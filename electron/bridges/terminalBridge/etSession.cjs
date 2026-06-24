@@ -1,6 +1,7 @@
 /* eslint-disable no-undef */
 const crypto = require("node:crypto");
 const { createSystemKnownHostsApi } = require("../sshBridge/systemKnownHosts.cjs");
+const { emitTerminalSessionData } = require("../emitTerminalSessionData.cjs");
 
 //
 // EternalTerminal session backend, factored into the createXxxSessionApi
@@ -818,7 +819,10 @@ main();
 
         const { bufferData: bufferEtData, flush: flushEt } = createPtyOutputBuffer((data) => {
           const contents = electronModule.webContents.fromId(session.webContentsId);
-          contents?.send("netcatty:data", { sessionId, data });
+          emitTerminalSessionData(contents, sessionId, data, {
+            cols: session.cols,
+            rows: session.rows,
+          });
         });
         session.flushPendingData = flushEt;
 

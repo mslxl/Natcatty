@@ -483,6 +483,16 @@ export const enCoreMessages: Messages = {
   'settings.terminal.rendering.hibernateHiddenTabs.desc': 'Dispose the terminal renderer for off-screen tabs to save memory while keeping the SSH session connected. Skipped during file transfers.',
   'settings.terminal.rendering.hibernateHiddenTabsDelay': 'Hibernate delay',
   'settings.terminal.rendering.hibernateHiddenTabsDelay.desc': 'How long a tab must stay off-screen before its renderer is released (5–600 seconds).',
+  'settings.terminal.rendering.hibernateSkipAltScreen': 'Skip hibernate on full-screen apps',
+  'settings.terminal.rendering.hibernateSkipAltScreen.desc': 'Keep the terminal renderer alive while vim, htop, or agent TUIs own the alternate screen buffer.',
+  'settings.terminal.rendering.hibernateKeepRendererCount': 'Keep hidden renderers',
+  'settings.terminal.rendering.hibernateKeepRendererCount.desc': 'How many off-screen tabs keep their renderer alive (WebGL suspended) before full hibernate.',
+  'settings.terminal.rendering.hibernateUseHeadlessMirror': 'Main-process terminal mirror',
+  'settings.terminal.rendering.hibernateUseHeadlessMirror.desc': 'Mirror PTY output in a headless xterm on the main process for faster wake snapshots.',
+  'settings.terminal.rendering.hibernateReplayChunkBytes': 'Wake replay chunk size',
+  'settings.terminal.rendering.hibernateReplayChunkBytes.desc': 'Bytes replayed per animation frame when restoring a hibernated terminal (4–64 KB).',
+  'settings.terminal.rendering.hibernatePreferWasmSerialize': 'Prefer WASM serialize',
+  'settings.terminal.rendering.hibernatePreferWasmSerialize.desc': 'Use WASM terminal serialization when available; falls back to the JS serializer.',
 
   // Settings > Terminal > Workspace Focus Indicator
   'settings.terminal.section.workspaceFocus': 'Workspace Focus Indicator',

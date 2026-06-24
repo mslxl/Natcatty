@@ -1,4 +1,6 @@
 /* eslint-disable no-undef */
+const { emitTerminalSessionData } = require("../emitTerminalSessionData.cjs");
+
 function createStartSessionApi(ctx) {
   with (ctx) {
     /**
@@ -61,6 +63,8 @@ function createStartSessionApi(ctx) {
           port: options.port || 22,
           username: options.username || 'root',
         },
+        cols: options.cols || 80,
+        rows: options.rows || 24,
       };
       sessions.set(sessionId, session);
 
@@ -95,7 +99,11 @@ function createStartSessionApi(ctx) {
       // cap still forces an immediate flush for bursts of output.
       const { bufferData, flush: flushBuffer } = createPtyOutputBuffer((data) => {
         const contents = event.sender;
-        safeSend(contents, "netcatty:data", { sessionId, data });
+        const current = sessions.get(sessionId);
+        emitTerminalSessionData(contents, sessionId, data, {
+          cols: current?.cols,
+          rows: current?.rows,
+        });
       });
 
       const sshZmodemSentry = createZmodemSentry({
@@ -1017,7 +1025,11 @@ function createStartSessionApi(ctx) {
             sendProgress(totalHops, totalHops, options.hostname, 'shell');
 
             const sendTerminalMessage = (data) => {
-              safeSend(event.sender, "netcatty:data", { sessionId, data });
+              const current = sessions.get(sessionId);
+              emitTerminalSessionData(event.sender, sessionId, data, {
+                cols: current?.cols,
+                rows: current?.rows,
+              });
             };
 
             const x11FakeCookie = options.x11Forwarding

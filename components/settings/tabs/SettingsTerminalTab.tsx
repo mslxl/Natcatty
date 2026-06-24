@@ -989,6 +989,7 @@ function SettingsTerminalTab(props: {
           />
         </SettingRow>
         {terminalSettings.hibernateHiddenTabs && (
+          <>
           <SettingRow
             label={t("settings.terminal.rendering.hibernateHiddenTabsDelay")}
             description={t("settings.terminal.rendering.hibernateHiddenTabsDelay.desc")}
@@ -1010,6 +1011,71 @@ function SettingsTerminalTab(props: {
               <span className="text-sm text-muted-foreground">{t("settings.terminal.serverStats.seconds")}</span>
             </div>
           </SettingRow>
+          <SettingRow
+            label={t("settings.terminal.rendering.hibernateSkipAltScreen")}
+            description={t("settings.terminal.rendering.hibernateSkipAltScreen.desc")}
+          >
+            <Toggle
+              checked={terminalSettings.hibernateSkipAltScreen}
+              onChange={(v) => updateTerminalSetting("hibernateSkipAltScreen", v)}
+            />
+          </SettingRow>
+          <SettingRow
+            label={t("settings.terminal.rendering.hibernateKeepRendererCount")}
+            description={t("settings.terminal.rendering.hibernateKeepRendererCount.desc")}
+          >
+            <Input
+              type="number"
+              min={0}
+              max={12}
+              value={terminalSettings.hibernateKeepRendererCount}
+              onChange={(e) => {
+                const val = parseInt(e.target.value, 10);
+                if (!Number.isNaN(val) && val >= 0 && val <= 12) {
+                  updateTerminalSetting("hibernateKeepRendererCount", val);
+                }
+              }}
+              className="w-20"
+            />
+          </SettingRow>
+          <SettingRow
+            label={t("settings.terminal.rendering.hibernateUseHeadlessMirror")}
+            description={t("settings.terminal.rendering.hibernateUseHeadlessMirror.desc")}
+          >
+            <Toggle
+              checked={terminalSettings.hibernateUseHeadlessMirror}
+              onChange={(v) => updateTerminalSetting("hibernateUseHeadlessMirror", v)}
+            />
+          </SettingRow>
+          <SettingRow
+            label={t("settings.terminal.rendering.hibernateReplayChunkBytes")}
+            description={t("settings.terminal.rendering.hibernateReplayChunkBytes.desc")}
+          >
+            <Input
+              type="number"
+              min={4096}
+              max={65536}
+              step={1024}
+              value={terminalSettings.hibernateReplayChunkBytes}
+              onChange={(e) => {
+                const val = parseInt(e.target.value, 10);
+                if (!Number.isNaN(val) && val >= 4096 && val <= 65536) {
+                  updateTerminalSetting("hibernateReplayChunkBytes", val);
+                }
+              }}
+              className="w-28"
+            />
+          </SettingRow>
+          <SettingRow
+            label={t("settings.terminal.rendering.hibernatePreferWasmSerialize")}
+            description={t("settings.terminal.rendering.hibernatePreferWasmSerialize.desc")}
+          >
+            <Toggle
+              checked={terminalSettings.hibernatePreferWasmSerialize}
+              onChange={(v) => updateTerminalSetting("hibernatePreferWasmSerialize", v)}
+            />
+          </SettingRow>
+          </>
         )}
       </div>
       {/* Autocomplete */}

@@ -8,9 +8,13 @@ import {
   serializeTerminalForHibernate,
 } from "./terminalHibernateRuntime.ts";
 
-const createFakeTerm = (bufferType: "normal" | "alternate") => ({
+const createFakeTerm = (bufferType: "normal" | "alternate", rows = 24, length = 30) => ({
+  rows,
   buffer: {
-    active: { type: bufferType },
+    active: {
+      type: bufferType,
+      length,
+    },
   },
 });
 
@@ -56,15 +60,31 @@ test("refreshTerminalViewport refreshes the full viewport", () => {
   assert.deepEqual(refreshed, [0, 23]);
 });
 
-test("serializeTerminalForHibernate preserves alternate screen when serialize throws", () => {
+test("serializeTerminalForHibernate preserves alternate screen when serialize throws", async () => {
   const term = createFakeTerm("alternate");
   const serializeAddon = {
     serialize: () => {
       throw new Error("serialize failed");
     },
   };
-  assert.deepEqual(serializeTerminalForHibernate(term as never, serializeAddon as never), {
+  assert.deepEqual(await serializeTerminalForHibernate(term as never, serializeAddon as never), {
     snapshot: "",
+    viewportSnapshot: "",
+    scrollbackSnapshot: "",
     alternateScreen: true,
   });
+});
+
+test("serializeTerminalForHibernate requests viewport-only range on alternate screen", async () => {
+  let capturedOptions: Record<string, unknown> | undefined;
+  const term = createFakeTerm("alternate", 24);
+  const serializeAddon = {
+    serialize: (options?: Record<string, unknown>) => {
+      capturedOptions = options;
+      return "alt-viewport";
+    },
+  };
+  const result = await serializeTerminalForHibernate(term as never, serializeAddon as never);
+  assert.equal(result.snapshot, "alt-viewport");
+  assert.deepEqual(capturedOptions?.range, { start: 0, end: 23 });
 });

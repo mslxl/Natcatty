@@ -13,6 +13,8 @@ const { promisify } = require("node:util");
 const { StringDecoder } = require("node:string_decoder");
 const pty = require("node-pty");
 const { SerialPort } = require("serialport");
+const { emitTerminalSessionData, disposeMirror } = require("./emitTerminalSessionData.cjs");
+const { resizeMirror } = require("./terminalHeadlessMirror.cjs");
 const iconv = require("iconv-lite");
 const ptyProcessTree = require("./ptyProcessTree.cjs");
 
@@ -404,7 +406,10 @@ function startLocalSession(event, payload) {
 
   const { bufferData: bufferLocalData, flush: flushLocal } = createPtyOutputBuffer((data) => {
     const contents = electronModule.webContents.fromId(session.webContentsId);
-    contents?.send("netcatty:data", { sessionId, data });
+    emitTerminalSessionData(contents, sessionId, data, {
+      cols: session.cols,
+      rows: session.rows,
+    });
   });
   session.flushPendingData = flushLocal;
 
@@ -626,7 +631,10 @@ async function startSerialSession(event, options) {
             const decoded = serialDecoderRef.current.write(buf);
             if (!decoded) return;
             const contents = electronModule.webContents.fromId(session.webContentsId);
-            contents?.send("netcatty:data", { sessionId, data: decoded });
+            emitTerminalSessionData(contents, sessionId, decoded, {
+              cols: session.cols,
+              rows: session.rows,
+            });
             sessionLogStreamManager.appendData(sessionId, decoded);
           },
           writeToRemote(buf) {
@@ -944,6 +952,9 @@ function resizeSession(event, payload) {
   if (!session) return;
   if (Number.isFinite(payload.cols)) session.cols = payload.cols;
   if (Number.isFinite(payload.rows)) session.rows = payload.rows;
+  if (Number.isFinite(payload.cols) && Number.isFinite(payload.rows)) {
+    resizeMirror(payload.sessionId, payload.cols, payload.rows);
+  }
   
   try {
     if (session.stream) {
@@ -980,6 +991,7 @@ function resizeSession(event, payload) {
 function closeSession(event, payload) {
   const session = sessions.get(payload.sessionId);
   if (!session) return;
+  disposeMirror(payload.sessionId);
   session.closed = true;
   
   try {

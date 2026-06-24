@@ -1,4 +1,6 @@
 /* eslint-disable no-undef */
+const { emitTerminalSessionData } = require("../emitTerminalSessionData.cjs");
+
 function createMoshSessionApi(ctx) {
   with (ctx) {
     function resolveBareMoshClient(_options, opts = {}) {
@@ -425,7 +427,10 @@ function createMoshSessionApi(ctx) {
     
       const { bufferData, flush } = createPtyOutputBuffer((data) => {
         const contents = electronModule.webContents.fromId(session.webContentsId);
-        contents?.send("netcatty:data", { sessionId, data });
+        emitTerminalSessionData(contents, sessionId, data, {
+          cols: session.cols,
+          rows: session.rows,
+        });
       });
       session.flushPendingData = flush;
     

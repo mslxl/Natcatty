@@ -88,14 +88,22 @@ import { useTerminalEffects } from "./terminal/useTerminalEffects";
 import { useTerminalHibernateEffect } from "./terminal/useTerminalHibernateEffect";
 import {
   appendHibernatePendingBuffer,
+  isTerminalAlternateScreenActive,
   serializeTerminalForHibernate,
 } from "./terminal/terminalHibernateRuntime";
 import {
   isTerminalFileTransferActive,
+  resolveHibernateKeepRendererCount,
+  resolveHibernatePreferWasmSerialize,
+  resolveHibernateSkipAltScreen,
+  resolveHibernateUseHeadlessMirror,
   resolveTerminalHibernateDelayMs,
   resolveTerminalHibernateEnabled,
+  resolveTerminalHibernateReplayChunkBytes,
   type TerminalHibernateWakePayload,
 } from "../domain/terminalHibernate";
+import { terminalHiddenRendererStore } from "../application/state/terminalHiddenRendererStore";
+import { mirrorSnapshotToHibernateSnapshot } from "../application/state/terminalMirrorSnapshot";
 import {
   wakeTerminalFromHibernate,
   type TerminalRuntimeRefs,
@@ -230,8 +238,12 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const disposeDataRef = useRef<(() => void) | null>(null);
   const disposeExitRef = useRef<(() => void) | null>(null);
   const hibernatedRef = useRef(false);
+  const softHiddenRef = useRef(false);
   const hasRuntimeRef = useRef(false);
   const hibernateSnapshotRef = useRef("");
+  const hibernateViewportSnapshotRef = useRef("");
+  const hibernateScrollbackSnapshotRef = useRef("");
+  const hibernateMirrorPreferredRef = useRef(false);
   const hibernatePendingBufferRef = useRef("");
   const hibernateAlternateScreenRef = useRef(false);
   const wakeInProgressRef = useRef(false);
@@ -827,30 +839,17 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     }
     sessionRef.current = null;
     hibernatedRef.current = false;
+    softHiddenRef.current = false;
     hibernateSnapshotRef.current = "";
+    hibernateViewportSnapshotRef.current = "";
+    hibernateScrollbackSnapshotRef.current = "";
+    hibernateMirrorPreferredRef.current = false;
     hibernatePendingBufferRef.current = "";
     hibernateAlternateScreenRef.current = false;
+    terminalHiddenRendererStore.clearSoftHidden(sessionId);
   }, [handleTerminalDataCaptureOnce, sessionId, terminalBackend]);
 
-  const hibernateRuntime = useCallback(() => {
-    if (hibernatedRef.current || !termRef.current || !serializeAddonRef.current) return;
-    const backendId = sessionRef.current;
-    if (!backendId) return;
-
-    const { snapshot, alternateScreen } = serializeTerminalForHibernate(
-      termRef.current,
-      serializeAddonRef.current,
-    );
-    if (alternateScreen && snapshot.length === 0) {
-      logger.info("[Terminal] Skipping hibernate: alternate screen snapshot unavailable", { sessionId });
-      return;
-    }
-
-    hibernateSnapshotRef.current = snapshot;
-    hibernateAlternateScreenRef.current = alternateScreen;
-    isBootActiveRef.current = false;
-    disposeRuntimeOnly();
-
+  const beginHibernatedSessionListeners = useCallback((backendId: string) => {
     disposeDataRef.current?.();
     hibernatePendingBufferRef.current = "";
     disposeDataRef.current = terminalBackend.onSessionData(backendId, (chunk) => {
@@ -873,14 +872,107 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       );
       onSessionExit?.(sessionId, evt);
     });
+  }, [onSessionExit, sessionId, terminalBackend]);
 
+  const applyHibernateSnapshot = useCallback((
+    snapshot: {
+      snapshot: string;
+      viewportSnapshot: string;
+      scrollbackSnapshot: string;
+      alternateScreen: boolean;
+    },
+    mirrorPreferred: boolean,
+  ) => {
+    hibernateSnapshotRef.current = snapshot.snapshot;
+    hibernateViewportSnapshotRef.current = snapshot.viewportSnapshot;
+    hibernateScrollbackSnapshotRef.current = snapshot.scrollbackSnapshot;
+    hibernateAlternateScreenRef.current = snapshot.alternateScreen;
+    hibernateMirrorPreferredRef.current = mirrorPreferred;
+  }, []);
+
+  const fullHibernateRuntime = useCallback(async () => {
+    if (hibernatedRef.current || softHiddenRef.current || !termRef.current || !serializeAddonRef.current) return;
+    const backendId = sessionRef.current;
+    if (!backendId) return;
+
+    terminalHiddenRendererStore.clearSoftHidden(sessionId);
+    softHiddenRef.current = false;
+
+    let snapshot = await serializeTerminalForHibernate(
+      termRef.current,
+      serializeAddonRef.current,
+      { preferWasm: resolveHibernatePreferWasmSerialize(terminalSettings) },
+    );
+    let mirrorPreferred = false;
+
+    if (resolveHibernateUseHeadlessMirror(terminalSettings)) {
+      const mirror = await terminalBackend.getTerminalMirrorSnapshot(backendId);
+      if (mirror && mirror.snapshot.length > 0) {
+        snapshot = mirrorSnapshotToHibernateSnapshot(mirror);
+        mirrorPreferred = true;
+      }
+    }
+
+    if (snapshot.alternateScreen && snapshot.snapshot.length === 0) {
+      logger.info("[Terminal] Skipping hibernate: alternate screen snapshot unavailable", { sessionId });
+      return;
+    }
+
+    applyHibernateSnapshot(snapshot, mirrorPreferred);
+    isBootActiveRef.current = false;
+    disposeRuntimeOnly();
+    beginHibernatedSessionListeners(backendId);
     hibernatedRef.current = true;
     logger.info("[Terminal] Hibernated runtime", {
       sessionId,
       snapshotChars: hibernateSnapshotRef.current.length,
-      alternateScreen,
+      viewportChars: hibernateViewportSnapshotRef.current.length,
+      scrollbackChars: hibernateScrollbackSnapshotRef.current.length,
+      alternateScreen: snapshot.alternateScreen,
+      mirrorPreferred,
     });
-  }, [onSessionExit, sessionId, terminalBackend]);
+  }, [
+    applyHibernateSnapshot,
+    beginHibernatedSessionListeners,
+    sessionId,
+    terminalBackend,
+    terminalSettings,
+  ]);
+
+  const hideRuntimeOnly = useCallback(() => {
+    if (hibernatedRef.current || softHiddenRef.current || !hasRuntimeRef.current) return;
+    xtermRuntimeRef.current?.suspendWebglRenderer();
+    terminalHiddenRendererStore.markSoftHidden(sessionId);
+    softHiddenRef.current = true;
+    logger.info("[Terminal] Soft-hidden runtime", { sessionId });
+  }, [sessionId]);
+
+  const hibernateRuntime = useCallback(() => {
+    if (hibernatedRef.current || softHiddenRef.current || !termRef.current) return;
+
+    if (
+      isTerminalAlternateScreenActive(termRef.current)
+      && resolveHibernateSkipAltScreen(terminalSettings)
+    ) {
+      logger.info("[Terminal] Skipping hibernate: alternate screen active", { sessionId });
+      return;
+    }
+
+    const keepCount = resolveHibernateKeepRendererCount(terminalSettings);
+    if (keepCount > 0 && terminalHiddenRendererStore.getSoftHiddenCount() < keepCount) {
+      hideRuntimeOnly();
+      return;
+    }
+
+    if (keepCount > 0) {
+      const victim = terminalHiddenRendererStore.pickEvictionCandidate(keepCount);
+      if (victim && victim !== sessionId) {
+        terminalHiddenRendererStore.requestEviction(victim);
+      }
+    }
+
+    void fullHibernateRuntime();
+  }, [fullHibernateRuntime, hideRuntimeOnly, sessionId, terminalSettings]);
 
   const terminalRuntimeRefs = useMemo<TerminalRuntimeRefs>(() => ({
     xtermRuntimeRef,
@@ -1602,6 +1694,25 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const safeFitRef = useRef(safeFit);
   safeFitRef.current = safeFit;
 
+  const wakeSoftHiddenRuntime = useCallback(() => {
+    if (!softHiddenRef.current) return;
+    terminalHiddenRendererStore.clearSoftHidden(sessionId);
+    softHiddenRef.current = false;
+    xtermRuntimeRef.current?.ensureWebglRenderer();
+    xtermRuntimeRef.current?.clearTextureAtlas();
+    safeFitRef.current({ force: true });
+  }, [sessionId]);
+
+  useEffect(() => {
+    return terminalHiddenRendererStore.subscribe(() => {
+      if (!terminalHiddenRendererStore.consumeEvictionRequest(sessionId)) return;
+      if (!softHiddenRef.current || hibernatedRef.current) return;
+      softHiddenRef.current = false;
+      terminalHiddenRendererStore.clearSoftHidden(sessionId);
+      void fullHibernateRuntime();
+    });
+  }, [fullHibernateRuntime, sessionId]);
+
   const wakeFromHibernateRuntime = useCallback((
     getPayload: () => TerminalHibernateWakePayload,
     options: { sessionConnected: boolean },
@@ -1656,13 +1767,14 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       isBootActiveRef,
       sessionId,
       updateStatus: (next) => updateStatusRef.current(next),
+      replayChunkBytes: resolveTerminalHibernateReplayChunkBytes(terminalSettings),
     }).then((ok) => ok).catch((err) => {
       logger.error("[Terminal] Failed to resume from hibernate", err);
       return false;
     }).finally(() => {
       wakeInProgressRef.current = false;
     });
-  }, [sessionId, terminalRuntimeRefs, resizeSession]);
+  }, [sessionId, terminalRuntimeRefs, resizeSession, terminalSettings]);
 
   useTerminalHibernateEffect({
     sessionId,
@@ -1679,11 +1791,16 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       isDraggingOver,
     }),
     hibernatedRef,
+    softHiddenRef,
     hibernatePendingBufferRef,
     hibernateSnapshotRef,
+    hibernateViewportSnapshotRef,
+    hibernateScrollbackSnapshotRef,
+    hibernateMirrorPreferredRef,
     hibernateAlternateScreenRef,
     hasRuntimeRef,
     onHibernate: hibernateRuntime,
+    onSoftHideWake: wakeSoftHiddenRuntime,
     onWake: wakeFromHibernateRuntime,
   });
 

@@ -1,4 +1,6 @@
 /* eslint-disable no-undef */
+const { emitTerminalSessionData } = require("../emitTerminalSessionData.cjs");
+
 function createTelnetSessionApi(ctx) {
   with (ctx) {
     async function startTelnetSession(event, options) {
@@ -154,7 +156,7 @@ function createTelnetSessionApi(ctx) {
         const telnetWebContentsId = event.sender.id;
         const { bufferData: bufferTelnetData, flush: flushTelnet } = createPtyOutputBuffer((data) => {
           const contents = electronModule.webContents.fromId(telnetWebContentsId);
-          contents?.send("netcatty:data", { sessionId, data });
+          emitTerminalSessionData(contents, sessionId, data, { cols, rows });
         });
     
         const telnetZmodemSentry = createZmodemSentry({
