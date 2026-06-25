@@ -264,8 +264,8 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({
                 const resultToolName = typeof tr.toolName === 'string' ? tr.toolName : undefined;
                 const pairedToolName = toolCallNames.get(tr.toolCallId);
                 const artifactToolName =
-                  normalizeArtifactToolName(resultToolName)
-                  ?? inferArtifactToolNameFromCliArgs(args)
+                  inferArtifactToolNameFromCliArgs(args)
+                  ?? normalizeArtifactToolName(resultToolName)
                   ?? normalizeArtifactToolName(pairedToolName);
                 return {
                   toolCallId: tr.toolCallId,

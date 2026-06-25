@@ -99,6 +99,7 @@ test("ChatMessageList renders Netcatty CLI vault results as artifact cards", () 
       toolResults: [
         {
           toolCallId: "cli-call-1",
+          toolName: "shell",
           content: JSON.stringify({
             ok: true,
             host: { id: "host_1", label: "Prod", hostname: "prod.example.com", port: 22 },
