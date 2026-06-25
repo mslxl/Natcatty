@@ -75,6 +75,7 @@ test("getServerStats opens a Mosh stats companion connection when session.conn i
   assert.equal(result.success, true);
   assert.equal(result.stats.memTotal, 8000);
   assert.equal(result.stats.cpuCores, 4);
+  assert.equal(typeof result.stats.latencyMs, "number");
 });
 
 test("getServerStats fails gracefully when the companion connection cannot be established", async () => {

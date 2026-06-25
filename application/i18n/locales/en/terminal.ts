@@ -88,6 +88,7 @@ export const enTerminalMessages: Messages = {
   'terminal.serverStats.disk': 'Disk Usage (Root)',
   'terminal.serverStats.diskDetails': 'Mounted Disks',
   'terminal.serverStats.network': 'Network Speed',
+  'terminal.serverStats.latency': 'Latency',
   'terminal.serverStats.networkDetails': 'Network Interfaces',
   'terminal.serverStats.noData': 'No data available',
   'terminal.dragDrop.localTitle': 'Drop to Insert Paths',
