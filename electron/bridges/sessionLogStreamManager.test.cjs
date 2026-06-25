@@ -142,6 +142,41 @@ test("stopStream without a token still tears down the current stream (back-compa
   }
 });
 
+test("token-required explicit file streams ignore tokenless stale stops", async () => {
+  const directory = path.join(TEMP_ROOT, `manual-token-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  const filePath = path.join(directory, "manual.log");
+  const sessionId = `session-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  let token;
+
+  try {
+    const result = startStreamToFile(sessionId, {
+      filePath,
+      format: "raw",
+      hostLabel: "manual",
+      startTime: Date.UTC(2026, 0, 2, 3, 4, 5),
+      stopRequiresToken: true,
+    });
+    assert.equal(result.ok, true);
+    token = result.token;
+
+    appendData(sessionId, "before-stale\n");
+    const staleResult = await stopStream(sessionId);
+    assert.equal(staleResult, null);
+    assert.equal(hasStream(sessionId), true);
+
+    appendData(sessionId, "after-stale\n");
+    const finalPath = await stopStream(sessionId, token);
+
+    assert.equal(finalPath, filePath);
+    assert.equal(fs.readFileSync(filePath, "utf8"), "before-stale\nafter-stale\n");
+  } finally {
+    if (hasStream(sessionId)) {
+      await stopStream(sessionId, token);
+    }
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("startStreamToFile writes to an explicit raw log file path", async () => {
   const directory = path.join(TEMP_ROOT, `manual-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   const filePath = path.join(directory, "manual.log");

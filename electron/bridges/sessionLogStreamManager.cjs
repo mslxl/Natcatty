@@ -148,7 +148,7 @@ function sanitizeSudoAutofillLogData(entry, dataChunk, { final = false } = {}) {
 function startStream(sessionId, opts) {
   if (activeStreams.has(sessionId)) {
     console.warn(`[SessionLogStream] Stream already active for ${sessionId}, stopping old one`);
-    stopStream(sessionId);
+    stopStream(sessionId, activeStreams.get(sessionId)?.startToken);
   }
 
   const { hostLabel, hostname, directory, format, startTime } = opts;
@@ -231,6 +231,7 @@ function createStreamEntry(sessionId, opts) {
     closing: false,
     disabled: false,
     startToken,
+    stopRequiresToken: Boolean(opts.stopRequiresToken),
   };
 
   entry.flushTimer = setInterval(() => {
@@ -262,6 +263,7 @@ function startStreamToFile(sessionId, opts = {}) {
       startTime: startTime || Date.now(),
       timestampsEnabled: opts.timestampsEnabled,
       timestampProvider: opts.timestampProvider,
+      stopRequiresToken: opts.stopRequiresToken,
     });
     if (typeof initialLine === "string" && initialLine.length > 0) {
       appendData(sessionId, initialLine);
@@ -402,6 +404,9 @@ async function stopStream(sessionId, expectedToken) {
     // The current stream belongs to a fresh incarnation; leave it alone.
     return null;
   }
+  if (entry.stopRequiresToken && !expectedToken) {
+    return null;
+  }
   activeStreams.delete(sessionId);
   entry.closing = true;
 
@@ -455,8 +460,8 @@ function hasStream(sessionId) {
  */
 async function cleanupAll() {
   console.log(`[SessionLogStream] Cleaning up ${activeStreams.size} active streams`);
-  const ids = [...activeStreams.keys()];
-  await Promise.allSettled(ids.map(id => stopStream(id)));
+  const entries = [...activeStreams.entries()];
+  await Promise.allSettled(entries.map(([id, entry]) => stopStream(id, entry.startToken)));
 }
 
 module.exports = {

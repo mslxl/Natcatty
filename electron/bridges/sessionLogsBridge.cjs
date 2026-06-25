@@ -13,6 +13,7 @@ const {
 
 const FILE_NAME_UNSAFE_CHARS = new Set(["<", ">", ":", "\"", "/", "\\", "|", "?", "*"]);
 const WINDOWS_RESERVED_DEVICE_NAME = /^(con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\..*)?$/i;
+const manualSessionLogTokens = new Map();
 
 function isControlCharacter(char) {
   const code = char.codePointAt(0);
@@ -291,12 +292,14 @@ async function startManualSessionLog(event, payload = {}) {
       hostLabel: safeSessionName,
       startTime: Date.now(),
       initialLine: typeof initialLine === "string" ? initialLine : "",
+      stopRequiresToken: true,
     });
 
     if (!startResult.ok) {
       return { success: false, started: false, error: startResult.error || "Failed to start session log" };
     }
 
+    manualSessionLogTokens.set(sessionId, startResult.token);
     return { success: true, started: true, filePath };
   } catch (err) {
     return { success: false, started: false, error: err?.message || String(err) };
@@ -311,10 +314,19 @@ async function stopManualSessionLog(event, payload = {}) {
   }
 
   try {
-    const filePath = await sessionLogStreamManager.stopStream(sessionId);
-    if (!filePath) {
+    const token = manualSessionLogTokens.get(sessionId);
+    if (!token) {
       return { success: true, stopped: false };
     }
+
+    const filePath = await sessionLogStreamManager.stopStream(sessionId, token);
+    if (!filePath) {
+      if (!sessionLogStreamManager.hasStream(sessionId)) {
+        manualSessionLogTokens.delete(sessionId);
+      }
+      return { success: true, stopped: false };
+    }
+    manualSessionLogTokens.delete(sessionId);
     return { success: true, stopped: true, filePath };
   } catch (err) {
     return { success: false, stopped: false, error: err?.message || String(err) };
