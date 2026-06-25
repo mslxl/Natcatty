@@ -69,11 +69,11 @@ export const PortForwardHostKeyTrayPrompt: React.FC<PortForwardHostKeyTrayPrompt
         </div>
       )}
 
-      <div className="mt-2 grid grid-cols-[auto_auto_1fr] gap-1.5">
+      <div className="mt-2 grid grid-cols-[auto_auto_1fr] gap-1">
         <Button
           variant="ghost"
           size="sm"
-          className="h-7 px-2 text-[11px]"
+          className="h-6 px-1.5 text-[10px]"
           onClick={rejectHostKeyVerification}
         >
           {t("common.close")}
@@ -81,14 +81,14 @@ export const PortForwardHostKeyTrayPrompt: React.FC<PortForwardHostKeyTrayPrompt
         <Button
           variant="outline"
           size="sm"
-          className="h-7 px-2 text-[11px]"
+          className="h-6 px-1.5 text-[10px]"
           onClick={acceptHostKeyVerification}
         >
           {t("common.continue")}
         </Button>
         <Button
           size="sm"
-          className="h-7 min-w-0 px-2 text-[11px]"
+          className="h-6 min-w-0 px-1.5 text-[10px]"
           onClick={acceptAndSaveHostKeyVerification}
         >
           <span className="truncate">
