@@ -8,6 +8,7 @@ const { Client: SSHClient } = require("ssh2");
 const { NetcattyAgent } = require("./netcattyAgent.cjs");
 const keyboardInteractiveHandler = require("./keyboardInteractiveHandler.cjs");
 const { connectThroughChain, buildAlgorithms } = require("./sshBridge.cjs");
+const hostKeyVerifier = require("./hostKeyVerifier.cjs");
 const { createProxySocket } = require("./proxyUtils.cjs");
 const { 
   buildAuthHandler, 
@@ -79,6 +80,7 @@ async function startPortForward(event, payload) {
     keyId,
     passphrase,
     knownHosts,
+    verifyHostKeys,
     proxy,
     jumpHosts = [],
     identityFilePaths,
@@ -139,6 +141,14 @@ async function startPortForward(event, payload) {
     tryKeyboard: true,
     algorithms: buildAlgorithms(legacyAlgorithms, { skipEcdsaHostKey, algorithmOverrides }),
   };
+  connectOpts.hostVerifier = hostKeyVerifier.createHostVerifier({
+    sender,
+    sessionId: tunnelId,
+    hostname,
+    port,
+    knownHosts,
+    verifyHostKeys,
+  });
 
   const hasCertificate = typeof certificate === "string" && certificate.trim().length > 0;
   sendStatus('connecting');
@@ -235,6 +245,7 @@ async function startPortForward(event, payload) {
           passphrase,
           proxy,
           knownHosts,
+          verifyHostKeys,
           jumpHosts,
           legacyAlgorithms,
           skipEcdsaHostKey,

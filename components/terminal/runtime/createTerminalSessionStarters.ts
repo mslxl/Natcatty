@@ -44,6 +44,13 @@ export const getMissingChainHostIds = (
 };
 
 export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContext) => {
+  const globalTerminalSettings = {
+    verifyHostKeys: true,
+    keepaliveInterval: 30,
+    keepaliveCountMax: 10,
+    ...(ctx.terminalSettings ?? {}),
+  };
+
   const tr = (key: string, fallback: string): string => {
     const translated = ctx.t?.(key);
     if (!translated || translated === key) return fallback;
@@ -170,7 +177,6 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       ctx.updateStatus("disconnected");
       return;
     }
-    const globalKeepalive = ctx.terminalSettings ?? { keepaliveInterval: 30, keepaliveCountMax: 10 };
     const jumpHosts = ctx.resolvedChainHosts.map<NetcattyJumpHost>((jumpHost, index) => {
       const jumpAuth = resolveHostAuth({
         host: jumpHost,
@@ -216,7 +222,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       // Resolve keepalive for THIS hop. Each jump host carries its own
       // override toggle, so a bastion that is a router (interval=0) can
       // coexist with a cloud target host (interval=30) in the same chain.
-      const hopKeepalive = resolveHostKeepalive(jumpHost, globalKeepalive);
+      const hopKeepalive = resolveHostKeepalive(jumpHost, globalTerminalSettings);
 
       return {
         hostname: jumpHost.hostname,
@@ -243,6 +249,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         identityFilePaths: jumpIdentityFilePaths,
         keepaliveInterval: hopKeepalive.interval,
         keepaliveCountMax: hopKeepalive.countMax,
+        verifyHostKeys: globalTerminalSettings.verifyHostKeys,
         legacyAlgorithms: jumpHost.legacyAlgorithms,
         skipEcdsaHostKey: jumpHost.skipEcdsaHostKey,
         algorithmOverrides: jumpHost.algorithms,
@@ -381,7 +388,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         // inherits the cloud-friendly global setting.
         const keepalive = resolveHostKeepalive(
           ctx.host,
-          ctx.terminalSettings ?? { keepaliveInterval: 30, keepaliveCountMax: 10 },
+          globalTerminalSettings,
         );
         return ctx.terminalBackend.startSSHSession({
           sessionId: ctx.sessionId,
@@ -412,6 +419,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           jumpHosts: jumpHosts.length > 0 ? jumpHosts : undefined,
           keepaliveInterval: keepalive.interval,
           keepaliveCountMax: keepalive.countMax,
+          verifyHostKeys: globalTerminalSettings.verifyHostKeys,
           sessionLog: ctx.sessionLog?.enabled ? ctx.sessionLog : undefined,
           sshDebugLogEnabled: ctx.sshDebugLogEnabled,
           identityFilePaths: attempt.useIdentityFiles ? targetIdentityFilePaths : undefined,
@@ -789,6 +797,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         // Lets the stats companion verify the host key before sending a saved
         // password (#1198), so it never discloses it to an unvetted host.
         knownHosts: ctx.knownHosts,
+        verifyHostKeys: globalTerminalSettings.verifyHostKeys,
         sudoAutofillPassword: resolveSavedSudoAutofillPassword(),
         cols: term.cols,
         rows: term.rows,
@@ -1026,6 +1035,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         skipEcdsaHostKey: ctx.host.skipEcdsaHostKey,
         algorithmOverrides: ctx.host.algorithms,
         knownHosts: ctx.knownHosts,
+        verifyHostKeys: globalTerminalSettings.verifyHostKeys,
         jumpHosts: jumpHosts.length > 0 ? jumpHosts : undefined,
         agentForwarding: ctx.host.agentForwarding,
         sudoAutofillPassword: resolveSavedSudoAutofillPassword(),

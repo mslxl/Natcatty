@@ -12,6 +12,11 @@ const trayPanelSource = readFileSync(
   "utf8",
 );
 
+const trayPromptSource = readFileSync(
+  new URL("./PortForwardHostKeyTrayPrompt.tsx", import.meta.url),
+  "utf8",
+);
+
 test("port-forward host-key dialog is marked so tray outside-click handling ignores it", () => {
   assert.match(dialogSource, /data-port-forward-host-key-dialog="true"/);
   assert.match(dialogSource, /overlayClassName="port-forward-host-key-dialog-layer"/);
@@ -19,4 +24,13 @@ test("port-forward host-key dialog is marked so tray outside-click handling igno
   assert.match(dialogSource, /rounded-lg/);
   assert.match(trayPanelSource, /data-port-forward-host-key-dialog/);
   assert.match(trayPanelSource, /port-forward-host-key-dialog-layer/);
+});
+
+test("tray uses the lightweight host-key prompt instead of the main dialog", () => {
+  assert.match(trayPromptSource, /data-port-forward-host-key-tray-prompt="true"/);
+  assert.match(trayPromptSource, /grid-cols-\[auto_auto_1fr\]/);
+  assert.match(trayPanelSource, /<PortForwardHostKeyTrayPrompt onAddKnownHost=\{handleAddKnownHost\} \/>/);
+  assert.doesNotMatch(trayPanelSource, /<PortForwardHostKeyDialog/);
+  assert.match(trayPanelSource, /data-port-forward-host-key-dialog/);
+  assert.match(trayPanelSource, /data-port-forward-host-key-tray-prompt/);
 });

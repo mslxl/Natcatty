@@ -17,3 +17,4 @@ export { EditPanel } from './EditPanel';
 export { NewFormPanel } from './NewFormPanel';
 
 export { PortForwardHostKeyDialog } from './PortForwardHostKeyDialog';
+export { PortForwardHostKeyTrayPrompt } from './PortForwardHostKeyTrayPrompt';

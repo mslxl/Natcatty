@@ -16,7 +16,7 @@ import { materializeHostProxyProfile } from "../domain/proxyProfiles";
 import { upsertKnownHost } from "../domain/knownHosts";
 import type { Host, KnownHost } from "../domain/models";
 import { getEffectiveKnownHosts } from "../infrastructure/syncHelpers";
-import { PortForwardHostKeyDialog } from "./port-forwarding";
+import { PortForwardHostKeyTrayPrompt } from "./port-forwarding";
 import { X, Maximize2, ChevronRight, ChevronDown, Power } from "lucide-react";
 import { AppLogo } from "./AppLogo";
 
@@ -115,7 +115,7 @@ const WorkspaceGroup: React.FC<{
 };
 
 interface TrayPanelContentProps {
-  terminalSettings?: { keepaliveInterval: number; keepaliveCountMax: number };
+  terminalSettings?: { verifyHostKeys: boolean; keepaliveInterval: number; keepaliveCountMax: number };
 }
 
 const TrayPanelContent: React.FC<TrayPanelContentProps> = ({ terminalSettings }) => {
@@ -202,7 +202,7 @@ const TrayPanelContent: React.FC<TrayPanelContentProps> = ({ terminalSettings })
       }
       if (
         target instanceof HTMLElement &&
-        target.closest("[data-port-forward-host-key-dialog='true'],.port-forward-host-key-dialog-layer")
+        target.closest("[data-port-forward-host-key-dialog='true'],[data-port-forward-host-key-tray-prompt='true'],.port-forward-host-key-dialog-layer")
       ) {
         return;
       }
@@ -233,7 +233,6 @@ const TrayPanelContent: React.FC<TrayPanelContentProps> = ({ terminalSettings })
 
   return (
     <>
-      <PortForwardHostKeyDialog onAddKnownHost={handleAddKnownHost} />
       <div id="tray-panel-root" className="w-full h-full bg-background/95 supports-[backdrop-filter]:backdrop-blur-sm border border-border/60 rounded-lg shadow-lg overflow-hidden flex flex-col">
       <div className="px-3 py-2 border-b border-border/60 flex items-center justify-between app-no-drag">
         <div className="flex items-center gap-2">
@@ -262,6 +261,7 @@ const TrayPanelContent: React.FC<TrayPanelContentProps> = ({ terminalSettings })
       </div>
 
       <div className="p-2 space-y-3 text-sm flex-1 overflow-y-auto min-h-0">
+        <PortForwardHostKeyTrayPrompt onAddKnownHost={handleAddKnownHost} />
 
         {jumpableSessions.length > 0 && (() => {
           // Group sessions by workspace

@@ -12,7 +12,11 @@ import { hasUsableProxyConfig } from '../../domain/proxyProfiles';
 
 // Fallback matching DEFAULT_TERMINAL_SETTINGS so older call sites that don't
 // thread terminalSettings still get the cloud-friendly defaults.
-const FALLBACK_KEEPALIVE = { keepaliveInterval: 30, keepaliveCountMax: 10 };
+const FALLBACK_TERMINAL_SETTINGS = {
+  verifyHostKeys: true,
+  keepaliveInterval: 30,
+  keepaliveCountMax: 10,
+};
 import { logger } from '../../lib/logger';
 import { localStorageAdapter } from '../persistence/localStorageAdapter';
 import { STORAGE_KEY_PF_RECONNECT_CANCEL } from '../config/storageKeys';
@@ -368,10 +372,10 @@ export const startPortForward = async (
   identities: Identity[],
   onStatusChange: (status: PortForwardingRule['status'], error?: string) => void,
   enableReconnect = false,
-  terminalSettings?: Pick<TerminalSettings, 'keepaliveInterval' | 'keepaliveCountMax'>,
+  terminalSettings?: Pick<TerminalSettings, 'verifyHostKeys' | 'keepaliveInterval' | 'keepaliveCountMax'>,
   knownHosts?: KnownHost[],
 ): Promise<{ success: boolean; error?: string }> => {
-  const globalKeepalive = terminalSettings ?? FALLBACK_KEEPALIVE;
+  const globalTerminalSettings = { ...FALLBACK_TERMINAL_SETTINGS, ...(terminalSettings ?? {}) };
   const bridge = netcattyBridge.get();
   
   // Clear any existing reconnect timer
@@ -450,7 +454,7 @@ export const startPortForward = async (
           ) {
             throw new Error(`Saved credentials for jump host "${jumpHost.label || jumpHost.hostname}" cannot be decrypted on this device. Open host settings and re-enter them.`);
           }
-          const hopKeepalive = resolveHostKeepalive(jumpHost, globalKeepalive);
+          const hopKeepalive = resolveHostKeepalive(jumpHost, globalTerminalSettings);
           return {
             hostname: jumpHost.hostname,
             port: jumpHost.port || 22,
@@ -476,6 +480,7 @@ export const startPortForward = async (
             identityFilePaths: jumpKeyAuth.identityFilePaths,
             keepaliveInterval: hopKeepalive.interval,
             keepaliveCountMax: hopKeepalive.countMax,
+            verifyHostKeys: globalTerminalSettings.verifyHostKeys,
             legacyAlgorithms: jumpHost.legacyAlgorithms,
             skipEcdsaHostKey: jumpHost.skipEcdsaHostKey,
             algorithmOverrides: jumpHost.algorithms,
@@ -556,14 +561,15 @@ export const startPortForward = async (
       keyId: resolved.keyId,
       passphrase: keyAuth.passphrase,
       knownHosts,
+      verifyHostKeys: globalTerminalSettings.verifyHostKeys,
       proxy,
       jumpHosts: jumpHosts && jumpHosts.length > 0 ? jumpHosts : undefined,
       identityFilePaths: keyAuth.identityFilePaths,
       legacyAlgorithms: host.legacyAlgorithms,
       skipEcdsaHostKey: host.skipEcdsaHostKey,
       algorithmOverrides: host.algorithms,
-      keepaliveInterval: resolveHostKeepalive(host, globalKeepalive).interval,
-      keepaliveCountMax: resolveHostKeepalive(host, globalKeepalive).countMax,
+      keepaliveInterval: resolveHostKeepalive(host, globalTerminalSettings).interval,
+      keepaliveCountMax: resolveHostKeepalive(host, globalTerminalSettings).countMax,
     });
     
     if (!result.success) {
