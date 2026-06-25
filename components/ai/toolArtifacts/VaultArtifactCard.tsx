@@ -3,7 +3,11 @@ import React from 'react';
 import { useI18n } from '../../../application/i18n/I18nProvider';
 import { cn } from '../../../lib/utils';
 import type { VaultToolArtifact } from './vaultToolArtifact';
-import { navigateVaultArtifact, useVaultArtifactNavigation } from './VaultArtifactNavigationContext';
+import {
+  canNavigateVaultArtifact,
+  navigateVaultArtifact,
+  useVaultArtifactNavigation,
+} from './VaultArtifactNavigationContext';
 import { VaultArtifactIcon } from './vaultArtifactPresentation';
 
 interface VaultArtifactCardProps {
@@ -81,9 +85,10 @@ export const VaultArtifactCard: React.FC<VaultArtifactCardProps> = ({
   const { t } = useI18n();
   const navigation = useVaultArtifactNavigation();
   const presentation = getArtifactPresentation(artifact, t);
+  const canNavigate = presentation.clickable && canNavigateVaultArtifact(artifact, navigation);
 
   const handleClick = () => {
-    if (!presentation.clickable || !navigation) return;
+    if (!canNavigate || !navigation) return;
     navigateVaultArtifact(artifact, navigation);
   };
 
@@ -100,15 +105,23 @@ export const VaultArtifactCard: React.FC<VaultArtifactCardProps> = ({
           </div>
         )}
       </div>
-      {presentation.clickable && (
+      {canNavigate && (
         <ChevronRight size={12} className="shrink-0 text-muted-foreground/40" />
       )}
     </>
   );
 
-  if (!presentation.clickable) {
+  if (!canNavigate) {
     return (
-      <div className={cn('flex items-center gap-2 px-1 py-0.5', className)}>
+      <div
+        className={cn(
+          presentation.clickable
+            ? 'flex w-full items-center gap-2.5 rounded-md border border-border/25 bg-muted/10 px-2.5 py-2 text-left'
+            : 'flex items-center gap-2 px-1 py-0.5',
+          className,
+          'cursor-default',
+        )}
+      >
         {content}
       </div>
     );

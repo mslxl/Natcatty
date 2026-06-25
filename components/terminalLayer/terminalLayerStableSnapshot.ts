@@ -74,8 +74,8 @@ export type TerminalLayerStableSnapshot = {
   lastSidePanelTabRef: React.MutableRefObject<Map<string, SidePanelTab>>;
   notesMountedTabIds: string[];
   setNotesMountedTabIds: React.Dispatch<React.SetStateAction<string[]>>;
-  notesOpenNoteByTab: Map<string, string>;
-  setNotesOpenNoteByTab: React.Dispatch<React.SetStateAction<Map<string, string>>>;
+  notesOpenNoteByTab: Map<string, { noteId: string; requestId: number }>;
+  setNotesOpenNoteByTab: React.Dispatch<React.SetStateAction<Map<string, { noteId: string; requestId: number }>>>;
   isComposeBarOpen: boolean;
   setIsComposeBarOpen: React.Dispatch<React.SetStateAction<boolean>>;
   splitHorizontalHandlersRef: React.MutableRefObject<Map<string, () => void>>;

@@ -510,7 +510,8 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   >(new Map());
   const [pendingTerminalSelectionForAI, setPendingTerminalSelectionForAI] =
     useState<PendingTerminalSelectionForAI | null>(null);
-  const [notesOpenNoteByTab, setNotesOpenNoteByTab] = useState<Map<string, string>>(new Map());
+  const [notesOpenNoteByTab, setNotesOpenNoteByTab] = useState<Map<string, { noteId: string; requestId: number }>>(new Map());
+  const notesOpenRequestIdRef = useRef(0);
   const sftpHostForTabRef = useRef(sftpHostForTab);
   sftpHostForTabRef.current = sftpHostForTab;
 
@@ -1084,9 +1085,11 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   }, [handleSwitchSidePanelTab, resolveSftpHostForTab]);
 
   const openNotesPanelForSourceNote = useCallback((tabId: string, noteId: string) => {
+    notesOpenRequestIdRef.current += 1;
+    const requestId = notesOpenRequestIdRef.current;
     setNotesOpenNoteByTab((prev) => {
       const next = new Map(prev);
-      next.set(tabId, noteId);
+      next.set(tabId, { noteId, requestId });
       return next;
     });
     setNotesMountedTabIds((prev) => addMountedSidePanelTabId(prev, tabId));

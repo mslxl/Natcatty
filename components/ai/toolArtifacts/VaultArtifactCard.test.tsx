@@ -24,6 +24,22 @@ test('VaultArtifactCard renders note artifact title', () => {
   assert.match(html, /ops\/prod/);
 });
 
+test('VaultArtifactCard does not render a clickable note without navigation wiring', () => {
+  const html = renderToStaticMarkup(
+    <I18nProvider locale="en">
+      <VaultArtifactCard
+        artifact={{
+          kind: 'vault.note',
+          noteId: 'note-1',
+          title: 'Runbook',
+        }}
+      />
+    </I18nProvider>,
+  );
+
+  assert.doesNotMatch(html, /<button/);
+});
+
 test('VaultArtifactCard renders host batch summary', () => {
   const html = renderToStaticMarkup(
     <I18nProvider locale="en">
