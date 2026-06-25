@@ -1,7 +1,6 @@
 import type { ExternalAgentConfig } from "../../../../infrastructure/ai/types";
 import {
   type ManagedAgentKey,
-  getExternalAgentSdkBackend,
   isPathLikeCommand,
 } from "../../../../infrastructure/ai/managedAgents";
 import type { AgentPathInfo } from "./types";

@@ -6,7 +6,6 @@ import type {
   ChatMessage,
   ChatMessageAttachment,
   ExternalAgentConfig,
-  ProviderAdvancedParams,
   ProviderConfig,
   WebSearchConfig,
 } from '../../types';
