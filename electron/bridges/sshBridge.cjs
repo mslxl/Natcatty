@@ -479,6 +479,7 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
   const sender = event.sender;
   const connections = options?._connectionsRef || [];
   const sshDiagnosticLogger = options?._sshDiagnosticLogger || log;
+  const keyboardInteractiveScope = options?._keyboardInteractiveScope || "terminal";
   let currentSocket = null;
 
   const sendProgress = (hop, total, label, status, error) => {
@@ -727,7 +728,7 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
           hostname: hopLabel,
           password: jump.password,
           logPrefix: `[Chain] Hop ${i + 1}/${totalHops}`,
-          scope: "terminal",
+          scope: keyboardInteractiveScope,
           onAutoFill: () => sendProgress(
             i + 1, totalHops + 1, hopLabel, 'auth-attempt', 'using saved password',
           ),
