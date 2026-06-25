@@ -328,7 +328,7 @@ export const enAiMessages: Messages = {
   'ai.safety.blocklist.add': 'Add pattern',
   'ai.safety.grants.title': 'Permission memory',
   'ai.safety.grants.heading': 'Confirm-mode allow rules',
-  'ai.safety.grants.description': 'Rules apply globally in confirm mode (all terminal sessions/nodes). Terminal commands follow OpenCode: always-allow writes command prefix patterns (e.g. lscpu *, git checkout *).',
+  'ai.safety.grants.description': 'Confirm mode asks before running an operation. Saved rules automatically allow matching operations across all terminal sessions/nodes, and can be edited manually.',
   'ai.safety.grants.empty': 'No saved rules yet. Approve a tool with “Always allow”, or add one manually.',
   'ai.safety.grants.capability': 'Capability',
   'ai.safety.grants.sessionPattern': 'Session pattern',

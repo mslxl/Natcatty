@@ -328,7 +328,7 @@ export const zhCNAiMessages: Messages = {
   'ai.safety.blocklist.add': '添加规则',
   'ai.safety.grants.title': '许可记忆表',
   'ai.safety.grants.heading': 'Confirm 模式放行规则',
-  'ai.safety.grants.description': '规则在 confirm 模式下全局生效（所有终端节点/会话）。终端命令遵循 OpenCode：「一律许可」会写入「命令前缀 + *」（如 lscpu *、git checkout *），也可手动编辑。',
+  'ai.safety.grants.description': 'Confirm 模式会先询问再执行；保存为规则后，匹配的同类操作会自动放行。规则对所有终端节点/会话生效，也可手动编辑。',
   'ai.safety.grants.empty': '尚无规则。可在审批时选择「一律许可」，或手动添加。',
   'ai.safety.grants.capability': '能力',
   'ai.safety.grants.sessionPattern': '节点/会话模式',
