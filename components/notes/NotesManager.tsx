@@ -115,6 +115,7 @@ export interface NotesManagerProps {
   onOpenHost?: (host: Host, source?: { noteId: string }) => void;
   displayMode?: "full" | "sidebar";
   openNoteId?: string | null;
+  openNoteRequestId?: number | null;
   /** Called after a one-shot openNoteId focus request has been applied. */
   onOpenNoteIdHandled?: () => void;
 }
@@ -328,6 +329,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
   onOpenHost,
   displayMode = "full",
   openNoteId = null,
+  openNoteRequestId = null,
   onOpenNoteIdHandled,
 }) => {
   const { t } = useI18n();
@@ -427,7 +429,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
       setExpandedGroups((current) => new Set([...current, ...ancestorNoteGroupPaths(note.group || "")]));
     }
     onOpenNoteIdHandled?.();
-  }, [isSidebarMode, onOpenNoteIdHandled, openNoteId, sortedNotes]);
+  }, [isSidebarMode, onOpenNoteIdHandled, openNoteId, openNoteRequestId, sortedNotes]);
 
   useEffect(() => {
     if (expandedPanel !== "search") return;

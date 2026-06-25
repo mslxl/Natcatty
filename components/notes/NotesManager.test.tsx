@@ -274,3 +274,10 @@ test("NotesManager sidebar mode opens the requested note without selecting its f
   assert.match(markup, /data-vault-tree-row="group"[^>]*data-selected="false"/);
   assert.match(markup, /data-vault-tree-row="item"[^>]*data-selected="true"[^>]*data-note-id="note-2"/);
 });
+
+test("NotesManager can re-open the same sidebar note when the request id changes", () => {
+  const source = readFileSync(new URL("./NotesManager.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /openNoteRequestId\?: number \| null/);
+  assert.match(source, /\[isSidebarMode, onOpenNoteIdHandled, openNoteId, openNoteRequestId, sortedNotes\]/);
+});

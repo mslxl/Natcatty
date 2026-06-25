@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { I18nProvider } from "../../application/i18n/I18nProvider.tsx";
 import type { ChatMessage } from "../../infrastructure/ai/types.ts";
-import ChatMessageList from "./ChatMessageList.tsx";
+import ChatMessageList, { shouldProvideVaultArtifactNavigation } from "./ChatMessageList.tsx";
 
 const makeMessage = (index: number): ChatMessage => ({
   id: `msg-${index}`,
@@ -29,4 +29,14 @@ test("ChatMessageList only renders the recent message batch by default", () => {
   assert.doesNotMatch(markup, /message-0/);
   assert.match(markup, /message-10/);
   assert.match(markup, /message-59/);
+});
+
+test("ChatMessageList wires vault artifact navigation when only note open is available", () => {
+  assert.equal(shouldProvideVaultArtifactNavigation({
+    onOpenVaultNote: () => {},
+  }), true);
+});
+
+test("ChatMessageList leaves vault artifact navigation disabled without open actions", () => {
+  assert.equal(shouldProvideVaultArtifactNavigation({}), false);
 });

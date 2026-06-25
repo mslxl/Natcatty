@@ -59,6 +59,7 @@ import { resolveSidePanelToggleIntent } from '../application/state/resolveSidePa
 import { resolveAiSidePanelToggleIntent } from '../application/state/resolveAiSidePanelToggleIntent';
 import { terminalLayerAreEqual } from './terminalLayerMemo';
 import { TerminalLayerTabBridge } from './terminalLayer/TerminalLayerTabBridge';
+import { resolveAiNoteArtifactPanelIntent } from './terminalLayer/aiNoteArtifactPanelIntent';
 import {
   canUseDirectSessionWriteFallback,
 } from './terminalLayer/terminalLayerSessionRouting';
@@ -509,7 +510,8 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   >(new Map());
   const [pendingTerminalSelectionForAI, setPendingTerminalSelectionForAI] =
     useState<PendingTerminalSelectionForAI | null>(null);
-  const [notesOpenNoteByTab, setNotesOpenNoteByTab] = useState<Map<string, string>>(new Map());
+  const [notesOpenNoteByTab, setNotesOpenNoteByTab] = useState<Map<string, { noteId: string; requestId: number }>>(new Map());
+  const notesOpenRequestIdRef = useRef(0);
   const sftpHostForTabRef = useRef(sftpHostForTab);
   sftpHostForTabRef.current = sftpHostForTab;
 
@@ -1083,9 +1085,11 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   }, [handleSwitchSidePanelTab, resolveSftpHostForTab]);
 
   const openNotesPanelForSourceNote = useCallback((tabId: string, noteId: string) => {
+    notesOpenRequestIdRef.current += 1;
+    const requestId = notesOpenRequestIdRef.current;
     setNotesOpenNoteByTab((prev) => {
       const next = new Map(prev);
-      next.set(tabId, noteId);
+      next.set(tabId, { noteId, requestId });
       return next;
     });
     setNotesMountedTabIds((prev) => addMountedSidePanelTabId(prev, tabId));
@@ -1127,6 +1131,26 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     if (!openNoteRequest) return;
     openNotesPanelForSourceNote(openNoteRequest.tabId, openNoteRequest.noteId);
   }, [openNoteRequest, openNotesPanelForSourceNote]);
+
+  const handleOpenVaultNoteFromAiPanel = useCallback((noteId: string) => {
+    const intent = resolveAiNoteArtifactPanelIntent({
+      activeTabId: activeTabIdRef.current,
+      currentPanel: activeTabIdRef.current
+        ? sidePanelOpenTabsRef.current.get(activeTabIdRef.current) ?? null
+        : null,
+      noteId,
+    });
+
+    if (intent.kind === 'fallback') {
+      onOpenVaultNoteFromChat?.(intent.noteId);
+      return;
+    }
+
+    if (intent.returnPanel) {
+      notesReturnTabRef.current.set(intent.tabId, intent.returnPanel);
+    }
+    openNotesPanelForSourceNote(intent.tabId, intent.noteId);
+  }, [onOpenVaultNoteFromChat, openNotesPanelForSourceNote]);
 
   const handleAddSelectionToAI = useCallback((sourceSessionId: string, selection: string) => {
     const text = selection.trim();
@@ -1456,7 +1480,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     noteGroups,
     notes,
     onOpenVaultHostFromChat,
-    onOpenVaultNoteFromChat,
+    onOpenVaultNoteFromChat: handleOpenVaultNoteFromAiPanel,
     onOpenVaultSectionFromChat,
     splitHorizontalHandlersRef,
     splitVerticalHandlersRef,
