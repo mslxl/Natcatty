@@ -720,6 +720,8 @@ function isTerminalReportSequence(data) {
   if (data === "\x1b[I" || data === "\x1b[O") return true;
   // CPR / DECXCPR / DA1 / DA2 / DSR: ESC [ (?|>)? digits/semicolons (R|c|n)
   if (/^\x1b\[[?>]?[0-9;]*[Rcn]$/.test(data)) return true;
+  // Kitty keyboard mode query reply: ESC [ ? digits u
+  if (/^\x1b\[\?[0-9]+u$/.test(data)) return true;
   // DCS replies (XTGETTCAP / DECRQSS, etc.): ESC P ... ESC \
   if (/^\x1bP[\s\S]*\x1b\\$/.test(data)) return true;
   return false;
