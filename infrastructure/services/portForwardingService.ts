@@ -4,7 +4,7 @@
  * for establishing and managing SSH port forwarding tunnels.
  */
 
-import { Host, Identity, PortForwardingRule, SSHKey, TerminalSettings } from '../../domain/models';
+import { Host, Identity, KnownHost, PortForwardingRule, SSHKey, TerminalSettings } from '../../domain/models';
 import { isEncryptedCredentialPlaceholder, sanitizeCredentialValue } from '../../domain/credentials';
 import { resolveBridgeKeyAuth, resolveHostAuth } from '../../domain/sshAuth';
 import { resolveHostKeepalive } from '../../domain/host';
@@ -369,6 +369,7 @@ export const startPortForward = async (
   onStatusChange: (status: PortForwardingRule['status'], error?: string) => void,
   enableReconnect = false,
   terminalSettings?: Pick<TerminalSettings, 'keepaliveInterval' | 'keepaliveCountMax'>,
+  knownHosts?: KnownHost[],
 ): Promise<{ success: boolean; error?: string }> => {
   const globalKeepalive = terminalSettings ?? FALLBACK_KEEPALIVE;
   const bridge = netcattyBridge.get();
@@ -554,6 +555,7 @@ export const startPortForward = async (
       certificate: key?.certificate,
       keyId: resolved.keyId,
       passphrase: keyAuth.passphrase,
+      knownHosts,
       proxy,
       jumpHosts: jumpHosts && jumpHosts.length > 0 ? jumpHosts : undefined,
       identityFilePaths: keyAuth.identityFilePaths,

@@ -169,6 +169,7 @@ declare global {
     certificate?: string;
     keyId?: string;
     passphrase?: string;
+    knownHosts?: import("./domain/models").KnownHost[];
     proxy?: NetcattyProxyConfig;
     jumpHosts?: NetcattyJumpHost[];
     identityFilePaths?: string[];

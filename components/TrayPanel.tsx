@@ -14,6 +14,7 @@ import { useActiveTabId } from "../application/state/activeTabStore";
 import { resolveGroupDefaults, applyGroupDefaults } from "../domain/groupConfig";
 import { materializeHostProxyProfile } from "../domain/proxyProfiles";
 import type { Host } from "../domain/models";
+import { getEffectiveKnownHosts } from "../infrastructure/syncHelpers";
 import { X, Maximize2, ChevronRight, ChevronDown, Power } from "lucide-react";
 import { AppLogo } from "./AppLogo";
 
@@ -127,13 +128,17 @@ const TrayPanelContent: React.FC<TrayPanelContentProps> = ({ terminalSettings })
     onTrayPanelMenuData,
   } = useTrayPanelBackend();
 
-  const { hosts, keys, identities, proxyProfiles, groupConfigs } = useVaultState();
+  const { hosts, keys, identities, proxyProfiles, groupConfigs, knownHosts } = useVaultState();
   useSessionState({ persistSessionRestore: false });
   const { rules: portForwardingRules, startTunnel, stopTunnel } = usePortForwardingState();
   const activeTabId = useActiveTabId();
   const proxyProfileIdSet = useMemo(
     () => new Set(proxyProfiles.map((profile) => profile.id)),
     [proxyProfiles],
+  );
+  const effectiveKnownHosts = useMemo(
+    () => getEffectiveKnownHosts(knownHosts) ?? [],
+    [knownHosts],
   );
 
   const [traySessions, setTraySessions] = useState<TraySession[]>([]);
@@ -368,7 +373,7 @@ const TrayPanelContent: React.FC<TrayPanelContentProps> = ({ terminalSettings })
                             const host = resolveEffectiveHost(rawHost);
                             void startTunnel(rule, host, hosts.map(resolveEffectiveHost), keys, identities, (status, error) => {
                               if (status === "error" && error) toast.error(error);
-                            }, rule.autoStart, terminalSettings);
+                            }, rule.autoStart, terminalSettings, effectiveKnownHosts);
                           }
                         }}
                         className={cn(
