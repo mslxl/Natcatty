@@ -10,7 +10,6 @@ import type {
   AgentModelPreset,
   AISessionScope,
   DiscoveredAgent,
-  ExternalAgentConfig,
 } from '../infrastructure/ai/types';
 import type { ExecutorContext } from '../infrastructure/ai/cattyAgent/executor';
 import { getAgentModelPresets } from '../infrastructure/ai/types';

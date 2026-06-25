@@ -47,19 +47,12 @@ export type GrantPersister = (rule: PermissionGrantRule) => void;
 
 let grantPersister: GrantPersister | null = null;
 const grantPersisterStack: GrantPersister[] = [];
-let grantsHydrated = false;
 
 function refreshPermissionGrantsFromStorage(): void {
   if (typeof window === 'undefined') return;
   setActivePermissionGrants(
     sanitizePermissionGrants(localStorageAdapter.read<unknown>(STORAGE_KEY_AI_PERMISSION_GRANTS)),
   );
-  grantsHydrated = true;
-}
-
-function ensureGrantsHydrated(): void {
-  if (grantsHydrated) return;
-  refreshPermissionGrantsFromStorage();
 }
 
 export function setGrantPersister(persister: GrantPersister | null): void {
@@ -112,7 +105,6 @@ function emitApprovalEvent(
   extra?: { outcome?: 'approved' | 'denied' | 'timeout'; persistedGrantId?: string },
 ): void {
   const sessionId = request.chatSessionId ?? 'global';
-  const capabilityId = request.capabilityId ?? resolveCapabilityId(request.toolName);
   const base = {
     sessionId,
     chatSessionId: request.chatSessionId,
