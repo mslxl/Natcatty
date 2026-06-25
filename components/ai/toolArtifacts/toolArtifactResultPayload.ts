@@ -13,6 +13,11 @@ function parseJsonRecord(value: string): Record<string, unknown> | null {
   }
 }
 
+function looksLikeJson(value: string): boolean {
+  const trimmed = value.trim();
+  return trimmed.startsWith('{') || trimmed.startsWith('[');
+}
+
 function unwrapMcpTextEnvelope(value: unknown): unknown {
   if (Array.isArray(value)) {
     const textPart = value.find((entry) => {
@@ -29,6 +34,15 @@ function unwrapMcpTextEnvelope(value: unknown): unknown {
   }
   if (Array.isArray(record?.content)) {
     return unwrapMcpTextEnvelope(record.content);
+  }
+  if (typeof record?.content === 'string' && looksLikeJson(record.content)) {
+    return record.content;
+  }
+  if (typeof record?.detailedContent === 'string' && looksLikeJson(record.detailedContent)) {
+    return record.detailedContent;
+  }
+  if (Array.isArray(record?.contents)) {
+    return unwrapMcpTextEnvelope(record.contents);
   }
 
   return value;

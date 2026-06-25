@@ -17,6 +17,32 @@ test('normalizeArtifactToolName unwraps MCP server prefixes', () => {
   );
 });
 
+test('normalizeArtifactToolName unwraps OpenCode server prefixes', () => {
+  assert.equal(
+    normalizeArtifactToolName('netcatty-remote-hosts_vault_notes_get'),
+    'vault_notes_get',
+  );
+  assert.equal(
+    normalizeArtifactToolName('netcatty-remote-hosts_vault_hosts_list'),
+    'vault_hosts_list',
+  );
+  assert.equal(
+    normalizeArtifactToolName('netcatty-remote-hosts_terminal_read_context'),
+    'terminal_read_context',
+  );
+});
+
+test('normalizeArtifactToolName unwraps Copilot server prefixes', () => {
+  assert.equal(
+    normalizeArtifactToolName('netcatty-remote-hosts-vault_notes_list'),
+    'vault_notes_list',
+  );
+  assert.equal(
+    normalizeArtifactToolName('netcatty-remote-hosts-terminal_read_context'),
+    'terminal_read_context',
+  );
+});
+
 test('inferArtifactToolNameFromCliArgs maps Netcatty CLI artifact commands', () => {
   assert.equal(
     inferArtifactToolNameFromCliArgs({

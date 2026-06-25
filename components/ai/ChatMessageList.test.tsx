@@ -181,3 +181,93 @@ test("ChatMessageList renders Claude MCP list envelopes as summary cards", () =>
   assert.match(markup, /8 notes in Vault/);
   assert.doesNotMatch(markup, /notes-call-1/);
 });
+
+test("ChatMessageList renders OpenCode MCP-prefixed vault results as artifact cards", () => {
+  const messages: ChatMessage[] = [
+    {
+      id: "tool-1",
+      role: "tool",
+      content: "",
+      timestamp: 1,
+      toolResults: [
+        {
+          toolCallId: "opencode-call-1",
+          toolName: "netcatty-remote-hosts_vault_notes_get",
+          content: JSON.stringify({
+            ok: true,
+            note: {
+              id: "note-1",
+              title: "2026-06-25 Host Import Report",
+              group: "infra/imports",
+            },
+          }),
+        },
+      ],
+    },
+  ];
+
+  const markup = renderToStaticMarkup(
+    React.createElement(
+      I18nProvider,
+      { locale: "en" },
+      React.createElement(
+        TooltipProvider,
+        null,
+        React.createElement(ChatMessageList, { messages }),
+      ),
+    ),
+  );
+
+  assert.match(markup, /2026-06-25 Host Import Report/);
+  assert.match(markup, /infra\/imports/);
+  assert.doesNotMatch(markup, /opencode-call-1/);
+});
+
+test("ChatMessageList renders Copilot MCP-prefixed wrapped vault results as artifact cards", () => {
+  const payload = {
+    ok: true,
+    notes: Array.from({ length: 8 }, (_value, index) => ({
+      id: `note-${index}`,
+      title: `Note ${index}`,
+    })),
+  };
+  const messages: ChatMessage[] = [
+    {
+      id: "tool-1",
+      role: "tool",
+      content: "",
+      timestamp: 1,
+      toolResults: [
+        {
+          toolCallId: "copilot-call-1",
+          toolName: "netcatty-remote-hosts-vault_notes_list",
+          content: JSON.stringify({
+            content: JSON.stringify(payload),
+            detailedContent: JSON.stringify(payload),
+            contents: [
+              {
+                type: "text",
+                text: JSON.stringify(payload),
+              },
+            ],
+          }),
+        },
+      ],
+    },
+  ];
+
+  const markup = renderToStaticMarkup(
+    React.createElement(
+      I18nProvider,
+      { locale: "en" },
+      React.createElement(
+        TooltipProvider,
+        null,
+        React.createElement(ChatMessageList, { messages }),
+      ),
+    ),
+  );
+
+  assert.match(markup, /8 notes in Vault/);
+  assert.doesNotMatch(markup, /copilot-call-1/);
+});

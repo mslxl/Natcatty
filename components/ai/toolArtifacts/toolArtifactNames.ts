@@ -1,5 +1,17 @@
 const MCP_TOOL_NAME_PREFIX = 'mcp__';
 
+const KNOWN_ARTIFACT_TOOL_NAMES = [
+  'terminal_read_context',
+  'vault_notes_create',
+  'vault_notes_update',
+  'vault_notes_get',
+  'vault_notes_list',
+  'vault_hosts_create',
+  'vault_hosts_import',
+  'vault_hosts_list',
+  'host_get',
+] as const;
+
 const CLI_ARTIFACT_TOOL_NAMES = new Map<string, string>([
   ['vault host get', 'host_get'],
 ]);
@@ -45,6 +57,11 @@ export function normalizeArtifactToolName(toolName: string | undefined): string 
     const segments = trimmed.split('__').filter(Boolean);
     return segments[segments.length - 1] || trimmed;
   }
+
+  const prefixedArtifactToolName = KNOWN_ARTIFACT_TOOL_NAMES.find((candidate) => (
+    trimmed.endsWith(`_${candidate}`) || trimmed.endsWith(`-${candidate}`)
+  ));
+  if (prefixedArtifactToolName) return prefixedArtifactToolName;
 
   return trimmed;
 }
