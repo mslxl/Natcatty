@@ -784,11 +784,13 @@ function createSessionOpsApi(ctx) {
       ].join('; ');
     
       // Auto-detect OS via uname — only Linux and macOS are supported
-      const statsCommand = `ostype=$(uname -s 2>/dev/null || echo "Unknown"); if [ "$ostype" = "Darwin" ]; then ${macosStatsCommand}; elif [ "$ostype" = "Linux" ]; then ${linuxStatsCommand}; else echo "UNSUPPORTED_OS:$ostype"; fi`;
+      const latencyMarker = "NC_LATENCY_MARK";
+      const statsCommand = `printf "${latencyMarker}|"; ostype=$(uname -s 2>/dev/null || echo "Unknown"); if [ "$ostype" = "Darwin" ]; then ${macosStatsCommand}; elif [ "$ostype" = "Linux" ]; then ${linuxStatsCommand}; else echo "UNSUPPORTED_OS:$ostype"; fi`;
       return new Promise((resolve) => {
         const timeout = setTimeout(() => {
           resolve({ success: false, error: 'Timeout getting server stats' });
         }, 5000);
+        const latencyStartedAt = Date.now();
     
         conn.exec(statsCommand, (err, stream) => {
           if (err) {
@@ -799,8 +801,12 @@ function createSessionOpsApi(ctx) {
     
           let stdout = '';
           let stderr = '';
+          let latencyMs = null;
     
           stream.on('data', (data) => {
+            if (latencyMs === null) {
+              latencyMs = Math.max(0, Date.now() - latencyStartedAt);
+            }
             stdout += data.toString();
           });
     
@@ -812,7 +818,7 @@ function createSessionOpsApi(ctx) {
             clearTimeout(timeout);
     
             // Parse the output
-            const output = stdout.trim();
+            const output = stdout.trim().replace(new RegExp(`^${latencyMarker}\\|?`), '');
     
             // Unsupported OS — stop polling this session
             if (output.startsWith('UNSUPPORTED_OS:')) {
@@ -1086,6 +1092,7 @@ function createSessionOpsApi(ctx) {
                 disks,         // Array of all mounted disks
                 netRxSpeed,    // Total network receive speed (bytes/sec)
                 netTxSpeed,    // Total network transmit speed (bytes/sec)
+                latencyMs,      // Approximate SSH stats round-trip latency (ms)
                 netInterfaces, // Per-interface network stats
               },
             });
