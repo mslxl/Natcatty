@@ -225,7 +225,7 @@ interface VaultViewProps {
   onNavigateToSectionHandled?: () => void;
   deepLinkHostDraft?: Host | null;
   onDeepLinkHostDraftHandled?: () => void;
-  terminalSettings?: { keepaliveInterval: number; keepaliveCountMax: number };
+  terminalSettings?: { verifyHostKeys: boolean; keepaliveInterval: number; keepaliveCountMax: number };
 }
 
 const VaultViewInner: React.FC<VaultViewProps> = ({
@@ -1188,10 +1188,11 @@ export const vaultViewAreEqual = (
     prev.terminalFontSize === next.terminalFontSize &&
     prev.navigateToSection === next.navigateToSection &&
     prev.deepLinkHostDraft === next.deepLinkHostDraft &&
-    // Only the keepalive fields of terminalSettings are forwarded to
+    // Only these terminal connection settings are forwarded to
     // PortForwarding inside the vault, so compare them directly. Other
     // terminal settings (fonts, themes, etc.) don't affect this subtree
     // and we don't want to re-render for them.
+    prev.terminalSettings?.verifyHostKeys === next.terminalSettings?.verifyHostKeys &&
     prev.terminalSettings?.keepaliveInterval === next.terminalSettings?.keepaliveInterval &&
     prev.terminalSettings?.keepaliveCountMax === next.terminalSettings?.keepaliveCountMax;
 
