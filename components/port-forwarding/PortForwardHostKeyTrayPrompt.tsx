@@ -29,10 +29,8 @@ export const PortForwardHostKeyTrayPrompt: React.FC<PortForwardHostKeyTrayPrompt
     <div
       data-port-forward-host-key-tray-prompt="true"
       className={cn(
-        "border-b px-3 py-2",
-        isChanged
-          ? "border-destructive/20 bg-destructive/8"
-          : "border-border/60 bg-muted/45",
+        "px-3 py-2",
+        isChanged ? "bg-destructive/8" : "bg-muted/45",
       )}
     >
       <div className="flex items-start justify-between gap-3">
