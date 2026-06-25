@@ -215,6 +215,9 @@ const SIDE_PANEL_CTX_KEYS = [
   'noteGroups',
   'updateNotes',
   'updateNoteGroups',
+  'onOpenVaultNoteFromChat',
+  'onOpenVaultHostFromChat',
+  'onOpenVaultSectionFromChat',
   't',
 ] as const;
 

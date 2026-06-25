@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
@@ -80,4 +81,13 @@ test('side panel tab order can move the dragged tab after the target tab', () =>
     ),
     ['sftp', 'history', 'theme', 'system', 'notes', 'ai', 'scripts'],
   );
+});
+
+test('notes side panel forwards repeated open-note requests', () => {
+  const layerSource = readFileSync(new URL('../TerminalLayer.tsx', import.meta.url), 'utf8');
+  const sectionSource = readFileSync(new URL('./TerminalLayerSidePanelSection.tsx', import.meta.url), 'utf8');
+
+  assert.match(layerSource, /notesOpenRequestIdRef\.current \+= 1/);
+  assert.match(layerSource, /next\.set\(tabId, \{ noteId, requestId \}\)/);
+  assert.match(sectionSource, /openNoteRequestId=\{openNoteRequest\?\.requestId \?\? null\}/);
 });

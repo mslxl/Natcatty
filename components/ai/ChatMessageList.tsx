@@ -61,6 +61,20 @@ interface ChatMessageListProps {
   onOpenVaultSection?: (section: 'notes' | 'hosts') => void;
 }
 
+interface VaultArtifactNavigationCallbackOptions {
+  onOpenVaultNote?: (noteId: string) => void;
+  onOpenVaultHost?: (hostId: string) => void;
+  onOpenVaultSection?: (section: 'notes' | 'hosts') => void;
+}
+
+export function shouldProvideVaultArtifactNavigation({
+  onOpenVaultNote,
+  onOpenVaultHost,
+  onOpenVaultSection,
+}: VaultArtifactNavigationCallbackOptions): boolean {
+  return Boolean(onOpenVaultNote || onOpenVaultHost || onOpenVaultSection);
+}
+
 const MESSAGE_RENDER_BATCH = 50;
 const MESSAGE_RENDER_STEP = 50;
 
@@ -633,7 +647,7 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({
     </>
   );
 
-  if (onOpenVaultNote && onOpenVaultHost && onOpenVaultSection) {
+  if (shouldProvideVaultArtifactNavigation({ onOpenVaultNote, onOpenVaultHost, onOpenVaultSection })) {
     return (
       <VaultArtifactNavigationProvider
         notes={notes}

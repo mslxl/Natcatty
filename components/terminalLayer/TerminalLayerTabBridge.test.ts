@@ -25,3 +25,9 @@ test('terminal layer bridge refreshes when terminal settings change', () => {
   assert.match(source, /terminalSettings: s\.terminalSettings/);
   assert.match(source, /\[\s*[\s\S]*s\.terminalSettings[\s\S]*\]\);/);
 });
+
+test('terminal layer bridge passes vault open callbacks into the side panel context', () => {
+  assert.match(source, /onOpenVaultNoteFromChat: s\.onOpenVaultNoteFromChat/);
+  assert.match(source, /onOpenVaultHostFromChat: s\.onOpenVaultHostFromChat/);
+  assert.match(source, /onOpenVaultSectionFromChat: s\.onOpenVaultSectionFromChat/);
+});

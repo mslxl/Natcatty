@@ -649,6 +649,7 @@ function TerminalLayerSidePanelTabBody({ ctx }: { ctx: SidePanelContext }) {
 
             {notesMountedTabIds.map((tabId: string) => {
               const isVisibleNotesPanel = activeTabId === tabId && activeSidePanelTab === 'notes';
+              const openNoteRequest = notesOpenNoteByTab.get(tabId) ?? null;
               return (
                 <div
                   key={`notes-${tabId}`}
@@ -663,7 +664,8 @@ function TerminalLayerSidePanelTabBody({ ctx }: { ctx: SidePanelContext }) {
                     onUpdateNoteGroups={updateNoteGroups}
                     onOpenHost={handleOpenHostFromNotes}
                     displayMode="sidebar"
-                    openNoteId={notesOpenNoteByTab.get(tabId) ?? null}
+                    openNoteId={openNoteRequest?.noteId ?? null}
+                    openNoteRequestId={openNoteRequest?.requestId ?? null}
                   />
                 </div>
               );

@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { I18nProvider } from "../../application/i18n/I18nProvider.tsx";
 import type { ChatMessage } from "../../infrastructure/ai/types.ts";
-import ChatMessageList from "./ChatMessageList.tsx";
+import ChatMessageList, { shouldProvideVaultArtifactNavigation } from "./ChatMessageList.tsx";
 import { TooltipProvider } from "../ui/tooltip.tsx";
 
 const makeMessage = (index: number): ChatMessage => ({
@@ -271,4 +271,14 @@ test("ChatMessageList renders Copilot MCP-prefixed wrapped vault results as arti
 
   assert.match(markup, /8 notes in Vault/);
   assert.doesNotMatch(markup, /copilot-call-1/);
+});
+
+test("ChatMessageList wires vault artifact navigation when only note open is available", () => {
+  assert.equal(shouldProvideVaultArtifactNavigation({
+    onOpenVaultNote: () => {},
+  }), true);
+});
+
+test("ChatMessageList leaves vault artifact navigation disabled without open actions", () => {
+  assert.equal(shouldProvideVaultArtifactNavigation({}), false);
 });

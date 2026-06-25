@@ -144,6 +144,21 @@ test("terminal layer side panel re-renders when follow terminal cwd setting chan
   );
 });
 
+test("terminal layer side panel re-renders when vault note open callback changes", () => {
+  const baseCtx = {
+    mountedAiTabIds: ["workspace-1"],
+    onOpenVaultNoteFromChat: () => {},
+  };
+
+  assert.equal(
+    terminalLayerSidePanelCtxEqual(
+      baseCtx,
+      { ...baseCtx, onOpenVaultNoteFromChat: () => {} },
+    ),
+    false,
+  );
+});
+
 test("terminal layer focus sidebar re-renders when dynamic tab title mode changes", () => {
   const baseCtx = {
     isFocusMode: true,
