@@ -70,6 +70,7 @@ export const terminalPropsAreEqual = (
   && prev.onTerminalTitleChange === next.onTerminalTitleChange
   && prev.onTerminalBell === next.onTerminalBell
   && prev.onTerminalOutput === next.onTerminalOutput
+  && prev.onTerminalContextReaderChange === next.onTerminalContextReaderChange
   && prev.onOpenScripts === next.onOpenScripts
   && prev.onOpenHistory === next.onOpenHistory
   && prev.onOpenTheme === next.onOpenTheme

@@ -8,6 +8,7 @@ import {
   type TerminalHibernateWakePayload,
 } from "../../domain/terminalHibernate";
 import type { XTermRuntime } from "./runtime/createXTermRuntime";
+import { readActiveTerminalBufferTextRange } from "./terminalContextBuffer";
 import { serializeTerminalBuffer } from "./terminalSerialize";
 import {
   writeTerminalPayloadChunked,
@@ -36,6 +37,9 @@ export type TerminalHibernateSnapshot = {
   snapshot: string;
   viewportSnapshot: string;
   scrollbackSnapshot: string;
+  contextSnapshot?: string;
+  contextViewportSnapshot?: string;
+  contextScrollbackSnapshot?: string;
   alternateScreen: boolean;
 };
 
@@ -82,10 +86,17 @@ export async function serializeTerminalForHibernate(
         }, preferWasm),
         rows,
       );
+      const contextViewportSnapshot = readActiveTerminalBufferTextRange(term, {
+        startLine: 0,
+        endLine: endRow,
+      });
       return {
         snapshot: viewportSnapshot,
         viewportSnapshot,
         scrollbackSnapshot: "",
+        contextSnapshot: contextViewportSnapshot,
+        contextViewportSnapshot,
+        contextScrollbackSnapshot: "",
         alternateScreen: true,
       };
     }
@@ -97,8 +108,13 @@ export async function serializeTerminalForHibernate(
       excludeModes,
       range: { start: viewportStart, end: viewportEnd },
     }, preferWasm);
+    const contextViewportSnapshot = readActiveTerminalBufferTextRange(term, {
+      startLine: viewportStart,
+      endLine: viewportEnd,
+    });
 
     let scrollbackSnapshot = "";
+    let contextScrollbackSnapshot = "";
     if (viewportStart > 0) {
       const scrollbackStart = Math.max(0, viewportStart - TERMINAL_HIBERNATE_SNAPSHOT_MAX_LINES);
       scrollbackSnapshot = capHibernateBufferByLines(
@@ -109,6 +125,10 @@ export async function serializeTerminalForHibernate(
         }, preferWasm),
         TERMINAL_HIBERNATE_SNAPSHOT_MAX_LINES,
       );
+      contextScrollbackSnapshot = readActiveTerminalBufferTextRange(term, {
+        startLine: scrollbackStart,
+        endLine: viewportStart - 1,
+      });
     }
 
     const snapshot = capHibernateBufferByLines(
@@ -123,6 +143,9 @@ export async function serializeTerminalForHibernate(
       snapshot,
       viewportSnapshot,
       scrollbackSnapshot,
+      contextSnapshot: [contextScrollbackSnapshot, contextViewportSnapshot].filter(Boolean).join("\n"),
+      contextViewportSnapshot,
+      contextScrollbackSnapshot,
       alternateScreen: false,
     };
   } catch {

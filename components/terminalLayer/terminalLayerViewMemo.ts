@@ -265,6 +265,7 @@ const WORKSPACE_CTX_KEYS = [
   'handleTerminalTitleChange',
   'handleTerminalBell',
   'handleTerminalOutput',
+  'handleTerminalContextReaderChange',
   'handleOpenScripts',
   'handleOpenHistory',
   'handleOpenSystem',

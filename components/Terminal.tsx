@@ -25,6 +25,13 @@ import {
   type TerminalHostUpdate,
 } from "../domain/terminalAppearance";
 import { resolveRestoreCwdIntent } from "../domain/sessionRestore";
+import {
+  buildTerminalContextReadResult,
+  buildTerminalContextSnapshotText,
+  normalizeTerminalContextRange,
+  resolveTerminalContextLineWindow,
+  type TerminalContextReader,
+} from "../domain/terminalContextRead";
 import { classifyDistroId, shouldProbeSessionCwd } from "../domain/host";
 import { supportsZmodemTerminalDragDrop } from "../lib/zmodemDragDrop";
 import { resolveHostAuth } from "../domain/sshAuth";
@@ -89,6 +96,7 @@ import {
 import { createTerminalCwdTracker, resolvePreferredTerminalCwd } from "./terminal/sftpCwd";
 import { useTerminalEffects } from "./terminal/useTerminalEffects";
 import { useTerminalHibernateEffect } from "./terminal/useTerminalHibernateEffect";
+import { readActiveTerminalBufferTextRange } from "./terminal/terminalContextBuffer";
 import {
   appendHibernatePendingBuffer,
   isTerminalAlternateScreenActive,
@@ -194,6 +202,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   onTerminalTitleChange,
   onTerminalBell,
   onTerminalOutput,
+  onTerminalContextReaderChange,
   onOpenScripts,
   onOpenHistory,
   onOpenTheme,
@@ -245,6 +254,9 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const hibernateSnapshotRef = useRef("");
   const hibernateViewportSnapshotRef = useRef("");
   const hibernateScrollbackSnapshotRef = useRef("");
+  const hibernateContextSnapshotRef = useRef("");
+  const hibernateContextViewportSnapshotRef = useRef("");
+  const hibernateContextScrollbackSnapshotRef = useRef("");
   const hibernatePendingBufferRef = useRef("");
   const hibernateAlternateScreenRef = useRef(false);
   const wakeInProgressRef = useRef(false);
@@ -304,6 +316,90 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     }
     return connectionLogBufferRef.current.toString();
   }, []);
+
+  const readTerminalContext = useCallback<TerminalContextReader>(async (request) => {
+    if (request.sessionId !== sessionId) {
+      return { ok: false, error: `Terminal context reader is registered for "${sessionId}", not "${request.sessionId}".` };
+    }
+
+    const range = normalizeTerminalContextRange(request.range);
+    const term = termRef.current;
+    if (term) {
+      const alternateScreen = isTerminalAlternateScreenActive(term);
+      const activeBuffer = term.buffer.active as typeof term.buffer.active & {
+        viewportY?: number;
+      };
+      const totalLines = Math.max(0, activeBuffer.length);
+      const viewportStartLine = alternateScreen
+        ? 0
+        : Math.max(0, activeBuffer.viewportY ?? Math.max(0, totalLines - term.rows));
+      const viewportEndLine = totalLines > 0
+        ? Math.min(totalLines - 1, viewportStartLine + Math.max(1, term.rows) - 1)
+        : -1;
+      const lineWindow = resolveTerminalContextLineWindow({
+        range,
+        totalLines,
+        viewportStartLine,
+        viewportEndLine,
+        startLine: request.startLine,
+        maxLines: request.maxLines,
+      });
+      let content = '';
+      if (lineWindow.endLine >= lineWindow.startLine) {
+        content = readActiveTerminalBufferTextRange(term, {
+          startLine: lineWindow.startLine,
+          endLine: lineWindow.endLine,
+        });
+      }
+
+      return {
+        ok: true,
+        sessionId,
+        label: sessionDisplayName ?? host.label,
+        range,
+        content,
+        totalLines,
+        startLine: lineWindow.startLine,
+        endLine: lineWindow.endLine,
+        returnedLines: lineWindow.endLine >= lineWindow.startLine
+          ? lineWindow.endLine - lineWindow.startLine + 1
+          : 0,
+        hasMoreBefore: lineWindow.startLine > 0,
+        hasMoreAfter: lineWindow.endLine >= 0 && lineWindow.endLine < totalLines - 1,
+        source: 'live',
+        alternateScreen,
+      };
+    }
+
+    const snapshot = buildTerminalContextSnapshotText({
+      scrollbackText: hibernateContextScrollbackSnapshotRef.current,
+      viewportText: hibernateContextViewportSnapshotRef.current,
+      pendingText: hibernatePendingBufferRef.current,
+    });
+    const fullText = snapshot.fullText || hibernateContextSnapshotRef.current;
+
+    if (!fullText) {
+      return { ok: false, error: `Terminal session "${sessionId}" has no readable terminal buffer yet.` };
+    }
+
+    return buildTerminalContextReadResult({
+      sessionId,
+      label: sessionDisplayName ?? host.label,
+      fullText,
+      range,
+      startLine: request.startLine,
+      maxLines: request.maxLines,
+      source: 'snapshot',
+      alternateScreen: hibernateAlternateScreenRef.current,
+      viewportStartLine: snapshot.viewportStartLine,
+      viewportEndLine: snapshot.viewportEndLine,
+    });
+  }, [host.label, sessionDisplayName, sessionId]);
+
+  useEffect(() => {
+    onTerminalContextReaderChange?.(sessionId, readTerminalContext);
+    return () => onTerminalContextReaderChange?.(sessionId, null);
+  }, [onTerminalContextReaderChange, readTerminalContext, sessionId]);
 
   useEffect(() => {
     commandLogRewriterRef.current = createProgrammaticCommandLogRewriter();
@@ -856,6 +952,9 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     hibernateSnapshotRef.current = "";
     hibernateViewportSnapshotRef.current = "";
     hibernateScrollbackSnapshotRef.current = "";
+    hibernateContextSnapshotRef.current = "";
+    hibernateContextViewportSnapshotRef.current = "";
+    hibernateContextScrollbackSnapshotRef.current = "";
     hibernatePendingBufferRef.current = "";
     hibernateAlternateScreenRef.current = false;
     terminalHiddenRendererStore.clearSoftHidden(sessionId);
@@ -894,12 +993,18 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       snapshot: string;
       viewportSnapshot: string;
       scrollbackSnapshot: string;
+      contextSnapshot?: string;
+      contextViewportSnapshot?: string;
+      contextScrollbackSnapshot?: string;
       alternateScreen: boolean;
     },
   ) => {
     hibernateSnapshotRef.current = snapshot.snapshot;
     hibernateViewportSnapshotRef.current = snapshot.viewportSnapshot;
     hibernateScrollbackSnapshotRef.current = snapshot.scrollbackSnapshot;
+    hibernateContextSnapshotRef.current = snapshot.contextSnapshot ?? "";
+    hibernateContextViewportSnapshotRef.current = snapshot.contextViewportSnapshot ?? "";
+    hibernateContextScrollbackSnapshotRef.current = snapshot.contextScrollbackSnapshot ?? "";
     hibernateAlternateScreenRef.current = snapshot.alternateScreen;
   }, []);
 
@@ -1874,6 +1979,9 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     hibernateSnapshotRef,
     hibernateViewportSnapshotRef,
     hibernateScrollbackSnapshotRef,
+    hibernateContextSnapshotRef,
+    hibernateContextViewportSnapshotRef,
+    hibernateContextScrollbackSnapshotRef,
     hibernateAlternateScreenRef,
     hasRuntimeRef,
     onHibernate: hibernateRuntime,

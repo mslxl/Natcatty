@@ -26,6 +26,9 @@ type UseTerminalHibernateEffectOptions = {
   hibernateSnapshotRef: React.MutableRefObject<string>;
   hibernateViewportSnapshotRef: React.MutableRefObject<string>;
   hibernateScrollbackSnapshotRef: React.MutableRefObject<string>;
+  hibernateContextSnapshotRef: React.MutableRefObject<string>;
+  hibernateContextViewportSnapshotRef: React.MutableRefObject<string>;
+  hibernateContextScrollbackSnapshotRef: React.MutableRefObject<string>;
   hibernateAlternateScreenRef: React.MutableRefObject<boolean>;
   hasRuntimeRef: React.MutableRefObject<boolean>;
   onHibernate: () => void;
@@ -52,6 +55,9 @@ export function useTerminalHibernateEffect({
   hibernateSnapshotRef,
   hibernateViewportSnapshotRef,
   hibernateScrollbackSnapshotRef,
+  hibernateContextSnapshotRef,
+  hibernateContextViewportSnapshotRef,
+  hibernateContextScrollbackSnapshotRef,
   hibernateAlternateScreenRef,
   hasRuntimeRef,
   onHibernate,
@@ -82,6 +88,9 @@ export function useTerminalHibernateEffect({
       hibernateSnapshotRef.current = "";
       hibernateViewportSnapshotRef.current = "";
       hibernateScrollbackSnapshotRef.current = "";
+      hibernateContextSnapshotRef.current = "";
+      hibernateContextViewportSnapshotRef.current = "";
+      hibernateContextScrollbackSnapshotRef.current = "";
       hibernatePendingBufferRef.current = "";
       hibernateAlternateScreenRef.current = false;
       hibernatedRef.current = false;
@@ -187,6 +196,9 @@ export function useTerminalHibernateEffect({
     hibernateAlternateScreenRef,
     hibernateDelayMs,
     hibernateEnabled,
+    hibernateContextScrollbackSnapshotRef,
+    hibernateContextSnapshotRef,
+    hibernateContextViewportSnapshotRef,
     hibernatePendingBufferRef,
     hibernateScrollbackSnapshotRef,
     hibernateSnapshotRef,

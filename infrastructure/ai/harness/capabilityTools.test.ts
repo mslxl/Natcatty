@@ -92,3 +92,117 @@ describe('capabilityTools result fitting', () => {
     assert.equal(result.content, body);
   });
 });
+
+describe('capabilityTools terminal context reader', () => {
+  it('reads terminal context from the only scoped terminal when sessionId is omitted', async () => {
+    const tools = createCattyToolsFromCatalog(
+      {},
+      {
+        sessions: [{
+          sessionId: 'session-1',
+          hostId: 'host-1',
+          hostname: 'prod.internal',
+          label: 'prod',
+          connected: true,
+        }],
+        readTerminalContext: async (request) => ({
+          ok: true,
+          sessionId: request.sessionId,
+          label: 'prod',
+          range: request.range ?? 'viewport',
+          content: 'line-a\nline-b',
+          totalLines: 2,
+          startLine: 0,
+          endLine: 1,
+          returnedLines: 2,
+          hasMoreBefore: false,
+          hasMoreAfter: false,
+          source: 'live',
+        }),
+      },
+      [],
+      'auto',
+      undefined,
+      'chat-1',
+    );
+
+    const result = await tools.terminal_read_context.execute(
+      { range: 'tail', maxLines: 20 },
+      { toolCallId: 'call-1', messages: [] },
+    ) as { sessionId: string; content: string; range: string };
+
+    assert.equal(result.sessionId, 'session-1');
+    assert.equal(result.range, 'tail');
+    assert.equal(result.content, 'line-a\nline-b');
+  });
+
+  it('fits large terminal context reads through the shared tool output store', async () => {
+    const store = new ToolOutputStore();
+    const body = `${'terminal line output '.repeat(900)}important ending`;
+    const tools = createCattyToolsFromCatalog(
+      {},
+      {
+        sessions: [{
+          sessionId: 'session-1',
+          hostId: 'host-1',
+          hostname: 'prod.internal',
+          label: 'prod',
+          connected: true,
+        }],
+        readTerminalContext: async (request) => ({
+          ok: true,
+          sessionId: request.sessionId,
+          label: 'prod',
+          range: request.range ?? 'viewport',
+          content: body,
+          totalLines: 1,
+          startLine: 0,
+          endLine: 0,
+          returnedLines: 1,
+          hasMoreBefore: false,
+          hasMoreAfter: false,
+          source: 'live',
+        }),
+      },
+      [],
+      'auto',
+      undefined,
+      'chat-1',
+      store,
+    );
+
+    const result = await tools.terminal_read_context.execute(
+      { range: 'viewport' },
+      { toolCallId: 'call-1', messages: [] },
+    ) as { content: string };
+
+    assert.notEqual(result.content, body);
+    assert.match(result.content, /tool output handle/);
+    const handleId = result.content.match(/handleId=(tool-output-[^\]\s]+)/)?.[1];
+    assert.ok(handleId);
+    assert.equal(store.read({ handleId, mode: 'full', maxChars: body.length + 100 }, 'chat-1'), body);
+  });
+
+  it('asks for sessionId when multiple scoped terminals are available', async () => {
+    const tools = createCattyToolsFromCatalog(
+      {},
+      {
+        sessions: [
+          { sessionId: 'session-1', hostId: 'host-1', hostname: 'a', label: 'a', connected: true },
+          { sessionId: 'session-2', hostId: 'host-2', hostname: 'b', label: 'b', connected: true },
+        ],
+      },
+      [],
+      'auto',
+      undefined,
+      'chat-1',
+    );
+
+    const result = await tools.terminal_read_context.execute(
+      { range: 'viewport' },
+      { toolCallId: 'call-1', messages: [] },
+    ) as { error?: string };
+
+    assert.match(result.error ?? '', /sessionId/);
+  });
+});

@@ -82,7 +82,7 @@ test("listCattyToolSpecs includes harness catty-only tools with local execution"
   const specs = listCattyToolSpecs();
   assert.ok(specs.length >= 40);
   const harness = specs.filter((spec) => spec.capabilityId.startsWith("harness."));
-  assert.equal(harness.length, 5);
+  assert.equal(harness.length, 6);
   for (const spec of harness) {
     assert.equal(spec.localExecution, true);
     assert.equal(spec.rpcMethod, null);
@@ -90,6 +90,7 @@ test("listCattyToolSpecs includes harness catty-only tools with local execution"
   const harnessIds = harness.map((spec) => spec.capabilityId);
   assert.ok(harnessIds.includes("harness.tool_output.read"));
   assert.ok(harnessIds.includes("harness.workspace.get_info"));
+  assert.ok(harnessIds.includes("harness.terminal.read_context"));
 });
 
 test("harness capabilities are not exposed on MCP", () => {

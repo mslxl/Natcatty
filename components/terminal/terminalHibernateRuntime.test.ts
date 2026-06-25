@@ -10,10 +10,16 @@ import {
 
 const createFakeTerm = (bufferType: "normal" | "alternate", rows = 24, length = 30) => ({
   rows,
+  cols: 80,
   buffer: {
     active: {
       type: bufferType,
       length,
+      getLine(index: number) {
+        return {
+          translateToString: () => `screen-${index}`,
+        };
+      },
     },
   },
 });
@@ -67,12 +73,12 @@ test("serializeTerminalForHibernate preserves alternate screen when serialize th
       throw new Error("serialize failed");
     },
   };
-  assert.deepEqual(await serializeTerminalForHibernate(term as never, serializeAddon as never), {
-    snapshot: "",
-    viewportSnapshot: "",
-    scrollbackSnapshot: "",
-    alternateScreen: true,
-  });
+  const result = await serializeTerminalForHibernate(term as never, serializeAddon as never);
+  assert.equal(result.snapshot, "");
+  assert.equal(result.viewportSnapshot, "");
+  assert.equal(result.scrollbackSnapshot, "");
+  assert.equal(result.contextViewportSnapshot?.startsWith("screen-0\nscreen-1"), true);
+  assert.equal(result.alternateScreen, true);
 });
 
 test("serializeTerminalForHibernate requests viewport-only range on alternate screen", async () => {
@@ -86,5 +92,28 @@ test("serializeTerminalForHibernate requests viewport-only range on alternate sc
   };
   const result = await serializeTerminalForHibernate(term as never, serializeAddon as never);
   assert.equal(result.snapshot, "alt-viewport");
+  assert.equal(result.contextViewportSnapshot, Array.from({ length: 24 }, (_, index) => `screen-${index}`).join("\n"));
   assert.deepEqual(capturedOptions?.range, { start: 0, end: 23 });
+});
+
+test("serializeTerminalForHibernate preserves plain text context for normal screen", async () => {
+  const capturedRanges: unknown[] = [];
+  const term = createFakeTerm("normal", 3, 5);
+  const serializeAddon = {
+    serialize: (options?: Record<string, unknown>) => {
+      capturedRanges.push(options?.range);
+      return "serialized";
+    },
+  };
+  const result = await serializeTerminalForHibernate(term as never, serializeAddon as never);
+  assert.equal(result.viewportSnapshot, "serialized");
+  assert.equal(result.scrollbackSnapshot, "serialized");
+  assert.equal(result.contextScrollbackSnapshot, "screen-0\nscreen-1");
+  assert.equal(result.contextViewportSnapshot, "screen-2\nscreen-3\nscreen-4");
+  assert.equal(result.contextSnapshot, "screen-0\nscreen-1\nscreen-2\nscreen-3\nscreen-4");
+  assert.deepEqual(capturedRanges, [
+    { start: 2, end: 4 },
+    { start: 0, end: 1 },
+    undefined,
+  ]);
 });

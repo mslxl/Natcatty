@@ -2,6 +2,7 @@ import type React from 'react';
 import { useCallback, useMemo } from 'react';
 
 import { collectSessionIds } from '../../domain/workspace';
+import type { TerminalContextReader } from '../../domain/terminalContextRead';
 import { detectLocalOs } from '../../lib/localShell';
 import type { Host, PortForwardingRule, TerminalSession, Workspace } from '../../types';
 import { buildAITerminalSessionInfo, type AIPanelContext } from './TerminalLayerSupport';
@@ -15,6 +16,7 @@ interface UseTerminalAiContextsOptions {
   sessionHostsMap: Map<string, Host>;
   sessions: TerminalSession[];
   sessionsRef: React.MutableRefObject<TerminalSession[]>;
+  terminalContextReadersRef: React.MutableRefObject<Map<string, TerminalContextReader>>;
   workspaces: Workspace[];
   workspacesRef: React.MutableRefObject<Workspace[]>;
 }
@@ -28,6 +30,7 @@ export function useTerminalAiContexts({
   sessionHostsMap,
   sessions,
   sessionsRef,
+  terminalContextReadersRef,
   workspaces,
   workspacesRef,
 }: UseTerminalAiContextsOptions) {
@@ -35,7 +38,7 @@ export function useTerminalAiContexts({
     const localOs = detectLocalOs(navigator.userAgent || navigator.platform);
     const sessionById = new Map<string, TerminalSession>(sessions.map((session) => [session.id, session]));
     const workspaceById = new Map<string, Workspace>(workspaces.map((workspace) => [workspace.id, workspace]));
-    const allHosts = hostsRef.current;
+    const allHosts = hosts;
     const tabIds = new Set<string>(mountedAiTabIds);
 
     const contexts = new Map<string, AIPanelContext>();
@@ -116,8 +119,18 @@ export function useTerminalAiContexts({
       }),
       workspaceId: scope.type === 'workspace' ? scope.targetId : undefined,
       workspaceName,
+      readTerminalContext: (request: Parameters<TerminalContextReader>[0]) => {
+        const reader = terminalContextReadersRef.current.get(request.sessionId);
+        if (!reader) {
+          return Promise.resolve({
+            ok: false as const,
+            error: `Terminal session "${request.sessionId}" has no readable terminal buffer.`,
+          });
+        }
+        return reader(request);
+      },
     };
-  }, [hostsRef, portForwardingRulesRef, sessionsRef, workspacesRef]);
+  }, [hostsRef, portForwardingRulesRef, sessionsRef, terminalContextReadersRef, workspacesRef]);
 
   return {
     aiContextsByTabId,

@@ -1,6 +1,7 @@
 import type { DragEvent, PointerEvent } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 
+import type { TerminalContextReader } from "../../domain/terminalContextRead";
 import { getSessionConnectionLabel, resolveSessionTabTitle } from "../../domain/sessionTabTitle";
 import { logger } from "../../lib/logger";
 import { getPathForFile, type DropEntry } from "../../lib/sftpFileUtils";
@@ -178,6 +179,7 @@ export interface TerminalProps {
   onTerminalTitleChange?: (sessionId: string, title: string | null) => void;
   onTerminalBell?: (sessionId: string) => void;
   onTerminalOutput?: (sessionId: string, chunk: string) => void;
+  onTerminalContextReaderChange?: (sessionId: string, reader: TerminalContextReader | null) => void;
   onOpenScripts?: () => void;
   onOpenHistory?: () => void;
   onOpenTheme?: () => void;
