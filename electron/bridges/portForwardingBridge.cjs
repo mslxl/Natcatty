@@ -241,6 +241,7 @@ async function startPortForward(event, payload) {
           _connectionsRef: chainConnections,
           _tunnelRef: tunnelState,
           _passphraseSignal: passphraseAbortController.signal,
+          _keyboardInteractiveScope: "external",
         },
         jumpHosts,
         hostname,
