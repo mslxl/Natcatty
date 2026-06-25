@@ -26,7 +26,7 @@ export const PortForwardHostKeyDialog: React.FC<PortForwardHostKeyDialogProps> =
       }}
     >
       <DialogContent
-        className="max-w-lg"
+        className="w-[calc(100vw-1.5rem)] max-w-lg rounded-lg"
         overlayClassName="port-forward-host-key-dialog-layer"
         data-port-forward-host-key-dialog="true"
         hideCloseButton

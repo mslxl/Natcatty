@@ -15,6 +15,8 @@ const trayPanelSource = readFileSync(
 test("port-forward host-key dialog is marked so tray outside-click handling ignores it", () => {
   assert.match(dialogSource, /data-port-forward-host-key-dialog="true"/);
   assert.match(dialogSource, /overlayClassName="port-forward-host-key-dialog-layer"/);
+  assert.match(dialogSource, /w-\[calc\(100vw-1\.5rem\)\]/);
+  assert.match(dialogSource, /rounded-lg/);
   assert.match(trayPanelSource, /data-port-forward-host-key-dialog/);
   assert.match(trayPanelSource, /port-forward-host-key-dialog-layer/);
 });
