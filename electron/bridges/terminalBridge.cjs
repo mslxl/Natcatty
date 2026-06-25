@@ -708,6 +708,23 @@ function clearPendingAutomatedWrites(session) {
   session.pendingAutomatedWriteTimers = [];
 }
 
+// Terminal-originated automatic replies (cursor position reports, device
+// attributes, focus in/out, etc.) travel through the same write path as user
+// keystrokes but must NOT be treated as "the user started typing". A terminal
+// routinely emits such a reply right after the first line runs; counting it as
+// manual input would clear the pending automated line-by-line writes and only
+// the first line would ever be sent (multi-line compose-bar input bug).
+function isTerminalReportSequence(data) {
+  if (typeof data !== "string" || data.length === 0) return false;
+  // Focus in/out reports: ESC [ I  /  ESC [ O
+  if (data === "\x1b[I" || data === "\x1b[O") return true;
+  // CPR / DECXCPR / DA1 / DA2 / DSR: ESC [ (?|>)? digits/semicolons (R|c|n)
+  if (/^\x1b\[[?>]?[0-9;]*[Rcn]$/.test(data)) return true;
+  // DCS replies (XTGETTCAP / DECRQSS, etc.): ESC P ... ESC \
+  if (/^\x1bP[\s\S]*\x1b\\$/.test(data)) return true;
+  return false;
+}
+
 function splitTerminalInputIntoLineWrites(data) {
   if (typeof data !== "string") return [data];
   const chunks = [];
@@ -810,7 +827,9 @@ function writeToSession(event, payload) {
   const session = sessions.get(payload.sessionId);
   if (!session) return;
 
-  if (!payload.automated) clearPendingAutomatedWrites(session);
+  if (!payload.automated && !isTerminalReportSequence(payload.data)) {
+    clearPendingAutomatedWrites(session);
+  }
   if (shouldBlockSessionInput(session, payload.data)) {
     return;
   }
