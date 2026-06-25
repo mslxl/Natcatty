@@ -11,6 +11,10 @@ const { execFile, execFileSync } = require("node:child_process");
 const path = require("node:path");
 const { promisify } = require("node:util");
 const { StringDecoder } = require("node:string_decoder");
+const { ensureNodePtySpawnHelperExecutable } = require("./nodePtySpawnHelperPermissions.cjs");
+
+ensureNodePtySpawnHelperExecutable();
+
 const pty = require("node-pty");
 const { SerialPort } = require("serialport");
 const { emitTerminalSessionData } = require("./emitTerminalSessionData.cjs");
