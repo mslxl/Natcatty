@@ -23,6 +23,8 @@ import ToolCallGroup from './ToolCallGroup';
 import {
   VaultArtifactNavigationProvider,
 } from './toolArtifacts/VaultArtifactNavigationContext';
+import { parseTerminalToolArtifact } from './toolArtifacts/terminalToolArtifact';
+import { TerminalArtifactToolResult } from './toolArtifacts/TerminalArtifactToolResult';
 import { parseVaultToolArtifact } from './toolArtifacts/vaultToolArtifact';
 import { VaultArtifactToolResult } from './toolArtifacts/VaultArtifactToolResult';
 import type { Host, VaultNote } from '../../types';
@@ -268,6 +270,19 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({
               && displayedMessages[end].role === "assistant";
 
             const renderToolResultItem = (item: typeof toolResults[number]) => {
+              const terminalArtifact = parseTerminalToolArtifact(item.name, item.content);
+              if (terminalArtifact) {
+                return (
+                  <TerminalArtifactToolResult
+                    key={item.toolCallId}
+                    artifact={terminalArtifact}
+                    toolName={item.name}
+                    args={item.args}
+                    result={item.content}
+                    isError={item.isError}
+                  />
+                );
+              }
               const artifact = parseVaultToolArtifact(item.name, item.content);
               if (artifact) {
                 return (

@@ -1,6 +1,7 @@
 import { tool } from 'ai';
 import { z } from 'zod';
 import type { NetcattyBridge } from '../cattyAgent/executor';
+import type { TerminalContextReadRange } from '../../../domain/terminalContextRead';
 import type { AIPermissionMode } from '../types';
 import type { WebSearchConfig } from '../types';
 import { isWebSearchReady } from '../types';
@@ -208,6 +209,44 @@ async function executeLocalCattyCapability(ctx: LocalExecutionContext): Promise<
         }
       }
       return local.data;
+    }
+    case 'harness.terminal.read_context': {
+      const scopeCtx = resolveContext();
+      const sessions = scopeCtx.sessions ?? [];
+      const requestedSessionId = typeof args.sessionId === 'string' && args.sessionId.trim()
+        ? args.sessionId.trim()
+        : undefined;
+      const sessionId = requestedSessionId
+        ?? (sessions.length === 1 ? sessions[0].sessionId : undefined);
+
+      if (!sessionId) {
+        return {
+          ok: false,
+          error: 'sessionId is required because the current AI scope contains multiple terminal sessions.',
+        };
+      }
+
+      const session = sessions.find((entry) => entry.sessionId === sessionId);
+      if (!session) {
+        return {
+          ok: false,
+          error: `Terminal session "${sessionId}" is not in the current AI scope.`,
+        };
+      }
+
+      if (!scopeCtx.readTerminalContext) {
+        return {
+          ok: false,
+          error: 'Terminal context reader is unavailable for this AI scope.',
+        };
+      }
+
+      return scopeCtx.readTerminalContext({
+        sessionId,
+        range: typeof args.range === 'string' ? args.range as TerminalContextReadRange : undefined,
+        startLine: typeof args.startLine === 'number' ? args.startLine : undefined,
+        maxLines: typeof args.maxLines === 'number' ? args.maxLines : undefined,
+      });
     }
     case 'harness.web.search': {
       const { query, maxResults } = args as { query: string; maxResults?: number };

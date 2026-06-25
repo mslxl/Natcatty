@@ -169,6 +169,12 @@ const TOOL_INPUT_FIELDS = Object.freeze({
   "harness.workspace.get_session_info": {
     sessionId: { type: "string", description: "The session ID to get information about." },
   },
+  "harness.terminal.read_context": {
+    sessionId: { type: "string", optional: true, description: "Terminal session ID. Required when the current AI scope contains more than one terminal." },
+    range: { type: "string", optional: true, description: "Which terminal slice to read: viewport, tail, head, or lines. Defaults to viewport." },
+    startLine: { type: "number", optional: true, description: "Zero-based terminal buffer line to start from when range is lines." },
+    maxLines: { type: "number", optional: true, description: "Maximum terminal rows to return. Defaults to 80, capped at 300." },
+  },
   "harness.web.search": {
     query: { type: "string", description: "The search query to look up on the web." },
     maxResults: { type: "number", optional: true, description: "Maximum number of search results to return." },

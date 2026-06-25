@@ -60,6 +60,24 @@ const HARNESS_CAPABILITIES = [
     },
   },
   {
+    id: "harness.terminal.read_context",
+    domain: "harness",
+    status: CAPABILITY_STATUS.IMPLEMENTED,
+    description: "Read a bounded slice of the current terminal screen or scrollback from the active AI scope.",
+    policy: {
+      write: false,
+      sensitiveRead: false,
+      longRunning: false,
+      requiresChatSession: true,
+      bypassesObserverBlock: false,
+      bypassesApproval: true,
+      bypassesChatCancel: true,
+    },
+    surfaces: {
+      catty: { toolName: "terminal_read_context" },
+    },
+  },
+  {
     id: "harness.web.search",
     domain: "harness",
     status: CAPABILITY_STATUS.IMPLEMENTED,

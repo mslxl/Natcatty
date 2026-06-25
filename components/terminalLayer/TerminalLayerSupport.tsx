@@ -19,6 +19,7 @@ import type { ExecutorContext } from '../../infrastructure/ai/cattyAgent/executo
 import Terminal from '../Terminal';
 import { removePaneVisible, setPaneVisible } from '../terminal/paneVisibilityStore';
 import type { TerminalBroadcastInputOptions } from '../terminal/terminalHelpers';
+import type { TerminalContextReader } from '../../domain/terminalContextRead';
 import {
   getTerminalPaneRenderSnapshot,
   parseTerminalPaneRenderSnapshot,
@@ -733,6 +734,7 @@ interface TerminalPaneProps {
   onTerminalTitleChange?: (sessionId: string, title: string | null) => void;
   onTerminalBell?: (sessionId: string) => void;
   onTerminalOutput?: (sessionId: string, chunk: string) => void;
+  onTerminalContextReaderChange?: (sessionId: string, reader: TerminalContextReader | null) => void;
   onOpenScripts: () => void;
   onOpenHistory?: () => void;
   onOpenTheme: () => void;
@@ -846,6 +848,7 @@ const terminalPanePropsAreEqual = (
   prev.onTerminalTitleChange === next.onTerminalTitleChange &&
   prev.onTerminalBell === next.onTerminalBell &&
   prev.onTerminalOutput === next.onTerminalOutput &&
+  prev.onTerminalContextReaderChange === next.onTerminalContextReaderChange &&
   prev.onOpenScripts === next.onOpenScripts &&
   prev.onOpenHistory === next.onOpenHistory &&
   prev.onOpenTheme === next.onOpenTheme &&
@@ -914,6 +917,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
   onTerminalTitleChange,
   onTerminalBell,
   onTerminalOutput,
+  onTerminalContextReaderChange,
   onOpenScripts,
   onOpenHistory,
   onOpenTheme,
@@ -1295,6 +1299,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
         onTerminalTitleChange={onTerminalTitleChange}
         onTerminalBell={onTerminalBell}
         onTerminalOutput={onTerminalOutput}
+        onTerminalContextReaderChange={onTerminalContextReaderChange}
         onOpenScripts={onOpenScripts}
         onOpenHistory={onOpenHistory}
         onOpenTheme={onOpenTheme}
@@ -1377,6 +1382,7 @@ interface TerminalPanesHostProps {
   onTerminalTitleChange?: TerminalPaneProps['onTerminalTitleChange'];
   onTerminalBell?: TerminalPaneProps['onTerminalBell'];
   onTerminalOutput?: TerminalPaneProps['onTerminalOutput'];
+  onTerminalContextReaderChange?: TerminalPaneProps['onTerminalContextReaderChange'];
   onOpenScripts: () => void;
   onOpenHistory?: () => void;
   onOpenTheme: () => void;
@@ -1455,6 +1461,7 @@ const terminalPanesHostPropsAreEqual = (
   if (prev.onTerminalTitleChange !== next.onTerminalTitleChange) return false;
   if (prev.onTerminalBell !== next.onTerminalBell) return false;
   if (prev.onTerminalOutput !== next.onTerminalOutput) return false;
+  if (prev.onTerminalContextReaderChange !== next.onTerminalContextReaderChange) return false;
   if (prev.onOpenScripts !== next.onOpenScripts) return false;
   if (prev.onOpenHistory !== next.onOpenHistory) return false;
   if (prev.onOpenTheme !== next.onOpenTheme) return false;

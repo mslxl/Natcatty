@@ -6,6 +6,7 @@ import { sessionCapabilitiesStore } from '../../application/state/sessionCapabil
 import { useSystemManagerBackend } from '../../application/state/useSystemManagerBackend';
 import { canReuseTerminalConnection } from '../../application/state/terminalConnectionReuse';
 import { resolveSystemSidebarSession } from '../../domain/systemManager/resolveSystemSession';
+import type { TerminalContextReader } from '../../domain/terminalContextRead';
 import { useSystemCapabilitiesWarmup } from '../systemManager/hooks/useSystemManager';
 import { cn } from '../../lib/utils';
 import type { Host, TerminalSession, Workspace } from '../../types';
@@ -22,6 +23,7 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
   const s = stableRef.current;
   const activeTabId = useActiveTabId();
   const systemBackend = useSystemManagerBackend();
+  const terminalContextReadersRef = useRef<Map<string, TerminalContextReader>>(new Map());
 
   s.activeTabIdRef.current = activeTabId;
 
@@ -205,9 +207,21 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     sessionHostsMap,
     sessions,
     sessionsRef: s.sessionsRef,
+    terminalContextReadersRef,
     workspaces: s.workspaces,
     workspacesRef: s.workspacesRef,
   });
+
+  const handleTerminalContextReaderChange = React.useCallback((
+    sessionId: string,
+    reader: TerminalContextReader | null,
+  ) => {
+    if (reader) {
+      terminalContextReadersRef.current.set(sessionId, reader);
+    } else {
+      terminalContextReadersRef.current.delete(sessionId);
+    }
+  }, []);
 
   const prevFocusedSessionIdRef = useRef<string | undefined>(undefined);
 
@@ -377,6 +391,7 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     handleTerminalBell: s.handleTerminalBell,
     handleTerminalOutput: s.handleTerminalOutput,
     handleTerminalDataCapture: s.handleTerminalDataCapture,
+    handleTerminalContextReaderChange,
     handleTerminalFontSizeChange: s.handleTerminalFontSizeChange,
     handleThemeChangeForFocusedSession: themeState.handleThemeChangeForFocusedSession,
     handleThemeResetForFocusedSession: themeState.handleThemeResetForFocusedSession,
@@ -520,6 +535,7 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     s.notes,
     s.noteGroups,
     handleWorkspaceDrop,
+    handleTerminalContextReaderChange,
     historySessionId,
     isFocusMode,
     isSidePanelOpenForCurrentTab,
