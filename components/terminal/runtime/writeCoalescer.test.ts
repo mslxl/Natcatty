@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { afterEach, beforeEach, test } from "node:test";
+import { beforeEach, test } from "node:test";
 
 import {
   createWriteCoalescer,
@@ -10,8 +10,18 @@ type FrameCallback = (time: number) => void;
 
 let frameCallbacks: Map<number, FrameCallback>;
 let nextFrameId: number;
-let originalRaf: typeof requestAnimationFrame;
-let originalCancelRaf: typeof cancelAnimationFrame;
+
+const createTestCoalescer = (write: (data: string) => void) =>
+  createWriteCoalescer(write, {
+    scheduleFrame(callback) {
+      const id = nextFrameId;
+      nextFrameId += 1;
+      frameCallbacks.set(id, callback);
+      return () => {
+        frameCallbacks.delete(id);
+      };
+    },
+  });
 
 const fireFrame = (): void => {
   const callbacks = [...frameCallbacks.values()];
@@ -24,27 +34,11 @@ const fireFrame = (): void => {
 beforeEach(() => {
   frameCallbacks = new Map();
   nextFrameId = 1;
-  originalRaf = globalThis.requestAnimationFrame;
-  originalCancelRaf = globalThis.cancelAnimationFrame;
-  globalThis.requestAnimationFrame = (callback: FrameCallback) => {
-    const id = nextFrameId;
-    nextFrameId += 1;
-    frameCallbacks.set(id, callback);
-    return id;
-  };
-  globalThis.cancelAnimationFrame = (id: number) => {
-    frameCallbacks.delete(id);
-  };
-});
-
-afterEach(() => {
-  globalThis.requestAnimationFrame = originalRaf;
-  globalThis.cancelAnimationFrame = originalCancelRaf;
 });
 
 test("coalesces chunks in the same frame into one write", () => {
   const writes: string[] = [];
-  const coalescer = createWriteCoalescer((data) => writes.push(data));
+  const coalescer = createTestCoalescer((data) => writes.push(data));
 
   coalescer.push("foo");
   coalescer.push("bar");
@@ -57,7 +51,7 @@ test("coalesces chunks in the same frame into one write", () => {
 
 test("schedules a new frame for data arriving after a flush", () => {
   const writes: string[] = [];
-  const coalescer = createWriteCoalescer((data) => writes.push(data));
+  const coalescer = createTestCoalescer((data) => writes.push(data));
 
   coalescer.push("first");
   fireFrame();
@@ -69,7 +63,7 @@ test("schedules a new frame for data arriving after a flush", () => {
 
 test("flushSync writes pending bytes immediately and cancels the scheduled frame", () => {
   const writes: string[] = [];
-  const coalescer = createWriteCoalescer((data) => writes.push(data));
+  const coalescer = createTestCoalescer((data) => writes.push(data));
 
   coalescer.push("pending");
   coalescer.flushSync();
@@ -81,7 +75,7 @@ test("flushSync writes pending bytes immediately and cancels the scheduled frame
 
 test("flushes synchronously when pending bytes exceed the cap", () => {
   const writes: string[] = [];
-  const coalescer = createWriteCoalescer((data) => writes.push(data));
+  const coalescer = createTestCoalescer((data) => writes.push(data));
   const chunk = "x".repeat(MAX_PENDING_WRITE_COALESCE_BYTES);
 
   coalescer.push(chunk);
@@ -92,7 +86,7 @@ test("flushes synchronously when pending bytes exceed the cap", () => {
 
 test("dispose flushes remaining bytes and stops accepting new chunks", () => {
   const writes: string[] = [];
-  const coalescer = createWriteCoalescer((data) => writes.push(data));
+  const coalescer = createTestCoalescer((data) => writes.push(data));
 
   coalescer.push("tail");
   coalescer.dispose();
