@@ -124,3 +124,60 @@ test("ChatMessageList renders Netcatty CLI vault results as artifact cards", () 
   assert.match(markup, /prod\.example\.com:22/);
   assert.doesNotMatch(markup, /cli-call-1/);
 });
+
+test("ChatMessageList renders Claude MCP list envelopes as summary cards", () => {
+  const messages: ChatMessage[] = [
+    {
+      id: "assistant-1",
+      role: "assistant",
+      content: "",
+      timestamp: 1,
+      toolCalls: [
+        {
+          id: "notes-call-1",
+          name: "mcp__netcatty-remote-hosts__vault_notes_list",
+          arguments: {},
+        },
+      ],
+      executionStatus: "completed",
+    },
+    {
+      id: "tool-1",
+      role: "tool",
+      content: "",
+      timestamp: 2,
+      toolResults: [
+        {
+          toolCallId: "notes-call-1",
+          content: JSON.stringify([
+            {
+              type: "text",
+              text: JSON.stringify({
+                ok: true,
+                notes: Array.from({ length: 8 }, (_value, index) => ({
+                  id: `note-${index}`,
+                  title: `Note ${index}`,
+                })),
+              }),
+            },
+          ]),
+        },
+      ],
+    },
+  ];
+
+  const markup = renderToStaticMarkup(
+    React.createElement(
+      I18nProvider,
+      { locale: "en" },
+      React.createElement(
+        TooltipProvider,
+        null,
+        React.createElement(ChatMessageList, { messages }),
+      ),
+    ),
+  );
+
+  assert.match(markup, /8 notes in Vault/);
+  assert.doesNotMatch(markup, /notes-call-1/);
+});

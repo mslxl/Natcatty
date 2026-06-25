@@ -1,4 +1,5 @@
 import { normalizeArtifactToolName } from './toolArtifactNames';
+import { parseResultPayload } from './toolArtifactResultPayload';
 
 export type TerminalToolArtifact =
   | {
@@ -23,25 +24,6 @@ export type TerminalToolArtifact =
 const TERMINAL_ARTIFACT_TOOL_NAMES = new Set([
   'terminal_read_context',
 ]);
-
-function parseResultPayload(result: unknown): Record<string, unknown> | null {
-  if (result == null) return null;
-  if (typeof result === 'string') {
-    try {
-      const parsed = JSON.parse(result) as unknown;
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        return parsed as Record<string, unknown>;
-      }
-      return null;
-    } catch {
-      return null;
-    }
-  }
-  if (typeof result === 'object' && !Array.isArray(result)) {
-    return result as Record<string, unknown>;
-  }
-  return null;
-}
 
 function readString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
