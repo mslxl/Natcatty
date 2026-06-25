@@ -28,6 +28,9 @@ test("port-forward host-key dialog is marked so tray outside-click handling igno
 
 test("tray uses the lightweight host-key prompt instead of the main dialog", () => {
   assert.match(trayPromptSource, /data-port-forward-host-key-tray-prompt="true"/);
+  assert.match(trayPromptSource, /border-b px-3 py-2/);
+  assert.doesNotMatch(trayPromptSource, /rounded-md border p-2\.5 shadow-sm/);
+  assert.doesNotMatch(trayPromptSource, /lucide-react/);
   assert.match(trayPromptSource, /grid-cols-\[auto_auto_1fr\]/);
   assert.match(trayPanelSource, /<PortForwardHostKeyTrayPrompt onAddKnownHost=\{handleAddKnownHost\} \/>/);
   assert.doesNotMatch(trayPanelSource, /<PortForwardHostKeyDialog/);

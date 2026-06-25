@@ -260,9 +260,9 @@ const TrayPanelContent: React.FC<TrayPanelContentProps> = ({ terminalSettings })
         </div>
       </div>
 
-      <div className="p-2 space-y-3 text-sm flex-1 overflow-y-auto min-h-0">
-        <PortForwardHostKeyTrayPrompt onAddKnownHost={handleAddKnownHost} />
+      <PortForwardHostKeyTrayPrompt onAddKnownHost={handleAddKnownHost} />
 
+      <div className="p-2 space-y-3 text-sm flex-1 overflow-y-auto min-h-0">
         {jumpableSessions.length > 0 && (() => {
           // Group sessions by workspace
           const workspaceGroups = new Map<string, { title: string; sessions: typeof jumpableSessions }>();

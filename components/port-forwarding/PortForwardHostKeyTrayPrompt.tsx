@@ -1,5 +1,4 @@
 import React from "react";
-import { AlertTriangle, Fingerprint } from "lucide-react";
 import type { KnownHost } from "../../domain/models";
 import { usePortForwardHostKeyVerification } from "../../application/state/usePortForwardHostKeyVerification";
 import { useI18n } from "../../application/i18n/I18nProvider";
@@ -25,34 +24,23 @@ export const PortForwardHostKeyTrayPrompt: React.FC<PortForwardHostKeyTrayPrompt
 
   const { hostKeyInfo } = hostKeyVerification;
   const isChanged = hostKeyInfo.status === "changed";
-  const Icon = isChanged ? AlertTriangle : Fingerprint;
 
   return (
     <div
       data-port-forward-host-key-tray-prompt="true"
       className={cn(
-        "rounded-md border p-2.5 shadow-sm",
+        "border-b px-3 py-2",
         isChanged
-          ? "border-destructive/30 bg-destructive/8"
-          : "border-amber-500/25 bg-amber-500/8",
+          ? "border-destructive/20 bg-destructive/8"
+          : "border-border/60 bg-muted/45",
       )}
     >
-      <div className="flex items-start gap-2">
-        <div
-          className={cn(
-            "mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md",
-            isChanged
-              ? "bg-destructive/15 text-destructive"
-              : "bg-amber-500/15 text-amber-400",
-          )}
-        >
-          <Icon size={15} />
-        </div>
+      <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div
             className={cn(
-              "truncate text-sm font-semibold",
-              isChanged ? "text-destructive" : "text-amber-400",
+              "truncate text-xs font-semibold",
+              isChanged ? "text-destructive" : "text-foreground",
             )}
           >
             {isChanged
@@ -65,21 +53,19 @@ export const PortForwardHostKeyTrayPrompt: React.FC<PortForwardHostKeyTrayPrompt
         </div>
       </div>
 
-      <div className="mt-2 rounded-md border border-border/50 bg-background/55 p-2">
-        <div className="mb-1 text-[10px] text-muted-foreground">
-          {t("terminal.hostKey.fingerprintLabel", { keyType: hostKeyInfo.keyType })}
-        </div>
-        <code className="block break-all font-mono text-[11px] leading-4 text-foreground/90">
+      <div className="mt-1.5 text-[10px] leading-4 text-muted-foreground">
+        {t("terminal.hostKey.fingerprintLabel", { keyType: hostKeyInfo.keyType })}
+        <code className="ml-1 break-all font-mono text-[11px] text-foreground/90">
           {hostKeyInfo.fingerprint}
         </code>
       </div>
 
       {isChanged && hostKeyInfo.knownFingerprint && (
-        <div className="mt-2 rounded-md border border-destructive/25 bg-destructive/8 p-2">
-          <div className="mb-1 text-[10px] font-medium text-destructive">
+        <div className="mt-1.5 text-[10px] leading-4 text-muted-foreground">
+          <span className="font-medium text-destructive">
             {t("terminal.hostKey.savedFingerprintLabel")}
-          </div>
-          <code className="block break-all font-mono text-[11px] leading-4 text-foreground/90">
+          </span>
+          <code className="ml-1 break-all font-mono text-[11px] text-foreground/90">
             {hostKeyInfo.knownFingerprint}
           </code>
         </div>
