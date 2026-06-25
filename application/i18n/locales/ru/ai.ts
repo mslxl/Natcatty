@@ -316,7 +316,7 @@ export const ruAiMessages: Messages = {
   'ai.safety.blocklist.add': 'Добавить шаблон',
   'ai.safety.grants.title': 'Память разрешений',
   'ai.safety.grants.heading': 'Правила для режима confirm',
-  'ai.safety.grants.description': 'Правила действуют глобально в режиме confirm (все терминальные сессии). Для команд используются префиксы OpenCode (например lscpu *).',
+  'ai.safety.grants.description': 'В режиме confirm действие сначала требует подтверждения. Сохранённые правила автоматически разрешают похожие действия во всех терминальных сессиях, их можно редактировать вручную.',
   'ai.safety.grants.empty': 'Правил пока нет. Выберите «Всегда разрешать» при одобрении или добавьте вручную.',
   'ai.safety.grants.capability': 'Capability ID',
   'ai.safety.grants.sessionPattern': 'Шаблон сессии',
