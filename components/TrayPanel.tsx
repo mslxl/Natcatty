@@ -13,8 +13,10 @@ import { useTrayPanelBackend } from "../application/state/useTrayPanelBackend";
 import { useActiveTabId } from "../application/state/activeTabStore";
 import { resolveGroupDefaults, applyGroupDefaults } from "../domain/groupConfig";
 import { materializeHostProxyProfile } from "../domain/proxyProfiles";
-import type { Host } from "../domain/models";
+import { upsertKnownHost } from "../domain/knownHosts";
+import type { Host, KnownHost } from "../domain/models";
 import { getEffectiveKnownHosts } from "../infrastructure/syncHelpers";
+import { PortForwardHostKeyDialog } from "./port-forwarding";
 import { X, Maximize2, ChevronRight, ChevronDown, Power } from "lucide-react";
 import { AppLogo } from "./AppLogo";
 
@@ -128,7 +130,7 @@ const TrayPanelContent: React.FC<TrayPanelContentProps> = ({ terminalSettings })
     onTrayPanelMenuData,
   } = useTrayPanelBackend();
 
-  const { hosts, keys, identities, proxyProfiles, groupConfigs, knownHosts } = useVaultState();
+  const { hosts, keys, identities, proxyProfiles, groupConfigs, knownHosts, updateKnownHosts } = useVaultState();
   useSessionState({ persistSessionRestore: false });
   const { rules: portForwardingRules, startTunnel, stopTunnel } = usePortForwardingState();
   const activeTabId = useActiveTabId();
@@ -140,6 +142,9 @@ const TrayPanelContent: React.FC<TrayPanelContentProps> = ({ terminalSettings })
     () => getEffectiveKnownHosts(knownHosts) ?? [],
     [knownHosts],
   );
+  const handleAddKnownHost = useCallback((knownHost: KnownHost) => {
+    updateKnownHosts(upsertKnownHost(effectiveKnownHosts, knownHost));
+  }, [effectiveKnownHosts, updateKnownHosts]);
 
   const [traySessions, setTraySessions] = useState<TraySession[]>([]);
 
@@ -221,7 +226,9 @@ const TrayPanelContent: React.FC<TrayPanelContentProps> = ({ terminalSettings })
   }, [quitApp]);
 
   return (
-    <div id="tray-panel-root" className="w-full h-full bg-background/95 supports-[backdrop-filter]:backdrop-blur-sm border border-border/60 rounded-lg shadow-lg overflow-hidden flex flex-col">
+    <>
+      <PortForwardHostKeyDialog onAddKnownHost={handleAddKnownHost} />
+      <div id="tray-panel-root" className="w-full h-full bg-background/95 supports-[backdrop-filter]:backdrop-blur-sm border border-border/60 rounded-lg shadow-lg overflow-hidden flex flex-col">
       <div className="px-3 py-2 border-b border-border/60 flex items-center justify-between app-no-drag">
         <div className="flex items-center gap-2">
           <AppLogo className="w-5 h-5" />
@@ -429,7 +436,8 @@ const TrayPanelContent: React.FC<TrayPanelContentProps> = ({ terminalSettings })
           <span>{t("tray.quit")}</span>
         </button>
       </div>
-    </div>
+      </div>
+    </>
   );
 };
 

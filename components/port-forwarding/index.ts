@@ -15,3 +15,5 @@ export { WizardContent } from './WizardContent';
 export { EditPanel } from './EditPanel';
 
 export { NewFormPanel } from './NewFormPanel';
+
+export { PortForwardHostKeyDialog } from './PortForwardHostKeyDialog';

@@ -55,6 +55,7 @@ import {
 import { getEffectiveKnownHosts } from './infrastructure/syncHelpers';
 import { ToastProvider, toast } from './components/ui/toast';
 import { TooltipProvider } from './components/ui/tooltip';
+import { PortForwardHostKeyDialog } from './components/port-forwarding';
 import { VaultSection } from './components/VaultView';
 import { KeyboardInteractiveRequest } from './components/KeyboardInteractiveModal';
 import { PassphraseRequest } from './components/PassphraseModal';
@@ -1073,6 +1074,7 @@ function App({ settings }: { settings: SettingsState }) {
 
   return (
     <>
+      <PortForwardHostKeyDialog onAddKnownHost={handleAddKnownHost} />
       <AppActiveTabChrome
         showSftpTab={settings.showSftpTab}
         setActiveTabId={setActiveTabId}
