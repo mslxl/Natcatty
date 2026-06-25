@@ -20,16 +20,35 @@ export type WriteCoalescer = {
   dispose(): void;
 };
 
-export const createWriteCoalescer = (write: (data: string) => void): WriteCoalescer => {
+type ScheduleWriteFrame = (callback: () => void) => (() => void) | null;
+
+const scheduleWriteFrame = (callback: () => void): (() => void) | null => {
+  if (typeof globalThis.requestAnimationFrame === "function") {
+    const frameId = globalThis.requestAnimationFrame(callback);
+    return () => {
+      if (typeof globalThis.cancelAnimationFrame === "function") {
+        globalThis.cancelAnimationFrame(frameId);
+      }
+    };
+  }
+
+  return null;
+};
+
+export const createWriteCoalescer = (
+  write: (data: string) => void,
+  options: { scheduleFrame?: ScheduleWriteFrame } = {},
+): WriteCoalescer => {
   let pending: string[] = [];
   let pendingBytes = 0;
-  let frameId: number | null = null;
+  let cancelPendingFrame: (() => void) | null = null;
   let disposed = false;
+  const scheduleFrame = options.scheduleFrame ?? scheduleWriteFrame;
 
   const flushSync = (): void => {
-    if (frameId !== null) {
-      cancelAnimationFrame(frameId);
-      frameId = null;
+    if (cancelPendingFrame !== null) {
+      cancelPendingFrame();
+      cancelPendingFrame = null;
     }
     if (pendingBytes === 0) {
       return;
@@ -50,11 +69,16 @@ export const createWriteCoalescer = (write: (data: string) => void): WriteCoales
       flushSync();
       return;
     }
-    if (frameId === null) {
-      frameId = requestAnimationFrame(() => {
-        frameId = null;
+    if (cancelPendingFrame === null) {
+      const cancelFrame = scheduleFrame(() => {
+        cancelPendingFrame = null;
         flushSync();
       });
+      if (cancelFrame === null) {
+        flushSync();
+        return;
+      }
+      cancelPendingFrame = cancelFrame;
     }
   };
 
