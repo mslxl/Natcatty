@@ -1,3 +1,5 @@
+import { normalizeArtifactToolName } from './toolArtifactNames';
+
 export type TerminalToolArtifact =
   | {
       kind: 'terminal.context';
@@ -57,7 +59,8 @@ export function parseTerminalToolArtifact(
   toolName: string,
   result: unknown,
 ): TerminalToolArtifact | null {
-  if (!TERMINAL_ARTIFACT_TOOL_NAMES.has(toolName)) return null;
+  const normalizedToolName = normalizeArtifactToolName(toolName);
+  if (!normalizedToolName || !TERMINAL_ARTIFACT_TOOL_NAMES.has(normalizedToolName)) return null;
 
   const payload = parseResultPayload(result);
   if (!payload) return null;

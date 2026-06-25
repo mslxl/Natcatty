@@ -115,7 +115,12 @@ async function runExternalTurn(input: ExternalTurnInput, ctx: TurnDriverContext)
         id: generateId(),
         role: 'tool',
         content: '',
-        toolResults: [{ toolCallId, content: result, isError: isToolResultError(result) }],
+        toolResults: [{
+          toolCallId,
+          toolName,
+          content: result,
+          isError: isToolResultError(result),
+        }],
         timestamp: Date.now(),
         executionStatus: 'completed',
       });

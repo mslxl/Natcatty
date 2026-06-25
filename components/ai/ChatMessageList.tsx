@@ -25,6 +25,10 @@ import {
 } from './toolArtifacts/VaultArtifactNavigationContext';
 import { parseTerminalToolArtifact } from './toolArtifacts/terminalToolArtifact';
 import { TerminalArtifactToolResult } from './toolArtifacts/TerminalArtifactToolResult';
+import {
+  inferArtifactToolNameFromCliArgs,
+  normalizeArtifactToolName,
+} from './toolArtifacts/toolArtifactNames';
 import { parseVaultToolArtifact } from './toolArtifacts/vaultToolArtifact';
 import { VaultArtifactToolResult } from './toolArtifacts/VaultArtifactToolResult';
 import type { Host, VaultNote } from '../../types';
@@ -255,13 +259,23 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({
             while (end < displayedMessages.length && displayedMessages[end].role === "tool") end++;
             const group = displayedMessages.slice(idx, end);
             const toolResults = group.flatMap((toolMsg) =>
-              (toolMsg.toolResults ?? []).map((tr) => ({
-                toolCallId: tr.toolCallId,
-                name: toolCallNames.get(tr.toolCallId) || tr.toolCallId,
-                args: toolCallArgs.get(tr.toolCallId),
-                content: tr.content,
-                isError: tr.isError,
-              })),
+              (toolMsg.toolResults ?? []).map((tr) => {
+                const args = toolCallArgs.get(tr.toolCallId);
+                const resultToolName = typeof tr.toolName === 'string' ? tr.toolName : undefined;
+                const pairedToolName = toolCallNames.get(tr.toolCallId);
+                const artifactToolName =
+                  normalizeArtifactToolName(resultToolName)
+                  ?? inferArtifactToolNameFromCliArgs(args)
+                  ?? normalizeArtifactToolName(pairedToolName);
+                return {
+                  toolCallId: tr.toolCallId,
+                  name: pairedToolName || resultToolName || tr.toolCallId,
+                  artifactToolName,
+                  args,
+                  content: tr.content,
+                  isError: tr.isError,
+                };
+              }),
             );
             const groupTotal = toolResults.length;
 
@@ -270,26 +284,27 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({
               && displayedMessages[end].role === "assistant";
 
             const renderToolResultItem = (item: typeof toolResults[number]) => {
-              const terminalArtifact = parseTerminalToolArtifact(item.name, item.content);
+              const artifactToolName = item.artifactToolName ?? item.name;
+              const terminalArtifact = parseTerminalToolArtifact(artifactToolName, item.content);
               if (terminalArtifact) {
                 return (
                   <TerminalArtifactToolResult
                     key={item.toolCallId}
                     artifact={terminalArtifact}
-                    toolName={item.name}
+                    toolName={artifactToolName}
                     args={item.args}
                     result={item.content}
                     isError={item.isError}
                   />
                 );
               }
-              const artifact = parseVaultToolArtifact(item.name, item.content);
+              const artifact = parseVaultToolArtifact(artifactToolName, item.content);
               if (artifact) {
                 return (
                   <VaultArtifactToolResult
                     key={item.toolCallId}
                     artifact={artifact}
-                    toolName={item.name}
+                    toolName={artifactToolName}
                     args={item.args}
                     result={item.content}
                     isError={item.isError}
