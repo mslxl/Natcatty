@@ -59,6 +59,7 @@ import { resolveSidePanelToggleIntent } from '../application/state/resolveSidePa
 import { resolveAiSidePanelToggleIntent } from '../application/state/resolveAiSidePanelToggleIntent';
 import { terminalLayerAreEqual } from './terminalLayerMemo';
 import { TerminalLayerTabBridge } from './terminalLayer/TerminalLayerTabBridge';
+import { resolveAiNoteArtifactPanelIntent } from './terminalLayer/aiNoteArtifactPanelIntent';
 import {
   canUseDirectSessionWriteFallback,
 } from './terminalLayer/terminalLayerSessionRouting';
@@ -1128,6 +1129,26 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     openNotesPanelForSourceNote(openNoteRequest.tabId, openNoteRequest.noteId);
   }, [openNoteRequest, openNotesPanelForSourceNote]);
 
+  const handleOpenVaultNoteFromAiPanel = useCallback((noteId: string) => {
+    const intent = resolveAiNoteArtifactPanelIntent({
+      activeTabId: activeTabIdRef.current,
+      currentPanel: activeTabIdRef.current
+        ? sidePanelOpenTabsRef.current.get(activeTabIdRef.current) ?? null
+        : null,
+      noteId,
+    });
+
+    if (intent.kind === 'fallback') {
+      onOpenVaultNoteFromChat?.(intent.noteId);
+      return;
+    }
+
+    if (intent.returnPanel) {
+      notesReturnTabRef.current.set(intent.tabId, intent.returnPanel);
+    }
+    openNotesPanelForSourceNote(intent.tabId, intent.noteId);
+  }, [onOpenVaultNoteFromChat, openNotesPanelForSourceNote]);
+
   const handleAddSelectionToAI = useCallback((sourceSessionId: string, selection: string) => {
     const text = selection.trim();
     if (!text) return;
@@ -1456,7 +1477,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     noteGroups,
     notes,
     onOpenVaultHostFromChat,
-    onOpenVaultNoteFromChat,
+    onOpenVaultNoteFromChat: handleOpenVaultNoteFromAiPanel,
     onOpenVaultSectionFromChat,
     splitHorizontalHandlersRef,
     splitVerticalHandlersRef,

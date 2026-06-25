@@ -10,6 +10,16 @@ export interface VaultArtifactNavigationActions {
   openVaultSection: (section: 'notes' | 'hosts') => void;
 }
 
+interface CreateVaultArtifactNavigationActionsOptions {
+  notes: VaultNote[];
+  hosts: Host[];
+  t: (key: string) => string;
+  onOpenVaultNote: (noteId: string) => void;
+  onOpenVaultHost: (hostId: string) => void;
+  onOpenVaultSection: (section: 'notes' | 'hosts') => void;
+  onUnavailable: (message: string, title: string) => void;
+}
+
 interface VaultArtifactNavigationProviderProps {
   notes: VaultNote[];
   hosts: Host[];
@@ -21,6 +31,36 @@ interface VaultArtifactNavigationProviderProps {
 
 const VaultArtifactNavigationContext = createContext<VaultArtifactNavigationActions | null>(null);
 
+export function createVaultArtifactNavigationActions({
+  notes,
+  hosts,
+  t,
+  onOpenVaultNote,
+  onOpenVaultHost,
+  onOpenVaultSection,
+  onUnavailable,
+}: CreateVaultArtifactNavigationActionsOptions): VaultArtifactNavigationActions {
+  return {
+    openVaultNote: (noteId: string) => {
+      const exists = notes.some((note) => note.id === noteId);
+      if (!exists) {
+        onUnavailable(t('ai.chat.artifact.noteMissing'), t('ai.chat.artifact.unavailableTitle'));
+        return;
+      }
+      onOpenVaultNote(noteId);
+    },
+    openVaultHost: (hostId: string) => {
+      const exists = hosts.some((host) => host.id === hostId);
+      if (!exists) {
+        onUnavailable(t('ai.chat.artifact.hostMissing'), t('ai.chat.artifact.unavailableTitle'));
+        return;
+      }
+      onOpenVaultHost(hostId);
+    },
+    openVaultSection: onOpenVaultSection,
+  };
+}
+
 export function VaultArtifactNavigationProvider({
   notes,
   hosts,
@@ -31,29 +71,19 @@ export function VaultArtifactNavigationProvider({
 }: VaultArtifactNavigationProviderProps) {
   const { t } = useI18n();
 
-  const openVaultNote = useCallback((noteId: string) => {
-    const exists = notes.some((note) => note.id === noteId);
-    if (!exists) {
-      toast.warning(t('ai.chat.artifact.noteMissing'), t('ai.chat.artifact.unavailableTitle'));
-      return;
-    }
-    onOpenVaultNote(noteId);
-  }, [notes, onOpenVaultNote, t]);
+  const onUnavailable = useCallback((message: string, title: string) => {
+    toast.warning(message, title);
+  }, []);
 
-  const openVaultHost = useCallback((hostId: string) => {
-    const exists = hosts.some((host) => host.id === hostId);
-    if (!exists) {
-      toast.warning(t('ai.chat.artifact.hostMissing'), t('ai.chat.artifact.unavailableTitle'));
-      return;
-    }
-    onOpenVaultHost(hostId);
-  }, [hosts, onOpenVaultHost, t]);
-
-  const value = useMemo<VaultArtifactNavigationActions>(() => ({
-    openVaultNote,
-    openVaultHost,
-    openVaultSection: onOpenVaultSection,
-  }), [onOpenVaultHost, onOpenVaultNote, onOpenVaultSection, openVaultHost, openVaultNote]);
+  const value = useMemo<VaultArtifactNavigationActions>(() => createVaultArtifactNavigationActions({
+    notes,
+    hosts,
+    t,
+    onOpenVaultNote,
+    onOpenVaultHost,
+    onOpenVaultSection,
+    onUnavailable,
+  }), [hosts, notes, onOpenVaultHost, onOpenVaultNote, onOpenVaultSection, onUnavailable, t]);
 
   return (
     <VaultArtifactNavigationContext.Provider value={value}>
