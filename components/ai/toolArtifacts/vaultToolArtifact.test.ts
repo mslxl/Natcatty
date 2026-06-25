@@ -72,3 +72,24 @@ test('parseVaultToolArtifact maps errors', () => {
     message: 'Vault note "missing" was not found.',
   });
 });
+
+test('parseVaultToolArtifact unwraps Claude MCP text result envelopes', () => {
+  const artifact = parseVaultToolArtifact('mcp__netcatty-remote-hosts__vault_notes_list', JSON.stringify([
+    {
+      type: 'text',
+      text: JSON.stringify({
+        ok: true,
+        notes: [
+          { id: 'note-1', title: 'Docker Compose' },
+          { id: 'note-2', title: 'Dokploy' },
+        ],
+      }),
+    },
+  ]));
+
+  assert.deepEqual(artifact, {
+    kind: 'vault.summary',
+    section: 'notes',
+    count: 2,
+  });
+});

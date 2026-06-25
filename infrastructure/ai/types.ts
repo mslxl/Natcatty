@@ -152,6 +152,8 @@ export interface ToolCall {
 
 export interface ToolResult {
   toolCallId: string;
+  /** Optional tool name carried by external SDK/MCP result streams. */
+  toolName?: string;
   content: string;
   isError?: boolean;
 }

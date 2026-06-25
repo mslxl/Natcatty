@@ -1,3 +1,6 @@
+import { normalizeArtifactToolName } from './toolArtifactNames';
+import { parseResultPayload } from './toolArtifactResultPayload';
+
 export type VaultToolArtifact =
   | {
       kind: 'vault.note';
@@ -40,25 +43,6 @@ const VAULT_ARTIFACT_TOOL_NAMES = new Set([
   'vault_hosts_list',
   'host_get',
 ]);
-
-function parseResultPayload(result: unknown): Record<string, unknown> | null {
-  if (result == null) return null;
-  if (typeof result === 'string') {
-    try {
-      const parsed = JSON.parse(result) as unknown;
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        return parsed as Record<string, unknown>;
-      }
-      return null;
-    } catch {
-      return null;
-    }
-  }
-  if (typeof result === 'object' && !Array.isArray(result)) {
-    return result as Record<string, unknown>;
-  }
-  return null;
-}
 
 function readString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
@@ -116,14 +100,16 @@ function parsePreviewHosts(value: unknown): Array<{ hostId?: string; label?: str
 }
 
 export function isVaultArtifactToolName(toolName: string): boolean {
-  return VAULT_ARTIFACT_TOOL_NAMES.has(toolName);
+  const normalized = normalizeArtifactToolName(toolName);
+  return normalized ? VAULT_ARTIFACT_TOOL_NAMES.has(normalized) : false;
 }
 
 export function parseVaultToolArtifact(
   toolName: string,
   result: unknown,
 ): VaultToolArtifact | null {
-  if (!isVaultArtifactToolName(toolName)) return null;
+  const normalizedToolName = normalizeArtifactToolName(toolName);
+  if (!normalizedToolName || !VAULT_ARTIFACT_TOOL_NAMES.has(normalizedToolName)) return null;
 
   const payload = parseResultPayload(result);
   if (!payload) return null;
@@ -133,7 +119,7 @@ export function parseVaultToolArtifact(
     return { kind: 'error', message };
   }
 
-  switch (toolName) {
+  switch (normalizedToolName) {
     case 'vault_notes_create':
     case 'vault_notes_update':
     case 'vault_notes_get':
@@ -165,7 +151,7 @@ export function parseVaultToolArtifact(
 
       return {
         kind: 'vault.hosts.batch',
-        sourceTool: toolName === 'vault_hosts_import' ? 'vault_hosts_import' : 'vault_hosts_create',
+        sourceTool: normalizedToolName === 'vault_hosts_import' ? 'vault_hosts_import' : 'vault_hosts_create',
         addedCount,
         dryRun,
         preview,

@@ -70,6 +70,7 @@ async function runExternalTurn(input: ExternalTurnInput, ctx: TurnDriverContext)
     }
   };
 
+  const toolNamesByCallId = new Map<string, string>();
   const callbacks: SdkAgentCallbacks = {
     onTextDelta: (text: string) => {
       maybeCreateAssistantMsg();
@@ -96,18 +97,21 @@ async function runExternalTurn(input: ExternalTurnInput, ctx: TurnDriverContext)
     },
     onToolCall: (toolName: string, args: Record<string, unknown>, toolCallId?: string) => {
       maybeCreateAssistantMsg();
+      const id = toolCallId || `tc_${Date.now()}`;
+      toolNamesByCallId.set(id, toolName);
       ui.updateLastMessage(sessionId, msg => ({
         ...msg,
-        toolCalls: [...(msg.toolCalls || []), { id: toolCallId || `tc_${Date.now()}`, name: toolName, arguments: args }],
+        toolCalls: [...(msg.toolCalls || []), { id, name: toolName, arguments: args }],
         executionStatus: 'running',
         statusText: undefined,
       }));
     },
     onToolResult: (toolCallId: string, result: string, toolName?: string) => {
+      const effectiveToolName = toolName ?? toolNamesByCallId.get(toolCallId);
       ui.updateLastMessage(sessionId, msg => {
         if (msg.role !== 'assistant' || msg.executionStatus !== 'running') return msg;
-        const updatedToolCalls = toolName && !toolName.includes('sdk_agent_dynamic_tool') && msg.toolCalls
-          ? msg.toolCalls.map(tc => tc.id === toolCallId && !tc.name ? { ...tc, name: toolName } : tc)
+        const updatedToolCalls = effectiveToolName && !effectiveToolName.includes('sdk_agent_dynamic_tool') && msg.toolCalls
+          ? msg.toolCalls.map(tc => tc.id === toolCallId && !tc.name ? { ...tc, name: effectiveToolName } : tc)
           : msg.toolCalls;
         return { ...msg, toolCalls: updatedToolCalls, executionStatus: 'completed', statusText: undefined };
       });
@@ -115,7 +119,12 @@ async function runExternalTurn(input: ExternalTurnInput, ctx: TurnDriverContext)
         id: generateId(),
         role: 'tool',
         content: '',
-        toolResults: [{ toolCallId, content: result, isError: isToolResultError(result) }],
+        toolResults: [{
+          toolCallId,
+          toolName: effectiveToolName,
+          content: result,
+          isError: isToolResultError(result),
+        }],
         timestamp: Date.now(),
         executionStatus: 'completed',
       });

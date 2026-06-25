@@ -1,3 +1,6 @@
+import { normalizeArtifactToolName } from './toolArtifactNames';
+import { parseResultPayload } from './toolArtifactResultPayload';
+
 export type TerminalToolArtifact =
   | {
       kind: 'terminal.context';
@@ -22,25 +25,6 @@ const TERMINAL_ARTIFACT_TOOL_NAMES = new Set([
   'terminal_read_context',
 ]);
 
-function parseResultPayload(result: unknown): Record<string, unknown> | null {
-  if (result == null) return null;
-  if (typeof result === 'string') {
-    try {
-      const parsed = JSON.parse(result) as unknown;
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        return parsed as Record<string, unknown>;
-      }
-      return null;
-    } catch {
-      return null;
-    }
-  }
-  if (typeof result === 'object' && !Array.isArray(result)) {
-    return result as Record<string, unknown>;
-  }
-  return null;
-}
-
 function readString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
@@ -57,7 +41,8 @@ export function parseTerminalToolArtifact(
   toolName: string,
   result: unknown,
 ): TerminalToolArtifact | null {
-  if (!TERMINAL_ARTIFACT_TOOL_NAMES.has(toolName)) return null;
+  const normalizedToolName = normalizeArtifactToolName(toolName);
+  if (!normalizedToolName || !TERMINAL_ARTIFACT_TOOL_NAMES.has(normalizedToolName)) return null;
 
   const payload = parseResultPayload(result);
   if (!payload) return null;
