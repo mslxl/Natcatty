@@ -259,6 +259,50 @@ test("short popup flips upward when the cursor is at the bottom of the screen", 
     "popup should not be clipped above the viewport");
 });
 
+test("clamps a downward popup back inside the terminal when the anchor is above the viewport", () => {
+  const p = computeAutocompletePopupPlacement({
+    ...baseInput,
+    anchorTop: -60,
+    anchorBottom: -40,
+    desiredHeight: 96,
+    maxHeight: 240,
+    expandUpwardHint: false,
+  });
+  const contentHeight = Math.min(p.maxHeight, 96);
+
+  assert.equal(p.renderUpward, false);
+  assert.ok(
+    p.top >= baseInput.viewportPadding,
+    `popup top ${p.top} should stay inside the terminal viewport`,
+  );
+  assert.ok(
+    p.top + contentHeight <= baseInput.viewportHeight - baseInput.viewportPadding + 0.001,
+    `popup bottom ${p.top + contentHeight} should stay inside the terminal viewport`,
+  );
+});
+
+test("clamps an upward popup back inside the terminal when the anchor is below the viewport", () => {
+  const p = computeAutocompletePopupPlacement({
+    ...baseInput,
+    anchorTop: 860,
+    anchorBottom: 880,
+    desiredHeight: 96,
+    maxHeight: 240,
+    expandUpwardHint: true,
+  });
+  const contentHeight = Math.min(p.maxHeight, 96);
+
+  assert.equal(p.renderUpward, true);
+  assert.ok(
+    p.top >= baseInput.viewportPadding,
+    `popup top ${p.top} should stay inside the terminal viewport`,
+  );
+  assert.ok(
+    p.top + contentHeight <= baseInput.viewportHeight - baseInput.viewportPadding + 0.001,
+    `popup bottom ${p.top + contentHeight} should stay inside the terminal viewport`,
+  );
+});
+
 test("resolveAutocompleteClampViewport clamps to the xterm screen rect", () => {
   const container = {
     closest: () => null,
@@ -297,7 +341,7 @@ test("resolveAutocompleteClampViewport clamps to the xterm screen rect", () => {
   assert.equal(clamp.width, 600);
 });
 
-test("resolveAutocompleteClampViewport prefers terminal split pane over screen", () => {
+test("resolveAutocompleteClampViewport prefers the visible terminal screen over the split pane", () => {
   const pane = {
     getAttribute: (name: string) => (name === "data-section" ? "terminal-split-pane" : null),
     getBoundingClientRect: () => ({
@@ -344,10 +388,10 @@ test("resolveAutocompleteClampViewport prefers terminal split pane over screen",
   } as unknown as HTMLElement;
 
   const clamp = resolveAutocompleteClampViewport(container);
-  assert.equal(clamp.left, 20, "split pane left should win");
-  assert.equal(clamp.top, 30, "split pane top should win");
-  assert.equal(clamp.width, 500, "split pane width should win");
-  assert.equal(clamp.height, 300, "split pane height should win");
+  assert.equal(clamp.left, 25, "screen left should win");
+  assert.equal(clamp.top, 35, "screen top should win");
+  assert.equal(clamp.width, 490, "screen width should win");
+  assert.equal(clamp.height, 280, "screen height should win");
 });
 
 test("resolveAutocompleteAnchorInViewport ignores the helper textarea horizontal position", () => {
