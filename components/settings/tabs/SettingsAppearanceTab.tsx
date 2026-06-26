@@ -243,52 +243,6 @@ function SettingsAppearanceTab(props: {
         </SettingRow>
       </div>
 
-      <SectionHeader title={t("settings.appearance.appIcon")} />
-      <div className="rounded-lg border bg-card px-4 py-3 space-y-4">
-        <p className="text-xs text-muted-foreground">
-          {t("settings.appearance.appIcon.desc")}
-        </p>
-        <div className="space-y-3">
-          {APP_ICON_VARIANT_GROUPS.map((group) => (
-            <div key={group.id} className="space-y-1.5">
-              <span className="text-[11px] text-muted-foreground">{t(group.labelKey)}</span>
-              <div className="flex flex-wrap gap-2">
-                {group.variants.map((variant) => (
-                  <Tooltip key={variant}>
-                    <TooltipTrigger asChild>
-                      <button
-                        type="button"
-                        onClick={() => setAppIconVariant(variant)}
-                        className={cn(
-                          "relative w-11 h-11 rounded-xl overflow-hidden transition-transform",
-                          resolvedAppIconVariant === variant
-                            ? "scale-105"
-                            : "hover:scale-105 opacity-90 hover:opacity-100",
-                        )}
-                        aria-label={t(APP_ICON_VARIANT_I18N_KEY[variant])}
-                      >
-                        <img
-                          src={APP_ICON_VARIANT_ASSET_PATH[variant]}
-                          alt=""
-                          className="w-full h-full object-cover"
-                          draggable={false}
-                        />
-                        {resolvedAppIconVariant === variant && (
-                          <span className="absolute inset-0 flex items-center justify-center bg-black/20">
-                            <Check className="text-white drop-shadow-md" size={14} />
-                          </span>
-                        )}
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent>{t(APP_ICON_VARIANT_I18N_KEY[variant])}</TooltipContent>
-                  </Tooltip>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
       <SectionHeader title={t("settings.appearance.uiTheme")} />
       <div className="space-y-0 divide-y divide-border rounded-lg border bg-card px-4">
         <SettingRow label={t("settings.appearance.theme")}>
@@ -380,6 +334,52 @@ function SettingsAppearanceTab(props: {
             </div>
           </div>
         )}
+      </div>
+
+      <SectionHeader title={t("settings.appearance.appIcon")} />
+      <div className="rounded-lg border bg-card px-4 py-3 space-y-4">
+        <p className="text-xs text-muted-foreground">
+          {t("settings.appearance.appIcon.desc")}
+        </p>
+        <div className="space-y-3">
+          {APP_ICON_VARIANT_GROUPS.map((group) => (
+            <div key={group.id} className="space-y-1.5">
+              <span className="text-[11px] text-muted-foreground">{t(group.labelKey)}</span>
+              <div className="flex flex-wrap gap-2">
+                {group.variants.map((variant) => (
+                  <Tooltip key={variant}>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        onClick={() => setAppIconVariant(variant)}
+                        className={cn(
+                          "relative w-11 h-11 rounded-xl overflow-hidden transition-transform",
+                          resolvedAppIconVariant === variant
+                            ? "scale-105"
+                            : "hover:scale-105 opacity-90 hover:opacity-100",
+                        )}
+                        aria-label={t(APP_ICON_VARIANT_I18N_KEY[variant])}
+                      >
+                        <img
+                          src={APP_ICON_VARIANT_ASSET_PATH[variant]}
+                          alt=""
+                          className="w-full h-full object-cover"
+                          draggable={false}
+                        />
+                        {resolvedAppIconVariant === variant && (
+                          <span className="absolute inset-0 flex items-center justify-center bg-black/20">
+                            <Check className="text-white drop-shadow-md" size={14} />
+                          </span>
+                        )}
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>{t(APP_ICON_VARIANT_I18N_KEY[variant])}</TooltipContent>
+                  </Tooltip>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
 
       <SectionHeader title={t("settings.vault.title")} />
