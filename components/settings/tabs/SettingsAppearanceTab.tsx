@@ -1,15 +1,20 @@
-import React, { memo, useCallback } from "react";
+import React, { memo, useCallback, useState } from "react";
 import { applyCustomCssToDocument } from "../../../lib/customCss";
 import { DebouncedTextarea } from "../DebouncedTextarea";
 import { Check, Monitor, Moon, Palette, Sun } from "lucide-react";
 import { useI18n } from "../../../application/i18n/I18nProvider";
-import { DARK_UI_THEMES, LIGHT_UI_THEMES } from "../../../infrastructure/config/uiThemes";
+import {
+  COPILOT_LIGHT_UI_THEMES,
+  DARK_UI_THEMES,
+  LIGHT_UI_THEMES,
+} from "../../../infrastructure/config/uiThemes";
 import { useAvailableUIFonts } from "../../../application/state/uiFontStore";
 import { SUPPORTED_UI_LOCALES } from "../../../infrastructure/config/i18n";
 import { cn } from "../../../lib/utils";
 import { SectionHeader, SettingsTabContent, SettingRow, Toggle, Select } from "../settings-ui";
 import { FontSelect } from "../FontSelect";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../ui/tooltip";
+import { UiThemePresetModal } from "../UiThemePresetModal";
 
 function SettingsAppearanceTab(props: {
   theme: "dark" | "light" | "system";
@@ -41,6 +46,7 @@ function SettingsAppearanceTab(props: {
 }) {
   const { t } = useI18n();
   const availableUIFonts = useAvailableUIFonts();
+  const [themePresetModalOpen, setThemePresetModalOpen] = useState(false);
   const {
     theme,
     setTheme,
@@ -77,6 +83,7 @@ function SettingsAppearanceTab(props: {
   ] as const;
 
   const getHslStyle = useCallback((hsl: string) => ({ backgroundColor: `hsl(${hsl})` }), []);
+  const selectedLightTheme = LIGHT_UI_THEMES.find((preset) => preset.id === lightUiThemeId) ?? LIGHT_UI_THEMES[0];
 
   const hexToHsl = useCallback((hex: string) => {
     const r = parseInt(hex.slice(1, 3), 16) / 255;
@@ -159,6 +166,12 @@ function SettingsAppearanceTab(props: {
       ))}
     </div>
   );
+
+  const handlePresetSelect = useCallback((themeId: string) => {
+    setTheme("light");
+    setLightUiThemeId(themeId);
+    setAccentMode("theme");
+  }, [setAccentMode, setLightUiThemeId, setTheme]);
 
   return (
     <SettingsTabContent value="appearance">
@@ -254,7 +267,27 @@ function SettingsAppearanceTab(props: {
             ))}
           </div>
         </SettingRow>
+        <SettingRow
+          label={t("settings.appearance.themePresets")}
+          description={t("settings.appearance.themePresets.desc")}
+        >
+          <button
+            type="button"
+            onClick={() => setThemePresetModalOpen(true)}
+            className="inline-flex h-9 items-center gap-2 rounded-lg border border-border bg-background px-3 text-sm font-medium text-foreground shadow-sm transition-colors hover:border-primary/70 hover:bg-muted/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <Palette size={15} className="text-primary" />
+            <span className="max-w-36 truncate">{selectedLightTheme.name}</span>
+          </button>
+        </SettingRow>
       </div>
+      <UiThemePresetModal
+        open={themePresetModalOpen}
+        onClose={() => setThemePresetModalOpen(false)}
+        presets={COPILOT_LIGHT_UI_THEMES}
+        selectedThemeId={lightUiThemeId}
+        onSelect={handlePresetSelect}
+      />
 
       <SectionHeader title={t("settings.appearance.accentColor")} />
       <div className="space-y-0 divide-y divide-border rounded-lg border bg-card px-4">

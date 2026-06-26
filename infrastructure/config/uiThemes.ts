@@ -23,13 +23,68 @@ export type UiThemeTokens = {
 export type UiThemePreset = {
   id: string;
   name: string;
+  collection?: "core" | "copilot";
+  preview?: {
+    sidebar: string;
+    activity: string[];
+    syntax: string[];
+  };
   tokens: UiThemeTokens;
 };
 
-export const LIGHT_UI_THEMES: UiThemePreset[] = [
+type CopilotThemeConfig = {
+  id: string;
+  name: string;
+  background: string;
+  foreground: string;
+  card: string;
+  secondary: string;
+  muted: string;
+  mutedForeground: string;
+  border: string;
+  primary: string;
+  added: string;
+  removed: string;
+  skill: string;
+};
+
+const createCopilotLightTheme = (config: CopilotThemeConfig): UiThemePreset => ({
+  id: config.id,
+  name: config.name,
+  collection: "copilot",
+  preview: {
+    sidebar: config.secondary,
+    activity: [config.removed, config.skill, config.added, config.primary],
+    syntax: [config.primary, config.removed, config.added, config.skill],
+  },
+  tokens: {
+    background: config.background,
+    foreground: config.foreground,
+    card: config.card,
+    cardForeground: config.foreground,
+    popover: config.card,
+    popoverForeground: config.foreground,
+    primary: config.primary,
+    primaryForeground: "0 0% 100%",
+    secondary: config.secondary,
+    secondaryForeground: config.foreground,
+    muted: config.muted,
+    mutedForeground: config.mutedForeground,
+    accent: config.primary,
+    accentForeground: "0 0% 100%",
+    destructive: config.removed,
+    destructiveForeground: "0 0% 100%",
+    border: config.border,
+    input: config.border,
+    ring: config.primary,
+  },
+});
+
+export const CORE_LIGHT_UI_THEMES: UiThemePreset[] = [
   {
     id: "snow",
     name: "Snow",
+    collection: "core",
     tokens: {
       background: "216 33% 96%",
       foreground: "222 47% 12%",
@@ -55,6 +110,7 @@ export const LIGHT_UI_THEMES: UiThemePreset[] = [
   {
     id: "pure-white",
     name: "Pure White",
+    collection: "core",
     tokens: {
       background: "0 0% 100%",
       foreground: "222 47% 12%",
@@ -80,6 +136,7 @@ export const LIGHT_UI_THEMES: UiThemePreset[] = [
   {
     id: "ivory",
     name: "Ivory",
+    collection: "core",
     tokens: {
       background: "38 40% 95%",
       foreground: "222 47% 12%",
@@ -105,6 +162,7 @@ export const LIGHT_UI_THEMES: UiThemePreset[] = [
   {
     id: "mist",
     name: "Mist",
+    collection: "core",
     tokens: {
       background: "210 20% 97%",
       foreground: "222 47% 12%",
@@ -130,6 +188,7 @@ export const LIGHT_UI_THEMES: UiThemePreset[] = [
   {
     id: "mint",
     name: "Mint",
+    collection: "core",
     tokens: {
       background: "150 30% 96%",
       foreground: "222 47% 12%",
@@ -155,6 +214,7 @@ export const LIGHT_UI_THEMES: UiThemePreset[] = [
   {
     id: "sand",
     name: "Sand",
+    collection: "core",
     tokens: {
       background: "34 30% 94%",
       foreground: "222 47% 12%",
@@ -180,6 +240,7 @@ export const LIGHT_UI_THEMES: UiThemePreset[] = [
   {
     id: "lavender",
     name: "Lavender",
+    collection: "core",
     tokens: {
       background: "270 30% 97%",
       foreground: "222 47% 12%",
@@ -202,6 +263,164 @@ export const LIGHT_UI_THEMES: UiThemePreset[] = [
       ring: "270 70% 55%",
     },
   },
+];
+
+export const COPILOT_LIGHT_UI_THEMES: UiThemePreset[] = [
+  createCopilotLightTheme({
+    id: "github",
+    name: "GitHub",
+    background: "0 0% 97%",
+    foreground: "261 36% 23%",
+    card: "0 0% 100%",
+    secondary: "220 12% 94%",
+    muted: "220 10% 91%",
+    mutedForeground: "220 7% 48%",
+    border: "220 10% 84%",
+    primary: "261 69% 59%",
+    added: "137 57% 41%",
+    removed: "356 72% 47%",
+    skill: "261 51% 51%",
+  }),
+  createCopilotLightTheme({
+    id: "fox",
+    name: "Fox",
+    background: "15 33% 95%",
+    foreground: "260 34% 27%",
+    card: "20 28% 98%",
+    secondary: "15 18% 91%",
+    muted: "15 15% 89%",
+    mutedForeground: "260 12% 48%",
+    border: "15 14% 84%",
+    primary: "225 62% 48%",
+    added: "133 14% 49%",
+    removed: "0 43% 59%",
+    skill: "262 83% 58%",
+  }),
+  createCopilotLightTheme({
+    id: "ic-orange-ppl",
+    name: "IC Orange PPL",
+    background: "37 35% 93%",
+    foreground: "257 35% 25%",
+    card: "38 33% 96%",
+    secondary: "38 22% 88%",
+    muted: "38 18% 85%",
+    mutedForeground: "37 12% 45%",
+    border: "36 18% 80%",
+    primary: "15 90% 41%",
+    added: "56 44% 35%",
+    removed: "16 37% 48%",
+    skill: "45 100% 24%",
+  }),
+  createCopilotLightTheme({
+    id: "monochrome",
+    name: "Monochrome",
+    background: "215 38% 94%",
+    foreground: "221 39% 11%",
+    card: "210 40% 98%",
+    secondary: "215 25% 88%",
+    muted: "215 20% 86%",
+    mutedForeground: "220 9% 46%",
+    border: "215 16% 78%",
+    primary: "222 47% 11%",
+    added: "220 9% 46%",
+    removed: "218 11% 65%",
+    skill: "221 39% 11%",
+  }),
+  createCopilotLightTheme({
+    id: "noctis-azureus",
+    name: "Noctis Azureus",
+    background: "51 49% 92%",
+    foreground: "216 28% 27%",
+    card: "51 70% 97%",
+    secondary: "124 18% 90%",
+    muted: "150 14% 86%",
+    mutedForeground: "190 12% 50%",
+    border: "124 14% 82%",
+    primary: "337 100% 65%",
+    added: "143 47% 53%",
+    removed: "13 100% 71%",
+    skill: "193 100% 42%",
+  }),
+  createCopilotLightTheme({
+    id: "notionish",
+    name: "Notionish",
+    background: "45 20% 96%",
+    foreground: "246 33% 25%",
+    card: "0 0% 100%",
+    secondary: "45 8% 93%",
+    muted: "45 8% 90%",
+    mutedForeground: "246 8% 48%",
+    border: "45 8% 84%",
+    primary: "261 51% 51%",
+    added: "139 51% 37%",
+    removed: "5 73% 64%",
+    skill: "262 83% 58%",
+  }),
+  createCopilotLightTheme({
+    id: "polychrome",
+    name: "Polychrome",
+    background: "253 100% 97%",
+    foreground: "266 43% 22%",
+    card: "0 0% 100%",
+    secondary: "253 45% 93%",
+    muted: "253 35% 90%",
+    mutedForeground: "266 14% 48%",
+    border: "253 30% 84%",
+    primary: "258 90% 66%",
+    added: "142 71% 45%",
+    removed: "351 95% 71%",
+    skill: "271 91% 65%",
+  }),
+  createCopilotLightTheme({
+    id: "selene-selenized",
+    name: "Selene Selenized",
+    background: "47 70% 90%",
+    foreground: "258 31% 23%",
+    card: "48 80% 96%",
+    secondary: "48 45% 84%",
+    muted: "48 35% 82%",
+    mutedForeground: "48 11% 42%",
+    border: "48 26% 76%",
+    primary: "323 56% 55%",
+    added: "92 45% 43%",
+    removed: "6 70% 62%",
+    skill: "17 88% 40%",
+  }),
+  createCopilotLightTheme({
+    id: "tokyo-night",
+    name: "Tokyo Night",
+    background: "219 56% 92%",
+    foreground: "220 32% 22%",
+    card: "219 60% 96%",
+    secondary: "221 38% 86%",
+    muted: "221 32% 83%",
+    mutedForeground: "220 16% 45%",
+    border: "221 28% 76%",
+    primary: "273 68% 59%",
+    added: "90 18% 53%",
+    removed: "349 89% 72%",
+    skill: "221 89% 72%",
+  }),
+  createCopilotLightTheme({
+    id: "xotopia",
+    name: "Xotopia",
+    background: "0 6% 94%",
+    foreground: "267 33% 24%",
+    card: "0 8% 98%",
+    secondary: "0 5% 89%",
+    muted: "0 4% 86%",
+    mutedForeground: "267 9% 48%",
+    border: "0 4% 80%",
+    primary: "332 67% 54%",
+    added: "159 28% 53%",
+    removed: "357 80% 67%",
+    skill: "203 38% 53%",
+  }),
+];
+
+export const LIGHT_UI_THEMES: UiThemePreset[] = [
+  ...CORE_LIGHT_UI_THEMES,
+  ...COPILOT_LIGHT_UI_THEMES,
 ];
 
 export const DARK_UI_THEMES: UiThemePreset[] = [

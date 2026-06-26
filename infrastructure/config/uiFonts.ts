@@ -71,6 +71,11 @@ export function withWindowsEmojiFallback(
 
 const BASE_UI_FONTS: UIFont[] = [
   {
+    id: 'mona-sans',
+    name: 'Mona Sans',
+    family: '"Mona Sans", system-ui',
+  },
+  {
     id: 'space-grotesk',
     name: 'Space Grotesk',
     family: '"Space Grotesk", system-ui',
@@ -182,4 +187,4 @@ export const UI_FONTS: UIFont[] = BASE_UI_FONTS.map((font) => ({
   family: withUiCjkFallback(font.family),
 }));
 
-export const DEFAULT_UI_FONT_ID = 'space-grotesk';
+export const DEFAULT_UI_FONT_ID = 'mona-sans';
