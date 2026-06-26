@@ -53,8 +53,18 @@ describe('permissionGrants', () => {
       sessionId: 'ssh-1',
       command: 'systemctl status nginx',
     }, 'chat-1');
+    assert.ok(grant);
     assert.equal(grant.sessionPattern, '*');
     assert.equal(grant.commandPattern, 'systemctl status *');
+  });
+
+  it('buildGrantFromApproval returns null when no command grant is produced', () => {
+    const grant = buildGrantFromApproval('terminal.execute', {
+      sessionId: 'ssh-1',
+      command: 'cd /tmp',
+    }, 'chat-1');
+
+    assert.equal(grant, null);
   });
 
   it('buildGrantsFromApproval emits one rule per chained command segment', () => {
