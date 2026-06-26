@@ -1,23 +1,19 @@
-import React, { memo, useCallback, useState } from "react";
+import React, { memo, useCallback } from "react";
 import { applyCustomCssToDocument } from "../../../lib/customCss";
 import { DebouncedTextarea } from "../DebouncedTextarea";
 import { Check, Monitor, Moon, Palette, Sun } from "lucide-react";
 import { useI18n } from "../../../application/i18n/I18nProvider";
-import {
-  COPILOT_LIGHT_UI_THEMES,
-  DARK_UI_THEMES,
-  LIGHT_UI_THEMES,
-} from "../../../infrastructure/config/uiThemes";
+import { DARK_UI_THEMES, LIGHT_UI_THEMES } from "../../../infrastructure/config/uiThemes";
 import { useAvailableUIFonts } from "../../../application/state/uiFontStore";
 import { SUPPORTED_UI_LOCALES } from "../../../infrastructure/config/i18n";
 import { cn } from "../../../lib/utils";
 import { SectionHeader, SettingsTabContent, SettingRow, Toggle, Select } from "../settings-ui";
 import { FontSelect } from "../FontSelect";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../ui/tooltip";
-import { UiThemePresetModal } from "../UiThemePresetModal";
 
 function SettingsAppearanceTab(props: {
   theme: "dark" | "light" | "system";
+  resolvedTheme: "dark" | "light";
   setTheme: (theme: "dark" | "light" | "system") => void;
   lightUiThemeId: string;
   setLightUiThemeId: (themeId: string) => void;
@@ -46,9 +42,9 @@ function SettingsAppearanceTab(props: {
 }) {
   const { t } = useI18n();
   const availableUIFonts = useAvailableUIFonts();
-  const [themePresetModalOpen, setThemePresetModalOpen] = useState(false);
   const {
     theme,
+    resolvedTheme,
     setTheme,
     lightUiThemeId,
     setLightUiThemeId,
@@ -83,7 +79,6 @@ function SettingsAppearanceTab(props: {
   ] as const;
 
   const getHslStyle = useCallback((hsl: string) => ({ backgroundColor: `hsl(${hsl})` }), []);
-  const selectedLightTheme = LIGHT_UI_THEMES.find((preset) => preset.id === lightUiThemeId) ?? LIGHT_UI_THEMES[0];
 
   const hexToHsl = useCallback((hex: string) => {
     const r = parseInt(hex.slice(1, 3), 16) / 255;
@@ -144,7 +139,7 @@ function SettingsAppearanceTab(props: {
     value: string,
     onChange: (next: string) => void,
   ) => (
-    <div className="flex flex-wrap gap-2 justify-end">
+    <div className="flex min-w-0 flex-1 flex-wrap justify-end gap-2">
       {options.map((preset) => (
         <Tooltip key={preset.id}>
           <TooltipTrigger asChild>
@@ -167,11 +162,9 @@ function SettingsAppearanceTab(props: {
     </div>
   );
 
-  const handlePresetSelect = useCallback((themeId: string) => {
-    setTheme("light");
-    setLightUiThemeId(themeId);
-    setAccentMode("theme");
-  }, [setAccentMode, setLightUiThemeId, setTheme]);
+  const visibleUiThemes = resolvedTheme === "dark" ? DARK_UI_THEMES : LIGHT_UI_THEMES;
+  const visibleUiThemeId = resolvedTheme === "dark" ? darkUiThemeId : lightUiThemeId;
+  const setVisibleUiThemeId = resolvedTheme === "dark" ? setDarkUiThemeId : setLightUiThemeId;
 
   return (
     <SettingsTabContent value="appearance">
@@ -245,10 +238,7 @@ function SettingsAppearanceTab(props: {
 
       <SectionHeader title={t("settings.appearance.uiTheme")} />
       <div className="space-y-0 divide-y divide-border rounded-lg border bg-card px-4">
-        <SettingRow
-          label={t("settings.appearance.theme")}
-          description={t("settings.appearance.theme.desc")}
-        >
+        <SettingRow label={t("settings.appearance.theme")}>
           <div className="flex items-center rounded-lg border border-border bg-muted/50 p-0.5">
             {THEME_OPTIONS.map((opt) => (
               <button
@@ -267,30 +257,14 @@ function SettingsAppearanceTab(props: {
             ))}
           </div>
         </SettingRow>
-        <SettingRow
-          label={t("settings.appearance.themePresets")}
-          description={t("settings.appearance.themePresets.desc")}
-        >
-          <button
-            type="button"
-            onClick={() => setThemePresetModalOpen(true)}
-            className="inline-flex h-9 items-center gap-2 rounded-lg border border-border bg-background px-3 text-sm font-medium text-foreground shadow-sm transition-colors hover:border-primary/70 hover:bg-muted/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <Palette size={15} className="text-primary" />
-            <span className="max-w-36 truncate">{selectedLightTheme.name}</span>
-          </button>
-        </SettingRow>
-      </div>
-      <UiThemePresetModal
-        open={themePresetModalOpen}
-        onClose={() => setThemePresetModalOpen(false)}
-        presets={COPILOT_LIGHT_UI_THEMES}
-        selectedThemeId={lightUiThemeId}
-        onSelect={handlePresetSelect}
-      />
-
-      <SectionHeader title={t("settings.appearance.accentColor")} />
-      <div className="space-y-0 divide-y divide-border rounded-lg border bg-card px-4">
+        <div className="flex items-start justify-between gap-4 py-3">
+          <div className="shrink-0 pt-0.5 text-sm font-medium">
+            {resolvedTheme === "dark"
+              ? t("settings.appearance.themeColor.dark")
+              : t("settings.appearance.themeColor.light")}
+          </div>
+          {renderThemeSwatches(visibleUiThemes, visibleUiThemeId, setVisibleUiThemeId)}
+        </div>
         <SettingRow
           label={t("settings.appearance.accentColor.mode")}
           description={t("settings.appearance.accentColor.mode.desc")}
@@ -353,19 +327,6 @@ function SettingsAppearanceTab(props: {
             </div>
           </div>
         )}
-      </div>
-
-      <SectionHeader title={t("settings.appearance.themeColor")} />
-      <div className="space-y-0 divide-y divide-border rounded-lg border bg-card px-4">
-        <SettingRow
-          label={t("settings.appearance.themeColor.light")}
-          description={t("settings.appearance.themeColor.desc")}
-        >
-          {renderThemeSwatches(LIGHT_UI_THEMES, lightUiThemeId, setLightUiThemeId)}
-        </SettingRow>
-        <SettingRow label={t("settings.appearance.themeColor.dark")}>
-          {renderThemeSwatches(DARK_UI_THEMES, darkUiThemeId, setDarkUiThemeId)}
-        </SettingRow>
       </div>
 
       <SectionHeader title={t("settings.vault.title")} />

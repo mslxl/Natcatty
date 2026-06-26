@@ -411,6 +411,7 @@ const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }
                         <SettingsLazyTab value="appearance">
                             <LazySettingsAppearanceTab
                                 theme={settings.theme}
+                                resolvedTheme={settings.resolvedTheme}
                                 setTheme={settings.setTheme}
                                 lightUiThemeId={settings.lightUiThemeId}
                                 setLightUiThemeId={settings.setLightUiThemeId}

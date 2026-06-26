@@ -229,6 +229,31 @@ test("follow-theme resolver: light + auto follows the active light UI preset", (
   );
 });
 
+test("follow-theme resolver: imported system presets follow the active light or dark mode", () => {
+  assert.equal(
+    resolveFollowedTerminalThemeId({
+      resolvedTheme: "light",
+      terminalThemeDarkId: TERMINAL_THEME_AUTO,
+      terminalThemeLightId: TERMINAL_THEME_AUTO,
+      lightUiThemeId: "github",
+      darkUiThemeId: "github",
+      fallbackThemeId: "netcatty-dark",
+    }),
+    "system-github-light",
+  );
+  assert.equal(
+    resolveFollowedTerminalThemeId({
+      resolvedTheme: "dark",
+      terminalThemeDarkId: TERMINAL_THEME_AUTO,
+      terminalThemeLightId: TERMINAL_THEME_AUTO,
+      lightUiThemeId: "github",
+      darkUiThemeId: "github",
+      fallbackThemeId: "netcatty-dark",
+    }),
+    "system-github-dark",
+  );
+});
+
 test("follow-theme resolver: explicit dark override wins over auto-matching", () => {
   assert.equal(
     resolveFollowedTerminalThemeId({

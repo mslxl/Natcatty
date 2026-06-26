@@ -88,8 +88,127 @@ const UI_TO_TERMINAL_THEME: Record<string, string> = {
   'forest': 'ui-forest',
 };
 
-export const getTerminalThemeForUiTheme = (uiThemeId: string): string | undefined =>
-  UI_TO_TERMINAL_THEME[uiThemeId];
+const SYSTEM_LIGHT_UI_TO_TERMINAL_THEME: Record<string, string> = {
+  "a-cup-of-coffee": "system-a-cup-of-coffee-light",
+  "abolkog": "system-abolkog-light",
+  "aurora": "system-aurora-light",
+  "ayu": "system-ayu-light",
+  "base16-flat": "system-base16-flat-light",
+  "base16-mocha": "system-base16-mocha-light",
+  "blue-dolphin": "system-blue-dolphin-light",
+  "calm-days-sober-nights-sky": "system-calm-days-sober-nights-sky-light",
+  "catppuccin": "system-catppuccin-light",
+  "chai": "system-chai-light",
+  "chinolor": "system-chinolor-light",
+  "cyberdyne": "system-cyberdyne-light",
+  "desert": "system-desert-light",
+  "django-reborn-again": "system-django-reborn-again-light",
+  "espresso": "system-espresso-light",
+  "eyehealth": "system-eyehealth-light",
+  "flexoki": "system-flexoki-light",
+  "fox": "system-fox-light",
+  "garbage-oracle": "system-garbage-oracle-light",
+  "github": "system-github-light",
+  "gruvbox-material": "system-gruvbox-material-light",
+  "homebrew": "system-homebrew-light",
+  "ic-orange-ppl": "system-ic-orange-ppl-light",
+  "ikki": "system-ikki-light",
+  "kanso-ink": "system-kanso-ink-light",
+  "kary-pro-colors": "system-kary-pro-colors-light",
+  "light-purple": "system-light-purple-light",
+  "mondrian": "system-mondrian-light",
+  "monochrome": "system-monochrome-light",
+  "monochrome-stone": "system-monochrome-stone-light",
+  "monokai-pro-spectrum": "system-monokai-pro-spectrum-light",
+  "monospace": "system-monospace-light",
+  "noctis-azureus": "system-noctis-azureus-light",
+  "noctis-hibernus": "system-noctis-hibernus-light",
+  "noir-essence": "system-noir-essence-light",
+  "nord-midnight": "system-nord-midnight-light",
+  "notionish": "system-notionish-light",
+  "phonebook": "system-phonebook-light",
+  "polychrome": "system-polychrome-light",
+  "purplepeter": "system-purplepeter-light",
+  "rainglow-codecourse": "system-rainglow-codecourse-light",
+  "rainglow-crisp": "system-rainglow-crisp-light",
+  "rainglow-lavender": "system-rainglow-lavender-light",
+  "remedy-tilted": "system-remedy-tilted-light",
+  "rose-pine": "system-rose-pine-light",
+  "selene-selenized": "system-selene-selenized-light",
+  "soft-color": "system-soft-color-light",
+  "tearout": "system-tearout-light",
+  "tokyo-night": "system-tokyo-night-light",
+  "tomorrow-night-eighties": "system-tomorrow-night-eighties-light",
+  "vaporizer-turquoise": "system-vaporizer-turquoise-light",
+  "xotopio": "system-xotopio-light",
+  "yuttari": "system-yuttari-light",
+  "zenbones-rosebones": "system-zenbones-rosebones-light",
+  "zhxo-red": "system-zhxo-red-light",
+};
+
+const SYSTEM_DARK_UI_TO_TERMINAL_THEME: Record<string, string> = {
+  "a-cup-of-coffee": "system-a-cup-of-coffee-dark",
+  "abolkog": "system-abolkog-dark",
+  "aurora": "system-aurora-dark",
+  "ayu": "system-ayu-dark",
+  "base16-flat": "system-base16-flat-dark",
+  "base16-mocha": "system-base16-mocha-dark",
+  "blue-dolphin": "system-blue-dolphin-dark",
+  "calm-days-sober-nights-sky": "system-calm-days-sober-nights-sky-dark",
+  "catppuccin": "system-catppuccin-dark",
+  "chai": "system-chai-dark",
+  "chinolor": "system-chinolor-dark",
+  "cyberdyne": "system-cyberdyne-dark",
+  "desert": "system-desert-dark",
+  "django-reborn-again": "system-django-reborn-again-dark",
+  "espresso": "system-espresso-dark",
+  "eyehealth": "system-eyehealth-dark",
+  "flexoki": "system-flexoki-dark",
+  "fox": "system-fox-dark",
+  "garbage-oracle": "system-garbage-oracle-dark",
+  "github": "system-github-dark",
+  "gruvbox-material": "system-gruvbox-material-dark",
+  "homebrew": "system-homebrew-dark",
+  "ic-orange-ppl": "system-ic-orange-ppl-dark",
+  "ikki": "system-ikki-dark",
+  "kanso-ink": "system-kanso-ink-dark",
+  "kary-pro-colors": "system-kary-pro-colors-dark",
+  "light-purple": "system-light-purple-dark",
+  "mondrian": "system-mondrian-dark",
+  "monochrome": "system-monochrome-dark",
+  "monochrome-stone": "system-monochrome-stone-dark",
+  "monokai-pro-spectrum": "system-monokai-pro-spectrum-dark",
+  "monospace": "system-monospace-dark",
+  "noctis-azureus": "system-noctis-azureus-dark",
+  "noctis-hibernus": "system-noctis-hibernus-dark",
+  "noir-essence": "system-noir-essence-dark",
+  "nord-midnight": "system-nord-midnight-dark",
+  "notionish": "system-notionish-dark",
+  "phonebook": "system-phonebook-dark",
+  "polychrome": "system-polychrome-dark",
+  "purplepeter": "system-purplepeter-dark",
+  "rainglow-codecourse": "system-rainglow-codecourse-dark",
+  "rainglow-crisp": "system-rainglow-crisp-dark",
+  "rainglow-lavender": "system-rainglow-lavender-dark",
+  "remedy-tilted": "system-remedy-tilted-dark",
+  "rose-pine": "system-rose-pine-dark",
+  "selene-selenized": "system-selene-selenized-dark",
+  "soft-color": "system-soft-color-dark",
+  "tearout": "system-tearout-dark",
+  "tokyo-night": "system-tokyo-night-dark",
+  "tomorrow-night-eighties": "system-tomorrow-night-eighties-dark",
+  "vaporizer-turquoise": "system-vaporizer-turquoise-dark",
+  "xotopio": "system-xotopio-dark",
+  "yuttari": "system-yuttari-dark",
+  "zenbones-rosebones": "system-zenbones-rosebones-dark",
+  "zhxo-red": "system-zhxo-red-dark",
+};
+
+export const getTerminalThemeForUiTheme = (uiThemeId: string, resolvedTheme?: 'light' | 'dark'): string | undefined => {
+  if (resolvedTheme === 'light') return SYSTEM_LIGHT_UI_TO_TERMINAL_THEME[uiThemeId] ?? UI_TO_TERMINAL_THEME[uiThemeId];
+  if (resolvedTheme === 'dark') return SYSTEM_DARK_UI_TO_TERMINAL_THEME[uiThemeId] ?? UI_TO_TERMINAL_THEME[uiThemeId];
+  return UI_TO_TERMINAL_THEME[uiThemeId];
+};
 
 /**
  * Sentinel stored in the per-mode follow-theme settings meaning "let the
@@ -121,7 +240,7 @@ export const resolveFollowedTerminalThemeId = (args: {
   const activeUiThemeId = args.resolvedTheme === 'dark'
     ? args.darkUiThemeId
     : args.lightUiThemeId;
-  return getTerminalThemeForUiTheme(activeUiThemeId) ?? args.fallbackThemeId;
+  return getTerminalThemeForUiTheme(activeUiThemeId, args.resolvedTheme) ?? args.fallbackThemeId;
 };
 
 export const getFollowAppTerminalThemeSelectionUpdate = (
