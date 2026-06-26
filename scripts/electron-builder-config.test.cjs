@@ -18,6 +18,17 @@ test("unpacked MCP server includes its shared CommonJS dependencies", () => {
   );
 });
 
+test("build.files includes shared terminal flow constants for main process", () => {
+  assert.ok(
+    config.files.includes("infrastructure/config/terminalFlowConstants.cjs"),
+    "terminalFlowAck.cjs requires infrastructure/config/terminalFlowConstants.cjs at packaged startup",
+  );
+  assert.ok(
+    config.files.includes("infrastructure/config/terminalFlowConstants.json"),
+    "terminalFlowConstants.cjs requires sibling terminalFlowConstants.json at packaged startup",
+  );
+});
+
 test("unpacked Tool CLI includes capability runtime dependencies", () => {
   assert.ok(
     config.asarUnpack.includes("electron/cli/**/*"),

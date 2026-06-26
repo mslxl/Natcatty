@@ -46,6 +46,10 @@ module.exports = {
     files: [
         'dist/**/*',
         'electron/**/*',
+        // Main-process terminal flow control reads shared thresholds from here
+        // (terminalFlowAck.cjs). Must ship beside electron/ in app.asar.
+        'infrastructure/config/terminalFlowConstants.cjs',
+        'infrastructure/config/terminalFlowConstants.json',
         'lib/**/*.cjs',
         'lib/**/*.json',
         '!electron/.dev-config.json',
