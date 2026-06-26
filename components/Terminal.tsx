@@ -88,6 +88,7 @@ import { useTerminalAuthState } from "./terminal/hooks/useTerminalAuthState";
 import { useTerminalDragDrop } from "./terminal/hooks/useTerminalDragDrop";
 import { useTerminalFilePaste } from "./terminal/hooks/useTerminalFilePaste";
 import { TerminalAutocomplete } from "./terminal/TerminalAutocomplete";
+import { resolveTerminalAutocompleteSettings } from "./terminal/autocomplete/terminalAutocompleteSettings";
 import { buildOsc7SetupExecCommand, runOsc7SetupAction, shouldOfferOsc7SetupAction } from "./terminal/osc7Setup";
 import {
   getRemoteClipboardImageUploadErrorMessageKey,
@@ -635,14 +636,10 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const autocompleteHostOs: "linux" | "windows" | "macos" = host.protocol === "local"
     ? detectLocalOs(navigator.userAgent || navigator.platform)
     : (host.os || "linux");
-  const autocompleteSettings = terminalSettings ? {
-    enabled: terminalSettings.autocompleteEnabled ?? true,
-    showGhostText: terminalSettings.autocompleteGhostText ?? true,
-    showPopupMenu: terminalSettings.autocompletePopupMenu ?? true,
-    debounceMs: terminalSettings.autocompleteDebounceMs ?? 100,
-    minChars: terminalSettings.autocompleteMinChars ?? 1,
-    maxSuggestions: terminalSettings.autocompleteMaxSuggestions ?? 8,
-  } : undefined;
+  const autocompleteSettings = resolveTerminalAutocompleteSettings({
+    protocol: host.protocol,
+    terminalSettings,
+  });
 
   const resolveSftpInitialPath = useCallback(async (options?: { preferFreshBackend?: boolean }): Promise<string | undefined> => {
     const cwd = await resolvePreferredTerminalCwd({
