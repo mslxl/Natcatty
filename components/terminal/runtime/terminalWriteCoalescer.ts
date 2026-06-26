@@ -5,7 +5,6 @@ import {
   MAX_PENDING_WRITE_COALESCE_BYTES_FLOOD,
 } from "./terminalFlowConstants";
 import { createWriteCoalescer, type WriteCoalescer } from "./writeCoalescer.ts";
-import { isTerminalWriteQueueInFloodMode } from "./terminalWriteQueue";
 
 type CoalescerByteCapResolver = () => number;
 

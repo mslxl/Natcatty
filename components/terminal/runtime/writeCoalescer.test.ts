@@ -4,7 +4,6 @@ import { beforeEach, test } from "node:test";
 import {
   createWriteCoalescer,
   MAX_PENDING_WRITE_COALESCE_BYTES,
-  MAX_PENDING_WRITE_COALESCE_BYTES_FLOOD,
   type WriteCoalescerOptions,
 } from "./writeCoalescer.ts";
 
