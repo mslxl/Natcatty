@@ -36,26 +36,34 @@ const acknowledgeDroppedBytes = (
   }
 };
 
-export const teardownTerminalOutputPipeline = (
-  ctx: TerminalSessionStartersContext,
+export const releaseTerminalFlowOutputForTerm = (
   term: XTerm,
+  backend: FlowBackend,
   sessionId: string | null,
-  flow: OutputFlowController,
+  flow: OutputFlowController | undefined,
 ): void => {
-  const backend = ctx.terminalBackend;
   const onDropped = (bytes: number) => {
     acknowledgeDroppedBytes(flow, bytes, backend, sessionId);
   };
 
   abortTerminalWriteCoalescer(term, onDropped);
   abortTerminalWriteQueue(term, onDropped);
-  flow.reset();
+  flow?.reset();
   if (sessionId) {
     flushTerminalSessionFlowAck(sessionId);
     backend.setSessionFlowPaused?.(sessionId, false);
     clearTerminalSessionFlowAck(sessionId);
   }
   resetTerminalWriteCoalescer(term);
+};
+
+export const teardownTerminalOutputPipeline = (
+  ctx: TerminalSessionStartersContext,
+  term: XTerm,
+  sessionId: string | null,
+  flow: OutputFlowController,
+): void => {
+  releaseTerminalFlowOutputForTerm(term, ctx.terminalBackend, sessionId, flow);
 };
 
 export const prioritizeTerminalInput = (

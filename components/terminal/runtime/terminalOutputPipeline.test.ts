@@ -6,6 +6,7 @@ import type { Terminal as XTerm } from "@xterm/xterm";
 import { createOutputFlowController } from "./outputFlowController.ts";
 import {
   prioritizeTerminalInput,
+  releaseTerminalFlowOutputForTerm,
   teardownTerminalOutputPipeline,
 } from "./terminalOutputPipeline.ts";
 import { FLOW_LOW_WATER_MARK } from "./terminalFlowConstants.ts";
@@ -39,6 +40,21 @@ test("teardownTerminalOutputPipeline resumes renderer pause and clears backlog",
   );
 
   assert.deepEqual(events, ["pause", "resume", "ipc-resume"]);
+});
+
+test("releaseTerminalFlowOutputForTerm resumes renderer pause without a flow controller", () => {
+  const term = createFakeTerm();
+  const events: string[] = [];
+  const backend = {
+    setSessionFlowPaused: (_sessionId: string, paused: boolean) => {
+      events.push(paused ? "ipc-pause" : "ipc-resume");
+    },
+    ackSessionFlow: () => {},
+  };
+
+  releaseTerminalFlowOutputForTerm(term, backend, "sess-1", undefined);
+
+  assert.deepEqual(events, ["ipc-resume"]);
 });
 
 test("prioritizeTerminalInput drains backlog before user input is forwarded", () => {

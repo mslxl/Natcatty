@@ -93,6 +93,8 @@ export const enqueueTerminalWrite = (
   const queue = getOrCreateQueue(term);
   if (options.onDropped) {
     queue.onDropped = options.onDropped;
+  } else if (!queue.onDropped) {
+    queue.onDropped = terminalWriteQueueDropHandlers.get(term);
   }
 
   const shouldCollapse = queue.floodMode

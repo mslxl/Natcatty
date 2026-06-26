@@ -38,7 +38,10 @@ import {
   enqueueTerminalWrite,
   setTerminalWriteQueueDropHandler,
 } from "./terminalWriteQueue";
-import { teardownTerminalOutputPipeline } from "./terminalOutputPipeline";
+import {
+  releaseTerminalFlowOutputForTerm,
+  teardownTerminalOutputPipeline,
+} from "./terminalOutputPipeline";
 
 export { FLOW_HIGH_WATER_MARK, FLOW_LOW_WATER_MARK };
 
@@ -185,12 +188,6 @@ const writeSessionDataImmediate = (
     };
 
     writeTerminalDataWithLineTimestamps(term, preparedDisplayData, afterWrite);
-  }, {
-    onDropped: (bytes) => {
-      if (bytes <= 0) return;
-      flow.written(bytes);
-      ackTerminalSessionFlow(ctx.terminalBackend, ctx.sessionRef.current, bytes);
-    },
   });
 };
 
@@ -228,15 +225,23 @@ export const tryAttachSessionToTerminal = (
   return true;
 };
 
+export const releaseTerminalFlowBeforeHibernate = (
+  backend: TerminalSessionStartersContext["terminalBackend"],
+  term: XTerm,
+  sessionId: string,
+): void => {
+  const flow = terminalFlowControllers.get(term);
+  releaseTerminalFlowOutputForTerm(term, backend, sessionId, flow);
+  terminalFlowControllers.delete(term);
+};
+
 export const detachSessionDataListeners = (
   ctx: TerminalSessionStartersContext,
   term: XTerm,
 ) => {
   const sessionId = ctx.sessionRef.current;
-  const flow = terminalFlowControllers.get(term);
-  if (flow) {
-    teardownTerminalOutputPipeline(ctx, term, sessionId, flow);
-    terminalFlowControllers.delete(term);
+  if (sessionId && term) {
+    releaseTerminalFlowBeforeHibernate(ctx.terminalBackend, term, sessionId);
   }
 
   ctx.disposeDataRef.current?.();

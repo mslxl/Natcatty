@@ -108,6 +108,7 @@ import {
   clearTerminalSessionFlowAck,
   flushTerminalSessionFlowAck,
 } from "./terminal/runtime/terminalFlowAckBuffer";
+import { releaseTerminalFlowBeforeHibernate } from "./terminal/runtime/terminalSessionAttachment";
 import {
   isTerminalFileTransferActive,
   resolveHibernateKeepRendererCount,
@@ -943,8 +944,14 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     telnetLocalEchoRef.current = false;
 
     if (closingSessionId) {
-      flushTerminalSessionFlowAck(closingSessionId);
-      clearTerminalSessionFlowAck(closingSessionId);
+      const activeTerm = termRef.current;
+      if (activeTerm) {
+        releaseTerminalFlowBeforeHibernate(terminalBackend, activeTerm, closingSessionId);
+      } else {
+        flushTerminalSessionFlowAck(closingSessionId);
+        clearTerminalSessionFlowAck(closingSessionId);
+        terminalBackend.setSessionFlowPaused?.(closingSessionId, false);
+      }
       try {
         terminalBackend.closeSession(closingSessionId);
       } catch (err) {
@@ -978,9 +985,13 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     disposeTelnetEchoModeRef.current?.();
     disposeTelnetEchoModeRef.current = null;
     telnetLocalEchoRef.current = false;
-    if (sessionRef.current) {
+    const closingSessionId = sessionRef.current;
+    if (closingSessionId) {
+      flushTerminalSessionFlowAck(closingSessionId);
+      clearTerminalSessionFlowAck(closingSessionId);
+      terminalBackend.setSessionFlowPaused?.(closingSessionId, false);
       try {
-        terminalBackend.closeSession(sessionRef.current);
+        terminalBackend.closeSession(closingSessionId);
       } catch (err) {
         logger.warn("Failed to close hibernated session", err);
       }
@@ -1002,6 +1013,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const beginHibernatedSessionListeners = useCallback((backendId: string) => {
     disposeDataRef.current?.();
     flushTerminalSessionFlowAck(backendId);
+    terminalBackend.setSessionFlowPaused?.(backendId, false);
     hibernatePendingBufferRef.current = "";
     disposeDataRef.current = terminalBackend.onSessionData(
       backendId,
@@ -1074,6 +1086,13 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
     applyHibernateSnapshot(snapshot);
     isBootActiveRef.current = false;
+    if (termRef.current) {
+      releaseTerminalFlowBeforeHibernate(terminalBackend, termRef.current, backendId);
+    }
+    disposeDataRef.current?.();
+    disposeDataRef.current = null;
+    disposeExitRef.current?.();
+    disposeExitRef.current = null;
     disposeRuntimeOnly();
     beginHibernatedSessionListeners(backendId);
     hibernatedRef.current = true;
