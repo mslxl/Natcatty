@@ -29,6 +29,8 @@ const existingShells = (paths: string[]) => Array.from(new Set(paths.filter(exis
 
 const supportedShells = () => existingShells(["/bin/bash", "/bin/zsh", "/usr/bin/zsh", "/opt/homebrew/bin/fish", "/usr/bin/fish"]);
 
+const quoteShellArg = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
+
 const extractOsc7Path = (output: string) => {
   const escape = String.fromCharCode(0x1b);
   const bell = String.fromCharCode(0x07);
@@ -47,22 +49,25 @@ const extractOsc7Path = (output: string) => {
 const runInteractiveHistoryProbe = ({
   shellPath,
   shellArgs,
-  historyCommand,
+  dumpHistoryCommand,
+  dumpPath,
   env,
 }: {
   shellPath: string;
   shellArgs: string[];
-  historyCommand: string;
+  dumpHistoryCommand: string;
+  dumpPath: string;
   env: NodeJS.ProcessEnv;
 }) => {
   const result = spawnSync(shellPath, shellArgs, {
     env: { ...process.env, ZDOTDIR: "", XDG_CONFIG_HOME: "", ...env },
-    input: `${buildOsc7SetupCommand()}\n${historyCommand}\nexit\n`,
+    input: `${buildOsc7SetupCommand()}\n${dumpHistoryCommand}\nexit\n`,
     encoding: "utf8",
   });
 
   assert.equal(result.status, 0, result.stderr || result.stdout);
-  return `${result.stdout ?? ""}${result.stderr ?? ""}`;
+  assert.ok(existsSync(dumpPath), result.stderr || result.stdout);
+  return readFileSync(dumpPath, "utf8");
 };
 
 test("shouldOfferOsc7SetupAction only allows remote shell-style sessions", () => {
@@ -186,10 +191,12 @@ test("buildOsc7SetupCommand can be pasted into supported shells", () => {
 
 test("buildOsc7SetupCommand does not leave setup payload in bash history", () => {
   withTempHome("netcatty-osc7-history-bash-", (home) => {
+    const dumpPath = join(home, "bash-history-dump");
     const output = runInteractiveHistoryProbe({
       shellPath: "/bin/bash",
       shellArgs: ["--noprofile", "--norc", "-i"],
-      historyCommand: "history",
+      dumpHistoryCommand: `history > ${quoteShellArg(dumpPath)}`,
+      dumpPath,
       env: {
         HOME: home,
         HISTFILE: join(home, ".bash_history"),
@@ -209,10 +216,12 @@ test("buildOsc7SetupCommand does not leave setup payload in zsh history", (t) =>
   }
 
   withTempHome("netcatty-osc7-history-zsh-", (home) => {
+    const dumpPath = join(home, "zsh-history-dump");
     const output = runInteractiveHistoryProbe({
       shellPath: zshPath,
       shellArgs: ["-f", "-i"],
-      historyCommand: "fc -l 1",
+      dumpHistoryCommand: `fc -ln 1 > ${quoteShellArg(dumpPath)}`,
+      dumpPath,
       env: {
         HOME: home,
         HISTFILE: join(home, ".zsh_history"),
