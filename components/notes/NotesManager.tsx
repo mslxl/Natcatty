@@ -1,5 +1,6 @@
 import {
   ArrowLeft,
+  Download,
   Edit2,
   Expand,
   FileText,
@@ -21,6 +22,7 @@ import { useStoredNumber } from "../../application/state/useStoredNumber";
 import { useStoredString } from "../../application/state/useStoredString";
 import {
   ancestorNoteGroupPaths,
+  buildVaultNoteMarkdownExportFiles,
   cleanNoteGroupPath,
   getNoteGroupParentPath,
   isNoteGroupInside,
@@ -32,6 +34,8 @@ import {
   remapExpandedNoteGroupPaths,
   replaceNoteGroupPrefix,
   resolveMovedNoteGroupPath,
+  sanitizeNoteExportFileNamePart,
+  type VaultNotesExportScope,
 } from "../../domain/notes";
 import { getNextVaultOrder, reorderVaultItems, reorderVaultStrings, sortByVaultOrder } from "../../domain/vaultOrder";
 import {
@@ -41,6 +45,7 @@ import {
 import { logger } from "../../lib/logger";
 import { cn } from "../../lib/utils";
 import { readTextFile } from "../../lib/readTextFile";
+import { buildTextFilesZipBlob } from "../../lib/textZip";
 import type { Host, VaultNote } from "../../types";
 import { Button } from "../ui/button";
 import { LazyLoadBoundary } from "../ui/lazy-load-boundary";
@@ -367,6 +372,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
   const isImportingMarkdownRef = useRef(false);
   const importTargetGroupRef = useRef<string | null | undefined>(undefined);
   const sortedNotesRef = useRef<VaultNote[]>([]);
+  const activeDownloadUrlsRef = useRef<Set<string>>(new Set());
 
   const groups = useMemo(() => normalizeNoteGroups(noteGroups), [noteGroups]);
   const groupOrderByPath = useMemo(
@@ -392,6 +398,14 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
   }, [groupOrderByPath, groups, sortedNotes]);
   const selectedNote = getSelectedVaultNote(sortedNotes, selectedNoteId);
   const overlayNote = sortedNotes.find((note) => note.id === overlayNoteId) ?? null;
+
+  useEffect(() => {
+    const urls = activeDownloadUrlsRef.current;
+    return () => {
+      urls.forEach((url) => URL.revokeObjectURL(url));
+      urls.clear();
+    };
+  }, []);
 
   const queryText = query.trim();
   const queryLower = queryText.toLowerCase();
@@ -601,6 +615,80 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
     selectedNote,
     t,
   ]);
+
+  const downloadNotesBlob = useCallback((blob: Blob, fileName: string) => {
+    const url = URL.createObjectURL(blob);
+    activeDownloadUrlsRef.current.add(url);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = fileName;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+
+    window.setTimeout(() => {
+      URL.revokeObjectURL(url);
+      activeDownloadUrlsRef.current.delete(url);
+    }, 60_000);
+  }, []);
+
+  const exportNoteToMarkdown = useCallback((note: VaultNote) => {
+    try {
+      const fileName = `${sanitizeNoteExportFileNamePart(note.title, "note")}.md`;
+      downloadNotesBlob(
+        new Blob([note.content], { type: "text/markdown;charset=utf-8" }),
+        fileName,
+      );
+      toast.success(t("notes.export.toast.success", { count: 1 }));
+    } catch (err) {
+      logger.error("Failed to export note:", err);
+      toast.error(t("notes.export.toast.failed"));
+    }
+  }, [downloadNotesBlob, t]);
+
+  const exportNotesToZip = useCallback((scope: VaultNotesExportScope, fileNamePart: string) => {
+    try {
+      const files = buildVaultNoteMarkdownExportFiles(sortedNotesRef.current, scope);
+      if (files.length === 0) {
+        toast.warning(t("notes.export.toast.empty"));
+        return;
+      }
+
+      const blob = buildTextFilesZipBlob(files);
+      const safeName = sanitizeNoteExportFileNamePart(fileNamePart, "notes");
+      downloadNotesBlob(blob, `netcatty-notes-${safeName}.zip`);
+      toast.success(t("notes.export.toast.success", { count: files.length }));
+    } catch (err) {
+      logger.error("Failed to export notes:", err);
+      toast.error(t("notes.export.toast.failed"));
+    }
+  }, [downloadNotesBlob, t]);
+
+  const exportAllNotes = useCallback(() => {
+    exportNotesToZip({ type: "all" }, "all");
+  }, [exportNotesToZip]);
+
+  const exportGroupNotes = useCallback((groupPath: string) => {
+    exportNotesToZip({ type: "group", group: groupPath }, groupPath);
+  }, [exportNotesToZip]);
+
+  const renderNoteExportButton = (note: VaultNote) => (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          aria-label={t("notes.action.exportNote")}
+          className="app-no-drag h-8 w-8 shrink-0 rounded-md p-0 text-muted-foreground transition-colors hover:bg-secondary/70 hover:text-foreground"
+          onClick={() => exportNoteToMarkdown(note)}
+        >
+          <Download size={16} />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom">{t("notes.action.exportNote")}</TooltipContent>
+    </Tooltip>
+  );
 
   const duplicateNoteById = (noteId: string) => {
     const source = sortedNotes.find((note) => note.id === noteId);
@@ -827,6 +915,10 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
         action: () => duplicateNoteById(note.id),
       },
       {
+        label: t("notes.action.exportNote"),
+        action: () => exportNoteToMarkdown(note),
+      },
+      {
         label: t("action.delete"),
         action: () => deleteNoteById(note.id),
         destructive: true,
@@ -878,6 +970,10 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
       {
         label: t("notes.action.importMarkdown"),
         action: () => openImportMarkdownPicker(groupPath),
+      },
+      {
+        label: t("notes.action.exportGroup"),
+        action: () => exportGroupNotes(groupPath),
       },
       {
         label: t("common.rename"),
@@ -1253,6 +1349,21 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                     variant="ghost"
                     size="icon"
                     className={toolbarIconButtonClass}
+                    disabled={sortedNotes.length === 0}
+                    onClick={exportAllNotes}
+                  >
+                    <Download size={14} className="text-muted-foreground" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">{t("notes.action.exportAll")}</TooltipContent>
+              </Tooltip>
+
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className={toolbarIconButtonClass}
                     disabled={!canExpandCollapse}
                     onClick={expandAllGroups}
                   >
@@ -1375,6 +1486,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                     })}
                   />
                 </div>
+                {renderNoteExportButton(selectedNote)}
                 {renderNoteModeToggle()}
               </div>
               <ScrollArea className="min-h-0 flex-1">
@@ -1460,6 +1572,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                   })}
                 />
               </div>
+              {renderNoteExportButton(overlayNote)}
               {renderNoteModeToggle()}
             </div>
             <ScrollArea className="min-h-0 flex-1">
