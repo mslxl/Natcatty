@@ -57,6 +57,30 @@ test("releaseTerminalFlowOutputForTerm resumes renderer pause without a flow con
   assert.deepEqual(events, ["ipc-resume"]);
 });
 
+test("prioritizeTerminalInput flushes batched ack remainders after dropping bytes", () => {
+  const term = createFakeTerm();
+  const acked: number[] = [];
+  const flow = createOutputFlowController({
+    highWaterMark: 100,
+    lowWaterMark: 20,
+    onPause: () => {},
+    onResume: () => {},
+  });
+  const backend = {
+    setSessionFlowPaused: () => {},
+    ackSessionFlow: (_sessionId: string, bytes: number) => {
+      acked.push(bytes);
+    },
+  };
+
+  flow.received(FLOW_LOW_WATER_MARK + 80);
+  enqueueTerminalWrite(term, 50, () => {});
+  enqueueTerminalWrite(term, 30, () => {});
+  prioritizeTerminalInput(term, "sess-1", flow, backend);
+
+  assert.deepEqual(acked, [30]);
+});
+
 test("prioritizeTerminalInput drains backlog before user input is forwarded", () => {
   const term = createFakeTerm();
   const events: string[] = [];

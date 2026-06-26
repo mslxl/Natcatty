@@ -33,6 +33,7 @@ import {
 } from "./terminalFlowConstants";
 import {
   ackTerminalSessionFlow,
+  flushTerminalSessionFlowAck,
 } from "./terminalFlowAckBuffer";
 import {
   enqueueTerminalWrite,
@@ -105,7 +106,11 @@ export const getFlowController = (
     setTerminalWriteQueueDropHandler(term, (bytes) => {
       if (bytes <= 0) return;
       controller?.written(bytes);
-      ackTerminalSessionFlow(ctx.terminalBackend, ctx.sessionRef.current, bytes);
+      const sessionId = ctx.sessionRef.current;
+      ackTerminalSessionFlow(ctx.terminalBackend, sessionId, bytes);
+      if (sessionId) {
+        flushTerminalSessionFlowAck(sessionId);
+      }
     });
   }
   return controller;

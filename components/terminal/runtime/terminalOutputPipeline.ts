@@ -32,6 +32,7 @@ const acknowledgeDroppedBytes = (
   flow?.written(bytes);
   ackTerminalSessionFlow(backend, sessionId, bytes);
   if (sessionId) {
+    flushTerminalSessionFlowAck(sessionId);
     backend.setSessionFlowPaused?.(sessionId, false);
   }
 };
@@ -87,5 +88,6 @@ export const prioritizeTerminalInput = (
   abortTerminalWriteCoalescer(term, onDropped);
   abortTerminalWriteQueue(term, onDropped);
   flow?.reset();
+  flushTerminalSessionFlowAck(sessionId);
   backend.setSessionFlowPaused?.(sessionId, false);
 };
