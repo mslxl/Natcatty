@@ -69,8 +69,7 @@ export const resolveHostTerminalThemeId = (host: Host | null | undefined, defaul
  * terminal blends seamlessly with the app chrome. Returns undefined if no
  * match exists (caller should fall back to the global terminal theme).
  */
-const UI_TO_TERMINAL_THEME: Record<string, string> = {
-  // Light
+const CORE_LIGHT_UI_TO_TERMINAL_THEME: Record<string, string> = {
   'snow': 'ui-snow',
   'pure-white': 'ui-pure-white',
   'ivory': 'ui-ivory',
@@ -78,7 +77,9 @@ const UI_TO_TERMINAL_THEME: Record<string, string> = {
   'mint': 'ui-mint',
   'sand': 'ui-sand',
   'lavender': 'ui-lavender',
-  // Dark
+};
+
+const CORE_DARK_UI_TO_TERMINAL_THEME: Record<string, string> = {
   'pure-black': 'ui-pure-black',
   'midnight': 'ui-midnight',
   'deep-blue': 'ui-deep-blue',
@@ -86,6 +87,11 @@ const UI_TO_TERMINAL_THEME: Record<string, string> = {
   'graphite': 'ui-graphite',
   'obsidian': 'ui-obsidian',
   'forest': 'ui-forest',
+};
+
+const UI_TO_TERMINAL_THEME: Record<string, string> = {
+  ...CORE_LIGHT_UI_TO_TERMINAL_THEME,
+  ...CORE_DARK_UI_TO_TERMINAL_THEME,
 };
 
 const SYSTEM_LIGHT_UI_TO_TERMINAL_THEME: Record<string, string> = {
@@ -210,22 +216,68 @@ export const getTerminalThemeForUiTheme = (uiThemeId: string, resolvedTheme?: 'l
   return UI_TO_TERMINAL_THEME[uiThemeId];
 };
 
+export type FollowAppTerminalThemeSelection = {
+  appTheme: TerminalTheme['type'];
+  uiThemeId: string;
+};
+
+const createTerminalThemeToUiThemeMap = (): Record<string, FollowAppTerminalThemeSelection> => {
+  const entries: Array<[string, FollowAppTerminalThemeSelection]> = [];
+  for (const [uiThemeId, terminalThemeId] of Object.entries(CORE_LIGHT_UI_TO_TERMINAL_THEME)) {
+    entries.push([terminalThemeId, { appTheme: 'light', uiThemeId }]);
+  }
+  for (const [uiThemeId, terminalThemeId] of Object.entries(CORE_DARK_UI_TO_TERMINAL_THEME)) {
+    entries.push([terminalThemeId, { appTheme: 'dark', uiThemeId }]);
+  }
+  for (const [uiThemeId, terminalThemeId] of Object.entries(SYSTEM_LIGHT_UI_TO_TERMINAL_THEME)) {
+    entries.push([terminalThemeId, { appTheme: 'light', uiThemeId }]);
+  }
+  for (const [uiThemeId, terminalThemeId] of Object.entries(SYSTEM_DARK_UI_TO_TERMINAL_THEME)) {
+    entries.push([terminalThemeId, { appTheme: 'dark', uiThemeId }]);
+  }
+  return Object.fromEntries(entries);
+};
+
+const TERMINAL_THEME_TO_UI_THEME = createTerminalThemeToUiThemeMap();
+
+export const getFollowAppTerminalThemeIds = (type?: TerminalTheme['type']): string[] =>
+  Object.entries(TERMINAL_THEME_TO_UI_THEME)
+    .filter(([, selection]) => !type || selection.appTheme === type)
+    .map(([terminalThemeId]) => terminalThemeId);
+
+export const isFollowAppTerminalThemeId = (themeId: string): boolean =>
+  Object.prototype.hasOwnProperty.call(TERMINAL_THEME_TO_UI_THEME, themeId);
+
+export const getFollowAppTerminalThemeSelectionUpdate = (
+  themeId: string,
+): FollowAppTerminalThemeSelection | null =>
+  TERMINAL_THEME_TO_UI_THEME[themeId] ?? null;
+
 /**
- * Sentinel stored in the per-mode follow-theme settings meaning "let the
- * terminal theme follow the active UI theme preset" (the legacy
- * auto-matching behavior), as opposed to a concrete terminal theme id.
+ * Sentinel stored in the per-mode manual terminal theme settings. It means
+ * the user has not chosen a concrete terminal theme for that mode yet, so the
+ * app can use the UI-matched default.
  */
 export const TERMINAL_THEME_AUTO = 'auto';
 
 /**
  * Resolve which terminal theme id to use while "Follow Application Theme" is
- * enabled, honoring the user's per-mode override.
- *
- * - A concrete theme id in the active mode's setting is used as-is.
- * - `TERMINAL_THEME_AUTO` (the default) keeps the legacy behavior: match the
- *   active UI theme preset, then `fallbackThemeId` when no UI match exists.
+ * enabled. This is intentionally not overrideable: the terminal follows the
+ * active UI theme preset, then `fallbackThemeId` when no UI match exists.
  */
 export const resolveFollowedTerminalThemeId = (args: {
+  resolvedTheme: 'light' | 'dark';
+  lightUiThemeId: string;
+  darkUiThemeId: string;
+  fallbackThemeId: string;
+}): string => {
+  const activeUiThemeId = args.resolvedTheme === 'dark'
+    ? args.darkUiThemeId
+    : args.lightUiThemeId;
+  return getTerminalThemeForUiTheme(activeUiThemeId, args.resolvedTheme) ?? args.fallbackThemeId;
+};
+
+export const resolveManualTerminalThemeId = (args: {
   resolvedTheme: 'light' | 'dark';
   terminalThemeDarkId: string;
   terminalThemeLightId: string;
@@ -237,21 +289,8 @@ export const resolveFollowedTerminalThemeId = (args: {
     ? args.terminalThemeDarkId
     : args.terminalThemeLightId;
   if (selected && selected !== TERMINAL_THEME_AUTO) return selected;
-  const activeUiThemeId = args.resolvedTheme === 'dark'
-    ? args.darkUiThemeId
-    : args.lightUiThemeId;
-  return getTerminalThemeForUiTheme(activeUiThemeId, args.resolvedTheme) ?? args.fallbackThemeId;
+  return resolveFollowedTerminalThemeId(args);
 };
-
-export const getFollowAppTerminalThemeSelectionUpdate = (
-  theme: Pick<TerminalTheme, 'id' | 'type'>,
-): {
-  appTheme: TerminalTheme['type'];
-  terminalThemeDarkId?: string;
-  terminalThemeLightId?: string;
-} => theme.type === 'dark'
-  ? { appTheme: 'dark', terminalThemeDarkId: theme.id }
-  : { appTheme: 'light', terminalThemeLightId: theme.id };
 
 type ParsedHslToken = {
   hue: number;

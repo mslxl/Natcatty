@@ -39,7 +39,7 @@ import { resolveCloseIntent } from './application/state/resolveCloseIntent';
 import { resolveSnippetsShortcutIntent } from './application/state/resolveSnippetsShortcutIntent';
 import { resolveWindowCommandCloseIntent } from './application/state/windowCommandClose';
 import { TERMINAL_THEMES } from './infrastructure/config/terminalThemes';
-import { customThemeStore, useCustomThemes } from './application/state/customThemeStore';
+import { useCustomThemes } from './application/state/customThemeStore';
 import type { SyncPayload } from './domain/sync';
 import { applySyncPayload, buildLocalVaultPayload, hasMeaningfulSyncData } from './application/syncPayload';
 import {
@@ -116,13 +116,13 @@ function App({ settings }: { settings: SettingsState }) {
   const {
     theme,
     setTheme,
+    setLightUiThemeId,
+    setDarkUiThemeId,
     resolvedTheme,
     accentMode,
     customAccent,
     terminalThemeId,
     setTerminalThemeId,
-    setTerminalThemeDarkId,
-    setTerminalThemeLightId,
     followAppTerminalTheme,
     currentTerminalTheme,
     terminalFontFamilyId,
@@ -1052,17 +1052,15 @@ function App({ settings }: { settings: SettingsState }) {
   const handleToggleTheme = useCallback(() => { return handleToggleThemeImpl(() => ({ openSettingsWindow, resolvedTheme, setTheme, t, theme, toast })); }, [openSettingsWindow, resolvedTheme, setTheme, t, theme]);
 
   const handleFollowAppTerminalThemeChange = useCallback((themeId: string) => {
-    const selectedTheme = customThemeStore.getThemeById(themeId);
-    if (!selectedTheme) return;
-    const update = getFollowAppTerminalThemeSelectionUpdate(selectedTheme);
-    if (update.terminalThemeDarkId) {
-      setTerminalThemeDarkId(update.terminalThemeDarkId);
-    }
-    if (update.terminalThemeLightId) {
-      setTerminalThemeLightId(update.terminalThemeLightId);
+    const update = getFollowAppTerminalThemeSelectionUpdate(themeId);
+    if (!update) return;
+    if (update.appTheme === 'dark') {
+      setDarkUiThemeId(update.uiThemeId);
+    } else {
+      setLightUiThemeId(update.uiThemeId);
     }
     setTheme(update.appTheme);
-  }, [setTerminalThemeDarkId, setTerminalThemeLightId, setTheme]);
+  }, [setDarkUiThemeId, setLightUiThemeId, setTheme]);
 
   const handleOpenQuickSwitcher = useCallback(() => {
     setIsQuickSwitcherOpen(true);

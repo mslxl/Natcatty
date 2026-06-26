@@ -4,9 +4,12 @@ import assert from "node:assert/strict";
 import {
   applyCustomAccentToTerminalTheme,
   applySessionFontSizeToHost,
+  getFollowAppTerminalThemeIds,
   getFollowAppTerminalThemeSelectionUpdate,
+  isFollowAppTerminalThemeId,
   mergeTerminalHostUpdate,
   resolveFollowedTerminalThemeId,
+  resolveManualTerminalThemeId,
   TERMINAL_THEME_AUTO,
 } from "./terminalAppearance";
 import type { Host, TerminalTheme } from "./models";
@@ -205,8 +208,6 @@ test("follow-theme resolver: dark + auto follows the active dark UI preset", () 
   assert.equal(
     resolveFollowedTerminalThemeId({
       resolvedTheme: "dark",
-      terminalThemeDarkId: TERMINAL_THEME_AUTO,
-      terminalThemeLightId: TERMINAL_THEME_AUTO,
       lightUiThemeId: "snow",
       darkUiThemeId: "midnight",
       fallbackThemeId: "netcatty-dark",
@@ -219,8 +220,6 @@ test("follow-theme resolver: light + auto follows the active light UI preset", (
   assert.equal(
     resolveFollowedTerminalThemeId({
       resolvedTheme: "light",
-      terminalThemeDarkId: TERMINAL_THEME_AUTO,
-      terminalThemeLightId: TERMINAL_THEME_AUTO,
       lightUiThemeId: "snow",
       darkUiThemeId: "midnight",
       fallbackThemeId: "netcatty-dark",
@@ -233,8 +232,6 @@ test("follow-theme resolver: imported system presets follow the active light or 
   assert.equal(
     resolveFollowedTerminalThemeId({
       resolvedTheme: "light",
-      terminalThemeDarkId: TERMINAL_THEME_AUTO,
-      terminalThemeLightId: TERMINAL_THEME_AUTO,
       lightUiThemeId: "github",
       darkUiThemeId: "github",
       fallbackThemeId: "netcatty-dark",
@@ -244,8 +241,6 @@ test("follow-theme resolver: imported system presets follow the active light or 
   assert.equal(
     resolveFollowedTerminalThemeId({
       resolvedTheme: "dark",
-      terminalThemeDarkId: TERMINAL_THEME_AUTO,
-      terminalThemeLightId: TERMINAL_THEME_AUTO,
       lightUiThemeId: "github",
       darkUiThemeId: "github",
       fallbackThemeId: "netcatty-dark",
@@ -254,9 +249,21 @@ test("follow-theme resolver: imported system presets follow the active light or 
   );
 });
 
-test("follow-theme resolver: explicit dark override wins over auto-matching", () => {
+test("follow-theme resolver: explicit dark override is ignored while following app theme", () => {
   assert.equal(
     resolveFollowedTerminalThemeId({
+      resolvedTheme: "dark",
+      lightUiThemeId: "snow",
+      darkUiThemeId: "midnight",
+      fallbackThemeId: "netcatty-dark",
+    }),
+    "ui-midnight",
+  );
+});
+
+test("manual-theme resolver: explicit per-mode theme wins when not following app theme", () => {
+  assert.equal(
+    resolveManualTerminalThemeId({
       resolvedTheme: "dark",
       terminalThemeDarkId: "dracula",
       terminalThemeLightId: TERMINAL_THEME_AUTO,
@@ -266,11 +273,8 @@ test("follow-theme resolver: explicit dark override wins over auto-matching", ()
     }),
     "dracula",
   );
-});
-
-test("follow-theme resolver: explicit light override wins over auto-matching", () => {
   assert.equal(
-    resolveFollowedTerminalThemeId({
+    resolveManualTerminalThemeId({
       resolvedTheme: "light",
       terminalThemeDarkId: TERMINAL_THEME_AUTO,
       terminalThemeLightId: "solarized-light",
@@ -284,27 +288,37 @@ test("follow-theme resolver: explicit light override wins over auto-matching", (
 
 test("follow-app theme selection updates the matching mode and app theme", () => {
   assert.deepEqual(
-    getFollowAppTerminalThemeSelectionUpdate({ id: "snow", type: "light" }),
+    getFollowAppTerminalThemeSelectionUpdate("ui-snow"),
     {
       appTheme: "light",
-      terminalThemeLightId: "snow",
+      uiThemeId: "snow",
     },
   );
   assert.deepEqual(
-    getFollowAppTerminalThemeSelectionUpdate({ id: "midnight", type: "dark" }),
+    getFollowAppTerminalThemeSelectionUpdate("system-github-dark"),
     {
       appTheme: "dark",
-      terminalThemeDarkId: "midnight",
+      uiThemeId: "github",
     },
   );
+});
+
+test("follow-app theme list only includes terminal themes backed by UI themes", () => {
+  const lightIds = getFollowAppTerminalThemeIds("light");
+  const darkIds = getFollowAppTerminalThemeIds("dark");
+
+  assert.ok(lightIds.includes("ui-snow"));
+  assert.ok(lightIds.includes("system-github-light"));
+  assert.ok(darkIds.includes("ui-midnight"));
+  assert.ok(darkIds.includes("system-github-dark"));
+  assert.equal(isFollowAppTerminalThemeId("dracula"), false);
+  assert.equal(isFollowAppTerminalThemeId("custom-theme"), false);
 });
 
 test("follow-theme resolver: auto with no UI match falls back to fallbackThemeId", () => {
   assert.equal(
     resolveFollowedTerminalThemeId({
       resolvedTheme: "dark",
-      terminalThemeDarkId: TERMINAL_THEME_AUTO,
-      terminalThemeLightId: TERMINAL_THEME_AUTO,
       lightUiThemeId: "no-such-ui-theme",
       darkUiThemeId: "no-such-ui-theme",
       fallbackThemeId: "netcatty-dark",

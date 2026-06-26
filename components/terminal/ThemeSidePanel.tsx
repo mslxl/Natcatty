@@ -6,7 +6,7 @@
  * Changes apply in real-time.
  */
 
-import React, { memo, useCallback, useMemo, useRef, useState } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Check, Download, Minus, Palette, Pencil, Plus, Sparkles, Type } from 'lucide-react';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { useAvailableFonts } from '../../application/state/fontStore';
@@ -19,6 +19,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { cn } from '../../lib/utils';
 import { TerminalTheme } from '../../domain/models';
 import { ScrollArea } from '../ui/scroll-area';
+import { isFollowAppTerminalThemeId } from '../../domain/terminalAppearance';
 
 type TabType = 'theme' | 'font' | 'custom';
 
@@ -154,6 +155,7 @@ interface ThemeSidePanelProps {
 }
 
 const ThemeSidePanelInner: React.FC<ThemeSidePanelProps> = ({
+  followAppTerminalTheme = false,
   currentThemeId,
   globalThemeId,
   currentFontFamilyId,
@@ -184,6 +186,13 @@ const ThemeSidePanelInner: React.FC<ThemeSidePanelProps> = ({
   const [editingTheme, setEditingTheme] = useState<TerminalTheme | null>(null);
   const [isNewTheme, setIsNewTheme] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (followAppTerminalTheme && activeTab === 'custom') {
+      setActiveTab('theme');
+      setEditingTheme(null);
+    }
+  }, [activeTab, followAppTerminalTheme]);
 
   const allThemes = useMemo(
     () => [...TERMINAL_THEMES, ...customThemes],
@@ -274,7 +283,9 @@ const ThemeSidePanelInner: React.FC<ThemeSidePanelProps> = ({
 
   if (!isVisible) return null;
 
-  const builtinThemes = USER_VISIBLE_TERMINAL_THEMES;
+  const builtinThemes = followAppTerminalTheme
+    ? TERMINAL_THEMES.filter((theme) => isFollowAppTerminalThemeId(theme.id))
+    : USER_VISIBLE_TERMINAL_THEMES;
 
   const footerLabel = `${allThemes.find(t => t.id === currentThemeId)?.name ?? currentThemeId} • ${availableFonts.find(f => f.id === currentFontFamilyId)?.name ?? currentFontFamilyId} • ${currentFontSize}px • ${currentFontWeight}`;
   const panelVars = {
@@ -325,17 +336,19 @@ const ThemeSidePanelInner: React.FC<ThemeSidePanelProps> = ({
             <Type size={12} />
             {t('terminal.themeModal.tab.font')}
           </button>
-          <button
-            onClick={() => setActiveTab('custom')}
-            className="flex-1 flex items-center justify-center gap-1 px-1.5 py-1.5 rounded-md text-[11px] font-medium transition-all"
-            style={{
-              backgroundColor: activeTab === 'custom' ? 'var(--terminal-panel-active)' : 'transparent',
-              color: activeTab === 'custom' ? 'var(--terminal-panel-fg)' : 'var(--terminal-panel-muted)',
-            }}
-          >
-            <Sparkles size={12} />
-            {t('terminal.themeModal.tab.custom')}
-          </button>
+          {!followAppTerminalTheme && (
+            <button
+              onClick={() => setActiveTab('custom')}
+              className="flex-1 flex items-center justify-center gap-1 px-1.5 py-1.5 rounded-md text-[11px] font-medium transition-all"
+              style={{
+                backgroundColor: activeTab === 'custom' ? 'var(--terminal-panel-active)' : 'transparent',
+                color: activeTab === 'custom' ? 'var(--terminal-panel-fg)' : 'var(--terminal-panel-muted)',
+              }}
+            >
+              <Sparkles size={12} />
+              {t('terminal.themeModal.tab.custom')}
+            </button>
+          )}
         </div>
 
         {/* List Content */}
@@ -343,7 +356,7 @@ const ThemeSidePanelInner: React.FC<ThemeSidePanelProps> = ({
           <div className="py-1">
             {activeTab === 'theme' && (
               <div>
-                {hiddenSelectedTheme && (
+                {!followAppTerminalTheme && hiddenSelectedTheme && (
                   <ThemeItem
                     theme={hiddenSelectedTheme}
                     isSelected={currentThemeId === hiddenSelectedTheme.id && !editingTheme}
@@ -358,7 +371,7 @@ const ThemeSidePanelInner: React.FC<ThemeSidePanelProps> = ({
                     onSelect={handleThemeSelect}
                   />
                 ))}
-                {customThemes.length > 0 && (
+                {!followAppTerminalTheme && customThemes.length > 0 && (
                   <>
                     <div className="text-[9px] uppercase tracking-wider mt-2 mb-1 px-1 font-semibold" style={{ color: 'var(--terminal-panel-muted)' }}>
                       {t('terminal.customTheme.section')}

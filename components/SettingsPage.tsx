@@ -96,6 +96,7 @@ type TerminalTabSettingsProps = Pick<
     SettingsState,
     | 'terminalThemeId'
     | 'setTerminalThemeId'
+    | 'resolvedTheme'
     | 'followAppTerminalTheme'
     | 'setFollowAppTerminalTheme'
     | 'terminalThemeDarkId'
@@ -117,6 +118,7 @@ type TerminalTabSettingsProps = Pick<
 const SettingsTerminalTabContainer = React.memo<TerminalTabSettingsProps>(function SettingsTerminalTabContainer({
     terminalThemeId,
     setTerminalThemeId,
+    resolvedTheme,
     followAppTerminalTheme,
     setFollowAppTerminalTheme,
     terminalThemeDarkId,
@@ -140,6 +142,7 @@ const SettingsTerminalTabContainer = React.memo<TerminalTabSettingsProps>(functi
         <LazySettingsTerminalTab
             terminalThemeId={terminalThemeId}
             setTerminalThemeId={setTerminalThemeId}
+            resolvedTheme={resolvedTheme}
             followAppTerminalTheme={followAppTerminalTheme}
             setFollowAppTerminalTheme={setFollowAppTerminalTheme}
             terminalThemeDarkId={terminalThemeDarkId}
@@ -446,6 +449,7 @@ const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }
                             <SettingsTerminalTabContainer
                                 terminalThemeId={settings.terminalThemeId}
                                 setTerminalThemeId={settings.setTerminalThemeId}
+                                resolvedTheme={settings.resolvedTheme}
                                 followAppTerminalTheme={settings.followAppTerminalTheme}
                                 setFollowAppTerminalTheme={settings.setFollowAppTerminalTheme}
                                 terminalThemeDarkId={settings.terminalThemeDarkId}

@@ -1,6 +1,10 @@
 import type { TerminalTheme } from '../../domain/models';
 import { TERMINAL_THEMES } from '../../infrastructure/config/terminalThemes';
-import { applyCustomAccentToTerminalTheme, resolveFollowedTerminalThemeId } from '../../domain/terminalAppearance';
+import {
+  applyCustomAccentToTerminalTheme,
+  resolveFollowedTerminalThemeId,
+  resolveManualTerminalThemeId,
+} from '../../domain/terminalAppearance';
 
 interface ResolveCurrentTerminalThemeParams {
   terminalThemeId: string;
@@ -30,8 +34,6 @@ export function resolveCurrentTerminalTheme({
   if (followAppTerminalTheme) {
     const followedId = resolveFollowedTerminalThemeId({
       resolvedTheme,
-      terminalThemeDarkId,
-      terminalThemeLightId,
       lightUiThemeId,
       darkUiThemeId,
       fallbackThemeId: terminalThemeId,
@@ -42,7 +44,17 @@ export function resolveCurrentTerminalTheme({
       return applyCustomAccentToTerminalTheme(followed, accentMode, customAccent);
     }
   }
-  const baseTheme = TERMINAL_THEMES.find(t => t.id === terminalThemeId)
+  const manualThemeId = resolveManualTerminalThemeId({
+    resolvedTheme,
+    terminalThemeDarkId,
+    terminalThemeLightId,
+    lightUiThemeId,
+    darkUiThemeId,
+    fallbackThemeId: terminalThemeId,
+  });
+  const baseTheme = TERMINAL_THEMES.find(t => t.id === manualThemeId)
+    || customThemes.find(t => t.id === manualThemeId)
+    || TERMINAL_THEMES.find(t => t.id === terminalThemeId)
     || customThemes.find(t => t.id === terminalThemeId)
     || TERMINAL_THEMES[0];
   return applyCustomAccentToTerminalTheme(baseTheme, accentMode, customAccent);
