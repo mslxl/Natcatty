@@ -826,6 +826,20 @@ async function sendWhenRendererReady(win, channel, payload, options = {}) {
   return { success: true };
 }
 
+function resolveLiveAppIcon(fallback = null) {
+  try {
+    const appIconManager = require("./appIconManager.cjs");
+    const appPath = electronApp?.getAppPath?.();
+    if (appPath) {
+      const iconPath = appIconManager.getAppIconPath(appPath);
+      if (iconPath) return iconPath;
+    }
+  } catch {
+    // ignore
+  }
+  return fallback;
+}
+
 /**
  * Create the main application window
  */
@@ -879,6 +893,7 @@ const mainWindowApi = createMainWindowApi({
   unregisterAppContentWindow,
   getMainWindowCount,
   applyWindowOpacityToWindow,
+  resolveLiveAppIcon,
   closeSettingsWindow: (...args) => closeSettingsWindow(...args),
   hideSettingsWindow: (...args) => hideSettingsWindow(...args),
 });
@@ -921,6 +936,7 @@ const settingsWindowApi = createSettingsWindowApi({
   resolveFrontendBackgroundColor,
   createAppWindowOpenHandler,
   createExternalOnlyWindowOpenHandler,
+  resolveLiveAppIcon,
   getDevRendererBaseUrl,
   applyWindowOpacityToWindow,
 });
@@ -1059,6 +1075,18 @@ function registerWindowHandlers(ipcMain, nativeTheme) {
   ipcMain.handle("netcatty:setWindowOpacity", (_event, opacity) => {
     applyWindowOpacity(opacity);
     return true;
+  });
+
+  ipcMain.handle("netcatty:setAppIconVariant", (_event, variant) => {
+    const { app, BrowserWindow, nativeImage } = require("electron");
+    const appIconManager = require("./appIconManager.cjs");
+    return appIconManager.applyAppIconVariant(variant, {
+      app,
+      BrowserWindow,
+      nativeImage,
+      appPath: app.getAppPath(),
+      isMac: process.platform === "darwin",
+    });
   });
 
   ipcMain.handle("netcatty:setLanguage", (_event, language) => {
