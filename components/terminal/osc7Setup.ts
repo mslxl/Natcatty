@@ -53,8 +53,11 @@ const quoteForSingleQuotedShellString = (value: string): string =>
 const URL_PATH_AWK_SCRIPT_QUOTED = quoteForSingleQuotedShellString(URL_PATH_AWK_SCRIPT);
 
 const BASH_DELETE_CURRENT_HISTORY = String.raw`test -n "$BASH_VERSION" && history -d $(history 1 | sed "s/^ *\([0-9][0-9]*\).*/\1/") 2>/dev/null || true`;
-const ZSH_SUPPRESS_NEXT_HISTORY = String.raw`test -n "$ZSH_VERSION" && eval 'zshaddhistory(){ return 1; }' || true`;
-const ZSH_RESTORE_HISTORY_HOOK = String.raw`test -n "$ZSH_VERSION" && eval 'unfunction zshaddhistory 2>/dev/null || true' || true`;
+const ZSH_SUPPRESS_SETUP_HISTORY = `test -n "$ZSH_VERSION" && eval '${[
+  "__netcatty_osc7_zsh_history_suppressions=2",
+  "if functions zshaddhistory >/dev/null 2>&1; then functions -c zshaddhistory __netcatty_osc7_original_zshaddhistory; __netcatty_osc7_had_zshaddhistory=1; else __netcatty_osc7_had_zshaddhistory=0; fi",
+  `zshaddhistory(){ local __netcatty_osc7_remaining=${DOLLAR}{__netcatty_osc7_zsh_history_suppressions:-0}; if (( __netcatty_osc7_remaining > 1 )); then __netcatty_osc7_zsh_history_suppressions=${DOLLAR}(( __netcatty_osc7_remaining - 1 )); return 1; fi; if (( ${DOLLAR}{__netcatty_osc7_had_zshaddhistory:-0} )); then functions -c __netcatty_osc7_original_zshaddhistory zshaddhistory 2>/dev/null || true; unfunction __netcatty_osc7_original_zshaddhistory 2>/dev/null || true; else unfunction zshaddhistory 2>/dev/null || true; fi; unset __netcatty_osc7_zsh_history_suppressions __netcatty_osc7_had_zshaddhistory; return 1; }`,
+].join("; ")}' || true`;
 
 const POSIX_SETUP_SCRIPT = String.raw`set -eu
 marker="# >>> Netcatty OSC 7 cwd tracking >>>"
@@ -152,7 +155,6 @@ printf '\033]7;file://%s%s\a' "$host" "$(__netcatty_osc7_url_path "$PWD")"`;
 
 export const buildOsc7SetupCommand = (): string =>
   [
-    `set +u 2>/dev/null || true; ${ZSH_SUPPRESS_NEXT_HISTORY}; ${BASH_DELETE_CURRENT_HISTORY}`,
+    `set +u 2>/dev/null || true; ${ZSH_SUPPRESS_SETUP_HISTORY}; ${BASH_DELETE_CURRENT_HISTORY}`,
     `set +u 2>/dev/null || true; printf "%s\\n" ${quoteForSingleQuotedShellString(POSIX_SETUP_SCRIPT)} | env NETCATTY_ZDOTDIR="$ZDOTDIR" NETCATTY_XDG_CONFIG_HOME="$XDG_CONFIG_HOME" sh; ${BASH_DELETE_CURRENT_HISTORY}`,
-    `${ZSH_RESTORE_HISTORY_HOOK}; ${BASH_DELETE_CURRENT_HISTORY}`,
   ].join("\n") + "\n";

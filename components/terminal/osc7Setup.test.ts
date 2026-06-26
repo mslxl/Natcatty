@@ -234,6 +234,42 @@ test("buildOsc7SetupCommand does not leave setup payload in zsh history", (t) =>
   });
 });
 
+test("buildOsc7SetupCommand preserves an existing zsh history hook", (t) => {
+  const zshPath = existingShells(["/bin/zsh", "/usr/bin/zsh"])[0];
+  if (!zshPath) {
+    t.skip("zsh is not installed on this runner");
+    return;
+  }
+
+  withTempHome("netcatty-osc7-history-hook-zsh-", (home) => {
+    const functionDumpPath = join(home, "zshaddhistory-dump");
+    const hookMarkerPath = join(home, "zshaddhistory-marker");
+    const result = spawnSync(zshPath, ["-f", "-i"], {
+      env: {
+        ...process.env,
+        HOME: home,
+        HISTFILE: join(home, ".zsh_history"),
+        SHELL: zshPath,
+        ZDOTDIR: home,
+      },
+      input: [
+        `zshaddhistory(){ print -r -- preserved >> ${quoteShellArg(hookMarkerPath)}; return 0; }`,
+        buildOsc7SetupCommand(),
+        `functions zshaddhistory > ${quoteShellArg(functionDumpPath)}`,
+        "zshaddhistory",
+        "exit",
+      ].join("\n"),
+      encoding: "utf8",
+    });
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const restoredFunction = readFileSync(functionDumpPath, "utf8");
+    assert.match(restoredFunction, /preserved/);
+    assert.doesNotMatch(restoredFunction, /__netcatty_osc7|return 1/);
+    assert.match(readFileSync(hookMarkerPath, "utf8"), /preserved/);
+  });
+});
+
 test("buildOsc7SetupCommand runs under strict unset-variable mode", () => {
   for (const shellPath of existingShells(["/bin/bash", "/bin/zsh"])) {
     withTempHome(`netcatty-osc7-strict-${basename(shellPath)}-`, (home) => {
