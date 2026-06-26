@@ -267,8 +267,8 @@ export function buildGrantFromApproval(
   capabilityId: string,
   args: Record<string, unknown>,
   chatSessionId?: string,
-): PermissionGrantRule {
-  return buildGrantsFromApproval(capabilityId, args, chatSessionId)[0];
+): PermissionGrantRule | null {
+  return buildGrantsFromApproval(capabilityId, args, chatSessionId)[0] ?? null;
 }
 
 let activeRules: PermissionGrantRule[] = [];
