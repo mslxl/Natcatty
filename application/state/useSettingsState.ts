@@ -43,6 +43,7 @@ import {
   STORAGE_KEY_CLOSE_TO_TRAY,
   STORAGE_KEY_GLOBAL_HOTKEY_ENABLED,
   STORAGE_KEY_WINDOW_OPACITY,
+  STORAGE_KEY_APP_ICON_VARIANT,
   STORAGE_KEY_AUTO_UPDATE_ENABLED,
   STORAGE_KEY_WORKSPACE_FOCUS_STYLE,
   STORAGE_KEY_SHOW_RECENT_HOSTS,
@@ -118,6 +119,8 @@ import { useSettingsStorageSync } from './settingsStorageSync';
 import { useSettingsIpcSync } from './settingsIpcSync';
 import { resolveCurrentTerminalTheme } from './settingsTerminalTheme';
 import { useSystemSettingsEffects } from './systemSettingsEffects';
+import { resolveAppIconVariant, type AppIconVariant } from '../../domain/appIconVariant';
+import { DEFAULT_APP_ICON_VARIANT } from '../../infrastructure/config/appIconVariants';
 import { applyCustomCssToDocument } from '../../lib/customCss';
 
 export const useSettingsState = (options: { enableSettingsSync?: boolean; enableSystemEffects?: boolean } = {}) => {
@@ -342,6 +345,18 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
       return clampWindowOpacity(candidate);
     });
   }, []);
+  const [appIconVariant, setAppIconVariantState] = useState<AppIconVariant>(() => {
+    const stored = readStoredString(STORAGE_KEY_APP_ICON_VARIANT);
+    return resolveAppIconVariant(stored ?? DEFAULT_APP_ICON_VARIANT);
+  });
+  const setAppIconVariant = useCallback((nextValue: SetStateAction<AppIconVariant>) => {
+    setAppIconVariantState((prev) => {
+      const candidate = typeof nextValue === 'function'
+        ? (nextValue as (prevState: AppIconVariant) => AppIconVariant)(prev)
+        : nextValue;
+      return resolveAppIconVariant(candidate);
+    });
+  }, []);
   const incomingTerminalSettingsSignatureRef = useRef<string | null>(null);
   const localTerminalSettingsVersionRef = useRef(0);
   const broadcastedLocalTerminalSettingsVersionRef = useRef(0);
@@ -511,6 +526,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
   const syncCustomCssFromStorage = useCallback(() => {
     const storedCss = localStorageAdapter.readString(STORAGE_KEY_CUSTOM_CSS) || '';
     setCustomCSS((prev) => (prev === storedCss ? prev : storedCss));
+    applyCustomCssToDocument(storedCss);
   }, []);
 
   const rehydrateAllFromStorage = useCallback(() => {
@@ -686,6 +702,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     setIsHotkeyRecordingState,
     setGlobalHotkeyEnabled,
     setWindowOpacity,
+    setAppIconVariant,
     setAutoUpdateEnabled,
     setSftpAutoOpenSidebar,
     setSftpFollowTerminalCwd,
@@ -725,7 +742,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     sftpUseCompressedUpload, sftpAutoOpenSidebar, sftpFollowTerminalCwd, sftpDefaultViewMode,
     showRecentHosts, showOnlyUngroupedHostsInRoot, showSftpTab, showHostTreeSidebar, shellOnlyTabNumberShortcuts, disableTerminalFontZoom, restorePreviousSession, restoreTerminalCwd,
     editorWordWrap, sessionLogsEnabled, sessionLogsDir, sessionLogsFormat, sessionLogsTimestampsEnabled, sshDebugLogsEnabled, sshDeepLinkEnabled,
-    globalHotkeyEnabled, autoUpdateEnabled, windowOpacity,
+    globalHotkeyEnabled, autoUpdateEnabled, windowOpacity, appIconVariant,
     setTheme, setLightUiThemeId, setDarkUiThemeId, setAccentMode, setCustomAccent,
     setCustomCSS, setUiFontFamilyId, setHotkeyScheme, setUiLanguage,
     setTerminalThemeId, setTerminalThemeDarkId, setTerminalThemeLightId,
@@ -734,7 +751,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     setSftpUseCompressedUpload, setSftpAutoOpenSidebar, setSftpFollowTerminalCwd, setSftpDefaultViewMode,
     setShowRecentHostsState, setShowOnlyUngroupedHostsInRootState, setShowSftpTabState, setShowHostTreeSidebarState, setShellOnlyTabNumberShortcutsState, setDisableTerminalFontZoomState, setRestorePreviousSessionState, setRestoreTerminalCwdState,
     setEditorWordWrapState, setSessionLogsEnabled, setSessionLogsDir, setSessionLogsFormat, setSessionLogsTimestampsEnabled, setSshDebugLogsEnabled, setSshDeepLinkEnabledState: applyIncomingSshDeepLinkEnabled,
-    setGlobalHotkeyEnabled, setWindowOpacity, setAutoUpdateEnabled, setWorkspaceFocusStyleState,
+    setGlobalHotkeyEnabled, setWindowOpacity, setAppIconVariant, setAutoUpdateEnabled, setWorkspaceFocusStyleState,
     setSftpTransferConcurrencyState, applyIncomingCustomKeyBindings, mergeIncomingTerminalSettings,
   });
 
@@ -1032,10 +1049,12 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     globalHotkeyEnabled,
     closeToTray,
     windowOpacity,
+    appIconVariant,
     autoUpdateEnabled,
     persistMountedRef,
     setHotkeyRegistrationError,
     setAutoUpdateEnabled,
+    setAppIconVariant,
     notifySettingsChanged,
   });
 
@@ -1218,6 +1237,8 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     setGlobalHotkeyEnabled,
     windowOpacity,
     setWindowOpacity,
+    appIconVariant,
+    setAppIconVariant,
     rehydrateAllFromStorage,
     applyAppTheme,
     workspaceFocusStyle,

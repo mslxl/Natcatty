@@ -1059,6 +1059,18 @@ function registerWindowHandlers(ipcMain, nativeTheme) {
     return true;
   });
 
+  ipcMain.handle("netcatty:setAppIconVariant", (_event, variant) => {
+    const { app, BrowserWindow, nativeImage } = require("electron");
+    const appIconManager = require("./appIconManager.cjs");
+    return appIconManager.applyAppIconVariant(variant, {
+      app,
+      BrowserWindow,
+      nativeImage,
+      appPath: app.getAppPath(),
+      isMac: process.platform === "darwin",
+    });
+  });
+
   ipcMain.handle("netcatty:setLanguage", (_event, language) => {
     currentLanguage = typeof language === "string" && language.length ? language : "en";
     rebuildApplicationMenu();

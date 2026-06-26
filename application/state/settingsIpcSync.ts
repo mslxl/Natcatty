@@ -40,7 +40,9 @@ import {
   STORAGE_KEY_WORKSPACE_FOCUS_STYLE,
   STORAGE_KEY_SHOW_HOST_TREE_SIDEBAR,
   STORAGE_KEY_WINDOW_OPACITY,
+  STORAGE_KEY_APP_ICON_VARIANT,
 } from '../../infrastructure/config/storageKeys';
+import { resolveAppIconVariant, type AppIconVariant } from '../../domain/appIconVariant';
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
 import {
   clampWindowOpacity,
@@ -73,6 +75,7 @@ interface UseSettingsIpcSyncParams {
   setIsHotkeyRecordingState: Dispatch<SetStateAction<boolean>>;
   setGlobalHotkeyEnabled: Dispatch<SetStateAction<boolean>>;
   setWindowOpacity: Dispatch<SetStateAction<number>>;
+  setAppIconVariant: Dispatch<SetStateAction<AppIconVariant>>;
   setAutoUpdateEnabled: Dispatch<SetStateAction<boolean>>;
   setSftpAutoOpenSidebar: Dispatch<SetStateAction<boolean>>;
   setSftpFollowTerminalCwd: Dispatch<SetStateAction<boolean>>;
@@ -110,6 +113,7 @@ export function useSettingsIpcSync({
   setIsHotkeyRecordingState,
   setGlobalHotkeyEnabled,
   setWindowOpacity,
+  setAppIconVariant,
   setAutoUpdateEnabled,
   setSftpAutoOpenSidebar,
   setSftpFollowTerminalCwd,
@@ -226,6 +230,10 @@ export function useSettingsIpcSync({
         const nextOpacity = clampWindowOpacity(value);
         setWindowOpacity((prev) => (prev === nextOpacity ? prev : nextOpacity));
       }
+      if (key === STORAGE_KEY_APP_ICON_VARIANT) {
+        const nextVariant = resolveAppIconVariant(value);
+        setAppIconVariant((prev) => (prev === nextVariant ? prev : nextVariant));
+      }
       if (key === STORAGE_KEY_AUTO_UPDATE_ENABLED && typeof value === 'boolean') {
         setAutoUpdateEnabled((prev) => (prev === value ? prev : value));
       }
@@ -275,6 +283,7 @@ export function useSettingsIpcSync({
     setFollowAppTerminalThemeState,
     setGlobalHotkeyEnabled,
     setWindowOpacity,
+    setAppIconVariant,
     setHotkeyScheme,
     setIsHotkeyRecordingState,
     setSessionLogsDir,

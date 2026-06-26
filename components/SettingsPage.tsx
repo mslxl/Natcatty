@@ -69,10 +69,15 @@ const SettingsTabLoading = ({ value }: { value: string }) => (
     </SettingsTabContent>
 );
 
-const SettingsTabLoadError = ({ value }: { value: string }) => (
+const SettingsTabLoadError = ({ value, error }: { value: string; error?: Error }) => (
     <SettingsTabContent value={value}>
         <div className="flex min-h-[320px] flex-col items-start justify-center gap-3 text-sm text-muted-foreground">
             <div className="font-medium text-foreground">This settings tab could not load.</div>
+            {error?.message && (
+                <div className="max-w-md text-xs font-mono text-destructive/90 break-words">
+                    {error.message}
+                </div>
+            )}
             <button
                 type="button"
                 className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
@@ -85,7 +90,11 @@ const SettingsTabLoadError = ({ value }: { value: string }) => (
 );
 
 const SettingsLazyTab = ({ children, value }: { children: React.ReactNode; value: string }) => (
-    <LazyLoadBoundary name="Settings tab" resetKey={value} fallback={<SettingsTabLoadError value={value} />}>
+    <LazyLoadBoundary
+        name="Settings tab"
+        resetKey={value}
+        fallback={(error) => <SettingsTabLoadError value={value} error={error} />}
+    >
         <Suspense fallback={<SettingsTabLoading value={value} />}>
             {children}
         </Suspense>
@@ -436,6 +445,8 @@ const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }
                                 setShowHostTreeSidebar={settings.setShowHostTreeSidebar}
                                 windowOpacity={settings.windowOpacity}
                                 setWindowOpacity={settings.setWindowOpacity}
+                                appIconVariant={settings.appIconVariant}
+                                setAppIconVariant={settings.setAppIconVariant}
                             />
                         </SettingsLazyTab>
                     )}
