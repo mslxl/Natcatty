@@ -99,6 +99,9 @@ function createPreloadApi(ctx) {
   signalSystemProcess: async (options) => {
     return ipcRenderer.invoke("netcatty:system:signalProcess", options);
   },
+  setupOsc7Tracking: async (sessionId, command) => {
+    return ipcRenderer.invoke("netcatty:system:setupOsc7Tracking", { sessionId, command });
+  },
   listTmuxSessions: async (sessionId) => {
     return ipcRenderer.invoke("netcatty:system:listTmuxSessions", { sessionId });
   },
