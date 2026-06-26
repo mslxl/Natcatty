@@ -17,6 +17,9 @@ export type WriteCoalescer = {
   push(chunk: string): void;
   /** Flush pending bytes synchronously before ordered writes (exit notices). */
   flushSync(): void;
+  /** Drop pending bytes without writing (flood recovery / teardown). */
+  abort(onDropped?: (bytes: number) => void): void;
+  pendingBytes(): number;
   dispose(): void;
 };
 
@@ -45,11 +48,15 @@ export const createWriteCoalescer = (
   let disposed = false;
   const scheduleFrame = options.scheduleFrame ?? scheduleWriteFrame;
 
-  const flushSync = (): void => {
+  const cancelScheduledFrame = (): void => {
     if (cancelPendingFrame !== null) {
       cancelPendingFrame();
       cancelPendingFrame = null;
     }
+  };
+
+  const flushSync = (): void => {
+    cancelScheduledFrame();
     if (pendingBytes === 0) {
       return;
     }
@@ -57,6 +64,17 @@ export const createWriteCoalescer = (
     pending = [];
     pendingBytes = 0;
     write(batch);
+  };
+
+  const abort = (onDropped?: (bytes: number) => void): void => {
+    cancelScheduledFrame();
+    if (pendingBytes === 0) {
+      return;
+    }
+    const dropped = pendingBytes;
+    pending = [];
+    pendingBytes = 0;
+    onDropped?.(dropped);
   };
 
   const push = (chunk: string): void => {
@@ -85,6 +103,8 @@ export const createWriteCoalescer = (
   return {
     push,
     flushSync,
+    abort,
+    pendingBytes: () => pendingBytes,
     dispose() {
       if (disposed) {
         return;

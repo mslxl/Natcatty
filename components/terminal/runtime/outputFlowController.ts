@@ -60,6 +60,7 @@ export function createOutputFlowController(
       }
     },
     reset(): void {
+      if (paused) onResume();
       pending = 0;
       paused = false;
     },

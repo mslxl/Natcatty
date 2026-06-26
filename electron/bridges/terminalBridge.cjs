@@ -17,7 +17,15 @@ ensureNodePtySpawnHelperExecutable();
 
 const pty = require("node-pty");
 const { SerialPort } = require("serialport");
-const { emitTerminalSessionData } = require("./emitTerminalSessionData.cjs");
+const {
+  configureTerminalSessionDataEmitter,
+  emitTerminalSessionData,
+} = require("./emitTerminalSessionData.cjs");
+const {
+  clearSessionFlowState,
+  setRendererFlowPaused,
+  trackAck,
+} = require("./terminalFlowAck.cjs");
 const iconv = require("iconv-lite");
 const ptyProcessTree = require("./ptyProcessTree.cjs");
 
@@ -74,6 +82,9 @@ const getLoginShellArgs = (shellPath) => {
 function init(deps) {
   sessions = deps.sessions;
   electronModule = deps.electronModule;
+  configureTerminalSessionDataEmitter({
+    getSession: (sessionId) => sessions?.get(sessionId),
+  });
   cleanupStaleEtTempDirs();
 }
 
@@ -956,19 +967,13 @@ async function receiveSerialYmodem(_event, payload) {
 function setSessionFlowPaused(event, payload) {
   const session = sessions.get(payload.sessionId);
   if (!session) return;
-  const target = session.stream || session.proc || session.socket || session.serialPort;
-  if (!target) return;
-  try {
-    if (payload.paused) {
-      target.pause?.();
-    } else {
-      target.resume?.();
-    }
-  } catch (err) {
-    if (err?.code !== 'EPIPE' && err?.code !== 'ERR_STREAM_DESTROYED') {
-      console.warn("Flow control toggle failed", err);
-    }
-  }
+  setRendererFlowPaused(session, payload.paused);
+}
+
+function ackSessionFlow(event, payload) {
+  const session = sessions.get(payload.sessionId);
+  if (!session) return;
+  trackAck(session, Number(payload.bytes));
 }
 
 /**
@@ -1016,8 +1021,9 @@ function closeSession(event, payload) {
   const session = sessions.get(payload.sessionId);
   if (!session) return;
   session.closed = true;
-  
+
   try {
+    clearSessionFlowState(session);
     cancelActiveYmodemSession(session);
     clearPendingAutomatedWrites(session);
     session.zmodemSentry?.cancel();
@@ -1122,6 +1128,7 @@ function registerHandlers(ipcMain) {
   ipcMain.on("netcatty:write", writeToSession);
   ipcMain.on("netcatty:resize", resizeSession);
   ipcMain.on("netcatty:flow", setSessionFlowPaused);
+  ipcMain.on("netcatty:flow:ack", ackSessionFlow);
   ipcMain.on("netcatty:close", closeSession);
 }
 

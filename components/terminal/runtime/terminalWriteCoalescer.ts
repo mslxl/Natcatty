@@ -25,3 +25,15 @@ export const resetTerminalWriteCoalescer = (term: XTerm): void => {
   terminalWriteCoalescers.get(term)?.dispose();
   terminalWriteCoalescers.delete(term);
 };
+
+export const getTerminalWriteCoalescerPendingBytes = (term: XTerm): number =>
+  terminalWriteCoalescers.get(term)?.pendingBytes() ?? 0;
+
+export const abortTerminalWriteCoalescer = (
+  term: XTerm,
+  onDropped?: (bytes: number) => void,
+): void => {
+  const coalescer = terminalWriteCoalescers.get(term);
+  if (!coalescer) return;
+  coalescer.abort(onDropped);
+};

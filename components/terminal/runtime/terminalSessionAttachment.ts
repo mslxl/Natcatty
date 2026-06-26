@@ -28,6 +28,14 @@ import {
   flushTerminalWriteCoalescer,
   resetTerminalWriteCoalescer,
 } from "./terminalWriteCoalescer";
+import { FLOW_HIGH_WATER_MARK, FLOW_LOW_WATER_MARK } from "./terminalFlowConstants";
+import {
+  enqueueTerminalWrite,
+  setTerminalWriteQueueDropHandler,
+} from "./terminalWriteQueue";
+import { teardownTerminalOutputPipeline } from "./terminalOutputPipeline";
+
+export { FLOW_HIGH_WATER_MARK, FLOW_LOW_WATER_MARK };
 
 export const buildTermEnv = (host: Host, terminalSettings?: TerminalSettings) => {
   const env: Record<string, string> = {
@@ -62,52 +70,10 @@ const handleTerminalOutputAutoScroll = (
   term.scrollToBottom();
 };
 
-type TerminalWriteQueue = {
-  writing: boolean;
-  pending: Array<() => void>;
-};
-
-const terminalWriteQueues = new WeakMap<XTerm, TerminalWriteQueue>();
-
-const scheduleNextTerminalWrite = (term: XTerm, queue: TerminalWriteQueue) => {
-  const next = queue.pending.shift();
-  if (!next) {
-    queue.writing = false;
-    terminalWriteQueues.delete(term);
-    return;
-  }
-
-  queue.writing = true;
-  next();
-};
-
-const enqueueTerminalWrite = (
-  term: XTerm,
-  write: (done: () => void) => void,
-) => {
-  let queue = terminalWriteQueues.get(term);
-  if (!queue) {
-    queue = { writing: false, pending: [] };
-    terminalWriteQueues.set(term, queue);
-  }
-
-  queue.pending.push(() => {
-    write(() => scheduleNextTerminalWrite(term, queue));
-  });
-
-  if (!queue.writing) {
-    scheduleNextTerminalWrite(term, queue);
-  }
-};
-
-// Output back-pressure. Without this the renderer can't slow a flooding source,
-// so a busy stream grows the write queue and xterm's buffer unbounded. The
-// controller tracks bytes received-but-not-yet-rendered and asks the main
-// process to pause/resume the session's source stream at these watermarks.
-const FLOW_HIGH_WATER_MARK = 256 * 1024; // pause the source above ~256KB backlog
-const FLOW_LOW_WATER_MARK = 64 * 1024; // resume once drained to ~64KB
-
 const terminalFlowControllers = new WeakMap<XTerm, OutputFlowController>();
+
+export const getFlowControllerForTerm = (term: XTerm): OutputFlowController | undefined =>
+  terminalFlowControllers.get(term);
 
 export const getFlowController = (
   ctx: TerminalSessionStartersContext,
@@ -128,6 +94,14 @@ export const getFlowController = (
       },
     });
     terminalFlowControllers.set(term, controller);
+    setTerminalWriteQueueDropHandler(term, (bytes) => {
+      if (bytes <= 0) return;
+      controller?.written(bytes);
+      const sessionId = ctx.sessionRef.current;
+      if (sessionId) {
+        ctx.terminalBackend.ackSessionFlow?.(sessionId, bytes);
+      }
+    });
   }
   return controller;
 };
@@ -139,8 +113,8 @@ export const writeTerminalLine = (
   term: XTerm,
   data: string,
 ) => {
-  enqueueTerminalWrite(term, (done) => {
-    const lineData = `${data}\r\n`;
+  const lineData = `${data}\r\n`;
+  enqueueTerminalWrite(term, lineData.length, (done) => {
     ctx.onTerminalLogData?.(lineData);
     term.write(lineData, done);
   });
@@ -151,6 +125,8 @@ export const writeSessionData = (
   term: XTerm,
   data: string,
 ) => {
+  const flow = getFlowController(ctx, term);
+  flow.received(data.length);
   enqueueCoalescedTerminalWrite(term, data, (batch) => {
     writeSessionDataImmediate(ctx, term, batch);
   });
@@ -162,8 +138,7 @@ const writeSessionDataImmediate = (
   data: string,
 ) => {
   const flow = getFlowController(ctx, term);
-  flow.received(data.length);
-  enqueueTerminalWrite(term, (done) => {
+  enqueueTerminalWrite(term, data.length, (done) => {
     const settings = ctx.terminalSettingsRef?.current ?? ctx.terminalSettings;
     const filteredData = filterTerminalSessionData(term, data);
     const displayData = appendEraseScrollbackAfterFullErases(filteredData, {
@@ -201,11 +176,23 @@ const writeSessionDataImmediate = (
         handleTerminalOutputAutoScroll(ctx, term);
       }
       done();
-      // Acknowledge the chunk so back-pressure can ease once xterm catches up.
       flow.written(filteredData.length);
+      const sessionId = ctx.sessionRef.current;
+      if (sessionId) {
+        ctx.terminalBackend.ackSessionFlow?.(sessionId, filteredData.length);
+      }
     };
 
     writeTerminalDataWithLineTimestamps(term, preparedDisplayData, afterWrite);
+  }, {
+    onDropped: (bytes) => {
+      if (bytes <= 0) return;
+      flow.written(bytes);
+      const sessionId = ctx.sessionRef.current;
+      if (sessionId) {
+        ctx.terminalBackend.ackSessionFlow?.(sessionId, bytes);
+      }
+    },
   });
 };
 
@@ -243,7 +230,17 @@ export const tryAttachSessionToTerminal = (
   return true;
 };
 
-export const detachSessionDataListeners = (ctx: Pick<TerminalSessionStartersContext, "disposeDataRef" | "disposeExitRef">) => {
+export const detachSessionDataListeners = (
+  ctx: TerminalSessionStartersContext,
+  term: XTerm,
+) => {
+  const sessionId = ctx.sessionRef.current;
+  const flow = terminalFlowControllers.get(term);
+  if (flow) {
+    teardownTerminalOutputPipeline(ctx, term, sessionId, flow);
+    terminalFlowControllers.delete(term);
+  }
+
   ctx.disposeDataRef.current?.();
   ctx.disposeDataRef.current = null;
   ctx.disposeExitRef.current?.();
@@ -258,7 +255,6 @@ export const attachSessionToTerminal = (
     onExitMessage?: (evt: { exitCode?: number; signal?: number; error?: string; reason?: string }) => string;
     onConnected?: () => void;
     onExit?: (evt: { exitCode?: number; signal?: number; error?: string; reason?: string }) => void;
-    // For serial: convert lone LF to CRLF to avoid "staircase effect"
     convertLfToCrlf?: boolean;
     sudoAutofillPassword?: string;
   },
@@ -269,10 +265,9 @@ export const attachSessionToTerminal = (
   }
 
   ctx.sessionRef.current = id;
-  // Clear any stale back-pressure accounting from a prior session on this term.
-  getFlowController(ctx, term).reset();
+  const flow = getFlowController(ctx, term);
+  teardownTerminalOutputPipeline(ctx, term, id, flow);
   flushTerminalWriteCoalescer(term);
-  resetTerminalWriteCoalescer(term);
   resetTerminalSyncBlockFilter(term);
   resetTerminalLineTimestamps(term);
   ctx.onSessionAttached?.(id);
@@ -289,10 +284,7 @@ export const attachSessionToTerminal = (
     id,
     (chunk) => {
       let data = chunk;
-      // Convert lone LF (\n) to CRLF (\r\n) for proper terminal display
-      // This prevents the "staircase effect" common in serial terminals
       if (opts?.convertLfToCrlf) {
-        // Replace \n that is not preceded by \r with \r\n
         data = data.replace(/(?<!\r)\n/g, "\r\n");
       }
       data = sudoAutofill?.handleOutput(data) ?? data;
@@ -334,9 +326,6 @@ export const attachSessionToTerminal = (
       }
     }
 
-    // Clean up the connection token for this sessionId so stale timers
-    // that haven't fired yet will fail the isConnectionTokenCurrent check
-    // (previously they would see the old token still in the map and pass).
     clearConnectionToken(ctx.sessionId);
 
     opts?.onExit?.(evt);
