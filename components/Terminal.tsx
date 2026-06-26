@@ -1993,10 +1993,16 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     wakeInProgressRef.current = true;
 
     const stopHibernateListeners = () => {
+      const backendId = sessionRef.current;
       disposeDataRef.current?.();
       disposeDataRef.current = null;
       disposeExitRef.current?.();
       disposeExitRef.current = null;
+      if (backendId) {
+        flushTerminalSessionFlowAck(backendId);
+        clearTerminalSessionFlowAck(backendId);
+        terminalBackend.setSessionFlowPaused?.(backendId, false);
+      }
     };
 
     return wakeTerminalFromHibernate({
