@@ -20,6 +20,8 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
   const { Activity, allGroupPaths, allTags, AppLogo, Array, Badge, BookMarked, Boolean, Button, cancelInlineGroupEdit, CheckSquare, ChevronDown, clearHostSelection, ClipboardCopy, Clock, cn, commitInlineGroupRename, connectionLogs, connectSelectedHosts, ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger, Copy, currentSection, customGroups, deleteGroupPath, deleteGroupWithHosts, deleteSelectedHosts, deleteTargetPath, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, displayedGroups, displayedHosts, DistroAvatar, Download, Dropdown, DropdownContent, DropdownTrigger, Edit2, editingGroupPath, editingHost, editingHostGroupDefaults, FileCode, FileSymlink, FolderPlus, FolderTree, getDropTargetClasses, getEffectiveHostDistro, Globe, groupConfigs, GroupDetailsPanel, groupedDisplayHosts, handleConnectClick, handleCopyCredentials, handleDeleteTag, handleDuplicateHost, handleEditGroupConfig, handleEditHost, handleEditTag, handleExportHosts, handleHostConnect, handleImportFileSelected, handleNewHost, handleProtocolSelect, handleQuickConnect, handleQuickConnectSaveHost, handleSaveGroupConfig, handleSearchKeyDown, handleUnmanageGroup, handleSidebarWidthCommit, hasHostsSidePanel, HostDetailsPanel, hostListScrollRef, hosts, HostTreeView, hotkeyScheme, identities, ImportVaultDialog, Input, isDeleteGroupOpen, isGroupPanelOpen, isHostPanelOpen, isHostsSectionActive, isImportOpen, isMultiSelectMode, isNewFolderOpen, isQuickConnectOpen, isRenameGroupOpen, isSearchQuickConnect, isSerialModalOpen, Key, keyBindings, KeychainManager, keys, knownHostsManagerElement, Label, lastPinnedId, LayoutGrid, LazyConnectionLogsManager, LazyProtocolSelectDialog, List, managedGroupPaths, managedSources, moveGroup, moveHostToGroup, Network, newFolderName, newHostGroupPath, onClearUnsavedConnectionLogs, onConnectSerial, onCreateLocalTerminal, onDeleteConnectionLog, onDeleteHost, onImportOrReuseKey, onOpenLogView, onOpenSettings, onRunSnippet, onToggleConnectionLogSaved, onUpdateCustomGroups, onUpdateGroupConfigs, onUpdateHosts, onUpdateIdentities, onUpdateKeys, onUpdateProxyProfiles, onUpdateSnippetPackages, onUpdateSnippets, Pin, pinnedHosts, pinnedRecentIds, Plug, Plus, PortForwarding, protocolSelectHost, proxyProfiles, ProxyProfilesManager, quickConnectTarget, quickConnectWarnings, QuickConnectWizard, recentHosts, renameGroupError, renameGroupName, renameTargetPath, reorderGroup, reorderHost, RippleButton, rootRef, sanitizeHost, search, selectedGroupPath, selectedHostIds, selectedTags, SerialConnectModal, SerialHostDetailsPanel, sessionCount, Set, setCurrentSection, setDeleteGroupWithHosts, setDeleteTargetPath, setDragOverDropTarget, setEditingGroupPath, setEditingHost, setGroupDragOverDropTarget, setIsDeleteGroupOpen, setIsGroupPanelOpen, setIsHostPanelOpen, setIsImportOpen, setIsMultiSelectMode, setIsNewFolderOpen, setIsQuickConnectOpen, setIsRenameGroupOpen, setIsSerialModalOpen, setLastPinnedId, setNewFolderName, setNewHostGroupPath, setProtocolSelectHost, setQuickConnectTarget, setQuickConnectWarnings, setRenameGroupError, setRenameGroupName, setRenameTargetPath, setSearch, setSelectedGroupPath, setSelectedHostIds, setSelectedTags, setSidebarCollapsed, setSidebarWidth, setSortMode, setTargetParentPath, Settings, setViewMode, shellHistory, shouldHideEmptyRootHostsSection, showRecentHosts, sidebarCollapsed, sidebarWidth, snippetPackages, snippets, SnippetsManager, SortDropdown, sortMode, splitViewGridStyle, Square, Star, startInlineDeleteGroup, startInlineNewGroup, startInlineRenameGroup, submitNewFolder, submitRenameGroup, Suspense, t, TagFilterDropdown, targetParentPath, terminalFontSize, terminalSettings, TerminalSquare, terminalThemeId, toggleHostPinned, toggleHostSelection, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger, Trash2, treeExpandedState, treeViewGroupTree, treeViewHosts, Upload, upsertHostById, Usb, viewMode, visibleDisplayedHosts, X, Zap } = ctx;
   const { knownHosts, noteGroups, NotebookText, notes, NotesManager, onOpenHostFromNote, onOpenNoteIdHandled, onUpdateNoteGroups, onUpdateNotes, openNoteId } = ctx;
   const [isSidebarResizing, setIsSidebarResizing] = React.useState(false);
+  const newHostActionsRef = React.useRef<HTMLDivElement>(null);
+  const sessionActionsRef = React.useRef<HTMLDivElement>(null);
   const sidebarMinWidth = 56;
   const sidebarMaxWidth = 320;
   const effectiveSidebarWidth = Math.max(
@@ -61,6 +63,19 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
     window.addEventListener("pointerup", handlePointerUp);
     window.addEventListener("pointercancel", handlePointerUp);
   }, [effectiveSidebarWidth, handleSidebarWidthCommit, setSidebarWidth]);
+
+  React.useEffect(() => {
+    if (!isHostPanelOpen) return;
+    const activeElement = document.activeElement;
+    if (!(activeElement instanceof HTMLElement)) return;
+    if (
+      newHostActionsRef.current?.contains(activeElement)
+      || sessionActionsRef.current?.contains(activeElement)
+    ) {
+      activeElement.blur();
+    }
+  }, [isHostPanelOpen]);
+
   return (
     <div ref={rootRef} className="absolute inset-0 min-h-0 flex bg-secondary" data-section="vault-view">
       {/* Sidebar */}
@@ -405,13 +420,15 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
                 host details / new-host aside panel is open, since the button
                 would be a no-op in that state. */}
             <div
+              ref={newHostActionsRef}
               className={cn(
                 "flex items-center app-no-drag overflow-hidden transition-[max-width,opacity,margin] duration-200 ease-in-out",
                 isHostPanelOpen
                   ? "max-w-0 opacity-0 -ml-2 pointer-events-none"
                   : "max-w-[260px] opacity-100",
               )}
-              aria-hidden={isHostPanelOpen}
+              aria-hidden={isHostPanelOpen ? true : undefined}
+              inert={isHostPanelOpen ? true : undefined}
             >
               <Dropdown>
                 <div className="flex items-center rounded-md bg-primary text-primary-foreground">
@@ -468,13 +485,15 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
                 the host details / new-host aside panel is open, freeing
                 horizontal space for the panel. */}
             <div
+              ref={sessionActionsRef}
               className={cn(
                 "flex items-center gap-3 overflow-hidden transition-[max-width,opacity,margin] duration-200 ease-in-out",
                 isHostPanelOpen
                   ? "max-w-0 opacity-0 -ml-3 pointer-events-none"
                   : "max-w-[320px] opacity-100",
               )}
-              aria-hidden={isHostPanelOpen}
+              aria-hidden={isHostPanelOpen ? true : undefined}
+              inert={isHostPanelOpen ? true : undefined}
             >
               <Button
                 size="sm"

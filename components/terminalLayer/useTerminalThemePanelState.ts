@@ -15,7 +15,7 @@ import {
   resolveHostTerminalFontWeight,
   resolveHostTerminalThemeId,
 } from '../../domain/terminalAppearance';
-import { TERMINAL_THEMES } from '../../infrastructure/config/terminalThemes';
+import { getBuiltinTerminalThemeById } from '../../infrastructure/config/terminalThemes';
 import { isSameResolvedTerminalFont } from '../../infrastructure/config/fonts';
 import type { Host, TerminalSession, TerminalTheme, Workspace } from '../../types';
 import { useCustomThemes } from '../../application/state/customThemeStore';
@@ -181,7 +181,7 @@ export function useTerminalThemePanelState({
         return;
       }
       const pane = document.querySelector<HTMLElement>(`[data-session-id="${sessionId}"]`);
-      const baseTheme = TERMINAL_THEMES.find((entry) => entry.id === themeId)
+      const baseTheme = getBuiltinTerminalThemeById(themeId)
         || customThemes.find((entry) => entry.id === themeId);
       if (!pane || !baseTheme) {
         clearTerminalPreviewVars(sessionId);
@@ -202,7 +202,7 @@ export function useTerminalThemePanelState({
         clearHostTreePreviewVars();
         return;
       }
-      const baseTheme = TERMINAL_THEMES.find((entry) => entry.id === themeId)
+      const baseTheme = getBuiltinTerminalThemeById(themeId)
         || customThemes.find((entry) => entry.id === themeId);
       if (!baseTheme) {
         clearHostTreePreviewVars();
@@ -218,7 +218,7 @@ export function useTerminalThemePanelState({
         return;
       }
       const tabsRoot = document.querySelector<HTMLElement>('[data-top-tabs-root]');
-      const baseTheme = TERMINAL_THEMES.find((entry) => entry.id === themeId)
+      const baseTheme = getBuiltinTerminalThemeById(themeId)
         || customThemes.find((entry) => entry.id === themeId);
       if (!tabsRoot || !baseTheme) {
         clearTopTabsPreviewVars();
@@ -345,7 +345,7 @@ export function useTerminalThemePanelState({
   
   const resolvedPreviewTheme = useMemo(() => {
       const themeId = previewedOrVisibleThemeId;
-      const baseTheme = TERMINAL_THEMES.find((theme) => theme.id === themeId)
+      const baseTheme = getBuiltinTerminalThemeById(themeId)
         || customThemes.find((theme) => theme.id === themeId)
         || terminalTheme;
       return applyCustomAccentToTerminalTheme(baseTheme, accentMode, customAccent);
