@@ -1,5 +1,5 @@
 import type { TerminalTheme } from '../../domain/models';
-import { TERMINAL_THEMES } from '../../infrastructure/config/terminalThemes';
+import { TERMINAL_THEMES, getBuiltinTerminalThemeById } from '../../infrastructure/config/terminalThemes';
 import {
   applyCustomAccentToTerminalTheme,
   resolveFollowedTerminalThemeId,
@@ -38,7 +38,7 @@ export function resolveCurrentTerminalTheme({
       darkUiThemeId,
       fallbackThemeId: terminalThemeId,
     });
-    const followed = TERMINAL_THEMES.find(t => t.id === followedId)
+    const followed = getBuiltinTerminalThemeById(followedId)
       || customThemes.find(t => t.id === followedId);
     if (followed) {
       return applyCustomAccentToTerminalTheme(followed, accentMode, customAccent);
@@ -52,9 +52,9 @@ export function resolveCurrentTerminalTheme({
     darkUiThemeId,
     fallbackThemeId: terminalThemeId,
   });
-  const baseTheme = TERMINAL_THEMES.find(t => t.id === manualThemeId)
+  const baseTheme = getBuiltinTerminalThemeById(manualThemeId)
     || customThemes.find(t => t.id === manualThemeId)
-    || TERMINAL_THEMES.find(t => t.id === terminalThemeId)
+    || getBuiltinTerminalThemeById(terminalThemeId)
     || customThemes.find(t => t.id === terminalThemeId)
     || TERMINAL_THEMES[0];
   return applyCustomAccentToTerminalTheme(baseTheme, accentMode, customAccent);

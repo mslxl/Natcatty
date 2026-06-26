@@ -35,6 +35,10 @@ export const TERMINAL_THEMES: TerminalTheme[] = [
   ...extraTerminalThemes,
 ];
 
+const TERMINAL_THEME_BY_ID = new Map(TERMINAL_THEMES.map((theme) => [theme.id, theme]));
+
+export const getBuiltinTerminalThemeById = (themeId: string): TerminalTheme | undefined =>
+  TERMINAL_THEME_BY_ID.get(themeId);
 
 export const isUiMatchTerminalThemeId = (themeId: string): boolean =>
   UI_MATCH_TERMINAL_THEME_IDS.has(themeId);

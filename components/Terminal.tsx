@@ -46,7 +46,7 @@ import { toast } from "./ui/toast";
 import { useAvailableFonts } from "../application/state/fontStore";
 import { composeFontFamilyStack, type SupportedPlatform } from "../infrastructure/config/cjkFonts";
 import { resolveTerminalFontFamilyId } from "../infrastructure/config/fonts";
-import { TERMINAL_THEMES } from "../infrastructure/config/terminalThemes";
+import { getBuiltinTerminalThemeById } from "../infrastructure/config/terminalThemes";
 import { useCustomThemes } from "../application/state/customThemeStore";
 
 import { TerminalConnectionDialog } from "./terminal/TerminalConnectionDialog";
@@ -867,7 +867,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     );
     let baseTheme = terminalTheme;
     if (themeId) {
-      const hostTheme = TERMINAL_THEMES.find((t) => t.id === themeId)
+      const hostTheme = getBuiltinTerminalThemeById(themeId)
         || customThemes.find((t) => t.id === themeId);
       if (hostTheme) baseTheme = hostTheme;
     }
