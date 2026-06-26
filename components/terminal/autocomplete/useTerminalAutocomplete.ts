@@ -316,6 +316,37 @@ export function useTerminalAutocomplete(
     );
   }, []);
 
+  const repositionPopup = useCallback(() => {
+    const term = termRef.current;
+    if (!term) return;
+
+    setState((prev) => {
+      if (!prev.popupVisible || prev.suggestions.length === 0) return prev;
+      const { prompt } = getAlignedPrompt(term, typedInputBufferRef.current, typedBufferReliableRef.current);
+      const cursorColumn = prompt.isAtPrompt
+        ? resolveAutocompleteCursorColumn(term, prompt)
+        : term.buffer.active.cursorX;
+      const anchor = resolveAutocompleteAnchorInViewport(
+        term,
+        containerRef.current,
+        prev.suggestions.length,
+        cursorColumn,
+      );
+
+      // Force a re-render even when the relative cursor cell hasn't changed.
+      // The terminal container may have moved in the viewport after a fit/resize.
+      return {
+        ...prev,
+        popupAnchorViewport: {
+          left: anchor.anchorLeft,
+          top: anchor.anchorTop,
+          bottom: anchor.anchorBottom,
+        },
+        expandUpward: anchor.expandUpward,
+      };
+    });
+  }, [containerRef, termRef]);
+
   /** Fetch directory listing via IPC. */
   const fetchDirEntries = useCallback(async (dirPath: string): Promise<SubDirEntry[]> => {
     return listDirectoryEntries(dirPath, {
@@ -393,7 +424,7 @@ export function useTerminalAutocomplete(
         repositionPopup();
       });
     });
-  }, [fetchDirEntries, repositionPopup]);
+  }, [fetchDirEntries, repositionPopup, termRef]);
 
   /** Expand a directory at the given panel level → fetch contents and push new panel.
    *  Does NOT change focus level — use moveFocus param to override. */
@@ -475,37 +506,6 @@ export function useTerminalAutocomplete(
 
   // Ref to fetchSuggestions (avoids circular dep — defined after fetchSuggestions)
   const fetchSuggestionsRef = useRef<() => void>(() => {});
-
-  const repositionPopup = useCallback(() => {
-    const term = termRef.current;
-    if (!term) return;
-
-    setState((prev) => {
-      if (!prev.popupVisible || prev.suggestions.length === 0) return prev;
-      const { prompt } = getAlignedPrompt(term, typedInputBufferRef.current, typedBufferReliableRef.current);
-      const cursorColumn = prompt.isAtPrompt
-        ? resolveAutocompleteCursorColumn(term, prompt)
-        : term.buffer.active.cursorX;
-      const anchor = resolveAutocompleteAnchorInViewport(
-        term,
-        containerRef.current,
-        prev.suggestions.length,
-        cursorColumn,
-      );
-
-      // Force a re-render even when the relative cursor cell hasn't changed.
-      // The terminal container may have moved in the viewport after a fit/resize.
-      return {
-        ...prev,
-        popupAnchorViewport: {
-          left: anchor.anchorLeft,
-          top: anchor.anchorTop,
-          bottom: anchor.anchorBottom,
-        },
-        expandUpward: anchor.expandUpward,
-      };
-    });
-  }, [containerRef, termRef]);
 
   /**
    * Render the full path for a sub-dir entry into the line WITHOUT finalizing
