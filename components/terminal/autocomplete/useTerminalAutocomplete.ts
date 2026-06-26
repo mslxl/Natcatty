@@ -316,6 +316,37 @@ export function useTerminalAutocomplete(
     );
   }, []);
 
+  const repositionPopup = useCallback(() => {
+    const term = termRef.current;
+    if (!term) return;
+
+    setState((prev) => {
+      if (!prev.popupVisible || prev.suggestions.length === 0) return prev;
+      const { prompt } = getAlignedPrompt(term, typedInputBufferRef.current, typedBufferReliableRef.current);
+      const cursorColumn = prompt.isAtPrompt
+        ? resolveAutocompleteCursorColumn(term, prompt)
+        : term.buffer.active.cursorX;
+      const anchor = resolveAutocompleteAnchorInViewport(
+        term,
+        containerRef.current,
+        prev.suggestions.length,
+        cursorColumn,
+      );
+
+      // Force a re-render even when the relative cursor cell hasn't changed.
+      // The terminal container may have moved in the viewport after a fit/resize.
+      return {
+        ...prev,
+        popupAnchorViewport: {
+          left: anchor.anchorLeft,
+          top: anchor.anchorTop,
+          bottom: anchor.anchorBottom,
+        },
+        expandUpward: anchor.expandUpward,
+      };
+    });
+  }, [containerRef, termRef]);
+
   /** Fetch directory listing via IPC. */
   const fetchDirEntries = useCallback(async (dirPath: string): Promise<SubDirEntry[]> => {
     return listDirectoryEntries(dirPath, {
@@ -387,8 +418,13 @@ export function useTerminalAutocomplete(
           };
         });
       });
+      // Adding/removing sub-dir panels changes the popup's total width, which
+      // can push it off-screen. Recompute placement after state settles.
+      requestAnimationFrame(() => {
+        repositionPopup();
+      });
     });
-  }, [fetchDirEntries, termRef]);
+  }, [fetchDirEntries, repositionPopup, termRef]);
 
   /** Expand a directory at the given panel level → fetch contents and push new panel.
    *  Does NOT change focus level — use moveFocus param to override. */
@@ -470,37 +506,6 @@ export function useTerminalAutocomplete(
 
   // Ref to fetchSuggestions (avoids circular dep — defined after fetchSuggestions)
   const fetchSuggestionsRef = useRef<() => void>(() => {});
-
-  const repositionPopup = useCallback(() => {
-    const term = termRef.current;
-    if (!term) return;
-
-    setState((prev) => {
-      if (!prev.popupVisible || prev.suggestions.length === 0) return prev;
-      const { prompt } = getAlignedPrompt(term, typedInputBufferRef.current, typedBufferReliableRef.current);
-      const cursorColumn = prompt.isAtPrompt
-        ? resolveAutocompleteCursorColumn(term, prompt)
-        : term.buffer.active.cursorX;
-      const anchor = resolveAutocompleteAnchorInViewport(
-        term,
-        containerRef.current,
-        prev.suggestions.length,
-        cursorColumn,
-      );
-
-      // Force a re-render even when the relative cursor cell hasn't changed.
-      // The terminal container may have moved in the viewport after a fit/resize.
-      return {
-        ...prev,
-        popupAnchorViewport: {
-          left: anchor.anchorLeft,
-          top: anchor.anchorTop,
-          bottom: anchor.anchorBottom,
-        },
-        expandUpward: anchor.expandUpward,
-      };
-    });
-  }, [containerRef, termRef]);
 
   /**
    * Render the full path for a sub-dir entry into the line WITHOUT finalizing
@@ -821,7 +826,13 @@ export function useTerminalAutocomplete(
     const isPreview = index >= 0 && candidate !== baseline;
     previewActiveRef.current = isPreview;
     lastAcceptedCommandRef.current = isPreview ? candidate : null;
-  }, [termRef, writeToTerminal]);
+    // Live-preview can move/wrap the cursor. Recompute the anchor after xterm
+    // has processed the write so the popup doesn't drift or flip into a stale
+    // position (fixes #1710).
+    requestAnimationFrame(() => {
+      repositionPopup();
+    });
+  }, [termRef, writeToTerminal, repositionPopup]);
 
   /** Accept a snippet: clear the user's typed input, then run it via the
    *  host-canonical send path (onAcceptSnippet). */
