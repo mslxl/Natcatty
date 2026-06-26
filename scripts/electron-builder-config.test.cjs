@@ -18,6 +18,21 @@ test("unpacked MCP server includes its shared CommonJS dependencies", () => {
   );
 });
 
+test("unpacked Tool CLI includes capability runtime dependencies", () => {
+  assert.ok(
+    config.asarUnpack.includes("electron/cli/**/*"),
+    "Tool CLI launcher and scripts must stay unpacked so agents can launch them as child processes",
+  );
+  assert.ok(
+    config.asarUnpack.includes("electron/capabilities/**/*"),
+    "Tool CLI requires capability catalog, registry, policy, timeout, and RPC transport modules from the unpacked runtime path",
+  );
+  assert.ok(
+    config.asarUnpack.includes("electron/shared/**/*"),
+    "Capability policy may load shared permission grant helpers from the unpacked runtime path",
+  );
+});
+
 test("build.files excludes per-platform agent binaries", () => {
   const files = config.files;
   const expectExclusions = [

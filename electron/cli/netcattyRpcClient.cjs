@@ -4,10 +4,8 @@ const fs = require("node:fs");
 const net = require("node:net");
 
 const { getCliDiscoveryFilePath } = require("./discoveryPath.cjs");
-const {
-  CAPABILITY_SURFACES,
-  createNdjsonRpcClient,
-} = require("../capabilities/index.cjs");
+const { CAPABILITY_SURFACES } = require("../capabilities/constants.cjs");
+const { createNdjsonRpcClient } = require("../capabilities/rpcTransport.cjs");
 
 function createError(code, message) {
   const err = new Error(message);

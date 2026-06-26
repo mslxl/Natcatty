@@ -144,8 +144,9 @@ module.exports = {
         'node_modules/fast-uri/**/*',
         'node_modules/json-schema-traverse/**/*',
         'electron/cli/**/*',
-        'electron/mcp/**/*'
-        ,
+        'electron/capabilities/**/*',
+        'electron/shared/**/*',
+        'electron/mcp/**/*',
         'skills/**/*'
     ],
     mac: {
