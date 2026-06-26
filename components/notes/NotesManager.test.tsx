@@ -228,6 +228,18 @@ test("NotesManager exposes markdown import controls", () => {
   assert.match(source, /multiple/);
 });
 
+test("NotesManager exposes markdown export controls", () => {
+  const source = readFileSync(new URL("./NotesManager.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /notes\.action\.exportNote/);
+  assert.match(source, /notes\.action\.exportGroup/);
+  assert.match(source, /notes\.action\.exportAll/);
+  assert.match(source, /buildVaultNoteMarkdownExportFiles/);
+  assert.match(source, /buildTextFilesZipBlob/);
+  assert.match(source, /downloadNotesBlob/);
+  assert.match(source, /text\/markdown;charset=utf-8/);
+});
+
 test("NotesManager shows placeholder label for notes without titles", () => {
   const markup = renderNotes([note({ title: "" })]);
 
