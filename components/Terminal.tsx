@@ -104,6 +104,12 @@ import {
   serializeTerminalForHibernate,
 } from "./terminal/terminalHibernateRuntime";
 import {
+  ackTerminalSessionFlow,
+  clearTerminalSessionFlowAck,
+  flushTerminalSessionFlowAck,
+} from "./terminal/runtime/terminalFlowAckBuffer";
+import { releaseTerminalFlowBeforeHibernate } from "./terminal/runtime/terminalSessionAttachment";
+import {
   isTerminalFileTransferActive,
   resolveHibernateKeepRendererCount,
   resolveHibernatePreferWasmSerialize,
@@ -928,6 +934,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   }, [finalizeTerminalLogData]);
 
   const cleanupSession = () => {
+    const closingSessionId = sessionRef.current;
     disposeDataRef.current?.();
     disposeDataRef.current = null;
     disposeExitRef.current?.();
@@ -936,9 +943,17 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     disposeTelnetEchoModeRef.current = null;
     telnetLocalEchoRef.current = false;
 
-    if (sessionRef.current) {
+    if (closingSessionId) {
+      const activeTerm = termRef.current;
+      if (activeTerm) {
+        releaseTerminalFlowBeforeHibernate(terminalBackend, activeTerm, closingSessionId);
+      } else {
+        flushTerminalSessionFlowAck(closingSessionId);
+        clearTerminalSessionFlowAck(closingSessionId);
+        terminalBackend.setSessionFlowPaused?.(closingSessionId, false);
+      }
       try {
-        terminalBackend.closeSession(sessionRef.current);
+        terminalBackend.closeSession(closingSessionId);
       } catch (err) {
         logger.warn("Failed to close SSH session", err);
       }
@@ -970,9 +985,13 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     disposeTelnetEchoModeRef.current?.();
     disposeTelnetEchoModeRef.current = null;
     telnetLocalEchoRef.current = false;
-    if (sessionRef.current) {
+    const closingSessionId = sessionRef.current;
+    if (closingSessionId) {
+      flushTerminalSessionFlowAck(closingSessionId);
+      clearTerminalSessionFlowAck(closingSessionId);
+      terminalBackend.setSessionFlowPaused?.(closingSessionId, false);
       try {
-        terminalBackend.closeSession(sessionRef.current);
+        terminalBackend.closeSession(closingSessionId);
       } catch (err) {
         logger.warn("Failed to close hibernated session", err);
       }
@@ -993,6 +1012,8 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
   const beginHibernatedSessionListeners = useCallback((backendId: string) => {
     disposeDataRef.current?.();
+    flushTerminalSessionFlowAck(backendId);
+    terminalBackend.setSessionFlowPaused?.(backendId, false);
     hibernatePendingBufferRef.current = "";
     disposeDataRef.current = terminalBackend.onSessionData(
       backendId,
@@ -1001,6 +1022,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
           hibernatePendingBufferRef.current,
           chunk,
         );
+        ackTerminalSessionFlow(terminalBackend, backendId, chunk.length);
       },
       { replayBacklog: true },
     );
@@ -1064,6 +1086,13 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
     applyHibernateSnapshot(snapshot);
     isBootActiveRef.current = false;
+    if (termRef.current) {
+      releaseTerminalFlowBeforeHibernate(terminalBackend, termRef.current, backendId);
+    }
+    disposeDataRef.current?.();
+    disposeDataRef.current = null;
+    disposeExitRef.current?.();
+    disposeExitRef.current = null;
     disposeRuntimeOnly();
     beginHibernatedSessionListeners(backendId);
     hibernatedRef.current = true;
@@ -1964,10 +1993,16 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     wakeInProgressRef.current = true;
 
     const stopHibernateListeners = () => {
+      const backendId = sessionRef.current;
       disposeDataRef.current?.();
       disposeDataRef.current = null;
       disposeExitRef.current?.();
       disposeExitRef.current = null;
+      if (backendId) {
+        flushTerminalSessionFlowAck(backendId);
+        clearTerminalSessionFlowAck(backendId);
+        terminalBackend.setSessionFlowPaused?.(backendId, false);
+      }
     };
 
     return wakeTerminalFromHibernate({

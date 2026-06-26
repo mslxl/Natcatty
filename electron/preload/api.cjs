@@ -180,6 +180,10 @@ function createPreloadApi(ctx) {
   setSessionFlowPaused: (sessionId, paused) => {
     ipcRenderer.send("netcatty:flow", { sessionId, paused: Boolean(paused) });
   },
+  ackSessionFlow: (sessionId, bytes) => {
+    if (!sessionId || !Number.isFinite(bytes) || bytes <= 0) return;
+    ipcRenderer.send("netcatty:flow:ack", { sessionId, bytes });
+  },
   closeSession: (sessionId) => {
     telnetEchoModeListeners.delete(sessionId);
     ipcRenderer.send("netcatty:close", { sessionId });

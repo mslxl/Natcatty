@@ -1,5 +1,6 @@
 /* eslint-disable no-undef */
 const { emitTerminalSessionData } = require("../emitTerminalSessionData.cjs");
+const { shouldAcceptSessionOutput } = require("../terminalFlowAck.cjs");
 
 function createStartSessionApi(ctx) {
   with (ctx) {
@@ -104,6 +105,8 @@ function createStartSessionApi(ctx) {
           cols: current?.cols,
           rows: current?.rows,
         });
+      }, {
+        shouldAcceptOutput: () => shouldAcceptSessionOutput(sessions.get(sessionId)),
       });
 
       const sshZmodemSentry = createZmodemSentry({

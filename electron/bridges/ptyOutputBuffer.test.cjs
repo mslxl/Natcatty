@@ -76,6 +76,21 @@ test("flush() with an empty buffer does not send", async () => {
   assert.equal(sends.length, 0);
 });
 
+test("drops incoming data when shouldAcceptOutput returns false", async () => {
+  const sends = [];
+  let accept = true;
+  const buffer = createPtyOutputBuffer((data) => sends.push(data), {
+    shouldAcceptOutput: () => accept,
+  });
+
+  buffer.bufferData("before");
+  accept = false;
+  buffer.bufferData("dropped");
+  await tick();
+
+  assert.deepEqual(sends, ["before"]);
+});
+
 test("keeps batching after a flush", async () => {
   const sends = [];
   const buffer = createPtyOutputBuffer((data) => sends.push(data));

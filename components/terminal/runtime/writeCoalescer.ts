@@ -10,17 +10,32 @@
  * apps/desktop/src/renderer/lib/terminal/write-coalescer.ts
  */
 
-/** Pending-byte ceiling when rAF is throttled (hidden window). */
-export const MAX_PENDING_WRITE_COALESCE_BYTES = 1024 * 1024;
+import {
+  MAX_PENDING_WRITE_COALESCE_BYTES,
+  MAX_PENDING_WRITE_COALESCE_BYTES_FLOOD,
+} from "./terminalFlowConstants";
+
+export {
+  MAX_PENDING_WRITE_COALESCE_BYTES,
+  MAX_PENDING_WRITE_COALESCE_BYTES_FLOOD,
+};
 
 export type WriteCoalescer = {
   push(chunk: string): void;
   /** Flush pending bytes synchronously before ordered writes (exit notices). */
   flushSync(): void;
+  /** Drop pending bytes without writing (flood recovery / teardown). */
+  abort(onDropped?: (bytes: number) => void): void;
+  pendingBytes(): number;
   dispose(): void;
 };
 
 type ScheduleWriteFrame = (callback: () => void) => (() => void) | null;
+
+export type WriteCoalescerOptions = {
+  scheduleFrame?: ScheduleWriteFrame;
+  getMaxPendingBytes?: () => number;
+};
 
 const scheduleWriteFrame = (callback: () => void): (() => void) | null => {
   if (typeof globalThis.requestAnimationFrame === "function") {
@@ -37,19 +52,25 @@ const scheduleWriteFrame = (callback: () => void): (() => void) | null => {
 
 export const createWriteCoalescer = (
   write: (data: string) => void,
-  options: { scheduleFrame?: ScheduleWriteFrame } = {},
+  options: WriteCoalescerOptions = {},
 ): WriteCoalescer => {
   let pending: string[] = [];
   let pendingBytes = 0;
   let cancelPendingFrame: (() => void) | null = null;
   let disposed = false;
   const scheduleFrame = options.scheduleFrame ?? scheduleWriteFrame;
+  const getMaxPendingBytes = options.getMaxPendingBytes
+    ?? (() => MAX_PENDING_WRITE_COALESCE_BYTES);
 
-  const flushSync = (): void => {
+  const cancelScheduledFrame = (): void => {
     if (cancelPendingFrame !== null) {
       cancelPendingFrame();
       cancelPendingFrame = null;
     }
+  };
+
+  const flushSync = (): void => {
+    cancelScheduledFrame();
     if (pendingBytes === 0) {
       return;
     }
@@ -59,13 +80,24 @@ export const createWriteCoalescer = (
     write(batch);
   };
 
+  const abort = (onDropped?: (bytes: number) => void): void => {
+    cancelScheduledFrame();
+    if (pendingBytes === 0) {
+      return;
+    }
+    const dropped = pendingBytes;
+    pending = [];
+    pendingBytes = 0;
+    onDropped?.(dropped);
+  };
+
   const push = (chunk: string): void => {
     if (disposed || chunk.length === 0) {
       return;
     }
     pending.push(chunk);
     pendingBytes += chunk.length;
-    if (pendingBytes > MAX_PENDING_WRITE_COALESCE_BYTES) {
+    if (pendingBytes > getMaxPendingBytes()) {
       flushSync();
       return;
     }
@@ -85,6 +117,8 @@ export const createWriteCoalescer = (
   return {
     push,
     flushSync,
+    abort,
+    pendingBytes: () => pendingBytes,
     dispose() {
       if (disposed) {
         return;

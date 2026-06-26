@@ -240,6 +240,7 @@ declare global {
     ): void;
     resizeSession(sessionId: string, cols: number, rows: number): void;
     setSessionFlowPaused(sessionId: string, paused: boolean): void;
+    ackSessionFlow(sessionId: string, bytes: number): void;
     closeSession(sessionId: string): void;
     // ZMODEM file transfer
     onZmodemEvent?(

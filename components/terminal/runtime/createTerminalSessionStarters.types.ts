@@ -76,6 +76,8 @@ export type TerminalBackendApi = {
   resizeSession: (sessionId: string, cols: number, rows: number) => void;
   /** Pause/resume the source stream for output back-pressure (optional). */
   setSessionFlowPaused?: (sessionId: string, paused: boolean) => void;
+  /** Acknowledge rendered terminal output bytes for main-process IPC back-pressure. */
+  ackSessionFlow?: (sessionId: string, bytes: number) => void;
 };
 
 export type PendingAuth = {

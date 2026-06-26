@@ -74,6 +74,8 @@ import {
   nextHistoryPreviewTop,
 } from "./terminalHistoryScrollOverride";
 import { shouldPassThroughCopyShortcut } from "./terminalCopyShortcut";
+import { getFlowControllerForTerm } from "./terminalSessionAttachment";
+import { prioritizeTerminalInput } from "./terminalOutputPipeline";
 import {
   markExpectedTerminalCursorPositionReport,
   pasteTextIntoTerminal,
@@ -104,6 +106,7 @@ type TerminalBackendApi = {
   openExternal: (url: string) => Promise<void>;
   writeToSession: (sessionId: string, data: string) => void;
   resizeSession: (sessionId: string, cols: number, rows: number) => void;
+  setSessionFlowPaused?: (sessionId: string, paused: boolean) => void;
 };
 
 export type XTermRuntime = {
@@ -1017,6 +1020,13 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     }
 
     if (id) {
+      prioritizeTerminalInput(
+        term,
+        id,
+        getFlowControllerForTerm(term),
+        ctx.terminalBackend,
+      );
+
       // Serial line mode: buffer input and send on Enter
       if (ctx.host.protocol === "serial" && ctx.serialLineMode && ctx.serialLineBufferRef) {
         handleSerialLineModeInput(dataToWrite, {
