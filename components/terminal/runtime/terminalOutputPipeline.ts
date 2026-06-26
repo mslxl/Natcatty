@@ -78,5 +78,6 @@ export const prioritizeTerminalInput = (
 
   abortTerminalWriteCoalescer(term, onDropped);
   abortTerminalWriteQueue(term, onDropped);
+  flow?.reset();
   backend.setSessionFlowPaused?.(sessionId, false);
 };

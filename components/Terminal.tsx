@@ -105,6 +105,7 @@ import {
 } from "./terminal/terminalHibernateRuntime";
 import {
   ackTerminalSessionFlow,
+  clearTerminalSessionFlowAck,
   flushTerminalSessionFlowAck,
 } from "./terminal/runtime/terminalFlowAckBuffer";
 import {
@@ -932,6 +933,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   }, [finalizeTerminalLogData]);
 
   const cleanupSession = () => {
+    const closingSessionId = sessionRef.current;
     disposeDataRef.current?.();
     disposeDataRef.current = null;
     disposeExitRef.current?.();
@@ -940,9 +942,11 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     disposeTelnetEchoModeRef.current = null;
     telnetLocalEchoRef.current = false;
 
-    if (sessionRef.current) {
+    if (closingSessionId) {
+      flushTerminalSessionFlowAck(closingSessionId);
+      clearTerminalSessionFlowAck(closingSessionId);
       try {
-        terminalBackend.closeSession(sessionRef.current);
+        terminalBackend.closeSession(closingSessionId);
       } catch (err) {
         logger.warn("Failed to close SSH session", err);
       }

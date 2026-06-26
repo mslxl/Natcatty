@@ -19,7 +19,7 @@ export interface OutputFlowController {
   received(bytes: number): void;
   /** Account bytes whose xterm write callback has fired. */
   written(bytes: number): void;
-  /** Clear all state (e.g. on a fresh session attach). Fires no callbacks. */
+  /** Clear pending state; calls `onResume` if currently paused. */
   reset(): void;
   pendingBytes(): number;
   isPaused(): boolean;

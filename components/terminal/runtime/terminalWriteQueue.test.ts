@@ -8,6 +8,7 @@ import {
   abortTerminalWriteQueue,
   enqueueTerminalWrite,
   getTerminalWriteQueueDepth,
+  setTerminalWriteQueueDropHandler,
 } from "./terminalWriteQueue.ts";
 
 const createFakeTerm = () => ({}) as XTerm;
@@ -48,6 +49,24 @@ test("collapses queued writes when item cap is exceeded", () => {
 
   assert.ok(dropped.length > 0);
   assert.ok(getTerminalWriteQueueDepth(term) <= 1);
+  releaseFirst?.();
+});
+
+test("setTerminalWriteQueueDropHandler applies to queues created after registration", () => {
+  const term = createFakeTerm();
+  const dropped: number[] = [];
+  let releaseFirst: (() => void) | null = null;
+
+  setTerminalWriteQueueDropHandler(term, (bytes) => dropped.push(bytes));
+  enqueueTerminalWrite(term, 10, (done) => {
+    releaseFirst = done;
+  });
+
+  for (let index = 0; index < MAX_WRITE_QUEUE_ITEMS + 1; index += 1) {
+    enqueueTerminalWrite(term, 10, (done) => done());
+  }
+
+  assert.ok(dropped.length > 0);
   releaseFirst?.();
 });
 

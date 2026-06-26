@@ -126,21 +126,22 @@ export const writeSessionData = (
   ctx: TerminalSessionStartersContext,
   term: XTerm,
   data: string,
+  ingressBytes: number = data.length,
 ) => {
   const flow = getFlowController(ctx, term);
-  flow.received(data.length);
-  enqueueCoalescedTerminalWrite(term, data, (batch) => {
-    writeSessionDataImmediate(ctx, term, batch);
-  });
+  flow.received(ingressBytes);
+  enqueueCoalescedTerminalWrite(term, data, (batch, batchIngress) => {
+    writeSessionDataImmediate(ctx, term, batch, batchIngress);
+  }, ingressBytes);
 };
 
 const writeSessionDataImmediate = (
   ctx: TerminalSessionStartersContext,
   term: XTerm,
   data: string,
+  ingressBytes: number = data.length,
 ) => {
   const flow = getFlowController(ctx, term);
-  const ingressBytes = data.length;
   enqueueTerminalWrite(term, ingressBytes, (done) => {
     const settings = ctx.terminalSettingsRef?.current ?? ctx.terminalSettings;
     const filteredData = filterTerminalSessionData(term, data);
@@ -280,12 +281,13 @@ export const attachSessionToTerminal = (
   ctx.disposeDataRef.current = ctx.terminalBackend.onSessionData(
     id,
     (chunk) => {
+      const ingressBytes = chunk.length;
       let data = chunk;
       if (opts?.convertLfToCrlf) {
         data = data.replace(/(?<!\r)\n/g, "\r\n");
       }
       data = sudoAutofill?.handleOutput(data) ?? data;
-      writeSessionData(ctx, term, data);
+      writeSessionData(ctx, term, data, ingressBytes);
       ctx.onTerminalOutput?.(data);
       if (!ctx.hasConnectedRef.current) {
         ctx.updateStatus("connected");

@@ -25,6 +25,11 @@ function makeSession() {
   };
 }
 
+test("main-process watermarks match VS Code FlowControlConstants", () => {
+  assert.equal(FLOW_HIGH_WATER_MARK, 100_000);
+  assert.equal(FLOW_LOW_WATER_MARK, 5_000);
+});
+
 test("trackEmitted pauses once when unacked bytes cross the high watermark", () => {
   const session = makeSession();
   trackEmitted(session, FLOW_HIGH_WATER_MARK);

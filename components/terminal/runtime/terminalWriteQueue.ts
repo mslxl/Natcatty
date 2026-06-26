@@ -17,6 +17,7 @@ type TerminalWriteQueue = {
 };
 
 const terminalWriteQueues = new WeakMap<XTerm, TerminalWriteQueue>();
+const terminalWriteQueueDropHandlers = new WeakMap<XTerm, (bytes: number) => void>();
 
 const getOrCreateQueue = (term: XTerm): TerminalWriteQueue => {
   let queue = terminalWriteQueues.get(term);
@@ -26,6 +27,7 @@ const getOrCreateQueue = (term: XTerm): TerminalWriteQueue => {
       pending: [],
       pendingBytes: 0,
       floodMode: false,
+      onDropped: terminalWriteQueueDropHandlers.get(term),
     };
     terminalWriteQueues.set(term, queue);
   }
@@ -68,8 +70,13 @@ export const setTerminalWriteQueueDropHandler = (
   term: XTerm,
   onDropped?: (bytes: number) => void,
 ): void => {
+  if (onDropped) {
+    terminalWriteQueueDropHandlers.set(term, onDropped);
+  } else {
+    terminalWriteQueueDropHandlers.delete(term);
+  }
   const queue = terminalWriteQueues.get(term);
-  if (queue) {
+  if (queue && onDropped) {
     queue.onDropped = onDropped;
   }
 };

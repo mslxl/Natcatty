@@ -91,6 +91,34 @@ test("writeSessionData acks ingress bytes to match main-process trackEmitted", (
   clearTerminalSessionFlowAck("session-1");
 });
 
+test("writeSessionData acks original ingress bytes when display data is expanded", () => {
+  clearTerminalSessionFlowAck("session-1");
+  const term = {
+    buffer: { active: { type: "normal" } },
+    write(_data: string, callback?: () => void) {
+      callback?.();
+    },
+    scrollToBottom() {},
+  } as unknown as XTerm;
+  const acked: number[] = [];
+  const ctx = {
+    ...createContext(false),
+    sessionRef: { current: "session-1" },
+    terminalBackend: {
+      ackSessionFlow: (_sessionId: string, bytes: number) => {
+        acked.push(bytes);
+      },
+    },
+  };
+
+  writeSessionData(ctx as never, term, "a\nb", 2);
+  flushTerminalWriteCoalescer(term);
+  flushTerminalSessionFlowAck("session-1");
+
+  assert.deepEqual(acked, [2]);
+  clearTerminalSessionFlowAck("session-1");
+});
+
 test("writeSessionData batches IPC acks using the VS Code ack size", () => {
   clearTerminalSessionFlowAck("session-1");
   const term = {
