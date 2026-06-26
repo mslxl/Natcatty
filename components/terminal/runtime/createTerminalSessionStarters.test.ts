@@ -871,6 +871,7 @@ test("ssh session restores cwd before startup command after attaching", async ()
   const sessionWrites: Array<{ id: string; data: string; automated?: boolean }> = [];
   const executedCommands: string[] = [];
   const progressLogs: string[] = [];
+  const restoredCwds: string[] = [];
 
   const terminalBackend = {
     backendAvailable: () => true,
@@ -906,6 +907,9 @@ test("ssh session restores cwd before startup command after attaching", async ()
     setProgressLogs: (updater: (prev: string[]) => string[]) => {
       progressLogs.splice(0, progressLogs.length, ...updater(progressLogs));
     },
+    onRestoreCwdIntentConsumed: (cwd: string) => {
+      restoredCwds.push(cwd);
+    },
     onCommandExecuted: (command: string) => {
       executedCommands.push(command);
     },
@@ -915,6 +919,7 @@ test("ssh session restores cwd before startup command after attaching", async ()
   await new Promise((resolve) => setTimeout(resolve, 0));
 
   assert.equal(restoreCwdIntentRef.current, null);
+  assert.deepEqual(restoredCwds, ["/srv/app dir"]);
   assert.deepEqual(sessionWrites, [
     { id: "ssh-session", data: "cd -- '/srv/app dir'\r", automated: true },
     { id: "ssh-session", data: "pwd\r", automated: true },
