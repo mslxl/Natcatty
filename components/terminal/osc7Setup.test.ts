@@ -5,7 +5,13 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync 
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
-import { OSC7_MARKER, buildOsc7SetupCommand, shouldOfferOsc7SetupAction } from "./osc7Setup";
+import {
+  OSC7_MARKER,
+  buildOsc7SetupCommand,
+  buildOsc7SetupExecCommand,
+  runOsc7SetupAction,
+  shouldOfferOsc7SetupAction,
+} from "./osc7Setup";
 
 const runSetup = (env: NodeJS.ProcessEnv) => {
   execFileSync("/bin/sh", ["-c", buildOsc7SetupCommand()], {
@@ -54,6 +60,70 @@ test("shouldOfferOsc7SetupAction only allows remote shell-style sessions", () =>
   assert.equal(shouldOfferOsc7SetupAction({ protocol: "serial", isSerialConnection: true }), false);
 });
 
+test("runOsc7SetupAction configures in the background and only sends a small reload command", async () => {
+  const writes: Array<{ sessionId: string; data: string; automated?: boolean }> = [];
+  const localData: string[] = [];
+  let setupArgs: { sessionId: string; command: string } | null = null;
+
+  const result = await runOsc7SetupAction({
+    status: "connected",
+    sessionId: "session-1",
+    setupCommand: "printf setup-script",
+    setupOsc7Tracking: async (sessionId, command) => {
+      setupArgs = { sessionId, command };
+      return {
+        success: true,
+        stdout: "__NETCATTY_OSC7_SETUP_SHELL__=bash\n__NETCATTY_OSC7_SETUP_CONFIG__=/home/me/.bashrc\n\u001b]7;file://host/home/me\u0007",
+        stderr: "",
+        code: 0,
+      };
+    },
+    writeToSession: (sessionId, data, options) => {
+      writes.push({ sessionId, data, automated: options?.automated });
+    },
+    writeLocalTerminalData: (data) => {
+      localData.push(data);
+    },
+  });
+
+  assert.equal(result.success, true);
+  assert.deepEqual(setupArgs, { sessionId: "session-1", command: "printf setup-script" });
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].sessionId, "session-1");
+  assert.equal(writes[0].automated, true);
+  assert.match(writes[0].data, /source '\/home\/me\/\.bashrc'/);
+  assert.doesNotMatch(writes[0].data, /setup-script/);
+  assert.deepEqual(localData, ["\u001b]7;file://host/home/me\u0007"]);
+});
+
+test("runOsc7SetupAction fails without reload metadata instead of reporting a partial setup", async () => {
+  const writes: string[] = [];
+  const localData: string[] = [];
+
+  const result = await runOsc7SetupAction({
+    status: "connected",
+    sessionId: "session-1",
+    setupCommand: "printf setup-script",
+    setupOsc7Tracking: async () => ({
+      success: true,
+      stdout: "\u001b]7;file://host/home/me\u0007",
+      stderr: "",
+      code: 0,
+    }),
+    writeToSession: (_sessionId, data) => {
+      writes.push(data);
+    },
+    writeLocalTerminalData: (data) => {
+      localData.push(data);
+    },
+  });
+
+  assert.equal(result.success, false);
+  assert.match(result.error || "", /reload metadata/);
+  assert.deepEqual(writes, []);
+  assert.deepEqual(localData, []);
+});
+
 test("buildOsc7SetupCommand configures bash once and prompt loading stays idempotent", () => {
   withTempHome("netcatty-osc7-bash-", (home) => {
     runSetup({ HOME: home, SHELL: "/bin/bash" });
@@ -74,6 +144,47 @@ test("buildOsc7SetupCommand configures bash once and prompt loading stays idempo
     ).toString("utf8");
 
     assert.equal(output.split("osc7_cwd").length - 1, 1);
+  });
+});
+
+test("buildOsc7SetupExecCommand configures bash through a background exec shell", () => {
+  withTempHome("netcatty-osc7-exec-bash-", (home) => {
+    const output = execFileSync("/bin/sh", ["-c", buildOsc7SetupExecCommand()], {
+      env: { ...process.env, HOME: home, SHELL: "/bin/bash" },
+      stdio: "pipe",
+    }).toString("utf8");
+
+    assert.match(output, /__NETCATTY_OSC7_SETUP_SHELL__=bash/);
+    assert.match(output, new RegExp(`__NETCATTY_OSC7_SETUP_CONFIG__=${home.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/\\.bashrc`));
+    const bashrc = readFileSync(join(home, ".bashrc"), "utf8");
+    assert.equal(markerCount(bashrc), 2);
+  });
+});
+
+test("buildOsc7SetupExecCommand carries the expected cwd for current-tab matching", () => {
+  const command = buildOsc7SetupExecCommand("/srv/app's cwd");
+
+  assert.match(command, /NETCATTY_OSC7_EXPECTED_CWD='\/srv\/app'\\''s cwd'/);
+});
+
+test("buildOsc7SetupExecCommand honors exported zsh ZDOTDIR fallback", (t) => {
+  const zshPath = existingShells(["/bin/zsh", "/usr/bin/zsh"])[0];
+  if (!zshPath) {
+    t.skip("zsh is not installed on this runner");
+    return;
+  }
+
+  withTempHome("netcatty-osc7-exec-zsh-", (home) => {
+    const zdotdir = join(home, ".config", "zsh");
+    const output = execFileSync("/bin/sh", ["-c", buildOsc7SetupExecCommand()], {
+      env: { ...process.env, HOME: home, SHELL: zshPath, ZDOTDIR: zdotdir },
+      stdio: "pipe",
+    }).toString("utf8");
+
+    const zshrcPath = join(zdotdir, ".zshrc");
+    assert.match(output, /__NETCATTY_OSC7_SETUP_SHELL__=zsh/);
+    assert.match(output, new RegExp(`__NETCATTY_OSC7_SETUP_CONFIG__=${zshrcPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+    assert.equal(markerCount(readFileSync(zshrcPath, "utf8")), 2);
   });
 });
 
