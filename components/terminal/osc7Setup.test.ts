@@ -176,6 +176,24 @@ test("buildOsc7SetupCommand configures bash once and prompt loading stays idempo
   });
 });
 
+test("buildOsc7SetupCommand preserves setup failure status", () => {
+  withTempHome("netcatty-osc7-unsupported-shell-", (home) => {
+    const result = spawnSync("/bin/sh", ["-c", buildOsc7SetupCommand()], {
+      env: {
+        ...process.env,
+        HOME: home,
+        SHELL: "/bin/unknown",
+        ZDOTDIR: "",
+        XDG_CONFIG_HOME: "",
+      },
+      encoding: "utf8",
+    });
+
+    assert.equal(result.status, 2, result.stderr || result.stdout);
+    assert.match(result.stderr, /unsupported shell unknown/);
+  });
+});
+
 test("buildOsc7SetupExecCommand configures bash through a background exec shell", () => {
   withTempHome("netcatty-osc7-exec-bash-", (home) => {
     const output = execFileSync("/bin/sh", ["-c", buildOsc7SetupExecCommand()], {
@@ -303,9 +321,17 @@ test("buildOsc7SetupCommand can be pasted into supported shells", () => {
   }
 });
 
-test("buildOsc7SetupCommand does not leave setup payload in bash history", () => {
-  withTempHome("netcatty-osc7-history-bash-", (home) => {
+test("buildOsc7ReloadCommand does not leave reload command in bash history", () => {
+  withTempHome("netcatty-osc7-reload-history-bash-", (home) => {
+    const bashrcPath = join(home, ".bashrc");
     const dumpPath = join(home, "bash-history-dump");
+    mkdirSync(home, { recursive: true });
+    writeFileSync(bashrcPath, "osc7_cwd(){ :; }\n");
+    const reloadCommand = buildOsc7ReloadCommand({ shell: "bash", configPath: bashrcPath });
+
+    assert.ok(reloadCommand);
+    assert.doesNotMatch(reloadCommand.slice(0, -1), /[\r\n]/);
+
     const output = runInteractiveHistoryProbe({
       shellPath: "/bin/bash",
       shellArgs: ["--noprofile", "--norc", "-i"],
@@ -314,42 +340,47 @@ test("buildOsc7SetupCommand does not leave setup payload in bash history", () =>
       env: {
         HOME: home,
         HISTFILE: join(home, ".bash_history"),
+        HISTCONTROL: "ignoreboth",
         SHELL: "/bin/bash",
       },
+      input: `echo keepme\n${reloadCommand}`,
     });
 
-    assert.doesNotMatch(output, /Netcatty OSC 7 cwd tracking|osc7_cwd|printf "%s\\n"/);
+    assert.match(output, /echo keepme/);
+    assert.doesNotMatch(output, /osc7_cwd|source .*\.bashrc|__netcatty_osc7|history -d/);
   });
 });
 
-test("buildOsc7SetupCommand does not leave setup payload in zsh history", (t) => {
-  const zshPath = existingShells(["/bin/zsh", "/usr/bin/zsh"])[0];
-  if (!zshPath) {
-    t.skip("zsh is not installed on this runner");
-    return;
-  }
+test("buildOsc7ReloadCommand preserves bash nounset", () => {
+  withTempHome("netcatty-osc7-reload-nounset-bash-", (home) => {
+    const bashrcPath = join(home, ".bashrc");
+    const optionDumpPath = join(home, "bash-options-dump");
+    mkdirSync(home, { recursive: true });
+    writeFileSync(bashrcPath, "osc7_cwd(){ :; }\n");
 
-  withTempHome("netcatty-osc7-history-zsh-", (home) => {
-    const dumpPath = join(home, "zsh-history-dump");
-    const output = runInteractiveHistoryProbe({
-      shellPath: zshPath,
-      shellArgs: ["-f", "-i"],
-      dumpHistoryCommand: `fc -ln 1 > ${quoteShellArg(dumpPath)}`,
-      dumpPath,
+    const result = spawnSync("/bin/bash", ["--noprofile", "--norc", "-i"], {
       env: {
+        ...process.env,
         HOME: home,
-        HISTFILE: join(home, ".zsh_history"),
-        SHELL: zshPath,
-        ZDOTDIR: home,
+        HISTFILE: join(home, ".bash_history"),
+        SHELL: "/bin/bash",
       },
+      input: [
+        "set -u",
+        (buildOsc7ReloadCommand({ shell: "bash", configPath: bashrcPath }) ?? "").replace(/\r/g, "\n"),
+        `set -o | grep nounset > ${quoteShellArg(optionDumpPath)}`,
+        "exit",
+      ].join("\n"),
+      encoding: "utf8",
     });
 
-    assert.doesNotMatch(output, /Netcatty OSC 7 cwd tracking|osc7_cwd|printf "%s\\n"/);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.match(readFileSync(optionDumpPath, "utf8"), /\bon\b/);
   });
 });
 
-test("buildOsc7ReloadCommand does not leave reload command in bash history", () => {
-  withTempHome("netcatty-osc7-reload-history-bash-", (home) => {
+test("buildOsc7ReloadCommand does not delete bash history when reload is not recorded", () => {
+  withTempHome("netcatty-osc7-reload-ignored-history-bash-", (home) => {
     const bashrcPath = join(home, ".bashrc");
     const dumpPath = join(home, "bash-history-dump");
     mkdirSync(home, { recursive: true });
@@ -363,48 +394,43 @@ test("buildOsc7ReloadCommand does not leave reload command in bash history", () 
       env: {
         HOME: home,
         HISTFILE: join(home, ".bash_history"),
+        HISTIGNORE: "*__netcatty_osc7_history_cleanup_marker__=1*",
         SHELL: "/bin/bash",
       },
-      input: buildOsc7ReloadCommand({ shell: "bash", configPath: bashrcPath }) ?? "",
+      input: `echo keepme\n${buildOsc7ReloadCommand({ shell: "bash", configPath: bashrcPath }) ?? ""}`,
     });
 
+    assert.match(output, /echo keepme/);
     assert.doesNotMatch(output, /osc7_cwd|source .*\.bashrc|__netcatty_osc7|history -d/);
   });
 });
 
-test("buildOsc7SetupCommand preserves an existing zsh history hook", (t) => {
-  const zshPath = existingShells(["/bin/zsh", "/usr/bin/zsh"])[0];
-  if (!zshPath) {
-    t.skip("zsh is not installed on this runner");
-    return;
-  }
+test("buildOsc7ReloadCommand bypasses custom bash history wrappers", () => {
+  withTempHome("netcatty-osc7-reload-wrapped-history-bash-", (home) => {
+    const bashrcPath = join(home, ".bashrc");
+    const dumpPath = join(home, "bash-history-dump");
+    mkdirSync(home, { recursive: true });
+    writeFileSync(bashrcPath, "osc7_cwd(){ :; }\n");
 
-  withTempHome("netcatty-osc7-history-hook-zsh-", (home) => {
-    const functionDumpPath = join(home, "zshaddhistory-dump");
-    const hookMarkerPath = join(home, "zshaddhistory-marker");
-    const result = spawnSync(zshPath, ["-f", "-i"], {
+    const output = runInteractiveHistoryProbe({
+      shellPath: "/bin/bash",
+      shellArgs: ["--noprofile", "--norc", "-i"],
+      dumpHistoryCommand: `builtin history > ${quoteShellArg(dumpPath)}`,
+      dumpPath,
       env: {
-        ...process.env,
         HOME: home,
-        HISTFILE: join(home, ".zsh_history"),
-        SHELL: zshPath,
-        ZDOTDIR: home,
+        HISTFILE: join(home, ".bash_history"),
+        SHELL: "/bin/bash",
       },
       input: [
-        `zshaddhistory(){ print -r -- preserved >> ${quoteShellArg(hookMarkerPath)}; return 0; }`,
-        buildOsc7SetupCommand(),
-        `functions zshaddhistory > ${quoteShellArg(functionDumpPath)}`,
-        "zshaddhistory",
-        "exit",
+        'history(){ echo custom; }',
+        "echo keepme",
+        buildOsc7ReloadCommand({ shell: "bash", configPath: bashrcPath }) ?? "",
       ].join("\n"),
-      encoding: "utf8",
     });
 
-    assert.equal(result.status, 0, result.stderr || result.stdout);
-    const restoredFunction = readFileSync(functionDumpPath, "utf8");
-    assert.match(restoredFunction, /preserved/);
-    assert.doesNotMatch(restoredFunction, /__netcatty_osc7|return 1/);
-    assert.match(readFileSync(hookMarkerPath, "utf8"), /preserved/);
+    assert.match(output, /echo keepme/);
+    assert.doesNotMatch(output, /osc7_cwd|source .*\.bashrc|__netcatty_osc7|history -d/);
   });
 });
 

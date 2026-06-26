@@ -91,15 +91,7 @@ const quoteForSingleQuotedShellString = (value: string): string =>
 
 const URL_PATH_AWK_SCRIPT_QUOTED = quoteForSingleQuotedShellString(URL_PATH_AWK_SCRIPT);
 
-const BASH_DELETE_CURRENT_HISTORY = String.raw`test -n "$BASH_VERSION" && history -d $(history 1 | sed "s/^ *\([0-9][0-9]*\).*/\1/") 2>/dev/null || true`;
-const ZSH_SUPPRESS_NEXT_TWO_HISTORY_ENTRIES = `test -n "$ZSH_VERSION" && eval '${[
-  "__netcatty_osc7_zsh_history_suppressions=2",
-  `__netcatty_osc7_original_zshaddhistory_name=__netcatty_osc7_original_zshaddhistory_${DOLLAR}${DOLLAR}`,
-  `if functions zshaddhistory >/dev/null 2>&1; then functions -c zshaddhistory "${DOLLAR}__netcatty_osc7_original_zshaddhistory_name"; __netcatty_osc7_had_zshaddhistory=1; else __netcatty_osc7_had_zshaddhistory=0; fi`,
-  `zshaddhistory(){ local __netcatty_osc7_remaining=${DOLLAR}{__netcatty_osc7_zsh_history_suppressions:-0}; if (( __netcatty_osc7_remaining > 1 )); then __netcatty_osc7_zsh_history_suppressions=${DOLLAR}(( __netcatty_osc7_remaining - 1 )); return 1; fi; if (( ${DOLLAR}{__netcatty_osc7_had_zshaddhistory:-0} )); then functions -c "${DOLLAR}__netcatty_osc7_original_zshaddhistory_name" zshaddhistory 2>/dev/null || true; unfunction "${DOLLAR}__netcatty_osc7_original_zshaddhistory_name" 2>/dev/null || true; else unfunction zshaddhistory 2>/dev/null || true; fi; unset __netcatty_osc7_zsh_history_suppressions __netcatty_osc7_had_zshaddhistory __netcatty_osc7_original_zshaddhistory_name; return 1; }`,
-].join("; ")}' || true`;
-const SUPPRESS_SHELL_HISTORY_COMMAND = `set +u 2>/dev/null || true; ${ZSH_SUPPRESS_NEXT_TWO_HISTORY_ENTRIES}; ${BASH_DELETE_CURRENT_HISTORY}`;
-const SUPPRESS_BASH_HISTORY_COMMAND = `set +u 2>/dev/null || true; ${BASH_DELETE_CURRENT_HISTORY}`;
+const BASH_DELETE_MARKED_HISTORY_COMMAND = String.raw`if test -n "${DOLLAR}{BASH_VERSION-}"; then __netcatty_osc7_history_cleanup_marker__=1; __netcatty_osc7_history_line=$(HISTTIMEFORMAT= builtin history 1 2>/dev/null) || __netcatty_osc7_history_line=""; case "$__netcatty_osc7_history_line" in *__netcatty_osc7_history_cleanup_marker__=1*) __netcatty_osc7_history_number=$(printf "%s\n" "$__netcatty_osc7_history_line" | sed "s/^ *\([0-9][0-9]*\).*/\1/"); case "$__netcatty_osc7_history_number" in ""|*[!0-9]*) ;; *) builtin history -d "$__netcatty_osc7_history_number" 2>/dev/null || true;; esac;; esac; unset __netcatty_osc7_history_cleanup_marker__ __netcatty_osc7_history_line __netcatty_osc7_history_number 2>/dev/null || true; fi`;
 
 const POSIX_SETUP_SCRIPT = String.raw`set -eu
 marker="# >>> Netcatty OSC 7 cwd tracking >>>"
@@ -307,10 +299,7 @@ host=$(hostname 2>/dev/null || printf localhost)
 printf '\033]7;file://%s%s\a' "$host" "$(__netcatty_osc7_url_path "$PWD")"`;
 
 export const buildOsc7SetupCommand = (): string =>
-  [
-    SUPPRESS_SHELL_HISTORY_COMMAND,
-    `set +u 2>/dev/null || true; printf "%s\\n" ${quoteForSingleQuotedShellString(POSIX_SETUP_SCRIPT)} | env NETCATTY_ZDOTDIR="$ZDOTDIR" NETCATTY_XDG_CONFIG_HOME="$XDG_CONFIG_HOME" sh; ${BASH_DELETE_CURRENT_HISTORY}`,
-  ].join("\n") + "\n";
+  `set +u 2>/dev/null || true; printf "%s\\n" ${quoteForSingleQuotedShellString(POSIX_SETUP_SCRIPT)} | env NETCATTY_ZDOTDIR="$ZDOTDIR" NETCATTY_XDG_CONFIG_HOME="$XDG_CONFIG_HOME" sh\n`;
 
 export const buildOsc7SetupExecCommand = (expectedCwd?: string): string => {
   const envPrefix = expectedCwd
@@ -366,7 +355,7 @@ export const buildOsc7ReloadCommand = (metadata: Osc7SetupMetadata | null): stri
   const sourceCommand = `source ${quoteForSingleQuotedShellString(metadata.configPath)} >/dev/null 2>&1`;
   const emitCommand = metadata.shell === "fish" ? "__netcatty_osc7_cwd" : "osc7_cwd";
   if (metadata.shell === "bash") {
-    return `${SUPPRESS_BASH_HISTORY_COMMAND}\n ${sourceCommand}; ${emitCommand} 2>/dev/null; true; ${BASH_DELETE_CURRENT_HISTORY}\r`;
+    return `${sourceCommand}; ${emitCommand} 2>/dev/null; true; ${BASH_DELETE_MARKED_HISTORY_COMMAND}\r`;
   }
   return ` ${sourceCommand}; ${emitCommand} 2>/dev/null; true\r`;
 };
