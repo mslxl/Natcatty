@@ -207,9 +207,8 @@ const writeSessionDataImmediate = (
       }
       done();
     };
-    const commitFlowAck = (ackedBytes: number) => {
+    const commitIpcAck = (ackedBytes: number) => {
       if (ackedBytes <= 0) return;
-      flow.written(ackedBytes);
       ackTerminalSessionFlow(ctx.terminalBackend, ctx.sessionRef.current, ackedBytes);
     };
     const deferredBeforeWrite = getDeferredTerminalWriteAckBytes(term);
@@ -225,9 +224,10 @@ const writeSessionDataImmediate = (
     if (deferFlowAck) {
       writeTerminalDataWithLineTimestamps(term, preparedDisplayData, () => {
         finishQueueItem();
+        flow.written(ingressBytes);
         const deferredTotal = accumulateDeferredTerminalWriteAck(term, ingressBytes);
         if (deferredTotal >= XTERM_WRITE_CALLBACK_BATCH_BYTES) {
-          commitFlowAck(clearDeferredTerminalWriteAck(term));
+          commitIpcAck(clearDeferredTerminalWriteAck(term));
         }
       });
       return;
@@ -237,7 +237,8 @@ const writeSessionDataImmediate = (
     const ackOnCallback = deferredBeforeCallback + ingressBytes;
     writeTerminalDataWithLineTimestamps(term, preparedDisplayData, () => {
       finishQueueItem();
-      commitFlowAck(ackOnCallback);
+      flow.written(ingressBytes);
+      commitIpcAck(ackOnCallback);
     });
   });
 };

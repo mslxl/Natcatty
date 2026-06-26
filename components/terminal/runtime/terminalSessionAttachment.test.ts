@@ -2,9 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import type { Terminal as XTerm } from "@xterm/xterm";
 
-import { FLOW_CHAR_COUNT_ACK_SIZE } from "./terminalFlowConstants.ts";
+import { FLOW_CHAR_COUNT_ACK_SIZE, XTERM_WRITE_CALLBACK_BATCH_BYTES } from "./terminalFlowConstants.ts";
 import {
   attachSessionToTerminal,
+  getFlowController,
   tryAttachSessionToTerminal,
   writeSessionData,
 } from "./terminalSessionAttachment.ts";
@@ -13,7 +14,10 @@ import {
   flushTerminalSessionFlowAck,
 } from "./terminalFlowAckBuffer.ts";
 import { flushTerminalWriteCoalescer } from "./terminalWriteCoalescer.ts";
-import { clearDeferredTerminalWriteAck } from "./terminalWriteAckDeferral.ts";
+import {
+  clearDeferredTerminalWriteAck,
+  getDeferredTerminalWriteAckBytes,
+} from "./terminalWriteAckDeferral.ts";
 
 const createFakeTerm = (activeType = "normal") => {
   const writes: string[] = [];
@@ -69,6 +73,28 @@ const createContext = (showLineTimestamps: boolean, host: Record<string, unknown
   terminalBackend: {},
   sessionRef: { current: "session-1" },
   promptLineBreakStateRef: { current: undefined },
+});
+
+test("writeSessionData clears renderer backlog while deferring IPC ack", () => {
+  const term = {
+    buffer: { active: { type: "normal" } },
+    write(_data: string, callback?: () => void) {
+      callback?.();
+    },
+    scrollToBottom() {},
+  } as unknown as XTerm;
+  const ctx = createContext(false);
+  const ingressPerWrite = 100;
+  const writeCount = Math.floor((XTERM_WRITE_CALLBACK_BATCH_BYTES - 1) / ingressPerWrite);
+
+  for (let index = 0; index < writeCount; index += 1) {
+    writeSessionData(ctx as never, term, "x".repeat(ingressPerWrite));
+  }
+  flushTerminalWriteCoalescer(term);
+
+  const flow = getFlowController(ctx as never, term);
+  assert.equal(flow.pendingBytes(), 0);
+  assert.ok(getDeferredTerminalWriteAckBytes(term) > 0);
 });
 
 test("writeSessionData acks ingress bytes to match main-process trackEmitted", () => {

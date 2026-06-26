@@ -55,7 +55,6 @@ export const releaseTerminalFlowOutputForTerm = (
   abortTerminalWriteQueue(term, onDropped);
   const deferredAck = clearDeferredTerminalWriteAck(term);
   if (deferredAck > 0) {
-    flow?.written(deferredAck);
     ackTerminalSessionFlow(backend, sessionId, deferredAck);
   }
   flow?.reset();
@@ -99,7 +98,6 @@ export const prioritizeTerminalInput = (
   abortTerminalWriteQueue(term, onDropped);
   const flushedDeferredAck = clearDeferredTerminalWriteAck(term);
   if (flushedDeferredAck > 0) {
-    flow?.written(flushedDeferredAck);
     ackTerminalSessionFlow(backend, sessionId, flushedDeferredAck);
   }
   flow?.reset();

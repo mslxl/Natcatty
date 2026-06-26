@@ -2,10 +2,11 @@ import type { Terminal as XTerm } from "@xterm/xterm";
 
 import { XTERM_WRITE_CALLBACK_BATCH_BYTES } from "./terminalFlowConstants";
 
-const deferredAckBytesByTerm = new WeakMap<XTerm, number>();
+/** Ingress bytes written to xterm but not yet reported to main-process IPC ACK. */
+const deferredIpcAckBytesByTerm = new WeakMap<XTerm, number>();
 
 export const getDeferredTerminalWriteAckBytes = (term: XTerm): number =>
-  deferredAckBytesByTerm.get(term) ?? 0;
+  deferredIpcAckBytesByTerm.get(term) ?? 0;
 
 export const accumulateDeferredTerminalWriteAck = (
   term: XTerm,
@@ -13,13 +14,13 @@ export const accumulateDeferredTerminalWriteAck = (
 ): number => {
   if (bytes <= 0) return getDeferredTerminalWriteAckBytes(term);
   const next = getDeferredTerminalWriteAckBytes(term) + bytes;
-  deferredAckBytesByTerm.set(term, next);
+  deferredIpcAckBytesByTerm.set(term, next);
   return next;
 };
 
 export const clearDeferredTerminalWriteAck = (term: XTerm): number => {
-  const bytes = deferredAckBytesByTerm.get(term) ?? 0;
-  deferredAckBytesByTerm.delete(term);
+  const bytes = deferredIpcAckBytesByTerm.get(term) ?? 0;
+  deferredIpcAckBytesByTerm.delete(term);
   return bytes;
 };
 
@@ -34,5 +35,5 @@ export const shouldDeferTerminalWriteCallback = (
   && deferredIngressBytes + ingressBytes < batchBytes;
 
 export const resetDeferredTerminalWriteAck = (term: XTerm): void => {
-  deferredAckBytesByTerm.delete(term);
+  deferredIpcAckBytesByTerm.delete(term);
 };
