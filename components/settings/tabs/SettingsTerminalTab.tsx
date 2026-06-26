@@ -386,9 +386,14 @@ function SettingsTerminalTab(props: {
         onClose={() => setThemeModalSlot(null)}
         selectedThemeId={themeModalSlot === 'dark' ? darkPreviewTheme.id : lightPreviewTheme.id}
         onSelect={(id) => {
-          if (themeModalSlot === 'dark') setTerminalThemeDarkId(id);
-          else if (themeModalSlot === 'light') setTerminalThemeLightId(id);
-          setTerminalThemeId(id);
+          if (themeModalSlot === 'dark') {
+            setTerminalThemeDarkId(id);
+          } else if (themeModalSlot === 'light') {
+            setTerminalThemeLightId(id);
+          }
+          if (themeModalSlot === resolvedTheme) {
+            setTerminalThemeId(id);
+          }
         }}
         filterType={themeModalSlot === 'light' ? 'light' : 'dark'}
       />

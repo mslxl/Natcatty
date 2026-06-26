@@ -9,6 +9,10 @@ test("terminal settings hide terminal theme pickers while following app theme", 
   assert.doesNotMatch(source, /settings\.terminal\.theme\.followingTheme/);
 });
 
+test("terminal settings only update the legacy global theme for the active mode", () => {
+  assert.match(source, /if \(themeModalSlot === resolvedTheme\) \{\s*setTerminalThemeId\(id\);/);
+});
+
 test("terminal settings expose host key verification toggle", () => {
   assert.match(source, /settings\.terminal\.connection\.verifyHostKeys/);
   assert.match(source, /checked=\{terminalSettings\.verifyHostKeys\}/);

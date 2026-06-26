@@ -286,6 +286,20 @@ test("manual-theme resolver: explicit per-mode theme wins when not following app
   );
 });
 
+test("manual-theme resolver: auto preserves the saved global terminal theme", () => {
+  assert.equal(
+    resolveManualTerminalThemeId({
+      resolvedTheme: "dark",
+      terminalThemeDarkId: TERMINAL_THEME_AUTO,
+      terminalThemeLightId: TERMINAL_THEME_AUTO,
+      lightUiThemeId: "snow",
+      darkUiThemeId: "midnight",
+      fallbackThemeId: "dracula",
+    }),
+    "dracula",
+  );
+});
+
 test("follow-app theme selection updates the matching mode and app theme", () => {
   assert.deepEqual(
     getFollowAppTerminalThemeSelectionUpdate("ui-snow"),

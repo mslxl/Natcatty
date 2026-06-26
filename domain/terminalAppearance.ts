@@ -289,7 +289,7 @@ export const resolveManualTerminalThemeId = (args: {
     ? args.terminalThemeDarkId
     : args.terminalThemeLightId;
   if (selected && selected !== TERMINAL_THEME_AUTO) return selected;
-  return resolveFollowedTerminalThemeId(args);
+  return args.fallbackThemeId;
 };
 
 type ParsedHslToken = {

@@ -34,3 +34,15 @@ test("manual terminal theme uses the active per-mode pick", () => {
 
   assert.equal(theme.id, "dracula");
 });
+
+test("manual terminal theme preserves the saved global theme until a per-mode pick exists", () => {
+  const theme = resolveCurrentTerminalTheme({
+    ...commonArgs,
+    terminalThemeId: "dracula",
+    followAppTerminalTheme: false,
+    terminalThemeDarkId: "auto",
+    terminalThemeLightId: "auto",
+  });
+
+  assert.equal(theme.id, "dracula");
+});
