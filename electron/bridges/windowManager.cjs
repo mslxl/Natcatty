@@ -826,6 +826,20 @@ async function sendWhenRendererReady(win, channel, payload, options = {}) {
   return { success: true };
 }
 
+function resolveLiveAppIcon(fallback = null) {
+  try {
+    const appIconManager = require("./appIconManager.cjs");
+    const appPath = electronApp?.getAppPath?.();
+    if (appPath) {
+      const iconPath = appIconManager.getAppIconPath(appPath);
+      if (iconPath) return iconPath;
+    }
+  } catch {
+    // ignore
+  }
+  return fallback;
+}
+
 /**
  * Create the main application window
  */
@@ -879,6 +893,7 @@ const mainWindowApi = createMainWindowApi({
   unregisterAppContentWindow,
   getMainWindowCount,
   applyWindowOpacityToWindow,
+  resolveLiveAppIcon,
   closeSettingsWindow: (...args) => closeSettingsWindow(...args),
   hideSettingsWindow: (...args) => hideSettingsWindow(...args),
 });
@@ -921,6 +936,7 @@ const settingsWindowApi = createSettingsWindowApi({
   resolveFrontendBackgroundColor,
   createAppWindowOpenHandler,
   createExternalOnlyWindowOpenHandler,
+  resolveLiveAppIcon,
   getDevRendererBaseUrl,
   applyWindowOpacityToWindow,
 });
