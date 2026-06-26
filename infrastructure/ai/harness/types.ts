@@ -12,6 +12,7 @@ export type AgentEventType =
   | 'approval_requested'
   | 'approval_resolved'
   | 'compaction'
+  | 'compaction_start'
   | 'usage'
   | 'performance'
   | 'model_call_start'
@@ -23,7 +24,7 @@ export type AgentBackend = 'catty' | 'external-sdk';
 
 export type ApprovalOutcome = 'approved' | 'denied' | 'timeout';
 
-export type ContextPrepareTrigger = 'pre-turn' | '413-retry' | 'force';
+export type ContextPrepareTrigger = 'pre-turn' | '413-retry' | 'force' | 'step';
 
 export interface AgentEventBase {
   id: string;
@@ -101,6 +102,11 @@ export interface CompactionEvent extends AgentEventBase {
   trace: CompactionTrace;
 }
 
+export interface CompactionStartEvent extends AgentEventBase {
+  type: 'compaction_start';
+  trigger: ContextPrepareTrigger;
+}
+
 export interface ErrorEvent extends AgentEventBase {
   type: 'error';
   message: string;
@@ -155,6 +161,7 @@ export type AgentEvent =
   | ApprovalRequestedEvent
   | ApprovalResolvedEvent
   | CompactionEvent
+  | CompactionStartEvent
   | UsageEvent
   | PerformanceEvent
   | ModelCallStartEvent

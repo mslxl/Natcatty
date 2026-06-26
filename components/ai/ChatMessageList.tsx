@@ -44,6 +44,11 @@ import {
   resolveCapabilityId,
 } from '../../infrastructure/ai/harness/permissionGrants';
 import {
+  compactionStatusText,
+  resolveCompactionStatusText,
+  type ActiveCompactionUi,
+} from './hooks/useAgentCompactionUi';
+import {
   getAIPanelDiagnosticHiddenParts,
   getAIPanelProfilerProps,
   isAIPanelDiagnosticPartHidden,
@@ -54,6 +59,7 @@ interface ChatMessageListProps {
   isStreaming?: boolean;
   /** Active chat session ID — used to filter standalone MCP approval blocks */
   activeSessionId?: string | null;
+  activeCompaction?: ActiveCompactionUi | null;
   notes?: VaultNote[];
   hosts?: Host[];
   onOpenVaultNote?: (noteId: string) => void;
@@ -82,6 +88,7 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({
   messages,
   isStreaming,
   activeSessionId,
+  activeCompaction = null,
   notes = [],
   hosts = [],
   onOpenVaultNote,
@@ -247,6 +254,11 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({
   }
 
   const lastAssistantMessage = displayedMessages.findLast(m => m.role === 'assistant');
+  const showCompactionStatus = Boolean(
+    activeCompaction
+    && activeSessionId
+    && activeCompaction.sessionId === activeSessionId,
+  );
 
   const conversation = (
     <>
@@ -468,7 +480,9 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({
                 {/* Status text with shimmer */}
                 {message.statusText && (
                   <div className="py-1">
-                    <span className="thinking-shimmer text-xs">{message.statusText}</span>
+                    <span className="thinking-shimmer text-xs">
+                      {resolveCompactionStatusText(message.statusText, t)}
+                    </span>
                   </div>
                 )}
 
@@ -557,6 +571,15 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({
               </React.Profiler>
             );
           })}
+        {/* Transient compaction status — inline, no banner */}
+        {showCompactionStatus && activeCompaction && (
+          <div className="py-1">
+            <span className="thinking-shimmer text-xs text-muted-foreground">
+              {compactionStatusText(activeCompaction.trigger, t)}
+            </span>
+          </div>
+        )}
+
         {/* Streaming indicator — only when no content and no thinking yet */}
         {isStreaming && !lastAssistantMessage?.content && !lastAssistantMessage?.thinking && (
           <div className="flex items-center gap-1 py-2">

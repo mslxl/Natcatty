@@ -13,12 +13,19 @@ import {
 } from './contextManager';
 import type { AgentEventListener, CompactionTrace } from './types';
 import { buildCattyCompactionTimeout } from './streamTimeouts';
+import {
+  COMPACTION_PROMPT_RESERVE,
+  COMPACTION_SUMMARY_MAX_OUTPUT_TOKENS,
+  DEFAULT_MAX_OUTPUT_TOKENS,
+  resolveEffectiveMaxOutputTokens,
+} from './contextBudget';
+import { pruneUntilFitsCompaction } from './compactionPruner';
 
 export interface CompactCattyMessagesInput {
   messages: ModelMessage[];
   sessionId: string;
   chatSessionId?: string;
-  provider?: Pick<ProviderConfig, 'contextWindow' | 'modelContextWindows'> | null;
+  provider?: Pick<ProviderConfig, 'contextWindow' | 'modelContextWindows' | 'providerId' | 'advancedParams'> | null;
   modelId?: string | null;
   reservedTokens?: () => number;
   model: Parameters<typeof generateText>[0]['model'];
@@ -26,11 +33,13 @@ export interface CompactCattyMessagesInput {
   trigger?: 'pre-turn' | '413-retry' | 'force';
   force?: boolean;
   compressForRequestTooLargeRetry?: boolean;
-  onStatusText?: (text: string) => void;
+  maxOutputTokens?: number;
+  onCompactionStart?: (trigger: 'pre-turn' | '413-retry' | 'force') => void;
   onCompaction?: (trace: CompactionTrace) => void;
   reinjection?: {
     permissionMode?: import('../types').AIPermissionMode;
     sessionScopeSummary?: string;
+    sessionStateText?: string;
   };
 }
 
@@ -57,18 +66,41 @@ export async function compactCattyMessages(
     provider: input.provider,
     modelId: input.modelId,
   });
+  const maxOutputTokens = input.maxOutputTokens
+    ?? input.provider?.advancedParams?.maxTokens
+    ?? DEFAULT_MAX_OUTPUT_TOKENS;
+  const providerId = input.provider?.providerId;
 
   const summarize = async (messagesToSummarize: ModelMessage[]) => {
-    input.onStatusText?.('Compacting earlier context...');
+    const summarizeTrigger = input.trigger === '413-retry' || input.compressForRequestTooLargeRetry
+      ? '413-retry'
+      : input.trigger === 'force' || input.force
+        ? 'force'
+        : 'pre-turn';
+    input.onCompactionStart?.(summarizeTrigger);
+    const reserved = input.reservedTokens?.() ?? 0;
+    const compactionOutputTokens = resolveEffectiveMaxOutputTokens(
+      contextWindow,
+      COMPACTION_SUMMARY_MAX_OUTPUT_TOKENS,
+    );
+    const availableForInput = Math.max(
+      1,
+      contextWindow - compactionOutputTokens - COMPACTION_PROMPT_RESERVE - reserved,
+    );
+    const pruned = pruneUntilFitsCompaction({
+      messages: messagesToSummarize,
+      availableForInput: Math.max(1, availableForInput),
+      providerId,
+    });
     const result = await generateText({
       model: input.model,
       instructions: CONTEXT_COMPACTION_SYSTEM_PROMPT,
       messages: [{
         role: 'user',
-        content: `Summarize this earlier conversation context for the next model turn:\n\n${formatMessagesForCompaction(messagesToSummarize)}`,
+        content: `Summarize this earlier conversation context for the next model turn:\n\n${formatMessagesForCompaction(pruned)}`,
       }],
       abortSignal: input.abortSignal,
-      maxOutputTokens: 1600,
+      maxOutputTokens: COMPACTION_SUMMARY_MAX_OUTPUT_TOKENS,
       temperature: 0,
       timeout: buildCattyCompactionTimeout(),
     });
@@ -83,6 +115,7 @@ export async function compactCattyMessages(
       backend: 'catty',
       contextWindow,
       reservedTokens: input.reservedTokens?.() ?? 0,
+      maxOutputTokens,
       trigger,
       force: input.force,
       compressForRequestTooLargeRetry: input.compressForRequestTooLargeRetry,
@@ -95,7 +128,7 @@ export async function compactCattyMessages(
         ...input.reinjection,
         userGoal: extractLatestUserGoal(input.messages),
       },
-      providerId: input.provider?.providerId,
+      providerId,
     });
     return { messages: prepared.messages, trace: prepared.trace };
   } catch (err) {

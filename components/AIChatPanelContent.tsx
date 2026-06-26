@@ -47,6 +47,7 @@ interface AIChatPanelContentProps {
   handleDeleteSession: (event: React.MouseEvent, sessionId: string) => void;
   messages: ChatMessage[];
   isStreaming: boolean;
+  activeCompaction?: import('./ai/hooks/useAgentCompactionUi').ActiveCompactionUi | null;
   inputValue: string;
   setInputValue: (value: string) => void;
   handleSend: () => void;
@@ -100,6 +101,7 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
   handleDeleteSession,
   messages,
   isStreaming,
+  activeCompaction = null,
   inputValue,
   setInputValue,
   handleSend,
@@ -210,6 +212,7 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
                 messages={messages}
                 isStreaming={isStreaming}
                 activeSessionId={activeSessionId}
+                activeCompaction={activeCompaction}
                 notes={notes}
                 hosts={hosts}
                 onOpenVaultNote={onOpenVaultNote}

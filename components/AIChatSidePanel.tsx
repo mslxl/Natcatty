@@ -288,6 +288,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     sendToCattyAgent,
     sendToExternalAgent,
     reportStreamError,
+    activeCompaction,
   } = useAIChatStreaming({
     maxIterations,
     addMessageToSession,
@@ -1113,6 +1114,9 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         handleDeleteSession={handleDeleteSession}
         messages={messages}
         isStreaming={isStreaming}
+        activeCompaction={
+          activeCompaction?.sessionId === activeSessionId ? activeCompaction : null
+        }
         inputValue={inputValue}
         setInputValue={setInputValue}
         handleSend={handleSend}

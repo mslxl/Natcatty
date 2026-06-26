@@ -26,8 +26,10 @@ import {
   type DefaultTargetSessionHint,
   type TerminalSessionInfo,
 } from './aiChatStreamingSupport';
+import { useAgentCompactionUi } from './useAgentCompactionUi';
 
 export { getNetcattyBridge } from './aiChatStreamingSupport';
+export type { ActiveCompactionUi } from './useAgentCompactionUi';
 export type { DefaultTargetSessionHint } from './aiChatStreamingSupport';
 
 const sharedStreamingSessionIds = new Set<string>();
@@ -79,6 +81,7 @@ export interface UseAIChatStreamingReturn {
     context: SendToExternalContext,
   ) => Promise<void>;
   reportStreamError: (sessionId: string, abortSignal: AbortSignal, err: unknown) => void;
+  activeCompaction: import('./useAgentCompactionUi').ActiveCompactionUi | null;
 }
 
 export interface SendToCattyContext {
@@ -144,6 +147,8 @@ export function useAIChatStreaming({
   }, []);
 
   const abortControllersRef = useRef<Map<string, AbortController>>(sharedAbortControllers);
+
+  const activeCompaction = useAgentCompactionUi();
 
   const reportStreamError = useCallback((
     sessionId: string,
@@ -236,5 +241,6 @@ export function useAIChatStreaming({
     sendToCattyAgent,
     sendToExternalAgent,
     reportStreamError,
+    activeCompaction,
   };
 }
