@@ -16,11 +16,15 @@
  * can't grow the buffer without bound between turns.
  *
  * @param {(data: string) => void} sendFn delivers an accumulated batch
- * @param {{ maxBufferSize?: number }} [options]
+ * @param {{
+ *   maxBufferSize?: number,
+ *   shouldAcceptOutput?: () => boolean,
+ * }} [options]
  * @returns {{ bufferData: (data: string) => void, flush: () => void }}
  */
 function createPtyOutputBuffer(sendFn, options = {}) {
   const maxBufferSize = options.maxBufferSize ?? 16384; // 16KB
+  const shouldAcceptOutput = options.shouldAcceptOutput ?? (() => true);
 
   let dataBuffer = "";
   let scheduled = null;
@@ -42,6 +46,9 @@ function createPtyOutputBuffer(sendFn, options = {}) {
   };
 
   const bufferData = (data) => {
+    if (!shouldAcceptOutput()) {
+      return;
+    }
     dataBuffer += data;
     if (dataBuffer.length >= maxBufferSize) {
       // Large enough to ship right now — don't wait for the turn flush.

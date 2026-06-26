@@ -1,9 +1,35 @@
 import type { Terminal as XTerm } from "@xterm/xterm";
 
+import {
+  MAX_PENDING_WRITE_COALESCE_BYTES,
+  MAX_PENDING_WRITE_COALESCE_BYTES_FLOOD,
+} from "./terminalFlowConstants";
 import { createWriteCoalescer, type WriteCoalescer } from "./writeCoalescer.ts";
+import { isTerminalWriteQueueInFloodMode } from "./terminalWriteQueue";
+
+type CoalescerByteCapResolver = () => number;
 
 const terminalWriteCoalescers = new WeakMap<XTerm, WriteCoalescer>();
 const terminalWriteCoalescerIngress = new WeakMap<XTerm, number>();
+const terminalWriteCoalescerByteCapResolvers = new WeakMap<XTerm, CoalescerByteCapResolver>();
+
+const defaultCoalescerByteCap = (): number => MAX_PENDING_WRITE_COALESCE_BYTES;
+
+export const setTerminalWriteCoalescerByteCapResolver = (
+  term: XTerm,
+  resolver?: CoalescerByteCapResolver,
+): void => {
+  if (resolver) {
+    terminalWriteCoalescerByteCapResolvers.set(term, resolver);
+  } else {
+    terminalWriteCoalescerByteCapResolvers.delete(term);
+  }
+};
+
+const resolveCoalescerByteCap = (term: XTerm): number => {
+  const resolver = terminalWriteCoalescerByteCapResolvers.get(term);
+  return resolver?.() ?? defaultCoalescerByteCap();
+};
 
 const takePendingIngressBytes = (term: XTerm, fallback = 0): number => {
   const pending = terminalWriteCoalescerIngress.get(term) ?? fallback;
@@ -27,6 +53,8 @@ export const enqueueCoalescedTerminalWrite = (
     coalescer = createWriteCoalescer((batch) => {
       const batchIngress = takePendingIngressBytes(term, batch.length);
       writeNow(batch, batchIngress);
+    }, {
+      getMaxPendingBytes: () => resolveCoalescerByteCap(term),
     });
     terminalWriteCoalescers.set(term, coalescer);
   }
@@ -41,6 +69,7 @@ export const resetTerminalWriteCoalescer = (term: XTerm): void => {
   terminalWriteCoalescers.get(term)?.dispose();
   terminalWriteCoalescers.delete(term);
   terminalWriteCoalescerIngress.delete(term);
+  terminalWriteCoalescerByteCapResolvers.delete(term);
 };
 
 export const getTerminalWriteCoalescerPendingBytes = (term: XTerm): number =>
@@ -64,3 +93,12 @@ export const abortTerminalWriteCoalescer = (
     onDropped?.(ingressDropped);
   }
 };
+
+export const resolveFloodCoalescerByteCap = (
+  isFlowPaused: boolean,
+  queueInFloodMode: boolean,
+): number => (
+  isFlowPaused || queueInFloodMode
+    ? MAX_PENDING_WRITE_COALESCE_BYTES_FLOOD
+    : MAX_PENDING_WRITE_COALESCE_BYTES
+);

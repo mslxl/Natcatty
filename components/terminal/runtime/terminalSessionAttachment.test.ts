@@ -13,6 +13,7 @@ import {
   flushTerminalSessionFlowAck,
 } from "./terminalFlowAckBuffer.ts";
 import { flushTerminalWriteCoalescer } from "./terminalWriteCoalescer.ts";
+import { clearDeferredTerminalWriteAck } from "./terminalWriteAckDeferral.ts";
 
 const createFakeTerm = (activeType = "normal") => {
   const writes: string[] = [];
@@ -85,6 +86,11 @@ test("writeSessionData acks ingress bytes to match main-process trackEmitted", (
   };
 
   writeSessionData(ctx as never, term, "hello");
+  flushTerminalWriteCoalescer(term);
+  const deferred = clearDeferredTerminalWriteAck(term);
+  if (deferred > 0) {
+    ctx.terminalBackend.ackSessionFlow!("session-1", deferred);
+  }
   flushTerminalSessionFlowAck("session-1");
 
   assert.deepEqual(acked, [5]);
@@ -113,6 +119,10 @@ test("writeSessionData acks original ingress bytes when display data is expanded
 
   writeSessionData(ctx as never, term, "a\nb", 2);
   flushTerminalWriteCoalescer(term);
+  const deferred = clearDeferredTerminalWriteAck(term);
+  if (deferred > 0) {
+    ctx.terminalBackend.ackSessionFlow!("session-1", deferred);
+  }
   flushTerminalSessionFlowAck("session-1");
 
   assert.deepEqual(acked, [2]);

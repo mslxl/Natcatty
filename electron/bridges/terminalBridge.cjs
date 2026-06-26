@@ -24,6 +24,7 @@ const {
 const {
   clearSessionFlowState,
   setRendererFlowPaused,
+  shouldAcceptSessionOutput,
   trackAck,
 } = require("./terminalFlowAck.cjs");
 const iconv = require("iconv-lite");
@@ -424,6 +425,8 @@ function startLocalSession(event, payload) {
       cols: session.cols,
       rows: session.rows,
     });
+  }, {
+    shouldAcceptOutput: () => shouldAcceptSessionOutput(session),
   });
   session.flushPendingData = flushLocal;
 

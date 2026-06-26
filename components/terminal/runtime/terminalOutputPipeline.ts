@@ -8,6 +8,10 @@ import {
   resetTerminalWriteCoalescer,
 } from "./terminalWriteCoalescer";
 import {
+  clearDeferredTerminalWriteAck,
+  getDeferredTerminalWriteAckBytes,
+} from "./terminalWriteAckDeferral";
+import {
   abortTerminalWriteQueue,
   getTerminalWriteQueueDepth,
 } from "./terminalWriteQueue";
@@ -49,6 +53,11 @@ export const releaseTerminalFlowOutputForTerm = (
 
   abortTerminalWriteCoalescer(term, onDropped);
   abortTerminalWriteQueue(term, onDropped);
+  const deferredAck = clearDeferredTerminalWriteAck(term);
+  if (deferredAck > 0) {
+    flow?.written(deferredAck);
+    ackTerminalSessionFlow(backend, sessionId, deferredAck);
+  }
   flow?.reset();
   if (sessionId) {
     flushTerminalSessionFlowAck(sessionId);
@@ -77,7 +86,8 @@ export const prioritizeTerminalInput = (
 
   const backlog = flow?.pendingBytes() ?? 0;
   const queueDepth = getTerminalWriteQueueDepth(term);
-  if (backlog <= FLOW_LOW_WATER_MARK && queueDepth === 0) {
+  const deferredAck = getDeferredTerminalWriteAckBytes(term);
+  if (backlog <= FLOW_LOW_WATER_MARK && queueDepth === 0 && deferredAck === 0) {
     return;
   }
 
@@ -87,6 +97,11 @@ export const prioritizeTerminalInput = (
 
   abortTerminalWriteCoalescer(term, onDropped);
   abortTerminalWriteQueue(term, onDropped);
+  const flushedDeferredAck = clearDeferredTerminalWriteAck(term);
+  if (flushedDeferredAck > 0) {
+    flow?.written(flushedDeferredAck);
+    ackTerminalSessionFlow(backend, sessionId, flushedDeferredAck);
+  }
   flow?.reset();
   flushTerminalSessionFlowAck(sessionId);
   backend.setSessionFlowPaused?.(sessionId, false);

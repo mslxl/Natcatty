@@ -26,10 +26,21 @@ import { appendEraseScrollbackAfterFullErases } from "../clearTerminalViewport";
 import {
   enqueueCoalescedTerminalWrite,
   flushTerminalWriteCoalescer,
+  resolveFloodCoalescerByteCap,
+  setTerminalWriteCoalescerByteCapResolver,
 } from "./terminalWriteCoalescer";
+import {
+  accumulateDeferredTerminalWriteAck,
+  clearDeferredTerminalWriteAck,
+  getDeferredTerminalWriteAckBytes,
+  resetDeferredTerminalWriteAck,
+  shouldDeferTerminalWriteCallback,
+} from "./terminalWriteAckDeferral";
 import {
   FLOW_HIGH_WATER_MARK,
   FLOW_LOW_WATER_MARK,
+  XTERM_WRITE_CALLBACK_BATCH_BYTES,
+  XTERM_WRITE_CALLBACK_FAST_PATH_MAX_BYTES,
 } from "./terminalFlowConstants";
 import {
   ackTerminalSessionFlow,
@@ -37,6 +48,7 @@ import {
 } from "./terminalFlowAckBuffer";
 import {
   enqueueTerminalWrite,
+  isTerminalWriteQueueInFloodMode,
   setTerminalWriteQueueDropHandler,
 } from "./terminalWriteQueue";
 import {
@@ -103,6 +115,12 @@ export const getFlowController = (
       },
     });
     terminalFlowControllers.set(term, controller);
+    setTerminalWriteCoalescerByteCapResolver(term, () => (
+      resolveFloodCoalescerByteCap(
+        controller!.isPaused(),
+        isTerminalWriteQueueInFloodMode(term),
+      )
+    ));
     setTerminalWriteQueueDropHandler(term, (bytes) => {
       if (bytes <= 0) return;
       controller?.written(bytes);
@@ -181,18 +199,46 @@ const writeSessionDataImmediate = (
         syncPromptLineBreakState(term, ctx.promptLineBreakStateRef?.current);
       }
     };
-    const afterWrite = () => {
+    const finishQueueItem = () => {
       clearPasteResidualAndCapture();
       syncPrompt();
       if (shouldScrollOnTerminalOutput(settings)) {
         handleTerminalOutputAutoScroll(ctx, term);
       }
       done();
-      flow.written(ingressBytes);
-      ackTerminalSessionFlow(ctx.terminalBackend, ctx.sessionRef.current, ingressBytes);
     };
+    const commitFlowAck = (ackedBytes: number) => {
+      if (ackedBytes <= 0) return;
+      flow.written(ackedBytes);
+      ackTerminalSessionFlow(ctx.terminalBackend, ctx.sessionRef.current, ackedBytes);
+    };
+    const deferredBeforeWrite = getDeferredTerminalWriteAckBytes(term);
+    const deferFlowAck = !forcePromptNewLine
+      && shouldDeferTerminalWriteCallback(
+        preparedDisplayData.length,
+        deferredBeforeWrite,
+        ingressBytes,
+        XTERM_WRITE_CALLBACK_FAST_PATH_MAX_BYTES,
+        XTERM_WRITE_CALLBACK_BATCH_BYTES,
+      );
 
-    writeTerminalDataWithLineTimestamps(term, preparedDisplayData, afterWrite);
+    if (deferFlowAck) {
+      writeTerminalDataWithLineTimestamps(term, preparedDisplayData, () => {
+        finishQueueItem();
+        const deferredTotal = accumulateDeferredTerminalWriteAck(term, ingressBytes);
+        if (deferredTotal >= XTERM_WRITE_CALLBACK_BATCH_BYTES) {
+          commitFlowAck(clearDeferredTerminalWriteAck(term));
+        }
+      });
+      return;
+    }
+
+    const deferredBeforeCallback = clearDeferredTerminalWriteAck(term);
+    const ackOnCallback = deferredBeforeCallback + ingressBytes;
+    writeTerminalDataWithLineTimestamps(term, preparedDisplayData, () => {
+      finishQueueItem();
+      commitFlowAck(ackOnCallback);
+    });
   });
 };
 
@@ -237,6 +283,8 @@ export const releaseTerminalFlowBeforeHibernate = (
 ): void => {
   const flow = terminalFlowControllers.get(term);
   releaseTerminalFlowOutputForTerm(term, backend, sessionId, flow);
+  setTerminalWriteCoalescerByteCapResolver(term);
+  resetDeferredTerminalWriteAck(term);
   terminalFlowControllers.delete(term);
 };
 

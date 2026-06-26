@@ -4,6 +4,8 @@ import { beforeEach, test } from "node:test";
 import {
   createWriteCoalescer,
   MAX_PENDING_WRITE_COALESCE_BYTES,
+  MAX_PENDING_WRITE_COALESCE_BYTES_FLOOD,
+  type WriteCoalescerOptions,
 } from "./writeCoalescer.ts";
 
 type FrameCallback = (time: number) => void;
@@ -11,8 +13,12 @@ type FrameCallback = (time: number) => void;
 let frameCallbacks: Map<number, FrameCallback>;
 let nextFrameId: number;
 
-const createTestCoalescer = (write: (data: string) => void) =>
+const createTestCoalescer = (
+  write: (data: string) => void,
+  options: Omit<WriteCoalescerOptions, "scheduleFrame"> = {},
+) =>
   createWriteCoalescer(write, {
+    ...options,
     scheduleFrame(callback) {
       const id = nextFrameId;
       nextFrameId += 1;
@@ -82,6 +88,19 @@ test("flushes synchronously when pending bytes exceed the cap", () => {
   coalescer.push("y");
   assert.equal(writes.length, 1);
   assert.equal(writes[0]?.length, MAX_PENDING_WRITE_COALESCE_BYTES + 1);
+});
+
+test("uses a tighter pending-byte cap when getMaxPendingBytes is set", () => {
+  const writes: string[] = [];
+  const cap = 64;
+  const coalescer = createTestCoalescer((data) => writes.push(data), {
+    getMaxPendingBytes: () => cap,
+  });
+
+  coalescer.push("x".repeat(cap - 1));
+  coalescer.push("yy");
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0]?.length, cap + 1);
 });
 
 test("dispose flushes remaining bytes and stops accepting new chunks", () => {

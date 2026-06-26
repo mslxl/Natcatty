@@ -2,6 +2,7 @@
 const crypto = require("node:crypto");
 const { createSystemKnownHostsApi } = require("../sshBridge/systemKnownHosts.cjs");
 const { emitTerminalSessionData } = require("../emitTerminalSessionData.cjs");
+const { shouldAcceptSessionOutput } = require("../terminalFlowAck.cjs");
 
 //
 // EternalTerminal session backend, factored into the createXxxSessionApi
@@ -824,6 +825,8 @@ main();
             cols: session.cols,
             rows: session.rows,
           });
+        }, {
+          shouldAcceptOutput: () => shouldAcceptSessionOutput(session),
         });
         session.flushPendingData = flushEt;
 

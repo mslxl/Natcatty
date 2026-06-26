@@ -11,6 +11,8 @@ import {
 } from "./terminalOutputPipeline.ts";
 import { FLOW_LOW_WATER_MARK } from "./terminalFlowConstants.ts";
 import { enqueueTerminalWrite } from "./terminalWriteQueue.ts";
+import { accumulateDeferredTerminalWriteAck } from "./terminalWriteAckDeferral.ts";
+import { clearTerminalSessionFlowAck } from "./terminalFlowAckBuffer.ts";
 
 const createFakeTerm = () => ({}) as XTerm;
 
@@ -79,6 +81,31 @@ test("prioritizeTerminalInput flushes batched ack remainders after dropping byte
   prioritizeTerminalInput(term, "sess-1", flow, backend);
 
   assert.deepEqual(acked, [30]);
+});
+
+test("prioritizeTerminalInput flushes deferred xterm write ack bytes", () => {
+  clearTerminalSessionFlowAck("sess-1");
+  const term = createFakeTerm();
+  const acked: number[] = [];
+  const flow = createOutputFlowController({
+    highWaterMark: 100,
+    lowWaterMark: 20,
+    onPause: () => {},
+    onResume: () => {},
+  });
+  const backend = {
+    ackSessionFlow: (_sessionId: string, bytes: number) => {
+      acked.push(bytes);
+    },
+    setSessionFlowPaused: () => {},
+  };
+
+  accumulateDeferredTerminalWriteAck(term, 42);
+  prioritizeTerminalInput(term, "sess-1", flow, backend);
+
+  assert.deepEqual(acked, [42]);
+  assert.equal(flow.pendingBytes(), 0);
+  clearTerminalSessionFlowAck("sess-1");
 });
 
 test("prioritizeTerminalInput drains backlog before user input is forwarded", () => {

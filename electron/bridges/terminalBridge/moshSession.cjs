@@ -1,5 +1,6 @@
 /* eslint-disable no-undef */
 const { emitTerminalSessionData } = require("../emitTerminalSessionData.cjs");
+const { shouldAcceptSessionOutput } = require("../terminalFlowAck.cjs");
 
 function createMoshSessionApi(ctx) {
   with (ctx) {
@@ -431,6 +432,8 @@ function createMoshSessionApi(ctx) {
           cols: session.cols,
           rows: session.rows,
         });
+      }, {
+        shouldAcceptOutput: () => shouldAcceptSessionOutput(session),
       });
       session.flushPendingData = flush;
     

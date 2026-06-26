@@ -1,5 +1,6 @@
 /* eslint-disable no-undef */
 const { emitTerminalSessionData } = require("../emitTerminalSessionData.cjs");
+const { shouldAcceptSessionOutput } = require("../terminalFlowAck.cjs");
 
 const TELNET_SESSION_REPLACED_ERROR = "Telnet session start was replaced";
 
@@ -237,6 +238,8 @@ function createTelnetSessionApi(ctx) {
         const { bufferData: bufferTelnetData, flush: flushTelnet } = createPtyOutputBuffer((data) => {
           const contents = electronModule.webContents.fromId(telnetWebContentsId);
           emitTerminalSessionData(contents, sessionId, data, { cols, rows });
+        }, {
+          shouldAcceptOutput: () => shouldAcceptSessionOutput(sessions.get(sessionId)),
         });
     
         const telnetZmodemSentry = createZmodemSentry({

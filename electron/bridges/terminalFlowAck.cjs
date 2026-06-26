@@ -1,8 +1,9 @@
 "use strict";
 
-// Match VS Code FlowControlConstants (terminal.ts).
-const FLOW_HIGH_WATER_MARK = 100_000;
-const FLOW_LOW_WATER_MARK = 5_000;
+const {
+  FLOW_HIGH_WATER_MARK,
+  FLOW_LOW_WATER_MARK,
+} = require("../../infrastructure/config/terminalFlowConstants.cjs");
 
 function getFlowTarget(session) {
   return session?.stream || session?.proc || session?.socket || session?.serialPort || null;
@@ -81,6 +82,12 @@ function trackAck(session, bytes) {
   reconcileSessionFlow(session);
 }
 
+function shouldAcceptSessionOutput(session) {
+  if (!session) return true;
+  const state = ensureFlowState(session);
+  return !state.appliedPause;
+}
+
 function clearSessionFlowState(session) {
   if (!session?.flowState) return;
   const target = getFlowTarget(session);
@@ -100,6 +107,7 @@ module.exports = {
   setRendererFlowPaused,
   trackEmitted,
   trackAck,
+  shouldAcceptSessionOutput,
   clearSessionFlowState,
   reconcileSessionFlow,
 };

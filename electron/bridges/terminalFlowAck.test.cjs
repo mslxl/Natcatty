@@ -1,11 +1,13 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
+const sharedConstants = require("../../infrastructure/config/terminalFlowConstants.cjs");
 const {
   FLOW_HIGH_WATER_MARK,
   FLOW_LOW_WATER_MARK,
   clearSessionFlowState,
   setRendererFlowPaused,
+  shouldAcceptSessionOutput,
   trackAck,
   trackEmitted,
 } = require("./terminalFlowAck.cjs");
@@ -25,9 +27,18 @@ function makeSession() {
   };
 }
 
-test("main-process watermarks match VS Code FlowControlConstants", () => {
-  assert.equal(FLOW_HIGH_WATER_MARK, 100_000);
-  assert.equal(FLOW_LOW_WATER_MARK, 5_000);
+test("main-process watermarks match shared terminalFlowConstants.cjs", () => {
+  assert.equal(FLOW_HIGH_WATER_MARK, sharedConstants.FLOW_HIGH_WATER_MARK);
+  assert.equal(FLOW_LOW_WATER_MARK, sharedConstants.FLOW_LOW_WATER_MARK);
+});
+
+test("shouldAcceptSessionOutput returns false when flow pause is applied", () => {
+  const session = makeSession();
+  assert.equal(shouldAcceptSessionOutput(session), true);
+  trackEmitted(session, FLOW_HIGH_WATER_MARK);
+  assert.equal(shouldAcceptSessionOutput(session), false);
+  trackAck(session, FLOW_HIGH_WATER_MARK);
+  assert.equal(shouldAcceptSessionOutput(session), true);
 });
 
 test("trackEmitted pauses once when unacked bytes cross the high watermark", () => {

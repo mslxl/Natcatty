@@ -10,8 +10,15 @@
  * apps/desktop/src/renderer/lib/terminal/write-coalescer.ts
  */
 
-/** Pending-byte ceiling when rAF is throttled (hidden window). */
-export const MAX_PENDING_WRITE_COALESCE_BYTES = 1024 * 1024;
+import {
+  MAX_PENDING_WRITE_COALESCE_BYTES,
+  MAX_PENDING_WRITE_COALESCE_BYTES_FLOOD,
+} from "./terminalFlowConstants";
+
+export {
+  MAX_PENDING_WRITE_COALESCE_BYTES,
+  MAX_PENDING_WRITE_COALESCE_BYTES_FLOOD,
+};
 
 export type WriteCoalescer = {
   push(chunk: string): void;
@@ -24,6 +31,11 @@ export type WriteCoalescer = {
 };
 
 type ScheduleWriteFrame = (callback: () => void) => (() => void) | null;
+
+export type WriteCoalescerOptions = {
+  scheduleFrame?: ScheduleWriteFrame;
+  getMaxPendingBytes?: () => number;
+};
 
 const scheduleWriteFrame = (callback: () => void): (() => void) | null => {
   if (typeof globalThis.requestAnimationFrame === "function") {
@@ -40,13 +52,15 @@ const scheduleWriteFrame = (callback: () => void): (() => void) | null => {
 
 export const createWriteCoalescer = (
   write: (data: string) => void,
-  options: { scheduleFrame?: ScheduleWriteFrame } = {},
+  options: WriteCoalescerOptions = {},
 ): WriteCoalescer => {
   let pending: string[] = [];
   let pendingBytes = 0;
   let cancelPendingFrame: (() => void) | null = null;
   let disposed = false;
   const scheduleFrame = options.scheduleFrame ?? scheduleWriteFrame;
+  const getMaxPendingBytes = options.getMaxPendingBytes
+    ?? (() => MAX_PENDING_WRITE_COALESCE_BYTES);
 
   const cancelScheduledFrame = (): void => {
     if (cancelPendingFrame !== null) {
@@ -83,7 +97,7 @@ export const createWriteCoalescer = (
     }
     pending.push(chunk);
     pendingBytes += chunk.length;
-    if (pendingBytes > MAX_PENDING_WRITE_COALESCE_BYTES) {
+    if (pendingBytes > getMaxPendingBytes()) {
       flushSync();
       return;
     }

@@ -84,6 +84,9 @@ export const setTerminalWriteQueueDropHandler = (
 export const getTerminalWriteQueueDepth = (term: XTerm): number =>
   terminalWriteQueues.get(term)?.pending.length ?? 0;
 
+export const isTerminalWriteQueueInFloodMode = (term: XTerm): boolean =>
+  terminalWriteQueues.get(term)?.floodMode ?? false;
+
 export const enqueueTerminalWrite = (
   term: XTerm,
   bytes: number,
