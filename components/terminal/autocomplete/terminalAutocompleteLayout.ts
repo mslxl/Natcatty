@@ -319,10 +319,25 @@ export function resolveAutocompleteCursorColumn(
   return Math.max(fromLine, fromPrompt);
 }
 
-/** Clamp autocomplete popups to the active terminal pane in split workspaces. */
+/** Clamp autocomplete popups to the active terminal pane in split workspaces.
+ *
+ * Uses the visible `.xterm-screen` rect as the clamp boundary so the popup
+ * never overflows the *actual* rendered terminal grid. The `.xterm-container`
+ * can be a few pixels taller than the screen (rounding/padding), so falling
+ * back to its rect produced a false positive `spaceBelow` at the bottom row
+ * and caused short suggestion lists to flip downward below the visible area
+ * (see issue #1710).
+ */
 export function resolveAutocompleteClampViewport(container: HTMLElement | null): PopupClampViewport {
   const pane = container?.closest<HTMLElement>('[data-section="terminal-split-pane"]');
-  const rect = pane?.getBoundingClientRect() ?? container?.getBoundingClientRect();
+  const screen = container?.querySelector<HTMLElement>(".xterm-screen")
+    ?? null;
+  // Prefer the split-pane bounds when present; otherwise clamp to the rendered
+  // screen so the popup cannot spill below the last row. If neither is
+  // available, fall back to the container rect or the full viewport.
+  const rect = pane?.getBoundingClientRect()
+    ?? screen?.getBoundingClientRect()
+    ?? container?.getBoundingClientRect();
   if (rect && rect.width > 0 && rect.height > 0) {
     return {
       left: rect.left,

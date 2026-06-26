@@ -387,8 +387,13 @@ export function useTerminalAutocomplete(
           };
         });
       });
+      // Adding/removing sub-dir panels changes the popup's total width, which
+      // can push it off-screen. Recompute placement after state settles.
+      requestAnimationFrame(() => {
+        repositionPopup();
+      });
     });
-  }, [fetchDirEntries, termRef]);
+  }, [fetchDirEntries, repositionPopup]);
 
   /** Expand a directory at the given panel level → fetch contents and push new panel.
    *  Does NOT change focus level — use moveFocus param to override. */
@@ -821,7 +826,13 @@ export function useTerminalAutocomplete(
     const isPreview = index >= 0 && candidate !== baseline;
     previewActiveRef.current = isPreview;
     lastAcceptedCommandRef.current = isPreview ? candidate : null;
-  }, [termRef, writeToTerminal]);
+    // Live-preview can move/wrap the cursor. Recompute the anchor after xterm
+    // has processed the write so the popup doesn't drift or flip into a stale
+    // position (fixes #1710).
+    requestAnimationFrame(() => {
+      repositionPopup();
+    });
+  }, [termRef, writeToTerminal, repositionPopup]);
 
   /** Accept a snippet: clear the user's typed input, then run it via the
    *  host-canonical send path (onAcceptSnippet). */
