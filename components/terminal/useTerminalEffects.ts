@@ -125,8 +125,8 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
 
 
   useEffect(() => {
-    clearTerminalCwd();
-    return clearTerminalCwd;
+    clearTerminalCwd({ persistRestoreMetadata: false });
+    return () => clearTerminalCwd({ persistRestoreMetadata: false });
   }, [clearTerminalCwd, host.id]);
 
 
