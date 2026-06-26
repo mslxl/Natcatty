@@ -726,7 +726,7 @@ function createSessionOpsApi(ctx) {
       }
     
       // macOS stats command: uses sysctl, vm_stat, ps, df, netstat
-      // CPU is a fast best-effort sum of process %CPU, clamped by the parser.
+      // CPU is a fast best-effort sum of process %CPU normalized by logical cores.
       // cpuPerCore not available on macOS without sudo
       const macosStatsCommand = [
         `cores=$(sysctl -n hw.logicalcpu 2>/dev/null || echo "1")`,
@@ -734,7 +734,7 @@ function createSessionOpsApi(ctx) {
         `memsize=$(sysctl -n hw.memsize 2>/dev/null || echo "0")`,
         // CPU usage: avoid top here; on some remote macOS shells top can block long enough
         // to trip the stats timeout. ps is fast and present on supported macOS versions.
-        `cpupct=$(ps -A -o %cpu= 2>/dev/null | awk '{s+=$1} END{if(s<0)s=0;if(s>100)s=100;printf "%.0f",s}')`,
+        `cpupct=$(ps -A -o %cpu= 2>/dev/null | awk -v c="$cores" '{s+=$1} END{if(c<=0)c=1;s=s/c;if(s<0)s=0;if(s>100)s=100;printf "%.0f",s}')`,
         // Memory: single vm_stat pipe → awk extracts all page counts (strip trailing dots with gsub)
         // Outputs: "memfree memcached" in MB
         `vmmem=$(vm_stat 2>/dev/null | awk -v ps="$pagesize" '/^Pages free:/{gsub(/[^0-9]/,"",$NF);free=$NF+0} /^Pages speculative:/{gsub(/[^0-9]/,"",$NF);spec=$NF+0} /^Pages inactive:/{gsub(/[^0-9]/,"",$NF);inact=$NF+0} /^Pages purgeable:/{gsub(/[^0-9]/,"",$NF);purg=$NF+0} END{mfree=int((free+spec)*ps/1024/1024);mcached=int((inact+purg)*ps/1024/1024);printf "%d %d",mfree,mcached}')`,
@@ -846,7 +846,7 @@ function createSessionOpsApi(ctx) {
     
             for (const part of parts) {
               if (part.startsWith('CPU:')) {
-                // macOS: top reports CPU% directly (no delta needed)
+                // macOS: command reports normalized CPU% directly (no delta needed)
                 const val = parseFloat(part.substring(4).trim());
                 if (!isNaN(val)) cpuDirect = Math.min(100, Math.max(0, Math.round(val)));
               } else if (part.startsWith('CPURAW:')) {
