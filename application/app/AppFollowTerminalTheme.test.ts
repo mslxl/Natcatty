@@ -4,7 +4,10 @@ import test from "node:test";
 
 const source = readFileSync(new URL("../../App.tsx", import.meta.url), "utf8");
 
-test("follow-app terminal theme selection reads the latest custom theme store", () => {
-  assert.match(source, /customThemeStore\.getThemeById\(themeId\)/);
-  assert.doesNotMatch(source, /const selectedTheme = themeById\.get\(themeId\)/);
+test("follow-app terminal theme selection updates the matching UI theme", () => {
+  assert.match(source, /const update = getFollowAppTerminalThemeSelectionUpdate\(themeId\)/);
+  assert.match(source, /setDarkUiThemeId\(update\.uiThemeId\)/);
+  assert.match(source, /setLightUiThemeId\(update\.uiThemeId\)/);
+  assert.match(source, /setTheme\(update\.appTheme\)/);
+  assert.doesNotMatch(source, /customThemeStore\.getThemeById\(themeId\)/);
 });
