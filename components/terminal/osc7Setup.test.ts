@@ -1,12 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
 import {
   OSC7_MARKER,
+  buildOsc7ReloadCommand,
   buildOsc7SetupCommand,
   buildOsc7SetupExecCommand,
   runOsc7SetupAction,
@@ -35,6 +36,8 @@ const existingShells = (paths: string[]) => Array.from(new Set(paths.filter(exis
 
 const supportedShells = () => existingShells(["/bin/bash", "/bin/zsh", "/usr/bin/zsh", "/opt/homebrew/bin/fish", "/usr/bin/fish"]);
 
+const quoteShellArg = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
+
 const extractOsc7Path = (output: string) => {
   const escape = String.fromCharCode(0x1b);
   const bell = String.fromCharCode(0x07);
@@ -48,6 +51,32 @@ const extractOsc7Path = (output: string) => {
   assert.ok(fileUrl.startsWith("file://"), "expected OSC 7 file URL");
 
   return decodeURIComponent(new URL(fileUrl).pathname);
+};
+
+const runInteractiveHistoryProbe = ({
+  shellPath,
+  shellArgs,
+  dumpHistoryCommand,
+  dumpPath,
+  env,
+  input = buildOsc7SetupCommand(),
+}: {
+  shellPath: string;
+  shellArgs: string[];
+  dumpHistoryCommand: string;
+  dumpPath: string;
+  env: NodeJS.ProcessEnv;
+  input?: string;
+}) => {
+  const result = spawnSync(shellPath, shellArgs, {
+    env: { ...process.env, ZDOTDIR: "", XDG_CONFIG_HOME: "", ...env },
+    input: `${input.replace(/\r/g, "\n")}\n${dumpHistoryCommand}\nexit\n`,
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.ok(existsSync(dumpPath), result.stderr || result.stdout);
+  return readFileSync(dumpPath, "utf8");
 };
 
 test("shouldOfferOsc7SetupAction only allows remote shell-style sessions", () => {
@@ -144,6 +173,24 @@ test("buildOsc7SetupCommand configures bash once and prompt loading stays idempo
     ).toString("utf8");
 
     assert.equal(output.split("osc7_cwd").length - 1, 1);
+  });
+});
+
+test("buildOsc7SetupCommand preserves setup failure status", () => {
+  withTempHome("netcatty-osc7-unsupported-shell-", (home) => {
+    const result = spawnSync("/bin/sh", ["-c", buildOsc7SetupCommand()], {
+      env: {
+        ...process.env,
+        HOME: home,
+        SHELL: "/bin/unknown",
+        ZDOTDIR: "",
+        XDG_CONFIG_HOME: "",
+      },
+      encoding: "utf8",
+    });
+
+    assert.equal(result.status, 2, result.stderr || result.stdout);
+    assert.match(result.stderr, /unsupported shell unknown/);
   });
 });
 
@@ -272,6 +319,119 @@ test("buildOsc7SetupCommand can be pasted into supported shells", () => {
       assert.equal(realpathSync(extractOsc7Path(output)), realpathSync(specialCwd), shellPath);
     });
   }
+});
+
+test("buildOsc7ReloadCommand does not leave reload command in bash history", () => {
+  withTempHome("netcatty-osc7-reload-history-bash-", (home) => {
+    const bashrcPath = join(home, ".bashrc");
+    const dumpPath = join(home, "bash-history-dump");
+    mkdirSync(home, { recursive: true });
+    writeFileSync(bashrcPath, "osc7_cwd(){ :; }\n");
+    const reloadCommand = buildOsc7ReloadCommand({ shell: "bash", configPath: bashrcPath });
+
+    assert.ok(reloadCommand);
+    assert.doesNotMatch(reloadCommand.slice(0, -1), /[\r\n]/);
+
+    const output = runInteractiveHistoryProbe({
+      shellPath: "/bin/bash",
+      shellArgs: ["--noprofile", "--norc", "-i"],
+      dumpHistoryCommand: `history > ${quoteShellArg(dumpPath)}`,
+      dumpPath,
+      env: {
+        HOME: home,
+        HISTFILE: join(home, ".bash_history"),
+        HISTCONTROL: "ignoreboth",
+        SHELL: "/bin/bash",
+      },
+      input: `echo keepme\n${reloadCommand}`,
+    });
+
+    assert.match(output, /echo keepme/);
+    assert.doesNotMatch(output, /osc7_cwd|source .*\.bashrc|__netcatty_osc7|history -d/);
+  });
+});
+
+test("buildOsc7ReloadCommand preserves bash nounset", () => {
+  withTempHome("netcatty-osc7-reload-nounset-bash-", (home) => {
+    const bashrcPath = join(home, ".bashrc");
+    const optionDumpPath = join(home, "bash-options-dump");
+    mkdirSync(home, { recursive: true });
+    writeFileSync(bashrcPath, "osc7_cwd(){ :; }\n");
+
+    const result = spawnSync("/bin/bash", ["--noprofile", "--norc", "-i"], {
+      env: {
+        ...process.env,
+        HOME: home,
+        HISTFILE: join(home, ".bash_history"),
+        SHELL: "/bin/bash",
+      },
+      input: [
+        "set -u",
+        (buildOsc7ReloadCommand({ shell: "bash", configPath: bashrcPath }) ?? "").replace(/\r/g, "\n"),
+        `set -o | grep nounset > ${quoteShellArg(optionDumpPath)}`,
+        "exit",
+      ].join("\n"),
+      encoding: "utf8",
+    });
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.match(readFileSync(optionDumpPath, "utf8"), /\bon\b/);
+  });
+});
+
+test("buildOsc7ReloadCommand does not delete bash history when reload is not recorded", () => {
+  withTempHome("netcatty-osc7-reload-ignored-history-bash-", (home) => {
+    const bashrcPath = join(home, ".bashrc");
+    const dumpPath = join(home, "bash-history-dump");
+    mkdirSync(home, { recursive: true });
+    writeFileSync(bashrcPath, "osc7_cwd(){ :; }\n");
+
+    const output = runInteractiveHistoryProbe({
+      shellPath: "/bin/bash",
+      shellArgs: ["--noprofile", "--norc", "-i"],
+      dumpHistoryCommand: `history > ${quoteShellArg(dumpPath)}`,
+      dumpPath,
+      env: {
+        HOME: home,
+        HISTFILE: join(home, ".bash_history"),
+        HISTIGNORE: "*__netcatty_osc7_history_cleanup_marker__=1*",
+        SHELL: "/bin/bash",
+      },
+      input: `echo keepme\n${buildOsc7ReloadCommand({ shell: "bash", configPath: bashrcPath }) ?? ""}`,
+    });
+
+    assert.match(output, /echo keepme/);
+    assert.doesNotMatch(output, /osc7_cwd|source .*\.bashrc|__netcatty_osc7|history -d/);
+  });
+});
+
+test("buildOsc7ReloadCommand bypasses custom bash history wrappers", () => {
+  withTempHome("netcatty-osc7-reload-wrapped-history-bash-", (home) => {
+    const bashrcPath = join(home, ".bashrc");
+    const dumpPath = join(home, "bash-history-dump");
+    mkdirSync(home, { recursive: true });
+    writeFileSync(bashrcPath, "osc7_cwd(){ :; }\n");
+
+    const output = runInteractiveHistoryProbe({
+      shellPath: "/bin/bash",
+      shellArgs: ["--noprofile", "--norc", "-i"],
+      dumpHistoryCommand: `builtin history > ${quoteShellArg(dumpPath)}`,
+      dumpPath,
+      env: {
+        HOME: home,
+        HISTFILE: join(home, ".bash_history"),
+        SHELL: "/bin/bash",
+      },
+      input: [
+        'history(){ echo custom; }',
+        "echo keepme",
+        buildOsc7ReloadCommand({ shell: "bash", configPath: bashrcPath }) ?? "",
+      ].join("\n"),
+    });
+
+    assert.match(output, /echo keepme/);
+    assert.doesNotMatch(output, /osc7_cwd|source .*\.bashrc|__netcatty_osc7|history -d/);
+  });
 });
 
 test("buildOsc7SetupCommand runs under strict unset-variable mode", () => {
