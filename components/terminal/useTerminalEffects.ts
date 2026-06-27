@@ -474,15 +474,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       teardown();
     };
      
-  }, [
-    finalizeTerminalLogData,
-    forceCloseHibernatedSession,
-    handleTerminalDataCaptureOnce,
-    host.id,
-    sessionId,
-    teardown,
-    terminalSettingsRef,
-  ]);
+  }, [forceCloseHibernatedSession, handleTerminalDataCaptureOnce, host.id, sessionId]);
 
 
   // Connection timeline and timeout visuals
