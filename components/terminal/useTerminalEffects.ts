@@ -9,12 +9,19 @@ import {
   TERMINAL_SESSION_RESTORE_FOCUS_EVENT,
   type TerminalSessionRestoreFocusDetail,
 } from './focusTerminalSession';
+import { resolveHibernatePreferWasmSerialize } from '../../domain/terminalHibernate';
 import { applyUserCursorBlinkPreference } from './runtime/cursorPreference';
 import { getFlowControllerForTerm } from './runtime/terminalSessionAttachment';
 import {
   prioritizeTerminalInput,
   shouldArmTerminalInterruptDisplayGateForProtocol,
 } from './runtime/terminalOutputPipeline';
+import {
+  isTerminalCloseGenerationCurrent,
+  resolveConnectionLogCapturePayload,
+  scheduleTerminalCloseTeardown,
+  serializeTerminalCloseFallback,
+} from './runtime/terminalCloseCapture';
 
 type TerminalEffectsContext = Record<string, any>;
 
@@ -71,12 +78,13 @@ export function resolveSelectionOverlayPosition(term: any, container: HTMLElemen
 }
 
 export function useTerminalEffects(ctx: TerminalEffectsContext) {
-  const { CONNECTION_TIMEOUT, Error, XTERM_PERFORMANCE_CONFIG, applyUserCursorPreference, auth, autocompleteCloseRef, autocompleteInputRef, autocompleteKeyEventRef, captureTerminalLogData, clearTerminalCwd, commandBufferRef, connectionLogBufferRef, containerRef, createPromptLineBreakState, createReplaySafeTerminalLogSanitizer, createXTermRuntime, deferTerminalResizeRef, disableTerminalFontZoomRef, effectiveFontSize, effectiveFontWeight, effectiveTheme, error, executeSnippetCommand, fitAddonRef, fontFamilyId, fontSize, fontWeightFixupDoneRef, forceCloseHibernatedSession, forceSyncRenderAfterResize, handleOsc52ReadRequest, handleTerminalDataCaptureOnce, hasConnectedRef, hasRuntimeRef, host, hotkeySchemeRef, hibernatedRef, identities, inWorkspace, isBootActiveRef, isBroadcastEnabledRef, isComposeBarOpen, isFocusMode, isFocused, isLocalConnection, isNetworkDevice, isResizing, isRestoringSelectionRef, isSearchOpen, isSerialConnection, isVisible, isVisibleRef, keyBindingsRef, keys, knownCwdRef, lastFittedSizeRef, lastToastedErrorRef, logger, mouseTrackingRef, onBroadcastInputRef, onBroadcastInterruptPriorityChange, onCommandExecuted, onCommandSubmitted, onHotkeyActionRef, onSnippetExecutorChange, onTerminalCwdChange, onTerminalTitleChange, onTerminalBell, onTerminalFontSizeChange, paneLayoutKey, pendingAuthRef, pendingOutputScrollRef, prepareRestoredReconnect, prevIsResizingRef, promptLineBreakStateRef, resizeSession, resolveHostAuth, resolvedFontFamily, safeFit, searchAddonRef, serialConfig, serialLineBufferRef, serializeAddonRef, sessionId, sessionRef, sessionStarters, setError, setHasMouseTracking, setHasSelection, setIsCancelling, setIsDisconnectedDialogDismissed, setIsSearchOpen, setNeedsHostKeyVerification, setPendingHostKeyInfo, setPendingHostKeyRequestId, setProgressLogs, setProgressValue, setSelectionOverlayPosition, setShowLogs, setStatus, setTimeLeft, shouldEnableNativeUserInputAutoScroll, shouldProbeSessionCwd, shouldStartTerminalBackend, onSnippetShortkeyRef, snippetsRef, status, statusRef, sudoAutofillRef, t, teardown, telnetLocalEchoRef, termRef, terminalAltKeyOptions, terminalBackend, terminalContextActionsRef, terminalCwdTracker, terminalDataCapturedRef, terminalLogSanitizerRef, terminalSettings, terminalSettingsRef, toHostKeyInfo, toast, updateStatus, useEffect, useLayoutEffect, xtermRuntimeRef, zmodem, zmodemToastedRef, restoreState } = ctx;
+  const { CONNECTION_TIMEOUT, Error, XTERM_PERFORMANCE_CONFIG, applyUserCursorPreference, auth, autocompleteCloseRef, autocompleteInputRef, autocompleteKeyEventRef, captureTerminalLogData, clearTerminalCwd, commandBufferRef, connectionLogBufferRef, containerRef, createPromptLineBreakState, createReplaySafeTerminalLogSanitizer, createXTermRuntime, deferTerminalResizeRef, disableTerminalFontZoomRef, effectiveFontSize, effectiveFontWeight, effectiveTheme, error, executeSnippetCommand, finalizeTerminalLogData, fitAddonRef, fontFamilyId, fontSize, fontWeightFixupDoneRef, forceCloseHibernatedSession, forceSyncRenderAfterResize, handleOsc52ReadRequest, handleTerminalDataCaptureOnce, hasConnectedRef, hasRuntimeRef, host, hotkeySchemeRef, hibernatedRef, identities, inWorkspace, isBootActiveRef, isBroadcastEnabledRef, isComposeBarOpen, isFocusMode, isFocused, isLocalConnection, isNetworkDevice, isResizing, isRestoringSelectionRef, isSearchOpen, isSerialConnection, isVisible, isVisibleRef, keyBindingsRef, keys, knownCwdRef, lastFittedSizeRef, lastToastedErrorRef, logger, mouseTrackingRef, onBroadcastInputRef, onBroadcastInterruptPriorityChange, onCommandExecuted, onCommandSubmitted, onHotkeyActionRef, onSnippetExecutorChange, onTerminalCwdChange, onTerminalTitleChange, onTerminalBell, onTerminalFontSizeChange, paneLayoutKey, pendingAuthRef, pendingOutputScrollRef, prepareRestoredReconnect, prevIsResizingRef, promptLineBreakStateRef, resizeSession, resolveHostAuth, resolvedFontFamily, safeFit, searchAddonRef, serialConfig, serialLineBufferRef, serializeAddonRef, sessionId, sessionRef, sessionStarters, setError, setHasMouseTracking, setHasSelection, setIsCancelling, setIsDisconnectedDialogDismissed, setIsSearchOpen, setNeedsHostKeyVerification, setPendingHostKeyInfo, setPendingHostKeyRequestId, setProgressLogs, setProgressValue, setSelectionOverlayPosition, setShowLogs, setStatus, setTimeLeft, shouldEnableNativeUserInputAutoScroll, shouldProbeSessionCwd, shouldStartTerminalBackend, onSnippetShortkeyRef, snippetsRef, status, statusRef, sudoAutofillRef, t, teardown, telnetLocalEchoRef, termRef, terminalAltKeyOptions, terminalBackend, terminalContextActionsRef, terminalCwdTracker, terminalDataCapturedRef, terminalLogSanitizerRef, terminalSettings, terminalSettingsRef, toHostKeyInfo, toast, updateStatus, useEffect, useLayoutEffect, xtermRuntimeRef, zmodem, zmodemToastedRef, restoreState } = ctx;
 
   // Remember the last layout we successfully refit while visible so revisiting
   // the same workspace tab does not replay expensive force-fit/WebGL recovery.
   const lastCommittedVisibleLayoutKeyRef = useRef<string | null>(null);
   const lastWebglRecoveryLayoutKeyRef = useRef<string | null>(null);
+  const terminalBootCloseGenerationRef = useRef(0);
   const hiddenAtRef = useRef<number | null>(null);
 
 
@@ -234,6 +242,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
 
   useEffect(() => {
     let disposed = false;
+    const closeGeneration = ++terminalBootCloseGenerationRef.current;
     isBootActiveRef.current = true;
     terminalDataCapturedRef.current = false;
     connectionLogBufferRef.current.reset();
@@ -422,15 +431,59 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
         forceCloseHibernatedSession?.();
         return;
       }
-      if (!terminalDataCapturedRef.current && serializeAddonRef.current) {
-        try {
-          const terminalData = serializeAddonRef.current.serialize();
-          logger.info("[Terminal] Capturing data on unmount", { sessionId, dataLength: terminalData.length });
-          handleTerminalDataCaptureOnce(sessionId, terminalData);
-        } catch (err) {
-          logger.warn("Failed to serialize terminal data on unmount:", err);
-        }
+
+      const persistCloseCapture = (data: string, source: string, dataLength: number) => {
+        logger.info("[Terminal] Capturing data on unmount", {
+          sessionId,
+          source,
+          dataLength,
+        });
+        handleTerminalDataCaptureOnce(sessionId, data, { finalized: true });
+      };
+
+      const connectionLogPayload = !terminalDataCapturedRef.current
+        ? resolveConnectionLogCapturePayload(finalizeTerminalLogData)
+        : null;
+      if (connectionLogPayload) {
+        persistCloseCapture(
+          connectionLogPayload.data,
+          connectionLogPayload.source,
+          connectionLogPayload.data.length,
+        );
+        scheduleTerminalCloseTeardown(teardown);
+        return;
       }
+
+      const term = termRef.current;
+      const serializeAddon = serializeAddonRef.current;
+      if (!terminalDataCapturedRef.current && term && serializeAddon) {
+        const preferWasm = resolveHibernatePreferWasmSerialize(terminalSettingsRef.current);
+        void serializeTerminalCloseFallback(term, serializeAddon, { preferWasm })
+          .then((payload) => {
+            if (!isTerminalCloseGenerationCurrent(
+              closeGeneration,
+              terminalBootCloseGenerationRef.current,
+            )) {
+              return;
+            }
+            if (payload) {
+              persistCloseCapture(payload.data, payload.source, payload.data.length);
+            }
+            scheduleTerminalCloseTeardown(teardown);
+          })
+          .catch((err) => {
+            if (!isTerminalCloseGenerationCurrent(
+              closeGeneration,
+              terminalBootCloseGenerationRef.current,
+            )) {
+              return;
+            }
+            logger.warn("Failed to serialize terminal data on unmount:", err);
+            scheduleTerminalCloseTeardown(teardown);
+          });
+        return;
+      }
+
       teardown();
     };
      
