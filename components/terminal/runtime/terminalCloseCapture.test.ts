@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  isTerminalCloseGenerationCurrent,
   resolveConnectionLogCapturePayload,
   resolveHibernateSnapshotCapturePayload,
-  scheduleTerminalCloseDataCapture,
+  scheduleTerminalCloseTeardown,
 } from "./terminalCloseCapture.ts";
 
 test("resolveConnectionLogCapturePayload returns null when finalize produces empty data", () => {
@@ -43,9 +44,9 @@ test("resolveHibernateSnapshotCapturePayload prefers combined snapshot fields", 
   );
 });
 
-test("scheduleTerminalCloseDataCapture runs callback asynchronously", async () => {
+test("scheduleTerminalCloseTeardown runs teardown asynchronously", async () => {
   let ran = false;
-  scheduleTerminalCloseDataCapture(() => {
+  scheduleTerminalCloseTeardown(() => {
     ran = true;
   });
   assert.equal(ran, false);
@@ -53,4 +54,9 @@ test("scheduleTerminalCloseDataCapture runs callback asynchronously", async () =
     setTimeout(resolve, 0);
   });
   assert.equal(ran, true);
+});
+
+test("isTerminalCloseGenerationCurrent rejects stale close generations", () => {
+  assert.equal(isTerminalCloseGenerationCurrent(1, 1), true);
+  assert.equal(isTerminalCloseGenerationCurrent(1, 2), false);
 });

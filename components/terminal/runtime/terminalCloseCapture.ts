@@ -13,22 +13,19 @@ export type TerminalCloseCapturePayload = {
   source: TerminalCloseCaptureSource;
 };
 
-export function scheduleTerminalCloseDataCapture(callback: () => void): void {
-  if (typeof requestIdleCallback === "function") {
-    requestIdleCallback(() => {
-      scheduleTerminalCloseDataCaptureMicrotask(callback);
-    });
+export function scheduleTerminalCloseTeardown(teardown: () => void): void {
+  if (typeof queueMicrotask === "function") {
+    queueMicrotask(teardown);
     return;
   }
-  scheduleTerminalCloseDataCaptureMicrotask(callback);
+  setTimeout(teardown, 0);
 }
 
-function scheduleTerminalCloseDataCaptureMicrotask(callback: () => void): void {
-  if (typeof queueMicrotask === "function") {
-    queueMicrotask(callback);
-    return;
-  }
-  setTimeout(callback, 0);
+export function isTerminalCloseGenerationCurrent(
+  closeGeneration: number,
+  currentGeneration: number,
+): boolean {
+  return closeGeneration === currentGeneration;
 }
 
 export function resolveConnectionLogCapturePayload(

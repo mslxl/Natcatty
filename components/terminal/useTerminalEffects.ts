@@ -17,8 +17,9 @@ import {
   shouldArmTerminalInterruptDisplayGateForProtocol,
 } from './runtime/terminalOutputPipeline';
 import {
+  isTerminalCloseGenerationCurrent,
   resolveConnectionLogCapturePayload,
-  scheduleTerminalCloseDataCapture,
+  scheduleTerminalCloseTeardown,
   serializeTerminalCloseFallback,
 } from './runtime/terminalCloseCapture';
 
@@ -83,6 +84,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
   // the same workspace tab does not replay expensive force-fit/WebGL recovery.
   const lastCommittedVisibleLayoutKeyRef = useRef<string | null>(null);
   const lastWebglRecoveryLayoutKeyRef = useRef<string | null>(null);
+  const terminalBootCloseGenerationRef = useRef(0);
   const hiddenAtRef = useRef<number | null>(null);
 
 
@@ -240,6 +242,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
 
   useEffect(() => {
     let disposed = false;
+    const closeGeneration = ++terminalBootCloseGenerationRef.current;
     isBootActiveRef.current = true;
     terminalDataCapturedRef.current = false;
     connectionLogBufferRef.current.reset();
@@ -429,27 +432,25 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
         return;
       }
 
-      const scheduleCloseCapture = (data: string, source: string, dataLength: number) => {
-        scheduleTerminalCloseDataCapture(() => {
-          logger.info("[Terminal] Capturing data on unmount", {
-            sessionId,
-            source,
-            dataLength,
-          });
-          handleTerminalDataCaptureOnce(sessionId, data, { finalized: true });
+      const persistCloseCapture = (data: string, source: string, dataLength: number) => {
+        logger.info("[Terminal] Capturing data on unmount", {
+          sessionId,
+          source,
+          dataLength,
         });
+        handleTerminalDataCaptureOnce(sessionId, data, { finalized: true });
       };
 
       const connectionLogPayload = !terminalDataCapturedRef.current
         ? resolveConnectionLogCapturePayload(finalizeTerminalLogData)
         : null;
       if (connectionLogPayload) {
-        teardown();
-        scheduleCloseCapture(
+        persistCloseCapture(
           connectionLogPayload.data,
           connectionLogPayload.source,
           connectionLogPayload.data.length,
         );
+        scheduleTerminalCloseTeardown(teardown);
         return;
       }
 
@@ -459,14 +460,26 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
         const preferWasm = resolveHibernatePreferWasmSerialize(terminalSettingsRef.current);
         void serializeTerminalCloseFallback(term, serializeAddon, { preferWasm })
           .then((payload) => {
-            teardown();
-            if (payload) {
-              scheduleCloseCapture(payload.data, payload.source, payload.data.length);
+            if (!isTerminalCloseGenerationCurrent(
+              closeGeneration,
+              terminalBootCloseGenerationRef.current,
+            )) {
+              return;
             }
+            if (payload) {
+              persistCloseCapture(payload.data, payload.source, payload.data.length);
+            }
+            scheduleTerminalCloseTeardown(teardown);
           })
           .catch((err) => {
+            if (!isTerminalCloseGenerationCurrent(
+              closeGeneration,
+              terminalBootCloseGenerationRef.current,
+            )) {
+              return;
+            }
             logger.warn("Failed to serialize terminal data on unmount:", err);
-            teardown();
+            scheduleTerminalCloseTeardown(teardown);
           });
         return;
       }
