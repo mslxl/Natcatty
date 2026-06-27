@@ -64,7 +64,7 @@ export type TerminalInputPrioritySnapshot = {
   deferredAckBytes: number;
   ackAfterInputBytes: number;
   scheduledBackendResume: boolean;
-  skippedReason?: "missing-session" | "below-threshold" | "interrupt-priority-disabled";
+  skippedReason?: "missing-session" | "below-threshold";
 };
 
 const scheduleAfterCurrentInput: ResumeScheduler = (callback) => {
@@ -349,11 +349,15 @@ export const filterTerminalInterruptDisplayOutput = (
   if (gate.pendingInterruptCaret) {
     gate.pendingInterruptCaret = false;
     if (text.startsWith("C")) {
+      const restoreControls = extractTerminalStateRestoreControls(pendingDisplayControl);
+      const droppedBytes = restoreControls.droppedBytes;
+      gate.droppedBytes += droppedBytes;
+      gate.droppedChunks += droppedBytes > 0 ? 1 : 0;
       disarmTerminalInterruptDisplayGate(term);
       return {
         accepted: true,
-        data: `^${text}`,
-        droppedBytes: 0,
+        data: `${restoreControls.preserved}^${text}`,
+        droppedBytes,
         acceptedBytes: bytes,
         reason: "interrupt-echo",
       };
@@ -551,17 +555,6 @@ export const prioritizeTerminalInput = (
   const backlog = flow?.pendingBytes() ?? 0;
   const queueDepth = getTerminalWriteQueueDepth(term);
   const deferredAck = getDeferredTerminalWriteAckBytes(term);
-  if (isInterrupt && !options.drainStaleOutput) {
-    return {
-      sessionId,
-      backlogBytes: backlog,
-      writeQueueDepth: queueDepth,
-      deferredAckBytes: deferredAck,
-      ackAfterInputBytes: 0,
-      scheduledBackendResume: false,
-      skippedReason: "interrupt-priority-disabled",
-    };
-  }
 
   if (backlog <= FLOW_LOW_WATER_MARK && queueDepth === 0 && deferredAck === 0) {
     disarmTerminalInterruptDisplayGate(term);
@@ -577,7 +570,7 @@ export const prioritizeTerminalInput = (
   }
 
   const hasVisibleBacklog = backlog > FLOW_LOW_WATER_MARK || queueDepth > 0;
-  if (isInterrupt && hasVisibleBacklog) {
+  if (isInterrupt && hasVisibleBacklog && options.drainStaleOutput !== false) {
     armTerminalInterruptDisplayGate(term, options);
   }
 

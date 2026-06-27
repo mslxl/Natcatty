@@ -221,11 +221,15 @@ function filterTerminalInterruptOutput(session, data, options = {}) {
   if (gate.pendingInterruptCaret) {
     gate.pendingInterruptCaret = false;
     if (text.startsWith("C")) {
+      const restoreControls = extractTerminalStateRestoreControls(pendingDisplayControl);
+      const droppedBytes = restoreControls.droppedBytes;
+      gate.droppedBytes += droppedBytes;
+      gate.droppedChunks += droppedBytes > 0 ? 1 : 0;
       disarmTerminalInterruptOutputGate(session);
       return {
         accepted: true,
-        data: `^${text}`,
-        droppedBytes: 0,
+        data: `${restoreControls.preserved}^${text}`,
+        droppedBytes,
         reason: "interrupt-echo",
       };
     }

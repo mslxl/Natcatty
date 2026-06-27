@@ -395,6 +395,67 @@ test("interrupt display drain preserves split alternate-screen exit controls", (
   );
 });
 
+test("interrupt display drain preserves restore controls on split caret echo", () => {
+  clearTerminalSessionFlowAck("sess-1");
+  const term = createFakeTerm();
+  const backend = {
+    ackSessionFlow: () => {},
+    setSessionFlowPaused: () => {},
+  };
+  const flow = createOutputFlowController({
+    highWaterMark: 100,
+    lowWaterMark: 20,
+    onPause: () => {},
+    onResume: () => {},
+  });
+  flow.received(FLOW_LOW_WATER_MARK + 1);
+
+  prioritizeTerminalInput(
+    term,
+    "sess-1",
+    flow,
+    backend,
+    (callback: () => void) => callback(),
+    {
+      reason: "interrupt",
+      drainStaleOutput: true,
+      now: 7150,
+      quietMs: 500,
+      promptQuietMs: 80,
+      maxDrainMs: 1000,
+    },
+  );
+
+  assert.deepEqual(
+    filterTerminalInterruptDisplayOutput(term, "stale frame\x1b[?104", { now: 7151 }),
+    {
+      accepted: false,
+      data: "",
+      droppedBytes: "stale frame".length,
+      reason: "draining",
+    },
+  );
+  assert.deepEqual(
+    filterTerminalInterruptDisplayOutput(term, "9l^", { now: 7152 }),
+    {
+      accepted: true,
+      data: "\x1b[?1049l",
+      droppedBytes: 1,
+      reason: "draining",
+    },
+  );
+  assert.deepEqual(
+    filterTerminalInterruptDisplayOutput(term, "C\r\n$ ", { now: 7153 }),
+    {
+      accepted: true,
+      data: "^C\r\n$ ",
+      droppedBytes: 0,
+      acceptedBytes: 5,
+      reason: "interrupt-echo",
+    },
+  );
+});
+
 test("interrupt display drain does not preserve unsafe combined private modes", () => {
   clearTerminalSessionFlowAck("sess-1");
   const term = createFakeTerm();
@@ -538,7 +599,7 @@ test("interrupt display drain accepts split OSC prompt candidates", () => {
   );
 });
 
-test("interrupt priority leaves display output alone when stale drain is disabled", () => {
+test("interrupt priority skips stale display drain but still flushes deferred acks", () => {
   clearTerminalSessionFlowAck("sess-deferred");
   const term = createFakeTerm();
   const acked: number[] = [];
@@ -567,11 +628,13 @@ test("interrupt priority leaves display output alone when stale drain is disable
     },
   );
 
-  assert.equal(priority.skippedReason, "interrupt-priority-disabled");
+  assert.equal(priority.skippedReason, undefined);
   assert.equal(priority.deferredAckBytes, 42);
-  assert.equal(priority.scheduledBackendResume, false);
-  assert.deepEqual(deferred, []);
-  assert.deepEqual(acked, []);
+  assert.equal(priority.scheduledBackendResume, true);
+  assert.equal(priority.ackAfterInputBytes, 42);
+  assert.equal(deferred.length, 1);
+  deferred[0]!();
+  assert.deepEqual(acked, [42]);
   assert.deepEqual(
     filterTerminalInterruptDisplayOutput(term, "KeyboardInterrupt\r\n$ ", { now: 5001 }),
     {
