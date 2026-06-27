@@ -67,6 +67,29 @@ test("accepts an immediate prompt when the remote does not echo Ctrl+C", () => {
   );
 });
 
+test("resumes output when interrupt echo is split across chunks", () => {
+  const session = {};
+
+  armTerminalInterruptOutputGate(session, {
+    now: 3500,
+    quietMs: 80,
+    maxDrainMs: 1000,
+  });
+
+  assert.deepEqual(
+    filterTerminalInterruptOutput(session, "old output", { now: 3501 }),
+    { accepted: false, data: "", droppedBytes: 10, reason: "draining" },
+  );
+  assert.deepEqual(
+    filterTerminalInterruptOutput(session, "^", { now: 3502 }),
+    { accepted: false, data: "", droppedBytes: 1, reason: "draining" },
+  );
+  assert.deepEqual(
+    filterTerminalInterruptOutput(session, "C\r\n$ ", { now: 3503 }),
+    { accepted: true, data: "^C\r\n$ ", droppedBytes: 0, reason: "interrupt-echo" },
+  );
+});
+
 test("keeps draining large chunks after a short quiet gap", () => {
   const session = {};
 

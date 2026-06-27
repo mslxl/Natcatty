@@ -458,6 +458,35 @@ test("interrupt display gate accepts a prompt after a quiet gap and ordinary inp
   );
 });
 
+test("prompt candidate keeps only the prompt suffix and drops stale prefix", () => {
+  const term = createFakeTerm();
+  const backend = {
+    ackSessionFlow: () => {},
+    setSessionFlowPaused: () => {},
+  };
+  const flow = createOutputFlowController({
+    highWaterMark: 100,
+    lowWaterMark: 20,
+    onPause: () => {},
+    onResume: () => {},
+  });
+  flow.received(FLOW_LOW_WATER_MARK + 1);
+
+  prioritizeTerminalInput(
+    term,
+    "sess-1",
+    flow,
+    backend,
+    (callback: () => void) => callback(),
+    { reason: "interrupt", now: 6000, quietMs: 500, promptQuietMs: 80, maxDrainMs: 1000 },
+  );
+
+  assert.deepEqual(
+    filterTerminalInterruptDisplayOutput(term, "stale flood\r\n$ ", { now: 6001 }),
+    { accepted: true, data: "$ ", droppedBytes: 13, reason: "prompt-candidate" },
+  );
+});
+
 test("interrupt display gate falls back after quiet and max-drain limits", () => {
   const term = createFakeTerm();
   const backend = {

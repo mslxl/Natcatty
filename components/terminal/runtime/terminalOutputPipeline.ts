@@ -242,11 +242,14 @@ export const filterTerminalInterruptDisplayOutput = (
     ? getPromptCandidateSuffix(text)
     : null;
   if (promptCandidate && gate.droppedBytes === 0) {
+    const droppedBytes = charLength(text.slice(0, text.length - promptCandidate.length));
+    gate.droppedBytes += droppedBytes;
+    gate.droppedChunks += droppedBytes > 0 ? 1 : 0;
     disarmTerminalInterruptDisplayGate(term);
     return {
       accepted: true,
-      data: text,
-      droppedBytes: 0,
+      data: promptCandidate,
+      droppedBytes,
       reason: "prompt-candidate",
     };
   }

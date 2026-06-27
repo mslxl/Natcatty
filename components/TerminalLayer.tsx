@@ -701,6 +701,10 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       if (!canUseDirectSessionWriteFallback(session)) continue;
 
       const lineDelayMs = options?.lineDelayMs;
+      if (data === "\x03" && terminalBackend.interruptSession) {
+        terminalBackend.interruptSession(session.id);
+        continue;
+      }
       terminalBackend.writeToSession(session.id, data, {
         automated: true,
         ...(lineDelayMs ? { lineDelayMs } : {}),

@@ -72,6 +72,7 @@ function armTerminalInterruptOutputGate(session, options = {}) {
       : DEFAULT_PROMPT_CANDIDATE_BYTES,
     droppedBytes: 0,
     droppedChunks: 0,
+    pendingInterruptCaret: false,
   };
   return true;
 }
@@ -92,6 +93,19 @@ function filterTerminalInterruptOutput(session, data, options = {}) {
   const now = nowFromOptions(options);
   const bytes = byteLength(data);
   const quietGapMs = gate.lastDroppedAt > 0 ? now - gate.lastDroppedAt : 0;
+
+  if (gate.pendingInterruptCaret) {
+    gate.pendingInterruptCaret = false;
+    if (text.startsWith("C")) {
+      disarmTerminalInterruptOutputGate(session);
+      return {
+        accepted: true,
+        data: `^${text}`,
+        droppedBytes: 0,
+        reason: "interrupt-echo",
+      };
+    }
+  }
 
   const interruptEchoIndex = text.indexOf("^C");
   if (interruptEchoIndex >= 0) {
@@ -137,6 +151,7 @@ function filterTerminalInterruptOutput(session, data, options = {}) {
     return { accepted: true, data: text, droppedBytes: 0, reason: "max-drain" };
   }
 
+  gate.pendingInterruptCaret = text.endsWith("^");
   gate.lastDroppedAt = now;
   gate.droppedBytes += bytes;
   gate.droppedChunks += 1;
