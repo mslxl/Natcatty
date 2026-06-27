@@ -29,9 +29,19 @@ const TERMINAL_CHROME_SURFACE_SELECTOR = [
   '[data-section="terminal-side-panel"]',
 ].join(', ');
 
+const TERMINAL_LAYER_CHROME_SURFACE_SELECTOR = [
+  '[data-section="terminal-host-tree-sidebar"]',
+  '[data-section="terminal-side-panel"]',
+].join(', ');
+
 function collectTerminalChromeSurfaceElements(): HTMLElement[] {
   if (typeof document === 'undefined') return [];
   return Array.from(document.querySelectorAll<HTMLElement>(TERMINAL_CHROME_SURFACE_SELECTOR));
+}
+
+function collectTerminalLayerChromeSurfaceElements(): HTMLElement[] {
+  if (typeof document === 'undefined') return [];
+  return Array.from(document.querySelectorAll<HTMLElement>(TERMINAL_LAYER_CHROME_SURFACE_SELECTOR));
 }
 
 function applyTerminalAppearanceVarsToTargets(targets: HTMLElement[], theme: TerminalTheme): void {
@@ -47,6 +57,10 @@ function applyTerminalAppearanceVarsToTargets(targets: HTMLElement[], theme: Ter
 
 export function injectTerminalChromeSurfaceVars(theme: TerminalTheme): void {
   applyTerminalAppearanceVarsToTargets(collectTerminalChromeSurfaceElements(), theme);
+}
+
+export function injectTerminalLayerChromeSurfaceVars(theme: TerminalTheme): void {
+  applyTerminalAppearanceVarsToTargets(collectTerminalLayerChromeSurfaceElements(), theme);
 }
 
 export type InjectTerminalAppearanceVarsOptions = {

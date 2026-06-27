@@ -94,6 +94,32 @@ export function buildTerminalAppearanceCssVars(theme: TerminalTheme): TerminalAp
   };
 }
 
+export type HostTreeThemeColors = {
+  termBg: string;
+  termFg: string;
+  mutedFg: string;
+  separator: string;
+  rowHoverBg: string;
+  rowActiveBg: string;
+  rowDropBg: string;
+  folderFg: string;
+};
+
+export function buildHostTreeThemeFromTerminalTheme(theme: TerminalTheme): HostTreeThemeColors {
+  const bg = theme.colors.background;
+  const fg = theme.colors.foreground;
+  return {
+    termBg: bg,
+    termFg: fg,
+    mutedFg: mix(fg, bg, 55),
+    separator: mix(fg, bg, 10),
+    rowHoverBg: mix(fg, bg, 8),
+    rowActiveBg: mix(fg, bg, 14),
+    rowDropBg: mix(fg, bg, 20),
+    folderFg: mix(fg, bg, 75),
+  };
+}
+
 export const terminalAppearancePanelStyle = {
   backgroundColor: 'var(--nc-term-panel-bg, var(--background))',
   color: 'var(--nc-term-panel-fg, var(--foreground))',

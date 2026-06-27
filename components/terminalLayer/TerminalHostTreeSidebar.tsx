@@ -36,7 +36,7 @@ import {
   STORAGE_KEY_TERMINAL_HOST_TREE_WIDTH,
   STORAGE_KEY_VAULT_HOSTS_TREE_EXPANDED,
 } from '../../infrastructure/config/storageKeys';
-import { terminalAppearanceHostTreeTheme } from '../../infrastructure/theme/terminalAppearanceTokens';
+import { buildHostTreeThemeFromTerminalTheme } from '../../infrastructure/theme/terminalAppearanceTokens';
 import { cn } from '../../lib/utils';
 import { matchesHostSearchQuery, matchesSearchQuery } from '../../lib/searchMatcher';
 import type { GroupConfig, GroupNode, Host, TerminalTheme } from '../../types';
@@ -605,7 +605,7 @@ const TerminalHostTreeSidebarInner: React.FC<TerminalHostTreeSidebarProps> = ({
   hosts,
   customGroups,
   groupConfigs = [],
-  resolvedPreviewTheme: _resolvedPreviewTheme,
+  resolvedPreviewTheme,
   activeHostId,
   onConnect,
   onCreateLocalTerminal,
@@ -633,16 +633,10 @@ const TerminalHostTreeSidebarInner: React.FC<TerminalHostTreeSidebarProps> = ({
   const inlineHostEdit = useHostTreeInlineHostEdit();
   const listRef = useRef<FixedSizeVirtualListHandle>(null);
 
-  const theme = useMemo<HostTreeTheme>(() => ({
-    termBg: terminalAppearanceHostTreeTheme.termBg,
-    termFg: terminalAppearanceHostTreeTheme.termFg,
-    mutedFg: terminalAppearanceHostTreeTheme.mutedFg,
-    separator: terminalAppearanceHostTreeTheme.separator,
-    rowHoverBg: terminalAppearanceHostTreeTheme.rowHoverBg,
-    rowActiveBg: terminalAppearanceHostTreeTheme.rowActiveBg,
-    rowDropBg: terminalAppearanceHostTreeTheme.rowDropBg,
-    folderFg: terminalAppearanceHostTreeTheme.folderFg,
-  }), []);
+  const theme = useMemo(
+    () => buildHostTreeThemeFromTerminalTheme(resolvedPreviewTheme),
+    [resolvedPreviewTheme.id, resolvedPreviewTheme.colors.background, resolvedPreviewTheme.colors.foreground],
+  );
 
   const allTags = useMemo(() => {
     const tags = new Set<string>();
