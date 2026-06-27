@@ -556,7 +556,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       { visible: false, focused: false },
       () => termRef.current,
     );
-  }, [effectiveThemeKey, isFocused, sessionId, effectiveTheme]);
+  }, [effectiveThemeKey, isFocused, isVisible, sessionId, effectiveTheme]);
 
 
   // Keep font-size sync separate from terminalSettings so unrelated setting
