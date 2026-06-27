@@ -79,6 +79,7 @@ import {
   createTerminalInterruptTrace,
   logTerminalInterruptTrace,
 } from "./terminalInterruptDiagnostics";
+import { clearTerminalInputStateForInterrupt } from "./terminalInterruptInputState";
 import { getFlowControllerForTerm } from "./terminalSessionAttachment";
 import { prioritizeTerminalInput } from "./terminalOutputPipeline";
 import {
@@ -821,6 +822,11 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         });
         logTerminalInterruptTrace("renderer-keydown-send", interruptTrace, {
           priority,
+        });
+        clearTerminalInputStateForInterrupt({
+          commandBufferRef: ctx.commandBufferRef,
+          serialLineBufferRef: ctx.serialLineBufferRef,
+          onAutocompleteInput: ctx.onAutocompleteInput,
         });
         if (ctx.terminalBackend.interruptSession) {
           ctx.terminalBackend.interruptSession(id, interruptTrace);
