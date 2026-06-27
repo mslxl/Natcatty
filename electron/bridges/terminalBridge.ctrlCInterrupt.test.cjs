@@ -41,6 +41,123 @@ test("SSH Ctrl+C signals INT immediately and still writes the original byte", ()
   ]);
 });
 
+test("interruptSession discards pending output before sending SSH Ctrl+C", () => {
+  const calls = [];
+  const sessions = new Map();
+  sessions.set("ssh-1", {
+    discardPendingData() {
+      calls.push(["discard"]);
+    },
+    stream: {
+      signal(signalName) {
+        calls.push(["signal", signalName]);
+      },
+      write(data) {
+        calls.push(["write", data]);
+      },
+    },
+  });
+  initBridge(sessions);
+
+  terminalBridge.interruptSession({ sender: {} }, { sessionId: "ssh-1" });
+
+  assert.deepEqual(calls, [
+    ["discard"],
+    ["signal", "INT"],
+    ["write", "\x03"],
+  ]);
+});
+
+test("interruptSession sends SSH Ctrl+C before resuming a paused output flood", async () => {
+  const calls = [];
+  const sessions = new Map();
+  sessions.set("ssh-1", {
+    discardPendingData() {
+      calls.push(["discard"]);
+    },
+    stream: {
+      pause() {
+        calls.push(["pause"]);
+      },
+      resume() {
+        calls.push(["resume"]);
+      },
+      signal(signalName) {
+        calls.push(["signal", signalName]);
+      },
+      write(data) {
+        calls.push(["write", data]);
+      },
+    },
+  });
+  initBridge(sessions);
+
+  terminalBridge.setSessionFlowPaused({ sender: {} }, { sessionId: "ssh-1", paused: true });
+  terminalBridge.interruptSession({ sender: {} }, { sessionId: "ssh-1" });
+
+  assert.deepEqual(calls, [
+    ["pause"],
+    ["discard"],
+    ["signal", "INT"],
+    ["write", "\x03"],
+  ]);
+
+  await delay(0);
+  assert.deepEqual(calls, [
+    ["pause"],
+    ["discard"],
+    ["signal", "INT"],
+    ["write", "\x03"],
+    ["resume"],
+  ]);
+});
+
+test("interruptSession arms SSH output drain when interrupting a paused output flood", () => {
+  const sessions = new Map();
+  const session = {
+    discardPendingData() {},
+    flowState: {
+      rendererPaused: false,
+      unackedBytes: 34068,
+      appliedPause: true,
+    },
+    stream: {
+      resume() {},
+      signal() {},
+      write() {},
+    },
+  };
+  sessions.set("ssh-1", session);
+  initBridge(sessions);
+
+  terminalBridge.interruptSession({ sender: {} }, { sessionId: "ssh-1" });
+
+  assert.equal(session._interruptOutputGate?.active, true);
+});
+
+test("interruptSession does not arm SSH output drain for tiny in-flight echo", () => {
+  const sessions = new Map();
+  const session = {
+    discardPendingData() {},
+    flowState: {
+      rendererPaused: false,
+      unackedBytes: 119,
+      appliedPause: false,
+    },
+    stream: {
+      resume() {},
+      signal() {},
+      write() {},
+    },
+  };
+  sessions.set("ssh-1", session);
+  initBridge(sessions);
+
+  terminalBridge.interruptSession({ sender: {} }, { sessionId: "ssh-1" });
+
+  assert.equal(session._interruptOutputGate, undefined);
+});
+
 test("SSH Ctrl+C still writes when the server does not support channel signals", () => {
   const calls = [];
   const sessions = new Map();
@@ -193,4 +310,28 @@ test("manual input cancels pending automated lines", async () => {
 
   await delay(60);
   assert.deepEqual(calls, ["first\r\n", "\x03"]);
+});
+
+test("closing a paused SSH session does not resume the output flood first", () => {
+  const calls = [];
+  const sessions = new Map();
+  sessions.set("ssh-1", {
+    stream: {
+      pause() {
+        calls.push("pause");
+      },
+      resume() {
+        calls.push("resume");
+      },
+      close() {
+        calls.push("close");
+      },
+    },
+  });
+  initBridge(sessions);
+
+  terminalBridge.setSessionFlowPaused({ sender: {} }, { sessionId: "ssh-1", paused: true });
+  terminalBridge.closeSession({ sender: {} }, { sessionId: "ssh-1" });
+
+  assert.deepEqual(calls, ["pause", "close"]);
 });

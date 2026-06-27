@@ -45,6 +45,9 @@ const {
   _resetAlgorithmSupportCacheForTests,
 } = require("./sshAlgorithms.cjs");
 const { enableSshNoDelay, enableTcpNoDelay } = require("./tcpNoDelay.cjs");
+const {
+  configureTerminalSessionDataEmitter,
+} = require("./emitTerminalSessionData.cjs");
 
 // Default SSH key names in priority order (preferred keys tried first)
 const PREFERRED_KEY_NAMES = ["id_ed25519", "id_ecdsa", "id_rsa"];
@@ -381,6 +384,7 @@ async function openSshDebugLogDir() {
 // Session storage - shared reference passed from main
 let sessions = null;
 let electronModule = null;
+let terminalOutputChannel = null;
 
 // Authentication method cache - remembers successful auth methods per host
 // Key format: "username@hostname:port"
@@ -470,6 +474,19 @@ const zmodemOverwritePending = new Map(); // requestId -> (decision) => void
 function init(deps) {
   sessions = deps.sessions;
   electronModule = deps.electronModule;
+  terminalOutputChannel = deps.terminalOutputChannel || null;
+  configureTerminalSessionDataEmitter({
+    getSession: (sessionId) => sessions?.get(sessionId),
+    outputChannel: terminalOutputChannel,
+  });
+}
+
+function openTerminalOutputSession(sessionId, webContents) {
+  terminalOutputChannel?.openSession?.(sessionId, webContents);
+}
+
+function closeTerminalOutputSession(sessionId) {
+  terminalOutputChannel?.closeSession?.(sessionId);
 }
 
 /**
@@ -813,6 +830,7 @@ const startSessionApi = createStartSessionApi({
   attachSshDebugLogger, logSshAlgorithms, resolveLangFromCharset, safeSend, zmodemOverwritePending,
   shouldLogSshDebugMessage, log, createSshDiagnosticLogger,
   buildAlgorithms, randomUUID, findDefaultPrivateKey, findAllDefaultPrivateKeys,
+  openTerminalOutputSession, closeTerminalOutputSession,
   preparePrivateKeyForAuth, loadFirstIdentityFileForAuth, hasUserConfiguredKey, createKeyboardInteractiveHandler,
   createConnectionRef, acquireConnectionRef, releaseConnectionRef, findReusableSession,
   get probeReceiveConflicts() { return probeReceiveConflicts; },
@@ -1039,17 +1057,58 @@ const {
 /**
  * Register IPC handlers for SSH operations
  */
-function registerHandlers(ipcMain) {
-  ipcMain.handle("netcatty:start", startSSHSessionWrapper);
-  ipcMain.handle("netcatty:ssh:exec", execCommand);
-  ipcMain.handle("netcatty:ssh:pwd", getSessionPwd);
-  ipcMain.handle("netcatty:ssh:remoteInfo", getSessionRemoteInfo);
-  ipcMain.handle("netcatty:ssh:distroInfo", getSessionDistroInfo);
-  ipcMain.handle("netcatty:ssh:readRemoteHistory", readRemoteHistory);
-  ipcMain.handle("netcatty:ssh:listdir", listSessionDir);
-  ipcMain.handle("netcatty:ssh:stats", getServerStats);
+function registerWorkerHandle(ipcMain, terminalWorkerManager, channel) {
+  ipcMain.handle(channel, (event, payload) => {
+    return terminalWorkerManager.request(channel, payload, {
+      webContentsId: event?.sender?.id,
+    });
+  });
+}
+
+function registerHandlers(ipcMain, options = {}) {
+  const terminalWorkerManager = options.terminalWorkerManager || null;
+  if (terminalWorkerManager) {
+    [
+      "netcatty:start",
+      "netcatty:ssh:exec",
+      "netcatty:ssh:pwd",
+      "netcatty:ssh:remoteInfo",
+      "netcatty:ssh:distroInfo",
+      "netcatty:ssh:readRemoteHistory",
+      "netcatty:ssh:listdir",
+      "netcatty:ssh:stats",
+      "netcatty:ssh:setEncoding",
+      "netcatty:keyboard-interactive:respond",
+      "netcatty:passphrase:respond",
+      "netcatty:host-key:respond",
+    ].forEach((channel) => registerWorkerHandle(ipcMain, terminalWorkerManager, channel));
+    ipcMain.on("netcatty:zmodem:overwrite-response", (event, payload) => {
+      terminalWorkerManager.send("netcatty:zmodem:overwrite-response", payload, {
+        webContentsId: event?.sender?.id,
+      });
+    });
+  } else {
+    ipcMain.handle("netcatty:start", startSSHSessionWrapper);
+    ipcMain.handle("netcatty:ssh:exec", execCommand);
+    ipcMain.handle("netcatty:ssh:pwd", getSessionPwd);
+    ipcMain.handle("netcatty:ssh:remoteInfo", getSessionRemoteInfo);
+    ipcMain.handle("netcatty:ssh:distroInfo", getSessionDistroInfo);
+    ipcMain.handle("netcatty:ssh:readRemoteHistory", readRemoteHistory);
+    ipcMain.handle("netcatty:ssh:listdir", listSessionDir);
+    ipcMain.handle("netcatty:ssh:stats", getServerStats);
+    ipcMain.handle("netcatty:ssh:setEncoding", setSessionEncoding);
+    ipcMain.on("netcatty:zmodem:overwrite-response", (_event, payload) => {
+      const resolve = zmodemOverwritePending.get(payload?.requestId);
+      if (resolve) { zmodemOverwritePending.delete(payload.requestId); resolve(payload); }
+    });
+    // Register the shared keyboard-interactive response handler
+    keyboardInteractiveHandler.registerHandler(ipcMain);
+    // Register the passphrase response handler
+    passphraseHandler.registerHandler(ipcMain);
+    // Register the SSH host key verification response handler
+    hostKeyVerifier.registerHandler(ipcMain);
+  }
   ipcMain.handle("netcatty:key:generate", generateKeyPair);
-  ipcMain.handle("netcatty:ssh:setEncoding", setSessionEncoding);
   ipcMain.handle("netcatty:sshDebugLog:info", getSshDebugLogInfo);
   ipcMain.handle("netcatty:sshDebugLog:openDir", openSshDebugLogDir);
   ipcMain.handle("netcatty:ssh:check-agent", async () => {
@@ -1072,16 +1131,6 @@ function registerHandlers(ipcMain) {
     }
     return keys;
   });
-  ipcMain.on("netcatty:zmodem:overwrite-response", (_event, payload) => {
-    const resolve = zmodemOverwritePending.get(payload?.requestId);
-    if (resolve) { zmodemOverwritePending.delete(payload.requestId); resolve(payload); }
-  });
-  // Register the shared keyboard-interactive response handler
-  keyboardInteractiveHandler.registerHandler(ipcMain);
-  // Register the passphrase response handler
-  passphraseHandler.registerHandler(ipcMain);
-  // Register the SSH host key verification response handler
-  hostKeyVerifier.registerHandler(ipcMain);
 }
 
 module.exports = {

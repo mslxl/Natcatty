@@ -46,9 +46,11 @@ function createTerminalDataDispatcher({
   displayDataListeners,
   terminalDataBacklog,
   onCallbackError = console.error,
+  shouldDropSession = () => false,
 }) {
   return function deliverToListeners(sessionId, data) {
     if (!data) return;
+    if (shouldDropSession(sessionId)) return;
 
     if (!hasSessionListeners(displayDataListeners, sessionId)) {
       terminalDataBacklog?.append?.(sessionId, data);

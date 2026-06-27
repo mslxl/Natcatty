@@ -20,7 +20,7 @@
  *   maxBufferSize?: number,
  *   shouldAcceptOutput?: () => boolean,
  * }} [options]
- * @returns {{ bufferData: (data: string) => void, flush: () => void }}
+ * @returns {{ bufferData: (data: string) => void, flush: () => void, discard: () => void }}
  */
 function createPtyOutputBuffer(sendFn, options = {}) {
   const maxBufferSize = options.maxBufferSize ?? 16384; // 16KB
@@ -64,7 +64,14 @@ function createPtyOutputBuffer(sendFn, options = {}) {
     flushNow();
   };
 
-  return { bufferData, flush };
+  const discard = () => {
+    cancelScheduled();
+    const discardedBytes = dataBuffer.length;
+    dataBuffer = "";
+    return discardedBytes;
+  };
+
+  return { bufferData, flush, discard };
 }
 
 module.exports = { createPtyOutputBuffer };

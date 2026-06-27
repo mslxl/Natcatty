@@ -1,7 +1,51 @@
- 
+const { clearTerminalDataSession } = require("./terminalDataBacklog.cjs");
+
 function createPreloadApi(ctx) {
   const terminalDataBacklog = ctx.terminalDataBacklog || null;
   const displayDataListeners = ctx.displayDataListeners || new Map();
+  const closedTerminalDataSessions = ctx.closedTerminalDataSessions || null;
+  const markTerminalDataSessionOpen = (sessionId) => {
+    if (!sessionId) return;
+    closedTerminalDataSessions?.delete?.(sessionId);
+  };
+  const markRequestedTerminalDataSessionOpen = (options) => {
+    markTerminalDataSessionOpen(options?.sessionId);
+  };
+  const markTerminalDataSessionClosed = (sessionId) => {
+    if (!sessionId) return;
+    closedTerminalDataSessions?.add?.(sessionId);
+    clearTerminalDataSession({
+      dataListeners: ctx.dataListeners,
+      displayDataListeners,
+      terminalDataBacklog,
+    }, sessionId);
+    ctx.terminalOutputPorts?.closeSession?.(sessionId);
+  };
+  const sanitizeInterruptTrace = (trace) => {
+    if (!trace || typeof trace !== "object") return undefined;
+    const priority = trace.rendererPriority && typeof trace.rendererPriority === "object"
+      ? {
+          sessionId: typeof trace.rendererPriority.sessionId === "string" ? trace.rendererPriority.sessionId : null,
+          backlogBytes: Number(trace.rendererPriority.backlogBytes) || 0,
+          writeQueueDepth: Number(trace.rendererPriority.writeQueueDepth) || 0,
+          deferredAckBytes: Number(trace.rendererPriority.deferredAckBytes) || 0,
+          ackAfterInputBytes: Number(trace.rendererPriority.ackAfterInputBytes) || 0,
+          scheduledBackendResume: Boolean(trace.rendererPriority.scheduledBackendResume),
+          skippedReason: typeof trace.rendererPriority.skippedReason === "string" ? trace.rendererPriority.skippedReason : undefined,
+        }
+      : undefined;
+    return {
+      debug: trace.debug === true,
+      traceId: typeof trace.traceId === "string" ? trace.traceId.slice(0, 128) : undefined,
+      source: typeof trace.source === "string" ? trace.source.slice(0, 80) : undefined,
+      sessionId: typeof trace.sessionId === "string" ? trace.sessionId : undefined,
+      rendererKeyAt: Number.isFinite(trace.rendererKeyAt) ? trace.rendererKeyAt : undefined,
+      rendererSendAt: Number.isFinite(trace.rendererSendAt) ? trace.rendererSendAt : undefined,
+      rendererStatus: typeof trace.rendererStatus === "string" ? trace.rendererStatus.slice(0, 40) : undefined,
+      rendererHasSelection: trace.rendererHasSelection === true,
+      rendererPriority: priority,
+    };
+  };
   with (ctx) {
     return {
   getWindowsPtyInfo: () => {
@@ -18,27 +62,39 @@ function createPreloadApi(ctx) {
     return hasBuildNumber ? { backend, buildNumber } : { backend };
   },
   startSSHSession: async (options) => {
+    markRequestedTerminalDataSessionOpen(options);
     const result = await ipcRenderer.invoke("netcatty:start", options);
+    markTerminalDataSessionOpen(result?.sessionId);
     return result.sessionId;
   },
   startTelnetSession: async (options) => {
+    markRequestedTerminalDataSessionOpen(options);
     const result = await ipcRenderer.invoke("netcatty:telnet:start", options);
+    markTerminalDataSessionOpen(result?.sessionId);
     return result.sessionId;
   },
   startMoshSession: async (options) => {
+    markRequestedTerminalDataSessionOpen(options);
     const result = await ipcRenderer.invoke("netcatty:mosh:start", options);
+    markTerminalDataSessionOpen(result?.sessionId);
     return result.sessionId;
   },
   startEtSession: async (options) => {
+    markRequestedTerminalDataSessionOpen(options);
     const result = await ipcRenderer.invoke("netcatty:et:start", options);
+    markTerminalDataSessionOpen(result?.sessionId);
     return result.sessionId;
   },
   startLocalSession: async (options) => {
+    markRequestedTerminalDataSessionOpen(options);
     const result = await ipcRenderer.invoke("netcatty:local:start", options || {});
+    markTerminalDataSessionOpen(result?.sessionId);
     return result.sessionId;
   },
   startSerialSession: async (options) => {
+    markRequestedTerminalDataSessionOpen(options);
     const result = await ipcRenderer.invoke("netcatty:serial:start", options);
+    markTerminalDataSessionOpen(result?.sessionId);
     return result.sessionId;
   },
   listSerialPorts: async () => {
@@ -71,6 +127,9 @@ function createPreloadApi(ctx) {
           }
         : undefined,
     });
+  },
+  interruptSession: (sessionId, trace) => {
+    ipcRenderer.send("netcatty:interrupt", { sessionId, trace: sanitizeInterruptTrace(trace) });
   },
   execCommand: async (options) => {
     return ipcRenderer.invoke("netcatty:ssh:exec", options);
@@ -185,6 +244,7 @@ function createPreloadApi(ctx) {
     ipcRenderer.send("netcatty:flow:ack", { sessionId, bytes });
   },
   closeSession: (sessionId) => {
+    markTerminalDataSessionClosed(sessionId);
     telnetEchoModeListeners.delete(sessionId);
     ipcRenderer.send("netcatty:close", { sessionId });
   },

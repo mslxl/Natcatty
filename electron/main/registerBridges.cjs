@@ -138,11 +138,28 @@ function createBridgeRegistrar(context) {
   
     // Initialize bridges with shared dependencies
     const cliDiscoveryFilePath = getCliDiscoveryFilePath({ userDataDir: app.getPath("userData") });
+    const { createTerminalOutputChannel } = require("../bridges/terminalOutputChannel.cjs");
+    const {
+      createTerminalWorkerManager,
+      isTerminalWorkerEnabled,
+    } = require("../bridges/terminalWorkerManager.cjs");
+    const terminalOutputChannel = createTerminalOutputChannel({
+      MessageChannelMain: electronModule.MessageChannelMain,
+    });
+    const terminalWorkerManager = isTerminalWorkerEnabled({ env: process.env }) && electronModule.utilityProcess
+      ? createTerminalWorkerManager({
+          utilityProcess: electronModule.utilityProcess,
+          electronModule,
+          terminalOutputChannel,
+        })
+      : null;
     const deps = {
       sessions,
       sftpClients,
       electronModule,
       cliDiscoveryFilePath,
+      terminalOutputChannel,
+      terminalWorkerManager,
     };
   
     sshBridge.init(deps);
@@ -164,12 +181,12 @@ function createBridgeRegistrar(context) {
     tempDirBridge.ensureTempDir();
   
     // Register all IPC handlers
-    sshBridge.registerHandlers(ipcMain);
-    sftpBridge.registerHandlers(ipcMain);
+    sshBridge.registerHandlers(ipcMain, { terminalWorkerManager });
+    sftpBridge.registerHandlers(ipcMain, { terminalWorkerManager });
     localFsBridge.registerHandlers(ipcMain);
-    transferBridge.registerHandlers(ipcMain);
+    transferBridge.registerHandlers(ipcMain, { terminalWorkerManager });
     portForwardingBridge.registerHandlers(ipcMain);
-    terminalBridge.registerHandlers(ipcMain);
+    terminalBridge.registerHandlers(ipcMain, { terminalWorkerManager });
 
     const { createSystemManagerBridge } = require("../bridges/systemManagerBridge.cjs");
     const systemManagerBridge = createSystemManagerBridge({
@@ -178,16 +195,16 @@ function createBridgeRegistrar(context) {
       ensureMoshStatsConnection: (...args) => sshBridge.ensureMoshStatsConnection(...args),
       process,
     });
-    systemManagerBridge.registerHandlers(ipcMain);
+    systemManagerBridge.registerHandlers(ipcMain, { terminalWorkerManager });
     oauthBridge.setupOAuthBridge(ipcMain);
     githubAuthBridge.registerHandlers(ipcMain);
     googleAuthBridge.registerHandlers(ipcMain, electronModule);
     onedriveAuthBridge.registerHandlers(ipcMain, electronModule);
     cloudSyncBridge.registerHandlers(ipcMain);
-    fileWatcherBridge.registerHandlers(ipcMain);
+    fileWatcherBridge.registerHandlers(ipcMain, { terminalWorkerManager });
     tempDirBridge.registerHandlers(ipcMain, shell);
     sessionLogsBridge.registerHandlers(ipcMain);
-    compressUploadBridge.registerHandlers(ipcMain);
+    compressUploadBridge.registerHandlers(ipcMain, { terminalWorkerManager });
     globalShortcutBridge.registerHandlers(ipcMain);
     credentialBridge.registerHandlers(ipcMain, electronModule);
     autoUpdateBridge.init(deps);
@@ -197,14 +214,25 @@ function createBridgeRegistrar(context) {
     vaultBackupBridge.registerHandlers(ipcMain, electronModule);
   
     // ZMODEM cancel handler
-    ipcMain.on("netcatty:zmodem:cancel", (_event, payload) => {
+    ipcMain.on("netcatty:zmodem:cancel", (event, payload) => {
+      if (terminalWorkerManager) {
+        terminalWorkerManager.send("netcatty:zmodem:cancel", payload, {
+          webContentsId: event?.sender?.id,
+        });
+        return;
+      }
       const session = sessions.get(payload.sessionId);
       if (session?.zmodemSentry) {
         session.zmodemSentry.cancel(payload.options);
       }
     });
 
-    ipcMain.handle("netcatty:zmodem:drag-drop-upload", async (_event, payload) => {
+    ipcMain.handle("netcatty:zmodem:drag-drop-upload", async (event, payload) => {
+      if (terminalWorkerManager) {
+        return terminalWorkerManager.request("netcatty:zmodem:drag-drop-upload", payload, {
+          webContentsId: event?.sender?.id,
+        });
+      }
       const { sessionId, files, uploadCommand } = payload || {};
       const session = sessions.get(sessionId);
       if (!session?.zmodemSentry?.queueDragDropUpload) {

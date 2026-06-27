@@ -281,9 +281,10 @@ export const releaseTerminalFlowBeforeHibernate = (
   backend: TerminalSessionStartersContext["terminalBackend"],
   term: XTerm,
   sessionId: string,
+  options?: { resumeBackend?: boolean },
 ): void => {
   const flow = terminalFlowControllers.get(term);
-  releaseTerminalFlowOutputForTerm(term, backend, sessionId, flow);
+  releaseTerminalFlowOutputForTerm(term, backend, sessionId, flow, options);
   setTerminalWriteCoalescerByteCapResolver(term);
   resetDeferredTerminalWriteAck(term);
   terminalFlowControllers.delete(term);

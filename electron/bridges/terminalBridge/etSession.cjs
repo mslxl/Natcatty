@@ -2,7 +2,10 @@
 const crypto = require("node:crypto");
 const { createSystemKnownHostsApi } = require("../sshBridge/systemKnownHosts.cjs");
 const { emitTerminalSessionData } = require("../emitTerminalSessionData.cjs");
-const { shouldAcceptSessionOutput } = require("../terminalFlowAck.cjs");
+const {
+  shouldAcceptSessionOutput,
+  shouldProcessSessionOutput,
+} = require("../terminalFlowAck.cjs");
 
 //
 // EternalTerminal session backend, factored into the createXxxSessionApi
@@ -806,6 +809,7 @@ main();
           _promptTrackTail: "",
         };
         sessions.set(sessionId, session);
+        openTerminalOutputSession?.(sessionId, event.sender);
 
         // Start real-time session log stream if configured
         if (options.sessionLog?.enabled && options.sessionLog?.directory) {
@@ -819,7 +823,11 @@ main();
           });
         }
 
-        const { bufferData: bufferEtData, flush: flushEt } = createPtyOutputBuffer((data) => {
+        const {
+          bufferData: bufferEtData,
+          flush: flushEt,
+          discard: discardEt,
+        } = createPtyOutputBuffer((data) => {
           const contents = electronModule.webContents.fromId(session.webContentsId);
           emitTerminalSessionData(contents, sessionId, data, {
             cols: session.cols,
@@ -829,6 +837,7 @@ main();
           shouldAcceptOutput: () => shouldAcceptSessionOutput(session),
         });
         session.flushPendingData = flushEt;
+        session.discardPendingData = discardEt;
 
         if (process.platform !== "win32") {
           const etDecoder = new StringDecoder("utf8");
@@ -852,10 +861,12 @@ main();
           session.zmodemSentry = etZmodemSentry;
 
           proc.onData((data) => {
+            if (!shouldProcessSessionOutput(session, etZmodemSentry)) return;
             etZmodemSentry.consume(data);
           });
         } else {
           proc.onData((data) => {
+            if (!shouldProcessSessionOutput(session)) return;
             trackSessionIdlePrompt(session, data);
             bufferEtData(data);
             sessionLogStreamManager.appendData(sessionId, data);
@@ -867,6 +878,7 @@ main();
           try { session.etStatsConn?.end(); } catch { /* ignore */ }
           cleanupSessionExternalAuthArtifacts(session);
           sessionLogStreamManager.stopStream(sessionId);
+          closeTerminalOutputSession?.(sessionId);
           sessions.delete(sessionId);
           const contents = electronModule.webContents.fromId(session.webContentsId);
           contents?.send("netcatty:exit", { sessionId, ...evt, reason: evt.exitCode === 0 ? "exited" : "error" });

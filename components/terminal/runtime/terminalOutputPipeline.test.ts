@@ -62,6 +62,7 @@ test("releaseTerminalFlowOutputForTerm resumes renderer pause without a flow con
 test("prioritizeTerminalInput flushes batched ack remainders after dropping bytes", () => {
   const term = createFakeTerm();
   const acked: number[] = [];
+  const deferred: Array<() => void> = [];
   const flow = createOutputFlowController({
     highWaterMark: 100,
     lowWaterMark: 20,
@@ -78,8 +79,16 @@ test("prioritizeTerminalInput flushes batched ack remainders after dropping byte
   flow.received(FLOW_LOW_WATER_MARK + 80);
   enqueueTerminalWrite(term, 50, () => {});
   enqueueTerminalWrite(term, 30, () => {});
-  prioritizeTerminalInput(term, "sess-1", flow, backend);
+  prioritizeTerminalInput(
+    term,
+    "sess-1",
+    flow,
+    backend,
+    (callback: () => void) => deferred.push(callback),
+  );
 
+  assert.deepEqual(acked, []);
+  deferred[0]!();
   assert.deepEqual(acked, [30]);
 });
 
@@ -87,6 +96,7 @@ test("prioritizeTerminalInput flushes deferred xterm write ack bytes", () => {
   clearTerminalSessionFlowAck("sess-1");
   const term = createFakeTerm();
   const acked: number[] = [];
+  const deferred: Array<() => void> = [];
   const flow = createOutputFlowController({
     highWaterMark: 100,
     lowWaterMark: 20,
@@ -101,8 +111,16 @@ test("prioritizeTerminalInput flushes deferred xterm write ack bytes", () => {
   };
 
   accumulateDeferredTerminalWriteAck(term, 42);
-  prioritizeTerminalInput(term, "sess-1", flow, backend);
+  prioritizeTerminalInput(
+    term,
+    "sess-1",
+    flow,
+    backend,
+    (callback: () => void) => deferred.push(callback),
+  );
 
+  assert.deepEqual(acked, []);
+  deferred[0]!();
   assert.deepEqual(acked, [42]);
   assert.equal(flow.pendingBytes(), 0);
   clearTerminalSessionFlowAck("sess-1");
@@ -111,6 +129,7 @@ test("prioritizeTerminalInput flushes deferred xterm write ack bytes", () => {
 test("prioritizeTerminalInput drains backlog before user input is forwarded", () => {
   const term = createFakeTerm();
   const events: string[] = [];
+  const deferred: Array<() => void> = [];
   const flow = createOutputFlowController({
     highWaterMark: 100,
     lowWaterMark: 20,
@@ -129,8 +148,91 @@ test("prioritizeTerminalInput drains backlog before user input is forwarded", ()
   enqueueTerminalWrite(term, 30, (done) => {
     release = done;
   });
-  prioritizeTerminalInput(term, "sess-1", flow, backend);
+  prioritizeTerminalInput(
+    term,
+    "sess-1",
+    flow,
+    backend,
+    (callback: () => void) => deferred.push(callback),
+  );
   release?.();
 
+  assert.equal(events.includes("ipc-resume"), false);
+  events.push("input-forwarded");
+  deferred[0]!();
   assert.ok(events.includes("ipc-resume"));
+  assert.deepEqual(events.slice(-2), ["input-forwarded", "ipc-resume"]);
+});
+
+test("prioritizeTerminalInput does not resume while collecting dropped bytes", () => {
+  const term = createFakeTerm();
+  const events: string[] = [];
+  const deferred: Array<() => void> = [];
+  const flow = createOutputFlowController({
+    highWaterMark: 100,
+    lowWaterMark: 20,
+    onPause: () => events.push("pause"),
+    onResume: () => events.push("resume"),
+  });
+  const backend = {
+    setSessionFlowPaused: (_sessionId: string, paused: boolean) => {
+      events.push(paused ? "ipc-pause" : "ipc-resume");
+    },
+    ackSessionFlow: () => {},
+  };
+
+  flow.received(110);
+  enqueueTerminalWrite(term, 10, () => {});
+  enqueueTerminalWrite(term, 100, () => {});
+  prioritizeTerminalInput(
+    term,
+    "sess-1",
+    flow,
+    backend,
+    (callback: () => void) => deferred.push(callback),
+  );
+
+  assert.deepEqual(events, ["pause"]);
+  events.push("input-forwarded");
+  deferred[0]!();
+
+  assert.deepEqual(events, ["pause", "input-forwarded", "ipc-resume"]);
+});
+
+test("prioritizeTerminalInput defers source resume until after input is forwarded", () => {
+  clearTerminalSessionFlowAck("sess-1");
+  const term = createFakeTerm();
+  const events: string[] = [];
+  const deferred: Array<() => void> = [];
+  const flow = createOutputFlowController({
+    highWaterMark: 100,
+    lowWaterMark: 20,
+    onPause: () => events.push("pause"),
+    onResume: () => events.push("resume"),
+  });
+  const backend = {
+    setSessionFlowPaused: (_sessionId: string, paused: boolean) => {
+      events.push(paused ? "ipc-pause" : "ipc-resume");
+    },
+    ackSessionFlow: () => {},
+  };
+
+  flow.received(FLOW_LOW_WATER_MARK + 1024);
+  prioritizeTerminalInput(
+    term,
+    "sess-1",
+    flow,
+    backend,
+    (callback: () => void) => deferred.push(callback),
+  );
+
+  assert.equal(flow.isPaused(), false);
+  assert.deepEqual(events, ["pause"]);
+  assert.equal(deferred.length, 1);
+
+  events.push("input-forwarded");
+  deferred[0]!();
+
+  assert.deepEqual(events, ["pause", "input-forwarded", "ipc-resume"]);
+  clearTerminalSessionFlowAck("sess-1");
 });

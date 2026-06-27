@@ -932,10 +932,38 @@ const {
   getSftpHomeDir,
 } = fileOpsApi;
 
+function registerWorkerHandle(ipcMain, terminalWorkerManager, channel) {
+  ipcMain.handle(channel, (event, payload) => terminalWorkerManager.request(channel, payload, {
+    webContentsId: event?.sender?.id,
+  }));
+}
+
 /**
  * Register IPC handlers for SFTP operations
  */
-function registerHandlers(ipcMain) {
+function registerHandlers(ipcMain, options = {}) {
+  const terminalWorkerManager = options.terminalWorkerManager || null;
+  if (terminalWorkerManager) {
+    [
+      "netcatty:sftp:open",
+      "netcatty:sftp:openForSession",
+      "netcatty:sftp:list",
+      "netcatty:sftp:read",
+      "netcatty:sftp:readBinary",
+      "netcatty:sftp:write",
+      "netcatty:sftp:writeBinary",
+      "netcatty:sftp:writeBinaryWithProgress",
+      "netcatty:sftp:cancelUpload",
+      "netcatty:sftp:close",
+      "netcatty:sftp:mkdir",
+      "netcatty:sftp:delete",
+      "netcatty:sftp:rename",
+      "netcatty:sftp:stat",
+      "netcatty:sftp:chmod",
+      "netcatty:sftp:homeDir",
+    ].forEach((channel) => registerWorkerHandle(ipcMain, terminalWorkerManager, channel));
+    return;
+  }
   ipcMain.handle("netcatty:sftp:open", openSftp);
   ipcMain.handle("netcatty:sftp:openForSession", openSftpForSession);
   ipcMain.handle("netcatty:sftp:list", listSftp);

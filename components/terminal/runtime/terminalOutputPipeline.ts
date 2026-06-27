@@ -26,6 +26,22 @@ type FlowBackend = {
   ackSessionFlow?: (sessionId: string, bytes: number) => void;
 };
 
+type ResumeScheduler = (callback: () => void) => void;
+
+export type TerminalInputPrioritySnapshot = {
+  sessionId: string | null;
+  backlogBytes: number;
+  writeQueueDepth: number;
+  deferredAckBytes: number;
+  ackAfterInputBytes: number;
+  scheduledBackendResume: boolean;
+  skippedReason?: "missing-session" | "below-threshold";
+};
+
+const scheduleAfterCurrentInput: ResumeScheduler = (callback) => {
+  setTimeout(callback, 0);
+};
+
 const acknowledgeDroppedBytes = (
   flow: OutputFlowController | undefined,
   bytes: number,
@@ -46,7 +62,9 @@ export const releaseTerminalFlowOutputForTerm = (
   backend: FlowBackend,
   sessionId: string | null,
   flow: OutputFlowController | undefined,
+  options: { resumeBackend?: boolean } = {},
 ): void => {
+  const resumeBackend = options.resumeBackend !== false;
   const onDropped = (bytes: number) => {
     acknowledgeDroppedBytes(flow, bytes, backend, sessionId);
   };
@@ -57,10 +75,12 @@ export const releaseTerminalFlowOutputForTerm = (
   if (deferredAck > 0) {
     ackTerminalSessionFlow(backend, sessionId, deferredAck);
   }
-  flow?.reset();
+  flow?.reset({ resume: resumeBackend });
   if (sessionId) {
     flushTerminalSessionFlowAck(sessionId);
-    backend.setSessionFlowPaused?.(sessionId, false);
+    if (resumeBackend) {
+      backend.setSessionFlowPaused?.(sessionId, false);
+    }
     clearTerminalSessionFlowAck(sessionId);
   }
   resetTerminalWriteCoalescer(term);
@@ -80,27 +100,63 @@ export const prioritizeTerminalInput = (
   sessionId: string | null,
   flow: OutputFlowController | undefined,
   backend: FlowBackend,
-): void => {
-  if (!sessionId) return;
+  scheduleResume: ResumeScheduler = scheduleAfterCurrentInput,
+): TerminalInputPrioritySnapshot => {
+  if (!sessionId) {
+    return {
+      sessionId,
+      backlogBytes: 0,
+      writeQueueDepth: 0,
+      deferredAckBytes: 0,
+      ackAfterInputBytes: 0,
+      scheduledBackendResume: false,
+      skippedReason: "missing-session",
+    };
+  }
 
   const backlog = flow?.pendingBytes() ?? 0;
   const queueDepth = getTerminalWriteQueueDepth(term);
   const deferredAck = getDeferredTerminalWriteAckBytes(term);
   if (backlog <= FLOW_LOW_WATER_MARK && queueDepth === 0 && deferredAck === 0) {
-    return;
+    return {
+      sessionId,
+      backlogBytes: backlog,
+      writeQueueDepth: queueDepth,
+      deferredAckBytes: deferredAck,
+      ackAfterInputBytes: 0,
+      scheduledBackendResume: false,
+      skippedReason: "below-threshold",
+    };
   }
 
+  let ackAfterInput = 0;
+
   const onDropped = (bytes: number) => {
-    acknowledgeDroppedBytes(flow, bytes, backend, sessionId);
+    if (bytes <= 0) return;
+    ackAfterInput += bytes;
   };
 
   abortTerminalWriteCoalescer(term, onDropped);
   abortTerminalWriteQueue(term, onDropped);
   const flushedDeferredAck = clearDeferredTerminalWriteAck(term);
   if (flushedDeferredAck > 0) {
-    ackTerminalSessionFlow(backend, sessionId, flushedDeferredAck);
+    ackAfterInput += flushedDeferredAck;
   }
-  flow?.reset();
-  flushTerminalSessionFlowAck(sessionId);
-  backend.setSessionFlowPaused?.(sessionId, false);
+  flow?.reset({ resume: false });
+  scheduleResume(() => {
+    if (ackAfterInput > 0) {
+      ackTerminalSessionFlow(backend, sessionId, ackAfterInput);
+    }
+    flushTerminalSessionFlowAck(sessionId);
+    backend.setSessionFlowPaused?.(sessionId, false);
+  });
+
+  return {
+    sessionId,
+    backlogBytes: backlog,
+    writeQueueDepth: queueDepth,
+    deferredAckBytes: deferredAck,
+    ackAfterInputBytes: ackAfterInput,
+    scheduledBackendResume: true,
+  };
 };

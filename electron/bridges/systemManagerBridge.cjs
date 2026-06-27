@@ -311,7 +311,36 @@ function createSystemManagerBridge(deps) {
     return { success: true, output: result.stdout };
   }
 
-  function registerHandlers(ipcMain) {
+  function registerWorkerHandle(ipcMain, terminalWorkerManager, channel) {
+    ipcMain.handle(channel, (event, payload) => terminalWorkerManager.request(channel, payload, {
+      webContentsId: event?.sender?.id,
+    }));
+  }
+
+  function registerHandlers(ipcMain, options = {}) {
+    const terminalWorkerManager = options.terminalWorkerManager || null;
+    if (terminalWorkerManager) {
+      [
+        "netcatty:system:probeCapabilities",
+        "netcatty:system:listProcesses",
+        "netcatty:system:signalProcess",
+        "netcatty:system:setupOsc7Tracking",
+        "netcatty:system:listTmuxSessions",
+        "netcatty:system:createTmuxSession",
+        "netcatty:system:listTmuxWindows",
+        "netcatty:system:listTmuxPanes",
+        "netcatty:system:listTmuxClients",
+        "netcatty:system:tmuxAction",
+        "netcatty:system:listDockerContainers",
+        "netcatty:system:listDockerImages",
+        "netcatty:system:dockerStats",
+        "netcatty:system:dockerInspect",
+        "netcatty:system:dockerImageInspect",
+        "netcatty:system:dockerAction",
+        "netcatty:system:dockerImageAction",
+      ].forEach((channel) => registerWorkerHandle(ipcMain, terminalWorkerManager, channel));
+      return;
+    }
     ipcMain.handle("netcatty:system:probeCapabilities", probeCapabilities);
     ipcMain.handle("netcatty:system:listProcesses", listProcesses);
     ipcMain.handle("netcatty:system:signalProcess", signalProcess);

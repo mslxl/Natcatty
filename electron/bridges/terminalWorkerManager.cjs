@@ -1,0 +1,285 @@
+"use strict";
+
+const path = require("node:path");
+const { randomUUID } = require("node:crypto");
+const {
+  logTerminalInterruptDebug,
+  normalizeTrace,
+} = require("./terminalInterruptDiagnostics.cjs");
+
+function isTerminalWorkerEnabled(options = {}) {
+  const env = options.env || process.env;
+  return env.NETCATTY_TERMINAL_WORKER !== "0";
+}
+
+function defaultWorkerScriptPath() {
+  return path.join(__dirname, "..", "terminalWorker", "process.cjs");
+}
+
+function createTerminalWorkerManager(options = {}) {
+  const {
+    utilityProcess,
+    terminalOutputChannel = null,
+    workerScriptPath = defaultWorkerScriptPath(),
+    electronModule = null,
+    onRendererEvent = null,
+  } = options;
+  let child = null;
+  const pending = new Map();
+  const pendingOutput = new Map();
+  const closedSessions = new Set();
+  const outputPortPending = new Set();
+  const outputPortReady = new Set();
+  const sessionWebContentsIds = new Map();
+  const maxPendingOutputChunks = Number.isFinite(options.maxPendingOutputChunks)
+    ? Math.max(0, Math.trunc(options.maxPendingOutputChunks))
+    : 512;
+
+  function rejectAllPending(error) {
+    for (const { reject } of pending.values()) {
+      reject(error);
+    }
+    pending.clear();
+  }
+
+  function clearBufferedOutput(sessionId) {
+    if (!sessionId) return;
+    pendingOutput.delete(sessionId);
+  }
+
+  function takeBufferedOutput(sessionId) {
+    const chunks = pendingOutput.get(sessionId) || [];
+    pendingOutput.delete(sessionId);
+    return chunks;
+  }
+
+  function bufferOutput(sessionId, data) {
+    if (!sessionId || closedSessions.has(sessionId) || maxPendingOutputChunks === 0) return;
+    const chunks = pendingOutput.get(sessionId) || [];
+    chunks.push(data);
+    while (chunks.length > maxPendingOutputChunks) {
+      chunks.shift();
+    }
+    pendingOutput.set(sessionId, chunks);
+  }
+
+  function flushBufferedOutput(sessionId) {
+    const chunks = pendingOutput.get(sessionId);
+    if (!sessionId || !chunks?.length) return;
+    pendingOutput.delete(sessionId);
+    for (let index = 0; index < chunks.length; index += 1) {
+      const chunk = chunks[index];
+      if (!deliverOutputToRenderer(sessionId, chunk)) {
+        for (let retryIndex = index; retryIndex < chunks.length; retryIndex += 1) {
+          bufferOutput(sessionId, chunks[retryIndex]);
+        }
+        break;
+      }
+    }
+  }
+
+  function sendOutputOverLegacyIpc(sessionId, data) {
+    const webContentsId = sessionWebContentsIds.get(sessionId);
+    if (!webContentsId) return false;
+    const contents = electronModule?.webContents?.fromId?.(webContentsId);
+    if (!contents?.send) return false;
+    contents.send("netcatty:data", { sessionId, data });
+    return true;
+  }
+
+  function deliverOutputToRenderer(sessionId, data) {
+    if (terminalOutputChannel?.send?.(sessionId, data)) return true;
+    return sendOutputOverLegacyIpc(sessionId, data);
+  }
+
+  function openOutputSession(sessionId, webContentsId) {
+    if (!sessionId || !webContentsId) return;
+    if (closedSessions.has(sessionId)) {
+      clearBufferedOutput(sessionId);
+      return;
+    }
+    sessionWebContentsIds.set(sessionId, webContentsId);
+    const contents = electronModule?.webContents?.fromId?.(webContentsId);
+    const outputPort = terminalOutputChannel?.openSession?.(sessionId, contents, {
+      transferToWorker: true,
+    });
+    if (outputPort && outputPort !== true && child?.postMessage) {
+      outputPortPending.add(sessionId);
+      child.postMessage({
+        kind: "output-port",
+        sessionId,
+        bufferedOutput: takeBufferedOutput(sessionId),
+      }, [outputPort]);
+      return;
+    }
+    flushBufferedOutput(sessionId);
+  }
+
+  function closeOutputSession(sessionId) {
+    if (!sessionId) return;
+    closedSessions.add(sessionId);
+    clearBufferedOutput(sessionId);
+    outputPortPending.delete(sessionId);
+    outputPortReady.delete(sessionId);
+    sessionWebContentsIds.delete(sessionId);
+    try {
+      child?.postMessage?.({ kind: "close-output-port", sessionId });
+    } catch {
+      // The worker may already be gone while closing a tab or quitting.
+    }
+    terminalOutputChannel?.closeSession?.(sessionId);
+  }
+
+  function flushOutputToWorker(sessionId) {
+    const chunks = takeBufferedOutput(sessionId);
+    if (!chunks.length || closedSessions.has(sessionId)) return;
+    try {
+      child?.postMessage?.({ kind: "output-flush", sessionId, chunks });
+    } catch {
+      for (const chunk of chunks) bufferOutput(sessionId, chunk);
+    }
+  }
+
+  function handleMessage(message) {
+    if (!message || typeof message !== "object") return;
+    if (message.kind === "response") {
+      const entry = pending.get(message.requestId);
+      if (!entry) return;
+      pending.delete(message.requestId);
+      if (message.error) {
+        entry.reject(new Error(message.error));
+      } else {
+        const sessionId = message.result?.sessionId;
+        openOutputSession(sessionId, entry.webContentsId);
+        entry.resolve(message.result);
+      }
+      return;
+    }
+    if (message.kind === "output") {
+      if (closedSessions.has(message.sessionId)) return;
+      if (outputPortPending.has(message.sessionId)) {
+        bufferOutput(message.sessionId, message.data);
+        return;
+      }
+      if (outputPortReady.has(message.sessionId)) {
+        bufferOutput(message.sessionId, message.data);
+        flushOutputToWorker(message.sessionId);
+        return;
+      }
+      if (!deliverOutputToRenderer(message.sessionId, message.data)) {
+        bufferOutput(message.sessionId, message.data);
+      }
+      return;
+    }
+    if (message.kind === "output-port-ready") {
+      outputPortPending.delete(message.sessionId);
+      if (!closedSessions.has(message.sessionId)) {
+        outputPortReady.add(message.sessionId);
+        flushOutputToWorker(message.sessionId);
+      }
+      return;
+    }
+    if (message.kind === "renderer-event") {
+      if (message.channel === "netcatty:exit" && message.payload?.sessionId) {
+        closeOutputSession(message.payload.sessionId);
+      }
+      if (onRendererEvent) {
+        onRendererEvent(message);
+        return;
+      }
+      const contents = electronModule?.webContents?.fromId?.(message.webContentsId);
+      contents?.send?.(message.channel, message.payload);
+    }
+  }
+
+  function handleExit(code) {
+    const error = new Error(`Terminal worker exited${Number.isFinite(code) ? ` with code ${code}` : ""}`);
+    child = null;
+    pendingOutput.clear();
+    closedSessions.clear();
+    outputPortPending.clear();
+    outputPortReady.clear();
+    sessionWebContentsIds.clear();
+    terminalOutputChannel?.closeAll?.();
+    rejectAllPending(error);
+  }
+
+  function ensureStarted() {
+    if (child) return child;
+    if (!utilityProcess?.fork) {
+      throw new Error("Electron utilityProcess is unavailable");
+    }
+    child = utilityProcess.fork(workerScriptPath);
+    child.on?.("message", handleMessage);
+    child.on?.("exit", handleExit);
+    return child;
+  }
+
+  function request(channel, payload, optionsForRequest = {}) {
+    const requestId = randomUUID();
+    const worker = ensureStarted();
+    const promise = new Promise((resolve, reject) => {
+      pending.set(requestId, { resolve, reject, webContentsId: optionsForRequest.webContentsId });
+    });
+    if (payload?.sessionId) {
+      closedSessions.delete(payload.sessionId);
+    }
+    worker.postMessage({
+      kind: "request",
+      requestId,
+      channel,
+      payload,
+      webContentsId: optionsForRequest.webContentsId,
+    });
+    return promise;
+  }
+
+  function send(channel, payload, optionsForSend = {}) {
+    if (channel === "netcatty:close" && payload?.sessionId) {
+      closeOutputSession(payload.sessionId);
+    }
+    if (channel === "netcatty:interrupt") {
+      const trace = normalizeTrace(payload);
+      logTerminalInterruptDebug("main-to-worker-send", {
+        channel,
+        webContentsId: optionsForSend.webContentsId,
+        hasChild: Boolean(child),
+      }, trace);
+    }
+    ensureStarted().postMessage({
+      kind: "send",
+      channel,
+      payload,
+      webContentsId: optionsForSend.webContentsId,
+    });
+  }
+
+  function stop() {
+    if (!child) return;
+    const current = child;
+    child = null;
+    try {
+      current.kill?.();
+    } finally {
+      pendingOutput.clear();
+      closedSessions.clear();
+      outputPortPending.clear();
+      outputPortReady.clear();
+      sessionWebContentsIds.clear();
+      terminalOutputChannel?.closeAll?.();
+      rejectAllPending(new Error("Terminal worker stopped"));
+    }
+  }
+
+  return {
+    ensureStarted,
+    request,
+    send,
+    stop,
+  };
+}
+
+module.exports = {
+  createTerminalWorkerManager,
+  isTerminalWorkerEnabled,
+};

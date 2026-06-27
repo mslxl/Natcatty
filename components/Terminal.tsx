@@ -946,11 +946,12 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     if (closingSessionId) {
       const activeTerm = termRef.current;
       if (activeTerm) {
-        releaseTerminalFlowBeforeHibernate(terminalBackend, activeTerm, closingSessionId);
+        releaseTerminalFlowBeforeHibernate(terminalBackend, activeTerm, closingSessionId, {
+          resumeBackend: false,
+        });
       } else {
         flushTerminalSessionFlowAck(closingSessionId);
         clearTerminalSessionFlowAck(closingSessionId);
-        terminalBackend.setSessionFlowPaused?.(closingSessionId, false);
       }
       try {
         terminalBackend.closeSession(closingSessionId);
@@ -989,7 +990,6 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     if (closingSessionId) {
       flushTerminalSessionFlowAck(closingSessionId);
       clearTerminalSessionFlowAck(closingSessionId);
-      terminalBackend.setSessionFlowPaused?.(closingSessionId, false);
       try {
         terminalBackend.closeSession(closingSessionId);
       } catch (err) {

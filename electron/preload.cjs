@@ -7,10 +7,14 @@ const {
   createTerminalDataBacklog,
   createTerminalDataDispatcher,
 } = require("./preload/terminalDataBacklog.cjs");
+const {
+  createTerminalOutputPortRegistry,
+} = require("./preload/terminalOutputPorts.cjs");
 
 const dataListeners = new Map();
 const displayDataListeners = new Map();
 const terminalDataBacklog = createTerminalDataBacklog();
+const closedTerminalDataSessions = new Set();
 const exitListeners = new Map();
 const transferProgressListeners = new Map();
 const transferCompleteListeners = new Map();
@@ -133,7 +137,14 @@ const _deliverToListeners = createTerminalDataDispatcher({
   dataListeners,
   displayDataListeners,
   terminalDataBacklog,
+  shouldDropSession: (sessionId) => closedTerminalDataSessions.has(sessionId),
 });
+const terminalOutputPorts = createTerminalOutputPortRegistry({
+  ipcRenderer,
+  deliverToListeners: _deliverToListeners,
+  closedTerminalDataSessions,
+});
+terminalOutputPorts.register();
 
 // ZMODEM file transfer events
 ipcRenderer.on("netcatty:zmodem:detect", (_event, payload) => {
@@ -176,6 +187,7 @@ ipcRenderer.on("netcatty:zmodem:overwrite-request", (_event, payload) => {
 });
 
 ipcRenderer.on("netcatty:data", (_event, payload) => {
+  if (closedTerminalDataSessions.has(payload?.sessionId)) return;
   if (payload?.syntheticEcho) {
     _deliverToListeners(payload.sessionId, payload.data);
     return;
@@ -203,6 +215,7 @@ ipcRenderer.on("netcatty:data", (_event, payload) => {
 });
 
 ipcRenderer.on("netcatty:exit", (_event, payload) => {
+  closedTerminalDataSessions.add(payload.sessionId);
   const set = exitListeners.get(payload.sessionId);
   if (set) {
     set.forEach((cb) => {
@@ -218,6 +231,7 @@ ipcRenderer.on("netcatty:exit", (_event, payload) => {
     displayDataListeners,
     terminalDataBacklog,
   }, payload.sessionId);
+  terminalOutputPorts.closeSession(payload.sessionId);
   exitListeners.delete(payload.sessionId);
   telnetAutoLoginCompleteListeners.delete(payload.sessionId);
   telnetAutoLoginCancelledListeners.delete(payload.sessionId);
@@ -686,6 +700,7 @@ const api = createPreloadApi({
   dataListeners,
   displayDataListeners,
   exitListeners,
+  closedTerminalDataSessions,
   transferProgressListeners,
   transferCompleteListeners,
   transferErrorListeners,
@@ -700,6 +715,7 @@ const api = createPreloadApi({
   telnetAutoLoginCancelledListeners,
   telnetEchoModeListeners,
   terminalDataBacklog,
+  terminalOutputPorts,
   languageChangeListeners,
   fullscreenChangeListeners,
   windowShownListeners,

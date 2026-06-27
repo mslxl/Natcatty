@@ -1,6 +1,9 @@
 /* eslint-disable no-undef */
 const { emitTerminalSessionData } = require("../emitTerminalSessionData.cjs");
-const { shouldAcceptSessionOutput } = require("../terminalFlowAck.cjs");
+const {
+  shouldAcceptSessionOutput,
+  shouldProcessSessionOutput,
+} = require("../terminalFlowAck.cjs");
 
 function createMoshSessionApi(ctx) {
   with (ctx) {
@@ -409,6 +412,7 @@ function createMoshSessionApi(ctx) {
         moshAuthTempFiles: moshAuth.tempFiles,
       };
       sessions.set(sessionId, session);
+      openTerminalOutputSession?.(sessionId, event.sender);
     
       let logStreamToken = null;
       if (options.sessionLog?.enabled && options.sessionLog?.directory) {
@@ -426,7 +430,11 @@ function createMoshSessionApi(ctx) {
       // it to scope its stopStream call.
       session.logStreamToken = logStreamToken;
     
-      const { bufferData, flush } = createPtyOutputBuffer((data) => {
+      const {
+        bufferData,
+        flush,
+        discard,
+      } = createPtyOutputBuffer((data) => {
         const contents = electronModule.webContents.fromId(session.webContentsId);
         emitTerminalSessionData(contents, sessionId, data, {
           cols: session.cols,
@@ -436,6 +444,7 @@ function createMoshSessionApi(ctx) {
         shouldAcceptOutput: () => shouldAcceptSessionOutput(session),
       });
       session.flushPendingData = flush;
+      session.discardPendingData = discard;
     
       const sniffer = moshHandshake.createMoshConnectSniffer();
       const respondToPasswordPrompt = createMoshSshPasswordResponder(sshPty, options.password, options.passphrase);
@@ -487,6 +496,7 @@ function createMoshSessionApi(ctx) {
               reason: "error",
               error: `Failed to spawn mosh-client: ${err.message}`,
             });
+            closeTerminalOutputSession?.(sessionId);
             sessions.delete(sessionId);
           }
           return;
@@ -505,6 +515,7 @@ function createMoshSessionApi(ctx) {
           signal,
           reason: "error",
         });
+        closeTerminalOutputSession?.(sessionId);
         sessions.delete(sessionId);
       });
     
@@ -603,9 +614,13 @@ function createMoshSessionApi(ctx) {
           protocolLabel: "Mosh",
         });
         session.zmodemSentry = sentry;
-        mcPty.onData((data) => sentry.consume(data));
+        mcPty.onData((data) => {
+          if (!shouldProcessSessionOutput(session, sentry)) return;
+          sentry.consume(data);
+        });
       } else {
         mcPty.onData((data) => {
+          if (!shouldProcessSessionOutput(session)) return;
           const str = data.toString("utf8");
           trackSessionIdlePrompt(session, str);
           bufferData(str);
@@ -630,6 +645,7 @@ function createMoshSessionApi(ctx) {
           signal,
           reason: exitCode !== 0 ? "error" : "exited",
         });
+        closeTerminalOutputSession?.(sessionId);
         sessions.delete(sessionId);
       });
     }

@@ -74,6 +74,11 @@ import {
   nextHistoryPreviewTop,
 } from "./terminalHistoryScrollOverride";
 import { shouldPassThroughCopyShortcut } from "./terminalCopyShortcut";
+import { shouldUseUrgentTerminalInterrupt } from "./terminalInterruptShortcut";
+import {
+  createTerminalInterruptTrace,
+  logTerminalInterruptTrace,
+} from "./terminalInterruptDiagnostics";
 import { getFlowControllerForTerm } from "./terminalSessionAttachment";
 import { prioritizeTerminalInput } from "./terminalOutputPipeline";
 import {
@@ -105,6 +110,7 @@ type TerminalBackendApi = {
   openExternalAvailable: () => boolean;
   openExternal: (url: string) => Promise<void>;
   writeToSession: (sessionId: string, data: string) => void;
+  interruptSession?: (sessionId: string, trace?: NetcattyTerminalInterruptTrace) => void;
   resizeSession: (sessionId: string, cols: number, rows: number) => void;
   setSessionFlowPaused?: (sessionId: string, paused: boolean) => void;
 };
@@ -792,6 +798,41 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     if (ctx.onAutocompleteKeyEvent) {
       const consumed = ctx.onAutocompleteKeyEvent(e);
       if (!consumed) return false; // Event was consumed by autocomplete
+    }
+
+    if (shouldUseUrgentTerminalInterrupt(e, { hasSelection: term.hasSelection() })) {
+      const id = ctx.sessionRef.current;
+      if (id && ctx.statusRef.current === "connected") {
+        const rendererKeyAt = Date.now();
+        e.preventDefault();
+        e.stopPropagation();
+        const priority = prioritizeTerminalInput(
+          term,
+          id,
+          getFlowControllerForTerm(term),
+          ctx.terminalBackend,
+        );
+        const interruptTrace = createTerminalInterruptTrace({
+          sessionId: id,
+          rendererKeyAt,
+          status: ctx.statusRef.current,
+          hasSelection: false,
+          priority,
+        });
+        logTerminalInterruptTrace("renderer-keydown-send", interruptTrace, {
+          priority,
+        });
+        if (ctx.terminalBackend.interruptSession) {
+          ctx.terminalBackend.interruptSession(id, interruptTrace);
+        } else {
+          ctx.terminalBackend.writeToSession(id, "\x03");
+        }
+        if (ctx.isBroadcastEnabledRef.current && ctx.onBroadcastInputRef.current) {
+          ctx.onBroadcastInputRef.current("\x03", ctx.sessionId);
+        }
+        scrollToBottomAfterInput("\x03");
+        return false;
+      }
     }
 
     const currentScheme = ctx.hotkeySchemeRef.current;

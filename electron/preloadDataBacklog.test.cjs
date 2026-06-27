@@ -164,6 +164,27 @@ test("does not backlog data once the display listener is registered", () => {
   assert.equal(terminalDataBacklog.take("session-1"), "");
 });
 
+test("drops terminal data for sessions marked closed", () => {
+  const observed = [];
+  const dataListeners = new Map([
+    ["session-1", new Set([(chunk) => observed.push(chunk)])],
+  ]);
+  const displayDataListeners = new Map();
+  const terminalDataBacklog = createTerminalDataBacklog();
+  const closedSessions = new Set(["session-1"]);
+  const deliverToListeners = createTerminalDataDispatcher({
+    dataListeners,
+    displayDataListeners,
+    terminalDataBacklog,
+    shouldDropSession: (sessionId) => closedSessions.has(sessionId),
+  });
+
+  deliverToListeners("session-1", "late output");
+
+  assert.deepEqual(observed, []);
+  assert.equal(terminalDataBacklog.take("session-1"), "");
+});
+
 test("clearTerminalDataSession drops listener and backlog state together", () => {
   const listener = () => {};
   const dataListeners = new Map([
@@ -184,4 +205,94 @@ test("clearTerminalDataSession drops listener and backlog state together", () =>
   assert.equal(dataListeners.has("session-1"), false);
   assert.equal(displayDataListeners.has("session-1"), false);
   assert.equal(terminalDataBacklog.take("session-1"), "");
+});
+
+test("closeSession clears terminal data state and marks the session closed", () => {
+  const listener = () => {};
+  const dataListeners = new Map([
+    ["session-1", new Set([listener])],
+  ]);
+  const displayDataListeners = new Map([
+    ["session-1", new Set([listener])],
+  ]);
+  const terminalDataBacklog = createTerminalDataBacklog();
+  const closedTerminalDataSessions = new Set();
+  const telnetEchoModeListeners = new Map([
+    ["session-1", new Set([listener])],
+  ]);
+  const sent = [];
+  const closedPorts = [];
+  terminalDataBacklog.append("session-1", "pending");
+
+  const api = createPreloadApi({
+    ipcRenderer: {
+      invoke() {},
+      send(channel, payload) {
+        sent.push({ channel, payload });
+      },
+      on() {},
+      removeListener() {},
+    },
+    os: {
+      release: () => "10.0.19045",
+    },
+    dataListeners,
+    displayDataListeners,
+    terminalDataBacklog,
+    closedTerminalDataSessions,
+    telnetEchoModeListeners,
+    terminalOutputPorts: {
+      closeSession(sessionId) {
+        closedPorts.push(sessionId);
+      },
+    },
+  });
+
+  api.closeSession("session-1");
+
+  assert.equal(dataListeners.has("session-1"), false);
+  assert.equal(displayDataListeners.has("session-1"), false);
+  assert.equal(terminalDataBacklog.take("session-1"), "");
+  assert.equal(closedTerminalDataSessions.has("session-1"), true);
+  assert.equal(telnetEchoModeListeners.has("session-1"), false);
+  assert.deepEqual(closedPorts, ["session-1"]);
+  assert.deepEqual(sent, [
+    { channel: "netcatty:close", payload: { sessionId: "session-1" } },
+  ]);
+});
+
+test("startLocalSession reopens a previously closed terminal data session", async () => {
+  const closedTerminalDataSessions = new Set(["session-1"]);
+  const invoked = [];
+  const api = createPreloadApi({
+    ipcRenderer: {
+      async invoke(channel, payload) {
+        invoked.push({ channel, payload, wasClosed: closedTerminalDataSessions.has("session-1") });
+        return { sessionId: "session-1" };
+      },
+      send() {},
+      on() {},
+      removeListener() {},
+    },
+    os: {
+      release: () => "10.0.19045",
+    },
+    dataListeners: new Map(),
+    displayDataListeners: new Map(),
+    terminalDataBacklog: createTerminalDataBacklog(),
+    closedTerminalDataSessions,
+    telnetEchoModeListeners: new Map(),
+  });
+
+  const sessionId = await api.startLocalSession({ sessionId: "session-1" });
+
+  assert.equal(sessionId, "session-1");
+  assert.deepEqual(invoked, [
+    {
+      channel: "netcatty:local:start",
+      payload: { sessionId: "session-1" },
+      wasClosed: false,
+    },
+  ]);
+  assert.equal(closedTerminalDataSessions.has("session-1"), false);
 });
