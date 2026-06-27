@@ -184,6 +184,7 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     focusedSessionId,
     fontSize: s.fontSize,
     hostMap: s.hostMap,
+    isSidePanelOpenForCurrentTab,
     isVisible,
     onUpdateHost: s.onUpdateHost,
     onUpdateTerminalFontFamilyId: s.onUpdateTerminalFontFamilyId,

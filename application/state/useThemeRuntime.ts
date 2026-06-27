@@ -73,9 +73,11 @@ export function useThemeRuntime(settings: ThemeRuntimeSettings) {
     return true;
   }, [settings]);
 
-  const pickTheme = useCallback((themeId: string, options?: { followApp?: boolean }) => {
+  const pickTheme = useCallback((themeId: string, options?: { followApp?: boolean; scopeHostId?: string | null }) => {
     const followApp = options?.followApp ?? settings.followAppTerminalTheme;
-    setUserIntent(pickingThemeUserIntent(themeId));
+    setUserIntent(pickingThemeUserIntent(themeId, {
+      scopeHostId: followApp ? undefined : options?.scopeHostId,
+    }));
     if (followApp) {
       applyFollowAppSettingsForPick(themeId);
     }

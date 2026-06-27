@@ -33,6 +33,7 @@ interface UseTerminalThemePanelStateOptions {
   focusedSessionId: string | undefined;
   fontSize: number;
   hostMap: Map<string, Host>;
+  isSidePanelOpenForCurrentTab: boolean;
   isVisible: boolean;
   onUpdateHost: (host: Host) => void;
   onUpdateTerminalFontFamilyId?: (fontFamilyId: string) => void;
@@ -58,6 +59,7 @@ export function useTerminalThemePanelState({
   focusedSessionId,
   fontSize,
   hostMap,
+  isSidePanelOpenForCurrentTab,
   isVisible,
   onUpdateHost,
   onUpdateTerminalFontFamilyId,
@@ -74,10 +76,14 @@ export function useTerminalThemePanelState({
   terminalTheme,
 }: UseTerminalThemePanelStateOptions) {
   useEffect(() => {
-    if (activeSidePanelTab !== 'theme') {
-      clearIntent();
+    if (isSidePanelOpenForCurrentTab) {
+      if (!followAppTerminalTheme && activeSidePanelTab !== 'theme') {
+        clearIntent();
+      }
+      return;
     }
-  }, [activeSidePanelTab, clearIntent]);
+    clearIntent();
+  }, [activeSidePanelTab, clearIntent, followAppTerminalTheme, isSidePanelOpenForCurrentTab]);
 
   const focusedHost = useMemo((): Host | null => {
     if (activeWorkspace && focusedSessionId) {
@@ -168,7 +174,10 @@ export function useTerminalThemePanelState({
       return;
     }
 
-    pickTheme(themeId, { followApp: false });
+    pickTheme(themeId, {
+      followApp: false,
+      scopeHostId: rawFocusedHost?.id ?? focusedHost?.id ?? null,
+    });
     if (isFocusedHostEphemeral) {
       onUpdateTerminalThemeId?.(themeId);
     } else if (rawFocusedHost) {

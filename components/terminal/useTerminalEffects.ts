@@ -16,7 +16,7 @@ import {
   prioritizeTerminalInput,
   shouldArmTerminalInterruptDisplayGateForProtocol,
 } from './runtime/terminalOutputPipeline';
-import { scheduleTerminalThemeUpdate, applyTerminalThemeSync } from './terminalThemeScheduler';
+import { scheduleTerminalThemeUpdate, applyTerminalThemeSync, cancelTerminalThemeUpdate } from './terminalThemeScheduler';
 import { injectTerminalPaneAppearanceVars } from '../../infrastructure/theme/terminalAppearanceVars';
 import {
   isTerminalCloseGenerationCurrent,
@@ -544,6 +544,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     if (!term) return;
 
     if (isVisibleRef.current || isFocused) {
+      cancelTerminalThemeUpdate(sessionId);
       applyTerminalThemeSync(term, effectiveTheme);
       injectTerminalPaneAppearanceVars(sessionId, effectiveTheme);
       return;

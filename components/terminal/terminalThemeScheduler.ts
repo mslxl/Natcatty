@@ -61,6 +61,10 @@ function flushPendingUpdates(): void {
   }
 }
 
+export function cancelTerminalThemeUpdate(sessionId: string): void {
+  pendingBySession.delete(sessionId);
+}
+
 export function scheduleTerminalThemeUpdate(
   sessionId: string,
   theme: TerminalTheme,

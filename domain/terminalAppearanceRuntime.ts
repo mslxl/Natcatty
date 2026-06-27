@@ -12,7 +12,7 @@ import { TERMINAL_THEMES, getBuiltinTerminalThemeById } from '../infrastructure/
 
 export type ThemeUserIntent =
   | { kind: 'idle' }
-  | { kind: 'picking'; themeId: string; startedAt: number };
+  | { kind: 'picking'; themeId: string; startedAt: number; scopeHostId?: string | null };
 
 export type AppearanceSource = 'intent' | 'follow-app' | 'host-override' | 'manual-global';
 
@@ -49,10 +49,14 @@ export type ResolveTerminalAppearanceInput = {
 
 export const idleThemeUserIntent = (): ThemeUserIntent => ({ kind: 'idle' });
 
-export const pickingThemeUserIntent = (themeId: string, startedAt = Date.now()): ThemeUserIntent => ({
+export const pickingThemeUserIntent = (
+  themeId: string,
+  options?: { startedAt?: number; scopeHostId?: string | null },
+): ThemeUserIntent => ({
   kind: 'picking',
   themeId,
-  startedAt,
+  startedAt: options?.startedAt ?? Date.now(),
+  ...(options?.scopeHostId !== undefined ? { scopeHostId: options.scopeHostId } : {}),
 });
 
 export function isFollowAppIntentSettled(
@@ -99,10 +103,15 @@ function resolveManualThemeId(
   hostScope: TerminalAppearanceHostScope,
 ): { themeId: string; source: AppearanceSource } {
   if (userIntent.kind === 'picking') {
-    if (hostScope.isEphemeral || !hostScope.host) {
+    const scopeHostId = userIntent.scopeHostId ?? null;
+    const hostId = hostScope.host?.id ?? null;
+    if (scopeHostId === null) {
+      if (hostScope.isEphemeral || !hostScope.host) {
+        return { themeId: userIntent.themeId, source: 'intent' };
+      }
+    } else if (hostId === scopeHostId) {
       return { themeId: userIntent.themeId, source: 'intent' };
     }
-    return { themeId: userIntent.themeId, source: 'intent' };
   }
 
   const globalThemeId = resolveManualTerminalThemeId({

@@ -13,9 +13,16 @@ test("follow-app side panel theme changes delegate to ThemeRuntime pickTheme", (
 });
 
 test("manual side panel theme changes persist host overrides and use runtime pick intent", () => {
-  assert.match(source, /pickTheme\(themeId, \{ followApp: false \}\)/);
+  assert.match(source, /pickTheme\(themeId, \{/);
+  assert.match(source, /scopeHostId:/);
   assert.match(source, /onUpdateHost\(\{ \.\.\.rawFocusedHost, theme: themeId, themeOverride: true \}\)/);
   assert.doesNotMatch(source, /startTransition\(\(\) => \{[\s\S]*onUpdateHost\(\{ \.\.\.rawFocusedHost, theme: themeId/);
+});
+
+test("follow-app keeps runtime intent until the side panel closes", () => {
+  assert.match(source, /isSidePanelOpenForCurrentTab/);
+  assert.match(source, /if \(!followAppTerminalTheme && activeSidePanelTab !== 'theme'\)/);
+  assert.match(source, /clearIntent\(\)/);
 });
 
 test("follow-app theme list selection tracks global runtime theme id", () => {
@@ -30,6 +37,6 @@ test("manual theme list selection reads focused appearance from runtime", () => 
 });
 
 test("closing the theme tab clears runtime user intent", () => {
-  assert.match(source, /if \(activeSidePanelTab !== 'theme'\) \{/);
+  assert.match(source, /if \(isSidePanelOpenForCurrentTab\)/);
   assert.match(source, /clearIntent\(\)/);
 });

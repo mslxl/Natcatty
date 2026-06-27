@@ -130,7 +130,7 @@ test('manual mode intent overrides host theme while picking', () => {
   } as Host;
 
   const appearance = resolveTerminalAppearance({
-    userIntent: pickingThemeUserIntent('solarized-light'),
+    userIntent: pickingThemeUserIntent('solarized-light', { scopeHostId: 'host-1' }),
     settings: {
       ...baseSettings,
       followAppTerminalTheme: false,
@@ -141,6 +141,35 @@ test('manual mode intent overrides host theme while picking', () => {
 
   assert.equal(appearance.themeId, 'solarized-light');
   assert.equal(appearance.source, 'intent');
+});
+
+test('manual mode intent stays scoped to the picked host', () => {
+  const focusedHost = {
+    id: 'host-1',
+    theme: 'dracula',
+    themeOverride: true,
+  } as Host;
+  const otherHost = {
+    id: 'host-2',
+    theme: 'netcatty-dark',
+    themeOverride: true,
+  } as Host;
+
+  const intent = pickingThemeUserIntent('solarized-light', { scopeHostId: 'host-1' });
+
+  assert.equal(resolveTerminalAppearance({
+    userIntent: intent,
+    settings: { ...baseSettings, followAppTerminalTheme: false },
+    hostScope: { host: focusedHost, isEphemeral: false },
+    customThemes: [],
+  }).themeId, 'solarized-light');
+
+  assert.equal(resolveTerminalAppearance({
+    userIntent: intent,
+    settings: { ...baseSettings, followAppTerminalTheme: false },
+    hostScope: { host: otherHost, isEphemeral: false },
+    customThemes: [],
+  }).themeId, 'netcatty-dark');
 });
 
 test('follow-app session appearance ignores host override', () => {
