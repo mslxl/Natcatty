@@ -182,6 +182,43 @@ test("manual workspace split view uses the focused session theme when panes diff
   assert.equal(resolved?.id, focusedTheme.id);
 });
 
+test("manual split workspace falls back to the first tree session theme when focus is stale", () => {
+  const workspace: Workspace = {
+    id: "ws-1",
+    name: "Workspace",
+    viewMode: "split",
+    focusedSessionId: "missing-session",
+    root: {
+      type: "split",
+      direction: "horizontal",
+      sizes: [50, 50],
+      children: [
+        { type: "pane", sessionId: "session-1" },
+        { type: "pane", sessionId: "session-2" },
+      ],
+    },
+  } as unknown as Workspace;
+
+  const hostA = { id: "host-a", theme: hostTheme.id, themeOverride: true } as unknown as Host;
+  const hostB = { id: "host-b", theme: logTheme.id, themeOverride: true } as unknown as Host;
+
+  const resolved = resolveActiveChromeTheme({
+    ...baseInput,
+    activeTabId: "ws-1",
+    hostById: new Map([
+      ["host-a", hostA],
+      ["host-b", hostB],
+    ]),
+    sessionById: new Map([
+      ["session-1", { id: "session-1", hostId: "host-a" } as TerminalSession],
+      ["session-2", { id: "session-2", hostId: "host-b" } as TerminalSession],
+    ]),
+    workspaceById: new Map([["ws-1", workspace]]),
+  });
+
+  assert.equal(resolved?.id, hostTheme.id);
+});
+
 test("manual mode prefers runtime session appearance over stale host theme ids", () => {
   const intentTheme = theme("intent-theme");
   const resolved = resolveActiveChromeTheme({

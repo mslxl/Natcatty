@@ -1,8 +1,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { Activity, FolderTree, History, MessageSquare, NotebookText, Palette, PanelLeft, PanelRight, X, Zap } from 'lucide-react';
 import { SystemManagerSidePanel } from '../systemManager/SystemManagerSidePanel';
-import { terminalAppearanceSidePanelStyle } from '../../infrastructure/theme/terminalAppearanceTokens';
-import React, { memo, useCallback, useRef, useState } from 'react';
+import { buildSidePanelChromeThemeFromTerminalTheme } from '../../infrastructure/theme/terminalAppearanceTokens';
+import { injectTerminalLayerChromeSurfaceVars } from '../../infrastructure/theme/terminalAppearanceVars';
+import React, { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { useActiveTabId } from '../../application/state/activeTabStore';
 import {
@@ -154,6 +155,7 @@ function TerminalLayerSidePanelTabBody({ ctx }: { ctx: SidePanelContext }) {
     previewedOrVisibleThemeId,
     refocusActiveTerminalSession,
     remoteHistory,
+    resolvedPreviewTheme,
     shellHistory,
     resolveAIExecutorContext,
     ScriptsSidePanel,
@@ -193,6 +195,21 @@ function TerminalLayerSidePanelTabBody({ ctx }: { ctx: SidePanelContext }) {
 
   const [resizePreviewWidth, setResizePreviewWidth] = useState<number | null>(null);
   const { sidePanelTabOrder, setSidePanelTabOrder } = useTerminalSidePanelTabOrder();
+  const sidePanelTheme = useMemo(
+    () => buildSidePanelChromeThemeFromTerminalTheme(resolvedPreviewTheme ?? terminalTheme),
+    [resolvedPreviewTheme, terminalTheme],
+  );
+
+  useLayoutEffect(() => {
+    if (followAppTerminalTheme || !isSidePanelOpenForCurrentTab) return;
+    injectTerminalLayerChromeSurfaceVars(resolvedPreviewTheme ?? terminalTheme);
+  }, [
+    followAppTerminalTheme,
+    isSidePanelOpenForCurrentTab,
+    resolvedPreviewTheme,
+    terminalTheme,
+  ]);
+
   const [dragOverSidePanelTab, setDragOverSidePanelTab] = useState<{
     tab: TerminalSidePanelTabId;
     placement: 'before' | 'after';
@@ -371,21 +388,29 @@ function TerminalLayerSidePanelTabBody({ ctx }: { ctx: SidePanelContext }) {
         <div
           className={cn(
             'h-full flex flex-col overflow-hidden',
-            isSidePanelOpenForCurrentTab && sidePanelPosition === 'left' && 'border-r',
-            isSidePanelOpenForCurrentTab && sidePanelPosition === 'right' && 'border-l',
             !isSidePanelOpenForCurrentTab && 'pointer-events-none',
           )}
           data-section={isSidePanelOpenForCurrentTab ? 'terminal-side-panel' : undefined}
           data-open={isSidePanelOpenForCurrentTab ? 'true' : 'false'}
           data-side-panel-tab={isSidePanelOpenForCurrentTab ? (activeSidePanelTab ?? undefined) : undefined}
-          style={terminalAppearanceSidePanelStyle}
+          style={{
+            backgroundColor: sidePanelTheme.termBg,
+            color: sidePanelTheme.termFg,
+            ...(isSidePanelOpenForCurrentTab && sidePanelPosition === 'left'
+              ? { borderRight: `1px solid ${sidePanelTheme.separator}` }
+              : {}),
+            ...(isSidePanelOpenForCurrentTab && sidePanelPosition === 'right'
+              ? { borderLeft: `1px solid ${sidePanelTheme.separator}` }
+              : {}),
+          }}
         >
           {isSidePanelOpenForCurrentTab && !isAiShellForceHidden && (
             <div
               className="flex h-9 items-center px-1.5 py-1 flex-shrink-0 gap-1"
               data-section="terminal-side-panel-tabs"
               style={{
-                borderBottom: '1px solid var(--terminal-sidepanel-border)',
+                backgroundColor: sidePanelTheme.termBg,
+                borderBottom: `1px solid ${sidePanelTheme.separator}`,
               }}
             >
               {sidePanelTabOrder.map((tabId) => {
@@ -408,11 +433,11 @@ function TerminalLayerSidePanelTabBody({ ctx }: { ctx: SidePanelContext }) {
                         className="netcatty-tab relative h-7 w-7 rounded-md p-0 hover:bg-transparent"
                         style={{
                           backgroundColor: isActive
-                            ? 'color-mix(in srgb, var(--terminal-sidepanel-accent) 24%, transparent)'
+                            ? `color-mix(in srgb, ${sidePanelTheme.accent} 24%, transparent)`
                             : 'transparent',
                           color: isActive
-                            ? 'var(--terminal-sidepanel-fg)'
-                            : 'var(--terminal-sidepanel-muted)',
+                            ? sidePanelTheme.termFg
+                            : sidePanelTheme.mutedFg,
                         }}
                         onClick={item.onClick}
                         onDragStart={(event: React.DragEvent) => handleSidePanelTabDragStart(event, item.id)}
@@ -431,7 +456,7 @@ function TerminalLayerSidePanelTabBody({ ctx }: { ctx: SidePanelContext }) {
                               'pointer-events-none absolute top-1 bottom-1 w-0.5 rounded-none',
                               dragOverSidePanelTab?.placement === 'after' ? 'right-0' : 'left-0',
                             )}
-                            style={{ backgroundColor: 'var(--terminal-sidepanel-accent)' }}
+                            style={{ backgroundColor: sidePanelTheme.accent }}
                           />
                         )}
                         {item.icon}
@@ -449,7 +474,7 @@ function TerminalLayerSidePanelTabBody({ ctx }: { ctx: SidePanelContext }) {
                     size="icon"
                     className="h-7 w-7 rounded-md p-0 hover:bg-transparent"
                     style={{
-                      color: 'var(--terminal-sidepanel-muted)',
+                      color: sidePanelTheme.mutedFg,
                     }}
                     onClick={() => setSidePanelPosition((p: 'left' | 'right') => (p === 'left' ? 'right' : 'left'))}
                   >
@@ -467,7 +492,7 @@ function TerminalLayerSidePanelTabBody({ ctx }: { ctx: SidePanelContext }) {
                     size="icon"
                     className="h-7 w-7 rounded-md p-0 hover:bg-transparent"
                     style={{
-                      color: 'var(--terminal-sidepanel-muted)',
+                      color: sidePanelTheme.mutedFg,
                     }}
                     onClick={handleCloseSidePanel}
                   >
