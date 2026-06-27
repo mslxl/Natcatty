@@ -1,6 +1,9 @@
 /* eslint-disable no-undef */
 const { emitTerminalSessionData } = require("../emitTerminalSessionData.cjs");
-const { shouldAcceptSessionOutput } = require("../terminalFlowAck.cjs");
+const {
+  shouldAcceptSessionOutput,
+  shouldProcessSessionOutput,
+} = require("../terminalFlowAck.cjs");
 
 const TELNET_SESSION_REPLACED_ERROR = "Telnet session start was replaced";
 
@@ -19,6 +22,7 @@ function createTelnetSessionApi(ctx) {
       try { existing.releaseTelnetGeneration?.(); } catch {}
       try { sessionLogStreamManager.stopStream(sessionId); } catch {}
       try { existing.socket?.destroy(); } catch {}
+      try { closeTerminalOutputSession?.(sessionId); } catch {}
       sessions.delete(sessionId);
       try { ptyProcessTree.unregisterPid(sessionId); } catch {}
     };
@@ -218,6 +222,7 @@ function createTelnetSessionApi(ctx) {
           };
           session.flushPendingData = flushTelnet;
           sessions.set(sessionId, session);
+          openTerminalOutputSession?.(sessionId, event.sender);
     
           // Start real-time session log stream if configured
           if (options.sessionLog?.enabled && options.sessionLog?.directory) {
@@ -235,7 +240,11 @@ function createTelnetSessionApi(ctx) {
         });
     
         const telnetWebContentsId = event.sender.id;
-        const { bufferData: bufferTelnetData, flush: flushTelnet } = createPtyOutputBuffer((data) => {
+        const {
+          bufferData: bufferTelnetData,
+          flush: flushTelnet,
+          discard: discardTelnet,
+        } = createPtyOutputBuffer((data) => {
           const contents = electronModule.webContents.fromId(telnetWebContentsId);
           emitTerminalSessionData(contents, sessionId, data, { cols, rows });
         }, {
@@ -281,7 +290,10 @@ function createTelnetSessionApi(ctx) {
         // Attach sentry to session once created (connect callback runs after this)
         const attachTelnetSentry = () => {
           const session = sessions.get(sessionId);
-          if (session?.socket === socket) session.zmodemSentry = telnetZmodemSentry;
+          if (session?.socket === socket) {
+            session.zmodemSentry = telnetZmodemSentry;
+            session.discardPendingData = discardTelnet;
+          }
         };
         socket.once('connect', attachTelnetSentry);
     
@@ -291,7 +303,7 @@ function createTelnetSessionApi(ctx) {
           // Always run Telnet negotiation — even during ZMODEM, the Telnet
           // layer still escapes 0xFF as IAC IAC and sends control sequences.
           const cleanData = processIncomingTelnet(data);
-          if (cleanData.length > 0) {
+          if (cleanData.length > 0 && shouldProcessSessionOutput(sessions.get(sessionId), telnetZmodemSentry)) {
             telnetZmodemSentry.consume(cleanData);
           }
         });
@@ -320,6 +332,7 @@ function createTelnetSessionApi(ctx) {
               contents?.send("netcatty:exit", { sessionId, exitCode: 1, error: err.message, reason: "error" });
             }
             ptyProcessTree.unregisterPid(sessionId);
+            closeTerminalOutputSession?.(sessionId);
             sessions.delete(sessionId);
             releaseTelnetGeneration();
           }
@@ -342,6 +355,7 @@ function createTelnetSessionApi(ctx) {
             contents?.send("netcatty:exit", { sessionId, exitCode: hadError ? 1 : 0, reason: hadError ? "error" : "closed" });
           }
           ptyProcessTree.unregisterPid(sessionId);
+          closeTerminalOutputSession?.(sessionId);
           sessions.delete(sessionId);
           releaseTelnetGeneration();
         });

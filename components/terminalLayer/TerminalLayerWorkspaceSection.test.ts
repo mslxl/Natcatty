@@ -84,6 +84,7 @@ test("workspace section passes resolved session host ids to terminal panes", () 
     onSplitSession: noop,
     isBroadcastEnabled: () => false,
     handleBroadcastInput: noop,
+    handleBroadcastInterruptPriorityChange: noop,
     handleToggleWorkspaceComposeBar: noop,
     handleSnippetExecutorChange: noop,
     handleProgrammaticCommandLogRewriteChange: noop,

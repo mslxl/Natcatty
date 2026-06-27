@@ -7,10 +7,17 @@ const {
   createTerminalDataBacklog,
   createTerminalDataDispatcher,
 } = require("./preload/terminalDataBacklog.cjs");
+const {
+  createTerminalOutputPortRegistry,
+} = require("./preload/terminalOutputPorts.cjs");
+const {
+  createTerminalUrgentInputPortRegistry,
+} = require("./preload/terminalUrgentInputPorts.cjs");
 
 const dataListeners = new Map();
 const displayDataListeners = new Map();
 const terminalDataBacklog = createTerminalDataBacklog();
+const closedTerminalDataSessions = new Set();
 const exitListeners = new Map();
 const transferProgressListeners = new Map();
 const transferCompleteListeners = new Map();
@@ -133,7 +140,57 @@ const _deliverToListeners = createTerminalDataDispatcher({
   dataListeners,
   displayDataListeners,
   terminalDataBacklog,
+  shouldDropSession: (sessionId) => closedTerminalDataSessions.has(sessionId),
 });
+
+function scheduleMcpBufferedFlush(sessionId) {
+  if (!_mcpLineBufs.has(sessionId)) return;
+  _mcpFlushTimers.set(sessionId, setTimeout(() => {
+    const held = _mcpLineBufs.get(sessionId);
+    _mcpLineBufs.delete(sessionId);
+    _mcpFlushTimers.delete(sessionId);
+    if (_mcpDroppingWrappedLine.has(sessionId)) {
+      _mcpDroppingWrappedLine.delete(sessionId);
+      return;
+    }
+    if (held) _deliverToListeners(sessionId, held);
+  }, 80));
+}
+
+function deliverTerminalData(sessionId, data, options = {}) {
+  if (!sessionId || !data) return;
+  if (closedTerminalDataSessions.has(sessionId)) return;
+  if (options.syntheticEcho) {
+    _deliverToListeners(sessionId, data);
+    return;
+  }
+  const filtered = filterMcpChunk(sessionId, data);
+  if (filtered) {
+    _deliverToListeners(sessionId, filtered);
+  }
+  // If there is buffered content waiting for more data (e.g. a prompt
+  // right after a dropped marker line), schedule a delayed flush so it
+  // appears after a short pause instead of staying hidden forever.
+  scheduleMcpBufferedFlush(sessionId);
+}
+
+const terminalOutputPorts = createTerminalOutputPortRegistry({
+  ipcRenderer,
+  deliverToListeners: _deliverToListeners,
+  filterData(sessionId, data, message) {
+    if (message?.syntheticEcho) return data;
+    const filtered = filterMcpChunk(sessionId, data);
+    scheduleMcpBufferedFlush(sessionId);
+    return filtered;
+  },
+  closedTerminalDataSessions,
+});
+terminalOutputPorts.register();
+
+const terminalUrgentInputPorts = createTerminalUrgentInputPortRegistry({
+  ipcRenderer,
+});
+terminalUrgentInputPorts.register();
 
 // ZMODEM file transfer events
 ipcRenderer.on("netcatty:zmodem:detect", (_event, payload) => {
@@ -176,33 +233,13 @@ ipcRenderer.on("netcatty:zmodem:overwrite-request", (_event, payload) => {
 });
 
 ipcRenderer.on("netcatty:data", (_event, payload) => {
-  if (payload?.syntheticEcho) {
-    _deliverToListeners(payload.sessionId, payload.data);
-    return;
-  }
-  const data = filterMcpChunk(payload.sessionId, payload.data);
-  if (data) {
-    _deliverToListeners(payload.sessionId, data);
-  }
-  // If there is buffered content waiting for more data (e.g. a prompt
-  // right after a dropped marker line), schedule a delayed flush so it
-  // appears after a short pause instead of staying hidden forever.
-  if (_mcpLineBufs.has(payload.sessionId)) {
-    const sid = payload.sessionId;
-    _mcpFlushTimers.set(sid, setTimeout(() => {
-      const held = _mcpLineBufs.get(sid);
-      _mcpLineBufs.delete(sid);
-      _mcpFlushTimers.delete(sid);
-      if (_mcpDroppingWrappedLine.has(sid)) {
-        _mcpDroppingWrappedLine.delete(sid);
-        return;
-      }
-      if (held) _deliverToListeners(sid, held);
-    }, 80));
-  }
+  deliverTerminalData(payload?.sessionId, payload?.data, {
+    syntheticEcho: payload?.syntheticEcho,
+  });
 });
 
 ipcRenderer.on("netcatty:exit", (_event, payload) => {
+  closedTerminalDataSessions.add(payload.sessionId);
   const set = exitListeners.get(payload.sessionId);
   if (set) {
     set.forEach((cb) => {
@@ -218,6 +255,7 @@ ipcRenderer.on("netcatty:exit", (_event, payload) => {
     displayDataListeners,
     terminalDataBacklog,
   }, payload.sessionId);
+  terminalOutputPorts.closeSession(payload.sessionId);
   exitListeners.delete(payload.sessionId);
   telnetAutoLoginCompleteListeners.delete(payload.sessionId);
   telnetAutoLoginCancelledListeners.delete(payload.sessionId);
@@ -686,6 +724,7 @@ const api = createPreloadApi({
   dataListeners,
   displayDataListeners,
   exitListeners,
+  closedTerminalDataSessions,
   transferProgressListeners,
   transferCompleteListeners,
   transferErrorListeners,
@@ -700,6 +739,8 @@ const api = createPreloadApi({
   telnetAutoLoginCancelledListeners,
   telnetEchoModeListeners,
   terminalDataBacklog,
+  terminalOutputPorts,
+  terminalUrgentInputPorts,
   languageChangeListeners,
   fullscreenChangeListeners,
   windowShownListeners,

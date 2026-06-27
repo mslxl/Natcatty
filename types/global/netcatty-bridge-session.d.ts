@@ -1,5 +1,25 @@
 
 declare global {
+  interface NetcattyTerminalInterruptTrace {
+    debug?: boolean;
+    traceId?: string;
+    source?: string;
+    sessionId?: string;
+    rendererKeyAt?: number;
+    rendererSendAt?: number;
+    rendererStatus?: string;
+    rendererHasSelection?: boolean;
+    rendererPriority?: {
+      sessionId: string | null;
+      backlogBytes: number;
+      writeQueueDepth: number;
+      deferredAckBytes: number;
+      ackAfterInputBytes: number;
+      scheduledBackendResume: boolean;
+      skippedReason?: string;
+    };
+  }
+
   interface NetcattyBridge {
     getWindowsPtyInfo?(): NetcattyWindowsPtyInfo | null;
     startSSHSession(options: NetcattySSHOptions): Promise<string>;
@@ -238,6 +258,7 @@ declare global {
         logRewrite?: { sentCommand: string; displayCommand: string };
       },
     ): void;
+    interruptSession?(sessionId: string, trace?: NetcattyTerminalInterruptTrace): void;
     resizeSession(sessionId: string, cols: number, rows: number): void;
     setSessionFlowPaused(sessionId: string, paused: boolean): void;
     ackSessionFlow(sessionId: string, bytes: number): void;

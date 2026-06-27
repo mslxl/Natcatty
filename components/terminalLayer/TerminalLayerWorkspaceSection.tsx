@@ -73,6 +73,7 @@ function TerminalLayerWorkspaceSectionInner({ ctx }: { ctx: WorkspaceContext }) 
     onSplitSession,
     isBroadcastEnabled,
     handleBroadcastInput,
+    handleBroadcastInterruptPriorityChange,
     handleToggleWorkspaceComposeBar,
     handleSnippetExecutorChange,
     handleProgrammaticCommandLogRewriteChange,
@@ -195,6 +196,7 @@ function TerminalLayerWorkspaceSectionInner({ ctx }: { ctx: WorkspaceContext }) 
           onSplitSession={onSplitSession}
           isBroadcastEnabled={isBroadcastEnabled}
           onBroadcastInput={handleBroadcastInput}
+          onBroadcastInterruptPriorityChange={handleBroadcastInterruptPriorityChange}
           onToggleWorkspaceComposeBar={handleToggleWorkspaceComposeBar}
           onSnippetExecutorChange={handleSnippetExecutorChange}
           onProgrammaticCommandLogRewriteChange={handleProgrammaticCommandLogRewriteChange}

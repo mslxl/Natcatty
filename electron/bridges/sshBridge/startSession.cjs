@@ -1,6 +1,14 @@
 /* eslint-disable no-undef */
 const { emitTerminalSessionData } = require("../emitTerminalSessionData.cjs");
-const { shouldAcceptSessionOutput } = require("../terminalFlowAck.cjs");
+const {
+  shouldAcceptSessionOutput,
+  shouldProcessSessionOutput,
+} = require("../terminalFlowAck.cjs");
+const { filterTerminalInterruptOutput } = require("../terminalInterruptOutputGate.cjs");
+const {
+  logTerminalInterruptDrainDropSample,
+  logTerminalOutputDropSample,
+} = require("../terminalInterruptDiagnostics.cjs");
 
 function createStartSessionApi(ctx) {
   with (ctx) {
@@ -68,6 +76,7 @@ function createStartSessionApi(ctx) {
         rows: options.rows || 24,
       };
       sessions.set(sessionId, session);
+      openTerminalOutputSession?.(sessionId, event.sender);
 
       // Attach the shared connection descriptor to this session. The caller owns
       // the reference *count*: the fresh-connection path calls createConnectionRef
@@ -98,7 +107,11 @@ function createStartSessionApi(ctx) {
       // event-loop turn (see ptyOutputBuffer) rather than on a fixed timer,
       // so interactive echo isn't held back by the batch interval. A size
       // cap still forces an immediate flush for bursts of output.
-      const { bufferData, flush: flushBuffer } = createPtyOutputBuffer((data) => {
+      const {
+        bufferData,
+        flush: flushBuffer,
+        discard: discardBuffer,
+      } = createPtyOutputBuffer((data) => {
         const contents = event.sender;
         const current = sessions.get(sessionId);
         emitTerminalSessionData(contents, sessionId, data, {
@@ -108,15 +121,38 @@ function createStartSessionApi(ctx) {
       }, {
         shouldAcceptOutput: () => shouldAcceptSessionOutput(sessions.get(sessionId)),
       });
+      session.flushPendingData = flushBuffer;
+      session.discardPendingData = discardBuffer;
 
       const sshZmodemSentry = createZmodemSentry({
         sessionId,
         onData(buf) {
           const decoder = getSessionDecoder(sessionId, "stdout");
           const decoded = decoder.write(buf);
-          trackSessionIdlePrompt(session, decoded);
-          bufferData(decoded);
-          sessionLogStreamManager.appendData(sessionId, decoded);
+          const output = filterTerminalInterruptOutput(session, decoded);
+          if (!output.accepted) {
+            logTerminalInterruptDrainDropSample(session, {
+              sessionId,
+              stream: "stdout",
+              droppedBytes: output.droppedBytes,
+              reason: output.reason,
+              accepted: false,
+            });
+            return;
+          }
+          if (output.droppedBytes > 0) {
+            logTerminalInterruptDrainDropSample(session, {
+              sessionId,
+              stream: "stdout",
+              droppedBytes: output.droppedBytes,
+              reason: output.reason,
+              accepted: true,
+            });
+          }
+          if (!output.data) return;
+          trackSessionIdlePrompt(session, output.data);
+          bufferData(output.data);
+          sessionLogStreamManager.appendData(sessionId, output.data);
         },
         writeToRemote(buf) {
           try { return stream.write(buf); } catch { return true; /* ignore */ }
@@ -157,17 +193,56 @@ function createStartSessionApi(ctx) {
       session.zmodemSentry = sshZmodemSentry;
 
       stream.on("data", (data) => {
+        const currentSession = sessions.get(sessionId);
+        if (!shouldProcessSessionOutput(currentSession, sshZmodemSentry)) {
+          logTerminalOutputDropSample(currentSession, {
+            sessionId,
+            stream: "stdout",
+            bytes: Buffer.isBuffer(data) ? data.length : Buffer.byteLength(String(data)),
+          });
+          return;
+        }
         // data is Buffer from ssh2 — feed raw bytes to ZMODEM sentry.
         // In normal mode, sentry's onData callback handles decoding and buffering.
         sshZmodemSentry.consume(data);
       });
 
       stream.stderr?.on("data", (data) => {
+        const currentSession = sessions.get(sessionId);
+        if (!shouldProcessSessionOutput(currentSession)) {
+          logTerminalOutputDropSample(currentSession, {
+            sessionId,
+            stream: "stderr",
+            bytes: Buffer.isBuffer(data) ? data.length : Buffer.byteLength(String(data)),
+          });
+          return;
+        }
         // stderr is not used for ZMODEM — decode normally
         const decoder = getSessionDecoder(sessionId, "stderr");
         const decoded = decoder.write(data);
-        bufferData(decoded);
-        sessionLogStreamManager.appendData(sessionId, decoded);
+        const output = filterTerminalInterruptOutput(currentSession, decoded);
+        if (!output.accepted) {
+          logTerminalInterruptDrainDropSample(currentSession, {
+            sessionId,
+            stream: "stderr",
+            droppedBytes: output.droppedBytes,
+            reason: output.reason,
+            accepted: false,
+          });
+          return;
+        }
+        if (output.droppedBytes > 0) {
+          logTerminalInterruptDrainDropSample(currentSession, {
+            sessionId,
+            stream: "stderr",
+            droppedBytes: output.droppedBytes,
+            reason: output.reason,
+            accepted: true,
+          });
+        }
+        if (!output.data) return;
+        bufferData(output.data);
+        sessionLogStreamManager.appendData(sessionId, output.data);
       });
 
       // Capture the real exit code from the remote process.
@@ -227,6 +302,7 @@ function createStartSessionApi(ctx) {
           // gone, so closing a reused tab — or the original tab while a copy is
           // still open — leaves the siblings connected.
           releaseConnectionRef(liveSession);
+          closeTerminalOutputSession?.(sessionId);
           sessions.delete(sessionId);
           sessionEncodings.delete(sessionId);
           sessionDecoders.delete(sessionId);
@@ -1193,6 +1269,7 @@ function createStartSessionApi(ctx) {
               detachX11Forwarding = null;
             }
             sessions.get(sessionId)?.zmodemSentry?.cancel();
+            closeTerminalOutputSession?.(sessionId);
             sessions.delete(sessionId);
             sessionEncodings.delete(sessionId);
             sessionDecoders.delete(sessionId);
@@ -1213,6 +1290,7 @@ function createStartSessionApi(ctx) {
             safeSend(contents, "netcatty:exit", { sessionId, exitCode: 1, error: err.message, reason: "timeout" });
             sessionLogStreamManager.stopStream(sessionId, ownerLogStreamToken);
             sessions.get(sessionId)?.zmodemSentry?.cancel();
+            closeTerminalOutputSession?.(sessionId);
             sessions.delete(sessionId);
             sessionEncodings.delete(sessionId);
             sessionDecoders.delete(sessionId);
@@ -1258,6 +1336,7 @@ function createStartSessionApi(ctx) {
               // siblings (if any) keep the count above zero until their own
               // stream close handlers run.
               releaseConnectionRef(session);
+              closeTerminalOutputSession?.(sessionId);
               sessions.delete(sessionId);
               sessionEncodings.delete(sessionId);
               sessionDecoders.delete(sessionId);

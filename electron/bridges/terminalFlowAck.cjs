@@ -88,10 +88,22 @@ function shouldAcceptSessionOutput(session) {
   return !state.appliedPause;
 }
 
-function clearSessionFlowState(session) {
+function isTransferSentryActive(transferSentry) {
+  try {
+    return Boolean(transferSentry?.isActive?.());
+  } catch {
+    return false;
+  }
+}
+
+function shouldProcessSessionOutput(session, transferSentry) {
+  return shouldAcceptSessionOutput(session) || isTransferSentryActive(transferSentry);
+}
+
+function clearSessionFlowState(session, options = {}) {
   if (!session?.flowState) return;
   const target = getFlowTarget(session);
-  if (session.flowState.appliedPause && target) {
+  if (session.flowState.appliedPause && target && options.resume !== false) {
     applyResume(session, target);
   }
   session.flowState = {
@@ -108,6 +120,7 @@ module.exports = {
   trackEmitted,
   trackAck,
   shouldAcceptSessionOutput,
+  shouldProcessSessionOutput,
   clearSessionFlowState,
   reconcileSessionFlow,
 };

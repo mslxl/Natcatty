@@ -78,6 +78,7 @@ export const terminalPropsAreEqual = (
   && prev.onToggleBroadcast === next.onToggleBroadcast
   && prev.onToggleComposeBar === next.onToggleComposeBar
   && prev.onBroadcastInput === next.onBroadcastInput
+  && prev.onBroadcastInterruptPriorityChange === next.onBroadcastInterruptPriorityChange
   && prev.onSnippetExecutorChange === next.onSnippetExecutorChange
   && prev.onProgrammaticCommandLogRewriteChange === next.onProgrammaticCommandLogRewriteChange
   && prev.onAddSelectionToAI === next.onAddSelectionToAI

@@ -218,6 +218,7 @@ const { execViaPty } = require("./ai/ptyExec.cjs");
 let sessions = null;
 let sftpClients = null;
 let electronModule = null;
+let terminalWorkerManager = null;
 let mainWebContentsId = null;
 let cliDiscoveryFilePath = null;
 let registeredContext = null;
@@ -364,8 +365,9 @@ function init(deps) {
   sessions = deps.sessions;
   sftpClients = deps.sftpClients;
   electronModule = deps.electronModule;
+  terminalWorkerManager = deps.terminalWorkerManager || null;
   cliDiscoveryFilePath = deps.cliDiscoveryFilePath || null;
-  mcpServerBridge.init({ sessions, sftpClients, electronModule, cliDiscoveryFilePath });
+  mcpServerBridge.init({ sessions, sftpClients, electronModule, cliDiscoveryFilePath, terminalWorkerManager });
 
   // Wire up main window getter for MCP approval IPC
   mcpServerBridge.setMainWindowGetter(() => {
@@ -708,6 +710,8 @@ function createHandlerContext(ipcMain) {
     set sftpClients(value) { sftpClients = value; },
     get electronModule() { return electronModule; },
     set electronModule(value) { electronModule = value; },
+    get terminalWorkerManager() { return terminalWorkerManager; },
+    set terminalWorkerManager(value) { terminalWorkerManager = value; },
     get mainWebContentsId() { return mainWebContentsId; },
     set mainWebContentsId(value) { mainWebContentsId = value; },
     get cliDiscoveryFilePath() { return cliDiscoveryFilePath; },

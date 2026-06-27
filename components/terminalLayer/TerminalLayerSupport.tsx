@@ -759,6 +759,10 @@ interface TerminalPaneProps {
     options?: TerminalBroadcastInputOptions,
   ) => void;
   onToggleWorkspaceComposeBar: () => void;
+  onBroadcastInterruptPriorityChange: (
+    sessionId: string,
+    prioritize: (() => void) | null,
+  ) => void;
   onSnippetExecutorChange: (
     sessionId: string,
     executor: SnippetExecutor | null,
@@ -867,6 +871,7 @@ const terminalPanePropsAreEqual = (
   prev.onSplitSession === next.onSplitSession &&
   prev.isBroadcastEnabled === next.isBroadcastEnabled &&
   prev.onBroadcastInput === next.onBroadcastInput &&
+  prev.onBroadcastInterruptPriorityChange === next.onBroadcastInterruptPriorityChange &&
   prev.onToggleWorkspaceComposeBar === next.onToggleWorkspaceComposeBar &&
   prev.onSnippetExecutorChange === next.onSnippetExecutorChange &&
   prev.onAddSelectionToAI === next.onAddSelectionToAI &&
@@ -936,6 +941,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
   onSplitSession,
   isBroadcastEnabled,
   onBroadcastInput,
+  onBroadcastInterruptPriorityChange,
   onToggleWorkspaceComposeBar,
   onSnippetExecutorChange,
   onProgrammaticCommandLogRewriteChange,
@@ -1322,6 +1328,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
         onToggleComposeBar={inActiveWorkspace ? onToggleWorkspaceComposeBar : undefined}
         isWorkspaceComposeBarOpen={inActiveWorkspace ? isComposeBarOpen : undefined}
         onBroadcastInput={broadcastEnabled ? onBroadcastInput : undefined}
+        onBroadcastInterruptPriorityChange={onBroadcastInterruptPriorityChange}
         onSnippetExecutorChange={onSnippetExecutorChange}
         onProgrammaticCommandLogRewriteChange={onProgrammaticCommandLogRewriteChange}
         sessionLog={sessionLog}
@@ -1407,6 +1414,10 @@ interface TerminalPanesHostProps {
     options?: TerminalBroadcastInputOptions,
   ) => void;
   onToggleWorkspaceComposeBar: () => void;
+  onBroadcastInterruptPriorityChange: (
+    sessionId: string,
+    prioritize: (() => void) | null,
+  ) => void;
   onSnippetExecutorChange: (
     sessionId: string,
     executor: SnippetExecutor | null,
@@ -1480,6 +1491,7 @@ const terminalPanesHostPropsAreEqual = (
   if (prev.onSplitSession !== next.onSplitSession) return false;
   if (prev.isBroadcastEnabled !== next.isBroadcastEnabled) return false;
   if (prev.onBroadcastInput !== next.onBroadcastInput) return false;
+  if (prev.onBroadcastInterruptPriorityChange !== next.onBroadcastInterruptPriorityChange) return false;
   if (prev.onToggleWorkspaceComposeBar !== next.onToggleWorkspaceComposeBar) return false;
   if (prev.onSnippetExecutorChange !== next.onSnippetExecutorChange) return false;
   if (prev.onProgrammaticCommandLogRewriteChange !== next.onProgrammaticCommandLogRewriteChange) return false;

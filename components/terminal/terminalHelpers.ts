@@ -201,6 +201,10 @@ export interface TerminalProps {
       options?: { broadcast?: boolean },
     ) => void) | null,
   ) => void;
+  onBroadcastInterruptPriorityChange?: (
+    sessionId: string,
+    prioritize: (() => void) | null,
+  ) => void;
   onProgrammaticCommandLogRewriteChange?: (
     sessionId: string,
     queueRewrite: ((rewrite: ProgrammaticCommandLogRewrite) => void) | null,

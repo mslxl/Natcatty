@@ -87,6 +87,15 @@ export const useTerminalBackend = () => {
     bridge?.writeToSession?.(sessionId, data, options);
   }, []);
 
+  const interruptSession = useCallback((sessionId: string, trace?: NetcattyTerminalInterruptTrace) => {
+    const bridge = netcattyBridge.get();
+    if (bridge?.interruptSession) {
+      bridge.interruptSession(sessionId, trace);
+      return;
+    }
+    bridge?.writeToSession?.(sessionId, "\x03");
+  }, []);
+
   const resizeSession = useCallback((sessionId: string, cols: number, rows: number) => {
     const bridge = netcattyBridge.get();
     bridge?.resizeSession?.(sessionId, cols, rows);
@@ -347,6 +356,7 @@ export const useTerminalBackend = () => {
       getSessionDistroInfo,
       getServerStats,
       writeToSession,
+      interruptSession,
       resizeSession,
       setSessionFlowPaused,
       ackSessionFlow,
@@ -398,6 +408,7 @@ export const useTerminalBackend = () => {
       getSessionDistroInfo,
       getServerStats,
       writeToSession,
+      interruptSession,
       resizeSession,
       setSessionFlowPaused,
       ackSessionFlow,

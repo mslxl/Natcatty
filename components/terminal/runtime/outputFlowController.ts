@@ -20,7 +20,7 @@ export interface OutputFlowController {
   /** Account bytes whose xterm write callback has fired. */
   written(bytes: number): void;
   /** Clear pending state; calls `onResume` if currently paused. */
-  reset(): void;
+  reset(options?: { resume?: boolean }): void;
   pendingBytes(): number;
   isPaused(): boolean;
 }
@@ -59,8 +59,8 @@ export function createOutputFlowController(
         onResume();
       }
     },
-    reset(): void {
-      if (paused) onResume();
+    reset(options?: { resume?: boolean }): void {
+      if (paused && options?.resume !== false) onResume();
       pending = 0;
       paused = false;
     },
