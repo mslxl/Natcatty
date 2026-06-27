@@ -137,8 +137,19 @@ function filterTerminalInterruptOutput(session, data, options = {}) {
     }
   }
   if (quietGapMs >= gate.promptQuietMs && bytes <= gate.promptCandidateBytes) {
-    disarmTerminalInterruptOutputGate(session);
-    return { accepted: true, data: text, droppedBytes: 0, reason: "prompt-gap" };
+    const promptCandidate = getPromptCandidateSuffix(text);
+    if (promptCandidate) {
+      const droppedBytes = byteLength(text.slice(0, text.length - promptCandidate.length));
+      gate.droppedBytes += droppedBytes;
+      gate.droppedChunks += droppedBytes > 0 ? 1 : 0;
+      disarmTerminalInterruptOutputGate(session);
+      return {
+        accepted: true,
+        data: promptCandidate,
+        droppedBytes,
+        reason: "prompt-gap",
+      };
+    }
   }
 
   if (quietGapMs >= gate.quietMs) {

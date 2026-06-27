@@ -90,6 +90,23 @@ test("resumes output when interrupt echo is split across chunks", () => {
   );
 });
 
+test("prompt gap keeps only the prompt suffix and drops stale prefix", () => {
+  const session = {};
+
+  armTerminalInterruptOutputGate(session, {
+    now: 3600,
+    quietMs: 500,
+    promptQuietMs: 80,
+    maxDrainMs: 1000,
+  });
+
+  assert.equal(filterTerminalInterruptOutput(session, "old output", { now: 3601 }).accepted, false);
+  assert.deepEqual(
+    filterTerminalInterruptOutput(session, "stale flood\r\n$ ", { now: 3700 }),
+    { accepted: true, data: "$ ", droppedBytes: 13, reason: "prompt-gap" },
+  );
+});
+
 test("keeps draining large chunks after a short quiet gap", () => {
   const session = {};
 
