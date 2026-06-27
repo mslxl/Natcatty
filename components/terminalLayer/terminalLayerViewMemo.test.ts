@@ -5,6 +5,7 @@ import type { Workspace } from "../../types";
 import {
   terminalLayerFocusSidebarPropsEqual,
   terminalLayerSidePanelCtxEqual,
+  terminalLayerSidePanelStableCtxEqual,
   terminalLayerViewCtxEqual,
   terminalLayerWorkspaceCtxEqual,
 } from "./terminalLayerViewMemo.ts";
@@ -93,6 +94,30 @@ test("terminal layer memo re-renders when active workspace root changes", () => 
     terminalLayerViewCtxEqual(
       { activeWorkspace: prevWorkspace },
       { activeWorkspace: nextWorkspace },
+    ),
+    false,
+  );
+});
+
+test("terminal layer side panel stable ctx ignores linked terminal cwd changes", () => {
+  const baseCtx = {
+    mountedSftpTabIds: ["workspace-1"],
+    sidePanelOpenTabs: new Map([["workspace-1", "sftp"]]),
+    activeTerminalCwd: "/home/user",
+    sftpFollowTerminalCwd: true,
+  };
+
+  assert.equal(
+    terminalLayerSidePanelStableCtxEqual(
+      baseCtx,
+      { ...baseCtx, activeTerminalCwd: "/home/user/project" },
+    ),
+    true,
+  );
+  assert.equal(
+    terminalLayerSidePanelCtxEqual(
+      baseCtx,
+      { ...baseCtx, activeTerminalCwd: "/home/user/project" },
     ),
     false,
   );

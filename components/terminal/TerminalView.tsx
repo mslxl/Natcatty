@@ -150,10 +150,13 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
     >
       <div
         className={cn(
-          "relative h-full w-full flex min-h-0 overflow-hidden bg-gradient-to-br from-[#050910] via-[#06101a] to-[#0b1220]",
+          "relative h-full w-full flex min-h-0 overflow-hidden",
           isComposeBarOpen && !inWorkspace && "flex-col"
         )}
-        style={terminalPreviewVars}
+        style={{
+          ...terminalPreviewVars,
+          backgroundColor: 'var(--terminal-ui-bg)',
+        }}
         onDragEnter={handleDragEnter}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}

@@ -1892,14 +1892,17 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       : status === "connecting"
         ? "bg-amber-400"
         : "bg-rose-500";
-  const terminalPreviewVars = useMemo(() => ({
-    ['--terminal-ui-bg' as never]: `var(--terminal-preview-bg, ${effectiveTheme.colors.background})`,
-    ['--terminal-ui-fg' as never]: `var(--terminal-preview-fg, ${effectiveTheme.colors.foreground})`,
-    ['--terminal-ui-border' as never]: `var(--terminal-preview-border, color-mix(in srgb, ${effectiveTheme.colors.foreground} 8%, ${effectiveTheme.colors.background} 92%))`,
-    ['--terminal-ui-toolbar-btn' as never]: `var(--terminal-preview-toolbar-btn, color-mix(in srgb, ${effectiveTheme.colors.background} 88%, ${effectiveTheme.colors.foreground} 12%))`,
-    ['--terminal-ui-toolbar-btn-hover' as never]: `var(--terminal-preview-toolbar-btn-hover, color-mix(in srgb, ${effectiveTheme.colors.background} 78%, ${effectiveTheme.colors.foreground} 22%))`,
-    ['--terminal-ui-toolbar-btn-active' as never]: `var(--terminal-preview-toolbar-btn-active, color-mix(in srgb, ${effectiveTheme.colors.cursor} 78%, ${effectiveTheme.colors.background} 22%))`,
-  }), [effectiveTheme.colors.background, effectiveTheme.colors.cursor, effectiveTheme.colors.foreground]);
+  const terminalPreviewVars = useMemo(() => {
+    const { background, foreground, cursor } = effectiveTheme.colors;
+    return {
+      ['--terminal-ui-bg' as never]: background,
+      ['--terminal-ui-fg' as never]: foreground,
+      ['--terminal-ui-border' as never]: `color-mix(in srgb, ${foreground} 8%, ${background} 92%)`,
+      ['--terminal-ui-toolbar-btn' as never]: `color-mix(in srgb, ${background} 88%, ${foreground} 12%)`,
+      ['--terminal-ui-toolbar-btn-hover' as never]: `color-mix(in srgb, ${background} 78%, ${foreground} 22%)`,
+      ['--terminal-ui-toolbar-btn-active' as never]: `color-mix(in srgb, ${cursor} 78%, ${background} 22%)`,
+    };
+  }, [effectiveTheme.colors]);
 
   const effectiveComposeBarOpen = inWorkspace ? !!isWorkspaceComposeBarOpen : isComposeBarOpen;
 

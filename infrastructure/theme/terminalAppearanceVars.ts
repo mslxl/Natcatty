@@ -63,6 +63,25 @@ export function injectTerminalLayerChromeSurfaceVars(theme: TerminalTheme): void
   applyTerminalAppearanceVarsToTargets(collectTerminalLayerChromeSurfaceElements(), theme);
 }
 
+function clearTerminalAppearanceVarsOnTargets(targets: HTMLElement[]): void {
+  for (const target of targets) {
+    for (const key of TERMINAL_APPEARANCE_VAR_KEYS) {
+      removeStylePropertyIfSet(target, key);
+    }
+    delete target.dataset.terminalAppearanceId;
+  }
+}
+
+export function clearTerminalChromeSurfaceVars(): void {
+  if (typeof document === 'undefined') return;
+  clearTerminalAppearanceVarsOnTargets(collectTerminalChromeSurfaceElements());
+}
+
+export function clearTerminalLayerChromeSurfaceVars(): void {
+  if (typeof document === 'undefined') return;
+  clearTerminalAppearanceVarsOnTargets(collectTerminalLayerChromeSurfaceElements());
+}
+
 export type InjectTerminalAppearanceVarsOptions = {
   root?: HTMLElement | null;
   includeChromeSurfaces?: boolean;
@@ -102,12 +121,7 @@ export function clearTerminalAppearanceVars(root?: HTMLElement | null): void {
   )) {
     if (!targets.includes(hostTreeRoot)) targets.push(hostTreeRoot);
   }
-  for (const target of targets) {
-    for (const key of TERMINAL_APPEARANCE_VAR_KEYS) {
-      removeStylePropertyIfSet(target, key);
-    }
-    delete target.dataset.terminalAppearanceId;
-  }
+  clearTerminalAppearanceVarsOnTargets(targets);
 }
 
 export function injectTerminalPaneAppearanceVars(sessionId: string, theme: TerminalTheme): void {

@@ -15,5 +15,8 @@ test('manual mode injects chrome surfaces from focused session theme', () => {
   assert.match(appSource, /resolveSessionAppearance=\{themeRuntime\.resolveFocusedAppearance\}/);
   assert.match(hookSource, /applyTopTabsChromeThemeVars\(theme\)/);
   assert.match(hookSource, /injectTerminalLayerChromeSurfaceVars\(theme\)/);
+  assert.match(hookSource, /if \(wasEnabled\) \{[\s\S]*clearTerminalLayerChromeSurfaceVars\(\)/);
+  assert.doesNotMatch(hookSource, /clearTopTabsChromeThemeVars\(\)/);
   assert.match(varsSource, /injectTerminalLayerChromeSurfaceVars/);
+  assert.match(varsSource, /clearTerminalLayerChromeSurfaceVars/);
 });

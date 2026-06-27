@@ -135,7 +135,27 @@ function sidePanelCtxKeyEqual(prev: Ctx, next: Ctx, key: string): boolean {
   return prev[key] === next[key];
 }
 
-const SIDE_PANEL_CTX_KEYS = [
+const SIDE_PANEL_LIVE_CTX_KEYS = [
+  'activeTerminalSessionForSystem',
+  'activeSystemSessionHost',
+  'focusedHost',
+  'historySessionId',
+  'resolvedPreviewTheme',
+  'previewedOrVisibleThemeId',
+  'sftpActiveHost',
+  'activeTerminalSessionIdForSftp',
+  'activeTerminalCwd',
+  'activeWorkspace',
+  'focusedFontFamilyId',
+  'focusedFontFamilyOverridden',
+  'focusedFontSize',
+  'focusedFontSizeOverridden',
+  'focusedFontWeight',
+  'focusedFontWeightOverridden',
+  'focusedThemeOverridden',
+] as const;
+
+const SIDE_PANEL_STABLE_CTX_KEYS = [
   'mountedSftpTabIds',
   'mountedAiTabIds',
   'notesMountedTabIds',
@@ -143,10 +163,6 @@ const SIDE_PANEL_CTX_KEYS = [
   'scriptsMountedTabIds',
   'systemMountedTabIds',
   'themeMountedTabIds',
-  'activeTerminalSessionForSystem',
-  'activeSystemSessionHost',
-  'focusedHost',
-  'historySessionId',
   'remoteHistory',
   'shellHistory',
   'handleHistoryPaste',
@@ -157,12 +173,7 @@ const SIDE_PANEL_CTX_KEYS = [
   'sidePanelWidth',
   'sidePanelPosition',
   'sidePanelOpenTabs',
-  'resolvedPreviewTheme',
-  'sftpActiveHost',
   'sftpHostForTab',
-  'activeTerminalSessionIdForSftp',
-  'activeTerminalCwd',
-  'activeWorkspace',
   'effectiveHosts',
   'hosts',
   'keys',
@@ -190,16 +201,9 @@ const SIDE_PANEL_CTX_KEYS = [
   'snippetPackages',
   'handleSnippetFromPanel',
   'followAppTerminalTheme',
-  'previewedOrVisibleThemeId',
   'terminalTheme',
+  'terminalThemeId',
   'terminalFontFamilyId',
-  'focusedFontFamilyId',
-  'focusedFontFamilyOverridden',
-  'focusedFontSize',
-  'focusedFontSizeOverridden',
-  'focusedFontWeight',
-  'focusedFontWeightOverridden',
-  'focusedThemeOverridden',
   'handleThemeChangeForFocusedSession',
   'handleThemeResetForFocusedSession',
   'handleFontFamilyChangeForFocusedSession',
@@ -330,8 +334,16 @@ const WORKSPACE_CTX_KEYS = [
   'onEndSessionDrag',
 ] as const;
 
+export function terminalLayerSidePanelStableCtxEqual(prev: Ctx, next: Ctx): boolean {
+  for (const key of SIDE_PANEL_STABLE_CTX_KEYS as unknown as string[]) {
+    if (!sidePanelCtxKeyEqual(prev, next, key)) return false;
+  }
+  return true;
+}
+
 export function terminalLayerSidePanelCtxEqual(prev: Ctx, next: Ctx): boolean {
-  for (const key of SIDE_PANEL_CTX_KEYS as unknown as string[]) {
+  if (!terminalLayerSidePanelStableCtxEqual(prev, next)) return false;
+  for (const key of SIDE_PANEL_LIVE_CTX_KEYS as unknown as string[]) {
     if (!sidePanelCtxKeyEqual(prev, next, key)) return false;
   }
   return true;

@@ -12,7 +12,9 @@ import {
   type ThemeUserIntent,
 } from '../../domain/terminalAppearanceRuntime';
 import { getFollowAppTerminalThemeSelectionUpdate } from '../../domain/terminalAppearance';
-import { injectTerminalAppearanceVars } from '../../infrastructure/theme/terminalAppearanceVars';
+import {
+  injectTerminalAppearanceVars,
+} from '../../infrastructure/theme/terminalAppearanceVars';
 
 export type ThemeRuntimeSettings = TerminalAppearanceSettings & {
   customThemes: TerminalTheme[];

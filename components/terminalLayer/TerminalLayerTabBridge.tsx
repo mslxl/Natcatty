@@ -15,6 +15,7 @@ import { useTerminalAiContexts } from './useTerminalAiContexts';
 import { useTerminalLayerEffects } from './useTerminalLayerEffects';
 import { useTerminalThemePanelState } from './useTerminalThemePanelState';
 import { useManualTerminalChromeSurfaceInjection } from '../../application/state/useManualTerminalChromeSurfaceInjection';
+import { sidePanelLiveStore } from '../../application/state/sidePanelLiveStore';
 import { useTerminalWorkspaceLayout } from './useTerminalWorkspaceLayout';
 import type { SidePanelTab } from './TerminalLayerSupport';
 
@@ -206,6 +207,26 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     themeState.resolvedPreviewTheme,
     !s.followAppTerminalTheme && isTerminalLayerVisible,
   );
+
+  sidePanelLiveStore.update({
+    sftpActiveHost,
+    activeTerminalSessionIdForSftp,
+    activeTerminalCwd,
+    activeWorkspace,
+    activeTerminalSessionForSystem: activeTerminalSessionForSystem ?? null,
+    activeSystemSessionHost,
+    focusedHost,
+    historySessionId,
+    resolvedPreviewTheme: themeState.resolvedPreviewTheme,
+    previewedOrVisibleThemeId: themeState.previewedOrVisibleThemeId,
+    focusedFontFamilyId: themeState.focusedFontFamilyId,
+    focusedFontFamilyOverridden: themeState.focusedFontFamilyOverridden,
+    focusedFontSize: themeState.focusedFontSize,
+    focusedFontSizeOverridden: themeState.focusedFontSizeOverridden,
+    focusedFontWeight: themeState.focusedFontWeight,
+    focusedFontWeightOverridden: themeState.focusedFontWeightOverridden,
+    focusedThemeOverridden: themeState.focusedThemeOverridden,
+  });
 
   const { aiContextsByTabId, resolveAIExecutorContext } = useTerminalAiContexts({
     hosts: s.hosts,
