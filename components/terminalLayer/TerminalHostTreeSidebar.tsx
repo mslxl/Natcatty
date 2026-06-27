@@ -36,6 +36,7 @@ import {
   STORAGE_KEY_TERMINAL_HOST_TREE_WIDTH,
   STORAGE_KEY_VAULT_HOSTS_TREE_EXPANDED,
 } from '../../infrastructure/config/storageKeys';
+import { themeFingerprint } from '../../application/state/useActiveChromeTheme';
 import { buildHostTreeThemeFromTerminalTheme } from '../../infrastructure/theme/terminalAppearanceTokens';
 import { cn } from '../../lib/utils';
 import { matchesHostSearchQuery, matchesSearchQuery } from '../../lib/searchMatcher';
@@ -1122,6 +1123,7 @@ export const TerminalHostTreeSidebar = memo(
     && prev.surfaceVisible === next.surfaceVisible
     && prev.customGroups === next.customGroups
     && prev.activeHostId === next.activeHostId
+    && themeFingerprint(prev.resolvedPreviewTheme) === themeFingerprint(next.resolvedPreviewTheme)
     && prev.onConnect === next.onConnect
     && prev.onCreateLocalTerminal === next.onCreateLocalTerminal
   ),

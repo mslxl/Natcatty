@@ -93,10 +93,11 @@ test('host tree keeps shell width while hidden behind root pages', () => {
   assert.doesNotMatch(source, /if \(!surfaceVisible\) \{\s*setShellWidth\(0\);/);
 });
 
-test('host tree sidebar memo tracks surface visibility changes', () => {
+test('host tree sidebar memo tracks surface visibility and theme changes', () => {
   const source = readFileSync(new URL('./TerminalHostTreeSidebar.tsx', import.meta.url), 'utf8');
 
   assert.match(source, /prev\.surfaceVisible === next\.surfaceVisible/);
+  assert.match(source, /themeFingerprint\(prev\.resolvedPreviewTheme\) === themeFingerprint\(next\.resolvedPreviewTheme\)/);
 });
 
 test('host tree sidebar clips the panel instead of fading it out while closing', () => {
