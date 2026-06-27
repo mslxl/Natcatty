@@ -277,6 +277,49 @@ export const resolveFollowedTerminalThemeId = (args: {
   return getTerminalThemeForUiTheme(activeUiThemeId, args.resolvedTheme) ?? args.fallbackThemeId;
 };
 
+/** Resolve a follow-app sidebar pick using the target mode, not the current resolvedTheme. */
+export const resolveFollowAppTerminalThemeId = (
+  pendingTerminalThemeId: string | null | undefined,
+  args: {
+    resolvedTheme: 'light' | 'dark';
+    lightUiThemeId: string;
+    darkUiThemeId: string;
+    fallbackThemeId: string;
+  },
+): string => {
+  if (pendingTerminalThemeId && isFollowAppTerminalThemeId(pendingTerminalThemeId)) {
+    return pendingTerminalThemeId;
+  }
+  return resolveFollowedTerminalThemeId(args);
+};
+
+export const getFollowAppThemePickExpectedSettledId = (
+  pendingTerminalThemeId: string,
+): string | null => {
+  const selection = getFollowAppTerminalThemeSelectionUpdate(pendingTerminalThemeId);
+  if (!selection) return null;
+  return getTerminalThemeForUiTheme(selection.uiThemeId, selection.appTheme) ?? pendingTerminalThemeId;
+};
+
+export const isFollowAppThemePickSettled = (
+  pendingTerminalThemeId: string,
+  args: {
+    resolvedTheme: 'light' | 'dark';
+    lightUiThemeId: string;
+    darkUiThemeId: string;
+    fallbackThemeId: string;
+  },
+): boolean => {
+  const selection = getFollowAppTerminalThemeSelectionUpdate(pendingTerminalThemeId);
+  if (!selection) return true;
+  if (args.resolvedTheme !== selection.appTheme) return false;
+  const activeUiThemeId = selection.appTheme === 'dark'
+    ? args.darkUiThemeId
+    : args.lightUiThemeId;
+  if (activeUiThemeId !== selection.uiThemeId) return false;
+  return resolveFollowedTerminalThemeId(args) === pendingTerminalThemeId;
+};
+
 export const resolveManualTerminalThemeId = (args: {
   resolvedTheme: 'light' | 'dark';
   terminalThemeDarkId: string;

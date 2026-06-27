@@ -14,6 +14,7 @@ import { TerminalLayerView } from './TerminalLayerView';
 import { useTerminalAiContexts } from './useTerminalAiContexts';
 import { useTerminalLayerEffects } from './useTerminalLayerEffects';
 import { useTerminalThemePanelState } from './useTerminalThemePanelState';
+import { useManualTerminalChromeSurfaceInjection } from '../../application/state/useManualTerminalChromeSurfaceInjection';
 import { useTerminalWorkspaceLayout } from './useTerminalWorkspaceLayout';
 import type { SidePanelTab } from './TerminalLayerSupport';
 
@@ -183,20 +184,28 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     focusedSessionId,
     fontSize: s.fontSize,
     hostMap: s.hostMap,
+    isSidePanelOpenForCurrentTab,
     isVisible,
     onUpdateHost: s.onUpdateHost,
-    onUpdateFollowAppTerminalThemeId: s.onUpdateFollowAppTerminalThemeId,
     onUpdateTerminalFontFamilyId: s.onUpdateTerminalFontFamilyId,
     onUpdateTerminalFontSize: s.onUpdateTerminalFontSize,
     onUpdateSessionFontSize: s.onUpdateSessionFontSize,
     onClearSessionFontSizeOverride: s.onClearSessionFontSizeOverride,
     onUpdateTerminalFontWeight: s.onUpdateTerminalFontWeight,
     onUpdateTerminalThemeId: s.onUpdateTerminalThemeId,
+    pickTheme: s.pickTerminalTheme,
+    clearIntent: s.clearThemeIntent,
+    resolveFocusedAppearance: s.resolveSessionAppearance,
     sessionHostsMap,
     terminalFontFamilyId: s.terminalFontFamilyId,
     terminalSettings: s.terminalSettings,
     terminalTheme: s.terminalTheme,
   });
+
+  useManualTerminalChromeSurfaceInjection(
+    themeState.resolvedPreviewTheme,
+    !s.followAppTerminalTheme && isTerminalLayerVisible,
+  );
 
   const { aiContextsByTabId, resolveAIExecutorContext } = useTerminalAiContexts({
     hosts: s.hosts,
@@ -229,24 +238,15 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     activeSidePanelTab,
     activeTabId,
     activeTabIdRef: s.activeTabIdRef,
-    activeTopTabsThemeId: themeState.activeTopTabsThemeId,
     activeWorkspace,
     activityTrackedSessions: s.activityTrackedSessions,
-    appliedPreviewSessionRef: themeState.appliedPreviewSessionRef,
-    applyHostTreePreviewVars: themeState.applyHostTreePreviewVars,
-    applyTerminalPreviewVars: themeState.applyTerminalPreviewVars,
-    applyTopTabsPreviewVars: themeState.applyTopTabsPreviewVars,
     cancelAnimationFrame,
     ChunkedEscapeFilter: s.ChunkedEscapeFilter,
-    clearHostTreePreviewVars: s.clearHostTreePreviewVars,
-    clearTerminalPreviewVars: s.clearTerminalPreviewVars,
     clearTimeout,
-    clearTopTabsPreviewVars: s.clearTopTabsPreviewVars,
     document,
     dropHint,
     filterTabsMap: s.filterTabsMap,
     focusedSessionId,
-    followAppTerminalTheme: s.followAppTerminalTheme,
     getSessionActivityIdsToClear: s.getSessionActivityIdsToClear,
     handleToggleAiFromTopBar: s.handleToggleAiFromTopBar,
     handleToggleScriptsSidePanel: s.handleToggleScriptsSidePanel,
@@ -263,11 +263,11 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     onToggleBroadcastRef: s.onToggleBroadcastRef,
     onToggleWorkspaceViewModeRef: s.onToggleWorkspaceViewModeRef,
     prevFocusedSessionIdRef,
-    previewTargetSessionId: themeState.previewTargetSessionId,
     refocusActiveTerminalSession: s.refocusActiveTerminalSession,
     requestAnimationFrame,
     ResizeObserver,
     sessionActivityStore: s.sessionActivityStore,
+    sessionHostsMap,
     sessions,
     Set,
     setDropHint,
@@ -280,7 +280,6 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     setSystemMountedTabIds: s.setSystemMountedTabIds,
     setThemeMountedTabIds: s.setThemeMountedTabIds,
     setSidePanelOpenTabs: s.setSidePanelOpenTabs,
-    setThemePreview: themeState.setThemePreview,
     setTimeout,
     setupMcpApprovalBridge: s.setupMcpApprovalBridge,
     setWorkspaceArea,
@@ -293,13 +292,10 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     splitHorizontalHandlersRef: s.splitHorizontalHandlersRef,
     splitVerticalHandlersRef: s.splitVerticalHandlersRef,
     terminalRendererCwdBySessionRef: s.terminalRendererCwdBySessionRef,
-    themeCommitTimerRef: themeState.themeCommitTimerRef,
-    themePreview: themeState.themePreview,
     toggleScriptsSidePanelRef: s.toggleScriptsSidePanelRef,
     toggleSidePanelRef: s.toggleSidePanelRef,
     validAIScopeTargetIds: s.validAIScopeTargetIds,
     validSessionActivityIds: s.validSessionActivityIds,
-    visibleFocusedThemeId: themeState.visibleFocusedThemeId,
     window,
     workspaceBroadcastHandlersRef: s.workspaceBroadcastHandlersRef,
     workspaceFocusHandlersRef: s.workspaceFocusHandlersRef,
@@ -502,7 +498,8 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     terminalSettings: s.terminalSettings,
     terminalTheme: s.terminalTheme,
     terminalThemeId: s.terminalThemeId,
-    themePreview: themeState.themePreview,
+    resolveSessionAppearance: s.resolveSessionAppearance,
+    hostMap: s.hostMap,
     ThemeSidePanel: s.ThemeSidePanel,
     Tooltip: s.Tooltip,
     TooltipContent: s.TooltipContent,
@@ -559,6 +556,9 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     workspaceOuterRef,
     workspaceOverlayRef,
     workspaceRectsById,
+    s.terminalTheme,
+    s.resolveSessionAppearance,
+    s.hostMap,
   ]);
 
   return <TerminalLayerView ctx={ctx} />;

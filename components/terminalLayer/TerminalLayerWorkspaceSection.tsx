@@ -28,7 +28,8 @@ function TerminalLayerWorkspaceSectionInner({ ctx }: { ctx: WorkspaceContext }) 
     workspaceBroadcastHandlersRef,
     splitHorizontalHandlersRef,
     splitVerticalHandlersRef,
-    themePreview,
+    resolveSessionAppearance,
+    hostMap,
     keys,
     identities,
     snippets,
@@ -151,7 +152,8 @@ function TerminalLayerWorkspaceSectionInner({ ctx }: { ctx: WorkspaceContext }) 
           workspaceBroadcastHandlersRef={workspaceBroadcastHandlersRef}
           splitHorizontalHandlersRef={splitHorizontalHandlersRef}
           splitVerticalHandlersRef={splitVerticalHandlersRef}
-          themePreview={themePreview}
+          resolveSessionAppearance={resolveSessionAppearance}
+          hostMap={hostMap}
           keys={keys}
           identities={identities}
           snippets={snippets}

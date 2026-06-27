@@ -4,13 +4,24 @@ import test from "node:test";
 
 const appSource = readFileSync(new URL("../../App.tsx", import.meta.url), "utf8");
 const appViewSource = readFileSync(new URL("./AppView.tsx", import.meta.url), "utf8");
+const runtimeSource = readFileSync(new URL("../state/useThemeRuntime.ts", import.meta.url), "utf8");
+const settingsSource = readFileSync(new URL("../state/useSettingsState.ts", import.meta.url), "utf8");
 
-test("follow-app terminal theme selection updates the matching UI theme", () => {
-  assert.match(appSource, /const update = getFollowAppTerminalThemeSelectionUpdate\(themeId\)/);
-  assert.match(appSource, /setDarkUiThemeId\(update\.uiThemeId\)/);
-  assert.match(appSource, /setLightUiThemeId\(update\.uiThemeId\)/);
-  assert.match(appSource, /setTheme\(update\.appTheme\)/);
-  assert.doesNotMatch(appSource, /customThemeStore\.getThemeById\(themeId\)/);
+test("follow-app terminal theme selection updates the matching UI theme via ThemeRuntime", () => {
+  assert.match(runtimeSource, /getFollowAppTerminalThemeSelectionUpdate\(themeId\)/);
+  assert.match(runtimeSource, /setDarkUiThemeId\(update\.uiThemeId\)/);
+  assert.match(runtimeSource, /setLightUiThemeId\(update\.uiThemeId\)/);
+  assert.match(runtimeSource, /setTheme\(update\.appTheme\)/);
+  assert.doesNotMatch(runtimeSource, /isFollowAppIntentSettled\(userIntent\.themeId/);
+  assert.match(appSource, /useThemeRuntime\(/);
+  assert.match(appSource, /themeRuntime\.pickTheme\(themeId\)/);
+  assert.match(appSource, /useTerminalAppearanceInjection/);
+  assert.match(appSource, /includeChromeSurfaces: followAppTerminalTheme/);
+  assert.doesNotMatch(settingsSource, /pendingFollowAppTerminalThemeId/);
+  assert.doesNotMatch(settingsSource, /applyFollowAppTerminalThemePick/);
+  assert.match(settingsSource, /appearanceTransitionModeRef\.current = 'instant'/);
+  assert.match(appViewSource, /data-terminal-appearance-root/);
+  assert.match(appViewSource, /pickTerminalTheme=\{ctx\.pickTerminalTheme\}/);
 });
 
 test("default terminal theme selection clears the current mode override", () => {

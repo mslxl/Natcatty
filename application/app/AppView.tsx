@@ -89,7 +89,8 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
     clearAndRemoveSource, clearAndRemoveSources, clearUnsavedConnectionLogs, closeLogView, closeSession, closeTabsBatch, closeWorkspace, copySessionToNewWindowWithCurrentShell, copySessionWithCurrentShell,
     connectionLogs, convertKnownHostToHost, createWorkspaceFromSessions, createWorkspaceFromTargets, createWorkspaceWithHosts, customAccent,
     customGroups, currentTerminalTheme, deepLinkHostDraft, deleteConnectionLog, draggingSessionId, effectiveKnownHosts, editorTabs, editorWordWrap, emptyVaultConflict,
-    followAppTerminalTheme, groupConfigs, handleAddKnownHost, handleConnectSerial, handleConnectToHost, handleCreateLocalTerminal, handleDefaultTerminalThemeChange, handleDeleteHost,
+    followAppTerminalTheme,
+    groupConfigs, handleAddKnownHost, handleConnectSerial, handleConnectToHost, handleCreateLocalTerminal, handleDefaultTerminalThemeChange, handleDeleteHost,
     handleEndSessionDrag, handleFollowAppTerminalThemeChange, handleHostConnectWithProtocolCheck, handleHotkeyAction, handleKeyboardInteractiveCancel, handleKeyboardInteractiveSubmit,
     handleOpenHostFromVaultNote, handleOpenQuickSwitcher, handleOpenSettings, handleOpenVaultHostFromChat, handleOpenVaultNoteFromChat, handleOpenVaultSectionFromChat, handleRootContextMenu, handlePassphraseCancel, handlePassphraseSkip, handlePassphraseSubmit, handleProtocolSelect,
     handleRequestCloseEditorTabRef, handleSessionStatusChange, handleSyncNowManual, handleTerminalDataCapture, handleToggleTheme, handleUpdateHostFromTerminal,
@@ -170,7 +171,7 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
         handleRequestCloseEditorTabRef.current = handleRequestCloseEditorTab;
 
         return (
-    <div className="flex flex-col h-screen text-foreground font-sans netcatty-shell" onContextMenu={handleRootContextMenu}>
+    <div className="flex flex-col h-screen text-foreground font-sans netcatty-shell" data-terminal-appearance-root onContextMenu={handleRootContextMenu}>
       <TopTabs
         theme={resolvedTheme}
         hosts={hosts}
@@ -330,6 +331,10 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
           terminalTheme={currentTerminalTheme}
           terminalThemeId={terminalThemeId}
           followAppTerminalTheme={followAppTerminalTheme}
+          pickTerminalTheme={ctx.pickTerminalTheme}
+          clearThemeIntent={ctx.clearThemeIntent}
+          settleManualThemeIntent={ctx.settleManualThemeIntent}
+          resolveSessionAppearance={ctx.resolveSessionAppearance}
           accentMode={accentMode}
           customAccent={customAccent}
           terminalSettings={terminalSettings}

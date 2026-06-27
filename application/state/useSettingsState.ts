@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type SetStateAction } from 'react';
 
-import { runThemeTransition } from './themeTransition';
+import { runThemeTransition, type ThemeTransitionMode } from './themeTransition';
 import { SyncConfig, TerminalSettings, HotkeyScheme, CustomKeyBindings, DEFAULT_KEY_BINDINGS, KeyBinding, UILanguage, SessionLogFormat, normalizeTerminalSettings } from '../../domain/models';
 import {
   STORAGE_KEY_COLOR,
@@ -63,8 +63,7 @@ import {
   shouldApplyIncomingCustomKeyBindingsRecord,
   updateCustomKeyBinding as updateCustomKeyBindingRecord,
 } from '../../domain/customKeyBindings';
-import { TERMINAL_THEME_AUTO } from '../../domain/terminalAppearance';
-import { customThemeStore, useCustomThemes } from '../state/customThemeStore';
+import { resolveGlobalTerminalAppearance, idleThemeUserIntent } from '../../domain/terminalAppearanceRuntime';
 import { DEFAULT_FONT_SIZE, TERMINAL_FONT_AUTO } from '../../infrastructure/config/fonts';
 import { getUiThemeById } from '../../infrastructure/config/uiThemes';
 import { DEFAULT_UI_FONT_ID, withWindowsEmojiFallback } from '../../infrastructure/config/uiFonts';
@@ -117,7 +116,8 @@ import { resolveRestorePreviousSessionSetting, resolveRestoreTerminalCwdSetting 
 import { sessionRestoreStorage } from './sessionRestoreStorage';
 import { useSettingsStorageSync } from './settingsStorageSync';
 import { useSettingsIpcSync } from './settingsIpcSync';
-import { resolveCurrentTerminalTheme } from './settingsTerminalTheme';
+import { TERMINAL_THEME_AUTO } from '../../domain/terminalAppearance';
+import { customThemeStore, useCustomThemes } from '../state/customThemeStore';
 import { useSystemSettingsEffects } from './systemSettingsEffects';
 import { resolveAppIconVariant, type AppIconVariant } from '../../domain/appIconVariant';
 import { DEFAULT_APP_ICON_VARIANT } from '../../infrastructure/config/appIconVariants';
@@ -371,6 +371,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
   // Fix 1: Mount guard — skip redundant IPC broadcasts & localStorage writes on initial mount.
   // Set to true by the LAST useEffect declaration; all persist effects see false on first render.
   const persistMountedRef = useRef(false);
+  const appearanceTransitionModeRef = useRef<ThemeTransitionMode>('view');
 
   const setTerminalSettings = useCallback((nextValue: SetStateAction<TerminalSettings>) => {
     setTerminalSettingsState((prev) => {
@@ -627,8 +628,10 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
   useLayoutEffect(() => {
     const tokens = getUiThemeById(resolvedTheme, resolvedTheme === 'dark' ? darkUiThemeId : lightUiThemeId).tokens;
     const apply = () => applyThemeTokens(theme, resolvedTheme, tokens, accentMode, customAccent);
+    const transitionMode = appearanceTransitionModeRef.current;
+    appearanceTransitionModeRef.current = 'instant';
     if (persistMountedRef.current) {
-      runThemeTransition(apply);
+      runThemeTransition(apply, { mode: transitionMode });
     } else {
       apply();
     }
@@ -1101,20 +1104,25 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
   // Subscribe to custom theme changes so editing in-place triggers re-render
   const customThemes = useCustomThemes();
 
-  const currentTerminalTheme = useMemo(() => resolveCurrentTerminalTheme({
-    terminalThemeId,
-    terminalThemeDarkId,
-    terminalThemeLightId,
+  const settledTerminalTheme = useMemo(() => resolveGlobalTerminalAppearance({
+    userIntent: idleThemeUserIntent(),
+    settings: {
+      terminalThemeId,
+      terminalThemeDarkId,
+      terminalThemeLightId,
+      followAppTerminalTheme,
+      resolvedTheme,
+      lightUiThemeId,
+      darkUiThemeId,
+      accentMode,
+      customAccent,
+    },
     customThemes,
-    followAppTerminalTheme,
-    resolvedTheme,
-    lightUiThemeId,
-    darkUiThemeId,
-    accentMode,
-    customAccent,
-  }), [terminalThemeId, terminalThemeDarkId, terminalThemeLightId, customThemes,
+  }).theme, [terminalThemeId, terminalThemeDarkId, terminalThemeLightId, customThemes,
       followAppTerminalTheme, resolvedTheme, lightUiThemeId, darkUiThemeId,
       accentMode, customAccent]);
+
+  const currentTerminalTheme = settledTerminalTheme;
 
   const updateTerminalSetting = useCallback(<K extends keyof TerminalSettings>(
     key: K,

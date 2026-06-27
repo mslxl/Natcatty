@@ -1,4 +1,4 @@
-import React, { createContext, lazy, memo, Suspense, useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import React, { createContext, lazy, memo, Suspense, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 
 import { activeTabStore } from '../../application/state/activeTabStore';
 import { useTerminalLayoutSuppressActive } from '../../application/state/terminalLayoutSuppressStore';
@@ -24,6 +24,7 @@ import {
   getTerminalPaneRenderSnapshot,
   parseTerminalPaneRenderSnapshot,
 } from '../terminalPaneVisibility';
+import type { ResolvedAppearance, TerminalAppearanceHostScope } from '../../domain/terminalAppearanceRuntime';
 
 export type SidePanelTab = 'sftp' | 'scripts' | 'history' | 'theme' | 'ai' | 'system' | 'notes';
 
@@ -118,6 +119,13 @@ export function adjustSaturationToken(hsl: string, factor: number): string {
   return `${parts[0]} ${Math.round(newS * 10) / 10}% ${parts[2]}`;
 }
 
+export type { TerminalThemePreviewState } from './terminalThemePreview';
+export {
+  emptyTerminalThemePreview,
+  listThemePreviewSessionIds,
+  resolvePaneThemePreviewId,
+} from './terminalThemePreview';
+
 export const clearTerminalPreviewVars = (sessionId: string | null) => {
   if (!sessionId || typeof document === 'undefined') return;
   const pane = document.querySelector<HTMLElement>(`[data-session-id="${sessionId}"]`);
@@ -128,6 +136,12 @@ export const clearTerminalPreviewVars = (sessionId: string | null) => {
   pane.style.removeProperty('--terminal-preview-toolbar-btn');
   pane.style.removeProperty('--terminal-preview-toolbar-btn-hover');
   pane.style.removeProperty('--terminal-preview-toolbar-btn-active');
+};
+
+export const clearTerminalPreviewVarsForSessions = (sessionIds: Iterable<string>) => {
+  for (const sessionId of sessionIds) {
+    clearTerminalPreviewVars(sessionId);
+  }
 };
 
 export const setStylePropertyIfChanged = (element: HTMLElement, property: string, value: string) => {
@@ -611,6 +625,10 @@ export interface TerminalLayerProps {
   terminalTheme: TerminalTheme;
   terminalThemeId?: string;
   followAppTerminalTheme?: boolean;
+  pickTerminalTheme?: (themeId: string) => void;
+  clearThemeIntent?: () => void;
+  settleManualThemeIntent?: () => void;
+  resolveSessionAppearance?: (hostScope: TerminalAppearanceHostScope) => ResolvedAppearance;
   accentMode?: 'theme' | 'custom';
   customAccent?: string;
   terminalSettings?: TerminalSettings;
@@ -622,7 +640,6 @@ export interface TerminalLayerProps {
   keyBindings?: KeyBinding[];
   onHotkeyAction?: (action: string, event: KeyboardEvent) => void;
   onUpdateTerminalThemeId?: (themeId: string) => void;
-  onUpdateFollowAppTerminalThemeId?: (themeId: string) => void;
   onUpdateTerminalFontFamilyId?: (fontFamilyId: string) => void;
   onUpdateTerminalFontSize?: (fontSize: number) => void;
   onUpdateTerminalFontWeight?: (fontWeight: number) => void;
@@ -703,7 +720,8 @@ interface TerminalPaneProps {
   workspaceBroadcastHandlersRef: React.MutableRefObject<Map<string, () => void>>;
   splitHorizontalHandlersRef: React.MutableRefObject<Map<string, () => void>>;
   splitVerticalHandlersRef: React.MutableRefObject<Map<string, () => void>>;
-  themePreview: { targetSessionId: string | null; themeId: string | null };
+  resolveSessionAppearance: (hostScope: TerminalAppearanceHostScope) => ResolvedAppearance;
+  hostMap: Map<string, Host>;
   keys: SSHKey[];
   identities: Identity[];
   snippets: Snippet[];
@@ -783,11 +801,10 @@ interface TerminalPaneProps {
   onEndSessionDrag?: () => void;
 }
 
-const getPaneThemePreviewId = (props: TerminalPaneProps): string | null => (
-  props.session.id === props.themePreview.targetSessionId
-    ? props.themePreview.themeId
-    : null
-);
+const getPaneAppearanceThemeId = (props: TerminalPaneProps): string => {
+  const isEphemeral = !props.hostMap.has(props.host.id);
+  return props.resolveSessionAppearance({ host: props.host, isEphemeral }).themeId;
+};
 
 const getPaneWorkspaceRect = (props: Pick<TerminalPaneProps, 'session' | 'workspaceRectsById'>): WorkspaceRect | null => {
   const workspaceId = props.session.workspaceId;
@@ -826,7 +843,7 @@ const terminalPanePropsAreEqual = (
   prev.workspaceBroadcastHandlersRef === next.workspaceBroadcastHandlersRef &&
   prev.splitHorizontalHandlersRef === next.splitHorizontalHandlersRef &&
   prev.splitVerticalHandlersRef === next.splitVerticalHandlersRef &&
-  getPaneThemePreviewId(prev) === getPaneThemePreviewId(next) &&
+  getPaneAppearanceThemeId(prev) === getPaneAppearanceThemeId(next) &&
   prev.keys === next.keys &&
   prev.identities === next.identities &&
   prev.snippets === next.snippets &&
@@ -896,7 +913,8 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
   workspaceBroadcastHandlersRef,
   splitHorizontalHandlersRef,
   splitVerticalHandlersRef,
-  themePreview,
+  resolveSessionAppearance,
+  hostMap,
   keys,
   identities,
   snippets,
@@ -1049,9 +1067,12 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
   const splitHorizontalHandler = splitHorizontalHandlersRef.current.get(session.id);
   const splitVerticalHandler = splitVerticalHandlersRef.current.get(session.id);
   const broadcastEnabled = activeWorkspaceId ? !!isBroadcastEnabled?.(activeWorkspaceId) : false;
-  const themePreviewId = session.id === themePreview.targetSessionId
-    ? themePreview.themeId ?? undefined
-    : undefined;
+  const isHostEphemeral = !hostMap.has(host.id);
+  const sessionAppearance = useMemo(
+    () => resolveSessionAppearance({ host, isEphemeral: isHostEphemeral }),
+    [resolveSessionAppearance, host, isHostEphemeral],
+  );
+  const sessionAppearanceTheme = sessionAppearance.theme;
 
   const handlePaneClick = useCallback(() => {
     if (activeWorkspaceId && !isFocusMode) {
@@ -1272,7 +1293,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
         identities={identities}
         snippets={snippets}
         chainHosts={chainHosts}
-        themePreviewId={themePreviewId}
+        appearanceTheme={sessionAppearanceTheme}
         knownHosts={knownHosts}
         isVisible={isVisible}
         paneLayoutKey={paneLayoutKey}
@@ -1363,7 +1384,8 @@ interface TerminalPanesHostProps {
   workspaceBroadcastHandlersRef: React.MutableRefObject<Map<string, () => void>>;
   splitHorizontalHandlersRef: React.MutableRefObject<Map<string, () => void>>;
   splitVerticalHandlersRef: React.MutableRefObject<Map<string, () => void>>;
-  themePreview: { targetSessionId: string | null; themeId: string | null };
+  resolveSessionAppearance: (hostScope: TerminalAppearanceHostScope) => ResolvedAppearance;
+  hostMap: Map<string, Host>;
   keys: SSHKey[];
   identities: Identity[];
   snippets: Snippet[];
@@ -1446,7 +1468,8 @@ const terminalPanesHostPropsAreEqual = (
   if (prev.workspaceBroadcastHandlersRef !== next.workspaceBroadcastHandlersRef) return false;
   if (prev.splitHorizontalHandlersRef !== next.splitHorizontalHandlersRef) return false;
   if (prev.splitVerticalHandlersRef !== next.splitVerticalHandlersRef) return false;
-  if (prev.themePreview !== next.themePreview) return false;
+  if (prev.resolveSessionAppearance !== next.resolveSessionAppearance) return false;
+  if (prev.hostMap !== next.hostMap) return false;
   if (prev.keys !== next.keys) return false;
   if (prev.identities !== next.identities) return false;
   if (prev.snippets !== next.snippets) return false;

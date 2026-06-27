@@ -22,6 +22,8 @@ export const terminalLayerAreEqual = (
   prev.terminalTheme === next.terminalTheme &&
   prev.terminalThemeId === next.terminalThemeId &&
   prev.followAppTerminalTheme === next.followAppTerminalTheme &&
+  prev.pickTerminalTheme === next.pickTerminalTheme &&
+  prev.resolveSessionAppearance === next.resolveSessionAppearance &&
   prev.accentMode === next.accentMode &&
   prev.customAccent === next.customAccent &&
   prev.terminalSettings === next.terminalSettings &&
@@ -45,7 +47,6 @@ export const terminalLayerAreEqual = (
   prev.onHotkeyAction === next.onHotkeyAction &&
   prev.onUpdateSessionRestoreCwd === next.onUpdateSessionRestoreCwd &&
   prev.onUpdateHost === next.onUpdateHost &&
-  prev.onUpdateFollowAppTerminalThemeId === next.onUpdateFollowAppTerminalThemeId &&
   prev.onAddKnownHost === next.onAddKnownHost &&
   prev.onToggleWorkspaceViewMode === next.onToggleWorkspaceViewMode &&
   prev.onSetWorkspaceFocusedSession === next.onSetWorkspaceFocusedSession &&

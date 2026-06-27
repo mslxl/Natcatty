@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { Activity, FolderTree, History, MessageSquare, NotebookText, Palette, PanelLeft, PanelRight, X, Zap } from 'lucide-react';
 import { SystemManagerSidePanel } from '../systemManager/SystemManagerSidePanel';
+import { terminalAppearanceSidePanelStyle } from '../../infrastructure/theme/terminalAppearanceTokens';
 import React, { memo, useCallback, useRef, useState } from 'react';
 
 import { useActiveTabId } from '../../application/state/activeTabStore';
@@ -155,7 +156,6 @@ function TerminalLayerSidePanelTabBody({ ctx }: { ctx: SidePanelContext }) {
     remoteHistory,
     shellHistory,
     resolveAIExecutorContext,
-    resolvedPreviewTheme,
     ScriptsSidePanel,
     setEditorWordWrap,
     setSidePanelPosition,
@@ -378,16 +378,7 @@ function TerminalLayerSidePanelTabBody({ ctx }: { ctx: SidePanelContext }) {
           data-section={isSidePanelOpenForCurrentTab ? 'terminal-side-panel' : undefined}
           data-open={isSidePanelOpenForCurrentTab ? 'true' : 'false'}
           data-side-panel-tab={isSidePanelOpenForCurrentTab ? (activeSidePanelTab ?? undefined) : undefined}
-          style={{
-            ['--terminal-sidepanel-bg' as never]: resolvedPreviewTheme.colors.background,
-            ['--terminal-sidepanel-fg' as never]: resolvedPreviewTheme.colors.foreground,
-            ['--terminal-sidepanel-accent' as never]: resolvedPreviewTheme.colors.cursor,
-            ['--terminal-sidepanel-muted' as never]: `color-mix(in srgb, ${resolvedPreviewTheme.colors.foreground} 62%, ${resolvedPreviewTheme.colors.background} 38%)`,
-            ['--terminal-sidepanel-border' as never]: `color-mix(in srgb, ${resolvedPreviewTheme.colors.foreground} 12%, ${resolvedPreviewTheme.colors.background} 88%)`,
-            backgroundColor: 'var(--terminal-sidepanel-bg)',
-            color: 'var(--terminal-sidepanel-fg)',
-            borderColor: 'var(--terminal-sidepanel-border)',
-          }}
+          style={terminalAppearanceSidePanelStyle}
         >
           {isSidePanelOpenForCurrentTab && !isAiShellForceHidden && (
             <div
@@ -640,7 +631,6 @@ function TerminalLayerSidePanelTabBody({ ctx }: { ctx: SidePanelContext }) {
                     onFontSizeReset={handleFontSizeResetForFocusedSession}
                     onFontWeightChange={handleFontWeightChangeForFocusedSession}
                     onFontWeightReset={handleFontWeightResetForFocusedSession}
-                    previewColors={resolvedPreviewTheme.colors}
                     isVisible={isVisibleThemePanel}
                   />
                 </div>

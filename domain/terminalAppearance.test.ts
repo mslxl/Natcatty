@@ -6,9 +6,12 @@ import {
   applySessionFontSizeToHost,
   getFollowAppTerminalThemeIds,
   getFollowAppTerminalThemeSelectionUpdate,
+  getFollowAppThemePickExpectedSettledId,
   isFollowAppTerminalThemeId,
+  isFollowAppThemePickSettled,
   mergeTerminalHostUpdate,
   resolveFollowedTerminalThemeId,
+  resolveFollowAppTerminalThemeId,
   resolveManualTerminalThemeId,
   TERMINAL_THEME_AUTO,
 } from "./terminalAppearance";
@@ -297,6 +300,52 @@ test("manual-theme resolver: auto preserves the saved global terminal theme", ()
       fallbackThemeId: "dracula",
     }),
     "dracula",
+  );
+});
+
+test("follow-app sidebar pick resolves with the target mode before resolvedTheme catches up", () => {
+  assert.equal(
+    resolveFollowAppTerminalThemeId("system-flexoki-light", {
+      resolvedTheme: "dark",
+      lightUiThemeId: "flexoki",
+      darkUiThemeId: "github",
+      fallbackThemeId: "netcatty-dark",
+    }),
+    "system-flexoki-light",
+  );
+});
+
+test("follow-app pick settles once ui theme and resolved mode match the selection", () => {
+  assert.equal(
+    isFollowAppThemePickSettled("system-flexoki-light", {
+      resolvedTheme: "dark",
+      lightUiThemeId: "snow",
+      darkUiThemeId: "github",
+      fallbackThemeId: "netcatty-dark",
+    }),
+    false,
+  );
+  assert.equal(
+    isFollowAppThemePickSettled("system-flexoki-light", {
+      resolvedTheme: "light",
+      lightUiThemeId: "snow",
+      darkUiThemeId: "github",
+      fallbackThemeId: "netcatty-dark",
+    }),
+    false,
+  );
+  assert.equal(
+    isFollowAppThemePickSettled("system-flexoki-light", {
+      resolvedTheme: "light",
+      lightUiThemeId: "flexoki",
+      darkUiThemeId: "github",
+      fallbackThemeId: "netcatty-dark",
+    }),
+    true,
+  );
+  assert.equal(
+    getFollowAppThemePickExpectedSettledId("system-flexoki-light"),
+    "system-flexoki-light",
   );
 });
 

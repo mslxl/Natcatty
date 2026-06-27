@@ -16,6 +16,8 @@ import {
   prioritizeTerminalInput,
   shouldArmTerminalInterruptDisplayGateForProtocol,
 } from './runtime/terminalOutputPipeline';
+import { scheduleTerminalThemeUpdate, applyTerminalThemeSync, cancelTerminalThemeUpdate } from './terminalThemeScheduler';
+import { injectTerminalPaneAppearanceVars } from '../../infrastructure/theme/terminalAppearanceVars';
 import {
   isTerminalCloseGenerationCurrent,
   resolveConnectionLogCapturePayload,
@@ -534,20 +536,27 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
   }, [status]);
 
 
-  // Sync xterm theme before browser paint and force the renderer to catch up so
-  // split panes do not visibly repaint one after another.
+  const effectiveThemeKey = `${effectiveTheme.id}:${effectiveTheme.colors.background}:${effectiveTheme.colors.foreground}:${effectiveTheme.colors.cursor}`;
+
+  // Sync xterm theme before browser paint; apply synchronously on visible panes.
   useLayoutEffect(() => {
     const term = termRef.current;
     if (!term) return;
-    term.options.theme = {
-      ...effectiveTheme.colors,
-      selectionBackground: effectiveTheme.colors.selection,
-      scrollbarSliderBackground: effectiveTheme.colors.foreground + '33',
-      scrollbarSliderHoverBackground: effectiveTheme.colors.foreground + '66',
-      scrollbarSliderActiveBackground: effectiveTheme.colors.foreground + '80',
-    };
-    forceSyncRenderAfterResize(term);
-  }, [effectiveTheme]);
+
+    if (isVisibleRef.current || isFocused) {
+      cancelTerminalThemeUpdate(sessionId);
+      applyTerminalThemeSync(term, effectiveTheme);
+      injectTerminalPaneAppearanceVars(sessionId, effectiveTheme);
+      return;
+    }
+
+    scheduleTerminalThemeUpdate(
+      sessionId,
+      effectiveTheme,
+      { visible: false, focused: false },
+      () => termRef.current,
+    );
+  }, [effectiveThemeKey, isFocused, isVisible, sessionId, effectiveTheme]);
 
 
   // Keep font-size sync separate from terminalSettings so unrelated setting
