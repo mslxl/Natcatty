@@ -500,6 +500,7 @@ function registerSdkStreamHandlers(ctx) {
       const effectiveChatSessionId = chatSessionId || sdkRequestSessions.get(requestId);
       mcpServerBridge.setChatSessionCancelled?.(effectiveChatSessionId, true);
       mcpServerBridge.cancelPtyExecsForSession(effectiveChatSessionId);
+      mcpServerBridge.cancelWorkerBackgroundJobsForSession?.(effectiveChatSessionId);
       mcpServerBridge.clearPendingApprovals(effectiveChatSessionId);
       void mcpServerBridge.cancelSftpOpsForSession?.(effectiveChatSessionId);
       const controller = sdkActiveStreams.get(requestId);
@@ -514,6 +515,7 @@ function registerSdkStreamHandlers(ctx) {
       if (!validateSender(event)) return { ok: false, error: "Unauthorized IPC sender" };
       mcpServerBridge.setChatSessionCancelled?.(chatSessionId, true);
       mcpServerBridge.cancelPtyExecsForSession(chatSessionId);
+      mcpServerBridge.cancelWorkerBackgroundJobsForSession?.(chatSessionId);
       deleteSdkSessionKeysForChat(sdkSessionIds, chatSessionId);
       await mcpServerBridge.cleanupScopedMetadata(chatSessionId);
       return { ok: true };

@@ -224,12 +224,16 @@ function registerCattyExecHandlers(ctx) {
     }
     mcpServerBridge.cancelPtyExecsForSession(chatSessionId);
     void mcpServerBridge.cancelSftpOpsForSession?.(chatSessionId);
-    try {
-      terminalWorkerManager?.send?.("netcatty:ai:catty:cancel", { chatSessionId }, {
-        webContentsId: event?.sender?.id,
-      });
-    } catch {
-      // Worker may already be gone while cancelling a torn-down terminal.
+    if (typeof mcpServerBridge.cancelWorkerBackgroundJobsForSession === "function") {
+      mcpServerBridge.cancelWorkerBackgroundJobsForSession(chatSessionId);
+    } else {
+      try {
+        terminalWorkerManager?.send?.("netcatty:ai:catty:cancel", { chatSessionId }, {
+          webContentsId: event?.sender?.id,
+        });
+      } catch {
+        // Worker may already be gone while cancelling a torn-down terminal.
+      }
     }
     return { ok: true };
   });

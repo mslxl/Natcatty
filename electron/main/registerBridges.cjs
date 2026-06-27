@@ -789,7 +789,7 @@ function createBridgeRegistrar(context) {
     });
   
     // Download SFTP file to temp and return local path
-    ipcMain.handle("netcatty:sftp:downloadToTemp", async (_event, { sftpId, remotePath, fileName, encoding }) => {
+    ipcMain.handle("netcatty:sftp:downloadToTemp", async (event, { sftpId, remotePath, fileName, encoding }) => {
       console.log(`[Main] Downloading SFTP file to temp:`);
       console.log(`[Main]   SFTP ID: ${sftpId}`);
       console.log(`[Main]   Remote path: ${remotePath}`);
@@ -800,6 +800,25 @@ function createBridgeRegistrar(context) {
       const localPath = await getTempDirBridge().getTempFilePath(fileName);
       
       console.log(`[Main]   Local temp path: ${localPath}`);
+
+      if (terminalWorkerManager) {
+        try {
+          const result = await terminalWorkerManager.request("netcatty:sftp:downloadToLocal", {
+            sftpId,
+            remotePath,
+            localPath,
+            encoding,
+          }, {
+            webContentsId: event?.sender?.id,
+          });
+          if (result?.error) throw new Error(result.error);
+          console.log(`[Main]   File downloaded successfully via terminal worker`);
+          return localPath;
+        } catch (err) {
+          try { await fs.promises.rm(localPath, { force: true }); } catch { /* ignore */ }
+          throw err;
+        }
+      }
       
       // Get the sftp client and download file
       const sftpClients = client.getSftpClients ? client.getSftpClients() : null;
@@ -860,7 +879,11 @@ function createBridgeRegistrar(context) {
           totalBytes: 0,
         };
   
-        const result = await transferBridge.startTransfer(event, payload);
+        const result = terminalWorkerManager
+          ? await terminalWorkerManager.request("netcatty:transfer:start", payload, {
+              webContentsId: event?.sender?.id,
+            })
+          : await transferBridge.startTransfer(event, payload);
   
         if (result.error) {
           await cleanupPartialDownload();

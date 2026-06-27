@@ -140,6 +140,14 @@ function createTerminalWorkerManager(options = {}) {
     }
   }
 
+  function deliverReadyPortFallbackOutput(sessionId, data) {
+    outputPortReady.delete(sessionId);
+    terminalOutputChannel?.closeSession?.(sessionId);
+    if (!sendOutputOverLegacyIpc(sessionId, data)) {
+      bufferOutput(sessionId, data);
+    }
+  }
+
   function handleMessage(message) {
     if (!message || typeof message !== "object") return;
     if (message.kind === "response") {
@@ -162,8 +170,7 @@ function createTerminalWorkerManager(options = {}) {
         return;
       }
       if (outputPortReady.has(message.sessionId)) {
-        bufferOutput(message.sessionId, message.data);
-        flushOutputToWorker(message.sessionId);
+        deliverReadyPortFallbackOutput(message.sessionId, message.data);
         return;
       }
       if (!deliverOutputToRenderer(message.sessionId, message.data)) {
@@ -194,6 +201,20 @@ function createTerminalWorkerManager(options = {}) {
 
   function handleExit(code) {
     const error = new Error(`Terminal worker exited${Number.isFinite(code) ? ` with code ${code}` : ""}`);
+    const exitCode = Number.isFinite(code) ? code : 1;
+    for (const [sessionId, webContentsId] of sessionWebContentsIds.entries()) {
+      try {
+        const contents = electronModule?.webContents?.fromId?.(webContentsId);
+        contents?.send?.("netcatty:exit", {
+          sessionId,
+          exitCode,
+          error: error.message,
+          reason: "error",
+        });
+      } catch {
+        // Ignore renderer notification failures while unwinding a crashed worker.
+      }
+    }
     child = null;
     pendingOutput.clear();
     closedSessions.clear();

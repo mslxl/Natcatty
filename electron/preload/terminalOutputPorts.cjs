@@ -6,6 +6,7 @@ function createTerminalOutputPortRegistry(options = {}) {
   const {
     ipcRenderer,
     deliverToListeners,
+    filterData = null,
     closedTerminalDataSessions = new Set(),
     onPortError = console.error,
   } = options;
@@ -32,7 +33,10 @@ function createTerminalOutputPortRegistry(options = {}) {
       if (closedTerminalDataSessions.has(targetSessionId)) return;
       if (!message.data) return;
       try {
-        deliverToListeners?.(targetSessionId, message.data);
+        const data = typeof filterData === "function"
+          ? filterData(targetSessionId, message.data, message)
+          : message.data;
+        if (data) deliverToListeners?.(targetSessionId, data);
       } catch (err) {
         onPortError("Terminal output port callback failed", err);
       }

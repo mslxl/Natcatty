@@ -47,6 +47,26 @@ test("resumes output after a quiet gap when no interrupt echo is visible", () =>
   );
 });
 
+test("accepts an immediate prompt when the remote does not echo Ctrl+C", () => {
+  const session = {};
+
+  armTerminalInterruptOutputGate(session, {
+    now: 2500,
+    quietMs: 80,
+    maxDrainMs: 1000,
+  });
+
+  assert.deepEqual(
+    filterTerminalInterruptOutput(session, "$ ", { now: 2501 }),
+    { accepted: true, data: "$ ", droppedBytes: 0, reason: "prompt-candidate" },
+  );
+
+  assert.deepEqual(
+    filterTerminalInterruptOutput(session, "next output", { now: 2502 }),
+    { accepted: true, data: "next output", droppedBytes: 0, reason: "inactive" },
+  );
+});
+
 test("keeps draining large chunks after a short quiet gap", () => {
   const session = {};
 

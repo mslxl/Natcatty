@@ -49,6 +49,50 @@ test("register attaches terminal output ports and delivers port messages", () =>
   ]);
 });
 
+test("terminal output ports filter data before delivery", () => {
+  const delivered = [];
+  const ipcRenderer = createFakeIpcRenderer();
+  const registry = createTerminalOutputPortRegistry({
+    ipcRenderer,
+    filterData(_sessionId, data) {
+      return data.replace(/^.*__NCMCP_.*\n?/gm, "");
+    },
+    deliverToListeners(sessionId, data) {
+      delivered.push({ sessionId, data });
+    },
+  });
+  const port = createFakePort();
+
+  registry.register();
+  ipcRenderer.emitPort("session-1", port);
+  port.emit({ sessionId: "session-1", data: "before\n__NCMCP_TEST_S\nvisible\n" });
+
+  assert.deepEqual(delivered, [
+    { sessionId: "session-1", data: "before\nvisible\n" },
+  ]);
+});
+
+test("terminal output ports do not deliver fully filtered chunks", () => {
+  const delivered = [];
+  const ipcRenderer = createFakeIpcRenderer();
+  const registry = createTerminalOutputPortRegistry({
+    ipcRenderer,
+    filterData() {
+      return "";
+    },
+    deliverToListeners(sessionId, data) {
+      delivered.push({ sessionId, data });
+    },
+  });
+  const port = createFakePort();
+
+  registry.register();
+  ipcRenderer.emitPort("session-1", port);
+  port.emit({ sessionId: "session-1", data: "__NCMCP_TEST_S\n" });
+
+  assert.deepEqual(delivered, []);
+});
+
 test("register closes stale replacement ports", () => {
   const ipcRenderer = createFakeIpcRenderer();
   const registry = createTerminalOutputPortRegistry({

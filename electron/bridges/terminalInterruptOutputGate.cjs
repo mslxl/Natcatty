@@ -23,6 +23,30 @@ function getStreamPaused(stream) {
   }
 }
 
+function stripAnsi(value) {
+  return String(value || "").replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
+}
+
+function getPromptCandidateSuffix(text) {
+  const raw = String(text || "");
+  const normalized = stripAnsi(raw).replace(/\r/g, "\n");
+  const lastLineStart = normalized.lastIndexOf("\n") + 1;
+  const candidate = normalized.slice(lastLineStart).trimEnd();
+  if (!candidate) return null;
+  if (candidate.length > 160) return null;
+
+  const looksLikePrompt = (
+    /^[#$>%]\s*$/.test(candidate)
+    || /^[^ \t\r\n<>]{1,80}[#$>%]\s*$/.test(candidate)
+    || /^<[^>\r\n]{1,80}>\s*$/.test(candidate)
+    || /^\[[^\]\r\n]{1,120}\]\s*[#$>%]\s*$/.test(candidate)
+  );
+  if (!looksLikePrompt) return null;
+
+  const rawLastBreak = Math.max(raw.lastIndexOf("\n"), raw.lastIndexOf("\r"));
+  return raw.slice(rawLastBreak + 1);
+}
+
 function shouldArmTerminalInterruptOutputGate(session) {
   if (!session?.stream) return false;
   const flowState = session.flowState;
@@ -68,20 +92,6 @@ function filterTerminalInterruptOutput(session, data, options = {}) {
   const now = nowFromOptions(options);
   const bytes = byteLength(data);
   const quietGapMs = gate.lastDroppedAt > 0 ? now - gate.lastDroppedAt : 0;
-  if (quietGapMs >= gate.promptQuietMs && bytes <= gate.promptCandidateBytes) {
-    disarmTerminalInterruptOutputGate(session);
-    return { accepted: true, data: text, droppedBytes: 0, reason: "prompt-gap" };
-  }
-
-  if (quietGapMs >= gate.quietMs) {
-    disarmTerminalInterruptOutputGate(session);
-    return { accepted: true, data: text, droppedBytes: 0, reason: "quiet-gap" };
-  }
-
-  if (now - gate.startedAt >= gate.maxDrainMs) {
-    disarmTerminalInterruptOutputGate(session);
-    return { accepted: true, data: text, droppedBytes: 0, reason: "max-drain" };
-  }
 
   const interruptEchoIndex = text.indexOf("^C");
   if (interruptEchoIndex >= 0) {
@@ -95,6 +105,36 @@ function filterTerminalInterruptOutput(session, data, options = {}) {
       droppedBytes,
       reason: "interrupt-echo",
     };
+  }
+
+  if (gate.droppedBytes === 0 && bytes <= gate.promptCandidateBytes) {
+    const promptCandidate = getPromptCandidateSuffix(text);
+    if (promptCandidate) {
+      const droppedBytes = byteLength(text.slice(0, text.length - promptCandidate.length));
+      gate.droppedBytes += droppedBytes;
+      gate.droppedChunks += droppedBytes > 0 ? 1 : 0;
+      disarmTerminalInterruptOutputGate(session);
+      return {
+        accepted: true,
+        data: promptCandidate,
+        droppedBytes,
+        reason: "prompt-candidate",
+      };
+    }
+  }
+  if (quietGapMs >= gate.promptQuietMs && bytes <= gate.promptCandidateBytes) {
+    disarmTerminalInterruptOutputGate(session);
+    return { accepted: true, data: text, droppedBytes: 0, reason: "prompt-gap" };
+  }
+
+  if (quietGapMs >= gate.quietMs) {
+    disarmTerminalInterruptOutputGate(session);
+    return { accepted: true, data: text, droppedBytes: 0, reason: "quiet-gap" };
+  }
+
+  if (now - gate.startedAt >= gate.maxDrainMs) {
+    disarmTerminalInterruptOutputGate(session);
+    return { accepted: true, data: text, droppedBytes: 0, reason: "max-drain" };
   }
 
   gate.lastDroppedAt = now;

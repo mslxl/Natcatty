@@ -953,6 +953,8 @@ function registerHandlers(ipcMain, options = {}) {
       "netcatty:sftp:write",
       "netcatty:sftp:writeBinary",
       "netcatty:sftp:writeBinaryWithProgress",
+      "netcatty:sftp:downloadToLocal",
+      "netcatty:sftp:uploadLocal",
       "netcatty:sftp:cancelUpload",
       "netcatty:sftp:close",
       "netcatty:sftp:mkdir",
@@ -972,6 +974,8 @@ function registerHandlers(ipcMain, options = {}) {
   ipcMain.handle("netcatty:sftp:write", writeSftp);
   ipcMain.handle("netcatty:sftp:writeBinary", writeSftpBinary);
   ipcMain.handle("netcatty:sftp:writeBinaryWithProgress", writeSftpBinaryWithProgress);
+  ipcMain.handle("netcatty:sftp:downloadToLocal", downloadSftpToLocal);
+  ipcMain.handle("netcatty:sftp:uploadLocal", uploadLocalToSftp);
   ipcMain.handle("netcatty:sftp:cancelUpload", cancelSftpUpload);
   ipcMain.handle("netcatty:sftp:close", closeSftp);
   ipcMain.handle("netcatty:sftp:mkdir", mkdirSftp);

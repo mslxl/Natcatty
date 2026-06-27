@@ -188,6 +188,72 @@ test("output-port-ready flushes output that arrived during port transfer", async
   });
 });
 
+test("worker fallback output after a ready output port is delivered over legacy IPC", async () => {
+  const child = new FakeChild();
+  const sent = [];
+  const closed = [];
+  const outputPort = { label: "worker-output-port" };
+  const manager = createTerminalWorkerManager({
+    utilityProcess: {
+      fork() {
+        return child;
+      },
+    },
+    terminalOutputChannel: {
+      openSession() {
+        return outputPort;
+      },
+      closeSession(sessionId) {
+        closed.push(sessionId);
+      },
+      send() {
+        throw new Error("ready worker fallback output should not be sent back through main output channel");
+      },
+    },
+    electronModule: {
+      webContents: {
+        fromId(id) {
+          return {
+            id,
+            send(channel, payload) {
+              sent.push({ id, channel, payload });
+            },
+          };
+        },
+      },
+    },
+    workerScriptPath: "/worker.cjs",
+  });
+
+  const promise = manager.request("netcatty:local:start", {}, { webContentsId: 7 });
+  child.emit("message", {
+    kind: "response",
+    requestId: child.messages[0].requestId,
+    result: { sessionId: "local-1" },
+  });
+  await promise;
+  child.emit("message", {
+    kind: "output-port-ready",
+    sessionId: "local-1",
+  });
+
+  child.emit("message", {
+    kind: "output",
+    sessionId: "local-1",
+    data: "fallback",
+  });
+
+  assert.deepEqual(sent, [
+    {
+      id: 7,
+      channel: "netcatty:data",
+      payload: { sessionId: "local-1", data: "fallback" },
+    },
+  ]);
+  assert.deepEqual(closed, ["local-1"]);
+  assert.equal(child.messages.some((message) => message.kind === "output-flush" && message.chunks?.includes("fallback")), false);
+});
+
 test("falls back to netcatty:data when no output port is available", async () => {
   const child = new FakeChild();
   const sent = [];
@@ -492,4 +558,56 @@ test("worker exit rejects pending requests and closes output routes", async () =
 
   await assert.rejects(promise, /Terminal worker exited/);
   assert.deepEqual(closed, ["all"]);
+});
+
+test("worker exit notifies renderers for active worker sessions", async () => {
+  const child = new FakeChild();
+  const sent = [];
+  const manager = createTerminalWorkerManager({
+    utilityProcess: {
+      fork() {
+        return child;
+      },
+    },
+    terminalOutputChannel: {
+      openSession() {},
+      closeAll() {},
+    },
+    electronModule: {
+      webContents: {
+        fromId(id) {
+          return {
+            id,
+            send(channel, payload) {
+              sent.push({ id, channel, payload });
+            },
+          };
+        },
+      },
+    },
+    workerScriptPath: "/worker.cjs",
+  });
+
+  const promise = manager.request("netcatty:local:start", {}, { webContentsId: 7 });
+  child.emit("message", {
+    kind: "response",
+    requestId: child.messages[0].requestId,
+    result: { sessionId: "local-1" },
+  });
+  await promise;
+
+  child.emit("exit", 1);
+
+  assert.deepEqual(sent, [
+    {
+      id: 7,
+      channel: "netcatty:exit",
+      payload: {
+        sessionId: "local-1",
+        exitCode: 1,
+        error: "Terminal worker exited with code 1",
+        reason: "error",
+      },
+    },
+  ]);
 });

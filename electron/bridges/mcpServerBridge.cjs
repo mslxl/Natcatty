@@ -66,6 +66,7 @@ const activePtyExecs = new Map(); // marker → { ptyStream, cleanup }
 const cancelledChatSessions = new Set();
 const activeExecChatSessions = new Map(); // chatSessionId -> { sessionId, command, startedAt }
 const backgroundJobs = new Map(); // jobId -> job metadata
+const workerBackgroundJobs = new Map(); // jobId -> { chatSessionId, sessionId }
 const activeSessionExecutions = new Map(); // sessionId -> { kind, startedAt, token }
 const activeSessionSftpOps = new Map(); // opId -> { chatSessionId, cancel }
 const pendingSessionWriteApprovals = new Map(); // sessionId -> method
@@ -929,6 +930,103 @@ async function handleWorkerTerminalExec(params = {}) {
   }
 }
 
+async function handleWorkerJobStart(params = {}) {
+  const { sessionId, command } = params;
+  if (!sessionId || !command) throw new Error("sessionId and command are required");
+  if (typeof command !== "string" || !command.trim()) {
+    return { ok: false, error: "Invalid command", exitCode: 1 };
+  }
+  if (!terminalWorkerManager?.request) {
+    return { ok: false, error: "Session not found" };
+  }
+
+  const chatSessionId = params?.chatSessionId || null;
+  const meta = getSessionMeta(sessionId, chatSessionId) || {};
+  if (!isNetworkDeviceLikeMeta(meta)) {
+    const safety = checkCommandSafety(command);
+    if (safety.blocked) {
+      return { ok: false, error: `Command blocked by safety policy. Pattern: ${safety.matchedPattern}` };
+    }
+  }
+
+  try {
+    const result = await terminalWorkerManager.request("netcatty:ai:jobStart", {
+      sessionId,
+      command,
+      chatSessionId,
+      commandTimeoutMs,
+      sessionMeta: meta,
+    }, {});
+    if (result?.ok && result.jobId) {
+      workerBackgroundJobs.set(result.jobId, {
+        chatSessionId: chatSessionId || null,
+        sessionId,
+      });
+    }
+    return result;
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err) };
+  }
+}
+
+function getWorkerJob(jobId, chatSessionId) {
+  const job = workerBackgroundJobs.get(jobId);
+  if (!job) return null;
+  if (job.chatSessionId && (!chatSessionId || chatSessionId !== job.chatSessionId)) {
+    return null;
+  }
+  return job;
+}
+
+async function handleWorkerJobPoll(params = {}) {
+  const { jobId, chatSessionId, scopedSessionIds } = params || {};
+  if (!jobId) throw new Error("jobId is required");
+  const job = getWorkerJob(jobId, chatSessionId || null);
+  if (!job || !terminalWorkerManager?.request) {
+    return { ok: false, error: "Background job not found" };
+  }
+  if (job.sessionId) {
+    const scopeErr = validateSessionScope(job.sessionId, chatSessionId || null, scopedSessionIds);
+    if (scopeErr) return { ok: false, error: scopeErr };
+  }
+  const result = await terminalWorkerManager.request("netcatty:ai:jobPoll", params, {});
+  if (result?.completed) {
+    workerBackgroundJobs.delete(jobId);
+  }
+  return result;
+}
+
+async function handleWorkerJobStop(params = {}) {
+  const { jobId, chatSessionId, scopedSessionIds } = params || {};
+  if (!jobId) throw new Error("jobId is required");
+  const job = getWorkerJob(jobId, chatSessionId || null);
+  if (!job || !terminalWorkerManager?.request) {
+    return { ok: false, error: "Background job not found" };
+  }
+  if (Array.isArray(scopedSessionIds) && job.sessionId && !scopedSessionIds.includes(job.sessionId)) {
+    return { ok: false, error: `Session "${job.sessionId}" is not in the current scope.` };
+  }
+  const result = await terminalWorkerManager.request("netcatty:ai:jobStop", params, {});
+  if (result?.completed) {
+    workerBackgroundJobs.delete(jobId);
+  }
+  return result;
+}
+
+function cancelWorkerBackgroundJobsForSession(chatSessionId) {
+  if (!chatSessionId) return;
+  for (const [jobId, job] of workerBackgroundJobs) {
+    if (job.chatSessionId === chatSessionId) {
+      workerBackgroundJobs.delete(jobId);
+    }
+  }
+  try {
+    terminalWorkerManager?.send?.("netcatty:ai:catty:cancel", { chatSessionId }, {});
+  } catch {
+    // Worker may already be gone while cancelling a torn-down chat/session.
+  }
+}
+
 let builtinRpcHandlerRegistry = null;
 
 function getBuiltinRpcHandlerRegistry() {
@@ -1030,6 +1128,15 @@ async function dispatch(method, params) {
     }
     if (capability?.id === "terminal.execute" && params?.sessionId && !sessions?.get?.(params.sessionId)) {
       return handleWorkerTerminalExec(params);
+    }
+    if (capability?.id === "terminal.start" && params?.sessionId && !sessions?.get?.(params.sessionId)) {
+      return handleWorkerJobStart(params);
+    }
+    if (capability?.id === "terminal.poll" && workerBackgroundJobs.has(params?.jobId)) {
+      return handleWorkerJobPoll(params);
+    }
+    if (capability?.id === "terminal.stop" && workerBackgroundJobs.has(params?.jobId)) {
+      return handleWorkerJobStop(params);
     }
     return handler(params);
   } finally {
@@ -1168,6 +1275,7 @@ function applyChatSessionCancelled(chatSessionId, cancelled) {
     setChatSessionCancelled(chatSessionId, true);
     cancelPtyExecsForSession(chatSessionId);
     cancelBackgroundJobsForSession(chatSessionId);
+    cancelWorkerBackgroundJobsForSession(chatSessionId);
     clearPendingApprovals(chatSessionId);
     void cancelSftpOpsForSession(chatSessionId);
   } else {
@@ -1189,6 +1297,8 @@ async function handleSetCancelled(params) {
 const { createSftpHandlerApi } = require("./mcpServerBridge/sftpHandlers.cjs");
 const sftpHandlerApi = createSftpHandlerApi({
   get commandTimeoutMs() { return commandTimeoutMs; },
+  get sessions() { return sessions; },
+  get terminalWorkerManager() { return terminalWorkerManager; },
   sftpBridge, registerSftpOp, setTimeout, clearTimeout, AbortController, Promise, Error,
 });
 const {
@@ -1234,6 +1344,7 @@ const configAndCleanupApi = createConfigAndCleanupApi({
   get permissionMode() { return permissionMode; },
   process, existsSync, path, __dirname, toUnpackedAsarPath, DEBUG_MCP,
   getScopedSessionIds, scopedMetadata, scopedAttachments, cancelledChatSessions, cancelBackgroundJobsForSession,
+  cancelWorkerBackgroundJobsForSession,
   clearPendingApprovals, cancelSftpOpsForSession, sftpBridge,
 });
 const { resolveMcpServerRuntimeCommand, buildMcpServerConfig, cleanupScopedMetadata } = configAndCleanupApi;
@@ -1267,6 +1378,7 @@ module.exports = {
   cancelBackgroundJobsForSession,
   cancelAllPtyExecs,
   cancelPtyExecsForSession,
+  cancelWorkerBackgroundJobsForSession,
   cancelSftpOpsForSession,
   getSessionMeta,
   cleanupScopedMetadata,

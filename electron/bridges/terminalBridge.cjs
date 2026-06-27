@@ -1005,7 +1005,7 @@ function interruptSession(event, payload) {
   }, trace);
   writeToSessionNow({ sessionId: payload.sessionId, interruptTrace: trace }, "\x03");
   if (shouldDrainOldOutput) {
-    setImmediate(() => {
+    queueMicrotask(() => {
       if (sessions.get(payload.sessionId) !== session) return;
       try {
         session.stream?.resume?.();
