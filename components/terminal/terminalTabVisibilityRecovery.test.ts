@@ -17,5 +17,6 @@ test('forces full recovery when a terminal pane becomes visible again', () => {
 });
 
 test('layout recovery refit also syncs PTY size for full-screen TUIs', () => {
-  assert.match(source, /runImmediateRefit\(\{ force: true, repeatOnNextFrame: false \}\);\s*finishLayoutRecovery\(\)/);
+  assert.match(source, /runImmediateRefit\(\{ force: true, repeatOnNextFrame: false \}\);\s*finishLayoutRecoveryAfterFit\(\)/);
+  assert.match(source, /finishLayoutRecoveryAfterFit/);
 });

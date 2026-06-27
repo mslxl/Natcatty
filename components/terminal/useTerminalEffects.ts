@@ -681,6 +681,15 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     syncPtySizeAfterLayout();
   };
 
+  const finishLayoutRecoveryAfterFit = () => {
+    const run = () => finishLayoutRecovery();
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => requestAnimationFrame(run));
+      return;
+    }
+    window.setTimeout(run, 0);
+  };
+
   const layoutRecoveryTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   const clearLayoutRecoveryTimers = () => {
@@ -700,7 +709,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
         layoutRecoveryTimersRef.current = layoutRecoveryTimersRef.current.filter((id) => id !== timerId);
         if (!isVisibleRef.current) return;
         runImmediateRefit({ force: true, repeatOnNextFrame: false });
-        finishLayoutRecovery();
+        finishLayoutRecoveryAfterFit();
       }, delayMs);
       layoutRecoveryTimersRef.current.push(timerId);
     }
@@ -744,8 +753,8 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     lastFittedSizeRef.current = null;
     xtermRuntimeRef.current?.ensureWebglRenderer();
     xtermRuntimeRef.current?.clearTextureAtlas();
-    runImmediateRefit({ force: true });
-    finishLayoutRecovery();
+    runImmediateRefit({ force: true, repeatOnNextFrame: false });
+    finishLayoutRecoveryAfterFit();
     commitVisibleLayout();
     scheduleLayoutRecoveryRefit([100, 350]);
   };
@@ -780,8 +789,8 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     }
 
     commitVisibleLayout();
-    runImmediateRefit({ force: true });
-    finishLayoutRecovery();
+    runImmediateRefit({ force: true, repeatOnNextFrame: false });
+    finishLayoutRecoveryAfterFit();
   }, [isVisible, paneLayoutKey, isResizing, inWorkspace, isFocusMode, isFocused]);
 
   // Defer refit for non-focused split panes that became visible on a tab switch.
@@ -794,7 +803,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       if (cancelled || !isVisibleRef.current) return;
       if (lastCommittedVisibleLayoutKeyRef.current === paneLayoutKey) return;
       runImmediateRefit({ force: true, repeatOnNextFrame: false });
-      finishLayoutRecovery();
+      finishLayoutRecoveryAfterFit();
       commitVisibleLayout();
     };
 
@@ -853,7 +862,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       // DOM renderer) and synchronously repaint every row.
       xtermRuntimeRef.current?.clearTextureAtlas();
       runImmediateRefit({ force: true });
-      finishLayoutRecovery();
+      finishLayoutRecoveryAfterFit();
       if (pendingOutputScrollRef.current) {
         termRef.current?.scrollToBottom();
         if (typeof requestAnimationFrame === "function") {
@@ -1032,7 +1041,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     prevIsResizingRef.current = isResizing;
     lastFittedSizeRef.current = null;
     safeFit({ force: true, requireVisible: true });
-    finishLayoutRecovery();
+    finishLayoutRecoveryAfterFit();
     if (typeof requestAnimationFrame === 'function') {
       requestAnimationFrame(() => {
         safeFit({ force: true, requireVisible: true });
@@ -1053,11 +1062,11 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     // dimensions may not be final on the first pass.
     const timer1 = setTimeout(() => {
       safeFit({ requireVisible: true });
-      finishLayoutRecovery();
+      finishLayoutRecoveryAfterFit();
     }, 100);
     const timer2 = setTimeout(() => {
       safeFit({ force: true, requireVisible: true });
-      finishLayoutRecovery();
+      finishLayoutRecoveryAfterFit();
     }, 350);
     return () => { clearTimeout(timer1); clearTimeout(timer2); };
   }, [inWorkspace, isVisible]);
