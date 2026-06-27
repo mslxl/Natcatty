@@ -22,8 +22,10 @@ import { cn, normalizeLineEndings } from '../lib/utils';
 import { detectLocalOs } from '../lib/localShell';
 import { useStoredString } from '../application/state/useStoredString';
 import { useStoredNumber } from '../application/state/useStoredNumber';
+import { useStoredBoolean } from '../application/state/useStoredBoolean';
 import {
   STORAGE_KEY_SIDE_PANEL_WIDTH,
+  STORAGE_KEY_TERMINAL_COMPOSE_BAR_OPEN,
 } from '../infrastructure/config/storageKeys';
 import { buildCacheKey } from '../application/state/sftp/sharedRemoteHostCache';
 import type { DropEntry } from '../lib/sftpFileUtils';
@@ -463,7 +465,10 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   );
 
   // Workspace-level compose bar state
-  const [isComposeBarOpen, setIsComposeBarOpen] = useState(false);
+  const [isComposeBarOpen, setIsComposeBarOpen] = useStoredBoolean(
+    STORAGE_KEY_TERMINAL_COMPOSE_BAR_OPEN,
+    false,
+  );
   const sessionsRef = useRef(sessions);
   sessionsRef.current = sessions;
   const workspacesRef = useRef(workspaces);
@@ -517,7 +522,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
 
   const handleToggleWorkspaceComposeBar = useCallback(() => {
     setIsComposeBarOpen(prev => !prev);
-  }, []);
+  }, [setIsComposeBarOpen]);
 
   const handleOpenSftp = useCallback((host: Host, initialPath?: string, pendingUploadEntries?: DropEntry[], sourceSessionId?: string) => {
     const tabId = activeTabIdRef.current;
