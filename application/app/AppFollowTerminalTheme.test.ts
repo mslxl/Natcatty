@@ -17,6 +17,8 @@ test("follow-app terminal theme selection updates the matching UI theme via Them
   assert.match(appSource, /themeRuntime\.pickTheme\(themeId\)/);
   assert.match(appSource, /useTerminalAppearanceInjection/);
   assert.match(appSource, /includeChromeSurfaces: followAppTerminalTheme/);
+  assert.match(appSource, /clearThemeIntent\(\)/);
+  assert.match(runtimeSource, /injectTerminalAppearanceVars\(appearance\.theme, \{ includeChromeSurfaces \}\)/);
   assert.doesNotMatch(settingsSource, /pendingFollowAppTerminalThemeId/);
   assert.doesNotMatch(settingsSource, /applyFollowAppTerminalThemePick/);
   assert.match(settingsSource, /appearanceTransitionModeRef\.current = 'instant'/);

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { activeTabStore, toEditorTabId, fromEditorTabId, isEditorTabId } from './application/state/activeTabStore';
 import { useAutoSync } from './application/state/useAutoSync';
 import { useManagedSourceSync } from './application/state/useManagedSourceSync';
@@ -316,6 +316,13 @@ function App({ settings }: { settings: SettingsState }) {
   useTerminalAppearanceInjection(themeRuntime.globalAppearance, {
     includeChromeSurfaces: followAppTerminalTheme,
   });
+  const prevFollowAppTerminalThemeRef = useRef(followAppTerminalTheme);
+  const clearThemeIntent = themeRuntime.clearIntent;
+  useLayoutEffect(() => {
+    if (prevFollowAppTerminalThemeRef.current === followAppTerminalTheme) return;
+    prevFollowAppTerminalThemeRef.current = followAppTerminalTheme;
+    clearThemeIntent();
+  }, [followAppTerminalTheme, clearThemeIntent]);
   const currentTerminalTheme = themeRuntime.currentTerminalTheme;
   const editorTabs = useEditorTabs();
 

@@ -24,6 +24,16 @@ export function useTerminalLayerEffects(ctx: TerminalLayerEffectsContext) {
 
   const activityEscapeFiltersRef = useRef<any>(new Map());
 
+  const remeasureScheduledRef = useRef(false);
+  const layoutEffectSnapshotRef = useRef({
+    workspaceId: undefined as string | undefined,
+    viewMode: undefined as string | undefined,
+    composeBarOpen: false,
+    shellWidth: 0,
+    width: 0,
+    height: 0,
+  });
+
   const remeasureWorkspaceArea = useCallback(() => {
     const el = workspaceInnerRef.current;
     if (!el) return;
@@ -38,10 +48,15 @@ export function useTerminalLayerEffects(ctx: TerminalLayerEffectsContext) {
   }, [setWorkspaceArea, workspaceInnerRef]);
 
   const scheduleWorkspaceAreaRemeasure = useCallback(() => {
+    if (remeasureScheduledRef.current) return;
+    remeasureScheduledRef.current = true;
     remeasureWorkspaceArea();
     requestAnimationFrame(() => {
       remeasureWorkspaceArea();
-      requestAnimationFrame(remeasureWorkspaceArea);
+      requestAnimationFrame(() => {
+        remeasureWorkspaceArea();
+        remeasureScheduledRef.current = false;
+      });
     });
   }, [remeasureWorkspaceArea, requestAnimationFrame]);
 
@@ -158,6 +173,31 @@ export function useTerminalLayerEffects(ctx: TerminalLayerEffectsContext) {
   // because it updates continuously during drag.
   useEffect(() => {
       if (!isTerminalLayerVisible) return;
+      const el = workspaceInnerRef.current;
+      const width = el?.clientWidth ?? 0;
+      const height = el?.clientHeight ?? 0;
+      const prev = layoutEffectSnapshotRef.current;
+      const dimensionsUnchanged = width > 0
+        && height > 0
+        && prev.width === width
+        && prev.height === height
+        && prev.shellWidth === sidePanelShellWidth;
+      if (
+        dimensionsUnchanged
+        && prev.workspaceId === activeWorkspaceId
+        && prev.viewMode === activeWorkspaceViewMode
+        && prev.composeBarOpen === isComposeBarOpen
+      ) {
+        return;
+      }
+      layoutEffectSnapshotRef.current = {
+        workspaceId: activeWorkspaceId,
+        viewMode: activeWorkspaceViewMode,
+        composeBarOpen: isComposeBarOpen,
+        shellWidth: sidePanelShellWidth,
+        width,
+        height,
+      };
       scheduleWorkspaceAreaRemeasure();
     }, [
       activeWorkspaceId,
