@@ -36,6 +36,7 @@ import { classifyDistroId, shouldProbeSessionCwd } from "../domain/host";
 import { supportsZmodemTerminalDragDrop } from "../lib/zmodemDragDrop";
 import { resolveHostAuth } from "../domain/sshAuth";
 import { useTerminalBackend } from "../application/state/useTerminalBackend";
+import { useStoredBoolean } from "../application/state/useStoredBoolean";
 import { useSessionLogBackend } from "../application/state/useSessionLogBackend";
 import { useTerminalLayoutSuppressActive } from "../application/state/terminalLayoutSuppressStore";
 // SFTPModal removed - SFTP is now handled by SftpSidePanel in TerminalLayer
@@ -47,6 +48,7 @@ import { useAvailableFonts } from "../application/state/fontStore";
 import { composeFontFamilyStack, type SupportedPlatform } from "../infrastructure/config/cjkFonts";
 import { resolveTerminalFontFamilyId } from "../infrastructure/config/fonts";
 import { getBuiltinTerminalThemeById } from "../infrastructure/config/terminalThemes";
+import { STORAGE_KEY_TERMINAL_COMPOSE_BAR_OPEN } from "../infrastructure/config/storageKeys";
 import { useCustomThemes } from "../application/state/customThemeStore";
 
 import { TerminalConnectionDialog } from "./terminal/TerminalConnectionDialog";
@@ -504,7 +506,10 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   } | null>(null);
 
   // pendingUploadEntries removed - drag-drop uploads now handled by SftpSidePanel
-  const [isComposeBarOpen, setIsComposeBarOpen] = useState(false);
+  const [isComposeBarOpen, setIsComposeBarOpen] = useStoredBoolean(
+    STORAGE_KEY_TERMINAL_COMPOSE_BAR_OPEN,
+    false,
+  );
   const [terminalEncoding, setTerminalEncoding] = useState<'utf-8' | 'gb18030'>(() => {
     return resolveInitialTerminalEncoding(host?.charset);
   });
@@ -1867,6 +1872,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     onOpenHistory,
     onOpenTheme,
     onToggleComposeBar,
+    setIsComposeBarOpen,
     handleUpdateHostFromTerminal,
     sessionId,
     snippetPackages,

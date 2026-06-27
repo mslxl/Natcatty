@@ -2,6 +2,8 @@ import type { SearchAddon } from "@xterm/addon-search";
 import type { Terminal as XTerm } from "@xterm/xterm";
 import { useCallback, useRef, useState } from "react";
 import type { RefObject } from "react";
+import { useStoredBoolean } from "../../../application/state/useStoredBoolean";
+import { STORAGE_KEY_TERMINAL_SEARCH_OPEN } from "../../../infrastructure/config/storageKeys";
 
 type SearchMatchCount = { current: number; total: number } | null;
 
@@ -28,7 +30,10 @@ export const useTerminalSearch = ({
   searchAddonRef: RefObject<SearchAddon | null>;
   termRef: RefObject<XTerm | null>;
 }) => {
-  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [isSearchOpen, setIsSearchOpen] = useStoredBoolean(
+    STORAGE_KEY_TERMINAL_SEARCH_OPEN,
+    false,
+  );
   const [searchMatchCount, setSearchMatchCount] = useState<SearchMatchCount>(null);
   const searchTermRef = useRef<string>("");
 
@@ -37,12 +42,13 @@ export const useTerminalSearch = ({
   }, [searchAddonRef]);
 
   const handleToggleSearch = useCallback(() => {
-    setIsSearchOpen((prev) => !prev);
-    if (isSearchOpen) {
+    const next = !isSearchOpen;
+    setIsSearchOpen(next);
+    if (!next) {
       setSearchMatchCount(null);
       clearSearchDecorations();
     }
-  }, [clearSearchDecorations, isSearchOpen]);
+  }, [clearSearchDecorations, isSearchOpen, setIsSearchOpen]);
 
   const handleSearch = useCallback(
     (term: string): boolean => {
@@ -87,7 +93,7 @@ export const useTerminalSearch = ({
     setSearchMatchCount(null);
     clearSearchDecorations();
     termRef.current?.focus();
-  }, [clearSearchDecorations, termRef]);
+  }, [clearSearchDecorations, setIsSearchOpen, termRef]);
 
   return {
     isSearchOpen,
