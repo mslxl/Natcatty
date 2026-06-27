@@ -164,6 +164,34 @@ test('shared host tree falls back to the first workspace session when focused se
   }), 'host-1');
 });
 
+test('shared host tree fallback prefers workspace tree order over sessions array order', () => {
+  const sessions = [
+    { id: 'session-2', hostId: 'host-2', workspaceId: 'workspace-1' },
+    { id: 'session-1', hostId: 'host-1', workspaceId: 'workspace-1' },
+  ] as TerminalSession[];
+  const workspaces = [{
+    id: 'workspace-1',
+    focusedSessionId: 'missing-session',
+    root: {
+      id: 'split-1',
+      type: 'split',
+      direction: 'horizontal',
+      children: [
+        { id: 'pane-1', type: 'pane', sessionId: 'session-1' },
+        { id: 'pane-2', type: 'pane', sessionId: 'session-2' },
+      ],
+      sizes: [0.5, 0.5],
+    },
+  }] as Workspace[];
+
+  assert.equal(resolveWorkTabActiveHostId({
+    activeTabId: 'workspace-1',
+    sessions,
+    workspaces,
+    editorTabs: [],
+  }), 'host-1');
+});
+
 test('shared host tree uses the active host theme when follow-app terminal theme is off', () => {
   const currentTheme = makeTheme('app-dark', 'dark', '#111111');
   const hostTheme = makeTheme('host-light', 'light', '#fafafa');

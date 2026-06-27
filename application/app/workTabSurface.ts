@@ -98,6 +98,34 @@ export function isTerminalContentTabSurface({
   return sessionIds.has(activeTabId) || workspaceIds.has(activeTabId);
 }
 
+export function resolveWorkspaceTargetSession(
+  workspace: Workspace,
+  sessions: readonly TerminalSession[],
+): TerminalSession | undefined {
+  const sessionById = new Map(sessions.map((session) => [session.id, session]));
+  return resolveWorkspaceTargetSessionFromMap(workspace, sessionById);
+}
+
+export function resolveWorkspaceTargetSessionFromMap(
+  workspace: Workspace,
+  sessionById: ReadonlyMap<string, TerminalSession>,
+): TerminalSession | undefined {
+  const orderedSessionIds = collectSessionIds(workspace.root);
+  const workspaceSessionIdSet = new Set(orderedSessionIds);
+  const focusedSession = workspace.focusedSessionId
+    ? sessionById.get(workspace.focusedSessionId)
+    : undefined;
+  const validFocusedSession = focusedSession && workspaceSessionIdSet.has(focusedSession.id)
+    ? focusedSession
+    : undefined;
+  if (validFocusedSession) return validFocusedSession;
+  for (const sessionId of orderedSessionIds) {
+    const session = sessionById.get(sessionId);
+    if (session) return session;
+  }
+  return undefined;
+}
+
 export function resolveWorkTabActiveHostId({
   activeTabId,
   editorTabs,
@@ -120,17 +148,7 @@ export function resolveWorkTabActiveHostId({
   const activeWorkspace = workspaces.find((workspace) => workspace.id === activeTabId);
   if (!activeWorkspace) return null;
 
-  const workspaceSessionIds = new Set(collectSessionIds(activeWorkspace.root));
-  const focusedSessionId = activeWorkspace.focusedSessionId;
-  const focusedSession = focusedSessionId
-    ? sessions.find((session) => session.id === focusedSessionId)
-    : undefined;
-  const validFocusedSession = focusedSession && workspaceSessionIds.has(focusedSession.id)
-    ? focusedSession
-    : undefined;
-  const targetSession = validFocusedSession
-    ?? sessions.find((session) => workspaceSessionIds.has(session.id));
-
+  const targetSession = resolveWorkspaceTargetSession(activeWorkspace, sessions);
   return targetSession?.hostId ?? null;
 }
 

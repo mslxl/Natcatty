@@ -9,6 +9,7 @@ import { collectSessionIds } from "../../domain/workspace";
 import type { EditorTab } from "../state/editorTabStore";
 import type { LogView } from "../state/logViewState";
 import type { Host, TerminalSession, TerminalTheme, Workspace } from "../../types";
+import { resolveWorkspaceTargetSessionFromMap } from "./workTabSurface";
 
 export type ResolveActiveChromeThemeInput = {
   accentMode: "theme" | "custom";
@@ -97,11 +98,7 @@ export function resolveActiveChromeTheme({
     if (followAppTerminalTheme) return currentTerminalTheme;
 
     if (workspace.viewMode === "focus") {
-      const workspaceSessionIds = collectSessionIds(workspace.root);
-      const focusedSession = (workspace.focusedSessionId
-        ? sessionById.get(workspace.focusedSessionId)
-        : null)
-        ?? workspaceSessionIds.map((id) => sessionById.get(id)).find(Boolean);
+      const focusedSession = resolveWorkspaceTargetSessionFromMap(workspace, sessionById);
       return focusedSession ? resolveSessionTheme(focusedSession) : null;
     }
 
@@ -114,9 +111,7 @@ export function resolveActiveChromeTheme({
     const allSame = workspaceSessions.every((session) => resolveSessionTheme(session).id === firstTheme.id);
     if (allSame) return firstTheme;
 
-    const focusedSession = workspace.focusedSessionId
-      ? sessionById.get(workspace.focusedSessionId)
-      : null;
+    const focusedSession = resolveWorkspaceTargetSessionFromMap(workspace, sessionById);
     return focusedSession ? resolveSessionTheme(focusedSession) : null;
   }
 
