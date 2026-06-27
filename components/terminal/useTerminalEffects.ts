@@ -19,6 +19,10 @@ import {
 import { scheduleTerminalThemeUpdate, applyTerminalThemeSync, cancelTerminalThemeUpdate } from './terminalThemeScheduler';
 import { injectTerminalPaneAppearanceVars } from '../../infrastructure/theme/terminalAppearanceVars';
 import {
+  isTerminalAlternateScreenActive,
+  nudgeAlternateScreenRedraw,
+} from './terminalHibernateRuntime';
+import {
   isTerminalCloseGenerationCurrent,
   resolveConnectionLogCapturePayload,
   scheduleTerminalCloseTeardown,
@@ -88,6 +92,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
   const lastWebglRecoveryLayoutKeyRef = useRef<string | null>(null);
   const terminalBootCloseGenerationRef = useRef(0);
   const hiddenAtRef = useRef<number | null>(null);
+  const wasVisibleRef = useRef(isVisible);
 
 
   useEffect(() => {
@@ -652,6 +657,30 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     }
   };
 
+  const syncPtySizeAfterLayout = () => {
+    const term = termRef.current;
+    const id = sessionRef.current;
+    if (!term || !id) return;
+
+    try {
+      if (isTerminalAlternateScreenActive(term)) {
+        nudgeAlternateScreenRedraw(term);
+      } else {
+        resizeSession(id, term.cols, term.rows);
+      }
+    } catch (err) {
+      logger.warn('Sync session size after layout failed', err);
+    }
+  };
+
+  const finishLayoutRecovery = () => {
+    const term = termRef.current;
+    if (term) {
+      forceSyncRenderAfterResize(term);
+    }
+    syncPtySizeAfterLayout();
+  };
+
   const layoutRecoveryTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   const clearLayoutRecoveryTimers = () => {
@@ -671,6 +700,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
         layoutRecoveryTimersRef.current = layoutRecoveryTimersRef.current.filter((id) => id !== timerId);
         if (!isVisibleRef.current) return;
         runImmediateRefit({ force: true, repeatOnNextFrame: false });
+        finishLayoutRecovery();
       }, delayMs);
       layoutRecoveryTimersRef.current.push(timerId);
     }
@@ -709,15 +739,39 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     lastCommittedVisibleLayoutKeyRef.current = paneLayoutKey;
   };
 
+  const recoverTerminalAfterBecomeVisible = () => {
+    lastCommittedVisibleLayoutKeyRef.current = null;
+    lastFittedSizeRef.current = null;
+    xtermRuntimeRef.current?.ensureWebglRenderer();
+    xtermRuntimeRef.current?.clearTextureAtlas();
+    runImmediateRefit({ force: true });
+    finishLayoutRecovery();
+    commitVisibleLayout();
+    scheduleLayoutRecoveryRefit([100, 350]);
+  };
+
   // Refit synchronously when a split pane becomes visible or its bounds change.
   // Tab switches move hidden panes off-screen without resizing xterm; becoming
   // visible again does not always fire ResizeObserver, leaving a gap below content.
   // Skip during split-divider drag — refit runs once when isResizing becomes false.
   // In multi-split workspaces only the focused pane refits on tab switch; other
   // visible panes defer so N terminals don't block the main thread together.
-  // Revisiting the same layout key (A→B→A) uses a cheap non-force fit only.
   useLayoutEffect(() => {
+    const becameVisible = isVisible && !wasVisibleRef.current;
+    wasVisibleRef.current = isVisible;
+
     if (!isVisible || isResizing) return;
+
+    if (becameVisible) {
+      if (shouldRefitImmediatelyOnShow()) {
+        recoverTerminalAfterBecomeVisible();
+      } else {
+        lastCommittedVisibleLayoutKeyRef.current = null;
+        scheduleLayoutRecoveryRefit([120, 350]);
+      }
+      return;
+    }
+
     if (!shouldRefitImmediatelyOnShow()) return;
 
     if (layoutAlreadyCommitted()) {
@@ -727,6 +781,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
 
     commitVisibleLayout();
     runImmediateRefit({ force: true });
+    finishLayoutRecovery();
   }, [isVisible, paneLayoutKey, isResizing, inWorkspace, isFocusMode, isFocused]);
 
   // Defer refit for non-focused split panes that became visible on a tab switch.
@@ -738,7 +793,8 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     const runDeferred = () => {
       if (cancelled || !isVisibleRef.current) return;
       if (lastCommittedVisibleLayoutKeyRef.current === paneLayoutKey) return;
-      safeFit({ requireVisible: true });
+      runImmediateRefit({ force: true, repeatOnNextFrame: false });
+      finishLayoutRecovery();
       commitVisibleLayout();
     };
 
@@ -759,6 +815,8 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
 
   useLayoutEffect(() => {
     if (isVisible) return;
+    lastCommittedVisibleLayoutKeyRef.current = null;
+    lastWebglRecoveryLayoutKeyRef.current = null;
     if (hiddenAtRef.current === null) {
       hiddenAtRef.current = Date.now();
     }
@@ -795,8 +853,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       // DOM renderer) and synchronously repaint every row.
       xtermRuntimeRef.current?.clearTextureAtlas();
       runImmediateRefit({ force: true });
-      const visibleTerm = termRef.current;
-      if (visibleTerm) forceSyncRenderAfterResize(visibleTerm);
+      finishLayoutRecovery();
       if (pendingOutputScrollRef.current) {
         termRef.current?.scrollToBottom();
         if (typeof requestAnimationFrame === "function") {
@@ -975,11 +1032,15 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     prevIsResizingRef.current = isResizing;
     lastFittedSizeRef.current = null;
     safeFit({ force: true, requireVisible: true });
+    finishLayoutRecovery();
     if (typeof requestAnimationFrame === 'function') {
       requestAnimationFrame(() => {
         safeFit({ force: true, requireVisible: true });
         const term = termRef.current;
-        if (term) forceSyncRenderAfterResize(term);
+        if (term) {
+          forceSyncRenderAfterResize(term);
+          syncPtySizeAfterLayout();
+        }
       });
     }
   }, [isResizing, isVisible]);
@@ -992,9 +1053,11 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     // dimensions may not be final on the first pass.
     const timer1 = setTimeout(() => {
       safeFit({ requireVisible: true });
+      finishLayoutRecovery();
     }, 100);
     const timer2 = setTimeout(() => {
       safeFit({ force: true, requireVisible: true });
+      finishLayoutRecovery();
     }, 350);
     return () => { clearTimeout(timer1); clearTimeout(timer2); };
   }, [inWorkspace, isVisible]);
