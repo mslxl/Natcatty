@@ -419,7 +419,12 @@ const HostTreeFlatRowItem = memo<HostTreeFlatRowProps>(({
             style={{ color: theme.termFg }}
           />
         ) : (
-          <span className="flex h-5 min-w-0 flex-1 translate-y-px items-center truncate leading-none">{row.host.label}</span>
+          <span
+            className="flex h-5 min-w-0 flex-1 translate-y-px items-center truncate leading-none"
+            style={{ color: theme.termFg }}
+          >
+            {row.host.label}
+          </span>
         )}
         {row.host.protocol && row.host.protocol !== 'ssh' && (
           <span className="flex h-5 shrink-0 translate-y-px items-center text-[10px] leading-none uppercase opacity-70" style={{ color: theme.mutedFg }}>

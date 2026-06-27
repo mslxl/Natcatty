@@ -91,3 +91,14 @@ test('notes side panel forwards repeated open-note requests', () => {
   assert.match(layerSource, /next\.set\(tabId, \{ noteId, requestId \}\)/);
   assert.match(sectionSource, /openNoteRequestId=\{openNoteRequest\?\.requestId \?\? null\}/);
 });
+
+test('side panel tab bar and borders use inline resolved terminal theme colors', () => {
+  const sectionSource = readFileSync(new URL('./TerminalLayerSidePanelSection.tsx', import.meta.url), 'utf8');
+
+  assert.match(sectionSource, /buildSidePanelChromeThemeFromTerminalTheme/);
+  assert.match(sectionSource, /backgroundColor: sidePanelTheme\.termBg/);
+  assert.match(sectionSource, /borderBottom: `1px solid \$\{sidePanelTheme\.separator\}`/);
+  assert.match(sectionSource, /borderLeft: `1px solid \$\{sidePanelTheme\.separator\}`/);
+  assert.doesNotMatch(sectionSource, /terminalAppearanceSidePanelStyle/);
+  assert.doesNotMatch(sectionSource, /var\(--terminal-sidepanel-border\)/);
+});

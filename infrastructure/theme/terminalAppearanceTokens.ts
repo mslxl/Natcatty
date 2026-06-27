@@ -105,6 +105,26 @@ export type HostTreeThemeColors = {
   folderFg: string;
 };
 
+export type SidePanelChromeTheme = {
+  termBg: string;
+  termFg: string;
+  mutedFg: string;
+  separator: string;
+  accent: string;
+};
+
+export function buildSidePanelChromeThemeFromTerminalTheme(theme: TerminalTheme): SidePanelChromeTheme {
+  const bg = theme.colors.background;
+  const fg = theme.colors.foreground;
+  return {
+    termBg: bg,
+    termFg: fg,
+    mutedFg: mix(fg, bg, 58),
+    separator: mix(fg, bg, 12),
+    accent: theme.colors.cursor,
+  };
+}
+
 export function buildHostTreeThemeFromTerminalTheme(theme: TerminalTheme): HostTreeThemeColors {
   const bg = theme.colors.background;
   const fg = theme.colors.foreground;

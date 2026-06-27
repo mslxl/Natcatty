@@ -3,6 +3,7 @@ import {
   isEditorTabId,
 } from '../state/activeTabStore';
 import { applyCustomAccentToTerminalTheme, resolveHostTerminalThemeId } from '../../domain/terminalAppearance';
+import { collectSessionIds } from '../../domain/workspace';
 import type { EditorTab } from '../state/editorTabStore';
 import type { Host, TerminalSession, TerminalTheme, Workspace } from '../../types';
 
@@ -119,12 +120,18 @@ export function resolveWorkTabActiveHostId({
   const activeWorkspace = workspaces.find((workspace) => workspace.id === activeTabId);
   if (!activeWorkspace) return null;
 
+  const workspaceSessionIds = new Set(collectSessionIds(activeWorkspace.root));
   const focusedSessionId = activeWorkspace.focusedSessionId;
-  if (focusedSessionId) {
-    return sessions.find((session) => session.id === focusedSessionId)?.hostId ?? null;
-  }
+  const focusedSession = focusedSessionId
+    ? sessions.find((session) => session.id === focusedSessionId)
+    : undefined;
+  const validFocusedSession = focusedSession && workspaceSessionIds.has(focusedSession.id)
+    ? focusedSession
+    : undefined;
+  const targetSession = validFocusedSession
+    ?? sessions.find((session) => workspaceSessionIds.has(session.id));
 
-  return null;
+  return targetSession?.hostId ?? null;
 }
 
 export function resolveWorkTabHostTreeTheme({
