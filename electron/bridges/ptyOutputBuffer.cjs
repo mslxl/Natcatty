@@ -12,32 +12,45 @@
  * current turn, so a single echoed keystroke is forwarded almost immediately
  * while bursts of output still collapse into one send.
  *
- * A byte cap still forces an immediate, synchronous flush so a flood of output
- * can't grow the buffer without bound between turns.
+ * Once a burst reaches the soft cap, switch to a very short timer. That gives
+ * urgent control input (Ctrl+C/close) room to run instead of letting a flood
+ * repeatedly send synchronously. A larger hard cap still flushes immediately so
+ * the process cannot grow the buffer without bound.
  *
  * @param {(data: string) => void} sendFn delivers an accumulated batch
  * @param {{
  *   maxBufferSize?: number,
  *   shouldAcceptOutput?: () => boolean,
+ *   floodFlushDelayMs?: number,
+ *   maxFloodBufferSize?: number,
  * }} [options]
  * @returns {{ bufferData: (data: string) => void, flush: () => void, discard: () => void }}
  */
 function createPtyOutputBuffer(sendFn, options = {}) {
   const maxBufferSize = options.maxBufferSize ?? 16384; // 16KB
+  const maxFloodBufferSize = options.maxFloodBufferSize ?? Math.max(maxBufferSize * 16, maxBufferSize);
+  const floodFlushDelayMs = options.floodFlushDelayMs ?? 8;
   const shouldAcceptOutput = options.shouldAcceptOutput ?? (() => true);
 
   let dataBuffer = "";
   let scheduled = null;
+  let scheduledType = null;
 
   const cancelScheduled = () => {
     if (scheduled) {
-      clearImmediate(scheduled);
+      if (scheduledType === "timeout") {
+        clearTimeout(scheduled);
+      } else {
+        clearImmediate(scheduled);
+      }
       scheduled = null;
+      scheduledType = null;
     }
   };
 
   const flushNow = () => {
     scheduled = null;
+    scheduledType = null;
     if (dataBuffer.length > 0) {
       const pending = dataBuffer;
       dataBuffer = "";
@@ -45,17 +58,31 @@ function createPtyOutputBuffer(sendFn, options = {}) {
     }
   };
 
+  const scheduleTurnFlush = () => {
+    if (scheduled) return;
+    scheduledType = "immediate";
+    scheduled = setImmediate(flushNow);
+  };
+
+  const scheduleFloodFlush = () => {
+    if (scheduledType === "timeout") return;
+    cancelScheduled();
+    scheduledType = "timeout";
+    scheduled = setTimeout(flushNow, floodFlushDelayMs);
+  };
+
   const bufferData = (data) => {
     if (!shouldAcceptOutput()) {
       return;
     }
     dataBuffer += data;
-    if (dataBuffer.length >= maxBufferSize) {
-      // Large enough to ship right now — don't wait for the turn flush.
+    if (dataBuffer.length >= maxFloodBufferSize) {
       cancelScheduled();
       flushNow();
+    } else if (dataBuffer.length >= maxBufferSize) {
+      scheduleFloodFlush();
     } else if (!scheduled) {
-      scheduled = setImmediate(flushNow);
+      scheduleTurnFlush();
     }
   };
 

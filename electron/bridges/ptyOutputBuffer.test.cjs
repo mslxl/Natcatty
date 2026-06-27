@@ -5,6 +5,7 @@ const { createPtyOutputBuffer } = require("./ptyOutputBuffer.cjs");
 
 /** Resolve after one event-loop turn (immediates have run). */
 const tick = () => new Promise((resolve) => setImmediate(resolve));
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 test("coalesces data buffered within the same turn into a single send", async () => {
   const sends = [];
@@ -35,10 +36,11 @@ test("flushes within a single event-loop turn (not on a fixed delay)", async () 
   assert.deepEqual(sends, ["x"]);
 });
 
-test("flushes immediately and synchronously once the size cap is reached", async () => {
+test("paces size-cap flushes with a short flood delay", async () => {
   const sends = [];
   const buffer = createPtyOutputBuffer((data) => sends.push(data), {
     maxBufferSize: 4,
+    floodFlushDelayMs: 5,
   });
 
   buffer.bufferData("ab");
@@ -46,12 +48,32 @@ test("flushes immediately and synchronously once the size cap is reached", async
 
   buffer.bufferData("cd"); // now "abcd" hits the 4-byte cap
 
-  // Cap flush happens synchronously, without waiting for the turn.
-  assert.deepEqual(sends, ["abcd"]);
+  // Flood-sized output is paced instead of synchronously spamming IPC.
+  assert.deepEqual(sends, []);
 
-  // The pending turn flush must have been cancelled — no empty/duplicate send.
   await tick();
+  assert.deepEqual(sends, []);
+
+  await sleep(10);
   assert.deepEqual(sends, ["abcd"]);
+});
+
+test("hard cap still flushes synchronously when paced flood output keeps growing", async () => {
+  const sends = [];
+  const buffer = createPtyOutputBuffer((data) => sends.push(data), {
+    maxBufferSize: 4,
+    maxFloodBufferSize: 8,
+    floodFlushDelayMs: 50,
+  });
+
+  buffer.bufferData("abcd");
+  assert.deepEqual(sends, []);
+
+  buffer.bufferData("efgh");
+  assert.deepEqual(sends, ["abcdefgh"]);
+
+  await sleep(60);
+  assert.deepEqual(sends, ["abcdefgh"]);
 });
 
 test("flush() forces a synchronous send and cancels the pending turn", async () => {
