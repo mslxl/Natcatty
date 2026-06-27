@@ -13,6 +13,7 @@ import { useAvailableFonts } from '../../application/state/fontStore';
 import { TERMINAL_THEMES, TerminalThemeConfig, USER_VISIBLE_TERMINAL_THEMES, getBuiltinTerminalThemeById, isUiMatchTerminalThemeId } from '../../infrastructure/config/terminalThemes';
 import { MIN_FONT_SIZE, MAX_FONT_SIZE, TerminalFont } from '../../infrastructure/config/fonts';
 import { useCustomThemes, useCustomThemeActions } from '../../application/state/customThemeStore';
+import { terminalAppearanceThemePanelVars } from '../../infrastructure/theme/terminalAppearanceTokens';
 import { parseItermcolors } from '../../infrastructure/parsers/itermcolorsParser';
 import { CustomThemeModal } from './CustomThemeModal';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
@@ -148,10 +149,6 @@ interface ThemeSidePanelProps {
   onFontWeightChange: (fontWeight: number) => void;
   onFontWeightReset?: () => void;
   isVisible?: boolean;
-  previewColors?: {
-    background: string;
-    foreground: string;
-  };
 }
 
 const ThemeSidePanelInner: React.FC<ThemeSidePanelProps> = ({
@@ -175,7 +172,6 @@ const ThemeSidePanelInner: React.FC<ThemeSidePanelProps> = ({
   onFontWeightChange,
   onFontWeightReset,
   isVisible = true,
-  previewColors,
 }) => {
   const { t } = useI18n();
   const availableFonts = useAvailableFonts();
@@ -299,14 +295,7 @@ const ThemeSidePanelInner: React.FC<ThemeSidePanelProps> = ({
   const footerThemeName = getThemeById(currentThemeId)?.name ?? currentThemeId;
   const footerFontName = fontById.get(currentFontFamilyId)?.name ?? currentFontFamilyId;
   const footerLabel = `${footerThemeName} • ${footerFontName} • ${currentFontSize}px • ${currentFontWeight}`;
-  const panelVars = {
-    ['--terminal-panel-bg' as never]: previewColors?.background ?? 'var(--background)',
-    ['--terminal-panel-fg' as never]: previewColors?.foreground ?? 'var(--foreground)',
-    ['--terminal-panel-muted' as never]: 'color-mix(in srgb, var(--terminal-panel-fg) 58%, var(--terminal-panel-bg) 42%)',
-    ['--terminal-panel-border' as never]: 'color-mix(in srgb, var(--terminal-panel-fg) 12%, var(--terminal-panel-bg) 88%)',
-    ['--terminal-panel-hover' as never]: 'color-mix(in srgb, var(--terminal-panel-fg) 12%, var(--terminal-panel-bg) 88%)',
-    ['--terminal-panel-active' as never]: 'color-mix(in srgb, var(--terminal-panel-fg) 16%, var(--terminal-panel-bg) 84%)',
-  } as React.CSSProperties;
+  const panelVars = terminalAppearanceThemePanelVars;
 
   return (
     <>

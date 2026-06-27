@@ -36,6 +36,7 @@ import {
   STORAGE_KEY_TERMINAL_HOST_TREE_WIDTH,
   STORAGE_KEY_VAULT_HOSTS_TREE_EXPANDED,
 } from '../../infrastructure/config/storageKeys';
+import { terminalAppearanceHostTreeTheme } from '../../infrastructure/theme/terminalAppearanceTokens';
 import { cn } from '../../lib/utils';
 import { matchesHostSearchQuery, matchesSearchQuery } from '../../lib/searchMatcher';
 import type { GroupConfig, GroupNode, Host, TerminalTheme } from '../../types';
@@ -604,7 +605,7 @@ const TerminalHostTreeSidebarInner: React.FC<TerminalHostTreeSidebarProps> = ({
   hosts,
   customGroups,
   groupConfigs = [],
-  resolvedPreviewTheme,
+  resolvedPreviewTheme: _resolvedPreviewTheme,
   activeHostId,
   onConnect,
   onCreateLocalTerminal,
@@ -632,26 +633,16 @@ const TerminalHostTreeSidebarInner: React.FC<TerminalHostTreeSidebarProps> = ({
   const inlineHostEdit = useHostTreeInlineHostEdit();
   const listRef = useRef<FixedSizeVirtualListHandle>(null);
 
-  const theme = useMemo<HostTreeTheme>(() => {
-    const termBg = resolvedPreviewTheme.colors.background;
-    const termFg = resolvedPreviewTheme.colors.foreground;
-    const mutedFg = `color-mix(in srgb, ${termFg} 55%, ${termBg} 45%)`;
-    const separator = `color-mix(in srgb, ${termFg} 10%, ${termBg} 90%)`;
-    const rowHoverBg = `color-mix(in srgb, ${termFg} 8%, transparent)`;
-    const rowActiveBg = `color-mix(in srgb, ${termFg} 14%, transparent)`;
-    const rowDropBg = `color-mix(in srgb, ${termFg} 20%, transparent)`;
-    const folderFg = `color-mix(in srgb, ${termFg} 75%, ${termBg} 25%)`;
-    return {
-      termBg: `var(--terminal-host-tree-bg, ${termBg})`,
-      termFg: `var(--terminal-host-tree-fg, ${termFg})`,
-      mutedFg: `var(--terminal-host-tree-muted, ${mutedFg})`,
-      separator: `var(--terminal-host-tree-separator, ${separator})`,
-      rowHoverBg: `var(--terminal-host-tree-hover-bg, ${rowHoverBg})`,
-      rowActiveBg: `var(--terminal-host-tree-active-bg, ${rowActiveBg})`,
-      rowDropBg: `var(--terminal-host-tree-drop-bg, ${rowDropBg})`,
-      folderFg: `var(--terminal-host-tree-folder-fg, ${folderFg})`,
-    };
-  }, [resolvedPreviewTheme]);
+  const theme = useMemo<HostTreeTheme>(() => ({
+    termBg: terminalAppearanceHostTreeTheme.termBg,
+    termFg: terminalAppearanceHostTreeTheme.termFg,
+    mutedFg: terminalAppearanceHostTreeTheme.mutedFg,
+    separator: terminalAppearanceHostTreeTheme.separator,
+    rowHoverBg: terminalAppearanceHostTreeTheme.rowHoverBg,
+    rowActiveBg: terminalAppearanceHostTreeTheme.rowActiveBg,
+    rowDropBg: terminalAppearanceHostTreeTheme.rowDropBg,
+    folderFg: terminalAppearanceHostTreeTheme.folderFg,
+  }), []);
 
   const allTags = useMemo(() => {
     const tags = new Set<string>();
@@ -1136,7 +1127,6 @@ export const TerminalHostTreeSidebar = memo(
     && prev.enabled === next.enabled
     && prev.surfaceVisible === next.surfaceVisible
     && prev.customGroups === next.customGroups
-    && prev.resolvedPreviewTheme === next.resolvedPreviewTheme
     && prev.activeHostId === next.activeHostId
     && prev.onConnect === next.onConnect
     && prev.onCreateLocalTerminal === next.onCreateLocalTerminal

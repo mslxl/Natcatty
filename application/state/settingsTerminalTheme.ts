@@ -2,7 +2,7 @@ import type { TerminalTheme } from '../../domain/models';
 import { TERMINAL_THEMES, getBuiltinTerminalThemeById } from '../../infrastructure/config/terminalThemes';
 import {
   applyCustomAccentToTerminalTheme,
-  resolveFollowedTerminalThemeId,
+  resolveFollowAppTerminalThemeId,
   resolveManualTerminalThemeId,
 } from '../../domain/terminalAppearance';
 
@@ -12,6 +12,7 @@ interface ResolveCurrentTerminalThemeParams {
   terminalThemeLightId: string;
   customThemes: TerminalTheme[];
   followAppTerminalTheme: boolean;
+  pendingFollowAppTerminalThemeId?: string | null;
   resolvedTheme: 'light' | 'dark';
   lightUiThemeId: string;
   darkUiThemeId: string;
@@ -25,6 +26,7 @@ export function resolveCurrentTerminalTheme({
   terminalThemeLightId,
   customThemes,
   followAppTerminalTheme,
+  pendingFollowAppTerminalThemeId = null,
   resolvedTheme,
   lightUiThemeId,
   darkUiThemeId,
@@ -32,7 +34,7 @@ export function resolveCurrentTerminalTheme({
   customAccent,
 }: ResolveCurrentTerminalThemeParams): TerminalTheme {
   if (followAppTerminalTheme) {
-    const followedId = resolveFollowedTerminalThemeId({
+    const followedId = resolveFollowAppTerminalThemeId(pendingFollowAppTerminalThemeId, {
       resolvedTheme,
       lightUiThemeId,
       darkUiThemeId,

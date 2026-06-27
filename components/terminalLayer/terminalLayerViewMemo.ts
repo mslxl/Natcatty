@@ -94,6 +94,18 @@ function activeWorkspaceEqual(a: any, b: any): boolean {
     && workspaceNodeEqual(a.root, b.root);
 }
 
+function terminalThemeEqual(prev: Ctx, next: Ctx, key: string): boolean {
+  if (key !== 'terminalTheme') return prev[key] === next[key];
+  const a = prev.terminalTheme;
+  const b = next.terminalTheme;
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return a.id === b.id
+    && a.colors.background === b.colors.background
+    && a.colors.foreground === b.colors.foreground
+    && a.colors.cursor === b.colors.cursor;
+}
+
 function workspaceCtxKeyEqual(prev: Ctx, next: Ctx, key: string): boolean {
   if (key === 'computeSplitHint' || key === 'handleWorkspaceDrop') {
     if (!prev.draggingSessionId && !next.draggingSessionId) return true;
@@ -107,12 +119,18 @@ function workspaceCtxKeyEqual(prev: Ctx, next: Ctx, key: string): boolean {
   if (key === 'activeResizers') {
     return resizerHandlesEqual(prev.activeResizers, next.activeResizers);
   }
+  if (key === 'terminalTheme') {
+    return terminalThemeEqual(prev, next, key);
+  }
   return prev[key] === next[key];
 }
 
 function sidePanelCtxKeyEqual(prev: Ctx, next: Ctx, key: string): boolean {
   if (key === 'activeWorkspace') {
     return activeWorkspaceEqual(prev.activeWorkspace, next.activeWorkspace);
+  }
+  if (key === 'terminalTheme') {
+    return terminalThemeEqual(prev, next, key);
   }
   return prev[key] === next[key];
 }
@@ -241,7 +259,8 @@ const WORKSPACE_CTX_KEYS = [
   'workspaceBroadcastHandlersRef',
   'splitHorizontalHandlersRef',
   'splitVerticalHandlersRef',
-  'themePreview',
+  'resolveSessionAppearance',
+  'hostMap',
   'keys',
   'identities',
   'snippets',

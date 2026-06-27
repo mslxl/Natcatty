@@ -40,7 +40,7 @@ test("workspace section passes resolved session host ids to terminal panes", () 
     workspaceBroadcastHandlersRef: { current: new Map() },
     splitHorizontalHandlersRef: { current: new Map() },
     splitVerticalHandlersRef: { current: new Map() },
-    themePreview: { targetSessionId: null, themeId: null },
+    themePreview: { targetSessionId: null, targetHostId: null, globalPreview: false, themeId: null },
     keys: [],
     identities: [],
     snippets: [],

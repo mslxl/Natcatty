@@ -165,7 +165,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   compactToolbar = false,
   lineTimestampsAvailable = true,
   chainHosts = [],
-  themePreviewId,
+  appearanceTheme,
   knownHosts = [],
   isVisible,
   paneLayoutKey,
@@ -868,13 +868,11 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   }, [availableFonts, fontFamilyId, hasFontFamilyOverride, host.fontFamily, terminalSettings?.fallbackFont]);
 
   const effectiveTheme = useMemo(() => {
-    // When "Follow Application Theme" is on and there's no active
-    // preview, skip per-host overrides — all terminals should use the
-    // UI-matched theme passed via terminalTheme prop.
-    if (followAppTerminalTheme && !themePreviewId) {
+    if (appearanceTheme) return appearanceTheme;
+    if (followAppTerminalTheme) {
       return applyCustomAccentToTerminalTheme(terminalTheme, accentMode, customAccent);
     }
-    const themeId = themePreviewId ?? resolveHostTerminalThemeId(
+    const themeId = resolveHostTerminalThemeId(
       { theme: host.theme, themeOverride: host.themeOverride } as Pick<Host, 'theme' | 'themeOverride'>,
       terminalTheme.id,
     );
@@ -885,7 +883,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       if (hostTheme) baseTheme = hostTheme;
     }
     return applyCustomAccentToTerminalTheme(baseTheme, accentMode, customAccent);
-  }, [accentMode, customAccent, customThemes, followAppTerminalTheme, host.theme, host.themeOverride, terminalTheme, themePreviewId]);
+  }, [accentMode, appearanceTheme, customAccent, customThemes, followAppTerminalTheme, host.theme, host.themeOverride, terminalTheme]);
 
   const resolvedChainHosts =
     chainHosts;
@@ -1118,6 +1116,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     applyHibernateSnapshot,
     beginHibernatedSessionListeners,
     sessionId,
+    terminalBackend,
     terminalSettings,
   ]);
 
@@ -2042,7 +2041,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     }).finally(() => {
       wakeInProgressRef.current = false;
     });
-  }, [sessionId, terminalRuntimeRefs, resizeSession, terminalSettings]);
+  }, [sessionId, terminalBackend, terminalRuntimeRefs, resizeSession, terminalSettings]);
 
   useTerminalHibernateEffect({
     sessionId,

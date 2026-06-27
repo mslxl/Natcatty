@@ -1544,3 +1544,26 @@ html[data-theme-transition] *::after {
 .dark .netcatty-mdx-editor [class*="_tableEditor_"] > tbody > tr > th:not([class*="_toolCell_"]):not([data-tool-cell="true"]) {
   border-color: hsl(var(--foreground) / 0.3) !important;
 }
+
+/* Terminal appearance runtime (--nc-term-* injected by useThemeRuntime) */
+[data-terminal-appearance-root] {
+  --terminal-sidepanel-bg: var(--nc-term-panel-bg, var(--background));
+  --terminal-sidepanel-fg: var(--nc-term-panel-fg, var(--foreground));
+  --terminal-sidepanel-accent: var(--nc-term-cursor, var(--accent));
+  --terminal-sidepanel-muted: var(--nc-term-panel-muted, var(--muted-foreground));
+  --terminal-sidepanel-border: var(--nc-term-panel-border, var(--border));
+  --terminal-panel-bg: var(--nc-term-panel-bg, var(--background));
+  --terminal-panel-fg: var(--nc-term-panel-fg, var(--foreground));
+  --terminal-panel-muted: var(--nc-term-panel-muted, var(--muted-foreground));
+  --terminal-panel-border: var(--nc-term-panel-border, var(--border));
+  --terminal-panel-hover: var(--nc-term-panel-hover, var(--accent));
+  --terminal-panel-active: var(--nc-term-panel-active, var(--accent));
+  --terminal-host-tree-bg: var(--nc-term-host-tree-bg, var(--background));
+  --terminal-host-tree-fg: var(--nc-term-host-tree-fg, var(--foreground));
+  --terminal-host-tree-muted: var(--nc-term-host-tree-muted, var(--muted-foreground));
+  --terminal-host-tree-separator: var(--nc-term-host-tree-separator, var(--border));
+  --terminal-host-tree-hover-bg: var(--nc-term-host-tree-hover-bg, transparent);
+  --terminal-host-tree-active-bg: var(--nc-term-host-tree-active-bg, transparent);
+  --terminal-host-tree-drop-bg: var(--nc-term-host-tree-drop-bg, transparent);
+  --terminal-host-tree-folder-fg: var(--nc-term-host-tree-folder-fg, var(--foreground));
+}

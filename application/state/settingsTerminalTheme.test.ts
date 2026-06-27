@@ -13,6 +13,21 @@ const commonArgs = {
   customAccent: "",
 };
 
+test("follow-app terminal theme uses pending pick before resolvedTheme catches up", () => {
+  const theme = resolveCurrentTerminalTheme({
+    ...commonArgs,
+    followAppTerminalTheme: true,
+    pendingFollowAppTerminalThemeId: "system-flexoki-light",
+    resolvedTheme: "dark",
+    lightUiThemeId: "flexoki",
+    darkUiThemeId: "github",
+    terminalThemeDarkId: "dracula",
+    terminalThemeLightId: "solarized-light",
+  });
+
+  assert.equal(theme.id, "system-flexoki-light");
+});
+
 test("follow-app terminal theme ignores manual per-mode terminal picks", () => {
   const theme = resolveCurrentTerminalTheme({
     ...commonArgs,

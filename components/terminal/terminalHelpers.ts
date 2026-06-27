@@ -114,7 +114,7 @@ export interface TerminalProps {
   /** Line timestamps are unavailable in popup terminals that stream shell output without timestamp metadata. */
   lineTimestampsAvailable?: boolean;
   chainHosts?: Host[];
-  themePreviewId?: string;
+  appearanceTheme?: TerminalTheme;
   knownHosts?: KnownHost[];
   isVisible: boolean;
   /** Changes when split-pane bounds update; triggers xterm refit after tab switches. */
