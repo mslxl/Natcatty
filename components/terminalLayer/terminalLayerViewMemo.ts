@@ -286,6 +286,7 @@ const WORKSPACE_CTX_KEYS = [
   'onSplitSession',
   'isBroadcastEnabled',
   'handleBroadcastInput',
+  'handleBroadcastInterruptPriorityChange',
   'handleToggleWorkspaceComposeBar',
   'handleSnippetExecutorChange',
   'handleProgrammaticCommandLogRewriteChange',

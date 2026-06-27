@@ -384,6 +384,7 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     handleSnippetClickForFocusedSession: s.handleSnippetClickForFocusedSession,
     handleSnippetFromPanel: s.handleSnippetFromPanel,
     handleSnippetExecutorChange: s.handleSnippetExecutorChange,
+    handleBroadcastInterruptPriorityChange: s.handleBroadcastInterruptPriorityChange,
     handleProgrammaticCommandLogRewriteChange: s.handleProgrammaticCommandLogRewriteChange,
     handleStatusChange: s.handleStatusChange,
     handleTerminalCwdChange: s.handleTerminalCwdChange,

@@ -434,6 +434,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   // Terminal backend for broadcast writes
   const terminalBackend = useTerminalBackend();
   const snippetExecutorsRef = useRef<Map<string, SnippetExecutor>>(new Map());
+  const broadcastInterruptPrioritizersRef = useRef<Map<string, () => void>>(new Map());
   const programmaticCommandLogRewriteHandlersRef = useRef<Map<string, (rewrite: ProgrammaticCommandLogRewrite) => void>>(new Map());
 
   const handleSnippetExecutorChange = useCallback((sessionId: string, executor: SnippetExecutor | null) => {
@@ -442,6 +443,17 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       return;
     }
     snippetExecutorsRef.current.delete(sessionId);
+  }, []);
+
+  const handleBroadcastInterruptPriorityChange = useCallback((
+    sessionId: string,
+    prioritize: (() => void) | null,
+  ) => {
+    if (prioritize) {
+      broadcastInterruptPrioritizersRef.current.set(sessionId, prioritize);
+      return;
+    }
+    broadcastInterruptPrioritizersRef.current.delete(sessionId);
   }, []);
 
   const handleProgrammaticCommandLogRewriteChange = useCallback((
@@ -702,6 +714,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
 
       const lineDelayMs = options?.lineDelayMs;
       if (data === "\x03" && terminalBackend.interruptSession) {
+        broadcastInterruptPrioritizersRef.current.get(session.id)?.();
         terminalBackend.interruptSession(session.id);
         continue;
       }
@@ -1338,6 +1351,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     handleAddKnownHost,
     handleAddSelectionToAI,
     handleBroadcastInput,
+    handleBroadcastInterruptPriorityChange,
     handleCloseSession,
     handleCloseSidePanel,
     handleCommandExecuted,

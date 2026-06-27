@@ -97,6 +97,7 @@ export type TerminalLayerStableSnapshot = {
   handleCommandExecuted: (command: string, hostId: string, hostLabel: string, sessionId: string) => void;
   handleTerminalDataCapture: (sessionId: string, data: string) => void;
   handleBroadcastInput: (data: string, sourceSessionId: string) => void;
+  handleBroadcastInterruptPriorityChange: (sessionId: string, prioritize: (() => void) | null) => void;
   handleSnippetExecutorChange: (sessionId: string, executor: SnippetExecutor | null) => void;
   handleProgrammaticCommandLogRewriteChange: (
     sessionId: string,
