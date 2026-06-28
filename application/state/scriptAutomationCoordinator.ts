@@ -19,7 +19,11 @@ function readPermissionMode(): AIPermissionMode {
 
 export function subscribeScriptRuns(listener: RunsListener): () => void {
   runsListeners.add(listener);
-  listener(runs);
+  queueMicrotask(() => {
+    if (runsListeners.has(listener)) {
+      listener(runs);
+    }
+  });
   return () => runsListeners.delete(listener);
 }
 
@@ -72,11 +76,20 @@ export function waitForScriptRun(
   runId: string,
   options: { signal?: AbortSignal; timeoutMs?: number } = {},
 ): Promise<ScriptRun> {
+  const existing = runs.find((entry) => entry.runId === runId);
+  if (existing && TERMINAL_SCRIPT_STATUSES.has(existing.status)) {
+    if (existing.status === 'completed') {
+      return Promise.resolve(existing);
+    }
+    return Promise.reject(new Error(existing.error || 'Script failed'));
+  }
+
   const timeoutMs = options.timeoutMs ?? 3_600_000;
 
   return new Promise((resolve, reject) => {
     let settled = false;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    let unsubscribe: () => void = () => {};
 
     const finish = (handler: () => void) => {
       if (settled) return;
@@ -102,7 +115,7 @@ export function waitForScriptRun(
       finish(() => reject(new Error(run.error || 'Script failed')));
     };
 
-    const unsubscribe = subscribeScriptRuns((currentRuns) => {
+    unsubscribe = subscribeScriptRuns((currentRuns) => {
       settleRun(currentRuns.find((entry) => entry.runId === runId));
     });
 

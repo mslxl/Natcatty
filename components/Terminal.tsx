@@ -272,7 +272,6 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const connectScriptsInFlightRef = useRef(false);
   const pendingScriptRunIdRef = useRef<string | null>(null);
   const pendingScriptHandledRef = useRef<Snippet | null>(null);
-  const [connectScriptRetryTick, setConnectScriptRetryTick] = useState(0);
   const [saveRecordingOpen, setSaveRecordingOpen] = useState(false);
   const [recordedCode, setRecordedCode] = useState('');
   const recorder = useScriptRecorder(sessionId);
@@ -1478,10 +1477,39 @@ const TerminalComponent: React.FC<TerminalProps> = ({
             connectScriptsConsumedRef.current = true;
           }
         })
-        .catch((err) => {
+        .catch(async (err) => {
           const message = err instanceof Error ? err.message : String(err);
           toast.error(message.includes('Observer mode') ? t('scripts.observer.blocked') : message);
-          setConnectScriptRetryTick((tick) => tick + 1);
+          connectScriptsConsumedRef.current = true;
+
+          const pendingStillNeeded = pendingScriptToMark && (
+            pendingScriptToMark.id
+              ? pendingScriptRunIdRef.current !== pendingScriptToMark.id
+              : pendingScriptHandledRef.current !== pendingScriptToMark
+          );
+          if (!pendingStillNeeded) return;
+
+          try {
+            await runConnectScriptsSequential({
+              scripts: [pendingScriptToMark],
+              sessionId,
+              sessionMeta: {
+                connected: true,
+                hostname: host.hostname,
+                username: host.username,
+              },
+              onScriptComplete: (snippet) => {
+                if (snippet.id) {
+                  pendingScriptRunIdRef.current = snippet.id;
+                } else {
+                  pendingScriptHandledRef.current = snippet;
+                }
+              },
+            });
+          } catch (pendingErr) {
+            const pendingMessage = pendingErr instanceof Error ? pendingErr.message : String(pendingErr);
+            toast.error(pendingMessage.includes('Observer mode') ? t('scripts.observer.blocked') : pendingMessage);
+          }
         })
         .finally(() => {
           connectScriptsInFlightRef.current = false;
@@ -1489,7 +1517,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     }, 400);
 
     return () => window.clearTimeout(timer);
-  }, [host, isPendingScriptAlreadyHandled, pendingScript, pendingScriptId, sessionId, snippets, status, t, connectScriptRetryTick]);
+  }, [host, isPendingScriptAlreadyHandled, pendingScript, pendingScriptId, sessionId, snippets, status, t]);
 
   useEffect(() => {
     return registerScreenSnapshotProvider(sessionId, () => {
