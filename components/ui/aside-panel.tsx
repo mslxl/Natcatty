@@ -13,6 +13,12 @@ export function clampAsideInlineWidth(width: number): number {
     return Math.max(MIN_ASIDE_INLINE_WIDTH_PX, Math.min(MAX_ASIDE_INLINE_WIDTH_PX, width));
 }
 
+export interface AsidePanelResizeProps {
+    resizable?: boolean;
+    persistWidthStorageKey?: string;
+    resizeAriaLabel?: string;
+}
+
 function parseInlineWidthPx(width: string): number {
     const arbitraryWidthMatch = width.match(/w-\[(.+)\]/);
     if (arbitraryWidthMatch) {
@@ -66,7 +72,7 @@ export const useAsidePanel = () => {
 };
 
 // Props
-interface AsidePanelProps {
+interface AsidePanelProps extends AsidePanelResizeProps {
     open: boolean;
     onClose: () => void;
     title?: string;
@@ -78,9 +84,6 @@ interface AsidePanelProps {
     className?: string;
     width?: string;
     layout?: AsidePanelLayout;
-    resizable?: boolean;
-    persistWidthStorageKey?: string;
-    resizeAriaLabel?: string;
     /**
      * Optional stable identifier emitted as `data-section` on the panel
      * root. Used as a targeting hook for Custom CSS (Settings → Appearance).
@@ -294,7 +297,7 @@ export const AsidePanelStack: React.FC<AsidePanelStackProps> = ({
         <AsidePanelContext.Provider value={{ push, pop, replace, clear, canGoBack, currentItem }}>
             <div className={cn(
                 layout === 'inline'
-                    ? "relative split-panel-enter shrink-0 h-full min-h-0 max-w-full border-l border-border/60 bg-background z-30 flex flex-col app-no-drag overflow-hidden shadow-[-16px_0_32px_hsl(var(--foreground)/0.08)]"
+                    ? "relative split-panel-enter shrink-0 h-full min-h-0 max-w-full border-l border-border/60 bg-background flex flex-col app-no-drag overflow-hidden shadow-[-16px_0_32px_hsl(var(--foreground)/0.08)]"
                     : "absolute right-0 top-0 bottom-0 max-w-full border-l border-border/60 bg-background z-30 flex flex-col app-no-drag overflow-hidden",
                 layout === 'overlay' && width,
                 className
@@ -389,7 +392,7 @@ export const AsidePanel: React.FC<AsidePanelProps> = ({
     return (
         <div className={cn(
             layout === 'inline'
-                ? "relative split-panel-enter shrink-0 h-full min-h-0 max-w-full border-l border-border/60 bg-background z-30 flex flex-col app-no-drag overflow-hidden shadow-[-16px_0_32px_hsl(var(--foreground)/0.08)]"
+                ? "relative split-panel-enter shrink-0 h-full min-h-0 max-w-full border-l border-border/60 bg-background flex flex-col app-no-drag overflow-hidden shadow-[-16px_0_32px_hsl(var(--foreground)/0.08)]"
                 : "absolute right-0 top-0 bottom-0 max-w-full border-l border-border/60 bg-background z-30 flex flex-col app-no-drag overflow-hidden",
             layout === 'overlay' && width,
             isResizing && layout === 'inline' && 'transition-none',

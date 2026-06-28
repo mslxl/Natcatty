@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import React from "react";
 import { preserveConcurrentHostLineTimestampUpdate } from "../../domain/host";
+import { STORAGE_KEY_VAULT_HOST_PANEL_WIDTH } from "@/infrastructure/config/storageKeys.ts";
 import { VaultHostListSection } from "./VaultHostListSection";
 import {
   VaultHeaderSearch,
@@ -19,6 +20,11 @@ const VaultSectionLoading = () => (
 export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
   const { Activity, allGroupPaths, allTags, AppLogo, Array, Badge, BookMarked, Boolean, Button, cancelInlineGroupEdit, CheckSquare, ChevronDown, clearHostSelection, ClipboardCopy, Clock, cn, commitInlineGroupRename, connectionLogs, connectSelectedHosts, ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger, Copy, currentSection, customGroups, deleteGroupPath, deleteGroupWithHosts, deleteSelectedHosts, deleteTargetPath, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, displayedGroups, displayedHosts, DistroAvatar, Download, Dropdown, DropdownContent, DropdownTrigger, Edit2, editingGroupPath, editingHost, editingHostGroupDefaults, FileCode, FileSymlink, FolderPlus, FolderTree, getDropTargetClasses, getEffectiveHostDistro, Globe, groupConfigs, GroupDetailsPanel, groupedDisplayHosts, handleConnectClick, handleCopyCredentials, handleDeleteTag, handleDuplicateHost, handleEditGroupConfig, handleEditHost, handleEditTag, handleExportHosts, handleHostConnect, handleImportFileSelected, handleNewHost, handleProtocolSelect, handleQuickConnect, handleQuickConnectSaveHost, handleSaveGroupConfig, handleSearchKeyDown, handleUnmanageGroup, handleSidebarWidthCommit, hasHostsSidePanel, HostDetailsPanel, hostListScrollRef, hosts, HostTreeView, hotkeyScheme, identities, ImportVaultDialog, Input, isDeleteGroupOpen, isGroupPanelOpen, isHostPanelOpen, isHostsSectionActive, isImportOpen, isMultiSelectMode, isNewFolderOpen, isQuickConnectOpen, isRenameGroupOpen, isSearchQuickConnect, isSerialModalOpen, Key, keyBindings, KeychainManager, keys, knownHostsManagerElement, Label, lastPinnedId, LayoutGrid, LazyConnectionLogsManager, LazyProtocolSelectDialog, List, managedGroupPaths, managedSources, moveGroup, moveHostToGroup, Network, newFolderName, newHostGroupPath, onClearUnsavedConnectionLogs, onConnectSerial, onCreateLocalTerminal, onDeleteConnectionLog, onDeleteHost, onImportOrReuseKey, onOpenLogView, onOpenSettings, onRunSnippet, onToggleConnectionLogSaved, onUpdateCustomGroups, onUpdateGroupConfigs, onUpdateHosts, onUpdateIdentities, onUpdateKeys, onUpdateProxyProfiles, onUpdateSnippetPackages, onUpdateSnippets, Pin, pinnedHosts, pinnedRecentIds, Plug, Plus, PortForwarding, protocolSelectHost, proxyProfiles, ProxyProfilesManager, quickConnectTarget, quickConnectWarnings, QuickConnectWizard, recentHosts, renameGroupError, renameGroupName, renameTargetPath, reorderGroup, reorderHost, RippleButton, rootRef, sanitizeHost, search, selectedGroupPath, selectedHostIds, selectedTags, SerialConnectModal, SerialHostDetailsPanel, sessionCount, Set, setCurrentSection, setDeleteGroupWithHosts, setDeleteTargetPath, setDragOverDropTarget, setEditingGroupPath, setEditingHost, setGroupDragOverDropTarget, setIsDeleteGroupOpen, setIsGroupPanelOpen, setIsHostPanelOpen, setIsImportOpen, setIsMultiSelectMode, setIsNewFolderOpen, setIsQuickConnectOpen, setIsRenameGroupOpen, setIsSerialModalOpen, setLastPinnedId, setNewFolderName, setNewHostGroupPath, setProtocolSelectHost, setQuickConnectTarget, setQuickConnectWarnings, setRenameGroupError, setRenameGroupName, setRenameTargetPath, setSearch, setSelectedGroupPath, setSelectedHostIds, setSelectedTags, setSidebarCollapsed, setSidebarWidth, setSortMode, setTargetParentPath, Settings, setViewMode, shellHistory, shouldHideEmptyRootHostsSection, showRecentHosts, sidebarCollapsed, sidebarWidth, snippetPackages, snippets, SnippetsManager, SortDropdown, sortMode, splitViewGridStyle, Square, Star, startInlineDeleteGroup, startInlineNewGroup, startInlineRenameGroup, submitNewFolder, submitRenameGroup, Suspense, t, TagFilterDropdown, targetParentPath, terminalFontSize, terminalSettings, TerminalSquare, terminalThemeId, toggleHostPinned, toggleHostSelection, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger, Trash2, treeExpandedState, treeViewGroupTree, treeViewHosts, Upload, upsertHostById, Usb, viewMode, visibleDisplayedHosts, X, Zap } = ctx;
   const { knownHosts, noteGroups, NotebookText, notes, NotesManager, onOpenHostFromNote, onOpenNoteIdHandled, onOpenSnippetIdHandled, onUpdateNoteGroups, onUpdateNotes, openNoteId, openSnippetId } = ctx;
+  const vaultHostPanelResizeProps = {
+    resizable: true as const,
+    persistWidthStorageKey: STORAGE_KEY_VAULT_HOST_PANEL_WIDTH,
+    resizeAriaLabel: t("vault.panel.resizeWidth"),
+  };
   const [isSidebarResizing, setIsSidebarResizing] = React.useState(false);
   const newHostActionsRef = React.useRef<HTMLDivElement>(null);
   const sessionActionsRef = React.useRef<HTMLDivElement>(null);
@@ -579,6 +585,7 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
         {currentSection === "snippets" && (
           <LazyLoadBoundary name="Snippets" resetKey="snippets">
             <Suspense fallback={<VaultSectionLoading />}>
+              <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
               <SnippetsManager
                 snippets={snippets}
                 packages={snippetPackages}
@@ -613,6 +620,7 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
                 openSnippetId={openSnippetId ?? null}
                 onOpenSnippetIdHandled={onOpenSnippetIdHandled}
               />
+              </div>
             </Suspense>
           </LazyLoadBoundary>
         )}
@@ -769,6 +777,7 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
             setEditingGroupPath(null);
           }}
           layout="inline"
+          {...vaultHostPanelResizeProps}
         />
       )}
 
@@ -814,6 +823,7 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
             );
           }}
           layout="inline"
+          {...vaultHostPanelResizeProps}
         />
       )}
 
@@ -835,6 +845,7 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
             setNewHostGroupPath(null);
           }}
           layout="inline"
+          {...vaultHostPanelResizeProps}
         />
       )}
         </div>

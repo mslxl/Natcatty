@@ -38,6 +38,7 @@ import {
   AsidePanelContent,
   AsidePanelFooter,
   type AsidePanelLayout,
+  type AsidePanelResizeProps,
 } from "./ui/aside-panel";
 import { HostDetailsAdvancedSections } from "./HostDetailsAdvancedSections";
 import { HostDetailsConnectionSections } from "./HostDetailsConnectionSections";
@@ -104,7 +105,9 @@ interface HostDetailsPanelProps {
   onSnippetsChange?: (snippets: Snippet[]) => void;
 }
 
-const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
+type HostDetailsPanelPropsWithResize = HostDetailsPanelProps & AsidePanelResizeProps;
+
+const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
   initialData,
   availableKeys,
   identities,
@@ -126,8 +129,16 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
   onImportKey,
   snippets = [],
   onSnippetsChange,
+  resizable,
+  persistWidthStorageKey,
+  resizeAriaLabel,
 }) => {
   const { t } = useI18n();
+  const asideResizeProps = {
+    resizable,
+    persistWidthStorageKey,
+    resizeAriaLabel,
+  };
   const { checkSshAgent } = useApplicationBackend();
   const [form, setForm] = useState<Host>(
     () =>
@@ -638,6 +649,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
         onBack={() => setActiveSubPanel("none")}
         onCancel={onCancel}
         layout={layout}
+        {...asideResizeProps}
       />
     );
   }
@@ -654,6 +666,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
         onBack={() => setActiveSubPanel("none")}
         onCancel={onCancel}
         layout={layout}
+        {...asideResizeProps}
       />
     );
   }
@@ -672,6 +685,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
         onBack={() => setActiveSubPanel("none")}
         onCancel={onCancel}
         layout={layout}
+        {...asideResizeProps}
       />
     );
   }
@@ -700,6 +714,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
         onBack={() => setActiveSubPanel("none")}
         onCancel={onCancel}
         layout={layout}
+        {...asideResizeProps}
       />
     );
   }
@@ -721,6 +736,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
         onBack={() => setActiveSubPanel("none")}
         showBackButton={true}
         layout={layout}
+        {...asideResizeProps}
       />
     );
   }
@@ -757,6 +773,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
         onBack={() => setActiveSubPanel("none")}
         showBackButton={true}
         layout={layout}
+        {...asideResizeProps}
       />
     );
   }
@@ -768,6 +785,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelProps> = ({
       width="w-[420px]"
       layout={layout}
       dataSection="host-details-panel"
+      {...asideResizeProps}
       title={
         initialData ? t("hostDetails.title.details") : t("hostDetails.title.new")
       }
