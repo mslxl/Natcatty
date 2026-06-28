@@ -5,6 +5,7 @@ import {
   isTerminalAlternateScreenActive,
   refreshTerminalViewport,
 } from "../terminalHibernateRuntime";
+import { flushTerminalWriteCoalescer } from "./terminalWriteCoalescer";
 
 const UNFOCUSED_REPAINT_DEBOUNCE_MS = 16;
 const unfocusedRepaintTimers = new WeakMap<XTerm, ReturnType<typeof setTimeout>>();
@@ -39,4 +40,12 @@ export function cancelScheduledUnfocusedRepaint(term: XTerm): void {
   if (timer === undefined) return;
   clearTimeout(timer);
   unfocusedRepaintTimers.delete(term);
+}
+
+export function maybeFlushTerminalWriteCoalescerWhenUnfocused(
+  term: XTerm,
+  isPaneVisible: boolean,
+): void {
+  if (!isPaneVisible || !isTerminalWindowUnfocusedButVisible()) return;
+  flushTerminalWriteCoalescer(term);
 }
