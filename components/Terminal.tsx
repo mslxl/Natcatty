@@ -25,6 +25,7 @@ import {
   type TerminalHostUpdate,
 } from "../domain/terminalAppearance";
 import {
+  createTerminalEncodingStorageKey,
   isTerminalEncodingPreference,
   resolveInitialTerminalEncoding,
   terminalEncodingPreferenceToCharset,
@@ -57,7 +58,7 @@ import { resolveTerminalFontFamilyId } from "../infrastructure/config/fonts";
 import { getBuiltinTerminalThemeById } from "../infrastructure/config/terminalThemes";
 import {
   STORAGE_KEY_TERMINAL_COMPOSE_BAR_OPEN,
-  STORAGE_KEY_TERMINAL_ENCODING,
+  STORAGE_KEY_TERMINAL_ENCODING_BY_HOST_PREFIX,
 } from "../infrastructure/config/storageKeys";
 import { useCustomThemes } from "../application/state/customThemeStore";
 
@@ -584,8 +585,12 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     STORAGE_KEY_TERMINAL_COMPOSE_BAR_OPEN,
     false,
   );
+  const terminalEncodingStorageKey = createTerminalEncodingStorageKey(
+    STORAGE_KEY_TERMINAL_ENCODING_BY_HOST_PREFIX,
+    host,
+  );
   const [, setRememberedTerminalEncoding] = useStoredString(
-    STORAGE_KEY_TERMINAL_ENCODING,
+    terminalEncodingStorageKey,
     'utf-8',
     isTerminalEncodingPreference,
   );
@@ -593,7 +598,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     return resolveInitialTerminalEncoding(
       host?.charset,
       readStoredStringValue(
-        STORAGE_KEY_TERMINAL_ENCODING,
+        terminalEncodingStorageKey,
         'utf-8',
         isTerminalEncodingPreference,
       ),

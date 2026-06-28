@@ -34,8 +34,6 @@ export const resolveInitialTerminalEncoding = (
   const charsetEncoding = resolveTerminalEncodingFromCharset(charset);
   const remembered = isTerminalEncodingPreference(rememberedEncoding) ? rememberedEncoding : null;
 
-  if (charsetEncoding === 'gb18030') return charsetEncoding;
-
   if (remembered && (charsetEncoding !== null || !String(charset ?? "").trim())) {
     return remembered;
   }
@@ -46,3 +44,23 @@ export const resolveInitialTerminalEncoding = (
 export const terminalEncodingPreferenceToCharset = (
   encoding: TerminalEncodingPreference,
 ): string => (encoding === 'gb18030' ? 'GB18030' : 'UTF-8');
+
+export const createTerminalEncodingStorageKey = (
+  prefix: string,
+  host: {
+    id?: string;
+    protocol?: string;
+    username?: string;
+    hostname?: string;
+    port?: number;
+  },
+): string => {
+  const stableHostId = host.id?.trim();
+  const rawKey = stableHostId || [
+    host.protocol || 'ssh',
+    host.username || '',
+    host.hostname || '',
+    host.port ?? '',
+  ].join('|');
+  return `${prefix}${encodeURIComponent(rawKey)}`;
+};
