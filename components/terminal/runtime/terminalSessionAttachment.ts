@@ -56,6 +56,10 @@ import {
   releaseTerminalFlowOutputForTerm,
   teardownTerminalOutputPipeline,
 } from "./terminalOutputPipeline";
+import {
+  maybeFlushTerminalWriteCoalescerWhenUnfocused,
+  scheduleTerminalRepaintWhenUnfocused,
+} from "./terminalUnfocusedRepaint";
 
 export { FLOW_HIGH_WATER_MARK, FLOW_LOW_WATER_MARK };
 
@@ -173,6 +177,10 @@ export const writeSessionData = (
   enqueueCoalescedTerminalWrite(term, data, (batch, batchIngress) => {
     writeSessionDataImmediate(ctx, term, batch, batchIngress);
   }, ingressBytes);
+  maybeFlushTerminalWriteCoalescerWhenUnfocused(
+    term,
+    ctx.isVisibleRef?.current !== false,
+  );
 };
 
 const writeSessionDataImmediate = (
@@ -218,6 +226,9 @@ const writeSessionDataImmediate = (
       syncPrompt();
       if (shouldScrollOnTerminalOutput(settings)) {
         handleTerminalOutputAutoScroll(ctx, term);
+      }
+      if (ctx.isVisibleRef?.current !== false) {
+        scheduleTerminalRepaintWhenUnfocused(term);
       }
       done();
     };
