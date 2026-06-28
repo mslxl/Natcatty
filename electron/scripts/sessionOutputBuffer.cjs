@@ -1,6 +1,12 @@
 "use strict";
 
 const DEFAULT_BUFFER_SIZE = 1024 * 1024;
+/** Matches within this many bytes of buffer end count as live terminal output. */
+const FRESH_MATCH_TAIL_SLACK = 512;
+
+function isFreshTailMatch(textLength, matchEndAbsolute) {
+  return matchEndAbsolute >= textLength - FRESH_MATCH_TAIL_SLACK;
+}
 
 function isRegExpLike(pattern) {
   return Boolean(
@@ -76,14 +82,37 @@ class SessionOutputBuffer {
     return tryMatchWithEnd(this.getPendingText(), pattern);
   }
 
+  consumeFreshPendingMatch(pattern) {
+    while (true) {
+      const matched = this.tryMatchPending(pattern);
+      if (matched === null) return null;
+      const absoluteEnd = this.scanOffset + matched.endOffset;
+      if (isFreshTailMatch(this.getText().length, absoluteEnd)) {
+        return matched;
+      }
+      this.advanceScanOffset(matched.endOffset);
+    }
+  }
+
+  consumeFreshPendingMatchAny(patterns) {
+    for (let index = 0; index < patterns.length; index += 1) {
+      const pattern = patterns[index];
+      while (true) {
+        const matched = this.tryMatchPending(pattern);
+        if (matched === null) break;
+        const absoluteEnd = this.scanOffset + matched.endOffset;
+        if (isFreshTailMatch(this.getText().length, absoluteEnd)) {
+          return { index, matched };
+        }
+        this.advanceScanOffset(matched.endOffset);
+      }
+    }
+    return null;
+  }
+
   advanceScanOffset(endOffset) {
     const absoluteEnd = this.scanOffset + endOffset;
     this.scanOffset = Math.min(absoluteEnd, this.getText().length);
-  }
-
-  /** Ignore scrollback already on screen when a script run starts. */
-  markScanBaseline() {
-    this.scanOffset = this.getText().length;
   }
 
   clear() {
@@ -102,7 +131,7 @@ class SessionOutputBuffer {
         }
         continue;
       }
-      const matched = this.tryMatchPending(waiter.pattern);
+      const matched = this.consumeFreshPendingMatch(waiter.pattern);
       if (matched !== null) {
         this.advanceScanOffset(matched.endOffset);
         clearTimeout(waiter.timer);
@@ -116,7 +145,7 @@ class SessionOutputBuffer {
   }
 
   waitFor(pattern, timeoutMs = 30000, shouldAbort) {
-    const immediate = this.tryMatchPending(pattern);
+    const immediate = this.consumeFreshPendingMatch(pattern);
     if (immediate !== null) {
       this.advanceScanOffset(immediate.endOffset);
       return Promise.resolve(immediate.value);
@@ -160,12 +189,10 @@ class SessionOutputBuffer {
     if (!Array.isArray(patterns) || patterns.length === 0) {
       throw new TypeError("waitForAny requires a non-empty patterns array");
     }
-    for (let index = 0; index < patterns.length; index += 1) {
-      const matched = this.tryMatchPending(patterns[index]);
-      if (matched !== null) {
-        this.advanceScanOffset(matched.endOffset);
-        return index;
-      }
+    const fresh = this.consumeFreshPendingMatchAny(patterns);
+    if (fresh !== null) {
+      this.advanceScanOffset(fresh.matched.endOffset);
+      return fresh.index;
     }
 
     return new Promise((resolve, reject) => {
@@ -177,17 +204,15 @@ class SessionOutputBuffer {
         timer: null,
         interval: null,
         check: () => {
-          for (let index = 0; index < patterns.length; index += 1) {
-            const matched = this.tryMatchPending(patterns[index]);
-            if (matched !== null) {
-              this.advanceScanOffset(matched.endOffset);
-              clearTimeout(waiter.timer);
-              if (waiter.interval) clearInterval(waiter.interval);
-              if (waiter.abortInterval) clearInterval(waiter.abortInterval);
-              this.waiters = this.waiters.filter((entry) => entry.custom !== waiter);
-              resolve(index);
-              return true;
-            }
+          const fresh = this.consumeFreshPendingMatchAny(patterns);
+          if (fresh !== null) {
+            this.advanceScanOffset(fresh.matched.endOffset);
+            clearTimeout(waiter.timer);
+            if (waiter.interval) clearInterval(waiter.interval);
+            if (waiter.abortInterval) clearInterval(waiter.abortInterval);
+            this.waiters = this.waiters.filter((entry) => entry.custom !== waiter);
+            resolve(fresh.index);
+            return true;
           }
           return false;
         },

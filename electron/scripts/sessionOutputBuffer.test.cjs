@@ -49,10 +49,9 @@ test("SessionOutputBuffer waitForAny matches shell prompt patterns", async () =>
   assert.equal(await pending, 0);
 });
 
-test("SessionOutputBuffer markScanBaseline ignores prior scrollback for waitFor", async () => {
+test("SessionOutputBuffer waitFor ignores stale scrollback not near buffer tail", async () => {
   const buffer = new SessionOutputBuffer("s1");
-  buffer.append("Do you want to reset password? ");
-  buffer.markScanBaseline();
+  buffer.append(`${"x".repeat(600)}Do you want to reset password? ${"x".repeat(600)}`);
 
   const pending = buffer.waitFor(/Do you want to reset password/, 200);
   let resolvedEarly = false;
@@ -64,6 +63,12 @@ test("SessionOutputBuffer markScanBaseline ignores prior scrollback for waitFor"
 
   buffer.append("Do you want to reset password? ");
   assert.equal(await pending, "Do you want to reset password");
+});
+
+test("SessionOutputBuffer waitFor resolves prompt already at buffer tail", async () => {
+  const buffer = new SessionOutputBuffer("s1");
+  buffer.append("root@host:~# ");
+  assert.equal(await buffer.waitFor("# ", 1000), "# ");
 });
 
 test("SessionOutputBuffer waitFor ignores stale prompt before cursor", async () => {

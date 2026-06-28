@@ -1480,7 +1480,37 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         .catch((err) => {
           const message = err instanceof Error ? err.message : String(err);
           toast.error(message.includes('Observer mode') ? t('scripts.observer.blocked') : message);
+          for (const id of connectIdsInBatch) {
+            connectScriptsCompletedIdsRef.current.add(id);
+          }
           connectScriptsConsumedRef.current = true;
+
+          const pendingStillNeeded = pendingScriptToMark && (
+            pendingScriptToMark.id
+              ? pendingScriptRunIdRef.current !== pendingScriptToMark.id
+              : pendingScriptHandledRef.current !== pendingScriptToMark
+          );
+          if (!pendingStillNeeded) return;
+
+          void runConnectScriptsSequential({
+            scripts: [pendingScriptToMark],
+            sessionId,
+            sessionMeta: {
+              connected: true,
+              hostname: host.hostname,
+              username: host.username,
+            },
+            onScriptComplete: (snippet) => {
+              if (snippet.id) {
+                pendingScriptRunIdRef.current = snippet.id;
+              } else {
+                pendingScriptHandledRef.current = snippet;
+              }
+            },
+          }).catch((pendingErr) => {
+            const pendingMessage = pendingErr instanceof Error ? pendingErr.message : String(pendingErr);
+            toast.error(pendingMessage.includes('Observer mode') ? t('scripts.observer.blocked') : pendingMessage);
+          });
         })
         .finally(() => {
           connectScriptsInFlightRef.current = false;
