@@ -189,6 +189,15 @@ export type CreateXTermRuntimeContext = {
   ) => void;
   commandBufferRef: RefObject<string>;
   promptLineBreakStateRef?: RefObject<PromptLineBreakState>;
+  scriptRecorderRef?: RefObject<{
+    isRecording: boolean;
+    recordInput: (data: string) => void;
+    recordBackspace: () => void;
+    recordClearLine: () => void;
+    recordEnter: (options?: { sensitive?: boolean }) => Promise<void>;
+  } | undefined>;
+  passwordPromptActiveRef?: RefObject<boolean>;
+  onOutputTriggerUserInputRef?: RefObject<((data: string) => void) | undefined>;
   sudoAutofillRef?: RefObject<SudoPasswordAutofill | null>;
   setIsSearchOpen: Dispatch<SetStateAction<boolean>>;
 
@@ -1049,6 +1058,14 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       hasBroadcastInputHandler: !!onBroadcastInput,
     });
     if (ctx.statusRef.current === "connected" && (data === "\r" || data === "\n")) {
+      if (ctx.scriptRecorderRef?.current?.isRecording) {
+        void ctx.scriptRecorderRef.current.recordEnter({
+          sensitive: ctx.passwordPromptActiveRef?.current,
+        });
+        if (ctx.passwordPromptActiveRef) {
+          ctx.passwordPromptActiveRef.current = false;
+        }
+      }
       const recordedCommand = recordTerminalCommandExecution(ctx.commandBufferRef.current, ctx, term);
       handledSubmittedInput = true;
       if (!willBroadcastInput) {
@@ -1086,7 +1103,10 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         handleSerialLineModeInput(dataToWrite, {
           bufferRef: ctx.serialLineBufferRef,
           localEcho: ctx.serialLocalEcho,
-          writeToSession: (nextData) => ctx.terminalBackend.writeToSession(id, nextData),
+          writeToSession: (nextData) => {
+            ctx.onOutputTriggerUserInputRef?.current?.(nextData);
+            ctx.terminalBackend.writeToSession(id, nextData);
+          },
           writeToTerminal: writeLocalTerminalData,
         });
       } else {
@@ -1096,6 +1116,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         if (dataToWrite === "\x7f" && ctx.host.backspaceBehavior === "ctrl-h") {
           outData = "\x08";
         }
+        ctx.onOutputTriggerUserInputRef?.current?.(outData);
         ctx.terminalBackend.writeToSession(id, outData);
 
         // Local echo for serial connections only when explicitly enabled
@@ -1135,18 +1156,24 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
           // input is written so sudo can receive a one-time prompt marker.
         } else if (data === "\x7f" || data === "\b") {
           ctx.commandBufferRef.current = ctx.commandBufferRef.current.slice(0, -1);
+          ctx.scriptRecorderRef?.current?.recordBackspace();
         } else if (data === "\x03") {
           ctx.commandBufferRef.current = "";
+          ctx.scriptRecorderRef?.current?.recordClearLine();
         } else if (data === "\x15") {
           ctx.commandBufferRef.current = "";
+          ctx.scriptRecorderRef?.current?.recordClearLine();
         } else if (data.length === 1 && data.charCodeAt(0) >= 32) {
           ctx.commandBufferRef.current += data;
+          ctx.scriptRecorderRef?.current?.recordInput(data);
         } else if (data.length > 1 && !data.startsWith("\x1b")) {
           ctx.commandBufferRef.current += data;
+          ctx.scriptRecorderRef?.current?.recordInput(data);
         } else {
           const pastedLine = getSingleBracketedPasteLine(data);
           if (pastedLine) {
             ctx.commandBufferRef.current += pastedLine;
+            ctx.scriptRecorderRef?.current?.recordInput(pastedLine);
           }
         }
       }

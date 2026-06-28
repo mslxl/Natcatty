@@ -1,6 +1,7 @@
 import { FolderTree, History, MessageSquare, PanelLeft, PanelRight, Palette, X, Zap } from 'lucide-react';
 import React, { memo, startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { activeTabStore } from '../application/state/activeTabStore';
+import { getScriptRecordingSnapshot } from '../application/state/scriptRecordingStore.ts';
 import { canReuseTerminalConnection } from '../application/state/terminalConnectionReuse';
 import { resolveTerminalSessionExitIntent, type TerminalSessionExitEvent } from '../application/state/resolveTerminalSessionExitIntent';
 import { prewarmAIStateStorageSnapshots } from '../application/state/aiStateSnapshots';
@@ -38,6 +39,7 @@ import {
   resolveTerminalSessionHost,
 } from '../domain/terminalHostResolution';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
+import { toast } from './ui/toast';
 import { useI18n } from '../application/i18n/I18nProvider';
 import { SftpSidePanel } from './SftpSidePanel';
 import { ScriptsSidePanel } from './ScriptsSidePanel';
@@ -46,6 +48,15 @@ import { NotesManager } from './notes/NotesManager';
 import { useRemoteHistoryState } from '../application/state/useRemoteHistoryState';
 import { resolveSnippetCommand } from './SnippetExecutionProvider';
 import type { Snippet } from '../types';
+import { isScriptSnippet } from '../domain/snippetScript.ts';
+import { useScriptExecution } from '../application/state/useScriptExecution';
+import {
+  pauseScriptRun,
+  resumeScriptRun,
+  runAutomationScript,
+  stopScriptRun,
+  waitForScriptRun,
+} from '../application/state/scriptAutomationCoordinator';
 import { ThemeSidePanel } from './terminal/ThemeSidePanel';
 import { focusTerminalSessionInput } from './terminal/focusTerminalSession';
 import { TerminalComposeBar } from './terminal/TerminalComposeBar';
@@ -97,6 +108,21 @@ const removeMountedSidePanelTabId = (
   tabIds: string[],
   tabId: string,
 ): string[] => tabIds.filter((id) => id !== tabId);
+
+function buildScriptSessionMeta(
+  sessionId: string,
+  sessions: TerminalSession[],
+  hosts: Host[],
+) {
+  const session = sessions.find((entry) => entry.id === sessionId);
+  if (!session) return undefined;
+  const host = hosts.find((entry) => entry.id === session.hostId);
+  return {
+    connected: session.status === 'connected',
+    hostname: host?.hostname ?? session.hostname,
+    username: host?.username ?? session.username,
+  };
+}
 
 const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   hosts,
@@ -197,6 +223,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   onRemoveSessionFromWorkspace,
 }) => {
   const { t } = useI18n();
+  const { runs } = useScriptExecution();
   const terminalRendererCwdBySessionRef = useRef<Map<string, string>>(new Map());
   const stableRef = useRef<Record<string, unknown>>({});
   const activeTabIdRef = useRef(activeTabStore.getActiveTabId());
@@ -1270,10 +1297,128 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   );
 
   const handleSnippetFromPanel = useCallback(async (snippet: Snippet) => {
+    const sessionId = getActiveTerminalSessionId();
+    if (!sessionId) return;
+    if (isScriptSnippet(snippet)) {
+      try {
+        await runAutomationScript({
+          snippet,
+          sessionId,
+          sessionMeta: buildScriptSessionMeta(sessionId, sessionsRef.current, hosts),
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        toast.error(message.includes('Observer mode') ? t('scripts.observer.blocked') : message);
+      }
+      return;
+    }
     const command = await resolveSnippetCommand(snippet);
     if (command === null) return;
     handleSnippetClickForFocusedSession(command, snippet.noAutoRun);
-  }, [handleSnippetClickForFocusedSession]);
+  }, [getActiveTerminalSessionId, handleSnippetClickForFocusedSession, hosts, t]);
+
+  const handleRunScriptFromPanel = useCallback(async (snippet: Snippet) => {
+    const sessionId = getActiveTerminalSessionId();
+    if (!sessionId) return;
+    try {
+      await runAutomationScript({
+        snippet,
+        sessionId,
+        sessionMeta: buildScriptSessionMeta(sessionId, sessionsRef.current, hosts),
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error(message.includes('Observer mode') ? t('scripts.observer.blocked') : message);
+    }
+  }, [getActiveTerminalSessionId, hosts, t]);
+
+  const handleRunScriptOnWorkspace = useCallback(async (
+    snippet: Snippet,
+    mode: 'sequential' | 'parallel' = 'parallel',
+  ) => {
+    const workspace = activeWorkspaceRef.current;
+    if (!workspace) {
+      const sessionId = getActiveTerminalSessionId();
+      if (!sessionId) {
+        toast.error(t('scripts.recording.noSession'));
+        return;
+      }
+      try {
+        await runAutomationScript({
+          snippet,
+          sessionId,
+          sessionMeta: buildScriptSessionMeta(sessionId, sessionsRef.current, hosts),
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        toast.error(message.includes('Observer mode') ? t('scripts.observer.blocked') : message);
+      }
+      return;
+    }
+    const workspaceSessions = sessionsRef.current.filter((session) => session.workspaceId === workspace.id);
+    const sessionIds = workspaceSessions
+      .filter((session) => session.status === 'connected')
+      .map((session) => session.id);
+    const skippedConnecting = workspaceSessions.filter((session) => session.status === 'connecting').length;
+    if (sessionIds.length === 0) {
+      if (skippedConnecting > 0) {
+        toast.info(t('scripts.actions.skippedConnectingSessions', { count: skippedConnecting }));
+      } else {
+        toast.error(t('scripts.recording.noSession'));
+      }
+      return;
+    }
+    if (skippedConnecting > 0) {
+      toast.info(t('scripts.actions.skippedConnectingSessions', { count: skippedConnecting }));
+    }
+    try {
+      const runOnSession = (sid: string) => runAutomationScript({
+        snippet,
+        sessionId: sid,
+        sessionMeta: buildScriptSessionMeta(sid, sessionsRef.current, hosts),
+      });
+      if (mode === 'sequential') {
+        for (const sid of sessionIds) {
+          const { runId } = await runOnSession(sid);
+          await waitForScriptRun(runId);
+        }
+      } else {
+        await Promise.all(sessionIds.map((sid) => runOnSession(sid)));
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error(message.includes('Observer mode') ? t('scripts.observer.blocked') : message);
+    }
+  }, [getActiveTerminalSessionId, hosts, t]);
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const snippet = (event as CustomEvent<{ snippet: Snippet }>).detail?.snippet;
+      if (!snippet) return;
+      void handleRunScriptFromPanel(snippet);
+    };
+    window.addEventListener('netcatty:scripts:run-on-focused', handler);
+    return () => window.removeEventListener('netcatty:scripts:run-on-focused', handler);
+  }, [handleRunScriptFromPanel]);
+
+  const handleStartRecordingFromPanel = useCallback(() => {
+    const sessionId = getActiveTerminalSessionId();
+    if (!sessionId) {
+      toast.error(t('scripts.recording.noSession'));
+      return;
+    }
+    const recording = getScriptRecordingSnapshot();
+    if (recording.sessionId === sessionId) {
+      window.dispatchEvent(new CustomEvent('netcatty:script:recording:stop', { detail: { sessionId } }));
+      return;
+    }
+    if (recording.sessionId) {
+      toast.error(t('scripts.recording.alreadyActive'));
+      return;
+    }
+    window.dispatchEvent(new CustomEvent('netcatty:script:recording:start', { detail: { sessionId } }));
+    toast.info(t('scripts.recording.started'));
+  }, [getActiveTerminalSessionId, t]);
 
   const handleComposeSend = useCallback((text: string) => {
     const activeWorkspace = activeWorkspaceRef.current;
@@ -1388,6 +1533,13 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     persistSidePanelWidth,
     handleSnippetClickForFocusedSession,
     handleSnippetFromPanel,
+    handleRunScriptFromPanel,
+    handleRunScriptOnWorkspace,
+    handleStartRecordingFromPanel,
+    scriptRuns: runs,
+    handleStopScriptRun: stopScriptRun,
+    handlePauseScriptRun: pauseScriptRun,
+    handleResumeScriptRun: resumeScriptRun,
     handleSnippetExecutorChange,
     handleProgrammaticCommandLogRewriteChange,
     handleStatusChange,

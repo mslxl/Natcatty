@@ -55,6 +55,25 @@ import { TerminalConnectionDialog } from "./terminal/TerminalConnectionDialog";
 import { HostKeyInfo } from "./terminal/TerminalHostKeyVerification";
 import { createKnownHostFromHostKeyInfo, toHostKeyInfo } from "./terminal/hostKeyVerification";
 import { TerminalToolbar } from "./terminal/TerminalToolbar";
+import { ScriptRecordingIndicator } from "./terminal/ScriptRecordingIndicator";
+import { ScriptSaveRecordingDialog } from "./scripts/ScriptSaveRecordingDialog";
+import { registerScreenSnapshotProvider } from "@/infrastructure/scripts/screenSnapshotRegistry.ts";
+import { useScriptRecorder } from "@/application/state/useScriptRecorder.ts";
+import { getScriptRecordingSnapshot, setScriptRecordingState } from "@/application/state/scriptRecordingStore.ts";
+import {
+  runAutomationScript,
+  runConnectScriptsSequential,
+  subscribeScriptRuns,
+  pauseScriptRun,
+  resumeScriptRun,
+  stopScriptRun,
+} from "@/application/state/scriptAutomationCoordinator.ts";
+import { resolveConnectScriptsForHost, hasUnresolvedConnectScriptBindings } from "@/domain/hostConnectScripts.ts";
+import { isVaultInitialized } from "@/application/state/vaultInitStore.ts";
+import { netcattyBridge } from "@/infrastructure/services/netcattyBridge.ts";
+import { ScriptExecutionOverlay } from "./terminal/ScriptExecutionOverlay";
+import { isScriptSnippet } from "@/domain/snippetScript.ts";
+import { useOutputTriggers } from "@/application/state/useOutputTriggers.ts";
 import { TerminalComposeBar } from "./terminal/TerminalComposeBar";
 import { TerminalContextMenu } from "./terminal/TerminalContextMenu";
 import { TerminalSearchBar } from "./terminal/TerminalSearchBar";
@@ -187,6 +206,8 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   restoreTerminalCwd = false,
   startupCommand,
   noAutoRun,
+  pendingScriptId,
+  pendingScript,
   reuseConnectionFromSessionId,
   serialConfig,
   hotkeyScheme = "disabled",
@@ -246,6 +267,62 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   // Timeout for connection - increased to 120s to allow time for keyboard-interactive (2FA) authentication
   const CONNECTION_TIMEOUT = 120000;
   const { t } = useI18n();
+  const connectScriptsConsumedRef = useRef(false);
+  const connectScriptsCompletedIdsRef = useRef(new Set<string>());
+  const connectScriptsInFlightRef = useRef(false);
+  const pendingScriptRunIdRef = useRef<string | null>(null);
+  const pendingScriptHandledRef = useRef<Snippet | null>(null);
+  const [connectScriptRetryTick, setConnectScriptRetryTick] = useState(0);
+  const [saveRecordingOpen, setSaveRecordingOpen] = useState(false);
+  const [recordedCode, setRecordedCode] = useState('');
+  const recorder = useScriptRecorder(sessionId);
+  const recorderRef = useRef(recorder);
+  recorderRef.current = recorder;
+  const passwordPromptActiveRef = useRef(false);
+  const [activeScriptRun, setActiveScriptRun] = useState<import('@/types/global/netcatty-bridge-script.d.ts').ScriptRun | undefined>(undefined);
+  const dismissedScriptRunIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    return subscribeScriptRuns((runs) => {
+      const sessionRuns = runs.filter((run) => run.sessionId === sessionId);
+      const liveRun = sessionRuns.find((run) => run.status === 'running' || run.status === 'paused');
+      if (liveRun) {
+        dismissedScriptRunIdRef.current = null;
+        setActiveScriptRun(liveRun);
+        return;
+      }
+
+      const finishedRun = sessionRuns
+        .filter((run) =>
+          (run.status === 'completed' || run.status === 'failed')
+          && run.runId !== dismissedScriptRunIdRef.current,
+        )
+        .sort((a, b) => (b.endedAt ?? 0) - (a.endedAt ?? 0))[0];
+
+      setActiveScriptRun(finishedRun);
+    });
+  }, [sessionId]);
+
+  const dismissScriptOverlay = useCallback(() => {
+    if (activeScriptRun) {
+      dismissedScriptRunIdRef.current = activeScriptRun.runId;
+    }
+    setActiveScriptRun(undefined);
+  }, [activeScriptRun]);
+  const outputTriggers = useOutputTriggers({
+    sessionId,
+    hostId: host.id,
+    snippets,
+    onRunScript: (snippet, sid) => runAutomationScript({ snippet, sessionId: sid }).catch((err) => {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error(message.includes('Observer mode') ? t('scripts.observer.blocked') : message);
+      throw err;
+    }),
+  });
+  const appendOutputTriggerOutputRef = useRef(outputTriggers.appendOutput);
+  appendOutputTriggerOutputRef.current = outputTriggers.appendOutput;
+  const noteOutputTriggerUserInputRef = useRef(outputTriggers.noteUserInput);
+  noteOutputTriggerUserInputRef.current = outputTriggers.noteUserInput;
   const availableFonts = useAvailableFonts();
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
@@ -618,6 +695,12 @@ const TerminalComponent: React.FC<TerminalProps> = ({
           break;
         } else if (ch === "\r" || ch === "\n") {
           const rawCommand = commandBufferRef.current;
+          if (recorderRef.current.isRecording) {
+            void recorderRef.current.recordEnter({
+              sensitive: passwordPromptActiveRef.current,
+            });
+            passwordPromptActiveRef.current = false;
+          }
           recordTerminalCommandExecution(rawCommand, {
             host,
             sessionId,
@@ -629,11 +712,14 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         } else if (ch === "\x15") {
           // Ctrl+U: clear line — reset command buffer (fuzzy match sends this)
           commandBufferRef.current = "";
+          recorderRef.current.recordClearLine();
         } else if (ch === "\b" || ch === "\x7f") {
           // Backspace: remove last character (Windows fuzzy replacement uses \b)
           commandBufferRef.current = commandBufferRef.current.slice(0, -1);
+          recorderRef.current.recordBackspace();
         } else if (ch.charCodeAt(0) >= 32) {
           commandBufferRef.current += ch;
+          recorderRef.current.recordInput(ch);
         }
       }
     }
@@ -1253,8 +1339,19 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     },
     onTerminalDataCapture: handleTerminalDataCaptureOnce,
     onTerminalOutput: onTerminalOutput
-      ? (chunk: string) => onTerminalOutput(sessionId, chunk)
-      : undefined,
+      ? (chunk: string) => {
+          if (/password|passphrase|口令/i.test(chunk)) {
+            passwordPromptActiveRef.current = true;
+          }
+          appendOutputTriggerOutputRef.current(chunk);
+          onTerminalOutput(sessionId, chunk);
+        }
+      : (chunk: string) => {
+          if (/password|passphrase|口令/i.test(chunk)) {
+            passwordPromptActiveRef.current = true;
+          }
+          appendOutputTriggerOutputRef.current(chunk);
+        },
     onTerminalLogData: captureTerminalLogData,
     onProgrammaticCommandLogRewrite: queueProgrammaticCommandLogRewrite,
     onOsDetected,
@@ -1266,6 +1363,190 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     sudoAutofillPasswordRef,
   });
   sessionStartersRef.current = sessionStarters;
+
+  useEffect(() => {
+    if (status === 'disconnected') {
+      connectScriptsConsumedRef.current = false;
+      connectScriptsCompletedIdsRef.current = new Set();
+    }
+  }, [status]);
+
+  useEffect(() => {
+    pendingScriptRunIdRef.current = null;
+    pendingScriptHandledRef.current = null;
+  }, [pendingScript?.id, pendingScriptId]);
+
+  const isPendingScriptAlreadyHandled = useCallback((snippet: Snippet) => {
+    if (snippet.id) {
+      return pendingScriptRunIdRef.current === snippet.id;
+    }
+    return pendingScriptHandledRef.current === snippet;
+  }, []);
+
+  useEffect(() => {
+    if (status !== 'connected') return;
+
+    let pendingOne: Snippet | undefined;
+    if (pendingScript && isScriptSnippet(pendingScript)) {
+      if (!isPendingScriptAlreadyHandled(pendingScript)) {
+        pendingOne = pendingScript;
+      }
+    } else if (pendingScriptId) {
+      const script = snippets.find((item) => item.id === pendingScriptId && isScriptSnippet(item));
+      if (script && !isPendingScriptAlreadyHandled(script)) {
+        pendingOne = script;
+      }
+    }
+
+    const shouldEvaluateConnect = !connectScriptsConsumedRef.current;
+    const hasPendingWork = Boolean(pendingOne);
+    if (!shouldEvaluateConnect && !hasPendingWork) return;
+    if (connectScriptsInFlightRef.current) return;
+
+    // Defer until xterm has rendered login output and the main-process output tap
+    // has populated SessionOutputBuffer (avoids waitForPrompt racing an empty buffer).
+    const timer = window.setTimeout(() => {
+      const runPending = Boolean(pendingOne);
+      const connectQueueNow = connectScriptsConsumedRef.current
+        ? []
+        : resolveConnectScriptsForHost(host, snippets).filter(
+          (item) => item.id && !connectScriptsCompletedIdsRef.current.has(item.id),
+        );
+
+      const scriptsToRun: Snippet[] = [];
+      for (const item of connectQueueNow) {
+        scriptsToRun.push(item);
+      }
+      if (runPending && pendingOne && !scriptsToRun.some((entry) => entry.id === pendingOne.id)) {
+        scriptsToRun.push(pendingOne);
+      }
+
+      const resolvedConnectScripts = resolveConnectScriptsForHost(host, snippets);
+      const allConnectScriptsDone = resolvedConnectScripts.length === 0
+        || resolvedConnectScripts.every(
+          (item) => item.id && connectScriptsCompletedIdsRef.current.has(item.id),
+        );
+
+      if (scriptsToRun.length === 0) {
+        if (
+          !connectScriptsConsumedRef.current
+          && allConnectScriptsDone
+          && isVaultInitialized()
+          && snippets.length > 0
+          && !hasUnresolvedConnectScriptBindings(host, snippets)
+        ) {
+          connectScriptsConsumedRef.current = true;
+        }
+        return;
+      }
+
+      const pendingScriptToMark = runPending ? pendingOne : undefined;
+      const connectIdsInBatch = new Set(
+        connectQueueNow.map((item) => item.id).filter((id): id is string => Boolean(id)),
+      );
+
+      connectScriptsInFlightRef.current = true;
+
+      void runConnectScriptsSequential({
+        scripts: scriptsToRun,
+        sessionId,
+        sessionMeta: {
+          connected: true,
+          hostname: host.hostname,
+          username: host.username,
+        },
+        onScriptComplete: (snippet) => {
+          if (snippet.id && connectIdsInBatch.has(snippet.id)) {
+            connectScriptsCompletedIdsRef.current.add(snippet.id);
+          }
+          if (pendingScriptToMark && snippet === pendingScriptToMark) {
+            if (snippet.id) {
+              pendingScriptRunIdRef.current = snippet.id;
+            } else {
+              pendingScriptHandledRef.current = snippet;
+            }
+          }
+        },
+      })
+        .then(() => {
+          const resolvedAfterRun = resolveConnectScriptsForHost(host, snippets);
+          const doneAfterRun = resolvedAfterRun.length === 0
+            || resolvedAfterRun.every(
+              (item) => item.id && connectScriptsCompletedIdsRef.current.has(item.id),
+            );
+          if (doneAfterRun) {
+            connectScriptsConsumedRef.current = true;
+          }
+        })
+        .catch((err) => {
+          const message = err instanceof Error ? err.message : String(err);
+          toast.error(message.includes('Observer mode') ? t('scripts.observer.blocked') : message);
+          setConnectScriptRetryTick((tick) => tick + 1);
+        })
+        .finally(() => {
+          connectScriptsInFlightRef.current = false;
+        });
+    }, 400);
+
+    return () => window.clearTimeout(timer);
+  }, [host, isPendingScriptAlreadyHandled, pendingScript, pendingScriptId, sessionId, snippets, status, t, connectScriptRetryTick]);
+
+  useEffect(() => {
+    return registerScreenSnapshotProvider(sessionId, () => {
+      const term = termRef.current;
+      if (!term?.buffer?.active) {
+        return { rows: 24, cols: 80, currentRow: 0, lines: [] };
+      }
+      const buffer = term.buffer.active;
+      const lines: string[] = [];
+      for (let row = 0; row < term.rows; row += 1) {
+        lines.push(buffer.getLine(buffer.viewportY + row)?.translateToString(true) ?? '');
+      }
+      return {
+        rows: term.rows,
+        cols: term.cols,
+        currentRow: buffer.baseY + buffer.cursorY,
+        lines,
+      };
+    });
+  }, [sessionId]);
+
+  useEffect(() => {
+    const startHandler = (event: Event) => {
+      const detail = (event as CustomEvent<{ sessionId?: string }>).detail;
+      if (detail?.sessionId !== sessionId) return;
+      void recorderRef.current.startRecording();
+    };
+    const stopHandler = (event: Event) => {
+      const detail = (event as CustomEvent<{ sessionId?: string }>).detail;
+      if (detail?.sessionId !== sessionId) return;
+      if (!recorderRef.current.isRecording) return;
+      void recorderRef.current.stopRecording().then(({ code }) => {
+        setRecordedCode(code);
+        setSaveRecordingOpen(true);
+      });
+    };
+    window.addEventListener('netcatty:script:recording:start', startHandler);
+    window.addEventListener('netcatty:script:recording:stop', stopHandler);
+    return () => {
+      window.removeEventListener('netcatty:script:recording:start', startHandler);
+      window.removeEventListener('netcatty:script:recording:stop', stopHandler);
+    };
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (recorder.isRecording) {
+      setScriptRecordingState(sessionId, recorder.isPaused);
+    } else if (getScriptRecordingSnapshot().sessionId === sessionId) {
+      setScriptRecordingState(null);
+    }
+  }, [recorder.isRecording, recorder.isPaused, sessionId]);
+
+  useEffect(() => () => {
+    if (getScriptRecordingSnapshot().sessionId === sessionId) {
+      setScriptRecordingState(null);
+    }
+  }, [sessionId]);
 
   useEffect(() => {
     setConnectionReuseFellBack(false);
@@ -1381,6 +1662,20 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     }
   }, []);
 
+  useEffect(() => {
+    const bridge = netcattyBridge.get();
+    const dispose = bridge?.onScriptSessionInput?.(({ sessionId: sid, data }) => {
+      if (sid !== sessionId) return;
+      scrollToBottomAfterProgrammaticInput(data);
+    });
+    return dispose;
+  }, [scrollToBottomAfterProgrammaticInput, sessionId]);
+
+  useEffect(() => {
+    if (!activeScriptRun) return;
+    termRef.current?.scrollToBottom();
+  }, [activeScriptRun]);
+
   const broadcastUserPasteData = useCallback((data: string) => {
     if (sessionRef.current && isBroadcastEnabledRef.current && onBroadcastInputRef.current) {
       onBroadcastInputRef.current(data, sessionId);
@@ -1435,10 +1730,19 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   }, [prepareProgrammaticSudoInput, scrollToBottomAfterProgrammaticInput, terminalBackend, sessionId]);
 
   const executeSnippet = useCallback(async (snippet: Snippet) => {
+    if (isScriptSnippet(snippet)) {
+      try {
+        await runAutomationScript({ snippet, sessionId });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        toast.error(message.includes('Observer mode') ? t('scripts.observer.blocked') : message);
+      }
+      return;
+    }
     const command = await resolveSnippetCommand(snippet);
     if (command === null) return;
     executeSnippetCommand(command, snippet.noAutoRun);
-  }, [executeSnippetCommand]);
+  }, [executeSnippetCommand, sessionId, t]);
 
   const onSnippetShortkeyRef = useRef(executeSnippet);
   onSnippetShortkeyRef.current = executeSnippet;
@@ -1820,6 +2124,19 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     };
   }, [getManualSessionLogStatus, sessionId, status]);
 
+  const handleToolbarRecordingToggle = useCallback(() => {
+    const recording = getScriptRecordingSnapshot();
+    if (recording.sessionId && recording.sessionId !== sessionId) {
+      toast.error(t('scripts.recording.alreadyActive'));
+      return;
+    }
+    if (recording.sessionId === sessionId) {
+      window.dispatchEvent(new CustomEvent('netcatty:script:recording:stop', { detail: { sessionId } }));
+      return;
+    }
+    window.dispatchEvent(new CustomEvent('netcatty:script:recording:start', { detail: { sessionId } }));
+  }, [sessionId, t]);
+
   const renderControls = useCallback((opts?: { showClose?: boolean }) => (
     <TerminalToolbar
       status={status}
@@ -1853,6 +2170,21 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       onToggleComposeBar={inWorkspace ? onToggleComposeBar : () => setIsComposeBarOpen(prev => !prev)}
       terminalEncoding={terminalEncoding}
       onSetTerminalEncoding={handleSetTerminalEncoding}
+      recordingIndicator={recorder.isRecording ? (
+        <ScriptRecordingIndicator
+          elapsedMs={recorder.elapsedMs}
+          isPaused={recorder.isPaused}
+          onPause={recorder.pauseRecording}
+          onResume={recorder.resumeRecording}
+          onStop={() => {
+            void recorder.stopRecording().then(({ code }) => {
+              setRecordedCode(code);
+              setSaveRecordingOpen(true);
+            });
+          }}
+        />
+      ) : undefined}
+      onStartRecording={status === 'connected' ? handleToolbarRecordingToggle : undefined}
     />
   ), [
     compactToolbar,
@@ -1863,6 +2195,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     handleSetTerminalEncoding,
     handleToggleSessionLog,
     handleToggleSearch,
+    handleToolbarRecordingToggle,
     host,
     inWorkspace,
     isLocalConnection,
@@ -1884,6 +2217,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     snippets,
     status,
     terminalEncoding,
+    recorder,
   ]);
 
   const statusDotTone =
@@ -1929,6 +2263,9 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     onCommandExecuted,
     onCommandSubmitted,
     commandBufferRef,
+    scriptRecorderRef: recorderRef,
+    passwordPromptActiveRef,
+    onOutputTriggerUserInputRef: noteOutputTriggerUserInputRef,
     promptLineBreakStateRef,
     sudoAutofillRef,
     setIsSearchOpen,
@@ -2076,9 +2413,34 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     onWake: wakeFromHibernateRuntime,
   });
 
-  useTerminalEffects({ CONNECTION_TIMEOUT, Error, XTERM_PERFORMANCE_CONFIG, applyUserCursorPreference, auth, autocompleteCloseRef, autocompleteInputRef, autocompleteKeyEventRef, captureTerminalLogData, clearTerminalCwd, commandBufferRef, connectionLogBufferRef, containerRef, createPromptLineBreakState, createReplaySafeTerminalLogSanitizer, createXTermRuntime, deferTerminalResizeRef, disableTerminalFontZoomRef, effectiveFontSize, effectiveFontWeight, effectiveTheme, error, executeSnippetCommand, finalizeTerminalLogData, fitAddonRef, fontFamilyId, fontSize, fontWeightFixupDoneRef, forceCloseHibernatedSession, forceSyncRenderAfterResize, handleOsc52ReadRequest, handleTerminalDataCaptureOnce, hasConnectedRef, hasRuntimeRef, host, hotkeySchemeRef, hibernatedRef, identities, inWorkspace, isBootActiveRef, isBroadcastEnabledRef, isComposeBarOpen: effectiveComposeBarOpen, isFocusMode, isFocused, isLocalConnection, isNetworkDevice, isResizing: deferTerminalResize, isRestoringSelectionRef, isSearchOpen, isSerialConnection, isVisible, isVisibleRef, keyBindingsRef, keys, knownCwdRef, lastFittedSizeRef, lastToastedErrorRef, logger, mouseTrackingRef, onBroadcastInputRef, onBroadcastInterruptPriorityChange, onCommandExecuted, onCommandSubmitted, onHotkeyActionRef, onSnippetShortkeyRef, onSnippetExecutorChange, onTerminalCwdChange, onTerminalTitleChange, onTerminalBell, onTerminalFontSizeChange, paneLayoutKey, pendingAuthRef, pendingOutputScrollRef, prepareRestoredReconnect, prevIsResizingRef, promptLineBreakStateRef, resizeSession, resolveHostAuth, resolvedFontFamily, safeFit, searchAddonRef, serialConfig, serialLineBufferRef, serializeAddonRef, sessionId, sessionRef, sessionStarters, setError, setHasMouseTracking, setHasSelection, setIsCancelling, setIsDisconnectedDialogDismissed, setIsSearchOpen, setNeedsHostKeyVerification, setPendingHostKeyInfo, setPendingHostKeyRequestId, setProgressLogs, setProgressValue, setSelectionOverlayPosition, setShowLogs, setStatus, setTimeLeft, shouldEnableNativeUserInputAutoScroll, shouldProbeSessionCwd, shouldStartTerminalBackend, snippetsRef, status, statusRef, sudoAutofillRef, t, teardown, telnetLocalEchoRef, termRef, terminalAltKeyOptions, terminalBackend, terminalContextActionsRef, terminalCwdTracker, terminalDataCapturedRef, terminalLogSanitizerRef, terminalSettings, terminalSettingsRef, toHostKeyInfo, toast, updateStatus, useEffect, useLayoutEffect, xtermRuntimeRef, zmodem, zmodemToastedRef, restoreState });
+  useTerminalEffects({ CONNECTION_TIMEOUT, Error, XTERM_PERFORMANCE_CONFIG, applyUserCursorPreference, auth, autocompleteCloseRef, autocompleteInputRef, autocompleteKeyEventRef, captureTerminalLogData, clearTerminalCwd, commandBufferRef, connectionLogBufferRef, containerRef, createPromptLineBreakState, createReplaySafeTerminalLogSanitizer, createXTermRuntime, deferTerminalResizeRef, disableTerminalFontZoomRef, effectiveFontSize, effectiveFontWeight, effectiveTheme, error, executeSnippetCommand, finalizeTerminalLogData, fitAddonRef, fontFamilyId, fontSize, fontWeightFixupDoneRef, forceCloseHibernatedSession, forceSyncRenderAfterResize, handleOsc52ReadRequest, handleTerminalDataCaptureOnce, hasConnectedRef, hasRuntimeRef, host, hotkeySchemeRef, hibernatedRef, identities, inWorkspace, isBootActiveRef, isBroadcastEnabledRef, isComposeBarOpen: effectiveComposeBarOpen, isFocusMode, isFocused, isLocalConnection, isNetworkDevice, isResizing: deferTerminalResize, isRestoringSelectionRef, isSearchOpen, isSerialConnection, isVisible, isVisibleRef, keyBindingsRef, keys, knownCwdRef, lastFittedSizeRef, lastToastedErrorRef, logger, mouseTrackingRef, onBroadcastInputRef, onBroadcastInterruptPriorityChange, onCommandExecuted, onCommandSubmitted, onHotkeyActionRef, onOutputTriggerUserInputRef: noteOutputTriggerUserInputRef, onSnippetShortkeyRef, onSnippetExecutorChange, onTerminalCwdChange, onTerminalTitleChange, onTerminalBell, onTerminalFontSizeChange, paneLayoutKey, passwordPromptActiveRef, pendingAuthRef, pendingOutputScrollRef, prepareRestoredReconnect, prevIsResizingRef, promptLineBreakStateRef, resizeSession, resolveHostAuth, resolvedFontFamily, safeFit, scriptRecorderRef: recorderRef, searchAddonRef, serialConfig, serialLineBufferRef, serializeAddonRef, sessionId, sessionRef, sessionStarters, setError, setHasMouseTracking, setHasSelection, setIsCancelling, setIsDisconnectedDialogDismissed, setIsSearchOpen, setNeedsHostKeyVerification, setPendingHostKeyInfo, setPendingHostKeyRequestId, setProgressLogs, setProgressValue, setSelectionOverlayPosition, setShowLogs, setStatus, setTimeLeft, shouldEnableNativeUserInputAutoScroll, shouldProbeSessionCwd, shouldStartTerminalBackend, snippetsRef, status, statusRef, sudoAutofillRef, t, teardown, telnetLocalEchoRef, termRef, terminalAltKeyOptions, terminalBackend, terminalContextActionsRef, terminalCwdTracker, terminalDataCapturedRef, terminalLogSanitizerRef, terminalSettings, terminalSettingsRef, toHostKeyInfo, toast, updateStatus, useEffect, useLayoutEffect, xtermRuntimeRef, zmodem, zmodemToastedRef, restoreState });
 
-  return <TerminalView ctx={{ Activity, ArrowDownToLine, ArrowUpFromLine, Button, Clock3, Copy, Cpu, HardDrive, HoverCard, HoverCardContent, HoverCardTrigger, Maximize2, MemoryStick, Radio, Sparkles, SquareArrowOutUpRight, TerminalAutocomplete, TerminalComposeBar, TerminalConnectionDialog, TerminalContextMenu, TerminalSearchBar, Tooltip, TooltipContent, TooltipTrigger, ZmodemOverwriteDialog, ZmodemProgressIndicator, auth, autocompleteAcceptTextRef, autocompleteCloseRef, autocompleteHostOs, autocompleteInputRef, autocompleteKeyEventRef, autocompleteRepositionRef, autocompleteSettings, chainProgress, cn, compactToolbar, lineTimestampsAvailable, containerRef, effectiveFontSize, effectiveFontWeight, effectiveTheme, error, executeSnippet, executeSnippetCommand, handleAddSelectionToAI, handleCancelConnect, handleCloseDisconnectedSession, handleCloseSearch, handleDismissDisconnectedDialog, handleDragEnter, handleDragLeave, handleDragOver, handleDrop, handleFindNext, handleFindPrevious, handleHostKeyAddAndContinue, handleHostKeyClose, handleHostKeyContinue, handleOsc52ReadResponse, handleOsc7SetupConfirm, handleOsc7SetupOpenChange, handleReceiveYmodem, handleRetry, handleSearch, handleSendYmodem, handleTopOverlayMouseDownCapture, hasMouseTracking, hasSelection, host, hotkeyScheme, inWorkspace, isBroadcastEnabled, isCancelling, isComposeBarOpen, isDraggingOver, isFocusMode, isLocalConnection, remoteDragDropUsesZmodem, isSerialConnection, isSearchOpen, isSupportedOs, isSystemSidebarEligible, isVisible, keyBindings, keys, knownCwdRef, needsHostKeyVerification, onAddSelectionToAI, onBroadcastInput, onCloseSession, onDetach, onDetachDragEnd, onDetachDragStart, onDetachPointerDown, onEndSessionDrag, onExpandToFocus, onOpenSystem, onRename, onSplitHorizontal, onSplitVertical, onStartSessionDrag, onToggleBroadcast, onUpdateHost: handleUpdateHostFromTerminal, osc52ReadPromptVisible, osc7SetupOpen, osc7SetupRunning, pendingHostKeyInfo, progressLogs, progressValue, renderControls, resolvedFontFamily, restoreState, scrollToBottomAfterProgrammaticInput, searchMatchCount, selectionOverlayPosition, sessionDisplayName, sessionId, sessionRef, setIsComposeBarOpen, setShowLogs, shouldShowConnectionDialog, showLogs, showSelectionAIAction, snippets, status, statusDotTone, sudoHintRef, sudoHintText: t("terminal.sudoHint.pressEnter"), t, termRef, terminalBackend, terminalContextActions, terminalCwdTracker, terminalPreviewVars, terminalSettings, timeLeft, toast, zmodem }} />;
+  return (
+    <>
+      <TerminalView ctx={{ Activity, ArrowDownToLine, ArrowUpFromLine, Button, Clock3, Copy, Cpu, HardDrive, HoverCard, HoverCardContent, HoverCardTrigger, Maximize2, MemoryStick, Radio, Sparkles, SquareArrowOutUpRight, TerminalAutocomplete, TerminalComposeBar, TerminalConnectionDialog, TerminalContextMenu, TerminalSearchBar, Tooltip, TooltipContent, TooltipTrigger, ZmodemOverwriteDialog, ZmodemProgressIndicator, auth, autocompleteAcceptTextRef, autocompleteCloseRef, autocompleteHostOs, autocompleteInputRef, autocompleteKeyEventRef, autocompleteRepositionRef, autocompleteSettings, chainProgress, cn, compactToolbar, lineTimestampsAvailable, containerRef, effectiveFontSize, effectiveFontWeight, effectiveTheme, error, executeSnippet, executeSnippetCommand, handleAddSelectionToAI, handleCancelConnect, handleCloseDisconnectedSession, handleCloseSearch, handleDismissDisconnectedDialog, handleDragEnter, handleDragLeave, handleDragOver, handleDrop, handleFindNext, handleFindPrevious, handleHostKeyAddAndContinue, handleHostKeyClose, handleHostKeyContinue, handleOsc52ReadResponse, handleOsc7SetupConfirm, handleOsc7SetupOpenChange, handleReceiveYmodem, handleRetry, handleSearch, handleSendYmodem, handleTopOverlayMouseDownCapture, hasMouseTracking, hasSelection, host, hotkeyScheme, inWorkspace, isBroadcastEnabled, isCancelling, isComposeBarOpen, isDraggingOver, isFocusMode, isLocalConnection, remoteDragDropUsesZmodem, isSerialConnection, isSearchOpen, isSupportedOs, isSystemSidebarEligible, isVisible, keyBindings, keys, knownCwdRef, needsHostKeyVerification, onAddSelectionToAI, onBroadcastInput, onCloseSession, onDetach, onDetachDragEnd, onDetachDragStart, onDetachPointerDown, onEndSessionDrag, onExpandToFocus, onOpenSystem, onRename, onSplitHorizontal, onSplitVertical, onStartSessionDrag, onToggleBroadcast, onUpdateHost: handleUpdateHostFromTerminal, osc52ReadPromptVisible, osc7SetupOpen, osc7SetupRunning, pendingHostKeyInfo, progressLogs, progressValue, renderControls, resolvedFontFamily, restoreState, scrollToBottomAfterProgrammaticInput, searchMatchCount, scriptExecutionOverlay: activeScriptRun ? (
+        <ScriptExecutionOverlay
+          run={activeScriptRun}
+          onPause={() => { void pauseScriptRun(activeScriptRun.runId); }}
+          onResume={() => { void resumeScriptRun(activeScriptRun.runId); }}
+          onStop={() => { void stopScriptRun(activeScriptRun.runId); }}
+          onDismiss={dismissScriptOverlay}
+        />
+      ) : null, selectionOverlayPosition, sessionDisplayName, sessionId, sessionRef, setIsComposeBarOpen, setShowLogs, shouldShowConnectionDialog, showLogs, showSelectionAIAction, snippets, status, statusDotTone, sudoHintRef, sudoHintText: t("terminal.sudoHint.pressEnter"), t, termRef, terminalBackend, terminalContextActions, terminalCwdTracker, terminalPreviewVars, terminalSettings, timeLeft, toast, zmodem }} />
+      <ScriptSaveRecordingDialog
+        open={saveRecordingOpen}
+        code={recordedCode}
+        packages={snippetPackages}
+        defaultName={`recorded-${new Date().toISOString().slice(0, 10)}`}
+        onClose={() => setSaveRecordingOpen(false)}
+        onSave={({ name, packagePath, code, editAfterSave }) => {
+          window.dispatchEvent(new CustomEvent('netcatty:scripts:save-recorded', {
+            detail: { name, packagePath, code, editAfterSave },
+          }));
+          setSaveRecordingOpen(false);
+        }}
+      />
+    </>
+  );
 };
 
 const Terminal = memo(TerminalComponent, terminalPropsAreEqual);

@@ -125,7 +125,33 @@ function workspaceCtxKeyEqual(prev: Ctx, next: Ctx, key: string): boolean {
   return prev[key] === next[key];
 }
 
+function scriptRunsEqual(a: any, b: any): boolean {
+  if (a === b) return true;
+  if (!Array.isArray(a) || !Array.isArray(b)) return false;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    const prevRun = a[i];
+    const nextRun = b[i];
+    if (prevRun === nextRun) continue;
+    if (!prevRun || !nextRun) return false;
+    if (
+      prevRun.runId !== nextRun.runId
+      || prevRun.status !== nextRun.status
+      || prevRun.stepIndex !== nextRun.stepIndex
+      || prevRun.waitingFor !== nextRun.waitingFor
+      || prevRun.error !== nextRun.error
+      || prevRun.logs?.length !== nextRun.logs?.length
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function sidePanelCtxKeyEqual(prev: Ctx, next: Ctx, key: string): boolean {
+  if (key === 'scriptRuns') {
+    return scriptRunsEqual(prev.scriptRuns, next.scriptRuns);
+  }
   if (key === 'activeWorkspace') {
     return activeWorkspaceEqual(prev.activeWorkspace, next.activeWorkspace);
   }
@@ -139,7 +165,9 @@ const SIDE_PANEL_LIVE_CTX_KEYS = [
   'activeTerminalSessionForSystem',
   'activeSystemSessionHost',
   'focusedHost',
+  'focusedSessionId',
   'historySessionId',
+  'scriptRuns',
   'resolvedPreviewTheme',
   'previewedOrVisibleThemeId',
   'sftpActiveHost',
@@ -200,6 +228,12 @@ const SIDE_PANEL_STABLE_CTX_KEYS = [
   'snippets',
   'snippetPackages',
   'handleSnippetFromPanel',
+  'handleRunScriptFromPanel',
+  'handleRunScriptOnWorkspace',
+  'handleStartRecordingFromPanel',
+  'handleStopScriptRun',
+  'handlePauseScriptRun',
+  'handleResumeScriptRun',
   'followAppTerminalTheme',
   'terminalTheme',
   'terminalThemeId',
