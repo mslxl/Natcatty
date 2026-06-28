@@ -530,15 +530,8 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
     return () => observer.disconnect();
   }, [hasSnippetsSidePanel, viewMode]);
 
-  const snippetsHeaderSectionCollapseClass = (
-    collapsed: boolean,
-    expandedMaxWidth: string,
-  ) => cn(
-    'flex items-center gap-2 overflow-hidden transition-[max-width,opacity,margin] duration-200 ease-in-out shrink-0',
-    collapsed
-      ? 'max-w-0 opacity-0 -ml-2 pointer-events-none'
-      : `${expandedMaxWidth} opacity-100`,
-  );
+  const snippetsHeaderActionsClass =
+    'flex min-w-0 flex-1 items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden';
 
   const [historyVisibleCount, setHistoryVisibleCount] = useState(HISTORY_PAGE_SIZE);
   const historyScrollRef = useRef<HTMLDivElement>(null);
@@ -1614,14 +1607,17 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
     <TooltipProvider delayDuration={300}>
     <div className="flex flex-1 min-h-0 min-w-0 relative">
       <div className="flex flex-1 flex-col min-h-0 min-w-0 overflow-hidden">
-        <VaultPageHeader contentClassName="min-w-0 overflow-hidden">
+        <VaultPageHeader contentClassName="min-w-0 gap-2 overflow-hidden">
             <VaultHeaderSearch
               placeholder={t('snippets.searchPlaceholder')}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className={cn(hasSnippetsSidePanel ? 'flex-1 min-w-[120px]' : 'w-64 shrink-0')}
+              className={cn(
+                'shrink-0',
+                hasSnippetsSidePanel ? 'w-[140px] min-w-[120px]' : 'w-64',
+              )}
             />
-            <div className={snippetsHeaderSectionCollapseClass(hasSnippetsSidePanel, 'max-w-[520px]')}>
+            <div className={snippetsHeaderActionsClass}>
             <Button onClick={() => handleEdit()} size="sm" className="h-10 px-3 shrink-0">
               <Plus size={14} className="mr-2" /> {t('snippets.action.newSnippet')}
             </Button>
@@ -1663,7 +1659,7 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
               <Clock size={14} /> {t('snippets.history.title')}
             </Button>
             </div>
-            <div className="flex items-center gap-1 ml-auto shrink-0">
+            <div className="ml-auto flex shrink-0 items-center gap-1">
               <Dropdown>
                 <DropdownTrigger asChild>
                   <Button variant="ghost" size="icon" className={vaultHeaderIconButtonClass}>
