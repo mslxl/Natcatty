@@ -77,6 +77,7 @@ export function waitForScriptRun(
   return new Promise((resolve, reject) => {
     let settled = false;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    let unsubscribe: () => void = () => {};
 
     const finish = (handler: () => void) => {
       if (settled) return;
@@ -102,7 +103,7 @@ export function waitForScriptRun(
       finish(() => reject(new Error(run.error || 'Script failed')));
     };
 
-    const unsubscribe = subscribeScriptRuns((currentRuns) => {
+    unsubscribe = subscribeScriptRuns((currentRuns) => {
       settleRun(currentRuns.find((entry) => entry.runId === runId));
     });
 

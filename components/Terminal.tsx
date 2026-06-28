@@ -272,7 +272,6 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const connectScriptsInFlightRef = useRef(false);
   const pendingScriptRunIdRef = useRef<string | null>(null);
   const pendingScriptHandledRef = useRef<Snippet | null>(null);
-  const [connectScriptRetryTick, setConnectScriptRetryTick] = useState(0);
   const [saveRecordingOpen, setSaveRecordingOpen] = useState(false);
   const [recordedCode, setRecordedCode] = useState('');
   const recorder = useScriptRecorder(sessionId);
@@ -1481,7 +1480,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         .catch((err) => {
           const message = err instanceof Error ? err.message : String(err);
           toast.error(message.includes('Observer mode') ? t('scripts.observer.blocked') : message);
-          setConnectScriptRetryTick((tick) => tick + 1);
+          connectScriptsConsumedRef.current = true;
         })
         .finally(() => {
           connectScriptsInFlightRef.current = false;
@@ -1489,7 +1488,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     }, 400);
 
     return () => window.clearTimeout(timer);
-  }, [host, isPendingScriptAlreadyHandled, pendingScript, pendingScriptId, sessionId, snippets, status, t, connectScriptRetryTick]);
+  }, [host, isPendingScriptAlreadyHandled, pendingScript, pendingScriptId, sessionId, snippets, status, t]);
 
   useEffect(() => {
     return registerScreenSnapshotProvider(sessionId, () => {
