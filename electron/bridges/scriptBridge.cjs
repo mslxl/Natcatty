@@ -379,6 +379,7 @@ async function runScriptOnSession({
 
   try {
     await syncOutputBufferFromSnapshot(sessionId);
+    getOrCreateBuffer(sessionId).markScanBaseline();
     await runtime.execute(content);
     if (run.aborted) {
       run.status = "failed";

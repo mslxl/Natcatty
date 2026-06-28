@@ -81,6 +81,11 @@ class SessionOutputBuffer {
     this.scanOffset = Math.min(absoluteEnd, this.getText().length);
   }
 
+  /** Ignore scrollback already on screen when a script run starts. */
+  markScanBaseline() {
+    this.scanOffset = this.getText().length;
+  }
+
   clear() {
     this.chunks = [];
     this.totalLength = 0;

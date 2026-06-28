@@ -49,6 +49,23 @@ test("SessionOutputBuffer waitForAny matches shell prompt patterns", async () =>
   assert.equal(await pending, 0);
 });
 
+test("SessionOutputBuffer markScanBaseline ignores prior scrollback for waitFor", async () => {
+  const buffer = new SessionOutputBuffer("s1");
+  buffer.append("Do you want to reset password? ");
+  buffer.markScanBaseline();
+
+  const pending = buffer.waitFor(/Do you want to reset password/, 200);
+  let resolvedEarly = false;
+  void pending.then(() => {
+    resolvedEarly = true;
+  });
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(resolvedEarly, false);
+
+  buffer.append("Do you want to reset password? ");
+  assert.equal(await pending, "Do you want to reset password");
+});
+
 test("SessionOutputBuffer waitFor ignores stale prompt before cursor", async () => {
   const buffer = new SessionOutputBuffer("s1");
   buffer.append("user@host:~$ ");
