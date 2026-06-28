@@ -220,7 +220,9 @@ const writeSessionDataImmediate = (
       if (shouldScrollOnTerminalOutput(settings)) {
         handleTerminalOutputAutoScroll(ctx, term);
       }
-      scheduleTerminalRepaintWhenUnfocused(term);
+      if (ctx.isVisibleRef?.current !== false) {
+        scheduleTerminalRepaintWhenUnfocused(term);
+      }
       done();
     };
     const commitIpcAck = (ackedBytes: number) => {

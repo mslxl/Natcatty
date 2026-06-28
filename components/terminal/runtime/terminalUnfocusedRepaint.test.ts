@@ -47,12 +47,12 @@ test("scheduleTerminalRepaintWhenUnfocused debounces repaint scheduling", () => 
   assert.match(source, /UNFOCUSED_REPAINT_DEBOUNCE_MS/);
 });
 
-test("writeSessionDataImmediate schedules unfocused repaint after output", () => {
+test("writeSessionDataImmediate schedules unfocused repaint only for visible panes", () => {
   const source = readFileSync(
     new URL("./terminalSessionAttachment.ts", import.meta.url),
     "utf8",
   );
-  assert.match(source, /scheduleTerminalRepaintWhenUnfocused\(term\)/);
+  assert.match(source, /if \(ctx\.isVisibleRef\?\.current !== false\) \{\s*scheduleTerminalRepaintWhenUnfocused\(term\)/);
 });
 
 test("window focus cancels pending unfocused repaint before layout recovery", () => {
