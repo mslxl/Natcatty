@@ -36,12 +36,14 @@ import {
   EnvVarsPanel,
   HostDetailsSection,
   HostDetailsSettingRow,
+  HostDetailsOverrideReset,
   ProxyPanel,
 } from "./host-details";
 import {
   AsidePanel,
   AsidePanelContent,
   type AsidePanelLayout,
+  type AsidePanelResizeProps,
 } from "./ui/aside-panel";
 import { Button } from "./ui/button";
 import { Combobox } from "./ui/combobox";
@@ -79,7 +81,9 @@ interface GroupDetailsPanelProps {
   layout?: AsidePanelLayout;
 }
 
-const GroupDetailsPanel: React.FC<GroupDetailsPanelProps> = ({
+type GroupDetailsPanelPropsWithResize = GroupDetailsPanelProps & AsidePanelResizeProps;
+
+const GroupDetailsPanel: React.FC<GroupDetailsPanelPropsWithResize> = ({
   groupPath,
   config,
   availableKeys,
@@ -93,8 +97,16 @@ const GroupDetailsPanel: React.FC<GroupDetailsPanelProps> = ({
   onSave,
   onCancel,
   layout = "overlay",
+  resizable,
+  persistWidthStorageKey,
+  resizeAriaLabel,
 }) => {
   const { t } = useI18n();
+  const asideResizeProps = {
+    resizable,
+    persistWidthStorageKey,
+    resizeAriaLabel,
+  };
   const availableFonts = useAvailableFonts();
 
   const originalName = groupPath.includes("/")
@@ -463,6 +475,7 @@ const GroupDetailsPanel: React.FC<GroupDetailsPanelProps> = ({
         onBack={() => setActiveSubPanel("none")}
         onCancel={onCancel}
         layout={layout}
+        {...asideResizeProps}
       />
     );
   }
@@ -481,6 +494,7 @@ const GroupDetailsPanel: React.FC<GroupDetailsPanelProps> = ({
         onBack={() => setActiveSubPanel("none")}
         onCancel={onCancel}
         layout={layout}
+        {...asideResizeProps}
       />
     );
   }
@@ -509,6 +523,7 @@ const GroupDetailsPanel: React.FC<GroupDetailsPanelProps> = ({
         onBack={() => setActiveSubPanel("none")}
         onCancel={onCancel}
         layout={layout}
+        {...asideResizeProps}
       />
     );
   }
@@ -530,6 +545,7 @@ const GroupDetailsPanel: React.FC<GroupDetailsPanelProps> = ({
         onBack={() => setActiveSubPanel("none")}
         showBackButton={true}
         layout={layout}
+        {...asideResizeProps}
       />
     );
   }
@@ -548,6 +564,7 @@ const GroupDetailsPanel: React.FC<GroupDetailsPanelProps> = ({
       dataSection="group-details-panel"
       title={t("vault.groups.details")}
       layout={layout}
+      {...asideResizeProps}
       actions={
         <Button
           variant="ghost"
@@ -725,79 +742,76 @@ const GroupDetailsPanel: React.FC<GroupDetailsPanelProps> = ({
           title={t("vault.groups.details.appearance")}
         >
 
-          <button
-            type="button"
-            className="w-full flex items-center gap-3 p-2 rounded-lg bg-secondary/50 hover:bg-secondary transition-colors text-left"
-            onClick={() => setActiveSubPanel("theme-select")}
-          >
-            <div
-              className="w-12 h-8 rounded-md border border-border/60 flex items-center justify-center text-[6px] font-mono overflow-hidden"
-              style={{
-                backgroundColor:
-                  customThemeStore.getThemeById(effectiveThemeId)?.colors.background || "#100F0F",
-                color:
-                  customThemeStore.getThemeById(effectiveThemeId)?.colors.foreground || "#CECDC3",
-              }}
+          <div className="flex w-full items-center gap-1 rounded-lg bg-secondary/50 p-2 transition-colors hover:bg-secondary">
+            <button
+              type="button"
+              className="flex min-w-0 flex-1 items-center gap-3 text-left"
+              onClick={() => setActiveSubPanel("theme-select")}
             >
-              <div className="p-0.5">
-                <div
-                  style={{
-                    color: customThemeStore.getThemeById(effectiveThemeId)?.colors.green,
-                  }}
-                >
-                  $
+              <div
+                className="w-12 h-8 rounded-md border border-border/60 flex items-center justify-center text-[6px] font-mono overflow-hidden shrink-0"
+                style={{
+                  backgroundColor:
+                    customThemeStore.getThemeById(effectiveThemeId)?.colors.background || "#100F0F",
+                  color:
+                    customThemeStore.getThemeById(effectiveThemeId)?.colors.foreground || "#CECDC3",
+                }}
+              >
+                <div className="p-0.5">
+                  <div
+                    style={{
+                      color: customThemeStore.getThemeById(effectiveThemeId)?.colors.green,
+                    }}
+                  >
+                    $
+                  </div>
                 </div>
               </div>
-            </div>
-            <span className="text-sm flex-1">
-              {customThemeStore.getThemeById(effectiveThemeId)?.name || "Flexoki Dark"}
-            </span>
-          </button>
-          {hasActiveThemeOverride && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="w-full justify-start text-primary"
-              onClick={() =>
-                setForm((prev) => ({
-                  ...prev,
-                  theme: undefined,
-                  themeOverride: false,
-                }))
-              }
-            >
-              {t("common.useGlobal")}
-            </Button>
-          )}
+              <span className="text-sm flex-1 truncate">
+                {customThemeStore.getThemeById(effectiveThemeId)?.name || "Flexoki Dark"}
+              </span>
+            </button>
+            {hasActiveThemeOverride && (
+              <HostDetailsOverrideReset
+                label={t("common.useGlobal")}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setForm((prev) => ({
+                    ...prev,
+                    theme: undefined,
+                    themeOverride: false,
+                  }));
+                }}
+              />
+            )}
+          </div>
 
-          <TerminalFontSelect
-            value={form.fontFamily || availableFonts[0]?.id || ""}
-            fonts={availableFonts}
-            onChange={(id) => {
-              setForm((prev) => ({
-                ...prev,
-                fontFamily: id,
-                fontFamilyOverride: true,
-              }));
-            }}
-            className="w-full"
-          />
-          {form.fontFamilyOverride && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="w-full justify-start text-primary"
-              onClick={() =>
+          <div className="flex items-center gap-2">
+            <TerminalFontSelect
+              value={form.fontFamily || availableFonts[0]?.id || ""}
+              fonts={availableFonts}
+              onChange={(id) => {
                 setForm((prev) => ({
                   ...prev,
-                  fontFamily: undefined,
-                  fontFamilyOverride: false,
-                }))
-              }
-            >
-              {t("common.useGlobal")}
-            </Button>
-          )}
+                  fontFamily: id,
+                  fontFamilyOverride: true,
+                }));
+              }}
+              className="min-w-0 flex-1"
+            />
+            {form.fontFamilyOverride && (
+              <HostDetailsOverrideReset
+                label={t("common.useGlobal")}
+                onClick={() =>
+                  setForm((prev) => ({
+                    ...prev,
+                    fontFamily: undefined,
+                    fontFamilyOverride: false,
+                  }))
+                }
+              />
+            )}
+          </div>
 
           {/* Font Size */}
           <HostDetailsSettingRow label="Font Size">

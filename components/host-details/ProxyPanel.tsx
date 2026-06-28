@@ -7,7 +7,7 @@ import React, { useCallback, useMemo } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { formatProxyConfigEndpoint, formatProxyConfigType, isProxyCommandConfig, isValidProxyPort } from '../../domain/proxyProfiles';
 import { ProxyConfig, ProxyProfile } from '../../types';
-import { AsidePanel, AsidePanelContent, type AsidePanelLayout } from '../ui/aside-panel';
+import { AsidePanel, AsidePanelContent, type AsidePanelLayout, type AsidePanelResizeProps } from '../ui/aside-panel';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { Card } from '../ui/card';
@@ -26,7 +26,9 @@ export interface ProxyPanelProps {
     layout?: AsidePanelLayout;
 }
 
-export const ProxyPanel: React.FC<ProxyPanelProps> = ({
+export type ProxyPanelPropsWithResize = ProxyPanelProps & AsidePanelResizeProps;
+
+export const ProxyPanel: React.FC<ProxyPanelPropsWithResize> = ({
     proxyConfig,
     proxyProfiles = [],
     selectedProxyProfileId,
@@ -36,6 +38,9 @@ export const ProxyPanel: React.FC<ProxyPanelProps> = ({
     onBack,
     onCancel,
     layout = 'overlay',
+    resizable,
+    persistWidthStorageKey,
+    resizeAriaLabel,
 }) => {
     const { t } = useI18n();
     const customValue = '__custom__';
@@ -65,6 +70,9 @@ export const ProxyPanel: React.FC<ProxyPanelProps> = ({
             showBackButton={true}
             onBack={handleBack}
             layout={layout}
+            resizable={resizable}
+            persistWidthStorageKey={persistWidthStorageKey}
+            resizeAriaLabel={resizeAriaLabel}
             actions={
                 <Button size="sm" onClick={handleBack} disabled={!canSave}>
                     {t('common.save')}

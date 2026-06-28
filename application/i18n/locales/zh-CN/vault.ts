@@ -57,6 +57,7 @@ export const zhCNVaultMessages: Messages = {
   // Host Details
   'hostDetails.title.details': '主机详情',
   'hostDetails.title.new': '新建主机',
+  'vault.panel.resizeWidth': '调整面板宽度',
   'hostDetails.saveAria': '保存',
   'hostDetails.section.address': '地址',
   'hostDetails.hostname.placeholder': 'IP 或 主机名',

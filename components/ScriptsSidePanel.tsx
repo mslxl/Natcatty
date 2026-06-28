@@ -26,6 +26,7 @@ import {
 } from './ui/context-menu';
 import { FixedSizeVirtualList } from './ui/FixedSizeVirtualList';
 import { Input } from './ui/input';
+import { SnippetCommandTooltipContent } from './snippets/SnippetCommandTooltipContent';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
 
 const SCRIPT_ROW_HEIGHT = 34;
@@ -917,11 +918,8 @@ const SnippetRow = memo<SnippetRowProps>(({
               )}
             </button>
           </TooltipTrigger>
-          <TooltipContent side="right" align="start" className="max-w-[480px]">
-            <div className="font-medium text-xs mb-1 break-all">{snippet.label}</div>
-            <pre className="font-mono text-[11px] whitespace-pre-wrap break-all leading-snug opacity-90">
-              {snippet.command}
-            </pre>
+          <TooltipContent side="right" align="start">
+            <SnippetCommandTooltipContent label={snippet.label} command={snippet.command} />
           </TooltipContent>
         </Tooltip>
       </div>

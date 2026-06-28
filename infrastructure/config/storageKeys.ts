@@ -54,6 +54,8 @@ export const STORAGE_KEY_VAULT_NOTES_SELECTED_GROUP = 'netcatty_vault_notes_sele
 export const STORAGE_KEY_VAULT_NOTES_TREE_WIDTH = 'netcatty_vault_notes_tree_width_v1';
 /** Inline snippet/script edit panel width (px). */
 export const STORAGE_KEY_SNIPPETS_PANEL_WIDTH = 'netcatty_snippets_panel_width_v1';
+/** Inline vault host/group details panel width (px). */
+export const STORAGE_KEY_VAULT_HOST_PANEL_WIDTH = 'netcatty_vault_host_panel_width_v1';
 /** Inline snippet script editor height (px) in vault edit panel. */
 export const STORAGE_KEY_SNIPPET_SCRIPT_EDITOR_HEIGHT = 'netcatty_snippet_script_editor_height_v1';
 /** Automation script Monaco editor height (px) in vault sidebar. */

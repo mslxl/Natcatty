@@ -483,6 +483,7 @@ export const enVaultMessages: Messages = {
   // Host Details
   'hostDetails.title.details': 'Host Details',
   'hostDetails.title.new': 'New Host',
+  'vault.panel.resizeWidth': 'Resize panel width',
   'hostDetails.saveAria': 'Save',
   'hostDetails.section.address': 'Address',
   'hostDetails.hostname.placeholder': 'IP or Hostname',

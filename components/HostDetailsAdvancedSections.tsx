@@ -6,7 +6,7 @@ import { MAX_FONT_SIZE, MIN_FONT_SIZE } from "../infrastructure/config/fonts";
 import { AlgorithmOverridesPanel } from "./host-details/AlgorithmOverridesPanel";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
-import { HostDetailsSection, HostDetailsSettingRow } from "./host-details";
+import { HostDetailsSection, HostDetailsSettingRow, HostDetailsOverrideReset } from "./host-details";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
 import { Input } from "./ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
@@ -58,110 +58,110 @@ export const HostDetailsAdvancedSections: React.FC<HostDetailsAdvancedSectionsPr
         >
 
           {/* SSH Theme Selection */}
-          <button
-            type="button"
-            className="w-full flex items-center gap-3 p-2 rounded-lg bg-secondary/50 hover:bg-secondary transition-colors text-left"
-            onClick={() => setActiveSubPanel("theme-select")}
-          >
-            <div
-              className="w-12 h-8 rounded-md border border-border/60 flex items-center justify-center text-[6px] font-mono overflow-hidden"
-              style={{
-                backgroundColor:
-                  customThemeStore.getThemeById(effectiveThemeId)?.colors.background || "#100F0F",
-                color:
-                  customThemeStore.getThemeById(effectiveThemeId)?.colors.foreground || "#CECDC3",
-              }}
+          <div className="flex w-full items-center gap-1 rounded-lg bg-secondary/50 p-2 transition-colors hover:bg-secondary">
+            <button
+              type="button"
+              className="flex min-w-0 flex-1 items-center gap-3 text-left"
+              onClick={() => setActiveSubPanel("theme-select")}
             >
-              <div className="p-0.5">
-                <div
-                  style={{
-                    color: customThemeStore.getThemeById(effectiveThemeId)?.colors.green,
-                  }}
-                >
-                  $
+              <div
+                className="w-12 h-8 rounded-md border border-border/60 flex items-center justify-center text-[6px] font-mono overflow-hidden shrink-0"
+                style={{
+                  backgroundColor:
+                    customThemeStore.getThemeById(effectiveThemeId)?.colors.background || "#100F0F",
+                  color:
+                    customThemeStore.getThemeById(effectiveThemeId)?.colors.foreground || "#CECDC3",
+                }}
+              >
+                <div className="p-0.5">
+                  <div
+                    style={{
+                      color: customThemeStore.getThemeById(effectiveThemeId)?.colors.green,
+                    }}
+                  >
+                    $
+                  </div>
                 </div>
               </div>
-            </div>
-            <span className="text-sm flex-1">
-              {customThemeStore.getThemeById(effectiveThemeId)?.name || "Flexoki Dark"}
-            </span>
-          </button>
-          {hasEffectiveThemeOverride && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="w-full justify-start text-primary"
-              onClick={() => setForm((prev) => clearHostThemeOverride(prev))}
-            >
-              {t("common.useGlobal")}
-            </Button>
-          )}
+              <span className="text-sm flex-1 truncate">
+                {customThemeStore.getThemeById(effectiveThemeId)?.name || "Flexoki Dark"}
+              </span>
+            </button>
+            {hasEffectiveThemeOverride && (
+              <HostDetailsOverrideReset
+                label={t("common.useGlobal")}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setForm((prev) => clearHostThemeOverride(prev));
+                }}
+              />
+            )}
+          </div>
 
           {/* Font Size */}
           <HostDetailsSettingRow label="Font Size">
             <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  if (effectiveFontSize > MIN_FONT_SIZE) {
-                    setForm((prev) => ({
-                      ...prev,
-                      fontSize: effectiveFontSize - 1,
-                      fontSizeOverride: true,
-                    }));
-                  }
-                }}
-                disabled={effectiveFontSize <= MIN_FONT_SIZE}
-                className="h-8 w-8 px-0"
-              >
-                -
-              </Button>
-              <Input
-                type="number"
-                min={MIN_FONT_SIZE}
-                max={MAX_FONT_SIZE}
-                value={effectiveFontSize}
-                onChange={(e) => {
-                  const val = parseInt(e.target.value);
-                  if (val >= MIN_FONT_SIZE && val <= MAX_FONT_SIZE) {
-                    setForm((prev) => ({
-                      ...prev,
-                      fontSize: val,
-                      fontSizeOverride: true,
-                    }));
-                  }
-                }}
-                className="h-8 w-16 text-center"
-              />
-              <span className="text-sm text-muted-foreground">pt</span>
-              {hasEffectiveFontSizeOverride && (
+              <div className="flex items-center gap-1.5">
                 <Button
-                  variant="ghost"
+                  variant="outline"
                   size="sm"
-                  className="h-8 text-primary"
-                  onClick={() => setForm((prev) => clearHostFontSizeOverride(prev))}
+                  onClick={() => {
+                    if (effectiveFontSize > MIN_FONT_SIZE) {
+                      setForm((prev) => ({
+                        ...prev,
+                        fontSize: effectiveFontSize - 1,
+                        fontSizeOverride: true,
+                      }));
+                    }
+                  }}
+                  disabled={effectiveFontSize <= MIN_FONT_SIZE}
+                  className="h-8 w-8 px-0"
                 >
-                  {t("common.useGlobal")}
+                  -
                 </Button>
+                <Input
+                  type="number"
+                  min={MIN_FONT_SIZE}
+                  max={MAX_FONT_SIZE}
+                  value={effectiveFontSize}
+                  onChange={(e) => {
+                    const val = parseInt(e.target.value);
+                    if (val >= MIN_FONT_SIZE && val <= MAX_FONT_SIZE) {
+                      setForm((prev) => ({
+                        ...prev,
+                        fontSize: val,
+                        fontSizeOverride: true,
+                      }));
+                    }
+                  }}
+                  className="h-8 w-16 text-center"
+                />
+                <span className="text-sm text-muted-foreground">pt</span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    if (effectiveFontSize < MAX_FONT_SIZE) {
+                      setForm((prev) => ({
+                        ...prev,
+                        fontSize: effectiveFontSize + 1,
+                        fontSizeOverride: true,
+                      }));
+                    }
+                  }}
+                  disabled={effectiveFontSize >= MAX_FONT_SIZE}
+                  className="h-8 w-8 px-0"
+                >
+                  +
+                </Button>
+              </div>
+              {hasEffectiveFontSizeOverride && (
+                <HostDetailsOverrideReset
+                  size="sm"
+                  label={t("common.useGlobal")}
+                  onClick={() => setForm((prev) => clearHostFontSizeOverride(prev))}
+                />
               )}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  if (effectiveFontSize < MAX_FONT_SIZE) {
-                    setForm((prev) => ({
-                      ...prev,
-                      fontSize: effectiveFontSize + 1,
-                      fontSizeOverride: true,
-                    }));
-                  }
-                }}
-                disabled={effectiveFontSize >= MAX_FONT_SIZE}
-                className="h-8 w-8 px-0"
-              >
-                +
-              </Button>
             </div>
           </HostDetailsSettingRow>
         </HostDetailsSection>

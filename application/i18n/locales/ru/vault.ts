@@ -518,6 +518,7 @@ export const ruVaultMessages: Messages = {
   // Host Details
   'hostDetails.title.details': 'Сведения о хосте',
   'hostDetails.title.new': 'Новый хост',
+  'vault.panel.resizeWidth': 'Изменить ширину панели',
   'hostDetails.saveAria': 'Сохранить',
   'hostDetails.section.address': 'Адрес',
   'hostDetails.hostname.placeholder': 'IP или имя хоста',

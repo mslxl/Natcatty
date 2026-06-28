@@ -16,6 +16,7 @@ import {
 } from '../domain/snippetTransfer';
 import { getRunnableHostsForSnippet, snippetHasRunTargets } from '../domain/snippetTargets.ts';
 import { removeHostConnectScript, syncHostsForSnippetTargetChange } from '../domain/hostConnectScripts.ts';
+import { flattenSnippetCommandPreview } from '../domain/snippetPreview.ts';
 import { DEFAULT_SCRIPT_TEMPLATE, isScriptSnippet } from '../domain/snippetScript.ts';
 import { reorderVaultItems, reorderVaultStrings, sortByVaultOrder } from '../domain/vaultOrder';
 import { Button } from './ui/button';
@@ -26,6 +27,7 @@ import { Dropdown, DropdownContent, DropdownTrigger } from './ui/dropdown';
 import { SortDropdown, SortMode } from './ui/sort-dropdown';
 import { toast } from './ui/toast';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
+import { SnippetCommandTooltipContent } from './snippets/SnippetCommandTooltipContent';
 import { SnippetsRightPanel } from './SnippetsRightPanel';
 import { SnippetsPackageDialogs } from './SnippetsPackageDialogs';
 import {
@@ -499,6 +501,44 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
   const [isSnippetImportDialogOpen, setIsSnippetImportDialogOpen] = useState(false);
   const [pendingImport, setPendingImport] = useState<PendingSnippetImport | null>(null);
   const prepareGridLayoutAnimation = useVaultGridLayoutAnimation(listRef);
+  const hasSnippetsSidePanel = rightPanelMode !== 'none';
+  const splitGridColsRef = useRef(2);
+  const splitViewGridStyle = hasSnippetsSidePanel && viewMode === 'grid'
+    ? { gridTemplateColumns: 'var(--snippets-grid-cols, repeat(2, minmax(0, 1fr)))' }
+    : undefined;
+
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+
+    const GAP = 12;
+    const MIN_CARD = 220;
+    const PADDING_X = 32;
+
+    const recompute = () => {
+      const usable = el.clientWidth - PADDING_X;
+      if (usable <= 0) return;
+      const next = Math.max(1, Math.floor((usable + GAP) / (MIN_CARD + GAP)));
+      if (next === splitGridColsRef.current) return;
+      splitGridColsRef.current = next;
+      el.style.setProperty('--snippets-grid-cols', `repeat(${next}, minmax(0, 1fr))`);
+    };
+
+    recompute();
+    const observer = new ResizeObserver(recompute);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [hasSnippetsSidePanel, viewMode]);
+
+  const snippetsHeaderSectionCollapseClass = (
+    collapsed: boolean,
+    expandedMaxWidth: string,
+  ) => cn(
+    'flex items-center gap-2 overflow-hidden transition-[max-width,opacity,margin] duration-200 ease-in-out shrink-0',
+    collapsed
+      ? 'max-w-0 opacity-0 -ml-2 pointer-events-none'
+      : `${expandedMaxWidth} opacity-100`,
+  );
 
   const [historyVisibleCount, setHistoryVisibleCount] = useState(HISTORY_PAGE_SIZE);
   const historyScrollRef = useRef<HTMLDivElement>(null);
@@ -1572,19 +1612,20 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
 
   return (
     <TooltipProvider delayDuration={300}>
-    <div className="h-full min-h-0 flex relative">
-      <div className="flex-1 flex flex-col min-h-0 min-w-0 overflow-hidden">
-        <VaultPageHeader>
+    <div className="flex flex-1 min-h-0 min-w-0 relative">
+      <div className="flex flex-1 flex-col min-h-0 min-w-0 overflow-hidden">
+        <VaultPageHeader contentClassName="min-w-0 overflow-hidden">
             <VaultHeaderSearch
               placeholder={t('snippets.searchPlaceholder')}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-64"
+              className={cn(hasSnippetsSidePanel ? 'flex-1 min-w-[120px]' : 'w-64 shrink-0')}
             />
-            <Button onClick={() => handleEdit()} size="sm" className="h-10 px-3">
+            <div className={snippetsHeaderSectionCollapseClass(hasSnippetsSidePanel, 'max-w-[520px]')}>
+            <Button onClick={() => handleEdit()} size="sm" className="h-10 px-3 shrink-0">
               <Plus size={14} className="mr-2" /> {t('snippets.action.newSnippet')}
             </Button>
-            <Button onClick={() => handleEdit(undefined, true)} size="sm" variant="secondary" className={vaultHeaderSecondaryButtonClass}>
+            <Button onClick={() => handleEdit(undefined, true)} size="sm" variant="secondary" className={cn(vaultHeaderSecondaryButtonClass, 'shrink-0')}>
               <Play size={14} className="mr-2" /> {t('snippets.action.newScript')}
             </Button>
             <Button
@@ -1594,14 +1635,14 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
               }}
               size="sm"
               variant="secondary"
-              className={vaultHeaderSecondaryButtonClass}
+              className={cn(vaultHeaderSecondaryButtonClass, 'shrink-0')}
             >
               <FolderPlus size={14} className="mr-1" /> {t('snippets.action.newPackage')}
             </Button>
             <Button
               variant="secondary"
               size="sm"
-              className={vaultHeaderSecondaryButtonClass}
+              className={cn(vaultHeaderSecondaryButtonClass, 'shrink-0')}
               onClick={() => {
                 setPendingImport(null);
                 setIsSnippetImportDialogOpen(true);
@@ -1614,13 +1655,15 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
               size="sm"
               className={cn(
                 vaultHeaderSecondaryButtonClass,
+                'shrink-0',
                 rightPanelMode === 'history' && "bg-foreground/10 hover:bg-foreground/15",
               )}
               onClick={() => setRightPanelMode(rightPanelMode === 'history' ? 'none' : 'history')}
             >
               <Clock size={14} /> {t('snippets.history.title')}
             </Button>
-            <div className="flex items-center gap-1 ml-auto">
+            </div>
+            <div className="flex items-center gap-1 ml-auto shrink-0">
               <Dropdown>
                 <DropdownTrigger asChild>
                   <Button variant="ghost" size="icon" className={vaultHeaderIconButtonClass}>
@@ -1751,9 +1794,16 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
               </div>
               <div className={cn(
                 viewMode === 'grid'
-                  ? "grid gap-3 grid-cols-1 md:grid-cols-2 xl:grid-cols-3"
+                  ? cn(
+                    "grid gap-3",
+                    hasSnippetsSidePanel
+                      ? "grid-cols-1"
+                      : "grid-cols-1 md:grid-cols-2 xl:grid-cols-3",
+                  )
                   : "flex flex-col gap-0"
-              )}>
+              )}
+              style={splitViewGridStyle}
+              >
                 {displayedPackages.map((pkg) => (
                   <ContextMenu key={pkg.path}>
                     <ContextMenuTrigger>
@@ -1825,9 +1875,16 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
               <h3 className={vaultSectionTitleClass}>{t('snippets.section.snippets')}</h3>
               <div className={cn(
                 viewMode === 'grid'
-                  ? "grid gap-3 grid-cols-1 md:grid-cols-2 xl:grid-cols-3"
+                  ? cn(
+                    "grid gap-3",
+                    hasSnippetsSidePanel
+                      ? "grid-cols-1"
+                      : "grid-cols-1 md:grid-cols-2 xl:grid-cols-3",
+                  )
                   : "flex flex-col gap-0"
-              )}>
+              )}
+              style={splitViewGridStyle}
+              >
                 {displayedSnippets.map((snippet) => {
                   const isSelected = selectedSnippetIds.has(snippet.id);
                   return (
@@ -1890,11 +1947,14 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
                             <Tooltip>
                               <TooltipTrigger asChild>
                                 <div className="text-[11px] text-muted-foreground font-mono leading-4 truncate">
-                                  {snippet.command.replace(/\s+/g, ' ') || t('snippets.commandFallback')}
+                                  {flattenSnippetCommandPreview(snippet.command) || t('snippets.commandFallback')}
                                 </div>
                               </TooltipTrigger>
-                              <TooltipContent side="bottom" className="max-w-sm break-all font-mono text-xs">
-                                {snippet.command}
+                              <TooltipContent side="bottom">
+                                <SnippetCommandTooltipContent
+                                  command={snippet.command}
+                                  fallback={t('snippets.commandFallback')}
+                                />
                               </TooltipContent>
                             </Tooltip>
                           </div>
