@@ -533,6 +533,11 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
   const snippetsHeaderActionsClass =
     'flex min-w-0 flex-1 items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden';
 
+  const snippetsHeaderActionsWrapClass = 'relative min-w-0 flex-1';
+
+  const snippetsHeaderActionsFadeClass =
+    'pointer-events-none absolute inset-y-0 right-0 z-10 w-10 bg-gradient-to-l from-background from-35% to-transparent';
+
   const [historyVisibleCount, setHistoryVisibleCount] = useState(HISTORY_PAGE_SIZE);
   const historyScrollRef = useRef<HTMLDivElement>(null);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
@@ -1617,7 +1622,8 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
                 hasSnippetsSidePanel ? 'w-[140px] min-w-[120px]' : 'w-64',
               )}
             />
-            <div className={snippetsHeaderActionsClass}>
+            <div className={snippetsHeaderActionsWrapClass}>
+              <div className={cn(snippetsHeaderActionsClass, hasSnippetsSidePanel && 'pr-1')}>
             <Button onClick={() => handleEdit()} size="sm" className="h-10 px-3 shrink-0">
               <Plus size={14} className="mr-2" /> {t('snippets.action.newSnippet')}
             </Button>
@@ -1658,6 +1664,10 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
             >
               <Clock size={14} /> {t('snippets.history.title')}
             </Button>
+              </div>
+              {hasSnippetsSidePanel ? (
+                <div className={snippetsHeaderActionsFadeClass} aria-hidden />
+              ) : null}
             </div>
             <div className="ml-auto flex shrink-0 items-center gap-1">
               <Dropdown>
