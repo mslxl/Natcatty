@@ -23,6 +23,10 @@ import {
   nudgeAlternateScreenRedraw,
 } from './terminalHibernateRuntime';
 import {
+  cancelScheduledUnfocusedRepaint,
+  forceTerminalRepaintBypassingAnimationFrame,
+} from './runtime/terminalUnfocusedRepaint';
+import {
   isTerminalCloseGenerationCurrent,
   resolveConnectionLogCapturePayload,
   scheduleTerminalCloseTeardown,
@@ -1336,6 +1340,11 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
 
     const handleWindowFocus = () => {
       if (!shouldRecoverOnAppResume()) return;
+      const term = termRef.current;
+      if (term) {
+        cancelScheduledUnfocusedRepaint(term);
+        forceTerminalRepaintBypassingAnimationFrame(term);
+      }
       recoverWebglRendererOnAppResume();
       scheduleLayoutRecoveryRefit();
     };

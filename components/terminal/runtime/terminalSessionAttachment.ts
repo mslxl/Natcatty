@@ -56,6 +56,7 @@ import {
   releaseTerminalFlowOutputForTerm,
   teardownTerminalOutputPipeline,
 } from "./terminalOutputPipeline";
+import { scheduleTerminalRepaintWhenUnfocused } from "./terminalUnfocusedRepaint";
 
 export { FLOW_HIGH_WATER_MARK, FLOW_LOW_WATER_MARK };
 
@@ -219,6 +220,7 @@ const writeSessionDataImmediate = (
       if (shouldScrollOnTerminalOutput(settings)) {
         handleTerminalOutputAutoScroll(ctx, term);
       }
+      scheduleTerminalRepaintWhenUnfocused(term);
       done();
     };
     const commitIpcAck = (ackedBytes: number) => {
