@@ -14,7 +14,7 @@ module.exports = {
             schemes: ['ssh']
         }
     ],
-    electronLanguages: ['en', 'en-US', 'zh_CN', 'zh-CN', 'ru'],
+    electronLanguages: ['en', 'en-US', 'zh_CN', 'zh-CN', 'zh_TW', 'zh-TW', 'ru'],
     // Give the macOS build a unique Mach-O LC_UUID before signing, so macOS
     // Local Network privacy treats Netcatty distinctly from every other
     // Electron app (which all share Electron's prebuilt LC_UUID) — see #1040
