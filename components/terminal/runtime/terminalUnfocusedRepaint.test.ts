@@ -38,12 +38,13 @@ test("forceTerminalRepaintBypassingAnimationFrame refreshes alternate-screen vie
   assert.equal(renderRowsCalled, true);
 });
 
-test("maybeFlushTerminalWriteCoalescerWhenUnfocused bypasses RAF-bound coalescer", () => {
+test("maybeFlushTerminalWriteCoalescerWhenUnfocused throttles coalescer flushes", () => {
   const source = readFileSync(
     new URL("./terminalUnfocusedRepaint.ts", import.meta.url),
     "utf8",
   );
   assert.match(source, /flushTerminalWriteCoalescer\(term\)/);
+  assert.match(source, /unfocusedFlushTimers/);
 });
 
 test("scheduleTerminalRepaintWhenUnfocused debounces repaint scheduling", () => {
@@ -55,7 +56,7 @@ test("scheduleTerminalRepaintWhenUnfocused debounces repaint scheduling", () => 
   assert.match(source, /UNFOCUSED_REPAINT_DEBOUNCE_MS/);
 });
 
-test("writeSessionData flushes the coalescer before RAF when unfocused", () => {
+test("writeSessionData schedules a throttled coalescer flush when unfocused", () => {
   const source = readFileSync(
     new URL("./terminalSessionAttachment.ts", import.meta.url),
     "utf8",

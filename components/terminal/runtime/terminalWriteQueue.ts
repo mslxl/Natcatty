@@ -49,23 +49,6 @@ const scheduleNextTerminalWrite = (term: XTerm, queue: TerminalWriteQueue) => {
   next.run();
 };
 
-const collapseFloodQueue = (queue: TerminalWriteQueue) => {
-  if (queue.pending.length <= 1) {
-    return;
-  }
-  let droppedBytes = 0;
-  const latest = queue.pending[queue.pending.length - 1]!;
-  for (let index = 0; index < queue.pending.length - 1; index += 1) {
-    droppedBytes += queue.pending[index]!.bytes;
-  }
-  queue.pending = [latest];
-  queue.pendingBytes = latest.bytes;
-  queue.floodMode = true;
-  if (droppedBytes > 0) {
-    queue.onDropped?.(droppedBytes);
-  }
-};
-
 export const setTerminalWriteQueueDropHandler = (
   term: XTerm,
   onDropped?: (bytes: number) => void,
@@ -100,10 +83,6 @@ export const enqueueTerminalWrite = (
     queue.onDropped = terminalWriteQueueDropHandlers.get(term);
   }
 
-  const shouldCollapse = queue.floodMode
-    || queue.pending.length >= MAX_WRITE_QUEUE_ITEMS
-    || queue.pendingBytes + bytes > MAX_WRITE_QUEUE_BYTES;
-
   queue.pending.push({
     bytes,
     run: () => {
@@ -111,9 +90,11 @@ export const enqueueTerminalWrite = (
     },
   });
   queue.pendingBytes += bytes;
-
-  if (shouldCollapse) {
-    collapseFloodQueue(queue);
+  if (
+    queue.pending.length >= MAX_WRITE_QUEUE_ITEMS
+    || queue.pendingBytes > MAX_WRITE_QUEUE_BYTES
+  ) {
+    queue.floodMode = true;
   }
 
   if (!queue.writing) {

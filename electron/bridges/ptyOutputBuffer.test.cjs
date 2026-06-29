@@ -92,6 +92,21 @@ test("hard cap still flushes synchronously when paced flood output keeps growing
   assert.deepEqual(sends, ["abcdefgh"]);
 });
 
+test("default hard cap keeps flood-sized renderer sends bounded", () => {
+  const sends = [];
+  const buffer = createPtyOutputBuffer((data) => sends.push(data), {
+    maxBufferSize: 4,
+    floodFlushDelayMs: 50,
+  });
+
+  buffer.bufferData("abcd");
+  buffer.bufferData("efgh");
+  buffer.bufferData("ijkl");
+  buffer.bufferData("mnop");
+
+  assert.deepEqual(sends, ["abcdefghijklmnop"]);
+});
+
 test("flush() forces a synchronous send and cancels the pending turn", async () => {
   const sends = [];
   const buffer = createPtyOutputBuffer((data) => sends.push(data));

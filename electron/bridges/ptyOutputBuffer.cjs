@@ -28,7 +28,7 @@
  */
 function createPtyOutputBuffer(sendFn, options = {}) {
   const maxBufferSize = options.maxBufferSize ?? 16384; // 16KB
-  const maxFloodBufferSize = options.maxFloodBufferSize ?? Math.max(maxBufferSize * 16, maxBufferSize);
+  const maxFloodBufferSize = options.maxFloodBufferSize ?? Math.max(maxBufferSize * 4, maxBufferSize);
   const floodFlushDelayMs = options.floodFlushDelayMs ?? 8;
   const shouldAcceptOutput = options.shouldAcceptOutput ?? (() => true);
 

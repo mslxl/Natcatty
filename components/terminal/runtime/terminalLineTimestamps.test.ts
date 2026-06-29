@@ -164,6 +164,16 @@ test("coalesces timestamp change notifications per write", () => {
   assert.equal(notifications, 1);
 });
 
+test("writes large timestamped output in one batch while preserving marker lines", () => {
+  const { term, writes, markerLines } = createFakeTerm();
+  const lines = Array.from({ length: 80 }, (_, index) => `line-${index}`).join("\r\n");
+
+  writeTerminalDataWithLineTimestamps(term as never, lines, () => {});
+
+  assert.deepEqual(writes, [lines]);
+  assert.deepEqual(markerLines, Array.from({ length: 80 }, (_, index) => index));
+});
+
 test("keeps recording and preserves existing timestamps when the gutter is hidden", () => {
   const { term, markerLines, disposedMarkerLines } = createFakeTerm();
 

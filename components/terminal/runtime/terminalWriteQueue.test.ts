@@ -29,9 +29,10 @@ test("enqueueTerminalWrite serializes writes in order", () => {
   assert.deepEqual(order, [1, 2]);
 });
 
-test("collapses queued writes when item cap is exceeded", () => {
+test("keeps queued writes when item cap is exceeded", () => {
   const term = createFakeTerm();
   const dropped: number[] = [];
+  const order: number[] = [];
   let releaseFirst: (() => void) | null = null;
 
   enqueueTerminalWrite(term, 10, (done) => {
@@ -42,19 +43,24 @@ test("collapses queued writes when item cap is exceeded", () => {
     enqueueTerminalWrite(
       term,
       10,
-      (done) => done(),
+      (done) => {
+        order.push(index);
+        done();
+      },
       { onDropped: (bytes) => dropped.push(bytes) },
     );
   }
 
-  assert.ok(dropped.length > 0);
-  assert.ok(getTerminalWriteQueueDepth(term) <= 1);
+  assert.deepEqual(dropped, []);
+  assert.equal(getTerminalWriteQueueDepth(term), MAX_WRITE_QUEUE_ITEMS + 1);
   releaseFirst?.();
+  assert.deepEqual(order, Array.from({ length: MAX_WRITE_QUEUE_ITEMS + 1 }, (_, index) => index));
 });
 
-test("setTerminalWriteQueueDropHandler applies to queues created after registration", () => {
+test("setTerminalWriteQueueDropHandler is not used for passive flood backlogs", () => {
   const term = createFakeTerm();
   const dropped: number[] = [];
+  let completed = 0;
   let releaseFirst: (() => void) | null = null;
 
   setTerminalWriteQueueDropHandler(term, (bytes) => dropped.push(bytes));
@@ -63,11 +69,15 @@ test("setTerminalWriteQueueDropHandler applies to queues created after registrat
   });
 
   for (let index = 0; index < MAX_WRITE_QUEUE_ITEMS + 1; index += 1) {
-    enqueueTerminalWrite(term, 10, (done) => done());
+    enqueueTerminalWrite(term, 10, (done) => {
+      completed += 1;
+      done();
+    });
   }
 
-  assert.ok(dropped.length > 0);
+  assert.deepEqual(dropped, []);
   releaseFirst?.();
+  assert.equal(completed, MAX_WRITE_QUEUE_ITEMS + 1);
 });
 
 test("abortTerminalWriteQueue drops pending bytes and reports dropped count", () => {

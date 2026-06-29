@@ -46,6 +46,7 @@ export type TerminalTimestampGutterRow = {
 };
 
 const stores = new WeakMap<XTerm, TimestampStore>();
+const MAX_SEGMENTED_TIMESTAMP_WRITES = 64;
 
 const pad2 = (value: number): string => value.toString().padStart(2, "0");
 
@@ -322,9 +323,10 @@ const recordTerminalLineTimestamp = (
   store: TimestampStore,
   label: string,
   notify = true,
+  cursorYOffset = 0,
 ): boolean => {
   const registerMarker = (term as XTerm & { registerMarker?: (offset: number) => TimestampMarker | undefined }).registerMarker;
-  const marker = registerMarker?.call(term, 0);
+  const marker = registerMarker?.call(term, cursorYOffset);
   if (!marker) return false;
 
   const entry: TimestampEntry = { marker, label };
@@ -338,6 +340,50 @@ const recordTerminalLineTimestamp = (
     notifyTimestampStore(store);
   }
   return true;
+};
+
+const countLineFeeds = (data: string): number => {
+  let count = 0;
+  for (const char of data) {
+    if (char === "\n") count += 1;
+  }
+  return count;
+};
+
+const writeBatchedTimestampSegments = (
+  term: XTerm,
+  store: TimestampStore,
+  data: string,
+  segments: TerminalLineTimestampSegment[],
+  done: () => void,
+): void => {
+  const timestamps: Array<{ label: string; lineOffset: number }> = [];
+  let lineOffset = 0;
+
+  for (const segment of segments) {
+    if (segment.kind === "timestamp") {
+      timestamps.push({ label: segment.label, lineOffset });
+      continue;
+    }
+    lineOffset += countLineFeeds(segment.data);
+  }
+
+  term.write(data, () => {
+    let timestampRecorded = false;
+    for (const timestamp of timestamps) {
+      timestampRecorded = recordTerminalLineTimestamp(
+        term,
+        store,
+        timestamp.label,
+        false,
+        timestamp.lineOffset - lineOffset,
+      ) || timestampRecorded;
+    }
+    if (timestampRecorded) {
+      notifyTimestampStore(store);
+    }
+    done();
+  });
 };
 
 export const resetTerminalLineTimestamps = (term: XTerm) => {
@@ -452,6 +498,17 @@ export const writeTerminalDataWithLineTimestamps = (
     .filter((segment): segment is { kind: "data"; data: string } => segment.kind === "data")
     .map((segment) => segment.data)
     .join("");
+  const dataSegmentCount = segments.reduce((count, segment) => (
+    segment.kind === "data" && segment.data ? count + 1 : count
+  ), 0);
+  if (
+    timestampOnlyPrefix.length === 0
+    && parsedData === dataForTimestamps
+    && dataSegmentCount > MAX_SEGMENTED_TIMESTAMP_WRITES
+  ) {
+    writeBatchedTimestampSegments(term, store, data, segments, done);
+    return;
+  }
   const writeSegments = (
     onComplete: () => void,
     skipLeadingDataLength = 0,
