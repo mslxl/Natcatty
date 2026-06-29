@@ -611,6 +611,9 @@ function createMoshSessionApi(ctx) {
             try { return mcPty.write(buf); } catch { return true; }
           },
           getWebContents() { return electronModule.webContents.fromId(session.webContentsId); },
+          selectUploadFiles: selectZmodemUploadFiles
+            ? () => selectZmodemUploadFiles(session.webContentsId)
+            : undefined,
           protocolLabel: "Mosh",
         });
         session.zmodemSentry = sentry;

@@ -747,11 +747,15 @@ async function handleUpload(zsession, opts) {
       : filePaths.map((fp) => path.basename(fp));
     dragDropTempPaths = dragDrop.tempPaths || [];
   } else {
-    const win = contents ? BrowserWindow.fromWebContents(contents) : null;
-    const result = await dialog.showOpenDialog(win || undefined, {
-      properties: ["openFile", "multiSelections"],
-      title: "Select files to upload (ZMODEM)",
-    });
+    const result = opts.selectUploadFiles
+      ? await opts.selectUploadFiles({ sessionId, contents })
+      : await (async () => {
+        const win = contents ? BrowserWindow.fromWebContents(contents) : null;
+        return dialog.showOpenDialog(win || undefined, {
+          properties: ["openFile", "multiSelections"],
+          title: "Select files to upload (ZMODEM)",
+        });
+      })();
 
     if (result.canceled || !result.filePaths.length) {
       try { zsession.abort(); } catch { /* ignore */ }

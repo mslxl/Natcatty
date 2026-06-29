@@ -242,6 +242,34 @@ function createTerminalWorkerManager(options = {}) {
       }
       const contents = electronModule?.webContents?.fromId?.(message.webContentsId);
       contents?.send?.(message.channel, message.payload);
+      return;
+    }
+    if (message.kind === "zmodem-upload-dialog") {
+      void handleZmodemUploadDialogRequest(message);
+    }
+  }
+
+  async function handleZmodemUploadDialogRequest(message) {
+    try {
+      const contents = electronModule?.webContents?.fromId?.(message.webContentsId);
+      const win = contents && electronModule?.BrowserWindow?.fromWebContents
+        ? electronModule.BrowserWindow.fromWebContents(contents)
+        : null;
+      const result = await electronModule?.dialog?.showOpenDialog?.(win || undefined, {
+        properties: ["openFile", "multiSelections"],
+        title: "Select files to upload (ZMODEM)",
+      });
+      child?.postMessage?.({
+        kind: "zmodem-upload-dialog-result",
+        requestId: message.requestId,
+        result: result || { canceled: true, filePaths: [] },
+      });
+    } catch (err) {
+      child?.postMessage?.({
+        kind: "zmodem-upload-dialog-result",
+        requestId: message.requestId,
+        error: err?.message || String(err),
+      });
     }
   }
 
