@@ -598,6 +598,7 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
                 fileIndex={zmodem.fileIndex}
                 fileCount={zmodem.fileCount}
                 finalizing={zmodem.finalizing}
+                bytesPerSecond={zmodem.bytesPerSecond}
                 onCancel={zmodem.cancel}
               />
             </div>
