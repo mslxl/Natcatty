@@ -142,6 +142,15 @@ function createMoshSessionApi(ctx) {
       addBundledMoshTerminfoEnv(env, bareClient, opts);
       return env;
     }
+
+    function createMoshUtf8Decoder() {
+      const decoder = new StringDecoder("utf8");
+      return (chunk) => {
+        if (Buffer.isBuffer(chunk)) return decoder.write(chunk);
+        if (chunk instanceof Uint8Array) return decoder.write(Buffer.from(chunk));
+        return chunk == null ? "" : String(chunk);
+      };
+    }
     
     function stripMoshPromptControls(text) {
       // eslint-disable-next-line no-control-regex
@@ -611,6 +620,9 @@ function createMoshSessionApi(ctx) {
             try { return mcPty.write(buf); } catch { return true; }
           },
           getWebContents() { return electronModule.webContents.fromId(session.webContentsId); },
+          selectUploadFiles: selectZmodemUploadFiles
+            ? () => selectZmodemUploadFiles(session.webContentsId)
+            : undefined,
           protocolLabel: "Mosh",
         });
         session.zmodemSentry = sentry;
@@ -619,9 +631,11 @@ function createMoshSessionApi(ctx) {
           sentry.consume(data);
         });
       } else {
+        const decodeMoshOutput = createMoshUtf8Decoder();
         mcPty.onData((data) => {
           if (!shouldProcessSessionOutput(session)) return;
-          const str = data.toString("utf8");
+          const str = decodeMoshOutput(data);
+          if (!str) return;
           trackSessionIdlePrompt(session, str);
           bufferData(str);
           sessionLogStreamManager.appendData(sessionId, str);
@@ -700,6 +714,7 @@ function createMoshSessionApi(ctx) {
       addBundledMoshDllPath,
       addBundledMoshTerminfoEnv,
       addBundledMoshRuntimeEnv,
+      createMoshUtf8Decoder,
       buildMoshSshAuthArgs,
       cleanupMoshAuthTempFiles,
       startMoshSessionViaHandshake,

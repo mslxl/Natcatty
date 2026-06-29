@@ -29,6 +29,11 @@ import {
   STORAGE_KEY_TERMINAL_COMPOSE_BAR_OPEN,
 } from '../infrastructure/config/storageKeys';
 import { buildCacheKey } from '../application/state/sftp/sharedRemoteHostCache';
+import {
+  getSftpReopenMemoryKey,
+  resolveSftpOpenLocation,
+  type SftpRememberedLocation,
+} from '../application/state/sftp/sftpReopenLocation';
 import type { DropEntry } from '../lib/sftpFileUtils';
 import { Host, KnownHost, TerminalSession, Workspace } from '../types';
 import { applySessionFontSizeToHost } from '../domain/terminalAppearance';
@@ -562,6 +567,29 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const notesOpenRequestIdRef = useRef(0);
   const sftpHostForTabRef = useRef(sftpHostForTab);
   sftpHostForTabRef.current = sftpHostForTab;
+  const sftpLastPathForSourceRef = useRef<Map<string, SftpRememberedLocation>>(new Map());
+
+  const resolveSftpOpenTarget = useCallback((params: {
+    tabId: string;
+    host: Host;
+    initialPath?: string;
+    pendingUploadEntries?: DropEntry[];
+    sourceSessionId?: string | null;
+  }) => {
+    const { tabId, host, initialPath, pendingUploadEntries, sourceSessionId } = params;
+    const connectionKey = buildCacheKey(host.id, host.hostname, host.port, host.protocol, host.sftpSudo, host.username);
+    const memoryKey = getSftpReopenMemoryKey({ tabId, sourceSessionId });
+    const effectiveInitialPath = resolveSftpOpenLocation({
+      hostId: host.id,
+      connectionKey,
+      terminalCwd: initialPath,
+      explicitTargetPath: pendingUploadEntries?.length ? initialPath : undefined,
+      hasPendingUpload: !!pendingUploadEntries?.length,
+      remembered: sftpLastPathForSourceRef.current.get(memoryKey),
+    });
+
+    return { connectionKey, effectiveInitialPath };
+  }, []);
 
   const handleToggleWorkspaceComposeBar = useCallback(() => {
     setIsComposeBarOpen(prev => !prev);
@@ -620,10 +648,18 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       return next;
     });
 
+    const { connectionKey, effectiveInitialPath } = resolveSftpOpenTarget({
+      tabId,
+      host,
+      initialPath,
+      pendingUploadEntries,
+      sourceSessionId,
+    });
+
     setSftpInitialLocationForTab(prev => {
       const next = new Map(prev);
-      if (initialPath) {
-        next.set(tabId, { hostId: host.id, path: initialPath });
+      if (effectiveInitialPath) {
+        next.set(tabId, { hostId: host.id, path: effectiveInitialPath });
       } else {
         next.delete(tabId);
       }
@@ -639,14 +675,14 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
         next.set(tabId, {
           requestId: crypto.randomUUID(),
           hostId: host.id,
-          connectionKey: buildCacheKey(host.id, host.hostname, host.port, host.protocol, host.sftpSudo, host.username),
+          connectionKey,
           targetPath: initialPath,
           entries: pendingUploadEntries,
         });
       }
       return next;
     });
-  }, []);
+  }, [resolveSftpOpenTarget]);
 
   const handlePendingUploadHandled = useCallback((tabId: string, requestId: string) => {
     setSftpPendingUploadsForTab(prev => {
@@ -670,6 +706,11 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       next.delete(tabId);
       return next;
     });
+  }, []);
+
+  const handleSftpCurrentPathChange = useCallback((memoryKey: string, location: SftpRememberedLocation) => {
+    if (!memoryKey || !location.path) return;
+    sftpLastPathForSourceRef.current.set(memoryKey, location);
   }, []);
 
   // Pre-compute host lookup map for O(1) access
@@ -1032,6 +1073,21 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
         next.set(tabId, host);
         return next;
       });
+      const sourceSessionId = getActiveTerminalSessionId();
+      const { effectiveInitialPath } = resolveSftpOpenTarget({
+        tabId,
+        host,
+        sourceSessionId,
+      });
+      setSftpInitialLocationForTab(prev => {
+        const next = new Map(prev);
+        if (effectiveInitialPath) {
+          next.set(tabId, { hostId: host.id, path: effectiveInitialPath });
+        } else {
+          next.delete(tabId);
+        }
+        return next;
+      });
     }
 
     // Note: When switching away from SFTP, we keep the SFTP host state
@@ -1046,7 +1102,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
         return next;
       });
     });
-  }, [markSidePanelSubTabOpened, resolveSftpHostForTab]);
+  }, [getActiveTerminalSessionId, markSidePanelSubTabOpened, resolveSftpHostForTab, resolveSftpOpenTarget]);
 
   // Toggle SFTP from activity bar header
   const handleToggleSftpFromBar = useCallback(() => {
@@ -1530,6 +1586,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     handlePendingTerminalSelectionConsumed,
     handlePendingUploadHandled,
     handleSessionExit,
+    handleSftpCurrentPathChange,
     handleSftpInitialLocationApplied,
     persistSidePanelWidth,
     handleSnippetClickForFocusedSession,

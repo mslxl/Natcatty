@@ -2,6 +2,9 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const terminalBridge = require("./terminalBridge.cjs");
+const {
+  FLOW_HIGH_WATER_MARK,
+} = require("../../infrastructure/config/terminalFlowConstants.cjs");
 
 function initBridge(sessions, sent = []) {
   terminalBridge.init({
@@ -171,7 +174,7 @@ test("interruptSession filters pending SSH output under high output pressure", (
     },
     flowState: {
       rendererPaused: false,
-      unackedBytes: 34068,
+      unackedBytes: FLOW_HIGH_WATER_MARK + 1300,
       appliedPause: false,
     },
     stream: {

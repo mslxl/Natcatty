@@ -269,6 +269,42 @@ test("handleUpload completes when the remote confirms after progress reaches 100
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
+test("handleUpload uses injected file picker when no drag-drop upload is queued", async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-zmodem-"));
+  const filePath = path.join(tempDir, "picker-upload.txt");
+  fs.writeFileSync(filePath, "payload");
+  let pickerCalled = false;
+  let endCalled = false;
+
+  const zsession = {
+    async send_offer() {
+      return {
+        send() {},
+        async end() {
+          endCalled = true;
+        },
+      };
+    },
+    async close() {},
+  };
+
+  await handleUpload(zsession, {
+    sessionId: "session-1",
+    getWebContents: () => ({
+      isDestroyed: () => false,
+      send() {},
+    }),
+    selectUploadFiles: async () => {
+      pickerCalled = true;
+      return { canceled: false, filePaths: [filePath] };
+    },
+  });
+
+  assert.equal(pickerCalled, true);
+  assert.equal(endCalled, true);
+  fs.rmSync(tempDir, { recursive: true, force: true });
+});
+
 test("handleUpload times out when the remote never confirms after progress reaches 100 percent", async () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-zmodem-"));
   const filePath = path.join(tempDir, "upload.txt");

@@ -68,6 +68,7 @@ const execFileAsync = promisify(execFile);
 let sessions = null;
 let electronModule = null;
 let terminalOutputChannel = null;
+let selectZmodemUploadFiles = null;
 
 const DEFAULT_UTF8_LOCALE = "en_US.UTF-8";
 const LOGIN_SHELLS = new Set(["bash", "zsh", "fish", "ksh"]);
@@ -102,6 +103,7 @@ function init(deps) {
   sessions = deps.sessions;
   electronModule = deps.electronModule;
   terminalOutputChannel = deps.terminalOutputChannel || null;
+  selectZmodemUploadFiles = deps.selectZmodemUploadFiles || null;
   configureTerminalSessionDataEmitter({
     getSession: (sessionId) => sessions?.get(sessionId),
     outputChannel: terminalOutputChannel,
@@ -486,6 +488,9 @@ function startLocalSession(event, payload) {
       getWebContents() {
         return electronModule.webContents.fromId(session.webContentsId);
       },
+      selectUploadFiles: selectZmodemUploadFiles
+        ? () => selectZmodemUploadFiles(session.webContentsId)
+        : undefined,
       label: "Local",
     });
     session.zmodemSentry = zmodemSentry;
@@ -531,6 +536,7 @@ const telnetSessionApi = createTelnetSessionApi({
   createPtyOutputBuffer, sessionLogStreamManager, createZmodemSentry, ptyProcessTree,
   enableTcpNoDelay, trackSessionIdlePrompt, stripAnsi, clearPendingAutomatedWrites,
   openTerminalOutputSession, closeTerminalOutputSession,
+  get selectZmodemUploadFiles() { return selectZmodemUploadFiles; },
 });
 const { startTelnetSession } = telnetSessionApi;
 
@@ -550,6 +556,7 @@ const moshSessionApi = createMoshSessionApi({
   createPtyOutputBuffer, enableTcpNoDelay, normalizeTerminalEncoding,
   resolvePosixExecutable, findExecutable, isExecutableFile,
   openTerminalOutputSession, closeTerminalOutputSession,
+  get selectZmodemUploadFiles() { return selectZmodemUploadFiles; },
   bundledMoshClient: (...args) => bundledMoshClient(...args),
 });
 const {
@@ -557,6 +564,7 @@ const {
   addBundledMoshDllPath,
   addBundledMoshTerminfoEnv,
   addBundledMoshRuntimeEnv,
+  createMoshUtf8Decoder,
   buildMoshSshAuthArgs,
   cleanupMoshAuthTempFiles,
   startMoshSessionViaHandshake,
@@ -580,6 +588,7 @@ const etSessionApi = createEtSessionApi({
   createZmodemSentry, trackSessionIdlePrompt, createPtyOutputBuffer,
   findExecutable,
   openTerminalOutputSession, closeTerminalOutputSession,
+  get selectZmodemUploadFiles() { return selectZmodemUploadFiles; },
   bundledEtClient: (...args) => bundledEtClient(...args),
 });
 const {
@@ -702,6 +711,9 @@ async function startSerialSession(event, options) {
           getWebContents() {
             return electronModule.webContents.fromId(session.webContentsId);
           },
+          selectUploadFiles: selectZmodemUploadFiles
+            ? () => selectZmodemUploadFiles(session.webContentsId)
+            : undefined,
           label: "Serial",
         });
         session.zmodemSentry = serialZmodemSentry;
@@ -1536,6 +1548,7 @@ module.exports = {
   addBundledMoshDllPath,
   addBundledMoshTerminfoEnv,
   addBundledMoshRuntimeEnv,
+  createMoshUtf8Decoder,
   startEtSession,
   execOnEtSession,
   bundledEtClient,

@@ -285,6 +285,9 @@ function createTelnetSessionApi(ctx) {
           getWebContents() {
             return electronModule.webContents.fromId(telnetWebContentsId);
           },
+          selectUploadFiles: selectZmodemUploadFiles
+            ? () => selectZmodemUploadFiles(telnetWebContentsId)
+            : undefined,
           label: "Telnet",
         });
         // Attach sentry to session once created (connect callback runs after this)

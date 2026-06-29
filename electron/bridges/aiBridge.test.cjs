@@ -5,6 +5,10 @@ const Module = require("node:module");
 const os = require("node:os");
 const path = require("node:path");
 const { prepareCommandForSpawn } = require("./ai/shellUtils.cjs");
+const {
+  isCodexAuthError: realIsCodexAuthError,
+  normalizeCodexIntegrationState: realNormalizeCodexIntegrationState,
+} = require("./ai/codexHelpers.cjs");
 
 function createIpcMainStub() {
   const handlers = new Map();
@@ -108,11 +112,19 @@ function loadBridgeWithMocks(options = {}) {
         typeof options.getActiveCodexLoginSession === "function"
           ? options.getActiveCodexLoginSession()
           : null,
-      normalizeCodexIntegrationState: () => ({}),
+      normalizeCodexIntegrationState: (...args) =>
+        typeof options.normalizeCodexIntegrationState === "function"
+          ? options.normalizeCodexIntegrationState(...args)
+          : realNormalizeCodexIntegrationState(...args),
+      appendCodexChatGptValidationFailure: (rawOutput, validationError) =>
+        `${rawOutput}\n\nChatGPT auth validation failed:\n${validationError}`.trim(),
       readCodexCustomProviderConfig: () => null,
       getCodexCustomConfigPreflightError: () => null,
       extractCodexError: (err) => ({ message: err?.message || String(err) }),
-      isCodexAuthError: () => false,
+      isCodexAuthError: (...args) =>
+        typeof options.isCodexAuthError === "function"
+          ? options.isCodexAuthError(...args)
+          : realIsCodexAuthError(...args),
       getCodexAuthFingerprint: (...args) =>
         typeof options.getCodexAuthFingerprint === "function"
           ? options.getCodexAuthFingerprint(...args)
@@ -336,6 +348,49 @@ test("codex login does not reuse an active session from a different resolved pat
 
     assert.equal(result.ok, false);
     assert.match(result.error, /different CLI path/);
+  } finally {
+    restore();
+  }
+});
+
+test("codex integration keeps ChatGPT connected when the SDK validation probe fails", async (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-codex-integration-"));
+  t.after(() => {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  const codexPath = path.join(tempDir, "codex");
+  fs.writeFileSync(
+    codexPath,
+    `#!${process.execPath}\nconsole.log('Logged in using ChatGPT');\n`,
+    { mode: 0o755 },
+  );
+
+  const { bridge, restore } = loadBridgeWithMocks({
+    normalizeCliPathForPlatform: (value) => value,
+  });
+  const ipcMain = createIpcMainStub();
+
+  bridge.init({
+    sessions: new Map(),
+    sftpClients: new Map(),
+    electronModule: { app: { getPath: () => process.cwd() } },
+  });
+  bridge.registerHandlers(ipcMain);
+
+  try {
+    const handler = ipcMain.handlers.get("netcatty:ai:codex:get-integration");
+    assert.equal(typeof handler, "function");
+
+    const result = await handler({ sender: { id: 1 } }, {
+      codexPath,
+      validateChatGptAuth: true,
+    });
+
+    assert.equal(result.state, "connected_chatgpt", JSON.stringify(result));
+    assert.equal(result.isConnected, true);
+    assert.match(result.rawOutput, /Logged in using ChatGPT/);
+    assert.match(result.rawOutput, /ChatGPT auth validation failed:/);
   } finally {
     restore();
   }

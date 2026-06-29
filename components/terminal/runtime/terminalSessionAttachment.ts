@@ -34,6 +34,7 @@ import {
   clearDeferredTerminalWriteAck,
   getDeferredTerminalWriteAckBytes,
   resetDeferredTerminalWriteAck,
+  scheduleDeferredTerminalWriteAckFlush,
   shouldDeferTerminalWriteCallback,
 } from "./terminalWriteAckDeferral";
 import {
@@ -236,6 +237,13 @@ const writeSessionDataImmediate = (
       if (ackedBytes <= 0) return;
       ackTerminalSessionFlow(ctx.terminalBackend, ctx.sessionRef.current, ackedBytes);
     };
+    const flushIpcAck = (ackedBytes: number) => {
+      commitIpcAck(ackedBytes);
+      flushTerminalSessionFlowAck(ctx.sessionRef.current);
+    };
+    const flushDeferredIpcAck = () => {
+      flushIpcAck(clearDeferredTerminalWriteAck(term));
+    };
     const deferredBeforeWrite = getDeferredTerminalWriteAckBytes(term);
     const deferFlowAck = !forcePromptNewLine
       && shouldDeferTerminalWriteCallback(
@@ -252,7 +260,9 @@ const writeSessionDataImmediate = (
         flow.written(ingressBytes);
         const deferredTotal = accumulateDeferredTerminalWriteAck(term, ingressBytes);
         if (deferredTotal >= XTERM_WRITE_CALLBACK_BATCH_BYTES) {
-          commitIpcAck(clearDeferredTerminalWriteAck(term));
+          flushDeferredIpcAck();
+        } else {
+          scheduleDeferredTerminalWriteAckFlush(term, flushIpcAck);
         }
       });
       return;
@@ -263,7 +273,11 @@ const writeSessionDataImmediate = (
     writeTerminalDataWithLineTimestamps(term, preparedDisplayData, () => {
       finishQueueItem();
       flow.written(ingressBytes);
-      commitIpcAck(ackOnCallback);
+      if (deferredBeforeCallback > 0) {
+        flushIpcAck(ackOnCallback);
+      } else {
+        commitIpcAck(ackOnCallback);
+      }
     });
   });
 };

@@ -12,6 +12,7 @@ import {
   XTERM_WRITE_CALLBACK_BATCH_BYTES,
   XTERM_WRITE_CALLBACK_FAST_PATH_MAX_BYTES,
 } from "./terminalFlowConstants.ts";
+import { createOutputFlowController } from "./outputFlowController.ts";
 
 const require = createRequire(import.meta.url);
 const sharedConstantsCjs = require("../../../infrastructure/config/terminalFlowConstants.cjs") as typeof terminalFlowConstantsJson;
@@ -41,11 +42,27 @@ test("renderer flow constants match shared terminalFlowConstants.json", () => {
   assert.ok(MAX_PENDING_WRITE_COALESCE_BYTES_FLOOD < MAX_PENDING_WRITE_COALESCE_BYTES);
 });
 
-test("terminal flood limits stay small enough to keep input responsive", () => {
-  assert.ok(FLOW_HIGH_WATER_MARK <= 32 * 1024);
+test("terminal flood limits keep interactive acks responsive", () => {
   assert.ok(FLOW_LOW_WATER_MARK <= 8 * 1024);
   assert.ok(FLOW_CHAR_COUNT_ACK_SIZE <= 4 * 1024);
-  assert.ok(MAX_PENDING_WRITE_COALESCE_BYTES <= 32 * 1024);
   assert.ok(MAX_PENDING_WRITE_COALESCE_BYTES_FLOOD <= 8 * 1024);
   assert.ok(XTERM_WRITE_CALLBACK_BATCH_BYTES <= FLOW_HIGH_WATER_MARK);
+});
+
+test("terminal flow allows a large TUI repaint before applying back-pressure", () => {
+  const events: string[] = [];
+  const controller = createOutputFlowController({
+    highWaterMark: FLOW_HIGH_WATER_MARK,
+    lowWaterMark: FLOW_LOW_WATER_MARK,
+    onPause: () => events.push("pause"),
+    onResume: () => events.push("resume"),
+  });
+
+  const tuiFrameBytes = 80 * 1024;
+  const chunkBytes = 4 * 1024;
+  for (let received = 0; received < tuiFrameBytes; received += chunkBytes) {
+    controller.received(chunkBytes);
+  }
+
+  assert.deepEqual(events, []);
 });
