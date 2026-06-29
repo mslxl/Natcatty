@@ -140,10 +140,10 @@
 
 }
 
-/* Windows: bundled flag font + Segoe UI Emoji ahead of Mona Sans so host
+/* Windows: bundled flag font ahead of Mona Sans so host
    labels render flag icons instead of ISO country codes (#1589, #1604). */
 html.platform-win32 {
-  --font-sans: "Noto Color Emoji Flags", "Segoe UI Emoji", "Segoe UI Symbol", "Mona Sans", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+  --font-sans: "Noto Color Emoji Flags", "Mona Sans", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif, "Segoe UI Emoji", "Segoe UI Symbol";
 }
 
 @keyframes top-tab-enter {
