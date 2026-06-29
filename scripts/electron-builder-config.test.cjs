@@ -162,6 +162,39 @@ test("linux packaging includes an Arch Linux pacman package target", () => {
   );
 });
 
+test("windows packaging includes a zip archive target", () => {
+  const winTargets = config.win.target.map((entry) => entry.target);
+  assert.ok(
+    winTargets.includes("zip"),
+    "windows package builds must publish a zip archive for no-install environments",
+  );
+});
+
+test("windows zip follows the requested build architecture", () => {
+  const { Arch } = require("builder-util");
+  const { Platform } = require("app-builder-lib");
+  const { computeArchToTargetNamesMap } = require("app-builder-lib/out/targets/targetFactory");
+
+  const rawCliTargets = new Map([[Arch.x64, []]]);
+  const targetsByArch = computeArchToTargetNamesMap(
+    rawCliTargets,
+    {
+      platformSpecificBuildOptions: config.win,
+      defaultTarget: ["nsis"],
+    },
+    Platform.WINDOWS,
+  );
+
+  assert.ok(
+    targetsByArch.get(Arch.x64)?.includes("zip"),
+    "pack:win-x64 must publish an x64 zip archive",
+  );
+  assert.ok(
+    !targetsByArch.get(Arch.arm64)?.includes("zip"),
+    "pack:win-x64 must not publish an arm64 zip archive without arm64 bundled binaries",
+  );
+});
+
 test("linux FPM packages refresh the hicolor icon cache after install and remove", () => {
   const fs = require("node:fs");
   const path = require("node:path");
