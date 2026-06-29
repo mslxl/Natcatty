@@ -856,6 +856,9 @@ main();
             getWebContents() {
               return electronModule.webContents.fromId(session.webContentsId);
             },
+            selectUploadFiles: selectZmodemUploadFiles
+              ? () => selectZmodemUploadFiles(session.webContentsId)
+              : undefined,
             label: "ET",
           });
           session.zmodemSentry = etZmodemSentry;

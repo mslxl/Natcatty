@@ -121,6 +121,63 @@ test("request opens a terminal output port when a session starts", async () => {
   assert.deepEqual(opened, [{ sessionId: "local-1", webContentsId: 7 }]);
 });
 
+test("worker ZMODEM upload dialog request opens picker from the owning webContents", async () => {
+  const child = new FakeChild();
+  const shown = [];
+  const contents = { id: 7 };
+  const window = { id: "main-window" };
+  const manager = createTerminalWorkerManager({
+    utilityProcess: {
+      fork() {
+        return child;
+      },
+    },
+    electronModule: {
+      webContents: {
+        fromId(id) {
+          assert.equal(id, 7);
+          return contents;
+        },
+      },
+      BrowserWindow: {
+        fromWebContents(value) {
+          assert.equal(value, contents);
+          return window;
+        },
+      },
+      dialog: {
+        async showOpenDialog(owner, options) {
+          shown.push({ owner, options });
+          return { canceled: false, filePaths: ["/tmp/upload.txt"] };
+        },
+      },
+    },
+    workerScriptPath: "/worker.cjs",
+  });
+
+  manager.ensureStarted();
+  child.emit("message", {
+    kind: "zmodem-upload-dialog",
+    requestId: "dialog-1",
+    webContentsId: 7,
+  });
+
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(shown, [{
+    owner: window,
+    options: {
+      properties: ["openFile", "multiSelections"],
+      title: "Select files to upload (ZMODEM)",
+    },
+  }]);
+  assert.deepEqual(child.messages.at(-1), {
+    kind: "zmodem-upload-dialog-result",
+    requestId: "dialog-1",
+    result: { canceled: false, filePaths: ["/tmp/upload.txt"] },
+  });
+});
+
 test("request transfers the output port to the worker when available", async () => {
   const child = new FakeChild();
   const outputPort = { label: "worker-output-port" };

@@ -385,6 +385,7 @@ async function openSshDebugLogDir() {
 let sessions = null;
 let electronModule = null;
 let terminalOutputChannel = null;
+let selectZmodemUploadFiles = null;
 
 // Authentication method cache - remembers successful auth methods per host
 // Key format: "username@hostname:port"
@@ -475,6 +476,7 @@ function init(deps) {
   sessions = deps.sessions;
   electronModule = deps.electronModule;
   terminalOutputChannel = deps.terminalOutputChannel || null;
+  selectZmodemUploadFiles = deps.selectZmodemUploadFiles || null;
   configureTerminalSessionDataEmitter({
     getSession: (sessionId) => sessions?.get(sessionId),
     outputChannel: terminalOutputChannel,
@@ -831,6 +833,7 @@ const startSessionApi = createStartSessionApi({
   shouldLogSshDebugMessage, log, createSshDiagnosticLogger,
   buildAlgorithms, randomUUID, findDefaultPrivateKey, findAllDefaultPrivateKeys,
   openTerminalOutputSession, closeTerminalOutputSession,
+  get selectZmodemUploadFiles() { return selectZmodemUploadFiles; },
   preparePrivateKeyForAuth, loadFirstIdentityFileForAuth, hasUserConfiguredKey, createKeyboardInteractiveHandler,
   createConnectionRef, acquireConnectionRef, releaseConnectionRef, findReusableSession,
   get probeReceiveConflicts() { return probeReceiveConflicts; },

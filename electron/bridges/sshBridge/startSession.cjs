@@ -190,6 +190,9 @@ function createStartSessionApi(ctx) {
         getWebContents() {
           return event.sender;
         },
+        selectUploadFiles: selectZmodemUploadFiles
+          ? () => selectZmodemUploadFiles(event.sender.id)
+          : undefined,
         label: "SSH",
       });
       session.zmodemSentry = sshZmodemSentry;
