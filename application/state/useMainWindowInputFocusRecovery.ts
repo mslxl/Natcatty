@@ -11,9 +11,101 @@ export type MainWindowInputFocusRecoveryOptions = {
   onPageHidden?: () => void;
 };
 
+type Listener = () => void;
+
+type MainWindowInputFocusRecoveryDocument = {
+  visibilityState: DocumentVisibilityState;
+  addEventListener: (eventName: "visibilitychange", listener: Listener) => void;
+  removeEventListener: (eventName: "visibilitychange", listener: Listener) => void;
+};
+
+type MainWindowInputFocusRecoveryWindow = {
+  addEventListener: (eventName: "focus", listener: Listener) => void;
+  removeEventListener: (eventName: "focus", listener: Listener) => void;
+};
+
+type MainWindowInputFocusRecoveryBridge = {
+  onWindowShown?: (callback: Listener) => Listener;
+  onWindowWillHide?: (callback: Listener) => Listener;
+};
+
+export type MainWindowInputFocusRecoveryDependencies = {
+  documentRef: MainWindowInputFocusRecoveryDocument;
+  windowRef?: MainWindowInputFocusRecoveryWindow;
+  bridge?: MainWindowInputFocusRecoveryBridge;
+  scheduleFocus?: () => ScheduledWindowInputFocus;
+};
+
+export function startMainWindowInputFocusRecovery(
+  options: MainWindowInputFocusRecoveryOptions = {},
+  dependencies: MainWindowInputFocusRecoveryDependencies = {
+    documentRef: document,
+    windowRef: window,
+    bridge: netcattyBridge.get(),
+    scheduleFocus: scheduleWindowInputFocus,
+  },
+): () => void {
+  const { onPageHidden } = options;
+  const {
+    documentRef,
+    bridge,
+    scheduleFocus = scheduleWindowInputFocus,
+  } = dependencies;
+
+  let pendingFocusRecovery: ScheduledWindowInputFocus | null = null;
+  let pendingExplicitShowRecovery = false;
+
+  const cancelPendingFocusRecovery = () => {
+    pendingFocusRecovery?.cancel();
+    pendingFocusRecovery = null;
+  };
+
+  const recoverFocus = (): boolean => {
+    if (documentRef.visibilityState !== "visible") return false;
+    pendingExplicitShowRecovery = false;
+    cancelPendingFocusRecovery();
+    pendingFocusRecovery = scheduleFocus();
+    return true;
+  };
+
+  const dismissTransientUi = () => {
+    pendingExplicitShowRecovery = false;
+    cancelPendingFocusRecovery();
+    onPageHidden?.();
+  };
+
+  const onVisibilityChange = () => {
+    if (documentRef.visibilityState === "hidden") {
+      dismissTransientUi();
+      return;
+    }
+    if (pendingExplicitShowRecovery) {
+      recoverFocus();
+    }
+  };
+
+  documentRef.addEventListener("visibilitychange", onVisibilityChange);
+
+  const unsubscribeShown = bridge?.onWindowShown?.(() => {
+    pendingExplicitShowRecovery = true;
+    recoverFocus();
+  });
+  const unsubscribeWillHide = bridge?.onWindowWillHide?.(() => {
+    dismissTransientUi();
+  });
+
+  return () => {
+    pendingExplicitShowRecovery = false;
+    cancelPendingFocusRecovery();
+    documentRef.removeEventListener("visibilitychange", onVisibilityChange);
+    unsubscribeShown?.();
+    unsubscribeWillHide?.();
+  };
+}
+
 /**
- * Recover OS/renderer input focus when the main window returns from hide,
- * another app, or a virtual desktop (#760, #1714, #1722).
+ * Recover OS/renderer input focus when the main process explicitly shows the
+ * main window (#760, #1714, #1722).
  */
 export function useMainWindowInputFocusRecovery(
   options: MainWindowInputFocusRecoveryOptions = {},
@@ -21,49 +113,6 @@ export function useMainWindowInputFocusRecovery(
   const { onPageHidden } = options;
 
   useEffect(() => {
-    let pendingFocusRecovery: ScheduledWindowInputFocus | null = null;
-
-    const cancelPendingFocusRecovery = () => {
-      pendingFocusRecovery?.cancel();
-      pendingFocusRecovery = null;
-    };
-
-    const recoverFocus = () => {
-      if (document.visibilityState !== "visible") return;
-      cancelPendingFocusRecovery();
-      pendingFocusRecovery = scheduleWindowInputFocus();
-    };
-
-    const dismissTransientUi = () => {
-      cancelPendingFocusRecovery();
-      onPageHidden?.();
-    };
-
-    const onVisibilityChange = () => {
-      if (document.visibilityState === "hidden") {
-        dismissTransientUi();
-        return;
-      }
-      recoverFocus();
-    };
-
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    window.addEventListener("focus", recoverFocus);
-
-    const bridge = netcattyBridge.get();
-    const unsubscribeShown = bridge?.onWindowShown?.(() => {
-      recoverFocus();
-    });
-    const unsubscribeWillHide = bridge?.onWindowWillHide?.(() => {
-      dismissTransientUi();
-    });
-
-    return () => {
-      cancelPendingFocusRecovery();
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-      window.removeEventListener("focus", recoverFocus);
-      unsubscribeShown?.();
-      unsubscribeWillHide?.();
-    };
+    return startMainWindowInputFocusRecovery({ onPageHidden });
   }, [onPageHidden]);
 }
