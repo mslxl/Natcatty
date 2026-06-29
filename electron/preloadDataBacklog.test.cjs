@@ -312,6 +312,10 @@ test("backend exit preserves live listeners for same-id reconnect", async () => 
       sessionId: "session-1",
       reason: "closed",
     });
+    preload.handlers.get("netcatty:exit")?.({}, {
+      sessionId: "session-1",
+      reason: "duplicate-closed",
+    });
     preload.handlers.get("netcatty:data")?.({}, {
       sessionId: "session-1",
       data: "dropped while closed",
