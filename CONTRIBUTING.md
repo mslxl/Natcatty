@@ -17,7 +17,7 @@ This project follows the [Contributor Covenant Code of Conduct](./CODE_OF_CONDUC
 
 ## Development Setup
 
-**Prerequisites:** Node.js 18+ and npm.
+**Prerequisites:** Node.js 22+ and npm.
 
 ```bash
 # Clone the repository
@@ -25,7 +25,7 @@ git clone https://github.com/binaricat/Netcatty.git
 cd Netcatty
 
 # Install dependencies
-npm install
+npm ci
 
 # Start in development mode (Vite + Electron)
 npm run dev
@@ -37,14 +37,15 @@ npm run dev
 npm run build          # Build for production
 npm run pack           # Package for current platform
 npm run pack:mac       # macOS (DMG + ZIP)
-npm run pack:win       # Windows (NSIS installer)
-npm run pack:linux     # Linux (AppImage + DEB + RPM)
+npm run pack:win       # Windows (NSIS, portable, ZIP)
+npm run pack:linux     # Linux (AppImage, DEB, RPM, pacman)
 ```
 
-## Linting
+## Linting and Tests
 
 ```bash
 npm run lint           # Run ESLint
+npm test               # Run the test suite
 ```
 
 ## Pull Request Process
@@ -54,13 +55,16 @@ npm run lint           # Run ESLint
    ```bash
    git checkout -b feature/your-feature-name
    ```
-3. Make your changes, following the coding conventions in [agents.md](./agents.md).
+3. Make your changes, following the existing project style.
 4. Commit with a clear message:
    ```bash
    git commit -m 'feat: add amazing feature'
    ```
 5. Push the branch and open a Pull Request against `main`.
-6. Ensure all CI checks pass before requesting review.
+6. Run `npm run lint` and `npm test` before requesting review.
+7. If you changed the capability catalog, run `npm run generate:capability-tools`
+   and commit any generated updates.
+8. Ensure all CI checks pass before requesting review.
 
 ## Commit Message Convention
 
@@ -72,9 +76,17 @@ We recommend following [Conventional Commits](https://www.conventionalcommits.or
 - `refactor:` — code change without feature or fix
 - `chore:` — build process or tooling changes
 
-## Architecture & Coding Conventions
+## Architecture & Coding Guidelines
 
-Refer to [agents.md](./agents.md) for an overview of the project architecture, module responsibilities, and coding guidelines.
+Netcatty is organized around three layers:
+
+- Domain logic in `domain/`
+- Application state in `application/state/`
+- UI components in `components/`
+
+Keep side effects in application or infrastructure code, avoid direct
+`localStorage` or network calls from components, and update relevant
+documentation when behavior changes.
 
 ## License
 

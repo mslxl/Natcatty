@@ -16,6 +16,7 @@ If you discover a security vulnerability in Netcatty, **please do not open a pub
 Instead, report it privately via one of the following methods:
 
 - **GitHub Private Vulnerability Reporting**: Use the [Security tab](https://github.com/binaricat/Netcatty/security/advisories/new) to submit a private advisory.
+- **Email**: Send details to support@netcatty.com.
 - **GitHub Issues** (for non-sensitive security concerns only): https://github.com/binaricat/Netcatty/issues
 
 Please include the following details in your report:
