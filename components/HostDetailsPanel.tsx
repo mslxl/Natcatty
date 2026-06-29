@@ -20,8 +20,7 @@ import {
 import {
   formatProxyConfigEndpoint,
   formatProxyConfigType,
-  isCompleteProxyConfig,
-  normalizeManualProxyConfig,
+  updateProxyConfigField,
 } from "../domain/proxyProfiles";
 import { customThemeStore } from "../application/state/customThemeStore";
 import {
@@ -50,6 +49,8 @@ import {
   resolveDetailsTelnetUsername,
   resolvePrimaryProtocolSavePort,
   resolvePrimaryProtocolSwitchPort,
+  prepareTelnetCredentialsForSave,
+  prepareProxyConfigForSave,
 } from "./HostDetailsPanel.helpers";
 export { parseOptionalPortInput } from "./HostDetailsPanel.helpers";
 import { Button } from "./ui/button";
@@ -327,18 +328,12 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
   }, []);
 
   const updateProxyConfig = useCallback(
-    (field: keyof ProxyConfig, value: string | number) => {
+    (field: keyof ProxyConfig, value: ProxyConfig[keyof ProxyConfig]) => {
       setForm((prev) => {
         const { proxyProfileId: _proxyProfileId, ...rest } = prev;
         return {
           ...rest,
-          proxyConfig: {
-            type: prev.proxyConfig?.type || "http",
-            host: prev.proxyConfig?.host || "",
-            port: prev.proxyConfig?.port || 8080,
-            ...prev.proxyConfig,
-            [field]: value,
-          },
+          proxyConfig: updateProxyConfigField(prev.proxyConfig, field, value),
         } as Host;
       });
     },
@@ -408,19 +403,29 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
   const handleSubmit = () => {
     const hostname = form.hostname.trim();
     if (!hostname) return;
-    const normalizedProxyConfig = normalizeManualProxyConfig(form.proxyConfig);
-    if (normalizedProxyConfig && !isCompleteProxyConfig(normalizedProxyConfig)) {
-      toast.error(
-        normalizedProxyConfig.host ? t("proxyProfiles.error.port") : t("hostDetails.proxyPanel.error.required"),
-      );
+    const proxySave = prepareProxyConfigForSave({
+      proxyConfig: form.proxyConfig,
+      proxyProfileId: form.proxyProfileId,
+      proxyProfiles,
+      identities,
+    });
+    if (proxySave.error) {
+      const messageKey = proxySave.error === "port"
+        ? "proxyProfiles.error.port"
+        : proxySave.error === "required"
+          ? "hostDetails.proxyPanel.error.required"
+          : proxySave.error === "missingSaved"
+            ? "hostDetails.proxyPanel.missingSaved"
+            : proxySave.error === "missingIdentity"
+              ? "hostDetails.proxyPanel.missingIdentity"
+              : proxySave.error === "incompleteIdentity"
+                ? "hostDetails.proxyPanel.incompleteIdentity"
+                : "hostDetails.proxyPanel.unreadableIdentity";
+      toast.error(t(messageKey));
       setActiveSubPanel("proxy");
       return;
     }
-    if (hasMissingProxyProfile) {
-      toast.error(t("hostDetails.proxyPanel.missingSaved"));
-      setActiveSubPanel("proxy");
-      return;
-    }
+    const normalizedProxyConfig = proxySave.normalizedProxyConfig;
     let finalLabel = form.label?.trim() || hostname;
     const finalGroup = groupInputValue.trim() || form.group || "";
 
@@ -462,7 +467,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
       password: form.savePassword === false ? undefined : form.password,
       managedSourceId: finalManagedSourceId,
     };
-    cleaned = normalizePrimaryTelnetState(cleaned);
+    cleaned = prepareTelnetCredentialsForSave(normalizePrimaryTelnetState(cleaned));
     if (
       onImportKey &&
       pendingReferenceKeyPath &&
@@ -594,6 +599,21 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
     return identities.find((i) => i.id === form.identityId);
   }, [form.identityId, identities]);
 
+  const selectedTelnetIdentity = useMemo(() => {
+    if (!form.telnetIdentityId) return undefined;
+    return identities.find((i) => i.id === form.telnetIdentityId);
+  }, [form.telnetIdentityId, identities]);
+
+  const telnetIdentityOptions: ComboboxOption[] = useMemo(
+    () =>
+      identities.map((identity) => ({
+        value: identity.id,
+        label: identity.label,
+        sublabel: identity.username,
+      })),
+    [identities],
+  );
+
   const filteredIdentitySuggestions = useMemo(() => {
     if (selectedIdentity) return [];
     const q = (form.username || "").toLowerCase().trim();
@@ -639,6 +659,19 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
     setIdentitySuggestionsOpen(false);
   }, []);
 
+  const updateTelnetIdentity = useCallback((identityId: string) => {
+    setForm((prev) => ({
+      ...prev,
+      telnetIdentityId: identityId || undefined,
+      ...(identityId
+        ? {
+          telnetUsername: undefined,
+          telnetPassword: undefined,
+        }
+        : {}),
+    }));
+  }, []);
+
   if (activeSubPanel === "create-group") {
     return (
       <CreateGroupPanel
@@ -661,6 +694,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
       <ProxyPanel
         proxyConfig={form.proxyConfig}
         proxyProfiles={proxyProfiles}
+        identities={identities}
         selectedProxyProfileId={form.proxyProfileId}
         onUpdateProxy={updateProxyConfig}
         onSelectProxyProfile={selectProxyProfile}
@@ -1014,32 +1048,52 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
             </div>
 
             <p className="text-xs font-semibold">{t("hostDetails.telnet.credentials")}</p>
-	            <Input
-	              placeholder={t("hostDetails.telnet.username")}
-	              value={effectiveTelnetUsername}
-	              onChange={(e) =>
-	                update("telnetUsername" as keyof Host, e.target.value)
-	              }
-              className="h-10"
-            />
-            <div className="relative">
-              <Input
-                placeholder={t("hostDetails.telnet.password")}
-                type={showTelnetPassword ? "text" : "password"}
-                value={effectiveTelnetPassword}
-                onChange={(e) =>
-                  update("telnetPassword" as keyof Host, e.target.value)
-                }
-                className="h-10 pr-10"
+            {identities.length > 0 && (
+              <Combobox
+                options={telnetIdentityOptions}
+                value={form.telnetIdentityId || ""}
+                onValueChange={updateTelnetIdentity}
+                placeholder={t("hostDetails.telnet.identity.placeholder")}
+                emptyText={t("common.noResultsFound")}
+                className="w-full"
               />
-              <button
-                type="button"
-                onClick={() => setShowTelnetPassword(!showTelnetPassword)}
-                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground transition-colors"
-              >
-                {showTelnetPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-              </button>
-            </div>
+            )}
+            {form.telnetIdentityId ? (
+              <div className="text-xs text-muted-foreground">
+                {selectedTelnetIdentity
+                  ? `${selectedTelnetIdentity.username} - ${selectedTelnetIdentity.label}`
+                  : t("hostDetails.identity.missing")}
+              </div>
+            ) : (
+              <>
+                <Input
+                  placeholder={t("hostDetails.telnet.username")}
+                  value={effectiveTelnetUsername}
+                  onChange={(e) =>
+                    update("telnetUsername" as keyof Host, e.target.value)
+                  }
+                  className="h-10"
+                />
+                <div className="relative">
+                  <Input
+                    placeholder={t("hostDetails.telnet.password")}
+                    type={showTelnetPassword ? "text" : "password"}
+                    value={effectiveTelnetPassword}
+                    onChange={(e) =>
+                      update("telnetPassword" as keyof Host, e.target.value)
+                    }
+                    className="h-10 pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowTelnetPassword(!showTelnetPassword)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    {showTelnetPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+              </>
+            )}
 
             <Input
               placeholder={groupDefaults?.charset || t("hostDetails.charset.placeholder")}

@@ -3,7 +3,15 @@ import type { Host, Identity, KnownHost, SSHKey, TerminalSettings } from "../../
 import { isEncryptedCredentialPlaceholder, sanitizeCredentialValue } from "../../../domain/credentials";
 import { resolveBridgeKeyAuth, resolveHostAuth } from "../../../domain/sshAuth";
 import { resolveHostKeepalive } from "../../../domain/host";
-import { hasUsableProxyConfig } from "../../../domain/proxyProfiles";
+import {
+  findIncompleteProxyIdentityId,
+  findMissingProxyIdentityId,
+  formatIncompleteProxyIdentityMessage,
+  formatMissingProxyIdentityMessage,
+  hasUnreadableProxyCredential,
+  hasUsableProxyConfig,
+  resolveProxyConfigAuth,
+} from "../../../domain/proxyProfiles";
 
 // Fallback used when no global TerminalSettings are wired through (older
 // call sites or tests). Matches DEFAULT_TERMINAL_SETTINGS so behavior is
@@ -34,19 +42,18 @@ export const buildSftpHostCredentials = ({
   if (host.proxyProfileId && !host.proxyConfig) {
     throw new Error(`Saved proxy for host "${host.label || host.hostname}" is missing. Open host settings and select a valid proxy.`);
   }
+  if (findMissingProxyIdentityId(host.proxyConfig, identities)) {
+    throw new Error(formatMissingProxyIdentityMessage(host.label || host.hostname));
+  }
+  if (findIncompleteProxyIdentityId(host.proxyConfig, identities)) {
+    throw new Error(formatIncompleteProxyIdentityMessage(host.label || host.hostname));
+  }
 
   const resolved = resolveHostAuth({ host, keys, identities });
   const key = resolved.key || null;
 
   const proxyConfig = host.proxyConfig
-    ? {
-      type: host.proxyConfig.type,
-      host: host.proxyConfig.host,
-      port: host.proxyConfig.port,
-      command: host.proxyConfig.command,
-      username: host.proxyConfig.username,
-      password: sanitizeCredentialValue(host.proxyConfig.password),
-    }
+    ? resolveProxyConfigAuth(host.proxyConfig, identities)
     : undefined;
   let jumpHosts: NetcattyJumpHost[] | undefined;
   if (host.hostChain?.hostIds && host.hostChain.hostIds.length > 0) {
@@ -57,6 +64,12 @@ export const buildSftpHostCredentials = ({
       }
       if (jumpHost.proxyProfileId && !jumpHost.proxyConfig) {
         throw new Error(`Saved proxy for jump host "${jumpHost.label || jumpHost.hostname}" is missing. Open host settings and select a valid proxy.`);
+      }
+      if (findMissingProxyIdentityId(jumpHost.proxyConfig, identities)) {
+        throw new Error(formatMissingProxyIdentityMessage(jumpHost.label || jumpHost.hostname));
+      }
+      if (findIncompleteProxyIdentityId(jumpHost.proxyConfig, identities)) {
+        throw new Error(formatIncompleteProxyIdentityMessage(jumpHost.label || jumpHost.hostname));
       }
       return jumpHost;
     }).map((jumpHost, index) => {
@@ -80,9 +93,7 @@ export const buildSftpHostCredentials = ({
         hasUsableProxyConfig(jumpHost.proxyConfig);
       if (
         hasConfiguredJumpProxyEndpoint &&
-        jumpHost.proxyConfig?.username &&
-        isEncryptedCredentialPlaceholder(jumpHost.proxyConfig.password) &&
-        !sanitizeCredentialValue(jumpHost.proxyConfig.password)
+        hasUnreadableProxyCredential(jumpHost.proxyConfig, identities)
       ) {
         throw new Error(`Proxy credentials for jump host "${jumpHost.label || jumpHost.hostname}" cannot be decrypted on this device. Open host settings and re-enter the proxy password.`);
       }
@@ -110,14 +121,7 @@ export const buildSftpHostCredentials = ({
         keySource: jumpKey?.source,
         label: jumpHost.label,
         proxy: hasUsableProxyConfig(jumpHost.proxyConfig)
-          ? {
-            type: jumpHost.proxyConfig.type,
-            host: jumpHost.proxyConfig.host,
-            port: jumpHost.proxyConfig.port,
-            command: jumpHost.proxyConfig.command,
-            username: jumpHost.proxyConfig.username,
-            password: sanitizeCredentialValue(jumpHost.proxyConfig.password),
-          }
+          ? resolveProxyConfigAuth(jumpHost.proxyConfig, identities)
           : undefined,
         identityFilePaths: jumpKeyAuth.identityFilePaths,
         keepaliveInterval: hopKeepalive.interval,
@@ -130,7 +134,7 @@ export const buildSftpHostCredentials = ({
     });
   }
   const usesTargetProxyForFirstHop = !!proxyConfig && !jumpHosts?.[0]?.proxy;
-  if (usesTargetProxyForFirstHop && host.proxyConfig?.username && isEncryptedCredentialPlaceholder(host.proxyConfig.password) && !proxyConfig?.password) {
+  if (usesTargetProxyForFirstHop && hasUnreadableProxyCredential(host.proxyConfig, identities)) {
     throw new Error("Proxy credentials cannot be decrypted on this device. Open host settings and re-enter the proxy password.");
   }
 

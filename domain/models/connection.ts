@@ -11,6 +11,7 @@ export interface ProxyConfig {
   host: string;
   port: number;
   command?: string;
+  identityId?: string;
   username?: string;
   password?: string;
 }
@@ -186,6 +187,7 @@ export interface Host {
   protocols?: ProtocolConfig[]; // Multiple protocol configurations
   telnetPort?: number; // Telnet-specific port (for quick access)
   telnetEnabled?: boolean; // Is Telnet enabled for this host
+  telnetIdentityId?: string; // Reference to a Telnet-specific reusable identity
   telnetUsername?: string; // Telnet-specific username
   telnetPassword?: string; // Telnet-specific password
   // Serial-specific configuration (for protocol='serial' hosts)
