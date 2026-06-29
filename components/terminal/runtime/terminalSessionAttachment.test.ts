@@ -359,7 +359,13 @@ test("attachSessionToTerminal keeps interrupt-time output visible", () => {
     flow,
     ctx.terminalBackend,
     (callback: () => void) => callback(),
-    { reason: "interrupt", quietMs: 500, promptQuietMs: 80, maxDrainMs: 1000 },
+    {
+      reason: "interrupt",
+      drainStaleOutput: false,
+      quietMs: 500,
+      promptQuietMs: 80,
+      maxDrainMs: 1000,
+    },
   );
 
   onData?.("old output");
