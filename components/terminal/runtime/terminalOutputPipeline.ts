@@ -570,7 +570,27 @@ export const prioritizeTerminalInput = (
   }
 
   const hasVisibleBacklog = backlog > FLOW_LOW_WATER_MARK || queueDepth > 0;
-  if (isInterrupt && hasVisibleBacklog && options.drainStaleOutput !== false) {
+  if (!hasVisibleBacklog && deferredAck > 0) {
+    const ackAfterInput = clearDeferredTerminalWriteAck(term);
+    scheduleResume(() => {
+      if (ackAfterInput > 0) {
+        ackTerminalSessionFlow(backend, sessionId, ackAfterInput);
+      }
+      flushTerminalSessionFlowAck(sessionId);
+      backend.setSessionFlowPaused?.(sessionId, false);
+    });
+
+    return {
+      sessionId,
+      backlogBytes: backlog,
+      writeQueueDepth: queueDepth,
+      deferredAckBytes: deferredAck,
+      ackAfterInputBytes: ackAfterInput,
+      scheduledBackendResume: true,
+    };
+  }
+
+  if (isInterrupt && hasVisibleBacklog && options.drainStaleOutput === true) {
     armTerminalInterruptDisplayGate(term, options);
   }
 

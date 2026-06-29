@@ -11,6 +11,12 @@ import {
   teardownTerminalOutputPipeline,
 } from "./terminalOutputPipeline.ts";
 import { FLOW_LOW_WATER_MARK } from "./terminalFlowConstants.ts";
+import {
+  enqueueCoalescedTerminalWrite,
+  flushTerminalWriteCoalescer,
+  getTerminalWriteCoalescerPendingBytes,
+  resetTerminalWriteCoalescer,
+} from "./terminalWriteCoalescer.ts";
 import { enqueueTerminalWrite } from "./terminalWriteQueue.ts";
 import { accumulateDeferredTerminalWriteAck } from "./terminalWriteAckDeferral.ts";
 import { clearTerminalSessionFlowAck } from "./terminalFlowAckBuffer.ts";
@@ -236,6 +242,76 @@ test("prioritizeTerminalInput defers source resume until after input is forwarde
 
   assert.deepEqual(events, ["pause", "input-forwarded", "ipc-resume"]);
   clearTerminalSessionFlowAck("sess-1");
+});
+
+test("ordinary input priority preserves pending line-edit echo when flushing deferred acks", () => {
+  clearTerminalSessionFlowAck("sess-edit");
+  const scheduler = globalThis as typeof globalThis & {
+    requestAnimationFrame?: (callback: FrameRequestCallback) => number;
+    cancelAnimationFrame?: (handle: number) => void;
+  };
+  const originalRequestAnimationFrame = scheduler.requestAnimationFrame;
+  const originalCancelAnimationFrame = scheduler.cancelAnimationFrame;
+  scheduler.requestAnimationFrame = () => 1;
+  scheduler.cancelAnimationFrame = () => {};
+
+  const term = createFakeTerm();
+  const echoedHistoryCommand = "systemctl dddd";
+  const written: string[] = [];
+  const acked: number[] = [];
+  const deferred: Array<() => void> = [];
+  const flow = createOutputFlowController({
+    highWaterMark: 100,
+    lowWaterMark: 20,
+    onPause: () => {},
+    onResume: () => {},
+  });
+  const backend = {
+    ackSessionFlow: (_sessionId: string, bytes: number) => {
+      acked.push(bytes);
+    },
+    setSessionFlowPaused: () => {},
+  };
+
+  try {
+    accumulateDeferredTerminalWriteAck(term, 2);
+    flow.received(echoedHistoryCommand.length);
+    enqueueCoalescedTerminalWrite(
+      term,
+      echoedHistoryCommand,
+      (data, ingressBytes) => {
+        written.push(data);
+        flow.written(ingressBytes);
+      },
+      echoedHistoryCommand.length,
+    );
+    assert.equal(getTerminalWriteCoalescerPendingBytes(term), echoedHistoryCommand.length);
+
+    const priority = prioritizeTerminalInput(
+      term,
+      "sess-edit",
+      flow,
+      backend,
+      (callback: () => void) => deferred.push(callback),
+      { reason: "input" },
+    );
+
+    assert.equal(priority.ackAfterInputBytes, 2);
+    assert.equal(flow.pendingBytes(), echoedHistoryCommand.length);
+    assert.equal(getTerminalWriteCoalescerPendingBytes(term), echoedHistoryCommand.length);
+
+    deferred[0]!();
+    assert.deepEqual(acked, [2]);
+
+    flushTerminalWriteCoalescer(term);
+    assert.deepEqual(written, [echoedHistoryCommand]);
+    assert.equal(flow.pendingBytes(), 0);
+  } finally {
+    resetTerminalWriteCoalescer(term);
+    scheduler.requestAnimationFrame = originalRequestAnimationFrame;
+    scheduler.cancelAnimationFrame = originalCancelAnimationFrame;
+    clearTerminalSessionFlowAck("sess-edit");
+  }
 });
 
 test("interrupt priority drains queued display output for ssh-like interrupts", () => {
