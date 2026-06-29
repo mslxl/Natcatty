@@ -84,6 +84,14 @@ test("Windows packaging includes the Windows Hello helper executable", () => {
   );
 });
 
+test("Windows package arch is controlled by pack script CLI flags", () => {
+  assert.deepEqual(
+    config.win.target,
+    ["nsis", "portable"],
+    "win.target must not hard-code x64 and arm64 or pack:win-x64 will still invoke arm64 beforePack hooks",
+  );
+});
+
 test("packaged app declares ssh URL protocol support", () => {
   assert.deepEqual(config.protocols, [
     {

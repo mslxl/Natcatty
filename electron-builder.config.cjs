@@ -186,16 +186,7 @@ module.exports = {
     },
     win: {
         icon: 'public/icon-win.png',
-        target: [
-            {
-                target: 'nsis',
-                arch: ['x64', 'arm64']
-            },
-            {
-                target: 'portable',
-                arch: ['x64', 'arm64']
-            }
-        ],
+        target: ['nsis', 'portable'],
         extraResources: [
             ...moshExtraResources('win32'),
             ...etExtraResources('win32'),

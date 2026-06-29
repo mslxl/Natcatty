@@ -12,6 +12,10 @@ function quoteCmdArg(value) {
   return `"${String(value).replace(/"/g, '\\"')}"`;
 }
 
+function makeCmdScriptPath(tmpdir, targetArch) {
+  return path.win32.join(tmpdir(), `build-netcatty-windows-hello-${targetArch}.cmd`);
+}
+
 function visualStudioDevCmdCandidates(env = process.env) {
   const candidates = [];
   if (env.VSINSTALLDIR) {
@@ -78,6 +82,9 @@ function buildWindowsHelloHelper({
   env = process.env,
   run = execFileSync,
   mkdir = fs.mkdirSync,
+  writeFile = fs.writeFileSync,
+  rm = fs.rmSync,
+  tmpdir = require("node:os").tmpdir,
   existsSync = fs.existsSync,
   readMachine = readPeMachine,
   logger = console,
@@ -120,11 +127,17 @@ function buildWindowsHelloHelper({
         quoteCmdArg(compiler),
         ...compilerArgs.map(quoteCmdArg),
       ].join(" ");
-      run("cmd.exe", ["/d", "/s", "/c", compileCommand], {
-        cwd: projectDir,
-        stdio: "inherit",
-        env,
-      });
+      const scriptPath = makeCmdScriptPath(tmpdir, targetArch);
+      writeFile(scriptPath, `@echo off\r\n${compileCommand}\r\n`, "utf8");
+      try {
+        run("cmd.exe", ["/d", "/c", scriptPath], {
+          cwd: projectDir,
+          stdio: "inherit",
+          env,
+        });
+      } finally {
+        rm(scriptPath, { force: true });
+      }
     } else {
       run(compiler, compilerArgs, {
         cwd: projectDir,
@@ -162,6 +175,7 @@ module.exports = {
   findVisualStudioDevCmd,
   getExpectedPeMachine,
   hasInitializedMsvcEnvironment,
+  makeCmdScriptPath,
   normalizeWindowsHelperArch,
   readPeMachine,
   visualStudioDevCmdCandidates,
