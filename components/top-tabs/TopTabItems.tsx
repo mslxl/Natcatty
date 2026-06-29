@@ -537,7 +537,18 @@ export const SessionTopTab: React.FC<SessionTopTabProps> = memo(({
     activeTabStore.setActiveTabId(session.id);
   }, [session.id]);
 
-  return (
+  // mosh/ET wrap SSH but use their own transports; we still want the tooltip
+  // off for them because the displayed address can differ from what's dialed.
+  const showAddressTooltip =
+    !session.moshEnabled
+    && !session.etEnabled
+    && (session.protocol === 'ssh' || session.protocol === 'telnet')
+    && Boolean(session.hostname);
+  const addressTooltip = showAddressTooltip
+    ? `${session.username ? `${session.username}@` : ''}${session.hostname}${session.port ? `:${session.port}` : ''}`
+    : null;
+
+  const tabBody = (
     <ContextMenu>
       <ContextMenuTrigger asChild>
         <div
@@ -617,6 +628,15 @@ export const SessionTopTab: React.FC<SessionTopTabProps> = memo(({
         t={t}
       />
     </ContextMenu>
+  );
+
+  if (!addressTooltip) return tabBody;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{tabBody}</TooltipTrigger>
+      <TooltipContent>{addressTooltip}</TooltipContent>
+    </Tooltip>
   );
 });
 SessionTopTab.displayName = 'SessionTopTab';
