@@ -5,7 +5,7 @@ import { UnicodeGraphemesAddon } from "@xterm/addon-unicode-graphemes";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal as XTerm } from "@xterm/xterm";
-import type { Dispatch, RefObject, SetStateAction } from "react";
+import type { RefObject } from "react";
 import {
   checkAppShortcut,
   getAppLevelActions,
@@ -199,7 +199,10 @@ export type CreateXTermRuntimeContext = {
   passwordPromptActiveRef?: RefObject<boolean>;
   onOutputTriggerUserInputRef?: RefObject<((data: string) => void) | undefined>;
   sudoAutofillRef?: RefObject<SudoPasswordAutofill | null>;
-  setIsSearchOpen: Dispatch<SetStateAction<boolean>>;
+  // Opens the search bar, or refocuses its input if already open. Used by the
+  // searchTerminal hotkey so Cmd/Ctrl+F re-grabs focus when the bar is open but
+  // unfocused (issue #1789).
+  requestSearchFocus: () => void;
 
   // Serial-specific options
   serialLocalEcho?: boolean;
@@ -945,7 +948,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
               break;
             }
             case "searchTerminal": {
-              ctx.setIsSearchOpen(true);
+              ctx.requestSearchFocus();
               break;
             }
             case "increaseTerminalFontSize":
