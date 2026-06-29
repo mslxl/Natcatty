@@ -285,13 +285,13 @@ export function useTerminalLayerEffects(ctx: TerminalLayerEffectsContext) {
         }
         return onSessionData(session.id, (chunk) => {
           const hasNotifiableOutput = hasNotifiableTerminalOutput(filter, chunk);
-          if (!hasNotifiableOutput) return;
           if (!shouldMarkSessionActivity(activeTabIdRef.current, session)) {
             return;
           }
           if (sessionActivityStore.getSnapshot()[session.id]) {
             return;
           }
+          if (!hasNotifiableOutput) return;
   
           sessionActivityStore.setTabActive(session.id, true);
         });

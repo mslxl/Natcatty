@@ -30,10 +30,55 @@ const resolveCoalescerByteCap = (term: XTerm): number => {
   return resolver?.() ?? defaultCoalescerByteCap();
 };
 
+const getPendingCoalescedBytes = (term: XTerm): number =>
+  terminalWriteCoalescers.get(term)?.pendingBytes() ?? 0;
+
 const takePendingIngressBytes = (term: XTerm, fallback = 0): number => {
   const pending = terminalWriteCoalescerIngress.get(term) ?? fallback;
   terminalWriteCoalescerIngress.delete(term);
   return pending;
+};
+
+const splitIngressBytes = (
+  totalDisplayBytes: number,
+  totalIngressBytes: number,
+  sliceDisplayBytes: number,
+  remainingIngressBytes: number,
+): number => {
+  if (totalDisplayBytes <= 0) {
+    return totalIngressBytes;
+  }
+  const proportionalBytes = Math.floor(
+    (totalIngressBytes * sliceDisplayBytes) / totalDisplayBytes,
+  );
+  return Math.max(0, Math.min(remainingIngressBytes, proportionalBytes));
+};
+
+const writeLargeTerminalBatch = (
+  data: string,
+  ingressBytes: number,
+  maxBatchBytes: number,
+  writeNow: (data: string, ingressBytes: number) => void,
+): void => {
+  const batchSize = Math.max(1, maxBatchBytes);
+  let offset = 0;
+  let remainingIngressBytes = Math.max(0, ingressBytes);
+
+  while (offset < data.length) {
+    const end = Math.min(data.length, offset + batchSize);
+    const slice = data.slice(offset, end);
+    const sliceIngress = end >= data.length
+      ? remainingIngressBytes
+      : splitIngressBytes(
+        data.length,
+        ingressBytes,
+        slice.length,
+        remainingIngressBytes,
+      );
+    remainingIngressBytes -= sliceIngress;
+    writeNow(slice, sliceIngress);
+    offset = end;
+  }
 };
 
 export const enqueueCoalescedTerminalWrite = (
@@ -42,6 +87,15 @@ export const enqueueCoalescedTerminalWrite = (
   writeNow: (data: string, ingressBytes: number) => void,
   ingressBytes: number = data.length,
 ): void => {
+  const maxPendingBytes = resolveCoalescerByteCap(term);
+  if (getPendingCoalescedBytes(term) + data.length > maxPendingBytes) {
+    flushTerminalWriteCoalescer(term);
+  }
+  if (data.length > maxPendingBytes) {
+    writeLargeTerminalBatch(data, ingressBytes, maxPendingBytes, writeNow);
+    return;
+  }
+
   terminalWriteCoalescerIngress.set(
     term,
     (terminalWriteCoalescerIngress.get(term) ?? 0) + ingressBytes,
@@ -72,7 +126,7 @@ export const resetTerminalWriteCoalescer = (term: XTerm): void => {
 };
 
 export const getTerminalWriteCoalescerPendingBytes = (term: XTerm): number =>
-  terminalWriteCoalescers.get(term)?.pendingBytes() ?? 0;
+  getPendingCoalescedBytes(term);
 
 export const getTerminalWriteCoalescerPendingIngressBytes = (term: XTerm): number =>
   terminalWriteCoalescerIngress.get(term) ?? 0;

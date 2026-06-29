@@ -93,7 +93,7 @@ function loadBridgeWithFakes(spawns, sentries) {
   }
 }
 
-test("local terminal drops incoming flood while renderer flow is paused", () => {
+test("local terminal buffers incoming flood while renderer flow is paused", () => {
   const spawns = [];
   const sentries = [];
   const sent = [];
@@ -122,13 +122,18 @@ test("local terminal drops incoming flood while renderer flow is paused", () => 
   );
   spawns[0].emitData(Buffer.from("ordinary flood"));
 
-  assert.equal(sentries[0].consumeCalls.length, 0);
+  assert.equal(sentries[0].consumeCalls.length, 1);
   assert.deepEqual(sent, []);
+  bridge.setSessionFlowPaused(
+    { sender: {} },
+    { sessionId: "local-flood", paused: false },
+  );
+  assert.deepEqual(sent.map((item) => item.payload.data), ["ordinary flood"]);
 
   sentries[0].active = true;
   spawns[0].emitData(Buffer.from("transfer bytes"));
 
-  assert.equal(sentries[0].consumeCalls.length, 1);
+  assert.equal(sentries[0].consumeCalls.length, 2);
 });
 
 test("closing a local terminal discards buffered output instead of flushing it", () => {

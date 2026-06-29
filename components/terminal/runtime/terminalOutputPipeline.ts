@@ -616,6 +616,25 @@ export const prioritizeTerminalInput = (
     armTerminalInterruptDisplayGate(term, options);
   }
 
+  if (!isInterrupt) {
+    const ackAfterInput = clearDeferredTerminalWriteAck(term);
+    if (ackAfterInput > 0) {
+      scheduleResume(() => {
+        ackTerminalSessionFlow(backend, sessionId, ackAfterInput);
+        flushTerminalSessionFlowAck(sessionId);
+      });
+    }
+
+    return {
+      sessionId,
+      backlogBytes: backlog,
+      writeQueueDepth: queueDepth,
+      deferredAckBytes: deferredAck,
+      ackAfterInputBytes: ackAfterInput,
+      scheduledBackendResume: ackAfterInput > 0,
+    };
+  }
+
   let ackAfterInput = 0;
 
   const onDropped = (bytes: number) => {

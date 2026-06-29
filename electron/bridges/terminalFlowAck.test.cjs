@@ -42,12 +42,12 @@ test("shouldAcceptSessionOutput returns false when flow pause is applied", () =>
   assert.equal(shouldAcceptSessionOutput(session), true);
 });
 
-test("shouldProcessSessionOutput drops paused output unless a transfer sentry is active", () => {
+test("shouldProcessSessionOutput keeps processing paused output for buffering", () => {
   const session = makeSession();
   trackEmitted(session, FLOW_HIGH_WATER_MARK);
 
-  assert.equal(shouldProcessSessionOutput(session), false);
-  assert.equal(shouldProcessSessionOutput(session, { isActive: () => false }), false);
+  assert.equal(shouldProcessSessionOutput(session), true);
+  assert.equal(shouldProcessSessionOutput(session, { isActive: () => false }), true);
   assert.equal(shouldProcessSessionOutput(session, { isActive: () => true }), true);
 });
 

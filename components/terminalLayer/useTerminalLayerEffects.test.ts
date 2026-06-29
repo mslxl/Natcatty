@@ -12,7 +12,7 @@ test("theme preview DOM effects were removed in favor of ThemeRuntime injection"
   assert.doesNotMatch(source, /themeCommitTimerRef/);
 });
 
-test("terminal activity filter consumes chunks before activity guards", () => {
+test("terminal activity filter stays in sync before notification guards", () => {
   const subscriptionIndex = source.indexOf("return onSessionData(session.id, (chunk) => {");
   const filterIndex = source.indexOf("const hasNotifiableOutput = hasNotifiableTerminalOutput(filter, chunk);", subscriptionIndex);
   const visibleGuardIndex = source.indexOf("if (!shouldMarkSessionActivity(activeTabIdRef.current, session))", subscriptionIndex);

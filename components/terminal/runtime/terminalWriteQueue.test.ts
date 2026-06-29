@@ -30,11 +30,11 @@ test("enqueueTerminalWrite serializes writes in order", () => {
   assert.deepEqual(order, [1, 2]);
 });
 
-test("marks flood mode without dropping queued writes when item cap is exceeded", () => {
+test("marks flood mode and coalesces queued writes when item cap is exceeded", () => {
   const term = createFakeTerm();
   const dropped: number[] = [];
+  const order: number[] = [];
   let releaseFirst: (() => void) | null = null;
-  let completed = 0;
 
   enqueueTerminalWrite(term, 10, (done) => {
     releaseFirst = done;
@@ -45,7 +45,7 @@ test("marks flood mode without dropping queued writes when item cap is exceeded"
       term,
       10,
       (done) => {
-        completed += 1;
+        order.push(index);
         done();
       },
       { onDropped: (bytes) => dropped.push(bytes) },
@@ -54,14 +54,15 @@ test("marks flood mode without dropping queued writes when item cap is exceeded"
 
   assert.deepEqual(dropped, []);
   assert.equal(isTerminalWriteQueueInFloodMode(term), true);
-  assert.equal(getTerminalWriteQueueDepth(term), MAX_WRITE_QUEUE_ITEMS + 1);
+  assert.equal(getTerminalWriteQueueDepth(term), 1);
   releaseFirst?.();
-  assert.equal(completed, MAX_WRITE_QUEUE_ITEMS + 1);
+  assert.deepEqual(order, Array.from({ length: MAX_WRITE_QUEUE_ITEMS + 1 }, (_, index) => index));
 });
 
 test("setTerminalWriteQueueDropHandler only reports explicit queue aborts", () => {
   const term = createFakeTerm();
   const dropped: number[] = [];
+  let completed = 0;
   let releaseFirst: (() => void) | null = null;
 
   setTerminalWriteQueueDropHandler(term, (bytes) => dropped.push(bytes));
@@ -70,7 +71,10 @@ test("setTerminalWriteQueueDropHandler only reports explicit queue aborts", () =
   });
 
   for (let index = 0; index < MAX_WRITE_QUEUE_ITEMS + 1; index += 1) {
-    enqueueTerminalWrite(term, 10, (done) => done());
+    enqueueTerminalWrite(term, 10, (done) => {
+      completed += 1;
+      done();
+    });
   }
 
   assert.deepEqual(dropped, []);
@@ -78,6 +82,65 @@ test("setTerminalWriteQueueDropHandler only reports explicit queue aborts", () =
   abortTerminalWriteQueue(term);
   assert.deepEqual(dropped, [MAX_WRITE_QUEUE_ITEMS * 10 + 10]);
   releaseFirst?.();
+  assert.equal(completed, 0);
+});
+
+test("abortTerminalWriteQueue cancels remaining merged writes while one is in flight", () => {
+  const term = createFakeTerm();
+  const dropped: number[] = [];
+  const order: number[] = [];
+  let releaseFirst: (() => void) | null = null;
+
+  enqueueTerminalWrite(term, 10, (done) => {
+    releaseFirst = done;
+  });
+
+  for (let index = 0; index < MAX_WRITE_QUEUE_ITEMS + 1; index += 1) {
+    enqueueTerminalWrite(
+      term,
+      10,
+      (done) => {
+        order.push(index);
+        if (index === 0) {
+          abortTerminalWriteQueue(term, (bytes) => dropped.push(bytes));
+        }
+        done();
+      },
+    );
+  }
+
+  releaseFirst?.();
+
+  assert.deepEqual(order, [0]);
+  assert.deepEqual(dropped, [MAX_WRITE_QUEUE_ITEMS * 10]);
+});
+
+test("merges passive flood backlog items without dropping output", () => {
+  const term = createFakeTerm();
+  const dropped: number[] = [];
+  const order: number[] = [];
+  let releaseFirst: (() => void) | null = null;
+
+  enqueueTerminalWrite(term, 10, (done) => {
+    releaseFirst = done;
+  });
+
+  for (let index = 0; index < MAX_WRITE_QUEUE_ITEMS + 10; index += 1) {
+    enqueueTerminalWrite(
+      term,
+      10,
+      (done) => {
+        order.push(index);
+        done();
+      },
+      { onDropped: (bytes) => dropped.push(bytes) },
+    );
+  }
+
+  assert.equal(getTerminalWriteQueueDepth(term) < MAX_WRITE_QUEUE_ITEMS + 10, true);
+  assert.deepEqual(dropped, []);
+  releaseFirst?.();
+  assert.deepEqual(order, Array.from({ length: MAX_WRITE_QUEUE_ITEMS + 10 }, (_, index) => index));
 });
 
 test("abortTerminalWriteQueue drops pending bytes and reports dropped count", () => {

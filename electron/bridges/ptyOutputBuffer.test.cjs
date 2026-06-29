@@ -92,6 +92,21 @@ test("hard cap still flushes synchronously when paced flood output keeps growing
   assert.deepEqual(sends, ["abcdefgh"]);
 });
 
+test("default hard cap keeps flood-sized renderer sends bounded", () => {
+  const sends = [];
+  const buffer = createPtyOutputBuffer((data) => sends.push(data), {
+    maxBufferSize: 4,
+    floodFlushDelayMs: 50,
+  });
+
+  buffer.bufferData("abcd");
+  buffer.bufferData("efgh");
+  buffer.bufferData("ijkl");
+  buffer.bufferData("mnop");
+
+  assert.deepEqual(sends, ["abcdefghijklmnop"]);
+});
+
 test("flush() forces a synchronous send and cancels the pending turn", async () => {
   const sends = [];
   const buffer = createPtyOutputBuffer((data) => sends.push(data));
@@ -138,7 +153,7 @@ test("takePending() returns pending data without sending it", async () => {
   assert.deepEqual(sends, []);
 });
 
-test("drops incoming data when shouldAcceptOutput returns false", async () => {
+test("buffers incoming data while shouldAcceptOutput returns false", async () => {
   const sends = [];
   let accept = true;
   const buffer = createPtyOutputBuffer((data) => sends.push(data), {
@@ -147,10 +162,54 @@ test("drops incoming data when shouldAcceptOutput returns false", async () => {
 
   buffer.bufferData("before");
   accept = false;
-  buffer.bufferData("dropped");
+  buffer.bufferData("buffered");
   await tick();
 
-  assert.deepEqual(sends, ["before"]);
+  assert.deepEqual(sends, []);
+  accept = true;
+  buffer.flush();
+
+  assert.deepEqual(sends, ["beforebuffered"]);
+});
+
+test("flushes data buffered while output is not accepted in bounded chunks", async () => {
+  const sends = [];
+  let accept = false;
+  const buffer = createPtyOutputBuffer((data) => sends.push(data), {
+    maxBufferSize: 4,
+    maxFloodBufferSize: 8,
+    shouldAcceptOutput: () => accept,
+  });
+
+  buffer.bufferData("1234");
+  buffer.bufferData("5678");
+  buffer.bufferData("90ab");
+  await tick();
+
+  assert.deepEqual(sends, []);
+  accept = true;
+  buffer.flush();
+
+  assert.deepEqual(sends, ["12345678", "90ab"]);
+});
+
+test("keeps a single paused append bounded before output is accepted", async () => {
+  const sends = [];
+  let accept = false;
+  const buffer = createPtyOutputBuffer((data) => sends.push(data), {
+    maxBufferSize: 4,
+    maxFloodBufferSize: 8,
+    shouldAcceptOutput: () => accept,
+  });
+
+  buffer.bufferData("1234567890abcdefgh");
+  await tick();
+
+  assert.deepEqual(sends, []);
+  accept = true;
+  buffer.flush();
+
+  assert.deepEqual(sends, ["12345678", "90abcdef", "gh"]);
 });
 
 test("keeps batching after a flush", async () => {
