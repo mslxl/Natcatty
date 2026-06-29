@@ -79,7 +79,14 @@ function clearTerminalDataSession({
   terminalDataBacklog?.clear?.(sessionId);
 }
 
+function clearTerminalDataBacklog({
+  terminalDataBacklog,
+}, sessionId) {
+  terminalDataBacklog?.clear?.(sessionId);
+}
+
 module.exports = {
+  clearTerminalDataBacklog,
   createTerminalDataBacklog,
   createTerminalDataDispatcher,
   clearTerminalDataSession,

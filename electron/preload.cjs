@@ -3,6 +3,7 @@ const os = require("node:os");
 const { randomUUID } = require("node:crypto");
 const { createPreloadApi } = require("./preload/api.cjs");
 const {
+  clearTerminalDataBacklog,
   clearTerminalDataSession,
   createTerminalDataBacklog,
   createTerminalDataDispatcher,
@@ -250,11 +251,7 @@ ipcRenderer.on("netcatty:exit", (_event, payload) => {
       }
     });
   }
-  clearTerminalDataSession({
-    dataListeners,
-    displayDataListeners,
-    terminalDataBacklog,
-  }, payload.sessionId);
+  clearTerminalDataBacklog({ terminalDataBacklog }, payload.sessionId);
   terminalOutputPorts.closeSession(payload.sessionId);
   exitListeners.delete(payload.sessionId);
   telnetAutoLoginCompleteListeners.delete(payload.sessionId);
