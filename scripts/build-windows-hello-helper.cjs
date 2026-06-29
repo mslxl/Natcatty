@@ -98,6 +98,7 @@ function buildWindowsHelloHelper({
     "/nologo",
     "/EHsc",
     "/std:c++17",
+    "/D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS",
     sourcePath,
     "/Fe:" + outputPath,
     "/link",

@@ -46,6 +46,10 @@ test("buildWindowsHelloHelper writes target architecture helper into an arch-spe
     calls[0][1].join(" "),
     /\/Fe:.*windowsHelloHelper.*build.*arm64.*NetcattyWindowsHello\.exe/,
   );
+  assert.ok(
+    calls[0][1].includes("/D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS"),
+    "Windows Hello helper compile must tolerate older C++/WinRT headers on newer MSVC",
+  );
   assert.deepEqual(calls[0][1].slice(-4), ["/link", "/MACHINE:ARM64", "runtimeobject.lib", "windowsapp.lib"]);
 });
 
