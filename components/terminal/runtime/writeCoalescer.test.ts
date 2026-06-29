@@ -54,6 +54,21 @@ test("coalesces chunks in the same frame into one write", () => {
   assert.deepEqual(writes, ["foobarbaz"]);
 });
 
+test("coalesces a large TUI repaint until the scheduled frame", () => {
+  const writes: string[] = [];
+  const coalescer = createTestCoalescer((data) => writes.push(data));
+  const chunk = "x".repeat(4 * 1024);
+
+  for (let index = 0; index < 20; index += 1) {
+    coalescer.push(chunk);
+  }
+
+  assert.equal(writes.length, 0);
+
+  fireFrame();
+  assert.deepEqual(writes.map((write) => write.length), [80 * 1024]);
+});
+
 test("schedules a new frame for data arriving after a flush", () => {
   const writes: string[] = [];
   const coalescer = createTestCoalescer((data) => writes.push(data));

@@ -36,26 +36,42 @@ test("flushes within a single event-loop turn (not on a fixed delay)", async () 
   assert.deepEqual(sends, ["x"]);
 });
 
-test("paces size-cap flushes with a short flood delay", async () => {
+test("paces size-cap flushes with a short flood delay", () => {
+  const originalSetTimeout = global.setTimeout;
+  const originalClearTimeout = global.clearTimeout;
+  const timers = [];
+  global.setTimeout = (callback, ms) => {
+    const timer = { callback, ms, cleared: false };
+    timers.push(timer);
+    return timer;
+  };
+  global.clearTimeout = (timer) => {
+    if (timer) timer.cleared = true;
+  };
+
   const sends = [];
-  const buffer = createPtyOutputBuffer((data) => sends.push(data), {
-    maxBufferSize: 4,
-    floodFlushDelayMs: 5,
-  });
+  try {
+    const buffer = createPtyOutputBuffer((data) => sends.push(data), {
+      maxBufferSize: 4,
+      floodFlushDelayMs: 5,
+    });
 
-  buffer.bufferData("ab");
-  assert.equal(sends.length, 0); // under cap, still pending
+    buffer.bufferData("ab");
+    assert.equal(sends.length, 0); // under cap, still pending
 
-  buffer.bufferData("cd"); // now "abcd" hits the 4-byte cap
+    buffer.bufferData("cd"); // now "abcd" hits the 4-byte cap
 
-  // Flood-sized output is paced instead of synchronously spamming IPC.
-  assert.deepEqual(sends, []);
+    // Flood-sized output is paced instead of synchronously spamming IPC.
+    assert.deepEqual(sends, []);
+    assert.equal(timers.length, 1);
+    assert.equal(timers[0].ms, 5);
 
-  await tick();
-  assert.deepEqual(sends, []);
-
-  await sleep(10);
-  assert.deepEqual(sends, ["abcd"]);
+    timers[0].callback();
+    assert.deepEqual(sends, ["abcd"]);
+  } finally {
+    global.setTimeout = originalSetTimeout;
+    global.clearTimeout = originalClearTimeout;
+  }
 });
 
 test("hard cap still flushes synchronously when paced flood output keeps growing", async () => {
