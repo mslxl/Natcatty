@@ -178,7 +178,12 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
   const [isSavingAppLock, setIsSavingAppLock] = useState(false);
   const [isSavingAppLockSystemUnlock, setIsSavingAppLockSystemUnlock] = useState(false);
   const hasAppLockPassword = Boolean(appLockSettings.passwordVerifier);
-  const showAppLockSystemUnlock = Boolean(hasAppLockPassword && appLockSystemUnlockStatus?.supported && appLockSystemUnlockStatus.label);
+  const showAppLockSystemUnlock = Boolean(
+    hasAppLockPassword &&
+    appLockSystemUnlockStatus?.supported &&
+    appLockSystemUnlockStatus.label &&
+    (appLockSystemUnlockStatus?.available || appLockSettings.systemUnlockEnabled)
+  );
 
   const [tempDirInfo, setTempDirInfo] = useState<TempDirInfo | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -486,6 +491,7 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
       setIsSavingAppLockSystemUnlock(false);
     }
   }, [
+    appLockSettings.systemUnlockEnabled,
     appLockSettings.systemUnlockAutoPromptEnabled,
     appLockSystemUnlockStatus?.label,
     mapAppLockChangeError,
@@ -769,7 +775,7 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
                         <div className="flex flex-col items-end gap-2">
                           <Toggle
                             checked={appLockSettings.systemUnlockEnabled}
-                            disabled={isSavingAppLockSystemUnlock || (!appLockSettings.systemUnlockEnabled && !appLockSystemUnlockStatus.available)}
+                            disabled={isSavingAppLockSystemUnlock || !appLockSystemUnlockStatus.available}
                             ariaLabel={t("settings.appLock.systemUnlock.label").replace("{label}", appLockSystemUnlockStatus.label)}
                             onChange={(enabled) => void handleAppLockSystemUnlockChange(enabled)}
                           />

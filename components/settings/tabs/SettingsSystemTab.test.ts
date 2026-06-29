@@ -77,13 +77,14 @@ test("app lock system unlock enablement does not require current password in set
   assert.doesNotMatch(systemUnlockSection, /settings\.appLock\.currentPassword/);
 });
 
-test("app lock system unlock toggle still allows disabling when system auth is unavailable", () => {
+test("app lock system unlock setting hides when unavailable unless already enabled", () => {
   const source = readFileSync(new URL("./SettingsSystemTab.tsx", import.meta.url), "utf8");
   const appLockSectionStart = source.indexOf('<SectionHeader title={t("settings.appLock.title")} />');
   const nextSectionStart = source.indexOf("<SectionHeader", appLockSectionStart + 1);
   const appLockSection = source.slice(appLockSectionStart, nextSectionStart);
 
-  assert.match(appLockSection, /disabled=\{isSavingAppLockSystemUnlock \|\| \(!appLockSettings\.systemUnlockEnabled && !appLockSystemUnlockStatus\.available\)\}/);
+  assert.match(source, /appLockSystemUnlockStatus\?\.available \|\| appLockSettings\.systemUnlockEnabled/);
+  assert.match(appLockSection, /disabled=\{isSavingAppLockSystemUnlock \|\| !appLockSystemUnlockStatus\.available\}/);
 });
 
 test("app lock system unlock exposes auto prompt as a child option", () => {

@@ -5,6 +5,7 @@ const {
   createAppLockSystemAuthBridge,
   normalizeSystemAuthStatus,
   normalizeSystemAuthUnlockResult,
+  resolveDefaultHelperPath,
 } = require("./appLockSystemAuthBridge.cjs");
 
 test("normalizes unsupported status", () => {
@@ -83,6 +84,21 @@ test("Windows status and unlock call helper with HWND", async () => {
   assert.equal(calls[0].options.windowsHide, true);
   assert.equal(calls[0].options.timeout, 15000);
   assert.deepEqual(calls[1].args, ["verify", "--hwnd", "1234605616436508552", "--message", "Unlock Netcatty"]);
+});
+
+test("Windows dev helper path follows the architecture-specific build output", () => {
+  const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+  const originalArch = Object.getOwnPropertyDescriptor(process, "arch");
+  Object.defineProperty(process, "platform", { value: "win32" });
+  Object.defineProperty(process, "arch", { value: "x64" });
+
+  try {
+    const helperPath = resolveDefaultHelperPath();
+    assert.match(helperPath, /windowsHelloHelper[\\/]build[\\/]x64[\\/]NetcattyWindowsHello\.exe$/);
+  } finally {
+    Object.defineProperty(process, "platform", originalPlatform);
+    Object.defineProperty(process, "arch", originalArch);
+  }
 });
 
 test("Windows helper maps unavailable and cancelled states", async () => {

@@ -96,7 +96,7 @@ function resolveDefaultHelperPath() {
   if (process.resourcesPath) {
     return path.join(process.resourcesPath, "windowsHello", "NetcattyWindowsHello.exe");
   }
-  return path.join(__dirname, "windowsHelloHelper", "build", "NetcattyWindowsHello.exe");
+  return path.join(__dirname, "windowsHelloHelper", "build", process.arch, "NetcattyWindowsHello.exe");
 }
 
 function createAppLockSystemAuthBridge({
