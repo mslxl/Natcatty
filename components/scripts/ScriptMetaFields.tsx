@@ -27,8 +27,8 @@ export const ScriptMetaFields: React.FC<ScriptMetaFieldsProps> = ({
   if (layout === 'toolbar') {
     return (
       <div className="flex flex-col gap-2 shrink-0">
-        <div className="flex flex-wrap items-end gap-2">
-          <div className="flex-1 min-w-[160px] space-y-1">
+        <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_148px] gap-2 items-end">
+          <div className="min-w-0 space-y-1">
             <label className="text-[11px] font-medium text-muted-foreground">{t('scripts.meta.name')}</label>
             <Input
               value={snippet.label}
@@ -36,7 +36,7 @@ export const ScriptMetaFields: React.FC<ScriptMetaFieldsProps> = ({
               className="h-8"
             />
           </div>
-          <div className="w-[148px] space-y-1">
+          <div className="space-y-1">
             <label className="text-[11px] font-medium text-muted-foreground">{t('scripts.meta.trigger')}</label>
             <Select
               value={snippet.trigger || 'manual'}
@@ -54,7 +54,7 @@ export const ScriptMetaFields: React.FC<ScriptMetaFieldsProps> = ({
             </Select>
           </div>
           {snippet.trigger === 'onOutput' ? (
-            <div className="flex-1 min-w-[180px] space-y-1">
+            <div className="col-span-full space-y-1">
               <label className="text-[11px] font-medium text-muted-foreground">{t('scripts.meta.triggerPattern')}</label>
               <Input
                 value={snippet.triggerPattern || ''}
