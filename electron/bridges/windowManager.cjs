@@ -250,6 +250,7 @@ function getWindowBoundsState(win, overrideBounds) {
 const MENU_LABELS = {
   en: { edit: "Edit", view: "View", window: "Window", reload: "Reload", closeWindow: "Close Window" },
   "zh-CN": { edit: "编辑", view: "视图", window: "窗口", reload: "重新加载", closeWindow: "关闭窗口" },
+  "zh-TW": { edit: "編輯", view: "檢視", window: "視窗", reload: "重新載入", closeWindow: "關閉視窗" },
 };
 
 function tMenu(language, key) {
