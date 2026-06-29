@@ -348,6 +348,88 @@ test("script waitFor ignores keywords from the startup screen snapshot until new
   scriptBridge.removeSessionBuffer(sessionId);
 });
 
+test("script waitFor sees output that arrives while startup snapshot sync is pending", async () => {
+  const handlers = new Map();
+  const sentRunUpdates = [];
+  const sessionId = "session-output-during-startup-sync";
+  let snapshotRequestId;
+
+  scriptBridge.removeSessionBuffer(sessionId);
+  scriptBridge.init({
+    sessions: new Map(),
+    electronModule: {
+      app: {
+        getVersion: () => "test",
+        getPath: () => process.cwd(),
+      },
+      webContents: {
+        fromId: () => null,
+      },
+    },
+    terminalBridge: {
+      writeToSession() {},
+    },
+    terminalWorkerManager: null,
+    getMainWindow: () => ({
+      webContents: {
+        id: 1,
+        send(channel, payload) {
+          if (channel === "netcatty:script:runs-updated") {
+            sentRunUpdates.push(payload.runs);
+          }
+          if (channel === "netcatty:script:screen-snapshot-request") {
+            snapshotRequestId = payload.requestId;
+          }
+          if (channel === "netcatty:script:dialog-request") {
+            setImmediate(() => {
+              handlers.get("netcatty:script:dialog-response")({}, {
+                requestId: payload.requestId,
+                value: "abort",
+              });
+            });
+          }
+        },
+      },
+    }),
+  });
+  scriptBridge.registerHandlers({
+    handle(channel, handler) {
+      handlers.set(channel, handler);
+    },
+  });
+
+  const runPromise = handlers.get("netcatty:script:run")({}, {
+    scriptId: "output-during-sync",
+    scriptLabel: "Output during sync",
+    sessionId,
+    content: `
+      const value = await nct.screen.waitFor('READY', 1000);
+      nct.log('matched ' + value);
+    `,
+    permissionMode: "auto",
+  });
+
+  await delay(20);
+  assert.ok(snapshotRequestId);
+  scriptBridge.appendSessionOutput(sessionId, "fresh READY\n");
+  handlers.get("netcatty:script:screen-snapshot-response")({}, {
+    requestId: snapshotRequestId,
+    snapshot: {
+      rows: 24,
+      cols: 80,
+      currentRow: 0,
+      lines: ["user@host:~$ "],
+    },
+  });
+
+  await runPromise;
+
+  const finalRun = sentRunUpdates.at(-1).find((run) => run.scriptId === "output-during-sync");
+  assert.equal(finalRun.status, "completed");
+  assert.match(finalRun.logs.map((entry) => entry.message).join("\n"), /matched READY/);
+  scriptBridge.removeSessionBuffer(sessionId);
+});
+
 test("script waitForPrompt can still use the current startup prompt", async () => {
   const handlers = new Map();
   const sentRunUpdates = [];

@@ -263,13 +263,17 @@ function showWaitForTimeoutDialog(pattern, timeoutMs) {
 
 async function syncOutputBufferFromSnapshot(sessionId) {
   const buffer = getOrCreateBuffer(sessionId);
+  const syncStartText = buffer.getText();
+  let consumedLength = syncStartText.length;
   try {
     const snapshot = await requestScreenSnapshot(sessionId);
     const screenText = (snapshot.lines || []).join("\n");
     if (!screenText) return;
+    if (buffer.getText() !== syncStartText) return;
     const existing = buffer.getText();
     if (!existing) {
       buffer.append(screenText.endsWith("\n") ? screenText : `${screenText}\n`);
+      consumedLength = buffer.getText().length;
       return;
     }
     const tail = screenText.slice(-8192);
@@ -278,15 +282,17 @@ async function syncOutputBufferFromSnapshot(sessionId) {
     if (tail === existingTail || existing.endsWith(tail)) return;
     if (existingTail && tail.includes(existingTail)) {
       buffer.append(tail.slice(tail.indexOf(existingTail) + existingTail.length));
+      consumedLength = buffer.getText().length;
       return;
     }
     if (!existing.includes(tail.trim())) {
       buffer.append(tail.startsWith("\n") ? tail : `\n${tail}`);
+      consumedLength = buffer.getText().length;
     }
   } catch {
     // Keep startup synchronization best-effort; the current buffer is still baselined below.
   } finally {
-    buffer.markCurrentOutputConsumed({ preserveTailPatterns: shellPromptPatterns() });
+    buffer.markOutputConsumedThrough(consumedLength, { preserveTailPatterns: shellPromptPatterns() });
   }
 }
 

@@ -165,19 +165,25 @@ class SessionOutputBuffer {
   }
 
   markCurrentOutputConsumed(options = {}) {
+    this.markOutputConsumedThrough(this.getText().length, options);
+  }
+
+  markOutputConsumedThrough(length, options = {}) {
     const text = this.getText();
-    this.scanOffset = text.length;
+    const consumedLength = Math.max(0, Math.min(Number(length) || 0, text.length));
+    const consumedText = text.slice(0, consumedLength);
+    this.scanOffset = consumedLength;
     this.preservedTailMatch = null;
 
     const preserveTailPatterns = Array.isArray(options.preserveTailPatterns)
       ? options.preserveTailPatterns
       : [];
-    if (preserveTailPatterns.length === 0 || text.length === 0) return;
+    if (preserveTailPatterns.length === 0 || consumedText.length === 0) return;
 
-    const fresh = findFreshTailMatchAny(text, preserveTailPatterns);
+    const fresh = findFreshTailMatchAny(consumedText, preserveTailPatterns);
     if (fresh === null) return;
     this.preservedTailMatch = {
-      textLength: text.length,
+      textLength: consumedText.length,
       value: fresh.matched.value,
       endOffset: fresh.matched.endOffset,
     };
