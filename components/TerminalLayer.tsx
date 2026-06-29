@@ -81,6 +81,10 @@ import { resolveAiNoteArtifactPanelIntent } from './terminalLayer/aiNoteArtifact
 import {
   canUseDirectSessionWriteFallback,
 } from './terminalLayer/terminalLayerSessionRouting';
+import {
+  DEFAULT_TERMINAL_SIDE_PANEL_AUTO_OPEN_TAB,
+  resolveTerminalSidePanelAutoOpen,
+} from '../domain/terminalSidePanelAutoOpen';
 import { shouldProbeCommandCwd } from './terminalLayer/commandCwdProbe';
 import { resolvePreferredTerminalCwd, scheduleBackendCwdProbeAfterCommand } from './terminal/sftpCwd';
 import { classifyDistroId, shouldProbeSessionCwd } from '../domain/host';
@@ -211,6 +215,8 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   sftpShowHiddenFiles,
   sftpUseCompressedUpload,
   sftpAutoOpenSidebar,
+  terminalSidePanelAutoOpen = false,
+  terminalSidePanelAutoOpenTab = DEFAULT_TERMINAL_SIDE_PANEL_AUTO_OPEN_TAB,
   sftpFollowTerminalCwd,
   setSftpFollowTerminalCwd,
   editorWordWrap,
@@ -391,57 +397,77 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
 
   const sftpAutoOpenSidebarRef = useRef(sftpAutoOpenSidebar);
   sftpAutoOpenSidebarRef.current = sftpAutoOpenSidebar;
+  const terminalSidePanelAutoOpenRef = useRef(terminalSidePanelAutoOpen);
+  terminalSidePanelAutoOpenRef.current = terminalSidePanelAutoOpen;
+  const terminalSidePanelAutoOpenTabRef = useRef(terminalSidePanelAutoOpenTab);
+  terminalSidePanelAutoOpenTabRef.current = terminalSidePanelAutoOpenTab;
   const sftpFollowTerminalCwdRef = useRef(sftpFollowTerminalCwd);
   sftpFollowTerminalCwdRef.current = sftpFollowTerminalCwd;
 
   const handleStatusChange = useCallback((sessionId: string, status: TerminalSession['status']) => {
     onUpdateSessionStatus(sessionId, status);
 
-    // Auto-open SFTP sidebar when a remote host connects (if setting enabled)
-    if (status === 'connected' && sftpAutoOpenSidebarRef.current) {
-      const session = sessionsRef.current.find(s => s.id === sessionId);
-      if (!session) return;
-      // Only auto-open for SSH/Mosh (SFTP requires SSH); skip local/unset protocol
-      const proto = session.protocol;
-      if (proto !== 'ssh' && proto !== 'mosh') return;
+    if (status !== 'connected') return;
 
+    const session = sessionsRef.current.find(s => s.id === sessionId);
+    if (!session) return;
+    const proto = session.protocol;
+    const sftpAvailable = proto === 'ssh' || proto === 'mosh';
+    const tabId = session.workspaceId || sessionId;
+
+    if (sidePanelOpenTabsRef.current.has(tabId)) return;
+
+    const autoOpenTarget = resolveTerminalSidePanelAutoOpen({
+      enabled: terminalSidePanelAutoOpenRef.current,
+      selectedTab: terminalSidePanelAutoOpenTabRef.current,
+      sftpAvailable,
+    });
+    const targetPanel = autoOpenTarget ?? (sftpAutoOpenSidebarRef.current && sftpAvailable ? 'sftp' : null);
+    if (!targetPanel) return;
+
+    lastSidePanelTabRef.current.set(tabId, targetPanel);
+
+    if (targetPanel === 'sftp') {
       const host = hostsRef.current.find(h => h.id === session.hostId);
-
-      // Determine the tab ID (workspace or solo session)
-      const tabId = session.workspaceId || sessionId;
-
-      // Only open if the sidebar is not already open for this tab
-      if (sidePanelOpenTabsRef.current.has(tabId)) return;
-
       const hostWithOverrides: Host = host
         ? {
-            ...host,
-            protocol: session.protocol ?? host.protocol,
-            port: session.port ?? host.port,
-            moshEnabled: session.moshEnabled ?? host.moshEnabled,
-            etEnabled: session.etEnabled ?? host.etEnabled,
-          }
+          ...host,
+          protocol: session.protocol ?? host.protocol,
+          port: session.port ?? host.port,
+          moshEnabled: session.moshEnabled ?? host.moshEnabled,
+          etEnabled: session.etEnabled ?? host.etEnabled,
+        }
         : {
-            // Quick Connect / temporary session — build minimal host from session data
-            id: session.hostId || sessionId,
-            hostname: session.hostname,
-            username: session.username,
-            port: session.port ?? 22,
-            protocol: proto,
-            label: session.label || session.hostname,
-          } as Host;
+          id: session.hostId || sessionId,
+          hostname: session.hostname,
+          username: session.username,
+          port: session.port ?? 22,
+          protocol: proto,
+          label: session.label || session.hostname,
+        } as Host;
 
-      setSidePanelOpenTabs(prev => {
-        const next = new Map(prev);
-        next.set(tabId, 'sftp');
-        return next;
-      });
       setSftpHostForTab(prev => {
         const next = new Map(prev);
         next.set(tabId, hostWithOverrides);
         return next;
       });
+    } else if (targetPanel === 'ai') {
+      setAiMountedTabIds((prev) => addMountedSidePanelTabId(prev, tabId));
+    } else if (targetPanel === 'scripts') {
+      setScriptsMountedTabIds((prev) => addMountedSidePanelTabId(prev, tabId));
+    } else if (targetPanel === 'theme') {
+      setThemeMountedTabIds((prev) => addMountedSidePanelTabId(prev, tabId));
+    } else if (targetPanel === 'system') {
+      setSystemMountedTabIds((prev) => addMountedSidePanelTabId(prev, tabId));
+    } else if (targetPanel === 'notes') {
+      setNotesMountedTabIds((prev) => addMountedSidePanelTabId(prev, tabId));
     }
+
+    setSidePanelOpenTabs(prev => {
+      const next = new Map(prev);
+      next.set(tabId, targetPanel);
+      return next;
+    });
   }, [onUpdateSessionStatus]);
 
   const handleSessionExit = useCallback((sessionId: string, evt: TerminalSessionExitEvent) => {
