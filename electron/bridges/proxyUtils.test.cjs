@@ -71,7 +71,9 @@ test("createProxySocket exposes ProxyCommand stdout as socket data", async () =>
 test("createProxySocket times out stalled HTTP proxy handshakes", async (t) => {
   const originalConnect = net.connect;
   let socketDestroyed = false;
+  const keepAlive = setTimeout(() => {}, 100);
   t.after(() => {
+    clearTimeout(keepAlive);
     net.connect = originalConnect;
   });
   net.connect = () => {
