@@ -39,6 +39,8 @@ export const terminalLayerAreEqual = (
   prev.sftpShowHiddenFiles === next.sftpShowHiddenFiles &&
   prev.sftpUseCompressedUpload === next.sftpUseCompressedUpload &&
   prev.sftpAutoOpenSidebar === next.sftpAutoOpenSidebar &&
+  prev.terminalSidePanelAutoOpen === next.terminalSidePanelAutoOpen &&
+  prev.terminalSidePanelAutoOpenTab === next.terminalSidePanelAutoOpenTab &&
   prev.sftpFollowTerminalCwd === next.sftpFollowTerminalCwd &&
   prev.setSftpFollowTerminalCwd === next.setSftpFollowTerminalCwd &&
   prev.editorWordWrap === next.editorWordWrap &&

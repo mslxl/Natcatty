@@ -69,6 +69,18 @@ export const zhCNCoreMessages: Messages = {
   'settings.tab.system': '系统',
   'settings.terminal.connection.verifyHostKeys': '校验 SSH 主机密钥',
   'settings.terminal.connection.verifyHostKeys.desc': '连接到新的或已变化的 SSH 主机密钥前先询问。只建议在可信内网中关闭。',
+  'settings.terminal.section.sidePanel': '侧边栏',
+  'settings.terminal.sidePanel.autoOpen': '打开终端时展开侧边栏',
+  'settings.terminal.sidePanel.autoOpen.desc': '终端连接成功后自动打开一个侧边栏。',
+  'settings.terminal.sidePanel.autoOpenPane': '默认侧边栏',
+  'settings.terminal.sidePanel.autoOpenPane.desc': '选择优先打开哪个面板。',
+  'settings.terminal.sidePanel.pane.sftp': 'SFTP',
+  'settings.terminal.sidePanel.pane.scripts': '脚本',
+  'settings.terminal.sidePanel.pane.history': '历史',
+  'settings.terminal.sidePanel.pane.theme': '主题',
+  'settings.terminal.sidePanel.pane.system': '系统',
+  'settings.terminal.sidePanel.pane.notes': '笔记',
+  'settings.terminal.sidePanel.pane.ai': 'AI',
 
   // Settings > System
   'settings.system.title': '系统',

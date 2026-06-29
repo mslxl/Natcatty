@@ -401,6 +401,8 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
           sftpShowHiddenFiles={sftpShowHiddenFiles}
           sftpUseCompressedUpload={sftpUseCompressedUpload}
           sftpAutoOpenSidebar={sftpAutoOpenSidebar}
+          terminalSidePanelAutoOpen={settings.terminalSidePanelAutoOpen}
+          terminalSidePanelAutoOpenTab={settings.terminalSidePanelAutoOpenTab}
           sftpFollowTerminalCwd={sftpFollowTerminalCwd}
           setSftpFollowTerminalCwd={setSftpFollowTerminalCwd}
           editorWordWrap={editorWordWrap}

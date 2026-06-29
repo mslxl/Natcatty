@@ -25,6 +25,7 @@ import {
   parseTerminalPaneRenderSnapshot,
 } from '../terminalPaneVisibility';
 import type { ResolvedAppearance, TerminalAppearanceHostScope } from '../../domain/terminalAppearanceRuntime';
+import type { TerminalSidePanelAutoOpenTab } from '../../domain/terminalSidePanelAutoOpen';
 
 export type SidePanelTab = 'sftp' | 'scripts' | 'history' | 'theme' | 'ai' | 'system' | 'notes';
 
@@ -698,6 +699,8 @@ export interface TerminalLayerProps {
   sftpShowHiddenFiles: boolean;
   sftpUseCompressedUpload: boolean;
   sftpAutoOpenSidebar: boolean;
+  terminalSidePanelAutoOpen?: boolean;
+  terminalSidePanelAutoOpenTab?: TerminalSidePanelAutoOpenTab;
   sftpFollowTerminalCwd: boolean;
   setSftpFollowTerminalCwd: (enabled: boolean) => void;
   editorWordWrap: boolean;

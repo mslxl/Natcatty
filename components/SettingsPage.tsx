@@ -120,6 +120,10 @@ type TerminalTabSettingsProps = Pick<
     | 'setTerminalFontSize'
     | 'terminalSettings'
     | 'updateTerminalSetting'
+    | 'terminalSidePanelAutoOpen'
+    | 'setTerminalSidePanelAutoOpen'
+    | 'terminalSidePanelAutoOpenTab'
+    | 'setTerminalSidePanelAutoOpenTab'
     | 'workspaceFocusStyle'
     | 'setWorkspaceFocusStyle'
 >;
@@ -142,6 +146,10 @@ const SettingsTerminalTabContainer = React.memo<TerminalTabSettingsProps>(functi
     setTerminalFontSize,
     terminalSettings,
     updateTerminalSetting,
+    terminalSidePanelAutoOpen,
+    setTerminalSidePanelAutoOpen,
+    terminalSidePanelAutoOpenTab,
+    setTerminalSidePanelAutoOpenTab,
     workspaceFocusStyle,
     setWorkspaceFocusStyle,
 }) {
@@ -166,6 +174,10 @@ const SettingsTerminalTabContainer = React.memo<TerminalTabSettingsProps>(functi
             setTerminalFontSize={setTerminalFontSize}
             terminalSettings={terminalSettings}
             updateTerminalSetting={updateTerminalSetting}
+            terminalSidePanelAutoOpen={terminalSidePanelAutoOpen}
+            setTerminalSidePanelAutoOpen={setTerminalSidePanelAutoOpen}
+            terminalSidePanelAutoOpenTab={terminalSidePanelAutoOpenTab}
+            setTerminalSidePanelAutoOpenTab={setTerminalSidePanelAutoOpenTab}
             availableFonts={availableFonts}
             workspaceFocusStyle={workspaceFocusStyle}
             setWorkspaceFocusStyle={setWorkspaceFocusStyle}
@@ -475,6 +487,10 @@ const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }
                                 setTerminalFontSize={settings.setTerminalFontSize}
                                 terminalSettings={settings.terminalSettings}
                                 updateTerminalSetting={settings.updateTerminalSetting}
+                                terminalSidePanelAutoOpen={settings.terminalSidePanelAutoOpen}
+                                setTerminalSidePanelAutoOpen={settings.setTerminalSidePanelAutoOpen}
+                                terminalSidePanelAutoOpenTab={settings.terminalSidePanelAutoOpenTab}
+                                setTerminalSidePanelAutoOpenTab={settings.setTerminalSidePanelAutoOpenTab}
                                 workspaceFocusStyle={settings.workspaceFocusStyle}
                                 setWorkspaceFocusStyle={settings.setWorkspaceFocusStyle}
                             />

@@ -181,12 +181,29 @@ test("terminal selection AI preference is syncable for auto-sync detection", () 
   );
 });
 
+test("terminal side panel auto-open settings are syncable for auto-sync detection", () => {
+  assert.ok(
+    (SYNCABLE_SETTING_STORAGE_KEYS as readonly string[]).includes(
+      storageKeys.STORAGE_KEY_TERMINAL_SIDE_PANEL_AUTO_OPEN,
+    ),
+  );
+  assert.ok(
+    (SYNCABLE_SETTING_STORAGE_KEYS as readonly string[]).includes(
+      storageKeys.STORAGE_KEY_TERMINAL_SIDE_PANEL_AUTO_OPEN_TAB,
+    ),
+  );
+});
+
 test("buildSyncPayload includes host tree sidebar visibility setting", () => {
   localStorage.setItem(storageKeys.STORAGE_KEY_SHOW_HOST_TREE_SIDEBAR, "false");
+  localStorage.setItem(storageKeys.STORAGE_KEY_TERMINAL_SIDE_PANEL_AUTO_OPEN, "true");
+  localStorage.setItem(storageKeys.STORAGE_KEY_TERMINAL_SIDE_PANEL_AUTO_OPEN_TAB, "scripts");
 
   const payload = buildSyncPayload(vault([]));
 
   assert.equal(payload.settings?.showHostTreeSidebar, false);
+  assert.equal(payload.settings?.terminalSidePanelAutoOpen, true);
+  assert.equal(payload.settings?.terminalSidePanelAutoOpenTab, "scripts");
 });
 
 test("buildSyncPayload excludes externalAgents (device-local OS-bound config)", () => {
@@ -378,6 +395,8 @@ test("applySyncPayload restores host tree sidebar visibility setting", async () 
     customGroups: [],
     settings: {
       showHostTreeSidebar: false,
+      terminalSidePanelAutoOpen: true,
+      terminalSidePanelAutoOpenTab: "scripts",
     },
     syncedAt: 1,
   } as SyncPayload;
@@ -385,6 +404,8 @@ test("applySyncPayload restores host tree sidebar visibility setting", async () 
   await applySyncPayload(payload, { importVaultData: () => {} });
 
   assert.equal(localStorage.getItem(storageKeys.STORAGE_KEY_SHOW_HOST_TREE_SIDEBAR), "false");
+  assert.equal(localStorage.getItem(storageKeys.STORAGE_KEY_TERMINAL_SIDE_PANEL_AUTO_OPEN), "true");
+  assert.equal(localStorage.getItem(storageKeys.STORAGE_KEY_TERMINAL_SIDE_PANEL_AUTO_OPEN_TAB), "scripts");
 });
 
 test("applySyncPayload dispatches a same-window AI-state-changed event so the open chat panel rehydrates", async () => {

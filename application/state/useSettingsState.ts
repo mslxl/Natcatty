@@ -50,6 +50,8 @@ import {
   STORAGE_KEY_SHOW_ONLY_UNGROUPED_HOSTS_IN_ROOT,
   STORAGE_KEY_SHOW_SFTP_TAB,
   STORAGE_KEY_SHOW_HOST_TREE_SIDEBAR,
+  STORAGE_KEY_TERMINAL_SIDE_PANEL_AUTO_OPEN,
+  STORAGE_KEY_TERMINAL_SIDE_PANEL_AUTO_OPEN_TAB,
   STORAGE_KEY_SHELL_ONLY_TAB_NUMBER_SHORTCUTS,
   STORAGE_KEY_DISABLE_TERMINAL_FONT_ZOOM,
 } from '../../infrastructure/config/storageKeys';
@@ -122,6 +124,12 @@ import { useSystemSettingsEffects } from './systemSettingsEffects';
 import { resolveAppIconVariant, type AppIconVariant } from '../../domain/appIconVariant';
 import { DEFAULT_APP_ICON_VARIANT } from '../../infrastructure/config/appIconVariants';
 import { applyCustomCssToDocument } from '../../lib/customCss';
+import {
+  DEFAULT_TERMINAL_SIDE_PANEL_AUTO_OPEN_ENABLED,
+  DEFAULT_TERMINAL_SIDE_PANEL_AUTO_OPEN_TAB,
+  isTerminalSidePanelAutoOpenTab,
+  type TerminalSidePanelAutoOpenTab,
+} from '../../domain/terminalSidePanelAutoOpen';
 
 export const useSettingsState = (options: { enableSettingsSync?: boolean; enableSystemEffects?: boolean } = {}) => {
   const enableSettingsSync = options.enableSettingsSync !== false;
@@ -252,6 +260,14 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
   const [showHostTreeSidebar, setShowHostTreeSidebarState] = useState<boolean>(() => {
     const stored = localStorageAdapter.readBoolean(STORAGE_KEY_SHOW_HOST_TREE_SIDEBAR);
     return stored ?? DEFAULT_SHOW_HOST_TREE_SIDEBAR;
+  });
+  const [terminalSidePanelAutoOpen, setTerminalSidePanelAutoOpenState] = useState<boolean>(() => {
+    const stored = localStorageAdapter.readBoolean(STORAGE_KEY_TERMINAL_SIDE_PANEL_AUTO_OPEN);
+    return stored ?? DEFAULT_TERMINAL_SIDE_PANEL_AUTO_OPEN_ENABLED;
+  });
+  const [terminalSidePanelAutoOpenTab, setTerminalSidePanelAutoOpenTabState] = useState<TerminalSidePanelAutoOpenTab>(() => {
+    const stored = readStoredString(STORAGE_KEY_TERMINAL_SIDE_PANEL_AUTO_OPEN_TAB);
+    return isTerminalSidePanelAutoOpenTab(stored) ? stored : DEFAULT_TERMINAL_SIDE_PANEL_AUTO_OPEN_TAB;
   });
   const [shellOnlyTabNumberShortcuts, setShellOnlyTabNumberShortcutsState] = useState<boolean>(() => {
     const stored = localStorageAdapter.readBoolean(STORAGE_KEY_SHELL_ONLY_TAB_NUMBER_SHORTCUTS);
@@ -608,6 +624,14 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     setShowSftpTabState(storedShowSftpTab ?? DEFAULT_SHOW_SFTP_TAB);
     const storedShowHostTreeSidebar = localStorageAdapter.readBoolean(STORAGE_KEY_SHOW_HOST_TREE_SIDEBAR);
     setShowHostTreeSidebarState(storedShowHostTreeSidebar ?? DEFAULT_SHOW_HOST_TREE_SIDEBAR);
+    const storedTerminalSidePanelAutoOpen = localStorageAdapter.readBoolean(STORAGE_KEY_TERMINAL_SIDE_PANEL_AUTO_OPEN);
+    setTerminalSidePanelAutoOpenState(storedTerminalSidePanelAutoOpen ?? DEFAULT_TERMINAL_SIDE_PANEL_AUTO_OPEN_ENABLED);
+    const storedTerminalSidePanelAutoOpenTab = readStoredString(STORAGE_KEY_TERMINAL_SIDE_PANEL_AUTO_OPEN_TAB);
+    setTerminalSidePanelAutoOpenTabState(
+      isTerminalSidePanelAutoOpenTab(storedTerminalSidePanelAutoOpenTab)
+        ? storedTerminalSidePanelAutoOpenTab
+        : DEFAULT_TERMINAL_SIDE_PANEL_AUTO_OPEN_TAB,
+    );
     const storedShellOnlyTabNumberShortcuts = localStorageAdapter.readBoolean(STORAGE_KEY_SHELL_ONLY_TAB_NUMBER_SHORTCUTS);
     setShellOnlyTabNumberShortcutsState(storedShellOnlyTabNumberShortcuts ?? DEFAULT_SHELL_ONLY_TAB_NUMBER_SHORTCUTS);
     const storedDisableTerminalFontZoom = localStorageAdapter.readBoolean(STORAGE_KEY_DISABLE_TERMINAL_FONT_ZOOM);
@@ -712,6 +736,8 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     setSftpDefaultViewMode,
     setWorkspaceFocusStyleState,
     setShowHostTreeSidebarState,
+    setTerminalSidePanelAutoOpenState,
+    setTerminalSidePanelAutoOpenTabState,
     setDisableTerminalFontZoomState,
     setRestorePreviousSessionState,
     setRestoreTerminalCwdState,
@@ -743,7 +769,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     terminalThemeId, followAppTerminalTheme, terminalFontFamilyId, terminalFontSize,
     sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles,
     sftpUseCompressedUpload, sftpAutoOpenSidebar, sftpFollowTerminalCwd, sftpDefaultViewMode,
-    showRecentHosts, showOnlyUngroupedHostsInRoot, showSftpTab, showHostTreeSidebar, shellOnlyTabNumberShortcuts, disableTerminalFontZoom, restorePreviousSession, restoreTerminalCwd,
+    showRecentHosts, showOnlyUngroupedHostsInRoot, showSftpTab, showHostTreeSidebar, terminalSidePanelAutoOpen, terminalSidePanelAutoOpenTab, shellOnlyTabNumberShortcuts, disableTerminalFontZoom, restorePreviousSession, restoreTerminalCwd,
     editorWordWrap, sessionLogsEnabled, sessionLogsDir, sessionLogsFormat, sessionLogsTimestampsEnabled, sshDebugLogsEnabled, sshDeepLinkEnabled,
     globalHotkeyEnabled, autoUpdateEnabled, windowOpacity, appIconVariant,
     setTheme, setLightUiThemeId, setDarkUiThemeId, setAccentMode, setCustomAccent,
@@ -752,7 +778,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     setFollowAppTerminalThemeState, setTerminalFontFamilyId, setTerminalFontSize,
     setSftpDoubleClickBehavior, setSftpAutoSync, setSftpShowHiddenFiles,
     setSftpUseCompressedUpload, setSftpAutoOpenSidebar, setSftpFollowTerminalCwd, setSftpDefaultViewMode,
-    setShowRecentHostsState, setShowOnlyUngroupedHostsInRootState, setShowSftpTabState, setShowHostTreeSidebarState, setShellOnlyTabNumberShortcutsState, setDisableTerminalFontZoomState, setRestorePreviousSessionState, setRestoreTerminalCwdState,
+    setShowRecentHostsState, setShowOnlyUngroupedHostsInRootState, setShowSftpTabState, setShowHostTreeSidebarState, setTerminalSidePanelAutoOpenState, setTerminalSidePanelAutoOpenTabState, setShellOnlyTabNumberShortcutsState, setDisableTerminalFontZoomState, setRestorePreviousSessionState, setRestoreTerminalCwdState,
     setEditorWordWrapState, setSessionLogsEnabled, setSessionLogsDir, setSessionLogsFormat, setSessionLogsTimestampsEnabled, setSshDebugLogsEnabled, setSshDeepLinkEnabledState: applyIncomingSshDeepLinkEnabled,
     setGlobalHotkeyEnabled, setWindowOpacity, setAppIconVariant, setAutoUpdateEnabled, setWorkspaceFocusStyleState,
     setSftpTransferConcurrencyState, applyIncomingCustomKeyBindings, mergeIncomingTerminalSettings,
@@ -864,6 +890,21 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     localStorageAdapter.writeBoolean(STORAGE_KEY_SHOW_HOST_TREE_SIDEBAR, enabled);
     if (!persistMountedRef.current) return;
     notifySettingsChanged(STORAGE_KEY_SHOW_HOST_TREE_SIDEBAR, enabled);
+  }, [notifySettingsChanged]);
+
+  const setTerminalSidePanelAutoOpen = useCallback((enabled: boolean) => {
+    setTerminalSidePanelAutoOpenState(enabled);
+    localStorageAdapter.writeBoolean(STORAGE_KEY_TERMINAL_SIDE_PANEL_AUTO_OPEN, enabled);
+    if (!persistMountedRef.current) return;
+    notifySettingsChanged(STORAGE_KEY_TERMINAL_SIDE_PANEL_AUTO_OPEN, enabled);
+  }, [notifySettingsChanged]);
+
+  const setTerminalSidePanelAutoOpenTab = useCallback((tab: TerminalSidePanelAutoOpenTab) => {
+    const next = isTerminalSidePanelAutoOpenTab(tab) ? tab : DEFAULT_TERMINAL_SIDE_PANEL_AUTO_OPEN_TAB;
+    setTerminalSidePanelAutoOpenTabState(next);
+    localStorageAdapter.writeString(STORAGE_KEY_TERMINAL_SIDE_PANEL_AUTO_OPEN_TAB, next);
+    if (!persistMountedRef.current) return;
+    notifySettingsChanged(STORAGE_KEY_TERMINAL_SIDE_PANEL_AUTO_OPEN_TAB, next);
   }, [notifySettingsChanged]);
 
   const setShellOnlyTabNumberShortcuts = useCallback((enabled: boolean) => {
@@ -1203,6 +1244,10 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     setShowSftpTab,
     showHostTreeSidebar,
     setShowHostTreeSidebar,
+    terminalSidePanelAutoOpen,
+    setTerminalSidePanelAutoOpen,
+    terminalSidePanelAutoOpenTab,
+    setTerminalSidePanelAutoOpenTab,
     shellOnlyTabNumberShortcuts,
     setShellOnlyTabNumberShortcuts,
     disableTerminalFontZoom,
@@ -1259,7 +1304,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
       terminalThemeId, terminalFontFamilyId, terminalFontSize, terminalSettings,
       customKeyBindings, editorWordWrap,
       sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles, sftpUseCompressedUpload, sftpAutoOpenSidebar, sftpFollowTerminalCwd, sftpDefaultViewMode,
-      showRecentHosts, showOnlyUngroupedHostsInRoot, showSftpTab, showHostTreeSidebar, shellOnlyTabNumberShortcuts, disableTerminalFontZoom,
+      showRecentHosts, showOnlyUngroupedHostsInRoot, showSftpTab, showHostTreeSidebar, terminalSidePanelAutoOpen, terminalSidePanelAutoOpenTab, shellOnlyTabNumberShortcuts, disableTerminalFontZoom,
       customThemes, workspaceFocusStyle, sessionLogsTimestampsEnabled, sshDebugLogsEnabled, sshDeepLinkEnabled,
     ]),
   };

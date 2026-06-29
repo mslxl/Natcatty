@@ -69,6 +69,18 @@ export const zhTWCoreMessages: Messages = {
   'settings.tab.system': '系統',
   'settings.terminal.connection.verifyHostKeys': '驗證 SSH 主機金鑰',
   'settings.terminal.connection.verifyHostKeys.desc': '連線到新的或已變化的 SSH 主機金鑰前先詢問。只建議在可信內網中關閉。',
+  'settings.terminal.section.sidePanel': '側邊欄',
+  'settings.terminal.sidePanel.autoOpen': '開啟終端時展開側邊欄',
+  'settings.terminal.sidePanel.autoOpen.desc': '終端連線成功後自動開啟一個側邊欄。',
+  'settings.terminal.sidePanel.autoOpenPane': '預設側邊欄',
+  'settings.terminal.sidePanel.autoOpenPane.desc': '選擇優先開啟哪個面板。',
+  'settings.terminal.sidePanel.pane.sftp': 'SFTP',
+  'settings.terminal.sidePanel.pane.scripts': '指令碼',
+  'settings.terminal.sidePanel.pane.history': '歷史',
+  'settings.terminal.sidePanel.pane.theme': '主題',
+  'settings.terminal.sidePanel.pane.system': '系統',
+  'settings.terminal.sidePanel.pane.notes': '筆記',
+  'settings.terminal.sidePanel.pane.ai': 'AI',
 
   // Settings > System
   'settings.system.title': '系統',

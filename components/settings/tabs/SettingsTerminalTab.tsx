@@ -27,6 +27,10 @@ import { resolveFollowedTerminalThemeId, resolveManualTerminalThemeId } from "..
 
 import { KeywordHighlightRulesEditor, ThemePreviewButton } from "./SettingsTerminalTabControls";
 import { TerminalBehaviorSettings } from "./TerminalBehaviorSettings";
+import {
+  TERMINAL_SIDE_PANEL_AUTO_OPEN_TABS,
+  type TerminalSidePanelAutoOpenTab,
+} from "../../../domain/terminalSidePanelAutoOpen";
 
 const FONT_WEIGHT_OPTIONS = [
   { value: "100", labelKey: "settings.terminal.font.weight.thin" },
@@ -61,6 +65,10 @@ function SettingsTerminalTab(props: {
     key: K,
     value: TerminalSettings[K],
   ) => void;
+  terminalSidePanelAutoOpen: boolean;
+  setTerminalSidePanelAutoOpen: (enabled: boolean) => void;
+  terminalSidePanelAutoOpenTab: TerminalSidePanelAutoOpenTab;
+  setTerminalSidePanelAutoOpenTab: (tab: TerminalSidePanelAutoOpenTab) => void;
   availableFonts: TerminalFont[];
   workspaceFocusStyle: 'dim' | 'border';
   setWorkspaceFocusStyle: (style: 'dim' | 'border') => void;
@@ -83,6 +91,10 @@ function SettingsTerminalTab(props: {
     setTerminalFontSize,
     terminalSettings,
     updateTerminalSetting,
+    terminalSidePanelAutoOpen,
+    setTerminalSidePanelAutoOpen,
+    terminalSidePanelAutoOpenTab,
+    setTerminalSidePanelAutoOpenTab,
     availableFonts,
     workspaceFocusStyle,
     setWorkspaceFocusStyle,
@@ -669,6 +681,32 @@ function SettingsTerminalTab(props: {
         terminalSettings={terminalSettings}
         updateTerminalSetting={updateTerminalSetting}
       />
+
+      <SectionHeader title={t("settings.terminal.section.sidePanel")} />
+      <div className="space-y-0 divide-y divide-border rounded-lg border bg-card px-4">
+        <SettingRow
+          label={t("settings.terminal.sidePanel.autoOpen")}
+          description={t("settings.terminal.sidePanel.autoOpen.desc")}
+        >
+          <Toggle checked={terminalSidePanelAutoOpen} onChange={setTerminalSidePanelAutoOpen} />
+        </SettingRow>
+
+        <SettingRow
+          label={t("settings.terminal.sidePanel.autoOpenPane")}
+          description={t("settings.terminal.sidePanel.autoOpenPane.desc")}
+        >
+          <Select
+            value={terminalSidePanelAutoOpenTab}
+            options={TERMINAL_SIDE_PANEL_AUTO_OPEN_TABS.map((tab) => ({
+              value: tab,
+              label: t(`settings.terminal.sidePanel.pane.${tab}`),
+            }))}
+            onChange={(value) => setTerminalSidePanelAutoOpenTab(value as TerminalSidePanelAutoOpenTab)}
+            disabled={!terminalSidePanelAutoOpen}
+            className="w-36"
+          />
+        </SettingRow>
+      </div>
 
       <SectionHeader title={t("settings.terminal.section.keywordHighlight")} />
       <div className="rounded-lg border bg-card p-4">
