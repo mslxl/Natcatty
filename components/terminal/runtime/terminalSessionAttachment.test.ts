@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import type { Terminal as XTerm } from "@xterm/xterm";
 
 import {
+  FLOW_HIGH_WATER_MARK,
   FLOW_CHAR_COUNT_ACK_SIZE,
   FLOW_LOW_WATER_MARK,
   XTERM_WRITE_CALLBACK_BATCH_BYTES,
@@ -100,6 +101,53 @@ test("writeSessionData clears renderer backlog while deferring IPC ack", () => {
   const flow = getFlowController(ctx as never, term);
   assert.equal(flow.pendingBytes(), 0);
   assert.ok(getDeferredTerminalWriteAckBytes(term) > 0);
+  clearDeferredTerminalWriteAck(term);
+});
+
+test("writeSessionData flushes deferred IPC acks before small output can leave the source paused", async () => {
+  clearTerminalSessionFlowAck("session-1");
+  const term = {
+    buffer: { active: { type: "normal" } },
+    write(_data: string, callback?: () => void) {
+      callback?.();
+    },
+    scrollToBottom() {},
+  } as unknown as XTerm;
+  let mainUnackedBytes = 0;
+  let mainPaused = false;
+  const ctx = {
+    ...createContext(false),
+    sessionRef: { current: "session-1" },
+    terminalBackend: {
+      ackSessionFlow: (_sessionId: string, bytes: number) => {
+        mainUnackedBytes = Math.max(0, mainUnackedBytes - bytes);
+        if (mainPaused && mainUnackedBytes <= FLOW_LOW_WATER_MARK) {
+          mainPaused = false;
+        }
+      },
+    },
+  };
+  const chunk = "x".repeat(512);
+
+  for (let index = 0; index < 120; index += 1) {
+    mainUnackedBytes += chunk.length;
+    if (mainUnackedBytes >= FLOW_HIGH_WATER_MARK) {
+      mainPaused = true;
+    }
+    writeSessionData(ctx as never, term, chunk);
+  }
+  flushTerminalWriteCoalescer(term);
+
+  assert.equal(mainPaused, false);
+  assert.equal(mainUnackedBytes, 28672);
+  assert.equal(getDeferredTerminalWriteAckBytes(term), 28672);
+
+  await new Promise((resolve) => { setTimeout(resolve, 25); });
+
+  assert.equal(mainPaused, false);
+  assert.equal(mainUnackedBytes, 0);
+  assert.equal(getDeferredTerminalWriteAckBytes(term), 0);
+  clearTerminalSessionFlowAck("session-1");
 });
 
 test("writeSessionData acks ingress bytes to match main-process trackEmitted", () => {
@@ -352,7 +400,7 @@ test("attachSessionToTerminal keeps interrupt-time output visible", () => {
 
   attachSessionToTerminal(ctx as never, term, "session-1");
   const flow = getFlowController(ctx as never, term);
-  flow.received(FLOW_LOW_WATER_MARK + 1);
+  flow.received(FLOW_LOW_WATER_MARK);
   prioritizeTerminalInput(
     term,
     "session-1",
