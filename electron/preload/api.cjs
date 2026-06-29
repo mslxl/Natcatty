@@ -313,7 +313,11 @@ function createPreloadApi(ctx) {
   onSessionExit: (sessionId, cb) => {
     if (!exitListeners.has(sessionId)) exitListeners.set(sessionId, new Set());
     exitListeners.get(sessionId).add(cb);
-    return () => exitListeners.get(sessionId)?.delete(cb);
+    return () => {
+      const set = exitListeners.get(sessionId);
+      set?.delete(cb);
+      if (set?.size === 0) exitListeners.delete(sessionId);
+    };
   },
   onTelnetAutoLoginComplete: (sessionId, cb) => {
     if (!telnetAutoLoginCompleteListeners.has(sessionId)) {

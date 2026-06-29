@@ -3,10 +3,77 @@ const test = require("node:test");
 
 const { createPreloadApi } = require("./preload/api.cjs");
 const {
+  clearTerminalDataBacklog,
   clearTerminalDataSession,
   createTerminalDataBacklog,
   createTerminalDataDispatcher,
 } = require("./preload/terminalDataBacklog.cjs");
+
+function loadPreloadWithFakeElectron() {
+  const handlers = new Map();
+  let exposedApi = null;
+  const fakeElectron = {
+    ipcRenderer: {
+      on(channel, handler) {
+        handlers.set(channel, handler);
+      },
+      send() {},
+      async invoke(channel, payload) {
+        if (channel === "netcatty:local:start") {
+          return { sessionId: payload?.sessionId };
+        }
+        return null;
+      },
+    },
+    contextBridge: {
+      exposeInMainWorld(_name, value) {
+        exposedApi = value;
+      },
+    },
+    webUtils: {
+      getPathForFile(file) {
+        return file?.path ?? "";
+      },
+    },
+  };
+
+  const electronPath = require.resolve("electron");
+  const preloadPath = require.resolve("./preload.cjs");
+  const previousElectron = require.cache[electronPath];
+  const previousWindow = global.window;
+
+  require.cache[electronPath] = {
+    id: electronPath,
+    filename: electronPath,
+    loaded: true,
+    exports: fakeElectron,
+  };
+  delete require.cache[preloadPath];
+  global.window = {
+    location: { origin: "app://netcatty" },
+    netcatty: undefined,
+  };
+
+  require(preloadPath);
+
+  return {
+    api: exposedApi,
+    handlers,
+    cleanup() {
+      delete require.cache[preloadPath];
+      if (previousElectron) {
+        require.cache[electronPath] = previousElectron;
+      } else {
+        delete require.cache[electronPath];
+      }
+      if (previousWindow === undefined) {
+        delete global.window;
+      } else {
+        global.window = previousWindow;
+      }
+    },
+  };
+}
 
 test("stores early terminal data until the listener is registered", () => {
   const backlog = createTerminalDataBacklog();
@@ -205,6 +272,126 @@ test("clearTerminalDataSession drops listener and backlog state together", () =>
   assert.equal(dataListeners.has("session-1"), false);
   assert.equal(displayDataListeners.has("session-1"), false);
   assert.equal(terminalDataBacklog.take("session-1"), "");
+});
+
+test("clearTerminalDataBacklog preserves live display listeners for reconnect", () => {
+  const listener = () => {};
+  const dataListeners = new Map([
+    ["session-1", new Set([listener])],
+  ]);
+  const displayDataListeners = new Map([
+    ["session-1", new Set([listener])],
+  ]);
+  const terminalDataBacklog = createTerminalDataBacklog();
+  terminalDataBacklog.append("session-1", "pending");
+
+  clearTerminalDataBacklog({ terminalDataBacklog }, "session-1");
+
+  assert.equal(dataListeners.get("session-1")?.has(listener), true);
+  assert.equal(displayDataListeners.get("session-1")?.has(listener), true);
+  assert.equal(terminalDataBacklog.take("session-1"), "");
+});
+
+test("backend exit preserves live listeners for same-id reconnect", async () => {
+  const preload = loadPreloadWithFakeElectron();
+  try {
+    const received = [];
+    const exits = [];
+    preload.api.onSessionData("session-1", (chunk) => {
+      received.push(chunk);
+    }, { replayBacklog: true });
+    preload.api.onSessionExit("session-1", (evt) => {
+      exits.push(evt.reason);
+    });
+
+    preload.handlers.get("netcatty:data")?.({}, {
+      sessionId: "session-1",
+      data: "before exit",
+    });
+    preload.handlers.get("netcatty:exit")?.({}, {
+      sessionId: "session-1",
+      reason: "closed",
+    });
+    preload.handlers.get("netcatty:exit")?.({}, {
+      sessionId: "session-1",
+      reason: "duplicate-closed",
+    });
+    preload.handlers.get("netcatty:data")?.({}, {
+      sessionId: "session-1",
+      data: "dropped while closed",
+    });
+    await preload.api.startLocalSession({ sessionId: "session-1" });
+    preload.handlers.get("netcatty:data")?.({}, {
+      sessionId: "session-1",
+      data: "after reconnect",
+    });
+    preload.handlers.get("netcatty:exit")?.({}, {
+      sessionId: "session-1",
+      reason: "closed-again",
+    });
+
+    assert.deepEqual(received, ["before exit", "after reconnect"]);
+    assert.deepEqual(exits, ["closed", "closed-again"]);
+  } finally {
+    preload.cleanup();
+  }
+});
+
+test("backend exit after explicit close still cleans per-session listeners", () => {
+  const preload = loadPreloadWithFakeElectron();
+  try {
+    const zmodemEvents = [];
+    const overwriteRequests = [];
+    preload.api.onZmodemEvent("session-1", (evt) => {
+      zmodemEvents.push(evt.type);
+    });
+    preload.api.onZmodemOverwriteRequest("session-1", (payload) => {
+      overwriteRequests.push(payload.sessionId);
+    });
+
+    preload.api.closeSession("session-1");
+    preload.handlers.get("netcatty:exit")?.({}, {
+      sessionId: "session-1",
+      reason: "closed",
+    });
+    preload.handlers.get("netcatty:zmodem:detect")?.({}, {
+      sessionId: "session-1",
+    });
+    preload.handlers.get("netcatty:zmodem:overwrite-request")?.({}, {
+      sessionId: "session-1",
+    });
+
+    assert.deepEqual(zmodemEvents, []);
+    assert.deepEqual(overwriteRequests, []);
+  } finally {
+    preload.cleanup();
+  }
+});
+
+test("onSessionExit unsubscribe removes empty listener set", () => {
+  const exitListeners = new Map();
+  const api = createPreloadApi({
+    ipcRenderer: {
+      invoke() {},
+      send() {},
+      on() {},
+      removeListener() {},
+    },
+    os: {
+      release: () => "10.0.19045",
+    },
+    dataListeners: new Map(),
+    displayDataListeners: new Map(),
+    terminalDataBacklog: createTerminalDataBacklog(),
+    exitListeners,
+  });
+
+  const off = api.onSessionExit("session-1", () => {});
+  assert.equal(exitListeners.has("session-1"), true);
+
+  off();
+
+  assert.equal(exitListeners.has("session-1"), false);
 });
 
 test("closeSession clears terminal data state and marks the session closed", () => {

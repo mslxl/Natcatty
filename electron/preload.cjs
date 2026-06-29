@@ -3,6 +3,7 @@ const os = require("node:os");
 const { randomUUID } = require("node:crypto");
 const { createPreloadApi } = require("./preload/api.cjs");
 const {
+  clearTerminalDataBacklog,
   clearTerminalDataSession,
   createTerminalDataBacklog,
   createTerminalDataDispatcher,
@@ -239,8 +240,11 @@ ipcRenderer.on("netcatty:data", (_event, payload) => {
 });
 
 ipcRenderer.on("netcatty:exit", (_event, payload) => {
-  closedTerminalDataSessions.add(payload.sessionId);
-  const set = exitListeners.get(payload.sessionId);
+  const sessionId = payload?.sessionId;
+  if (!sessionId) return;
+  const wasClosed = closedTerminalDataSessions.has(sessionId);
+  closedTerminalDataSessions.add(sessionId);
+  const set = wasClosed ? null : exitListeners.get(sessionId);
   if (set) {
     set.forEach((cb) => {
       try {
@@ -250,25 +254,20 @@ ipcRenderer.on("netcatty:exit", (_event, payload) => {
       }
     });
   }
-  clearTerminalDataSession({
-    dataListeners,
-    displayDataListeners,
-    terminalDataBacklog,
-  }, payload.sessionId);
-  terminalOutputPorts.closeSession(payload.sessionId);
-  exitListeners.delete(payload.sessionId);
-  telnetAutoLoginCompleteListeners.delete(payload.sessionId);
-  telnetAutoLoginCancelledListeners.delete(payload.sessionId);
-  telnetEchoModeListeners.delete(payload.sessionId);
-  zmodemListeners.delete(payload.sessionId);
-  zmodemOverwriteListeners.delete(payload.sessionId);
-  const pendingTimer = _mcpFlushTimers.get(payload.sessionId);
+  clearTerminalDataBacklog({ terminalDataBacklog }, sessionId);
+  terminalOutputPorts.closeSession(sessionId);
+  telnetAutoLoginCompleteListeners.delete(sessionId);
+  telnetAutoLoginCancelledListeners.delete(sessionId);
+  telnetEchoModeListeners.delete(sessionId);
+  zmodemListeners.delete(sessionId);
+  zmodemOverwriteListeners.delete(sessionId);
+  const pendingTimer = _mcpFlushTimers.get(sessionId);
   if (pendingTimer) {
     clearTimeout(pendingTimer);
-    _mcpFlushTimers.delete(payload.sessionId);
+    _mcpFlushTimers.delete(sessionId);
   }
-  _mcpLineBufs.delete(payload.sessionId); // clean up any held fragment
-  _mcpDroppingWrappedLine.delete(payload.sessionId);
+  _mcpLineBufs.delete(sessionId); // clean up any held fragment
+  _mcpDroppingWrappedLine.delete(sessionId);
 });
 
 // Chain progress events (for jump host connections)
