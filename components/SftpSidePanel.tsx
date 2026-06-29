@@ -68,6 +68,7 @@ interface SftpSidePanelProps {
   activeSessionId?: string | null;
   initialLocation?: { hostId: string; path: string } | null;
   onInitialLocationApplied?: (location: { hostId: string; path: string }) => void;
+  onCurrentPathChange?: (location: { hostId: string; connectionKey: string; path: string }) => void;
   showWorkspaceHostHeader?: boolean;
   isVisible?: boolean;
   renderOverlays?: boolean;
@@ -108,6 +109,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   activeSessionId,
   initialLocation,
   onInitialLocationApplied,
+  onCurrentPathChange,
   showWorkspaceHostHeader = false,
   isVisible = true,
   renderOverlays = true,
@@ -385,6 +387,28 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     initialLocation,
     onInitialLocationApplied,
     sftp.leftPane,
+  ]);
+
+  const onCurrentPathChangeRef = useRef(onCurrentPathChange);
+  onCurrentPathChangeRef.current = onCurrentPathChange;
+  useEffect(() => {
+    const connection = sftp.leftPane.connection;
+    if (!connection || connection.isLocal) return;
+    if (connection.status !== "connected") return;
+    if (!connection.currentPath) return;
+    const connectionKey = tabConnectionKeyMapRef.current.get(sftp.leftPane.id);
+    if (!connectionKey) return;
+    onCurrentPathChangeRef.current?.({
+      hostId: connection.hostId,
+      connectionKey,
+      path: connection.currentPath,
+    });
+  }, [
+    sftp.leftPane.connection,
+    sftp.leftPane.connection?.currentPath,
+    sftp.leftPane.connection?.hostId,
+    sftp.leftPane.connection?.status,
+    sftp.leftPane.id,
   ]);
 
   useEffect(() => {
@@ -1144,6 +1168,7 @@ const sidePanelAreEqual = (prev: SftpSidePanelProps, next: SftpSidePanelProps): 
   prev.sftpFollowTerminalCwd === next.sftpFollowTerminalCwd &&
   prev.onSftpFollowTerminalCwdChange === next.onSftpFollowTerminalCwdChange &&
   prev.onRequestTerminalFocus === next.onRequestTerminalFocus &&
+  prev.onCurrentPathChange === next.onCurrentPathChange &&
   prev.initialLocation?.hostId === next.initialLocation?.hostId &&
   prev.initialLocation?.path === next.initialLocation?.path &&
   // Only the keepalive fields of terminalSettings affect SFTP connection

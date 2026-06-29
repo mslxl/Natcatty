@@ -2,6 +2,7 @@
 import React, { memo, useCallback, useSyncExternalStore } from 'react';
 
 import { activeTabStore, useIsTabActive } from '../../application/state/activeTabStore';
+import { getSftpCurrentPathMemoryKey } from '../../application/state/sftp/sftpReopenLocation';
 import {
   getSidePanelLiveSnapshot,
   subscribeSidePanelLiveSnapshot,
@@ -60,6 +61,7 @@ function SidePanelSftpSlotInner({
     sftpInitialLocationForTab,
     sftpPendingUploadsForTab,
     handleSftpInitialLocationApplied,
+    handleSftpCurrentPathChange,
     handlePendingUploadHandled,
     sftpDoubleClickBehavior,
     sftpAutoSync,
@@ -118,6 +120,20 @@ function SidePanelSftpSlotInner({
     [handlePendingUploadHandled, tabId],
   );
 
+  const handleCurrentPathChange = useCallback(
+    (location: { hostId: string; connectionKey: string; path: string }) => {
+      handleSftpCurrentPathChange(
+        getSftpCurrentPathMemoryKey({
+          tabId,
+          activeTerminalSessionIdForSftp: live.activeTerminalSessionIdForSftp,
+          focusedSessionId: live.focusedSessionId,
+        }),
+        location,
+      );
+    },
+    [handleSftpCurrentPathChange, live.activeTerminalSessionIdForSftp, live.focusedSessionId, tabId],
+  );
+
   return (
     <div className={sidePanelHiddenPanelClassName(!isVisible)}>
       <SftpSidePanel
@@ -133,6 +149,7 @@ function SidePanelSftpSlotInner({
         activeSessionId={isVisible ? live.activeTerminalSessionIdForSftp : null}
         initialLocation={isVisible ? (sftpInitialLocationForTab.get(tabId) ?? null) : null}
         onInitialLocationApplied={handleInitialLocationApplied}
+        onCurrentPathChange={handleCurrentPathChange}
         showWorkspaceHostHeader={isVisible && !!live.activeWorkspace}
         isVisible={isVisible}
         renderOverlays={isVisible}
