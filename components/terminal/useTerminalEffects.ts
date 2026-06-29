@@ -41,6 +41,33 @@ type SelectionOverlayPosition = {
   top: number;
 } | null;
 
+type ZmodemToast =
+  | { kind: 'error'; message: string; title: string }
+  | { kind: 'success'; message: string; title: string }
+  | null;
+
+export function resolveZmodemTransferToast(zmodem: {
+  active?: boolean;
+  completed?: boolean;
+  error?: string | null;
+  filename?: string | null;
+  transferType?: 'upload' | 'download' | null;
+}): ZmodemToast {
+  if (zmodem.active) return null;
+  if (zmodem.error) {
+    return { kind: 'error', message: zmodem.error, title: 'ZMODEM' };
+  }
+  if (!zmodem.completed) return null;
+
+  const action = zmodem.transferType === 'upload'
+    ? 'Uploaded'
+    : zmodem.transferType === 'download'
+      ? 'Downloaded'
+      : 'Transfer completed';
+  const message = zmodem.filename ? `${action}: ${zmodem.filename}` : action;
+  return { kind: 'success', message, title: 'ZMODEM' };
+}
+
 const areSelectionOverlayPositionsEqual = (
   a: SelectionOverlayPosition,
   b: SelectionOverlayPosition,
@@ -206,17 +233,15 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       return;
     }
     if (zmodemToastedRef.current) return;
-    if (zmodem.error) {
-      zmodemToastedRef.current = true;
-      toast.error(zmodem.error, 'ZMODEM');
-    } else if (zmodem.filename) {
-      zmodemToastedRef.current = true;
-      toast.success(
-        `${zmodem.transferType === 'upload' ? 'Uploaded' : 'Downloaded'}: ${zmodem.filename}`,
-        'ZMODEM',
-      );
+    const zmodemToast = resolveZmodemTransferToast(zmodem);
+    if (!zmodemToast) return;
+    zmodemToastedRef.current = true;
+    if (zmodemToast.kind === 'error') {
+      toast.error(zmodemToast.message, zmodemToast.title);
+    } else {
+      toast.success(zmodemToast.message, zmodemToast.title);
     }
-  }, [zmodem.active, zmodem.error, zmodem.filename, zmodem.transferType]);
+  }, [zmodem.active, zmodem.completed, zmodem.error, zmodem.filename, zmodem.transferType]);
 
 
   useEffect(() => {
