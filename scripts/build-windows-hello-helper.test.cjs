@@ -70,10 +70,35 @@ test("buildWindowsHelloHelper initializes the Visual Studio developer environmen
   assert.equal(result.skipped, false);
   assert.equal(calls[0][0], "cmd.exe");
   assert.deepEqual(calls[0][1].slice(0, 3), ["/d", "/s", "/c"]);
+  assert.match(calls[0][1][3], /^call "/);
   assert.match(calls[0][1][3], /VsDevCmd\.bat/);
   assert.match(calls[0][1][3], /-arch=x64/);
   assert.match(calls[0][1][3], /cl\.exe/);
   assert.match(calls[0][1][3], /\/MACHINE:X64/);
+});
+
+test("buildWindowsHelloHelper uses the current MSVC environment when it is already initialized", () => {
+  const calls = [];
+  const vsDevCmd = "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\Common7\\Tools\\VsDevCmd.bat";
+  const result = buildWindowsHelloHelper({
+    projectDir: "D:\\a\\Netcatty\\Netcatty",
+    platform: "win32",
+    arch: "x64",
+    env: {
+      VSINSTALLDIR: "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\",
+      VSCMD_ARG_TGT_ARCH: "x64",
+      VSCMD_VER: "18.0.0",
+    },
+    existsSync: (candidate) => candidate === vsDevCmd,
+    run: (...args) => calls.push(args),
+    mkdir: () => {},
+    readMachine: () => 0x8664,
+    logger: { warn() {} },
+  });
+
+  assert.equal(result.skipped, false);
+  assert.equal(calls[0][0], "cl.exe");
+  assert.match(calls[0][1].join(" "), /\/MACHINE:X64/);
 });
 
 test("buildWindowsHelloHelper rejects unsupported target architectures on Windows", () => {

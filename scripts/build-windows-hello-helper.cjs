@@ -43,6 +43,12 @@ function findVisualStudioDevCmd(env = process.env, existsSync = fs.existsSync) {
   return visualStudioDevCmdCandidates(env).find((candidate) => existsSync(candidate)) || null;
 }
 
+function hasInitializedMsvcEnvironment(env = process.env, targetArch) {
+  const initializedArch = String(env.VSCMD_ARG_TGT_ARCH || "").toLowerCase();
+  if (initializedArch) return initializedArch === targetArch;
+  return Boolean(env.VSCMD_VER && env.INCLUDE && env.LIB);
+}
+
 function normalizeWindowsHelperArch(arch) {
   if (arch === "x64" || arch === "arm64") return arch;
   if (arch === 1 || arch === "1") return "x64";
@@ -100,10 +106,12 @@ function buildWindowsHelloHelper({
     "windowsapp.lib",
   ];
   try {
-    const vsDevCmd = compiler === "cl.exe" ? findVisualStudioDevCmd(env, existsSync) : null;
+    const shouldInitializeMsvc = compiler === "cl.exe" && !hasInitializedMsvcEnvironment(env, targetArch);
+    const vsDevCmd = shouldInitializeMsvc ? findVisualStudioDevCmd(env, existsSync) : null;
     if (vsDevCmd) {
       const devArch = targetArch === "arm64" ? "arm64" : "x64";
       const compileCommand = [
+        "call",
         quoteCmdArg(vsDevCmd),
         `-arch=${devArch}`,
         "-host_arch=x64",
@@ -152,6 +160,7 @@ module.exports = {
   findCompiler,
   findVisualStudioDevCmd,
   getExpectedPeMachine,
+  hasInitializedMsvcEnvironment,
   normalizeWindowsHelperArch,
   readPeMachine,
   visualStudioDevCmdCandidates,
