@@ -181,6 +181,19 @@ test("terminal selection AI preference is syncable for auto-sync detection", () 
   );
 });
 
+test("terminal side panel auto-open settings are syncable for auto-sync detection", () => {
+  assert.ok(
+    (SYNCABLE_SETTING_STORAGE_KEYS as readonly string[]).includes(
+      storageKeys.STORAGE_KEY_TERMINAL_SIDE_PANEL_AUTO_OPEN,
+    ),
+  );
+  assert.ok(
+    (SYNCABLE_SETTING_STORAGE_KEYS as readonly string[]).includes(
+      storageKeys.STORAGE_KEY_TERMINAL_SIDE_PANEL_AUTO_OPEN_TAB,
+    ),
+  );
+});
+
 test("buildSyncPayload includes host tree sidebar visibility setting", () => {
   localStorage.setItem(storageKeys.STORAGE_KEY_SHOW_HOST_TREE_SIDEBAR, "false");
   localStorage.setItem(storageKeys.STORAGE_KEY_TERMINAL_SIDE_PANEL_AUTO_OPEN, "true");

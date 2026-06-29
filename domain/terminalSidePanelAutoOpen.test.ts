@@ -5,6 +5,7 @@ import {
   resolveTerminalSidePanelAutoOpen,
   type TerminalSidePanelAutoOpenTab,
 } from "./terminalSidePanelAutoOpen.ts";
+import { TERMINAL_SIDE_PANEL_TAB_DEFAULT_ORDER } from "../application/state/terminalSidePanelTabs.ts";
 
 test("terminal side panel auto-open stays off by default", () => {
   assert.equal(
@@ -40,15 +41,7 @@ test("terminal side panel auto-open skips SFTP when the session cannot use it", 
 });
 
 test("terminal side panel auto-open accepts every selectable side pane", () => {
-  const tabs: TerminalSidePanelAutoOpenTab[] = [
-    "sftp",
-    "scripts",
-    "history",
-    "theme",
-    "system",
-    "notes",
-    "ai",
-  ];
+  const tabs: TerminalSidePanelAutoOpenTab[] = [...TERMINAL_SIDE_PANEL_TAB_DEFAULT_ORDER];
 
   assert.deepEqual(
     tabs.map((selectedTab) =>
