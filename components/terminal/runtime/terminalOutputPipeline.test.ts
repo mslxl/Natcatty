@@ -17,7 +17,10 @@ import {
   getTerminalWriteCoalescerPendingBytes,
   resetTerminalWriteCoalescer,
 } from "./terminalWriteCoalescer.ts";
-import { enqueueTerminalWrite } from "./terminalWriteQueue.ts";
+import {
+  enqueueTerminalWrite,
+  getTerminalWriteQueueDepth,
+} from "./terminalWriteQueue.ts";
 import { accumulateDeferredTerminalWriteAck } from "./terminalWriteAckDeferral.ts";
 import { clearTerminalSessionFlowAck } from "./terminalFlowAckBuffer.ts";
 
@@ -66,10 +69,11 @@ test("releaseTerminalFlowOutputForTerm resumes renderer pause without a flow con
   assert.deepEqual(events, ["ipc-resume"]);
 });
 
-test("prioritizeTerminalInput flushes batched ack remainders after dropping bytes", () => {
+test("ordinary input priority preserves queued display output", () => {
   const term = createFakeTerm();
   const acked: number[] = [];
   const deferred: Array<() => void> = [];
+  let completed = 0;
   const flow = createOutputFlowController({
     highWaterMark: 100,
     lowWaterMark: 20,
@@ -85,19 +89,24 @@ test("prioritizeTerminalInput flushes batched ack remainders after dropping byte
 
   flow.received(FLOW_LOW_WATER_MARK + 80);
   enqueueTerminalWrite(term, 50, () => {});
-  enqueueTerminalWrite(term, 30, () => {});
-  prioritizeTerminalInput(
+  enqueueTerminalWrite(term, 30, (done) => {
+    completed += 1;
+    done();
+  });
+  const priority = prioritizeTerminalInput(
     term,
     "sess-1",
     flow,
     backend,
     (callback: () => void) => deferred.push(callback),
-    { reason: "interrupt" },
   );
 
+  assert.equal(priority.scheduledBackendResume, false);
+  assert.equal(priority.ackAfterInputBytes, 0);
+  assert.equal(getTerminalWriteQueueDepth(term), 1);
   assert.deepEqual(acked, []);
-  deferred[0]!();
-  assert.deepEqual(acked, [30]);
+  assert.deepEqual(deferred, []);
+  assert.equal(completed, 0);
 });
 
 test("prioritizeTerminalInput flushes deferred xterm write ack bytes", () => {
@@ -125,7 +134,6 @@ test("prioritizeTerminalInput flushes deferred xterm write ack bytes", () => {
     flow,
     backend,
     (callback: () => void) => deferred.push(callback),
-    { reason: "interrupt" },
   );
 
   assert.deepEqual(acked, []);
@@ -135,7 +143,7 @@ test("prioritizeTerminalInput flushes deferred xterm write ack bytes", () => {
   clearTerminalSessionFlowAck("sess-1");
 });
 
-test("prioritizeTerminalInput drains backlog before user input is forwarded", () => {
+test("ordinary input priority leaves queued backlog intact", () => {
   const term = createFakeTerm();
   const events: string[] = [];
   const deferred: Array<() => void> = [];
@@ -157,24 +165,25 @@ test("prioritizeTerminalInput drains backlog before user input is forwarded", ()
   enqueueTerminalWrite(term, 30, (done) => {
     release = done;
   });
-  prioritizeTerminalInput(
+  const priority = prioritizeTerminalInput(
     term,
     "sess-1",
     flow,
     backend,
     (callback: () => void) => deferred.push(callback),
-    { reason: "interrupt" },
   );
-  release?.();
 
+  assert.equal(priority.scheduledBackendResume, false);
+  assert.equal(priority.writeQueueDepth, 0);
+  assert.equal(getTerminalWriteQueueDepth(term), 0);
   assert.equal(events.includes("ipc-resume"), false);
+  assert.deepEqual(deferred, []);
   events.push("input-forwarded");
-  deferred[0]!();
-  assert.ok(events.includes("ipc-resume"));
-  assert.deepEqual(events.slice(-2), ["input-forwarded", "ipc-resume"]);
+  release?.();
+  assert.deepEqual(events, ["pause", "input-forwarded"]);
 });
 
-test("prioritizeTerminalInput does not resume while collecting dropped bytes", () => {
+test("ordinary input priority does not drop queued bytes or resume paused output", () => {
   const term = createFakeTerm();
   const events: string[] = [];
   const deferred: Array<() => void> = [];
@@ -194,25 +203,38 @@ test("prioritizeTerminalInput does not resume while collecting dropped bytes", (
   flow.received(110);
   enqueueTerminalWrite(term, 10, () => {});
   enqueueTerminalWrite(term, 100, () => {});
-  prioritizeTerminalInput(
+  const priority = prioritizeTerminalInput(
     term,
     "sess-1",
     flow,
     backend,
     (callback: () => void) => deferred.push(callback),
-    { reason: "interrupt" },
   );
 
+  assert.equal(priority.scheduledBackendResume, false);
+  assert.equal(priority.ackAfterInputBytes, 0);
   assert.deepEqual(events, ["pause"]);
+  assert.equal(getTerminalWriteQueueDepth(term), 1);
   events.push("input-forwarded");
-  deferred[0]!();
+  assert.deepEqual(deferred, []);
 
-  assert.deepEqual(events, ["pause", "input-forwarded", "ipc-resume"]);
+  assert.deepEqual(events, ["pause", "input-forwarded"]);
 });
 
-test("prioritizeTerminalInput defers source resume until after input is forwarded", () => {
+test("ordinary input priority preserves a pending coalesced backlog above the pressure threshold", () => {
   clearTerminalSessionFlowAck("sess-1");
+  const scheduler = globalThis as typeof globalThis & {
+    requestAnimationFrame?: (callback: FrameRequestCallback) => number;
+    cancelAnimationFrame?: (handle: number) => void;
+  };
+  const originalRequestAnimationFrame = scheduler.requestAnimationFrame;
+  const originalCancelAnimationFrame = scheduler.cancelAnimationFrame;
+  scheduler.requestAnimationFrame = () => 1;
+  scheduler.cancelAnimationFrame = () => {};
+
   const term = createFakeTerm();
+  const payload = "x".repeat(FLOW_LOW_WATER_MARK + 1024);
+  const written: string[] = [];
   const events: string[] = [];
   const deferred: Array<() => void> = [];
   const flow = createOutputFlowController({
@@ -228,25 +250,42 @@ test("prioritizeTerminalInput defers source resume until after input is forwarde
     ackSessionFlow: () => {},
   };
 
-  flow.received(FLOW_LOW_WATER_MARK + 1024);
-  prioritizeTerminalInput(
-    term,
-    "sess-1",
-    flow,
-    backend,
-    (callback: () => void) => deferred.push(callback),
-    { reason: "interrupt" },
-  );
+  try {
+    flow.received(payload.length);
+    enqueueCoalescedTerminalWrite(
+      term,
+      payload,
+      (data, ingressBytes) => {
+        written.push(data);
+        flow.written(ingressBytes);
+      },
+      payload.length,
+    );
+    const priority = prioritizeTerminalInput(
+      term,
+      "sess-1",
+      flow,
+      backend,
+      (callback: () => void) => deferred.push(callback),
+    );
 
-  assert.equal(flow.isPaused(), false);
-  assert.deepEqual(events, ["pause"]);
-  assert.equal(deferred.length, 1);
+    assert.equal(priority.scheduledBackendResume, false);
+    assert.equal(flow.isPaused(), true);
+    assert.deepEqual(events, ["pause"]);
+    assert.deepEqual(deferred, []);
+    assert.equal(getTerminalWriteCoalescerPendingBytes(term), payload.length);
 
-  events.push("input-forwarded");
-  deferred[0]!();
+    events.push("input-forwarded");
+    flushTerminalWriteCoalescer(term);
 
-  assert.deepEqual(events, ["pause", "input-forwarded", "ipc-resume"]);
-  clearTerminalSessionFlowAck("sess-1");
+    assert.deepEqual(written, [payload]);
+    assert.equal(flow.pendingBytes(), 0);
+  } finally {
+    resetTerminalWriteCoalescer(term);
+    scheduler.requestAnimationFrame = originalRequestAnimationFrame;
+    scheduler.cancelAnimationFrame = originalCancelAnimationFrame;
+    clearTerminalSessionFlowAck("sess-1");
+  }
 });
 
 test("ordinary input priority preserves pending line-edit echo when flushing deferred acks", () => {

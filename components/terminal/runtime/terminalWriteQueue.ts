@@ -91,6 +91,19 @@ const mergePendingWrites = (queue: TerminalWriteQueue): void => {
   queue.floodMode = true;
 };
 
+const updateFloodMode = (
+  queue: TerminalWriteQueue,
+  nextBytes: number,
+): void => {
+  if (
+    queue.floodMode
+    || queue.pending.length >= MAX_WRITE_QUEUE_ITEMS
+    || queue.pendingBytes + nextBytes > MAX_WRITE_QUEUE_BYTES
+  ) {
+    queue.floodMode = true;
+  }
+};
+
 export const setTerminalWriteQueueDropHandler = (
   term: XTerm,
   onDropped?: (bytes: number) => void,
@@ -124,6 +137,8 @@ export const enqueueTerminalWrite = (
   } else if (!queue.onDropped) {
     queue.onDropped = terminalWriteQueueDropHandlers.get(term);
   }
+
+  updateFloodMode(queue, bytes);
 
   queue.pending.push({
     bytes,
@@ -164,6 +179,6 @@ export const abortTerminalWriteQueue = (
   terminalWriteQueues.delete(term);
 
   if (droppedBytes > 0) {
-    onDropped?.(droppedBytes);
+    (onDropped ?? queue.onDropped)?.(droppedBytes);
   }
 };

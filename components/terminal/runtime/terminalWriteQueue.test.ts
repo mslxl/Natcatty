@@ -8,6 +8,7 @@ import {
   abortTerminalWriteQueue,
   enqueueTerminalWrite,
   getTerminalWriteQueueDepth,
+  isTerminalWriteQueueInFloodMode,
   setTerminalWriteQueueDropHandler,
 } from "./terminalWriteQueue.ts";
 
@@ -29,7 +30,7 @@ test("enqueueTerminalWrite serializes writes in order", () => {
   assert.deepEqual(order, [1, 2]);
 });
 
-test("keeps queued writes when item cap is exceeded", () => {
+test("marks flood mode and coalesces queued writes when item cap is exceeded", () => {
   const term = createFakeTerm();
   const dropped: number[] = [];
   const order: number[] = [];
@@ -52,12 +53,13 @@ test("keeps queued writes when item cap is exceeded", () => {
   }
 
   assert.deepEqual(dropped, []);
+  assert.equal(isTerminalWriteQueueInFloodMode(term), true);
   assert.equal(getTerminalWriteQueueDepth(term), 1);
   releaseFirst?.();
   assert.deepEqual(order, Array.from({ length: MAX_WRITE_QUEUE_ITEMS + 1 }, (_, index) => index));
 });
 
-test("setTerminalWriteQueueDropHandler is not used for passive flood backlogs", () => {
+test("setTerminalWriteQueueDropHandler only reports explicit queue aborts", () => {
   const term = createFakeTerm();
   const dropped: number[] = [];
   let completed = 0;
@@ -76,8 +78,11 @@ test("setTerminalWriteQueueDropHandler is not used for passive flood backlogs", 
   }
 
   assert.deepEqual(dropped, []);
+  assert.equal(isTerminalWriteQueueInFloodMode(term), true);
+  abortTerminalWriteQueue(term);
+  assert.deepEqual(dropped, [MAX_WRITE_QUEUE_ITEMS * 10 + 10]);
   releaseFirst?.();
-  assert.equal(completed, MAX_WRITE_QUEUE_ITEMS + 1);
+  assert.equal(completed, 0);
 });
 
 test("merges passive flood backlog items without dropping output", () => {
