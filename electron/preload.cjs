@@ -241,9 +241,10 @@ ipcRenderer.on("netcatty:data", (_event, payload) => {
 
 ipcRenderer.on("netcatty:exit", (_event, payload) => {
   const sessionId = payload?.sessionId;
-  if (!sessionId || closedTerminalDataSessions.has(sessionId)) return;
+  if (!sessionId) return;
+  const wasClosed = closedTerminalDataSessions.has(sessionId);
   closedTerminalDataSessions.add(sessionId);
-  const set = exitListeners.get(sessionId);
+  const set = wasClosed ? null : exitListeners.get(sessionId);
   if (set) {
     set.forEach((cb) => {
       try {

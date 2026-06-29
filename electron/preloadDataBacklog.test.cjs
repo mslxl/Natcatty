@@ -337,6 +337,37 @@ test("backend exit preserves live listeners for same-id reconnect", async () => 
   }
 });
 
+test("backend exit after explicit close still cleans per-session listeners", () => {
+  const preload = loadPreloadWithFakeElectron();
+  try {
+    const zmodemEvents = [];
+    const overwriteRequests = [];
+    preload.api.onZmodemEvent("session-1", (evt) => {
+      zmodemEvents.push(evt.type);
+    });
+    preload.api.onZmodemOverwriteRequest("session-1", (payload) => {
+      overwriteRequests.push(payload.sessionId);
+    });
+
+    preload.api.closeSession("session-1");
+    preload.handlers.get("netcatty:exit")?.({}, {
+      sessionId: "session-1",
+      reason: "closed",
+    });
+    preload.handlers.get("netcatty:zmodem:detect")?.({}, {
+      sessionId: "session-1",
+    });
+    preload.handlers.get("netcatty:zmodem:overwrite-request")?.({}, {
+      sessionId: "session-1",
+    });
+
+    assert.deepEqual(zmodemEvents, []);
+    assert.deepEqual(overwriteRequests, []);
+  } finally {
+    preload.cleanup();
+  }
+});
+
 test("onSessionExit unsubscribe removes empty listener set", () => {
   const exitListeners = new Map();
   const api = createPreloadApi({
