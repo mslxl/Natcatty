@@ -286,6 +286,12 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Set up MSVC developer command prompt
+        if: matrix.name == 'windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
       - name: Install deps
         run: npm ci
 
