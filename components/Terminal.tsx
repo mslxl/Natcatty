@@ -44,7 +44,7 @@ import { supportsZmodemTerminalDragDrop } from "../lib/zmodemDragDrop";
 import { resolveHostAuth } from "../domain/sshAuth";
 import { useTerminalBackend } from "../application/state/useTerminalBackend";
 import { useStoredBoolean } from "../application/state/useStoredBoolean";
-import { readStoredStringValue, useStoredString } from "../application/state/useStoredString";
+import { readOptionalStoredStringValue, useStoredString } from "../application/state/useStoredString";
 import { useSessionLogBackend } from "../application/state/useSessionLogBackend";
 import { useTerminalLayoutSuppressActive } from "../application/state/terminalLayoutSuppressStore";
 // SFTPModal removed - SFTP is now handled by SftpSidePanel in TerminalLayer
@@ -597,9 +597,8 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const [terminalEncoding, setTerminalEncoding] = useState<TerminalEncodingPreference>(() => {
     return resolveInitialTerminalEncoding(
       host?.charset,
-      readStoredStringValue(
+      readOptionalStoredStringValue(
         terminalEncodingStorageKey,
-        'utf-8',
         isTerminalEncodingPreference,
       ),
     );

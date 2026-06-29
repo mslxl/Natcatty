@@ -24,6 +24,10 @@ test("per-host remembered terminal encoding wins for supported or empty host cha
   assert.equal(resolveInitialTerminalEncoding(undefined, "gb18030"), "gb18030");
 });
 
+test("missing per-host remembered encoding preserves configured GB18030 charset", () => {
+  assert.equal(resolveInitialTerminalEncoding("GB18030", null), "gb18030");
+});
+
 test("per-host remembered UTF-8 can override a supported GB18030 host charset", () => {
   assert.equal(resolveInitialTerminalEncoding("GB18030", "utf-8"), "utf-8");
 });
