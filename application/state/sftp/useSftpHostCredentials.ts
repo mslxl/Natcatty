@@ -4,6 +4,10 @@ import { isEncryptedCredentialPlaceholder, sanitizeCredentialValue } from "../..
 import { resolveBridgeKeyAuth, resolveHostAuth } from "../../../domain/sshAuth";
 import { resolveHostKeepalive } from "../../../domain/host";
 import {
+  findIncompleteProxyIdentityId,
+  findMissingProxyIdentityId,
+  formatIncompleteProxyIdentityMessage,
+  formatMissingProxyIdentityMessage,
   hasUnreadableProxyCredential,
   hasUsableProxyConfig,
   resolveProxyConfigAuth,
@@ -38,6 +42,12 @@ export const buildSftpHostCredentials = ({
   if (host.proxyProfileId && !host.proxyConfig) {
     throw new Error(`Saved proxy for host "${host.label || host.hostname}" is missing. Open host settings and select a valid proxy.`);
   }
+  if (findMissingProxyIdentityId(host.proxyConfig, identities)) {
+    throw new Error(formatMissingProxyIdentityMessage(host.label || host.hostname));
+  }
+  if (findIncompleteProxyIdentityId(host.proxyConfig, identities)) {
+    throw new Error(formatIncompleteProxyIdentityMessage(host.label || host.hostname));
+  }
 
   const resolved = resolveHostAuth({ host, keys, identities });
   const key = resolved.key || null;
@@ -54,6 +64,12 @@ export const buildSftpHostCredentials = ({
       }
       if (jumpHost.proxyProfileId && !jumpHost.proxyConfig) {
         throw new Error(`Saved proxy for jump host "${jumpHost.label || jumpHost.hostname}" is missing. Open host settings and select a valid proxy.`);
+      }
+      if (findMissingProxyIdentityId(jumpHost.proxyConfig, identities)) {
+        throw new Error(formatMissingProxyIdentityMessage(jumpHost.label || jumpHost.hostname));
+      }
+      if (findIncompleteProxyIdentityId(jumpHost.proxyConfig, identities)) {
+        throw new Error(formatIncompleteProxyIdentityMessage(jumpHost.label || jumpHost.hostname));
       }
       return jumpHost;
     }).map((jumpHost, index) => {

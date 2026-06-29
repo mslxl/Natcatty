@@ -33,6 +33,10 @@ import {
   resolveTelnetUsername,
 } from "../../../domain/host";
 import {
+  findIncompleteProxyIdentityId,
+  findMissingProxyIdentityId,
+  formatIncompleteProxyIdentityMessage,
+  formatMissingProxyIdentityMessage,
   hasUnreadableProxyCredential,
   hasUsableProxyConfig,
   resolveProxyConfigAuth,
@@ -195,6 +199,20 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       ctx.updateStatus("disconnected");
       return;
     }
+    if (findMissingProxyIdentityId(ctx.host.proxyConfig, ctx.identities)) {
+      const message = formatMissingProxyIdentityMessage(ctx.host.label || ctx.host.hostname);
+      ctx.setError(message);
+      writeTerminalLine(ctx, term, `\r\n[${message}]`);
+      ctx.updateStatus("disconnected");
+      return;
+    }
+    if (findIncompleteProxyIdentityId(ctx.host.proxyConfig, ctx.identities)) {
+      const message = formatIncompleteProxyIdentityMessage(ctx.host.label || ctx.host.hostname);
+      ctx.setError(message);
+      writeTerminalLine(ctx, term, `\r\n[${message}]`);
+      ctx.updateStatus("disconnected");
+      return;
+    }
     const proxyConfig = ctx.host.proxyConfig
       ? resolveProxyConfigAuth(ctx.host.proxyConfig, ctx.identities)
       : undefined;
@@ -203,6 +221,30 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
     const unresolvedJumpProxyHost = ctx.resolvedChainHosts.find((jumpHost) => jumpHost.proxyProfileId && !jumpHost.proxyConfig);
     if (unresolvedJumpProxyHost) {
       const message = `Saved proxy for jump host "${unresolvedJumpProxyHost.label || unresolvedJumpProxyHost.hostname}" is missing. Open host settings and select a valid proxy.`;
+      ctx.setError(message);
+      writeTerminalLine(ctx, term, `\r\n[${message}]`);
+      ctx.updateStatus("disconnected");
+      return;
+    }
+    const unresolvedJumpProxyIdentityHost = ctx.resolvedChainHosts.find((jumpHost) =>
+      findMissingProxyIdentityId(jumpHost.proxyConfig, ctx.identities),
+    );
+    if (unresolvedJumpProxyIdentityHost) {
+      const message = formatMissingProxyIdentityMessage(
+        unresolvedJumpProxyIdentityHost.label || unresolvedJumpProxyIdentityHost.hostname,
+      );
+      ctx.setError(message);
+      writeTerminalLine(ctx, term, `\r\n[${message}]`);
+      ctx.updateStatus("disconnected");
+      return;
+    }
+    const incompleteJumpProxyIdentityHost = ctx.resolvedChainHosts.find((jumpHost) =>
+      findIncompleteProxyIdentityId(jumpHost.proxyConfig, ctx.identities),
+    );
+    if (incompleteJumpProxyIdentityHost) {
+      const message = formatIncompleteProxyIdentityMessage(
+        incompleteJumpProxyIdentityHost.label || incompleteJumpProxyIdentityHost.hostname,
+      );
       ctx.setError(message);
       writeTerminalLine(ctx, term, `\r\n[${message}]`);
       ctx.updateStatus("disconnected");
@@ -610,6 +652,20 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       ctx.updateStatus("disconnected");
       return;
     }
+    if (findMissingProxyIdentityId(ctx.host.proxyConfig, ctx.identities)) {
+      const message = formatMissingProxyIdentityMessage(ctx.host.label || ctx.host.hostname);
+      ctx.setError(message);
+      writeTerminalLine(ctx, term, `\r\n[${message}]`);
+      ctx.updateStatus("disconnected");
+      return;
+    }
+    if (findIncompleteProxyIdentityId(ctx.host.proxyConfig, ctx.identities)) {
+      const message = formatIncompleteProxyIdentityMessage(ctx.host.label || ctx.host.hostname);
+      ctx.setError(message);
+      writeTerminalLine(ctx, term, `\r\n[${message}]`);
+      ctx.updateStatus("disconnected");
+      return;
+    }
 
     if (hasUsableProxyConfig(ctx.host.proxyConfig)) {
       const message = "Telnet does not support proxy connections. Use SSH for this host or remove the proxy from this connection.";
@@ -760,6 +816,14 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         stopMosh(`Saved proxy for host "${ctx.host.label || ctx.host.hostname}" is missing. Open host settings and select a valid proxy.`);
         return;
       }
+      if (findMissingProxyIdentityId(ctx.host.proxyConfig, ctx.identities)) {
+        stopMosh(formatMissingProxyIdentityMessage(ctx.host.label || ctx.host.hostname));
+        return;
+      }
+      if (findIncompleteProxyIdentityId(ctx.host.proxyConfig, ctx.identities)) {
+        stopMosh(formatIncompleteProxyIdentityMessage(ctx.host.label || ctx.host.hostname));
+        return;
+      }
 
       const hasConfiguredJumpHostChain =
         (ctx.host.hostChain?.hostIds?.length || 0) > 0 ||
@@ -905,6 +969,14 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         stopEt(`Saved proxy for host "${ctx.host.label || ctx.host.hostname}" is missing. Open host settings and select a valid proxy.`);
         return;
       }
+      if (findMissingProxyIdentityId(ctx.host.proxyConfig, ctx.identities)) {
+        stopEt(formatMissingProxyIdentityMessage(ctx.host.label || ctx.host.hostname));
+        return;
+      }
+      if (findIncompleteProxyIdentityId(ctx.host.proxyConfig, ctx.identities)) {
+        stopEt(formatIncompleteProxyIdentityMessage(ctx.host.label || ctx.host.hostname));
+        return;
+      }
 
       if (hasUsableProxyConfig(ctx.host.proxyConfig)) {
         stopEt(tr(
@@ -940,6 +1012,30 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           ? ` +${missingChainHostIds.length - 2}`
           : "";
         stopEt(`${base} (${missingChainHostIds.slice(0, 2).join(", ")}${suffix})`);
+        return;
+      }
+
+      const unresolvedJumpProxyHost = ctx.resolvedChainHosts.find((jumpHost) => jumpHost.proxyProfileId && !jumpHost.proxyConfig);
+      if (unresolvedJumpProxyHost) {
+        stopEt(`Saved proxy for jump host "${unresolvedJumpProxyHost.label || unresolvedJumpProxyHost.hostname}" is missing. Open host settings and select a valid proxy.`);
+        return;
+      }
+      const unresolvedJumpProxyIdentityHost = ctx.resolvedChainHosts.find((jumpHost) =>
+        findMissingProxyIdentityId(jumpHost.proxyConfig, ctx.identities),
+      );
+      if (unresolvedJumpProxyIdentityHost) {
+        stopEt(formatMissingProxyIdentityMessage(
+          unresolvedJumpProxyIdentityHost.label || unresolvedJumpProxyIdentityHost.hostname,
+        ));
+        return;
+      }
+      const incompleteJumpProxyIdentityHost = ctx.resolvedChainHosts.find((jumpHost) =>
+        findIncompleteProxyIdentityId(jumpHost.proxyConfig, ctx.identities),
+      );
+      if (incompleteJumpProxyIdentityHost) {
+        stopEt(formatIncompleteProxyIdentityMessage(
+          incompleteJumpProxyIdentityHost.label || incompleteJumpProxyIdentityHost.hostname,
+        ));
         return;
       }
 

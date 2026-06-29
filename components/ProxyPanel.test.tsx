@@ -112,6 +112,79 @@ test("ProxyPanel disables saving invalid manual proxy ports", () => {
   assert.match(markup, /disabled=""/);
 });
 
+test("ProxyPanel shows a clear missing state for stale proxy identities", () => {
+  const markup = renderPanel({
+    proxyConfig: {
+      type: "http",
+      host: "manual-proxy.example.com",
+      port: 3128,
+      identityId: "missing-identity",
+    },
+    identities: [proxyIdentity],
+  });
+
+  assert.match(markup, /Missing keychain identity/);
+  assert.match(markup, /Username/);
+  assert.match(markup, /disabled=""/);
+});
+
+test("ProxyPanel warns when a saved proxy profile has a stale identity", () => {
+  const markup = renderPanel({
+    proxyProfiles: [{
+      ...proxyProfile,
+      config: {
+        type: "http",
+        host: "office-proxy.example.com",
+        port: 8080,
+        identityId: "missing-identity",
+      },
+    }],
+    selectedProxyProfileId: proxyProfile.id,
+    identities: [proxyIdentity],
+  });
+
+  assert.match(markup, /Missing keychain identity/);
+  assert.match(markup, /disabled=""/);
+});
+
+test("ProxyPanel warns when a saved proxy profile has an incomplete identity", () => {
+  const markup = renderPanel({
+    proxyProfiles: [{
+      ...proxyProfile,
+      config: {
+        type: "http",
+        host: "office-proxy.example.com",
+        port: 8080,
+        identityId: proxyIdentity.id,
+      },
+    }],
+    selectedProxyProfileId: proxyProfile.id,
+    identities: [{ ...proxyIdentity, password: undefined }],
+  });
+
+  assert.match(markup, /Proxy identity needs a username and password/);
+  assert.match(markup, /disabled=""/);
+});
+
+test("ProxyPanel warns when a saved proxy profile has an unreadable identity password", () => {
+  const markup = renderPanel({
+    proxyProfiles: [{
+      ...proxyProfile,
+      config: {
+        type: "http",
+        host: "office-proxy.example.com",
+        port: 8080,
+        identityId: proxyIdentity.id,
+      },
+    }],
+    selectedProxyProfileId: proxyProfile.id,
+    identities: [{ ...proxyIdentity, password: "enc:v1:djEwAAAA" }],
+  });
+
+  assert.match(markup, /Proxy identity password cannot be read/);
+  assert.match(markup, /disabled=""/);
+});
+
 test("ProxyPanel supports custom ProxyCommand settings", () => {
   const markup = renderPanel({
     proxyConfig: {

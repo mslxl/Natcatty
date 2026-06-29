@@ -1,5 +1,13 @@
 import type { GroupConfig } from "../domain/models";
-import type { Host } from "../types";
+import {
+  findProxyProfile,
+  hasIncompleteProxyIdentity,
+  hasMissingProxyIdentity,
+  hasUnreadableProxyCredential,
+  isCompleteProxyConfig,
+  normalizeManualProxyConfig,
+} from "../domain/proxyProfiles";
+import type { Host, Identity, ProxyConfig, ProxyProfile } from "../types";
 import {
   LINUX_DISTRO_OPTIONS,
   NETWORK_DEVICE_OPTIONS,
@@ -83,3 +91,60 @@ export const LINUX_DISTRO_OPTION_IDS = [
   ...POSIX_PLATFORM_OPTIONS,
   ...NETWORK_DEVICE_OPTIONS,
 ];
+
+export type ProxySaveValidationError =
+  | "required"
+  | "port"
+  | "missingSaved"
+  | "missingIdentity"
+  | "incompleteIdentity"
+  | "unreadableIdentity";
+
+export const validateProxyConfigForSave = ({
+  proxyConfig,
+  proxyProfileId,
+  proxyProfiles,
+  identities,
+}: {
+  proxyConfig?: ProxyConfig;
+  proxyProfileId?: string;
+  proxyProfiles?: ProxyProfile[];
+  identities?: Identity[];
+}): ProxySaveValidationError | null => {
+  const selectedProxyProfile = findProxyProfile(proxyProfileId, proxyProfiles ?? []);
+  if (proxyProfileId && !selectedProxyProfile) return "missingSaved";
+
+  const normalizedProxyConfig = normalizeManualProxyConfig(proxyConfig);
+  if (normalizedProxyConfig && !isCompleteProxyConfig(normalizedProxyConfig)) {
+    return normalizedProxyConfig.host ? "port" : "required";
+  }
+
+  const effectiveProxyConfig = selectedProxyProfile?.config ?? proxyConfig;
+  if (hasMissingProxyIdentity(effectiveProxyConfig, identities ?? [])) {
+    return "missingIdentity";
+  }
+  if (hasIncompleteProxyIdentity(effectiveProxyConfig, identities ?? [])) {
+    return "incompleteIdentity";
+  }
+  if (hasUnreadableProxyCredential(effectiveProxyConfig, identities ?? [])) {
+    return "unreadableIdentity";
+  }
+
+  return null;
+};
+
+export const prepareProxyConfigForSave = (params: {
+  proxyConfig?: ProxyConfig;
+  proxyProfileId?: string;
+  proxyProfiles?: ProxyProfile[];
+  identities?: Identity[];
+}): {
+  error?: ProxySaveValidationError;
+  normalizedProxyConfig?: ProxyConfig;
+} => {
+  const error = validateProxyConfigForSave(params);
+  if (error) return { error };
+  return {
+    normalizedProxyConfig: normalizeManualProxyConfig(params.proxyConfig),
+  };
+};

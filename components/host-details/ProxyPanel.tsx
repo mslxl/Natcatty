@@ -5,7 +5,15 @@
 import { Globe, KeyRound, SquareTerminal, Trash2 } from 'lucide-react';
 import React, { useCallback, useMemo } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
-import { formatProxyConfigEndpoint, formatProxyConfigType, isProxyCommandConfig, isValidProxyPort } from '../../domain/proxyProfiles';
+import {
+    formatProxyConfigEndpoint,
+    formatProxyConfigType,
+    hasIncompleteProxyIdentity,
+    hasMissingProxyIdentity,
+    hasUnreadableProxyCredential,
+    isProxyCommandConfig,
+    isValidProxyPort,
+} from '../../domain/proxyProfiles';
 import { Identity, ProxyConfig, ProxyProfile } from '../../types';
 import { AsidePanel, AsidePanelContent, type AsidePanelLayout, type AsidePanelResizeProps } from '../ui/aside-panel';
 import { Badge } from '../ui/badge';
@@ -58,17 +66,24 @@ export const ProxyPanel: React.FC<ProxyPanelPropsWithResize> = ({
     const hasManualProxyCommand = Boolean(proxyConfig?.command?.trim());
     const hasManualProxyValue = isCommandProxy ? hasManualProxyCommand : hasManualProxyHost;
     const hasInvalidManualProxyPort = !isCommandProxy && hasManualProxyHost && !isValidProxyPort(proxyConfig?.port);
-    const canSave = isUsingProfile || (hasManualProxyValue && !hasInvalidManualProxyPort);
+    const effectiveProxyConfig = selectedProfile?.config ?? proxyConfig;
+    const hasMissingIdentity = hasMissingProxyIdentity(effectiveProxyConfig, identities);
+    const hasIncompleteIdentity = hasIncompleteProxyIdentity(effectiveProxyConfig, identities);
+    const hasUnreadableIdentity = hasUnreadableProxyCredential(effectiveProxyConfig, identities);
+    const hasInvalidIdentity = hasMissingIdentity || hasIncompleteIdentity || hasUnreadableIdentity;
+    const canSave = (isUsingProfile && !hasInvalidIdentity) ||
+        (!isUsingProfile && hasManualProxyValue && !hasInvalidManualProxyPort && !hasInvalidIdentity);
     const manualCredentialsValue = '__manual_credentials__';
+    const missingIdentityValue = '__missing_identity__';
     const selectedIdentity = useMemo(
         () => identities.find((identity) => identity.id === proxyConfig?.identityId),
         [identities, proxyConfig?.identityId],
     );
-    const selectedIdentityValue = selectedIdentity?.id || manualCredentialsValue;
+    const selectedIdentityValue = selectedIdentity?.id || (hasMissingIdentity ? missingIdentityValue : manualCredentialsValue);
     const handleBack = useCallback(() => {
-        if (hasInvalidManualProxyPort) return;
+        if (hasInvalidManualProxyPort || hasInvalidIdentity) return;
         onBack();
-    }, [hasInvalidManualProxyPort, onBack]);
+    }, [hasInvalidManualProxyPort, hasInvalidIdentity, onBack]);
 
     return (
         <AsidePanel
@@ -128,6 +143,21 @@ export const ProxyPanel: React.FC<ProxyPanelPropsWithResize> = ({
                                         {formatProxyConfigEndpoint(selectedProfile.config)}
                                     </span>
                                 </div>
+                            </div>
+                        )}
+                        {selectedProfile && hasMissingIdentity && (
+                            <div className="min-w-0 rounded-md border border-destructive/30 bg-destructive/10 p-2 text-sm text-destructive">
+                                {t('hostDetails.proxyPanel.missingIdentity')}
+                            </div>
+                        )}
+                        {selectedProfile && hasIncompleteIdentity && (
+                            <div className="min-w-0 rounded-md border border-destructive/30 bg-destructive/10 p-2 text-sm text-destructive">
+                                {t('hostDetails.proxyPanel.incompleteIdentity')}
+                            </div>
+                        )}
+                        {selectedProfile && hasUnreadableIdentity && (
+                            <div className="min-w-0 rounded-md border border-destructive/30 bg-destructive/10 p-2 text-sm text-destructive">
+                                {t('hostDetails.proxyPanel.unreadableIdentity')}
                             </div>
                         )}
                     </Card>
@@ -217,10 +247,13 @@ export const ProxyPanel: React.FC<ProxyPanelPropsWithResize> = ({
                                     </p>
                                     <Select
                                         value={selectedIdentityValue}
-                                        onValueChange={(value) => onUpdateProxy(
-                                            'identityId',
-                                            value === manualCredentialsValue ? undefined : value,
-                                        )}
+                                        onValueChange={(value) => {
+                                            if (value === missingIdentityValue) return;
+                                            onUpdateProxy(
+                                                'identityId',
+                                                value === manualCredentialsValue ? undefined : value,
+                                            );
+                                        }}
                                     >
                                         <SelectTrigger
                                             aria-label={t('hostDetails.proxyPanel.keychainIdentity')}
@@ -232,6 +265,11 @@ export const ProxyPanel: React.FC<ProxyPanelPropsWithResize> = ({
                                             <SelectItem value={manualCredentialsValue}>
                                                 {t('hostDetails.proxyPanel.manualCredentials')}
                                             </SelectItem>
+                                            {hasMissingIdentity && (
+                                                <SelectItem value={missingIdentityValue}>
+                                                    {t('hostDetails.proxyPanel.missingIdentity')}
+                                                </SelectItem>
+                                            )}
                                             {identities.map((identity) => (
                                                 <SelectItem key={identity.id} value={identity.id}>
                                                     {identity.label}
@@ -239,6 +277,21 @@ export const ProxyPanel: React.FC<ProxyPanelPropsWithResize> = ({
                                             ))}
                                         </SelectContent>
                                     </Select>
+                                </div>
+                            )}
+                            {hasMissingIdentity && (
+                                <div className="min-w-0 rounded-md border border-destructive/30 bg-destructive/10 p-2 text-sm text-destructive">
+                                    {t('hostDetails.proxyPanel.missingIdentity')}
+                                </div>
+                            )}
+                            {hasIncompleteIdentity && (
+                                <div className="min-w-0 rounded-md border border-destructive/30 bg-destructive/10 p-2 text-sm text-destructive">
+                                    {t('hostDetails.proxyPanel.incompleteIdentity')}
+                                </div>
+                            )}
+                            {hasUnreadableIdentity && (
+                                <div className="min-w-0 rounded-md border border-destructive/30 bg-destructive/10 p-2 text-sm text-destructive">
+                                    {t('hostDetails.proxyPanel.unreadableIdentity')}
                                 </div>
                             )}
                             {selectedIdentity ? (

@@ -7,8 +7,10 @@ import { I18nProvider } from "../application/i18n/I18nProvider.tsx";
 import type { Host } from "../types.ts";
 import HostDetailsPanel, { parseOptionalPortInput } from "./HostDetailsPanel.tsx";
 import {
+  prepareProxyConfigForSave,
   resolvePrimaryProtocolSavePort,
   resolvePrimaryProtocolSwitchPort,
+  validateProxyConfigForSave,
 } from "./HostDetailsPanel.helpers.ts";
 import { TooltipProvider } from "./ui/tooltip.tsx";
 
@@ -273,6 +275,138 @@ test("HostDetailsPanel displays inherited telnet credentials", () => {
 test("parseOptionalPortInput clears empty port values", () => {
   assert.equal(parseOptionalPortInput(""), undefined);
   assert.equal(parseOptionalPortInput("2325"), 2325);
+});
+
+test("validateProxyConfigForSave rejects missing proxy identities", () => {
+  assert.equal(
+    validateProxyConfigForSave({
+      proxyConfig: {
+        type: "http",
+        host: "proxy.example.com",
+        port: 3128,
+        identityId: "missing-identity",
+      },
+      identities: [],
+    }),
+    "missingIdentity",
+  );
+});
+
+test("validateProxyConfigForSave rejects missing identities inside saved proxy profiles", () => {
+  assert.equal(
+    validateProxyConfigForSave({
+      proxyProfileId: "profile-1",
+      proxyProfiles: [{
+        id: "profile-1",
+        label: "Office Proxy",
+        config: {
+          type: "http",
+          host: "proxy.example.com",
+          port: 3128,
+          identityId: "missing-identity",
+        },
+        createdAt: 1,
+      }],
+      identities: [],
+    }),
+    "missingIdentity",
+  );
+});
+
+test("validateProxyConfigForSave rejects incomplete proxy identities", () => {
+  assert.equal(
+    validateProxyConfigForSave({
+      proxyConfig: {
+        type: "http",
+        host: "proxy.example.com",
+        port: 3128,
+        identityId: "identity-1",
+      },
+      identities: [{
+        id: "identity-1",
+        label: "Proxy login",
+        username: "proxy-user",
+        authMethod: "password",
+        created: 1,
+      }],
+    }),
+    "incompleteIdentity",
+  );
+});
+
+test("validateProxyConfigForSave rejects unreadable proxy identity passwords", () => {
+  assert.equal(
+    validateProxyConfigForSave({
+      proxyConfig: {
+        type: "http",
+        host: "proxy.example.com",
+        port: 3128,
+        identityId: "identity-1",
+      },
+      identities: [{
+        id: "identity-1",
+        label: "Proxy login",
+        username: "proxy-user",
+        authMethod: "password",
+        password: "enc:v1:djEwAAAA",
+        created: 1,
+      }],
+    }),
+    "unreadableIdentity",
+  );
+});
+
+test("prepareProxyConfigForSave returns a normalized proxy config for save handlers", () => {
+  assert.deepEqual(
+    prepareProxyConfigForSave({
+      proxyConfig: {
+        type: "http",
+        host: " proxy.example.com ",
+        port: "3128" as never,
+        command: "cloudflared access ssh --hostname %h --token secret",
+        username: " proxy-user ",
+        password: "proxy-secret",
+      },
+      identities: [],
+    }),
+    {
+      normalizedProxyConfig: {
+        type: "http",
+        host: "proxy.example.com",
+        port: 3128,
+        username: "proxy-user",
+        password: "proxy-secret",
+      },
+    },
+  );
+});
+
+test("prepareProxyConfigForSave returns identity errors before save handlers build output", () => {
+  assert.deepEqual(
+    prepareProxyConfigForSave({
+      proxyProfileId: "profile-1",
+      proxyProfiles: [{
+        id: "profile-1",
+        label: "Office Proxy",
+        config: {
+          type: "http",
+          host: "proxy.example.com",
+          port: 3128,
+          identityId: "identity-1",
+        },
+        createdAt: 1,
+      }],
+      identities: [{
+        id: "identity-1",
+        label: "Proxy login",
+        username: "",
+        authMethod: "password",
+        password: "enc:v1:djEwAAAA",
+        created: 1,
+      }],
+    }),
+    { error: "incompleteIdentity" },
+  );
 });
 
 test("resolvePrimaryProtocolSwitchPort only migrates opposite protocol defaults", () => {

@@ -20,8 +20,7 @@ import {
 import {
   formatProxyConfigEndpoint,
   formatProxyConfigType,
-  isCompleteProxyConfig,
-  normalizeManualProxyConfig,
+  updateProxyConfigField,
 } from "../domain/proxyProfiles";
 import { customThemeStore } from "../application/state/customThemeStore";
 import {
@@ -50,6 +49,7 @@ import {
   resolveDetailsTelnetUsername,
   resolvePrimaryProtocolSavePort,
   resolvePrimaryProtocolSwitchPort,
+  prepareProxyConfigForSave,
 } from "./HostDetailsPanel.helpers";
 export { parseOptionalPortInput } from "./HostDetailsPanel.helpers";
 import { Button } from "./ui/button";
@@ -330,22 +330,9 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
     (field: keyof ProxyConfig, value: ProxyConfig[keyof ProxyConfig]) => {
       setForm((prev) => {
         const { proxyProfileId: _proxyProfileId, ...rest } = prev;
-        const nextProxyConfig = {
-          type: prev.proxyConfig?.type || "http",
-          host: prev.proxyConfig?.host || "",
-          port: prev.proxyConfig?.port || 8080,
-          ...prev.proxyConfig,
-          [field]: value,
-        };
-        if (field === "identityId") {
-          delete nextProxyConfig.username;
-          delete nextProxyConfig.password;
-        } else if (field === "username" || field === "password") {
-          delete nextProxyConfig.identityId;
-        }
         return {
           ...rest,
-          proxyConfig: nextProxyConfig,
+          proxyConfig: updateProxyConfigField(prev.proxyConfig, field, value),
         } as Host;
       });
     },
@@ -415,19 +402,29 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
   const handleSubmit = () => {
     const hostname = form.hostname.trim();
     if (!hostname) return;
-    const normalizedProxyConfig = normalizeManualProxyConfig(form.proxyConfig);
-    if (normalizedProxyConfig && !isCompleteProxyConfig(normalizedProxyConfig)) {
-      toast.error(
-        normalizedProxyConfig.host ? t("proxyProfiles.error.port") : t("hostDetails.proxyPanel.error.required"),
-      );
+    const proxySave = prepareProxyConfigForSave({
+      proxyConfig: form.proxyConfig,
+      proxyProfileId: form.proxyProfileId,
+      proxyProfiles,
+      identities,
+    });
+    if (proxySave.error) {
+      const messageKey = proxySave.error === "port"
+        ? "proxyProfiles.error.port"
+        : proxySave.error === "required"
+          ? "hostDetails.proxyPanel.error.required"
+          : proxySave.error === "missingSaved"
+            ? "hostDetails.proxyPanel.missingSaved"
+            : proxySave.error === "missingIdentity"
+              ? "hostDetails.proxyPanel.missingIdentity"
+              : proxySave.error === "incompleteIdentity"
+                ? "hostDetails.proxyPanel.incompleteIdentity"
+                : "hostDetails.proxyPanel.unreadableIdentity";
+      toast.error(t(messageKey));
       setActiveSubPanel("proxy");
       return;
     }
-    if (hasMissingProxyProfile) {
-      toast.error(t("hostDetails.proxyPanel.missingSaved"));
-      setActiveSubPanel("proxy");
-      return;
-    }
+    const normalizedProxyConfig = proxySave.normalizedProxyConfig;
     let finalLabel = form.label?.trim() || hostname;
     const finalGroup = groupInputValue.trim() || form.group || "";
 

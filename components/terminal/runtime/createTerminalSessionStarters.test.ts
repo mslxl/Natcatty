@@ -162,6 +162,628 @@ test("startSSH forwards custom ProxyCommand to the SSH bridge", async () => {
   });
 });
 
+test("startSSH resolves target proxy credentials from an identity", async () => {
+  let capturedOptions: Record<string, unknown> | null = null;
+  const terminalBackend = {
+    backendAvailable: () => true,
+    telnetAvailable: () => true,
+    moshAvailable: () => true,
+    localAvailable: () => true,
+    serialAvailable: () => true,
+    execAvailable: () => true,
+    startSSHSession: async (options: Record<string, unknown>) => {
+      capturedOptions = options;
+      return "ssh-session";
+    },
+    startTelnetSession: async () => "telnet-session",
+    startMoshSession: async () => "mosh-session",
+    startLocalSession: async () => "local-session",
+    startSerialSession: async () => "serial-session",
+    execCommand: async () => ({}),
+    onSessionData: () => noop,
+    onSessionExit: () => noop,
+    onChainProgress: () => noop,
+    writeToSession: noop,
+    resizeSession: noop,
+  };
+  const ctx = createStarterContext({
+    terminalBackend,
+    host: {
+      id: "host-1",
+      label: "Target",
+      hostname: "target.example.test",
+      username: "alice",
+      proxyConfig: {
+        type: "http",
+        host: "proxy.example.test",
+        port: 3128,
+        identityId: "identity-1",
+      },
+    },
+    identities: [{
+      id: "identity-1",
+      label: "Proxy login",
+      username: "proxy-user",
+      authMethod: "password",
+      password: "proxy-secret",
+      created: 1,
+    }],
+  });
+
+  await createTerminalSessionStarters(ctx as never).startSSH(createTermStub() as never);
+
+  assert.deepEqual(capturedOptions?.proxy, {
+    type: "http",
+    host: "proxy.example.test",
+    port: 3128,
+    username: "proxy-user",
+    password: "proxy-secret",
+  });
+});
+
+test("startSSH resolves jump host proxy credentials from an identity", async () => {
+  let capturedOptions: Record<string, unknown> | null = null;
+  const terminalBackend = {
+    backendAvailable: () => true,
+    telnetAvailable: () => true,
+    moshAvailable: () => true,
+    localAvailable: () => true,
+    serialAvailable: () => true,
+    execAvailable: () => true,
+    startSSHSession: async (options: Record<string, unknown>) => {
+      capturedOptions = options;
+      return "ssh-session";
+    },
+    startTelnetSession: async () => "telnet-session",
+    startMoshSession: async () => "mosh-session",
+    startLocalSession: async () => "local-session",
+    startSerialSession: async () => "serial-session",
+    execCommand: async () => ({}),
+    onSessionData: () => noop,
+    onSessionExit: () => noop,
+    onChainProgress: () => noop,
+    writeToSession: noop,
+    resizeSession: noop,
+  };
+  const ctx = createStarterContext({
+    terminalBackend,
+    host: {
+      id: "host-1",
+      label: "Target",
+      hostname: "target.example.test",
+      username: "alice",
+      hostChain: { hostIds: ["jump-1"] },
+    },
+    resolvedChainHosts: [{
+      id: "jump-1",
+      label: "Jump",
+      hostname: "jump.example.test",
+      username: "jump",
+      proxyConfig: {
+        type: "socks5",
+        host: "jump-proxy.example.test",
+        port: 1080,
+        identityId: "identity-1",
+      },
+    }],
+    identities: [{
+      id: "identity-1",
+      label: "Proxy login",
+      username: "proxy-user",
+      authMethod: "password",
+      password: "proxy-secret",
+      created: 1,
+    }],
+  });
+
+  await createTerminalSessionStarters(ctx as never).startSSH(createTermStub() as never);
+
+  const jumpHosts = capturedOptions?.jumpHosts as Array<Record<string, unknown>>;
+  assert.deepEqual(jumpHosts[0]?.proxy, {
+    type: "socks5",
+    host: "jump-proxy.example.test",
+    port: 1080,
+    username: "proxy-user",
+    password: "proxy-secret",
+  });
+});
+
+test("startSSH rejects missing saved proxy profiles before connecting", async () => {
+  let started = false;
+  let error = "";
+  const terminalBackend = {
+    backendAvailable: () => true,
+    telnetAvailable: () => true,
+    moshAvailable: () => true,
+    localAvailable: () => true,
+    serialAvailable: () => true,
+    execAvailable: () => true,
+    startSSHSession: async () => {
+      started = true;
+      return "ssh-session";
+    },
+    startTelnetSession: async () => "telnet-session",
+    startMoshSession: async () => "mosh-session",
+    startLocalSession: async () => "local-session",
+    startSerialSession: async () => "serial-session",
+    execCommand: async () => ({}),
+    onSessionData: () => noop,
+    onSessionExit: () => noop,
+    onChainProgress: () => noop,
+    writeToSession: noop,
+    resizeSession: noop,
+  };
+  const ctx = createStarterContext({
+    terminalBackend,
+    host: {
+      id: "host-1",
+      label: "Target",
+      hostname: "target.example.test",
+      username: "alice",
+      proxyProfileId: "missing-proxy",
+    },
+    setError: (message: string) => { error = message; },
+  });
+
+  await createTerminalSessionStarters(ctx as never).startSSH(createTermStub() as never);
+
+  assert.equal(started, false);
+  assert.match(error, /Saved proxy for host "Target" is missing/);
+});
+
+test("startSSH rejects missing saved proxy profiles on jump hosts before connecting", async () => {
+  let started = false;
+  let error = "";
+  const terminalBackend = {
+    backendAvailable: () => true,
+    telnetAvailable: () => true,
+    moshAvailable: () => true,
+    localAvailable: () => true,
+    serialAvailable: () => true,
+    execAvailable: () => true,
+    startSSHSession: async () => {
+      started = true;
+      return "ssh-session";
+    },
+    startTelnetSession: async () => "telnet-session",
+    startMoshSession: async () => "mosh-session",
+    startLocalSession: async () => "local-session",
+    startSerialSession: async () => "serial-session",
+    execCommand: async () => ({}),
+    onSessionData: () => noop,
+    onSessionExit: () => noop,
+    onChainProgress: () => noop,
+    writeToSession: noop,
+    resizeSession: noop,
+  };
+  const ctx = createStarterContext({
+    terminalBackend,
+    host: {
+      id: "host-1",
+      label: "Target",
+      hostname: "target.example.test",
+      username: "alice",
+      hostChain: { hostIds: ["jump-1"] },
+    },
+    resolvedChainHosts: [{
+      id: "jump-1",
+      label: "Jump",
+      hostname: "jump.example.test",
+      username: "jump",
+      proxyProfileId: "missing-proxy",
+    }],
+    setError: (message: string) => { error = message; },
+  });
+
+  await createTerminalSessionStarters(ctx as never).startSSH(createTermStub() as never);
+
+  assert.equal(started, false);
+  assert.match(error, /Saved proxy for jump host "Jump" is missing/);
+});
+
+test("startSSH rejects missing proxy identities before connecting", async () => {
+  let started = false;
+  let error = "";
+  const terminalBackend = {
+    backendAvailable: () => true,
+    telnetAvailable: () => true,
+    moshAvailable: () => true,
+    localAvailable: () => true,
+    serialAvailable: () => true,
+    execAvailable: () => true,
+    startSSHSession: async () => {
+      started = true;
+      return "ssh-session";
+    },
+    startTelnetSession: async () => "telnet-session",
+    startMoshSession: async () => "mosh-session",
+    startLocalSession: async () => "local-session",
+    startSerialSession: async () => "serial-session",
+    execCommand: async () => ({}),
+    onSessionData: () => noop,
+    onSessionExit: () => noop,
+    onChainProgress: () => noop,
+    writeToSession: noop,
+    resizeSession: noop,
+  };
+  const ctx = createStarterContext({
+    terminalBackend,
+    host: {
+      id: "host-1",
+      label: "Target",
+      hostname: "target.example.test",
+      username: "alice",
+      proxyConfig: {
+        type: "http",
+        host: "proxy.example.test",
+        port: 3128,
+        identityId: "missing-identity",
+      },
+    },
+    setError: (message: string) => { error = message; },
+  });
+
+  await createTerminalSessionStarters(ctx as never).startSSH(createTermStub() as never);
+
+  assert.equal(started, false);
+  assert.match(error, /Proxy identity/);
+  assert.match(error, /Target/);
+});
+
+test("startSSH rejects incomplete proxy identities before connecting", async () => {
+  let started = false;
+  let error = "";
+  const terminalBackend = {
+    backendAvailable: () => true,
+    telnetAvailable: () => true,
+    moshAvailable: () => true,
+    localAvailable: () => true,
+    serialAvailable: () => true,
+    execAvailable: () => true,
+    startSSHSession: async () => {
+      started = true;
+      return "ssh-session";
+    },
+    startTelnetSession: async () => "telnet-session",
+    startMoshSession: async () => "mosh-session",
+    startLocalSession: async () => "local-session",
+    startSerialSession: async () => "serial-session",
+    execCommand: async () => ({}),
+    onSessionData: () => noop,
+    onSessionExit: () => noop,
+    onChainProgress: () => noop,
+    writeToSession: noop,
+    resizeSession: noop,
+  };
+  const ctx = createStarterContext({
+    terminalBackend,
+    host: {
+      id: "host-1",
+      label: "Target",
+      hostname: "target.example.test",
+      username: "alice",
+      proxyConfig: {
+        type: "http",
+        host: "proxy.example.test",
+        port: 3128,
+        identityId: "identity-1",
+      },
+    },
+    identities: [{
+      id: "identity-1",
+      label: "Proxy login",
+      username: "proxy-user",
+      authMethod: "password",
+      created: 1,
+    }],
+    setError: (message: string) => { error = message; },
+  });
+
+  await createTerminalSessionStarters(ctx as never).startSSH(createTermStub() as never);
+
+  assert.equal(started, false);
+  assert.match(error, /Proxy identity/);
+  assert.match(error, /incomplete/);
+});
+
+test("startSSH rejects proxy identities with blank usernames even when passwords are encrypted", async () => {
+  let started = false;
+  let error = "";
+  const terminalBackend = {
+    backendAvailable: () => true,
+    telnetAvailable: () => true,
+    moshAvailable: () => true,
+    localAvailable: () => true,
+    serialAvailable: () => true,
+    execAvailable: () => true,
+    startSSHSession: async () => {
+      started = true;
+      return "ssh-session";
+    },
+    startTelnetSession: async () => "telnet-session",
+    startMoshSession: async () => "mosh-session",
+    startLocalSession: async () => "local-session",
+    startSerialSession: async () => "serial-session",
+    execCommand: async () => ({}),
+    onSessionData: () => noop,
+    onSessionExit: () => noop,
+    onChainProgress: () => noop,
+    writeToSession: noop,
+    resizeSession: noop,
+  };
+  const ctx = createStarterContext({
+    terminalBackend,
+    host: {
+      id: "host-1",
+      label: "Target",
+      hostname: "target.example.test",
+      username: "alice",
+      proxyConfig: {
+        type: "http",
+        host: "proxy.example.test",
+        port: 3128,
+        identityId: "identity-1",
+      },
+    },
+    identities: [{
+      id: "identity-1",
+      label: "Proxy login",
+      username: " ",
+      authMethod: "password",
+      password: ENCRYPTED_CREDENTIAL_PLACEHOLDER,
+      created: 1,
+    }],
+    setError: (message: string) => { error = message; },
+  });
+
+  await createTerminalSessionStarters(ctx as never).startSSH(createTermStub() as never);
+
+  assert.equal(started, false);
+  assert.match(error, /Proxy identity/);
+  assert.match(error, /incomplete/);
+});
+
+test("startSSH rejects target proxy identity passwords that cannot be decrypted", async () => {
+  let started = false;
+  let error = "";
+  const terminalBackend = {
+    backendAvailable: () => true,
+    telnetAvailable: () => true,
+    moshAvailable: () => true,
+    localAvailable: () => true,
+    serialAvailable: () => true,
+    execAvailable: () => true,
+    startSSHSession: async () => {
+      started = true;
+      return "ssh-session";
+    },
+    startTelnetSession: async () => "telnet-session",
+    startMoshSession: async () => "mosh-session",
+    startLocalSession: async () => "local-session",
+    startSerialSession: async () => "serial-session",
+    execCommand: async () => ({}),
+    onSessionData: () => noop,
+    onSessionExit: () => noop,
+    onChainProgress: () => noop,
+    writeToSession: noop,
+    resizeSession: noop,
+  };
+  const ctx = createStarterContext({
+    terminalBackend,
+    host: {
+      id: "host-1",
+      label: "Target",
+      hostname: "target.example.test",
+      username: "alice",
+      proxyConfig: {
+        type: "http",
+        host: "proxy.example.test",
+        port: 3128,
+        identityId: "identity-1",
+      },
+    },
+    identities: [{
+      id: "identity-1",
+      label: "Proxy login",
+      username: "proxy-user",
+      authMethod: "password",
+      password: ENCRYPTED_CREDENTIAL_PLACEHOLDER,
+      created: 1,
+    }],
+    setError: (message: string) => { error = message; },
+  });
+
+  await createTerminalSessionStarters(ctx as never).startSSH(createTermStub() as never);
+
+  assert.equal(started, false);
+  assert.match(error, /Proxy credentials cannot be decrypted/);
+});
+
+test("startSSH rejects missing jump host proxy identities before connecting", async () => {
+  let started = false;
+  let error = "";
+  const terminalBackend = {
+    backendAvailable: () => true,
+    telnetAvailable: () => true,
+    moshAvailable: () => true,
+    localAvailable: () => true,
+    serialAvailable: () => true,
+    execAvailable: () => true,
+    startSSHSession: async () => {
+      started = true;
+      return "ssh-session";
+    },
+    startTelnetSession: async () => "telnet-session",
+    startMoshSession: async () => "mosh-session",
+    startLocalSession: async () => "local-session",
+    startSerialSession: async () => "serial-session",
+    execCommand: async () => ({}),
+    onSessionData: () => noop,
+    onSessionExit: () => noop,
+    onChainProgress: () => noop,
+    writeToSession: noop,
+    resizeSession: noop,
+  };
+  const ctx = createStarterContext({
+    terminalBackend,
+    host: {
+      id: "host-1",
+      label: "Target",
+      hostname: "target.example.test",
+      username: "alice",
+      hostChain: { hostIds: ["jump-1"] },
+    },
+    resolvedChainHosts: [{
+      id: "jump-1",
+      label: "Jump",
+      hostname: "jump.example.test",
+      username: "jump",
+      proxyConfig: {
+        type: "http",
+        host: "proxy.example.test",
+        port: 3128,
+        identityId: "missing-identity",
+      },
+    }],
+    setError: (message: string) => { error = message; },
+  });
+
+  await createTerminalSessionStarters(ctx as never).startSSH(createTermStub() as never);
+
+  assert.equal(started, false);
+  assert.match(error, /Proxy identity/);
+  assert.match(error, /Jump/);
+});
+
+test("startSSH rejects incomplete jump host proxy identities before connecting", async () => {
+  let started = false;
+  let error = "";
+  const terminalBackend = {
+    backendAvailable: () => true,
+    telnetAvailable: () => true,
+    moshAvailable: () => true,
+    localAvailable: () => true,
+    serialAvailable: () => true,
+    execAvailable: () => true,
+    startSSHSession: async () => {
+      started = true;
+      return "ssh-session";
+    },
+    startTelnetSession: async () => "telnet-session",
+    startMoshSession: async () => "mosh-session",
+    startLocalSession: async () => "local-session",
+    startSerialSession: async () => "serial-session",
+    execCommand: async () => ({}),
+    onSessionData: () => noop,
+    onSessionExit: () => noop,
+    onChainProgress: () => noop,
+    writeToSession: noop,
+    resizeSession: noop,
+  };
+  const ctx = createStarterContext({
+    terminalBackend,
+    host: {
+      id: "host-1",
+      label: "Target",
+      hostname: "target.example.test",
+      username: "alice",
+      hostChain: { hostIds: ["jump-1"] },
+    },
+    identities: [{
+      id: "identity-1",
+      label: "Proxy login",
+      username: "",
+      authMethod: "password",
+      password: ENCRYPTED_CREDENTIAL_PLACEHOLDER,
+      created: 1,
+    }],
+    resolvedChainHosts: [{
+      id: "jump-1",
+      label: "Jump",
+      hostname: "jump.example.test",
+      username: "jump",
+      proxyConfig: {
+        type: "http",
+        host: "proxy.example.test",
+        port: 3128,
+        identityId: "identity-1",
+      },
+    }],
+    setError: (message: string) => { error = message; },
+  });
+
+  await createTerminalSessionStarters(ctx as never).startSSH(createTermStub() as never);
+
+  assert.equal(started, false);
+  assert.match(error, /Proxy identity/);
+  assert.match(error, /incomplete/);
+  assert.match(error, /Jump/);
+});
+
+test("startSSH rejects jump host proxy identity passwords that cannot be decrypted", async () => {
+  let started = false;
+  let error = "";
+  const terminalBackend = {
+    backendAvailable: () => true,
+    telnetAvailable: () => true,
+    moshAvailable: () => true,
+    localAvailable: () => true,
+    serialAvailable: () => true,
+    execAvailable: () => true,
+    startSSHSession: async () => {
+      started = true;
+      return "ssh-session";
+    },
+    startTelnetSession: async () => "telnet-session",
+    startMoshSession: async () => "mosh-session",
+    startLocalSession: async () => "local-session",
+    startSerialSession: async () => "serial-session",
+    execCommand: async () => ({}),
+    onSessionData: () => noop,
+    onSessionExit: () => noop,
+    onChainProgress: () => noop,
+    writeToSession: noop,
+    resizeSession: noop,
+  };
+  const ctx = createStarterContext({
+    terminalBackend,
+    host: {
+      id: "host-1",
+      label: "Target",
+      hostname: "target.example.test",
+      username: "alice",
+      hostChain: { hostIds: ["jump-1"] },
+    },
+    identities: [{
+      id: "identity-1",
+      label: "Proxy login",
+      username: "proxy-user",
+      authMethod: "password",
+      password: ENCRYPTED_CREDENTIAL_PLACEHOLDER,
+      created: 1,
+    }],
+    resolvedChainHosts: [{
+      id: "jump-1",
+      label: "Jump",
+      hostname: "jump.example.test",
+      username: "jump",
+      proxyConfig: {
+        type: "http",
+        host: "proxy.example.test",
+        port: 3128,
+        identityId: "identity-1",
+      },
+    }],
+    setError: (message: string) => { error = message; },
+  });
+
+  await createTerminalSessionStarters(ctx as never).startSSH(createTermStub() as never);
+
+  assert.equal(started, false);
+  assert.match(error, /cannot be decrypted/);
+  assert.match(error, /Jump/);
+});
+
 test("startSSH sends key and password together in one connection for publickey+password MFA hosts", async () => {
   let capturedOptions: Record<string, unknown> | null = null;
   let startCalls = 0;

@@ -9,6 +9,10 @@ import { isEncryptedCredentialPlaceholder, sanitizeCredentialValue } from '../..
 import { resolveBridgeKeyAuth, resolveHostAuth } from '../../domain/sshAuth';
 import { resolveHostKeepalive } from '../../domain/host';
 import {
+  findIncompleteProxyIdentityId,
+  findMissingProxyIdentityId,
+  formatIncompleteProxyIdentityMessage,
+  formatMissingProxyIdentityMessage,
   hasUnreadableProxyCredential,
   hasUsableProxyConfig,
   resolveProxyConfigAuth,
@@ -398,6 +402,12 @@ export const startPortForward = async (
     if (host.proxyProfileId && !host.proxyConfig) {
       throw new Error(`Saved proxy for host "${host.label || host.hostname}" is missing. Open host settings and select a valid proxy.`);
     }
+    if (findMissingProxyIdentityId(host.proxyConfig, identities)) {
+      throw new Error(formatMissingProxyIdentityMessage(host.label || host.hostname));
+    }
+    if (findIncompleteProxyIdentityId(host.proxyConfig, identities)) {
+      throw new Error(formatIncompleteProxyIdentityMessage(host.label || host.hostname));
+    }
 
     const resolved = resolveHostAuth({ host, keys, identities });
     const key = resolved.key;
@@ -418,6 +428,12 @@ export const startPortForward = async (
         .map((jumpHost, index) => {
           if (jumpHost.proxyProfileId && !jumpHost.proxyConfig) {
             throw new Error(`Saved proxy for jump host "${jumpHost.label || jumpHost.hostname}" is missing. Open host settings and select a valid proxy.`);
+          }
+          if (findMissingProxyIdentityId(jumpHost.proxyConfig, identities)) {
+            throw new Error(formatMissingProxyIdentityMessage(jumpHost.label || jumpHost.hostname));
+          }
+          if (findIncompleteProxyIdentityId(jumpHost.proxyConfig, identities)) {
+            throw new Error(formatIncompleteProxyIdentityMessage(jumpHost.label || jumpHost.hostname));
           }
           const hasConfiguredJumpProxyEndpoint =
             index === 0 &&
