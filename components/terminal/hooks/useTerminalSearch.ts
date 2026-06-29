@@ -35,7 +35,22 @@ export const useTerminalSearch = ({
     false,
   );
   const [searchMatchCount, setSearchMatchCount] = useState<SearchMatchCount>(null);
+  // Bumped each time the search hotkey fires while the bar is already open.
+  // The SearchBar watches this token to refocus its input — without it, calling
+  // setIsSearchOpen(true) when already open is a no-op (React bails on the
+  // unchanged boolean) and focus never returns to the input. See issue #1789.
+  const [searchFocusToken, setSearchFocusToken] = useState(0);
   const searchTermRef = useRef<string>("");
+
+  // Invoked by the searchTerminal hotkey (Cmd/Ctrl+F). Opens the bar if closed;
+  // refocuses the input if already open (focus may have moved elsewhere).
+  const requestSearchFocus = useCallback(() => {
+    if (isSearchOpen) {
+      setSearchFocusToken((n) => n + 1);
+    } else {
+      setIsSearchOpen(true);
+    }
+  }, [isSearchOpen, setIsSearchOpen]);
 
   const clearSearchDecorations = useCallback(() => {
     searchAddonRef.current?.clearDecorations();
@@ -99,6 +114,8 @@ export const useTerminalSearch = ({
     isSearchOpen,
     setIsSearchOpen,
     searchMatchCount,
+    searchFocusToken,
+    requestSearchFocus,
     handleToggleSearch,
     handleSearch,
     handleFindNext,
