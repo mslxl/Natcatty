@@ -8,6 +8,7 @@ import {
   abortTerminalWriteQueue,
   enqueueTerminalWrite,
   getTerminalWriteQueueDepth,
+  isTerminalWriteQueueInFloodMode,
   setTerminalWriteQueueDropHandler,
 } from "./terminalWriteQueue.ts";
 
@@ -29,10 +30,11 @@ test("enqueueTerminalWrite serializes writes in order", () => {
   assert.deepEqual(order, [1, 2]);
 });
 
-test("collapses queued writes when item cap is exceeded", () => {
+test("marks flood mode without dropping queued writes when item cap is exceeded", () => {
   const term = createFakeTerm();
   const dropped: number[] = [];
   let releaseFirst: (() => void) | null = null;
+  let completed = 0;
 
   enqueueTerminalWrite(term, 10, (done) => {
     releaseFirst = done;
@@ -42,17 +44,22 @@ test("collapses queued writes when item cap is exceeded", () => {
     enqueueTerminalWrite(
       term,
       10,
-      (done) => done(),
+      (done) => {
+        completed += 1;
+        done();
+      },
       { onDropped: (bytes) => dropped.push(bytes) },
     );
   }
 
-  assert.ok(dropped.length > 0);
-  assert.ok(getTerminalWriteQueueDepth(term) <= 1);
+  assert.deepEqual(dropped, []);
+  assert.equal(isTerminalWriteQueueInFloodMode(term), true);
+  assert.equal(getTerminalWriteQueueDepth(term), MAX_WRITE_QUEUE_ITEMS + 1);
   releaseFirst?.();
+  assert.equal(completed, MAX_WRITE_QUEUE_ITEMS + 1);
 });
 
-test("setTerminalWriteQueueDropHandler applies to queues created after registration", () => {
+test("setTerminalWriteQueueDropHandler only reports explicit queue aborts", () => {
   const term = createFakeTerm();
   const dropped: number[] = [];
   let releaseFirst: (() => void) | null = null;
@@ -66,7 +73,10 @@ test("setTerminalWriteQueueDropHandler applies to queues created after registrat
     enqueueTerminalWrite(term, 10, (done) => done());
   }
 
-  assert.ok(dropped.length > 0);
+  assert.deepEqual(dropped, []);
+  assert.equal(isTerminalWriteQueueInFloodMode(term), true);
+  abortTerminalWriteQueue(term);
+  assert.deepEqual(dropped, [MAX_WRITE_QUEUE_ITEMS * 10 + 10]);
   releaseFirst?.();
 });
 

@@ -590,6 +590,28 @@ export const prioritizeTerminalInput = (
     };
   }
 
+  if (hasVisibleBacklog && (!isInterrupt || options.drainStaleOutput !== true)) {
+    let ackAfterInput = 0;
+    if (deferredAck > 0) {
+      ackAfterInput = clearDeferredTerminalWriteAck(term);
+      scheduleResume(() => {
+        if (ackAfterInput > 0) {
+          ackTerminalSessionFlow(backend, sessionId, ackAfterInput);
+        }
+        flushTerminalSessionFlowAck(sessionId);
+      });
+    }
+
+    return {
+      sessionId,
+      backlogBytes: backlog,
+      writeQueueDepth: queueDepth,
+      deferredAckBytes: deferredAck,
+      ackAfterInputBytes: ackAfterInput,
+      scheduledBackendResume: ackAfterInput > 0,
+    };
+  }
+
   if (isInterrupt && hasVisibleBacklog && options.drainStaleOutput === true) {
     armTerminalInterruptDisplayGate(term, options);
   }
