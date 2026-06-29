@@ -5,11 +5,19 @@ export const MAX_WRITE_QUEUE_BYTES = 512 * 1024;
 
 type QueuedWrite = {
   bytes: number;
-  writes: Array<(done: () => void) => void>;
+  steps: QueuedWriteStep[];
+  nextIndex: number;
+  cancelled: boolean;
+};
+
+type QueuedWriteStep = {
+  bytes: number;
+  write: (done: () => void) => void;
 };
 
 type TerminalWriteQueue = {
   writing: boolean;
+  active?: QueuedWrite;
   pending: QueuedWrite[];
   pendingBytes: number;
   floodMode: boolean;
@@ -46,7 +54,13 @@ const scheduleNextTerminalWrite = (term: XTerm, queue: TerminalWriteQueue) => {
   queue.pendingBytes -= next.bytes;
   if (queue.pendingBytes < 0) queue.pendingBytes = 0;
   queue.writing = true;
-  runQueuedWrite(next, () => scheduleNextTerminalWrite(term, queue));
+  queue.active = next;
+  runQueuedWrite(next, () => {
+    if (queue.active === next) {
+      queue.active = undefined;
+    }
+    scheduleNextTerminalWrite(term, queue);
+  });
 };
 
 const runQueuedWrite = (item: QueuedWrite, done: () => void): void => {
@@ -62,14 +76,19 @@ const runQueuedWrite = (item: QueuedWrite, done: () => void): void => {
 
     do {
       continueRequested = false;
-      const write = item.writes[index];
+      if (item.cancelled) {
+        done();
+        return;
+      }
+      const step = item.steps[index];
       index += 1;
-      if (!write) {
+      item.nextIndex = index;
+      if (!step) {
         done();
         return;
       }
       inCallback = true;
-      write(runNext);
+      step.write(runNext);
       inCallback = false;
     } while (continueRequested);
   };
@@ -80,13 +99,18 @@ const runQueuedWrite = (item: QueuedWrite, done: () => void): void => {
 const mergePendingWrites = (queue: TerminalWriteQueue): void => {
   if (queue.pending.length <= 1) return;
 
-  const writes: Array<(done: () => void) => void> = [];
+  const steps: QueuedWriteStep[] = [];
   let bytes = 0;
   for (const item of queue.pending) {
     bytes += item.bytes;
-    writes.push(...item.writes);
+    steps.push(...item.steps.slice(item.nextIndex));
   }
-  queue.pending = [{ bytes, writes }];
+  queue.pending = [{
+    bytes,
+    steps,
+    nextIndex: 0,
+    cancelled: false,
+  }];
   queue.pendingBytes = bytes;
   queue.floodMode = true;
 };
@@ -142,7 +166,9 @@ export const enqueueTerminalWrite = (
 
   queue.pending.push({
     bytes,
-    writes: [write],
+    steps: [{ bytes, write }],
+    nextIndex: 0,
+    cancelled: false,
   });
   queue.pendingBytes += bytes;
   if (
@@ -167,15 +193,18 @@ export const abortTerminalWriteQueue = (
   if (!queue) return;
 
   let droppedBytes = queue.pendingBytes;
-  if (queue.writing) {
-    // The in-flight write is not counted in pendingBytes once dequeued.
-    droppedBytes = queue.pending.reduce((sum, item) => sum + item.bytes, 0);
+  if (queue.active) {
+    queue.active.cancelled = true;
+    droppedBytes += queue.active.steps
+      .slice(queue.active.nextIndex)
+      .reduce((sum, step) => sum + step.bytes, 0);
   }
 
   queue.pending = [];
   queue.pendingBytes = 0;
   queue.writing = false;
   queue.floodMode = false;
+  queue.active = undefined;
   terminalWriteQueues.delete(term);
 
   if (droppedBytes > 0) {

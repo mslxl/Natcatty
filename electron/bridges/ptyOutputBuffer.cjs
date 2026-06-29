@@ -55,9 +55,16 @@ function createPtyOutputBuffer(sendFn, options = {}) {
       return;
     }
     if (dataBuffer.length > 0) {
-      const pending = dataBuffer;
-      dataBuffer = "";
-      sendFn(pending);
+      while (dataBuffer.length > maxFloodBufferSize) {
+        const chunk = dataBuffer.slice(0, maxFloodBufferSize);
+        dataBuffer = dataBuffer.slice(maxFloodBufferSize);
+        sendFn(chunk);
+      }
+      if (dataBuffer.length > 0) {
+        const pending = dataBuffer;
+        dataBuffer = "";
+        sendFn(pending);
+      }
     }
   };
 

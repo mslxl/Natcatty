@@ -85,6 +85,36 @@ test("setTerminalWriteQueueDropHandler only reports explicit queue aborts", () =
   assert.equal(completed, 0);
 });
 
+test("abortTerminalWriteQueue cancels remaining merged writes while one is in flight", () => {
+  const term = createFakeTerm();
+  const dropped: number[] = [];
+  const order: number[] = [];
+  let releaseFirst: (() => void) | null = null;
+
+  enqueueTerminalWrite(term, 10, (done) => {
+    releaseFirst = done;
+  });
+
+  for (let index = 0; index < MAX_WRITE_QUEUE_ITEMS + 1; index += 1) {
+    enqueueTerminalWrite(
+      term,
+      10,
+      (done) => {
+        order.push(index);
+        if (index === 0) {
+          abortTerminalWriteQueue(term, (bytes) => dropped.push(bytes));
+        }
+        done();
+      },
+    );
+  }
+
+  releaseFirst?.();
+
+  assert.deepEqual(order, [0]);
+  assert.deepEqual(dropped, [MAX_WRITE_QUEUE_ITEMS * 10]);
+});
+
 test("merges passive flood backlog items without dropping output", () => {
   const term = createFakeTerm();
   const dropped: number[] = [];

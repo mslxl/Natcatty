@@ -172,6 +172,27 @@ test("buffers incoming data while shouldAcceptOutput returns false", async () =>
   assert.deepEqual(sends, ["beforebuffered"]);
 });
 
+test("flushes data buffered while output is not accepted in bounded chunks", async () => {
+  const sends = [];
+  let accept = false;
+  const buffer = createPtyOutputBuffer((data) => sends.push(data), {
+    maxBufferSize: 4,
+    maxFloodBufferSize: 8,
+    shouldAcceptOutput: () => accept,
+  });
+
+  buffer.bufferData("1234");
+  buffer.bufferData("5678");
+  buffer.bufferData("90ab");
+  await tick();
+
+  assert.deepEqual(sends, []);
+  accept = true;
+  buffer.flush();
+
+  assert.deepEqual(sends, ["12345678", "90ab"]);
+});
+
 test("keeps batching after a flush", async () => {
   const sends = [];
   const buffer = createPtyOutputBuffer((data) => sends.push(data));

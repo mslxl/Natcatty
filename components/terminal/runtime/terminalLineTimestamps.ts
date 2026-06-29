@@ -151,6 +151,22 @@ const getAlternateScreenAction = (sequence: string): "enter" | "leave" | null =>
   return final === "h" ? "enter" : "leave";
 };
 
+const getWraparoundAction = (sequence: string): boolean | null => {
+  const final = getCsiFinal(sequence);
+  if (final !== "h" && final !== "l") return null;
+
+  const params = sequence.slice(2, -1);
+  if (!params.startsWith("?")) return null;
+
+  const modes = params
+    .slice(1)
+    .split(";")
+    .map((part) => Number.parseInt(part, 10))
+    .filter(Number.isFinite);
+
+  return modes.includes(7) ? final === "h" : null;
+};
+
 const isPotentialAlternateScreenSequence = (sequence: string): boolean => {
   if (!sequence.startsWith("\x1b[?")) return false;
 
@@ -350,6 +366,120 @@ const countLineFeeds = (data: string): number => {
   return count;
 };
 
+const getTerminalColumnCount = (term: XTerm): number => {
+  const columns = (term as XTerm & { cols?: number }).cols;
+  return Number.isFinite(columns) && Number(columns) > 0
+    ? Math.floor(Number(columns))
+    : Number.POSITIVE_INFINITY;
+};
+
+const getTerminalCursorColumn = (term: XTerm): number => {
+  const cursorX = ((term.buffer?.active as { cursorX?: number } | undefined)?.cursorX);
+  return Number.isFinite(cursorX) && Number(cursorX) >= 0
+    ? Math.floor(Number(cursorX))
+    : 0;
+};
+
+const getTerminalWraparoundMode = (term: XTerm): boolean => (
+  ((term as XTerm & { modes?: { wraparoundMode?: boolean } }).modes?.wraparoundMode) !== false
+);
+
+const canMeasureVisualRows = (data: string): boolean => {
+  for (let index = 0; index < data.length; index += 1) {
+    if (data.charCodeAt(index) > 0x7f) return false;
+  }
+  return true;
+};
+
+const advanceMeasuredColumns = (
+  column: number,
+  rowOffset: number,
+  columns: number,
+  width: number,
+  wraparoundMode: boolean,
+): { column: number; rowOffset: number } => {
+  if (!Number.isFinite(columns)) {
+    return { column, rowOffset };
+  }
+  if (!wraparoundMode) {
+    return {
+      column: Math.min(columns, column + width),
+      rowOffset,
+    };
+  }
+  let nextRowOffset = rowOffset;
+  let nextColumn = column;
+  if (nextColumn + width > columns) {
+    nextRowOffset += 1;
+    nextColumn = 0;
+  }
+  nextColumn += width;
+  while (nextColumn > columns) {
+    nextRowOffset += 1;
+    nextColumn -= columns;
+  }
+  return { column: nextColumn, rowOffset: nextRowOffset };
+};
+
+const advanceMeasuredTab = (
+  column: number,
+  columns: number,
+): number => {
+  if (!Number.isFinite(columns) || column >= columns) {
+    return column;
+  }
+  const tabStopWidth = 8;
+  const nextTabStop = column + (tabStopWidth - (column % tabStopWidth));
+  return Math.min(nextTabStop, columns - 1);
+};
+
+const measureTerminalRows = (
+  data: string,
+  startColumn: number,
+  columns: number,
+  startWraparoundMode: boolean,
+): { rowOffset: number; column: number; wraparoundMode: boolean } => {
+  let rowOffset = 0;
+  let column = startColumn;
+  let wraparoundMode = startWraparoundMode;
+
+  for (let index = 0; index < data.length; index += 1) {
+    const sequence = readEscapeSequence(data, index);
+    if (sequence?.complete) {
+      wraparoundMode = getWraparoundAction(sequence.sequence) ?? wraparoundMode;
+      index = sequence.endIndex;
+      continue;
+    }
+
+    const char = data[index];
+    if (char === "\n") {
+      rowOffset += 1;
+      if (Number.isFinite(columns) && column >= columns) {
+        column = columns - 1;
+      }
+      continue;
+    }
+    if (char === "\r") {
+      column = 0;
+      continue;
+    }
+    if (char === "\b") {
+      column = Math.max(0, column - 1);
+      continue;
+    }
+    if (char === "\t") {
+      column = advanceMeasuredTab(column, columns);
+      continue;
+    }
+    if (char < " " || char === "\u007f") {
+      continue;
+    }
+    ({ column, rowOffset } = advanceMeasuredColumns(column, rowOffset, columns, 1, wraparoundMode));
+  }
+
+  return { rowOffset, column, wraparoundMode };
+};
+
 const writeBatchedTimestampSegments = (
   term: XTerm,
   store: TimestampStore,
@@ -357,15 +487,23 @@ const writeBatchedTimestampSegments = (
   segments: TerminalLineTimestampSegment[],
   done: () => void,
 ): void => {
-  const timestamps: Array<{ label: string; lineOffset: number }> = [];
-  let lineOffset = 0;
+  const timestamps: Array<{ label: string; rowOffset: number }> = [];
+  const columns = getTerminalColumnCount(term);
+  let column = getTerminalCursorColumn(term);
+  let wraparoundMode = getTerminalWraparoundMode(term);
+  let rowOffset = 0;
 
   for (const segment of segments) {
     if (segment.kind === "timestamp") {
-      timestamps.push({ label: segment.label, lineOffset });
+      timestamps.push({ label: segment.label, rowOffset });
       continue;
     }
-    lineOffset += countLineFeeds(segment.data);
+    const measured = Number.isFinite(columns) && canMeasureVisualRows(segment.data)
+      ? measureTerminalRows(segment.data, column, columns, wraparoundMode)
+      : { rowOffset: countLineFeeds(segment.data), column, wraparoundMode };
+    rowOffset += measured.rowOffset;
+    column = measured.column;
+    wraparoundMode = measured.wraparoundMode;
   }
 
   term.write(data, () => {
@@ -376,7 +514,7 @@ const writeBatchedTimestampSegments = (
         store,
         timestamp.label,
         false,
-        timestamp.lineOffset - lineOffset,
+        timestamp.rowOffset - rowOffset,
       ) || timestampRecorded;
     }
     if (timestampRecorded) {
