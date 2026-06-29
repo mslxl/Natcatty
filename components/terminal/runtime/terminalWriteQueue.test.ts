@@ -52,7 +52,7 @@ test("keeps queued writes when item cap is exceeded", () => {
   }
 
   assert.deepEqual(dropped, []);
-  assert.equal(getTerminalWriteQueueDepth(term), MAX_WRITE_QUEUE_ITEMS + 1);
+  assert.equal(getTerminalWriteQueueDepth(term), 1);
   releaseFirst?.();
   assert.deepEqual(order, Array.from({ length: MAX_WRITE_QUEUE_ITEMS + 1 }, (_, index) => index));
 });
@@ -78,6 +78,34 @@ test("setTerminalWriteQueueDropHandler is not used for passive flood backlogs", 
   assert.deepEqual(dropped, []);
   releaseFirst?.();
   assert.equal(completed, MAX_WRITE_QUEUE_ITEMS + 1);
+});
+
+test("merges passive flood backlog items without dropping output", () => {
+  const term = createFakeTerm();
+  const dropped: number[] = [];
+  const order: number[] = [];
+  let releaseFirst: (() => void) | null = null;
+
+  enqueueTerminalWrite(term, 10, (done) => {
+    releaseFirst = done;
+  });
+
+  for (let index = 0; index < MAX_WRITE_QUEUE_ITEMS + 10; index += 1) {
+    enqueueTerminalWrite(
+      term,
+      10,
+      (done) => {
+        order.push(index);
+        done();
+      },
+      { onDropped: (bytes) => dropped.push(bytes) },
+    );
+  }
+
+  assert.equal(getTerminalWriteQueueDepth(term) < MAX_WRITE_QUEUE_ITEMS + 10, true);
+  assert.deepEqual(dropped, []);
+  releaseFirst?.();
+  assert.deepEqual(order, Array.from({ length: MAX_WRITE_QUEUE_ITEMS + 10 }, (_, index) => index));
 });
 
 test("abortTerminalWriteQueue drops pending bytes and reports dropped count", () => {

@@ -51,6 +51,9 @@ function createPtyOutputBuffer(sendFn, options = {}) {
   const flushNow = () => {
     scheduled = null;
     scheduledType = null;
+    if (!shouldAcceptOutput()) {
+      return;
+    }
     if (dataBuffer.length > 0) {
       const pending = dataBuffer;
       dataBuffer = "";
@@ -72,10 +75,10 @@ function createPtyOutputBuffer(sendFn, options = {}) {
   };
 
   const bufferData = (data) => {
+    dataBuffer += data;
     if (!shouldAcceptOutput()) {
       return;
     }
-    dataBuffer += data;
     if (dataBuffer.length >= maxFloodBufferSize) {
       cancelScheduled();
       flushNow();

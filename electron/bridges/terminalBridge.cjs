@@ -1172,6 +1172,9 @@ function setSessionFlowPaused(event, payload) {
   }
   const trace = getRecentInterruptTrace(session);
   setRendererFlowPaused(session, payload.paused);
+  if (!payload.paused) {
+    session.flushPendingData?.();
+  }
   if (trace) {
     logTerminalFlowPauseSample(session, {
       sessionId: payload.sessionId,
@@ -1190,6 +1193,7 @@ function ackSessionFlow(event, payload) {
     senderId: event?.sender?.id,
   });
   trackAck(session, Number(payload.bytes));
+  session.flushPendingData?.();
 }
 
 /**

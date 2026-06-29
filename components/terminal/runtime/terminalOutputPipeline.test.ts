@@ -92,6 +92,7 @@ test("prioritizeTerminalInput flushes batched ack remainders after dropping byte
     flow,
     backend,
     (callback: () => void) => deferred.push(callback),
+    { reason: "interrupt" },
   );
 
   assert.deepEqual(acked, []);
@@ -124,6 +125,7 @@ test("prioritizeTerminalInput flushes deferred xterm write ack bytes", () => {
     flow,
     backend,
     (callback: () => void) => deferred.push(callback),
+    { reason: "interrupt" },
   );
 
   assert.deepEqual(acked, []);
@@ -161,6 +163,7 @@ test("prioritizeTerminalInput drains backlog before user input is forwarded", ()
     flow,
     backend,
     (callback: () => void) => deferred.push(callback),
+    { reason: "interrupt" },
   );
   release?.();
 
@@ -197,6 +200,7 @@ test("prioritizeTerminalInput does not resume while collecting dropped bytes", (
     flow,
     backend,
     (callback: () => void) => deferred.push(callback),
+    { reason: "interrupt" },
   );
 
   assert.deepEqual(events, ["pause"]);
@@ -231,6 +235,7 @@ test("prioritizeTerminalInput defers source resume until after input is forwarde
     flow,
     backend,
     (callback: () => void) => deferred.push(callback),
+    { reason: "interrupt" },
   );
 
   assert.equal(flow.isPaused(), false);
@@ -312,6 +317,58 @@ test("ordinary input priority preserves pending line-edit echo when flushing def
     scheduler.cancelAnimationFrame = originalCancelAnimationFrame;
     clearTerminalSessionFlowAck("sess-edit");
   }
+});
+
+test("ordinary input priority keeps queued visible output intact", () => {
+  clearTerminalSessionFlowAck("sess-input");
+  const term = createFakeTerm();
+  const acked: number[] = [];
+  const deferred: Array<() => void> = [];
+  const order: string[] = [];
+  const flow = createOutputFlowController({
+    highWaterMark: 100,
+    lowWaterMark: 20,
+    onPause: () => {},
+    onResume: () => {},
+  });
+  const backend = {
+    ackSessionFlow: (_sessionId: string, bytes: number) => {
+      acked.push(bytes);
+    },
+    setSessionFlowPaused: () => {},
+  };
+
+  flow.received(FLOW_LOW_WATER_MARK + 200);
+  let releaseFirst: (() => void) | null = null;
+  enqueueTerminalWrite(term, 20, (done) => {
+    order.push("first");
+    releaseFirst = done;
+  });
+  enqueueTerminalWrite(term, 30, (done) => {
+    order.push("second");
+    done();
+  });
+  accumulateDeferredTerminalWriteAck(term, 7);
+
+  const priority = prioritizeTerminalInput(
+    term,
+    "sess-input",
+    flow,
+    backend,
+    (callback: () => void) => deferred.push(callback),
+    { reason: "input" },
+  );
+
+  assert.equal(priority.ackAfterInputBytes, 7);
+  assert.equal(priority.writeQueueDepth, 1);
+  assert.equal(flow.pendingBytes(), FLOW_LOW_WATER_MARK + 200);
+  assert.deepEqual(order, ["first"]);
+
+  deferred[0]!();
+  assert.deepEqual(acked, [7]);
+  releaseFirst?.();
+  assert.deepEqual(order, ["first", "second"]);
+  clearTerminalSessionFlowAck("sess-input");
 });
 
 test("interrupt priority drains queued display output for ssh-like interrupts", () => {

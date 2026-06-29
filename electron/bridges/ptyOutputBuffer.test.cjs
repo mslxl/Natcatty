@@ -153,7 +153,7 @@ test("takePending() returns pending data without sending it", async () => {
   assert.deepEqual(sends, []);
 });
 
-test("drops incoming data when shouldAcceptOutput returns false", async () => {
+test("buffers incoming data while shouldAcceptOutput returns false", async () => {
   const sends = [];
   let accept = true;
   const buffer = createPtyOutputBuffer((data) => sends.push(data), {
@@ -162,10 +162,14 @@ test("drops incoming data when shouldAcceptOutput returns false", async () => {
 
   buffer.bufferData("before");
   accept = false;
-  buffer.bufferData("dropped");
+  buffer.bufferData("buffered");
   await tick();
 
-  assert.deepEqual(sends, ["before"]);
+  assert.deepEqual(sends, []);
+  accept = true;
+  buffer.flush();
+
+  assert.deepEqual(sends, ["beforebuffered"]);
 });
 
 test("keeps batching after a flush", async () => {

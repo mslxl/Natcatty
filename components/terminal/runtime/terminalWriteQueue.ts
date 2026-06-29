@@ -5,7 +5,7 @@ export const MAX_WRITE_QUEUE_BYTES = 512 * 1024;
 
 type QueuedWrite = {
   bytes: number;
-  run: () => void;
+  writes: Array<(done: () => void) => void>;
 };
 
 type TerminalWriteQueue = {
@@ -46,7 +46,49 @@ const scheduleNextTerminalWrite = (term: XTerm, queue: TerminalWriteQueue) => {
   queue.pendingBytes -= next.bytes;
   if (queue.pendingBytes < 0) queue.pendingBytes = 0;
   queue.writing = true;
-  next.run();
+  runQueuedWrite(next, () => scheduleNextTerminalWrite(term, queue));
+};
+
+const runQueuedWrite = (item: QueuedWrite, done: () => void): void => {
+  let index = 0;
+  let inCallback = false;
+  let continueRequested = false;
+
+  const runNext = (): void => {
+    if (inCallback) {
+      continueRequested = true;
+      return;
+    }
+
+    do {
+      continueRequested = false;
+      const write = item.writes[index];
+      index += 1;
+      if (!write) {
+        done();
+        return;
+      }
+      inCallback = true;
+      write(runNext);
+      inCallback = false;
+    } while (continueRequested);
+  };
+
+  runNext();
+};
+
+const mergePendingWrites = (queue: TerminalWriteQueue): void => {
+  if (queue.pending.length <= 1) return;
+
+  const writes: Array<(done: () => void) => void> = [];
+  let bytes = 0;
+  for (const item of queue.pending) {
+    bytes += item.bytes;
+    writes.push(...item.writes);
+  }
+  queue.pending = [{ bytes, writes }];
+  queue.pendingBytes = bytes;
+  queue.floodMode = true;
 };
 
 export const setTerminalWriteQueueDropHandler = (
@@ -85,16 +127,15 @@ export const enqueueTerminalWrite = (
 
   queue.pending.push({
     bytes,
-    run: () => {
-      write(() => scheduleNextTerminalWrite(term, queue));
-    },
+    writes: [write],
   });
   queue.pendingBytes += bytes;
   if (
-    queue.pending.length >= MAX_WRITE_QUEUE_ITEMS
+    queue.floodMode
+    || queue.pending.length >= MAX_WRITE_QUEUE_ITEMS
     || queue.pendingBytes > MAX_WRITE_QUEUE_BYTES
   ) {
-    queue.floodMode = true;
+    mergePendingWrites(queue);
   }
 
   if (!queue.writing) {

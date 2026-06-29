@@ -97,7 +97,7 @@ function isTransferSentryActive(transferSentry) {
 }
 
 function shouldProcessSessionOutput(session, transferSentry) {
-  return shouldAcceptSessionOutput(session) || isTransferSentryActive(transferSentry);
+  return Boolean(session) || isTransferSentryActive(transferSentry);
 }
 
 function clearSessionFlowState(session, options = {}) {
