@@ -252,6 +252,7 @@ export const zhTWVaultMessages: Messages = {
   'hostDetails.telnetOn': 'Telnet on',
   'hostDetails.port': '埠',
   'hostDetails.telnet.credentials': '憑證',
+  'hostDetails.telnet.identity.placeholder': '選擇 Telnet 身份',
   'hostDetails.telnet.username': 'Telnet 使用者名稱',
   'hostDetails.telnet.password': 'Telnet 密碼',
   'hostDetails.charset.placeholder': '字元集（例如 UTF-8）',

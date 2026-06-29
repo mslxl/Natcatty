@@ -4,10 +4,11 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { I18nProvider } from "../application/i18n/I18nProvider.tsx";
-import type { Host } from "../types.ts";
+import type { Host, Identity } from "../types.ts";
 import HostDetailsPanel, { parseOptionalPortInput } from "./HostDetailsPanel.tsx";
 import {
   prepareProxyConfigForSave,
+  prepareTelnetCredentialsForSave,
   resolvePrimaryProtocolSavePort,
   resolvePrimaryProtocolSwitchPort,
   validateProxyConfigForSave,
@@ -28,7 +29,10 @@ const hostWithMissingProxyProfile: Host = {
   createdAt: 1,
 };
 
-const renderHostDetails = (initialData: Host = hostWithMissingProxyProfile) =>
+const renderHostDetails = (
+  initialData: Host = hostWithMissingProxyProfile,
+  options: { identities?: Identity[] } = {},
+) =>
   renderToStaticMarkup(
     React.createElement(
       I18nProvider,
@@ -39,7 +43,7 @@ const renderHostDetails = (initialData: Host = hostWithMissingProxyProfile) =>
         React.createElement(HostDetailsPanel, {
           initialData,
           availableKeys: [],
-          identities: [],
+          identities: options.identities ?? [],
           proxyProfiles: [],
           groups: [],
           managedSources: [],
@@ -108,6 +112,60 @@ test("HostDetailsPanel keeps explicitly cleared telnet credentials empty", () =>
   assert.match(markup, /placeholder="Telnet Password"[^>]*value=""/);
   assert.doesNotMatch(markup, /placeholder="Telnet Username"[^>]*value="root"/);
   assert.doesNotMatch(markup, /placeholder="Telnet Password"[^>]*value="ssh-password"/);
+});
+
+test("HostDetailsPanel shows a selected telnet identity instead of manual telnet fields", () => {
+  const markup = renderHostDetails(
+    {
+      ...hostWithMissingProxyProfile,
+      protocol: "telnet",
+      telnetEnabled: true,
+      identityId: "ssh-identity",
+      telnetIdentityId: "telnet-identity",
+      telnetUsername: undefined,
+      telnetPassword: undefined,
+      proxyProfileId: undefined,
+    },
+    {
+      identities: [{
+        id: "ssh-identity",
+        label: "SSH login",
+        username: "ssh-user",
+        authMethod: "password",
+        password: "ssh-password",
+        created: 1,
+      }, {
+        id: "telnet-identity",
+        label: "Telnet login",
+        username: "telnet-user",
+        authMethod: "password",
+        password: "telnet-password",
+        created: 2,
+      }],
+    },
+  );
+
+  assert.match(markup, /telnet-user - Telnet login/);
+  assert.doesNotMatch(markup, /placeholder="Telnet Username"/);
+  assert.doesNotMatch(markup, /placeholder="Telnet Password"/);
+});
+
+test("prepareTelnetCredentialsForSave preserves selected telnet identity and clears manual telnet fields", () => {
+  const saved = prepareTelnetCredentialsForSave({
+    ...hostWithMissingProxyProfile,
+    protocol: "telnet",
+    telnetEnabled: true,
+    identityId: "ssh-identity",
+    telnetIdentityId: "telnet-identity",
+    telnetUsername: "stale-telnet-user",
+    telnetPassword: "stale-telnet-password",
+    proxyProfileId: undefined,
+  });
+
+  assert.equal(saved.identityId, "ssh-identity");
+  assert.equal(saved.telnetIdentityId, "telnet-identity");
+  assert.equal(saved.telnetUsername, undefined);
+  assert.equal(saved.telnetPassword, undefined);
 });
 
 test("HostDetailsPanel disables save when hostname is whitespace only", () => {

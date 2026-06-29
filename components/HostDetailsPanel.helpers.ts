@@ -86,6 +86,15 @@ export const resolveDetailsTelnetPassword = (
       ? groupDefaults.telnetPassword
       : host.password ?? groupDefaults?.password ?? "";
 
+export const prepareTelnetCredentialsForSave = (host: Host): Host =>
+  host.telnetIdentityId
+    ? {
+      ...host,
+      telnetUsername: undefined,
+      telnetPassword: undefined,
+    }
+    : host;
+
 export const LINUX_DISTRO_OPTION_IDS = [
   ...LINUX_DISTRO_OPTIONS,
   ...POSIX_PLATFORM_OPTIONS,

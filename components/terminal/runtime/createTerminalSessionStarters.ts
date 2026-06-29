@@ -698,17 +698,29 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
     };
     try {
       const telnetEnv = buildTermEnv(ctx.host, ctx.terminalSettings);
-      const resolvedAuth = resolveHostAuth({
-        host: ctx.host,
-        keys: ctx.keys,
-        identities: ctx.identities,
-      });
-      const telnetUsername = ctx.host.telnetUsername !== undefined
-        ? resolveTelnetUsername(ctx.host)
-        : resolvedAuth.username;
-      const rawTelnetPassword = ctx.host.telnetPassword !== undefined
-        ? resolveTelnetPassword(ctx.host)
-        : resolvedAuth.password;
+      const telnetIdentity = ctx.host.telnetIdentityId
+        ? ctx.identities.find((identity) => identity.id === ctx.host.telnetIdentityId)
+        : undefined;
+      if (ctx.host.telnetIdentityId && !telnetIdentity) {
+        const message = "Telnet identity is missing. Open host settings and select a valid identity.";
+        ctx.setError(message);
+        writeTerminalLine(ctx, term, `\r\n[${message}]`);
+        ctx.updateStatus("disconnected");
+        return;
+      }
+      if (telnetIdentity && (!telnetIdentity.username?.trim() || telnetIdentity.password === undefined)) {
+        const message = "Telnet identity must include a username and password. Open host settings and select a password identity.";
+        ctx.setError(message);
+        writeTerminalLine(ctx, term, `\r\n[${message}]`);
+        ctx.updateStatus("disconnected");
+        return;
+      }
+      const telnetUsername = telnetIdentity
+        ? telnetIdentity.username?.trim()
+        : resolveTelnetUsername(ctx.host);
+      const rawTelnetPassword = telnetIdentity
+        ? telnetIdentity.password
+        : resolveTelnetPassword(ctx.host);
       const telnetPassword = sanitizeCredentialValue(rawTelnetPassword);
       const hasTelnetPasswordForAutoLogin = rawTelnetPassword !== undefined;
       if (isEncryptedCredentialPlaceholder(rawTelnetPassword)) {

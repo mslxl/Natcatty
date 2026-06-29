@@ -318,7 +318,7 @@ test("startTelnet preserves an explicitly cleared telnet password", async () => 
   assert.equal(capturedOptions.password, "");
 });
 
-test("startTelnet falls back to selected identity credentials when telnet credentials are unset", async () => {
+test("startTelnet uses selected telnet identity credentials when telnet fields are unset", async () => {
   let capturedOptions: Record<string, unknown> | null = null;
 
   const terminalBackend = {
@@ -350,18 +350,110 @@ test("startTelnet falls back to selected identity credentials when telnet creden
       label: "Example",
       hostname: "example.test",
       username: "ssh-user",
-      identityId: "identity-1",
+      identityId: "ssh-identity",
+      telnetIdentityId: "telnet-identity",
       telnetUsername: undefined,
       telnetPassword: undefined,
       telnetPort: 2323,
     },
     keys: [],
     identities: [{
-      id: "identity-1",
-      label: "Network login",
-      username: "identity-user",
+      id: "ssh-identity",
+      label: "SSH login",
+      username: "ssh-identity-user",
       authMethod: "password",
-      password: "identity-password",
+      password: "ssh-identity-password",
+      created: 1,
+    }, {
+      id: "telnet-identity",
+      label: "Network login",
+      username: "telnet-identity-user",
+      authMethod: "password",
+      password: "telnet-identity-password",
+      created: 2,
+    }],
+    resolvedChainHosts: [],
+    sessionId: "session-1",
+    terminalSettings: {},
+    terminalBackend,
+    sessionRef: { current: null },
+    hasConnectedRef: { current: false },
+    hasRunStartupCommandRef: { current: false },
+    disposeDataRef: { current: null },
+    disposeExitRef: { current: null },
+    fitAddonRef: { current: null },
+    serializeAddonRef: { current: null },
+    pendingAuthRef: { current: null },
+    updateStatus: noop,
+    setStatus: noop,
+    setError: noop,
+    setNeedsAuth: noop,
+    setAuthRetryMessage: noop,
+    setAuthPassword: noop,
+    setProgressLogs: noop,
+    setProgressValue: noop,
+    setChainProgress: noop,
+  };
+
+  const term = {
+    cols: 120,
+    rows: 32,
+    write: noop,
+    writeln: noop,
+    scrollToBottom: noop,
+  };
+
+  await createTerminalSessionStarters(ctx as never).startTelnet(term as never);
+
+  assert.ok(capturedOptions);
+  assert.equal(capturedOptions.username, "telnet-identity-user");
+  assert.equal(capturedOptions.password, "telnet-identity-password");
+});
+
+test("startTelnet does not fall back to ssh identity credentials when telnet identity is unset", async () => {
+  let capturedOptions: Record<string, unknown> | null = null;
+
+  const terminalBackend = {
+    backendAvailable: () => true,
+    telnetAvailable: () => true,
+    moshAvailable: () => true,
+    localAvailable: () => true,
+    serialAvailable: () => true,
+    execAvailable: () => true,
+    startSSHSession: async () => "ssh-session",
+    startTelnetSession: async (options: Record<string, unknown>) => {
+      capturedOptions = options;
+      return "telnet-session";
+    },
+    startMoshSession: async () => "mosh-session",
+    startLocalSession: async () => "local-session",
+    startSerialSession: async () => "serial-session",
+    execCommand: async () => ({}),
+    onSessionData: () => noop,
+    onSessionExit: () => noop,
+    onChainProgress: () => noop,
+    writeToSession: noop,
+    resizeSession: noop,
+  };
+
+  const ctx = {
+    host: {
+      id: "host-1",
+      label: "Example",
+      hostname: "example.test",
+      username: "manual-host-user",
+      identityId: "ssh-identity",
+      telnetUsername: undefined,
+      telnetPassword: undefined,
+      telnetPort: 2323,
+    },
+    keys: [],
+    identities: [{
+      id: "ssh-identity",
+      label: "SSH login",
+      username: "ssh-identity-user",
+      authMethod: "password",
+      password: "ssh-identity-password",
       created: 1,
     }],
     resolvedChainHosts: [],
@@ -398,8 +490,168 @@ test("startTelnet falls back to selected identity credentials when telnet creden
   await createTerminalSessionStarters(ctx as never).startTelnet(term as never);
 
   assert.ok(capturedOptions);
-  assert.equal(capturedOptions.username, "identity-user");
-  assert.equal(capturedOptions.password, "identity-password");
+  assert.equal(capturedOptions.username, "manual-host-user");
+  assert.equal(capturedOptions.password, undefined);
+});
+
+test("startTelnet rejects missing telnet identities before connecting", async () => {
+  let didConnect = false;
+  let error: string | null = null;
+
+  const terminalBackend = {
+    backendAvailable: () => true,
+    telnetAvailable: () => true,
+    moshAvailable: () => true,
+    localAvailable: () => true,
+    serialAvailable: () => true,
+    execAvailable: () => true,
+    startSSHSession: async () => "ssh-session",
+    startTelnetSession: async () => {
+      didConnect = true;
+      return "telnet-session";
+    },
+    startMoshSession: async () => "mosh-session",
+    startLocalSession: async () => "local-session",
+    startSerialSession: async () => "serial-session",
+    execCommand: async () => ({}),
+    onSessionData: () => noop,
+    onSessionExit: () => noop,
+    onChainProgress: () => noop,
+    writeToSession: noop,
+    resizeSession: noop,
+  };
+
+  const ctx = {
+    host: {
+      id: "host-1",
+      label: "Example",
+      hostname: "example.test",
+      username: "manual-host-user",
+      telnetIdentityId: "missing-telnet-identity",
+      telnetPort: 2323,
+    },
+    keys: [],
+    identities: [],
+    resolvedChainHosts: [],
+    sessionId: "session-1",
+    terminalSettings: {},
+    terminalBackend,
+    sessionRef: { current: null },
+    hasConnectedRef: { current: false },
+    hasRunStartupCommandRef: { current: false },
+    disposeDataRef: { current: null },
+    disposeExitRef: { current: null },
+    fitAddonRef: { current: null },
+    serializeAddonRef: { current: null },
+    pendingAuthRef: { current: null },
+    updateStatus: noop,
+    setStatus: noop,
+    setError: (message: string) => {
+      error = message;
+    },
+    setNeedsAuth: noop,
+    setAuthRetryMessage: noop,
+    setAuthPassword: noop,
+    setProgressLogs: noop,
+    setProgressValue: noop,
+    setChainProgress: noop,
+  };
+
+  const term = {
+    cols: 120,
+    rows: 32,
+    write: noop,
+    writeln: noop,
+    scrollToBottom: noop,
+  };
+
+  await createTerminalSessionStarters(ctx as never).startTelnet(term as never);
+
+  assert.equal(didConnect, false);
+  assert.match(error ?? "", /Telnet identity is missing/);
+});
+
+test("startTelnet rejects telnet identities without passwords before connecting", async () => {
+  let didConnect = false;
+  let error: string | null = null;
+
+  const terminalBackend = {
+    backendAvailable: () => true,
+    telnetAvailable: () => true,
+    moshAvailable: () => true,
+    localAvailable: () => true,
+    serialAvailable: () => true,
+    execAvailable: () => true,
+    startSSHSession: async () => "ssh-session",
+    startTelnetSession: async () => {
+      didConnect = true;
+      return "telnet-session";
+    },
+    startMoshSession: async () => "mosh-session",
+    startLocalSession: async () => "local-session",
+    startSerialSession: async () => "serial-session",
+    execCommand: async () => ({}),
+    onSessionData: () => noop,
+    onSessionExit: () => noop,
+    onChainProgress: () => noop,
+    writeToSession: noop,
+    resizeSession: noop,
+  };
+
+  const ctx = {
+    host: {
+      id: "host-1",
+      label: "Example",
+      hostname: "example.test",
+      username: "manual-host-user",
+      telnetIdentityId: "passwordless-telnet-identity",
+      telnetPort: 2323,
+    },
+    keys: [],
+    identities: [{
+      id: "passwordless-telnet-identity",
+      label: "Passwordless",
+      username: "telnet-user",
+      authMethod: "key",
+      created: 1,
+    }],
+    resolvedChainHosts: [],
+    sessionId: "session-1",
+    terminalSettings: {},
+    terminalBackend,
+    sessionRef: { current: null },
+    hasConnectedRef: { current: false },
+    hasRunStartupCommandRef: { current: false },
+    disposeDataRef: { current: null },
+    disposeExitRef: { current: null },
+    fitAddonRef: { current: null },
+    serializeAddonRef: { current: null },
+    pendingAuthRef: { current: null },
+    updateStatus: noop,
+    setStatus: noop,
+    setError: (message: string) => {
+      error = message;
+    },
+    setNeedsAuth: noop,
+    setAuthRetryMessage: noop,
+    setAuthPassword: noop,
+    setProgressLogs: noop,
+    setProgressValue: noop,
+    setChainProgress: noop,
+  };
+
+  const term = {
+    cols: 120,
+    rows: 32,
+    write: noop,
+    writeln: noop,
+    scrollToBottom: noop,
+  };
+
+  await createTerminalSessionStarters(ctx as never).startTelnet(term as never);
+
+  assert.equal(didConnect, false);
+  assert.match(error ?? "", /Telnet identity must include a username and password/);
 });
 
 test("startTelnet marks the session connected before the server sends output", async () => {

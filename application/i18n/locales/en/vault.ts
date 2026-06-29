@@ -720,6 +720,7 @@ export const enVaultMessages: Messages = {
   'hostDetails.telnetOn': 'Telnet on',
   'hostDetails.port': 'port',
   'hostDetails.telnet.credentials': 'Credentials',
+  'hostDetails.telnet.identity.placeholder': 'Select Telnet Identity',
   'hostDetails.telnet.username': 'Telnet Username',
   'hostDetails.telnet.password': 'Telnet Password',
   'hostDetails.charset.placeholder': 'Charset (e.g. UTF-8)',
