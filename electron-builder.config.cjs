@@ -199,6 +199,10 @@ module.exports = {
             {
                 target: 'portable',
                 arch: ['x64', 'arm64']
+            },
+            {
+                target: 'zip',
+                arch: ['x64', 'arm64']
             }
         ],
         extraResources: [...moshExtraResources('win32'), ...etExtraResources('win32')]

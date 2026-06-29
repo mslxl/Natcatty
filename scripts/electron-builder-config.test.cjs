@@ -162,6 +162,14 @@ test("linux packaging includes an Arch Linux pacman package target", () => {
   );
 });
 
+test("windows packaging includes a zip archive target", () => {
+  const winTargets = config.win.target.map((entry) => entry.target);
+  assert.ok(
+    winTargets.includes("zip"),
+    "windows package builds must publish a zip archive for no-install environments",
+  );
+});
+
 test("linux FPM packages refresh the hicolor icon cache after install and remove", () => {
   const fs = require("node:fs");
   const path = require("node:path");
