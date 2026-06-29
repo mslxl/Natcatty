@@ -69,6 +69,37 @@ function createZmodemUploadFileSelector(parentPort, options = {}) {
   };
 }
 
+function createZmodemDownloadDirectorySelector(parentPort, options = {}) {
+  const randomUUIDFn = options.randomUUID || randomUUID;
+  const pendingRequests = new Map();
+
+  parentPort.on("message", (eventOrMessage) => {
+    const message = normalizeParentPortMessage(eventOrMessage);
+    if (message?.kind !== "zmodem-download-dialog-result") return;
+    const pending = pendingRequests.get(message.requestId);
+    if (!pending) return;
+    pendingRequests.delete(message.requestId);
+    if (message.error) {
+      pending.reject(new Error(message.error));
+    } else {
+      pending.resolve(message.result || { canceled: true, filePaths: [] });
+    }
+  });
+
+  return function selectZmodemDownloadDirectory(webContentsId) {
+    const requestId = randomUUIDFn();
+    const promise = new Promise((resolve, reject) => {
+      pendingRequests.set(requestId, { resolve, reject });
+    });
+    parentPort.postMessage({
+      kind: "zmodem-download-dialog",
+      requestId,
+      webContentsId,
+    });
+    return promise;
+  };
+}
+
 function main() {
   const parentPort = process.parentPort;
   if (!parentPort) {
@@ -89,6 +120,7 @@ function main() {
     },
   };
   const selectZmodemUploadFiles = createZmodemUploadFileSelector(parentPort);
+  const selectZmodemDownloadDirectory = createZmodemDownloadDirectorySelector(parentPort);
 
   const terminalBridge = require("../bridges/terminalBridge.cjs");
   const sshBridge = require("../bridges/sshBridge.cjs");
@@ -102,6 +134,7 @@ function main() {
     sftpClients,
     electronModule,
     selectZmodemUploadFiles,
+    selectZmodemDownloadDirectory,
   };
 
   runtime = createTerminalWorkerRuntime({
@@ -198,6 +231,7 @@ if (require.main === module) {
 
 module.exports = {
   createWorkerSender,
+  createZmodemDownloadDirectorySelector,
   createZmodemUploadFileSelector,
   normalizeParentPortMessage,
   main,

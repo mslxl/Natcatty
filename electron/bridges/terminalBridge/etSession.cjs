@@ -859,6 +859,9 @@ main();
             selectUploadFiles: selectZmodemUploadFiles
               ? () => selectZmodemUploadFiles(session.webContentsId)
               : undefined,
+            selectDownloadDirectory: selectZmodemDownloadDirectory
+              ? () => selectZmodemDownloadDirectory(session.webContentsId)
+              : undefined,
             label: "ET",
           });
           session.zmodemSentry = etZmodemSentry;

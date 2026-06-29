@@ -623,6 +623,9 @@ function createMoshSessionApi(ctx) {
           selectUploadFiles: selectZmodemUploadFiles
             ? () => selectZmodemUploadFiles(session.webContentsId)
             : undefined,
+          selectDownloadDirectory: selectZmodemDownloadDirectory
+            ? () => selectZmodemDownloadDirectory(session.webContentsId)
+            : undefined,
           protocolLabel: "Mosh",
         });
         session.zmodemSentry = sentry;

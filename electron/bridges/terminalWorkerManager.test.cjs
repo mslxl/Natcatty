@@ -178,6 +178,63 @@ test("worker ZMODEM upload dialog request opens picker from the owning webConten
   });
 });
 
+test("worker ZMODEM download dialog request opens directory picker from the owning webContents", async () => {
+  const child = new FakeChild();
+  const shown = [];
+  const contents = { id: 7 };
+  const window = { id: "main-window" };
+  const manager = createTerminalWorkerManager({
+    utilityProcess: {
+      fork() {
+        return child;
+      },
+    },
+    electronModule: {
+      webContents: {
+        fromId(id) {
+          assert.equal(id, 7);
+          return contents;
+        },
+      },
+      BrowserWindow: {
+        fromWebContents(value) {
+          assert.equal(value, contents);
+          return window;
+        },
+      },
+      dialog: {
+        async showOpenDialog(owner, options) {
+          shown.push({ owner, options });
+          return { canceled: false, filePaths: ["/tmp/downloads"] };
+        },
+      },
+    },
+    workerScriptPath: "/worker.cjs",
+  });
+
+  manager.ensureStarted();
+  child.emit("message", {
+    kind: "zmodem-download-dialog",
+    requestId: "download-dialog-1",
+    webContentsId: 7,
+  });
+
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(shown, [{
+    owner: window,
+    options: {
+      properties: ["openDirectory", "createDirectory"],
+      title: "Select download directory (ZMODEM)",
+    },
+  }]);
+  assert.deepEqual(child.messages.at(-1), {
+    kind: "zmodem-download-dialog-result",
+    requestId: "download-dialog-1",
+    result: { canceled: false, filePaths: ["/tmp/downloads"] },
+  });
+});
+
 test("request transfers the output port to the worker when available", async () => {
   const child = new FakeChild();
   const outputPort = { label: "worker-output-port" };
