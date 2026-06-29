@@ -253,7 +253,6 @@ ipcRenderer.on("netcatty:exit", (_event, payload) => {
   }
   clearTerminalDataBacklog({ terminalDataBacklog }, payload.sessionId);
   terminalOutputPorts.closeSession(payload.sessionId);
-  exitListeners.delete(payload.sessionId);
   telnetAutoLoginCompleteListeners.delete(payload.sessionId);
   telnetAutoLoginCancelledListeners.delete(payload.sessionId);
   telnetEchoModeListeners.delete(payload.sessionId);

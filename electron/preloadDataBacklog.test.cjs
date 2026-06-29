@@ -292,13 +292,17 @@ test("clearTerminalDataBacklog preserves live display listeners for reconnect", 
   assert.equal(terminalDataBacklog.take("session-1"), "");
 });
 
-test("backend exit preserves live display listener for same-id reconnect", async () => {
+test("backend exit preserves live listeners for same-id reconnect", async () => {
   const preload = loadPreloadWithFakeElectron();
   try {
     const received = [];
+    const exits = [];
     preload.api.onSessionData("session-1", (chunk) => {
       received.push(chunk);
     }, { replayBacklog: true });
+    preload.api.onSessionExit("session-1", (evt) => {
+      exits.push(evt.reason);
+    });
 
     preload.handlers.get("netcatty:data")?.({}, {
       sessionId: "session-1",
@@ -317,11 +321,42 @@ test("backend exit preserves live display listener for same-id reconnect", async
       sessionId: "session-1",
       data: "after reconnect",
     });
+    preload.handlers.get("netcatty:exit")?.({}, {
+      sessionId: "session-1",
+      reason: "closed-again",
+    });
 
     assert.deepEqual(received, ["before exit", "after reconnect"]);
+    assert.deepEqual(exits, ["closed", "closed-again"]);
   } finally {
     preload.cleanup();
   }
+});
+
+test("onSessionExit unsubscribe removes empty listener set", () => {
+  const exitListeners = new Map();
+  const api = createPreloadApi({
+    ipcRenderer: {
+      invoke() {},
+      send() {},
+      on() {},
+      removeListener() {},
+    },
+    os: {
+      release: () => "10.0.19045",
+    },
+    dataListeners: new Map(),
+    displayDataListeners: new Map(),
+    terminalDataBacklog: createTerminalDataBacklog(),
+    exitListeners,
+  });
+
+  const off = api.onSessionExit("session-1", () => {});
+  assert.equal(exitListeners.has("session-1"), true);
+
+  off();
+
+  assert.equal(exitListeners.has("session-1"), false);
 });
 
 test("closeSession clears terminal data state and marks the session closed", () => {
