@@ -388,6 +388,7 @@ let sessions = null;
 let electronModule = null;
 let terminalOutputChannel = null;
 let selectZmodemUploadFiles = null;
+let selectZmodemDownloadDirectory = null;
 
 // Authentication method cache - remembers successful auth methods per host
 // Key format: "username@hostname:port"
@@ -479,6 +480,7 @@ function init(deps) {
   electronModule = deps.electronModule;
   terminalOutputChannel = deps.terminalOutputChannel || null;
   selectZmodemUploadFiles = deps.selectZmodemUploadFiles || null;
+  selectZmodemDownloadDirectory = deps.selectZmodemDownloadDirectory || null;
   configureTerminalSessionDataEmitter({
     getSession: (sessionId) => sessions?.get(sessionId),
     outputChannel: terminalOutputChannel,
@@ -874,6 +876,7 @@ const startSessionApi = createStartSessionApi({
   buildAlgorithms, randomUUID, findDefaultPrivateKey, findAllDefaultPrivateKeys,
   openTerminalOutputSession, closeTerminalOutputSession,
   get selectZmodemUploadFiles() { return selectZmodemUploadFiles; },
+  get selectZmodemDownloadDirectory() { return selectZmodemDownloadDirectory; },
   preparePrivateKeyForAuth, loadFirstIdentityFileForAuth, hasUserConfiguredKey, createKeyboardInteractiveHandler,
   createConnectionRef, acquireConnectionRef, releaseConnectionRef, findReusableSession,
   get probeReceiveConflicts() { return probeReceiveConflicts; },

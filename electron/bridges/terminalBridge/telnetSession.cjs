@@ -288,6 +288,9 @@ function createTelnetSessionApi(ctx) {
           selectUploadFiles: selectZmodemUploadFiles
             ? () => selectZmodemUploadFiles(telnetWebContentsId)
             : undefined,
+          selectDownloadDirectory: selectZmodemDownloadDirectory
+            ? () => selectZmodemDownloadDirectory(telnetWebContentsId)
+            : undefined,
           label: "Telnet",
         });
         // Attach sentry to session once created (connect callback runs after this)
