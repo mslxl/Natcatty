@@ -2298,7 +2298,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     onOutputTriggerUserInputRef: noteOutputTriggerUserInputRef,
     promptLineBreakStateRef,
     sudoAutofillRef,
-    setIsSearchOpen,
+    requestSearchFocus,
     serialLocalEcho: serialConfig?.localEcho,
     serialLineMode: serialConfig?.lineMode,
     serialLineBufferRef,
