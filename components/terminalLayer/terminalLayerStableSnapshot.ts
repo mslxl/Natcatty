@@ -107,6 +107,7 @@ export type TerminalLayerStableSnapshot = {
   handleOpenSftp: (host: Host, initialPath?: string, pendingUploadEntries?: DropEntry[], sourceSessionId?: string) => void;
   handlePendingUploadHandled: (tabId: string, requestId: string) => void;
   handleSftpInitialLocationApplied: (tabId: string, location: { hostId: string; path: string }) => void;
+  handleSftpCurrentPathChange: (memoryKey: string, location: { hostId: string; path: string }) => void;
   handleSidePanelResizeStart: (e: React.MouseEvent) => void;
   handleToggleWorkspaceComposeBar: () => void;
   handleSwitchSidePanelTab: (tab: SidePanelTab) => void;

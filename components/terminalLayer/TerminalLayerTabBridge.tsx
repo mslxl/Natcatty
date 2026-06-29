@@ -403,6 +403,7 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     handlePendingTerminalSelectionConsumed: s.handlePendingTerminalSelectionConsumed,
     handlePendingUploadHandled: s.handlePendingUploadHandled,
     handleSessionExit: s.handleSessionExit,
+    handleSftpCurrentPathChange: s.handleSftpCurrentPathChange,
     handleSftpInitialLocationApplied: s.handleSftpInitialLocationApplied,
     persistSidePanelWidth: s.persistSidePanelWidth,
     setSidePanelWidth: s.setSidePanelWidth,
