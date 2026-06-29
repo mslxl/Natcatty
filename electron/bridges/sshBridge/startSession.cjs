@@ -10,6 +10,9 @@ const {
   logTerminalOutputDropSample,
 } = require("../terminalInterruptDiagnostics.cjs");
 
+const SSH_TCP_CONNECT_TIMEOUT_MS = 20000;
+const SSH_AUTH_READY_TIMEOUT_MS = 120000;
+
 function createStartSessionApi(ctx) {
   with (ctx) {
     /**
@@ -559,8 +562,10 @@ function createStartSessionApi(ctx) {
           host: options.hostname,
           port: options.port || 22,
           username: options.username || "root",
-          // `readyTimeout` covers the entire connection + authentication flow in ssh2.
-          readyTimeout: 20000, // Fast failure for non-interactive auth
+          // `timeout` covers TCP dial silence; `readyTimeout` covers the full
+          // SSH handshake/auth flow so MFA still has enough time.
+          timeout: SSH_TCP_CONNECT_TIMEOUT_MS,
+          readyTimeout: SSH_AUTH_READY_TIMEOUT_MS,
           // Resolved keepalive (caller decides whether host override or global
           // applies). interval is in seconds; 0 means truly disabled, so
           // countMax also goes to 0 to skip ssh2's dead-connection check.
@@ -625,6 +630,12 @@ function createStartSessionApi(ctx) {
             hostname: options.hostname,
             initialPassphrase: options.passphrase,
             logPrefix: "[SSH]",
+            onPassphrasePromptShown: () => sendProgress(
+              totalHops, totalHops, options.hostname, "auth-attempt", "waiting for user input...",
+            ),
+            onPassphrasePromptResolved: () => sendProgress(
+              totalHops, totalHops, options.hostname, "auth-attempt", "user responded",
+            ),
             onLoaded: (loaded) => {
               log("Loaded identity file", { keyPath: loaded.keyPath, encrypted: !!loaded.passphrase });
             },
@@ -642,6 +653,12 @@ function createStartSessionApi(ctx) {
             hostname: options.hostname,
             initialPassphrase: effectivePassphrase,
             logPrefix: "[SSH]",
+            onPassphrasePromptShown: () => sendProgress(
+              totalHops, totalHops, options.hostname, "auth-attempt", "waiting for user input...",
+            ),
+            onPassphrasePromptResolved: () => sendProgress(
+              totalHops, totalHops, options.hostname, "auth-attempt", "user responded",
+            ),
           })
           : null;
         const effectivePrivateKey = inlineKey?.privateKey || identityFile?.privateKey;
@@ -1042,7 +1059,8 @@ function createStartSessionApi(ctx) {
           connectionSocket = await createProxySocket(
             options.proxy,
             options.hostname,
-            options.port || 22
+            options.port || 22,
+            { timeoutMs: SSH_TCP_CONNECT_TIMEOUT_MS }
           );
           connectOpts.sock = connectionSocket;
           delete connectOpts.host;
@@ -1081,7 +1099,11 @@ function createStartSessionApi(ctx) {
             }
           };
 
-          conn.once("connect", () => enableSshNoDelay(conn));
+          conn.once("connect", () => {
+            try { conn._sock?.setTimeout?.(0); } catch { }
+            sendProgress(totalHops, totalHops, options.hostname, 'tcp-connected');
+            enableSshNoDelay(conn);
+          });
           if (connectOpts.sock) enableTcpNoDelay(connectOpts.sock);
 
           conn.once("handshake", () => {
@@ -1403,9 +1425,6 @@ function createStartSessionApi(ctx) {
           }
           // If authHandler is a function, it already handles keyboard-interactive
 
-          // Increase timeout to allow for keyboard-interactive auth
-          connectOpts.readyTimeout = 120000; // 2 minutes for 2FA input
-
           console.log(`${logPrefix} Connecting to ${options.hostname}...`);
           conn.connect(connectOpts);
         });
@@ -1420,4 +1439,8 @@ function createStartSessionApi(ctx) {
   }
 }
 
-module.exports = { createStartSessionApi };
+module.exports = {
+  SSH_AUTH_READY_TIMEOUT_MS,
+  SSH_TCP_CONNECT_TIMEOUT_MS,
+  createStartSessionApi,
+};
