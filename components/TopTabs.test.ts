@@ -127,6 +127,24 @@ test("session top tab label appends the target address for ssh sessions", () => 
   );
 });
 
+test("session top tab label treats missing protocol as ssh", () => {
+  assert.equal(
+    formatSessionTopTabLabel({
+      hostLabel: "prod-web",
+      hostname: "10.1.2.34",
+    }),
+    "prod-web · 10.1.2.34",
+  );
+  assert.equal(
+    formatSessionTopTabTooltip({
+      username: "root",
+      hostname: "10.1.2.34",
+      port: 22,
+    }),
+    "root@10.1.2.34:22",
+  );
+});
+
 test("session top tab label avoids duplicating the target address", () => {
   assert.equal(
     formatSessionTopTabLabel({

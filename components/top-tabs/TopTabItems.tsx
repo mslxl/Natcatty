@@ -168,10 +168,11 @@ export const sessionStatusDot = (status: TerminalSession['status'], hasActivity:
 const getSessionTopTabAddress = (
   session: Pick<TerminalSession, 'protocol' | 'hostname' | 'moshEnabled' | 'etEnabled'>,
 ): string | null => {
+  const protocol = session.protocol ?? 'ssh';
   if (
     session.moshEnabled
     || session.etEnabled
-    || (session.protocol !== 'ssh' && session.protocol !== 'telnet')
+    || (protocol !== 'ssh' && protocol !== 'telnet')
     || !session.hostname
   ) {
     return null;
@@ -646,19 +647,21 @@ export const SessionTopTab: React.FC<SessionTopTabProps> = memo(({
   );
 
   const tabTrigger = (
-    <ContextMenuTrigger asChild>
-      {addressTooltip ? (
-        <Tooltip>
-          <TooltipTrigger asChild>{tabBody}</TooltipTrigger>
-          <TooltipContent
-            sideOffset={6}
-            className="rounded-md border border-border/60 bg-popover/95 px-2.5 py-1.5 font-mono text-[11px] font-medium leading-none text-foreground shadow-lg supports-[backdrop-filter]:backdrop-blur-sm"
-          >
-            {addressTooltip}
-          </TooltipContent>
-        </Tooltip>
-      ) : tabBody}
-    </ContextMenuTrigger>
+    addressTooltip ? (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <ContextMenuTrigger asChild>{tabBody}</ContextMenuTrigger>
+        </TooltipTrigger>
+        <TooltipContent
+          sideOffset={6}
+          className="rounded-md border border-border/60 bg-popover/95 px-2.5 py-1.5 font-mono text-[11px] font-medium leading-none text-foreground shadow-lg supports-[backdrop-filter]:backdrop-blur-sm"
+        >
+          {addressTooltip}
+        </TooltipContent>
+      </Tooltip>
+    ) : (
+      <ContextMenuTrigger asChild>{tabBody}</ContextMenuTrigger>
+    )
   );
 
   return (
