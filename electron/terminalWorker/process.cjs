@@ -6,6 +6,10 @@ const { randomUUID } = require("node:crypto");
 const { createTerminalWorkerRuntime } = require("./runtime.cjs");
 const tempDirBridge = require("../bridges/tempDirBridge.cjs");
 
+// The worker owns SSH sessions in the default runtime path. Install the same
+// DH compatibility shim as the main process before loading ssh2-backed bridges.
+require("../bridges/boringSslDhCompat.cjs").installBoringSslDhCompat();
+
 function createWorkerSender(parentPort, webContentsId) {
   return {
     id: webContentsId,
