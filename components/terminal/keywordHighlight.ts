@@ -105,7 +105,7 @@ export class KeywordHighlighter implements IDisposable {
     this.disposables.push(
       // When user scrolls, refresh visible area
       this.term.onScroll(() => {
-        this.triggerRefresh("immediate", "scroll");
+        this.triggerViewportChangeRefresh();
       }),
       // When new data is written, refresh on the next frame so highlights land
       // with the freshly rendered content instead of trailing behind it.
@@ -121,7 +121,7 @@ export class KeywordHighlighter implements IDisposable {
         const currentViewportY = this.term.buffer.active?.viewportY ?? 0;
         if (currentViewportY !== this.lastViewportY) {
           this.lastViewportY = currentViewportY;
-          this.triggerRefresh("immediate", "scroll");
+          this.triggerViewportChangeRefresh();
         }
       })
     );
@@ -468,6 +468,20 @@ export class KeywordHighlighter implements IDisposable {
       this.debounceTimer = null;
       this.executeRefresh();
     }, delay);
+  }
+
+  private triggerViewportChangeRefresh() {
+    const now = performance.now();
+    const isOutputDrivenViewportChange =
+      this.lastWriteAt > 0 &&
+      now - this.lastWriteAt <= KeywordHighlighter.WRITE_BURST_HIGHLIGHT_PAUSE_MS;
+    if (isOutputDrivenViewportChange || this.isWriteBurstActive(now)) {
+      this.markVisibleRangeDirty();
+      this.triggerRefresh("debounced", "write");
+      return;
+    }
+
+    this.triggerRefresh("immediate", "scroll");
   }
 
   private refreshViewport(reason: RefreshReason) {

@@ -3,11 +3,18 @@ import type { Terminal as XTerm } from "@xterm/xterm";
 export const MAX_WRITE_QUEUE_ITEMS = 32;
 export const MAX_WRITE_QUEUE_BYTES = 512 * 1024;
 
+export type TerminalWriteQueueOptions = {
+  onDropped?: (bytes: number) => void;
+  deferStart?: boolean;
+  yieldAfter?: boolean;
+};
+
 type QueuedWrite = {
   bytes: number;
   steps: QueuedWriteStep[];
   nextIndex: number;
   cancelled: boolean;
+  yieldAfter: boolean;
 };
 
 type QueuedWriteStep = {
@@ -22,6 +29,7 @@ type TerminalWriteQueue = {
   pendingBytes: number;
   floodMode: boolean;
   onDropped?: (bytes: number) => void;
+  drainTimer?: ReturnType<typeof setTimeout>;
 };
 
 const terminalWriteQueues = new WeakMap<XTerm, TerminalWriteQueue>();
@@ -42,6 +50,22 @@ const getOrCreateQueue = (term: XTerm): TerminalWriteQueue => {
   return queue;
 };
 
+const scheduleQueueDrain = (
+  term: XTerm,
+  queue: TerminalWriteQueue,
+  deferred: boolean,
+): void => {
+  if (queue.drainTimer) return;
+  if (!deferred) {
+    scheduleNextTerminalWrite(term, queue);
+    return;
+  }
+  queue.drainTimer = setTimeout(() => {
+    queue.drainTimer = undefined;
+    scheduleNextTerminalWrite(term, queue);
+  }, 0);
+};
+
 const scheduleNextTerminalWrite = (term: XTerm, queue: TerminalWriteQueue) => {
   const next = queue.pending.shift();
   if (!next) {
@@ -59,7 +83,7 @@ const scheduleNextTerminalWrite = (term: XTerm, queue: TerminalWriteQueue) => {
     if (queue.active === next) {
       queue.active = undefined;
     }
-    scheduleNextTerminalWrite(term, queue);
+    scheduleQueueDrain(term, queue, next.yieldAfter);
   });
 };
 
@@ -110,6 +134,7 @@ const mergePendingWrites = (queue: TerminalWriteQueue): void => {
     steps,
     nextIndex: 0,
     cancelled: false,
+    yieldAfter: true,
   }];
   queue.pendingBytes = bytes;
   queue.floodMode = true;
@@ -153,7 +178,7 @@ export const enqueueTerminalWrite = (
   term: XTerm,
   bytes: number,
   write: (done: () => void) => void,
-  options: { onDropped?: (bytes: number) => void } = {},
+  options: TerminalWriteQueueOptions = {},
 ): void => {
   const queue = getOrCreateQueue(term);
   if (options.onDropped) {
@@ -169,6 +194,7 @@ export const enqueueTerminalWrite = (
     steps: [{ bytes, write }],
     nextIndex: 0,
     cancelled: false,
+    yieldAfter: Boolean(options.yieldAfter),
   });
   queue.pendingBytes += bytes;
   if (
@@ -180,7 +206,7 @@ export const enqueueTerminalWrite = (
   }
 
   if (!queue.writing) {
-    scheduleNextTerminalWrite(term, queue);
+    scheduleQueueDrain(term, queue, Boolean(options.deferStart));
   }
 };
 
@@ -205,6 +231,10 @@ export const abortTerminalWriteQueue = (
   queue.writing = false;
   queue.floodMode = false;
   queue.active = undefined;
+  if (queue.drainTimer) {
+    clearTimeout(queue.drainTimer);
+    queue.drainTimer = undefined;
+  }
   terminalWriteQueues.delete(term);
 
   if (droppedBytes > 0) {

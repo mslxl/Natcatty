@@ -30,11 +30,12 @@ function installAnimationFrameQueue() {
   };
 }
 
-function createFakeLine(text: string) {
+function createFakeLine(text: string, onTranslate?: () => void) {
   return {
     isWrapped: false,
     length: text.length,
     translateToString() {
+      onTranslate?.();
       return text;
     },
     getCell(index: number) {
@@ -47,10 +48,22 @@ function createFakeLine(text: string) {
   };
 }
 
-function createFakeTerminal(lineText: string) {
-  const line = createFakeLine(lineText);
+function createFakeTerminal(lineText: string, options: { lineCount?: number } = {}) {
+  const lineCount = options.lineCount ?? 1;
+  let translateCount = 0;
+  const lines = Array.from({ length: lineCount }, (_, index) =>
+    createFakeLine(`${lineText} ${index}`, () => {
+      translateCount += 1;
+    })
+  );
   const decorations: Array<{ x: number; width: number; foregroundColor: string }> = [];
   const noopDisposable = { dispose() {} };
+  const handlers: {
+    scroll?: () => void;
+    writeParsed?: () => void;
+    resize?: () => void;
+    render?: () => void;
+  } = {};
   const term = {
     rows: 3,
     cols: 80,
@@ -60,14 +73,26 @@ function createFakeTerminal(lineText: string) {
         viewportY: 0,
         baseY: 0,
         cursorY: 0,
-        length: 1,
-        getLine: (lineY: number) => (lineY === 0 ? line : undefined),
+        length: lineCount,
+        getLine: (lineY: number) => lines[lineY],
       },
     },
-    onScroll: () => noopDisposable,
-    onWriteParsed: () => noopDisposable,
-    onResize: () => noopDisposable,
-    onRender: () => noopDisposable,
+    onScroll: (handler: () => void) => {
+      handlers.scroll = handler;
+      return noopDisposable;
+    },
+    onWriteParsed: (handler: () => void) => {
+      handlers.writeParsed = handler;
+      return noopDisposable;
+    },
+    onResize: (handler: () => void) => {
+      handlers.resize = handler;
+      return noopDisposable;
+    },
+    onRender: (handler: () => void) => {
+      handlers.render = handler;
+      return noopDisposable;
+    },
     registerMarker(offset: number) {
       return {
         line: offset,
@@ -89,7 +114,15 @@ function createFakeTerminal(lineText: string) {
     refresh() {},
   };
 
-  return { term, decorations };
+  return {
+    term,
+    decorations,
+    handlers,
+    getTranslateCount: () => translateCount,
+    resetTranslateCount: () => {
+      translateCount = 0;
+    },
+  };
 }
 
 test("setRules immediately highlights a newly added rule against visible terminal text", () => {
@@ -114,6 +147,44 @@ test("setRules immediately highlights a newly added rule against visible termina
     assert.deepEqual(decorations.map(({ x, width, foregroundColor }) => ({ x, width, foregroundColor })), [
       { x: 6, width: 6, foregroundColor: "#F87171" },
     ]);
+  } finally {
+    raf.restore();
+  }
+});
+
+test("output-driven viewport changes defer keyword highlight scans", async () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const { term, handlers, getTranslateCount, resetTranslateCount } = createFakeTerminal("hello DEPLOY world", {
+      lineCount: 20,
+    });
+    const highlighter = new KeywordHighlighter(term as never);
+    const rules: KeywordHighlightRule[] = [
+      {
+        id: "deploy",
+        label: "Deploy",
+        patterns: ["DEPLOY"],
+        color: "#F87171",
+        enabled: true,
+      },
+    ];
+
+    highlighter.setRules(rules, true);
+    raf.flush();
+    resetTranslateCount();
+
+    term.buffer.active.length = 40;
+    term.buffer.active.baseY = 20;
+    term.buffer.active.viewportY = 20;
+    term.buffer.active.cursorY = 2;
+    handlers.writeParsed?.();
+    handlers.render?.();
+
+    assert.equal(getTranslateCount(), 0);
+
+    await new Promise((resolve) => { setTimeout(resolve, 220); });
+    assert.ok(getTranslateCount() > 0);
+    highlighter.dispose();
   } finally {
     raf.restore();
   }

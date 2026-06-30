@@ -24,6 +24,7 @@ import {
 } from "./terminalSyncBlockFilter";
 import { appendEraseScrollbackAfterFullErases } from "../clearTerminalViewport";
 import {
+  type CoalescedTerminalWriteOptions,
   enqueueCoalescedTerminalWrite,
   flushTerminalWriteCoalescer,
   resolveFloodCoalescerByteCap,
@@ -175,8 +176,8 @@ export const writeSessionData = (
 ) => {
   const flow = getFlowController(ctx, term);
   flow.received(ingressBytes);
-  enqueueCoalescedTerminalWrite(term, data, (batch, batchIngress) => {
-    writeSessionDataImmediate(ctx, term, batch, batchIngress);
+  enqueueCoalescedTerminalWrite(term, data, (batch, batchIngress, writeOptions) => {
+    writeSessionDataImmediate(ctx, term, batch, batchIngress, writeOptions);
   }, ingressBytes);
   maybeFlushTerminalWriteCoalescerWhenUnfocused(
     term,
@@ -189,6 +190,7 @@ const writeSessionDataImmediate = (
   term: XTerm,
   data: string,
   ingressBytes: number = data.length,
+  writeOptions: CoalescedTerminalWriteOptions = {},
 ) => {
   const flow = getFlowController(ctx, term);
   enqueueTerminalWrite(term, ingressBytes, (done) => {
@@ -279,6 +281,9 @@ const writeSessionDataImmediate = (
         commitIpcAck(ackOnCallback);
       }
     });
+  }, {
+    deferStart: writeOptions.deferStart,
+    yieldAfter: writeOptions.yieldAfter,
   });
 };
 

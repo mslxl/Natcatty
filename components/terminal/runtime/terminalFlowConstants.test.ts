@@ -9,6 +9,7 @@ import {
   FLOW_LOW_WATER_MARK,
   MAX_PENDING_WRITE_COALESCE_BYTES,
   MAX_PENDING_WRITE_COALESCE_BYTES_FLOOD,
+  MAX_TERMINAL_PLAIN_WRITE_CHUNK_BYTES,
   XTERM_WRITE_CALLBACK_BATCH_BYTES,
   XTERM_WRITE_CALLBACK_FAST_PATH_MAX_BYTES,
 } from "./terminalFlowConstants.ts";
@@ -30,6 +31,10 @@ test("renderer flow constants match shared terminalFlowConstants.json", () => {
     terminalFlowConstantsJson.MAX_PENDING_WRITE_COALESCE_BYTES_FLOOD,
   );
   assert.equal(
+    MAX_TERMINAL_PLAIN_WRITE_CHUNK_BYTES,
+    terminalFlowConstantsJson.MAX_TERMINAL_PLAIN_WRITE_CHUNK_BYTES,
+  );
+  assert.equal(
     XTERM_WRITE_CALLBACK_FAST_PATH_MAX_BYTES,
     terminalFlowConstantsJson.XTERM_WRITE_CALLBACK_FAST_PATH_MAX_BYTES,
   );
@@ -46,6 +51,7 @@ test("terminal flood limits keep interactive acks responsive", () => {
   assert.ok(FLOW_LOW_WATER_MARK <= 8 * 1024);
   assert.ok(FLOW_CHAR_COUNT_ACK_SIZE <= 4 * 1024);
   assert.ok(MAX_PENDING_WRITE_COALESCE_BYTES_FLOOD <= 8 * 1024);
+  assert.ok(MAX_TERMINAL_PLAIN_WRITE_CHUNK_BYTES <= 16 * 1024);
   assert.ok(XTERM_WRITE_CALLBACK_BATCH_BYTES <= FLOW_HIGH_WATER_MARK);
 });
 

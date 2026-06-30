@@ -30,6 +30,39 @@ test("enqueueTerminalWrite serializes writes in order", () => {
   assert.deepEqual(order, [1, 2]);
 });
 
+test("deferStart queues a write until the next task", async () => {
+  const term = createFakeTerm();
+  const order: number[] = [];
+
+  enqueueTerminalWrite(term, 1, (done) => {
+    order.push(1);
+    done();
+  }, { deferStart: true });
+
+  assert.deepEqual(order, []);
+  await new Promise((resolve) => { setTimeout(resolve, 0); });
+  assert.deepEqual(order, [1]);
+});
+
+test("yieldAfter lets the event loop run between queued write chunks", async () => {
+  const term = createFakeTerm();
+  const order: number[] = [];
+
+  enqueueTerminalWrite(term, 1, (done) => {
+    order.push(1);
+    done();
+  }, { deferStart: true, yieldAfter: true });
+  enqueueTerminalWrite(term, 1, (done) => {
+    order.push(2);
+    done();
+  });
+
+  await new Promise((resolve) => { setTimeout(resolve, 0); });
+  assert.deepEqual(order, [1]);
+  await new Promise((resolve) => { setTimeout(resolve, 0); });
+  assert.deepEqual(order, [1, 2]);
+});
+
 test("marks flood mode and coalesces queued writes when item cap is exceeded", () => {
   const term = createFakeTerm();
   const dropped: number[] = [];
