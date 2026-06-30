@@ -9,6 +9,7 @@ const net = require("node:net");
 const { randomUUID } = require("node:crypto");
 const { pipeline } = require("node:stream/promises");
 const { TextDecoder } = require("node:util");
+require("./boringSslDhCompat.cjs").installBoringSslDhCompat();
 const SftpClient = require("ssh2-sftp-client");
 const { Client: SSHClient } = require("ssh2");
 const iconv = require("iconv-lite");

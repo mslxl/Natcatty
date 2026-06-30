@@ -4,6 +4,7 @@
  */
 
 const net = require("node:net");
+require("./boringSslDhCompat.cjs").installBoringSslDhCompat();
 const { Client: SSHClient } = require("ssh2");
 const { NetcattyAgent } = require("./netcattyAgent.cjs");
 const keyboardInteractiveHandler = require("./keyboardInteractiveHandler.cjs");

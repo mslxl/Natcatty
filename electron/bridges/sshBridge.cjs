@@ -10,6 +10,7 @@ const { randomUUID } = require("node:crypto");
 const os = require("node:os");
 const crypto = require("node:crypto");
 const { exec } = require("node:child_process");
+require("./boringSslDhCompat.cjs").installBoringSslDhCompat();
 const { Client: SSHClient, utils: sshUtils } = require("ssh2");
 const { NetcattyAgent } = require("./netcattyAgent.cjs");
 const keyboardInteractiveHandler = require("./keyboardInteractiveHandler.cjs");
