@@ -1,4 +1,5 @@
 const assert = require("node:assert/strict");
+const crypto = require("node:crypto");
 const test = require("node:test");
 
 const {
@@ -33,6 +34,10 @@ test("normalizeParentPortMessage unwraps Electron utility process MessageEvent d
     normalizeParentPortMessage({ kind: "request" }),
     { kind: "request" },
   );
+});
+
+test("terminal worker installs DH compatibility before SSH bridges load", () => {
+  assert.equal(crypto.createDiffieHellmanGroup.__boringSslDhCompat, true);
 });
 
 test("ZMODEM upload selector resolves dialog results delivered as MessageEvent data", async () => {
