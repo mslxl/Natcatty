@@ -210,14 +210,9 @@ if (isDev) {
 }
 const preload = path.join(__dirname, "preload.cjs");
 const isMac = process.platform === "darwin";
-function resolveAppIconPath() {
-  const candidates = [
-    path.join(__dirname, "../dist/icon.png"),
-    path.join(__dirname, "../public/icon.png"),
-  ];
-  return candidates.find((candidate) => fs.existsSync(candidate)) || candidates[0];
-}
-const appIcon = resolveAppIconPath();
+const appIconManager = require("./bridges/appIconManager.cjs");
+const appPath = path.join(__dirname, "..");
+appIconManager.initializeAppIconManager(appPath, { preferPublic: !app.isPackaged });
 const electronDir = __dirname;
 
 const APP_PROTOCOL_HEADERS = {
@@ -375,16 +370,13 @@ function focusMainWindow() {
       getGlobalShortcutBridge().clearPendingFullscreenHide?.(win);
     } catch {}
 
-    try {
-      if (win.isMinimized && win.isMinimized()) win.restore();
-    } catch {}
-    try {
-      win.show();
-    } catch {}
-    try {
-      win.focus();
-    } catch {}
-    notifyAllAppLockReopenWindows();
+    handleActivateWithMainWindow({
+      app,
+      mainWindow: win,
+      globalShortcutBridge: getGlobalShortcutBridge(),
+      windowManager: getWindowManager(),
+      reopenWindows: getAppLockReopenWindows(),
+    });
     try {
       app.focus({ steal: true });
     } catch {}
@@ -396,12 +388,16 @@ function focusMainWindow() {
 }
 
 function notifyAllAppLockReopenWindows() {
-  emitAppLockReopen([
+  emitAppLockReopen(getAppLockReopenWindows());
+}
+
+function getAppLockReopenWindows() {
+  return [
     ...(getWindowManager().getMainWindows?.() ?? []),
     getWindowManager().getSettingsWindow?.() ?? null,
     getGlobalShortcutBridge().getTrayPanelWindow?.() ?? null,
     ...(getWindowManager().getTerminalPopupWindows?.() ?? []),
-  ]);
+  ];
 }
 
 // Shared state
@@ -475,9 +471,11 @@ const registerBridges = createBridgeRegistrar({
   preload,
   effectiveDevServerUrl,
   isDev,
-  appIcon,
+  getAppIconPath: () => appIconManager.getAppIconPath(appPath),
   isMac,
   electronDir,
+  appPath,
+  appIconManager,
   sessions,
   sftpClients,
   CLOUD_SYNC_PASSWORD_FILE,
@@ -516,7 +514,7 @@ async function createWindow() {
     preload,
     devServerUrl: effectiveDevServerUrl,
     isDev,
-    appIcon,
+    appIcon: appIconManager.getAppIconPath(appPath),
     isMac,
     electronDir,
     onRegisterBridge: registerBridges,
@@ -874,7 +872,8 @@ if (!gotLock) {
           win.setMenuBarVisibility(false);
           win.autoHideMenuBar = true;
           win.setMenu(null);
-          if (appIcon && win.setIcon) win.setIcon(appIcon);
+          const iconPath = appIconManager.getAppIconPath(appPath);
+          if (iconPath && win.setIcon) win.setIcon(iconPath);
         }
       } catch {
         // ignore
@@ -896,7 +895,7 @@ if (!gotLock) {
           preload,
           devServerUrl: effectiveDevServerUrl,
           isDev,
-          appIcon,
+          appIcon: appIconManager.getAppIconPath(appPath),
           isMac,
           electronDir,
         });
@@ -919,12 +918,8 @@ if (!gotLock) {
           app,
           mainWindow: mainWin,
           globalShortcutBridge: getGlobalShortcutBridge(),
-          reopenWindows: [
-            ...(getWindowManager().getMainWindows?.() ?? []),
-            getWindowManager().getSettingsWindow?.() ?? null,
-            getGlobalShortcutBridge().getTrayPanelWindow?.() ?? null,
-            ...(getWindowManager().getTerminalPopupWindows?.() ?? []),
-          ],
+          windowManager: getWindowManager(),
+          reopenWindows: getAppLockReopenWindows(),
         })) {
           return;
         }

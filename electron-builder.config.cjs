@@ -14,7 +14,7 @@ module.exports = {
             schemes: ['ssh']
         }
     ],
-    electronLanguages: ['en', 'en-US', 'zh_CN', 'zh-CN', 'ru'],
+    electronLanguages: ['en', 'en-US', 'zh_CN', 'zh-CN', 'zh_TW', 'zh-TW', 'ru'],
     // Give the macOS build a unique Mach-O LC_UUID before signing, so macOS
     // Local Network privacy treats Netcatty distinctly from every other
     // Electron app (which all share Electron's prebuilt LC_UUID) — see #1040
@@ -46,6 +46,10 @@ module.exports = {
     files: [
         'dist/**/*',
         'electron/**/*',
+        // Main-process terminal flow control reads shared thresholds from here
+        // (terminalFlowAck.cjs). Must ship beside electron/ in app.asar.
+        'infrastructure/config/terminalFlowConstants.cjs',
+        'infrastructure/config/terminalFlowConstants.json',
         'lib/**/*.cjs',
         'lib/**/*.json',
         '!electron/.dev-config.json',
@@ -144,8 +148,9 @@ module.exports = {
         'node_modules/fast-uri/**/*',
         'node_modules/json-schema-traverse/**/*',
         'electron/cli/**/*',
-        'electron/mcp/**/*'
-        ,
+        'electron/capabilities/**/*',
+        'electron/shared/**/*',
+        'electron/mcp/**/*',
         'skills/**/*'
     ],
     mac: {
@@ -186,7 +191,7 @@ module.exports = {
     },
     win: {
         icon: 'public/icon-win.png',
-        target: ['nsis', 'portable'],
+        target: ['nsis', 'portable', 'zip'],
         extraResources: [
             ...moshExtraResources('win32'),
             ...etExtraResources('win32'),

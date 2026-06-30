@@ -71,10 +71,15 @@ const SettingsTabLoading = ({ value }: { value: string }) => (
     </SettingsTabContent>
 );
 
-const SettingsTabLoadError = ({ value }: { value: string }) => (
+const SettingsTabLoadError = ({ value, error }: { value: string; error?: Error }) => (
     <SettingsTabContent value={value}>
         <div className="flex min-h-[320px] flex-col items-start justify-center gap-3 text-sm text-muted-foreground">
             <div className="font-medium text-foreground">This settings tab could not load.</div>
+            {error?.message && (
+                <div className="max-w-md text-xs font-mono text-destructive/90 break-words">
+                    {error.message}
+                </div>
+            )}
             <button
                 type="button"
                 className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
@@ -87,7 +92,11 @@ const SettingsTabLoadError = ({ value }: { value: string }) => (
 );
 
 const SettingsLazyTab = ({ children, value }: { children: React.ReactNode; value: string }) => (
-    <LazyLoadBoundary name="Settings tab" resetKey={value} fallback={<SettingsTabLoadError value={value} />}>
+    <LazyLoadBoundary
+        name="Settings tab"
+        resetKey={value}
+        fallback={(error) => <SettingsTabLoadError value={value} error={error} />}
+    >
         <Suspense fallback={<SettingsTabLoading value={value} />}>
             {children}
         </Suspense>
@@ -98,6 +107,7 @@ type TerminalTabSettingsProps = Pick<
     SettingsState,
     | 'terminalThemeId'
     | 'setTerminalThemeId'
+    | 'resolvedTheme'
     | 'followAppTerminalTheme'
     | 'setFollowAppTerminalTheme'
     | 'terminalThemeDarkId'
@@ -112,6 +122,10 @@ type TerminalTabSettingsProps = Pick<
     | 'setTerminalFontSize'
     | 'terminalSettings'
     | 'updateTerminalSetting'
+    | 'terminalSidePanelAutoOpen'
+    | 'setTerminalSidePanelAutoOpen'
+    | 'terminalSidePanelAutoOpenTab'
+    | 'setTerminalSidePanelAutoOpenTab'
     | 'workspaceFocusStyle'
     | 'setWorkspaceFocusStyle'
 >;
@@ -119,6 +133,7 @@ type TerminalTabSettingsProps = Pick<
 const SettingsTerminalTabContainer = React.memo<TerminalTabSettingsProps>(function SettingsTerminalTabContainer({
     terminalThemeId,
     setTerminalThemeId,
+    resolvedTheme,
     followAppTerminalTheme,
     setFollowAppTerminalTheme,
     terminalThemeDarkId,
@@ -133,6 +148,10 @@ const SettingsTerminalTabContainer = React.memo<TerminalTabSettingsProps>(functi
     setTerminalFontSize,
     terminalSettings,
     updateTerminalSetting,
+    terminalSidePanelAutoOpen,
+    setTerminalSidePanelAutoOpen,
+    terminalSidePanelAutoOpenTab,
+    setTerminalSidePanelAutoOpenTab,
     workspaceFocusStyle,
     setWorkspaceFocusStyle,
 }) {
@@ -142,6 +161,7 @@ const SettingsTerminalTabContainer = React.memo<TerminalTabSettingsProps>(functi
         <LazySettingsTerminalTab
             terminalThemeId={terminalThemeId}
             setTerminalThemeId={setTerminalThemeId}
+            resolvedTheme={resolvedTheme}
             followAppTerminalTheme={followAppTerminalTheme}
             setFollowAppTerminalTheme={setFollowAppTerminalTheme}
             terminalThemeDarkId={terminalThemeDarkId}
@@ -156,6 +176,10 @@ const SettingsTerminalTabContainer = React.memo<TerminalTabSettingsProps>(functi
             setTerminalFontSize={setTerminalFontSize}
             terminalSettings={terminalSettings}
             updateTerminalSetting={updateTerminalSetting}
+            terminalSidePanelAutoOpen={terminalSidePanelAutoOpen}
+            setTerminalSidePanelAutoOpen={setTerminalSidePanelAutoOpen}
+            terminalSidePanelAutoOpenTab={terminalSidePanelAutoOpenTab}
+            setTerminalSidePanelAutoOpenTab={setTerminalSidePanelAutoOpenTab}
             availableFonts={availableFonts}
             workspaceFocusStyle={workspaceFocusStyle}
             setWorkspaceFocusStyle={setWorkspaceFocusStyle}
@@ -413,6 +437,7 @@ const SettingsPageContent: React.FC<{ settings: SettingsState; appLock?: AppLock
                         <SettingsLazyTab value="appearance">
                             <LazySettingsAppearanceTab
                                 theme={settings.theme}
+                                resolvedTheme={settings.resolvedTheme}
                                 setTheme={settings.setTheme}
                                 lightUiThemeId={settings.lightUiThemeId}
                                 setLightUiThemeId={settings.setLightUiThemeId}
@@ -438,6 +463,8 @@ const SettingsPageContent: React.FC<{ settings: SettingsState; appLock?: AppLock
                                 setShowHostTreeSidebar={settings.setShowHostTreeSidebar}
                                 windowOpacity={settings.windowOpacity}
                                 setWindowOpacity={settings.setWindowOpacity}
+                                appIconVariant={settings.appIconVariant}
+                                setAppIconVariant={settings.setAppIconVariant}
                             />
                         </SettingsLazyTab>
                     )}
@@ -447,6 +474,7 @@ const SettingsPageContent: React.FC<{ settings: SettingsState; appLock?: AppLock
                             <SettingsTerminalTabContainer
                                 terminalThemeId={settings.terminalThemeId}
                                 setTerminalThemeId={settings.setTerminalThemeId}
+                                resolvedTheme={settings.resolvedTheme}
                                 followAppTerminalTheme={settings.followAppTerminalTheme}
                                 setFollowAppTerminalTheme={settings.setFollowAppTerminalTheme}
                                 terminalThemeDarkId={settings.terminalThemeDarkId}
@@ -461,6 +489,10 @@ const SettingsPageContent: React.FC<{ settings: SettingsState; appLock?: AppLock
                                 setTerminalFontSize={settings.setTerminalFontSize}
                                 terminalSettings={settings.terminalSettings}
                                 updateTerminalSetting={settings.updateTerminalSetting}
+                                terminalSidePanelAutoOpen={settings.terminalSidePanelAutoOpen}
+                                setTerminalSidePanelAutoOpen={settings.setTerminalSidePanelAutoOpen}
+                                terminalSidePanelAutoOpenTab={settings.terminalSidePanelAutoOpenTab}
+                                setTerminalSidePanelAutoOpenTab={settings.setTerminalSidePanelAutoOpenTab}
                                 workspaceFocusStyle={settings.workspaceFocusStyle}
                                 setWorkspaceFocusStyle={settings.setWorkspaceFocusStyle}
                             />

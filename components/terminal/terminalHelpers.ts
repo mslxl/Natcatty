@@ -1,6 +1,7 @@
 import type { DragEvent, PointerEvent } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 
+import type { TerminalContextReader } from "../../domain/terminalContextRead";
 import { getSessionConnectionLabel, resolveSessionTabTitle } from "../../domain/sessionTabTitle";
 import { logger } from "../../lib/logger";
 import { getPathForFile, type DropEntry } from "../../lib/sftpFileUtils";
@@ -113,7 +114,7 @@ export interface TerminalProps {
   /** Line timestamps are unavailable in popup terminals that stream shell output without timestamp metadata. */
   lineTimestampsAvailable?: boolean;
   chainHosts?: Host[];
-  themePreviewId?: string;
+  appearanceTheme?: TerminalTheme;
   knownHosts?: KnownHost[];
   isVisible: boolean;
   /** Changes when split-pane bounds update; triggers xterm refit after tab switches. */
@@ -136,6 +137,8 @@ export interface TerminalProps {
   restoreTerminalCwd?: boolean;
   startupCommand?: string;
   noAutoRun?: boolean;
+  pendingScriptId?: string;
+  pendingScript?: Snippet;
   // When this tab was created from a connected SSH session, the id of the
   // source session whose authenticated connection should be reused for a new
   // shell channel — skipping a second MFA prompt (issue #1204).
@@ -174,10 +177,11 @@ export interface TerminalProps {
     pendingUploadEntries?: DropEntry[],
     sourceSessionId?: string,
   ) => void;
-  onTerminalCwdChange?: (sessionId: string, cwd: string | null) => void;
+  onTerminalCwdChange?: (sessionId: string, cwd: string | null, meta?: { source?: 'osc7' }) => void;
   onTerminalTitleChange?: (sessionId: string, title: string | null) => void;
   onTerminalBell?: (sessionId: string) => void;
   onTerminalOutput?: (sessionId: string, chunk: string) => void;
+  onTerminalContextReaderChange?: (sessionId: string, reader: TerminalContextReader | null) => void;
   onOpenScripts?: () => void;
   onOpenHistory?: () => void;
   onOpenTheme?: () => void;
@@ -198,6 +202,10 @@ export interface TerminalProps {
       noAutoRun?: boolean,
       options?: { broadcast?: boolean },
     ) => void) | null,
+  ) => void;
+  onBroadcastInterruptPriorityChange?: (
+    sessionId: string,
+    prioritize: (() => void) | null,
   ) => void;
   onProgrammaticCommandLogRewriteChange?: (
     sessionId: string,

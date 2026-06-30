@@ -33,6 +33,7 @@ function handleActivateWithMainWindow({
   app,
   mainWindow,
   globalShortcutBridge,
+  windowManager,
   reopenWindows,
 }) {
   if (!mainWindow || mainWindow.isDestroyed?.()) return false;
@@ -51,20 +52,24 @@ function handleActivateWithMainWindow({
   } catch {
     // ignore
   }
-  try {
-    if (mainWindow.isMinimized?.()) mainWindow.restore?.();
-  } catch {
-    // ignore
-  }
-  try {
-    mainWindow.show?.();
-  } catch {
-    // ignore
-  }
-  try {
-    mainWindow.focus?.();
-  } catch {
-    // ignore
+  if (typeof windowManager?.showAndFocusMainWindow === "function") {
+    windowManager.showAndFocusMainWindow(mainWindow);
+  } else {
+    try {
+      if (mainWindow.isMinimized?.()) mainWindow.restore?.();
+    } catch {
+      // ignore
+    }
+    try {
+      mainWindow.show?.();
+    } catch {
+      // ignore
+    }
+    try {
+      mainWindow.focus?.();
+    } catch {
+      // ignore
+    }
   }
   emitAppLockReopen(reopenWindows);
   try {

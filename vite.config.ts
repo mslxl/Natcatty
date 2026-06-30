@@ -1,7 +1,7 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 
 // Custom plugin to suppress monaco-editor source map warnings
 const suppressMonacoSourcemapWarning = () => ({
@@ -36,6 +36,25 @@ const devContentSecurityPolicyPlugin = () => ({
       /content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' data: blob: ws: wss: https:; img-src 'self' data: https:;"/,
       `content="${devContentSecurityPolicy}"`,
     );
+  },
+});
+
+/** After git pull / npm install, stale pre-bundles return 504; force a full reload. */
+const reloadOnOutdatedOptimizeDep = (): Plugin => ({
+  name: 'reload-on-outdated-optimize-dep',
+  apply: 'serve',
+  configureServer(server) {
+    server.middlewares.use((req, res, next) => {
+      res.on('finish', () => {
+        if (
+          res.statusCode === 504
+          && req.url?.includes('/node_modules/.vite/deps/')
+        ) {
+          server.ws.send({ type: 'full-reload', path: '*' });
+        }
+      });
+      next();
+    });
   },
 });
 
@@ -93,7 +112,7 @@ export default defineConfig(() => {
           },
         },
       },
-      plugins: [suppressMonacoSourcemapWarning(), devContentSecurityPolicyPlugin(), tailwindcss(), react()],
+      plugins: [suppressMonacoSourcemapWarning(), devContentSecurityPolicyPlugin(), reloadOnOutdatedOptimizeDep(), tailwindcss(), react()],
       resolve: {
         alias: {
           '@': path.resolve(__dirname, '.'),

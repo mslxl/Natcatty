@@ -18,6 +18,32 @@ test("unpacked MCP server includes its shared CommonJS dependencies", () => {
   );
 });
 
+test("build.files includes shared terminal flow constants for main process", () => {
+  assert.ok(
+    config.files.includes("infrastructure/config/terminalFlowConstants.cjs"),
+    "terminalFlowAck.cjs requires infrastructure/config/terminalFlowConstants.cjs at packaged startup",
+  );
+  assert.ok(
+    config.files.includes("infrastructure/config/terminalFlowConstants.json"),
+    "terminalFlowConstants.cjs requires sibling terminalFlowConstants.json at packaged startup",
+  );
+});
+
+test("unpacked Tool CLI includes capability runtime dependencies", () => {
+  assert.ok(
+    config.asarUnpack.includes("electron/cli/**/*"),
+    "Tool CLI launcher and scripts must stay unpacked so agents can launch them as child processes",
+  );
+  assert.ok(
+    config.asarUnpack.includes("electron/capabilities/**/*"),
+    "Tool CLI requires capability catalog, registry, policy, timeout, and RPC transport modules from the unpacked runtime path",
+  );
+  assert.ok(
+    config.asarUnpack.includes("electron/shared/**/*"),
+    "Capability policy may load shared permission grant helpers from the unpacked runtime path",
+  );
+});
+
 test("build.files excludes per-platform agent binaries", () => {
   const files = config.files;
   const expectExclusions = [
@@ -87,7 +113,7 @@ test("Windows packaging includes the Windows Hello helper executable", () => {
 test("Windows package arch is controlled by pack script CLI flags", () => {
   assert.deepEqual(
     config.win.target,
-    ["nsis", "portable"],
+    ["nsis", "portable", "zip"],
     "win.target must not hard-code x64 and arm64 or pack:win-x64 will still invoke arm64 beforePack hooks",
   );
 });
@@ -156,6 +182,38 @@ test("linux packaging includes an Arch Linux pacman package target", () => {
     config.linux.target,
     ["AppImage", "deb", "rpm", "pacman"],
     "linux package builds must publish AppImage, Debian, RPM, and Arch pacman artifacts",
+  );
+});
+
+test("windows packaging includes a zip archive target", () => {
+  assert.ok(
+    config.win.target.includes("zip"),
+    "windows package builds must publish a zip archive for no-install environments",
+  );
+});
+
+test("windows zip follows the requested build architecture", () => {
+  const { Arch } = require("builder-util");
+  const { Platform } = require("app-builder-lib");
+  const { computeArchToTargetNamesMap } = require("app-builder-lib/out/targets/targetFactory");
+
+  const rawCliTargets = new Map([[Arch.x64, []]]);
+  const targetsByArch = computeArchToTargetNamesMap(
+    rawCliTargets,
+    {
+      platformSpecificBuildOptions: config.win,
+      defaultTarget: ["nsis"],
+    },
+    Platform.WINDOWS,
+  );
+
+  assert.ok(
+    targetsByArch.get(Arch.x64)?.includes("zip"),
+    "pack:win-x64 must publish an x64 zip archive",
+  );
+  assert.ok(
+    !targetsByArch.get(Arch.arm64)?.includes("zip"),
+    "pack:win-x64 must not publish an arm64 zip archive without arm64 bundled binaries",
   );
 });
 
