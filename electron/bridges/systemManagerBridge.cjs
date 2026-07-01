@@ -19,6 +19,7 @@ const PROCESS_LIST_SCRIPT_POSIX = [
   "ps -eo pid= -o ppid= -o user= -o stat= -o pcpu= -o pmem= -o rss= -o vsz= -o etime= -o args= 2>/dev/null",
   "'",
 ].join("");
+const PROCESS_LIST_MAX_BUFFER = 64 * 1024 * 1024;
 
 function parseCapabilities(stdout, isLocal, localPlatform) {
   const text = stdout || "";
@@ -190,7 +191,9 @@ function createSystemManagerBridge(deps) {
       }
     }
 
-    const result = await execOnSession(event, sessionId, PROCESS_LIST_SCRIPT_POSIX, 12000);
+    const result = await execOnSession(event, sessionId, PROCESS_LIST_SCRIPT_POSIX, 12000, {
+      maxBuffer: PROCESS_LIST_MAX_BUFFER,
+    });
     if (result.pending) return { success: false, pending: true };
     if (!result.success) return { success: false, error: result.error || "Failed to list processes" };
     return { success: true, processes: parseProcessLines(result.stdout) };

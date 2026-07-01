@@ -664,6 +664,9 @@ main();
           env: { ...process.env, ...session.sshEnv },
           timeout: timeoutMs,
           encoding: "utf8",
+          maxBuffer: Number.isFinite(Number(execOpts.maxBuffer)) && Number(execOpts.maxBuffer) > 0
+            ? Math.floor(Number(execOpts.maxBuffer))
+            : undefined,
           windowsHide: true,
         }, (err, stdout, stderr) => {
           if (err) {

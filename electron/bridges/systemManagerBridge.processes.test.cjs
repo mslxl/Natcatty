@@ -60,6 +60,27 @@ test("process listing commands do not hard-cap the visible list at 2000 entries"
   assert.doesNotMatch(source, /Select-Object\s+-First\s+2000/);
 });
 
+test("listProcesses gives ET process listing enough output buffer for dense hosts", async () => {
+  let seenOptions = null;
+  const sessions = new Map([["s1", {
+    type: "et",
+    etStatsAuth: { knownHosts: [] },
+  }]]);
+  const bridge = createSystemManagerBridge({
+    getSessions: () => sessions,
+    process,
+    execOnEtSession: async (_session, _command, _timeoutMs, options) => {
+      seenOptions = options;
+      return { success: true, stdout: "" };
+    },
+  });
+
+  const result = await bridge.listProcesses(null, { sessionId: "s1" });
+
+  assert.equal(result.success, true);
+  assert.ok(seenOptions.maxBuffer > 10 * 1024 * 1024);
+});
+
 test("probeCapabilities reports Docker when docker is installed even if plain docker access is denied", async () => {
   const conn = {
     exec(command, callback) {
