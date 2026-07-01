@@ -95,6 +95,7 @@ function createExecOnSessionApi(ctx) {
       return new Promise((resolve) => {
         let settled = false;
         let activeStream = null;
+        const maxBuffer = normalizeExecMaxBuffer(execOptions.maxBuffer);
         const settle = (result) => {
           if (settled) return;
           settled = true;
@@ -115,9 +116,24 @@ function createExecOnSessionApi(ctx) {
             activeStream = stream;
             let stdout = "";
             let stderr = "";
-            stream.on("data", (chunk) => { stdout += chunk.toString(); });
+            const appendOutput = (streamName, current, chunk) => {
+              const next = current + chunk.toString();
+              if (next.length > maxBuffer) {
+                settle({
+                  success: false,
+                  error: `${streamName} maxBuffer exceeded`,
+                  stdout: "",
+                  stderr: "",
+                  code: 1,
+                });
+                try { stream.close(); } catch { /* ignore */ }
+                return current;
+              }
+              return next;
+            };
+            stream.on("data", (chunk) => { stdout = appendOutput("stdout", stdout, chunk); });
             if (stream.stderr) {
-              stream.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+              stream.stderr.on("data", (chunk) => { stderr = appendOutput("stderr", stderr, chunk); });
             }
             if (typeof execOptions.stdin === "string") {
               stream.write(execOptions.stdin);
