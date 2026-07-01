@@ -94,13 +94,21 @@ const handleTerminalOutputAutoScroll = (
   }
 
   if (ctx.isVisibleRef?.current === false) {
-    if (ctx.pendingOutputScrollRef) {
-      ctx.pendingOutputScrollRef.current = true;
-    }
+    notePendingOutputScrollIfEnabled(ctx);
     return;
   }
 
   term.scrollToBottom();
+};
+
+export const notePendingOutputScrollIfEnabled = (
+  ctx: TerminalSessionStartersContext,
+): void => {
+  const settings = ctx.terminalSettingsRef?.current ?? ctx.terminalSettings;
+  if (!shouldScrollOnTerminalOutput(settings)) return;
+  if (ctx.pendingOutputScrollRef) {
+    ctx.pendingOutputScrollRef.current = true;
+  }
 };
 
 const terminalFlowControllers = new WeakMap<XTerm, OutputFlowController>();
@@ -410,9 +418,7 @@ export const attachSessionToTerminal = (
         opts?.onConnected?.();
         setTimeout(() => {
           if (ctx.isVisibleRef?.current === false) {
-            if (ctx.pendingOutputScrollRef) {
-              ctx.pendingOutputScrollRef.current = true;
-            }
+            notePendingOutputScrollIfEnabled(ctx);
             return;
           }
           if (!ctx.fitAddonRef.current) return;

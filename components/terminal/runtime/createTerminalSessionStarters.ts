@@ -15,6 +15,7 @@ import {
   closeOrphanBackendSession,
   getFlowController,
   isTerminalBootActive,
+  notePendingOutputScrollIfEnabled,
   resetTerminalLineTimestampState,
   tryAttachSessionToTerminal,
   writeSessionData,
@@ -1304,9 +1305,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
             ctx.updateStatus("connected");
             setTimeout(() => {
               if (ctx.isVisibleRef?.current === false) {
-                if (ctx.pendingOutputScrollRef) {
-                  ctx.pendingOutputScrollRef.current = true;
-                }
+                notePendingOutputScrollIfEnabled(ctx);
                 return;
               }
               if (!ctx.fitAddonRef.current) return;

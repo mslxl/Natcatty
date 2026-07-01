@@ -6,7 +6,7 @@ const attachmentSource = readFileSync(new URL('./terminalSessionAttachment.ts', 
 const startersSource = readFileSync(new URL('./createTerminalSessionStarters.ts', import.meta.url), 'utf8');
 
 const hiddenPostConnectFitGuard =
-  /setTimeout\(\(\) => \{\s*if \(ctx\.isVisibleRef\?\.current === false\) \{\s*if \(ctx\.pendingOutputScrollRef\) \{\s*ctx\.pendingOutputScrollRef\.current = true;\s*\}\s*return;\s*\}\s*if \(!ctx\.fitAddonRef\.current\) return;[\s\S]*ctx\.fitAddonRef\.current\.fit\(\)/;
+  /setTimeout\(\(\) => \{\s*if \(ctx\.isVisibleRef\?\.current === false\) \{\s*notePendingOutputScrollIfEnabled\(ctx\);\s*return;\s*\}\s*if \(!ctx\.fitAddonRef\.current\) return;[\s\S]*ctx\.fitAddonRef\.current\.fit\(\)/;
 
 test('reattached sessions do not fit hidden terminal panes after first output', () => {
   assert.match(attachmentSource, hiddenPostConnectFitGuard);
@@ -14,4 +14,11 @@ test('reattached sessions do not fit hidden terminal panes after first output', 
 
 test('local sessions do not fit hidden terminal panes after first output', () => {
   assert.match(startersSource, hiddenPostConnectFitGuard);
+});
+
+test('hidden post-connect scroll recovery respects the scroll-on-output setting', () => {
+  assert.match(
+    attachmentSource,
+    /export const notePendingOutputScrollIfEnabled[\s\S]*shouldScrollOnTerminalOutput\(settings\)[\s\S]*ctx\.pendingOutputScrollRef\.current = true/,
+  );
 });
