@@ -139,14 +139,14 @@ test("terminal pane render snapshot combines visibility and focus in one token",
   assert.equal(parsed.isFocusedPane, true);
 });
 
-test("hidden terminal pane keeps its last visible size instead of inheriting the active tab width", () => {
+test("hidden terminal pane keeps its last visible size without moving offscreen", () => {
   const hiddenStyle = resolveHiddenTerminalPaneStyle(
     { left: 0, top: 0, width: "100%", height: "100%" },
     { width: 1180, height: 720 },
   );
 
-  assert.equal(hiddenStyle.left, "-9999px");
-  assert.equal(hiddenStyle.top, "-9999px");
+  assert.equal(hiddenStyle.left, 0);
+  assert.equal(hiddenStyle.top, 0);
   assert.equal(hiddenStyle.visibility, "hidden");
   assert.equal(hiddenStyle.pointerEvents, "none");
   assert.equal(hiddenStyle.width, "1180px");
