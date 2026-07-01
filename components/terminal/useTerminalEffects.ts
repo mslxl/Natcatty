@@ -1222,6 +1222,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     };
 
     const scheduleSelectionOverlayPosition = () => {
+      if (lastHasSelection === false) return;
       if (overlayRafId !== null) return;
       overlayRafId = requestFrame(publishSelectionOverlayPosition);
     };
@@ -1233,12 +1234,18 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
         lastHasSelection = hasText;
         setHasSelection(hasText);
       }
-      scheduleSelectionOverlayPosition();
-
       if (copyTimer) {
         clearTimeout(copyTimer);
         copyTimer = null;
       }
+      if (!hasText) {
+        if (lastOverlayPosition !== null) {
+          lastOverlayPosition = null;
+          setSelectionOverlayPosition?.(null);
+        }
+        return;
+      }
+      scheduleSelectionOverlayPosition();
 
       if (hasText && terminalSettings?.copyOnSelect && !isRestoringSelectionRef.current) {
         copyTimer = setTimeout(() => {
