@@ -168,6 +168,7 @@ function createSystemManagerBridge(deps) {
       const result = await execOnLocalMachine(
         "Get-CimInstance Win32_Process | Sort-Object KernelModeTime -Descending | Select-Object ProcessId,ParentProcessId,Name,WorkingSetSize | ConvertTo-Json -Compress",
         10000,
+        { maxBuffer: PROCESS_LIST_MAX_BUFFER },
       );
       if (!result.success) return { success: false, error: result.error };
       try {

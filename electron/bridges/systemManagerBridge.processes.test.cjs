@@ -81,6 +81,15 @@ test("listProcesses gives ET process listing enough output buffer for dense host
   assert.ok(seenOptions.maxBuffer > 10 * 1024 * 1024);
 });
 
+test("listProcesses gives Windows process listing enough output buffer for dense local hosts", () => {
+  const source = fs.readFileSync(path.join(__dirname, "systemManagerBridge.cjs"), "utf8");
+
+  assert.match(
+    source,
+    /execOnLocalMachine\(\s*"Get-CimInstance Win32_Process[\s\S]+10000,\s*\{\s*maxBuffer:\s*PROCESS_LIST_MAX_BUFFER\s*\}/,
+  );
+});
+
 test("probeCapabilities reports Docker when docker is installed even if plain docker access is denied", async () => {
   const conn = {
     exec(command, callback) {
