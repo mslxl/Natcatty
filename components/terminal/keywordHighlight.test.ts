@@ -107,6 +107,64 @@ function createFakeTerminalFromLines(lines: Array<{ text: string; isWrapped: boo
   return { term, decorations };
 }
 
+function createFakeTerminalFromLargeWrappedBlock({
+  lineCount,
+  lineText,
+  viewportY,
+  rows,
+}: {
+  lineCount: number;
+  lineText: string;
+  viewportY: number;
+  rows: number;
+}) {
+  let getLineCount = 0;
+  const decorations: Array<{ x: number; width: number; foregroundColor: string }> = [];
+  const noopDisposable = { dispose() {} };
+  const term = {
+    rows,
+    cols: lineText.length,
+    buffer: {
+      active: {
+        type: "normal",
+        viewportY,
+        baseY: 0,
+        cursorY: viewportY,
+        length: lineCount,
+        getLine: (lineY: number) => {
+          getLineCount += 1;
+          if (lineY < 0 || lineY >= lineCount) return undefined;
+          return createFakeWrappedLine(lineText, lineY > 0);
+        },
+      },
+    },
+    onScroll: () => noopDisposable,
+    onWriteParsed: () => noopDisposable,
+    onResize: () => noopDisposable,
+    onRender: () => noopDisposable,
+    registerMarker(offset: number) {
+      return {
+        line: offset,
+        isDisposed: false,
+        dispose() {
+          this.isDisposed = true;
+        },
+      };
+    },
+    registerDecoration(options: { x: number; width: number; foregroundColor: string }) {
+      decorations.push(options);
+      return {
+        isDisposed: false,
+        dispose() {
+          this.isDisposed = true;
+        },
+      };
+    },
+    refresh() {},
+  };
+  return { term, decorations, getLineCount: () => getLineCount };
+}
+
 function createFakeTerminal(lineText: string, options: { lineCount?: number } = {}) {
   const lineCount = options.lineCount ?? 1;
   let translateCount = 0;
@@ -306,6 +364,42 @@ test("wrapped highlight scanning falls back when the logical line exceeds the sc
     resetTerminalOutputPressure(term as never);
 
     assert.deepEqual(decorations, []);
+  } finally {
+    raf.restore();
+  }
+});
+
+test("wrapped highlight scanning stops before walking an oversized soft-wrapped line", () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const lineText = "a".repeat(80);
+    const { term, decorations, getLineCount } = createFakeTerminalFromLargeWrappedBlock({
+      lineCount: 30_000,
+      lineText,
+      viewportY: 29_990,
+      rows: 3,
+    });
+    const highlighter = new KeywordHighlighter(term as never);
+    const rules: KeywordHighlightRule[] = [
+      {
+        id: "wrapped",
+        label: "Wrapped",
+        patterns: [`${lineText}${lineText}`],
+        color: "#F87171",
+        enabled: true,
+      },
+    ];
+
+    highlighter.setRules(rules, true);
+    raf.flush();
+    highlighter.dispose();
+    resetTerminalOutputPressure(term as never);
+
+    assert.deepEqual(decorations, []);
+    assert.ok(
+      getLineCount() < 3_000,
+      `expected capped wrapped scan, got ${getLineCount()} getLine calls`,
+    );
   } finally {
     raf.restore();
   }
