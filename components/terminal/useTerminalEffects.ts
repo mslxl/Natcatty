@@ -59,6 +59,8 @@ type ZmodemToastApi = {
   error: (message: string, title?: string) => void;
 };
 
+const CSS_ONLY_TAB_REVEAL_MAX_HIDDEN_MS = 3000;
+
 export function resolveZmodemTransferToast(zmodem: ZmodemToastInput): ZmodemToast {
   if (zmodem.active) return null;
   if (zmodem.error) {
@@ -820,10 +822,27 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     return width > 0 && height > 0 && lastSize.width === width && lastSize.height === height;
   };
 
+  const getHiddenDurationMs = () => (
+    hiddenAtRef.current !== null
+      ? Date.now() - hiddenAtRef.current
+      : Number.POSITIVE_INFINITY
+  );
+
   const recoverTerminalAfterBecomeVisible = () => {
     lastCommittedVisibleLayoutKeyRef.current = null;
+
+    if (
+      getHiddenDurationMs() < CSS_ONLY_TAB_REVEAL_MAX_HIDDEN_MS
+      && currentContainerSizeAlreadyFit()
+    ) {
+      lastWebglRecoveryLayoutKeyRef.current = paneLayoutKey;
+      commitVisibleLayout();
+      return;
+    }
+
     xtermRuntimeRef.current?.ensureWebglRenderer();
     xtermRuntimeRef.current?.clearTextureAtlas();
+    lastWebglRecoveryLayoutKeyRef.current = paneLayoutKey;
 
     if (currentContainerSizeAlreadyFit()) {
       finishLayoutRecovery();
@@ -839,8 +858,8 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
   };
 
   // Refit synchronously when a split pane becomes visible or its bounds change.
-  // Tab switches move hidden panes off-screen without resizing xterm; becoming
-  // visible again does not always fire ResizeObserver, leaving a gap below content.
+  // Tab switches hide inactive panes without resizing xterm; becoming visible
+  // again does not always fire ResizeObserver, leaving a gap below content.
   // Skip during split-divider drag — refit runs once when split resizing ends.
   // In multi-split workspaces only the focused pane refits on tab switch; other
   // visible panes defer so N terminals don't block the main thread together.
@@ -926,7 +945,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
 
     if (
       lastWebglRecoveryLayoutKeyRef.current === paneLayoutKey
-      && hiddenMs < 3000
+      && hiddenMs < CSS_ONLY_TAB_REVEAL_MAX_HIDDEN_MS
     ) {
       return;
     }

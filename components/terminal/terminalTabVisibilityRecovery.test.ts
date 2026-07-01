@@ -42,3 +42,28 @@ test('visible tab recovery reuses a cached fit when the container size is unchan
     /if \(currentContainerSizeAlreadyFit\(\)\) \{\s*finishLayoutRecovery\(\);\s*commitVisibleLayout\(\);\s*return;\s*\}/,
   );
 });
+
+test('short unchanged tab reveals skip the recovery work entirely', () => {
+  const recoverIndex = source.indexOf('const recoverTerminalAfterBecomeVisible = () => {');
+  const fastPathIndex = source.indexOf('getHiddenDurationMs() < CSS_ONLY_TAB_REVEAL_MAX_HIDDEN_MS', recoverIndex);
+  const webglRecoveryIndex = source.indexOf('xtermRuntimeRef.current?.ensureWebglRenderer();', recoverIndex);
+
+  assert.ok(recoverIndex >= 0);
+  assert.ok(fastPathIndex > recoverIndex);
+  assert.ok(webglRecoveryIndex > fastPathIndex);
+  assert.match(
+    source.slice(fastPathIndex, webglRecoveryIndex),
+    /currentContainerSizeAlreadyFit\(\)[\s\S]*lastWebglRecoveryLayoutKeyRef\.current = paneLayoutKey;[\s\S]*commitVisibleLayout\(\);[\s\S]*return;/,
+  );
+});
+
+test('immediate tab recovery marks webgl recovery to skip the delayed duplicate pass', () => {
+  assert.match(
+    source,
+    /const recoverTerminalAfterBecomeVisible = \(\) => \{[\s\S]*xtermRuntimeRef\.current\?\.clearTextureAtlas\(\);\s*lastWebglRecoveryLayoutKeyRef\.current = paneLayoutKey;/,
+  );
+  assert.match(
+    source,
+    /lastWebglRecoveryLayoutKeyRef\.current === paneLayoutKey\s*&& hiddenMs < CSS_ONLY_TAB_REVEAL_MAX_HIDDEN_MS/,
+  );
+});

@@ -33,8 +33,6 @@ export function resolveHiddenTerminalPaneStyle<T extends TerminalPaneStyle>(
     ...layoutStyle,
     visibility: "hidden",
     pointerEvents: "none",
-    left: "-9999px",
-    top: "-9999px",
     ...(lastVisibleSize
       ? {
         width: `${lastVisibleSize.width}px`,

@@ -634,14 +634,14 @@ export const useSessionState = ({
     hint: SplitHint
   ) => {
     if (!hint || baseSessionId === joiningSessionId) return;
+    const newWorkspace = createWorkspaceEntity(baseSessionId, joiningSessionId, hint);
     
 	    setSessions(prevSessions => {
       const base = prevSessions.find(s => s.id === baseSessionId);
       const joining = prevSessions.find(s => s.id === joiningSessionId);
       if (!base || !joining || base.workspaceId || joining.workspaceId) return prevSessions;
 
-      const newWorkspace = createWorkspaceEntity(baseSessionId, joiningSessionId, hint);
-      setWorkspaces(prev => [...prev, newWorkspace]);
+      setWorkspaces(prev => prev.some(ws => ws.id === newWorkspace.id) ? prev : [...prev, newWorkspace]);
       setActiveTabId(newWorkspace.id);
       
       return prevSessions.map(s => {
@@ -670,6 +670,7 @@ export const useSessionState = ({
         
         return prevWorkspaces.map(ws => {
           if (ws.id !== workspaceId) return ws;
+          if (collectSessionIds(ws.root).includes(sessionId)) return ws;
           return { ...ws, root: insertPaneIntoWorkspace(ws.root, sessionId, hint) };
         });
       });
@@ -730,6 +731,9 @@ export const useSessionState = ({
       setActiveTabId(workspaceId);
       return prev.map(ws => {
         if (ws.id !== workspaceId) return ws;
+        if (collectSessionIds(ws.root).includes(newSessionId)) {
+          return { ...ws, focusedSessionId: newSessionId };
+        }
         return {
           ...ws,
           root: appendPaneToWorkspaceRoot(ws.root, newSessionId, direction),
@@ -782,6 +786,9 @@ export const useSessionState = ({
       setActiveTabId(workspaceId);
       return prev.map(ws => {
         if (ws.id !== workspaceId) return ws;
+        if (collectSessionIds(ws.root).includes(newSessionId)) {
+          return { ...ws, focusedSessionId: newSessionId };
+        }
         return {
           ...ws,
           root: appendPaneToWorkspaceRoot(ws.root, newSessionId, direction),
@@ -808,6 +815,13 @@ export const useSessionState = ({
       localShellType?: TerminalSession['shellType'];
     },
   ) => {
+    const newSessionId = crypto.randomUUID();
+    const standaloneHint: SplitHint = {
+      direction,
+      position: direction === 'horizontal' ? 'bottom' : 'right',
+    };
+    const standaloneWorkspace = createWorkspaceEntity(sessionId, newSessionId, standaloneHint);
+
 	    setSessions(prevSessions => {
       const session = prevSessions.find(s => s.id === sessionId);
       if (!session) return prevSessions;
@@ -816,7 +830,7 @@ export const useSessionState = ({
       if (session.workspaceId) {
         // Create a new session with the same host
         const newSession = createSplitTerminalSessionClone(session, {
-          id: crypto.randomUUID(),
+          id: newSessionId,
           localShellType: options?.localShellType,
           workspaceId: session.workspaceId,
         });
@@ -831,34 +845,31 @@ export const useSessionState = ({
         setWorkspaces(prevWorkspaces => {
           return prevWorkspaces.map(ws => {
             if (ws.id !== session.workspaceId) return ws;
+            if (collectSessionIds(ws.root).includes(newSession.id)) return ws;
             return { ...ws, root: insertPaneIntoWorkspace(ws.root, newSession.id, hint) };
           });
         });
         
-        return [...prevSessions, newSession];
+        return prevSessions.some(s => s.id === newSession.id)
+          ? prevSessions
+          : [...prevSessions, newSession];
       }
       
       // Session is standalone - create a new workspace
       const newSession = createSplitTerminalSessionClone(session, {
-        id: crypto.randomUUID(),
+        id: newSessionId,
         localShellType: options?.localShellType,
       });
 
-      const hint: SplitHint = {
-        direction,
-        position: direction === 'horizontal' ? 'bottom' : 'right',
-      };
-
-      const newWorkspace = createWorkspaceEntity(sessionId, newSession.id, hint);
-      setWorkspaces(prev => [...prev, newWorkspace]);
-      setActiveTabId(newWorkspace.id);
+      setWorkspaces(prev => prev.some(ws => ws.id === standaloneWorkspace.id) ? prev : [...prev, standaloneWorkspace]);
+      setActiveTabId(standaloneWorkspace.id);
       
       return prevSessions.map(s => {
         if (s.id === sessionId) {
-          return { ...s, workspaceId: newWorkspace.id };
+          return { ...s, workspaceId: standaloneWorkspace.id };
         }
         return s;
-      }).concat({ ...newSession, workspaceId: newWorkspace.id });
+      }).concat({ ...newSession, workspaceId: standaloneWorkspace.id });
 	    });
 	  }, [setActiveTabId]);
 
@@ -1024,6 +1035,7 @@ export const useSessionState = ({
       // StrictMode's double-invocation is harmless.
       setActiveTabId(newSessionId);
       setTabOrder(prevTabOrder => {
+        if (prevTabOrder.includes(newSessionId)) return prevTabOrder;
         // Fast path: source is already tracked in tabOrder — splice directly.
         const directIdx = prevTabOrder.indexOf(sessionId);
         if (directIdx !== -1) {
