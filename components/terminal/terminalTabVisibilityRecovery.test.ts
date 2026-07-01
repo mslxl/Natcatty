@@ -39,7 +39,7 @@ test('visible tab recovery reuses a cached fit when the container size is unchan
   assert.match(source, /const currentContainerSizeAlreadyFit = \(\) => \{/);
   assert.match(
     source,
-    /if \(currentContainerSizeAlreadyFit\(\)\) \{\s*finishLayoutRecovery\(\);\s*commitVisibleLayout\(\);\s*return;\s*\}/,
+    /if \(currentContainerSizeAlreadyFit\(\)\) \{\s*finishLayoutRecovery\(\);\s*flushPendingOutputScroll\(\);\s*commitVisibleLayout\(\);\s*return;\s*\}/,
   );
 });
 
@@ -54,6 +54,27 @@ test('short unchanged tab reveals skip the recovery work entirely', () => {
   assert.match(
     source.slice(fastPathIndex, webglRecoveryIndex),
     /currentContainerSizeAlreadyFit\(\)[\s\S]*lastWebglRecoveryLayoutKeyRef\.current = paneLayoutKey;[\s\S]*commitVisibleLayout\(\);[\s\S]*return;/,
+  );
+});
+
+test('short unchanged tab reveals still flush pending hidden-output scroll', () => {
+  const recoverIndex = source.indexOf('const recoverTerminalAfterBecomeVisible = () => {');
+  const fastPathIndex = source.indexOf('getHiddenDurationMs() < CSS_ONLY_TAB_REVEAL_MAX_HIDDEN_MS', recoverIndex);
+  const webglRecoveryIndex = source.indexOf('xtermRuntimeRef.current?.ensureWebglRenderer();', recoverIndex);
+  const delayedSkipIndex = source.indexOf('lastWebglRecoveryLayoutKeyRef.current === paneLayoutKey', webglRecoveryIndex);
+  const delayedTimerIndex = source.indexOf('const timer = setTimeout', delayedSkipIndex);
+
+  assert.match(
+    source,
+    /const flushPendingOutputScroll = \(\) => \{[\s\S]*pendingOutputScrollRef\.current[\s\S]*scrollToBottom\(\)[\s\S]*pendingOutputScrollRef\.current = false;/,
+  );
+  assert.match(
+    source.slice(fastPathIndex, webglRecoveryIndex),
+    /flushPendingOutputScroll\(\);[\s\S]*commitVisibleLayout\(\);[\s\S]*return;/,
+  );
+  assert.match(
+    source.slice(delayedSkipIndex, delayedTimerIndex),
+    /flushPendingOutputScroll\(\);\s*return;/,
   );
 });
 

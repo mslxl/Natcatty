@@ -828,6 +828,17 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       : Number.POSITIVE_INFINITY
   );
 
+  const flushPendingOutputScroll = () => {
+    if (!pendingOutputScrollRef.current) return;
+    termRef.current?.scrollToBottom();
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(() => {
+        termRef.current?.scrollToBottom();
+      });
+    }
+    pendingOutputScrollRef.current = false;
+  };
+
   const recoverTerminalAfterBecomeVisible = () => {
     lastCommittedVisibleLayoutKeyRef.current = null;
 
@@ -836,6 +847,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       && currentContainerSizeAlreadyFit()
     ) {
       lastWebglRecoveryLayoutKeyRef.current = paneLayoutKey;
+      flushPendingOutputScroll();
       commitVisibleLayout();
       return;
     }
@@ -846,6 +858,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
 
     if (currentContainerSizeAlreadyFit()) {
       finishLayoutRecovery();
+      flushPendingOutputScroll();
       commitVisibleLayout();
       return;
     }
@@ -853,6 +866,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     lastFittedSizeRef.current = null;
     runImmediateRefit({ force: true, repeatOnNextFrame: false });
     finishLayoutRecoveryAfterFit();
+    flushPendingOutputScroll();
     commitVisibleLayout();
     scheduleLayoutRecoveryRefit([100, 350]);
   };
@@ -947,6 +961,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       lastWebglRecoveryLayoutKeyRef.current === paneLayoutKey
       && hiddenMs < CSS_ONLY_TAB_REVEAL_MAX_HIDDEN_MS
     ) {
+      flushPendingOutputScroll();
       return;
     }
 
@@ -967,15 +982,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       xtermRuntimeRef.current?.clearTextureAtlas();
       runImmediateRefit({ force: true });
       finishLayoutRecoveryAfterFit();
-      if (pendingOutputScrollRef.current) {
-        termRef.current?.scrollToBottom();
-        if (typeof requestAnimationFrame === "function") {
-          requestAnimationFrame(() => {
-            termRef.current?.scrollToBottom();
-          });
-        }
-        pendingOutputScrollRef.current = false;
-      }
+      flushPendingOutputScroll();
     }, 50);
     return () => clearTimeout(timer);
   }, [isVisible, paneLayoutKey, inWorkspace, isFocusMode, isFocused]);
