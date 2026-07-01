@@ -53,6 +53,8 @@ interface WrappedBlockContext {
   segmentBounds: Map<number, { lineStart: number; lineEnd: number }>;
 }
 
+type WrappedBlockCacheEntry = WrappedBlockContext | null;
+
 /** Shared empty array for non-matching lines to avoid per-call allocations. */
 const EMPTY_RANGES: readonly CachedDecorationRange[] = Object.freeze([]);
 
@@ -1023,7 +1025,7 @@ export class KeywordHighlighter implements IDisposable {
   private processLineRange(start: number, end: number, cursorAbsoluteY: number) {
     if (end < start) return;
     const buffer = this.term.buffer.active;
-    const wrappedBlockCache = new Map<number, WrappedBlockContext>();
+    const wrappedBlockCache = new Map<number, WrappedBlockCacheEntry>();
     const pressure = getTerminalOutputPressure(this.term);
     for (let lineY = start; lineY <= end; lineY++) {
       const line = buffer.getLine(lineY);
@@ -1105,7 +1107,13 @@ export class KeywordHighlighter implements IDisposable {
 
   private findWrappedBlockStart(buffer: IBuffer, lineY: number): number {
     let startY = lineY;
+    let scannedRows = 0;
+    const maxRows = this.getWrappedContextScanRowLimit();
     while (startY > 0) {
+      scannedRows += 1;
+      if (scannedRows > maxRows) {
+        return -1;
+      }
       const current = buffer.getLine(startY);
       if (!current?.isWrapped) break;
       startY -= 1;
@@ -1113,12 +1121,23 @@ export class KeywordHighlighter implements IDisposable {
     return startY;
   }
 
+  private getWrappedContextScanRowLimit(): number {
+    const cols = Math.max(1, this.term.cols || 1);
+    return Math.max(1, Math.ceil(TERMINAL_AUX_LONG_LINE_SCAN_LIMIT_CHARS / cols) + 1);
+  }
+
   private buildWrappedBlockContext(buffer: IBuffer, startY: number): WrappedBlockContext | null {
     let logicalLineText = "";
     const segmentBounds = new Map<number, { lineStart: number; lineEnd: number }>();
     let cursorY = startY;
+    let scannedRows = 0;
+    const maxRows = this.getWrappedContextScanRowLimit();
 
     while (true) {
+      scannedRows += 1;
+      if (scannedRows > maxRows) {
+        return null;
+      }
       const segment = buffer.getLine(cursorY);
       if (!segment) break;
       const segmentText = segment.translateToString(true);
@@ -1142,16 +1161,14 @@ export class KeywordHighlighter implements IDisposable {
   private getWrappedContext(
     buffer: IBuffer,
     lineY: number,
-    cache: Map<number, WrappedBlockContext>,
+    cache: Map<number, WrappedBlockCacheEntry>,
   ): { logicalLineText: string; lineStart: number; lineEnd: number } | null {
     const startY = this.findWrappedBlockStart(buffer, lineY);
-    let block = cache.get(startY);
-    if (!block) {
-      block = this.buildWrappedBlockContext(buffer, startY) ?? undefined;
-      if (block) {
-        cache.set(startY, block);
-      }
+    if (startY < 0) return null;
+    if (!cache.has(startY)) {
+      cache.set(startY, this.buildWrappedBlockContext(buffer, startY));
     }
+    const block = cache.get(startY);
     if (!block) return null;
     const bounds = block.segmentBounds.get(lineY);
     if (!bounds) return null;
@@ -1167,7 +1184,7 @@ export class KeywordHighlighter implements IDisposable {
     lineY: number,
     line: IBufferLine,
     lineText: string,
-    wrappedBlockCache: Map<number, WrappedBlockContext>,
+    wrappedBlockCache: Map<number, WrappedBlockCacheEntry>,
   ): CachedDecorationRange[] {
     const context = this.getWrappedContext(buffer, lineY, wrappedBlockCache);
     if (!context || context.logicalLineText === lineText) {
