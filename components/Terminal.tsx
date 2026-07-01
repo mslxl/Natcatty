@@ -2296,12 +2296,6 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     recorder,
   ]);
 
-  const statusDotTone =
-    status === "connected"
-      ? "bg-emerald-400"
-      : status === "connecting"
-        ? "bg-amber-400"
-        : "bg-rose-500";
   const terminalPreviewVars = useMemo(() => {
     const { background, foreground, cursor } = effectiveTheme.colors;
     return {
@@ -2501,7 +2495,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
           onStop={() => { void stopScriptRun(activeScriptRun.runId); }}
           onDismiss={dismissScriptOverlay}
         />
-      ) : null, selectionOverlayPosition, sessionDisplayName, sessionId, sessionRef, setIsComposeBarOpen, setShowLogs, shouldShowConnectionDialog, showLogs, showSelectionAIAction, snippets, status, statusDotTone, sudoHintRef, sudoHintText: t("terminal.sudoHint.pressEnter"), t, termRef, terminalBackend, terminalContextActions, terminalCwdTracker, terminalPreviewVars, terminalSettings, timeLeft, toast, zmodem }} />
+      ) : null, selectionOverlayPosition, sessionDisplayName, sessionId, sessionRef, setIsComposeBarOpen, setShowLogs, shouldShowConnectionDialog, showLogs, showSelectionAIAction, snippets, status, sudoHintRef, sudoHintText: t("terminal.sudoHint.pressEnter"), t, termRef, terminalBackend, terminalContextActions, terminalCwdTracker, terminalPreviewVars, terminalSettings, timeLeft, toast, zmodem }} />
       <ScriptSaveRecordingDialog
         open={saveRecordingOpen}
         code={recordedCode}

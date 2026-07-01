@@ -195,12 +195,7 @@ export const formatSessionTopTabLabel = (
   >,
   dynamicTabTitleMode?: DynamicTabTitleMode,
 ): string => {
-  const baseTitle = resolveSessionTabTitle(session, dynamicTabTitleMode);
-  const address = getSessionTopTabAddress(session);
-  if (!address) return baseTitle;
-  if (!baseTitle) return address;
-  if (baseTitle.trim() === address) return baseTitle;
-  return `${baseTitle} · ${address}`;
+  return resolveSessionTabTitle(session, dynamicTabTitleMode);
 };
 
 // Custom window controls for Windows/Linux (frameless window)
