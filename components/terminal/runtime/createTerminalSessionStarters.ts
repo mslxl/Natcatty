@@ -1303,6 +1303,12 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           if (!ctx.hasConnectedRef.current) {
             ctx.updateStatus("connected");
             setTimeout(() => {
+              if (ctx.isVisibleRef?.current === false) {
+                if (ctx.pendingOutputScrollRef) {
+                  ctx.pendingOutputScrollRef.current = true;
+                }
+                return;
+              }
               if (!ctx.fitAddonRef.current) return;
               try {
                 ctx.fitAddonRef.current.fit();

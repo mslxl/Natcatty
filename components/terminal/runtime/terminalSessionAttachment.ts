@@ -409,6 +409,12 @@ export const attachSessionToTerminal = (
         ctx.updateStatus("connected");
         opts?.onConnected?.();
         setTimeout(() => {
+          if (ctx.isVisibleRef?.current === false) {
+            if (ctx.pendingOutputScrollRef) {
+              ctx.pendingOutputScrollRef.current = true;
+            }
+            return;
+          }
           if (!ctx.fitAddonRef.current) return;
           try {
             ctx.fitAddonRef.current.fit();
