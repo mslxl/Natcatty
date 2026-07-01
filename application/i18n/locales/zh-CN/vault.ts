@@ -256,7 +256,7 @@ export const zhCNVaultMessages: Messages = {
   'hostDetails.telnetOn': 'Telnet on',
   'hostDetails.port': '端口',
   'hostDetails.telnet.credentials': '凭据',
-  'hostDetails.telnet.identity.placeholder': '选择 Telnet 身份',
+  'hostDetails.telnet.identity.placeholder': '手动身份',
   'hostDetails.telnet.username': 'Telnet 用户名',
   'hostDetails.telnet.password': 'Telnet 密码',
   'hostDetails.charset.placeholder': '字符集（例如 UTF-8）',

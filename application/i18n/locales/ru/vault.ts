@@ -755,7 +755,7 @@ export const ruVaultMessages: Messages = {
   'hostDetails.telnetOn': 'Telnet на',
   'hostDetails.port': 'порт',
   'hostDetails.telnet.credentials': 'Учётные данные',
-  'hostDetails.telnet.identity.placeholder': 'Выберите идентификатор Telnet',
+  'hostDetails.telnet.identity.placeholder': 'Ручной идентификатор',
   'hostDetails.telnet.username': 'Имя пользователя Telnet',
   'hostDetails.telnet.password': 'Пароль Telnet',
   'hostDetails.charset.placeholder': 'Кодировка (например, UTF-8)',
