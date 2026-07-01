@@ -25,18 +25,34 @@ interface ComboboxProps {
     disabled?: boolean;
 }
 
-const wheelDeltaToPixels = (event: React.WheelEvent): number => {
-    if (event.deltaMode === 1) return event.deltaY * 16
-    if (event.deltaMode === 2) return event.deltaY * 280
-    return event.deltaY
+export const comboboxWheelDeltaToPixels = (deltaY: number, deltaMode: number): number => {
+    if (deltaMode === 1) return deltaY * 16
+    if (deltaMode === 2) return deltaY * 280
+    return deltaY
+}
+
+export type ComboboxScrollableTarget = {
+    clientHeight: number;
+    scrollHeight: number;
+    scrollTop: number;
+}
+
+export const applyComboboxWheelScroll = (
+    target: ComboboxScrollableTarget,
+    deltaY: number,
+    deltaMode: number,
+): boolean => {
+    if (target.scrollHeight <= target.clientHeight) return false
+
+    target.scrollTop += comboboxWheelDeltaToPixels(deltaY, deltaMode)
+    return true
 }
 
 function ComboboxOptionsList({ children }: { children: React.ReactNode }) {
     const handleWheelCapture = (event: React.WheelEvent<HTMLDivElement>) => {
-        const target = event.currentTarget
-        if (target.scrollHeight <= target.clientHeight) return
+        const handled = applyComboboxWheelScroll(event.currentTarget, event.deltaY, event.deltaMode)
+        if (!handled) return
 
-        target.scrollTop += wheelDeltaToPixels(event)
         event.preventDefault()
         event.stopPropagation()
         event.nativeEvent.stopImmediatePropagation()
