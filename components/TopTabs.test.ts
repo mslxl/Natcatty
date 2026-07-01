@@ -116,14 +116,14 @@ test("SessionTabIcon checks custom host icon appearance before distro logos", ()
   );
 });
 
-test("session top tab label appends the target address for ssh sessions", () => {
+test("session top tab label only shows the host label for ssh sessions", () => {
   assert.equal(
     formatSessionTopTabLabel({
       hostLabel: "prod-web",
       hostname: "10.1.2.34",
       protocol: "ssh",
     }),
-    "prod-web · 10.1.2.34",
+    "prod-web",
   );
 });
 
@@ -133,7 +133,7 @@ test("session top tab label treats missing protocol as ssh", () => {
       hostLabel: "prod-web",
       hostname: "10.1.2.34",
     }),
-    "prod-web · 10.1.2.34",
+    "prod-web",
   );
   assert.equal(
     formatSessionTopTabTooltip({
