@@ -83,6 +83,38 @@ test("manual reconnect captures restore cwd intent before clearing restored stat
   );
 });
 
+test("dismissing the disconnected dialog returns focus to the terminal for enter reconnect", () => {
+  const source = readFileSync(new URL("../Terminal.tsx", import.meta.url), "utf8");
+  const dismissIndex = source.indexOf("const handleDismissDisconnectedDialog = () =>");
+  const dismissedIndex = source.indexOf("setIsDisconnectedDialogDismissed(true)", dismissIndex);
+  const focusIndex = source.indexOf("queueMicrotask(() => termRef.current?.focus())", dismissIndex);
+  const closeSessionIndex = source.indexOf("const handleCloseDisconnectedSession = () =>", dismissIndex);
+
+  assert.notEqual(dismissIndex, -1);
+  assert.notEqual(dismissedIndex, -1);
+  assert.notEqual(focusIndex, -1);
+  assert.notEqual(closeSessionIndex, -1);
+  assert.ok(
+    dismissedIndex < focusIndex && focusIndex < closeSessionIndex,
+    "dismissing the disconnected dialog should leave Enter routed back through the terminal",
+  );
+});
+
+test("terminal view receives the effective compose bar state for enter reconnect gating", () => {
+  const source = readFileSync(new URL("../Terminal.tsx", import.meta.url), "utf8");
+  const effectiveDefinitionIndex = source.indexOf("const effectiveComposeBarOpen =");
+  const viewIndex = source.indexOf("<TerminalView ctx={{");
+  const passEffectiveIndex = source.indexOf("isComposeBarOpen: effectiveComposeBarOpen", viewIndex);
+
+  assert.notEqual(effectiveDefinitionIndex, -1);
+  assert.notEqual(viewIndex, -1);
+  assert.notEqual(passEffectiveIndex, -1);
+  assert.ok(
+    effectiveDefinitionIndex < passEffectiveIndex,
+    "TerminalView must use the visible workspace compose state before deciding whether Enter can reconnect",
+  );
+});
+
 test("startup and attach cwd cache clears preserve restore cwd metadata", () => {
   const terminalSource = readFileSync(new URL("../Terminal.tsx", import.meta.url), "utf8");
   const effectsSource = readFileSync(new URL("./useTerminalEffects.ts", import.meta.url), "utf8");
