@@ -162,6 +162,8 @@ export const DEFAULT_SCRIPT_TEMPLATE = `// Netcatty automation script - async JS
 // nct.screen.getText(start?, end?) | clear()
 // nct.session.sleep(ms) | startLog(path) | stopLog() | disconnect()
 // nct.dialog.confirm(msg)->bool | prompt(msg, def?)->string | alert(msg)
+// nct.dialog.form({ fields })->object; fields: select/radio/checkbox/textarea/number, optional visibleWhen
+// nct.dialog.select/radio/checkbox are convenience helpers
 // nct.progress.start(label, total)        opt-in determinate progress for loops
 // nct.progress.step(detail?) | set(n, detail?) | done()
 // nct.log(msg)  run log panel. Type "nct." in editor for autocomplete snippets.
