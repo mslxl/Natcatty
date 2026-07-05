@@ -155,6 +155,8 @@ export const enTerminalMessages: Messages = {
   'terminal.auth.passphrase.placeholder': 'Optional passphrase for the selected private key',
   'terminal.auth.certificate': 'Certificate',
   'terminal.auth.selectKey': 'Select Key',
+  'terminal.auth.retryMessage': 'Authentication failed. Please check your credentials and try again.',
+  'terminal.auth.retryLog': 'Authentication failed. Please try again.',
   'terminal.auth.noKeysHint': 'No keys available. Add keys in Keychain.',
   'terminal.auth.continueSave': 'Continue & Save',
   'terminal.auth.credentialsUnavailable': 'Saved credentials cannot be decrypted on this device. Please re-enter and save them again.',

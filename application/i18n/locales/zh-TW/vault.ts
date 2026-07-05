@@ -437,6 +437,8 @@ export const zhTWVaultMessages: Messages = {
   'terminal.auth.passphrase.placeholder': '可選：所選私鑰的密碼短語',
   'terminal.auth.certificate': '憑證',
   'terminal.auth.selectKey': '選擇金鑰',
+  'terminal.auth.retryMessage': '驗證失敗。請檢查憑證後再試一次。',
+  'terminal.auth.retryLog': '驗證失敗，請再試一次。',
   'terminal.auth.noKeysHint': '暫無金鑰，請先在鑰匙串中新增。',
   'terminal.auth.continueSave': '繼續並儲存',
   'terminal.auth.credentialsUnavailable': '目前裝置無法解密已儲存憑證，請重新輸入並再次儲存。',

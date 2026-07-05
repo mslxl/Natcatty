@@ -437,6 +437,8 @@ export const zhCNVaultMessages: Messages = {
   'terminal.auth.passphrase.placeholder': '可选：所选私钥的密码短语',
   'terminal.auth.certificate': '证书',
   'terminal.auth.selectKey': '选择密钥',
+  'terminal.auth.retryMessage': '身份验证失败。请检查凭据后重试。',
+  'terminal.auth.retryLog': '身份验证失败，请重试。',
   'terminal.auth.noKeysHint': '暂无密钥，请先在钥匙串中添加。',
   'terminal.auth.continueSave': '继续并保存',
   'terminal.auth.credentialsUnavailable': '当前设备无法解密已保存凭据，请重新输入并再次保存。',

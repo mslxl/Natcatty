@@ -622,12 +622,15 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         ctx.setError(null);
         ctx.setNeedsAuth(true);
         ctx.setAuthRetryMessage(
-          "Authentication failed. Please check your credentials and try again.",
+          tr(
+            "terminal.auth.retryMessage",
+            "Authentication failed. Please check your credentials and try again.",
+          ),
         );
         ctx.setAuthPassword("");
         ctx.setProgressLogs((prev) => [
           ...prev,
-          "Authentication failed. Please try again.",
+          tr("terminal.auth.retryLog", "Authentication failed. Please try again."),
         ]);
         ctx.setStatus("connecting");
       } else {

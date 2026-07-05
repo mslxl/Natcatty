@@ -175,6 +175,8 @@ export const ruTerminalMessages: Messages = {
   'terminal.auth.passphrase.placeholder': 'Необязательная парольная фраза для выбранного приватного ключа',
   'terminal.auth.certificate': 'Сертификат',
   'terminal.auth.selectKey': 'Выбрать ключ',
+  'terminal.auth.retryMessage': 'Ошибка аутентификации. Проверьте учётные данные и повторите попытку.',
+  'terminal.auth.retryLog': 'Ошибка аутентификации. Повторите попытку.',
   'terminal.auth.noKeysHint': 'Нет доступных ключей. Добавьте ключи в связке ключей.',
   'terminal.auth.continueSave': 'Продолжить и сохранить',
   'terminal.auth.credentialsUnavailable': 'Сохранённые учётные данные не могут быть расшифрованы на этом устройстве. Пожалуйста, введите и сохраните их заново.',
