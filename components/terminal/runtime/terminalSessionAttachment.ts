@@ -283,6 +283,8 @@ const writeSessionDataImmediate = (
         handleTerminalOutputAutoScroll(ctx, term);
       }
       if (ctx.isVisibleRef?.current !== false) {
+        // Unfocused-but-visible windows have no rAF-driven render; this
+        // debounced sync repaint is the only path that updates pixels (#1761).
         scheduleTerminalRepaintWhenUnfocused(term);
       }
       done();
