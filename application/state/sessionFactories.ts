@@ -88,5 +88,6 @@ export const createHostTerminalSession = (
     moshEnabled: host.moshEnabled,
     etEnabled: host.etEnabled,
     charset: host.charset,
+    ...(host.ephemeral ? { ephemeralHost: true } : {}),
   };
 };
