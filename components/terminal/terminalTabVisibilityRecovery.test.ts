@@ -78,6 +78,36 @@ test('short unchanged tab reveals still flush pending hidden-output scroll', () 
   );
 });
 
+test('visible tab recovery drains hidden terminal writes before any fast-path return', () => {
+  const recoverIndex = source.indexOf('const recoverTerminalAfterBecomeVisible = () => {');
+  const fastPathIndex = source.indexOf('getHiddenDurationMs() < CSS_ONLY_TAB_REVEAL_MAX_HIDDEN_MS', recoverIndex);
+  const flushCallIndex = source.indexOf('flushTerminalWritesAfterBecomeVisible();', recoverIndex);
+
+  assert.ok(recoverIndex >= 0);
+  assert.ok(fastPathIndex > recoverIndex);
+  assert.ok(flushCallIndex > recoverIndex && flushCallIndex < fastPathIndex);
+});
+
+test('visible split-pane recovery no longer defers background panes', () => {
+  const effectIndex = source.indexOf('const becameVisible = isVisible && !wasVisibleRef.current');
+  const effectEnd = source.indexOf('}, [isVisible, paneLayoutKey, splitResizeActive]);', effectIndex);
+  const effectSource = source.slice(effectIndex, effectEnd);
+
+  assert.ok(effectIndex >= 0);
+  assert.ok(effectEnd > effectIndex);
+  assert.match(
+    source,
+    /if \(becameVisible\) \{\s*recoverTerminalAfterBecomeVisible\(\);\s*return;\s*\}/,
+  );
+  assert.doesNotMatch(effectSource, /\binWorkspace\b/);
+  assert.doesNotMatch(effectSource, /\bisFocusMode\b/);
+  assert.doesNotMatch(effectSource, /\bisFocused\b/);
+  assert.doesNotMatch(source, /shouldRefitImmediatelyOnShow/);
+  assert.doesNotMatch(source, /shouldRecoverWebglOnShow/);
+  assert.doesNotMatch(source, /const runDeferred = \(\) => \{/);
+  assert.doesNotMatch(source, /scheduleLayoutRecoveryRefit\(\[120, 350\]\)/);
+});
+
 test('immediate tab recovery marks webgl recovery to skip the delayed duplicate pass', () => {
   assert.match(
     source,

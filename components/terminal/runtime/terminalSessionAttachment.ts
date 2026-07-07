@@ -77,7 +77,7 @@ import {
   flushTerminalWriteBufferBypassingTimers,
   maybeFlushTerminalWriteCoalescerWhenUnfocused,
   scheduleTerminalRepaintWhenUnfocused,
-  shouldFlushTerminalWritesForHiddenPage,
+  shouldFlushTerminalWritesForBackgroundOutput,
 } from "./terminalUnfocusedRepaint";
 
 export { FLOW_HIGH_WATER_MARK, FLOW_LOW_WATER_MARK };
@@ -130,7 +130,7 @@ type TerminalSessionWriteOptions = CoalescedTerminalWriteOptions & {
   perfTrace?: TerminalOutputPerfTrace | null;
 };
 
-const HIDDEN_PAGE_FLUSH_MAX_PASSES = 64;
+const BACKGROUND_OUTPUT_FLUSH_MAX_PASSES = 64;
 const LARGE_WRITE_FLUSH_WATCHDOG_BYTES = 64 * 1024;
 const LARGE_WRITE_FLUSH_WATCHDOG_MS = 250;
 const VISIBLE_WRITE_IDLE_FLUSH_MS = 64;
@@ -223,9 +223,9 @@ const summarizeLineTimestampPerf = (totals: LineTimestampPerfTotals) => ({
   measuredRows: totals.measuredRows,
 });
 
-const flushTerminalWritesForHiddenPage = (term: XTerm): void => {
+const flushTerminalWritesForBackgroundOutput = (term: XTerm): void => {
   flushTerminalWriteBufferBypassingTimers(term);
-  for (let pass = 0; pass < HIDDEN_PAGE_FLUSH_MAX_PASSES; pass += 1) {
+  for (let pass = 0; pass < BACKGROUND_OUTPUT_FLUSH_MAX_PASSES; pass += 1) {
     if (!flushTerminalWriteQueueBypassingTimers(term)) {
       return;
     }
@@ -342,8 +342,8 @@ export const writeSessionData = (
   flow.received(ingressBytes);
   setTerminalOutputPressureVisibility(term, isPaneVisible);
   noteTerminalOutputPressureData(term, data);
-  if (shouldFlushTerminalWritesForHiddenPage(isPaneVisible)) {
-    const writeHiddenPageData = (
+  if (shouldFlushTerminalWritesForBackgroundOutput(isPaneVisible)) {
+    const writeBackgroundOutputData = (
       batch: string,
       batchIngress: number,
     ): void => {
@@ -351,13 +351,13 @@ export const writeSessionData = (
         flushXtermWriteBuffer: true,
         perfTrace,
       });
-      flushTerminalWritesForHiddenPage(term);
+      flushTerminalWritesForBackgroundOutput(term);
     };
-    flushTerminalWriteCoalescer(term, writeHiddenPageData);
-    flushTerminalWritesForHiddenPage(term);
-    enqueueCoalescedTerminalWrite(term, data, writeHiddenPageData, ingressBytes);
-    flushTerminalWriteCoalescer(term, writeHiddenPageData);
-    flushTerminalWritesForHiddenPage(term);
+    flushTerminalWriteCoalescer(term, writeBackgroundOutputData);
+    flushTerminalWritesForBackgroundOutput(term);
+    enqueueCoalescedTerminalWrite(term, data, writeBackgroundOutputData, ingressBytes);
+    flushTerminalWriteCoalescer(term, writeBackgroundOutputData);
+    flushTerminalWritesForBackgroundOutput(term);
     return;
   }
   enqueueCoalescedTerminalWrite(term, data, (batch, batchIngress, writeOptions) => {

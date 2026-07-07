@@ -278,7 +278,7 @@ test("writeSessionData flushes xterm writes while the window is unfocused but vi
   clearTerminalSessionFlowAck("session-1");
 });
 
-test("writeSessionData flushes pending coalesced output with the hidden-page fast path", () => {
+test("writeSessionData flushes pending coalesced output with the background fast path", () => {
   clearTerminalSessionFlowAck("session-1");
   const pendingPayload = "pending output\n";
   const currentPayload = "current\n";
@@ -341,6 +341,90 @@ test("writeSessionData flushes pending coalesced output with the hidden-page fas
     pendingPayload.length + currentPayload.length,
   );
   clearTerminalSessionFlowAck("session-1");
+});
+
+test("hidden tab output is written completely while the tab remains hidden", () => {
+  clearTerminalSessionFlowAck("session-1");
+  const lines: string[] = [];
+  let payloadLength = 0;
+  while (payloadLength <= MAX_TERMINAL_PLAIN_WRITE_CHUNK_BYTES) {
+    const lineNumber = lines.length + 1;
+    const line = `${String(lineNumber).padStart(5)}  echo history-${lineNumber}\r\n`;
+    lines.push(line);
+    payloadLength += line.length;
+  }
+  const payload = lines.join("");
+  assert.ok(payload.length > MAX_TERMINAL_PLAIN_WRITE_CHUNK_BYTES);
+  const writes: string[] = [];
+  const term = {
+    buffer: { active: { type: "normal" } },
+    _core: { _writeBuffer: { flushSync() {} } },
+    write(data: string, callback?: () => void) {
+      writes.push(data);
+      callback?.();
+    },
+    scrollToBottom() {},
+  } as unknown as XTerm;
+  const acked: number[] = [];
+  const ctx = {
+    ...createContext(false),
+    isVisibleRef: { current: false },
+    sessionRef: { current: "session-1" },
+    terminalBackend: {
+      ackSessionFlow: (_sessionId: string, bytes: number) => {
+        acked.push(bytes);
+      },
+    },
+  };
+
+  withAnimationFrameQueue(() => {
+    writeSessionData(ctx as never, term, payload);
+  });
+  flushTerminalSessionFlowAck("session-1");
+
+  assert.equal(writes.join(""), payload);
+  assert.equal(getFlowController(ctx as never, term).pendingBytes(), 0);
+  assert.equal(acked.reduce((total, bytes) => total + bytes, 0), payload.length);
+  clearTerminalSessionFlowAck("session-1");
+});
+
+test("hidden tab output marks pending scroll without scrolling immediately", () => {
+  const writes: string[] = [];
+  let scrollCalls = 0;
+  const term = {
+    buffer: { active: { type: "normal" } },
+    _core: { _writeBuffer: { flushSync() {} } },
+    write(data: string, callback?: () => void) {
+      writes.push(data);
+      callback?.();
+    },
+    scrollToBottom() {
+      scrollCalls += 1;
+    },
+  } as unknown as XTerm;
+  const ctx = {
+    ...createContext(false),
+    isVisibleRef: { current: false },
+    pendingOutputScrollRef: { current: false },
+    terminalSettingsRef: {
+      current: {
+        showLineTimestamps: false,
+        scrollOnOutput: true,
+        forcePromptNewLine: false,
+      },
+    },
+    terminalSettings: {
+      showLineTimestamps: false,
+      scrollOnOutput: true,
+      forcePromptNewLine: false,
+    },
+  };
+
+  writeSessionData(ctx as never, term, "fresh output");
+
+  assert.equal(writes.join(""), "fresh output");
+  assert.equal(ctx.pendingOutputScrollRef.current, true);
+  assert.equal(scrollCalls, 0);
 });
 
 test("writeSessionData flushes deferred IPC acks before small output can leave the source paused", async () => {
