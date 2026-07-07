@@ -43,6 +43,7 @@ import {
   flushTerminalWriteCoalescer,
   resolveFloodCoalescerByteCap,
   setTerminalWriteCoalescerByteCapResolver,
+  setTerminalWriteCoalescerFlushGate,
 } from "./terminalWriteCoalescer";
 import {
   accumulateDeferredTerminalWriteAck,
@@ -75,6 +76,7 @@ import {
 } from "./terminalOutputPipeline";
 import {
   flushTerminalWriteBufferBypassingTimers,
+  hasPendingTerminalWrites,
   maybeFlushTerminalWriteCoalescerWhenUnfocused,
   scheduleTerminalRepaintWhenUnfocused,
   shouldFlushTerminalWritesForBackgroundOutput,
@@ -134,7 +136,9 @@ const BACKGROUND_OUTPUT_FLUSH_MAX_PASSES = 64;
 const LARGE_WRITE_FLUSH_WATCHDOG_BYTES = 64 * 1024;
 const LARGE_WRITE_FLUSH_WATCHDOG_MS = 250;
 const VISIBLE_WRITE_IDLE_FLUSH_MS = 64;
+const HIDDEN_PANE_DRAIN_MS = 160;
 const visibleWriteIdleFlushTimers = new WeakMap<XTerm, ReturnType<typeof setTimeout>>();
+const hiddenPaneDrainTimers = new WeakMap<XTerm, ReturnType<typeof setTimeout>>();
 
 type LineTimestampPerfTotals = {
   segmentCalls: number;
@@ -233,8 +237,38 @@ const flushTerminalWritesForBackgroundOutput = (term: XTerm): void => {
   }
 };
 
-const scheduleVisibleTerminalWriteIdleFlush = (term: XTerm, isPaneVisible: boolean): void => {
-  if (!isPaneVisible) return;
+const cancelHiddenPaneDrain = (term: XTerm): void => {
+  const timer = hiddenPaneDrainTimers.get(term);
+  if (timer === undefined) return;
+  clearTimeout(timer);
+  hiddenPaneDrainTimers.delete(term);
+};
+
+function flushHiddenPaneWritesNow(term: XTerm, isPaneVisible: () => boolean): void {
+  if (isPaneVisible()) return;
+  flushTerminalWriteCoalescer(term);
+  flushTerminalWritesForBackgroundOutput(term);
+  if (!isPaneVisible() && hasPendingTerminalWrites(term)) {
+    scheduleHiddenPaneDrain(term, isPaneVisible);
+  }
+}
+
+function scheduleHiddenPaneDrain(term: XTerm, isPaneVisible: () => boolean): void {
+  if (isPaneVisible()) return;
+  if (hiddenPaneDrainTimers.has(term)) return;
+
+  const timer = setTimeout(() => {
+    hiddenPaneDrainTimers.delete(term);
+    flushHiddenPaneWritesNow(term, isPaneVisible);
+  }, HIDDEN_PANE_DRAIN_MS);
+  if (typeof timer === "object" && "unref" in timer && typeof timer.unref === "function") {
+    timer.unref();
+  }
+  hiddenPaneDrainTimers.set(term, timer);
+}
+
+const scheduleVisibleTerminalWriteIdleFlush = (term: XTerm, isPaneVisible: () => boolean): void => {
+  if (!isPaneVisible()) return;
   const existingTimer = visibleWriteIdleFlushTimers.get(term);
   if (existingTimer !== undefined) {
     clearTimeout(existingTimer);
@@ -242,6 +276,10 @@ const scheduleVisibleTerminalWriteIdleFlush = (term: XTerm, isPaneVisible: boole
 
   const timer = setTimeout(() => {
     visibleWriteIdleFlushTimers.delete(term);
+    if (!isPaneVisible()) {
+      flushHiddenPaneWritesNow(term, isPaneVisible);
+      return;
+    }
     flushTerminalWriteCoalescer(term);
     flushTerminalWriteBufferBypassingTimers(term);
     flushTerminalWriteQueueBypassingTimers(term);
@@ -275,12 +313,6 @@ export const getFlowController = (
       },
     });
     terminalFlowControllers.set(term, controller);
-    setTerminalWriteCoalescerByteCapResolver(term, () => (
-      resolveFloodCoalescerByteCap(
-        controller!.isPaused(),
-        isTerminalWriteQueueInFloodMode(term),
-      )
-    ));
     setTerminalWriteQueueDropHandler(term, (bytes) => {
       if (bytes <= 0) return;
       controller?.written(bytes);
@@ -291,6 +323,13 @@ export const getFlowController = (
       }
     });
   }
+  setTerminalWriteCoalescerByteCapResolver(term, () => (
+    resolveFloodCoalescerByteCap(
+      controller!.isPaused(),
+      isTerminalWriteQueueInFloodMode(term),
+    )
+  ));
+  setTerminalWriteCoalescerFlushGate(term, () => ctx.isVisibleRef?.current !== false);
   return controller;
 };
 
@@ -329,7 +368,8 @@ export const writeSessionData = (
   meta?: TerminalSessionDataMeta,
 ) => {
   const flow = getFlowController(ctx, term);
-  const isPaneVisible = ctx.isVisibleRef?.current !== false;
+  const isPaneCurrentlyVisible = () => ctx.isVisibleRef?.current !== false;
+  const isPaneVisible = isPaneCurrentlyVisible();
   const perfTrace = createTerminalOutputPerfTrace({
     sessionId: ctx.sessionRef.current ?? ctx.sessionId,
     data,
@@ -346,10 +386,12 @@ export const writeSessionData = (
     const writeBackgroundOutputData = (
       batch: string,
       batchIngress: number,
+      writeOptions?: CoalescedTerminalWriteOptions,
     ): void => {
       writeSessionDataImmediate(ctx, term, batch, batchIngress, {
+        ...writeOptions,
         flushXtermWriteBuffer: true,
-        perfTrace,
+        perfTrace: writeOptions?.preservePerfTrace === false ? null : perfTrace,
       });
       flushTerminalWritesForBackgroundOutput(term);
     };
@@ -363,10 +405,11 @@ export const writeSessionData = (
   enqueueCoalescedTerminalWrite(term, data, (batch, batchIngress, writeOptions) => {
     writeSessionDataImmediate(ctx, term, batch, batchIngress, {
       ...writeOptions,
-      perfTrace,
+      perfTrace: writeOptions?.preservePerfTrace === false ? null : perfTrace,
     });
   }, ingressBytes);
-  scheduleVisibleTerminalWriteIdleFlush(term, isPaneVisible);
+  scheduleVisibleTerminalWriteIdleFlush(term, isPaneCurrentlyVisible);
+  scheduleHiddenPaneDrain(term, isPaneCurrentlyVisible);
   maybeFlushTerminalWriteCoalescerWhenUnfocused(
     term,
     isPaneVisible,
@@ -382,8 +425,9 @@ const writeSessionDataImmediate = (
 ) => {
   const flow = getFlowController(ctx, term);
   enqueueTerminalWrite(term, ingressBytes, (done) => {
-    const queueItemStartedAt = performance.now();
-    const prepareStartedAt = performance.now();
+    const shouldMeasurePerf = Boolean(writeOptions.perfTrace);
+    const queueItemStartedAt = shouldMeasurePerf ? performance.now() : 0;
+    const prepareStartedAt = shouldMeasurePerf ? performance.now() : 0;
     const settings = ctx.terminalSettingsRef?.current ?? ctx.terminalSettings;
     const filteredData = filterTerminalSessionData(term, data);
     const displayData = appendEraseScrollbackAfterFullErases(filteredData, {
@@ -402,7 +446,7 @@ const writeSessionDataImmediate = (
       ctx.promptLineBreakStateRef?.current,
       forcePromptNewLine,
     );
-    const prepareMs = performance.now() - prepareStartedAt;
+    const prepareMs = shouldMeasurePerf ? performance.now() - prepareStartedAt : 0;
     ctx.onTerminalLogData?.(pasteDisplayData);
     const clearPasteResidualAndCapture = () => {
       const cleanupData = clearPasteResidualAfterTerminalWrite(term);
@@ -451,7 +495,6 @@ const writeSessionDataImmediate = (
       );
 
     const writePreparedDisplayData = (callback: () => void): void => {
-      const shouldMeasurePerf = Boolean(writeOptions.perfTrace);
       const lineTimestampPerf = shouldMeasurePerf ? createLineTimestampPerfTotals() : null;
       const writeStartedAt = shouldMeasurePerf ? performance.now() : 0;
       let completed = false;
@@ -575,8 +618,10 @@ export const releaseTerminalFlowBeforeHibernate = (
   options?: { resumeBackend?: boolean },
 ): void => {
   const flow = terminalFlowControllers.get(term);
+  cancelHiddenPaneDrain(term);
   releaseTerminalFlowOutputForTerm(term, backend, sessionId, flow, options);
   setTerminalWriteCoalescerByteCapResolver(term);
+  setTerminalWriteCoalescerFlushGate(term);
   resetDeferredTerminalWriteAck(term);
   terminalFlowControllers.delete(term);
 };
