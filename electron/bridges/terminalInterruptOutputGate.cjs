@@ -194,16 +194,39 @@ function isProbablePasswordPromptPrefix(candidate) {
   if (prefixTargets.some((target) => target.startsWith(lower))) return true;
 
   // Allow an unfinished "[sudo…]" tag, or "[sudo…] " + a password-word prefix.
-  // Do NOT keep arbitrary lines that merely start with "password" / "[sudo]"
-  // (e.g. "Password authentication failed").
   const sudoTag = trimmed.match(/^\[sudo[^\]]*\]?\s*/i);
-  if (!sudoTag) return false;
-  const remainder = trimmed.slice(sudoTag[0].length);
-  if (!remainder) {
-    return /^\[sudo(?:[^\]]*)\]?\s*$/i.test(trimmed);
+  if (sudoTag) {
+    const remainder = trimmed.slice(sudoTag[0].length);
+    if (!remainder) {
+      if (/^\[sudo(?:[^\]]*)\]?\s*$/i.test(trimmed)) return true;
+    } else {
+      const remLower = remainder.toLowerCase();
+      const remTargets = [
+        "password",
+        "password:",
+        "password：",
+        "密码",
+        "密码：",
+        "口令",
+        "口令：",
+        "输入密码",
+        "输入密码：",
+        "input password",
+        "input password:",
+      ];
+      if (remTargets.some((target) => target.startsWith(remLower))) return true;
+    }
   }
-  const remLower = remainder.toLowerCase();
-  const remTargets = [
+
+  // Prompts with leading text split mid-keyword, e.g. `alice@host's pass` +
+  // `word:` or `用户 的密` + `码`. Hold when a trailing suffix is a real
+  // password-keyword prefix at a word boundary.
+  return hasTrailingPasswordKeywordPrefix(trimmed);
+}
+
+function hasTrailingPasswordKeywordPrefix(trimmed) {
+  const lower = String(trimmed || "").toLowerCase();
+  const keywordTargets = [
     "password",
     "password:",
     "password：",
@@ -216,7 +239,22 @@ function isProbablePasswordPromptPrefix(candidate) {
     "input password",
     "input password:",
   ];
-  return remTargets.some((target) => target.startsWith(remLower));
+
+  for (const target of keywordTargets) {
+    const maxLen = Math.min(lower.length, target.length);
+    // ASCII keywords: require >= 3 chars ("pas"/"pass") so lone "p"/"pa" mid-line
+    // noise is not held. CJK keywords can match a single character ("密").
+    const minLen = /^[\x00-\x7f]+$/.test(target) ? 3 : 1;
+    for (let len = maxLen; len >= minLen; len -= 1) {
+      const suffix = lower.slice(-len);
+      if (!target.startsWith(suffix)) continue;
+      const before = lower.slice(0, -len);
+      if (before.length === 0) return true;
+      const prev = before[before.length - 1];
+      if (!/[a-z0-9]/i.test(prev)) return true;
+    }
+  }
+  return false;
 }
 
 function getTrailingPasswordPromptPrefix(text) {

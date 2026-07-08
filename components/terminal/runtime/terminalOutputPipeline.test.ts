@@ -1004,3 +1004,31 @@ test("interrupt display drain does not hold ordinary password-related output", (
     },
   );
 });
+
+test("interrupt display drain holds split password prompts with leading text", () => {
+  const term = createFakeTerm();
+  armTerminalInterruptDisplayGate(term, {
+    now: 9000,
+    quietMs: 500,
+    promptQuietMs: 80,
+    maxDrainMs: 2500,
+  });
+
+  assert.equal(
+    filterTerminalInterruptDisplayOutput(term, "stale\n", { now: 9001 }).accepted,
+    false,
+  );
+  assert.deepEqual(
+    filterTerminalInterruptDisplayOutput(term, "alice@host's pass", { now: 9002 }),
+    { accepted: false, data: "", droppedBytes: 0, reason: "draining" },
+  );
+  assert.deepEqual(
+    filterTerminalInterruptDisplayOutput(term, "word: ", { now: 9003 }),
+    {
+      accepted: true,
+      data: "alice@host's password: ",
+      droppedBytes: 0,
+      reason: "prompt-gap",
+    },
+  );
+});

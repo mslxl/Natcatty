@@ -463,3 +463,49 @@ test("does not hold ordinary password-related output as a prompt prefix", () => 
     },
   );
 });
+
+test("holds split password prompts that have leading text before the keyword", () => {
+  const ssh = {};
+  armTerminalInterruptOutputGate(ssh, {
+    now: 9600,
+    quietMs: 500,
+    promptQuietMs: 80,
+    maxDrainMs: 2500,
+  });
+  assert.equal(filterTerminalInterruptOutput(ssh, "stale\n", { now: 9601 }).accepted, false);
+  assert.deepEqual(
+    filterTerminalInterruptOutput(ssh, "alice@host's pass", { now: 9602 }),
+    { accepted: false, data: "", droppedBytes: 0, reason: "draining" },
+  );
+  assert.deepEqual(
+    filterTerminalInterruptOutput(ssh, "word: ", { now: 9603 }),
+    {
+      accepted: true,
+      data: "alice@host's password: ",
+      droppedBytes: 0,
+      reason: "prompt-gap",
+    },
+  );
+
+  const kylin = {};
+  armTerminalInterruptOutputGate(kylin, {
+    now: 9700,
+    quietMs: 500,
+    promptQuietMs: 80,
+    maxDrainMs: 2500,
+  });
+  assert.equal(filterTerminalInterruptOutput(kylin, "stale\n", { now: 9701 }).accepted, false);
+  assert.deepEqual(
+    filterTerminalInterruptOutput(kylin, "用户 的密", { now: 9702 }),
+    { accepted: false, data: "", droppedBytes: 0, reason: "draining" },
+  );
+  assert.deepEqual(
+    filterTerminalInterruptOutput(kylin, "码", { now: 9703 }),
+    {
+      accepted: true,
+      data: "用户 的密码",
+      droppedBytes: 0,
+      reason: "prompt-gap",
+    },
+  );
+});
