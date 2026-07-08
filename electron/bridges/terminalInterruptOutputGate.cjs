@@ -244,14 +244,16 @@ function hasTrailingPasswordKeywordPrefix(trimmed) {
     const maxLen = Math.min(lower.length, target.length);
     // ASCII keywords: require >= 3 chars ("pas"/"pass") so lone "p"/"pa" mid-line
     // noise is not held. CJK keywords can match a single character ("密").
-    let isAsciiTarget = true;
-    for (let i = 0; i < target.length; i += 1) {
-      if (target.charCodeAt(i) > 0x7f) {
-        isAsciiTarget = false;
+    // Ignore punctuation/spaces (incl. full-width ：) so "password：" stays ASCII minLen.
+    const keywordBody = target.replace(/[:：\s]/g, "");
+    let isAsciiKeyword = true;
+    for (let i = 0; i < keywordBody.length; i += 1) {
+      if (keywordBody.charCodeAt(i) > 0x7f) {
+        isAsciiKeyword = false;
         break;
       }
     }
-    const minLen = isAsciiTarget ? 3 : 1;
+    const minLen = isAsciiKeyword ? 3 : 1;
     for (let len = maxLen; len >= minLen; len -= 1) {
       const suffix = lower.slice(-len);
       if (!target.startsWith(suffix)) continue;

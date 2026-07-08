@@ -541,6 +541,48 @@ test("keeps the quiet-gap guard for fresh password-looking lines in the flood", 
   );
 });
 
+test("does not hold short ASCII trailing letters as password prefixes", () => {
+  const session = {};
+
+  armTerminalInterruptOutputGate(session, {
+    now: 10000,
+    quietMs: 500,
+    promptQuietMs: 80,
+    maxDrainMs: 2500,
+  });
+
+  assert.equal(filterTerminalInterruptOutput(session, "stale\n", { now: 10001 }).accepted, false);
+  // Full-width "password：" must not lower ASCII minLen to 1, or "copy p" is held
+  // and a later "assword:" chunk can bypass quiet-gap.
+  assert.deepEqual(
+    filterTerminalInterruptOutput(session, "copy p", { now: 10002 }),
+    {
+      accepted: false,
+      data: "",
+      droppedBytes: "copy p".length,
+      reason: "draining",
+    },
+  );
+  assert.deepEqual(
+    filterTerminalInterruptOutput(session, "assword: ", { now: 10010 }),
+    {
+      accepted: false,
+      data: "",
+      droppedBytes: "assword: ".length,
+      reason: "draining",
+    },
+  );
+  assert.deepEqual(
+    filterTerminalInterruptOutput(session, "$ ", { now: 10200 }),
+    {
+      accepted: true,
+      data: "$ ",
+      droppedBytes: 0,
+      reason: "prompt-gap",
+    },
+  );
+});
+
 test("rejects held password-prefix completion across a line break", () => {
   const session = {};
 

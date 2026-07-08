@@ -1066,6 +1066,50 @@ test("interrupt display drain keeps quiet-gap for fresh password-looking lines",
   );
 });
 
+test("interrupt display drain does not hold short ASCII trailing letters as password prefixes", () => {
+  const term = createFakeTerm();
+  armTerminalInterruptDisplayGate(term, {
+    now: 9300,
+    quietMs: 500,
+    promptQuietMs: 80,
+    maxDrainMs: 2500,
+  });
+
+  assert.equal(
+    filterTerminalInterruptDisplayOutput(term, "stale\n", { now: 9301 }).accepted,
+    false,
+  );
+  // Full-width "password：" must not lower ASCII minLen to 1, or "copy p" is held
+  // and a later "assword:" chunk can bypass quiet-gap.
+  assert.deepEqual(
+    filterTerminalInterruptDisplayOutput(term, "copy p", { now: 9302 }),
+    {
+      accepted: false,
+      data: "",
+      droppedBytes: "copy p".length,
+      reason: "draining",
+    },
+  );
+  assert.deepEqual(
+    filterTerminalInterruptDisplayOutput(term, "assword: ", { now: 9310 }),
+    {
+      accepted: false,
+      data: "",
+      droppedBytes: "assword: ".length,
+      reason: "draining",
+    },
+  );
+  assert.deepEqual(
+    filterTerminalInterruptDisplayOutput(term, "$ ", { now: 9500 }),
+    {
+      accepted: true,
+      data: "$ ",
+      droppedBytes: 0,
+      reason: "prompt-gap",
+    },
+  );
+});
+
 test("interrupt display drain rejects held password-prefix completion across a line break", () => {
   const term = createFakeTerm();
   armTerminalInterruptDisplayGate(term, {
