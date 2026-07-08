@@ -966,6 +966,39 @@ test("interrupt display drain discards a held password prefix that does not comp
     {
       accepted: true,
       data: "$ ",
+      droppedBytes: 4,
+      reason: "prompt-gap",
+    },
+  );
+});
+
+test("interrupt display drain does not hold ordinary password-related output", () => {
+  const term = createFakeTerm();
+  armTerminalInterruptDisplayGate(term, {
+    now: 8700,
+    quietMs: 500,
+    promptQuietMs: 80,
+    maxDrainMs: 2500,
+  });
+
+  assert.equal(
+    filterTerminalInterruptDisplayOutput(term, "stale\n", { now: 8701 }).accepted,
+    false,
+  );
+  assert.deepEqual(
+    filterTerminalInterruptDisplayOutput(term, "Password authentication failed", { now: 8702 }),
+    {
+      accepted: false,
+      data: "",
+      droppedBytes: "Password authentication failed".length,
+      reason: "draining",
+    },
+  );
+  assert.deepEqual(
+    filterTerminalInterruptDisplayOutput(term, "$ ", { now: 8900 }),
+    {
+      accepted: true,
+      data: "$ ",
       droppedBytes: 0,
       reason: "prompt-gap",
     },

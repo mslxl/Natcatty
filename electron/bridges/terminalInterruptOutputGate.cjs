@@ -189,12 +189,30 @@ function isProbablePasswordPromptPrefix(candidate) {
   ];
   if (prefixTargets.some((target) => target.startsWith(lower))) return true;
 
-  // Incomplete sudo / password lines that have started but not finished yet.
-  if (/^\[sudo/i.test(trimmed)) return true;
-  if (/^(?:password|密\s*码|口\s*令|输入\s*密码|input\s+password)\b/i.test(trimmed)) {
-    return true;
+  // Allow an unfinished "[sudo…]" tag, or "[sudo…] " + a password-word prefix.
+  // Do NOT keep arbitrary lines that merely start with "password" / "[sudo]"
+  // (e.g. "Password authentication failed").
+  const sudoTag = trimmed.match(/^\[sudo[^\]]*\]?\s*/i);
+  if (!sudoTag) return false;
+  const remainder = trimmed.slice(sudoTag[0].length);
+  if (!remainder) {
+    return /^\[sudo(?:[^\]]*)\]?\s*$/i.test(trimmed);
   }
-  return false;
+  const remLower = remainder.toLowerCase();
+  const remTargets = [
+    "password",
+    "password:",
+    "password：",
+    "密码",
+    "密码：",
+    "口令",
+    "口令：",
+    "输入密码",
+    "输入密码：",
+    "input password",
+    "input password:",
+  ];
+  return remTargets.some((target) => target.startsWith(remLower));
 }
 
 function getTrailingPasswordPromptPrefix(text) {
@@ -372,8 +390,9 @@ function filterTerminalInterruptOutput(session, data, options = {}) {
     rawPendingDisplayControl,
     incomingText,
   );
-  if (resolvedPasswordPrefix.droppedPendingBytes > 0) {
-    gate.droppedBytes += resolvedPasswordPrefix.droppedPendingBytes;
+  const prefixDropBytes = resolvedPasswordPrefix.droppedPendingBytes;
+  if (prefixDropBytes > 0) {
+    gate.droppedBytes += prefixDropBytes;
     gate.droppedChunks += 1;
   }
   const pendingDisplayControl = resolvedPasswordPrefix.pending;
@@ -381,6 +400,7 @@ function filterTerminalInterruptOutput(session, data, options = {}) {
   const combinedText = `${pendingDisplayControl}${text}`;
   const bytes = byteLength(combinedText);
   const quietGapMs = gate.lastDroppedAt > 0 ? now - gate.lastDroppedAt : 0;
+  const withPrefixDrop = (droppedBytes) => droppedBytes + prefixDropBytes;
 
   if (gate.pendingInterruptCaret) {
     gate.pendingInterruptCaret = false;
@@ -393,7 +413,7 @@ function filterTerminalInterruptOutput(session, data, options = {}) {
       return {
         accepted: true,
         data: `${restoreControls.preserved}^${text}`,
-        droppedBytes,
+        droppedBytes: withPrefixDrop(droppedBytes),
         reason: "interrupt-echo",
       };
     }
@@ -410,7 +430,7 @@ function filterTerminalInterruptOutput(session, data, options = {}) {
     return {
       accepted: true,
       data: `${restoreControls.preserved}${combinedText.slice(interruptEchoIndex)}`,
-      droppedBytes,
+      droppedBytes: withPrefixDrop(droppedBytes),
       reason: "interrupt-echo",
     };
   }
@@ -427,7 +447,7 @@ function filterTerminalInterruptOutput(session, data, options = {}) {
       return {
         accepted: true,
         data: `${restoreControls.preserved}${promptCandidate}`,
-        droppedBytes,
+        droppedBytes: withPrefixDrop(droppedBytes),
         reason: "prompt-candidate",
       };
     }
@@ -448,7 +468,7 @@ function filterTerminalInterruptOutput(session, data, options = {}) {
       return {
         accepted: true,
         data: `${restoreControls.preserved}${promptCandidate}`,
-        droppedBytes,
+        droppedBytes: withPrefixDrop(droppedBytes),
         reason: "prompt-gap",
       };
     }
@@ -466,7 +486,7 @@ function filterTerminalInterruptOutput(session, data, options = {}) {
       return {
         accepted: true,
         data: `${restoreControls.preserved}${promptCandidate}`,
-        droppedBytes,
+        droppedBytes: withPrefixDrop(droppedBytes),
         reason: "prompt-gap",
       };
     }
@@ -480,7 +500,7 @@ function filterTerminalInterruptOutput(session, data, options = {}) {
     return {
       accepted: true,
       data: accepted.data,
-      droppedBytes: accepted.droppedBytes,
+      droppedBytes: withPrefixDrop(accepted.droppedBytes),
       reason: "quiet-gap",
     };
   }
@@ -493,7 +513,7 @@ function filterTerminalInterruptOutput(session, data, options = {}) {
     return {
       accepted: true,
       data: accepted.data,
-      droppedBytes: accepted.droppedBytes,
+      droppedBytes: withPrefixDrop(accepted.droppedBytes),
       reason: "max-drain",
     };
   }
@@ -508,9 +528,19 @@ function filterTerminalInterruptOutput(session, data, options = {}) {
   gate.droppedBytes += droppedBytes;
   gate.droppedChunks += droppedBytes > 0 ? 1 : 0;
   if (restoreControls.preserved) {
-    return { accepted: true, data: restoreControls.preserved, droppedBytes, reason: "draining" };
+    return {
+      accepted: true,
+      data: restoreControls.preserved,
+      droppedBytes: withPrefixDrop(droppedBytes),
+      reason: "draining",
+    };
   }
-  return { accepted: false, data: "", droppedBytes, reason: "draining" };
+  return {
+    accepted: false,
+    data: "",
+    droppedBytes: withPrefixDrop(droppedBytes),
+    reason: "draining",
+  };
 }
 
 module.exports = {

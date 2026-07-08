@@ -425,6 +425,37 @@ test("discards a held password prefix that does not complete as a password promp
     {
       accepted: true,
       data: "$ ",
+      droppedBytes: 4,
+      reason: "prompt-gap",
+    },
+  );
+});
+
+test("does not hold ordinary password-related output as a prompt prefix", () => {
+  const session = {};
+
+  armTerminalInterruptOutputGate(session, {
+    now: 9300,
+    quietMs: 500,
+    promptQuietMs: 80,
+    maxDrainMs: 2500,
+  });
+
+  assert.equal(filterTerminalInterruptOutput(session, "stale\n", { now: 9301 }).accepted, false);
+  assert.deepEqual(
+    filterTerminalInterruptOutput(session, "Password authentication failed", { now: 9302 }),
+    {
+      accepted: false,
+      data: "",
+      droppedBytes: "Password authentication failed".length,
+      reason: "draining",
+    },
+  );
+  assert.deepEqual(
+    filterTerminalInterruptOutput(session, "$ ", { now: 9500 }),
+    {
+      accepted: true,
+      data: "$ ",
       droppedBytes: 0,
       reason: "prompt-gap",
     },
