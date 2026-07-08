@@ -891,7 +891,7 @@ test("interrupt display drain accepts a sudo password prompt (#2010)", () => {
 });
 
 test("interrupt display drain accepts localized password prompts (#2010)", () => {
-  for (const prompt of ["Password: ", "[sudo] alice 的密码：", "输入密码"]) {
+  for (const prompt of ["Password: ", "[sudo] alice 的密码：", "输入密码", "用户 的密码"]) {
     const term = createFakeTerm();
     armTerminalInterruptDisplayGate(term, {
       now: 8100,

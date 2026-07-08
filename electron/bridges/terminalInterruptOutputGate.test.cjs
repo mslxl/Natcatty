@@ -314,6 +314,8 @@ test("accepts bare and localized password prompts while draining (#2010)", () =>
     "[sudo] alice 的密码：",
     "输入密码",
     "Input Password",
+    "用户 的密码",
+    "密码",
   ]) {
     const session = {};
     armTerminalInterruptOutputGate(session, {

@@ -286,13 +286,17 @@ export const shouldArmTerminalInterruptDisplayGateForProtocol = (
 const isCompletePasswordPrompt = (candidate: string): boolean => {
   const trimmed = candidate.trimEnd();
   if (!trimmed) return false;
+  // Align with terminalSudoAutofill's Kylin coverage (#1293): prompts may end
+  // with 密码/口令 and no colon (e.g. "用户 的密码"). Still require a password
+  // keyword so ordinary lines like "Password authentication failed" stay out.
   return (
     /(?:\bpassword\b|密\s*码|口\s*令)/i.test(trimmed)
     && (
       /[:：]\s*$/.test(trimmed)
       || /\[sudo/i.test(trimmed)
-      || /^(?:输入\s*)?密码\s*$/.test(trimmed)
+      || /(?:密\s*码|口\s*令)\s*$/.test(trimmed)
       || /^input\s+password\s*$/i.test(trimmed)
+      || /^password\s*$/i.test(trimmed)
     )
   );
 };
