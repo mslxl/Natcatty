@@ -944,6 +944,36 @@ test("interrupt display drain holds a split Password: prompt across chunks (#201
   );
 });
 
+test("interrupt display drain holds a split ANSI-colored Password: prompt", () => {
+  const term = createFakeTerm();
+  const red = "\x1b[31m";
+  const reset = "\x1b[0m";
+  armTerminalInterruptDisplayGate(term, {
+    now: 8350,
+    quietMs: 500,
+    promptQuietMs: 80,
+    maxDrainMs: 2500,
+  });
+
+  assert.equal(
+    filterTerminalInterruptDisplayOutput(term, "stale\n", { now: 8351 }).accepted,
+    false,
+  );
+  assert.deepEqual(
+    filterTerminalInterruptDisplayOutput(term, `${red}Pass`, { now: 8352 }),
+    { accepted: false, data: "", droppedBytes: 0, reason: "draining" },
+  );
+  assert.deepEqual(
+    filterTerminalInterruptDisplayOutput(term, `word:${reset} `, { now: 8353 }),
+    {
+      accepted: true,
+      data: `${red}Password:${reset} `,
+      droppedBytes: 0,
+      reason: "prompt-gap",
+    },
+  );
+});
+
 test("interrupt display drain discards a held password prefix that does not complete", () => {
   const term = createFakeTerm();
   armTerminalInterruptDisplayGate(term, {

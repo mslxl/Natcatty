@@ -144,9 +144,9 @@ function finalizeAcceptedTextAfterPendingDisplayControl(pending, text) {
   if (oscMatch?.index === 0 && oscMatch[0].length > pending.length) {
     return { data: combined, droppedBytes: 0 };
   }
-  // Held password-prompt prefixes are plain text (never ESC). Keep them when
+  // Held password-prompt prefixes (plain or SGR-styled). Keep them when
   // quiet/max-drain resumes so a split "Pass"+"word: " is not lost.
-  if (!pending.includes(ESC) && isProbablePasswordPromptPrefix(pending)) {
+  if (isProbablePasswordPromptPrefix(pending)) {
     return { data: combined, droppedBytes: 0 };
   }
   return { data: rawText, droppedBytes: byteLength(pending) };
@@ -171,7 +171,9 @@ function isCompletePasswordPrompt(candidate) {
 }
 
 function isProbablePasswordPromptPrefix(candidate) {
-  const trimmed = String(candidate || "").trimEnd();
+  // Strip SGR/OSC for matching so styled chunks like "\x1b[31mPass" still hold,
+  // while callers keep the raw pending bytes for display.
+  const trimmed = stripAnsi(String(candidate || "")).trimEnd();
   if (!trimmed || trimmed.length > 160) return false;
   if (/[\r\n]/.test(trimmed)) return false;
   if (isCompletePasswordPrompt(trimmed)) return false;
@@ -394,9 +396,7 @@ function clearPendingInterruptOutputMeta(session) {
 }
 
 function isPasswordPrefixPending(pending) {
-  return Boolean(pending)
-    && !pending.includes(ESC)
-    && isProbablePasswordPromptPrefix(pending);
+  return Boolean(pending) && isProbablePasswordPromptPrefix(pending);
 }
 
 function getLastVisibleLine(text) {

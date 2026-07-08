@@ -381,6 +381,34 @@ test("holds a split Password: prompt across chunks while draining (#2010)", () =
   );
 });
 
+test("holds a split ANSI-colored Password: prompt across chunks while draining", () => {
+  const session = {};
+  const red = "\x1b[31m";
+  const reset = "\x1b[0m";
+
+  armTerminalInterruptOutputGate(session, {
+    now: 9050,
+    quietMs: 500,
+    promptQuietMs: 80,
+    maxDrainMs: 2500,
+  });
+
+  assert.equal(filterTerminalInterruptOutput(session, "stale\n", { now: 9051 }).accepted, false);
+  assert.deepEqual(
+    filterTerminalInterruptOutput(session, `${red}Pass`, { now: 9052 }),
+    { accepted: false, data: "", droppedBytes: 0, reason: "draining" },
+  );
+  assert.deepEqual(
+    filterTerminalInterruptOutput(session, `word:${reset} `, { now: 9053 }),
+    {
+      accepted: true,
+      data: `${red}Password:${reset} `,
+      droppedBytes: 0,
+      reason: "prompt-gap",
+    },
+  );
+});
+
 test("holds a split [sudo] password prompt across chunks while draining (#2010)", () => {
   const session = {};
 
