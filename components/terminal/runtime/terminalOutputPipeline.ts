@@ -46,6 +46,7 @@ export type TerminalInterruptDisplayFilterReason =
   | "interrupt-echo"
   | "prompt-candidate"
   | "prompt-gap"
+  | "password-prompt"
   | "quiet-gap"
   | "max-drain";
 
