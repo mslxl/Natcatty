@@ -413,6 +413,26 @@ const getTrailingPasswordPromptPrefix = (text: string): string => {
   return isProbablePasswordPromptPrefix(trailing) ? trailing : "";
 };
 
+/**
+ * Restore sequences already counted in `preserved` can also sit at the start of
+ * the trailing password-prefix line (e.g. "stale\n\x1b[?1049lPass"). Strip that
+ * overlap so droppedBytes stays accurate and the restore is not re-emitted.
+ */
+const stripLeadingPreservedOverlap = (
+  passwordPending: string,
+  preserved: string,
+): string => {
+  if (!passwordPending || !preserved) return passwordPending;
+  const max = Math.min(preserved.length, passwordPending.length);
+  for (let len = max; len > 0; len -= 1) {
+    const suffix = preserved.slice(-len);
+    if (passwordPending.startsWith(suffix)) {
+      return passwordPending.slice(len);
+    }
+  }
+  return passwordPending;
+};
+
 const extractDrainHold = (
   text: string,
   options: { holdTrailingPartial?: boolean } = {},
@@ -429,8 +449,12 @@ const extractDrainHold = (
   const textWithoutControl = controlPending
     ? text.slice(0, -controlPending.length)
     : text;
-  const passwordPending = getTrailingPasswordPromptPrefix(textWithoutControl);
-  if (!passwordPending) {
+  let passwordPending = getTrailingPasswordPromptPrefix(textWithoutControl);
+  passwordPending = stripLeadingPreservedOverlap(
+    passwordPending,
+    restoreControls.preserved,
+  );
+  if (!passwordPending || !isProbablePasswordPromptPrefix(passwordPending)) {
     return restoreControls;
   }
 

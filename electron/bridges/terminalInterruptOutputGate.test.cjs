@@ -155,6 +155,38 @@ test("preserves alternate-screen exit controls while draining stale output", () 
   );
 });
 
+test("excludes preserved restore controls from held password prefixes", () => {
+  const session = {};
+
+  armTerminalInterruptOutputGate(session, {
+    now: 3850,
+    quietMs: 500,
+    promptQuietMs: 80,
+    maxDrainMs: 2500,
+  });
+
+  // Restore sequence is preserved once; password prefix hold must not re-count
+  // it, or stale bytes report as 0 dropped and the restore is re-emitted.
+  assert.deepEqual(
+    filterTerminalInterruptOutput(session, "stale\n\x1b[?1049lPass", { now: 3851 }),
+    {
+      accepted: true,
+      data: "\x1b[?1049l",
+      droppedBytes: "stale\n".length,
+      reason: "draining",
+    },
+  );
+  assert.deepEqual(
+    filterTerminalInterruptOutput(session, "word: ", { now: 3852 }),
+    {
+      accepted: true,
+      data: "Password: ",
+      droppedBytes: 0,
+      reason: "prompt-gap",
+    },
+  );
+});
+
 test("preserves split alternate-screen exit controls while draining stale output", () => {
   const session = {};
 

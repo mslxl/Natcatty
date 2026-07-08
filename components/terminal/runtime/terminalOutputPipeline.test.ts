@@ -518,6 +518,35 @@ test("interrupt display drain preserves alternate-screen exit controls", () => {
   );
 });
 
+test("interrupt display drain excludes preserved restore from held password prefixes", () => {
+  const term = createFakeTerm();
+  armTerminalInterruptDisplayGate(term, {
+    now: 6250,
+    quietMs: 500,
+    promptQuietMs: 80,
+    maxDrainMs: 2500,
+  });
+
+  assert.deepEqual(
+    filterTerminalInterruptDisplayOutput(term, "stale\n\x1b[?1049lPass", { now: 6251 }),
+    {
+      accepted: true,
+      data: "\x1b[?1049l",
+      droppedBytes: "stale\n".length,
+      reason: "draining",
+    },
+  );
+  assert.deepEqual(
+    filterTerminalInterruptDisplayOutput(term, "word: ", { now: 6252 }),
+    {
+      accepted: true,
+      data: "Password: ",
+      droppedBytes: 0,
+      reason: "prompt-gap",
+    },
+  );
+});
+
 test("interrupt display drain preserves split alternate-screen exit controls", () => {
   clearTerminalSessionFlowAck("sess-1");
   const term = createFakeTerm();
