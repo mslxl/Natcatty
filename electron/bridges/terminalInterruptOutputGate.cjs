@@ -144,7 +144,84 @@ function finalizeAcceptedTextAfterPendingDisplayControl(pending, text) {
   if (oscMatch?.index === 0 && oscMatch[0].length > pending.length) {
     return { data: combined, droppedBytes: 0 };
   }
+  // Held password-prompt prefixes are plain text (never ESC). Keep them when
+  // quiet/max-drain resumes so a split "Pass"+"word: " is not lost.
+  if (!pending.includes(ESC) && isProbablePasswordPromptPrefix(pending)) {
+    return { data: combined, droppedBytes: 0 };
+  }
   return { data: rawText, droppedBytes: byteLength(pending) };
+}
+
+function isCompletePasswordPrompt(candidate) {
+  const trimmed = String(candidate || "").trimEnd();
+  if (!trimmed) return false;
+  return (
+    /(?:\bpassword\b|密\s*码|口\s*令)/i.test(trimmed)
+    && (
+      /[:：]\s*$/.test(trimmed)
+      || /\[sudo/i.test(trimmed)
+      || /^(?:输入\s*)?密码\s*$/.test(trimmed)
+      || /^input\s+password\s*$/i.test(trimmed)
+    )
+  );
+}
+
+function isProbablePasswordPromptPrefix(candidate) {
+  const trimmed = String(candidate || "").trimEnd();
+  if (!trimmed || trimmed.length > 160) return false;
+  if (/[\r\n]/.test(trimmed)) return false;
+  if (isCompletePasswordPrompt(trimmed)) return false;
+
+  const lower = trimmed.toLowerCase();
+  const prefixTargets = [
+    "password",
+    "password:",
+    "password：",
+    "[sudo",
+    "密码",
+    "密码：",
+    "口令",
+    "口令：",
+    "输入密码",
+    "输入密码：",
+    "input password",
+    "input password:",
+  ];
+  if (prefixTargets.some((target) => target.startsWith(lower))) return true;
+
+  // Incomplete sudo / password lines that have started but not finished yet.
+  if (/^\[sudo/i.test(trimmed)) return true;
+  if (/^(?:password|密\s*码|口\s*令|输入\s*密码|input\s+password)\b/i.test(trimmed)) {
+    return true;
+  }
+  return false;
+}
+
+function getTrailingPasswordPromptPrefix(text) {
+  const raw = String(text || "");
+  const lastBreak = Math.max(raw.lastIndexOf("\n"), raw.lastIndexOf("\r"));
+  const trailing = raw.slice(lastBreak + 1);
+  if (!trailing) return "";
+  return isProbablePasswordPromptPrefix(trailing) ? trailing : "";
+}
+
+function extractDrainHold(text, options = {}) {
+  const restoreControls = extractTerminalStateRestoreControls(text, options);
+  if (!options.holdTrailingPartial || restoreControls.pending) {
+    return restoreControls;
+  }
+
+  const passwordPending = getTrailingPasswordPromptPrefix(text);
+  if (!passwordPending) return restoreControls;
+
+  return {
+    preserved: restoreControls.preserved,
+    pending: passwordPending,
+    droppedBytes: Math.max(
+      0,
+      byteLength(text) - byteLength(restoreControls.preserved) - byteLength(passwordPending),
+    ),
+  };
 }
 
 function getPromptCandidateSuffix(text) {
@@ -158,17 +235,8 @@ function getPromptCandidateSuffix(text) {
   // Password prompts are interactive resume points too. Without this, Ctrl+C
   // drain treats "[sudo] password for …:" as stale flood and drops it, so the
   // remote waits for a password while the terminal shows nothing (#2010).
-  const looksLikePasswordPrompt = (
-    /(?:\bpassword\b|密\s*码|口\s*令)/i.test(candidate)
-    && (
-      /[:：]\s*$/.test(candidate)
-      || /\[sudo/i.test(candidate)
-      || /^(?:输入\s*)?密码\s*$/.test(candidate)
-      || /^input\s+password\s*$/i.test(candidate)
-    )
-  );
   const looksLikePrompt = (
-    looksLikePasswordPrompt
+    isCompletePasswordPrompt(candidate)
     || /^[#$>%]\s*$/.test(candidate)
     || /^[^ \t\r\n<>]{1,80}[#$>%]\s*$/.test(candidate)
     || /^[^\r\n<>]{1,120}[#$>%]\s*$/.test(candidate)
@@ -319,6 +387,28 @@ function filterTerminalInterruptOutput(session, data, options = {}) {
       };
     }
   }
+
+  // Password prompts are specific enough to resume immediately even after we
+  // already dropped stale flood — including when a held "Pass" prefix completes
+  // as "Password: " in the next chunk before promptQuietMs elapses.
+  if (bytes <= gate.promptCandidateBytes) {
+    const promptCandidate = getPromptCandidateSuffix(combinedText);
+    if (promptCandidate && isCompletePasswordPrompt(stripAnsi(promptCandidate))) {
+      const droppedPrefix = combinedText.slice(0, combinedText.length - promptCandidate.length);
+      const restoreControls = extractTerminalStateRestoreControls(droppedPrefix);
+      const droppedBytes = restoreControls.droppedBytes;
+      gate.droppedBytes += droppedBytes;
+      gate.droppedChunks += droppedBytes > 0 ? 1 : 0;
+      disarmTerminalInterruptOutputGate(session);
+      return {
+        accepted: true,
+        data: `${restoreControls.preserved}${promptCandidate}`,
+        droppedBytes,
+        reason: "prompt-gap",
+      };
+    }
+  }
+
   if (quietGapMs >= gate.promptQuietMs && bytes <= gate.promptCandidateBytes) {
     const promptCandidate = getPromptCandidateSuffix(combinedText);
     if (promptCandidate) {
@@ -363,7 +453,7 @@ function filterTerminalInterruptOutput(session, data, options = {}) {
     };
   }
 
-  const restoreControls = extractTerminalStateRestoreControls(combinedText, {
+  const restoreControls = extractDrainHold(combinedText, {
     holdTrailingPartial: true,
   });
   const droppedBytes = restoreControls.droppedBytes;

@@ -352,3 +352,55 @@ test("does not treat password mentions in ordinary output as prompts", () => {
     { accepted: false, data: "", droppedBytes: 24, reason: "draining" },
   );
 });
+
+test("holds a split Password: prompt across chunks while draining (#2010)", () => {
+  const session = {};
+
+  armTerminalInterruptOutputGate(session, {
+    now: 9000,
+    quietMs: 500,
+    promptQuietMs: 80,
+    maxDrainMs: 2500,
+  });
+
+  assert.equal(filterTerminalInterruptOutput(session, "stale\n", { now: 9001 }).accepted, false);
+  assert.deepEqual(
+    filterTerminalInterruptOutput(session, "Pass", { now: 9002 }),
+    { accepted: false, data: "", droppedBytes: 0, reason: "draining" },
+  );
+  assert.deepEqual(
+    filterTerminalInterruptOutput(session, "word: ", { now: 9003 }),
+    {
+      accepted: true,
+      data: "Password: ",
+      droppedBytes: 0,
+      reason: "prompt-gap",
+    },
+  );
+});
+
+test("holds a split [sudo] password prompt across chunks while draining (#2010)", () => {
+  const session = {};
+
+  armTerminalInterruptOutputGate(session, {
+    now: 9100,
+    quietMs: 500,
+    promptQuietMs: 80,
+    maxDrainMs: 2500,
+  });
+
+  assert.equal(filterTerminalInterruptOutput(session, "stale\n", { now: 9101 }).accepted, false);
+  assert.deepEqual(
+    filterTerminalInterruptOutput(session, "[sudo] pass", { now: 9102 }),
+    { accepted: false, data: "", droppedBytes: 0, reason: "draining" },
+  );
+  assert.deepEqual(
+    filterTerminalInterruptOutput(session, "word for alice: ", { now: 9103 }),
+    {
+      accepted: true,
+      data: "[sudo] password for alice: ",
+      droppedBytes: 0,
+      reason: "prompt-gap",
+    },
+  );
+});

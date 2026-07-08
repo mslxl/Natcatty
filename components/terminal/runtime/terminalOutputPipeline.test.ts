@@ -915,3 +915,31 @@ test("interrupt display drain accepts localized password prompts (#2010)", () =>
     );
   }
 });
+
+test("interrupt display drain holds a split Password: prompt across chunks (#2010)", () => {
+  const term = createFakeTerm();
+  armTerminalInterruptDisplayGate(term, {
+    now: 8300,
+    quietMs: 500,
+    promptQuietMs: 80,
+    maxDrainMs: 2500,
+  });
+
+  assert.equal(
+    filterTerminalInterruptDisplayOutput(term, "stale\n", { now: 8301 }).accepted,
+    false,
+  );
+  assert.deepEqual(
+    filterTerminalInterruptDisplayOutput(term, "Pass", { now: 8302 }),
+    { accepted: false, data: "", droppedBytes: 0, reason: "draining" },
+  );
+  assert.deepEqual(
+    filterTerminalInterruptDisplayOutput(term, "word: ", { now: 8303 }),
+    {
+      accepted: true,
+      data: "Password: ",
+      droppedBytes: 0,
+      reason: "prompt-gap",
+    },
+  );
+});
