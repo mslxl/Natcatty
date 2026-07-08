@@ -1065,3 +1065,42 @@ test("interrupt display drain keeps quiet-gap for fresh password-looking lines",
     },
   );
 });
+
+test("interrupt display drain rejects held password-prefix completion across a line break", () => {
+  const term = createFakeTerm();
+  armTerminalInterruptDisplayGate(term, {
+    now: 9200,
+    quietMs: 500,
+    promptQuietMs: 80,
+    maxDrainMs: 2500,
+  });
+
+  assert.equal(
+    filterTerminalInterruptDisplayOutput(term, "stale\n", { now: 9201 }).accepted,
+    false,
+  );
+  assert.deepEqual(
+    filterTerminalInterruptDisplayOutput(term, "Pass", { now: 9202 }),
+    { accepted: false, data: "", droppedBytes: 0, reason: "draining" },
+  );
+  // A newline before Password: means a fresh flood line, not a same-line
+  // completion of the held "Pass" prefix — keep quiet-gap.
+  assert.deepEqual(
+    filterTerminalInterruptDisplayOutput(term, "\nPassword: ", { now: 9210 }),
+    {
+      accepted: false,
+      data: "",
+      droppedBytes: 4 + "\nPassword: ".length,
+      reason: "draining",
+    },
+  );
+  assert.deepEqual(
+    filterTerminalInterruptDisplayOutput(term, "$ ", { now: 9400 }),
+    {
+      accepted: true,
+      data: "$ ",
+      droppedBytes: 0,
+      reason: "prompt-gap",
+    },
+  );
+});

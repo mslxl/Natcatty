@@ -540,3 +540,40 @@ test("keeps the quiet-gap guard for fresh password-looking lines in the flood", 
     },
   );
 });
+
+test("rejects held password-prefix completion across a line break", () => {
+  const session = {};
+
+  armTerminalInterruptOutputGate(session, {
+    now: 9900,
+    quietMs: 500,
+    promptQuietMs: 80,
+    maxDrainMs: 2500,
+  });
+
+  assert.equal(filterTerminalInterruptOutput(session, "stale\n", { now: 9901 }).accepted, false);
+  assert.deepEqual(
+    filterTerminalInterruptOutput(session, "Pass", { now: 9902 }),
+    { accepted: false, data: "", droppedBytes: 0, reason: "draining" },
+  );
+  // A newline before Password: means a fresh flood line, not a same-line
+  // completion of the held "Pass" prefix — keep quiet-gap.
+  assert.deepEqual(
+    filterTerminalInterruptOutput(session, "\nPassword: ", { now: 9910 }),
+    {
+      accepted: false,
+      data: "",
+      droppedBytes: 4 + "\nPassword: ".length,
+      reason: "draining",
+    },
+  );
+  assert.deepEqual(
+    filterTerminalInterruptOutput(session, "$ ", { now: 10100 }),
+    {
+      accepted: true,
+      data: "$ ",
+      droppedBytes: 0,
+      reason: "prompt-gap",
+    },
+  );
+});

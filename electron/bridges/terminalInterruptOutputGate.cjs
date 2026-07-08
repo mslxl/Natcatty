@@ -413,6 +413,17 @@ function resolveHeldPasswordPrefix(pending, text) {
     return { pending, text, droppedPendingBytes: 0 };
   }
 
+  // Held prefixes must continue on the same line. A leading line break means
+  // the next chunk is a fresh line (e.g. "Pass" then "\nPassword: "), not a
+  // completion of the held prefix — discard so quiet-gap still applies.
+  if (/^[\r\n]/.test(text)) {
+    return {
+      pending: "",
+      text,
+      droppedPendingBytes: byteLength(pending),
+    };
+  }
+
   const combined = `${pending}${text}`;
   const lastLine = getLastVisibleLine(combined);
   if (isCompletePasswordPrompt(lastLine) || isProbablePasswordPromptPrefix(lastLine)) {
@@ -435,12 +446,19 @@ function filterTerminalInterruptOutput(session, data, options = {}) {
 
   const now = nowFromOptions(options);
   const rawPendingDisplayControl = takePendingDisplayControl(gate);
-  const heldPasswordPrefix = isPasswordPrefixPending(rawPendingDisplayControl);
+  const hadHeldPasswordPrefix = isPasswordPrefixPending(rawPendingDisplayControl);
   const resolvedPasswordPrefix = resolveHeldPasswordPrefix(
     rawPendingDisplayControl,
     incomingText,
   );
   const prefixDropBytes = resolvedPasswordPrefix.droppedPendingBytes;
+  // Only treat the held prefix as continued when it was merged into this chunk
+  // (not discarded across a line break / non-prompt continuation).
+  const heldPasswordPrefixContinued = (
+    hadHeldPasswordPrefix
+    && prefixDropBytes === 0
+    && resolvedPasswordPrefix.pending === ""
+  );
   if (prefixDropBytes > 0) {
     gate.droppedBytes += prefixDropBytes;
     gate.droppedChunks += 1;
@@ -503,11 +521,11 @@ function filterTerminalInterruptOutput(session, data, options = {}) {
     }
   }
 
-  // Only bypass the quiet gap when a held password-prefix chunk completes.
-  // Fresh password-looking lines in the flood must wait like shell prompts,
-  // otherwise a canceled "Password:" from the interrupted program resumes
-  // drain too early and lets more stale output through.
-  if (heldPasswordPrefix && bytes <= gate.promptCandidateBytes) {
+  // Only bypass the quiet gap when a held password-prefix chunk completes on
+  // the same line. Fresh password-looking lines in the flood must wait like
+  // shell prompts, otherwise a canceled "Password:" from the interrupted
+  // program resumes drain too early and lets more stale output through.
+  if (heldPasswordPrefixContinued && bytes <= gate.promptCandidateBytes) {
     const promptCandidate = getPromptCandidateSuffix(combinedText);
     if (promptCandidate && isCompletePasswordPrompt(stripAnsi(promptCandidate))) {
       const droppedPrefix = combinedText.slice(0, combinedText.length - promptCandidate.length);
