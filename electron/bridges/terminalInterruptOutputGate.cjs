@@ -12,6 +12,8 @@ const TERMINAL_STATE_RESTORE_SEQUENCE_PATTERN = new RegExp(
 );
 const PRIVATE_MODE_PATTERN = new RegExp(`^${ESC}\\[\\?([0-9;:]*)([hl])$`);
 const TRAILING_RESTORE_CONTROL_PREFIX_PATTERN = new RegExp(`^${ESC}\\[\\?[0-9;:]*$`);
+// Incomplete CSI (params/intermediates, no final byte) — e.g. ESC[0 or ESC[31
+const TRAILING_CSI_CONTROL_PREFIX_PATTERN = new RegExp(`^${ESC}\\[[0-?]*[ -/]*$`);
 const RESTORE_PRIVATE_MODE_PARAMS = new Set([
   1,
   47,
@@ -80,7 +82,9 @@ function getTrailingRestoreControlPrefix(text) {
   if (escapeIndex < 0) return "";
   const suffix = raw.slice(escapeIndex);
   if (suffix === ESC) return suffix;
-  if (suffix === `${ESC}[`) return suffix;
+  // Hold any incomplete CSI (ESC[ / ESC[0 / ESC[31 / ESC[?1049), not only
+  // private-mode restore prefixes — styled password prompts can split mid-SGR.
+  if (TRAILING_CSI_CONTROL_PREFIX_PATTERN.test(suffix)) return suffix;
   if (suffix.startsWith(`${ESC}[?`) && TRAILING_RESTORE_CONTROL_PREFIX_PATTERN.test(suffix)) {
     return suffix;
   }

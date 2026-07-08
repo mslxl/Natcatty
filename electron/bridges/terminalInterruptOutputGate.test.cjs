@@ -473,6 +473,35 @@ test("holds a password prefix split before a trailing ANSI control while drainin
   );
 });
 
+test("holds a password prefix split mid CSI parameter while draining", () => {
+  const session = {};
+  const red = "\x1b[31m";
+  const reset = "\x1b[0m";
+
+  armTerminalInterruptOutputGate(session, {
+    now: 9080,
+    quietMs: 500,
+    promptQuietMs: 80,
+    maxDrainMs: 2500,
+  });
+
+  assert.equal(filterTerminalInterruptOutput(session, "stale\n", { now: 9081 }).accepted, false);
+  // Incomplete CSI params (ESC[0) must also hold with the password prefix.
+  assert.deepEqual(
+    filterTerminalInterruptOutput(session, `${red}Pass\x1b[0`, { now: 9082 }),
+    { accepted: false, data: "", droppedBytes: 0, reason: "draining" },
+  );
+  assert.deepEqual(
+    filterTerminalInterruptOutput(session, `mword: `, { now: 9083 }),
+    {
+      accepted: true,
+      data: `${red}Pass${reset}word: `,
+      droppedBytes: 0,
+      reason: "prompt-gap",
+    },
+  );
+});
+
 test("holds a split [sudo] password prompt across chunks while draining (#2010)", () => {
   const session = {};
 
