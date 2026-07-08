@@ -356,6 +356,43 @@ const extractDrainHold = (
   };
 };
 
+const isPasswordPrefixPending = (pending: string): boolean =>
+  Boolean(pending)
+  && !pending.includes(ANSI_ESCAPE)
+  && isProbablePasswordPromptPrefix(pending);
+
+const getLastVisibleLine = (text: string): string => {
+  const normalized = stripAnsi(text).replace(/\r/g, "\n");
+  const lastLineStart = normalized.lastIndexOf("\n") + 1;
+  return normalized.slice(lastLineStart).trimEnd();
+};
+
+/**
+ * A held "Pass" / "[sudo] pass" must only survive when the next chunk continues
+ * or completes a password prompt. Otherwise discard it before the generic
+ * shell-prompt matcher can accept junk like "Pass$ " (#2010 Codex follow-up).
+ */
+const resolveHeldPasswordPrefix = (
+  pending: string,
+  text: string,
+): { pending: string; text: string; droppedPendingBytes: number } => {
+  if (!isPasswordPrefixPending(pending)) {
+    return { pending, text, droppedPendingBytes: 0 };
+  }
+
+  const combined = `${pending}${text}`;
+  const lastLine = getLastVisibleLine(combined);
+  if (isCompletePasswordPrompt(lastLine) || isProbablePasswordPromptPrefix(lastLine)) {
+    return { pending: "", text: combined, droppedPendingBytes: 0 };
+  }
+
+  return {
+    pending: "",
+    text,
+    droppedPendingBytes: charLength(pending),
+  };
+};
+
 const getPromptCandidateSuffix = (text: string): string | null => {
   const normalized = stripAnsi(text).replace(/\r/g, "\n");
   const lastLineStart = normalized.lastIndexOf("\n") + 1;
@@ -416,14 +453,24 @@ export const filterTerminalInterruptDisplayOutput = (
   data: string,
   options: Pick<TerminalInputPriorityOptions, "now"> = {},
 ): TerminalInterruptDisplayFilterResult => {
-  const text = String(data || "");
+  const incomingText = String(data || "");
   const gate = readTerminalInterruptDisplayGate(term);
   if (!gate?.active) {
-    return { accepted: true, data: text, droppedBytes: 0, reason: "inactive" };
+    return { accepted: true, data: incomingText, droppedBytes: 0, reason: "inactive" };
   }
 
   const now = nowFromPriorityOptions(options);
-  const pendingDisplayControl = takePendingDisplayControl(gate);
+  const rawPendingDisplayControl = takePendingDisplayControl(gate);
+  const resolvedPasswordPrefix = resolveHeldPasswordPrefix(
+    rawPendingDisplayControl,
+    incomingText,
+  );
+  if (resolvedPasswordPrefix.droppedPendingBytes > 0) {
+    gate.droppedBytes += resolvedPasswordPrefix.droppedPendingBytes;
+    gate.droppedChunks += 1;
+  }
+  const pendingDisplayControl = resolvedPasswordPrefix.pending;
+  const text = resolvedPasswordPrefix.text;
   const combinedText = `${pendingDisplayControl}${text}`;
   const bytes = charLength(combinedText);
   const quietGapMs = gate.lastDroppedAt > 0 ? now - gate.lastDroppedAt : 0;

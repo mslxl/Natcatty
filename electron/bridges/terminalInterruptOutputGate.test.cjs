@@ -404,3 +404,29 @@ test("holds a split [sudo] password prompt across chunks while draining (#2010)"
     },
   );
 });
+
+test("discards a held password prefix that does not complete as a password prompt", () => {
+  const session = {};
+
+  armTerminalInterruptOutputGate(session, {
+    now: 9200,
+    quietMs: 500,
+    promptQuietMs: 80,
+    maxDrainMs: 2500,
+  });
+
+  assert.equal(filterTerminalInterruptOutput(session, "stale\n", { now: 9201 }).accepted, false);
+  assert.deepEqual(
+    filterTerminalInterruptOutput(session, "Pass", { now: 9202 }),
+    { accepted: false, data: "", droppedBytes: 0, reason: "draining" },
+  );
+  assert.deepEqual(
+    filterTerminalInterruptOutput(session, "$ ", { now: 9400 }),
+    {
+      accepted: true,
+      data: "$ ",
+      droppedBytes: 0,
+      reason: "prompt-gap",
+    },
+  );
+});

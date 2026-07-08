@@ -324,15 +324,60 @@ function clearPendingInterruptOutputMeta(session) {
   }
 }
 
+function isPasswordPrefixPending(pending) {
+  return Boolean(pending)
+    && !pending.includes(ESC)
+    && isProbablePasswordPromptPrefix(pending);
+}
+
+function getLastVisibleLine(text) {
+  const normalized = stripAnsi(String(text || "")).replace(/\r/g, "\n");
+  const lastLineStart = normalized.lastIndexOf("\n") + 1;
+  return normalized.slice(lastLineStart).trimEnd();
+}
+
+/**
+ * A held "Pass" / "[sudo] pass" must only survive when the next chunk continues
+ * or completes a password prompt. Otherwise discard it before the generic
+ * shell-prompt matcher can accept junk like "Pass$ " (#2010 Codex follow-up).
+ */
+function resolveHeldPasswordPrefix(pending, text) {
+  if (!isPasswordPrefixPending(pending)) {
+    return { pending, text, droppedPendingBytes: 0 };
+  }
+
+  const combined = `${pending}${text}`;
+  const lastLine = getLastVisibleLine(combined);
+  if (isCompletePasswordPrompt(lastLine) || isProbablePasswordPromptPrefix(lastLine)) {
+    return { pending: "", text: combined, droppedPendingBytes: 0 };
+  }
+
+  return {
+    pending: "",
+    text,
+    droppedPendingBytes: byteLength(pending),
+  };
+}
+
 function filterTerminalInterruptOutput(session, data, options = {}) {
   const gate = session?._interruptOutputGate;
-  const text = String(data || "");
+  const incomingText = String(data || "");
   if (!gate?.active) {
-    return { accepted: true, data: text, droppedBytes: 0, reason: "inactive" };
+    return { accepted: true, data: incomingText, droppedBytes: 0, reason: "inactive" };
   }
 
   const now = nowFromOptions(options);
-  const pendingDisplayControl = takePendingDisplayControl(gate);
+  const rawPendingDisplayControl = takePendingDisplayControl(gate);
+  const resolvedPasswordPrefix = resolveHeldPasswordPrefix(
+    rawPendingDisplayControl,
+    incomingText,
+  );
+  if (resolvedPasswordPrefix.droppedPendingBytes > 0) {
+    gate.droppedBytes += resolvedPasswordPrefix.droppedPendingBytes;
+    gate.droppedChunks += 1;
+  }
+  const pendingDisplayControl = resolvedPasswordPrefix.pending;
+  const text = resolvedPasswordPrefix.text;
   const combinedText = `${pendingDisplayControl}${text}`;
   const bytes = byteLength(combinedText);
   const quietGapMs = gate.lastDroppedAt > 0 ? now - gate.lastDroppedAt : 0;

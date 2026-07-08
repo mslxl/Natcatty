@@ -943,3 +943,31 @@ test("interrupt display drain holds a split Password: prompt across chunks (#201
     },
   );
 });
+
+test("interrupt display drain discards a held password prefix that does not complete", () => {
+  const term = createFakeTerm();
+  armTerminalInterruptDisplayGate(term, {
+    now: 8400,
+    quietMs: 500,
+    promptQuietMs: 80,
+    maxDrainMs: 2500,
+  });
+
+  assert.equal(
+    filterTerminalInterruptDisplayOutput(term, "stale\n", { now: 8401 }).accepted,
+    false,
+  );
+  assert.deepEqual(
+    filterTerminalInterruptDisplayOutput(term, "Pass", { now: 8402 }),
+    { accepted: false, data: "", droppedBytes: 0, reason: "draining" },
+  );
+  assert.deepEqual(
+    filterTerminalInterruptDisplayOutput(term, "$ ", { now: 8600 }),
+    {
+      accepted: true,
+      data: "$ ",
+      droppedBytes: 0,
+      reason: "prompt-gap",
+    },
+  );
+});
