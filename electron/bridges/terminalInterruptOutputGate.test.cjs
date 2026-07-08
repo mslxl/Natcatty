@@ -509,3 +509,34 @@ test("holds split password prompts that have leading text before the keyword", (
     },
   );
 });
+
+test("keeps the quiet-gap guard for fresh password-looking lines in the flood", () => {
+  const session = {};
+
+  armTerminalInterruptOutputGate(session, {
+    now: 9800,
+    quietMs: 500,
+    promptQuietMs: 80,
+    maxDrainMs: 2500,
+  });
+
+  assert.equal(filterTerminalInterruptOutput(session, "old flood\n", { now: 9801 }).accepted, false);
+  assert.deepEqual(
+    filterTerminalInterruptOutput(session, "Password: ", { now: 9810 }),
+    {
+      accepted: false,
+      data: "",
+      droppedBytes: "Password: ".length,
+      reason: "draining",
+    },
+  );
+  assert.deepEqual(
+    filterTerminalInterruptOutput(session, "$ ", { now: 10000 }),
+    {
+      accepted: true,
+      data: "$ ",
+      droppedBytes: 0,
+      reason: "prompt-gap",
+    },
+  );
+});

@@ -435,6 +435,7 @@ function filterTerminalInterruptOutput(session, data, options = {}) {
 
   const now = nowFromOptions(options);
   const rawPendingDisplayControl = takePendingDisplayControl(gate);
+  const heldPasswordPrefix = isPasswordPrefixPending(rawPendingDisplayControl);
   const resolvedPasswordPrefix = resolveHeldPasswordPrefix(
     rawPendingDisplayControl,
     incomingText,
@@ -502,10 +503,11 @@ function filterTerminalInterruptOutput(session, data, options = {}) {
     }
   }
 
-  // Password prompts are specific enough to resume immediately even after we
-  // already dropped stale flood — including when a held "Pass" prefix completes
-  // as "Password: " in the next chunk before promptQuietMs elapses.
-  if (bytes <= gate.promptCandidateBytes) {
+  // Only bypass the quiet gap when a held password-prefix chunk completes.
+  // Fresh password-looking lines in the flood must wait like shell prompts,
+  // otherwise a canceled "Password:" from the interrupted program resumes
+  // drain too early and lets more stale output through.
+  if (heldPasswordPrefix && bytes <= gate.promptCandidateBytes) {
     const promptCandidate = getPromptCandidateSuffix(combinedText);
     if (promptCandidate && isCompletePasswordPrompt(stripAnsi(promptCandidate))) {
       const droppedPrefix = combinedText.slice(0, combinedText.length - promptCandidate.length);

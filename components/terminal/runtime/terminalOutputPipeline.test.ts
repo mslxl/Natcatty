@@ -1032,3 +1032,36 @@ test("interrupt display drain holds split password prompts with leading text", (
     },
   );
 });
+
+test("interrupt display drain keeps quiet-gap for fresh password-looking lines", () => {
+  const term = createFakeTerm();
+  armTerminalInterruptDisplayGate(term, {
+    now: 9100,
+    quietMs: 500,
+    promptQuietMs: 80,
+    maxDrainMs: 2500,
+  });
+
+  assert.equal(
+    filterTerminalInterruptDisplayOutput(term, "old flood\n", { now: 9101 }).accepted,
+    false,
+  );
+  assert.deepEqual(
+    filterTerminalInterruptDisplayOutput(term, "Password: ", { now: 9110 }),
+    {
+      accepted: false,
+      data: "",
+      droppedBytes: "Password: ".length,
+      reason: "draining",
+    },
+  );
+  assert.deepEqual(
+    filterTerminalInterruptDisplayOutput(term, "$ ", { now: 9300 }),
+    {
+      accepted: true,
+      data: "$ ",
+      droppedBytes: 0,
+      reason: "prompt-gap",
+    },
+  );
+});
