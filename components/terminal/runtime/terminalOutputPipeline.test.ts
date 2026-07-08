@@ -576,6 +576,35 @@ test("interrupt display drain does not peel restore suffix from later password p
   );
 });
 
+test("interrupt display drain does not leak incomplete SGR CSI into shell prompts", () => {
+  const term = createFakeTerm();
+  armTerminalInterruptDisplayGate(term, {
+    now: 6270,
+    quietMs: 500,
+    promptQuietMs: 80,
+    maxDrainMs: 2500,
+  });
+
+  assert.deepEqual(
+    filterTerminalInterruptDisplayOutput(term, "old\x1b[31", { now: 6271 }),
+    {
+      accepted: false,
+      data: "",
+      droppedBytes: "old\x1b[31".length,
+      reason: "draining",
+    },
+  );
+  assert.deepEqual(
+    filterTerminalInterruptDisplayOutput(term, "$ ", { now: 6400 }),
+    {
+      accepted: true,
+      data: "$ ",
+      droppedBytes: 0,
+      reason: "prompt-gap",
+    },
+  );
+});
+
 test("interrupt display drain preserves split alternate-screen exit controls", () => {
   clearTerminalSessionFlowAck("sess-1");
   const term = createFakeTerm();

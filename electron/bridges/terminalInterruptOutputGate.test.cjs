@@ -218,6 +218,37 @@ test("does not peel preserved restore suffix chars from a later password prefix"
   );
 });
 
+test("does not leak held incomplete SGR CSI into a later shell prompt", () => {
+  const session = {};
+
+  armTerminalInterruptOutputGate(session, {
+    now: 3950,
+    quietMs: 500,
+    promptQuietMs: 80,
+    maxDrainMs: 2500,
+  });
+
+  // Incomplete SGR without a password prefix must be dropped, not held into "$ ".
+  assert.deepEqual(
+    filterTerminalInterruptOutput(session, "old\x1b[31", { now: 3951 }),
+    {
+      accepted: false,
+      data: "",
+      droppedBytes: "old\x1b[31".length,
+      reason: "draining",
+    },
+  );
+  assert.deepEqual(
+    filterTerminalInterruptOutput(session, "$ ", { now: 4100 }),
+    {
+      accepted: true,
+      data: "$ ",
+      droppedBytes: 0,
+      reason: "prompt-gap",
+    },
+  );
+});
+
 test("preserves split alternate-screen exit controls while draining stale output", () => {
   const session = {};
 

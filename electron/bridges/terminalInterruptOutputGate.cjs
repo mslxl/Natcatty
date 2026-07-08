@@ -327,6 +327,19 @@ function consumeTrailingCsiCompletion(pending, text) {
   return { text: raw, extraDroppedBytes: 0 };
 }
 
+function isStandaloneHoldableControlPrefix(pending) {
+  const raw = String(pending || "");
+  if (!raw) return false;
+  if (raw === ESC || raw === `${ESC}[`) return true;
+  // Incomplete private-mode restore CSI and OSC title prefixes are safe to hold
+  // alone; incomplete SGR CSI (ESC[31) is not — it can leak into "$ ".
+  if (raw.startsWith(`${ESC}[?`) && TRAILING_RESTORE_CONTROL_PREFIX_PATTERN.test(raw)) {
+    return true;
+  }
+  if (raw.startsWith(`${ESC}]`)) return true;
+  return false;
+}
+
 function extractDrainHold(text, options = {}) {
   const restoreControls = extractTerminalStateRestoreControls(text, options);
   if (!options.holdTrailingPartial) {
@@ -346,6 +359,19 @@ function extractDrainHold(text, options = {}) {
     restoreControls.preserved,
   );
   if (!passwordPending || !isProbablePasswordPromptPrefix(passwordPending)) {
+    // Incomplete SGR CSI (ESC[31) must not be held alone — otherwise the next
+    // shell prompt can be accepted as "\x1b[31$ " and leak stale color bytes.
+    // Restore/OSC prefixes stay held as before.
+    if (controlPending && !isStandaloneHoldableControlPrefix(controlPending)) {
+      return {
+        preserved: restoreControls.preserved,
+        pending: "",
+        droppedBytes: Math.max(
+          0,
+          byteLength(text) - byteLength(restoreControls.preserved),
+        ),
+      };
+    }
     return restoreControls;
   }
 
