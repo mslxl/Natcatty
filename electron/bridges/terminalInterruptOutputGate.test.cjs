@@ -411,6 +411,36 @@ test("holds a split ANSI-colored Password: prompt across chunks while draining",
   );
 });
 
+test("holds a password prefix split before a trailing ANSI control while draining", () => {
+  const session = {};
+  const red = "\x1b[31m";
+  const reset = "\x1b[0m";
+
+  armTerminalInterruptOutputGate(session, {
+    now: 9070,
+    quietMs: 500,
+    promptQuietMs: 80,
+    maxDrainMs: 2500,
+  });
+
+  assert.equal(filterTerminalInterruptOutput(session, "stale\n", { now: 9071 }).accepted, false);
+  // Mid-CSI split: keep both "Pass" and the trailing "\x1b[" so the next chunk
+  // can complete the reset + "word:" into a password prompt.
+  assert.deepEqual(
+    filterTerminalInterruptOutput(session, `${red}Pass\x1b[`, { now: 9072 }),
+    { accepted: false, data: "", droppedBytes: 0, reason: "draining" },
+  );
+  assert.deepEqual(
+    filterTerminalInterruptOutput(session, `0mword: `, { now: 9073 }),
+    {
+      accepted: true,
+      data: `${red}Pass${reset}word: `,
+      droppedBytes: 0,
+      reason: "prompt-gap",
+    },
+  );
+});
+
 test("holds a split [sudo] password prompt across chunks while draining (#2010)", () => {
   const session = {};
 

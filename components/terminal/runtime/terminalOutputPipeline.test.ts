@@ -974,6 +974,36 @@ test("interrupt display drain holds a split ANSI-colored Password: prompt", () =
   );
 });
 
+test("interrupt display drain holds a password prefix split before trailing ANSI", () => {
+  const term = createFakeTerm();
+  const red = "\x1b[31m";
+  const reset = "\x1b[0m";
+  armTerminalInterruptDisplayGate(term, {
+    now: 8370,
+    quietMs: 500,
+    promptQuietMs: 80,
+    maxDrainMs: 2500,
+  });
+
+  assert.equal(
+    filterTerminalInterruptDisplayOutput(term, "stale\n", { now: 8371 }).accepted,
+    false,
+  );
+  assert.deepEqual(
+    filterTerminalInterruptDisplayOutput(term, `${red}Pass\x1b[`, { now: 8372 }),
+    { accepted: false, data: "", droppedBytes: 0, reason: "draining" },
+  );
+  assert.deepEqual(
+    filterTerminalInterruptDisplayOutput(term, `0mword: `, { now: 8373 }),
+    {
+      accepted: true,
+      data: `${red}Pass${reset}word: `,
+      droppedBytes: 0,
+      reason: "prompt-gap",
+    },
+  );
+});
+
 test("interrupt display drain discards a held password prefix that does not complete", () => {
   const term = createFakeTerm();
   armTerminalInterruptDisplayGate(term, {

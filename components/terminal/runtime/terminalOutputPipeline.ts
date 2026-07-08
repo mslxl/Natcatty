@@ -305,7 +305,13 @@ const isCompletePasswordPrompt = (candidate: string): boolean => {
 const isProbablePasswordPromptPrefix = (candidate: string): boolean => {
   // Strip SGR/OSC for matching so styled chunks like "\x1b[31mPass" still hold,
   // while callers keep the raw pending bytes for display.
-  const trimmed = stripAnsi(candidate).trimEnd();
+  let trimmed = stripAnsi(candidate).trimEnd();
+  // Incomplete CSI/OSC left after stripAnsi (e.g. trailing "\x1b[") must not
+  // prevent matching a held password prefix.
+  const trailingControl = getTrailingDisplayControlPrefix(trimmed);
+  if (trailingControl) {
+    trimmed = trimmed.slice(0, -trailingControl.length).trimEnd();
+  }
   if (!trimmed || trimmed.length > 160) return false;
   if (/[\r\n]/.test(trimmed)) return false;
   if (isCompletePasswordPrompt(trimmed)) return false;
@@ -412,19 +418,29 @@ const extractDrainHold = (
   options: { holdTrailingPartial?: boolean } = {},
 ): { preserved: string; pending: string; droppedBytes: number } => {
   const restoreControls = extractTerminalStateRestoreControls(text, options);
-  if (!options.holdTrailingPartial || restoreControls.pending) {
+  if (!options.holdTrailingPartial) {
     return restoreControls;
   }
 
-  const passwordPending = getTrailingPasswordPromptPrefix(text);
-  if (!passwordPending) return restoreControls;
+  // A styled prompt can split mid-CSI, e.g. "\x1b[31mPass\x1b[" + "0mword: ".
+  // Keep both the password-prefix body and the trailing control prefix so the
+  // next chunk can still complete "Password:" (#2010 Codex follow-up).
+  const controlPending = restoreControls.pending;
+  const textWithoutControl = controlPending
+    ? text.slice(0, -controlPending.length)
+    : text;
+  const passwordPending = getTrailingPasswordPromptPrefix(textWithoutControl);
+  if (!passwordPending) {
+    return restoreControls;
+  }
 
+  const pending = `${passwordPending}${controlPending}`;
   return {
     preserved: restoreControls.preserved,
-    pending: passwordPending,
+    pending,
     droppedBytes: Math.max(
       0,
-      charLength(text) - charLength(restoreControls.preserved) - charLength(passwordPending),
+      charLength(text) - charLength(restoreControls.preserved) - charLength(pending),
     ),
   };
 };

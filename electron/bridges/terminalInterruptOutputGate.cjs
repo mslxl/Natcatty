@@ -173,7 +173,13 @@ function isCompletePasswordPrompt(candidate) {
 function isProbablePasswordPromptPrefix(candidate) {
   // Strip SGR/OSC for matching so styled chunks like "\x1b[31mPass" still hold,
   // while callers keep the raw pending bytes for display.
-  const trimmed = stripAnsi(String(candidate || "")).trimEnd();
+  let trimmed = stripAnsi(String(candidate || "")).trimEnd();
+  // Incomplete CSI/OSC left after stripAnsi (e.g. trailing "\x1b[") must not
+  // prevent matching a held password prefix.
+  const trailingControl = getTrailingDisplayControlPrefix(trimmed);
+  if (trailingControl) {
+    trimmed = trimmed.slice(0, -trailingControl.length).trimEnd();
+  }
   if (!trimmed || trimmed.length > 160) return false;
   if (/[\r\n]/.test(trimmed)) return false;
   if (isCompletePasswordPrompt(trimmed)) return false;
@@ -278,19 +284,29 @@ function getTrailingPasswordPromptPrefix(text) {
 
 function extractDrainHold(text, options = {}) {
   const restoreControls = extractTerminalStateRestoreControls(text, options);
-  if (!options.holdTrailingPartial || restoreControls.pending) {
+  if (!options.holdTrailingPartial) {
     return restoreControls;
   }
 
-  const passwordPending = getTrailingPasswordPromptPrefix(text);
-  if (!passwordPending) return restoreControls;
+  // A styled prompt can split mid-CSI, e.g. "\x1b[31mPass\x1b[" + "0mword: ".
+  // Keep both the password-prefix body and the trailing control prefix so the
+  // next chunk can still complete "Password:" (#2010 Codex follow-up).
+  const controlPending = restoreControls.pending;
+  const textWithoutControl = controlPending
+    ? String(text || "").slice(0, -controlPending.length)
+    : String(text || "");
+  const passwordPending = getTrailingPasswordPromptPrefix(textWithoutControl);
+  if (!passwordPending) {
+    return restoreControls;
+  }
 
+  const pending = `${passwordPending}${controlPending}`;
   return {
     preserved: restoreControls.preserved,
-    pending: passwordPending,
+    pending,
     droppedBytes: Math.max(
       0,
-      byteLength(text) - byteLength(restoreControls.preserved) - byteLength(passwordPending),
+      byteLength(text) - byteLength(restoreControls.preserved) - byteLength(pending),
     ),
   };
 }
