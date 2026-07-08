@@ -187,6 +187,37 @@ test("excludes preserved restore controls from held password prefixes", () => {
   );
 });
 
+test("does not peel preserved restore suffix chars from a later password prefix", () => {
+  const session = {};
+
+  armTerminalInterruptOutputGate(session, {
+    now: 3860,
+    quietMs: 500,
+    promptQuietMs: 80,
+    maxDrainMs: 2500,
+  });
+
+  // Preserve restore on its own line; next line "login pass" must keep the "l".
+  assert.deepEqual(
+    filterTerminalInterruptOutput(session, "\x1b[?1049l\nlogin pass", { now: 3861 }),
+    {
+      accepted: true,
+      data: "\x1b[?1049l",
+      droppedBytes: 1,
+      reason: "draining",
+    },
+  );
+  assert.deepEqual(
+    filterTerminalInterruptOutput(session, "word: ", { now: 3862 }),
+    {
+      accepted: true,
+      data: "login password: ",
+      droppedBytes: 0,
+      reason: "prompt-gap",
+    },
+  );
+});
+
 test("preserves split alternate-screen exit controls while draining stale output", () => {
   const session = {};
 
@@ -549,6 +580,33 @@ test("discards a held password prefix that does not complete as a password promp
       accepted: true,
       data: "$ ",
       droppedBytes: 4,
+      reason: "prompt-gap",
+    },
+  );
+});
+
+test("discards CSI final bytes when a held mid-CSI password prefix does not complete", () => {
+  const session = {};
+
+  armTerminalInterruptOutputGate(session, {
+    now: 9220,
+    quietMs: 500,
+    promptQuietMs: 80,
+    maxDrainMs: 2500,
+  });
+
+  assert.equal(filterTerminalInterruptOutput(session, "stale\n", { now: 9221 }).accepted, false);
+  assert.deepEqual(
+    filterTerminalInterruptOutput(session, "Pass\x1b[0", { now: 9222 }),
+    { accepted: false, data: "", droppedBytes: 0, reason: "draining" },
+  );
+  // Discard held prefix and the completing "m" so the shell prompt is clean.
+  assert.deepEqual(
+    filterTerminalInterruptOutput(session, "m$ ", { now: 9400 }),
+    {
+      accepted: true,
+      data: "$ ",
+      droppedBytes: "Pass\x1b[0".length + 1,
       reason: "prompt-gap",
     },
   );

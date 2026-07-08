@@ -547,6 +547,35 @@ test("interrupt display drain excludes preserved restore from held password pref
   );
 });
 
+test("interrupt display drain does not peel restore suffix from later password prefixes", () => {
+  const term = createFakeTerm();
+  armTerminalInterruptDisplayGate(term, {
+    now: 6260,
+    quietMs: 500,
+    promptQuietMs: 80,
+    maxDrainMs: 2500,
+  });
+
+  assert.deepEqual(
+    filterTerminalInterruptDisplayOutput(term, "\x1b[?1049l\nlogin pass", { now: 6261 }),
+    {
+      accepted: true,
+      data: "\x1b[?1049l",
+      droppedBytes: 1,
+      reason: "draining",
+    },
+  );
+  assert.deepEqual(
+    filterTerminalInterruptDisplayOutput(term, "word: ", { now: 6262 }),
+    {
+      accepted: true,
+      data: "login password: ",
+      droppedBytes: 0,
+      reason: "prompt-gap",
+    },
+  );
+});
+
 test("interrupt display drain preserves split alternate-screen exit controls", () => {
   clearTerminalSessionFlowAck("sess-1");
   const term = createFakeTerm();
@@ -1086,6 +1115,34 @@ test("interrupt display drain discards a held password prefix that does not comp
       accepted: true,
       data: "$ ",
       droppedBytes: 4,
+      reason: "prompt-gap",
+    },
+  );
+});
+
+test("interrupt display drain discards CSI finals when mid-CSI password prefix fails", () => {
+  const term = createFakeTerm();
+  armTerminalInterruptDisplayGate(term, {
+    now: 8420,
+    quietMs: 500,
+    promptQuietMs: 80,
+    maxDrainMs: 2500,
+  });
+
+  assert.equal(
+    filterTerminalInterruptDisplayOutput(term, "stale\n", { now: 8421 }).accepted,
+    false,
+  );
+  assert.deepEqual(
+    filterTerminalInterruptDisplayOutput(term, "Pass\x1b[0", { now: 8422 }),
+    { accepted: false, data: "", droppedBytes: 0, reason: "draining" },
+  );
+  assert.deepEqual(
+    filterTerminalInterruptDisplayOutput(term, "m$ ", { now: 8600 }),
+    {
+      accepted: true,
+      data: "$ ",
+      droppedBytes: "Pass\x1b[0".length + 1,
       reason: "prompt-gap",
     },
   );

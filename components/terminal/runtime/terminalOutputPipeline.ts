@@ -421,22 +421,48 @@ const getTrailingPasswordPromptPrefix = (text: string): string => {
 
 /**
  * Restore sequences already counted in `preserved` can also sit at the start of
- * the trailing password-prefix line (e.g. "stale\n\x1b[?1049lPass"). Strip that
- * overlap so droppedBytes stays accurate and the restore is not re-emitted.
+ * the trailing password-prefix line (e.g. "stale\n\x1b[?1049lPass"). Strip only
+ * when the full preserved string is a real prefix — never peel single chars
+ * like the final "l" of "\x1b[?1049l" off "login pass".
  */
 const stripLeadingPreservedOverlap = (
   passwordPending: string,
   preserved: string,
 ): string => {
   if (!passwordPending || !preserved) return passwordPending;
-  const max = Math.min(preserved.length, passwordPending.length);
-  for (let len = max; len > 0; len -= 1) {
-    const suffix = preserved.slice(-len);
-    if (passwordPending.startsWith(suffix)) {
-      return passwordPending.slice(len);
-    }
+  if (passwordPending.startsWith(preserved)) {
+    return passwordPending.slice(preserved.length);
   }
   return passwordPending;
+};
+
+/**
+ * When discarding a held prefix that ends mid-CSI, also drop the CSI final
+ * byte(s) from the next chunk so "Pass\x1b[0" + "m$ " does not leak as "m$ ".
+ */
+const consumeTrailingCsiCompletion = (
+  pending: string,
+  text: string,
+): { text: string; extraDroppedBytes: number } => {
+  const control = getTrailingDisplayControlPrefix(pending);
+  if (!control || !control.startsWith(`${ANSI_ESCAPE}[`)) {
+    return { text, extraDroppedBytes: 0 };
+  }
+  let i = 0;
+  while (i < text.length) {
+    const code = text.charCodeAt(i);
+    // CSI parameter bytes 0–? and intermediate bytes SP–/
+    if ((code >= 0x30 && code <= 0x3f) || (code >= 0x20 && code <= 0x2f)) {
+      i += 1;
+      continue;
+    }
+    // CSI final byte @–~
+    if (code >= 0x40 && code <= 0x7e) {
+      return { text: text.slice(i + 1), extraDroppedBytes: i + 1 };
+    }
+    break;
+  }
+  return { text, extraDroppedBytes: 0 };
 };
 
 const extractDrainHold = (
@@ -514,10 +540,11 @@ const resolveHeldPasswordPrefix = (
     return { pending: "", text: combined, droppedPendingBytes: 0 };
   }
 
+  const consumed = consumeTrailingCsiCompletion(pending, text);
   return {
     pending: "",
-    text,
-    droppedPendingBytes: charLength(pending),
+    text: consumed.text,
+    droppedPendingBytes: charLength(pending) + consumed.extraDroppedBytes,
   };
 };
 

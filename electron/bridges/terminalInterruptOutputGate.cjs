@@ -288,21 +288,43 @@ function getTrailingPasswordPromptPrefix(text) {
 
 /**
  * Restore sequences already counted in `preserved` can also sit at the start of
- * the trailing password-prefix line (e.g. "stale\n\x1b[?1049lPass"). Strip that
- * overlap so droppedBytes stays accurate and the restore is not re-emitted.
+ * the trailing password-prefix line (e.g. "stale\n\x1b[?1049lPass"). Strip only
+ * when the full preserved string is a real prefix — never peel single chars
+ * like the final "l" of "\x1b[?1049l" off "login pass".
  */
 function stripLeadingPreservedOverlap(passwordPending, preserved) {
   const pending = String(passwordPending || "");
   const keep = String(preserved || "");
   if (!pending || !keep) return pending;
-  const max = Math.min(keep.length, pending.length);
-  for (let len = max; len > 0; len -= 1) {
-    const suffix = keep.slice(-len);
-    if (pending.startsWith(suffix)) {
-      return pending.slice(len);
-    }
-  }
+  if (pending.startsWith(keep)) return pending.slice(keep.length);
   return pending;
+}
+
+/**
+ * When discarding a held prefix that ends mid-CSI, also drop the CSI final
+ * byte(s) from the next chunk so "Pass\x1b[0" + "m$ " does not leak as "m$ ".
+ */
+function consumeTrailingCsiCompletion(pending, text) {
+  const control = getTrailingDisplayControlPrefix(pending);
+  if (!control || !control.startsWith(`${ESC}[`)) {
+    return { text, extraDroppedBytes: 0 };
+  }
+  let i = 0;
+  const raw = String(text || "");
+  while (i < raw.length) {
+    const code = raw.charCodeAt(i);
+    // CSI parameter bytes 0–? and intermediate bytes SP–/
+    if ((code >= 0x30 && code <= 0x3f) || (code >= 0x20 && code <= 0x2f)) {
+      i += 1;
+      continue;
+    }
+    // CSI final byte @–~
+    if (code >= 0x40 && code <= 0x7e) {
+      return { text: raw.slice(i + 1), extraDroppedBytes: i + 1 };
+    }
+    break;
+  }
+  return { text: raw, extraDroppedBytes: 0 };
 }
 
 function extractDrainHold(text, options = {}) {
@@ -475,10 +497,11 @@ function resolveHeldPasswordPrefix(pending, text) {
     return { pending: "", text: combined, droppedPendingBytes: 0 };
   }
 
+  const consumed = consumeTrailingCsiCompletion(pending, text);
   return {
     pending: "",
-    text,
-    droppedPendingBytes: byteLength(pending),
+    text: consumed.text,
+    droppedPendingBytes: byteLength(pending) + consumed.extraDroppedBytes,
   };
 }
 
