@@ -5,6 +5,7 @@ import type { Terminal as XTerm } from "@xterm/xterm";
 
 import { createOutputFlowController } from "./outputFlowController.ts";
 import {
+  armTerminalInterruptDisplayGate,
   filterTerminalInterruptDisplayOutput,
   prioritizeTerminalInput,
   releaseTerminalFlowOutputForTerm,
@@ -863,4 +864,54 @@ test("interrupt priority leaves display output alone below pressure threshold", 
     },
   );
   clearTerminalSessionFlowAck("sess-low-pressure");
+});
+
+test("interrupt display drain accepts a sudo password prompt (#2010)", () => {
+  const term = createFakeTerm();
+  armTerminalInterruptDisplayGate(term, {
+    now: 8000,
+    quietMs: 500,
+    promptQuietMs: 80,
+    maxDrainMs: 2500,
+  });
+
+  assert.equal(
+    filterTerminalInterruptDisplayOutput(term, "Reading package lists...\n", { now: 8001 }).accepted,
+    false,
+  );
+  assert.deepEqual(
+    filterTerminalInterruptDisplayOutput(term, "[sudo] password for alice: ", { now: 8100 }),
+    {
+      accepted: true,
+      data: "[sudo] password for alice: ",
+      droppedBytes: 0,
+      reason: "prompt-gap",
+    },
+  );
+});
+
+test("interrupt display drain accepts localized password prompts (#2010)", () => {
+  for (const prompt of ["Password: ", "[sudo] alice 的密码：", "输入密码"]) {
+    const term = createFakeTerm();
+    armTerminalInterruptDisplayGate(term, {
+      now: 8100,
+      quietMs: 500,
+      promptQuietMs: 80,
+      maxDrainMs: 2500,
+    });
+    assert.equal(
+      filterTerminalInterruptDisplayOutput(term, "stale\n", { now: 8101 }).accepted,
+      false,
+    );
+    assert.deepEqual(
+      filterTerminalInterruptDisplayOutput(term, prompt, { now: 8200 }),
+      {
+        accepted: true,
+        data: prompt,
+        droppedBytes: 0,
+        reason: "prompt-gap",
+      },
+      `expected password prompt to resume drain: ${JSON.stringify(prompt)}`,
+    );
+  }
 });

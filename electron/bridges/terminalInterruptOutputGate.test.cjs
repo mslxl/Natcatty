@@ -282,3 +282,73 @@ test("keeps draining large chunks after a short quiet gap", () => {
     { accepted: true, data: "$ ", droppedBytes: 0, reason: "prompt-gap" },
   );
 });
+
+test("accepts a sudo password prompt while draining after Ctrl+C (#2010)", () => {
+  const session = {};
+
+  armTerminalInterruptOutputGate(session, {
+    now: 6000,
+    quietMs: 500,
+    promptQuietMs: 80,
+    maxDrainMs: 2500,
+  });
+
+  assert.equal(
+    filterTerminalInterruptOutput(session, "Reading package lists...\n", { now: 6001 }).accepted,
+    false,
+  );
+  assert.deepEqual(
+    filterTerminalInterruptOutput(session, "[sudo] password for alice: ", { now: 6100 }),
+    {
+      accepted: true,
+      data: "[sudo] password for alice: ",
+      droppedBytes: 0,
+      reason: "prompt-gap",
+    },
+  );
+});
+
+test("accepts bare and localized password prompts while draining (#2010)", () => {
+  for (const prompt of [
+    "Password: ",
+    "[sudo] alice 的密码：",
+    "输入密码",
+    "Input Password",
+  ]) {
+    const session = {};
+    armTerminalInterruptOutputGate(session, {
+      now: 7000,
+      quietMs: 500,
+      promptQuietMs: 80,
+      maxDrainMs: 2500,
+    });
+    assert.equal(filterTerminalInterruptOutput(session, "stale\n", { now: 7001 }).accepted, false);
+    assert.deepEqual(
+      filterTerminalInterruptOutput(session, prompt, { now: 7100 }),
+      {
+        accepted: true,
+        data: prompt,
+        droppedBytes: 0,
+        reason: "prompt-gap",
+      },
+      `expected password prompt to resume drain: ${JSON.stringify(prompt)}`,
+    );
+  }
+});
+
+test("does not treat password mentions in ordinary output as prompts", () => {
+  const session = {};
+
+  armTerminalInterruptOutputGate(session, {
+    now: 8000,
+    quietMs: 500,
+    promptQuietMs: 80,
+    maxDrainMs: 2500,
+  });
+
+  assert.equal(filterTerminalInterruptOutput(session, "stale\n", { now: 8001 }).accepted, false);
+  assert.deepEqual(
+    filterTerminalInterruptOutput(session, "the password was changed", { now: 8100 }),
+    { accepted: false, data: "", droppedBytes: 24, reason: "draining" },
+  );
+});

@@ -285,8 +285,21 @@ const getPromptCandidateSuffix = (text: string): string | null => {
   if (!candidate) return null;
   if (candidate.length > 160) return null;
 
+  // Password prompts are interactive resume points too. Without this, Ctrl+C
+  // drain treats "[sudo] password for …:" as stale flood and drops it, so the
+  // remote waits for a password while the terminal shows nothing (#2010).
+  const looksLikePasswordPrompt = (
+    /(?:\bpassword\b|密\s*码|口\s*令)/i.test(candidate)
+    && (
+      /[:：]\s*$/.test(candidate)
+      || /\[sudo/i.test(candidate)
+      || /^(?:输入\s*)?密码\s*$/.test(candidate)
+      || /^input\s+password\s*$/i.test(candidate)
+    )
+  );
   const looksLikePrompt = (
-    /^[#$>%]\s*$/.test(candidate)
+    looksLikePasswordPrompt
+    || /^[#$>%]\s*$/.test(candidate)
     || /^[^ \t\r\n<>]{1,80}[#$>%]\s*$/.test(candidate)
     || /^[^\r\n<>]{1,120}[#$>%]\s*$/.test(candidate)
     || /^<[^>\r\n]{1,80}>\s*$/.test(candidate)
