@@ -101,6 +101,18 @@ describe("external MCP client setup classifiers", () => {
     });
     assert.equal(quoted.state, "configured");
 
+    const withEnvHeader = classifyClaudeExternalMcpStatus({
+      getResult: {
+        exitCode: 0,
+        stdout: `Command: /path/to/netcatty-external-mcp\nEnvironment:\n  NETCATTY_EXTERNAL_MCP_DISCOVERY_FILE=/tmp/d.json\nScope: User config (available in all your projects)`,
+        stderr: "",
+      },
+      launcherPath: "/path/to/netcatty-external-mcp",
+      claudePath: "/usr/bin/claude",
+      discoveryEnv: { NETCATTY_EXTERNAL_MCP_DISCOVERY_FILE: "/tmp/d.json" },
+    });
+    assert.equal(withEnvHeader.state, "configured");
+
     const withEnvFlags = classifyClaudeExternalMcpStatus({
       getResult: {
         exitCode: 0,

@@ -421,28 +421,43 @@ function notifyExternalMcpActivity(method, params) {
  * register it under the reserved external MCP chat scope.
  */
 function syncLiveSessionsToExternalScope(chatSessionId = EXTERNAL_MCP_CHAT_SESSION_ID) {
+  const existingScoped = scopedMetadata.get(chatSessionId);
+  const existingMeta = existingScoped?.metadata || new Map();
   const sessionList = [];
   if (sessions && typeof sessions.entries === "function") {
     for (const [sessionId, session] of sessions.entries()) {
       if (!session || typeof session !== "object") continue;
+      const previous = existingMeta.get(sessionId) || findSessionMetaAcrossScopes(sessionId) || {};
       sessionList.push({
         sessionId,
-        hostId: session.hostId || "",
-        hostname: session.hostname || session.host || "",
-        label: session.label || session.hostname || sessionId,
-        os: session.os || "",
-        username: session.username || "",
-        protocol: session.protocol || session.type || "",
-        shellType: session.shellKind || session.shellType || "",
-        deviceType: session.deviceType || "",
+        hostId: session.hostId || previous.hostId || "",
+        hostname: session.hostname || session.host || previous.hostname || "",
+        label: session.label || session.hostname || previous.label || sessionId,
+        os: session.os || previous.os || "",
+        username: session.username || previous.username || "",
+        protocol: session.protocol || session.type || previous.protocol || "",
+        shellType: session.shellKind || session.shellType || previous.shellType || "",
+        deviceType: session.deviceType || previous.deviceType || "",
         connected: session.connected !== false,
-        hostChain: Array.isArray(session.hostChain) ? session.hostChain : [],
-        activePortForwards: Array.isArray(session.activePortForwards) ? session.activePortForwards : [],
+        hostChain: Array.isArray(session.hostChain)
+          ? session.hostChain
+          : (Array.isArray(previous.hostChain) ? previous.hostChain : []),
+        activePortForwards: Array.isArray(session.activePortForwards)
+          ? session.activePortForwards
+          : (Array.isArray(previous.activePortForwards) ? previous.activePortForwards : []),
       });
     }
   }
   updateSessionMetadata(sessionList, chatSessionId);
   return { ok: true, count: sessionList.length, chatSessionId };
+}
+
+function findSessionMetaAcrossScopes(sessionId) {
+  for (const scoped of scopedMetadata.values()) {
+    const meta = scoped?.metadata?.get?.(sessionId);
+    if (meta) return meta;
+  }
+  return null;
 }
 
 function getPermissionMode() {

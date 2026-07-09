@@ -133,12 +133,30 @@ function extractExistingEnv(result) {
   const output = getCombinedOutput(result);
   if (!output) return null;
   const env = {};
-  for (const line of output.split(/\r?\n/u)) {
-    const match = line.match(/^\s*(?:Env|Environment|env)\s*[:=]\s*(.+)\s*$/iu)
-      || line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.+)\s*$/u);
-    if (!match) continue;
-    if (match[1] && match[2] && /^[A-Z0-9_]+$/u.test(match[1])) {
-      env[match[1]] = match[2].trim().replace(/^["']|["']$/gu, "");
+  const lines = output.split(/\r?\n/u);
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    const header = line.match(/^\s*(?:Env|Environment|env)\s*[:=]\s*(.*)\s*$/iu);
+    if (header) {
+      const inline = String(header[1] || "").trim();
+      if (inline) {
+        const inlinePair = inline.match(/^([A-Z0-9_]+)\s*=\s*(.+)$/u);
+        if (inlinePair) {
+          env[inlinePair[1]] = inlinePair[2].trim().replace(/^["']|["']$/gu, "");
+        }
+      }
+      // Claude prints indented KEY=VALUE lines under an Environment: header.
+      for (let j = i + 1; j < lines.length; j += 1) {
+        const nested = lines[j].match(/^\s+([A-Z0-9_]+)\s*=\s*(.+)\s*$/u);
+        if (!nested) break;
+        env[nested[1]] = nested[2].trim().replace(/^["']|["']$/gu, "");
+        i = j;
+      }
+      continue;
+    }
+    const pair = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.+)\s*$/u);
+    if (pair) {
+      env[pair[1]] = pair[2].trim().replace(/^["']|["']$/gu, "");
     }
   }
   // Also accept inline -e KEY=VALUE fragments in the Command line.
