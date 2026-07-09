@@ -24,6 +24,41 @@ interface UseVaultHostCollectionsOptions {
   viewMode: "grid" | "list" | "tree";
 }
 
+export function hostBelongsToSelectedVaultGroup(host: Host, selectedGroupPath: string): boolean {
+  const hostGroup = host.group || "";
+  if (selectedGroupPath === "General") {
+    return hostGroup === "" || hostGroup === "General";
+  }
+  return hostGroup === selectedGroupPath;
+}
+
+export function filterVaultHostsForDisplay({
+  filteredHosts,
+  searchTerm,
+  selectedGroupPath,
+  showOnlyUngroupedHostsInRoot,
+}: {
+  filteredHosts: Host[];
+  searchTerm: string;
+  selectedGroupPath: string | null;
+  showOnlyUngroupedHostsInRoot: boolean;
+}): Host[] {
+  if (selectedGroupPath) {
+    return filteredHosts.filter((host) =>
+      hostBelongsToSelectedVaultGroup(host, selectedGroupPath),
+    );
+  }
+
+  if (!searchTerm && showOnlyUngroupedHostsInRoot) {
+    return filteredHosts.filter((host) => {
+      const hostGroup = (host.group || "").trim();
+      return hostGroup === "";
+    });
+  }
+
+  return filteredHosts;
+}
+
 export function useVaultHostCollections({
   customGroups,
   groupConfigs,
@@ -192,32 +227,14 @@ export function useVaultHostCollections({
     };
   
   const displayedHosts = useMemo(() => {
-      let filtered = filteredHosts;
-      // Search spans all groups (#777): when the user types in the search box
-      // we skip group/ungrouped-root scoping, so a matching host in another
-      // group is still reachable without having to navigate into it first.
-      // The tree view already uses this shape — see `treeViewHosts` below.
-      const hasSearch = searchTerm.length > 0;
-      if (!hasSearch) {
-        if (selectedGroupPath) {
-          // Match hosts whose group equals the selected path
-          // For "General" group, also match hosts with empty/undefined group
-          filtered = filtered.filter((h) => {
-            const hostGroup = h.group || "";
-            if (selectedGroupPath === "General") {
-              return hostGroup === "" || hostGroup === "General";
-            }
-            return hostGroup === selectedGroupPath;
-          });
-        } else if (showOnlyUngroupedHostsInRoot) {
-          filtered = filtered.filter((h) => {
-            const hostGroup = (h.group || "").trim();
-            return hostGroup === "";
-          });
-        }
-      }
+      const filtered = filterVaultHostsForDisplay({
+        filteredHosts,
+        searchTerm,
+        selectedGroupPath,
+        showOnlyUngroupedHostsInRoot,
+      });
       return sortHosts(filtered);
-    }, [filteredHosts, searchTerm.length, selectedGroupPath, showOnlyUngroupedHostsInRoot, sortHosts]);
+    }, [filteredHosts, searchTerm, selectedGroupPath, showOnlyUngroupedHostsInRoot, sortHosts]);
   
   // Pinned hosts for root-level display (not inside a subgroup)
     // Respects active search and tag filters
