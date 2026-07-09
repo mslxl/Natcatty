@@ -34,6 +34,7 @@ const {
   loadIdentityFileForAuth,
   loadFirstIdentityFileForAuth,
   hasUserConfiguredKey,
+  isPasswordProvided,
   PassphraseCancelledError,
   isPassphraseCancelledError,
 } = require("./sshAuthHelper.cjs");
@@ -878,7 +879,7 @@ const startSessionApi = createStartSessionApi({
   openTerminalOutputSession, closeTerminalOutputSession,
   get selectZmodemUploadFiles() { return selectZmodemUploadFiles; },
   get selectZmodemDownloadDirectory() { return selectZmodemDownloadDirectory; },
-  preparePrivateKeyForAuth, loadFirstIdentityFileForAuth, hasUserConfiguredKey, createKeyboardInteractiveHandler,
+  preparePrivateKeyForAuth, loadFirstIdentityFileForAuth, hasUserConfiguredKey, isPasswordProvided, createKeyboardInteractiveHandler,
   createConnectionRef, acquireConnectionRef, releaseConnectionRef, findReusableSession,
   get probeReceiveConflicts() { return probeReceiveConflicts; },
   get removeRemoteFiles() { return removeRemoteFiles; },
