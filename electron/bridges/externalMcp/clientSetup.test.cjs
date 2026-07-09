@@ -24,15 +24,34 @@ describe("external MCP client setup classifiers", () => {
       {
         name: EXTERNAL_MCP_CODEX_NAME,
         enabled: true,
-        transport: { type: "stdio", command: "/path/to/netcatty-external-mcp", args: [] },
+        transport: {
+          type: "stdio",
+          command: "/path/to/netcatty-external-mcp",
+          args: [],
+          env: { NETCATTY_EXTERNAL_MCP_DISCOVERY_FILE: "/tmp/discovery.json" },
+        },
       },
     ]));
     const status = classifyCodexExternalMcpStatus({
       entries,
       launcherPath: "/path/to/netcatty-external-mcp",
       codexPath: "/usr/bin/codex",
+      discoveryEnv: { NETCATTY_EXTERNAL_MCP_DISCOVERY_FILE: "/tmp/discovery.json" },
     });
     assert.equal(status.state, "configured");
+  });
+
+  it("treats Codex launcher without discovery env as not_configured", () => {
+    const status = classifyCodexExternalMcpStatus({
+      entries: [{
+        name: EXTERNAL_MCP_CODEX_NAME,
+        transport: { type: "stdio", command: "/path/to/netcatty-external-mcp", args: [], env: null },
+      }],
+      launcherPath: "/path/to/netcatty-external-mcp",
+      codexPath: "/usr/bin/codex",
+      discoveryEnv: { NETCATTY_EXTERNAL_MCP_DISCOVERY_FILE: "/tmp/discovery.json" },
+    });
+    assert.equal(status.state, "not_configured");
   });
 
   it("flags Codex conflict when command differs", () => {
@@ -74,8 +93,21 @@ describe("external MCP client setup classifiers", () => {
       },
       launcherPath: "/path/to/netcatty-external-mcp",
       claudePath: "/usr/bin/claude",
+      discoveryEnv: { NETCATTY_EXTERNAL_MCP_DISCOVERY_FILE: "/tmp/d.json" },
     });
     assert.equal(withEnvFlags.state, "configured");
+
+    const missingEnv = classifyClaudeExternalMcpStatus({
+      getResult: {
+        exitCode: 0,
+        stdout: `Command: /path/to/netcatty-external-mcp`,
+        stderr: "",
+      },
+      launcherPath: "/path/to/netcatty-external-mcp",
+      claudePath: "/usr/bin/claude",
+      discoveryEnv: { NETCATTY_EXTERNAL_MCP_DISCOVERY_FILE: "/tmp/d.json" },
+    });
+    assert.equal(missingEnv.state, "not_configured");
 
     const withExtraArgs = classifyClaudeExternalMcpStatus({
       getResult: {
@@ -117,12 +149,14 @@ describe("external MCP client setup classifiers", () => {
         name: EXTERNAL_MCP_GROK_NAME,
         enabled: true,
         transport: { type: "stdio", command: "/path/to/netcatty-external-mcp", args: [] },
+        env: { NETCATTY_EXTERNAL_MCP_DISCOVERY_FILE: "/tmp/discovery.json" },
       },
     ]));
     const status = classifyGrokExternalMcpStatus({
       entries,
       launcherPath: "/path/to/netcatty-external-mcp",
       grokPath: "/usr/bin/grok",
+      discoveryEnv: { NETCATTY_EXTERNAL_MCP_DISCOVERY_FILE: "/tmp/discovery.json" },
     });
     assert.equal(status.state, "configured");
   });

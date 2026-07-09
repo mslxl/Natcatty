@@ -75,8 +75,23 @@ function buildCodexAddArgs(launcherPath, discoveryEnv) {
   ];
 }
 
-function classifyCodexExternalMcpStatus({ entries, launcherPath, codexPath }) {
-  const commandArgs = buildCodexAddArgs(launcherPath, {});
+function getCodexEntryEnv(entry) {
+  const transportEnv = entry?.transport?.env;
+  if (transportEnv && typeof transportEnv === "object") return transportEnv;
+  if (entry?.env && typeof entry.env === "object") return entry.env;
+  return null;
+}
+
+function hasRequiredDiscoveryEnv(entryEnv, discoveryEnv) {
+  const required = discoveryEnv && typeof discoveryEnv === "object" ? discoveryEnv : {};
+  const keys = Object.keys(required).filter((key) => typeof required[key] === "string" && required[key]);
+  if (keys.length === 0) return true;
+  if (!entryEnv || typeof entryEnv !== "object") return false;
+  return keys.every((key) => String(entryEnv[key] || "") === String(required[key]));
+}
+
+function classifyCodexExternalMcpStatus({ entries, launcherPath, codexPath, discoveryEnv }) {
+  const commandArgs = buildCodexAddArgs(launcherPath, discoveryEnv || {});
   const base = {
     ok: true,
     codexPath: codexPath || null,
@@ -104,6 +119,13 @@ function classifyCodexExternalMcpStatus({ entries, launcherPath, codexPath }) {
     && pathsMatch(transport.command, launcherPath)
     && (!Array.isArray(transport.args) || transport.args.length === 0)
   ) {
+    if (!hasRequiredDiscoveryEnv(getCodexEntryEnv(entry), discoveryEnv)) {
+      return {
+        ...base,
+        state: "not_configured",
+        existingCommand,
+      };
+    }
     return {
       ...base,
       state: "configured",
@@ -209,6 +231,7 @@ function createExternalMcpCodexSetup(options = {}) {
         entries: parseCodexMcpList(result.stdout),
         launcherPath: deps.launcherPath,
         codexPath,
+        discoveryEnv: deps.discoveryEnv,
       });
       return {
         ...status,
@@ -246,6 +269,9 @@ function createExternalMcpCodexSetup(options = {}) {
     }
 
     try {
+      if (status.existingCommand) {
+        await runCodex(codexPath, shellEnv, ["mcp", "remove", EXTERNAL_MCP_CODEX_NAME]);
+      }
       const addResult = await runCodex(
         codexPath,
         shellEnv,

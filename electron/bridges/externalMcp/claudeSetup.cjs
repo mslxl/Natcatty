@@ -98,8 +98,36 @@ function extractCommandExecutable(commandText) {
   return match[1];
 }
 
-function classifyClaudeExternalMcpStatus({ getResult, launcherPath, claudePath }) {
-  const commandArgs = buildClaudeAddArgs(launcherPath, {});
+function extractExistingEnv(result) {
+  const output = getCombinedOutput(result);
+  if (!output) return null;
+  const env = {};
+  for (const line of output.split(/\r?\n/u)) {
+    const match = line.match(/^\s*(?:Env|Environment|env)\s*[:=]\s*(.+)\s*$/iu)
+      || line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.+)\s*$/u);
+    if (!match) continue;
+    if (match[1] && match[2] && /^[A-Z0-9_]+$/u.test(match[1])) {
+      env[match[1]] = match[2].trim().replace(/^["']|["']$/gu, "");
+    }
+  }
+  // Also accept inline -e KEY=VALUE fragments in the Command line.
+  const command = extractExistingCommand(result) || "";
+  for (const match of command.matchAll(/(?:^|\s)-e\s+([A-Z0-9_]+)=("[^"]*"|'[^']*'|[^\s]+)/gu)) {
+    env[match[1]] = match[2].replace(/^["']|["']$/gu, "");
+  }
+  return Object.keys(env).length > 0 ? env : null;
+}
+
+function hasRequiredDiscoveryEnv(entryEnv, discoveryEnv) {
+  const required = discoveryEnv && typeof discoveryEnv === "object" ? discoveryEnv : {};
+  const keys = Object.keys(required).filter((key) => typeof required[key] === "string" && required[key]);
+  if (keys.length === 0) return true;
+  if (!entryEnv || typeof entryEnv !== "object") return false;
+  return keys.every((key) => String(entryEnv[key] || "") === String(required[key]));
+}
+
+function classifyClaudeExternalMcpStatus({ getResult, launcherPath, claudePath, discoveryEnv }) {
+  const commandArgs = buildClaudeAddArgs(launcherPath, discoveryEnv || {});
   const base = {
     ok: true,
     claudePath: claudePath || null,
@@ -125,6 +153,13 @@ function classifyClaudeExternalMcpStatus({ getResult, launcherPath, claudePath }
 
   const existingCommand = extractExistingCommand(getResult);
   if (pathsMatch(extractCommandExecutable(existingCommand), launcherPath)) {
+    if (!hasRequiredDiscoveryEnv(extractExistingEnv(getResult), discoveryEnv)) {
+      return {
+        ...base,
+        state: "not_configured",
+        existingCommand,
+      };
+    }
     return {
       ...base,
       state: "configured",
@@ -225,6 +260,7 @@ function createExternalMcpClaudeSetup(options = {}) {
         getResult: result,
         launcherPath: deps.launcherPath,
         claudePath,
+        discoveryEnv: deps.discoveryEnv,
       });
       return {
         ...status,
@@ -262,6 +298,9 @@ function createExternalMcpClaudeSetup(options = {}) {
     }
 
     try {
+      if (status.existingCommand) {
+        await runClaude(claudePath, shellEnv, ["mcp", "remove", "-s", "user", EXTERNAL_MCP_CLAUDE_NAME]);
+      }
       const addResult = await runClaude(
         claudePath,
         shellEnv,

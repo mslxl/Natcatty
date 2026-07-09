@@ -107,6 +107,7 @@ function normalizeGrokListEntry(entry) {
     args: Array.isArray(entry.args) ? entry.args : null,
     transport: entry.transport && typeof entry.transport === "object" ? entry.transport : null,
     url: typeof entry.url === "string" ? entry.url : null,
+    env: entry.env && typeof entry.env === "object" ? entry.env : null,
   };
 }
 
@@ -154,6 +155,20 @@ function getEntryCommand(entry) {
   return formatExistingCommand(entry);
 }
 
+function hasRequiredDiscoveryEnv(entryEnv, discoveryEnv) {
+  const required = discoveryEnv && typeof discoveryEnv === "object" ? discoveryEnv : {};
+  const keys = Object.keys(required).filter((key) => typeof required[key] === "string" && required[key]);
+  if (keys.length === 0) return true;
+  if (!entryEnv || typeof entryEnv !== "object") return false;
+  return keys.every((key) => String(entryEnv[key] || "") === String(required[key]));
+}
+
+function getGrokEntryEnv(entry) {
+  if (entry?.env && typeof entry.env === "object") return entry.env;
+  if (entry?.transport?.env && typeof entry.transport.env === "object") return entry.transport.env;
+  return null;
+}
+
 function buildGrokAddArgs(launcherPath, discoveryEnv) {
   return [
     "mcp",
@@ -165,8 +180,8 @@ function buildGrokAddArgs(launcherPath, discoveryEnv) {
   ];
 }
 
-function classifyGrokExternalMcpStatus({ entries, launcherPath, grokPath }) {
-  const commandArgs = buildGrokAddArgs(launcherPath, {});
+function classifyGrokExternalMcpStatus({ entries, launcherPath, grokPath, discoveryEnv }) {
+  const commandArgs = buildGrokAddArgs(launcherPath, discoveryEnv || {});
   const base = {
     ok: true,
     grokPath: grokPath || null,
@@ -189,6 +204,13 @@ function classifyGrokExternalMcpStatus({ entries, launcherPath, grokPath }) {
 
   const existingCommand = getEntryCommand(entry);
   if (pathsMatch(extractCommandExecutable(existingCommand), launcherPath)) {
+    if (!hasRequiredDiscoveryEnv(getGrokEntryEnv(entry), discoveryEnv)) {
+      return {
+        ...base,
+        state: "not_configured",
+        existingCommand,
+      };
+    }
     return {
       ...base,
       state: "configured",
@@ -297,6 +319,7 @@ function createExternalMcpGrokSetup(options = {}) {
           entries: parseGrokMcpList(fallback.stdout),
           launcherPath: deps.launcherPath,
           grokPath,
+          discoveryEnv: deps.discoveryEnv,
         });
         return {
           ...status,
@@ -307,6 +330,7 @@ function createExternalMcpGrokSetup(options = {}) {
         entries: parseGrokMcpList(result.stdout),
         launcherPath: deps.launcherPath,
         grokPath,
+        discoveryEnv: deps.discoveryEnv,
       });
       return {
         ...status,
@@ -344,6 +368,9 @@ function createExternalMcpGrokSetup(options = {}) {
     }
 
     try {
+      if (status.existingCommand) {
+        await runGrok(grokPath, shellEnv, ["mcp", "remove", EXTERNAL_MCP_GROK_NAME]);
+      }
       const addResult = await runGrok(
         grokPath,
         shellEnv,
