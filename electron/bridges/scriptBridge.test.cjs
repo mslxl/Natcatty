@@ -391,6 +391,7 @@ test("late startup snapshots from a stopped script do not seed the next run", as
 test("completed scripts clear unawaited dialog requests without rejecting them as stopped", async () => {
   const handlers = new Map();
   const sentRunUpdates = [];
+  const closedSessions = [];
   let dialogRequestId;
 
   scriptBridge.init({
@@ -403,6 +404,9 @@ test("completed scripts clear unawaited dialog requests without rejecting them a
     },
     terminalBridge: {
       writeToSession() {},
+      closeSession(_event, payload) {
+        closedSessions.push(payload.sessionId);
+      },
     },
     terminalWorkerManager: null,
     getMainWindow: () => ({
@@ -442,13 +446,15 @@ test("completed scripts clear unawaited dialog requests without rejecting them a
     scriptLabel: "Unawaited dialog",
     sessionId: "session-unawaited-dialog",
     content: `
-      void nct.dialog.confirm('background prompt');
+      void nct.dialog.confirm('background prompt').then(() => nct.session.disconnect());
       nct.log('done');
     `,
     permissionMode: "auto",
   });
 
+  await delay(100);
   assert.ok(dialogRequestId);
+  assert.deepEqual(closedSessions, []);
   const finalRun = sentRunUpdates.at(-1).find((run) => run.scriptId === "unawaited-dialog");
   assert.equal(finalRun.status, "completed");
   assert.deepEqual(await handlers.get("netcatty:script:dialog-response")({}, {

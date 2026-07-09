@@ -333,6 +333,17 @@ function createScriptRuntime(deps) {
     return promise;
   }
 
+  async function ignoreIfStopped(task) {
+    try {
+      return await task();
+    } catch (err) {
+      if (deps.isAborted?.() && err?.message === "Script stopped") {
+        return undefined;
+      }
+      throw err;
+    }
+  }
+
   function emitStatus(patch = {}) {
     onStatusChange?.(runId, {
       progressMode,
@@ -572,12 +583,13 @@ function createScriptRuntime(deps) {
       return markHandled(trackStep(`sleep ${delay}ms`).then(() => interruptibleSleep(delay, deps.isAborted)));
     },
     startLog(path) {
-      return markHandled((async () => {
+      return markHandled(ignoreIfStopped(async () => {
+        if (deps.isAborted?.()) return;
         assertWriteAllowed("session.startLog");
         await trackStep("startLog");
-        assertNotAborted();
+        if (deps.isAborted?.()) return;
         await startSessionLog?.(sessionId, path);
-      })());
+      }));
     },
     stopLog() {
       return markHandled((async () => {
@@ -585,39 +597,40 @@ function createScriptRuntime(deps) {
       })());
     },
     disconnect() {
-      return markHandled((async () => {
+      return markHandled(ignoreIfStopped(async () => {
+        if (deps.isAborted?.()) return;
         assertWriteAllowed("session.disconnect");
         await trackStep("disconnect");
-        assertNotAborted();
+        if (deps.isAborted?.()) return;
         await disconnectSession?.(sessionId);
-      })());
+      }));
     },
   };
 
   const screenApi = {
     send(text) {
-      return markHandled((async () => {
+      return markHandled(ignoreIfStopped(async () => {
+        if (deps.isAborted?.()) return;
         assertWriteAllowed("screen.send");
-        assertNotAborted();
         await waitIfPaused();
         const payload = String(text ?? "");
         await trackStep(`send: ${truncateActivityLabel(formatScriptInputForLog(payload), 60)}`);
-        assertNotAborted();
+        if (deps.isAborted?.()) return;
         appendLog(runId, `→ ${formatScriptInputForLog(payload)}`);
         writeToSession(sessionId, payload, { automated: true });
-      })());
+      }));
     },
     sendLine(text) {
-      return markHandled((async () => {
+      return markHandled(ignoreIfStopped(async () => {
+        if (deps.isAborted?.()) return;
         assertWriteAllowed("screen.sendLine");
-        assertNotAborted();
         await waitIfPaused();
         const line = String(text ?? "");
         await trackStep(`sendLine: ${truncateActivityLabel(line, 60)}`);
-        assertNotAborted();
+        if (deps.isAborted?.()) return;
         appendLog(runId, `→ ${line}`);
         writeToSession(sessionId, `${line}\r`, { automated: true });
-      })());
+      }));
     },
     waitFor(pattern, timeoutMs = 30000) {
       return markHandled(waitForWithRecovery(pattern, timeoutMs));
@@ -663,12 +676,13 @@ function createScriptRuntime(deps) {
       return screenSnapshot.cols ?? 80;
     },
     clear() {
-      return markHandled((async () => {
+      return markHandled(ignoreIfStopped(async () => {
+        if (deps.isAborted?.()) return;
         assertWriteAllowed("screen.clear");
         await trackStep("clear");
-        assertNotAborted();
+        if (deps.isAborted?.()) return;
         writeToSession(sessionId, "\x1b[2J\x1b[H", { automated: true });
-      })());
+      }));
     },
   };
 
@@ -744,6 +758,7 @@ function createScriptRuntime(deps) {
     version: deps.appVersion || "0.0.0",
     sleep: sessionApi.sleep.bind(sessionApi),
     log(message) {
+      if (deps.isAborted?.()) return;
       assertNotAborted();
       stepIndex += 1;
       emitStatus({

@@ -452,7 +452,10 @@ async function runScriptOnSession({
       await stopScriptSessionLog(sid);
     },
     isPaused: () => Boolean(runs.get(runId)?.paused),
-    isAborted: () => Boolean(runs.get(runId)?.aborted),
+    isAborted: () => {
+      const entry = runs.get(runId);
+      return Boolean(entry?.aborted || entry?.endedAt);
+    },
     permissionMode,
     startedAt: run.startedAt,
     onStatusChange: (id, patch) => {
