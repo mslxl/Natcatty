@@ -72,7 +72,6 @@ import {
   type TerminalBroadcastInputOptions,
 } from './terminal/terminalHelpers';
 import { Button } from './ui/button';
-import { setupMcpApprovalBridge } from '../infrastructure/ai/shared/approvalGate';
 import { resolveScriptsSidePanelShortcutIntent } from '../application/state/resolveSnippetsShortcutIntent';
 import { resolveSidePanelToggleIntent } from '../application/state/resolveSidePanelToggleIntent';
 import { resolveAiSidePanelToggleIntent } from '../application/state/resolveAiSidePanelToggleIntent';
@@ -1726,7 +1725,6 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     setSftpHostForTab,
     setSftpInitialLocationForTab,
     setSftpPendingUploadsForTab,
-    setupMcpApprovalBridge,
     showHostTreeSidebar,
     sidePanelOpenTabs,
     sidePanelPosition,

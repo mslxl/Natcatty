@@ -341,7 +341,6 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     setThemeMountedTabIds: s.setThemeMountedTabIds,
     setSidePanelOpenTabs: s.setSidePanelOpenTabs,
     setTimeout,
-    setupMcpApprovalBridge: s.setupMcpApprovalBridge,
     setWorkspaceArea,
     sidePanelPosition: s.sidePanelPosition,
     sidePanelWidth: s.sidePanelWidth,

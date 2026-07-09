@@ -74,6 +74,7 @@ import { resolveSnippetCommand } from './components/SnippetExecutionProvider';
 import { isScriptSnippet } from './domain/snippetScript.ts';
 import { ScriptAutomationRoot } from './components/scripts/ScriptAutomationRoot';
 import { ExternalMcpApprovalsHost } from './components/ai/ExternalMcpApprovalsHost';
+import { setupMcpApprovalBridge } from './infrastructure/ai/shared/approvalGate';
 import { AppActiveTabChrome } from './application/app/AppActiveTabChrome';
 import { AppView } from './application/app/AppView';
 import { useAppStartupEffects } from './application/app/useAppStartupEffects';
@@ -1409,6 +1410,13 @@ function AppWithProviders() {
     } catch {
       // ignore
     }
+  }, []);
+
+  // Keep MCP/SDK approval IPC alive for the whole app lifetime — including the
+  // ~5s before TerminalLayer lazy-mounts, and when External MCP is used without
+  // opening the Catty AI panel.
+  useEffect(() => {
+    return setupMcpApprovalBridge();
   }, []);
 
   return (
