@@ -397,7 +397,17 @@ function registerProviderHandlers(ctx) {
     const MAX_RESPONSE_SIZE = 10 * 1024 * 1024; // 10MB safety limit
     const MAX_REDIRECTS = followRedirects ? 5 : 0;
 
-    function doFetch(fetchUrl, redirectsLeft) {
+    async function doFetch(fetchUrl, redirectsLeft) {
+      const { resolveOutboundHttpAgent } = require("../httpNetworkProxyAgent.cjs");
+      let proxyAgent;
+      try {
+        proxyAgent = await resolveOutboundHttpAgent(fetchUrl, {
+          session: electronModule?.session?.defaultSession,
+        });
+      } catch {
+        proxyAgent = undefined;
+      }
+
       return new Promise((resolve) => {
         const parsedUrl = new URL(fetchUrl);
         const isHttps = parsedUrl.protocol === "https:";
@@ -405,6 +415,7 @@ function registerProviderHandlers(ctx) {
 
         const fetchOpts = { method: method || "GET", headers: resolvedHeaders || {}, timeout: 30000 };
         if ((skipTLSVerify || shouldSkipTLSVerify(providerId)) && isHttps) fetchOpts.rejectUnauthorized = false;
+        if (proxyAgent) fetchOpts.agent = proxyAgent;
         const req = lib.request(parsedUrl, fetchOpts,
           (res) => {
             // Handle redirects

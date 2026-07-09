@@ -104,6 +104,21 @@ export const zhCNCoreMessages: Messages = {
   'settings.system.credentials.unavailableHint': '在其他用户或机器上加密的凭据无法在此处解密。请在当前设备重新输入并保存凭据。',
   'settings.system.credentials.portabilityHint': '云同步可跨设备，因为使用主密钥加密；本地 safeStorage 加密仅绑定当前系统用户/设备。',
 
+  // Settings > System > Network Proxy
+  'settings.system.networkProxy.title': '网络代理',
+  'settings.system.networkProxy.description': '用于云同步与 AI 服务商的 HTTP(S) 代理。与 SSH 的 ProxyJump / ProxyCommand 配置无关。',
+  'settings.system.networkProxy.mode': '代理模式',
+  'settings.system.networkProxy.mode.system': '系统代理',
+  'settings.system.networkProxy.mode.direct': '直连（不使用代理）',
+  'settings.system.networkProxy.mode.custom': '自定义代理',
+  'settings.system.networkProxy.url': '代理地址',
+  'settings.system.networkProxy.url.placeholder': 'http://127.0.0.1:7890',
+  'settings.system.networkProxy.url.desc': '支持 http://、https://、socks5:// 的 host:port 地址。代理 URL 中不支持账号密码。',
+  'settings.system.networkProxy.bypass': '绕过列表',
+  'settings.system.networkProxy.bypass.placeholder': '<local>,localhost,127.0.0.1',
+  'settings.system.networkProxy.bypass.desc': '逗号分隔、不走代理的主机。可用 <local> 表示本机与局域网名称。',
+  'settings.system.networkProxy.hint': '影响 Google Drive / OneDrive / GitHub 同步登录与 AI 服务商请求，不会改变 SSH 连接。',
+
   // Settings > System > Crash Logs
   'settings.system.crashLogs.title': '崩溃日志',
   'settings.system.crashLogs.description': '查看主进程错误日志，帮助诊断异常行为。',

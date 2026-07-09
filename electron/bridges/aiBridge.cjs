@@ -494,7 +494,17 @@ function safeReadJson(filePath) {
  * renderer can construct a Response with the real status. Data continues to
  * flow via stream:data / stream:end / stream:error IPC events.
  */
-function streamRequest(url, options, event, requestId, skipTLS) {
+async function streamRequest(url, options, event, requestId, skipTLS) {
+  const { resolveOutboundHttpAgent } = require("./httpNetworkProxyAgent.cjs");
+  let proxyAgent;
+  try {
+    proxyAgent = await resolveOutboundHttpAgent(url, {
+      session: electronModule?.session?.defaultSession,
+    });
+  } catch {
+    proxyAgent = undefined;
+  }
+
   return new Promise((resolve, reject) => {
     const parsedUrl = new URL(url);
     const isHttps = parsedUrl.protocol === "https:";
@@ -519,6 +529,7 @@ function streamRequest(url, options, event, requestId, skipTLS) {
         timeout: 120000, // 2 min connection timeout
     };
     if (skipTLS && isHttps) reqOpts.rejectUnauthorized = false;
+    if (proxyAgent) reqOpts.agent = proxyAgent;
 
     const req = lib.request(parsedUrl, reqOpts,
       (res) => {

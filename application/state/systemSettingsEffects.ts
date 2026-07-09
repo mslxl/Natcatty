@@ -6,8 +6,13 @@ import {
   STORAGE_KEY_TOGGLE_WINDOW_HOTKEY,
   STORAGE_KEY_WINDOW_OPACITY,
   STORAGE_KEY_APP_ICON_VARIANT,
+  STORAGE_KEY_HTTP_NETWORK_PROXY,
 } from '../../infrastructure/config/storageKeys';
 import { resolveAppIconVariant, type AppIconVariant } from '../../domain/appIconVariant';
+import {
+  normalizeHttpNetworkProxySettings,
+  type HttpNetworkProxySettings,
+} from '../../domain/httpNetworkProxy';
 import { localStorageAdapter } from '../../infrastructure/persistence/localStorageAdapter';
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
 
@@ -19,6 +24,7 @@ interface UseSystemSettingsEffectsParams {
   windowOpacity: number;
   appIconVariant: AppIconVariant;
   autoUpdateEnabled: boolean;
+  httpNetworkProxy: HttpNetworkProxySettings;
   persistMountedRef: MutableRefObject<boolean>;
   setHotkeyRegistrationError: (error: string | null) => void;
   setAutoUpdateEnabled: (enabled: boolean | ((prev: boolean) => boolean)) => void;
@@ -34,6 +40,7 @@ export function useSystemSettingsEffects({
   windowOpacity,
   appIconVariant,
   autoUpdateEnabled,
+  httpNetworkProxy,
   persistMountedRef,
   setHotkeyRegistrationError,
   setAutoUpdateEnabled,
@@ -105,6 +112,23 @@ export function useSystemSettingsEffects({
     if (!persistMountedRef.current) return;
     notifySettingsChanged(STORAGE_KEY_CLOSE_TO_TRAY, closeToTray);
   }, [enabled, closeToTray, notifySettingsChanged, persistMountedRef]);
+
+  // Persist and apply app-level HTTP(S) network proxy (cloud sync / AI)
+  useEffect(() => {
+    if (!enabled) return;
+    const normalized = normalizeHttpNetworkProxySettings(httpNetworkProxy);
+    localStorageAdapter.write(STORAGE_KEY_HTTP_NETWORK_PROXY, normalized);
+    const bridge = netcattyBridge.get();
+    if (bridge?.setHttpNetworkProxy) {
+      // Apply to main process; empty custom is treated as system there.
+      // Persist draft custom+empty so the URL field remains visible.
+      bridge.setHttpNetworkProxy(normalized).catch((err) => {
+        console.warn('[NetworkProxy] Failed to apply HTTP network proxy:', err);
+      });
+    }
+    if (!persistMountedRef.current) return;
+    notifySettingsChanged(STORAGE_KEY_HTTP_NETWORK_PROXY, normalized);
+  }, [enabled, httpNetworkProxy, notifySettingsChanged, persistMountedRef]);
 
   // Persist and sync window opacity
   useEffect(() => {

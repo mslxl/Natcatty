@@ -3,6 +3,11 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { runThemeTransition, type ThemeTransitionMode } from './themeTransition';
 import { SyncConfig, TerminalSettings, HotkeyScheme, CustomKeyBindings, DEFAULT_KEY_BINDINGS, KeyBinding, UILanguage, SessionLogFormat, normalizeTerminalSettings } from '../../domain/models';
 import {
+  DEFAULT_HTTP_NETWORK_PROXY,
+  normalizeHttpNetworkProxySettings,
+  type HttpNetworkProxySettings,
+} from '../../domain/httpNetworkProxy';
+import {
   STORAGE_KEY_COLOR,
   STORAGE_KEY_SYNC,
   STORAGE_KEY_TERM_THEME,
@@ -42,6 +47,7 @@ import {
   STORAGE_KEY_JMS_DEEP_LINK_ENABLED,
   STORAGE_KEY_TOGGLE_WINDOW_HOTKEY,
   STORAGE_KEY_CLOSE_TO_TRAY,
+  STORAGE_KEY_HTTP_NETWORK_PROXY,
   STORAGE_KEY_GLOBAL_HOTKEY_ENABLED,
   STORAGE_KEY_WINDOW_OPACITY,
   STORAGE_KEY_APP_ICON_VARIANT,
@@ -343,6 +349,18 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     if (stored === null) return true;
     return stored === 'true';
   });
+  const [httpNetworkProxy, setHttpNetworkProxyState] = useState<HttpNetworkProxySettings>(() => {
+    const stored = localStorageAdapter.read<unknown>(STORAGE_KEY_HTTP_NETWORK_PROXY);
+    return normalizeHttpNetworkProxySettings(stored ?? DEFAULT_HTTP_NETWORK_PROXY);
+  });
+  const setHttpNetworkProxy = useCallback((nextValue: SetStateAction<HttpNetworkProxySettings>) => {
+    setHttpNetworkProxyState((prev) => {
+      const candidate = typeof nextValue === 'function'
+        ? (nextValue as (prevState: HttpNetworkProxySettings) => HttpNetworkProxySettings)(prev)
+        : nextValue;
+      return normalizeHttpNetworkProxySettings(candidate);
+    });
+  }, []);
   const [autoUpdateEnabled, setAutoUpdateEnabled] = useState<boolean>(() => {
     const stored = readStoredString(STORAGE_KEY_AUTO_UPDATE_ENABLED);
     if (stored === null) return true; // Default to enabled
@@ -665,6 +683,13 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     const storedFocusStyle = readStoredString(STORAGE_KEY_WORKSPACE_FOCUS_STYLE);
     if (storedFocusStyle === 'dim' || storedFocusStyle === 'border') setWorkspaceFocusStyleState(storedFocusStyle);
 
+    // App-level HTTP(S) network proxy
+    setHttpNetworkProxyState(
+      normalizeHttpNetworkProxySettings(
+        localStorageAdapter.read(STORAGE_KEY_HTTP_NETWORK_PROXY) ?? DEFAULT_HTTP_NETWORK_PROXY,
+      ),
+    );
+
     // Custom terminal themes
     customThemeStore.loadFromStorage();
   }, [applyIncomingCustomKeyBindings, applyIncomingJmsDeepLinkEnabled, applyIncomingSshDeepLinkEnabled, syncAppearanceFromStorage, syncCustomCssFromStorage, setTerminalSettings]);
@@ -752,6 +777,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     setWindowOpacity,
     setAppIconVariant,
     setAutoUpdateEnabled,
+    setHttpNetworkProxy,
     setSftpAutoOpenSidebar,
     setSftpFollowTerminalCwd,
     setSftpDefaultViewMode,
@@ -1176,6 +1202,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     windowOpacity,
     appIconVariant,
     autoUpdateEnabled,
+    httpNetworkProxy,
     persistMountedRef,
     setHotkeyRegistrationError,
     setAutoUpdateEnabled,
@@ -1366,6 +1393,8 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     setToggleWindowHotkey,
     closeToTray,
     setCloseToTray,
+    httpNetworkProxy,
+    setHttpNetworkProxy,
     autoUpdateEnabled,
     setAutoUpdateEnabled,
     hotkeyRegistrationError,

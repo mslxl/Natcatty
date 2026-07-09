@@ -44,8 +44,13 @@ import {
   STORAGE_KEY_TERMINAL_SIDE_PANEL_AUTO_OPEN_TAB,
   STORAGE_KEY_WINDOW_OPACITY,
   STORAGE_KEY_APP_ICON_VARIANT,
+  STORAGE_KEY_HTTP_NETWORK_PROXY,
 } from '../../infrastructure/config/storageKeys';
 import { resolveAppIconVariant, type AppIconVariant } from '../../domain/appIconVariant';
+import {
+  normalizeHttpNetworkProxySettings,
+  type HttpNetworkProxySettings,
+} from '../../domain/httpNetworkProxy';
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
 import {
   clampWindowOpacity,
@@ -82,6 +87,7 @@ interface UseSettingsIpcSyncParams {
   setWindowOpacity: Dispatch<SetStateAction<number>>;
   setAppIconVariant: Dispatch<SetStateAction<AppIconVariant>>;
   setAutoUpdateEnabled: Dispatch<SetStateAction<boolean>>;
+  setHttpNetworkProxy: Dispatch<SetStateAction<HttpNetworkProxySettings>>;
   setSftpAutoOpenSidebar: Dispatch<SetStateAction<boolean>>;
   setSftpFollowTerminalCwd: Dispatch<SetStateAction<boolean>>;
   setSftpDefaultViewMode: Dispatch<SetStateAction<'list' | 'tree'>>;
@@ -123,6 +129,7 @@ export function useSettingsIpcSync({
   setWindowOpacity,
   setAppIconVariant,
   setAutoUpdateEnabled,
+  setHttpNetworkProxy,
   setSftpAutoOpenSidebar,
   setSftpFollowTerminalCwd,
   setSftpDefaultViewMode,
@@ -250,6 +257,14 @@ export function useSettingsIpcSync({
       if (key === STORAGE_KEY_AUTO_UPDATE_ENABLED && typeof value === 'boolean') {
         setAutoUpdateEnabled((prev) => (prev === value ? prev : value));
       }
+      if (key === STORAGE_KEY_HTTP_NETWORK_PROXY) {
+        const next = normalizeHttpNetworkProxySettings(value);
+        setHttpNetworkProxy((prev) => (
+          prev.mode === next.mode && prev.url === next.url && prev.bypass === next.bypass
+            ? prev
+            : next
+        ));
+      }
       if (key === STORAGE_KEY_SFTP_AUTO_OPEN_SIDEBAR && typeof value === 'boolean') {
         setSftpAutoOpenSidebar((prev) => (prev === value ? prev : value));
       }
@@ -298,6 +313,7 @@ export function useSettingsIpcSync({
     applyIncomingCustomKeyBindings,
     mergeIncomingTerminalSettings,
     setAutoUpdateEnabled,
+    setHttpNetworkProxy,
     setEditorWordWrapState,
     setFollowAppTerminalThemeState,
     setGlobalHotkeyEnabled,

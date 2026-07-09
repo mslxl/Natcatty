@@ -36,6 +36,29 @@ test("localized settings include workspace focus indicator labels", () => {
   }
 });
 
+test("localized settings include network proxy labels", () => {
+  const keys = [
+    "settings.system.networkProxy.title",
+    "settings.system.networkProxy.description",
+    "settings.system.networkProxy.mode",
+    "settings.system.networkProxy.mode.system",
+    "settings.system.networkProxy.mode.direct",
+    "settings.system.networkProxy.mode.custom",
+    "settings.system.networkProxy.url",
+    "settings.system.networkProxy.url.placeholder",
+    "settings.system.networkProxy.url.desc",
+    "settings.system.networkProxy.bypass",
+    "settings.system.networkProxy.bypass.placeholder",
+    "settings.system.networkProxy.bypass.desc",
+    "settings.system.networkProxy.hint",
+  ];
+
+  for (const locale of LOCALIZED_SETTINGS_LOCALES) {
+    const missing = keys.filter((key) => !locale.messages[key]);
+    assert.deepEqual(missing, [], `${locale.name} is missing network proxy labels`);
+  }
+});
+
 test("localized settings include terminal font weight option labels", () => {
   const keys = [
     "settings.terminal.font.weight.thin",

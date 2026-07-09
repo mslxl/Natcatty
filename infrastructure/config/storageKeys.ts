@@ -142,6 +142,8 @@ export const STORAGE_KEY_MANAGED_SOURCES = 'netcatty_managed_sources_v1';
 // Global Toggle Window Settings (Quake Mode)
 export const STORAGE_KEY_TOGGLE_WINDOW_HOTKEY = 'netcatty_toggle_window_hotkey_v1';
 export const STORAGE_KEY_CLOSE_TO_TRAY = 'netcatty_close_to_tray_v1';
+/** App-level HTTP(S) proxy for cloud sync / AI (not SSH ProxyJump). */
+export const STORAGE_KEY_HTTP_NETWORK_PROXY = 'netcatty_http_network_proxy_v1';
 export const STORAGE_KEY_GLOBAL_HOTKEY_ENABLED = 'netcatty_global_hotkey_enabled_v1';
 export const STORAGE_KEY_WINDOW_OPACITY = 'netcatty_window_opacity_v1';
 export const STORAGE_KEY_APP_ICON_VARIANT = 'netcatty_app_icon_variant_v1';

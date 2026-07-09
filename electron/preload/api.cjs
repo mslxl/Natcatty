@@ -934,6 +934,12 @@ function createPreloadApi(ctx) {
     ipcRenderer.invoke("netcatty:tray:setCloseToTray", { enabled }),
   isCloseToTray: () =>
     ipcRenderer.invoke("netcatty:tray:isCloseToTray"),
+
+  // App-level HTTP(S) network proxy (cloud sync / AI providers)
+  setHttpNetworkProxy: (settings) =>
+    ipcRenderer.invoke("netcatty:networkProxy:set", settings),
+  getHttpNetworkProxy: () =>
+    ipcRenderer.invoke("netcatty:networkProxy:get"),
   updateTrayMenuData: (data) =>
     ipcRenderer.invoke("netcatty:tray:updateMenuData", data),
   // Listen for tray menu actions
