@@ -173,6 +173,31 @@ test("terminal layer side panel stable ctx ignores session title-only updates", 
   );
 });
 
+test("terminal layer side panel stable ctx re-renders when session transport flags change", () => {
+  const baseCtx = {
+    mountedSftpTabIds: ["workspace-1"],
+    sidePanelOpenTabs: new Map([["workspace-1", "sftp"]]),
+    sessions: [{ id: "s1", hostId: "h1", protocol: "ssh", status: "connected" }],
+  };
+
+  assert.equal(
+    terminalLayerSidePanelStableCtxEqual(
+      baseCtx,
+      {
+        ...baseCtx,
+        sessions: [{
+          id: "s1",
+          hostId: "h1",
+          protocol: "ssh",
+          status: "connected",
+          moshEnabled: true,
+        }],
+      },
+    ),
+    false,
+  );
+});
+
 test("terminal layer side panel re-renders when linked terminal cwd changes", () => {
   const baseCtx = {
     mountedSftpTabIds: ["workspace-1"],

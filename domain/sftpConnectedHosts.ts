@@ -3,17 +3,22 @@ import type { Host, TerminalSession } from "./models";
 export type SftpConnectedHostEntry = {
   host: Host;
   sessionId: string;
-  status: Extract<TerminalSession["status"], "connecting" | "connected">;
+  status: "connected";
 };
 
 /** Fields the SFTP Connected picker cares about from a terminal session. */
 export type SftpPickerSessionFields = Pick<
   TerminalSession,
-  "id" | "hostId" | "protocol" | "status"
+  "id" | "hostId" | "protocol" | "status" | "moshEnabled" | "etEnabled"
 >;
 
-const isSftpEligibleSession = (session: SftpPickerSessionFields): boolean => {
-  if (session.status !== "connected" && session.status !== "connecting") return false;
+/**
+ * Sessions that can actually reuse a live terminal SSH connection for SFTP.
+ * Connecting sessions and Mosh/ET transports have no reusable ssh2 shell conn.
+ */
+const isReusableSftpSourceSession = (session: SftpPickerSessionFields): boolean => {
+  if (session.status !== "connected") return false;
+  if (session.moshEnabled || session.etEnabled) return false;
   const protocol = session.protocol;
   if (protocol === "serial" || protocol === "local" || protocol === "telnet") return false;
   // Missing protocol defaults to SSH (same as host picker filtering).
@@ -42,6 +47,8 @@ export const sftpPickerSessionsEqual = (
       session.hostId !== other.hostId
       || session.protocol !== other.protocol
       || session.status !== other.status
+      || Boolean(session.moshEnabled) !== Boolean(other.moshEnabled)
+      || Boolean(session.etEnabled) !== Boolean(other.etEnabled)
     ) {
       return false;
     }
@@ -51,8 +58,7 @@ export const sftpPickerSessionsEqual = (
 
 /**
  * Build the "currently connected" host list for the SFTP host picker.
- * One entry per hostId — prefers a connected session over connecting,
- * then the most recently listed session for that host.
+ * One entry per hostId — keeps the most recently listed reusable session.
  */
 export const listSftpConnectedHosts = (
   sessions: ReadonlyArray<SftpPickerSessionFields>,
@@ -61,31 +67,18 @@ export const listSftpConnectedHosts = (
   const bestByHostId = new Map<string, SftpConnectedHostEntry>();
 
   for (const session of sessions) {
-    if (!isSftpEligibleSession(session)) continue;
+    if (!isReusableSftpSourceSession(session)) continue;
     const host = hostsById.get(session.hostId);
     if (!host) continue;
     if (host.protocol === "serial") continue;
+    if (host.moshEnabled || host.etEnabled) continue;
 
-    const next: SftpConnectedHostEntry = {
+    // Later sessions overwrite earlier ones for the same hostId.
+    bestByHostId.set(host.id, {
       host,
       sessionId: session.id,
-      status: session.status === "connecting" ? "connecting" : "connected",
-    };
-    const existing = bestByHostId.get(host.id);
-    if (!existing) {
-      bestByHostId.set(host.id, next);
-      continue;
-    }
-    // Prefer connected over connecting. On a status tie, keep the later
-    // session in the list (usually the most recently opened terminal) so
-    // reuse targets a connection that still matches the current host endpoint.
-    if (existing.status === "connecting" && next.status === "connected") {
-      bestByHostId.set(host.id, next);
-      continue;
-    }
-    if (existing.status === next.status) {
-      bestByHostId.set(host.id, next);
-    }
+      status: "connected",
+    });
   }
 
   return [...bestByHostId.values()].sort((a, b) =>

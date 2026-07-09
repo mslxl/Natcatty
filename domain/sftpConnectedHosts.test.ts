@@ -45,20 +45,7 @@ test("listSftpConnectedHosts returns connected SSH hosts sorted by label", () =>
   );
 });
 
-test("listSftpConnectedHosts prefers connected over connecting for the same host", () => {
-  const hostsById = new Map([["a", host({ id: "a", label: "Alpha" })]]);
-  const sessions = [
-    session({ id: "s-connecting", hostId: "a", status: "connecting" }),
-    session({ id: "s-connected", hostId: "a", status: "connected" }),
-  ];
-
-  const result = listSftpConnectedHosts(sessions, hostsById);
-  assert.equal(result.length, 1);
-  assert.equal(result[0]?.sessionId, "s-connected");
-  assert.equal(result[0]?.status, "connected");
-});
-
-test("listSftpConnectedHosts prefers the later same-status session for a host", () => {
+test("listSftpConnectedHosts prefers the later reusable session for a host", () => {
   const hostsById = new Map([["a", host({ id: "a", label: "Alpha" })]]);
   const sessions = [
     session({ id: "s-old", hostId: "a", status: "connected" }),
@@ -70,16 +57,33 @@ test("listSftpConnectedHosts prefers the later same-status session for a host", 
   assert.equal(result[0]?.sessionId, "s-new");
 });
 
-test("listSftpConnectedHosts still prefers connected over a later connecting session", () => {
+test("listSftpConnectedHosts skips connecting sessions", () => {
   const hostsById = new Map([["a", host({ id: "a", label: "Alpha" })]]);
   const sessions = [
-    session({ id: "s-connected", hostId: "a", status: "connected" }),
     session({ id: "s-connecting", hostId: "a", status: "connecting" }),
   ];
 
+  assert.deepEqual(listSftpConnectedHosts(sessions, hostsById), []);
+});
+
+test("listSftpConnectedHosts skips mosh and et sessions", () => {
+  const hosts = [
+    host({ id: "ssh", label: "SSH" }),
+    host({ id: "mosh", label: "Mosh" }),
+    host({ id: "et", label: "ET" }),
+  ];
+  const hostsById = new Map(hosts.map((h) => [h.id, h]));
+  const sessions = [
+    session({ id: "s-ssh", hostId: "ssh", status: "connected" }),
+    session({ id: "s-mosh", hostId: "mosh", status: "connected", moshEnabled: true }),
+    session({ id: "s-et", hostId: "et", status: "connected", etEnabled: true }),
+  ];
+
   const result = listSftpConnectedHosts(sessions, hostsById);
-  assert.equal(result.length, 1);
-  assert.equal(result[0]?.sessionId, "s-connected");
+  assert.deepEqual(
+    result.map((entry) => entry.sessionId),
+    ["s-ssh"],
+  );
 });
 
 test("listSftpConnectedHosts skips serial, local, telnet, and disconnected sessions", () => {
@@ -136,14 +140,21 @@ test("sftpPickerSessionsEqual ignores title-only changes", () => {
   assert.equal(sftpPickerSessionsEqual(prev, next), true);
 });
 
-test("sftpPickerSessionsEqual detects status and hostId changes", () => {
-  const base = session({ id: "s1", hostId: "a", status: "connecting" });
+test("sftpPickerSessionsEqual detects status, hostId, and transport changes", () => {
+  const base = session({ id: "s1", hostId: "a", status: "connected" });
   assert.equal(
-    sftpPickerSessionsEqual([base], [session({ id: "s1", hostId: "a", status: "connected" })]),
+    sftpPickerSessionsEqual([base], [session({ id: "s1", hostId: "a", status: "connecting" })]),
     false,
   );
   assert.equal(
-    sftpPickerSessionsEqual([base], [session({ id: "s1", hostId: "b", status: "connecting" })]),
+    sftpPickerSessionsEqual([base], [session({ id: "s1", hostId: "b", status: "connected" })]),
+    false,
+  );
+  assert.equal(
+    sftpPickerSessionsEqual(
+      [base],
+      [session({ id: "s1", hostId: "a", status: "connected", moshEnabled: true })],
+    ),
     false,
   );
 });

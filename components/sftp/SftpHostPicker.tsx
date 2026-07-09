@@ -11,8 +11,6 @@ import { DistroAvatar } from '../DistroAvatar';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../ui/dialog';
 import { Input } from '../ui/input';
 import { ScrollArea } from '../ui/scroll-area';
-import { cn } from '../../lib/utils';
-
 interface SftpHostPickerProps {
     open: boolean;
     onOpenChange: (open: boolean) => void;
@@ -25,14 +23,8 @@ interface SftpHostPickerProps {
     onSelectHost: (host: Host, options?: { sourceSessionId?: string }) => void;
 }
 
-const StatusDot: React.FC<{ status: SftpConnectedHostEntry['status'] }> = ({ status }) => (
-    <span
-        className={cn(
-            'h-1.5 w-1.5 rounded-full shrink-0',
-            status === 'connected' ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse',
-        )}
-        aria-hidden
-    />
+const StatusDot: React.FC = () => (
+    <span className="h-1.5 w-1.5 rounded-full shrink-0 bg-emerald-500" aria-hidden />
 );
 
 const SftpHostPickerInner: React.FC<SftpHostPickerProps> = ({
@@ -144,7 +136,7 @@ const SftpHostPickerInner: React.FC<SftpHostPickerProps> = ({
     const renderHostRow = (
         itemId: string,
         host: Host,
-        meta: { badge: string; status?: SftpConnectedHostEntry['status'] },
+        meta: { badge: string; showStatus?: boolean },
     ) => {
         const itemIndex = itemIndexById.get(itemId) ?? 0;
         return (
@@ -159,7 +151,7 @@ const SftpHostPickerInner: React.FC<SftpHostPickerProps> = ({
                     <DistroAvatar host={host} fallback={host.label[0].toUpperCase()} size="sm" />
                     <div className="min-w-0">
                         <div className="text-sm font-medium truncate flex items-center gap-1.5">
-                            {meta.status ? <StatusDot status={meta.status} /> : null}
+                            {meta.showStatus ? <StatusDot /> : null}
                             <span className="truncate">{host.label}</span>
                         </div>
                         <div className="text-xs text-muted-foreground truncate">
@@ -237,10 +229,8 @@ const SftpHostPickerInner: React.FC<SftpHostPickerProps> = ({
                                         `connected:${entry.sessionId}`,
                                         entry.host,
                                         {
-                                            badge: entry.status === 'connecting'
-                                                ? t('sftp.picker.connected.connecting')
-                                                : t('sftp.picker.connected.badge'),
-                                            status: entry.status,
+                                            badge: t('sftp.picker.connected.badge'),
+                                            showStatus: true,
                                         },
                                     ),
                                 )}
