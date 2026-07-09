@@ -581,8 +581,6 @@ function createScriptRuntime(deps) {
     },
     stopLog() {
       return markHandled((async () => {
-        await trackStep("stopLog");
-        assertNotAborted();
         await stopSessionLog?.(sessionId);
       })());
     },

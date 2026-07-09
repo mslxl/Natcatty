@@ -1,7 +1,11 @@
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 const test = require("node:test");
 
 const scriptBridge = require("./scriptBridge.cjs");
+const sessionLogStreamManager = require("./sessionLogStreamManager.cjs");
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -631,6 +635,104 @@ test("stopping scripts clears unawaited screen reads without unhandled rejection
     }), { ok: false });
   } finally {
     process.off("unhandledRejection", onUnhandledRejection);
+  }
+});
+
+test("stopping a script releases its session log so the next run can start one", async () => {
+  const handlers = new Map();
+  const sentRunUpdates = [];
+  const sessionId = "session-stop-log-cleanup";
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-script-log-test-"));
+
+  try {
+    scriptBridge.init({
+      sessions: new Map([[sessionId, { hostname: "example.test" }]]),
+      electronModule: {
+        app: {
+          getVersion: () => "test",
+          getPath: () => logDir,
+        },
+      },
+      terminalBridge: {
+        writeToSession() {},
+      },
+      terminalWorkerManager: null,
+      getMainWindow: () => ({
+        webContents: {
+          send(channel, payload) {
+            if (channel === "netcatty:script:runs-updated") {
+              sentRunUpdates.push(payload.runs);
+            }
+            if (channel === "netcatty:script:screen-snapshot-request") {
+              setImmediate(() => {
+                handlers.get("netcatty:script:screen-snapshot-response")({}, {
+                  requestId: payload.requestId,
+                  snapshot: {
+                    rows: 24,
+                    cols: 80,
+                    currentRow: 0,
+                    lines: [],
+                  },
+                });
+              });
+            }
+          },
+        },
+      }),
+    });
+    scriptBridge.registerHandlers({
+      handle(channel, handler) {
+        handlers.set(channel, handler);
+      },
+    });
+
+    const runHandler = handlers.get("netcatty:script:run");
+    const firstLogPath = path.join(logDir, "first.log");
+    const firstRunPromise = runHandler({}, {
+      scriptId: "stopped-log-run",
+      scriptLabel: "Stopped log run",
+      sessionId,
+      content: `
+        await nct.session.startLog(${JSON.stringify(firstLogPath)});
+        try {
+          await nct.sleep(5000);
+        } finally {
+          await nct.session.stopLog();
+        }
+      `,
+      permissionMode: "auto",
+    });
+
+    await waitUntil(() => sessionLogStreamManager.hasStream(sessionId));
+    const firstRunId = await waitUntil(() => (
+      sentRunUpdates
+        .flat()
+        .find((run) => run.scriptId === "stopped-log-run" && run.status === "running")
+        ?.runId
+    ));
+
+    assert.deepEqual(await handlers.get("netcatty:script:stop")({}, { runId: firstRunId }), { ok: true });
+    await firstRunPromise;
+    await waitUntil(() => !sessionLogStreamManager.hasStream(sessionId));
+
+    const secondLogPath = path.join(logDir, "second.log");
+    await runHandler({}, {
+      scriptId: "next-log-run",
+      scriptLabel: "Next log run",
+      sessionId,
+      content: `
+        await nct.session.startLog(${JSON.stringify(secondLogPath)});
+        await nct.session.stopLog();
+      `,
+      permissionMode: "auto",
+    });
+
+    const secondRun = sentRunUpdates.at(-1).find((run) => run.scriptId === "next-log-run");
+    assert.equal(secondRun.status, "completed");
+    assert.equal(sessionLogStreamManager.hasStream(sessionId), false);
+  } finally {
+    await sessionLogStreamManager.cleanupAll();
+    fs.rmSync(logDir, { recursive: true, force: true });
   }
 });
 

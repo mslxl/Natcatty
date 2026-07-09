@@ -313,6 +313,13 @@ function showWaitForTimeoutDialog(pattern, timeoutMs, runId) {
   );
 }
 
+async function stopScriptSessionLog(sessionId) {
+  const token = scriptLogTokens.get(sessionId);
+  if (!token) return;
+  scriptLogTokens.delete(sessionId);
+  await sessionLogStreamManager.stopStream(sessionId, token);
+}
+
 async function syncOutputBufferFromSnapshot(sessionId, runId, isAborted = () => false) {
   const buffer = getOrCreateBuffer(sessionId);
   const syncStartText = buffer.getText();
@@ -442,11 +449,7 @@ async function runScriptOnSession({
       scriptLogTokens.set(sid, result.token);
     },
     stopSessionLog: async (sid) => {
-      const token = scriptLogTokens.get(sid);
-      if (token) {
-        sessionLogStreamManager.stopStream(sid, token);
-        scriptLogTokens.delete(sid);
-      }
+      await stopScriptSessionLog(sid);
     },
     isPaused: () => Boolean(runs.get(runId)?.paused),
     isAborted: () => Boolean(runs.get(runId)?.aborted),
@@ -495,6 +498,7 @@ async function runScriptOnSession({
       reject: run.aborted,
       reason: new Error("Stopped by user"),
     });
+    await stopScriptSessionLog(sessionId);
     runAbortControls.delete(runId);
     broadcastRuns();
   }
