@@ -192,7 +192,7 @@ function classifyGrokExternalMcpStatus({ entries, launcherPath, grokPath, discov
   };
 
   const entry = Array.isArray(entries)
-    ? entries.find((item) => item?.name === EXTERNAL_MCP_GROK_NAME && item.enabled !== false)
+    ? entries.find((item) => item?.name === EXTERNAL_MCP_GROK_NAME)
     : null;
 
   if (!entry) {
@@ -202,7 +202,15 @@ function classifyGrokExternalMcpStatus({ entries, launcherPath, grokPath, discov
     };
   }
 
-  const existingCommand = getEntryCommand(entry);
+  const existingCommand = getEntryCommand(entry) || launcherPath || EXTERNAL_MCP_GROK_NAME;
+  if (entry.enabled === false) {
+    return {
+      ...base,
+      state: "not_configured",
+      existingCommand,
+    };
+  }
+
   if (pathsMatch(extractCommandExecutable(existingCommand), launcherPath)) {
     if (!hasRequiredDiscoveryEnv(getGrokEntryEnv(entry), discoveryEnv)) {
       return {

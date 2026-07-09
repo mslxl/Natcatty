@@ -15,7 +15,7 @@ function parseCodexMcpList(rawOutput) {
     throw new Error("Codex MCP list returned an unexpected payload.");
   }
   return parsed
-    .filter((entry) => entry && typeof entry === "object" && entry.enabled !== false)
+    .filter((entry) => entry && typeof entry === "object")
     .map((entry) => ({
       name: typeof entry.name === "string" ? entry.name : "",
       enabled: entry.enabled !== false,
@@ -113,7 +113,15 @@ function classifyCodexExternalMcpStatus({ entries, launcherPath, codexPath, disc
   }
 
   const transport = entry.transport || null;
-  const existingCommand = formatExistingCommand(transport);
+  const existingCommand = formatExistingCommand(transport) || launcherPath || EXTERNAL_MCP_CODEX_NAME;
+  if (entry.enabled === false) {
+    return {
+      ...base,
+      state: "not_configured",
+      existingCommand,
+    };
+  }
+
   if (
     transport?.type === "stdio"
     && pathsMatch(transport.command, launcherPath)

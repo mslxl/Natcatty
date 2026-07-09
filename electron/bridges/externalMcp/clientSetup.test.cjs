@@ -52,6 +52,22 @@ describe("external MCP client setup classifiers", () => {
       discoveryEnv: { NETCATTY_EXTERNAL_MCP_DISCOVERY_FILE: "/tmp/discovery.json" },
     });
     assert.equal(status.state, "not_configured");
+    assert.equal(status.existingCommand, "/path/to/netcatty-external-mcp");
+  });
+
+  it("treats disabled Codex entries as not_configured with existingCommand", () => {
+    const status = classifyCodexExternalMcpStatus({
+      entries: [{
+        name: EXTERNAL_MCP_CODEX_NAME,
+        enabled: false,
+        transport: { type: "stdio", command: "/path/to/netcatty-external-mcp", args: [] },
+      }],
+      launcherPath: "/path/to/netcatty-external-mcp",
+      codexPath: "/usr/bin/codex",
+      discoveryEnv: { NETCATTY_EXTERNAL_MCP_DISCOVERY_FILE: "/tmp/discovery.json" },
+    });
+    assert.equal(status.state, "not_configured");
+    assert.ok(status.existingCommand);
   });
 
   it("flags Codex conflict when command differs", () => {
