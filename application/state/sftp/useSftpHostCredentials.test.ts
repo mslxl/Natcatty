@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildSftpHostCredentials } from "./useSftpHostCredentials.ts";
+import {
+  buildSftpHostCredentials,
+  buildSftpReuseCredentials,
+} from "./useSftpHostCredentials.ts";
 import type { Host, Identity, KnownHost, SSHKey } from "../../../domain/models.ts";
 
 const host = (overrides: Partial<Host> = {}): Host => ({
@@ -12,6 +15,21 @@ const host = (overrides: Partial<Host> = {}): Host => ({
   tags: [],
   os: "linux",
   ...overrides,
+});
+
+test("buildSftpReuseCredentials only needs the live endpoint and sourceSessionId", () => {
+  const credentials = buildSftpReuseCredentials(
+    host({ hostname: "live.example.com", username: "alice", port: 2222 }),
+    "session-live",
+  );
+
+  assert.deepEqual(credentials, {
+    hostname: "live.example.com",
+    username: "alice",
+    port: 2222,
+    sourceSessionId: "session-live",
+    sudo: false,
+  });
 });
 
 test("buildSftpHostCredentials rejects missing jump hosts", () => {

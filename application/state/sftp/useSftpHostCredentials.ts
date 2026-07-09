@@ -30,6 +30,22 @@ interface UseSftpHostCredentialsParams {
   terminalSettings?: Pick<TerminalSettings, 'verifyHostKeys' | 'keepaliveInterval' | 'keepaliveCountMax'>;
 }
 
+/**
+ * Minimal options for reusing a live terminal SSH connection for SFTP.
+ * Must not require vault password/key material — the source session is already
+ * authenticated. Endpoint fields must match the session for findReusableSession.
+ */
+export const buildSftpReuseCredentials = (
+  host: Pick<Host, "hostname" | "username" | "port">,
+  sourceSessionId: string,
+): NetcattySSHOptions => ({
+  hostname: host.hostname,
+  username: host.username || "root",
+  port: host.port || 22,
+  sourceSessionId,
+  sudo: false,
+});
+
 export const buildSftpHostCredentials = ({
   host,
   hosts,

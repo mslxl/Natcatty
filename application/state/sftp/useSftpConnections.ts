@@ -4,7 +4,7 @@ import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge"
 import type { Host, Identity, KnownHost, SftpConnection, SftpFileEntry, SftpFilenameEncoding, SSHKey } from "../../../domain/models";
 import type { SftpHostKeyInfo, SftpHostKeyVerificationState, SftpPane } from "./types";
 import { useSftpDirectoryListing } from "./useSftpDirectoryListing";
-import { useSftpHostCredentials } from "./useSftpHostCredentials";
+import { buildSftpReuseCredentials, useSftpHostCredentials } from "./useSftpHostCredentials";
 import { buildCacheKey, getSharedRemoteHostCache, setSharedRemoteHostCache } from "./sharedRemoteHostCache";
 import { resolveRemoteSftpStartState } from "./sftpConnectStartPath";
 
@@ -421,7 +421,6 @@ export const useSftpConnections = ({
         }
 
         try {
-          const credentials = getHostCredentials(host);
           const openSftp = bridge?.openSftp;
           if (!openSftp) throw new Error("SFTP bridge unavailable");
 
@@ -436,47 +435,69 @@ export const useSftpConnections = ({
             );
           };
 
-          const hasKey = !!credentials.privateKey || !!credentials.identityFilePaths?.length;
-          const hasPassword = !!credentials.password;
-
+          let credentials: NetcattySSHOptions | null = null;
           let sftpId: string | undefined;
-          if (hasKey) {
+
+          // Live Connected rows: try reuse with endpoint-only options first so
+          // missing/undecryptable vault credentials do not block an already-
+          // authenticated terminal session. Fall back to full credentials if
+          // reuse fails (bridge may also fall through to a fresh connect).
+          if (options?.sourceSessionId && !host.sftpSudo) {
+            const reuseCredentials = buildSftpReuseCredentials(host, options.sourceSessionId);
             try {
-              const keyFirstCredentials = {
+              sftpId = await openSftp({
                 sessionId: sftpSessionId,
-                ...credentials,
-                sourceSessionId: options?.sourceSessionId,
-              };
-              if (!credentials.sudo) {
-                keyFirstCredentials.password = undefined;
-              }
-              sftpId = await openSftp(keyFirstCredentials);
-            } catch (err) {
-              if (hasPassword && isAuthError(err)) {
-                sftpId = await openSftp({
+                ...reuseCredentials,
+              });
+              credentials = reuseCredentials;
+            } catch {
+              sftpId = undefined;
+            }
+          }
+
+          if (!sftpId) {
+            credentials = getHostCredentials(host);
+            const hasKey = !!credentials.privateKey || !!credentials.identityFilePaths?.length;
+            const hasPassword = !!credentials.password;
+
+            if (hasKey) {
+              try {
+                const keyFirstCredentials = {
                   sessionId: sftpSessionId,
                   ...credentials,
                   sourceSessionId: options?.sourceSessionId,
-                  privateKey: undefined,
-                  certificate: undefined,
-                  publicKey: undefined,
-                  keyId: undefined,
-                  keySource: undefined,
-                  identityFilePaths: undefined,
-                });
-              } else {
-                throw err;
+                };
+                if (!credentials.sudo) {
+                  keyFirstCredentials.password = undefined;
+                }
+                sftpId = await openSftp(keyFirstCredentials);
+              } catch (err) {
+                if (hasPassword && isAuthError(err)) {
+                  sftpId = await openSftp({
+                    sessionId: sftpSessionId,
+                    ...credentials,
+                    sourceSessionId: options?.sourceSessionId,
+                    privateKey: undefined,
+                    certificate: undefined,
+                    publicKey: undefined,
+                    keyId: undefined,
+                    keySource: undefined,
+                    identityFilePaths: undefined,
+                  });
+                } else {
+                  throw err;
+                }
               }
+            } else {
+              sftpId = await openSftp({
+                sessionId: sftpSessionId,
+                ...credentials,
+                sourceSessionId: options?.sourceSessionId,
+              });
             }
-          } else {
-            sftpId = await openSftp({
-              sessionId: sftpSessionId,
-              ...credentials,
-              sourceSessionId: options?.sourceSessionId,
-            });
           }
 
-          if (!sftpId) throw new Error("Failed to open SFTP session");
+          if (!sftpId || !credentials) throw new Error("Failed to open SFTP session");
 
           sftpSessionsRef.current.set(connectionId, sftpId);
           if (!isTargetConnectionCurrent()) {
