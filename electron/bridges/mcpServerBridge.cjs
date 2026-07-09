@@ -448,6 +448,16 @@ function syncLiveSessionsToExternalScope(chatSessionId = EXTERNAL_MCP_CHAT_SESSI
       });
     }
   }
+  // Terminal-worker mode keeps live sessions off the main-process map. Do not
+  // wipe renderer-pushed external scope metadata with an empty live snapshot.
+  if (sessionList.length === 0 && existingScoped?.sessionIds?.length) {
+    return {
+      ok: true,
+      count: existingScoped.sessionIds.length,
+      chatSessionId,
+      preserved: true,
+    };
+  }
   updateSessionMetadata(sessionList, chatSessionId);
   return { ok: true, count: sessionList.length, chatSessionId };
 }
