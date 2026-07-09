@@ -98,6 +98,17 @@ describe("external MCP client setup classifiers", () => {
       claudePath: "/usr/bin/claude",
     });
     assert.equal(missing.state, "not_configured");
+
+    const missingNamed = classifyClaudeExternalMcpStatus({
+      getResult: {
+        exitCode: 1,
+        stdout: "",
+        stderr: `No MCP server named ${EXTERNAL_MCP_CLAUDE_NAME}`,
+      },
+      launcherPath: "/path/to/netcatty-external-mcp",
+      claudePath: "/usr/bin/claude",
+    });
+    assert.equal(missingNamed.state, "not_configured");
   });
 
   it("parses Grok MCP list and detects configured launcher", () => {

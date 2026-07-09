@@ -102,7 +102,8 @@ function getExternalMcpDiscoveryFilePath(options = {}) {
  */
 function resolveExistingExternalMcpDiscoveryFilePath(options = {}) {
   const configured = getConfiguredDiscoveryFilePath();
-  if (configured && fs.existsSync(configured)) {
+  // Explicit client env must not silently fall back to another profile's file.
+  if (configured) {
     return configured;
   }
 
@@ -120,7 +121,7 @@ function resolveExistingExternalMcpDiscoveryFilePath(options = {}) {
     }
   }
 
-  return configured || primary;
+  return primary;
 }
 
 function getExternalMcpLauncherPath() {

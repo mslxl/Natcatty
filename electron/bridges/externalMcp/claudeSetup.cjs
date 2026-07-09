@@ -24,7 +24,8 @@ function getCombinedOutput(result) {
 }
 
 function isMissingClaudeServer(result) {
-  return /No MCP server found with name:\s*["']?netcatty-external["']?/i.test(getCombinedOutput(result));
+  const output = getCombinedOutput(result);
+  return /No MCP server (?:found with name:|named)\s*["']?netcatty-external["']?/i.test(output);
 }
 
 function normalizePathForCompare(value) {

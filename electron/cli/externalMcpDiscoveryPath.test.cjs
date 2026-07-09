@@ -31,12 +31,13 @@ describe("externalMcpDiscoveryPath", () => {
     assert.ok(getExternalMcpLauncherPath().includes("netcatty-external-mcp"));
   });
 
-  it("honors NETCATTY_EXTERNAL_MCP_DISCOVERY_FILE", () => {
+  it("honors NETCATTY_EXTERNAL_MCP_DISCOVERY_FILE without falling back", () => {
     const previous = process.env[EXTERNAL_MCP_DISCOVERY_ENV_VAR];
-    const custom = path.join(os.tmpdir(), "custom-external-discovery.json");
+    const custom = path.join(os.tmpdir(), "missing-external-discovery.json");
     process.env[EXTERNAL_MCP_DISCOVERY_ENV_VAR] = custom;
     try {
       assert.equal(getExternalMcpDiscoveryFilePath(), custom);
+      assert.equal(resolveExistingExternalMcpDiscoveryFilePath(), custom);
     } finally {
       if (previous == null) delete process.env[EXTERNAL_MCP_DISCOVERY_ENV_VAR];
       else process.env[EXTERNAL_MCP_DISCOVERY_ENV_VAR] = previous;

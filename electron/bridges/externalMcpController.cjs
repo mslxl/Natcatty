@@ -276,7 +276,8 @@ function createExternalMcpController(options = {}) {
       })
       .catch(async (startError) => {
         error = startError?.message || String(startError);
-        state = enabled ? "error" : "disabled";
+        enabled = false;
+        state = "disabled";
         try {
           await stopActiveRuntime();
         } catch {
@@ -330,7 +331,7 @@ function createExternalMcpController(options = {}) {
   }
 
   function onBridgeHostReady({ port, token }) {
-    if (!enabled) return;
+    if (!isEnabled()) return;
     if (port) lastKnownPort = port;
     if (token) lastKnownToken = token;
     if (discoveryFilePath && lastKnownPort && lastKnownToken) {
@@ -339,7 +340,7 @@ function createExternalMcpController(options = {}) {
   }
 
   function onPermissionModeChanged() {
-    if (enabled && state === "running") {
+    if (isEnabled() && state === "running") {
       writeDiscoveryFromBridge();
     }
   }

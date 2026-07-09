@@ -559,7 +559,13 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({
 
         {/* Standalone MCP/SDK approval requests (not tied to SDK tool calls) */}
         {!hideToolCalls && Array.from(pendingApprovals.entries())
-          .filter(([id, req]) => id.startsWith('mcp_approval_') && (!activeSessionId || req.chatSessionId === activeSessionId))
+          .filter(([id, req]) => {
+            if (!id.startsWith('mcp_approval_')) return false;
+            // External MCP approvals use a reserved chatSessionId that is not a
+            // Catty sidebar session — always surface them while AI chat is open.
+            if (req.chatSessionId === '__external_mcp__') return true;
+            return !activeSessionId || req.chatSessionId === activeSessionId;
+          })
           .map(([id, req]) => {
             return (
               <React.Profiler key={id} {...getAIPanelProfilerProps('AIChatPanel.ToolCall.Approval')}>
