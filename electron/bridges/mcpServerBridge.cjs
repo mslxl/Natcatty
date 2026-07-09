@@ -43,6 +43,33 @@ let cliDiscoveryFilePath = getCliDiscoveryFilePath();
 
 // Track which sockets have completed authentication
 const authenticatedSockets = new WeakSet();
+// Sockets that have used the reserved External MCP chat scope (revoked on disable).
+const externalMcpSockets = new Set();
+
+function markExternalMcpSocket(socket) {
+  if (!socket || socket.destroyed) return;
+  externalMcpSockets.add(socket);
+  if (!socket.__netcattyExternalMcpCleanupBound) {
+    socket.__netcattyExternalMcpCleanupBound = true;
+    const cleanup = () => {
+      externalMcpSockets.delete(socket);
+    };
+    socket.once("close", cleanup);
+    socket.once("end", cleanup);
+    socket.once("error", cleanup);
+  }
+}
+
+function disconnectExternalMcpClients() {
+  for (const socket of Array.from(externalMcpSockets)) {
+    externalMcpSockets.delete(socket);
+    try {
+      if (!socket.destroyed) socket.destroy();
+    } catch {
+      // Ignore destroy failures while revoking external clients.
+    }
+  }
+}
 
 // Per-scope metadata: chatSessionId → { sessionIds: string[], metadata: Map<sessionId, meta> }
 // Each chat session only sees the hosts registered for its scope.
@@ -843,10 +870,14 @@ async function handleMessage(socket, line) {
 
   try {
     const callParams = params || {};
+    const isExternalScope = callParams?.chatSessionId === EXTERNAL_MCP_CHAT_SESSION_ID;
+    if (isExternalScope) {
+      markExternalMcpSocket(socket);
+    }
     // External MCP clients keep an authenticated TCP socket after disable unless
-    // we reject reserved-scope RPCs once the controller reports disabled.
+    // we reject reserved-scope RPCs (and previously marked external sockets).
     if (
-      callParams?.chatSessionId === EXTERNAL_MCP_CHAT_SESSION_ID
+      (isExternalScope || externalMcpSockets.has(socket))
       && !externalMcpActivityHook?.isEnabled?.()
     ) {
       throw new Error(
@@ -1535,6 +1566,7 @@ module.exports = {
   setMainWindowGetter,
   setVaultAgentInvoker,
   setExternalMcpHooks,
+  disconnectExternalMcpClients,
   syncLiveSessionsToExternalScope,
   resolveApprovalFromRenderer,
   clearPendingApprovals,

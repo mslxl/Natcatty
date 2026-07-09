@@ -110,6 +110,31 @@ function normalizeGrokListEntry(entry) {
   };
 }
 
+function normalizePathForCompare(value) {
+  if (typeof value !== "string") return "";
+  let normalized = value.trim().replace(/^["']|["']$/gu, "");
+  if (process.platform === "win32") {
+    normalized = normalized.replace(/\.cmd$/iu, "");
+  }
+  return normalized;
+}
+
+function pathsMatch(left, right) {
+  return normalizePathForCompare(left) === normalizePathForCompare(right);
+}
+
+function extractCommandExecutable(commandText) {
+  if (typeof commandText !== "string") return "";
+  const trimmed = commandText.trim();
+  if (!trimmed) return "";
+  const dashDashIndex = trimmed.lastIndexOf(" -- ");
+  const candidate = dashDashIndex >= 0
+    ? trimmed.slice(dashDashIndex + 4).trim()
+    : trimmed;
+  const match = candidate.match(/("(?:\\.|[^"])*"|'(?:\\.|[^'])*'|[^\s]+)/u);
+  return match ? match[1] : candidate;
+}
+
 function getEntryCommand(entry) {
   if (!entry) return null;
   if (entry.transport?.type === "stdio" || entry.transport?.command) {
@@ -124,19 +149,6 @@ function getEntryCommand(entry) {
     return [entry.command.trim(), ...args].join(" ").trim();
   }
   return formatExistingCommand(entry);
-}
-
-function normalizePathForCompare(value) {
-  if (typeof value !== "string") return "";
-  let normalized = value.trim().replace(/^["']|["']$/gu, "");
-  if (process.platform === "win32") {
-    normalized = normalized.replace(/\.cmd$/iu, "");
-  }
-  return normalized;
-}
-
-function pathsMatch(left, right) {
-  return normalizePathForCompare(left) === normalizePathForCompare(right);
 }
 
 function buildGrokAddArgs(launcherPath, discoveryEnv) {
@@ -173,7 +185,7 @@ function classifyGrokExternalMcpStatus({ entries, launcherPath, grokPath }) {
   }
 
   const existingCommand = getEntryCommand(entry);
-  if (pathsMatch(existingCommand, launcherPath)) {
+  if (pathsMatch(extractCommandExecutable(existingCommand), launcherPath)) {
     return {
       ...base,
       state: "configured",

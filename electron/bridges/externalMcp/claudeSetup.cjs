@@ -71,11 +71,26 @@ function buildClaudeAddArgs(launcherPath, discoveryEnv) {
   return [
     "mcp",
     "add",
+    "-s",
+    "user",
     EXTERNAL_MCP_CLAUDE_NAME,
     ...formatDiscoveryEnvCliFlags(discoveryEnv, "claude"),
     "--",
     launcherPath,
   ];
+}
+
+function extractCommandExecutable(commandText) {
+  if (typeof commandText !== "string") return "";
+  const trimmed = commandText.trim();
+  if (!trimmed) return "";
+  // Prefer the last path-like token so env flags before `--` do not confuse matching.
+  const dashDashIndex = trimmed.lastIndexOf(" -- ");
+  const candidate = dashDashIndex >= 0
+    ? trimmed.slice(dashDashIndex + 4).trim()
+    : trimmed;
+  const match = candidate.match(/("(?:\\.|[^"])*"|'(?:\\.|[^'])*'|[^\s]+)/u);
+  return match ? match[1] : candidate;
 }
 
 function classifyClaudeExternalMcpStatus({ getResult, launcherPath, claudePath }) {
@@ -104,7 +119,7 @@ function classifyClaudeExternalMcpStatus({ getResult, launcherPath, claudePath }
   }
 
   const existingCommand = extractExistingCommand(getResult);
-  if (pathsMatch(existingCommand, launcherPath)) {
+  if (pathsMatch(extractCommandExecutable(existingCommand), launcherPath)) {
     return {
       ...base,
       state: "configured",
@@ -194,7 +209,13 @@ function createExternalMcpClaudeSetup(options = {}) {
     }
 
     try {
-      const result = await runClaude(claudePath, shellEnv, ["mcp", "get", EXTERNAL_MCP_CLAUDE_NAME]);
+      const result = await runClaude(claudePath, shellEnv, [
+        "mcp",
+        "get",
+        "-s",
+        "user",
+        EXTERNAL_MCP_CLAUDE_NAME,
+      ]);
       const status = classifyClaudeExternalMcpStatus({
         getResult: result,
         launcherPath: deps.launcherPath,

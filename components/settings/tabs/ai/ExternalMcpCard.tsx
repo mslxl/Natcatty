@@ -144,7 +144,7 @@ export function formatClaudeAddCommand(launcherPath: string, discoveryPath?: str
   const envFlags = discoveryPath
     ? ` -e ${EXTERNAL_MCP_DISCOVERY_ENV_VAR}=${quoteShellArg(discoveryPath)}`
     : "";
-  return `claude mcp add netcatty-external${envFlags} -- ${quoteShellArg(launcherPath)}`;
+  return `claude mcp add -s user netcatty-external${envFlags} -- ${quoteShellArg(launcherPath)}`;
 }
 
 export function formatGrokAddCommand(launcherPath: string, discoveryPath?: string | null) {
@@ -243,8 +243,9 @@ export const ExternalMcpCard: React.FC = () => {
     pushConfig(mode, normalized);
   }, [mode, pushConfig]);
 
-  const refreshStatus = useCallback(async (options?: { quiet?: boolean }) => {
+  const refreshStatus = useCallback(async (options?: { quiet?: boolean; clients?: boolean }) => {
     const bridge = getBridge();
+    const includeClients = options?.clients !== false;
     if (
       !bridge?.externalMcpGetStatus
       || !bridge?.externalMcpCodexGetStatus
@@ -276,19 +277,27 @@ export const ExternalMcpCard: React.FC = () => {
 
     if (!options?.quiet) setIsRefreshing(true);
     try {
-      const [nextStatus, nextCodexStatus, nextClaudeStatus, nextGrokStatus] = await Promise.all([
-        bridge.externalMcpGetStatus(),
-        bridge.externalMcpCodexGetStatus(),
-        bridge.externalMcpClaudeGetStatus(),
-        bridge.externalMcpGrokGetStatus(),
-      ]);
-      setStatus(nextStatus as ExternalMcpStatus);
-      if (enabled && nextStatus?.ok && !nextStatus.enabled) {
-        setEnabled(false);
+      if (includeClients) {
+        const [nextStatus, nextCodexStatus, nextClaudeStatus, nextGrokStatus] = await Promise.all([
+          bridge.externalMcpGetStatus(),
+          bridge.externalMcpCodexGetStatus(),
+          bridge.externalMcpClaudeGetStatus(),
+          bridge.externalMcpGrokGetStatus(),
+        ]);
+        setStatus(nextStatus as ExternalMcpStatus);
+        if (enabled && nextStatus?.ok && !nextStatus.enabled) {
+          setEnabled(false);
+        }
+        setCodexStatus(nextCodexStatus as ClientSetupStatus);
+        setClaudeStatus(nextClaudeStatus as ClientSetupStatus);
+        setGrokStatus(nextGrokStatus as ClientSetupStatus);
+      } else {
+        const nextStatus = await bridge.externalMcpGetStatus();
+        setStatus(nextStatus as ExternalMcpStatus);
+        if (enabled && nextStatus?.ok && !nextStatus.enabled) {
+          setEnabled(false);
+        }
       }
-      setCodexStatus(nextCodexStatus as ClientSetupStatus);
-      setClaudeStatus(nextClaudeStatus as ClientSetupStatus);
-      setGrokStatus(nextGrokStatus as ClientSetupStatus);
     } finally {
       if (!options?.quiet) setIsRefreshing(false);
     }
@@ -300,8 +309,10 @@ export const ExternalMcpCard: React.FC = () => {
 
   useEffect(() => {
     if (!enabled) return;
+    // Quiet polling only refreshes bridge runtime status. Spawning Codex/Claude/Grok
+    // CLIs every few seconds is too expensive for a settings page keep-alive.
     const intervalId = window.setInterval(() => {
-      void refreshStatus({ quiet: true });
+      void refreshStatus({ quiet: true, clients: false });
     }, 3000);
     return () => window.clearInterval(intervalId);
   }, [enabled, refreshStatus]);

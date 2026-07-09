@@ -829,7 +829,9 @@ function cleanup() {
   } catch {
     // Ignore external MCP cleanup failures during shutdown.
   }
-  mcpServerBridge.setExternalMcpHooks(null);
+  if (typeof mcpServerBridge.setExternalMcpHooks === "function") {
+    mcpServerBridge.setExternalMcpHooks(null);
+  }
   mcpServerBridge.cleanup();
 }
 

@@ -209,6 +209,13 @@ function createExternalMcpController(options = {}) {
       deps.removeDiscovery(discoveryFilePath);
     }
     const bridge = getBridge();
+    if (typeof bridge?.disconnectExternalMcpClients === "function") {
+      try {
+        bridge.disconnectExternalMcpClients();
+      } catch {
+        // Best-effort socket revoke.
+      }
+    }
     if (bridge?.cleanupScopedMetadata) {
       await bridge.cleanupScopedMetadata(deps.chatSessionId);
     }
@@ -243,6 +250,12 @@ function createExternalMcpController(options = {}) {
       writeDiscoveryFromBridge();
       scheduleIdleShutdown();
       return buildStatus();
+    }
+    if (stopPromise) {
+      await stopPromise;
+      if (!enabled) {
+        return buildStatus();
+      }
     }
     if (startPromise) {
       await startPromise.catch(() => {});
@@ -302,7 +315,9 @@ function createExternalMcpController(options = {}) {
   }
 
   function isEnabled() {
-    return enabled && state === "running";
+    // Accept clients while starting/running as soon as the switch is on.
+    // Discovery may be written before state flips to "running".
+    return enabled;
   }
 
   function getChatSessionId() {
