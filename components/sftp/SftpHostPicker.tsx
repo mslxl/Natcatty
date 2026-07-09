@@ -5,12 +5,16 @@
 import { Monitor, Search } from 'lucide-react';
 import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
-import type { SftpConnectedHostEntry } from '../../domain/sftpConnectedHosts';
+import {
+    sftpHostEndpointsEqual,
+    type SftpConnectedHostEntry,
+} from '../../domain/sftpConnectedHosts';
 import { Host } from '../../types';
 import { DistroAvatar } from '../DistroAvatar';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../ui/dialog';
 import { Input } from '../ui/input';
 import { ScrollArea } from '../ui/scroll-area';
+
 interface SftpHostPickerProps {
     open: boolean;
     onOpenChange: (open: boolean) => void;
@@ -52,22 +56,27 @@ const SftpHostPickerInner: React.FC<SftpHostPickerProps> = ({
         );
     }, [connectedHosts, term]);
 
-    const connectedHostIds = useMemo(
-        () => new Set(filteredConnectedHosts.map((entry) => entry.host.id)),
-        [filteredConnectedHosts],
-    );
+    const connectedByHostId = useMemo(() => {
+        const map = new Map<string, SftpConnectedHostEntry>();
+        for (const entry of filteredConnectedHosts) {
+            map.set(entry.host.id, entry);
+        }
+        return map;
+    }, [filteredConnectedHosts]);
 
     const filteredHosts = useMemo(() => {
-        return hosts.filter(h =>
+        return hosts.filter((h) => {
             // Filter out serial hosts - SFTP is not supported for serial connections
-            h.protocol !== "serial" &&
-            // Keep connected hosts only in the Connected section to avoid duplicates.
-            !connectedHostIds.has(h.id) &&
-            (!term ||
-            h.label.toLowerCase().includes(term) ||
-            h.hostname.toLowerCase().includes(term))
-        ).sort((a, b) => a.label.localeCompare(b.label));
-    }, [hosts, term, connectedHostIds]);
+            if (h.protocol === "serial") return false;
+            // Hide a saved host only when Connected already shows the same endpoint.
+            // If the vault host was edited after connect, keep both: Live (old) + Saved (new).
+            const connected = connectedByHostId.get(h.id);
+            if (connected && sftpHostEndpointsEqual(h, connected.host)) return false;
+            return !term
+                || h.label.toLowerCase().includes(term)
+                || h.hostname.toLowerCase().includes(term);
+        }).sort((a, b) => a.label.localeCompare(b.label));
+    }, [hosts, term, connectedByHostId]);
     const sideLabel = side === 'left' ? t('common.left') : t('common.right');
 
     type PickerItem =

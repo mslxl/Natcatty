@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { Host, TerminalSession } from "./models";
-import { listSftpConnectedHosts, sftpPickerSessionsEqual } from "./sftpConnectedHosts";
+import {
+  listSftpConnectedHosts,
+  sftpHostEndpointsEqual,
+  sftpPickerSessionsEqual,
+} from "./sftpConnectedHosts";
 
 const host = (overrides: Partial<Host> & Pick<Host, "id" | "label">): Host => ({
   hostname: `${overrides.id}.example.test`,
@@ -189,6 +193,22 @@ test("listSftpConnectedHosts skips sessions whose host is missing from the map",
     new Map(),
   );
   assert.deepEqual(result, []);
+});
+
+test("sftpHostEndpointsEqual compares hostname, username, and port", () => {
+  const base = host({ id: "a", label: "Alpha", hostname: "a.example.test", username: "alice", port: 22 });
+  assert.equal(
+    sftpHostEndpointsEqual(base, { hostname: "a.example.test", username: "alice", port: undefined }),
+    true,
+  );
+  assert.equal(
+    sftpHostEndpointsEqual(base, { hostname: "a.example.test", username: "bob", port: 22 }),
+    false,
+  );
+  assert.equal(
+    sftpHostEndpointsEqual(base, { hostname: "other.example.test", username: "alice", port: 22 }),
+    false,
+  );
 });
 
 test("sftpPickerSessionsEqual ignores title-only changes", () => {

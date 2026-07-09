@@ -46,6 +46,15 @@ const hostForLiveSession = (host: Host, session: SftpPickerSessionFields): Host 
   port: session.port ?? host.port ?? 22,
 });
 
+/** True when two hosts target the same SSH endpoint (hostname/user/port). */
+export const sftpHostEndpointsEqual = (
+  a: Pick<Host, "hostname" | "username" | "port">,
+  b: Pick<Host, "hostname" | "username" | "port">,
+): boolean =>
+  a.hostname === b.hostname
+  && a.username === b.username
+  && (a.port ?? 22) === (b.port ?? 22);
+
 /**
  * Compare only picker-relevant session fields so title/cwd/font churn does not
  * invalidate side-panel memoization.
