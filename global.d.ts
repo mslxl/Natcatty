@@ -136,9 +136,10 @@ declare global {
     // The bridge falls back to a fresh connection if the source is gone, unless
     // reuseOnly is also set.
     sourceSessionId?: string;
-    // When true with sourceSessionId, fail instead of falling back to a fresh
-    // SSH dial. Used by the SFTP Connected picker so a reuse-only probe does
-    // not authenticate with incomplete endpoint-only options.
+    // When true with sourceSessionId: (1) fail instead of falling back to a
+    // fresh SSH dial, and (2) skip renderer endpoint matching so a Connected
+    // picker probe can reuse the named live session even if session.username
+    // /port lag the authenticated bridge endpoint.
     reuseOnly?: boolean;
   }
 

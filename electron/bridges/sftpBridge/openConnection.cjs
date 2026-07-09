@@ -528,11 +528,22 @@ function createOpenConnectionApi(ctx) {
       const connId = options.sessionId || randomUUID();
 
       if (options.sourceSessionId && !options.sudo) {
-        const sourceSession = findReusableSession?.(sessions, options.sourceSessionId, {
-          hostname: options.hostname,
-          port: options.port || 22,
-          username: options.username || "root",
-        });
+        // reuseOnly: the caller named a specific live session (Connected picker).
+        // Skip endpoint matching — renderer session.username/port can lag the
+        // authenticated _reuseEndpoint (identity/auth-dialog username, default port).
+        // Non-reuseOnly callers still pass the requested target so Copy/SFTP
+        // reuse cannot attach to a connection for a different host.
+        const sourceSession = findReusableSession?.(
+          sessions,
+          options.sourceSessionId,
+          options.reuseOnly
+            ? undefined
+            : {
+                hostname: options.hostname,
+                port: options.port || 22,
+                username: options.username || "root",
+              },
+        );
         if (sourceSession?.conn && sourceSession?.connRef) {
           const refHolder = {
             id: connId,

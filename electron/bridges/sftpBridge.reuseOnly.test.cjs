@@ -22,6 +22,23 @@ function loadOpenConnectionWithSftpClient(SftpClient) {
   }
 }
 
+function createReuseOnlyApi({ findReusableSession, createSessionBackedSftpClient, SftpClient }) {
+  const { createOpenConnectionApi } = loadOpenConnectionWithSftpClient(SftpClient);
+  return createOpenConnectionApi({
+    sessions: new Map(),
+    findReusableSession,
+    acquireConnectionRef: () => {},
+    createSessionBackedSftpClient,
+    requireSftpChannel: async () => {},
+    sendSftpProgress: () => {},
+    sftpClients: new Map(),
+    randomUUID: () => "conn-1",
+    findAllDefaultPrivateKeysFromHelper: async () => [],
+    getAvailableAgentSocket: async () => null,
+    hasUsableProxy: () => false,
+  });
+}
+
 test("openSftp with reuseOnly throws instead of dialing fresh when source is missing", async () => {
   let dialedFresh = false;
   class TrackingSftpClient {
@@ -30,21 +47,12 @@ test("openSftp with reuseOnly throws instead of dialing fresh when source is mis
     }
   }
 
-  const { createOpenConnectionApi } = loadOpenConnectionWithSftpClient(TrackingSftpClient);
-  const api = createOpenConnectionApi({
-    sessions: new Map(),
+  const api = createReuseOnlyApi({
     findReusableSession: () => null,
-    acquireConnectionRef: () => {},
     createSessionBackedSftpClient: () => {
       throw new Error("should not create reused client");
     },
-    requireSftpChannel: async () => {},
-    sendSftpProgress: () => {},
-    sftpClients: new Map(),
-    randomUUID: () => "conn-1",
-    findAllDefaultPrivateKeysFromHelper: async () => [],
-    getAvailableAgentSocket: async () => null,
-    hasUsableProxy: () => false,
+    SftpClient: TrackingSftpClient,
   });
 
   await assert.rejects(
@@ -62,4 +70,44 @@ test("openSftp with reuseOnly throws instead of dialing fresh when source is mis
     /not reusable/,
   );
   assert.equal(dialedFresh, false);
+});
+
+test("openSftp with reuseOnly does not require renderer endpoint to match", async () => {
+  let requestedTarget;
+  const source = {
+    conn: { _sock: { destroyed: false } },
+    connRef: { id: "ref-1" },
+  };
+  const reusedClient = {
+    end: async () => {},
+  };
+
+  const api = createReuseOnlyApi({
+    findReusableSession: (_sessions, sourceSessionId, target) => {
+      assert.equal(sourceSessionId, "live-session");
+      requestedTarget = target;
+      return source;
+    },
+    createSessionBackedSftpClient: () => reusedClient,
+    SftpClient: class {
+      constructor() {
+        throw new Error("should not dial fresh");
+      }
+    },
+  });
+
+  const result = await api.openSftp(
+    { sender: { id: 1, isDestroyed: () => false, send: () => {} } },
+    {
+      sessionId: "sftp-1",
+      hostname: "stale.example.test",
+      username: "stale-user",
+      port: 2222,
+      sourceSessionId: "live-session",
+      reuseOnly: true,
+    },
+  );
+
+  assert.equal(requestedTarget, undefined);
+  assert.deepEqual(result, { sftpId: "sftp-1" });
 });
