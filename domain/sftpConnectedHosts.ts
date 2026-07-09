@@ -95,6 +95,8 @@ export const listSftpConnectedHosts = (
     const host = hostsById.get(session.hostId);
     if (!host) continue;
     if (host.protocol === "serial") continue;
+    // SFTP sudo never reuses a terminal shell conn (bridge requires !options.sudo).
+    if (host.sftpSudo) continue;
     // Use session transport flags only. Vault hosts may still have mosh/et
     // defaults while the live terminal was opened as plain SSH (e.g. ssh://).
 
