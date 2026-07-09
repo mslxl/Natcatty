@@ -720,7 +720,7 @@ export const zhTWCoreMessages: Messages = {
   'sftp.picker.local.title': '本機檔案系統',
   'sftp.picker.local.desc': '瀏覽本機檔案',
   'sftp.picker.local.badge': '本機',
-  'sftp.picker.connected.section': '正在連線',
+  'sftp.picker.connected.section': '已連線',
   'sftp.picker.connected.badge': '已連線',
   'sftp.picker.connected.connecting': '連線中',
   'sftp.picker.noMatch': '沒有相符的主機',

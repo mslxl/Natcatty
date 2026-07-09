@@ -133,8 +133,13 @@ declare global {
     // When set, reuse the already-authenticated SSH connection of this existing
     // session by opening a new shell channel on it, instead of dialing a fresh
     // connection. Lets a duplicated tab skip a second MFA prompt (issue #1204).
-    // The bridge falls back to a fresh connection if the source is gone.
+    // The bridge falls back to a fresh connection if the source is gone, unless
+    // reuseOnly is also set.
     sourceSessionId?: string;
+    // When true with sourceSessionId, fail instead of falling back to a fresh
+    // SSH dial. Used by the SFTP Connected picker so a reuse-only probe does
+    // not authenticate with incomplete endpoint-only options.
+    reuseOnly?: boolean;
   }
 
   interface SftpStatResult {

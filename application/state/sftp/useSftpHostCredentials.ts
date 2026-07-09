@@ -43,6 +43,7 @@ export const buildSftpReuseCredentials = (
   username: host.username || "root",
   port: host.port || 22,
   sourceSessionId,
+  reuseOnly: true,
   sudo: false,
 });
 

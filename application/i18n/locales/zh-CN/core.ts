@@ -720,7 +720,7 @@ export const zhCNCoreMessages: Messages = {
   'sftp.picker.local.title': '本地文件系统',
   'sftp.picker.local.desc': '浏览本地文件',
   'sftp.picker.local.badge': '本地',
-  'sftp.picker.connected.section': '正在连接',
+  'sftp.picker.connected.section': '已连接',
   'sftp.picker.connected.badge': '已连接',
   'sftp.picker.connected.connecting': '连接中',
   'sftp.picker.noMatch': '没有匹配的主机',

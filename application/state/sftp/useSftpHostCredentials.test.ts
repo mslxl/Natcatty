@@ -28,6 +28,7 @@ test("buildSftpReuseCredentials only needs the live endpoint and sourceSessionId
     username: "alice",
     port: 2222,
     sourceSessionId: "session-live",
+    reuseOnly: true,
     sudo: false,
   });
 });

@@ -555,16 +555,25 @@ function createOpenConnectionApi(ctx) {
             console.log(`[SFTP] Reused terminal SSH connection ${options.sourceSessionId} for ${connId}`);
             return { sftpId: connId };
           } catch (reuseErr) {
-            console.warn(
-              `[SFTP] Failed to reuse terminal SSH connection ${options.sourceSessionId} for ${connId}; falling back to fresh connection:`,
-              reuseErr?.message || String(reuseErr),
-            );
             try {
               await reusedClient.end();
             } catch {
               // Ignore cleanup errors while falling back to a fresh SFTP connection.
             }
+            if (options.reuseOnly) {
+              throw new Error(
+                `Failed to reuse terminal SSH connection ${options.sourceSessionId}: ${reuseErr?.message || String(reuseErr)}`,
+              );
+            }
+            console.warn(
+              `[SFTP] Failed to reuse terminal SSH connection ${options.sourceSessionId} for ${connId}; falling back to fresh connection:`,
+              reuseErr?.message || String(reuseErr),
+            );
           }
+        } else if (options.reuseOnly) {
+          throw new Error(
+            `Source session ${options.sourceSessionId} is not reusable for SFTP`,
+          );
         } else {
           console.log(`[SFTP] Reuse requested for ${connId} but source session is not reusable; connecting fresh`);
         }
