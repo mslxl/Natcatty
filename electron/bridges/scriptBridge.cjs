@@ -23,14 +23,16 @@ let getMainWindow = null;
 const runs = new Map();
 /** @type {Map<string, object>} */
 const recordings = new Map();
-/** @type {Map<string, { resolve, reject, type }>} */
+/** @type {Map<string, { resolve, reject, type, runId?: string }>} */
 const pendingDialogs = new Map();
-/** @type {Map<string, { resolve, reject, sessionId }>} */
+/** @type {Map<string, { resolve, reject, sessionId, runId?: string }>} */
 const pendingScreenSnapshots = new Map();
 /** @type {Map<string, symbol>} */
 const scriptLogTokens = new Map();
 /** @type {Map<string, Promise<void>>} */
 const sessionRunChains = new Map();
+/** @type {Map<string, { abort: (reason?: Error) => void }>} */
+const runAbortControls = new Map();
 /** @type {Map<string, { connected?: boolean, hostname?: string, username?: string }>} */
 const rendererSessionMetaById = new Map();
 
@@ -39,10 +41,13 @@ function enqueueSessionRun(sessionId, task) {
   const next = previous
     .catch(() => {})
     .then(() => task());
-  sessionRunChains.set(
-    sessionId,
-    next.then(() => {}, () => {}),
-  );
+  const settled = next.then(() => {}, () => {});
+  sessionRunChains.set(sessionId, settled);
+  settled.finally(() => {
+    if (sessionRunChains.get(sessionId) === settled) {
+      sessionRunChains.delete(sessionId);
+    }
+  });
   return next;
 }
 
@@ -198,7 +203,38 @@ function isViewportSnapshot(snapshot) {
   return snapshot?.source !== "buffer-fallback";
 }
 
-async function requestScreenSnapshot(sessionId) {
+function defaultDialogValue(type) {
+  if (type === "confirm") return false;
+  if (type === "prompt") return "";
+  if (type === "form") return {};
+  if (type === "waitForTimeout") return "abort";
+  return undefined;
+}
+
+function settlePendingRunRequests(runId, options = {}) {
+  const reject = options.reject === true;
+  const reason = options.reason || new Error("Stopped by user");
+  for (const [requestId, pending] of pendingScreenSnapshots.entries()) {
+    if (pending.runId !== runId) continue;
+    pendingScreenSnapshots.delete(requestId);
+    if (reject) {
+      pending.reject(reason);
+    } else {
+      pending.resolve(bufferFallbackSnapshot(pending.sessionId));
+    }
+  }
+  for (const [requestId, pending] of pendingDialogs.entries()) {
+    if (pending.runId !== runId) continue;
+    pendingDialogs.delete(requestId);
+    if (reject) {
+      pending.reject(reason);
+    } else {
+      pending.resolve(defaultDialogValue(pending.type));
+    }
+  }
+}
+
+async function requestScreenSnapshot(sessionId, runId) {
   const session = sessions?.get(sessionId);
   const webContents = session?.webContentsId
     ? electronModule.webContents.fromId(session.webContentsId)
@@ -215,6 +251,7 @@ async function requestScreenSnapshot(sessionId) {
     }, 3000);
     pendingScreenSnapshots.set(requestId, {
       sessionId,
+      runId,
       resolve: (value) => {
         clearTimeout(timer);
         resolve(value);
@@ -228,7 +265,7 @@ async function requestScreenSnapshot(sessionId) {
   });
 }
 
-function showDialog(type, message, defaultValue, extras = {}) {
+function showDialog(type, message, defaultValue, extras = {}, runId) {
   const win = getMainWindow?.();
   const webContents = win?.webContents;
   if (!webContents) {
@@ -246,6 +283,7 @@ function showDialog(type, message, defaultValue, extras = {}) {
     }, 120000);
     pendingDialogs.set(requestId, {
       type,
+      runId,
       resolve: (value) => {
         clearTimeout(timer);
         resolve(value);
@@ -265,20 +303,22 @@ function showDialog(type, message, defaultValue, extras = {}) {
   });
 }
 
-function showWaitForTimeoutDialog(pattern, timeoutMs) {
+function showWaitForTimeoutDialog(pattern, timeoutMs, runId) {
   return showDialog(
     "waitForTimeout",
     `Timed out waiting for "${pattern}" after ${timeoutMs}ms`,
     undefined,
     { pattern, timeoutMs },
+    runId,
   );
 }
 
-async function syncOutputBufferFromSnapshot(sessionId) {
+async function syncOutputBufferFromSnapshot(sessionId, runId, isAborted = () => false) {
   const buffer = getOrCreateBuffer(sessionId);
   const syncStartText = buffer.getText();
   try {
-    const snapshot = await requestScreenSnapshot(sessionId);
+    const snapshot = await requestScreenSnapshot(sessionId, runId);
+    if (isAborted()) return;
     const screenText = (snapshot.lines || []).join("\n");
 
     // Buffer-fallback snapshots are the full script output/scrollback, not the
@@ -287,6 +327,7 @@ async function syncOutputBufferFromSnapshot(sessionId) {
     // the pre-sync length so bytes that arrived during the await stay fresh
     // (same trailingFresh idea as the viewport path).
     if (!isViewportSnapshot(snapshot) || !screenText) {
+      if (isAborted()) return;
       buffer.markOutputConsumedThrough(syncStartText.length, {
         preserveTailPatterns: shellPromptPatterns(),
       });
@@ -303,8 +344,10 @@ async function syncOutputBufferFromSnapshot(sessionId) {
     const trailingFresh = currentText.startsWith(syncStartText)
       ? currentText.slice(syncStartText.length)
       : "";
+    if (isAborted()) return;
     buffer.replaceWithVisibleScreen(screenText, trailingFresh, syncStartText);
   } catch {
+    if (isAborted()) return;
     // Snapshot failed: baseline existing buffer so waits require new output.
     if (buffer.getText() === syncStartText) {
       buffer.markOutputConsumedThrough(syncStartText.length, {
@@ -348,22 +391,32 @@ async function runScriptOnSession({
   runs.set(runId, run);
   broadcastRuns();
 
+  let abortRun = () => {};
+  const abortPromise = new Promise((_, reject) => {
+    abortRun = (reason) => reject(reason || new Error("Script stopped"));
+  });
+  abortPromise.catch(() => {});
+  runAbortControls.set(runId, { abort: abortRun });
+
   const runtime = createScriptRuntime({
     sessionId,
     runId,
     appVersion: electronModule?.app?.getVersion?.(),
     appendLog: (id, message) => {
       const entry = runs.get(id);
-      if (!entry) return;
+      if (!entry || entry.aborted || entry.endedAt) return;
       entry.logs.push({ at: Date.now(), message });
       broadcastRuns();
     },
-    writeToSession,
+    writeToSession: (sid, data, options) => {
+      if (run.aborted || run.endedAt) return;
+      writeToSession(sid, data, options);
+    },
     getOutputBuffer: getOrCreateBuffer,
-    getScreenSnapshot: requestScreenSnapshot,
+    getScreenSnapshot: (sid) => requestScreenSnapshot(sid, runId),
     getSessionMeta,
-    showDialog,
-    showWaitForTimeoutDialog,
+    showDialog: (type, message, defaultValue, extras) => showDialog(type, message, defaultValue, extras, runId),
+    showWaitForTimeoutDialog: (pattern, timeoutMs) => showWaitForTimeoutDialog(pattern, timeoutMs, runId),
     disconnectSession: async (sid) => {
       if (terminalWorkerManager) {
         terminalWorkerManager.send("netcatty:close", { sessionId: sid });
@@ -401,15 +454,22 @@ async function runScriptOnSession({
     startedAt: run.startedAt,
     onStatusChange: (id, patch) => {
       const entry = runs.get(id);
-      if (!entry) return;
+      if (!entry || entry.aborted || entry.endedAt) return;
       Object.assign(entry, patch);
       broadcastRuns();
     },
   });
 
   try {
-    await syncOutputBufferFromSnapshot(sessionId);
-    await runtime.execute(content);
+    const operationPromise = (async () => {
+      await syncOutputBufferFromSnapshot(sessionId, runId, () => run.aborted);
+      await runtime.execute(content);
+    })();
+    operationPromise.catch(() => {});
+    await Promise.race([
+      operationPromise,
+      abortPromise,
+    ]);
     if (run.aborted) {
       run.status = "failed";
       run.error = run.error || "Stopped by user";
@@ -431,6 +491,11 @@ async function runScriptOnSession({
     run.error = err?.message || String(err);
     run.logs.push({ at: Date.now(), message: run.error });
   } finally {
+    settlePendingRunRequests(runId, {
+      reject: run.aborted,
+      reason: new Error("Stopped by user"),
+    });
+    runAbortControls.delete(runId);
     broadcastRuns();
   }
 }
@@ -493,6 +558,11 @@ function handleScriptStop(_event, payload = {}) {
   run.endedAt = Date.now();
   run.waitingFor = undefined;
   getOrCreateBuffer(run.sessionId).abortWaiters("Stopped by user");
+  settlePendingRunRequests(run.runId, {
+    reject: false,
+    reason: new Error("Stopped by user"),
+  });
+  runAbortControls.get(run.runId)?.abort(new Error("Stopped by user"));
   broadcastRuns();
   return { ok: true };
 }

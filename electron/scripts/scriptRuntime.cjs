@@ -286,6 +286,53 @@ function createScriptRuntime(deps) {
     lines: [],
   };
 
+  function assertNotAborted() {
+    if (deps.isAborted?.()) {
+      throw new Error("Script stopped");
+    }
+  }
+
+  function abortable(promise) {
+    if (typeof deps.isAborted !== "function") {
+      return promise;
+    }
+    assertNotAborted();
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (callback, value) => {
+        if (settled) return;
+        settled = true;
+        clearInterval(timer);
+        callback(value);
+      };
+      const timer = setInterval(() => {
+        if (!deps.isAborted?.()) return;
+        finish(reject, new Error("Script stopped"));
+      }, 50);
+      Promise.resolve(promise).then(
+        (value) => {
+          if (deps.isAborted?.()) {
+            finish(reject, new Error("Script stopped"));
+            return;
+          }
+          finish(resolve, value);
+        },
+        (err) => {
+          if (deps.isAborted?.()) {
+            finish(reject, new Error("Script stopped"));
+            return;
+          }
+          finish(reject, err);
+        },
+      );
+    });
+  }
+
+  function markHandled(promise) {
+    Promise.resolve(promise).catch(() => {});
+    return promise;
+  }
+
   function emitStatus(patch = {}) {
     onStatusChange?.(runId, {
       progressMode,
@@ -305,6 +352,7 @@ function createScriptRuntime(deps) {
   }
 
   async function trackStep(label) {
+    assertNotAborted();
     stepIndex += 1;
     const activityLabel = truncateActivityLabel(label);
     emitStatus({
@@ -314,13 +362,15 @@ function createScriptRuntime(deps) {
   }
 
   async function refreshScreenSnapshot() {
+    assertNotAborted();
     if (typeof getScreenSnapshot === "function") {
       try {
-        screenSnapshot = await getScreenSnapshot(sessionId);
+        screenSnapshot = await abortable(getScreenSnapshot(sessionId));
       } catch {
         // fall back to output buffer text
       }
     }
+    assertNotAborted();
     return screenSnapshot;
   }
 
@@ -347,7 +397,8 @@ function createScriptRuntime(deps) {
           throw err;
         }
         onStatusChange?.(runId, { status: "paused", waitingFor: "shell prompt", elapsedMs: Math.max(0, Date.now() - startedAt) });
-        const action = await showWaitForTimeoutDialog?.("shell prompt", timeoutMs);
+        assertNotAborted();
+        const action = await abortable(showWaitForTimeoutDialog?.("shell prompt", timeoutMs));
         onStatusChange?.(runId, { status: "running" });
         if (action === "retry") {
           continue;
@@ -387,7 +438,8 @@ function createScriptRuntime(deps) {
           throw err;
         }
         onStatusChange?.(runId, { status: "paused", waitingFor: label, elapsedMs: Math.max(0, Date.now() - startedAt) });
-        const action = await showWaitForTimeoutDialog?.(label, timeoutMs);
+        assertNotAborted();
+        const action = await abortable(showWaitForTimeoutDialog?.(label, timeoutMs));
         onStatusChange?.(runId, { status: "running" });
         if (action === "retry") {
           continue;
@@ -427,7 +479,8 @@ function createScriptRuntime(deps) {
           throw err;
         }
         onStatusChange?.(runId, { status: "paused", waitingFor: patternLabel, elapsedMs: Math.max(0, Date.now() - startedAt) });
-        const action = await showWaitForTimeoutDialog?.(patternLabel, timeoutMs);
+        assertNotAborted();
+        const action = await abortable(showWaitForTimeoutDialog?.(patternLabel, timeoutMs));
         onStatusChange?.(runId, { status: "running" });
         if (action === "retry") {
           continue;
@@ -516,71 +569,91 @@ function createScriptRuntime(deps) {
     },
     sleep(ms) {
       const delay = Math.max(0, Number(ms) || 0);
-      return trackStep(`sleep ${delay}ms`).then(() => interruptibleSleep(delay, deps.isAborted));
+      return markHandled(trackStep(`sleep ${delay}ms`).then(() => interruptibleSleep(delay, deps.isAborted)));
     },
-    async startLog(path) {
-      assertWriteAllowed("session.startLog");
-      await trackStep("startLog");
-      await startSessionLog?.(sessionId, path);
+    startLog(path) {
+      return markHandled((async () => {
+        assertWriteAllowed("session.startLog");
+        await trackStep("startLog");
+        assertNotAborted();
+        await startSessionLog?.(sessionId, path);
+      })());
     },
-    async stopLog() {
-      await trackStep("stopLog");
-      await stopSessionLog?.(sessionId);
+    stopLog() {
+      return markHandled((async () => {
+        await trackStep("stopLog");
+        assertNotAborted();
+        await stopSessionLog?.(sessionId);
+      })());
     },
-    async disconnect() {
-      assertWriteAllowed("session.disconnect");
-      await trackStep("disconnect");
-      await disconnectSession?.(sessionId);
+    disconnect() {
+      return markHandled((async () => {
+        assertWriteAllowed("session.disconnect");
+        await trackStep("disconnect");
+        assertNotAborted();
+        await disconnectSession?.(sessionId);
+      })());
     },
   };
 
   const screenApi = {
-    async send(text) {
-      assertWriteAllowed("screen.send");
-      await waitIfPaused();
-      const payload = String(text ?? "");
-      await trackStep(`send: ${truncateActivityLabel(formatScriptInputForLog(payload), 60)}`);
-      appendLog(runId, `→ ${formatScriptInputForLog(payload)}`);
-      writeToSession(sessionId, payload, { automated: true });
+    send(text) {
+      return markHandled((async () => {
+        assertWriteAllowed("screen.send");
+        assertNotAborted();
+        await waitIfPaused();
+        const payload = String(text ?? "");
+        await trackStep(`send: ${truncateActivityLabel(formatScriptInputForLog(payload), 60)}`);
+        assertNotAborted();
+        appendLog(runId, `→ ${formatScriptInputForLog(payload)}`);
+        writeToSession(sessionId, payload, { automated: true });
+      })());
     },
-    async sendLine(text) {
-      assertWriteAllowed("screen.sendLine");
-      await waitIfPaused();
-      const line = String(text ?? "");
-      await trackStep(`sendLine: ${truncateActivityLabel(line, 60)}`);
-      appendLog(runId, `→ ${line}`);
-      writeToSession(sessionId, `${line}\r`, { automated: true });
+    sendLine(text) {
+      return markHandled((async () => {
+        assertWriteAllowed("screen.sendLine");
+        assertNotAborted();
+        await waitIfPaused();
+        const line = String(text ?? "");
+        await trackStep(`sendLine: ${truncateActivityLabel(line, 60)}`);
+        assertNotAborted();
+        appendLog(runId, `→ ${line}`);
+        writeToSession(sessionId, `${line}\r`, { automated: true });
+      })());
     },
     waitFor(pattern, timeoutMs = 30000) {
-      return waitForWithRecovery(pattern, timeoutMs);
+      return markHandled(waitForWithRecovery(pattern, timeoutMs));
     },
     waitForText(text, timeoutMs = 30000) {
-      return waitForWithRecovery(text, timeoutMs, {
+      return markHandled(waitForWithRecovery(text, timeoutMs, {
         waitMethod: "waitForText",
         operationLabel: "waitForText",
-      });
+      }));
     },
     waitForRegex(pattern, timeoutMs = 30000) {
-      return waitForWithRecovery(pattern, timeoutMs, {
+      return markHandled(waitForWithRecovery(pattern, timeoutMs, {
         waitMethod: "waitForRegex",
         operationLabel: "waitForRegex",
-      });
+      }));
     },
     waitForPrompt(timeoutMs = 60000) {
-      return waitForPromptWithRecovery(timeoutMs);
+      return markHandled(waitForPromptWithRecovery(timeoutMs));
     },
-    async waitForAny(patterns, timeoutMs = 30000) {
-      return waitForAnyWithRecovery(patterns, timeoutMs);
+    waitForAny(patterns, timeoutMs = 30000) {
+      return markHandled(waitForAnyWithRecovery(patterns, timeoutMs));
     },
-    async getText(startRow, endRow) {
-      await refreshScreenSnapshot();
-      const lines = screenSnapshot.lines || [];
-      const start = typeof startRow === "number" ? Math.max(0, startRow) : 0;
-      const end = typeof endRow === "number" ? Math.min(lines.length - 1, endRow) : lines.length - 1;
-      if (lines.length === 0) {
-        return getOutputBuffer(sessionId).getText();
-      }
-      return lines.slice(start, end + 1).join("\n");
+    getText(startRow, endRow) {
+      return markHandled((async () => {
+        await refreshScreenSnapshot();
+        assertNotAborted();
+        const lines = screenSnapshot.lines || [];
+        const start = typeof startRow === "number" ? Math.max(0, startRow) : 0;
+        const end = typeof endRow === "number" ? Math.min(lines.length - 1, endRow) : lines.length - 1;
+        if (lines.length === 0) {
+          return getOutputBuffer(sessionId).getText();
+        }
+        return lines.slice(start, end + 1).join("\n");
+      })());
     },
     get currentRow() {
       return screenSnapshot.currentRow ?? 0;
@@ -591,64 +664,77 @@ function createScriptRuntime(deps) {
     get cols() {
       return screenSnapshot.cols ?? 80;
     },
-    async clear() {
-      assertWriteAllowed("screen.clear");
-      await trackStep("clear");
-      writeToSession(sessionId, "\x1b[2J\x1b[H", { automated: true });
+    clear() {
+      return markHandled((async () => {
+        assertWriteAllowed("screen.clear");
+        await trackStep("clear");
+        assertNotAborted();
+        writeToSession(sessionId, "\x1b[2J\x1b[H", { automated: true });
+      })());
     },
   };
 
   const dialogApi = {
     alert(message) {
-      return showDialog("alert", String(message ?? ""));
+      assertNotAborted();
+      return markHandled(showDialog("alert", String(message ?? "")));
     },
     confirm(message) {
-      return showDialog("confirm", String(message ?? ""));
+      assertNotAborted();
+      return markHandled(showDialog("confirm", String(message ?? "")));
     },
     prompt(message, defaultValue = "") {
-      return showDialog("prompt", String(message ?? ""), String(defaultValue ?? ""));
+      assertNotAborted();
+      return markHandled(showDialog("prompt", String(message ?? ""), String(defaultValue ?? "")));
     },
     form(spec) {
+      assertNotAborted();
       const form = normalizeDialogFormSpec(spec);
-      return showDialog("form", form.message, undefined, { form });
+      return markHandled(showDialog("form", form.message, undefined, { form }));
     },
-    async select(message, options, defaultValue) {
-      const values = await dialogApi.form({
-        message,
-        fields: [{
-          type: "select",
-          name: "value",
-          label: message,
-          options,
-          defaultValue,
-        }],
-      });
-      return String(values?.value ?? "");
+    select(message, options, defaultValue) {
+      return markHandled((async () => {
+        const values = await dialogApi.form({
+          message,
+          fields: [{
+            type: "select",
+            name: "value",
+            label: message,
+            options,
+            defaultValue,
+          }],
+        });
+        return String(values?.value ?? "");
+      })());
     },
-    async radio(message, options, defaultValue) {
-      const values = await dialogApi.form({
-        message,
-        fields: [{
-          type: "radio",
-          name: "value",
-          label: message,
-          options,
-          defaultValue,
-        }],
-      });
-      return String(values?.value ?? "");
+    radio(message, options, defaultValue) {
+      return markHandled((async () => {
+        const values = await dialogApi.form({
+          message,
+          fields: [{
+            type: "radio",
+            name: "value",
+            label: message,
+            options,
+            defaultValue,
+          }],
+        });
+        return String(values?.value ?? "");
+      })());
     },
-    async checkbox(message, defaultChecked = false) {
-      const values = await dialogApi.form({
-        message,
-        fields: [{
-          type: "checkbox",
-          name: "value",
-          label: message,
-          defaultValue: defaultChecked,
-        }],
-      });
-      return Boolean(values?.value);
+    checkbox(message, defaultChecked = false) {
+      return markHandled((async () => {
+        const values = await dialogApi.form({
+          message,
+          fields: [{
+            type: "checkbox",
+            name: "value",
+            label: message,
+            defaultValue: defaultChecked,
+          }],
+        });
+        return Boolean(values?.value);
+      })());
     },
   };
 
@@ -660,6 +746,7 @@ function createScriptRuntime(deps) {
     version: deps.appVersion || "0.0.0",
     sleep: sessionApi.sleep.bind(sessionApi),
     log(message) {
+      assertNotAborted();
       stepIndex += 1;
       emitStatus({
         activityLabel: "log",
@@ -670,20 +757,18 @@ function createScriptRuntime(deps) {
   };
 
   async function waitIfPaused() {
+    assertNotAborted();
     while (isPaused?.()) {
-      if (deps.isAborted?.()) {
-        throw new Error("Script stopped");
-      }
+      assertNotAborted();
       onStatusChange?.(runId, { status: "paused", elapsedMs: Math.max(0, Date.now() - startedAt) });
       await interruptibleSleep(100, deps.isAborted);
     }
+    assertNotAborted();
     onStatusChange?.(runId, { status: "running", elapsedMs: Math.max(0, Date.now() - startedAt) });
   }
 
   async function execute(source) {
-    if (deps.isAborted?.()) {
-      throw new Error("Script stopped");
-    }
+    assertNotAborted();
     const wrapped = wrapScriptSource(source);
     const sandbox = {
       nct,
@@ -697,8 +782,9 @@ function createScriptRuntime(deps) {
     const script = new vm.Script(wrapped, { filename: `script-${runId}.js` });
     const result = script.runInContext(sandbox, { displayErrors: true });
     if (result && typeof result.then === "function") {
-      await result;
+      await abortable(result);
     }
+    assertNotAborted();
   }
 
   return { execute, nct };

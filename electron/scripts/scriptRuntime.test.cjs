@@ -427,3 +427,41 @@ test("createScriptRuntime convenience dialog controls return single values", asy
   assert.deepEqual(calls.map((call) => call.fieldType), ["select", "radio", "checkbox"]);
   assert.deepEqual(values, ["prod", "safe", "true"]);
 });
+
+test("createScriptRuntime does not open dialogs after a script is stopped", async () => {
+  let aborted = false;
+  let dialogCalls = 0;
+  const runtime = createScriptRuntime({
+    sessionId: "s1",
+    runId: "r1",
+    appendLog: () => {},
+    writeToSession: () => {},
+    getOutputBuffer: () => ({
+      waitFor: async () => "ok",
+      waitForAny: async () => 0,
+      getText: () => "",
+    }),
+    getSessionMeta: () => ({ connected: true, hostname: "host", username: "user" }),
+    showDialog: async () => {
+      dialogCalls += 1;
+      return true;
+    },
+    isPaused: () => false,
+    isAborted: () => aborted,
+    onStatusChange: () => {},
+  });
+
+  const run = runtime.execute(`
+    try {
+      await nct.sleep(5000);
+    } catch {
+      await nct.dialog.confirm('still there?');
+    }
+  `);
+  setTimeout(() => {
+    aborted = true;
+  }, 30);
+
+  await assert.rejects(run, /Script stopped/);
+  assert.equal(dialogCalls, 0);
+});
