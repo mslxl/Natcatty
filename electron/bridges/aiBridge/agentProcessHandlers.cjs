@@ -6,8 +6,25 @@ function registerAgentProcessHandlers(ctx) {
 
   ipcMain.handle("netcatty:ai:mcp:update-sessions", async (event, { sessions: sessionList, chatSessionId }) => {
     if (!validateSenderOrSettings(event)) return { ok: false, error: "Unauthorized IPC sender" };
-    mcpServerBridge.updateSessionMetadata(sessionList || [], chatSessionId);
-    return { ok: true };
+    const list = Array.isArray(sessionList) ? sessionList : [];
+    const externalId = mcpServerBridge.EXTERNAL_MCP_CHAT_SESSION_ID;
+    if (chatSessionId === externalId) {
+      // App-wide External MCP scope is owned by the main-window full-session sync.
+      // Reject writes while disabled so in-flight renderer pushes cannot resurrect
+      // metadata after stopActiveRuntime cleared the scope.
+      try {
+        const external = typeof getExternalMcpController === "function"
+          ? getExternalMcpController()
+          : null;
+        if (!external?.isEnabled?.()) {
+          return { ok: false, error: "External MCP is disabled" };
+        }
+      } catch {
+        return { ok: false, error: "External MCP is unavailable" };
+      }
+    }
+    mcpServerBridge.updateSessionMetadata(list, chatSessionId);
+    return { ok: true, count: list.length };
   });
 
   ipcMain.handle("netcatty:ai:mcp:update-attachments", async (event, { attachments, chatSessionId }) => {
@@ -84,7 +101,8 @@ function registerAgentProcessHandlers(ctx) {
 
   // ── MCP Approval response (renderer → main) ──
   ipcMain.handle("netcatty:ai:mcp:approval-response", async (event, { approvalId, approved }) => {
-    if (!validateSender(event)) return { ok: false, error: "Unauthorized IPC sender" };
+    // Settings window also hosts External MCP approval cards.
+    if (!validateSenderOrSettings(event)) return { ok: false, error: "Unauthorized IPC sender" };
     mcpServerBridge.resolveApprovalFromRenderer(approvalId, approved);
     return { ok: true };
   });

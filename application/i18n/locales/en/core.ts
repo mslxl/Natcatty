@@ -106,6 +106,21 @@ export const enCoreMessages: Messages = {
   'settings.system.credentials.unavailableHint': 'Credentials encrypted on another user profile or machine cannot be decrypted here. Re-enter and save credentials on this device.',
   'settings.system.credentials.portabilityHint': 'Cloud Sync is portable because it uses your master key encryption. Local safeStorage encryption is device/user scoped.',
 
+  // Settings > System > Network Proxy
+  'settings.system.networkProxy.title': 'Network Proxy',
+  'settings.system.networkProxy.description': 'HTTP(S) proxy for cloud sync and AI providers. This is separate from SSH ProxyJump / ProxyCommand profiles.',
+  'settings.system.networkProxy.mode': 'Proxy mode',
+  'settings.system.networkProxy.mode.system': 'Use system proxy',
+  'settings.system.networkProxy.mode.direct': 'Direct (no proxy)',
+  'settings.system.networkProxy.mode.custom': 'Custom proxy',
+  'settings.system.networkProxy.url': 'Proxy URL',
+  'settings.system.networkProxy.url.placeholder': 'http://127.0.0.1:7890',
+  'settings.system.networkProxy.url.desc': 'Supports http://, https://, and socks5:// host:port URLs. Proxy credentials in the URL are not supported.',
+  'settings.system.networkProxy.bypass': 'Bypass list',
+  'settings.system.networkProxy.bypass.placeholder': '<local>,localhost,127.0.0.1',
+  'settings.system.networkProxy.bypass.desc': 'Comma-separated hosts that skip the proxy. Use <local> for loopback and LAN names.',
+  'settings.system.networkProxy.hint': 'Affects Google Drive / OneDrive / GitHub sync login and AI provider requests. Does not change SSH connections.',
+
   // Settings > System > Crash Logs
   'settings.system.crashLogs.title': 'Crash Logs',
   'settings.system.crashLogs.description': 'View error logs from the main process to help diagnose unexpected behavior.',

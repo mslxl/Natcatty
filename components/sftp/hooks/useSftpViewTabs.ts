@@ -42,8 +42,14 @@ interface UseSftpViewTabsResult {
   handleMoveTabFromRightToLeft: (tabId: string) => void;
   handleDuplicateTabLeft: (tabId: string, mode: SftpTabDuplicateMode) => Promise<string | null>;
   handleDuplicateTabRight: (tabId: string, mode: SftpTabDuplicateMode) => Promise<string | null>;
-  handleHostSelectLeft: (host: Host | "local") => void;
-  handleHostSelectRight: (host: Host | "local") => void;
+  handleHostSelectLeft: (
+    host: Host | "local",
+    options?: Parameters<SftpStateApi["connect"]>[2],
+  ) => void;
+  handleHostSelectRight: (
+    host: Host | "local",
+    options?: Parameters<SftpStateApi["connect"]>[2],
+  ) => void;
 }
 
 export const useSftpViewTabs = ({ sftp, sftpRef, hosts = [] }: UseSftpViewTabsParams): UseSftpViewTabsResult => {
@@ -178,13 +184,19 @@ export const useSftpViewTabs = ({ sftp, sftpRef, hosts = [] }: UseSftpViewTabsPa
     [handleDuplicateTab],
   );
 
-  const handleHostSelectLeft = useCallback((host: Host | "local") => {
-    sftpRef.current.connect("left", host);
+  const handleHostSelectLeft = useCallback((
+    host: Host | "local",
+    options?: Parameters<SftpStateApi["connect"]>[2],
+  ) => {
+    sftpRef.current.connect("left", host, options);
     setShowHostPickerLeft(false);
   }, [sftpRef]);
 
-  const handleHostSelectRight = useCallback((host: Host | "local") => {
-    sftpRef.current.connect("right", host);
+  const handleHostSelectRight = useCallback((
+    host: Host | "local",
+    options?: Parameters<SftpStateApi["connect"]>[2],
+  ) => {
+    sftpRef.current.connect("right", host, options);
     setShowHostPickerRight(false);
   }, [sftpRef]);
 

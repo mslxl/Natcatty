@@ -17,10 +17,15 @@ const { appendVaultAgentGuidance } = require("../shared/vaultAgentGuidance.cjs")
 const { execViaPty, startPtyJob, execViaChannel, execViaRawPty } = require("./ai/ptyExec.cjs");
 const { safeSend } = require("./ipcUtils.cjs");
 const { getCliDiscoveryFilePath } = require("../cli/discoveryPath.cjs");
+const { EXTERNAL_MCP_CHAT_SESSION_ID } = require("../cli/externalMcpDiscoveryPath.cjs");
 const sftpBridge = require("./sftpBridge.cjs");
 const portForwardingBridge = require("./portForwardingBridge.cjs");
 
 const DEBUG_MCP = process.env.NETCATTY_MCP_DEBUG === "1";
+
+/** Optional external-MCP activity / host-ready hooks (set by externalMcpController). */
+let externalMcpActivityHook = null;
+let externalMcpHostReadyHook = null;
 
 function debugLog(...args) {
   if (!DEBUG_MCP) return;
@@ -32,12 +37,58 @@ let terminalWorkerManager = null;
 let tcpServer = null;
 let tcpPort = null;
 let authToken = null;  // Random token generated when TCP server starts
+// Dedicated token for External MCP discovery. Rotated on enable/disable so a
+// stale discovery file cannot keep writing after External MCP is turned off.
+let externalAuthToken = null;
 let pendingHostStart = null; // { promise, server, cancel }
 let electronModule = null;
 let cliDiscoveryFilePath = getCliDiscoveryFilePath();
 
 // Track which sockets have completed authentication
 const authenticatedSockets = new WeakSet();
+// Sockets authenticated with the External MCP token (or that used the reserved scope).
+const externalMcpSockets = new Set();
+
+function markExternalMcpSocket(socket) {
+  if (!socket || socket.destroyed) return;
+  externalMcpSockets.add(socket);
+  if (!socket.__netcattyExternalMcpCleanupBound) {
+    socket.__netcattyExternalMcpCleanupBound = true;
+    const cleanup = () => {
+      externalMcpSockets.delete(socket);
+    };
+    socket.once("close", cleanup);
+    socket.once("end", cleanup);
+    socket.once("error", cleanup);
+  }
+}
+
+function issueExternalMcpAuthToken() {
+  externalAuthToken = crypto.randomBytes(32).toString("hex");
+  return externalAuthToken;
+}
+
+function revokeExternalMcpAuthToken() {
+  externalAuthToken = null;
+}
+
+function getExternalMcpAuthToken() {
+  return externalAuthToken;
+}
+
+function disconnectExternalMcpClients() {
+  // Prefer soft revoke: keep long-lived stdio MCP TCP sockets alive so
+  // re-enable can resume without restarting Codex/Claude/Grok. Hard destroy
+  // is reserved for process shutdown paths that call this intentionally.
+  for (const socket of Array.from(externalMcpSockets)) {
+    externalMcpSockets.delete(socket);
+    try {
+      if (!socket.destroyed) socket.destroy();
+    } catch {
+      // Ignore destroy failures while revoking external clients.
+    }
+  }
+}
 
 // Per-scope metadata: chatSessionId → { sessionIds: string[], metadata: Map<sessionId, meta> }
 // Each chat session only sees the hosts registered for its scope.
@@ -100,11 +151,39 @@ function setMainWindowGetter(fn) {
 const { MCP_APPROVAL_TIMEOUT_MS } = require("../shared/approvalConstants.cjs");
 const APPROVAL_TIMEOUT_MS = MCP_APPROVAL_TIMEOUT_MS;
 
+function listApprovalTargetWindows() {
+  const windows = [];
+  const seen = new Set();
+  const push = (win) => {
+    if (!win || win.isDestroyed?.()) return;
+    const id = win.webContents?.id;
+    if (id != null && seen.has(id)) return;
+    if (id != null) seen.add(id);
+    windows.push(win);
+  };
+  try {
+    if (typeof getMainWindowFn === "function") push(getMainWindowFn());
+  } catch { /* ignore */ }
+  try {
+    const windowManager = require("./windowManager.cjs");
+    push(windowManager.getSettingsWindow?.());
+  } catch { /* ignore */ }
+  return windows;
+}
+
+function broadcastApprovalEvent(channel, payload) {
+  for (const win of listApprovalTargetWindows()) {
+    try {
+      win.webContents.send(channel, payload);
+    } catch { /* ignore */ }
+  }
+}
+
 function requestApprovalFromRenderer(toolName, args, chatSessionId) {
   return new Promise((resolve) => {
     debugLog("requestApprovalFromRenderer", { toolName, args, chatSessionId });
-    const mainWin = typeof getMainWindowFn === 'function' ? getMainWindowFn() : null;
-    if (!mainWin || mainWin.isDestroyed()) {
+    const targets = listApprovalTargetWindows();
+    if (targets.length === 0) {
       // No renderer available — deny to preserve confirm mode safety guarantee
       resolve(false);
       return;
@@ -116,13 +195,8 @@ function requestApprovalFromRenderer(toolName, args, chatSessionId) {
       if (pendingApprovals.has(approvalId)) {
         pendingApprovals.delete(approvalId);
         resolve(false);
-        // Notify renderer to remove the stale approval card
-        try {
-          const win = typeof getMainWindowFn === 'function' ? getMainWindowFn() : null;
-          if (win && !win.isDestroyed()) {
-            win.webContents.send('netcatty:ai:mcp:approval-cleared', { approvalIds: [approvalId] });
-          }
-        } catch { /* ignore */ }
+        // Notify renderer(s) to remove the stale approval card
+        broadcastApprovalEvent('netcatty:ai:mcp:approval-cleared', { approvalIds: [approvalId] });
       }
     }, APPROVAL_TIMEOUT_MS);
 
@@ -133,7 +207,7 @@ function requestApprovalFromRenderer(toolName, args, chatSessionId) {
       },
       chatSessionId: chatSessionId || null,
     });
-    mainWin.webContents.send('netcatty:ai:mcp:approval-request', {
+    broadcastApprovalEvent('netcatty:ai:mcp:approval-request', {
       approvalId,
       toolName,
       args,
@@ -148,19 +222,14 @@ function resolveApprovalFromRenderer(approvalId, approved) {
   if (entry) {
     pendingApprovals.delete(approvalId);
     entry.resolve(approved);
+    // Main + settings both receive approval requests; clear the sibling card.
+    notifyRendererApprovalCleared([approvalId]);
   }
 }
 
 function notifyRendererApprovalCleared(approvalIds) {
   if (!Array.isArray(approvalIds) || approvalIds.length === 0) return;
-  try {
-    const win = typeof getMainWindowFn === "function" ? getMainWindowFn() : null;
-    if (win && !win.isDestroyed()) {
-      win.webContents.send("netcatty:ai:mcp:approval-cleared", { approvalIds });
-    }
-  } catch {
-    // Ignore renderer notification failures during approval cleanup.
-  }
+  broadcastApprovalEvent("netcatty:ai:mcp:approval-cleared", { approvalIds });
 }
 
 /**
@@ -356,7 +425,118 @@ function setPermissionMode(mode) {
   if (mode === "observer" || mode === "confirm" || mode === "auto") {
     permissionMode = mode;
     writeCliDiscoveryFile();
+    try {
+      if (typeof externalMcpActivityHook?.onPermissionModeChanged === "function") {
+        externalMcpActivityHook.onPermissionModeChanged();
+      }
+    } catch {
+      // External MCP permission sync is best-effort.
+    }
   }
+}
+
+function setExternalMcpHooks(hooks = null) {
+  externalMcpActivityHook = hooks && typeof hooks === "object" ? hooks : null;
+  externalMcpHostReadyHook = typeof hooks?.onBridgeHostReady === "function"
+    ? hooks.onBridgeHostReady.bind(hooks)
+    : null;
+}
+
+function notifyExternalMcpActivity(method, params) {
+  try {
+    const chatSessionId = params?.chatSessionId || null;
+    if (chatSessionId === EXTERNAL_MCP_CHAT_SESSION_ID) {
+      externalMcpActivityHook?.recordActivity?.({ method, chatSessionId });
+    }
+  } catch {
+    // Ignore activity hook failures.
+  }
+}
+
+/**
+ * Build MCP session metadata from the live main-process session map and
+ * register it under the reserved external MCP chat scope.
+ */
+function syncLiveSessionsToExternalScope(chatSessionId = EXTERNAL_MCP_CHAT_SESSION_ID) {
+  const existingScoped = scopedMetadata.get(chatSessionId);
+  const existingMeta = existingScoped?.metadata || new Map();
+  const sessionList = [];
+  if (sessions && typeof sessions.entries === "function") {
+    for (const [sessionId, session] of sessions.entries()) {
+      if (!session || typeof session !== "object") continue;
+      const previous = existingMeta.get(sessionId) || findSessionMetaAcrossScopes(sessionId) || {};
+      sessionList.push({
+        sessionId,
+        hostId: session.hostId || previous.hostId || "",
+        hostname: session.hostname || session.host || previous.hostname || "",
+        label: session.label || session.hostname || previous.label || sessionId,
+        os: session.os || previous.os || "",
+        username: session.username || previous.username || "",
+        protocol: session.protocol || session.type || previous.protocol || "",
+        shellType: session.shellKind || session.shellType || previous.shellType || "",
+        deviceType: session.deviceType || previous.deviceType || "",
+        connected: session.connected !== false,
+        hostChain: Array.isArray(session.hostChain)
+          ? session.hostChain
+          : (Array.isArray(previous.hostChain) ? previous.hostChain : []),
+        activePortForwards: Array.isArray(session.activePortForwards)
+          ? session.activePortForwards
+          : (Array.isArray(previous.activePortForwards) ? previous.activePortForwards : []),
+      });
+    }
+  }
+  // Terminal-worker mode keeps live sessions off the main-process map. Do not
+  // wipe renderer-pushed external scope metadata with an empty live snapshot.
+  if (sessionList.length === 0) {
+    if (existingScoped?.sessionIds?.length) {
+      return {
+        ok: true,
+        count: existingScoped.sessionIds.length,
+        chatSessionId,
+        preserved: true,
+      };
+    }
+    // Only seed when the external scope key has never been written. An explicit
+    // empty updateSessionMetadata([]) must stay empty (authoritative clear).
+    if (!scopedMetadata.has(chatSessionId)) {
+      const seeded = seedExternalScopeFromOtherScopes(chatSessionId);
+      if (seeded) {
+        return {
+          ok: true,
+          count: seeded,
+          chatSessionId,
+          seeded: true,
+        };
+      }
+    }
+    return { ok: true, count: 0, chatSessionId };
+  }
+  updateSessionMetadata(sessionList, chatSessionId);
+  return { ok: true, count: sessionList.length, chatSessionId };
+}
+
+function findSessionMetaAcrossScopes(sessionId) {
+  for (const scoped of scopedMetadata.values()) {
+    const meta = scoped?.metadata?.get?.(sessionId);
+    if (meta) return meta;
+  }
+  return null;
+}
+
+function seedExternalScopeFromOtherScopes(chatSessionId) {
+  const byId = new Map();
+  for (const [scopeId, scoped] of scopedMetadata.entries()) {
+    if (scopeId === chatSessionId || !scoped?.metadata) continue;
+    for (const [sessionId, meta] of scoped.metadata.entries()) {
+      if (!sessionId || !meta) continue;
+      if (!byId.has(sessionId)) {
+        byId.set(sessionId, { sessionId, ...meta });
+      }
+    }
+  }
+  if (byId.size === 0) return 0;
+  updateSessionMetadata(Array.from(byId.values()), chatSessionId);
+  return byId.size;
 }
 
 function getPermissionMode() {
@@ -444,6 +624,46 @@ function updateSessionMetadata(sessionList, chatSessionId) {
   if (chatSessionId) {
     scopedMetadata.set(chatSessionId, { sessionIds: ids, metadata: metaMap });
   }
+}
+
+/**
+ * Merge session metadata into an existing chat scope without dropping
+ * previously known sessions. Used for the app-wide External MCP scope so a
+ * single Catty sidebar push cannot shrink the exposed host set.
+ */
+function mergeSessionMetadata(sessionList, chatSessionId) {
+  if (!chatSessionId || !Array.isArray(sessionList)) return { ok: false, count: 0 };
+  const existing = scopedMetadata.get(chatSessionId);
+  const byId = new Map();
+  if (existing?.metadata) {
+    for (const [sessionId, meta] of existing.metadata.entries()) {
+      byId.set(sessionId, { sessionId, ...meta });
+    }
+  }
+  for (const entry of sessionList) {
+    if (!entry || typeof entry !== "object" || !entry.sessionId) continue;
+    const previous = byId.get(entry.sessionId) || {};
+    byId.set(entry.sessionId, {
+      sessionId: entry.sessionId,
+      hostname: entry.hostname || previous.hostname || "",
+      label: entry.label || previous.label || "",
+      os: entry.os || previous.os || "",
+      username: entry.username || previous.username || "",
+      protocol: entry.protocol || previous.protocol || "",
+      shellType: entry.shellType || previous.shellType || "",
+      deviceType: entry.deviceType || previous.deviceType || "",
+      connected: entry.connected !== undefined ? entry.connected !== false : previous.connected !== false,
+      hostId: entry.hostId || previous.hostId || "",
+      hostChain: Array.isArray(entry.hostChain)
+        ? entry.hostChain
+        : (Array.isArray(previous.hostChain) ? previous.hostChain : []),
+      activePortForwards: Array.isArray(entry.activePortForwards)
+        ? entry.activePortForwards
+        : (Array.isArray(previous.activePortForwards) ? previous.activePortForwards : []),
+    });
+  }
+  updateSessionMetadata(Array.from(byId.values()), chatSessionId);
+  return { ok: true, count: byId.size };
 }
 
 function normalizeAttachmentEntry(attachment) {
@@ -698,6 +918,11 @@ function getOrCreateHost() {
       tcpServer = server;
       debugLog("TCP server listening", { port: tcpPort });
       writeCliDiscoveryFile();
+      try {
+        externalMcpHostReadyHook?.({ port: tcpPort, token: authToken });
+      } catch {
+        // External MCP host-ready sync is best-effort.
+      }
       finishResolve(tcpPort);
     });
 
@@ -756,9 +981,32 @@ async function handleMessage(socket, line) {
   // The first message from any connection MUST be auth/verify with the correct token.
   // All other methods are rejected until the socket is authenticated.
   if (!authenticatedSockets.has(socket)) {
-    if (method === "auth/verify" && params?.token === authToken) {
-      debugLog("auth/verify success");
+    const presentedToken = typeof params?.token === "string" ? params.token : "";
+    const isCattyToken = Boolean(presentedToken && authToken && presentedToken === authToken);
+    const isExternalToken = Boolean(
+      presentedToken && externalAuthToken && presentedToken === externalAuthToken,
+    );
+    if (method === "auth/verify" && (isCattyToken || isExternalToken)) {
+      if (isExternalToken && !externalMcpActivityHook?.isEnabled?.()) {
+        const response = JSON.stringify({
+          jsonrpc: "2.0",
+          id,
+          error: {
+            code: -32001,
+            message: "External MCP is disabled. Re-enable it in Netcatty Settings → AI.",
+          },
+        }) + "\n";
+        if (!socket.destroyed) {
+          socket.write(response);
+          socket.destroy();
+        }
+        return;
+      }
+      debugLog("auth/verify success", { external: isExternalToken });
       authenticatedSockets.add(socket);
+      if (isExternalToken) {
+        markExternalMcpSocket(socket);
+      }
       const response = JSON.stringify({ jsonrpc: "2.0", id, result: { ok: true } }) + "\n";
       if (!socket.destroyed) socket.write(response);
       return;
@@ -778,7 +1026,28 @@ async function handleMessage(socket, line) {
   }
 
   try {
-    const result = await dispatch(method, params || {});
+    const callParams = { ...(params || {}) };
+    // External-token sockets always operate under the reserved app-wide scope so
+    // callers cannot omit chatSessionId and widen access via scopedSessionIds.
+    if (externalMcpSockets.has(socket)) {
+      callParams.chatSessionId = EXTERNAL_MCP_CHAT_SESSION_ID;
+    }
+    const isExternalScope = callParams.chatSessionId === EXTERNAL_MCP_CHAT_SESSION_ID;
+    if (isExternalScope) {
+      markExternalMcpSocket(socket);
+    }
+    // External MCP clients keep an authenticated TCP socket after disable unless
+    // we reject reserved-scope RPCs (and previously marked external sockets).
+    if (
+      (isExternalScope || externalMcpSockets.has(socket))
+      && !externalMcpActivityHook?.isEnabled?.()
+    ) {
+      throw new Error(
+        "External MCP is disabled. Re-enable it in Netcatty Settings → AI.",
+      );
+    }
+    notifyExternalMcpActivity(method, callParams);
+    const result = await dispatch(method, callParams);
     const response = JSON.stringify({ jsonrpc: "2.0", id, result }) + "\n";
     if (!socket.destroyed) socket.write(response);
   } catch (err) {
@@ -1207,6 +1476,22 @@ async function handleGetContext(params) {
 
   // chatSessionId may be passed via env for per-scope metadata lookup
   const chatSessionId = params?.chatSessionId || null;
+  // External MCP clients use the reserved app-wide scope; refresh from the live
+  // session map so newly opened terminals appear without waiting for a renderer push.
+  // Only sync while External MCP is enabled — otherwise a stale client could
+  // rebuild the cleared scope after disable/idle timeout.
+  if (chatSessionId === EXTERNAL_MCP_CHAT_SESSION_ID) {
+    if (!externalMcpActivityHook?.isEnabled?.()) {
+      return {
+        environment: "netcatty-terminal",
+        description: "External MCP is disabled.",
+        hosts: [],
+        hostCount: 0,
+        tools: toolHints,
+      };
+    }
+    syncLiveSessionsToExternalScope(chatSessionId);
+  }
   const explicitScopedIds = Array.isArray(params?.scopedSessionIds)
     ? params.scopedSessionIds
     : null;
@@ -1424,6 +1709,7 @@ module.exports = {
   applyChatSessionCancelled,
   checkCommandSafety,
   updateSessionMetadata,
+  mergeSessionMetadata,
   updateAttachmentMetadata,
   handleListAttachments,
   handleReadAttachment,
@@ -1442,10 +1728,17 @@ module.exports = {
   shutdownHost,
   setMainWindowGetter,
   setVaultAgentInvoker,
+  setExternalMcpHooks,
+  disconnectExternalMcpClients,
+  issueExternalMcpAuthToken,
+  revokeExternalMcpAuthToken,
+  getExternalMcpAuthToken,
+  syncLiveSessionsToExternalScope,
   resolveApprovalFromRenderer,
   clearPendingApprovals,
   reserveSessionExecution,
   releaseSessionExecution,
   getSessionBusyError,
   dispatchBuiltinRpc: dispatch,
+  EXTERNAL_MCP_CHAT_SESSION_ID,
 };

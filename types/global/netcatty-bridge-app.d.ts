@@ -61,6 +61,20 @@ declare global {
     // System Tray / Close to Tray
     setCloseToTray?(enabled: boolean): Promise<{ success: boolean; enabled: boolean }>;
     isCloseToTray?(): Promise<{ enabled: boolean }>;
+
+    // App-level HTTP(S) network proxy (cloud sync / AI — not SSH ProxyJump)
+    setHttpNetworkProxy?(settings: {
+      mode: 'system' | 'direct' | 'custom';
+      url: string;
+      bypass: string;
+    }): Promise<{
+      success: boolean;
+      settings: { mode: 'system' | 'direct' | 'custom'; url: string; bypass: string };
+      electronConfig?: unknown;
+    }>;
+    getHttpNetworkProxy?(): Promise<{
+      settings: { mode: 'system' | 'direct' | 'custom'; url: string; bypass: string };
+    }>;
     updateTrayMenuData?(data: {
       sessions?: Array<{ id: string; label: string; hostLabel: string; status: "connecting" | "connected" | "disconnected"; workspaceId?: string; workspaceTitle?: string }>;
       hosts?: Array<{ id: string; label?: string; hostname?: string; group?: string; pinned?: boolean; lastConnectedAt?: number; protocol?: string }>;

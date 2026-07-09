@@ -8,8 +8,43 @@ const {
   GetObjectCommand,
   DeleteObjectCommand,
 } = require("@aws-sdk/client-s3");
+const {
+  resolveOutboundHttpAgent,
+} = require("./httpNetworkProxyAgent.cjs");
 
 const SYNC_FILE_NAME = "netcatty-vault.json";
+
+let electronModuleRef = null;
+
+const isHttpsEndpoint = (endpoint) => {
+  try {
+    return new URL(endpoint).protocol === "https:";
+  } catch {
+    return true;
+  }
+};
+
+const resolveCloudSyncTransportAgent = async (targetUrl, allowInsecure = false) => {
+  const session = electronModuleRef?.session?.defaultSession || null;
+  const agent = await resolveOutboundHttpAgent(targetUrl, {
+    session,
+    rejectUnauthorized: allowInsecure ? false : undefined,
+  });
+  if (agent) return agent;
+  if (allowInsecure && isHttpsEndpoint(targetUrl)) {
+    return new https.Agent({ rejectUnauthorized: false });
+  }
+  return undefined;
+};
+
+const assignTransportAgent = (extraOpts, endpoint, agent) => {
+  if (!agent) return;
+  if (isHttpsEndpoint(endpoint)) {
+    extraOpts.httpsAgent = agent;
+  } else {
+    extraOpts.httpAgent = agent;
+  }
+};
 
 const normalizeEndpoint = (endpoint) => {
   const trimmed = String(endpoint || "").trim();
@@ -58,13 +93,12 @@ const buildBasicAuthHeader = (username, password) =>
   "Basic " +
   Buffer.from(`${username || ""}:${password || ""}`, "utf8").toString("base64");
 
-const buildWebdavClient = (config) => {
+const buildWebdavClient = async (config) => {
   if (!config) throw new Error("Missing WebDAV config");
   const endpoint = normalizeEndpoint(config.endpoint);
   const extraOpts = {};
-  if (config.allowInsecure) {
-    extraOpts.httpsAgent = new https.Agent({ rejectUnauthorized: false });
-  }
+  const agent = await resolveCloudSyncTransportAgent(endpoint, Boolean(config.allowInsecure));
+  assignTransportAgent(extraOpts, endpoint, agent);
   if (config.authType === "token") {
     return createClient(endpoint, {
       authType: AuthType.Token,
@@ -94,7 +128,7 @@ const buildWebdavClient = (config) => {
 
 const getWebdavPath = () => ensureLeadingSlash(SYNC_FILE_NAME);
 
-const buildS3Client = (config) => {
+const buildS3Client = async (config) => {
   const clientOptions = {
     region: config.region,
     endpoint: normalizeEndpoint(config.endpoint),
@@ -108,10 +142,13 @@ const buildS3Client = (config) => {
     },
   };
 
-  if (config.allowInsecure) {
-    clientOptions.requestHandler = new NodeHttpHandler({
-      httpsAgent: new https.Agent({ rejectUnauthorized: false }),
-    });
+  const endpoint = clientOptions.endpoint || "https://s3.amazonaws.com";
+  const agent = await resolveCloudSyncTransportAgent(endpoint, Boolean(config.allowInsecure));
+  if (agent) {
+    const handlerOpts = isHttpsEndpoint(endpoint)
+      ? { httpsAgent: agent }
+      : { httpAgent: agent };
+    clientOptions.requestHandler = new NodeHttpHandler(handlerOpts);
   }
 
   return new S3Client(clientOptions);
@@ -158,7 +195,7 @@ const wrapS3Error = (operation, error, config) => {
 
 const handleWebdavInitialize = async (config) => {
   try {
-    const client = buildWebdavClient(config);
+    const client = await buildWebdavClient(config);
     const path = getWebdavPath();
     await client.exists(path);
     return { resourceId: path };
@@ -169,7 +206,7 @@ const handleWebdavInitialize = async (config) => {
 
 const handleWebdavUpload = async (config, syncedFile) => {
   try {
-    const client = buildWebdavClient(config);
+    const client = await buildWebdavClient(config);
     const path = getWebdavPath();
     await client.putFileContents(path, JSON.stringify(syncedFile), { overwrite: true });
     return { resourceId: path };
@@ -180,7 +217,7 @@ const handleWebdavUpload = async (config, syncedFile) => {
 
 const handleWebdavDownload = async (config) => {
   try {
-    const client = buildWebdavClient(config);
+    const client = await buildWebdavClient(config);
     const path = getWebdavPath();
     const exists = await client.exists(path);
     if (!exists) return { syncedFile: null };
@@ -194,7 +231,7 @@ const handleWebdavDownload = async (config) => {
 
 const handleWebdavDelete = async (config) => {
   try {
-    const client = buildWebdavClient(config);
+    const client = await buildWebdavClient(config);
     const path = getWebdavPath();
     const exists = await client.exists(path);
     if (!exists) return { ok: true };
@@ -207,7 +244,7 @@ const handleWebdavDelete = async (config) => {
 
 const handleS3Initialize = async (config) => {
   if (!config) throw new Error("Missing S3 config");
-  const client = buildS3Client(config);
+  const client = await buildS3Client(config);
   const key = getS3ObjectKey(config);
   try {
     await client.send(new HeadObjectCommand({ Bucket: config.bucket, Key: key }));
@@ -233,7 +270,7 @@ const handleS3Initialize = async (config) => {
 
 const handleS3Upload = async (config, syncedFile) => {
   if (!config) throw new Error("Missing S3 config");
-  const client = buildS3Client(config);
+  const client = await buildS3Client(config);
   const key = getS3ObjectKey(config);
   try {
     await client.send(
@@ -252,7 +289,7 @@ const handleS3Upload = async (config, syncedFile) => {
 
 const handleS3Download = async (config) => {
   if (!config) throw new Error("Missing S3 config");
-  const client = buildS3Client(config);
+  const client = await buildS3Client(config);
   const key = getS3ObjectKey(config);
   try {
     const response = await client.send(
@@ -269,7 +306,7 @@ const handleS3Download = async (config) => {
 
 const handleS3Delete = async (config) => {
   if (!config) throw new Error("Missing S3 config");
-  const client = buildS3Client(config);
+  const client = await buildS3Client(config);
   const key = getS3ObjectKey(config);
   try {
     await client.send(new DeleteObjectCommand({ Bucket: config.bucket, Key: key }));
@@ -280,7 +317,8 @@ const handleS3Delete = async (config) => {
   return { ok: true };
 };
 
-const registerHandlers = (ipcMain) => {
+const registerHandlers = (ipcMain, electronModule) => {
+  electronModuleRef = electronModule || null;
   ipcMain.handle("netcatty:cloudSync:webdav:initialize", async (_event, payload) => {
     return handleWebdavInitialize(payload?.config);
   });

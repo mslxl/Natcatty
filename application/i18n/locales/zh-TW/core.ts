@@ -104,6 +104,21 @@ export const zhTWCoreMessages: Messages = {
   'settings.system.credentials.unavailableHint': '在其他使用者或機器上加密的憑證無法在此處解密。請在目前裝置重新輸入並儲存憑證。',
   'settings.system.credentials.portabilityHint': '雲同步可跨裝置，因為使用主金鑰加密；本機 safeStorage 加密僅綁定目前系統使用者/裝置。',
 
+  // Settings > System > Network Proxy
+  'settings.system.networkProxy.title': '網路代理',
+  'settings.system.networkProxy.description': '用於雲端同步與 AI 服務商的 HTTP(S) 代理。與 SSH 的 ProxyJump / ProxyCommand 設定無關。',
+  'settings.system.networkProxy.mode': '代理模式',
+  'settings.system.networkProxy.mode.system': '系統代理',
+  'settings.system.networkProxy.mode.direct': '直連（不使用代理）',
+  'settings.system.networkProxy.mode.custom': '自訂代理',
+  'settings.system.networkProxy.url': '代理位址',
+  'settings.system.networkProxy.url.placeholder': 'http://127.0.0.1:7890',
+  'settings.system.networkProxy.url.desc': '支援 http://、https://、socks5:// 的 host:port 位址。代理 URL 中不支援帳號密碼。',
+  'settings.system.networkProxy.bypass': '略過清單',
+  'settings.system.networkProxy.bypass.placeholder': '<local>,localhost,127.0.0.1',
+  'settings.system.networkProxy.bypass.desc': '逗號分隔、不走代理的主機。可用 <local> 表示本機與區域網路名稱。',
+  'settings.system.networkProxy.hint': '影響 Google Drive / OneDrive / GitHub 同步登入與 AI 服務商請求，不會改變 SSH 連線。',
+
   // Settings > System > Crash Logs
   'settings.system.crashLogs.title': '崩潰日誌',
   'settings.system.crashLogs.description': '檢視主程序錯誤日誌，協助診斷異常行為。',
@@ -720,6 +735,9 @@ export const zhTWCoreMessages: Messages = {
   'sftp.picker.local.title': '本機檔案系統',
   'sftp.picker.local.desc': '瀏覽本機檔案',
   'sftp.picker.local.badge': '本機',
+  'sftp.picker.connected.section': '已連線',
+  'sftp.picker.connected.badge': '已連線',
+  'sftp.picker.connected.connecting': '連線中',
   'sftp.picker.noMatch': '沒有相符的主機',
   'sftp.permissions.title': '編輯權限',
   'sftp.permissions.owner': '所有者',

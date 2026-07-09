@@ -45,6 +45,7 @@ import { ClaudeCodeCard } from "./ai/ClaudeCodeCard";
 import { CopilotCliCard } from "./ai/CopilotCliCard";
 import { CodebuddyCard } from "./ai/CodebuddyCard";
 import { SafetySettings } from "./ai/SafetySettings";
+import { ExternalMcpCard } from "./ai/ExternalMcpCard";
 import { PermissionGrantsSettings } from "./ai/PermissionGrantsSettings";
 import { useAIPermissionGrantsState } from "../../../application/state/useAIPermissionGrantsState";
 import { WebSearchSettings } from "./ai/WebSearchSettings";
@@ -1050,6 +1051,10 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
                 />
               </SettingRow>
             </SettingCard>
+          </SettingsSection>
+
+          <SettingsSection title={t('ai.externalMcp.title')}>
+            <ExternalMcpCard />
           </SettingsSection>
 
           <SettingsSection

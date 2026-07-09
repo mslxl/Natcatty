@@ -38,7 +38,7 @@ interface BridgeAPI {
     headers: Record<string, string>,
     body: string,
     providerId?: string,
-  ): Promise<{ ok: boolean; statusCode?: number; statusText?: string; error?: string }>;
+  ): Promise<{ ok: boolean; statusCode?: number; statusText?: string; error?: string; aborted?: boolean }>;
   onAiStreamData(requestId: string, cb: (data: string) => void): () => void;
   onAiStreamEnd(requestId: string, cb: () => void): () => void;
   onAiStreamError(requestId: string, cb: (error: string) => void): () => void;
@@ -461,23 +461,60 @@ export function createBridgeFetchForSDK(
       // Set up IPC event listeners BEFORE starting the stream to avoid
       // missing early events.
       const encoder = new TextEncoder();
-      let streamController: ReadableStreamDefaultController<Uint8Array>;
+      let streamController: ReadableStreamDefaultController<Uint8Array> | null = null;
+      const pendingChunks: Uint8Array[] = [];
+      let pendingClose = false;
+      let pendingError: Error | null = null;
       let cleanedUp = false;
+
+      const enqueueChunk = (chunk: Uint8Array) => {
+        if (streamController) {
+          streamController.enqueue(chunk);
+          return;
+        }
+        pendingChunks.push(chunk);
+      };
+      const closeStream = () => {
+        if (streamController) {
+          try { streamController.close(); } catch { /* already closed */ }
+          return;
+        }
+        pendingClose = true;
+      };
+      const errorStream = (error: Error) => {
+        if (streamController) {
+          try { streamController.error(error); } catch { /* already errored */ }
+          return;
+        }
+        pendingError = error;
+      };
+      const flushPendingStreamEvents = (controller: ReadableStreamDefaultController<Uint8Array>) => {
+        for (const chunk of pendingChunks.splice(0)) {
+          controller.enqueue(chunk);
+        }
+        if (pendingError) {
+          controller.error(pendingError);
+          return;
+        }
+        if (pendingClose) {
+          controller.close();
+        }
+      };
 
       const unsubData = bridge.onAiStreamData(requestId, (data: string) => {
         const normalizedData = normalizeOpenAIChatToolCalls(data);
         captureOpenAIChatFields(normalizedData);
         // Re-wrap as SSE so the SDK can parse it
-        streamController?.enqueue(encoder.encode(`data: ${normalizedData}\n\n`));
+        enqueueChunk(encoder.encode(`data: ${normalizedData}\n\n`));
       });
       const unsubEnd = bridge.onAiStreamEnd(requestId, () => {
-        try { streamController?.close(); } catch { /* already closed */ }
+        closeStream();
         cleanup();
       });
       const unsubError = bridge.onAiStreamError(
         requestId,
         (error: string) => {
-          try { streamController?.error(new Error(error)); } catch { /* already errored */ }
+          errorStream(new Error(error));
           cleanup();
         },
       );
@@ -496,7 +533,7 @@ export function createBridgeFetchForSDK(
           'abort',
           () => {
             bridge.aiChatCancel(requestId).catch(() => {});
-            try { streamController?.error(new DOMException('Aborted', 'AbortError')); } catch { /* already errored */ }
+            errorStream(new DOMException('Aborted', 'AbortError'));
             cleanup();
           },
           { once: true },
@@ -515,6 +552,11 @@ export function createBridgeFetchForSDK(
 
       if (!result.ok) {
         cleanup();
+        // Cancel during proxy lookup / request start must stay an AbortError,
+        // not a synthetic 502 that the AI SDK treats as a provider failure.
+        if (result.aborted || resolvedInit?.signal?.aborted) {
+          throw new DOMException('Aborted', 'AbortError');
+        }
         const errorMessage = result.error || 'Stream request failed';
         const jsonBody = JSON.stringify({ error: { message: errorMessage } });
         return new Response(jsonBody, {
@@ -543,6 +585,7 @@ export function createBridgeFetchForSDK(
       const stream = new ReadableStream<Uint8Array>({
         start(controller) {
           streamController = controller;
+          flushPendingStreamEvents(controller);
         },
       });
 

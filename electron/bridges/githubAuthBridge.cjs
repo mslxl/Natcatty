@@ -12,13 +12,17 @@ const pendingPollControllers = new Map();
 
 /**
  * @param {Electron.IpcMain} ipcMain
+ * @param {import('electron')=} electronModule
  */
-function registerHandlers(ipcMain) {
+function registerHandlers(ipcMain, electronModule) {
+  const fetchImpl =
+    electronModule?.net?.fetch ? electronModule.net.fetch.bind(electronModule.net) : fetch;
+
   ipcMain.handle("netcatty:github:deviceFlow:start", async (_event, payload) => {
     const clientId = payload?.clientId || GITHUB_CLIENT_ID;
     const scope = payload?.scope || "gist read:user";
 
-    const res = await fetch(GITHUB_DEVICE_CODE_URL, {
+    const res = await fetchImpl(GITHUB_DEVICE_CODE_URL, {
       method: "POST",
       headers: {
         Accept: "application/json",
@@ -63,7 +67,7 @@ function registerHandlers(ipcMain) {
     }
 
     try {
-      const res = await fetch(GITHUB_ACCESS_TOKEN_URL, {
+      const res = await fetchImpl(GITHUB_ACCESS_TOKEN_URL, {
         method: "POST",
         signal: controller.signal,
         headers: {

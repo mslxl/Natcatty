@@ -152,6 +152,7 @@ const getGlobalShortcutBridge = createLazyModule("./bridges/globalShortcutBridge
 const getCredentialBridge = createLazyModule("./bridges/credentialBridge.cjs");
 const getAutoUpdateBridge = createLazyModule("./bridges/autoUpdateBridge.cjs");
 const getAiBridge = createLazyModule("./bridges/aiBridge.cjs");
+const getHttpNetworkProxyBridge = createLazyModule("./bridges/httpNetworkProxyBridge.cjs");
 const getWindowManager = createLazyModule("./bridges/windowManager.cjs");
 const getVaultBackupBridge = createLazyModule("./bridges/vaultBackupBridge.cjs");
 const ptyProcessTree = require("./bridges/ptyProcessTree.cjs");
@@ -447,6 +448,7 @@ const registerBridges = createBridgeRegistrar({
   getCredentialBridge,
   getAutoUpdateBridge,
   getAiBridge,
+  getHttpNetworkProxyBridge,
   getWindowManager,
   getVaultBackupBridge,
   isPathInside,

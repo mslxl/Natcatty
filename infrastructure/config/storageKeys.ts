@@ -142,6 +142,8 @@ export const STORAGE_KEY_MANAGED_SOURCES = 'netcatty_managed_sources_v1';
 // Global Toggle Window Settings (Quake Mode)
 export const STORAGE_KEY_TOGGLE_WINDOW_HOTKEY = 'netcatty_toggle_window_hotkey_v1';
 export const STORAGE_KEY_CLOSE_TO_TRAY = 'netcatty_close_to_tray_v1';
+/** App-level HTTP(S) proxy for cloud sync / AI (not SSH ProxyJump). */
+export const STORAGE_KEY_HTTP_NETWORK_PROXY = 'netcatty_http_network_proxy_v1';
 export const STORAGE_KEY_GLOBAL_HOTKEY_ENABLED = 'netcatty_global_hotkey_enabled_v1';
 export const STORAGE_KEY_WINDOW_OPACITY = 'netcatty_window_opacity_v1';
 export const STORAGE_KEY_APP_ICON_VARIANT = 'netcatty_app_icon_variant_v1';
@@ -169,6 +171,12 @@ export const STORAGE_KEY_AI_QUICK_MESSAGES = 'netcatty_ai_quick_messages_v1';
 /** Confirm-mode permission grant memory (capability + session/command patterns). */
 export const STORAGE_KEY_AI_PERMISSION_GRANTS = 'netcatty_ai_permission_grants_v1';
 export const STORAGE_KEY_AI_SHOW_TERMINAL_SELECTION_ACTION = 'netcatty_ai_show_terminal_selection_action_v1';
+/** External MCP: whether the user last enabled the public catalog MCP endpoint. */
+export const STORAGE_KEY_AI_EXTERNAL_MCP_ENABLED = 'netcatty_ai_external_mcp_enabled_v1';
+/** External MCP lifecycle mode: temporary (idle timeout) or persistent (restore on launch). */
+export const STORAGE_KEY_AI_EXTERNAL_MCP_MODE = 'netcatty_ai_external_mcp_mode_v1';
+/** External MCP idle timeout in minutes (temporary mode only). */
+export const STORAGE_KEY_AI_EXTERNAL_MCP_IDLE_TIMEOUT_MINUTES = 'netcatty_ai_external_mcp_idle_timeout_minutes_v1';
 
 // SFTP Transfer Concurrency
 export const STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY = 'netcatty_sftp_transfer_concurrency_v1';

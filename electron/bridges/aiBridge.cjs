@@ -16,7 +16,9 @@ const { existsSync } = fs;
 const { appendVaultAgentGuidance } = require("../shared/vaultAgentGuidance.cjs");
 
 const mcpServerBridge = require("./mcpServerBridge.cjs");
+const { createExternalMcpController } = require("./externalMcpController.cjs");
 const { getCliLauncherPath, TOOL_CLI_DISCOVERY_ENV_VAR } = require("../cli/discoveryPath.cjs");
+const { getExternalMcpDiscoveryFilePath } = require("../cli/externalMcpDiscoveryPath.cjs");
 const {
   scanUserSkills,
   buildUserSkillsContext,
@@ -216,6 +218,8 @@ function buildExternalAgentContextualPrompt({ mode, prompt, chatSessionId, defau
 
 const { execViaPty } = require("./ai/ptyExec.cjs");
 
+let externalMcpController = null;
+let userDataDir = null;
 let sessions = null;
 let sftpClients = null;
 let electronModule = null;
@@ -368,6 +372,7 @@ function init(deps) {
   electronModule = deps.electronModule;
   terminalWorkerManager = deps.terminalWorkerManager || null;
   cliDiscoveryFilePath = deps.cliDiscoveryFilePath || null;
+  userDataDir = deps.userDataDir || null;
   mcpServerBridge.init({ sessions, sftpClients, electronModule, cliDiscoveryFilePath, terminalWorkerManager });
 
   // Wire up main window getter for MCP approval IPC
@@ -392,6 +397,23 @@ function init(deps) {
     // windowManager may not be available yet; will be set lazily
   }
 
+  if (!externalMcpController) {
+    externalMcpController = createExternalMcpController({
+      mcpServerBridge,
+    });
+  }
+  externalMcpController.init({
+    mcpServerBridge,
+    discoveryFilePath: getExternalMcpDiscoveryFilePath(
+      userDataDir ? { userDataDir } : {},
+    ),
+  });
+  externalMcpController.setSessionSyncHandler(async () => {
+    mcpServerBridge.syncLiveSessionsToExternalScope();
+  });
+  if (typeof mcpServerBridge.setExternalMcpHooks === "function") {
+    mcpServerBridge.setExternalMcpHooks(externalMcpController);
+  }
 }
 
 function withCliDiscoveryEnv(env) {
@@ -486,30 +508,76 @@ function safeReadJson(filePath) {
 }
 
 /**
- * Make a streaming HTTP request and forward SSE events back to renderer
- */
-/**
  * Start a streaming HTTP request. The returned promise resolves as soon as
  * the HTTP response headers arrive (with { statusCode, statusText }) so the
  * renderer can construct a Response with the real status. Data continues to
  * flow via stream:data / stream:end / stream:error IPC events.
  */
-function streamRequest(url, options, event, requestId, skipTLS) {
+function createAbortError() {
+  const err = new Error("Aborted");
+  err.name = "AbortError";
+  return err;
+}
+
+function raceAgainstAbort(promise, signal) {
+  if (signal.aborted) return Promise.reject(createAbortError());
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(createAbortError());
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (err) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(err);
+      },
+    );
+  });
+}
+
+async function streamRequest(url, options, event, requestId, skipTLS) {
+  // Register cancellation before any await so Stop during PAC/proxy lookup works.
+  const controller = new AbortController();
+  activeStreams.set(requestId, controller);
+  if (controller.signal.aborted) {
+    activeStreams.delete(requestId);
+    throw createAbortError();
+  }
+
+  const { resolveOutboundHttpAgent } = require("./httpNetworkProxyAgent.cjs");
+  let proxyAgent;
+  try {
+    proxyAgent = await raceAgainstAbort(
+      resolveOutboundHttpAgent(url, {
+        session: electronModule?.session?.defaultSession,
+        rejectUnauthorized: skipTLS ? false : undefined,
+      }),
+      controller.signal,
+    );
+  } catch (err) {
+    if (err?.name === "AbortError" || controller.signal.aborted) {
+      activeStreams.delete(requestId);
+      throw createAbortError();
+    }
+    proxyAgent = undefined;
+  }
+
+  if (controller.signal.aborted) {
+    activeStreams.delete(requestId);
+    throw createAbortError();
+  }
+
   return new Promise((resolve, reject) => {
     const parsedUrl = new URL(url);
     const isHttps = parsedUrl.protocol === "https:";
     const lib = isHttps ? https : http;
 
-    // Store an AbortController before starting the request so that
-    // cancellation requests arriving before the http.request callback
-    // are not lost (fixes a race between request start and activeStreams.set).
-    const controller = new AbortController();
-    activeStreams.set(requestId, controller);
-
-    // If already aborted (cancel arrived before we even got here), bail out.
+    // Re-check after entering the Promise in case cancel raced the await above.
     if (controller.signal.aborted) {
       activeStreams.delete(requestId);
-      resolve({ statusCode: 0, statusText: "Aborted" });
+      reject(createAbortError());
       return;
     }
 
@@ -519,6 +587,7 @@ function streamRequest(url, options, event, requestId, skipTLS) {
         timeout: 120000, // 2 min connection timeout
     };
     if (skipTLS && isHttps) reqOpts.rejectUnauthorized = false;
+    if (proxyAgent) reqOpts.agent = proxyAgent;
 
     const req = lib.request(parsedUrl, reqOpts,
       (res) => {
@@ -650,6 +719,7 @@ function createHandlerContext(ipcMain) {
     fs,
     existsSync,
     mcpServerBridge,
+    getExternalMcpController: () => externalMcpController,
     getCliLauncherPath,
     TOOL_CLI_DISCOVERY_ENV_VAR,
     scanUserSkills,
@@ -771,6 +841,10 @@ function registerHandlers(ipcMain) {
   registerAgentDiscoveryHandlers(context);
   registerAgentProcessHandlers(context);
   registerSdkStreamHandlers(context);
+
+  if (externalMcpController) {
+    externalMcpController.registerHandlers(ipcMain, validateSenderOrSettings);
+  }
 }
 
 // Abort active streams and child processes on shutdown
@@ -797,6 +871,14 @@ function cleanup() {
   }
   codexLoginSessions.clear();
   invalidateCodexValidationCache();
+  try {
+    externalMcpController?.cleanup?.();
+  } catch {
+    // Ignore external MCP cleanup failures during shutdown.
+  }
+  if (typeof mcpServerBridge.setExternalMcpHooks === "function") {
+    mcpServerBridge.setExternalMcpHooks(null);
+  }
   mcpServerBridge.cleanup();
 }
 
@@ -806,4 +888,5 @@ module.exports = {
   cleanup,
   buildExternalAgentSystemContext,
   buildExternalAgentContextualPrompt,
+  getExternalMcpController: () => externalMcpController,
 };
