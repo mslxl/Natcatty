@@ -236,6 +236,12 @@ test("sftpPickerSessionsEqual ignores title-only changes", () => {
   assert.equal(sftpPickerSessionsEqual(prev, next), true);
 });
 
+test("sftpPickerSessionsEqual detects session reorder for same-host preference", () => {
+  const a = session({ id: "s-a", hostId: "h", status: "connected" });
+  const b = session({ id: "s-b", hostId: "h", status: "connected" });
+  assert.equal(sftpPickerSessionsEqual([a, b], [b, a]), false);
+});
+
 test("sftpPickerSessionsEqual detects status, hostId, transport, and endpoint changes", () => {
   const base = session({ id: "s1", hostId: "a", status: "connected" });
   assert.equal(

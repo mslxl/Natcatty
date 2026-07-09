@@ -69,14 +69,15 @@ export const sftpPickerSessionsEqual = (
   if (!prev || !next) return false;
   if (prev.length !== next.length) return false;
 
-  const nextById = new Map(next.map((session) => [session.id, session]));
-  if (nextById.size !== next.length) return false;
-
-  for (const session of prev) {
-    const other = nextById.get(session.id);
-    if (!other) return false;
+  // Compare positionally: listSftpConnectedHosts keeps the later same-host
+  // session, so a reorder with identical members must invalidate memoization.
+  for (let i = 0; i < prev.length; i += 1) {
+    const session = prev[i];
+    const other = next[i];
+    if (!session || !other) return false;
     if (
-      session.hostId !== other.hostId
+      session.id !== other.id
+      || session.hostId !== other.hostId
       || session.protocol !== other.protocol
       || session.status !== other.status
       || Boolean(session.moshEnabled) !== Boolean(other.moshEnabled)
