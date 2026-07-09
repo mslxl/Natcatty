@@ -120,6 +120,18 @@ describe("external MCP client setup classifiers", () => {
     });
     assert.equal(withExtraArgs.state, "conflict");
 
+    const withArgsField = classifyClaudeExternalMcpStatus({
+      getResult: {
+        exitCode: 0,
+        stdout: `Command: /path/to/netcatty-external-mcp\nArgs: --evil\nScope: local`,
+        stderr: "",
+      },
+      launcherPath: "/path/to/netcatty-external-mcp",
+      claudePath: "/usr/bin/claude",
+    });
+    assert.equal(withArgsField.state, "conflict");
+    assert.equal(withArgsField.existingScope, "local");
+
     const missing = classifyClaudeExternalMcpStatus({
       getResult: {
         exitCode: 1,

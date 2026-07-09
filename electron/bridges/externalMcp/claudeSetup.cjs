@@ -68,6 +68,32 @@ function extractExistingCommand(result) {
   return afterName || output;
 }
 
+function extractExistingArgs(result) {
+  const output = getCombinedOutput(result);
+  if (!output) return [];
+  const argsLine = output
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .find((line) => /^Args?:\s*/iu.test(line));
+  if (!argsLine) return [];
+  const raw = argsLine.replace(/^Args?:\s*/iu, "").trim();
+  if (!raw || raw === "[]" || raw === "(none)" || raw === "none") return [];
+  return raw.split(/\s+/u).filter(Boolean);
+}
+
+function extractExistingScope(result) {
+  const output = getCombinedOutput(result);
+  if (!output) return null;
+  const scopeLine = output
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .find((line) => /^Scope:\s*/iu.test(line));
+  if (!scopeLine) return null;
+  const scope = scopeLine.replace(/^Scope:\s*/iu, "").trim().toLowerCase();
+  if (scope === "user" || scope === "local" || scope === "project") return scope;
+  return null;
+}
+
 function buildClaudeAddArgs(launcherPath, discoveryEnv) {
   return [
     "mcp",
@@ -152,18 +178,30 @@ function classifyClaudeExternalMcpStatus({ getResult, launcherPath, claudePath, 
   }
 
   const existingCommand = extractExistingCommand(getResult);
+  const existingArgs = extractExistingArgs(getResult);
+  const existingScope = extractExistingScope(getResult);
   if (pathsMatch(extractCommandExecutable(existingCommand), launcherPath)) {
+    if (existingArgs.length > 0) {
+      return {
+        ...base,
+        state: "conflict",
+        existingCommand,
+        existingScope,
+      };
+    }
     if (!hasRequiredDiscoveryEnv(extractExistingEnv(getResult), discoveryEnv)) {
       return {
         ...base,
         state: "not_configured",
         existingCommand,
+        existingScope,
       };
     }
     return {
       ...base,
       state: "configured",
       existingCommand,
+      existingScope,
     };
   }
 
@@ -171,6 +209,7 @@ function classifyClaudeExternalMcpStatus({ getResult, launcherPath, claudePath, 
     ...base,
     state: "conflict",
     existingCommand,
+    existingScope,
   };
 }
 
@@ -299,7 +338,18 @@ function createExternalMcpClaudeSetup(options = {}) {
 
     try {
       if (status.existingCommand) {
-        await runClaude(claudePath, shellEnv, ["mcp", "remove", "-s", "user", EXTERNAL_MCP_CLAUDE_NAME]);
+        const scopes = status.existingScope
+          ? [status.existingScope]
+          : ["local", "user", "project"];
+        for (const nextScope of scopes) {
+          await runClaude(claudePath, shellEnv, [
+            "mcp",
+            "remove",
+            "-s",
+            nextScope,
+            EXTERNAL_MCP_CLAUDE_NAME,
+          ]);
+        }
       }
       const addResult = await runClaude(
         claudePath,
