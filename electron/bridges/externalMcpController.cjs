@@ -65,6 +65,8 @@ function createExternalMcpController(options = {}) {
   let idleTimer = null;
   let startPromise = null;
   let stopPromise = null;
+  let setEnabledChain = Promise.resolve();
+  let startGeneration = 0;
   let lastKnownPort = null;
   let lastKnownToken = null;
   let sessionSyncHandler = null;
@@ -216,6 +218,34 @@ function createExternalMcpController(options = {}) {
         // Best-effort socket revoke.
       }
     }
+    if (typeof bridge?.cancelPtyExecsForSession === "function") {
+      try {
+        bridge.cancelPtyExecsForSession(deps.chatSessionId);
+      } catch {
+        // Best-effort exec cancel.
+      }
+    }
+    if (typeof bridge?.cancelBackgroundJobsForSession === "function") {
+      try {
+        bridge.cancelBackgroundJobsForSession(deps.chatSessionId);
+      } catch {
+        // Best-effort background job cancel.
+      }
+    }
+    if (typeof bridge?.cancelWorkerBackgroundJobsForSession === "function") {
+      try {
+        bridge.cancelWorkerBackgroundJobsForSession(deps.chatSessionId);
+      } catch {
+        // Best-effort worker job cancel.
+      }
+    }
+    if (typeof bridge?.cancelSftpOpsForSession === "function") {
+      try {
+        await bridge.cancelSftpOpsForSession(deps.chatSessionId);
+      } catch {
+        // Best-effort SFTP cancel.
+      }
+    }
     if (typeof bridge?.clearPendingApprovals === "function") {
       try {
         bridge.clearPendingApprovals(deps.chatSessionId);
@@ -228,10 +258,12 @@ function createExternalMcpController(options = {}) {
     }
   }
 
-  async function setEnabled(nextEnabled) {
-    enabled = Boolean(nextEnabled);
+  async function setEnabledUnlocked(nextEnabled) {
+    const wantEnabled = Boolean(nextEnabled);
+    enabled = wantEnabled;
 
-    if (!enabled) {
+    if (!wantEnabled) {
+      startGeneration += 1;
       if (startPromise) {
         state = "disabled";
         error = null;
@@ -240,16 +272,12 @@ function createExternalMcpController(options = {}) {
       if (stopPromise) {
         await stopPromise;
       }
-      // Always run cleanup for this disable request, even if another stop was
-      // already in flight (enable→disable races / idle timer overlap).
-      if (!enabled) {
-        state = "disabled";
-        error = null;
-        stopPromise = stopActiveRuntime().finally(() => {
-          stopPromise = null;
-        });
-        await stopPromise;
-      }
+      state = "disabled";
+      error = null;
+      stopPromise = stopActiveRuntime().finally(() => {
+        stopPromise = null;
+      });
+      await stopPromise;
       return buildStatus();
     }
 
@@ -260,20 +288,28 @@ function createExternalMcpController(options = {}) {
     }
     if (stopPromise) {
       await stopPromise;
-      if (!enabled) {
-        return buildStatus();
-      }
+    }
+    if (!enabled) {
+      return buildStatus();
     }
     if (startPromise) {
       await startPromise.catch(() => {});
-      return buildStatus();
+      if (!enabled) {
+        return buildStatus();
+      }
+      if (state === "running" && lastKnownPort != null && lastKnownToken) {
+        writeDiscoveryFromBridge();
+        scheduleIdleShutdown();
+        return buildStatus();
+      }
     }
 
+    const generation = ++startGeneration;
     state = "starting";
     error = null;
     startPromise = startRuntime()
       .then(() => {
-        if (!enabled) {
+        if (!enabled || generation !== startGeneration) {
           state = "disabled";
           error = null;
           return;
@@ -282,6 +318,7 @@ function createExternalMcpController(options = {}) {
         scheduleIdleShutdown();
       })
       .catch(async (startError) => {
+        if (generation !== startGeneration) return;
         error = startError?.message || String(startError);
         enabled = false;
         state = "disabled";
@@ -292,11 +329,20 @@ function createExternalMcpController(options = {}) {
         }
       })
       .finally(() => {
-        startPromise = null;
+        if (generation === startGeneration) {
+          startPromise = null;
+        }
       });
 
     await startPromise;
     return buildStatus();
+  }
+
+  function setEnabled(nextEnabled) {
+    const run = () => setEnabledUnlocked(nextEnabled);
+    const result = setEnabledChain.then(run, run);
+    setEnabledChain = result.then(() => {}, () => {});
+    return result;
   }
 
   function setConfig(config = {}) {

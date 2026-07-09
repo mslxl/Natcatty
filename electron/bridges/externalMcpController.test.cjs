@@ -36,6 +36,12 @@ function createFakeBridge({ port = 45555, token = "tok-1" } = {}) {
     cleanupScopedMetadata: async (chatSessionId) => {
       scoped.delete(chatSessionId);
     },
+    cancelPtyExecsForSession: () => {},
+    cancelBackgroundJobsForSession: () => {},
+    cancelWorkerBackgroundJobsForSession: () => {},
+    cancelSftpOpsForSession: async () => {},
+    clearPendingApprovals: () => {},
+    disconnectExternalMcpClients: () => {},
     _scoped: scoped,
   };
 }
@@ -162,5 +168,35 @@ describe("externalMcpController", () => {
     await controller.setEnabled(true);
     assert.equal(scheduled, 0);
     assert.equal(controller.getStatus().mode, "persistent");
+  });
+
+  it("serializes overlapping enable/disable so final enable recovers", async () => {
+    let releaseStart = null;
+    let startPasses = 0;
+    const { controller, bridge } = createController();
+    controller.setSessionSyncHandler(async () => {
+      startPasses += 1;
+      if (startPasses === 1) {
+        await new Promise((resolve) => {
+          releaseStart = resolve;
+        });
+      }
+      bridge.syncLiveSessionsToExternalScope();
+    });
+
+    const firstEnable = controller.setEnabled(true);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(typeof releaseStart, "function");
+
+    const disableDuringStart = controller.setEnabled(false);
+    const reenable = controller.setEnabled(true);
+    releaseStart();
+
+    await firstEnable;
+    await disableDuringStart;
+    const status = await reenable;
+    assert.equal(status.enabled, true);
+    assert.equal(status.state, "running");
+    assert.ok(written.length >= 2);
   });
 });

@@ -220,6 +220,16 @@ function classifyClaudeExternalMcpStatus({ getResult, launcherPath, claudePath, 
         existingScope,
       };
     }
+    // One-click setup targets user scope. Local/project matches still need
+    // remove+re-add so the entry is available across projects.
+    if (existingScope && existingScope !== "user") {
+      return {
+        ...base,
+        state: "not_configured",
+        existingCommand,
+        existingScope,
+      };
+    }
     return {
       ...base,
       state: "configured",

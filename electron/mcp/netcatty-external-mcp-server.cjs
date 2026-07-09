@@ -39,6 +39,7 @@ function main() {
     process.exit(1);
   }
 
+  process.env.NETCATTY_EXTERNAL_MCP_DISCOVERY_FILE = discoveryPath;
   process.env.NETCATTY_MCP_PORT = String(discovery.port);
   process.env.NETCATTY_MCP_TOKEN = discovery.token;
   process.env.NETCATTY_MCP_CHAT_SESSION_ID = discovery.chatSessionId || EXTERNAL_MCP_CHAT_SESSION_ID;

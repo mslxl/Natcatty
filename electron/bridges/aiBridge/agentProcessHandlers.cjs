@@ -6,28 +6,9 @@ function registerAgentProcessHandlers(ctx) {
 
   ipcMain.handle("netcatty:ai:mcp:update-sessions", async (event, { sessions: sessionList, chatSessionId }) => {
     if (!validateSenderOrSettings(event)) return { ok: false, error: "Unauthorized IPC sender" };
+    // Catty sidebar pushes stay on their own chat scope. App-wide External MCP
+    // scope (`__external_mcp__`) is owned by TerminalLayer full-session sync.
     mcpServerBridge.updateSessionMetadata(sessionList || [], chatSessionId);
-    // Keep the reserved external MCP scope in sync whenever the renderer pushes
-    // an update and external mode is enabled. Merge (do not replace) so a
-    // single Catty sidebar scope cannot shrink the app-wide external host set.
-    // In terminal-worker mode the main-process sessions map is empty, so this
-    // renderer payload is the primary seed source.
-    try {
-      const external = typeof getExternalMcpController === "function"
-        ? getExternalMcpController()
-        : null;
-      if (external?.isEnabled?.()) {
-        const externalChatSessionId = external.getChatSessionId?.();
-        if (externalChatSessionId && typeof mcpServerBridge.mergeSessionMetadata === "function") {
-          mcpServerBridge.mergeSessionMetadata(sessionList || [], externalChatSessionId);
-        } else if (externalChatSessionId) {
-          mcpServerBridge.updateSessionMetadata(sessionList || [], externalChatSessionId);
-        }
-        mcpServerBridge.syncLiveSessionsToExternalScope(externalChatSessionId);
-      }
-    } catch {
-      // External scope sync is best-effort.
-    }
     return { ok: true };
   });
 

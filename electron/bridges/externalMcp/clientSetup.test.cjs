@@ -173,6 +173,20 @@ describe("external MCP client setup classifiers", () => {
     assert.equal(userScope.state, "configured");
     assert.equal(userScope.existingScope, "user");
 
+    const localScopeNeedsUpgrade = classifyClaudeExternalMcpStatus({
+      getResult: {
+        exitCode: 0,
+        stdout: `Command: -e NETCATTY_EXTERNAL_MCP_DISCOVERY_FILE=/tmp/d.json -- /path/to/netcatty-external-mcp\nScope: Local config (private to you in this project)`,
+        stderr: "",
+      },
+      launcherPath: "/path/to/netcatty-external-mcp",
+      claudePath: "/usr/bin/claude",
+      discoveryEnv: { NETCATTY_EXTERNAL_MCP_DISCOVERY_FILE: "/tmp/d.json" },
+    });
+    assert.equal(localScopeNeedsUpgrade.state, "not_configured");
+    assert.equal(localScopeNeedsUpgrade.existingScope, "local");
+    assert.ok(localScopeNeedsUpgrade.existingCommand);
+
     const missing = classifyClaudeExternalMcpStatus({
       getResult: {
         exitCode: 1,
