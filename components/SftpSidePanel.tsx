@@ -53,7 +53,7 @@ import {
   shouldResetSftpSidePanelSourceSession,
   shouldSkipSftpSidePanelAutoConnect,
 } from "./sftp/sftpSidePanelAutoConnect";
-import { listSftpConnectedHosts } from "../domain/sftpConnectedHosts";
+import { listSftpConnectedHosts, sftpPickerSessionsEqual } from "../domain/sftpConnectedHosts";
 import type { TerminalSession } from "../domain/models";
 
 interface SftpSidePanelProps {
@@ -1201,7 +1201,7 @@ const SftpSidePanelInteractiveBody: React.FC<SftpSidePanelInteractiveBodyProps> 
 const sidePanelAreEqual = (prev: SftpSidePanelProps, next: SftpSidePanelProps): boolean =>
   prev.hosts === next.hosts &&
   prev.writableHosts === next.writableHosts &&
-  prev.sessions === next.sessions &&
+  sftpPickerSessionsEqual(prev.sessions, next.sessions) &&
   prev.keys === next.keys &&
   prev.identities === next.identities &&
   prev.knownHosts === next.knownHosts &&

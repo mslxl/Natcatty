@@ -21,7 +21,7 @@ import { useSftpState } from "../application/state/useSftpState";
 import { useSftpBackend } from "../application/state/useSftpBackend";
 import { getParentPath, isConcreteTransferTargetPath } from "../application/state/sftp/utils";
 import { HotkeyScheme, KeyBinding, TerminalSession } from "../domain/models";
-import { listSftpConnectedHosts } from "../domain/sftpConnectedHosts";
+import { listSftpConnectedHosts, sftpPickerSessionsEqual } from "../domain/sftpConnectedHosts";
 import { logger } from "../lib/logger";
 import { useRenderTracker } from "../lib/useRenderTracker";
 import { cn } from "../lib/utils";
@@ -634,7 +634,7 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
 export const sftpViewAreEqual = (prev: SftpViewProps, next: SftpViewProps): boolean =>
   prev.hosts === next.hosts &&
   prev.writableHosts === next.writableHosts &&
-  prev.sessions === next.sessions &&
+  sftpPickerSessionsEqual(prev.sessions, next.sessions) &&
   prev.keys === next.keys &&
   prev.identities === next.identities &&
   prev.knownHosts === next.knownHosts &&
