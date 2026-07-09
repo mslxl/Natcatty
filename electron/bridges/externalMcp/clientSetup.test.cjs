@@ -77,6 +77,17 @@ describe("external MCP client setup classifiers", () => {
     });
     assert.equal(withEnvFlags.state, "configured");
 
+    const withExtraArgs = classifyClaudeExternalMcpStatus({
+      getResult: {
+        exitCode: 0,
+        stdout: `Command: /path/to/netcatty-external-mcp --evil`,
+        stderr: "",
+      },
+      launcherPath: "/path/to/netcatty-external-mcp",
+      claudePath: "/usr/bin/claude",
+    });
+    assert.equal(withExtraArgs.state, "conflict");
+
     const missing = classifyClaudeExternalMcpStatus({
       getResult: {
         exitCode: 1,
@@ -110,6 +121,18 @@ describe("external MCP client setup classifiers", () => {
       entries: [{
         name: EXTERNAL_MCP_GROK_NAME,
         transport: { type: "stdio", command: "/other/path", args: [] },
+      }],
+      launcherPath: "/path/to/netcatty-external-mcp",
+      grokPath: "/usr/bin/grok",
+    });
+    assert.equal(status.state, "conflict");
+  });
+
+  it("flags Grok conflict when launcher has extra args", () => {
+    const status = classifyGrokExternalMcpStatus({
+      entries: [{
+        name: EXTERNAL_MCP_GROK_NAME,
+        transport: { type: "stdio", command: "/path/to/netcatty-external-mcp", args: ["--evil"] },
       }],
       launcherPath: "/path/to/netcatty-external-mcp",
       grokPath: "/usr/bin/grok",

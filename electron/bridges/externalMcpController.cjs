@@ -316,8 +316,9 @@ function createExternalMcpController(options = {}) {
 
   function isEnabled() {
     // Accept clients while starting/running as soon as the switch is on.
-    // Discovery may be written before state flips to "running".
-    return enabled;
+    // Discovery may be written before state flips to "running". Do not treat
+    // error/disabled as enabled after cleanup revoked discovery/sockets.
+    return enabled && (state === "starting" || state === "running");
   }
 
   function getChatSessionId() {

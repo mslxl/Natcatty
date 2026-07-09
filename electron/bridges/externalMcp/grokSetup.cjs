@@ -132,7 +132,10 @@ function extractCommandExecutable(commandText) {
     ? trimmed.slice(dashDashIndex + 4).trim()
     : trimmed;
   const match = candidate.match(/("(?:\\.|[^"])*"|'(?:\\.|[^'])*'|[^\s]+)/u);
-  return match ? match[1] : candidate;
+  if (!match) return candidate;
+  const remainder = candidate.slice(match[0].length).trim();
+  if (remainder) return "";
+  return match[1];
 }
 
 function getEntryCommand(entry) {
@@ -141,12 +144,12 @@ function getEntryCommand(entry) {
     const command = String(entry.transport.command || "").trim();
     const args = Array.isArray(entry.transport.args) ? entry.transport.args : [];
     if (command && args.length === 0) return command;
-    return formatExistingCommand(entry);
+    return null;
   }
   if (typeof entry.command === "string" && entry.command.trim()) {
     const args = Array.isArray(entry.args) ? entry.args : [];
     if (args.length === 0) return entry.command.trim();
-    return [entry.command.trim(), ...args].join(" ").trim();
+    return null;
   }
   return formatExistingCommand(entry);
 }

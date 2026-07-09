@@ -90,7 +90,11 @@ function extractCommandExecutable(commandText) {
     ? trimmed.slice(dashDashIndex + 4).trim()
     : trimmed;
   const match = candidate.match(/("(?:\\.|[^"])*"|'(?:\\.|[^'])*'|[^\s]+)/u);
-  return match ? match[1] : candidate;
+  if (!match) return candidate;
+  // Extra args after the executable mean a different launch command.
+  const remainder = candidate.slice(match[0].length).trim();
+  if (remainder) return "";
+  return match[1];
 }
 
 function classifyClaudeExternalMcpStatus({ getResult, launcherPath, claudePath }) {
@@ -209,11 +213,11 @@ function createExternalMcpClaudeSetup(options = {}) {
     }
 
     try {
+      // `claude mcp get` does not accept `-s`; user-scope entries are still
+      // returned by the default get lookup after `mcp add -s user`.
       const result = await runClaude(claudePath, shellEnv, [
         "mcp",
         "get",
-        "-s",
-        "user",
         EXTERNAL_MCP_CLAUDE_NAME,
       ]);
       const status = classifyClaudeExternalMcpStatus({
