@@ -202,12 +202,21 @@ function classifyGrokExternalMcpStatus({ entries, launcherPath, grokPath, discov
     };
   }
 
-  const existingCommand = getEntryCommand(entry) || launcherPath || EXTERNAL_MCP_GROK_NAME;
+  const existingCommand = getEntryCommand(entry);
   if (entry.enabled === false) {
     return {
       ...base,
       state: "not_configured",
-      existingCommand,
+      existingCommand: existingCommand || launcherPath || EXTERNAL_MCP_GROK_NAME,
+    };
+  }
+
+  if (!existingCommand) {
+    // Present but not a plain launcher command (extra args / non-stdio).
+    return {
+      ...base,
+      state: "conflict",
+      existingCommand: formatExistingCommand(entry) || EXTERNAL_MCP_GROK_NAME,
     };
   }
 
