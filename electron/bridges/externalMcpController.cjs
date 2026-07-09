@@ -246,6 +246,13 @@ function createExternalMcpController(options = {}) {
         // Best-effort SFTP cancel.
       }
     }
+    if (typeof bridge?.setChatSessionCancelled === "function") {
+      try {
+        bridge.setChatSessionCancelled(deps.chatSessionId, true);
+      } catch {
+        // Best-effort cancel flag.
+      }
+    }
     if (typeof bridge?.clearPendingApprovals === "function") {
       try {
         bridge.clearPendingApprovals(deps.chatSessionId);
@@ -307,6 +314,14 @@ function createExternalMcpController(options = {}) {
     const generation = ++startGeneration;
     state = "starting";
     error = null;
+    const bridgeForEnable = getBridge();
+    if (typeof bridgeForEnable?.setChatSessionCancelled === "function") {
+      try {
+        bridgeForEnable.setChatSessionCancelled(deps.chatSessionId, false);
+      } catch {
+        // Best-effort clear of a previous disable cancel flag.
+      }
+    }
     startPromise = startRuntime()
       .then(() => {
         if (!enabled || generation !== startGeneration) {

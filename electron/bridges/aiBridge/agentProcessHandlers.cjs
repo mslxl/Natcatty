@@ -6,10 +6,32 @@ function registerAgentProcessHandlers(ctx) {
 
   ipcMain.handle("netcatty:ai:mcp:update-sessions", async (event, { sessions: sessionList, chatSessionId }) => {
     if (!validateSenderOrSettings(event)) return { ok: false, error: "Unauthorized IPC sender" };
-    // Catty sidebar pushes stay on their own chat scope. App-wide External MCP
-    // scope (`__external_mcp__`) is owned by TerminalLayer full-session sync.
-    mcpServerBridge.updateSessionMetadata(sessionList || [], chatSessionId);
-    return { ok: true };
+    const list = Array.isArray(sessionList) ? sessionList : [];
+    const externalId = mcpServerBridge.EXTERNAL_MCP_CHAT_SESSION_ID;
+    if (chatSessionId === externalId) {
+      // App-wide External MCP scope is owned by the main-window full-session sync.
+      // Reject writes while disabled so in-flight renderer pushes cannot resurrect
+      // metadata after stopActiveRuntime cleared the scope.
+      try {
+        const external = typeof getExternalMcpController === "function"
+          ? getExternalMcpController()
+          : null;
+        if (!external?.isEnabled?.()) {
+          return { ok: false, error: "External MCP is disabled" };
+        }
+      } catch {
+        return { ok: false, error: "External MCP is unavailable" };
+      }
+      // Preserve previously seeded hosts when the renderer briefly pushes [].
+      if (list.length === 0) {
+        const existing = mcpServerBridge.getScopedSessionIds?.(externalId) || [];
+        if (existing.length > 0) {
+          return { ok: true, preserved: true, count: existing.length };
+        }
+      }
+    }
+    mcpServerBridge.updateSessionMetadata(list, chatSessionId);
+    return { ok: true, count: list.length };
   });
 
   ipcMain.handle("netcatty:ai:mcp:update-attachments", async (event, { attachments, chatSessionId }) => {

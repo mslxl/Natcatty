@@ -40,6 +40,7 @@ function createFakeBridge({ port = 45555, token = "tok-1" } = {}) {
     cancelBackgroundJobsForSession: () => {},
     cancelWorkerBackgroundJobsForSession: () => {},
     cancelSftpOpsForSession: async () => {},
+    setChatSessionCancelled: () => {},
     clearPendingApprovals: () => {},
     disconnectExternalMcpClients: () => {},
     _scoped: scoped,

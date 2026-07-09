@@ -12,7 +12,7 @@ const EXTERNAL_MCP_CHAT_SESSION_ID = '__external_mcp__';
 
 type UseExternalMcpSessionSyncOptions = {
   sessions: TerminalSession[];
-  sessionHostsMap: Map<string, Host>;
+  sessionHostsMap?: Map<string, Host>;
   hosts: Host[];
   portForwardingRules: PortForwardingRule[];
 };
@@ -29,7 +29,8 @@ function isMainAppWindow(): boolean {
 
 /**
  * Keep the reserved External MCP scope aligned with every live terminal
- * session, independent of whether the Catty AI side panel is open.
+ * session, independent of whether the Catty AI side panel / TerminalLayer
+ * has mounted yet.
  */
 export function useExternalMcpSessionSync({
   sessions,
@@ -42,6 +43,7 @@ export function useExternalMcpSessionSync({
     void enabledTick;
     return readExternalMcpStoredEnabled();
   }, [enabledTick]);
+  const syncGenerationRef = useRef(0);
 
   useEffect(() => {
     const bump = () => setEnabledTick((value) => value + 1);
@@ -64,12 +66,15 @@ export function useExternalMcpSessionSync({
 
   const payload = useMemo(() => {
     const localOs = detectLocalOs(navigator.userAgent || navigator.platform);
-    return sessions.map((session) =>
-      buildAITerminalSessionInfo(session, sessionHostsMap.get(session.id), localOs, {
+    const hostById = new Map(hosts.map((host) => [host.id, host]));
+    return sessions.map((session) => {
+      const host = sessionHostsMap?.get(session.id)
+        || (session.hostId ? hostById.get(session.hostId) : undefined);
+      return buildAITerminalSessionInfo(session, host, localOs, {
         allHosts: hosts,
         portForwardingRules,
-      }),
-    );
+      });
+    });
   }, [sessions, sessionHostsMap, hosts, portForwardingRules]);
 
   const lastSentSerializedRef = useRef('');
@@ -77,6 +82,7 @@ export function useExternalMcpSessionSync({
   useEffect(() => {
     if (!isMainAppWindow()) return;
     if (!enabled) {
+      syncGenerationRef.current += 1;
       lastSentSerializedRef.current = '';
       return;
     }
@@ -86,9 +92,14 @@ export function useExternalMcpSessionSync({
     const serialized = JSON.stringify(payload);
     if (serialized === lastSentSerializedRef.current) return;
 
+    const generation = ++syncGenerationRef.current;
     const timeoutId = window.setTimeout(() => {
       void Promise.resolve(bridge.aiMcpUpdateSessions?.(payload, EXTERNAL_MCP_CHAT_SESSION_ID))
-        .then(() => {
+        .then((result) => {
+          if (generation !== syncGenerationRef.current) return;
+          if (result && typeof result === 'object' && 'ok' in result && (result as { ok?: boolean }).ok === false) {
+            return;
+          }
           lastSentSerializedRef.current = serialized;
         })
         .catch(() => {

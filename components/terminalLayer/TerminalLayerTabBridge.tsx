@@ -12,7 +12,6 @@ import { cn } from '../../lib/utils';
 import type { Host, TerminalSession, Workspace } from '../../types';
 import { TerminalLayerView } from './TerminalLayerView';
 import { useTerminalAiContexts } from './useTerminalAiContexts';
-import { useExternalMcpSessionSync } from './useExternalMcpSessionSync';
 import { useTerminalLayerEffects } from './useTerminalLayerEffects';
 import { useTerminalThemePanelState } from './useTerminalThemePanelState';
 import { useManualTerminalChromeSurfaceInjection } from '../../application/state/useManualTerminalChromeSurfaceInjection';
@@ -272,13 +271,6 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     terminalContextReadersRef,
     workspaces: s.workspaces,
     workspacesRef: s.workspacesRef,
-  });
-
-  useExternalMcpSessionSync({
-    sessions,
-    sessionHostsMap,
-    hosts: s.hosts,
-    portForwardingRules: s.portForwardingRules,
   });
 
   const handleTerminalContextReaderChange = React.useCallback((

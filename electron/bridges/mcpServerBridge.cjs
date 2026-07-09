@@ -132,11 +132,39 @@ function setMainWindowGetter(fn) {
 const { MCP_APPROVAL_TIMEOUT_MS } = require("../shared/approvalConstants.cjs");
 const APPROVAL_TIMEOUT_MS = MCP_APPROVAL_TIMEOUT_MS;
 
+function listApprovalTargetWindows() {
+  const windows = [];
+  const seen = new Set();
+  const push = (win) => {
+    if (!win || win.isDestroyed?.()) return;
+    const id = win.webContents?.id;
+    if (id != null && seen.has(id)) return;
+    if (id != null) seen.add(id);
+    windows.push(win);
+  };
+  try {
+    if (typeof getMainWindowFn === "function") push(getMainWindowFn());
+  } catch { /* ignore */ }
+  try {
+    const windowManager = require("./windowManager.cjs");
+    push(windowManager.getSettingsWindow?.());
+  } catch { /* ignore */ }
+  return windows;
+}
+
+function broadcastApprovalEvent(channel, payload) {
+  for (const win of listApprovalTargetWindows()) {
+    try {
+      win.webContents.send(channel, payload);
+    } catch { /* ignore */ }
+  }
+}
+
 function requestApprovalFromRenderer(toolName, args, chatSessionId) {
   return new Promise((resolve) => {
     debugLog("requestApprovalFromRenderer", { toolName, args, chatSessionId });
-    const mainWin = typeof getMainWindowFn === 'function' ? getMainWindowFn() : null;
-    if (!mainWin || mainWin.isDestroyed()) {
+    const targets = listApprovalTargetWindows();
+    if (targets.length === 0) {
       // No renderer available — deny to preserve confirm mode safety guarantee
       resolve(false);
       return;
@@ -148,13 +176,8 @@ function requestApprovalFromRenderer(toolName, args, chatSessionId) {
       if (pendingApprovals.has(approvalId)) {
         pendingApprovals.delete(approvalId);
         resolve(false);
-        // Notify renderer to remove the stale approval card
-        try {
-          const win = typeof getMainWindowFn === 'function' ? getMainWindowFn() : null;
-          if (win && !win.isDestroyed()) {
-            win.webContents.send('netcatty:ai:mcp:approval-cleared', { approvalIds: [approvalId] });
-          }
-        } catch { /* ignore */ }
+        // Notify renderer(s) to remove the stale approval card
+        broadcastApprovalEvent('netcatty:ai:mcp:approval-cleared', { approvalIds: [approvalId] });
       }
     }, APPROVAL_TIMEOUT_MS);
 
@@ -165,7 +188,7 @@ function requestApprovalFromRenderer(toolName, args, chatSessionId) {
       },
       chatSessionId: chatSessionId || null,
     });
-    mainWin.webContents.send('netcatty:ai:mcp:approval-request', {
+    broadcastApprovalEvent('netcatty:ai:mcp:approval-request', {
       approvalId,
       toolName,
       args,
@@ -185,14 +208,7 @@ function resolveApprovalFromRenderer(approvalId, approved) {
 
 function notifyRendererApprovalCleared(approvalIds) {
   if (!Array.isArray(approvalIds) || approvalIds.length === 0) return;
-  try {
-    const win = typeof getMainWindowFn === "function" ? getMainWindowFn() : null;
-    if (win && !win.isDestroyed()) {
-      win.webContents.send("netcatty:ai:mcp:approval-cleared", { approvalIds });
-    }
-  } catch {
-    // Ignore renderer notification failures during approval cleanup.
-  }
+  broadcastApprovalEvent("netcatty:ai:mcp:approval-cleared", { approvalIds });
 }
 
 /**

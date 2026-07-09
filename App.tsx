@@ -54,6 +54,7 @@ import { getCredentialProtectionAvailability } from './infrastructure/services/c
 import { netcattyBridge } from './infrastructure/services/netcattyBridge';
 import { localStorageAdapter } from './infrastructure/persistence/localStorageAdapter';
 import { syncExternalMcpStartupState } from './application/state/useExternalMcpToggleState';
+import { useExternalMcpSessionSync } from './components/terminalLayer/useExternalMcpSessionSync';
 import {
   STORAGE_KEY_DEBUG_HOTKEYS,
   STORAGE_KEY_PORT_FORWARDING,
@@ -401,6 +402,13 @@ function App({ settings }: { settings: SettingsState }) {
 
   // Get port forwarding rules and import function
   const { rules: portForwardingRules, importRules: importPortForwardingRules, startTunnel, stopTunnel } = usePortForwardingState();
+
+  // App-level External MCP session sync (before TerminalLayer lazy-mount).
+  useExternalMcpSessionSync({
+    sessions,
+    hosts: terminalHosts,
+    portForwardingRules,
+  });
 
   const portForwardingRulesForSync = useMemo(
     () =>

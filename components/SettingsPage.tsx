@@ -18,6 +18,8 @@ import { SettingsTabContent } from "./settings/settings-ui";
 import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { LazyLoadBoundary } from "./ui/lazy-load-boundary";
+import { ExternalMcpApprovalsHost } from "./ai/ExternalMcpApprovalsHost";
+import { setupMcpApprovalBridge } from "../infrastructure/ai/shared/approvalGate";
 
 const LazySettingsApplicationTab = lazy(() => import("./SettingsApplicationTab"));
 const LazySettingsAppearanceTab = lazy(() => import("./settings/tabs/SettingsAppearanceTab"));
@@ -307,6 +309,10 @@ const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }
     }, [notifyRendererReady]);
 
     useEffect(() => {
+        return setupMcpApprovalBridge();
+    }, []);
+
+    useEffect(() => {
         const unsubscribe = onWindowCommandCloseRequested(() => {
             void closeSettingsWindow();
         });
@@ -327,6 +333,7 @@ const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }
     }, [closeSettingsWindow]);
 
     return (
+        <>
         <div className="settings-window h-screen flex flex-col bg-background text-foreground font-sans">
             <div className="shrink-0 border-b border-border app-drag">
                 <div className="flex items-center justify-between px-4 pt-3">
@@ -574,6 +581,8 @@ const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }
                 </div>
             </Tabs>
         </div>
+        <ExternalMcpApprovalsHost />
+        </>
     );
 };
 
