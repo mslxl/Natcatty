@@ -71,7 +71,8 @@ export const listSftpConnectedHosts = (
     const host = hostsById.get(session.hostId);
     if (!host) continue;
     if (host.protocol === "serial") continue;
-    if (host.moshEnabled || host.etEnabled) continue;
+    // Use session transport flags only. Vault hosts may still have mosh/et
+    // defaults while the live terminal was opened as plain SSH (e.g. ssh://).
 
     // Later sessions overwrite earlier ones for the same hostId.
     bestByHostId.set(host.id, {

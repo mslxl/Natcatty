@@ -86,6 +86,19 @@ test("listSftpConnectedHosts skips mosh and et sessions", () => {
   );
 });
 
+test("listSftpConnectedHosts keeps plain SSH sessions even when vault host defaults to mosh/et", () => {
+  const hostsById = new Map([
+    ["a", host({ id: "a", label: "Alpha", moshEnabled: true, etEnabled: true })],
+  ]);
+  const sessions = [
+    session({ id: "s-ssh-deeplink", hostId: "a", status: "connected", moshEnabled: false, etEnabled: false }),
+  ];
+
+  const result = listSftpConnectedHosts(sessions, hostsById);
+  assert.equal(result.length, 1);
+  assert.equal(result[0]?.sessionId, "s-ssh-deeplink");
+});
+
 test("listSftpConnectedHosts skips serial, local, telnet, and disconnected sessions", () => {
   const hosts = [
     host({ id: "ssh", label: "SSH" }),
