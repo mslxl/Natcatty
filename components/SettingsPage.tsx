@@ -19,6 +19,7 @@ import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { LazyLoadBoundary } from "./ui/lazy-load-boundary";
 import { ExternalMcpApprovalsHost } from "./ai/ExternalMcpApprovalsHost";
+import { useExternalMcpGrantPersister } from "./ai/useExternalMcpGrantPersister";
 import { setupMcpApprovalBridge } from "../infrastructure/ai/shared/approvalGate";
 
 const LazySettingsApplicationTab = lazy(() => import("./SettingsApplicationTab"));
@@ -311,6 +312,8 @@ const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }
     useEffect(() => {
         return setupMcpApprovalBridge();
     }, []);
+
+    useExternalMcpGrantPersister();
 
     useEffect(() => {
         const unsubscribe = onWindowCommandCloseRequested(() => {

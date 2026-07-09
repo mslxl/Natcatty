@@ -22,13 +22,6 @@ function registerAgentProcessHandlers(ctx) {
       } catch {
         return { ok: false, error: "External MCP is unavailable" };
       }
-      // Preserve previously seeded hosts when the renderer briefly pushes [].
-      if (list.length === 0) {
-        const existing = mcpServerBridge.getScopedSessionIds?.(externalId) || [];
-        if (existing.length > 0) {
-          return { ok: true, preserved: true, count: existing.length };
-        }
-      }
     }
     mcpServerBridge.updateSessionMetadata(list, chatSessionId);
     return { ok: true, count: list.length };
@@ -108,7 +101,8 @@ function registerAgentProcessHandlers(ctx) {
 
   // ── MCP Approval response (renderer → main) ──
   ipcMain.handle("netcatty:ai:mcp:approval-response", async (event, { approvalId, approved }) => {
-    if (!validateSender(event)) return { ok: false, error: "Unauthorized IPC sender" };
+    // Settings window also hosts External MCP approval cards.
+    if (!validateSenderOrSettings(event)) return { ok: false, error: "Unauthorized IPC sender" };
     mcpServerBridge.resolveApprovalFromRenderer(approvalId, approved);
     return { ok: true };
   });

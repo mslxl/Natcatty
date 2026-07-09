@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-import { AI_STATE_CHANGED_EVENT } from '../../application/state/aiStateEvents';
-import { readExternalMcpStoredEnabled } from '../../application/state/useExternalMcpToggleState';
-import { STORAGE_KEY_AI_EXTERNAL_MCP_ENABLED } from '../../infrastructure/config/storageKeys';
-import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
+import { buildAITerminalSessionInfo } from '../../components/terminalLayer/TerminalLayerSupport';
 import { detectLocalOs } from '../../lib/localShell';
 import type { Host, PortForwardingRule, TerminalSession } from '../../types';
-import { buildAITerminalSessionInfo } from './TerminalLayerSupport';
+import { STORAGE_KEY_AI_EXTERNAL_MCP_ENABLED } from '../../infrastructure/config/storageKeys';
+import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
+import { AI_STATE_CHANGED_EVENT } from './aiStateEvents';
+import { readExternalMcpStoredEnabled } from './useExternalMcpToggleState';
 
 const EXTERNAL_MCP_CHAT_SESSION_ID = '__external_mcp__';
 

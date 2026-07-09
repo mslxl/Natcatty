@@ -203,6 +203,8 @@ function resolveApprovalFromRenderer(approvalId, approved) {
   if (entry) {
     pendingApprovals.delete(approvalId);
     entry.resolve(approved);
+    // Main + settings both receive approval requests; clear the sibling card.
+    notifyRendererApprovalCleared([approvalId]);
   }
 }
 

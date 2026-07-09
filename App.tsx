@@ -54,7 +54,7 @@ import { getCredentialProtectionAvailability } from './infrastructure/services/c
 import { netcattyBridge } from './infrastructure/services/netcattyBridge';
 import { localStorageAdapter } from './infrastructure/persistence/localStorageAdapter';
 import { syncExternalMcpStartupState } from './application/state/useExternalMcpToggleState';
-import { useExternalMcpSessionSync } from './components/terminalLayer/useExternalMcpSessionSync';
+import { useExternalMcpSessionSync } from './application/state/useExternalMcpSessionSync';
 import {
   STORAGE_KEY_DEBUG_HOTKEYS,
   STORAGE_KEY_PORT_FORWARDING,
@@ -75,6 +75,7 @@ import { resolveSnippetCommand } from './components/SnippetExecutionProvider';
 import { isScriptSnippet } from './domain/snippetScript.ts';
 import { ScriptAutomationRoot } from './components/scripts/ScriptAutomationRoot';
 import { ExternalMcpApprovalsHost } from './components/ai/ExternalMcpApprovalsHost';
+import { useExternalMcpGrantPersister } from './components/ai/useExternalMcpGrantPersister';
 import { setupMcpApprovalBridge } from './infrastructure/ai/shared/approvalGate';
 import { AppActiveTabChrome } from './application/app/AppActiveTabChrome';
 import { AppView } from './application/app/AppView';
@@ -1426,6 +1427,8 @@ function AppWithProviders() {
   useEffect(() => {
     return setupMcpApprovalBridge();
   }, []);
+
+  useExternalMcpGrantPersister();
 
   return (
     <I18nProvider locale={settings.uiLanguage}>
