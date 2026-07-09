@@ -9,10 +9,10 @@ import {
 } from "lucide-react";
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "../application/i18n/I18nProvider";
-import { Host, TerminalSession, Workspace } from "../types";
+import { Host, TerminalSession, TerminalSettings, Workspace } from "../types";
 import { KeyBinding } from "../domain/models";
 import { matchesSearchQuery } from "../lib/searchMatcher";
-import { useDiscoveredShells, getShellIconPath, isMonochromeShellIcon } from "../lib/useDiscoveredShells";
+import { buildQuickSwitcherShells, useDiscoveredShells, getShellIconPath, isMonochromeShellIcon } from "../lib/useDiscoveredShells";
 
 type QuickSwitcherItem = {
   type: "host" | "tab" | "workspace" | "action" | "shell";
@@ -73,6 +73,7 @@ interface QuickSwitcherProps {
   onCreateWorkspace?: () => void;
   keyBindings?: KeyBinding[];
   showSftpTab: boolean;
+  terminalSettings?: Pick<TerminalSettings, "localShell" | "localShellArgs">;
 }
 
 const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
@@ -89,19 +90,27 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
   onCreateWorkspace,
   keyBindings,
   showSftpTab,
+  terminalSettings,
 }) => {
   const { t } = useI18n();
   const discoveredShells = useDiscoveredShells();
+  const quickSwitcherShells = useMemo(() => (
+    buildQuickSwitcherShells(
+      discoveredShells,
+      terminalSettings?.localShell ?? "",
+      terminalSettings?.localShellArgs,
+    )
+  ), [discoveredShells, terminalSettings?.localShell, terminalSettings?.localShellArgs]);
 
   const filteredShells = useMemo(() => {
     const list = !query.trim()
-      ? discoveredShells
-      : discoveredShells.filter(
-          (s) => matchesSearchQuery(query, s.name, s.id)
+      ? quickSwitcherShells
+      : quickSwitcherShells.filter(
+          (s) => matchesSearchQuery(query, s.name, s.id, s.command)
         );
     // Default shell first
     return [...list].sort((a, b) => (a.isDefault === b.isDefault ? 0 : a.isDefault ? -1 : 1));
-  }, [discoveredShells, query]);
+  }, [quickSwitcherShells, query]);
 
   // Get hotkey display strings
   const getHotkeyLabel = useCallback((actionId: string) => {
@@ -270,7 +279,7 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
         }
         break;
       case "shell": {
-        const shell = discoveredShells.find(s => s.id === item.id);
+        const shell = quickSwitcherShells.find(s => s.id === item.id);
         if (shell && onCreateLocalTerminal) {
           onCreateLocalTerminal({ command: shell.command, args: shell.args, name: shell.name, icon: shell.icon });
           onClose();
