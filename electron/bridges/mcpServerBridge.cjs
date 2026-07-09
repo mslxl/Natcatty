@@ -37,13 +37,16 @@ let terminalWorkerManager = null;
 let tcpServer = null;
 let tcpPort = null;
 let authToken = null;  // Random token generated when TCP server starts
+// Dedicated token for External MCP discovery. Rotated on enable/disable so a
+// stale discovery file cannot keep writing after External MCP is turned off.
+let externalAuthToken = null;
 let pendingHostStart = null; // { promise, server, cancel }
 let electronModule = null;
 let cliDiscoveryFilePath = getCliDiscoveryFilePath();
 
 // Track which sockets have completed authentication
 const authenticatedSockets = new WeakSet();
-// Sockets that have used the reserved External MCP chat scope (revoked on disable).
+// Sockets authenticated with the External MCP token (or that used the reserved scope).
 const externalMcpSockets = new Set();
 
 function markExternalMcpSocket(socket) {
@@ -60,7 +63,23 @@ function markExternalMcpSocket(socket) {
   }
 }
 
+function issueExternalMcpAuthToken() {
+  externalAuthToken = crypto.randomBytes(32).toString("hex");
+  return externalAuthToken;
+}
+
+function revokeExternalMcpAuthToken() {
+  externalAuthToken = null;
+}
+
+function getExternalMcpAuthToken() {
+  return externalAuthToken;
+}
+
 function disconnectExternalMcpClients() {
+  // Prefer soft revoke: keep long-lived stdio MCP TCP sockets alive so
+  // re-enable can resume without restarting Codex/Claude/Grok. Hard destroy
+  // is reserved for process shutdown paths that call this intentionally.
   for (const socket of Array.from(externalMcpSockets)) {
     externalMcpSockets.delete(socket);
     try {
@@ -477,15 +496,18 @@ function syncLiveSessionsToExternalScope(chatSessionId = EXTERNAL_MCP_CHAT_SESSI
         preserved: true,
       };
     }
-    // Seed from other chat scopes when external scope has never been populated.
-    const seeded = seedExternalScopeFromOtherScopes(chatSessionId);
-    if (seeded) {
-      return {
-        ok: true,
-        count: seeded,
-        chatSessionId,
-        seeded: true,
-      };
+    // Only seed when the external scope key has never been written. An explicit
+    // empty updateSessionMetadata([]) must stay empty (authoritative clear).
+    if (!scopedMetadata.has(chatSessionId)) {
+      const seeded = seedExternalScopeFromOtherScopes(chatSessionId);
+      if (seeded) {
+        return {
+          ok: true,
+          count: seeded,
+          chatSessionId,
+          seeded: true,
+        };
+      }
     }
     return { ok: true, count: 0, chatSessionId };
   }
@@ -959,9 +981,32 @@ async function handleMessage(socket, line) {
   // The first message from any connection MUST be auth/verify with the correct token.
   // All other methods are rejected until the socket is authenticated.
   if (!authenticatedSockets.has(socket)) {
-    if (method === "auth/verify" && params?.token === authToken) {
-      debugLog("auth/verify success");
+    const presentedToken = typeof params?.token === "string" ? params.token : "";
+    const isCattyToken = Boolean(presentedToken && authToken && presentedToken === authToken);
+    const isExternalToken = Boolean(
+      presentedToken && externalAuthToken && presentedToken === externalAuthToken,
+    );
+    if (method === "auth/verify" && (isCattyToken || isExternalToken)) {
+      if (isExternalToken && !externalMcpActivityHook?.isEnabled?.()) {
+        const response = JSON.stringify({
+          jsonrpc: "2.0",
+          id,
+          error: {
+            code: -32001,
+            message: "External MCP is disabled. Re-enable it in Netcatty Settings → AI.",
+          },
+        }) + "\n";
+        if (!socket.destroyed) {
+          socket.write(response);
+          socket.destroy();
+        }
+        return;
+      }
+      debugLog("auth/verify success", { external: isExternalToken });
       authenticatedSockets.add(socket);
+      if (isExternalToken) {
+        markExternalMcpSocket(socket);
+      }
       const response = JSON.stringify({ jsonrpc: "2.0", id, result: { ok: true } }) + "\n";
       if (!socket.destroyed) socket.write(response);
       return;
@@ -981,8 +1026,13 @@ async function handleMessage(socket, line) {
   }
 
   try {
-    const callParams = params || {};
-    const isExternalScope = callParams?.chatSessionId === EXTERNAL_MCP_CHAT_SESSION_ID;
+    const callParams = { ...(params || {}) };
+    // External-token sockets always operate under the reserved app-wide scope so
+    // callers cannot omit chatSessionId and widen access via scopedSessionIds.
+    if (externalMcpSockets.has(socket)) {
+      callParams.chatSessionId = EXTERNAL_MCP_CHAT_SESSION_ID;
+    }
+    const isExternalScope = callParams.chatSessionId === EXTERNAL_MCP_CHAT_SESSION_ID;
     if (isExternalScope) {
       markExternalMcpSocket(socket);
     }
@@ -1680,6 +1730,9 @@ module.exports = {
   setVaultAgentInvoker,
   setExternalMcpHooks,
   disconnectExternalMcpClients,
+  issueExternalMcpAuthToken,
+  revokeExternalMcpAuthToken,
+  getExternalMcpAuthToken,
   syncLiveSessionsToExternalScope,
   resolveApprovalFromRenderer,
   clearPendingApprovals,

@@ -171,14 +171,15 @@ function createExternalMcpController(options = {}) {
 
   async function resolveHostCredentials() {
     const bridge = getBridge();
-    if (!bridge?.getOrCreateHost || !bridge?.buildMcpServerConfig) {
+    if (!bridge?.getOrCreateHost) {
       throw new Error("MCP bridge is unavailable.");
     }
     const port = await bridge.getOrCreateHost();
-    const config = bridge.buildMcpServerConfig(port, null, deps.chatSessionId);
-    const envPairs = Array.isArray(config?.env) ? config.env : [];
-    const tokenEntry = envPairs.find((entry) => entry?.name === "NETCATTY_MCP_TOKEN");
-    const token = typeof tokenEntry?.value === "string" ? tokenEntry.value : "";
+    // External MCP uses a dedicated token (rotated on enable) so disable can
+    // invalidate discovery without rotating the shared Catty/CLI TCP token.
+    const token = typeof bridge.issueExternalMcpAuthToken === "function"
+      ? bridge.issueExternalMcpAuthToken()
+      : (typeof bridge.getExternalMcpAuthToken === "function" ? bridge.getExternalMcpAuthToken() : "");
     if (!port || !token) {
       throw new Error("Failed to resolve MCP bridge port/token for external mode.");
     }
@@ -211,11 +212,14 @@ function createExternalMcpController(options = {}) {
       deps.removeDiscovery(discoveryFilePath);
     }
     const bridge = getBridge();
-    if (typeof bridge?.disconnectExternalMcpClients === "function") {
+    // Soft revoke: rotate/clear the external token and reject reserved-scope
+    // RPCs while disabled. Keep TCP sockets alive so long-lived stdio clients
+    // can resume after re-enable without restarting Codex/Claude/Grok.
+    if (typeof bridge?.revokeExternalMcpAuthToken === "function") {
       try {
-        bridge.disconnectExternalMcpClients();
+        bridge.revokeExternalMcpAuthToken();
       } catch {
-        // Best-effort socket revoke.
+        // Best-effort token revoke.
       }
     }
     if (typeof bridge?.cancelPtyExecsForSession === "function") {

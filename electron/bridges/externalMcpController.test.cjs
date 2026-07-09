@@ -15,13 +15,9 @@ function createFakeBridge({ port = 45555, token = "tok-1" } = {}) {
   const scoped = new Map();
   return {
     getOrCreateHost: async () => port,
-    buildMcpServerConfig: () => ({
-      env: [
-        { name: "NETCATTY_MCP_PORT", value: String(port) },
-        { name: "NETCATTY_MCP_TOKEN", value: token },
-        { name: "NETCATTY_MCP_CHAT_SESSION_ID", value: EXTERNAL_MCP_CHAT_SESSION_ID },
-      ],
-    }),
+    issueExternalMcpAuthToken: () => token,
+    getExternalMcpAuthToken: () => token,
+    revokeExternalMcpAuthToken: () => {},
     getPermissionMode: () => "confirm",
     getScopedSessionIds: (chatSessionId) => scoped.get(chatSessionId)?.sessionIds || [],
     updateSessionMetadata: (sessionList, chatSessionId) => {
