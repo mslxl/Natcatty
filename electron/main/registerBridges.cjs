@@ -57,6 +57,7 @@ function createBridgeRegistrar(context) {
     getCredentialBridge,
     getAutoUpdateBridge,
     getAiBridge,
+    getHttpNetworkProxyBridge,
     getWindowManager,
     getVaultBackupBridge,
     isPathInside,
@@ -86,6 +87,7 @@ function createBridgeRegistrar(context) {
     const credentialBridge = getCredentialBridge();
     const autoUpdateBridge = getAutoUpdateBridge();
     const aiBridge = getAiBridge();
+    const httpNetworkProxyBridge = getHttpNetworkProxyBridge();
     const vaultBackupBridge = getVaultBackupBridge();
   
     const getCloudSyncPasswordPath = () => {
@@ -212,10 +214,10 @@ function createBridgeRegistrar(context) {
     });
     systemManagerBridge.registerHandlers(ipcMain, { terminalWorkerManager });
     oauthBridge.setupOAuthBridge(ipcMain);
-    githubAuthBridge.registerHandlers(ipcMain);
+    githubAuthBridge.registerHandlers(ipcMain, electronModule);
     googleAuthBridge.registerHandlers(ipcMain, electronModule);
     onedriveAuthBridge.registerHandlers(ipcMain, electronModule);
-    cloudSyncBridge.registerHandlers(ipcMain);
+    cloudSyncBridge.registerHandlers(ipcMain, electronModule);
     fileWatcherBridge.registerHandlers(ipcMain, { terminalWorkerManager });
     tempDirBridge.registerHandlers(ipcMain, shell);
     sessionLogsBridge.registerHandlers(ipcMain, { terminalWorkerManager });
@@ -225,6 +227,7 @@ function createBridgeRegistrar(context) {
     autoUpdateBridge.init(deps);
     autoUpdateBridge.registerHandlers(ipcMain);
     aiBridge.registerHandlers(ipcMain);
+    httpNetworkProxyBridge.registerHandlers(ipcMain, electronModule);
     crashLogBridge.registerHandlers(ipcMain);
     vaultBackupBridge.registerHandlers(ipcMain, electronModule);
   

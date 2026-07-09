@@ -106,6 +106,21 @@ export const ruCoreMessages: Messages = {
   'settings.system.credentials.unavailableHint': 'Учётные данные, зашифрованные в другом профиле пользователя или на другой машине, здесь расшифровать нельзя. Повторно введите и сохраните их на этом устройстве.',
   'settings.system.credentials.portabilityHint': 'Облачная синхронизация переносима, потому что использует шифрование вашим мастер-ключом. Локальное шифрование safeStorage привязано к устройству и пользователю.',
 
+  // Settings > System > Network Proxy
+  'settings.system.networkProxy.title': 'Сетевой прокси',
+  'settings.system.networkProxy.description': 'HTTP(S)-прокси для облачной синхронизации и AI-провайдеров. Не связан с SSH ProxyJump / ProxyCommand.',
+  'settings.system.networkProxy.mode': 'Режим прокси',
+  'settings.system.networkProxy.mode.system': 'Системный прокси',
+  'settings.system.networkProxy.mode.direct': 'Напрямую (без прокси)',
+  'settings.system.networkProxy.mode.custom': 'Свой прокси',
+  'settings.system.networkProxy.url': 'URL прокси',
+  'settings.system.networkProxy.url.placeholder': 'http://127.0.0.1:7890',
+  'settings.system.networkProxy.url.desc': 'Поддерживаются URL вида http://, https:// и socks5:// host:port. Учётные данные в URL прокси не поддерживаются.',
+  'settings.system.networkProxy.bypass': 'Список исключений',
+  'settings.system.networkProxy.bypass.placeholder': '<local>,localhost,127.0.0.1',
+  'settings.system.networkProxy.bypass.desc': 'Хосты через запятую, для которых прокси не используется. <local> — localhost и локальные имена.',
+  'settings.system.networkProxy.hint': 'Влияет на вход в Google Drive / OneDrive / GitHub sync и запросы к AI-провайдерам. SSH-подключения не меняет.',
+
   // Settings > System > Crash Logs
   'settings.system.crashLogs.title': 'Журналы сбоев',
   'settings.system.crashLogs.description': 'Просмотр журналов ошибок основного процесса для диагностики неожиданного поведения.',
