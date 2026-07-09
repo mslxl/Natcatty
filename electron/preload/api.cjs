@@ -1118,6 +1118,34 @@ function createPreloadApi(ctx) {
   aiCodexLogout: async (options) => {
     return ipcRenderer.invoke("netcatty:ai:codex:logout", options);
   },
+  // External MCP (productized catalog MCP for Codex / Claude Code / Cursor / Grok)
+  externalMcpGetStatus: async () => {
+    return ipcRenderer.invoke("netcatty:external-mcp:get-status");
+  },
+  externalMcpSetEnabled: async (enabled) => {
+    return ipcRenderer.invoke("netcatty:external-mcp:set-enabled", { enabled });
+  },
+  externalMcpSetConfig: async (config) => {
+    return ipcRenderer.invoke("netcatty:external-mcp:set-config", config || {});
+  },
+  externalMcpCodexGetStatus: async () => {
+    return ipcRenderer.invoke("netcatty:external-mcp:codex:get-status");
+  },
+  externalMcpCodexAdd: async () => {
+    return ipcRenderer.invoke("netcatty:external-mcp:codex:add");
+  },
+  externalMcpClaudeGetStatus: async () => {
+    return ipcRenderer.invoke("netcatty:external-mcp:claude:get-status");
+  },
+  externalMcpClaudeAdd: async () => {
+    return ipcRenderer.invoke("netcatty:external-mcp:claude:add");
+  },
+  externalMcpGrokGetStatus: async () => {
+    return ipcRenderer.invoke("netcatty:external-mcp:grok:get-status");
+  },
+  externalMcpGrokAdd: async () => {
+    return ipcRenderer.invoke("netcatty:external-mcp:grok:add");
+  },
   // MCP Server session metadata
   aiMcpUpdateSessions: async (sessions, chatSessionId) => {
     return ipcRenderer.invoke("netcatty:ai:mcp:update-sessions", { sessions, chatSessionId });

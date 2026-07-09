@@ -140,7 +140,8 @@ function createBridgeRegistrar(context) {
     };
   
     // Initialize bridges with shared dependencies
-    const cliDiscoveryFilePath = getCliDiscoveryFilePath({ userDataDir: app.getPath("userData") });
+    const userDataDir = app.getPath("userData");
+    const cliDiscoveryFilePath = getCliDiscoveryFilePath({ userDataDir });
     const { createTerminalOutputChannel } = require("../bridges/terminalOutputChannel.cjs");
     const {
       createTerminalWorkerManager,
@@ -165,6 +166,7 @@ function createBridgeRegistrar(context) {
       getMainWindow: () => getWindowManager().getMainWindow?.(),
       sendWhenRendererReady: (...args) => getWindowManager().sendWhenRendererReady?.(...args),
       cliDiscoveryFilePath,
+      userDataDir,
       terminalOutputChannel,
       terminalWorkerManager,
     };
