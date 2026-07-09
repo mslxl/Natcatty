@@ -147,6 +147,25 @@ test("listSftpConnectedHosts uses the live session endpoint when the vault host 
   assert.equal(result[0]?.host.port, 22);
 });
 
+test("listSftpConnectedHosts defaults missing session.port to 22, not the edited vault port", () => {
+  const hostsById = new Map([
+    ["a", host({ id: "a", label: "Alpha", port: 2222 })],
+  ]);
+  const sessions = [
+    session({
+      id: "s-live",
+      hostId: "a",
+      status: "connected",
+      hostname: "a.example.test",
+      username: "alice",
+      port: undefined,
+    }),
+  ];
+
+  const result = listSftpConnectedHosts(sessions, hostsById);
+  assert.equal(result[0]?.host.port, 22);
+});
+
 test("listSftpConnectedHosts skips serial, local, telnet, and disconnected sessions", () => {
   const hosts = [
     host({ id: "ssh", label: "SSH" }),

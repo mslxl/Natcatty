@@ -43,7 +43,9 @@ const hostForLiveSession = (host: Host, session: SftpPickerSessionFields): Host 
   ...host,
   hostname: session.hostname,
   username: session.username,
-  port: session.port ?? host.port ?? 22,
+  // Prefer the session port; when undefined the live SSH default is 22.
+  // Do not fall back to vault host.port — it may have been edited after connect.
+  port: session.port ?? 22,
 });
 
 /** True when two hosts target the same SSH endpoint (hostname/user/port). */
