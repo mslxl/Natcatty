@@ -116,6 +116,18 @@ export interface NetcattyAiBridge {
   aiUserSkillsGetStatus?: () => Promise<UserSkillsStatusResult>;
   aiUserSkillsOpenFolder?: () => Promise<UserSkillsStatusResult>;
   openExternal?: (url: string) => Promise<void>;
+  externalMcpGetStatus?: () => Promise<Record<string, unknown>>;
+  externalMcpSetEnabled?: (enabled: boolean) => Promise<Record<string, unknown>>;
+  externalMcpSetConfig?: (config: {
+    mode?: 'temporary' | 'persistent';
+    idleTimeoutMinutes?: number;
+  }) => Promise<Record<string, unknown>>;
+  externalMcpCodexGetStatus?: () => Promise<Record<string, unknown>>;
+  externalMcpCodexAdd?: () => Promise<Record<string, unknown>>;
+  externalMcpClaudeGetStatus?: () => Promise<Record<string, unknown>>;
+  externalMcpClaudeAdd?: () => Promise<Record<string, unknown>>;
+  externalMcpGrokGetStatus?: () => Promise<Record<string, unknown>>;
+  externalMcpGrokAdd?: () => Promise<Record<string, unknown>>;
 }
 
 // Agent default configs for registration in externalAgents

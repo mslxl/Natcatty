@@ -1,0 +1,337 @@
+"use strict";
+
+const EXTERNAL_MCP_GROK_NAME = "netcatty-external";
+
+function loadShellUtils() {
+  return require("../ai/shellUtils.cjs");
+}
+
+function formatGrokCommandText(args) {
+  return ["grok", ...args.map(quoteCommandArg)].join(" ");
+}
+
+function quoteCommandArg(value) {
+  if (typeof value !== "string" || value.length === 0) return '""';
+  if (!/[\s"]/u.test(value)) return value;
+  return `"${value.replaceAll("\\", "\\\\").replaceAll("\"", "\\\"")}"`;
+}
+
+function formatExistingCommand(entry) {
+  if (!entry || typeof entry !== "object") return null;
+  if (entry.transport && typeof entry.transport === "object") {
+    const transport = entry.transport;
+    if (transport.type === "stdio" || transport.command) {
+      const command = typeof transport.command === "string" ? transport.command.trim() : "";
+      const args = Array.isArray(transport.args)
+        ? transport.args.filter((arg) => typeof arg === "string" && arg.trim())
+        : [];
+      return [command, ...args].filter(Boolean).join(" ").trim() || null;
+    }
+    if (typeof transport.url === "string" && transport.url.trim()) {
+      return transport.url.trim();
+    }
+  }
+  if (typeof entry.command === "string" && entry.command.trim()) {
+    const args = Array.isArray(entry.args)
+      ? entry.args.filter((arg) => typeof arg === "string" && arg.trim())
+      : [];
+    return [entry.command.trim(), ...args].filter(Boolean).join(" ").trim() || null;
+  }
+  if (typeof entry.url === "string" && entry.url.trim()) {
+    return entry.url.trim();
+  }
+  return null;
+}
+
+function parseGrokMcpList(rawOutput) {
+  const text = String(rawOutput || "").trim();
+  if (!text) return [];
+
+  try {
+    const parsed = JSON.parse(text);
+    if (Array.isArray(parsed)) {
+      return parsed
+        .filter((entry) => entry && typeof entry === "object")
+        .map(normalizeGrokListEntry);
+    }
+    if (parsed && typeof parsed === "object") {
+      const servers = parsed.servers || parsed.mcp_servers || parsed.mcpServers || parsed;
+      if (Array.isArray(servers)) {
+        return servers
+          .filter((entry) => entry && typeof entry === "object")
+          .map(normalizeGrokListEntry);
+      }
+      if (servers && typeof servers === "object") {
+        return Object.entries(servers).map(([name, value]) => normalizeGrokListEntry({
+          ...(value && typeof value === "object" ? value : {}),
+          name,
+        }));
+      }
+    }
+  } catch {
+    // Fall through to line-oriented parsing for non-JSON list output.
+  }
+
+  return text
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const colonIndex = line.indexOf(":");
+      if (colonIndex > 0) {
+        return {
+          name: line.slice(0, colonIndex).trim(),
+          command: line.slice(colonIndex + 1).trim() || null,
+        };
+      }
+      const parts = line.split(/\s+/u);
+      return {
+        name: parts[0] || "",
+        command: parts.slice(1).join(" ").trim() || null,
+      };
+    })
+    .filter((entry) => entry.name);
+}
+
+function normalizeGrokListEntry(entry) {
+  const name = typeof entry.name === "string"
+    ? entry.name
+    : (typeof entry.id === "string" ? entry.id : "");
+  return {
+    name,
+    enabled: entry.enabled !== false,
+    command: typeof entry.command === "string" ? entry.command : null,
+    args: Array.isArray(entry.args) ? entry.args : null,
+    transport: entry.transport && typeof entry.transport === "object" ? entry.transport : null,
+    url: typeof entry.url === "string" ? entry.url : null,
+  };
+}
+
+function getEntryCommand(entry) {
+  if (!entry) return null;
+  if (entry.transport?.type === "stdio" || entry.transport?.command) {
+    const command = String(entry.transport.command || "").trim();
+    const args = Array.isArray(entry.transport.args) ? entry.transport.args : [];
+    if (command && args.length === 0) return command;
+    return formatExistingCommand(entry);
+  }
+  if (typeof entry.command === "string" && entry.command.trim()) {
+    const args = Array.isArray(entry.args) ? entry.args : [];
+    if (args.length === 0) return entry.command.trim();
+    return [entry.command.trim(), ...args].join(" ").trim();
+  }
+  return formatExistingCommand(entry);
+}
+
+function classifyGrokExternalMcpStatus({ entries, launcherPath, grokPath }) {
+  const commandArgs = ["mcp", "add", EXTERNAL_MCP_GROK_NAME, "--", launcherPath];
+  const base = {
+    ok: true,
+    grokPath: grokPath || null,
+    launcherPath: launcherPath || null,
+    command: formatGrokCommandText(commandArgs),
+    existingCommand: null,
+    error: null,
+  };
+
+  const entry = Array.isArray(entries)
+    ? entries.find((item) => item?.name === EXTERNAL_MCP_GROK_NAME)
+    : null;
+
+  if (!entry) {
+    return {
+      ...base,
+      state: grokPath ? "not_configured" : "grok_not_found",
+    };
+  }
+
+  const existingCommand = getEntryCommand(entry);
+  if (existingCommand === launcherPath) {
+    return {
+      ...base,
+      state: "configured",
+      existingCommand,
+    };
+  }
+
+  return {
+    ...base,
+    state: "conflict",
+    existingCommand,
+  };
+}
+
+function createExternalMcpGrokSetup(options = {}) {
+  const deps = {
+    launcherPath: options.launcherPath || null,
+    getShellEnv: options.getShellEnv || loadShellUtils().getShellEnv,
+    resolveCliFromPath: options.resolveCliFromPath || loadShellUtils().resolveCliFromPath,
+    prepareCommandForSpawn: options.prepareCommandForSpawn || loadShellUtils().prepareCommandForSpawn,
+    spawn: options.spawn || require("node:child_process").spawn,
+    stripAnsi: options.stripAnsi || loadShellUtils().stripAnsi,
+  };
+
+  function getManualCommand() {
+    return formatGrokCommandText(["mcp", "add", EXTERNAL_MCP_GROK_NAME, "--", deps.launcherPath]);
+  }
+
+  async function resolveGrok() {
+    const shellEnv = await deps.getShellEnv();
+    const grokPath = deps.resolveCliFromPath("grok", shellEnv);
+    return {
+      shellEnv,
+      grokPath: grokPath || null,
+    };
+  }
+
+  async function runGrok(grokPath, shellEnv, args) {
+    return await new Promise((resolve, reject) => {
+      const spawnSpec = deps.prepareCommandForSpawn(grokPath, args);
+      const child = deps.spawn(spawnSpec.command, spawnSpec.args || [], {
+        stdio: ["ignore", "pipe", "pipe"],
+        env: shellEnv,
+        shell: spawnSpec.shell,
+        windowsHide: true,
+      });
+
+      let stdout = "";
+      let stderr = "";
+
+      child.stdout.on("data", (chunk) => {
+        stdout += chunk.toString("utf8");
+      });
+      child.stderr.on("data", (chunk) => {
+        stderr += chunk.toString("utf8");
+      });
+      child.once("error", reject);
+      child.once("close", (exitCode) => {
+        resolve({
+          exitCode,
+          stdout: deps.stripAnsi(stdout),
+          stderr: deps.stripAnsi(stderr),
+        });
+      });
+    });
+  }
+
+  function summarizeFailure(result, fallback) {
+    return String(result?.stderr || result?.stdout || fallback || "Grok command failed").trim();
+  }
+
+  async function getStatus() {
+    const { shellEnv, grokPath } = await resolveGrok();
+    if (!grokPath) {
+      return {
+        ok: true,
+        state: "grok_not_found",
+        grokPath: null,
+        launcherPath: deps.launcherPath,
+        command: getManualCommand(),
+        existingCommand: null,
+        error: null,
+      };
+    }
+
+    try {
+      const result = await runGrok(grokPath, shellEnv, ["mcp", "list", "--json"]);
+      if (result.exitCode !== 0) {
+        // Some builds may not support --json; fall back to plain list.
+        const fallback = await runGrok(grokPath, shellEnv, ["mcp", "list"]);
+        if (fallback.exitCode !== 0) {
+          return {
+            ok: true,
+            state: "error",
+            grokPath,
+            launcherPath: deps.launcherPath,
+            command: getManualCommand(),
+            existingCommand: null,
+            error: summarizeFailure(fallback, `Grok exited with code ${fallback.exitCode ?? "unknown"}`),
+          };
+        }
+        return classifyGrokExternalMcpStatus({
+          entries: parseGrokMcpList(fallback.stdout),
+          launcherPath: deps.launcherPath,
+          grokPath,
+        });
+      }
+      return classifyGrokExternalMcpStatus({
+        entries: parseGrokMcpList(result.stdout),
+        launcherPath: deps.launcherPath,
+        grokPath,
+      });
+    } catch (error) {
+      return {
+        ok: true,
+        state: "error",
+        grokPath,
+        launcherPath: deps.launcherPath,
+        command: getManualCommand(),
+        existingCommand: null,
+        error: error?.message || String(error),
+      };
+    }
+  }
+
+  async function addToGrok() {
+    const status = await getStatus();
+    if (status.state === "grok_not_found" || status.state === "conflict" || status.state === "configured") {
+      return status;
+    }
+    if (status.state === "error") {
+      return status;
+    }
+
+    const { shellEnv, grokPath } = await resolveGrok();
+    if (!grokPath) {
+      return {
+        ...status,
+        state: "grok_not_found",
+        grokPath: null,
+      };
+    }
+
+    try {
+      const addResult = await runGrok(grokPath, shellEnv, [
+        "mcp",
+        "add",
+        EXTERNAL_MCP_GROK_NAME,
+        "--",
+        deps.launcherPath,
+      ]);
+      if (addResult.exitCode !== 0) {
+        return {
+          ok: true,
+          state: "error",
+          grokPath,
+          launcherPath: deps.launcherPath,
+          command: getManualCommand(),
+          existingCommand: null,
+          error: summarizeFailure(addResult, `Grok exited with code ${addResult.exitCode ?? "unknown"}`),
+        };
+      }
+      return await getStatus();
+    } catch (error) {
+      return {
+        ok: true,
+        state: "error",
+        grokPath,
+        launcherPath: deps.launcherPath,
+        command: getManualCommand(),
+        existingCommand: null,
+        error: error?.message || String(error),
+      };
+    }
+  }
+
+  return {
+    getStatus,
+    addToGrok,
+  };
+}
+
+module.exports = {
+  EXTERNAL_MCP_GROK_NAME,
+  createExternalMcpGrokSetup,
+  parseGrokMcpList,
+  classifyGrokExternalMcpStatus,
+};

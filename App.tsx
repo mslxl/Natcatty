@@ -53,6 +53,7 @@ import {
 import { getCredentialProtectionAvailability } from './infrastructure/services/credentialProtection';
 import { netcattyBridge } from './infrastructure/services/netcattyBridge';
 import { localStorageAdapter } from './infrastructure/persistence/localStorageAdapter';
+import { syncExternalMcpStartupState } from './application/state/useExternalMcpToggleState';
 import {
   STORAGE_KEY_DEBUG_HOTKEYS,
   STORAGE_KEY_PORT_FORWARDING,
@@ -177,6 +178,13 @@ function App({ settings }: { settings: SettingsState }) {
       document.documentElement.removeAttribute('data-workspace-focus');
     }
   }, [workspaceFocusStyle]);
+
+  // External MCP: only persistent+enabled restores at app startup.
+  // Keep this on the App mount path (not Settings) so temporary mode is not
+  // accidentally disabled when the AI settings page remounts.
+  useEffect(() => {
+    syncExternalMcpStartupState(netcattyBridge.get());
+  }, []);
 
   const {
     isInitialized: isVaultInitialized,

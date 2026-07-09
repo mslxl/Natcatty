@@ -7,6 +7,18 @@ function registerAgentProcessHandlers(ctx) {
   ipcMain.handle("netcatty:ai:mcp:update-sessions", async (event, { sessions: sessionList, chatSessionId }) => {
     if (!validateSenderOrSettings(event)) return { ok: false, error: "Unauthorized IPC sender" };
     mcpServerBridge.updateSessionMetadata(sessionList || [], chatSessionId);
+    // Keep the reserved external MCP scope in sync with live terminal sessions
+    // whenever the renderer pushes an update and external mode is enabled.
+    try {
+      const external = typeof getExternalMcpController === "function"
+        ? getExternalMcpController()
+        : null;
+      if (external?.isEnabled?.()) {
+        mcpServerBridge.syncLiveSessionsToExternalScope(external.getChatSessionId?.());
+      }
+    } catch {
+      // External scope sync is best-effort.
+    }
     return { ok: true };
   });
 

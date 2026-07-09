@@ -17,10 +17,15 @@ const { appendVaultAgentGuidance } = require("../shared/vaultAgentGuidance.cjs")
 const { execViaPty, startPtyJob, execViaChannel, execViaRawPty } = require("./ai/ptyExec.cjs");
 const { safeSend } = require("./ipcUtils.cjs");
 const { getCliDiscoveryFilePath } = require("../cli/discoveryPath.cjs");
+const { EXTERNAL_MCP_CHAT_SESSION_ID } = require("../cli/externalMcpDiscoveryPath.cjs");
 const sftpBridge = require("./sftpBridge.cjs");
 const portForwardingBridge = require("./portForwardingBridge.cjs");
 
 const DEBUG_MCP = process.env.NETCATTY_MCP_DEBUG === "1";
+
+/** Optional external-MCP activity / host-ready hooks (set by externalMcpController). */
+let externalMcpActivityHook = null;
+let externalMcpHostReadyHook = null;
 
 function debugLog(...args) {
   if (!DEBUG_MCP) return;
@@ -356,7 +361,61 @@ function setPermissionMode(mode) {
   if (mode === "observer" || mode === "confirm" || mode === "auto") {
     permissionMode = mode;
     writeCliDiscoveryFile();
+    try {
+      if (typeof externalMcpActivityHook?.onPermissionModeChanged === "function") {
+        externalMcpActivityHook.onPermissionModeChanged();
+      }
+    } catch {
+      // External MCP permission sync is best-effort.
+    }
   }
+}
+
+function setExternalMcpHooks(hooks = null) {
+  externalMcpActivityHook = hooks && typeof hooks === "object" ? hooks : null;
+  externalMcpHostReadyHook = typeof hooks?.onBridgeHostReady === "function"
+    ? hooks.onBridgeHostReady.bind(hooks)
+    : null;
+}
+
+function notifyExternalMcpActivity(method, params) {
+  try {
+    const chatSessionId = params?.chatSessionId || null;
+    if (chatSessionId === EXTERNAL_MCP_CHAT_SESSION_ID) {
+      externalMcpActivityHook?.recordActivity?.({ method, chatSessionId });
+    }
+  } catch {
+    // Ignore activity hook failures.
+  }
+}
+
+/**
+ * Build MCP session metadata from the live main-process session map and
+ * register it under the reserved external MCP chat scope.
+ */
+function syncLiveSessionsToExternalScope(chatSessionId = EXTERNAL_MCP_CHAT_SESSION_ID) {
+  const sessionList = [];
+  if (sessions && typeof sessions.entries === "function") {
+    for (const [sessionId, session] of sessions.entries()) {
+      if (!session || typeof session !== "object") continue;
+      sessionList.push({
+        sessionId,
+        hostId: session.hostId || "",
+        hostname: session.hostname || session.host || "",
+        label: session.label || session.hostname || sessionId,
+        os: session.os || "",
+        username: session.username || "",
+        protocol: session.protocol || session.type || "",
+        shellType: session.shellKind || session.shellType || "",
+        deviceType: session.deviceType || "",
+        connected: session.connected !== false,
+        hostChain: Array.isArray(session.hostChain) ? session.hostChain : [],
+        activePortForwards: Array.isArray(session.activePortForwards) ? session.activePortForwards : [],
+      });
+    }
+  }
+  updateSessionMetadata(sessionList, chatSessionId);
+  return { ok: true, count: sessionList.length, chatSessionId };
 }
 
 function getPermissionMode() {
@@ -698,6 +757,11 @@ function getOrCreateHost() {
       tcpServer = server;
       debugLog("TCP server listening", { port: tcpPort });
       writeCliDiscoveryFile();
+      try {
+        externalMcpHostReadyHook?.({ port: tcpPort, token: authToken });
+      } catch {
+        // External MCP host-ready sync is best-effort.
+      }
       finishResolve(tcpPort);
     });
 
@@ -778,7 +842,9 @@ async function handleMessage(socket, line) {
   }
 
   try {
-    const result = await dispatch(method, params || {});
+    const callParams = params || {};
+    notifyExternalMcpActivity(method, callParams);
+    const result = await dispatch(method, callParams);
     const response = JSON.stringify({ jsonrpc: "2.0", id, result }) + "\n";
     if (!socket.destroyed) socket.write(response);
   } catch (err) {
@@ -1207,6 +1273,11 @@ async function handleGetContext(params) {
 
   // chatSessionId may be passed via env for per-scope metadata lookup
   const chatSessionId = params?.chatSessionId || null;
+  // External MCP clients use the reserved app-wide scope; refresh from the live
+  // session map so newly opened terminals appear without waiting for a renderer push.
+  if (chatSessionId === EXTERNAL_MCP_CHAT_SESSION_ID) {
+    syncLiveSessionsToExternalScope(chatSessionId);
+  }
   const explicitScopedIds = Array.isArray(params?.scopedSessionIds)
     ? params.scopedSessionIds
     : null;
@@ -1442,10 +1513,13 @@ module.exports = {
   shutdownHost,
   setMainWindowGetter,
   setVaultAgentInvoker,
+  setExternalMcpHooks,
+  syncLiveSessionsToExternalScope,
   resolveApprovalFromRenderer,
   clearPendingApprovals,
   reserveSessionExecution,
   releaseSessionExecution,
   getSessionBusyError,
   dispatchBuiltinRpc: dispatch,
+  EXTERNAL_MCP_CHAT_SESSION_ID,
 };

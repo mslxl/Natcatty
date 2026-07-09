@@ -157,6 +157,35 @@ declare global {
     aiCattyCancelExec?(chatSessionId: string): Promise<unknown>;
     aiSetChatSessionCancelled?(chatSessionId: string, cancelled?: boolean): Promise<{ ok: boolean; error?: string }>;
     aiMcpSyncPermissionGrants?(grants: Array<Record<string, unknown>>): Promise<{ ok: boolean; count?: number; error?: string }>;
+    externalMcpGetStatus?(): Promise<{
+      ok: boolean;
+      enabled?: boolean;
+      state?: string;
+      host?: string;
+      port?: number | null;
+      discoveryPath?: string | null;
+      launcherPath?: string | null;
+      chatSessionId?: string;
+      exposedSessionCount?: number;
+      mode?: 'temporary' | 'persistent';
+      idleTimeoutMinutes?: number;
+      lastActivityAt?: number | null;
+      idleExpiresAt?: number | null;
+      permissionMode?: string;
+      hostRunning?: boolean;
+      error?: string | null;
+    }>;
+    externalMcpSetEnabled?(enabled: boolean): Promise<Record<string, unknown>>;
+    externalMcpSetConfig?(config: {
+      mode?: 'temporary' | 'persistent';
+      idleTimeoutMinutes?: number;
+    }): Promise<Record<string, unknown>>;
+    externalMcpCodexGetStatus?(): Promise<Record<string, unknown>>;
+    externalMcpCodexAdd?(): Promise<Record<string, unknown>>;
+    externalMcpClaudeGetStatus?(): Promise<Record<string, unknown>>;
+    externalMcpClaudeAdd?(): Promise<Record<string, unknown>>;
+    externalMcpGrokGetStatus?(): Promise<Record<string, unknown>>;
+    externalMcpGrokAdd?(): Promise<Record<string, unknown>>;
     aiSdkAgentCancel?(requestId: string, chatSessionId?: string): Promise<{ ok: boolean; error?: string }>;
     aiSdkAgentCleanup?(chatSessionId: string): Promise<{ ok: boolean }>;
     onAiSdkAgentEvent?(requestId: string, cb: (event: Record<string, unknown>) => void): () => void;
