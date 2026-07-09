@@ -216,6 +216,13 @@ function createExternalMcpController(options = {}) {
         // Best-effort socket revoke.
       }
     }
+    if (typeof bridge?.clearPendingApprovals === "function") {
+      try {
+        bridge.clearPendingApprovals(deps.chatSessionId);
+      } catch {
+        // Best-effort approval revoke.
+      }
+    }
     if (bridge?.cleanupScopedMetadata) {
       await bridge.cleanupScopedMetadata(deps.chatSessionId);
     }

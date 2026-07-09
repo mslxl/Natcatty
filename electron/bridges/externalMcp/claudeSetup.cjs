@@ -88,9 +88,14 @@ function extractExistingScope(result) {
     .split(/\r?\n/u)
     .map((line) => line.trim())
     .find((line) => /^Scope:\s*/iu.test(line));
-  if (!scopeLine) return null;
-  const scope = scopeLine.replace(/^Scope:\s*/iu, "").trim().toLowerCase();
-  if (scope === "user" || scope === "local" || scope === "project") return scope;
+  if (scopeLine) {
+    const scopeText = scopeLine.replace(/^Scope:\s*/iu, "").trim().toLowerCase();
+    if (scopeText.startsWith("user")) return "user";
+    if (scopeText.startsWith("local")) return "local";
+    if (scopeText.startsWith("project")) return "project";
+  }
+  const removeHint = output.match(/claude\s+mcp\s+remove[^\n]*?-s\s+(user|local|project)/iu);
+  if (removeHint) return removeHint[1].toLowerCase();
   return null;
 }
 

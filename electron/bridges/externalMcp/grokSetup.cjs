@@ -192,7 +192,7 @@ function classifyGrokExternalMcpStatus({ entries, launcherPath, grokPath, discov
   };
 
   const entry = Array.isArray(entries)
-    ? entries.find((item) => item?.name === EXTERNAL_MCP_GROK_NAME)
+    ? entries.find((item) => item?.name === EXTERNAL_MCP_GROK_NAME && item.enabled !== false)
     : null;
 
   if (!entry) {
