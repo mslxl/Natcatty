@@ -102,7 +102,7 @@ test("treats a CR-redrawn last line as the effective prompt, not the doubled str
   );
 });
 
-test("rejects spoofed `PS >` (literal space then `>`) ù default PowerShell never emits this", () => {
+test("rejects spoofed `PS >` (literal space then `>`) ‚Äî default PowerShell never emits this", () => {
   assert.equal(resolveEffectiveShellKind(undefined, "PS >"), "posix");
 });
 
@@ -114,6 +114,31 @@ test("falls back to posix when neither shell kind nor prompt is informative", ()
 test("does not misclassify command output that happens to contain 'PS'", () => {
   assert.equal(resolveEffectiveShellKind(undefined, "PSO>"), "posix");
   assert.equal(resolveEffectiveShellKind(undefined, "ZIPS>"), "posix");
+});
+
+test("loginShellHint selects fish/posix without pinning confirmed shellKind", () => {
+  assert.equal(
+    resolveEffectiveShellKind(undefined, "user@host:~$", { loginShellHint: "fish" }),
+    "fish",
+  );
+  assert.equal(
+    resolveEffectiveShellKind(undefined, "user@host:~$", { loginShellHint: "posix" }),
+    "posix",
+  );
+  // Live PowerShell prompt still wins over a posix/fish login hint.
+  assert.equal(
+    resolveEffectiveShellKind(undefined, "PS C:\\Users\\alice>", { loginShellHint: "posix" }),
+    "powershell",
+  );
+  assert.equal(
+    resolveEffectiveShellKind(undefined, "PS C:\\Users\\alice>", { loginShellHint: "fish" }),
+    "powershell",
+  );
+  // Confirmed shellKind is never overridden by a login hint.
+  assert.equal(
+    resolveEffectiveShellKind("posix", "user@host:~$", { loginShellHint: "fish" }),
+    "posix",
+  );
 });
 
 test("cmd wrapper uses interactive cmd variable expansion", () => {
@@ -209,7 +234,7 @@ test("execViaChannel registers a pending-cancel marker before the SSH channel op
   let execCallback;
   const fakeClient = {
     exec(_command, callback) {
-      // Capture but do not invoke yet ù simulates the channel-open
+      // Capture but do not invoke yet ÔøΩ simulates the channel-open
       // delay where the race window lives.
       execCallback = callback;
     },
@@ -263,7 +288,7 @@ test("execViaChannel short-circuits when cancel fires before the SSH channel ope
     if (entry.chatSessionId === "chat-2") entry.cancel();
   }
 
-  // Now the channel "opens" ù even though `sshClient.exec` would
+  // Now the channel "opens" ÔøΩ even though `sshClient.exec` would
   // hand us a working stream, we must short-circuit because the user
   // already cancelled.
   const fakeExecStream = {

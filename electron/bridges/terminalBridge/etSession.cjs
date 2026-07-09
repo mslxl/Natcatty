@@ -783,7 +783,16 @@ main();
           hostname: options.hostname || "",
           username: options.username || "",
           label: options.label || options.hostname || "ET Session",
-          shellKind: "posix",
+          // Leave unset so ensureSessionShellKind can probe via companion SSH
+          // exec before AI wrappers (fish login shells — issue #1854).
+          shellKind: undefined,
+          _shellKindExecProbe: async (command, timeoutMs) => {
+            const result = await execOnEtSession(session, command, timeoutMs, {
+              requireTrustedHost: true,
+              knownHosts: session.etStatsAuth?.knownHosts,
+            });
+            return result?.success ? (result.stdout || "") : null;
+          },
           shellExecutable: "remote-shell",
           externalAuthArtifacts: sshEnvironment?.artifacts || [],
           externalAuthArtifactsCleaned: false,

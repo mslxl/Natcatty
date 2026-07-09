@@ -96,16 +96,23 @@ function isPowerShellPrompt(prompt) {
 
 // Prompt-driven override is intentionally narrow: only flip to PowerShell
 // when the session has no confirmed shell type. This keeps the issue #841
-// fix working (SSH/Telnet sessions never set shellKind — see
-// sshBridge.cjs:1265) while preventing a malicious remote process from
-// spoofing a `PS ...>` line on a real bash/zsh/fish/cmd session to coerce
-// a single mis-wrapped command.
+// fix working for remote Windows shells that never set shellKind at connect
+// time, while preventing a malicious remote process from spoofing a
+// `PS ...>` line on a real bash/zsh/fish/cmd session to coerce a single
+// mis-wrapped command.
+//
+// Remote login-shell probing stores a *soft* hint (`loginShellHint` /
+// session._loginShellKind) without pinning session.shellKind for fish/posix:
+//   - hint "fish"  → fish wrapper (issue #1854) without permanent pin
+//   - hint "posix" → native posix wrapper evaluated by interactive bash/zsh
+//                    (NOT sh -c / dash — Codex P2 on #2061)
+//   - live PS ...> still overrides when base kind is open
 //
 // Universe of shellKind values (see lib/localShell.cjs:23-33 and
 // terminalBridge.cjs:368, :932, :1074):
 //   "posix" | "powershell" | "cmd" | "fish" | "unknown" | "raw" | "" | undefined
-// Excluded on purpose:
-//   - "posix" / "fish" / "cmd": confirmed POSIX-family or cmd.exe — never override.
+// Excluded on purpose from prompt override:
+//   - "posix" / "fish" / "cmd": confirmed — never override.
 //   - "powershell": already correct; no override needed (would be a no-op).
 //   - "raw": serial / network device — execViaRawPty bypasses buildWrappedCommand.
 const SHELL_KINDS_OPEN_TO_PROMPT_OVERRIDE = new Set([
@@ -113,7 +120,9 @@ const SHELL_KINDS_OPEN_TO_PROMPT_OVERRIDE = new Set([
   "unknown",
 ]);
 
-function resolveEffectiveShellKind(shellKind, expectedPrompt) {
+const LOGIN_SHELL_HINTS = new Set(["posix", "fish", "powershell", "cmd"]);
+
+function resolveEffectiveShellKind(shellKind, expectedPrompt, options = {}) {
   const baseKind = shellKind || "";
   if (
     SHELL_KINDS_OPEN_TO_PROMPT_OVERRIDE.has(baseKind) &&
@@ -121,7 +130,24 @@ function resolveEffectiveShellKind(shellKind, expectedPrompt) {
   ) {
     return "powershell";
   }
-  return baseKind || "posix";
+  if (baseKind) return baseKind;
+
+  // Soft login-shell hint from remote probe (not a permanent pin).
+  const hint = options.loginShellHint || "";
+  if (LOGIN_SHELL_HINTS.has(hint)) return hint;
+
+  return "posix";
+}
+
+function buildPosixWrapperBody(command, marker) {
+  const noPager = "PAGER=cat SYSTEMD_PAGER= GIT_PAGER=cat LESS= ";
+  const commandLines = String(command || "").replace(/\r\n?/g, "\n").split("\n");
+  const cmdAssign = commandLines.length > 1
+    ? `${marker}_cmd=$(printf '%s\\n' ${commandLines.map((line) => `'${escapePosixSingleQuoted(line)}'`).join(" ")})`
+    : `${marker}_cmd='${escapePosixSingleQuoted(command)}'`;
+  return (
+    `${marker}=0; ${cmdAssign}; { printf '%s\\n' '${marker}_S'; trap ':' INT; ( ${noPager}eval "$${marker}_cmd" ); __NCMCP_rc=$?; trap - INT; printf '%s\\n' '${marker}_E:'\"$__NCMCP_rc\"; (exit $__NCMCP_rc); }`
+  );
 }
 
 function buildWrappedCommand(command, shellKind, marker) {
@@ -191,17 +217,7 @@ function buildWrappedCommand(command, shellKind, marker) {
       //    Earlier attempts (PRs #1852/#1882) that instead tried to detect
       //    dangerous commands grew into shell parsing and were abandoned —
       //    do not reintroduce detection here.
-      const noPager = "PAGER=cat SYSTEMD_PAGER= GIT_PAGER=cat LESS= ";
-      // Multi-line commands must not embed raw newlines in the typed
-      // wrapper: the interactive shell would echo PS2 continuation lines
-      // ("> cd ...") that don't contain the marker and leak past the
-      // preload filter. Rebuild the newlines inside the shell instead via
-      // printf so the wrapper stays one physical line. Single-line
-      // commands keep the plain assignment.
-      const commandLines = String(command || "").replace(/\r\n?/g, "\n").split("\n");
-      const cmdAssign = commandLines.length > 1
-        ? `${marker}_cmd=$(printf '%s\\n' ${commandLines.map((line) => `'${escapePosixSingleQuoted(line)}'`).join(" ")})`
-        : `${marker}_cmd='${escapePosixSingleQuoted(command)}'`;
+      //
       // Leading single space: lets bash/zsh skip recording this command
       // in history when the user already has HISTCONTROL=ignorespace
       // (bash) or HIST_IGNORE_SPACE (zsh) configured — Debian/Ubuntu and
@@ -209,9 +225,7 @@ function buildWrappedCommand(command, shellKind, marker) {
       // can opt in by adding `HISTCONTROL=ignoreboth` to ~/.bashrc.
       // Without that config the prefix is harmless; it just doesn't
       // suppress history recording.
-      return (
-        ` ${marker}=0; ${cmdAssign}; { printf '%s\\n' '${marker}_S'; trap ':' INT; ( ${noPager}eval "$${marker}_cmd" ); __NCMCP_rc=$?; trap - INT; printf '%s\\n' '${marker}_E:'\"$__NCMCP_rc\"; (exit $__NCMCP_rc); }\n`
-      );
+      return ` ${buildPosixWrapperBody(command, marker)}\n`;
     }
   }
 }
