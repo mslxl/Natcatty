@@ -354,12 +354,16 @@ jobs:
             release/*.blockmap
           if-no-files-found: ignore
 
-  # Dedicated job for Linux x64 — builds inside Debian Buster (GLIBC 2.28)
+  # Dedicated job for Linux x64 — builds inside AlmaLinux 8 (GLIBC 2.28)
   # so native modules (node-pty, serialport) stay compatible with RHEL 8 /
   # CentOS 8 / UOS / Deepin. Ubuntu 22.04 links against GLIBC 2.32–2.35,
-  # which crashes on those older hosts (see #2062). Buster is preferred over
-  # Bullseye (2.31) because some RHEL 8 derivatives only export symbols up
-  # through GLIBC_2.30 even when `ldd --version` reports 2.31.
+  # which crashes on those older hosts (see #2062).
+  #
+  # We previously used debian:buster for the same glibc floor, but Buster's
+  # g++ 8 cannot compile Electron 42 natives (`-std=gnu++20`). AlmaLinux 8
+  # keeps glibc 2.28 while gcc-toolset-13 provides a real C++20 toolchain.
+  # Link natives with -static-libstdc++ so the result does not require a
+  # newer system libstdc++ on RHEL 8 derivatives.
   # Key: GLIBC < 2.34 also avoids the libpthread-merge symbol requirement.
   build-linux-x64:
     name: ${{ needs.dedupe.outputs.skip_heavy_ci == 'true' && 'deduped build-linux-x64' || 'build-linux-x64' }}
@@ -370,12 +374,14 @@ jobs:
       && needs.dedupe.outputs.skip_heavy_ci != 'true'
     runs-on: ubuntu-latest
     container:
-      image: debian:buster
+      image: almalinux:8
     env:
       MOSH_BIN_RELEASE: ${{ needs.resolve-mosh.outputs.mosh_bin_release }}
       ET_BIN_RELEASE: ${{ needs.resolve-et.outputs.et_bin_release }}
       npm_config_arch: x64
       npm_config_target_arch: x64
+      # Keep rebuilt natives portable to stock RHEL 8 libstdc++.
+      LDFLAGS: "-static-libstdc++ -static-libgcc"
       VITE_SYNC_GITHUB_CLIENT_ID: ${{ secrets.VITE_SYNC_GITHUB_CLIENT_ID }}
       VITE_SYNC_GOOGLE_CLIENT_ID: ${{ secrets.VITE_SYNC_GOOGLE_CLIENT_ID }}
       VITE_SYNC_GOOGLE_CLIENT_SECRET: ${{ secrets.VITE_SYNC_GOOGLE_CLIENT_SECRET }}
@@ -404,25 +410,132 @@ jobs:
           fi
 
       - name: Install build dependencies
-        # Container jobs default to /bin/sh; Buster's dash rejects `[[`.
         shell: bash
         run: |
-          # Buster is archived; redirect apt to archive.debian.org and
-          # disable Valid-Until so expired security metadata still works.
-          if [[ -f /etc/apt/sources.list ]]; then
-            sed -i 's/deb.debian.org/archive.debian.org/g' /etc/apt/sources.list
-            sed -i 's/security.debian.org/archive.debian.org/g' /etc/apt/sources.list
-            sed -i '/buster-updates/d' /etc/apt/sources.list || true
+          set -euo pipefail
+          dnf -y install epel-release
+          dnf -y install \
+            curl ca-certificates \
+            gcc-toolset-13-gcc gcc-toolset-13-gcc-c++ make \
+            python3.11 python3.11-pip \
+            git file rpm-build binutils cpio elfutils \
+            libarchive gzip bzip2 xz zstd tar which findutils \
+            dpkg fakeroot \
+            fuse fuse-libs gtk3 nss libXScrnSaver libXtst alsa-lib \
+            at-spi2-atk libdrm mesa-libgbm libX11 libX11-xcb libxcb \
+            mesa-libGL pango cairo
+          # gcc-toolset-13: C++20 for Electron 42 natives; still links glibc 2.28.
+          GCC_TOOLSET_ROOT="/opt/rh/gcc-toolset-13/root"
+          echo "PATH=${GCC_TOOLSET_ROOT}/usr/bin:${PATH}" >> "${GITHUB_ENV}"
+          echo "CC=${GCC_TOOLSET_ROOT}/usr/bin/gcc" >> "${GITHUB_ENV}"
+          echo "CXX=${GCC_TOOLSET_ROOT}/usr/bin/g++" >> "${GITHUB_ENV}"
+          echo "DEVTOOLSET_ROOTPATH=${GCC_TOOLSET_ROOT}" >> "${GITHUB_ENV}"
+          export PATH="${GCC_TOOLSET_ROOT}/usr/bin:${PATH}"
+          gcc --version
+          g++ --version
+          # AlmaLinux 8's libarchive package is often library-only in minimal
+          # images (no /usr/bin/bsdtar). electron-builder pacman packaging needs
+          # bsdtar; pull a Debian tools package that runs on glibc 2.28.
+          # Prefer Buster (published as +deb10u1 on archive.debian.org).
+          if [[ ! -x /usr/bin/bsdtar ]]; then
+            echo "bsdtar missing; installing CLI from Debian libarchive-tools"
+            mkdir -p /tmp/bsdtar-deb
+            BSDTAR_DEB_URLS=(
+              "http://archive.debian.org/debian/pool/main/liba/libarchive/libarchive-tools_3.3.3-4+deb10u1_amd64.deb"
+              "http://archive.debian.org/debian/pool/main/liba/libarchive/libarchive-tools_3.2.2-2+deb9u2_amd64.deb"
+            )
+            BSDTAR_DEB_OK=0
+            for url in "${BSDTAR_DEB_URLS[@]}"; do
+              echo "trying ${url}"
+              if curl -fsSL -o /tmp/libarchive-tools.deb "${url}"; then
+                BSDTAR_DEB_OK=1
+                break
+              fi
+              echo "download failed for ${url}"
+            done
+            if [[ "${BSDTAR_DEB_OK}" -ne 1 ]]; then
+              echo "::error::Could not download Debian libarchive-tools for bsdtar"
+              exit 1
+            fi
+            dpkg-deb -x /tmp/libarchive-tools.deb /tmp/bsdtar-deb
+            install -m 0755 /tmp/bsdtar-deb/usr/bin/bsdtar /usr/local/bin/bsdtar-bin
+            # Prefer system libarchive.so if present; fall back to the deb's.
+            if [[ ! -e /usr/lib64/libarchive.so.13 && -d /tmp/bsdtar-deb/usr/lib/x86_64-linux-gnu ]]; then
+              mkdir -p /usr/local/lib/bsdtar-libs
+              cp -a /tmp/bsdtar-deb/usr/lib/x86_64-linux-gnu/libarchive.so* /usr/local/lib/bsdtar-libs/ 2>/dev/null || true
+            fi
+            printf '%s\n' \
+              '#!/bin/bash' \
+              'unset LD_LIBRARY_PATH' \
+              'if [[ -d /usr/local/lib/bsdtar-libs ]]; then' \
+              '  export LD_LIBRARY_PATH=/usr/local/lib/bsdtar-libs' \
+              'fi' \
+              'exec /usr/local/bin/bsdtar-bin "$@"' \
+              > /usr/local/bin/bsdtar
+            chmod +x /usr/local/bin/bsdtar
           fi
-          echo 'Acquire::Check-Valid-Until "false";' > /etc/apt/apt.conf.d/99no-check-valid-until
-          apt-get update
-          apt-get install -y curl ca-certificates build-essential python3 git libfuse2 file rpm \
-            libarchive-tools xz-utils \
-            libglib2.0-0 libgtk-3-0 libnss3 libxss1 libxtst6 libasound2 \
-            libatk-bridge2.0-0 libdrm2 libgbm1 libx11-xcb1 libxcb-dri3-0
-          # NodeSource no longer ships Node 22 for Buster; install the
-          # official linux-x64 binary tarball instead (matches major 22
-          # used by the other package jobs).
+          # Some fpm paths still look for xzmt even when payload compression
+          # is gzip; provide a multi-thread xz shim.
+          printf '%s\n' '#!/bin/sh' 'exec /usr/bin/xz -T0 "$@"' > /usr/local/bin/xzmt
+          chmod +x /usr/local/bin/xzmt
+          # electron-builder's portable fpm injects its own LD_LIBRARY_PATH.
+          # System tools (rpmbuild, bsdtar, ...) then exit 127 under that path.
+          # Wrap every packaging helper so child processes see a clean env.
+          # Use printf (not a bare heredoc): unindented heredoc body breaks GHA YAML.
+          wrap_clean_env() {
+            local name="$1"
+            local real=""
+            if [[ -x "/usr/bin/${name}" ]]; then
+              real="/usr/bin/${name}"
+            elif [[ -x "/usr/local/bin/${name}-bin" ]]; then
+              real="/usr/local/bin/${name}-bin"
+            elif command -v "${name}" >/dev/null 2>&1; then
+              real="$(command -v "${name}")"
+            else
+              return 0
+            fi
+            # Don't wrap our own wrapper recursively.
+            if [[ "${real}" == /usr/local/bin/* && "${name}" != "bsdtar" ]]; then
+              return 0
+            fi
+            if [[ "${name}" == "bsdtar" && -x /usr/local/bin/bsdtar-bin ]]; then
+              real="/usr/local/bin/bsdtar-bin"
+            fi
+            printf '%s\n' \
+              '#!/bin/bash' \
+              'unset LD_LIBRARY_PATH' \
+              "exec ${real} \"\$@\"" \
+              > "/usr/local/bin/${name}"
+            chmod +x "/usr/local/bin/${name}"
+          }
+          for cmd in rpmbuild bsdtar bsdcpio tar gzip xz strip cpio; do
+            wrap_clean_env "${cmd}"
+          done
+          # Re-apply bsdtar wrapper with optional lib path for the deb-extracted binary.
+          if [[ -x /usr/local/bin/bsdtar-bin ]]; then
+            printf '%s\n' \
+              '#!/bin/bash' \
+              'unset LD_LIBRARY_PATH' \
+              'if [[ -d /usr/local/lib/bsdtar-libs ]]; then' \
+              '  export LD_LIBRARY_PATH=/usr/local/lib/bsdtar-libs' \
+              'fi' \
+              'exec /usr/local/bin/bsdtar-bin "$@"' \
+              > /usr/local/bin/bsdtar
+            chmod +x /usr/local/bin/bsdtar
+          fi
+          # Fail early with diagnostics if packaging tools are missing.
+          for tool in rpmbuild bsdtar strip gzip xz xzmt; do
+            if ! command -v "${tool}" >/dev/null 2>&1; then
+              echo "::error::Required packaging tool not found: ${tool}"
+              ls -la /usr/bin/bsd* /usr/local/bin/bsd* 2>/dev/null || true
+              rpm -ql libarchive 2>/dev/null | head -n 40 || true
+              exit 1
+            fi
+            echo "found ${tool}: $(command -v "${tool}")"
+          done
+          rpmbuild --version
+          bsdtar --version | head -n 1
+          # Official Node 22 linux-x64 tarball (same major as other package jobs).
           NODE_VERSION="$(curl -fsSL https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt \
             | awk '/node-v[0-9.]+-linux-x64\.tar\.xz$/{print $2; exit}' \
             | sed -E 's/^node-(v[0-9.]+)-linux-x64\.tar\.xz$/\1/')"
@@ -435,18 +548,11 @@ jobs:
             | tar -xJ -C /usr/local --strip-components=1
           node -v
           npm -v
-          # Buster ships Python 3.7; node-gyp 12 needs >=3.8 (walrus syntax).
-          # actions/setup-python is not reliable inside this old glibc container,
-          # so install a manylinux-compatible CPython via uv instead.
-          curl -LsSf https://astral.sh/uv/install.sh | sh
-          export PATH="${HOME}/.local/bin:${PATH}"
-          uv python install 3.11
-          PYTHON_BIN="$(uv python find 3.11)"
-          ln -sfn "${PYTHON_BIN}" /usr/local/bin/python3.11
-          ln -sfn python3.11 /usr/local/bin/python3
+          # node-gyp 12 needs Python >=3.8; AlmaLinux 8 default is older.
+          alternatives --set python3 /usr/bin/python3.11 || ln -sfn /usr/bin/python3.11 /usr/local/bin/python3
           python3 --version
-          echo "PYTHON=${PYTHON_BIN}" >> "${GITHUB_ENV}"
-          echo "npm_config_python=${PYTHON_BIN}" >> "${GITHUB_ENV}"
+          echo "PYTHON=/usr/bin/python3.11" >> "${GITHUB_ENV}"
+          echo "npm_config_python=/usr/bin/python3.11" >> "${GITHUB_ENV}"
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -454,6 +560,7 @@ jobs:
       - name: Install deps
         run: |
           python3 --version
+          g++ --version
           npm ci
 
       - name: Set version
@@ -487,7 +594,23 @@ jobs:
         env:
           npm_config_arch: x64
           ELECTRON_BUILDER_PUBLISH: "never"
-        run: npm run pack:linux-x64
+          # Natives are already rebuilt. Prefer system packaging tools so
+          # rpmbuild brp scripts do not pick up a toolset-only binary, and so
+          # /usr/local/bin/rpmbuild (clean-env wrapper) wins over /usr/bin.
+          PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+        run: |
+          set -euo pipefail
+          command -v node
+          command -v rpmbuild
+          command -v bsdtar
+          command -v gzip
+          command -v xzmt
+          for cmd in rpmbuild bsdtar; do
+            if ! head -n 2 "$(command -v "${cmd}")" | grep -q 'unset LD_LIBRARY_PATH'; then
+              echo "::warning::${cmd} on PATH is not the clean-env wrapper; packaging may fail with exit 127"
+            fi
+          done
+          npm run pack:linux-x64
 
       - name: Verify packaged node-pty Linux runtime
         run: bash scripts/ensure-node-pty-linux.sh verify x64

@@ -173,8 +173,23 @@ test("linux packaging includes an Arch Linux pacman package target", () => {
 test("rpm packaging disables generated build-id symlinks", () => {
   assert.deepEqual(
     config.rpm?.fpm,
-    ["--rpm-rpmbuild-define", "_build_id_links none"],
-    "RPM packages must not own /usr/lib/.build-id links that can conflict with other RPMs",
+    [
+      "--rpm-rpmbuild-define",
+      "_build_id_links none",
+      "--rpm-rpmbuild-define",
+      "__os_install_post %{nil}",
+    ],
+    "RPM packages must skip build-id links and host brp post scripts on RHEL builders",
+  );
+});
+
+test("rpm packaging uses gzip compression for RHEL-family package hosts", () => {
+  // Default electron-builder/fpm RPM compression is xzmt. AlmaLinux/RHEL 8 CI
+  // images provide `xz` but not the `xzmt` shim, which makes rpmbuild exit 127.
+  assert.equal(
+    config.rpm?.compression,
+    "gzip",
+    "RPM compression must avoid xzmt on RHEL 8 / AlmaLinux 8 package builders",
   );
 });
 

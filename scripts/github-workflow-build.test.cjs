@@ -7,6 +7,10 @@ const buildWorkflow = fs.readFileSync(
   path.join(__dirname, "..", ".github", "workflows", "build.yml"),
   "utf8",
 );
+const moshLinuxScript = fs.readFileSync(path.join(__dirname, "build-mosh", "build-linux.sh"), "utf8");
+const moshMacScript = fs.readFileSync(path.join(__dirname, "build-mosh", "build-macos.sh"), "utf8");
+const etLinuxScript = fs.readFileSync(path.join(__dirname, "build-et", "build-linux.sh"), "utf8");
+const etMacScript = fs.readFileSync(path.join(__dirname, "build-et", "build-macos.sh"), "utf8");
 
 test("build workflow no longer installs removed legacy agent binaries", () => {
   for (const stale of [
@@ -37,11 +41,24 @@ test("build workflow uploads and releases Arch pacman artifacts", () => {
 });
 
 test("build workflow installs bsdtar for Arch pacman packaging", () => {
-  const installMentions = buildWorkflow.match(/libarchive-tools/g) ?? [];
-  assert.equal(
-    installMentions.length,
-    2,
-    "both Linux package jobs must install libarchive-tools for pacman metadata generation",
+  // arm64 (Debian) uses libarchive-tools; x64 (AlmaLinux 8) uses libarchive.
+  // Both packages provide bsdtar for electron-builder pacman metadata.
+  assert.match(
+    buildWorkflow,
+    /build-linux-arm64:[\s\S]*libarchive-tools/,
+    "Linux arm64 package job must install libarchive-tools for pacman metadata generation",
+  );
+  assert.match(
+    buildWorkflow,
+    /build-linux-x64:[\s\S]*\blibarchive\b/,
+    "Linux x64 package job must install libarchive (bsdtar) for pacman metadata generation",
+  );
+  // Pin a filename that actually exists on archive.debian.org so CI does not
+  // 404 when AlmaLinux's libarchive RPM ships without /usr/bin/bsdtar.
+  assert.match(
+    buildWorkflow,
+    /libarchive-tools_3\.3\.3-4\+deb10u1_amd64\.deb/,
+    "Linux x64 job must download a published Buster libarchive-tools deb for bsdtar",
   );
 });
 
@@ -58,16 +75,22 @@ test("build workflow verifies RPM artifacts for both Linux architectures", () =>
 
 test("build workflow builds Linux x64 native modules in a glibc 2.28 container", () => {
   // Keep x64 packages loadable on RHEL 8 / UOS / Deepin (see #2062).
-  // Buster (2.28) is stricter than the prior ubuntu-22.04 host (2.35) and
-  // slightly older than the arm64 Bullseye container (2.31).
+  // AlmaLinux 8 (glibc 2.28) replaces debian:buster so we still target the
+  // same glibc floor, but gcc-toolset-13 can compile Electron 42's -std=gnu++20
+  // (Buster's g++ 8 cannot).
   const x64Job = buildWorkflow.match(
     /build-linux-x64:[\s\S]*?(?=\n  build-linux-arm64:)/,
   );
   assert.ok(x64Job, "build-linux-x64 job must be present before build-linux-arm64");
   assert.match(
     x64Job[0],
-    /container:\s*\n\s*image:\s*debian:buster/,
-    "Linux x64 package job must build inside debian:buster for glibc 2.28",
+    /container:\s*\n\s*image:\s*almalinux:8/,
+    "Linux x64 package job must build inside almalinux:8 for glibc 2.28 + modern GCC",
+  );
+  assert.equal(
+    x64Job[0].includes("debian:buster"),
+    false,
+    "Linux x64 package job must not use debian:buster (g++ 8 cannot build gnu++20 natives)",
   );
   assert.equal(
     x64Job[0].includes("ubuntu-22.04"),
@@ -81,17 +104,55 @@ test("build workflow builds Linux x64 native modules in a glibc 2.28 container",
   );
   assert.match(
     x64Job[0],
-    /name:\s*Install build dependencies[\s\S]*?\n\s+shell:\s*bash\n\s+run:/,
-    "Linux x64 install step must use bash so archive-mirror rewrite works under Buster",
+    /gcc-toolset-13-gcc-c\+\+/,
+    "Linux x64 job must install gcc-toolset-13 for C++20 native rebuilds",
   );
   assert.match(
     x64Job[0],
-    /uv python install 3\.11/,
-    "Linux x64 job must install Python >=3.8 for node-gyp 12 on Buster",
+    /static-libstdc\+\+/,
+    "Linux x64 job must static-link libstdc++ so RHEL 8 stock libstdc++ is enough",
+  );
+  assert.match(
+    x64Job[0],
+    /unset LD_LIBRARY_PATH/,
+    "Linux x64 job must wrap packaging tools to clear portable-fpm LD_LIBRARY_PATH",
+  );
+  assert.match(
+    x64Job[0],
+    /for cmd in rpmbuild bsdtar/,
+    "Linux x64 job must wrap both rpmbuild and bsdtar for rpm/pacman targets",
+  );
+  assert.match(
+    x64Job[0],
+    /python3\.11/,
+    "Linux x64 job must use Python >=3.8 for node-gyp 12",
   );
   assert.equal(
     x64Job[0].includes("actions/setup-python@"),
     false,
-    "Linux x64 job must not rely on actions/setup-python inside Buster",
+    "Linux x64 job must not rely on actions/setup-python inside the glibc container",
   );
+});
+
+test("mosh binary build scripts retry source downloads before failing CI", () => {
+  for (const [name, script] of [
+    ["linux", moshLinuxScript],
+    ["macos", moshMacScript],
+  ]) {
+    assert.match(script, /curl_retry\(\)/, `${name} mosh build must use retrying downloads`);
+    assert.match(script, /--retry 8/, `${name} mosh build must retry transient HTTP failures`);
+    assert.match(script, /--retry-max-time 600/, `${name} mosh build must bound retry time`);
+  }
+});
+
+test("et binary build scripts retry dependency configure and pin ninja", () => {
+  for (const [name, script] of [
+    ["linux", etLinuxScript],
+    ["macos", etMacScript],
+  ]) {
+    assert.match(script, /retry_command\(\)/, `${name} et build must retry transient dependency failures`);
+    assert.match(script, /retry_command cmake -S/, `${name} et build must retry CMake configure`);
+    assert.match(script, /NINJA_BIN=\$\(command -v ninja\)/, `${name} et build must resolve ninja before configure`);
+    assert.match(script, /-DCMAKE_MAKE_PROGRAM="\$NINJA_BIN"/, `${name} et build must pass the resolved ninja path`);
+  }
 });
