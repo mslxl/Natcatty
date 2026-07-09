@@ -27,7 +27,7 @@ const recordings = new Map();
 const pendingDialogs = new Map();
 /** @type {Map<string, { resolve, reject, sessionId, runId?: string }>} */
 const pendingScreenSnapshots = new Map();
-/** @type {Map<string, symbol>} */
+/** @type {Map<string, { runId: string, token: symbol }>} */
 const scriptLogTokens = new Map();
 /** @type {Map<string, Promise<void>>} */
 const sessionRunChains = new Map();
@@ -313,11 +313,11 @@ function showWaitForTimeoutDialog(pattern, timeoutMs, runId) {
   );
 }
 
-async function stopScriptSessionLog(sessionId) {
-  const token = scriptLogTokens.get(sessionId);
-  if (!token) return;
+async function stopScriptSessionLog(sessionId, runId) {
+  const entry = scriptLogTokens.get(sessionId);
+  if (!entry || (runId && entry.runId !== runId)) return;
   scriptLogTokens.delete(sessionId);
-  await sessionLogStreamManager.stopStream(sessionId, token);
+  await sessionLogStreamManager.stopStream(sessionId, entry.token);
 }
 
 async function syncOutputBufferFromSnapshot(sessionId, runId, isAborted = () => false) {
@@ -446,10 +446,10 @@ async function runScriptOnSession({
       if (!result.ok) {
         throw new Error(result.error || "Failed to start script log");
       }
-      scriptLogTokens.set(sid, result.token);
+      scriptLogTokens.set(sid, { runId, token: result.token });
     },
     stopSessionLog: async (sid) => {
-      await stopScriptSessionLog(sid);
+      await stopScriptSessionLog(sid, runId);
     },
     isPaused: () => Boolean(runs.get(runId)?.paused),
     isAborted: () => {
@@ -501,7 +501,7 @@ async function runScriptOnSession({
       reject: run.aborted,
       reason: new Error("Stopped by user"),
     });
-    await stopScriptSessionLog(sessionId);
+    await stopScriptSessionLog(sessionId, runId);
     runAbortControls.delete(runId);
     broadcastRuns();
   }

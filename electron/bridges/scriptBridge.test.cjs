@@ -742,6 +742,108 @@ test("stopping a script releases its session log so the next run can start one",
   }
 });
 
+test("late stopLog from a stopped script does not close the next run log", async () => {
+  const handlers = new Map();
+  const sentRunUpdates = [];
+  const sessionId = "session-stale-stop-log";
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-script-stale-log-test-"));
+
+  try {
+    scriptBridge.init({
+      sessions: new Map([[sessionId, { hostname: "example.test" }]]),
+      electronModule: {
+        app: {
+          getVersion: () => "test",
+          getPath: () => logDir,
+        },
+      },
+      terminalBridge: {
+        writeToSession() {},
+      },
+      terminalWorkerManager: null,
+      getMainWindow: () => ({
+        webContents: {
+          send(channel, payload) {
+            if (channel === "netcatty:script:runs-updated") {
+              sentRunUpdates.push(payload.runs);
+            }
+            if (channel === "netcatty:script:screen-snapshot-request") {
+              setImmediate(() => {
+                handlers.get("netcatty:script:screen-snapshot-response")({}, {
+                  requestId: payload.requestId,
+                  snapshot: {
+                    rows: 24,
+                    cols: 80,
+                    currentRow: 0,
+                    lines: [],
+                  },
+                });
+              });
+            }
+          },
+        },
+      }),
+    });
+    scriptBridge.registerHandlers({
+      handle(channel, handler) {
+        handlers.set(channel, handler);
+      },
+    });
+
+    const runHandler = handlers.get("netcatty:script:run");
+    const firstRunPromise = runHandler({}, {
+      scriptId: "stale-stop-log-first",
+      scriptLabel: "Stale stopLog first",
+      sessionId,
+      content: `
+        await nct.session.startLog(${JSON.stringify(path.join(logDir, "first.log"))});
+        try {
+          await nct.sleep(5000);
+        } finally {
+          await nct.session.stopLog();
+        }
+      `,
+      permissionMode: "auto",
+    });
+
+    await waitUntil(() => sessionLogStreamManager.hasStream(sessionId));
+    const firstRunId = await waitUntil(() => (
+      sentRunUpdates
+        .flat()
+        .find((run) => run.scriptId === "stale-stop-log-first" && run.status === "running")
+        ?.runId
+    ));
+
+    assert.deepEqual(await handlers.get("netcatty:script:stop")({}, { runId: firstRunId }), { ok: true });
+    await firstRunPromise;
+    await waitUntil(() => !sessionLogStreamManager.hasStream(sessionId));
+
+    const secondRunPromise = runHandler({}, {
+      scriptId: "stale-stop-log-second",
+      scriptLabel: "Stale stopLog second",
+      sessionId,
+      content: `
+        await nct.session.startLog(${JSON.stringify(path.join(logDir, "second.log"))});
+        await nct.sleep(250);
+        await nct.session.stopLog();
+      `,
+      permissionMode: "auto",
+    });
+
+    await waitUntil(() => sessionLogStreamManager.hasStream(sessionId));
+    await delay(120);
+    assert.equal(sessionLogStreamManager.hasStream(sessionId), true);
+    await secondRunPromise;
+
+    const secondRun = sentRunUpdates.at(-1).find((run) => run.scriptId === "stale-stop-log-second");
+    assert.equal(secondRun.status, "completed");
+    assert.equal(sessionLogStreamManager.hasStream(sessionId), false);
+  } finally {
+    await sessionLogStreamManager.cleanupAll();
+    fs.rmSync(logDir, { recursive: true, force: true });
+  }
+});
+
 test("script run treats worker-managed sessions as connected", async () => {
   const handlers = new Map();
   const sentRunUpdates = [];
