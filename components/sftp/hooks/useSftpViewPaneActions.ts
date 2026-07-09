@@ -15,8 +15,14 @@ interface UseSftpViewPaneActionsParams {
 interface UseSftpViewPaneActionsResult {
   dragCallbacks: SftpDragCallbacks;
   draggedFiles: (SftpTransferSource & { side: "left" | "right" })[] | null;
-  onConnectLeft: (host: Parameters<SftpStateApi["connect"]>[1]) => void;
-  onConnectRight: (host: Parameters<SftpStateApi["connect"]>[1]) => void;
+  onConnectLeft: (
+    host: Parameters<SftpStateApi["connect"]>[1],
+    options?: Parameters<SftpStateApi["connect"]>[2],
+  ) => void;
+  onConnectRight: (
+    host: Parameters<SftpStateApi["connect"]>[1],
+    options?: Parameters<SftpStateApi["connect"]>[2],
+  ) => void;
   onDisconnectLeft: () => Promise<boolean>;
   onDisconnectRight: () => Promise<boolean>;
   onPrepareSelectionLeft: () => void;
@@ -124,11 +130,17 @@ export const useSftpViewPaneActions = ({
   );
 
   const onConnectLeft = useCallback(
-    (host: Parameters<SftpStateApi["connect"]>[1]) => sftpRef.current.connect("left", host),
+    (
+      host: Parameters<SftpStateApi["connect"]>[1],
+      options?: Parameters<SftpStateApi["connect"]>[2],
+    ) => sftpRef.current.connect("left", host, options),
     [sftpRef],
   );
   const onConnectRight = useCallback(
-    (host: Parameters<SftpStateApi["connect"]>[1]) => sftpRef.current.connect("right", host),
+    (
+      host: Parameters<SftpStateApi["connect"]>[1],
+      options?: Parameters<SftpStateApi["connect"]>[2],
+    ) => sftpRef.current.connect("right", host, options),
     [sftpRef],
   );
   // Returns `true` if the disconnect actually happened, `false` if the user

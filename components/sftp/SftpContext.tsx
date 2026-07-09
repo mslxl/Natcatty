@@ -7,6 +7,8 @@
  */
 
 import React, { createContext, useContext, useMemo, useSyncExternalStore } from "react";
+import type { SftpConnectedHostEntry } from "../../domain/sftpConnectedHosts";
+import type { SftpConnectOptions } from "../../application/state/sftp/useSftpConnections";
 import { Host, SftpFileEntry, SftpFilenameEncoding } from "../../types";
 
 export interface SftpTransferSource {
@@ -17,9 +19,12 @@ export interface SftpTransferSource {
     targetPath?: string;
 }
 
+export type SftpConnectTarget = Host | "local";
+export type SftpConnectHostOptions = Pick<SftpConnectOptions, "sourceSessionId">;
+
 // Types for the context
 export interface SftpPaneCallbacks {
-    onConnect: (host: Host | "local") => void;
+    onConnect: (host: SftpConnectTarget, options?: SftpConnectHostOptions) => void;
     /** Resolves true if disconnect completed, false if the user canceled the
      * dirty-editor prompt. Callers that follow up with a replacement connect
      * must gate on the result. */
@@ -108,6 +113,8 @@ export const useActiveTabId = (side: "left" | "right"): string | null => {
 export interface SftpContextValue {
     // Hosts list for connection picker
     hosts: Host[];
+    // Live terminal sessions that can be reused for SFTP (shown in picker).
+    connectedHosts: SftpConnectedHostEntry[];
     // Raw hosts list for bookmark persistence and other host writes.
     writableHosts: Host[];
     // Host updater for bookmark persistence
@@ -161,6 +168,12 @@ export const useSftpHosts = () => {
     return context.hosts;
 };
 
+// Hook to get currently connected terminal hosts for the picker
+export const useSftpConnectedHosts = () => {
+    const context = useSftpContext();
+    return context.connectedHosts;
+};
+
 // Hook to get raw hosts for writeback
 export const useSftpWritableHosts = () => {
     const context = useSftpContext();
@@ -175,6 +188,7 @@ export const useSftpUpdateHosts = () => {
 
 interface SftpContextProviderProps {
     hosts: Host[];
+    connectedHosts?: SftpConnectedHostEntry[];
     writableHosts?: Host[];
     updateHosts: (hosts: Host[]) => void;
     draggedFiles: (SftpTransferSource & { side: "left" | "right" })[] | null;
@@ -186,6 +200,7 @@ interface SftpContextProviderProps {
 
 export const SftpContextProvider: React.FC<SftpContextProviderProps> = ({
     hosts,
+    connectedHosts = [],
     writableHosts,
     updateHosts,
     draggedFiles,
@@ -198,12 +213,13 @@ export const SftpContextProvider: React.FC<SftpContextProviderProps> = ({
     const value = useMemo<SftpContextValue>(
         () => ({
             hosts,
+            connectedHosts,
             writableHosts: writableHosts ?? hosts,
             updateHosts,
             leftCallbacks,
             rightCallbacks,
         }),
-        [hosts, writableHosts, updateHosts, leftCallbacks, rightCallbacks],
+        [hosts, connectedHosts, writableHosts, updateHosts, leftCallbacks, rightCallbacks],
     );
 
     // Memoize drag context separately so only drag consumers re-render on drag state changes

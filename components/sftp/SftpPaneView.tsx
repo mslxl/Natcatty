@@ -11,6 +11,7 @@ import { SftpPaneToolbar } from "./SftpPaneToolbar";
 import { SftpPaneTreeView } from "./SftpPaneTreeView";
 import {
   useActiveTabId,
+  useSftpConnectedHosts,
   useSftpDrag,
   useSftpHosts,
   useSftpPaneCallbacks,
@@ -103,6 +104,7 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
   const callbacks = useSftpPaneCallbacks(side);
   const { draggedFiles, onDragStart, onDragEnd } = useSftpDrag();
   const hosts = useSftpHosts();
+  const connectedHosts = useSftpConnectedHosts();
   const writableHosts = useSftpWritableHosts();
 
   const { t } = useI18n();
@@ -470,6 +472,7 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
         hostSearch={hostSearch}
         setHostSearch={setHostSearch}
         hosts={hosts}
+        connectedHosts={connectedHosts}
         onConnect={callbacks.onConnect}
       />
     );
@@ -668,6 +671,7 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
         showHostPicker={showHostPicker}
         setShowHostPicker={setShowHostPicker}
         hosts={hosts}
+        connectedHosts={connectedHosts}
         side={side}
         hostSearch={hostSearch}
         setHostSearch={setHostSearch}
