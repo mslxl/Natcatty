@@ -58,6 +58,30 @@ test("listSftpConnectedHosts prefers connected over connecting for the same host
   assert.equal(result[0]?.status, "connected");
 });
 
+test("listSftpConnectedHosts prefers the later same-status session for a host", () => {
+  const hostsById = new Map([["a", host({ id: "a", label: "Alpha" })]]);
+  const sessions = [
+    session({ id: "s-old", hostId: "a", status: "connected" }),
+    session({ id: "s-new", hostId: "a", status: "connected" }),
+  ];
+
+  const result = listSftpConnectedHosts(sessions, hostsById);
+  assert.equal(result.length, 1);
+  assert.equal(result[0]?.sessionId, "s-new");
+});
+
+test("listSftpConnectedHosts still prefers connected over a later connecting session", () => {
+  const hostsById = new Map([["a", host({ id: "a", label: "Alpha" })]]);
+  const sessions = [
+    session({ id: "s-connected", hostId: "a", status: "connected" }),
+    session({ id: "s-connecting", hostId: "a", status: "connecting" }),
+  ];
+
+  const result = listSftpConnectedHosts(sessions, hostsById);
+  assert.equal(result.length, 1);
+  assert.equal(result[0]?.sessionId, "s-connected");
+});
+
 test("listSftpConnectedHosts skips serial, local, telnet, and disconnected sessions", () => {
   const hosts = [
     host({ id: "ssh", label: "SSH" }),

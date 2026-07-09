@@ -76,8 +76,14 @@ export const listSftpConnectedHosts = (
       bestByHostId.set(host.id, next);
       continue;
     }
-    // Prefer connected over connecting; otherwise keep the first seen.
+    // Prefer connected over connecting. On a status tie, keep the later
+    // session in the list (usually the most recently opened terminal) so
+    // reuse targets a connection that still matches the current host endpoint.
     if (existing.status === "connecting" && next.status === "connected") {
+      bestByHostId.set(host.id, next);
+      continue;
+    }
+    if (existing.status === next.status) {
       bestByHostId.set(host.id, next);
     }
   }
