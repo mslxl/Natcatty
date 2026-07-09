@@ -414,17 +414,16 @@ function createExternalMcpController(options = {}) {
   function onBridgeHostReady({ port }) {
     if (!isEnabled()) return;
     // Host-ready reports the shared Catty/CLI TCP token — never write that into
-    // External discovery. Keep/refresh the dedicated externalAuthToken only.
+    // External discovery. Only refresh with an already-issued external token;
+    // do not issue here or cold-start enable double-rotates before
+    // resolveHostCredentials runs.
     if (port) lastKnownPort = port;
     const bridge = getBridge();
     const externalToken = typeof bridge?.getExternalMcpAuthToken === "function"
       ? bridge.getExternalMcpAuthToken()
       : null;
-    if (externalToken) {
-      lastKnownToken = externalToken;
-    } else if (typeof bridge?.issueExternalMcpAuthToken === "function") {
-      lastKnownToken = bridge.issueExternalMcpAuthToken();
-    }
+    if (!externalToken) return;
+    lastKnownToken = externalToken;
     if (discoveryFilePath && lastKnownPort && lastKnownToken) {
       writeDiscoveryFromBridge();
     }
