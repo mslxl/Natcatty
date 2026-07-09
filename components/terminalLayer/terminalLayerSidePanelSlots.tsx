@@ -51,6 +51,7 @@ function SidePanelSftpSlotInner({
     SftpSidePanel,
     effectiveHosts,
     hosts,
+    sessions,
     keys,
     identities,
     knownHosts,
@@ -139,6 +140,7 @@ function SidePanelSftpSlotInner({
       <SftpSidePanel
         hosts={effectiveHosts}
         writableHosts={hosts}
+        sessions={sessions}
         keys={keys}
         identities={identities}
         knownHosts={knownHosts}

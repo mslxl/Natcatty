@@ -123,6 +123,81 @@ test("terminal layer side panel stable ctx ignores linked terminal cwd changes",
   );
 });
 
+test("terminal layer side panel stable ctx re-renders when SFTP-relevant session fields change", () => {
+  const baseCtx = {
+    mountedSftpTabIds: ["workspace-1"],
+    sidePanelOpenTabs: new Map([["workspace-1", "sftp"]]),
+    sessions: [{ id: "s1", hostId: "h1", protocol: "ssh", status: "connecting" }],
+  };
+
+  assert.equal(
+    terminalLayerSidePanelStableCtxEqual(
+      baseCtx,
+      {
+        ...baseCtx,
+        sessions: [{ id: "s1", hostId: "h1", protocol: "ssh", status: "connected" }],
+      },
+    ),
+    false,
+  );
+});
+
+test("terminal layer side panel stable ctx ignores session title-only updates", () => {
+  const baseCtx = {
+    mountedSftpTabIds: ["workspace-1"],
+    sidePanelOpenTabs: new Map([["workspace-1", "sftp"]]),
+    sessions: [{
+      id: "s1",
+      hostId: "h1",
+      protocol: "ssh",
+      status: "connected",
+      dynamicTitle: "old",
+    }],
+  };
+
+  assert.equal(
+    terminalLayerSidePanelStableCtxEqual(
+      baseCtx,
+      {
+        ...baseCtx,
+        sessions: [{
+          id: "s1",
+          hostId: "h1",
+          protocol: "ssh",
+          status: "connected",
+          dynamicTitle: "new title from OSC",
+        }],
+      },
+    ),
+    true,
+  );
+});
+
+test("terminal layer side panel stable ctx re-renders when session transport flags change", () => {
+  const baseCtx = {
+    mountedSftpTabIds: ["workspace-1"],
+    sidePanelOpenTabs: new Map([["workspace-1", "sftp"]]),
+    sessions: [{ id: "s1", hostId: "h1", protocol: "ssh", status: "connected" }],
+  };
+
+  assert.equal(
+    terminalLayerSidePanelStableCtxEqual(
+      baseCtx,
+      {
+        ...baseCtx,
+        sessions: [{
+          id: "s1",
+          hostId: "h1",
+          protocol: "ssh",
+          status: "connected",
+          moshEnabled: true,
+        }],
+      },
+    ),
+    false,
+  );
+});
+
 test("terminal layer side panel re-renders when linked terminal cwd changes", () => {
   const baseCtx = {
     mountedSftpTabIds: ["workspace-1"],

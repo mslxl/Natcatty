@@ -528,11 +528,22 @@ function createOpenConnectionApi(ctx) {
       const connId = options.sessionId || randomUUID();
 
       if (options.sourceSessionId && !options.sudo) {
-        const sourceSession = findReusableSession?.(sessions, options.sourceSessionId, {
-          hostname: options.hostname,
-          port: options.port || 22,
-          username: options.username || "root",
-        });
+        // reuseOnly: the caller named a specific live session (Connected picker).
+        // Skip endpoint matching — renderer session.username/port can lag the
+        // authenticated _reuseEndpoint (identity/auth-dialog username, default port).
+        // Non-reuseOnly callers still pass the requested target so Copy/SFTP
+        // reuse cannot attach to a connection for a different host.
+        const sourceSession = findReusableSession?.(
+          sessions,
+          options.sourceSessionId,
+          options.reuseOnly
+            ? undefined
+            : {
+                hostname: options.hostname,
+                port: options.port || 22,
+                username: options.username || "root",
+              },
+        );
         if (sourceSession?.conn && sourceSession?.connRef) {
           const refHolder = {
             id: connId,
@@ -555,16 +566,25 @@ function createOpenConnectionApi(ctx) {
             console.log(`[SFTP] Reused terminal SSH connection ${options.sourceSessionId} for ${connId}`);
             return { sftpId: connId };
           } catch (reuseErr) {
-            console.warn(
-              `[SFTP] Failed to reuse terminal SSH connection ${options.sourceSessionId} for ${connId}; falling back to fresh connection:`,
-              reuseErr?.message || String(reuseErr),
-            );
             try {
               await reusedClient.end();
             } catch {
               // Ignore cleanup errors while falling back to a fresh SFTP connection.
             }
+            if (options.reuseOnly) {
+              throw new Error(
+                `Failed to reuse terminal SSH connection ${options.sourceSessionId}: ${reuseErr?.message || String(reuseErr)}`,
+              );
+            }
+            console.warn(
+              `[SFTP] Failed to reuse terminal SSH connection ${options.sourceSessionId} for ${connId}; falling back to fresh connection:`,
+              reuseErr?.message || String(reuseErr),
+            );
           }
+        } else if (options.reuseOnly) {
+          throw new Error(
+            `Source session ${options.sourceSessionId} is not reusable for SFTP`,
+          );
         } else {
           console.log(`[SFTP] Reuse requested for ${connId} but source session is not reusable; connecting fresh`);
         }
