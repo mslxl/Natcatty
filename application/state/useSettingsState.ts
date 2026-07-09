@@ -4,6 +4,7 @@ import { runThemeTransition, type ThemeTransitionMode } from './themeTransition'
 import { SyncConfig, TerminalSettings, HotkeyScheme, CustomKeyBindings, DEFAULT_KEY_BINDINGS, KeyBinding, UILanguage, SessionLogFormat, normalizeTerminalSettings } from '../../domain/models';
 import {
   DEFAULT_HTTP_NETWORK_PROXY,
+  areHttpNetworkProxySettingsEqual,
   normalizeHttpNetworkProxySettings,
   type HttpNetworkProxySettings,
 } from '../../domain/httpNetworkProxy';
@@ -358,7 +359,10 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
       const candidate = typeof nextValue === 'function'
         ? (nextValue as (prevState: HttpNetworkProxySettings) => HttpNetworkProxySettings)(prev)
         : nextValue;
-      return normalizeHttpNetworkProxySettings(candidate);
+      // Preserve the previous object when values are unchanged so cross-window
+      // settings:changed IPC does not rebroadcast forever via useSystemSettingsEffects.
+      const next = normalizeHttpNetworkProxySettings(candidate);
+      return areHttpNetworkProxySettingsEqual(prev, next) ? prev : next;
     });
   }, []);
   const [autoUpdateEnabled, setAutoUpdateEnabled] = useState<boolean>(() => {

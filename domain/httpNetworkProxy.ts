@@ -70,6 +70,13 @@ export function normalizeHttpNetworkProxySettings(
   return { mode: 'custom', url, bypass };
 }
 
+export function areHttpNetworkProxySettingsEqual(
+  a: HttpNetworkProxySettings,
+  b: HttpNetworkProxySettings,
+): boolean {
+  return a.mode === b.mode && a.url === b.url && a.bypass === b.bypass;
+}
+
 /** Payload for Electron `session.setProxy`. */
 export function buildElectronProxyConfig(
   settings: HttpNetworkProxySettings,

@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const {
   proxyInfoFromResolveResult,
   createAgentFromProxyUrl,
+  applyInsecureTargetTls,
 } = require("./httpNetworkProxyAgent.cjs");
 
 test("proxyInfoFromResolveResult parses Chromium PROXY / SOCKS / DIRECT", () => {
@@ -35,4 +36,17 @@ test("createAgentFromProxyUrl can disable TLS verification for insecure endpoint
   });
   assert.ok(agent);
   assert.equal(agent.connectOpts.rejectUnauthorized, false);
+});
+
+test("applyInsecureTargetTls forces rejectUnauthorized on tunneled target connect", () => {
+  let seenOpts;
+  const fakeAgent = {
+    connect(_req, opts) {
+      seenOpts = opts;
+      return opts;
+    },
+  };
+  applyInsecureTargetTls(fakeAgent);
+  fakeAgent.connect({}, { host: "example.com", port: 443, rejectUnauthorized: true });
+  assert.equal(seenOpts.rejectUnauthorized, false);
 });

@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   DEFAULT_HTTP_NETWORK_PROXY,
+  areHttpNetworkProxySettingsEqual,
   buildElectronProxyConfig,
   buildNodeProxyEnv,
   normalizeHttpNetworkProxySettings,
@@ -91,6 +92,12 @@ test('normalizeHttpNetworkProxySettings preserves trailing colon while typing a 
     }).url,
     'http://127.0.0.1:',
   );
+});
+
+test('areHttpNetworkProxySettingsEqual compares mode/url/bypass', () => {
+  const a = { mode: 'custom' as const, url: 'http://127.0.0.1:7890', bypass: '<local>' };
+  assert.equal(areHttpNetworkProxySettingsEqual(a, { ...a }), true);
+  assert.equal(areHttpNetworkProxySettingsEqual(a, { ...a, url: 'http://127.0.0.1:1' }), false);
 });
 
 test('buildElectronProxyConfig maps modes to session.setProxy payloads', () => {

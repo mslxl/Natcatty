@@ -42,21 +42,43 @@ function createAgentFromProxyUrl(proxyUrl, targetIsHttps, options = {}) {
     return undefined;
   }
 
-  const agentOptions = {};
+  // Options for the connection to the proxy itself (e.g. HTTPS proxy).
+  const proxyConnectOptions = {};
   if (options.rejectUnauthorized === false) {
-    agentOptions.rejectUnauthorized = false;
+    proxyConnectOptions.rejectUnauthorized = false;
   }
 
   const protocol = parsed.protocol.toLowerCase();
+  let agent;
   if (protocol === "socks:" || protocol === "socks5:" || protocol === "socks4:") {
     if (!SocksProxyAgent) return undefined;
-    return new SocksProxyAgent(trimmed, agentOptions);
+    agent = new SocksProxyAgent(trimmed, proxyConnectOptions);
+  } else if (targetIsHttps) {
+    agent = new HttpsProxyAgent(trimmed, proxyConnectOptions);
+  } else {
+    agent = new HttpProxyAgent(trimmed, proxyConnectOptions);
   }
 
-  if (targetIsHttps) {
-    return new HttpsProxyAgent(trimmed, agentOptions);
+  // https-proxy-agent / socks-proxy-agent apply constructor rejectUnauthorized to
+  // the proxy hop, not the tunneled target TLS upgrade. When callers need
+  // allowInsecure for self-signed *targets*, force it on the connect opts.
+  if (options.rejectUnauthorized === false && targetIsHttps) {
+    applyInsecureTargetTls(agent);
   }
-  return new HttpProxyAgent(trimmed, agentOptions);
+
+  return agent;
+}
+
+/**
+ * Force rejectUnauthorized:false onto the tunneled target TLS upgrade.
+ * Constructor options alone only affect the proxy hop.
+ */
+function applyInsecureTargetTls(agent) {
+  if (!agent || typeof agent.connect !== "function") return agent;
+  const originalConnect = agent.connect.bind(agent);
+  agent.connect = (req, opts) =>
+    originalConnect(req, { ...opts, rejectUnauthorized: false });
+  return agent;
 }
 
 /**
@@ -129,6 +151,7 @@ async function resolveOutboundHttpAgent(targetUrl, deps = {}) {
 
 module.exports = {
   createAgentFromProxyUrl,
+  applyInsecureTargetTls,
   proxyInfoFromResolveResult,
   resolveOutboundHttpAgent,
 };

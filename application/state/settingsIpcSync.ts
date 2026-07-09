@@ -48,6 +48,7 @@ import {
 } from '../../infrastructure/config/storageKeys';
 import { resolveAppIconVariant, type AppIconVariant } from '../../domain/appIconVariant';
 import {
+  areHttpNetworkProxySettingsEqual,
   normalizeHttpNetworkProxySettings,
   type HttpNetworkProxySettings,
 } from '../../domain/httpNetworkProxy';
@@ -260,9 +261,7 @@ export function useSettingsIpcSync({
       if (key === STORAGE_KEY_HTTP_NETWORK_PROXY) {
         const next = normalizeHttpNetworkProxySettings(value);
         setHttpNetworkProxy((prev) => (
-          prev.mode === next.mode && prev.url === next.url && prev.bypass === next.bypass
-            ? prev
-            : next
+          areHttpNetworkProxySettingsEqual(prev, next) ? prev : next
         ));
       }
       if (key === STORAGE_KEY_SFTP_AUTO_OPEN_SIDEBAR && typeof value === 'boolean') {
