@@ -7,14 +7,19 @@ function registerAgentProcessHandlers(ctx) {
   ipcMain.handle("netcatty:ai:mcp:update-sessions", async (event, { sessions: sessionList, chatSessionId }) => {
     if (!validateSenderOrSettings(event)) return { ok: false, error: "Unauthorized IPC sender" };
     mcpServerBridge.updateSessionMetadata(sessionList || [], chatSessionId);
-    // Keep the reserved external MCP scope in sync with live terminal sessions
-    // whenever the renderer pushes an update and external mode is enabled.
+    // Keep the reserved external MCP scope in sync whenever the renderer pushes
+    // an update and external mode is enabled. In terminal-worker mode the main
+    // process sessions map is empty, so mirror the renderer payload directly.
     try {
       const external = typeof getExternalMcpController === "function"
         ? getExternalMcpController()
         : null;
       if (external?.isEnabled?.()) {
-        mcpServerBridge.syncLiveSessionsToExternalScope(external.getChatSessionId?.());
+        const externalChatSessionId = external.getChatSessionId?.();
+        if (externalChatSessionId) {
+          mcpServerBridge.updateSessionMetadata(sessionList || [], externalChatSessionId);
+        }
+        mcpServerBridge.syncLiveSessionsToExternalScope(externalChatSessionId);
       }
     } catch {
       // External scope sync is best-effort.

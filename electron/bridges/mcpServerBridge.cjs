@@ -450,13 +450,26 @@ function syncLiveSessionsToExternalScope(chatSessionId = EXTERNAL_MCP_CHAT_SESSI
   }
   // Terminal-worker mode keeps live sessions off the main-process map. Do not
   // wipe renderer-pushed external scope metadata with an empty live snapshot.
-  if (sessionList.length === 0 && existingScoped?.sessionIds?.length) {
-    return {
-      ok: true,
-      count: existingScoped.sessionIds.length,
-      chatSessionId,
-      preserved: true,
-    };
+  if (sessionList.length === 0) {
+    if (existingScoped?.sessionIds?.length) {
+      return {
+        ok: true,
+        count: existingScoped.sessionIds.length,
+        chatSessionId,
+        preserved: true,
+      };
+    }
+    // Seed from other chat scopes when external scope has never been populated.
+    const seeded = seedExternalScopeFromOtherScopes(chatSessionId);
+    if (seeded) {
+      return {
+        ok: true,
+        count: seeded,
+        chatSessionId,
+        seeded: true,
+      };
+    }
+    return { ok: true, count: 0, chatSessionId };
   }
   updateSessionMetadata(sessionList, chatSessionId);
   return { ok: true, count: sessionList.length, chatSessionId };
@@ -468,6 +481,22 @@ function findSessionMetaAcrossScopes(sessionId) {
     if (meta) return meta;
   }
   return null;
+}
+
+function seedExternalScopeFromOtherScopes(chatSessionId) {
+  const byId = new Map();
+  for (const [scopeId, scoped] of scopedMetadata.entries()) {
+    if (scopeId === chatSessionId || !scoped?.metadata) continue;
+    for (const [sessionId, meta] of scoped.metadata.entries()) {
+      if (!sessionId || !meta) continue;
+      if (!byId.has(sessionId)) {
+        byId.set(sessionId, { sessionId, ...meta });
+      }
+    }
+  }
+  if (byId.size === 0) return 0;
+  updateSessionMetadata(Array.from(byId.values()), chatSessionId);
+  return byId.size;
 }
 
 function getPermissionMode() {
