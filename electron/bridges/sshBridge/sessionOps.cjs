@@ -710,8 +710,9 @@ function createSessionOpsApi(ctx) {
         typeof execOnEtSession === "function" &&
         !!session.sshUserHost &&
         !session.externalAuthArtifactsCleaned;
-      const conn = session.conn || session.moshStatsConn || session.etStatsConn ||
-        (canExecEtStats ? createEtStatsExecConn(session) : null);
+      const sshStatsConn = session.conn || session.moshStatsConn || session.etStatsConn;
+      const usesEtStatsFallback = !sshStatsConn && canExecEtStats;
+      const conn = sshStatsConn || (usesEtStatsFallback ? createEtStatsExecConn(session) : null);
       if (!conn) {
         // A Mosh session can be marked "connected" (and start polling) from
         // the SSH bootstrap's visible output before swapToMoshClient stores
@@ -797,29 +798,65 @@ function createSessionOpsApi(ctx) {
     
       // Auto-detect OS via uname — only Linux and macOS are supported
       const latencyMarker = "NC_LATENCY_MARK";
-      const statsCommand = `printf "${latencyMarker}|"; ostype=$(uname -s 2>/dev/null || echo "Unknown"); if [ "$ostype" = "Darwin" ]; then ${macosStatsCommand}; elif [ "$ostype" = "Linux" ]; then ${linuxStatsCommand}; else echo "UNSUPPORTED_OS:$ostype"; fi`;
+      // On an ssh2 channel, wait for a one-byte client probe before printing
+      // the marker. Timing that data round-trip excludes channel setup and the
+      // stats command itself. The buffered system-ssh ET fallback cannot expose
+      // first-byte timing, so it reports no latency instead of a misleading one.
+      const latencyProbeCommand = usesEtStatsFallback ? '' : 'read -r nc_latency_probe; ';
+      const statsCommand = `${latencyProbeCommand}printf "${latencyMarker}|"; ostype=$(uname -s 2>/dev/null || echo "Unknown"); if [ "$ostype" = "Darwin" ]; then ${macosStatsCommand}; elif [ "$ostype" = "Linux" ]; then ${linuxStatsCommand}; else echo "UNSUPPORTED_OS:$ostype"; fi`;
       return new Promise((resolve) => {
-        const timeout = setTimeout(() => {
-          resolve({ success: false, error: 'Timeout getting server stats' });
+        let activeStream = null;
+        let settled = false;
+        let timeout = null;
+        const disposeStream = (stream) => {
+          if (!stream) return;
+          try {
+            if (typeof stream.close === 'function') stream.close();
+            else if (typeof stream.destroy === 'function') stream.destroy();
+          } catch {
+            try { stream.destroy?.(); } catch { /* ignore cleanup errors */ }
+          }
+        };
+        const settle = (result) => {
+          if (settled) return false;
+          settled = true;
+          if (timeout) clearTimeout(timeout);
+          resolve(result);
+          return true;
+        };
+        timeout = setTimeout(() => {
+          const stream = activeStream;
+          activeStream = null;
+          if (settle({ success: false, error: 'Timeout getting server stats' })) {
+            disposeStream(stream);
+          }
         }, 10000);
-        const latencyStartedAt = Date.now();
     
         conn.exec(statsCommand, (err, stream) => {
-          if (err) {
-            clearTimeout(timeout);
-            resolve({ success: false, error: err.message });
+          if (settled) {
+            disposeStream(stream);
             return;
           }
+          if (err) {
+            settle({ success: false, error: err.message });
+            return;
+          }
+          activeStream = stream;
     
           let stdout = '';
           let stderr = '';
           let latencyMs = null;
+          let latencyStartedAt = null;
     
           stream.on('data', (data) => {
-            if (latencyMs === null) {
+            stdout += data.toString();
+            if (
+              latencyMs === null &&
+              latencyStartedAt !== null &&
+              stdout.includes(latencyMarker)
+            ) {
               latencyMs = Math.max(0, Date.now() - latencyStartedAt);
             }
-            stdout += data.toString();
           });
     
           stream.stderr.on('data', (data) => {
@@ -827,14 +864,15 @@ function createSessionOpsApi(ctx) {
           });
     
           stream.on('close', () => {
-            clearTimeout(timeout);
+            if (settled) return;
+            activeStream = null;
     
             // Parse the output
             const output = stdout.trim().replace(new RegExp(`^${latencyMarker}\\|?`), '');
     
             // Unsupported OS — stop polling this session
             if (output.startsWith('UNSUPPORTED_OS:')) {
-              resolve({ success: false, error: `Server stats not supported on this OS (${output.substring(15)})` });
+              settle({ success: false, error: `Server stats not supported on this OS (${output.substring(15)})` });
               return;
             }
     
@@ -1105,11 +1143,11 @@ function createSessionOpsApi(ctx) {
     
             // If no meaningful data was parsed, treat as failure to stop futile polling
             if (cpu === null && memTotal === null && cpuCores === null) {
-              resolve({ success: false, error: 'Unable to parse server stats (unsupported OS or shell)' });
+              settle({ success: false, error: 'Unable to parse server stats (unsupported OS or shell)' });
               return;
             }
     
-            resolve({
+            settle({
               success: true,
               stats: {
                 cpu,           // CPU usage percentage (0-100)
@@ -1129,7 +1167,7 @@ function createSessionOpsApi(ctx) {
                 disks,         // Array of all mounted disks
                 netRxSpeed,    // Total network receive speed (bytes/sec)
                 netTxSpeed,    // Total network transmit speed (bytes/sec)
-                latencyMs,      // Approximate SSH stats round-trip latency (ms)
+                latencyMs,      // Approximate network round-trip over the SSH stats channel (ms)
                 netInterfaces, // Per-interface network stats
                 hostname,
                 osName,
@@ -1139,6 +1177,17 @@ function createSessionOpsApi(ctx) {
               },
             });
           });
+
+          if (!usesEtStatsFallback) {
+            try {
+              latencyStartedAt = Date.now();
+              stream.write('\n');
+            } catch (err) {
+              if (settle({ success: false, error: err?.message || String(err) })) {
+                disposeStream(stream);
+              }
+            }
+          }
         });
       });
     }
