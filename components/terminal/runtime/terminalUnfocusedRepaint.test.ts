@@ -9,6 +9,7 @@ import {
   flushTerminalWriteBufferBypassingTimers,
   forceTerminalRepaintBypassingAnimationFrame,
   hasPendingTerminalWrites,
+  repaintTerminalAfterReveal,
   scheduleTerminalRepaintWhenUnfocused,
   shouldFlushTerminalWritesForBackgroundOutput,
 } from "./terminalUnfocusedRepaint.ts";
@@ -128,6 +129,41 @@ test("forceTerminalRepaintBypassingAnimationFrame refreshes alternate-screen vie
   forceTerminalRepaintBypassingAnimationFrame(term as never);
   assert.deepEqual(refreshed, [0, 23]);
   assert.equal(renderRowsCalled, true);
+});
+
+test("repaintTerminalAfterReveal repaints again after the reveal reaches a browser frame", () => {
+  const scheduledFrames: Array<() => void> = [];
+  let compositorReady = false;
+  let visibleTail = "stale-history-line";
+  const term = {
+    rows: 24,
+    buffer: { active: { type: "normal" } },
+    _core: {
+      _renderService: {
+        _renderRows: () => {
+          if (compositorReady) {
+            visibleTail = "__END_1000__";
+          }
+        },
+      },
+    },
+  } as unknown as XTerm;
+
+  repaintTerminalAfterReveal(
+    term,
+    () => true,
+    (callback) => {
+      scheduledFrames.push(callback);
+    },
+  );
+
+  assert.equal(visibleTail, "stale-history-line");
+  assert.equal(scheduledFrames.length, 1);
+
+  compositorReady = true;
+  scheduledFrames.shift()?.();
+
+  assert.equal(visibleTail, "__END_1000__");
 });
 
 test("shouldFlushTerminalWritesForBackgroundOutput flushes hidden panes and unfocused pages", () => {

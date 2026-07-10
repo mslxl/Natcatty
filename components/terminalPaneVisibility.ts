@@ -23,22 +23,68 @@ export type TerminalPaneStyle = {
   height?: string | number;
   visibility?: string;
   pointerEvents?: string;
+  zIndex?: number;
 };
 
-export function resolveHiddenTerminalPaneStyle<T extends TerminalPaneStyle>(
+export function shouldUseTerminalPaneSplitLayout({
+  workspace,
+  sessionId,
+  isVisible,
+  hibernateHiddenTabs,
+}: {
+  workspace: Workspace | undefined;
+  sessionId: string;
+  isVisible: boolean;
+  hibernateHiddenTabs: boolean;
+}): boolean {
+  if (!workspace) return false;
+  if (workspace.viewMode === "split") return true;
+  return !isVisible
+    && !hibernateHiddenTabs
+    && workspace.focusedSessionId !== sessionId;
+}
+
+export function shouldMeasureTerminalLayerLayout({
+  isTerminalLayerVisible,
+  hibernateHiddenTabs,
+  workspaceArea,
+}: {
+  isTerminalLayerVisible: boolean;
+  hibernateHiddenTabs: boolean;
+  workspaceArea: TerminalPaneHiddenSize;
+}): boolean {
+  return isTerminalLayerVisible
+    || (!hibernateHiddenTabs && (workspaceArea.width <= 0 || workspaceArea.height <= 0));
+}
+
+export function resolveInactiveTerminalPaneStyle<T extends TerminalPaneStyle>(
   layoutStyle: T,
   lastVisibleSize: TerminalPaneHiddenSize | null,
+  hibernateHiddenTabs: boolean,
+  preserveLastVisibleSize = false,
 ): T {
   return {
     ...layoutStyle,
-    visibility: "hidden",
+    visibility: hibernateHiddenTabs ? "hidden" : "visible",
     pointerEvents: "none",
-    ...(lastVisibleSize
+    zIndex: 0,
+    ...((hibernateHiddenTabs || preserveLastVisibleSize) && lastVisibleSize
       ? {
         width: `${lastVisibleSize.width}px`,
         height: `${lastVisibleSize.height}px`,
       }
       : {}),
+  };
+}
+
+export function resolveTerminalLayerSurfaceStyle(
+  isActive: boolean,
+  hibernateHiddenTabs: boolean,
+): { visibility: "visible" | "hidden"; pointerEvents: "auto" | "none"; zIndex: number } {
+  return {
+    visibility: isActive || !hibernateHiddenTabs ? "visible" : "hidden",
+    pointerEvents: isActive ? "auto" : "none",
+    zIndex: isActive ? 10 : 0,
   };
 }
 

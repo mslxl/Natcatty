@@ -362,7 +362,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const hibernatePendingBufferRef = useRef("");
   const hibernateAlternateScreenRef = useRef(false);
   const hibernateRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const fullHibernateRuntimeRef = useRef<(() => Promise<void>) | null>(null);
+  const fullHibernateRuntimeRef = useRef<(() => Promise<boolean>) | null>(null);
   const wakeInProgressRef = useRef(false);
   const sessionRef = useRef<string | null>(null);
   const isBootActiveRef = useRef(false);
@@ -402,6 +402,9 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   onTerminalDataCaptureRef.current = onTerminalDataCapture;
   const isVisibleRef = useRef(isVisible);
   isVisibleRef.current = isVisible;
+  const isRendererActive = isVisible || !resolveTerminalHibernateEnabled(terminalSettings);
+  const isRendererActiveRef = useRef(isRendererActive);
+  isRendererActiveRef.current = isRendererActive;
   const pendingOutputScrollRef = useRef(false);
   const lastFittedSizeRef = useRef<{ width: number; height: number } | null>(null);
   const fontWeightFixupDoneRef = useRef(false);
@@ -1310,12 +1313,28 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     return true;
   }, [sessionId, terminalSettings]);
 
-  const fullHibernateRuntime = useCallback(async () => {
-    if (hibernatedRef.current || softHiddenRef.current || !termRef.current || !serializeAddonRef.current) return;
+  const fullHibernateRuntime = useCallback(async (): Promise<boolean> => {
+    if (hibernatedRef.current || softHiddenRef.current || !termRef.current || !serializeAddonRef.current) return false;
     clearHibernateRetry();
     const backendId = sessionRef.current;
-    if (!backendId) return;
+    if (!backendId) return false;
     const term = termRef.current;
+    const serializeAddon = serializeAddonRef.current;
+    const canFinishHibernate = () => (
+      !isVisibleRef.current
+      && !hibernatedRef.current
+      && !softHiddenRef.current
+      && hasRuntimeRef.current
+      && statusRef.current === "connected"
+      && !isSearchOpenRef.current
+      && !hibernateFileTransferActiveRef.current
+      && resolveTerminalHibernateEnabled(terminalSettingsRef.current)
+      && termRef.current === term
+      && sessionRef.current === backendId
+      && serializeAddonRef.current === serializeAddon
+    );
+
+    if (!canFinishHibernate()) return false;
 
     terminalHiddenRendererStore.clearSoftHidden(sessionId);
     softHiddenRef.current = false;
@@ -1323,30 +1342,24 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     if (!flushedBeforeHibernate) {
       logger.info("[Terminal] Skipping hibernate: terminal output is still draining", { sessionId });
       scheduleHibernateRetry();
-      return;
+      return false;
     }
-    if (
-      isVisibleRef.current
-      || hibernatedRef.current
-      || termRef.current !== term
-      || sessionRef.current !== backendId
-      || !serializeAddonRef.current
-    ) {
-      return;
-    }
+    if (!canFinishHibernate()) return false;
     if (shouldSkipHibernateForActiveAlternateScreen(term)) {
-      return;
+      return false;
     }
 
     const snapshot = await serializeTerminalForHibernate(
       term,
-      serializeAddonRef.current,
-      { preferWasm: resolveHibernatePreferWasmSerialize(terminalSettings) },
+      serializeAddon,
+      { preferWasm: resolveHibernatePreferWasmSerialize(terminalSettingsRef.current) },
     );
+
+    if (!canFinishHibernate()) return false;
 
     if (snapshot.alternateScreen && snapshot.snapshot.length === 0) {
       logger.info("[Terminal] Skipping hibernate: alternate screen snapshot unavailable", { sessionId });
-      return;
+      return false;
     }
 
     applyHibernateSnapshot(snapshot);
@@ -1366,6 +1379,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       scrollbackChars: hibernateScrollbackSnapshotRef.current.length,
       alternateScreen: snapshot.alternateScreen,
     });
+    return true;
   }, [
     applyHibernateSnapshot,
     beginHibernatedSessionListeners,
@@ -1374,7 +1388,6 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     sessionId,
     shouldSkipHibernateForActiveAlternateScreen,
     terminalBackend,
-    terminalSettings,
   ]);
   fullHibernateRuntimeRef.current = fullHibernateRuntime;
 
@@ -1449,7 +1462,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     terminalBackend,
     serialConfig,
     telnetLocalEchoRef,
-    isVisibleRef,
+    isVisibleRef: isRendererActiveRef,
     isBootActiveRef,
     pendingOutputScrollRef,
     sessionRef,
@@ -1802,7 +1815,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const safeFit = (options?: { force?: boolean; requireVisible?: boolean; immediate?: boolean; allowHidden?: boolean }) => {
     const fitAddon = fitAddonRef.current;
     if (!fitAddon) return;
-    if (!isVisibleRef.current && !options?.allowHidden) {
+    if (!isRendererActiveRef.current && !options?.allowHidden) {
       lastFittedSizeRef.current = null;
       return;
     }
@@ -2598,15 +2611,33 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     safeFitRef.current({ force: true });
   }, [sessionId]);
 
+  const resumeRendererAfterCancelledHibernateUpgrade = useCallback(() => {
+    if (hibernatedRef.current || softHiddenRef.current || !hasRuntimeRef.current) return;
+    xtermRuntimeRef.current?.ensureWebglRenderer();
+    xtermRuntimeRef.current?.clearTextureAtlas();
+    safeFitRef.current({ force: true });
+  }, []);
+
   useEffect(() => {
     return terminalHiddenRendererStore.subscribe(() => {
       if (!terminalHiddenRendererStore.consumeEvictionRequest(sessionId)) return;
       if (!softHiddenRef.current || hibernatedRef.current) return;
-      softHiddenRef.current = false;
-      terminalHiddenRendererStore.clearSoftHidden(sessionId);
-      void fullHibernateRuntime();
+      // Resume the soft-hidden renderer before the asynchronous full-hibernate
+      // upgrade. If the pane is revealed while the upgrade is draining output
+      // or serializing, it then already has a live renderer instead of waiting
+      // on the upgrade promise to settle.
+      wakeSoftHiddenRuntime();
+      void fullHibernateRuntime().then(
+        (completed) => {
+          if (!completed) resumeRendererAfterCancelledHibernateUpgrade();
+        },
+        (error) => {
+          logger.error("[Terminal] Failed to upgrade soft-hidden runtime to hibernate", { sessionId, error });
+          resumeRendererAfterCancelledHibernateUpgrade();
+        },
+      );
     });
-  }, [fullHibernateRuntime, sessionId]);
+  }, [fullHibernateRuntime, resumeRendererAfterCancelledHibernateUpgrade, sessionId, wakeSoftHiddenRuntime]);
 
   const wakeFromHibernateRuntime = useCallback((
     getPayload: () => TerminalHibernateWakePayload,

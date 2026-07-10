@@ -15,7 +15,10 @@ import {
   TERMINAL_SESSION_RESTORE_FOCUS_EVENT,
   type TerminalSessionRestoreFocusDetail,
 } from './focusTerminalSession';
-import { resolveHibernatePreferWasmSerialize } from '../../domain/terminalHibernate';
+import {
+  resolveHibernatePreferWasmSerialize,
+  resolveTerminalHibernateEnabled,
+} from '../../domain/terminalHibernate';
 import { applyUserCursorBlinkPreference } from './runtime/cursorPreference';
 import { getFlowControllerForTerm } from './runtime/terminalSessionAttachment';
 import {
@@ -32,6 +35,7 @@ import {
   cancelScheduledUnfocusedRepaint,
   flushPendingTerminalWritesOnResume,
   forceTerminalRepaintBypassingAnimationFrame,
+  repaintTerminalAfterReveal,
 } from './runtime/terminalUnfocusedRepaint';
 import {
   forceXTermFontRemeasure,
@@ -157,6 +161,10 @@ export function resolveSelectionOverlayPosition(term: any, container: HTMLElemen
 
 export function useTerminalEffects(ctx: TerminalEffectsContext) {
   const { CONNECTION_TIMEOUT, Error, XTERM_PERFORMANCE_CONFIG, applyUserCursorPreference, auth, autocompleteCloseRef, autocompleteInputRef, autocompleteKeyEventRef, captureTerminalLogData, clearTerminalCwd, commandBufferRef, connectionLogBufferRef, containerRef, createPromptLineBreakState, createReplaySafeTerminalLogSanitizer, createXTermRuntime, deferTerminalResizeRef, disableTerminalFontZoomRef, effectiveFontSize, effectiveFontWeight, effectiveTheme, error, executeSnippetCommand, finalizeTerminalLogData, fitAddonRef, fontFamilyId, fontSize, fontWeightFixupDoneRef, forceCloseHibernatedSession, forceSyncRenderAfterResize, handleOsc52ReadRequest, handleTerminalDataCaptureOnce, hasConnectedRef, hasRuntimeRef, host, hotkeySchemeRef, hibernatedRef, identities, inWorkspace, isBootActiveRef, isBroadcastEnabledRef, isComposeBarOpen, isConnectionAwaitingUserInput, isConnectionPastTcpDial, isFocusMode, isFocused, isLocalConnection, isNetworkDevice, isResizing, isRestoringSelectionRef, isSearchOpen, isSerialConnection, isVisible, isVisibleRef, keyBindingsRef, keys, knownCwdRef, lastFittedSizeRef, lastToastedErrorRef, logger, mouseTrackingRef, needsHostKeyVerification, onBroadcastInputRef, onBroadcastInterruptPriorityChange, onCommandExecuted, onCommandSubmitted, onHotkeyActionRef, onOutputTriggerUserInputRef, onSnippetExecutorChange, onTerminalCwdChange, onTerminalTitleChange, onTerminalBell, onTerminalFontSizeChange, paneLayoutKey, passwordPromptActiveRef, pendingAuthRef, pendingOutputScrollRef, prepareRestoredReconnect, prevIsResizingRef, promptLineBreakStateRef, resizeSession, resolveHostAuth, resolvedFontFamily, safeFit, scriptRecorderRef, searchAddonRef, serialConfig, serialLineBufferRef, serializeAddonRef, sessionId, sessionRef, sessionStarters, setError, setHasMouseTracking, setHasSelection, setIsCancelling, setIsDisconnectedDialogDismissed, requestSearchFocus, setNeedsHostKeyVerification, setPendingHostKeyInfo, setPendingHostKeyRequestId, setProgressLogs, setProgressValue, setSelectionOverlayPosition, setShowLogs, setStatus, setTimeLeft, shouldEnableNativeUserInputAutoScroll, shouldProbeSessionCwd, shouldStartTerminalBackend, onSnippetShortkeyRef, snippetsRef, splitResizeActive, status, statusRef, sudoAutofillRef, t, teardown, telnetLocalEchoRef, termRef, terminalAltKeyOptions, terminalBackend, terminalContextActionsRef, terminalCwdTracker, terminalDataCapturedRef, terminalLogSanitizerRef, terminalSettings, terminalSettingsRef, toHostKeyInfo, toast, updateStatus, useEffect, useLayoutEffect, xtermRuntimeRef, zmodem, zmodemToastedRef, restoreState } = ctx;
+  const hibernateHiddenTabs = resolveTerminalHibernateEnabled(terminalSettings);
+  const isRendererActive = isVisible || !hibernateHiddenTabs;
+  const isRendererActiveRef = useRef(isRendererActive);
+  isRendererActiveRef.current = isRendererActive;
 
   // Remember the last layout we successfully refit while visible so revisiting
   // the same workspace tab does not replay expensive force-fit/WebGL recovery.
@@ -380,7 +388,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
           isRestoringSelectionRef,
           // Defer WebGL context creation for panes that mount hidden (e.g. the
           // background tabs of a batch connect) until they first become visible.
-          initiallyVisible: isVisible,
+          initiallyVisible: isRendererActive,
         });
 
         if (disposed) {
@@ -624,7 +632,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     const term = termRef.current;
     if (!term) return;
 
-    if (isVisibleRef.current || isFocused) {
+    if (isRendererActiveRef.current || isFocused) {
       cancelTerminalThemeUpdate(sessionId);
       applyTerminalThemeSync(term, effectiveTheme);
       injectTerminalPaneAppearanceVars(sessionId, effectiveTheme);
@@ -647,7 +655,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     if (!termRef.current) return;
     termRef.current.options.fontSize = effectiveFontSize;
     xtermRuntimeRef.current?.clearTextureAtlas();
-    if (isVisibleRef.current) {
+    if (isRendererActiveRef.current) {
       setTimeout(() => safeFit({ force: true, requireVisible: true }), 50);
     } else {
       lastFittedSizeRef.current = null;
@@ -711,7 +719,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     // Clear the texture atlas so glyphs re-rasterize with the new font.
     xtermRuntimeRef.current?.clearTextureAtlas();
 
-    if (isVisibleRef.current) {
+    if (isRendererActiveRef.current) {
       setTimeout(() => safeFit({ force: true, requireVisible: true }), 50);
     } else {
       lastFittedSizeRef.current = null;
@@ -850,7 +858,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     if (term) {
       cancelScheduledUnfocusedRepaint(term);
       flushPendingTerminalWritesOnResume(term);
-      forceTerminalRepaintBypassingAnimationFrame(term);
+      repaintTerminalAfterReveal(term, () => isVisibleRef.current);
     }
   };
 
@@ -981,7 +989,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
         rows: number;
       } & XTermFontRemeasureTarget | null;
       if (cancelled || !term) return;
-      if (!isVisibleRef.current) {
+      if (!isRendererActiveRef.current) {
         lastFittedSizeRef.current = null;
         return;
       }
@@ -1102,12 +1110,12 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
 
 
   useEffect(() => {
-    if (!isVisible || !containerRef.current) return;
+    if (!isRendererActive || !containerRef.current) return;
 
     let resizeTimeout: ReturnType<typeof setTimeout> | null = null;
 
     const observer = new ResizeObserver(() => {
-      if (deferTerminalResizeRef?.current || !isVisibleRef.current) return;
+      if (deferTerminalResizeRef?.current || !isRendererActiveRef.current) return;
       if (!fitAddonRef.current) return;
       if (resizeTimeout) {
         clearTimeout(resizeTimeout);
@@ -1122,7 +1130,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       if (resizeTimeout) clearTimeout(resizeTimeout);
       observer.disconnect();
     };
-  }, [isVisible, isResizing]);
+  }, [isRendererActive, isResizing]);
 
   useLayoutEffect(() => {
     if (splitResizeActive) {
@@ -1428,12 +1436,12 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
 
 
   useEffect(() => {
-    if (!isVisible) return;
+    if (!isRendererActive) return;
 
     let resizeTimeout: ReturnType<typeof setTimeout> | null = null;
 
     const handler = () => {
-      if (!isVisibleRef.current) return;
+      if (!isRendererActiveRef.current) return;
       if (resizeTimeout) {
         clearTimeout(resizeTimeout);
       }
@@ -1447,7 +1455,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       if (resizeTimeout) clearTimeout(resizeTimeout);
       window.removeEventListener("resize", handler);
     };
-  }, [isVisible]);
+  }, [isRendererActive]);
 
 
   useEffect(() => {

@@ -10,6 +10,8 @@ import type { TerminalContextReader } from '../../domain/terminalContextRead';
 import { useSystemCapabilitiesWarmup } from '../systemManager/hooks/useSystemManager';
 import { cn } from '../../lib/utils';
 import type { Host, TerminalSession, Workspace } from '../../types';
+import { resolveTerminalHibernateEnabled } from '../../domain/terminalHibernate';
+import { shouldMeasureTerminalLayerLayout } from '../terminalPaneVisibility';
 import { TerminalLayerView } from './TerminalLayerView';
 import { useTerminalAiContexts } from './useTerminalAiContexts';
 import { useTerminalLayerEffects } from './useTerminalLayerEffects';
@@ -46,6 +48,7 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
   );
   const isFocusMode = activeWorkspace?.viewMode === 'focus';
   const focusedSessionId = activeWorkspace?.focusedSessionId;
+  const hibernateHiddenTabs = resolveTerminalHibernateEnabled(s.terminalSettings);
   const effectiveFocusedSessionId = useMemo((): string | null => {
     if (activeWorkspace) {
       if (focusedSessionId) return focusedSessionId;
@@ -71,6 +74,7 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     setDropHint,
     setResizing,
     setWorkspaceArea,
+    workspaceArea,
     workspaceInnerRef,
     workspaceOuterRef,
     workspaceOverlayRef,
@@ -79,6 +83,7 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     activeSession,
     activeWorkspace,
     isFocusMode,
+    keepHiddenWorkspacesLaidOut: !hibernateHiddenTabs,
     onAddSessionToWorkspace: s.onAddSessionToWorkspace,
     onCreateWorkspaceFromSessions: s.onCreateWorkspaceFromSessions,
     onSetDraggingSessionId: s.onSetDraggingSessionId,
@@ -307,6 +312,11 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     isComposeBarOpen: s.isComposeBarOpen,
     isFocusMode,
     isTerminalLayerVisible,
+    shouldMeasureTerminalLayerLayout: shouldMeasureTerminalLayerLayout({
+      isTerminalLayerVisible,
+      hibernateHiddenTabs,
+      workspaceArea,
+    }),
     lastSidePanelTabRef: s.lastSidePanelTabRef,
     Map,
     Math,
