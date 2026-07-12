@@ -190,7 +190,9 @@ function createOpenConnectionApi(ctx) {
             agent: connOpts.agent,
             username: connOpts.username,
             logPrefix: `[SFTP Chain] Hop ${i + 1}`,
-            unlockedEncryptedKeys: options._unlockedEncryptedKeys || [],
+            unlockedEncryptedKeys: systemAuthAgent && jump.identitiesOnly
+              ? []
+              : options._unlockedEncryptedKeys || [],
             defaultKeys,
             sshAgentSocketOverride: defaultAgentSocket,
             allowAgentFallback: jump.useSshAgent !== false,

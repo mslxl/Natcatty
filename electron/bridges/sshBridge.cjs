@@ -705,7 +705,9 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
         agent: connOpts.agent,
         username: connOpts.username,
         logPrefix: `[Chain] Hop ${i + 1}`,
-        unlockedEncryptedKeys: options._unlockedEncryptedKeys || [],
+        unlockedEncryptedKeys: systemAuthAgent && jump.identitiesOnly
+          ? []
+          : options._unlockedEncryptedKeys || [],
         defaultKeys,
         allowAgentFallback: jump.useSshAgent !== false,
         onAuthAttempt: (method) => {

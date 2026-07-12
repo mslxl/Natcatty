@@ -52,6 +52,10 @@ function shouldOfferAgentForLogin(options, connectOpts) {
   return options?.useSshAgent !== false && Boolean(connectOpts?.agent);
 }
 
+function resolveUnlockedEncryptedKeysForAuth(options, strictAgentSelection) {
+  return strictAgentSelection ? [] : (options?._unlockedEncryptedKeys || []);
+}
+
 function createStartSessionApi(ctx) {
   with (ctx) {
     /**
@@ -771,7 +775,10 @@ function createStartSessionApi(ctx) {
 
         // Use unlocked encrypted keys if provided (from retry after auth failure)
         // These are passed via _unlockedEncryptedKeys from startSSHSessionWrapper
-        const unlockedEncryptedKeys = options._unlockedEncryptedKeys || [];
+        const unlockedEncryptedKeys = resolveUnlockedEncryptedKeysForAuth(
+          options,
+          Boolean(systemAuthAgent && options.identitiesOnly),
+        );
         if (unlockedEncryptedKeys.length > 0) {
           log("Using unlocked encrypted keys from retry", {
             count: unlockedEncryptedKeys.length,
@@ -1545,4 +1552,5 @@ module.exports = {
   createStartSessionApi,
   resolveSshConnectionTimeouts,
   shouldOfferAgentForLogin,
+  resolveUnlockedEncryptedKeysForAuth,
 };
