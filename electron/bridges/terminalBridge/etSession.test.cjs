@@ -190,6 +190,29 @@ test("prepareEtSshEnvironment enables agent auth for a password-default imported
   );
 });
 
+test("ET explicitly disables native agent login for target and jump hosts", (t) => {
+  const { api } = makeApi(t);
+  const env = api.prepareEtSshEnvironment("sess-agent-disabled", {
+    hostname: "host.example",
+    username: "alice",
+    useSshAgent: false,
+    jumpHosts: [{
+      hostname: "jump.example",
+      username: "ops",
+      useSshAgent: false,
+    }],
+  });
+  const config = fs.readFileSync(path.join(env.env.HOME, ".ssh", "config"), "utf8");
+  const processEnv = api.applyEtSshAgentEnvironment(
+    { SSH_AUTH_SOCK: "/tmp/inherited-agent.sock" },
+    { useSshAgent: false },
+  );
+
+  assert.match(config, /Host host\.example[\s\S]*IdentityAgent none/);
+  assert.match(config, /Host jump\.example[\s\S]*IdentityAgent none/);
+  assert.equal(processEnv.SSH_AUTH_SOCK, undefined);
+});
+
 test("ET prepares target and jump agents before generating their host config", async (t) => {
   const calls = [];
   const { api } = makeApi(t, {

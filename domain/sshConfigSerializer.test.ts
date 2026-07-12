@@ -65,6 +65,14 @@ test("serializeHostsToSshConfig preserves a disabled imported agent setting", ()
   assert.notEqual(imported.hosts[0]?.useSshAgent, true);
 });
 
+test("serializeHostsToSshConfig preserves a plain explicit agent opt-out", () => {
+  const config = serializeHostsToSshConfig([makeHost({ useSshAgent: false })]);
+  const imported = importVaultHostsFromText("ssh_config", config);
+
+  assert.match(config, /IdentityAgent none/);
+  assert.equal(imported.hosts[0]?.useSshAgent, false);
+});
+
 test("serializeHostsToSshConfig preserves an enabled default agent setting", () => {
   const config = serializeHostsToSshConfig([makeHost({ useSshAgent: true })]);
   const imported = importVaultHostsFromText("ssh_config", config);

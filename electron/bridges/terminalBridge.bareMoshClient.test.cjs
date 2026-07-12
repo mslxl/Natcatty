@@ -167,6 +167,24 @@ test("Mosh prepares the configured system agent before building native ssh optio
   assert.equal(env.SSH_AUTH_SOCK, "/tmp/custom-agent.sock");
 });
 
+test("Mosh explicitly disables native agent login after an opt-out", async () => {
+  const api = createMoshSessionApi({
+    os,
+    path,
+    fs,
+    process,
+    randomUUID: () => "fixed",
+  });
+  const auth = await api.buildMoshSshAuthArgs({ useSshAgent: false }, "session-disabled");
+  const env = api.applyMoshSshAgentEnvironment(
+    { SSH_AUTH_SOCK: "/tmp/inherited-agent.sock" },
+    { useSshAgent: false },
+  );
+
+  assert.deepEqual(auth.sshArgs, ["-o", "IdentityAgent=none"]);
+  assert.equal(env.SSH_AUTH_SOCK, undefined);
+});
+
 test("removed Mosh client detection APIs are not exposed to the renderer", () => {
   const bridgeSource = fs.readFileSync(path.join(__dirname, "terminalBridge.cjs"), "utf8");
   const preloadSource = fs.readFileSync(path.join(__dirname, "..", "preload.cjs"), "utf8");

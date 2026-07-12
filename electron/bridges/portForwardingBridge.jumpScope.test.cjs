@@ -19,6 +19,7 @@ function loadBridgeWithMocks(t, { systemAgent = false } = {}) {
   let capturedChainOptions = null;
   let capturedConnectOptions = null;
   let connectedClient = null;
+  let capturedSystemAgentOptions = null;
 
   class MockSshClient extends EventEmitter {
     constructor() {
@@ -88,10 +89,13 @@ function loadBridgeWithMocks(t, { systemAgent = false } = {}) {
           keyPath: "/home/alice/.ssh/id_ed25519",
           privateKey: "PRIVATE KEY",
         }],
-        prepareSystemSshAgentForAuth: async () => ({
-          getIdentities(callback) { callback(null, []); },
-          sign() {},
-        }),
+        prepareSystemSshAgentForAuth: async (options) => {
+          capturedSystemAgentOptions = options;
+          return {
+            getIdentities(callback) { callback(null, []); },
+            sign() {},
+          };
+        },
       };
     }
     return originalLoad.call(this, request, parent, isMain);
@@ -111,6 +115,7 @@ function loadBridgeWithMocks(t, { systemAgent = false } = {}) {
     getCapturedChainOptions: () => capturedChainOptions,
     getCapturedConnectOptions: () => capturedConnectOptions,
     getConnectedClient: () => connectedClient,
+    getCapturedSystemAgentOptions: () => capturedSystemAgentOptions,
   };
 }
 
@@ -167,7 +172,7 @@ test("port forwarding routes jump-host keyboard-interactive prompts through the 
 });
 
 test("strict target agent selection keeps default keys available to jump hosts", async (t) => {
-  const { bridge, getCapturedChainOptions } = loadBridgeWithMocks(t, { systemAgent: true });
+  const { bridge, getCapturedChainOptions, getCapturedSystemAgentOptions } = loadBridgeWithMocks(t, { systemAgent: true });
   const event = { sender: createSender() };
 
   try {
@@ -179,7 +184,7 @@ test("strict target agent selection keeps default keys available to jump hosts",
       remoteHost: "127.0.0.1",
       remotePort: 3306,
       hostname: "db.internal",
-      port: 22,
+      port: 2222,
       username: "dbuser",
       useSshAgent: true,
       identitiesOnly: true,
@@ -196,6 +201,7 @@ test("strict target agent selection keeps default keys available to jump hosts",
       keyPath: "/home/alice/.ssh/id_ed25519",
       privateKey: "PRIVATE KEY",
     }]);
+    assert.equal(getCapturedSystemAgentOptions()?.port, 2222);
   } finally {
     await bridge.stopPortForward(event, { tunnelId: "pf-strict-target" });
   }

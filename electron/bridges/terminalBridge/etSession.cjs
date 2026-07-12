@@ -165,6 +165,10 @@ main();
     }
 
     function applyEtSshAgentEnvironment(env, options) {
+      if (options?.useSshAgent === false) {
+        delete env.SSH_AUTH_SOCK;
+        return env;
+      }
       const socketPath = options?._resolvedSshAgentSocket
         || (options?.agentForwarding ? process.env.SSH_AUTH_SOCK : undefined);
       if (socketPath) env.SSH_AUTH_SOCK = socketPath;
@@ -320,7 +324,9 @@ main();
         sshOptions.push(`Port=${options.port}`);
       }
 
-      if (options.useSshAgent && options._resolvedSshAgentSocket) {
+      if (options.useSshAgent === false) {
+        configLines.push("IdentityAgent none");
+      } else if (options.useSshAgent && options._resolvedSshAgentSocket) {
         configLines.push(`IdentityAgent ${quoteRawSshConfigValue(options._resolvedSshAgentSocket)}`);
       }
 
@@ -443,7 +449,9 @@ main();
         jumpConfigLines.push(`  User ${jumpUser}`);
         jumpConfigLines.push(`  Port ${jumpPort}`);
 
-        if (jump.useSshAgent && jump._resolvedSshAgentSocket) {
+        if (jump.useSshAgent === false) {
+          jumpConfigLines.push("  IdentityAgent none");
+        } else if (jump.useSshAgent && jump._resolvedSshAgentSocket) {
           jumpConfigLines.push(`  IdentityAgent ${quoteRawSshConfigValue(jump._resolvedSshAgentSocket)}`);
         }
 

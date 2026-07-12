@@ -181,6 +181,7 @@ async function startPortForward(event, payload) {
       addKeysToAgent,
       useKeychain,
       hostname,
+      port,
       username,
     }, "[PortForward]");
     const identityFile = !privateKey && !systemAuthAgent

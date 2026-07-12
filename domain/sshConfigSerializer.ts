@@ -129,10 +129,7 @@ export const serializeHostsToSshConfig = (hosts: Host[], allHosts?: Host[]): str
 
     const hasMacKeychainAgent = hasMacKeychainAgentDirectives(host);
     let serializedIdentityAgent = host.identityAgent;
-    if (
-      host.useSshAgent === false
-      && (host.identityAgent !== undefined || hasMacKeychainAgent)
-    ) {
+    if (host.useSshAgent === false) {
       serializedIdentityAgent = "none";
     } else if (
       host.useSshAgent === true

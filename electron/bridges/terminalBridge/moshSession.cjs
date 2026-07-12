@@ -113,6 +113,10 @@ function createMoshSessionApi(ctx) {
     }
 
     function applyMoshSshAgentEnvironment(env, options) {
+      if (options?.useSshAgent === false) {
+        delete env.SSH_AUTH_SOCK;
+        return env;
+      }
       const socketPath = options?._resolvedSshAgentSocket
         || (options?.agentForwarding ? process.env.SSH_AUTH_SOCK : undefined);
       if (socketPath) env.SSH_AUTH_SOCK = socketPath;
@@ -244,7 +248,9 @@ function createMoshSessionApi(ctx) {
           }
         }
 
-        if (options.useSshAgent && options._resolvedSshAgentSocket) {
+        if (options.useSshAgent === false) {
+          sshArgs.push("-o", "IdentityAgent=none");
+        } else if (options.useSshAgent && options._resolvedSshAgentSocket) {
           sshArgs.push("-o", `IdentityAgent=${options._resolvedSshAgentSocket}`);
           if (options.identitiesOnly && !sshArgs.includes("IdentitiesOnly=yes")) {
             sshArgs.push("-o", "IdentitiesOnly=yes");
