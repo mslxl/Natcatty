@@ -1,6 +1,7 @@
 import React, { useCallback, useRef, useState } from "react";
 import { FileSymlink, Import } from "lucide-react";
 import { useI18n } from "../../application/i18n/I18nProvider";
+import type { VaultImportFileEncoding } from "../../application/state/vaultImportFile";
 import { getVaultCsvTemplate } from "../../domain/vaultImport";
 import type { VaultImportFormat } from "../../domain/vaultImport";
 import { cn } from "../../lib/utils";
@@ -55,6 +56,7 @@ const OPTIONS: ImportOption[] = [
 export type ImportOptions = {
   managed?: boolean;
   filePath?: string;
+  encoding?: VaultImportFileEncoding;
 };
 
 export type ImportVaultDialogProps = {
@@ -73,6 +75,7 @@ export const ImportVaultDialog: React.FC<ImportVaultDialogProps> = ({
   const pendingFormatRef = useRef<VaultImportFormat | null>(null);
   const pendingOptionsRef = useRef<ImportOptions | undefined>(undefined);
   const [showManagedChoice, setShowManagedChoice] = useState(false);
+  const [showMobaEncodingChoice, setShowMobaEncodingChoice] = useState(false);
 
   const downloadCsvTemplate = useCallback(() => {
     const csv = getVaultCsvTemplate();
@@ -102,6 +105,8 @@ export const ImportVaultDialog: React.FC<ImportVaultDialogProps> = ({
     (opt: ImportOption) => {
       if (opt.format === "ssh_config") {
         setShowManagedChoice(true);
+      } else if (opt.format === "mobaxterm") {
+        setShowMobaEncodingChoice(true);
       } else {
         pickFile(opt.format, opt.accept);
       }
@@ -113,6 +118,14 @@ export const ImportVaultDialog: React.FC<ImportVaultDialogProps> = ({
     (managed: boolean) => {
       setShowManagedChoice(false);
       pickFile("ssh_config", "*", { managed });
+    },
+    [pickFile],
+  );
+
+  const handleMobaEncodingChoice = useCallback(
+    (encoding: VaultImportFileEncoding) => {
+      setShowMobaEncodingChoice(false);
+      pickFile("mobaxterm", ".ini,.mxtsessions,.txt", { encoding });
     },
     [pickFile],
   );
@@ -134,6 +147,7 @@ export const ImportVaultDialog: React.FC<ImportVaultDialogProps> = ({
     (newOpen: boolean) => {
       if (!newOpen) {
         setShowManagedChoice(false);
+        setShowMobaEncodingChoice(false);
       }
       onOpenChange(newOpen);
     },
@@ -155,7 +169,9 @@ export const ImportVaultDialog: React.FC<ImportVaultDialogProps> = ({
           <DialogDescription className="mx-auto max-w-xl">
             {showManagedChoice
               ? t("vault.import.sshConfig.chooseMode")
-              : t("vault.import.desc")}
+              : showMobaEncodingChoice
+                ? t("vault.import.mobaxterm.chooseEncoding")
+                : t("vault.import.desc")}
           </DialogDescription>
         </DialogHeader>
 
@@ -215,6 +231,55 @@ export const ImportVaultDialog: React.FC<ImportVaultDialogProps> = ({
               <button
                 type="button"
                 onClick={() => setShowManagedChoice(false)}
+                className="text-xs text-muted-foreground hover:text-foreground"
+              >
+                {t("common.back")}
+              </button>
+            </>
+          ) : showMobaEncodingChoice ? (
+            <>
+              <div className="text-sm font-medium text-center text-muted-foreground">
+                {t("vault.import.mobaxterm.encodingQuestion")}
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {([
+                  ["auto", "auto", "autoDesc", true],
+                  ["utf-8", "utf8", "utf8Desc", false],
+                  ["gb18030", "gb18030", "gb18030Desc", false],
+                ] as const).map(([encoding, labelKey, descKey, recommended]) => (
+                  <button
+                    key={encoding}
+                    type="button"
+                    className={cn(
+                      "group rounded-2xl border bg-background px-4 py-5 transition-colors",
+                      "flex flex-col items-center gap-3",
+                      recommended
+                        ? "border-primary/60 bg-primary/5 hover:bg-primary/10 hover:border-primary"
+                        : "border-border/60 hover:bg-muted/30 hover:border-border",
+                    )}
+                    onClick={() => handleMobaEncodingChoice(encoding)}
+                  >
+                    <div className={cn(
+                      "h-12 w-12 rounded-xl flex items-center justify-center",
+                      recommended ? "bg-primary/10" : "bg-muted/60",
+                    )}>
+                      <Import className={cn(
+                        "h-6 w-6",
+                        recommended ? "text-primary" : "text-muted-foreground",
+                      )} />
+                    </div>
+                    <div className="text-sm font-medium text-foreground">
+                      {t(`vault.import.mobaxterm.${labelKey}`)}
+                    </div>
+                    <div className="text-xs text-muted-foreground text-center">
+                      {t(`vault.import.mobaxterm.${descKey}`)}
+                    </div>
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowMobaEncodingChoice(false)}
                 className="text-xs text-muted-foreground hover:text-foreground"
               >
                 {t("common.back")}

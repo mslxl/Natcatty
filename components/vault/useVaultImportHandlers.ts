@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 
+import { readVaultImportFile } from "../../application/state/vaultImportFile";
 import { sanitizeHost } from "../../domain/host";
-import { readTextFile } from "../../lib/readTextFile";
 import { applyVaultHostImport, importVaultHostsFromText, type VaultImportFormat } from "../../domain/vaultImport";
 import type { Host, ManagedSource } from "../../types";
 import type { ImportOptions } from "./ImportVaultDialog";
@@ -46,7 +46,7 @@ export function useVaultImportHandlers({
   
           toast.info(t("vault.import.toast.start", { format: formatLabel }));
   
-          const text = await readTextFile(file);
+          const text = await readVaultImportFile(format, file, options?.encoding);
           const result = importVaultHostsFromText(format, text, {
             fileName: file.name,
           });

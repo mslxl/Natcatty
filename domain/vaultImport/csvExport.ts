@@ -1,5 +1,7 @@
 import type { Host } from '../models';
 
+const UTF8_BOM = "\uFEFF";
+
 export interface VaultCsvTemplateOptions {
   includeExampleRows?: boolean;
 }
@@ -97,7 +99,7 @@ export const exportHostsToCsvWithStats = (hosts: Host[]): ExportHostsResult => {
   const exportableHosts = hosts.filter((h) => !isUnsupported(h));
 
   return {
-    csv: exportHostsToCsv(hosts),
+    csv: UTF8_BOM + exportHostsToCsv(hosts),
     exportedCount: exportableHosts.length,
     skippedCount: skippedHosts.length,
   };
