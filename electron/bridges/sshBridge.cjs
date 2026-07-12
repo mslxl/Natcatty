@@ -1018,13 +1018,26 @@ function isChainAuthError(err) {
 
 function canRetryWithEncryptedDefaultKeys(options) {
   const hasJumpHosts = options.jumpHosts && options.jumpHosts.length > 0;
+  const hasStrictTargetAgent = options.useSshAgent === true && options.identitiesOnly === true;
   const isPasswordOnly = !hasJumpHosts &&
     !options.agentForwarding &&
     !!options.password &&
     !options.privateKey &&
     !options.certificate;
   return !isPasswordOnly &&
+    (hasJumpHosts || !hasStrictTargetAgent) &&
     (!options._unlockedEncryptedKeys || options._unlockedEncryptedKeys.length === 0);
+}
+
+function isStrictAgentAuthFailure(options, err) {
+  if (!err?.isJumpHostAuthError) {
+    return options.useSshAgent === true && options.identitiesOnly === true;
+  }
+  const failedJump = (options.jumpHosts || []).find((jump) => (
+    (err.jumpHostHostname && jump.hostname === err.jumpHostHostname)
+    || (err.jumpHostLabel && jump.label === err.jumpHostLabel)
+  ));
+  return failedJump?.useSshAgent === true && failedJump.identitiesOnly === true;
 }
 
 function canReuseExistingSession(options) {
@@ -1081,7 +1094,7 @@ async function startSSHSessionWrapper(event, options) {
     if (isAuthError) {
       // Check if there are encrypted default keys we haven't tried yet
       // Only offer retry if no unlocked keys were provided in this attempt
-      if (canRetryEncryptedDefaults) {
+      if (canRetryEncryptedDefaults && !isStrictAgentAuthFailure(options, err)) {
         const encryptedKeys = loadedRetryableEncryptedKeys
           ? retryableEncryptedKeys
           : await loadRetryableEncryptedKeys();
