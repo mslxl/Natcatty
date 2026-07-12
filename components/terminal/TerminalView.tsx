@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { ChevronsLeft, X as XIcon } from 'lucide-react';
+import { ChevronsLeft, GripVertical, X as XIcon } from 'lucide-react';
 
 import { OSC7_SETUP_TARGETS } from './osc7Setup';
 import { TerminalServerStats } from './TerminalServerStats';
@@ -170,15 +170,20 @@ export function resolveTerminalTopOffsets({
 }
 
 export function resolveTerminalRightInset({
-  showHostInfoBar,
-  isSearchOpen,
+  showHostInfoBar: _showHostInfoBar,
+  isSearchOpen: _isSearchOpen,
   terminalBodyInset = 4,
 }: {
   showHostInfoBar: boolean;
   isSearchOpen: boolean;
   terminalBodyInset?: number;
 }): number {
-  return terminalBodyInset + (!showHostInfoBar && !isSearchOpen ? 28 : 0);
+  // Compact speed-dial floats over the terminal (z-30 overlay). Do not reserve
+  // a right gutter for it — that pushes the xterm scrollbar left and leaves a
+  // dead strip next to the circular toggle.
+  void _showHostInfoBar;
+  void _isSearchOpen;
+  return terminalBodyInset;
 }
 
 /**
@@ -404,16 +409,21 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
                 >
                   {!showHostInfoBar && inWorkspace && onDetachPointerDown && (
                     <div
-                      aria-hidden="true"
+                      role="button"
+                      tabIndex={-1}
                       title={t("terminal.toolbar.dragPane")}
-                      className="h-5 w-3 rounded cursor-grab active:cursor-grabbing opacity-60 hover:opacity-100 flex-shrink-0"
-                      style={{
-                        backgroundImage: 'radial-gradient(circle, currentColor 1px, transparent 1px)',
-                        backgroundSize: '4px 4px',
-                      }}
+                      aria-label={t("terminal.toolbar.dragPane")}
+                      className={cn(
+                        "flex h-6 w-5 shrink-0 items-center justify-center rounded-md",
+                        "cursor-grab active:cursor-grabbing",
+                        "text-[color:var(--terminal-toolbar-fg)] opacity-45 hover:opacity-90",
+                        "hover:bg-[color:var(--terminal-toolbar-btn-hover)] transition-colors",
+                      )}
                       data-terminal-detach-drag-handle="true"
                       onPointerDown={onDetachPointerDown}
-                    />
+                    >
+                      <GripVertical size={12} strokeWidth={2} aria-hidden="true" />
+                    </div>
                   )}
                   {showHostInfoBar && <div
                     className={cn(

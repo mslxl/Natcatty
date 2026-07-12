@@ -203,8 +203,9 @@ test("terminal search keeps enough space when host information is hidden", () =>
   );
 });
 
-test("hidden host information reserves a side gutter for its action button", () => {
-  assert.equal(resolveTerminalRightInset({ showHostInfoBar: false, isSearchOpen: false }), 32);
+test("hidden host information does not reserve a side gutter for its floating action button", () => {
+  // Speed-dial overlays the terminal; scrollbar stays at the pane edge.
+  assert.equal(resolveTerminalRightInset({ showHostInfoBar: false, isSearchOpen: false }), 4);
   assert.equal(resolveTerminalRightInset({ showHostInfoBar: true, isSearchOpen: false }), 4);
   assert.equal(resolveTerminalRightInset({ showHostInfoBar: false, isSearchOpen: true }), 4);
 });
@@ -228,6 +229,9 @@ test("hidden host information keeps terminal actions rendered", () => {
   assert.notEqual(actionsStart, -1);
   assert.notEqual(controls, -1);
   assert.notEqual(compactDragHandle, -1);
+  // Compact drag handle uses GripVertical, not the old radial-dot “chessboard”.
+  assert.match(source, /GripVertical/);
+  assert.ok(!source.includes("backgroundSize: '4px 4px'"));
   assert.ok(hostInfoStart < hostInfoEnd);
   assert.ok(hostInfoEnd < copyAction);
   assert.ok(copyAction < timestampAction);
