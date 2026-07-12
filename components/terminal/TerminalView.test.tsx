@@ -246,12 +246,11 @@ test("hidden host information reveals actions without permanently covering termi
   assert.match(source, /id=\{`terminal-actions-\$\{sessionId\}`\}/);
   assert.match(source, /onClick=\{\(\) => setCompactActionsOpen/);
   assert.match(source, /right: terminalRightInset/);
-  // Compact strip opens below the ⋯ toggle (top-8), not beside it (top-0 right-8),
-  // so the full toolbar is visible instead of stacking on the toggle.
-  assert.match(source, /absolute right-1 top-8/);
-  assert.match(source, /\? "visible opacity-100 pointer-events-auto"/);
-  assert.match(source, /: "invisible opacity-0"/);
-  assert.match(source, /aria-hidden=\{!showHostInfoBar && !isSearchOpen && !compactActionsOpen \? true : undefined\}/);
+  // Compact mode is a circular speed-dial: tray springs left from the toggle.
+  assert.match(source, /flex flex-row-reverse items-center/);
+  assert.match(source, /rounded-full/);
+  assert.match(source, /max-w-\[min\(100vw-3rem,40rem\)\]/);
+  assert.match(source, /max-w-0 opacity-0 scale-90/);
   assert.match(source, /document\.addEventListener\("pointerdown", handlePointerDown\)/);
   assert.match(source, /closest\('\[data-radix-popper-content-wrapper\]'\)/);
   assert.match(source, /event\.key !== "Escape"/);
