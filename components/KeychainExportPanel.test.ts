@@ -9,3 +9,10 @@ test('key export forwards the selected host SSH connection timeouts', () => {
   assert.match(source, /sshTcpConnectTimeoutMs: connectionTimeouts\.tcpConnectTimeoutSeconds \* 1000/);
   assert.match(source, /sshAuthReadyTimeoutMs: connectionTimeouts\.authReadyTimeoutSeconds \* 1000/);
 });
+
+test('key export preserves imported identity files when the system SSH agent is enabled', () => {
+  assert.match(
+    source,
+    /fallbackIdentityFilePaths: \(!effectiveExportHost\.useSshAgent && exportAuth\.authMethod === "password"\) \|\| exportAuth\.keyId/,
+  );
+});

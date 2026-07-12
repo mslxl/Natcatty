@@ -189,7 +189,7 @@ export const KeychainExportPanel: React.FC<KeychainExportPanelProps> = ({
                       });
                       const exportKeyAuth = resolveBridgeKeyAuth({
                         key: exportAuth.key,
-                        fallbackIdentityFilePaths: exportAuth.authMethod === "password" || exportAuth.keyId
+                        fallbackIdentityFilePaths: (!effectiveExportHost.useSshAgent && exportAuth.authMethod === "password") || exportAuth.keyId
                           ? undefined
                           : effectiveExportHost.identityFilePaths,
                         passphrase: exportAuth.passphrase,
