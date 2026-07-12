@@ -47,3 +47,21 @@ test("MobaXterm import keeps valid UTF-8 labels when GB18030 would produce Chine
 
   assert.equal(result.hosts[0]?.label, "¡prod");
 });
+
+test("MobaXterm import can force GB18030 for ambiguous legacy Chinese text", async () => {
+  const prefix = new TextEncoder().encode("[Bookmarks]\nSubRep=\nImgNum=42\n");
+  const suffix = new TextEncoder().encode(`prod=${sessionValue}`);
+  const bytes = new Uint8Array(prefix.length + 2 + suffix.length);
+  bytes.set(prefix);
+  bytes.set([0xc2, 0xa1], prefix.length);
+  bytes.set(suffix, prefix.length + 2);
+
+  const decoded = await readVaultImportFile(
+    "mobaxterm",
+    new File([bytes], "MobaXterm.ini", { type: "text/plain" }),
+    "gb18030",
+  );
+  const result = importVaultHostsFromText("mobaxterm", decoded);
+
+  assert.equal(result.hosts[0]?.label, "隆prod");
+});

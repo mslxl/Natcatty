@@ -1,4 +1,5 @@
 type ReadTextFileOptions = {
+  encoding?: string;
   fallbackEncoding?: string;
 };
 
@@ -8,6 +9,10 @@ export async function readTextFile(
 ): Promise<string> {
   const buf = await file.arrayBuffer();
   const bytes = new Uint8Array(buf);
+
+  if (options.encoding) {
+    return new TextDecoder(options.encoding).decode(bytes);
+  }
 
   let encoding: string = "utf-8";
   let offset = 0;

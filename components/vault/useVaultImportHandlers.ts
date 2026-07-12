@@ -46,7 +46,7 @@ export function useVaultImportHandlers({
   
           toast.info(t("vault.import.toast.start", { format: formatLabel }));
   
-          const text = await readVaultImportFile(format, file);
+          const text = await readVaultImportFile(format, file, options?.encoding);
           const result = importVaultHostsFromText(format, text, {
             fileName: file.name,
           });

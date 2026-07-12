@@ -48,3 +48,12 @@ test("readTextFile keeps valid UTF-8 when a fallback encoding is configured", as
     "[Bookmarks]\n中文服务器",
   );
 });
+
+test("readTextFile honors an explicit encoding for ambiguous bytes", async () => {
+  const file = new File([new Uint8Array([0xc2, 0xa1])], "MobaXterm.ini", {
+    type: "text/plain",
+  });
+
+  assert.equal(await readTextFile(file, { encoding: "utf-8" }), "¡");
+  assert.equal(await readTextFile(file, { encoding: "gb18030" }), "隆");
+});
