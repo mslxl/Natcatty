@@ -159,6 +159,11 @@ export const resolveBridgeSshAgentAuth = (
   };
 };
 
+export const hasMacKeychainAgentDirectives = (
+  host: Pick<Host, "addKeysToAgent" | "useKeychain">,
+): boolean => host.useKeychain === true
+  && host.addKeysToAgent?.toLowerCase() === "yes";
+
 export const hasBridgeSshCredentials = (auth: {
   password?: string;
   privateKey?: string;

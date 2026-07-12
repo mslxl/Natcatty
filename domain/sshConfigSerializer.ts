@@ -1,4 +1,5 @@
 import { Host } from "./models";
+import { hasMacKeychainAgentDirectives } from "./sshAuth";
 
 const DEFAULT_SSH_PORT = 22;
 const MANAGED_BLOCK_BEGIN = "# BEGIN NETCATTY MANAGED - DO NOT EDIT THIS BLOCK";
@@ -126,8 +127,28 @@ export const serializeHostsToSshConfig = (hosts: Host[], allHosts?: Host[]): str
       }
     }
 
-    if (host.identityAgent !== undefined) {
-      const formatted = host.identityAgent.includes(" ") ? `"${host.identityAgent}"` : host.identityAgent;
+    const hasMacKeychainAgent = hasMacKeychainAgentDirectives(host);
+    let serializedIdentityAgent = host.identityAgent;
+    if (
+      host.useSshAgent === false
+      && (host.identityAgent !== undefined || hasMacKeychainAgent)
+    ) {
+      serializedIdentityAgent = "none";
+    } else if (
+      host.useSshAgent === true
+      && host.identityAgent?.toLowerCase() === "none"
+    ) {
+      serializedIdentityAgent = "$SSH_AUTH_SOCK";
+    } else if (
+      host.useSshAgent === true
+      && host.identityAgent === undefined
+      && !hasMacKeychainAgent
+    ) {
+      serializedIdentityAgent = "$SSH_AUTH_SOCK";
+    }
+
+    if (serializedIdentityAgent !== undefined) {
+      const formatted = serializedIdentityAgent.includes(" ") ? `"${serializedIdentityAgent}"` : serializedIdentityAgent;
       lines.push(`    IdentityAgent ${formatted}`);
     }
 

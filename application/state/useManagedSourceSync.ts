@@ -15,6 +15,14 @@ export interface UseManagedSourceSyncOptions {
   onUpdateManagedSources: (sources: ManagedSource[]) => void;
 }
 
+export const haveSameManagedSshAgentFields = (previous: Host, current: Host): boolean => (
+  previous.useSshAgent === current.useSshAgent
+  && previous.identityAgent === current.identityAgent
+  && previous.identitiesOnly === current.identitiesOnly
+  && previous.addKeysToAgent === current.addKeysToAgent
+  && previous.useKeychain === current.useKeychain
+);
+
 export const useManagedSourceSync = ({
   hosts,
   managedSources,
@@ -285,6 +293,7 @@ export const useManagedSourceSync = ({
             prev.label !== curr.label ||
             prev.group !== curr.group ||
             prev.protocol !== curr.protocol ||
+            !haveSameManagedSshAgentFields(prev, curr) ||
             chainChanged;
           if (hasChanged) {
             sourceChanged = true;

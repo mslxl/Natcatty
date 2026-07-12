@@ -1,5 +1,6 @@
 import { Host, HostChainConfig, HostProtocol } from "./models";
 import { sanitizeHost } from "./host";
+import { hasMacKeychainAgentDirectives } from "./sshAuth";
 import {
   buildVaultHostFromDraft,
   buildVaultHostMergeKey,
@@ -581,8 +582,7 @@ const importFromSshConfig = (text: string): VaultImportResult => {
       // declaring IdentityAgent. Treat that pair as an agent-backed login so
       // the bridge can ask Apple's ssh-add to load the configured IdentityFile.
       // AddKeysToAgent alone still keeps direct-key semantics on other setups.
-      const macKeychainAgentEnabled = block.useKeychain === true
-        && block.addKeysToAgent === "yes";
+      const macKeychainAgentEnabled = hasMacKeychainAgentDirectives(block);
       if (!identityAgentDisabled && (identityAgentEnabled || macKeychainAgentEnabled)) {
         host.useSshAgent = true;
       }
