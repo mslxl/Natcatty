@@ -8,6 +8,7 @@ import { Host, Identity, KnownHost, PortForwardingRule, SSHKey, TerminalSettings
 import { isEncryptedCredentialPlaceholder, sanitizeCredentialValue } from '../../domain/credentials';
 import { resolveBridgeKeyAuth, resolveHostAuth } from '../../domain/sshAuth';
 import { resolveHostKeepalive } from '../../domain/host';
+import { resolveHostSshConnectionTimeouts } from '../../domain/sshConnectionTimeouts';
 import {
   findIncompleteProxyIdentityId,
   findMissingProxyIdentityId,
@@ -466,6 +467,7 @@ export const startPortForward = async (
             throw new Error(`Saved credentials for jump host "${jumpHost.label || jumpHost.hostname}" cannot be decrypted on this device. Open host settings and re-enter them.`);
           }
           const hopKeepalive = resolveHostKeepalive(jumpHost, globalTerminalSettings);
+          const hopConnectionTimeouts = resolveHostSshConnectionTimeouts(jumpHost);
           return {
             hostname: jumpHost.hostname,
             port: jumpHost.port || 22,
@@ -484,6 +486,8 @@ export const startPortForward = async (
             identityFilePaths: jumpKeyAuth.identityFilePaths,
             keepaliveInterval: hopKeepalive.interval,
             keepaliveCountMax: hopKeepalive.countMax,
+            sshTcpConnectTimeoutMs: hopConnectionTimeouts.tcpConnectTimeoutSeconds * 1000,
+            sshAuthReadyTimeoutMs: hopConnectionTimeouts.authReadyTimeoutSeconds * 1000,
             verifyHostKeys: globalTerminalSettings.verifyHostKeys,
             legacyAlgorithms: jumpHost.legacyAlgorithms,
             skipEcdsaHostKey: jumpHost.skipEcdsaHostKey,
@@ -548,6 +552,7 @@ export const startPortForward = async (
     onStatusChange('connecting');
     
     // Start the tunnel
+    const connectionTimeouts = resolveHostSshConnectionTimeouts(host);
     const result = await bridge.startPortForward({
       ruleId: rule.id,
       tunnelId,
@@ -574,6 +579,8 @@ export const startPortForward = async (
       algorithmOverrides: host.algorithms,
       keepaliveInterval: resolveHostKeepalive(host, globalTerminalSettings).interval,
       keepaliveCountMax: resolveHostKeepalive(host, globalTerminalSettings).countMax,
+      sshTcpConnectTimeoutMs: connectionTimeouts.tcpConnectTimeoutSeconds * 1000,
+      sshAuthReadyTimeoutMs: connectionTimeouts.authReadyTimeoutSeconds * 1000,
     });
     
     if (!result.success) {

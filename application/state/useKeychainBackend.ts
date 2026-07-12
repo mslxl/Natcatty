@@ -15,6 +15,8 @@ export const useKeychainBackend = () => {
     privateKey?: string;
     command: string;
     timeout?: number;
+    sshTcpConnectTimeoutMs?: number;
+    sshAuthReadyTimeoutMs?: number;
     enableKeyboardInteractive?: boolean;
     sessionId?: string;
     // Algorithm settings — let the keychain "export public key" flow honor
@@ -32,4 +34,3 @@ export const useKeychainBackend = () => {
 
   return { generateKeyPair, execCommand };
 };
-

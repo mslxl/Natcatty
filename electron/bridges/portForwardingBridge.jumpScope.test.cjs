@@ -17,11 +17,26 @@ function createSender() {
 function loadBridgeWithMocks(t) {
   const originalLoad = Module._load;
   let capturedChainOptions = null;
+  let capturedConnectOptions = null;
+  let connectedClient = null;
 
   class MockSshClient extends EventEmitter {
+    constructor() {
+      super();
+      this.socketTimeouts = [];
+      this._sock = {
+        setTimeout: (value) => this.socketTimeouts.push(value),
+      };
+    }
+
     connect(options) {
       this.options = options;
-      setImmediate(() => this.emit("ready"));
+      connectedClient = this;
+      capturedConnectOptions = options;
+      setImmediate(() => {
+        this.emit("connect");
+        this.emit("ready");
+      });
     }
 
     forwardOut(_srcIP, _srcPort, _dstHost, _dstPort, callback) {
@@ -76,11 +91,21 @@ function loadBridgeWithMocks(t) {
     delete require.cache[bridgePath];
   });
 
-  return { bridge, getCapturedChainOptions: () => capturedChainOptions };
+  return {
+    bridge,
+    getCapturedChainOptions: () => capturedChainOptions,
+    getCapturedConnectOptions: () => capturedConnectOptions,
+    getConnectedClient: () => connectedClient,
+  };
 }
 
 test("port forwarding routes jump-host keyboard-interactive prompts through the external scope", async (t) => {
-  const { bridge, getCapturedChainOptions } = loadBridgeWithMocks(t);
+  const {
+    bridge,
+    getCapturedChainOptions,
+    getCapturedConnectOptions,
+    getConnectedClient,
+  } = loadBridgeWithMocks(t);
   const event = { sender: createSender() };
 
   try {
@@ -102,6 +127,8 @@ test("port forwarding routes jump-host keyboard-interactive prompts through the 
       port: 22,
       username: "dbuser",
       password: "target-password",
+      sshTcpConnectTimeoutMs: 45_000,
+      sshAuthReadyTimeoutMs: 300_000,
       knownHosts,
       jumpHosts: [{
         hostname: "jump.internal",
@@ -114,6 +141,11 @@ test("port forwarding routes jump-host keyboard-interactive prompts through the 
     assert.equal(result.success, true);
     assert.equal(getCapturedChainOptions()?._keyboardInteractiveScope, "external");
     assert.equal(getCapturedChainOptions()?.knownHosts, knownHosts);
+    assert.equal(getCapturedChainOptions()?.sshTcpConnectTimeoutMs, 45_000);
+    assert.equal(getCapturedChainOptions()?.sshAuthReadyTimeoutMs, 300_000);
+    assert.equal(getCapturedConnectOptions()?.timeout, 45_000);
+    assert.equal(getCapturedConnectOptions()?.readyTimeout, 0);
+    assert.deepEqual(getConnectedClient()?.socketTimeouts, [0]);
   } finally {
     await bridge.stopPortForward(event, { tunnelId: "pf-jump-scope" });
   }

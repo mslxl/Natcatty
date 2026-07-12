@@ -3,6 +3,7 @@ import { ChevronRight, Info } from "lucide-react";
 import { applyGroupDefaults, resolveGroupDefaults } from "../domain/groupConfig";
 import { sanitizeCredentialValue } from "../domain/credentials";
 import { resolveBridgeKeyAuth, resolveHostAuth } from "../domain/sshAuth";
+import { resolveHostSshConnectionTimeouts } from "../domain/sshConnectionTimeouts";
 import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
@@ -222,6 +223,7 @@ export const KeychainExportPanel: React.FC<KeychainExportPanelProps> = ({
                           resolveGroupDefaults(exportHost.group, groupConfigs),
                         )
                         : applyGroupDefaults(exportHost, {});
+                      const connectionTimeouts = resolveHostSshConnectionTimeouts(effectiveExportHost);
 
                       // Execute via SSH
                       const result = await execCommand({
@@ -245,6 +247,8 @@ export const KeychainExportPanel: React.FC<KeychainExportPanelProps> = ({
                         algorithmOverrides: effectiveExportHost.algorithms,
                         command,
                         timeout: 30000,
+                        sshTcpConnectTimeoutMs: connectionTimeouts.tcpConnectTimeoutSeconds * 1000,
+                        sshAuthReadyTimeoutMs: connectionTimeouts.authReadyTimeoutSeconds * 1000,
                         enableKeyboardInteractive: true,
                         sessionId: `export-key:${effectiveExportHost.id}:${panel.key.id}`,
                       });

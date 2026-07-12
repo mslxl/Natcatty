@@ -60,6 +60,9 @@ declare global {
     // override / global fallback). interval in seconds, 0 = disabled.
     keepaliveInterval?: number;
     keepaliveCountMax?: number;
+    // Per-hop SSH connection timeouts, resolved from the saved host.
+    sshTcpConnectTimeoutMs?: number;
+    sshAuthReadyTimeoutMs?: number;
     verifyHostKeys?: boolean;
     // Per-hop algorithm settings, mirroring the target-host fields. When
     // omitted the bridge falls back to the target host's settings so a
@@ -114,6 +117,10 @@ declare global {
     keepaliveInterval?: number;
     // Unanswered keepalives before ssh2 declares the connection dead
     keepaliveCountMax?: number;
+    // Maximum time to establish the TCP connection
+    sshTcpConnectTimeoutMs?: number;
+    // Maximum time for SSH handshake and authentication
+    sshAuthReadyTimeoutMs?: number;
     // Enable legacy SSH algorithms for older network equipment
     legacyAlgorithms?: boolean;
     // Drop ecdsa-sha2-* from offered host-key algorithms (#1027)
@@ -190,6 +197,8 @@ declare global {
     // applied host override / global fallback). interval in seconds.
     keepaliveInterval?: number;
     keepaliveCountMax?: number;
+    sshTcpConnectTimeoutMs?: number;
+    sshAuthReadyTimeoutMs?: number;
   }
 
   interface PortForwardResult {
