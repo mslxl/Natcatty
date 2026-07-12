@@ -252,6 +252,8 @@ test("hidden host information reveals actions without permanently covering termi
   assert.match(source, /rounded-full/);
   assert.match(source, /grid-cols-\[1fr\]/);
   assert.match(source, /grid-cols-\[0fr\]/);
+  assert.match(source, /ChevronsLeft/);
+  assert.match(source, /h-7/);
   assert.match(source, /Do NOT use `\.terminal-topbar`|container-type:inline-size|container-type collapses/);
   assert.match(source, /document\.addEventListener\("pointerdown", handlePointerDown\)/);
   assert.match(source, /closest\('\[data-radix-popper-content-wrapper\]'\)/);
