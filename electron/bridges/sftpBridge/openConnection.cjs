@@ -94,7 +94,9 @@ function createOpenConnectionApi(ctx) {
           const hasCertificate =
             typeof jump.certificate === "string" && jump.certificate.trim().length > 0;
 
-          const systemAuthAgent = await prepareSystemSshAgentForAuth(jump, `[SFTP Chain] Hop ${i + 1}:`);
+          const systemAuthAgent = hasCertificate
+            ? null
+            : await prepareSystemSshAgentForAuth(jump, `[SFTP Chain] Hop ${i + 1}:`);
     
           const identityFile = !jump.privateKey && !systemAuthAgent
             ? await loadFirstIdentityFileForAuth({
@@ -699,7 +701,9 @@ function createOpenConnectionApi(ctx) {
       let inlineKey = null;
       let systemAuthAgent = null;
       try {
-        systemAuthAgent = await prepareSystemSshAgentForAuth(options, "[SFTP]");
+        systemAuthAgent = hasCertificate
+          ? null
+          : await prepareSystemSshAgentForAuth(options, "[SFTP]");
         identityFile = !options.privateKey && !systemAuthAgent
           ? await loadFirstIdentityFileForAuth({
             sender: event.sender,

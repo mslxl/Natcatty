@@ -448,6 +448,31 @@ function windowsPipeConnectable(pipePath, timeoutMs = 1000) {
   });
 }
 
+function isWindowsNamedPipe(agentPath) {
+  return /^[/\\][/\\]\.[/\\]pipe[/\\].+/.test(agentPath);
+}
+
+function ssh2AgentConnectable(agentPath, options = {}) {
+  const createAgentImpl = options.createAgentImpl || require("ssh2/lib/agent.js").createAgent;
+  const timeoutMs = options.timeoutMs ?? 1000;
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (ok) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(ok);
+    };
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    timer.unref?.();
+    try {
+      createAgentImpl(agentPath).getIdentities((error) => finish(!error));
+    } catch {
+      finish(false);
+    }
+  });
+}
+
 /**
  * Check if an SSH agent is available on Windows.
  * Probes the well-known named pipe via net.connect(). This supports any
@@ -483,7 +508,7 @@ function getSshAgentSocket(identityAgent) {
   if (process.platform === "win32") {
     // On Windows, always return the pipe path; the caller should use
     // getAvailableAgentSocket() for a reliable async check.
-    return "\\\\.\\pipe\\openssh-ssh-agent";
+    return configuredSocket || WIN_SSH_AGENT_PIPE;
   }
   const agentSocket = configuredSocket || process.env.SSH_AUTH_SOCK;
   if (!agentSocket) return null;
@@ -502,12 +527,15 @@ function getSshAgentSocket(identityAgent) {
  * Get ssh-agent socket path with async validation (checks Windows service status)
  * @returns {Promise<string|null>}
  */
-async function getAvailableAgentSocket(identityAgent) {
+async function getAvailableAgentSocket(identityAgent, injected = {}) {
   const configuredSocket = resolveIdentityAgentPath(identityAgent);
   if (identityAgent && !configuredSocket) return null;
-  if (process.platform === "win32") {
-    const socketPath = configuredSocket || "\\\\.\\pipe\\openssh-ssh-agent";
-    const running = await windowsPipeConnectable(socketPath);
+  const platform = injected.platform || process.platform;
+  if (platform === "win32") {
+    const socketPath = configuredSocket || WIN_SSH_AGENT_PIPE;
+    const running = isWindowsNamedPipe(socketPath)
+      ? await (injected.windowsPipeConnectable || windowsPipeConnectable)(socketPath)
+      : await (injected.ssh2AgentConnectable || ssh2AgentConnectable)(socketPath);
     return running ? socketPath : null;
   }
   return getSshAgentSocket(configuredSocket);
@@ -1078,6 +1106,8 @@ module.exports = {
   findAllDefaultPrivateKeys,
   getSshAgentSocket,
   getAvailableAgentSocket,
+  isWindowsNamedPipe,
+  ssh2AgentConnectable,
   resolveIdentityAgentPath,
   prepareSystemSshAgentForAuth,
   buildAuthHandler,

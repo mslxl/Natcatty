@@ -585,7 +585,9 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
       const hasCertificate =
         typeof jump.certificate === "string" && jump.certificate.trim().length > 0;
 
-      const systemAuthAgent = await prepareSystemSshAgentForAuth(jump, `[Chain] Hop ${i + 1}:`);
+      const systemAuthAgent = hasCertificate
+        ? null
+        : await prepareSystemSshAgentForAuth(jump, `[Chain] Hop ${i + 1}:`);
 
       const identityFile = !jump.privateKey && !systemAuthAgent
         ? await loadFirstIdentityFileForAuth({
@@ -891,6 +893,7 @@ const { createExecCommandApi } = require("./sshBridge/execCommand.cjs");
 const execCommandApi = createExecCommandApi({
   SSHClient, NetcattyAgent, randomUUID, console, setTimeout, clearTimeout, Error,
   findAllDefaultPrivateKeysFromHelper, preparePrivateKeyForAuth, loadIdentityFileForAuth,
+  prepareSystemSshAgentForAuth,
   isPassphraseCancelledError, buildAlgorithms, buildAuthHandler, applyAuthToConnOpts,
   createKeyboardInteractiveHandler,
 });

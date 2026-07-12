@@ -122,6 +122,51 @@ test("mosh UTF-8 decoder preserves fragmented Chinese output", () => {
   assert.equal(decoded.includes("\uFFFD"), false);
 });
 
+test("Mosh prepares the configured system agent before building native ssh options", async () => {
+  const calls = [];
+  const api = createMoshSessionApi({
+    os,
+    path,
+    fs,
+    process,
+    randomUUID: () => "fixed",
+    prepareSystemSshAgentForAuth: async (options) => {
+      calls.push(["prepare", options.identityAgent, options.useKeychain]);
+    },
+    getAvailableAgentSocket: async (identityAgent) => {
+      calls.push(["resolve", identityAgent]);
+      return "/tmp/custom-agent.sock";
+    },
+  });
+
+  const prepared = await api.prepareMoshSshAgentOptions({
+    hostname: "host.example",
+    username: "alice",
+    useSshAgent: true,
+    identityAgent: "/tmp/custom-agent.sock",
+    useKeychain: true,
+    addKeysToAgent: "yes",
+    identityFilePaths: ["~/.ssh/id_work"],
+  });
+  const auth = await api.buildMoshSshAuthArgs({
+    ...prepared,
+    identitiesOnly: true,
+    identityFilePaths: ["~/.ssh/id_work"],
+  }, "session-1");
+  const env = api.applyMoshSshAgentEnvironment({}, prepared);
+
+  assert.deepEqual(calls, [
+    ["prepare", "/tmp/custom-agent.sock", true],
+    ["resolve", "/tmp/custom-agent.sock"],
+  ]);
+  assert.deepEqual(auth.sshArgs, [
+    "-i", path.join(os.homedir(), ".ssh", "id_work"),
+    "-o", "IdentitiesOnly=yes",
+    "-o", "IdentityAgent=/tmp/custom-agent.sock",
+  ]);
+  assert.equal(env.SSH_AUTH_SOCK, "/tmp/custom-agent.sock");
+});
+
 test("removed Mosh client detection APIs are not exposed to the renderer", () => {
   const bridgeSource = fs.readFileSync(path.join(__dirname, "terminalBridge.cjs"), "utf8");
   const preloadSource = fs.readFileSync(path.join(__dirname, "..", "preload.cjs"), "utf8");

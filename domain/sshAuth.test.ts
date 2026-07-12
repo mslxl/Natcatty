@@ -97,6 +97,17 @@ test("resolveBridgeSshAgentAuth carries system agent settings without private ma
   );
 });
 
+test("resolveBridgeSshAgentAuth keeps certificate authentication independent", () => {
+  assert.deepEqual(
+    resolveBridgeSshAgentAuth({
+      ...autofillBaseHost,
+      useSshAgent: true,
+      certificate: "ssh-ed25519-cert-v01@openssh.com AAAATEST",
+    }),
+    {},
+  );
+});
+
 test("resolveHostAuth respects password auth over stale key selections", () => {
   const host: Host = {
     id: "host-1",

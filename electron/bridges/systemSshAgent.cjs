@@ -38,6 +38,7 @@ function resolveIdentityPath(rawPath, { hostname = "", username = "", env = proc
 async function loadPreferredPublicKeyBlobs(identityFilePaths, options, deps) {
   const preferred = new Set();
   const resolvedIdentityPaths = [];
+  const unavailablePublicKeyPaths = [];
   for (const rawPath of identityFilePaths ?? []) {
     const identityPath = resolveIdentityPath(rawPath, options);
     if (!identityPath) continue;
@@ -47,14 +48,16 @@ async function loadPreferredPublicKeyBlobs(identityFilePaths, options, deps) {
       const contents = await deps.readFile(publicKeyPath, "utf8");
       const blob = publicKeyBlob(contents);
       if (blob) preferred.add(blob);
+      else unavailablePublicKeyPaths.push(publicKeyPath);
     } catch (error) {
+      unavailablePublicKeyPaths.push(publicKeyPath);
       deps.log?.("Configured SSH public key is unavailable", {
         publicKeyPath,
         error: error instanceof Error ? error.message : String(error),
       });
     }
   }
-  return { preferred, resolvedIdentityPaths };
+  return { preferred, resolvedIdentityPaths, unavailablePublicKeyPaths };
 }
 
 function getIdentities(agent) {
@@ -125,13 +128,13 @@ async function prepareSystemSshAgent(options, injected = {}) {
     log: injected.log,
   };
   const agent = deps.createAgent(options.socketPath);
-  const { preferred, resolvedIdentityPaths } = await loadPreferredPublicKeyBlobs(
+  const { preferred, resolvedIdentityPaths, unavailablePublicKeyPaths } = await loadPreferredPublicKeyBlobs(
     options.identityFilePaths,
     { hostname: options.hostname, username: options.username, env: deps.env },
     deps,
   );
 
-  if (shouldLoadFromMacKeychain(options, deps.platform) && preferred.size > 0) {
+  if (shouldLoadFromMacKeychain(options, deps.platform)) {
     let loadedBlobs = new Set();
     try {
       loadedBlobs = new Set((await getIdentities(agent)).map(publicKeyBlob).filter(Boolean));
@@ -140,7 +143,11 @@ async function prepareSystemSshAgent(options, injected = {}) {
         error: error instanceof Error ? error.message : String(error),
       });
     }
-    const hasPreferredIdentity = [...preferred].some((blob) => loadedBlobs.has(blob));
+    // Without a readable .pub selector we cannot tell whether the configured
+    // identity is already loaded, so still ask Apple's ssh-add to load it.
+    // In non-strict mode the delegate can then safely advertise the full list.
+    const hasPreferredIdentity = preferred.size > 0
+      && [...preferred].some((blob) => loadedBlobs.has(blob));
     if (!hasPreferredIdentity) {
       try {
         const args = ["--apple-load-keychain", ...resolvedIdentityPaths];
@@ -152,6 +159,16 @@ async function prepareSystemSshAgent(options, injected = {}) {
         });
       }
     }
+  }
+
+  if (options.identitiesOnly === true && preferred.size === 0) {
+    const error = new Error(
+      unavailablePublicKeyPaths.length > 0
+        ? `IdentitiesOnly requires a readable public key selector. Missing or invalid: ${unavailablePublicKeyPaths.join(", ")}`
+        : "IdentitiesOnly requires at least one IdentityFile with a readable public .pub key.",
+    );
+    error.code = "ERR_SSH_AGENT_IDENTITY_SELECTOR_UNAVAILABLE";
+    throw error;
   }
 
   return new IdentityAwareAgent(agent, preferred, options.identitiesOnly === true);

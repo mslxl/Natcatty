@@ -2,7 +2,7 @@ import React from "react";
 import { ChevronRight, Info } from "lucide-react";
 import { applyGroupDefaults, resolveGroupDefaults } from "../domain/groupConfig";
 import { sanitizeCredentialValue } from "../domain/credentials";
-import { resolveBridgeKeyAuth, resolveHostAuth } from "../domain/sshAuth";
+import { resolveBridgeKeyAuth, resolveBridgeSshAgentAuth, resolveHostAuth } from "../domain/sshAuth";
 import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
@@ -236,6 +236,7 @@ export const KeychainExportPanel: React.FC<KeychainExportPanelProps> = ({
                         keySource: exportAuth.key?.source,
                         passphrase: exportKeyAuth.passphrase,
                         identityFilePaths: exportKeyAuth.identityFilePaths,
+                        ...resolveBridgeSshAgentAuth(effectiveExportHost),
                         // Carry the effective host's algorithm settings
                         // (host value falling back to its group default)
                         // so the one-off SSH exec honors them just like

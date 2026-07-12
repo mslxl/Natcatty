@@ -576,9 +576,10 @@ const importFromSshConfig = (text: string): VaultImportResult => {
       }
       const identityAgentEnabled = block.identityAgent !== undefined
         && block.identityAgent.toLowerCase() !== "none";
+      const identityAgentDisabled = block.identityAgent?.toLowerCase() === "none";
       const addKeysEnabled = block.addKeysToAgent !== undefined
         && block.addKeysToAgent !== "no";
-      if (identityAgentEnabled || addKeysEnabled) {
+      if (!identityAgentDisabled && (identityAgentEnabled || addKeysEnabled)) {
         host.useSshAgent = true;
       }
       if (block.forwardX11 !== undefined) {

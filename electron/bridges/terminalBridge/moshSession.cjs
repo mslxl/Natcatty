@@ -101,6 +101,23 @@ function createMoshSessionApi(ctx) {
       if (trimmed.startsWith("~/")) return path.join(os.homedir(), trimmed.slice(2));
       return trimmed;
     }
+
+    async function prepareMoshSshAgentOptions(options) {
+      if (options?.useSshAgent !== true) return options;
+      await prepareSystemSshAgentForAuth(options, "[Mosh]");
+      const socketPath = await getAvailableAgentSocket(options.identityAgent);
+      if (!socketPath) {
+        throw new Error("System SSH agent is unavailable. Start or unlock it, or configure a valid agent socket.");
+      }
+      return { ...options, _resolvedSshAgentSocket: socketPath };
+    }
+
+    function applyMoshSshAgentEnvironment(env, options) {
+      const socketPath = options?._resolvedSshAgentSocket
+        || (options?.agentForwarding ? process.env.SSH_AUTH_SOCK : undefined);
+      if (socketPath) env.SSH_AUTH_SOCK = socketPath;
+      return env;
+    }
     
     function safeMoshAuthFileName(sessionId, keyId, suffix) {
       const safeId = String(keyId || sessionId || randomUUID())
@@ -209,7 +226,7 @@ function createMoshSessionApi(ctx) {
             const normalized = normalizeMoshIdentityPath(keyPath);
             if (normalized) sshArgs.push("-i", normalized);
           }
-          if (sshArgs.length > 0) {
+          if (sshArgs.length > 0 && (!options.useSshAgent || options.identitiesOnly)) {
             sshArgs.push("-o", "IdentitiesOnly=yes");
           }
           if (typeof options.certificate === "string" && options.certificate.trim().length > 0) {
@@ -219,6 +236,13 @@ function createMoshSessionApi(ctx) {
             );
             tempFiles.push(certPath);
             sshArgs.push("-o", `CertificateFile=${certPath}`);
+          }
+        }
+
+        if (options.useSshAgent && options._resolvedSshAgentSocket) {
+          sshArgs.push("-o", `IdentityAgent=${options._resolvedSshAgentSocket}`);
+          if (options.identitiesOnly && !sshArgs.includes("IdentitiesOnly=yes")) {
+            sshArgs.push("-o", "IdentitiesOnly=yes");
           }
         }
       } catch (err) {
@@ -278,9 +302,7 @@ function createMoshSessionApi(ctx) {
       for (const key of Object.keys(sshEnv)) {
         if (key.startsWith("LC_")) delete sshEnv[key];
       }
-      if (options.agentForwarding && process.env.SSH_AUTH_SOCK) {
-        sshEnv.SSH_AUTH_SOCK = process.env.SSH_AUTH_SOCK;
-      }
+      applyMoshSshAgentEnvironment(sshEnv, options);
     
       let sshPty;
       try {
@@ -497,9 +519,7 @@ function createMoshSessionApi(ctx) {
       // highlighting keep observing the active buffer.
       env.MOSH_NO_TERM_INIT = "1";
       addBundledMoshRuntimeEnv(env, bareClient);
-      if (options.agentForwarding && process.env.SSH_AUTH_SOCK) {
-        env.SSH_AUTH_SOCK = process.env.SSH_AUTH_SOCK;
-      }
+      applyMoshSshAgentEnvironment(env, options);
     
       const { command, args: clientArgs } = moshHandshake.buildMoshClientCommand({
         moshClientPath: bareClient,
@@ -667,7 +687,8 @@ function createMoshSessionApi(ctx) {
         throw new Error("OpenSSH client not found. Netcatty needs ssh to start the remote mosh-server handshake.");
       }
     
-      return startMoshSessionViaHandshake(event, options, { bareClient, sshExe });
+      const preparedOptions = await prepareMoshSshAgentOptions(options);
+      return startMoshSessionViaHandshake(event, preparedOptions, { bareClient, sshExe });
     }
 
     return {
@@ -675,6 +696,8 @@ function createMoshSessionApi(ctx) {
       addBundledMoshRuntimeEnv,
       createMoshUtf8Decoder,
       buildMoshSshAuthArgs,
+      prepareMoshSshAgentOptions,
+      applyMoshSshAgentEnvironment,
       cleanupMoshAuthTempFiles,
       startMoshSessionViaHandshake,
       swapToMoshClient,

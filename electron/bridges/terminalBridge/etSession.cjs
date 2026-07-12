@@ -119,12 +119,51 @@ main();
     }
 
     function normalizeSshConfigPath(targetPath) {
-      return path.resolve(String(targetPath)).replace(/\\/g, "/");
+      const raw = String(targetPath);
+      const expanded = raw === "~"
+        ? os.homedir()
+        : raw.startsWith("~/") || raw.startsWith("~\\")
+          ? path.join(os.homedir(), raw.slice(2))
+          : raw;
+      return path.resolve(expanded).replace(/\\/g, "/");
     }
 
     function quoteSshConfigValue(value) {
       const normalized = normalizeSshConfigPath(value);
       return `"${normalized.replace(/(["\\])/g, "\\$1")}"`;
+    }
+
+    function quoteRawSshConfigValue(value) {
+      return `"${String(value).replace(/(["\\])/g, "\\$1")}"`;
+    }
+
+    async function prepareEtSshAgentOptions(options) {
+      const prepareOne = async (connectionOptions, logPrefix) => {
+        if (connectionOptions?.useSshAgent !== true) return connectionOptions;
+        await prepareSystemSshAgentForAuth(connectionOptions, logPrefix);
+        const socketPath = await getAvailableAgentSocket(connectionOptions.identityAgent);
+        if (!socketPath) {
+          throw new Error("System SSH agent is unavailable. Start or unlock it, or configure a valid agent socket.");
+        }
+        return { ...connectionOptions, _resolvedSshAgentSocket: socketPath };
+      };
+
+      const preparedTarget = await prepareOne(options, "[ET]");
+      if (!Array.isArray(options.jumpHosts) || options.jumpHosts.length === 0) {
+        return preparedTarget;
+      }
+      const preparedJumpHosts = [];
+      for (let index = 0; index < options.jumpHosts.length; index += 1) {
+        preparedJumpHosts.push(await prepareOne(options.jumpHosts[index], `[ET Chain] Hop ${index + 1}:`));
+      }
+      return { ...preparedTarget, jumpHosts: preparedJumpHosts };
+    }
+
+    function applyEtSshAgentEnvironment(env, options) {
+      const socketPath = options?._resolvedSshAgentSocket
+        || (options?.agentForwarding ? process.env.SSH_AUTH_SOCK : undefined);
+      if (socketPath) env.SSH_AUTH_SOCK = socketPath;
+      return env;
     }
 
     // POSIX single-quote a string so it is safe to embed verbatim in a /bin/sh
@@ -276,6 +315,10 @@ main();
         sshOptions.push(`Port=${options.port}`);
       }
 
+      if (options.useSshAgent && options._resolvedSshAgentSocket) {
+        configLines.push(`IdentityAgent ${quoteRawSshConfigValue(options._resolvedSshAgentSocket)}`);
+      }
+
       // Private key
       const identityPaths = [];
       let tempKeyPath = null;
@@ -308,7 +351,10 @@ main();
         sshOptions.push(`IdentityFile=${normalizeSshConfigPath(idPath)}`);
       }
 
-      if (identityPaths.length > 0 || options.authMethod === "key" || options.authMethod === "certificate") {
+      if (
+        (!options.useSshAgent && (identityPaths.length > 0 || options.authMethod === "key" || options.authMethod === "certificate"))
+        || (options.useSshAgent && options.identitiesOnly)
+      ) {
         sshOptions.push("IdentitiesOnly=yes");
       }
 
@@ -328,9 +374,13 @@ main();
       // NOTE: values with commas (e.g. "password,keyboard-interactive") MUST go into
       // the config file — ET on Windows passes --ssh-option values through cmd.exe
       // which treats commas as argument delimiters.
-      if (options.authMethod === "password") {
+      if (options.authMethod === "password" && !options.useSshAgent) {
         sshOptions.push("PubkeyAuthentication=no");
         configLines.push("PreferredAuthentications password,keyboard-interactive");
+      } else if (options.useSshAgent && hasPassword) {
+        configLines.push("PreferredAuthentications publickey,password,keyboard-interactive");
+      } else if (options.useSshAgent) {
+        sshOptions.push("PreferredAuthentications=publickey");
       } else if (identityPaths.length > 0 && hasPassword) {
         configLines.push("PreferredAuthentications publickey,password,keyboard-interactive");
       } else if (identityPaths.length > 0) {
@@ -386,6 +436,10 @@ main();
         jumpConfigLines.push(`  User ${jumpUser}`);
         jumpConfigLines.push(`  Port ${jumpPort}`);
 
+        if (jump.useSshAgent && jump._resolvedSshAgentSocket) {
+          jumpConfigLines.push(`  IdentityAgent ${quoteRawSshConfigValue(jump._resolvedSshAgentSocket)}`);
+        }
+
         // Jump host key
         if (jump.privateKey) {
           const jumpKeyPath = path.join(sshDir, `${safeId}-jump-key`);
@@ -402,9 +456,13 @@ main();
           for (const idPath of jumpIdentityPaths) {
             jumpConfigLines.push(`  IdentityFile ${quoteSshConfigValue(idPath)}`);
           }
-          if (jumpIdentityPaths.length > 0) {
+          if (jumpIdentityPaths.length > 0 && (!jump.useSshAgent || jump.identitiesOnly)) {
             jumpConfigLines.push("  IdentitiesOnly yes");
           }
+        }
+
+        if (jump.useSshAgent && jump.identitiesOnly && !jumpConfigLines.includes("  IdentitiesOnly yes")) {
+          jumpConfigLines.push("  IdentitiesOnly yes");
         }
 
         // Jump host certificate
@@ -723,7 +781,9 @@ main();
 
       let sshEnvironment;
       try {
-        sshEnvironment = prepareEtSshEnvironment(sessionId, options);
+        const preparedOptions = await prepareEtSshAgentOptions(options);
+        options = preparedOptions;
+        sshEnvironment = prepareEtSshEnvironment(sessionId, preparedOptions);
       } catch (err) {
         throw new Error(err instanceof Error ? err.message : String(err));
       }
@@ -759,9 +819,7 @@ main();
         ET_NO_TELEMETRY: "1",
       };
 
-      if (options.agentForwarding && process.env.SSH_AUTH_SOCK) {
-        env.SSH_AUTH_SOCK = process.env.SSH_AUTH_SOCK;
-      }
+      applyEtSshAgentEnvironment(env, options);
 
       addBundledEtDllPath(env, etCmd);
 
@@ -934,6 +992,8 @@ main();
     return {
       resolveBareEtClient,
       prepareEtSshEnvironment,
+      prepareEtSshAgentOptions,
+      applyEtSshAgentEnvironment,
       cleanupStaleEtTempDirs,
       cleanupSessionExternalAuthArtifacts,
       addBundledEtDllPath,

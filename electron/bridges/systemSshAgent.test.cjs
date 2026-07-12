@@ -133,3 +133,45 @@ test("prepareSystemSshAgent does not bypass AddKeysToAgent confirmation policies
 
   assert.deepEqual(sshAddCalls, []);
 });
+
+test("prepareSystemSshAgent reports a clear error when strict selection has no readable public key", async () => {
+  await assert.rejects(
+    prepareSystemSshAgent({
+      socketPath: "/tmp/agent.sock",
+      identityFilePaths: ["/Users/alice/.ssh/missing"],
+      identitiesOnly: true,
+    }, {
+      createAgent: () => fakeAgent([makePublicKey()]),
+      readFile: async () => { throw new Error("ENOENT"); },
+      platform: "linux",
+    }),
+    (error) => {
+      assert.equal(error.code, "ERR_SSH_AGENT_IDENTITY_SELECTOR_UNAVAILABLE");
+      assert.match(error.message, /missing\.pub/);
+      return true;
+    },
+  );
+});
+
+test("prepareSystemSshAgent falls back to all identities and still invokes macOS ssh-add without a .pub file", async () => {
+  const loaded = makePublicKey();
+  const sshAddCalls = [];
+  const agent = await prepareSystemSshAgent({
+    socketPath: "/private/tmp/agent.sock",
+    identityFilePaths: ["/Users/alice/.ssh/aws_root"],
+    identitiesOnly: false,
+    useKeychain: true,
+    addKeysToAgent: "yes",
+  }, {
+    createAgent: () => fakeAgent([loaded]),
+    readFile: async () => { throw new Error("ENOENT"); },
+    runSshAdd: async (args) => sshAddCalls.push(args),
+    platform: "darwin",
+  });
+
+  assert.deepEqual(sshAddCalls, [[
+    "--apple-load-keychain",
+    "/Users/alice/.ssh/aws_root",
+  ]]);
+  assert.equal((await getIdentities(agent)).length, 1);
+});

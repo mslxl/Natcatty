@@ -163,7 +163,7 @@ async function startPortForward(event, payload) {
 
   let defaultKeys = [];
   try {
-    const systemAuthAgent = await prepareSystemSshAgentForAuth({
+    const systemAuthAgent = hasCertificate ? null : await prepareSystemSshAgentForAuth({
       useSshAgent,
       identityAgent,
       identityFilePaths,
@@ -230,10 +230,12 @@ async function startPortForward(event, payload) {
       connectOpts.password = password;
     }
 
-    // Get default keys
+    // Keep the discovered keys available to unrelated jump hosts even when
+    // strict agent selection disables them for the final target.
+    const discoveredDefaultKeys = await findAllDefaultPrivateKeysFromHelper();
     defaultKeys = systemAuthAgent && identitiesOnly
       ? []
-      : await findAllDefaultPrivateKeysFromHelper();
+      : discoveredDefaultKeys;
     if (isTunnelCancelled(tunnelState)) {
       portForwardingTunnels.delete(tunnelId);
       return { tunnelId, success: false, cancelled: true };
@@ -278,7 +280,7 @@ async function startPortForward(event, payload) {
           legacyAlgorithms,
           skipEcdsaHostKey,
           algorithmOverrides,
-          _defaultKeys: defaultKeys,
+          _defaultKeys: discoveredDefaultKeys,
           _connectionsRef: chainConnections,
           _tunnelRef: tunnelState,
           _passphraseSignal: passphraseAbortController.signal,

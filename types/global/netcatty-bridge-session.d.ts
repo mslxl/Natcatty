@@ -186,6 +186,9 @@ declare global {
       timeout?: number;
       enableKeyboardInteractive?: boolean;
       sessionId?: string;
+      legacyAlgorithms?: boolean;
+      skipEcdsaHostKey?: boolean;
+      algorithmOverrides?: import("../../domain/models").HostAlgorithmOverrides;
     }): Promise<{ stdout: string; stderr: string; code: number | null }>;
     /** Get current working directory from an active SSH session */
     getSessionPwd?(

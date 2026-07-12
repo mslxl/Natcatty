@@ -7,10 +7,16 @@ function createExecCommandApi(ctx) {
       const timeoutMs = enableKeyboardInteractive ? Math.max(baseTimeoutMs, 120000) : baseTimeoutMs;
       const sender = event.sender;
       const sessionId = payload.sessionId || randomUUID();
-      const defaultKeys = enableKeyboardInteractive ? await findAllDefaultPrivateKeysFromHelper() : [];
+      const hasCertificate = typeof payload.certificate === "string" && payload.certificate.trim().length > 0;
+      const systemAuthAgent = hasCertificate
+        ? null
+        : await prepareSystemSshAgentForAuth(payload, "[SSH Exec]");
+      const defaultKeys = enableKeyboardInteractive && !(systemAuthAgent && payload.identitiesOnly)
+        ? await findAllDefaultPrivateKeysFromHelper()
+        : [];
       let identityFilePrivateKey = null;
       let identityFilePassphrase = null;
-      const inlineKey = payload.privateKey
+      const inlineKey = payload.privateKey && !systemAuthAgent
         ? await preparePrivateKeyForAuth({
           sender,
           privateKey: payload.privateKey,
@@ -22,7 +28,7 @@ function createExecCommandApi(ctx) {
         })
         : null;
     
-      if (!payload.privateKey && payload.identityFilePaths?.length > 0) {
+      if (!payload.privateKey && !systemAuthAgent && payload.identityFilePaths?.length > 0) {
         for (const keyPath of payload.identityFilePaths) {
           try {
             const identityFile = await loadIdentityFileForAuth({
@@ -102,8 +108,6 @@ function createExecCommandApi(ctx) {
             }
           });
     
-        const hasCertificate = typeof payload.certificate === "string" && payload.certificate.trim().length > 0;
-    
         const connectOpts = {
           host: payload.hostname,
           port: payload.port || 22,
@@ -124,7 +128,9 @@ function createExecCommandApi(ctx) {
         let authAgent = null;
         const effectivePrivateKey = inlineKey?.privateKey || identityFilePrivateKey;
         const effectivePassphrase = inlineKey?.passphrase || identityFilePassphrase;
-        if (hasCertificate) {
+        if (systemAuthAgent) {
+          connectOpts.agent = systemAuthAgent;
+        } else if (hasCertificate) {
           authAgent = new NetcattyAgent({
             mode: "certificate",
             webContents: event.sender,
@@ -168,7 +174,7 @@ function createExecCommandApi(ctx) {
             logPrefix: "[SSH Exec]",
             scope: "external",
           }));
-        } else if (authAgent) {
+        } else if (connectOpts.agent) {
           const order = ["agent"];
           if (connectOpts.password) order.push("password");
           connectOpts.authHandler = order;

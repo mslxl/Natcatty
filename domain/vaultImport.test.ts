@@ -75,6 +75,20 @@ test("ssh_config import preserves system agent authentication semantics", () => 
   );
 });
 
+test("ssh_config IdentityAgent none prevents AddKeysToAgent from enabling agent login", () => {
+  const result = importVaultHostsFromText("ssh_config", [
+    "Host local-key-only",
+    "  HostName server.example.com",
+    "  IdentityAgent none",
+    "  AddKeysToAgent yes",
+    "  IdentityFile ~/.ssh/id_ed25519",
+  ].join("\n"));
+
+  assert.equal(result.hosts.length, 1);
+  assert.equal(result.hosts[0].identityAgent, "none");
+  assert.notEqual(result.hosts[0].useSshAgent, true);
+});
+
 test("detectVaultImportFormat recognizes csv and ssh_config exports", () => {
   assert.equal(
     detectVaultImportFormat("Label,Hostname,Port,Username\nweb,10.0.0.1,22,root"),
