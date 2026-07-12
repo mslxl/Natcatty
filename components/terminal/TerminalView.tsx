@@ -577,12 +577,10 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
               // animate max-width / rely on content sizing (buttons never appear).
               // Shared h-7 keeps the toggle and the action pill the same height as the
               // inner h-6 icon buttons + vertical padding.
+              // No box-shadow: the 0fr→1fr expand clip always slices shadows and
+              // looks worse than a clean border-only chrome.
               const compactChromeClass =
                 "h-7 rounded-full border backdrop-blur-md";
-              // Down-biased shadow avoids looking "cut off" against the pane's
-              // overflow:hidden top edge (box-shadow upward gets clipped).
-              const compactShadowClass =
-                "shadow-[0_2px_10px_rgba(0,0,0,0.10),0_1px_3px_rgba(0,0,0,0.06)]";
               return (
                 <div className="absolute right-1 top-1 z-30 flex flex-row-reverse items-center pointer-events-none">
                   <Tooltip open={compactActionsOpen ? false : undefined}>
@@ -593,7 +591,6 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
                         className={cn(
                           "relative z-10 flex w-7 shrink-0 items-center justify-center pointer-events-auto",
                           compactChromeClass,
-                          compactShadowClass,
                           "opacity-80 hover:opacity-100 focus-visible:opacity-100",
                           "transition-[transform,opacity] duration-200 ease-out",
                           compactActionsOpen && "opacity-100",
@@ -620,30 +617,22 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
                     className={cn(
                       "grid min-w-0 transition-[grid-template-columns,opacity,margin] duration-200 ease-out",
                       compactActionsOpen
-                        ? "mr-1 grid-cols-[1fr] opacity-100 pointer-events-auto"
+                        ? "mr-1.5 grid-cols-[1fr] opacity-100 pointer-events-auto"
                         : "mr-0 grid-cols-[0fr] opacity-0 pointer-events-none",
                     )}
                   >
-                    {/*
-                      overflow-hidden is required for the 0fr→1fr width animation.
-                      Inner padding keeps the pill's soft shadow inside that clip box
-                      so it is not sliced on the left/top/bottom edges.
-                    */}
                     <div className="min-w-0 overflow-hidden">
-                      <div className="p-1.5">
-                        <div
-                          id={`terminal-actions-${sessionId}`}
-                          aria-hidden={!compactActionsOpen ? true : undefined}
-                          className={cn(
-                            "flex w-max items-center gap-0.5 px-1.5",
-                            compactChromeClass,
-                            compactShadowClass,
-                          )}
-                          data-host-info-visible="false"
-                          style={toolbarSurfaceStyle}
-                        >
-                          {terminalActionsBody}
-                        </div>
+                      <div
+                        id={`terminal-actions-${sessionId}`}
+                        aria-hidden={!compactActionsOpen ? true : undefined}
+                        className={cn(
+                          "flex w-max items-center gap-0.5 px-1.5",
+                          compactChromeClass,
+                        )}
+                        data-host-info-visible="false"
+                        style={toolbarSurfaceStyle}
+                      >
+                        {terminalActionsBody}
                       </div>
                     </div>
                   </div>
