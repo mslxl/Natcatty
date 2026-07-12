@@ -229,6 +229,9 @@ test("hidden host information keeps terminal actions rendered", () => {
   assert.notEqual(actionsStart, -1);
   assert.notEqual(controls, -1);
   assert.notEqual(compactDragHandle, -1);
+  // Compact drag handle uses GripVertical, not the old radial-dot “chessboard”.
+  assert.match(source, /GripVertical/);
+  assert.ok(!source.includes("backgroundSize: '4px 4px'"));
   assert.ok(hostInfoStart < hostInfoEnd);
   assert.ok(hostInfoEnd < copyAction);
   assert.ok(copyAction < timestampAction);
