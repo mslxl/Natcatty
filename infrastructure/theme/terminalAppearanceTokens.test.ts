@@ -117,8 +117,13 @@ test('terminal side panel variables follow the terminal palette with readable se
 test('every built-in terminal theme keeps side panel text readable', () => {
   const pairs = [
     ['--foreground', '--background'],
+    ['--muted-foreground', '--background'],
+    ['--muted-foreground', '--muted'],
+    ['--secondary-foreground', '--secondary'],
+    ['--primary', '--background'],
     ['--accent-foreground', '--accent'],
     ['--primary-foreground', '--primary'],
+    ['--destructive', '--background'],
     ['--destructive-foreground', '--destructive'],
   ] as const;
 

@@ -348,7 +348,7 @@ export const CloudSyncDialogs: React.FC<CloudSyncDialogsProps> = ({
                                             disabled={historyPreviewLoading}
                                             className={cn(
                                                 "w-full flex items-center justify-between p-2.5 rounded-lg text-left text-sm transition-colors",
-                                                "hover:bg-accent/50 border border-transparent hover:border-border",
+                                                "hover:bg-muted/50 border border-transparent hover:border-border",
                                                 index === 0 && "bg-primary/5 border-primary/20",
                                             )}
                                         >

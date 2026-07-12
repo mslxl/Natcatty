@@ -83,11 +83,6 @@ const rgbToHslToken = ({ red, green, blue }: RgbColor): string => {
   return `${format(hue)} ${format(saturation * 100)}% ${format(lightness * 100)}%`;
 };
 
-const hexToHslToken = (value: string, fallback: string): string => {
-  const rgb = parseHexColor(value);
-  return rgb ? rgbToHslToken(rgb) : fallback;
-};
-
 const relativeLuminance = ({ red, green, blue }: RgbColor): number => {
   const linearize = (channel: number) => {
     const normalized = channel / 255;
@@ -108,12 +103,50 @@ const contrastRatio = (first: RgbColor, second: RgbColor): number => {
 
 const BLACK_RGB: RgbColor = { red: 0, green: 0, blue: 0 };
 const WHITE_RGB: RgbColor = { red: 255, green: 255, blue: 255 };
+const SAFE_TEXT_CONTRAST = 4.55;
 
 const readableForegroundRgb = (background: RgbColor, preferred?: RgbColor): RgbColor => {
-  if (preferred && contrastRatio(preferred, background) >= 4.5) return preferred;
+  if (preferred && contrastRatio(preferred, background) >= SAFE_TEXT_CONTRAST) return preferred;
   return contrastRatio(WHITE_RGB, background) >= contrastRatio(BLACK_RGB, background)
     ? WHITE_RGB
     : BLACK_RGB;
+};
+
+const minimumContrastRatio = (foreground: RgbColor, backgrounds: RgbColor[]): number => (
+  Math.min(...backgrounds.map((background) => contrastRatio(foreground, background)))
+);
+
+const ensureReadableRgb = (
+  preferred: RgbColor,
+  backgrounds: RgbColor[],
+  fallbackCandidates: RgbColor[] = [BLACK_RGB, WHITE_RGB],
+): RgbColor => {
+  if (minimumContrastRatio(preferred, backgrounds) >= SAFE_TEXT_CONTRAST) return preferred;
+
+  const fallback = fallbackCandidates.reduce((best, candidate) => (
+    minimumContrastRatio(candidate, backgrounds) > minimumContrastRatio(best, backgrounds)
+      ? candidate
+      : best
+  ));
+
+  for (let step = 1; step <= 100; step += 1) {
+    const candidate = mixRgb(fallback, preferred, step / 100);
+    if (minimumContrastRatio(candidate, backgrounds) >= SAFE_TEXT_CONTRAST) return candidate;
+  }
+  return fallback;
+};
+
+const keepSurfaceReadableBy = (
+  preferredSurface: RgbColor,
+  background: RgbColor,
+  foreground: RgbColor,
+): RgbColor => {
+  if (contrastRatio(foreground, preferredSurface) >= SAFE_TEXT_CONTRAST) return preferredSurface;
+  for (let step = 1; step <= 100; step += 1) {
+    const candidate = mixRgb(background, preferredSurface, step / 100);
+    if (contrastRatio(foreground, candidate) >= SAFE_TEXT_CONTRAST) return candidate;
+  }
+  return background;
 };
 
 export type TerminalSidePanelCssVars = Record<
@@ -143,16 +176,36 @@ export function buildTerminalSidePanelCssVars(theme: TerminalTheme): TerminalSid
   const backgroundRgb = parseHexColor(theme.colors.background) ?? BLACK_RGB;
   const preferredForegroundRgb = parseHexColor(theme.colors.foreground) ?? WHITE_RGB;
   const foregroundRgb = readableForegroundRgb(backgroundRgb, preferredForegroundRgb);
-  const cursorRgb = parseHexColor(theme.colors.cursor) ?? foregroundRgb;
-  const redRgb = parseHexColor(theme.colors.red) ?? { red: 220, green: 38, blue: 38 };
-  const secondaryRgb = mixRgb(foregroundRgb, backgroundRgb, 0.12);
-  const mutedRgb = mixRgb(foregroundRgb, backgroundRgb, 0.08);
-  const mutedForegroundRgb = mixRgb(foregroundRgb, backgroundRgb, 0.58);
+  const preferredCursorRgb = parseHexColor(theme.colors.cursor) ?? foregroundRgb;
+  const preferredRedRgb = parseHexColor(theme.colors.red) ?? { red: 220, green: 38, blue: 38 };
+  const cursorRgb = ensureReadableRgb(preferredCursorRgb, [backgroundRgb], [foregroundRgb, BLACK_RGB, WHITE_RGB]);
+  const redRgb = ensureReadableRgb(preferredRedRgb, [backgroundRgb], [foregroundRgb, BLACK_RGB, WHITE_RGB]);
+  const secondaryRgb = keepSurfaceReadableBy(
+    mixRgb(foregroundRgb, backgroundRgb, 0.12),
+    backgroundRgb,
+    foregroundRgb,
+  );
+  const mutedRgb = keepSurfaceReadableBy(
+    mixRgb(foregroundRgb, backgroundRgb, 0.08),
+    backgroundRgb,
+    foregroundRgb,
+  );
+  const preferredMutedForegroundRgb = mixRgb(foregroundRgb, backgroundRgb, 0.58);
+  const mutedForegroundRgb = ensureReadableRgb(
+    preferredMutedForegroundRgb,
+    [backgroundRgb, mutedRgb],
+    [foregroundRgb, BLACK_RGB, WHITE_RGB],
+  );
+  const secondaryForegroundRgb = ensureReadableRgb(
+    foregroundRgb,
+    [secondaryRgb],
+    [BLACK_RGB, WHITE_RGB],
+  );
   const accentRgb = mixRgb(foregroundRgb, backgroundRgb, 0.16);
   const borderRgb = mixRgb(foregroundRgb, backgroundRgb, 0.12);
   const background = rgbToHslToken(backgroundRgb);
   const foreground = rgbToHslToken(foregroundRgb);
-  const primary = hexToHslToken(theme.colors.cursor, foreground);
+  const primary = rgbToHslToken(cursorRgb);
   const secondary = rgbToHslToken(secondaryRgb);
   const muted = rgbToHslToken(mutedRgb);
   const mutedForeground = rgbToHslToken(mutedForegroundRgb);
@@ -171,7 +224,7 @@ export function buildTerminalSidePanelCssVars(theme: TerminalTheme): TerminalSid
     '--primary': primary,
     '--primary-foreground': rgbToHslToken(readableForegroundRgb(cursorRgb)),
     '--secondary': secondary,
-    '--secondary-foreground': foreground,
+    '--secondary-foreground': rgbToHslToken(secondaryForegroundRgb),
     '--muted': muted,
     '--muted-foreground': mutedForeground,
     '--accent': accent,
