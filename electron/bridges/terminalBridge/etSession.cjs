@@ -137,6 +137,11 @@ main();
       return `"${String(value).replace(/(["\\])/g, "\\$1")}"`;
     }
 
+    function publicIdentitySelectorPath(value) {
+      const raw = String(value);
+      return raw.toLowerCase().endsWith(".pub") ? raw : `${raw}.pub`;
+    }
+
     async function prepareEtSshAgentOptions(options) {
       const prepareOne = async (connectionOptions, logPrefix) => {
         if (connectionOptions?.useSshAgent !== true) return connectionOptions;
@@ -341,9 +346,11 @@ main();
       }
 
       // Additional identity file paths from host config
-      if (!options.useSshAgent && Array.isArray(options.identityFilePaths)) {
+      if (Array.isArray(options.identityFilePaths)) {
         for (const idPath of options.identityFilePaths) {
-          if (idPath) identityPaths.push(idPath);
+          if (idPath) {
+            identityPaths.push(options.useSshAgent ? publicIdentitySelectorPath(idPath) : idPath);
+          }
         }
       }
 
@@ -451,8 +458,10 @@ main();
             writeSecureFile(jumpPassPath, `${jump.passphrase}\n`, 0o600);
             addAskpassEntry(askpassEntries, "passphrase", createPassphrasePromptMatchers(jumpKeyPath), jumpPassPath);
           }
-        } else if (!jump.useSshAgent && Array.isArray(jump.identityFilePaths)) {
-          const jumpIdentityPaths = jump.identityFilePaths.filter(Boolean);
+        } else if (Array.isArray(jump.identityFilePaths)) {
+          const jumpIdentityPaths = jump.identityFilePaths
+            .filter(Boolean)
+            .map((identityPath) => jump.useSshAgent ? publicIdentitySelectorPath(identityPath) : identityPath);
           for (const idPath of jumpIdentityPaths) {
             jumpConfigLines.push(`  IdentityFile ${quoteSshConfigValue(idPath)}`);
           }

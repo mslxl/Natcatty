@@ -455,7 +455,10 @@ export const startPortForward = async (
               : jumpHost.identityFilePaths,
             passphrase: jumpResolved.passphrase,
           });
-          const hasJumpKeyMaterial = Boolean(jumpKeyAuth.privateKey || jumpKeyAuth.identityFilePaths?.length);
+          const jumpAgentAuth = resolveBridgeSshAgentAuth(jumpHost, jumpKey?.certificate);
+          const hasJumpKeyMaterial = Boolean(
+            jumpAgentAuth.useSshAgent || jumpKeyAuth.privateKey || jumpKeyAuth.identityFilePaths?.length,
+          );
           const hasUnreadableJumpCredential =
             isEncryptedCredentialPlaceholder(jumpResolved.password) ||
             isEncryptedCredentialPlaceholder(jumpKey?.privateKey) ||
@@ -484,7 +487,7 @@ export const startPortForward = async (
               ? resolveProxyConfigAuth(jumpHost.proxyConfig, identities)
               : undefined,
             identityFilePaths: jumpKeyAuth.identityFilePaths,
-            ...resolveBridgeSshAgentAuth(jumpHost, jumpKey?.certificate),
+            ...jumpAgentAuth,
             keepaliveInterval: hopKeepalive.interval,
             keepaliveCountMax: hopKeepalive.countMax,
             sshTcpConnectTimeoutMs: hopConnectionTimeouts.tcpConnectTimeoutSeconds * 1000,
@@ -508,8 +511,11 @@ export const startPortForward = async (
         : host.identityFilePaths,
       passphrase: resolved.passphrase,
     });
+    const targetAgentAuth = resolveBridgeSshAgentAuth(host, key?.certificate);
     const password = sanitizeCredentialValue(resolved.password);
-    const hasKeyMaterial = Boolean(keyAuth.privateKey || keyAuth.identityFilePaths?.length);
+    const hasKeyMaterial = Boolean(
+      targetAgentAuth.useSshAgent || keyAuth.privateKey || keyAuth.identityFilePaths?.length,
+    );
     const hasUnreadableCredential =
       isEncryptedCredentialPlaceholder(resolved.password) ||
       isEncryptedCredentialPlaceholder(key?.privateKey) ||
@@ -575,7 +581,7 @@ export const startPortForward = async (
       proxy,
       jumpHosts: jumpHosts && jumpHosts.length > 0 ? jumpHosts : undefined,
       identityFilePaths: keyAuth.identityFilePaths,
-      ...resolveBridgeSshAgentAuth(host, key?.certificate),
+      ...targetAgentAuth,
       legacyAlgorithms: host.legacyAlgorithms,
       skipEcdsaHostKey: host.skipEcdsaHostKey,
       algorithmOverrides: host.algorithms,

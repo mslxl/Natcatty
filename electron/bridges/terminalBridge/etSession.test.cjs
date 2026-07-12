@@ -177,10 +177,9 @@ test("prepareEtSshEnvironment enables agent auth for a password-default imported
   assert.equal(env.sshOptions.includes("PubkeyAuthentication=no"), false);
   const config = fs.readFileSync(path.join(env.env.HOME, ".ssh", "config"), "utf8");
   assert.match(config, /IdentityAgent "\/tmp\/custom agent\.sock"/);
-  assert.equal(
-    env.sshOptions.some((option) => option.startsWith("IdentityFile=")),
-    false,
-    "agent-only mode must not fall back to opening private identity files",
+  assert.ok(
+    env.sshOptions.includes(`IdentityFile=${path.join(base, "home", ".ssh", "id_work.pub").replace(/\\/g, "/")}`),
+    "agent-only mode should use only the public file as its identity selector",
   );
   assert.equal(
     api.applyEtSshAgentEnvironment({}, {

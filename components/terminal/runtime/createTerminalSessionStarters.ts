@@ -291,7 +291,10 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           : jumpAllowsLocalIdentityFallback
             ? jumpHost.identityFilePaths
             : undefined;
-      const hasJumpKeyMaterial = Boolean(jumpPrivateKey || jumpIdentityFilePaths?.length);
+      const jumpAgentAuth = resolveBridgeSshAgentAuth(jumpHost, jumpKey?.certificate);
+      const hasJumpKeyMaterial = Boolean(
+        jumpAgentAuth.useSshAgent || jumpPrivateKey || jumpIdentityFilePaths?.length,
+      );
       const hasConfiguredJumpProxyEndpoint =
         index === 0 &&
         hasUsableProxyConfig(jumpHost.proxyConfig);
@@ -330,7 +333,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           ? resolveProxyConfigAuth(jumpHost.proxyConfig, ctx.identities)
           : undefined,
         identityFilePaths: jumpIdentityFilePaths,
-        ...resolveBridgeSshAgentAuth(jumpHost, jumpKey?.certificate),
+        ...jumpAgentAuth,
         keepaliveInterval: hopKeepalive.interval,
         keepaliveCountMax: hopKeepalive.countMax,
         sshTcpConnectTimeoutMs: hopConnectionTimeouts.tcpConnectTimeoutSeconds * 1000,
@@ -547,8 +550,11 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
 
       let id: string;
       // Respect explicit auth method selection - don't use key if password auth was explicitly selected
-      const hasKeyMaterial = (!!sanitizeCredentialValue(key?.privateKey) || !!targetIdentityFilePaths?.length)
-        && (authMethod !== 'password' || ctx.host.useSshAgent === true);
+      const usesSystemAgent = resolveBridgeSshAgentAuth(ctx.host, key?.certificate).useSshAgent === true;
+      const hasKeyMaterial = usesSystemAgent || (
+        (!!sanitizeCredentialValue(key?.privateKey) || !!targetIdentityFilePaths?.length)
+        && (authMethod !== 'password' || ctx.host.useSshAgent === true)
+      );
       const hasPassword = !!effectivePassword;
 
       const needsCredentialReentry =
@@ -930,8 +936,11 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           : allowsLocalIdentityFallback
             ? ctx.host.identityFilePaths
             : undefined;
-      const hasKeyMaterial = (!!sanitizeCredentialValue(key?.privateKey) || !!moshIdentityFilePaths?.length)
-        && (authMethod !== "password" || ctx.host.useSshAgent === true);
+      const usesSystemAgent = resolveBridgeSshAgentAuth(ctx.host, key?.certificate).useSshAgent === true;
+      const hasKeyMaterial = usesSystemAgent || (
+        (!!sanitizeCredentialValue(key?.privateKey) || !!moshIdentityFilePaths?.length)
+        && (authMethod !== "password" || ctx.host.useSshAgent === true)
+      );
       const hasPassword = !!effectivePassword;
       const needsCredentialReentry =
         (authMethod === "password" && hasEncryptedPrimaryPassword && !hasPassword) ||
@@ -1124,8 +1133,11 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           : allowsLocalIdentityFallback
             ? ctx.host.identityFilePaths
             : undefined;
-      const hasKeyMaterial = (!!sanitizeCredentialValue(key?.privateKey) || !!etIdentityFilePaths?.length)
-        && (authMethod !== "password" || ctx.host.useSshAgent === true);
+      const usesSystemAgent = resolveBridgeSshAgentAuth(ctx.host, key?.certificate).useSshAgent === true;
+      const hasKeyMaterial = usesSystemAgent || (
+        (!!sanitizeCredentialValue(key?.privateKey) || !!etIdentityFilePaths?.length)
+        && (authMethod !== "password" || ctx.host.useSshAgent === true)
+      );
       const hasPassword = !!effectivePassword;
       const needsCredentialReentry =
         (authMethod === "password" && hasEncryptedPrimaryPassword && !hasPassword) ||
@@ -1169,7 +1181,14 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           isEncryptedCredentialPlaceholder(rawJumpPassword) ||
           isEncryptedCredentialPlaceholder(rawJumpPrivateKey) ||
           isEncryptedCredentialPlaceholder(rawJumpPassphrase);
-        if (hasEncryptedJumpCredential && !jumpPassword && !jumpPrivateKey && !jumpPassphrase) {
+        const jumpAgentAuth = resolveBridgeSshAgentAuth(jumpHost, jumpKey?.certificate);
+        if (
+          hasEncryptedJumpCredential
+          && !jumpPassword
+          && !jumpPrivateKey
+          && !jumpPassphrase
+          && !jumpAgentAuth.useSshAgent
+        ) {
           jumpHostsWithUnavailableCredentials.push(jumpHost.label || jumpHost.hostname);
         }
 
@@ -1205,7 +1224,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           keySource: jumpKey?.source,
           label: jumpHost.label,
           identityFilePaths: jumpIdentityFilePaths,
-          ...resolveBridgeSshAgentAuth(jumpHost, jumpKey?.certificate),
+          ...jumpAgentAuth,
         };
       });
 

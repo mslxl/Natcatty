@@ -221,10 +221,15 @@ function createMoshSessionApi(ctx) {
             tempFiles.push(certPath);
             sshArgs.push("-o", `CertificateFile=${certPath}`);
           }
-        } else if (!options.useSshAgent && Array.isArray(options.identityFilePaths) && options.identityFilePaths.length > 0) {
+        } else if (Array.isArray(options.identityFilePaths) && options.identityFilePaths.length > 0) {
           for (const keyPath of options.identityFilePaths) {
             const normalized = normalizeMoshIdentityPath(keyPath);
-            if (normalized) sshArgs.push("-i", normalized);
+            if (normalized) {
+              const selector = options.useSshAgent && !normalized.toLowerCase().endsWith(".pub")
+                ? `${normalized}.pub`
+                : normalized;
+              sshArgs.push("-i", selector);
+            }
           }
           if (sshArgs.length > 0 && (!options.useSshAgent || options.identitiesOnly)) {
             sshArgs.push("-o", "IdentitiesOnly=yes");

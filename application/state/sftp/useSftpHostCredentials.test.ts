@@ -583,3 +583,29 @@ test("buildSftpHostCredentials does not use stale local key paths when a selecte
     /Saved credentials cannot be decrypted/,
   );
 });
+
+test("buildSftpHostCredentials uses the system agent when a synced key cannot be decrypted", () => {
+  const key: SSHKey = {
+    id: "key-1",
+    label: "Synced key",
+    type: "ED25519",
+    privateKey: "enc:v1:djEwAAAA",
+    source: "imported",
+    category: "key",
+    created: 1,
+  };
+
+  const credentials = buildSftpHostCredentials({
+    host: host({
+      authMethod: "key",
+      identityFileId: "key-1",
+      useSshAgent: true,
+    }),
+    hosts: [],
+    keys: [key],
+    identities: [],
+  });
+
+  assert.equal(credentials.useSshAgent, true);
+  assert.equal(credentials.privateKey, undefined);
+});

@@ -134,6 +134,48 @@ test("startSSH forwards imported system agent authentication settings", async ()
   );
 });
 
+test("startSSH uses the system agent when a synced vault key cannot be decrypted", async () => {
+  let capturedOptions: Record<string, unknown> | null = null;
+  const terminalBackend = {
+    backendAvailable: () => true,
+    startSSHSession: async (options: Record<string, unknown>) => {
+      capturedOptions = options;
+      return "ssh-session";
+    },
+    onSessionData: () => noop,
+    onSessionExit: () => noop,
+    onChainProgress: () => noop,
+    writeToSession: noop,
+    resizeSession: noop,
+  };
+  const ctx = createStarterContext({
+    host: {
+      id: "host-1",
+      label: "Agent host",
+      hostname: "agent.example.test",
+      username: "root",
+      authMethod: "key",
+      identityFileId: "key-1",
+      useSshAgent: true,
+    },
+    keys: [{
+      id: "key-1",
+      label: "Synced key",
+      type: "ED25519",
+      privateKey: "enc:v1:djEwAAAA",
+      source: "imported",
+      category: "key",
+      created: 1,
+    }],
+    terminalBackend,
+  });
+
+  await createTerminalSessionStarters(ctx as never).startSSH(createTermStub() as never);
+
+  assert.equal(capturedOptions?.useSshAgent, true);
+  assert.equal(capturedOptions?.privateKey, undefined);
+});
+
 for (const protocol of ["Mosh", "ET"] as const) {
   test(`${protocol} keeps certificate signing material when the system agent toggle is also enabled`, async () => {
     let capturedOptions: Record<string, unknown> | null = null;
