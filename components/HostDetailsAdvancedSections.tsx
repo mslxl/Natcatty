@@ -2,6 +2,7 @@ import React from "react";
 import { AlertTriangle, ChevronDown, ChevronUp, Forward, Globe, HeartPulse, KeyRound, Link2, Palette, Plus, Router, ShieldAlert, TerminalSquare, Timer, Wifi, X, Variable } from "lucide-react";
 import { customThemeStore } from "../application/state/customThemeStore";
 import { clearHostFontSizeOverride, clearHostThemeOverride } from "../domain/terminalAppearance";
+import { isSshAgentNoneValue } from "../domain/sshAgentSettings";
 import { MAX_FONT_SIZE, MIN_FONT_SIZE } from "../infrastructure/config/fonts";
 import { AlgorithmOverridesPanel } from "./host-details/AlgorithmOverridesPanel";
 import { Badge } from "./ui/badge";
@@ -248,7 +249,7 @@ export const HostDetailsAdvancedSections: React.FC<HostDetailsAdvancedSectionsPr
               return {
                 ...previous,
                 useSshAgent: enabling,
-                identityAgent: enabling && previous.identityAgent?.toLowerCase() === "none"
+                identityAgent: enabling && isSshAgentNoneValue(previous.identityAgent)
                   ? undefined
                   : previous.identityAgent,
               };
