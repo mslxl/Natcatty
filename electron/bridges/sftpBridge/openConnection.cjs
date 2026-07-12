@@ -7,11 +7,12 @@ function createOpenConnectionApi(ctx) {
       return !!(proxy.host && proxy.port);
     };
 
-    async function connectThroughChainForSftp(event, options, jumpHosts, targetHost, targetPort, connId, agentSocket) {
+    async function connectThroughChainForSftp(event, options, jumpHosts, targetHost, targetPort, connId) {
       const sender = event.sender;
       const connections = [];
       let currentSocket = null;
       let activeConn = null;
+      const defaultAgentSocket = await getAvailableAgentSocket();
     
       const cleanupSocket = (socket) => {
         if (!socket) return;
@@ -186,7 +187,7 @@ function createOpenConnectionApi(ctx) {
             logPrefix: `[SFTP Chain] Hop ${i + 1}`,
             unlockedEncryptedKeys: options._unlockedEncryptedKeys || [],
             defaultKeys,
-            sshAgentSocketOverride: agentSocket,
+            sshAgentSocketOverride: defaultAgentSocket,
             onAuthAttempt: (method) => {
               sendSftpProgress(sender, connId, hopLabel, 'auth-attempt', method);
             },
@@ -638,8 +639,7 @@ function createOpenConnectionApi(ctx) {
           jumpHosts,
           options.hostname,
           options.port || 22,
-          connId,
-          agentSocket
+          connId
         );
         connectionSocket = chainResult.socket;
         chainConnections = chainResult.connections;

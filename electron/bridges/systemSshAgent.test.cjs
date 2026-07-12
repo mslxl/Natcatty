@@ -114,6 +114,31 @@ test("prepareSystemSshAgent does not invoke macOS Keychain loading when the iden
   assert.deepEqual(sshAddCalls, []);
 });
 
+test("prepareSystemSshAgent loads macOS Keychain when only some configured identities are present", async () => {
+  const first = makePublicKey();
+  const second = makePublicKey();
+  const sshAddCalls = [];
+
+  await prepareSystemSshAgent({
+    socketPath: "/private/tmp/agent.sock",
+    identityFilePaths: ["/Users/alice/.ssh/first", "/Users/alice/.ssh/second"],
+    identitiesOnly: true,
+    useKeychain: true,
+    addKeysToAgent: "yes",
+  }, {
+    createAgent: () => fakeAgent([first]),
+    readFile: async (publicKeyPath) => publicKeyPath.endsWith("first.pub") ? first : second,
+    runSshAdd: async (args) => sshAddCalls.push(args),
+    platform: "darwin",
+  });
+
+  assert.deepEqual(sshAddCalls, [[
+    "--apple-load-keychain",
+    "/Users/alice/.ssh/first",
+    "/Users/alice/.ssh/second",
+  ]]);
+});
+
 test("prepareSystemSshAgent does not bypass AddKeysToAgent confirmation policies", async () => {
   const selected = makePublicKey();
   const sshAddCalls = [];

@@ -538,7 +538,23 @@ async function getAvailableAgentSocket(identityAgent, injected = {}) {
       : await (injected.ssh2AgentConnectable || ssh2AgentConnectable)(socketPath);
     return running ? socketPath : null;
   }
-  return getSshAgentSocket(configuredSocket);
+  const socketPath = getSshAgentSocket(configuredSocket);
+  if (!socketPath) return null;
+  const running = await (injected.ssh2AgentConnectable || ssh2AgentConnectable)(socketPath);
+  return running ? socketPath : null;
+}
+
+async function getNativeOpenSshAgentSocket(identityAgent, injected = {}) {
+  const socketPath = await getAvailableAgentSocket(identityAgent, injected);
+  const platform = injected.platform || process.platform;
+  if (platform === "win32" && socketPath && !isWindowsNamedPipe(socketPath)) {
+    const error = new Error(
+      "This SSH agent is available only to Netcatty's built-in SSH client. Mosh and EternalTerminal require a Windows named-pipe agent.",
+    );
+    error.code = "ERR_SSH_AGENT_NATIVE_UNSUPPORTED";
+    throw error;
+  }
+  return socketPath;
 }
 
 async function prepareSystemSshAgentForAuth(options, logPrefix = "[SSHAuth]") {
@@ -1106,6 +1122,7 @@ module.exports = {
   findAllDefaultPrivateKeys,
   getSshAgentSocket,
   getAvailableAgentSocket,
+  getNativeOpenSshAgentSocket,
   isWindowsNamedPipe,
   ssh2AgentConnectable,
   resolveIdentityAgentPath,

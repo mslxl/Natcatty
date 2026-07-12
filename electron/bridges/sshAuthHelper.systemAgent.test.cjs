@@ -2,9 +2,14 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const net = require("node:net");
+const os = require("node:os");
+const path = require("node:path");
 
 const {
   getAvailableAgentSocket,
+  getNativeOpenSshAgentSocket,
   isWindowsNamedPipe,
   ssh2AgentConnectable,
 } = require("./sshAuthHelper.cjs");
@@ -64,4 +69,41 @@ test("ssh2 agent validation times out when an agent does not respond", async () 
 
   assert.equal(available, false);
   assert.ok(Date.now() - start < 500);
+});
+
+test("Unix agent availability requires a working agent protocol response", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-agent-socket-"));
+  const socketPath = path.join(dir, "agent.sock");
+  const server = net.createServer();
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(socketPath, resolve);
+  });
+  t.after(() => {
+    server.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  assert.equal(await getAvailableAgentSocket(socketPath, {
+    platform: "linux",
+    ssh2AgentConnectable: async () => false,
+  }), null);
+  assert.equal(await getAvailableAgentSocket(socketPath, {
+    platform: "linux",
+    ssh2AgentConnectable: async () => true,
+  }), socketPath);
+});
+
+test("native OpenSSH modes reject Pageant and Cygwin-only adapters clearly", async () => {
+  await assert.rejects(
+    getNativeOpenSshAgentSocket("pageant", {
+      platform: "win32",
+      ssh2AgentConnectable: async () => true,
+    }),
+    (error) => {
+      assert.equal(error.code, "ERR_SSH_AGENT_NATIVE_UNSUPPORTED");
+      assert.match(error.message, /named-pipe agent/);
+      return true;
+    },
+  );
 });

@@ -140,7 +140,8 @@ export const resolveBridgeKeyAuth = (args: {
 };
 
 export const resolveBridgeSshAgentAuth = (
-  host: Pick<Host, "useSshAgent" | "identityAgent" | "identitiesOnly" | "addKeysToAgent" | "useKeychain" | "certificate">,
+  host: Pick<Host, "useSshAgent" | "identityAgent" | "identitiesOnly" | "addKeysToAgent" | "useKeychain">,
+  certificate?: string,
 ): {
   useSshAgent?: boolean;
   identityAgent?: string;
@@ -148,7 +149,7 @@ export const resolveBridgeSshAgentAuth = (
   addKeysToAgent?: string;
   useKeychain?: boolean;
 } => {
-  if (host.useSshAgent !== true || Boolean(host.certificate?.trim())) return {};
+  if (host.useSshAgent !== true || Boolean(certificate?.trim())) return {};
   return {
     useSshAgent: true,
     identityAgent: host.identityAgent,
@@ -157,3 +158,15 @@ export const resolveBridgeSshAgentAuth = (
     useKeychain: host.useKeychain,
   };
 };
+
+export const hasBridgeSshCredentials = (auth: {
+  password?: string;
+  privateKey?: string;
+  identityFilePaths?: string[];
+  useSshAgent?: boolean;
+}): boolean => Boolean(
+  auth.password ||
+  auth.privateKey ||
+  auth.identityFilePaths?.length ||
+  auth.useSshAgent,
+);

@@ -134,6 +134,59 @@ test("startSSH forwards imported system agent authentication settings", async ()
   );
 });
 
+for (const protocol of ["Mosh", "ET"] as const) {
+  test(`${protocol} keeps certificate signing material when the system agent toggle is also enabled`, async () => {
+    let capturedOptions: Record<string, unknown> | null = null;
+    const terminalBackend = {
+      backendAvailable: () => true,
+      moshAvailable: () => true,
+      etAvailable: () => true,
+      startMoshSession: async (options: Record<string, unknown>) => {
+        capturedOptions = options;
+        return "mosh-session";
+      },
+      startEtSession: async (options: Record<string, unknown>) => {
+        capturedOptions = options;
+        return "et-session";
+      },
+      onSessionData: () => noop,
+      onSessionExit: () => noop,
+      writeToSession: noop,
+      resizeSession: noop,
+    };
+    const ctx = createStarterContext({
+      host: {
+        id: "host-1",
+        label: "Certificate host",
+        hostname: "cert.example.test",
+        username: "alice",
+        authMethod: "certificate",
+        identityFileId: "cert-key",
+        useSshAgent: true,
+      },
+      keys: [{
+        id: "cert-key",
+        label: "Certificate key",
+        type: "ED25519",
+        category: "key",
+        source: "imported",
+        created: 1,
+        privateKey: "PRIVATE KEY",
+        certificate: "ssh-ed25519-cert-v01@openssh.com AAAATEST",
+      }],
+      terminalBackend,
+    });
+
+    const starters = createTerminalSessionStarters(ctx as never);
+    if (protocol === "Mosh") await starters.startMosh(createTermStub() as never);
+    else await starters.startEt(createTermStub() as never);
+
+    assert.equal(capturedOptions?.privateKey, "PRIVATE KEY");
+    assert.equal(capturedOptions?.certificate, "ssh-ed25519-cert-v01@openssh.com AAAATEST");
+    assert.equal(capturedOptions?.useSshAgent, undefined);
+  });
+}
+
 test("startSSH forwards custom ProxyCommand to the SSH bridge", async () => {
   let capturedOptions: Record<string, unknown> | null = null;
   const terminalBackend = {

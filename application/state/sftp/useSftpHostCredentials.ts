@@ -141,7 +141,7 @@ export const buildSftpHostCredentials = ({
           ? resolveProxyConfigAuth(jumpHost.proxyConfig, identities)
           : undefined,
         identityFilePaths: jumpKeyAuth.identityFilePaths,
-        ...resolveBridgeSshAgentAuth(jumpHost),
+        ...resolveBridgeSshAgentAuth(jumpHost, jumpKey?.certificate),
         keepaliveInterval: hopKeepalive.interval,
         keepaliveCountMax: hopKeepalive.countMax,
         verifyHostKeys: globalTerminalSettings.verifyHostKeys,
@@ -192,7 +192,7 @@ export const buildSftpHostCredentials = ({
     jumpHosts: jumpHosts && jumpHosts.length > 0 ? jumpHosts : undefined,
     sudo: host.sftpSudo,
     identityFilePaths: keyAuth.identityFilePaths,
-    ...resolveBridgeSshAgentAuth(host),
+    ...resolveBridgeSshAgentAuth(host, key?.certificate),
     keepaliveInterval: targetKeepalive.interval,
     keepaliveCountMax: targetKeepalive.countMax,
     knownHosts,

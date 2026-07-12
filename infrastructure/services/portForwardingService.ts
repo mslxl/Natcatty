@@ -482,7 +482,7 @@ export const startPortForward = async (
               ? resolveProxyConfigAuth(jumpHost.proxyConfig, identities)
               : undefined,
             identityFilePaths: jumpKeyAuth.identityFilePaths,
-            ...resolveBridgeSshAgentAuth(jumpHost),
+            ...resolveBridgeSshAgentAuth(jumpHost, jumpKey?.certificate),
             keepaliveInterval: hopKeepalive.interval,
             keepaliveCountMax: hopKeepalive.countMax,
             verifyHostKeys: globalTerminalSettings.verifyHostKeys,
@@ -570,7 +570,7 @@ export const startPortForward = async (
       proxy,
       jumpHosts: jumpHosts && jumpHosts.length > 0 ? jumpHosts : undefined,
       identityFilePaths: keyAuth.identityFilePaths,
-      ...resolveBridgeSshAgentAuth(host),
+      ...resolveBridgeSshAgentAuth(host, key?.certificate),
       legacyAlgorithms: host.legacyAlgorithms,
       skipEcdsaHostKey: host.skipEcdsaHostKey,
       algorithmOverrides: host.algorithms,

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { resolveBridgeKeyAuth, resolveBridgeSshAgentAuth, resolveHostAuth, resolveHostAutofillPassword } from "./sshAuth.ts";
+import { hasBridgeSshCredentials, resolveBridgeKeyAuth, resolveBridgeSshAgentAuth, resolveHostAuth, resolveHostAutofillPassword } from "./sshAuth.ts";
 import type { Host, Identity, SSHKey } from "./models.ts";
 
 const referenceKey: SSHKey = {
@@ -102,10 +102,14 @@ test("resolveBridgeSshAgentAuth keeps certificate authentication independent", (
     resolveBridgeSshAgentAuth({
       ...autofillBaseHost,
       useSshAgent: true,
-      certificate: "ssh-ed25519-cert-v01@openssh.com AAAATEST",
-    }),
+    }, "ssh-ed25519-cert-v01@openssh.com AAAATEST"),
     {},
   );
+});
+
+test("hasBridgeSshCredentials accepts an agent-only host", () => {
+  assert.equal(hasBridgeSshCredentials({ useSshAgent: true }), true);
+  assert.equal(hasBridgeSshCredentials({}), false);
 });
 
 test("resolveHostAuth respects password auth over stale key selections", () => {

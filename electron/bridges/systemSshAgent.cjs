@@ -146,9 +146,10 @@ async function prepareSystemSshAgent(options, injected = {}) {
     // Without a readable .pub selector we cannot tell whether the configured
     // identity is already loaded, so still ask Apple's ssh-add to load it.
     // In non-strict mode the delegate can then safely advertise the full list.
-    const hasPreferredIdentity = preferred.size > 0
-      && [...preferred].some((blob) => loadedBlobs.has(blob));
-    if (!hasPreferredIdentity) {
+    const hasEveryPreferredIdentity = unavailablePublicKeyPaths.length === 0
+      && preferred.size > 0
+      && [...preferred].every((blob) => loadedBlobs.has(blob));
+    if (!hasEveryPreferredIdentity) {
       try {
         const args = ["--apple-load-keychain", ...resolvedIdentityPaths];
         if (deps.runSshAdd) await deps.runSshAdd(args);
