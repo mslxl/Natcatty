@@ -257,7 +257,7 @@ function createMoshStatsConnectionApi(ctx) {
       // any saved password (ssh2 tries agent before password), so a
       // public-key host that also happens to have a stored password still
       // authenticates via the agent instead of failing on password-only.
-      if (!connectOpts.agent && !agent && !connectOpts.privateKey) {
+      if (auth.useSshAgent !== false && !connectOpts.agent && !agent && !connectOpts.privateKey) {
         const agentSocket = getSshAgentSocket(auth.identityAgent);
         if (agentSocket) {
           connectOpts.agent = agentSocket;

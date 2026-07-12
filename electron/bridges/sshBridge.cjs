@@ -707,6 +707,7 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
         logPrefix: `[Chain] Hop ${i + 1}`,
         unlockedEncryptedKeys: options._unlockedEncryptedKeys || [],
         defaultKeys,
+        allowAgentFallback: jump.useSshAgent !== false,
         onAuthAttempt: (method) => {
           sendProgress(i + 1, totalHops + 1, hopLabel, 'auth-attempt', method);
         },
@@ -1292,11 +1293,12 @@ function registerHandlers(ipcMain, options = {}) {
   ipcMain.handle("netcatty:key:generate", generateKeyPair);
   ipcMain.handle("netcatty:sshDebugLog:info", getSshDebugLogInfo);
   ipcMain.handle("netcatty:sshDebugLog:openDir", openSshDebugLogDir);
-  ipcMain.handle("netcatty:ssh:check-agent", async (_event, identityAgent) => {
+  ipcMain.handle("netcatty:ssh:check-agent", async (_event, options = {}) => {
+    const identityAgent = typeof options === "string" ? options : options.identityAgent;
     if (process.platform === "win32" && !identityAgent) {
       return await checkWindowsSshAgent();
     }
-    const socketPath = await getAvailableSystemAgentSocket(identityAgent);
+    const socketPath = await getAvailableSystemAgentSocket(identityAgent, typeof options === "string" ? {} : options);
     return {
       running: Boolean(socketPath),
       startupType: socketPath ? "running" : "stopped",

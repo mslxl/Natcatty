@@ -778,7 +778,7 @@ function createStartSessionApi(ctx) {
         // If no primary auth method configured, try ssh-agent first, then ALL default keys.
         // Skip default-key primaries when the user explicitly chose a key (inline or
         // identityFilePaths) even if loading that key failed (issue #1614).
-        if (!connectOpts.privateKey && !connectOpts.password && !connectOpts.agent) {
+        if (options.useSshAgent !== false && !connectOpts.privateKey && !connectOpts.password && !connectOpts.agent) {
           // First, try to use ssh-agent if available (this is what regular SSH does)
           const sshAgentSocket = await getAvailableAgentSocket();
 

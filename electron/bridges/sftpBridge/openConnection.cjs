@@ -193,6 +193,7 @@ function createOpenConnectionApi(ctx) {
             unlockedEncryptedKeys: options._unlockedEncryptedKeys || [],
             defaultKeys,
             sshAgentSocketOverride: defaultAgentSocket,
+            allowAgentFallback: jump.useSshAgent !== false,
             onAuthAttempt: (method) => {
               sendSftpProgress(sender, connId, hopLabel, 'auth-attempt', method);
             },
@@ -859,6 +860,7 @@ function createOpenConnectionApi(ctx) {
         logPrefix: "[SFTP]",
         defaultKeys: systemAuthAgent && options.identitiesOnly ? [] : defaultKeys,
         sshAgentSocketOverride: agentSocket,
+        allowAgentFallback: options.useSshAgent !== false,
         onAuthAttempt: (method) => {
           sendSftpProgress(event.sender, connId, options.hostname, 'auth-attempt', method);
         },

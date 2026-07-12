@@ -831,6 +831,7 @@ function isPasswordProvided(password) {
  */
 function buildAuthHandler(options) {
   const { privateKey, password, passphrase, agent, username, logPrefix = "[SSH]", unlockedEncryptedKeys = [], defaultKeys = [], sshAgentSocketOverride, onAuthAttempt } = options;
+  const allowAgentFallback = options.allowAgentFallback !== false;
 
   // Determine what type of explicit auth the user configured
   const hasExplicitKey = !!privateKey;
@@ -845,7 +846,9 @@ function buildAuthHandler(options) {
   // Allow callers to pass in a pre-validated agent socket (e.g. from async
   // getAvailableAgentSocket). Fall back to synchronous getSshAgentSocket()
   // which on Windows always returns the pipe path without checking the service.
-  const sshAgentSocket = sshAgentSocketOverride !== undefined ? sshAgentSocketOverride : getSshAgentSocket();
+  const sshAgentSocket = allowAgentFallback
+    ? (sshAgentSocketOverride !== undefined ? sshAgentSocketOverride : getSshAgentSocket())
+    : null;
 
   // Only use system ssh-agent BEFORE user's auth when:
   // - User explicitly configured agent, OR

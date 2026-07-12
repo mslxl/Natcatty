@@ -9,6 +9,7 @@ const path = require("node:path");
 const { Duplex } = require("node:stream");
 
 const {
+  buildAuthHandler,
   getAvailableAgentSocket,
   getNativeOpenSshAgentSocket,
   cygwinAgentConnectable,
@@ -17,6 +18,16 @@ const {
   ssh2AgentConnectable,
   resolveIdentityAgentPath,
 } = require("./sshAuthHelper.cjs");
+
+test("explicit agent opt-out suppresses automatic socket fallback", () => {
+  const auth = buildAuthHandler({
+    username: "deploy",
+    allowAgentFallback: false,
+    sshAgentSocketOverride: "/tmp/agent.sock",
+  });
+
+  assert.equal(auth.agent, null);
+});
 
 test("IdentityAgent paths expand standard OpenSSH connection tokens", () => {
   const resolved = resolveIdentityAgentPath(

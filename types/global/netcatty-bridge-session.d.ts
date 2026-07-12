@@ -163,7 +163,12 @@ declare global {
       bits?: number;
       comment?: string;
     }): Promise<{ success: boolean; privateKey?: string; publicKey?: string; error?: string }>;
-    checkSshAgent?(identityAgent?: string): Promise<{ running: boolean; startupType: string | null; error: string | null }>;
+    checkSshAgent?(options?: {
+      identityAgent?: string;
+      hostname?: string;
+      port?: number;
+      username?: string;
+    }): Promise<{ running: boolean; startupType: string | null; error: string | null }>;
     getDefaultKeys?(): Promise<Array<{ name: string; path: string }>>;
     execCommand(options: {
       hostname: string;
