@@ -24,12 +24,12 @@ test("MobaXterm import prefers GB18030 when legacy Chinese bytes are valid UTF-8
 });
 
 test("MobaXterm import keeps unmarked UTF-8 Chinese text", async () => {
-  const text = `[Bookmarks]\nSubRep=\nImgNum=42\n隆=${sessionValue}`;
+  const text = `[Bookmarks]\nSubRep=\nImgNum=42\n北京上海=${sessionValue}`;
   const decoded = await readVaultImportFile(
     "mobaxterm",
     new File([text], "MobaXterm.ini", { type: "text/plain" }),
   );
   const result = importVaultHostsFromText("mobaxterm", decoded);
 
-  assert.equal(result.hosts[0]?.label, "隆");
+  assert.equal(result.hosts[0]?.label, "北京上海");
 });
