@@ -858,6 +858,12 @@ main();
           sshEnv: sshEnvironment?.env || {},
           sshOptions: sshEnvironment?.sshOptions || [],
           sshUserHost: sshEnvironment?.userHost || "",
+          tcpLatencyTarget: {
+            hostname: options.hostname,
+            port: options.etPort || 2022,
+          },
+          tcpLatencyDirect:
+            (!Array.isArray(options.jumpHosts) || options.jumpHosts.length === 0) && !options.proxy,
           etStatsAuth: {
             hostname: options.hostname,
             port: options.port || 22,
@@ -879,6 +885,7 @@ main();
             knownHosts: options.knownHosts,
             verifyHostKeys: options.verifyHostKeys,
             hasJumpHost: Array.isArray(options.jumpHosts) && options.jumpHosts.length > 0,
+            hasProxy: !!options.proxy,
           },
           systemManagerSudoPassword: typeof options.sudoAutofillPassword === "string" && options.sudoAutofillPassword.length > 0
             ? options.sudoAutofillPassword

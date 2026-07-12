@@ -6,6 +6,7 @@ const net = require("node:net");
 
 const {
   createProxySocket,
+  runWhenProxyConnectionReady,
   substituteProxyCommand,
 } = require("./proxyUtils.cjs");
 
@@ -66,6 +67,42 @@ test("createProxySocket exposes ProxyCommand stdout as socket data", async () =>
   } finally {
     socket.destroy();
   }
+});
+
+test("createProxySocket times out a ProxyCommand that never produces a connection", async () => {
+  const command = `${JSON.stringify(process.execPath)} -e ${JSON.stringify("setTimeout(() => {}, 1000)")}`;
+  const socket = await createProxySocket(
+    { type: "command", host: "", port: 0, command },
+    "server.example.com",
+    22,
+    { timeoutMs: 20 },
+  );
+
+  const [error] = await once(socket, "error");
+  assert.match(error.message, /ProxyCommand connection timeout to server\.example\.com:22/);
+  assert.equal(socket.destroyed, true);
+});
+
+test("ProxyCommand reports network readiness only after it produces connection data", async () => {
+  const command = `${JSON.stringify(process.execPath)} -e ${JSON.stringify(
+    "setTimeout(() => process.stdout.write('ready'), 50)",
+  )}`;
+  const socket = await createProxySocket(
+    { type: "command", host: "", port: 0, command },
+    "server.example.com",
+    22,
+    { timeoutMs: 500 },
+  );
+  let ready = false;
+  runWhenProxyConnectionReady(socket, () => {
+    ready = true;
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 15));
+  assert.equal(ready, false);
+  await once(socket, "data");
+  assert.equal(ready, true);
+  socket.destroy();
 });
 
 test("ProxyCommand spawn restores launch-time proxy env under Direct mode", async () => {

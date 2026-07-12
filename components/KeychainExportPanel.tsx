@@ -3,6 +3,7 @@ import { ChevronRight, Info } from "lucide-react";
 import { applyGroupDefaults, resolveGroupDefaults } from "../domain/groupConfig";
 import { sanitizeCredentialValue } from "../domain/credentials";
 import { hasBridgeSshCredentials, resolveBridgeKeyAuth, resolveBridgeSshAgentAuth, resolveHostAuth } from "../domain/sshAuth";
+import { resolveHostSshConnectionTimeouts } from "../domain/sshConnectionTimeouts";
 import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
@@ -180,6 +181,7 @@ export const KeychainExportPanel: React.FC<KeychainExportPanelProps> = ({
                           resolveGroupDefaults(exportHost.group, groupConfigs),
                         )
                         : applyGroupDefaults(exportHost, {});
+                      const connectionTimeouts = resolveHostSshConnectionTimeouts(effectiveExportHost);
                       const exportAuth = resolveHostAuth({
                         host: effectiveExportHost,
                         keys,
@@ -189,7 +191,7 @@ export const KeychainExportPanel: React.FC<KeychainExportPanelProps> = ({
                         key: exportAuth.key,
                         fallbackIdentityFilePaths: exportAuth.authMethod === "password" || exportAuth.keyId
                           ? undefined
-                          : exportHost.identityFilePaths,
+                          : effectiveExportHost.identityFilePaths,
                         passphrase: exportAuth.passphrase,
                       });
                       const exportPassword = sanitizeCredentialValue(exportAuth.password);
@@ -248,6 +250,8 @@ export const KeychainExportPanel: React.FC<KeychainExportPanelProps> = ({
                         algorithmOverrides: effectiveExportHost.algorithms,
                         command,
                         timeout: 30000,
+                        sshTcpConnectTimeoutMs: connectionTimeouts.tcpConnectTimeoutSeconds * 1000,
+                        sshAuthReadyTimeoutMs: connectionTimeouts.authReadyTimeoutSeconds * 1000,
                         enableKeyboardInteractive: true,
                         sessionId: `export-key:${effectiveExportHost.id}:${panel.key.id}`,
                       });

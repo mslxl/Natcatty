@@ -15,10 +15,8 @@ function fakeStream(stdout) {
     if (stdout) stream.emit("data", Buffer.from(stdout));
     stream.emit("close", 0);
   };
-  stream.write = () => {
-    setImmediate(send);
-    return true;
-  };
+  stream.write = () => true;
+  setImmediate(send);
   return stream;
 }
 
@@ -51,6 +49,7 @@ function makeSessionOps(sessions) {
     setTimeout,
     clearTimeout,
     Buffer,
+    measureTcpConnectLatency: async () => 3,
     // The rest of the sessionOps surface isn't exercised by getServerStats.
   });
 }
@@ -77,6 +76,7 @@ test("getServerStats opens a Mosh stats companion connection when session.conn i
       s.moshStatsConn = fakeConn(LINUX_STATS);
       return s.moshStatsConn;
     },
+    measureTcpConnectLatency: async () => 3,
   });
 
   const result = await api.getServerStats({ sender: {} }, { sessionId: "sid" });
@@ -136,50 +136,58 @@ test("getServerStats does not touch the companion path for a normal SSH session"
   assert.equal(result.success, true);
 });
 
-test("getServerStats reports network round-trip without SSH stats channel setup time", async () => {
-  let now = 1_000;
-  let command = "";
-  let probeWrites = 0;
-  const stream = new EventEmitter();
-  stream.stderr = new EventEmitter();
-  stream.write = (data) => {
-    probeWrites += 1;
-    assert.equal(data, "\n");
-    now += 1;
-    stream.emit("data", Buffer.from("remote shell notice\n"));
-    now += 2;
-    stream.emit("data", Buffer.from("NC_LATENCY_"));
-    now += 2;
-    stream.emit("data", Buffer.from(`MARK|${LINUX_STATS}`));
-    stream.emit("close", 0);
-    return true;
+test("getServerStats measures TCP connectivity instead of SSH protocol latency", async () => {
+  const sessions = new Map();
+  const session = {
+    type: "mosh",
+    hostname: "vm.example.test",
+    moshStatsAuth: { hostname: "vm.example.test", port: 2222 },
+    moshStatsConn: fakeConn(LINUX_STATS),
   };
-  const sessions = new Map([
-    ["sid", {
-      type: "ssh",
-      conn: {
-        exec(statsCommand, callback) {
-          command = statsCommand;
-          now += 75;
-          callback(null, stream);
-        },
-      },
-    }],
-  ]);
+  sessions.set("sid", session);
+
+  const probes = [];
   const api = createSessionOpsApi({
     sessions,
-    Date: { now: () => now },
     setTimeout,
     clearTimeout,
     Buffer,
+    measureTcpConnectLatency: async (target) => {
+      probes.push(target);
+      return 2;
+    },
   });
 
   const result = await api.getServerStats({ sender: {} }, { sessionId: "sid" });
 
   assert.equal(result.success, true);
-  assert.equal(result.stats.latencyMs, 5);
-  assert.equal(probeWrites, 1);
-  assert.match(command, /^read -r nc_latency_probe; printf "NC_LATENCY_MARK\|";/);
+  assert.equal(result.stats.latencyMs, 2);
+  assert.deepEqual(probes, [{ hostname: "vm.example.test", port: 2222 }]);
+});
+
+test("getServerStats skips a misleading direct probe for jump-host sessions", async () => {
+  const sessions = new Map([["sid", {
+    type: "mosh",
+    moshStatsAuth: { hostname: "private.example.test", port: 22, hasJumpHost: true },
+    moshStatsConn: fakeConn(LINUX_STATS),
+  }]]);
+  let probeCalls = 0;
+  const api = createSessionOpsApi({
+    sessions,
+    setTimeout,
+    clearTimeout,
+    Buffer,
+    measureTcpConnectLatency: async () => {
+      probeCalls += 1;
+      return 2;
+    },
+  });
+
+  const result = await api.getServerStats({ sender: {} }, { sessionId: "sid" });
+
+  assert.equal(result.success, true);
+  assert.equal(result.stats.latencyMs, null);
+  assert.equal(probeCalls, 0);
 });
 
 test("getServerStats closes a blocked probe channel when stats time out", async () => {
@@ -239,21 +247,6 @@ test("getServerStats closes a stats stream delivered after timeout", async () =>
   assert.equal(closeCalls, 1);
 });
 
-test("getServerStats closes the channel when the latency probe cannot be written", async () => {
-  let closeCalls = 0;
-  const stream = new EventEmitter();
-  stream.stderr = new EventEmitter();
-  stream.write = () => { throw new Error("probe write failed"); };
-  stream.close = () => { closeCalls += 1; };
-  const api = makeSessionOps(new Map([["sid", { type: "ssh", conn: { exec: (_command, cb) => cb(null, stream) } }]]));
-
-  const result = await api.getServerStats({ sender: {} }, { sessionId: "sid" });
-
-  assert.equal(result.success, false);
-  assert.match(result.error, /probe write failed/);
-  assert.equal(closeCalls, 1);
-});
-
 test("getServerStats includes host identity, load average, and uptime", async () => {
   const sessions = new Map();
   const session = {
@@ -298,6 +291,7 @@ test("getServerStats parses macOS stats and avoids blocking top command", async 
   let command = "";
   const session = {
     type: "ssh",
+    _reuseEndpoint: { hostname: "mac.example.test", port: 22 },
     conn: {
       exec(cmd, cb) {
         command = cmd;

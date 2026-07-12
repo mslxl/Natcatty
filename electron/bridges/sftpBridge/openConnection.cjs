@@ -1,4 +1,7 @@
 /* eslint-disable no-undef */
+const { resolveSshConnectionTimeouts } = require("../sshBridge/startSession.cjs");
+const { runWhenProxyConnectionReady } = require("../proxyUtils.cjs");
+
 function createOpenConnectionApi(ctx) {
   with (ctx) {
     const hasUsableProxy = (proxy) => {
@@ -56,12 +59,14 @@ function createOpenConnectionApi(ctx) {
           const hopCountMaxEffective = hopInterval == null
             ? 3
             : (hopInterval > 0 ? (hopCountMax ?? 3) : 0);
+          const hopConnectionTimeouts = resolveSshConnectionTimeouts(jump);
           // Build connection options
           const connOpts = {
             host: jump.hostname,
             port: jump.port || 22,
             username: jump.username || 'root',
-            readyTimeout: 120000, // 2 minutes to allow for keyboard-interactive (2FA/MFA)
+            timeout: hopConnectionTimeouts.tcpConnectTimeoutMs,
+            readyTimeout: 0,
             keepaliveInterval: hopIntervalMs,
             keepaliveCountMax: hopCountMaxEffective,
             // Enable keyboard-interactive authentication (required for 2FA/MFA)
@@ -198,7 +203,9 @@ function createOpenConnectionApi(ctx) {
           const hasUsableJumpProxy = hasUsableProxy(jump.proxy);
           const effectiveHopProxy = isFirst ? ((hasUsableJumpProxy ? jump.proxy : null) || options.proxy) : null;
           if (effectiveHopProxy) {
-            currentSocket = await createProxySocket(effectiveHopProxy, jump.hostname, jump.port || 22);
+            currentSocket = await createProxySocket(effectiveHopProxy, jump.hostname, jump.port || 22, {
+              timeoutMs: hopConnectionTimeouts.tcpConnectTimeoutMs,
+            });
             connOpts.sock = currentSocket;
             delete connOpts.host;
             delete connOpts.port;
@@ -211,10 +218,31 @@ function createOpenConnectionApi(ctx) {
     
           // Connect this hop
           await new Promise((resolve, reject) => {
+            let settled = false;
+            let authReadyTimer = null;
+            const clearAuthReadyTimer = () => {
+              if (!authReadyTimer) return;
+              clearTimeout(authReadyTimer);
+              authReadyTimer = null;
+            };
+            conn.once('connect', () => {
+              runWhenProxyConnectionReady(conn._sock, () => {
+                try { conn._sock?.setTimeout?.(0); } catch { /* ignore */ }
+                clearAuthReadyTimer();
+                authReadyTimer = setTimeout(
+                  () => conn.emit('timeout'),
+                  hopConnectionTimeouts.authReadyTimeoutMs,
+                );
+                authReadyTimer.unref?.();
+              });
+            });
             conn.once('handshake', () => {
               sendSftpProgress(sender, connId, hopLabel, 'authenticating');
             });
             conn.once('ready', () => {
+              if (settled) return;
+              settled = true;
+              clearAuthReadyTimer();
               console.log(`[SFTP Chain] Hop ${i + 1}/${jumpHosts.length}: ${hopLabel} connected`);
               sendSftpProgress(sender, connId, hopLabel, 'connected');
               resolve();
@@ -225,13 +253,25 @@ function createOpenConnectionApi(ctx) {
                 console.log(`[SFTP Chain] Hop ${i + 1} non-fatal agent auth error (will try next method):`, err.message);
                 return;
               }
+              if (settled) return;
+              settled = true;
+              clearAuthReadyTimer();
               console.error(`[SFTP Chain] Hop ${i + 1}/${jumpHosts.length}: ${hopLabel} error:`, err.message);
               sendSftpProgress(sender, connId, hopLabel, 'error', err.message);
               reject(err);
             });
             conn.once('timeout', () => {
+              if (settled) return;
+              settled = true;
+              clearAuthReadyTimer();
               console.error(`[SFTP Chain] Hop ${i + 1}/${jumpHosts.length}: ${hopLabel} timeout`);
               reject(new Error(`Connection timeout to ${hopLabel}`));
+            });
+            conn.once('close', () => {
+              if (settled) return;
+              settled = true;
+              clearAuthReadyTimer();
+              reject(new Error(`Connection closed before authentication completed for ${hopLabel}`));
             });
             // Handle keyboard-interactive authentication for jump hosts (2FA/MFA)
             const sftpChainKiHandler = createKeyboardInteractiveHandler({
@@ -259,22 +299,37 @@ function createOpenConnectionApi(ctx) {
           activeConn = null;
     
           // Determine next target
-          let nextHost, nextPort;
+          let nextHost, nextPort, nextConnectionTimeouts;
           if (isLast) {
             // Last jump host, forward to final target
             nextHost = targetHost;
             nextPort = targetPort;
+            nextConnectionTimeouts = resolveSshConnectionTimeouts(options);
           } else {
             // Forward to next jump host
             const nextJump = jumpHosts[i + 1];
             nextHost = nextJump.hostname;
             nextPort = nextJump.port || 22;
+            nextConnectionTimeouts = resolveSshConnectionTimeouts(nextJump);
           }
     
           // Create forward stream to next hop
           console.log(`[SFTP Chain] Hop ${i + 1}/${jumpHosts.length}: Forwarding to ${nextHost}:${nextPort}...`);
           currentSocket = await new Promise((resolve, reject) => {
+            let settled = false;
+            const timeout = setTimeout(() => {
+              if (settled) return;
+              settled = true;
+              reject(new Error(`Connection timeout to ${nextHost}:${nextPort}`));
+            }, nextConnectionTimeouts.tcpConnectTimeoutMs);
+            timeout.unref?.();
             conn.forwardOut('127.0.0.1', 0, nextHost, nextPort, (err, stream) => {
+              if (settled) {
+                try { stream?.end?.(); } catch { /* ignore */ }
+                return;
+              }
+              settled = true;
+              clearTimeout(timeout);
               if (err) {
                 console.error(`[SFTP Chain] Hop ${i + 1}/${jumpHosts.length}: forwardOut failed:`, err.message);
                 reject(err);
@@ -609,6 +664,7 @@ function createOpenConnectionApi(ctx) {
       const jumpHosts = options.jumpHosts || [];
       const hasJumpHosts = jumpHosts.length > 0;
       const hasProxy = hasUsableProxy(options.proxy);
+      const targetConnectionTimeouts = resolveSshConnectionTimeouts(options);
     
       let chainConnections = [];
       let connectionSocket = null;
@@ -648,7 +704,8 @@ function createOpenConnectionApi(ctx) {
         connectionSocket = await createProxySocket(
           options.proxy,
           options.hostname,
-          options.port || 22
+          options.port || 22,
+          { timeoutMs: targetConnectionTimeouts.tcpConnectTimeoutMs },
         );
       }
     
@@ -658,7 +715,8 @@ function createOpenConnectionApi(ctx) {
         username: options.username || "root",
         // Enable keyboard-interactive authentication (required for 2FA/MFA)
         tryKeyboard: true,
-        readyTimeout: 120000, // 2 minutes for 2FA input
+        timeout: targetConnectionTimeouts.tcpConnectTimeoutMs,
+        readyTimeout: 0,
         // Keepalive policy:
         //   - positive value: honor it (in seconds, convert to ms)
         //   - explicit 0: truly disabled (host opted out via per-host override —
@@ -830,9 +888,6 @@ function createOpenConnectionApi(ctx) {
         kiHandler(name, instructions, lang, prompts, wrappedFinish);
       });
     
-      // Increase timeout to allow for keyboard-interactive auth
-      connectOpts.readyTimeout = 120000; // 2 minutes for 2FA input
-    
       try {
         // IMPORTANT: We bypass ssh2-sftp-client's connect() method and use the
         // underlying ssh2 Client directly. This is because ssh2-sftp-client adds
@@ -845,9 +900,16 @@ function createOpenConnectionApi(ctx) {
     
         await new Promise((resolve, reject) => {
           let settled = false;
+          let authReadyTimer = null;
+          const clearAuthReadyTimer = () => {
+            if (!authReadyTimer) return;
+            clearTimeout(authReadyTimer);
+            authReadyTimer = null;
+          };
           const settle = (fn, val) => {
             if (settled) return;
             settled = true;
+            clearAuthReadyTimer();
             cleanup();
             fn(val);
           };
@@ -876,6 +938,7 @@ function createOpenConnectionApi(ctx) {
             sshClient.removeListener('error', onError);
             sshClient.removeListener('end', onEnd);
             sshClient.removeListener('close', onClose);
+            sshClient.removeListener('timeout', onTimeout);
             // Keep a catch-all error listener so post-ready errors (e.g. connection
             // drops during an active SFTP session) don't become uncaught exceptions.
             sshClient.on('error', (err) => {
@@ -886,12 +949,30 @@ function createOpenConnectionApi(ctx) {
           sshClient.on('error', onError);
           sshClient.on('end', onEnd);
           sshClient.on('close', onClose);
+          const onTimeout = () => {
+            settle(reject, new Error(`Connection timeout to ${options.hostname}`));
+            try { sshClient.end?.(); } catch { /* ignore */ }
+            try { sshClient.destroy?.(); } catch { /* ignore */ }
+          };
+          sshClient.on('timeout', onTimeout);
+          sshClient.once('connect', () => {
+            runWhenProxyConnectionReady(sshClient._sock, () => {
+              try { sshClient._sock?.setTimeout?.(0); } catch { /* ignore */ }
+              clearAuthReadyTimer();
+              authReadyTimer = setTimeout(
+                () => sshClient.emit('timeout'),
+                targetConnectionTimeouts.authReadyTimeoutMs,
+              );
+              authReadyTimer.unref?.();
+            });
+          });
     
           sshClient.once('handshake', () => {
             sendSftpProgress(event.sender, connId, options.hostname, 'authenticating');
           });
     
           sshClient.once('ready', () => {
+            clearAuthReadyTimer();
             cleanup();
             sendSftpProgress(event.sender, connId, options.hostname, 'connected');
     

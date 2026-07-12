@@ -54,6 +54,10 @@ function createHarness({ identitiesOnly }) {
       return { privateKey: "identity-file-key" };
     },
     isPassphraseCancelledError: () => false,
+    resolveSshConnectionTimeouts: () => ({
+      tcpConnectTimeoutMs: 20000,
+      authReadyTimeoutMs: 120000,
+    }),
     buildAlgorithms: () => undefined,
     buildAuthHandler: (options) => {
       calls.authConfig = options;

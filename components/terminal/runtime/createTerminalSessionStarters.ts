@@ -48,6 +48,7 @@ import {
   resolveProxyConfigAuth,
 } from "../../../domain/proxyProfiles";
 import { hasConnectionPassedTcpDial } from "../connectionTimeouts";
+import { resolveHostSshConnectionTimeouts } from "../../../domain/sshConnectionTimeouts";
 
 const TELNET_SESSION_REPLACED_ERROR = "Telnet session start was replaced";
 const JUMP_HOST_AUTH_FAILED_PREFIX = "Jump host authentication failed";
@@ -311,6 +312,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       // override toggle, so a bastion that is a router (interval=0) can
       // coexist with a cloud target host (interval=30) in the same chain.
       const hopKeepalive = resolveHostKeepalive(jumpHost, globalTerminalSettings);
+      const hopConnectionTimeouts = resolveHostSshConnectionTimeouts(jumpHost);
 
       return {
         hostname: jumpHost.hostname,
@@ -331,6 +333,8 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         ...resolveBridgeSshAgentAuth(jumpHost, jumpKey?.certificate),
         keepaliveInterval: hopKeepalive.interval,
         keepaliveCountMax: hopKeepalive.countMax,
+        sshTcpConnectTimeoutMs: hopConnectionTimeouts.tcpConnectTimeoutSeconds * 1000,
+        sshAuthReadyTimeoutMs: hopConnectionTimeouts.authReadyTimeoutSeconds * 1000,
         verifyHostKeys: globalTerminalSettings.verifyHostKeys,
         legacyAlgorithms: jumpHost.legacyAlgorithms,
         skipEcdsaHostKey: jumpHost.skipEcdsaHostKey,
@@ -381,6 +385,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         totalHops,
         currentHostLabel:
           jumpHosts[0]?.label || jumpHosts[0]?.hostname || ctx.host.hostname,
+        connectionPhase: 'connecting',
       });
     }
 
@@ -395,6 +400,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
             currentHop: hop,
             totalHops: total,
             currentHostLabel: label,
+            connectionPhase: status,
           });
         }
 
@@ -492,6 +498,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           ctx.host,
           globalTerminalSettings,
         );
+        const connectionTimeouts = resolveHostSshConnectionTimeouts(ctx.host);
         return ctx.terminalBackend.startSSHSession({
           sessionId: ctx.sessionId,
           hostLabel: ctx.host.label,
@@ -521,6 +528,8 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           jumpHosts: jumpHosts.length > 0 ? jumpHosts : undefined,
           keepaliveInterval: keepalive.interval,
           keepaliveCountMax: keepalive.countMax,
+          sshTcpConnectTimeoutMs: connectionTimeouts.tcpConnectTimeoutSeconds * 1000,
+          sshAuthReadyTimeoutMs: connectionTimeouts.authReadyTimeoutSeconds * 1000,
           verifyHostKeys: globalTerminalSettings.verifyHostKeys,
           sessionLog: ctx.sessionLog?.enabled ? ctx.sessionLog : undefined,
           sshDebugLogEnabled: ctx.sshDebugLogEnabled,
