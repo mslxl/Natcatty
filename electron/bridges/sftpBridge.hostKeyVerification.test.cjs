@@ -50,6 +50,10 @@ function loadSftpBridgeWithMockedClients(t) {
         const accept = () => {
           this.emit("connect");
           this.emit("handshake");
+          if (MockJumpClient.closeBeforeReady) {
+            this.emit("close");
+            return;
+          }
           this.emit("ready");
         };
         if (typeof opts.hostVerifier !== "function") {
@@ -85,6 +89,7 @@ function loadSftpBridgeWithMockedClients(t) {
     }
   }
   MockJumpClient.instances = [];
+  MockJumpClient.closeBeforeReady = false;
   MockJumpClient.hostKeysByHost = new Map();
   MockJumpClient.defaultHostKey = makeRawPublicKey("ssh-ed25519", "default untrusted jump key");
 
@@ -334,5 +339,34 @@ test("SFTP jump-host chains stop when hop host keys are rejected", async (t) => 
   assert.equal(
     sender.sent.filter((message) => message.channel === "netcatty:host-key:verify").length,
     1,
+  );
+});
+
+test("SFTP jump-host chains reject when a hop closes during authentication", async (t) => {
+  const { bridge, MockJumpClient } = loadSftpBridgeWithMockedClients(t);
+  const rawJumpKey = makeRawPublicKey("ssh-ed25519", "closing sftp jump key");
+  MockJumpClient.hostKeysByHost.set("bastion.example.com", rawJumpKey);
+  MockJumpClient.closeBeforeReady = true;
+
+  bridge.init({ sftpClients: new Map(), sessions: new Map(), electronModule: {} });
+  await assert.rejects(
+    bridge.openSftp(
+      { sender: makeSender() },
+      {
+        sessionId: "sftp-chain-auth-close",
+        hostname: "target.example.com",
+        port: 22,
+        username: "alice",
+        knownHosts: [makeKnownHost("kh-closing-jump", "bastion.example.com", rawJumpKey)],
+        jumpHosts: [{
+          hostname: "bastion.example.com",
+          port: 22,
+          username: "jump",
+          password: "secret",
+          label: "Bastion",
+        }],
+      },
+    ),
+    /Connection closed before authentication completed for Bastion/,
   );
 });

@@ -1,6 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
+const { readFileSync } = require("node:fs");
 const Module = require("node:module");
 
 const passphraseHandler = require("./passphraseHandler.cjs");
@@ -66,6 +67,14 @@ function createSender() {
     send: () => {},
   };
 }
+
+test("openSftp clears its authentication timer when SSH becomes ready", () => {
+  const source = readFileSync(require.resolve("./sftpBridge/openConnection.cjs"), "utf8");
+  assert.match(
+    source,
+    /sshClient\.once\('ready', \(\) => \{\s*clearAuthReadyTimer\(\);\s*cleanup\(\);/,
+  );
+});
 
 test("openSftp cleans an opened proxy socket when target key passphrase is cancelled", async (t) => {
   const originalRequestPassphrase = passphraseHandler.requestPassphrase;

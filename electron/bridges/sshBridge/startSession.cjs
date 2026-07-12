@@ -13,6 +13,7 @@ const {
   logTerminalInterruptDrainDropSample,
   logTerminalOutputDropSample,
 } = require("../terminalInterruptDiagnostics.cjs");
+const { runWhenProxyConnectionReady } = require("../proxyUtils.cjs");
 
 const SSH_TCP_CONNECT_TIMEOUT_MS = 20000;
 const SSH_AUTH_READY_TIMEOUT_MS = 120000;
@@ -1156,12 +1157,14 @@ function createStartSessionApi(ctx) {
           };
 
           conn.once("connect", () => {
-            try { conn._sock?.setTimeout?.(0); } catch { }
-            clearAuthReadyTimer();
-            authReadyTimer = setTimeout(() => conn.emit("timeout"), authReadyTimeoutMs);
-            authReadyTimer.unref?.();
-            sendProgress(totalHops, totalHops, options.hostname, 'tcp-connected');
-            enableSshNoDelay(conn);
+            runWhenProxyConnectionReady(conn._sock, () => {
+              try { conn._sock?.setTimeout?.(0); } catch { }
+              clearAuthReadyTimer();
+              authReadyTimer = setTimeout(() => conn.emit("timeout"), authReadyTimeoutMs);
+              authReadyTimer.unref?.();
+              sendProgress(totalHops, totalHops, options.hostname, 'tcp-connected');
+              enableSshNoDelay(conn);
+            });
           });
           if (connectOpts.sock) enableTcpNoDelay(connectOpts.sock);
 

@@ -169,6 +169,8 @@ declare global {
       passphrase?: string;
       command: string;
       timeout?: number;
+      sshTcpConnectTimeoutMs?: number;
+      sshAuthReadyTimeoutMs?: number;
       enableKeyboardInteractive?: boolean;
       sessionId?: string;
     }): Promise<{ stdout: string; stderr: string; code: number | null }>;

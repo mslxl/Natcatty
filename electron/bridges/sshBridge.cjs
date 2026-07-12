@@ -16,7 +16,7 @@ const { NetcattyAgent } = require("./netcattyAgent.cjs");
 const keyboardInteractiveHandler = require("./keyboardInteractiveHandler.cjs");
 const passphraseHandler = require("./passphraseHandler.cjs");
 const hostKeyVerifier = require("./hostKeyVerifier.cjs");
-const { createProxySocket } = require("./proxyUtils.cjs");
+const { createProxySocket, runWhenProxyConnectionReady } = require("./proxyUtils.cjs");
 const { attachX11Forwarding } = require("./x11Forwarding.cjs");
 const { createPtyOutputBuffer } = require("./ptyOutputBuffer.cjs");
 const {
@@ -807,15 +807,17 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
         }));
         console.log(`[Chain] Hop ${i + 1}/${totalHops}: Connecting to ${hopLabel}...`);
         conn.once('connect', () => {
-          try { conn._sock?.setTimeout?.(0); } catch { }
-          clearAuthReadyTimer();
-          authReadyTimer = setTimeout(
-            () => conn.emit('timeout'),
-            hopConnectionTimeouts.authReadyTimeoutMs,
-          );
-          authReadyTimer.unref?.();
-          sendProgress(i + 1, totalHops + 1, hopLabel, 'tcp-connected');
-          enableSshNoDelay(conn);
+          runWhenProxyConnectionReady(conn._sock, () => {
+            try { conn._sock?.setTimeout?.(0); } catch { }
+            clearAuthReadyTimer();
+            authReadyTimer = setTimeout(
+              () => conn.emit('timeout'),
+              hopConnectionTimeouts.authReadyTimeoutMs,
+            );
+            authReadyTimer.unref?.();
+            sendProgress(i + 1, totalHops + 1, hopLabel, 'tcp-connected');
+            enableSshNoDelay(conn);
+          });
         });
         if (connOpts.sock) enableTcpNoDelay(connOpts.sock);
         conn.connect(connOpts);
@@ -923,7 +925,7 @@ const execCommandApi = createExecCommandApi({
   SSHClient, NetcattyAgent, randomUUID, console, setTimeout, clearTimeout, Error,
   findAllDefaultPrivateKeysFromHelper, preparePrivateKeyForAuth, loadIdentityFileForAuth,
   isPassphraseCancelledError, buildAlgorithms, buildAuthHandler, applyAuthToConnOpts,
-  createKeyboardInteractiveHandler,
+  createKeyboardInteractiveHandler, resolveSshConnectionTimeouts,
 });
 const { execCommand } = execCommandApi;
 

@@ -11,7 +11,7 @@ const keyboardInteractiveHandler = require("./keyboardInteractiveHandler.cjs");
 const { connectThroughChain, buildAlgorithms } = require("./sshBridge.cjs");
 const { resolveSshConnectionTimeouts } = require("./sshBridge/startSession.cjs");
 const hostKeyVerifier = require("./hostKeyVerifier.cjs");
-const { createProxySocket } = require("./proxyUtils.cjs");
+const { createProxySocket, runWhenProxyConnectionReady } = require("./proxyUtils.cjs");
 const { 
   buildAuthHandler, 
   createKeyboardInteractiveHandler, 
@@ -346,13 +346,15 @@ async function startPortForward(event, payload) {
     };
 
     conn.once('connect', () => {
-      try { conn._sock?.setTimeout?.(0); } catch { /* ignore */ }
-      clearAuthReadyTimer();
-      authReadyTimer = setTimeout(
-        () => conn.emit('timeout'),
-        connectionTimeouts.authReadyTimeoutMs,
-      );
-      authReadyTimer.unref?.();
+      runWhenProxyConnectionReady(conn._sock, () => {
+        try { conn._sock?.setTimeout?.(0); } catch { /* ignore */ }
+        clearAuthReadyTimer();
+        authReadyTimer = setTimeout(
+          () => conn.emit('timeout'),
+          connectionTimeouts.authReadyTimeoutMs,
+        );
+        authReadyTimer.unref?.();
+      });
     });
 
     conn.once('ready', () => {
