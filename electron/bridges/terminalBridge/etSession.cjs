@@ -146,7 +146,7 @@ main();
       const prepareOne = async (connectionOptions, logPrefix) => {
         if (connectionOptions?.useSshAgent !== true) return connectionOptions;
         await prepareSystemSshAgentForAuth(connectionOptions, logPrefix);
-        const socketPath = await getAvailableAgentSocket(connectionOptions.identityAgent);
+        const socketPath = await getAvailableAgentSocket(connectionOptions.identityAgent, connectionOptions);
         if (!socketPath) {
           throw new Error("System SSH agent is unavailable. Start or unlock it, or configure a valid agent socket.");
         }

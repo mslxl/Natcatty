@@ -15,7 +15,27 @@ const {
   isWindowsNamedPipe,
   socketAgentConnectable,
   ssh2AgentConnectable,
+  resolveIdentityAgentPath,
 } = require("./sshAuthHelper.cjs");
+
+test("IdentityAgent paths expand standard OpenSSH connection tokens", () => {
+  const resolved = resolveIdentityAgentPath(
+    "%d/.ssh/agent-%h-%p-%r-%u-%l-%L-%i-%%-%C.sock",
+    {
+      hostname: "server.example.com",
+      port: 2222,
+      username: "deploy",
+      localHostname: "mac.example.net",
+      localUsername: "alice",
+      uid: 501,
+    },
+  );
+
+  assert.match(
+    resolved,
+    new RegExp(`^${os.homedir().replace(/[\\^$.*+?()[\]{}|]/g, "\\$&")}/\\.ssh/agent-server\\.example\\.com-2222-deploy-alice-mac\\.example\\.net-mac-501-%-[a-f0-9]{40}\\.sock$`),
+  );
+});
 
 test("Windows named pipe detection accepts both slash styles", () => {
   assert.equal(isWindowsNamedPipe("\\\\.\\pipe\\openssh-ssh-agent"), true);

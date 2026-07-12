@@ -6,6 +6,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
+const { createHash } = require("node:crypto");
 const { exec } = require("node:child_process");
 const { utils: sshUtils } = require("ssh2");
 const { prepareSystemSshAgent } = require("./systemSshAgent.cjs");
@@ -673,20 +674,43 @@ function checkWindowsSshAgentRunning() {
  * Get ssh-agent socket path based on platform (synchronous, best-effort)
  * @returns {string|null}
  */
-function resolveIdentityAgentPath(rawPath) {
+function resolveIdentityAgentPath(rawPath, context = {}) {
   if (typeof rawPath !== "string" || rawPath.trim() === "") return null;
   const value = rawPath.trim().replace(/^["']|["']$/g, "");
   if (value.toLowerCase() === "none") return null;
   if (value === "SSH_AUTH_SOCK") return process.env.SSH_AUTH_SOCK || null;
+  const localHostname = context.localHostname || os.hostname();
+  const hostname = context.hostname || "";
+  const port = String(context.port || 22);
+  const username = context.username || "";
+  const proxyJump = context.proxyJump || "";
+  const tokenValues = {
+    "%": "%",
+    d: os.homedir(),
+    h: hostname,
+    i: String(context.uid ?? (typeof process.getuid === "function" ? process.getuid() : "")),
+    j: proxyJump,
+    k: context.hostKeyAlias || hostname,
+    L: context.shortLocalHostname || localHostname.split(".")[0],
+    l: localHostname,
+    n: context.originalHostname || hostname,
+    p: port,
+    r: username,
+    u: context.localUsername || os.userInfo().username,
+  };
+  tokenValues.C = createHash("sha1")
+    .update(`${localHostname}${hostname}${port}${username}${proxyJump}`)
+    .digest("hex");
   const expanded = value
+    .replace(/%([%CdhijkLlnpru])/g, (match, token) => tokenValues[token] ?? match)
     .replace(/^~(?=$|[\\/])/, os.homedir())
     .replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_match, name) => process.env[name] ?? "")
     .replace(/\$([A-Za-z_][A-Za-z0-9_]*)/g, (_match, name) => process.env[name] ?? "");
   return expanded || null;
 }
 
-function getSshAgentSocket(identityAgent) {
-  const configuredSocket = resolveIdentityAgentPath(identityAgent);
+function getSshAgentSocket(identityAgent, context = {}) {
+  const configuredSocket = resolveIdentityAgentPath(identityAgent, context);
   if (identityAgent && !configuredSocket) return null;
   if (process.platform === "win32") {
     // On Windows, always return the pipe path; the caller should use
@@ -711,7 +735,7 @@ function getSshAgentSocket(identityAgent) {
  * @returns {Promise<string|null>}
  */
 async function getAvailableAgentSocket(identityAgent, injected = {}) {
-  const configuredSocket = resolveIdentityAgentPath(identityAgent);
+  const configuredSocket = resolveIdentityAgentPath(identityAgent, injected);
   if (identityAgent && !configuredSocket) return null;
   const platform = injected.platform || process.platform;
   if (platform === "win32") {
@@ -723,7 +747,7 @@ async function getAvailableAgentSocket(identityAgent, injected = {}) {
         : await (injected.cygwinAgentConnectable || cygwinAgentConnectable)(socketPath);
     return running ? socketPath : null;
   }
-  const socketPath = getSshAgentSocket(configuredSocket);
+  const socketPath = getSshAgentSocket(configuredSocket, injected);
   if (!socketPath) return null;
   const running = await (injected.socketAgentConnectable || socketAgentConnectable)(socketPath);
   return running ? socketPath : null;
@@ -744,7 +768,11 @@ async function getNativeOpenSshAgentSocket(identityAgent, injected = {}) {
 
 async function prepareSystemSshAgentForAuth(options, logPrefix = "[SSHAuth]") {
   if (options?.useSshAgent !== true) return null;
-  const socketPath = await getAvailableAgentSocket(options.identityAgent);
+  const socketPath = await getAvailableAgentSocket(options.identityAgent, {
+    hostname: options.hostname,
+    port: options.port,
+    username: options.username,
+  });
   if (!socketPath) {
     const error = new Error("System SSH agent is unavailable. Start or unlock it, or configure a valid agent socket.");
     error.code = "ERR_SSH_AGENT_UNAVAILABLE";
