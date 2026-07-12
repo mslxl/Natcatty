@@ -1,6 +1,5 @@
 type ReadTextFileOptions = {
   fallbackEncoding?: string;
-  selectDecodedText?: (candidates: { utf8: string; fallback: string }) => string;
 };
 
 export async function readTextFile(
@@ -36,10 +35,6 @@ export async function readTextFile(
       utf8 = new TextDecoder("utf-8", { fatal: true }).decode(content);
     } catch {
       return new TextDecoder(options.fallbackEncoding).decode(content);
-    }
-    if (options.selectDecodedText) {
-      const fallback = new TextDecoder(options.fallbackEncoding).decode(content);
-      return options.selectDecodedText({ utf8, fallback });
     }
     return utf8;
   }
