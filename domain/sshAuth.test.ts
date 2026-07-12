@@ -103,7 +103,7 @@ test("resolveBridgeSshAgentAuth keeps certificate authentication independent", (
       ...autofillBaseHost,
       useSshAgent: true,
     }, { certificate: "ssh-ed25519-cert-v01@openssh.com AAAATEST" }),
-    {},
+    { useSshAgent: false },
   );
 });
 

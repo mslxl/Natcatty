@@ -151,7 +151,7 @@ export const resolveBridgeSshAgentAuth = (
   useKeychain?: boolean;
   agentPublicKeys?: string[];
 } => {
-  if (key?.certificate?.trim()) return {};
+  if (key?.certificate?.trim()) return { useSshAgent: false };
   if (host.useSshAgent !== true) return { useSshAgent: false };
   return {
     useSshAgent: true,

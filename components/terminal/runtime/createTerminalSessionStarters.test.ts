@@ -227,7 +227,7 @@ for (const protocol of ["Mosh", "ET"] as const) {
 
     assert.equal(capturedOptions?.privateKey, "PRIVATE KEY");
     assert.equal(capturedOptions?.certificate, "ssh-ed25519-cert-v01@openssh.com AAAATEST");
-    assert.equal(capturedOptions?.useSshAgent, undefined);
+    assert.equal(capturedOptions?.useSshAgent, false);
   });
 }
 

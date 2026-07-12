@@ -592,6 +592,7 @@ function createMoshSessionApi(ctx) {
         certificate: options.certificate,
         keyId: options.keyId,
         identityFilePaths: options.identityFilePaths,
+        agentPublicKeys: options.agentPublicKeys,
         useSshAgent: options.useSshAgent,
         identityAgent: options.identityAgent,
         identitiesOnly: options.identitiesOnly,
