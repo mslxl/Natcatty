@@ -14,11 +14,12 @@ function createSender() {
   };
 }
 
-function loadBridgeWithMocks(t) {
+function loadBridgeWithMocks(t, { systemAgent = false } = {}) {
   const originalLoad = Module._load;
   let capturedChainOptions = null;
   let capturedConnectOptions = null;
   let connectedClient = null;
+  let capturedSystemAgentOptions = null;
 
   class MockSshClient extends EventEmitter {
     constructor() {
@@ -79,6 +80,24 @@ function loadBridgeWithMocks(t) {
         },
       };
     }
+    if (request === "./sshAuthHelper.cjs" && systemAgent) {
+      const helper = originalLoad.call(this, request, parent, isMain);
+      return {
+        ...helper,
+        findAllDefaultPrivateKeys: async () => [{
+          keyName: "id_ed25519",
+          keyPath: "/home/alice/.ssh/id_ed25519",
+          privateKey: "PRIVATE KEY",
+        }],
+        prepareSystemSshAgentForAuth: async (options) => {
+          capturedSystemAgentOptions = options;
+          return {
+            getIdentities(callback) { callback(null, []); },
+            sign() {},
+          };
+        },
+      };
+    }
     return originalLoad.call(this, request, parent, isMain);
   };
 
@@ -96,6 +115,7 @@ function loadBridgeWithMocks(t) {
     getCapturedChainOptions: () => capturedChainOptions,
     getCapturedConnectOptions: () => capturedConnectOptions,
     getConnectedClient: () => connectedClient,
+    getCapturedSystemAgentOptions: () => capturedSystemAgentOptions,
   };
 }
 
@@ -148,5 +168,41 @@ test("port forwarding routes jump-host keyboard-interactive prompts through the 
     assert.deepEqual(getConnectedClient()?.socketTimeouts, [0]);
   } finally {
     await bridge.stopPortForward(event, { tunnelId: "pf-jump-scope" });
+  }
+});
+
+test("strict target agent selection keeps default keys available to jump hosts", async (t) => {
+  const { bridge, getCapturedChainOptions, getCapturedSystemAgentOptions } = loadBridgeWithMocks(t, { systemAgent: true });
+  const event = { sender: createSender() };
+
+  try {
+    const result = await bridge.startPortForward(event, {
+      tunnelId: "pf-strict-target",
+      type: "local",
+      localPort: 0,
+      bindAddress: "127.0.0.1",
+      remoteHost: "127.0.0.1",
+      remotePort: 3306,
+      hostname: "db.internal",
+      port: 2222,
+      username: "dbuser",
+      useSshAgent: true,
+      identitiesOnly: true,
+      jumpHosts: [{
+        hostname: "jump.internal",
+        port: 22,
+        username: "jumpuser",
+      }],
+    });
+
+    assert.equal(result.success, true);
+    assert.deepEqual(getCapturedChainOptions()?._defaultKeys, [{
+      keyName: "id_ed25519",
+      keyPath: "/home/alice/.ssh/id_ed25519",
+      privateKey: "PRIVATE KEY",
+    }]);
+    assert.equal(getCapturedSystemAgentOptions()?.port, 2222);
+  } finally {
+    await bridge.stopPortForward(event, { tunnelId: "pf-strict-target" });
   }
 });

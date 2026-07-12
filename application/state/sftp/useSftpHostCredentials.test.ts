@@ -33,6 +33,52 @@ test("buildSftpReuseCredentials only needs the live endpoint and sourceSessionId
   });
 });
 
+test("buildSftpHostCredentials forwards system agent settings for target and jump hosts", () => {
+  const jump = host({
+    id: "jump-1",
+    hostname: "jump.example.com",
+    useSshAgent: true,
+    identityFilePaths: ["~/.ssh/jump"],
+    identitiesOnly: true,
+  });
+  const credentials = buildSftpHostCredentials({
+    host: host({
+      hostChain: { hostIds: ["jump-1"] },
+      useSshAgent: true,
+      identityAgent: "$SSH_AUTH_SOCK",
+      identityFilePaths: ["~/.ssh/aws_root"],
+      identitiesOnly: true,
+      addKeysToAgent: "yes",
+      useKeychain: true,
+    }),
+    hosts: [jump],
+    keys: [],
+    identities: [],
+  });
+
+  assert.deepEqual(
+    {
+      useSshAgent: credentials.useSshAgent,
+      identityAgent: credentials.identityAgent,
+      identityFilePaths: credentials.identityFilePaths,
+      identitiesOnly: credentials.identitiesOnly,
+      addKeysToAgent: credentials.addKeysToAgent,
+      useKeychain: credentials.useKeychain,
+    },
+    {
+      useSshAgent: true,
+      identityAgent: "$SSH_AUTH_SOCK",
+      identityFilePaths: ["~/.ssh/aws_root"],
+      identitiesOnly: true,
+      addKeysToAgent: "yes",
+      useKeychain: true,
+    },
+  );
+  assert.equal(credentials.jumpHosts?.[0]?.useSshAgent, true);
+  assert.deepEqual(credentials.jumpHosts?.[0]?.identityFilePaths, ["~/.ssh/jump"]);
+  assert.equal(credentials.jumpHosts?.[0]?.identitiesOnly, true);
+});
+
 test("buildSftpHostCredentials forwards target and jump-host timeouts", () => {
   const jumpHost = host({
     id: "jump-1",
@@ -536,4 +582,48 @@ test("buildSftpHostCredentials does not use stale local key paths when a selecte
     }),
     /Saved credentials cannot be decrypted/,
   );
+});
+
+test("buildSftpHostCredentials uses the system agent when a synced key cannot be decrypted", () => {
+  const key: SSHKey = {
+    id: "key-1",
+    label: "Synced key",
+    type: "ED25519",
+    publicKey: "ssh-ed25519 AAAASELECTED",
+    privateKey: "enc:v1:djEwAAAA",
+    source: "imported",
+    category: "key",
+    created: 1,
+  };
+
+  const credentials = buildSftpHostCredentials({
+    host: host({
+      authMethod: "key",
+      identityFileId: "key-1",
+      useSshAgent: true,
+    }),
+    hosts: [],
+    keys: [key],
+    identities: [],
+  });
+
+  assert.equal(credentials.useSshAgent, true);
+  assert.deepEqual(credentials.agentPublicKeys, ["ssh-ed25519 AAAASELECTED"]);
+  assert.equal(credentials.privateKey, undefined);
+});
+
+test("imported IdentityFile paths remain usable when agent login is disabled", () => {
+  const credentials = buildSftpHostCredentials({
+    host: host({
+      identityFilePaths: ["~/.ssh/id_work"],
+      useSshAgent: false,
+      identityAgent: "none",
+    }),
+    hosts: [],
+    keys: [],
+    identities: [],
+  });
+
+  assert.equal(credentials.useSshAgent, false);
+  assert.deepEqual(credentials.identityFilePaths, ["~/.ssh/id_work"]);
 });

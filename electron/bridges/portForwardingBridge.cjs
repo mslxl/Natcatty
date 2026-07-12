@@ -19,6 +19,7 @@ const {
   findAllDefaultPrivateKeys: findAllDefaultPrivateKeysFromHelper,
   preparePrivateKeyForAuth,
   loadFirstIdentityFileForAuth,
+  prepareSystemSshAgentForAuth,
   isPassphraseCancelledError,
 } = require("./sshAuthHelper.cjs");
 
@@ -86,6 +87,12 @@ async function startPortForward(event, payload) {
     proxy,
     jumpHosts = [],
     identityFilePaths,
+    useSshAgent,
+    agentPublicKeys,
+    identityAgent,
+    identitiesOnly,
+    addKeysToAgent,
+    useKeychain,
     legacyAlgorithms,
     skipEcdsaHostKey,
     algorithmOverrides,
@@ -165,7 +172,19 @@ async function startPortForward(event, payload) {
 
   let defaultKeys = [];
   try {
-    const identityFile = !privateKey
+    const systemAuthAgent = hasCertificate ? null : await prepareSystemSshAgentForAuth({
+      useSshAgent,
+      agentPublicKeys,
+      identityAgent,
+      identityFilePaths,
+      identitiesOnly,
+      addKeysToAgent,
+      useKeychain,
+      hostname,
+      port,
+      username,
+    }, "[PortForward]");
+    const identityFile = !privateKey && !systemAuthAgent
       ? await loadFirstIdentityFileForAuth({
         sender,
         identityFilePaths,
@@ -178,7 +197,7 @@ async function startPortForward(event, payload) {
         },
       })
       : null;
-    const inlineKey = privateKey
+    const inlineKey = privateKey && !systemAuthAgent
       ? await preparePrivateKeyForAuth({
         sender,
         privateKey,
@@ -198,6 +217,9 @@ async function startPortForward(event, payload) {
       return { tunnelId, success: false, cancelled: true };
     }
 
+    if (systemAuthAgent) {
+      connectOpts.agent = systemAuthAgent;
+    }
     if (hasCertificate) {
       connectOpts.agent = new NetcattyAgent({
         mode: "certificate",
@@ -219,8 +241,12 @@ async function startPortForward(event, payload) {
       connectOpts.password = password;
     }
 
-    // Get default keys
-    defaultKeys = await findAllDefaultPrivateKeysFromHelper();
+    // Keep the discovered keys available to unrelated jump hosts even when
+    // strict agent selection disables them for the final target.
+    const discoveredDefaultKeys = await findAllDefaultPrivateKeysFromHelper();
+    defaultKeys = systemAuthAgent && identitiesOnly
+      ? []
+      : discoveredDefaultKeys;
     if (isTunnelCancelled(tunnelState)) {
       portForwardingTunnels.delete(tunnelId);
       return { tunnelId, success: false, cancelled: true };
@@ -235,6 +261,7 @@ async function startPortForward(event, payload) {
       username: connectOpts.username,
       logPrefix: "[PortForward]",
       defaultKeys,
+      allowAgentFallback: useSshAgent !== false,
     });
     applyAuthToConnOpts(connectOpts, authConfig);
     if (isTunnelCancelled(tunnelState)) {
@@ -252,6 +279,12 @@ async function startPortForward(event, payload) {
           password,
           privateKey,
           passphrase,
+          useSshAgent,
+          identityAgent,
+          identityFilePaths,
+          identitiesOnly,
+          addKeysToAgent,
+          useKeychain,
           proxy,
           knownHosts,
           verifyHostKeys,
@@ -261,7 +294,7 @@ async function startPortForward(event, payload) {
           algorithmOverrides,
           sshTcpConnectTimeoutMs: connectionTimeouts.tcpConnectTimeoutMs,
           sshAuthReadyTimeoutMs: connectionTimeouts.authReadyTimeoutMs,
-          _defaultKeys: defaultKeys,
+          _defaultKeys: discoveredDefaultKeys,
           _connectionsRef: chainConnections,
           _tunnelRef: tunnelState,
           _passphraseSignal: passphraseAbortController.signal,

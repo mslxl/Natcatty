@@ -1,4 +1,5 @@
 import { Host } from "./models";
+import { hasMacKeychainAgentDirectives } from "./sshAuth";
 
 const DEFAULT_SSH_PORT = 22;
 const MANAGED_BLOCK_BEGIN = "# BEGIN NETCATTY MANAGED - DO NOT EDIT THIS BLOCK";
@@ -124,6 +125,40 @@ export const serializeHostsToSshConfig = (hosts: Host[], allHosts?: Host[]): str
         const formatted = keyPath.includes(" ") ? `"${keyPath}"` : keyPath;
         lines.push(`    IdentityFile ${formatted}`);
       }
+    }
+
+    const hasMacKeychainAgent = hasMacKeychainAgentDirectives(host);
+    let serializedIdentityAgent = host.identityAgent;
+    if (host.useSshAgent === false) {
+      serializedIdentityAgent = "none";
+    } else if (
+      host.useSshAgent === true
+      && host.identityAgent?.toLowerCase() === "none"
+    ) {
+      serializedIdentityAgent = "${SSH_AUTH_SOCK}";
+    } else if (
+      host.useSshAgent === true
+      && host.identityAgent === undefined
+      && !hasMacKeychainAgent
+    ) {
+      serializedIdentityAgent = "${SSH_AUTH_SOCK}";
+    }
+
+    if (serializedIdentityAgent !== undefined) {
+      const formatted = serializedIdentityAgent.includes(" ") ? `"${serializedIdentityAgent}"` : serializedIdentityAgent;
+      lines.push(`    IdentityAgent ${formatted}`);
+    }
+
+    if (host.identitiesOnly !== undefined) {
+      lines.push(`    IdentitiesOnly ${host.identitiesOnly ? "yes" : "no"}`);
+    }
+
+    if (host.addKeysToAgent !== undefined) {
+      lines.push(`    AddKeysToAgent ${host.addKeysToAgent}`);
+    }
+
+    if (host.useKeychain !== undefined) {
+      lines.push(`    UseKeychain ${host.useKeychain ? "yes" : "no"}`);
     }
 
     // Serialize ProxyJump if host has a chain

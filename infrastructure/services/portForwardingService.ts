@@ -6,7 +6,7 @@
 
 import { Host, Identity, KnownHost, PortForwardingRule, SSHKey, TerminalSettings } from '../../domain/models';
 import { isEncryptedCredentialPlaceholder, sanitizeCredentialValue } from '../../domain/credentials';
-import { resolveBridgeKeyAuth, resolveHostAuth } from '../../domain/sshAuth';
+import { resolveBridgeKeyAuth, resolveBridgeSshAgentAuth, resolveHostAuth } from '../../domain/sshAuth';
 import { resolveHostKeepalive } from '../../domain/host';
 import { resolveHostSshConnectionTimeouts } from '../../domain/sshConnectionTimeouts';
 import {
@@ -450,12 +450,15 @@ export const startPortForward = async (
           const jumpPassword = sanitizeCredentialValue(jumpResolved.password);
           const jumpKeyAuth = resolveBridgeKeyAuth({
             key: jumpKey,
-            fallbackIdentityFilePaths: jumpResolved.authMethod === "password" || jumpResolved.keyId
+            fallbackIdentityFilePaths: (!jumpHost.useSshAgent && jumpResolved.authMethod === "password") || jumpResolved.keyId
               ? undefined
               : jumpHost.identityFilePaths,
             passphrase: jumpResolved.passphrase,
           });
-          const hasJumpKeyMaterial = Boolean(jumpKeyAuth.privateKey || jumpKeyAuth.identityFilePaths?.length);
+          const jumpAgentAuth = resolveBridgeSshAgentAuth(jumpHost, jumpKey);
+          const hasJumpKeyMaterial = Boolean(
+            jumpAgentAuth.useSshAgent || jumpKeyAuth.privateKey || jumpKeyAuth.identityFilePaths?.length,
+          );
           const hasUnreadableJumpCredential =
             isEncryptedCredentialPlaceholder(jumpResolved.password) ||
             isEncryptedCredentialPlaceholder(jumpKey?.privateKey) ||
@@ -484,6 +487,7 @@ export const startPortForward = async (
               ? resolveProxyConfigAuth(jumpHost.proxyConfig, identities)
               : undefined,
             identityFilePaths: jumpKeyAuth.identityFilePaths,
+            ...jumpAgentAuth,
             keepaliveInterval: hopKeepalive.interval,
             keepaliveCountMax: hopKeepalive.countMax,
             sshTcpConnectTimeoutMs: hopConnectionTimeouts.tcpConnectTimeoutSeconds * 1000,
@@ -502,13 +506,16 @@ export const startPortForward = async (
     
     const keyAuth = resolveBridgeKeyAuth({
       key,
-      fallbackIdentityFilePaths: resolved.authMethod === "password" || resolved.keyId
+      fallbackIdentityFilePaths: (!host.useSshAgent && resolved.authMethod === "password") || resolved.keyId
         ? undefined
         : host.identityFilePaths,
       passphrase: resolved.passphrase,
     });
+    const targetAgentAuth = resolveBridgeSshAgentAuth(host, key);
     const password = sanitizeCredentialValue(resolved.password);
-    const hasKeyMaterial = Boolean(keyAuth.privateKey || keyAuth.identityFilePaths?.length);
+    const hasKeyMaterial = Boolean(
+      targetAgentAuth.useSshAgent || keyAuth.privateKey || keyAuth.identityFilePaths?.length,
+    );
     const hasUnreadableCredential =
       isEncryptedCredentialPlaceholder(resolved.password) ||
       isEncryptedCredentialPlaceholder(key?.privateKey) ||
@@ -574,6 +581,7 @@ export const startPortForward = async (
       proxy,
       jumpHosts: jumpHosts && jumpHosts.length > 0 ? jumpHosts : undefined,
       identityFilePaths: keyAuth.identityFilePaths,
+      ...targetAgentAuth,
       legacyAlgorithms: host.legacyAlgorithms,
       skipEcdsaHostKey: host.skipEcdsaHostKey,
       algorithmOverrides: host.algorithms,

@@ -153,6 +153,14 @@ export interface Host {
   password?: string;
   savePassword?: boolean; // Whether to save the password (default: true)
   authMethod?: 'password' | 'key' | 'certificate';
+  // Use the local SSH agent for login. This is separate from agentForwarding,
+  // which exposes the local agent to the remote host after login.
+  useSshAgent?: boolean;
+  // OpenSSH config metadata used for agent-backed authentication.
+  identityAgent?: string;
+  identitiesOnly?: boolean;
+  addKeysToAgent?: string;
+  useKeychain?: boolean;
   agentForwarding?: boolean;
   x11Forwarding?: boolean;
   createdAt?: number; // Timestamp when host was created

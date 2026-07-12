@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { resolveBridgeKeyAuth, resolveHostAuth, resolveHostAutofillPassword } from "./sshAuth.ts";
+import { hasBridgeSshCredentials, resolveBridgeKeyAuth, resolveBridgeSshAgentAuth, resolveHostAuth, resolveHostAutofillPassword } from "./sshAuth.ts";
 import type { Host, Identity, SSHKey } from "./models.ts";
 
 const referenceKey: SSHKey = {
@@ -77,6 +77,77 @@ test("resolveBridgeKeyAuth preserves imported key material", () => {
   );
 });
 
+test("resolveBridgeSshAgentAuth carries system agent settings without private material", () => {
+  assert.deepEqual(
+    resolveBridgeSshAgentAuth({
+      ...autofillBaseHost,
+      useSshAgent: true,
+      identityAgent: "$SSH_AUTH_SOCK",
+      identitiesOnly: true,
+      addKeysToAgent: "yes",
+      useKeychain: true,
+    }),
+    {
+      useSshAgent: true,
+      identityAgent: "$SSH_AUTH_SOCK",
+      identitiesOnly: true,
+      addKeysToAgent: "yes",
+      useKeychain: true,
+    },
+  );
+});
+
+test("resolveBridgeSshAgentAuth keeps certificate authentication independent", () => {
+  assert.deepEqual(
+    resolveBridgeSshAgentAuth({
+      ...autofillBaseHost,
+      useSshAgent: true,
+    }, { certificate: "ssh-ed25519-cert-v01@openssh.com AAAATEST" }),
+    { useSshAgent: false },
+  );
+});
+
+test("resolveBridgeSshAgentAuth forwards a selected vault public key", () => {
+  assert.deepEqual(
+    resolveBridgeSshAgentAuth({
+      ...autofillBaseHost,
+      useSshAgent: true,
+      identitiesOnly: true,
+    }, { publicKey: "ssh-ed25519 AAAATEST" }),
+    {
+      useSshAgent: true,
+      identityAgent: undefined,
+      identitiesOnly: true,
+      addKeysToAgent: undefined,
+      useKeychain: undefined,
+      agentPublicKeys: ["ssh-ed25519 AAAATEST"],
+    },
+  );
+});
+
+test("resolveBridgeSshAgentAuth preserves an explicit agent opt-out", () => {
+  assert.deepEqual(
+    resolveBridgeSshAgentAuth({
+      ...autofillBaseHost,
+      useSshAgent: false,
+      identityAgent: "none",
+    }),
+    { useSshAgent: false },
+  );
+});
+
+test("resolveBridgeSshAgentAuth treats an unset agent toggle as disabled", () => {
+  assert.deepEqual(
+    resolveBridgeSshAgentAuth(autofillBaseHost),
+    { useSshAgent: false },
+  );
+});
+
+test("hasBridgeSshCredentials accepts an agent-only host", () => {
+  assert.equal(hasBridgeSshCredentials({ useSshAgent: true }), true);
+  assert.equal(hasBridgeSshCredentials({}), false);
+});
+
 test("resolveHostAuth respects password auth over stale key selections", () => {
   const host: Host = {
     id: "host-1",
@@ -96,6 +167,18 @@ test("resolveHostAuth respects password auth over stale key selections", () => {
   assert.equal(resolved.authMethod, "password");
   assert.equal(resolved.key, undefined);
   assert.equal(resolved.keyId, undefined);
+});
+
+test("resolveHostAuth infers key auth from imported IdentityFile paths", () => {
+  const resolved = resolveHostAuth({
+    host: {
+      ...autofillBaseHost,
+      identityFilePaths: ["~/.ssh/id_work"],
+    },
+    keys: [],
+  });
+
+  assert.equal(resolved.authMethod, "key");
 });
 
 const autofillBaseHost = {

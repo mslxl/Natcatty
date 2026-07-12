@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import type { Host, PortForwardingRule } from "../../domain/models.ts";
+import type { Host, PortForwardingRule, SSHKey } from "../../domain/models.ts";
 import { startPortForward } from "./portForwardingService.ts";
 
 const host = (overrides: Partial<Host> = {}): Host => ({
@@ -47,6 +47,78 @@ const installBridgeStub = () => {
     getOptions: () => capturedOptions,
   };
 };
+
+test("startPortForward forwards system agent settings", async () => {
+  const bridge = installBridgeStub();
+
+  const result = await startPortForward(
+    rule({ id: "rule-agent" }),
+    host({
+      useSshAgent: true,
+      identityAgent: "$SSH_AUTH_SOCK",
+      identityFilePaths: ["~/.ssh/aws_root"],
+      identitiesOnly: true,
+      addKeysToAgent: "yes",
+      useKeychain: true,
+    }),
+    [],
+    [],
+    [],
+    () => undefined,
+  );
+
+  assert.equal(result.success, true);
+  assert.deepEqual(
+    bridge.getOptions() && {
+      useSshAgent: bridge.getOptions()?.useSshAgent,
+      identityAgent: bridge.getOptions()?.identityAgent,
+      identityFilePaths: bridge.getOptions()?.identityFilePaths,
+      identitiesOnly: bridge.getOptions()?.identitiesOnly,
+      addKeysToAgent: bridge.getOptions()?.addKeysToAgent,
+      useKeychain: bridge.getOptions()?.useKeychain,
+    },
+    {
+      useSshAgent: true,
+      identityAgent: "$SSH_AUTH_SOCK",
+      identityFilePaths: ["~/.ssh/aws_root"],
+      identitiesOnly: true,
+      addKeysToAgent: "yes",
+      useKeychain: true,
+    },
+  );
+});
+
+test("startPortForward uses the system agent when a synced key cannot be decrypted", async () => {
+  const bridge = installBridgeStub();
+  const key: SSHKey = {
+    id: "key-1",
+    label: "Synced key",
+    type: "ED25519",
+    publicKey: "ssh-ed25519 AAAASELECTED",
+    privateKey: "enc:v1:djEwAAAA",
+    source: "imported",
+    category: "key",
+    created: 1,
+  };
+
+  const result = await startPortForward(
+    rule({ id: "rule-agent-synced-key" }),
+    host({
+      authMethod: "key",
+      identityFileId: "key-1",
+      useSshAgent: true,
+    }),
+    [],
+    [key],
+    [],
+    () => undefined,
+  );
+
+  assert.equal(result.success, true);
+  assert.equal(bridge.getOptions()?.useSshAgent, true);
+  assert.deepEqual(bridge.getOptions()?.agentPublicKeys, ["ssh-ed25519 AAAASELECTED"]);
+  assert.equal(bridge.getOptions()?.privateKey, undefined);
+});
 
 test("startPortForward forwards target and jump-host timeouts", async () => {
   const bridge = installBridgeStub();

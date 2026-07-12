@@ -53,6 +53,12 @@ declare global {
     label?: string; // Display label for UI
     proxy?: NetcattyProxyConfig;
     identityFilePaths?: string[];
+    useSshAgent?: boolean;
+    agentPublicKeys?: string[];
+    identityAgent?: string;
+    identitiesOnly?: boolean;
+    addKeysToAgent?: string;
+    useKeychain?: boolean;
     // ET server port on this hop, used only when ET tunnels through it as a
     // jump host (--jport). Defaults to 2022 in the bridge when omitted.
     etPort?: number;
@@ -137,6 +143,12 @@ declare global {
     sshDebugLogEnabled?: boolean;
     // Local SSH key file paths (from SSH config IdentityFile)
     identityFilePaths?: string[];
+    useSshAgent?: boolean;
+    agentPublicKeys?: string[];
+    identityAgent?: string;
+    identitiesOnly?: boolean;
+    addKeysToAgent?: string;
+    useKeychain?: boolean;
     // When set, reuse the already-authenticated SSH connection of this existing
     // session by opening a new shell channel on it, instead of dialing a fresh
     // connection. Lets a duplicated tab skip a second MFA prompt (issue #1204).
@@ -190,6 +202,12 @@ declare global {
     proxy?: NetcattyProxyConfig;
     jumpHosts?: NetcattyJumpHost[];
     identityFilePaths?: string[];
+    useSshAgent?: boolean;
+    agentPublicKeys?: string[];
+    identityAgent?: string;
+    identitiesOnly?: boolean;
+    addKeysToAgent?: string;
+    useKeychain?: boolean;
     legacyAlgorithms?: boolean;
     skipEcdsaHostKey?: boolean;
     algorithmOverrides?: import("./domain/models").HostAlgorithmOverrides;

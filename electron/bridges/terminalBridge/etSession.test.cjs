@@ -160,6 +160,123 @@ test("prepareEtSshEnvironment writes a private key + IdentityFile option and a p
   assert.ok(map.some((e) => e.type === "passphrase"));
 });
 
+test("prepareEtSshEnvironment enables agent auth for a password-default imported host", (t) => {
+  const { api, base } = makeApi(t);
+  const env = api.prepareEtSshEnvironment("sess-agent", {
+    hostname: "host.example",
+    username: "alice",
+    authMethod: "password",
+    useSshAgent: true,
+    _resolvedSshAgentSocket: "/tmp/custom agent.sock",
+    identityFilePaths: ["~/.ssh/id_work"],
+    agentPublicKeys: ["ssh-ed25519 AAAASELECTED"],
+    identitiesOnly: true,
+  });
+
+  assert.ok(env.sshOptions.includes("IdentitiesOnly=yes"));
+  assert.ok(env.sshOptions.includes("PreferredAuthentications=publickey"));
+  assert.equal(env.sshOptions.includes("PubkeyAuthentication=no"), false);
+  const config = fs.readFileSync(path.join(env.env.HOME, ".ssh", "config"), "utf8");
+  assert.match(config, /IdentityAgent "\/tmp\/custom agent\.sock"/);
+  assert.ok(
+    env.sshOptions.includes(`IdentityFile=${path.join(base, "home", ".ssh", "id_work.pub").replace(/\\/g, "/")}`),
+    "agent-only mode should use only the public file as its identity selector",
+  );
+  const selectedIdentityOption = env.sshOptions.find((option) => option.includes("-agent-0.pub"));
+  assert.ok(selectedIdentityOption);
+  const selectedIdentityPath = selectedIdentityOption.split("=")[1];
+  assert.equal(fs.readFileSync(selectedIdentityPath, "utf8"), "ssh-ed25519 AAAASELECTED");
+  assert.equal(
+    api.applyEtSshAgentEnvironment({}, {
+      useSshAgent: true,
+      _resolvedSshAgentSocket: "/tmp/custom agent.sock",
+    }).SSH_AUTH_SOCK,
+    "/tmp/custom agent.sock",
+  );
+});
+
+test("ET explicitly disables native agent login for target and jump hosts", (t) => {
+  const { api } = makeApi(t);
+  const env = api.prepareEtSshEnvironment("sess-agent-disabled", {
+    hostname: "host.example",
+    username: "alice",
+    useSshAgent: false,
+    jumpHosts: [{
+      hostname: "jump.example",
+      username: "ops",
+      useSshAgent: false,
+    }],
+  });
+  const config = fs.readFileSync(path.join(env.env.HOME, ".ssh", "config"), "utf8");
+  const processEnv = api.applyEtSshAgentEnvironment(
+    { SSH_AUTH_SOCK: "/tmp/inherited-agent.sock" },
+    { useSshAgent: false },
+  );
+
+  assert.match(config, /Host host\.example[\s\S]*IdentityAgent none/);
+  assert.match(config, /Host jump\.example[\s\S]*IdentityAgent none/);
+  assert.equal(processEnv.SSH_AUTH_SOCK, undefined);
+
+  const forwarding = api.prepareEtSshEnvironment("sess-agent-forwarding", {
+    hostname: "forward.example",
+    username: "alice",
+    useSshAgent: false,
+    agentForwarding: true,
+  });
+  const forwardingConfig = fs.readFileSync(path.join(forwarding.env.HOME, ".ssh", "config"), "utf8");
+  const forwardingEnv = api.applyEtSshAgentEnvironment(
+    { SSH_AUTH_SOCK: "/tmp/forwarded-agent.sock" },
+    { useSshAgent: false, agentForwarding: true },
+  );
+  assert.match(forwardingConfig, /IdentityAgent none/);
+  assert.match(forwardingConfig, /ForwardAgent \$\{SSH_AUTH_SOCK\}/);
+  assert.equal(forwardingEnv.SSH_AUTH_SOCK, "/tmp/forwarded-agent.sock");
+});
+
+test("ET prepares target and jump agents before generating their host config", async (t) => {
+  const calls = [];
+  const { api } = makeApi(t, {
+    prepareSystemSshAgentForAuth: async (options, prefix) => {
+      calls.push(["prepare", options.hostname, prefix, options.useKeychain]);
+    },
+    getAvailableAgentSocket: async (identityAgent) => {
+      calls.push(["resolve", identityAgent]);
+      return identityAgent;
+    },
+  });
+  const prepared = await api.prepareEtSshAgentOptions({
+    hostname: "dest.example",
+    username: "alice",
+    useSshAgent: true,
+    identityAgent: "/tmp/target.sock",
+    useKeychain: true,
+    identityFilePaths: ["~/.ssh/id_target"],
+    jumpHosts: [{
+      hostname: "jump.example",
+      username: "ops",
+      useSshAgent: true,
+      identityAgent: "/tmp/jump.sock",
+      identitiesOnly: true,
+      agentPublicKeys: ["ssh-ed25519 AAAAJUMPSELECTED"],
+    }],
+  });
+  const env = api.prepareEtSshEnvironment("sess-chain-agent", prepared);
+  const config = fs.readFileSync(path.join(env.env.HOME, ".ssh", "config"), "utf8");
+
+  assert.deepEqual(calls, [
+    ["prepare", "dest.example", "[ET]", true],
+    ["resolve", "/tmp/target.sock"],
+    ["prepare", "jump.example", "[ET Chain] Hop 1:", undefined],
+    ["resolve", "/tmp/jump.sock"],
+  ]);
+  assert.match(config, /Host dest\.example[\s\S]*IdentityAgent "\/tmp\/target\.sock"/);
+  assert.match(config, /Host jump\.example[\s\S]*IdentityAgent "\/tmp\/jump\.sock"/);
+  assert.match(config, /Host jump\.example[\s\S]*IdentitiesOnly yes/);
+  const jumpSelectorMatch = config.match(/Host jump\.example[\s\S]*?IdentityFile "?([^"\n]*jump-agent-0\.pub)"?/);
+  assert.ok(jumpSelectorMatch);
+  assert.equal(fs.readFileSync(jumpSelectorMatch[1], "utf8"), "ssh-ed25519 AAAAJUMPSELECTED");
+});
+
 test("prepareEtSshEnvironment writes legacy algorithms to the ssh config file", (t) => {
   const { api } = makeApi(t);
   const env = api.prepareEtSshEnvironment("sess1", {

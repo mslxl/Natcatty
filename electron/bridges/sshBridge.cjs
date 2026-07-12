@@ -27,6 +27,8 @@ const {
   requestPassphrasesForEncryptedKeys,
   findAllDefaultPrivateKeys: findAllDefaultPrivateKeysFromHelper,
   getSshAgentSocket,
+  getAvailableAgentSocket: getAvailableSystemAgentSocket,
+  prepareSystemSshAgentForAuth,
   readFileNoFollow,
   expandIdentityFilePath,
   isAutoFillablePasswordChallenge,
@@ -590,7 +592,11 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
       const hasCertificate =
         typeof jump.certificate === "string" && jump.certificate.trim().length > 0;
 
-      const identityFile = !jump.privateKey
+      const systemAuthAgent = hasCertificate
+        ? null
+        : await prepareSystemSshAgentForAuth(jump, `[Chain] Hop ${i + 1}:`);
+
+      const identityFile = !jump.privateKey && !systemAuthAgent
         ? await loadFirstIdentityFileForAuth({
           sender,
           identityFilePaths: jump.identityFilePaths,
@@ -615,7 +621,7 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
           },
         })
         : null;
-      const inlineKey = jump.privateKey
+      const inlineKey = jump.privateKey && !systemAuthAgent
         ? await preparePrivateKeyForAuth({
           sender,
           privateKey: jump.privateKey,
@@ -637,6 +643,9 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
       const effectivePassphrase = inlineKey?.passphrase || identityFile?.passphrase;
 
       let authAgent = null;
+      if (systemAuthAgent) {
+        connOpts.agent = systemAuthAgent;
+      }
       if (hasCertificate) {
         authAgent = new NetcattyAgent({
           mode: "certificate",
@@ -683,7 +692,9 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
       if (jump.password) connOpts.password = jump.password;
 
       // Get default keys (either from options if pre-fetched, or fetch them now)
-      const defaultKeys = options._defaultKeys || await findAllDefaultPrivateKeys();
+      const defaultKeys = systemAuthAgent && jump.identitiesOnly
+        ? []
+        : options._defaultKeys || await findAllDefaultPrivateKeys();
 
       // Build auth handler using shared helper
       // Pass unlocked encrypted keys from options so jump hosts can use them for retry
@@ -694,8 +705,11 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
         agent: connOpts.agent,
         username: connOpts.username,
         logPrefix: `[Chain] Hop ${i + 1}`,
-        unlockedEncryptedKeys: options._unlockedEncryptedKeys || [],
+        unlockedEncryptedKeys: systemAuthAgent && jump.identitiesOnly
+          ? []
+          : options._unlockedEncryptedKeys || [],
         defaultKeys,
+        allowAgentFallback: jump.useSshAgent !== false,
         onAuthAttempt: (method) => {
           sendProgress(i + 1, totalHops + 1, hopLabel, 'auth-attempt', method);
         },
@@ -764,6 +778,7 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
           sendProgress(i + 1, totalHops + 1, hopLabel, 'error', err.message);
           if (isChainAuthError(err)) {
             err.isJumpHostAuthError = true;
+            err.jumpHostIndex = i;
             err.jumpHostLabel = hopLabel;
             err.jumpHostHostname = jump.hostname;
             err.message = `Jump host authentication failed for "${hopLabel}": ${err.message}`;
@@ -914,7 +929,7 @@ const startSessionApi = createStartSessionApi({
   openTerminalOutputSession, closeTerminalOutputSession,
   get selectZmodemUploadFiles() { return selectZmodemUploadFiles; },
   get selectZmodemDownloadDirectory() { return selectZmodemDownloadDirectory; },
-  preparePrivateKeyForAuth, loadFirstIdentityFileForAuth, hasUserConfiguredKey, isPasswordProvided, createKeyboardInteractiveHandler,
+  preparePrivateKeyForAuth, loadFirstIdentityFileForAuth, prepareSystemSshAgentForAuth, hasUserConfiguredKey, isPasswordProvided, createKeyboardInteractiveHandler,
   createConnectionRef, acquireConnectionRef, releaseConnectionRef, findReusableSession,
   get probeReceiveConflicts() { return probeReceiveConflicts; },
   get removeRemoteFiles() { return removeRemoteFiles; },
@@ -925,6 +940,7 @@ const { createExecCommandApi } = require("./sshBridge/execCommand.cjs");
 const execCommandApi = createExecCommandApi({
   SSHClient, NetcattyAgent, randomUUID, console, setTimeout, clearTimeout, Error,
   findAllDefaultPrivateKeysFromHelper, preparePrivateKeyForAuth, loadIdentityFileForAuth,
+  prepareSystemSshAgentForAuth,
   isPassphraseCancelledError, buildAlgorithms, buildAuthHandler, applyAuthToConnOpts,
   createKeyboardInteractiveHandler, resolveSshConnectionTimeouts,
 });
@@ -1003,13 +1019,32 @@ function isChainAuthError(err) {
 
 function canRetryWithEncryptedDefaultKeys(options) {
   const hasJumpHosts = options.jumpHosts && options.jumpHosts.length > 0;
+  const hasStrictTargetAgent = options.useSshAgent === true && options.identitiesOnly === true;
   const isPasswordOnly = !hasJumpHosts &&
     !options.agentForwarding &&
     !!options.password &&
     !options.privateKey &&
     !options.certificate;
   return !isPasswordOnly &&
+    (hasJumpHosts || !hasStrictTargetAgent) &&
     (!options._unlockedEncryptedKeys || options._unlockedEncryptedKeys.length === 0);
+}
+
+function isStrictAgentAuthFailure(options, err) {
+  if (!err?.isJumpHostAuthError) {
+    return options.useSshAgent === true && options.identitiesOnly === true;
+  }
+  const jumpHosts = options.jumpHosts || [];
+  if (Number.isInteger(err.jumpHostIndex) && err.jumpHostIndex >= 0) {
+    const failedJump = jumpHosts[err.jumpHostIndex];
+    return failedJump?.useSshAgent === true && failedJump.identitiesOnly === true;
+  }
+  const matchingJumps = jumpHosts.filter((jump) => (
+    (err.jumpHostHostname && jump.hostname === err.jumpHostHostname)
+    || (err.jumpHostLabel && jump.label === err.jumpHostLabel)
+  ));
+  const failedJump = matchingJumps.length === 1 ? matchingJumps[0] : undefined;
+  return failedJump?.useSshAgent === true && failedJump.identitiesOnly === true;
 }
 
 function canReuseExistingSession(options) {
@@ -1066,7 +1101,7 @@ async function startSSHSessionWrapper(event, options) {
     if (isAuthError) {
       // Check if there are encrypted default keys we haven't tried yet
       // Only offer retry if no unlocked keys were provided in this attempt
-      if (canRetryEncryptedDefaults) {
+      if (canRetryEncryptedDefaults && !isStrictAgentAuthFailure(options, err)) {
         const encryptedKeys = loadedRetryableEncryptedKeys
           ? retryableEncryptedKeys
           : await loadRetryableEncryptedKeys();
@@ -1119,6 +1154,7 @@ async function startSSHSessionWrapper(event, options) {
                 authError.isAuthError = true;
                 if (retryErr.isJumpHostAuthError) {
                   authError.isJumpHostAuthError = true;
+                  authError.jumpHostIndex = retryErr.jumpHostIndex;
                   authError.jumpHostLabel = retryErr.jumpHostLabel;
                   authError.jumpHostHostname = retryErr.jumpHostHostname;
                 }
@@ -1147,6 +1183,7 @@ async function startSSHSessionWrapper(event, options) {
       authError.isAuthError = true;
       if (err.isJumpHostAuthError) {
         authError.isJumpHostAuthError = true;
+        authError.jumpHostIndex = err.jumpHostIndex;
         authError.jumpHostLabel = err.jumpHostLabel;
         authError.jumpHostHostname = err.jumpHostHostname;
       }
@@ -1192,7 +1229,7 @@ const { isHostKeyTrustedBySystem } = createSystemKnownHostsApi({
 const { createMoshStatsConnectionApi } = require("./sshBridge/moshStatsConnection.cjs");
 const { ensureMoshStatsConnection, ensureEtStatsConnection } = createMoshStatsConnectionApi({
   get sessions() { return sessions; },
-  SSHClient, sshUtils, NetcattyAgent, buildAlgorithms, getSshAgentSocket,
+  SSHClient, sshUtils, NetcattyAgent, buildAlgorithms, getSshAgentSocket, prepareSystemSshAgentForAuth,
   readFileNoFollow, expandIdentityFilePath, isAutoFillablePasswordChallenge,
   hostKeyVerifier, isHostKeyTrustedBySystem, log,
 });
@@ -1280,8 +1317,17 @@ function registerHandlers(ipcMain, options = {}) {
   ipcMain.handle("netcatty:key:generate", generateKeyPair);
   ipcMain.handle("netcatty:sshDebugLog:info", getSshDebugLogInfo);
   ipcMain.handle("netcatty:sshDebugLog:openDir", openSshDebugLogDir);
-  ipcMain.handle("netcatty:ssh:check-agent", async () => {
-    return await checkWindowsSshAgent();
+  ipcMain.handle("netcatty:ssh:check-agent", async (_event, options = {}) => {
+    const identityAgent = typeof options === "string" ? options : options.identityAgent;
+    if (process.platform === "win32" && !identityAgent) {
+      return await checkWindowsSshAgent();
+    }
+    const socketPath = await getAvailableSystemAgentSocket(identityAgent, typeof options === "string" ? {} : options);
+    return {
+      running: Boolean(socketPath),
+      startupType: socketPath ? "running" : "stopped",
+      error: socketPath ? null : "SSH Agent socket not connectable",
+    };
   });
   ipcMain.handle("netcatty:ssh:get-default-keys", async () => {
     const sshDir = path.join(os.homedir(), ".ssh");
@@ -1317,5 +1363,6 @@ module.exports = {
   // derives the preferred default key from findAllDefaultPrivateKeys()[0]).
   _findDefaultPrivateKey: findDefaultPrivateKey,
   _findAllDefaultPrivateKeys: findAllDefaultPrivateKeys,
+  _isStrictAgentAuthFailure: isStrictAgentAuthFailure,
   ensureMoshStatsConnection,
 };

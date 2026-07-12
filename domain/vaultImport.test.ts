@@ -34,6 +34,87 @@ test("ssh_config import maps ForwardX11 no to disabled host X11 forwarding", () 
   assert.equal(result.hosts[0].x11Forwarding, false);
 });
 
+test("ssh_config import enables agent login for the macOS Keychain pattern", () => {
+  const result = importVaultHostsFromText("ssh_config", [
+    "Host aws-sg",
+    "  HostName 1.1.1.1",
+    "  Port 2222",
+    "  User root",
+    "  AddKeysToAgent yes",
+    "  UseKeychain yes",
+    "  IdentityFile ~/.ssh/aws_root",
+    "  IdentitiesOnly yes",
+  ].join("\n"));
+
+  assert.equal(result.hosts.length, 1);
+  assert.deepEqual(
+    {
+      label: result.hosts[0].label,
+      hostname: result.hosts[0].hostname,
+      port: result.hosts[0].port,
+      username: result.hosts[0].username,
+      identityFilePaths: result.hosts[0].identityFilePaths,
+      useSshAgent: result.hosts[0].useSshAgent,
+      identityAgent: result.hosts[0].identityAgent,
+      identitiesOnly: result.hosts[0].identitiesOnly,
+      addKeysToAgent: result.hosts[0].addKeysToAgent,
+      useKeychain: result.hosts[0].useKeychain,
+    },
+    {
+      label: "aws-sg",
+      hostname: "1.1.1.1",
+      port: 2222,
+      username: "root",
+      identityFilePaths: ["~/.ssh/aws_root"],
+      useSshAgent: true,
+      identityAgent: undefined,
+      identitiesOnly: true,
+      addKeysToAgent: "yes",
+      useKeychain: true,
+    },
+  );
+});
+
+test("ssh_config AddKeysToAgent does not enable agent login when IdentityAgent is none", () => {
+  const result = importVaultHostsFromText("ssh_config", [
+    "Host local-key-only",
+    "  HostName server.example.com",
+    "  IdentityAgent none",
+    "  AddKeysToAgent yes",
+    "  IdentityFile ~/.ssh/id_ed25519",
+  ].join("\n"));
+
+  assert.equal(result.hosts.length, 1);
+  assert.equal(result.hosts[0].identityAgent, "none");
+  assert.equal(result.hosts[0].useSshAgent, false);
+});
+
+test("ssh_config AddKeysToAgent alone preserves direct-key authentication", () => {
+  const result = importVaultHostsFromText("ssh_config", [
+    "Host direct-key-host",
+    "  HostName server.example.com",
+    "  AddKeysToAgent yes",
+    "  IdentityFile ~/.ssh/id_ed25519",
+  ].join("\n"));
+
+  assert.equal(result.hosts.length, 1);
+  assert.equal(result.hosts[0].addKeysToAgent, "yes");
+  assert.notEqual(result.hosts[0].useSshAgent, true);
+});
+
+test("ssh_config IdentityAgent enables system agent authentication", () => {
+  const result = importVaultHostsFromText("ssh_config", [
+    "Host agent-host",
+    "  HostName server.example.com",
+    "  IdentityAgent $SSH_AUTH_SOCK",
+    "  IdentityFile ~/.ssh/id_ed25519",
+  ].join("\n"));
+
+  assert.equal(result.hosts.length, 1);
+  assert.equal(result.hosts[0].identityAgent, "$SSH_AUTH_SOCK");
+  assert.equal(result.hosts[0].useSshAgent, true);
+});
+
 test("detectVaultImportFormat recognizes csv and ssh_config exports", () => {
   assert.equal(
     detectVaultImportFormat("Label,Hostname,Port,Username\nweb,10.0.0.1,22,root"),

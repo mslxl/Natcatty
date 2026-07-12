@@ -188,12 +188,23 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
   } | null>(null);
 
   useEffect(() => {
-    if (form.agentForwarding) {
-      checkSshAgent().then(setSshAgentStatus);
+    let cancelled = false;
+    if (form.agentForwarding || form.useSshAgent === true) {
+      void checkSshAgent({
+        identityAgent: form.useSshAgent === true ? form.identityAgent : undefined,
+        hostname: form.hostname,
+        port: form.port,
+        username: form.username,
+      }).then((status) => {
+        if (!cancelled) setSshAgentStatus(status);
+      });
     } else {
       setSshAgentStatus(null);
     }
-  }, [form.agentForwarding, checkSshAgent]);
+    return () => {
+      cancelled = true;
+    };
+  }, [form.agentForwarding, form.useSshAgent, form.identityAgent, form.hostname, form.port, form.username, checkSshAgent]);
 
   const [groupInputValue, setGroupInputValue] = useState(form.group || "");
 

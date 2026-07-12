@@ -231,8 +231,8 @@ function createPreloadApi(ctx) {
   generateKeyPair: async (options) => {
     return ipcRenderer.invoke("netcatty:key:generate", options);
   },
-  checkSshAgent: async () => {
-    return ipcRenderer.invoke("netcatty:ssh:check-agent");
+  checkSshAgent: async (options) => {
+    return ipcRenderer.invoke("netcatty:ssh:check-agent", options);
   },
   getDefaultKeys: async () => {
     return ipcRenderer.invoke("netcatty:ssh:get-default-keys");

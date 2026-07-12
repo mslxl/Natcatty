@@ -203,9 +203,10 @@ function createMoshStatsConnectionApi(ctx) {
 
       const hasCertificate =
         typeof auth.certificate === "string" && auth.certificate.trim().length > 0;
-      const key =
-        resolveNonInteractiveKey(auth.privateKey, auth.passphrase) ||
-        await resolveNonInteractiveIdentityFile(auth.identityFilePaths, auth.passphrase);
+      const key = auth.useSshAgent
+        ? null
+        : resolveNonInteractiveKey(auth.privateKey, auth.passphrase) ||
+          await resolveNonInteractiveIdentityFile(auth.identityFilePaths, auth.passphrase);
 
       let agent = null;
       if (hasCertificate && key) {
@@ -233,6 +234,10 @@ function createMoshStatsConnectionApi(ctx) {
         if (key.passphrase) connectOpts.passphrase = key.passphrase;
       }
 
+      if (!agent && auth.useSshAgent && typeof prepareSystemSshAgentForAuth === "function") {
+        connectOpts.agent = await prepareSystemSshAgentForAuth(auth, `[${label} Stats]`);
+      }
+
       if (typeof auth.password === "string" && auth.password.length > 0) {
         connectOpts.password = auth.password;
         // Many SSH servers (PAM-backed) only offer password auth through
@@ -252,8 +257,8 @@ function createMoshStatsConnectionApi(ctx) {
       // any saved password (ssh2 tries agent before password), so a
       // public-key host that also happens to have a stored password still
       // authenticates via the agent instead of failing on password-only.
-      if (!agent && !connectOpts.privateKey) {
-        const agentSocket = getSshAgentSocket();
+      if (auth.useSshAgent !== false && !connectOpts.agent && !agent && !connectOpts.privateKey) {
+        const agentSocket = getSshAgentSocket(auth.identityAgent);
         if (agentSocket) {
           connectOpts.agent = agentSocket;
         }

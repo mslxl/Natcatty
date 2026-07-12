@@ -62,7 +62,8 @@ export const resolveHostAuth = (args: {
   const selectedAuthMethod = (
     override?.authMethod ||
     identity?.authMethod ||
-    host.authMethod
+    host.authMethod ||
+    (host.identityFilePaths?.length ? "key" : undefined)
   ) as HostAuthMethod | undefined;
 
   // Don't load key when password auth is selected.
@@ -78,7 +79,7 @@ export const resolveHostAuth = (args: {
 
   const authMethod = inferAuthMethod({
     explicit: override?.authMethod,
-    hostAuthMethod: (identity?.authMethod || host.authMethod) as HostAuthMethod | undefined,
+    hostAuthMethod: selectedAuthMethod,
     keyId,
     password,
     key,
@@ -138,3 +139,43 @@ export const resolveBridgeKeyAuth = (args: {
     passphrase: sanitizeCredentialValue(passphrase ?? key?.passphrase),
   };
 };
+
+export const resolveBridgeSshAgentAuth = (
+  host: Pick<Host, "useSshAgent" | "identityAgent" | "identitiesOnly" | "addKeysToAgent" | "useKeychain">,
+  key?: Pick<SSHKey, "certificate" | "publicKey">,
+): {
+  useSshAgent?: boolean;
+  identityAgent?: string;
+  identitiesOnly?: boolean;
+  addKeysToAgent?: string;
+  useKeychain?: boolean;
+  agentPublicKeys?: string[];
+} => {
+  if (key?.certificate?.trim()) return { useSshAgent: false };
+  if (host.useSshAgent !== true) return { useSshAgent: false };
+  return {
+    useSshAgent: true,
+    identityAgent: host.identityAgent,
+    identitiesOnly: host.identitiesOnly,
+    addKeysToAgent: host.addKeysToAgent,
+    useKeychain: host.useKeychain,
+    ...(key?.publicKey?.trim() ? { agentPublicKeys: [key.publicKey] } : {}),
+  };
+};
+
+export const hasMacKeychainAgentDirectives = (
+  host: Pick<Host, "addKeysToAgent" | "useKeychain">,
+): boolean => host.useKeychain === true
+  && host.addKeysToAgent?.toLowerCase() === "yes";
+
+export const hasBridgeSshCredentials = (auth: {
+  password?: string;
+  privateKey?: string;
+  identityFilePaths?: string[];
+  useSshAgent?: boolean;
+}): boolean => Boolean(
+  auth.password ||
+  auth.privateKey ||
+  auth.identityFilePaths?.length ||
+  auth.useSshAgent,
+);

@@ -12,3 +12,13 @@ test('advanced host settings expose per-host SSH connection timeouts', () => {
   assert.match(source, /update\("sshAuthReadyTimeoutSeconds", value\)/);
   assert.equal(source.match(/!Number\.isFinite\(value\)/g)?.length, 2);
 });
+
+test('editing enabled SSH agent controls persists the enabled state', () => {
+  assert.match(source, /enabled=\{form\.useSshAgent === true\}/);
+  assert.match(source, /useSshAgent: true,\s*identityAgent:/);
+  assert.match(source, /useSshAgent: true,\s*identitiesOnly:/);
+});
+
+test('enabling SSH agent login clears an imported none sentinel', () => {
+  assert.match(source, /enabling && isSshAgentNoneValue\(previous\.identityAgent\)/);
+});

@@ -48,6 +48,14 @@ function isSshAuthFailure(err) {
     message.includes("no authentication methods available");
 }
 
+function shouldOfferAgentForLogin(options, connectOpts) {
+  return options?.useSshAgent !== false && Boolean(connectOpts?.agent);
+}
+
+function resolveUnlockedEncryptedKeysForAuth(options, strictAgentSelection) {
+  return strictAgentSelection ? [] : (options?._unlockedEncryptedKeys || []);
+}
+
 function createStartSessionApi(ctx) {
   with (ctx) {
     /**
@@ -670,13 +678,16 @@ function createStartSessionApi(ctx) {
         });
 
         let authAgent = null;
+        const systemAuthAgent = hasCertificate
+          ? null
+          : await prepareSystemSshAgentForAuth(options, "[SSH]");
         // Kick off the default-key scan now so it overlaps the identity-file /
         // inline-key preparation below instead of running serially after it.
         // findAllDefaultPrivateKeys swallows its own fs errors and never rejects,
         // so leaving this promise briefly unawaited cannot surface an unhandled
         // rejection even if the key prep throws first.
         const defaultKeysPromise = findAllDefaultPrivateKeys();
-        const identityFile = !options.privateKey
+        const identityFile = !options.privateKey && !systemAuthAgent
           ? await loadFirstIdentityFileForAuth({
             sender,
             identityFilePaths: options.identityFilePaths,
@@ -697,7 +708,7 @@ function createStartSessionApi(ctx) {
             },
           })
           : null;
-        const inlineKey = options.privateKey
+        const inlineKey = options.privateKey && !systemAuthAgent
           ? await preparePrivateKeyForAuth({
             sender,
             privateKey: options.privateKey,
@@ -716,6 +727,10 @@ function createStartSessionApi(ctx) {
           : null;
         const effectivePrivateKey = inlineKey?.privateKey || identityFile?.privateKey;
         const effectiveIdentityPassphrase = inlineKey?.passphrase || identityFile?.passphrase;
+
+        if (systemAuthAgent) {
+          connectOpts.agent = systemAuthAgent;
+        }
 
         if (hasCertificate) {
           authAgent = new NetcattyAgent({
@@ -749,7 +764,10 @@ function createStartSessionApi(ctx) {
         // of walking ~/.ssh a second time. (Pinned by
         // sshBridge.defaultKeyEquivalence.test.cjs.)
         let usedDefaultKeyAsPrimary = false;
-        const allDefaultKeys = await defaultKeysPromise;
+        const discoveredDefaultKeys = await defaultKeysPromise;
+        const allDefaultKeys = systemAuthAgent && options.identitiesOnly
+          ? []
+          : discoveredDefaultKeys;
         const defaultKeyInfo = allDefaultKeys[0] ?? null;
         if (defaultKeyInfo) {
           log("Found default SSH key for fallback", { keyPath: defaultKeyInfo.keyPath, keyName: defaultKeyInfo.keyName });
@@ -757,7 +775,10 @@ function createStartSessionApi(ctx) {
 
         // Use unlocked encrypted keys if provided (from retry after auth failure)
         // These are passed via _unlockedEncryptedKeys from startSSHSessionWrapper
-        const unlockedEncryptedKeys = options._unlockedEncryptedKeys || [];
+        const unlockedEncryptedKeys = resolveUnlockedEncryptedKeysForAuth(
+          options,
+          Boolean(systemAuthAgent && options.identitiesOnly),
+        );
         if (unlockedEncryptedKeys.length > 0) {
           log("Using unlocked encrypted keys from retry", {
             count: unlockedEncryptedKeys.length,
@@ -770,7 +791,9 @@ function createStartSessionApi(ctx) {
         // identityFilePaths) even if loading that key failed (issue #1614).
         if (!connectOpts.privateKey && !connectOpts.password && !connectOpts.agent) {
           // First, try to use ssh-agent if available (this is what regular SSH does)
-          const sshAgentSocket = await getAvailableAgentSocket();
+          const sshAgentSocket = options.useSshAgent !== false
+            ? await getAvailableAgentSocket()
+            : null;
 
           if (sshAgentSocket) {
             log("No auth method configured, trying ssh-agent first", { agentSocket: sshAgentSocket });
@@ -839,7 +862,7 @@ function createStartSessionApi(ctx) {
           }
 
           // Then try agent if configured (try agent before password since it's usually faster)
-          if (connectOpts.agent) {
+          if (shouldOfferAgentForLogin(options, connectOpts)) {
             authMethods.push({ type: "agent", id: "agent" });
           }
 
@@ -1089,7 +1112,7 @@ function createStartSessionApi(ctx) {
         // Handle chain/proxy connections
         if (hasJumpHosts) {
           // Pass fetched keys to chain connection to avoid re-reading files
-          options._defaultKeys = allDefaultKeys;
+          options._defaultKeys = discoveredDefaultKeys;
           options._sshDiagnosticLogger = log;
 
           const chainResult = await connectThroughChain(
@@ -1528,4 +1551,6 @@ module.exports = {
   SSH_TCP_CONNECT_TIMEOUT_MS,
   createStartSessionApi,
   resolveSshConnectionTimeouts,
+  shouldOfferAgentForLogin,
+  resolveUnlockedEncryptedKeysForAuth,
 };

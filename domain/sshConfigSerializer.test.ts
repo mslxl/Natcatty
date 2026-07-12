@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import type { Host } from "./models.ts";
 import { serializeHostsToSshConfig } from "./sshConfigSerializer.ts";
+import { importVaultHostsFromText } from "./vaultImport.ts";
 
 const makeHost = (overrides: Partial<Host> = {}): Host => ({
   id: "host-1",
@@ -32,4 +33,50 @@ test("serializeHostsToSshConfig omits ForwardX11 for mosh hosts", () => {
   const config = serializeHostsToSshConfig([makeHost({ moshEnabled: true, x11Forwarding: true })]);
 
   assert.doesNotMatch(config, /ForwardX11/);
+});
+
+test("serializeHostsToSshConfig preserves system agent authentication directives", () => {
+  const config = serializeHostsToSshConfig([makeHost({
+    identityFilePaths: ["~/.ssh/aws_root"],
+    useSshAgent: true,
+    identityAgent: "$SSH_AUTH_SOCK",
+    identitiesOnly: true,
+    addKeysToAgent: "yes",
+    useKeychain: true,
+  })]);
+
+  assert.match(config, /IdentityFile ~\/\.ssh\/aws_root/);
+  assert.match(config, /IdentityAgent \$SSH_AUTH_SOCK/);
+  assert.match(config, /IdentitiesOnly yes/);
+  assert.match(config, /AddKeysToAgent yes/);
+  assert.match(config, /UseKeychain yes/);
+});
+
+test("serializeHostsToSshConfig preserves a disabled imported agent setting", () => {
+  const config = serializeHostsToSshConfig([makeHost({
+    identityFilePaths: ["~/.ssh/aws_root"],
+    useSshAgent: false,
+    addKeysToAgent: "yes",
+    useKeychain: true,
+  })]);
+  const imported = importVaultHostsFromText("ssh_config", config);
+
+  assert.match(config, /IdentityAgent none/);
+  assert.notEqual(imported.hosts[0]?.useSshAgent, true);
+});
+
+test("serializeHostsToSshConfig preserves a plain explicit agent opt-out", () => {
+  const config = serializeHostsToSshConfig([makeHost({ useSshAgent: false })]);
+  const imported = importVaultHostsFromText("ssh_config", config);
+
+  assert.match(config, /IdentityAgent none/);
+  assert.equal(imported.hosts[0]?.useSshAgent, false);
+});
+
+test("serializeHostsToSshConfig preserves an enabled default agent setting", () => {
+  const config = serializeHostsToSshConfig([makeHost({ useSshAgent: true })]);
+  const imported = importVaultHostsFromText("ssh_config", config);
+
+  assert.match(config, /IdentityAgent \$\{SSH_AUTH_SOCK\}/);
+  assert.equal(imported.hosts[0]?.useSshAgent, true);
 });

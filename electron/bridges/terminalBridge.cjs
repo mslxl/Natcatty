@@ -64,6 +64,10 @@ const { enableTcpNoDelay } = require("./tcpNoDelay.cjs");
 const { releaseConnectionRef } = require("./sshConnectionPool.cjs");
 const { normalizeTerminalEncoding, encodeTerminalInput } = require("./terminalEncoding.cjs");
 const { receiveYmodemFiles, sendYmodemCancel, sendYmodemFile } = require("./ymodemTransfer.cjs");
+const {
+  getNativeOpenSshAgentSocket,
+  prepareSystemSshAgentForAuth,
+} = require("./sshAuthHelper.cjs");
 
 const execFileAsync = promisify(execFile);
 
@@ -576,6 +580,8 @@ const moshSessionApi = createMoshSessionApi({
   get selectZmodemUploadFiles() { return selectZmodemUploadFiles; },
   get selectZmodemDownloadDirectory() { return selectZmodemDownloadDirectory; },
   ensureMoshStatsConnection: (...args) => require("./sshBridge.cjs").ensureMoshStatsConnection(...args),
+  getAvailableAgentSocket: getNativeOpenSshAgentSocket,
+  prepareSystemSshAgentForAuth,
   bundledMoshClient: (...args) => bundledMoshClient(...args),
 });
 const {
@@ -605,6 +611,8 @@ const etSessionApi = createEtSessionApi({
   createZmodemSentry, trackSessionIdlePrompt, createPtyOutputBuffer,
   findExecutable,
   openTerminalOutputSession, closeTerminalOutputSession,
+  getAvailableAgentSocket: getNativeOpenSshAgentSocket,
+  prepareSystemSshAgentForAuth,
   get selectZmodemUploadFiles() { return selectZmodemUploadFiles; },
   get selectZmodemDownloadDirectory() { return selectZmodemDownloadDirectory; },
   bundledEtClient: (...args) => bundledEtClient(...args),

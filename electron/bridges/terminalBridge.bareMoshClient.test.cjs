@@ -122,6 +122,98 @@ test("mosh UTF-8 decoder preserves fragmented Chinese output", () => {
   assert.equal(decoded.includes("\uFFFD"), false);
 });
 
+test("Mosh prepares the configured system agent before building native ssh options", async (t) => {
+  const calls = [];
+  const tempBase = makeTmp();
+  t.after(() => fs.rmSync(tempBase, { recursive: true, force: true }));
+  const api = createMoshSessionApi({
+    os,
+    path,
+    fs,
+    process,
+    randomUUID: () => "fixed",
+    tempDirBridge: { getTempFilePath: (fileName) => path.join(tempBase, fileName) },
+    prepareSystemSshAgentForAuth: async (options) => {
+      calls.push(["prepare", options.identityAgent, options.useKeychain]);
+    },
+    getAvailableAgentSocket: async (identityAgent) => {
+      calls.push(["resolve", identityAgent]);
+      return "/tmp/custom-agent.sock";
+    },
+  });
+
+  const prepared = await api.prepareMoshSshAgentOptions({
+    hostname: "host.example",
+    username: "alice",
+    useSshAgent: true,
+    identityAgent: "/tmp/custom-agent.sock",
+    useKeychain: true,
+    addKeysToAgent: "yes",
+    identityFilePaths: ["~/.ssh/id_work"],
+  });
+  const auth = await api.buildMoshSshAuthArgs({
+    ...prepared,
+    identitiesOnly: true,
+    identityFilePaths: ["~/.ssh/id_work"],
+  }, "session-1");
+  const env = api.applyMoshSshAgentEnvironment({}, prepared);
+
+  assert.deepEqual(calls, [
+    ["prepare", "/tmp/custom-agent.sock", true],
+    ["resolve", "/tmp/custom-agent.sock"],
+  ]);
+  assert.deepEqual(auth.sshArgs, [
+    "-i", path.join(os.homedir(), ".ssh", "id_work.pub"),
+    "-o", "IdentitiesOnly=yes",
+    "-o", "IdentityAgent=/tmp/custom-agent.sock",
+  ]);
+  assert.equal(env.SSH_AUTH_SOCK, "/tmp/custom-agent.sock");
+
+  const selected = await api.buildMoshSshAuthArgs({
+    ...prepared,
+    identitiesOnly: true,
+    keyId: "vault-key",
+    agentPublicKeys: ["ssh-ed25519 AAAASELECTED"],
+  }, "session-selected");
+  const selectedPath = selected.sshArgs[1];
+  assert.deepEqual(selected.sshArgs.slice(0, 2), ["-i", selectedPath]);
+  assert.equal(fs.readFileSync(selectedPath, "utf8"), "ssh-ed25519 AAAASELECTED\n");
+  assert.ok(selected.sshArgs.includes("IdentitiesOnly=yes"));
+  api.cleanupMoshAuthTempFiles(selected.tempFiles);
+});
+
+test("Mosh explicitly disables native agent login after an opt-out", async () => {
+  const api = createMoshSessionApi({
+    os,
+    path,
+    fs,
+    process,
+    randomUUID: () => "fixed",
+  });
+  const auth = await api.buildMoshSshAuthArgs({ useSshAgent: false }, "session-disabled");
+  const env = api.applyMoshSshAgentEnvironment(
+    { SSH_AUTH_SOCK: "/tmp/inherited-agent.sock" },
+    { useSshAgent: false },
+  );
+
+  assert.deepEqual(auth.sshArgs, ["-o", "IdentityAgent=none"]);
+  assert.equal(env.SSH_AUTH_SOCK, undefined);
+
+  const forwardingAuth = await api.buildMoshSshAuthArgs({
+    useSshAgent: false,
+    agentForwarding: true,
+  }, "session-forwarding");
+  const forwardingEnv = api.applyMoshSshAgentEnvironment(
+    { SSH_AUTH_SOCK: "/tmp/forwarded-agent.sock" },
+    { useSshAgent: false, agentForwarding: true },
+  );
+  assert.deepEqual(forwardingAuth.sshArgs, [
+    "-o", "IdentityAgent=none",
+    "-o", "ForwardAgent=${SSH_AUTH_SOCK}",
+  ]);
+  assert.equal(forwardingEnv.SSH_AUTH_SOCK, "/tmp/forwarded-agent.sock");
+});
+
 test("removed Mosh client detection APIs are not exposed to the renderer", () => {
   const bridgeSource = fs.readFileSync(path.join(__dirname, "terminalBridge.cjs"), "utf8");
   const preloadSource = fs.readFileSync(path.join(__dirname, "..", "preload.cjs"), "utf8");
