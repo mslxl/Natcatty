@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const { utils } = require("ssh2");
 const {
   prepareSystemSshAgent,
+  resolveIdentityPath,
 } = require("./systemSshAgent.cjs");
 
 function makePublicKey() {
@@ -33,6 +34,22 @@ function getIdentities(agent) {
     });
   });
 }
+
+test("IdentityFile paths expand standard OpenSSH connection tokens", () => {
+  const resolved = resolveIdentityPath(
+    "%d/.ssh/key-%h-%p-%r-%u-%l-%L-%i-%%-%C",
+    {
+      hostname: "server.example.com",
+      port: 2222,
+      username: "deploy",
+      localHostname: "mac.example.net",
+      localUsername: "alice",
+      uid: 501,
+    },
+  );
+
+  assert.match(resolved, /key-server\.example\.com-2222-deploy-alice-mac\.example\.net-mac-501-%-[a-f0-9]{40}$/);
+});
 
 test("prepareSystemSshAgent prioritizes the identity selected by IdentityFile", async () => {
   const unrelated = makePublicKey();

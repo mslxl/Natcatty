@@ -3,6 +3,7 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { createHash } = require("node:crypto");
 const { execFile } = require("node:child_process");
 const { promisify } = require("node:util");
 const { utils } = require("ssh2");
@@ -20,12 +21,33 @@ function publicKeyBlob(key) {
   }
 }
 
-function resolveIdentityPath(rawPath, { hostname = "", username = "", env = process.env } = {}) {
+function resolveIdentityPath(rawPath, context = {}) {
   if (typeof rawPath !== "string") return "";
+  const env = context.env ?? process.env;
+  const localHostname = context.localHostname || os.hostname();
+  const hostname = context.hostname || "";
+  const port = String(context.port || 22);
+  const username = context.username || "";
+  const proxyJump = context.proxyJump || "";
+  const tokenValues = {
+    "%": "%",
+    d: os.homedir(),
+    h: hostname,
+    i: String(context.uid ?? (typeof process.getuid === "function" ? process.getuid() : "")),
+    j: proxyJump,
+    k: context.hostKeyAlias || hostname,
+    L: context.shortLocalHostname || localHostname.split(".")[0],
+    l: localHostname,
+    n: context.originalHostname || hostname,
+    p: port,
+    r: username,
+    u: context.localUsername || os.userInfo().username,
+  };
+  tokenValues.C = createHash("sha1")
+    .update(`${localHostname}${hostname}${port}${username}${proxyJump}`)
+    .digest("hex");
   let resolved = rawPath.trim()
-    .replace(/%h/g, hostname)
-    .replace(/%r/g, username)
-    .replace(/%d/g, os.homedir())
+    .replace(/%([%CdhijkLlnpru])/g, (match, token) => tokenValues[token] ?? match)
     .replace(/^~(?=$|[\\/])/, os.homedir())
     .replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_match, name) => env[name] ?? "")
     .replace(/\$([A-Za-z_][A-Za-z0-9_]*)/g, (_match, name) => env[name] ?? "");
@@ -147,7 +169,7 @@ async function prepareSystemSshAgent(options, injected = {}) {
   const { preferred, providedPreferredCount, resolvedIdentityPaths, unavailablePublicKeyPaths } = await loadPreferredPublicKeyBlobs(
     options.identityFilePaths,
     options.agentPublicKeys,
-    { hostname: options.hostname, username: options.username, env: deps.env },
+    { hostname: options.hostname, port: options.port, username: options.username, env: deps.env },
     deps,
   );
 

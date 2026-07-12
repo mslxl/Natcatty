@@ -255,14 +255,22 @@ export const HostDetailsAdvancedSections: React.FC<HostDetailsAdvancedSectionsPr
                   className="w-44 font-mono text-xs"
                   placeholder="$SSH_AUTH_SOCK"
                   value={form.identityAgent ?? ""}
-                  onChange={(event) => update("identityAgent", event.target.value || undefined)}
+                  onChange={(event) => setForm((previous: typeof form) => ({
+                    ...previous,
+                    useSshAgent: true,
+                    identityAgent: event.target.value || undefined,
+                  }))}
                 />
               </HostDetailsSettingRow>
               <ToggleRow
                 label={t("hostDetails.systemSshAgent.identitiesOnly")}
                 hint={t("hostDetails.systemSshAgent.identitiesOnly.desc")}
                 enabled={!!form.identitiesOnly}
-                onToggle={() => update("identitiesOnly", !form.identitiesOnly)}
+                onToggle={() => setForm((previous: typeof form) => ({
+                  ...previous,
+                  useSshAgent: true,
+                  identitiesOnly: !previous.identitiesOnly,
+                }))}
               />
             </>
           )}

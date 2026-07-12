@@ -786,6 +786,7 @@ async function prepareSystemSshAgentForAuth(options, logPrefix = "[SSHAuth]") {
     useKeychain: options.useKeychain,
     agentPublicKeys: options.agentPublicKeys,
     hostname: options.hostname,
+    port: options.port,
     username: options.username,
   }, {
     log: (message, details) => console.log(`${logPrefix} ${message}`, details ?? ""),
