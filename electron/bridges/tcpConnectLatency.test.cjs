@@ -73,3 +73,40 @@ test("TCP latency returns no value when the endpoint cannot be reached", async (
   assert.equal(await pending, null);
   assert.equal(socket.destroyedByProbe, true);
 });
+
+test("TCP latency deduplicates concurrent probes and reuses a recent result", async () => {
+  const sockets = [];
+  const connectCallbacks = [];
+  const probeTimes = [100, 104, 200, 205];
+  let clock = 1_000;
+  const measure = createTcpConnectLatencyProbe({
+    net: {
+      isIP: () => 4,
+      createConnection(_options, callback) {
+        const socket = createSocket();
+        sockets.push(socket);
+        connectCallbacks.push(callback);
+        return socket;
+      },
+    },
+    now: () => probeTimes.shift(),
+    cacheNow: () => clock,
+    cacheTtlMs: 30_000,
+  });
+
+  const first = measure({ hostname: "192.0.2.30", port: 22 });
+  const concurrent = measure({ hostname: "192.0.2.30", port: 22 });
+  assert.equal(first, concurrent);
+  assert.equal(sockets.length, 1);
+
+  connectCallbacks[0]();
+  assert.equal(await first, 4);
+  assert.equal(await measure({ hostname: "192.0.2.30", port: 22 }), 4);
+  assert.equal(sockets.length, 1);
+
+  clock += 30_001;
+  const refreshed = measure({ hostname: "192.0.2.30", port: 22 });
+  assert.equal(sockets.length, 2);
+  connectCallbacks[1]();
+  assert.equal(await refreshed, 5);
+});
