@@ -46,7 +46,9 @@ export function useVaultImportHandlers({
   
           toast.info(t("vault.import.toast.start", { format: formatLabel }));
   
-          const text = await readTextFile(file);
+          const text = await readTextFile(file, {
+            fallbackEncoding: format === "mobaxterm" ? "gb18030" : undefined,
+          });
           const result = importVaultHostsFromText(format, text, {
             fileName: file.name,
           });

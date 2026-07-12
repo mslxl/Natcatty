@@ -1,4 +1,11 @@
-export async function readTextFile(file: File): Promise<string> {
+type ReadTextFileOptions = {
+  fallbackEncoding?: string;
+};
+
+export async function readTextFile(
+  file: File,
+  options: ReadTextFileOptions = {},
+): Promise<string> {
   const buf = await file.arrayBuffer();
   const bytes = new Uint8Array(buf);
 
@@ -21,6 +28,14 @@ export async function readTextFile(file: File): Promise<string> {
     offset = 3;
   }
 
-  const decoder = new TextDecoder(encoding);
-  return decoder.decode(bytes.slice(offset));
+  const content = bytes.slice(offset);
+  if (offset === 0 && options.fallbackEncoding) {
+    try {
+      return new TextDecoder("utf-8", { fatal: true }).decode(content);
+    } catch {
+      return new TextDecoder(options.fallbackEncoding).decode(content);
+    }
+  }
+
+  return new TextDecoder(encoding).decode(content);
 }
