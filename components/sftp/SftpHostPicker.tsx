@@ -96,10 +96,10 @@ const SftpHostPickerInner: React.FC<SftpHostPickerProps> = ({
     }, [filteredConnectedHosts, filteredHosts]);
 
     useEffect(() => {
-        if (open) {
-            setSelectedIndex(0);
-            setTimeout(() => inputRef.current?.focus(), 50);
-        }
+        if (!open) return;
+        setSelectedIndex(0);
+        const focusTimer = setTimeout(() => inputRef.current?.focus(), 50);
+        return () => clearTimeout(focusTimer);
     }, [open]);
 
     useEffect(() => {
