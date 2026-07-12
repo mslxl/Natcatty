@@ -169,6 +169,7 @@ test("prepareEtSshEnvironment enables agent auth for a password-default imported
     useSshAgent: true,
     _resolvedSshAgentSocket: "/tmp/custom agent.sock",
     identityFilePaths: ["~/.ssh/id_work"],
+    agentPublicKeys: ["ssh-ed25519 AAAASELECTED"],
     identitiesOnly: true,
   });
 
@@ -181,6 +182,10 @@ test("prepareEtSshEnvironment enables agent auth for a password-default imported
     env.sshOptions.includes(`IdentityFile=${path.join(base, "home", ".ssh", "id_work.pub").replace(/\\/g, "/")}`),
     "agent-only mode should use only the public file as its identity selector",
   );
+  const selectedIdentityOption = env.sshOptions.find((option) => option.includes("-agent-0.pub"));
+  assert.ok(selectedIdentityOption);
+  const selectedIdentityPath = selectedIdentityOption.split("=")[1];
+  assert.equal(fs.readFileSync(selectedIdentityPath, "utf8"), "ssh-ed25519 AAAASELECTED");
   assert.equal(
     api.applyEtSshAgentEnvironment({}, {
       useSshAgent: true,

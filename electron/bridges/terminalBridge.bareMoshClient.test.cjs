@@ -122,14 +122,17 @@ test("mosh UTF-8 decoder preserves fragmented Chinese output", () => {
   assert.equal(decoded.includes("\uFFFD"), false);
 });
 
-test("Mosh prepares the configured system agent before building native ssh options", async () => {
+test("Mosh prepares the configured system agent before building native ssh options", async (t) => {
   const calls = [];
+  const tempBase = makeTmp();
+  t.after(() => fs.rmSync(tempBase, { recursive: true, force: true }));
   const api = createMoshSessionApi({
     os,
     path,
     fs,
     process,
     randomUUID: () => "fixed",
+    tempDirBridge: { getTempFilePath: (fileName) => path.join(tempBase, fileName) },
     prepareSystemSshAgentForAuth: async (options) => {
       calls.push(["prepare", options.identityAgent, options.useKeychain]);
     },
@@ -165,6 +168,18 @@ test("Mosh prepares the configured system agent before building native ssh optio
     "-o", "IdentityAgent=/tmp/custom-agent.sock",
   ]);
   assert.equal(env.SSH_AUTH_SOCK, "/tmp/custom-agent.sock");
+
+  const selected = await api.buildMoshSshAuthArgs({
+    ...prepared,
+    identitiesOnly: true,
+    keyId: "vault-key",
+    agentPublicKeys: ["ssh-ed25519 AAAASELECTED"],
+  }, "session-selected");
+  const selectedPath = selected.sshArgs[1];
+  assert.deepEqual(selected.sshArgs.slice(0, 2), ["-i", selectedPath]);
+  assert.equal(fs.readFileSync(selectedPath, "utf8"), "ssh-ed25519 AAAASELECTED\n");
+  assert.ok(selected.sshArgs.includes("IdentitiesOnly=yes"));
+  api.cleanupMoshAuthTempFiles(selected.tempFiles);
 });
 
 test("Mosh explicitly disables native agent login after an opt-out", async () => {

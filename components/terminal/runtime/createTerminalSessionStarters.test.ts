@@ -1230,6 +1230,7 @@ test("startSSH resets the TCP dial timeout state before password fallback", asyn
     error?: string,
   ) => void = noop;
   let startCalls = 0;
+  const startOptions: Record<string, unknown>[] = [];
   const tcpDialState: boolean[] = [];
   const terminalBackend = {
     backendAvailable: () => true,
@@ -1238,8 +1239,9 @@ test("startSSH resets the TCP dial timeout state before password fallback", asyn
     localAvailable: () => true,
     serialAvailable: () => true,
     execAvailable: () => true,
-    startSSHSession: async () => {
+    startSSHSession: async (options: Record<string, unknown>) => {
       startCalls += 1;
+      startOptions.push(options);
       if (startCalls === 1) {
         chainProgressListener("session-1", 1, 1, "target.example.test", "tcp-connected");
         throw new Error("Authentication failed");
@@ -1270,6 +1272,7 @@ test("startSSH resets the TCP dial timeout state before password fallback", asyn
       authMethod: "key",
       identityFileId: "key-1",
       password: "login-secret",
+      useSshAgent: true,
     },
     keys: [{
       id: "key-1",
@@ -1287,6 +1290,8 @@ test("startSSH resets the TCP dial timeout state before password fallback", asyn
   await createTerminalSessionStarters(ctx as never).startSSH(createTermStub() as never);
 
   assert.equal(startCalls, 2);
+  assert.equal(startOptions[0]?.useSshAgent, true);
+  assert.equal(startOptions[1]?.useSshAgent, false);
   assert.deepEqual(tcpDialState, [false, false, true, false]);
 });
 

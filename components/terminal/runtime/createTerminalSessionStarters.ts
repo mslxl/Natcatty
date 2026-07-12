@@ -490,6 +490,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         password?: string;
         key?: SSHKey;
         useIdentityFiles?: boolean;
+        useSshAgent?: boolean;
       }): Promise<string> => {
         ctx.setIsConnectionAwaitingUserInput?.(false);
         ctx.setIsConnectionPastTcpDial?.(false);
@@ -537,7 +538,9 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           sessionLog: ctx.sessionLog?.enabled ? ctx.sessionLog : undefined,
           sshDebugLogEnabled: ctx.sshDebugLogEnabled,
           identityFilePaths: attempt.useIdentityFiles ? targetIdentityFilePaths : undefined,
-          ...resolveBridgeSshAgentAuth(ctx.host, attempt.key),
+          ...(attempt.useSshAgent === false
+            ? { useSshAgent: false }
+            : resolveBridgeSshAgentAuth(ctx.host, attempt.key)),
           knownHosts: ctx.knownHosts,
           sudoAutofillPassword: resolveSavedSudoAutofillPassword(),
           // Ask the bridge to reuse the source tab's authenticated connection
@@ -604,7 +607,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
               ...prev,
               "Key auth failed. Trying password...",
             ]);
-            id = await startAttempt({ password: effectivePassword });
+            id = await startAttempt({ password: effectivePassword, useSshAgent: false });
           } else {
             throw err;
           }

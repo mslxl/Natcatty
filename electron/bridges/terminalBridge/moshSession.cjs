@@ -231,6 +231,15 @@ function createMoshSessionApi(ctx) {
             tempFiles.push(certPath);
             sshArgs.push("-o", `CertificateFile=${certPath}`);
           }
+        } else if (options.useSshAgent && Array.isArray(options.agentPublicKeys) && options.agentPublicKeys.length > 0) {
+          for (let index = 0; index < options.agentPublicKeys.length; index += 1) {
+            const selectorPath = await writeMoshAuthTempFile(
+              safeMoshAuthFileName(sessionId, `${options.keyId || "agent"}-${index}`, ".pub"),
+              options.agentPublicKeys[index],
+            );
+            tempFiles.push(selectorPath);
+            sshArgs.push("-i", selectorPath);
+          }
         } else if (Array.isArray(options.identityFilePaths) && options.identityFilePaths.length > 0) {
           for (const keyPath of options.identityFilePaths) {
             const normalized = normalizeMoshIdentityPath(keyPath);

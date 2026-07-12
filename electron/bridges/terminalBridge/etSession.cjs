@@ -351,6 +351,16 @@ main();
         }
       }
 
+      if (options.useSshAgent && Array.isArray(options.agentPublicKeys)) {
+        for (let index = 0; index < options.agentPublicKeys.length; index += 1) {
+          const publicKey = options.agentPublicKeys[index];
+          if (typeof publicKey !== "string" || !publicKey.trim()) continue;
+          const selectorPath = path.join(sshDir, `${safeId}-agent-${index}.pub`);
+          writeSecureFile(selectorPath, publicKey, 0o600);
+          identityPaths.push(selectorPath);
+        }
+      }
+
       // Certificate
       if (options.certificate) {
         const certPath = path.join(sshDir, `${safeId}-cert.pub`);
