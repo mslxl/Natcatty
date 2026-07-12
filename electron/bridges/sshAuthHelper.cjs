@@ -457,19 +457,133 @@ function ssh2AgentConnectable(agentPath, options = {}) {
   const timeoutMs = options.timeoutMs ?? 1000;
   return new Promise((resolve) => {
     let settled = false;
+    let stream = null;
     const finish = (ok) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (stream) {
+        stream.removeAllListeners();
+        stream.destroy();
+      }
       resolve(ok);
     };
     const timer = setTimeout(() => finish(false), timeoutMs);
     timer.unref?.();
     try {
-      createAgentImpl(agentPath).getIdentities((error) => finish(!error));
+      createAgentImpl(agentPath).getStream((error, agentStream) => {
+        if (error || !agentStream) return finish(false);
+        stream = agentStream;
+        let response = Buffer.alloc(0);
+        stream.on("data", (chunk) => {
+          response = Buffer.concat([response, chunk]);
+          if (response.length < 5) return;
+          const payloadLength = response.readUInt32BE(0);
+          if (payloadLength < 1 || payloadLength > 1024 * 1024) return finish(false);
+          if (response.length < payloadLength + 4) return;
+          finish(response[4] === 12 || response[4] === 5);
+        });
+        stream.once("error", () => finish(false));
+        stream.once("end", () => finish(false));
+        stream.once("close", () => finish(false));
+        stream.write(Buffer.from([0, 0, 0, 1, 11]));
+      });
     } catch {
       finish(false);
     }
+  });
+}
+
+function cygwinAgentConnectable(agentPath, options = {}) {
+  const timeoutMs = options.timeoutMs ?? 1000;
+  const readFile = options.readFileImpl || require("node:fs").promises.readFile;
+  const createConnection = options.createConnectionImpl || require("node:net").createConnection;
+  const descriptorPattern = /^!<socket >(\d+) s ([A-Z0-9]{8}-[A-Z0-9]{8}-[A-Z0-9]{8}-[A-Z0-9]{8})/;
+
+  return new Promise((resolve) => {
+    let settled = false;
+    let activeSocket = null;
+    const finish = (ok) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (activeSocket) {
+        activeSocket.removeAllListeners();
+        activeSocket.destroy();
+      }
+      resolve(ok);
+    };
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    timer.unref?.();
+
+    const negotiate = (port, secret, credentials, keepOpen) => new Promise((resolveNegotiation, rejectNegotiation) => {
+      const socket = activeSocket = createConnection({ host: "127.0.0.1", port });
+      let state = "secret";
+      let response = Buffer.alloc(0);
+      const fail = (error) => {
+        socket.removeAllListeners();
+        socket.destroy();
+        rejectNegotiation(error instanceof Error ? error : new Error("Cygwin agent negotiation failed"));
+      };
+      socket.once("connect", () => socket.write(secret));
+      socket.once("error", fail);
+      socket.once("end", () => fail(new Error("Cygwin agent ended during negotiation")));
+      socket.once("close", () => fail(new Error("Cygwin agent closed during negotiation")));
+      socket.on("data", (chunk) => {
+        response = Buffer.concat([response, chunk]);
+        const needed = state === "secret" ? 16 : 12;
+        if (response.length < needed) return;
+        const value = response.subarray(0, needed);
+        response = response.subarray(needed);
+        if (state === "secret") {
+          state = "credentials";
+          socket.write(credentials);
+          return;
+        }
+        socket.removeAllListeners();
+        if (!keepOpen) {
+          socket.destroy();
+          activeSocket = null;
+        }
+        resolveNegotiation({ credentials: value, socket: keepOpen ? socket : null, buffered: response });
+      });
+    });
+
+    readFile(agentPath, "utf8").then(async (contents) => {
+      const match = descriptorPattern.exec(String(contents));
+      if (!match) return finish(false);
+      const port = Number(match[1]);
+      const secret = Buffer.from(match[2].replace(/-/g, ""), "hex");
+      for (let offset = 0; offset < secret.length; offset += 4) {
+        secret.writeUInt32LE(secret.readUInt32BE(offset), offset);
+      }
+      try {
+        const first = await negotiate(port, secret, Buffer.alloc(12), false);
+        if (settled) return;
+        const second = await negotiate(port, secret, first.credentials, true);
+        if (settled || !second.socket) return;
+        activeSocket = second.socket;
+        let response = second.buffered;
+        const inspectResponse = () => {
+          if (response.length < 5) return;
+          const payloadLength = response.readUInt32BE(0);
+          if (payloadLength < 1 || payloadLength > 1024 * 1024) return finish(false);
+          if (response.length < payloadLength + 4) return;
+          finish(response[4] === 12 || response[4] === 5);
+        };
+        activeSocket.on("data", (chunk) => {
+          response = Buffer.concat([response, chunk]);
+          inspectResponse();
+        });
+        activeSocket.once("error", () => finish(false));
+        activeSocket.once("end", () => finish(false));
+        activeSocket.once("close", () => finish(false));
+        activeSocket.write(Buffer.from([0, 0, 0, 1, 11]));
+        inspectResponse();
+      } catch {
+        finish(false);
+      }
+    }).catch(() => finish(false));
   });
 }
 
@@ -579,7 +693,9 @@ async function getAvailableAgentSocket(identityAgent, injected = {}) {
     const socketPath = configuredSocket || WIN_SSH_AGENT_PIPE;
     const running = isWindowsNamedPipe(socketPath)
       ? await (injected.windowsPipeConnectable || windowsPipeConnectable)(socketPath)
-      : await (injected.ssh2AgentConnectable || ssh2AgentConnectable)(socketPath);
+      : socketPath === "pageant"
+        ? await (injected.ssh2AgentConnectable || ssh2AgentConnectable)(socketPath)
+        : await (injected.cygwinAgentConnectable || cygwinAgentConnectable)(socketPath);
     return running ? socketPath : null;
   }
   const socketPath = getSshAgentSocket(configuredSocket);
@@ -1169,6 +1285,7 @@ module.exports = {
   getNativeOpenSshAgentSocket,
   isWindowsNamedPipe,
   ssh2AgentConnectable,
+  cygwinAgentConnectable,
   socketAgentConnectable,
   resolveIdentityAgentPath,
   prepareSystemSshAgentForAuth,

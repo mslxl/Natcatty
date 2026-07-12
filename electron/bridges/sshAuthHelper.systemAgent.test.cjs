@@ -6,10 +6,12 @@ const fs = require("node:fs");
 const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
+const { Duplex } = require("node:stream");
 
 const {
   getAvailableAgentSocket,
   getNativeOpenSshAgentSocket,
+  cygwinAgentConnectable,
   isWindowsNamedPipe,
   socketAgentConnectable,
   ssh2AgentConnectable,
@@ -30,6 +32,10 @@ test("Windows Pageant and Cygwin overrides use ssh2 agent validation", async () 
       throw new Error("named-pipe validation should not run");
     },
     ssh2AgentConnectable: async (agentPath) => {
+      checked.push(agentPath);
+      return true;
+    },
+    cygwinAgentConnectable: async (agentPath) => {
       checked.push(agentPath);
       return true;
     },
@@ -63,13 +69,102 @@ test("Windows named pipe overrides retain the lightweight pipe probe", async () 
 
 test("ssh2 agent validation times out when an agent does not respond", async () => {
   const start = Date.now();
+  const stream = new Duplex({
+    read() {},
+    write(_chunk, _encoding, callback) { callback(); },
+  });
   const available = await ssh2AgentConnectable("pageant", {
     timeoutMs: 20,
-    createAgentImpl: () => ({ getIdentities() {} }),
+    createAgentImpl: () => ({ getStream(callback) { callback(null, stream); } }),
   });
 
   assert.equal(available, false);
+  assert.equal(stream.destroyed, true);
   assert.ok(Date.now() - start < 500);
+});
+
+test("Cygwin agent validation closes a stalled negotiation socket", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-cygwin-agent-"));
+  const descriptorPath = path.join(dir, "agent.socket");
+  const server = net.createServer();
+  let acceptedSocket = null;
+  let acceptedSocketClosed;
+  const closed = new Promise((resolve) => { acceptedSocketClosed = resolve; });
+  server.on("connection", (socket) => {
+    acceptedSocket = socket;
+    socket.resume();
+    socket.once("close", acceptedSocketClosed);
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  fs.writeFileSync(
+    descriptorPath,
+    `!<socket >${address.port} s 00000000-00000000-00000000-00000000`,
+  );
+  t.after(() => {
+    server.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  assert.equal(await cygwinAgentConnectable(descriptorPath, { timeoutMs: 20 }), false);
+  await Promise.race([
+    closed,
+    new Promise((_, reject) => setTimeout(() => reject(new Error("Cygwin probe connection stayed open")), 500)),
+  ]);
+  assert.equal(acceptedSocket?.destroyed, true);
+});
+
+test("Cygwin agent validation completes the two-stage handshake", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-cygwin-agent-ok-"));
+  const descriptorPath = path.join(dir, "agent.socket");
+  const server = net.createServer();
+  let connectionIndex = 0;
+  server.on("connection", (socket) => {
+    connectionIndex += 1;
+    const currentConnection = connectionIndex;
+    let state = "secret";
+    let buffered = Buffer.alloc(0);
+    socket.on("data", (chunk) => {
+      buffered = Buffer.concat([buffered, chunk]);
+      while (true) {
+        const needed = state === "secret" ? 16 : state === "credentials" ? 12 : 5;
+        if (buffered.length < needed) return;
+        const value = buffered.subarray(0, needed);
+        buffered = buffered.subarray(needed);
+        if (state === "secret") {
+          socket.write(value);
+          state = "credentials";
+        } else if (state === "credentials") {
+          socket.write(currentConnection === 1 ? Buffer.alloc(12, 7) : Buffer.alloc(12, 9));
+          state = currentConnection === 1 ? "done" : "agent";
+        } else if (state === "agent") {
+          socket.write(Buffer.from([0, 0, 0, 5, 12, 0, 0, 0, 0]));
+          state = "done";
+        } else {
+          return;
+        }
+      }
+    });
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  fs.writeFileSync(
+    descriptorPath,
+    `!<socket >${address.port} s 00000000-00000000-00000000-00000000`,
+  );
+  t.after(() => {
+    server.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  assert.equal(await cygwinAgentConnectable(descriptorPath, { timeoutMs: 500 }), true);
+  assert.equal(connectionIndex, 2);
 });
 
 test("Unix agent availability requires a working agent protocol response", async (t) => {
