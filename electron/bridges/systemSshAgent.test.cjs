@@ -178,6 +178,29 @@ test("prepareSystemSshAgent reports a clear error when strict selection has no r
   );
 });
 
+test("prepareSystemSshAgent reports every missing selector in strict multi-key mode", async () => {
+  const selected = makePublicKey();
+  await assert.rejects(
+    prepareSystemSshAgent({
+      socketPath: "/tmp/agent.sock",
+      identityFilePaths: ["/Users/alice/.ssh/available", "/Users/alice/.ssh/missing"],
+      identitiesOnly: true,
+    }, {
+      createAgent: () => fakeAgent([selected]),
+      readFile: async (publicKeyPath) => {
+        if (publicKeyPath.endsWith("available.pub")) return selected;
+        throw new Error("ENOENT");
+      },
+      platform: "linux",
+    }),
+    (error) => {
+      assert.equal(error.code, "ERR_SSH_AGENT_IDENTITY_SELECTOR_UNAVAILABLE");
+      assert.match(error.message, /missing\.pub/);
+      return true;
+    },
+  );
+});
+
 test("prepareSystemSshAgent falls back to all identities and still invokes macOS ssh-add without a .pub file", async () => {
   const loaded = makePublicKey();
   const sshAddCalls = [];

@@ -473,6 +473,50 @@ function ssh2AgentConnectable(agentPath, options = {}) {
   });
 }
 
+function socketAgentConnectable(agentPath, options = {}) {
+  const createConnection = options.createConnectionImpl || require("node:net").createConnection;
+  const timeoutMs = options.timeoutMs ?? 1000;
+  return new Promise((resolve) => {
+    let settled = false;
+    let socket = null;
+    let response = Buffer.alloc(0);
+    const finish = (ok) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (socket) {
+        socket.removeAllListeners();
+        socket.destroy();
+      }
+      resolve(ok);
+    };
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    timer.unref?.();
+    try {
+      socket = createConnection(agentPath);
+      socket.once("connect", () => {
+        // SSH_AGENTC_REQUEST_IDENTITIES: uint32 payload length + byte 11.
+        socket.write(Buffer.from([0, 0, 0, 1, 11]));
+      });
+      socket.on("data", (chunk) => {
+        response = Buffer.concat([response, chunk]);
+        if (response.length < 5) return;
+        const payloadLength = response.readUInt32BE(0);
+        if (payloadLength < 1 || payloadLength > 1024 * 1024) return finish(false);
+        if (response.length < payloadLength + 4) return;
+        const responseType = response[4];
+        // SSH_AGENT_IDENTITIES_ANSWER (12), or SSH_AGENT_FAILURE (5).
+        finish(responseType === 12 || responseType === 5);
+      });
+      socket.once("error", () => finish(false));
+      socket.once("end", () => finish(false));
+      socket.once("close", () => finish(false));
+    } catch {
+      finish(false);
+    }
+  });
+}
+
 /**
  * Check if an SSH agent is available on Windows.
  * Probes the well-known named pipe via net.connect(). This supports any
@@ -540,7 +584,7 @@ async function getAvailableAgentSocket(identityAgent, injected = {}) {
   }
   const socketPath = getSshAgentSocket(configuredSocket);
   if (!socketPath) return null;
-  const running = await (injected.ssh2AgentConnectable || ssh2AgentConnectable)(socketPath);
+  const running = await (injected.socketAgentConnectable || socketAgentConnectable)(socketPath);
   return running ? socketPath : null;
 }
 
@@ -1125,6 +1169,7 @@ module.exports = {
   getNativeOpenSshAgentSocket,
   isWindowsNamedPipe,
   ssh2AgentConnectable,
+  socketAgentConnectable,
   resolveIdentityAgentPath,
   prepareSystemSshAgentForAuth,
   buildAuthHandler,

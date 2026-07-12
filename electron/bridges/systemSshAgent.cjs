@@ -162,7 +162,7 @@ async function prepareSystemSshAgent(options, injected = {}) {
     }
   }
 
-  if (options.identitiesOnly === true && preferred.size === 0) {
+  if (options.identitiesOnly === true && (preferred.size === 0 || unavailablePublicKeyPaths.length > 0)) {
     const error = new Error(
       unavailablePublicKeyPaths.length > 0
         ? `IdentitiesOnly requires a readable public key selector. Missing or invalid: ${unavailablePublicKeyPaths.join(", ")}`

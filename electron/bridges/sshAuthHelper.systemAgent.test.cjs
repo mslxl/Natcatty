@@ -11,6 +11,7 @@ const {
   getAvailableAgentSocket,
   getNativeOpenSshAgentSocket,
   isWindowsNamedPipe,
+  socketAgentConnectable,
   ssh2AgentConnectable,
 } = require("./sshAuthHelper.cjs");
 
@@ -86,12 +87,49 @@ test("Unix agent availability requires a working agent protocol response", async
 
   assert.equal(await getAvailableAgentSocket(socketPath, {
     platform: "linux",
-    ssh2AgentConnectable: async () => false,
+    socketAgentConnectable: async () => false,
   }), null);
   assert.equal(await getAvailableAgentSocket(socketPath, {
     platform: "linux",
-    ssh2AgentConnectable: async () => true,
+    socketAgentConnectable: async () => true,
   }), socketPath);
+});
+
+test("Unix agent protocol probe closes a connection that never responds", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-agent-hung-"));
+  const socketPath = path.join(dir, "agent.sock");
+  const server = net.createServer();
+  let acceptedSocket = null;
+  let probeSocket = null;
+  let acceptedSocketClosed;
+  const closed = new Promise((resolve) => { acceptedSocketClosed = resolve; });
+  server.on("connection", (socket) => {
+    acceptedSocket = socket;
+    socket.resume();
+    socket.once("close", acceptedSocketClosed);
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(socketPath, resolve);
+  });
+  t.after(() => {
+    server.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  assert.equal(await socketAgentConnectable(socketPath, {
+    timeoutMs: 20,
+    createConnectionImpl: (value) => {
+      probeSocket = net.createConnection(value);
+      return probeSocket;
+    },
+  }), false);
+  assert.equal(probeSocket?.destroyed, true);
+  await Promise.race([
+    closed,
+    new Promise((_, reject) => setTimeout(() => reject(new Error("agent probe connection stayed open")), 500)),
+  ]);
+  assert.equal(acceptedSocket?.destroyed, true);
 });
 
 test("native OpenSSH modes reject Pageant and Cygwin-only adapters clearly", async () => {
