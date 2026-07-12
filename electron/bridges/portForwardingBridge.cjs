@@ -18,6 +18,7 @@ const {
   findAllDefaultPrivateKeys: findAllDefaultPrivateKeysFromHelper,
   preparePrivateKeyForAuth,
   loadFirstIdentityFileForAuth,
+  prepareSystemSshAgentForAuth,
   isPassphraseCancelledError,
 } = require("./sshAuthHelper.cjs");
 
@@ -85,6 +86,11 @@ async function startPortForward(event, payload) {
     proxy,
     jumpHosts = [],
     identityFilePaths,
+    useSshAgent,
+    identityAgent,
+    identitiesOnly,
+    addKeysToAgent,
+    useKeychain,
     legacyAlgorithms,
     skipEcdsaHostKey,
     algorithmOverrides,
@@ -157,7 +163,17 @@ async function startPortForward(event, payload) {
 
   let defaultKeys = [];
   try {
-    const identityFile = !privateKey
+    const systemAuthAgent = await prepareSystemSshAgentForAuth({
+      useSshAgent,
+      identityAgent,
+      identityFilePaths,
+      identitiesOnly,
+      addKeysToAgent,
+      useKeychain,
+      hostname,
+      username,
+    }, "[PortForward]");
+    const identityFile = !privateKey && !systemAuthAgent
       ? await loadFirstIdentityFileForAuth({
         sender,
         identityFilePaths,
@@ -170,7 +186,7 @@ async function startPortForward(event, payload) {
         },
       })
       : null;
-    const inlineKey = privateKey
+    const inlineKey = privateKey && !systemAuthAgent
       ? await preparePrivateKeyForAuth({
         sender,
         privateKey,
@@ -190,6 +206,9 @@ async function startPortForward(event, payload) {
       return { tunnelId, success: false, cancelled: true };
     }
 
+    if (systemAuthAgent) {
+      connectOpts.agent = systemAuthAgent;
+    }
     if (hasCertificate) {
       connectOpts.agent = new NetcattyAgent({
         mode: "certificate",
@@ -212,7 +231,9 @@ async function startPortForward(event, payload) {
     }
 
     // Get default keys
-    defaultKeys = await findAllDefaultPrivateKeysFromHelper();
+    defaultKeys = systemAuthAgent && identitiesOnly
+      ? []
+      : await findAllDefaultPrivateKeysFromHelper();
     if (isTunnelCancelled(tunnelState)) {
       portForwardingTunnels.delete(tunnelId);
       return { tunnelId, success: false, cancelled: true };
@@ -244,6 +265,12 @@ async function startPortForward(event, payload) {
           password,
           privateKey,
           passphrase,
+          useSshAgent,
+          identityAgent,
+          identityFilePaths,
+          identitiesOnly,
+          addKeysToAgent,
+          useKeychain,
           proxy,
           knownHosts,
           verifyHostKeys,

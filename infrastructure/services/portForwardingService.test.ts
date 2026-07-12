@@ -48,6 +48,46 @@ const installBridgeStub = () => {
   };
 };
 
+test("startPortForward forwards system agent settings", async () => {
+  const bridge = installBridgeStub();
+
+  const result = await startPortForward(
+    rule({ id: "rule-agent" }),
+    host({
+      useSshAgent: true,
+      identityAgent: "$SSH_AUTH_SOCK",
+      identityFilePaths: ["~/.ssh/aws_root"],
+      identitiesOnly: true,
+      addKeysToAgent: "yes",
+      useKeychain: true,
+    }),
+    [],
+    [],
+    [],
+    () => undefined,
+  );
+
+  assert.equal(result.success, true);
+  assert.deepEqual(
+    bridge.getOptions() && {
+      useSshAgent: bridge.getOptions()?.useSshAgent,
+      identityAgent: bridge.getOptions()?.identityAgent,
+      identityFilePaths: bridge.getOptions()?.identityFilePaths,
+      identitiesOnly: bridge.getOptions()?.identitiesOnly,
+      addKeysToAgent: bridge.getOptions()?.addKeysToAgent,
+      useKeychain: bridge.getOptions()?.useKeychain,
+    },
+    {
+      useSshAgent: true,
+      identityAgent: "$SSH_AUTH_SOCK",
+      identityFilePaths: ["~/.ssh/aws_root"],
+      identitiesOnly: true,
+      addKeysToAgent: "yes",
+      useKeychain: true,
+    },
+  );
+});
+
 test("startPortForward rejects missing proxy identities before starting", async () => {
   const bridge = installBridgeStub();
   const statuses: string[] = [];

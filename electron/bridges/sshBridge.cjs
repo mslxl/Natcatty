@@ -27,6 +27,8 @@ const {
   requestPassphrasesForEncryptedKeys,
   findAllDefaultPrivateKeys: findAllDefaultPrivateKeysFromHelper,
   getSshAgentSocket,
+  getAvailableAgentSocket: getAvailableSystemAgentSocket,
+  prepareSystemSshAgentForAuth,
   readFileNoFollow,
   expandIdentityFilePath,
   isAutoFillablePasswordChallenge,
@@ -583,7 +585,9 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
       const hasCertificate =
         typeof jump.certificate === "string" && jump.certificate.trim().length > 0;
 
-      const identityFile = !jump.privateKey
+      const systemAuthAgent = await prepareSystemSshAgentForAuth(jump, `[Chain] Hop ${i + 1}:`);
+
+      const identityFile = !jump.privateKey && !systemAuthAgent
         ? await loadFirstIdentityFileForAuth({
           sender,
           identityFilePaths: jump.identityFilePaths,
@@ -608,7 +612,7 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
           },
         })
         : null;
-      const inlineKey = jump.privateKey
+      const inlineKey = jump.privateKey && !systemAuthAgent
         ? await preparePrivateKeyForAuth({
           sender,
           privateKey: jump.privateKey,
@@ -630,6 +634,9 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
       const effectivePassphrase = inlineKey?.passphrase || identityFile?.passphrase;
 
       let authAgent = null;
+      if (systemAuthAgent) {
+        connOpts.agent = systemAuthAgent;
+      }
       if (hasCertificate) {
         authAgent = new NetcattyAgent({
           mode: "certificate",
@@ -676,7 +683,9 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
       if (jump.password) connOpts.password = jump.password;
 
       // Get default keys (either from options if pre-fetched, or fetch them now)
-      const defaultKeys = options._defaultKeys || await findAllDefaultPrivateKeys();
+      const defaultKeys = systemAuthAgent && jump.identitiesOnly
+        ? []
+        : options._defaultKeys || await findAllDefaultPrivateKeys();
 
       // Build auth handler using shared helper
       // Pass unlocked encrypted keys from options so jump hosts can use them for retry
@@ -871,7 +880,7 @@ const startSessionApi = createStartSessionApi({
   openTerminalOutputSession, closeTerminalOutputSession,
   get selectZmodemUploadFiles() { return selectZmodemUploadFiles; },
   get selectZmodemDownloadDirectory() { return selectZmodemDownloadDirectory; },
-  preparePrivateKeyForAuth, loadFirstIdentityFileForAuth, hasUserConfiguredKey, isPasswordProvided, createKeyboardInteractiveHandler,
+  preparePrivateKeyForAuth, loadFirstIdentityFileForAuth, prepareSystemSshAgentForAuth, hasUserConfiguredKey, isPasswordProvided, createKeyboardInteractiveHandler,
   createConnectionRef, acquireConnectionRef, releaseConnectionRef, findReusableSession,
   get probeReceiveConflicts() { return probeReceiveConflicts; },
   get removeRemoteFiles() { return removeRemoteFiles; },
@@ -1149,7 +1158,7 @@ const { isHostKeyTrustedBySystem } = createSystemKnownHostsApi({
 const { createMoshStatsConnectionApi } = require("./sshBridge/moshStatsConnection.cjs");
 const { ensureMoshStatsConnection, ensureEtStatsConnection } = createMoshStatsConnectionApi({
   get sessions() { return sessions; },
-  SSHClient, sshUtils, NetcattyAgent, buildAlgorithms, getSshAgentSocket,
+  SSHClient, sshUtils, NetcattyAgent, buildAlgorithms, getSshAgentSocket, prepareSystemSshAgentForAuth,
   readFileNoFollow, expandIdentityFilePath, isAutoFillablePasswordChallenge,
   hostKeyVerifier, isHostKeyTrustedBySystem, log,
 });
@@ -1235,8 +1244,16 @@ function registerHandlers(ipcMain, options = {}) {
   ipcMain.handle("netcatty:key:generate", generateKeyPair);
   ipcMain.handle("netcatty:sshDebugLog:info", getSshDebugLogInfo);
   ipcMain.handle("netcatty:sshDebugLog:openDir", openSshDebugLogDir);
-  ipcMain.handle("netcatty:ssh:check-agent", async () => {
-    return await checkWindowsSshAgent();
+  ipcMain.handle("netcatty:ssh:check-agent", async (_event, identityAgent) => {
+    if (process.platform === "win32" && !identityAgent) {
+      return await checkWindowsSshAgent();
+    }
+    const socketPath = await getAvailableSystemAgentSocket(identityAgent);
+    return {
+      running: Boolean(socketPath),
+      startupType: socketPath ? "running" : "stopped",
+      error: socketPath ? null : "SSH Agent socket not connectable",
+    };
   });
   ipcMain.handle("netcatty:ssh:get-default-keys", async () => {
     const sshDir = path.join(os.homedir(), ".ssh");

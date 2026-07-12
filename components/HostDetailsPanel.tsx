@@ -188,12 +188,12 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
   } | null>(null);
 
   useEffect(() => {
-    if (form.agentForwarding) {
-      checkSshAgent().then(setSshAgentStatus);
+    if (form.agentForwarding || form.useSshAgent) {
+      checkSshAgent(form.useSshAgent ? form.identityAgent : undefined).then(setSshAgentStatus);
     } else {
       setSshAgentStatus(null);
     }
-  }, [form.agentForwarding, checkSshAgent]);
+  }, [form.agentForwarding, form.useSshAgent, form.identityAgent, checkSshAgent]);
 
   const [groupInputValue, setGroupInputValue] = useState(form.group || "");
 

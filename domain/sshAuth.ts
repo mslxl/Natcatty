@@ -138,3 +138,22 @@ export const resolveBridgeKeyAuth = (args: {
     passphrase: sanitizeCredentialValue(passphrase ?? key?.passphrase),
   };
 };
+
+export const resolveBridgeSshAgentAuth = (
+  host: Pick<Host, "useSshAgent" | "identityAgent" | "identitiesOnly" | "addKeysToAgent" | "useKeychain">,
+): {
+  useSshAgent?: boolean;
+  identityAgent?: string;
+  identitiesOnly?: boolean;
+  addKeysToAgent?: string;
+  useKeychain?: boolean;
+} => {
+  if (host.useSshAgent !== true) return {};
+  return {
+    useSshAgent: true,
+    identityAgent: host.identityAgent,
+    identitiesOnly: host.identitiesOnly,
+    addKeysToAgent: host.addKeysToAgent,
+    useKeychain: host.useKeychain,
+  };
+};

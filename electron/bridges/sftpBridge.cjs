@@ -36,6 +36,7 @@ const {
   isKeyEncrypted,
   findAllDefaultPrivateKeys: findAllDefaultPrivateKeysFromHelper,
   getAvailableAgentSocket,
+  prepareSystemSshAgentForAuth,
   preparePrivateKeyForAuth,
   loadFirstIdentityFileForAuth,
 } = require("./sshAuthHelper.cjs");
@@ -901,7 +902,7 @@ const openConnectionApi = createOpenConnectionApi({
   hostKeyVerifier,
   fs, path, net, Buffer, process, console, setTimeout, clearTimeout,
   SFTPWrapper, createProxySocket, buildSftpAlgorithms, getAvailableAgentSocket,
-  preparePrivateKeyForAuth, loadFirstIdentityFileForAuth, findAllDefaultPrivateKeysFromHelper,
+  preparePrivateKeyForAuth, loadFirstIdentityFileForAuth, prepareSystemSshAgentForAuth, findAllDefaultPrivateKeysFromHelper,
   buildAuthHandler, applyAuthToConnOpts, createKeyboardInteractiveHandler, passphraseHandler,
   isKeyEncrypted, randomUUID,
   sendSftpProgress, safeSend, authSafeSend, copySftpEncodingState, clearSftpEncodingState, normalizeEncoding,

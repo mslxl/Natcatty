@@ -6,7 +6,7 @@
 
 import { Host, Identity, KnownHost, PortForwardingRule, SSHKey, TerminalSettings } from '../../domain/models';
 import { isEncryptedCredentialPlaceholder, sanitizeCredentialValue } from '../../domain/credentials';
-import { resolveBridgeKeyAuth, resolveHostAuth } from '../../domain/sshAuth';
+import { resolveBridgeKeyAuth, resolveBridgeSshAgentAuth, resolveHostAuth } from '../../domain/sshAuth';
 import { resolveHostKeepalive } from '../../domain/host';
 import {
   findIncompleteProxyIdentityId,
@@ -449,7 +449,7 @@ export const startPortForward = async (
           const jumpPassword = sanitizeCredentialValue(jumpResolved.password);
           const jumpKeyAuth = resolveBridgeKeyAuth({
             key: jumpKey,
-            fallbackIdentityFilePaths: jumpResolved.authMethod === "password" || jumpResolved.keyId
+            fallbackIdentityFilePaths: (!jumpHost.useSshAgent && jumpResolved.authMethod === "password") || jumpResolved.keyId
               ? undefined
               : jumpHost.identityFilePaths,
             passphrase: jumpResolved.passphrase,
@@ -482,6 +482,7 @@ export const startPortForward = async (
               ? resolveProxyConfigAuth(jumpHost.proxyConfig, identities)
               : undefined,
             identityFilePaths: jumpKeyAuth.identityFilePaths,
+            ...resolveBridgeSshAgentAuth(jumpHost),
             keepaliveInterval: hopKeepalive.interval,
             keepaliveCountMax: hopKeepalive.countMax,
             verifyHostKeys: globalTerminalSettings.verifyHostKeys,
@@ -498,7 +499,7 @@ export const startPortForward = async (
     
     const keyAuth = resolveBridgeKeyAuth({
       key,
-      fallbackIdentityFilePaths: resolved.authMethod === "password" || resolved.keyId
+      fallbackIdentityFilePaths: (!host.useSshAgent && resolved.authMethod === "password") || resolved.keyId
         ? undefined
         : host.identityFilePaths,
       passphrase: resolved.passphrase,
@@ -569,6 +570,7 @@ export const startPortForward = async (
       proxy,
       jumpHosts: jumpHosts && jumpHosts.length > 0 ? jumpHosts : undefined,
       identityFilePaths: keyAuth.identityFilePaths,
+      ...resolveBridgeSshAgentAuth(host),
       legacyAlgorithms: host.legacyAlgorithms,
       skipEcdsaHostKey: host.skipEcdsaHostKey,
       algorithmOverrides: host.algorithms,

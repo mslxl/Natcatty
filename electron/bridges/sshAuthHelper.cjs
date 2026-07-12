@@ -8,6 +8,7 @@ const path = require("node:path");
 const os = require("node:os");
 const { exec } = require("node:child_process");
 const { utils: sshUtils } = require("ssh2");
+const { prepareSystemSshAgent } = require("./systemSshAgent.cjs");
 const keyboardInteractiveHandler = require("./keyboardInteractiveHandler.cjs");
 const passphraseHandler = require("./passphraseHandler.cjs");
 const {
@@ -464,13 +465,27 @@ function checkWindowsSshAgentRunning() {
  * Get ssh-agent socket path based on platform (synchronous, best-effort)
  * @returns {string|null}
  */
-function getSshAgentSocket() {
+function resolveIdentityAgentPath(rawPath) {
+  if (typeof rawPath !== "string" || rawPath.trim() === "") return null;
+  const value = rawPath.trim().replace(/^["']|["']$/g, "");
+  if (value.toLowerCase() === "none") return null;
+  if (value === "SSH_AUTH_SOCK") return process.env.SSH_AUTH_SOCK || null;
+  const expanded = value
+    .replace(/^~(?=$|[\\/])/, os.homedir())
+    .replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_match, name) => process.env[name] ?? "")
+    .replace(/\$([A-Za-z_][A-Za-z0-9_]*)/g, (_match, name) => process.env[name] ?? "");
+  return expanded || null;
+}
+
+function getSshAgentSocket(identityAgent) {
+  const configuredSocket = resolveIdentityAgentPath(identityAgent);
+  if (identityAgent && !configuredSocket) return null;
   if (process.platform === "win32") {
     // On Windows, always return the pipe path; the caller should use
     // getAvailableAgentSocket() for a reliable async check.
     return "\\\\.\\pipe\\openssh-ssh-agent";
   }
-  const agentSocket = process.env.SSH_AUTH_SOCK;
+  const agentSocket = configuredSocket || process.env.SSH_AUTH_SOCK;
   if (!agentSocket) return null;
 
   try {
@@ -487,12 +502,36 @@ function getSshAgentSocket() {
  * Get ssh-agent socket path with async validation (checks Windows service status)
  * @returns {Promise<string|null>}
  */
-async function getAvailableAgentSocket() {
+async function getAvailableAgentSocket(identityAgent) {
+  const configuredSocket = resolveIdentityAgentPath(identityAgent);
+  if (identityAgent && !configuredSocket) return null;
   if (process.platform === "win32") {
-    const running = await checkWindowsSshAgentRunning();
-    return running ? "\\\\.\\pipe\\openssh-ssh-agent" : null;
+    const socketPath = configuredSocket || "\\\\.\\pipe\\openssh-ssh-agent";
+    const running = await windowsPipeConnectable(socketPath);
+    return running ? socketPath : null;
   }
-  return getSshAgentSocket();
+  return getSshAgentSocket(configuredSocket);
+}
+
+async function prepareSystemSshAgentForAuth(options, logPrefix = "[SSHAuth]") {
+  if (options?.useSshAgent !== true) return null;
+  const socketPath = await getAvailableAgentSocket(options.identityAgent);
+  if (!socketPath) {
+    const error = new Error("System SSH agent is unavailable. Start or unlock it, or configure a valid agent socket.");
+    error.code = "ERR_SSH_AGENT_UNAVAILABLE";
+    throw error;
+  }
+  return prepareSystemSshAgent({
+    socketPath,
+    identityFilePaths: options.identityFilePaths,
+    identitiesOnly: options.identitiesOnly,
+    addKeysToAgent: options.addKeysToAgent,
+    useKeychain: options.useKeychain,
+    hostname: options.hostname,
+    username: options.username,
+  }, {
+    log: (message, details) => console.log(`${logPrefix} ${message}`, details ?? ""),
+  });
 }
 
 /**
@@ -1039,6 +1078,8 @@ module.exports = {
   findAllDefaultPrivateKeys,
   getSshAgentSocket,
   getAvailableAgentSocket,
+  resolveIdentityAgentPath,
+  prepareSystemSshAgentForAuth,
   buildAuthHandler,
   createKeyboardInteractiveHandler,
   isAutoFillablePasswordChallenge,

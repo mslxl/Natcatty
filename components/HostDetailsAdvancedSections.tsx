@@ -1,5 +1,5 @@
 import React from "react";
-import { AlertTriangle, ChevronDown, ChevronUp, Forward, Globe, HeartPulse, Link2, Palette, Plus, Router, ShieldAlert, TerminalSquare, Wifi, X, Variable } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronUp, Forward, Globe, HeartPulse, KeyRound, Link2, Palette, Plus, Router, ShieldAlert, TerminalSquare, Wifi, X, Variable } from "lucide-react";
 import { customThemeStore } from "../application/state/customThemeStore";
 import { clearHostFontSizeOverride, clearHostThemeOverride } from "../domain/terminalAppearance";
 import { MAX_FONT_SIZE, MIN_FONT_SIZE } from "../infrastructure/config/fonts";
@@ -226,6 +226,53 @@ export const HostDetailsAdvancedSections: React.FC<HostDetailsAdvancedSectionsPr
                 />
               </HostDetailsSettingRow>
             </>
+          )}
+        </HostDetailsSection>
+
+        {/* System SSH Agent login */}
+        <HostDetailsSection
+          icon={<KeyRound size={14} className="text-muted-foreground" />}
+          title={t("hostDetails.section.systemSshAgent")}
+        >
+          <ToggleRow
+            label={t("hostDetails.systemSshAgent")}
+            hint={t("hostDetails.systemSshAgent.desc")}
+            enabled={!!form.useSshAgent}
+            onToggle={() => update("useSshAgent", !form.useSshAgent)}
+          />
+          {form.useSshAgent && (
+            <>
+              <HostDetailsSettingRow
+                label={t("hostDetails.systemSshAgent.socket")}
+                hint={t("hostDetails.systemSshAgent.socket.desc")}
+              >
+                <Input
+                  className="w-44 font-mono text-xs"
+                  placeholder="$SSH_AUTH_SOCK"
+                  value={form.identityAgent ?? ""}
+                  onChange={(event) => update("identityAgent", event.target.value || undefined)}
+                />
+              </HostDetailsSettingRow>
+              <ToggleRow
+                label={t("hostDetails.systemSshAgent.identitiesOnly")}
+                hint={t("hostDetails.systemSshAgent.identitiesOnly.desc")}
+                enabled={!!form.identitiesOnly}
+                onToggle={() => update("identitiesOnly", !form.identitiesOnly)}
+              />
+            </>
+          )}
+          {form.useSshAgent && sshAgentStatus && !sshAgentStatus.running && (
+            <div className="flex items-start gap-2 p-2 rounded-md bg-yellow-500/10 border border-yellow-500/20">
+              <AlertTriangle size={14} className="text-yellow-500 mt-0.5 flex-shrink-0" />
+              <div className="space-y-1">
+                <p className="text-xs text-yellow-600 dark:text-yellow-400 font-medium">
+                  {t("hostDetails.systemSshAgent.notRunning")}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {t("hostDetails.systemSshAgent.notRunningHint")}
+                </p>
+              </div>
+            </div>
           )}
         </HostDetailsSection>
 

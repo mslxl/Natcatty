@@ -81,6 +81,59 @@ test("getMissingChainHostIds reports unresolved jump hosts", () => {
   );
 });
 
+test("startSSH forwards imported system agent authentication settings", async () => {
+  let capturedOptions: Record<string, unknown> | null = null;
+  const terminalBackend = {
+    backendAvailable: () => true,
+    startSSHSession: async (options: Record<string, unknown>) => {
+      capturedOptions = options;
+      return "ssh-session";
+    },
+    onSessionData: () => noop,
+    onSessionExit: () => noop,
+    onChainProgress: () => noop,
+    writeToSession: noop,
+    resizeSession: noop,
+  };
+  const ctx = createStarterContext({
+    host: {
+      id: "host-1",
+      label: "aws-sg",
+      hostname: "1.1.1.1",
+      username: "root",
+      port: 2222,
+      useSshAgent: true,
+      identityAgent: "$SSH_AUTH_SOCK",
+      identityFilePaths: ["~/.ssh/aws_root"],
+      identitiesOnly: true,
+      addKeysToAgent: "yes",
+      useKeychain: true,
+    },
+    terminalBackend,
+  });
+
+  await createTerminalSessionStarters(ctx as never).startSSH(createTermStub() as never);
+
+  assert.deepEqual(
+    capturedOptions && {
+      useSshAgent: capturedOptions.useSshAgent,
+      identityAgent: capturedOptions.identityAgent,
+      identityFilePaths: capturedOptions.identityFilePaths,
+      identitiesOnly: capturedOptions.identitiesOnly,
+      addKeysToAgent: capturedOptions.addKeysToAgent,
+      useKeychain: capturedOptions.useKeychain,
+    },
+    {
+      useSshAgent: true,
+      identityAgent: "$SSH_AUTH_SOCK",
+      identityFilePaths: ["~/.ssh/aws_root"],
+      identitiesOnly: true,
+      addKeysToAgent: "yes",
+      useKeychain: true,
+    },
+  );
+});
+
 test("startSSH forwards custom ProxyCommand to the SSH bridge", async () => {
   let capturedOptions: Record<string, unknown> | null = null;
   const terminalBackend = {

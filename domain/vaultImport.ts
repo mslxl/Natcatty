@@ -464,6 +464,10 @@ const importFromSshConfig = (text: string): VaultImportResult => {
     port?: number;
     proxyJump?: string;
     identityFiles?: string[];
+    identityAgent?: string;
+    identitiesOnly?: boolean;
+    addKeysToAgent?: string;
+    useKeychain?: boolean;
     forwardX11?: boolean;
   };
 
@@ -504,6 +508,10 @@ const importFromSshConfig = (text: string): VaultImportResult => {
     else if (keyword === "port") current.port = parsePort(value);
     else if (keyword === "proxyjump") current.proxyJump = value;
     else if (keyword === "forwardx11") current.forwardX11 = value.toLowerCase() === "yes";
+    else if (keyword === "identityagent") current.identityAgent = value.replace(/^["']|["']$/g, "");
+    else if (keyword === "identitiesonly") current.identitiesOnly = value.toLowerCase() === "yes";
+    else if (keyword === "addkeystoagent") current.addKeysToAgent = value.toLowerCase();
+    else if (keyword === "usekeychain") current.useKeychain = value.toLowerCase() === "yes";
     else if (keyword === "identityfile") {
       if (!current.identityFiles) current.identityFiles = [];
       // Remove surrounding quotes (ssh_config allows quoted paths with spaces)
@@ -553,6 +561,25 @@ const importFromSshConfig = (text: string): VaultImportResult => {
       // Attach IdentityFile paths if present
       if (block.identityFiles && block.identityFiles.length > 0) {
         host.identityFilePaths = [...block.identityFiles];
+      }
+      if (block.identityAgent !== undefined) {
+        host.identityAgent = block.identityAgent;
+      }
+      if (block.identitiesOnly !== undefined) {
+        host.identitiesOnly = block.identitiesOnly;
+      }
+      if (block.addKeysToAgent !== undefined) {
+        host.addKeysToAgent = block.addKeysToAgent;
+      }
+      if (block.useKeychain !== undefined) {
+        host.useKeychain = block.useKeychain;
+      }
+      const identityAgentEnabled = block.identityAgent !== undefined
+        && block.identityAgent.toLowerCase() !== "none";
+      const addKeysEnabled = block.addKeysToAgent !== undefined
+        && block.addKeysToAgent !== "no";
+      if (identityAgentEnabled || addKeysEnabled) {
+        host.useSshAgent = true;
       }
       if (block.forwardX11 !== undefined) {
         host.x11Forwarding = block.forwardX11;

@@ -126,6 +126,23 @@ export const serializeHostsToSshConfig = (hosts: Host[], allHosts?: Host[]): str
       }
     }
 
+    if (host.identityAgent !== undefined) {
+      const formatted = host.identityAgent.includes(" ") ? `"${host.identityAgent}"` : host.identityAgent;
+      lines.push(`    IdentityAgent ${formatted}`);
+    }
+
+    if (host.identitiesOnly !== undefined) {
+      lines.push(`    IdentitiesOnly ${host.identitiesOnly ? "yes" : "no"}`);
+    }
+
+    if (host.addKeysToAgent !== undefined) {
+      lines.push(`    AddKeysToAgent ${host.addKeysToAgent}`);
+    }
+
+    if (host.useKeychain !== undefined) {
+      lines.push(`    UseKeychain ${host.useKeychain ? "yes" : "no"}`);
+    }
+
     // Serialize ProxyJump if host has a chain
     const proxyJumpValue = buildProxyJumpValue(host, hostsForLookup, managedHostIds);
     if (proxyJumpValue) {

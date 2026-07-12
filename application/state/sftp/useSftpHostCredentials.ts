@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import type { Host, Identity, KnownHost, SSHKey, TerminalSettings } from "../../../domain/models";
 import { isEncryptedCredentialPlaceholder, sanitizeCredentialValue } from "../../../domain/credentials";
-import { resolveBridgeKeyAuth, resolveHostAuth } from "../../../domain/sshAuth";
+import { resolveBridgeKeyAuth, resolveBridgeSshAgentAuth, resolveHostAuth } from "../../../domain/sshAuth";
 import { resolveHostKeepalive } from "../../../domain/host";
 import {
   findIncompleteProxyIdentityId,
@@ -99,7 +99,7 @@ export const buildSftpHostCredentials = ({
       const jumpPassword = sanitizeCredentialValue(jumpAuth.password);
       const jumpKeyAuth = resolveBridgeKeyAuth({
         key: jumpKey,
-        fallbackIdentityFilePaths: jumpAuth.authMethod === "password" || jumpAuth.keyId
+        fallbackIdentityFilePaths: (!jumpHost.useSshAgent && jumpAuth.authMethod === "password") || jumpAuth.keyId
           ? undefined
           : jumpHost.identityFilePaths,
         passphrase: jumpAuth.passphrase,
@@ -141,6 +141,7 @@ export const buildSftpHostCredentials = ({
           ? resolveProxyConfigAuth(jumpHost.proxyConfig, identities)
           : undefined,
         identityFilePaths: jumpKeyAuth.identityFilePaths,
+        ...resolveBridgeSshAgentAuth(jumpHost),
         keepaliveInterval: hopKeepalive.interval,
         keepaliveCountMax: hopKeepalive.countMax,
         verifyHostKeys: globalTerminalSettings.verifyHostKeys,
@@ -157,7 +158,7 @@ export const buildSftpHostCredentials = ({
 
   const keyAuth = resolveBridgeKeyAuth({
     key,
-    fallbackIdentityFilePaths: resolved.authMethod === "password" || resolved.keyId
+    fallbackIdentityFilePaths: (!host.useSshAgent && resolved.authMethod === "password") || resolved.keyId
       ? undefined
       : host.identityFilePaths,
     passphrase: resolved.passphrase,
@@ -191,6 +192,7 @@ export const buildSftpHostCredentials = ({
     jumpHosts: jumpHosts && jumpHosts.length > 0 ? jumpHosts : undefined,
     sudo: host.sftpSudo,
     identityFilePaths: keyAuth.identityFilePaths,
+    ...resolveBridgeSshAgentAuth(host),
     keepaliveInterval: targetKeepalive.interval,
     keepaliveCountMax: targetKeepalive.countMax,
     knownHosts,

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { resolveBridgeKeyAuth, resolveHostAuth, resolveHostAutofillPassword } from "./sshAuth.ts";
+import { resolveBridgeKeyAuth, resolveBridgeSshAgentAuth, resolveHostAuth, resolveHostAutofillPassword } from "./sshAuth.ts";
 import type { Host, Identity, SSHKey } from "./models.ts";
 
 const referenceKey: SSHKey = {
@@ -73,6 +73,26 @@ test("resolveBridgeKeyAuth preserves imported key material", () => {
       privateKey: "PRIVATE KEY",
       identityFilePaths: ["/legacy/key"],
       passphrase: undefined,
+    },
+  );
+});
+
+test("resolveBridgeSshAgentAuth carries system agent settings without private material", () => {
+  assert.deepEqual(
+    resolveBridgeSshAgentAuth({
+      ...autofillBaseHost,
+      useSshAgent: true,
+      identityAgent: "$SSH_AUTH_SOCK",
+      identitiesOnly: true,
+      addKeysToAgent: "yes",
+      useKeychain: true,
+    }),
+    {
+      useSshAgent: true,
+      identityAgent: "$SSH_AUTH_SOCK",
+      identitiesOnly: true,
+      addKeysToAgent: "yes",
+      useKeychain: true,
     },
   );
 });

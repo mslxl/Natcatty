@@ -33,6 +33,52 @@ test("buildSftpReuseCredentials only needs the live endpoint and sourceSessionId
   });
 });
 
+test("buildSftpHostCredentials forwards system agent settings for target and jump hosts", () => {
+  const jump = host({
+    id: "jump-1",
+    hostname: "jump.example.com",
+    useSshAgent: true,
+    identityFilePaths: ["~/.ssh/jump"],
+    identitiesOnly: true,
+  });
+  const credentials = buildSftpHostCredentials({
+    host: host({
+      hostChain: { hostIds: ["jump-1"] },
+      useSshAgent: true,
+      identityAgent: "$SSH_AUTH_SOCK",
+      identityFilePaths: ["~/.ssh/aws_root"],
+      identitiesOnly: true,
+      addKeysToAgent: "yes",
+      useKeychain: true,
+    }),
+    hosts: [jump],
+    keys: [],
+    identities: [],
+  });
+
+  assert.deepEqual(
+    {
+      useSshAgent: credentials.useSshAgent,
+      identityAgent: credentials.identityAgent,
+      identityFilePaths: credentials.identityFilePaths,
+      identitiesOnly: credentials.identitiesOnly,
+      addKeysToAgent: credentials.addKeysToAgent,
+      useKeychain: credentials.useKeychain,
+    },
+    {
+      useSshAgent: true,
+      identityAgent: "$SSH_AUTH_SOCK",
+      identityFilePaths: ["~/.ssh/aws_root"],
+      identitiesOnly: true,
+      addKeysToAgent: "yes",
+      useKeychain: true,
+    },
+  );
+  assert.equal(credentials.jumpHosts?.[0]?.useSshAgent, true);
+  assert.deepEqual(credentials.jumpHosts?.[0]?.identityFilePaths, ["~/.ssh/jump"]);
+  assert.equal(credentials.jumpHosts?.[0]?.identitiesOnly, true);
+});
+
 test("buildSftpHostCredentials rejects missing jump hosts", () => {
   assert.throws(
     () => buildSftpHostCredentials({

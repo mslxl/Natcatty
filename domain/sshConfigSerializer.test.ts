@@ -33,3 +33,20 @@ test("serializeHostsToSshConfig omits ForwardX11 for mosh hosts", () => {
 
   assert.doesNotMatch(config, /ForwardX11/);
 });
+
+test("serializeHostsToSshConfig preserves system agent authentication directives", () => {
+  const config = serializeHostsToSshConfig([makeHost({
+    identityFilePaths: ["~/.ssh/aws_root"],
+    useSshAgent: true,
+    identityAgent: "$SSH_AUTH_SOCK",
+    identitiesOnly: true,
+    addKeysToAgent: "yes",
+    useKeychain: true,
+  })]);
+
+  assert.match(config, /IdentityFile ~\/\.ssh\/aws_root/);
+  assert.match(config, /IdentityAgent \$SSH_AUTH_SOCK/);
+  assert.match(config, /IdentitiesOnly yes/);
+  assert.match(config, /AddKeysToAgent yes/);
+  assert.match(config, /UseKeychain yes/);
+});

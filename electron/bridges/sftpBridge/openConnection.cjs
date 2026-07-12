@@ -93,8 +93,10 @@ function createOpenConnectionApi(ctx) {
           // Auth - support agent (certificate), key, and password fallback
           const hasCertificate =
             typeof jump.certificate === "string" && jump.certificate.trim().length > 0;
+
+          const systemAuthAgent = await prepareSystemSshAgentForAuth(jump, `[SFTP Chain] Hop ${i + 1}:`);
     
-          const identityFile = !jump.privateKey
+          const identityFile = !jump.privateKey && !systemAuthAgent
             ? await loadFirstIdentityFileForAuth({
               sender,
               identityFilePaths: jump.identityFilePaths,
@@ -109,7 +111,7 @@ function createOpenConnectionApi(ctx) {
               },
             })
             : null;
-          const inlineKey = jump.privateKey
+          const inlineKey = jump.privateKey && !systemAuthAgent
             ? await preparePrivateKeyForAuth({
               sender,
               privateKey: jump.privateKey,
@@ -124,6 +126,9 @@ function createOpenConnectionApi(ctx) {
           const effectivePassphrase = inlineKey?.passphrase || identityFile?.passphrase;
     
           let authAgent = null;
+          if (systemAuthAgent) {
+            connOpts.agent = systemAuthAgent;
+          }
           if (hasCertificate) {
             authAgent = new NetcattyAgent({
               mode: "certificate",
@@ -164,7 +169,9 @@ function createOpenConnectionApi(ctx) {
           if (jump.password) connOpts.password = jump.password;
     
           // Get default keys (either from options if pre-fetched, or fetch them now)
-          const defaultKeys = options._defaultKeys || await findAllDefaultPrivateKeysFromHelper();
+          const defaultKeys = systemAuthAgent && jump.identitiesOnly
+            ? []
+            : options._defaultKeys || await findAllDefaultPrivateKeysFromHelper();
     
           // Build auth handler using shared helper
           // Pass unlocked encrypted keys from options so jump hosts can use them for retry
@@ -614,7 +621,7 @@ function createOpenConnectionApi(ctx) {
     
       // Pre-fetch agent socket (async check for Windows SSH Agent service)
       // This is used by both jump host chain auth and final host auth
-      const agentSocket = await getAvailableAgentSocket();
+      const agentSocket = await getAvailableAgentSocket(options.identityAgent);
     
       // Handle chain/proxy connections
       if (hasJumpHosts) {
@@ -690,8 +697,10 @@ function createOpenConnectionApi(ctx) {
     
       let identityFile = null;
       let inlineKey = null;
+      let systemAuthAgent = null;
       try {
-        identityFile = !options.privateKey
+        systemAuthAgent = await prepareSystemSshAgentForAuth(options, "[SFTP]");
+        identityFile = !options.privateKey && !systemAuthAgent
           ? await loadFirstIdentityFileForAuth({
             sender: event.sender,
             identityFilePaths: options.identityFilePaths,
@@ -706,7 +715,7 @@ function createOpenConnectionApi(ctx) {
             },
           })
           : null;
-        inlineKey = options.privateKey
+        inlineKey = options.privateKey && !systemAuthAgent
           ? await preparePrivateKeyForAuth({
             sender: event.sender,
             privateKey: options.privateKey,
@@ -725,6 +734,9 @@ function createOpenConnectionApi(ctx) {
       const effectivePassphrase = inlineKey?.passphrase || identityFile?.passphrase;
     
       let authAgent = null;
+      if (systemAuthAgent) {
+        connectOpts.agent = systemAuthAgent;
+      }
       if (hasCertificate) {
         authAgent = new NetcattyAgent({
           mode: "certificate",
@@ -783,7 +795,7 @@ function createOpenConnectionApi(ctx) {
         agent: connectOpts.agent,
         username: connectOpts.username,
         logPrefix: "[SFTP]",
-        defaultKeys,
+        defaultKeys: systemAuthAgent && options.identitiesOnly ? [] : defaultKeys,
         sshAgentSocketOverride: agentSocket,
         onAuthAttempt: (method) => {
           sendSftpProgress(event.sender, connId, options.hostname, 'auth-attempt', method);
