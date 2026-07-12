@@ -611,3 +611,19 @@ test("buildSftpHostCredentials uses the system agent when a synced key cannot be
   assert.deepEqual(credentials.agentPublicKeys, ["ssh-ed25519 AAAASELECTED"]);
   assert.equal(credentials.privateKey, undefined);
 });
+
+test("imported IdentityFile paths remain usable when agent login is disabled", () => {
+  const credentials = buildSftpHostCredentials({
+    host: host({
+      identityFilePaths: ["~/.ssh/id_work"],
+      useSshAgent: false,
+      identityAgent: "none",
+    }),
+    hosts: [],
+    keys: [],
+    identities: [],
+  });
+
+  assert.equal(credentials.useSshAgent, false);
+  assert.deepEqual(credentials.identityFilePaths, ["~/.ssh/id_work"]);
+});

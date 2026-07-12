@@ -62,7 +62,8 @@ export const resolveHostAuth = (args: {
   const selectedAuthMethod = (
     override?.authMethod ||
     identity?.authMethod ||
-    host.authMethod
+    host.authMethod ||
+    (host.identityFilePaths?.length ? "key" : undefined)
   ) as HostAuthMethod | undefined;
 
   // Don't load key when password auth is selected.
@@ -78,7 +79,7 @@ export const resolveHostAuth = (args: {
 
   const authMethod = inferAuthMethod({
     explicit: override?.authMethod,
-    hostAuthMethod: (identity?.authMethod || host.authMethod) as HostAuthMethod | undefined,
+    hostAuthMethod: selectedAuthMethod,
     keyId,
     password,
     key,

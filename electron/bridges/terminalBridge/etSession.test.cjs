@@ -257,6 +257,7 @@ test("ET prepares target and jump agents before generating their host config", a
       useSshAgent: true,
       identityAgent: "/tmp/jump.sock",
       identitiesOnly: true,
+      agentPublicKeys: ["ssh-ed25519 AAAAJUMPSELECTED"],
     }],
   });
   const env = api.prepareEtSshEnvironment("sess-chain-agent", prepared);
@@ -271,6 +272,9 @@ test("ET prepares target and jump agents before generating their host config", a
   assert.match(config, /Host dest\.example[\s\S]*IdentityAgent "\/tmp\/target\.sock"/);
   assert.match(config, /Host jump\.example[\s\S]*IdentityAgent "\/tmp\/jump\.sock"/);
   assert.match(config, /Host jump\.example[\s\S]*IdentitiesOnly yes/);
+  const jumpSelectorMatch = config.match(/Host jump\.example[\s\S]*?IdentityFile "?([^"\n]*jump-agent-0\.pub)"?/);
+  assert.ok(jumpSelectorMatch);
+  assert.equal(fs.readFileSync(jumpSelectorMatch[1], "utf8"), "ssh-ed25519 AAAAJUMPSELECTED");
 });
 
 test("prepareEtSshEnvironment writes legacy algorithms to the ssh config file", (t) => {

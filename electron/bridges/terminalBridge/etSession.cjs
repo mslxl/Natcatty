@@ -472,6 +472,16 @@ main();
           jumpConfigLines.push(`  IdentityAgent ${quoteRawSshConfigValue(jump._resolvedSshAgentSocket)}`);
         }
 
+        if (jump.useSshAgent && Array.isArray(jump.agentPublicKeys)) {
+          for (let index = 0; index < jump.agentPublicKeys.length; index += 1) {
+            const publicKey = jump.agentPublicKeys[index];
+            if (typeof publicKey !== "string" || !publicKey.trim()) continue;
+            const selectorPath = path.join(sshDir, `${safeId}-jump-agent-${index}.pub`);
+            writeSecureFile(selectorPath, publicKey, 0o600);
+            jumpConfigLines.push(`  IdentityFile ${quoteSshConfigValue(selectorPath)}`);
+          }
+        }
+
         // Jump host key
         if (jump.privateKey) {
           const jumpKeyPath = path.join(sshDir, `${safeId}-jump-key`);

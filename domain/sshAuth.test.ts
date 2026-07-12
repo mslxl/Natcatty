@@ -169,6 +169,18 @@ test("resolveHostAuth respects password auth over stale key selections", () => {
   assert.equal(resolved.keyId, undefined);
 });
 
+test("resolveHostAuth infers key auth from imported IdentityFile paths", () => {
+  const resolved = resolveHostAuth({
+    host: {
+      ...autofillBaseHost,
+      identityFilePaths: ["~/.ssh/id_work"],
+    },
+    keys: [],
+  });
+
+  assert.equal(resolved.authMethod, "key");
+});
+
 const autofillBaseHost = {
   id: "h1",
   label: "Host",
