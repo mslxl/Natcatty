@@ -34,7 +34,7 @@ test("ssh_config import maps ForwardX11 no to disabled host X11 forwarding", () 
   assert.equal(result.hosts[0].x11Forwarding, false);
 });
 
-test("ssh_config import preserves system agent authentication semantics", () => {
+test("ssh_config import preserves key loading directives without forcing agent-only auth", () => {
   const result = importVaultHostsFromText("ssh_config", [
     "Host aws-sg",
     "  HostName 1.1.1.1",
@@ -66,7 +66,7 @@ test("ssh_config import preserves system agent authentication semantics", () => 
       port: 2222,
       username: "root",
       identityFilePaths: ["~/.ssh/aws_root"],
-      useSshAgent: true,
+      useSshAgent: undefined,
       identityAgent: undefined,
       identitiesOnly: true,
       addKeysToAgent: "yes",
@@ -75,7 +75,7 @@ test("ssh_config import preserves system agent authentication semantics", () => 
   );
 });
 
-test("ssh_config IdentityAgent none prevents AddKeysToAgent from enabling agent login", () => {
+test("ssh_config AddKeysToAgent does not enable agent login when IdentityAgent is none", () => {
   const result = importVaultHostsFromText("ssh_config", [
     "Host local-key-only",
     "  HostName server.example.com",
@@ -87,6 +87,19 @@ test("ssh_config IdentityAgent none prevents AddKeysToAgent from enabling agent 
   assert.equal(result.hosts.length, 1);
   assert.equal(result.hosts[0].identityAgent, "none");
   assert.notEqual(result.hosts[0].useSshAgent, true);
+});
+
+test("ssh_config IdentityAgent enables system agent authentication", () => {
+  const result = importVaultHostsFromText("ssh_config", [
+    "Host agent-host",
+    "  HostName server.example.com",
+    "  IdentityAgent $SSH_AUTH_SOCK",
+    "  IdentityFile ~/.ssh/id_ed25519",
+  ].join("\n"));
+
+  assert.equal(result.hosts.length, 1);
+  assert.equal(result.hosts[0].identityAgent, "$SSH_AUTH_SOCK");
+  assert.equal(result.hosts[0].useSshAgent, true);
 });
 
 test("detectVaultImportFormat recognizes csv and ssh_config exports", () => {
