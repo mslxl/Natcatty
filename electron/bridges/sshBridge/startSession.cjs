@@ -89,6 +89,10 @@ function createStartSessionApi(ctx) {
           port: options.port || 22,
           username: options.username || 'root',
         },
+        tcpLatencyDirect:
+          !Array.isArray(options.jumpHosts) || options.jumpHosts.length === 0
+            ? !options.proxy
+            : false,
         cols: options.cols || 80,
         rows: options.rows || 24,
       };

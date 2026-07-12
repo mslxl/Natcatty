@@ -47,6 +47,7 @@ const {
   _resetAlgorithmSupportCacheForTests,
 } = require("./sshAlgorithms.cjs");
 const { enableSshNoDelay, enableTcpNoDelay } = require("./tcpNoDelay.cjs");
+const { createTcpConnectLatencyProbe } = require("./tcpConnectLatency.cjs");
 const {
   configureTerminalSessionDataEmitter,
 } = require("./emitTerminalSessionData.cjs");
@@ -1155,6 +1156,7 @@ const { ensureMoshStatsConnection, ensureEtStatsConnection } = createMoshStatsCo
 });
 
 const { createSessionOpsApi } = require("./sshBridge/sessionOps.cjs");
+const measureTcpConnectLatency = createTcpConnectLatencyProbe({ net });
 const sessionOpsApi = createSessionOpsApi({
   get sessions() { return sessions; },
   get electronModule() { return electronModule; },
@@ -1162,6 +1164,7 @@ const sessionOpsApi = createSessionOpsApi({
   getSessionDecoder, resetSessionDecoders, sessionEncodings, normalizeTerminalEncoding,
   safeSend,
   quoteShellArg, log, ensureMoshStatsConnection, ensureEtStatsConnection,
+  measureTcpConnectLatency,
   execOnEtSession: (...args) => require("./terminalBridge.cjs").execOnEtSession(...args),
   getServerStats: undefined,
 });

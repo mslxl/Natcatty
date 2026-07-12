@@ -1,6 +1,19 @@
 /* eslint-disable no-undef */
 function createSessionOpsApi(ctx) {
   with (ctx) {
+    function getTcpLatencyTarget(session) {
+      if (session.tcpLatencyDirect === false) return null;
+
+      const auth = session.moshStatsAuth || session.etStatsAuth || session._reuseEndpoint || null;
+      if (auth?.hasJumpHost || auth?.hasProxy) return null;
+
+      const hostname = auth?.hostname || session.hostname;
+      const rawPort = auth?.port ?? 22;
+      const port = Number(rawPort);
+      if (!hostname || !Number.isInteger(port) || port < 1 || port > 65535) return null;
+      return { hostname, port };
+    }
+
     async function getSessionRemoteInfo(_event, payload) {
       const { sessionId } = payload || {};
       const session = sessions.get(sessionId);
@@ -798,12 +811,11 @@ function createSessionOpsApi(ctx) {
     
       // Auto-detect OS via uname — only Linux and macOS are supported
       const latencyMarker = "NC_LATENCY_MARK";
-      // On an ssh2 channel, wait for a one-byte client probe before printing
-      // the marker. Timing that data round-trip excludes channel setup and the
-      // stats command itself. The buffered system-ssh ET fallback cannot expose
-      // first-byte timing, so it reports no latency instead of a misleading one.
-      const latencyProbeCommand = usesEtStatsFallback ? '' : 'read -r nc_latency_probe; ';
-      const statsCommand = `${latencyProbeCommand}printf "${latencyMarker}|"; ostype=$(uname -s 2>/dev/null || echo "Unknown"); if [ "$ostype" = "Darwin" ]; then ${macosStatsCommand}; elif [ "$ostype" = "Linux" ]; then ${linuxStatsCommand}; else echo "UNSUPPORTED_OS:$ostype"; fi`;
+      const statsCommand = `printf "${latencyMarker}|"; ostype=$(uname -s 2>/dev/null || echo "Unknown"); if [ "$ostype" = "Darwin" ]; then ${macosStatsCommand}; elif [ "$ostype" = "Linux" ]; then ${linuxStatsCommand}; else echo "UNSUPPORTED_OS:$ostype"; fi`;
+      const tcpLatencyTarget = getTcpLatencyTarget(session);
+      const tcpLatencyPromise = tcpLatencyTarget && typeof measureTcpConnectLatency === 'function'
+        ? Promise.resolve(measureTcpConnectLatency(tcpLatencyTarget)).catch(() => null)
+        : Promise.resolve(null);
       return new Promise((resolve) => {
         let activeStream = null;
         let settled = false;
@@ -845,27 +857,21 @@ function createSessionOpsApi(ctx) {
     
           let stdout = '';
           let stderr = '';
-          let latencyMs = null;
-          let latencyStartedAt = null;
     
           stream.on('data', (data) => {
             stdout += data.toString();
-            if (
-              latencyMs === null &&
-              latencyStartedAt !== null &&
-              stdout.includes(latencyMarker)
-            ) {
-              latencyMs = Math.max(0, Date.now() - latencyStartedAt);
-            }
           });
     
           stream.stderr.on('data', (data) => {
             stderr += data.toString();
           });
     
-          stream.on('close', () => {
+          stream.on('close', async () => {
             if (settled) return;
             activeStream = null;
+            const measuredLatency = await tcpLatencyPromise;
+            if (settled) return;
+            const latencyMs = Number.isFinite(measuredLatency) ? measuredLatency : null;
     
             // Parse the output
             const output = stdout.trim().replace(new RegExp(`^${latencyMarker}\\|?`), '');
@@ -1167,7 +1173,7 @@ function createSessionOpsApi(ctx) {
                 disks,         // Array of all mounted disks
                 netRxSpeed,    // Total network receive speed (bytes/sec)
                 netTxSpeed,    // Total network transmit speed (bytes/sec)
-                latencyMs,      // Approximate network round-trip over the SSH stats channel (ms)
+                latencyMs,      // TCP connection establishment latency to the SSH endpoint (ms)
                 netInterfaces, // Per-interface network stats
                 hostname,
                 osName,
@@ -1178,16 +1184,6 @@ function createSessionOpsApi(ctx) {
             });
           });
 
-          if (!usesEtStatsFallback) {
-            try {
-              latencyStartedAt = Date.now();
-              stream.write('\n');
-            } catch (err) {
-              if (settle({ success: false, error: err?.message || String(err) })) {
-                disposeStream(stream);
-              }
-            }
-          }
         });
       });
     }

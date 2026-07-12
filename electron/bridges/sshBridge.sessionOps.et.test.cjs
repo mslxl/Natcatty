@@ -28,7 +28,7 @@ function fakeConn(stdout) {
       const output = command.includes("NC_LATENCY_MARK") && !stdout.includes("NC_LATENCY_MARK")
         ? `NC_LATENCY_MARK|${stdout}`
         : stdout;
-      cb(null, fakeStream(output, command.includes("NC_LATENCY_MARK")));
+      cb(null, fakeStream(output));
     },
   };
 }
@@ -52,6 +52,7 @@ function makeApi(session, execOnEtSession, extra = {}) {
     iconv: { encodingExists: () => true },
     sessionEncodings: new Map(),
     resetSessionDecoders: () => {},
+    measureTcpConnectLatency: async () => 3,
     ...extra,
   });
 }
@@ -171,7 +172,7 @@ test("getServerStats falls back to execOnEtSession when the direct ET companion 
   assert.equal(execFallbackCalls, 1);
   assert.equal(result.success, true);
   assert.equal(result.stats.memTotal, 8000);
-  assert.equal(result.stats.latencyMs, null);
+  assert.equal(result.stats.latencyMs, 3);
 });
 
 test("readRemoteHistory probes ET sessions and parses the detected shell", async () => {
