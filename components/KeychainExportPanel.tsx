@@ -197,7 +197,7 @@ export const KeychainExportPanel: React.FC<KeychainExportPanelProps> = ({
                       const exportPassword = sanitizeCredentialValue(exportAuth.password);
                       const exportAgentAuth = resolveBridgeSshAgentAuth(
                         effectiveExportHost,
-                        exportAuth.key?.certificate,
+                        exportAuth.key,
                       );
 
                       // Need either password or a usable key to run remote command.

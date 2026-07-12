@@ -784,6 +784,7 @@ async function prepareSystemSshAgentForAuth(options, logPrefix = "[SSHAuth]") {
     identitiesOnly: options.identitiesOnly,
     addKeysToAgent: options.addKeysToAgent,
     useKeychain: options.useKeychain,
+    agentPublicKeys: options.agentPublicKeys,
     hostname: options.hostname,
     username: options.username,
   }, {

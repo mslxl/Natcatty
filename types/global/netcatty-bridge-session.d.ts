@@ -54,6 +54,7 @@ declare global {
       passphrase?: string;
       identityFilePaths?: string[];
       useSshAgent?: boolean;
+      agentPublicKeys?: string[];
       identityAgent?: string;
       identitiesOnly?: boolean;
       addKeysToAgent?: string;
@@ -91,6 +92,7 @@ declare global {
       authMethod?: 'password' | 'key' | 'certificate';
       identityFilePaths?: string[];
       useSshAgent?: boolean;
+      agentPublicKeys?: string[];
       identityAgent?: string;
       identitiesOnly?: boolean;
       addKeysToAgent?: string;
@@ -182,6 +184,7 @@ declare global {
       keySource?: 'generated' | 'imported' | 'reference';
       identityFilePaths?: string[];
       useSshAgent?: boolean;
+      agentPublicKeys?: string[];
       identityAgent?: string;
       identitiesOnly?: boolean;
       addKeysToAgent?: string;

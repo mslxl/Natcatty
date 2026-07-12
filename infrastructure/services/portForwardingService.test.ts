@@ -94,6 +94,7 @@ test("startPortForward uses the system agent when a synced key cannot be decrypt
     id: "key-1",
     label: "Synced key",
     type: "ED25519",
+    publicKey: "ssh-ed25519 AAAASELECTED",
     privateKey: "enc:v1:djEwAAAA",
     source: "imported",
     category: "key",
@@ -115,6 +116,7 @@ test("startPortForward uses the system agent when a synced key cannot be decrypt
 
   assert.equal(result.success, true);
   assert.equal(bridge.getOptions()?.useSshAgent, true);
+  assert.deepEqual(bridge.getOptions()?.agentPublicKeys, ["ssh-ed25519 AAAASELECTED"]);
   assert.equal(bridge.getOptions()?.privateKey, undefined);
 });
 

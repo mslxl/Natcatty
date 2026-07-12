@@ -86,7 +86,7 @@ test("ssh_config AddKeysToAgent does not enable agent login when IdentityAgent i
 
   assert.equal(result.hosts.length, 1);
   assert.equal(result.hosts[0].identityAgent, "none");
-  assert.notEqual(result.hosts[0].useSshAgent, true);
+  assert.equal(result.hosts[0].useSshAgent, false);
 });
 
 test("ssh_config AddKeysToAgent alone preserves direct-key authentication", () => {

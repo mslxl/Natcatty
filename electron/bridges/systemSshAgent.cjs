@@ -35,10 +35,18 @@ function resolveIdentityPath(rawPath, { hostname = "", username = "", env = proc
   return resolved;
 }
 
-async function loadPreferredPublicKeyBlobs(identityFilePaths, options, deps) {
+async function loadPreferredPublicKeyBlobs(identityFilePaths, publicKeys, options, deps) {
   const preferred = new Set();
   const resolvedIdentityPaths = [];
   const unavailablePublicKeyPaths = [];
+  let providedPreferredCount = 0;
+  for (const publicKey of publicKeys ?? []) {
+    const blob = publicKeyBlob(publicKey);
+    if (blob) {
+      preferred.add(blob);
+      providedPreferredCount += 1;
+    }
+  }
   for (const rawPath of identityFilePaths ?? []) {
     const identityPath = resolveIdentityPath(rawPath, options);
     if (!identityPath) continue;
@@ -57,7 +65,7 @@ async function loadPreferredPublicKeyBlobs(identityFilePaths, options, deps) {
       });
     }
   }
-  return { preferred, resolvedIdentityPaths, unavailablePublicKeyPaths };
+  return { preferred, providedPreferredCount, resolvedIdentityPaths, unavailablePublicKeyPaths };
 }
 
 function getIdentities(agent) {
@@ -136,8 +144,9 @@ async function prepareSystemSshAgent(options, injected = {}) {
     log: injected.log,
   };
   const agent = deps.createAgent(options.socketPath);
-  const { preferred, resolvedIdentityPaths, unavailablePublicKeyPaths } = await loadPreferredPublicKeyBlobs(
+  const { preferred, providedPreferredCount, resolvedIdentityPaths, unavailablePublicKeyPaths } = await loadPreferredPublicKeyBlobs(
     options.identityFilePaths,
+    options.agentPublicKeys,
     { hostname: options.hostname, username: options.username, env: deps.env },
     deps,
   );
@@ -170,7 +179,10 @@ async function prepareSystemSshAgent(options, injected = {}) {
     }
   }
 
-  if (options.identitiesOnly === true && (preferred.size === 0 || unavailablePublicKeyPaths.length > 0)) {
+  if (
+    options.identitiesOnly === true
+    && (preferred.size === 0 || (unavailablePublicKeyPaths.length > 0 && providedPreferredCount === 0))
+  ) {
     const error = new Error(
       unavailablePublicKeyPaths.length > 0
         ? `IdentitiesOnly requires a readable public key selector. Missing or invalid: ${unavailablePublicKeyPaths.join(", ")}`

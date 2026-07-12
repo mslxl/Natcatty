@@ -589,6 +589,7 @@ test("buildSftpHostCredentials uses the system agent when a synced key cannot be
     id: "key-1",
     label: "Synced key",
     type: "ED25519",
+    publicKey: "ssh-ed25519 AAAASELECTED",
     privateKey: "enc:v1:djEwAAAA",
     source: "imported",
     category: "key",
@@ -607,5 +608,6 @@ test("buildSftpHostCredentials uses the system agent when a synced key cannot be
   });
 
   assert.equal(credentials.useSshAgent, true);
+  assert.deepEqual(credentials.agentPublicKeys, ["ssh-ed25519 AAAASELECTED"]);
   assert.equal(credentials.privateKey, undefined);
 });

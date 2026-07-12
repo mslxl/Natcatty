@@ -162,6 +162,7 @@ test("startSSH uses the system agent when a synced vault key cannot be decrypted
       id: "key-1",
       label: "Synced key",
       type: "ED25519",
+      publicKey: "ssh-ed25519 AAAASELECTED",
       privateKey: "enc:v1:djEwAAAA",
       source: "imported",
       category: "key",
@@ -173,6 +174,7 @@ test("startSSH uses the system agent when a synced vault key cannot be decrypted
   await createTerminalSessionStarters(ctx as never).startSSH(createTermStub() as never);
 
   assert.equal(capturedOptions?.useSshAgent, true);
+  assert.deepEqual(capturedOptions?.agentPublicKeys, ["ssh-ed25519 AAAASELECTED"]);
   assert.equal(capturedOptions?.privateKey, undefined);
 });
 

@@ -54,6 +54,7 @@ declare global {
     proxy?: NetcattyProxyConfig;
     identityFilePaths?: string[];
     useSshAgent?: boolean;
+    agentPublicKeys?: string[];
     identityAgent?: string;
     identitiesOnly?: boolean;
     addKeysToAgent?: string;
@@ -143,6 +144,7 @@ declare global {
     // Local SSH key file paths (from SSH config IdentityFile)
     identityFilePaths?: string[];
     useSshAgent?: boolean;
+    agentPublicKeys?: string[];
     identityAgent?: string;
     identitiesOnly?: boolean;
     addKeysToAgent?: string;
@@ -201,6 +203,7 @@ declare global {
     jumpHosts?: NetcattyJumpHost[];
     identityFilePaths?: string[];
     useSshAgent?: boolean;
+    agentPublicKeys?: string[];
     identityAgent?: string;
     identitiesOnly?: boolean;
     addKeysToAgent?: string;

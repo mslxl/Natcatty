@@ -83,6 +83,25 @@ test("prepareSystemSshAgent excludes unrelated identities for IdentitiesOnly", a
   );
 });
 
+test("prepareSystemSshAgent filters by a selected vault public key", async () => {
+  const unrelated = makePublicKey();
+  const selected = makePublicKey();
+  const agent = await prepareSystemSshAgent({
+    socketPath: "/tmp/agent.sock",
+    agentPublicKeys: [selected],
+    identitiesOnly: true,
+  }, {
+    createAgent: () => fakeAgent([unrelated, selected]),
+    platform: "linux",
+  });
+
+  const identities = await getIdentities(agent);
+  assert.deepEqual(
+    identities.map((key) => key.getPublicSSH().toString("base64")),
+    [utils.parseKey(selected).getPublicSSH().toString("base64")],
+  );
+});
+
 test("prepareSystemSshAgent asks macOS to load a missing configured identity from Keychain", async () => {
   const selected = makePublicKey();
   const sshAddCalls = [];

@@ -16,3 +16,7 @@ test('key export preserves imported identity files when the system SSH agent is 
     /fallbackIdentityFilePaths: \(!effectiveExportHost\.useSshAgent && exportAuth\.authMethod === "password"\) \|\| exportAuth\.keyId/,
   );
 });
+
+test('key export passes the selected vault key to agent filtering', () => {
+  assert.match(source, /resolveBridgeSshAgentAuth\(\s*effectiveExportHost,\s*exportAuth\.key,\s*\)/);
+});

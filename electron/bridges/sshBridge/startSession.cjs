@@ -48,6 +48,10 @@ function isSshAuthFailure(err) {
     message.includes("no authentication methods available");
 }
 
+function shouldOfferAgentForLogin(options, connectOpts) {
+  return options?.useSshAgent !== false && Boolean(connectOpts?.agent);
+}
+
 function createStartSessionApi(ctx) {
   with (ctx) {
     /**
@@ -778,9 +782,11 @@ function createStartSessionApi(ctx) {
         // If no primary auth method configured, try ssh-agent first, then ALL default keys.
         // Skip default-key primaries when the user explicitly chose a key (inline or
         // identityFilePaths) even if loading that key failed (issue #1614).
-        if (options.useSshAgent !== false && !connectOpts.privateKey && !connectOpts.password && !connectOpts.agent) {
+        if (!connectOpts.privateKey && !connectOpts.password && !connectOpts.agent) {
           // First, try to use ssh-agent if available (this is what regular SSH does)
-          const sshAgentSocket = await getAvailableAgentSocket();
+          const sshAgentSocket = options.useSshAgent !== false
+            ? await getAvailableAgentSocket()
+            : null;
 
           if (sshAgentSocket) {
             log("No auth method configured, trying ssh-agent first", { agentSocket: sshAgentSocket });
@@ -849,7 +855,7 @@ function createStartSessionApi(ctx) {
           }
 
           // Then try agent if configured (try agent before password since it's usually faster)
-          if (connectOpts.agent) {
+          if (shouldOfferAgentForLogin(options, connectOpts)) {
             authMethods.push({ type: "agent", id: "agent" });
           }
 
@@ -1538,4 +1544,5 @@ module.exports = {
   SSH_TCP_CONNECT_TIMEOUT_MS,
   createStartSessionApi,
   resolveSshConnectionTimeouts,
+  shouldOfferAgentForLogin,
 };

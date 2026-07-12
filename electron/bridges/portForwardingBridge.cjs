@@ -88,6 +88,7 @@ async function startPortForward(event, payload) {
     jumpHosts = [],
     identityFilePaths,
     useSshAgent,
+    agentPublicKeys,
     identityAgent,
     identitiesOnly,
     addKeysToAgent,
@@ -173,6 +174,7 @@ async function startPortForward(event, payload) {
   try {
     const systemAuthAgent = hasCertificate ? null : await prepareSystemSshAgentForAuth({
       useSshAgent,
+      agentPublicKeys,
       identityAgent,
       identityFilePaths,
       identitiesOnly,

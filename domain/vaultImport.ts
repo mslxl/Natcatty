@@ -585,6 +585,8 @@ const importFromSshConfig = (text: string): VaultImportResult => {
       const macKeychainAgentEnabled = hasMacKeychainAgentDirectives(block);
       if (!identityAgentDisabled && (identityAgentEnabled || macKeychainAgentEnabled)) {
         host.useSshAgent = true;
+      } else if (identityAgentDisabled) {
+        host.useSshAgent = false;
       }
       if (block.forwardX11 !== undefined) {
         host.x11Forwarding = block.forwardX11;

@@ -105,7 +105,7 @@ export const buildSftpHostCredentials = ({
           : jumpHost.identityFilePaths,
         passphrase: jumpAuth.passphrase,
       });
-      const jumpAgentAuth = resolveBridgeSshAgentAuth(jumpHost, jumpKey?.certificate);
+      const jumpAgentAuth = resolveBridgeSshAgentAuth(jumpHost, jumpKey);
       const hasJumpKeyMaterial = Boolean(
         jumpAgentAuth.useSshAgent || jumpKeyAuth.privateKey || jumpKeyAuth.identityFilePaths?.length,
       );
@@ -170,7 +170,7 @@ export const buildSftpHostCredentials = ({
       : host.identityFilePaths,
     passphrase: resolved.passphrase,
   });
-  const targetAgentAuth = resolveBridgeSshAgentAuth(host, key?.certificate);
+  const targetAgentAuth = resolveBridgeSshAgentAuth(host, key);
   const password = sanitizeCredentialValue(resolved.password);
   const hasKeyMaterial = Boolean(
     targetAgentAuth.useSshAgent || keyAuth.privateKey || keyAuth.identityFilePaths?.length,

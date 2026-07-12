@@ -102,8 +102,26 @@ test("resolveBridgeSshAgentAuth keeps certificate authentication independent", (
     resolveBridgeSshAgentAuth({
       ...autofillBaseHost,
       useSshAgent: true,
-    }, "ssh-ed25519-cert-v01@openssh.com AAAATEST"),
+    }, { certificate: "ssh-ed25519-cert-v01@openssh.com AAAATEST" }),
     {},
+  );
+});
+
+test("resolveBridgeSshAgentAuth forwards a selected vault public key", () => {
+  assert.deepEqual(
+    resolveBridgeSshAgentAuth({
+      ...autofillBaseHost,
+      useSshAgent: true,
+      identitiesOnly: true,
+    }, { publicKey: "ssh-ed25519 AAAATEST" }),
+    {
+      useSshAgent: true,
+      identityAgent: undefined,
+      identitiesOnly: true,
+      addKeysToAgent: undefined,
+      useKeychain: undefined,
+      agentPublicKeys: ["ssh-ed25519 AAAATEST"],
+    },
   );
 });
 
