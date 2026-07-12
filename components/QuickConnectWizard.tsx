@@ -116,6 +116,19 @@ const QuickConnectWizard: React.FC<QuickConnectWizardProps> = ({
     setSelectedKeyId(null);
   };
 
+  const handleProtocolPortChange = (
+    proto: QuickConnectProtocol,
+    rawValue: string,
+    fallbackPort: number,
+  ) => {
+    setPort(parseInt(rawValue) || fallbackPort);
+    setProtocol(proto);
+    if (proto === "telnet") {
+      if (selectedIdentityId) clearSelectedIdentity();
+      setAuthMethod("password");
+    }
+  };
+
   // Navigate to next step
   const handleContinue = () => {
     switch (step) {
@@ -183,14 +196,14 @@ const QuickConnectWizard: React.FC<QuickConnectWizardProps> = ({
       case "knownhost":
         return true;
       case "auth":
-        if (selectedIdentity) return true;
+        if (selectedIdentity && protocol !== "telnet") return true;
         if (authMethod === "password") {
           // Whitespace-only passwords are valid SSH secrets (issue #2036).
           return password.length > 0;
         }
         return !!selectedKeyId;
     }
-  }, [step, username, authMethod, password, selectedKeyId, selectedIdentity]);
+  }, [step, username, authMethod, password, selectedKeyId, selectedIdentity, protocol]);
 
   // Render protocol selection step
   const renderProtocolStep = () => (
@@ -230,10 +243,7 @@ const QuickConnectWizard: React.FC<QuickConnectWizardProps> = ({
             <Input
               type="number"
               value={protocol === "ssh" ? port : 22}
-              onChange={(e) => {
-                setPort(parseInt(e.target.value) || 22);
-                setProtocol("ssh");
-              }}
+              onChange={(e) => handleProtocolPortChange("ssh", e.target.value, 22)}
               onClick={(e) => e.stopPropagation()}
               className="w-16 h-7 text-xs text-center"
               min={1}
@@ -275,10 +285,7 @@ const QuickConnectWizard: React.FC<QuickConnectWizardProps> = ({
             <Input
               type="number"
               value={protocol === "mosh" ? port : 22}
-              onChange={(e) => {
-                setPort(parseInt(e.target.value) || 22);
-                setProtocol("mosh");
-              }}
+              onChange={(e) => handleProtocolPortChange("mosh", e.target.value, 22)}
               onClick={(e) => e.stopPropagation()}
               className="w-16 h-7 text-xs text-center"
               min={1}
@@ -320,10 +327,7 @@ const QuickConnectWizard: React.FC<QuickConnectWizardProps> = ({
             <Input
               type="number"
               value={protocol === "et" ? port : 22}
-              onChange={(e) => {
-                setPort(parseInt(e.target.value) || 22);
-                setProtocol("et");
-              }}
+              onChange={(e) => handleProtocolPortChange("et", e.target.value, 22)}
               onClick={(e) => e.stopPropagation()}
               className="w-16 h-7 text-xs text-center"
               min={1}
@@ -365,10 +369,7 @@ const QuickConnectWizard: React.FC<QuickConnectWizardProps> = ({
             <Input
               type="number"
               value={protocol === "telnet" ? port : 23}
-              onChange={(e) => {
-                setPort(parseInt(e.target.value) || 23);
-                setProtocol("telnet");
-              }}
+              onChange={(e) => handleProtocolPortChange("telnet", e.target.value, 23)}
               onClick={(e) => e.stopPropagation()}
               className="w-16 h-7 text-xs text-center"
               min={1}

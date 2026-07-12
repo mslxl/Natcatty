@@ -28,8 +28,9 @@ export const buildQuickConnectHost = (args: {
     now = Date.now(),
     randomId = Math.random().toString(36).slice(2, 11),
   } = args;
-  const effectiveUsername = selectedIdentity?.username || args.username || target.username || "root";
-  const authMethod = selectedIdentity?.authMethod || args.authMethod;
+  const applicableIdentity = protocol === "telnet" ? undefined : selectedIdentity;
+  const effectiveUsername = applicableIdentity?.username || args.username || target.username || "root";
+  const authMethod = applicableIdentity?.authMethod || args.authMethod;
   const effectivePort = args.port || getQuickConnectDefaultPort(protocol);
 
   return {
@@ -43,10 +44,10 @@ export const buildQuickConnectHost = (args: {
     os: "linux",
     protocol: protocol === "mosh" || protocol === "et" ? "ssh" : protocol,
     authMethod,
-    identityId: selectedIdentity?.id,
-    password: !selectedIdentity && authMethod === "password" ? args.password : undefined,
+    identityId: applicableIdentity?.id,
+    password: !applicableIdentity && authMethod === "password" ? args.password : undefined,
     identityFileId:
-      !selectedIdentity && (authMethod === "key" || authMethod === "certificate")
+      !applicableIdentity && (authMethod === "key" || authMethod === "certificate")
         ? args.selectedKeyId || undefined
         : undefined,
     moshEnabled: protocol === "mosh",

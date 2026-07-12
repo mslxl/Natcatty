@@ -71,3 +71,31 @@ test("buildQuickConnectHost keeps Mosh on SSH bootstrap settings", () => {
   assert.equal(host.moshEnabled, true);
   assert.equal(host.identityFileId, "key-1");
 });
+
+test("buildQuickConnectHost never applies an SSH identity to Telnet", () => {
+  const identity: Identity = {
+    id: "identity-1",
+    label: "SSH only",
+    username: "ssh-user",
+    authMethod: "password",
+    password: "ssh-secret",
+    created: 1,
+  };
+  const host = buildQuickConnectHost({
+    target,
+    protocol: "telnet",
+    port: 2323,
+    username: "telnet-user",
+    authMethod: "password",
+    password: "telnet-secret",
+    selectedIdentity: identity,
+    save: false,
+    now: 1,
+    randomId: "id",
+  });
+
+  assert.equal(host.identityId, undefined);
+  assert.equal(host.username, "telnet-user");
+  assert.equal(host.password, "telnet-secret");
+  assert.equal(host.telnetPort, 2323);
+});
