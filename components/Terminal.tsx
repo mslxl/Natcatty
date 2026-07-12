@@ -71,7 +71,6 @@ import {
 import { useCustomThemes } from "../application/state/customThemeStore";
 
 import { TerminalConnectionDialog } from "./terminal/TerminalConnectionDialog";
-import { SSH_TCP_CONNECT_TIMEOUT_MS } from "./terminal/connectionTimeouts";
 import { HostKeyInfo } from "./terminal/TerminalHostKeyVerification";
 import { createKnownHostFromHostKeyInfo, toHostKeyInfo } from "./terminal/hostKeyVerification";
 import { TerminalToolbar } from "./terminal/TerminalToolbar";
@@ -281,7 +280,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   deferTerminalResizeRef.current = deferTerminalResize;
 
   // Initial TCP dial timeout. Authentication prompts use their own backend timeout.
-  const CONNECTION_TIMEOUT = SSH_TCP_CONNECT_TIMEOUT_MS;
+  const CONNECTION_TIMEOUT = terminalSettings.sshTcpConnectTimeoutSeconds * 1000;
   const { t } = useI18n();
   const connectScriptsConsumedRef = useRef(false);
   const connectScriptsCompletedIdsRef = useRef(new Set<string>());

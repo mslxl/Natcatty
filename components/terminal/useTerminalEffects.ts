@@ -587,7 +587,10 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     };
     if (!shouldRunConnectionTimeout(timeoutState)) return;
 
-    const connectionTimeout = getConnectionTimeoutMs(timeoutState) || CONNECTION_TIMEOUT;
+    const connectionTimeout = getConnectionTimeoutMs(timeoutState, {
+      tcpConnectTimeoutMs: terminalSettings.sshTcpConnectTimeoutSeconds * 1000,
+      authReadyTimeoutMs: terminalSettings.sshAuthReadyTimeoutSeconds * 1000,
+    }) || CONNECTION_TIMEOUT;
     setTimeLeft(connectionTimeout / 1000);
     const countdown = setInterval(() => {
       setTimeLeft((prev) => (prev > 0 ? prev - 1 : 0));

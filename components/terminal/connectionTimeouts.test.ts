@@ -48,6 +48,20 @@ test("connection timeout switches from TCP dial to auth readiness after TCP conn
   }), SSH_AUTH_READY_TIMEOUT_MS);
 });
 
+test("connection timeout uses configured timeout values", () => {
+  assert.equal(getConnectionTimeoutMs(baseTimeoutState, {
+    tcpConnectTimeoutMs: 45_000,
+    authReadyTimeoutMs: 300_000,
+  }), 45_000);
+  assert.equal(getConnectionTimeoutMs({
+    ...baseTimeoutState,
+    isConnectionPastTcpDial: true,
+  }, {
+    tcpConnectTimeoutMs: 45_000,
+    authReadyTimeoutMs: 300_000,
+  }), 300_000);
+});
+
 test("connection timeout keeps the auth-ready window for protocols without SSH TCP progress", () => {
   assert.equal(getConnectionTimeoutMs({
     ...baseTimeoutState,

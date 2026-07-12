@@ -114,6 +114,10 @@ declare global {
     keepaliveInterval?: number;
     // Unanswered keepalives before ssh2 declares the connection dead
     keepaliveCountMax?: number;
+    // Maximum time to establish the TCP connection
+    sshTcpConnectTimeoutMs?: number;
+    // Maximum time for SSH handshake and authentication
+    sshAuthReadyTimeoutMs?: number;
     // Enable legacy SSH algorithms for older network equipment
     legacyAlgorithms?: boolean;
     // Drop ecdsa-sha2-* from offered host-key algorithms (#1027)

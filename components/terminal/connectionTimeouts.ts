@@ -1,6 +1,11 @@
 export const SSH_TCP_CONNECT_TIMEOUT_MS = 20_000;
 export const SSH_AUTH_READY_TIMEOUT_MS = 120_000;
 
+type ConnectionTimeouts = {
+  tcpConnectTimeoutMs?: number;
+  authReadyTimeoutMs?: number;
+};
+
 type ConnectionTimeoutState = {
   status: string;
   needsAuth: boolean;
@@ -12,11 +17,16 @@ type ConnectionTimeoutState = {
   isConnectionPastTcpDial: boolean;
 };
 
-export function getConnectionTimeoutMs(state: ConnectionTimeoutState): number {
-  if (!state.hasSshTcpConnectProgress) return SSH_AUTH_READY_TIMEOUT_MS;
+export function getConnectionTimeoutMs(
+  state: ConnectionTimeoutState,
+  timeouts: ConnectionTimeouts = {},
+): number {
+  const tcpConnectTimeoutMs = timeouts.tcpConnectTimeoutMs ?? SSH_TCP_CONNECT_TIMEOUT_MS;
+  const authReadyTimeoutMs = timeouts.authReadyTimeoutMs ?? SSH_AUTH_READY_TIMEOUT_MS;
+  if (!state.hasSshTcpConnectProgress) return authReadyTimeoutMs;
   return state.isConnectionPastTcpDial
-    ? SSH_AUTH_READY_TIMEOUT_MS
-    : SSH_TCP_CONNECT_TIMEOUT_MS;
+    ? authReadyTimeoutMs
+    : tcpConnectTimeoutMs;
 }
 
 export function hasConnectionPassedTcpDial(status: string): boolean {

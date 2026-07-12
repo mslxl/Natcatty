@@ -689,6 +689,8 @@ test("buildSyncPayload includes syncable terminal options from settings", () => 
     fontSmoothing: false,
     showServerStats: false,
     serverStatsRefreshInterval: 12,
+    sshTcpConnectTimeoutSeconds: 45,
+    sshAuthReadyTimeoutSeconds: 300,
     rendererType: "dom",
     localShell: "/bin/zsh",
   }));
@@ -705,6 +707,8 @@ test("buildSyncPayload includes syncable terminal options from settings", () => 
     fontSmoothing: false,
     showServerStats: false,
     serverStatsRefreshInterval: 12,
+    sshTcpConnectTimeoutSeconds: 45,
+    sshAuthReadyTimeoutSeconds: 300,
     rendererType: "dom",
   });
 });

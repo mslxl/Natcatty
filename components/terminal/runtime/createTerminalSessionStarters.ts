@@ -82,6 +82,8 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
     verifyHostKeys: true,
     keepaliveInterval: 30,
     keepaliveCountMax: 10,
+    sshTcpConnectTimeoutSeconds: 20,
+    sshAuthReadyTimeoutSeconds: 120,
     ...(ctx.terminalSettings ?? {}),
   };
   let fallbackDisposeTelnetEchoMode: (() => void) | null = null;
@@ -520,6 +522,8 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           jumpHosts: jumpHosts.length > 0 ? jumpHosts : undefined,
           keepaliveInterval: keepalive.interval,
           keepaliveCountMax: keepalive.countMax,
+          sshTcpConnectTimeoutMs: globalTerminalSettings.sshTcpConnectTimeoutSeconds * 1000,
+          sshAuthReadyTimeoutMs: globalTerminalSettings.sshAuthReadyTimeoutSeconds * 1000,
           verifyHostKeys: globalTerminalSettings.verifyHostKeys,
           sessionLog: ctx.sessionLog?.enabled ? ctx.sessionLog : undefined,
           sshDebugLogEnabled: ctx.sshDebugLogEnabled,
