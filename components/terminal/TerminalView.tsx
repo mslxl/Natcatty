@@ -571,18 +571,21 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
 
             if (isCompactActionsMode) {
               // Speed-dial: circular toggle; full action strip springs out to the left.
+              // Do NOT use `.terminal-topbar` here — it sets container-type:inline-size,
+              // which size-contains the inline axis and collapses width to 0 when we
+              // animate max-width / rely on content sizing (buttons never appear).
               return (
-                <div className="absolute right-1.5 top-1.5 z-30 flex flex-row-reverse items-center pointer-events-none">
+                <div className="absolute right-1 top-1 z-30 flex flex-row-reverse items-center pointer-events-none">
                   <Tooltip open={compactActionsOpen ? false : undefined}>
                     <TooltipTrigger asChild>
                       <button
                         ref={compactActionsButtonRef}
                         type="button"
                         className={cn(
-                          "relative z-10 h-7 w-7 shrink-0 rounded-full border pointer-events-auto",
-                          "opacity-80 hover:opacity-100 focus-visible:opacity-100 shadow-sm",
-                          "transition-[transform,opacity] duration-200 ease-out",
-                          compactActionsOpen && "opacity-100 scale-105",
+                          "relative z-10 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border pointer-events-auto",
+                          "opacity-70 hover:opacity-100 focus-visible:opacity-100",
+                          "transition-[transform,opacity,background-color] duration-200 ease-out",
+                          compactActionsOpen && "opacity-100",
                         )}
                         style={{
                           backgroundColor: 'var(--terminal-ui-bg)',
@@ -594,34 +597,34 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
                         aria-controls={`terminal-actions-${sessionId}`}
                         onClick={() => setCompactActionsOpen((open) => !open)}
                       >
-                        <span
-                          aria-hidden="true"
-                          className="mx-auto block h-3.5 w-3.5"
-                          style={{
-                            backgroundImage: 'radial-gradient(circle, currentColor 1px, transparent 1px)',
-                            backgroundSize: '4px 4px',
-                          }}
-                        />
+                        {/* Three horizontal dots — lighter than a dense 3×3 grid */}
+                        <span aria-hidden="true" className="flex items-center gap-[3px]">
+                          <span className="block h-[3px] w-[3px] rounded-full bg-current" />
+                          <span className="block h-[3px] w-[3px] rounded-full bg-current" />
+                          <span className="block h-[3px] w-[3px] rounded-full bg-current" />
+                        </span>
                       </button>
                     </TooltipTrigger>
                     <TooltipContent side="bottom">{t("terminal.toolbar.showActions")}</TooltipContent>
                   </Tooltip>
                   <div
-                    id={`terminal-actions-${sessionId}`}
-                    aria-hidden={!compactActionsOpen ? true : undefined}
                     className={cn(
-                      "terminal-topbar flex items-center min-w-0 overflow-hidden origin-right",
-                      "rounded-full border shadow-md backdrop-blur-md",
-                      "transition-[max-width,opacity,transform,margin] duration-200 ease-out",
+                      "grid min-w-0 transition-[grid-template-columns,opacity,margin] duration-200 ease-out",
                       compactActionsOpen
-                        ? "max-w-[min(100vw-3rem,40rem)] opacity-100 scale-100 translate-x-0 mr-1.5 pointer-events-auto"
-                        : "max-w-0 opacity-0 scale-90 translate-x-3 mr-0 pointer-events-none border-transparent shadow-none",
+                        ? "mr-1.5 grid-cols-[1fr] opacity-100 pointer-events-auto"
+                        : "mr-0 grid-cols-[0fr] opacity-0 pointer-events-none",
                     )}
-                    data-host-info-visible="false"
-                    style={toolbarSurfaceStyle}
                   >
-                    <div className="flex items-center gap-0.5 px-1.5 py-0.5 flex-nowrap w-max">
-                      {terminalActionsBody}
+                    <div className="min-w-0 overflow-hidden">
+                      <div
+                        id={`terminal-actions-${sessionId}`}
+                        aria-hidden={!compactActionsOpen ? true : undefined}
+                        className="flex w-max items-center gap-0.5 rounded-full border px-1.5 py-0.5 shadow-md backdrop-blur-md"
+                        data-host-info-visible="false"
+                        style={toolbarSurfaceStyle}
+                      >
+                        {terminalActionsBody}
+                      </div>
                     </div>
                   </div>
                 </div>

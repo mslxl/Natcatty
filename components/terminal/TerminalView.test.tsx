@@ -246,11 +246,13 @@ test("hidden host information reveals actions without permanently covering termi
   assert.match(source, /id=\{`terminal-actions-\$\{sessionId\}`\}/);
   assert.match(source, /onClick=\{\(\) => setCompactActionsOpen/);
   assert.match(source, /right: terminalRightInset/);
-  // Compact mode is a circular speed-dial: tray springs left from the toggle.
+  // Compact mode is a circular speed-dial: tray springs left via 0fr→1fr grid
+  // (must not use .terminal-topbar — container-type collapses content width).
   assert.match(source, /flex flex-row-reverse items-center/);
   assert.match(source, /rounded-full/);
-  assert.match(source, /max-w-\[min\(100vw-3rem,40rem\)\]/);
-  assert.match(source, /max-w-0 opacity-0 scale-90/);
+  assert.match(source, /grid-cols-\[1fr\]/);
+  assert.match(source, /grid-cols-\[0fr\]/);
+  assert.match(source, /Do NOT use `\.terminal-topbar`|container-type:inline-size|container-type collapses/);
   assert.match(source, /document\.addEventListener\("pointerdown", handlePointerDown\)/);
   assert.match(source, /closest\('\[data-radix-popper-content-wrapper\]'\)/);
   assert.match(source, /event\.key !== "Escape"/);
