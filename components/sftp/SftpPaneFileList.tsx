@@ -15,7 +15,7 @@ import type { SftpFileEntry } from "../../types";
 import type { SftpPane } from "../../application/state/sftp/types";
 import type { SftpTransferSource } from "./SftpContext";
 import { sftpListOrderStore } from "./hooks/useSftpListOrderStore";
-import { buildSftpColumnTemplate, isNavigableDirectory, type ColumnWidths, type SftpColumnVisibility, type SortField, type SortOrder } from "./utils";
+import { buildSftpColumnTemplate, isNavigableDirectory, isSftpColumnMenuKey, type ColumnWidths, type SftpColumnVisibility, type SortField, type SortOrder } from "./utils";
 import { isKnownBinaryFile } from "../../lib/sftpFileUtils";
 import { SftpFileRow } from "./SftpFileRow";
 import {
@@ -514,6 +514,19 @@ export const SftpPaneFileList: React.FC<SftpPaneFileListProps> = React.memo(({
         <div
           className="text-[11px] uppercase tracking-wide text-muted-foreground px-4 py-2 border-b border-border/40 bg-secondary/10 select-none"
           data-section="terminal-sftp-list-header"
+          tabIndex={0}
+          aria-label={t("sftp.columns.configure")}
+          onKeyDown={(e) => {
+            if (!isSftpColumnMenuKey(e.key, e.shiftKey)) return;
+            e.preventDefault();
+            const rect = e.currentTarget.getBoundingClientRect();
+            e.currentTarget.dispatchEvent(new MouseEvent("contextmenu", {
+              bubbles: true,
+              cancelable: true,
+              clientX: rect.left + 16,
+              clientY: rect.top + rect.height / 2,
+            }));
+          }}
           style={{
             display: "grid",
             gridTemplateColumns: buildSftpColumnTemplate(columnWidths, visibleColumns),

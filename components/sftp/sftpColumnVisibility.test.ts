@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   buildSftpColumnTemplate,
   DEFAULT_SFTP_COLUMN_VISIBILITY,
+  isSftpColumnMenuKey,
   normalizeSftpColumnVisibility,
   type ColumnWidths,
 } from './utils.ts';
@@ -48,4 +49,11 @@ test('can reduce the SFTP file list to only the name column', () => {
     }),
     'minmax(140px, 56fr)',
   );
+});
+
+test('recognizes standard keyboard shortcuts for opening the column menu', () => {
+  assert.equal(isSftpColumnMenuKey('ContextMenu', false), true);
+  assert.equal(isSftpColumnMenuKey('F10', true), true);
+  assert.equal(isSftpColumnMenuKey('F10', false), false);
+  assert.equal(isSftpColumnMenuKey('Enter', false), false);
 });

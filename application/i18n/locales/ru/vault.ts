@@ -201,6 +201,7 @@ export const ruVaultMessages: Messages = {
   'sftp.columns.modified': 'Изменён',
   'sftp.columns.size': 'Размер',
   'sftp.columns.kind': 'Тип',
+  'sftp.columns.configure': 'Выбрать видимые столбцы',
   'sftp.columns.actions': 'Действия',
   'sftp.emptyDirectory': 'Пустой каталог',
   'sftp.nav.up': 'Наверх',

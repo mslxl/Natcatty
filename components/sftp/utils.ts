@@ -280,6 +280,9 @@ export const normalizeSftpColumnVisibility = (value: unknown): SftpColumnVisibil
     };
 };
 
+export const isSftpColumnMenuKey = (key: string, shiftKey: boolean): boolean =>
+    key === 'ContextMenu' || (key === 'F10' && shiftKey);
+
 export const buildSftpColumnTemplate = (
     columnWidths: ColumnWidths,
     visibleColumns: SftpColumnVisibility = DEFAULT_SFTP_COLUMN_VISIBILITY,
