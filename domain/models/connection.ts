@@ -231,6 +231,9 @@ export interface Host {
   keepaliveInterval?: number; // Seconds; 0 = disabled
   keepaliveCountMax?: number; // Unanswered keepalives before declaring dead
   keepaliveOverride?: boolean;
+  // Per-host SSH connection timeouts. Missing values retain Netcatty defaults.
+  sshTcpConnectTimeoutSeconds?: number;
+  sshAuthReadyTimeoutSeconds?: number;
   // Show local timestamps for this host beside terminal output rows.
   // Kept per-host because timestamp visibility is usually a host/workflow preference.
   showLineTimestamps?: boolean;

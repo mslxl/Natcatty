@@ -25,15 +25,6 @@ test("terminal settings expose SSH auto reconnect toggle", () => {
   assert.match(source, /updateTerminalSetting\("sshAutoReconnectEnabled", v\)/);
 });
 
-test("terminal settings expose SSH connection timeout controls", () => {
-  assert.match(source, /aria-label=\{t\("settings\.terminal\.connection\.sshTcpConnectTimeout"\)\}/);
-  assert.match(source, /value=\{terminalSettings\.sshTcpConnectTimeoutSeconds\}/);
-  assert.match(source, /updateTerminalSetting\("sshTcpConnectTimeoutSeconds", val\)/);
-  assert.match(source, /value=\{terminalSettings\.sshAuthReadyTimeoutSeconds\}/);
-  assert.match(source, /aria-label=\{t\("settings\.terminal\.connection\.sshAuthReadyTimeout"\)\}/);
-  assert.match(source, /updateTerminalSetting\("sshAuthReadyTimeoutSeconds", val\)/);
-});
-
 test("terminal settings expose the host information bar toggle", () => {
   assert.match(source, /checked=\{terminalSettings\.showHostInfoBar\}/);
   assert.match(source, /updateTerminalSetting\("showHostInfoBar", v\)/);

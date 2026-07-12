@@ -1,10 +1,34 @@
-export const SSH_TCP_CONNECT_TIMEOUT_MS = 20_000;
-export const SSH_AUTH_READY_TIMEOUT_MS = 120_000;
+import {
+  DEFAULT_SSH_AUTH_READY_TIMEOUT_SECONDS,
+  DEFAULT_SSH_TCP_CONNECT_TIMEOUT_SECONDS,
+} from '../../domain/sshConnectionTimeouts';
+import type { Host } from '../../domain/models';
+
+export const SSH_TCP_CONNECT_TIMEOUT_MS = DEFAULT_SSH_TCP_CONNECT_TIMEOUT_SECONDS * 1000;
+export const SSH_AUTH_READY_TIMEOUT_MS = DEFAULT_SSH_AUTH_READY_TIMEOUT_SECONDS * 1000;
 
 type ConnectionTimeouts = {
   tcpConnectTimeoutMs?: number;
   authReadyTimeoutMs?: number;
 };
+
+type HostConnectionTimeouts = Pick<
+  Host,
+  'sshTcpConnectTimeoutSeconds' | 'sshAuthReadyTimeoutSeconds'
+>;
+
+export function resolveActiveConnectionTimeoutHost(
+  targetHost: HostConnectionTimeouts,
+  chainHosts: HostConnectionTimeouts[],
+  currentHop?: number,
+  connectionPhase?: string,
+): HostConnectionTimeouts {
+  const activeHop = connectionPhase === 'forwarding' && currentHop
+    ? currentHop + 1
+    : currentHop;
+  if (!activeHop || activeHop > chainHosts.length) return targetHost;
+  return chainHosts[activeHop - 1] ?? targetHost;
+}
 
 type ConnectionTimeoutState = {
   status: string;

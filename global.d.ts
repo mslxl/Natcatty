@@ -60,6 +60,9 @@ declare global {
     // override / global fallback). interval in seconds, 0 = disabled.
     keepaliveInterval?: number;
     keepaliveCountMax?: number;
+    // Per-hop SSH connection timeouts, resolved from the saved host.
+    sshTcpConnectTimeoutMs?: number;
+    sshAuthReadyTimeoutMs?: number;
     verifyHostKeys?: boolean;
     // Per-hop algorithm settings, mirroring the target-host fields. When
     // omitted the bridge falls back to the target host's settings so a

@@ -161,6 +161,8 @@ test("jump-host chain connections verify hop host keys against known hosts", asy
       username: "alice",
       password: "secret",
       label: "Bastion",
+      sshTcpConnectTimeoutMs: 45_000,
+      sshAuthReadyTimeoutMs: 300_000,
     }],
     "target.example.com",
     22,
@@ -169,7 +171,7 @@ test("jump-host chain connections verify hop host keys against known hosts", asy
 
   assert.equal(MockSSHClient.instances.length, 1);
   const connectOpts = MockSSHClient.instances[0].connectOpts;
-  assert.equal(connectOpts.timeout, 20_000);
+  assert.equal(connectOpts.timeout, 45_000);
   assert.equal(connectOpts.readyTimeout, 0);
   assert.equal(typeof connectOpts.hostVerifier, "function");
   assert.equal(MockSSHClient.instances[0].hostVerifierCalls, 1);

@@ -182,6 +182,16 @@ test("sanitizeHost trims leading whitespace before extracting the hostname", () 
   assert.equal(sanitized.hostname, "127.0.0.1");
 });
 
+test("sanitizeHost preserves valid per-host SSH timeouts and removes invalid values", () => {
+  const sanitized = sanitizeHost(makeHost({
+    sshTcpConnectTimeoutSeconds: 45.4,
+    sshAuthReadyTimeoutSeconds: 3601,
+  }));
+
+  assert.equal(sanitized.sshTcpConnectTimeoutSeconds, 45);
+  assert.equal(sanitized.sshAuthReadyTimeoutSeconds, undefined);
+});
+
 test("preserves a concurrent terminal timestamp toggle when host details did not edit it", () => {
   const openedHost = makeHost({ showLineTimestamps: false });
   const latestHost = makeHost({ showLineTimestamps: true });

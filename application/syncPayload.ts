@@ -205,7 +205,7 @@ const SYNCABLE_TERMINAL_KEYS = [
   'smoothScrolling',
   'rightClickBehavior', 'middleClickBehavior', 'copyOnSelect', 'middleClickPaste', 'wordSeparators',
   'linkModifier', 'keywordHighlightEnabled', 'keywordHighlightRules',
-  'keepaliveInterval', 'keepaliveCountMax', 'sshTcpConnectTimeoutSeconds', 'sshAuthReadyTimeoutSeconds', 'disableBracketedPaste', 'clearWipesScrollback',
+  'keepaliveInterval', 'keepaliveCountMax', 'disableBracketedPaste', 'clearWipesScrollback',
   'preserveSelectionOnInput', 'forcePromptNewLine', 'osc52Clipboard', 'dynamicTabTitleMode',
   'showHostInfoBar', 'showServerStats',
   'serverStatsRefreshInterval',

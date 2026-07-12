@@ -489,7 +489,7 @@ function closeTerminalOutputSession(sessionId) {
  * Connect through a chain of jump hosts
  */
 async function connectThroughChain(event, options, jumpHosts, targetHost, targetPort, sessionId) {
-  const { tcpConnectTimeoutMs, authReadyTimeoutMs } = resolveSshConnectionTimeouts(options);
+  const targetConnectionTimeouts = resolveSshConnectionTimeouts(options);
   const sender = event.sender;
   const connections = options?._connectionsRef || [];
   const sshDiagnosticLogger = options?._sshDiagnosticLogger || log;
@@ -529,12 +529,13 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
       // serializers that don't populate the per-hop fields yet.
       const hopInterval = jump.keepaliveInterval ?? options.keepaliveInterval ?? 0;
       const hopCountMax = jump.keepaliveCountMax ?? options.keepaliveCountMax ?? 10;
+      const hopConnectionTimeouts = resolveSshConnectionTimeouts(jump);
       // Build connection options
       const connOpts = {
         host: jump.hostname,
         port: jump.port || 22,
         username: jump.username || 'root',
-        timeout: tcpConnectTimeoutMs,
+        timeout: hopConnectionTimeouts.tcpConnectTimeoutMs,
         // ssh2 starts readyTimeout before TCP connects. The auth-ready timer
         // below starts explicitly from the connection event instead.
         readyTimeout: 0,
@@ -705,7 +706,7 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
       const effectiveHopProxy = isFirst ? ((hasUsableJumpProxy ? jump.proxy : null) || options.proxy) : null;
       if (effectiveHopProxy) {
         currentSocket = await createProxySocket(effectiveHopProxy, jump.hostname, jump.port || 22, {
-          timeoutMs: tcpConnectTimeoutMs,
+          timeoutMs: hopConnectionTimeouts.tcpConnectTimeoutMs,
           onSocket: (socket) => {
             if (options?._tunnelRef) {
               options._tunnelRef.pendingConn = socket;
@@ -808,7 +809,10 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
         conn.once('connect', () => {
           try { conn._sock?.setTimeout?.(0); } catch { }
           clearAuthReadyTimer();
-          authReadyTimer = setTimeout(() => conn.emit('timeout'), authReadyTimeoutMs);
+          authReadyTimer = setTimeout(
+            () => conn.emit('timeout'),
+            hopConnectionTimeouts.authReadyTimeoutMs,
+          );
           authReadyTimer.unref?.();
           sendProgress(i + 1, totalHops + 1, hopLabel, 'tcp-connected');
           enableSshNoDelay(conn);
@@ -820,23 +824,26 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
       connections.push(conn);
 
       // Determine next target
-      let nextHost, nextPort;
+      let nextHost, nextPort, nextConnectionTimeouts;
       if (isLast) {
         // Last jump host, forward to final target
         nextHost = targetHost;
         nextPort = targetPort;
+        nextConnectionTimeouts = targetConnectionTimeouts;
       } else {
         // Forward to next jump host
         const nextJump = jumpHosts[i + 1];
         nextHost = nextJump.hostname;
         nextPort = nextJump.port || 22;
+        nextConnectionTimeouts = resolveSshConnectionTimeouts(nextJump);
       }
 
       // Create forward stream to next hop
       console.log(`[Chain] Hop ${i + 1}/${totalHops}: Forwarding from ${hopLabel} to ${nextHost}:${nextPort}...`);
       sendProgress(i + 1, totalHops + 1, hopLabel, 'forwarding');
       currentSocket = await new Promise((resolve, reject) => {
-        const forwardTimeoutMs = options?._forwardTimeoutMs || tcpConnectTimeoutMs;
+        const forwardTimeoutMs = options?._forwardTimeoutMs
+          || nextConnectionTimeouts.tcpConnectTimeoutMs;
         let settled = false;
         const timeout = setTimeout(() => {
           if (settled) return;

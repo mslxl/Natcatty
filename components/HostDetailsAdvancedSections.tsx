@@ -1,5 +1,5 @@
 import React from "react";
-import { AlertTriangle, ChevronDown, ChevronUp, Forward, Globe, HeartPulse, Link2, Palette, Plus, Router, ShieldAlert, TerminalSquare, Wifi, X, Variable } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronUp, Forward, Globe, HeartPulse, Link2, Palette, Plus, Router, ShieldAlert, TerminalSquare, Timer, Wifi, X, Variable } from "lucide-react";
 import { customThemeStore } from "../application/state/customThemeStore";
 import { clearHostFontSizeOverride, clearHostThemeOverride } from "../domain/terminalAppearance";
 import { MAX_FONT_SIZE, MIN_FONT_SIZE } from "../infrastructure/config/fonts";
@@ -13,6 +13,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Switch } from "./ui/switch";
 import { Textarea } from "./ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
+import {
+  DEFAULT_SSH_AUTH_READY_TIMEOUT_SECONDS,
+  DEFAULT_SSH_TCP_CONNECT_TIMEOUT_SECONDS,
+  MAX_SSH_CONNECTION_TIMEOUT_SECONDS,
+} from "../domain/sshConnectionTimeouts";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type HostDetailsAdvancedSectionsProps = Record<string, any>;
@@ -454,6 +459,48 @@ export const HostDetailsAdvancedSections: React.FC<HostDetailsAdvancedSectionsPr
               )}
             </div>
           )}
+        </HostDetailsSection>
+
+        <HostDetailsSection
+          icon={<Timer size={14} className="text-muted-foreground" />}
+          title={t("hostDetails.section.sshTimeouts")}
+        >
+          <HostDetailsSettingRow
+            label={t("hostDetails.sshTimeouts.tcpConnect")}
+            hint={t("hostDetails.sshTimeouts.tcpConnect.desc")}
+          >
+            <Input
+              type="number"
+              min={1}
+              max={MAX_SSH_CONNECTION_TIMEOUT_SECONDS}
+              className="h-8 w-20 text-xs"
+              aria-label={t("hostDetails.sshTimeouts.tcpConnect")}
+              value={form.sshTcpConnectTimeoutSeconds ?? DEFAULT_SSH_TCP_CONNECT_TIMEOUT_SECONDS}
+              onChange={(e) => {
+                const value = Number.parseInt(e.target.value, 10);
+                if (value < 1 || value > MAX_SSH_CONNECTION_TIMEOUT_SECONDS) return;
+                update("sshTcpConnectTimeoutSeconds", value);
+              }}
+            />
+          </HostDetailsSettingRow>
+          <HostDetailsSettingRow
+            label={t("hostDetails.sshTimeouts.authReady")}
+            hint={t("hostDetails.sshTimeouts.authReady.desc")}
+          >
+            <Input
+              type="number"
+              min={1}
+              max={MAX_SSH_CONNECTION_TIMEOUT_SECONDS}
+              className="h-8 w-20 text-xs"
+              aria-label={t("hostDetails.sshTimeouts.authReady")}
+              value={form.sshAuthReadyTimeoutSeconds ?? DEFAULT_SSH_AUTH_READY_TIMEOUT_SECONDS}
+              onChange={(e) => {
+                const value = Number.parseInt(e.target.value, 10);
+                if (value < 1 || value > MAX_SSH_CONNECTION_TIMEOUT_SECONDS) return;
+                update("sshAuthReadyTimeoutSeconds", value);
+              }}
+            />
+          </HostDetailsSettingRow>
         </HostDetailsSection>
 
         {/* Proxy via Hosts (Jump Hosts / ProxyJump) */}

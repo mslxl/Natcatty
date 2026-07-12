@@ -64,19 +64,6 @@ test("normalizeTerminalSettings preserves explicit SSH auto reconnect settings",
   assert.equal(normalizeTerminalSettings({ sshAutoReconnectEnabled: false }).sshAutoReconnectEnabled, false);
 });
 
-test("normalizeTerminalSettings provides and preserves SSH connection timeouts", () => {
-  assert.equal(normalizeTerminalSettings().sshTcpConnectTimeoutSeconds, 20);
-  assert.equal(normalizeTerminalSettings().sshAuthReadyTimeoutSeconds, 120);
-  assert.equal(normalizeTerminalSettings({ sshTcpConnectTimeoutSeconds: 45 }).sshTcpConnectTimeoutSeconds, 45);
-  assert.equal(normalizeTerminalSettings({ sshAuthReadyTimeoutSeconds: 300 }).sshAuthReadyTimeoutSeconds, 300);
-});
-
-test("normalizeTerminalSettings rejects invalid SSH connection timeouts", () => {
-  assert.equal(normalizeTerminalSettings({ sshTcpConnectTimeoutSeconds: 0 }).sshTcpConnectTimeoutSeconds, 20);
-  assert.equal(normalizeTerminalSettings({ sshAuthReadyTimeoutSeconds: Number.NaN }).sshAuthReadyTimeoutSeconds, 120);
-  assert.equal(normalizeTerminalSettings({ sshAuthReadyTimeoutSeconds: 3601 }).sshAuthReadyTimeoutSeconds, 120);
-});
-
 test("normalizeTerminalSettings shows the host information bar by default", () => {
   assert.equal(normalizeTerminalSettings().showHostInfoBar, true);
 });

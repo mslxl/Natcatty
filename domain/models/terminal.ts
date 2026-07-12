@@ -86,8 +86,6 @@ export interface TerminalSettings {
   verifyHostKeys: boolean; // Verify SSH host keys before authenticating
   keepaliveInterval: number; // Seconds between SSH-level keepalive packets (0 = disabled)
   keepaliveCountMax: number; // Unanswered keepalives before declaring the connection dead
-  sshTcpConnectTimeoutSeconds: number; // Maximum time to establish the TCP connection
-  sshAuthReadyTimeoutSeconds: number; // Maximum time for SSH handshake and authentication
   sshAutoReconnectEnabled: boolean; // Automatically reconnect SSH sessions after unexpected disconnects
   x11Display: string; // Optional local X11 DISPLAY override (empty = use system DISPLAY/default)
 
@@ -278,12 +276,6 @@ const isDynamicTabTitleMode = (value: unknown): value is DynamicTabTitleMode => 
   value === 'all'
 );
 
-const normalizeSshTimeoutSeconds = (value: unknown, fallback: number): number => (
-  typeof value === 'number' && Number.isFinite(value) && value >= 1 && value <= 3600
-    ? Math.round(value)
-    : fallback
-);
-
 export const normalizeTerminalSettings = (
   settings?: Partial<TerminalSettings> | null,
 ): TerminalSettings => {
@@ -313,14 +305,6 @@ export const normalizeTerminalSettings = (
 
   return {
     ...mergedSettings,
-    sshTcpConnectTimeoutSeconds: normalizeSshTimeoutSeconds(
-      settings?.sshTcpConnectTimeoutSeconds,
-      DEFAULT_TERMINAL_SETTINGS.sshTcpConnectTimeoutSeconds,
-    ),
-    sshAuthReadyTimeoutSeconds: normalizeSshTimeoutSeconds(
-      settings?.sshAuthReadyTimeoutSeconds,
-      DEFAULT_TERMINAL_SETTINGS.sshAuthReadyTimeoutSeconds,
-    ),
     rendererType,
     hibernateHiddenTabsDelaySec: normalizeHibernateHiddenTabsDelaySec(
       mergedSettings.hibernateHiddenTabsDelaySec,
@@ -382,8 +366,6 @@ const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   verifyHostKeys: true,
   keepaliveInterval: 30,
   keepaliveCountMax: 10,
-  sshTcpConnectTimeoutSeconds: 20,
-  sshAuthReadyTimeoutSeconds: 120,
   sshAutoReconnectEnabled: false,
   x11Display: '', // Empty = use DISPLAY/default local X server
   moshClientPath: '', // Legacy mosh-client override; normal UI uses bundled mosh-client

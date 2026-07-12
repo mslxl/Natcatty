@@ -875,44 +875,6 @@ function SettingsTerminalTab(props: {
           />
         </SettingRow>
         <SettingRow
-          label={t("settings.terminal.connection.sshTcpConnectTimeout")}
-          description={t("settings.terminal.connection.sshTcpConnectTimeout.desc")}
-        >
-          <Input
-            type="number"
-            min={1}
-            max={3600}
-            aria-label={t("settings.terminal.connection.sshTcpConnectTimeout")}
-            value={terminalSettings.sshTcpConnectTimeoutSeconds}
-            onChange={(e) => {
-              const val = Number.parseInt(e.target.value, 10);
-              if (val >= 1 && val <= 3600) {
-                updateTerminalSetting("sshTcpConnectTimeoutSeconds", val);
-              }
-            }}
-            className="w-24"
-          />
-        </SettingRow>
-        <SettingRow
-          label={t("settings.terminal.connection.sshAuthReadyTimeout")}
-          description={t("settings.terminal.connection.sshAuthReadyTimeout.desc")}
-        >
-          <Input
-            type="number"
-            min={1}
-            max={3600}
-            aria-label={t("settings.terminal.connection.sshAuthReadyTimeout")}
-            value={terminalSettings.sshAuthReadyTimeoutSeconds}
-            onChange={(e) => {
-              const val = Number.parseInt(e.target.value, 10);
-              if (val >= 1 && val <= 3600) {
-                updateTerminalSetting("sshAuthReadyTimeoutSeconds", val);
-              }
-            }}
-            className="w-24"
-          />
-        </SettingRow>
-        <SettingRow
           label={t("settings.terminal.connection.x11Display")}
           description={t("settings.terminal.connection.x11Display.desc")}
         >

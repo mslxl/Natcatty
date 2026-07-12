@@ -158,23 +158,37 @@ test("SSH authentication timeout starts only after TCP connects", async (t) => {
   MockSSHClient.emitSocketTimeout = false;
   const start = registerStartHandler(bridge, new Map());
   const startedAt = Date.now();
+  let guardTimer;
+  const guard = new Promise((_, reject) => {
+    guardTimer = setTimeout(
+      () => reject(new Error("Authentication timeout test exceeded 3 seconds")),
+      3_000,
+    );
+  });
 
-  await assert.rejects(
-    () => start(
-      { sender: makeSender() },
-      {
-        sessionId: "ssh-auth-timeout",
-        hostname: "192.0.2.30",
-        username: "alice",
-        port: 22,
-        password: "secret",
-        knownHosts: [],
-        sshTcpConnectTimeoutMs: 45_000,
-        sshAuthReadyTimeoutMs: 1_000,
-      },
-    ),
-    /Connection timeout to 192\.0\.2\.30/,
-  );
+  try {
+    await assert.rejects(
+      Promise.race([
+        start(
+          { sender: makeSender() },
+          {
+            sessionId: "ssh-auth-timeout",
+            hostname: "192.0.2.30",
+            username: "alice",
+            port: 22,
+            password: "secret",
+            knownHosts: [],
+            sshTcpConnectTimeoutMs: 45_000,
+            sshAuthReadyTimeoutMs: 1_000,
+          },
+        ),
+        guard,
+      ]),
+      /Connection timeout to 192\.0\.2\.30/,
+    );
+  } finally {
+    clearTimeout(guardTimer);
+  }
 
   assert.ok(Date.now() - startedAt >= 900);
   assert.equal(MockSSHClient.instances[0].connectOpts.timeout, 45_000);

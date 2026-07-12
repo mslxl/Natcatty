@@ -94,6 +94,7 @@ type ChainProgressState = {
   currentHop: number;
   totalHops: number;
   currentHostLabel: string;
+  connectionPhase: string;
 } | null;
 
 export type SessionLogConfig = {

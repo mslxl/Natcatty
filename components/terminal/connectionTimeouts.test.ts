@@ -6,6 +6,7 @@ import {
   SSH_TCP_CONNECT_TIMEOUT_MS,
   getConnectionTimeoutMs,
   hasConnectionPassedTcpDial,
+  resolveActiveConnectionTimeoutHost,
   shouldRunConnectionTimeout,
 } from "./connectionTimeouts";
 
@@ -60,6 +61,21 @@ test("connection timeout uses configured timeout values", () => {
     tcpConnectTimeoutMs: 45_000,
     authReadyTimeoutMs: 300_000,
   }), 300_000);
+});
+
+test("connection timeout follows the current jump host before the target", () => {
+  const target = { sshTcpConnectTimeoutSeconds: 20, sshAuthReadyTimeoutSeconds: 120 };
+  const jumps = [
+    { sshTcpConnectTimeoutSeconds: 75, sshAuthReadyTimeoutSeconds: 360 },
+    { sshTcpConnectTimeoutSeconds: 90, sshAuthReadyTimeoutSeconds: 420 },
+  ];
+
+  assert.equal(resolveActiveConnectionTimeoutHost(target, jumps, 1), jumps[0]);
+  assert.equal(resolveActiveConnectionTimeoutHost(target, jumps, 2), jumps[1]);
+  assert.equal(resolveActiveConnectionTimeoutHost(target, jumps, 3), target);
+  assert.equal(resolveActiveConnectionTimeoutHost(target, jumps), target);
+  assert.equal(resolveActiveConnectionTimeoutHost(target, jumps, 1, "forwarding"), jumps[1]);
+  assert.equal(resolveActiveConnectionTimeoutHost(target, jumps, 2, "forwarding"), target);
 });
 
 test("connection timeout keeps the auth-ready window for protocols without SSH TCP progress", () => {

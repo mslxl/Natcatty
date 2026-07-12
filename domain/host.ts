@@ -2,6 +2,7 @@ import { Host, Snippet, TerminalSettings } from './models';
 import { sanitizeHostIconFields } from './hostIcon';
 import { migrateHostConnectScriptIds } from './hostConnectScripts.ts';
 import { migrateDeprecatedFontOverride } from '../infrastructure/config/fonts';
+import { sanitizeOptionalSshTimeoutSeconds } from './sshConnectionTimeouts.ts';
 
 export type HostLabelRenameResult =
   | { ok: true; changed: true; hosts: Host[] }
@@ -382,6 +383,12 @@ export const sanitizeHost = (host: Host, snippets: Snippet[] = []): Host => {
     iconColorCustom: undefined,
     ...cleanHostIcon,
     notes: cleanNotes,
+    sshTcpConnectTimeoutSeconds: sanitizeOptionalSshTimeoutSeconds(
+      host.sshTcpConnectTimeoutSeconds,
+    ),
+    sshAuthReadyTimeoutSeconds: sanitizeOptionalSshTimeoutSeconds(
+      host.sshAuthReadyTimeoutSeconds,
+    ),
     connectScriptIds: connectScriptIds && connectScriptIds.length > 0 ? connectScriptIds : undefined,
   };
 };

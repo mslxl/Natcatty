@@ -253,6 +253,8 @@ test("startSSH resolves jump host proxy credentials from an identity", async () 
       label: "Target",
       hostname: "target.example.test",
       username: "alice",
+      sshTcpConnectTimeoutSeconds: 50,
+      sshAuthReadyTimeoutSeconds: 240,
       hostChain: { hostIds: ["jump-1"] },
     },
     resolvedChainHosts: [{
@@ -260,6 +262,8 @@ test("startSSH resolves jump host proxy credentials from an identity", async () 
       label: "Jump",
       hostname: "jump.example.test",
       username: "jump",
+      sshTcpConnectTimeoutSeconds: 75,
+      sshAuthReadyTimeoutSeconds: 360,
       proxyConfig: {
         type: "socks5",
         host: "jump-proxy.example.test",
@@ -287,6 +291,10 @@ test("startSSH resolves jump host proxy credentials from an identity", async () 
     username: "proxy-user",
     password: "proxy-secret",
   });
+  assert.equal(capturedOptions?.sshTcpConnectTimeoutMs, 50_000);
+  assert.equal(capturedOptions?.sshAuthReadyTimeoutMs, 240_000);
+  assert.equal(jumpHosts[0]?.sshTcpConnectTimeoutMs, 75_000);
+  assert.equal(jumpHosts[0]?.sshAuthReadyTimeoutMs, 360_000);
 });
 
 test("startSSH shows jump-host auth failures without opening target auth retry", async () => {
@@ -2686,7 +2694,7 @@ test("startSSH allows jump hosts that use reference key files with unavailable s
   assert.equal(jumpHosts[0]?.passphrase, undefined);
 });
 
-test("startSSH forwards global SSH settings to the native bridge", async () => {
+test("startSSH forwards per-host SSH settings to the native bridge", async () => {
   let capturedOptions: Record<string, unknown> | null = null;
 
   const terminalBackend = {
@@ -2720,6 +2728,8 @@ test("startSSH forwards global SSH settings to the native bridge", async () => {
       username: "alice",
       port: 22,
       password: "pw",
+      sshTcpConnectTimeoutSeconds: 45,
+      sshAuthReadyTimeoutSeconds: 300,
     },
     keys: [],
     knownHosts: [],
@@ -2730,8 +2740,6 @@ test("startSSH forwards global SSH settings to the native bridge", async () => {
     terminalSettings: {
       keepaliveInterval: 30,
       keepaliveCountMax: 10,
-      sshTcpConnectTimeoutSeconds: 45,
-      sshAuthReadyTimeoutSeconds: 300,
     },
     sessionRef: { current: null },
     hasConnectedRef: { current: false },
