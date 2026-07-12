@@ -194,7 +194,6 @@ interface VaultViewProps {
   onConnectSerial?: (config: SerialConfig, options?: { charset?: string }) => void;
   onDeleteHost: (id: string) => void;
   onConnect: (host: Host) => void;
-  onConnectEphemeral: (host: Host) => void;
   onOpenHostFromNote?: (host: Host, source?: { noteId: string }) => void;
   onUpdateHosts: (hosts: Host[]) => void;
   onUpdateKeys: (keys: SSHKey[]) => void;
@@ -256,7 +255,6 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   onConnectSerial,
   onDeleteHost,
   onConnect,
-  onConnectEphemeral,
   onOpenHostFromNote,
   onUpdateHosts,
   onUpdateKeys,
@@ -522,17 +520,13 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   // Handle quick connect
   const handleQuickConnect = useCallback(
     (host: Host) => {
-      if (host.ephemeral) {
-        onConnectEphemeral(host);
-      } else {
-        onConnect(host);
-      }
+      onConnect(host);
       setIsQuickConnectOpen(false);
       setQuickConnectTarget(null);
       setQuickConnectWarnings([]);
       setSearch("");
     },
-    [onConnect, onConnectEphemeral],
+    [onConnect],
   );
 
   // Handle quick connect save host

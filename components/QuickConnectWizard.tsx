@@ -13,19 +13,21 @@ import {
 import React, { useMemo, useState } from "react";
 import { useI18n } from "../application/i18n/I18nProvider";
 import type { QuickConnectTarget } from "../domain/quickConnect";
+import { formatHostPort } from "../domain/host";
 import {
   buildQuickConnectHost,
   getQuickConnectDefaultPort,
+  isQuickConnectIdentityUsable,
+  type QuickConnectAuthMethod,
   type QuickConnectProtocol,
 } from "../domain/quickConnectHost";
-import { formatHostPort } from "../domain/host";
 import { cn } from "../lib/utils";
 import { Host, Identity, SSHKey } from "../types";
 import { Button } from "./ui/button";
+import { Combobox } from "./ui/combobox";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Dropdown, DropdownContent, DropdownTrigger } from "./ui/dropdown";
-import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { ScrollArea } from "./ui/scroll-area";
 
 // Wizard steps
@@ -68,11 +70,10 @@ const QuickConnectWizard: React.FC<QuickConnectWizardProps> = ({
   } | null>(null);
 
   // Auth state
-  const [authMethod, setAuthMethod] = useState<"password" | "key" | "certificate">("password");
+  const [authMethod, setAuthMethod] = useState<QuickConnectAuthMethod>("password");
   const [password, setPassword] = useState("");
   const [selectedKeyId, setSelectedKeyId] = useState<string | null>(null);
   const [selectedIdentityId, setSelectedIdentityId] = useState<string | null>(null);
-  const [identityPickerOpen, setIdentityPickerOpen] = useState(false);
   const [saveOptionsOpen, setSaveOptionsOpen] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const selectedIdentity = useMemo(
@@ -96,24 +97,56 @@ const QuickConnectWizard: React.FC<QuickConnectWizardProps> = ({
     }
   }, [open, target]);
 
-  // Handle protocol selection
-  const handleProtocolSelect = (proto: QuickConnectProtocol) => {
-    setProtocol(proto);
-    if (proto === "telnet") {
-      setSelectedIdentityId(null);
-      setAuthMethod("password");
-    }
-    // Update port to default for protocol if unchanged
-    if (port === getQuickConnectDefaultPort(protocol)) {
-      setPort(getQuickConnectDefaultPort(proto));
-    }
-  };
+  const canUseSelectedIdentity = useMemo(
+    () => isQuickConnectIdentityUsable(selectedIdentity, keys, protocol),
+    [keys, protocol, selectedIdentity],
+  );
+  const identityOptions = useMemo(
+    () => identities.map((identity) => ({
+      value: identity.id,
+      label: identity.label,
+      sublabel: identity.username,
+      icon: <User size={14} />,
+    })),
+    [identities],
+  );
 
-  const clearSelectedIdentity = () => {
+  const detachSelectedIdentity = () => {
     setSelectedIdentityId(null);
     setAuthMethod("password");
     setPassword("");
     setSelectedKeyId(null);
+  };
+
+  const clearSelectedIdentity = () => {
+    detachSelectedIdentity();
+    setUsername(target.username || "");
+  };
+
+  const handleIdentitySelect = (identityId: string) => {
+    if (!identityId) {
+      clearSelectedIdentity();
+      return;
+    }
+    const identity = identities.find((candidate) => candidate.id === identityId);
+    if (!identity) return;
+    setSelectedIdentityId(identity.id);
+    setUsername(identity.username);
+    setAuthMethod(identity.authMethod);
+    setPassword("");
+    setSelectedKeyId(identity.keyId || null);
+  };
+
+  // Handle protocol selection
+  const handleProtocolSelect = (proto: QuickConnectProtocol) => {
+    setProtocol(proto);
+    if (proto === "telnet") {
+      if (selectedIdentityId) clearSelectedIdentity();
+      setAuthMethod("password");
+    }
+    if (port === getQuickConnectDefaultPort(protocol)) {
+      setPort(getQuickConnectDefaultPort(proto));
+    }
   };
 
   const handleProtocolPortChange = (
@@ -121,18 +154,18 @@ const QuickConnectWizard: React.FC<QuickConnectWizardProps> = ({
     rawValue: string,
     fallbackPort: number,
   ) => {
+    handleProtocolSelect(proto);
     setPort(parseInt(rawValue) || fallbackPort);
-    setProtocol(proto);
-    if (proto === "telnet") {
-      if (selectedIdentityId) clearSelectedIdentity();
-      setAuthMethod("password");
-    }
   };
 
   // Navigate to next step
   const handleContinue = () => {
     switch (step) {
       case "protocol":
+        if (canUseSelectedIdentity) {
+          handleConnect();
+          break;
+        }
         // Always go to username step to let user confirm/edit username
         setStep("username");
         break;
@@ -166,15 +199,20 @@ const QuickConnectWizard: React.FC<QuickConnectWizardProps> = ({
 
   // Create host and connect
   const handleConnect = (save = false) => {
+    const effectiveUsername = username || target.username || "root";
+    const effectivePort = port || getQuickConnectDefaultPort(protocol);
+    const now = Date.now();
     const tempHost = buildQuickConnectHost({
+      id: `quick-${now}-${Math.random().toString(36).slice(2, 11)}`,
+      createdAt: now,
       target,
       protocol,
-      port,
-      username,
+      port: effectivePort,
+      username: effectiveUsername,
       authMethod,
       password,
       selectedKeyId,
-      selectedIdentity,
+      selectedIdentityId: selectedIdentity?.id,
       save,
     });
 
@@ -196,14 +234,24 @@ const QuickConnectWizard: React.FC<QuickConnectWizardProps> = ({
       case "knownhost":
         return true;
       case "auth":
-        if (selectedIdentity && protocol !== "telnet") return true;
+        if (selectedIdentity && protocol !== "telnet") return canUseSelectedIdentity;
         if (authMethod === "password") {
           // Whitespace-only passwords are valid SSH secrets (issue #2036).
           return password.length > 0;
         }
-        return !!selectedKeyId;
+        return Boolean(selectedKeyId && keys.some((key) => key.id === selectedKeyId));
     }
-  }, [step, username, authMethod, password, selectedKeyId, selectedIdentity, protocol]);
+  }, [
+    step,
+    username,
+    authMethod,
+    password,
+    selectedKeyId,
+    selectedIdentity,
+    canUseSelectedIdentity,
+    keys,
+    protocol,
+  ]);
 
   // Render protocol selection step
   const renderProtocolStep = () => (
@@ -378,6 +426,25 @@ const QuickConnectWizard: React.FC<QuickConnectWizardProps> = ({
           </div>
         </button>
       </div>
+
+      {protocol !== "telnet" && identities.length > 0 && (
+        <div className="space-y-2 pt-1">
+          <Label>{t("quickConnect.identity.label")}</Label>
+          <Combobox
+            options={identityOptions}
+            value={selectedIdentityId || undefined}
+            onValueChange={handleIdentitySelect}
+            placeholder={t("quickConnect.identity.placeholder")}
+            emptyText={t("quickConnect.identity.empty")}
+            icon={<User size={14} />}
+          />
+          <p className="text-xs text-muted-foreground">
+            {selectedIdentity
+              ? t("quickConnect.identity.selectedHint", { username: selectedIdentity.username })
+              : t("quickConnect.identity.hint")}
+          </p>
+        </div>
+      )}
     </div>
   );
 
@@ -390,8 +457,8 @@ const QuickConnectWizard: React.FC<QuickConnectWizardProps> = ({
           id="quick-username"
           value={username}
           onChange={(e) => {
+            if (selectedIdentityId) detachSelectedIdentity();
             setUsername(e.target.value);
-            if (selectedIdentityId) clearSelectedIdentity();
           }}
           placeholder={t("terminal.auth.username.placeholder")}
           autoFocus
@@ -402,7 +469,6 @@ const QuickConnectWizard: React.FC<QuickConnectWizardProps> = ({
           }}
         />
       </div>
-      {renderIdentityPicker()}
     </div>
   );
 
@@ -429,78 +495,32 @@ const QuickConnectWizard: React.FC<QuickConnectWizardProps> = ({
     </div>
   );
 
-  const renderIdentityPicker = () => identities.length > 0 && protocol !== "telnet" ? (
-    <div className="space-y-2">
-          <Label>{t("quickConnect.identity.label")}</Label>
-          <Popover open={identityPickerOpen} onOpenChange={setIdentityPickerOpen}>
-            <PopoverTrigger asChild>
-              <button className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border border-border/50 hover:bg-secondary/50 text-left">
-                <div className="h-8 w-8 rounded-lg flex items-center justify-center bg-primary/20 text-primary">
-                  <User size={14} />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium truncate">
-                    {selectedIdentity?.label || t("quickConnect.identity.manual")}
-                  </div>
-                  {selectedIdentity && (
-                    <div className="text-xs text-muted-foreground truncate">
-                      {selectedIdentity.username}
-                    </div>
-                  )}
-                </div>
-                <ChevronDown size={16} className="text-muted-foreground" />
-              </button>
-            </PopoverTrigger>
-            <PopoverContent
-              className="p-1"
-              align="start"
-              style={{ width: "var(--radix-popover-trigger-width)" }}
-            >
-              <div className="max-h-60 overflow-y-auto">
-                <button
-                  className={cn(
-                    "w-full px-3 py-2 text-sm text-left rounded-md",
-                    !selectedIdentityId ? "bg-primary/10 text-primary" : "hover:bg-secondary/80",
-                  )}
-                  onClick={() => {
-                    if (selectedIdentityId) clearSelectedIdentity();
-                    setIdentityPickerOpen(false);
-                  }}
-                >
-                  {t("quickConnect.identity.manual")}
-                </button>
-                {identities.map((identity) => (
-                  <button
-                    key={identity.id}
-                    className={cn(
-                      "w-full px-3 py-2 text-left rounded-md",
-                      selectedIdentityId === identity.id
-                        ? "bg-primary/10 text-primary"
-                        : "hover:bg-secondary/80",
-                    )}
-                    onClick={() => {
-                      setSelectedIdentityId(identity.id);
-                      setUsername(identity.username);
-                      setAuthMethod(identity.authMethod);
-                      setIdentityPickerOpen(false);
-                    }}
-                  >
-                    <div className="text-sm font-medium truncate">{identity.label}</div>
-                    <div className="text-xs text-muted-foreground truncate">{identity.username}</div>
-                  </button>
-                ))}
-              </div>
-            </PopoverContent>
-          </Popover>
-    </div>
-  ) : null;
-
   // Render auth step
   const renderAuthStep = () => (
     <div className="space-y-4">
-      {renderIdentityPicker()}
-
-      {!selectedIdentity && (
+      {selectedIdentity ? (
+        <div className="rounded-xl border border-primary/40 bg-primary/5 p-4 space-y-3">
+          <div className="flex items-center gap-3">
+            <div className="h-9 w-9 rounded-lg bg-primary/15 text-primary flex items-center justify-center">
+              <User size={16} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="font-medium truncate">{selectedIdentity.label}</div>
+              <div className="text-xs text-muted-foreground truncate">
+                {selectedIdentity.username} · {t(`quickConnect.identity.method.${selectedIdentity.authMethod}`)}
+              </div>
+            </div>
+          </div>
+          {!canUseSelectedIdentity && (
+            <p className="text-xs text-destructive">
+              {t("quickConnect.identity.unavailable")}
+            </p>
+          )}
+          <Button variant="outline" size="sm" className="w-full" onClick={detachSelectedIdentity}>
+            {t("quickConnect.identity.useCustom")}
+          </Button>
+        </div>
+      ) : (
         <>
       {/* Auth method tabs */}
       <div className="flex gap-1 p-1 bg-secondary/80 rounded-lg border border-border/60">
@@ -511,7 +531,10 @@ const QuickConnectWizard: React.FC<QuickConnectWizardProps> = ({
               ? "bg-primary text-primary-foreground shadow-sm"
               : "text-muted-foreground hover:text-foreground hover:bg-secondary",
           )}
-          onClick={() => setAuthMethod("password")}
+          onClick={() => {
+            setSelectedIdentityId(null);
+            setAuthMethod("password");
+          }}
         >
           <Lock size={14} />
           {t("terminal.auth.password")}
@@ -519,11 +542,14 @@ const QuickConnectWizard: React.FC<QuickConnectWizardProps> = ({
         <button
           className={cn(
             "flex-1 flex items-center justify-center gap-2 py-2 text-sm font-medium rounded-md transition-all",
-            authMethod === "key"
+            authMethod !== "password"
               ? "bg-primary text-primary-foreground shadow-sm"
               : "text-muted-foreground hover:text-foreground hover:bg-secondary",
           )}
-          onClick={() => setAuthMethod("key")}
+          onClick={() => {
+            setSelectedIdentityId(null);
+            setAuthMethod("key");
+          }}
         >
           <Key size={14} />
           {t("terminal.auth.sshKey")}
@@ -581,7 +607,10 @@ const QuickConnectWizard: React.FC<QuickConnectWizardProps> = ({
                           ? "border-primary bg-primary/5"
                           : "border-border/50 hover:bg-secondary/50",
                       )}
-                      onClick={() => setSelectedKeyId(key.id)}
+                      onClick={() => {
+                        setSelectedIdentityId(null);
+                        setSelectedKeyId(key.id);
+                      }}
                     >
                       <div
                         className={cn(
@@ -829,7 +858,9 @@ const QuickConnectWizard: React.FC<QuickConnectWizardProps> = ({
             </div>
           ) : (
             <Button onClick={handleContinue} disabled={!canProceed}>
-              {t("common.continue")}
+              {step === "protocol" && canUseSelectedIdentity
+                ? t("quickConnect.identity.connect")
+                : t("common.continue")}
             </Button>
           )}
         </div>

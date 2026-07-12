@@ -37,11 +37,3 @@ export const applyEphemeralHostsUpdate = (
   const updatedById = new Map(updated.map((host) => [host.id, host]));
   return previous.map((host) => updatedById.get(host.id) ?? host);
 };
-
-export const upsertEphemeralHost = (
-  previous: Host[],
-  host: Host,
-): Host[] => [
-  ...previous.filter((candidate) => candidate.id !== host.id),
-  host,
-];

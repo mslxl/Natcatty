@@ -1,61 +1,79 @@
-import type { Host, Identity } from "./models";
+import { sanitizeCredentialValue } from "./credentials";
+import type { Host, Identity, SSHKey } from "./models";
 import type { QuickConnectTarget } from "./quickConnect";
 
 export type QuickConnectProtocol = "ssh" | "mosh" | "et" | "telnet";
+export type QuickConnectAuthMethod = "password" | "key" | "certificate";
 
 export const getQuickConnectDefaultPort = (
   protocol: QuickConnectProtocol,
 ): number => protocol === "telnet" ? 23 : 22;
 
-export const buildQuickConnectHost = (args: {
+export const isQuickConnectIdentityUsable = (
+  identity: Identity | undefined,
+  keys: SSHKey[],
+  protocol: QuickConnectProtocol = "ssh",
+): boolean => {
+  if (!identity?.username.trim() || protocol === "telnet") return false;
+  if (identity.authMethod === "password") {
+    return Boolean(sanitizeCredentialValue(identity.password));
+  }
+  return Boolean(identity.keyId && keys.some((key) => key.id === identity.keyId));
+};
+
+type BuildQuickConnectHostInput = {
+  id: string;
+  createdAt: number;
   target: QuickConnectTarget;
   protocol: QuickConnectProtocol;
   port: number;
   username: string;
-  authMethod: "password" | "key" | "certificate";
+  authMethod: QuickConnectAuthMethod;
   password?: string;
   selectedKeyId?: string | null;
-  selectedIdentity?: Identity;
-  save: boolean;
-  now?: number;
-  randomId?: string;
-}): Host => {
-  const {
-    target,
-    protocol,
-    selectedIdentity,
-    save,
-    now = Date.now(),
-    randomId = Math.random().toString(36).slice(2, 11),
-  } = args;
-  const applicableIdentity = protocol === "telnet" ? undefined : selectedIdentity;
-  const effectiveUsername = applicableIdentity?.username || args.username || target.username || "root";
-  const authMethod = applicableIdentity?.authMethod || args.authMethod;
-  const effectivePort = args.port || getQuickConnectDefaultPort(protocol);
+  selectedIdentityId?: string | null;
+  save?: boolean;
+};
+
+export const buildQuickConnectHost = ({
+  id,
+  createdAt,
+  target,
+  protocol,
+  port,
+  username,
+  authMethod,
+  password,
+  selectedKeyId,
+  selectedIdentityId,
+  save = false,
+}: BuildQuickConnectHostInput): Host => {
+  const isTelnet = protocol === "telnet";
+  const applicableIdentityId = isTelnet ? undefined : selectedIdentityId || undefined;
 
   return {
-    id: `quick-${now}-${randomId}`,
+    id,
     label: target.hostname,
     hostname: target.hostname,
-    port: effectivePort,
-    username: effectiveUsername,
+    port,
+    username,
     group: "",
     tags: [],
     os: "linux",
     protocol: protocol === "mosh" || protocol === "et" ? "ssh" : protocol,
     authMethod,
-    identityId: applicableIdentity?.id,
-    password: !applicableIdentity && authMethod === "password" ? args.password : undefined,
+    identityId: applicableIdentityId,
+    password: !applicableIdentityId && authMethod === "password" ? password : undefined,
     identityFileId:
-      !applicableIdentity && (authMethod === "key" || authMethod === "certificate")
-        ? args.selectedKeyId || undefined
+      !applicableIdentityId && authMethod !== "password"
+        ? selectedKeyId || undefined
         : undefined,
     moshEnabled: protocol === "mosh",
     etEnabled: protocol === "et",
     etPort: protocol === "et" ? 2022 : undefined,
-    telnetEnabled: protocol === "telnet",
-    telnetPort: protocol === "telnet" ? effectivePort : undefined,
+    telnetEnabled: isTelnet,
+    telnetPort: isTelnet ? port : undefined,
     ephemeral: !save,
-    createdAt: now,
+    createdAt,
   };
 };

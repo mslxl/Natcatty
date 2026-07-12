@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { AlertCircle, Loader2, RefreshCw } from 'lucide-react';
 import { Button } from '../ui/button';
-import { ContextMenu, ContextMenuTrigger } from '../ui/context-menu';
+import { ContextMenu, ContextMenuCheckboxItem, ContextMenuContent, ContextMenuTrigger } from '../ui/context-menu';
 import { type NodeDescriptor } from './SftpPaneTreeNode';
 import { INITIAL_TREE_PATHS_STATE, treePathsReducer } from './sftpTreePathsReducer';
 import { useSftpPaneTreeContextMenu } from './useSftpPaneTreeContextMenu';
@@ -9,7 +9,7 @@ import { useSftpPaneTreeRows } from './useSftpPaneTreeRows';
 import { SftpMoveToDialog } from './SftpMoveToDialog';
 import type { SftpFileEntry } from '../../types';
 import { getParentPath, joinPath } from '../../application/state/sftp/utils';
-import { buildSftpColumnTemplate, filterHiddenFiles, isNavigableDirectory, sortSftpEntries } from './utils';
+import { buildSftpColumnTemplate, filterHiddenFiles, isNavigableDirectory, isSftpColumnMenuKey, sortSftpEntries } from './utils';
 import type { SftpTransferSource } from './SftpContext';
 import type { SftpPaneTreeViewProps } from './SftpPaneTreeView.types';
 import { sftpTreeSelectionStore, useSftpTreeSelectionState } from './hooks/useSftpTreeSelectionStore';
@@ -51,14 +51,16 @@ export const SftpPaneTreeView = React.memo<SftpPaneTreeViewProps>(({
   onUploadExternalFileList,
   onUploadExternalFolder,
   columnWidths,
+  visibleColumns,
   handleSort,
   handleResizeStart,
+  toggleColumnVisibility,
   sortField,
   sortOrder,
   reloadRequest,
 }) => {
   const { t } = useI18n();
-  const columnTemplate = buildSftpColumnTemplate(columnWidths);
+  const columnTemplate = buildSftpColumnTemplate(columnWidths, visibleColumns);
   const tRef = useRef(t);
   tRef.current = t;
   const [dragOverNodePath, setDragOverNodePath] = useState<string | null>(null);
@@ -794,6 +796,7 @@ export const SftpPaneTreeView = React.memo<SftpPaneTreeViewProps>(({
     viewportHeight,
     tRef,
     columnTemplate,
+    visibleColumns,
     selectedPaths,
     dragOverNodePath,
     toggleExpand,
@@ -841,67 +844,105 @@ export const SftpPaneTreeView = React.memo<SftpPaneTreeViewProps>(({
   });
   return (
     <div className="relative flex-1 min-h-0 flex flex-col text-sm">
-      <div
-        className="text-[11px] uppercase tracking-wide text-muted-foreground px-4 py-2 border-b border-border/40 bg-secondary/10 select-none shrink-0"
-        style={{ display: 'grid', gridTemplateColumns: columnTemplate }}
-      >
-        <div
-          className="flex items-center gap-1 cursor-pointer hover:text-foreground relative pr-2 min-w-0 overflow-hidden"
-          onClick={() => handleSort('name')}
-        >
-          <span className="truncate whitespace-nowrap">{t('sftp.columns.name')}</span>
-          {sortField === 'name' && (
-            <span className="shrink-0 text-primary">
-              {sortOrder === 'asc' ? '↑' : '↓'}
-            </span>
-          )}
+      <ContextMenu>
+        <ContextMenuTrigger asChild>
           <div
-            className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/50 transition-colors"
-            onMouseDown={(e) => handleResizeStart('name', e)}
-          />
-        </div>
-        <div
-          className="flex items-center gap-1 cursor-pointer hover:text-foreground relative pr-2 min-w-0 overflow-hidden"
-          onClick={() => handleSort('modified')}
-        >
-          <span className="truncate whitespace-nowrap">{t('sftp.columns.modified')}</span>
-          {sortField === 'modified' && (
-            <span className="shrink-0 text-primary">
-              {sortOrder === 'asc' ? '↑' : '↓'}
-            </span>
-          )}
-          <div
-            className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/50 transition-colors"
-            onMouseDown={(e) => handleResizeStart('modified', e)}
-          />
-        </div>
-        <div
-          className="flex items-center justify-end gap-1 cursor-pointer hover:text-foreground relative pr-2 min-w-0 overflow-hidden"
-          onClick={() => handleSort('size')}
-        >
-          {sortField === 'size' && (
-            <span className="shrink-0 text-primary">
-              {sortOrder === 'asc' ? '↑' : '↓'}
-            </span>
-          )}
-          <span className="truncate whitespace-nowrap">{t('sftp.columns.size')}</span>
-          <div
-            className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/50 transition-colors"
-            onMouseDown={(e) => handleResizeStart('size', e)}
-          />
-        </div>
-        <div
-          className="flex items-center justify-end gap-1 cursor-pointer hover:text-foreground min-w-0 overflow-hidden"
-          onClick={() => handleSort('type')}
-        >
-          {sortField === 'type' && (
-            <span className="shrink-0 text-primary">
-              {sortOrder === 'asc' ? '↑' : '↓'}
-            </span>
-          )}
-          <span className="truncate whitespace-nowrap">{t('sftp.columns.kind')}</span>
-        </div>
-      </div>
+            className="text-[11px] uppercase tracking-wide text-muted-foreground px-4 py-2 border-b border-border/40 bg-secondary/10 select-none shrink-0"
+            data-section="terminal-sftp-tree-header"
+            tabIndex={0}
+            aria-label={t('sftp.columns.configure')}
+            onKeyDown={(e) => {
+              if (!isSftpColumnMenuKey(e.key, e.shiftKey)) return;
+              e.preventDefault();
+              const rect = e.currentTarget.getBoundingClientRect();
+              e.currentTarget.dispatchEvent(new MouseEvent('contextmenu', {
+                bubbles: true,
+                cancelable: true,
+                clientX: rect.left + 16,
+                clientY: rect.top + rect.height / 2,
+              }));
+            }}
+            style={{ display: 'grid', gridTemplateColumns: columnTemplate }}
+          >
+            <div
+              className="flex items-center gap-1 cursor-pointer hover:text-foreground relative pr-2 min-w-0 overflow-hidden"
+              onClick={() => handleSort('name')}
+            >
+              <span className="truncate whitespace-nowrap">{t('sftp.columns.name')}</span>
+              {sortField === 'name' && (
+                <span className="shrink-0 text-primary">
+                  {sortOrder === 'asc' ? '↑' : '↓'}
+                </span>
+              )}
+              <div
+                className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/50 transition-colors"
+                onMouseDown={(e) => handleResizeStart('name', e)}
+              />
+            </div>
+            {visibleColumns.modified && (
+              <div
+                className="flex items-center gap-1 cursor-pointer hover:text-foreground relative pr-2 min-w-0 overflow-hidden"
+                onClick={() => handleSort('modified')}
+              >
+                <span className="truncate whitespace-nowrap">{t('sftp.columns.modified')}</span>
+                {sortField === 'modified' && (
+                  <span className="shrink-0 text-primary">
+                    {sortOrder === 'asc' ? '↑' : '↓'}
+                  </span>
+                )}
+                <div
+                  className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/50 transition-colors"
+                  onMouseDown={(e) => handleResizeStart('modified', e)}
+                />
+              </div>
+            )}
+            {visibleColumns.size && (
+              <div
+                className="flex items-center justify-end gap-1 cursor-pointer hover:text-foreground relative pr-2 min-w-0 overflow-hidden"
+                onClick={() => handleSort('size')}
+              >
+                {sortField === 'size' && (
+                  <span className="shrink-0 text-primary">
+                    {sortOrder === 'asc' ? '↑' : '↓'}
+                  </span>
+                )}
+                <span className="truncate whitespace-nowrap">{t('sftp.columns.size')}</span>
+                <div
+                  className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/50 transition-colors"
+                  onMouseDown={(e) => handleResizeStart('size', e)}
+                />
+              </div>
+            )}
+            {visibleColumns.type && (
+              <div
+                className="flex items-center justify-end gap-1 cursor-pointer hover:text-foreground min-w-0 overflow-hidden"
+                onClick={() => handleSort('type')}
+              >
+                {sortField === 'type' && (
+                  <span className="shrink-0 text-primary">
+                    {sortOrder === 'asc' ? '↑' : '↓'}
+                  </span>
+                )}
+                <span className="truncate whitespace-nowrap">{t('sftp.columns.kind')}</span>
+              </div>
+            )}
+          </div>
+        </ContextMenuTrigger>
+        <ContextMenuContent>
+          <ContextMenuCheckboxItem checked disabled>
+            {t('sftp.columns.name')}
+          </ContextMenuCheckboxItem>
+          {(['modified', 'size', 'type'] as const).map((field) => (
+            <ContextMenuCheckboxItem
+              key={field}
+              checked={visibleColumns[field]}
+              onCheckedChange={() => toggleColumnVisibility(field)}
+            >
+              {t(field === 'type' ? 'sftp.columns.kind' : `sftp.columns.${field}`)}
+            </ContextMenuCheckboxItem>
+          ))}
+        </ContextMenuContent>
+      </ContextMenu>
       <ContextMenu>
         <ContextMenuTrigger asChild>
           <div

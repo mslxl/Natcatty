@@ -551,6 +551,8 @@ function createMoshSessionApi(ctx) {
         // does not depend on this.
         knownHosts: options.knownHosts,
         verifyHostKeys: options.verifyHostKeys,
+        hasJumpHost: Array.isArray(options.jumpHosts) && options.jumpHosts.length > 0,
+        hasProxy: !!options.proxy,
       };
       session.systemManagerSudoPassword = typeof options.sudoAutofillPassword === "string" && options.sudoAutofillPassword.length > 0
         ? options.sudoAutofillPassword
