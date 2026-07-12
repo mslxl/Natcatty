@@ -619,6 +619,7 @@ export const zhTWCoreMessages: Messages = {
   'sftp.bookmark.addGlobalTooltip': '儲存為全域收藏（所有主機共享）',
   'sftp.bookmark.empty': '暫無收藏路徑',
   'sftp.columns.name': '名稱',
+  'sftp.columns.configure': '選擇顯示的欄位',
   'sftp.columns.modified': '修改時間',
   'sftp.columns.size': '大小',
   'sftp.columns.kind': '型別',

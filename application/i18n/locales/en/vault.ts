@@ -166,6 +166,7 @@ export const enVaultMessages: Messages = {
   'sftp.columns.modified': 'Modified',
   'sftp.columns.size': 'Size',
   'sftp.columns.kind': 'Kind',
+  'sftp.columns.configure': 'Choose visible columns',
   'sftp.columns.actions': 'Actions',
   'sftp.emptyDirectory': 'Empty directory',
   'sftp.nav.up': 'Go up',
