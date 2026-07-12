@@ -19,6 +19,9 @@ function fakeAgent(publicKeys) {
     sign(_key, _data, _options, callback) {
       callback(null, Buffer.from("signature"));
     },
+    getStream(callback) {
+      callback(null, "forwarded-stream");
+    },
   };
 }
 
@@ -49,6 +52,15 @@ test("prepareSystemSshAgent prioritizes the identity selected by IdentityFile", 
     identities.map((key) => key.getPublicSSH().toString("base64")),
     [selected, unrelated].map((key) => utils.parseKey(key).getPublicSSH().toString("base64")),
   );
+  await new Promise((resolve, reject) => {
+    agent.getStream((error, stream) => {
+      if (error) reject(error);
+      else {
+        assert.equal(stream, "forwarded-stream");
+        resolve();
+      }
+    });
+  });
 });
 
 test("prepareSystemSshAgent excludes unrelated identities for IdentitiesOnly", async () => {

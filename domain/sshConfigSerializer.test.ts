@@ -69,6 +69,6 @@ test("serializeHostsToSshConfig preserves an enabled default agent setting", () 
   const config = serializeHostsToSshConfig([makeHost({ useSshAgent: true })]);
   const imported = importVaultHostsFromText("ssh_config", config);
 
-  assert.match(config, /IdentityAgent \$SSH_AUTH_SOCK/);
+  assert.match(config, /IdentityAgent \$\{SSH_AUTH_SOCK\}/);
   assert.equal(imported.hosts[0]?.useSshAgent, true);
 });

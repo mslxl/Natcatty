@@ -341,7 +341,7 @@ main();
       }
 
       // Additional identity file paths from host config
-      if (Array.isArray(options.identityFilePaths)) {
+      if (!options.useSshAgent && Array.isArray(options.identityFilePaths)) {
         for (const idPath of options.identityFilePaths) {
           if (idPath) identityPaths.push(idPath);
         }
@@ -451,7 +451,7 @@ main();
             writeSecureFile(jumpPassPath, `${jump.passphrase}\n`, 0o600);
             addAskpassEntry(askpassEntries, "passphrase", createPassphrasePromptMatchers(jumpKeyPath), jumpPassPath);
           }
-        } else if (Array.isArray(jump.identityFilePaths)) {
+        } else if (!jump.useSshAgent && Array.isArray(jump.identityFilePaths)) {
           const jumpIdentityPaths = jump.identityFilePaths.filter(Boolean);
           for (const idPath of jumpIdentityPaths) {
             jumpConfigLines.push(`  IdentityFile ${quoteSshConfigValue(idPath)}`);

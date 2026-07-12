@@ -94,6 +94,14 @@ class IdentityAwareAgent extends BaseAgent {
   sign(publicKey, data, options, callback) {
     this.delegate.sign(publicKey, data, options, callback);
   }
+
+  getStream(callback) {
+    if (typeof this.delegate.getStream !== "function") {
+      callback(new Error("SSH agent does not support forwarding streams"));
+      return;
+    }
+    this.delegate.getStream(callback);
+  }
 }
 
 function shouldLoadFromMacKeychain(options, platform) {

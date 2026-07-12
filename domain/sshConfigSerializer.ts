@@ -138,13 +138,13 @@ export const serializeHostsToSshConfig = (hosts: Host[], allHosts?: Host[]): str
       host.useSshAgent === true
       && host.identityAgent?.toLowerCase() === "none"
     ) {
-      serializedIdentityAgent = "$SSH_AUTH_SOCK";
+      serializedIdentityAgent = "${SSH_AUTH_SOCK}";
     } else if (
       host.useSshAgent === true
       && host.identityAgent === undefined
       && !hasMacKeychainAgent
     ) {
-      serializedIdentityAgent = "$SSH_AUTH_SOCK";
+      serializedIdentityAgent = "${SSH_AUTH_SOCK}";
     }
 
     if (serializedIdentityAgent !== undefined) {

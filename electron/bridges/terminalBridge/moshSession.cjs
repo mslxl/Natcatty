@@ -221,7 +221,7 @@ function createMoshSessionApi(ctx) {
             tempFiles.push(certPath);
             sshArgs.push("-o", `CertificateFile=${certPath}`);
           }
-        } else if (Array.isArray(options.identityFilePaths) && options.identityFilePaths.length > 0) {
+        } else if (!options.useSshAgent && Array.isArray(options.identityFilePaths) && options.identityFilePaths.length > 0) {
           for (const keyPath of options.identityFilePaths) {
             const normalized = normalizeMoshIdentityPath(keyPath);
             if (normalized) sshArgs.push("-i", normalized);
