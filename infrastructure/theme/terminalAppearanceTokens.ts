@@ -39,6 +39,151 @@ function mix(fg: string, bg: string, fgPercent: number): string {
   return `color-mix(in srgb, ${fg} ${fgPercent}%, ${bg} ${100 - fgPercent}%)`;
 }
 
+type RgbColor = { red: number; green: number; blue: number };
+
+const parseHexColor = (value: string): RgbColor | null => {
+  const normalized = value.trim().replace(/^#/, '');
+  const expanded = normalized.length === 3
+    ? normalized.split('').map((part) => `${part}${part}`).join('')
+    : normalized;
+  if (!/^[0-9a-f]{6}$/i.test(expanded)) return null;
+  return {
+    red: Number.parseInt(expanded.slice(0, 2), 16),
+    green: Number.parseInt(expanded.slice(2, 4), 16),
+    blue: Number.parseInt(expanded.slice(4, 6), 16),
+  };
+};
+
+const mixRgb = (foreground: RgbColor, background: RgbColor, foregroundRatio: number): RgbColor => ({
+  red: foreground.red * foregroundRatio + background.red * (1 - foregroundRatio),
+  green: foreground.green * foregroundRatio + background.green * (1 - foregroundRatio),
+  blue: foreground.blue * foregroundRatio + background.blue * (1 - foregroundRatio),
+});
+
+const rgbToHslToken = ({ red, green, blue }: RgbColor): string => {
+  const r = red / 255;
+  const g = green / 255;
+  const b = blue / 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const delta = max - min;
+  const lightness = (max + min) / 2;
+  let hue = 0;
+  let saturation = 0;
+
+  if (delta > 0) {
+    saturation = delta / (1 - Math.abs(2 * lightness - 1));
+    if (max === r) hue = 60 * (((g - b) / delta) % 6);
+    else if (max === g) hue = 60 * (((b - r) / delta) + 2);
+    else hue = 60 * (((r - g) / delta) + 4);
+  }
+
+  if (hue < 0) hue += 360;
+  const format = (value: number) => Number(value.toFixed(2));
+  return `${format(hue)} ${format(saturation * 100)}% ${format(lightness * 100)}%`;
+};
+
+const hexToHslToken = (value: string, fallback: string): string => {
+  const rgb = parseHexColor(value);
+  return rgb ? rgbToHslToken(rgb) : fallback;
+};
+
+const relativeLuminance = ({ red, green, blue }: RgbColor): number => {
+  const linearize = (channel: number) => {
+    const normalized = channel / 255;
+    return normalized <= 0.03928
+      ? normalized / 12.92
+      : ((normalized + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * linearize(red) + 0.7152 * linearize(green) + 0.0722 * linearize(blue);
+};
+
+const contrastRatio = (first: RgbColor, second: RgbColor): number => {
+  const firstLuminance = relativeLuminance(first);
+  const secondLuminance = relativeLuminance(second);
+  const lighter = Math.max(firstLuminance, secondLuminance);
+  const darker = Math.min(firstLuminance, secondLuminance);
+  return (lighter + 0.05) / (darker + 0.05);
+};
+
+const BLACK_RGB: RgbColor = { red: 0, green: 0, blue: 0 };
+const WHITE_RGB: RgbColor = { red: 255, green: 255, blue: 255 };
+
+const readableForegroundRgb = (background: RgbColor, preferred?: RgbColor): RgbColor => {
+  if (preferred && contrastRatio(preferred, background) >= 4.5) return preferred;
+  return contrastRatio(WHITE_RGB, background) >= contrastRatio(BLACK_RGB, background)
+    ? WHITE_RGB
+    : BLACK_RGB;
+};
+
+export type TerminalSidePanelCssVars = Record<
+  | '--background'
+  | '--foreground'
+  | '--card'
+  | '--card-foreground'
+  | '--popover'
+  | '--popover-foreground'
+  | '--primary'
+  | '--primary-foreground'
+  | '--secondary'
+  | '--secondary-foreground'
+  | '--muted'
+  | '--muted-foreground'
+  | '--accent'
+  | '--accent-foreground'
+  | '--destructive'
+  | '--destructive-foreground'
+  | '--border'
+  | '--input'
+  | '--ring',
+  string
+>;
+
+export function buildTerminalSidePanelCssVars(theme: TerminalTheme): TerminalSidePanelCssVars {
+  const backgroundRgb = parseHexColor(theme.colors.background) ?? BLACK_RGB;
+  const preferredForegroundRgb = parseHexColor(theme.colors.foreground) ?? WHITE_RGB;
+  const foregroundRgb = readableForegroundRgb(backgroundRgb, preferredForegroundRgb);
+  const cursorRgb = parseHexColor(theme.colors.cursor) ?? foregroundRgb;
+  const redRgb = parseHexColor(theme.colors.red) ?? { red: 220, green: 38, blue: 38 };
+  const secondaryRgb = mixRgb(foregroundRgb, backgroundRgb, 0.12);
+  const mutedRgb = mixRgb(foregroundRgb, backgroundRgb, 0.08);
+  const mutedForegroundRgb = mixRgb(foregroundRgb, backgroundRgb, 0.58);
+  const accentRgb = mixRgb(foregroundRgb, backgroundRgb, 0.16);
+  const borderRgb = mixRgb(foregroundRgb, backgroundRgb, 0.12);
+  const background = rgbToHslToken(backgroundRgb);
+  const foreground = rgbToHslToken(foregroundRgb);
+  const primary = hexToHslToken(theme.colors.cursor, foreground);
+  const secondary = rgbToHslToken(secondaryRgb);
+  const muted = rgbToHslToken(mutedRgb);
+  const mutedForeground = rgbToHslToken(mutedForegroundRgb);
+  const accent = rgbToHslToken(accentRgb);
+  const accentForeground = rgbToHslToken(readableForegroundRgb(accentRgb, foregroundRgb));
+  const border = rgbToHslToken(borderRgb);
+  const destructive = rgbToHslToken(redRgb);
+
+  return {
+    '--background': background,
+    '--foreground': foreground,
+    '--card': background,
+    '--card-foreground': foreground,
+    '--popover': background,
+    '--popover-foreground': foreground,
+    '--primary': primary,
+    '--primary-foreground': rgbToHslToken(readableForegroundRgb(cursorRgb)),
+    '--secondary': secondary,
+    '--secondary-foreground': foreground,
+    '--muted': muted,
+    '--muted-foreground': mutedForeground,
+    '--accent': accent,
+    '--accent-foreground': accentForeground,
+    '--destructive': destructive,
+    '--destructive-foreground': rgbToHslToken(readableForegroundRgb(redRgb)),
+    '--border': border,
+    '--input': border,
+    '--ring': primary,
+  };
+}
+
 export function buildTerminalAppearanceCssVars(theme: TerminalTheme): TerminalAppearanceCssVars {
   const bg = theme.colors.background;
   const fg = theme.colors.foreground;

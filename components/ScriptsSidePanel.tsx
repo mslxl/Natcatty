@@ -616,7 +616,7 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
           type="button"
           className={cn(
             'flex-1 h-7 rounded-md text-xs',
-            subView === 'library' ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-muted/50',
+            subView === 'library' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:bg-muted/50',
           )}
           onClick={() => setSubView('library')}
         >
@@ -626,7 +626,7 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
           type="button"
           className={cn(
             'flex-1 h-7 rounded-md text-xs',
-            subView === 'running' ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-muted/50',
+            subView === 'running' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:bg-muted/50',
           )}
           onClick={() => setSubView('running')}
         >
