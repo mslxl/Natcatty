@@ -322,7 +322,8 @@ export const ActiveTabAutoScroller: React.FC<ActiveTabAutoScrollerProps> = memo(
     const activeTabElement = container.querySelector(`[data-tab-id="${activeTabId}"]`) as HTMLElement | null;
     scrollTopTabIntoComfortView(container, activeTabElement, 'smooth');
 
-    setTimeout(updateScrollState, 260);
+    const scrollStateTimer = setTimeout(updateScrollState, 260);
+    return () => clearTimeout(scrollStateTimer);
   }, [activeTabId, tabsContainerRef, updateScrollState]);
 
   return null;

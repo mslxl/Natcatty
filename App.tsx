@@ -1430,19 +1430,23 @@ function AppWithProviders() {
   });
 
   useEffect(() => {
+    let splashRemovalTimer: ReturnType<typeof setTimeout> | undefined;
     try {
       // Hide splash screen with a fade-out animation
       const splash = document.getElementById('splash');
       if (splash) {
         splash.classList.add('fade-out');
         // Remove from DOM after animation completes
-        setTimeout(() => splash.remove(), 200);
+        splashRemovalTimer = setTimeout(() => splash.remove(), 200);
       }
       // Notify main process that renderer is ready
       netcattyBridge.get()?.rendererReady?.();
     } catch {
       // ignore
     }
+    return () => {
+      if (splashRemovalTimer !== undefined) clearTimeout(splashRemovalTimer);
+    };
   }, []);
 
   // Keep MCP/SDK approval IPC alive for the whole app lifetime — including the

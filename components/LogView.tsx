@@ -155,7 +155,7 @@ const LogViewComponent: React.FC<LogViewProps> = ({
         }
 
         // Fit terminal
-        setTimeout(() => {
+        const initialFitTimer = setTimeout(() => {
             try {
                 fitAddon.fit();
             } catch {
@@ -186,6 +186,7 @@ const LogViewComponent: React.FC<LogViewProps> = ({
 
         // Cleanup
         return () => {
+            clearTimeout(initialFitTimer);
             term.dispose();
             termRef.current = null;
             fitAddonRef.current = null;
@@ -205,17 +206,17 @@ const LogViewComponent: React.FC<LogViewProps> = ({
 
     // Update font size instantly without recreating terminal
     useEffect(() => {
-        if (termRef.current && isReady) {
-            termRef.current.options.fontSize = currentFontSize;
-            // Refit after font size change
-            setTimeout(() => {
-                try {
-                    fitAddonRef.current?.fit();
-                } catch {
-                    // Ignore fit errors
-                }
-            }, 10);
-        }
+        if (!termRef.current || !isReady) return;
+        termRef.current.options.fontSize = currentFontSize;
+        // Refit after font size change
+        const refitTimer = setTimeout(() => {
+            try {
+                fitAddonRef.current?.fit();
+            } catch {
+                // Ignore fit errors
+            }
+        }, 10);
+        return () => clearTimeout(refitTimer);
     }, [currentFontSize, isReady]);
 
     // Handle resize

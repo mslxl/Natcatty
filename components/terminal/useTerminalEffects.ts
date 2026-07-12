@@ -320,6 +320,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
 
   useEffect(() => {
     let disposed = false;
+    let initialFitTimer: ReturnType<typeof setTimeout> | undefined;
     const closeGeneration = ++terminalBootCloseGenerationRef.current;
     isBootActiveRef.current = true;
     terminalDataCapturedRef.current = false;
@@ -409,7 +410,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
         hasRuntimeRef.current = true;
         // xterm boots asynchronously; ResizeObserver may have already run without
         // fitAddon and will not re-attach until isVisible/isResizing changes.
-        setTimeout(() => {
+        initialFitTimer = setTimeout(() => {
           if (disposed) return;
           safeFit({ force: true, requireVisible: true });
         }, 0);
@@ -507,6 +508,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
 
     return () => {
       disposed = true;
+      if (initialFitTimer !== undefined) clearTimeout(initialFitTimer);
       isBootActiveRef.current = false;
       if (hibernatedRef?.current) {
         forceCloseHibernatedSession?.();
@@ -671,7 +673,8 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     termRef.current.options.fontSize = effectiveFontSize;
     xtermRuntimeRef.current?.clearTextureAtlas();
     if (isRendererActiveRef.current) {
-      setTimeout(() => safeFit({ force: true, requireVisible: true }), 50);
+      const refitTimer = setTimeout(() => safeFit({ force: true, requireVisible: true }), 50);
+      return () => clearTimeout(refitTimer);
     } else {
       lastFittedSizeRef.current = null;
     }
@@ -735,7 +738,8 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     xtermRuntimeRef.current?.clearTextureAtlas();
 
     if (isRendererActiveRef.current) {
-      setTimeout(() => safeFit({ force: true, requireVisible: true }), 50);
+      const refitTimer = setTimeout(() => safeFit({ force: true, requireVisible: true }), 50);
+      return () => clearTimeout(refitTimer);
     } else {
       lastFittedSizeRef.current = null;
     }

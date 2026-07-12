@@ -187,12 +187,12 @@ export const ToolCall = ({
 
   // Auto-focus and auto-scroll when approval is pending
   useEffect(() => {
-    if (isPendingApproval && cardRef.current) {
-      cardRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
-      // Small delay to let the UI render, then expand and focus
-      setExpanded(true);
-      setTimeout(() => approveBtnRef.current?.focus(), 100);
-    }
+    if (!isPendingApproval || !cardRef.current) return;
+    cardRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    // Small delay to let the UI render, then expand and focus
+    setExpanded(true);
+    const focusTimer = setTimeout(() => approveBtnRef.current?.focus(), 100);
+    return () => clearTimeout(focusTimer);
   }, [isPendingApproval]);
 
   // Reset responded state when approvalStatus changes (e.g. new approval)
