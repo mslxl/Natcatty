@@ -10,4 +10,5 @@ test('advanced host settings expose per-host SSH connection timeouts', () => {
   assert.match(source, /update\("sshTcpConnectTimeoutSeconds", value\)/);
   assert.match(source, /value=\{form\.sshAuthReadyTimeoutSeconds \?\?/);
   assert.match(source, /update\("sshAuthReadyTimeoutSeconds", value\)/);
+  assert.equal(source.match(/!Number\.isFinite\(value\)/g)?.length, 2);
 });

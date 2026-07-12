@@ -478,7 +478,7 @@ export const HostDetailsAdvancedSections: React.FC<HostDetailsAdvancedSectionsPr
               value={form.sshTcpConnectTimeoutSeconds ?? DEFAULT_SSH_TCP_CONNECT_TIMEOUT_SECONDS}
               onChange={(e) => {
                 const value = Number.parseInt(e.target.value, 10);
-                if (value < 1 || value > MAX_SSH_CONNECTION_TIMEOUT_SECONDS) return;
+                if (!Number.isFinite(value) || value < 1 || value > MAX_SSH_CONNECTION_TIMEOUT_SECONDS) return;
                 update("sshTcpConnectTimeoutSeconds", value);
               }}
             />
@@ -496,7 +496,7 @@ export const HostDetailsAdvancedSections: React.FC<HostDetailsAdvancedSectionsPr
               value={form.sshAuthReadyTimeoutSeconds ?? DEFAULT_SSH_AUTH_READY_TIMEOUT_SECONDS}
               onChange={(e) => {
                 const value = Number.parseInt(e.target.value, 10);
-                if (value < 1 || value > MAX_SSH_CONNECTION_TIMEOUT_SECONDS) return;
+                if (!Number.isFinite(value) || value < 1 || value > MAX_SSH_CONNECTION_TIMEOUT_SECONDS) return;
                 update("sshAuthReadyTimeoutSeconds", value);
               }}
             />
