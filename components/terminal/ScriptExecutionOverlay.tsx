@@ -11,7 +11,18 @@ export interface ScriptExecutionOverlayProps {
   onResume: () => void;
   onStop: () => void;
   onDismiss: () => void;
+  /**
+   * Host info bar is hidden: top-right circular speed-dial floats over the
+   * pane. Sit the banner higher and leave a right gutter so it is not forced
+   * under the toggle.
+   */
+  compactTopChrome?: boolean;
 }
+
+/** Default top offset under the full host-info toolbar. */
+export const SCRIPT_OVERLAY_TOP_DEFAULT_PX = 34;
+/** Top offset when only the compact speed-dial is present. */
+export const SCRIPT_OVERLAY_TOP_COMPACT_PX = 8;
 
 function formatElapsed(ms: number) {
   const seconds = Math.max(0, Math.floor(ms / 1000));
@@ -185,6 +196,7 @@ export const ScriptExecutionOverlay: React.FC<ScriptExecutionOverlayProps> = ({
   onResume,
   onStop,
   onDismiss,
+  compactTopChrome = false,
 }) => {
   const { t } = useI18n();
   const [tick, setTick] = useState(0);
@@ -212,14 +224,19 @@ export const ScriptExecutionOverlay: React.FC<ScriptExecutionOverlayProps> = ({
 
   return (
     <div
-      className="absolute left-2 right-2 z-25 rounded-md border shadow-md backdrop-blur-md pointer-events-auto px-3 py-2"
+      className={cn(
+        "absolute left-2 z-25 rounded-md border shadow-md backdrop-blur-md pointer-events-auto px-3 py-2",
+        // Leave room for the circular speed-dial (h-7 + right-1) when host info is hidden.
+        compactTopChrome ? "right-10" : "right-2",
+      )}
       style={{
-        top: 34,
+        top: compactTopChrome ? SCRIPT_OVERLAY_TOP_COMPACT_PX : SCRIPT_OVERLAY_TOP_DEFAULT_PX,
         backgroundColor: 'color-mix(in srgb, var(--terminal-ui-bg) 92%, transparent)',
         borderColor: 'var(--terminal-ui-border)',
         color: 'var(--terminal-ui-fg)',
       }}
       data-section="script-execution-overlay"
+      data-compact-top-chrome={compactTopChrome ? "true" : "false"}
     >
       <div className="flex items-center gap-2 min-w-0">
         <div className="min-w-0 flex flex-1 items-center text-[11px] leading-none">

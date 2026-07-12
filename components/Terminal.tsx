@@ -2795,6 +2795,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
           onResume={() => { void resumeScriptRun(activeScriptRun.runId); }}
           onStop={() => { void stopScriptRun(activeScriptRun.runId); }}
           onDismiss={dismissScriptOverlay}
+          compactTopChrome={terminalSettings?.showHostInfoBar === false}
         />
       ) : null, selectionOverlayPosition, sessionDisplayName, sessionId, sessionRef, setIsComposeBarOpen, setShowLogs, shouldShowConnectionDialog, showLogs, showSelectionAIAction, snippets, status, sudoHintRef, sudoHintText: t("terminal.sudoHint.pressEnter"), t, termRef, terminalBackend, terminalContextActions, terminalCwdTracker, terminalPreviewVars, terminalSettings, timeLeft, toast, zmodem }} />
       <ScriptSaveRecordingDialog
