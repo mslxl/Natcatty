@@ -102,3 +102,10 @@ test('side panel tab bar and borders use inline resolved terminal theme colors',
   assert.doesNotMatch(sectionSource, /terminalAppearanceSidePanelStyle/);
   assert.doesNotMatch(sectionSource, /var\(--terminal-sidepanel-border\)/);
 });
+
+test('side panel content scopes app color utilities to the resolved terminal theme', () => {
+  const sectionSource = readFileSync(new URL('./TerminalLayerSidePanelSection.tsx', import.meta.url), 'utf8');
+
+  assert.match(sectionSource, /buildTerminalSidePanelCssVars/);
+  assert.match(sectionSource, /\.\.\.sidePanelCssVars/);
+});

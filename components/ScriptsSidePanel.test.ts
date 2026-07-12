@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import { buildScriptsSidePanelRows } from "./ScriptsSidePanel.tsx";
 import type { Snippet } from "../types";
@@ -11,6 +12,8 @@ const snippet = (overrides: Partial<Snippet>): Snippet => ({
   package: overrides.package ?? "",
   order: overrides.order,
 });
+
+const source = readFileSync(new URL("./ScriptsSidePanel.tsx", import.meta.url), "utf8");
 
 test("scripts side panel rows keep manual snippet order inside a package", () => {
   const rows = buildScriptsSidePanelRows({
@@ -27,4 +30,8 @@ test("scripts side panel rows keep manual snippet order inside a package", () =>
     rows.filter((row) => row.type === "snippet").map((row) => row.id),
     ["zulu", "beta", "alpha"],
   );
+});
+
+test("scripts side panel active tabs pair the accent background with its foreground", () => {
+  assert.equal(source.match(/bg-accent text-accent-foreground/g)?.length, 2);
 });

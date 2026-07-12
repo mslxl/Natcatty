@@ -1,6 +1,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { Activity, FolderTree, History, MessageSquare, NotebookText, Palette, PanelLeft, PanelRight, Play, X } from 'lucide-react';
-import { buildSidePanelChromeThemeFromTerminalTheme } from '../../infrastructure/theme/terminalAppearanceTokens';
+import {
+  buildSidePanelChromeThemeFromTerminalTheme,
+  buildTerminalSidePanelCssVars,
+} from '../../infrastructure/theme/terminalAppearanceTokens';
 import { injectTerminalLayerChromeSurfaceVars } from '../../infrastructure/theme/terminalAppearanceVars';
 import React, { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
@@ -111,12 +114,19 @@ function TerminalLayerSidePanelInner({ ctx }: { ctx: SidePanelContext }) {
 
   const [resizePreviewWidth, setResizePreviewWidth] = useState<number | null>(null);
   const { sidePanelTabOrder, setSidePanelTabOrder } = useTerminalSidePanelTabOrder();
-  const sidePanelTheme = useMemo(() => {
-    const chromeTheme = followAppTerminalTheme
+  const resolvedSidePanelTerminalTheme = useMemo(() => (
+    followAppTerminalTheme
       ? terminalTheme
-      : (resolvedPreviewTheme ?? terminalTheme);
-    return buildSidePanelChromeThemeFromTerminalTheme(chromeTheme);
-  }, [followAppTerminalTheme, resolvedPreviewTheme, terminalTheme]);
+      : (resolvedPreviewTheme ?? terminalTheme)
+  ), [followAppTerminalTheme, resolvedPreviewTheme, terminalTheme]);
+  const sidePanelTheme = useMemo(
+    () => buildSidePanelChromeThemeFromTerminalTheme(resolvedSidePanelTerminalTheme),
+    [resolvedSidePanelTerminalTheme],
+  );
+  const sidePanelCssVars = useMemo(
+    () => buildTerminalSidePanelCssVars(resolvedSidePanelTerminalTheme),
+    [resolvedSidePanelTerminalTheme],
+  );
 
   useLayoutEffect(() => {
     if (!isSidePanelOpenForCurrentTab) return;
@@ -285,6 +295,7 @@ function TerminalLayerSidePanelInner({ ctx }: { ctx: SidePanelContext }) {
         data-open={isSidePanelOpenForCurrentTab ? 'true' : 'false'}
         data-side-panel-tab={isSidePanelOpenForCurrentTab ? (activeSidePanelTab ?? undefined) : undefined}
         style={{
+          ...sidePanelCssVars,
           backgroundColor: sidePanelTheme.termBg,
           color: sidePanelTheme.termFg,
           ...(isSidePanelOpenForCurrentTab && sidePanelPosition === 'left'
