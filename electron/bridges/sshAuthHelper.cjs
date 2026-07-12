@@ -469,7 +469,6 @@ function ssh2AgentConnectable(agentPath, options = {}) {
       resolve(ok);
     };
     const timer = setTimeout(() => finish(false), timeoutMs);
-    timer.unref?.();
     try {
       createAgentImpl(agentPath).getStream((error, agentStream) => {
         if (settled) {
@@ -530,7 +529,6 @@ function cygwinAgentConnectable(agentPath, options = {}) {
       resolve(ok);
     };
     const timer = setTimeout(() => finish(false), timeoutMs);
-    timer.unref?.();
 
     const negotiate = (port, secret, credentials, keepOpen) => new Promise((resolveNegotiation, rejectNegotiation) => {
       const socket = activeSocket = createConnection({ host: "127.0.0.1", port });
@@ -633,7 +631,6 @@ function socketAgentConnectable(agentPath, options = {}) {
       resolve(ok);
     };
     const timer = setTimeout(() => finish(false), timeoutMs);
-    timer.unref?.();
     try {
       socket = createConnection(agentPath);
       socket.once("connect", () => {
