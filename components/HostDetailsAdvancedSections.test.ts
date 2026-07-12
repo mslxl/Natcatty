@@ -18,3 +18,7 @@ test('editing enabled SSH agent controls persists the enabled state', () => {
   assert.match(source, /useSshAgent: true,\s*identityAgent:/);
   assert.match(source, /useSshAgent: true,\s*identitiesOnly:/);
 });
+
+test('enabling SSH agent login clears an imported none sentinel', () => {
+  assert.match(source, /enabling && previous\.identityAgent\?\.toLowerCase\(\) === "none"/);
+});

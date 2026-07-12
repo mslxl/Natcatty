@@ -243,7 +243,16 @@ export const HostDetailsAdvancedSections: React.FC<HostDetailsAdvancedSectionsPr
             label={t("hostDetails.systemSshAgent")}
             hint={t("hostDetails.systemSshAgent.desc")}
             enabled={form.useSshAgent === true}
-            onToggle={() => update("useSshAgent", form.useSshAgent !== true)}
+            onToggle={() => setForm((previous: typeof form) => {
+              const enabling = previous.useSshAgent !== true;
+              return {
+                ...previous,
+                useSshAgent: enabling,
+                identityAgent: enabling && previous.identityAgent?.toLowerCase() === "none"
+                  ? undefined
+                  : previous.identityAgent,
+              };
+            })}
           />
           {form.useSshAgent === true && (
             <>
