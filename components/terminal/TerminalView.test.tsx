@@ -246,7 +246,10 @@ test("hidden host information reveals actions without permanently covering termi
   assert.match(source, /id=\{`terminal-actions-\$\{sessionId\}`\}/);
   assert.match(source, /onClick=\{\(\) => setCompactActionsOpen/);
   assert.match(source, /right: terminalRightInset/);
-  assert.match(source, /\? "visible opacity-100 translate-y-0 pointer-events-auto"/);
+  // Compact strip opens below the ⋯ toggle (top-8), not beside it (top-0 right-8),
+  // so the full toolbar is visible instead of stacking on the toggle.
+  assert.match(source, /absolute right-1 top-8/);
+  assert.match(source, /\? "visible opacity-100 pointer-events-auto"/);
   assert.match(source, /: "invisible opacity-0"/);
   assert.match(source, /aria-hidden=\{!showHostInfoBar && !isSearchOpen && !compactActionsOpen \? true : undefined\}/);
   assert.match(source, /document\.addEventListener\("pointerdown", handlePointerDown\)/);

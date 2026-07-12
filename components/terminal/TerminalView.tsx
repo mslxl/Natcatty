@@ -381,12 +381,12 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
           onMouseDownCapture={handleTopOverlayMouseDownCapture}
         >
           {!showHostInfoBar && !isSearchOpen && (
-            <Tooltip>
+            <Tooltip open={compactActionsOpen ? false : undefined}>
               <TooltipTrigger asChild>
                 <button
                   ref={compactActionsButtonRef}
                   type="button"
-                  className="absolute right-1 top-1 h-6 w-6 rounded-md border pointer-events-auto opacity-70 hover:opacity-100 focus-visible:opacity-100"
+                  className="absolute right-1 top-1 z-30 h-6 w-6 rounded-md border pointer-events-auto opacity-70 hover:opacity-100 focus-visible:opacity-100"
                   style={{
                     backgroundColor: 'var(--terminal-ui-bg)',
                     borderColor: 'var(--terminal-ui-border)',
@@ -417,11 +417,15 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
               "terminal-topbar flex items-center gap-1 py-0.5 backdrop-blur-md min-w-0",
               showHostInfoBar
                 ? "px-2 pointer-events-auto"
-                : "ml-auto w-fit rounded-bl-md px-1",
+                : "ml-auto w-fit rounded-md px-1",
+              // Compact mode: drop the full action strip *below* the ⋯ toggle so it
+              // does not share the top-right corner with the toggle (which made the
+              // first toolbar control + its tooltip look like the only thing that
+              // opened, stacked on the dots button).
               !showHostInfoBar && !isSearchOpen && [
-                "absolute right-8 top-0 -translate-y-1 pointer-events-none transition-[opacity,transform]",
+                "absolute right-1 top-8 z-30 max-w-[calc(100%-0.5rem)] overflow-x-auto border shadow-md pointer-events-none transition-opacity",
                 compactActionsOpen
-                  ? "visible opacity-100 translate-y-0 pointer-events-auto"
+                  ? "visible opacity-100 pointer-events-auto"
                   : "invisible opacity-0",
               ],
               !showHostInfoBar && isSearchOpen && "pointer-events-auto",
