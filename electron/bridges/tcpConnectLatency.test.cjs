@@ -158,3 +158,45 @@ test("TCP latency caps concurrent probes without evicting pending deduplication"
   connectCallbacks[3]();
   await firstAgain;
 });
+
+test("TCP latency bounds queued work and includes queue wait in the timeout", async () => {
+  const connectCallbacks = [];
+  const timeoutCallbacks = [];
+  let clock = 1_000;
+  const measure = createTcpConnectLatencyProbe({
+    net: {
+      isIP: () => 4,
+      createConnection(_options, callback) {
+        connectCallbacks.push(callback);
+        return createSocket();
+      },
+    },
+    now: () => 100,
+    cacheNow: () => clock,
+    maxConcurrentProbes: 1,
+    maxQueuedProbes: 1,
+    setTimer: (callback) => {
+      timeoutCallbacks.push(callback);
+      return callback;
+    },
+    clearTimer: () => {},
+  });
+
+  const active = measure({ hostname: "192.0.2.1", port: 22, timeoutMs: 3_000 });
+  const queued = measure({ hostname: "192.0.2.2", port: 22, timeoutMs: 3_000 });
+  const overflow = measure({ hostname: "192.0.2.3", port: 22, timeoutMs: 3_000 });
+  assert.equal(await overflow, null);
+  assert.equal(connectCallbacks.length, 1);
+
+  timeoutCallbacks[0]();
+  assert.equal(await queued, null);
+  connectCallbacks[0]();
+  await active;
+  assert.equal(connectCallbacks.length, 1, "expired queued probe must not start later");
+
+  clock += 5_001;
+  const retried = measure({ hostname: "192.0.2.2", port: 22, timeoutMs: 3_000 });
+  assert.equal(connectCallbacks.length, 2);
+  connectCallbacks[1]();
+  await retried;
+});
