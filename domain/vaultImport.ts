@@ -576,7 +576,14 @@ const importFromSshConfig = (text: string): VaultImportResult => {
       }
       const identityAgentEnabled = block.identityAgent !== undefined
         && block.identityAgent.toLowerCase() !== "none";
-      if (identityAgentEnabled) {
+      const identityAgentDisabled = block.identityAgent?.toLowerCase() === "none";
+      // The #2119 macOS pattern relies on AddKeysToAgent + UseKeychain without
+      // declaring IdentityAgent. Treat that pair as an agent-backed login so
+      // the bridge can ask Apple's ssh-add to load the configured IdentityFile.
+      // AddKeysToAgent alone still keeps direct-key semantics on other setups.
+      const macKeychainAgentEnabled = block.useKeychain === true
+        && block.addKeysToAgent === "yes";
+      if (!identityAgentDisabled && (identityAgentEnabled || macKeychainAgentEnabled)) {
         host.useSshAgent = true;
       }
       if (block.forwardX11 !== undefined) {

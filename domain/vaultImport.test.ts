@@ -34,7 +34,7 @@ test("ssh_config import maps ForwardX11 no to disabled host X11 forwarding", () 
   assert.equal(result.hosts[0].x11Forwarding, false);
 });
 
-test("ssh_config import preserves key loading directives without forcing agent-only auth", () => {
+test("ssh_config import enables agent login for the macOS Keychain pattern", () => {
   const result = importVaultHostsFromText("ssh_config", [
     "Host aws-sg",
     "  HostName 1.1.1.1",
@@ -66,7 +66,7 @@ test("ssh_config import preserves key loading directives without forcing agent-o
       port: 2222,
       username: "root",
       identityFilePaths: ["~/.ssh/aws_root"],
-      useSshAgent: undefined,
+      useSshAgent: true,
       identityAgent: undefined,
       identitiesOnly: true,
       addKeysToAgent: "yes",
@@ -86,6 +86,19 @@ test("ssh_config AddKeysToAgent does not enable agent login when IdentityAgent i
 
   assert.equal(result.hosts.length, 1);
   assert.equal(result.hosts[0].identityAgent, "none");
+  assert.notEqual(result.hosts[0].useSshAgent, true);
+});
+
+test("ssh_config AddKeysToAgent alone preserves direct-key authentication", () => {
+  const result = importVaultHostsFromText("ssh_config", [
+    "Host direct-key-host",
+    "  HostName server.example.com",
+    "  AddKeysToAgent yes",
+    "  IdentityFile ~/.ssh/id_ed25519",
+  ].join("\n"));
+
+  assert.equal(result.hosts.length, 1);
+  assert.equal(result.hosts[0].addKeysToAgent, "yes");
   assert.notEqual(result.hosts[0].useSshAgent, true);
 });
 
