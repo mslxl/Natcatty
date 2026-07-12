@@ -472,6 +472,10 @@ function ssh2AgentConnectable(agentPath, options = {}) {
     timer.unref?.();
     try {
       createAgentImpl(agentPath).getStream((error, agentStream) => {
+        if (settled) {
+          agentStream?.destroy?.();
+          return;
+        }
         if (error || !agentStream) return finish(false);
         stream = agentStream;
         let response = Buffer.alloc(0);
@@ -499,6 +503,18 @@ function cygwinAgentConnectable(agentPath, options = {}) {
   const readFile = options.readFileImpl || require("node:fs").promises.readFile;
   const createConnection = options.createConnectionImpl || require("node:net").createConnection;
   const descriptorPattern = /^!<socket >(\d+) s ([A-Z0-9]{8}-[A-Z0-9]{8}-[A-Z0-9]{8}-[A-Z0-9]{8})/;
+  const resolveCygwinPath = options.resolveCygwinPathImpl || ((value) => new Promise((resolve, reject) => {
+    require("node:child_process").execFile(
+      "cygpath",
+      ["-w", value],
+      { timeout: timeoutMs, windowsHide: true },
+      (error, stdout) => {
+        const converted = String(stdout || "").trim();
+        if (error || !converted) reject(error || new Error("cygpath returned an empty path"));
+        else resolve(converted);
+      },
+    );
+  }));
 
   return new Promise((resolve) => {
     let settled = false;
@@ -549,7 +565,17 @@ function cygwinAgentConnectable(agentPath, options = {}) {
       });
     });
 
-    readFile(agentPath, "utf8").then(async (contents) => {
+    const readDescriptor = async () => {
+      try {
+        return await readFile(agentPath, "utf8");
+      } catch {
+        const convertedPath = await resolveCygwinPath(agentPath);
+        return readFile(convertedPath, "utf8");
+      }
+    };
+
+    readDescriptor().then(async (contents) => {
+      if (settled) return;
       const match = descriptorPattern.exec(String(contents));
       if (!match) return finish(false);
       const port = Number(match[1]);
@@ -560,7 +586,9 @@ function cygwinAgentConnectable(agentPath, options = {}) {
       try {
         const first = await negotiate(port, secret, Buffer.alloc(12), false);
         if (settled) return;
-        const second = await negotiate(port, secret, first.credentials, true);
+        const retryCredentials = Buffer.from(first.credentials);
+        retryCredentials.writeUInt32LE(options.processId ?? process.pid, 0);
+        const second = await negotiate(port, secret, retryCredentials, true);
         if (settled || !second.socket) return;
         activeSocket = second.socket;
         let response = second.buffered;

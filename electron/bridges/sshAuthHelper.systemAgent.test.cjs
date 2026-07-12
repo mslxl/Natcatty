@@ -83,6 +83,24 @@ test("ssh2 agent validation times out when an agent does not respond", async () 
   assert.ok(Date.now() - start < 500);
 });
 
+test("Pageant validation destroys a stream delivered after timeout", async () => {
+  let deliverStream;
+  const stream = new Duplex({
+    read() {},
+    write(_chunk, _encoding, callback) { callback(); },
+  });
+  const available = await ssh2AgentConnectable("pageant", {
+    timeoutMs: 20,
+    createAgentImpl: () => ({
+      getStream(callback) { deliverStream = callback; },
+    }),
+  });
+  assert.equal(available, false);
+  deliverStream(null, stream);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(stream.destroyed, true);
+});
+
 test("Cygwin agent validation closes a stalled negotiation socket", async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-cygwin-agent-"));
   const descriptorPath = path.join(dir, "agent.socket");
@@ -117,11 +135,59 @@ test("Cygwin agent validation closes a stalled negotiation socket", async (t) =>
   assert.equal(acceptedSocket?.destroyed, true);
 });
 
+test("Cygwin validation does not connect when descriptor reading finishes after timeout", async () => {
+  let finishRead;
+  let connectionAttempts = 0;
+  const availablePromise = cygwinAgentConnectable("C:\\cygwin\\agent.socket", {
+    timeoutMs: 20,
+    readFileImpl: () => new Promise((resolve) => { finishRead = resolve; }),
+    createConnectionImpl: () => {
+      connectionAttempts += 1;
+      throw new Error("must not connect after timeout");
+    },
+  });
+  assert.equal(await availablePromise, false);
+  finishRead("!<socket >1234 s 00000000-00000000-00000000-00000000");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(connectionAttempts, 0);
+});
+
+test("Cygwin validation converts POSIX-style descriptor paths", async () => {
+  const readPaths = [];
+  let convertedPath = null;
+  let connectionAttempts = 0;
+  const available = await cygwinAgentConnectable("/tmp/agent.socket", {
+    timeoutMs: 20,
+    readFileImpl: async (value) => {
+      readPaths.push(value);
+      if (value === "/tmp/agent.socket") throw new Error("ENOENT");
+      return "!<socket >1234 s 00000000-00000000-00000000-00000000";
+    },
+    resolveCygwinPathImpl: async (value) => {
+      assert.equal(value, "/tmp/agent.socket");
+      convertedPath = "C:\\cygwin64\\tmp\\agent.socket";
+      return convertedPath;
+    },
+    createConnectionImpl: () => {
+      connectionAttempts += 1;
+      return new Duplex({
+        read() {},
+        write(_chunk, _encoding, callback) { callback(); },
+      });
+    },
+  });
+
+  assert.equal(available, false);
+  assert.deepEqual(readPaths, ["/tmp/agent.socket", convertedPath]);
+  assert.equal(connectionAttempts, 1);
+});
+
 test("Cygwin agent validation completes the two-stage handshake", async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-cygwin-agent-ok-"));
   const descriptorPath = path.join(dir, "agent.socket");
   const server = net.createServer();
   let connectionIndex = 0;
+  let retryCredentials = null;
   server.on("connection", (socket) => {
     connectionIndex += 1;
     const currentConnection = connectionIndex;
@@ -138,6 +204,7 @@ test("Cygwin agent validation completes the two-stage handshake", async (t) => {
           socket.write(value);
           state = "credentials";
         } else if (state === "credentials") {
+          if (currentConnection === 2) retryCredentials = Buffer.from(value);
           socket.write(currentConnection === 1 ? Buffer.alloc(12, 7) : Buffer.alloc(12, 9));
           state = currentConnection === 1 ? "done" : "agent";
         } else if (state === "agent") {
@@ -163,8 +230,13 @@ test("Cygwin agent validation completes the two-stage handshake", async (t) => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  assert.equal(await cygwinAgentConnectable(descriptorPath, { timeoutMs: 500 }), true);
+  assert.equal(await cygwinAgentConnectable(descriptorPath, {
+    timeoutMs: 500,
+    processId: 4242,
+  }), true);
   assert.equal(connectionIndex, 2);
+  assert.equal(retryCredentials.readUInt32LE(0), 4242);
+  assert.deepEqual(retryCredentials.subarray(4), Buffer.alloc(8, 7));
 });
 
 test("Unix agent availability requires a working agent protocol response", async (t) => {
