@@ -12,9 +12,8 @@ export interface ScriptExecutionOverlayProps {
   onStop: () => void;
   onDismiss: () => void;
   /**
-   * Host info bar is hidden: top-right circular speed-dial floats over the
-   * pane. Sit the banner higher and leave a right gutter so it is not forced
-   * under the toggle.
+   * Host info bar is hidden: no full toolbar. Sit the banner higher and stack
+   * above the compact speed-dial (cover it for the run duration).
    */
   compactTopChrome?: boolean;
 }
@@ -224,11 +223,9 @@ export const ScriptExecutionOverlay: React.FC<ScriptExecutionOverlayProps> = ({
 
   return (
     <div
-      className={cn(
-        "absolute left-2 z-25 rounded-md border shadow-md backdrop-blur-md pointer-events-auto px-3 py-2",
-        // Leave room for the circular speed-dial (h-7 + right-1) when host info is hidden.
-        compactTopChrome ? "right-10" : "right-2",
-      )}
+      // z-40 sits above the compact speed-dial (z-30) so the full-width banner
+      // covers the toggle while a script is running — no right-edge gutter.
+      className="absolute left-2 right-2 z-40 rounded-md border shadow-md backdrop-blur-md pointer-events-auto px-3 py-2"
       style={{
         top: compactTopChrome ? SCRIPT_OVERLAY_TOP_COMPACT_PX : SCRIPT_OVERLAY_TOP_DEFAULT_PX,
         backgroundColor: 'color-mix(in srgb, var(--terminal-ui-bg) 92%, transparent)',

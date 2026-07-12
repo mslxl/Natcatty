@@ -14,7 +14,7 @@ test("script overlay sits lower under the full host toolbar than under compact c
   assert.ok(SCRIPT_OVERLAY_TOP_COMPACT_PX < SCRIPT_OVERLAY_TOP_DEFAULT_PX);
 });
 
-test("script overlay clears the compact speed-dial when host info is hidden", () => {
+test("script overlay covers compact speed-dial full-width instead of reserving a right gutter", () => {
   const overlaySource = readFileSync(
     fileURLToPath(new URL("./ScriptExecutionOverlay.tsx", import.meta.url)),
     "utf8",
@@ -25,7 +25,9 @@ test("script overlay clears the compact speed-dial when host info is hidden", ()
   );
 
   assert.match(overlaySource, /compactTopChrome/);
-  assert.match(overlaySource, /right-10/);
+  assert.match(overlaySource, /left-2 right-2/);
+  assert.match(overlaySource, /z-40/);
+  assert.doesNotMatch(overlaySource, /right-10/);
   assert.match(overlaySource, /SCRIPT_OVERLAY_TOP_COMPACT_PX/);
   assert.match(
     terminalSource,
