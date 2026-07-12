@@ -189,6 +189,7 @@ import {
 import { terminalPropsAreEqual } from "./terminal/terminalMemo";
 
 const HIBERNATE_RETRY_AFTER_DRAIN_MS = 250;
+const EMPTY_CHAIN_HOSTS: Host[] = [];
 
 const TerminalComponent: React.FC<TerminalProps> = ({
   host,
@@ -198,7 +199,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   snippetPackages = [],
   compactToolbar = false,
   lineTimestampsAvailable = true,
-  chainHosts = [],
+  chainHosts = EMPTY_CHAIN_HOSTS,
   appearanceTheme,
   knownHosts = [],
   isVisible,

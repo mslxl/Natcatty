@@ -47,7 +47,7 @@ export function getConnectionTimeoutMs(
 ): number {
   const tcpConnectTimeoutMs = timeouts.tcpConnectTimeoutMs ?? SSH_TCP_CONNECT_TIMEOUT_MS;
   const authReadyTimeoutMs = timeouts.authReadyTimeoutMs ?? SSH_AUTH_READY_TIMEOUT_MS;
-  if (!state.hasSshTcpConnectProgress) return authReadyTimeoutMs;
+  if (!state.hasSshTcpConnectProgress) return SSH_AUTH_READY_TIMEOUT_MS;
   return state.isConnectionPastTcpDial
     ? authReadyTimeoutMs
     : tcpConnectTimeoutMs;

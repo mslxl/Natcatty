@@ -82,6 +82,9 @@ test("connection timeout keeps the auth-ready window for protocols without SSH T
   assert.equal(getConnectionTimeoutMs({
     ...baseTimeoutState,
     hasSshTcpConnectProgress: false,
+  }, {
+    tcpConnectTimeoutMs: 5_000,
+    authReadyTimeoutMs: 5_000,
   }), SSH_AUTH_READY_TIMEOUT_MS);
 });
 

@@ -197,6 +197,8 @@ declare global {
     // applied host override / global fallback). interval in seconds.
     keepaliveInterval?: number;
     keepaliveCountMax?: number;
+    sshTcpConnectTimeoutMs?: number;
+    sshAuthReadyTimeoutMs?: number;
   }
 
   interface PortForwardResult {

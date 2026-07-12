@@ -33,6 +33,29 @@ test("buildSftpReuseCredentials only needs the live endpoint and sourceSessionId
   });
 });
 
+test("buildSftpHostCredentials forwards target and jump-host timeouts", () => {
+  const jumpHost = host({
+    id: "jump-1",
+    sshTcpConnectTimeoutSeconds: 75,
+    sshAuthReadyTimeoutSeconds: 360,
+  });
+  const credentials = buildSftpHostCredentials({
+    host: host({
+      hostChain: { hostIds: ["jump-1"] },
+      sshTcpConnectTimeoutSeconds: 45,
+      sshAuthReadyTimeoutSeconds: 300,
+    }),
+    hosts: [jumpHost],
+    keys: [],
+    identities: [],
+  });
+
+  assert.equal(credentials.sshTcpConnectTimeoutMs, 45_000);
+  assert.equal(credentials.sshAuthReadyTimeoutMs, 300_000);
+  assert.equal(credentials.jumpHosts?.[0]?.sshTcpConnectTimeoutMs, 75_000);
+  assert.equal(credentials.jumpHosts?.[0]?.sshAuthReadyTimeoutMs, 360_000);
+});
+
 test("buildSftpHostCredentials rejects missing jump hosts", () => {
   assert.throws(
     () => buildSftpHostCredentials({

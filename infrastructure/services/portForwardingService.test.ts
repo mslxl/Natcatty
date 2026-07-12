@@ -48,6 +48,35 @@ const installBridgeStub = () => {
   };
 };
 
+test("startPortForward forwards target and jump-host timeouts", async () => {
+  const bridge = installBridgeStub();
+  const jumpHost = host({
+    id: "jump-1",
+    sshTcpConnectTimeoutSeconds: 75,
+    sshAuthReadyTimeoutSeconds: 360,
+  });
+
+  const result = await startPortForward(
+    rule({ id: "rule-timeouts" }),
+    host({
+      hostChain: { hostIds: ["jump-1"] },
+      sshTcpConnectTimeoutSeconds: 45,
+      sshAuthReadyTimeoutSeconds: 300,
+    }),
+    [jumpHost],
+    [],
+    [],
+    () => {},
+  );
+
+  assert.equal(result.success, true);
+  assert.equal(bridge.getOptions()?.sshTcpConnectTimeoutMs, 45_000);
+  assert.equal(bridge.getOptions()?.sshAuthReadyTimeoutMs, 300_000);
+  const jumpHosts = bridge.getOptions()?.jumpHosts as Array<Record<string, unknown>>;
+  assert.equal(jumpHosts[0]?.sshTcpConnectTimeoutMs, 75_000);
+  assert.equal(jumpHosts[0]?.sshAuthReadyTimeoutMs, 360_000);
+});
+
 test("startPortForward rejects missing proxy identities before starting", async () => {
   const bridge = installBridgeStub();
   const statuses: string[] = [];
