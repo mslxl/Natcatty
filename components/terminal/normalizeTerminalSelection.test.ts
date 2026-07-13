@@ -137,6 +137,22 @@ test("joinSoftWrappedRows does not invent spaces between CJK characters", () => 
   assert.equal(joinSoftWrappedRows("最   ", "稳"), "最稳");
   // Single pad cell must not bypass the CJK check.
   assert.equal(joinSoftWrappedRows("最 ", "稳"), "最稳");
+  assert.equal(joinSoftWrappedRows("한   ", "글"), "한글");
+  assert.equal(joinSoftWrappedRows("你好。   ", "世界"), "你好。世界");
+});
+
+test("joinSoftWrappedRows keeps a space after sentence-ending punctuation", () => {
+  assert.equal(
+    joinSoftWrappedRows("First sentence.   ", "Next sentence"),
+    "First sentence. Next sentence",
+  );
+});
+
+test("joinSoftWrappedRows only uses the trailing token for URL detection", () => {
+  assert.equal(
+    joinSoftWrappedRows("See https://x.test for more   ", "details"),
+    "See https://x.test for more details",
+  );
 });
 
 test("joinSoftWrappedRows keeps URL tokens intact when split mid-word", () => {

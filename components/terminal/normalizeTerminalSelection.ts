@@ -61,9 +61,13 @@ export type SelectionTerminal = {
 /** Matches xterm SelectionMode.COLUMN */
 const SELECTION_MODE_COLUMN = 3;
 const ALL_NON_BREAKING_SPACE_REGEX = /\u00a0/g;
-/** Characters that usually mean the next soft-wrapped row continues the same token. */
-const TOKEN_CONTINUATION_END = new Set("\\/-_.:@?#&=+%".split(""));
-const TOKEN_CONTINUATION_START = new Set("\\/-_.".split(""));
+/**
+ * Characters that strongly mean the next soft-wrapped row continues the same
+ * token (path/URL fragment). Sentence punctuation like `.` `?` `:` is NOT
+ * included here — those need surrounding URL/path context.
+ */
+const PATH_TOKEN_END = new Set("\\/@#&=+%".split(""));
+const PATH_TOKEN_START = new Set("\\/-_.".split(""));
 
 /**
  * Return clipboard-ready text for the current terminal selection.
@@ -214,33 +218,62 @@ function isTokenContinuation(left: string, next: string): boolean {
   const nextStart = firstCodePointChar(next);
   if (!leftEnd || !nextStart) return false;
 
-  if (isCjkCodePoint(leftEnd.codePointAt(0) ?? 0)) {
-    // CJK runs and CJK punctuation should not gain Latin-style spaces.
-    return isCjkCodePoint(nextStart.codePointAt(0) ?? 0) || isCjkPunctuation(nextStart);
+  const leftEndCp = leftEnd.codePointAt(0) ?? 0;
+  const nextStartCp = nextStart.codePointAt(0) ?? 0;
+
+  // CJK / Hangul runs and CJK punctuation should not gain Latin-style spaces.
+  if (isCjkRelatedCodePoint(leftEndCp) || isCjkPunctuation(leftEnd)) {
+    return isCjkRelatedCodePoint(nextStartCp) || isCjkPunctuation(nextStart);
   }
 
-  if (TOKEN_CONTINUATION_END.has(leftEnd)) {
+  // Only the token immediately before the wrap (after the last whitespace).
+  const trailingToken = getTrailingToken(left);
+
+  // Path/URL fragment separators at the end of the trailing token.
+  if (PATH_TOKEN_END.has(leftEnd) && looksLikeUrlOrPath(trailingToken)) {
     return true;
   }
 
-  if (TOKEN_CONTINUATION_START.has(nextStart) && isAsciiWordChar(leftEnd)) {
-    return true;
+  // e.g. "foo/" + "bar", or mid-URL "com." + "path" when trailing token is URL-like.
+  if (PATH_TOKEN_START.has(nextStart) && (isAsciiWordChar(leftEnd) || "/-_:.".includes(leftEnd))) {
+    if (looksLikeUrlOrPath(trailingToken) || leftEnd === "/" || leftEnd === "\\") {
+      return true;
+    }
   }
 
   // URL/path split mid-token between alphanumerics (common at terminal width).
-  if (isAsciiWordChar(leftEnd) && isAsciiWordChar(nextStart) && looksLikeUrlOrPath(left)) {
+  if (
+    isAsciiWordChar(leftEnd) &&
+    isAsciiWordChar(nextStart) &&
+    looksLikeUrlOrPath(trailingToken)
+  ) {
+    return true;
+  }
+
+  // Trailing token ends with URL-ish punctuation and next continues the token.
+  if (
+    looksLikeUrlOrPath(trailingToken) &&
+    isAsciiWordChar(nextStart) &&
+    (leftEnd === "." || leftEnd === "-" || leftEnd === "_" || leftEnd === ":")
+  ) {
     return true;
   }
 
   return false;
 }
 
-function looksLikeUrlOrPath(text: string): boolean {
-  if (/[a-z][a-z0-9+.-]*:\/\//i.test(text)) return true;
-  if (text.includes("www.")) return true;
+function getTrailingToken(text: string): string {
+  const match = text.match(/(\S+)$/u);
+  return match?.[1] ?? text;
+}
+
+function looksLikeUrlOrPath(token: string): boolean {
+  if (!token) return false;
+  if (/[a-z][a-z0-9+.-]*:\/\//i.test(token)) return true;
+  if (token.includes("www.")) return true;
   // Absolute or deep relative paths: /usr/local/... or foo/bar/baz
-  if (text.startsWith("/") || text.startsWith("./") || text.startsWith("../")) return true;
-  if ((text.match(/\//g) ?? []).length >= 2) return true;
+  if (token.startsWith("/") || token.startsWith("./") || token.startsWith("../")) return true;
+  if ((token.match(/\//g) ?? []).length >= 1 && /[A-Za-z0-9]/u.test(token)) return true;
   return false;
 }
 
@@ -277,12 +310,16 @@ function lastCodePointChar(text: string): string {
   return chars[chars.length - 1] ?? "";
 }
 
-function isCjkCodePoint(cp: number): boolean {
+function isCjkRelatedCodePoint(cp: number): boolean {
   return (
+    (cp >= 0x1100 && cp <= 0x11ff) || // Hangul Jamo
     (cp >= 0x3040 && cp <= 0x30ff) || // Hiragana / Katakana
+    (cp >= 0x3130 && cp <= 0x318f) || // Hangul Compatibility Jamo
     (cp >= 0x3400 && cp <= 0x9fff) || // CJK Unified Ideographs
+    (cp >= 0xac00 && cp <= 0xd7af) || // Hangul Syllables
     (cp >= 0xf900 && cp <= 0xfaff) || // CJK Compatibility Ideographs
-    (cp >= 0xff66 && cp <= 0xff9d) // Half-width Katakana
+    (cp >= 0xff66 && cp <= 0xff9d) || // Half-width Katakana
+    (cp >= 0x20000 && cp <= 0x2ceaf) // CJK Extension B–F (supplementary planes)
   );
 }
 
