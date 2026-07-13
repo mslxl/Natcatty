@@ -41,6 +41,11 @@ type TimestampStore = {
    * unboundedly.
    */
   entries: TimestampEntry[];
+  /**
+   * Markers dropped from `entries` but not yet disposed. Drained with a per-pass
+   * budget so rewrite storms do not O(n²)-freeze on xterm marker list splices.
+   */
+  orphanedMarkers: TimestampMarker[];
   listeners: Set<() => void>;
   timestampOnlyPrefix: string;
   /** Amortize prune cost across many registerMarker calls. */
@@ -117,6 +122,11 @@ const BULK_TIMESTAMP_BATCH_MIN_BYTES = 4096;
 export const MAX_TERMINAL_LINE_TIMESTAMP_ENTRIES = XTERM_UNLIMITED_SCROLLBACK_CAP + 256;
 /** Compact disposed holes at least this often during flood writes. */
 const TIMESTAMP_PRUNE_EVERY_RECORDS = 256;
+/** Max xterm marker.dispose() calls per prune/write pass (amortize O(n) splices). */
+const TIMESTAMP_ORPHAN_DISPOSE_BUDGET = 64;
+/** When orphan backlog grows large, spend a bigger budget to catch up. */
+const TIMESTAMP_ORPHAN_CATCHUP_THRESHOLD = 512;
+const TIMESTAMP_ORPHAN_CATCHUP_BUDGET = 256;
 
 const pad2 = (value: number): string => value.toString().padStart(2, "0");
 
@@ -432,6 +442,7 @@ const getTimestampStore = (term: XTerm): TimestampStore => {
       // Placeholder; replaced immediately with an interning segmenter below.
       segmenter: createTerminalLineTimestampSegmenter(),
       entries: [],
+      orphanedMarkers: [],
       listeners: new Set(),
       timestampOnlyPrefix: "",
       recordsSincePrune: 0,
@@ -460,6 +471,36 @@ const internTerminalLineTimestampLabel = (
   store.labelCacheKey = key;
   store.labelCacheValue = label;
   return label;
+};
+
+const enqueueOrphanedMarker = (
+  store: TimestampStore,
+  marker: TimestampMarker,
+): void => {
+  if (marker.isDisposed) return;
+  store.orphanedMarkers.push(marker);
+};
+
+/**
+ * Dispose a bounded number of orphaned xterm markers. Full mass-dispose of
+ * thousands of markers freezes (xterm splice is O(markers) each); amortizing
+ * keeps rewrite/flood sessions responsive while still retiring superseded
+ * markers that scrollback will never trim (e.g. DECSTBM row rewrites).
+ */
+const drainOrphanedMarkers = (
+  store: TimestampStore,
+  budget = TIMESTAMP_ORPHAN_DISPOSE_BUDGET,
+): void => {
+  let remaining = budget;
+  if (store.orphanedMarkers.length >= TIMESTAMP_ORPHAN_CATCHUP_THRESHOLD) {
+    remaining = Math.max(remaining, TIMESTAMP_ORPHAN_CATCHUP_BUDGET);
+  }
+  while (remaining > 0 && store.orphanedMarkers.length > 0) {
+    const marker = store.orphanedMarkers.pop();
+    remaining -= 1;
+    if (!marker || marker.isDisposed) continue;
+    marker.dispose?.();
+  }
 };
 
 /**
@@ -492,8 +533,7 @@ const pruneDisposedEntries = (
       const entry = entries[index];
       const line = entry.marker.line;
       if (seenLines.has(line)) {
-        // Abandon the older duplicate without marker.dispose() — xterm dispose
-        // is O(markers) and rewrite storms would otherwise reintroduce freezes.
+        enqueueOrphanedMarker(store, entry.marker);
         continue;
       }
       seenLines.add(line);
@@ -505,13 +545,13 @@ const pruneDisposedEntries = (
 
   const live = store.entries;
   if (capacity > 0 && live.length > capacity) {
-    // Drop from our store only — do NOT call marker.dispose() for each excess
-    // entry. xterm removes disposed markers with a linear scan/splice, so
-    // mass-disposing after a flood (e.g. seq 1 500000) is effectively O(n²)
-    // and reintroduces the freeze this path is meant to prevent. Abandoned
-    // markers leave with scrollback trim; we stop tracking them here.
-    live.splice(0, live.length - capacity);
+    const drop = live.length - capacity;
+    for (let index = 0; index < drop; index += 1) {
+      enqueueOrphanedMarker(store, live[index].marker);
+    }
+    live.splice(0, drop);
   }
+  drainOrphanedMarkers(store);
   store.recordsSincePrune = 0;
 };
 
@@ -535,7 +575,11 @@ const resetTimestampStore = (store: TimestampStore) => {
   for (const entry of store.entries) {
     entry.marker.dispose?.();
   }
+  for (const marker of store.orphanedMarkers) {
+    if (!marker.isDisposed) marker.dispose?.();
+  }
   store.entries = [];
+  store.orphanedMarkers = [];
   store.segmenter.reset();
   store.timestampOnlyPrefix = "";
   store.recordsSincePrune = 0;
