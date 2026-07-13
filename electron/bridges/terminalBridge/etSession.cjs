@@ -60,7 +60,13 @@ function promptMatchScore(entry, prompt) {
 
 function pickEntry(entries, prompt) {
   const wantsPassphrase = prompt.includes("passphrase");
-  const wantsSecondFactor = /one[\s-]?time|\botp\b|verification|passcode|\btoken\b|2fa|two[\s-]?factor|multi[\s-]?factor|\bmfa\b|second\s+factor|secondary(?:\s+\w+){0,3}\s+passw|second(?:\s+\w+){0,3}\s+passw|additional(?:\s+\w+){0,3}\s+passw|re[-\s]?enter\s+passw|confirm\s+passw|\bedr\b|duo|动态|一次性|验证码|验证信息|令牌|双因素|多因素|短信验证|手机验证|二次|安全密码|挑战码/.test(prompt);
+  const matchesKnownLoginPrompt = entries.some((entry) => entry.type === "password"
+    && (Array.isArray(entry.matchers) ? entry.matchers : []).some((matcher) => {
+      const value = String(matcher || "").toLowerCase();
+      return value.endsWith("'s password") && prompt.includes(value);
+    }));
+  const wantsSecondFactor = !matchesKnownLoginPrompt
+    && /one[\s-]?time|\botp\b|verification|passcode|\btoken\b|2fa|two[\s-]?factor|multi[\s-]?factor|\bmfa\b|second\s+factor|secondary(?:\s+\w+){0,3}\s+passw|second(?:\s+\w+){0,3}\s+passw|additional(?:\s+\w+){0,3}\s+passw|re[-\s]?enter\s+passw|confirm\s+passw|\bedr\b|duo|动态|一次性|验证码|验证信息|令牌|双因素|多因素|短信验证|手机验证|二次|安全密码|挑战码/.test(prompt);
   const wantsPassword = !wantsSecondFactor && /passw(or)?d|密\s*码|口\s*令/.test(prompt);
   if (!wantsPassphrase && !wantsPassword) return null;
   const scoped = entries.filter((entry) => entry.type === (wantsPassphrase ? "passphrase" : "password"));

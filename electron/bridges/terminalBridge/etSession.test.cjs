@@ -237,6 +237,7 @@ test("prepareEtSshEnvironment never sends a saved password to a PIN or MFA promp
     "One-time password:",
     "OTP password:",
     "Token password:",
+    "alice@target.example's token password:",
   ]) {
     const output = execFileSync(env.env.SSH_ASKPASS, [prompt], {
       env: { ...process.env, ...env.env },
@@ -244,6 +245,27 @@ test("prepareEtSshEnvironment never sends a saved password to a PIN or MFA promp
     });
     assert.equal(output, "", prompt);
   }
+});
+
+test("prepareEtSshEnvironment ignores MFA words inside the matched login identity", (t) => {
+  const { api } = makeApi(t);
+  const env = api.prepareEtSshEnvironment("sess-mfa-hostname", {
+    hostname: "token.duo.example",
+    username: "verification-user",
+    authMethod: "password",
+    password: "saved-login-password",
+  });
+
+  const output = execFileSync(
+    env.env.SSH_ASKPASS,
+    ["verification-user@token.duo.example's password:"],
+    {
+      env: { ...process.env, ...env.env },
+      encoding: "utf8",
+    },
+  );
+
+  assert.equal(output.trim(), "saved-login-password");
 });
 
 test(
