@@ -294,7 +294,7 @@ main();
 
     /**
      * Build a private SSH home + options for the `et` client's internal ssh.
-     * Returns { userHost, sshOptions, env, artifacts }. comma-free option
+     * Returns { userHost, sshOptions, identityFilePaths, env, artifacts }. comma-free option
      * values go in `sshOptions` (passed via --ssh-option); options that need
      * commas/spaces are written to a config file under HOME/.ssh/config.
      */
@@ -639,6 +639,7 @@ main();
       return {
         userHost,
         sshOptions,
+        identityFilePaths: identityPaths,
         etJumpArgs,
         env: {
           // Set HOME/USERPROFILE so ssh finds .ssh/config for comma-containing options
@@ -979,7 +980,7 @@ main();
             passphrase: options.passphrase,
             certificate: options.certificate,
             keyId: options.keyId,
-            identityFilePaths: options.identityFilePaths,
+            identityFilePaths: sshEnvironment?.identityFilePaths,
             agentPublicKeys: options.agentPublicKeys,
             useSshAgent: options.useSshAgent,
             identityAgent: options.identityAgent,

@@ -12,6 +12,9 @@ const { createEtSessionApi } = require("./etSession.cjs");
 function makeApi(t, overrides = {}) {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-et-prep-"));
   const fakeHome = path.join(base, "home");
+  const sessions = overrides.sessions || new Map();
+  const pty = overrides.pty || {};
+  const bundledEtClient = overrides.bundledEtClient || (() => null);
   fs.mkdirSync(fakeHome, { recursive: true });
   t.after(() => fs.rmSync(base, { recursive: true, force: true }));
 
@@ -26,7 +29,7 @@ function makeApi(t, overrides = {}) {
   };
 
   const api = createEtSessionApi({
-    sessions: new Map(),
+    sessions,
     electronModule: {},
     os: osMock,
     fs,
@@ -39,16 +42,16 @@ function makeApi(t, overrides = {}) {
     ...overrides,
     StringDecoder: require("node:string_decoder").StringDecoder,
     randomUUID: require("node:crypto").randomUUID,
-    pty: {},
+    pty,
     sessionLogStreamManager: {},
     tempDirBridge,
     createZmodemSentry: () => ({}),
     trackSessionIdlePrompt: () => {},
     createPtyOutputBuffer: () => ({ bufferData() {}, flush() {}, flushPaced() {} }),
     findExecutable: () => "ssh",
-    bundledEtClient: () => null,
+    bundledEtClient,
   });
-  return { api, base };
+  return { api, base, sessions };
 }
 
 test("prepareEtSshEnvironment builds userHost and base ssh options", (t) => {
@@ -71,6 +74,38 @@ test("prepareEtSshEnvironment defaults the user to the local username", (t) => {
   const { api } = makeApi(t);
   const env = api.prepareEtSshEnvironment("sess1", { hostname: "host.example" });
   assert.equal(env.userHost, "tester@host.example");
+});
+
+test("startEtSession preserves discovered automatic identities for host information", async (t) => {
+  const proc = {
+    onData() {},
+    onExit() {},
+    write() {},
+  };
+  const { api, base, sessions } = makeApi(t, {
+    bundledEtClient: () => "/fake/et",
+    pty: { spawn: () => proc },
+    electronModule: { webContents: { fromId: () => null } },
+    openTerminalOutputSession: () => {},
+    selectZmodemUploadFiles: null,
+    selectZmodemDownloadDirectory: null,
+  });
+  const keyPath = path.join(base, "home", ".ssh", "id_ed25519_sk");
+  fs.mkdirSync(path.dirname(keyPath), { recursive: true });
+  fs.writeFileSync(keyPath, "PRIVATE KEY");
+
+  await api.startEtSession({ sender: { id: 7 } }, {
+    sessionId: "sess-auto-stats",
+    hostname: "host.example",
+    username: "alice",
+    authMethod: "auto",
+    useSshAgent: false,
+  });
+
+  assert.deepEqual(
+    sessions.get("sess-auto-stats").etStatsAuth.identityFilePaths,
+    [keyPath],
+  );
 });
 
 test("prepareEtSshEnvironment passes a non-default port via --ssh-option", (t) => {
