@@ -17,15 +17,20 @@ export type TerminalOutputPressureSnapshot = {
   consecutiveUnbrokenBytes: number;
 };
 
+type OutputRateSample = {
+  at: number;
+  bytes: number;
+};
+
 type TerminalOutputPressureState = {
   background: boolean;
   largeOutput: boolean;
   largeOutputUntil: number;
   longLine: boolean;
   consecutiveUnbrokenBytes: number;
-  /** Sliding window of recently received bytes (high-rate small chunks). */
-  recentBytes: number;
-  recentBytesWindowStart: number;
+  /** True rolling window samples for high-rate small-chunk detection. */
+  recentSamples: OutputRateSample[];
+  recentSampleBytes: number;
 };
 
 /** Detect bulk streams that arrive as many small IPC chunks (e.g. `yes`). */
@@ -43,12 +48,28 @@ const getOrCreateState = (term: XTerm): TerminalOutputPressureState => {
       largeOutputUntil: 0,
       longLine: false,
       consecutiveUnbrokenBytes: 0,
-      recentBytes: 0,
-      recentBytesWindowStart: 0,
+      recentSamples: [],
+      recentSampleBytes: 0,
     };
     pressureStates.set(term, state);
   }
   return state;
+};
+
+const noteRecentOutputRate = (
+  state: TerminalOutputPressureState,
+  now: number,
+  bytes: number,
+): number => {
+  state.recentSamples.push({ at: now, bytes });
+  state.recentSampleBytes += bytes;
+  const cutoff = now - LARGE_OUTPUT_RATE_WINDOW_MS;
+  while (state.recentSamples.length > 0 && state.recentSamples[0]!.at < cutoff) {
+    const dropped = state.recentSamples.shift()!;
+    state.recentSampleBytes -= dropped.bytes;
+  }
+  if (state.recentSampleBytes < 0) state.recentSampleBytes = 0;
+  return state.recentSampleBytes;
 };
 
 const LINE_BREAK_SCAN = /[\n\r]/g;
@@ -101,18 +122,11 @@ export const noteTerminalOutputPressureData = (
   const state = getOrCreateState(term);
   const now = performance.now();
 
-  if (
-    state.recentBytesWindowStart === 0
-    || now - state.recentBytesWindowStart > LARGE_OUTPUT_RATE_WINDOW_MS
-  ) {
-    state.recentBytes = 0;
-    state.recentBytesWindowStart = now;
-  }
-  state.recentBytes += data.length;
+  const recentBytes = noteRecentOutputRate(state, now, data.length);
 
   if (
     data.length >= TERMINAL_LONG_LINE_PRESSURE_BYTES
-    || state.recentBytes >= LARGE_OUTPUT_RATE_BYTES
+    || recentBytes >= LARGE_OUTPUT_RATE_BYTES
   ) {
     markLargeOutput(state, now);
   } else if (now >= state.largeOutputUntil) {

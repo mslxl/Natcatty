@@ -121,3 +121,31 @@ test("detects large-output pressure from high-rate small chunks", () => {
     resetTerminalOutputPressure(term);
   }
 });
+
+test("rate detector uses a true rolling window across early tiny samples", () => {
+  const term = createFakeTerm();
+  const originalNow = performance.now.bind(performance);
+  let now = 1;
+
+  Object.defineProperty(performance, "now", {
+    configurable: true,
+    value: () => now,
+  });
+
+  try {
+    noteTerminalOutputPressureData(term, "x\n");
+    now = 60;
+    noteTerminalOutputPressureData(term, `${"x".repeat(40 * 1024)}\n`);
+    now = 102;
+    noteTerminalOutputPressureData(term, `${"x".repeat(40 * 1024)}\n`);
+    // 80KB arrived within 42ms; the tiny sample at t=1 should age out, not reset the window.
+    assert.equal(getTerminalOutputPressure(term).largeOutput, true);
+    assert.equal(getTerminalOutputPressure(term).mode, "large-output");
+  } finally {
+    Object.defineProperty(performance, "now", {
+      configurable: true,
+      value: originalNow,
+    });
+    resetTerminalOutputPressure(term);
+  }
+});

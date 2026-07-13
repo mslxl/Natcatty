@@ -16,16 +16,37 @@ import {
 const ESC = String.fromCharCode(0x1b);
 const CSI_PRIVATE_INTRO = `${ESC}[?`;
 const ALT_SCREEN_DECSET = new Set(["47", "1047", "1049"]);
+/** Incomplete CSI private-mode tails retained across coalescer flushes. */
+const incompleteAltScreenCsiByTerm = new WeakMap<XTerm, string>();
+
+/**
+ * Extract a trailing incomplete private CSI (or ESC / ESC[) that may continue
+ * in a later PTY chunk. Empty when the buffer ends on a finished sequence.
+ */
+const extractIncompletePrivateCsiTail = (data: string): string => {
+  const lastEsc = data.lastIndexOf(ESC);
+  if (lastEsc < 0) return "";
+  const tail = data.slice(lastEsc);
+  if (tail === ESC || tail === `${ESC}[`) return tail;
+  if (!tail.startsWith(CSI_PRIVATE_INTRO)) return "";
+  const rest = tail.slice(CSI_PRIVATE_INTRO.length);
+  for (let i = 0; i < rest.length; i += 1) {
+    const code = rest.charCodeAt(i);
+    if ((code >= 0x30 && code <= 0x39) || code === 0x3b) continue;
+    return "";
+  }
+  return tail;
+};
 
 /**
  * Detect CSI private-mode sequences that enter the alternate screen buffer
  * (DECSET 47 / 1047 / 1049), including incomplete tails split across PTY chunks.
- * Used to schedule rAF before xterm has switched `buffer.active.type`.
- *
  * Intentionally avoids control-character regexes (eslint no-control-regex).
  */
 const looksLikeEnteringAlternateScreen = (data: string): boolean => {
-  if (!data.includes(ESC)) return false;
+  if (!data.includes(ESC)) {
+    return extractIncompletePrivateCsiTail(data).length > 0;
+  }
 
   let searchFrom = 0;
   while (searchFrom < data.length) {
@@ -35,7 +56,6 @@ const looksLikeEnteringAlternateScreen = (data: string): boolean => {
     const paramStart = index;
     while (index < data.length) {
       const code = data.charCodeAt(index);
-      // digits 0-9 or ';'
       if ((code >= 0x30 && code <= 0x39) || code === 0x3b) {
         index += 1;
         continue;
@@ -43,7 +63,6 @@ const looksLikeEnteringAlternateScreen = (data: string): boolean => {
       break;
     }
     if (index >= data.length) {
-      // Incomplete CSI private mode at end of buffer — next chunk may finish it.
       return true;
     }
     if (data.charAt(index) === "h") {
@@ -55,21 +74,7 @@ const looksLikeEnteringAlternateScreen = (data: string): boolean => {
     searchFrom = start + 1;
   }
 
-  // Trailing incomplete ESC / ESC[ / ESC[?… (split across PTY chunks).
-  const lastEsc = data.lastIndexOf(ESC);
-  if (lastEsc < 0) return false;
-  const tail = data.slice(lastEsc);
-  if (tail === ESC || tail === `${ESC}[`) return true;
-  if (tail.startsWith(CSI_PRIVATE_INTRO)) {
-    const rest = tail.slice(CSI_PRIVATE_INTRO.length);
-    for (let i = 0; i < rest.length; i += 1) {
-      const code = rest.charCodeAt(i);
-      if ((code >= 0x30 && code <= 0x39) || code === 0x3b) continue;
-      return false;
-    }
-    return true;
-  }
-  return false;
+  return extractIncompletePrivateCsiTail(data).length > 0;
 };
 
 const isTerminalAlternateScreenActive = (term: XTerm): boolean => {
@@ -78,6 +83,15 @@ const isTerminalAlternateScreenActive = (term: XTerm): boolean => {
   } catch {
     return false;
   }
+};
+
+const noteAltScreenScheduleProbe = (term: XTerm, chunk: string): boolean => {
+  const prefix = incompleteAltScreenCsiByTerm.get(term) ?? "";
+  // Bound prefix so a pathological stream cannot grow the tail unbounded.
+  const combined = `${prefix.slice(-16)}${chunk}`;
+  const entering = looksLikeEnteringAlternateScreen(combined);
+  incompleteAltScreenCsiByTerm.set(term, extractIncompletePrivateCsiTail(combined));
+  return entering || (incompleteAltScreenCsiByTerm.get(term)?.length ?? 0) > 0;
 };
 
 type CoalescerByteCapResolver = () => number;
@@ -315,12 +329,13 @@ export const enqueueCoalescedTerminalWrite = (
       // has switched buffer.active.type) so multi-chunk repaints stay atomic.
       // When rAF is unavailable (Node unit tests), prefer the "raf" mode so the
       // coalescer falls back to an immediate flush (legacy test contract).
-      resolveScheduleMode: ({ pendingJoined }): WriteCoalesceScheduleMode => {
-        // Inspect the full pending buffer so alt-screen CSI split across PTY
-        // chunks (e.g. "\x1b[?104" + "9h...") still upgrades to rAF.
+      resolveScheduleMode: ({ nextChunk }): WriteCoalesceScheduleMode => {
+        // Use only nextChunk + retained incomplete CSI tail (O(1) / chunk), so
+        // multi-chunk TUI bursts do not quadratic-join the pending backlog.
+        // Tail is retained across flushes so "\x1b[?104" | "9h..." still rAF.
         if (
           isTerminalAlternateScreenActive(term)
-          || looksLikeEnteringAlternateScreen(pendingJoined)
+          || noteAltScreenScheduleProbe(term, nextChunk)
         ) {
           return "raf";
         }
@@ -368,6 +383,7 @@ export const resetTerminalWriteCoalescer = (term: XTerm): void => {
   terminalWriteCoalescerByteCapResolvers.delete(term);
   terminalWriteCoalescerFlushGates.delete(term);
   terminalWriteCoalescerWriters.delete(term);
+  incompleteAltScreenCsiByTerm.delete(term);
 };
 
 export const getTerminalWriteCoalescerPendingBytes = (term: XTerm): number =>

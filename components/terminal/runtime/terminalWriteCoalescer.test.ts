@@ -470,6 +470,67 @@ test("uses the latest coalesced writer when pending output is flushed", () => {
   resetTerminalWriteCoalescer(term);
 });
 
+test("retains incomplete alt-screen CSI across coalescer flushes", () => {
+  const term = {
+    buffer: { active: { type: "normal" } },
+  } as unknown as XTerm;
+  const writes: string[] = [];
+  const frames: Array<FrameRequestCallback> = [];
+  const originalRaf = Object.getOwnPropertyDescriptor(globalThis, "requestAnimationFrame");
+  const originalCancel = Object.getOwnPropertyDescriptor(globalThis, "cancelAnimationFrame");
+  const originalMicrotask = globalThis.queueMicrotask;
+  const microtasks: Array<() => void> = [];
+
+  Object.defineProperty(globalThis, "requestAnimationFrame", {
+    configurable: true,
+    value: (callback: FrameRequestCallback) => {
+      frames.push(callback);
+      return frames.length;
+    },
+  });
+  Object.defineProperty(globalThis, "cancelAnimationFrame", {
+    configurable: true,
+    value: () => {},
+  });
+  globalThis.queueMicrotask = (callback: () => void) => {
+    microtasks.push(callback);
+  };
+
+  try {
+    setTerminalWriteCoalescerByteCapResolver(term, () => 64 * 1024);
+    enqueueCoalescedTerminalWrite(term, "\x1b[?104", (data) => {
+      writes.push(data);
+    });
+    assert.equal(frames.length, 1);
+    frames[0]!(0);
+    assert.deepEqual(writes, ["\x1b[?104"]);
+    frames.length = 0;
+    microtasks.length = 0;
+
+    // After flush, the incomplete CSI tail must still force rAF for the suffix.
+    enqueueCoalescedTerminalWrite(term, "9hframe", (data) => {
+      writes.push(data);
+    });
+    assert.equal(frames.length, 1);
+    assert.equal(microtasks.length, 0);
+    frames[0]!(0);
+    assert.deepEqual(writes, ["\x1b[?104", "9hframe"]);
+  } finally {
+    resetTerminalWriteCoalescer(term);
+    globalThis.queueMicrotask = originalMicrotask;
+    if (originalRaf) {
+      Object.defineProperty(globalThis, "requestAnimationFrame", originalRaf);
+    } else {
+      Reflect.deleteProperty(globalThis, "requestAnimationFrame");
+    }
+    if (originalCancel) {
+      Object.defineProperty(globalThis, "cancelAnimationFrame", originalCancel);
+    } else {
+      Reflect.deleteProperty(globalThis, "cancelAnimationFrame");
+    }
+  }
+});
+
 test("upgrades to rAF when alternate-screen CSI is split across PTY chunks", () => {
   const term = {
     buffer: { active: { type: "normal" } },

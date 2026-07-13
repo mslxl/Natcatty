@@ -42,8 +42,6 @@ export type WriteCoalesceScheduleContext = {
   nextChunk: string;
   /** Bytes already pending before this chunk was appended. */
   pendingBytesBefore: number;
-  /** Full pending buffer including `nextChunk` (for cross-chunk CSI detection). */
-  pendingJoined: string;
 };
 
 type ScheduleWriteFrame = (callback: () => void) => (() => void) | null;
@@ -191,11 +189,9 @@ export const createWriteCoalescer = (
       flushSync();
       return;
     }
-    const pendingJoined = pending.length === 1 ? pending[0]! : pending.join("");
     const mode = resolveScheduleMode({
       nextChunk: chunk,
       pendingBytesBefore,
-      pendingJoined,
     });
     if (cancelPendingFrame === null) {
       armSchedule(mode);
