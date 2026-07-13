@@ -703,6 +703,7 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
       // Build auth handler using shared helper
       // Pass unlocked encrypted keys from options so jump hosts can use them for retry
       const authConfig = buildAuthHandler({
+        authMethod: jump.authMethod,
         privateKey: connOpts.privateKey,
         password: connOpts.password,
         passphrase: connOpts.passphrase,

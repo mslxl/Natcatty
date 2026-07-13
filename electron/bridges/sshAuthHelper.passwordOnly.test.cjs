@@ -99,6 +99,30 @@ test("buildAuthHandler password-only still fires onAuthAttempt for jump/SFTP pro
   );
 });
 
+test("buildAuthHandler automatic mode tries agent and default keys before password", () => {
+  const auth = buildAuthHandler({
+    authMethod: "auto",
+    password: "saved-secret",
+    username: "root",
+    defaultKeys: DEFAULT_KEYS,
+    sshAgentSocketOverride: "/tmp/ssh-agent.sock",
+  });
+
+  const labels = collectAuthMethods(auth.authHandler);
+  const agentIndex = labels.indexOf("agent");
+  const keyIndex = labels.indexOf("publickey");
+  const passwordIndex = labels.indexOf("password");
+  assert.ok(agentIndex >= 0, `expected agent; got ${labels.join(",")}`);
+  assert.ok(keyIndex >= 0, `expected publickey; got ${labels.join(",")}`);
+  assert.ok(passwordIndex >= 0, `expected password; got ${labels.join(",")}`);
+  assert.ok(agentIndex < passwordIndex, `agent should precede password; got ${labels.join(",")}`);
+  assert.ok(keyIndex < passwordIndex, `default key should precede password; got ${labels.join(",")}`);
+  assert.ok(
+    labels.every((label, index) => label !== "publickey" || index < passwordIndex),
+    `all default keys should precede password; got ${labels.join(",")}`,
+  );
+});
+
 test("buildAuthHandler with no credentials still offers default keys", () => {
   const auth = buildAuthHandler({
     username: "root",
@@ -131,6 +155,38 @@ test("buildAuthHandler key+password still allows default key fallback after user
     publickeyCount >= 2,
     `key auth may still fall back to default keys; offered=${labels.join(",")}`,
   );
+});
+
+test("buildAuthHandler explicit key mode uses only the selected key and stated password fallback", () => {
+  const auth = buildAuthHandler({
+    authMethod: "key",
+    privateKey: "-----BEGIN OPENSSH PRIVATE KEY-----\nuser\n-----END OPENSSH PRIVATE KEY-----\n",
+    password: "fallback-password",
+    username: "root",
+    defaultKeys: DEFAULT_KEYS,
+    allowAgentFallback: true,
+  });
+
+  const labels = collectAuthMethods(auth.authHandler);
+  assert.equal(labels.filter((label) => label === "publickey").length, 1, labels.join(","));
+  assert.equal(labels.includes("agent"), false, labels.join(","));
+  assert.equal(labels.includes("password"), true, labels.join(","));
+});
+
+test("buildAuthHandler explicit password mode ignores an agent and default keys", () => {
+  const auth = buildAuthHandler({
+    authMethod: "password",
+    password: "host-password",
+    agent: "/tmp/agent.sock",
+    username: "root",
+    defaultKeys: DEFAULT_KEYS,
+    allowAgentFallback: true,
+  });
+
+  const labels = collectAuthMethods(auth.authHandler);
+  assert.equal(labels.includes("agent"), false, labels.join(","));
+  assert.equal(labels.includes("publickey"), false, labels.join(","));
+  assert.equal(labels.includes("password"), true, labels.join(","));
 });
 
 test("buildAuthHandler password-only may still attach unlocked encrypted keys for jump retry", () => {

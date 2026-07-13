@@ -308,6 +308,10 @@ main();
       // mismatch detection instead of trusting it again on every ET session.
       const realSshDir = path.join(os.homedir(), ".ssh");
       fs.mkdirSync(realSshDir, { recursive: true });
+      const defaultIdentityPaths = fs.readdirSync(realSshDir, { withFileTypes: true })
+        .filter((entry) => (entry.isFile() || entry.isSymbolicLink()) && /^id_[\w-]+$/.test(entry.name))
+        .map((entry) => path.join(realSshDir, entry.name))
+        .sort();
       const knownHostsPath = path.join(realSshDir, "known_hosts");
       sshOptions.push(`UserKnownHostsFile=${normalizeSshConfigPath(knownHostsPath)}`);
 
@@ -377,12 +381,20 @@ main();
         }
       }
 
+      if (options.authMethod === "auto") {
+        for (const keyPath of defaultIdentityPaths) {
+          if (!identityPaths.includes(keyPath)) {
+            identityPaths.push(keyPath);
+          }
+        }
+      }
+
       for (const idPath of identityPaths) {
         sshOptions.push(`IdentityFile=${normalizeSshConfigPath(idPath)}`);
       }
 
       if (
-        (!options.useSshAgent && (identityPaths.length > 0 || options.authMethod === "key" || options.authMethod === "certificate"))
+        (options.authMethod !== "auto" && !options.useSshAgent && (identityPaths.length > 0 || options.authMethod === "key" || options.authMethod === "certificate"))
         || (options.useSshAgent && options.identitiesOnly)
       ) {
         sshOptions.push("IdentitiesOnly=yes");
@@ -404,7 +416,13 @@ main();
       // NOTE: values with commas (e.g. "password,keyboard-interactive") MUST go into
       // the config file — ET on Windows passes --ssh-option values through cmd.exe
       // which treats commas as argument delimiters.
-      if (options.authMethod === "password" && !options.useSshAgent) {
+      if (options.authMethod === "auto") {
+        if (hasPassword) {
+          configLines.push("PreferredAuthentications publickey,password,keyboard-interactive");
+        } else {
+          sshOptions.push("PreferredAuthentications=publickey");
+        }
+      } else if (options.authMethod === "password" && !options.useSshAgent) {
         sshOptions.push("PubkeyAuthentication=no");
         configLines.push("PreferredAuthentications password,keyboard-interactive");
       } else if (options.useSshAgent && hasPassword) {
@@ -507,6 +525,22 @@ main();
 
         if (jump.useSshAgent && jump.identitiesOnly && !jumpConfigLines.includes("  IdentitiesOnly yes")) {
           jumpConfigLines.push("  IdentitiesOnly yes");
+        }
+
+        if (jump.authMethod === "auto") {
+          for (const keyPath of defaultIdentityPaths) {
+            jumpConfigLines.push(`  IdentityFile ${quoteSshConfigValue(keyPath)}`);
+          }
+          jumpConfigLines.push(jump.password
+            ? "  PreferredAuthentications publickey,password,keyboard-interactive"
+            : "  PreferredAuthentications publickey");
+        } else if (jump.authMethod === "password") {
+          jumpConfigLines.push("  PubkeyAuthentication no");
+          jumpConfigLines.push("  PreferredAuthentications password,keyboard-interactive");
+        } else if (jump.authMethod === "key" || jump.authMethod === "certificate") {
+          jumpConfigLines.push(jump.password
+            ? "  PreferredAuthentications publickey,password,keyboard-interactive"
+            : "  PreferredAuthentications publickey");
         }
 
         // Jump host certificate

@@ -52,6 +52,7 @@ declare global {
       certificate?: string;
       keyId?: string;
       passphrase?: string;
+      authMethod?: import("../../domain/models").HostAuthMethod;
       identityFilePaths?: string[];
       useSshAgent?: boolean;
       agentPublicKeys?: string[];
@@ -89,7 +90,7 @@ declare global {
       certificate?: string;
       keyId?: string;
       passphrase?: string;
-      authMethod?: 'password' | 'key' | 'certificate';
+      authMethod?: import("../../domain/models").HostAuthMethod;
       identityFilePaths?: string[];
       useSshAgent?: boolean;
       agentPublicKeys?: string[];
@@ -176,6 +177,7 @@ declare global {
       hostname: string;
       username: string;
       port?: number;
+      authMethod?: import("../../domain/models").HostAuthMethod;
       password?: string;
       privateKey?: string;
       certificate?: string;

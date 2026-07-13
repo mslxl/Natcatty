@@ -22,6 +22,7 @@ import {
   formatProxyConfigType,
   updateProxyConfigField,
 } from "../domain/proxyProfiles";
+import { resolveHostAuth } from "../domain/sshAuth";
 import { customThemeStore } from "../application/state/customThemeStore";
 import {
   hasHostFontSizeOverride,
@@ -154,7 +155,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
         protocol: "ssh",
         tags: [],
         os: "linux",
-        authMethod: "password",
+        authMethod: "auto",
         charset: groupDefaults?.charset ? undefined : "UTF-8",
         distroMode: "auto",
         createdAt: Date.now(),
@@ -477,6 +478,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
       notes: form.notes?.trim() || undefined,
       port: finalPort,
       password: form.savePassword === false ? undefined : form.password,
+      authMethod: resolveHostAuth({ host: form, keys: availableKeys, identities }).authMethod,
       managedSourceId: finalManagedSourceId,
     };
     cleaned = prepareTelnetCredentialsForSave(normalizePrimaryTelnetState(cleaned));
@@ -916,6 +918,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
         <HostDetailsConnectionSections
           t={t}
           form={form}
+          setForm={setForm}
           update={update}
           groupDefaults={groupDefaults}
           selectedIdentity={selectedIdentity}

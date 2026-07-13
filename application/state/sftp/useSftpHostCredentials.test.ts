@@ -102,6 +102,23 @@ test("buildSftpHostCredentials forwards target and jump-host timeouts", () => {
   assert.equal(credentials.jumpHosts?.[0]?.sshAuthReadyTimeoutMs, 360_000);
 });
 
+test("buildSftpHostCredentials keeps automatic auth per target and jump host", () => {
+  const jumpHost = host({ id: "jump-1", authMethod: "auto", password: "jump-secret" });
+  const credentials = buildSftpHostCredentials({
+    host: host({
+      authMethod: "auto",
+      password: "target-secret",
+      hostChain: { hostIds: ["jump-1"] },
+    }),
+    hosts: [jumpHost],
+    keys: [],
+    identities: [],
+  });
+
+  assert.equal(credentials.authMethod, "auto");
+  assert.equal(credentials.jumpHosts?.[0]?.authMethod, "auto");
+});
+
 test("buildSftpHostCredentials rejects missing jump hosts", () => {
   assert.throws(
     () => buildSftpHostCredentials({

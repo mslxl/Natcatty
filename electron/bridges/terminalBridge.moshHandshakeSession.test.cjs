@@ -231,6 +231,18 @@ test("startMoshSession writes the saved password when ssh prompts for one", asyn
   assert.deepEqual(h.spawns[0].writes, ["saved-secret\r"]);
 });
 
+test("startMoshSession password-only mode disables public-key authentication", async (t) => {
+  const h = makeHarness(t);
+  await h.bridge.startMoshSession(
+    h.event,
+    { ...h.options, authMethod: "password", password: "saved-secret", useSshAgent: false },
+    { moshClientLookup: h.lookupOpts },
+  );
+
+  assert.ok(h.spawns[0].args.includes("PubkeyAuthentication=no"));
+  assert.ok(h.spawns[0].args.includes("PreferredAuthentications=password,keyboard-interactive"));
+});
+
 test("startMoshSession writes the saved password when ConPTY appends cursor controls to the prompt", async (t) => {
   const h = makeHarness(t);
   await h.bridge.startMoshSession(

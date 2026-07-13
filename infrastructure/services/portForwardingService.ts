@@ -455,7 +455,7 @@ export const startPortForward = async (
               : jumpHost.identityFilePaths,
             passphrase: jumpResolved.passphrase,
           });
-          const jumpAgentAuth = resolveBridgeSshAgentAuth(jumpHost, jumpKey);
+          const jumpAgentAuth = resolveBridgeSshAgentAuth(jumpHost, jumpKey, jumpResolved.authMethod);
           const hasJumpKeyMaterial = Boolean(
             jumpAgentAuth.useSshAgent || jumpKeyAuth.privateKey || jumpKeyAuth.identityFilePaths?.length,
           );
@@ -475,6 +475,7 @@ export const startPortForward = async (
             hostname: jumpHost.hostname,
             port: jumpHost.port || 22,
             username: jumpResolved.username || 'root',
+            authMethod: jumpResolved.authMethod,
             password: jumpPassword,
             privateKey: jumpKeyAuth.privateKey,
             certificate: jumpKey?.certificate,
@@ -511,7 +512,7 @@ export const startPortForward = async (
         : host.identityFilePaths,
       passphrase: resolved.passphrase,
     });
-    const targetAgentAuth = resolveBridgeSshAgentAuth(host, key);
+    const targetAgentAuth = resolveBridgeSshAgentAuth(host, key, resolved.authMethod);
     const password = sanitizeCredentialValue(resolved.password);
     const hasKeyMaterial = Boolean(
       targetAgentAuth.useSshAgent || keyAuth.privateKey || keyAuth.identityFilePaths?.length,
@@ -571,6 +572,7 @@ export const startPortForward = async (
       hostname: host.hostname,
       port: host.port,
       username: resolved.username,
+      authMethod: resolved.authMethod,
       password,
       privateKey: keyAuth.privateKey,
       certificate: key?.certificate,

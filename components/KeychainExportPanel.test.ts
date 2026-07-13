@@ -18,5 +18,5 @@ test('key export preserves imported identity files when the system SSH agent is 
 });
 
 test('key export passes the selected vault key to agent filtering', () => {
-  assert.match(source, /resolveBridgeSshAgentAuth\(\s*effectiveExportHost,\s*exportAuth\.key,\s*\)/);
+  assert.match(source, /resolveBridgeSshAgentAuth\(\s*effectiveExportHost,\s*exportAuth\.key,\s*exportAuth\.authMethod,\s*\)/);
 });

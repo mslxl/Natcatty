@@ -78,6 +78,7 @@ async function startPortForward(event, payload) {
     hostname,
     port = 22,
     username,
+    authMethod,
     password,
     privateKey,
     certificate,
@@ -256,6 +257,7 @@ async function startPortForward(event, payload) {
 
     // Build auth handler using shared helper
     const authConfig = buildAuthHandler({
+      authMethod,
       privateKey: connectOpts.privateKey,
       password,
       passphrase: connectOpts.passphrase,
@@ -279,6 +281,7 @@ async function startPortForward(event, payload) {
           hostname,
           port,
           username,
+          authMethod,
           password,
           privateKey,
           passphrase,

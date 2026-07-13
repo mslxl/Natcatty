@@ -99,6 +99,25 @@ test("prepareEtSshEnvironment writes an askpass map + sets SSH_ASKPASS for passw
   assert.equal(fs.readFileSync(map[0].secretFile, "utf8").trim(), "s3cret");
 });
 
+test("prepareEtSshEnvironment automatic mode tries real local keys before a saved password", (t) => {
+  const { api, base } = makeApi(t);
+  const defaultKeyPath = path.join(base, "home", ".ssh", "id_ed25519_sk");
+  fs.mkdirSync(path.dirname(defaultKeyPath), { recursive: true });
+  fs.writeFileSync(defaultKeyPath, "PRIVATE KEY");
+
+  const env = api.prepareEtSshEnvironment("sess-auto", {
+    hostname: "h",
+    username: "u",
+    authMethod: "auto",
+    password: "saved-secret",
+  });
+
+  assert.ok(env.sshOptions.includes(`IdentityFile=${defaultKeyPath.replace(/\\/g, "/")}`));
+  assert.equal(env.sshOptions.includes("PubkeyAuthentication=no"), false);
+  const config = fs.readFileSync(path.join(env.env.HOME, ".ssh", "config"), "utf8");
+  assert.match(config, /PreferredAuthentications publickey,password,keyboard-interactive/);
+});
+
 test("prepareEtSshEnvironment askpass prefers the most specific matching password prompt", (t) => {
   const { api } = makeApi(t);
   const env = api.prepareEtSshEnvironment("sess1", {
@@ -321,6 +340,31 @@ test("prepareEtSshEnvironment routes a single jump host through ET --jumphost/--
   assert.match(config, /StrictHostKeyChecking accept-new/);
   // No ProxyCommand anymore — ET owns the jump routing.
   assert.doesNotMatch(config, /ProxyCommand/);
+});
+
+test("prepareEtSshEnvironment applies automatic authentication to a jump host", (t) => {
+  const { api, base } = makeApi(t);
+  const defaultKeyPath = path.join(base, "home", ".ssh", "id_work");
+  fs.mkdirSync(path.dirname(defaultKeyPath), { recursive: true });
+  fs.writeFileSync(defaultKeyPath, "PRIVATE KEY");
+
+  const env = api.prepareEtSshEnvironment("sess-auto-jump", {
+    hostname: "target.example",
+    username: "alice",
+    authMethod: "password",
+    password: "target-secret",
+    jumpHosts: [{
+      hostname: "jump.example",
+      username: "ops",
+      authMethod: "auto",
+      password: "jump-secret",
+    }],
+  });
+
+  const config = fs.readFileSync(path.join(env.env.HOME, ".ssh", "config"), "utf8");
+  assert.match(config, /Host jump\.example[\s\S]*IdentityFile "/);
+  assert.ok(config.includes(defaultKeyPath));
+  assert.match(config, /Host jump\.example[\s\S]*PreferredAuthentications publickey,password,keyboard-interactive/);
 });
 
 test("prepareEtSshEnvironment honors an explicit jump host etPort for --jport", (t) => {

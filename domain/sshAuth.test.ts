@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { hasBridgeSshCredentials, resolveBridgeKeyAuth, resolveBridgeSshAgentAuth, resolveHostAuth, resolveHostAutofillPassword } from "./sshAuth.ts";
+import { applyHostAuthMethodSelection, hasBridgeSshCredentials, resolveBridgeKeyAuth, resolveBridgeSshAgentAuth, resolveHostAuth, resolveHostAuthMethodSelection, resolveHostAutofillPassword } from "./sshAuth.ts";
 import type { Host, Identity, SSHKey } from "./models.ts";
 
 const referenceKey: SSHKey = {
@@ -143,9 +143,24 @@ test("resolveBridgeSshAgentAuth treats an unset agent toggle as disabled", () =>
   );
 });
 
+test("resolveBridgeSshAgentAuth leaves the ambient agent available in automatic mode", () => {
+  assert.deepEqual(
+    resolveBridgeSshAgentAuth(autofillBaseHost, undefined, "auto"),
+    {},
+  );
+  assert.deepEqual(
+    resolveBridgeSshAgentAuth({ ...autofillBaseHost, useSshAgent: false }, undefined, "auto"),
+    { useSshAgent: false },
+  );
+});
+
 test("hasBridgeSshCredentials accepts an agent-only host", () => {
   assert.equal(hasBridgeSshCredentials({ useSshAgent: true }), true);
   assert.equal(hasBridgeSshCredentials({}), false);
+});
+
+test("hasBridgeSshCredentials accepts automatic local authentication", () => {
+  assert.equal(hasBridgeSshCredentials({ authMethod: "auto" }), true);
 });
 
 test("resolveHostAuth respects password auth over stale key selections", () => {
@@ -179,6 +194,58 @@ test("resolveHostAuth infers key auth from imported IdentityFile paths", () => {
   });
 
   assert.equal(resolved.authMethod, "key");
+});
+
+test("resolveHostAuth treats a legacy host without credentials as automatic", () => {
+  const resolved = resolveHostAuth({
+    host: autofillBaseHost,
+    keys: [],
+  });
+
+  assert.equal(resolved.authMethod, "auto");
+});
+
+test("resolveHostAuth keeps a legacy saved password in password-only mode", () => {
+  const resolved = resolveHostAuth({
+    host: { ...autofillBaseHost, password: "saved-secret" },
+    keys: [],
+  });
+
+  assert.equal(resolved.authMethod, "password");
+});
+
+test("resolveHostAuthMethodSelection gives legacy hosts a visible mode", () => {
+  assert.equal(resolveHostAuthMethodSelection(autofillBaseHost), "auto");
+  assert.equal(resolveHostAuthMethodSelection({ ...autofillBaseHost, password: "secret" }), "password");
+  assert.equal(resolveHostAuthMethodSelection({ ...autofillBaseHost, identityFilePaths: ["~/.ssh/id_work"] }), "key");
+});
+
+test("applyHostAuthMethodSelection clears incompatible per-host credentials", () => {
+  const keyedHost = {
+    ...autofillBaseHost,
+    authMethod: "key",
+    identityId: "identity-1",
+    identityFileId: "key-1",
+    identityFilePaths: ["~/.ssh/id_work"],
+    useSshAgent: true,
+  } as Host;
+
+  assert.deepEqual(applyHostAuthMethodSelection(keyedHost, "certificate"), {
+    ...keyedHost,
+    authMethod: "certificate",
+    identityId: undefined,
+    identityFileId: undefined,
+    identityFilePaths: undefined,
+    useSshAgent: false,
+  });
+  assert.deepEqual(applyHostAuthMethodSelection(keyedHost, "auto"), {
+    ...keyedHost,
+    authMethod: "auto",
+    identityId: undefined,
+    identityFileId: undefined,
+    identityFilePaths: undefined,
+    useSshAgent: undefined,
+  });
 });
 
 const autofillBaseHost = {

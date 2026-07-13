@@ -3,6 +3,7 @@ import { AlertTriangle, ChevronDown, ChevronUp, Forward, Globe, HeartPulse, KeyR
 import { customThemeStore } from "../application/state/customThemeStore";
 import { clearHostFontSizeOverride, clearHostThemeOverride } from "../domain/terminalAppearance";
 import { isSshAgentNoneValue } from "../domain/sshAgentSettings";
+import { resolveHostAuthMethodSelection } from "../domain/sshAuth";
 import { MAX_FONT_SIZE, MIN_FONT_SIZE } from "../infrastructure/config/fonts";
 import { AlgorithmOverridesPanel } from "./host-details/AlgorithmOverridesPanel";
 import { Badge } from "./ui/badge";
@@ -23,10 +24,10 @@ import {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type HostDetailsAdvancedSectionsProps = Record<string, any>;
 
-const ToggleRow: React.FC<{ label: string; hint?: React.ReactNode; enabled: boolean; onToggle: () => void }> = ({ label, hint, enabled, onToggle }) => {
+const ToggleRow: React.FC<{ label: string; hint?: React.ReactNode; enabled: boolean; disabled?: boolean; onToggle: () => void }> = ({ label, hint, enabled, disabled, onToggle }) => {
   return (
     <HostDetailsSettingRow label={label} hint={hint}>
-      <Switch checked={enabled} onCheckedChange={() => onToggle()} />
+      <Switch checked={enabled} disabled={disabled} onCheckedChange={() => onToggle()} />
     </HostDetailsSettingRow>
   );
 };
@@ -56,6 +57,7 @@ export const HostDetailsAdvancedSections: React.FC<HostDetailsAdvancedSectionsPr
   const effectiveDeviceType = form.deviceType ?? inheritedDeviceType;
   const inheritedStartupCommandRunMode = effectiveGroupDefaults?.startupCommandRunMode ?? "paste";
   const effectiveStartupCommandRunMode = form.startupCommandRunMode ?? inheritedStartupCommandRunMode;
+  const effectiveAuthMethod = resolveHostAuthMethodSelection(form);
 
   return (
   <>
@@ -243,12 +245,14 @@ export const HostDetailsAdvancedSections: React.FC<HostDetailsAdvancedSectionsPr
           <ToggleRow
             label={t("hostDetails.systemSshAgent")}
             hint={t("hostDetails.systemSshAgent.desc")}
-            enabled={form.useSshAgent === true}
+            enabled={effectiveAuthMethod === "auto" && form.useSshAgent !== false}
+            disabled={effectiveAuthMethod !== "auto"}
             onToggle={() => setForm((previous: typeof form) => {
-              const enabling = previous.useSshAgent !== true;
+              const enabled = previous.useSshAgent !== false;
+              const enabling = !enabled;
               return {
                 ...previous,
-                useSshAgent: enabling,
+                useSshAgent: enabling ? undefined : false,
                 identityAgent: enabling && isSshAgentNoneValue(previous.identityAgent)
                   ? undefined
                   : previous.identityAgent,

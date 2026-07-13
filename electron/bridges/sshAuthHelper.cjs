@@ -833,17 +833,23 @@ function isPasswordProvided(password) {
  */
 function buildAuthHandler(options) {
   const { privateKey, password, passphrase, agent, username, logPrefix = "[SSH]", unlockedEncryptedKeys = [], defaultKeys = [], sshAgentSocketOverride, onAuthAttempt } = options;
-  const allowAgentFallback = options.allowAgentFallback !== false;
 
   // Determine what type of explicit auth the user configured
   const hasExplicitKey = !!privateKey;
   const hasExplicitPassword = !!password;
   const hasExplicitAgent = !!agent;
   const hasExplicitAuth = hasExplicitKey || hasExplicitPassword || hasExplicitAgent;
+  const isAutomatic = options.authMethod === "auto";
+  const isExplicitPasswordMode = options.authMethod === "password";
+  const isSelectedKeyMode = options.authMethod === "key" || options.authMethod === "certificate";
 
   // Determine if this is a password-only or key-only connection
-  const isPasswordOnly = hasExplicitPassword && !hasExplicitKey && !hasExplicitAgent;
-  const isKeyOnly = hasExplicitKey && !hasExplicitAgent;
+  const isPasswordOnly = isExplicitPasswordMode
+    || (!isAutomatic && hasExplicitPassword && !hasExplicitKey && !hasExplicitAgent);
+  const isKeyOnly = !isPasswordOnly && hasExplicitKey && !hasExplicitAgent;
+  const allowAgentFallback = options.allowAgentFallback !== false
+    && !isPasswordOnly
+    && !isSelectedKeyMode;
 
   // Allow callers to pass in a pre-validated agent socket (e.g. from async
   // getAvailableAgentSocket). Fall back to synchronous getSshAgentSocket()
@@ -856,21 +862,25 @@ function buildAuthHandler(options) {
   // - User explicitly configured agent, OR
   // - No explicit auth is configured (pure fallback mode)
   // When user configured key/password, system agent should only be used AFTER as fallback
-  const useAgentFirst = hasExplicitAgent || !hasExplicitAuth;
+  const useAgentFirst = hasExplicitAgent || isAutomatic || !hasExplicitAuth;
 
   // Determine effective agent
-  const effectiveAgent = agent || (useAgentFirst ? sshAgentSocket : null);
+  const effectiveAgent = isPasswordOnly ? null : agent || (useAgentFirst ? sshAgentSocket : null);
 
   // Determine effective privateKey (user-provided takes priority)
-  const effectivePrivateKey = privateKey || (!hasExplicitAuth && defaultKeys.length > 0 ? defaultKeys[0].privateKey : null);
+  const effectivePrivateKey = isPasswordOnly
+    ? null
+    : privateKey || ((isAutomatic || !hasExplicitAuth) && defaultKeys.length > 0 ? defaultKeys[0].privateKey : null);
 
   // Determine fallback keys (keys to try after user's primary auth fails)
   // - If user provided a key: all default keys are fallbacks
   // - If no explicit auth: first default key is primary, rest are fallbacks
   // - If password-only: no default-key fallback (issue #266 / #2079)
   // - If agent-only: all default keys are fallbacks (tried after primary)
-  const fallbackKeys = isPasswordOnly
+  const fallbackKeys = isPasswordOnly || isSelectedKeyMode
     ? []
+    : isAutomatic
+      ? defaultKeys
     : hasExplicitKey
       ? defaultKeys
       : !hasExplicitAuth
@@ -894,7 +904,7 @@ function buildAuthHandler(options) {
   if (hasExplicitAuth && !hasFallbackOptions) {
     const authMethods = ["none"]; // Always try none first per RFC 4252
     if (effectiveAgent) authMethods.push("agent");
-    if (privateKey) authMethods.push("publickey");
+    if (!isPasswordOnly && privateKey) authMethods.push("publickey");
     if (password) authMethods.push("password");
     authMethods.push("keyboard-interactive");
 
@@ -920,6 +930,31 @@ function buildAuthHandler(options) {
     // Password-only: respect user's explicit choice, no key/agent fallback.
     // Matches startSSHSession (issue #2079) and avoids #266 passphrase prompts.
     authMethods.push({ type: "password", id: "password" });
+  } else if (isAutomatic) {
+    // Automatic: mirror the familiar OpenSSH-style order. Try local key
+    // sources first, then use a saved password as the final non-interactive
+    // fallback before keyboard-interactive prompts.
+    if (effectiveAgent) {
+      authMethods.push({ type: "agent", id: "agent" });
+    }
+    if (privateKey) {
+      authMethods.push({
+        type: "publickey",
+        key: privateKey,
+        passphrase,
+        id: "publickey-user"
+      });
+    }
+    for (const keyInfo of fallbackKeys) {
+      authMethods.push({
+        type: "publickey",
+        key: keyInfo.privateKey,
+        id: `publickey-default-${keyInfo.keyName}`
+      });
+    }
+    if (password) {
+      authMethods.push({ type: "password", id: "password" });
+    }
   } else if (isKeyOnly) {
     // Key-only: user key first, then password (if any), then agent/default keys as fallback
 
@@ -1006,6 +1041,7 @@ function buildAuthHandler(options) {
   authMethods.push({ type: "keyboard-interactive", id: "keyboard-interactive" });
 
   console.log(`${logPrefix} Auth methods configured`, {
+    isAutomatic,
     isPasswordOnly,
     hasUserKey: !!privateKey,
     hasPassword: !!password,

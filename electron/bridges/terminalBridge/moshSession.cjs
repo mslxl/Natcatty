@@ -274,6 +274,11 @@ function createMoshSessionApi(ctx) {
             sshArgs.push("-o", "IdentitiesOnly=yes");
           }
         }
+
+        if (options.authMethod === "password") {
+          sshArgs.push("-o", "PubkeyAuthentication=no");
+          sshArgs.push("-o", "PreferredAuthentications=password,keyboard-interactive");
+        }
       } catch (err) {
         cleanupMoshAuthTempFiles(tempFiles);
         throw err;

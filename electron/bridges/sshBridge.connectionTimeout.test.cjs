@@ -2,6 +2,9 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
 const Module = require("node:module");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 
 function loadBridgeWithMockedSsh2(t) {
   const bridgePath = require.resolve("./sshBridge.cjs");
@@ -88,6 +91,70 @@ function registerStartHandler(bridge, sessions) {
   bridge.registerHandlers(ipcMain);
   return ipcMain.handlers.get("netcatty:start");
 }
+
+function collectAuthMethods(authHandler, maxSteps = 16) {
+  const labels = [];
+  let methodsLeft = null;
+  for (let i = 0; i < maxSteps; i += 1) {
+    let offered = null;
+    authHandler(methodsLeft, false, (method) => {
+      offered = method;
+    });
+    if (!offered) break;
+    labels.push(typeof offered === "string" ? offered : offered.type);
+    methodsLeft = ["publickey", "password", "keyboard-interactive", "agent"];
+  }
+  return labels;
+}
+
+async function withFakeDefaultKey(run) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-auto-auth-"));
+  const sshDir = path.join(home, ".ssh");
+  fs.mkdirSync(sshDir);
+  fs.writeFileSync(
+    path.join(sshDir, "id_rsa"),
+    "-----BEGIN RSA PRIVATE KEY-----\nMIIBfake-auto-auth\n-----END RSA PRIVATE KEY-----\n",
+  );
+  const originalHomedir = os.homedir;
+  const originalAgentSocket = process.env.SSH_AUTH_SOCK;
+  os.homedir = () => home;
+  delete process.env.SSH_AUTH_SOCK;
+  try {
+    return await run();
+  } finally {
+    os.homedir = originalHomedir;
+    if (originalAgentSocket === undefined) delete process.env.SSH_AUTH_SOCK;
+    else process.env.SSH_AUTH_SOCK = originalAgentSocket;
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+}
+
+test("SSH start automatic mode tries local keys before its saved password", async (t) => {
+  await withFakeDefaultKey(async () => {
+    const { bridge, MockSSHClient } = loadBridgeWithMockedSsh2(t);
+    const start = registerStartHandler(bridge, new Map());
+
+    await assert.rejects(
+      () => start(
+        { sender: makeSender() },
+        {
+          sessionId: "ssh-auto-auth",
+          hostname: "192.0.2.9",
+          username: "alice",
+          port: 22,
+          authMethod: "auto",
+          password: "saved-secret",
+          knownHosts: [],
+        },
+      ),
+      /Connection timeout/,
+    );
+
+    const labels = collectAuthMethods(MockSSHClient.instances[0].connectOpts.authHandler);
+    assert.ok(labels.includes("publickey"), `expected publickey; got ${labels.join(",")}`);
+    assert.ok(labels.indexOf("publickey") < labels.indexOf("password"), labels.join(","));
+  });
+});
 
 test("SSH start keeps TCP dial and auth readiness as separate timeout phases", async (t) => {
   const { bridge, MockSSHClient } = loadBridgeWithMockedSsh2(t);

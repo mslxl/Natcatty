@@ -184,6 +184,7 @@ function createExecCommandApi(ctx) {
           connectOpts.tryKeyboard = true;
     
           const authConfig = buildAuthHandler({
+            authMethod: payload.authMethod,
             privateKey: connectOpts.privateKey,
             password: connectOpts.password,
             passphrase: connectOpts.passphrase,

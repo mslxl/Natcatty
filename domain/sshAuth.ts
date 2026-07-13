@@ -1,7 +1,5 @@
-import type { Host, Identity, SSHKey } from "./models";
+import type { Host, HostAuthMethod, Identity, SSHKey } from "./models";
 import { sanitizeCredentialValue } from "./credentials";
-
-type HostAuthMethod = "password" | "key" | "certificate";
 
 type HostAuthOverride = {
   authMethod?: HostAuthMethod;
@@ -22,6 +20,36 @@ type ResolvedHostAuth = {
   identityFilePath?: string;
 };
 
+export const resolveHostAuthMethodSelection = (
+  host: Pick<Host, "authMethod" | "identityFileId" | "identityFilePaths" | "password">,
+): HostAuthMethod => host.authMethod || (
+  host.identityFileId || host.identityFilePaths?.length
+    ? "key"
+    : host.password
+      ? "password"
+      : "auto"
+);
+
+export const applyHostAuthMethodSelection = <T extends Host>(
+  host: T,
+  authMethod: HostAuthMethod,
+): T => {
+  const previousMethod = resolveHostAuthMethodSelection(host);
+  const clearSelectedKey = authMethod === "auto"
+    || authMethod === "password"
+    || previousMethod !== authMethod;
+
+  return {
+    ...host,
+    authMethod,
+    identityId: undefined,
+    ...(clearSelectedKey
+      ? { identityFileId: undefined, identityFilePaths: undefined }
+      : {}),
+    useSshAgent: authMethod === "auto" ? undefined : false,
+  };
+};
+
 const inferAuthMethod = (opts: {
   explicit?: HostAuthMethod;
   keyId?: string;
@@ -38,7 +66,7 @@ const inferAuthMethod = (opts: {
   }
   if (opts.hostAuthMethod) return opts.hostAuthMethod;
   if (opts.password) return "password";
-  return "password";
+  return "auto";
 };
 
 export const resolveHostAuth = (args: {
@@ -143,6 +171,7 @@ export const resolveBridgeKeyAuth = (args: {
 export const resolveBridgeSshAgentAuth = (
   host: Pick<Host, "useSshAgent" | "identityAgent" | "identitiesOnly" | "addKeysToAgent" | "useKeychain">,
   key?: Pick<SSHKey, "certificate" | "publicKey">,
+  authMethod?: HostAuthMethod,
 ): {
   useSshAgent?: boolean;
   identityAgent?: string;
@@ -152,7 +181,11 @@ export const resolveBridgeSshAgentAuth = (
   agentPublicKeys?: string[];
 } => {
   if (key?.certificate?.trim()) return { useSshAgent: false };
-  if (host.useSshAgent !== true) return { useSshAgent: false };
+  if (host.useSshAgent !== true) {
+    return authMethod === "auto" && host.useSshAgent !== false
+      ? {}
+      : { useSshAgent: false };
+  }
   return {
     useSshAgent: true,
     identityAgent: host.identityAgent,
@@ -169,11 +202,13 @@ export const hasMacKeychainAgentDirectives = (
   && host.addKeysToAgent?.toLowerCase() === "yes";
 
 export const hasBridgeSshCredentials = (auth: {
+  authMethod?: HostAuthMethod;
   password?: string;
   privateKey?: string;
   identityFilePaths?: string[];
   useSshAgent?: boolean;
 }): boolean => Boolean(
+  auth.authMethod === "auto" ||
   auth.password ||
   auth.privateKey ||
   auth.identityFilePaths?.length ||

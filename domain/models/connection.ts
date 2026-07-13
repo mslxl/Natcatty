@@ -128,6 +128,8 @@ export interface SftpBookmark {
   global?: boolean;
 }
 
+export type HostAuthMethod = 'auto' | 'password' | 'key' | 'certificate';
+
 export interface Host {
   id: string;
   label: string;
@@ -152,7 +154,7 @@ export interface Host {
   autoOpenSftpPanel?: boolean;
   password?: string;
   savePassword?: boolean; // Whether to save the password (default: true)
-  authMethod?: 'password' | 'key' | 'certificate';
+  authMethod?: HostAuthMethod;
   // Use the local SSH agent for login. This is separate from agentForwarding,
   // which exposes the local agent to the remote host after login.
   useSshAgent?: boolean;
@@ -369,7 +371,7 @@ export interface GroupConfig {
   username?: string;
   password?: string;
   savePassword?: boolean;
-  authMethod?: 'password' | 'key' | 'certificate';
+  authMethod?: HostAuthMethod;
   identityId?: string;
   identityFileId?: string;
   identityFilePaths?: string[];

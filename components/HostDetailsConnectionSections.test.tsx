@@ -40,6 +40,7 @@ const renderConnectionSections = (formOverrides: Record<string, unknown> = {}) =
           identityFileId: availableKey.id,
           ...formOverrides,
         },
+        setForm: () => {},
         update: () => {},
         groupDefaults: undefined,
         selectedIdentity: undefined,
@@ -93,4 +94,26 @@ test("color and icon settings render for non-Linux hosts", () => {
   assert.match(markup, /hostDetails\.icon\.sectionTitle/);
   assert.match(markup, /hostDetails\.icon\.colorLabel/);
   assert.match(markup, /hostDetails\.icon\.manualLabel/);
+});
+
+test("host credentials expose automatic and password-only choices", () => {
+  const markup = renderConnectionSections({
+    authMethod: "auto",
+    identityFileId: undefined,
+  });
+
+  assert.match(markup, /hostDetails\.auth\.method/);
+  assert.match(markup, /hostDetails\.auth\.auto/);
+  assert.match(markup, /hostDetails\.auth\.passwordOnly/);
+  assert.match(markup, /hostDetails\.auth\.key/);
+  assert.match(markup, /hostDetails\.auth\.certificate/);
+});
+
+test("host authentication choices remain visible for a selected identity", () => {
+  const markup = renderConnectionSections({
+    identityId: "identity-1",
+    authMethod: "password",
+  });
+
+  assert.match(markup, /hostDetails\.auth\.passwordOnly/);
 });
