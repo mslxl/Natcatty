@@ -404,6 +404,9 @@ export const enCoreMessages: Messages = {
   'settings.terminal.behavior.rightClick.selectWord': 'Select word',
   'settings.terminal.behavior.copyOnSelect': 'Copy on select',
   'settings.terminal.behavior.copyOnSelect.desc': 'Automatically copy selected text. In tmux/vim with mouse mode, hold Option on macOS or Shift on Windows/Linux to select',
+  'settings.terminal.behavior.normalizeTextOnCopy': 'Normalize terminal text on copy',
+  'settings.terminal.behavior.normalizeTextOnCopy.desc':
+    'When copying from the terminal, strip display-only trailing padding and join soft-wrapped rows so pasted text matches logical output. Turn off to copy the raw screen selection (including TUI padding and visual wraps).',
   'settings.terminal.behavior.middleClickPaste': 'Middle-click paste',
   'settings.terminal.behavior.middleClickPaste.desc':
     'Paste clipboard content on middle-click',

@@ -248,6 +248,9 @@ export const zhTWTerminalMessages: Messages = {
   'settings.terminal.behavior.rightClick.selectWord': '選擇單字',
   'settings.terminal.behavior.copyOnSelect': '選擇即複製',
   'settings.terminal.behavior.copyOnSelect.desc': '自動複製選取的文字。在 tmux/vim 滑鼠模式下，macOS 按住 Option，Windows/Linux 按住 Shift 拖選即可選取文字',
+  'settings.terminal.behavior.normalizeTextOnCopy': '複製時正規化終端文字',
+  'settings.terminal.behavior.normalizeTextOnCopy.desc':
+    '複製終端內容時去除僅供顯示的行尾填充空白，並拼接軟換行，使貼上結果更接近邏輯文字。關閉後依螢幕選取原樣複製（含 TUI 填充空白與視覺折行）。',
   'settings.terminal.behavior.middleClickPaste': '中鍵貼上',
   'settings.terminal.behavior.middleClickPaste.desc': '中鍵點選時貼上剪貼簿內容',
   'settings.terminal.behavior.middleClick': '中鍵行為',

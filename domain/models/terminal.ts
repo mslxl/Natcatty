@@ -69,6 +69,12 @@ export interface TerminalSettings {
   rightClickBehavior: RightClickBehavior;
   middleClickBehavior: MiddleClickBehavior;
   copyOnSelect: boolean; // Automatically copy selected text
+  /**
+   * When true, terminal copy paths strip display-padding spaces and join
+   * soft-wrapped rows before writing the clipboard. When false, use raw
+   * xterm getSelection() (screen-cell layout as-is).
+   */
+  normalizeTextOnCopy: boolean;
   middleClickPaste: boolean; // Legacy mirror for older settings payloads
   wordSeparators: string; // Characters for word selection
   linkModifier: LinkModifier; // Modifier key to click links
@@ -350,6 +356,7 @@ const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   rightClickBehavior: 'context-menu',
   middleClickBehavior: 'paste',
   copyOnSelect: false,
+  normalizeTextOnCopy: true, // Clean soft wraps + padding on copy (opt-out available)
   middleClickPaste: true,
   wordSeparators: DEFAULT_TERMINAL_WORD_SEPARATORS,
   linkModifier: 'none',

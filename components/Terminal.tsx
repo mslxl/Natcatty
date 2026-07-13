@@ -103,6 +103,7 @@ import { createReplaySafeTerminalLogSanitizer } from "./terminal/replaySafeTermi
 import { createConnectionLogBuffer } from "./terminal/connectionLogBuffer";
 import { createProgrammaticCommandLogRewriter, type ProgrammaticCommandLogRewrite } from "./terminal/programmaticCommandLog";
 import { getSessionLogInitialLine } from "./terminal/sessionLogInitialLine";
+import { getTerminalSelectionForClipboard } from "./terminal/normalizeTerminalSelection";
 import { useZmodemTransfer } from "./terminal/hooks/useZmodemTransfer";
 import {
   createTerminalSessionStarters,
@@ -1922,6 +1923,8 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   scrollOnPasteRef.current = terminalSettings?.scrollOnPaste ?? true;
   const clearWipesScrollbackRef = useRef(terminalSettings?.clearWipesScrollback ?? true);
   clearWipesScrollbackRef.current = terminalSettings?.clearWipesScrollback ?? true;
+  const normalizeTextOnCopyRef = useRef(terminalSettings?.normalizeTextOnCopy ?? true);
+  normalizeTextOnCopyRef.current = terminalSettings?.normalizeTextOnCopy ?? true;
 
   const scrollToBottomAfterProgrammaticInput = useCallback((data: string) => {
     if (termRef.current && shouldScrollOnTerminalInput(terminalSettingsRef.current, data)) {
@@ -2031,6 +2034,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     onHasSelectionChange: setHasSelection,
     scrollOnPasteRef,
     clearWipesScrollbackRef,
+    normalizeTextOnCopyRef,
     isBroadcastEnabledRef,
     onBroadcastInputRef,
     isLocalConnection,
@@ -2048,10 +2052,15 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   terminalContextActionsRef.current = terminalContextActions;
 
   const handleAddSelectionToAI = useCallback(() => {
-    const selection = termRef.current?.getSelection() ?? "";
+    const term = termRef.current;
+    if (!term) return;
+    const selection = getTerminalSelectionForClipboard(
+      term,
+      terminalSettings?.normalizeTextOnCopy ?? true,
+    );
     if (!selection.trim()) return;
     onAddSelectionToAI?.(sessionId, selection);
-  }, [onAddSelectionToAI, sessionId]);
+  }, [onAddSelectionToAI, sessionId, terminalSettings?.normalizeTextOnCopy]);
 
   const handleSetTerminalEncoding = useCallback((encoding: TerminalEncodingPreference) => {
     setTerminalEncoding(encoding);

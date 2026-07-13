@@ -20,6 +20,7 @@ import {
   resolveTerminalHibernateEnabled,
 } from '../../domain/terminalHibernate';
 import { applyUserCursorBlinkPreference } from './runtime/cursorPreference';
+import { getTerminalSelectionForClipboard } from './normalizeTerminalSelection';
 import { getFlowControllerForTerm } from './runtime/terminalSessionAttachment';
 import {
   prioritizeTerminalInput,
@@ -1287,8 +1288,10 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     };
 
     const onSelectionChange = () => {
-      const selection = term.getSelection();
-      const hasText = !!selection && selection.length > 0;
+      // hasSelection uses raw getSelection for cheap emptiness checks; the
+      // clipboard write path normalizes soft wraps + display padding.
+      const rawSelection = term.getSelection();
+      const hasText = !!rawSelection && rawSelection.length > 0;
       if (lastHasSelection !== hasText) {
         lastHasSelection = hasText;
         setHasSelection(hasText);
@@ -1307,6 +1310,13 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       scheduleSelectionOverlayPosition();
 
       if (hasText && terminalSettings?.copyOnSelect && !isRestoringSelectionRef.current) {
+        // Capture now so a later buffer redraw during the debounce cannot
+        // change what gets copied (selection-change may not fire again).
+        const selection = getTerminalSelectionForClipboard(
+          term,
+          terminalSettings?.normalizeTextOnCopy ?? true,
+        );
+        if (!selection) return;
         copyTimer = setTimeout(() => {
           navigator.clipboard.writeText(selection).catch((err) => {
             logger.warn("Copy on select failed:", err);
@@ -1337,7 +1347,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       resizeDisposable?.dispose();
       resizeObserver?.disconnect();
     };
-  }, [terminalSettings?.copyOnSelect, isSearchOpen, isVisible, isResizing]);
+  }, [terminalSettings?.copyOnSelect, terminalSettings?.normalizeTextOnCopy, isSearchOpen, isVisible, isResizing]);
 
 
   // Track whether the terminal application has enabled mouse tracking

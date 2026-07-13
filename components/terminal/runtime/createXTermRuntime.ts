@@ -38,6 +38,7 @@ import {
   clearTerminalViewport,
   installEraseInDisplayHandlers,
 } from "../clearTerminalViewport";
+import { getTerminalSelectionForClipboard } from "../normalizeTerminalSelection";
 import {
   createKittyKeyboardModeState,
   encodeKittyControlKey,
@@ -459,6 +460,26 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   term.loadAddon(searchAddon);
 
   term.open(ctx.container);
+
+  // Intercept native copy (Edit > Copy, browser/Electron copy event) before
+  // xterm's built-in handler writes selectionText, so normalizeTextOnCopy applies.
+  const handleNativeCopy = (event: ClipboardEvent) => {
+    if (!term.hasSelection()) return;
+    const normalize = ctx.terminalSettingsRef.current?.normalizeTextOnCopy ?? true;
+    if (!normalize) return; // let xterm write raw selectionText
+    const selection = getTerminalSelectionForClipboard(term, true);
+    if (!selection) return;
+    if (event.clipboardData) {
+      event.clipboardData.setData("text/plain", selection);
+    } else {
+      void navigator.clipboard.writeText(selection).catch((err) => {
+        logger.warn("[XTerm] Normalized native copy failed:", err);
+      });
+    }
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  };
+  term.element?.addEventListener("copy", handleNativeCopy, true);
 
   let webglAddon: WebglAddon | null = null;
   let webglLoaded = false;
@@ -1078,7 +1099,10 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
           e.stopPropagation();
           switch (action) {
             case "copy": {
-              const selection = term.getSelection();
+              const selection = getTerminalSelectionForClipboard(
+                term,
+                ctx.terminalSettingsRef.current?.normalizeTextOnCopy ?? true,
+              );
               if (selection) navigator.clipboard.writeText(selection);
               break;
             }
@@ -1095,7 +1119,10 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
               break;
             }
             case "pasteSelection": {
-              const selection = term.getSelection();
+              const selection = getTerminalSelectionForClipboard(
+                term,
+                ctx.terminalSettingsRef.current?.normalizeTextOnCopy ?? true,
+              );
               const id = ctx.sessionRef.current;
               if (selection && id) {
                 pasteTextIntoTerminal(term, selection, {
@@ -1417,6 +1444,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     ensureWebglRenderer: loadWebglRenderer,
     suspendWebglRenderer,
     dispose: () => {
+      term.element?.removeEventListener("copy", handleNativeCopy, true);
       ctx.container.removeEventListener(
         "wheel",
         handleForcedHistoryScrollWheel,
