@@ -173,6 +173,20 @@ test("buildAuthHandler explicit key mode uses only the selected key and stated p
   assert.equal(labels.includes("password"), true, labels.join(","));
 });
 
+test("buildAuthHandler explicit key mode never substitutes an unrelated default key", () => {
+  const auth = buildAuthHandler({
+    authMethod: "key",
+    username: "root",
+    defaultKeys: DEFAULT_KEYS,
+    allowAgentFallback: true,
+  });
+
+  const labels = collectAuthMethods(auth.authHandler);
+  assert.equal(labels.includes("publickey"), false, labels.join(","));
+  assert.equal(labels.includes("agent"), false, labels.join(","));
+  assert.equal(auth.privateKey, null);
+});
+
 test("buildAuthHandler explicit password mode ignores an agent and default keys", () => {
   const auth = buildAuthHandler({
     authMethod: "password",

@@ -48,13 +48,20 @@ function isSshAuthFailure(err) {
     message.includes("no authentication methods available");
 }
 
+function hasSelectedAgentIdentity(options) {
+  const hasInlinePublicKey = Array.isArray(options?.agentPublicKeys)
+    && options.agentPublicKeys.some((key) => typeof key === "string" && key.trim().length > 0);
+  const hasReferencedIdentity = Array.isArray(options?.identityFilePaths)
+    && options.identityFilePaths.some((filePath) => typeof filePath === "string" && filePath.trim().length > 0);
+  return hasInlinePublicKey || hasReferencedIdentity;
+}
+
 function shouldOfferAgentForLogin(options, connectOpts) {
   const selectedMethod = options?.authMethod;
   const hasRestrictedSelectedAgent = selectedMethod === "key"
     && options?.useSshAgent === true
     && options?.identitiesOnly === true
-    && Array.isArray(options?.agentPublicKeys)
-    && options.agentPublicKeys.length > 0;
+    && hasSelectedAgentIdentity(options);
   const isStrictMethod = selectedMethod === "password"
     || selectedMethod === "key"
     || selectedMethod === "certificate";
@@ -68,8 +75,7 @@ function shouldPrepareSystemAgentForLogin(options) {
   if (options?.authMethod !== "key") return true;
   return options?.useSshAgent === true
     && options?.identitiesOnly === true
-    && Array.isArray(options?.agentPublicKeys)
-    && options.agentPublicKeys.length > 0;
+    && hasSelectedAgentIdentity(options);
 }
 
 function resolveUnlockedEncryptedKeysForAuth(options, strictAgentSelection) {

@@ -278,11 +278,13 @@ function createMoshSessionApi(ctx) {
 
         if (options.authMethod === "auto") {
           const selectedIdentities = new Set();
+          const useAgentOnlySelectors = options.useSshAgent === true
+            && options.identitiesOnly === true;
           for (let index = 0; index < sshArgs.length - 1; index += 1) {
             if (sshArgs[index] === "-i") selectedIdentities.add(sshArgs[index + 1]);
           }
           for (const keyPath of discoverMoshIdentityPaths()) {
-            const selector = options.useSshAgent ? `${keyPath}.pub` : keyPath;
+            const selector = useAgentOnlySelectors ? `${keyPath}.pub` : keyPath;
             if (!selectedIdentities.has(selector)) {
               sshArgs.push("-i", selector);
               selectedIdentities.add(selector);

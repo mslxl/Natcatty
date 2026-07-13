@@ -873,10 +873,13 @@ function buildAuthHandler(options) {
   // Determine effective agent
   const effectiveAgent = isPasswordOnly ? null : agent || (useAgentFirst ? sshAgentSocket : null);
 
-  // Determine effective privateKey (user-provided takes priority)
+  // Determine effective privateKey (user-provided takes priority). Explicit
+  // key/certificate selection must fail closed when the selected material is
+  // unavailable instead of silently substituting an unrelated default key.
+  const mayUseDefaultKeyAsPrimary = isAutomatic || (!isSelectedKeyMode && !hasExplicitAuth);
   const effectivePrivateKey = isPasswordOnly
     ? null
-    : privateKey || ((isAutomatic || !hasExplicitAuth) && defaultKeys.length > 0 ? defaultKeys[0].privateKey : null);
+    : privateKey || (mayUseDefaultKeyAsPrimary && defaultKeys.length > 0 ? defaultKeys[0].privateKey : null);
 
   // Determine fallback keys (keys to try after user's primary auth fails)
   // - If user provided a key: all default keys are fallbacks
@@ -1025,7 +1028,7 @@ function buildAuthHandler(options) {
     }
 
     // 5. If no user key provided, add first default key at the beginning (after agent)
-    if (!privateKey && defaultKeys.length > 0) {
+    if (!isSelectedKeyMode && !privateKey && defaultKeys.length > 0) {
       const insertIndex = effectiveAgent ? 1 : 0;
       authMethods.splice(insertIndex, 0, {
         type: "publickey",

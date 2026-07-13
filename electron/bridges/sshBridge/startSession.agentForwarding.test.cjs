@@ -34,9 +34,18 @@ test("direct SSH allows only a restricted selected agent-backed key", () => {
   assert.equal(shouldPrepareSystemAgentForLogin(selectedAgentKey), true);
   assert.equal(shouldOfferAgentForLogin(selectedAgentKey, { agent: {} }), true);
 
+  const selectedReferencedKey = {
+    ...selectedAgentKey,
+    agentPublicKeys: [],
+    identityFilePaths: ["~/.ssh/id_work"],
+  };
+  assert.equal(shouldPrepareSystemAgentForLogin(selectedReferencedKey), true);
+  assert.equal(shouldOfferAgentForLogin(selectedReferencedKey, { agent: {} }), true);
+
   assert.equal(shouldPrepareSystemAgentForLogin({
     ...selectedAgentKey,
     agentPublicKeys: [],
+    identityFilePaths: [],
   }), false);
   assert.equal(shouldOfferAgentForLogin({
     ...selectedAgentKey,

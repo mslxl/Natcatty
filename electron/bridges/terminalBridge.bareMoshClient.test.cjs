@@ -237,6 +237,16 @@ test("Mosh automatic mode discovers custom local keys in preferred order", async
     "-i", path.join(sshDir, "id_ed25519"),
     "-i", path.join(sshDir, "id_work"),
   ]);
+
+  const agentFallback = await api.buildMoshSshAuthArgs({
+    authMethod: "auto",
+    useSshAgent: true,
+    identitiesOnly: false,
+  }, "session-auto-agent");
+  assert.deepEqual(agentFallback.sshArgs, [
+    "-i", path.join(sshDir, "id_ed25519"),
+    "-i", path.join(sshDir, "id_work"),
+  ]);
 });
 
 test("removed Mosh client detection APIs are not exposed to the renderer", () => {
