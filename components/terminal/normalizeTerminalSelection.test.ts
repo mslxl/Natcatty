@@ -162,6 +162,28 @@ test("joinSoftWrappedRows keeps URL tokens intact when split mid-word", () => {
   );
 });
 
+test("joinSoftWrappedRows preserves Windows paths and URL query delimiters", () => {
+  assert.equal(
+    joinSoftWrappedRows("C:\\Users\\alice\\verylongfi   ", "lename.txt"),
+    "C:\\Users\\alice\\verylongfilename.txt",
+  );
+  assert.equal(
+    joinSoftWrappedRows("https://example.com/path   ", "?q=netcatty"),
+    "https://example.com/path?q=netcatty",
+  );
+  assert.equal(
+    joinSoftWrappedRows("https://example.com/search?   ", "q=netcatty"),
+    "https://example.com/search?q=netcatty",
+  );
+});
+
+test("joinSoftWrappedRows keeps sentence break after a URL", () => {
+  assert.equal(
+    joinSoftWrappedRows("See https://example.com.   ", "Next sentence"),
+    "See https://example.com. Next sentence",
+  );
+});
+
 test("preserves partial trailing spaces after wide characters using column ends", () => {
   // "中  X" with 中 width 2 → columns: [中][ ][ ][ ][X] roughly.
   // Select through the spaces after 中 but before X.

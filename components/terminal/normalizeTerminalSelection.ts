@@ -234,8 +234,23 @@ function isTokenContinuation(left: string, next: string): boolean {
     return true;
   }
 
-  // e.g. "foo/" + "bar", or mid-URL "com." + "path" when trailing token is URL-like.
-  if (PATH_TOKEN_START.has(nextStart) && (isAsciiWordChar(leftEnd) || "/-_:.".includes(leftEnd))) {
+  // Query/fragment delimiters after a URL/path token.
+  if (
+    looksLikeUrlOrPath(trailingToken) &&
+    (nextStart === "?" || nextStart === "#" || nextStart === "&")
+  ) {
+    return true;
+  }
+  if (
+    looksLikeUrlOrPath(trailingToken) &&
+    (leftEnd === "?" || leftEnd === "#" || leftEnd === "&") &&
+    (isAsciiWordChar(nextStart) || nextStart === "=" || nextStart === "-" || nextStart === "_")
+  ) {
+    return true;
+  }
+
+  // e.g. "foo/" + "bar", or mid-URL when trailing token is URL-like.
+  if (PATH_TOKEN_START.has(nextStart) && (isAsciiWordChar(leftEnd) || "/\\-_:.".includes(leftEnd))) {
     if (looksLikeUrlOrPath(trailingToken) || leftEnd === "/" || leftEnd === "\\") {
       return true;
     }
@@ -250,11 +265,12 @@ function isTokenContinuation(left: string, next: string): boolean {
     return true;
   }
 
-  // Trailing token ends with URL-ish punctuation and next continues the token.
+  // Trailing token ends with URL-ish joiners (- _ :) and next continues the token.
+  // Do not include "." here: "https://example.com." + "Next" is a sentence break.
   if (
     looksLikeUrlOrPath(trailingToken) &&
     isAsciiWordChar(nextStart) &&
-    (leftEnd === "." || leftEnd === "-" || leftEnd === "_" || leftEnd === ":")
+    (leftEnd === "-" || leftEnd === "_" || leftEnd === ":")
   ) {
     return true;
   }
@@ -274,6 +290,10 @@ function looksLikeUrlOrPath(token: string): boolean {
   // Absolute or deep relative paths: /usr/local/... or foo/bar/baz
   if (token.startsWith("/") || token.startsWith("./") || token.startsWith("../")) return true;
   if ((token.match(/\//g) ?? []).length >= 1 && /[A-Za-z0-9]/u.test(token)) return true;
+  // Windows / UNC paths: C:\Users\... or \\server\share
+  if (/^[A-Za-z]:[\\/]/u.test(token)) return true;
+  if (token.startsWith("\\\\")) return true;
+  if ((token.match(/\\/g) ?? []).length >= 1 && /[A-Za-z0-9]/u.test(token)) return true;
   return false;
 }
 
