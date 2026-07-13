@@ -177,12 +177,12 @@ function buildLinearSelection(
 /**
  * Join two physical rows that xterm marked as a soft wrap.
  *
- * Trailing whitespace on the previous row may be a real word separator (one
- * space) or TUI display padding (often many spaces). Multi-space padding alone
- * is never treated as proof of a word boundary — inventing a space would split
- * identifiers, URLs, and non-Latin words. A single trailing space is the common
- * soft-wrap-at-word-boundary case and keeps one separator, except for token
- * continuations (CJK / URL / path) which stay tight.
+ * Trailing whitespace is either a real word separator or TUI display padding.
+ * Policy (tuned for #2162 Pi/TUI prose + common tokens):
+ * - no trailing ws → mid-word auto-wrap, concatenate tightly
+ * - strong token continuation (CJK / path punctuation / URL query) → tight
+ * - multi-space padding on a URL/path mid-token (alnum|alnum) → tight
+ * - otherwise (single or multi-space between ordinary words) → one space
  */
 export function joinSoftWrappedRows(previousRaw: string, nextRaw: string): string {
   const trailingWhitespace = countTrailingHorizontalWhitespace(previousRaw);
@@ -204,26 +204,25 @@ export function joinSoftWrappedRows(previousRaw: string, nextRaw: string): strin
     return nextRaw;
   }
 
-  // Token continuations always join tightly (even with a single pad cell).
-  if (isTokenContinuation(left, nextRaw)) {
+  // Strong continuations (CJK, path/URL punctuation) ignore pad spaces.
+  if (isStrongTokenContinuation(left, nextRaw)) {
     return left + nextRaw;
   }
 
-  // Exactly one trailing space → classic word-boundary soft wrap.
-  if (trailingWhitespace === 1) {
-    return `${left} ${nextRaw}`;
+  // Multi-space padding mid-URL/path (not a word boundary after the token).
+  // A single trailing space after a URL is a real separator ("…com today").
+  if (
+    trailingWhitespace > 1 &&
+    isUrlOrPathMidTokenContinuation(left, nextRaw)
+  ) {
+    return left + nextRaw;
   }
 
-  // Multi-space TUI padding: do not invent separators for mid-token wraps
-  // (identifiers, URLs, non-Latin words). Keep a separator only after clear
-  // sentence-ending punctuation so "…com. Next" stays two sentences.
-  if (/[.!?…]$/u.test(left)) {
-    return `${left} ${nextRaw}`;
-  }
-  return left + nextRaw;
+  // Prose word boundary: single-space wrap or multi-space TUI padding between words.
+  return `${left} ${nextRaw}`;
 }
 
-function isTokenContinuation(left: string, next: string): boolean {
+function isStrongTokenContinuation(left: string, next: string): boolean {
   const leftEnd = lastCodePointChar(left);
   const nextStart = firstCodePointChar(next);
   if (!leftEnd || !nextStart) return false;
@@ -236,7 +235,6 @@ function isTokenContinuation(left: string, next: string): boolean {
     return isCjkRelatedCodePoint(nextStartCp) || isCjkPunctuation(nextStart);
   }
 
-  // Only the token immediately before the wrap (after the last whitespace).
   const trailingToken = getTrailingToken(left);
 
   // Path/URL fragment separators at the end of the trailing token.
@@ -259,24 +257,14 @@ function isTokenContinuation(left: string, next: string): boolean {
     return true;
   }
 
-  // e.g. "foo/" + "bar", or mid-URL when trailing token is URL-like.
+  // e.g. "foo/" + "bar" when trailing token is path/URL-like.
   if (PATH_TOKEN_START.has(nextStart) && (isAsciiWordChar(leftEnd) || "/\\-_:.".includes(leftEnd))) {
     if (looksLikeUrlOrPath(trailingToken) || leftEnd === "/" || leftEnd === "\\") {
       return true;
     }
   }
 
-  // URL/path split mid-token between alphanumerics (common at terminal width).
-  if (
-    isAsciiWordChar(leftEnd) &&
-    isAsciiWordChar(nextStart) &&
-    looksLikeUrlOrPath(trailingToken)
-  ) {
-    return true;
-  }
-
-  // Trailing token ends with URL-ish joiners (- _ :) and next continues the token.
-  // Do not include "." here: "https://example.com." + "Next" is a sentence break.
+  // URL/path joiners (- _ :) — not "." (sentence end after URL).
   if (
     looksLikeUrlOrPath(trailingToken) &&
     isAsciiWordChar(nextStart) &&
@@ -286,6 +274,15 @@ function isTokenContinuation(left: string, next: string): boolean {
   }
 
   return false;
+}
+
+/** Mid-token URL/path split between alphanumerics (multi-space pad only). */
+function isUrlOrPathMidTokenContinuation(left: string, next: string): boolean {
+  const leftEnd = lastCodePointChar(left);
+  const nextStart = firstCodePointChar(next);
+  if (!leftEnd || !nextStart) return false;
+  if (!isAsciiWordChar(leftEnd) || !isAsciiWordChar(nextStart)) return false;
+  return looksLikeUrlOrPath(getTrailingToken(left));
 }
 
 function getTrailingToken(text: string): string {

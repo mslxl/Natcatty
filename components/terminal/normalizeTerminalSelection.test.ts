@@ -128,11 +128,10 @@ test("joinSoftWrappedRows does not invent spaces before CJK punctuation", () => 
   assert.equal(joinSoftWrappedRows("你好   ", "，世界"), "你好，世界");
 });
 
-test("joinSoftWrappedRows does not invent spaces for multi-space TUI padding", () => {
-  // Multi-space runs are display padding, not proof of a word boundary.
-  assert.equal(joinSoftWrappedRows("most   ", "reliable"), "mostreliable");
-  assert.equal(joinSoftWrappedRows("someVeryLongIdenti   ", "fier"), "someVeryLongIdentifier");
-  assert.equal(joinSoftWrappedRows("прив   ", "ет"), "привет");
+test("joinSoftWrappedRows collapses multi-space prose padding to one space", () => {
+  // Pi/TUI word-wrapped prose: padding between words must not glue them.
+  assert.equal(joinSoftWrappedRows("the most   ", "reliable"), "the most reliable");
+  assert.equal(joinSoftWrappedRows("shifts   ", "across"), "shifts across");
 });
 
 test("joinSoftWrappedRows does not invent spaces between CJK characters", () => {
@@ -151,15 +150,14 @@ test("joinSoftWrappedRows keeps a space after sentence-ending punctuation", () =
 });
 
 test("joinSoftWrappedRows only uses the trailing token for URL detection", () => {
-  // Multi-space padding after a normal word stays tight (not a URL token).
   assert.equal(
     joinSoftWrappedRows("See https://x.test for more   ", "details"),
-    "See https://x.test for moredetails",
-  );
-  // Single trailing space still preserves the word boundary.
-  assert.equal(
-    joinSoftWrappedRows("See https://x.test for more ", "details"),
     "See https://x.test for more details",
+  );
+  // Single trailing space after a URL is a real word separator.
+  assert.equal(
+    joinSoftWrappedRows("See https://example.com ", "today"),
+    "See https://example.com today",
   );
 });
 
@@ -203,7 +201,7 @@ test("preserves partial trailing spaces after wide characters using column ends"
   assert.equal(getNormalizedTerminalSelection(term), "中  ");
 });
 
-test("joins soft-wrapped rows, strips multi-space padding without inventing separators", () => {
+test("joins soft-wrapped rows and collapses prose padding to one space", () => {
   const term = makeTerm(
     [
       { text: "Pi: use /copy is the most   " },
@@ -215,7 +213,7 @@ test("joins soft-wrapped rows, strips multi-space padding without inventing sepa
 
   assert.equal(
     getNormalizedTerminalSelection(term),
-    "Pi: use /copy is the mostreliable option\nnext hard line",
+    "Pi: use /copy is the most reliable option\nnext hard line",
   );
 });
 
