@@ -213,6 +213,34 @@ test("does not flush cap-sized pending bytes while automatic flushing is gated",
   assert.deepEqual(writes, ["x".repeat(cap) + "y"]);
 });
 
+test("still resolves schedule mode for gated oversize pushes (alt-screen probe)", () => {
+  const writes: string[] = [];
+  let canFlush = false;
+  const probed: string[] = [];
+  const cap = 8;
+  const coalescer = createTestCoalescer((data) => writes.push(data), {
+    getMaxPendingBytes: () => cap,
+    shouldFlushScheduledFrame: () => canFlush,
+    resolveScheduleMode: ({ nextChunk }) => {
+      probed.push(nextChunk);
+      return nextChunk.includes("\x1b[?1049h") ? "raf" : "microtask";
+    },
+  });
+
+  // First chunk arms microtask schedule under the cap; second exceeds cap while
+  // gated — resolveScheduleMode must still run so enter-alt latches fire.
+  coalescer.push("shell");
+  coalescer.push(`\x1b[?1049h${"x".repeat(cap)}`);
+  fireFrame();
+
+  assert.deepEqual(writes, []);
+  assert.deepEqual(probed, ["shell", `\x1b[?1049h${"x".repeat(cap)}`]);
+
+  canFlush = true;
+  coalescer.flushSync();
+  assert.equal(writes.join("").includes("\x1b[?1049h"), true);
+});
+
 test("dispose flushes remaining bytes and stops accepting new chunks", () => {
   const writes: string[] = [];
   const coalescer = createTestCoalescer((data) => writes.push(data));

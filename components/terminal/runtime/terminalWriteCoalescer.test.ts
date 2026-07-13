@@ -288,6 +288,79 @@ test("oversized coalesced output waits while hidden instead of writing directly"
   resetTerminalWriteCoalescer(term);
 });
 
+test("hidden oversized enter-alt still latches rAF for follow-up after reveal", () => {
+  const term = {
+    buffer: { active: { type: "normal" as string } },
+  } as unknown as XTerm;
+  const writes: string[] = [];
+  let isPaneVisible = false;
+  const frames: Array<FrameRequestCallback> = [];
+  const microtasks: Array<() => void> = [];
+  const originalRaf = Object.getOwnPropertyDescriptor(globalThis, "requestAnimationFrame");
+  const originalCancel = Object.getOwnPropertyDescriptor(globalThis, "cancelAnimationFrame");
+  const originalMicrotask = globalThis.queueMicrotask;
+
+  Object.defineProperty(globalThis, "requestAnimationFrame", {
+    configurable: true,
+    value: (callback: FrameRequestCallback) => {
+      frames.push(callback);
+      return frames.length;
+    },
+  });
+  Object.defineProperty(globalThis, "cancelAnimationFrame", {
+    configurable: true,
+    value: () => {},
+  });
+  globalThis.queueMicrotask = (callback: () => void) => {
+    microtasks.push(callback);
+  };
+
+  try {
+    // Cap below enter-alt payload so the gated oversize path is taken while hidden.
+    setTerminalWriteCoalescerByteCapResolver(term, () => 4);
+    setTerminalWriteCoalescerFlushGate(term, () => isPaneVisible);
+
+    enqueueCoalescedTerminalWrite(term, "\x1b[?1049hframe", (data) => {
+      writes.push(data);
+    });
+    frames.splice(0).forEach((frame) => frame(0));
+    microtasks.splice(0).forEach((task) => task());
+    assert.deepEqual(writes, []);
+
+    isPaneVisible = true;
+    flushTerminalWriteCoalescer(term);
+    // Cap is 4, so the flush may shard the batch; content must still be intact.
+    assert.equal(writes.join(""), "\x1b[?1049hframe");
+    writes.length = 0;
+    frames.length = 0;
+    microtasks.length = 0;
+
+    // Buffer still reports normal until xterm parses; latch must force rAF.
+    // Raise the cap so the follow-up uses normal scheduling (not cap flush).
+    setTerminalWriteCoalescerByteCapResolver(term, () => 64 * 1024);
+    enqueueCoalescedTerminalWrite(term, "\x1b[Hrepaint", (data) => {
+      writes.push(data);
+    });
+    assert.equal(frames.length, 1, "follow-up after hidden enter-alt must use rAF");
+    assert.equal(microtasks.length, 0, "must not fall back to microtask after enter-alt latch");
+    frames[0]!(0);
+    assert.deepEqual(writes, ["\x1b[Hrepaint"]);
+  } finally {
+    resetTerminalWriteCoalescer(term);
+    globalThis.queueMicrotask = originalMicrotask;
+    if (originalRaf) {
+      Object.defineProperty(globalThis, "requestAnimationFrame", originalRaf);
+    } else {
+      Reflect.deleteProperty(globalThis, "requestAnimationFrame");
+    }
+    if (originalCancel) {
+      Object.defineProperty(globalThis, "cancelAnimationFrame", originalCancel);
+    } else {
+      Reflect.deleteProperty(globalThis, "cancelAnimationFrame");
+    }
+  }
+});
+
 test("splits large plain terminal output into cooperative chunks", () => {
   const term = createFakeTerm();
   const writes: Array<{
