@@ -159,12 +159,8 @@ const isTerminalAlternateScreenActive = (term: XTerm): boolean => {
 };
 
 const noteAltScreenScheduleProbe = (term: XTerm, chunk: string): boolean => {
-  if (isTerminalAlternateScreenActive(term)) {
-    incompleteAltScreenCsiByTerm.delete(term);
-    pendingAltScreenEntryByTerm.delete(term);
-    return true;
-  }
-
+  // Always scan the chunk first so leave-alt CSI is observed even while
+  // buffer.active still reports "alternate" (parser lags our write schedule).
   const resume = incompleteAltScreenCsiByTerm.get(term) ?? null;
   const probe = probeAltScreenScheduling(chunk, resume);
   if (probe.incomplete) {
@@ -178,6 +174,11 @@ const noteAltScreenScheduleProbe = (term: XTerm, chunk: string): boolean => {
   } else if (probe.lastTransition === "enter") {
     // Complete enter CSI observed; xterm may still report normal until parse.
     pendingAltScreenEntryByTerm.set(term, true);
+  }
+
+  if (isTerminalAlternateScreenActive(term)) {
+    // Stay on rAF while the alternate buffer is live.
+    return true;
   }
 
   return (
@@ -425,13 +426,9 @@ export const enqueueCoalescedTerminalWrite = (
       // When rAF is unavailable (Node unit tests), prefer the "raf" mode so the
       // coalescer falls back to an immediate flush (legacy test contract).
       resolveScheduleMode: ({ nextChunk }): WriteCoalesceScheduleMode => {
-        // Use only nextChunk + retained incomplete CSI tail (O(1) / chunk), so
-        // multi-chunk TUI bursts do not quadratic-join the pending backlog.
-        // Tail is retained across flushes so "\x1b[?104" | "9h..." still rAF.
-        if (
-          isTerminalAlternateScreenActive(term)
-          || noteAltScreenScheduleProbe(term, nextChunk)
-        ) {
+        // Probe always runs (handles leave while buffer is still alternate).
+        // O(chunk) parser state — no quadratic pending joins.
+        if (noteAltScreenScheduleProbe(term, nextChunk)) {
           return "raf";
         }
         const canUseMicrotask = typeof queueMicrotask === "function"

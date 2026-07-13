@@ -588,6 +588,65 @@ test("upgrades to rAF when alternate-screen CSI is split across PTY chunks", () 
   }
 });
 
+test("leave-alt CSI clears latch even while buffer still reports alternate", () => {
+  const term = {
+    buffer: { active: { type: "alternate" as string } },
+  } as unknown as XTerm;
+  const frames: Array<FrameRequestCallback> = [];
+  const originalRaf = Object.getOwnPropertyDescriptor(globalThis, "requestAnimationFrame");
+  const originalCancel = Object.getOwnPropertyDescriptor(globalThis, "cancelAnimationFrame");
+  const originalMicrotask = globalThis.queueMicrotask;
+  const microtasks: Array<() => void> = [];
+
+  Object.defineProperty(globalThis, "requestAnimationFrame", {
+    configurable: true,
+    value: (callback: FrameRequestCallback) => {
+      frames.push(callback);
+      return frames.length;
+    },
+  });
+  Object.defineProperty(globalThis, "cancelAnimationFrame", {
+    configurable: true,
+    value: () => {},
+  });
+  globalThis.queueMicrotask = (callback: () => void) => {
+    microtasks.push(callback);
+  };
+
+  try {
+    setTerminalWriteCoalescerByteCapResolver(term, () => 64 * 1024);
+    // Simulate prior enter latch while already on alternate buffer.
+    enqueueCoalescedTerminalWrite(term, "\x1b[?1049h", () => {});
+    frames[0]!(0);
+    frames.length = 0;
+    microtasks.length = 0;
+
+    enqueueCoalescedTerminalWrite(term, "\x1b[?1049l", () => {});
+    frames[0]!(0);
+    frames.length = 0;
+    microtasks.length = 0;
+
+    // Buffer flips to normal after leave is written; latch must be gone.
+    (term.buffer.active as { type: string }).type = "normal";
+    enqueueCoalescedTerminalWrite(term, "shell after tui", () => {});
+    assert.equal(microtasks.length, 1);
+    assert.equal(frames.length, 0);
+  } finally {
+    resetTerminalWriteCoalescer(term);
+    globalThis.queueMicrotask = originalMicrotask;
+    if (originalRaf) {
+      Object.defineProperty(globalThis, "requestAnimationFrame", originalRaf);
+    } else {
+      Reflect.deleteProperty(globalThis, "requestAnimationFrame");
+    }
+    if (originalCancel) {
+      Object.defineProperty(globalThis, "cancelAnimationFrame", originalCancel);
+    } else {
+      Reflect.deleteProperty(globalThis, "cancelAnimationFrame");
+    }
+  }
+});
+
 test("enter-then-leave in one chunk does not latch rAF forever", () => {
   const term = {
     buffer: { active: { type: "normal" as string } },
