@@ -343,6 +343,38 @@ test("prepareEtSshEnvironment enables selected agent-backed key auth", (t) => {
   );
 });
 
+test("ET strict key modes do not fall back to unrelated default identities", (t) => {
+  const { api, base } = makeApi(t);
+  const defaultKeyPath = path.join(base, "home", ".ssh", "id_unrelated");
+  fs.mkdirSync(path.dirname(defaultKeyPath), { recursive: true });
+  fs.writeFileSync(defaultKeyPath, "UNRELATED PRIVATE KEY");
+
+  const target = api.prepareEtSshEnvironment("sess-missing-target-key", {
+    hostname: "target.example",
+    username: "alice",
+    authMethod: "key",
+  });
+  assert.ok(target.sshOptions.includes("IdentityFile=none"));
+  assert.ok(target.sshOptions.includes("IdentitiesOnly=yes"));
+  assert.equal(target.sshOptions.includes(`IdentityFile=${defaultKeyPath}`), false);
+
+  const jump = api.prepareEtSshEnvironment("sess-missing-jump-key", {
+    hostname: "target.example",
+    username: "alice",
+    authMethod: "password",
+    password: "target-secret",
+    jumpHosts: [{
+      hostname: "jump.example",
+      username: "ops",
+      authMethod: "certificate",
+    }],
+  });
+  const config = fs.readFileSync(path.join(jump.env.HOME, ".ssh", "config"), "utf8");
+  assert.match(config, /Host jump\.example[\s\S]*IdentityFile none/);
+  assert.match(config, /Host jump\.example[\s\S]*IdentitiesOnly yes/);
+  assert.doesNotMatch(config, new RegExp(defaultKeyPath.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&")));
+});
+
 test("ET explicitly disables native agent login for target and jump hosts", (t) => {
   const { api } = makeApi(t);
   const env = api.prepareEtSshEnvironment("sess-agent-disabled", {

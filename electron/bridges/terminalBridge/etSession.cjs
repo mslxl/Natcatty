@@ -411,6 +411,11 @@ main();
         sshOptions.push(`IdentityFile=${normalizeSshConfigPath(idPath)}`);
       }
 
+      const hasStrictTargetAuth = options.authMethod === "key" || options.authMethod === "certificate";
+      if (hasStrictTargetAuth && identityPaths.length === 0) {
+        sshOptions.push("IdentityFile=none");
+      }
+
       if (
         (options.authMethod !== "auto" && !options.useSshAgent && (identityPaths.length > 0 || options.authMethod === "key" || options.authMethod === "certificate"))
         || (options.useSshAgent && options.identitiesOnly)
@@ -539,6 +544,15 @@ main();
 
         if (jump.useSshAgent && jump.identitiesOnly && !jumpConfigLines.includes("  IdentitiesOnly yes")) {
           jumpConfigLines.push("  IdentitiesOnly yes");
+        }
+
+        const hasStrictJumpAuth = jump.authMethod === "key" || jump.authMethod === "certificate";
+        const hasSelectedJumpIdentity = jumpConfigLines.some((line) => line.startsWith("  IdentityFile "));
+        if (hasStrictJumpAuth && !hasSelectedJumpIdentity) {
+          jumpConfigLines.push("  IdentityFile none");
+          if (!jumpConfigLines.includes("  IdentitiesOnly yes")) {
+            jumpConfigLines.push("  IdentitiesOnly yes");
+          }
         }
 
         if (jump.authMethod === "auto") {
