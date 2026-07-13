@@ -2484,16 +2484,9 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       }) ? () => setOsc7SetupOpen(true) : undefined}
       onUpdateHost={handleUpdateHostFromTerminal}
       showClose={opts?.showClose}
-      // In a workspace, the toolbar X means "return this pane to its own tab"
-      // (detach), not destroy the session. Context-menu Close still kills it.
-      onClose={() => {
-        if (inWorkspace && onDetach) {
-          onDetach();
-          return;
-        }
-        onCloseSession?.(sessionId);
-      }}
-      closeRestoresTab={Boolean(inWorkspace && onDetach)}
+      // Workspace toolbar X closes/destroys this pane session. Detach to a
+      // standalone tab remains a separate control (SquareArrowOutUpRight).
+      onClose={() => onCloseSession?.(sessionId)}
       isSearchOpen={isSearchOpen}
       onToggleSearch={handleToggleSearch}
       showLogButton
@@ -2540,7 +2533,6 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     isSessionLogging,
     isWorkspaceComposeBarOpen,
     onCloseSession,
-    onDetach,
     onOpenScripts,
     onOpenHistory,
     onOpenTheme,
