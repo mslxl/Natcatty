@@ -265,6 +265,42 @@ test("merged flood backlog still yields between synchronous write steps", async 
   assert.deepEqual(order, [0, 1]);
 });
 
+test("merged flood backlog honors per-step yieldAfter, not every shard", async () => {
+  const term = createFakeTerm();
+  const order: number[] = [];
+  let releaseFirst: (() => void) | null = null;
+
+  // Hold the first write so later shards merge into one flood item.
+  enqueueTerminalWrite(term, 1, (done) => {
+    releaseFirst = done;
+  });
+
+  for (let index = 0; index < MAX_WRITE_QUEUE_ITEMS + 1; index += 1) {
+    // Only every 4th step asks to yield — merge must preserve that, not force
+    // a timer after each shard (writeLargeTerminalBatch drain-budget pacing).
+    const yieldAfter = index % 4 === 3;
+    enqueueTerminalWrite(
+      term,
+      10,
+      (done) => {
+        order.push(index);
+        done();
+      },
+      { yieldAfter },
+    );
+  }
+
+  assert.equal(getTerminalWriteQueueDepth(term), 1);
+  assert.equal(isTerminalWriteQueueInFloodMode(term), true);
+  assert.deepEqual(order, []);
+
+  releaseFirst?.();
+  // First four shards run in one turn (yieldAfter only on index 3).
+  assert.deepEqual(order, [0, 1, 2, 3]);
+  await waitForQueuedWriteYield();
+  assert.deepEqual(order, [0, 1, 2, 3, 4, 5, 6, 7]);
+});
+
 test("flushTerminalWriteQueueBypassingTimers drains merged flood backlog without timer yields", () => {
   const term = createFakeTerm();
   const order: number[] = [];

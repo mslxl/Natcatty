@@ -211,7 +211,11 @@ const runQueuedWrite = (
     let insideWrite = true;
     const continueAfterStep = (): void => {
       currentDrainBytes += step.bytes;
-      if ((step.yieldAfter || item.yieldAfter) && index < item.steps.length) {
+      // Inter-step yields honor per-step flags only. item.yieldAfter applies
+      // after the whole item finishes (see scheduleNextTerminalWrite), so that
+      // flood merges preserve writeLargeTerminalBatch drain-budget pacing
+      // instead of forcing a timer after every shard.
+      if (step.yieldAfter && index < item.steps.length) {
         currentDrainBytes = 0;
         deferStep(runNext);
         return;
@@ -262,8 +266,15 @@ const mergePendingWrites = (queue: TerminalWriteQueue): void => {
 
   const steps: QueuedWriteStep[] = [];
   let bytes = 0;
+  // Keep a post-item yield if any source item asked for one; inter-step yields
+  // come only from per-step yieldAfter / maxDrainBytes (not a forced every-step
+  // pause). writeLargeTerminalBatch sets yieldAfter only every drain budget.
+  let yieldAfterItem = false;
   for (const item of queue.pending) {
     bytes += item.bytes;
+    if (item.yieldAfter) {
+      yieldAfterItem = true;
+    }
     steps.push(...item.steps.slice(item.nextIndex));
   }
   queue.pending = [{
@@ -271,7 +282,7 @@ const mergePendingWrites = (queue: TerminalWriteQueue): void => {
     steps,
     nextIndex: 0,
     cancelled: false,
-    yieldAfter: true,
+    yieldAfter: yieldAfterItem,
     maxDrainBytes: Math.min(...queue.pending.map((item) => item.maxDrainBytes)),
   }];
   queue.pendingBytes = bytes;

@@ -288,6 +288,69 @@ test("oversized coalesced output waits while hidden instead of writing directly"
   resetTerminalWriteCoalescer(term);
 });
 
+test("abort clears alt-screen latch even when no coalescer was created", () => {
+  const term = {
+    buffer: { active: { type: "normal" as string } },
+  } as unknown as XTerm;
+  const writes: string[] = [];
+  const frames: Array<FrameRequestCallback> = [];
+  const microtasks: Array<() => void> = [];
+  const originalRaf = Object.getOwnPropertyDescriptor(globalThis, "requestAnimationFrame");
+  const originalCancel = Object.getOwnPropertyDescriptor(globalThis, "cancelAnimationFrame");
+  const originalMicrotask = globalThis.queueMicrotask;
+
+  Object.defineProperty(globalThis, "requestAnimationFrame", {
+    configurable: true,
+    value: (callback: FrameRequestCallback) => {
+      frames.push(callback);
+      return frames.length;
+    },
+  });
+  Object.defineProperty(globalThis, "cancelAnimationFrame", {
+    configurable: true,
+    value: () => {},
+  });
+  globalThis.queueMicrotask = (callback: () => void) => {
+    microtasks.push(callback);
+  };
+
+  try {
+    // Cap below the enter-alt payload so the direct oversized path probes latch
+    // without creating a coalescer.
+    setTerminalWriteCoalescerByteCapResolver(term, () => 4);
+    enqueueCoalescedTerminalWrite(term, "\x1b[?1049hframe", (data) => {
+      writes.push(data);
+    });
+    // Drop before xterm would parse — latch must not stick for later shell output.
+    abortTerminalWriteCoalescer(term);
+    writes.length = 0;
+    frames.length = 0;
+    microtasks.length = 0;
+
+    setTerminalWriteCoalescerByteCapResolver(term, () => 64 * 1024);
+    enqueueCoalescedTerminalWrite(term, "shell", (data) => {
+      writes.push(data);
+    });
+    assert.equal(frames.length, 0, "abort must clear enter-alt latch");
+    assert.equal(microtasks.length, 1, "normal-screen follow-up should use microtask");
+    microtasks[0]!();
+    assert.deepEqual(writes, ["shell"]);
+  } finally {
+    resetTerminalWriteCoalescer(term);
+    globalThis.queueMicrotask = originalMicrotask;
+    if (originalRaf) {
+      Object.defineProperty(globalThis, "requestAnimationFrame", originalRaf);
+    } else {
+      Reflect.deleteProperty(globalThis, "requestAnimationFrame");
+    }
+    if (originalCancel) {
+      Object.defineProperty(globalThis, "cancelAnimationFrame", originalCancel);
+    } else {
+      Reflect.deleteProperty(globalThis, "cancelAnimationFrame");
+    }
+  }
+});
+
 test("hidden oversized enter-alt still latches rAF for follow-up after reveal", () => {
   const term = {
     buffer: { active: { type: "normal" as string } },

@@ -512,6 +512,14 @@ export const abortTerminalWriteCoalescer = (
   term: XTerm,
   onDropped?: (bytes: number) => void,
 ): void => {
+  // Always clear alt-screen schedule state, even when no coalescer exists.
+  // Oversized direct-write path can latch enter-alt via noteAltScreenScheduleProbe
+  // without creating a coalescer; if Ctrl-C drops that queued batch before xterm
+  // parses it, a sticky latch would force rAF for later normal-screen output.
+  incompleteAltScreenCsiByTerm.delete(term);
+  pendingAltScreenEntryByTerm.delete(term);
+  observedAltScreenByTerm.delete(term);
+
   const coalescer = terminalWriteCoalescers.get(term);
   if (!coalescer) return;
   const ingressDropped = takePendingIngressBytes(
@@ -520,11 +528,6 @@ export const abortTerminalWriteCoalescer = (
   );
   takePendingChunkCount(term);
   coalescer.abort();
-  // Dropped bytes never reach xterm — clear alt-screen schedule state that was
-  // only inferred from those discarded chunks (Ctrl-C / interrupt drain).
-  incompleteAltScreenCsiByTerm.delete(term);
-  pendingAltScreenEntryByTerm.delete(term);
-  observedAltScreenByTerm.delete(term);
   if (ingressDropped > 0) {
     onDropped?.(ingressDropped);
   }
