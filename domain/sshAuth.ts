@@ -1,5 +1,6 @@
-import type { Host, HostAuthMethod, Identity, SSHKey } from "./models";
+import type { GroupConfig, Host, HostAuthMethod, Identity, SSHKey } from "./models";
 import { sanitizeCredentialValue } from "./credentials";
+import { applyGroupDefaults } from "./groupConfig";
 
 type HostAuthOverride = {
   authMethod?: HostAuthMethod;
@@ -141,16 +142,21 @@ export const resolveHostAuthMethodForPersistence = (args: {
   host: Host;
   keys: SSHKey[];
   identities?: Identity[];
+  groupDefaults?: Partial<GroupConfig>;
 }): HostAuthMethod | undefined => {
-  const { host, keys, identities } = args;
+  const { host, keys, identities, groupDefaults } = args;
   if (host.authMethod) return host.authMethod;
 
-  const hostHasOwnAuth = Boolean(host.identityId)
-    || host.identityFileId !== undefined
-    || Boolean(host.identityFilePaths?.length)
-    || host.password !== undefined;
-  if (!hostHasOwnAuth) return undefined;
-  return resolveHostAuth({ host, keys, identities }).authMethod;
+  const resolveEffectiveMethod = (candidate: Host) => resolveHostAuth({
+    host: groupDefaults ? applyGroupDefaults(candidate, groupDefaults) : candidate,
+    keys,
+    identities,
+  }).authMethod;
+  const methodBeforeSave = resolveEffectiveMethod(host);
+  const methodAfterSave = resolveEffectiveMethod(
+    host.savePassword === false ? { ...host, password: undefined } : host,
+  );
+  return methodBeforeSave === methodAfterSave ? undefined : methodBeforeSave;
 };
 
 /**

@@ -376,6 +376,7 @@ test("saving keeps inherited group authentication inherited", () => {
       host,
       keys: [referenceKey],
       identities: [identity],
+      groupDefaults,
     }), undefined);
     assert.equal(resolveHostAuth({
       host: applyGroupDefaults(host, groupDefaults),
@@ -418,11 +419,50 @@ test("legacy agent settings do not override inherited strict group authenticatio
       identityAgent: "/tmp/legacy-agent.sock",
       identitiesOnly: true,
     } as Host;
-    assert.equal(resolveHostAuthMethodForPersistence({ host, keys: [] }), undefined);
+    assert.equal(resolveHostAuthMethodForPersistence({ host, keys: [], groupDefaults }), undefined);
     assert.equal(resolveHostAuth({
       host: applyGroupDefaults(host, groupDefaults),
       keys: [],
     }).authMethod, "password");
+  }
+});
+
+test("saving does not replace an effective group method with stale host credentials", () => {
+  const cases = [
+    [{ password: "stale-host-password", savePassword: false }, {
+      authMethod: "key" as const,
+      identityFileId: referenceKey.id,
+    }, "key"],
+    [{ identityFileId: referenceKey.id, identityFilePaths: ["~/.ssh/id_stale"] }, {
+      authMethod: "password" as const,
+      password: "group-password",
+    }, "password"],
+  ] as const;
+
+  for (const [hostCredentials, groupDefaults, expectedMethod] of cases) {
+    const host = {
+      ...autofillBaseHost,
+      username: "",
+      authMethod: undefined,
+      ...hostCredentials,
+    } as Host;
+    const methodBeforeSave = resolveHostAuth({
+      host: applyGroupDefaults(host, groupDefaults),
+      keys: [referenceKey],
+    }).authMethod;
+    const persistedMethod = resolveHostAuthMethodForPersistence({
+      host,
+      keys: [referenceKey],
+      groupDefaults,
+    });
+    const methodAfterSave = resolveHostAuth({
+      host: applyGroupDefaults({ ...host, authMethod: persistedMethod }, groupDefaults),
+      keys: [referenceKey],
+    }).authMethod;
+
+    assert.equal(methodBeforeSave, expectedMethod);
+    assert.equal(persistedMethod, undefined);
+    assert.equal(methodAfterSave, expectedMethod);
   }
 });
 
