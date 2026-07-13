@@ -20,12 +20,12 @@ test('editing enabled SSH agent controls persists the enabled state', () => {
   assert.match(source, /effectiveAuthMethod === "key" && form\.useSshAgent === true/);
   assert.match(source, /enabled=\{systemSshAgentEnabled\}/);
   assert.match(source, /disabled=\{!systemSshAgentSupported\}/);
-  assert.match(source, /useSshAgent: enabling,/);
+  assert.match(source, /resolveSshAgentToggleUpdate\(previous, effectiveAuthMethod, enabling\)/);
   assert.match(source, /\{systemSshAgentEnabled && \(/);
   assert.match(source, /useSshAgent: true,\s*identityAgent:/);
   assert.match(source, /useSshAgent: true,\s*identitiesOnly:/);
 });
 
 test('enabling SSH agent login clears an imported none sentinel', () => {
-  assert.match(source, /enabling && isSshAgentNoneValue\(previous\.identityAgent\)/);
+  assert.match(source, /resolveSshAgentToggleUpdate/);
 });

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { applyHostAuthMethodSelection, hasBridgeSshCredentials, hasRequiredHostAuthCredential, resolveBridgeKeyAuth, resolveBridgeSshAgentAuth, resolveHostAuth, resolveHostAuthMethodForPersistence, resolveHostAuthMethodSelection, resolveHostAutofillPassword } from "./sshAuth.ts";
+import { applyHostAuthMethodSelection, hasBridgeSshCredentials, hasRequiredHostAuthCredential, resolveBridgeKeyAuth, resolveBridgeSshAgentAuth, resolveHostAuth, resolveHostAuthMethodForPersistence, resolveHostAuthMethodSelection, resolveHostAutofillPassword, resolveSshAgentToggleUpdate } from "./sshAuth.ts";
 import { applyGroupDefaults } from "./groupConfig.ts";
 import type { Host, Identity, SSHKey } from "./models.ts";
 
@@ -133,6 +133,25 @@ test("resolveBridgeSshAgentAuth keeps agent login for a selected reference key",
       useSshAgent: true,
       identitiesOnly: false,
     }, referenceKey, "key"),
+    {
+      useSshAgent: true,
+      identityAgent: undefined,
+      identitiesOnly: true,
+      addKeysToAgent: undefined,
+      useKeychain: undefined,
+    },
+  );
+});
+
+test("resolveBridgeSshAgentAuth keeps agent login for a selected local key file", () => {
+  assert.deepEqual(
+    resolveBridgeSshAgentAuth({
+      ...autofillBaseHost,
+      authMethod: "key",
+      useSshAgent: true,
+      identitiesOnly: false,
+      identityFilePaths: ["~/.ssh/id_work"],
+    }, undefined, "key"),
     {
       useSshAgent: true,
       identityAgent: undefined,
@@ -363,6 +382,29 @@ test("applyHostAuthMethodSelection clears incompatible per-host credentials", ()
   const automaticHost = applyHostAuthMethodSelection(passwordHost, "auto");
   assert.equal(automaticHost.useSshAgent, undefined);
   assert.deepEqual(resolveBridgeSshAgentAuth(automaticHost, undefined, "auto"), {});
+});
+
+test("resolveSshAgentToggleUpdate keeps the default automatic agent optional", () => {
+  assert.deepEqual(resolveSshAgentToggleUpdate({}, "auto", true), {
+    useSshAgent: undefined,
+    identityAgent: undefined,
+  });
+  assert.deepEqual(resolveSshAgentToggleUpdate({}, "auto", false), {
+    useSshAgent: false,
+    identityAgent: undefined,
+  });
+  assert.deepEqual(resolveSshAgentToggleUpdate({ identityAgent: "none" }, "auto", true), {
+    useSshAgent: undefined,
+    identityAgent: undefined,
+  });
+  assert.deepEqual(resolveSshAgentToggleUpdate({ identityAgent: "/tmp/custom-agent.sock" }, "auto", true), {
+    useSshAgent: true,
+    identityAgent: "/tmp/custom-agent.sock",
+  });
+  assert.deepEqual(resolveSshAgentToggleUpdate({}, "key", true), {
+    useSshAgent: true,
+    identityAgent: undefined,
+  });
 });
 
 test("per-host auth selection opts out of an inherited group identity", () => {

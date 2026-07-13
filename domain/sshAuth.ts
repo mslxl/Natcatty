@@ -74,6 +74,25 @@ export const applyHostAuthMethodSelection = <T extends Host>(
   };
 };
 
+export const resolveSshAgentToggleUpdate = (
+  host: Pick<Host, "identityAgent" | "addKeysToAgent" | "useKeychain">,
+  authMethod: HostAuthMethod,
+  enabling: boolean,
+): Pick<Host, "useSshAgent" | "identityAgent"> => {
+  const identityAgent = enabling && isSshAgentNoneValue(host.identityAgent)
+    ? undefined
+    : host.identityAgent;
+  const hasExplicitAgentSettings = Boolean(
+    identityAgent || host.addKeysToAgent || host.useKeychain !== undefined,
+  );
+  return {
+    useSshAgent: enabling
+      ? (authMethod === "auto" && !hasExplicitAgentSettings ? undefined : true)
+      : false,
+    identityAgent,
+  };
+};
+
 const inferAuthMethod = (opts: {
   explicit?: HostAuthMethod;
   keyId?: string;
@@ -215,7 +234,7 @@ export const resolveBridgeKeyAuth = (args: {
 };
 
 export const resolveBridgeSshAgentAuth = (
-  host: Pick<Host, "authMethod" | "useSshAgent" | "identityAgent" | "identitiesOnly" | "addKeysToAgent" | "useKeychain">,
+  host: Pick<Host, "authMethod" | "useSshAgent" | "identityAgent" | "identityFilePaths" | "identitiesOnly" | "addKeysToAgent" | "useKeychain">,
   key?: Pick<SSHKey, "certificate" | "publicKey" | "source" | "filePath">,
   authMethod?: HostAuthMethod,
 ): {
@@ -232,7 +251,8 @@ export const resolveBridgeSshAgentAuth = (
   if (authMethod === "key") {
     const hasAgentSelector = Boolean(
       key?.publicKey?.trim()
-      || (key?.source === "reference" && key.filePath?.trim()),
+      || (key?.source === "reference" && key.filePath?.trim())
+      || host.identityFilePaths?.some((filePath) => filePath.trim()),
     );
     if (host.useSshAgent !== true || !hasAgentSelector) {
       return { useSshAgent: false };
