@@ -756,10 +756,15 @@ function createStartSessionApi(ctx) {
           connectOpts.password = options.password;
         }
 
-        // Always try to find default SSH keys for fallback authentication.
-        // This allows fallback even when password auth fails. The full list is
-        // scanned exactly once (kicked off above); its first entry is the
-        // preferred default key — identical to what a separate
+        // Default ~/.ssh keys are a fallback for hosts that have no explicit
+        // credentials. Password-only hosts must NOT silently fall back to local
+        // keys: jump-host / SFTP paths already honor that rule via
+        // buildAuthHandler (issue #266), and falling back only on the direct
+        // terminal path makes a wrong saved password look fine until ProxyJump
+        // or SFTP fails (issue #2079).
+        //
+        // The full list is scanned exactly once (kicked off above); its first
+        // entry is the preferred default key — identical to what a separate
         // findDefaultPrivateKey() scan would return — so derive it here instead
         // of walking ~/.ssh a second time. (Pinned by
         // sshBridge.defaultKeyEquivalence.test.cjs.)
@@ -769,8 +774,21 @@ function createStartSessionApi(ctx) {
           ? []
           : discoveredDefaultKeys;
         const defaultKeyInfo = allDefaultKeys[0] ?? null;
-        if (defaultKeyInfo) {
+        // Explicit password without a user-configured key/certificate/agent is
+        // password-only — same predicate buildAuthHandler uses for isPasswordOnly.
+        const isPasswordOnlyAuth =
+          isPasswordProvided(connectOpts.password) &&
+          !connectOpts.privateKey &&
+          !hasCertificate &&
+          !systemAuthAgent &&
+          !hasUserConfiguredKey(options);
+        if (defaultKeyInfo && !isPasswordOnlyAuth) {
           log("Found default SSH key for fallback", { keyPath: defaultKeyInfo.keyPath, keyName: defaultKeyInfo.keyName });
+        } else if (defaultKeyInfo && isPasswordOnlyAuth) {
+          log("Skipping default SSH key fallback for password-only auth", {
+            keyPath: defaultKeyInfo.keyPath,
+            keyName: defaultKeyInfo.keyName,
+          });
         }
 
         // Use unlocked encrypted keys if provided (from retry after auth failure)
@@ -815,7 +833,8 @@ function createStartSessionApi(ctx) {
           hasPrivateKey: !!connectOpts.privateKey,
           hasPassword: !!connectOpts.password,
           hasAgent: !!connectOpts.agent,
-          hasDefaultKeyFallback: !!defaultKeyInfo,
+          hasDefaultKeyFallback: !!defaultKeyInfo && !isPasswordOnlyAuth,
+          isPasswordOnlyAuth,
         });
 
         // Agent forwarding
@@ -847,9 +866,9 @@ function createStartSessionApi(ctx) {
         if (authAgent) {
           const order = ["none", "agent"];
           if (connectOpts.password) order.push("password");
-          // Add default key fallback if available and no user key configured
-          // Must also set connectOpts.privateKey for ssh2 to actually try publickey auth
-          if (defaultKeyInfo && !hasUserConfiguredKey(options)) {
+          // Default key fallback only when this is not password-only (issue #266 / #2079).
+          // Must also set connectOpts.privateKey for ssh2 to actually try publickey auth.
+          if (defaultKeyInfo && !hasUserConfiguredKey(options) && !isPasswordOnlyAuth) {
             connectOpts.privateKey = defaultKeyInfo.privateKey;
             order.push("publickey");
           }
@@ -878,22 +897,30 @@ function createStartSessionApi(ctx) {
           }
 
           // Then try ALL default SSH keys as fallback (not just the first one!)
-          // This is critical because different servers may have different keys in authorized_keys
-          if (usedDefaultKeyAsPrimary && allDefaultKeys.length > 0) {
-            for (const keyInfo of allDefaultKeys) {
-              authMethods.push({
-                type: "publickey",
-                key: keyInfo.privateKey,
-                isDefault: true,
-                id: `publickey-default-${keyInfo.keyName}`
-              });
+          // This is critical because different servers may have different keys in authorized_keys.
+          // Password-only hosts skip automatic default-key probing so terminal/SFTP/jump
+          // agree (issue #2079). Unlocked encrypted keys from an explicit passphrase
+          // retry are kept even for password-only targets when jump-host retry
+          // unlocked them (Codex review P2 on #2153 / canRetryWithEncryptedDefaultKeys).
+          if (!isPasswordOnlyAuth) {
+            if (usedDefaultKeyAsPrimary && allDefaultKeys.length > 0) {
+              for (const keyInfo of allDefaultKeys) {
+                authMethods.push({
+                  type: "publickey",
+                  key: keyInfo.privateKey,
+                  isDefault: true,
+                  id: `publickey-default-${keyInfo.keyName}`
+                });
+              }
+            } else if (defaultKeyInfo && !hasUserConfiguredKey(options) && !usedDefaultKeyAsPrimary) {
+              // Single default key fallback (when user has configured other non-password auth)
+              authMethods.push({ type: "publickey", key: defaultKeyInfo.privateKey, isDefault: true, id: "publickey-default" });
             }
-          } else if (defaultKeyInfo && !hasUserConfiguredKey(options) && !usedDefaultKeyAsPrimary) {
-            // Single default key fallback (when user has configured other auth methods)
-            authMethods.push({ type: "publickey", key: defaultKeyInfo.privateKey, isDefault: true, id: "publickey-default" });
           }
 
-          // Add unlocked encrypted default keys (user provided passphrases for these)
+          // Unlocked encrypted keys always stay eligible after the user was
+          // prompted for their passphrase — discarding them here would waste
+          // that interaction when jump-host retry re-enters startSession.
           for (const keyInfo of unlockedEncryptedKeys) {
             authMethods.push({
               type: "publickey",
