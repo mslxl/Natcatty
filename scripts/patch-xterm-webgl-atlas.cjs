@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /* global process, console */
 /**
- * Disable @xterm/addon-webgl's cross-terminal texture-atlas sharing.
+ * Apply Netcatty's @xterm/addon-webgl glyph-atlas safety fixes.
  *
  * xterm's WebGL addon shares ONE TextureAtlas across terminal instances whose
  * config (font / size / theme / device-pixel-ratio) is equal — see
@@ -17,15 +17,51 @@
  * package is minified, so we string-replace the exact loop in both the CJS and
  * ESM builds. This runs from `postinstall` (after patch-package).
  *
+ * Linux/Wayland GPU stacks can also corrupt dense terminal output into black
+ * cell blocks when xterm generates mipmaps for the glyph atlas (#2158,
+ * xtermjs/xterm.js#5986). Upstream fixed this in xtermjs/xterm.js#5987 by using
+ * non-mipmapped linear filters. Apply that narrow fix to the currently pinned
+ * beta so Netcatty does not need to absorb unrelated xterm beta changes.
+ *
  * Idempotent. If the upstream code changes (e.g. an @xterm/addon-webgl upgrade)
- * the loop won't be found; we warn loudly but do not fail the install, and the
- * strings below must then be refreshed for the new version.
+ * and neither the expected target nor the upstream fixed form is found, fail
+ * the install so a release cannot silently lose either protection.
  */
 "use strict";
 const fs = require("node:fs");
 const path = require("node:path");
 
-const MARKER = "/*netcatty:#1063 atlas-isolation*/";
+const ATLAS_MARKER = "/*netcatty:#1063 atlas-isolation*/";
+const MIPMAP_MARKER = "/*netcatty:#2158 no-atlas-mipmaps*/";
+
+function countOccurrences(source, value) {
+  return source.split(value).length - 1;
+}
+
+function filterSequence(gl) {
+  return (
+    `${gl}.texParameteri(${gl}.TEXTURE_2D,${gl}.TEXTURE_MIN_FILTER,${gl}.LINEAR),` +
+    `${gl}.texParameteri(${gl}.TEXTURE_2D,${gl}.TEXTURE_MAG_FILTER,${gl}.LINEAR)`
+  );
+}
+
+function mipmapPath(gl, pages, index) {
+  const upload = `${gl}.texImage2D(${gl}.TEXTURE_2D,0,${gl}.RGBA,${gl}.RGBA,${gl}.UNSIGNED_BYTE,${pages}.pages[${index}].canvas),`;
+  const version = `this._atlasTextures[${index}].version=${pages}.pages[${index}].version`;
+  return {
+    target: `${upload}${gl}.generateMipmap(${gl}.TEXTURE_2D),${version}`,
+    replacement: `${upload}${MIPMAP_MARKER}${filterSequence(gl)},${version}`,
+  };
+}
+
+function upstreamFixedPath(gl, pages, index) {
+  return (
+    `${gl}.texParameteri(${gl}.TEXTURE_2D,${gl}.TEXTURE_WRAP_T,${gl}.CLAMP_TO_EDGE),` +
+    `${filterSequence(gl)},` +
+    `${gl}.texImage2D(${gl}.TEXTURE_2D,0,${gl}.RGBA,${gl}.RGBA,${gl}.UNSIGNED_BYTE,${pages}.pages[${index}].canvas),` +
+    `this._atlasTextures[${index}].version=${pages}.pages[${index}].version`
+  );
+}
 
 // Exact (minified) "reuse a shared atlas" loops. Keep the previous stable
 // package strings so old release branches still get the #1063 protection.
@@ -38,6 +74,13 @@ const TARGETS = [
       // @xterm/addon-webgl@0.19.0
       "for(let h=0;h<le.length;h++){let f=le[h];if(Mi(f.config,u))return f.ownedBy.push(i),f.atlas}",
     ],
+    mipmapPaths: [
+      mipmapPath("t", "r", "n"), // @xterm/addon-webgl@0.20.0-beta.219
+      mipmapPath("t", "n", "s"), // @xterm/addon-webgl@0.19.0
+    ],
+    upstreamFixedPaths: [
+      upstreamFixedPath("t", "r", "s"), // @xterm/addon-webgl@0.20.0-beta.276
+    ],
   },
   {
     file: "node_modules/@xterm/addon-webgl/lib/addon-webgl.js",
@@ -47,41 +90,99 @@ const TARGETS = [
       // @xterm/addon-webgl@0.19.0
       "for(let t=0;t<r.length;t++){const i=r[t];if((0,n.configEquals)(i.config,d))return i.ownedBy.push(e),i.atlas}",
     ],
+    mipmapPaths: [
+      mipmapPath("t", "e", "i"), // @xterm/addon-webgl@0.20.0-beta.219
+      mipmapPath("e", "t", "i"), // @xterm/addon-webgl@0.19.0
+    ],
+    upstreamFixedPaths: [
+      upstreamFixedPath("t", "e", "i"), // @xterm/addon-webgl@0.20.0-beta.276
+    ],
   },
 ];
 
-let patched = 0;
-let already = 0;
-let missing = 0;
+const atlas = { patched: 0, already: 0, missing: 0 };
+const mipmap = { patched: 0, already: 0, upstream: 0, missing: 0 };
 
-for (const { file, loops } of TARGETS) {
+for (const { file, loops, mipmapPaths, upstreamFixedPaths } of TARGETS) {
   const abs = path.resolve(process.cwd(), file);
   let src;
   try {
     src = fs.readFileSync(abs, "utf8");
   } catch {
     console.warn(`[patch-xterm-webgl-atlas] skip (not found): ${file}`);
-    missing++;
+    atlas.missing++;
+    mipmap.missing++;
     continue;
   }
-  if (src.includes(MARKER)) {
-    already++;
-    continue;
+  let next = src;
+
+  if (next.includes(ATLAS_MARKER)) {
+    atlas.already++;
+  } else {
+    const loop = loops.find((candidate) => next.includes(candidate));
+    if (loop) {
+      next = next.replace(loop, ATLAS_MARKER);
+      atlas.patched++;
+    } else {
+      console.warn(
+        `[patch-xterm-webgl-atlas] ERROR: atlas-sharing loop not found in ${file}. ` +
+          "Refresh the minified target strings before upgrading @xterm/addon-webgl (#1063).",
+      );
+      atlas.missing++;
+    }
   }
-  const loop = loops.find((candidate) => src.includes(candidate));
-  if (!loop) {
+
+  const markerCount = countOccurrences(next, MIPMAP_MARKER);
+  const patchedMatches = mipmapPaths.reduce(
+    (count, candidate) => count + countOccurrences(next, candidate.replacement),
+    0,
+  );
+  const targetMatches = mipmapPaths.reduce(
+    (count, candidate) => count + countOccurrences(next, candidate.target),
+    0,
+  );
+  const upstreamMatches = upstreamFixedPaths.reduce(
+    (count, candidate) => count + countOccurrences(next, candidate),
+    0,
+  );
+  const hasMipmapCall = next.includes(".generateMipmap(");
+
+  if (markerCount === 1 && patchedMatches === 1 && targetMatches === 0 && !hasMipmapCall) {
+    mipmap.already++;
+  } else if (markerCount === 0 && targetMatches === 1) {
+    const candidate = mipmapPaths.find((path) => next.includes(path.target));
+    next = next.replace(candidate.target, candidate.replacement);
+    if (next.includes(".generateMipmap(")) {
+      console.warn(
+        `[patch-xterm-webgl-atlas] ERROR: another mipmap call remains in ${file}. ` +
+          "Refresh the scoped target strings before upgrading @xterm/addon-webgl (#2158).",
+      );
+      mipmap.missing++;
+    } else {
+      mipmap.patched++;
+    }
+  } else if (
+    markerCount === 0 &&
+    targetMatches === 0 &&
+    upstreamMatches === 1 &&
+    !hasMipmapCall
+  ) {
+    // xtermjs/xterm.js#5987 is already present in the glyph-atlas upload path.
+    mipmap.upstream++;
+  } else {
     console.warn(
-      `[patch-xterm-webgl-atlas] WARNING: atlas-sharing loop not found in ${file}. ` +
-        "@xterm/addon-webgl likely changed — split-view WebGL may garble again (#1063). " +
-        "Refresh the minified target strings in scripts/patch-xterm-webgl-atlas.cjs.",
+      `[patch-xterm-webgl-atlas] ERROR: glyph-atlas mipmap path is missing or ambiguous in ${file}. ` +
+        "Confirm xtermjs/xterm.js#5987 before upgrading @xterm/addon-webgl (#2158).",
     );
-    missing++;
-    continue;
+    mipmap.missing++;
   }
-  fs.writeFileSync(abs, src.replace(loop, MARKER));
-  patched++;
+
+  if (next !== src) fs.writeFileSync(abs, next);
 }
 
 console.log(
-  `[patch-xterm-webgl-atlas] atlas isolation: patched=${patched} already=${already} missing=${missing}`,
+  `[patch-xterm-webgl-atlas] atlas: patched=${atlas.patched} already=${atlas.already} missing=${atlas.missing}; ` +
+    `mipmap: patched=${mipmap.patched} already=${mipmap.already} upstream=${mipmap.upstream} missing=${mipmap.missing}`,
 );
+
+if (atlas.missing > 0 || mipmap.missing > 0) process.exitCode = 1;
