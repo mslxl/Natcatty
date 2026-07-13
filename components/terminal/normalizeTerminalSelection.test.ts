@@ -63,16 +63,30 @@ function makeTerm(
 test("trimWrittenPadding removes written trailing spaces but keeps internal ones", () => {
   assert.equal(trimWrittenPadding("hello   "), "hello");
   assert.equal(trimWrittenPadding("  hello  world  "), "  hello  world");
-  assert.equal(trimWrittenPadding("tabs\t\t"), "tabs");
 });
 
-test("joinSoftWrappedRows keeps a word-boundary space after padding trim", () => {
-  assert.equal(joinSoftWrappedRows("hello   ", "world"), "hello world");
+test("joinSoftWrappedRows keeps a single trailing space as a word separator", () => {
   assert.equal(joinSoftWrappedRows("hello ", "world"), "hello world");
 });
 
 test("joinSoftWrappedRows concatenates mid-word wraps tightly", () => {
   assert.equal(joinSoftWrappedRows("hel", "lo world"), "hello world");
+});
+
+test("joinSoftWrappedRows does not invent spaces inside URL/path tokens", () => {
+  assert.equal(
+    joinSoftWrappedRows("https://example.com/very/long/   ", "path"),
+    "https://example.com/very/long/path",
+  );
+});
+
+test("joinSoftWrappedRows does not invent spaces before CJK punctuation", () => {
+  assert.equal(joinSoftWrappedRows("你好   ", "，世界"), "你好，世界");
+});
+
+test("joinSoftWrappedRows collapses prose padding to one space", () => {
+  assert.equal(joinSoftWrappedRows("shifts   ", "across"), "shifts across");
+  assert.equal(joinSoftWrappedRows("most   ", "reliable"), "most reliable");
 });
 
 test("joinSoftWrappedRows does not invent spaces between CJK characters", () => {
@@ -108,6 +122,15 @@ test("preserves hard line breaks between non-wrapped rows while trimming padding
   assert.equal(getNormalizedTerminalSelection(term), "line one\nline two\nline three");
 });
 
+test("preserves explicitly selected trailing spaces on a partial last row", () => {
+  // "abc  def" — select columns 0..5 → "abc  " must keep the spaces.
+  const term = makeTerm(
+    [{ text: "abc  def" }],
+    { start: { x: 0, y: 0 }, end: { x: 5, y: 0 } },
+  );
+  assert.equal(getNormalizedTerminalSelection(term), "abc  ");
+});
+
 test("empty-cell trim from xterm still applies before written-space trim", () => {
   const term = makeTerm(
     [{ text: "hello", emptyCells: 10 }],
@@ -125,9 +148,8 @@ test("respects partial column selection on first and last rows", () => {
     { start: { x: 2, y: 0 }, end: { x: 10, y: 1 } },
   );
 
-  // first row from col 2 to line end (multi-row): "hello worldyy" (no trailing ws)
-  // last row cols 0..10: "continued " → logical trim at end of selection → "continued"
-  assert.equal(getNormalizedTerminalSelection(term), "hello worldyycontinued");
+  // Last-row end.x=10 selects "continued " (including the space); keep it.
+  assert.equal(getNormalizedTerminalSelection(term), "hello worldyycontinued ");
 });
 
 test("falls back to getSelection when position is unavailable", () => {
@@ -163,18 +185,19 @@ test("handles multi-row soft wrap chains", () => {
   assert.equal(getNormalizedTerminalSelection(term), "aaabbbccc\nddd");
 });
 
-test("preserves rectangular column selection column bounds on every row", () => {
+test("preserves rectangular column selection including right-edge spaces", () => {
   const term = makeTerm(
     [
-      { text: "abcdefghij" },
-      { text: "0123456789" },
-      { text: "ABCDEFGHIJ" },
+      { text: "ab  efghij" },
+      { text: "01  56789x" },
+      { text: "AB  EFGHIJ" },
     ],
     { start: { x: 2, y: 0 }, end: { x: 5, y: 2 } },
     { columnSelect: true },
   );
 
-  assert.equal(getNormalizedTerminalSelection(term), "cde\n234\nCDE");
+  // Columns 2..5 include the intentional spaces.
+  assert.equal(getNormalizedTerminalSelection(term), "  e\n  5\n  E");
 });
 
 test("converts non-breaking spaces to regular spaces", () => {

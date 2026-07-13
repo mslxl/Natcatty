@@ -6,10 +6,10 @@
  * Those written spaces survive copy and corrupt pasted paragraphs/code blocks.
  *
  * This helper rebuilds the selection from buffer coordinates so we can:
- * - strip written trailing padding on each physical row
+ * - strip written trailing padding on completed physical rows
  * - join only rows marked soft-wrapped by xterm
  * - keep genuine hard line breaks
- * - preserve rectangular (column) selections
+ * - preserve rectangular (column) selections and partial end-column spaces
  * - convert non-breaking spaces like xterm's selectionText path
  */
 
@@ -50,6 +50,9 @@ export type SelectionTerminal = {
 /** Matches xterm SelectionMode.COLUMN */
 const SELECTION_MODE_COLUMN = 3;
 const ALL_NON_BREAKING_SPACE_REGEX = /\u00a0/g;
+/** Characters that usually mean the next soft-wrapped row continues the same token. */
+const TOKEN_CONTINUATION_END = new Set("\\/-_.:@?#&=+%".split(""));
+const TOKEN_CONTINUATION_START = new Set("\\/-_.".split(""));
 
 /**
  * Return clipboard-ready text for the current terminal selection.
@@ -96,7 +99,8 @@ function buildColumnSelection(
       rows.push("");
       continue;
     }
-    rows.push(trimWrittenPadding(line.translateToString(true, startCol, endCol)));
+    // Keep right-edge spaces: the user selected those columns on purpose.
+    rows.push(line.translateToString(true, startCol, endCol));
   }
 
   return normalizeClipboardText(rows.join("\n"));
@@ -114,7 +118,7 @@ function buildLinearSelection(
     const line = buffer.getLine(y);
     if (!line) {
       if (current.length > 0 || logicalLines.length > 0) {
-        logicalLines.push(trimWrittenPadding(current));
+        logicalLines.push(trimCompletedRowPadding(current));
         current = "";
       }
       continue;
@@ -124,8 +128,6 @@ function buildLinearSelection(
     // Match xterm: on multi-row selections the first row runs to the line end
     // (undefined endCol → line length), not only to the selection's end.x.
     const endCol = y === end.y ? end.x : undefined;
-    // Keep written trailing spaces on the raw row so soft-wrap joins can tell
-    // word-boundary wraps ("hello " + "world") apart from mid-word wraps.
     const rowText =
       endCol === undefined
         ? line.translateToString(true, startCol)
@@ -141,58 +143,117 @@ function buildLinearSelection(
       continue;
     }
 
-    logicalLines.push(trimWrittenPadding(current));
+    logicalLines.push(trimCompletedRowPadding(current));
     current = rowText;
   }
 
-  logicalLines.push(trimWrittenPadding(current));
+  // Last logical segment: only strip padding when the selection ends at/after
+  // the buffer line's content end (full-row copy). Partial end columns keep
+  // explicitly selected trailing spaces.
+  const lastLine = buffer.getLine(end.y);
+  const selectionEndsAtRowEnd =
+    !lastLine || end.x >= lastLine.length || end.x >= measureContentEnd(lastLine);
+  logicalLines.push(
+    selectionEndsAtRowEnd ? trimCompletedRowPadding(current) : current,
+  );
   return normalizeClipboardText(logicalLines.join("\n"));
 }
 
 /**
  * Join two physical rows that xterm marked as a soft wrap.
  *
- * - Mid-word wrap (no trailing whitespace on previous row): concatenate tightly.
- * - Word-boundary wrap or TUI padding (trailing whitespace): collapse boundary
- *   whitespace to a single separator space, except between CJK characters where
- *   a space must not be invented.
+ * Trailing whitespace on the previous row may be a real word separator (one
+ * space) or TUI display padding (often many spaces). Padding alone is not
+ * treated as proof of a word boundary — token-like continuations (URLs, paths,
+ * CJK) stay tight; only clear prose-style boundaries get a single space.
  */
 export function joinSoftWrappedRows(previousRaw: string, nextRaw: string): string {
-  const left = trimWrittenPadding(previousRaw);
-  const hadTrailingWhitespace = left.length < previousRaw.length;
-
-  if (!hadTrailingWhitespace) {
-    return left + nextRaw;
-  }
+  const trailingWhitespace = countTrailingHorizontalWhitespace(previousRaw);
+  const left = trailingWhitespace > 0 ? previousRaw.slice(0, -trailingWhitespace) : previousRaw;
 
   if (!nextRaw) {
     return left;
   }
 
-  if (/^\s/u.test(nextRaw)) {
-    // Next row already carries leading whitespace; don't double-insert.
+  if (trailingWhitespace === 0) {
     return left + nextRaw;
   }
 
-  if (left.length === 0) {
+  if (/^\s/u.test(nextRaw)) {
+    return left + nextRaw;
+  }
+
+  if (!left) {
     return nextRaw;
   }
 
-  if (endsWithCjk(left) && startsWithCjk(nextRaw)) {
+  // A single trailing space is the common soft-wrap-at-word-boundary case.
+  if (trailingWhitespace === 1) {
+    return `${left} ${nextRaw}`;
+  }
+
+  // Multi-space runs are usually TUI padding. Do not invent a separator when
+  // the next row clearly continues the same token (URL/path/CJK/punctuation).
+  if (isTokenContinuation(left, nextRaw)) {
     return left + nextRaw;
   }
 
+  // Prose-style padding wrap: collapse padding to one space.
   return `${left} ${nextRaw}`;
 }
 
-function endsWithCjk(text: string): boolean {
-  if (!text) return false;
-  return isCjkCodePoint(text.codePointAt(text.length - 1) ?? 0);
+function isTokenContinuation(left: string, next: string): boolean {
+  const leftEnd = lastCodePointChar(left);
+  const nextStart = firstCodePointChar(next);
+  if (!leftEnd || !nextStart) return false;
+
+  if (isCjkCodePoint(leftEnd.codePointAt(0) ?? 0)) {
+    // CJK runs and CJK punctuation should not gain Latin-style spaces.
+    return isCjkCodePoint(nextStart.codePointAt(0) ?? 0) || isCjkPunctuation(nextStart);
+  }
+
+  if (TOKEN_CONTINUATION_END.has(leftEnd)) {
+    return true;
+  }
+
+  if (TOKEN_CONTINUATION_START.has(nextStart) && isAsciiWordChar(leftEnd)) {
+    return true;
+  }
+
+  return false;
 }
 
-function startsWithCjk(text: string): boolean {
-  if (!text) return false;
-  return isCjkCodePoint(text.codePointAt(0) ?? 0);
+function isAsciiWordChar(char: string): boolean {
+  return /^[A-Za-z0-9]$/u.test(char);
+}
+
+function isCjkPunctuation(char: string): boolean {
+  const cp = char.codePointAt(0) ?? 0;
+  // Common fullwidth / CJK punctuation used after ideographs.
+  return (
+    (cp >= 0x3000 && cp <= 0x303f) ||
+    (cp >= 0xff01 && cp <= 0xff60) ||
+    char === "，" ||
+    char === "。" ||
+    char === "、" ||
+    char === "：" ||
+    char === "；" ||
+    char === "！" ||
+    char === "？"
+  );
+}
+
+function firstCodePointChar(text: string): string {
+  if (!text) return "";
+  const cp = text.codePointAt(0);
+  if (cp === undefined) return "";
+  return String.fromCodePoint(cp);
+}
+
+function lastCodePointChar(text: string): string {
+  if (!text) return "";
+  const chars = Array.from(text);
+  return chars[chars.length - 1] ?? "";
 }
 
 function isCjkCodePoint(cp: number): boolean {
@@ -204,12 +265,35 @@ function isCjkCodePoint(cp: number): boolean {
   );
 }
 
+function countTrailingHorizontalWhitespace(text: string): number {
+  let count = 0;
+  for (let i = text.length - 1; i >= 0; i -= 1) {
+    const ch = text[i];
+    if (ch === " " || ch === "\t" || ch === "\f" || ch === "\v") {
+      count += 1;
+      continue;
+    }
+    break;
+  }
+  return count;
+}
+
 /**
  * Strip written display-padding spaces that survive xterm's empty-cell trim.
- * Only trailing whitespace is removed so intentional leading/internal spaces stay.
+ * Only trailing horizontal whitespace is removed.
  */
 export function trimWrittenPadding(text: string): string {
   return text.replace(/[ \t\f\v]+$/u, "");
+}
+
+/** Alias used when a completed physical/hard row may still carry TUI padding. */
+function trimCompletedRowPadding(text: string): string {
+  return trimWrittenPadding(text);
+}
+
+function measureContentEnd(line: SelectionBufferLine): number {
+  // Empty-cell trim length of the full line — selection ending here is "full row".
+  return line.translateToString(true).length;
 }
 
 function normalizeClipboardText(text: string): string {
