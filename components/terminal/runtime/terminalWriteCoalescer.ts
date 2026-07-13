@@ -61,8 +61,8 @@ const extractIncompletePrivateCsiTail = (data: string): string => {
 
 type PrivateDecsetScan = {
   incomplete: boolean;
-  enter: boolean;
-  leave: boolean;
+  /** Last complete enter/leave transition in encounter order, if any. */
+  lastTransition: "enter" | "leave" | null;
 };
 
 const scanPrivateDecsetModes = (
@@ -71,8 +71,7 @@ const scanPrivateDecsetModes = (
 ): PrivateDecsetScan => {
   let searchFrom = 0;
   let incomplete = false;
-  let enter = false;
-  let leave = false;
+  let lastTransition: "enter" | "leave" | null = null;
   while (searchFrom < data.length) {
     const start = data.indexOf(intro, searchFrom);
     if (start < 0) break;
@@ -89,13 +88,12 @@ const scanPrivateDecsetModes = (
     if (final === "h" || final === "l") {
       const params = data.slice(paramStart, index).split(";").filter(Boolean);
       if (params.some((param) => ALT_SCREEN_DECSET.has(param))) {
-        if (final === "h") enter = true;
-        else leave = true;
+        lastTransition = final === "h" ? "enter" : "leave";
       }
     }
     searchFrom = start + 1;
   }
-  return { incomplete, enter, leave };
+  return { incomplete, lastTransition };
 };
 
 const isTerminalAlternateScreenActive = (term: XTerm): boolean => {
@@ -120,18 +118,19 @@ const noteAltScreenScheduleProbe = (term: XTerm, chunk: string): boolean => {
   const eight = scanPrivateDecsetModes(combined, CSI_PRIVATE_INTRO_8BIT);
   incompleteAltScreenCsiByTerm.set(term, extractIncompletePrivateCsiTail(combined));
 
-  if (seven.leave || eight.leave) {
+  // Prefer the later transition when both 7-bit and 8-bit scans fire. Each scan
+  // already walks encounter order so enter-then-leave in one chunk clears latch.
+  const lastTransition = eight.lastTransition ?? seven.lastTransition;
+  if (lastTransition === "leave") {
     pendingAltScreenEntryByTerm.delete(term);
-  }
-  if (seven.enter || eight.enter) {
+  } else if (lastTransition === "enter") {
     // Complete enter CSI observed; xterm may still report normal until parse.
     pendingAltScreenEntryByTerm.set(term, true);
   }
 
   const incompleteTail = (incompleteAltScreenCsiByTerm.get(term)?.length ?? 0) > 0;
   return (
-    seven.enter
-    || eight.enter
+    lastTransition === "enter"
     || seven.incomplete
     || eight.incomplete
     || incompleteTail
