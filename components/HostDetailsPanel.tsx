@@ -280,11 +280,12 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
     return identities.find((i) => i.id === effectiveAuthHost.identityId);
   }, [effectiveAuthHost.identityId, identities]);
 
-  const effectiveAuthMethod = useMemo(() => resolveHostAuth({
+  const effectiveAuth = useMemo(() => resolveHostAuth({
     host: effectiveAuthHost,
     keys: availableKeys,
     identities,
-  }).authMethod, [availableKeys, effectiveAuthHost, identities]);
+  }), [availableKeys, effectiveAuthHost, identities]);
+  const effectiveAuthMethod = effectiveAuth.authMethod;
 
   const effectiveThemeId = useMemo(
     () => resolveHostTerminalThemeId(form, resolveGroupTerminalThemeId(effectiveGroupDefaults, terminalThemeId)),
@@ -691,9 +692,9 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
   );
 
   const clearIdentity = useCallback(() => {
-    setForm((prev) => detachEffectiveHostIdentity(prev, effectiveAuthHost.username));
+    setForm((prev) => detachEffectiveHostIdentity(prev, effectiveAuth.username));
     setIdentitySuggestionsOpen(false);
-  }, [effectiveAuthHost.username]);
+  }, [effectiveAuth.username]);
 
   const updateTelnetIdentity = useCallback((identityId: string) => {
     setForm((prev) => ({
@@ -944,7 +945,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
           update={update}
           groupDefaults={effectiveGroupDefaults}
           effectiveAuthMethod={effectiveAuthMethod}
-          effectiveUsername={effectiveAuthHost.username}
+          effectiveUsername={effectiveAuth.username}
           effectiveIdentityId={effectiveAuthHost.identityId}
           selectedIdentity={selectedIdentity}
           clearIdentity={clearIdentity}

@@ -9,3 +9,9 @@ test('SSH agent availability ignores stale async responses', () => {
   assert.match(source, /if \(!cancelled\) setSshAgentStatus\(status\)/);
   assert.match(source, /return \(\) => \{\s*cancelled = true/);
 });
+
+test('inherited identity actions use the resolved authentication username', () => {
+  assert.match(source, /const effectiveAuth = useMemo\(\(\) => resolveHostAuth/);
+  assert.match(source, /detachEffectiveHostIdentity\(prev, effectiveAuth\.username\)/);
+  assert.match(source, /effectiveUsername=\{effectiveAuth\.username\}/);
+});
