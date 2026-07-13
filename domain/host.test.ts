@@ -202,6 +202,25 @@ test("sanitizeHost preserves a legacy no-save password-only choice", () => {
   assert.equal(sanitized.authPolicyVersion, 1);
 });
 
+test("sanitizeHost keeps legacy no-save agent and key hosts on their prior authentication path", () => {
+  for (const legacySettings of [
+    { useSshAgent: true },
+    { identityFileId: "selected-key" },
+    { identityFilePaths: ["~/.ssh/id_work"] },
+  ]) {
+    const sanitized = sanitizeHost(makeHost({
+      password: undefined,
+      savePassword: false,
+      authMethod: "password",
+      authPolicyVersion: undefined,
+      ...legacySettings,
+    }));
+
+    assert.equal(sanitized.authMethod, undefined);
+    assert.equal(sanitized.authPolicyVersion, 1);
+  }
+});
+
 test("sanitizeHost preserves a legacy whitespace-only password", () => {
   const sanitized = sanitizeHost(makeHost({
     password: "   ",

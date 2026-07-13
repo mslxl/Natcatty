@@ -368,12 +368,11 @@ export const sanitizeHost = (host: Host, snippets: Snippet[] = []): Host => {
   // load; versioned records represent a deliberate Password-only selection.
   const isLegacyPasswordDefault = migrated.authPolicyVersion !== 1
     && migrated.authMethod === 'password'
-    && migrated.savePassword !== false
     && (
-      !migrated.password?.length
-      || migrated.useSshAgent === true
+      migrated.useSshAgent === true
       || Boolean(migrated.identityFileId)
       || Boolean(migrated.identityFilePaths?.length)
+      || (migrated.savePassword !== false && !migrated.password?.length)
     );
   const inferredLegacyAuthMethod = migrated.authPolicyVersion !== 1
     && migrated.authMethod === undefined
