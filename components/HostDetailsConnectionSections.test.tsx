@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { Host, SSHKey } from "../types.ts";
 import {
   applyEffectiveHostAuthMethodSelection,
+  detachEffectiveHostIdentity,
   HostDetailsConnectionSections,
 } from "./HostDetailsConnectionSections.tsx";
 import { TooltipProvider } from "./ui/tooltip.tsx";
@@ -166,6 +167,35 @@ test("selecting automatic opts out of an inherited identity", () => {
       useSshAgent: undefined,
     },
   );
+});
+
+test("overriding inherited authentication preserves the effective username", () => {
+  const host = {
+    id: "host-1",
+    label: "Host",
+    hostname: "example.com",
+    username: "",
+  } as Host;
+
+  assert.equal(
+    applyEffectiveHostAuthMethodSelection(host, "password", "key", "deploy").username,
+    "deploy",
+  );
+});
+
+test("detaching an inherited identity preserves the effective username", () => {
+  const host = {
+    id: "host-1",
+    label: "Host",
+    hostname: "example.com",
+    username: "",
+  } as Host;
+
+  assert.deepEqual(detachEffectiveHostIdentity(host, "deploy"), {
+    ...host,
+    identityId: "",
+    username: "deploy",
+  });
 });
 
 test("an inherited deleted identity remains visible and clearable", () => {

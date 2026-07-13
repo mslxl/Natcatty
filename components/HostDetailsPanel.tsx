@@ -41,7 +41,7 @@ import {
   type AsidePanelResizeProps,
 } from "./ui/aside-panel";
 import { HostDetailsAdvancedSections } from "./HostDetailsAdvancedSections";
-import { HostDetailsConnectionSections } from "./HostDetailsConnectionSections";
+import { detachEffectiveHostIdentity, HostDetailsConnectionSections } from "./HostDetailsConnectionSections";
 import {
   LINUX_DISTRO_OPTION_IDS,
   parseOptionalPortInput,
@@ -691,9 +691,9 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
   );
 
   const clearIdentity = useCallback(() => {
-    setForm((prev) => ({ ...prev, identityId: "" }));
+    setForm((prev) => detachEffectiveHostIdentity(prev, effectiveAuthHost.username));
     setIdentitySuggestionsOpen(false);
-  }, []);
+  }, [effectiveAuthHost.username]);
 
   const updateTelnetIdentity = useCallback((identityId: string) => {
     setForm((prev) => ({
@@ -944,6 +944,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
           update={update}
           groupDefaults={effectiveGroupDefaults}
           effectiveAuthMethod={effectiveAuthMethod}
+          effectiveUsername={effectiveAuthHost.username}
           effectiveIdentityId={effectiveAuthHost.identityId}
           selectedIdentity={selectedIdentity}
           clearIdentity={clearIdentity}

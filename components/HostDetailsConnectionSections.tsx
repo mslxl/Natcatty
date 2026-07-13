@@ -20,9 +20,22 @@ export const applyEffectiveHostAuthMethodSelection = (
   host: Host,
   authMethod: "auto" | "password" | "key" | "certificate",
   effectiveAuthMethod: "auto" | "password" | "key" | "certificate",
-): Host => authMethod === effectiveAuthMethod
-  ? host
-  : applyHostAuthMethodSelection(host, authMethod, effectiveAuthMethod);
+  effectiveUsername?: string,
+): Host => {
+  if (authMethod === effectiveAuthMethod) return host;
+  const selected = applyHostAuthMethodSelection(host, authMethod, effectiveAuthMethod);
+  return !selected.username?.trim() && effectiveUsername?.trim()
+    ? { ...selected, username: effectiveUsername }
+    : selected;
+};
+
+export const detachEffectiveHostIdentity = (host: Host, effectiveUsername?: string): Host => ({
+  ...host,
+  identityId: "",
+  ...(!host.username?.trim() && effectiveUsername?.trim()
+    ? { username: effectiveUsername }
+    : {}),
+});
 
 export const HostDetailsConnectionSections: React.FC<HostDetailsConnectionSectionsProps> = ({
   t,
@@ -31,6 +44,7 @@ export const HostDetailsConnectionSections: React.FC<HostDetailsConnectionSectio
   update,
   groupDefaults,
   effectiveAuthMethod,
+  effectiveUsername,
   effectiveIdentityId,
   selectedIdentity,
   clearIdentity,
@@ -61,6 +75,7 @@ export const HostDetailsConnectionSections: React.FC<HostDetailsConnectionSectio
       previous,
       authMethod,
       effectiveAuthMethod,
+      effectiveUsername,
     ));
     if (authMethod === "auto" || authMethod === "password") {
       setPendingReferenceKeyPath(null);
