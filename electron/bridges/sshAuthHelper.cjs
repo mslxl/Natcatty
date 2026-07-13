@@ -866,18 +866,23 @@ function buildAuthHandler(options) {
 
   // Determine fallback keys (keys to try after user's primary auth fails)
   // - If user provided a key: all default keys are fallbacks
-  // - If no explicit auth: first default key is primary, rest are fallbacks  
-  // - If password-only or agent-only: all default keys are fallbacks (tried after primary)
-  const fallbackKeys = hasExplicitKey
-    ? defaultKeys
-    : !hasExplicitAuth
-      ? defaultKeys.slice(1)
-      : defaultKeys;
+  // - If no explicit auth: first default key is primary, rest are fallbacks
+  // - If password-only: no default-key fallback (issue #266 / #2079)
+  // - If agent-only: all default keys are fallbacks (tried after primary)
+  const fallbackKeys = isPasswordOnly
+    ? []
+    : hasExplicitKey
+      ? defaultKeys
+      : !hasExplicitAuth
+        ? defaultKeys.slice(1)
+        : defaultKeys;
 
-  // Check if we need dynamic handler (have fallback options)
+  // Check if we need dynamic handler (have fallback options).
+  // Password-only never treats default keys as fallbacks — only unlocked
+  // encrypted keys (jump-chain retry) and keyboard-interactive remain.
   const hasFallbackOptions = fallbackKeys.length > 0 ||
-    (!hasExplicitAgent && sshAgentSocket) ||
-    (isPasswordOnly && defaultKeys.length > 0);
+    (!hasExplicitAgent && !isPasswordOnly && sshAgentSocket) ||
+    unlockedEncryptedKeys.length > 0;
 
   // Simple explicit auth with no fallback keys: preserve the old ordered
   // method list, but use a function handler so we can observe partialSuccess
@@ -902,14 +907,15 @@ function buildAuthHandler(options) {
 
   // Build comprehensive authMethods array with all auth options
   // Order depends on what user explicitly configured:
-  // - Password-only: password -> agent -> default keys -> keyboard-interactive
-  // - Key-only: user key -> password -> agent -> default keys -> keyboard-interactive  
+  // - Password-only: password -> keyboard-interactive (no default-key fallback)
+  // - Key-only: user key -> password -> agent -> default keys -> keyboard-interactive
   // - Agent configured: agent -> user key -> password -> default keys -> keyboard-interactive
   // - No explicit auth: agent -> default keys -> keyboard-interactive
   const authMethods = [];
 
   if (isPasswordOnly) {
-    // Password-only: respect user's explicit choice, no key/agent fallback
+    // Password-only: respect user's explicit choice, no key/agent fallback.
+    // Matches startSSHSession (issue #2079) and avoids #266 passphrase prompts.
     authMethods.push({ type: "password", id: "password" });
   } else if (isKeyOnly) {
     // Key-only: user key first, then password (if any), then agent/default keys as fallback
