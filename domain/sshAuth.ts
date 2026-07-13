@@ -53,7 +53,9 @@ export const applyHostAuthMethodSelection = <T extends Host>(
       ? (host.identityAgent || host.identitiesOnly !== undefined || host.addKeysToAgent || host.useKeychain !== undefined
         ? true
         : undefined)
-      : false,
+      : authMethod === "key" && previousMethod === "key"
+        ? host.useSshAgent
+        : false,
   };
 };
 

@@ -318,6 +318,10 @@ test("applyHostAuthMethodSelection clears incompatible per-host credentials", ()
     identityFilePaths: undefined,
     useSshAgent: undefined,
   });
+  assert.deepEqual(applyHostAuthMethodSelection(keyedHost, "key"), {
+    ...keyedHost,
+    identityId: "",
+  });
 
   const passwordHost = {
     ...autofillBaseHost,

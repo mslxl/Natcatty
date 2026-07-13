@@ -932,7 +932,9 @@ function buildAuthHandler(options) {
   if (isPasswordOnly) {
     // Password-only: respect user's explicit choice, no key/agent fallback.
     // Matches startSSHSession (issue #2079) and avoids #266 passphrase prompts.
-    authMethods.push({ type: "password", id: "password" });
+    if (password) {
+      authMethods.push({ type: "password", id: "password" });
+    }
   } else if (isAutomatic) {
     // Automatic: mirror the familiar OpenSSH-style order. Try local key
     // sources first, then use a saved password as the final non-interactive

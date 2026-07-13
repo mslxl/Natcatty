@@ -57,7 +57,10 @@ export const HostDetailsAdvancedSections: React.FC<HostDetailsAdvancedSectionsPr
   const effectiveDeviceType = form.deviceType ?? inheritedDeviceType;
   const inheritedStartupCommandRunMode = effectiveGroupDefaults?.startupCommandRunMode ?? "paste";
   const effectiveStartupCommandRunMode = form.startupCommandRunMode ?? inheritedStartupCommandRunMode;
-  const systemSshAgentEnabled = effectiveAuthMethod === "auto" && form.useSshAgent !== false;
+  const systemSshAgentSupported = effectiveAuthMethod === "auto" || effectiveAuthMethod === "key";
+  const systemSshAgentEnabled = effectiveAuthMethod === "auto"
+    ? form.useSshAgent !== false
+    : effectiveAuthMethod === "key" && form.useSshAgent === true;
 
   return (
   <>
@@ -246,9 +249,11 @@ export const HostDetailsAdvancedSections: React.FC<HostDetailsAdvancedSectionsPr
             label={t("hostDetails.systemSshAgent")}
             hint={t("hostDetails.systemSshAgent.desc")}
             enabled={systemSshAgentEnabled}
-            disabled={effectiveAuthMethod !== "auto"}
+            disabled={!systemSshAgentSupported}
             onToggle={() => setForm((previous: typeof form) => {
-              const enabled = effectiveAuthMethod === "auto" && previous.useSshAgent !== false;
+              const enabled = effectiveAuthMethod === "auto"
+                ? previous.useSshAgent !== false
+                : effectiveAuthMethod === "key" && previous.useSshAgent === true;
               const enabling = !enabled;
               return {
                 ...previous,

@@ -189,6 +189,23 @@ test("buildAuthHandler explicit password mode ignores an agent and default keys"
   assert.equal(labels.includes("password"), true, labels.join(","));
 });
 
+test("buildAuthHandler explicit password mode never submits an empty saved password", () => {
+  const auth = buildAuthHandler({
+    authMethod: "password",
+    password: undefined,
+    agent: "/tmp/agent.sock",
+    username: "root",
+    defaultKeys: DEFAULT_KEYS,
+    allowAgentFallback: true,
+  });
+
+  const labels = collectAuthMethods(auth.authHandler);
+  assert.equal(labels.includes("password"), false, labels.join(","));
+  assert.equal(labels.includes("agent"), false, labels.join(","));
+  assert.equal(labels.includes("publickey"), false, labels.join(","));
+  assert.equal(labels.includes("keyboard-interactive"), true, labels.join(","));
+});
+
 for (const authMethod of ["password", "key", "certificate"]) {
   test(`buildAuthHandler explicit ${authMethod} mode ignores unlocked default keys`, () => {
     const auth = buildAuthHandler({
