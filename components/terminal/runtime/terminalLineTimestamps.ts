@@ -1,5 +1,7 @@
 import type { Terminal as XTerm } from "@xterm/xterm";
 
+import { XTERM_UNLIMITED_SCROLLBACK_CAP } from "../../../infrastructure/config/xtermPerformance";
+
 export type TerminalLineTimestampSegment =
   | { kind: "data"; data: string }
   | { kind: "timestamp"; label: string };
@@ -108,8 +110,11 @@ export type TerminalLineTimestampDiagnostics = {
 const stores = new WeakMap<XTerm, TimestampStore>();
 const MAX_SEGMENTED_TIMESTAMP_WRITES = 64;
 const BULK_TIMESTAMP_BATCH_MIN_BYTES = 4096;
-/** Match XTERM_UNLIMITED_SCROLLBACK_CAP — never keep more timestamps than useful history. */
-export const MAX_TERMINAL_LINE_TIMESTAMP_ENTRIES = 50000;
+/**
+ * Hard ceiling for retained timestamps: unlimited scrollback cap plus a small
+ * viewport headroom so the oldest still-visible rows keep labels.
+ */
+export const MAX_TERMINAL_LINE_TIMESTAMP_ENTRIES = XTERM_UNLIMITED_SCROLLBACK_CAP + 256;
 /** Compact disposed holes at least this often during flood writes. */
 const TIMESTAMP_PRUNE_EVERY_RECORDS = 256;
 
@@ -122,6 +127,7 @@ export const formatTerminalLineTimestamp = (date: Date): string => (
 /**
  * Resolve how many line timestamps to retain for a terminal.
  * Prefer the live scrollback option so a smaller history trims timestamps too.
+ * Capacity is scrollback + viewport (+slack), matching xterm's retained lines.
  */
 export const resolveTerminalLineTimestampCapacity = (
   term: XTerm,
@@ -498,11 +504,12 @@ const pruneDisposedEntries = (
 
   const live = store.entries;
   if (capacity > 0 && live.length > capacity) {
-    const drop = live.length - capacity;
-    for (let index = 0; index < drop; index += 1) {
-      live[index].marker.dispose?.();
-    }
-    live.splice(0, drop);
+    // Drop from our store only — do NOT call marker.dispose() for each excess
+    // entry. xterm removes disposed markers with a linear scan/splice, so
+    // mass-disposing after a flood (e.g. seq 1 500000) is effectively O(n²)
+    // and reintroduces the freeze this path is meant to prevent. Abandoned
+    // markers leave with scrollback trim; we stop tracking them here.
+    live.splice(0, live.length - capacity);
   }
   store.recordsSincePrune = 0;
 };
@@ -880,8 +887,19 @@ const writeBatchedTimestampSegments = (
   term.write(data, () => {
     const writeCallbackMs = shouldMeasureDiagnostics ? performance.now() - writeStartedAt : 0;
     const markerStartedAt = shouldMeasureDiagnostics ? performance.now() : 0;
+    const capacity = resolveTerminalLineTimestampCapacity(term);
+    // Only register markers we can retain. Creating then disposing hundreds of
+    // thousands of xterm markers is quadratic inside xterm's marker list.
+    const timestampsToRecord = timestamps.length > capacity
+      ? timestamps.slice(timestamps.length - capacity)
+      : timestamps;
+    if (timestampsToRecord.length >= capacity) {
+      // This flood alone fills history — drop prior bookkeeping without
+      // mass-disposing markers (see pruneDisposedEntries).
+      store.entries.length = 0;
+    }
     let timestampRecorded = false;
-    for (const timestamp of timestamps) {
+    for (const timestamp of timestampsToRecord) {
       timestampRecorded = recordTerminalLineTimestamp(
         term,
         store,
