@@ -890,14 +890,12 @@ const writeBatchedTimestampSegments = (
     const capacity = resolveTerminalLineTimestampCapacity(term);
     // Only register markers we can retain. Creating then disposing hundreds of
     // thousands of xterm markers is quadratic inside xterm's marker list.
+    // Do NOT wipe prior store entries here: DECSTBM scrolling regions can emit
+    // many newlines without trimming normal scrollback, and clearing would drop
+    // timestamps for lines still in history. pruneDisposedEntries trims excess.
     const timestampsToRecord = timestamps.length > capacity
       ? timestamps.slice(timestamps.length - capacity)
       : timestamps;
-    if (timestampsToRecord.length >= capacity) {
-      // This flood alone fills history — drop prior bookkeeping without
-      // mass-disposing markers (see pruneDisposedEntries).
-      store.entries.length = 0;
-    }
     let timestampRecorded = false;
     for (const timestamp of timestampsToRecord) {
       timestampRecorded = recordTerminalLineTimestamp(

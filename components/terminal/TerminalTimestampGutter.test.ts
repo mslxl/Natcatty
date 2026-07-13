@@ -139,9 +139,11 @@ test("timestamp gutter throttles output-driven scroll events under flood pressur
   const source = readFileSync(new URL("./TerminalTimestampGutter.tsx", import.meta.url), "utf8");
   assert.match(source, /term\.onScroll\?\.\(\(\) => \{/);
   assert.match(source, /getTerminalOutputPressure\(term\)/);
-  assert.match(
+  // largeOutput only (time-bounded); longLine must not sticky-throttle user scrolls.
+  assert.match(source, /scheduleRender\(pressure\.largeOutput \? "normal" : "immediate"\)/);
+  assert.doesNotMatch(
     source,
-    /pressure\.largeOutput \|\| pressure\.longLine \? "normal" : "immediate"/,
+    /onScroll[\s\S]{0,200}pressure\.largeOutput \|\| pressure\.longLine/,
   );
 });
 
