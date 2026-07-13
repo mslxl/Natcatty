@@ -36,13 +36,13 @@ const hasAgentEnablingDirectives = (
 );
 
 export const resolveHostAuthMethodSelection = (
-  host: Pick<Host, "authMethod" | "identityFileId" | "identityFilePaths" | "password" | "useSshAgent">,
+  host: Pick<Host, "authMethod" | "authPolicyVersion" | "identityFileId" | "identityFilePaths" | "password" | "useSshAgent">,
 ): HostAuthMethod => host.authMethod || (
   host.useSshAgent === true
     ? "auto"
     : host.identityFileId || host.identityFilePaths?.length
     ? "key"
-    : host.password
+    : host.password && host.authPolicyVersion !== 1
       ? "password"
       : "auto"
 );
@@ -144,7 +144,15 @@ export const resolveHostAuth = (args: {
     override?.authMethod ||
     identity?.authMethod ||
     host.authMethod ||
-    (host.useSshAgent === true ? "auto" : host.identityFilePaths?.length ? "key" : undefined)
+    (
+      host.useSshAgent === true
+        ? "auto"
+        : host.identityFilePaths?.length
+          ? "key"
+          : host.authPolicyVersion === 1
+            ? "auto"
+            : undefined
+    )
   ) as HostAuthMethod | undefined;
 
   // Don't load key when password auth is selected.

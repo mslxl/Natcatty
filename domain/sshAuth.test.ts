@@ -309,6 +309,18 @@ test("resolveHostAuth keeps a legacy saved password in password-only mode", () =
   assert.equal(resolved.authMethod, "password");
 });
 
+test("a new automatic host keeps its saved password as a fallback", () => {
+  const host = {
+    ...autofillBaseHost,
+    authPolicyVersion: 1 as const,
+    authMethod: undefined,
+    password: "fallback-secret",
+  } as Host;
+
+  assert.equal(resolveHostAuthMethodSelection(host), "auto");
+  assert.equal(resolveHostAuth({ host, keys: [] }).authMethod, "auto");
+});
+
 test("resolveHostAuthMethodSelection gives legacy hosts a visible mode", () => {
   assert.equal(resolveHostAuthMethodSelection(autofillBaseHost), "auto");
   assert.equal(resolveHostAuthMethodSelection({ ...autofillBaseHost, password: "secret" }), "password");

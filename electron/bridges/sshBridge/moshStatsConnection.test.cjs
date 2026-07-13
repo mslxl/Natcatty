@@ -247,6 +247,47 @@ test("reads identity files non-interactively when no inline key is present", asy
   assert.equal(client.connectOpts.privateKey, "FILEKEY");
 });
 
+test("tries every discovered identity file for automatic stats auth", async () => {
+  const { api, sessions } = makeApi({
+    readFileNoFollow: async (p) => p.endsWith("id_first") ? "FIRSTKEY" : "SECONDKEY",
+    getSshAgentSocket: () => "/tmp/agent.sock",
+  });
+  const session = {
+    moshStatsAuth: {
+      hostname: "h",
+      username: "u",
+      identityFilePaths: ["~/.ssh/id_first", "~/.ssh/id_second"],
+    },
+  };
+  sessions.set("sid", session);
+
+  api.ensureMoshStatsConnection(session, "sid");
+  await tick();
+  await tick();
+
+  const handler = FakeSSHClient.instances[0].connectOpts.authHandler;
+  const nextMethod = () => {
+    let method;
+    handler(null, false, (value) => { method = value; });
+    return method;
+  };
+
+  assert.equal(nextMethod(), "none");
+  assert.equal(nextMethod(), "agent");
+  assert.deepEqual(nextMethod(), {
+    type: "publickey",
+    username: "u",
+    key: "FIRSTKEY",
+    passphrase: undefined,
+  });
+  assert.deepEqual(nextMethod(), {
+    type: "publickey",
+    username: "u",
+    key: "SECONDKEY",
+    passphrase: undefined,
+  });
+});
+
 test("falls back to ssh-agent when a socket is available and no inline creds", async () => {
   // The system ssh used by the Mosh handshake authenticates via the local
   // agent by default, so the companion should too — regardless of the
