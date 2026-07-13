@@ -15,28 +15,59 @@ import {
  */
 function makeLine(
   text: string,
-  options: { isWrapped?: boolean; emptyCells?: number } = {},
+  options: { isWrapped?: boolean; emptyCells?: number; cellWidths?: number[] } = {},
 ): SelectionBufferLine {
   const emptyCells = options.emptyCells ?? 0;
-  const full = text + "\0".repeat(emptyCells);
+  // Optional per-character terminal widths (default 1). Used to model CJK.
+  const widths = options.cellWidths ?? Array.from(text, () => 1);
+  let colLength = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    colLength += widths[i] ?? 1;
+  }
+  const fullCols = colLength + emptyCells;
+  // Map each terminal column to a char (wide chars occupy two cols; second is spacer).
+  const cols: string[] = [];
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i]!;
+    const w = widths[i] ?? 1;
+    cols.push(ch);
+    for (let extra = 1; extra < w; extra += 1) {
+      cols.push(""); // wide-char continuation column
+    }
+  }
+  while (cols.length < fullCols) {
+    cols.push("\0");
+  }
   return {
     isWrapped: options.isWrapped ?? false,
-    length: full.length,
-    translateToString(trimRight = false, startColumn = 0, endColumn = full.length) {
-      let end = Math.max(startColumn, Math.min(endColumn, full.length));
+    length: fullCols,
+    getTrimmedLength() {
+      for (let i = cols.length - 1; i >= 0; i -= 1) {
+        if (cols[i] && cols[i] !== "\0") {
+          return i + 1;
+        }
+      }
+      return 0;
+    },
+    translateToString(trimRight = false, startColumn = 0, endColumn = fullCols) {
+      let end = Math.max(startColumn, Math.min(endColumn, fullCols));
       if (trimRight) {
-        while (end > startColumn && full[end - 1] === "\0") {
+        while (end > startColumn && (cols[end - 1] === "\0" || cols[end - 1] === "")) {
           end -= 1;
         }
       }
-      const start = Math.max(0, startColumn);
-      return full.slice(start, end).replace(/\0/g, " ");
+      let result = "";
+      for (let c = Math.max(0, startColumn); c < end; c += 1) {
+        const cell = cols[c];
+        if (cell && cell !== "\0") result += cell;
+      }
+      return result;
     },
   };
 }
 
 function makeTerm(
-  lines: Array<{ text: string; isWrapped?: boolean; emptyCells?: number }>,
+  lines: Array<{ text: string; isWrapped?: boolean; emptyCells?: number; cellWidths?: number[] }>,
   range: { start: { x: number; y: number }; end: { x: number; y: number } } | null,
   options: {
     rawSelection?: string;
@@ -44,7 +75,11 @@ function makeTerm(
   } = {},
 ): SelectionTerminal {
   const bufferLines = lines.map((line) =>
-    makeLine(line.text, { isWrapped: line.isWrapped, emptyCells: line.emptyCells }),
+    makeLine(line.text, {
+      isWrapped: line.isWrapped,
+      emptyCells: line.emptyCells,
+      cellWidths: line.cellWidths,
+    }),
   );
   return {
     getSelection: () => options.rawSelection ?? "",
@@ -91,6 +126,26 @@ test("joinSoftWrappedRows collapses prose padding to one space", () => {
 
 test("joinSoftWrappedRows does not invent spaces between CJK characters", () => {
   assert.equal(joinSoftWrappedRows("最   ", "稳"), "最稳");
+  // Single pad cell must not bypass the CJK check.
+  assert.equal(joinSoftWrappedRows("最 ", "稳"), "最稳");
+});
+
+test("joinSoftWrappedRows keeps URL tokens intact when split mid-word", () => {
+  assert.equal(
+    joinSoftWrappedRows("https://example.com/verylongto   ", "ken"),
+    "https://example.com/verylongtoken",
+  );
+});
+
+test("preserves partial trailing spaces after wide characters using column ends", () => {
+  // "中  X" with 中 width 2 → columns: [中][ ][ ][ ][X] roughly.
+  // Select through the spaces after 中 but before X.
+  const term = makeTerm(
+    [{ text: "中  X", cellWidths: [2, 1, 1, 1] }],
+    { start: { x: 0, y: 0 }, end: { x: 4, y: 0 } },
+  );
+  // end.x=4 is before content end column of X; keep selected spaces.
+  assert.equal(getNormalizedTerminalSelection(term), "中  ");
 });
 
 test("joins soft-wrapped rows, strips padding, keeps word separators", () => {

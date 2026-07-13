@@ -17,6 +17,11 @@ export type SelectionBufferLine = {
   isWrapped?: boolean;
   length: number;
   /**
+   * xterm: column index after the last non-empty cell (terminal columns, not
+   * UTF-16 length). Used to decide whether a selection ends at the row edge.
+   */
+  getTrimmedLength?: () => number;
+  /**
    * xterm semantics: trimRight only drops empty cells (getTrimmedLength),
    * not written ASCII spaces used as display padding.
    */
@@ -187,18 +192,14 @@ export function joinSoftWrappedRows(previousRaw: string, nextRaw: string): strin
     return nextRaw;
   }
 
-  // A single trailing space is the common soft-wrap-at-word-boundary case.
-  if (trailingWhitespace === 1) {
-    return `${left} ${nextRaw}`;
-  }
-
-  // Multi-space runs are usually TUI padding. Do not invent a separator when
-  // the next row clearly continues the same token (URL/path/CJK/punctuation).
+  // Token continuations (CJK, URL/path, boundary punctuation) always join
+  // tightly — even when the previous row had exactly one trailing pad cell.
   if (isTokenContinuation(left, nextRaw)) {
     return left + nextRaw;
   }
 
-  // Prose-style padding wrap: collapse padding to one space.
+  // A single trailing space is the common soft-wrap-at-word-boundary case.
+  // Multi-space runs are usually TUI padding collapsed to one prose separator.
   return `${left} ${nextRaw}`;
 }
 
@@ -220,6 +221,20 @@ function isTokenContinuation(left: string, next: string): boolean {
     return true;
   }
 
+  // URL/path split mid-token between alphanumerics (common at terminal width).
+  if (isAsciiWordChar(leftEnd) && isAsciiWordChar(nextStart) && looksLikeUrlOrPath(left)) {
+    return true;
+  }
+
+  return false;
+}
+
+function looksLikeUrlOrPath(text: string): boolean {
+  if (/[a-z][a-z0-9+.-]*:\/\//i.test(text)) return true;
+  if (text.includes("www.")) return true;
+  // Absolute or deep relative paths: /usr/local/... or foo/bar/baz
+  if (text.startsWith("/") || text.startsWith("./") || text.startsWith("../")) return true;
+  if ((text.match(/\//g) ?? []).length >= 2) return true;
   return false;
 }
 
@@ -292,7 +307,11 @@ function trimCompletedRowPadding(text: string): string {
 }
 
 function measureContentEnd(line: SelectionBufferLine): number {
-  // Empty-cell trim length of the full line — selection ending here is "full row".
+  // Prefer xterm's column-based trimmed length so wide/combining characters
+  // don't make string.length disagree with selection end.x (also columns).
+  if (typeof line.getTrimmedLength === "function") {
+    return line.getTrimmedLength();
+  }
   return line.translateToString(true).length;
 }
 
