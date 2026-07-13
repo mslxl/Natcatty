@@ -23,6 +23,7 @@ export const HostDetailsConnectionSections: React.FC<HostDetailsConnectionSectio
   update,
   groupDefaults,
   effectiveAuthMethod,
+  effectiveIdentityId,
   selectedIdentity,
   clearIdentity,
   identities,
@@ -152,7 +153,7 @@ export const HostDetailsConnectionSections: React.FC<HostDetailsConnectionSectio
                   <TooltipContent>{t("common.clear")}</TooltipContent>
                 </Tooltip>
               </div>
-            ) : form.identityId ? (
+            ) : effectiveIdentityId ? (
               <div className="flex items-center gap-2 h-10 px-3 rounded-md border border-border/70 bg-secondary/60">
                 <User size={16} className="text-muted-foreground" />
                 <div className="min-w-0 flex-1">

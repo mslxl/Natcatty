@@ -1,4 +1,4 @@
-import type { Host, HostAuthMethod, Identity, SSHKey } from "./models";
+import type { GroupConfig, Host, HostAuthMethod, Identity, SSHKey } from "./models";
 import { sanitizeCredentialValue } from "./credentials";
 
 type HostAuthOverride = {
@@ -31,10 +31,6 @@ export const resolveHostAuthMethodSelection = (
       ? "password"
       : "auto"
 );
-
-export const resolveHostAuthMethodForPersistence = (
-  host: Pick<Host, "authMethod">,
-): HostAuthMethod | undefined => host.authMethod;
 
 export const applyHostAuthMethodSelection = <T extends Host>(
   host: T,
@@ -141,6 +137,35 @@ export const resolveHostAuth = (args: {
   };
 };
 
+export const resolveHostAuthMethodForPersistence = (args: {
+  host: Host;
+  keys: SSHKey[];
+  identities?: Identity[];
+  groupDefaults?: Partial<GroupConfig>;
+}): HostAuthMethod | undefined => {
+  const { host, keys, identities, groupDefaults } = args;
+  if (host.authMethod) return host.authMethod;
+
+  const hostHasOwnAuth = host.identityId !== undefined
+    || host.identityFileId !== undefined
+    || Boolean(host.identityFilePaths?.length)
+    || host.password !== undefined
+    || host.savePassword === false
+    || host.useSshAgent !== undefined
+    || host.identityAgent !== undefined
+    || host.identitiesOnly !== undefined
+    || host.addKeysToAgent !== undefined
+    || host.useKeychain !== undefined;
+  const groupHasAuth = groupDefaults?.identityId !== undefined
+    || groupDefaults?.authMethod !== undefined
+    || groupDefaults?.identityFileId !== undefined
+    || Boolean(groupDefaults?.identityFilePaths?.length)
+    || groupDefaults?.password !== undefined;
+
+  if (!hostHasOwnAuth && groupHasAuth) return undefined;
+  return resolveHostAuth({ host, keys, identities }).authMethod;
+};
+
 /**
  * Resolve the password to use for sudo autofill the same way SSH login does
  * (through resolveHostAuth), so a password stored in a referenced Keychain
@@ -227,6 +252,9 @@ export const hasRequiredHostAuthCredential = (args: {
   identities?: Identity[];
 }): boolean => {
   if (args.host.protocol && args.host.protocol !== "ssh") return true;
+  if (args.host.identityId && !args.identities?.some((identity) => identity.id === args.host.identityId)) {
+    return false;
+  }
   const resolved = resolveHostAuth(args);
   if (resolved.authMethod === "key") {
     return Boolean(resolved.key || args.host.identityFilePaths?.some((value) => value.trim()));

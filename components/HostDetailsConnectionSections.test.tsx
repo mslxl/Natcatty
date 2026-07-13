@@ -44,6 +44,7 @@ const renderConnectionSections = (formOverrides: Record<string, unknown> = {}) =
         update: () => {},
         groupDefaults: undefined,
         effectiveAuthMethod: formOverrides.effectiveAuthMethod || formOverrides.authMethod || "key",
+        effectiveIdentityId: formOverrides.effectiveIdentityId || formOverrides.identityId,
         selectedIdentity: undefined,
         clearIdentity: () => {},
         identities: [],
@@ -127,4 +128,16 @@ test("host authentication choices show the inherited effective method", () => {
   });
 
   assert.match(markup, /<button[^>]*aria-pressed="true"[^>]*>hostDetails\.auth\.passwordOnly<\/button>/);
+});
+
+test("an inherited deleted identity remains visible and clearable", () => {
+  const markup = renderConnectionSections({
+    authMethod: undefined,
+    identityFileId: undefined,
+    effectiveAuthMethod: "auto",
+    effectiveIdentityId: "deleted-group-identity",
+  });
+
+  assert.match(markup, /hostDetails\.identity\.missing/);
+  assert.doesNotMatch(markup, /placeholder="hostDetails\.username\.placeholder"/);
 });

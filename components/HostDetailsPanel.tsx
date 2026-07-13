@@ -269,6 +269,22 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
     return groupDefaults;
   }, [defaultGroup, form.group, groupConfigs, groupDefaults]);
 
+  const effectiveAuthHost = useMemo(
+    () => effectiveGroupDefaults ? applyGroupDefaults(form, effectiveGroupDefaults) : form,
+    [effectiveGroupDefaults, form],
+  );
+
+  const selectedIdentity = useMemo(() => {
+    if (!effectiveAuthHost.identityId) return undefined;
+    return identities.find((i) => i.id === effectiveAuthHost.identityId);
+  }, [effectiveAuthHost.identityId, identities]);
+
+  const effectiveAuthMethod = useMemo(() => resolveHostAuth({
+    host: effectiveAuthHost,
+    keys: availableKeys,
+    identities,
+  }).authMethod, [availableKeys, effectiveAuthHost, identities]);
+
   const effectiveThemeId = useMemo(
     () => resolveHostTerminalThemeId(form, resolveGroupTerminalThemeId(effectiveGroupDefaults, terminalThemeId)),
     [effectiveGroupDefaults, form, terminalThemeId],
@@ -416,7 +432,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
   const handleSubmit = () => {
     const hostname = form.hostname.trim();
     if (!hostname) return;
-    if (!hasRequiredHostAuthCredential({ host: form, keys: availableKeys, identities })) {
+    if (!hasRequiredHostAuthCredential({ host: effectiveAuthHost, keys: availableKeys, identities })) {
       toast.error(t("hostDetails.auth.credentialRequired"));
       return;
     }
@@ -482,7 +498,12 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
       notes: form.notes?.trim() || undefined,
       port: finalPort,
       password: form.savePassword === false ? undefined : form.password,
-      authMethod: resolveHostAuthMethodForPersistence(form),
+      authMethod: resolveHostAuthMethodForPersistence({
+        host: form,
+        keys: availableKeys,
+        identities,
+        groupDefaults: effectiveGroupDefaults,
+      }),
       managedSourceId: finalManagedSourceId,
     };
     cleaned = prepareTelnetCredentialsForSave(normalizePrimaryTelnetState(cleaned));
@@ -611,22 +632,6 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
       identity: availableKeys.filter((k) => k.category === "identity"),
     };
   }, [availableKeys]);
-
-  const effectiveAuthHost = useMemo(
-    () => effectiveGroupDefaults ? applyGroupDefaults(form, effectiveGroupDefaults) : form,
-    [effectiveGroupDefaults, form],
-  );
-
-  const selectedIdentity = useMemo(() => {
-    if (!effectiveAuthHost.identityId) return undefined;
-    return identities.find((i) => i.id === effectiveAuthHost.identityId);
-  }, [effectiveAuthHost.identityId, identities]);
-
-  const effectiveAuthMethod = useMemo(() => resolveHostAuth({
-    host: effectiveAuthHost,
-    keys: availableKeys,
-    identities,
-  }).authMethod, [availableKeys, effectiveAuthHost, identities]);
 
   const selectedTelnetIdentity = useMemo(() => {
     if (!form.telnetIdentityId) return undefined;
@@ -937,6 +942,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
           update={update}
           groupDefaults={effectiveGroupDefaults}
           effectiveAuthMethod={effectiveAuthMethod}
+          effectiveIdentityId={effectiveAuthHost.identityId}
           selectedIdentity={selectedIdentity}
           clearIdentity={clearIdentity}
           identities={identities}

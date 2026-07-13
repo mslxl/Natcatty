@@ -206,6 +206,11 @@ test("hasRequiredHostAuthCredential rejects empty explicit key and certificate s
     host: { ...autofillBaseHost, protocol: "telnet", authMethod: "key" },
     keys: [],
   }), true);
+  assert.equal(hasRequiredHostAuthCredential({
+    host: applyGroupDefaults({ ...autofillBaseHost, username: "" }, { identityId: "deleted-identity" }),
+    keys: [],
+    identities: [],
+  }), false);
 });
 
 test("hasBridgeSshCredentials accepts an agent-only host", () => {
@@ -367,13 +372,35 @@ test("saving keeps inherited group authentication inherited", () => {
 
   for (const [groupDefaults, expectedMethod] of cases) {
     const host = { ...autofillBaseHost, username: "", authMethod: undefined } as Host;
-    assert.equal(resolveHostAuthMethodForPersistence(host), undefined);
+    assert.equal(resolveHostAuthMethodForPersistence({
+      host,
+      keys: [referenceKey],
+      identities: [identity],
+      groupDefaults,
+    }), undefined);
     assert.equal(resolveHostAuth({
       host: applyGroupDefaults(host, groupDefaults),
       keys: [referenceKey],
       identities: [identity],
     }).authMethod, expectedMethod);
   }
+});
+
+test("saving a legacy password host keeps password-only after discarding the secret", () => {
+  const host = {
+    ...autofillBaseHost,
+    authMethod: undefined,
+    password: "temporary-secret",
+    savePassword: false,
+  } as Host;
+  const groupDefaults = { identityId: "group-identity" };
+
+  assert.equal(resolveHostAuthMethodForPersistence({ host, keys: [] }), "password");
+  assert.equal(resolveHostAuthMethodForPersistence({
+    host,
+    keys: [],
+    groupDefaults,
+  }), "password");
 });
 
 test("manual host credentials suppress an inherited group identity", () => {
