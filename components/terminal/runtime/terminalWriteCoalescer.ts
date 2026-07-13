@@ -88,9 +88,16 @@ const probeAltScreenScheduling = (
     }
 
     if (phase === 0) {
-      // After ESC: expect '['
+      // After ESC: expect '[' (CSI) or 'c' (RIS full reset).
       if (ch === "[") {
         phase = 1;
+        continue;
+      }
+      if (ch === "c") {
+        // RIS returns the terminal to the normal screen without DECSET leave.
+        lastTransition = "leave";
+        phase = null;
+        params = "";
         continue;
       }
       phase = null;
@@ -513,6 +520,11 @@ export const abortTerminalWriteCoalescer = (
   );
   takePendingChunkCount(term);
   coalescer.abort();
+  // Dropped bytes never reach xterm — clear alt-screen schedule state that was
+  // only inferred from those discarded chunks (Ctrl-C / interrupt drain).
+  incompleteAltScreenCsiByTerm.delete(term);
+  pendingAltScreenEntryByTerm.delete(term);
+  observedAltScreenByTerm.delete(term);
   if (ingressDropped > 0) {
     onDropped?.(ingressDropped);
   }
