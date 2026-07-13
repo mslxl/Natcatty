@@ -16,11 +16,19 @@ import {
 const ESC = String.fromCharCode(0x1b);
 /** 8-bit C1 CSI (0x9b); xterm accepts this as equivalent to ESC [. */
 const C1_CSI = String.fromCharCode(0x9b);
-const CSI_PRIVATE_INTRO_7BIT = `${ESC}[?`;
-const CSI_PRIVATE_INTRO_8BIT = `${C1_CSI}?`;
 const ALT_SCREEN_DECSET = new Set(["47", "1047", "1049"]);
-/** Incomplete CSI private-mode tails retained across coalescer flushes. */
-const incompleteAltScreenCsiByTerm = new WeakMap<XTerm, string>();
+/** Cap incomplete CSI param buffer (real sequences are far shorter). */
+const MAX_INCOMPLETE_CSI_PARAMS = 48;
+
+type IncompletePrivateCsi = {
+  /** 0=ESC, 1=ESC[, 2=ESC[? or C1?, 3=C1 alone */
+  phase: 0 | 1 | 2 | 3;
+  /** Accumulated private-mode params after '?' */
+  params: string;
+};
+
+/** Incomplete private CSI state retained across coalescer flushes. */
+const incompleteAltScreenCsiByTerm = new WeakMap<XTerm, IncompletePrivateCsi>();
 /**
  * Set after a complete enter-alt-screen CSI is observed, until xterm reports
  * `buffer.active.type === "alternate"` (parser is async relative to our schedule).
@@ -30,70 +38,116 @@ const pendingAltScreenEntryByTerm = new WeakMap<XTerm, true>();
 const isPrivateParamCharCode = (code: number): boolean =>
   (code >= 0x30 && code <= 0x39) || code === 0x3b;
 
-/**
- * Extract a trailing incomplete private CSI (7-bit or 8-bit) that may continue
- * in a later PTY chunk. Empty when the buffer ends on a finished sequence.
- */
-const extractIncompletePrivateCsiTail = (data: string): string => {
-  const lastEsc = data.lastIndexOf(ESC);
-  const lastC1 = data.lastIndexOf(C1_CSI);
-  const start = Math.max(lastEsc, lastC1);
-  if (start < 0) return "";
-  const tail = data.slice(start);
-  if (tail === ESC || tail === `${ESC}[`) return tail;
-  if (tail === C1_CSI) return tail;
-  if (tail.startsWith(CSI_PRIVATE_INTRO_7BIT)) {
-    const rest = tail.slice(CSI_PRIVATE_INTRO_7BIT.length);
-    for (let i = 0; i < rest.length; i += 1) {
-      if (!isPrivateParamCharCode(rest.charCodeAt(i))) return "";
-    }
-    return tail;
-  }
-  if (tail.startsWith(CSI_PRIVATE_INTRO_8BIT)) {
-    const rest = tail.slice(CSI_PRIVATE_INTRO_8BIT.length);
-    for (let i = 0; i < rest.length; i += 1) {
-      if (!isPrivateParamCharCode(rest.charCodeAt(i))) return "";
-    }
-    return tail;
-  }
-  return "";
-};
-
-type PrivateDecsetScan = {
-  incomplete: boolean;
-  /** Last complete enter/leave transition in encounter order, if any. */
+type AltScreenProbeResult = {
+  needsRaf: boolean;
+  incomplete: IncompletePrivateCsi | null;
   lastTransition: "enter" | "leave" | null;
 };
 
-const scanPrivateDecsetModes = (
+/**
+ * Single left-to-right scan for 7-bit (`ESC[?…`) and 8-bit (`CSI?…`) private
+ * DECSET modes that enter/leave the alternate screen. Resumes from incomplete
+ * parser state so long param lists can span PTY/schedule flushes.
+ */
+const probeAltScreenScheduling = (
   data: string,
-  intro: string,
-): PrivateDecsetScan => {
-  let searchFrom = 0;
-  let incomplete = false;
+  resume: IncompletePrivateCsi | null,
+): AltScreenProbeResult => {
+  let phase: IncompletePrivateCsi["phase"] | null = resume?.phase ?? null;
+  let params = resume?.params ?? "";
   let lastTransition: "enter" | "leave" | null = null;
-  while (searchFrom < data.length) {
-    const start = data.indexOf(intro, searchFrom);
-    if (start < 0) break;
-    let index = start + intro.length;
-    const paramStart = index;
-    while (index < data.length && isPrivateParamCharCode(data.charCodeAt(index))) {
-      index += 1;
+  let incomplete: IncompletePrivateCsi | null = null;
+
+  const finishPrivate = (final: string): void => {
+    const parts = params.split(";").filter(Boolean);
+    if (parts.some((param) => ALT_SCREEN_DECSET.has(param))) {
+      lastTransition = final === "h" ? "enter" : "leave";
     }
-    if (index >= data.length) {
-      incomplete = true;
-      break;
-    }
-    const final = data.charAt(index);
-    if (final === "h" || final === "l") {
-      const params = data.slice(paramStart, index).split(";").filter(Boolean);
-      if (params.some((param) => ALT_SCREEN_DECSET.has(param))) {
-        lastTransition = final === "h" ? "enter" : "leave";
+    phase = null;
+    params = "";
+  };
+
+  for (let i = 0; i < data.length; i += 1) {
+    const ch = data.charAt(i);
+    const code = data.charCodeAt(i);
+
+    if (phase === null) {
+      if (ch === ESC) {
+        phase = 0;
+        params = "";
+        continue;
       }
+      if (ch === C1_CSI) {
+        phase = 3;
+        params = "";
+        continue;
+      }
+      continue;
     }
-    searchFrom = start + 1;
+
+    if (phase === 0) {
+      // After ESC: expect '['
+      if (ch === "[") {
+        phase = 1;
+        continue;
+      }
+      phase = null;
+      params = "";
+      i -= 1; // reprocess this char as potential start
+      continue;
+    }
+
+    if (phase === 1) {
+      // After ESC[: expect '?'
+      if (ch === "?") {
+        phase = 2;
+        params = "";
+        continue;
+      }
+      phase = null;
+      params = "";
+      i -= 1;
+      continue;
+    }
+
+    if (phase === 3) {
+      // After C1 CSI: expect '?'
+      if (ch === "?") {
+        phase = 2;
+        params = "";
+        continue;
+      }
+      phase = null;
+      params = "";
+      i -= 1;
+      continue;
+    }
+
+    // phase === 2: private params then final byte
+    if (isPrivateParamCharCode(code)) {
+      if (params.length < MAX_INCOMPLETE_CSI_PARAMS) {
+        params += ch;
+      }
+      continue;
+    }
+    if (ch === "h" || ch === "l") {
+      finishPrivate(ch);
+      continue;
+    }
+    // Other CSI final/abort — drop incomplete private mode.
+    phase = null;
+    params = "";
   }
-  return { incomplete, lastTransition };
+
+  if (phase !== null) {
+    incomplete = { phase, params };
+  }
+
+  return {
+    needsRaf: lastTransition === "enter" || incomplete !== null,
+    incomplete,
+    lastTransition,
+  };
 };
 
 const isTerminalAlternateScreenActive = (term: XTerm): boolean => {
@@ -111,29 +165,23 @@ const noteAltScreenScheduleProbe = (term: XTerm, chunk: string): boolean => {
     return true;
   }
 
-  const prefix = incompleteAltScreenCsiByTerm.get(term) ?? "";
-  // Bound prefix so a pathological stream cannot grow the tail unbounded.
-  const combined = `${prefix.slice(-16)}${chunk}`;
-  const seven = scanPrivateDecsetModes(combined, CSI_PRIVATE_INTRO_7BIT);
-  const eight = scanPrivateDecsetModes(combined, CSI_PRIVATE_INTRO_8BIT);
-  incompleteAltScreenCsiByTerm.set(term, extractIncompletePrivateCsiTail(combined));
+  const resume = incompleteAltScreenCsiByTerm.get(term) ?? null;
+  const probe = probeAltScreenScheduling(chunk, resume);
+  if (probe.incomplete) {
+    incompleteAltScreenCsiByTerm.set(term, probe.incomplete);
+  } else {
+    incompleteAltScreenCsiByTerm.delete(term);
+  }
 
-  // Prefer the later transition when both 7-bit and 8-bit scans fire. Each scan
-  // already walks encounter order so enter-then-leave in one chunk clears latch.
-  const lastTransition = eight.lastTransition ?? seven.lastTransition;
-  if (lastTransition === "leave") {
+  if (probe.lastTransition === "leave") {
     pendingAltScreenEntryByTerm.delete(term);
-  } else if (lastTransition === "enter") {
+  } else if (probe.lastTransition === "enter") {
     // Complete enter CSI observed; xterm may still report normal until parse.
     pendingAltScreenEntryByTerm.set(term, true);
   }
 
-  const incompleteTail = (incompleteAltScreenCsiByTerm.get(term)?.length ?? 0) > 0;
   return (
-    lastTransition === "enter"
-    || seven.incomplete
-    || eight.incomplete
-    || incompleteTail
+    probe.needsRaf
     || pendingAltScreenEntryByTerm.has(term)
   );
 };
@@ -334,6 +382,9 @@ export const enqueueCoalescedTerminalWrite = (
   }
   terminalWriteCoalescerWriters.set(term, writeNow);
   if (canAutoFlush && data.length > maxPendingBytes) {
+    // Oversized batches skip the coalescer frame arm, but still must latch
+    // enter-alt-screen so follow-up repaint chunks use rAF.
+    noteAltScreenScheduleProbe(term, data);
     writeLargeTerminalBatch(
       data,
       ingressBytes,
