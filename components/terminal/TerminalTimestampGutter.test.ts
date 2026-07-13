@@ -135,6 +135,16 @@ test("timestamp gutter flood throttle advances even when the paint signature is 
   );
 });
 
+test("timestamp gutter throttles output-driven scroll events under flood pressure", () => {
+  const source = readFileSync(new URL("./TerminalTimestampGutter.tsx", import.meta.url), "utf8");
+  assert.match(source, /term\.onScroll\?\.\(\(\) => \{/);
+  assert.match(source, /getTerminalOutputPressure\(term\)/);
+  assert.match(
+    source,
+    /pressure\.largeOutput \|\| pressure\.longLine \? "normal" : "immediate"/,
+  );
+});
+
 test("timestamp gutter reuses row nodes across paints instead of rebuilding the tree", () => {
   const gutter = {
     children: [] as Array<Record<string, unknown>>,

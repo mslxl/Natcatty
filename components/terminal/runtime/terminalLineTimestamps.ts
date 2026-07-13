@@ -457,7 +457,8 @@ const internTerminalLineTimestampLabel = (
 };
 
 /**
- * Compact disposed markers and enforce a hard capacity in one linear pass.
+ * Compact disposed markers, collapse rewritten lines to their latest label,
+ * and enforce a hard capacity in linear passes.
  * Avoids the previous O(n) filter on *every* individual marker dispose during
  * scrollback trim (which turned seq 1 500000 into ~O(n²) main-thread work).
  */
@@ -475,12 +476,33 @@ const pruneDisposedEntries = (
   }
   entries.length = write;
 
-  if (capacity > 0 && entries.length > capacity) {
-    const drop = entries.length - capacity;
-    for (let index = 0; index < drop; index += 1) {
-      entries[index].marker.dispose?.();
+  // Cursor-up / reposition can append many live markers on the same buffer
+  // line. Keep only the latest label per line so the capacity budget tracks
+  // unique visible history instead of rewrite noise.
+  if (entries.length > 1) {
+    const kept: TimestampEntry[] = [];
+    const seenLines = new Set<number>();
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const entry = entries[index];
+      const line = entry.marker.line;
+      if (seenLines.has(line)) {
+        entry.marker.dispose?.();
+        continue;
+      }
+      seenLines.add(line);
+      kept.push(entry);
     }
-    entries.splice(0, drop);
+    kept.reverse();
+    store.entries = kept;
+  }
+
+  const live = store.entries;
+  if (capacity > 0 && live.length > capacity) {
+    const drop = live.length - capacity;
+    for (let index = 0; index < drop; index += 1) {
+      live[index].marker.dispose?.();
+    }
+    live.splice(0, drop);
   }
   store.recordsSincePrune = 0;
 };

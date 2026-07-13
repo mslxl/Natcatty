@@ -793,3 +793,25 @@ test("gutter prefers the latest label when a later marker rewrites an earlier li
     ],
   );
 });
+
+test("capacity prune dedupes rewritten lines so unique history is not dropped", () => {
+  const scrollback = 100;
+  const rows = 1;
+  const { term } = createFakeTerm({ scrollback, rows, cols: 80 });
+
+  // Fill unique lines up to roughly the capacity window.
+  const seed = Array.from({ length: scrollback + rows }, (_, index) => `line-${index}`).join("\r\n");
+  writeTerminalDataWithLineTimestamps(term as never, seed, () => {});
+
+  // Rewrite the same line many times via cursor-up (segmented path).
+  for (let index = 0; index < 200; index += 1) {
+    writeTerminalDataWithLineTimestamps(term as never, "\x1b[Ax\r\n", () => {});
+  }
+
+  const live = getTerminalLineTimestampEntryCount(term as never);
+  const capacity = resolveTerminalLineTimestampCapacity(term as never);
+  assert.ok(live <= capacity, `expected <= ${capacity} live entries, got ${live}`);
+  // Unique-line history should still fit under capacity; rewrite noise must not
+  // push older unique lines out purely by duplicate count.
+  assert.ok(live >= Math.min(capacity, 20), `expected meaningful unique history, got ${live}`);
+});

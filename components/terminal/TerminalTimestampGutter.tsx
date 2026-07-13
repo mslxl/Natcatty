@@ -380,7 +380,15 @@ export function TerminalTimestampGutter({
       }
 
       disposables = [
-        term.onScroll?.(() => scheduleRender("immediate")),
+        // xterm fires onScroll for output-driven scrolling too (not only user
+        // wheel/trackpad). During flood pressure, treat scroll as throttled so
+        // a multi-line write cannot clear the 100ms paint budget every frame.
+        term.onScroll?.(() => {
+          const pressure = getTerminalOutputPressure(term);
+          scheduleRender(
+            pressure.largeOutput || pressure.longLine ? "normal" : "immediate",
+          );
+        }),
         term.onRender?.(() => scheduleRender("normal")),
         term.onResize?.(() => scheduleRender("immediate")),
       ].filter(Boolean) as DisposableLike[];
