@@ -3,7 +3,10 @@ const assert = require("node:assert/strict");
 
 const {
   createKeyboardInteractiveHandler,
+  createOrderedStringAuthHandler,
   isAutoFillablePasswordChallenge,
+  shouldPrefillSavedPassword,
+  buildAuthHandler,
 } = require("./sshAuthHelper.cjs");
 const keyboardInteractiveHandler = require("./keyboardInteractiveHandler.cjs");
 
@@ -377,4 +380,96 @@ test("createKeyboardInteractiveHandler still auto-fills before any partialSucces
   assert.deepEqual(autoFillEvents, ["auto-fill"]);
   assert.deepEqual(finishCalls, [["hunter2"]]);
   assert.deepEqual(sent, []);
+});
+
+test("createKeyboardInteractiveHandler omits savedPassword on post-partialSuccess modal (#2150)", () => {
+  const { sender, sent } = createSender();
+  const authPhase = { hadPartialSuccess: true };
+
+  const handler = createKeyboardInteractiveHandler({
+    sender,
+    sessionId: "session-1",
+    hostname: "corp-edr.example.com",
+    password: "login-password",
+    shouldSkipAutoFill: () => authPhase.hadPartialSuccess,
+  });
+
+  handler("", "", "", [passwordPrompt], () => {});
+
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].payload.savedPassword, null);
+
+  drainPendingRequests(sent);
+});
+
+test("createKeyboardInteractiveHandler omits savedPassword for secondary password prompts", () => {
+  const { sender, sent } = createSender();
+
+  const handler = createKeyboardInteractiveHandler({
+    sender,
+    sessionId: "session-1",
+    hostname: "corp-edr.example.com",
+    password: "login-password",
+  });
+
+  handler("EDR", "", "", [secondaryPasswordPrompt], () => {});
+
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].payload.savedPassword, null);
+
+  drainPendingRequests(sent);
+});
+
+test("createOrderedStringAuthHandler sets hadPartialSuccess on partialSuccess", () => {
+  const authPhase = { hadPartialSuccess: false };
+  const handler = createOrderedStringAuthHandler(
+    ["none", "password", "keyboard-interactive"],
+    authPhase,
+  );
+
+  const offered = [];
+  handler(null, false, (method) => offered.push(method)); // none
+  handler(["password", "keyboard-interactive"], false, (method) => offered.push(method)); // password
+  handler(["keyboard-interactive"], true, (method) => offered.push(method)); // KI after partial
+
+  assert.deepEqual(offered, ["none", "password", "keyboard-interactive"]);
+  assert.equal(authPhase.hadPartialSuccess, true);
+});
+
+test("buildAuthHandler simple password path tracks partialSuccess via function handler", () => {
+  const auth = buildAuthHandler({
+    password: "hunter2",
+    username: "alice",
+    // No default keys / agent: simple explicit password-only path.
+    defaultKeys: [],
+    allowAgentFallback: false,
+  });
+
+  assert.equal(typeof auth.authHandler, "function");
+  assert.ok(auth.authPhase);
+  assert.equal(auth.authPhase.hadPartialSuccess, false);
+
+  const offered = [];
+  auth.authHandler(null, false, (method) => offered.push(method));
+  auth.authHandler(["password", "keyboard-interactive"], false, (method) => offered.push(method));
+  auth.authHandler(["keyboard-interactive"], true, (method) => offered.push(method));
+
+  assert.ok(offered.includes("password") || offered.some((m) => m === "password" || m?.type === "password"));
+  assert.ok(offered.includes("keyboard-interactive"));
+  assert.equal(auth.authPhase.hadPartialSuccess, true);
+});
+
+test("shouldPrefillSavedPassword is false after skipAutoFill and for secondary prompts", () => {
+  assert.equal(
+    shouldPrefillSavedPassword([passwordPrompt], "hunter2", { skipAutoFill: true }),
+    false,
+  );
+  assert.equal(
+    shouldPrefillSavedPassword([secondaryPasswordPrompt], "hunter2", { skipAutoFill: false }),
+    false,
+  );
+  assert.equal(
+    shouldPrefillSavedPassword([passwordPrompt], "hunter2", { skipAutoFill: false }),
+    true,
+  );
 });

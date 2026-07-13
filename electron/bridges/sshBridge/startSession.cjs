@@ -854,7 +854,9 @@ function createStartSessionApi(ctx) {
             order.push("publickey");
           }
           order.push("keyboard-interactive");
-          connectOpts.authHandler = order;
+          // Function form so authPhase.hadPartialSuccess updates for cert/agent
+          // first-factor + keyboard-interactive second-factor (#2150).
+          connectOpts.authHandler = createOrderedStringAuthHandler(order, authPhase);
           log("Auth order (agent mode)", { order });
         } else {
           // Build dynamic auth handler for fallback support

@@ -22,6 +22,7 @@ const { createPtyOutputBuffer } = require("./ptyOutputBuffer.cjs");
 const {
   buildAuthHandler,
   createKeyboardInteractiveHandler,
+  createOrderedStringAuthHandler,
   applyAuthToConnOpts,
   safeSend: authSafeSend,
   requestPassphrasesForEncryptedKeys,
@@ -931,7 +932,7 @@ const startSessionApi = createStartSessionApi({
   openTerminalOutputSession, closeTerminalOutputSession,
   get selectZmodemUploadFiles() { return selectZmodemUploadFiles; },
   get selectZmodemDownloadDirectory() { return selectZmodemDownloadDirectory; },
-  preparePrivateKeyForAuth, loadFirstIdentityFileForAuth, prepareSystemSshAgentForAuth, hasUserConfiguredKey, isPasswordProvided, createKeyboardInteractiveHandler,
+  preparePrivateKeyForAuth, loadFirstIdentityFileForAuth, prepareSystemSshAgentForAuth, hasUserConfiguredKey, isPasswordProvided, createKeyboardInteractiveHandler, createOrderedStringAuthHandler,
   createConnectionRef, acquireConnectionRef, releaseConnectionRef, findReusableSession,
   get probeReceiveConflicts() { return probeReceiveConflicts; },
   get removeRemoteFiles() { return removeRemoteFiles; },
