@@ -21,9 +21,11 @@ type ResolvedHostAuth = {
 };
 
 export const resolveHostAuthMethodSelection = (
-  host: Pick<Host, "authMethod" | "identityFileId" | "identityFilePaths" | "password">,
+  host: Pick<Host, "authMethod" | "identityFileId" | "identityFilePaths" | "password" | "useSshAgent">,
 ): HostAuthMethod => host.authMethod || (
-  host.identityFileId || host.identityFilePaths?.length
+  host.useSshAgent === true
+    ? "auto"
+    : host.identityFileId || host.identityFilePaths?.length
     ? "key"
     : host.password
       ? "password"
@@ -42,11 +44,17 @@ export const applyHostAuthMethodSelection = <T extends Host>(
   return {
     ...host,
     authMethod,
-    identityId: undefined,
+    identityId: "",
     ...(clearSelectedKey
       ? { identityFileId: undefined, identityFilePaths: undefined }
       : {}),
-    useSshAgent: authMethod === "auto" ? undefined : false,
+    useSshAgent: authMethod === "auto"
+      ? (host.identityAgent || host.identitiesOnly !== undefined || host.addKeysToAgent || host.useKeychain !== undefined
+        ? true
+        : host.useSshAgent === false
+          ? true
+          : undefined)
+      : false,
   };
 };
 
@@ -91,7 +99,7 @@ export const resolveHostAuth = (args: {
     override?.authMethod ||
     identity?.authMethod ||
     host.authMethod ||
-    (host.identityFilePaths?.length ? "key" : undefined)
+    (host.useSshAgent === true ? "auto" : host.identityFilePaths?.length ? "key" : undefined)
   ) as HostAuthMethod | undefined;
 
   // Don't load key when password auth is selected.
@@ -183,7 +191,7 @@ export const resolveBridgeSshAgentAuth = (
   if (authMethod === "password" || authMethod === "certificate" || key?.certificate?.trim()) {
     return { useSshAgent: false };
   }
-  if (authMethod === "key" && (host.authMethod === "key" || key)) {
+  if (authMethod === "key") {
     if (host.useSshAgent !== true || !key?.publicKey?.trim()) {
       return { useSshAgent: false };
     }
@@ -216,6 +224,7 @@ export const hasRequiredHostAuthCredential = (args: {
   keys: SSHKey[];
   identities?: Identity[];
 }): boolean => {
+  if (args.host.protocol && args.host.protocol !== "ssh") return true;
   const resolved = resolveHostAuth(args);
   if (resolved.authMethod === "key") {
     return Boolean(resolved.key || args.host.identityFilePaths?.some((value) => value.trim()));

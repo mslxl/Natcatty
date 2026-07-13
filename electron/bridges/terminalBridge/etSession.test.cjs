@@ -159,6 +159,32 @@ test("prepareEtSshEnvironment askpass prefers the most specific matching passwor
   assert.equal(output.trim(), "jump-secret");
 });
 
+test("prepareEtSshEnvironment never sends one key passphrase to an unrelated automatic key", (t) => {
+  const { api, base } = makeApi(t);
+  const automaticKeyPath = path.join(base, "home", ".ssh", "id_automatic");
+  fs.mkdirSync(path.dirname(automaticKeyPath), { recursive: true });
+  fs.writeFileSync(automaticKeyPath, "ENCRYPTED PRIVATE KEY");
+
+  const env = api.prepareEtSshEnvironment("sess-passphrase-scope", {
+    hostname: "target.example",
+    username: "alice",
+    authMethod: "auto",
+    jumpHosts: [{
+      hostname: "jump.example",
+      username: "ops",
+      authMethod: "key",
+      privateKey: "-----BEGIN KEY-----\njump\n-----END KEY-----",
+      passphrase: "jump-key-passphrase",
+    }],
+  });
+
+  const output = execFileSync(env.env.SSH_ASKPASS, [`Enter passphrase for key '${automaticKeyPath}':`], {
+    env: { ...process.env, ...env.env },
+    encoding: "utf8",
+  });
+  assert.equal(output, "");
+});
+
 test(
   "prepareEtSshEnvironment points SSH_ASKPASS at an Electron wrapper on Unix",
   { skip: process.platform === "win32" ? "Unix-only askpass wrapper" : false },

@@ -6,6 +6,7 @@ const assert = require("node:assert/strict");
 const {
   resolveUnlockedEncryptedKeysForAuth,
   shouldOfferAgentForLogin,
+  shouldPrepareSystemAgentForLogin,
   shouldPromoteCachedAuthMethod,
 } = require("./startSession.cjs");
 
@@ -21,6 +22,26 @@ test("agent login remains available when it is not explicitly disabled", () => {
     { agentForwarding: true },
     { agent: "/tmp/agent.sock", agentForward: true },
   ), true);
+});
+
+test("direct SSH allows only a restricted selected agent-backed key", () => {
+  const selectedAgentKey = {
+    authMethod: "key",
+    useSshAgent: true,
+    identitiesOnly: true,
+    agentPublicKeys: ["ssh-ed25519 AAAASELECTED"],
+  };
+  assert.equal(shouldPrepareSystemAgentForLogin(selectedAgentKey), true);
+  assert.equal(shouldOfferAgentForLogin(selectedAgentKey, { agent: {} }), true);
+
+  assert.equal(shouldPrepareSystemAgentForLogin({
+    ...selectedAgentKey,
+    agentPublicKeys: [],
+  }), false);
+  assert.equal(shouldOfferAgentForLogin({
+    ...selectedAgentKey,
+    identitiesOnly: false,
+  }, { agent: {} }), false);
 });
 
 test("strict agent selection excludes unlocked default keys", () => {

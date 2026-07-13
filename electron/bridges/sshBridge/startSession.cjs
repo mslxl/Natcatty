@@ -50,10 +50,26 @@ function isSshAuthFailure(err) {
 
 function shouldOfferAgentForLogin(options, connectOpts) {
   const selectedMethod = options?.authMethod;
+  const hasRestrictedSelectedAgent = selectedMethod === "key"
+    && options?.useSshAgent === true
+    && options?.identitiesOnly === true
+    && Array.isArray(options?.agentPublicKeys)
+    && options.agentPublicKeys.length > 0;
   const isStrictMethod = selectedMethod === "password"
     || selectedMethod === "key"
     || selectedMethod === "certificate";
-  return !isStrictMethod && options?.useSshAgent !== false && Boolean(connectOpts?.agent);
+  return (!isStrictMethod || hasRestrictedSelectedAgent)
+    && options?.useSshAgent !== false
+    && Boolean(connectOpts?.agent);
+}
+
+function shouldPrepareSystemAgentForLogin(options) {
+  if (options?.authMethod === "password" || options?.authMethod === "certificate") return false;
+  if (options?.authMethod !== "key") return true;
+  return options?.useSshAgent === true
+    && options?.identitiesOnly === true
+    && Array.isArray(options?.agentPublicKeys)
+    && options.agentPublicKeys.length > 0;
 }
 
 function resolveUnlockedEncryptedKeysForAuth(options, strictAgentSelection) {
@@ -701,9 +717,9 @@ function createStartSessionApi(ctx) {
         });
 
         let authAgent = null;
-        const systemAuthAgent = hasCertificate || isSelectedKeyAuth || options.authMethod === "password"
-          ? null
-          : await prepareSystemSshAgentForAuth(options, "[SSH]");
+        const systemAuthAgent = shouldPrepareSystemAgentForLogin(options)
+          ? await prepareSystemSshAgentForAuth(options, "[SSH]")
+          : null;
         // Kick off the default-key scan now so it overlaps the identity-file /
         // inline-key preparation below instead of running serially after it.
         // findAllDefaultPrivateKeys swallows its own fs errors and never rejects,
@@ -1646,6 +1662,7 @@ module.exports = {
   createStartSessionApi,
   resolveSshConnectionTimeouts,
   shouldOfferAgentForLogin,
+  shouldPrepareSystemAgentForLogin,
   resolveUnlockedEncryptedKeysForAuth,
   shouldPromoteCachedAuthMethod,
 };

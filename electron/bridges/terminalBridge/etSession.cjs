@@ -66,7 +66,7 @@ function pickEntry(entries, prompt) {
     .filter(({ score }) => score > 0)
     .sort((a, b) => b.score - a.score || a.index - b.index)[0]?.entry;
   if (matched) return matched;
-  if (scoped.length === 1) return scoped[0];
+  if (!wantsPassphrase && scoped.length === 1) return scoped[0];
   return null;
 }
 

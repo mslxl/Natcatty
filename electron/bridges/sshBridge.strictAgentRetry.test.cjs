@@ -2,7 +2,11 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { _canRetryWithEncryptedDefaultKeys, _isStrictAgentAuthFailure } = require("./sshBridge.cjs");
+const {
+  _canFailedHopRetryWithEncryptedDefaultKeys,
+  _canRetryWithEncryptedDefaultKeys,
+  _isStrictAgentAuthFailure,
+} = require("./sshBridge.cjs");
 
 test("strict agent failures skip encrypted default-key prompts", () => {
   const jumpHosts = [
@@ -42,4 +46,32 @@ test("encrypted default-key retry is limited to automatic or legacy hops", () =>
     authMethod: "auto",
     _unlockedEncryptedKeys: [{ keyName: "id_work" }],
   }), false);
+});
+
+test("encrypted default-key prompts follow the hop that actually failed", () => {
+  const automaticJumpExplicitTarget = {
+    authMethod: "password",
+    jumpHosts: [{ authMethod: "auto", hostname: "jump.example" }],
+  };
+  assert.equal(_canFailedHopRetryWithEncryptedDefaultKeys(
+    automaticJumpExplicitTarget,
+    { level: "client-authentication" },
+  ), false);
+  assert.equal(_canFailedHopRetryWithEncryptedDefaultKeys(
+    automaticJumpExplicitTarget,
+    { isJumpHostAuthError: true, jumpHostIndex: 0 },
+  ), true);
+
+  const automaticTargetExplicitJump = {
+    authMethod: "auto",
+    jumpHosts: [{ authMethod: "key", hostname: "jump.example" }],
+  };
+  assert.equal(_canFailedHopRetryWithEncryptedDefaultKeys(
+    automaticTargetExplicitJump,
+    { level: "client-authentication" },
+  ), true);
+  assert.equal(_canFailedHopRetryWithEncryptedDefaultKeys(
+    automaticTargetExplicitJump,
+    { isJumpHostAuthError: true, jumpHostIndex: 0 },
+  ), false);
 });

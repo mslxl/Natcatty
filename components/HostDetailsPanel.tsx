@@ -673,7 +673,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
   );
 
   const clearIdentity = useCallback(() => {
-    setForm((prev) => ({ ...prev, identityId: undefined }));
+    setForm((prev) => ({ ...prev, identityId: "" }));
     setIdentitySuggestionsOpen(false);
   }, []);
 

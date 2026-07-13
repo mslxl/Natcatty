@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { applyHostAuthMethodSelection, hasBridgeSshCredentials, hasRequiredHostAuthCredential, resolveBridgeKeyAuth, resolveBridgeSshAgentAuth, resolveHostAuth, resolveHostAuthMethodSelection, resolveHostAutofillPassword } from "./sshAuth.ts";
+import { applyGroupDefaults } from "./groupConfig.ts";
 import type { Host, Identity, SSHKey } from "./models.ts";
 
 const referenceKey: SSHKey = {
@@ -201,6 +202,10 @@ test("hasRequiredHostAuthCredential rejects empty explicit key and certificate s
     host: { ...autofillBaseHost, authMethod: "key", identityFilePaths: ["~/.ssh/id_work"] },
     keys: [],
   }), true);
+  assert.equal(hasRequiredHostAuthCredential({
+    host: { ...autofillBaseHost, protocol: "telnet", authMethod: "key" },
+    keys: [],
+  }), true);
 });
 
 test("hasBridgeSshCredentials accepts an agent-only host", () => {
@@ -267,6 +272,19 @@ test("resolveHostAuthMethodSelection gives legacy hosts a visible mode", () => {
   assert.equal(resolveHostAuthMethodSelection(autofillBaseHost), "auto");
   assert.equal(resolveHostAuthMethodSelection({ ...autofillBaseHost, password: "secret" }), "password");
   assert.equal(resolveHostAuthMethodSelection({ ...autofillBaseHost, identityFilePaths: ["~/.ssh/id_work"] }), "key");
+  assert.equal(resolveHostAuthMethodSelection({ ...autofillBaseHost, identityFilePaths: ["~/.ssh/id_work"], useSshAgent: true }), "auto");
+});
+
+test("resolveHostAuth preserves legacy agent plus identity-file hosts as automatic", () => {
+  const resolved = resolveHostAuth({
+    host: {
+      ...autofillBaseHost,
+      identityFilePaths: ["~/.ssh/id_work"],
+      useSshAgent: true,
+    },
+    keys: [],
+  });
+  assert.equal(resolved.authMethod, "auto");
 });
 
 test("applyHostAuthMethodSelection clears incompatible per-host credentials", () => {
@@ -282,7 +300,7 @@ test("applyHostAuthMethodSelection clears incompatible per-host credentials", ()
   assert.deepEqual(applyHostAuthMethodSelection(keyedHost, "certificate"), {
     ...keyedHost,
     authMethod: "certificate",
-    identityId: undefined,
+    identityId: "",
     identityFileId: undefined,
     identityFilePaths: undefined,
     useSshAgent: false,
@@ -290,10 +308,54 @@ test("applyHostAuthMethodSelection clears incompatible per-host credentials", ()
   assert.deepEqual(applyHostAuthMethodSelection(keyedHost, "auto"), {
     ...keyedHost,
     authMethod: "auto",
-    identityId: undefined,
+    identityId: "",
     identityFileId: undefined,
     identityFilePaths: undefined,
     useSshAgent: undefined,
+  });
+});
+
+test("per-host auth selection opts out of an inherited group identity", () => {
+  const selected = applyHostAuthMethodSelection({
+    ...autofillBaseHost,
+    group: "Production",
+    identityId: "group-identity",
+  } as Host, "password");
+  const effective = applyGroupDefaults(selected, { identityId: "group-identity" });
+  const resolved = resolveHostAuth({
+    host: effective,
+    keys: [referenceKey],
+    identities: [{
+      id: "group-identity",
+      label: "Group key",
+      username: "deploy",
+      authMethod: "key",
+      keyId: referenceKey.id,
+      created: 1,
+    }],
+  });
+
+  assert.equal(effective.identityId, "");
+  assert.equal(resolved.authMethod, "password");
+  assert.equal(resolved.key, undefined);
+});
+
+test("switching to automatic keeps visible custom agent settings active", () => {
+  const selected = applyHostAuthMethodSelection({
+    ...autofillBaseHost,
+    authMethod: "password",
+    useSshAgent: false,
+    identityAgent: "/tmp/custom-agent.sock",
+    identitiesOnly: true,
+  } as Host, "auto");
+
+  assert.equal(selected.useSshAgent, true);
+  assert.deepEqual(resolveBridgeSshAgentAuth(selected, undefined, "auto"), {
+    useSshAgent: true,
+    identityAgent: "/tmp/custom-agent.sock",
+    identitiesOnly: true,
+    addKeysToAgent: undefined,
+    useKeychain: undefined,
   });
 });
 

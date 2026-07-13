@@ -1024,15 +1024,34 @@ function isChainAuthError(err) {
     isAuthFailureMessage(err?.message);
 }
 
+function canHopUseEncryptedDefaultKeys(hop) {
+  if (hop.authMethod === "password" || hop.authMethod === "key" || hop.authMethod === "certificate") {
+    return false;
+  }
+  return !(hop.useSshAgent === true && hop.identitiesOnly === true);
+}
+
 function canRetryWithEncryptedDefaultKeys(options) {
   if (options._unlockedEncryptedKeys?.length) return false;
-  const canHopUseDefaultKeys = (hop) => {
-    if (hop.authMethod === "password" || hop.authMethod === "key" || hop.authMethod === "certificate") {
-      return false;
-    }
-    return !(hop.useSshAgent === true && hop.identitiesOnly === true);
-  };
-  return canHopUseDefaultKeys(options) || (options.jumpHosts || []).some(canHopUseDefaultKeys);
+  return canHopUseEncryptedDefaultKeys(options) || (options.jumpHosts || []).some(canHopUseEncryptedDefaultKeys);
+}
+
+function resolveFailedAuthHop(options, err) {
+  if (!err?.isJumpHostAuthError) return options;
+  const jumpHosts = options.jumpHosts || [];
+  if (Number.isInteger(err.jumpHostIndex) && err.jumpHostIndex >= 0) {
+    return jumpHosts[err.jumpHostIndex] || null;
+  }
+  const matchingJumps = jumpHosts.filter((jump) => (
+    (err.jumpHostHostname && jump.hostname === err.jumpHostHostname)
+    || (err.jumpHostLabel && jump.label === err.jumpHostLabel)
+  ));
+  return matchingJumps.length === 1 ? matchingJumps[0] : null;
+}
+
+function canFailedHopRetryWithEncryptedDefaultKeys(options, err) {
+  const failedHop = resolveFailedAuthHop(options, err);
+  return Boolean(failedHop && canHopUseEncryptedDefaultKeys(failedHop));
 }
 
 function isStrictAgentAuthFailure(options, err) {
@@ -1106,7 +1125,11 @@ async function startSSHSessionWrapper(event, options) {
     if (isAuthError) {
       // Check if there are encrypted default keys we haven't tried yet
       // Only offer retry if no unlocked keys were provided in this attempt
-      if (canRetryEncryptedDefaults && !isStrictAgentAuthFailure(options, err)) {
+      if (
+        canRetryEncryptedDefaults
+        && canFailedHopRetryWithEncryptedDefaultKeys(options, err)
+        && !isStrictAgentAuthFailure(options, err)
+      ) {
         const encryptedKeys = loadedRetryableEncryptedKeys
           ? retryableEncryptedKeys
           : await loadRetryableEncryptedKeys();
@@ -1370,5 +1393,6 @@ module.exports = {
   _findAllDefaultPrivateKeys: findAllDefaultPrivateKeys,
   _isStrictAgentAuthFailure: isStrictAgentAuthFailure,
   _canRetryWithEncryptedDefaultKeys: canRetryWithEncryptedDefaultKeys,
+  _canFailedHopRetryWithEncryptedDefaultKeys: canFailedHopRetryWithEncryptedDefaultKeys,
   ensureMoshStatsConnection,
 };
