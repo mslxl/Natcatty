@@ -369,7 +369,7 @@ export const sanitizeHost = (host: Host, snippets: Snippet[] = []): Host => {
   const isLegacyPasswordDefault = migrated.authPolicyVersion !== 1
     && migrated.authMethod === 'password'
     && (
-      !migrated.password?.trim()
+      !migrated.password?.length
       || migrated.useSshAgent === true
       || Boolean(migrated.identityFileId)
       || Boolean(migrated.identityFilePaths?.length)

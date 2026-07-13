@@ -325,7 +325,17 @@ test("applyHostAuthMethodSelection clears incompatible per-host credentials", ()
   assert.deepEqual(applyHostAuthMethodSelection(keyedHost, "key"), {
     ...keyedHost,
     authPolicyVersion: 1,
-    identityId: "",
+  });
+
+  const passwordIdentityHost = {
+    ...autofillBaseHost,
+    authMethod: "password",
+    identityId: "identity-password",
+    useSshAgent: false,
+  } as Host;
+  assert.deepEqual(applyHostAuthMethodSelection(passwordIdentityHost, "password"), {
+    ...passwordIdentityHost,
+    authPolicyVersion: 1,
   });
 
   const passwordHost = {

@@ -39,10 +39,15 @@ export const applyHostAuthMethodSelection = <T extends Host>(
   authMethod: HostAuthMethod,
 ): T => {
   const previousMethod = resolveHostAuthMethodSelection(host);
+  if (previousMethod === authMethod) {
+    return {
+      ...host,
+      authMethod,
+      authPolicyVersion: 1,
+    };
+  }
+
   const isAutomatic = authMethod === "auto";
-  const clearSelectedKey = authMethod === "auto"
-    || authMethod === "password"
-    || previousMethod !== authMethod;
 
   const automaticIdentityAgent = isAutomatic && isSshAgentNoneValue(host.identityAgent)
     ? undefined
@@ -56,9 +61,8 @@ export const applyHostAuthMethodSelection = <T extends Host>(
     authMethod,
     authPolicyVersion: 1,
     identityId: "",
-    ...(clearSelectedKey
-      ? { identityFileId: undefined, identityFilePaths: undefined }
-      : {}),
+    identityFileId: undefined,
+    identityFilePaths: undefined,
     ...(isAutomatic
       ? { identityAgent: automaticIdentityAgent, identitiesOnly: undefined }
       : {}),

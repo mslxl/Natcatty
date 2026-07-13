@@ -189,6 +189,18 @@ test("sanitizeHost preserves an explicit password-only choice", () => {
   assert.equal(sanitized.authPolicyVersion, 1);
 });
 
+test("sanitizeHost preserves a legacy whitespace-only password", () => {
+  const sanitized = sanitizeHost(makeHost({
+    password: "   ",
+    authMethod: "password",
+    authPolicyVersion: undefined,
+  }));
+
+  assert.equal(sanitized.authMethod, "password");
+  assert.equal(sanitized.password, "   ");
+  assert.equal(sanitized.authPolicyVersion, 1);
+});
+
 test("sanitizeHost preserves automatic host icon color fields", () => {
   const sanitized = sanitizeHost(makeHost({
     iconMode: "auto",
