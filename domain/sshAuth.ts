@@ -37,8 +37,8 @@ export const resolveHostAuthMethodSelection = (
 export const applyHostAuthMethodSelection = <T extends Host>(
   host: T,
   authMethod: HostAuthMethod,
+  previousMethod: HostAuthMethod = resolveHostAuthMethodSelection(host),
 ): T => {
-  const previousMethod = resolveHostAuthMethodSelection(host);
   if (previousMethod === authMethod) {
     return {
       ...host,

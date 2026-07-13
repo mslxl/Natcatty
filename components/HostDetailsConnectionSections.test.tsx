@@ -144,6 +144,30 @@ test("reselecting an inherited authentication method preserves group credentials
   assert.equal(applyEffectiveHostAuthMethodSelection(host, "key", "key"), host);
 });
 
+test("selecting automatic opts out of an inherited identity", () => {
+  const host = {
+    id: "host-1",
+    label: "Host",
+    hostname: "example.com",
+    username: "root",
+    authMethod: "auto",
+  } as Host;
+
+  assert.deepEqual(
+    applyEffectiveHostAuthMethodSelection(host, "auto", "password"),
+    {
+      ...host,
+      authPolicyVersion: 1,
+      identityId: "",
+      identityFileId: undefined,
+      identityFilePaths: undefined,
+      identityAgent: undefined,
+      identitiesOnly: undefined,
+      useSshAgent: undefined,
+    },
+  );
+});
+
 test("an inherited deleted identity remains visible and clearable", () => {
   const markup = renderConnectionSections({
     authMethod: undefined,

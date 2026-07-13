@@ -22,7 +22,7 @@ export const applyEffectiveHostAuthMethodSelection = (
   effectiveAuthMethod: "auto" | "password" | "key" | "certificate",
 ): Host => authMethod === effectiveAuthMethod
   ? host
-  : applyHostAuthMethodSelection(host, authMethod);
+  : applyHostAuthMethodSelection(host, authMethod, effectiveAuthMethod);
 
 export const HostDetailsConnectionSections: React.FC<HostDetailsConnectionSectionsProps> = ({
   t,
