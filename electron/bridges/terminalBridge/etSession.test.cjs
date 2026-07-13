@@ -379,6 +379,16 @@ test("ET explicitly disables native agent login for target and jump hosts", (t) 
   assert.match(forwardingConfig, /IdentityAgent none/);
   assert.match(forwardingConfig, /ForwardAgent \$\{SSH_AUTH_SOCK\}/);
   assert.equal(forwardingEnv.SSH_AUTH_SOCK, "/tmp/forwarded-agent.sock");
+
+  const automaticJumpEnv = api.applyEtSshAgentEnvironment(
+    { SSH_AUTH_SOCK: "/tmp/jump-agent.sock" },
+    {
+      authMethod: "password",
+      useSshAgent: false,
+      jumpHosts: [{ authMethod: "auto" }],
+    },
+  );
+  assert.equal(automaticJumpEnv.SSH_AUTH_SOCK, "/tmp/jump-agent.sock");
 });
 
 test("ET prepares target and jump agents before generating their host config", async (t) => {

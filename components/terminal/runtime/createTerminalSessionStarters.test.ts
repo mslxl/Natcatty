@@ -232,6 +232,59 @@ for (const protocol of ["Mosh", "ET"] as const) {
 }
 
 for (const protocol of ["Mosh", "ET"] as const) {
+  test(`${protocol} keeps an imported private key when agent filtering is unavailable`, async () => {
+    let capturedOptions: Record<string, unknown> | null = null;
+    const terminalBackend = {
+      backendAvailable: () => true,
+      moshAvailable: () => true,
+      etAvailable: () => true,
+      startMoshSession: async (options: Record<string, unknown>) => {
+        capturedOptions = options;
+        return "mosh-session";
+      },
+      startEtSession: async (options: Record<string, unknown>) => {
+        capturedOptions = options;
+        return "et-session";
+      },
+      onSessionData: () => noop,
+      onSessionExit: () => noop,
+      writeToSession: noop,
+      resizeSession: noop,
+    };
+    const ctx = createStarterContext({
+      host: {
+        id: "host-1",
+        label: "Imported key host",
+        hostname: "key.example.test",
+        username: "alice",
+        authMethod: "key",
+        identityFileId: "key-1",
+        useSshAgent: true,
+      },
+      keys: [{
+        id: "key-1",
+        label: "Imported key",
+        type: "ED25519",
+        category: "key",
+        source: "imported",
+        created: 1,
+        privateKey: "PRIVATE KEY",
+        passphrase: "key-passphrase",
+      }],
+      terminalBackend,
+    });
+
+    const starters = createTerminalSessionStarters(ctx as never);
+    if (protocol === "Mosh") await starters.startMosh(createTermStub() as never);
+    else await starters.startEt(createTermStub() as never);
+
+    assert.equal(capturedOptions?.useSshAgent, false);
+    assert.equal(capturedOptions?.privateKey, "PRIVATE KEY");
+    assert.equal(capturedOptions?.passphrase, "key-passphrase");
+  });
+}
+
+for (const protocol of ["Mosh", "ET"] as const) {
   test(`${protocol} keeps automatic key discovery available with an unreadable saved password`, async () => {
     let capturedOptions: Record<string, unknown> | null = null;
     let needsAuth = false;

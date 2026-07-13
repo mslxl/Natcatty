@@ -946,7 +946,8 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           : allowsLocalIdentityFallback
             ? ctx.host.identityFilePaths
             : undefined;
-      const usesSystemAgent = resolveBridgeSshAgentAuth(ctx.host, key, authMethod).useSshAgent === true;
+      const moshAgentAuth = resolveBridgeSshAgentAuth(ctx.host, key, authMethod);
+      const usesSystemAgent = moshAgentAuth.useSshAgent === true;
       const hasKeyMaterial = usesSystemAgent || (
         (!!sanitizeCredentialValue(key?.privateKey) || !!moshIdentityFilePaths?.length)
         && (authMethod !== "password" || ctx.host.useSshAgent === true)
@@ -977,14 +978,14 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         username: resolvedAuth.username || "root",
         authMethod,
         password: effectivePassword,
-        privateKey: (ctx.host.useSshAgent && !key?.certificate) || key?.source === 'reference' ? undefined : sanitizeCredentialValue(key?.privateKey),
+        privateKey: (usesSystemAgent && !key?.certificate) || key?.source === 'reference' ? undefined : sanitizeCredentialValue(key?.privateKey),
         certificate: key?.certificate,
         keyId: key?.id,
-        passphrase: key && (!ctx.host.useSshAgent || Boolean(key.certificate))
+        passphrase: key && (!usesSystemAgent || Boolean(key.certificate))
           ? (effectivePassphrase || sanitizeCredentialValue(key.passphrase))
           : undefined,
         identityFilePaths: moshIdentityFilePaths,
-        ...resolveBridgeSshAgentAuth(ctx.host, key, authMethod),
+        ...moshAgentAuth,
         port: ctx.host.port || 22,
         moshServerPath: ctx.host.moshServerPath,
         agentForwarding: ctx.host.agentForwarding,
@@ -1144,7 +1145,8 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           : allowsLocalIdentityFallback
             ? ctx.host.identityFilePaths
             : undefined;
-      const usesSystemAgent = resolveBridgeSshAgentAuth(ctx.host, key, authMethod).useSshAgent === true;
+      const etAgentAuth = resolveBridgeSshAgentAuth(ctx.host, key, authMethod);
+      const usesSystemAgent = etAgentAuth.useSshAgent === true;
       const hasKeyMaterial = usesSystemAgent || (
         (!!sanitizeCredentialValue(key?.privateKey) || !!etIdentityFilePaths?.length)
         && (authMethod !== "password" || ctx.host.useSshAgent === true)
@@ -1230,9 +1232,9 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           username: jumpAuth.username || "root",
           authMethod: jumpAuth.authMethod,
           password: jumpPassword,
-          privateKey: (jumpHost.useSshAgent && !jumpKey?.certificate) || jumpKey?.source === 'reference' ? undefined : jumpPrivateKey,
+          privateKey: (jumpAgentAuth.useSshAgent && !jumpKey?.certificate) || jumpKey?.source === 'reference' ? undefined : jumpPrivateKey,
           certificate: jumpKey?.certificate,
-          passphrase: jumpHost.useSshAgent && !jumpKey?.certificate ? undefined : jumpPassphrase,
+          passphrase: jumpAgentAuth.useSshAgent && !jumpKey?.certificate ? undefined : jumpPassphrase,
           keyId: jumpAuth.keyId,
           keySource: jumpKey?.source,
           label: jumpHost.label,
@@ -1268,15 +1270,15 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         hostname: ctx.host.hostname,
         username: resolvedAuth.username || "root",
         password: effectivePassword,
-        privateKey: (ctx.host.useSshAgent && !key?.certificate) || key?.source === 'reference' ? undefined : sanitizeCredentialValue(key?.privateKey),
+        privateKey: (usesSystemAgent && !key?.certificate) || key?.source === 'reference' ? undefined : sanitizeCredentialValue(key?.privateKey),
         certificate: key?.certificate,
         keyId: key?.id,
-        passphrase: key && (!ctx.host.useSshAgent || Boolean(key.certificate))
+        passphrase: key && (!usesSystemAgent || Boolean(key.certificate))
           ? (effectivePassphrase || sanitizeCredentialValue(key.passphrase))
           : undefined,
         authMethod,
         identityFilePaths: etIdentityFilePaths,
-        ...resolveBridgeSshAgentAuth(ctx.host, key, authMethod),
+        ...etAgentAuth,
         port: ctx.host.port || 22,
         etPort: ctx.host.etPort,
         legacyAlgorithms: ctx.host.legacyAlgorithms,

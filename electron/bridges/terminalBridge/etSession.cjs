@@ -175,7 +175,10 @@ main();
 
     function applyEtSshAgentEnvironment(env, options) {
       if (options?.useSshAgent === false) {
-        if (options.agentForwarding) {
+        const automaticJumpNeedsAmbientAgent = options.jumpHosts?.some((jump) => (
+          jump?.authMethod === "auto" && jump.useSshAgent !== false
+        ));
+        if (options.agentForwarding || automaticJumpNeedsAmbientAgent) {
           if (!env.SSH_AUTH_SOCK && process.env.SSH_AUTH_SOCK) {
             env.SSH_AUTH_SOCK = process.env.SSH_AUTH_SOCK;
           }
