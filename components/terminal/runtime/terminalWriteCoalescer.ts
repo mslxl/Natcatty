@@ -21,6 +21,11 @@ const CSI_PRIVATE_INTRO_8BIT = `${C1_CSI}?`;
 const ALT_SCREEN_DECSET = new Set(["47", "1047", "1049"]);
 /** Incomplete CSI private-mode tails retained across coalescer flushes. */
 const incompleteAltScreenCsiByTerm = new WeakMap<XTerm, string>();
+/**
+ * Set after a complete enter-alt-screen CSI is observed, until xterm reports
+ * `buffer.active.type === "alternate"` (parser is async relative to our schedule).
+ */
+const pendingAltScreenEntryByTerm = new WeakMap<XTerm, true>();
 
 const isPrivateParamCharCode = (code: number): boolean =>
   (code >= 0x30 && code <= 0x39) || code === 0x3b;
@@ -54,11 +59,20 @@ const extractIncompletePrivateCsiTail = (data: string): string => {
   return "";
 };
 
-const scanPrivateDecsetEntries = (
+type PrivateDecsetScan = {
+  incomplete: boolean;
+  enter: boolean;
+  leave: boolean;
+};
+
+const scanPrivateDecsetModes = (
   data: string,
   intro: string,
-): boolean => {
+): PrivateDecsetScan => {
   let searchFrom = 0;
+  let incomplete = false;
+  let enter = false;
+  let leave = false;
   while (searchFrom < data.length) {
     const start = data.indexOf(intro, searchFrom);
     if (start < 0) break;
@@ -68,17 +82,20 @@ const scanPrivateDecsetEntries = (
       index += 1;
     }
     if (index >= data.length) {
-      return true;
+      incomplete = true;
+      break;
     }
-    if (data.charAt(index) === "h") {
+    const final = data.charAt(index);
+    if (final === "h" || final === "l") {
       const params = data.slice(paramStart, index).split(";").filter(Boolean);
       if (params.some((param) => ALT_SCREEN_DECSET.has(param))) {
-        return true;
+        if (final === "h") enter = true;
+        else leave = true;
       }
     }
     searchFrom = start + 1;
   }
-  return false;
+  return { incomplete, enter, leave };
 };
 
 /**
@@ -87,10 +104,9 @@ const scanPrivateDecsetEntries = (
  * and 8-bit C1 CSI (`\x9b?…h`). Avoids control-character regexes.
  */
 const looksLikeEnteringAlternateScreen = (data: string): boolean => {
-  if (
-    scanPrivateDecsetEntries(data, CSI_PRIVATE_INTRO_7BIT)
-    || scanPrivateDecsetEntries(data, CSI_PRIVATE_INTRO_8BIT)
-  ) {
+  const seven = scanPrivateDecsetModes(data, CSI_PRIVATE_INTRO_7BIT);
+  const eight = scanPrivateDecsetModes(data, CSI_PRIVATE_INTRO_8BIT);
+  if (seven.enter || eight.enter || seven.incomplete || eight.incomplete) {
     return true;
   }
   return extractIncompletePrivateCsiTail(data).length > 0;
@@ -105,12 +121,36 @@ const isTerminalAlternateScreenActive = (term: XTerm): boolean => {
 };
 
 const noteAltScreenScheduleProbe = (term: XTerm, chunk: string): boolean => {
+  if (isTerminalAlternateScreenActive(term)) {
+    incompleteAltScreenCsiByTerm.delete(term);
+    pendingAltScreenEntryByTerm.delete(term);
+    return true;
+  }
+
   const prefix = incompleteAltScreenCsiByTerm.get(term) ?? "";
   // Bound prefix so a pathological stream cannot grow the tail unbounded.
   const combined = `${prefix.slice(-16)}${chunk}`;
-  const entering = looksLikeEnteringAlternateScreen(combined);
+  const seven = scanPrivateDecsetModes(combined, CSI_PRIVATE_INTRO_7BIT);
+  const eight = scanPrivateDecsetModes(combined, CSI_PRIVATE_INTRO_8BIT);
   incompleteAltScreenCsiByTerm.set(term, extractIncompletePrivateCsiTail(combined));
-  return entering || (incompleteAltScreenCsiByTerm.get(term)?.length ?? 0) > 0;
+
+  if (seven.leave || eight.leave) {
+    pendingAltScreenEntryByTerm.delete(term);
+  }
+  if (seven.enter || eight.enter) {
+    // Complete enter CSI observed; xterm may still report normal until parse.
+    pendingAltScreenEntryByTerm.set(term, true);
+  }
+
+  const incompleteTail = (incompleteAltScreenCsiByTerm.get(term)?.length ?? 0) > 0;
+  return (
+    seven.enter
+    || eight.enter
+    || seven.incomplete
+    || eight.incomplete
+    || incompleteTail
+    || pendingAltScreenEntryByTerm.has(term)
+  );
 };
 
 type CoalescerByteCapResolver = () => number;
@@ -403,6 +443,7 @@ export const resetTerminalWriteCoalescer = (term: XTerm): void => {
   terminalWriteCoalescerFlushGates.delete(term);
   terminalWriteCoalescerWriters.delete(term);
   incompleteAltScreenCsiByTerm.delete(term);
+  pendingAltScreenEntryByTerm.delete(term);
 };
 
 export const getTerminalWriteCoalescerPendingBytes = (term: XTerm): number =>

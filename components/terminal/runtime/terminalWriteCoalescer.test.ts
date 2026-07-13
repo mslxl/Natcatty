@@ -588,6 +588,65 @@ test("upgrades to rAF when alternate-screen CSI is split across PTY chunks", () 
   }
 });
 
+test("keeps rAF latched after enter-alt CSI until buffer flips", () => {
+  const term = {
+    buffer: { active: { type: "normal" as string } },
+  } as unknown as XTerm;
+  const writes: string[] = [];
+  const frames: Array<FrameRequestCallback> = [];
+  const originalRaf = Object.getOwnPropertyDescriptor(globalThis, "requestAnimationFrame");
+  const originalCancel = Object.getOwnPropertyDescriptor(globalThis, "cancelAnimationFrame");
+  const originalMicrotask = globalThis.queueMicrotask;
+  const microtasks: Array<() => void> = [];
+
+  Object.defineProperty(globalThis, "requestAnimationFrame", {
+    configurable: true,
+    value: (callback: FrameRequestCallback) => {
+      frames.push(callback);
+      return frames.length;
+    },
+  });
+  Object.defineProperty(globalThis, "cancelAnimationFrame", {
+    configurable: true,
+    value: () => {},
+  });
+  globalThis.queueMicrotask = (callback: () => void) => {
+    microtasks.push(callback);
+  };
+
+  try {
+    setTerminalWriteCoalescerByteCapResolver(term, () => 64 * 1024);
+    enqueueCoalescedTerminalWrite(term, "\x1b[?1049h", (data) => {
+      writes.push(data);
+    });
+    frames[0]!(0);
+    frames.length = 0;
+    microtasks.length = 0;
+
+    // xterm still reports normal until deferred parse; repaint must stay on rAF.
+    enqueueCoalescedTerminalWrite(term, "\x1b[Hrepaint", (data) => {
+      writes.push(data);
+    });
+    assert.equal(frames.length, 1);
+    assert.equal(microtasks.length, 0);
+    frames[0]!(0);
+    assert.deepEqual(writes, ["\x1b[?1049h", "\x1b[Hrepaint"]);
+  } finally {
+    resetTerminalWriteCoalescer(term);
+    globalThis.queueMicrotask = originalMicrotask;
+    if (originalRaf) {
+      Object.defineProperty(globalThis, "requestAnimationFrame", originalRaf);
+    } else {
+      Reflect.deleteProperty(globalThis, "requestAnimationFrame");
+    }
+    if (originalCancel) {
+      Object.defineProperty(globalThis, "cancelAnimationFrame", originalCancel);
+    } else {
+      Reflect.deleteProperty(globalThis, "cancelAnimationFrame");
+    }
+  }
+});
+
 test("schedules rAF for 8-bit C1 CSI alternate-screen entry", () => {
   const term = {
     buffer: { active: { type: "normal" } },
