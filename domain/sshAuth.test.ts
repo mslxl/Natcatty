@@ -376,7 +376,6 @@ test("saving keeps inherited group authentication inherited", () => {
       host,
       keys: [referenceKey],
       identities: [identity],
-      groupDefaults,
     }), undefined);
     assert.equal(resolveHostAuth({
       host: applyGroupDefaults(host, groupDefaults),
@@ -393,14 +392,38 @@ test("saving a legacy password host keeps password-only after discarding the sec
     password: "temporary-secret",
     savePassword: false,
   } as Host;
-  const groupDefaults = { identityId: "group-identity" };
 
   assert.equal(resolveHostAuthMethodForPersistence({ host, keys: [] }), "password");
-  assert.equal(resolveHostAuthMethodForPersistence({
-    host,
-    keys: [],
-    groupDefaults,
-  }), "password");
+});
+
+test("an untouched host keeps following authentication added to its group later", () => {
+  const host = { ...autofillBaseHost, username: "", authMethod: undefined } as Host;
+  assert.equal(resolveHostAuthMethodForPersistence({ host, keys: [] }), undefined);
+
+  const futureEffectiveHost = applyGroupDefaults(host, {
+    authMethod: "password",
+    password: "future-group-secret",
+  });
+  assert.equal(resolveHostAuth({ host: futureEffectiveHost, keys: [] }).authMethod, "password");
+});
+
+test("legacy agent settings do not override inherited strict group authentication", () => {
+  const groupDefaults = { authMethod: "password" as const, password: "group-secret" };
+  for (const useSshAgent of [false, true]) {
+    const host = {
+      ...autofillBaseHost,
+      username: "",
+      authMethod: undefined,
+      useSshAgent,
+      identityAgent: "/tmp/legacy-agent.sock",
+      identitiesOnly: true,
+    } as Host;
+    assert.equal(resolveHostAuthMethodForPersistence({ host, keys: [] }), undefined);
+    assert.equal(resolveHostAuth({
+      host: applyGroupDefaults(host, groupDefaults),
+      keys: [],
+    }).authMethod, "password");
+  }
 });
 
 test("manual host credentials suppress an inherited group identity", () => {

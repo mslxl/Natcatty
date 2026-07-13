@@ -502,7 +502,6 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
         host: form,
         keys: availableKeys,
         identities,
-        groupDefaults: effectiveGroupDefaults,
       }),
       managedSourceId: finalManagedSourceId,
     };

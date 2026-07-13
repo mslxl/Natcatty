@@ -1,4 +1,4 @@
-import type { GroupConfig, Host, HostAuthMethod, Identity, SSHKey } from "./models";
+import type { Host, HostAuthMethod, Identity, SSHKey } from "./models";
 import { sanitizeCredentialValue } from "./credentials";
 
 type HostAuthOverride = {
@@ -141,28 +141,15 @@ export const resolveHostAuthMethodForPersistence = (args: {
   host: Host;
   keys: SSHKey[];
   identities?: Identity[];
-  groupDefaults?: Partial<GroupConfig>;
 }): HostAuthMethod | undefined => {
-  const { host, keys, identities, groupDefaults } = args;
+  const { host, keys, identities } = args;
   if (host.authMethod) return host.authMethod;
 
-  const hostHasOwnAuth = host.identityId !== undefined
+  const hostHasOwnAuth = Boolean(host.identityId)
     || host.identityFileId !== undefined
     || Boolean(host.identityFilePaths?.length)
-    || host.password !== undefined
-    || host.savePassword === false
-    || host.useSshAgent !== undefined
-    || host.identityAgent !== undefined
-    || host.identitiesOnly !== undefined
-    || host.addKeysToAgent !== undefined
-    || host.useKeychain !== undefined;
-  const groupHasAuth = groupDefaults?.identityId !== undefined
-    || groupDefaults?.authMethod !== undefined
-    || groupDefaults?.identityFileId !== undefined
-    || Boolean(groupDefaults?.identityFilePaths?.length)
-    || groupDefaults?.password !== undefined;
-
-  if (!hostHasOwnAuth && groupHasAuth) return undefined;
+    || host.password !== undefined;
+  if (!hostHasOwnAuth) return undefined;
   return resolveHostAuth({ host, keys, identities }).authMethod;
 };
 
