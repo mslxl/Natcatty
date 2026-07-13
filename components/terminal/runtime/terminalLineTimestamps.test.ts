@@ -5,9 +5,11 @@ import {
   createTerminalLineTimestampSegmenter,
   formatTerminalLineTimestamp,
   getTerminalLineTimestampEntryCount,
+  isSimpleAsciiControlText,
   onTerminalLineTimestampsChange,
   resolveTerminalLineTimestampCapacity,
   resolveTerminalTimestampGutterRows,
+  tryMeasureVisualRows,
   type TerminalLineTimestampPerfStep,
   writeTerminalDataWithLineTimestamps,
 } from "./terminalLineTimestamps.ts";
@@ -718,4 +720,57 @@ test("large multi-chunk flood stays within capacity across writes", () => {
   const live = getTerminalLineTimestampEntryCount(term as never);
   const capacity = resolveTerminalLineTimestampCapacity(term as never);
   assert.ok(live <= capacity, `expected <= ${capacity} live entries, got ${live}`);
+});
+
+test("simple ASCII control text gate matches seq-style floods", () => {
+  assert.equal(isSimpleAsciiControlText("1\n2\n3\n"), true);
+  assert.equal(isSimpleAsciiControlText("line-0\r\nline-1\r\n"), true);
+  assert.equal(isSimpleAsciiControlText("a\tb\b c"), true);
+  assert.equal(isSimpleAsciiControlText("hello\x1b[0m"), false);
+  assert.equal(isSimpleAsciiControlText("界"), false);
+});
+
+test("tryMeasureVisualRows matches hard-newline accounting for short ASCII lines", () => {
+  const { term } = createFakeTerm({ cols: 80 });
+  const data = Array.from({ length: 100 }, (_, index) => `line-${index}`).join("\r\n");
+  const measured = tryMeasureVisualRows(term as never, data, 0, 80, true);
+  assert.ok(measured);
+  assert.equal(measured?.rowOffset, 99);
+  assert.equal(measured?.column, "line-99".length);
+});
+
+test("tryMeasureVisualRows accounts for soft wraps on long ASCII lines", () => {
+  const { term } = createFakeTerm({ cols: 5 });
+  const measured = tryMeasureVisualRows(term as never, "abcdefghij", 0, 5, true);
+  assert.ok(measured);
+  assert.equal(measured?.rowOffset, 1);
+  assert.equal(measured?.column, 5);
+});
+
+test("tryMeasureVisualRows rejects unmeasurable escape sequences", () => {
+  const { term } = createFakeTerm({ cols: 80 });
+  assert.equal(
+    tryMeasureVisualRows(term as never, "\x1b[Aup", 0, 80, true),
+    null,
+  );
+});
+
+test("gutter row resolution still finds viewport labels with binary search window", () => {
+  const entries = Array.from({ length: 1000 }, (_, index) => ({
+    marker: { line: index },
+    label: `t-${index}`,
+  }));
+  assert.deepEqual(
+    resolveTerminalTimestampGutterRows({
+      viewportY: 500,
+      rows: 4,
+      entries,
+    }),
+    [
+      { row: 0, label: "t-500" },
+      { row: 1, label: "t-501" },
+      { row: 2, label: "t-502" },
+      { row: 3, label: "t-503" },
+    ],
+  );
 });

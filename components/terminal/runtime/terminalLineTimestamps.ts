@@ -616,40 +616,10 @@ const getCodePointCellWidth = (term: XTerm, codePoint: number): 0 | 1 | 2 | null
   }
 };
 
-const canMeasureVisualRows = (term: XTerm, data: string): boolean => {
-  for (let index = 0; index < data.length; index += 1) {
-    const char = data[index];
-    const codePoint = data.codePointAt(index);
-    if (codePoint === undefined) return false;
-    if (char === "\x1b") {
-      const sequence = readEscapeSequence(data, index);
-      if (!sequence?.complete || !isBulkMeasurableEscapeSequence(sequence.sequence)) {
-        return false;
-      }
-      index = sequence.endIndex;
-      continue;
-    }
-    if (char === "\n" || char === "\r" || char === "\b" || char === "\t") {
-      continue;
-    }
-    if (
-      codePoint < 0x20
-      || codePoint === 0x7f
-      || (codePoint >= 0x80 && codePoint <= 0x9f)
-      || isUnsafeGraphemeSequenceCodePoint(codePoint)
-      || isUnsafeFormatCodePoint(codePoint)
-      || isContextSensitiveGraphemeCodePoint(codePoint)
-    ) {
-      return false;
-    }
-    if (getCodePointCellWidth(term, codePoint) === null) {
-      return false;
-    }
-    if (codePoint > 0xffff) {
-      index += 1;
-    }
-  }
-  return true;
+type MeasuredTerminalRows = {
+  rowOffset: number;
+  column: number;
+  wraparoundMode: boolean;
 };
 
 const advanceMeasuredColumns = (
@@ -694,26 +664,96 @@ const advanceMeasuredTab = (
   return Math.min(nextTabStop, columns - 1);
 };
 
-const measureTerminalRows = (
+/**
+ * Fast gate for flood output like `seq`: printable ASCII + CR/LF/TAB/BS only.
+ * Avoids escape parsing and unicode width lookups entirely.
+ */
+export const isSimpleAsciiControlText = (data: string): boolean => {
+  for (let index = 0; index < data.length; index += 1) {
+    const code = data.charCodeAt(index);
+    if (code === 0x0a || code === 0x0d || code === 0x09 || code === 0x08) continue;
+    if (code >= 0x20 && code <= 0x7e) continue;
+    return false;
+  }
+  return true;
+};
+
+const measureSimpleAsciiRows = (
+  data: string,
+  startColumn: number,
+  columns: number,
+  startWraparoundMode: boolean,
+): MeasuredTerminalRows => {
+  let rowOffset = 0;
+  let column = startColumn;
+  const wraparoundMode = startWraparoundMode;
+
+  for (let index = 0; index < data.length; index += 1) {
+    const code = data.charCodeAt(index);
+    if (code === 0x0a) {
+      rowOffset += 1;
+      if (Number.isFinite(columns) && column >= columns) {
+        column = columns - 1;
+      }
+      continue;
+    }
+    if (code === 0x0d) {
+      column = 0;
+      continue;
+    }
+    if (code === 0x08) {
+      column = Math.max(0, column - 1);
+      continue;
+    }
+    if (code === 0x09) {
+      column = advanceMeasuredTab(column, columns);
+      continue;
+    }
+    // Printable ASCII is always width 1.
+    ({ column, rowOffset } = advanceMeasuredColumns(
+      column,
+      rowOffset,
+      columns,
+      1,
+      wraparoundMode,
+    ));
+  }
+
+  return { rowOffset, column, wraparoundMode };
+};
+
+/**
+ * Validate + measure visual rows in a single pass.
+ * Returns null when the chunk contains sequences we cannot bulk-measure safely
+ * (caller falls back to line-feed counting / segmented writes).
+ */
+export const tryMeasureVisualRows = (
   term: XTerm,
   data: string,
   startColumn: number,
   columns: number,
   startWraparoundMode: boolean,
-): { rowOffset: number; column: number; wraparoundMode: boolean } => {
+): MeasuredTerminalRows | null => {
+  if (isSimpleAsciiControlText(data)) {
+    return measureSimpleAsciiRows(data, startColumn, columns, startWraparoundMode);
+  }
+
   let rowOffset = 0;
   let column = startColumn;
   let wraparoundMode = startWraparoundMode;
 
   for (let index = 0; index < data.length; index += 1) {
-    const sequence = readEscapeSequence(data, index);
-    if (sequence?.complete) {
+    const char = data[index];
+    if (char === "\x1b") {
+      const sequence = readEscapeSequence(data, index);
+      if (!sequence?.complete || !isBulkMeasurableEscapeSequence(sequence.sequence)) {
+        return null;
+      }
       wraparoundMode = getWraparoundAction(sequence.sequence) ?? wraparoundMode;
       index = sequence.endIndex;
       continue;
     }
 
-    const char = data[index];
     if (char === "\n") {
       rowOffset += 1;
       if (Number.isFinite(columns) && column >= columns) {
@@ -733,17 +773,21 @@ const measureTerminalRows = (
       column = advanceMeasuredTab(column, columns);
       continue;
     }
-    if (char < " " || char === "\u007f") {
-      continue;
-    }
+
     const codePoint = data.codePointAt(index);
-    if (codePoint === undefined) {
-      continue;
+    if (codePoint === undefined) return null;
+    if (
+      codePoint < 0x20
+      || codePoint === 0x7f
+      || (codePoint >= 0x80 && codePoint <= 0x9f)
+      || isUnsafeGraphemeSequenceCodePoint(codePoint)
+      || isUnsafeFormatCodePoint(codePoint)
+      || isContextSensitiveGraphemeCodePoint(codePoint)
+    ) {
+      return null;
     }
     const width = getCodePointCellWidth(term, codePoint);
-    if (width === null) {
-      continue;
-    }
+    if (width === null) return null;
     ({ column, rowOffset } = advanceMeasuredColumns(
       column,
       rowOffset,
@@ -758,6 +802,18 @@ const measureTerminalRows = (
 
   return { rowOffset, column, wraparoundMode };
 };
+
+/** @deprecated Prefer tryMeasureVisualRows — kept for call-site clarity in gates. */
+const canMeasureVisualRows = (term: XTerm, data: string): boolean => (
+  isSimpleAsciiControlText(data)
+  || tryMeasureVisualRows(
+    term,
+    data,
+    0,
+    Number.POSITIVE_INFINITY,
+    true,
+  ) !== null
+);
 
 const writeBatchedTimestampSegments = (
   term: XTerm,
@@ -780,9 +836,18 @@ const writeBatchedTimestampSegments = (
       timestamps.push({ label: segment.label, rowOffset });
       continue;
     }
-    const measured = canMeasureVisualRows(term, segment.data)
-      ? measureTerminalRows(term, segment.data, column, columns, wraparoundMode)
-      : { rowOffset: countLineFeeds(segment.data), column, wraparoundMode };
+    const measured = tryMeasureVisualRows(
+      term,
+      segment.data,
+      column,
+      columns,
+      wraparoundMode,
+    ) ?? {
+      // Unmeasurable chunk: preserve prior column/wrap state and count hard newlines only.
+      rowOffset: countLineFeeds(segment.data),
+      column,
+      wraparoundMode,
+    };
     rowOffset += measured.rowOffset;
     column = measured.column;
     wraparoundMode = measured.wraparoundMode;
@@ -840,6 +905,27 @@ export const onTerminalLineTimestampsChange = (
   };
 };
 
+/**
+ * Lower-bound index of the first entry whose marker.line >= `line`.
+ * Entries are append-only by write order and stay sorted by line after prune.
+ */
+const findFirstTimestampEntryAtOrAfterLine = (
+  entries: readonly TerminalTimestampGutterEntry[],
+  line: number,
+): number => {
+  let lo = 0;
+  let hi = entries.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (entries[mid].marker.line < line) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  return lo;
+};
+
 export const resolveTerminalTimestampGutterRows = ({
   viewportY,
   rows,
@@ -869,19 +955,25 @@ export const resolveTerminalTimestampGutterRows = ({
   }
 
   const labelByLine = new Map<number, string>();
-  for (const entry of entries) {
+  // Binary-search into the sorted marker list, then scan only the viewport window.
+  for (
+    let index = findFirstTimestampEntryAtOrAfterLine(entries, firstRelevantLine);
+    index < entries.length;
+    index += 1
+  ) {
+    const entry = entries[index];
     if (entry.marker.isDisposed) continue;
     const line = entry.marker.line;
-    if (line < firstRelevantLine || line > viewportEnd) continue;
+    if (line > viewportEnd) break;
     labelByLine.set(line, entry.label);
   }
 
-  const rowLabels = new Map<number, string>();
+  const visible: TerminalTimestampGutterRow[] = [];
   for (let row = 0; row < rows; row += 1) {
     const line = viewportY + row;
     const directLabel = labelByLine.get(line);
     if (directLabel) {
-      rowLabels.set(row, directLabel);
+      visible.push({ row, label: directLabel });
       continue;
     }
 
@@ -889,13 +981,11 @@ export const resolveTerminalTimestampGutterRows = ({
     if (sourceLine === undefined) continue;
     const wrappedLabel = labelByLine.get(sourceLine);
     if (wrappedLabel) {
-      rowLabels.set(row, wrappedLabel);
+      visible.push({ row, label: wrappedLabel });
     }
   }
 
-  return [...rowLabels.entries()]
-    .sort(([a], [b]) => a - b)
-    .map(([row, label]) => ({ row, label }));
+  return visible;
 };
 
 export const getVisibleTerminalLineTimestampRows = (
@@ -980,10 +1070,14 @@ export const writeTerminalDataWithLineTimestamps = (
   if (
     timestampOnlyPrefix.length === 0
     && parsedData === dataForTimestamps
-    && canMeasureVisualRows(term, data)
     && (
       dataSegmentCount > MAX_SEGMENTED_TIMESTAMP_WRITES
       || data.length >= BULK_TIMESTAMP_BATCH_MIN_BYTES
+    )
+    // Cheap ASCII gate first (seq / log floods); otherwise one validate+measure probe.
+    && (
+      isSimpleAsciiControlText(data)
+      || canMeasureVisualRows(term, data)
     )
   ) {
     writeBatchedTimestampSegments(term, store, data, segments, done, diagnostics);
