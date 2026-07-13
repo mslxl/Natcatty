@@ -12,7 +12,7 @@ import {
 import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { useI18n } from "../application/i18n/I18nProvider";
 import { useApplicationBackend } from "../application/state/useApplicationBackend";
-import { resolveGroupDefaults, resolveGroupTerminalThemeId } from "../domain/groupConfig";
+import { applyGroupDefaults, resolveGroupDefaults, resolveGroupTerminalThemeId } from "../domain/groupConfig";
 import {
   getEffectiveHostDistro,
   normalizePrimaryTelnetState,
@@ -613,9 +613,18 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
   }, [availableKeys]);
 
   const selectedIdentity = useMemo(() => {
-    if (!form.identityId) return undefined;
-    return identities.find((i) => i.id === form.identityId);
-  }, [form.identityId, identities]);
+    const effectiveIdentityId = form.identityId || (
+      form.identityId !== "" ? effectiveGroupDefaults?.identityId : undefined
+    );
+    if (!effectiveIdentityId) return undefined;
+    return identities.find((i) => i.id === effectiveIdentityId);
+  }, [effectiveGroupDefaults?.identityId, form.identityId, identities]);
+
+  const effectiveAuthMethod = useMemo(() => resolveHostAuth({
+    host: effectiveGroupDefaults ? applyGroupDefaults(form, effectiveGroupDefaults) : form,
+    keys: availableKeys,
+    identities,
+  }).authMethod, [availableKeys, effectiveGroupDefaults, form, identities]);
 
   const selectedTelnetIdentity = useMemo(() => {
     if (!form.telnetIdentityId) return undefined;
@@ -924,7 +933,8 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
           form={form}
           setForm={setForm}
           update={update}
-          groupDefaults={groupDefaults}
+          groupDefaults={effectiveGroupDefaults}
+          effectiveAuthMethod={effectiveAuthMethod}
           selectedIdentity={selectedIdentity}
           clearIdentity={clearIdentity}
           identities={identities}

@@ -313,6 +313,15 @@ test("applyHostAuthMethodSelection clears incompatible per-host credentials", ()
     identityFilePaths: undefined,
     useSshAgent: undefined,
   });
+
+  const passwordHost = {
+    ...autofillBaseHost,
+    authMethod: "password",
+    useSshAgent: false,
+  } as Host;
+  const automaticHost = applyHostAuthMethodSelection(passwordHost, "auto");
+  assert.equal(automaticHost.useSshAgent, undefined);
+  assert.deepEqual(resolveBridgeSshAgentAuth(automaticHost, undefined, "auto"), {});
 });
 
 test("per-host auth selection opts out of an inherited group identity", () => {

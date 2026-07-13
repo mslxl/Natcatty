@@ -1,7 +1,7 @@
 import React from "react";
 import { ChevronDown, Eye, EyeOff, FileKey, FolderLock, FolderOpen, Key, KeyRound, MapPin, Plus, Shapes, Shield, Trash2, User, X } from "lucide-react";
 import type { Host } from "../types";
-import { applyHostAuthMethodSelection, resolveHostAuthMethodSelection } from "../domain/sshAuth";
+import { applyHostAuthMethodSelection } from "../domain/sshAuth";
 import { HostIconPicker } from "./HostIconPicker";
 import { Button } from "./ui/button";
 import { Combobox } from "./ui/combobox";
@@ -22,6 +22,7 @@ export const HostDetailsConnectionSections: React.FC<HostDetailsConnectionSectio
   setForm,
   update,
   groupDefaults,
+  effectiveAuthMethod,
   selectedIdentity,
   clearIdentity,
   identities,
@@ -46,8 +47,6 @@ export const HostDetailsConnectionSections: React.FC<HostDetailsConnectionSectio
   effectiveFormDistro,
   getDistroOptionLabel,
 }) => {
-  const effectiveAuthMethod = selectedIdentity?.authMethod || resolveHostAuthMethodSelection(form);
-
   const selectAuthMethod = (authMethod: "auto" | "password" | "key" | "certificate") => {
     setForm((previous: Host) => applyHostAuthMethodSelection(previous, authMethod));
     if (authMethod === "auto" || authMethod === "password") {

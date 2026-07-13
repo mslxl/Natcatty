@@ -51,9 +51,7 @@ export const applyHostAuthMethodSelection = <T extends Host>(
     useSshAgent: authMethod === "auto"
       ? (host.identityAgent || host.identitiesOnly !== undefined || host.addKeysToAgent || host.useKeychain !== undefined
         ? true
-        : host.useSshAgent === false
-          ? true
-          : undefined)
+        : undefined)
       : false,
   };
 };

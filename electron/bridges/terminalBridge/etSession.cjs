@@ -60,13 +60,15 @@ function promptMatchScore(entry, prompt) {
 
 function pickEntry(entries, prompt) {
   const wantsPassphrase = prompt.includes("passphrase");
+  const wantsPassword = /(^|[^a-z])password([^a-z]|$)/.test(prompt);
+  if (!wantsPassphrase && !wantsPassword) return null;
   const scoped = entries.filter((entry) => entry.type === (wantsPassphrase ? "passphrase" : "password"));
   const matched = scoped
     .map((entry, index) => ({ entry, index, score: promptMatchScore(entry, prompt) }))
     .filter(({ score }) => score > 0)
     .sort((a, b) => b.score - a.score || a.index - b.index)[0]?.entry;
   if (matched) return matched;
-  if (!wantsPassphrase && scoped.length === 1) return scoped[0];
+  if (wantsPassword && scoped.length === 1) return scoped[0];
   return null;
 }
 

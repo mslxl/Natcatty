@@ -43,6 +43,7 @@ const renderConnectionSections = (formOverrides: Record<string, unknown> = {}) =
         setForm: () => {},
         update: () => {},
         groupDefaults: undefined,
+        effectiveAuthMethod: formOverrides.effectiveAuthMethod || formOverrides.authMethod || "key",
         selectedIdentity: undefined,
         clearIdentity: () => {},
         identities: [],
@@ -116,4 +117,14 @@ test("host authentication choices remain visible for a selected identity", () =>
   });
 
   assert.match(markup, /hostDetails\.auth\.passwordOnly/);
+});
+
+test("host authentication choices show the inherited effective method", () => {
+  const markup = renderConnectionSections({
+    authMethod: undefined,
+    identityFileId: undefined,
+    effectiveAuthMethod: "password",
+  });
+
+  assert.match(markup, /<button[^>]*aria-pressed="true"[^>]*>hostDetails\.auth\.passwordOnly<\/button>/);
 });
