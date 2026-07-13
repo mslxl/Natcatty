@@ -802,6 +802,27 @@ test("gutter prefers the latest label when a later marker rewrites an earlier li
   );
 });
 
+test("bulk timestamp batching is disabled inside a partial scrolling region", () => {
+  const { term, writes } = createFakeTerm({ cols: 80, rows: 24 });
+  (term as { _core?: { buffer?: { scrollTop: number; scrollBottom: number } } })._core = {
+    buffer: { scrollTop: 1, scrollBottom: 10 },
+  };
+  const steps: string[] = [];
+  const lines = Array.from({ length: 80 }, (_, index) => `line-${index}`).join("\r\n");
+
+  writeTerminalDataWithLineTimestamps(
+    term as never,
+    lines,
+    () => {},
+    { onStep: (step) => steps.push(step.kind) },
+  );
+
+  assert.equal(steps.includes("batched-write"), false);
+  assert.equal(steps.includes("segmented-write"), true);
+  // Segmented path still emits the original bytes.
+  assert.equal(writes.join(""), lines);
+});
+
 test("capacity prune dedupes rewritten lines so unique history is not dropped", () => {
   const scrollback = 100;
   const rows = 1;

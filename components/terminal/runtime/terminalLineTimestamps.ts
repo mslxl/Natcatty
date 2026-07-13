@@ -602,6 +602,29 @@ const getTerminalWraparoundMode = (term: XTerm): boolean => (
   ((term as XTerm & { modes?: { wraparoundMode?: boolean } }).modes?.wraparoundMode) !== false
 );
 
+/**
+ * True when DECSTBM (or equivalent) leaves a partial scrolling region.
+ * Bulk row-offset measurement assumes full-buffer advancement; inside a
+ * region, newlines recycle rows and measured offsets would invent fake
+ * history and evict still-valid scrollback timestamps.
+ */
+export const hasPartialScrollingRegion = (term: XTerm): boolean => {
+  const core = (term as XTerm & {
+    _core?: { buffer?: { scrollTop?: number; scrollBottom?: number } };
+  })._core;
+  const scrollTop = core?.buffer?.scrollTop;
+  const scrollBottom = core?.buffer?.scrollBottom;
+  const rows = Number.isFinite(term.rows) && term.rows > 0 ? term.rows : 0;
+  if (
+    !Number.isFinite(scrollTop)
+    || !Number.isFinite(scrollBottom)
+    || rows <= 0
+  ) {
+    return false;
+  }
+  return Number(scrollTop) > 0 || Number(scrollBottom) < rows - 1;
+};
+
 const isUnsafeGraphemeSequenceCodePoint = (codePoint: number): boolean => (
   codePoint === 0x200d
   || codePoint === 0x20e3
@@ -1084,6 +1107,7 @@ export const writeTerminalDataWithLineTimestamps = (
   if (
     timestampOnlyPrefix.length === 0
     && parsedData === dataForTimestamps
+    && !hasPartialScrollingRegion(term)
     && (
       dataSegmentCount > MAX_SEGMENTED_TIMESTAMP_WRITES
       || data.length >= BULK_TIMESTAMP_BATCH_MIN_BYTES
