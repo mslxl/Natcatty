@@ -31,8 +31,6 @@ export interface TerminalToolbarProps {
     onUpdateHost?: (host: Host) => void;
     showClose?: boolean;
     onClose?: () => void;
-    /** When true, close is "return pane to its own tab" rather than kill the session. */
-    closeRestoresTab?: boolean;
     // Search functionality
     isSearchOpen?: boolean;
     onToggleSearch?: () => void;
@@ -68,7 +66,6 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
     onUpdateHost,
     showClose,
     onClose,
-    closeRestoresTab = false,
     isSearchOpen,
     onToggleSearch,
     showLogButton = false,
@@ -485,11 +482,7 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
                             <X size={11} />
                         </Button>
                     </TooltipTrigger>
-                    <TooltipContent side="bottom">
-                        {closeRestoresTab
-                            ? t("terminal.toolbar.detach")
-                            : t("terminal.toolbar.closeSession")}
-                    </TooltipContent>
+                    <TooltipContent side="bottom">{t("terminal.toolbar.closeSession")}</TooltipContent>
                 </Tooltip>
             )}
         </TooltipProvider>
