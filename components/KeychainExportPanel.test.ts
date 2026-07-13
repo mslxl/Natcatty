@@ -20,3 +20,7 @@ test('key export omits stale identity files for password-only auth', () => {
 test('key export passes the selected vault key to agent filtering', () => {
   assert.match(source, /resolveBridgeSshAgentAuth\(\s*effectiveExportHost,\s*exportAuth\.key,\s*exportAuth\.authMethod,\s*\)/);
 });
+
+test('key export defaults blank usernames the same way as other SSH entry points', () => {
+  assert.match(source, /username: exportAuth\.username \|\| "root"/);
+});
