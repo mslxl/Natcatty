@@ -616,7 +616,13 @@ test("enter-then-leave in one chunk does not latch rAF forever", () => {
   try {
     setTerminalWriteCoalescerByteCapResolver(term, () => 64 * 1024);
     enqueueCoalescedTerminalWrite(term, "\x1b[?1049hframe\x1b[?1049l", () => {});
-    frames[0]!(0);
+    // Final transition is leave → no pending latch; schedule may be microtask.
+    if (frames.length > 0) {
+      frames[0]!(0);
+    } else {
+      assert.ok(microtasks.length >= 1);
+      for (const task of microtasks.splice(0)) task();
+    }
     frames.length = 0;
     microtasks.length = 0;
 
