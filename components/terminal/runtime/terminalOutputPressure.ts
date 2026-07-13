@@ -23,7 +23,14 @@ type TerminalOutputPressureState = {
   largeOutputUntil: number;
   longLine: boolean;
   consecutiveUnbrokenBytes: number;
+  /** Sliding window of recently received bytes (high-rate small chunks). */
+  recentBytes: number;
+  recentBytesWindowStart: number;
 };
+
+/** Detect bulk streams that arrive as many small IPC chunks (e.g. `yes`). */
+const LARGE_OUTPUT_RATE_WINDOW_MS = 100;
+const LARGE_OUTPUT_RATE_BYTES = 64 * 1024;
 
 const pressureStates = new WeakMap<XTerm, TerminalOutputPressureState>();
 
@@ -36,6 +43,8 @@ const getOrCreateState = (term: XTerm): TerminalOutputPressureState => {
       largeOutputUntil: 0,
       longLine: false,
       consecutiveUnbrokenBytes: 0,
+      recentBytes: 0,
+      recentBytesWindowStart: 0,
     };
     pressureStates.set(term, state);
   }
@@ -79,6 +88,11 @@ const measureUnbrokenRuns = (
   return { maxRunBytes, trailingRunBytes };
 };
 
+const markLargeOutput = (state: TerminalOutputPressureState, now: number): void => {
+  state.largeOutputUntil = now + XTERM_PERFORMANCE_CONFIG.highlighting.largeOutputQuietMs;
+  state.largeOutput = true;
+};
+
 export const noteTerminalOutputPressureData = (
   term: XTerm,
   data: string,
@@ -86,12 +100,25 @@ export const noteTerminalOutputPressureData = (
   if (!data) return;
   const state = getOrCreateState(term);
   const now = performance.now();
-  if (data.length >= TERMINAL_LONG_LINE_PRESSURE_BYTES) {
-    state.largeOutputUntil = now + XTERM_PERFORMANCE_CONFIG.highlighting.largeOutputQuietMs;
-    state.largeOutput = true;
+
+  if (
+    state.recentBytesWindowStart === 0
+    || now - state.recentBytesWindowStart > LARGE_OUTPUT_RATE_WINDOW_MS
+  ) {
+    state.recentBytes = 0;
+    state.recentBytesWindowStart = now;
+  }
+  state.recentBytes += data.length;
+
+  if (
+    data.length >= TERMINAL_LONG_LINE_PRESSURE_BYTES
+    || state.recentBytes >= LARGE_OUTPUT_RATE_BYTES
+  ) {
+    markLargeOutput(state, now);
   } else if (now >= state.largeOutputUntil) {
     state.largeOutput = false;
   }
+
   const { maxRunBytes, trailingRunBytes } = measureUnbrokenRuns(
     data,
     state.consecutiveUnbrokenBytes,
@@ -138,6 +165,15 @@ export const getTerminalOutputPressure = (
     longLine: state.longLine,
     consecutiveUnbrokenBytes: state.consecutiveUnbrokenBytes,
   };
+};
+
+/**
+ * True when hot-path side work (timestamps, highlight scans) should degrade so
+ * xterm can keep painting bulk output smoothly.
+ */
+export const shouldDegradeTerminalSideWork = (term: XTerm): boolean => {
+  const pressure = getTerminalOutputPressure(term);
+  return pressure.background || pressure.largeOutput || pressure.longLine;
 };
 
 export const resetTerminalOutputPressure = (term: XTerm): void => {

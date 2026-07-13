@@ -54,6 +54,21 @@ test("coalesces chunks in the same frame into one write", () => {
   assert.deepEqual(writes, ["foobarbaz"]);
 });
 
+test("microtask schedule mode flushes after the current turn without rAF", async () => {
+  const writes: string[] = [];
+  const coalescer = createWriteCoalescer((data) => writes.push(data), {
+    resolveScheduleMode: () => "microtask",
+  });
+
+  coalescer.push("a");
+  coalescer.push("b");
+  assert.equal(writes.length, 0);
+
+  await Promise.resolve();
+  assert.deepEqual(writes, ["ab"]);
+  coalescer.dispose();
+});
+
 test("coalesces a large TUI repaint until the scheduled frame", () => {
   const writes: string[] = [];
   const coalescer = createTestCoalescer((data) => writes.push(data));

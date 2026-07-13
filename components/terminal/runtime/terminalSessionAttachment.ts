@@ -135,7 +135,9 @@ type TerminalSessionWriteOptions = CoalescedTerminalWriteOptions & {
 const BACKGROUND_OUTPUT_FLUSH_MAX_PASSES = 64;
 const LARGE_WRITE_FLUSH_WATCHDOG_BYTES = 64 * 1024;
 const LARGE_WRITE_FLUSH_WATCHDOG_MS = 250;
-const VISIBLE_WRITE_IDLE_FLUSH_MS = 64;
+// With microtask coalescing, idle flush is only a safety net for rAF TUI path
+// and any leftover queue work — keep it short so the last batch does not lag.
+const VISIBLE_WRITE_IDLE_FLUSH_MS = 24;
 const HIDDEN_PANE_DRAIN_MS = 160;
 const visibleWriteIdleFlushTimers = new WeakMap<XTerm, ReturnType<typeof setTimeout>>();
 const hiddenPaneDrainTimers = new WeakMap<XTerm, ReturnType<typeof setTimeout>>();

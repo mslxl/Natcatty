@@ -5,6 +5,13 @@ import { MAX_TERMINAL_WRITE_QUEUE_DRAIN_BYTES } from "./terminalFlowConstants";
 export const MAX_WRITE_QUEUE_ITEMS = 32;
 export const MAX_WRITE_QUEUE_BYTES = 512 * 1024;
 
+/**
+ * Soft wall-clock budget per event-loop turn of continuous write-queue drain.
+ * After this, yield with setTimeout(0) so input/Ctrl-C can run — similar to
+ * keeping the UI responsive without Tabby-style 4KB choppiness.
+ */
+export const WRITE_QUEUE_TURN_BUDGET_MS = 10;
+
 export type TerminalWriteQueueOptions = {
   onDropped?: (bytes: number) => void;
   deferStart?: boolean;
@@ -34,6 +41,7 @@ type TerminalWriteQueue = {
   pendingBytes: number;
   drainBytes: number;
   floodMode: boolean;
+  turnStartedAt: number;
   onDropped?: (bytes: number) => void;
   drainTimer?: ReturnType<typeof setTimeout>;
   stepTimer?: ReturnType<typeof setTimeout>;
@@ -52,11 +60,27 @@ const getOrCreateQueue = (term: XTerm): TerminalWriteQueue => {
       pendingBytes: 0,
       drainBytes: 0,
       floodMode: false,
+      turnStartedAt: 0,
       onDropped: terminalWriteQueueDropHandlers.get(term),
     };
     terminalWriteQueues.set(term, queue);
   }
   return queue;
+};
+
+const beginQueueTurn = (queue: TerminalWriteQueue): void => {
+  if (queue.turnStartedAt <= 0) {
+    queue.turnStartedAt = performance.now();
+  }
+};
+
+const endQueueTurn = (queue: TerminalWriteQueue): void => {
+  queue.turnStartedAt = 0;
+};
+
+const isQueueTurnBudgetExceeded = (queue: TerminalWriteQueue): boolean => {
+  if (queue.turnStartedAt <= 0) return false;
+  return performance.now() - queue.turnStartedAt >= WRITE_QUEUE_TURN_BUDGET_MS;
 };
 
 const scheduleQueueDrain = (
@@ -69,6 +93,7 @@ const scheduleQueueDrain = (
     scheduleNextTerminalWrite(term, queue);
     return;
   }
+  endQueueTurn(queue);
   queue.drainTimer = setTimeout(() => {
     queue.drainTimer = undefined;
     scheduleNextTerminalWrite(term, queue);
@@ -81,16 +106,25 @@ const scheduleNextTerminalWrite = (term: XTerm, queue: TerminalWriteQueue) => {
     queue.writing = false;
     queue.drainBytes = 0;
     queue.floodMode = false;
+    endQueueTurn(queue);
     if (terminalWriteQueues.get(term) === queue) {
       terminalWriteQueues.delete(term);
     }
     return;
   }
+  beginQueueTurn(queue);
   if (
     queue.drainBytes > 0
     && queue.drainBytes + next.bytes > next.maxDrainBytes
   ) {
     queue.drainBytes = 0;
+    queue.pending.unshift(next);
+    scheduleQueueDrain(term, queue, true);
+    return;
+  }
+  // Time-budget yield: continuous sync drains stay smooth like Tabby, but never
+  // pin the main thread for multi-frame bulk parses.
+  if (queue.drainBytes > 0 && isQueueTurnBudgetExceeded(queue)) {
     queue.pending.unshift(next);
     scheduleQueueDrain(term, queue, true);
     return;
@@ -111,8 +145,14 @@ const scheduleNextTerminalWrite = (term: XTerm, queue: TerminalWriteQueue) => {
     if (next.yieldAfter) {
       queue.drainBytes = 0;
     }
-    scheduleQueueDrain(term, queue, next.yieldAfter);
+    const shouldDefer = next.yieldAfter || isQueueTurnBudgetExceeded(queue);
+    if (shouldDefer && !next.yieldAfter) {
+      // Byte drain continues next turn; reset counter so a fresh budget applies.
+      queue.drainBytes = 0;
+    }
+    scheduleQueueDrain(term, queue, shouldDefer);
   }, (continuation) => {
+    endQueueTurn(queue);
     const timer = setTimeout(() => {
       if (terminalWriteQueues.get(term) !== queue || queue.stepTimer !== timer) {
         return;
@@ -366,6 +406,7 @@ export const abortTerminalWriteQueue = (
   queue.pendingBytes = 0;
   queue.writing = false;
   queue.floodMode = false;
+  queue.turnStartedAt = 0;
   queue.active = undefined;
   if (queue.drainTimer) {
     clearTimeout(queue.drainTimer);

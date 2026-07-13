@@ -463,7 +463,9 @@ test("large output delays keyword highlight scans until output quiets", async ()
 
     assert.equal(getTranslateCount(), 0);
 
-    await new Promise((resolve) => { setTimeout(resolve, 220); });
+    // largeOutput debounce / quiet window is intentionally longer so bulk dumps
+    // do not compete with xterm paint (see XTERM_PERFORMANCE_CONFIG.highlighting).
+    await new Promise((resolve) => { setTimeout(resolve, 520); });
     assert.ok(getTranslateCount() > 0);
     highlighter.dispose();
     resetTerminalOutputPressure(term as never);

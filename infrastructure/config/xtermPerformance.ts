@@ -127,9 +127,15 @@ export const XTERM_PERFORMANCE_CONFIG = {
     // User-scroll catch-up should be almost invisible to the renderer.
     scrollSettleDebounceMs: 120,
     // Keep highlighting deprioritized briefly after a large output burst.
-    largeOutputQuietMs: 320,
+    // Longer quiet window lets xterm paint bulk dumps (cat/yes/tail) without
+    // competing decoration scans every few hundred ms.
+    largeOutputQuietMs: 480,
     // Give interactive typing priority over keyword highlight catch-up.
     inputQuietMs: 180,
+    // Extra debounce while large-output / long-line pressure is active.
+    largeOutputDebounceMs: 280,
+    // Floor for immediate refresh interval under output pressure.
+    largeOutputImmediateMinIntervalMs: 120,
   },
 };
 

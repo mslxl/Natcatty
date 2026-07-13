@@ -116,9 +116,9 @@ export class KeywordHighlighter implements IDisposable {
   private static readonly WRITE_BURST_OVERSCAN_SCALE = 0.35;
   private static readonly WRITE_BURST_BUDGET_SCALE = 0.5;
   private static readonly WRITE_BURST_CHUNK_SCALE = 0.5;
-  private static readonly WRITE_BURST_DEBOUNCE_MS = 140;
-  private static readonly WRITE_BURST_IMMEDIATE_MIN_INTERVAL_MS = 32;
-  private static readonly WRITE_BURST_HIGHLIGHT_PAUSE_MS = 180;
+  private static readonly WRITE_BURST_DEBOUNCE_MS = 180;
+  private static readonly WRITE_BURST_IMMEDIATE_MIN_INTERVAL_MS = 48;
+  private static readonly WRITE_BURST_HIGHLIGHT_PAUSE_MS = 260;
 
   constructor(term: XTerm) {
     this.term = term;
@@ -138,13 +138,20 @@ export class KeywordHighlighter implements IDisposable {
       // with the freshly rendered content instead of trailing behind it.
       this.term.onWriteParsed(() => {
         const pressure = getTerminalOutputPressure(this.term);
+        if (pressure.background) {
+          // Hidden panes: do not schedule highlight work until visible again.
+          this.updateWriteBurst();
+          this.markVisibleRangeDirty();
+          return;
+        }
         if (
           pressure.longLine
           || pressure.largeOutput
-          || pressure.background
           || this.isInputProtectionActive(performance.now())
         ) {
           this.updateWriteBurst();
+          // Mark once; skip per-write dirty expansion during flood so decoration
+          // scans do not fight xterm paint (Tabby has no keyword path at all).
           this.markVisibleRangeDirty();
           this.triggerRefresh("debounced", "write");
           return;
@@ -983,6 +990,28 @@ export class KeywordHighlighter implements IDisposable {
   private getAdaptiveHighlightingProfile(now = performance.now()) {
     const config = XTERM_PERFORMANCE_CONFIG.highlighting;
     const overscanLines = this.getBaseOverscanLines();
+    const pressure = getTerminalOutputPressure(this.term);
+    const underOutputPressure = pressure.largeOutput || pressure.longLine || pressure.background;
+
+    if (underOutputPressure) {
+      return {
+        overscanLines: Math.max(4, Math.round(overscanLines * 0.25)),
+        writeRefreshBudgetMs: Math.max(1, Math.floor(config.writeRefreshBudgetMs * 0.35)),
+        dirtySegmentChunkSize: Math.max(8, Math.round(config.dirtySegmentChunkSize * 0.35)),
+        debounceMs: Math.max(
+          config.debounceMs,
+          config.largeOutputDebounceMs ?? KeywordHighlighter.WRITE_BURST_DEBOUNCE_MS,
+          KeywordHighlighter.WRITE_BURST_DEBOUNCE_MS,
+        ),
+        immediateMinIntervalMs: Math.max(
+          config.immediateMinIntervalMs,
+          config.largeOutputImmediateMinIntervalMs
+            ?? KeywordHighlighter.WRITE_BURST_IMMEDIATE_MIN_INTERVAL_MS,
+          KeywordHighlighter.WRITE_BURST_IMMEDIATE_MIN_INTERVAL_MS,
+        ),
+      };
+    }
+
     if (!this.isWriteBurstActive(now)) {
       return {
         overscanLines,

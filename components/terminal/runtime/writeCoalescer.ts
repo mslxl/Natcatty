@@ -1,10 +1,15 @@
 /**
- * Coalesces PTY output chunks into one xterm.write() per animation frame.
+ * Coalesces PTY output chunks into one xterm.write() per schedule tick.
  *
  * Agent CLIs (Codex, Claude Code) emit full-screen repaints as many small PTY
  * chunks. Writing each chunk individually triggers an xterm parse/render cycle
  * per chunk, which can tear TUI frames (missing box borders, clipped bottom
- * rows). Batching to the display refresh rate keeps rendering atomic per frame.
+ * rows). Batching keeps rendering atomic per schedule turn.
+ *
+ * Schedule modes (Tabby-inspired):
+ * - `raf`: wait for the next animation frame (best for alternate-screen TUIs)
+ * - `microtask`: flush after the current JS turn (normal-screen bulk / echo —
+ *   closer to Tabby's direct write, still coalesces same-turn chunks)
  *
  * Ported from superset-sh/superset (issues #2241 / #2244):
  * apps/desktop/src/renderer/lib/terminal/write-coalescer.ts
@@ -30,15 +35,22 @@ export type WriteCoalescer = {
   dispose(): void;
 };
 
+export type WriteCoalesceScheduleMode = "raf" | "microtask";
+
 type ScheduleWriteFrame = (callback: () => void) => (() => void) | null;
 
 export type WriteCoalescerOptions = {
   scheduleFrame?: ScheduleWriteFrame;
+  /**
+   * Choose scheduling per push. Alternate-screen TUIs should return `raf`;
+   * normal-screen / bulk output should return `microtask` for lower latency.
+   */
+  resolveScheduleMode?: () => WriteCoalesceScheduleMode;
   getMaxPendingBytes?: () => number;
   shouldFlushScheduledFrame?: () => boolean;
 };
 
-const scheduleWriteFrame = (callback: () => void): (() => void) | null => {
+const scheduleRafFrame = (callback: () => void): (() => void) | null => {
   if (typeof globalThis.requestAnimationFrame === "function") {
     const frameId = globalThis.requestAnimationFrame(callback);
     return () => {
@@ -47,8 +59,46 @@ const scheduleWriteFrame = (callback: () => void): (() => void) | null => {
       }
     };
   }
-
   return null;
+};
+
+const scheduleMicrotaskFrame = (callback: () => void): (() => void) | null => {
+  if (typeof queueMicrotask === "function") {
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) {
+        callback();
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }
+  if (typeof setTimeout === "function") {
+    const timer = setTimeout(callback, 0);
+    return () => {
+      clearTimeout(timer);
+    };
+  }
+  return null;
+};
+
+const scheduleByMode = (
+  mode: WriteCoalesceScheduleMode,
+  callback: () => void,
+  customSchedule?: ScheduleWriteFrame,
+): (() => void) | null => {
+  if (customSchedule) {
+    return customSchedule(callback);
+  }
+  if (mode === "microtask") {
+    // Prefer microtask; fall back to rAF only if microtasks are unavailable.
+    return scheduleMicrotaskFrame(callback) ?? scheduleRafFrame(callback);
+  }
+  // rAF mode must NOT fall back to microtask — when rAF is missing (Node unit
+  // tests / headless), returning null makes push() flush synchronously, which
+  // matches the pre-coalescer-schedule contract tests rely on.
+  return scheduleRafFrame(callback);
 };
 
 export const createWriteCoalescer = (
@@ -59,7 +109,8 @@ export const createWriteCoalescer = (
   let pendingBytes = 0;
   let cancelPendingFrame: (() => void) | null = null;
   let disposed = false;
-  const scheduleFrame = options.scheduleFrame ?? scheduleWriteFrame;
+  const customScheduleFrame = options.scheduleFrame;
+  const resolveScheduleMode = options.resolveScheduleMode ?? (() => "raf" as const);
   const getMaxPendingBytes = options.getMaxPendingBytes
     ?? (() => MAX_PENDING_WRITE_COALESCE_BYTES);
   const shouldFlushScheduledFrame = options.shouldFlushScheduledFrame ?? (() => true);
@@ -107,13 +158,14 @@ export const createWriteCoalescer = (
       return;
     }
     if (cancelPendingFrame === null) {
-      const cancelFrame = scheduleFrame(() => {
+      const mode = resolveScheduleMode();
+      const cancelFrame = scheduleByMode(mode, () => {
         cancelPendingFrame = null;
         if (!shouldFlushScheduledFrame()) {
           return;
         }
         flushSync();
-      });
+      }, customScheduleFrame);
       if (cancelFrame === null) {
         if (!shouldFlushScheduledFrame()) {
           return;

@@ -26,7 +26,9 @@ test("tracks long unbroken terminal output pressure until a line break arrives",
 
   noteTerminalOutputPressureData(term, "\nshort");
   assert.equal(getTerminalOutputPressure(term).longLine, false);
-  assert.equal(getTerminalOutputPressure(term).mode, "normal");
+  // Crossing the long-line threshold also arms the high-rate large-output window.
+  assert.equal(getTerminalOutputPressure(term).largeOutput, true);
+  assert.equal(getTerminalOutputPressure(term).mode, "large-output");
 
   resetTerminalOutputPressure(term);
 });
@@ -84,6 +86,33 @@ test("keeps large-output pressure through small input echoes until output is qui
     now += XTERM_PERFORMANCE_CONFIG.highlighting.largeOutputQuietMs + 1;
     assert.equal(getTerminalOutputPressure(term).largeOutput, false);
     assert.equal(getTerminalOutputPressure(term).mode, "normal");
+  } finally {
+    Object.defineProperty(performance, "now", {
+      configurable: true,
+      value: originalNow,
+    });
+    resetTerminalOutputPressure(term);
+  }
+});
+
+test("detects large-output pressure from high-rate small chunks", () => {
+  const term = createFakeTerm();
+  const originalNow = performance.now.bind(performance);
+  let now = 5_000;
+
+  Object.defineProperty(performance, "now", {
+    configurable: true,
+    value: () => now,
+  });
+
+  try {
+    // 64KB of short lines inside the 100ms rate window (not one unbroken run).
+    for (let index = 0; index < 64; index += 1) {
+      noteTerminalOutputPressureData(term, `${"y".repeat(1023)}\n`);
+    }
+    assert.equal(getTerminalOutputPressure(term).largeOutput, true);
+    assert.equal(getTerminalOutputPressure(term).longLine, false);
+    assert.equal(getTerminalOutputPressure(term).mode, "large-output");
   } finally {
     Object.defineProperty(performance, "now", {
       configurable: true,

@@ -5,8 +5,14 @@ import {
   MAX_PENDING_WRITE_COALESCE_BYTES_FLOOD,
   MAX_TERMINAL_PLAIN_WRITE_CHUNK_BYTES,
   MAX_TERMINAL_UNBROKEN_WRITE_CHUNK_BYTES,
+  MAX_TERMINAL_WRITE_QUEUE_DRAIN_BYTES,
 } from "./terminalFlowConstants";
-import { createWriteCoalescer, type WriteCoalescer } from "./writeCoalescer.ts";
+import { getTerminalOutputPressure } from "./terminalOutputPressure";
+import {
+  createWriteCoalescer,
+  type WriteCoalesceScheduleMode,
+  type WriteCoalescer,
+} from "./writeCoalescer.ts";
 
 type CoalescerByteCapResolver = () => number;
 type CoalescerFlushGate = () => boolean;
@@ -128,6 +134,17 @@ const resolveTerminalWriteBatchBytes = (
     : maxPendingBytes
 );
 
+/**
+ * Cooperative yield budget between sliced xterm writes.
+ *
+ * Tabby streams ~100KB PTY chunks straight into xterm with almost no
+ * setTimeout(0) between them; yielding every tiny shard makes bulk output
+ * feel stuttery. Keep occasional yields so input/Ctrl-C can interleave, but
+ * align them with the write-queue drain budget rather than every slice.
+ */
+const resolveSliceYieldBudgetBytes = (): number =>
+  Math.max(MAX_TERMINAL_UNBROKEN_WRITE_CHUNK_BYTES, MAX_TERMINAL_WRITE_QUEUE_DRAIN_BYTES);
+
 const writeLargeTerminalBatch = (
   data: string,
   ingressBytes: number,
@@ -141,8 +158,10 @@ const writeLargeTerminalBatch = (
 ): void => {
   const batchSize = Math.max(1, maxBatchBytes);
   const isSliced = data.length > batchSize;
+  const yieldBudget = resolveSliceYieldBudgetBytes();
   let offset = 0;
   let remainingIngressBytes = Math.max(0, ingressBytes);
+  let bytesSinceYield = 0;
 
   while (offset < data.length) {
     const end = Math.min(data.length, offset + batchSize);
@@ -156,12 +175,18 @@ const writeLargeTerminalBatch = (
         remainingIngressBytes,
       );
     remainingIngressBytes -= sliceIngress;
+    const isLast = end >= data.length;
+    bytesSinceYield += slice.length;
+    // Yield only after a full drain budget of continuous slices — not on the
+    // first/last slice and not on every shard. This preserves cooperative
+    // scheduling without Tabby-style stop/start cadence.
+    const shouldYield = isSliced && !isLast && bytesSinceYield >= yieldBudget;
+    if (shouldYield) {
+      bytesSinceYield = 0;
+    }
     const nextOptions = {
       ...options,
-      ...(isSliced ? {
-        deferStart: true,
-        yieldAfter: true,
-      } : {}),
+      ...(shouldYield ? { yieldAfter: true } : {}),
     };
     writeNow(
       slice,
@@ -219,6 +244,25 @@ export const enqueueCoalescedTerminalWrite = (
     }, {
       getMaxPendingBytes: () => resolveCoalescerByteCap(term),
       shouldFlushScheduledFrame: () => terminalWriteCoalescerFlushGates.get(term)?.() ?? true,
+      // Tabby streams normal-screen output without waiting for vsync. Keep rAF
+      // only for alternate-screen TUIs so multi-chunk repaints stay atomic.
+      // When rAF is unavailable (Node unit tests), prefer the "raf" mode so the
+      // coalescer falls back to an immediate flush (legacy test contract).
+      resolveScheduleMode: (): WriteCoalesceScheduleMode => {
+        try {
+          if ((term.buffer?.active as { type?: string } | undefined)?.type === "alternate") {
+            return "raf";
+          }
+        } catch {
+          // Test doubles may omit buffer.
+        }
+        const canUseMicrotask = typeof queueMicrotask === "function"
+          && typeof globalThis.requestAnimationFrame === "function";
+        if (canUseMicrotask) {
+          return "microtask";
+        }
+        return "raf";
+      },
     });
     terminalWriteCoalescers.set(term, coalescer);
   }

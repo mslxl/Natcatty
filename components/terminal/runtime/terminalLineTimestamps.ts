@@ -1,5 +1,7 @@
 import type { Terminal as XTerm } from "@xterm/xterm";
 
+import { shouldDegradeTerminalSideWork } from "./terminalOutputPressure";
+
 export type TerminalLineTimestampSegment =
   | { kind: "data"; data: string }
   | { kind: "timestamp"; label: string };
@@ -1134,19 +1136,31 @@ export const writeTerminalDataWithLineTimestamps = (
   diagnostics?: TerminalLineTimestampDiagnostics,
 ) => {
   const shouldMeasureDiagnostics = Boolean(diagnostics);
-  const registerMarker = (term as XTerm & { registerMarker?: unknown }).registerMarker;
-  if (typeof registerMarker !== "function") {
+  const writeFallbackOnly = (fallbackData: string, onComplete: () => void): void => {
     const writeStartedAt = shouldMeasureDiagnostics ? performance.now() : 0;
-    term.write(data, () => {
+    term.write(fallbackData, () => {
       if (diagnostics) {
         diagnostics.onStep?.({
           kind: "fallback-write",
-          dataChars: data.length,
+          dataChars: fallbackData.length,
           writeCallbackMs: performance.now() - writeStartedAt,
         });
       }
-      done();
+      onComplete();
     });
+  };
+
+  const registerMarker = (term as XTerm & { registerMarker?: unknown }).registerMarker;
+  if (typeof registerMarker !== "function") {
+    writeFallbackOnly(data, done);
+    return;
+  }
+
+  // Under bulk/background pressure, skip registerMarker / segmenter work so the
+  // xterm write path stays close to Tabby. Flood dumps rarely need per-line
+  // history; quiet interactive output still records full timestamps.
+  if (shouldDegradeTerminalSideWork(term)) {
+    writeFallbackOnly(data, done);
     return;
   }
 
@@ -1182,19 +1196,7 @@ export const writeTerminalDataWithLineTimestamps = (
       parsedChars: parsedData.length,
     });
   }
-  const writeFallbackData = (fallbackData: string, onComplete: () => void): void => {
-    const writeStartedAt = shouldMeasureDiagnostics ? performance.now() : 0;
-    term.write(fallbackData, () => {
-      if (diagnostics) {
-        diagnostics.onStep?.({
-          kind: "fallback-write",
-          dataChars: fallbackData.length,
-          writeCallbackMs: performance.now() - writeStartedAt,
-        });
-      }
-      onComplete();
-    });
-  };
+  const writeFallbackData = writeFallbackOnly;
   if (
     timestampOnlyPrefix.length === 0
     && parsedData === dataForTimestamps

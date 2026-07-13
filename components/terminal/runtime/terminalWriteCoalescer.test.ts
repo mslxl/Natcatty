@@ -320,26 +320,29 @@ test("splits large plain terminal output into cooperative chunks", () => {
     ],
   );
   assert.deepEqual(writes.map((write) => write.ingressBytes), writes.map((write) => write.data.length));
+  // Each 1MB plain shard exceeds the drain budget, so intermediate slices yield
+  // for input interleaving; the final shard streams without a trailing yield.
   assert.deepEqual(
     writes.map((write) => write.options),
     [
-      { deferStart: true, yieldAfter: true },
-      { deferStart: true, yieldAfter: true },
-      { deferStart: true, yieldAfter: true },
+      { yieldAfter: true },
+      { yieldAfter: true },
+      undefined,
     ],
   );
 
   resetTerminalWriteCoalescer(term);
 });
 
-test("splits long unbroken plain terminal output more conservatively", () => {
+test("splits long unbroken plain terminal output into larger Tabby-sized shards", () => {
   const term = createFakeTerm();
   const writes: Array<{
     data: string;
     ingressBytes: number;
     options?: CoalescedTerminalWriteOptions;
   }> = [];
-  const payload = "x".repeat(MAX_TERMINAL_UNBROKEN_WRITE_CHUNK_BYTES * 2 + 11);
+  // Four shards: yield once after the drain budget (~2 shards), not every shard.
+  const payload = "x".repeat(MAX_TERMINAL_UNBROKEN_WRITE_CHUNK_BYTES * 4 + 11);
 
   setTerminalWriteCoalescerByteCapResolver(term, () => payload.length + 100);
   enqueueCoalescedTerminalWrite(
@@ -355,25 +358,32 @@ test("splits long unbroken plain terminal output more conservatively", () => {
   assert.deepEqual(
     writes.map((write) => write.data.length),
     [
+      MAX_TERMINAL_UNBROKEN_WRITE_CHUNK_BYTES,
+      MAX_TERMINAL_UNBROKEN_WRITE_CHUNK_BYTES,
       MAX_TERMINAL_UNBROKEN_WRITE_CHUNK_BYTES,
       MAX_TERMINAL_UNBROKEN_WRITE_CHUNK_BYTES,
       11,
     ],
   );
   assert.deepEqual(writes.map((write) => write.ingressBytes), writes.map((write) => write.data.length));
-  assert.equal(writes.every((write) => write.options?.yieldAfter === true), true);
+  assert.equal(writes.map((write) => write.data).join(""), payload);
+  // Continuous write until the queue drain budget; only then yieldOnce.
+  assert.deepEqual(
+    writes.map((write) => write.options?.yieldAfter === true),
+    [false, false, false, true, false],
+  );
 
   resetTerminalWriteCoalescer(term);
 });
 
-test("splits newline-terminated long plain output more conservatively", () => {
+test("splits newline-terminated long plain output into larger Tabby-sized shards", () => {
   const term = createFakeTerm();
   const writes: Array<{
     data: string;
     ingressBytes: number;
     options?: CoalescedTerminalWriteOptions;
   }> = [];
-  const payload = `${"x".repeat(MAX_TERMINAL_UNBROKEN_WRITE_CHUNK_BYTES * 2)}\n`;
+  const payload = `${"x".repeat(MAX_TERMINAL_UNBROKEN_WRITE_CHUNK_BYTES * 4)}\n`;
 
   setTerminalWriteCoalescerByteCapResolver(term, () => payload.length + 100);
   enqueueCoalescedTerminalWrite(
@@ -389,6 +399,8 @@ test("splits newline-terminated long plain output more conservatively", () => {
   assert.deepEqual(
     writes.map((write) => write.data.length),
     [
+      MAX_TERMINAL_UNBROKEN_WRITE_CHUNK_BYTES,
+      MAX_TERMINAL_UNBROKEN_WRITE_CHUNK_BYTES,
       MAX_TERMINAL_UNBROKEN_WRITE_CHUNK_BYTES,
       MAX_TERMINAL_UNBROKEN_WRITE_CHUNK_BYTES,
       1,
@@ -396,7 +408,10 @@ test("splits newline-terminated long plain output more conservatively", () => {
   );
   assert.equal(writes.map((write) => write.data).join(""), payload);
   assert.deepEqual(writes.map((write) => write.ingressBytes), writes.map((write) => write.data.length));
-  assert.equal(writes.every((write) => write.options?.yieldAfter === true), true);
+  assert.deepEqual(
+    writes.map((write) => write.options?.yieldAfter === true),
+    [false, false, false, true, false],
+  );
 
   resetTerminalWriteCoalescer(term);
 });

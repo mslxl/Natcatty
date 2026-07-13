@@ -75,12 +75,18 @@ test("terminal flood limits keep interactive acks responsive", () => {
   assert.ok(MAX_PENDING_WRITE_COALESCE_BYTES_FLOOD <= 256 * 1024);
   assert.ok(MAX_PENDING_WRITE_COALESCE_BYTES_FLOOD >= 64 * 1024);
   assert.ok(MAX_TERMINAL_PLAIN_WRITE_CHUNK_BYTES <= FLOW_HIGH_WATER_MARK);
-  assert.ok(MAX_TERMINAL_UNBROKEN_WRITE_CHUNK_BYTES <= 4 * 1024);
+  // Unbroken-line shards should stay near Tabby's ~100KB PTY chunk size so
+  // long dumps stream smoothly instead of 4KB + setTimeout(0) stuttering.
+  assert.ok(MAX_TERMINAL_UNBROKEN_WRITE_CHUNK_BYTES >= 64 * 1024);
+  assert.ok(MAX_TERMINAL_UNBROKEN_WRITE_CHUNK_BYTES <= 256 * 1024);
   assert.ok(MAX_TERMINAL_WRITE_QUEUE_DRAIN_BYTES <= FLOW_HIGH_WATER_MARK);
   // Drain enough per event-loop turn that a 1MB high-water backlog does not
   // require dozens of setTimeout(0) yields before SSH can resume.
-  assert.ok(MAX_TERMINAL_WRITE_QUEUE_DRAIN_BYTES >= 128 * 1024);
-  assert.ok(TERMINAL_LONG_LINE_PRESSURE_BYTES >= MAX_TERMINAL_UNBROKEN_WRITE_CHUNK_BYTES);
+  assert.ok(MAX_TERMINAL_WRITE_QUEUE_DRAIN_BYTES >= 256 * 1024);
+  assert.ok(MAX_TERMINAL_WRITE_QUEUE_DRAIN_BYTES >= MAX_TERMINAL_UNBROKEN_WRITE_CHUNK_BYTES);
+  // Long-line pressure can trip earlier than the write shard size so highlight
+  // / gutter work throttles before bulk parse cost peaks.
+  assert.ok(TERMINAL_LONG_LINE_PRESSURE_BYTES >= 32 * 1024);
   assert.ok(TERMINAL_AUX_LONG_LINE_SCAN_LIMIT_CHARS >= TERMINAL_LONG_LINE_PRESSURE_BYTES);
   assert.ok(XTERM_WRITE_CALLBACK_BATCH_BYTES <= FLOW_HIGH_WATER_MARK);
 });
