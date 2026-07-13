@@ -970,14 +970,19 @@ const writeBatchedTimestampSegments = (
     const writeCallbackMs = shouldMeasureDiagnostics ? performance.now() - writeStartedAt : 0;
     const markerStartedAt = shouldMeasureDiagnostics ? performance.now() : 0;
     const capacity = resolveTerminalLineTimestampCapacity(term);
-    // Only register markers we can retain. Creating then disposing hundreds of
-    // thousands of xterm markers is quadratic inside xterm's marker list.
-    // Do NOT wipe prior store entries here: DECSTBM scrolling regions can emit
-    // many newlines without trimming normal scrollback, and clearing would drop
-    // timestamps for lines still in history. pruneDisposedEntries trims excess.
-    const timestampsToRecord = timestamps.length > capacity
-      ? timestamps.slice(timestamps.length - capacity)
-      : timestamps;
+    // Only register markers that land in the retained visual-row window.
+    // Slice by timestamp count is wrong for soft-wrapped floods (many stamps
+    // can map outside the buffer while fewer visual rows remain). Prefer the
+    // last `capacity` visual rows by measured rowOffset.
+    const minRowOffset = Math.max(0, rowOffset - capacity + 1);
+    let timestampsToRecord = timestamps.filter(
+      (timestamp) => timestamp.rowOffset >= minRowOffset,
+    );
+    if (timestampsToRecord.length > capacity) {
+      timestampsToRecord = timestampsToRecord.slice(
+        timestampsToRecord.length - capacity,
+      );
+    }
     let timestampRecorded = false;
     for (const timestamp of timestampsToRecord) {
       timestampRecorded = recordTerminalLineTimestamp(
@@ -1125,6 +1130,10 @@ export const writeTerminalDataWithLineTimestamps = (
   }
 
   const store = getTimestampStore(term);
+  // Clears / scrollback wipes dispose markers without recording new stamps;
+  // compact disposed holes on every write so the store cannot retain 100k
+  // dead entries while the gutter is off.
+  compactDisposedMarkersOnly(store);
   store.segmenter.setAlternateScreenActive(
     ((term.buffer?.active as { type?: string } | undefined)?.type) === "alternate",
   );
