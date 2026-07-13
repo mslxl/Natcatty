@@ -22,7 +22,7 @@ import {
   formatProxyConfigType,
   updateProxyConfigField,
 } from "../domain/proxyProfiles";
-import { hasRequiredHostAuthCredential, resolveHostAuth } from "../domain/sshAuth";
+import { hasRequiredHostAuthCredential, resolveHostAuth, resolveHostAuthMethodForPersistence } from "../domain/sshAuth";
 import { customThemeStore } from "../application/state/customThemeStore";
 import {
   hasHostFontSizeOverride,
@@ -155,7 +155,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
         protocol: "ssh",
         tags: [],
         os: "linux",
-        authMethod: "auto",
+        authMethod: undefined,
         charset: groupDefaults?.charset ? undefined : "UTF-8",
         distroMode: "auto",
         createdAt: Date.now(),
@@ -482,7 +482,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
       notes: form.notes?.trim() || undefined,
       port: finalPort,
       password: form.savePassword === false ? undefined : form.password,
-      authMethod: resolveHostAuth({ host: form, keys: availableKeys, identities }).authMethod,
+      authMethod: resolveHostAuthMethodForPersistence(form),
       managedSourceId: finalManagedSourceId,
     };
     cleaned = prepareTelnetCredentialsForSave(normalizePrimaryTelnetState(cleaned));
@@ -612,19 +612,21 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
     };
   }, [availableKeys]);
 
+  const effectiveAuthHost = useMemo(
+    () => effectiveGroupDefaults ? applyGroupDefaults(form, effectiveGroupDefaults) : form,
+    [effectiveGroupDefaults, form],
+  );
+
   const selectedIdentity = useMemo(() => {
-    const effectiveIdentityId = form.identityId || (
-      form.identityId !== "" ? effectiveGroupDefaults?.identityId : undefined
-    );
-    if (!effectiveIdentityId) return undefined;
-    return identities.find((i) => i.id === effectiveIdentityId);
-  }, [effectiveGroupDefaults?.identityId, form.identityId, identities]);
+    if (!effectiveAuthHost.identityId) return undefined;
+    return identities.find((i) => i.id === effectiveAuthHost.identityId);
+  }, [effectiveAuthHost.identityId, identities]);
 
   const effectiveAuthMethod = useMemo(() => resolveHostAuth({
-    host: effectiveGroupDefaults ? applyGroupDefaults(form, effectiveGroupDefaults) : form,
+    host: effectiveAuthHost,
     keys: availableKeys,
     identities,
-  }).authMethod, [availableKeys, effectiveGroupDefaults, form, identities]);
+  }).authMethod, [availableKeys, effectiveAuthHost, identities]);
 
   const selectedTelnetIdentity = useMemo(() => {
     if (!form.telnetIdentityId) return undefined;
@@ -1008,6 +1010,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
           hasEffectiveFontSizeOverride={hasEffectiveFontSizeOverride}
           sshAgentStatus={sshAgentStatus}
           effectiveGroupDefaults={effectiveGroupDefaults}
+          effectiveAuthMethod={effectiveAuthMethod}
           showAlgorithmOverrides={showAlgorithmOverrides}
           setShowAlgorithmOverrides={setShowAlgorithmOverrides}
           chainedHosts={chainedHosts}

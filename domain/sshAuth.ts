@@ -32,6 +32,10 @@ export const resolveHostAuthMethodSelection = (
       : "auto"
 );
 
+export const resolveHostAuthMethodForPersistence = (
+  host: Pick<Host, "authMethod">,
+): HostAuthMethod | undefined => host.authMethod;
+
 export const applyHostAuthMethodSelection = <T extends Host>(
   host: T,
   authMethod: HostAuthMethod,

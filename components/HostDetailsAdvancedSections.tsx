@@ -3,7 +3,6 @@ import { AlertTriangle, ChevronDown, ChevronUp, Forward, Globe, HeartPulse, KeyR
 import { customThemeStore } from "../application/state/customThemeStore";
 import { clearHostFontSizeOverride, clearHostThemeOverride } from "../domain/terminalAppearance";
 import { isSshAgentNoneValue } from "../domain/sshAgentSettings";
-import { resolveHostAuthMethodSelection } from "../domain/sshAuth";
 import { MAX_FONT_SIZE, MIN_FONT_SIZE } from "../infrastructure/config/fonts";
 import { AlgorithmOverridesPanel } from "./host-details/AlgorithmOverridesPanel";
 import { Badge } from "./ui/badge";
@@ -43,6 +42,7 @@ export const HostDetailsAdvancedSections: React.FC<HostDetailsAdvancedSectionsPr
   hasEffectiveFontSizeOverride,
   sshAgentStatus,
   effectiveGroupDefaults,
+  effectiveAuthMethod,
   showAlgorithmOverrides,
   setShowAlgorithmOverrides,
   chainedHosts,
@@ -57,7 +57,6 @@ export const HostDetailsAdvancedSections: React.FC<HostDetailsAdvancedSectionsPr
   const effectiveDeviceType = form.deviceType ?? inheritedDeviceType;
   const inheritedStartupCommandRunMode = effectiveGroupDefaults?.startupCommandRunMode ?? "paste";
   const effectiveStartupCommandRunMode = form.startupCommandRunMode ?? inheritedStartupCommandRunMode;
-  const effectiveAuthMethod = resolveHostAuthMethodSelection(form);
   const systemSshAgentEnabled = effectiveAuthMethod === "auto" && form.useSshAgent !== false;
 
   return (

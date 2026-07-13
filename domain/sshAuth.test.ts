@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { applyHostAuthMethodSelection, hasBridgeSshCredentials, hasRequiredHostAuthCredential, resolveBridgeKeyAuth, resolveBridgeSshAgentAuth, resolveHostAuth, resolveHostAuthMethodSelection, resolveHostAutofillPassword } from "./sshAuth.ts";
+import { applyHostAuthMethodSelection, hasBridgeSshCredentials, hasRequiredHostAuthCredential, resolveBridgeKeyAuth, resolveBridgeSshAgentAuth, resolveHostAuth, resolveHostAuthMethodForPersistence, resolveHostAuthMethodSelection, resolveHostAutofillPassword } from "./sshAuth.ts";
 import { applyGroupDefaults } from "./groupConfig.ts";
 import type { Host, Identity, SSHKey } from "./models.ts";
 
@@ -347,6 +347,52 @@ test("per-host auth selection opts out of an inherited group identity", () => {
   assert.equal(effective.identityId, "");
   assert.equal(resolved.authMethod, "password");
   assert.equal(resolved.key, undefined);
+});
+
+test("saving keeps inherited group authentication inherited", () => {
+  const identity = {
+    id: "group-identity",
+    label: "Group identity",
+    username: "deploy",
+    authMethod: "certificate" as const,
+    keyId: referenceKey.id,
+    created: 1,
+  };
+  const cases = [
+    [{ authMethod: "password" as const, password: "secret" }, "password"],
+    [{ authMethod: "key" as const, identityFileId: referenceKey.id }, "key"],
+    [{ authMethod: "certificate" as const, identityFileId: referenceKey.id }, "certificate"],
+    [{ identityId: identity.id }, "certificate"],
+  ] as const;
+
+  for (const [groupDefaults, expectedMethod] of cases) {
+    const host = { ...autofillBaseHost, username: "", authMethod: undefined } as Host;
+    assert.equal(resolveHostAuthMethodForPersistence(host), undefined);
+    assert.equal(resolveHostAuth({
+      host: applyGroupDefaults(host, groupDefaults),
+      keys: [referenceKey],
+      identities: [identity],
+    }).authMethod, expectedMethod);
+  }
+});
+
+test("manual host credentials suppress an inherited group identity", () => {
+  const groupDefaults = { identityId: "group-identity" };
+  const passwordHost = applyGroupDefaults({
+    ...autofillBaseHost,
+    authMethod: "password",
+    password: "host-secret",
+  }, groupDefaults);
+  const keyHost = applyGroupDefaults({
+    ...autofillBaseHost,
+    authMethod: "key",
+    identityFileId: referenceKey.id,
+  }, groupDefaults);
+
+  assert.equal(passwordHost.identityId, undefined);
+  assert.equal(keyHost.identityId, undefined);
+  assert.equal(resolveHostAuth({ host: passwordHost, keys: [referenceKey] }).authMethod, "password");
+  assert.equal(resolveHostAuth({ host: keyHost, keys: [referenceKey] }).authMethod, "key");
 });
 
 test("switching to automatic keeps visible custom agent settings active", () => {

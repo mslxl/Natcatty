@@ -185,7 +185,7 @@ test("prepareEtSshEnvironment never sends one key passphrase to an unrelated aut
   assert.equal(output, "");
 });
 
-test("prepareEtSshEnvironment never sends a saved password to a hardware-key PIN prompt", (t) => {
+test("prepareEtSshEnvironment never sends a saved password to a PIN or MFA prompt", (t) => {
   const { api, base } = makeApi(t);
   const hardwareKeyPath = path.join(base, "home", ".ssh", "id_ed25519_sk");
   fs.mkdirSync(path.dirname(hardwareKeyPath), { recursive: true });
@@ -198,11 +198,18 @@ test("prepareEtSshEnvironment never sends a saved password to a hardware-key PIN
     password: "saved-login-password",
   });
 
-  const output = execFileSync(env.env.SSH_ASKPASS, ["Enter PIN for authenticator:"], {
-    env: { ...process.env, ...env.env },
-    encoding: "utf8",
-  });
-  assert.equal(output, "");
+  for (const prompt of [
+    "Enter PIN for authenticator:",
+    "One-time password:",
+    "OTP password:",
+    "Token password:",
+  ]) {
+    const output = execFileSync(env.env.SSH_ASKPASS, [prompt], {
+      env: { ...process.env, ...env.env },
+      encoding: "utf8",
+    });
+    assert.equal(output, "", prompt);
+  }
 });
 
 test(
