@@ -1310,9 +1310,11 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       scheduleSelectionOverlayPosition();
 
       if (hasText && terminalSettings?.copyOnSelect && !isRestoringSelectionRef.current) {
+        // Capture now so a later buffer redraw during the debounce cannot
+        // change what gets copied (selection-change may not fire again).
+        const selection = getNormalizedTerminalSelection(term);
+        if (!selection) return;
         copyTimer = setTimeout(() => {
-          const selection = getNormalizedTerminalSelection(term);
-          if (!selection) return;
           navigator.clipboard.writeText(selection).catch((err) => {
             logger.warn("Copy on select failed:", err);
           });

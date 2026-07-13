@@ -41,13 +41,22 @@ function makeLine(
   return {
     isWrapped: options.isWrapped ?? false,
     length: fullCols,
-    getTrimmedLength() {
-      for (let i = cols.length - 1; i >= 0; i -= 1) {
-        if (cols[i] && cols[i] !== "\0") {
-          return i + 1;
-        }
+    getCell(x: number) {
+      if (x < 0 || x >= cols.length) return undefined;
+      const cell = cols[x];
+      if (cell === "\0" || cell === undefined) {
+        return { getChars: () => "", getCode: () => 0, getWidth: () => 1 };
       }
-      return 0;
+      if (cell === "") {
+        // Wide-character continuation column.
+        return { getChars: () => "", getCode: () => 0, getWidth: () => 0 };
+      }
+      const width = cell === "中" || /[\u3400-\u9fff]/u.test(cell) ? 2 : 1;
+      return {
+        getChars: () => cell,
+        getCode: () => cell.codePointAt(0) ?? 0,
+        getWidth: () => width,
+      };
     },
     translateToString(trimRight = false, startColumn = 0, endColumn = fullCols) {
       let end = Math.max(startColumn, Math.min(endColumn, fullCols));

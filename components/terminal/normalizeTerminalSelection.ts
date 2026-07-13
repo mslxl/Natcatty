@@ -13,14 +13,20 @@
  * - convert non-breaking spaces like xterm's selectionText path
  */
 
+export type SelectionBufferCell = {
+  getChars?: () => string;
+  getCode?: () => number;
+  getWidth?: () => number;
+};
+
 export type SelectionBufferLine = {
   isWrapped?: boolean;
   length: number;
   /**
-   * xterm: column index after the last non-empty cell (terminal columns, not
-   * UTF-16 length). Used to decide whether a selection ends at the row edge.
+   * Public xterm API — preferred for column-accurate content-end measurement
+   * (wide characters, empty cells).
    */
-  getTrimmedLength?: () => number;
+  getCell?: (x: number, cell?: SelectionBufferCell) => SelectionBufferCell | undefined;
   /**
    * xterm semantics: trimRight only drops empty cells (getTrimmedLength),
    * not written ASCII spaces used as display padding.
@@ -306,11 +312,23 @@ function trimCompletedRowPadding(text: string): string {
   return trimWrittenPadding(text);
 }
 
-function measureContentEnd(line: SelectionBufferLine): number {
-  // Prefer xterm's column-based trimmed length so wide/combining characters
-  // don't make string.length disagree with selection end.x (also columns).
-  if (typeof line.getTrimmedLength === "function") {
-    return line.getTrimmedLength();
+/**
+ * Column after the last non-empty cell on the line (public xterm cell widths).
+ * Falls back to string length only when getCell is unavailable (tests/fakes).
+ */
+export function measureContentEnd(line: SelectionBufferLine): number {
+  if (typeof line.getCell === "function") {
+    for (let x = line.length - 1; x >= 0; x -= 1) {
+      const cell = line.getCell(x);
+      if (!cell) continue;
+      const chars = cell.getChars?.() ?? "";
+      const code = cell.getCode?.() ?? 0;
+      if (chars.length > 0 || code !== 0) {
+        const width = cell.getWidth?.() ?? 1;
+        return x + Math.max(1, width);
+      }
+    }
+    return 0;
   }
   return line.translateToString(true).length;
 }
