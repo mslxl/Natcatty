@@ -201,6 +201,7 @@ function createOpenConnectionApi(ctx) {
             },
           });
           applyAuthToConnOpts(connOpts, authConfig);
+          const hopAuthPhase = authConfig.authPhase || { hadPartialSuccess: false };
     
           // If first hop and proxy is configured, connect through proxy
           const hasUsableJumpProxy = hasUsableProxy(jump.proxy);
@@ -284,6 +285,7 @@ function createOpenConnectionApi(ctx) {
               password: jump.password,
               logPrefix: `[SFTP Chain] Hop ${i + 1}/${jumpHosts.length}`,
               scope: "external",
+              shouldSkipAutoFill: () => shouldSkipKiPasswordAutoFill(hopAuthPhase),
             });
             conn.on('keyboard-interactive', (name, instructions, lang, prompts, finish) => {
               if (prompts && prompts.length > 0) {
@@ -868,6 +870,7 @@ function createOpenConnectionApi(ctx) {
         },
       });
       applyAuthToConnOpts(connectOpts, authConfig);
+      const sftpAuthPhase = authConfig.authPhase || { hadPartialSuccess: false };
     
       // Create keyboard-interactive handler using shared helper
       const kiHandler = createKeyboardInteractiveHandler({
@@ -877,6 +880,7 @@ function createOpenConnectionApi(ctx) {
         password: options.password,
         logPrefix: "[SFTP]",
         scope: "external",
+        shouldSkipAutoFill: () => shouldSkipKiPasswordAutoFill(sftpAuthPhase),
       });
     
       // Add keyboard-interactive listener BEFORE connecting

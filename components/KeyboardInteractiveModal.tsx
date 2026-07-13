@@ -31,14 +31,44 @@ export interface KeyboardInteractiveRequest {
   prompts: KeyboardInteractivePrompt[];
   hostname?: string;
   savedPassword?: string | null;
+  /** When false, hide save-password UI (second-factor / EDR challenges). Default true. */
+  allowSavePassword?: boolean;
 }
 
 const isAPasswordPrompt = (prompt: KeyboardInteractivePrompt) => {
   if (prompt.echo) return false;
   const lower = prompt.prompt.toLowerCase();
-  if (!lower.includes("password")) return false;
-  // Exclude OTP / one-time password / verification code prompts
-  if (lower.includes("one-time") || lower.includes("otp") || lower.includes("verification") || lower.includes("token") || lower.includes("code")) return false;
+  if (!lower.includes("password") && !lower.includes("passwd")) return false;
+  // Keep aligned with electron/bridges/sshAuthHelper.cjs OTP_PROMPT_PATTERN so
+  // the modal never prefills the host login password into a second-factor field
+  // (#2150). Backend also omits savedPassword for those challenges; this is
+  // defense in depth if a caller still passes it.
+  if (
+    lower.includes("one-time") ||
+    lower.includes("otp") ||
+    lower.includes("verification") ||
+    lower.includes("token") ||
+    lower.includes("code") ||
+    lower.includes("passcode") ||
+    lower.includes("2fa") ||
+    lower.includes("mfa") ||
+    lower.includes("two-factor") ||
+    lower.includes("two factor") ||
+    lower.includes("multi-factor") ||
+    lower.includes("multi factor") ||
+    lower.includes("second factor") ||
+    lower.includes("secondary password") ||
+    lower.includes("secondary authentication") ||
+    lower.includes("second password") ||
+    lower.includes("additional password") ||
+    lower.includes("re-enter password") ||
+    lower.includes("reenter password") ||
+    lower.includes("confirm password") ||
+    lower.includes("edr") ||
+    lower.includes("duo")
+  ) {
+    return false;
+  }
   return true;
 };
 
@@ -96,14 +126,17 @@ export const KeyboardInteractiveModal: React.FC<KeyboardInteractiveModalProps> =
     });
   }, []);
 
+  const canSavePassword = request?.allowSavePassword !== false;
+
   const handleSubmit = useCallback(() => {
     if (!request || isSubmitting) return;
     setIsSubmitting(true);
-    const passwordToSave = savePassword && passwordPromptIndex >= 0
-      ? responses[passwordPromptIndex]
-      : undefined;
+    const passwordToSave =
+      canSavePassword && savePassword && passwordPromptIndex >= 0
+        ? responses[passwordPromptIndex]
+        : undefined;
     onSubmit(request.requestId, responses, passwordToSave);
-  }, [request, responses, onSubmit, isSubmitting, savePassword, passwordPromptIndex]);
+  }, [request, responses, onSubmit, isSubmitting, savePassword, passwordPromptIndex, canSavePassword]);
 
   const handleCancel = useCallback(() => {
     if (!request) return;
@@ -181,8 +214,8 @@ export const KeyboardInteractiveModal: React.FC<KeyboardInteractiveModalProps> =
                     </button>
                   )}
                 </div>
-                {/* Save password checkbox - shown only for the first password prompt */}
-                {index === passwordPromptIndex && (
+                {/* Save password checkbox - first-factor password prompts only */}
+                {canSavePassword && index === passwordPromptIndex && (
                   <label className="flex items-center gap-2 cursor-pointer select-none">
                     <input
                       type="checkbox"

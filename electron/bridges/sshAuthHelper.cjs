@@ -879,7 +879,10 @@ function buildAuthHandler(options) {
     (!hasExplicitAgent && sshAgentSocket) ||
     (isPasswordOnly && defaultKeys.length > 0);
 
-  // If only simple auth methods and no fallback keys needed, use array-based handler
+  // Simple explicit auth with no fallback keys: preserve the old ordered
+  // method list, but use a function handler so we can observe partialSuccess
+  // for second-factor keyboard-interactive (#2150). Plain string arrays hide
+  // that signal from us and leave authPhase stuck at false.
   if (hasExplicitAuth && !hasFallbackOptions) {
     const authMethods = ["none"]; // Always try none first per RFC 4252
     if (effectiveAgent) authMethods.push("agent");
@@ -887,11 +890,13 @@ function buildAuthHandler(options) {
     if (password) authMethods.push("password");
     authMethods.push("keyboard-interactive");
 
+    const authPhase = createAuthPhase();
     return {
-      authHandler: authMethods,
+      authHandler: createOrderedStringAuthHandler(authMethods, authPhase),
       privateKey: effectivePrivateKey,
       agent: effectiveAgent,
       usedDefaultKeys: false,
+      authPhase,
     };
   }
 
@@ -1004,6 +1009,11 @@ function buildAuthHandler(options) {
   let authIndex = 0;
   let lastAttemptedLabel = null;
   const attemptedMethodIds = new Set();
+  // Shared with keyboard-interactive auto-fill. See createAuthPhase /
+  // shouldSkipKiPasswordAutoFill — only password-as-first-factor suppresses
+  // reusing the saved host password on a later KI challenge (#2150 / #2151).
+  const authPhase = createAuthPhase();
+  let lastAttemptedType = null;
 
   let triedNone = false;
 
@@ -1014,6 +1024,7 @@ function buildAuthHandler(options) {
     if (methodsLeft === null && !triedNone) {
       triedNone = true;
       lastAttemptedLabel = "none (no credentials)";
+      lastAttemptedType = "none";
       onAuthAttempt?.("none (no credentials)");
       return callback("none");
     }
@@ -1023,6 +1034,10 @@ function buildAuthHandler(options) {
     // Log rejection of previous method (authHandler is called again when server rejects)
     if (lastAttemptedLabel && !partialSuccess) {
       onAuthAttempt?.(`${lastAttemptedLabel} rejected`);
+    }
+
+    if (partialSuccess) {
+      markAuthPhasePartialSuccess(authPhase, lastAttemptedType);
     }
 
     while (authIndex < authMethods.length) {
@@ -1035,6 +1050,7 @@ function buildAuthHandler(options) {
       if (method.type === "agent" && (availableMethods.includes("publickey") || availableMethods.includes("agent"))) {
         console.log(`${logPrefix} Trying agent auth`);
         lastAttemptedLabel = "SSH agent";
+        lastAttemptedType = "agent";
         onAuthAttempt?.("SSH agent");
         return callback("agent");
       } else if (method.type === "publickey" && availableMethods.includes("publickey")) {
@@ -1048,6 +1064,7 @@ function buildAuthHandler(options) {
               ? "configured key"
               : method.id;
         lastAttemptedLabel = keyLabel;
+        lastAttemptedType = "publickey";
         onAuthAttempt?.(keyLabel);
         const pubkeyAuth = {
           type: "publickey",
@@ -1061,6 +1078,7 @@ function buildAuthHandler(options) {
       } else if (method.type === "password" && availableMethods.includes("password")) {
         console.log(`${logPrefix} Trying password auth`);
         lastAttemptedLabel = "password";
+        lastAttemptedType = "password";
         onAuthAttempt?.("password");
         return callback({
           type: "password",
@@ -1069,6 +1087,7 @@ function buildAuthHandler(options) {
         });
       } else if (method.type === "keyboard-interactive" && availableMethods.includes("keyboard-interactive")) {
         lastAttemptedLabel = "keyboard-interactive";
+        lastAttemptedType = "keyboard-interactive";
         onAuthAttempt?.("keyboard-interactive");
         return callback("keyboard-interactive");
       }
@@ -1087,17 +1106,18 @@ function buildAuthHandler(options) {
     privateKey: effectivePrivateKey,
     agent: returnAgent,
     usedDefaultKeys: true,
+    authPhase,
   };
 }
 
-// OTP / MFA / token vocabulary. Matched FIRST — any hit here disqualifies the
-// challenge from auto-fill even if it also contains a "password" keyword.
+// OTP / MFA / step-up vocabulary. Matched FIRST — any hit here disqualifies
+// the challenge from auto-fill even if it also contains a "password" keyword.
 // Catches phrases like "One-time password", "动态密码", "动态口令",
-// "一次性密码", "Verification code", "Duo passcode", "two-factor", etc.
-// — all single-prompt shapes that look like password fields on the surface
-// but actually want an OTP. Submitting the saved password into any of these
-// burns an auth attempt and risks `pam_faillock` / `pam_tally2` lockout.
-// (#969 PR review, second round.)
+// "一次性密码", "Verification code", "Duo passcode", "two-factor", and
+// EDR/secondary-password prompts like "二次密码" / "Secondary password"
+// (issue #2150). Submitting the saved login password into any of these
+// burns an auth attempt and often disconnects without re-prompting.
+// (#969 PR review, second round; #2150.)
 const OTP_PROMPT_PATTERN = new RegExp(
   [
     "one[\\s-]?time",
@@ -1110,6 +1130,15 @@ const OTP_PROMPT_PATTERN = new RegExp(
     "multi[\\s-]?factor",
     "\\bmfa\\b",
     "second\\s+factor",
+    // Step-up / secondary password (login password already used as first factor).
+    // Allow a few words between "secondary" and "password" so prompts like
+    // "Secondary Authentication Password:" (common EDR English label) match.
+    "secondary(?:\\s+\\w+){0,3}\\s+passw",
+    "second(?:\\s+\\w+){0,3}\\s+passw",
+    "additional(?:\\s+\\w+){0,3}\\s+passw",
+    "re[-\\s]?enter\\s+passw",
+    "confirm\\s+passw",
+    "\\bedr\\b",
     "duo",
     // CJK — no word boundaries; substring match is intentional
     "动态",
@@ -1121,18 +1150,108 @@ const OTP_PROMPT_PATTERN = new RegExp(
     "多因素",
     "短信验证",
     "手机验证",
+    // Corporate EDR / bastion second-factor password prompts (#2150)
+    // Covers "二次密码", "二次认证密码", "二次验证", etc.
+    "二次",
+    "安全密码",
+    "挑战码",
   ].join("|"),
   "i",
 );
 
 // Latin-script + CJK keywords for "this prompt is asking for a reusable
 // password". Only consulted AFTER OTP_PROMPT_PATTERN clears, so phrases like
-// "One-time password" or "动态密码" never reach this step.
+// "One-time password", "动态密码", or "二次密码" never reach this step.
 //
 // Custom-localized prompts that don't match these keywords fall through to
 // the modal, which is the same behavior as before the auto-fill optimization
 // — strictly no worse than the old "always prompt" baseline.
 const PASSWORD_PROMPT_PATTERN = /passw(or)?d|密\s*码|口\s*令/i;
+
+/**
+ * Shared auth-phase state for keyboard-interactive auto-fill decisions.
+ * passwordAlreadySucceeded means the password method already contributed a
+ * successful factor — later KI challenges must not silently re-submit the
+ * same host password (EDR second factor). publickey/agent partialSuccess
+ * alone does NOT set this, so publickey+password MFA still auto-fills.
+ */
+function createAuthPhase() {
+  return { hadPartialSuccess: false, passwordAlreadySucceeded: false };
+}
+
+/**
+ * Record a partialSuccess against authPhase. Pass the method type that just
+ * succeeded (e.g. "password", "publickey", "agent").
+ */
+function markAuthPhasePartialSuccess(authPhase, succeededMethodType) {
+  if (!authPhase) return;
+  authPhase.hadPartialSuccess = true;
+  if (succeededMethodType === "password") {
+    authPhase.passwordAlreadySucceeded = true;
+  }
+}
+
+/**
+ * Whether keyboard-interactive should refuse to auto-fill / prefill the saved
+ * host password. True only when password already succeeded as a prior factor
+ * (or callers force-skip). publickey→Password: MFA must return false.
+ */
+function shouldSkipKiPasswordAutoFill(authPhase) {
+  return Boolean(authPhase && authPhase.passwordAlreadySucceeded);
+}
+
+/**
+ * Wrap a simple ordered list of ssh2 auth method *strings* (the form used by
+ * `connectOpts.authHandler = ["none","password","keyboard-interactive"]`)
+ * so callers can observe `partialSuccess` for multi-factor flows (#2150).
+ *
+ * Behavior mirrors ssh2's array handler, with one important difference from a
+ * naive index cursor: methods that are merely *unavailable on this call*
+ * (not in `methodsLeft`) are NOT permanently consumed. That matters when a
+ * server first advertises only `publickey`, then after a partial-success key
+ * re-advertises `password` — advancing past password on the first pass would
+ * leave the connection unable to offer the second factor (Codex P2 on #2151).
+ *
+ * @param {string[]} order
+ * @param {{ hadPartialSuccess: boolean, passwordAlreadySucceeded?: boolean }} authPhase
+ * @returns {(methodsLeft: string[]|null, partialSuccess: boolean, callback: Function) => void}
+ */
+function createOrderedStringAuthHandler(order, authPhase) {
+  // Methods we actually offered (server got a chance to accept/reject).
+  let attempted = new Set();
+  // Methods that contributed a successful factor; never retried.
+  const succeeded = new Set();
+  let lastOffered = null;
+
+  return (methodsLeft, partialSuccess, callback) => {
+    if (partialSuccess) {
+      markAuthPhasePartialSuccess(authPhase, lastOffered);
+      if (lastOffered) succeeded.add(lastOffered);
+      // Drop rejected/skipped attempts so a method that was not advertised
+      // earlier can be offered now that the server is asking for it.
+      attempted = new Set(succeeded);
+    }
+
+    const available = Array.isArray(methodsLeft) && methodsLeft.length > 0
+      ? methodsLeft
+      : null;
+
+    for (const method of order) {
+      if (attempted.has(method)) continue;
+      if (available) {
+        const allowed =
+          available.includes(method) ||
+          (method === "agent" && available.includes("publickey"));
+        // Not advertised right now — leave it eligible for a later phase.
+        if (!allowed) continue;
+      }
+      attempted.add(method);
+      lastOffered = method;
+      return callback(method);
+    }
+    return callback(false);
+  };
+}
 
 /**
  * Decide whether a keyboard-interactive challenge is "just a PAM-wrapped
@@ -1142,24 +1261,61 @@ const PASSWORD_PROMPT_PATTERN = /passw(or)?d|密\s*码|口\s*令/i;
  * connection pops a second password dialog even when the host already has a
  * saved credential — see #969.
  *
- * Conservative criteria, matching OpenSSH and Tabby behavior:
+ * Conservative criteria:
  *   - exactly one prompt (multi-prompt is almost certainly real 2FA / MFA)
  *   - the prompt has `echo === false`
- *   - the prompt text does NOT contain any OTP / MFA vocabulary
+ *   - the prompt text + optional name/instructions do NOT contain any OTP /
+ *     MFA / secondary-password vocabulary (EDR often puts the Chinese
+ *     "二次认证密码" wording in instructions and only "Secondary
+ *     Authentication Password:" in the prompt field — see #2150)
  *   - the prompt text DOES contain a recognized password keyword (Latin
  *     "password" / "passwd", CJK "密码" / "口令")
  *   - we have a non-empty saved password
  *
  * Anything else falls through to the modal so the user can answer in person.
+ *
+ * @param {Array} prompts
+ * @param {string} password
+ * @param {string} [contextText] - name + instructions from the KI challenge
  */
-function isAutoFillablePasswordChallenge(prompts, password) {
+function isAutoFillablePasswordChallenge(prompts, password, contextText = "") {
   if (typeof password !== "string" || password.length === 0) return false;
   if (!Array.isArray(prompts) || prompts.length !== 1) return false;
   const prompt = prompts[0];
   if (!prompt || prompt.echo !== false) return false;
   const promptText = typeof prompt.prompt === "string" ? prompt.prompt : "";
-  if (OTP_PROMPT_PATTERN.test(promptText)) return false;
+  // Scan prompt + name/instructions together so secondary-password wording
+  // that only appears in the instruction banner still blocks auto-fill.
+  const haystack = [contextText, promptText].filter(Boolean).join("\n");
+  if (OTP_PROMPT_PATTERN.test(haystack)) return false;
   return PASSWORD_PROMPT_PATTERN.test(promptText);
+}
+
+/**
+ * Whether the modal may pre-fill / offer-to-save the host login password for
+ * this challenge. Single secondary/EDR prompts and post-partialSuccess
+ * challenges must open empty (#2150). Multi-prompt forms (password + OTP)
+ * still get the saved value as a convenience for the password slot.
+ *
+ * @param {Array} prompts
+ * @param {string} password
+ * @param {{ skipAutoFill?: boolean, contextText?: string }} [opts]
+ */
+function shouldPrefillSavedPassword(prompts, password, { skipAutoFill = false, contextText = "" } = {}) {
+  if (skipAutoFill) return false;
+  if (typeof password !== "string" || password.length === 0) return false;
+  if (!Array.isArray(prompts) || prompts.length === 0) return false;
+  // Single-prompt: only prefill classic first-factor password challenges.
+  // Secondary/OTP wording in name/instructions still blocks via contextText.
+  if (prompts.length === 1) {
+    return isAutoFillablePasswordChallenge(prompts, password, contextText);
+  }
+  // Multi-prompt (e.g. Password: + Verification code: / Duo): always prefill
+  // the password slot when we have a saved host password. Challenge names like
+  // "Duo two-factor" must NOT suppress prefill — skipAutoFill already covers
+  // true post-partialSuccess second-factor rounds (Codex P3 on #2151).
+  // The modal only writes into isAPasswordPrompt fields, not OTP slots.
+  return true;
 }
 
 /**
@@ -1173,6 +1329,11 @@ function isAutoFillablePasswordChallenge(prompts, password) {
  *   password-prompt fast path (#969).
  * @param {string} [options.logPrefix] - Log prefix for debugging
  * @param {"terminal"|"external"} [options.scope] - Renderer-side routing scope
+ * @param {Function} [options.shouldSkipAutoFill] - Optional predicate. When it
+ *   returns true, never auto-fill — always show the modal. Callers set this
+ *   after a first-factor `partialSuccess` so a second-factor challenge that
+ *   merely says "Password:" / "密码：" is not silently answered with the
+ *   already-used login password (#2150).
  * @param {Function} [options.onAutoFill] - Called when the saved password is
  *   auto-filled into the challenge (no modal shown). Lets callers emit a
  *   different progress message than the user-prompt flow.
@@ -1190,6 +1351,7 @@ function createKeyboardInteractiveHandler(options) {
     password,
     logPrefix = "[SSH]",
     scope = "external",
+    shouldSkipAutoFill,
     onAutoFill,
     onPromptShown,
     onUserResponded,
@@ -1214,7 +1376,26 @@ function createKeyboardInteractiveHandler(options) {
       return;
     }
 
-    if (!autoFilledOnce && isAutoFillablePasswordChallenge(prompts, password)) {
+    // name + instructions often carry the real EDR banner (e.g. "请输入二次认证密码")
+    // while prompts[i].prompt is only the short English field label.
+    const contextText = [name, instructions].filter((s) => typeof s === "string" && s.trim()).join("\n");
+
+    let skipAutoFill = false;
+    try {
+      skipAutoFill = typeof shouldSkipAutoFill === "function" && !!shouldSkipAutoFill();
+    } catch (err) {
+      console.warn(`${logPrefix} shouldSkipAutoFill callback threw`, err);
+    }
+
+    // After a first factor already succeeded (partialSuccess), never reuse the
+    // saved login password for a later keyboard-interactive challenge — even
+    // if the prompt text looks like a plain "Password:" / "密码：". Corporate
+    // EDR step-up often reuses password wording for a different secret.
+    if (
+      !skipAutoFill &&
+      !autoFilledOnce &&
+      isAutoFillablePasswordChallenge(prompts, password, contextText)
+    ) {
       autoFilledOnce = true;
       console.log(`${logPrefix} Auto-filling saved password into single keyboard-interactive prompt`);
       try { onAutoFill?.(); } catch (err) { console.warn(`${logPrefix} onAutoFill callback threw`, err); }
@@ -1235,6 +1416,37 @@ function createKeyboardInteractiveHandler(options) {
       echo: p.echo,
     }));
 
+    // Never prefill the host login password into a second-factor challenge or
+    // into a retry after a failed auto-fill. Passing null here is what keeps
+    // KeyboardInteractiveModal from re-submitting the wrong secret on Enter
+    // (#2150). autoFilledOnce blocks prefill only — not the save checkbox.
+    const savedPasswordForModal = shouldPrefillSavedPassword(prompts, password, {
+      skipAutoFill: skipAutoFill || autoFilledOnce,
+      contextText,
+    })
+      ? password
+      : null;
+    // Hide "Save password" only for true second-factor challenges:
+    //   - after a first-factor partialSuccess, or
+    //   - a *single* OTP / EDR secondary field (possibly with secondary wording
+    //     only in name/instructions).
+    // Do NOT disable save after a failed auto-fill retry of the same first-
+    // factor Password: prompt — the user may have corrected a stale login
+    // password and should be able to persist it (Codex P2 on #2151).
+    // Do NOT disable save just because a multi-prompt challenge also includes
+    // an OTP field next to Password: (PAM/Duo first-login) — the modal only
+    // ever saves the isAPasswordPrompt slot (Codex P3 on #2151).
+    const singlePromptText =
+      prompts.length === 1 && typeof prompts[0]?.prompt === "string"
+        ? prompts[0].prompt
+        : "";
+    const singleSecondaryChallenge =
+      prompts.length === 1 &&
+      OTP_PROMPT_PATTERN.test(
+        [contextText, singlePromptText].filter(Boolean).join("\n"),
+      );
+    const allowSavePassword = !(skipAutoFill || singleSecondaryChallenge);
+
     console.log(`${logPrefix} Showing modal for ${promptsData.length} prompts`);
     try { onPromptShown?.(); } catch (err) { console.warn(`${logPrefix} onPromptShown callback threw`, err); }
 
@@ -1245,7 +1457,8 @@ function createKeyboardInteractiveHandler(options) {
       instructions: instructions || "",
       prompts: promptsData,
       hostname: hostname,
-      savedPassword: password || null,
+      savedPassword: savedPasswordForModal,
+      allowSavePassword,
       scope,
     });
   };
@@ -1348,8 +1561,13 @@ module.exports = {
   resolveIdentityAgentPath,
   prepareSystemSshAgentForAuth,
   buildAuthHandler,
+  createAuthPhase,
+  markAuthPhasePartialSuccess,
+  shouldSkipKiPasswordAutoFill,
+  createOrderedStringAuthHandler,
   createKeyboardInteractiveHandler,
   isAutoFillablePasswordChallenge,
+  shouldPrefillSavedPassword,
   applyAuthToConnOpts,
   safeSend,
   requestPassphrasesForEncryptedKeys,

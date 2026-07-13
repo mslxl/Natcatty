@@ -3,7 +3,12 @@ const assert = require("node:assert/strict");
 
 const {
   createKeyboardInteractiveHandler,
+  createOrderedStringAuthHandler,
+  createAuthPhase,
+  shouldSkipKiPasswordAutoFill,
   isAutoFillablePasswordChallenge,
+  shouldPrefillSavedPassword,
+  buildAuthHandler,
 } = require("./sshAuthHelper.cjs");
 const keyboardInteractiveHandler = require("./keyboardInteractiveHandler.cjs");
 
@@ -120,6 +125,61 @@ test("isAutoFillablePasswordChallenge accepts a sudo-style password prompt", () 
   assert.equal(isAutoFillablePasswordChallenge([linuxPasswordPrompt], "hunter2"), true);
 });
 
+// Corporate EDR / bastion step-up password prompts (#2150). These contain the
+// word "密码" / "password" but must never be auto-filled with the login password.
+const secondaryPasswordPrompt = { prompt: "二次密码:", echo: false };
+const secondaryAuthPasswordPrompt = { prompt: "请输入二次认证密码", echo: false };
+const securityPasswordPrompt = { prompt: "安全密码：", echo: false };
+const secondaryPasswordEnPrompt = { prompt: "Secondary password:", echo: false };
+const secondPasswordEnPrompt = { prompt: "Second password:", echo: false };
+
+test("isAutoFillablePasswordChallenge rejects EDR secondary password prompts (#2150)", () => {
+  assert.equal(isAutoFillablePasswordChallenge([secondaryPasswordPrompt], "hunter2"), false);
+  assert.equal(isAutoFillablePasswordChallenge([secondaryAuthPasswordPrompt], "hunter2"), false);
+  assert.equal(isAutoFillablePasswordChallenge([securityPasswordPrompt], "hunter2"), false);
+  assert.equal(isAutoFillablePasswordChallenge([secondaryPasswordEnPrompt], "hunter2"), false);
+  assert.equal(isAutoFillablePasswordChallenge([secondPasswordEnPrompt], "hunter2"), false);
+});
+
+// Real-world EDR banner from issue #2150 / reporter screenshot: Chinese
+// instruction + English "Secondary Authentication Password:" field label.
+const edrSecondaryAuthPasswordPrompt = {
+  prompt: "Secondary Authentication Password:",
+  echo: false,
+};
+const edrSecondaryAuthInstructions =
+  "为保障主机安全，请输入二次认证密码，如有疑问，请联系xxx，电话xxx。";
+
+test("isAutoFillablePasswordChallenge rejects Secondary Authentication Password (#2150)", () => {
+  // English field label alone must not auto-fill — words between "Secondary"
+  // and "Password" are common in corporate EDR prompts.
+  assert.equal(
+    isAutoFillablePasswordChallenge([edrSecondaryAuthPasswordPrompt], "hunter2"),
+    false,
+  );
+});
+
+test("isAutoFillablePasswordChallenge rejects when 二次认证 is only in instructions (#2150)", () => {
+  // Even if the prompt field were a generic "Password:", the instruction
+  // banner carrying "二次认证密码" must still block auto-fill.
+  assert.equal(
+    isAutoFillablePasswordChallenge(
+      [passwordPrompt],
+      "hunter2",
+      edrSecondaryAuthInstructions,
+    ),
+    false,
+  );
+  assert.equal(
+    isAutoFillablePasswordChallenge(
+      [edrSecondaryAuthPasswordPrompt],
+      "hunter2",
+      edrSecondaryAuthInstructions,
+    ),
+    false,
+  );
+});
+
 // --- createKeyboardInteractiveHandler --------------------------------------
 
 test("createKeyboardInteractiveHandler auto-fills the saved password for a single password prompt", () => {
@@ -164,6 +224,8 @@ test("createKeyboardInteractiveHandler falls back to the modal on the retry afte
   // First call — auto-fill fires, no modal shown.
   handler("", "", "", [passwordPrompt], (responses) => finishCalls.push({ first: responses }));
   // ssh2 re-invokes after auth failure — this time the user must see the modal.
+  // savedPassword is intentionally omitted so a multi-round second factor that
+  // also says "Password:" cannot re-submit the login secret on Enter (#2150).
   handler("", "", "", [passwordPrompt], (responses) => finishCalls.push({ second: responses }));
 
   assert.deepEqual(autoFillEvents, ["auto-fill"]);
@@ -171,6 +233,31 @@ test("createKeyboardInteractiveHandler falls back to the modal on the retry afte
   assert.deepEqual(finishCalls, [{ first: ["wrong-password"] }]);
   assert.equal(sent.length, 1);
   assert.equal(sent[0].channel, "netcatty:keyboard-interactive");
+  // Do not re-prefill the stale value, but still allow saving a corrected one.
+  assert.equal(sent[0].payload.savedPassword, null);
+  assert.equal(sent[0].payload.allowSavePassword, true);
+
+  drainPendingRequests(sent);
+});
+
+test("createKeyboardInteractiveHandler does not prefill after a prior auto-fill round (#2150)", () => {
+  // Multi-round keyboard-interactive without partialSuccess between rounds:
+  // round 1 auto-fills the login password; round 2 looks like Password: again
+  // (EDR secondary) and must open empty.
+  const { sender, sent } = createSender();
+
+  const handler = createKeyboardInteractiveHandler({
+    sender,
+    sessionId: "session-1",
+    hostname: "corp-edr.example.com",
+    password: "login-password",
+  });
+
+  handler("", "", "", [passwordPrompt], () => {}); // auto-fill
+  handler("", "", "", [passwordPrompt], () => {}); // modal, no prefill
+
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].payload.savedPassword, null);
 
   drainPendingRequests(sent);
 });
@@ -286,4 +373,372 @@ test("createKeyboardInteractiveHandler short-circuits when the server sends zero
   assert.deepEqual(promptEvents, []);
   assert.deepEqual(sent, []);
   assert.deepEqual(finishCalls, [[]]);
+});
+
+test("createKeyboardInteractiveHandler shows the modal for EDR secondary password prompts (#2150)", () => {
+  const { sender, sent } = createSender();
+  const autoFillEvents = [];
+  const promptEvents = [];
+
+  const handler = createKeyboardInteractiveHandler({
+    sender,
+    sessionId: "session-1",
+    hostname: "corp-edr.example.com",
+    password: "login-password",
+    onAutoFill: () => autoFillEvents.push("auto-fill"),
+    onPromptShown: () => promptEvents.push("prompt-shown"),
+  });
+
+  handler("EDR", "", "", [secondaryPasswordPrompt], () => {});
+
+  assert.deepEqual(autoFillEvents, []);
+  assert.deepEqual(promptEvents, ["prompt-shown"]);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].channel, "netcatty:keyboard-interactive");
+  assert.equal(sent[0].payload.prompts[0].prompt, "二次密码:");
+
+  drainPendingRequests(sent);
+});
+
+test("createKeyboardInteractiveHandler skips auto-fill after password partialSuccess (#2150)", () => {
+  // password method already succeeded as first factor; a later KI challenge
+  // that merely says "Password:" must still show the modal so the user can
+  // enter the distinct secondary secret.
+  const { sender, sent } = createSender();
+  const autoFillEvents = [];
+  const promptEvents = [];
+  const authPhase = createAuthPhase();
+  authPhase.passwordAlreadySucceeded = true;
+
+  const handler = createKeyboardInteractiveHandler({
+    sender,
+    sessionId: "session-1",
+    hostname: "corp-edr.example.com",
+    password: "login-password",
+    shouldSkipAutoFill: () => shouldSkipKiPasswordAutoFill(authPhase),
+    onAutoFill: () => autoFillEvents.push("auto-fill"),
+    onPromptShown: () => promptEvents.push("prompt-shown"),
+  });
+
+  handler("", "", "", [passwordPrompt], () => {});
+
+  assert.deepEqual(autoFillEvents, []);
+  assert.deepEqual(promptEvents, ["prompt-shown"]);
+  assert.equal(sent.length, 1);
+
+  drainPendingRequests(sent);
+});
+
+test("createKeyboardInteractiveHandler still auto-fills after publickey partialSuccess (#2151 P2)", () => {
+  // publickey succeeded first; KI Password: is still the account password and
+  // should auto-fill from the saved host credential.
+  const { sender, sent } = createSender();
+  const autoFillEvents = [];
+  const authPhase = createAuthPhase();
+  authPhase.hadPartialSuccess = true;
+  // passwordAlreadySucceeded remains false
+
+  const handler = createKeyboardInteractiveHandler({
+    sender,
+    sessionId: "session-1",
+    hostname: "vps-1.example.com",
+    password: "hunter2",
+    shouldSkipAutoFill: () => shouldSkipKiPasswordAutoFill(authPhase),
+    onAutoFill: () => autoFillEvents.push("auto-fill"),
+  });
+
+  const finishCalls = [];
+  handler("", "", "", [passwordPrompt], (responses) => finishCalls.push(responses));
+
+  assert.deepEqual(autoFillEvents, ["auto-fill"]);
+  assert.deepEqual(finishCalls, [["hunter2"]]);
+  assert.deepEqual(sent, []);
+});
+
+test("createKeyboardInteractiveHandler still auto-fills before any partialSuccess", () => {
+  const { sender, sent } = createSender();
+  const autoFillEvents = [];
+  const authPhase = createAuthPhase();
+
+  const handler = createKeyboardInteractiveHandler({
+    sender,
+    sessionId: "session-1",
+    hostname: "vps-1.example.com",
+    password: "hunter2",
+    shouldSkipAutoFill: () => shouldSkipKiPasswordAutoFill(authPhase),
+    onAutoFill: () => autoFillEvents.push("auto-fill"),
+  });
+
+  const finishCalls = [];
+  handler("", "", "", [passwordPrompt], (responses) => finishCalls.push(responses));
+
+  assert.deepEqual(autoFillEvents, ["auto-fill"]);
+  assert.deepEqual(finishCalls, [["hunter2"]]);
+  assert.deepEqual(sent, []);
+});
+
+test("createKeyboardInteractiveHandler omits savedPassword on post-password-partialSuccess modal (#2150)", () => {
+  const { sender, sent } = createSender();
+  const authPhase = createAuthPhase();
+  authPhase.passwordAlreadySucceeded = true;
+
+  const handler = createKeyboardInteractiveHandler({
+    sender,
+    sessionId: "session-1",
+    hostname: "corp-edr.example.com",
+    password: "login-password",
+    shouldSkipAutoFill: () => shouldSkipKiPasswordAutoFill(authPhase),
+  });
+
+  handler("", "", "", [passwordPrompt], () => {});
+
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].payload.savedPassword, null);
+
+  drainPendingRequests(sent);
+});
+
+test("createKeyboardInteractiveHandler omits savedPassword for secondary password prompts", () => {
+  const { sender, sent } = createSender();
+
+  const handler = createKeyboardInteractiveHandler({
+    sender,
+    sessionId: "session-1",
+    hostname: "corp-edr.example.com",
+    password: "login-password",
+  });
+
+  handler("EDR", "", "", [secondaryPasswordPrompt], () => {});
+
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].payload.savedPassword, null);
+
+  drainPendingRequests(sent);
+});
+
+test("createOrderedStringAuthHandler sets hadPartialSuccess on partialSuccess", () => {
+  const authPhase = { hadPartialSuccess: false };
+  const handler = createOrderedStringAuthHandler(
+    ["none", "password", "keyboard-interactive"],
+    authPhase,
+  );
+
+  const offered = [];
+  handler(null, false, (method) => offered.push(method)); // none
+  handler(["password", "keyboard-interactive"], false, (method) => offered.push(method)); // password
+  handler(["keyboard-interactive"], true, (method) => offered.push(method)); // KI after partial
+
+  assert.deepEqual(offered, ["none", "password", "keyboard-interactive"]);
+  assert.equal(authPhase.hadPartialSuccess, true);
+});
+
+test("createOrderedStringAuthHandler re-offers methods skipped as unavailable after partialSuccess (#2151 P2)", () => {
+  // Server first only advertises publickey. password sits in our order before
+  // publickey but is not advertised yet — it must NOT be permanently skipped.
+  // After publickey partialSuccess, the server asks for password and we offer it.
+  // (agent is also allowed when publickey is advertised, so it is tried first.)
+  const authPhase = { hadPartialSuccess: false };
+  const handler = createOrderedStringAuthHandler(
+    ["none", "agent", "password", "publickey", "keyboard-interactive"],
+    authPhase,
+  );
+
+  const offered = [];
+  handler(null, false, (method) => offered.push(method)); // none
+  handler(["publickey"], false, (method) => offered.push(method)); // agent
+  handler(["publickey"], false, (method) => offered.push(method)); // publickey (password still not advertised)
+  // publickey partially succeeds; server now wants password
+  handler(["password", "keyboard-interactive"], true, (method) => offered.push(method));
+
+  assert.deepEqual(offered, ["none", "agent", "publickey", "password"]);
+  assert.equal(authPhase.hadPartialSuccess, true);
+
+  // Continue to keyboard-interactive if password also only partial-succeeds
+  handler(["keyboard-interactive"], true, (method) => offered.push(method));
+  assert.deepEqual(offered, ["none", "agent", "publickey", "password", "keyboard-interactive"]);
+});
+
+test("buildAuthHandler simple password path tracks partialSuccess via function handler", () => {
+  const auth = buildAuthHandler({
+    password: "hunter2",
+    username: "alice",
+    // No default keys / agent: simple explicit password-only path.
+    defaultKeys: [],
+    allowAgentFallback: false,
+  });
+
+  assert.equal(typeof auth.authHandler, "function");
+  assert.ok(auth.authPhase);
+  assert.equal(auth.authPhase.hadPartialSuccess, false);
+
+  const offered = [];
+  auth.authHandler(null, false, (method) => offered.push(method));
+  auth.authHandler(["password", "keyboard-interactive"], false, (method) => offered.push(method));
+  auth.authHandler(["keyboard-interactive"], true, (method) => offered.push(method));
+
+  assert.ok(offered.includes("password") || offered.some((m) => m === "password" || m?.type === "password"));
+  assert.ok(offered.includes("keyboard-interactive"));
+  assert.equal(auth.authPhase.hadPartialSuccess, true);
+});
+
+test("shouldPrefillSavedPassword is false after skipAutoFill and for secondary prompts", () => {
+  assert.equal(
+    shouldPrefillSavedPassword([passwordPrompt], "hunter2", { skipAutoFill: true }),
+    false,
+  );
+  assert.equal(
+    shouldPrefillSavedPassword([secondaryPasswordPrompt], "hunter2", { skipAutoFill: false }),
+    false,
+  );
+  assert.equal(
+    shouldPrefillSavedPassword([passwordPrompt], "hunter2", { skipAutoFill: false }),
+    true,
+  );
+});
+
+test("shouldPrefillSavedPassword keeps multi-prompt Duo/two-factor password prefill (#2151 P3)", () => {
+  // Challenge name/instructions often say "Duo" / "two-factor" even when the
+  // form still includes a first-factor Password: slot next to an OTP field.
+  assert.equal(
+    shouldPrefillSavedPassword(
+      [passwordPrompt, verificationCodePrompt],
+      "hunter2",
+      { skipAutoFill: false, contextText: "Duo two-factor login" },
+    ),
+    true,
+  );
+  assert.equal(
+    shouldPrefillSavedPassword(
+      [passwordPrompt, verificationCodePrompt],
+      "hunter2",
+      { skipAutoFill: true, contextText: "Duo two-factor login" },
+    ),
+    false,
+  );
+});
+
+test("createKeyboardInteractiveHandler shows modal for Secondary Authentication Password banner (#2150)", () => {
+  const { sender, sent } = createSender();
+  const autoFillEvents = [];
+
+  const handler = createKeyboardInteractiveHandler({
+    sender,
+    sessionId: "session-1",
+    hostname: "192.168.9.128",
+    password: "login-password",
+    onAutoFill: () => autoFillEvents.push("auto-fill"),
+  });
+
+  handler(
+    "Keyboard-interactive authentication prompts from server",
+    edrSecondaryAuthInstructions,
+    "",
+    [edrSecondaryAuthPasswordPrompt],
+    () => {},
+  );
+
+  assert.deepEqual(autoFillEvents, []);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].payload.savedPassword, null);
+  assert.equal(sent[0].payload.allowSavePassword, false);
+  assert.equal(sent[0].payload.prompts[0].prompt, "Secondary Authentication Password:");
+
+  drainPendingRequests(sent);
+});
+
+test("createKeyboardInteractiveHandler disables save on post-password-partialSuccess Password prompt", () => {
+  const { sender, sent } = createSender();
+  const authPhase = createAuthPhase();
+  authPhase.passwordAlreadySucceeded = true;
+
+  const handler = createKeyboardInteractiveHandler({
+    sender,
+    sessionId: "session-1",
+    hostname: "corp-edr.example.com",
+    password: "login-password",
+    shouldSkipAutoFill: () => shouldSkipKiPasswordAutoFill(authPhase),
+  });
+
+  handler("", "", "", [passwordPrompt], () => {});
+
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].payload.savedPassword, null);
+  assert.equal(sent[0].payload.allowSavePassword, false);
+
+  drainPendingRequests(sent);
+});
+
+test("createOrderedStringAuthHandler sets passwordAlreadySucceeded only for password factor", () => {
+  const authPhase = createAuthPhase();
+  const handler = createOrderedStringAuthHandler(
+    ["none", "publickey", "password", "keyboard-interactive"],
+    authPhase,
+  );
+
+  handler(null, false, () => {}); // none
+  handler(["publickey", "password", "keyboard-interactive"], false, () => {}); // publickey
+  handler(["password", "keyboard-interactive"], true, () => {}); // after publickey PS
+
+  assert.equal(authPhase.hadPartialSuccess, true);
+  assert.equal(authPhase.passwordAlreadySucceeded, false);
+  assert.equal(shouldSkipKiPasswordAutoFill(authPhase), false);
+
+  const authPhasePw = createAuthPhase();
+  const handlerPw = createOrderedStringAuthHandler(
+    ["none", "password", "keyboard-interactive"],
+    authPhasePw,
+  );
+  handlerPw(null, false, () => {});
+  handlerPw(["password", "keyboard-interactive"], false, () => {}); // password
+  handlerPw(["keyboard-interactive"], true, () => {}); // after password PS
+  assert.equal(authPhasePw.passwordAlreadySucceeded, true);
+  assert.equal(shouldSkipKiPasswordAutoFill(authPhasePw), true);
+});
+
+test("createKeyboardInteractiveHandler allows save on first-factor password modal", () => {
+  const { sender, sent } = createSender();
+
+  const handler = createKeyboardInteractiveHandler({
+    sender,
+    sessionId: "session-1",
+    hostname: "vps-1.example.com",
+    // No saved password → modal with save checkbox for first login
+  });
+
+  handler("", "", "", [passwordPrompt], () => {});
+
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].payload.allowSavePassword, true);
+
+  drainPendingRequests(sent);
+});
+
+test("createKeyboardInteractiveHandler allows save on multi-prompt Password + OTP (#2151 P3)", () => {
+  // PAM/Duo style: one keyboard-interactive challenge with a password slot
+  // and a verification-code slot. Saving should still target the password
+  // field only — do not disable allowSavePassword just because OTP wording
+  // appears in another prompt of the same challenge.
+  const { sender, sent } = createSender();
+
+  const handler = createKeyboardInteractiveHandler({
+    sender,
+    sessionId: "session-1",
+    hostname: "duo.example.com",
+    password: "login-password",
+  });
+
+  handler(
+    "Duo two-factor login",
+    "Enter password and passcode",
+    "",
+    [passwordPrompt, verificationCodePrompt],
+    () => {},
+  );
+
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].payload.allowSavePassword, true);
+  // Prefill still OK for the password slot even when name/instructions say Duo.
+  assert.equal(sent[0].payload.savedPassword, "login-password");
+
+  drainPendingRequests(sent);
 });

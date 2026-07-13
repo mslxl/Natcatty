@@ -195,6 +195,7 @@ function createExecCommandApi(ctx) {
           });
     
           applyAuthToConnOpts(connectOpts, authConfig);
+          const execAuthPhase = authConfig.authPhase || { hadPartialSuccess: false };
     
           conn.on("keyboard-interactive", createKeyboardInteractiveHandler({
             sender,
@@ -203,6 +204,7 @@ function createExecCommandApi(ctx) {
             password: payload.password,
             logPrefix: "[SSH Exec]",
             scope: "external",
+            shouldSkipAutoFill: () => shouldSkipKiPasswordAutoFill(execAuthPhase),
           }));
         } else if (connectOpts.agent) {
           const order = ["agent"];
