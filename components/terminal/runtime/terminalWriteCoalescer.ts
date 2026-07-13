@@ -98,20 +98,6 @@ const scanPrivateDecsetModes = (
   return { incomplete, enter, leave };
 };
 
-/**
- * Detect CSI private-mode sequences that enter the alternate screen buffer
- * (DECSET 47 / 1047 / 1049), including incomplete tails split across PTY chunks
- * and 8-bit C1 CSI (`\x9b?…h`). Avoids control-character regexes.
- */
-const looksLikeEnteringAlternateScreen = (data: string): boolean => {
-  const seven = scanPrivateDecsetModes(data, CSI_PRIVATE_INTRO_7BIT);
-  const eight = scanPrivateDecsetModes(data, CSI_PRIVATE_INTRO_8BIT);
-  if (seven.enter || eight.enter || seven.incomplete || eight.incomplete) {
-    return true;
-  }
-  return extractIncompletePrivateCsiTail(data).length > 0;
-};
-
 const isTerminalAlternateScreenActive = (term: XTerm): boolean => {
   try {
     return (term.buffer?.active as { type?: string } | undefined)?.type === "alternate";
