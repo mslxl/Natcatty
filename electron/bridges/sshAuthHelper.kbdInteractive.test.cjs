@@ -183,6 +183,8 @@ test("createKeyboardInteractiveHandler falls back to the modal on the retry afte
   // First call — auto-fill fires, no modal shown.
   handler("", "", "", [passwordPrompt], (responses) => finishCalls.push({ first: responses }));
   // ssh2 re-invokes after auth failure — this time the user must see the modal.
+  // savedPassword is intentionally omitted so a multi-round second factor that
+  // also says "Password:" cannot re-submit the login secret on Enter (#2150).
   handler("", "", "", [passwordPrompt], (responses) => finishCalls.push({ second: responses }));
 
   assert.deepEqual(autoFillEvents, ["auto-fill"]);
@@ -190,6 +192,29 @@ test("createKeyboardInteractiveHandler falls back to the modal on the retry afte
   assert.deepEqual(finishCalls, [{ first: ["wrong-password"] }]);
   assert.equal(sent.length, 1);
   assert.equal(sent[0].channel, "netcatty:keyboard-interactive");
+  assert.equal(sent[0].payload.savedPassword, null);
+
+  drainPendingRequests(sent);
+});
+
+test("createKeyboardInteractiveHandler does not prefill after a prior auto-fill round (#2150)", () => {
+  // Multi-round keyboard-interactive without partialSuccess between rounds:
+  // round 1 auto-fills the login password; round 2 looks like Password: again
+  // (EDR secondary) and must open empty.
+  const { sender, sent } = createSender();
+
+  const handler = createKeyboardInteractiveHandler({
+    sender,
+    sessionId: "session-1",
+    hostname: "corp-edr.example.com",
+    password: "login-password",
+  });
+
+  handler("", "", "", [passwordPrompt], () => {}); // auto-fill
+  handler("", "", "", [passwordPrompt], () => {}); // modal, no prefill
+
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].payload.savedPassword, null);
 
   drainPendingRequests(sent);
 });

@@ -1339,8 +1339,14 @@ function createKeyboardInteractiveHandler(options) {
     // Never prefill / offer-to-save the host login password into a second-factor
     // challenge. Passing null here is what keeps KeyboardInteractiveModal from
     // re-submitting the wrong secret on Enter (#2150).
+    //
+    // Also treat autoFilledOnce as skip: servers can issue successive
+    // password-looking keyboard-interactive rounds inside one method without
+    // reporting partialSuccess between them (login password, then EDR). After
+    // the first auto-fill, later rounds must open empty — not pre-filled with
+    // the same login secret.
     const savedPasswordForModal = shouldPrefillSavedPassword(prompts, password, {
-      skipAutoFill,
+      skipAutoFill: skipAutoFill || autoFilledOnce,
     })
       ? password
       : null;
