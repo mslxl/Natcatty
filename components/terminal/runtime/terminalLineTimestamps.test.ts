@@ -665,7 +665,7 @@ test("capacity follows terminal scrollback so flood output cannot retain unbound
       rows: 24,
       options: { scrollback: 200000 },
     } as never),
-    100000 + 256,
+    100000 + 2048,
   );
   assert.equal(
     resolveTerminalLineTimestampCapacity({
@@ -673,6 +673,13 @@ test("capacity follows terminal scrollback so flood output cannot retain unbound
       options: { scrollback: 80000 },
     } as never),
     80000 + 24 + 64,
+  );
+  assert.equal(
+    resolveTerminalLineTimestampCapacity({
+      rows: 400,
+      options: { scrollback: 100000 },
+    } as never),
+    100000 + 400 + 64,
   );
 });
 

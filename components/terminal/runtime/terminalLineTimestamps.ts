@@ -115,9 +115,9 @@ const MAX_SEGMENTED_TIMESTAMP_WRITES = 64;
 const BULK_TIMESTAMP_BATCH_MIN_BYTES = 4096;
 /**
  * Hard ceiling for retained timestamps. Matches Settings UI max scrollback
- * (100000) plus viewport headroom so the oldest still-visible rows keep labels.
+ * (100000) plus generous viewport headroom for very tall terminals.
  */
-export const MAX_TERMINAL_LINE_TIMESTAMP_ENTRIES = 100000 + 256;
+export const MAX_TERMINAL_LINE_TIMESTAMP_ENTRIES = 100000 + 2048;
 /** Compact disposed holes at least this often during flood writes. */
 const TIMESTAMP_PRUNE_EVERY_RECORDS = 256;
 /** Max xterm marker.dispose() calls per prune/write pass (amortize O(n) splices). */
@@ -501,6 +501,19 @@ const drainOrphanedMarkers = (
   }
 };
 
+/** Cheap pass for paint paths: drop disposed holes only (no dedupe / capacity). */
+const compactDisposedMarkersOnly = (store: TimestampStore): void => {
+  const entries = store.entries;
+  let write = 0;
+  for (let read = 0; read < entries.length; read += 1) {
+    const entry = entries[read];
+    if (entry.marker.isDisposed) continue;
+    entries[write] = entry;
+    write += 1;
+  }
+  entries.length = write;
+};
+
 /**
  * Compact disposed markers, collapse rewritten lines to their latest label,
  * and enforce a hard capacity in linear passes.
@@ -592,6 +605,7 @@ const recordTerminalLineTimestamp = (
   label: string,
   notify = true,
   cursorYOffset = 0,
+  options: { skipPrune?: boolean } = {},
 ): boolean => {
   const registerMarker = (term as XTerm & { registerMarker?: (offset: number) => TimestampMarker | undefined }).registerMarker;
   const marker = registerMarker?.call(term, cursorYOffset);
@@ -600,7 +614,9 @@ const recordTerminalLineTimestamp = (
   // Intentionally no per-marker onDispose → filter(entries). xterm still
   // marks isDisposed when scrollback trims; we compact lazily in bulk.
   store.entries.push({ marker, label });
-  maybePruneTimestampEntries(term, store);
+  if (!options.skipPrune) {
+    maybePruneTimestampEntries(term, store);
+  }
   if (notify) {
     notifyTimestampStore(store);
   }
@@ -970,10 +986,10 @@ const writeBatchedTimestampSegments = (
         timestamp.label,
         false,
         timestamp.rowOffset - rowOffset,
+        { skipPrune: true },
       ) || timestampRecorded;
     }
-    // Compact once after bulk marker registration (scrollback may already have
-    // disposed older markers while this flood was writing).
+    // Single prune after bulk registration (intermediate prunes dominate large floods).
     maybePruneTimestampEntries(term, store, true);
     if (timestampRecorded) {
       notifyTimestampStore(store);
@@ -1075,7 +1091,8 @@ export const getVisibleTerminalLineTimestampRows = (
     return [];
   }
   const store = getTimestampStore(term);
-  pruneDisposedEntries(store, resolveTerminalLineTimestampCapacity(term));
+  // Paint path: only drop disposed holes. Full dedupe/capacity runs on write.
+  compactDisposedMarkersOnly(store);
   return resolveTerminalTimestampGutterRows({
     viewportY: term.buffer.active.viewportY,
     rows: term.rows,
