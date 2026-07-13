@@ -10,6 +10,7 @@ import {
   type RemoteClipboardImageUploadResult,
 } from "../clipboardImagePaste";
 import { handleTerminalClipboardPaste } from "../terminalClipboardPaste";
+import { getNormalizedTerminalSelection } from "../normalizeTerminalSelection";
 
 type BroadcastPasteRefs = {
   sourceSessionId: string;
@@ -74,7 +75,7 @@ export const useTerminalContextActions = ({
   const onCopy = useCallback(() => {
     const term = termRef.current;
     if (!term) return;
-    const selection = term.getSelection();
+    const selection = getNormalizedTerminalSelection(term);
     if (selection) {
       navigator.clipboard.writeText(selection);
     }
@@ -138,7 +139,7 @@ export const useTerminalContextActions = ({
   const onPasteSelection = useCallback(() => {
     const term = termRef.current;
     if (!term) return;
-    const selection = term.getSelection();
+    const selection = getNormalizedTerminalSelection(term);
     if (!selection || !sessionRef.current) return;
     pasteTextIntoTerminal(term, selection, {
       scrollOnPaste: scrollOnPasteRef?.current ?? false,

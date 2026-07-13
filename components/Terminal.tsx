@@ -103,6 +103,7 @@ import { createReplaySafeTerminalLogSanitizer } from "./terminal/replaySafeTermi
 import { createConnectionLogBuffer } from "./terminal/connectionLogBuffer";
 import { createProgrammaticCommandLogRewriter, type ProgrammaticCommandLogRewrite } from "./terminal/programmaticCommandLog";
 import { getSessionLogInitialLine } from "./terminal/sessionLogInitialLine";
+import { getNormalizedTerminalSelection } from "./terminal/normalizeTerminalSelection";
 import { useZmodemTransfer } from "./terminal/hooks/useZmodemTransfer";
 import {
   createTerminalSessionStarters,
@@ -2048,7 +2049,9 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   terminalContextActionsRef.current = terminalContextActions;
 
   const handleAddSelectionToAI = useCallback(() => {
-    const selection = termRef.current?.getSelection() ?? "";
+    const term = termRef.current;
+    if (!term) return;
+    const selection = getNormalizedTerminalSelection(term);
     if (!selection.trim()) return;
     onAddSelectionToAI?.(sessionId, selection);
   }, [onAddSelectionToAI, sessionId]);

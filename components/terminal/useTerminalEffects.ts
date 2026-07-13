@@ -20,6 +20,7 @@ import {
   resolveTerminalHibernateEnabled,
 } from '../../domain/terminalHibernate';
 import { applyUserCursorBlinkPreference } from './runtime/cursorPreference';
+import { getNormalizedTerminalSelection } from './normalizeTerminalSelection';
 import { getFlowControllerForTerm } from './runtime/terminalSessionAttachment';
 import {
   prioritizeTerminalInput,
@@ -1287,8 +1288,10 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     };
 
     const onSelectionChange = () => {
-      const selection = term.getSelection();
-      const hasText = !!selection && selection.length > 0;
+      // hasSelection uses raw getSelection for cheap emptiness checks; the
+      // clipboard write path normalizes soft wraps + display padding.
+      const rawSelection = term.getSelection();
+      const hasText = !!rawSelection && rawSelection.length > 0;
       if (lastHasSelection !== hasText) {
         lastHasSelection = hasText;
         setHasSelection(hasText);
@@ -1308,6 +1311,8 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
 
       if (hasText && terminalSettings?.copyOnSelect && !isRestoringSelectionRef.current) {
         copyTimer = setTimeout(() => {
+          const selection = getNormalizedTerminalSelection(term);
+          if (!selection) return;
           navigator.clipboard.writeText(selection).catch((err) => {
             logger.warn("Copy on select failed:", err);
           });
