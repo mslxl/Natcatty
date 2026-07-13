@@ -284,7 +284,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       const jumpReferenceKeyPath = jumpAuth.authMethod === "password"
         ? undefined
         : jumpKey?.source === 'reference' ? jumpKey.filePath : undefined;
-      const jumpIdentityFilePaths = !jumpHost.useSshAgent && jumpAuth.authMethod === "password"
+      const jumpIdentityFilePaths = jumpAuth.authMethod === "password"
         ? undefined
         : jumpReferenceKeyPath
           ? [jumpReferenceKeyPath]
@@ -484,7 +484,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       const authMethod = resolvedAuth.authMethod;
       const allowsLocalIdentityFallback = !resolvedAuth.keyId;
       const targetReferenceKeyPath = key?.source === 'reference' ? key.filePath : undefined;
-      const targetIdentityFilePaths = !ctx.host.useSshAgent && authMethod === "password"
+      const targetIdentityFilePaths = authMethod === "password"
         ? undefined
         : targetReferenceKeyPath
           ? [targetReferenceKeyPath]
@@ -939,7 +939,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       const hasEncryptedPrimaryKey = isEncryptedCredentialPlaceholder(resolvedAuth.key?.privateKey);
       const allowsLocalIdentityFallback = !resolvedAuth.keyId;
       const moshReferenceKeyPath = key?.source === 'reference' ? key.filePath : undefined;
-      const moshIdentityFilePaths = !ctx.host.useSshAgent && authMethod === "password"
+      const moshIdentityFilePaths = authMethod === "password"
         ? undefined
         : moshReferenceKeyPath
           ? [moshReferenceKeyPath]
@@ -1138,7 +1138,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       const hasEncryptedPrimaryKey = isEncryptedCredentialPlaceholder(resolvedAuth.key?.privateKey);
       const allowsLocalIdentityFallback = !resolvedAuth.keyId;
       const etReferenceKeyPath = key?.source === 'reference' ? key.filePath : undefined;
-      const etIdentityFilePaths = !ctx.host.useSshAgent && authMethod === "password"
+      const etIdentityFilePaths = authMethod === "password"
         ? undefined
         : etReferenceKeyPath
           ? [etReferenceKeyPath]
@@ -1214,7 +1214,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         const jumpReferenceKeyPath = jumpAuth.authMethod === "password"
           ? undefined
           : jumpKey?.source === 'reference' ? jumpKey.filePath : undefined;
-        const jumpIdentityFilePaths = !jumpHost.useSshAgent && jumpAuth.authMethod === "password"
+        const jumpIdentityFilePaths = jumpAuth.authMethod === "password"
           ? undefined
           : jumpReferenceKeyPath
             ? [jumpReferenceKeyPath]

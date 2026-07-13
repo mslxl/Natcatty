@@ -88,6 +88,39 @@ test("startPortForward forwards system agent settings", async () => {
   );
 });
 
+test("startPortForward drops stale identity paths for password-only auth", async () => {
+  const bridge = installBridgeStub();
+  const jumpHost = host({
+    id: "jump-1",
+    authMethod: "password",
+    password: "jump-secret",
+    useSshAgent: true,
+    identityFilePaths: ["~/.ssh/stale-jump-key"],
+  });
+
+  const result = await startPortForward(
+    rule({ id: "rule-password-only" }),
+    host({
+      authMethod: "password",
+      password: "secret",
+      useSshAgent: true,
+      identityFilePaths: ["~/.ssh/stale-key"],
+      hostChain: { hostIds: ["jump-1"] },
+    }),
+    [jumpHost],
+    [],
+    [],
+    () => undefined,
+  );
+
+  assert.equal(result.success, true);
+  assert.equal(bridge.getOptions()?.identityFilePaths, undefined);
+  assert.equal(bridge.getOptions()?.useSshAgent, false);
+  const jumpHosts = bridge.getOptions()?.jumpHosts as Array<Record<string, unknown>>;
+  assert.equal(jumpHosts[0]?.identityFilePaths, undefined);
+  assert.equal(jumpHosts[0]?.useSshAgent, false);
+});
+
 test("startPortForward uses the system agent when a synced key cannot be decrypted", async () => {
   const bridge = installBridgeStub();
   const key: SSHKey = {

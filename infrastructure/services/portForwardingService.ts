@@ -450,7 +450,7 @@ export const startPortForward = async (
           const jumpPassword = sanitizeCredentialValue(jumpResolved.password);
           const jumpKeyAuth = resolveBridgeKeyAuth({
             key: jumpKey,
-            fallbackIdentityFilePaths: (!jumpHost.useSshAgent && jumpResolved.authMethod === "password") || jumpResolved.keyId
+            fallbackIdentityFilePaths: jumpResolved.authMethod === "password" || jumpResolved.keyId
               ? undefined
               : jumpHost.identityFilePaths,
             passphrase: jumpResolved.passphrase,
@@ -507,7 +507,7 @@ export const startPortForward = async (
     
     const keyAuth = resolveBridgeKeyAuth({
       key,
-      fallbackIdentityFilePaths: (!host.useSshAgent && resolved.authMethod === "password") || resolved.keyId
+      fallbackIdentityFilePaths: resolved.authMethod === "password" || resolved.keyId
         ? undefined
         : host.identityFilePaths,
       passphrase: resolved.passphrase,

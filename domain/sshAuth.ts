@@ -22,6 +22,19 @@ type ResolvedHostAuth = {
   identityFilePath?: string;
 };
 
+const hasAgentEnablingDirectives = (
+  host: Pick<Host, "addKeysToAgent" | "useKeychain">,
+  identityAgent?: string,
+): boolean => Boolean(
+  identityAgent
+  || (
+    typeof host.addKeysToAgent === "string"
+    && host.addKeysToAgent.trim().length > 0
+    && host.addKeysToAgent.trim().toLowerCase() !== "no"
+  )
+  || host.useKeychain === true,
+);
+
 export const resolveHostAuthMethodSelection = (
   host: Pick<Host, "authMethod" | "identityFileId" | "identityFilePaths" | "password" | "useSshAgent">,
 ): HostAuthMethod => host.authMethod || (
@@ -52,9 +65,7 @@ export const applyHostAuthMethodSelection = <T extends Host>(
   const automaticIdentityAgent = isAutomatic && isSshAgentNoneValue(host.identityAgent)
     ? undefined
     : host.identityAgent;
-  const hasAutomaticAgentSettings = Boolean(
-    automaticIdentityAgent || host.addKeysToAgent || host.useKeychain !== undefined,
-  );
+  const hasAutomaticAgentSettings = hasAgentEnablingDirectives(host, automaticIdentityAgent);
 
   return {
     ...host,
@@ -82,9 +93,7 @@ export const resolveSshAgentToggleUpdate = (
   const identityAgent = enabling && isSshAgentNoneValue(host.identityAgent)
     ? undefined
     : host.identityAgent;
-  const hasExplicitAgentSettings = Boolean(
-    identityAgent || host.addKeysToAgent || host.useKeychain !== undefined,
-  );
+  const hasExplicitAgentSettings = hasAgentEnablingDirectives(host, identityAgent);
   return {
     useSshAgent: enabling
       ? (authMethod === "auto" && !hasExplicitAgentSettings ? undefined : true)

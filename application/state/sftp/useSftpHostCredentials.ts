@@ -100,7 +100,7 @@ export const buildSftpHostCredentials = ({
       const jumpPassword = sanitizeCredentialValue(jumpAuth.password);
       const jumpKeyAuth = resolveBridgeKeyAuth({
         key: jumpKey,
-        fallbackIdentityFilePaths: (!jumpHost.useSshAgent && jumpAuth.authMethod === "password") || jumpAuth.keyId
+        fallbackIdentityFilePaths: jumpAuth.authMethod === "password" || jumpAuth.keyId
           ? undefined
           : jumpHost.identityFilePaths,
         passphrase: jumpAuth.passphrase,
@@ -166,7 +166,7 @@ export const buildSftpHostCredentials = ({
 
   const keyAuth = resolveBridgeKeyAuth({
     key,
-    fallbackIdentityFilePaths: (!host.useSshAgent && resolved.authMethod === "password") || resolved.keyId
+    fallbackIdentityFilePaths: resolved.authMethod === "password" || resolved.keyId
       ? undefined
       : host.identityFilePaths,
     passphrase: resolved.passphrase,

@@ -598,6 +598,24 @@ test("switching to automatic clears stale strict agent settings", () => {
   assert.equal(selected.identitiesOnly, undefined);
 });
 
+test("negative SSH directives do not make automatic auth require an agent", () => {
+  const host = {
+    ...autofillBaseHost,
+    authMethod: "key",
+    identityFilePaths: ["~/.ssh/id_work"],
+    useSshAgent: false,
+    addKeysToAgent: "no",
+    useKeychain: false,
+  } as Host;
+
+  const selected = applyHostAuthMethodSelection(host, "auto");
+  assert.equal(selected.useSshAgent, undefined);
+  assert.deepEqual(resolveSshAgentToggleUpdate(host, "auto", true), {
+    useSshAgent: undefined,
+    identityAgent: undefined,
+  });
+});
+
 test("an explicit automatic host remains automatic when its group supplies a key", () => {
   const effective = applyGroupDefaults({
     ...autofillBaseHost,

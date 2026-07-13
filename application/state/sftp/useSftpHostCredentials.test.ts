@@ -119,6 +119,33 @@ test("buildSftpHostCredentials keeps automatic auth per target and jump host", (
   assert.equal(credentials.jumpHosts?.[0]?.authMethod, "auto");
 });
 
+test("buildSftpHostCredentials drops stale identity paths for password-only hosts", () => {
+  const jumpHost = host({
+    id: "jump-1",
+    authMethod: "password",
+    password: "jump-secret",
+    useSshAgent: true,
+    identityFilePaths: ["~/.ssh/stale-jump"],
+  });
+  const credentials = buildSftpHostCredentials({
+    host: host({
+      authMethod: "password",
+      password: "target-secret",
+      useSshAgent: true,
+      identityFilePaths: ["~/.ssh/stale-target"],
+      hostChain: { hostIds: ["jump-1"] },
+    }),
+    hosts: [jumpHost],
+    keys: [],
+    identities: [],
+  });
+
+  assert.equal(credentials.identityFilePaths, undefined);
+  assert.equal(credentials.useSshAgent, false);
+  assert.equal(credentials.jumpHosts?.[0]?.identityFilePaths, undefined);
+  assert.equal(credentials.jumpHosts?.[0]?.useSshAgent, false);
+});
+
 test("buildSftpHostCredentials rejects missing jump hosts", () => {
   assert.throws(
     () => buildSftpHostCredentials({
