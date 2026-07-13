@@ -23,6 +23,9 @@ const {
   buildAuthHandler,
   createKeyboardInteractiveHandler,
   createOrderedStringAuthHandler,
+  createAuthPhase,
+  markAuthPhasePartialSuccess,
+  shouldSkipKiPasswordAutoFill,
   applyAuthToConnOpts,
   safeSend: authSafeSend,
   requestPassphrasesForEncryptedKeys,
@@ -716,7 +719,7 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
         },
       });
       applyAuthToConnOpts(connOpts, authConfig);
-      const hopAuthPhase = authConfig.authPhase || { hadPartialSuccess: false };
+      const hopAuthPhase = authConfig.authPhase || createAuthPhase();
 
       // If first hop and proxy is configured, connect through proxy
       const hasUsableJumpProxy = hasUsableProxy(jump.proxy);
@@ -813,7 +816,7 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
           password: jump.password,
           logPrefix: `[Chain] Hop ${i + 1}/${totalHops}`,
           scope: keyboardInteractiveScope,
-          shouldSkipAutoFill: () => hopAuthPhase.hadPartialSuccess,
+          shouldSkipAutoFill: () => shouldSkipKiPasswordAutoFill(hopAuthPhase),
           onAutoFill: () => sendProgress(
             i + 1, totalHops + 1, hopLabel, 'auth-attempt', 'using saved password',
           ),
@@ -932,7 +935,7 @@ const startSessionApi = createStartSessionApi({
   openTerminalOutputSession, closeTerminalOutputSession,
   get selectZmodemUploadFiles() { return selectZmodemUploadFiles; },
   get selectZmodemDownloadDirectory() { return selectZmodemDownloadDirectory; },
-  preparePrivateKeyForAuth, loadFirstIdentityFileForAuth, prepareSystemSshAgentForAuth, hasUserConfiguredKey, isPasswordProvided, createKeyboardInteractiveHandler, createOrderedStringAuthHandler,
+  preparePrivateKeyForAuth, loadFirstIdentityFileForAuth, prepareSystemSshAgentForAuth, hasUserConfiguredKey, isPasswordProvided, createKeyboardInteractiveHandler, createOrderedStringAuthHandler, createAuthPhase, markAuthPhasePartialSuccess, shouldSkipKiPasswordAutoFill,
   createConnectionRef, acquireConnectionRef, releaseConnectionRef, findReusableSession,
   get probeReceiveConflicts() { return probeReceiveConflicts; },
   get removeRemoteFiles() { return removeRemoteFiles; },
@@ -945,7 +948,7 @@ const execCommandApi = createExecCommandApi({
   findAllDefaultPrivateKeysFromHelper, preparePrivateKeyForAuth, loadIdentityFileForAuth,
   prepareSystemSshAgentForAuth,
   isPassphraseCancelledError, buildAlgorithms, buildAuthHandler, applyAuthToConnOpts,
-  createKeyboardInteractiveHandler, resolveSshConnectionTimeouts,
+  createKeyboardInteractiveHandler, shouldSkipKiPasswordAutoFill, resolveSshConnectionTimeouts,
 });
 const { execCommand } = execCommandApi;
 

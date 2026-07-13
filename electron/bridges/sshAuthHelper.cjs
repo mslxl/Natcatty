@@ -890,7 +890,7 @@ function buildAuthHandler(options) {
     if (password) authMethods.push("password");
     authMethods.push("keyboard-interactive");
 
-    const authPhase = { hadPartialSuccess: false };
+    const authPhase = createAuthPhase();
     return {
       authHandler: createOrderedStringAuthHandler(authMethods, authPhase),
       privateKey: effectivePrivateKey,
@@ -1009,9 +1009,11 @@ function buildAuthHandler(options) {
   let authIndex = 0;
   let lastAttemptedLabel = null;
   const attemptedMethodIds = new Set();
-  // Shared with keyboard-interactive auto-fill: after a first factor succeeds
-  // (partialSuccess), subsequent challenges must prompt the user (#2150).
-  const authPhase = { hadPartialSuccess: false };
+  // Shared with keyboard-interactive auto-fill. See createAuthPhase /
+  // shouldSkipKiPasswordAutoFill — only password-as-first-factor suppresses
+  // reusing the saved host password on a later KI challenge (#2150 / #2151).
+  const authPhase = createAuthPhase();
+  let lastAttemptedType = null;
 
   let triedNone = false;
 
@@ -1022,6 +1024,7 @@ function buildAuthHandler(options) {
     if (methodsLeft === null && !triedNone) {
       triedNone = true;
       lastAttemptedLabel = "none (no credentials)";
+      lastAttemptedType = "none";
       onAuthAttempt?.("none (no credentials)");
       return callback("none");
     }
@@ -1034,7 +1037,7 @@ function buildAuthHandler(options) {
     }
 
     if (partialSuccess) {
-      authPhase.hadPartialSuccess = true;
+      markAuthPhasePartialSuccess(authPhase, lastAttemptedType);
     }
 
     while (authIndex < authMethods.length) {
@@ -1047,6 +1050,7 @@ function buildAuthHandler(options) {
       if (method.type === "agent" && (availableMethods.includes("publickey") || availableMethods.includes("agent"))) {
         console.log(`${logPrefix} Trying agent auth`);
         lastAttemptedLabel = "SSH agent";
+        lastAttemptedType = "agent";
         onAuthAttempt?.("SSH agent");
         return callback("agent");
       } else if (method.type === "publickey" && availableMethods.includes("publickey")) {
@@ -1060,6 +1064,7 @@ function buildAuthHandler(options) {
               ? "configured key"
               : method.id;
         lastAttemptedLabel = keyLabel;
+        lastAttemptedType = "publickey";
         onAuthAttempt?.(keyLabel);
         const pubkeyAuth = {
           type: "publickey",
@@ -1073,6 +1078,7 @@ function buildAuthHandler(options) {
       } else if (method.type === "password" && availableMethods.includes("password")) {
         console.log(`${logPrefix} Trying password auth`);
         lastAttemptedLabel = "password";
+        lastAttemptedType = "password";
         onAuthAttempt?.("password");
         return callback({
           type: "password",
@@ -1081,6 +1087,7 @@ function buildAuthHandler(options) {
         });
       } else if (method.type === "keyboard-interactive" && availableMethods.includes("keyboard-interactive")) {
         lastAttemptedLabel = "keyboard-interactive";
+        lastAttemptedType = "keyboard-interactive";
         onAuthAttempt?.("keyboard-interactive");
         return callback("keyboard-interactive");
       }
@@ -1162,6 +1169,38 @@ const OTP_PROMPT_PATTERN = new RegExp(
 const PASSWORD_PROMPT_PATTERN = /passw(or)?d|密\s*码|口\s*令/i;
 
 /**
+ * Shared auth-phase state for keyboard-interactive auto-fill decisions.
+ * passwordAlreadySucceeded means the password method already contributed a
+ * successful factor — later KI challenges must not silently re-submit the
+ * same host password (EDR second factor). publickey/agent partialSuccess
+ * alone does NOT set this, so publickey+password MFA still auto-fills.
+ */
+function createAuthPhase() {
+  return { hadPartialSuccess: false, passwordAlreadySucceeded: false };
+}
+
+/**
+ * Record a partialSuccess against authPhase. Pass the method type that just
+ * succeeded (e.g. "password", "publickey", "agent").
+ */
+function markAuthPhasePartialSuccess(authPhase, succeededMethodType) {
+  if (!authPhase) return;
+  authPhase.hadPartialSuccess = true;
+  if (succeededMethodType === "password") {
+    authPhase.passwordAlreadySucceeded = true;
+  }
+}
+
+/**
+ * Whether keyboard-interactive should refuse to auto-fill / prefill the saved
+ * host password. True only when password already succeeded as a prior factor
+ * (or callers force-skip). publickey→Password: MFA must return false.
+ */
+function shouldSkipKiPasswordAutoFill(authPhase) {
+  return Boolean(authPhase && authPhase.passwordAlreadySucceeded);
+}
+
+/**
  * Wrap a simple ordered list of ssh2 auth method *strings* (the form used by
  * `connectOpts.authHandler = ["none","password","keyboard-interactive"]`)
  * so callers can observe `partialSuccess` for multi-factor flows (#2150).
@@ -1174,7 +1213,7 @@ const PASSWORD_PROMPT_PATTERN = /passw(or)?d|密\s*码|口\s*令/i;
  * leave the connection unable to offer the second factor (Codex P2 on #2151).
  *
  * @param {string[]} order
- * @param {{ hadPartialSuccess: boolean }} authPhase - mutated on partialSuccess
+ * @param {{ hadPartialSuccess: boolean, passwordAlreadySucceeded?: boolean }} authPhase
  * @returns {(methodsLeft: string[]|null, partialSuccess: boolean, callback: Function) => void}
  */
 function createOrderedStringAuthHandler(order, authPhase) {
@@ -1186,7 +1225,7 @@ function createOrderedStringAuthHandler(order, authPhase) {
 
   return (methodsLeft, partialSuccess, callback) => {
     if (partialSuccess) {
-      if (authPhase) authPhase.hadPartialSuccess = true;
+      markAuthPhasePartialSuccess(authPhase, lastOffered);
       if (lastOffered) succeeded.add(lastOffered);
       // Drop rejected/skipped attempts so a method that was not advertised
       // earlier can be offered now that the server is asking for it.
@@ -1522,6 +1561,9 @@ module.exports = {
   resolveIdentityAgentPath,
   prepareSystemSshAgentForAuth,
   buildAuthHandler,
+  createAuthPhase,
+  markAuthPhasePartialSuccess,
+  shouldSkipKiPasswordAutoFill,
   createOrderedStringAuthHandler,
   createKeyboardInteractiveHandler,
   isAutoFillablePasswordChallenge,

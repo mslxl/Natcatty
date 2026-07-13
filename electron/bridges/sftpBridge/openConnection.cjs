@@ -285,7 +285,7 @@ function createOpenConnectionApi(ctx) {
               password: jump.password,
               logPrefix: `[SFTP Chain] Hop ${i + 1}/${jumpHosts.length}`,
               scope: "external",
-              shouldSkipAutoFill: () => hopAuthPhase.hadPartialSuccess,
+              shouldSkipAutoFill: () => shouldSkipKiPasswordAutoFill(hopAuthPhase),
             });
             conn.on('keyboard-interactive', (name, instructions, lang, prompts, finish) => {
               if (prompts && prompts.length > 0) {
@@ -880,7 +880,7 @@ function createOpenConnectionApi(ctx) {
         password: options.password,
         logPrefix: "[SFTP]",
         scope: "external",
-        shouldSkipAutoFill: () => sftpAuthPhase.hadPartialSuccess,
+        shouldSkipAutoFill: () => shouldSkipKiPasswordAutoFill(sftpAuthPhase),
       });
     
       // Add keyboard-interactive listener BEFORE connecting

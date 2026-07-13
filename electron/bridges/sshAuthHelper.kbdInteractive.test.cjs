@@ -4,6 +4,8 @@ const assert = require("node:assert/strict");
 const {
   createKeyboardInteractiveHandler,
   createOrderedStringAuthHandler,
+  createAuthPhase,
+  shouldSkipKiPasswordAutoFill,
   isAutoFillablePasswordChallenge,
   shouldPrefillSavedPassword,
   buildAuthHandler,
@@ -398,21 +400,22 @@ test("createKeyboardInteractiveHandler shows the modal for EDR secondary passwor
   drainPendingRequests(sent);
 });
 
-test("createKeyboardInteractiveHandler skips auto-fill after partialSuccess (#2150)", () => {
+test("createKeyboardInteractiveHandler skips auto-fill after password partialSuccess (#2150)", () => {
   // password method already succeeded as first factor; a later KI challenge
   // that merely says "Password:" must still show the modal so the user can
   // enter the distinct secondary secret.
   const { sender, sent } = createSender();
   const autoFillEvents = [];
   const promptEvents = [];
-  const authPhase = { hadPartialSuccess: true };
+  const authPhase = createAuthPhase();
+  authPhase.passwordAlreadySucceeded = true;
 
   const handler = createKeyboardInteractiveHandler({
     sender,
     sessionId: "session-1",
     hostname: "corp-edr.example.com",
     password: "login-password",
-    shouldSkipAutoFill: () => authPhase.hadPartialSuccess,
+    shouldSkipAutoFill: () => shouldSkipKiPasswordAutoFill(authPhase),
     onAutoFill: () => autoFillEvents.push("auto-fill"),
     onPromptShown: () => promptEvents.push("prompt-shown"),
   });
@@ -426,17 +429,21 @@ test("createKeyboardInteractiveHandler skips auto-fill after partialSuccess (#21
   drainPendingRequests(sent);
 });
 
-test("createKeyboardInteractiveHandler still auto-fills before any partialSuccess", () => {
+test("createKeyboardInteractiveHandler still auto-fills after publickey partialSuccess (#2151 P2)", () => {
+  // publickey succeeded first; KI Password: is still the account password and
+  // should auto-fill from the saved host credential.
   const { sender, sent } = createSender();
   const autoFillEvents = [];
-  const authPhase = { hadPartialSuccess: false };
+  const authPhase = createAuthPhase();
+  authPhase.hadPartialSuccess = true;
+  // passwordAlreadySucceeded remains false
 
   const handler = createKeyboardInteractiveHandler({
     sender,
     sessionId: "session-1",
     hostname: "vps-1.example.com",
     password: "hunter2",
-    shouldSkipAutoFill: () => authPhase.hadPartialSuccess,
+    shouldSkipAutoFill: () => shouldSkipKiPasswordAutoFill(authPhase),
     onAutoFill: () => autoFillEvents.push("auto-fill"),
   });
 
@@ -448,16 +455,39 @@ test("createKeyboardInteractiveHandler still auto-fills before any partialSucces
   assert.deepEqual(sent, []);
 });
 
-test("createKeyboardInteractiveHandler omits savedPassword on post-partialSuccess modal (#2150)", () => {
+test("createKeyboardInteractiveHandler still auto-fills before any partialSuccess", () => {
   const { sender, sent } = createSender();
-  const authPhase = { hadPartialSuccess: true };
+  const autoFillEvents = [];
+  const authPhase = createAuthPhase();
+
+  const handler = createKeyboardInteractiveHandler({
+    sender,
+    sessionId: "session-1",
+    hostname: "vps-1.example.com",
+    password: "hunter2",
+    shouldSkipAutoFill: () => shouldSkipKiPasswordAutoFill(authPhase),
+    onAutoFill: () => autoFillEvents.push("auto-fill"),
+  });
+
+  const finishCalls = [];
+  handler("", "", "", [passwordPrompt], (responses) => finishCalls.push(responses));
+
+  assert.deepEqual(autoFillEvents, ["auto-fill"]);
+  assert.deepEqual(finishCalls, [["hunter2"]]);
+  assert.deepEqual(sent, []);
+});
+
+test("createKeyboardInteractiveHandler omits savedPassword on post-password-partialSuccess modal (#2150)", () => {
+  const { sender, sent } = createSender();
+  const authPhase = createAuthPhase();
+  authPhase.passwordAlreadySucceeded = true;
 
   const handler = createKeyboardInteractiveHandler({
     sender,
     sessionId: "session-1",
     hostname: "corp-edr.example.com",
     password: "login-password",
-    shouldSkipAutoFill: () => authPhase.hadPartialSuccess,
+    shouldSkipAutoFill: () => shouldSkipKiPasswordAutoFill(authPhase),
   });
 
   handler("", "", "", [passwordPrompt], () => {});
@@ -616,16 +646,17 @@ test("createKeyboardInteractiveHandler shows modal for Secondary Authentication 
   drainPendingRequests(sent);
 });
 
-test("createKeyboardInteractiveHandler disables save on post-partialSuccess Password prompt", () => {
+test("createKeyboardInteractiveHandler disables save on post-password-partialSuccess Password prompt", () => {
   const { sender, sent } = createSender();
-  const authPhase = { hadPartialSuccess: true };
+  const authPhase = createAuthPhase();
+  authPhase.passwordAlreadySucceeded = true;
 
   const handler = createKeyboardInteractiveHandler({
     sender,
     sessionId: "session-1",
     hostname: "corp-edr.example.com",
     password: "login-password",
-    shouldSkipAutoFill: () => authPhase.hadPartialSuccess,
+    shouldSkipAutoFill: () => shouldSkipKiPasswordAutoFill(authPhase),
   });
 
   handler("", "", "", [passwordPrompt], () => {});
@@ -635,6 +666,33 @@ test("createKeyboardInteractiveHandler disables save on post-partialSuccess Pass
   assert.equal(sent[0].payload.allowSavePassword, false);
 
   drainPendingRequests(sent);
+});
+
+test("createOrderedStringAuthHandler sets passwordAlreadySucceeded only for password factor", () => {
+  const authPhase = createAuthPhase();
+  const handler = createOrderedStringAuthHandler(
+    ["none", "publickey", "password", "keyboard-interactive"],
+    authPhase,
+  );
+
+  handler(null, false, () => {}); // none
+  handler(["publickey", "password", "keyboard-interactive"], false, () => {}); // publickey
+  handler(["password", "keyboard-interactive"], true, () => {}); // after publickey PS
+
+  assert.equal(authPhase.hadPartialSuccess, true);
+  assert.equal(authPhase.passwordAlreadySucceeded, false);
+  assert.equal(shouldSkipKiPasswordAutoFill(authPhase), false);
+
+  const authPhasePw = createAuthPhase();
+  const handlerPw = createOrderedStringAuthHandler(
+    ["none", "password", "keyboard-interactive"],
+    authPhasePw,
+  );
+  handlerPw(null, false, () => {});
+  handlerPw(["password", "keyboard-interactive"], false, () => {}); // password
+  handlerPw(["keyboard-interactive"], true, () => {}); // after password PS
+  assert.equal(authPhasePw.passwordAlreadySucceeded, true);
+  assert.equal(shouldSkipKiPasswordAutoFill(authPhasePw), true);
 });
 
 test("createKeyboardInteractiveHandler allows save on first-factor password modal", () => {

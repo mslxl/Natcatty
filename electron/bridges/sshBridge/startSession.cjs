@@ -839,10 +839,10 @@ function createStartSessionApi(ctx) {
 
         // Track which method succeeded for caching
         let lastTriedMethod = null;
-        // Shared with keyboard-interactive auto-fill: after a first factor
-        // succeeds (partialSuccess), second-factor challenges always prompt
-        // the user instead of reusing the saved login password (#2150).
-        const authPhase = { hadPartialSuccess: false };
+        // Shared with keyboard-interactive auto-fill. Only suppresses reuse of
+        // the saved host password when password already succeeded as a factor
+        // (EDR step-up). publickey partialSuccess still allows Password: auto-fill.
+        const authPhase = createAuthPhase();
 
         if (authAgent) {
           const order = ["none", "agent"];
@@ -967,7 +967,16 @@ function createStartSessionApi(ctx) {
               // When partialSuccess is true, we should try the remaining methods the server is asking for
               if (partialSuccess && methodsLeft && methodsLeft.length > 0) {
                 hadPartialSuccess = true;
-                authPhase.hadPartialSuccess = true;
+                // password method id is "password"; key ids start with publickey-
+                const succeededType =
+                  lastTriedMethod === "password"
+                    ? "password"
+                    : lastTriedMethod === "agent"
+                      ? "agent"
+                      : lastTriedMethod === "keyboard-interactive"
+                        ? "keyboard-interactive"
+                        : "publickey";
+                markAuthPhasePartialSuccess(authPhase, succeededType);
                 // Record the first successful method (the one that triggered partialSuccess)
                 if (lastTriedMethod && !firstSuccessfulMethod) {
                   firstSuccessfulMethod = lastTriedMethod;
@@ -1500,7 +1509,7 @@ function createStartSessionApi(ctx) {
             password: options.password,
             logPrefix,
             scope: "terminal",
-            shouldSkipAutoFill: () => authPhase.hadPartialSuccess,
+            shouldSkipAutoFill: () => shouldSkipKiPasswordAutoFill(authPhase),
             onAutoFill: () => sendProgress(
               totalHops, totalHops, options.hostname, 'auth-attempt', 'using saved password',
             ),

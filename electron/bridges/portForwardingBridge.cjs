@@ -16,6 +16,7 @@ const {
   buildAuthHandler, 
   createKeyboardInteractiveHandler, 
   applyAuthToConnOpts,
+  shouldSkipKiPasswordAutoFill,
   findAllDefaultPrivateKeys: findAllDefaultPrivateKeysFromHelper,
   preparePrivateKeyForAuth,
   loadFirstIdentityFileForAuth,
@@ -171,7 +172,7 @@ async function startPortForward(event, payload) {
   portForwardingTunnels.set(tunnelId, tunnelState);
 
   let defaultKeys = [];
-  let portForwardAuthPhase = { hadPartialSuccess: false };
+  let portForwardAuthPhase = { hadPartialSuccess: false, passwordAlreadySucceeded: false };
   try {
     const systemAuthAgent = hasCertificate ? null : await prepareSystemSshAgentForAuth({
       useSshAgent,
@@ -367,7 +368,7 @@ async function startPortForward(event, payload) {
     password,
     logPrefix: "[PortForward]",
     scope: "external",
-    shouldSkipAutoFill: () => portForwardAuthPhase.hadPartialSuccess,
+    shouldSkipAutoFill: () => shouldSkipKiPasswordAutoFill(portForwardAuthPhase),
   }));
 
   return new Promise((resolve, reject) => {

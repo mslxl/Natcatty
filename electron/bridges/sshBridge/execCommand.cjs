@@ -204,7 +204,7 @@ function createExecCommandApi(ctx) {
             password: payload.password,
             logPrefix: "[SSH Exec]",
             scope: "external",
-            shouldSkipAutoFill: () => execAuthPhase.hadPartialSuccess,
+            shouldSkipAutoFill: () => shouldSkipKiPasswordAutoFill(execAuthPhase),
           }));
         } else if (connectOpts.agent) {
           const order = ["agent"];
