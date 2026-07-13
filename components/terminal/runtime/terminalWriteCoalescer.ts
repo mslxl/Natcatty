@@ -34,6 +34,8 @@ const incompleteAltScreenCsiByTerm = new WeakMap<XTerm, IncompletePrivateCsi>();
  * `buffer.active.type === "alternate"` (parser is async relative to our schedule).
  */
 const pendingAltScreenEntryByTerm = new WeakMap<XTerm, true>();
+/** True once we have observed the alternate buffer live on this term. */
+const observedAltScreenByTerm = new WeakMap<XTerm, true>();
 
 const isPrivateParamCharCode = (code: number): boolean =>
   (code >= 0x30 && code <= 0x39) || code === 0x3b;
@@ -134,9 +136,13 @@ const probeAltScreenScheduling = (
       finishPrivate(ch);
       continue;
     }
-    // Other CSI final/abort — drop incomplete private mode.
+    // Abort incomplete private mode. ESC / C1 start a new sequence (xterm does
+    // the same) — reprocess this byte as a fresh introducer.
     phase = null;
     params = "";
+    if (ch === ESC || ch === C1_CSI) {
+      i -= 1;
+    }
   }
 
   if (phase !== null) {
@@ -171,14 +177,23 @@ const noteAltScreenScheduleProbe = (term: XTerm, chunk: string): boolean => {
 
   if (probe.lastTransition === "leave") {
     pendingAltScreenEntryByTerm.delete(term);
+    observedAltScreenByTerm.delete(term);
   } else if (probe.lastTransition === "enter") {
     // Complete enter CSI observed; xterm may still report normal until parse.
     pendingAltScreenEntryByTerm.set(term, true);
   }
 
   if (isTerminalAlternateScreenActive(term)) {
-    // Stay on rAF while the alternate buffer is live.
+    // Buffer realized alternate — drop enter-pending (no longer needed).
+    observedAltScreenByTerm.set(term, true);
+    pendingAltScreenEntryByTerm.delete(term);
     return true;
+  }
+
+  // Left alternate without a recognized leave CSI (e.g. RIS / ESC c).
+  if (observedAltScreenByTerm.has(term)) {
+    observedAltScreenByTerm.delete(term);
+    pendingAltScreenEntryByTerm.delete(term);
   }
 
   return (
@@ -477,6 +492,7 @@ export const resetTerminalWriteCoalescer = (term: XTerm): void => {
   terminalWriteCoalescerWriters.delete(term);
   incompleteAltScreenCsiByTerm.delete(term);
   pendingAltScreenEntryByTerm.delete(term);
+  observedAltScreenByTerm.delete(term);
 };
 
 export const getTerminalWriteCoalescerPendingBytes = (term: XTerm): number =>
