@@ -659,20 +659,20 @@ test("capacity follows terminal scrollback so flood output cannot retain unbound
     } as never),
     1000 + 24 + 64,
   );
-  // Unlimited scrollback cap (50000) plus viewport headroom.
+  // Settings UI allows up to 100000 scrollback rows.
   assert.equal(
     resolveTerminalLineTimestampCapacity({
       rows: 24,
       options: { scrollback: 200000 },
     } as never),
-    50000 + 256,
+    100000 + 256,
   );
   assert.equal(
     resolveTerminalLineTimestampCapacity({
       rows: 24,
-      options: { scrollback: 50000 },
+      options: { scrollback: 80000 },
     } as never),
-    50000 + 24 + 64,
+    80000 + 24 + 64,
   );
 });
 

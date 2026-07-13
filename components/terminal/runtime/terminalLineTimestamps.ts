@@ -1,7 +1,5 @@
 import type { Terminal as XTerm } from "@xterm/xterm";
 
-import { XTERM_UNLIMITED_SCROLLBACK_CAP } from "../../../infrastructure/config/xtermPerformance";
-
 export type TerminalLineTimestampSegment =
   | { kind: "data"; data: string }
   | { kind: "timestamp"; label: string };
@@ -116,10 +114,10 @@ const stores = new WeakMap<XTerm, TimestampStore>();
 const MAX_SEGMENTED_TIMESTAMP_WRITES = 64;
 const BULK_TIMESTAMP_BATCH_MIN_BYTES = 4096;
 /**
- * Hard ceiling for retained timestamps: unlimited scrollback cap plus a small
- * viewport headroom so the oldest still-visible rows keep labels.
+ * Hard ceiling for retained timestamps. Matches Settings UI max scrollback
+ * (100000) plus viewport headroom so the oldest still-visible rows keep labels.
  */
-export const MAX_TERMINAL_LINE_TIMESTAMP_ENTRIES = XTERM_UNLIMITED_SCROLLBACK_CAP + 256;
+export const MAX_TERMINAL_LINE_TIMESTAMP_ENTRIES = 100000 + 256;
 /** Compact disposed holes at least this often during flood writes. */
 const TIMESTAMP_PRUNE_EVERY_RECORDS = 256;
 /** Max xterm marker.dispose() calls per prune/write pass (amortize O(n) splices). */
