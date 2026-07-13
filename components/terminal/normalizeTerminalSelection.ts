@@ -178,9 +178,11 @@ function buildLinearSelection(
  * Join two physical rows that xterm marked as a soft wrap.
  *
  * Trailing whitespace on the previous row may be a real word separator (one
- * space) or TUI display padding (often many spaces). Padding alone is not
- * treated as proof of a word boundary — token-like continuations (URLs, paths,
- * CJK) stay tight; only clear prose-style boundaries get a single space.
+ * space) or TUI display padding (often many spaces). Multi-space padding alone
+ * is never treated as proof of a word boundary — inventing a space would split
+ * identifiers, URLs, and non-Latin words. A single trailing space is the common
+ * soft-wrap-at-word-boundary case and keeps one separator, except for token
+ * continuations (CJK / URL / path) which stay tight.
  */
 export function joinSoftWrappedRows(previousRaw: string, nextRaw: string): string {
   const trailingWhitespace = countTrailingHorizontalWhitespace(previousRaw);
@@ -202,15 +204,23 @@ export function joinSoftWrappedRows(previousRaw: string, nextRaw: string): strin
     return nextRaw;
   }
 
-  // Token continuations (CJK, URL/path, boundary punctuation) always join
-  // tightly — even when the previous row had exactly one trailing pad cell.
+  // Token continuations always join tightly (even with a single pad cell).
   if (isTokenContinuation(left, nextRaw)) {
     return left + nextRaw;
   }
 
-  // A single trailing space is the common soft-wrap-at-word-boundary case.
-  // Multi-space runs are usually TUI padding collapsed to one prose separator.
-  return `${left} ${nextRaw}`;
+  // Exactly one trailing space → classic word-boundary soft wrap.
+  if (trailingWhitespace === 1) {
+    return `${left} ${nextRaw}`;
+  }
+
+  // Multi-space TUI padding: do not invent separators for mid-token wraps
+  // (identifiers, URLs, non-Latin words). Keep a separator only after clear
+  // sentence-ending punctuation so "…com. Next" stays two sentences.
+  if (/[.!?…]$/u.test(left)) {
+    return `${left} ${nextRaw}`;
+  }
+  return left + nextRaw;
 }
 
 function isTokenContinuation(left: string, next: string): boolean {

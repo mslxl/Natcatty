@@ -128,9 +128,11 @@ test("joinSoftWrappedRows does not invent spaces before CJK punctuation", () => 
   assert.equal(joinSoftWrappedRows("你好   ", "，世界"), "你好，世界");
 });
 
-test("joinSoftWrappedRows collapses prose padding to one space", () => {
-  assert.equal(joinSoftWrappedRows("shifts   ", "across"), "shifts across");
-  assert.equal(joinSoftWrappedRows("most   ", "reliable"), "most reliable");
+test("joinSoftWrappedRows does not invent spaces for multi-space TUI padding", () => {
+  // Multi-space runs are display padding, not proof of a word boundary.
+  assert.equal(joinSoftWrappedRows("most   ", "reliable"), "mostreliable");
+  assert.equal(joinSoftWrappedRows("someVeryLongIdenti   ", "fier"), "someVeryLongIdentifier");
+  assert.equal(joinSoftWrappedRows("прив   ", "ет"), "привет");
 });
 
 test("joinSoftWrappedRows does not invent spaces between CJK characters", () => {
@@ -149,8 +151,14 @@ test("joinSoftWrappedRows keeps a space after sentence-ending punctuation", () =
 });
 
 test("joinSoftWrappedRows only uses the trailing token for URL detection", () => {
+  // Multi-space padding after a normal word stays tight (not a URL token).
   assert.equal(
     joinSoftWrappedRows("See https://x.test for more   ", "details"),
+    "See https://x.test for moredetails",
+  );
+  // Single trailing space still preserves the word boundary.
+  assert.equal(
+    joinSoftWrappedRows("See https://x.test for more ", "details"),
     "See https://x.test for more details",
   );
 });
@@ -195,7 +203,7 @@ test("preserves partial trailing spaces after wide characters using column ends"
   assert.equal(getNormalizedTerminalSelection(term), "中  ");
 });
 
-test("joins soft-wrapped rows, strips padding, keeps word separators", () => {
+test("joins soft-wrapped rows, strips multi-space padding without inventing separators", () => {
   const term = makeTerm(
     [
       { text: "Pi: use /copy is the most   " },
@@ -207,8 +215,19 @@ test("joins soft-wrapped rows, strips padding, keeps word separators", () => {
 
   assert.equal(
     getNormalizedTerminalSelection(term),
-    "Pi: use /copy is the most reliable option\nnext hard line",
+    "Pi: use /copy is the mostreliable option\nnext hard line",
   );
+});
+
+test("keeps a single trailing space as a word-boundary soft wrap", () => {
+  const term = makeTerm(
+    [
+      { text: "hello " },
+      { text: "world   ", isWrapped: true },
+    ],
+    { start: { x: 0, y: 0 }, end: { x: 8, y: 1 } },
+  );
+  assert.equal(getNormalizedTerminalSelection(term), "hello world");
 });
 
 test("preserves hard line breaks between non-wrapped rows while trimming padding", () => {
