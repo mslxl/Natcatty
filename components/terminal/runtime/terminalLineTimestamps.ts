@@ -492,7 +492,8 @@ const pruneDisposedEntries = (
       const entry = entries[index];
       const line = entry.marker.line;
       if (seenLines.has(line)) {
-        entry.marker.dispose?.();
+        // Abandon the older duplicate without marker.dispose() — xterm dispose
+        // is O(markers) and rewrite storms would otherwise reintroduce freezes.
         continue;
       }
       seenLines.add(line);
