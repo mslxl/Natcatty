@@ -22,6 +22,13 @@ const {
 const PREFERRED_KEY_NAMES = ["id_ed25519", "id_ecdsa", "id_rsa"];
 const SSH_KEY_PATTERN = /^id_[\w-]+$/;
 
+function orderSshIdentityNames(names) {
+  const uniqueNames = [...new Set(names)];
+  const preferred = PREFERRED_KEY_NAMES.filter((name) => uniqueNames.includes(name));
+  const rest = uniqueNames.filter((name) => !PREFERRED_KEY_NAMES.includes(name)).sort();
+  return [...preferred, ...rest];
+}
+
 class PassphraseCancelledError extends Error {
   constructor(keyPath) {
     super(`Passphrase entry cancelled for ${keyPath}`);
@@ -355,9 +362,7 @@ async function findDefaultPrivateKey() {
   } catch {
     return null;
   }
-  const preferred = PREFERRED_KEY_NAMES.filter(n => allNames.includes(n));
-  const rest = allNames.filter(n => !PREFERRED_KEY_NAMES.includes(n)).sort();
-  const sorted = [...preferred, ...rest];
+  const sorted = orderSshIdentityNames(allNames);
 
   for (const name of sorted) {
     const keyPath = path.join(sshDir, name);
@@ -391,9 +396,7 @@ async function findAllDefaultPrivateKeys(options = {}) {
   } catch {
     return [];
   }
-  const preferred = PREFERRED_KEY_NAMES.filter(n => allNames.includes(n));
-  const rest = allNames.filter(n => !PREFERRED_KEY_NAMES.includes(n)).sort();
-  const sorted = [...preferred, ...rest];
+  const sorted = orderSshIdentityNames(allNames);
 
   const promises = sorted.map(async (name) => {
     const keyPath = path.join(sshDir, name);
@@ -1611,6 +1614,7 @@ async function requestPassphrasesForEncryptedKeys(sender, hostname) {
 module.exports = {
   PREFERRED_KEY_NAMES,
   SSH_KEY_PATTERN,
+  orderSshIdentityNames,
   looksLikePrivateKey,
   isKeyEncrypted,
   findDefaultPrivateKey,

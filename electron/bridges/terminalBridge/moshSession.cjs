@@ -6,6 +6,7 @@ const {
   shouldProcessSessionOutput,
 } = require("../terminalFlowAck.cjs");
 const { createSshConnExecProbe } = require("../ai/sessionShellKind.cjs");
+const { orderSshIdentityNames, SSH_KEY_PATTERN } = require("../sshAuthHelper.cjs");
 
 // MoshCatty normally emits this cleanup together with an alternate-screen
 // exit. Netcatty keeps the primary screen, so restore only terminal modes that
@@ -100,6 +101,18 @@ function createMoshSessionApi(ctx) {
       if (trimmed === "~") return os.homedir();
       if (trimmed.startsWith("~/")) return path.join(os.homedir(), trimmed.slice(2));
       return trimmed;
+    }
+
+    function discoverMoshIdentityPaths() {
+      const sshDir = path.join(os.homedir(), ".ssh");
+      try {
+        const names = fs.readdirSync(sshDir, { withFileTypes: true })
+          .filter((entry) => (entry.isFile() || entry.isSymbolicLink()) && SSH_KEY_PATTERN.test(entry.name))
+          .map((entry) => entry.name);
+        return orderSshIdentityNames(names).map((name) => path.join(sshDir, name));
+      } catch {
+        return [];
+      }
     }
 
     async function prepareMoshSshAgentOptions(options) {
@@ -260,6 +273,20 @@ function createMoshSessionApi(ctx) {
             );
             tempFiles.push(certPath);
             sshArgs.push("-o", `CertificateFile=${certPath}`);
+          }
+        }
+
+        if (options.authMethod === "auto") {
+          const selectedIdentities = new Set();
+          for (let index = 0; index < sshArgs.length - 1; index += 1) {
+            if (sshArgs[index] === "-i") selectedIdentities.add(sshArgs[index + 1]);
+          }
+          for (const keyPath of discoverMoshIdentityPaths()) {
+            const selector = options.useSshAgent ? `${keyPath}.pub` : keyPath;
+            if (!selectedIdentities.has(selector)) {
+              sshArgs.push("-i", selector);
+              selectedIdentities.add(selector);
+            }
           }
         }
 

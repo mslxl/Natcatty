@@ -138,6 +138,28 @@ test("prepareEtSshEnvironment automatic mode tries real local keys before a save
   assert.match(config, /PreferredAuthentications publickey,password,keyboard-interactive/);
 });
 
+test("prepareEtSshEnvironment automatic mode tries standard keys before custom keys", (t) => {
+  const { api, base } = makeApi(t);
+  const sshDir = path.join(base, "home", ".ssh");
+  fs.mkdirSync(sshDir, { recursive: true });
+  fs.writeFileSync(path.join(sshDir, "id_work"), "PRIVATE KEY");
+  fs.writeFileSync(path.join(sshDir, "id_rsa"), "PRIVATE KEY");
+  fs.writeFileSync(path.join(sshDir, "id_ed25519"), "PRIVATE KEY");
+
+  const env = api.prepareEtSshEnvironment("sess-auto-order", {
+    hostname: "h",
+    username: "u",
+    authMethod: "auto",
+  });
+  const identities = env.sshOptions.filter((option) => option.startsWith("IdentityFile="));
+
+  assert.deepEqual(identities, [
+    `IdentityFile=${path.join(sshDir, "id_ed25519").replace(/\\/g, "/")}`,
+    `IdentityFile=${path.join(sshDir, "id_rsa").replace(/\\/g, "/")}`,
+    `IdentityFile=${path.join(sshDir, "id_work").replace(/\\/g, "/")}`,
+  ]);
+});
+
 test("prepareEtSshEnvironment automatic mode keeps interactive authentication without a saved password", (t) => {
   const { api } = makeApi(t);
   const env = api.prepareEtSshEnvironment("sess-auto-interactive", {

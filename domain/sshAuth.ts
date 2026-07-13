@@ -216,7 +216,7 @@ export const resolveBridgeKeyAuth = (args: {
 
 export const resolveBridgeSshAgentAuth = (
   host: Pick<Host, "authMethod" | "useSshAgent" | "identityAgent" | "identitiesOnly" | "addKeysToAgent" | "useKeychain">,
-  key?: Pick<SSHKey, "certificate" | "publicKey">,
+  key?: Pick<SSHKey, "certificate" | "publicKey" | "source" | "filePath">,
   authMethod?: HostAuthMethod,
 ): {
   useSshAgent?: boolean;
@@ -230,7 +230,11 @@ export const resolveBridgeSshAgentAuth = (
     return { useSshAgent: false };
   }
   if (authMethod === "key") {
-    if (host.useSshAgent !== true || !key?.publicKey?.trim()) {
+    const hasAgentSelector = Boolean(
+      key?.publicKey?.trim()
+      || (key?.source === "reference" && key.filePath?.trim()),
+    );
+    if (host.useSshAgent !== true || !hasAgentSelector) {
       return { useSshAgent: false };
     }
     return {
@@ -239,7 +243,7 @@ export const resolveBridgeSshAgentAuth = (
       identitiesOnly: true,
       addKeysToAgent: host.addKeysToAgent,
       useKeychain: host.useKeychain,
-      agentPublicKeys: [key.publicKey],
+      ...(key?.publicKey?.trim() ? { agentPublicKeys: [key.publicKey] } : {}),
     };
   }
   if (host.useSshAgent !== true) {

@@ -126,6 +126,23 @@ test("resolveBridgeSshAgentAuth forwards a selected vault public key", () => {
   );
 });
 
+test("resolveBridgeSshAgentAuth keeps agent login for a selected reference key", () => {
+  assert.deepEqual(
+    resolveBridgeSshAgentAuth({
+      ...autofillBaseHost,
+      useSshAgent: true,
+      identitiesOnly: false,
+    }, referenceKey, "key"),
+    {
+      useSshAgent: true,
+      identityAgent: undefined,
+      identitiesOnly: true,
+      addKeysToAgent: undefined,
+      useKeychain: undefined,
+    },
+  );
+});
+
 test("resolveBridgeSshAgentAuth preserves an explicit agent opt-out", () => {
   assert.deepEqual(
     resolveBridgeSshAgentAuth({

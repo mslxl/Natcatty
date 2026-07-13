@@ -7,6 +7,7 @@ const {
   shouldAcceptSessionOutput,
   shouldProcessSessionOutput,
 } = require("../terminalFlowAck.cjs");
+const { orderSshIdentityNames, SSH_KEY_PATTERN } = require("../sshAuthHelper.cjs");
 
 //
 // EternalTerminal session backend, factored into the createXxxSessionApi
@@ -322,10 +323,11 @@ main();
       fs.mkdirSync(realSshDir, { recursive: true });
       let defaultIdentityPaths = [];
       try {
-        defaultIdentityPaths = fs.readdirSync(realSshDir, { withFileTypes: true })
-          .filter((entry) => (entry.isFile() || entry.isSymbolicLink()) && /^id_[\w-]+$/.test(entry.name))
-          .map((entry) => path.join(realSshDir, entry.name))
-          .sort();
+        const identityNames = fs.readdirSync(realSshDir, { withFileTypes: true })
+          .filter((entry) => (entry.isFile() || entry.isSymbolicLink()) && SSH_KEY_PATTERN.test(entry.name))
+          .map((entry) => entry.name);
+        defaultIdentityPaths = orderSshIdentityNames(identityNames)
+          .map((name) => path.join(realSshDir, name));
       } catch {
         // Local key discovery is optional. Password-only and interactive ET
         // sessions must still work when ~/.ssh cannot be read.
