@@ -461,6 +461,24 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
 
   term.open(ctx.container);
 
+  // Intercept native copy (Edit > Copy, browser/Electron copy event) before
+  // xterm's built-in handler writes the unnormalized selectionText.
+  const handleNativeCopy = (event: ClipboardEvent) => {
+    if (!term.hasSelection()) return;
+    const selection = getNormalizedTerminalSelection(term);
+    if (!selection) return;
+    if (event.clipboardData) {
+      event.clipboardData.setData("text/plain", selection);
+    } else {
+      void navigator.clipboard.writeText(selection).catch((err) => {
+        logger.warn("[XTerm] Normalized native copy failed:", err);
+      });
+    }
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  };
+  term.element?.addEventListener("copy", handleNativeCopy, true);
+
   let webglAddon: WebglAddon | null = null;
   let webglLoaded = false;
   const scopedWindow = window as Window & {
@@ -1418,6 +1436,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     ensureWebglRenderer: loadWebglRenderer,
     suspendWebglRenderer,
     dispose: () => {
+      term.element?.removeEventListener("copy", handleNativeCopy, true);
       ctx.container.removeEventListener(
         "wheel",
         handleForcedHistoryScrollWheel,

@@ -114,7 +114,7 @@ function buildLinearSelection(
     const line = buffer.getLine(y);
     if (!line) {
       if (current.length > 0 || logicalLines.length > 0) {
-        logicalLines.push(current);
+        logicalLines.push(trimWrittenPadding(current));
         current = "";
       }
       continue;
@@ -124,11 +124,12 @@ function buildLinearSelection(
     // Match xterm: on multi-row selections the first row runs to the line end
     // (undefined endCol → line length), not only to the selection's end.x.
     const endCol = y === end.y ? end.x : undefined;
-    const rowText = trimWrittenPadding(
+    // Keep written trailing spaces on the raw row so soft-wrap joins can tell
+    // word-boundary wraps ("hello " + "world") apart from mid-word wraps.
+    const rowText =
       endCol === undefined
         ? line.translateToString(true, startCol)
-        : line.translateToString(true, startCol, endCol),
-    );
+        : line.translateToString(true, startCol, endCol);
 
     if (y === start.y) {
       current = rowText;
@@ -136,17 +137,71 @@ function buildLinearSelection(
     }
 
     if (line.isWrapped) {
-      // Soft wrap: padding was already stripped from the previous physical row.
-      current += rowText;
+      current = joinSoftWrappedRows(current, rowText);
       continue;
     }
 
-    logicalLines.push(current);
+    logicalLines.push(trimWrittenPadding(current));
     current = rowText;
   }
 
-  logicalLines.push(current);
+  logicalLines.push(trimWrittenPadding(current));
   return normalizeClipboardText(logicalLines.join("\n"));
+}
+
+/**
+ * Join two physical rows that xterm marked as a soft wrap.
+ *
+ * - Mid-word wrap (no trailing whitespace on previous row): concatenate tightly.
+ * - Word-boundary wrap or TUI padding (trailing whitespace): collapse boundary
+ *   whitespace to a single separator space, except between CJK characters where
+ *   a space must not be invented.
+ */
+export function joinSoftWrappedRows(previousRaw: string, nextRaw: string): string {
+  const left = trimWrittenPadding(previousRaw);
+  const hadTrailingWhitespace = left.length < previousRaw.length;
+
+  if (!hadTrailingWhitespace) {
+    return left + nextRaw;
+  }
+
+  if (!nextRaw) {
+    return left;
+  }
+
+  if (/^\s/u.test(nextRaw)) {
+    // Next row already carries leading whitespace; don't double-insert.
+    return left + nextRaw;
+  }
+
+  if (left.length === 0) {
+    return nextRaw;
+  }
+
+  if (endsWithCjk(left) && startsWithCjk(nextRaw)) {
+    return left + nextRaw;
+  }
+
+  return `${left} ${nextRaw}`;
+}
+
+function endsWithCjk(text: string): boolean {
+  if (!text) return false;
+  return isCjkCodePoint(text.codePointAt(text.length - 1) ?? 0);
+}
+
+function startsWithCjk(text: string): boolean {
+  if (!text) return false;
+  return isCjkCodePoint(text.codePointAt(0) ?? 0);
+}
+
+function isCjkCodePoint(cp: number): boolean {
+  return (
+    (cp >= 0x3040 && cp <= 0x30ff) || // Hiragana / Katakana
+    (cp >= 0x3400 && cp <= 0x9fff) || // CJK Unified Ideographs
+    (cp >= 0xf900 && cp <= 0xfaff) || // CJK Compatibility Ideographs
+    (cp >= 0xff66 && cp <= 0xff9d) // Half-width Katakana
+  );
 }
 
 /**

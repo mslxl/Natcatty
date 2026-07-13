@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   getNormalizedTerminalSelection,
+  joinSoftWrappedRows,
   trimWrittenPadding,
   type SelectionBufferLine,
   type SelectionTerminal,
@@ -24,7 +25,6 @@ function makeLine(
     translateToString(trimRight = false, startColumn = 0, endColumn = full.length) {
       let end = Math.max(startColumn, Math.min(endColumn, full.length));
       if (trimRight) {
-        // Drop only empty (never-written) cells on the right — not spaces.
         while (end > startColumn && full[end - 1] === "\0") {
           end -= 1;
         }
@@ -66,8 +66,20 @@ test("trimWrittenPadding removes written trailing spaces but keeps internal ones
   assert.equal(trimWrittenPadding("tabs\t\t"), "tabs");
 });
 
-test("joins soft-wrapped rows and strips written display padding", () => {
-  // TUI pads each physical row with real spaces; empty cells alone are not the problem.
+test("joinSoftWrappedRows keeps a word-boundary space after padding trim", () => {
+  assert.equal(joinSoftWrappedRows("hello   ", "world"), "hello world");
+  assert.equal(joinSoftWrappedRows("hello ", "world"), "hello world");
+});
+
+test("joinSoftWrappedRows concatenates mid-word wraps tightly", () => {
+  assert.equal(joinSoftWrappedRows("hel", "lo world"), "hello world");
+});
+
+test("joinSoftWrappedRows does not invent spaces between CJK characters", () => {
+  assert.equal(joinSoftWrappedRows("最   ", "稳"), "最稳");
+});
+
+test("joins soft-wrapped rows, strips padding, keeps word separators", () => {
   const term = makeTerm(
     [
       { text: "Pi: use /copy is the most   " },
@@ -79,7 +91,7 @@ test("joins soft-wrapped rows and strips written display padding", () => {
 
   assert.equal(
     getNormalizedTerminalSelection(term),
-    "Pi: use /copy is the mostreliable option\nnext hard line",
+    "Pi: use /copy is the most reliable option\nnext hard line",
   );
 });
 
@@ -113,8 +125,8 @@ test("respects partial column selection on first and last rows", () => {
     { start: { x: 2, y: 0 }, end: { x: 10, y: 1 } },
   );
 
-  // first row from col 2 to line end (multi-row): "hello worldyy"
-  // last row cols 0..10: "continued " → written-space trim → "continued"
+  // first row from col 2 to line end (multi-row): "hello worldyy" (no trailing ws)
+  // last row cols 0..10: "continued " → logical trim at end of selection → "continued"
   assert.equal(getNormalizedTerminalSelection(term), "hello worldyycontinued");
 });
 
@@ -162,7 +174,6 @@ test("preserves rectangular column selection column bounds on every row", () => 
     { columnSelect: true },
   );
 
-  // Columns 2..5 on each row (not linear first-row-to-end / last-row-from-start).
   assert.equal(getNormalizedTerminalSelection(term), "cde\n234\nCDE");
 });
 
@@ -172,4 +183,15 @@ test("converts non-breaking spaces to regular spaces", () => {
     { start: { x: 0, y: 0 }, end: { x: 13, y: 0 } },
   );
   assert.equal(getNormalizedTerminalSelection(term), "hello world");
+});
+
+test("soft-wrapped CJK with padding joins without inserted spaces", () => {
+  const term = makeTerm(
+    [
+      { text: "Pi: 用 /copy 最   " },
+      { text: "稳                ", isWrapped: true },
+    ],
+    { start: { x: 0, y: 0 }, end: { x: 18, y: 1 } },
+  );
+  assert.equal(getNormalizedTerminalSelection(term), "Pi: 用 /copy 最稳");
 });
