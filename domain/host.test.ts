@@ -189,6 +189,19 @@ test("sanitizeHost preserves an explicit password-only choice", () => {
   assert.equal(sanitized.authPolicyVersion, 1);
 });
 
+test("sanitizeHost preserves a legacy no-save password-only choice", () => {
+  const sanitized = sanitizeHost(makeHost({
+    password: undefined,
+    savePassword: false,
+    authMethod: "password",
+    authPolicyVersion: undefined,
+  }));
+
+  assert.equal(sanitized.authMethod, "password");
+  assert.equal(sanitized.savePassword, false);
+  assert.equal(sanitized.authPolicyVersion, 1);
+});
+
 test("sanitizeHost preserves a legacy whitespace-only password", () => {
   const sanitized = sanitizeHost(makeHost({
     password: "   ",
