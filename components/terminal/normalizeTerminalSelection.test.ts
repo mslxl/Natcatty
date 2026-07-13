@@ -161,17 +161,22 @@ test("joinSoftWrappedRows only uses the trailing token for URL detection", () =>
   );
 });
 
-test("joinSoftWrappedRows keeps URL tokens intact when split mid-word", () => {
+test("joinSoftWrappedRows keeps path separators attached across wraps", () => {
   assert.equal(
-    joinSoftWrappedRows("https://example.com/verylongto   ", "ken"),
-    "https://example.com/verylongtoken",
+    joinSoftWrappedRows("https://example.com/very/long/   ", "path"),
+    "https://example.com/very/long/path",
+  );
+  // Complete URL + padding + next word stays two words (not mid-token glue).
+  assert.equal(
+    joinSoftWrappedRows("See https://example.com   ", "today"),
+    "See https://example.com today",
   );
 });
 
 test("joinSoftWrappedRows preserves Windows paths and URL query delimiters", () => {
   assert.equal(
-    joinSoftWrappedRows("C:\\Users\\alice\\verylongfi   ", "lename.txt"),
-    "C:\\Users\\alice\\verylongfilename.txt",
+    joinSoftWrappedRows("C:\\Users\\alice\\   ", "file.txt"),
+    "C:\\Users\\alice\\file.txt",
   );
   assert.equal(
     joinSoftWrappedRows("https://example.com/path   ", "?q=netcatty"),
@@ -190,9 +195,10 @@ test("joinSoftWrappedRows keeps sentence break after a URL", () => {
   );
 });
 
-test("joinSoftWrappedRows keeps hyphenated words intact", () => {
+test("joinSoftWrappedRows keeps hyphenated words intact at the hyphen", () => {
   assert.equal(joinSoftWrappedRows("state-   ", "of-the-art"), "state-of-the-art");
-  assert.equal(joinSoftWrappedRows("--ver   ", "bose"), "--verbose");
+  // Complete flag + next word keeps a boundary.
+  assert.equal(joinSoftWrappedRows("Use --verbose   ", "to inspect"), "Use --verbose to inspect");
 });
 
 test("preserves partial trailing spaces after wide characters using column ends", () => {

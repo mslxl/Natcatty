@@ -204,17 +204,10 @@ export function joinSoftWrappedRows(previousRaw: string, nextRaw: string): strin
     return nextRaw;
   }
 
-  // Strong continuations (CJK, path/URL punctuation) ignore pad spaces.
+  // Strong continuations (CJK, path/URL punctuation, trailing hyphen) ignore pad
+  // spaces. Deliberately do NOT treat "complete URL/flag + padding + next word"
+  // as a mid-token join — multi-space pad after a finished token is a word boundary.
   if (isStrongTokenContinuation(left, nextRaw)) {
-    return left + nextRaw;
-  }
-
-  // Multi-space padding mid-URL/path (not a word boundary after the token).
-  // A single trailing space after a URL is a real separator ("…com today").
-  if (
-    trailingWhitespace > 1 &&
-    isUrlOrPathMidTokenContinuation(left, nextRaw)
-  ) {
     return left + nextRaw;
   }
 
@@ -273,30 +266,13 @@ function isStrongTokenContinuation(left: string, next: string): boolean {
     return true;
   }
 
-  // Hyphenated words: "state-" + "of-the-art".
+  // Hyphenated words at the hyphen: "state-" + "of-the-art".
+  // Do not join complete flags like "--verbose" + "to" (left ends with a letter).
   if (leftEnd === "-" && (isAsciiWordChar(nextStart) || nextStart === "-")) {
     return true;
   }
 
-  // CLI flags / options split mid-token: "--ver" + "bose".
-  if (
-    trailingToken.startsWith("-") &&
-    isAsciiWordChar(leftEnd) &&
-    isAsciiWordChar(nextStart)
-  ) {
-    return true;
-  }
-
   return false;
-}
-
-/** Mid-token URL/path split between alphanumerics (multi-space pad only). */
-function isUrlOrPathMidTokenContinuation(left: string, next: string): boolean {
-  const leftEnd = lastCodePointChar(left);
-  const nextStart = firstCodePointChar(next);
-  if (!leftEnd || !nextStart) return false;
-  if (!isAsciiWordChar(leftEnd) || !isAsciiWordChar(nextStart)) return false;
-  return looksLikeUrlOrPath(getTrailingToken(left));
 }
 
 function getTrailingToken(text: string): string {
