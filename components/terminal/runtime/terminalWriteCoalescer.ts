@@ -14,53 +14,58 @@ import {
 } from "./writeCoalescer.ts";
 
 const ESC = String.fromCharCode(0x1b);
-const CSI_PRIVATE_INTRO = `${ESC}[?`;
+/** 8-bit C1 CSI (0x9b); xterm accepts this as equivalent to ESC [. */
+const C1_CSI = String.fromCharCode(0x9b);
+const CSI_PRIVATE_INTRO_7BIT = `${ESC}[?`;
+const CSI_PRIVATE_INTRO_8BIT = `${C1_CSI}?`;
 const ALT_SCREEN_DECSET = new Set(["47", "1047", "1049"]);
 /** Incomplete CSI private-mode tails retained across coalescer flushes. */
 const incompleteAltScreenCsiByTerm = new WeakMap<XTerm, string>();
 
+const isPrivateParamCharCode = (code: number): boolean =>
+  (code >= 0x30 && code <= 0x39) || code === 0x3b;
+
 /**
- * Extract a trailing incomplete private CSI (or ESC / ESC[) that may continue
+ * Extract a trailing incomplete private CSI (7-bit or 8-bit) that may continue
  * in a later PTY chunk. Empty when the buffer ends on a finished sequence.
  */
 const extractIncompletePrivateCsiTail = (data: string): string => {
   const lastEsc = data.lastIndexOf(ESC);
-  if (lastEsc < 0) return "";
-  const tail = data.slice(lastEsc);
+  const lastC1 = data.lastIndexOf(C1_CSI);
+  const start = Math.max(lastEsc, lastC1);
+  if (start < 0) return "";
+  const tail = data.slice(start);
   if (tail === ESC || tail === `${ESC}[`) return tail;
-  if (!tail.startsWith(CSI_PRIVATE_INTRO)) return "";
-  const rest = tail.slice(CSI_PRIVATE_INTRO.length);
-  for (let i = 0; i < rest.length; i += 1) {
-    const code = rest.charCodeAt(i);
-    if ((code >= 0x30 && code <= 0x39) || code === 0x3b) continue;
-    return "";
+  if (tail === C1_CSI) return tail;
+  if (tail.startsWith(CSI_PRIVATE_INTRO_7BIT)) {
+    const rest = tail.slice(CSI_PRIVATE_INTRO_7BIT.length);
+    for (let i = 0; i < rest.length; i += 1) {
+      if (!isPrivateParamCharCode(rest.charCodeAt(i))) return "";
+    }
+    return tail;
   }
-  return tail;
+  if (tail.startsWith(CSI_PRIVATE_INTRO_8BIT)) {
+    const rest = tail.slice(CSI_PRIVATE_INTRO_8BIT.length);
+    for (let i = 0; i < rest.length; i += 1) {
+      if (!isPrivateParamCharCode(rest.charCodeAt(i))) return "";
+    }
+    return tail;
+  }
+  return "";
 };
 
-/**
- * Detect CSI private-mode sequences that enter the alternate screen buffer
- * (DECSET 47 / 1047 / 1049), including incomplete tails split across PTY chunks.
- * Intentionally avoids control-character regexes (eslint no-control-regex).
- */
-const looksLikeEnteringAlternateScreen = (data: string): boolean => {
-  if (!data.includes(ESC)) {
-    return extractIncompletePrivateCsiTail(data).length > 0;
-  }
-
+const scanPrivateDecsetEntries = (
+  data: string,
+  intro: string,
+): boolean => {
   let searchFrom = 0;
   while (searchFrom < data.length) {
-    const start = data.indexOf(CSI_PRIVATE_INTRO, searchFrom);
+    const start = data.indexOf(intro, searchFrom);
     if (start < 0) break;
-    let index = start + CSI_PRIVATE_INTRO.length;
+    let index = start + intro.length;
     const paramStart = index;
-    while (index < data.length) {
-      const code = data.charCodeAt(index);
-      if ((code >= 0x30 && code <= 0x39) || code === 0x3b) {
-        index += 1;
-        continue;
-      }
-      break;
+    while (index < data.length && isPrivateParamCharCode(data.charCodeAt(index))) {
+      index += 1;
     }
     if (index >= data.length) {
       return true;
@@ -73,7 +78,21 @@ const looksLikeEnteringAlternateScreen = (data: string): boolean => {
     }
     searchFrom = start + 1;
   }
+  return false;
+};
 
+/**
+ * Detect CSI private-mode sequences that enter the alternate screen buffer
+ * (DECSET 47 / 1047 / 1049), including incomplete tails split across PTY chunks
+ * and 8-bit C1 CSI (`\x9b?…h`). Avoids control-character regexes.
+ */
+const looksLikeEnteringAlternateScreen = (data: string): boolean => {
+  if (
+    scanPrivateDecsetEntries(data, CSI_PRIVATE_INTRO_7BIT)
+    || scanPrivateDecsetEntries(data, CSI_PRIVATE_INTRO_8BIT)
+  ) {
+    return true;
+  }
   return extractIncompletePrivateCsiTail(data).length > 0;
 };
 
