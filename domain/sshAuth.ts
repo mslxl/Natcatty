@@ -54,6 +54,7 @@ export const applyHostAuthMethodSelection = <T extends Host>(
   return {
     ...host,
     authMethod,
+    authPolicyVersion: 1,
     identityId: "",
     ...(clearSelectedKey
       ? { identityFileId: undefined, identityFilePaths: undefined }

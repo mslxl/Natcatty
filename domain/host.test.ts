@@ -151,6 +151,44 @@ test("sanitizeHost preserves valid custom host icon fields", () => {
   assert.equal(sanitized.iconColor, "blue");
 });
 
+test("sanitizeHost keeps legacy empty-password hosts on automatic authentication", () => {
+  const sanitized = sanitizeHost(makeHost({
+    password: undefined,
+    authMethod: "password",
+    authPolicyVersion: undefined,
+  }));
+
+  assert.equal(sanitized.authMethod, undefined);
+  assert.equal(sanitized.authPolicyVersion, 1);
+});
+
+test("sanitizeHost keeps legacy agent and key hosts on their prior authentication path", () => {
+  for (const legacySettings of [
+    { useSshAgent: true, password: "saved-secret" },
+    { identityFilePaths: ["~/.ssh/id_work"], password: "saved-secret" },
+  ]) {
+    const sanitized = sanitizeHost(makeHost({
+      authMethod: "password",
+      authPolicyVersion: undefined,
+      ...legacySettings,
+    }));
+
+    assert.equal(sanitized.authMethod, undefined);
+    assert.equal(sanitized.authPolicyVersion, 1);
+  }
+});
+
+test("sanitizeHost preserves an explicit password-only choice", () => {
+  const sanitized = sanitizeHost(makeHost({
+    password: undefined,
+    authMethod: "password",
+    authPolicyVersion: 1,
+  }));
+
+  assert.equal(sanitized.authMethod, "password");
+  assert.equal(sanitized.authPolicyVersion, 1);
+});
+
 test("sanitizeHost preserves automatic host icon color fields", () => {
   const sanitized = sanitizeHost(makeHost({
     iconMode: "auto",

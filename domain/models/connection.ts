@@ -155,6 +155,9 @@ export interface Host {
   password?: string;
   savePassword?: boolean; // Whether to save the password (default: true)
   authMethod?: HostAuthMethod;
+  // Version 1 distinguishes the explicit per-host login choices from the
+  // legacy "password" default, which did not mean password-only.
+  authPolicyVersion?: 1;
   // Use the local SSH agent for login. This is separate from agentForwarding,
   // which exposes the local agent to the remote host after login.
   useSshAgent?: boolean;

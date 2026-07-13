@@ -156,6 +156,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
         tags: [],
         os: "linux",
         authMethod: undefined,
+        authPolicyVersion: 1,
         charset: groupDefaults?.charset ? undefined : "UTF-8",
         distroMode: "auto",
         createdAt: Date.now(),
@@ -504,6 +505,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
         identities,
         groupDefaults: effectiveGroupDefaults,
       }),
+      authPolicyVersion: 1,
       managedSourceId: finalManagedSourceId,
     };
     cleaned = prepareTelnetCredentialsForSave(normalizePrimaryTelnetState(cleaned));

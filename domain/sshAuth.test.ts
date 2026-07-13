@@ -305,6 +305,7 @@ test("applyHostAuthMethodSelection clears incompatible per-host credentials", ()
   assert.deepEqual(applyHostAuthMethodSelection(keyedHost, "certificate"), {
     ...keyedHost,
     authMethod: "certificate",
+    authPolicyVersion: 1,
     identityId: "",
     identityFileId: undefined,
     identityFilePaths: undefined,
@@ -313,6 +314,7 @@ test("applyHostAuthMethodSelection clears incompatible per-host credentials", ()
   assert.deepEqual(applyHostAuthMethodSelection(keyedHost, "auto"), {
     ...keyedHost,
     authMethod: "auto",
+    authPolicyVersion: 1,
     identityId: "",
     identityFileId: undefined,
     identityFilePaths: undefined,
@@ -322,6 +324,7 @@ test("applyHostAuthMethodSelection clears incompatible per-host credentials", ()
   });
   assert.deepEqual(applyHostAuthMethodSelection(keyedHost, "key"), {
     ...keyedHost,
+    authPolicyVersion: 1,
     identityId: "",
   });
 
