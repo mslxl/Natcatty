@@ -106,6 +106,7 @@ test("startEtSession preserves discovered automatic identities for host informat
     sessions.get("sess-auto-stats").etStatsAuth.identityFilePaths,
     [keyPath],
   );
+  assert.equal(sessions.get("sess-auto-stats").etStatsAuth.authMethod, "auto");
 });
 
 test("prepareEtSshEnvironment passes a non-default port via --ssh-option", (t) => {

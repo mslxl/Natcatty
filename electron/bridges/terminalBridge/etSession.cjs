@@ -975,6 +975,7 @@ main();
             hostname: options.hostname,
             port: options.port || 22,
             username: options.username,
+            authMethod: options.authMethod,
             password: options.password,
             privateKey: options.privateKey,
             passphrase: options.passphrase,

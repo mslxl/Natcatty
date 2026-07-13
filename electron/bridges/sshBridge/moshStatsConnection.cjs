@@ -212,12 +212,13 @@ function createMoshStatsConnectionApi(ctx) {
 
       const hasCertificate =
         typeof auth.certificate === "string" && auth.certificate.trim().length > 0;
-      const inlineKey = auth.useSshAgent
+      const allowLocalKeyFallbackWithAgent = auth.authMethod === "auto";
+      const inlineKey = auth.useSshAgent && !allowLocalKeyFallbackWithAgent
         ? null
         : resolveNonInteractiveKey(auth.privateKey, auth.passphrase);
       const keys = inlineKey
         ? [inlineKey]
-        : auth.useSshAgent
+        : auth.useSshAgent && !allowLocalKeyFallbackWithAgent
           ? []
           : await resolveNonInteractiveIdentityFiles(auth.identityFilePaths, auth.passphrase);
       const key = keys[0] || null;
