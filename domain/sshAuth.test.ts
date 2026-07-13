@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { applyHostAuthMethodSelection, hasBridgeSshCredentials, resolveBridgeKeyAuth, resolveBridgeSshAgentAuth, resolveHostAuth, resolveHostAuthMethodSelection, resolveHostAutofillPassword } from "./sshAuth.ts";
+import { applyHostAuthMethodSelection, hasBridgeSshCredentials, hasRequiredHostAuthCredential, resolveBridgeKeyAuth, resolveBridgeSshAgentAuth, resolveHostAuth, resolveHostAuthMethodSelection, resolveHostAutofillPassword } from "./sshAuth.ts";
 import type { Host, Identity, SSHKey } from "./models.ts";
 
 const referenceKey: SSHKey = {
@@ -152,6 +152,55 @@ test("resolveBridgeSshAgentAuth leaves the ambient agent available in automatic 
     resolveBridgeSshAgentAuth({ ...autofillBaseHost, useSshAgent: false }, undefined, "auto"),
     { useSshAgent: false },
   );
+});
+
+test("resolveBridgeSshAgentAuth lets explicit auth override a stale agent toggle", () => {
+  const staleAgentHost = { ...autofillBaseHost, useSshAgent: true };
+  assert.deepEqual(
+    resolveBridgeSshAgentAuth(staleAgentHost, undefined, "password"),
+    { useSshAgent: false },
+  );
+  assert.deepEqual(
+    resolveBridgeSshAgentAuth(staleAgentHost, undefined, "certificate"),
+    { useSshAgent: false },
+  );
+  assert.deepEqual(
+    resolveBridgeSshAgentAuth({ ...staleAgentHost, authMethod: "key" }, undefined, "key"),
+    { useSshAgent: false },
+  );
+});
+
+test("resolveBridgeSshAgentAuth restricts explicit agent-backed key auth to the selected key", () => {
+  assert.deepEqual(
+    resolveBridgeSshAgentAuth(
+      { ...autofillBaseHost, useSshAgent: true, identitiesOnly: false },
+      { publicKey: "ssh-ed25519 AAAASELECTED" },
+      "key",
+    ),
+    {
+      useSshAgent: true,
+      identityAgent: undefined,
+      identitiesOnly: true,
+      addKeysToAgent: undefined,
+      useKeychain: undefined,
+      agentPublicKeys: ["ssh-ed25519 AAAASELECTED"],
+    },
+  );
+});
+
+test("hasRequiredHostAuthCredential rejects empty explicit key and certificate selections", () => {
+  assert.equal(hasRequiredHostAuthCredential({
+    host: { ...autofillBaseHost, authMethod: "key" },
+    keys: [],
+  }), false);
+  assert.equal(hasRequiredHostAuthCredential({
+    host: { ...autofillBaseHost, authMethod: "certificate" },
+    keys: [],
+  }), false);
+  assert.equal(hasRequiredHostAuthCredential({
+    host: { ...autofillBaseHost, authMethod: "key", identityFilePaths: ["~/.ssh/id_work"] },
+    keys: [],
+  }), true);
 });
 
 test("hasBridgeSshCredentials accepts an agent-only host", () => {

@@ -124,7 +124,7 @@ export const buildSftpHostCredentials = ({
         isEncryptedCredentialPlaceholder(jumpAuth.passphrase);
       if (
         (jumpAuth.authMethod === "password" && isEncryptedCredentialPlaceholder(jumpAuth.password) && !jumpPassword) ||
-        (jumpAuth.authMethod !== "password" && hasUnreadableJumpCredential && !jumpPassword && !hasJumpKeyMaterial)
+        (jumpAuth.authMethod !== "password" && jumpAuth.authMethod !== "auto" && hasUnreadableJumpCredential && !jumpPassword && !hasJumpKeyMaterial)
       ) {
         throw new Error(`Saved credentials for jump host "${jumpHost.label || jumpHost.hostname}" cannot be decrypted on this device. Open host settings and re-enter them.`);
       }
@@ -182,7 +182,7 @@ export const buildSftpHostCredentials = ({
     isEncryptedCredentialPlaceholder(resolved.passphrase);
   if (
     (resolved.authMethod === "password" && isEncryptedCredentialPlaceholder(resolved.password) && !password) ||
-    (resolved.authMethod !== "password" && hasUnreadableCredential && !password && !hasKeyMaterial)
+    (resolved.authMethod !== "password" && resolved.authMethod !== "auto" && hasUnreadableCredential && !password && !hasKeyMaterial)
   ) {
     throw new Error("Saved credentials cannot be decrypted on this device. Open host settings and re-enter them.");
   }

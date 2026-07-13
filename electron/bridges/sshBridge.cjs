@@ -1025,16 +1025,14 @@ function isChainAuthError(err) {
 }
 
 function canRetryWithEncryptedDefaultKeys(options) {
-  const hasJumpHosts = options.jumpHosts && options.jumpHosts.length > 0;
-  const hasStrictTargetAgent = options.useSshAgent === true && options.identitiesOnly === true;
-  const isPasswordOnly = !hasJumpHosts &&
-    !options.agentForwarding &&
-    !!options.password &&
-    !options.privateKey &&
-    !options.certificate;
-  return !isPasswordOnly &&
-    (hasJumpHosts || !hasStrictTargetAgent) &&
-    (!options._unlockedEncryptedKeys || options._unlockedEncryptedKeys.length === 0);
+  if (options._unlockedEncryptedKeys?.length) return false;
+  const canHopUseDefaultKeys = (hop) => {
+    if (hop.authMethod === "password" || hop.authMethod === "key" || hop.authMethod === "certificate") {
+      return false;
+    }
+    return !(hop.useSshAgent === true && hop.identitiesOnly === true);
+  };
+  return canHopUseDefaultKeys(options) || (options.jumpHosts || []).some(canHopUseDefaultKeys);
 }
 
 function isStrictAgentAuthFailure(options, err) {
@@ -1371,5 +1369,6 @@ module.exports = {
   _findDefaultPrivateKey: findDefaultPrivateKey,
   _findAllDefaultPrivateKeys: findAllDefaultPrivateKeys,
   _isStrictAgentAuthFailure: isStrictAgentAuthFailure,
+  _canRetryWithEncryptedDefaultKeys: canRetryWithEncryptedDefaultKeys,
   ensureMoshStatsConnection,
 };

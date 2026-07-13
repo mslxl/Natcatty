@@ -645,6 +645,7 @@ export const enVaultMessages: Messages = {
   'hostDetails.auth.key.desc': 'Use the selected key, with the saved password as a fallback when present.',
   'hostDetails.auth.certificate': 'Certificate',
   'hostDetails.auth.certificate.desc': 'Use the selected SSH certificate, with the saved password as a fallback when present.',
+  'hostDetails.auth.credentialRequired': 'Select a key or certificate before saving this login method.',
   'hostDetails.identity.suggestions': 'Identities',
   'hostDetails.identity.missing': 'Identity not found',
   'hostDetails.credential.keyCertificate': 'Key, Certificate, Local Key File',

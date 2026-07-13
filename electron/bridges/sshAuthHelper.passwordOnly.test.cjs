@@ -189,6 +189,30 @@ test("buildAuthHandler explicit password mode ignores an agent and default keys"
   assert.equal(labels.includes("password"), true, labels.join(","));
 });
 
+for (const authMethod of ["password", "key", "certificate"]) {
+  test(`buildAuthHandler explicit ${authMethod} mode ignores unlocked default keys`, () => {
+    const auth = buildAuthHandler({
+      authMethod,
+      password: "fallback-password",
+      privateKey: authMethod === "password" ? undefined : "-----BEGIN OPENSSH PRIVATE KEY-----\nselected\n-----END OPENSSH PRIVATE KEY-----\n",
+      username: "root",
+      allowAgentFallback: false,
+      unlockedEncryptedKeys: [{
+        keyName: "id_unrelated",
+        privateKey: "-----BEGIN OPENSSH PRIVATE KEY-----\nunrelated\n-----END OPENSSH PRIVATE KEY-----\n",
+        passphrase: "key-pass",
+      }],
+    });
+
+    const labels = collectAuthMethods(auth.authHandler);
+    assert.equal(
+      labels.filter((label) => label === "publickey").length,
+      authMethod === "password" ? 0 : 1,
+      labels.join(","),
+    );
+  });
+}
+
 test("buildAuthHandler password-only may still attach unlocked encrypted keys for jump retry", () => {
   const auth = buildAuthHandler({
     password: "host-password",

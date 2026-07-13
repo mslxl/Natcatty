@@ -22,7 +22,7 @@ import {
   formatProxyConfigType,
   updateProxyConfigField,
 } from "../domain/proxyProfiles";
-import { resolveHostAuth } from "../domain/sshAuth";
+import { hasRequiredHostAuthCredential, resolveHostAuth } from "../domain/sshAuth";
 import { customThemeStore } from "../application/state/customThemeStore";
 import {
   hasHostFontSizeOverride,
@@ -416,6 +416,10 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
   const handleSubmit = () => {
     const hostname = form.hostname.trim();
     if (!hostname) return;
+    if (!hasRequiredHostAuthCredential({ host: form, keys: availableKeys, identities })) {
+      toast.error(t("hostDetails.auth.credentialRequired"));
+      return;
+    }
     const proxySave = prepareProxyConfigForSave({
       proxyConfig: form.proxyConfig,
       proxyProfileId: form.proxyProfileId,

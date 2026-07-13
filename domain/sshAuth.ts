@@ -169,7 +169,7 @@ export const resolveBridgeKeyAuth = (args: {
 };
 
 export const resolveBridgeSshAgentAuth = (
-  host: Pick<Host, "useSshAgent" | "identityAgent" | "identitiesOnly" | "addKeysToAgent" | "useKeychain">,
+  host: Pick<Host, "authMethod" | "useSshAgent" | "identityAgent" | "identitiesOnly" | "addKeysToAgent" | "useKeychain">,
   key?: Pick<SSHKey, "certificate" | "publicKey">,
   authMethod?: HostAuthMethod,
 ): {
@@ -180,7 +180,22 @@ export const resolveBridgeSshAgentAuth = (
   useKeychain?: boolean;
   agentPublicKeys?: string[];
 } => {
-  if (key?.certificate?.trim()) return { useSshAgent: false };
+  if (authMethod === "password" || authMethod === "certificate" || key?.certificate?.trim()) {
+    return { useSshAgent: false };
+  }
+  if (authMethod === "key" && (host.authMethod === "key" || key)) {
+    if (host.useSshAgent !== true || !key?.publicKey?.trim()) {
+      return { useSshAgent: false };
+    }
+    return {
+      useSshAgent: true,
+      identityAgent: host.identityAgent,
+      identitiesOnly: true,
+      addKeysToAgent: host.addKeysToAgent,
+      useKeychain: host.useKeychain,
+      agentPublicKeys: [key.publicKey],
+    };
+  }
   if (host.useSshAgent !== true) {
     return authMethod === "auto" && host.useSshAgent !== false
       ? {}
@@ -194,6 +209,21 @@ export const resolveBridgeSshAgentAuth = (
     useKeychain: host.useKeychain,
     ...(key?.publicKey?.trim() ? { agentPublicKeys: [key.publicKey] } : {}),
   };
+};
+
+export const hasRequiredHostAuthCredential = (args: {
+  host: Host;
+  keys: SSHKey[];
+  identities?: Identity[];
+}): boolean => {
+  const resolved = resolveHostAuth(args);
+  if (resolved.authMethod === "key") {
+    return Boolean(resolved.key || args.host.identityFilePaths?.some((value) => value.trim()));
+  }
+  if (resolved.authMethod === "certificate") {
+    return Boolean(resolved.key?.certificate?.trim());
+  }
+  return true;
 };
 
 export const hasMacKeychainAgentDirectives = (

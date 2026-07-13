@@ -57,7 +57,22 @@ function shouldOfferAgentForLogin(options, connectOpts) {
 }
 
 function resolveUnlockedEncryptedKeysForAuth(options, strictAgentSelection) {
-  return strictAgentSelection ? [] : (options?._unlockedEncryptedKeys || []);
+  const selectedMethod = options?.authMethod;
+  const hasStrictMethod = selectedMethod === "password"
+    || selectedMethod === "key"
+    || selectedMethod === "certificate";
+  return strictAgentSelection || hasStrictMethod ? [] : (options?._unlockedEncryptedKeys || []);
+}
+
+function shouldPromoteCachedAuthMethod(authMethod, cachedMethod) {
+  if (!cachedMethod) return false;
+  if (authMethod === "auto") {
+    return cachedMethod === "agent" || cachedMethod.startsWith("publickey");
+  }
+  if (authMethod === "password" || authMethod === "key" || authMethod === "certificate") {
+    return false;
+  }
+  return true;
 }
 
 function createStartSessionApi(ctx) {
@@ -954,9 +969,8 @@ function createStartSessionApi(ctx) {
             }
           }
 
-          // Unlocked encrypted keys always stay eligible after the user was
-          // prompted for their passphrase — discarding them here would waste
-          // that interaction when jump-host retry re-enters startSession.
+          // Unlocked default keys remain eligible only for automatic and
+          // legacy fallback modes. Explicit modes must not probe unrelated keys.
           for (const keyInfo of unlockedEncryptedKeys) {
             authMethods.push({
               type: "publickey",
@@ -977,7 +991,7 @@ function createStartSessionApi(ctx) {
           });
 
           // Reorder methods based on cached successful method
-          if (cachedMethod && !(isAutomaticAuth && cachedMethod === "password")) {
+          if (shouldPromoteCachedAuthMethod(options.authMethod, cachedMethod)) {
             const cachedIndex = authMethods.findIndex(m => m.id === cachedMethod);
             if (cachedIndex > 0) {
               const [cachedAuthMethod] = authMethods.splice(cachedIndex, 1);
@@ -1633,4 +1647,5 @@ module.exports = {
   resolveSshConnectionTimeouts,
   shouldOfferAgentForLogin,
   resolveUnlockedEncryptedKeysForAuth,
+  shouldPromoteCachedAuthMethod,
 };

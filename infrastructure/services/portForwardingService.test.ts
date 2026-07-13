@@ -120,6 +120,45 @@ test("startPortForward uses the system agent when a synced key cannot be decrypt
   assert.equal(bridge.getOptions()?.privateKey, undefined);
 });
 
+test("startPortForward keeps automatic target discovery available with an unreadable saved password", async () => {
+  const bridge = installBridgeStub();
+  const result = await startPortForward(
+    rule({ id: "rule-auto-unreadable" }),
+    host({ authMethod: "auto", password: "enc:v1:djEwAAAA" }),
+    [],
+    [],
+    [],
+    () => undefined,
+  );
+
+  assert.equal(result.success, true);
+  assert.equal(bridge.getOptions()?.authMethod, "auto");
+  assert.equal(bridge.getOptions()?.password, undefined);
+});
+
+test("startPortForward keeps automatic jump discovery available with an unreadable saved password", async () => {
+  const bridge = installBridgeStub();
+  const jumpHost = host({
+    id: "jump-1",
+    label: "Jump",
+    authMethod: "auto",
+    password: "enc:v1:djEwAAAA",
+  });
+  const result = await startPortForward(
+    rule({ id: "rule-auto-jump-unreadable" }),
+    host({ hostChain: { hostIds: ["jump-1"] } }),
+    [jumpHost],
+    [],
+    [],
+    () => undefined,
+  );
+
+  assert.equal(result.success, true);
+  const jumpOptions = bridge.getOptions()?.jumpHosts as Array<Record<string, unknown>> | undefined;
+  assert.equal(jumpOptions?.[0]?.authMethod, "auto");
+  assert.equal(jumpOptions?.[0]?.password, undefined);
+});
+
 test("startPortForward forwards target and jump-host timeouts", async () => {
   const bridge = installBridgeStub();
   const jumpHost = host({

@@ -231,6 +231,90 @@ for (const protocol of ["Mosh", "ET"] as const) {
   });
 }
 
+for (const protocol of ["Mosh", "ET"] as const) {
+  test(`${protocol} keeps automatic key discovery available with an unreadable saved password`, async () => {
+    let capturedOptions: Record<string, unknown> | null = null;
+    let needsAuth = false;
+    const terminalBackend = {
+      backendAvailable: () => true,
+      moshAvailable: () => true,
+      etAvailable: () => true,
+      startMoshSession: async (options: Record<string, unknown>) => {
+        capturedOptions = options;
+        return "mosh-session";
+      },
+      startEtSession: async (options: Record<string, unknown>) => {
+        capturedOptions = options;
+        return "et-session";
+      },
+      onSessionData: () => noop,
+      onSessionExit: () => noop,
+      writeToSession: noop,
+      resizeSession: noop,
+    };
+    const ctx = createStarterContext({
+      host: {
+        id: "host-1",
+        label: "Automatic host",
+        hostname: "auto.example.test",
+        username: "alice",
+        authMethod: "auto",
+        password: ENCRYPTED_CREDENTIAL_PLACEHOLDER,
+      },
+      terminalBackend,
+      setNeedsAuth: (value: boolean) => { needsAuth = value; },
+    });
+
+    const starters = createTerminalSessionStarters(ctx as never);
+    if (protocol === "Mosh") await starters.startMosh(createTermStub() as never);
+    else await starters.startEt(createTermStub() as never);
+
+    assert.equal(needsAuth, false);
+    assert.equal(capturedOptions?.authMethod, "auto");
+    assert.equal(capturedOptions?.password, undefined);
+  });
+}
+
+test("ET keeps automatic jump discovery available with an unreadable saved password", async () => {
+  let capturedOptions: Record<string, unknown> | null = null;
+  const terminalBackend = {
+    backendAvailable: () => true,
+    etAvailable: () => true,
+    startEtSession: async (options: Record<string, unknown>) => {
+      capturedOptions = options;
+      return "et-session";
+    },
+    onSessionData: () => noop,
+    onSessionExit: () => noop,
+    writeToSession: noop,
+    resizeSession: noop,
+  };
+  const ctx = createStarterContext({
+    host: {
+      id: "host-1",
+      label: "Target",
+      hostname: "target.example.test",
+      username: "alice",
+      authMethod: "auto",
+    },
+    resolvedChainHosts: [{
+      id: "jump-1",
+      label: "Jump",
+      hostname: "jump.example.test",
+      username: "ops",
+      authMethod: "auto",
+      password: ENCRYPTED_CREDENTIAL_PLACEHOLDER,
+    }],
+    terminalBackend,
+  });
+
+  await createTerminalSessionStarters(ctx as never).startEt(createTermStub() as never);
+
+  const jumpHosts = capturedOptions?.jumpHosts as Array<Record<string, unknown>> | undefined;
+  assert.equal(jumpHosts?.[0]?.authMethod, "auto");
+  assert.equal(jumpHosts?.[0]?.password, undefined);
+});
+
 test("startSSH forwards custom ProxyCommand to the SSH bridge", async () => {
   let capturedOptions: Record<string, unknown> | null = null;
   const terminalBackend = {
@@ -1290,7 +1374,7 @@ test("startSSH resets the TCP dial timeout state before password fallback", asyn
   await createTerminalSessionStarters(ctx as never).startSSH(createTermStub() as never);
 
   assert.equal(startCalls, 2);
-  assert.equal(startOptions[0]?.useSshAgent, true);
+  assert.equal(startOptions[0]?.useSshAgent, false);
   assert.equal(startOptions[1]?.useSshAgent, false);
   assert.deepEqual(tcpDialState, [false, false, true, false]);
 });

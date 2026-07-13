@@ -99,6 +99,26 @@ test("prepareEtSshEnvironment writes an askpass map + sets SSH_ASKPASS for passw
   assert.equal(fs.readFileSync(map[0].secretFile, "utf8").trim(), "s3cret");
 });
 
+test("prepareEtSshEnvironment password mode overrides a stale agent toggle", (t) => {
+  const { api, base } = makeApi(t);
+  const defaultKeyPath = path.join(base, "home", ".ssh", "id_work");
+  fs.mkdirSync(path.dirname(defaultKeyPath), { recursive: true });
+  fs.writeFileSync(defaultKeyPath, "PRIVATE KEY");
+
+  const env = api.prepareEtSshEnvironment("sess-password", {
+    hostname: "h",
+    username: "u",
+    authMethod: "password",
+    password: "saved-secret",
+    useSshAgent: true,
+  });
+
+  assert.ok(env.sshOptions.includes("PubkeyAuthentication=no"));
+  assert.equal(env.sshOptions.some((option) => option.startsWith("IdentityFile=")), false);
+  const config = fs.readFileSync(path.join(env.env.HOME, ".ssh", "config"), "utf8");
+  assert.match(config, /PreferredAuthentications password,keyboard-interactive/);
+});
+
 test("prepareEtSshEnvironment automatic mode tries real local keys before a saved password", (t) => {
   const { api, base } = makeApi(t);
   const defaultKeyPath = path.join(base, "home", ".ssh", "id_ed25519_sk");
@@ -179,12 +199,12 @@ test("prepareEtSshEnvironment writes a private key + IdentityFile option and a p
   assert.ok(map.some((e) => e.type === "passphrase"));
 });
 
-test("prepareEtSshEnvironment enables agent auth for a password-default imported host", (t) => {
+test("prepareEtSshEnvironment enables selected agent-backed key auth", (t) => {
   const { api, base } = makeApi(t);
   const env = api.prepareEtSshEnvironment("sess-agent", {
     hostname: "host.example",
     username: "alice",
-    authMethod: "password",
+    authMethod: "key",
     useSshAgent: true,
     _resolvedSshAgentSocket: "/tmp/custom agent.sock",
     identityFilePaths: ["~/.ssh/id_work"],

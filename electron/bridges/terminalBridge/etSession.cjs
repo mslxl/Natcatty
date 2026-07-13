@@ -422,7 +422,7 @@ main();
         } else {
           sshOptions.push("PreferredAuthentications=publickey");
         }
-      } else if (options.authMethod === "password" && !options.useSshAgent) {
+      } else if (options.authMethod === "password") {
         sshOptions.push("PubkeyAuthentication=no");
         configLines.push("PreferredAuthentications password,keyboard-interactive");
       } else if (options.useSshAgent && hasPassword) {

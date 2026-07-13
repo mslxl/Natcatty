@@ -58,6 +58,7 @@ export const HostDetailsAdvancedSections: React.FC<HostDetailsAdvancedSectionsPr
   const inheritedStartupCommandRunMode = effectiveGroupDefaults?.startupCommandRunMode ?? "paste";
   const effectiveStartupCommandRunMode = form.startupCommandRunMode ?? inheritedStartupCommandRunMode;
   const effectiveAuthMethod = resolveHostAuthMethodSelection(form);
+  const systemSshAgentEnabled = effectiveAuthMethod === "auto" && form.useSshAgent !== false;
 
   return (
   <>
@@ -245,21 +246,21 @@ export const HostDetailsAdvancedSections: React.FC<HostDetailsAdvancedSectionsPr
           <ToggleRow
             label={t("hostDetails.systemSshAgent")}
             hint={t("hostDetails.systemSshAgent.desc")}
-            enabled={effectiveAuthMethod === "auto" && form.useSshAgent !== false}
+            enabled={systemSshAgentEnabled}
             disabled={effectiveAuthMethod !== "auto"}
             onToggle={() => setForm((previous: typeof form) => {
-              const enabled = previous.useSshAgent !== false;
+              const enabled = effectiveAuthMethod === "auto" && previous.useSshAgent !== false;
               const enabling = !enabled;
               return {
                 ...previous,
-                useSshAgent: enabling ? undefined : false,
+                useSshAgent: enabling,
                 identityAgent: enabling && isSshAgentNoneValue(previous.identityAgent)
                   ? undefined
                   : previous.identityAgent,
               };
             })}
           />
-          {form.useSshAgent === true && (
+          {systemSshAgentEnabled && (
             <>
               <HostDetailsSettingRow
                 label={t("hostDetails.systemSshAgent.socket")}
@@ -288,7 +289,7 @@ export const HostDetailsAdvancedSections: React.FC<HostDetailsAdvancedSectionsPr
               />
             </>
           )}
-          {form.useSshAgent === true && sshAgentStatus && !sshAgentStatus.running && (
+          {systemSshAgentEnabled && sshAgentStatus && !sshAgentStatus.running && (
             <div className="flex items-start gap-2 p-2 rounded-md bg-yellow-500/10 border border-yellow-500/20">
               <AlertTriangle size={14} className="text-yellow-500 mt-0.5 flex-shrink-0" />
               <div className="space-y-1">

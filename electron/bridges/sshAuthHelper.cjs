@@ -842,6 +842,9 @@ function buildAuthHandler(options) {
   const isAutomatic = options.authMethod === "auto";
   const isExplicitPasswordMode = options.authMethod === "password";
   const isSelectedKeyMode = options.authMethod === "key" || options.authMethod === "certificate";
+  const eligibleUnlockedEncryptedKeys = isExplicitPasswordMode || isSelectedKeyMode
+    ? []
+    : unlockedEncryptedKeys;
 
   // Determine if this is a password-only or key-only connection
   const isPasswordOnly = isExplicitPasswordMode
@@ -895,7 +898,7 @@ function buildAuthHandler(options) {
   // keep showing auth attempts after #2079 (Codex review P2).
   const hasFallbackOptions = fallbackKeys.length > 0 ||
     (!hasExplicitAgent && !isPasswordOnly && sshAgentSocket) ||
-    unlockedEncryptedKeys.length > 0;
+    eligibleUnlockedEncryptedKeys.length > 0;
 
   // Simple explicit auth with no fallback keys: preserve the old ordered
   // method list, but use a function handler so we can observe partialSuccess
@@ -1028,7 +1031,7 @@ function buildAuthHandler(options) {
   }
 
   // Add unlocked encrypted default keys (user provided passphrases for these)
-  for (const keyInfo of unlockedEncryptedKeys) {
+  for (const keyInfo of eligibleUnlockedEncryptedKeys) {
     authMethods.push({
       type: "publickey",
       key: keyInfo.privateKey,

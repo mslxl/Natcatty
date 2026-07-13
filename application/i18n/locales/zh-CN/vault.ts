@@ -203,6 +203,7 @@ export const zhCNVaultMessages: Messages = {
   'hostDetails.auth.key.desc': '使用选中的密钥；如果同时保存了密码，可在失败后尝试密码。',
   'hostDetails.auth.certificate': '证书',
   'hostDetails.auth.certificate.desc': '使用选中的 SSH 证书；如果同时保存了密码，可在失败后尝试密码。',
+  'hostDetails.auth.credentialRequired': '保存这种登录方式前，请先选择密钥或证书。',
   'hostDetails.identity.suggestions': '身份',
   'hostDetails.identity.missing': '身份不存在',
   'hostDetails.credential.keyCertificate': '密钥 / 证书 / 本地密钥',

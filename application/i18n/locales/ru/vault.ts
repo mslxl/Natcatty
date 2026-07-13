@@ -677,6 +677,7 @@ export const ruVaultMessages: Messages = {
   'hostDetails.auth.key.desc': 'Использовать выбранный ключ и сохранённый пароль как запасной вариант.',
   'hostDetails.auth.certificate': 'Сертификат',
   'hostDetails.auth.certificate.desc': 'Использовать выбранный SSH-сертификат и сохранённый пароль как запасной вариант.',
+  'hostDetails.auth.credentialRequired': 'Перед сохранением этого способа входа выберите ключ или сертификат.',
   'hostDetails.identity.suggestions': 'Идентификаторы',
   'hostDetails.identity.missing': 'Идентификатор не найден',
   'hostDetails.credential.keyCertificate': 'Ключ, сертификат, локальный файл ключа',

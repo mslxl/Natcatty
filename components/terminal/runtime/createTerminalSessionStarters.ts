@@ -307,7 +307,12 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         isEncryptedCredentialPlaceholder(rawJumpPrivateKey) ||
         isEncryptedCredentialPlaceholder(rawJumpPassphrase);
 
-      if (hasEncryptedJumpProxyCredential || (hasEncryptedJumpCredential && !jumpPassword && !hasJumpKeyMaterial)) {
+      if (hasEncryptedJumpProxyCredential || (
+        jumpAuth.authMethod !== "auto"
+        && hasEncryptedJumpCredential
+        && !jumpPassword
+        && !hasJumpKeyMaterial
+      )) {
         jumpHostsWithUnavailableCredentials.push(jumpHost.label || jumpHost.hostname);
       }
 
@@ -564,7 +569,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
 
       const needsCredentialReentry =
         (authMethod === "password" && hasEncryptedPrimaryPassword && !hasPassword) ||
-        (authMethod !== "password" && hasEncryptedPrimaryKey && !hasKeyMaterial && !hasPassword);
+        (authMethod !== "password" && authMethod !== "auto" && hasEncryptedPrimaryKey && !hasKeyMaterial && !hasPassword);
 
       if (needsCredentialReentry) {
         if (unsubscribeChainProgress) unsubscribeChainProgress();
@@ -949,7 +954,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       const hasPassword = !!effectivePassword;
       const needsCredentialReentry =
         (authMethod === "password" && hasEncryptedPrimaryPassword && !hasPassword) ||
-        (authMethod !== "password" && hasEncryptedPrimaryKey && !hasKeyMaterial && !hasPassword);
+        (authMethod !== "password" && authMethod !== "auto" && hasEncryptedPrimaryKey && !hasKeyMaterial && !hasPassword);
 
       if (needsCredentialReentry) {
         ctx.setError(null);
@@ -1147,7 +1152,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       const hasPassword = !!effectivePassword;
       const needsCredentialReentry =
         (authMethod === "password" && hasEncryptedPrimaryPassword && !hasPassword) ||
-        (authMethod !== "password" && hasEncryptedPrimaryKey && !hasKeyMaterial && !hasPassword);
+        (authMethod !== "password" && authMethod !== "auto" && hasEncryptedPrimaryKey && !hasKeyMaterial && !hasPassword);
 
       if (needsCredentialReentry) {
         ctx.setError(null);
@@ -1189,7 +1194,8 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           isEncryptedCredentialPlaceholder(rawJumpPassphrase);
         const jumpAgentAuth = resolveBridgeSshAgentAuth(jumpHost, jumpKey, jumpAuth.authMethod);
         if (
-          hasEncryptedJumpCredential
+          jumpAuth.authMethod !== "auto"
+          && hasEncryptedJumpCredential
           && !jumpPassword
           && !jumpPrivateKey
           && !jumpPassphrase

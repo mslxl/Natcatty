@@ -2,7 +2,7 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { _isStrictAgentAuthFailure } = require("./sshBridge.cjs");
+const { _canRetryWithEncryptedDefaultKeys, _isStrictAgentAuthFailure } = require("./sshBridge.cjs");
 
 test("strict agent failures skip encrypted default-key prompts", () => {
   const jumpHosts = [
@@ -23,4 +23,23 @@ test("strict agent failures skip encrypted default-key prompts", () => {
     isJumpHostAuthError: true,
     jumpHostHostname: "shared.example",
   }), false, "ambiguous legacy errors must not guess the failed hop");
+});
+
+test("encrypted default-key retry is limited to automatic or legacy hops", () => {
+  assert.equal(_canRetryWithEncryptedDefaultKeys({ authMethod: "password" }), false);
+  assert.equal(_canRetryWithEncryptedDefaultKeys({ authMethod: "key" }), false);
+  assert.equal(_canRetryWithEncryptedDefaultKeys({ authMethod: "certificate" }), false);
+  assert.equal(_canRetryWithEncryptedDefaultKeys({ authMethod: "auto" }), true);
+  assert.equal(_canRetryWithEncryptedDefaultKeys({
+    authMethod: "password",
+    jumpHosts: [{ authMethod: "auto" }],
+  }), true);
+  assert.equal(_canRetryWithEncryptedDefaultKeys({
+    authMethod: "password",
+    jumpHosts: [{ authMethod: "password" }, { authMethod: "key" }],
+  }), false);
+  assert.equal(_canRetryWithEncryptedDefaultKeys({
+    authMethod: "auto",
+    _unlockedEncryptedKeys: [{ keyName: "id_work" }],
+  }), false);
 });
