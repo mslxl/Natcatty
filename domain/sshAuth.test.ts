@@ -2,7 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { applyHostAuthMethodSelection, hasBridgeSshCredentials, hasRequiredHostAuthCredential, resolveBridgeKeyAuth, resolveBridgeSshAgentAuth, resolveHostAuth, resolveHostAuthMethodForPersistence, resolveHostAuthMethodSelection, resolveHostAutofillPassword, resolveSshAgentToggleUpdate } from "./sshAuth.ts";
-import { applyGroupDefaults } from "./groupConfig.ts";
+import { applyGroupDefaults, sanitizeGroupConfig } from "./groupConfig.ts";
+import { sanitizeHost } from "./host.ts";
 import type { Host, Identity, SSHKey } from "./models.ts";
 
 const referenceKey: SSHKey = {
@@ -319,6 +320,27 @@ test("a new automatic host keeps its saved password as a fallback", () => {
 
   assert.equal(resolveHostAuthMethodSelection(host), "auto");
   assert.equal(resolveHostAuth({ host, keys: [] }).authMethod, "auto");
+});
+
+test("a migrated host keeps an inherited legacy group password password-only", () => {
+  const host = sanitizeHost({
+    ...autofillBaseHost,
+    authMethod: "password",
+    authPolicyVersion: undefined,
+    password: undefined,
+    group: "team",
+  });
+  const groupDefaults = sanitizeGroupConfig({
+    path: "team",
+    password: "group-secret",
+  });
+
+  assert.equal(host.authMethod, undefined);
+  assert.equal(groupDefaults.authMethod, "password");
+  assert.equal(resolveHostAuth({
+    host: applyGroupDefaults(host, groupDefaults),
+    keys: [],
+  }).authMethod, "password");
 });
 
 test("resolveHostAuthMethodSelection gives legacy hosts a visible mode", () => {

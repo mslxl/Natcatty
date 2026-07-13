@@ -486,6 +486,35 @@ test("sanitizeGroupConfig keeps a still-valid fontFamily untouched", () => {
   assert.equal(after.fontFamilyOverride, true);
 });
 
+test("sanitizeGroupConfig preserves legacy group passwords as password-only", () => {
+  const after = sanitizeGroupConfig({
+    path: "team",
+    password: "group-secret",
+  });
+
+  assert.equal(after.authMethod, "password");
+});
+
+test("sanitizeGroupConfig preserves an explicit automatic password fallback", () => {
+  const after = sanitizeGroupConfig({
+    path: "team",
+    authMethod: "auto",
+    password: "group-secret",
+  });
+
+  assert.equal(after.authMethod, "auto");
+});
+
+test("sanitizeGroupConfig does not replace a selected identity with password-only", () => {
+  const after = sanitizeGroupConfig({
+    path: "team",
+    identityId: "identity-1",
+    password: "stale-secret",
+  });
+
+  assert.equal(after.authMethod, undefined);
+});
+
 test("applyGroupDefaults inherits skipEcdsaHostKey from the group when host has no value", () => {
   const result = applyGroupDefaults(host(), { skipEcdsaHostKey: true });
   assert.equal(result.skipEcdsaHostKey, true);

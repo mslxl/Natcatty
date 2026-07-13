@@ -8,7 +8,16 @@ import { migrateDeprecatedFontOverride } from '../infrastructure/config/fonts';
  * defaults too.
  */
 export function sanitizeGroupConfig(config: GroupConfig): GroupConfig {
-  return migrateDeprecatedFontOverride(config);
+  const migrated = migrateDeprecatedFontOverride(config);
+  const hasLegacyPasswordOnlyCredentials = migrated.authMethod === undefined
+    && Boolean(migrated.password?.length)
+    && migrated.identityId === undefined
+    && migrated.identityFileId === undefined
+    && !migrated.identityFilePaths?.length;
+
+  return hasLegacyPasswordOnlyCredentials
+    ? { ...migrated, authMethod: 'password' }
+    : migrated;
 }
 
 export interface ApplyGroupDefaultsOptions {
