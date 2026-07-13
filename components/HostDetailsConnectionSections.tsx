@@ -1,6 +1,7 @@
 import React from "react";
 import { ChevronDown, Eye, EyeOff, FileKey, FolderLock, FolderOpen, Key, KeyRound, MapPin, Plus, Shapes, Shield, Trash2, User, X } from "lucide-react";
 import type { Host } from "../types";
+import { applyHostAuthMethodSelection } from "../domain/sshAuth";
 import { HostIconPicker } from "./HostIconPicker";
 import { Button } from "./ui/button";
 import { Combobox } from "./ui/combobox";
@@ -15,11 +16,48 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type HostDetailsConnectionSectionsProps = Record<string, any>;
 
+export const applyEffectiveHostAuthMethodSelection = (
+  host: Host,
+  authMethod: "auto" | "password" | "key" | "certificate",
+  effectiveAuthMethod: "auto" | "password" | "key" | "certificate",
+  effectiveUsername?: string,
+): Host => {
+  if (authMethod === effectiveAuthMethod) return host;
+  const selected = applyHostAuthMethodSelection(host, authMethod, effectiveAuthMethod);
+  return !selected.username?.trim() && effectiveUsername?.trim()
+    ? { ...selected, username: effectiveUsername }
+    : selected;
+};
+
+export const detachEffectiveHostIdentity = (host: Host, effectiveUsername?: string): Host => ({
+  ...host,
+  identityId: "",
+  ...(!host.username?.trim() && effectiveUsername?.trim()
+    ? { username: effectiveUsername }
+    : {}),
+});
+
+export const removeSelectedHostCredential = (
+  host: Host,
+  effectiveAuthMethod: "auto" | "password" | "key" | "certificate",
+  effectiveUsername?: string,
+): Host => {
+  const authMethod = host.password ? "password" : "auto";
+  const selected = applyHostAuthMethodSelection(host, authMethod, effectiveAuthMethod);
+  return !selected.username?.trim() && effectiveUsername?.trim()
+    ? { ...selected, username: effectiveUsername }
+    : selected;
+};
+
 export const HostDetailsConnectionSections: React.FC<HostDetailsConnectionSectionsProps> = ({
   t,
   form,
+  setForm,
   update,
   groupDefaults,
+  effectiveAuthMethod,
+  effectiveUsername,
+  effectiveIdentityId,
   selectedIdentity,
   clearIdentity,
   identities,
@@ -44,6 +82,30 @@ export const HostDetailsConnectionSections: React.FC<HostDetailsConnectionSectio
   effectiveFormDistro,
   getDistroOptionLabel,
 }) => {
+  const selectAuthMethod = (authMethod: "auto" | "password" | "key" | "certificate") => {
+    setForm((previous: Host) => applyEffectiveHostAuthMethodSelection(
+      previous,
+      authMethod,
+      effectiveAuthMethod,
+      effectiveUsername,
+    ));
+    if (authMethod === "auto" || authMethod === "password") {
+      setPendingReferenceKeyPath(null);
+      setSelectedCredentialType(null);
+      setCredentialPopoverOpen(false);
+      return;
+    }
+    setSelectedCredentialType(authMethod);
+    setCredentialPopoverOpen(false);
+  };
+
+  const authChoices = [
+    ["auto", "hostDetails.auth.auto"],
+    ["password", "hostDetails.auth.passwordOnly"],
+    ["key", "hostDetails.auth.key"],
+    ["certificate", "hostDetails.auth.certificate"],
+  ] as const;
+
   return (
   <>
         <HostDetailsSection
@@ -81,6 +143,33 @@ export const HostDetailsConnectionSections: React.FC<HostDetailsConnectionSectio
             </div>
           </div>
           <div className="grid gap-2">
+            <div className="space-y-2 rounded-md border border-border/60 bg-secondary/30 p-2.5">
+                <div>
+                  <div className="text-xs font-medium text-foreground">
+                    {t("hostDetails.auth.method")}
+                  </div>
+                  <div className="text-[11px] text-muted-foreground">
+                    {t(`hostDetails.auth.${effectiveAuthMethod}.desc`)}
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {authChoices.map(([value, labelKey]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      aria-pressed={effectiveAuthMethod === value}
+                      onClick={() => selectAuthMethod(value)}
+                      className={`h-8 rounded-md border px-2 text-xs font-medium transition-colors ${
+                        effectiveAuthMethod === value
+                          ? "border-primary/60 bg-primary/10 text-primary"
+                          : "border-border/60 bg-background text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      {t(labelKey)}
+                    </button>
+                  ))}
+                </div>
+            </div>
             {selectedIdentity ? (
               <div className="flex items-center gap-2 h-10 px-3 rounded-md border border-border/70 bg-secondary/60">
                 <User size={16} className="text-muted-foreground" />
@@ -103,7 +192,7 @@ export const HostDetailsConnectionSections: React.FC<HostDetailsConnectionSectio
                   <TooltipContent>{t("common.clear")}</TooltipContent>
                 </Tooltip>
               </div>
-            ) : form.identityId ? (
+            ) : effectiveIdentityId ? (
               <div className="flex items-center gap-2 h-10 px-3 rounded-md border border-border/70 bg-secondary/60">
                 <User size={16} className="text-muted-foreground" />
                 <div className="min-w-0 flex-1">
@@ -364,8 +453,11 @@ export const HostDetailsConnectionSections: React.FC<HostDetailsConnectionSectio
                   size="icon"
                   className="h-6 w-6 shrink-0"
                   onClick={() => {
-                    update("identityFileId", undefined);
-                    update("authMethod", "password");
+                    setForm((previous: Host) => removeSelectedHostCredential(
+                      previous,
+                      effectiveAuthMethod,
+                      effectiveUsername,
+                    ));
                     setPendingReferenceKeyPath(null);
                     setSelectedCredentialType(null);
                   }}

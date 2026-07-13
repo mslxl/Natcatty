@@ -14,11 +14,18 @@ test('advanced host settings expose per-host SSH connection timeouts', () => {
 });
 
 test('editing enabled SSH agent controls persists the enabled state', () => {
-  assert.match(source, /enabled=\{form\.useSshAgent === true\}/);
+  assert.match(source, /effectiveGroupDefaults,\s*effectiveAuthMethod,/);
+  assert.doesNotMatch(source, /resolveHostAuthMethodSelection/);
+  assert.match(source, /const systemSshAgentSupported = effectiveAuthMethod === "auto" \|\| effectiveAuthMethod === "key"/);
+  assert.match(source, /effectiveAuthMethod === "key" && form\.useSshAgent === true/);
+  assert.match(source, /enabled=\{systemSshAgentEnabled\}/);
+  assert.match(source, /disabled=\{!systemSshAgentSupported\}/);
+  assert.match(source, /resolveSshAgentToggleUpdate\(previous, effectiveAuthMethod, enabling\)/);
+  assert.match(source, /\{systemSshAgentEnabled && \(/);
   assert.match(source, /useSshAgent: true,\s*identityAgent:/);
   assert.match(source, /useSshAgent: true,\s*identitiesOnly:/);
 });
 
 test('enabling SSH agent login clears an imported none sentinel', () => {
-  assert.match(source, /enabling && isSshAgentNoneValue\(previous\.identityAgent\)/);
+  assert.match(source, /resolveSshAgentToggleUpdate/);
 });

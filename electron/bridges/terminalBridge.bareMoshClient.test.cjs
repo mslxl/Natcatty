@@ -214,6 +214,49 @@ test("Mosh explicitly disables native agent login after an opt-out", async () =>
   assert.equal(forwardingEnv.SSH_AUTH_SOCK, "/tmp/forwarded-agent.sock");
 });
 
+test("Mosh automatic mode discovers custom local keys in preferred order", async (t) => {
+  const tempBase = makeTmp();
+  const fakeHome = path.join(tempBase, "home");
+  const sshDir = path.join(fakeHome, ".ssh");
+  fs.mkdirSync(sshDir, { recursive: true });
+  fs.writeFileSync(path.join(sshDir, "id_work"), "PRIVATE KEY");
+  fs.writeFileSync(path.join(sshDir, "id_ed25519"), "PRIVATE KEY");
+  fs.writeFileSync(path.join(sshDir, "id_rsa.pub"), "PUBLIC KEY");
+  t.after(() => fs.rmSync(tempBase, { recursive: true, force: true }));
+
+  const api = createMoshSessionApi({
+    os: { ...os, homedir: () => fakeHome },
+    path,
+    fs,
+    process,
+    randomUUID: () => "fixed",
+  });
+  const auth = await api.buildMoshSshAuthArgs({ authMethod: "auto" }, "session-auto");
+
+  assert.deepEqual(auth.sshArgs, [
+    "-i", path.join(sshDir, "id_ed25519"),
+    "-i", path.join(sshDir, "id_work"),
+  ]);
+  assert.deepEqual(auth.identityFilePaths, [
+    path.join(sshDir, "id_ed25519"),
+    path.join(sshDir, "id_work"),
+  ]);
+
+  const agentFallback = await api.buildMoshSshAuthArgs({
+    authMethod: "auto",
+    useSshAgent: true,
+    identitiesOnly: false,
+  }, "session-auto-agent");
+  assert.deepEqual(agentFallback.sshArgs, [
+    "-i", path.join(sshDir, "id_ed25519"),
+    "-i", path.join(sshDir, "id_work"),
+  ]);
+  assert.deepEqual(agentFallback.identityFilePaths, [
+    path.join(sshDir, "id_ed25519"),
+    path.join(sshDir, "id_work"),
+  ]);
+});
+
 test("removed Mosh client detection APIs are not exposed to the renderer", () => {
   const bridgeSource = fs.readFileSync(path.join(__dirname, "terminalBridge.cjs"), "utf8");
   const preloadSource = fs.readFileSync(path.join(__dirname, "..", "preload.cjs"), "utf8");

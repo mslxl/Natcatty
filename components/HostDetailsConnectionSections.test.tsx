@@ -3,8 +3,13 @@ import assert from "node:assert/strict";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import type { SSHKey } from "../types.ts";
-import { HostDetailsConnectionSections } from "./HostDetailsConnectionSections.tsx";
+import type { Host, SSHKey } from "../types.ts";
+import {
+  applyEffectiveHostAuthMethodSelection,
+  detachEffectiveHostIdentity,
+  HostDetailsConnectionSections,
+  removeSelectedHostCredential,
+} from "./HostDetailsConnectionSections.tsx";
 import { TooltipProvider } from "./ui/tooltip.tsx";
 
 const longCredentialLabel =
@@ -40,8 +45,11 @@ const renderConnectionSections = (formOverrides: Record<string, unknown> = {}) =
           identityFileId: availableKey.id,
           ...formOverrides,
         },
+        setForm: () => {},
         update: () => {},
         groupDefaults: undefined,
+        effectiveAuthMethod: formOverrides.effectiveAuthMethod || formOverrides.authMethod || "key",
+        effectiveIdentityId: formOverrides.effectiveIdentityId || formOverrides.identityId,
         selectedIdentity: undefined,
         clearIdentity: () => {},
         identities: [],
@@ -93,4 +101,136 @@ test("color and icon settings render for non-Linux hosts", () => {
   assert.match(markup, /hostDetails\.icon\.sectionTitle/);
   assert.match(markup, /hostDetails\.icon\.colorLabel/);
   assert.match(markup, /hostDetails\.icon\.manualLabel/);
+});
+
+test("host credentials expose automatic and password-only choices", () => {
+  const markup = renderConnectionSections({
+    authMethod: "auto",
+    identityFileId: undefined,
+  });
+
+  assert.match(markup, /hostDetails\.auth\.method/);
+  assert.match(markup, /hostDetails\.auth\.auto/);
+  assert.match(markup, /hostDetails\.auth\.passwordOnly/);
+  assert.match(markup, /hostDetails\.auth\.key/);
+  assert.match(markup, /hostDetails\.auth\.certificate/);
+});
+
+test("host authentication choices remain visible for a selected identity", () => {
+  const markup = renderConnectionSections({
+    identityId: "identity-1",
+    authMethod: "password",
+  });
+
+  assert.match(markup, /hostDetails\.auth\.passwordOnly/);
+});
+
+test("host authentication choices show the inherited effective method", () => {
+  const markup = renderConnectionSections({
+    authMethod: undefined,
+    identityFileId: undefined,
+    effectiveAuthMethod: "password",
+  });
+
+  assert.match(markup, /<button[^>]*aria-pressed="true"[^>]*>hostDetails\.auth\.passwordOnly<\/button>/);
+});
+
+test("reselecting an inherited authentication method preserves group credentials", () => {
+  const host = {
+    id: "host-1",
+    label: "Host",
+    hostname: "example.com",
+    username: "root",
+  } as Host;
+
+  assert.equal(applyEffectiveHostAuthMethodSelection(host, "key", "key"), host);
+});
+
+test("selecting automatic opts out of an inherited identity", () => {
+  const host = {
+    id: "host-1",
+    label: "Host",
+    hostname: "example.com",
+    username: "root",
+    authMethod: "auto",
+  } as Host;
+
+  assert.deepEqual(
+    applyEffectiveHostAuthMethodSelection(host, "auto", "password"),
+    {
+      ...host,
+      authPolicyVersion: 1,
+      identityId: "",
+      identityFileId: undefined,
+      identityFilePaths: undefined,
+      identityAgent: undefined,
+      identitiesOnly: undefined,
+      useSshAgent: undefined,
+    },
+  );
+});
+
+test("overriding inherited authentication preserves the effective username", () => {
+  const host = {
+    id: "host-1",
+    label: "Host",
+    hostname: "example.com",
+    username: "",
+  } as Host;
+
+  assert.equal(
+    applyEffectiveHostAuthMethodSelection(host, "password", "key", "deploy").username,
+    "deploy",
+  );
+});
+
+test("detaching an inherited identity preserves the effective username", () => {
+  const host = {
+    id: "host-1",
+    label: "Host",
+    hostname: "example.com",
+    username: "",
+  } as Host;
+
+  assert.deepEqual(detachEffectiveHostIdentity(host, "deploy"), {
+    ...host,
+    identityId: "",
+    username: "deploy",
+  });
+});
+
+test("removing a selected key resets stale agent settings for automatic auth", () => {
+  const host = {
+    id: "host-1",
+    label: "Host",
+    hostname: "example.com",
+    username: "root",
+    authMethod: "key",
+    authPolicyVersion: 1,
+    identityFileId: "key-1",
+    useSshAgent: false,
+  } as Host;
+
+  assert.deepEqual(removeSelectedHostCredential(host, "key"), {
+    ...host,
+    authMethod: "auto",
+    identityId: "",
+    identityFileId: undefined,
+    identityFilePaths: undefined,
+    identityAgent: undefined,
+    identitiesOnly: undefined,
+    useSshAgent: undefined,
+  });
+});
+
+test("an inherited deleted identity remains visible and clearable", () => {
+  const markup = renderConnectionSections({
+    authMethod: undefined,
+    identityFileId: undefined,
+    effectiveAuthMethod: "auto",
+    effectiveIdentityId: "deleted-group-identity",
+  });
+
+  assert.match(markup, /hostDetails\.identity\.missing/);
+  assert.doesNotMatch(markup, /placeholder="hostDetails\.username\.placeholder"/);
 });

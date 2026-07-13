@@ -102,6 +102,50 @@ test("buildSftpHostCredentials forwards target and jump-host timeouts", () => {
   assert.equal(credentials.jumpHosts?.[0]?.sshAuthReadyTimeoutMs, 360_000);
 });
 
+test("buildSftpHostCredentials keeps automatic auth per target and jump host", () => {
+  const jumpHost = host({ id: "jump-1", authMethod: "auto", password: "jump-secret" });
+  const credentials = buildSftpHostCredentials({
+    host: host({
+      authMethod: "auto",
+      password: "target-secret",
+      hostChain: { hostIds: ["jump-1"] },
+    }),
+    hosts: [jumpHost],
+    keys: [],
+    identities: [],
+  });
+
+  assert.equal(credentials.authMethod, "auto");
+  assert.equal(credentials.jumpHosts?.[0]?.authMethod, "auto");
+});
+
+test("buildSftpHostCredentials drops stale identity paths for password-only hosts", () => {
+  const jumpHost = host({
+    id: "jump-1",
+    authMethod: "password",
+    password: "jump-secret",
+    useSshAgent: true,
+    identityFilePaths: ["~/.ssh/stale-jump"],
+  });
+  const credentials = buildSftpHostCredentials({
+    host: host({
+      authMethod: "password",
+      password: "target-secret",
+      useSshAgent: true,
+      identityFilePaths: ["~/.ssh/stale-target"],
+      hostChain: { hostIds: ["jump-1"] },
+    }),
+    hosts: [jumpHost],
+    keys: [],
+    identities: [],
+  });
+
+  assert.equal(credentials.identityFilePaths, undefined);
+  assert.equal(credentials.useSshAgent, false);
+  assert.equal(credentials.jumpHosts?.[0]?.identityFilePaths, undefined);
+  assert.equal(credentials.jumpHosts?.[0]?.useSshAgent, false);
+});
+
 test("buildSftpHostCredentials rejects missing jump hosts", () => {
   assert.throws(
     () => buildSftpHostCredentials({
@@ -517,6 +561,39 @@ test("buildSftpHostCredentials rejects undecryptable saved password credentials"
     }),
     /Saved credentials cannot be decrypted/,
   );
+});
+
+test("buildSftpHostCredentials keeps automatic target discovery available with an unreadable saved password", () => {
+  const credentials = buildSftpHostCredentials({
+    host: host({
+      authMethod: "auto",
+      password: "enc:v1:djEwAAAA",
+    }),
+    hosts: [],
+    keys: [],
+    identities: [],
+  });
+
+  assert.equal(credentials.authMethod, "auto");
+  assert.equal(credentials.password, undefined);
+});
+
+test("buildSftpHostCredentials keeps automatic jump discovery available with an unreadable saved password", () => {
+  const jumpHost = host({
+    id: "jump-1",
+    label: "Jump",
+    authMethod: "auto",
+    password: "enc:v1:djEwAAAA",
+  });
+  const credentials = buildSftpHostCredentials({
+    host: host({ hostChain: { hostIds: ["jump-1"] } }),
+    hosts: [jumpHost],
+    keys: [],
+    identities: [],
+  });
+
+  assert.equal(credentials.jumpHosts?.[0]?.authMethod, "auto");
+  assert.equal(credentials.jumpHosts?.[0]?.password, undefined);
 });
 
 test("buildSftpHostCredentials omits local key file paths for password auth", () => {

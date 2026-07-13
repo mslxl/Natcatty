@@ -420,6 +420,18 @@ test("applyGroupDefaults inherits group identityId when host only has default SS
   assert.equal(result.username, "root");
 });
 
+test("applyGroupDefaults keeps explicit host auth modes instead of inheriting a group identity", () => {
+  for (const authMethod of ["auto", "password"] as const) {
+    const result = applyGroupDefaults(
+      host({ authMethod, authPolicyVersion: 1 }),
+      { identityId: "group-identity" },
+    );
+
+    assert.equal(result.authMethod, authMethod);
+    assert.equal(result.identityId, undefined);
+  }
+});
+
 test("applyGroupDefaults preserves a custom username instead of inheriting a group identity", () => {
   const result = applyGroupDefaults(
     host({ identityId: undefined, username: "ubuntu", authMethod: "password" }),
@@ -484,6 +496,46 @@ test("sanitizeGroupConfig keeps a still-valid fontFamily untouched", () => {
   const after = sanitizeGroupConfig(before);
   assert.equal(after.fontFamily, "jetbrains-mono");
   assert.equal(after.fontFamilyOverride, true);
+});
+
+test("sanitizeGroupConfig preserves legacy group passwords as password-only", () => {
+  const after = sanitizeGroupConfig({
+    path: "team",
+    password: "group-secret",
+  });
+
+  assert.equal(after.authMethod, "password");
+});
+
+test("sanitizeGroupConfig preserves an explicit automatic password fallback", () => {
+  const after = sanitizeGroupConfig({
+    path: "team",
+    authMethod: "auto",
+    password: "group-secret",
+  });
+
+  assert.equal(after.authMethod, "auto");
+});
+
+test("sanitizeGroupConfig does not replace a selected identity with password-only", () => {
+  const after = sanitizeGroupConfig({
+    path: "team",
+    identityId: "identity-1",
+    password: "stale-secret",
+  });
+
+  assert.equal(after.authMethod, undefined);
+});
+
+test("sanitizeGroupConfig treats an empty inherited identity marker as cleared", () => {
+  const after = sanitizeGroupConfig({
+    path: "team/child",
+    identityId: "",
+    password: "child-secret",
+  });
+
+  assert.equal(after.identityId, "");
+  assert.equal(after.authMethod, "password");
 });
 
 test("applyGroupDefaults inherits skipEcdsaHostKey from the group when host has no value", () => {

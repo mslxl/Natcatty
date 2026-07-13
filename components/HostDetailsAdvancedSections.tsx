@@ -2,7 +2,7 @@ import React from "react";
 import { AlertTriangle, ChevronDown, ChevronUp, Forward, Globe, HeartPulse, KeyRound, Link2, Palette, Plus, Router, ShieldAlert, TerminalSquare, Timer, Wifi, X, Variable } from "lucide-react";
 import { customThemeStore } from "../application/state/customThemeStore";
 import { clearHostFontSizeOverride, clearHostThemeOverride } from "../domain/terminalAppearance";
-import { isSshAgentNoneValue } from "../domain/sshAgentSettings";
+import { resolveSshAgentToggleUpdate } from "../domain/sshAuth";
 import { MAX_FONT_SIZE, MIN_FONT_SIZE } from "../infrastructure/config/fonts";
 import { AlgorithmOverridesPanel } from "./host-details/AlgorithmOverridesPanel";
 import { Badge } from "./ui/badge";
@@ -23,10 +23,10 @@ import {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type HostDetailsAdvancedSectionsProps = Record<string, any>;
 
-const ToggleRow: React.FC<{ label: string; hint?: React.ReactNode; enabled: boolean; onToggle: () => void }> = ({ label, hint, enabled, onToggle }) => {
+const ToggleRow: React.FC<{ label: string; hint?: React.ReactNode; enabled: boolean; disabled?: boolean; onToggle: () => void }> = ({ label, hint, enabled, disabled, onToggle }) => {
   return (
     <HostDetailsSettingRow label={label} hint={hint}>
-      <Switch checked={enabled} onCheckedChange={() => onToggle()} />
+      <Switch checked={enabled} disabled={disabled} onCheckedChange={() => onToggle()} />
     </HostDetailsSettingRow>
   );
 };
@@ -42,6 +42,7 @@ export const HostDetailsAdvancedSections: React.FC<HostDetailsAdvancedSectionsPr
   hasEffectiveFontSizeOverride,
   sshAgentStatus,
   effectiveGroupDefaults,
+  effectiveAuthMethod,
   showAlgorithmOverrides,
   setShowAlgorithmOverrides,
   chainedHosts,
@@ -56,6 +57,10 @@ export const HostDetailsAdvancedSections: React.FC<HostDetailsAdvancedSectionsPr
   const effectiveDeviceType = form.deviceType ?? inheritedDeviceType;
   const inheritedStartupCommandRunMode = effectiveGroupDefaults?.startupCommandRunMode ?? "paste";
   const effectiveStartupCommandRunMode = form.startupCommandRunMode ?? inheritedStartupCommandRunMode;
+  const systemSshAgentSupported = effectiveAuthMethod === "auto" || effectiveAuthMethod === "key";
+  const systemSshAgentEnabled = effectiveAuthMethod === "auto"
+    ? form.useSshAgent !== false
+    : effectiveAuthMethod === "key" && form.useSshAgent === true;
 
   return (
   <>
@@ -243,19 +248,23 @@ export const HostDetailsAdvancedSections: React.FC<HostDetailsAdvancedSectionsPr
           <ToggleRow
             label={t("hostDetails.systemSshAgent")}
             hint={t("hostDetails.systemSshAgent.desc")}
-            enabled={form.useSshAgent === true}
+            enabled={systemSshAgentEnabled}
+            disabled={!systemSshAgentSupported}
             onToggle={() => setForm((previous: typeof form) => {
-              const enabling = previous.useSshAgent !== true;
+              const enabled = effectiveAuthMethod === "auto"
+                ? previous.useSshAgent !== false
+                : effectiveAuthMethod === "key" && previous.useSshAgent === true;
+              const enabling = !enabled;
               return {
                 ...previous,
-                useSshAgent: enabling,
-                identityAgent: enabling && isSshAgentNoneValue(previous.identityAgent)
-                  ? undefined
-                  : previous.identityAgent,
+                // Automatic mode treats the ambient agent as an optional first
+                // choice. Keep the unset state when re-enabling that default so
+                // an unavailable agent still falls back to local keys/password.
+                ...resolveSshAgentToggleUpdate(previous, effectiveAuthMethod, enabling),
               };
             })}
           />
-          {form.useSshAgent === true && (
+          {systemSshAgentEnabled && (
             <>
               <HostDetailsSettingRow
                 label={t("hostDetails.systemSshAgent.socket")}
@@ -284,7 +293,7 @@ export const HostDetailsAdvancedSections: React.FC<HostDetailsAdvancedSectionsPr
               />
             </>
           )}
-          {form.useSshAgent === true && sshAgentStatus && !sshAgentStatus.running && (
+          {systemSshAgentEnabled && sshAgentStatus && !sshAgentStatus.running && (
             <div className="flex items-start gap-2 p-2 rounded-md bg-yellow-500/10 border border-yellow-500/20">
               <AlertTriangle size={14} className="text-yellow-500 mt-0.5 flex-shrink-0" />
               <div className="space-y-1">

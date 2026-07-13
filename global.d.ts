@@ -43,6 +43,7 @@ declare global {
     hostname: string;
     port: number;
     username: string;
+    authMethod?: import("./domain/models").HostAuthMethod;
     password?: string;
     privateKey?: string;
     certificate?: string;
@@ -94,6 +95,7 @@ declare global {
     hostLabel?: string;
     hostname: string;
     username: string;
+    authMethod?: import("./domain/models").HostAuthMethod;
     port?: number;
     password?: string;
     privateKey?: string;
@@ -192,6 +194,7 @@ declare global {
     hostname: string;
     port?: number;
     username: string;
+    authMethod?: import("./domain/models").HostAuthMethod;
     password?: string;
     privateKey?: string;
     certificate?: string;

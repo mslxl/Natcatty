@@ -7,6 +7,7 @@ const {
   shouldAcceptSessionOutput,
   shouldProcessSessionOutput,
 } = require("../terminalFlowAck.cjs");
+const { orderSshIdentityNames, SSH_KEY_PATTERN } = require("../sshAuthHelper.cjs");
 
 //
 // EternalTerminal session backend, factored into the createXxxSessionApi
@@ -60,13 +61,22 @@ function promptMatchScore(entry, prompt) {
 
 function pickEntry(entries, prompt) {
   const wantsPassphrase = prompt.includes("passphrase");
+  const matchesKnownLoginPrompt = entries.some((entry) => entry.type === "password"
+    && (Array.isArray(entry.matchers) ? entry.matchers : []).some((matcher) => {
+      const value = String(matcher || "").toLowerCase();
+      return value.endsWith("'s password") && prompt.includes(value);
+    }));
+  const wantsSecondFactor = !matchesKnownLoginPrompt
+    && /one[\s-]?time|\botp\b|verification|passcode|\btoken\b|2fa|two[\s-]?factor|multi[\s-]?factor|\bmfa\b|second\s+factor|secondary(?:\s+\w+){0,3}\s+passw|second(?:\s+\w+){0,3}\s+passw|additional(?:\s+\w+){0,3}\s+passw|re[-\s]?enter\s+passw|confirm\s+passw|\bedr\b|duo|动态|一次性|验证码|验证信息|令牌|双因素|多因素|短信验证|手机验证|二次|安全密码|挑战码/.test(prompt);
+  const wantsPassword = !wantsSecondFactor && /passw(or)?d|密\s*码|口\s*令/.test(prompt);
+  if (!wantsPassphrase && !wantsPassword) return null;
   const scoped = entries.filter((entry) => entry.type === (wantsPassphrase ? "passphrase" : "password"));
   const matched = scoped
     .map((entry, index) => ({ entry, index, score: promptMatchScore(entry, prompt) }))
     .filter(({ score }) => score > 0)
     .sort((a, b) => b.score - a.score || a.index - b.index)[0]?.entry;
   if (matched) return matched;
-  if (scoped.length === 1) return scoped[0];
+  if (wantsPassword && scoped.length === 1) return scoped[0];
   return null;
 }
 
@@ -166,7 +176,10 @@ main();
 
     function applyEtSshAgentEnvironment(env, options) {
       if (options?.useSshAgent === false) {
-        if (options.agentForwarding) {
+        const automaticJumpNeedsAmbientAgent = options.jumpHosts?.some((jump) => (
+          jump?.authMethod === "auto" && jump.useSshAgent !== false
+        ));
+        if (options.agentForwarding || automaticJumpNeedsAmbientAgent) {
           if (!env.SSH_AUTH_SOCK && process.env.SSH_AUTH_SOCK) {
             env.SSH_AUTH_SOCK = process.env.SSH_AUTH_SOCK;
           }
@@ -281,7 +294,7 @@ main();
 
     /**
      * Build a private SSH home + options for the `et` client's internal ssh.
-     * Returns { userHost, sshOptions, env, artifacts }. comma-free option
+     * Returns { userHost, sshOptions, identityFilePaths, env, artifacts }. comma-free option
      * values go in `sshOptions` (passed via --ssh-option); options that need
      * commas/spaces are written to a config file under HOME/.ssh/config.
      */
@@ -308,6 +321,17 @@ main();
       // mismatch detection instead of trusting it again on every ET session.
       const realSshDir = path.join(os.homedir(), ".ssh");
       fs.mkdirSync(realSshDir, { recursive: true });
+      let defaultIdentityPaths = [];
+      try {
+        const identityNames = fs.readdirSync(realSshDir, { withFileTypes: true })
+          .filter((entry) => (entry.isFile() || entry.isSymbolicLink()) && SSH_KEY_PATTERN.test(entry.name))
+          .map((entry) => entry.name);
+        defaultIdentityPaths = orderSshIdentityNames(identityNames)
+          .map((name) => path.join(realSshDir, name));
+      } catch {
+        // Local key discovery is optional. Password-only and interactive ET
+        // sessions must still work when ~/.ssh cannot be read.
+      }
       const knownHostsPath = path.join(realSshDir, "known_hosts");
       sshOptions.push(`UserKnownHostsFile=${normalizeSshConfigPath(knownHostsPath)}`);
 
@@ -377,12 +401,25 @@ main();
         }
       }
 
+      if (options.authMethod === "auto") {
+        for (const keyPath of defaultIdentityPaths) {
+          if (!identityPaths.includes(keyPath)) {
+            identityPaths.push(keyPath);
+          }
+        }
+      }
+
       for (const idPath of identityPaths) {
         sshOptions.push(`IdentityFile=${normalizeSshConfigPath(idPath)}`);
       }
 
+      const hasStrictTargetAuth = options.authMethod === "key" || options.authMethod === "certificate";
+      if (hasStrictTargetAuth && identityPaths.length === 0) {
+        sshOptions.push("IdentityFile=none");
+      }
+
       if (
-        (!options.useSshAgent && (identityPaths.length > 0 || options.authMethod === "key" || options.authMethod === "certificate"))
+        (options.authMethod !== "auto" && !options.useSshAgent && (identityPaths.length > 0 || options.authMethod === "key" || options.authMethod === "certificate"))
         || (options.useSshAgent && options.identitiesOnly)
       ) {
         sshOptions.push("IdentitiesOnly=yes");
@@ -404,7 +441,9 @@ main();
       // NOTE: values with commas (e.g. "password,keyboard-interactive") MUST go into
       // the config file — ET on Windows passes --ssh-option values through cmd.exe
       // which treats commas as argument delimiters.
-      if (options.authMethod === "password" && !options.useSshAgent) {
+      if (options.authMethod === "auto") {
+        configLines.push("PreferredAuthentications publickey,password,keyboard-interactive");
+      } else if (options.authMethod === "password") {
         sshOptions.push("PubkeyAuthentication=no");
         configLines.push("PreferredAuthentications password,keyboard-interactive");
       } else if (options.useSshAgent && hasPassword) {
@@ -509,6 +548,29 @@ main();
           jumpConfigLines.push("  IdentitiesOnly yes");
         }
 
+        const hasStrictJumpAuth = jump.authMethod === "key" || jump.authMethod === "certificate";
+        const hasSelectedJumpIdentity = jumpConfigLines.some((line) => line.startsWith("  IdentityFile "));
+        if (hasStrictJumpAuth && !hasSelectedJumpIdentity) {
+          jumpConfigLines.push("  IdentityFile none");
+          if (!jumpConfigLines.includes("  IdentitiesOnly yes")) {
+            jumpConfigLines.push("  IdentitiesOnly yes");
+          }
+        }
+
+        if (jump.authMethod === "auto") {
+          for (const keyPath of defaultIdentityPaths) {
+            jumpConfigLines.push(`  IdentityFile ${quoteSshConfigValue(keyPath)}`);
+          }
+          jumpConfigLines.push("  PreferredAuthentications publickey,password,keyboard-interactive");
+        } else if (jump.authMethod === "password") {
+          jumpConfigLines.push("  PubkeyAuthentication no");
+          jumpConfigLines.push("  PreferredAuthentications password,keyboard-interactive");
+        } else if (jump.authMethod === "key" || jump.authMethod === "certificate") {
+          jumpConfigLines.push(jump.password
+            ? "  PreferredAuthentications publickey,password,keyboard-interactive"
+            : "  PreferredAuthentications publickey");
+        }
+
         // Jump host certificate
         if (jump.certificate) {
           const jumpCertPath = path.join(sshDir, `${safeId}-jump-cert.pub`);
@@ -577,6 +639,7 @@ main();
       return {
         userHost,
         sshOptions,
+        identityFilePaths: identityPaths,
         etJumpArgs,
         env: {
           // Set HOME/USERPROFILE so ssh finds .ssh/config for comma-containing options
@@ -912,12 +975,13 @@ main();
             hostname: options.hostname,
             port: options.port || 22,
             username: options.username,
+            authMethod: options.authMethod,
             password: options.password,
             privateKey: options.privateKey,
             passphrase: options.passphrase,
             certificate: options.certificate,
             keyId: options.keyId,
-            identityFilePaths: options.identityFilePaths,
+            identityFilePaths: sshEnvironment?.identityFilePaths,
             agentPublicKeys: options.agentPublicKeys,
             useSshAgent: options.useSshAgent,
             identityAgent: options.identityAgent,

@@ -100,12 +100,12 @@ export const buildSftpHostCredentials = ({
       const jumpPassword = sanitizeCredentialValue(jumpAuth.password);
       const jumpKeyAuth = resolveBridgeKeyAuth({
         key: jumpKey,
-        fallbackIdentityFilePaths: (!jumpHost.useSshAgent && jumpAuth.authMethod === "password") || jumpAuth.keyId
+        fallbackIdentityFilePaths: jumpAuth.authMethod === "password" || jumpAuth.keyId
           ? undefined
           : jumpHost.identityFilePaths,
         passphrase: jumpAuth.passphrase,
       });
-      const jumpAgentAuth = resolveBridgeSshAgentAuth(jumpHost, jumpKey);
+      const jumpAgentAuth = resolveBridgeSshAgentAuth(jumpHost, jumpKey, jumpAuth.authMethod);
       const hasJumpKeyMaterial = Boolean(
         jumpAgentAuth.useSshAgent || jumpKeyAuth.privateKey || jumpKeyAuth.identityFilePaths?.length,
       );
@@ -124,7 +124,7 @@ export const buildSftpHostCredentials = ({
         isEncryptedCredentialPlaceholder(jumpAuth.passphrase);
       if (
         (jumpAuth.authMethod === "password" && isEncryptedCredentialPlaceholder(jumpAuth.password) && !jumpPassword) ||
-        (jumpAuth.authMethod !== "password" && hasUnreadableJumpCredential && !jumpPassword && !hasJumpKeyMaterial)
+        (jumpAuth.authMethod !== "password" && jumpAuth.authMethod !== "auto" && hasUnreadableJumpCredential && !jumpPassword && !hasJumpKeyMaterial)
       ) {
         throw new Error(`Saved credentials for jump host "${jumpHost.label || jumpHost.hostname}" cannot be decrypted on this device. Open host settings and re-enter them.`);
       }
@@ -134,6 +134,7 @@ export const buildSftpHostCredentials = ({
         hostname: jumpHost.hostname,
         port: jumpHost.port || 22,
         username: jumpAuth.username || "root",
+        authMethod: jumpAuth.authMethod,
         password: jumpPassword,
         privateKey: jumpKeyAuth.privateKey,
         certificate: jumpKey?.certificate,
@@ -165,12 +166,12 @@ export const buildSftpHostCredentials = ({
 
   const keyAuth = resolveBridgeKeyAuth({
     key,
-    fallbackIdentityFilePaths: (!host.useSshAgent && resolved.authMethod === "password") || resolved.keyId
+    fallbackIdentityFilePaths: resolved.authMethod === "password" || resolved.keyId
       ? undefined
       : host.identityFilePaths,
     passphrase: resolved.passphrase,
   });
-  const targetAgentAuth = resolveBridgeSshAgentAuth(host, key);
+  const targetAgentAuth = resolveBridgeSshAgentAuth(host, key, resolved.authMethod);
   const password = sanitizeCredentialValue(resolved.password);
   const hasKeyMaterial = Boolean(
     targetAgentAuth.useSshAgent || keyAuth.privateKey || keyAuth.identityFilePaths?.length,
@@ -181,7 +182,7 @@ export const buildSftpHostCredentials = ({
     isEncryptedCredentialPlaceholder(resolved.passphrase);
   if (
     (resolved.authMethod === "password" && isEncryptedCredentialPlaceholder(resolved.password) && !password) ||
-    (resolved.authMethod !== "password" && hasUnreadableCredential && !password && !hasKeyMaterial)
+    (resolved.authMethod !== "password" && resolved.authMethod !== "auto" && hasUnreadableCredential && !password && !hasKeyMaterial)
   ) {
     throw new Error("Saved credentials cannot be decrypted on this device. Open host settings and re-enter them.");
   }
@@ -191,6 +192,7 @@ export const buildSftpHostCredentials = ({
   return {
     hostname: host.hostname,
     username: resolved.username,
+    authMethod: resolved.authMethod,
     port: host.port || 22,
     password,
     privateKey: keyAuth.privateKey,

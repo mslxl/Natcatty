@@ -6,6 +6,7 @@ const {
   shouldProcessSessionOutput,
 } = require("../terminalFlowAck.cjs");
 const { createSshConnExecProbe } = require("../ai/sessionShellKind.cjs");
+const { orderSshIdentityNames, SSH_KEY_PATTERN } = require("../sshAuthHelper.cjs");
 
 // MoshCatty normally emits this cleanup together with an alternate-screen
 // exit. Netcatty keeps the primary screen, so restore only terminal modes that
@@ -100,6 +101,18 @@ function createMoshSessionApi(ctx) {
       if (trimmed === "~") return os.homedir();
       if (trimmed.startsWith("~/")) return path.join(os.homedir(), trimmed.slice(2));
       return trimmed;
+    }
+
+    function discoverMoshIdentityPaths() {
+      const sshDir = path.join(os.homedir(), ".ssh");
+      try {
+        const names = fs.readdirSync(sshDir, { withFileTypes: true })
+          .filter((entry) => (entry.isFile() || entry.isSymbolicLink()) && SSH_KEY_PATTERN.test(entry.name))
+          .map((entry) => entry.name);
+        return orderSshIdentityNames(names).map((name) => path.join(sshDir, name));
+      } catch {
+        return [];
+      }
     }
 
     async function prepareMoshSshAgentOptions(options) {
@@ -213,6 +226,12 @@ function createMoshSessionApi(ctx) {
     async function buildMoshSshAuthArgs(options, sessionId) {
       const sshArgs = [];
       const tempFiles = [];
+      const resolvedIdentityFilePaths = [];
+      const rememberIdentityFilePath = (keyPath) => {
+        if (keyPath && !resolvedIdentityFilePaths.includes(keyPath)) {
+          resolvedIdentityFilePaths.push(keyPath);
+        }
+      };
     
       try {
         if (typeof options.privateKey === "string" && options.privateKey.trim().length > 0) {
@@ -244,6 +263,7 @@ function createMoshSessionApi(ctx) {
           for (const keyPath of options.identityFilePaths) {
             const normalized = normalizeMoshIdentityPath(keyPath);
             if (normalized) {
+              rememberIdentityFilePath(normalized);
               const selector = options.useSshAgent && !normalized.toLowerCase().endsWith(".pub")
                 ? `${normalized}.pub`
                 : normalized;
@@ -263,6 +283,31 @@ function createMoshSessionApi(ctx) {
           }
         }
 
+        if (options.authMethod === "auto") {
+          const selectedIdentities = new Set();
+          const useAgentOnlySelectors = options.useSshAgent === true
+            && options.identitiesOnly === true;
+          for (let index = 0; index < sshArgs.length - 1; index += 1) {
+            if (sshArgs[index] === "-i") selectedIdentities.add(sshArgs[index + 1]);
+          }
+          for (const keyPath of discoverMoshIdentityPaths()) {
+            rememberIdentityFilePath(keyPath);
+            const selector = useAgentOnlySelectors ? `${keyPath}.pub` : keyPath;
+            if (!selectedIdentities.has(selector)) {
+              sshArgs.push("-i", selector);
+              selectedIdentities.add(selector);
+            }
+          }
+        }
+
+        const hasSelectedIdentity = sshArgs.some((arg) => arg === "-i");
+        if (
+          (options.authMethod === "key" || options.authMethod === "certificate")
+          && !hasSelectedIdentity
+        ) {
+          sshArgs.push("-o", "IdentityFile=none", "-o", "IdentitiesOnly=yes");
+        }
+
         if (options.useSshAgent === false) {
           sshArgs.push("-o", "IdentityAgent=none");
           if (options.agentForwarding) {
@@ -274,12 +319,17 @@ function createMoshSessionApi(ctx) {
             sshArgs.push("-o", "IdentitiesOnly=yes");
           }
         }
+
+        if (options.authMethod === "password") {
+          sshArgs.push("-o", "PubkeyAuthentication=no");
+          sshArgs.push("-o", "PreferredAuthentications=password,keyboard-interactive");
+        }
       } catch (err) {
         cleanupMoshAuthTempFiles(tempFiles);
         throw err;
       }
     
-      return { sshArgs, tempFiles };
+      return { sshArgs, tempFiles, identityFilePaths: resolvedIdentityFilePaths };
     }
     
     /**
@@ -472,6 +522,7 @@ function createMoshSessionApi(ctx) {
               bareClient,
               optionsEnv,
               lang,
+              identityFilePaths: moshAuth.identityFilePaths,
               parsed: session.moshHandshakeResult,
               bufferData,
               flush,
@@ -535,7 +586,17 @@ function createMoshSessionApi(ctx) {
      * sentry whose writeToRemote closure captured the previous handle.
      */
     function swapToMoshClient(session, options, ctx) {
-      const { bareClient, optionsEnv, lang, parsed, bufferData, flush, flushPaced, sessionId } = ctx;
+      const {
+        bareClient,
+        optionsEnv,
+        lang,
+        identityFilePaths,
+        parsed,
+        bufferData,
+        flush,
+        flushPaced,
+        sessionId,
+      } = ctx;
     
       const { buildTerminalProcessEnv } = require("../httpNetworkProxyBridge.cjs");
       const env = moshHandshake.buildMoshClientEnv({
@@ -586,12 +647,13 @@ function createMoshSessionApi(ctx) {
         hostname: options.hostname,
         port: options.port || 22,
         username: options.username,
+        authMethod: options.authMethod,
         password: options.password,
         privateKey: options.privateKey,
         passphrase: options.passphrase,
         certificate: options.certificate,
         keyId: options.keyId,
-        identityFilePaths: options.identityFilePaths,
+        identityFilePaths: identityFilePaths || options.identityFilePaths,
         agentPublicKeys: options.agentPublicKeys,
         useSshAgent: options.useSshAgent,
         identityAgent: options.identityAgent,

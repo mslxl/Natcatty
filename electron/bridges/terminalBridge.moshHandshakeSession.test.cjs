@@ -231,6 +231,36 @@ test("startMoshSession writes the saved password when ssh prompts for one", asyn
   assert.deepEqual(h.spawns[0].writes, ["saved-secret\r"]);
 });
 
+test("startMoshSession password-only mode disables public-key authentication", async (t) => {
+  const h = makeHarness(t);
+  await h.bridge.startMoshSession(
+    h.event,
+    { ...h.options, authMethod: "password", password: "saved-secret", useSshAgent: false },
+    { moshClientLookup: h.lookupOpts },
+  );
+
+  assert.ok(h.spawns[0].args.includes("PubkeyAuthentication=no"));
+  assert.ok(h.spawns[0].args.includes("PreferredAuthentications=password,keyboard-interactive"));
+});
+
+test("startMoshSession key mode never probes unrelated default identities", async (t) => {
+  const h = makeHarness(t);
+  await h.bridge.startMoshSession(
+    h.event,
+    {
+      ...h.options,
+      authMethod: "key",
+      password: "fallback-secret",
+      useSshAgent: false,
+    },
+    { moshClientLookup: h.lookupOpts },
+  );
+
+  assert.ok(h.spawns[0].args.includes("IdentityFile=none"));
+  assert.ok(h.spawns[0].args.includes("IdentitiesOnly=yes"));
+  assert.equal(h.spawns[0].args.includes("PubkeyAuthentication=no"), false);
+});
+
 test("startMoshSession writes the saved password when ConPTY appends cursor controls to the prompt", async (t) => {
   const h = makeHarness(t);
   await h.bridge.startMoshSession(
@@ -462,8 +492,10 @@ test("startMoshSession stashes stats-companion auth after a successful handshake
     {
       ...h.options,
       port: 2200,
+      authMethod: "auto",
       password: "secret",
       keyId: "key-1",
+      identityFilePaths: ["~/.ssh/id_work"],
       agentPublicKeys: ["ssh-ed25519 AAAASELECTED"],
       legacyAlgorithms: true,
       skipEcdsaHostKey: true,
@@ -485,7 +517,9 @@ test("startMoshSession stashes stats-companion auth after a successful handshake
   assert.equal(session.moshStatsAuth.hostname, "example.com");
   assert.equal(session.moshStatsAuth.port, 2200);
   assert.equal(session.moshStatsAuth.username, "alice");
+  assert.equal(session.moshStatsAuth.authMethod, "auto");
   assert.equal(session.moshStatsAuth.password, "secret");
+  assert.equal(session.moshStatsAuth.identityFilePaths[0], path.join(os.homedir(), ".ssh", "id_work"));
   assert.deepEqual(session.moshStatsAuth.agentPublicKeys, ["ssh-ed25519 AAAASELECTED"]);
   assert.equal(session.moshStatsAuth.legacyAlgorithms, true);
   assert.equal(session.moshStatsAuth.skipEcdsaHostKey, true);

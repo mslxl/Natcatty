@@ -184,6 +184,7 @@ function createOpenConnectionApi(ctx) {
           // Build auth handler using shared helper
           // Pass unlocked encrypted keys from options so jump hosts can use them for retry
           const authConfig = buildAuthHandler({
+            authMethod: jump.authMethod,
             privateKey: connOpts.privateKey,
             password: connOpts.password,
             passphrase: connOpts.passphrase,
@@ -856,6 +857,7 @@ function createOpenConnectionApi(ctx) {
       // Build auth handler using shared helper
       // Use pre-fetched agentSocket (validated async, including Windows service check)
       const authConfig = buildAuthHandler({
+        authMethod: options.authMethod,
         privateKey: connectOpts.privateKey,
         password: connectOpts.password,
         passphrase: connectOpts.passphrase,

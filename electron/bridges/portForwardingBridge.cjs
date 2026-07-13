@@ -20,6 +20,7 @@ const {
   findAllDefaultPrivateKeys: findAllDefaultPrivateKeysFromHelper,
   preparePrivateKeyForAuth,
   loadFirstIdentityFileForAuth,
+  getAvailableAgentSocket,
   prepareSystemSshAgentForAuth,
   isPassphraseCancelledError,
 } = require("./sshAuthHelper.cjs");
@@ -78,6 +79,7 @@ async function startPortForward(event, payload) {
     hostname,
     port = 22,
     username,
+    authMethod,
     password,
     privateKey,
     certificate,
@@ -174,6 +176,11 @@ async function startPortForward(event, payload) {
   let defaultKeys = [];
   let portForwardAuthPhase = { hadPartialSuccess: false, passwordAlreadySucceeded: false };
   try {
+    const fallbackAgentSocket = useSshAgent === false
+      ? null
+      : useSshAgent === true
+        ? undefined
+        : await getAvailableAgentSocket(identityAgent, { hostname, port, username });
     const systemAuthAgent = hasCertificate ? null : await prepareSystemSshAgentForAuth({
       useSshAgent,
       agentPublicKeys,
@@ -256,6 +263,7 @@ async function startPortForward(event, payload) {
 
     // Build auth handler using shared helper
     const authConfig = buildAuthHandler({
+      authMethod,
       privateKey: connectOpts.privateKey,
       password,
       passphrase: connectOpts.passphrase,
@@ -263,6 +271,7 @@ async function startPortForward(event, payload) {
       username: connectOpts.username,
       logPrefix: "[PortForward]",
       defaultKeys,
+      sshAgentSocketOverride: fallbackAgentSocket,
       allowAgentFallback: useSshAgent !== false,
     });
     applyAuthToConnOpts(connectOpts, authConfig);
@@ -279,6 +288,7 @@ async function startPortForward(event, payload) {
           hostname,
           port,
           username,
+          authMethod,
           password,
           privateKey,
           passphrase,

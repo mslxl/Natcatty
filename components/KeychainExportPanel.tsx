@@ -189,7 +189,7 @@ export const KeychainExportPanel: React.FC<KeychainExportPanelProps> = ({
                       });
                       const exportKeyAuth = resolveBridgeKeyAuth({
                         key: exportAuth.key,
-                        fallbackIdentityFilePaths: (!effectiveExportHost.useSshAgent && exportAuth.authMethod === "password") || exportAuth.keyId
+                        fallbackIdentityFilePaths: exportAuth.authMethod === "password" || exportAuth.keyId
                           ? undefined
                           : effectiveExportHost.identityFilePaths,
                         passphrase: exportAuth.passphrase,
@@ -198,10 +198,12 @@ export const KeychainExportPanel: React.FC<KeychainExportPanelProps> = ({
                       const exportAgentAuth = resolveBridgeSshAgentAuth(
                         effectiveExportHost,
                         exportAuth.key,
+                        exportAuth.authMethod,
                       );
 
                       // Need either password or a usable key to run remote command.
                       if (!hasBridgeSshCredentials({
+                        authMethod: exportAuth.authMethod,
                         password: exportPassword,
                         privateKey: exportKeyAuth.privateKey,
                         identityFilePaths: exportKeyAuth.identityFilePaths,
@@ -230,8 +232,9 @@ export const KeychainExportPanel: React.FC<KeychainExportPanelProps> = ({
                       // Execute via SSH
                       const result = await execCommand({
                         hostname: effectiveExportHost.hostname,
-                        username: exportAuth.username,
+                        username: exportAuth.username || "root",
                         port: effectiveExportHost.port || 22,
+                        authMethod: exportAuth.authMethod,
                         password: exportPassword,
                         privateKey: exportKeyAuth.privateKey,
                         certificate: exportAuth.key?.certificate,

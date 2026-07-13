@@ -284,14 +284,14 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       const jumpReferenceKeyPath = jumpAuth.authMethod === "password"
         ? undefined
         : jumpKey?.source === 'reference' ? jumpKey.filePath : undefined;
-      const jumpIdentityFilePaths = !jumpHost.useSshAgent && jumpAuth.authMethod === "password"
+      const jumpIdentityFilePaths = jumpAuth.authMethod === "password"
         ? undefined
         : jumpReferenceKeyPath
           ? [jumpReferenceKeyPath]
           : jumpAllowsLocalIdentityFallback
             ? jumpHost.identityFilePaths
             : undefined;
-      const jumpAgentAuth = resolveBridgeSshAgentAuth(jumpHost, jumpKey);
+      const jumpAgentAuth = resolveBridgeSshAgentAuth(jumpHost, jumpKey, jumpAuth.authMethod);
       const hasJumpKeyMaterial = Boolean(
         jumpAgentAuth.useSshAgent || jumpPrivateKey || jumpIdentityFilePaths?.length,
       );
@@ -307,7 +307,12 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         isEncryptedCredentialPlaceholder(rawJumpPrivateKey) ||
         isEncryptedCredentialPlaceholder(rawJumpPassphrase);
 
-      if (hasEncryptedJumpProxyCredential || (hasEncryptedJumpCredential && !jumpPassword && !hasJumpKeyMaterial)) {
+      if (hasEncryptedJumpProxyCredential || (
+        jumpAuth.authMethod !== "auto"
+        && hasEncryptedJumpCredential
+        && !jumpPassword
+        && !hasJumpKeyMaterial
+      )) {
         jumpHostsWithUnavailableCredentials.push(jumpHost.label || jumpHost.hostname);
       }
 
@@ -321,6 +326,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         hostname: jumpHost.hostname,
         port: jumpHost.port || 22,
         username: jumpAuth.username || "root",
+        authMethod: jumpAuth.authMethod,
         password: jumpPassword,
         privateKey: jumpKey?.source === 'reference' ? undefined : jumpPrivateKey,
         certificate: jumpKey?.certificate,
@@ -478,7 +484,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       const authMethod = resolvedAuth.authMethod;
       const allowsLocalIdentityFallback = !resolvedAuth.keyId;
       const targetReferenceKeyPath = key?.source === 'reference' ? key.filePath : undefined;
-      const targetIdentityFilePaths = !ctx.host.useSshAgent && authMethod === "password"
+      const targetIdentityFilePaths = authMethod === "password"
         ? undefined
         : targetReferenceKeyPath
           ? [targetReferenceKeyPath]
@@ -508,6 +514,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           hostLabel: ctx.host.label,
           hostname: ctx.host.hostname,
           username: effectiveUsername,
+          authMethod,
           port: ctx.host.port || 22,
           password: attempt.password,
           privateKey: attempt.key?.source === 'reference' ? undefined : sanitizeCredentialValue(attempt.key?.privateKey),
@@ -540,7 +547,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           identityFilePaths: attempt.useIdentityFiles ? targetIdentityFilePaths : undefined,
           ...(attempt.useSshAgent === false
             ? { useSshAgent: false }
-            : resolveBridgeSshAgentAuth(ctx.host, attempt.key)),
+            : resolveBridgeSshAgentAuth(ctx.host, attempt.key, authMethod)),
           knownHosts: ctx.knownHosts,
           sudoAutofillPassword: resolveSavedSudoAutofillPassword(),
           // Ask the bridge to reuse the source tab's authenticated connection
@@ -553,7 +560,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
 
       let id: string;
       // Respect explicit auth method selection - don't use key if password auth was explicitly selected
-      const usesSystemAgent = resolveBridgeSshAgentAuth(ctx.host, key).useSshAgent === true;
+      const usesSystemAgent = resolveBridgeSshAgentAuth(ctx.host, key, authMethod).useSshAgent === true;
       const hasKeyMaterial = usesSystemAgent || (
         (!!sanitizeCredentialValue(key?.privateKey) || !!targetIdentityFilePaths?.length)
         && (authMethod !== 'password' || ctx.host.useSshAgent === true)
@@ -562,7 +569,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
 
       const needsCredentialReentry =
         (authMethod === "password" && hasEncryptedPrimaryPassword && !hasPassword) ||
-        (authMethod !== "password" && hasEncryptedPrimaryKey && !hasKeyMaterial && !hasPassword);
+        (authMethod !== "password" && authMethod !== "auto" && hasEncryptedPrimaryKey && !hasKeyMaterial && !hasPassword);
 
       if (needsCredentialReentry) {
         if (unsubscribeChainProgress) unsubscribeChainProgress();
@@ -932,14 +939,15 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       const hasEncryptedPrimaryKey = isEncryptedCredentialPlaceholder(resolvedAuth.key?.privateKey);
       const allowsLocalIdentityFallback = !resolvedAuth.keyId;
       const moshReferenceKeyPath = key?.source === 'reference' ? key.filePath : undefined;
-      const moshIdentityFilePaths = !ctx.host.useSshAgent && authMethod === "password"
+      const moshIdentityFilePaths = authMethod === "password"
         ? undefined
         : moshReferenceKeyPath
           ? [moshReferenceKeyPath]
           : allowsLocalIdentityFallback
             ? ctx.host.identityFilePaths
             : undefined;
-      const usesSystemAgent = resolveBridgeSshAgentAuth(ctx.host, key).useSshAgent === true;
+      const moshAgentAuth = resolveBridgeSshAgentAuth(ctx.host, key, authMethod);
+      const usesSystemAgent = moshAgentAuth.useSshAgent === true;
       const hasKeyMaterial = usesSystemAgent || (
         (!!sanitizeCredentialValue(key?.privateKey) || !!moshIdentityFilePaths?.length)
         && (authMethod !== "password" || ctx.host.useSshAgent === true)
@@ -947,7 +955,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       const hasPassword = !!effectivePassword;
       const needsCredentialReentry =
         (authMethod === "password" && hasEncryptedPrimaryPassword && !hasPassword) ||
-        (authMethod !== "password" && hasEncryptedPrimaryKey && !hasKeyMaterial && !hasPassword);
+        (authMethod !== "password" && authMethod !== "auto" && hasEncryptedPrimaryKey && !hasKeyMaterial && !hasPassword);
 
       if (needsCredentialReentry) {
         ctx.setError(null);
@@ -968,15 +976,16 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         sessionId: ctx.sessionId,
         hostname: ctx.host.hostname,
         username: resolvedAuth.username || "root",
+        authMethod,
         password: effectivePassword,
-        privateKey: (ctx.host.useSshAgent && !key?.certificate) || key?.source === 'reference' ? undefined : sanitizeCredentialValue(key?.privateKey),
+        privateKey: (usesSystemAgent && !key?.certificate) || key?.source === 'reference' ? undefined : sanitizeCredentialValue(key?.privateKey),
         certificate: key?.certificate,
         keyId: key?.id,
-        passphrase: key && (!ctx.host.useSshAgent || Boolean(key.certificate))
+        passphrase: key && (!usesSystemAgent || Boolean(key.certificate))
           ? (effectivePassphrase || sanitizeCredentialValue(key.passphrase))
           : undefined,
         identityFilePaths: moshIdentityFilePaths,
-        ...resolveBridgeSshAgentAuth(ctx.host, key),
+        ...moshAgentAuth,
         port: ctx.host.port || 22,
         moshServerPath: ctx.host.moshServerPath,
         agentForwarding: ctx.host.agentForwarding,
@@ -1129,14 +1138,15 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       const hasEncryptedPrimaryKey = isEncryptedCredentialPlaceholder(resolvedAuth.key?.privateKey);
       const allowsLocalIdentityFallback = !resolvedAuth.keyId;
       const etReferenceKeyPath = key?.source === 'reference' ? key.filePath : undefined;
-      const etIdentityFilePaths = !ctx.host.useSshAgent && authMethod === "password"
+      const etIdentityFilePaths = authMethod === "password"
         ? undefined
         : etReferenceKeyPath
           ? [etReferenceKeyPath]
           : allowsLocalIdentityFallback
             ? ctx.host.identityFilePaths
             : undefined;
-      const usesSystemAgent = resolveBridgeSshAgentAuth(ctx.host, key).useSshAgent === true;
+      const etAgentAuth = resolveBridgeSshAgentAuth(ctx.host, key, authMethod);
+      const usesSystemAgent = etAgentAuth.useSshAgent === true;
       const hasKeyMaterial = usesSystemAgent || (
         (!!sanitizeCredentialValue(key?.privateKey) || !!etIdentityFilePaths?.length)
         && (authMethod !== "password" || ctx.host.useSshAgent === true)
@@ -1144,7 +1154,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       const hasPassword = !!effectivePassword;
       const needsCredentialReentry =
         (authMethod === "password" && hasEncryptedPrimaryPassword && !hasPassword) ||
-        (authMethod !== "password" && hasEncryptedPrimaryKey && !hasKeyMaterial && !hasPassword);
+        (authMethod !== "password" && authMethod !== "auto" && hasEncryptedPrimaryKey && !hasKeyMaterial && !hasPassword);
 
       if (needsCredentialReentry) {
         ctx.setError(null);
@@ -1184,9 +1194,10 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           isEncryptedCredentialPlaceholder(rawJumpPassword) ||
           isEncryptedCredentialPlaceholder(rawJumpPrivateKey) ||
           isEncryptedCredentialPlaceholder(rawJumpPassphrase);
-        const jumpAgentAuth = resolveBridgeSshAgentAuth(jumpHost, jumpKey);
+        const jumpAgentAuth = resolveBridgeSshAgentAuth(jumpHost, jumpKey, jumpAuth.authMethod);
         if (
-          hasEncryptedJumpCredential
+          jumpAuth.authMethod !== "auto"
+          && hasEncryptedJumpCredential
           && !jumpPassword
           && !jumpPrivateKey
           && !jumpPassphrase
@@ -1203,7 +1214,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         const jumpReferenceKeyPath = jumpAuth.authMethod === "password"
           ? undefined
           : jumpKey?.source === 'reference' ? jumpKey.filePath : undefined;
-        const jumpIdentityFilePaths = !jumpHost.useSshAgent && jumpAuth.authMethod === "password"
+        const jumpIdentityFilePaths = jumpAuth.authMethod === "password"
           ? undefined
           : jumpReferenceKeyPath
             ? [jumpReferenceKeyPath]
@@ -1219,10 +1230,11 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           // defaults to 2022 and the connection fails.
           etPort: jumpHost.etPort,
           username: jumpAuth.username || "root",
+          authMethod: jumpAuth.authMethod,
           password: jumpPassword,
-          privateKey: (jumpHost.useSshAgent && !jumpKey?.certificate) || jumpKey?.source === 'reference' ? undefined : jumpPrivateKey,
+          privateKey: (jumpAgentAuth.useSshAgent && !jumpKey?.certificate) || jumpKey?.source === 'reference' ? undefined : jumpPrivateKey,
           certificate: jumpKey?.certificate,
-          passphrase: jumpHost.useSshAgent && !jumpKey?.certificate ? undefined : jumpPassphrase,
+          passphrase: jumpAgentAuth.useSshAgent && !jumpKey?.certificate ? undefined : jumpPassphrase,
           keyId: jumpAuth.keyId,
           keySource: jumpKey?.source,
           label: jumpHost.label,
@@ -1258,15 +1270,15 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         hostname: ctx.host.hostname,
         username: resolvedAuth.username || "root",
         password: effectivePassword,
-        privateKey: (ctx.host.useSshAgent && !key?.certificate) || key?.source === 'reference' ? undefined : sanitizeCredentialValue(key?.privateKey),
+        privateKey: (usesSystemAgent && !key?.certificate) || key?.source === 'reference' ? undefined : sanitizeCredentialValue(key?.privateKey),
         certificate: key?.certificate,
         keyId: key?.id,
-        passphrase: key && (!ctx.host.useSshAgent || Boolean(key.certificate))
+        passphrase: key && (!usesSystemAgent || Boolean(key.certificate))
           ? (effectivePassphrase || sanitizeCredentialValue(key.passphrase))
           : undefined,
         authMethod,
         identityFilePaths: etIdentityFilePaths,
-        ...resolveBridgeSshAgentAuth(ctx.host, key),
+        ...etAgentAuth,
         port: ctx.host.port || 22,
         etPort: ctx.host.etPort,
         legacyAlgorithms: ctx.host.legacyAlgorithms,

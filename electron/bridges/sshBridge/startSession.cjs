@@ -48,12 +48,53 @@ function isSshAuthFailure(err) {
     message.includes("no authentication methods available");
 }
 
+function hasSelectedAgentIdentity(options) {
+  const hasInlinePublicKey = Array.isArray(options?.agentPublicKeys)
+    && options.agentPublicKeys.some((key) => typeof key === "string" && key.trim().length > 0);
+  const hasReferencedIdentity = Array.isArray(options?.identityFilePaths)
+    && options.identityFilePaths.some((filePath) => typeof filePath === "string" && filePath.trim().length > 0);
+  return hasInlinePublicKey || hasReferencedIdentity;
+}
+
 function shouldOfferAgentForLogin(options, connectOpts) {
-  return options?.useSshAgent !== false && Boolean(connectOpts?.agent);
+  const selectedMethod = options?.authMethod;
+  const hasRestrictedSelectedAgent = selectedMethod === "key"
+    && options?.useSshAgent === true
+    && options?.identitiesOnly === true
+    && hasSelectedAgentIdentity(options);
+  const isStrictMethod = selectedMethod === "password"
+    || selectedMethod === "key"
+    || selectedMethod === "certificate";
+  return (!isStrictMethod || hasRestrictedSelectedAgent)
+    && options?.useSshAgent !== false
+    && Boolean(connectOpts?.agent);
+}
+
+function shouldPrepareSystemAgentForLogin(options) {
+  if (options?.authMethod === "password" || options?.authMethod === "certificate") return false;
+  if (options?.authMethod !== "key") return true;
+  return options?.useSshAgent === true
+    && options?.identitiesOnly === true
+    && hasSelectedAgentIdentity(options);
 }
 
 function resolveUnlockedEncryptedKeysForAuth(options, strictAgentSelection) {
-  return strictAgentSelection ? [] : (options?._unlockedEncryptedKeys || []);
+  const selectedMethod = options?.authMethod;
+  const hasStrictMethod = selectedMethod === "password"
+    || selectedMethod === "key"
+    || selectedMethod === "certificate";
+  return strictAgentSelection || hasStrictMethod ? [] : (options?._unlockedEncryptedKeys || []);
+}
+
+function shouldPromoteCachedAuthMethod(authMethod, cachedMethod) {
+  if (!cachedMethod) return false;
+  if (authMethod === "auto") {
+    return cachedMethod === "agent" || cachedMethod.startsWith("publickey");
+  }
+  if (authMethod === "password" || authMethod === "key" || authMethod === "certificate") {
+    return false;
+  }
+  return true;
 }
 
 function createStartSessionApi(ctx) {
@@ -658,7 +699,11 @@ function createStartSessionApi(ctx) {
         });
 
         // Authentication for final target
-        const hasCertificate = typeof options.certificate === "string" && options.certificate.trim().length > 0;
+        const hasCertificate = options.authMethod !== "password"
+          && typeof options.certificate === "string"
+          && options.certificate.trim().length > 0;
+        const isAutomaticAuth = options.authMethod === "auto";
+        const isSelectedKeyAuth = options.authMethod === "key" || options.authMethod === "certificate";
         const effectivePassphrase = options.passphrase;
 
         console.log("[SSH] Auth configuration:", {
@@ -678,16 +723,16 @@ function createStartSessionApi(ctx) {
         });
 
         let authAgent = null;
-        const systemAuthAgent = hasCertificate
-          ? null
-          : await prepareSystemSshAgentForAuth(options, "[SSH]");
+        const systemAuthAgent = shouldPrepareSystemAgentForLogin(options)
+          ? await prepareSystemSshAgentForAuth(options, "[SSH]")
+          : null;
         // Kick off the default-key scan now so it overlaps the identity-file /
         // inline-key preparation below instead of running serially after it.
         // findAllDefaultPrivateKeys swallows its own fs errors and never rejects,
         // so leaving this promise briefly unawaited cannot surface an unhandled
         // rejection even if the key prep throws first.
         const defaultKeysPromise = findAllDefaultPrivateKeys();
-        const identityFile = !options.privateKey && !systemAuthAgent
+        const identityFile = options.authMethod !== "password" && !options.privateKey && !systemAuthAgent
           ? await loadFirstIdentityFileForAuth({
             sender,
             identityFilePaths: options.identityFilePaths,
@@ -708,7 +753,7 @@ function createStartSessionApi(ctx) {
             },
           })
           : null;
-        const inlineKey = options.privateKey && !systemAuthAgent
+        const inlineKey = options.authMethod !== "password" && options.privateKey && !systemAuthAgent
           ? await preparePrivateKeyForAuth({
             sender,
             privateKey: options.privateKey,
@@ -770,18 +815,21 @@ function createStartSessionApi(ctx) {
         // sshBridge.defaultKeyEquivalence.test.cjs.)
         let usedDefaultKeyAsPrimary = false;
         const discoveredDefaultKeys = await defaultKeysPromise;
-        const allDefaultKeys = systemAuthAgent && options.identitiesOnly
+        const allDefaultKeys = isSelectedKeyAuth || options.authMethod === "password" || (systemAuthAgent && options.identitiesOnly)
           ? []
           : discoveredDefaultKeys;
         const defaultKeyInfo = allDefaultKeys[0] ?? null;
         // Explicit password without a user-configured key/certificate/agent is
         // password-only — same predicate buildAuthHandler uses for isPasswordOnly.
         const isPasswordOnlyAuth =
-          isPasswordProvided(connectOpts.password) &&
-          !connectOpts.privateKey &&
-          !hasCertificate &&
-          !systemAuthAgent &&
-          !hasUserConfiguredKey(options);
+          options.authMethod === "password" || (
+            !isAutomaticAuth &&
+            isPasswordProvided(connectOpts.password) &&
+            !connectOpts.privateKey &&
+            !hasCertificate &&
+            !systemAuthAgent &&
+            !hasUserConfiguredKey(options)
+          );
         if (defaultKeyInfo && !isPasswordOnlyAuth) {
           log("Found default SSH key for fallback", { keyPath: defaultKeyInfo.keyPath, keyName: defaultKeyInfo.keyName });
         } else if (defaultKeyInfo && isPasswordOnlyAuth) {
@@ -795,13 +843,24 @@ function createStartSessionApi(ctx) {
         // These are passed via _unlockedEncryptedKeys from startSSHSessionWrapper
         const unlockedEncryptedKeys = resolveUnlockedEncryptedKeysForAuth(
           options,
-          Boolean(systemAuthAgent && options.identitiesOnly),
+          Boolean(isSelectedKeyAuth || (systemAuthAgent && options.identitiesOnly)),
         );
         if (unlockedEncryptedKeys.length > 0) {
           log("Using unlocked encrypted keys from retry", {
             count: unlockedEncryptedKeys.length,
             keyNames: unlockedEncryptedKeys.map(k => k.keyName)
           });
+        }
+
+        // Automatic mode intentionally mirrors OpenSSH-style discovery even
+        // when a saved password exists: agent and default keys are tried first,
+        // then the password. Password-only mode never enters this path.
+        if (isAutomaticAuth && !connectOpts.agent && options.useSshAgent !== false) {
+          const automaticAgentSocket = await getAvailableAgentSocket();
+          if (automaticAgentSocket) {
+            connectOpts.agent = automaticAgentSocket;
+            log("Automatic auth found SSH agent", { agentSocket: automaticAgentSocket });
+          }
         }
 
         // If no primary auth method configured, try ssh-agent first, then ALL default keys.
@@ -881,29 +940,43 @@ function createStartSessionApi(ctx) {
           // Build dynamic auth handler for fallback support
           const authMethods = [];
 
-          // First try user-configured key if available (explicit user choice)
-          if (connectOpts.privateKey && !usedDefaultKeyAsPrimary) {
-            authMethods.push({ type: "publickey", key: connectOpts.privateKey, passphrase: connectOpts.passphrase, id: "publickey-user" });
-          }
+          if (isAutomaticAuth) {
+            if (shouldOfferAgentForLogin(options, connectOpts)) {
+              authMethods.push({ type: "agent", id: "agent" });
+            }
+            if (connectOpts.privateKey && !usedDefaultKeyAsPrimary) {
+              authMethods.push({ type: "publickey", key: connectOpts.privateKey, passphrase: connectOpts.passphrase, id: "publickey-user" });
+            }
+            for (const keyInfo of allDefaultKeys) {
+              authMethods.push({
+                type: "publickey",
+                key: keyInfo.privateKey,
+                isDefault: true,
+                id: `publickey-default-${keyInfo.keyName}`
+              });
+            }
+            if (connectOpts.password) {
+              authMethods.push({ type: "password", id: "password" });
+            }
+          } else {
+            // First try user-configured key if available (explicit user choice)
+            if (connectOpts.privateKey && !usedDefaultKeyAsPrimary) {
+              authMethods.push({ type: "publickey", key: connectOpts.privateKey, passphrase: connectOpts.passphrase, id: "publickey-user" });
+            }
 
-          // Then try agent if configured (try agent before password since it's usually faster)
-          if (shouldOfferAgentForLogin(options, connectOpts)) {
-            authMethods.push({ type: "agent", id: "agent" });
-          }
+            // Then try agent if configured (try agent before password since it's usually faster)
+            if (shouldOfferAgentForLogin(options, connectOpts)) {
+              authMethods.push({ type: "agent", id: "agent" });
+            }
 
-          // Then try password if available (explicit user choice)
-          if (connectOpts.password) {
-            authMethods.push({ type: "password", id: "password" });
-          }
+            // Then try password if available (explicit user choice)
+            if (connectOpts.password) {
+              authMethods.push({ type: "password", id: "password" });
+            }
 
-          // Then try ALL default SSH keys as fallback (not just the first one!)
-          // This is critical because different servers may have different keys in authorized_keys.
-          // Password-only hosts skip automatic default-key probing so terminal/SFTP/jump
-          // agree (issue #2079). Unlocked encrypted keys from an explicit passphrase
-          // retry are kept even for password-only targets when jump-host retry
-          // unlocked them (Codex review P2 on #2153 / canRetryWithEncryptedDefaultKeys).
-          if (!isPasswordOnlyAuth) {
-            if (usedDefaultKeyAsPrimary && allDefaultKeys.length > 0) {
+            // Then try ALL default SSH keys as fallback (not just the first one!)
+            // Password-only hosts skip automatic default-key probing so terminal/SFTP/jump agree.
+            if (!isPasswordOnlyAuth && usedDefaultKeyAsPrimary && allDefaultKeys.length > 0) {
               for (const keyInfo of allDefaultKeys) {
                 authMethods.push({
                   type: "publickey",
@@ -912,15 +985,14 @@ function createStartSessionApi(ctx) {
                   id: `publickey-default-${keyInfo.keyName}`
                 });
               }
-            } else if (defaultKeyInfo && !hasUserConfiguredKey(options) && !usedDefaultKeyAsPrimary) {
+            } else if (!isSelectedKeyAuth && defaultKeyInfo && !hasUserConfiguredKey(options) && !usedDefaultKeyAsPrimary) {
               // Single default key fallback (when user has configured other non-password auth)
               authMethods.push({ type: "publickey", key: defaultKeyInfo.privateKey, isDefault: true, id: "publickey-default" });
             }
           }
 
-          // Unlocked encrypted keys always stay eligible after the user was
-          // prompted for their passphrase — discarding them here would waste
-          // that interaction when jump-host retry re-enters startSession.
+          // Unlocked default keys remain eligible only for automatic and
+          // legacy fallback modes. Explicit modes must not probe unrelated keys.
           for (const keyInfo of unlockedEncryptedKeys) {
             authMethods.push({
               type: "publickey",
@@ -941,7 +1013,7 @@ function createStartSessionApi(ctx) {
           });
 
           // Reorder methods based on cached successful method
-          if (cachedMethod) {
+          if (shouldPromoteCachedAuthMethod(options.authMethod, cachedMethod)) {
             const cachedIndex = authMethods.findIndex(m => m.id === cachedMethod);
             if (cachedIndex > 0) {
               const [cachedAuthMethod] = authMethods.splice(cachedIndex, 1);
@@ -1596,5 +1668,7 @@ module.exports = {
   createStartSessionApi,
   resolveSshConnectionTimeouts,
   shouldOfferAgentForLogin,
+  shouldPrepareSystemAgentForLogin,
   resolveUnlockedEncryptedKeysForAuth,
+  shouldPromoteCachedAuthMethod,
 };

@@ -450,12 +450,12 @@ export const startPortForward = async (
           const jumpPassword = sanitizeCredentialValue(jumpResolved.password);
           const jumpKeyAuth = resolveBridgeKeyAuth({
             key: jumpKey,
-            fallbackIdentityFilePaths: (!jumpHost.useSshAgent && jumpResolved.authMethod === "password") || jumpResolved.keyId
+            fallbackIdentityFilePaths: jumpResolved.authMethod === "password" || jumpResolved.keyId
               ? undefined
               : jumpHost.identityFilePaths,
             passphrase: jumpResolved.passphrase,
           });
-          const jumpAgentAuth = resolveBridgeSshAgentAuth(jumpHost, jumpKey);
+          const jumpAgentAuth = resolveBridgeSshAgentAuth(jumpHost, jumpKey, jumpResolved.authMethod);
           const hasJumpKeyMaterial = Boolean(
             jumpAgentAuth.useSshAgent || jumpKeyAuth.privateKey || jumpKeyAuth.identityFilePaths?.length,
           );
@@ -465,7 +465,7 @@ export const startPortForward = async (
             isEncryptedCredentialPlaceholder(jumpResolved.passphrase);
           if (
             (jumpResolved.authMethod === "password" && isEncryptedCredentialPlaceholder(jumpResolved.password) && !jumpPassword) ||
-            (jumpResolved.authMethod !== "password" && hasUnreadableJumpCredential && !jumpPassword && !hasJumpKeyMaterial)
+            (jumpResolved.authMethod !== "password" && jumpResolved.authMethod !== "auto" && hasUnreadableJumpCredential && !jumpPassword && !hasJumpKeyMaterial)
           ) {
             throw new Error(`Saved credentials for jump host "${jumpHost.label || jumpHost.hostname}" cannot be decrypted on this device. Open host settings and re-enter them.`);
           }
@@ -475,6 +475,7 @@ export const startPortForward = async (
             hostname: jumpHost.hostname,
             port: jumpHost.port || 22,
             username: jumpResolved.username || 'root',
+            authMethod: jumpResolved.authMethod,
             password: jumpPassword,
             privateKey: jumpKeyAuth.privateKey,
             certificate: jumpKey?.certificate,
@@ -506,12 +507,12 @@ export const startPortForward = async (
     
     const keyAuth = resolveBridgeKeyAuth({
       key,
-      fallbackIdentityFilePaths: (!host.useSshAgent && resolved.authMethod === "password") || resolved.keyId
+      fallbackIdentityFilePaths: resolved.authMethod === "password" || resolved.keyId
         ? undefined
         : host.identityFilePaths,
       passphrase: resolved.passphrase,
     });
-    const targetAgentAuth = resolveBridgeSshAgentAuth(host, key);
+    const targetAgentAuth = resolveBridgeSshAgentAuth(host, key, resolved.authMethod);
     const password = sanitizeCredentialValue(resolved.password);
     const hasKeyMaterial = Boolean(
       targetAgentAuth.useSshAgent || keyAuth.privateKey || keyAuth.identityFilePaths?.length,
@@ -522,7 +523,7 @@ export const startPortForward = async (
       isEncryptedCredentialPlaceholder(resolved.passphrase);
     if (
       (resolved.authMethod === "password" && isEncryptedCredentialPlaceholder(resolved.password) && !password) ||
-      (resolved.authMethod !== "password" && hasUnreadableCredential && !password && !hasKeyMaterial)
+      (resolved.authMethod !== "password" && resolved.authMethod !== "auto" && hasUnreadableCredential && !password && !hasKeyMaterial)
     ) {
       throw new Error('Saved credentials cannot be decrypted on this device. Open host settings and re-enter them.');
     }
@@ -571,6 +572,7 @@ export const startPortForward = async (
       hostname: host.hostname,
       port: host.port,
       username: resolved.username,
+      authMethod: resolved.authMethod,
       password,
       privateKey: keyAuth.privateKey,
       certificate: key?.certificate,

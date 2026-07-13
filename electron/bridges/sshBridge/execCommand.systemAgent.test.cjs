@@ -13,6 +13,7 @@ function createHarness({ identitiesOnly }) {
     inlineKeyLoads: 0,
     endCount: 0,
     authConfig: null,
+    agentSocketChecks: 0,
   };
 
   class MockSSHClient extends EventEmitter {
@@ -37,9 +38,14 @@ function createHarness({ identitiesOnly }) {
     clearTimeout,
     Error,
     prepareSystemSshAgentForAuth: async (payload) => {
+      if (payload.useSshAgent !== true) return null;
       assert.equal(payload.useSshAgent, true);
       assert.equal(payload.identitiesOnly, identitiesOnly);
       return preparedAgent;
+    },
+    getAvailableAgentSocket: async () => {
+      calls.agentSocketChecks += 1;
+      return null;
     },
     findAllDefaultPrivateKeysFromHelper: async () => {
       calls.defaultKeyScans += 1;
@@ -72,6 +78,29 @@ function createHarness({ identitiesOnly }) {
 
   return { api, calls, preparedAgent };
 }
+
+test("execCommand disables an unavailable optional agent before automatic fallback", async () => {
+  const { api, calls } = createHarness({ identitiesOnly: false });
+
+  await assert.rejects(
+    () => api.execCommand(
+      { sender: {} },
+      {
+        hostname: "example.test",
+        username: "alice",
+        command: "true",
+        authMethod: "auto",
+        password: "fallback-password",
+        enableKeyboardInteractive: true,
+        timeout: 10,
+      },
+    ),
+    /stop after options capture/,
+  );
+
+  assert.equal(calls.agentSocketChecks, 1);
+  assert.equal(calls.authConfig.sshAgentSocketOverride, null);
+});
 
 for (const identitiesOnly of [true, false]) {
   test(`execCommand uses the system agent without reading private keys (identitiesOnly=${identitiesOnly})`, async () => {
