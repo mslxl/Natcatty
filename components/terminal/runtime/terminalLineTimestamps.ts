@@ -13,6 +13,8 @@ export type TerminalLineTimestampSegmenter = {
 
 type TerminalLineTimestampSegmenterOptions = {
   now?: () => Date;
+  /** Optional label factory (used to intern same-second strings). */
+  formatLabel?: (date: Date) => string;
 };
 
 type TimestampMarker = {
@@ -30,9 +32,28 @@ type TimestampEntry = {
 
 type TimestampStore = {
   segmenter: TerminalLineTimestampSegmenter;
+  /**
+   * Dense ring of live markers. Always records (even when the gutter is off)
+   * so expanding timestamps later still shows history — same product model as
+   * iTerm2, where per-line time lives in buffer metadata and display is a
+   * view toggle. Capacity is capped to scrollback so flood output cannot grow
+   * unboundedly.
+   */
   entries: TimestampEntry[];
+  /**
+   * Markers dropped from `entries` but not yet disposed. Drained with a per-pass
+   * budget so rewrite storms do not O(n²)-freeze on xterm marker list splices.
+   */
+  orphanedMarkers: TimestampMarker[];
   listeners: Set<() => void>;
   timestampOnlyPrefix: string;
+  /** Amortize prune cost across many registerMarker calls. */
+  recordsSincePrune: number;
+  /** Disposed markers since last compact (drives write-path cleanup). */
+  disposedPendingCompact: number;
+  /** Intern HH:MM:SS for the current wall-clock second. */
+  labelCacheKey: number | null;
+  labelCacheValue: string;
 };
 
 type XTermWithUnicodeService = XTerm & {
@@ -95,12 +116,45 @@ export type TerminalLineTimestampDiagnostics = {
 const stores = new WeakMap<XTerm, TimestampStore>();
 const MAX_SEGMENTED_TIMESTAMP_WRITES = 64;
 const BULK_TIMESTAMP_BATCH_MIN_BYTES = 4096;
+/**
+ * Hard ceiling for retained timestamps. Matches Settings UI max scrollback
+ * (100000) plus generous viewport headroom for very tall terminals.
+ */
+export const MAX_TERMINAL_LINE_TIMESTAMP_ENTRIES = 100000 + 2048;
+/** Compact disposed holes at least this often during flood writes. */
+const TIMESTAMP_PRUNE_EVERY_RECORDS = 256;
+/** Max xterm marker.dispose() calls per prune/write pass (amortize O(n) splices). */
+const TIMESTAMP_ORPHAN_DISPOSE_BUDGET = 64;
+/** When orphan backlog grows large, spend a bigger budget to catch up. */
+const TIMESTAMP_ORPHAN_CATCHUP_THRESHOLD = 512;
+const TIMESTAMP_ORPHAN_CATCHUP_BUDGET = 256;
 
 const pad2 = (value: number): string => value.toString().padStart(2, "0");
 
 export const formatTerminalLineTimestamp = (date: Date): string => (
   `${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`
 );
+
+/**
+ * Resolve how many line timestamps to retain for a terminal.
+ * Prefer the live scrollback option so a smaller history trims timestamps too.
+ * Capacity is scrollback + viewport (+slack), matching xterm's retained lines.
+ */
+export const resolveTerminalLineTimestampCapacity = (
+  term: XTerm,
+  fallback = MAX_TERMINAL_LINE_TIMESTAMP_ENTRIES,
+): number => {
+  const options = (term as XTerm & { options?: { scrollback?: number } }).options;
+  const scrollback = options?.scrollback;
+  const rows = Number.isFinite(term.rows) && term.rows > 0 ? term.rows : 24;
+  if (Number.isFinite(scrollback) && Number(scrollback) > 0) {
+    return Math.min(
+      MAX_TERMINAL_LINE_TIMESTAMP_ENTRIES,
+      Math.floor(Number(scrollback)) + rows + 64,
+    );
+  }
+  return Math.min(MAX_TERMINAL_LINE_TIMESTAMP_ENTRIES, fallback);
+};
 
 const isCsiFinalByte = (char: string): boolean => char >= "@" && char <= "~";
 const STRING_TERMINATOR = "\u009c";
@@ -270,6 +324,7 @@ export const createTerminalLineTimestampSegmenter = (
   options: TerminalLineTimestampSegmenterOptions = {},
 ): TerminalLineTimestampSegmenter => {
   const now = options.now ?? (() => new Date());
+  const formatLabel = options.formatLabel ?? formatTerminalLineTimestamp;
   let atLineStart = true;
   let currentLineStamped = false;
   let pendingEscapeSequence = "";
@@ -286,7 +341,7 @@ export const createTerminalLineTimestampSegmenter = (
     atLineStart = false;
     segments.push({
       kind: "timestamp",
-      label: formatTerminalLineTimestamp(now()),
+      label: formatLabel(now()),
     });
   };
 
@@ -375,6 +430,7 @@ export const createTerminalLineTimestampSegmenter = (
 };
 
 const notifyTimestampStore = (store: TimestampStore) => {
+  if (store.listeners.size === 0) return;
   for (const listener of store.listeners) {
     listener();
   }
@@ -383,19 +439,160 @@ const notifyTimestampStore = (store: TimestampStore) => {
 const getTimestampStore = (term: XTerm): TimestampStore => {
   let store = stores.get(term);
   if (!store) {
-    store = {
+    const created: TimestampStore = {
+      // Placeholder; replaced immediately with an interning segmenter below.
       segmenter: createTerminalLineTimestampSegmenter(),
       entries: [],
+      orphanedMarkers: [],
       listeners: new Set(),
       timestampOnlyPrefix: "",
+      recordsSincePrune: 0,
+      disposedPendingCompact: 0,
+      labelCacheKey: null,
+      labelCacheValue: "",
     };
-    stores.set(term, store);
+    created.segmenter = createTerminalLineTimestampSegmenter({
+      formatLabel: (date) => internTerminalLineTimestampLabel(created, date),
+    });
+    stores.set(term, created);
+    store = created;
   }
   return store;
 };
 
-const pruneDisposedEntries = (store: TimestampStore) => {
-  store.entries = store.entries.filter((entry) => !entry.marker.isDisposed);
+const internTerminalLineTimestampLabel = (
+  store: TimestampStore,
+  date: Date,
+): string => {
+  // Same wall-clock second → identical label; avoid allocating 50万× "12:34:56".
+  const key = Math.floor(date.getTime() / 1000);
+  if (store.labelCacheKey === key) {
+    return store.labelCacheValue;
+  }
+  const label = formatTerminalLineTimestamp(date);
+  store.labelCacheKey = key;
+  store.labelCacheValue = label;
+  return label;
+};
+
+const enqueueOrphanedMarker = (
+  store: TimestampStore,
+  marker: TimestampMarker,
+): void => {
+  if (marker.isDisposed) return;
+  store.orphanedMarkers.push(marker);
+};
+
+/**
+ * Dispose a bounded number of orphaned xterm markers. Full mass-dispose of
+ * thousands of markers freezes (xterm splice is O(markers) each); amortizing
+ * keeps rewrite/flood sessions responsive while still retiring superseded
+ * markers that scrollback will never trim (e.g. DECSTBM row rewrites).
+ */
+const drainOrphanedMarkers = (
+  store: TimestampStore,
+  budget = TIMESTAMP_ORPHAN_DISPOSE_BUDGET,
+): void => {
+  let remaining = budget;
+  if (store.orphanedMarkers.length >= TIMESTAMP_ORPHAN_CATCHUP_THRESHOLD) {
+    remaining = Math.max(remaining, TIMESTAMP_ORPHAN_CATCHUP_BUDGET);
+  }
+  while (remaining > 0 && store.orphanedMarkers.length > 0) {
+    const marker = store.orphanedMarkers.pop();
+    remaining -= 1;
+    if (!marker || marker.isDisposed) continue;
+    marker.dispose?.();
+  }
+};
+
+/** Cheap pass for paint/write paths: drop disposed holes only (no dedupe / capacity). */
+const compactDisposedMarkersOnly = (store: TimestampStore): void => {
+  if (store.disposedPendingCompact <= 0) {
+    // Still drop any disposed holes we notice, but skip the scan when we have
+    // no dispose signals and the list is empty.
+    if (store.entries.length === 0) return;
+  }
+  const entries = store.entries;
+  let write = 0;
+  for (let read = 0; read < entries.length; read += 1) {
+    const entry = entries[read];
+    if (entry.marker.isDisposed) {
+      entry.disposeListener?.dispose();
+      continue;
+    }
+    entries[write] = entry;
+    write += 1;
+  }
+  entries.length = write;
+  store.disposedPendingCompact = 0;
+};
+
+/**
+ * Compact disposed markers, collapse rewritten lines to their latest label,
+ * and enforce a hard capacity in linear passes.
+ * Avoids the previous O(n) filter on *every* individual marker dispose during
+ * scrollback trim (which turned seq 1 500000 into ~O(n²) main-thread work).
+ */
+const pruneDisposedEntries = (
+  store: TimestampStore,
+  capacity = MAX_TERMINAL_LINE_TIMESTAMP_ENTRIES,
+): void => {
+  const entries = store.entries;
+  let write = 0;
+  for (let read = 0; read < entries.length; read += 1) {
+    const entry = entries[read];
+    if (entry.marker.isDisposed) continue;
+    entries[write] = entry;
+    write += 1;
+  }
+  entries.length = write;
+
+  // Cursor-up / reposition can append many live markers on the same buffer
+  // line. Keep only the latest label per line so the capacity budget tracks
+  // unique visible history instead of rewrite noise.
+  if (entries.length > 1) {
+    const kept: TimestampEntry[] = [];
+    const seenLines = new Set<number>();
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const entry = entries[index];
+      const line = entry.marker.line;
+      if (seenLines.has(line)) {
+        enqueueOrphanedMarker(store, entry.marker);
+        continue;
+      }
+      seenLines.add(line);
+      kept.push(entry);
+    }
+    kept.reverse();
+    store.entries = kept;
+  }
+
+  const live = store.entries;
+  if (capacity > 0 && live.length > capacity) {
+    const drop = live.length - capacity;
+    for (let index = 0; index < drop; index += 1) {
+      enqueueOrphanedMarker(store, live[index].marker);
+    }
+    live.splice(0, drop);
+  }
+  drainOrphanedMarkers(store);
+  store.recordsSincePrune = 0;
+};
+
+const maybePruneTimestampEntries = (
+  term: XTerm,
+  store: TimestampStore,
+  force = false,
+): void => {
+  const capacity = resolveTerminalLineTimestampCapacity(term);
+  store.recordsSincePrune += 1;
+  if (
+    force
+    || store.recordsSincePrune >= TIMESTAMP_PRUNE_EVERY_RECORDS
+    || store.entries.length > capacity * 1.25
+  ) {
+    pruneDisposedEntries(store, capacity);
+  }
 };
 
 const resetTimestampStore = (store: TimestampStore) => {
@@ -403,9 +600,17 @@ const resetTimestampStore = (store: TimestampStore) => {
     entry.disposeListener?.dispose();
     entry.marker.dispose?.();
   }
+  for (const marker of store.orphanedMarkers) {
+    if (!marker.isDisposed) marker.dispose?.();
+  }
   store.entries = [];
+  store.orphanedMarkers = [];
   store.segmenter.reset();
   store.timestampOnlyPrefix = "";
+  store.recordsSincePrune = 0;
+  store.disposedPendingCompact = 0;
+  store.labelCacheKey = null;
+  store.labelCacheValue = "";
   notifyTimestampStore(store);
 };
 
@@ -415,22 +620,40 @@ const recordTerminalLineTimestamp = (
   label: string,
   notify = true,
   cursorYOffset = 0,
+  options: { skipPrune?: boolean } = {},
 ): boolean => {
   const registerMarker = (term as XTerm & { registerMarker?: (offset: number) => TimestampMarker | undefined }).registerMarker;
   const marker = registerMarker?.call(term, cursorYOffset);
   if (!marker) return false;
 
+  // Lightweight dispose signal only — never filter(entries) per dispose.
+  // Compaction happens in bulk on write/paint via compactDisposedMarkersOnly.
   const entry: TimestampEntry = { marker, label };
   entry.disposeListener = marker.onDispose?.(() => {
-    store.entries = store.entries.filter((candidate) => candidate !== entry);
+    store.disposedPendingCompact += 1;
     entry.disposeListener?.dispose();
-    notifyTimestampStore(store);
+    entry.disposeListener = undefined;
   });
   store.entries.push(entry);
+  if (!options.skipPrune) {
+    maybePruneTimestampEntries(term, store);
+  }
   if (notify) {
     notifyTimestampStore(store);
   }
   return true;
+};
+
+/** Test/diagnostics helper: live entry count after optional prune. */
+export const getTerminalLineTimestampEntryCount = (
+  term: XTerm,
+  options: { prune?: boolean } = {},
+): number => {
+  const store = getTimestampStore(term);
+  if (options.prune !== false) {
+    pruneDisposedEntries(store, resolveTerminalLineTimestampCapacity(term));
+  }
+  return store.entries.length;
 };
 
 const countLineFeeds = (data: string): number => {
@@ -458,6 +681,29 @@ const getTerminalCursorColumn = (term: XTerm): number => {
 const getTerminalWraparoundMode = (term: XTerm): boolean => (
   ((term as XTerm & { modes?: { wraparoundMode?: boolean } }).modes?.wraparoundMode) !== false
 );
+
+/**
+ * True when DECSTBM (or equivalent) leaves a partial scrolling region.
+ * Bulk row-offset measurement assumes full-buffer advancement; inside a
+ * region, newlines recycle rows and measured offsets would invent fake
+ * history and evict still-valid scrollback timestamps.
+ */
+export const hasPartialScrollingRegion = (term: XTerm): boolean => {
+  const core = (term as XTerm & {
+    _core?: { buffer?: { scrollTop?: number; scrollBottom?: number } };
+  })._core;
+  const scrollTop = core?.buffer?.scrollTop;
+  const scrollBottom = core?.buffer?.scrollBottom;
+  const rows = Number.isFinite(term.rows) && term.rows > 0 ? term.rows : 0;
+  if (
+    !Number.isFinite(scrollTop)
+    || !Number.isFinite(scrollBottom)
+    || rows <= 0
+  ) {
+    return false;
+  }
+  return Number(scrollTop) > 0 || Number(scrollBottom) < rows - 1;
+};
 
 const isUnsafeGraphemeSequenceCodePoint = (codePoint: number): boolean => (
   codePoint === 0x200d
@@ -502,40 +748,10 @@ const getCodePointCellWidth = (term: XTerm, codePoint: number): 0 | 1 | 2 | null
   }
 };
 
-const canMeasureVisualRows = (term: XTerm, data: string): boolean => {
-  for (let index = 0; index < data.length; index += 1) {
-    const char = data[index];
-    const codePoint = data.codePointAt(index);
-    if (codePoint === undefined) return false;
-    if (char === "\x1b") {
-      const sequence = readEscapeSequence(data, index);
-      if (!sequence?.complete || !isBulkMeasurableEscapeSequence(sequence.sequence)) {
-        return false;
-      }
-      index = sequence.endIndex;
-      continue;
-    }
-    if (char === "\n" || char === "\r" || char === "\b" || char === "\t") {
-      continue;
-    }
-    if (
-      codePoint < 0x20
-      || codePoint === 0x7f
-      || (codePoint >= 0x80 && codePoint <= 0x9f)
-      || isUnsafeGraphemeSequenceCodePoint(codePoint)
-      || isUnsafeFormatCodePoint(codePoint)
-      || isContextSensitiveGraphemeCodePoint(codePoint)
-    ) {
-      return false;
-    }
-    if (getCodePointCellWidth(term, codePoint) === null) {
-      return false;
-    }
-    if (codePoint > 0xffff) {
-      index += 1;
-    }
-  }
-  return true;
+type MeasuredTerminalRows = {
+  rowOffset: number;
+  column: number;
+  wraparoundMode: boolean;
 };
 
 const advanceMeasuredColumns = (
@@ -580,26 +796,96 @@ const advanceMeasuredTab = (
   return Math.min(nextTabStop, columns - 1);
 };
 
-const measureTerminalRows = (
+/**
+ * Fast gate for flood output like `seq`: printable ASCII + CR/LF/TAB/BS only.
+ * Avoids escape parsing and unicode width lookups entirely.
+ */
+export const isSimpleAsciiControlText = (data: string): boolean => {
+  for (let index = 0; index < data.length; index += 1) {
+    const code = data.charCodeAt(index);
+    if (code === 0x0a || code === 0x0d || code === 0x09 || code === 0x08) continue;
+    if (code >= 0x20 && code <= 0x7e) continue;
+    return false;
+  }
+  return true;
+};
+
+const measureSimpleAsciiRows = (
+  data: string,
+  startColumn: number,
+  columns: number,
+  startWraparoundMode: boolean,
+): MeasuredTerminalRows => {
+  let rowOffset = 0;
+  let column = startColumn;
+  const wraparoundMode = startWraparoundMode;
+
+  for (let index = 0; index < data.length; index += 1) {
+    const code = data.charCodeAt(index);
+    if (code === 0x0a) {
+      rowOffset += 1;
+      if (Number.isFinite(columns) && column >= columns) {
+        column = columns - 1;
+      }
+      continue;
+    }
+    if (code === 0x0d) {
+      column = 0;
+      continue;
+    }
+    if (code === 0x08) {
+      column = Math.max(0, column - 1);
+      continue;
+    }
+    if (code === 0x09) {
+      column = advanceMeasuredTab(column, columns);
+      continue;
+    }
+    // Printable ASCII is always width 1.
+    ({ column, rowOffset } = advanceMeasuredColumns(
+      column,
+      rowOffset,
+      columns,
+      1,
+      wraparoundMode,
+    ));
+  }
+
+  return { rowOffset, column, wraparoundMode };
+};
+
+/**
+ * Validate + measure visual rows in a single pass.
+ * Returns null when the chunk contains sequences we cannot bulk-measure safely
+ * (caller falls back to line-feed counting / segmented writes).
+ */
+export const tryMeasureVisualRows = (
   term: XTerm,
   data: string,
   startColumn: number,
   columns: number,
   startWraparoundMode: boolean,
-): { rowOffset: number; column: number; wraparoundMode: boolean } => {
+): MeasuredTerminalRows | null => {
+  if (isSimpleAsciiControlText(data)) {
+    return measureSimpleAsciiRows(data, startColumn, columns, startWraparoundMode);
+  }
+
   let rowOffset = 0;
   let column = startColumn;
   let wraparoundMode = startWraparoundMode;
 
   for (let index = 0; index < data.length; index += 1) {
-    const sequence = readEscapeSequence(data, index);
-    if (sequence?.complete) {
+    const char = data[index];
+    if (char === "\x1b") {
+      const sequence = readEscapeSequence(data, index);
+      if (!sequence?.complete || !isBulkMeasurableEscapeSequence(sequence.sequence)) {
+        return null;
+      }
       wraparoundMode = getWraparoundAction(sequence.sequence) ?? wraparoundMode;
       index = sequence.endIndex;
       continue;
     }
 
-    const char = data[index];
     if (char === "\n") {
       rowOffset += 1;
       if (Number.isFinite(columns) && column >= columns) {
@@ -619,17 +905,21 @@ const measureTerminalRows = (
       column = advanceMeasuredTab(column, columns);
       continue;
     }
-    if (char < " " || char === "\u007f") {
-      continue;
-    }
+
     const codePoint = data.codePointAt(index);
-    if (codePoint === undefined) {
-      continue;
+    if (codePoint === undefined) return null;
+    if (
+      codePoint < 0x20
+      || codePoint === 0x7f
+      || (codePoint >= 0x80 && codePoint <= 0x9f)
+      || isUnsafeGraphemeSequenceCodePoint(codePoint)
+      || isUnsafeFormatCodePoint(codePoint)
+      || isContextSensitiveGraphemeCodePoint(codePoint)
+    ) {
+      return null;
     }
     const width = getCodePointCellWidth(term, codePoint);
-    if (width === null) {
-      continue;
-    }
+    if (width === null) return null;
     ({ column, rowOffset } = advanceMeasuredColumns(
       column,
       rowOffset,
@@ -644,6 +934,18 @@ const measureTerminalRows = (
 
   return { rowOffset, column, wraparoundMode };
 };
+
+/** @deprecated Prefer tryMeasureVisualRows — kept for call-site clarity in gates. */
+const canMeasureVisualRows = (term: XTerm, data: string): boolean => (
+  isSimpleAsciiControlText(data)
+  || tryMeasureVisualRows(
+    term,
+    data,
+    0,
+    Number.POSITIVE_INFINITY,
+    true,
+  ) !== null
+);
 
 const writeBatchedTimestampSegments = (
   term: XTerm,
@@ -666,9 +968,18 @@ const writeBatchedTimestampSegments = (
       timestamps.push({ label: segment.label, rowOffset });
       continue;
     }
-    const measured = canMeasureVisualRows(term, segment.data)
-      ? measureTerminalRows(term, segment.data, column, columns, wraparoundMode)
-      : { rowOffset: countLineFeeds(segment.data), column, wraparoundMode };
+    const measured = tryMeasureVisualRows(
+      term,
+      segment.data,
+      column,
+      columns,
+      wraparoundMode,
+    ) ?? {
+      // Unmeasurable chunk: preserve prior column/wrap state and count hard newlines only.
+      rowOffset: countLineFeeds(segment.data),
+      column,
+      wraparoundMode,
+    };
     rowOffset += measured.rowOffset;
     column = measured.column;
     wraparoundMode = measured.wraparoundMode;
@@ -679,16 +990,33 @@ const writeBatchedTimestampSegments = (
   term.write(data, () => {
     const writeCallbackMs = shouldMeasureDiagnostics ? performance.now() - writeStartedAt : 0;
     const markerStartedAt = shouldMeasureDiagnostics ? performance.now() : 0;
+    const capacity = resolveTerminalLineTimestampCapacity(term);
+    // Only register markers that land in the retained visual-row window.
+    // Slice by timestamp count is wrong for soft-wrapped floods (many stamps
+    // can map outside the buffer while fewer visual rows remain). Prefer the
+    // last `capacity` visual rows by measured rowOffset.
+    const minRowOffset = Math.max(0, rowOffset - capacity + 1);
+    let timestampsToRecord = timestamps.filter(
+      (timestamp) => timestamp.rowOffset >= minRowOffset,
+    );
+    if (timestampsToRecord.length > capacity) {
+      timestampsToRecord = timestampsToRecord.slice(
+        timestampsToRecord.length - capacity,
+      );
+    }
     let timestampRecorded = false;
-    for (const timestamp of timestamps) {
+    for (const timestamp of timestampsToRecord) {
       timestampRecorded = recordTerminalLineTimestamp(
         term,
         store,
         timestamp.label,
         false,
         timestamp.rowOffset - rowOffset,
+        { skipPrune: true },
       ) || timestampRecorded;
     }
+    // Single prune after bulk registration (intermediate prunes dominate large floods).
+    maybePruneTimestampEntries(term, store, true);
     if (timestampRecorded) {
       notifyTimestampStore(store);
     }
@@ -751,6 +1079,9 @@ export const resolveTerminalTimestampGutterRows = ({
     }
   }
 
+  // Full scan (not binary search): cursor-up / reposition writes can append a
+  // newer marker on an earlier buffer line, so entries are not always sorted by
+  // marker.line. Later entries win for the same line.
   const labelByLine = new Map<number, string>();
   for (const entry of entries) {
     if (entry.marker.isDisposed) continue;
@@ -759,12 +1090,12 @@ export const resolveTerminalTimestampGutterRows = ({
     labelByLine.set(line, entry.label);
   }
 
-  const rowLabels = new Map<number, string>();
+  const visible: TerminalTimestampGutterRow[] = [];
   for (let row = 0; row < rows; row += 1) {
     const line = viewportY + row;
     const directLabel = labelByLine.get(line);
     if (directLabel) {
-      rowLabels.set(row, directLabel);
+      visible.push({ row, label: directLabel });
       continue;
     }
 
@@ -772,13 +1103,11 @@ export const resolveTerminalTimestampGutterRows = ({
     if (sourceLine === undefined) continue;
     const wrappedLabel = labelByLine.get(sourceLine);
     if (wrappedLabel) {
-      rowLabels.set(row, wrappedLabel);
+      visible.push({ row, label: wrappedLabel });
     }
   }
 
-  return [...rowLabels.entries()]
-    .sort(([a], [b]) => a - b)
-    .map(([row, label]) => ({ row, label }));
+  return visible;
 };
 
 export const getVisibleTerminalLineTimestampRows = (
@@ -788,7 +1117,8 @@ export const getVisibleTerminalLineTimestampRows = (
     return [];
   }
   const store = getTimestampStore(term);
-  pruneDisposedEntries(store);
+  // Paint path: only drop disposed holes. Full dedupe/capacity runs on write.
+  compactDisposedMarkersOnly(store);
   return resolveTerminalTimestampGutterRows({
     viewportY: term.buffer.active.viewportY,
     rows: term.rows,
@@ -821,6 +1151,11 @@ export const writeTerminalDataWithLineTimestamps = (
   }
 
   const store = getTimestampStore(term);
+  // Clears / scrollback wipes dispose markers without new stamps. Compact only
+  // when dispose signals arrived — not on every tiny write against a full store.
+  if (store.disposedPendingCompact > 0) {
+    compactDisposedMarkersOnly(store);
+  }
   store.segmenter.setAlternateScreenActive(
     ((term.buffer?.active as { type?: string } | undefined)?.type) === "alternate",
   );
@@ -863,10 +1198,15 @@ export const writeTerminalDataWithLineTimestamps = (
   if (
     timestampOnlyPrefix.length === 0
     && parsedData === dataForTimestamps
-    && canMeasureVisualRows(term, data)
+    && !hasPartialScrollingRegion(term)
     && (
       dataSegmentCount > MAX_SEGMENTED_TIMESTAMP_WRITES
       || data.length >= BULK_TIMESTAMP_BATCH_MIN_BYTES
+    )
+    // Cheap ASCII gate first (seq / log floods); otherwise one validate+measure probe.
+    && (
+      isSimpleAsciiControlText(data)
+      || canMeasureVisualRows(term, data)
     )
   ) {
     writeBatchedTimestampSegments(term, store, data, segments, done, diagnostics);
