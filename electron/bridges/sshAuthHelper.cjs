@@ -1123,10 +1123,12 @@ const OTP_PROMPT_PATTERN = new RegExp(
     "multi[\\s-]?factor",
     "\\bmfa\\b",
     "second\\s+factor",
-    // Step-up / secondary password (login password already used as first factor)
-    "secondary\\s+passw",
-    "second\\s+passw",
-    "additional\\s+passw",
+    // Step-up / secondary password (login password already used as first factor).
+    // Allow a few words between "secondary" and "password" so prompts like
+    // "Secondary Authentication Password:" (common EDR English label) match.
+    "secondary(?:\\s+\\w+){0,3}\\s+passw",
+    "second(?:\\s+\\w+){0,3}\\s+passw",
+    "additional(?:\\s+\\w+){0,3}\\s+passw",
     "re[-\\s]?enter\\s+passw",
     "confirm\\s+passw",
     "\\bedr\\b",
@@ -1142,6 +1144,7 @@ const OTP_PROMPT_PATTERN = new RegExp(
     "短信验证",
     "手机验证",
     // Corporate EDR / bastion second-factor password prompts (#2150)
+    // Covers "二次密码", "二次认证密码", "二次验证", etc.
     "二次",
     "安全密码",
     "挑战码",
@@ -1207,20 +1210,30 @@ function createOrderedStringAuthHandler(order, authPhase) {
  * Conservative criteria:
  *   - exactly one prompt (multi-prompt is almost certainly real 2FA / MFA)
  *   - the prompt has `echo === false`
- *   - the prompt text does NOT contain any OTP / MFA / secondary-password vocabulary
+ *   - the prompt text + optional name/instructions do NOT contain any OTP /
+ *     MFA / secondary-password vocabulary (EDR often puts the Chinese
+ *     "二次认证密码" wording in instructions and only "Secondary
+ *     Authentication Password:" in the prompt field — see #2150)
  *   - the prompt text DOES contain a recognized password keyword (Latin
  *     "password" / "passwd", CJK "密码" / "口令")
  *   - we have a non-empty saved password
  *
  * Anything else falls through to the modal so the user can answer in person.
+ *
+ * @param {Array} prompts
+ * @param {string} password
+ * @param {string} [contextText] - name + instructions from the KI challenge
  */
-function isAutoFillablePasswordChallenge(prompts, password) {
+function isAutoFillablePasswordChallenge(prompts, password, contextText = "") {
   if (typeof password !== "string" || password.length === 0) return false;
   if (!Array.isArray(prompts) || prompts.length !== 1) return false;
   const prompt = prompts[0];
   if (!prompt || prompt.echo !== false) return false;
   const promptText = typeof prompt.prompt === "string" ? prompt.prompt : "";
-  if (OTP_PROMPT_PATTERN.test(promptText)) return false;
+  // Scan prompt + name/instructions together so secondary-password wording
+  // that only appears in the instruction banner still blocks auto-fill.
+  const haystack = [contextText, promptText].filter(Boolean).join("\n");
+  if (OTP_PROMPT_PATTERN.test(haystack)) return false;
   return PASSWORD_PROMPT_PATTERN.test(promptText);
 }
 
@@ -1228,17 +1241,23 @@ function isAutoFillablePasswordChallenge(prompts, password) {
  * Whether the modal may pre-fill / offer-to-save the host login password for
  * this challenge. Single secondary/EDR prompts and post-partialSuccess
  * challenges must open empty (#2150). Multi-prompt forms (password + OTP)
- * and failed auto-fill retries still get the saved value as a convenience.
+ * still get the saved value as a convenience for the password slot.
+ *
+ * @param {Array} prompts
+ * @param {string} password
+ * @param {{ skipAutoFill?: boolean, contextText?: string }} [opts]
  */
-function shouldPrefillSavedPassword(prompts, password, { skipAutoFill = false } = {}) {
+function shouldPrefillSavedPassword(prompts, password, { skipAutoFill = false, contextText = "" } = {}) {
   if (skipAutoFill) return false;
   if (typeof password !== "string" || password.length === 0) return false;
   if (!Array.isArray(prompts) || prompts.length === 0) return false;
   // Single-prompt: only prefill classic first-factor password challenges.
   if (prompts.length === 1) {
-    return isAutoFillablePasswordChallenge(prompts, password);
+    return isAutoFillablePasswordChallenge(prompts, password, contextText);
   }
   // Multi-prompt: let the modal fill the password slot(s); OTP slots stay empty.
+  // Still block when the overall challenge is clearly a second-factor banner.
+  if (OTP_PROMPT_PATTERN.test(String(contextText || ""))) return false;
   return true;
 }
 
@@ -1300,6 +1319,10 @@ function createKeyboardInteractiveHandler(options) {
       return;
     }
 
+    // name + instructions often carry the real EDR banner (e.g. "请输入二次认证密码")
+    // while prompts[i].prompt is only the short English field label.
+    const contextText = [name, instructions].filter((s) => typeof s === "string" && s.trim()).join("\n");
+
     let skipAutoFill = false;
     try {
       skipAutoFill = typeof shouldSkipAutoFill === "function" && !!shouldSkipAutoFill();
@@ -1314,7 +1337,7 @@ function createKeyboardInteractiveHandler(options) {
     if (
       !skipAutoFill &&
       !autoFilledOnce &&
-      isAutoFillablePasswordChallenge(prompts, password)
+      isAutoFillablePasswordChallenge(prompts, password, contextText)
     ) {
       autoFilledOnce = true;
       console.log(`${logPrefix} Auto-filling saved password into single keyboard-interactive prompt`);
@@ -1347,6 +1370,7 @@ function createKeyboardInteractiveHandler(options) {
     // the same login secret.
     const savedPasswordForModal = shouldPrefillSavedPassword(prompts, password, {
       skipAutoFill: skipAutoFill || autoFilledOnce,
+      contextText,
     })
       ? password
       : null;

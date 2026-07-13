@@ -56,6 +56,7 @@ const isAPasswordPrompt = (prompt: KeyboardInteractivePrompt) => {
     lower.includes("multi factor") ||
     lower.includes("second factor") ||
     lower.includes("secondary password") ||
+    lower.includes("secondary authentication") ||
     lower.includes("second password") ||
     lower.includes("additional password") ||
     lower.includes("re-enter password") ||

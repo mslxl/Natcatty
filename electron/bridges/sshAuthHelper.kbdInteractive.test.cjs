@@ -139,6 +139,45 @@ test("isAutoFillablePasswordChallenge rejects EDR secondary password prompts (#2
   assert.equal(isAutoFillablePasswordChallenge([secondPasswordEnPrompt], "hunter2"), false);
 });
 
+// Real-world EDR banner from issue #2150 / reporter screenshot: Chinese
+// instruction + English "Secondary Authentication Password:" field label.
+const edrSecondaryAuthPasswordPrompt = {
+  prompt: "Secondary Authentication Password:",
+  echo: false,
+};
+const edrSecondaryAuthInstructions =
+  "为保障主机安全，请输入二次认证密码，如有疑问，请联系xxx，电话xxx。";
+
+test("isAutoFillablePasswordChallenge rejects Secondary Authentication Password (#2150)", () => {
+  // English field label alone must not auto-fill — words between "Secondary"
+  // and "Password" are common in corporate EDR prompts.
+  assert.equal(
+    isAutoFillablePasswordChallenge([edrSecondaryAuthPasswordPrompt], "hunter2"),
+    false,
+  );
+});
+
+test("isAutoFillablePasswordChallenge rejects when 二次认证 is only in instructions (#2150)", () => {
+  // Even if the prompt field were a generic "Password:", the instruction
+  // banner carrying "二次认证密码" must still block auto-fill.
+  assert.equal(
+    isAutoFillablePasswordChallenge(
+      [passwordPrompt],
+      "hunter2",
+      edrSecondaryAuthInstructions,
+    ),
+    false,
+  );
+  assert.equal(
+    isAutoFillablePasswordChallenge(
+      [edrSecondaryAuthPasswordPrompt],
+      "hunter2",
+      edrSecondaryAuthInstructions,
+    ),
+    false,
+  );
+});
+
 // --- createKeyboardInteractiveHandler --------------------------------------
 
 test("createKeyboardInteractiveHandler auto-fills the saved password for a single password prompt", () => {
@@ -497,4 +536,32 @@ test("shouldPrefillSavedPassword is false after skipAutoFill and for secondary p
     shouldPrefillSavedPassword([passwordPrompt], "hunter2", { skipAutoFill: false }),
     true,
   );
+});
+
+test("createKeyboardInteractiveHandler shows modal for Secondary Authentication Password banner (#2150)", () => {
+  const { sender, sent } = createSender();
+  const autoFillEvents = [];
+
+  const handler = createKeyboardInteractiveHandler({
+    sender,
+    sessionId: "session-1",
+    hostname: "192.168.9.128",
+    password: "login-password",
+    onAutoFill: () => autoFillEvents.push("auto-fill"),
+  });
+
+  handler(
+    "Keyboard-interactive authentication prompts from server",
+    edrSecondaryAuthInstructions,
+    "",
+    [edrSecondaryAuthPasswordPrompt],
+    () => {},
+  );
+
+  assert.deepEqual(autoFillEvents, []);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].payload.savedPassword, null);
+  assert.equal(sent[0].payload.prompts[0].prompt, "Secondary Authentication Password:");
+
+  drainPendingRequests(sent);
 });
