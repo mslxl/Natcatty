@@ -38,7 +38,7 @@ import {
   clearTerminalViewport,
   installEraseInDisplayHandlers,
 } from "../clearTerminalViewport";
-import { getNormalizedTerminalSelection } from "../normalizeTerminalSelection";
+import { getTerminalSelectionForClipboard } from "../normalizeTerminalSelection";
 import {
   createKittyKeyboardModeState,
   encodeKittyControlKey,
@@ -462,10 +462,12 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   term.open(ctx.container);
 
   // Intercept native copy (Edit > Copy, browser/Electron copy event) before
-  // xterm's built-in handler writes the unnormalized selectionText.
+  // xterm's built-in handler writes selectionText, so normalizeTextOnCopy applies.
   const handleNativeCopy = (event: ClipboardEvent) => {
     if (!term.hasSelection()) return;
-    const selection = getNormalizedTerminalSelection(term);
+    const normalize = ctx.terminalSettingsRef.current?.normalizeTextOnCopy ?? true;
+    if (!normalize) return; // let xterm write raw selectionText
+    const selection = getTerminalSelectionForClipboard(term, true);
     if (!selection) return;
     if (event.clipboardData) {
       event.clipboardData.setData("text/plain", selection);
@@ -1097,7 +1099,10 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
           e.stopPropagation();
           switch (action) {
             case "copy": {
-              const selection = getNormalizedTerminalSelection(term);
+              const selection = getTerminalSelectionForClipboard(
+                term,
+                ctx.terminalSettingsRef.current?.normalizeTextOnCopy ?? true,
+              );
               if (selection) navigator.clipboard.writeText(selection);
               break;
             }
@@ -1114,7 +1119,10 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
               break;
             }
             case "pasteSelection": {
-              const selection = getNormalizedTerminalSelection(term);
+              const selection = getTerminalSelectionForClipboard(
+                term,
+                ctx.terminalSettingsRef.current?.normalizeTextOnCopy ?? true,
+              );
               const id = ctx.sessionRef.current;
               if (selection && id) {
                 pasteTextIntoTerminal(term, selection, {

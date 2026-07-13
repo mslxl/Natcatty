@@ -109,6 +109,11 @@ test("normalizeTerminalSettings defaults middle-click behavior to paste", () => 
   assert.equal(settings.middleClickPaste, true);
 });
 
+test("normalizeTerminalSettings enables normalizeTextOnCopy by default", () => {
+  assert.equal(normalizeTerminalSettings().normalizeTextOnCopy, true);
+  assert.equal(normalizeTerminalSettings({ normalizeTextOnCopy: false }).normalizeTextOnCopy, false);
+});
+
 test("normalizeTerminalSettings defaults word separators to xterm-compatible boundaries", () => {
   assert.equal(normalizeTerminalSettings().wordSeparators, " ()[]{}'\"");
 });

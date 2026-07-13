@@ -248,6 +248,9 @@ export const zhCNTerminalMessages: Messages = {
   'settings.terminal.behavior.rightClick.selectWord': '选择单词',
   'settings.terminal.behavior.copyOnSelect': '选择即复制',
   'settings.terminal.behavior.copyOnSelect.desc': '自动复制选中的文本。在 tmux/vim 鼠标模式下，macOS 按住 Option，Windows/Linux 按住 Shift 拖选即可选中文本',
+  'settings.terminal.behavior.normalizeTextOnCopy': '复制时规范化终端文本',
+  'settings.terminal.behavior.normalizeTextOnCopy.desc':
+    '复制终端内容时去掉仅用于显示的行尾填充空格，并拼接软换行，使粘贴结果更接近逻辑文本。关闭后按屏幕选区原样复制（含 TUI 填充空格与视觉折行）。',
   'settings.terminal.behavior.middleClickPaste': '中键粘贴',
   'settings.terminal.behavior.middleClickPaste.desc': '中键点击时粘贴剪贴板内容',
   'settings.terminal.behavior.middleClick': '中键行为',

@@ -63,6 +63,16 @@ export const TerminalBehaviorSettings: React.FC<TerminalBehaviorSettingsProps> =
         </SettingRow>
 
         <SettingRow
+          label={t("settings.terminal.behavior.normalizeTextOnCopy")}
+          description={t("settings.terminal.behavior.normalizeTextOnCopy.desc")}
+        >
+          <Toggle
+            checked={terminalSettings.normalizeTextOnCopy ?? true}
+            onChange={(v) => updateTerminalSetting("normalizeTextOnCopy", v)}
+          />
+        </SettingRow>
+
+        <SettingRow
           label={t("settings.terminal.behavior.middleClick")}
           description={t("settings.terminal.behavior.middleClick.desc")}
         >

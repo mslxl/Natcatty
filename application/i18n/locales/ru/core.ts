@@ -381,6 +381,9 @@ export const ruCoreMessages: Messages = {
   'settings.terminal.behavior.rightClick.selectWord': 'Выбрать слово',
   'settings.terminal.behavior.copyOnSelect': 'Копировать при выделении',
   'settings.terminal.behavior.copyOnSelect.desc': 'Автоматически копировать выделенный текст. В tmux/vim с режимом мыши удерживайте Option на macOS или Shift на Windows/Linux для выделения',
+  'settings.terminal.behavior.normalizeTextOnCopy': 'Нормализовать текст терминала при копировании',
+  'settings.terminal.behavior.normalizeTextOnCopy.desc':
+    'При копировании из терминала убирать отображающие хвостовые пробелы и объединять soft-wrap строки, чтобы вставка соответствовала логическому тексту. Отключите, чтобы копировать сырое выделение экрана (включая padding TUI и визуальные переносы).',
   'settings.terminal.behavior.middleClickPaste': 'Вставка средней кнопкой мыши',
   'settings.terminal.behavior.middleClickPaste.desc':
     'Вставлять содержимое буфера обмена по щелчку средней кнопкой',

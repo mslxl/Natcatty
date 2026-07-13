@@ -20,7 +20,7 @@ import {
   resolveTerminalHibernateEnabled,
 } from '../../domain/terminalHibernate';
 import { applyUserCursorBlinkPreference } from './runtime/cursorPreference';
-import { getNormalizedTerminalSelection } from './normalizeTerminalSelection';
+import { getTerminalSelectionForClipboard } from './normalizeTerminalSelection';
 import { getFlowControllerForTerm } from './runtime/terminalSessionAttachment';
 import {
   prioritizeTerminalInput,
@@ -1312,7 +1312,10 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       if (hasText && terminalSettings?.copyOnSelect && !isRestoringSelectionRef.current) {
         // Capture now so a later buffer redraw during the debounce cannot
         // change what gets copied (selection-change may not fire again).
-        const selection = getNormalizedTerminalSelection(term);
+        const selection = getTerminalSelectionForClipboard(
+          term,
+          terminalSettings?.normalizeTextOnCopy ?? true,
+        );
         if (!selection) return;
         copyTimer = setTimeout(() => {
           navigator.clipboard.writeText(selection).catch((err) => {
@@ -1344,7 +1347,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       resizeDisposable?.dispose();
       resizeObserver?.disconnect();
     };
-  }, [terminalSettings?.copyOnSelect, isSearchOpen, isVisible, isResizing]);
+  }, [terminalSettings?.copyOnSelect, terminalSettings?.normalizeTextOnCopy, isSearchOpen, isVisible, isResizing]);
 
 
   // Track whether the terminal application has enabled mouse tracking

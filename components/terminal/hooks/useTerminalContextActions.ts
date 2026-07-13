@@ -10,7 +10,7 @@ import {
   type RemoteClipboardImageUploadResult,
 } from "../clipboardImagePaste";
 import { handleTerminalClipboardPaste } from "../terminalClipboardPaste";
-import { getNormalizedTerminalSelection } from "../normalizeTerminalSelection";
+import { getTerminalSelectionForClipboard } from "../normalizeTerminalSelection";
 
 type BroadcastPasteRefs = {
   sourceSessionId: string;
@@ -41,6 +41,7 @@ export const useTerminalContextActions = ({
   isLocalConnection,
   supportsRemoteImagePaste,
   clearWipesScrollbackRef,
+  normalizeTextOnCopyRef,
   terminalBackend,
   getRemoteCwd,
   scrollToBottomAfterProgrammaticInput,
@@ -56,6 +57,8 @@ export const useTerminalContextActions = ({
   isLocalConnection: boolean;
   supportsRemoteImagePaste: boolean;
   clearWipesScrollbackRef?: RefObject<boolean | undefined>;
+  /** When false, copy uses raw getSelection(). Default true when unset. */
+  normalizeTextOnCopyRef?: RefObject<boolean | undefined>;
   terminalBackend: {
     writeToSession: (sessionId: string, data: string, options?: { automated?: boolean }) => void;
   };
@@ -75,11 +78,14 @@ export const useTerminalContextActions = ({
   const onCopy = useCallback(() => {
     const term = termRef.current;
     if (!term) return;
-    const selection = getNormalizedTerminalSelection(term);
+    const selection = getTerminalSelectionForClipboard(
+      term,
+      normalizeTextOnCopyRef?.current ?? true,
+    );
     if (selection) {
       navigator.clipboard.writeText(selection);
     }
-  }, [termRef]);
+  }, [normalizeTextOnCopyRef, termRef]);
 
   const onPaste = useCallback(async () => {
     const term = termRef.current;
@@ -139,13 +145,16 @@ export const useTerminalContextActions = ({
   const onPasteSelection = useCallback(() => {
     const term = termRef.current;
     if (!term) return;
-    const selection = getNormalizedTerminalSelection(term);
+    const selection = getTerminalSelectionForClipboard(
+      term,
+      normalizeTextOnCopyRef?.current ?? true,
+    );
     if (!selection || !sessionRef.current) return;
     pasteTextIntoTerminal(term, selection, {
       scrollOnPaste: scrollOnPasteRef?.current ?? false,
       onPasteData: broadcastUserPasteData,
     });
-  }, [broadcastUserPasteData, sessionRef, termRef, scrollOnPasteRef]);
+  }, [broadcastUserPasteData, normalizeTextOnCopyRef, sessionRef, termRef, scrollOnPasteRef]);
 
   const onSelectAll = useCallback(() => {
     const term = termRef.current;

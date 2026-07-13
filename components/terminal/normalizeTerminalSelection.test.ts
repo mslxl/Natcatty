@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   getNormalizedTerminalSelection,
+  getTerminalSelectionForClipboard,
   joinSoftWrappedRows,
   trimWrittenPadding,
   type SelectionBufferLine,
@@ -285,6 +286,19 @@ test("respects partial column selection on first and last rows", () => {
 test("falls back to getSelection when position is unavailable", () => {
   const term = makeTerm([{ text: "abc" }], null, { rawSelection: "fallback text" });
   assert.equal(getNormalizedTerminalSelection(term), "fallback text");
+});
+
+test("getTerminalSelectionForClipboard respects normalize flag", () => {
+  const term = makeTerm(
+    [
+      { text: "hello   " },
+      { text: "world   ", isWrapped: true },
+    ],
+    { start: { x: 0, y: 0 }, end: { x: 8, y: 1 } },
+    { rawSelection: "hello   \nworld   " },
+  );
+  assert.equal(getTerminalSelectionForClipboard(term, true), "hello world");
+  assert.equal(getTerminalSelectionForClipboard(term, false), "hello   \nworld   ");
 });
 
 test("returns empty string for empty range and normalizes inverted ranges", () => {

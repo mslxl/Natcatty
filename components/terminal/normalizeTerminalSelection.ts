@@ -70,6 +70,21 @@ const PATH_TOKEN_END = new Set("\\/@#&=+%".split(""));
 const PATH_TOKEN_START = new Set("\\/-_.".split(""));
 
 /**
+ * Selection text for clipboard / paste-selection / AI attach.
+ * When `normalize` is false, returns raw xterm getSelection() (screen cells).
+ * When true (default), strips display padding and joins soft wraps.
+ */
+export function getTerminalSelectionForClipboard(
+  term: SelectionTerminal,
+  normalize = true,
+): string {
+  if (!normalize) {
+    return term.getSelection?.() ?? "";
+  }
+  return getNormalizedTerminalSelection(term);
+}
+
+/**
  * Return clipboard-ready text for the current terminal selection.
  * Falls back to term.getSelection() when position/buffer APIs are unavailable.
  */
