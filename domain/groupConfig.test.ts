@@ -420,6 +420,18 @@ test("applyGroupDefaults inherits group identityId when host only has default SS
   assert.equal(result.username, "root");
 });
 
+test("applyGroupDefaults keeps explicit host auth modes instead of inheriting a group identity", () => {
+  for (const authMethod of ["auto", "password"] as const) {
+    const result = applyGroupDefaults(
+      host({ authMethod, authPolicyVersion: 1 }),
+      { identityId: "group-identity" },
+    );
+
+    assert.equal(result.authMethod, authMethod);
+    assert.equal(result.identityId, undefined);
+  }
+});
+
 test("applyGroupDefaults preserves a custom username instead of inheriting a group identity", () => {
   const result = applyGroupDefaults(
     host({ identityId: undefined, username: "ubuntu", authMethod: "password" }),

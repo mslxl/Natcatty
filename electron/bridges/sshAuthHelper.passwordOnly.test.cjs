@@ -123,6 +123,21 @@ test("buildAuthHandler automatic mode tries agent and default keys before passwo
   );
 });
 
+test("buildAuthHandler automatic mode skips an unavailable validated agent", () => {
+  const auth = buildAuthHandler({
+    authMethod: "auto",
+    password: "saved-secret",
+    username: "root",
+    defaultKeys: DEFAULT_KEYS,
+    sshAgentSocketOverride: null,
+  });
+
+  const labels = collectAuthMethods(auth.authHandler);
+  assert.equal(labels.includes("agent"), false, labels.join(","));
+  assert.equal(labels.includes("publickey"), true, labels.join(","));
+  assert.equal(labels.includes("password"), true, labels.join(","));
+});
+
 test("buildAuthHandler with no credentials still offers default keys", () => {
   const auth = buildAuthHandler({
     username: "root",

@@ -10,6 +10,11 @@ function createExecCommandApi(ctx) {
       const sender = event.sender;
       const sessionId = payload.sessionId || randomUUID();
       const hasCertificate = typeof payload.certificate === "string" && payload.certificate.trim().length > 0;
+      const fallbackAgentSocket = payload.useSshAgent === false
+        ? null
+        : payload.useSshAgent === true
+          ? undefined
+          : await getAvailableAgentSocket();
       const systemAuthAgent = hasCertificate
         ? null
         : await prepareSystemSshAgentForAuth(payload, "[SSH Exec]");
@@ -192,6 +197,7 @@ function createExecCommandApi(ctx) {
             username: connectOpts.username,
             logPrefix: "[SSH Exec]",
             defaultKeys,
+            sshAgentSocketOverride: fallbackAgentSocket,
             allowAgentFallback: payload.useSshAgent !== false,
           });
     

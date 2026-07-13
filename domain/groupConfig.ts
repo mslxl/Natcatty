@@ -186,6 +186,7 @@ export function applyGroupDefaults(
   const hostUsername = host.username?.trim();
   const hostHasManualSshCredentials = !host.identityId && Boolean(
     (hostUsername && hostUsername !== 'root') ||
+    (host.authPolicyVersion === 1 && host.authMethod !== undefined) ||
     host.password !== undefined ||
     host.savePassword === false ||
     host.identityFileId ||

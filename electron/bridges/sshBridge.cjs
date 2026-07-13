@@ -702,6 +702,11 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
 
       // Build auth handler using shared helper
       // Pass unlocked encrypted keys from options so jump hosts can use them for retry
+      const fallbackAgentSocket = jump.useSshAgent === false
+        ? null
+        : jump.useSshAgent === true
+          ? undefined
+          : await getAvailableAgentSocket();
       const authConfig = buildAuthHandler({
         authMethod: jump.authMethod,
         privateKey: connOpts.privateKey,
@@ -714,6 +719,7 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
           ? []
           : options._unlockedEncryptedKeys || [],
         defaultKeys,
+        sshAgentSocketOverride: fallbackAgentSocket,
         allowAgentFallback: jump.useSshAgent !== false,
         onAuthAttempt: (method) => {
           sendProgress(i + 1, totalHops + 1, hopLabel, 'auth-attempt', method);
@@ -947,7 +953,7 @@ const { createExecCommandApi } = require("./sshBridge/execCommand.cjs");
 const execCommandApi = createExecCommandApi({
   SSHClient, NetcattyAgent, randomUUID, console, setTimeout, clearTimeout, Error,
   findAllDefaultPrivateKeysFromHelper, preparePrivateKeyForAuth, loadIdentityFileForAuth,
-  prepareSystemSshAgentForAuth,
+  prepareSystemSshAgentForAuth, getAvailableAgentSocket,
   isPassphraseCancelledError, buildAlgorithms, buildAuthHandler, applyAuthToConnOpts,
   createKeyboardInteractiveHandler, shouldSkipKiPasswordAutoFill, resolveSshConnectionTimeouts,
 });
