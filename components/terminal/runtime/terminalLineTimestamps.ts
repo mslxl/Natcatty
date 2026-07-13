@@ -905,27 +905,6 @@ export const onTerminalLineTimestampsChange = (
   };
 };
 
-/**
- * Lower-bound index of the first entry whose marker.line >= `line`.
- * Entries are append-only by write order and stay sorted by line after prune.
- */
-const findFirstTimestampEntryAtOrAfterLine = (
-  entries: readonly TerminalTimestampGutterEntry[],
-  line: number,
-): number => {
-  let lo = 0;
-  let hi = entries.length;
-  while (lo < hi) {
-    const mid = (lo + hi) >>> 1;
-    if (entries[mid].marker.line < line) {
-      lo = mid + 1;
-    } else {
-      hi = mid;
-    }
-  }
-  return lo;
-};
-
 export const resolveTerminalTimestampGutterRows = ({
   viewportY,
   rows,
@@ -954,17 +933,14 @@ export const resolveTerminalTimestampGutterRows = ({
     }
   }
 
+  // Full scan (not binary search): cursor-up / reposition writes can append a
+  // newer marker on an earlier buffer line, so entries are not always sorted by
+  // marker.line. Later entries win for the same line.
   const labelByLine = new Map<number, string>();
-  // Binary-search into the sorted marker list, then scan only the viewport window.
-  for (
-    let index = findFirstTimestampEntryAtOrAfterLine(entries, firstRelevantLine);
-    index < entries.length;
-    index += 1
-  ) {
-    const entry = entries[index];
+  for (const entry of entries) {
     if (entry.marker.isDisposed) continue;
     const line = entry.marker.line;
-    if (line > viewportEnd) break;
+    if (line < firstRelevantLine || line > viewportEnd) continue;
     labelByLine.set(line, entry.label);
   }
 

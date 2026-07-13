@@ -282,6 +282,10 @@ export function TerminalTimestampGutter({
 
     const render = () => {
       rafId = null;
+      // Always advance the flood clock when a render attempt runs — even if the
+      // signature is unchanged. Otherwise same-second labels during sustained
+      // output leave lastFloodRenderAt stale and the throttle stops limiting work.
+      lastFloodRenderAt = performance.now();
       const term = termRef.current;
       const container = containerRef.current;
       if (!enabled || !term || !container) {
@@ -312,7 +316,6 @@ export function TerminalTimestampGutter({
       });
       if (signature === lastRenderSignature) return;
       lastRenderSignature = signature;
-      lastFloodRenderAt = performance.now();
 
       syncTerminalTimestampGutterRows(gutter, visibleRows, {
         screenTop,

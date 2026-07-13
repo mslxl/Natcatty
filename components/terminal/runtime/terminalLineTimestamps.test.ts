@@ -755,7 +755,7 @@ test("tryMeasureVisualRows rejects unmeasurable escape sequences", () => {
   );
 });
 
-test("gutter row resolution still finds viewport labels with binary search window", () => {
+test("gutter row resolution finds viewport labels across a large entry list", () => {
   const entries = Array.from({ length: 1000 }, (_, index) => ({
     marker: { line: index },
     label: `t-${index}`,
@@ -771,6 +771,25 @@ test("gutter row resolution still finds viewport labels with binary search windo
       { row: 1, label: "t-501" },
       { row: 2, label: "t-502" },
       { row: 3, label: "t-503" },
+    ],
+  );
+});
+
+test("gutter prefers the latest label when a later marker rewrites an earlier line", () => {
+  // Cursor-up / reposition can append a newer marker on a lower line index.
+  assert.deepEqual(
+    resolveTerminalTimestampGutterRows({
+      viewportY: 0,
+      rows: 2,
+      entries: [
+        { marker: { line: 0 }, label: "10:00:00" },
+        { marker: { line: 1 }, label: "10:00:01" },
+        { marker: { line: 0 }, label: "10:00:02" },
+      ],
+    }),
+    [
+      { row: 0, label: "10:00:02" },
+      { row: 1, label: "10:00:01" },
     ],
   );
 });

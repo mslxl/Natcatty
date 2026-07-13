@@ -120,6 +120,21 @@ test("timestamp gutter render signature is stable and changes only for visible i
   );
 });
 
+test("timestamp gutter flood throttle advances even when the paint signature is unchanged", () => {
+  const source = readFileSync(new URL("./TerminalTimestampGutter.tsx", import.meta.url), "utf8");
+  // lastFloodRenderAt must move on every render attempt, before the signature early-return.
+  const renderStart = source.indexOf("const render = () => {");
+  const signatureReturn = source.indexOf("if (signature === lastRenderSignature) return;", renderStart);
+  const floodAdvance = source.indexOf("lastFloodRenderAt = performance.now();", renderStart);
+  assert.notEqual(renderStart, -1);
+  assert.notEqual(signatureReturn, -1);
+  assert.notEqual(floodAdvance, -1);
+  assert.ok(
+    floodAdvance < signatureReturn,
+    "flood throttle clock must advance before the unchanged-signature early return",
+  );
+});
+
 test("timestamp gutter reuses row nodes across paints instead of rebuilding the tree", () => {
   const gutter = {
     children: [] as Array<Record<string, unknown>>,
