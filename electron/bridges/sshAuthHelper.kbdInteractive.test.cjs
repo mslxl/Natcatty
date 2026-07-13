@@ -120,6 +120,22 @@ test("isAutoFillablePasswordChallenge accepts a sudo-style password prompt", () 
   assert.equal(isAutoFillablePasswordChallenge([linuxPasswordPrompt], "hunter2"), true);
 });
 
+// Corporate EDR / bastion step-up password prompts (#2150). These contain the
+// word "密码" / "password" but must never be auto-filled with the login password.
+const secondaryPasswordPrompt = { prompt: "二次密码:", echo: false };
+const secondaryAuthPasswordPrompt = { prompt: "请输入二次认证密码", echo: false };
+const securityPasswordPrompt = { prompt: "安全密码：", echo: false };
+const secondaryPasswordEnPrompt = { prompt: "Secondary password:", echo: false };
+const secondPasswordEnPrompt = { prompt: "Second password:", echo: false };
+
+test("isAutoFillablePasswordChallenge rejects EDR secondary password prompts (#2150)", () => {
+  assert.equal(isAutoFillablePasswordChallenge([secondaryPasswordPrompt], "hunter2"), false);
+  assert.equal(isAutoFillablePasswordChallenge([secondaryAuthPasswordPrompt], "hunter2"), false);
+  assert.equal(isAutoFillablePasswordChallenge([securityPasswordPrompt], "hunter2"), false);
+  assert.equal(isAutoFillablePasswordChallenge([secondaryPasswordEnPrompt], "hunter2"), false);
+  assert.equal(isAutoFillablePasswordChallenge([secondPasswordEnPrompt], "hunter2"), false);
+});
+
 // --- createKeyboardInteractiveHandler --------------------------------------
 
 test("createKeyboardInteractiveHandler auto-fills the saved password for a single password prompt", () => {
@@ -286,4 +302,79 @@ test("createKeyboardInteractiveHandler short-circuits when the server sends zero
   assert.deepEqual(promptEvents, []);
   assert.deepEqual(sent, []);
   assert.deepEqual(finishCalls, [[]]);
+});
+
+test("createKeyboardInteractiveHandler shows the modal for EDR secondary password prompts (#2150)", () => {
+  const { sender, sent } = createSender();
+  const autoFillEvents = [];
+  const promptEvents = [];
+
+  const handler = createKeyboardInteractiveHandler({
+    sender,
+    sessionId: "session-1",
+    hostname: "corp-edr.example.com",
+    password: "login-password",
+    onAutoFill: () => autoFillEvents.push("auto-fill"),
+    onPromptShown: () => promptEvents.push("prompt-shown"),
+  });
+
+  handler("EDR", "", "", [secondaryPasswordPrompt], () => {});
+
+  assert.deepEqual(autoFillEvents, []);
+  assert.deepEqual(promptEvents, ["prompt-shown"]);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].channel, "netcatty:keyboard-interactive");
+  assert.equal(sent[0].payload.prompts[0].prompt, "二次密码:");
+
+  drainPendingRequests(sent);
+});
+
+test("createKeyboardInteractiveHandler skips auto-fill after partialSuccess (#2150)", () => {
+  // password method already succeeded as first factor; a later KI challenge
+  // that merely says "Password:" must still show the modal so the user can
+  // enter the distinct secondary secret.
+  const { sender, sent } = createSender();
+  const autoFillEvents = [];
+  const promptEvents = [];
+  const authPhase = { hadPartialSuccess: true };
+
+  const handler = createKeyboardInteractiveHandler({
+    sender,
+    sessionId: "session-1",
+    hostname: "corp-edr.example.com",
+    password: "login-password",
+    shouldSkipAutoFill: () => authPhase.hadPartialSuccess,
+    onAutoFill: () => autoFillEvents.push("auto-fill"),
+    onPromptShown: () => promptEvents.push("prompt-shown"),
+  });
+
+  handler("", "", "", [passwordPrompt], () => {});
+
+  assert.deepEqual(autoFillEvents, []);
+  assert.deepEqual(promptEvents, ["prompt-shown"]);
+  assert.equal(sent.length, 1);
+
+  drainPendingRequests(sent);
+});
+
+test("createKeyboardInteractiveHandler still auto-fills before any partialSuccess", () => {
+  const { sender, sent } = createSender();
+  const autoFillEvents = [];
+  const authPhase = { hadPartialSuccess: false };
+
+  const handler = createKeyboardInteractiveHandler({
+    sender,
+    sessionId: "session-1",
+    hostname: "vps-1.example.com",
+    password: "hunter2",
+    shouldSkipAutoFill: () => authPhase.hadPartialSuccess,
+    onAutoFill: () => autoFillEvents.push("auto-fill"),
+  });
+
+  const finishCalls = [];
+  handler("", "", "", [passwordPrompt], (responses) => finishCalls.push(responses));
+
+  assert.deepEqual(autoFillEvents, ["auto-fill"]);
+  assert.deepEqual(finishCalls, [["hunter2"]]);
+  assert.deepEqual(sent, []);
 });

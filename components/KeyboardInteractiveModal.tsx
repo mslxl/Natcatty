@@ -37,8 +37,23 @@ const isAPasswordPrompt = (prompt: KeyboardInteractivePrompt) => {
   if (prompt.echo) return false;
   const lower = prompt.prompt.toLowerCase();
   if (!lower.includes("password")) return false;
-  // Exclude OTP / one-time password / verification code prompts
-  if (lower.includes("one-time") || lower.includes("otp") || lower.includes("verification") || lower.includes("token") || lower.includes("code")) return false;
+  // Exclude OTP / MFA / secondary-password prompts so we do not prefill the
+  // host login password into a second-factor field (#2150).
+  if (
+    lower.includes("one-time") ||
+    lower.includes("otp") ||
+    lower.includes("verification") ||
+    lower.includes("token") ||
+    lower.includes("code") ||
+    lower.includes("secondary password") ||
+    lower.includes("second password") ||
+    lower.includes("additional password") ||
+    lower.includes("passcode") ||
+    lower.includes("2fa") ||
+    lower.includes("mfa")
+  ) {
+    return false;
+  }
   return true;
 };
 

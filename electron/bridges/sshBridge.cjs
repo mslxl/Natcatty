@@ -715,6 +715,7 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
         },
       });
       applyAuthToConnOpts(connOpts, authConfig);
+      const hopAuthPhase = authConfig.authPhase || { hadPartialSuccess: false };
 
       // If first hop and proxy is configured, connect through proxy
       const hasUsableJumpProxy = hasUsableProxy(jump.proxy);
@@ -811,6 +812,7 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
           password: jump.password,
           logPrefix: `[Chain] Hop ${i + 1}/${totalHops}`,
           scope: keyboardInteractiveScope,
+          shouldSkipAutoFill: () => hopAuthPhase.hadPartialSuccess,
           onAutoFill: () => sendProgress(
             i + 1, totalHops + 1, hopLabel, 'auth-attempt', 'using saved password',
           ),

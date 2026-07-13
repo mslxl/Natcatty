@@ -892,6 +892,9 @@ function buildAuthHandler(options) {
       privateKey: effectivePrivateKey,
       agent: effectiveAgent,
       usedDefaultKeys: false,
+      // Array-form authHandler does not surface partialSuccess to us; the
+      // keyboard-interactive deny-list still covers EDR secondary prompts.
+      authPhase: { hadPartialSuccess: false },
     };
   }
 
@@ -1004,6 +1007,9 @@ function buildAuthHandler(options) {
   let authIndex = 0;
   let lastAttemptedLabel = null;
   const attemptedMethodIds = new Set();
+  // Shared with keyboard-interactive auto-fill: after a first factor succeeds
+  // (partialSuccess), subsequent challenges must prompt the user (#2150).
+  const authPhase = { hadPartialSuccess: false };
 
   let triedNone = false;
 
@@ -1023,6 +1029,10 @@ function buildAuthHandler(options) {
     // Log rejection of previous method (authHandler is called again when server rejects)
     if (lastAttemptedLabel && !partialSuccess) {
       onAuthAttempt?.(`${lastAttemptedLabel} rejected`);
+    }
+
+    if (partialSuccess) {
+      authPhase.hadPartialSuccess = true;
     }
 
     while (authIndex < authMethods.length) {
@@ -1087,17 +1097,18 @@ function buildAuthHandler(options) {
     privateKey: effectivePrivateKey,
     agent: returnAgent,
     usedDefaultKeys: true,
+    authPhase,
   };
 }
 
-// OTP / MFA / token vocabulary. Matched FIRST — any hit here disqualifies the
-// challenge from auto-fill even if it also contains a "password" keyword.
+// OTP / MFA / step-up vocabulary. Matched FIRST — any hit here disqualifies
+// the challenge from auto-fill even if it also contains a "password" keyword.
 // Catches phrases like "One-time password", "动态密码", "动态口令",
-// "一次性密码", "Verification code", "Duo passcode", "two-factor", etc.
-// — all single-prompt shapes that look like password fields on the surface
-// but actually want an OTP. Submitting the saved password into any of these
-// burns an auth attempt and risks `pam_faillock` / `pam_tally2` lockout.
-// (#969 PR review, second round.)
+// "一次性密码", "Verification code", "Duo passcode", "two-factor", and
+// EDR/secondary-password prompts like "二次密码" / "Secondary password"
+// (issue #2150). Submitting the saved login password into any of these
+// burns an auth attempt and often disconnects without re-prompting.
+// (#969 PR review, second round; #2150.)
 const OTP_PROMPT_PATTERN = new RegExp(
   [
     "one[\\s-]?time",
@@ -1110,6 +1121,13 @@ const OTP_PROMPT_PATTERN = new RegExp(
     "multi[\\s-]?factor",
     "\\bmfa\\b",
     "second\\s+factor",
+    // Step-up / secondary password (login password already used as first factor)
+    "secondary\\s+passw",
+    "second\\s+passw",
+    "additional\\s+passw",
+    "re[-\\s]?enter\\s+passw",
+    "confirm\\s+passw",
+    "\\bedr\\b",
     "duo",
     // CJK — no word boundaries; substring match is intentional
     "动态",
@@ -1121,13 +1139,17 @@ const OTP_PROMPT_PATTERN = new RegExp(
     "多因素",
     "短信验证",
     "手机验证",
+    // Corporate EDR / bastion second-factor password prompts (#2150)
+    "二次",
+    "安全密码",
+    "挑战码",
   ].join("|"),
   "i",
 );
 
 // Latin-script + CJK keywords for "this prompt is asking for a reusable
 // password". Only consulted AFTER OTP_PROMPT_PATTERN clears, so phrases like
-// "One-time password" or "动态密码" never reach this step.
+// "One-time password", "动态密码", or "二次密码" never reach this step.
 //
 // Custom-localized prompts that don't match these keywords fall through to
 // the modal, which is the same behavior as before the auto-fill optimization
@@ -1142,10 +1164,10 @@ const PASSWORD_PROMPT_PATTERN = /passw(or)?d|密\s*码|口\s*令/i;
  * connection pops a second password dialog even when the host already has a
  * saved credential — see #969.
  *
- * Conservative criteria, matching OpenSSH and Tabby behavior:
+ * Conservative criteria:
  *   - exactly one prompt (multi-prompt is almost certainly real 2FA / MFA)
  *   - the prompt has `echo === false`
- *   - the prompt text does NOT contain any OTP / MFA vocabulary
+ *   - the prompt text does NOT contain any OTP / MFA / secondary-password vocabulary
  *   - the prompt text DOES contain a recognized password keyword (Latin
  *     "password" / "passwd", CJK "密码" / "口令")
  *   - we have a non-empty saved password
@@ -1173,6 +1195,11 @@ function isAutoFillablePasswordChallenge(prompts, password) {
  *   password-prompt fast path (#969).
  * @param {string} [options.logPrefix] - Log prefix for debugging
  * @param {"terminal"|"external"} [options.scope] - Renderer-side routing scope
+ * @param {Function} [options.shouldSkipAutoFill] - Optional predicate. When it
+ *   returns true, never auto-fill — always show the modal. Callers set this
+ *   after a first-factor `partialSuccess` so a second-factor challenge that
+ *   merely says "Password:" / "密码：" is not silently answered with the
+ *   already-used login password (#2150).
  * @param {Function} [options.onAutoFill] - Called when the saved password is
  *   auto-filled into the challenge (no modal shown). Lets callers emit a
  *   different progress message than the user-prompt flow.
@@ -1190,6 +1217,7 @@ function createKeyboardInteractiveHandler(options) {
     password,
     logPrefix = "[SSH]",
     scope = "external",
+    shouldSkipAutoFill,
     onAutoFill,
     onPromptShown,
     onUserResponded,
@@ -1214,7 +1242,22 @@ function createKeyboardInteractiveHandler(options) {
       return;
     }
 
-    if (!autoFilledOnce && isAutoFillablePasswordChallenge(prompts, password)) {
+    let skipAutoFill = false;
+    try {
+      skipAutoFill = typeof shouldSkipAutoFill === "function" && !!shouldSkipAutoFill();
+    } catch (err) {
+      console.warn(`${logPrefix} shouldSkipAutoFill callback threw`, err);
+    }
+
+    // After a first factor already succeeded (partialSuccess), never reuse the
+    // saved login password for a later keyboard-interactive challenge — even
+    // if the prompt text looks like a plain "Password:" / "密码：". Corporate
+    // EDR step-up often reuses password wording for a different secret.
+    if (
+      !skipAutoFill &&
+      !autoFilledOnce &&
+      isAutoFillablePasswordChallenge(prompts, password)
+    ) {
       autoFilledOnce = true;
       console.log(`${logPrefix} Auto-filling saved password into single keyboard-interactive prompt`);
       try { onAutoFill?.(); } catch (err) { console.warn(`${logPrefix} onAutoFill callback threw`, err); }

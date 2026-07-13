@@ -839,6 +839,10 @@ function createStartSessionApi(ctx) {
 
         // Track which method succeeded for caching
         let lastTriedMethod = null;
+        // Shared with keyboard-interactive auto-fill: after a first factor
+        // succeeds (partialSuccess), second-factor challenges always prompt
+        // the user instead of reusing the saved login password (#2150).
+        const authPhase = { hadPartialSuccess: false };
 
         if (authAgent) {
           const order = ["none", "agent"];
@@ -961,6 +965,7 @@ function createStartSessionApi(ctx) {
               // When partialSuccess is true, we should try the remaining methods the server is asking for
               if (partialSuccess && methodsLeft && methodsLeft.length > 0) {
                 hadPartialSuccess = true;
+                authPhase.hadPartialSuccess = true;
                 // Record the first successful method (the one that triggered partialSuccess)
                 if (lastTriedMethod && !firstSuccessfulMethod) {
                   firstSuccessfulMethod = lastTriedMethod;
@@ -1493,6 +1498,7 @@ function createStartSessionApi(ctx) {
             password: options.password,
             logPrefix,
             scope: "terminal",
+            shouldSkipAutoFill: () => authPhase.hadPartialSuccess,
             onAutoFill: () => sendProgress(
               totalHops, totalHops, options.hostname, 'auth-attempt', 'using saved password',
             ),
