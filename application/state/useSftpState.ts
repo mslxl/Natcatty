@@ -160,6 +160,15 @@ export const useSftpState = (
     right: null,
   });
 
+  // Keep reconnect metadata in sync when auto-connect reuses an existing tab
+  // without calling connect() (selectTab alone does not update this ref).
+  const setLastConnectedHost = useCallback((
+    side: "left" | "right",
+    host: Host | "local" | null,
+  ) => {
+    lastConnectedHostRef.current[side] = host;
+  }, []);
+
   const handleSessionError = useSftpSessionErrors({
     getActivePane,
     leftTabsRef,
@@ -418,6 +427,7 @@ export const useSftpState = (
     resolveConflict: resolveAnyConflict,
     getSftpIdForConnection,
     getConnectionCacheKey,
+    setLastConnectedHost,
     reportSessionError: handleSessionError,
     rejectHostKeyVerification,
     acceptHostKeyVerification,
@@ -480,6 +490,7 @@ export const useSftpState = (
     resolveConflict: resolveAnyConflict,
     getSftpIdForConnection,
     getConnectionCacheKey,
+    setLastConnectedHost,
     reportSessionError: handleSessionError,
     rejectHostKeyVerification,
     acceptHostKeyVerification,
@@ -556,6 +567,7 @@ export const useSftpState = (
     resolveConflict: (...args: Parameters<typeof resolveAnyConflict>) => methodsRef.current.resolveConflict(...args),
     getSftpIdForConnection: (...args: Parameters<typeof getSftpIdForConnection>) => methodsRef.current.getSftpIdForConnection(...args),
     getConnectionCacheKey: (...args: Parameters<typeof getConnectionCacheKey>) => methodsRef.current.getConnectionCacheKey(...args),
+    setLastConnectedHost: (...args: Parameters<typeof setLastConnectedHost>) => methodsRef.current.setLastConnectedHost(...args),
     reportSessionError: (...args: Parameters<typeof handleSessionError>) => methodsRef.current.reportSessionError(...args),
     rejectHostKeyVerification: () => methodsRef.current.rejectHostKeyVerification(),
     acceptHostKeyVerification: () => methodsRef.current.acceptHostKeyVerification(),

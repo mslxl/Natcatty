@@ -627,8 +627,9 @@ export const useSftpConnections = ({
               dirCacheRef.current.delete(provisionalCacheKey);
             }
             // Fall back to homeDir, then "/", chaining attempts.
+            // Remembered/reconnect paths can be stale even when shared cache is gone.
             let fallbackSucceeded = false;
-            if (sharedHostCache && startPath !== homeDir) {
+            if (startPath !== homeDir) {
               try {
                 startPath = homeDir;
                 files = await listRemoteFiles(sftpId, startPath, filenameEncoding);
