@@ -247,10 +247,15 @@ export const resolveLiveSubmittedCommand = (
     }
   }
 
-  // Complete themed / Powerline prompts already isolate the command in
-  // userInput (including multiword sudo whoami). getCommandToRecordOnEnter
-  // refuses multiword themed input, so accept the detector split here —
-  // but never treat a lone cwd token as a command (⚡ ➜  git ).
+  // Themed prompts (including prefixed terminators like "⚡ ➜ "): peel cwd/path
+  // chrome before accepting userInput (⚡ ➜  ~ su - → su -).
+  if (hasThemedPromptMarker(prompt.promptText)) {
+    const peeled = peelThemedCommandFromPrompt(prompt);
+    if (peeled) return peeled;
+  }
+
+  // Complete Powerline / multi-glyph prompts may already isolate multiword
+  // commands (sudo whoami) when peel has nothing left to strip.
   if (!isBareThemedTerminator(prompt.promptText)) {
     const liveTrimmed = prompt.userInput.trim();
     if (
@@ -264,8 +269,7 @@ export const resolveLiveSubmittedCommand = (
         && hasThemedPromptMarker(prompt.promptText)
         && !/^(?:su|sudo|doas)$/i.test(liveTrimmed)
       ) {
-        // Single bare word after a themed prompt is usually cwd chrome.
-        return peelThemedCommandFromPrompt(prompt);
+        return "";
       }
       return liveTrimmed;
     }
@@ -369,8 +373,23 @@ export const resolveSubmittedShellCommand = (
     return live;
   }
 
-  // Echo lag: user typed more than the line has echoed yet — keep buffer.
+  // Echo lag: live is a same-command prefix of the buffer (e.g. "su" → "su -").
+  // Do not treat accidental word prefixes as lag ("su" vs "sudo whoami").
   if (buffered.startsWith(live) && buffered.length > live.length) {
+    const next = buffered[live.length] ?? "";
+    if (next === " " || next === "" || live.length === 0) {
+      return buffered;
+    }
+    // History replaced a longer typed command with a shorter different one.
+    return live;
+  }
+
+  // Live still has path chrome but ends with the typed command — keep buffer
+  // (e.g. themed dir "~/My Project" + typed "su -" → live "Project su -").
+  if (
+    live.endsWith(buffered)
+    || live.endsWith(` ${buffered}`)
+  ) {
     return buffered;
   }
 
