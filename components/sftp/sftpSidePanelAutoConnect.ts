@@ -48,11 +48,14 @@ export function findReusableSftpSidePanelTab(
   connectionKey: string,
   tabConnectionKeyMap: ReadonlyMap<string, string>,
   hasBackendSession: (connectionId: string) => boolean,
+  getConnectionKey?: (connectionId: string) => string | null,
 ): SftpPane | null {
   const candidate = tabs.find((tab) => {
     if (!tab.connection || tab.connection.hostId !== hostId) return false;
     if (tab.connection.status === "error" || tab.connection.status === "disconnected") return false;
-    return tabConnectionKeyMap.get(tab.id) === connectionKey;
+    const liveKey = getConnectionKey?.(tab.connection.id) ?? null;
+    const tabKey = liveKey ?? tabConnectionKeyMap.get(tab.id) ?? null;
+    return tabKey === connectionKey;
   });
   if (!candidate?.connection) return null;
   if (!isRemoteSftpTabHealthy(candidate, hasBackendSession(candidate.connection.id))) {

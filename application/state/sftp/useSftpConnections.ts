@@ -205,13 +205,29 @@ export const useSftpConnections = ({
 
       if (!activeTabId) return;
 
+      // Capture path/host before we replace the connection so same-endpoint
+      // auto-reconnect can land back where the user was browsing instead of home.
+      // Do not inherit path across hosts if a reconnect flag is still set while
+      // the user switches to a different target.
+      const previousConnection = getActivePane(side)?.connection;
+      const previousPath = previousConnection?.currentPath;
+      const previousHostId = previousConnection?.isLocal ? "local" : previousConnection?.hostId;
+      const targetHostId = host === "local" ? "local" : host.id;
+      if (
+        reconnectingRef.current[side]
+        && previousHostId
+        && previousHostId !== targetHostId
+      ) {
+        reconnectingRef.current[side] = false;
+      }
       const isReconnectAttempt = reconnectingRef.current[side];
-      // Capture path before we replace the connection so auto-reconnect can
-      // land back where the user was browsing instead of home.
-      const previousPath = getActivePane(side)?.connection?.currentPath;
+      const sameEndpointReconnect =
+        isReconnectAttempt
+        && !!previousPath
+        && previousHostId === targetHostId;
       const effectiveInitialPath =
         options?.initialPath
-        ?? (isReconnectAttempt && previousPath ? previousPath : undefined);
+        ?? (sameEndpointReconnect ? previousPath : undefined);
 
       // Notify caller of the tab ID synchronously, before any async work.
       // This allows callers to map metadata (e.g. connection keys) to the tab

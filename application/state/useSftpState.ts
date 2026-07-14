@@ -146,6 +146,11 @@ export const useSftpState = (
   // share the same hostId with different session-time overrides.
   const connectionCacheKeyMapRef = useRef<Map<string, string>>(new Map());
 
+  // Full endpoint key captured at connect time (hostId:hostname:port:…).
+  const getConnectionCacheKey = useCallback((connectionId: string) => {
+    return connectionCacheKeyMapRef.current.get(connectionId) ?? null;
+  }, []);
+
   // Store last connected host info for reconnection
   const lastConnectedHostRef = useRef<{
     left: Host | "local" | null;
@@ -412,6 +417,7 @@ export const useSftpState = (
     dismissTransfer,
     resolveConflict: resolveAnyConflict,
     getSftpIdForConnection,
+    getConnectionCacheKey,
     reportSessionError: handleSessionError,
     rejectHostKeyVerification,
     acceptHostKeyVerification,
@@ -473,6 +479,7 @@ export const useSftpState = (
     dismissTransfer,
     resolveConflict: resolveAnyConflict,
     getSftpIdForConnection,
+    getConnectionCacheKey,
     reportSessionError: handleSessionError,
     rejectHostKeyVerification,
     acceptHostKeyVerification,
@@ -548,6 +555,7 @@ export const useSftpState = (
     dismissTransfer: (...args: Parameters<typeof dismissTransfer>) => methodsRef.current.dismissTransfer(...args),
     resolveConflict: (...args: Parameters<typeof resolveAnyConflict>) => methodsRef.current.resolveConflict(...args),
     getSftpIdForConnection: (...args: Parameters<typeof getSftpIdForConnection>) => methodsRef.current.getSftpIdForConnection(...args),
+    getConnectionCacheKey: (...args: Parameters<typeof getConnectionCacheKey>) => methodsRef.current.getConnectionCacheKey(...args),
     reportSessionError: (...args: Parameters<typeof handleSessionError>) => methodsRef.current.reportSessionError(...args),
     rejectHostKeyVerification: () => methodsRef.current.rejectHostKeyVerification(),
     acceptHostKeyVerification: () => methodsRef.current.acceptHostKeyVerification(),
