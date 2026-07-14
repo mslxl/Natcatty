@@ -26,3 +26,31 @@ test("keyboard-interactive responses from the wrong renderer are rejected and ke
   assert.deepEqual(finishCalls, [["correct"]]);
   assert.equal(keyboardInteractiveHandler.getRequests().has(requestId), false);
 });
+
+test("keyboard-interactive responses never write password or OTP contents to logs", (t) => {
+  const logs = [];
+  t.mock.method(console, "log", (...args) => logs.push(args));
+  const finishCalls = [];
+  const requestId = keyboardInteractiveHandler.generateRequestId("secret-log-test");
+  const secrets = ["secondary-password-secret", "123456-otp-secret"];
+
+  keyboardInteractiveHandler.storeRequest(requestId, (responses) => {
+    finishCalls.push(responses);
+  }, 303, "session-secret-log-test");
+
+  const result = keyboardInteractiveHandler.handleResponse(
+    { sender: { id: 303 } },
+    { requestId, responses: secrets, cancelled: false },
+  );
+
+  assert.deepEqual(result, { success: true });
+  assert.deepEqual(finishCalls, [secrets]);
+  const serializedLogs = JSON.stringify(logs);
+  for (const secret of secrets) {
+    assert.equal(serializedLogs.includes(secret), false);
+  }
+  assert.equal(
+    logs.some((entry) => entry.some((value) => value?.responsesCount === secrets.length)),
+    true,
+  );
+});

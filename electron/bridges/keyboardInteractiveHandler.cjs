@@ -52,7 +52,11 @@ function storeRequest(requestId, finishCallback, webContentsId, sessionId) {
  * Handle keyboard-interactive authentication response from renderer
  */
 function handleResponse(_event, payload) {
-  console.log(`[KeyboardInteractive] handleResponse called with payload:`, JSON.stringify(payload));
+  console.log(`[KeyboardInteractive] handleResponse called`, {
+    requestId: payload?.requestId,
+    cancelled: Boolean(payload?.cancelled),
+    responsesCount: Array.isArray(payload?.responses) ? payload.responses.length : 0,
+  });
 
   const { requestId, responses, cancelled } = payload;
   const pending = keyboardInteractiveRequests.get(requestId);
