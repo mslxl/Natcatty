@@ -1066,6 +1066,7 @@ function buildAuthHandler(options) {
   let lastAttemptedLabel = null;
   const attemptedMethodIds = new Set();
   const succeededMethodIds = new Set();
+  const failedMethodIds = new Set();
   // Shared with keyboard-interactive auto-fill. See createAuthPhase /
   // shouldSkipKiPasswordAutoFill — a completed password or keyboard-
   // interactive factor suppresses reusing the saved host password on a later
@@ -1094,6 +1095,9 @@ function buildAuthHandler(options) {
     // Log rejection of previous method (authHandler is called again when server rejects)
     if (lastAttemptedLabel && !partialSuccess) {
       onAuthAttempt?.(`${lastAttemptedLabel} rejected`);
+      if (lastAttemptedMethodId) {
+        failedMethodIds.add(lastAttemptedMethodId);
+      }
     }
 
     if (partialSuccess) {
@@ -1102,10 +1106,13 @@ function buildAuthHandler(options) {
         succeededMethodIds.add(lastAttemptedMethodId);
       }
       // Start a fresh pass for the next factor. Methods merely unavailable in
-      // the previous phase become eligible again, while methods that already
-      // succeeded stay suppressed.
+      // the previous phase become eligible again, while methods actually
+      // rejected or already successful stay suppressed.
       authIndex = 0;
       attemptedMethodIds.clear();
+      for (const methodId of failedMethodIds) {
+        attemptedMethodIds.add(methodId);
+      }
       for (const methodId of succeededMethodIds) {
         attemptedMethodIds.add(methodId);
       }
@@ -1115,7 +1122,11 @@ function buildAuthHandler(options) {
       // method again for the second factor. Unlike a key, keyboard-interactive
       // is safe to repeat because the server supplies a fresh challenge and
       // createKeyboardInteractiveHandler refuses to auto-fill after round one.
-      if (Array.isArray(methodsLeft) && methodsLeft.includes("keyboard-interactive")) {
+      if (
+        Array.isArray(methodsLeft) &&
+        methodsLeft.includes("keyboard-interactive") &&
+        canRepeatKeyboardInteractive(authPhase)
+      ) {
         attemptedMethodIds.delete("keyboard-interactive");
       }
     }
@@ -1251,20 +1262,21 @@ const OTP_PROMPT_PATTERN = new RegExp(
 // the modal, which is the same behavior as before the auto-fill optimization
 // — strictly no worse than the old "always prompt" baseline.
 const PASSWORD_PROMPT_PATTERN = /passw(or)?d|密\s*码|口\s*令/i;
+const MAX_KEYBOARD_INTERACTIVE_FACTORS = 2;
 
 /**
  * Shared auth-phase state for keyboard-interactive auto-fill decisions.
  * passwordAlreadySucceeded means the password method already contributed a
- * successful factor. keyboardInteractiveAlreadySucceeded remembers that any
- * earlier keyboard-interactive factor completed, so a later KI challenge is
- * treated as distinct even when another factor ran between them. Neither flag
- * is set by publickey/agent alone, preserving publickey+password MFA auto-fill.
+ * successful factor. keyboardInteractiveSuccessCount remembers completed KI
+ * factors, so a later KI challenge is treated as distinct even when another
+ * factor ran between them. Neither value changes for publickey/agent alone,
+ * preserving publickey+password MFA auto-fill.
  */
 function createAuthPhase() {
   return {
     hadPartialSuccess: false,
     passwordAlreadySucceeded: false,
-    keyboardInteractiveAlreadySucceeded: false,
+    keyboardInteractiveSuccessCount: 0,
   };
 }
 
@@ -1280,8 +1292,20 @@ function markAuthPhasePartialSuccess(authPhase, succeededMethodType) {
     authPhase.passwordAlreadySucceeded = true;
   }
   if (succeededMethodType === "keyboard-interactive") {
-    authPhase.keyboardInteractiveAlreadySucceeded = true;
+    authPhase.keyboardInteractiveSuccessCount =
+      (authPhase.keyboardInteractiveSuccessCount || 0) + 1;
   }
+}
+
+/**
+ * Allow at most one repeated keyboard-interactive factor. Two completed KI
+ * factors cover login-password + secondary-password flows while preventing a
+ * broken or malicious server from keeping the client in an unbounded loop.
+ */
+function canRepeatKeyboardInteractive(authPhase) {
+  if (!authPhase) return false;
+  return (authPhase.keyboardInteractiveSuccessCount || 0) ===
+    MAX_KEYBOARD_INTERACTIVE_FACTORS - 1;
 }
 
 /**
@@ -1295,7 +1319,7 @@ function shouldSkipKiPasswordAutoFill(authPhase) {
     authPhase &&
     (
       authPhase.passwordAlreadySucceeded ||
-      authPhase.keyboardInteractiveAlreadySucceeded
+      (authPhase.keyboardInteractiveSuccessCount || 0) > 0
     )
   );
 }
@@ -1313,7 +1337,7 @@ function shouldSkipKiPasswordAutoFill(authPhase) {
  * leave the connection unable to offer the second factor (Codex P2 on #2151).
  *
  * @param {string[]} order
- * @param {{ hadPartialSuccess: boolean, passwordAlreadySucceeded?: boolean, keyboardInteractiveAlreadySucceeded?: boolean }} authPhase
+ * @param {{ hadPartialSuccess: boolean, passwordAlreadySucceeded?: boolean, keyboardInteractiveSuccessCount?: number }} authPhase
  * @param {(label: string) => void} [onAuthAttempt] - optional progress callback
  *   (jump/SFTP connection logs). Mirrors the dynamic authHandler's onAuthAttempt.
  * @returns {(methodsLeft: string[]|null, partialSuccess: boolean, callback: Function) => void}
@@ -1323,6 +1347,9 @@ function createOrderedStringAuthHandler(order, authPhase, onAuthAttempt) {
   let attempted = new Set();
   // Methods that contributed a successful factor; never retried.
   const succeeded = new Set();
+  // Methods actually rejected by the server. Methods that were merely absent
+  // from an earlier methodsLeft list are intentionally not recorded here.
+  const failed = new Set();
   let lastOffered = null;
 
   const attemptLabel = (method) => {
@@ -1335,20 +1362,25 @@ function createOrderedStringAuthHandler(order, authPhase, onAuthAttempt) {
     if (partialSuccess) {
       markAuthPhasePartialSuccess(authPhase, lastOffered);
       if (lastOffered) succeeded.add(lastOffered);
-      // Drop rejected/skipped attempts so a method that was not advertised
-      // earlier can be offered now that the server is asking for it.
-      attempted = new Set(succeeded);
+      // Reconsider methods that were unavailable in the previous factor, but
+      // do not resubmit credentials the server already rejected or accepted.
+      attempted = new Set([...failed, ...succeeded]);
       // A server may deliberately require keyboard-interactive more than once
       // (for example PAM login password followed by an EDR secondary password).
       // Re-offer it only when the server explicitly advertises it for the next
       // factor. Failed attempts still remain blocked on non-partial callbacks.
-      if (Array.isArray(methodsLeft) && methodsLeft.includes("keyboard-interactive")) {
+      if (
+        Array.isArray(methodsLeft) &&
+        methodsLeft.includes("keyboard-interactive") &&
+        canRepeatKeyboardInteractive(authPhase)
+      ) {
         attempted.delete("keyboard-interactive");
       }
     } else if (lastOffered && methodsLeft !== null) {
       // Server rejected the previous method (or finished a failed factor).
       // Skip the initial methodsLeft===null probe which is not a rejection.
       onAuthAttempt?.(`${attemptLabel(lastOffered)} rejected`);
+      failed.add(lastOffered);
     }
 
     const available = Array.isArray(methodsLeft) && methodsLeft.length > 0
@@ -1685,6 +1717,7 @@ module.exports = {
   buildAuthHandler,
   createAuthPhase,
   markAuthPhasePartialSuccess,
+  canRepeatKeyboardInteractive,
   shouldSkipKiPasswordAutoFill,
   createOrderedStringAuthHandler,
   createKeyboardInteractiveHandler,

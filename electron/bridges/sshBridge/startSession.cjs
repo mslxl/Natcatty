@@ -1035,6 +1035,9 @@ function createStartSessionApi(ctx) {
             let attemptedMethodIds = new Set();
             // Methods that contributed a successful factor; never retried.
             const succeededMethodIds = new Set();
+            // Methods actually rejected by the server. Keep these blocked when
+            // a later factor makes previously unavailable methods eligible.
+            const failedMethodIds = new Set();
             // Track the first successful method for caching (not the last one in multi-step flows)
             let firstSuccessfulMethod = null;
             // Track if we've gone through a partialSuccess flow (multi-step auth)
@@ -1046,6 +1049,9 @@ function createStartSessionApi(ctx) {
               // Log rejection of previous method
               if (lastTriedMethod && !partialSuccess) {
                 sendProgress(totalHops, totalHops, options.hostname, 'auth-attempt', `${lastTriedMethod} rejected`);
+                if (lastTriedMethod !== "none") {
+                  failedMethodIds.add(lastTriedMethod);
+                }
               }
 
               // On the very first call (methodsLeft === null), try "none" auth.
@@ -1082,21 +1088,23 @@ function createStartSessionApi(ctx) {
                   firstSuccessfulMethod = lastTriedMethod;
                   log("Recorded first successful method for caching", { method: firstSuccessfulMethod });
                 }
-                // Keep only the succeeded factors as "attempted" so a method
-                // rejected in an earlier stage can be re-offered for the next
-                // required factor (publickey+password MFA).
+                // Reconsider methods that were unavailable in the previous
+                // factor, but preserve credentials already rejected or used.
                 if (lastTriedMethod) {
                   succeededMethodIds.add(lastTriedMethod);
                   log("Recorded successful auth factor (partial success)", { method: lastTriedMethod });
                 }
-                attemptedMethodIds = new Set(succeededMethodIds);
+                attemptedMethodIds = new Set([...failedMethodIds, ...succeededMethodIds]);
                 // PAM/EDR can require two consecutive keyboard-interactive
                 // factors (login password, then a separate secondary password).
                 // A partial-success response explicitly advertising KI again is
                 // permission to repeat that method with a fresh server prompt.
                 // Keep keys/passwords de-duplicated, but do not suppress this
                 // second interactive factor (#2150).
-                if (methodsLeft.includes("keyboard-interactive")) {
+                if (
+                  methodsLeft.includes("keyboard-interactive") &&
+                  canRepeatKeyboardInteractive(authPhase)
+                ) {
                   attemptedMethodIds.delete("keyboard-interactive");
                 }
 
