@@ -446,6 +446,11 @@ export interface AgentModelPreset {
    * UI lists levels low→high but catalog defaults are usually mid-range.
    */
   defaultThinkingLevel?: string;
+  /**
+   * Minimum agent CLI version that advertises this model (semver core).
+   * Netcatty is BYO-CLI: the packaged SDK does not replace the user's binary.
+   */
+  minCliVersion?: string;
 }
 
 export const CLAUDE_MODEL_PRESETS: AgentModelPreset[] = [
@@ -463,35 +468,86 @@ const CODEX_REASONING_LEVELS = ['low', 'medium', 'high', 'xhigh'] as const;
 // Sol/Terra advertise ultra; Luna stops at max (official catalog + lobehub).
 const CODEX_REASONING_LEVELS_5_6 = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const;
 const CODEX_REASONING_LEVELS_5_6_LUNA = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+/** Official catalog `minimal_client_version` for GPT-5.6 family. */
+export const CODEX_GPT_5_6_MIN_CLI_VERSION = '0.144.0';
 
 function codexPreset(
   id: string,
   name: string,
   thinkingLevels: readonly string[],
   defaultThinkingLevel: string,
-  description?: string,
+  options?: { description?: string; minCliVersion?: string },
 ): AgentModelPreset {
   return {
     id,
     name,
-    description,
+    description: options?.description,
     thinkingLevels: [...thinkingLevels],
     defaultThinkingLevel,
+    minCliVersion: options?.minCliVersion,
   };
 }
 
 export const CODEX_MODEL_PRESETS: AgentModelPreset[] = [
-  // default_reasoning_level from openai/codex models-manager catalog
-  codexPreset('gpt-5.6-sol', 'GPT-5.6 Sol', CODEX_REASONING_LEVELS_5_6, 'low', 'Latest'),
-  codexPreset('gpt-5.6-terra', 'GPT-5.6 Terra', CODEX_REASONING_LEVELS_5_6, 'medium', 'Balanced'),
-  codexPreset('gpt-5.6-luna', 'GPT-5.6 Luna', CODEX_REASONING_LEVELS_5_6_LUNA, 'medium', 'Fast'),
+  // default_reasoning_level + minimal_client_version from openai/codex catalog
+  codexPreset('gpt-5.6-sol', 'GPT-5.6 Sol', CODEX_REASONING_LEVELS_5_6, 'low', {
+    description: 'Latest',
+    minCliVersion: CODEX_GPT_5_6_MIN_CLI_VERSION,
+  }),
+  codexPreset('gpt-5.6-terra', 'GPT-5.6 Terra', CODEX_REASONING_LEVELS_5_6, 'medium', {
+    description: 'Balanced',
+    minCliVersion: CODEX_GPT_5_6_MIN_CLI_VERSION,
+  }),
+  codexPreset('gpt-5.6-luna', 'GPT-5.6 Luna', CODEX_REASONING_LEVELS_5_6_LUNA, 'medium', {
+    description: 'Fast',
+    minCliVersion: CODEX_GPT_5_6_MIN_CLI_VERSION,
+  }),
   codexPreset('gpt-5.5', 'GPT-5.5', CODEX_REASONING_LEVELS, 'medium'),
   codexPreset('gpt-5.4', 'GPT-5.4', CODEX_REASONING_LEVELS, 'medium'),
-  codexPreset('gpt-5.4-mini', 'GPT-5.4 Mini', CODEX_REASONING_LEVELS, 'medium', 'Small & fast'),
+  codexPreset('gpt-5.4-mini', 'GPT-5.4 Mini', CODEX_REASONING_LEVELS, 'medium', {
+    description: 'Small & fast',
+  }),
   // Still visibility:list in upstream catalog; keep selectable so stored
   // gpt-5.2/* selections are not silently forced onto Sol.
   codexPreset('gpt-5.2', 'GPT-5.2', CODEX_REASONING_LEVELS, 'medium'),
 ];
+
+/** Extract `major.minor.patch` from CLI --version output (e.g. "codex-cli 0.144.1"). */
+export function extractCliSemver(versionText: string | null | undefined): string | null {
+  if (!versionText) return null;
+  const match = String(versionText).match(/(\d+)\.(\d+)\.(\d+)/);
+  return match ? `${match[1]}.${match[2]}.${match[3]}` : null;
+}
+
+function compareSemverCore(a: string, b: string): number {
+  const pa = a.split('.').map((part) => Number.parseInt(part, 10) || 0);
+  const pb = b.split('.').map((part) => Number.parseInt(part, 10) || 0);
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const da = pa[i] ?? 0;
+    const db = pb[i] ?? 0;
+    if (da > db) return 1;
+    if (da < db) return -1;
+  }
+  return 0;
+}
+
+/**
+ * Drop presets whose minCliVersion exceeds the installed CLI.
+ * When the CLI version is unknown, keep the full list (optimistic) so the
+ * picker is not empty before discovery finishes.
+ */
+export function filterAgentModelPresetsForCliVersion(
+  presets: AgentModelPreset[],
+  cliVersionText: string | null | undefined,
+): AgentModelPreset[] {
+  const cliSemver = extractCliSemver(cliVersionText);
+  if (!cliSemver) return presets;
+  return presets.filter((preset) => {
+    if (!preset.minCliVersion) return true;
+    return compareSemverCore(cliSemver, preset.minCliVersion) >= 0;
+  });
+}
 
 /** Resolve the model id (with optional /effort) for auto-selection. */
 export function resolveAgentModelSelection(preset: AgentModelPreset): string {
@@ -503,6 +559,35 @@ export function resolveAgentModelSelection(preset: AgentModelPreset): string {
   }
   // Conservative fallback: first listed effort (usually the cheapest/fastest).
   return `${preset.id}/${levels[0]}`;
+}
+
+/** Match a configured agent to a discovery row to read its probed CLI version. */
+export function resolveDiscoveredAgentCliVersion(
+  agent: Pick<ExternalAgentConfig, 'command' | 'sdkBackend'> | null | undefined,
+  discovered: Array<Pick<DiscoveredAgent, 'command' | 'path' | 'binPath' | 'sdkBackend' | 'version'>>,
+): string | undefined {
+  if (!agent || discovered.length === 0) return undefined;
+  const command = agent.command || '';
+  const basename = command.split(/[\\/]/).pop()?.toLowerCase() ?? '';
+  const match = discovered.find((entry) => {
+    if (agent.sdkBackend && entry.sdkBackend && agent.sdkBackend === entry.sdkBackend) {
+      if (
+        entry.path === command
+        || entry.binPath === command
+        || entry.command === basename
+        || entry.command === command
+      ) {
+        return true;
+      }
+    }
+    return (
+      entry.path === command
+      || entry.binPath === command
+      || entry.command === basename
+      || entry.command === command
+    );
+  });
+  return match?.version || undefined;
 }
 
 export const CURSOR_MODEL_PRESETS: AgentModelPreset[] = [

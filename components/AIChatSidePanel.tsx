@@ -13,7 +13,12 @@ import type {
   ExternalAgentConfig,
 } from '../infrastructure/ai/types';
 import type { ExecutorContext } from '../infrastructure/ai/cattyAgent/executor';
-import { getAgentModelPresets, resolveAgentModelSelection } from '../infrastructure/ai/types';
+import {
+  filterAgentModelPresetsForCliVersion,
+  getAgentModelPresets,
+  resolveAgentModelSelection,
+  resolveDiscoveredAgentCliVersion,
+} from '../infrastructure/ai/types';
 import { getExternalAgentSdkBackend, getManualAgentCommand, matchesManagedAgentConfig } from '../infrastructure/ai/managedAgents';
 import { useAgentDiscovery } from '../application/state/useAgentDiscovery';
 import {
@@ -854,8 +859,19 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       }
       return [];
     }
-    return runtimePresets ?? getAgentModelPresets(currentAgentConfig?.command);
-  }, [currentAgentConfig?.command, currentAgentId, runtimeAgentModelPresets, hasCodexCustomConfig, codexConfigModel]);
+    if (runtimePresets) return runtimePresets;
+    const presets = getAgentModelPresets(currentAgentConfig?.command);
+    // BYO Codex CLI: hide GPT-5.6 when discovery reports CLI < 0.144.0.
+    const cliVersion = resolveDiscoveredAgentCliVersion(currentAgentConfig, discoveredAgents);
+    return filterAgentModelPresetsForCliVersion(presets, cliVersion);
+  }, [
+    currentAgentConfig,
+    currentAgentId,
+    runtimeAgentModelPresets,
+    hasCodexCustomConfig,
+    codexConfigModel,
+    discoveredAgents,
+  ]);
 
   const selectedAgentModel = useMemo(() => {
     const stored = agentModelMap[currentAgentId];

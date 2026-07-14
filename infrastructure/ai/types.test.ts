@@ -4,9 +4,13 @@ import assert from 'node:assert/strict';
 import {
   CLAUDE_MODEL_PRESETS,
   CODEBUDDY_MODEL_PRESETS,
+  CODEX_GPT_5_6_MIN_CLI_VERSION,
   CODEX_MODEL_PRESETS,
+  extractCliSemver,
+  filterAgentModelPresetsForCliVersion,
   getAgentModelPresets,
   resolveAgentModelSelection,
+  resolveDiscoveredAgentCliVersion,
 } from './types';
 
 test('getAgentModelPresets returns CodeBuddy fallback models for command paths', () => {
@@ -87,6 +91,44 @@ test('resolveAgentModelSelection uses catalog default effort, not last array ent
   assert.equal(
     resolveAgentModelSelection({ id: 'plain', name: 'Plain' }),
     'plain',
+  );
+});
+
+test('filterAgentModelPresetsForCliVersion gates GPT-5.6 on CLI < 0.144.0', () => {
+  assert.equal(extractCliSemver('codex-cli 0.136.0'), '0.136.0');
+  assert.equal(CODEX_GPT_5_6_MIN_CLI_VERSION, '0.144.0');
+
+  const oldCli = filterAgentModelPresetsForCliVersion(CODEX_MODEL_PRESETS, '0.136.0');
+  assert.deepEqual(
+    oldCli.map((model) => model.id),
+    ['gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.2'],
+  );
+  assert.equal(resolveAgentModelSelection(oldCli[0]!), 'gpt-5.5/medium');
+
+  const newCli = filterAgentModelPresetsForCliVersion(CODEX_MODEL_PRESETS, 'codex-cli 0.144.1');
+  assert.equal(newCli[0]?.id, 'gpt-5.6-sol');
+
+  // Unknown version: keep full list so the picker is not empty pre-discovery.
+  assert.equal(
+    filterAgentModelPresetsForCliVersion(CODEX_MODEL_PRESETS, undefined).length,
+    CODEX_MODEL_PRESETS.length,
+  );
+});
+
+test('resolveDiscoveredAgentCliVersion matches command path or sdk backend', () => {
+  assert.equal(
+    resolveDiscoveredAgentCliVersion(
+      { command: '/usr/local/bin/codex', sdkBackend: 'codex' },
+      [{ command: 'codex', path: '/usr/local/bin/codex', binPath: '/usr/local/bin/codex', sdkBackend: 'codex', version: '0.144.1' }],
+    ),
+    '0.144.1',
+  );
+  assert.equal(
+    resolveDiscoveredAgentCliVersion(
+      { command: 'codex', sdkBackend: 'codex' },
+      [{ command: 'claude', path: '/bin/claude', binPath: '/bin/claude', sdkBackend: 'claude', version: '1.0.0' }],
+    ),
+    undefined,
   );
 });
 
