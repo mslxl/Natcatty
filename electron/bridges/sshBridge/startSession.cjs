@@ -1103,7 +1103,7 @@ function createStartSessionApi(ctx) {
                 // second interactive factor (#2150).
                 if (
                   methodsLeft.includes("keyboard-interactive") &&
-                  canRepeatKeyboardInteractive(authPhase)
+                  canRepeatKeyboardInteractive(authPhase, failedMethodIds)
                 ) {
                   attemptedMethodIds.delete("keyboard-interactive");
                 }

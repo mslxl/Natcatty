@@ -5,6 +5,7 @@ const {
   createKeyboardInteractiveHandler,
   createOrderedStringAuthHandler,
   createAuthPhase,
+  canRepeatKeyboardInteractive,
   shouldSkipKiPasswordAutoFill,
   isAutoFillablePasswordChallenge,
   shouldPrefillSavedPassword,
@@ -708,6 +709,38 @@ test("createOrderedStringAuthHandler caps repeated keyboard-interactive factors 
     ["none", "keyboard-interactive", "keyboard-interactive", false],
   );
   assert.equal(authPhase.keyboardInteractiveSuccessCount, 2);
+});
+
+test("createOrderedStringAuthHandler does not re-offer a rejected second interactive factor", () => {
+  const authPhase = createAuthPhase();
+  const handler = createOrderedStringAuthHandler(
+    ["none", "keyboard-interactive", "publickey"],
+    authPhase,
+  );
+
+  const offered = [];
+  handler(null, null, (method) => offered.push(method));
+  handler(["keyboard-interactive"], false, (method) => offered.push(method));
+  handler(["keyboard-interactive"], true, (method) => offered.push(method));
+  handler(["publickey"], false, (method) => offered.push(method));
+  handler(["keyboard-interactive"], true, (method) => offered.push(method));
+
+  assert.deepEqual(
+    offered,
+    ["none", "keyboard-interactive", "keyboard-interactive", "publickey", false],
+  );
+  assert.equal(authPhase.keyboardInteractiveSuccessCount, 1);
+});
+
+test("canRepeatKeyboardInteractive blocks an interactive method already rejected in this connection", () => {
+  const authPhase = createAuthPhase();
+  authPhase.keyboardInteractiveSuccessCount = 1;
+
+  assert.equal(canRepeatKeyboardInteractive(authPhase, new Set()), true);
+  assert.equal(
+    canRepeatKeyboardInteractive(authPhase, new Set(["keyboard-interactive"])),
+    false,
+  );
 });
 
 test("buildAuthHandler caps repeated keyboard-interactive factors on the dynamic path (#2150)", () => {

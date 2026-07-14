@@ -1125,7 +1125,7 @@ function buildAuthHandler(options) {
       if (
         Array.isArray(methodsLeft) &&
         methodsLeft.includes("keyboard-interactive") &&
-        canRepeatKeyboardInteractive(authPhase)
+        canRepeatKeyboardInteractive(authPhase, failedMethodIds)
       ) {
         attemptedMethodIds.delete("keyboard-interactive");
       }
@@ -1301,9 +1301,14 @@ function markAuthPhasePartialSuccess(authPhase, succeededMethodType) {
  * Allow at most one repeated keyboard-interactive factor. Two completed KI
  * factors cover login-password + secondary-password flows while preventing a
  * broken or malicious server from keeping the client in an unbounded loop.
+ * Once an interactive factor is rejected, it must not be revived by a later
+ * partial success from another method.
+ * @param {Object} authPhase
+ * @param {Set<string>} [failedMethodIds]
  */
-function canRepeatKeyboardInteractive(authPhase) {
+function canRepeatKeyboardInteractive(authPhase, failedMethodIds) {
   if (!authPhase) return false;
+  if (failedMethodIds?.has("keyboard-interactive")) return false;
   return (authPhase.keyboardInteractiveSuccessCount || 0) ===
     MAX_KEYBOARD_INTERACTIVE_FACTORS - 1;
 }
@@ -1372,7 +1377,7 @@ function createOrderedStringAuthHandler(order, authPhase, onAuthAttempt) {
       if (
         Array.isArray(methodsLeft) &&
         methodsLeft.includes("keyboard-interactive") &&
-        canRepeatKeyboardInteractive(authPhase)
+        canRepeatKeyboardInteractive(authPhase, failed)
       ) {
         attempted.delete("keyboard-interactive");
       }
