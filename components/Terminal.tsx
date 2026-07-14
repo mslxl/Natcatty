@@ -296,8 +296,11 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const pendingScriptHandledRef = useRef<Snippet | null>(null);
   // Mosh marks status=connected during the SSH handshake so interactive
   // prompts remain reachable. Connect/pending scripts must wait until
-  // mosh-client is ready (#2199).
+  // mosh-client is ready (#2199). Re-subscribe on every connecting
+  // attempt: closeSession clears preload ready listeners for the session id.
   const [moshShellReady, setMoshShellReady] = useState(() => !host.moshEnabled);
+  const [moshConnectEpoch, setMoshConnectEpoch] = useState(0);
+  const moshStatusRef = useRef(status);
   const [saveRecordingOpen, setSaveRecordingOpen] = useState(false);
   const [recordedCode, setRecordedCode] = useState('');
   const recorder = useScriptRecorder(sessionId);
@@ -1623,10 +1626,20 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     if (status === 'disconnected' && !autoReconnectLoopActiveRef.current) {
       connectScriptsConsumedRef.current = false;
       connectScriptsCompletedIdsRef.current = new Set();
-      if (host.moshEnabled) {
-        setMoshShellReady(false);
-      }
     }
+  }, [status]);
+
+  useEffect(() => {
+    if (host.moshEnabled && status === 'connecting' && moshStatusRef.current !== 'connecting') {
+      // Manual retry and auto-reconnect both land here. Bump the epoch so the
+      // ready subscription is recreated after closeSession cleared listeners.
+      setMoshConnectEpoch((epoch) => epoch + 1);
+      setMoshShellReady(false);
+    }
+    if (status === 'disconnected' && host.moshEnabled) {
+      setMoshShellReady(false);
+    }
+    moshStatusRef.current = status;
   }, [host.moshEnabled, status]);
 
   useEffect(() => {
@@ -1634,7 +1647,6 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       setMoshShellReady(true);
       return;
     }
-    // Stay false until ready fires (or reconnect completes a new handshake).
     setMoshShellReady(false);
     const dispose = terminalBackend.onMoshSessionReady?.(sessionId, () => {
       setMoshShellReady(true);
@@ -1642,7 +1654,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     return () => {
       dispose?.();
     };
-  }, [host.moshEnabled, sessionId, terminalBackend]);
+  }, [host.moshEnabled, moshConnectEpoch, sessionId, terminalBackend]);
 
   useEffect(() => {
     if (status !== "disconnected") return;
