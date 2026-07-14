@@ -42,38 +42,81 @@ const isBareThemedTerminator = (promptText: string): boolean => {
 };
 
 /**
+ * Read the full logical input after the prompt, including wrapped continuation
+ * rows and text past the cursor (Enter submits the whole line, not the prefix).
+ */
+const readFullLineAfterPrompt = (
+  term: XTerm,
+  promptText: string,
+): string | null => {
+  if (!promptText) return null;
+  try {
+    const buffer = term.buffer.active;
+    const cursorY = buffer.cursorY + buffer.baseY;
+    let promptRow = cursorY;
+    let line = buffer.getLine(promptRow);
+    if (!line) return null;
+
+    // Walk up through wrapped continuation rows to the prompt row.
+    while (line.isWrapped && promptRow > 0) {
+      promptRow -= 1;
+      const prev = buffer.getLine(promptRow);
+      if (!prev) return null;
+      line = prev;
+    }
+
+    let combined = "";
+    for (let row = promptRow; ; row += 1) {
+      const rowLine = buffer.getLine(row);
+      if (!rowLine) break;
+      combined += rowLine.translateToString(false);
+      const next = buffer.getLine(row + 1);
+      if (!next?.isWrapped) break;
+    }
+
+    if (!combined.startsWith(promptText)) return null;
+    return combined.slice(promptText.length).replace(/\s+$/g, "");
+  } catch {
+    return null;
+  }
+};
+
+/**
  * detectPrompt truncates userInput at the cursor. Enter submits the whole line,
- * so expand to the full text after the prompt when the cursor is mid-line.
+ * so expand to the full text after the prompt (including wrapped rows).
  */
 const expandPromptUserInputToFullLine = (
   term: XTerm,
   prompt: PromptDetectionResult,
 ): PromptDetectionResult => {
   if (!prompt.isAtPrompt || !prompt.promptText) return prompt;
-  try {
-    const buffer = term.buffer.active;
-    const cursorY = buffer.cursorY + buffer.baseY;
-    const line = buffer.getLine(cursorY);
-    if (!line) return prompt;
-    const raw = line.translateToString(false);
-    if (!raw.startsWith(prompt.promptText)) return prompt;
-    // Drop xterm cell padding; keep intentional trailing spaces out of history.
-    const fullInput = raw.slice(prompt.promptText.length).replace(/\s+$/g, "");
-    if (fullInput === prompt.userInput) return prompt;
-    if (
-      fullInput.length > prompt.userInput.length
-      && fullInput.startsWith(prompt.userInput)
-    ) {
-      return {
-        ...prompt,
-        userInput: fullInput,
-        cursorOffset: fullInput.length,
-      };
-    }
-  } catch {
-    // ignore buffer read failures
+  const fullInput = readFullLineAfterPrompt(term, prompt.promptText);
+  if (fullInput === null || fullInput === prompt.userInput) return prompt;
+  if (
+    fullInput.length > prompt.userInput.length
+    && fullInput.startsWith(prompt.userInput)
+  ) {
+    return {
+      ...prompt,
+      userInput: fullInput,
+      cursorOffset: fullInput.length,
+    };
   }
   return prompt;
+};
+
+/**
+ * When the prompt has no trailing space (`user@host:~$su -`), the detector
+ * may not find a boundary. Fall back to the last known prompt prefix.
+ */
+const resolveFromCachedPromptPrefix = (
+  term: XTerm,
+  lastPromptText: string | undefined,
+): string => {
+  const cached = lastPromptText ?? "";
+  if (!cached) return "";
+  const fullInput = readFullLineAfterPrompt(term, cached);
+  return fullInput?.trim() ?? "";
 };
 
 export const shouldRecordShellHistory = (
@@ -232,15 +275,25 @@ export const resolveSubmittedShellCommand = (
   const aligned = alignedResult.alignedTyped?.trim() ?? "";
   if (aligned) return aligned;
 
-  // Expand past the cursor so mid-line Enter still sees the full recalled command.
+  // Expand past the cursor / across wraps so Enter sees the full recalled command.
   const prompt = expandPromptUserInputToFullLine(term, alignedResult.prompt);
-  if (!prompt.isAtPrompt) return buffered;
+  if (!prompt.isAtPrompt) {
+    // No-space prompts (`user@host:~$su -`) often fail boundary detection;
+    // recover via the last fully-detected prompt prefix (#2191 review).
+    if (!buffered) {
+      return resolveFromCachedPromptPrefix(term, lastPromptText);
+    }
+    return buffered;
+  }
 
   const live = resolveLiveSubmittedCommand(prompt, lastPromptText);
   if (!buffered) {
     // Empty Enter on a themed prompt must not treat cwd/git chrome as a command
     // (would pollute history and can false-arm su/sudo assist).
-    if (!live || isEmptyPromptDecoration(live, prompt)) return "";
+    if (!live || isEmptyPromptDecoration(live, prompt)) {
+      // Last chance: no-space / partial detect with a known prompt prefix.
+      return resolveFromCachedPromptPrefix(term, lastPromptText);
+    }
     return live;
   }
   if (!live || live === buffered) return buffered || live;

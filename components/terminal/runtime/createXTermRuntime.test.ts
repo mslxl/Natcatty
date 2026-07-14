@@ -220,6 +220,15 @@ test("resolveSubmittedShellCommand strips themed prompt chrome without stale cac
     ),
     "sudo whoami",
   );
+  // No trailing space after $: recover via lastPromptText (#2191 review).
+  assert.equal(
+    resolveSubmittedShellCommand(
+      "",
+      createFakeTerm("user@host:~$su -") as never,
+      "user@host:~$",
+    ),
+    "su -",
+  );
 });
 
 test("resolveSubmittedShellCommand prefers live line when history replaces a typed prefix (#2191)", () => {
