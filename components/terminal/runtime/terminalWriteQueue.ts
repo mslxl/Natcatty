@@ -172,6 +172,9 @@ const resolveMaxDrainBytes = (value?: number): number => (
     : MAX_TERMINAL_WRITE_QUEUE_DRAIN_BYTES
 );
 
+/** Max synchronous recursive step hops inside one merged flood item. */
+const MAX_SYNC_MERGED_STEPS_BEFORE_YIELD = 32;
+
 const runQueuedWrite = (
   item: QueuedWrite,
   done: () => void,
@@ -180,6 +183,7 @@ const runQueuedWrite = (
   let index = 0;
   let completed = false;
   let currentDrainBytes = 0;
+  let syncStepsSinceYield = 0;
 
   const runNext = (): void => {
     if (completed) {
@@ -201,6 +205,7 @@ const runQueuedWrite = (
       && currentDrainBytes + step.bytes > item.maxDrainBytes
     ) {
       currentDrainBytes = 0;
+      syncStepsSinceYield = 0;
       deferStep(runNext);
       return;
     }
@@ -217,8 +222,19 @@ const runQueuedWrite = (
       // instead of forcing a timer after every shard.
       if (step.yieldAfter && index < item.steps.length) {
         currentDrainBytes = 0;
+        syncStepsSinceYield = 0;
         deferStep(runNext);
         return;
+      }
+      // Flood-merged items can hold thousands of tiny sync steps. Without a
+      // hop limit, continueAfterStep → runNext recursion blows the stack.
+      if (index < item.steps.length) {
+        syncStepsSinceYield += 1;
+        if (syncStepsSinceYield >= MAX_SYNC_MERGED_STEPS_BEFORE_YIELD) {
+          syncStepsSinceYield = 0;
+          deferStep(runNext);
+          return;
+        }
       }
       runNext();
     };

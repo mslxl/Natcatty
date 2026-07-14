@@ -265,6 +265,35 @@ test("merged flood backlog still yields between synchronous write steps", async 
   assert.deepEqual(order, [0, 1]);
 });
 
+test("merged flood of many tiny sync steps does not blow the call stack", async () => {
+  const term = createFakeTerm();
+  const order: number[] = [];
+  let releaseFirst: (() => void) | null = null;
+  const stepCount = 10_000;
+
+  enqueueTerminalWrite(term, 1, (done) => {
+    releaseFirst = done;
+  });
+  for (let index = 0; index < stepCount; index += 1) {
+    enqueueTerminalWrite(term, 1, (done) => {
+      order.push(index);
+      done();
+    });
+  }
+
+  assert.equal(isTerminalWriteQueueInFloodMode(term), true);
+  assert.doesNotThrow(() => {
+    releaseFirst?.();
+  });
+  // Cooperative yields every 32 sync hops — drain with timer flushes.
+  for (let guard = 0; guard < 500 && order.length < stepCount; guard += 1) {
+    await waitForQueuedWriteYield();
+  }
+  assert.equal(order.length, stepCount);
+  assert.equal(order[0], 0);
+  assert.equal(order[stepCount - 1], stepCount - 1);
+});
+
 test("merged flood backlog honors per-step yieldAfter, not every shard", async () => {
   const term = createFakeTerm();
   const order: number[] = [];

@@ -444,21 +444,23 @@ const writeSessionDataImmediate = (
     const prepareStartedAt = shouldMeasurePerf ? performance.now() : 0;
     const settings = ctx.terminalSettingsRef?.current ?? ctx.terminalSettings;
     const forcePromptNewLine = settings?.forcePromptNewLine ?? false;
-    // Bulk plain dumps (seq/logs): skip paste/sync-block prep. Display bytes are
-    // unchanged for plain text. Never skip when forcePromptNewLine is on —
-    // prompt placement is correctness, not optional side work (Codex review).
+    // Bulk plain dumps (seq/logs): skip paste/prompt cosmetics. Never skip when
+    // forcePromptNewLine is on — prompt placement is correctness. Always run the
+    // stateful sync-block filter: a chunk may look "plain" (no ESC) while it is
+    // the continuation of a split CSI held in filter state (Codex review).
     const bulkPlainPath = shouldDegradeTerminalSideWork(term)
       && isPlainTerminalDisplayData(data)
       && !forcePromptNewLine;
     let preparedDisplayData: string;
     let logDisplayData: string;
     let prepareMs = 0;
+    // Always feed the filter so pending escape prefixes stay consistent.
+    const filteredData = filterTerminalSessionData(term, data);
     if (bulkPlainPath) {
-      preparedDisplayData = data;
-      logDisplayData = data;
+      preparedDisplayData = filteredData;
+      logDisplayData = filteredData;
       prepareMs = shouldMeasurePerf ? performance.now() - prepareStartedAt : 0;
     } else {
-      const filteredData = filterTerminalSessionData(term, data);
       const displayData = appendEraseScrollbackAfterFullErases(filteredData, {
         wipeScrollback: settings?.clearWipesScrollback ?? true,
         normalScreen: term.buffer?.active?.type !== "alternate",
