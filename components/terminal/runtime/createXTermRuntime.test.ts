@@ -204,6 +204,25 @@ test("resolveSubmittedShellCommand strips themed prompt chrome without stale cac
     resolveSubmittedShellCommand("", createFakeTerm("❯ su") as never),
     "su",
   );
+  // Double-space after glyph must not peel "su" into decoration.
+  assert.equal(
+    resolveSubmittedShellCommand("", createFakeTerm("❯  su -") as never),
+    "su -",
+  );
+  assert.equal(
+    resolveSubmittedShellCommand("", createFakeTerm("❯  sudo whoami") as never),
+    "sudo whoami",
+  );
+  // Multi-word themed directory without cache.
+  assert.equal(
+    resolveSubmittedShellCommand("", createFakeTerm("➜  My Project su -") as never),
+    "su -",
+  );
+  // Directory token "su " with trailing pad is chrome, not a command.
+  assert.equal(
+    resolveSubmittedShellCommand("", createFakeTerm("➜  su ") as never),
+    "",
+  );
   // Absolute path commands on normal prompts are real, not decoration.
   assert.equal(
     resolveSubmittedShellCommand(

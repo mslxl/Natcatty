@@ -239,28 +239,74 @@ export const shouldRecordShellHistory = (
   return liveCommand === trimmed;
 };
 
+/** Path / git-status chrome that may sit between a glyph prompt and the command. */
+const isPlausiblePathDecoration = (text: string): boolean => {
+  const s = text.trim();
+  if (!s) return true;
+  if (s === "~" || s.startsWith("~/") || s.startsWith("/")) return true;
+  if (/^git:\([^)]*\)/.test(s)) return true;
+  if (/[✗✔]/.test(s)) return true;
+  // Bare or multi-word directory tokens (My Project), but not privilege verbs.
+  if (/\b(?:su|sudo|doas)\b/i.test(s)) return false;
+  return /^[\w./~-]+(?:\s+[\w./~-]+)*$/.test(s);
+};
+
 /**
- * Peel themed cwd/git chrome from userInput by trying space-aligned suffixes
- * and keeping the split that attributes the most text to the prompt.
+ * Peel themed cwd/git chrome from userInput.
+ *
+ * Prefer a trailing privilege command (su/sudo/doas) when the prefix looks like
+ * path decoration — longest-prompt peel alone turns `❯  su -` into `-` and
+ * `➜  My Project su -` into `Project su -` (#2191 review).
  */
 const peelThemedCommandFromPrompt = (
   prompt: PromptDetectionResult,
 ): string => {
   const live = prompt.userInput;
-  let best: { command: string; promptLength: number } | null = null;
+  const trimmedStart = live.trimStart();
+  if (!trimmedStart) return "";
+
+  const privilegeMatch = trimmedStart.match(
+    /(?:^|\s)((?:sudo|su|doas)(?:\s+.*)?)$/i,
+  );
+  if (privilegeMatch) {
+    const command = privilegeMatch[1].trim();
+    const before = trimmedStart
+      .slice(0, trimmedStart.length - privilegeMatch[1].length)
+      .trim();
+    if (isPlausiblePathDecoration(before)) {
+      return command;
+    }
+  }
+
+  // Reconcile peel: prefer the longest command (avoid over-peeling to "-").
+  let best: { command: string; length: number } | null = null;
   for (let start = 0; start < live.length; start += 1) {
     if (start > 0 && live[start - 1] !== " ") continue;
     const candidate = live.slice(start);
     if (!candidate.trim()) continue;
+    const extra = live.slice(0, start);
+    // Never treat privilege words as path chrome in the stripped prefix.
+    if (/\b(?:su|sudo|doas)\b/i.test(extra)) continue;
     const reconciled = reconcilePromptWithTypedInput(prompt, candidate);
     if (reconciled === prompt || reconciled.userInput !== candidate) continue;
     const command = candidate.trim();
     if (!command) continue;
-    if (!best || reconciled.promptText.length > best.promptLength) {
-      best = { command, promptLength: reconciled.promptText.length };
+    if (!best || command.length > best.length) {
+      best = { command, length: command.length };
     }
   }
-  return best?.command ?? "";
+  if (best) return best.command;
+
+  // Bare leading spaces before a simple command: ` su -` → `su -`.
+  const trimmed = live.trim();
+  if (
+    trimmed
+    && live.endsWith(trimmed)
+    && /^\s+$/.test(live.slice(0, live.length - trimmed.length))
+  ) {
+    return trimmed;
+  }
+  return "";
 };
 
 /**
@@ -356,7 +402,10 @@ const isEmptyPromptDecoration = (
 
   const rawTokens = prompt.userInput.trim().split(/\s+/).filter(Boolean);
   if (rawTokens.length <= 1) {
-    // One-word history of su/sudo/doas must still arm password assist (❯ su).
+    // Cwd chrome often keeps a trailing space after the directory token
+    // (" git "). A real one-word history command usually has no trailing pad.
+    if (/\s$/.test(prompt.userInput)) return true;
+    // One-word history of su/sudo/doas (❯ su) with no trailing pad.
     if (/^(?:su|sudo|doas)$/i.test(command)) return false;
     return true;
   }
