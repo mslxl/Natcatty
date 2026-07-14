@@ -159,41 +159,44 @@ const DropdownContent: React.FC<DropdownContentProps> = ({
     let top: number;
     let left: number;
 
-    // Use trigger's bottom for vertical positioning (not parent's)
+    const contentHeight = contentEl?.offsetHeight ?? 0;
+    const contentWidth = contentEl?.offsetWidth ?? 0;
+
+    // Vertical: open below or fully above the trigger (not overlapping it).
     if (side === "bottom") {
       top = triggerRect.bottom + sideOffset;
     } else {
-      top = triggerRect.top - sideOffset;
+      top = triggerRect.top - contentHeight - sideOffset;
     }
 
     // Use anchor element (parent or trigger) for horizontal positioning
     if (align === "start") {
       left = rect.left;
     } else if (align === "end") {
-      left = rect.right;
-      if (contentEl) {
-        left = rect.right - contentEl.offsetWidth;
-      }
+      left = contentEl ? rect.right - contentWidth : rect.right;
     } else {
       left = rect.left + rect.width / 2;
       if (contentEl) {
-        left -= contentEl.offsetWidth / 2;
+        left -= contentWidth / 2;
       }
     }
 
-    // Keep within viewport
+    // Keep within viewport; flip vertical side when needed
     if (contentEl) {
       const viewportWidth = window.innerWidth;
       const viewportHeight = window.innerHeight;
 
-      if (left + contentEl.offsetWidth > viewportWidth - 8) {
-        left = viewportWidth - contentEl.offsetWidth - 8;
+      if (left + contentWidth > viewportWidth - 8) {
+        left = viewportWidth - contentWidth - 8;
       }
       if (left < 8) {
         left = 8;
       }
-      if (top + contentEl.offsetHeight > viewportHeight - 8) {
-        top = rect.top - contentEl.offsetHeight - sideOffset;
+      if (top + contentHeight > viewportHeight - 8) {
+        top = triggerRect.top - contentHeight - sideOffset;
+      }
+      if (top < 8) {
+        top = triggerRect.bottom + sideOffset;
       }
     }
 

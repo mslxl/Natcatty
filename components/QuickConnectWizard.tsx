@@ -845,7 +845,7 @@ const QuickConnectWizard: React.FC<QuickConnectWizardProps> = ({
                     </Button>
                   </DropdownTrigger>
                 </div>
-                <DropdownContent className="w-44 p-1" align="end" side="top">
+                <DropdownContent className="w-44 p-1 z-50" align="end">
                   <button
                     className="w-full px-3 py-2 text-sm text-left hover:bg-secondary rounded-md"
                     onClick={() => handleConnect(true)}
