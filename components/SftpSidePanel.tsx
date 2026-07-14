@@ -50,6 +50,7 @@ import {
   type SftpFollowTerminalCwdBlock,
 } from "./sftp/sftpFollowTerminalCwd";
 import {
+  connectionKeyMatchesHost,
   findReusableSftpSidePanelTab,
   shouldResetSftpSidePanelSourceSession,
   shouldSkipSftpSidePanelAutoConnect,
@@ -299,6 +300,9 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     const hasBackendSession = (connectionId: string) => !!s.getSftpIdForConnection(connectionId);
     const activeTab = s.leftTabs.tabs.find((tab) => tab.id === s.leftTabs.activeTabId) ?? null;
     const activeConnectionId = activeTab?.connection?.id;
+    const activeTabConnectionKey = activeTab
+      ? tabConnectionKeyMapRef.current.get(activeTab.id) ?? null
+      : null;
     // Same-host terminal focus changes used to force a reconnect (and often
     // dropped back to $HOME). Keep a healthy tab for this endpoint instead.
     if (
@@ -307,6 +311,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
         connectedKeyRef.current,
         activeTab,
         activeConnectionId ? hasBackendSession(activeConnectionId) : false,
+        activeTabConnectionKey,
       )
     ) {
       return;
@@ -414,8 +419,30 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     if (!connection || connection.isLocal) return;
     if (connection.status !== "connected") return;
     if (!connection.currentPath) return;
-    const connectionKey = tabConnectionKeyMapRef.current.get(sftp.leftPane.id);
-    if (!connectionKey) return;
+
+    // Prefer the live host endpoint over a stale tab map entry. Host-picker
+    // reconnects keep the same tab id but switch hosts, and only auto-connect
+    // used to write the map.
+    const mappedKey = tabConnectionKeyMapRef.current.get(sftp.leftPane.id);
+    let connectionKey =
+      connectionKeyMatchesHost(mappedKey, connection.hostId) ? mappedKey! : null;
+    if (!connectionKey) {
+      const host =
+        (activeHost?.id === connection.hostId ? activeHost : null)
+        ?? hosts.find((candidate) => candidate.id === connection.hostId)
+        ?? null;
+      if (!host) return;
+      connectionKey = buildCacheKey(
+        host.id,
+        host.hostname,
+        host.port,
+        host.protocol,
+        host.sftpSudo,
+        host.username,
+      );
+      tabConnectionKeyMapRef.current.set(sftp.leftPane.id, connectionKey);
+    }
+
     lastBrowsedPathByConnectionKeyRef.current.set(connectionKey, connection.currentPath);
     onCurrentPathChangeRef.current?.({
       hostId: connection.hostId,
@@ -423,6 +450,8 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
       path: connection.currentPath,
     });
   }, [
+    activeHost,
+    hosts,
     sftp.leftPane.connection,
     sftp.leftPane.connection?.currentPath,
     sftp.leftPane.connection?.hostId,

@@ -15,16 +15,31 @@ export function isRemoteSftpTabHealthy(
   return true;
 }
 
-/** Skip auto-connect only when the active tab is already bound to this endpoint and healthy. */
+/**
+ * Skip auto-connect only when the active tab is already bound to this endpoint
+ * and healthy. `activeTabConnectionKey` must match so a manually selected tab
+ * for a different host cannot be kept just because `connectedKey` is stale.
+ */
 export function shouldSkipSftpSidePanelAutoConnect(
   connectionKey: string,
   connectedKey: string | null,
   activeTab: SftpSidePanelTabHealth | null | undefined,
   hasBackendSession: boolean,
+  activeTabConnectionKey?: string | null,
 ): boolean {
   if (connectedKey !== connectionKey) return false;
   if (!activeTab) return false;
+  if (activeTabConnectionKey !== connectionKey) return false;
   return isRemoteSftpTabHealthy(activeTab, hasBackendSession);
+}
+
+/** Whether a stored endpoint key still belongs to the live connection's host. */
+export function connectionKeyMatchesHost(
+  connectionKey: string | null | undefined,
+  hostId: string,
+): boolean {
+  if (!connectionKey) return false;
+  return connectionKey === hostId || connectionKey.startsWith(`${hostId}:`);
 }
 
 export function findReusableSftpSidePanelTab(

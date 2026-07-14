@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import type { SftpPane } from "../../application/state/sftp/types";
 import {
+  connectionKeyMatchesHost,
   findReusableSftpSidePanelTab,
   isRemoteSftpTabHealthy,
   shouldResetSftpSidePanelSourceSession,
@@ -54,9 +55,31 @@ test("isRemoteSftpTabHealthy rejects connecting tabs", () => {
 test("shouldSkipSftpSidePanelAutoConnect returns false for stale connected keys", () => {
   const tab = remoteConnectedTab({ loading: true });
   assert.equal(
-    shouldSkipSftpSidePanelAutoConnect("host-key", "host-key", tab, true),
+    shouldSkipSftpSidePanelAutoConnect("host-key", "host-key", tab, true, "host-key"),
     false,
   );
+});
+
+test("shouldSkipSftpSidePanelAutoConnect rejects a healthy tab mapped to another endpoint", () => {
+  const tab = remoteConnectedTab();
+  assert.equal(
+    shouldSkipSftpSidePanelAutoConnect("host-a-key", "host-a-key", tab, true, "host-b-key"),
+    false,
+  );
+});
+
+test("shouldSkipSftpSidePanelAutoConnect rejects when the active tab has no endpoint map", () => {
+  const tab = remoteConnectedTab();
+  assert.equal(
+    shouldSkipSftpSidePanelAutoConnect("host-a-key", "host-a-key", tab, true, null),
+    false,
+  );
+});
+
+test("connectionKeyMatchesHost accepts host-id prefix keys", () => {
+  assert.equal(connectionKeyMatchesHost("host-1:server:22:ssh::root", "host-1"), true);
+  assert.equal(connectionKeyMatchesHost("host-2:server:22:ssh::root", "host-1"), false);
+  assert.equal(connectionKeyMatchesHost(null, "host-1"), false);
 });
 
 test("findReusableSftpSidePanelTab ignores tabs stuck in loading after SSH disconnect", () => {
@@ -89,7 +112,7 @@ test("healthy same-endpoint tabs still skip auto-connect after a terminal sessio
   // Session focus changes must not tear down a healthy SFTP tab for the same host.
   assert.equal(shouldResetSftpSidePanelSourceSession("sess-a", "sess-b"), true);
   assert.equal(
-    shouldSkipSftpSidePanelAutoConnect("host-key", "host-key", tab, true),
+    shouldSkipSftpSidePanelAutoConnect("host-key", "host-key", tab, true, "host-key"),
     true,
   );
   assert.equal(
