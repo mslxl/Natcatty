@@ -200,8 +200,24 @@ export const shouldRecordShellHistory = (
   if (liveCommand.length === 0) {
     return !isNonPromptLine(`${prompt.promptText}${trimmed}`);
   }
-  return liveCommand === trimmed;
+  if (liveCommand === trimmed) return true;
+
+  // Themed multi-word / unicode dirs: resolver peels to "su -" but the raw
+  // userInput is still " My Project su -". Accept trailing resolved commands
+  // so password assist still arms (#2191 review).
+  if (
+    liveCommand === trimmed
+    || liveCommand.endsWith(` ${trimmed}`)
+    || liveCommand.endsWith(trimmed)
+  ) {
+    return true;
+  }
+  return false;
 };
+
+/** Common shell verbs that are commands, not themed directory names. */
+const LOOKS_LIKE_SHELL_COMMAND_PREFIX =
+  /^(?:echo|printf|ls|cd|pwd|cat|grep|find|sed|awk|vim|nvim|nano|git|npm|yarn|pnpm|node|python|pip|docker|make|curl|wget|ssh|scp|rsync|tar|zip|unzip|chmod|chown|cp|mv|rm|mkdir|touch|tail|head|less|more|man|which|type|alias|export|source|bash|zsh|fish|sh|env|ps|top|htop|kill|df|du|free|uname|whoami|id|date|clear|history|exit|logout|true|false|test|expr|seq|sleep|yes|nohup|time|env|sudo|su|doas)\b/i;
 
 /** Path / git-status chrome that may sit between a glyph prompt and the command. */
 const isPlausiblePathDecoration = (text: string): boolean => {
@@ -210,11 +226,46 @@ const isPlausiblePathDecoration = (text: string): boolean => {
   if (s === "~" || s.startsWith("~/") || s.startsWith("/")) return true;
   if (/^git:\([^)]*\)/.test(s)) return true;
   if (/[✗✔]/.test(s)) return true;
-  // Bare or multi-word directory tokens (My Project / 项目 / Project (old)),
-  // but not privilege verbs.
+  // Privilege verbs in the prefix are never directory chrome.
   if (/\b(?:su|sudo|doas)\b/i.test(s)) return false;
-  // Allow unicode letters and common path punctuation in directory names.
+
+  const words = s.split(/\s+/).filter(Boolean);
+  // Single token: common cwd names may collide with commands (git, node).
+  // Ordinary verbs (echo, ls, cat) are almost never directory chrome.
+  if (words.length === 1) {
+    if (
+      LOOKS_LIKE_SHELL_COMMAND_PREFIX.test(s)
+      && !/^[./~]/.test(s)
+      && s !== "~"
+      && !/^(?:git|node|go|npm|yarn|pnpm|docker|src|app|bin|lib|test|tmp|home|user|root|www|html|dist|build|target|main|dev|prod|staging)$/i.test(s)
+    ) {
+      return false;
+    }
+    return /^(?:[^\s\\]|[./~_()-])+$/u.test(s);
+  }
+  // Multi-word: reject shell verbs (`echo foo`) but allow `My Project` / `项目 a`.
+  if (LOOKS_LIKE_SHELL_COMMAND_PREFIX.test(words[0] ?? "")) return false;
   return /^(?:[^\s\\]|[./~_()-])+(?:\s+(?:[^\s\\]|[./~_()-])+)*$/u.test(s);
+};
+
+/**
+ * Recover a privilege command from a line with no space after the prompt marker
+ * (`user@host:~$su -`) when prompt detection and lastPromptText both fail.
+ */
+const resolveNoSpacePromptPrivilegeCommand = (term: XTerm): string => {
+  try {
+    const buffer = term.buffer.active;
+    const cursorY = buffer.cursorY + buffer.baseY;
+    const line = buffer.getLine(cursorY);
+    if (!line) return "";
+    const raw = line.translateToString(false).replace(/\s+$/g, "");
+    const match = raw.match(/^(.*?[$#%>])((?:sudo|su|doas)(?:\s.*)?)$/i);
+    if (!match) return "";
+    const command = match[2].trim();
+    return shouldArmSudoPasswordAutofill(command) ? command : "";
+  } catch {
+    return "";
+  }
 };
 
 /**
@@ -464,9 +515,13 @@ export const resolveSubmittedShellCommand = (
 
   if (!prompt.isAtPrompt) {
     // No-space prompts (`user@host:~$su -`) often fail boundary detection;
-    // recover via the last fully-detected prompt prefix (#2191 review).
+    // recover via the last fully-detected prompt prefix, then a direct
+    // privilege-command scan for the first history recall before any cache.
     if (!buffered) {
-      return resolveFromCachedPromptPrefix(term, lastPromptText);
+      return (
+        resolveFromCachedPromptPrefix(term, lastPromptText)
+        || resolveNoSpacePromptPrivilegeCommand(term)
+      );
     }
     return buffered;
   }

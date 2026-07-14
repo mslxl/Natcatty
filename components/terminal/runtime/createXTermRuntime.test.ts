@@ -278,6 +278,26 @@ test("resolveSubmittedShellCommand strips themed prompt chrome without stale cac
     resolveSubmittedShellCommand("", createFakeTerm("➜  Project (old) su -") as never),
     "su -",
   );
+  // Ordinary commands ending in "su -" must not be peeled to privilege-only.
+  assert.equal(
+    resolveSubmittedShellCommand("", createFakeTerm("❯  echo su -") as never),
+    "echo su -",
+  );
+  // No-space prompt on first history recall (no lastPromptText cache).
+  assert.equal(
+    resolveSubmittedShellCommand("", createFakeTerm("user@host:~$su -") as never),
+    "su -",
+  );
+  // Themed multi-word dir resolves and still records for arming.
+  {
+    const commandBufferRef = { current: "" };
+    const recorded = recordTerminalCommandExecution("", {
+      host: { id: "h", label: "H" },
+      sessionId: "s",
+      commandBufferRef,
+    }, createFakeTerm("➜  My Project su -") as never);
+    assert.equal(recorded, "su -");
+  }
   // Incomplete remote echo of a longer typed word: trust keystrokes.
   assert.equal(
     resolveSubmittedShellCommand(
