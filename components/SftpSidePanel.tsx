@@ -374,12 +374,21 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     }
 
     const currentConn = s.leftPane.connection;
-    // Replace the active connection in place when possible so session switches
-    // do not accumulate orphaned SFTP tabs/channels.
+    // Replace in place only for the same endpoint. A different endpoint (even
+    // under the same hostId) keeps the old tab so promoted editors still have
+    // a live connection to save against.
+    const currentConnectionKey = currentConn && !currentConn.isLocal
+      ? (
+        s.getConnectionCacheKey?.(currentConn.id)
+        ?? tabConnectionKeyMapRef.current.get(s.leftPane.id)
+        ?? null
+      )
+      : null;
     const needsNewTab = !!(
       currentConn
       && currentConn.status === "connected"
-      && currentConn.hostId !== activeHost.id
+      && currentConnectionKey
+      && currentConnectionKey !== connectionKey
     );
     const rememberedPath = lastBrowsedPathByConnectionKeyRef.current.get(connectionKey);
     const initialPath = resolveSftpAutoConnectPath({
