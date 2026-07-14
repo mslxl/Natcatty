@@ -142,6 +142,31 @@ test("resolveSubmittedShellCommand recovers ↑ history when keystroke buffer is
   );
 });
 
+test("resolveSubmittedShellCommand strips themed prompt chrome via cached prompt (#2191)", () => {
+  // Without cache, themed cwd decoration must not become the command (#806).
+  assert.equal(
+    resolveSubmittedShellCommand("", createFakeTerm("➜  git su -") as never),
+    "",
+  );
+  // After a prior typed command, lastPromptText includes the decoration.
+  assert.equal(
+    resolveSubmittedShellCommand(
+      "",
+      createFakeTerm("➜  git su -") as never,
+      "➜  git ",
+    ),
+    "su -",
+  );
+  assert.equal(
+    resolveSubmittedShellCommand(
+      "",
+      createFakeTerm("➜  ~ sudo whoami") as never,
+      "➜  ~ ",
+    ),
+    "sudo whoami",
+  );
+});
+
 test("recordTerminalCommandExecution arms su after empty-buffer history recall (#2191)", () => {
   const commandBufferRef = { current: "" };
   const recorded: string[] = [];
@@ -174,6 +199,33 @@ test("recordTerminalCommandExecution arms su after empty-buffer history recall (
   assert.equal(autofill.isPickerPending(), true);
   autofill.confirmFill("host");
   assert.deepEqual(writes, ["host-secret\n"]);
+});
+
+test("recordTerminalCommandExecution arms su from themed history using lastPromptText (#2191)", () => {
+  const promptState = createPromptLineBreakState();
+  promptState.lastPromptText = "➜  git ";
+  const commandBufferRef = { current: "" };
+  const recordedCommand = recordTerminalCommandExecution("", {
+    host: { id: "host-1", label: "Host" },
+    sessionId: "session-1",
+    commandBufferRef,
+    promptLineBreakStateRef: { current: promptState },
+  }, createFakeTerm("➜  git su -") as never);
+
+  assert.equal(recordedCommand, "su -");
+
+  const autofill = createSudoPasswordAutofill({
+    mode: "picker",
+    candidates: [
+      { id: "host", label: "Host", password: "host-secret" },
+      { id: "identity:root", label: "Root", password: "root-secret" },
+    ],
+    write: () => {},
+    onPicker: () => true,
+  });
+  prepareSudoAutofillInput("\r", recordedCommand, autofill);
+  autofill.handleOutput("Password: ");
+  assert.equal(autofill.isPickerPending(), true);
 });
 
 test("command execution caches the current prompt instead of prompt-like command text", () => {

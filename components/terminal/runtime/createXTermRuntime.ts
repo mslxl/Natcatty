@@ -1016,14 +1016,13 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         sudoAutofill.cancelHint();
         return false; // dismiss without forwarding the byte to the no-echo prompt
       }
-      // Unmodified printable keys: soft-dismiss so the user can type a password.
-      // Ctrl/Meta/Alt combos (including Ctrl+C) must not soft-dismiss — that
-      // leaves dismissedWhileArmed and blocks the next bare Password: (#2191).
+      // Printable keys soft-dismiss so the user can type a password manually.
+      // Keep soft-dismiss for AltGr/Option-produced characters (they report
+      // Ctrl/Alt modifiers on Windows/macOS). Only plain Ctrl+C skips this —
+      // the interrupt path hard-aborts instead (#2191).
       if (
         e.key.length === 1
-        && !e.ctrlKey
-        && !e.metaKey
-        && !e.altKey
+        && !shouldUseUrgentTerminalInterrupt(e, { hasSelection: term.hasSelection() })
       ) {
         sudoAutofill.cancelHint();
         // fall through: key becomes the first char of the manually typed password

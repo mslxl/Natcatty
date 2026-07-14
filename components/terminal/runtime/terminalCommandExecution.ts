@@ -10,6 +10,7 @@ import {
   isNonPromptLine,
   reconcilePromptWithExternalCommand,
 } from "../autocomplete/promptDetector";
+import { getCommandToRecordOnEnter } from "../autocomplete/terminalAutocompletePrompt";
 
 type TerminalCommandExecutionContext = {
   host: Pick<Host, "id" | "label">;
@@ -56,10 +57,17 @@ export const shouldRecordShellHistory = (
  * those keys redraw the line remotely and never append the recalled text to
  * commandBuffer. Fall back to the live prompt line so su/sudo arming, shell
  * history, and command hooks still see the real command (#2191).
+ *
+ * Prefer the last fully-reconciled prompt text (including themed cwd
+ * decorations like `➜  git `) so empty-buffer history does not prefix the
+ * command with prompt chrome. When that cache is missing, reuse the same
+ * policy as autocomplete Enter-record so themed decoration is not treated
+ * as the command (#806).
  */
 export const resolveSubmittedShellCommand = (
   commandBuffer: string,
   term?: XTerm | null,
+  lastPromptText?: string,
 ): string => {
   const buffered = commandBuffer.trim();
   if (!term) return buffered;
@@ -67,14 +75,23 @@ export const resolveSubmittedShellCommand = (
   const { prompt, alignedTyped } = getAlignedPrompt(term, commandBuffer, true);
   const aligned = alignedTyped?.trim() ?? "";
   if (aligned) return aligned;
+  if (buffered) return buffered;
+  if (!prompt.isAtPrompt) return "";
 
-  if (prompt.isAtPrompt) {
-    const live = prompt.userInput.trim();
-    // Empty buffer + live line: classic ↑ history recall before Enter.
-    if (live && !buffered) return live;
+  // Empty buffer: shell history recall. Prefer cached full prompt so themed
+  // decorations (➜  ~ / ➜  git ) stay out of the command (#2191 + #806).
+  const cachedPrompt = lastPromptText ?? "";
+  if (cachedPrompt) {
+    const fullLine = `${prompt.promptText}${prompt.userInput}`;
+    if (fullLine.startsWith(cachedPrompt)) {
+      const fromCachedPrompt = fullLine.slice(cachedPrompt.length).trim();
+      if (fromCachedPrompt) return fromCachedPrompt;
+    }
   }
 
-  return buffered;
+  // Same live-line policy as autocomplete Enter-record: accepts clean
+  // standard prompts, refuses themed decoration pollution.
+  return getCommandToRecordOnEnter(prompt, null, "", true) ?? "";
 };
 
 export const recordTerminalCommandExecution = (
@@ -82,7 +99,8 @@ export const recordTerminalCommandExecution = (
   ctx: TerminalCommandExecutionContext,
   term?: XTerm | null,
 ): string | null => {
-  const cmd = resolveSubmittedShellCommand(command, term);
+  const lastPromptText = ctx.promptLineBreakStateRef?.current?.lastPromptText;
+  const cmd = resolveSubmittedShellCommand(command, term, lastPromptText);
   if (cmd) {
     ctx.onCommandSubmitted?.(cmd, ctx.host.id, ctx.host.label, ctx.sessionId);
   }
