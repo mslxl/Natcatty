@@ -30,6 +30,7 @@ import {
   noteTerminalOutputPressureData,
   resetTerminalOutputPressure,
   setTerminalOutputPressureVisibility,
+  shouldDegradeTerminalSideWork,
 } from "./terminalOutputPressure";
 import { createSudoPasswordAutofill } from "./terminalSudoAutofill";
 import {
@@ -328,7 +329,9 @@ export const getFlowController = (
   setTerminalWriteCoalescerByteCapResolver(term, () => (
     resolveFloodCoalescerByteCap(
       controller!.isPaused(),
-      isTerminalWriteQueueInFloodMode(term),
+      // Treat bulk/large-output pressure like queue flood so we stop packing
+      // multi-MB seq dumps into a single microtask flush (UI freeze).
+      isTerminalWriteQueueInFloodMode(term) || shouldDegradeTerminalSideWork(term),
     )
   ));
   setTerminalWriteCoalescerFlushGate(term, () => ctx.isVisibleRef?.current !== false);
@@ -575,6 +578,7 @@ const writeSessionDataImmediate = (
     });
   }, {
     deferStart: writeOptions.deferStart,
+    // Intermediate plain shards set yieldAfter via writeLargeTerminalBatch.
     yieldAfter: writeOptions.yieldAfter,
   });
 };

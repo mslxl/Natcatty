@@ -456,8 +456,8 @@ test("splits large plain terminal output into cooperative chunks", () => {
     ],
   );
   assert.deepEqual(writes.map((write) => write.ingressBytes), writes.map((write) => write.data.length));
-  // Each 1MB plain shard exceeds the drain budget, so intermediate slices yield
-  // for input interleaving; the final shard streams without a trailing yield.
+  // Plain multi-line shards yield after every intermediate slice so seq/log
+  // floods leave the event loop (Tabby ~128KB cadence).
   assert.deepEqual(
     writes.map((write) => write.options),
     [
@@ -470,14 +470,13 @@ test("splits large plain terminal output into cooperative chunks", () => {
   resetTerminalWriteCoalescer(term);
 });
 
-test("splits long unbroken plain terminal output into larger Tabby-sized shards", () => {
+test("splits long unbroken plain terminal output into Tabby-sized shards with per-slice yield", () => {
   const term = createFakeTerm();
   const writes: Array<{
     data: string;
     ingressBytes: number;
     options?: CoalescedTerminalWriteOptions;
   }> = [];
-  // Four shards: yield once after the drain budget (~2 shards), not every shard.
   const payload = "x".repeat(MAX_TERMINAL_UNBROKEN_WRITE_CHUNK_BYTES * 4 + 11);
 
   setTerminalWriteCoalescerByteCapResolver(term, () => payload.length + 100);
@@ -503,16 +502,16 @@ test("splits long unbroken plain terminal output into larger Tabby-sized shards"
   );
   assert.deepEqual(writes.map((write) => write.ingressBytes), writes.map((write) => write.data.length));
   assert.equal(writes.map((write) => write.data).join(""), payload);
-  // Continuous write until the queue drain budget; only then yieldOnce.
+  // Plain output yields after every intermediate shard for UI responsiveness.
   assert.deepEqual(
     writes.map((write) => write.options?.yieldAfter === true),
-    [false, false, false, true, false],
+    [true, true, true, true, false],
   );
 
   resetTerminalWriteCoalescer(term);
 });
 
-test("splits newline-terminated long plain output into larger Tabby-sized shards", () => {
+test("splits newline-terminated long plain output into Tabby-sized shards with per-slice yield", () => {
   const term = createFakeTerm();
   const writes: Array<{
     data: string;
@@ -546,7 +545,7 @@ test("splits newline-terminated long plain output into larger Tabby-sized shards
   assert.deepEqual(writes.map((write) => write.ingressBytes), writes.map((write) => write.data.length));
   assert.deepEqual(
     writes.map((write) => write.options?.yieldAfter === true),
-    [false, false, false, true, false],
+    [true, true, true, true, false],
   );
 
   resetTerminalWriteCoalescer(term);

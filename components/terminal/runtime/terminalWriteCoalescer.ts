@@ -7,6 +7,7 @@ import {
   MAX_TERMINAL_UNBROKEN_WRITE_CHUNK_BYTES,
   MAX_TERMINAL_WRITE_QUEUE_DRAIN_BYTES,
 } from "./terminalFlowConstants";
+import { shouldDegradeTerminalSideWork } from "./terminalOutputPressure";
 import {
   createWriteCoalescer,
   type WriteCoalesceScheduleMode,
@@ -317,28 +318,41 @@ const hasLongUnbrokenRun = (data: string, maxRunBytes: number): boolean => {
   return data.length - runStart > maxRunBytes;
 };
 
+/**
+ * Cap how much plain text reaches xterm in one write().
+ *
+ * Tabby's FlowControl thresholds ~128KB before tracking write callbacks.
+ * Multi-line floods (`seq`, log dumps) are plain text with newlines — they
+ * must use the same cap as long unbroken runs. Leaving them at the coalescer
+ * pending cap (1MB) feeds hundreds of thousands of buffer lines into a single
+ * parse turn and freezes the whole Electron UI.
+ */
 const resolveTerminalWriteBatchBytes = (
   data: string,
   maxPendingBytes: number,
-): number => (
-  isPlainTerminalOutput(data)
-    && hasLongUnbrokenRun(data, MAX_TERMINAL_UNBROKEN_WRITE_CHUNK_BYTES)
-    ? MAX_TERMINAL_UNBROKEN_WRITE_CHUNK_BYTES
-    : data.length > MAX_TERMINAL_PLAIN_WRITE_CHUNK_BYTES && isPlainTerminalOutput(data)
-      ? MAX_TERMINAL_PLAIN_WRITE_CHUNK_BYTES
-    : maxPendingBytes
-);
+): number => {
+  if (!isPlainTerminalOutput(data)) {
+    return maxPendingBytes;
+  }
+  if (hasLongUnbrokenRun(data, MAX_TERMINAL_UNBROKEN_WRITE_CHUNK_BYTES)) {
+    return Math.min(maxPendingBytes, MAX_TERMINAL_UNBROKEN_WRITE_CHUNK_BYTES);
+  }
+  return Math.min(maxPendingBytes, MAX_TERMINAL_PLAIN_WRITE_CHUNK_BYTES);
+};
 
 /**
  * Cooperative yield budget between sliced xterm writes.
  *
- * Tabby streams ~100KB PTY chunks straight into xterm with almost no
- * setTimeout(0) between them; yielding every tiny shard makes bulk output
- * feel stuttery. Keep occasional yields so input/Ctrl-C can interleave, but
- * align them with the write-queue drain budget rather than every slice.
+ * Plain bulk dumps yield after every slice (~128KB, Tabby-like) so paint and
+ * input can run between shards. CSI/TUI batches keep a larger drain budget so
+ * multi-chunk frames are not chopped into stuttery 128KB pauses.
  */
-const resolveSliceYieldBudgetBytes = (): number =>
-  Math.max(MAX_TERMINAL_UNBROKEN_WRITE_CHUNK_BYTES, MAX_TERMINAL_WRITE_QUEUE_DRAIN_BYTES);
+const resolveSliceYieldBudgetBytes = (data: string, batchSize: number): number => {
+  if (isPlainTerminalOutput(data)) {
+    return Math.max(1, batchSize);
+  }
+  return Math.max(MAX_TERMINAL_UNBROKEN_WRITE_CHUNK_BYTES, MAX_TERMINAL_WRITE_QUEUE_DRAIN_BYTES);
+};
 
 const writeLargeTerminalBatch = (
   data: string,
@@ -353,7 +367,7 @@ const writeLargeTerminalBatch = (
 ): void => {
   const batchSize = Math.max(1, maxBatchBytes);
   const isSliced = data.length > batchSize;
-  const yieldBudget = resolveSliceYieldBudgetBytes();
+  const yieldBudget = resolveSliceYieldBudgetBytes(data, batchSize);
   let offset = 0;
   let remainingIngressBytes = Math.max(0, ingressBytes);
   let bytesSinceYield = 0;
@@ -372,9 +386,6 @@ const writeLargeTerminalBatch = (
     remainingIngressBytes -= sliceIngress;
     const isLast = end >= data.length;
     bytesSinceYield += slice.length;
-    // Yield only after a full drain budget of continuous slices — not on the
-    // first/last slice and not on every shard. This preserves cooperative
-    // scheduling without Tabby-style stop/start cadence.
     const shouldYield = isSliced && !isLast && bytesSinceYield >= yieldBudget;
     if (shouldYield) {
       bytesSinceYield = 0;
@@ -451,6 +462,12 @@ export const enqueueCoalescedTerminalWrite = (
         // Probe always runs (handles leave while buffer is still alternate).
         // O(chunk) parser state — no quadratic pending joins.
         if (noteAltScreenScheduleProbe(term, nextChunk)) {
+          return "raf";
+        }
+        // Bulk pressure: prefer rAF so the browser can paint between flushes.
+        // Microtask packing of seq/log floods pins the main thread for many
+        // consecutive turns (Tabby instead back-pressures on write callbacks).
+        if (shouldDegradeTerminalSideWork(term)) {
           return "raf";
         }
         const canUseMicrotask = typeof queueMicrotask === "function"
