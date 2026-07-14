@@ -534,17 +534,18 @@ function compareSemverCore(a: string, b: string): number {
 
 /**
  * Drop presets whose minCliVersion exceeds the installed CLI.
- * When the CLI version is unknown, keep the full list (optimistic) so the
- * picker is not empty before discovery finishes.
+ * When the CLI version is unknown (pre-discovery / probe failed), also drop
+ * version-gated presets so old installs cannot auto-default to Sol before
+ * discovery finishes. Older ungated presets keep the picker non-empty.
  */
 export function filterAgentModelPresetsForCliVersion(
   presets: AgentModelPreset[],
   cliVersionText: string | null | undefined,
 ): AgentModelPreset[] {
   const cliSemver = extractCliSemver(cliVersionText);
-  if (!cliSemver) return presets;
   return presets.filter((preset) => {
     if (!preset.minCliVersion) return true;
+    if (!cliSemver) return false;
     return compareSemverCore(cliSemver, preset.minCliVersion) >= 0;
   });
 }
@@ -561,31 +562,46 @@ export function resolveAgentModelSelection(preset: AgentModelPreset): string {
   return `${preset.id}/${levels[0]}`;
 }
 
+function looksLikeFilesystemPath(command: string): boolean {
+  return /[\\/]/.test(command) || /^[A-Za-z]:/.test(command);
+}
+
+function normalizeCliPathKey(pathText: string): string {
+  // Case-fold on Windows-style paths; keep POSIX case-sensitive otherwise.
+  const trimmed = pathText.trim();
+  if (/^[A-Za-z]:[\\/]/.test(trimmed) || trimmed.includes('\\')) {
+    return trimmed.replace(/\\/g, '/').toLowerCase();
+  }
+  return trimmed;
+}
+
 /** Match a configured agent to a discovery row to read its probed CLI version. */
 export function resolveDiscoveredAgentCliVersion(
   agent: Pick<ExternalAgentConfig, 'command' | 'sdkBackend'> | null | undefined,
   discovered: Array<Pick<DiscoveredAgent, 'command' | 'path' | 'binPath' | 'sdkBackend' | 'version'>>,
 ): string | undefined {
   if (!agent || discovered.length === 0) return undefined;
-  const command = agent.command || '';
-  const basename = command.split(/[\\/]/).pop()?.toLowerCase() ?? '';
+  const command = (agent.command || '').trim();
+  if (!command) return undefined;
+
+  // Absolute/relative path configs must match the exact discovered binary —
+  // basename-only matching would gate against PATH codex while the driver
+  // launches a different manual binary.
+  if (looksLikeFilesystemPath(command)) {
+    const wanted = normalizeCliPathKey(command);
+    const pathMatch = discovered.find((entry) => {
+      const candidates = [entry.path, entry.binPath].filter(Boolean) as string[];
+      return candidates.some((candidate) => normalizeCliPathKey(candidate) === wanted);
+    });
+    return pathMatch?.version || undefined;
+  }
+
+  const basename = command.split(/[\\/]/).pop()?.toLowerCase() ?? command.toLowerCase();
   const match = discovered.find((entry) => {
-    if (agent.sdkBackend && entry.sdkBackend && agent.sdkBackend === entry.sdkBackend) {
-      if (
-        entry.path === command
-        || entry.binPath === command
-        || entry.command === basename
-        || entry.command === command
-      ) {
-        return true;
-      }
+    if (agent.sdkBackend && entry.sdkBackend && agent.sdkBackend !== entry.sdkBackend) {
+      return false;
     }
-    return (
-      entry.path === command
-      || entry.binPath === command
-      || entry.command === basename
-      || entry.command === command
-    );
+    return entry.command === basename || entry.command === command;
   });
   return match?.version || undefined;
 }

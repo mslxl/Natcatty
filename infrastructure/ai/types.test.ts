@@ -108,10 +108,11 @@ test('filterAgentModelPresetsForCliVersion gates GPT-5.6 on CLI < 0.144.0', () =
   const newCli = filterAgentModelPresetsForCliVersion(CODEX_MODEL_PRESETS, 'codex-cli 0.144.1');
   assert.equal(newCli[0]?.id, 'gpt-5.6-sol');
 
-  // Unknown version: keep full list so the picker is not empty pre-discovery.
-  assert.equal(
-    filterAgentModelPresetsForCliVersion(CODEX_MODEL_PRESETS, undefined).length,
-    CODEX_MODEL_PRESETS.length,
+  // Unknown version: hide version-gated models so pre-discovery cannot
+  // auto-default old installs onto Sol. Ungated presets keep the picker usable.
+  assert.deepEqual(
+    filterAgentModelPresetsForCliVersion(CODEX_MODEL_PRESETS, undefined).map((m) => m.id),
+    ['gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.2'],
   );
 });
 
@@ -123,12 +124,27 @@ test('resolveDiscoveredAgentCliVersion matches command path or sdk backend', () 
     ),
     '0.144.1',
   );
+  // Manual path must not inherit PATH discovery version for a different binary.
+  assert.equal(
+    resolveDiscoveredAgentCliVersion(
+      { command: '/opt/old/codex', sdkBackend: 'codex' },
+      [{ command: 'codex', path: '/usr/local/bin/codex', binPath: '/usr/local/bin/codex', sdkBackend: 'codex', version: '0.144.1' }],
+    ),
+    undefined,
+  );
   assert.equal(
     resolveDiscoveredAgentCliVersion(
       { command: 'codex', sdkBackend: 'codex' },
       [{ command: 'claude', path: '/bin/claude', binPath: '/bin/claude', sdkBackend: 'claude', version: '1.0.0' }],
     ),
     undefined,
+  );
+  assert.equal(
+    resolveDiscoveredAgentCliVersion(
+      { command: 'codex', sdkBackend: 'codex' },
+      [{ command: 'codex', path: '/usr/local/bin/codex', binPath: '/usr/local/bin/codex', sdkBackend: 'codex', version: '0.144.1' }],
+    ),
+    '0.144.1',
   );
 });
 
