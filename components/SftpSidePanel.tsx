@@ -415,6 +415,16 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
       currentConn
       && editorTabStore.getTabs().some((tab) => tab.sessionId === currentConn.id)
     );
+    const hasActiveTransferOnCurrentConnection = !!(
+      currentConn
+      && s.transfers.some((task) => (
+        (task.status === "pending" || task.status === "transferring")
+        && (
+          task.sourceConnectionId === currentConn.id
+          || task.targetConnectionId === currentConn.id
+        )
+      ))
+    );
     const needsNewTab = !!(
       currentConn
       && currentConn.status === "connected"
@@ -424,7 +434,12 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
           currentConnectionKey
           && currentConnectionKey !== connectionKey
         )
-        || (sessionChanged && hasEditorBoundToCurrentConnection)
+        // Same-endpoint rebind closes the old connection in place; keep a tab
+        // when editors or in-flight transfers still depend on that connection id.
+        || (
+          sessionChanged
+          && (hasEditorBoundToCurrentConnection || hasActiveTransferOnCurrentConnection)
+        )
       )
     );
     const rememberedPath = lastBrowsedPathByConnectionKeyRef.current.get(connectionKey);
