@@ -239,6 +239,12 @@ export interface ExternalAgentConfig {
   sdkBackend?: string;
   /** Internal: whether the managed command was set manually or auto-detected. */
   commandSource?: "manual" | "auto";
+  /**
+   * Last probed CLI --version output for this agent binary (from settings
+   * resolve-cli or discovery). Used to gate version-specific model presets
+   * when the configured path is not on PATH discovery.
+   */
+  cliVersion?: string;
   /** @deprecated Legacy persisted field from the pre-SDK migration. Read only for compatibility. */
   acpCommand?: string;
   /** @deprecated Legacy persisted field from the pre-SDK migration. */
@@ -440,6 +446,17 @@ export interface AgentModelPreset {
   description?: string;
   /** Codex thinking levels (model ID sent as `id/thinking`) */
   thinkingLevels?: string[];
+  /**
+   * Default effort used when auto-selecting a model with thinkingLevels.
+   * Must be one of `thinkingLevels` when set. Do not infer from array order —
+   * UI lists levels low→high but catalog defaults are usually mid-range.
+   */
+  defaultThinkingLevel?: string;
+  /**
+   * Minimum agent CLI version that advertises this model (semver core).
+   * Netcatty is BYO-CLI: the packaged SDK does not replace the user's binary.
+   */
+  minCliVersion?: string;
 }
 
 export const CLAUDE_MODEL_PRESETS: AgentModelPreset[] = [
@@ -448,18 +465,165 @@ export const CLAUDE_MODEL_PRESETS: AgentModelPreset[] = [
   { id: 'haiku', name: 'Haiku 4.5', description: 'Fastest' },
 ];
 
-// Curated codex model list (codex-sdk has no enumeration API). Mirrors the
-// craft agent's `openai-codex` set. The codex driver splits "<id>/<effort>"
-// into model + modelReasoningEffort, so thinkingLevels work via codex-sdk.
+// Curated codex model list (codex-sdk has no enumeration API). IDs/efforts
+// mirror openai/codex `models-manager/models.json` and peer open-source presets
+// (pi openai-codex.models, lobehub agencyConfig, paperclip codex_local, suna
+// codex-models, cherry-studio openai-codex). GPT-5.6 needs CLI >= 0.144.0.
+// The codex driver splits "<id>/<effort>" into model + modelReasoningEffort.
+const CODEX_REASONING_LEVELS = ['low', 'medium', 'high', 'xhigh'] as const;
+// Sol/Terra advertise ultra; Luna stops at max (official catalog + lobehub).
+const CODEX_REASONING_LEVELS_5_6 = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const;
+const CODEX_REASONING_LEVELS_5_6_LUNA = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+/** Official catalog `minimal_client_version` for GPT-5.6 family. */
+export const CODEX_GPT_5_6_MIN_CLI_VERSION = '0.144.0';
+
+function codexPreset(
+  id: string,
+  name: string,
+  thinkingLevels: readonly string[],
+  defaultThinkingLevel: string,
+  options?: { description?: string; minCliVersion?: string },
+): AgentModelPreset {
+  return {
+    id,
+    name,
+    description: options?.description,
+    thinkingLevels: [...thinkingLevels],
+    defaultThinkingLevel,
+    minCliVersion: options?.minCliVersion,
+  };
+}
+
 export const CODEX_MODEL_PRESETS: AgentModelPreset[] = [
-  { id: 'gpt-5.5', name: 'GPT-5.5', description: 'Latest', thinkingLevels: ['low', 'medium', 'high', 'xhigh'] },
-  { id: 'gpt-5.2', name: 'GPT-5.2', thinkingLevels: ['low', 'medium', 'high', 'xhigh'] },
-  { id: 'gpt-5.1', name: 'GPT-5.1', thinkingLevels: ['low', 'medium', 'high', 'xhigh'] },
-  { id: 'gpt-5', name: 'GPT-5', thinkingLevels: ['low', 'medium', 'high', 'xhigh'] },
-  { id: 'o4-mini', name: 'o4-mini', description: 'Fast reasoning' },
-  { id: 'o3', name: 'o3', description: 'Reasoning' },
-  { id: 'gpt-4o', name: 'GPT-4o' },
+  // default_reasoning_level + minimal_client_version from openai/codex catalog
+  codexPreset('gpt-5.6-sol', 'GPT-5.6 Sol', CODEX_REASONING_LEVELS_5_6, 'low', {
+    description: 'Latest',
+    minCliVersion: CODEX_GPT_5_6_MIN_CLI_VERSION,
+  }),
+  codexPreset('gpt-5.6-terra', 'GPT-5.6 Terra', CODEX_REASONING_LEVELS_5_6, 'medium', {
+    description: 'Balanced',
+    minCliVersion: CODEX_GPT_5_6_MIN_CLI_VERSION,
+  }),
+  codexPreset('gpt-5.6-luna', 'GPT-5.6 Luna', CODEX_REASONING_LEVELS_5_6_LUNA, 'medium', {
+    description: 'Fast',
+    minCliVersion: CODEX_GPT_5_6_MIN_CLI_VERSION,
+  }),
+  codexPreset('gpt-5.5', 'GPT-5.5', CODEX_REASONING_LEVELS, 'medium'),
+  codexPreset('gpt-5.4', 'GPT-5.4', CODEX_REASONING_LEVELS, 'medium'),
+  codexPreset('gpt-5.4-mini', 'GPT-5.4 Mini', CODEX_REASONING_LEVELS, 'medium', {
+    description: 'Small & fast',
+  }),
+  // Still visibility:list in upstream catalog; keep selectable so stored
+  // gpt-5.2/* selections are not silently forced onto Sol.
+  codexPreset('gpt-5.2', 'GPT-5.2', CODEX_REASONING_LEVELS, 'medium'),
 ];
+
+/** Extract `major.minor.patch` from CLI --version output (e.g. "codex-cli 0.144.1"). */
+export function extractCliSemver(versionText: string | null | undefined): string | null {
+  if (!versionText) return null;
+  const match = String(versionText).match(/(\d+)\.(\d+)\.(\d+)/);
+  return match ? `${match[1]}.${match[2]}.${match[3]}` : null;
+}
+
+function compareSemverCore(a: string, b: string): number {
+  const pa = a.split('.').map((part) => Number.parseInt(part, 10) || 0);
+  const pb = b.split('.').map((part) => Number.parseInt(part, 10) || 0);
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const da = pa[i] ?? 0;
+    const db = pb[i] ?? 0;
+    if (da > db) return 1;
+    if (da < db) return -1;
+  }
+  return 0;
+}
+
+/**
+ * Drop presets whose minCliVersion exceeds the installed CLI.
+ * When the CLI version is unknown (pre-discovery / probe failed), also drop
+ * version-gated presets so old installs cannot auto-default to Sol before
+ * discovery finishes. Older ungated presets keep the picker non-empty.
+ */
+export function filterAgentModelPresetsForCliVersion(
+  presets: AgentModelPreset[],
+  cliVersionText: string | null | undefined,
+): AgentModelPreset[] {
+  const cliSemver = extractCliSemver(cliVersionText);
+  return presets.filter((preset) => {
+    if (!preset.minCliVersion) return true;
+    if (!cliSemver) return false;
+    return compareSemverCore(cliSemver, preset.minCliVersion) >= 0;
+  });
+}
+
+/** Resolve the model id (with optional /effort) for auto-selection. */
+export function resolveAgentModelSelection(preset: AgentModelPreset): string {
+  const levels = preset.thinkingLevels;
+  if (!levels?.length) return preset.id;
+  const preferred = preset.defaultThinkingLevel;
+  if (preferred && levels.includes(preferred)) {
+    return `${preset.id}/${preferred}`;
+  }
+  // Conservative fallback: first listed effort (usually the cheapest/fastest).
+  return `${preset.id}/${levels[0]}`;
+}
+
+function looksLikeFilesystemPath(command: string): boolean {
+  return /[\\/]/.test(command) || /^[A-Za-z]:/.test(command);
+}
+
+function normalizeCliPathKey(pathText: string): string {
+  // Case-fold on Windows-style paths; keep POSIX case-sensitive otherwise.
+  const trimmed = pathText.trim();
+  if (/^[A-Za-z]:[\\/]/.test(trimmed) || trimmed.includes('\\')) {
+    return trimmed.replace(/\\/g, '/').toLowerCase();
+  }
+  return trimmed;
+}
+
+/** Match a configured agent to a discovery row to read its probed CLI version. */
+export function resolveDiscoveredAgentCliVersion(
+  agent: Pick<ExternalAgentConfig, 'command' | 'sdkBackend'> | null | undefined,
+  discovered: Array<Pick<DiscoveredAgent, 'command' | 'path' | 'binPath' | 'sdkBackend' | 'version'>>,
+): string | undefined {
+  if (!agent || discovered.length === 0) return undefined;
+  const command = (agent.command || '').trim();
+  if (!command) return undefined;
+
+  // Absolute/relative path configs must match the exact discovered binary —
+  // basename-only matching would gate against PATH codex while the driver
+  // launches a different manual binary.
+  if (looksLikeFilesystemPath(command)) {
+    const wanted = normalizeCliPathKey(command);
+    const pathMatch = discovered.find((entry) => {
+      const candidates = [entry.path, entry.binPath].filter(Boolean) as string[];
+      return candidates.some((candidate) => normalizeCliPathKey(candidate) === wanted);
+    });
+    return pathMatch?.version || undefined;
+  }
+
+  const basename = command.split(/[\\/]/).pop()?.toLowerCase() ?? command.toLowerCase();
+  const match = discovered.find((entry) => {
+    if (agent.sdkBackend && entry.sdkBackend && agent.sdkBackend !== entry.sdkBackend) {
+      return false;
+    }
+    return entry.command === basename || entry.command === command;
+  });
+  return match?.version || undefined;
+}
+
+/**
+ * Prefer the version stored on the agent config (settings resolve-cli / enable),
+ * then fall back to a matching discovery probe.
+ */
+export function resolveAgentCliVersion(
+  agent: Pick<ExternalAgentConfig, 'command' | 'sdkBackend' | 'cliVersion'> | null | undefined,
+  discovered: Array<Pick<DiscoveredAgent, 'command' | 'path' | 'binPath' | 'sdkBackend' | 'version'>>,
+): string | undefined {
+  const stored = agent?.cliVersion?.trim();
+  if (stored) return stored;
+  return resolveDiscoveredAgentCliVersion(agent, discovered);
+}
 
 export const CURSOR_MODEL_PRESETS: AgentModelPreset[] = [
   { id: 'composer-2.5', name: 'Composer 2.5', description: 'Recommended' },

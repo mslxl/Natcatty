@@ -272,6 +272,13 @@ test("buildCodexThreadOptions splits <model>/<effort> into model + modelReasonin
   const t = buildCodexThreadOptions({ model: "gpt-5.5/high" });
   assert.equal(t.model, "gpt-5.5");
   assert.equal(t.modelReasoningEffort, "high");
+  // GPT-5.6 advertises max/ultra reasoning efforts in the Codex catalog.
+  const solMax = buildCodexThreadOptions({ model: "gpt-5.6-sol/max" });
+  assert.equal(solMax.model, "gpt-5.6-sol");
+  assert.equal(solMax.modelReasoningEffort, "max");
+  const solUltra = buildCodexThreadOptions({ model: "gpt-5.6-sol/ultra" });
+  assert.equal(solUltra.model, "gpt-5.6-sol");
+  assert.equal(solUltra.modelReasoningEffort, "ultra");
   // a trailing segment that isn't a valid effort (custom/OpenRouter id) is kept whole
   const c = buildCodexThreadOptions({ model: "openrouter/some-model" });
   assert.equal(c.model, "openrouter/some-model");

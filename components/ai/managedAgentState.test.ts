@@ -101,6 +101,7 @@ test('buildManagedAgentState stores SDK backend keys for discovered managed agen
   );
 
   assert.equal(codexState.agents[0].sdkBackend, 'codex');
+  assert.equal(codexState.agents[0].cliVersion, '1.0.0');
   assert.equal(copilotState.agents[0].sdkBackend, 'copilot');
   assert.equal(copilotState.agents[0].acpArgs, undefined);
 });

@@ -106,6 +106,9 @@ export function buildManagedAgentState(
     id: managedId,
     command: pathInfo.path,
     commandSource,
+    // Persist probed --version so the chat model picker can gate GPT-5.6+
+    // even when this custom path is not the PATH discovery binary.
+    ...(pathInfo.version ? { cliVersion: pathInfo.version } : {}),
     ...(managedEnv ? { env: managedEnv } : {}),
     available: true,
     enabled: managedAgents.length === 0
