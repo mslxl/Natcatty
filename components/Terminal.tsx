@@ -298,9 +298,9 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   // prompts remain reachable. Connect/pending scripts must wait until
   // mosh-client is ready (#2199). Re-subscribe on every connecting
   // attempt: closeSession clears preload ready listeners for the session id.
+  // moshStatusRef is declared next to status state below.
   const [moshShellReady, setMoshShellReady] = useState(() => !host.moshEnabled);
   const [moshConnectEpoch, setMoshConnectEpoch] = useState(0);
-  const moshStatusRef = useRef(status);
   const [saveRecordingOpen, setSaveRecordingOpen] = useState(false);
   const [recordedCode, setRecordedCode] = useState('');
   const recorder = useScriptRecorder(sessionId);
@@ -612,6 +612,8 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
   const statusRef = useRef<TerminalSession["status"]>(status);
   statusRef.current = status;
+  // Tracks previous status for mosh ready re-subscribe (must live after status state).
+  const moshStatusRef = useRef<TerminalSession["status"]>(status);
   const getSessionConnectedRef = useRef(() => statusRef.current === "connected" && Boolean(sessionRef.current));
   getSessionConnectedRef.current = () => statusRef.current === "connected" && Boolean(sessionRef.current);
   const sudoAutofillRef = useRef<SudoPasswordAutofill | null>(null);
