@@ -131,7 +131,7 @@ export const VaultTreeGroupRow: React.FC<VaultTreeGroupRowProps> = ({
       className={cn(
         "vault-drop-indicator-row group flex h-7 min-w-0 items-center px-2 text-sm font-medium cursor-pointer transition-colors select-none rounded-md",
         selected
-          ? "border border-primary text-foreground"
+          ? "ring-1 ring-inset ring-primary text-foreground"
           : "hover:bg-secondary/60",
         className,
       )}
@@ -215,7 +215,7 @@ export const VaultTreeItemRow: React.FC<VaultTreeItemRowProps> = ({
     className={cn(
       "vault-drop-indicator-row group flex h-7 min-w-0 items-center px-2 text-sm cursor-pointer transition-colors select-none rounded-md",
       selected
-        ? "border border-primary text-foreground"
+        ? "ring-1 ring-inset ring-primary text-foreground"
         : "hover:bg-secondary/40",
       className,
     )}
