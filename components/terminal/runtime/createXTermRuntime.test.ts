@@ -187,6 +187,18 @@ test("resolveSubmittedShellCommand strips themed prompt chrome without stale cac
     ),
     "sudo whoami",
   );
+  // Empty Enter on themed decoration must not invent a command (#2191 review).
+  assert.equal(
+    resolveSubmittedShellCommand("", createFakeTerm("➜  git ") as never),
+    "",
+  );
+  assert.equal(
+    resolveSubmittedShellCommand(
+      "",
+      createFakeTerm("➜  netcatty git:(main) ✗ ") as never,
+    ),
+    "",
+  );
 });
 
 test("resolveSubmittedShellCommand prefers live line when history replaces a typed prefix (#2191)", () => {

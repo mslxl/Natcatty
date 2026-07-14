@@ -149,6 +149,32 @@ export const resolveLiveSubmittedCommand = (
 };
 
 /**
+ * True when a live "command" is really empty-prompt chrome (cwd / git status)
+ * left in userInput by the detector — not a history-recalled command.
+ */
+const isEmptyPromptDecoration = (
+  live: string,
+  prompt: PromptDetectionResult,
+): boolean => {
+  const command = live.trim();
+  if (!command) return true;
+  if (command === "~" || command.startsWith("~/") || command.startsWith("/")) {
+    return true;
+  }
+  if (/^git:\([^)]*\)/.test(command)) return true;
+  if (/^[✗✔+*!]$/.test(command)) return true;
+
+  // Bare-glyph themes often leave a single cwd token in userInput (" git ").
+  // A real history recall has decoration + command (multiple tokens) before peel.
+  if (isBareThemedTerminator(prompt.promptText)) {
+    const rawTokens = prompt.userInput.trim().split(/\s+/).filter(Boolean);
+    if (rawTokens.length <= 1) return true;
+  }
+
+  return false;
+};
+
+/**
  * Resolve the command that Enter is submitting.
  *
  * The keystroke buffer alone is incomplete for shell history recall (↑/↓ /
@@ -170,7 +196,12 @@ export const resolveSubmittedShellCommand = (
   if (!prompt.isAtPrompt) return buffered;
 
   const live = resolveLiveSubmittedCommand(prompt, lastPromptText);
-  if (!buffered) return live;
+  if (!buffered) {
+    // Empty Enter on a themed prompt must not treat cwd/git chrome as a command
+    // (would pollute history and can false-arm su/sudo assist).
+    if (!live || isEmptyPromptDecoration(live, prompt)) return "";
+    return live;
+  }
   if (!live || live === buffered) return buffered || live;
 
   // Direct send / incomplete echo: keystroke buffer is the real command even
