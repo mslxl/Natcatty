@@ -444,43 +444,38 @@ const writeSessionDataImmediate = (
     const prepareStartedAt = shouldMeasurePerf ? performance.now() : 0;
     const settings = ctx.terminalSettingsRef?.current ?? ctx.terminalSettings;
     const forcePromptNewLine = settings?.forcePromptNewLine ?? false;
-    // Always feed the filter so pending escape prefixes stay consistent.
-    // Decide the bulk-plain shortcut on *filtered* output: a chunk with no ESC
-    // can still receive a retained CSI prefix from filter state, and that
-    // output must go through erase-scrollback / prompt transforms (Codex).
+    // Always run filter + paste bookkeeping (stateful). Bulk-plain only skips
+    // erase-scrollback / prompt cosmetics when the *post-paste* stream is still
+    // plain and forcePromptNewLine is off (Codex: long paste cleanup must run).
     const filteredData = filterTerminalSessionData(term, data);
+    const afterErase = appendEraseScrollbackAfterFullErases(filteredData, {
+      wipeScrollback: settings?.clearWipesScrollback ?? true,
+      normalScreen: term.buffer?.active?.type !== "alternate",
+    });
+    const pasteDisplayData = prepareTerminalDataForUserPasteDisplay(term, afterErase);
     const bulkPlainPath = shouldDegradeTerminalSideWork(term)
-      && isPlainTerminalDisplayData(filteredData)
+      && isPlainTerminalDisplayData(pasteDisplayData)
       && !forcePromptNewLine;
     let preparedDisplayData: string;
-    let logDisplayData: string;
     let prepareMs = 0;
     if (bulkPlainPath) {
-      preparedDisplayData = filteredData;
-      logDisplayData = filteredData;
+      preparedDisplayData = pasteDisplayData;
       prepareMs = shouldMeasurePerf ? performance.now() - prepareStartedAt : 0;
     } else {
-      const displayData = appendEraseScrollbackAfterFullErases(filteredData, {
-        wipeScrollback: settings?.clearWipesScrollback ?? true,
-        normalScreen: term.buffer?.active?.type !== "alternate",
-      });
       if (!forcePromptNewLine && ctx.promptLineBreakStateRef?.current) {
         ctx.promptLineBreakStateRef.current.pendingCommand = false;
         ctx.promptLineBreakStateRef.current.suppressNextPromptCache = false;
       }
-      const pasteDisplayData = prepareTerminalDataForUserPasteDisplay(term, displayData);
       preparedDisplayData = prepareTerminalDataForPromptLineBreak(
         term,
         pasteDisplayData,
         ctx.promptLineBreakStateRef?.current,
         forcePromptNewLine,
       );
-      logDisplayData = pasteDisplayData;
       prepareMs = shouldMeasurePerf ? performance.now() - prepareStartedAt : 0;
     }
-    ctx.onTerminalLogData?.(logDisplayData);
+    ctx.onTerminalLogData?.(pasteDisplayData);
     const clearPasteResidualAndCapture = () => {
-      if (bulkPlainPath) return;
       const cleanupData = clearPasteResidualAfterTerminalWrite(term);
       if (cleanupData) {
         ctx.onTerminalLogData?.(cleanupData);
