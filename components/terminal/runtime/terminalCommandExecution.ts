@@ -13,6 +13,7 @@ import {
   type PromptDetectionResult,
 } from "../autocomplete/promptDetector";
 import { getCommandToRecordOnEnter } from "../autocomplete/terminalAutocompletePrompt";
+import { shouldArmSudoPasswordAutofill } from "./terminalSudoAutofill";
 
 type TerminalCommandExecutionContext = {
   host: Pick<Host, "id" | "label">;
@@ -82,14 +83,13 @@ const readFullLineAfterPrompt = (
 };
 
 /**
- * detectPrompt truncates userInput at the cursor. Expand carefully:
+ * detectPrompt truncates userInput at the cursor.
  *
- * - Empty buffer: never absorb post-cursor paint (zsh autosuggest / RPROMPT).
- * - Buffer longer than visible prefix: incomplete remote echo — use buffer.
- * - Buffer is a strict prefix of the painted line and the next painted char
- *   continues the same token (`s` → `su -`): history mid-line — use full line.
- * - Buffer is a strict prefix and the next painted char is whitespace
- *   (`git` → `git status`): treat as autosuggest — keep buffer only.
+ * Never absorb painted tails into the command when the keystroke buffer is
+ * non-empty: zsh same-token autosuggest (`g` + paint `git status`) must stay
+ * as `g`. Incomplete remote echo (keystrokes ahead of the line) may promote
+ * the buffer into userInput. History that rewrote the line is handled later
+ * via live-line comparison (#2191 review).
  */
 const expandPromptUserInputToFullLine = (
   term: XTerm,
@@ -99,9 +99,6 @@ const expandPromptUserInputToFullLine = (
   if (!prompt.isAtPrompt || !prompt.promptText) return prompt;
   const buffered = typedBuffer.trim();
   if (!buffered) return prompt;
-
-  const fullInput = readFullLineAfterPrompt(term, prompt.promptText);
-  if (fullInput === null) return prompt;
 
   // Incomplete echo: keystrokes ahead of what the line shows.
   // - visible "su", buffer "sudo" (same single word still typing)
@@ -122,39 +119,6 @@ const expandPromptUserInputToFullLine = (
         ...prompt,
         userInput: buffered,
         cursorOffset: buffered.length,
-      };
-    }
-  }
-
-  if (fullInput === buffered) {
-    if (prompt.userInput === buffered) return prompt;
-    return {
-      ...prompt,
-      userInput: buffered,
-      cursorOffset: buffered.length,
-    };
-  }
-
-  // Painted line longer than buffer: history continuation vs autosuggest.
-  if (fullInput.startsWith(buffered) && fullInput.length > buffered.length) {
-    const next = fullInput[buffered.length] ?? "";
-    if (next === " " || next === "\t") {
-      // "git" + " status" suggestion — do not absorb.
-      if (prompt.userInput.startsWith(buffered)) {
-        return {
-          ...prompt,
-          userInput: buffered,
-          cursorOffset: buffered.length,
-        };
-      }
-      return prompt;
-    }
-    // Same-token continuation on the line (history "s" + "u -").
-    if (/[\w@./:-]/.test(next)) {
-      return {
-        ...prompt,
-        userInput: fullInput,
-        cursorOffset: fullInput.length,
       };
     }
   }
@@ -246,9 +210,11 @@ const isPlausiblePathDecoration = (text: string): boolean => {
   if (s === "~" || s.startsWith("~/") || s.startsWith("/")) return true;
   if (/^git:\([^)]*\)/.test(s)) return true;
   if (/[✗✔]/.test(s)) return true;
-  // Bare or multi-word directory tokens (My Project), but not privilege verbs.
+  // Bare or multi-word directory tokens (My Project / 项目 / Project (old)),
+  // but not privilege verbs.
   if (/\b(?:su|sudo|doas)\b/i.test(s)) return false;
-  return /^[\w./~-]+(?:\s+[\w./~-]+)*$/.test(s);
+  // Allow unicode letters and common path punctuation in directory names.
+  return /^(?:[^\s\\]|[./~_()-])+(?:\s+(?:[^\s\\]|[./~_()-])+)*$/u.test(s);
 };
 
 /**
@@ -278,6 +244,17 @@ const peelThemedCommandFromPrompt = (
     }
   }
 
+  // Leading whitespace only (❯␠␠git status / ❯␠␠su -): the whole trimmed
+  // line is the command — do this before reconcile peel can drop the first word.
+  const trimmed = live.trim();
+  if (
+    trimmed
+    && live.endsWith(trimmed)
+    && /^\s+$/.test(live.slice(0, live.length - trimmed.length))
+  ) {
+    return trimmed;
+  }
+
   // Reconcile peel: prefer the longest command (avoid over-peeling to "-").
   let best: { command: string; length: number } | null = null;
   for (let start = 0; start < live.length; start += 1) {
@@ -295,18 +272,7 @@ const peelThemedCommandFromPrompt = (
       best = { command, length: command.length };
     }
   }
-  if (best) return best.command;
-
-  // Bare leading spaces before a simple command: ` su -` → `su -`.
-  const trimmed = live.trim();
-  if (
-    trimmed
-    && live.endsWith(trimmed)
-    && /^\s+$/.test(live.slice(0, live.length - trimmed.length))
-  ) {
-    return trimmed;
-  }
-  return "";
+  return best?.command ?? "";
 };
 
 /**
@@ -431,31 +397,67 @@ export const resolveSubmittedShellCommand = (
 
   const alignedResult = getAlignedPrompt(term, commandBuffer, true);
 
-  // Expand only when keystrokes confirm the span (never paint-only suggestions).
+  // Expand only for incomplete echo (never same-token autosuggest paint).
   const prompt = expandPromptUserInputToFullLine(
     term,
     alignedResult.prompt,
     commandBuffer,
   );
-  const liveFromPrompt = prompt.isAtPrompt
+  const liveFromCursor = prompt.isAtPrompt
     ? resolveLiveSubmittedCommand(prompt, lastPromptText)
     : "";
+
+  // Full painted line (for history that rewrote past a stale typed prefix).
+  // Only adopt it over the buffer when it is a privilege command the buffer
+  // is not — autosuggest `g`→`git status` stays on the buffer.
+  let liveFromFull = liveFromCursor;
+  if (prompt.isAtPrompt && prompt.promptText) {
+    const fullInput = readFullLineAfterPrompt(term, prompt.promptText);
+    if (fullInput && fullInput !== prompt.userInput) {
+      liveFromFull = resolveLiveSubmittedCommand(
+        {
+          ...prompt,
+          userInput: fullInput,
+          cursorOffset: fullInput.length,
+        },
+        lastPromptText,
+      );
+    }
+  }
+
+  const preferFullOverBuffer = (
+    buffer: string,
+    fullLive: string,
+  ): boolean => {
+    if (!fullLive || fullLive === buffer) return false;
+    if (!fullLive.startsWith(buffer) || fullLive.length <= buffer.length) {
+      return false;
+    }
+    // History to privilege command from a non-privilege typed prefix ("s"→"su -").
+    return (
+      shouldArmSudoPasswordAutofill(fullLive)
+      && !shouldArmSudoPasswordAutofill(buffer)
+    );
+  };
 
   const aligned = alignedResult.alignedTyped?.trim() ?? "";
   // Aligned buffer can match a stale mid-line prefix after history recall
   // (typed "s", recalled "su -", cursor after "s"), or only a suffix when
   // history prepended text (typed "whoami", recalled "sudo whoami").
   if (aligned) {
+    if (preferFullOverBuffer(aligned, liveFromFull)) {
+      return liveFromFull;
+    }
     if (
-      liveFromPrompt
-      && liveFromPrompt.length > aligned.length
+      liveFromCursor
+      && liveFromCursor.length > aligned.length
       && (
-        liveFromPrompt.startsWith(aligned)
-        || liveFromPrompt.endsWith(aligned)
-        || liveFromPrompt.endsWith(` ${aligned}`)
+        liveFromCursor.startsWith(aligned)
+        || liveFromCursor.endsWith(aligned)
+        || liveFromCursor.endsWith(` ${aligned}`)
       )
     ) {
-      return liveFromPrompt;
+      return liveFromCursor;
     }
     return aligned;
   }
@@ -469,15 +471,18 @@ export const resolveSubmittedShellCommand = (
     return buffered;
   }
 
-  const live = liveFromPrompt;
+  const live = liveFromCursor;
   if (!buffered) {
-    // Empty Enter on a themed prompt must not treat cwd/git chrome as a command
-    // (would pollute history and can false-arm su/sudo assist).
-    if (!live || isEmptyPromptDecoration(live, prompt)) {
-      // Last chance: no-space / partial detect with a known prompt prefix.
+    // Empty buffer: submitted text is the painted command (history at EOL or
+    // mid-line). Keystroke autosuggest always leaves a non-empty buffer.
+    const emptyLive = liveFromFull || live;
+    if (!emptyLive || isEmptyPromptDecoration(emptyLive, prompt)) {
       return resolveFromCachedPromptPrefix(term, lastPromptText);
     }
-    return live;
+    return emptyLive;
+  }
+  if (preferFullOverBuffer(buffered, liveFromFull)) {
+    return liveFromFull;
   }
   if (!live || live === buffered) return buffered || live;
 
@@ -490,6 +495,9 @@ export const resolveSubmittedShellCommand = (
   // History / reverse-search replaced a typed prefix (buffer "s", live "su -").
   if (live.startsWith(buffered) && live.length > buffered.length) {
     return live;
+  }
+  if (preferFullOverBuffer(buffered, liveFromFull)) {
+    return liveFromFull;
   }
 
   // Echo lag: live is a visible prefix of what the user typed.

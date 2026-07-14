@@ -248,6 +248,36 @@ test("resolveSubmittedShellCommand strips themed prompt chrome without stale cac
     ),
     "git",
   );
+  // Same-token autosuggest (typed "g", paint "git status") must stay "g".
+  assert.equal(
+    resolveSubmittedShellCommand(
+      "g",
+      createFakeTerm("user@host:~$ git status", "user@host:~$ g".length) as never,
+    ),
+    "g",
+  );
+  // Stale typed prefix after history to privilege command.
+  assert.equal(
+    resolveSubmittedShellCommand(
+      "s",
+      createFakeTerm("user@host:~$ su -") as never,
+    ),
+    "su -",
+  );
+  // Double-space glyph + non-privilege history keeps the first word.
+  assert.equal(
+    resolveSubmittedShellCommand("", createFakeTerm("❯  git status") as never),
+    "git status",
+  );
+  // Unicode / punctuated themed directories before su.
+  assert.equal(
+    resolveSubmittedShellCommand("", createFakeTerm("➜  项目 su -") as never),
+    "su -",
+  );
+  assert.equal(
+    resolveSubmittedShellCommand("", createFakeTerm("➜  Project (old) su -") as never),
+    "su -",
+  );
   // Incomplete remote echo of a longer typed word: trust keystrokes.
   assert.equal(
     resolveSubmittedShellCommand(
