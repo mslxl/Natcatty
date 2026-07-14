@@ -199,6 +199,27 @@ test("resolveSubmittedShellCommand strips themed prompt chrome without stale cac
     ),
     "",
   );
+  // One-word su at a glyph-only prompt must still arm (#2191 review).
+  assert.equal(
+    resolveSubmittedShellCommand("", createFakeTerm("❯ su") as never),
+    "su",
+  );
+  // Absolute path commands on normal prompts are real, not decoration.
+  assert.equal(
+    resolveSubmittedShellCommand(
+      "",
+      createFakeTerm("user@host:~$ /bin/ls") as never,
+    ),
+    "/bin/ls",
+  );
+  // Cursor mid-line still submits the full recalled command.
+  assert.equal(
+    resolveSubmittedShellCommand(
+      "",
+      createFakeTerm("user@host:~$ sudo whoami", "user@host:~$ sudo".length) as never,
+    ),
+    "sudo whoami",
+  );
 });
 
 test("resolveSubmittedShellCommand prefers live line when history replaces a typed prefix (#2191)", () => {

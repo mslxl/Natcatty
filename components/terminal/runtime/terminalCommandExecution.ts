@@ -33,6 +33,49 @@ type TerminalCommandExecutionContext = {
   promptLineBreakStateRef?: RefObject<PromptLineBreakState>;
 };
 
+/** Bare omz/p10k glyph alone — detector often leaves cwd/git chrome in userInput. */
+const isBareThemedTerminator = (promptText: string): boolean => {
+  const trimmed = promptText.trim();
+  if (trimmed.length !== 1) return false;
+  const code = trimmed.charCodeAt(0);
+  return /[❯❮→➜➤⟩»›]/.test(trimmed) || (code >= 0xE000 && code <= 0xF8FF);
+};
+
+/**
+ * detectPrompt truncates userInput at the cursor. Enter submits the whole line,
+ * so expand to the full text after the prompt when the cursor is mid-line.
+ */
+const expandPromptUserInputToFullLine = (
+  term: XTerm,
+  prompt: PromptDetectionResult,
+): PromptDetectionResult => {
+  if (!prompt.isAtPrompt || !prompt.promptText) return prompt;
+  try {
+    const buffer = term.buffer.active;
+    const cursorY = buffer.cursorY + buffer.baseY;
+    const line = buffer.getLine(cursorY);
+    if (!line) return prompt;
+    const raw = line.translateToString(false);
+    if (!raw.startsWith(prompt.promptText)) return prompt;
+    // Drop xterm cell padding; keep intentional trailing spaces out of history.
+    const fullInput = raw.slice(prompt.promptText.length).replace(/\s+$/g, "");
+    if (fullInput === prompt.userInput) return prompt;
+    if (
+      fullInput.length > prompt.userInput.length
+      && fullInput.startsWith(prompt.userInput)
+    ) {
+      return {
+        ...prompt,
+        userInput: fullInput,
+        cursorOffset: fullInput.length,
+      };
+    }
+  } catch {
+    // ignore buffer read failures
+  }
+  return prompt;
+};
+
 export const shouldRecordShellHistory = (
   command: string,
   term?: XTerm | null,
@@ -40,9 +83,10 @@ export const shouldRecordShellHistory = (
   if (!term) return true;
 
   const trimmed = command.trim();
-  const { prompt, alignedTyped } = getAlignedPrompt(term, command, true);
+  const alignedResult = getAlignedPrompt(term, command, true);
+  const prompt = expandPromptUserInputToFullLine(term, alignedResult.prompt);
   if (!prompt.isAtPrompt) return false;
-  if (alignedTyped?.trim() === trimmed) return true;
+  if (alignedResult.alignedTyped?.trim() === trimmed) return true;
 
   if (reconcilePromptWithExternalCommand(prompt, command)) return true;
 
@@ -60,14 +104,6 @@ export const shouldRecordShellHistory = (
     return !isNonPromptLine(`${prompt.promptText}${trimmed}`);
   }
   return liveCommand === trimmed;
-};
-
-/** Bare omz/p10k glyph alone — detector often leaves cwd/git chrome in userInput. */
-const isBareThemedTerminator = (promptText: string): boolean => {
-  const trimmed = promptText.trim();
-  if (trimmed.length !== 1) return false;
-  const code = trimmed.charCodeAt(0);
-  return /[❯❮→➜➤⟩»›]/.test(trimmed) || (code >= 0xE000 && code <= 0xF8FF);
 };
 
 /**
@@ -151,6 +187,7 @@ export const resolveLiveSubmittedCommand = (
 /**
  * True when a live "command" is really empty-prompt chrome (cwd / git status)
  * left in userInput by the detector — not a history-recalled command.
+ * Only applies to bare-glyph themed prompts where that pollution happens.
  */
 const isEmptyPromptDecoration = (
   live: string,
@@ -158,17 +195,18 @@ const isEmptyPromptDecoration = (
 ): boolean => {
   const command = live.trim();
   if (!command) return true;
-  if (command === "~" || command.startsWith("~/") || command.startsWith("/")) {
-    return true;
-  }
+  if (!isBareThemedTerminator(prompt.promptText)) return false;
+
+  if (command === "~" || command.startsWith("~/")) return true;
   if (/^git:\([^)]*\)/.test(command)) return true;
   if (/^[✗✔+*!]$/.test(command)) return true;
 
-  // Bare-glyph themes often leave a single cwd token in userInput (" git ").
-  // A real history recall has decoration + command (multiple tokens) before peel.
-  if (isBareThemedTerminator(prompt.promptText)) {
-    const rawTokens = prompt.userInput.trim().split(/\s+/).filter(Boolean);
-    if (rawTokens.length <= 1) return true;
+  const rawTokens = prompt.userInput.trim().split(/\s+/).filter(Boolean);
+  if (rawTokens.length <= 1) {
+    // One-word history of su/sudo/doas must still arm password assist (❯ su).
+    if (/^(?:su|sudo|doas)$/i.test(command)) return false;
+    // Single cwd token left in userInput (" git " / " netcatty ").
+    return true;
   }
 
   return false;
@@ -190,9 +228,12 @@ export const resolveSubmittedShellCommand = (
   const buffered = commandBuffer.trim();
   if (!term) return buffered;
 
-  const { prompt, alignedTyped } = getAlignedPrompt(term, commandBuffer, true);
-  const aligned = alignedTyped?.trim() ?? "";
+  const alignedResult = getAlignedPrompt(term, commandBuffer, true);
+  const aligned = alignedResult.alignedTyped?.trim() ?? "";
   if (aligned) return aligned;
+
+  // Expand past the cursor so mid-line Enter still sees the full recalled command.
+  const prompt = expandPromptUserInputToFullLine(term, alignedResult.prompt);
   if (!prompt.isAtPrompt) return buffered;
 
   const live = resolveLiveSubmittedCommand(prompt, lastPromptText);
