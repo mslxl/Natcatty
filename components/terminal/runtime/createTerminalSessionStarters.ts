@@ -878,6 +878,11 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       return;
     }
 
+    // Hoisted so the catch path can dispose a ready subscription registered
+    // before startMoshSession resolves.
+    let disposeMoshReady: (() => void) | undefined;
+    let cancelPendingStartupCommand: (() => void) | undefined;
+
     try {
       const stopMosh = (message: string) => {
         ctx.setError(message);
@@ -988,8 +993,6 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       //
       // Subscribe BEFORE startMoshSession: a fast passwordless handshake can
       // emit ready before the await returns, and the event is not replayed.
-      let disposeMoshReady: (() => void) | undefined;
-      let cancelPendingStartupCommand: (() => void) | undefined;
       let sessionAttached = false;
       let moshReadyFired = false;
       let attachedSessionId = ctx.sessionId;
@@ -1057,6 +1060,9 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       if (!tryAttachSessionToTerminal(ctx, term, id, {
         onExitMessage: (evt) =>
           `\r\n[Mosh session closed${evt?.exitCode !== undefined ? ` (code ${evt.exitCode})` : ""}]`,
+        // Real backend exit only — do not chain onto disposeExitRef, because
+        // hibernate detaches exit listeners without closing the session and
+        // would otherwise cancel a still-pending startup command.
         onExit: cleanupMoshStartupWait,
         sudoAutofillPassword: resolveSavedSudoAutofillPassword(),
         sudoAutofillCandidates: resolveSudoAutofillCandidates(),
@@ -1068,14 +1074,6 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       sessionAttached = true;
 
       if (ctx.terminalBackend.onMoshSessionReady) {
-        // Cancel/close disposes exit listeners before the backend can emit
-        // exit (and close suppresses the exit event). Chain cleanup onto the
-        // disposeExitRef so cancel does not leak the ready callback.
-        const disposeExit = ctx.disposeExitRef.current;
-        ctx.disposeExitRef.current = () => {
-          cleanupMoshStartupWait();
-          disposeExit?.();
-        };
         if (moshReadyFired) {
           runMoshStartup();
         }
@@ -1084,6 +1082,11 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         scheduleStartupCommand(ctx, term, id);
       }
     } catch (err) {
+      // Drop any pre-start ready subscription if handshake never attached.
+      disposeMoshReady?.();
+      disposeMoshReady = undefined;
+      cancelPendingStartupCommand?.();
+      cancelPendingStartupCommand = undefined;
       const message = err instanceof Error ? err.message : String(err);
       ctx.setError(message);
       writeTerminalLine(ctx, term, `\r\n[Failed to start Mosh: ${message}]`);

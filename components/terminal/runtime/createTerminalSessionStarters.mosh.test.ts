@@ -1380,24 +1380,87 @@ test("startMosh defers startup commands until mosh-client is ready", async () =>
   assert.deepEqual(sent, []);
   assert.ok(readyCb, "expected onMoshSessionReady subscription");
 
-  // Cancel before ready must dispose the ready listener (no exit event on close).
+  // Hibernate detaches exit listeners without closing the session — ready work
+  // must survive that dispose so startup can still run after wake.
   ctx.disposeExitRef.current?.();
-  assert.equal(readyDisposed, true);
+  assert.equal(readyDisposed, false);
 
-  // Fresh start for the ready-path assertion.
-  readyDisposed = false;
-  readyCb = null;
-  sent.length = 0;
-  ctx.hasConnectedRef.current = false;
-  ctx.hasRunStartupCommandRef.current = false;
-  ctx.disposeDataRef.current = null;
-  ctx.disposeExitRef.current = null;
-  await createTerminalSessionStarters(ctx as never).startMosh(term as never);
-  assert.ok(readyCb);
   readyCb?.({ sessionId: "mosh-session" });
-
   await new Promise((resolve) => setTimeout(resolve, 5));
   assert.ok(sent.some((chunk) => chunk.includes("echo from-snippet")));
+});
+
+test("startMosh disposes ready subscription when startMoshSession rejects", async () => {
+  let readyDisposed = false;
+
+  const terminalBackend = {
+    backendAvailable: () => true,
+    telnetAvailable: () => true,
+    moshAvailable: () => true,
+    localAvailable: () => true,
+    serialAvailable: () => true,
+    execAvailable: () => true,
+    startSSHSession: async () => "ssh-session",
+    startTelnetSession: async () => "telnet-session",
+    startMoshSession: async () => {
+      throw new Error("mosh-client missing");
+    },
+    startLocalSession: async () => "local-session",
+    startSerialSession: async () => "serial-session",
+    execCommand: async () => ({}),
+    onSessionData: () => noop,
+    onSessionExit: () => noop,
+    onMoshSessionReady: () => () => {
+      readyDisposed = true;
+    },
+    onChainProgress: () => noop,
+    writeToSession: noop,
+    resizeSession: noop,
+  };
+
+  const ctx = {
+    host: {
+      id: "host-1",
+      label: "Example",
+      hostname: "example.test",
+      username: "alice",
+    },
+    keys: [],
+    identities: [],
+    resolvedChainHosts: [],
+    sessionId: "session-1",
+    startupCommand: "echo startup",
+    terminalSettings: {},
+    terminalBackend,
+    sessionRef: { current: null as string | null },
+    hasConnectedRef: { current: false },
+    hasRunStartupCommandRef: { current: false },
+    disposeDataRef: { current: null as (() => void) | null },
+    disposeExitRef: { current: null as (() => void) | null },
+    fitAddonRef: { current: null },
+    serializeAddonRef: { current: null },
+    pendingAuthRef: { current: null },
+    updateStatus: noop,
+    setStatus: noop,
+    setError: noop,
+    setNeedsAuth: noop,
+    setAuthRetryMessage: noop,
+    setAuthPassword: noop,
+    setProgressLogs: noop,
+    setProgressValue: noop,
+    setChainProgress: noop,
+  };
+
+  const term = {
+    cols: 120,
+    rows: 32,
+    write: noop,
+    writeln: noop,
+    scrollToBottom: noop,
+  };
+
+  await createTerminalSessionStarters(ctx as never).startMosh(term as never);
+  assert.equal(readyDisposed, true);
 });
 
 test("startMosh still runs startup when ready fires during startMoshSession await", async () => {
