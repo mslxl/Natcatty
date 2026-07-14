@@ -558,6 +558,122 @@ test("createOrderedStringAuthHandler re-offers methods skipped as unavailable af
   assert.deepEqual(offered, ["none", "agent", "publickey", "password", "keyboard-interactive"]);
 });
 
+test("createOrderedStringAuthHandler allows consecutive keyboard-interactive factors (#2150)", () => {
+  const authPhase = createAuthPhase();
+  const handler = createOrderedStringAuthHandler(
+    ["none", "password", "keyboard-interactive"],
+    authPhase,
+  );
+
+  const offered = [];
+  handler(null, null, (method) => offered.push(method));
+  handler(["keyboard-interactive"], false, (method) => offered.push(method));
+  handler(["keyboard-interactive"], true, (method) => offered.push(method));
+
+  assert.deepEqual(offered, ["none", "keyboard-interactive", "keyboard-interactive"]);
+  assert.equal(authPhase.hadPartialSuccess, true);
+});
+
+test("consecutive keyboard-interactive factors do not offer to save a generic second password (#2150)", () => {
+  const { sender, sent } = createSender();
+  const authPhase = createAuthPhase();
+  const authHandler = createOrderedStringAuthHandler(
+    ["none", "password", "keyboard-interactive"],
+    authPhase,
+  );
+  const keyboardHandler = createKeyboardInteractiveHandler({
+    sender,
+    sessionId: "session-1",
+    hostname: "corp-edr.example.com",
+    password: "login-password",
+    shouldSkipAutoFill: () => shouldSkipKiPasswordAutoFill(authPhase),
+  });
+
+  const offered = [];
+  authHandler(null, null, (method) => offered.push(method));
+  authHandler(["keyboard-interactive"], false, (method) => offered.push(method));
+
+  const firstResponses = [];
+  keyboardHandler("", "", "", [passwordPrompt], (responses) => firstResponses.push(responses));
+  assert.deepEqual(firstResponses, [["login-password"]]);
+  assert.deepEqual(sent, []);
+
+  authHandler(["keyboard-interactive"], true, (method) => offered.push(method));
+  keyboardHandler("", "", "", [passwordPrompt], () => {});
+
+  assert.deepEqual(offered, ["none", "keyboard-interactive", "keyboard-interactive"]);
+  assert.equal(authPhase.keyboardInteractiveAlreadySucceeded, true);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].payload.savedPassword, null);
+  assert.equal(sent[0].payload.allowSavePassword, false);
+
+  drainPendingRequests(sent);
+});
+
+test("an intervening factor does not make a later keyboard-interactive password reusable (#2150)", () => {
+  const authPhase = createAuthPhase();
+  const authHandler = createOrderedStringAuthHandler(
+    ["none", "keyboard-interactive", "publickey"],
+    authPhase,
+  );
+
+  const offered = [];
+  authHandler(null, null, (method) => offered.push(method));
+  authHandler(["keyboard-interactive"], false, (method) => offered.push(method));
+  authHandler(["publickey"], true, (method) => offered.push(method));
+  assert.equal(shouldSkipKiPasswordAutoFill(authPhase), true);
+
+  authHandler(["keyboard-interactive"], true, (method) => offered.push(method));
+
+  assert.deepEqual(offered, ["none", "keyboard-interactive", "publickey", "keyboard-interactive"]);
+  assert.equal(authPhase.keyboardInteractiveAlreadySucceeded, true);
+  assert.equal(shouldSkipKiPasswordAutoFill(authPhase), true);
+});
+
+test("buildAuthHandler allows consecutive keyboard-interactive factors on the dynamic path (#2150)", () => {
+  const auth = buildAuthHandler({
+    authMethod: "auto",
+    username: "alice",
+    password: "login-password",
+    allowAgentFallback: false,
+    defaultKeys: [{ keyName: "unused-test-key", privateKey: "unused" }],
+  });
+
+  const offered = [];
+  auth.authHandler(null, null, (method) => offered.push(method));
+  auth.authHandler(["keyboard-interactive"], false, (method) => offered.push(method));
+  auth.authHandler(["keyboard-interactive"], true, (method) => offered.push(method));
+
+  assert.deepEqual(offered, ["none", "keyboard-interactive", "keyboard-interactive"]);
+  assert.equal(auth.authPhase.hadPartialSuccess, true);
+});
+
+test("buildAuthHandler reconsiders dynamic methods between authentication factors (#2150)", () => {
+  const auth = buildAuthHandler({
+    authMethod: "auto",
+    username: "alice",
+    password: "login-password",
+    allowAgentFallback: false,
+    defaultKeys: [{ keyName: "id_ed25519", privateKey: "test-key" }],
+  });
+
+  const offered = [];
+  const record = (method) => offered.push(
+    method && typeof method === "object" ? method.type : method,
+  );
+  auth.authHandler(null, null, record);
+  auth.authHandler(["keyboard-interactive"], false, record);
+  auth.authHandler(["publickey"], true, record);
+  auth.authHandler(["keyboard-interactive"], true, record);
+
+  assert.deepEqual(
+    offered,
+    ["none", "keyboard-interactive", "publickey", "keyboard-interactive"],
+  );
+  assert.equal(auth.authPhase.keyboardInteractiveAlreadySucceeded, true);
+  assert.equal(shouldSkipKiPasswordAutoFill(auth.authPhase), true);
+});
+
 test("buildAuthHandler simple password path tracks partialSuccess via function handler", () => {
   const auth = buildAuthHandler({
     password: "hunter2",

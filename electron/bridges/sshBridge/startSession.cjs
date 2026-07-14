@@ -917,9 +917,10 @@ function createStartSessionApi(ctx) {
 
         // Track which method succeeded for caching
         let lastTriedMethod = null;
-        // Shared with keyboard-interactive auto-fill. Only suppresses reuse of
-        // the saved host password when password already succeeded as a factor
-        // (EDR step-up). publickey partialSuccess still allows Password: auto-fill.
+        // Shared with keyboard-interactive auto-fill. A completed password or
+        // keyboard-interactive factor suppresses reuse of the saved host
+        // password for a later KI factor (EDR step-up). publickey partialSuccess
+        // still allows Password: auto-fill.
         const authPhase = createAuthPhase();
 
         if (authAgent) {
@@ -1089,6 +1090,15 @@ function createStartSessionApi(ctx) {
                   log("Recorded successful auth factor (partial success)", { method: lastTriedMethod });
                 }
                 attemptedMethodIds = new Set(succeededMethodIds);
+                // PAM/EDR can require two consecutive keyboard-interactive
+                // factors (login password, then a separate secondary password).
+                // A partial-success response explicitly advertising KI again is
+                // permission to repeat that method with a fresh server prompt.
+                // Keep keys/passwords de-duplicated, but do not suppress this
+                // second interactive factor (#2150).
+                if (methodsLeft.includes("keyboard-interactive")) {
+                  attemptedMethodIds.delete("keyboard-interactive");
+                }
 
                 log("Partial success - server requires additional auth", { methodsLeft, succeeded: Array.from(succeededMethodIds), attemptedMethodIds: Array.from(attemptedMethodIds) });
 

@@ -1065,11 +1065,14 @@ function buildAuthHandler(options) {
   let authIndex = 0;
   let lastAttemptedLabel = null;
   const attemptedMethodIds = new Set();
+  const succeededMethodIds = new Set();
   // Shared with keyboard-interactive auto-fill. See createAuthPhase /
-  // shouldSkipKiPasswordAutoFill — only password-as-first-factor suppresses
-  // reusing the saved host password on a later KI challenge (#2150 / #2151).
+  // shouldSkipKiPasswordAutoFill — a completed password or keyboard-
+  // interactive factor suppresses reusing the saved host password on a later
+  // KI challenge (#2150 / #2151).
   const authPhase = createAuthPhase();
   let lastAttemptedType = null;
+  let lastAttemptedMethodId = null;
 
   let triedNone = false;
 
@@ -1081,6 +1084,7 @@ function buildAuthHandler(options) {
       triedNone = true;
       lastAttemptedLabel = "none (no credentials)";
       lastAttemptedType = "none";
+      lastAttemptedMethodId = null;
       onAuthAttempt?.("none (no credentials)");
       return callback("none");
     }
@@ -1094,6 +1098,26 @@ function buildAuthHandler(options) {
 
     if (partialSuccess) {
       markAuthPhasePartialSuccess(authPhase, lastAttemptedType);
+      if (lastAttemptedMethodId) {
+        succeededMethodIds.add(lastAttemptedMethodId);
+      }
+      // Start a fresh pass for the next factor. Methods merely unavailable in
+      // the previous phase become eligible again, while methods that already
+      // succeeded stay suppressed.
+      authIndex = 0;
+      attemptedMethodIds.clear();
+      for (const methodId of succeededMethodIds) {
+        attemptedMethodIds.add(methodId);
+      }
+      // Some PAM/EDR stacks model login-password + secondary-password as two
+      // consecutive keyboard-interactive authentication factors. The server
+      // reports the first factor as partial success and advertises the same
+      // method again for the second factor. Unlike a key, keyboard-interactive
+      // is safe to repeat because the server supplies a fresh challenge and
+      // createKeyboardInteractiveHandler refuses to auto-fill after round one.
+      if (Array.isArray(methodsLeft) && methodsLeft.includes("keyboard-interactive")) {
+        attemptedMethodIds.delete("keyboard-interactive");
+      }
     }
 
     while (authIndex < authMethods.length) {
@@ -1107,6 +1131,7 @@ function buildAuthHandler(options) {
         console.log(`${logPrefix} Trying agent auth`);
         lastAttemptedLabel = "SSH agent";
         lastAttemptedType = "agent";
+        lastAttemptedMethodId = method.id;
         onAuthAttempt?.("SSH agent");
         return callback("agent");
       } else if (method.type === "publickey" && availableMethods.includes("publickey")) {
@@ -1121,6 +1146,7 @@ function buildAuthHandler(options) {
               : method.id;
         lastAttemptedLabel = keyLabel;
         lastAttemptedType = "publickey";
+        lastAttemptedMethodId = method.id;
         onAuthAttempt?.(keyLabel);
         const pubkeyAuth = {
           type: "publickey",
@@ -1135,6 +1161,7 @@ function buildAuthHandler(options) {
         console.log(`${logPrefix} Trying password auth`);
         lastAttemptedLabel = "password";
         lastAttemptedType = "password";
+        lastAttemptedMethodId = method.id;
         onAuthAttempt?.("password");
         return callback({
           type: "password",
@@ -1144,6 +1171,7 @@ function buildAuthHandler(options) {
       } else if (method.type === "keyboard-interactive" && availableMethods.includes("keyboard-interactive")) {
         lastAttemptedLabel = "keyboard-interactive";
         lastAttemptedType = "keyboard-interactive";
+        lastAttemptedMethodId = method.id;
         onAuthAttempt?.("keyboard-interactive");
         return callback("keyboard-interactive");
       }
@@ -1227,17 +1255,23 @@ const PASSWORD_PROMPT_PATTERN = /passw(or)?d|密\s*码|口\s*令/i;
 /**
  * Shared auth-phase state for keyboard-interactive auto-fill decisions.
  * passwordAlreadySucceeded means the password method already contributed a
- * successful factor — later KI challenges must not silently re-submit the
- * same host password (EDR second factor). publickey/agent partialSuccess
- * alone does NOT set this, so publickey+password MFA still auto-fills.
+ * successful factor. keyboardInteractiveAlreadySucceeded remembers that any
+ * earlier keyboard-interactive factor completed, so a later KI challenge is
+ * treated as distinct even when another factor ran between them. Neither flag
+ * is set by publickey/agent alone, preserving publickey+password MFA auto-fill.
  */
 function createAuthPhase() {
-  return { hadPartialSuccess: false, passwordAlreadySucceeded: false };
+  return {
+    hadPartialSuccess: false,
+    passwordAlreadySucceeded: false,
+    keyboardInteractiveAlreadySucceeded: false,
+  };
 }
 
 /**
  * Record a partialSuccess against authPhase. Pass the method type that just
- * succeeded (e.g. "password", "publickey", "agent").
+ * succeeded (e.g. "password", "publickey", "agent", or
+ * "keyboard-interactive").
  */
 function markAuthPhasePartialSuccess(authPhase, succeededMethodType) {
   if (!authPhase) return;
@@ -1245,15 +1279,25 @@ function markAuthPhasePartialSuccess(authPhase, succeededMethodType) {
   if (succeededMethodType === "password") {
     authPhase.passwordAlreadySucceeded = true;
   }
+  if (succeededMethodType === "keyboard-interactive") {
+    authPhase.keyboardInteractiveAlreadySucceeded = true;
+  }
 }
 
 /**
  * Whether keyboard-interactive should refuse to auto-fill / prefill the saved
- * host password. True only when password already succeeded as a prior factor
- * (or callers force-skip). publickey→Password: MFA must return false.
+ * host password. A completed password or keyboard-interactive factor means a
+ * later KI challenge is a distinct factor. publickey→Password: MFA still
+ * returns false so the saved login password can be used there.
  */
 function shouldSkipKiPasswordAutoFill(authPhase) {
-  return Boolean(authPhase && authPhase.passwordAlreadySucceeded);
+  return Boolean(
+    authPhase &&
+    (
+      authPhase.passwordAlreadySucceeded ||
+      authPhase.keyboardInteractiveAlreadySucceeded
+    )
+  );
 }
 
 /**
@@ -1269,7 +1313,7 @@ function shouldSkipKiPasswordAutoFill(authPhase) {
  * leave the connection unable to offer the second factor (Codex P2 on #2151).
  *
  * @param {string[]} order
- * @param {{ hadPartialSuccess: boolean, passwordAlreadySucceeded?: boolean }} authPhase
+ * @param {{ hadPartialSuccess: boolean, passwordAlreadySucceeded?: boolean, keyboardInteractiveAlreadySucceeded?: boolean }} authPhase
  * @param {(label: string) => void} [onAuthAttempt] - optional progress callback
  *   (jump/SFTP connection logs). Mirrors the dynamic authHandler's onAuthAttempt.
  * @returns {(methodsLeft: string[]|null, partialSuccess: boolean, callback: Function) => void}
@@ -1294,6 +1338,13 @@ function createOrderedStringAuthHandler(order, authPhase, onAuthAttempt) {
       // Drop rejected/skipped attempts so a method that was not advertised
       // earlier can be offered now that the server is asking for it.
       attempted = new Set(succeeded);
+      // A server may deliberately require keyboard-interactive more than once
+      // (for example PAM login password followed by an EDR secondary password).
+      // Re-offer it only when the server explicitly advertises it for the next
+      // factor. Failed attempts still remain blocked on non-partial callbacks.
+      if (Array.isArray(methodsLeft) && methodsLeft.includes("keyboard-interactive")) {
+        attempted.delete("keyboard-interactive");
+      }
     } else if (lastOffered && methodsLeft !== null) {
       // Server rejected the previous method (or finished a failed factor).
       // Skip the initial methodsLeft===null probe which is not a rejection.
