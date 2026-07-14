@@ -49,22 +49,50 @@ export const shouldRecordShellHistory = (
   return liveCommand === command.trim();
 };
 
+/**
+ * Resolve the command that Enter is submitting.
+ *
+ * The keystroke buffer alone is incomplete for shell history recall (↑/↓):
+ * those keys redraw the line remotely and never append the recalled text to
+ * commandBuffer. Fall back to the live prompt line so su/sudo arming, shell
+ * history, and command hooks still see the real command (#2191).
+ */
+export const resolveSubmittedShellCommand = (
+  commandBuffer: string,
+  term?: XTerm | null,
+): string => {
+  const buffered = commandBuffer.trim();
+  if (!term) return buffered;
+
+  const { prompt, alignedTyped } = getAlignedPrompt(term, commandBuffer, true);
+  const aligned = alignedTyped?.trim() ?? "";
+  if (aligned) return aligned;
+
+  if (prompt.isAtPrompt) {
+    const live = prompt.userInput.trim();
+    // Empty buffer + live line: classic ↑ history recall before Enter.
+    if (live && !buffered) return live;
+  }
+
+  return buffered;
+};
+
 export const recordTerminalCommandExecution = (
   command: string,
   ctx: TerminalCommandExecutionContext,
   term?: XTerm | null,
 ): string | null => {
-  const cmd = command.trim();
+  const cmd = resolveSubmittedShellCommand(command, term);
   if (cmd) {
     ctx.onCommandSubmitted?.(cmd, ctx.host.id, ctx.host.label, ctx.sessionId);
   }
   if (cmd && shouldRecordShellHistory(cmd, term)) {
     ctx.onCommandExecuted?.(cmd, ctx.host.id, ctx.host.label, ctx.sessionId);
     ctx.commandBufferRef.current = "";
-    markPromptLineBreakCommandPending(ctx.promptLineBreakStateRef, term, command);
+    markPromptLineBreakCommandPending(ctx.promptLineBreakStateRef, term, cmd);
     return cmd;
   }
   ctx.commandBufferRef.current = "";
-  markPromptLineBreakCommandPending(ctx.promptLineBreakStateRef, term, command);
+  markPromptLineBreakCommandPending(ctx.promptLineBreakStateRef, term, cmd || command);
   return null;
 };

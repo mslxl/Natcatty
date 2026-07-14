@@ -148,6 +148,37 @@ test("Esc soft-dismiss keeps arm so assist can re-open on the same Password prom
   assert.deepEqual(writes, ["host-secret\n"]);
 });
 
+test("abort hard-disarms so a later bare Password requires a fresh su arm (#2191)", () => {
+  // Ctrl+C aborts the remote su. Soft-dismiss would leave dismissedWhileArmed
+  // and block the next bare Password: without a leading newline.
+  const pickerActives: boolean[] = [];
+  const autofill = createSudoPasswordAutofill({
+    mode: "picker",
+    candidates: [
+      { id: "host", label: "Host", password: "host-secret" },
+      { id: "identity:root", label: "Root", password: "root-secret" },
+    ],
+    write: () => {},
+    onPicker: (active) => {
+      pickerActives.push(active);
+      return true;
+    },
+  });
+  autofill.armForCommand("su -");
+  autofill.handleOutput("Password: ");
+  assert.equal(autofill.isPickerPending(), true);
+  autofill.abort();
+  assert.equal(autofill.isPickerPending(), false);
+  assert.equal(autofill.canReshowAssist(), false);
+  // Stale arm gone: bare Password without a new su must not open the picker
+  autofill.handleOutput("Password: ");
+  assert.equal(autofill.isPickerPending(), false);
+  // Fresh arm after interrupt works again
+  autofill.armForCommand("su -");
+  autofill.handleOutput("Password: ");
+  assert.equal(autofill.isPickerPending(), true);
+});
+
 test("confirmFill does nothing when no prompt is pending", () => {
   const { autofill, writes } = make();
   autofill.confirmFill();

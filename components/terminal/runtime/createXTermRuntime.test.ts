@@ -5,7 +5,10 @@ import {
   createSudoPasswordAutofill,
   prepareSudoAutofillInput,
 } from "./terminalSudoAutofill";
-import { recordTerminalCommandExecution } from "./terminalCommandExecution";
+import {
+  recordTerminalCommandExecution,
+  resolveSubmittedShellCommand,
+} from "./terminalCommandExecution";
 import { createPromptLineBreakState } from "./promptLineBreak";
 
 function createFakeTerm(lineText = "$ echo ok", cursorX = lineText.length) {
@@ -120,6 +123,57 @@ test("command execution arms prompt line break even without command history call
   assert.equal(commandBufferRef.current, "");
   assert.equal(recordedCommand, "echo ok");
   assert.equal(promptState.pendingCommand, true);
+});
+
+test("resolveSubmittedShellCommand recovers ↑ history when keystroke buffer is empty (#2191)", () => {
+  // Shell history redraws the line remotely; commandBuffer never sees "su -".
+  assert.equal(
+    resolveSubmittedShellCommand("", createFakeTerm("user@host:~$ su -") as never),
+    "su -",
+  );
+  assert.equal(
+    resolveSubmittedShellCommand("", createFakeTerm("user@host:~$ sudo whoami") as never),
+    "sudo whoami",
+  );
+  // Prefer the typed buffer when present
+  assert.equal(
+    resolveSubmittedShellCommand("ls", createFakeTerm("user@host:~$ ls") as never),
+    "ls",
+  );
+});
+
+test("recordTerminalCommandExecution arms su after empty-buffer history recall (#2191)", () => {
+  const commandBufferRef = { current: "" };
+  const recorded: string[] = [];
+  const recordedCommand = recordTerminalCommandExecution("", {
+    host: { id: "host-1", label: "Host" },
+    sessionId: "session-1",
+    commandBufferRef,
+    onCommandExecuted(cmd) {
+      recorded.push(cmd);
+    },
+  }, createFakeTerm("user@host:~$ su -") as never);
+
+  assert.equal(recordedCommand, "su -");
+  assert.deepEqual(recorded, ["su -"]);
+  assert.equal(commandBufferRef.current, "");
+
+  // Full Enter path: empty buffer + live line still arms sudo autofill
+  const writes: string[] = [];
+  const autofill = createSudoPasswordAutofill({
+    mode: "picker",
+    candidates: [
+      { id: "host", label: "Host", password: "host-secret" },
+      { id: "identity:root", label: "Root", password: "root-secret" },
+    ],
+    write: (d) => writes.push(d),
+    onPicker: () => true,
+  });
+  prepareSudoAutofillInput("\r", recordedCommand, autofill);
+  autofill.handleOutput("Password: ");
+  assert.equal(autofill.isPickerPending(), true);
+  autofill.confirmFill("host");
+  assert.deepEqual(writes, ["host-secret\n"]);
 });
 
 test("command execution caches the current prompt instead of prompt-like command text", () => {

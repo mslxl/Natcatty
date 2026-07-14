@@ -122,6 +122,12 @@ export type SudoPasswordAutofill = {
   confirmFill: (candidateId?: string) => void;
   /** Dismiss the open UI without clearing the su/sudo arm (Esc). */
   cancelHint: () => void;
+  /**
+   * Hard-abort: hide UI and clear the arm (Ctrl+C / interrupt / disconnect).
+   * Unlike cancelHint, a later Password: line will not re-open assist until
+   * a fresh su/sudo command is armed (#2191).
+   */
+  abort: () => void;
   isPromptPending: () => boolean;
   /** True only while the multi-credential picker UI is open (not the hint). */
   isPickerPending: () => boolean;
@@ -472,6 +478,9 @@ export const createSudoPasswordAutofill = (_options: {
         armedKind = null;
         armedUntil = Number.NEGATIVE_INFINITY;
       }
+    },
+    abort: () => {
+      disarm();
     },
     isPromptPending: () => pending,
     isPickerPending: () => pending && pendingUi === "picker",
