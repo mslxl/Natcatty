@@ -22,6 +22,7 @@ import { useSftpBackend } from "../application/state/useSftpBackend";
 import { useSftpFileAssociations } from "../application/state/useSftpFileAssociations";
 import { getParentPath, isConcreteTransferTargetPath } from "../application/state/sftp/utils";
 import { buildCacheKey } from "../application/state/sftp/sharedRemoteHostCache";
+import { resolveSftpAutoConnectPath } from "../application/state/sftp/sftpReopenLocation";
 import { logger } from "../lib/logger";
 import type { DropEntry } from "../lib/sftpFileUtils";
 import { Host, Identity, KnownHost, SSHKey } from "../types";
@@ -49,6 +50,7 @@ import {
   type SftpFollowTerminalCwdBlock,
 } from "./sftp/sftpFollowTerminalCwd";
 import {
+  connectionKeyMatchesHost,
   findReusableSftpSidePanelTab,
   shouldResetSftpSidePanelSourceSession,
   shouldSkipSftpSidePanelAutoConnect,
@@ -235,6 +237,8 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   const lastAppliedInitialLocationKeyRef = useRef<string | null>(null);
   const handledPendingUploadIdRef = useRef<string | null>(null);
   const tabConnectionKeyMapRef = useRef<Map<string, string>>(new Map());
+  /** Last browsed path per endpoint — survives session switches while the panel stays open. */
+  const lastBrowsedPathByConnectionKeyRef = useRef<Map<string, string>>(new Map());
   const [interactiveWorkActive, setInteractiveWorkActive] = useState(false);
   const [sftpUiReady, setSftpUiReady] = useState(false);
 
@@ -289,16 +293,21 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
       lastSourceSessionIdRef.current,
       activeSessionId,
     );
-    if (sessionChanged) {
-      connectedKeyRef.current = null;
-    }
-    if (activeSessionId) {
-      lastSourceSessionIdRef.current = activeSessionId;
-    }
 
     const hasBackendSession = (connectionId: string) => !!s.getSftpIdForConnection(connectionId);
     const activeTab = s.leftTabs.tabs.find((tab) => tab.id === s.leftTabs.activeTabId) ?? null;
     const activeConnectionId = activeTab?.connection?.id;
+    const liveConnectionKey = activeConnectionId
+      ? s.getConnectionCacheKey?.(activeConnectionId) ?? null
+      : null;
+    const activeTabConnectionKey = liveConnectionKey
+      ?? (activeTab ? tabConnectionKeyMapRef.current.get(activeTab.id) ?? null : null);
+    if (activeTab && activeTabConnectionKey) {
+      tabConnectionKeyMapRef.current.set(activeTab.id, activeTabConnectionKey);
+    }
+    // Rebind when the focused terminal session changes: saved host keys can lag
+    // live session endpoints (edited host / unsaved user). Still keep the
+    // browsed path sticky via remembered initialPath below.
     if (
       !sessionChanged
       && shouldSkipSftpSidePanelAutoConnect(
@@ -306,20 +315,34 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
         connectedKeyRef.current,
         activeTab,
         activeConnectionId ? hasBackendSession(activeConnectionId) : false,
+        activeTabConnectionKey,
       )
     ) {
+      if (activeSessionId) {
+        lastSourceSessionIdRef.current = activeSessionId;
+      }
       return;
     }
+    // Defer advancing the session cursor while interactive work blocks rebind,
+    // so sessionChanged stays true once the editor/dialog closes.
     if (hasActiveWork) return;
+    if (activeSessionId) {
+      lastSourceSessionIdRef.current = activeSessionId;
+    }
 
     logger.info("[SftpSidePanel] Auto-connect triggered", {
       hostId: activeHost.id,
       hostLabel: activeHost.label,
       protocol: activeHost.protocol,
       hostname: activeHost.hostname,
+      sessionChanged,
     });
 
     const tabs = s.leftTabs.tabs;
+    // Session focus changes must rebind SFTP onto the new terminal SSH session
+    // (proxy/jump path can differ even when hostId/hostname/port/user match).
+    // Same-endpoint rebind happens in place below with remembered initialPath so
+    // we keep the browsed directory without stacking tabs.
     const existingTab = sessionChanged
       ? null
       : findReusableSftpSidePanelTab(
@@ -328,27 +351,115 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
         connectionKey,
         tabConnectionKeyMapRef.current,
         hasBackendSession,
+        (connectionId) => s.getConnectionCacheKey?.(connectionId) ?? null,
       );
     if (existingTab) {
       s.selectTab("left", existingTab.id);
+      // selectTab does not update reconnect metadata; keep lastConnectedHost
+      // aligned with the tab we just activated so channel drops rebind correctly.
+      s.setLastConnectedHost?.("left", activeHost);
       connectedKeyRef.current = connectionKey;
       connectedHostObjRef.current = activeHost;
+      // Session memory keys are per terminal session; republish the visible
+      // path so reopening SFTP from the newly focused session keeps this dir.
+      const path = existingTab.connection?.currentPath;
+      if (
+        path
+        && existingTab.connection
+        && !existingTab.connection.isLocal
+      ) {
+        onCurrentPathChangeRef.current?.({
+          hostId: existingTab.connection.hostId,
+          connectionKey,
+          path,
+        });
+      }
       return;
     }
 
+    // Capture the visible path before rebind so session switches keep it even
+    // if the path-memory effect has not written this endpoint yet.
+    if (
+      sessionChanged
+      && activeTab?.connection
+      && !activeTab.connection.isLocal
+      && activeTab.connection.status === "connected"
+      && activeTab.connection.currentPath
+      && activeTabConnectionKey === connectionKey
+    ) {
+      lastBrowsedPathByConnectionKeyRef.current.set(
+        connectionKey,
+        activeTab.connection.currentPath,
+      );
+      onCurrentPathChangeRef.current?.({
+        hostId: activeTab.connection.hostId,
+        connectionKey,
+        path: activeTab.connection.currentPath,
+      });
+    }
+
     const currentConn = s.leftPane.connection;
-    const needsNewTab = !!(currentConn && currentConn.status === "connected");
+    // Replace in place only when it is safe. Keep the old tab when:
+    // - local is active (distinct endpoint)
+    // - the target endpoint key differs
+    // - same-endpoint rebind would drop a connection still used by promoted
+    //   editor tabs (they save via the old connection id)
+    const currentConnectionKey = currentConn && !currentConn.isLocal
+      ? (
+        s.getConnectionCacheKey?.(currentConn.id)
+        ?? tabConnectionKeyMapRef.current.get(s.leftPane.id)
+        ?? null
+      )
+      : null;
+    const hasEditorBoundToCurrentConnection = !!(
+      currentConn
+      && editorTabStore.getTabs().some((tab) => tab.sessionId === currentConn.id)
+    );
+    const hasActiveTransferOnCurrentConnection = !!(
+      currentConn
+      && s.transfers.some((task) => (
+        (task.status === "pending" || task.status === "transferring")
+        && (
+          task.sourceConnectionId === currentConn.id
+          || task.targetConnectionId === currentConn.id
+        )
+      ))
+    );
+    const needsNewTab = !!(
+      currentConn
+      && currentConn.status === "connected"
+      && (
+        currentConn.isLocal
+        || (
+          currentConnectionKey
+          && currentConnectionKey !== connectionKey
+        )
+        // Same-endpoint rebind closes the old connection in place; keep a tab
+        // when editors or in-flight transfers still depend on that connection id.
+        || (
+          sessionChanged
+          && (hasEditorBoundToCurrentConnection || hasActiveTransferOnCurrentConnection)
+        )
+      )
+    );
+    const rememberedPath = lastBrowsedPathByConnectionKeyRef.current.get(connectionKey);
+    const initialPath = resolveSftpAutoConnectPath({
+      explicitPath:
+        initialLocation?.hostId === activeHost.id ? initialLocation.path : null,
+      rememberedPath,
+    });
 
     connectedKeyRef.current = connectionKey;
     connectedHostObjRef.current = activeHost;
     s.connect("left", activeHost, {
       sourceSessionId: activeSessionId ?? undefined,
+      ...(initialPath ? { initialPath } : undefined),
       ...(needsNewTab ? { forceNewTab: true } : undefined),
       onTabCreated: (tabId) => {
         tabConnectionKeyMapRef.current.set(tabId, connectionKey);
       },
     });
-  }, [activeHost, activeSessionId, interactiveWorkActive]);
+  }, [activeHost, activeSessionId, initialLocation, interactiveWorkActive]);
 
   useEffect(() => {
     if (!activeHost || !isVisible) return;
@@ -407,14 +518,40 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     if (!connection || connection.isLocal) return;
     if (connection.status !== "connected") return;
     if (!connection.currentPath) return;
-    const connectionKey = tabConnectionKeyMapRef.current.get(sftp.leftPane.id);
-    if (!connectionKey) return;
+
+    // Prefer the connect-time endpoint map (includes session overrides / picker
+    // switches). Fall back to rebuilding from the host object only when missing.
+    let connectionKey =
+      sftp.getConnectionCacheKey?.(connection.id)
+      ?? tabConnectionKeyMapRef.current.get(sftp.leftPane.id)
+      ?? null;
+    if (!connectionKeyMatchesHost(connectionKey, connection.hostId)) {
+      const host =
+        (activeHost?.id === connection.hostId ? activeHost : null)
+        ?? hosts.find((candidate) => candidate.id === connection.hostId)
+        ?? null;
+      if (!host) return;
+      connectionKey = buildCacheKey(
+        host.id,
+        host.hostname,
+        host.port,
+        host.protocol,
+        host.sftpSudo,
+        host.username,
+      );
+    }
+    tabConnectionKeyMapRef.current.set(sftp.leftPane.id, connectionKey);
+
+    lastBrowsedPathByConnectionKeyRef.current.set(connectionKey, connection.currentPath);
     onCurrentPathChangeRef.current?.({
       hostId: connection.hostId,
       connectionKey,
       path: connection.currentPath,
     });
   }, [
+    activeHost,
+    hosts,
+    sftp,
     sftp.leftPane.connection,
     sftp.leftPane.connection?.currentPath,
     sftp.leftPane.connection?.hostId,

@@ -205,7 +205,42 @@ export const useSftpConnections = ({
 
       if (!activeTabId) return;
 
+      // Capture path/endpoint before we replace the connection so same-endpoint
+      // auto-reconnect can land back where the user was browsing instead of home.
+      // Do not inherit path across endpoints (including same hostId with different
+      // hostname/port/user) if a reconnect flag is still set while switching.
+      const previousConnection = getActivePane(side)?.connection;
+      const previousPath = previousConnection?.currentPath;
+      const previousConnectionKey = !previousConnection
+        ? null
+        : previousConnection.isLocal
+          ? "local"
+          : (connectionCacheKeyMapRef.current.get(previousConnection.id) ?? null);
+      const targetConnectionKey = host === "local"
+        ? "local"
+        : buildCacheKey(
+          host.id,
+          host.hostname,
+          host.port,
+          host.protocol,
+          host.sftpSudo,
+          host.username,
+        );
+      if (
+        reconnectingRef.current[side]
+        && previousConnectionKey
+        && previousConnectionKey !== targetConnectionKey
+      ) {
+        reconnectingRef.current[side] = false;
+      }
       const isReconnectAttempt = reconnectingRef.current[side];
+      const sameEndpointReconnect =
+        isReconnectAttempt
+        && !!previousPath
+        && previousConnectionKey === targetConnectionKey;
+      const effectiveInitialPath =
+        options?.initialPath
+        ?? (sameEndpointReconnect ? previousPath : undefined);
 
       // Notify caller of the tab ID synchronously, before any async work.
       // This allows callers to map metadata (e.g. connection keys) to the tab
@@ -289,7 +324,7 @@ export const useSftpConnections = ({
           homeDir = isWindows ? "C:\\Users\\damao" : "/Users/damao";
         }
 
-        const startPath = options?.initialPath || homeDir;
+        const startPath = effectiveInitialPath || homeDir;
 
         const connection: SftpConnection = {
           id: connectionId,
@@ -343,7 +378,7 @@ export const useSftpConnections = ({
         const { initialPath, sharedHostCache, cachedStartPath } = resolveRemoteSftpStartState({
           filenameEncoding,
           ignoreSharedCache: options?.ignoreSharedCache,
-          initialPath: options?.initialPath,
+          initialPath: effectiveInitialPath,
           sharedHostCacheCandidate,
         });
 
@@ -592,8 +627,9 @@ export const useSftpConnections = ({
               dirCacheRef.current.delete(provisionalCacheKey);
             }
             // Fall back to homeDir, then "/", chaining attempts.
+            // Remembered/reconnect paths can be stale even when shared cache is gone.
             let fallbackSucceeded = false;
-            if (sharedHostCache && startPath !== homeDir) {
+            if (startPath !== homeDir) {
               try {
                 startPath = homeDir;
                 files = await listRemoteFiles(sftpId, startPath, filenameEncoding);
