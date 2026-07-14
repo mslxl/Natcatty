@@ -83,7 +83,8 @@ const readFullLineAfterPrompt = (
 
 /**
  * detectPrompt truncates userInput at the cursor. Enter submits the whole line,
- * so expand to the full text after the prompt (including wrapped rows).
+ * so expand past the cursor when the tail still looks like the same command
+ * (not zsh autosuggest / right-prompt chrome).
  */
 const expandPromptUserInputToFullLine = (
   term: XTerm,
@@ -93,16 +94,29 @@ const expandPromptUserInputToFullLine = (
   const fullInput = readFullLineAfterPrompt(term, prompt.promptText);
   if (fullInput === null || fullInput === prompt.userInput) return prompt;
   if (
-    fullInput.length > prompt.userInput.length
-    && fullInput.startsWith(prompt.userInput)
+    fullInput.length <= prompt.userInput.length
+    || !fullInput.startsWith(prompt.userInput)
   ) {
-    return {
-      ...prompt,
-      userInput: fullInput,
-      cursorOffset: fullInput.length,
-    };
+    return prompt;
   }
-  return prompt;
+  const tail = fullInput.slice(prompt.userInput.length);
+  // Continue same token (sudo|whoami mid-word) or next argv ("su" + " -").
+  // Skip likely autosuggest/RPROMPT blobs that start a new unrelated word
+  // after the cursor without the user having typed into them.
+  const okContinuation =
+    tail.startsWith(" ")
+    || tail.startsWith("-")
+    || (
+      !prompt.userInput.endsWith(" ")
+      && /^[\w@./:-]+/.test(tail)
+      && !/\s{2,}/.test(tail)
+    );
+  if (!okContinuation) return prompt;
+  return {
+    ...prompt,
+    userInput: fullInput,
+    cursorOffset: fullInput.length,
+  };
 };
 
 /** Status / cwd chrome that must not be recorded as a submitted command. */
@@ -225,26 +239,30 @@ export const resolveLiveSubmittedCommand = (
   const direct = getCommandToRecordOnEnter(prompt, null, "", true);
   if (direct) return direct;
 
-  // Incomplete bare-glyph split (➜  + cwd/git in userInput): peel chrome.
-  if (isBareThemedTerminator(prompt.promptText)) {
-    const peeled = peelThemedCommandFromPrompt(prompt);
-    if (peeled) return peeled;
-  }
-
-  // Cached full prompt: accept remainder only when it reconciles on the
-  // original line (partial cache after git:(main) must not win).
+  // Cached full prompt first: handles space-containing dirs ("➜  My Project ")
+  // before peel can mis-split on the path (#2191 review).
   const cachedPrompt = lastPromptText ?? "";
   if (cachedPrompt) {
     const fullLine = `${prompt.promptText}${prompt.userInput}`;
     if (fullLine.startsWith(cachedPrompt)) {
       const remainder = fullLine.slice(cachedPrompt.length).trim();
-      if (remainder && prompt.userInput.endsWith(remainder)) {
-        const reconciled = reconcilePromptWithTypedInput(prompt, remainder);
-        if (reconciled !== prompt && reconciled.userInput.trim() === remainder) {
-          return remainder;
+      if (remainder && !isDecorationOnlyCommand(remainder)) {
+        if (prompt.userInput.endsWith(remainder)) {
+          const reconciled = reconcilePromptWithTypedInput(prompt, remainder);
+          if (reconciled !== prompt && reconciled.userInput.trim() === remainder) {
+            return remainder;
+          }
         }
+        // Exact cache prefix on the rendered line (no-space / multi-word dirs).
+        return remainder;
       }
     }
+  }
+
+  // Incomplete bare-glyph split (➜  + cwd/git in userInput): peel chrome.
+  if (isBareThemedTerminator(prompt.promptText)) {
+    const peeled = peelThemedCommandFromPrompt(prompt);
+    if (peeled) return peeled;
   }
 
   // Themed prompts (including prefixed terminators like "⚡ ➜ "): peel cwd/path
@@ -329,12 +347,17 @@ export const resolveSubmittedShellCommand = (
 
   const aligned = alignedResult.alignedTyped?.trim() ?? "";
   // Aligned buffer can match a stale mid-line prefix after history recall
-  // (typed "s", recalled "su -", cursor after "s"). Prefer the longer live line.
+  // (typed "s", recalled "su -", cursor after "s"), or only a suffix when
+  // history prepended text (typed "whoami", recalled "sudo whoami").
   if (aligned) {
     if (
       liveFromPrompt
-      && liveFromPrompt.startsWith(aligned)
       && liveFromPrompt.length > aligned.length
+      && (
+        liveFromPrompt.startsWith(aligned)
+        || liveFromPrompt.endsWith(aligned)
+        || liveFromPrompt.endsWith(` ${aligned}`)
+      )
     ) {
       return liveFromPrompt;
     }
@@ -384,12 +407,16 @@ export const resolveSubmittedShellCommand = (
     return live;
   }
 
-  // Live still has path chrome but ends with the typed command — keep buffer
-  // (e.g. themed dir "~/My Project" + typed "su -" → live "Project su -").
-  if (
-    live.endsWith(buffered)
-    || live.endsWith(` ${buffered}`)
-  ) {
+  // Live ends with the typed buffer: either path chrome + typed command
+  // ("Project su -" + "su -") or history that grew leftward ("sudo whoami"
+  // after typing "whoami"). Prefer live for sudo/su wrappers; else buffer.
+  if (live.endsWith(buffered) || live.endsWith(` ${buffered}`)) {
+    if (
+      live !== buffered
+      && /^(?:sudo|su|doas|command|builtin)\s/i.test(live)
+    ) {
+      return live;
+    }
     return buffered;
   }
 
