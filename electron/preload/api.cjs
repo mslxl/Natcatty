@@ -4,6 +4,10 @@ function createPreloadApi(ctx) {
   const terminalDataBacklog = ctx.terminalDataBacklog || null;
   const displayDataListeners = ctx.displayDataListeners || new Map();
   const closedTerminalDataSessions = ctx.closedTerminalDataSessions || null;
+  // Lightweight test contexts may omit this map; default so closeSession never throws.
+  if (!ctx.moshSessionReadyListeners) {
+    ctx.moshSessionReadyListeners = new Map();
+  }
   const markTerminalDataSessionOpen = (sessionId) => {
     if (!sessionId) return;
     closedTerminalDataSessions?.delete?.(sessionId);

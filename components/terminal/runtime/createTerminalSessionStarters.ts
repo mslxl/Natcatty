@@ -976,6 +976,47 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       }
 
       const moshEnv = buildTermEnv(ctx.host, ctx.terminalSettings);
+
+      // Defer startup commands until mosh-client is ready. The backend
+      // handshake uses an ephemeral SSH PTY first; writing too early lands
+      // input on that PTY and is lost on the swap (issue #2199).
+      //
+      // Do not gate status=connected on ready: interactive password/OTP
+      // prompts during the SSH handshake need the overlay dismissed so the
+      // user can type into the terminal. Scripts wait on moshShellReady in
+      // Terminal.tsx instead.
+      //
+      // Subscribe BEFORE startMoshSession: a fast passwordless handshake can
+      // emit ready before the await returns, and the event is not replayed.
+      let disposeMoshReady: (() => void) | undefined;
+      let cancelPendingStartupCommand: (() => void) | undefined;
+      let sessionAttached = false;
+      let moshReadyFired = false;
+      let attachedSessionId = ctx.sessionId;
+      const cleanupMoshStartupWait = () => {
+        disposeMoshReady?.();
+        disposeMoshReady = undefined;
+        cancelPendingStartupCommand?.();
+        cancelPendingStartupCommand = undefined;
+      };
+      const runMoshStartup = () => {
+        disposeMoshReady?.();
+        disposeMoshReady = undefined;
+        cancelPendingStartupCommand = scheduleStartupCommand(ctx, term, attachedSessionId, () => {
+          cancelPendingStartupCommand = undefined;
+        });
+      };
+      const onMoshReady = () => {
+        moshReadyFired = true;
+        if (sessionAttached) {
+          runMoshStartup();
+        }
+      };
+
+      if (ctx.terminalBackend.onMoshSessionReady) {
+        disposeMoshReady = ctx.terminalBackend.onMoshSessionReady(ctx.sessionId, onMoshReady);
+      }
+
       const id = await ctx.terminalBackend.startMoshSession({
         sessionId: ctx.sessionId,
         hostname: ctx.host.hostname,
@@ -1011,30 +1052,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         env: moshEnv,
         sessionLog: ctx.sessionLog?.enabled ? ctx.sessionLog : undefined,
       });
-
-      // Defer startup commands until mosh-client is ready. The backend
-      // handshake uses an ephemeral SSH PTY first; writing too early lands
-      // input on that PTY and is lost on the swap (issue #2199).
-      //
-      // Do not gate status=connected on ready: interactive password/OTP
-      // prompts during the SSH handshake need the overlay dismissed so the
-      // user can type into the terminal. Scripts wait on moshShellReady in
-      // Terminal.tsx instead.
-      let disposeMoshReady: (() => void) | undefined;
-      let cancelPendingStartupCommand: (() => void) | undefined;
-      const cleanupMoshStartupWait = () => {
-        disposeMoshReady?.();
-        disposeMoshReady = undefined;
-        cancelPendingStartupCommand?.();
-        cancelPendingStartupCommand = undefined;
-      };
-      const runMoshStartup = () => {
-        disposeMoshReady?.();
-        disposeMoshReady = undefined;
-        cancelPendingStartupCommand = scheduleStartupCommand(ctx, term, id, () => {
-          cancelPendingStartupCommand = undefined;
-        });
-      };
+      attachedSessionId = id;
 
       if (!tryAttachSessionToTerminal(ctx, term, id, {
         onExitMessage: (evt) =>
@@ -1047,11 +1065,9 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         abortSessionStartAfterUnmount();
         return;
       }
+      sessionAttached = true;
 
       if (ctx.terminalBackend.onMoshSessionReady) {
-        disposeMoshReady = ctx.terminalBackend.onMoshSessionReady(id, () => {
-          runMoshStartup();
-        });
         // Cancel/close disposes exit listeners before the backend can emit
         // exit (and close suppresses the exit event). Chain cleanup onto the
         // disposeExitRef so cancel does not leak the ready callback.
@@ -1060,6 +1076,9 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           cleanupMoshStartupWait();
           disposeExit?.();
         };
+        if (moshReadyFired) {
+          runMoshStartup();
+        }
       } else {
         // Older bridges without the ready event: keep previous behavior.
         scheduleStartupCommand(ctx, term, id);

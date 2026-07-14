@@ -1399,3 +1399,83 @@ test("startMosh defers startup commands until mosh-client is ready", async () =>
   await new Promise((resolve) => setTimeout(resolve, 5));
   assert.ok(sent.some((chunk) => chunk.includes("echo from-snippet")));
 });
+
+test("startMosh still runs startup when ready fires during startMoshSession await", async () => {
+  const sent: string[] = [];
+  let readyCb: ((evt: { sessionId: string }) => void) | null = null;
+
+  const terminalBackend = {
+    backendAvailable: () => true,
+    telnetAvailable: () => true,
+    moshAvailable: () => true,
+    localAvailable: () => true,
+    serialAvailable: () => true,
+    execAvailable: () => true,
+    startSSHSession: async () => "ssh-session",
+    startTelnetSession: async () => "telnet-session",
+    startMoshSession: async () => {
+      // Simulate a fast handshake that emits ready before the await resumes.
+      readyCb?.({ sessionId: "session-1" });
+      return "session-1";
+    },
+    startLocalSession: async () => "local-session",
+    startSerialSession: async () => "serial-session",
+    execCommand: async () => ({}),
+    onSessionData: () => noop,
+    onSessionExit: () => noop,
+    onMoshSessionReady: (_id: string, cb: (evt: { sessionId: string }) => void) => {
+      readyCb = cb;
+      return noop;
+    },
+    onChainProgress: () => noop,
+    writeToSession: (_id: string, data: string) => sent.push(data),
+    resizeSession: noop,
+  };
+
+  const ctx = {
+    host: {
+      id: "host-1",
+      label: "Example",
+      hostname: "example.test",
+      username: "alice",
+    },
+    keys: [],
+    identities: [],
+    resolvedChainHosts: [],
+    sessionId: "session-1",
+    startupCommand: "echo startup",
+    terminalSettings: { startupCommandDelayMs: 0 },
+    terminalBackend,
+    sessionRef: { current: null as string | null },
+    hasConnectedRef: { current: false },
+    hasRunStartupCommandRef: { current: false },
+    disposeDataRef: { current: null as (() => void) | null },
+    disposeExitRef: { current: null as (() => void) | null },
+    fitAddonRef: { current: null },
+    serializeAddonRef: { current: null },
+    pendingAuthRef: { current: null },
+    updateStatus: noop,
+    setStatus: noop,
+    setError: noop,
+    setNeedsAuth: noop,
+    setAuthRetryMessage: noop,
+    setAuthPassword: noop,
+    setProgressLogs: noop,
+    setProgressValue: noop,
+    setChainProgress: noop,
+  };
+
+  const term = {
+    cols: 120,
+    rows: 32,
+    write: noop,
+    writeln: noop,
+    scrollToBottom: noop,
+    modes: {},
+    options: {},
+  };
+
+  await createTerminalSessionStarters(ctx as never).startMosh(term as never);
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.ok(sent.some((chunk) => chunk.includes("echo startup")));
+});
