@@ -82,41 +82,84 @@ const readFullLineAfterPrompt = (
 };
 
 /**
- * detectPrompt truncates userInput at the cursor. Enter submits the whole line,
- * so expand past the cursor when the tail still looks like the same command
- * (not zsh autosuggest / right-prompt chrome).
+ * detectPrompt truncates userInput at the cursor. Expand carefully:
+ *
+ * - Empty buffer: never absorb post-cursor paint (zsh autosuggest / RPROMPT).
+ * - Buffer longer than visible prefix: incomplete remote echo — use buffer.
+ * - Buffer is a strict prefix of the painted line and the next painted char
+ *   continues the same token (`s` → `su -`): history mid-line — use full line.
+ * - Buffer is a strict prefix and the next painted char is whitespace
+ *   (`git` → `git status`): treat as autosuggest — keep buffer only.
  */
 const expandPromptUserInputToFullLine = (
   term: XTerm,
   prompt: PromptDetectionResult,
+  typedBuffer: string,
 ): PromptDetectionResult => {
   if (!prompt.isAtPrompt || !prompt.promptText) return prompt;
+  const buffered = typedBuffer.trim();
+  if (!buffered) return prompt;
+
   const fullInput = readFullLineAfterPrompt(term, prompt.promptText);
-  if (fullInput === null || fullInput === prompt.userInput) return prompt;
+  if (fullInput === null) return prompt;
+
+  // Incomplete echo: keystrokes ahead of what the line shows.
+  // - visible "su", buffer "sudo" (same single word still typing)
+  // - visible "su", buffer "su -" (more argv)
+  // Not: visible "su", buffer "sudo whoami" (history may have shortened).
   if (
-    fullInput.length <= prompt.userInput.length
-    || !fullInput.startsWith(prompt.userInput)
+    prompt.userInput.length > 0
+    && buffered.startsWith(prompt.userInput)
+    && buffered.length > prompt.userInput.length
   ) {
-    return prompt;
+    const next = buffered[prompt.userInput.length] ?? "";
+    const singleWordEchoLag =
+      !buffered.includes(" ")
+      && /[\w@./:-]/.test(next);
+    const moreArgsEchoLag = next === " " || next === "\t";
+    if (singleWordEchoLag || moreArgsEchoLag) {
+      return {
+        ...prompt,
+        userInput: buffered,
+        cursorOffset: buffered.length,
+      };
+    }
   }
-  const tail = fullInput.slice(prompt.userInput.length);
-  // Continue same token (sudo|whoami mid-word) or next argv ("su" + " -").
-  // Skip likely autosuggest/RPROMPT blobs that start a new unrelated word
-  // after the cursor without the user having typed into them.
-  const okContinuation =
-    tail.startsWith(" ")
-    || tail.startsWith("-")
-    || (
-      !prompt.userInput.endsWith(" ")
-      && /^[\w@./:-]+/.test(tail)
-      && !/\s{2,}/.test(tail)
-    );
-  if (!okContinuation) return prompt;
-  return {
-    ...prompt,
-    userInput: fullInput,
-    cursorOffset: fullInput.length,
-  };
+
+  if (fullInput === buffered) {
+    if (prompt.userInput === buffered) return prompt;
+    return {
+      ...prompt,
+      userInput: buffered,
+      cursorOffset: buffered.length,
+    };
+  }
+
+  // Painted line longer than buffer: history continuation vs autosuggest.
+  if (fullInput.startsWith(buffered) && fullInput.length > buffered.length) {
+    const next = fullInput[buffered.length] ?? "";
+    if (next === " " || next === "\t") {
+      // "git" + " status" suggestion — do not absorb.
+      if (prompt.userInput.startsWith(buffered)) {
+        return {
+          ...prompt,
+          userInput: buffered,
+          cursorOffset: buffered.length,
+        };
+      }
+      return prompt;
+    }
+    // Same-token continuation on the line (history "s" + "u -").
+    if (/[\w@./:-]/.test(next)) {
+      return {
+        ...prompt,
+        userInput: fullInput,
+        cursorOffset: fullInput.length,
+      };
+    }
+  }
+
+  return prompt;
 };
 
 /** Status / cwd chrome that must not be recorded as a submitted command. */
@@ -174,7 +217,7 @@ export const shouldRecordShellHistory = (
 
   const trimmed = command.trim();
   const alignedResult = getAlignedPrompt(term, command, true);
-  const prompt = expandPromptUserInputToFullLine(term, alignedResult.prompt);
+  const prompt = expandPromptUserInputToFullLine(term, alignedResult.prompt, command);
   if (!prompt.isAtPrompt) return false;
   if (alignedResult.alignedTyped?.trim() === trimmed) return true;
 
@@ -339,8 +382,12 @@ export const resolveSubmittedShellCommand = (
 
   const alignedResult = getAlignedPrompt(term, commandBuffer, true);
 
-  // Expand past the cursor / across wraps so Enter sees the full recalled command.
-  const prompt = expandPromptUserInputToFullLine(term, alignedResult.prompt);
+  // Expand only when keystrokes confirm the span (never paint-only suggestions).
+  const prompt = expandPromptUserInputToFullLine(
+    term,
+    alignedResult.prompt,
+    commandBuffer,
+  );
   const liveFromPrompt = prompt.isAtPrompt
     ? resolveLiveSubmittedCommand(prompt, lastPromptText)
     : "";
@@ -396,14 +443,26 @@ export const resolveSubmittedShellCommand = (
     return live;
   }
 
-  // Echo lag: live is a same-command prefix of the buffer (e.g. "su" → "su -").
-  // Do not treat accidental word prefixes as lag ("su" vs "sudo whoami").
+  // Echo lag: live is a visible prefix of what the user typed.
+  // - "su" + buffer "su -" → same command, more argv → buffer
+  // - "su" + buffer "sudo" → incomplete echo of the same word → buffer
+  // - "su" + buffer "sudo whoami" → history shortened the line → live
   if (buffered.startsWith(live) && buffered.length > live.length) {
     const next = buffered[live.length] ?? "";
     if (next === " " || next === "" || live.length === 0) {
       return buffered;
     }
-    // History replaced a longer typed command with a shorter different one.
+    const liveFirst = live.split(/\s+/)[0] ?? "";
+    const bufFirst = buffered.split(/\s+/)[0] ?? "";
+    // Single-word buffer still extending the echoed prefix: trust keystrokes.
+    if (
+      !buffered.includes(" ")
+      && bufFirst.startsWith(liveFirst)
+      && bufFirst !== liveFirst
+    ) {
+      return buffered;
+    }
+    // Multi-word typed buffer vs shorter live command: history replaced it.
     return live;
   }
 

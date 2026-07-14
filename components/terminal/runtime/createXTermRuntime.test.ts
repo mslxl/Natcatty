@@ -212,13 +212,38 @@ test("resolveSubmittedShellCommand strips themed prompt chrome without stale cac
     ),
     "/bin/ls",
   );
-  // Cursor mid-line still submits the full recalled command.
+  // Cursor mid-line: empty buffer does not absorb post-cursor paint (autosuggest).
+  // At EOL with empty buffer, the full recalled line is already in userInput.
   assert.equal(
     resolveSubmittedShellCommand(
       "",
-      createFakeTerm("user@host:~$ sudo whoami", "user@host:~$ sudo".length) as never,
+      createFakeTerm("user@host:~$ sudo whoami") as never,
     ),
     "sudo whoami",
+  );
+  // zsh-style suggestion after the cursor must not be recorded as input.
+  assert.equal(
+    resolveSubmittedShellCommand(
+      "git",
+      createFakeTerm("user@host:~$ git status", "user@host:~$ git".length) as never,
+    ),
+    "git",
+  );
+  // Incomplete remote echo of a longer typed word: trust keystrokes.
+  assert.equal(
+    resolveSubmittedShellCommand(
+      "sudo",
+      createFakeTerm("user@host:~$ su") as never,
+    ),
+    "sudo",
+  );
+  // History shortened a multi-word typed buffer to a different short command.
+  assert.equal(
+    resolveSubmittedShellCommand(
+      "sudo whoami",
+      createFakeTerm("user@host:~$ su") as never,
+    ),
+    "su",
   );
   // No trailing space after $: recover via lastPromptText (#2191 review).
   assert.equal(
