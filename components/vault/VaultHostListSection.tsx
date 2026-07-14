@@ -338,8 +338,10 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                         hostCardFocusClassName(viewMode, focusedHostId === host.id),
                                       )
                                       : cn(
-                                        "h-14 px-3 py-2 rounded-lg transition-colors",
-                                        focusedHostId === host.id ? "bg-secondary/60" : "hover:bg-secondary/60",
+                                        "h-14 px-3 py-2 rounded-lg transition-colors border border-transparent",
+                                        focusedHostId === host.id
+                                          ? hostCardFocusClassName("list", true)
+                                          : "hover:bg-secondary/60",
                                       ),
                                   )}
                                   data-host-id={host.id}
@@ -444,8 +446,10 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                         hostCardFocusClassName(viewMode, focusedHostId === host.id),
                                       )
                                       : cn(
-                                        "h-14 px-3 py-2 rounded-lg transition-colors",
-                                        focusedHostId === host.id ? "bg-secondary/60" : "hover:bg-secondary/60",
+                                        "h-14 px-3 py-2 rounded-lg transition-colors border border-transparent",
+                                        focusedHostId === host.id
+                                          ? hostCardFocusClassName("list", true)
+                                          : "hover:bg-secondary/60",
                                       ),
                                   )}
                                   data-host-id={host.id}
@@ -560,8 +564,10 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                     hostCardFocusClassName("grid", focusedGroupPath === node.path),
                                   )
                                   : cn(
-                                    "h-14 px-3 py-2 rounded-lg transition-colors",
-                                    focusedGroupPath === node.path ? "bg-secondary/60" : "hover:bg-secondary/60",
+                                    "h-14 px-3 py-2 rounded-lg transition-colors border border-transparent",
+                                    focusedGroupPath === node.path
+                                      ? hostCardFocusClassName("list", true)
+                                      : "hover:bg-secondary/60",
                                   ),
                                 getDropTargetClasses({ kind: "group", path: node.path }),
                               )}
@@ -769,8 +775,10 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                               hostCardFocusClassName(viewMode, focusedHostId === host.id),
                                             )
                                             : cn(
-                                              "h-14 px-3 py-2 rounded-lg transition-colors",
-                                              focusedHostId === host.id ? "bg-secondary/60" : "hover:bg-secondary/60",
+                                              "h-14 px-3 py-2 rounded-lg transition-colors border border-transparent",
+                                              focusedHostId === host.id
+                                                ? hostCardFocusClassName("list", true)
+                                                : "hover:bg-secondary/60",
                                             ),
                                         )}
                                         data-host-id={host.id}
@@ -909,8 +917,10 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                         hostCardFocusClassName(viewMode, focusedHostId === host.id),
                                       )
                                       : cn(
-                                        "h-14 px-3 py-2 rounded-lg transition-colors",
-                                        focusedHostId === host.id ? "bg-secondary/60" : "hover:bg-secondary/60",
+                                        "h-14 px-3 py-2 rounded-lg transition-colors border border-transparent",
+                                        focusedHostId === host.id
+                                          ? hostCardFocusClassName("list", true)
+                                          : "hover:bg-secondary/60",
                                       ),
                                   )}
                                   data-host-id={host.id}

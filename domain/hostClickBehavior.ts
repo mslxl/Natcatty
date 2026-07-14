@@ -34,16 +34,19 @@ export function resolveGroupActivateAction(input: {
   return 'select';
 }
 
-/** Visual focus styles for vault host cards (grid/list). */
+/**
+ * Visual focus styles for vault host/group cards.
+ * Must read clearly vs hover: solid accent border + light primary wash.
+ */
 export function hostCardFocusClassName(
   viewMode: 'grid' | 'list' | 'tree',
   isFocused: boolean,
 ): string {
   if (!isFocused) return '';
-  // Grid: accent edge ring (issue #2116)
+  // Full accent edge (not /opacity border) so selection is obvious at a glance
   if (viewMode === 'grid') {
-    return 'ring-2 ring-primary border-primary/70';
+    return 'border-2 border-primary bg-primary/10 ring-2 ring-primary/40 shadow-[0_0_0_1px_hsl(var(--primary))]';
   }
-  // List/other: match hover glass fill
-  return 'bg-secondary/60';
+  // List/tree rows: accent outline + wash (distinct from hover bg-secondary)
+  return 'border border-primary bg-primary/10 ring-1 ring-primary/50';
 }
