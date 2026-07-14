@@ -55,6 +55,7 @@ import {
   STORAGE_KEY_AUTO_UPDATE_ENABLED,
   STORAGE_KEY_WORKSPACE_FOCUS_STYLE,
   STORAGE_KEY_SHOW_RECENT_HOSTS,
+  STORAGE_KEY_HOST_CLICK_BEHAVIOR,
   STORAGE_KEY_SHOW_ONLY_UNGROUPED_HOSTS_IN_ROOT,
   STORAGE_KEY_SHOW_SFTP_TAB,
   STORAGE_KEY_SHOW_HOST_TREE_SIDEBAR,
@@ -100,6 +101,7 @@ import {
   DEFAULT_SFTP_USE_COMPRESSED_UPLOAD,
   DEFAULT_SHOW_ONLY_UNGROUPED_HOSTS_IN_ROOT,
   DEFAULT_SHOW_RECENT_HOSTS,
+  DEFAULT_HOST_CLICK_BEHAVIOR,
   DEFAULT_SHOW_SFTP_TAB,
   DEFAULT_SHOW_HOST_TREE_SIDEBAR,
   DEFAULT_SHELL_ONLY_TAB_NUMBER_SHORTCUTS,
@@ -122,7 +124,9 @@ import {
   migrateIncomingTerminalFontId,
   readStoredString,
   serializeTerminalSettings,
+  type HostClickBehavior,
 } from './settingsStateDefaults';
+import { isHostClickBehavior } from '../../domain/hostClickBehavior';
 import { resolveRestorePreviousSessionSetting, resolveRestoreTerminalCwdSetting } from './sessionRestoreSettings';
 import { sessionRestoreStorage } from './sessionRestoreStorage';
 import { useSettingsStorageSync } from './settingsStorageSync';
@@ -269,6 +273,10 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
   const [showRecentHosts, setShowRecentHostsState] = useState<boolean>(() => {
     const stored = localStorageAdapter.readBoolean(STORAGE_KEY_SHOW_RECENT_HOSTS);
     return stored ?? DEFAULT_SHOW_RECENT_HOSTS;
+  });
+  const [hostClickBehavior, setHostClickBehaviorState] = useState<HostClickBehavior>(() => {
+    const stored = readStoredString(STORAGE_KEY_HOST_CLICK_BEHAVIOR);
+    return isHostClickBehavior(stored) ? stored : DEFAULT_HOST_CLICK_BEHAVIOR;
   });
   const [showOnlyUngroupedHostsInRoot, setShowOnlyUngroupedHostsInRootState] = useState<boolean>(() => {
     const stored = localStorageAdapter.readBoolean(STORAGE_KEY_SHOW_ONLY_UNGROUPED_HOSTS_IN_ROOT);
@@ -717,6 +725,10 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     if (storedDefaultViewMode === 'list' || storedDefaultViewMode === 'tree') setSftpDefaultViewMode(storedDefaultViewMode);
     const storedShowRecentHosts = localStorageAdapter.readBoolean(STORAGE_KEY_SHOW_RECENT_HOSTS);
     setShowRecentHostsState(storedShowRecentHosts ?? DEFAULT_SHOW_RECENT_HOSTS);
+    const storedHostClickBehavior = readStoredString(STORAGE_KEY_HOST_CLICK_BEHAVIOR);
+    setHostClickBehaviorState(
+      isHostClickBehavior(storedHostClickBehavior) ? storedHostClickBehavior : DEFAULT_HOST_CLICK_BEHAVIOR,
+    );
     const storedShowOnlyUngroupedHostsInRoot = localStorageAdapter.readBoolean(STORAGE_KEY_SHOW_ONLY_UNGROUPED_HOSTS_IN_ROOT);
     setShowOnlyUngroupedHostsInRootState(storedShowOnlyUngroupedHostsInRoot ?? DEFAULT_SHOW_ONLY_UNGROUPED_HOSTS_IN_ROOT);
     const storedShowSftpTab = localStorageAdapter.readBoolean(STORAGE_KEY_SHOW_SFTP_TAB);
@@ -908,7 +920,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     terminalThemeId, followAppTerminalTheme, terminalFontFamilyId, terminalFontSize,
     sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles,
     sftpUseCompressedUpload, sftpAutoOpenSidebar, sftpFollowTerminalCwd, sftpDefaultViewMode,
-    showRecentHosts, showOnlyUngroupedHostsInRoot, showSftpTab, showHostTreeSidebar, terminalSidePanelAutoOpen, terminalSidePanelAutoOpenTab, shellOnlyTabNumberShortcuts, disableTerminalFontZoom, restorePreviousSession, restoreTerminalCwd,
+    showRecentHosts, hostClickBehavior, showOnlyUngroupedHostsInRoot, showSftpTab, showHostTreeSidebar, terminalSidePanelAutoOpen, terminalSidePanelAutoOpenTab, shellOnlyTabNumberShortcuts, disableTerminalFontZoom, restorePreviousSession, restoreTerminalCwd,
     editorWordWrap, sessionLogsEnabled, sessionLogsDir, sessionLogsFormat, sessionLogsTimestampsEnabled, sshDebugLogsEnabled, sshDeepLinkEnabled, jmsDeepLinkEnabled,
     globalHotkeyEnabled, autoUpdateEnabled, windowOpacity, appIconVariant,
     setTheme, setLightUiThemeId, setDarkUiThemeId, setAccentMode, setCustomAccent,
@@ -917,7 +929,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     setFollowAppTerminalThemeState, setTerminalFontFamilyId, setTerminalFontSize,
     setSftpDoubleClickBehavior, setSftpAutoSync, setSftpShowHiddenFiles,
     setSftpUseCompressedUpload, setSftpAutoOpenSidebar, setSftpFollowTerminalCwd, setSftpDefaultViewMode,
-    setShowRecentHostsState, setShowOnlyUngroupedHostsInRootState, setShowSftpTabState, setShowHostTreeSidebarState, setTerminalSidePanelAutoOpenState, setTerminalSidePanelAutoOpenTabState, setShellOnlyTabNumberShortcutsState, setDisableTerminalFontZoomState, setRestorePreviousSessionState, setRestoreTerminalCwdState,
+    setShowRecentHostsState, setHostClickBehaviorState, setShowOnlyUngroupedHostsInRootState, setShowSftpTabState, setShowHostTreeSidebarState, setTerminalSidePanelAutoOpenState, setTerminalSidePanelAutoOpenTabState, setShellOnlyTabNumberShortcutsState, setDisableTerminalFontZoomState, setRestorePreviousSessionState, setRestoreTerminalCwdState,
     setEditorWordWrapState, setSessionLogsEnabled, setSessionLogsDir, setSessionLogsFormat, setSessionLogsTimestampsEnabled, setSshDebugLogsEnabled, setSshDeepLinkEnabledState: applyIncomingSshDeepLinkEnabled, setJmsDeepLinkEnabledState: applyIncomingJmsDeepLinkEnabled,
     setGlobalHotkeyEnabled, setWindowOpacity: applyIncomingWindowOpacity, setAppIconVariant, setAutoUpdateEnabled, setWorkspaceFocusStyleState,
     setSftpTransferConcurrencyState, applyIncomingCustomKeyBindings, mergeIncomingTerminalSettings,
@@ -1008,6 +1020,13 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     localStorageAdapter.writeBoolean(STORAGE_KEY_SHOW_RECENT_HOSTS, enabled);
     if (!persistMountedRef.current) return;
     notifySettingsChanged(STORAGE_KEY_SHOW_RECENT_HOSTS, enabled);
+  }, [notifySettingsChanged]);
+
+  const setHostClickBehavior = useCallback((behavior: HostClickBehavior) => {
+    setHostClickBehaviorState(behavior);
+    localStorageAdapter.writeString(STORAGE_KEY_HOST_CLICK_BEHAVIOR, behavior);
+    if (!persistMountedRef.current) return;
+    notifySettingsChanged(STORAGE_KEY_HOST_CLICK_BEHAVIOR, behavior);
   }, [notifySettingsChanged]);
 
   const setShowOnlyUngroupedHostsInRoot = useCallback((enabled: boolean) => {
@@ -1439,6 +1458,8 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     setSftpDefaultViewMode,
     showRecentHosts,
     setShowRecentHosts,
+    hostClickBehavior,
+    setHostClickBehavior,
     showOnlyUngroupedHostsInRoot,
     setShowOnlyUngroupedHostsInRoot,
     showSftpTab,
@@ -1509,7 +1530,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
       terminalThemeId, terminalFontFamilyId, terminalFontSize, terminalSettings,
       customKeyBindings, editorWordWrap,
       sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles, sftpUseCompressedUpload, sftpAutoOpenSidebar, sftpFollowTerminalCwd, sftpDefaultViewMode,
-      showRecentHosts, showOnlyUngroupedHostsInRoot, showSftpTab, showHostTreeSidebar, terminalSidePanelAutoOpen, terminalSidePanelAutoOpenTab, shellOnlyTabNumberShortcuts, disableTerminalFontZoom,
+      showRecentHosts, hostClickBehavior, showOnlyUngroupedHostsInRoot, showSftpTab, showHostTreeSidebar, terminalSidePanelAutoOpen, terminalSidePanelAutoOpenTab, shellOnlyTabNumberShortcuts, disableTerminalFontZoom,
       customThemes, workspaceFocusStyle, sessionLogsTimestampsEnabled, sshDebugLogsEnabled, sshDeepLinkEnabled, jmsDeepLinkEnabled,
     ]),
   };

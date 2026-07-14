@@ -248,6 +248,8 @@ export const enCoreMessages: Messages = {
   'settings.vault.title': 'Vault',
   'settings.vault.showRecentHosts': 'Show recently connected hosts',
   'settings.vault.showRecentHostsDesc': 'Display a section of recently connected hosts at the top of the vault',
+  'settings.vault.selectBeforeConnect': 'Select host before connecting',
+  'settings.vault.selectBeforeConnectDesc': 'Click once to select a host (accent highlight in grid view), click again to connect. Groups work the same way. Default remains single-click connect.',
   'settings.vault.showOnlyUngroupedHostsInRoot': 'Only show ungrouped hosts at root',
   'settings.vault.showOnlyUngroupedHostsInRootDesc': 'When enabled, the root host list only shows hosts without a group. Open a group from the sidebar to see grouped hosts.',
   'settings.vault.showSftpTab': 'Show SFTP tab',

@@ -237,6 +237,8 @@ export const ruCoreMessages: Messages = {
   'settings.vault.title': 'Хранилище',
   'settings.vault.showRecentHosts': 'Показывать недавно подключённые хосты',
   'settings.vault.showRecentHostsDesc': 'Показывать раздел недавно подключённых хостов в верхней части хранилища',
+  'settings.vault.selectBeforeConnect': 'Сначала выбрать, потом подключать',
+  'settings.vault.selectBeforeConnectDesc': 'Один клик выбирает хост (акцентная рамка в сетке), повторный клик подключает. Группы работают так же. По умолчанию — подключение одним кликом.',
   'settings.vault.showOnlyUngroupedHostsInRoot': 'Показывать в корне только хосты без группы',
   'settings.vault.showOnlyUngroupedHostsInRootDesc': 'Если включено, в корневом списке хостов будут показаны только хосты без группы. Откройте группу на боковой панели, чтобы увидеть сгруппированные хосты.',
   'settings.vault.showSftpTab': 'Показывать вкладку SFTP',
