@@ -387,8 +387,15 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     const needsNewTab = !!(
       currentConn
       && currentConn.status === "connected"
-      && currentConnectionKey
-      && currentConnectionKey !== connectionKey
+      && (
+        // Local is its own endpoint; never overwrite it in place when moving
+        // to a remote host (promoted editors keep the old connection id).
+        currentConn.isLocal
+        || (
+          currentConnectionKey
+          && currentConnectionKey !== connectionKey
+        )
+      )
     );
     const rememberedPath = lastBrowsedPathByConnectionKeyRef.current.get(connectionKey);
     const initialPath = resolveSftpAutoConnectPath({
