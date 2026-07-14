@@ -258,8 +258,10 @@ export class KeywordHighlighter implements IDisposable {
       this.bulkPressureCatchUpTimer = null;
       if (!this.enabled || this.compiledRules.length === 0) return;
       const pressure = getTerminalOutputPressure(this.term);
-      if (pressure.largeOutput || pressure.longLine) {
-        // Still dumping / quiet window not elapsed — poll without scanning.
+      // Only largeOutput is time-bounded. longLine stays sticky until a later
+      // short write updates pressure — waiting on it would poll forever after a
+      // single threshold-sized line with no follow-up (Codex review).
+      if (pressure.largeOutput) {
         this.bulkPressureCatchUpTimer = setTimeout(tick, 50);
         return;
       }

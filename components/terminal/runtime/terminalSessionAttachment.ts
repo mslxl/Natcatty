@@ -443,14 +443,15 @@ const writeSessionDataImmediate = (
     const queueItemStartedAt = shouldMeasurePerf ? performance.now() : 0;
     const prepareStartedAt = shouldMeasurePerf ? performance.now() : 0;
     const settings = ctx.terminalSettingsRef?.current ?? ctx.terminalSettings;
-    // Bulk plain dumps (seq/logs): skip paste/prompt/sync-block prep. Those only
-    // matter for ESC-bearing / interactive streams; Tabby has no equivalent work
-    // on the write path. Display bytes are unchanged for plain text.
+    const forcePromptNewLine = settings?.forcePromptNewLine ?? false;
+    // Bulk plain dumps (seq/logs): skip paste/sync-block prep. Display bytes are
+    // unchanged for plain text. Never skip when forcePromptNewLine is on —
+    // prompt placement is correctness, not optional side work (Codex review).
     const bulkPlainPath = shouldDegradeTerminalSideWork(term)
-      && isPlainTerminalDisplayData(data);
+      && isPlainTerminalDisplayData(data)
+      && !forcePromptNewLine;
     let preparedDisplayData: string;
     let logDisplayData: string;
-    let forcePromptNewLine = false;
     let prepareMs = 0;
     if (bulkPlainPath) {
       preparedDisplayData = data;
@@ -462,7 +463,6 @@ const writeSessionDataImmediate = (
         wipeScrollback: settings?.clearWipesScrollback ?? true,
         normalScreen: term.buffer?.active?.type !== "alternate",
       });
-      forcePromptNewLine = settings?.forcePromptNewLine ?? false;
       if (!forcePromptNewLine && ctx.promptLineBreakStateRef?.current) {
         ctx.promptLineBreakStateRef.current.pendingCommand = false;
         ctx.promptLineBreakStateRef.current.suppressNextPromptCache = false;
