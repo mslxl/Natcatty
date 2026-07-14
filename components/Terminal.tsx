@@ -1649,8 +1649,13 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       setMoshShellReady(true);
       return;
     }
+    // Older bridges without onMoshSessionReady must not block scripts forever.
+    if (!terminalBackend.onMoshSessionReady) {
+      setMoshShellReady(true);
+      return;
+    }
     setMoshShellReady(false);
-    const dispose = terminalBackend.onMoshSessionReady?.(sessionId, () => {
+    const dispose = terminalBackend.onMoshSessionReady(sessionId, () => {
       setMoshShellReady(true);
     });
     return () => {
