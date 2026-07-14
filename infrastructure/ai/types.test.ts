@@ -9,6 +9,7 @@ import {
   extractCliSemver,
   filterAgentModelPresetsForCliVersion,
   getAgentModelPresets,
+  resolveAgentCliVersion,
   resolveAgentModelSelection,
   resolveDiscoveredAgentCliVersion,
 } from './types';
@@ -146,6 +147,25 @@ test('resolveDiscoveredAgentCliVersion matches command path or sdk backend', () 
     ),
     '0.144.1',
   );
+});
+
+test('resolveAgentCliVersion prefers stored cliVersion over discovery', () => {
+  assert.equal(
+    resolveAgentCliVersion(
+      { command: '/opt/custom/codex', sdkBackend: 'codex', cliVersion: 'codex-cli 0.144.3' },
+      [{ command: 'codex', path: '/usr/local/bin/codex', binPath: '/usr/local/bin/codex', sdkBackend: 'codex', version: '0.136.0' }],
+    ),
+    'codex-cli 0.144.3',
+  );
+  // Custom path with stored probe unlocks GPT-5.6 even when not on PATH.
+  const gated = filterAgentModelPresetsForCliVersion(
+    CODEX_MODEL_PRESETS,
+    resolveAgentCliVersion(
+      { command: '/opt/custom/codex', sdkBackend: 'codex', cliVersion: '0.144.0' },
+      [],
+    ),
+  );
+  assert.equal(gated[0]?.id, 'gpt-5.6-sol');
 });
 
 test('getAgentModelPresets resolves Windows command paths with backslashes', () => {

@@ -239,6 +239,12 @@ export interface ExternalAgentConfig {
   sdkBackend?: string;
   /** Internal: whether the managed command was set manually or auto-detected. */
   commandSource?: "manual" | "auto";
+  /**
+   * Last probed CLI --version output for this agent binary (from settings
+   * resolve-cli or discovery). Used to gate version-specific model presets
+   * when the configured path is not on PATH discovery.
+   */
+  cliVersion?: string;
   /** @deprecated Legacy persisted field from the pre-SDK migration. Read only for compatibility. */
   acpCommand?: string;
   /** @deprecated Legacy persisted field from the pre-SDK migration. */
@@ -604,6 +610,19 @@ export function resolveDiscoveredAgentCliVersion(
     return entry.command === basename || entry.command === command;
   });
   return match?.version || undefined;
+}
+
+/**
+ * Prefer the version stored on the agent config (settings resolve-cli / enable),
+ * then fall back to a matching discovery probe.
+ */
+export function resolveAgentCliVersion(
+  agent: Pick<ExternalAgentConfig, 'command' | 'sdkBackend' | 'cliVersion'> | null | undefined,
+  discovered: Array<Pick<DiscoveredAgent, 'command' | 'path' | 'binPath' | 'sdkBackend' | 'version'>>,
+): string | undefined {
+  const stored = agent?.cliVersion?.trim();
+  if (stored) return stored;
+  return resolveDiscoveredAgentCliVersion(agent, discovered);
 }
 
 export const CURSOR_MODEL_PRESETS: AgentModelPreset[] = [

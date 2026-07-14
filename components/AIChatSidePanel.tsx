@@ -16,8 +16,8 @@ import type { ExecutorContext } from '../infrastructure/ai/cattyAgent/executor';
 import {
   filterAgentModelPresetsForCliVersion,
   getAgentModelPresets,
+  resolveAgentCliVersion,
   resolveAgentModelSelection,
-  resolveDiscoveredAgentCliVersion,
 } from '../infrastructure/ai/types';
 import { getExternalAgentSdkBackend, getManualAgentCommand, matchesManagedAgentConfig } from '../infrastructure/ai/managedAgents';
 import { useAgentDiscovery } from '../application/state/useAgentDiscovery';
@@ -861,8 +861,8 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     }
     if (runtimePresets) return runtimePresets;
     const presets = getAgentModelPresets(currentAgentConfig?.command);
-    // BYO Codex CLI: hide GPT-5.6 when discovery reports CLI < 0.144.0.
-    const cliVersion = resolveDiscoveredAgentCliVersion(currentAgentConfig, discoveredAgents);
+    // BYO Codex CLI: hide GPT-5.6 when CLI < 0.144.0 (stored probe or discovery).
+    const cliVersion = resolveAgentCliVersion(currentAgentConfig, discoveredAgents);
     return filterAgentModelPresetsForCliVersion(presets, cliVersion);
   }, [
     currentAgentConfig,
