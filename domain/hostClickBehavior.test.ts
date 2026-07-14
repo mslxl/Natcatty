@@ -7,6 +7,7 @@ import {
   isHostClickBehavior,
   resolveGroupActivateAction,
   resolveHostActivateAction,
+  shouldClearHostFocusOnBackgroundClick,
 } from './hostClickBehavior';
 
 test('default host click behavior is connect (legacy single-click)', () => {
@@ -116,6 +117,54 @@ test('resolveGroupActivateAction: select mode focuses then opens', () => {
       groupPath: 'prod',
     }),
     'open',
+  );
+});
+
+test('background clicks clear focus only in select-before-connect mode', () => {
+  assert.equal(
+    shouldClearHostFocusOnBackgroundClick({
+      behavior: 'select',
+      isMultiSelectMode: false,
+      clickedWithinHostList: true,
+      clickedHostOrGroup: false,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldClearHostFocusOnBackgroundClick({
+      behavior: 'select',
+      isMultiSelectMode: false,
+      clickedWithinHostList: true,
+      clickedHostOrGroup: true,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldClearHostFocusOnBackgroundClick({
+      behavior: 'select',
+      isMultiSelectMode: true,
+      clickedWithinHostList: true,
+      clickedHostOrGroup: false,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldClearHostFocusOnBackgroundClick({
+      behavior: 'connect',
+      isMultiSelectMode: false,
+      clickedWithinHostList: true,
+      clickedHostOrGroup: false,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldClearHostFocusOnBackgroundClick({
+      behavior: 'select',
+      isMultiSelectMode: false,
+      clickedWithinHostList: false,
+      clickedHostOrGroup: false,
+    }),
+    false,
   );
 });
 
