@@ -219,32 +219,39 @@ export const shouldRecordShellHistory = (
 const LOOKS_LIKE_SHELL_COMMAND_PREFIX =
   /^(?:echo|printf|ls|cd|pwd|cat|grep|find|sed|awk|vim|nvim|nano|git|npm|yarn|pnpm|node|python|pip|docker|make|curl|wget|ssh|scp|rsync|tar|zip|unzip|chmod|chown|cp|mv|rm|mkdir|touch|tail|head|less|more|man|which|type|alias|export|source|bash|zsh|fish|sh|env|ps|top|htop|kill|df|du|free|uname|whoami|id|date|clear|history|exit|logout|true|false|test|expr|seq|sleep|yes|nohup|time|env|sudo|su|doas)\b/i;
 
+const CWD_NAME_COMMAND_COLLISION =
+  /^(?:git|node|go|npm|yarn|pnpm|docker|src|app|bin|lib|test|tmp|home|user|root|www|html|dist|build|target|main|dev|prod|staging)$/i;
+
 /** Path / git-status chrome that may sit between a glyph prompt and the command. */
 const isPlausiblePathDecoration = (text: string): boolean => {
   const s = text.trim();
   if (!s) return true;
   if (s === "~" || s.startsWith("~/") || s.startsWith("/")) return true;
-  if (/^git:\([^)]*\)/.test(s)) return true;
-  if (/[✗✔]/.test(s)) return true;
   // Privilege verbs in the prefix are never directory chrome.
   if (/\b(?:su|sudo|doas)\b/i.test(s)) return false;
 
   const words = s.split(/\s+/).filter(Boolean);
-  // Single token: common cwd names may collide with commands (git, node).
-  // Ordinary verbs (echo, ls, cat) are almost never directory chrome.
-  if (words.length === 1) {
+  // Any ordinary shell verb in the prefix means this is command text, not cwd
+  // chrome — including after git-status markers (`git:(main) ✗ echo …`).
+  for (const word of words) {
+    const token = word.replace(/^git:\([^)]*\)$/i, "").replace(/[✗✔+*!]/g, "");
+    if (!token) continue;
     if (
-      LOOKS_LIKE_SHELL_COMMAND_PREFIX.test(s)
-      && !/^[./~]/.test(s)
-      && s !== "~"
-      && !/^(?:git|node|go|npm|yarn|pnpm|docker|src|app|bin|lib|test|tmp|home|user|root|www|html|dist|build|target|main|dev|prod|staging)$/i.test(s)
+      LOOKS_LIKE_SHELL_COMMAND_PREFIX.test(token)
+      && !CWD_NAME_COMMAND_COLLISION.test(token)
+      && !/^[./~]/.test(token)
     ) {
       return false;
     }
-    return /^(?:[^\s\\]|[./~_()-])+$/u.test(s);
   }
-  // Multi-word: reject shell verbs (`echo foo`) but allow `My Project` / `项目 a`.
-  if (LOOKS_LIKE_SHELL_COMMAND_PREFIX.test(words[0] ?? "")) return false;
+
+  // Pure git-status / status glyph chrome.
+  if (/^git:\([^)]*\)/.test(s) || /^[✗✔+*!]+$/.test(s)) return true;
+  if (words.every((w) => /^git:\([^)]*\)$/i.test(w) || /^[✗✔+*!]+$/.test(w))) {
+    return true;
+  }
+
+  // Allow unicode letters and common path punctuation in directory names.
   return /^(?:[^\s\\]|[./~_()-])+(?:\s+(?:[^\s\\]|[./~_()-])+)*$/u.test(s);
 };
 
@@ -295,14 +302,34 @@ const peelThemedCommandFromPrompt = (
     }
   }
 
-  // Leading whitespace only (❯␠␠git status / ❯␠␠su -): the whole trimmed
-  // line is the command — do this before reconcile peel can drop the first word.
+  // Leading whitespace only: try path-prefix + trailing command before taking
+  // the whole line (avoids ` My Project ls` → recording the directory too).
   const trimmed = live.trim();
   if (
     trimmed
     && live.endsWith(trimmed)
     && /^\s+$/.test(live.slice(0, live.length - trimmed.length))
   ) {
+    const parts = trimmed.split(/\s+/).filter(Boolean);
+    if (parts.length === 1 || shouldArmSudoPasswordAutofill(trimmed)) {
+      return trimmed;
+    }
+    for (let i = 1; i < parts.length; i += 1) {
+      const before = parts.slice(0, i).join(" ");
+      const command = parts.slice(i).join(" ");
+      if (!command || !isPlausiblePathDecoration(before)) continue;
+      // Privilege after any path chrome, or ordinary commands only after a
+      // multi-word / path-sigil directory (not `git status` → `status`).
+      if (
+        shouldArmSudoPasswordAutofill(command)
+        || before.includes(" ")
+        || before === "~"
+        || before.startsWith("~/")
+        || before.startsWith("/")
+      ) {
+        return command;
+      }
+    }
     return trimmed;
   }
 
