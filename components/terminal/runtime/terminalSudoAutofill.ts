@@ -123,6 +123,12 @@ export type SudoPasswordAutofill = {
   /** Dismiss the open UI without clearing the su/sudo arm (Esc). */
   cancelHint: () => void;
   /**
+   * Hard-abort: hide UI and clear the arm (Ctrl+C / interrupt / disconnect).
+   * Unlike cancelHint, a later Password: line will not re-open assist until
+   * a fresh su/sudo command is armed (#2191).
+   */
+  abort: () => void;
+  /**
    * Soft-dismiss when the user pastes or types their own secret so Enter is
    * not hijacked for confirmFill after clipboard paste (#2198).
    * Returns true when the assist UI was dismissed.
@@ -516,6 +522,9 @@ export const createSudoPasswordAutofill = (_options: {
       if (!pending || !shouldDismissPasswordAssistOnInput(data)) return false;
       softDismissPendingUi();
       return true;
+    },
+    abort: () => {
+      disarm();
     },
     isPromptPending: () => pending,
     isPickerPending: () => pending && pendingUi === "picker",

@@ -893,6 +893,9 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         } else if (data === "\x03") {
           ctx.commandBufferRef.current = "";
           ctx.scriptRecorderRef?.current?.recordClearLine();
+          // Hard-abort password assist when Ctrl+C reaches the input path
+          // (e.g. broadcast peers) so a later su re-arms cleanly (#2191).
+          ctx.sudoAutofillRef?.current?.abort();
         } else if (data === "\x15") {
           ctx.commandBufferRef.current = "";
           ctx.scriptRecorderRef?.current?.recordClearLine();
@@ -1020,7 +1023,14 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         sudoAutofill.cancelHint();
         return false; // dismiss without forwarding the byte to the no-echo prompt
       }
-      if (e.key.length === 1) {
+      // Printable keys soft-dismiss so the user can type a password manually.
+      // Keep soft-dismiss for AltGr/Option-produced characters (they report
+      // Ctrl/Alt modifiers on Windows/macOS). Only plain Ctrl+C skips this —
+      // the interrupt path hard-aborts instead (#2191).
+      if (
+        e.key.length === 1
+        && !shouldUseUrgentTerminalInterrupt(e, { hasSelection: term.hasSelection() })
+      ) {
         sudoAutofill.cancelHint();
         // fall through: key becomes the first char of the manually typed password
       }
@@ -1052,6 +1062,9 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         const rendererKeyAt = Date.now();
         e.preventDefault();
         e.stopPropagation();
+        // Abort password assist: user is cancelling the remote command, not
+        // soft-dismissing the UI. A later su must re-arm cleanly (#2191).
+        sudoAutofill?.abort();
         const priority = prioritizeTerminalInput(
           term,
           id,
