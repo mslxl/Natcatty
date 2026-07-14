@@ -72,8 +72,16 @@ function buildCodexConstructorOptions({ codexPath, env, apiKey, injectedMcpServe
   return options;
 }
 
-// codex-sdk reasoning-effort levels.
-const CODEX_REASONING_EFFORTS = new Set(["minimal", "low", "medium", "high", "xhigh"]);
+// codex-sdk reasoning-effort levels (GPT-5.6 also advertises max/ultra).
+const CODEX_REASONING_EFFORTS = new Set([
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+  "ultra",
+]);
 
 function buildCodexThreadOptions({ cwd, model }) {
   // model + sandboxMode + workingDirectory belong to ThreadOptions (startThread).

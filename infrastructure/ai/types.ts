@@ -448,17 +448,43 @@ export const CLAUDE_MODEL_PRESETS: AgentModelPreset[] = [
   { id: 'haiku', name: 'Haiku 4.5', description: 'Fastest' },
 ];
 
-// Curated codex model list (codex-sdk has no enumeration API). Mirrors the
-// craft agent's `openai-codex` set. The codex driver splits "<id>/<effort>"
-// into model + modelReasoningEffort, so thinkingLevels work via codex-sdk.
+// Curated codex model list (codex-sdk has no enumeration API). IDs/efforts
+// mirror openai/codex `models-manager/models.json` and peer open-source presets
+// (pi openai-codex.models, lobehub agencyConfig, paperclip codex_local, suna
+// codex-models, cherry-studio openai-codex). GPT-5.6 needs CLI >= 0.144.0.
+// The codex driver splits "<id>/<effort>" into model + modelReasoningEffort.
+const CODEX_REASONING_LEVELS = ['low', 'medium', 'high', 'xhigh'] as const;
+// Sol/Terra advertise ultra; Luna stops at max (official catalog + lobehub).
+const CODEX_REASONING_LEVELS_5_6 = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const;
+const CODEX_REASONING_LEVELS_5_6_LUNA = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+
 export const CODEX_MODEL_PRESETS: AgentModelPreset[] = [
-  { id: 'gpt-5.5', name: 'GPT-5.5', description: 'Latest', thinkingLevels: ['low', 'medium', 'high', 'xhigh'] },
-  { id: 'gpt-5.2', name: 'GPT-5.2', thinkingLevels: ['low', 'medium', 'high', 'xhigh'] },
-  { id: 'gpt-5.1', name: 'GPT-5.1', thinkingLevels: ['low', 'medium', 'high', 'xhigh'] },
-  { id: 'gpt-5', name: 'GPT-5', thinkingLevels: ['low', 'medium', 'high', 'xhigh'] },
-  { id: 'o4-mini', name: 'o4-mini', description: 'Fast reasoning' },
-  { id: 'o3', name: 'o3', description: 'Reasoning' },
-  { id: 'gpt-4o', name: 'GPT-4o' },
+  {
+    id: 'gpt-5.6-sol',
+    name: 'GPT-5.6 Sol',
+    description: 'Latest',
+    thinkingLevels: [...CODEX_REASONING_LEVELS_5_6],
+  },
+  {
+    id: 'gpt-5.6-terra',
+    name: 'GPT-5.6 Terra',
+    description: 'Balanced',
+    thinkingLevels: [...CODEX_REASONING_LEVELS_5_6],
+  },
+  {
+    id: 'gpt-5.6-luna',
+    name: 'GPT-5.6 Luna',
+    description: 'Fast',
+    thinkingLevels: [...CODEX_REASONING_LEVELS_5_6_LUNA],
+  },
+  { id: 'gpt-5.5', name: 'GPT-5.5', thinkingLevels: [...CODEX_REASONING_LEVELS] },
+  { id: 'gpt-5.4', name: 'GPT-5.4', thinkingLevels: [...CODEX_REASONING_LEVELS] },
+  {
+    id: 'gpt-5.4-mini',
+    name: 'GPT-5.4 Mini',
+    description: 'Small & fast',
+    thinkingLevels: [...CODEX_REASONING_LEVELS],
+  },
 ];
 
 export const CURSOR_MODEL_PRESETS: AgentModelPreset[] = [
