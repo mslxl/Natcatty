@@ -9,6 +9,10 @@ function loadShellUtils() {
   return require("../ai/shellUtils.cjs");
 }
 
+function loadDesktopCliResolver() {
+  return require("./desktopCliResolver.cjs");
+}
+
 function parseCodexMcpList(rawOutput) {
   const parsed = JSON.parse(String(rawOutput || "[]"));
   if (!Array.isArray(parsed)) {
@@ -156,6 +160,8 @@ function createExternalMcpCodexSetup(options = {}) {
       : {},
     getShellEnv: options.getShellEnv || loadShellUtils().getShellEnv,
     resolveCliFromPath: options.resolveCliFromPath || loadShellUtils().resolveCliFromPath,
+    resolveDesktopManagedCli: options.resolveDesktopManagedCli
+      || loadDesktopCliResolver().resolveDesktopManagedCli,
     prepareCommandForSpawn: options.prepareCommandForSpawn || loadShellUtils().prepareCommandForSpawn,
     spawn: options.spawn || require("node:child_process").spawn,
     stripAnsi: options.stripAnsi || loadShellUtils().stripAnsi,
@@ -167,7 +173,8 @@ function createExternalMcpCodexSetup(options = {}) {
 
   async function resolveCodex() {
     const shellEnv = await deps.getShellEnv();
-    const codexPath = deps.resolveCliFromPath("codex", shellEnv);
+    const codexPath = deps.resolveCliFromPath("codex", shellEnv)
+      || deps.resolveDesktopManagedCli("codex");
     return {
       shellEnv,
       codexPath: codexPath || null,

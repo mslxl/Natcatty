@@ -9,6 +9,10 @@ function loadShellUtils() {
   return require("../ai/shellUtils.cjs");
 }
 
+function loadDesktopCliResolver() {
+  return require("./desktopCliResolver.cjs");
+}
+
 function formatClaudeCommandText(args) {
   return ["claude", ...args.map(quoteCommandArg)].join(" ");
 }
@@ -258,6 +262,8 @@ function createExternalMcpClaudeSetup(options = {}) {
       : {},
     getShellEnv: options.getShellEnv || loadShellUtils().getShellEnv,
     resolveCliFromPath: options.resolveCliFromPath || loadShellUtils().resolveCliFromPath,
+    resolveDesktopManagedCli: options.resolveDesktopManagedCli
+      || loadDesktopCliResolver().resolveDesktopManagedCli,
     prepareCommandForSpawn: options.prepareCommandForSpawn || loadShellUtils().prepareCommandForSpawn,
     spawn: options.spawn || require("node:child_process").spawn,
     stripAnsi: options.stripAnsi || loadShellUtils().stripAnsi,
@@ -269,7 +275,8 @@ function createExternalMcpClaudeSetup(options = {}) {
 
   async function resolveClaude() {
     const shellEnv = await deps.getShellEnv();
-    const claudePath = deps.resolveCliFromPath("claude", shellEnv);
+    const claudePath = deps.resolveCliFromPath("claude", shellEnv)
+      || deps.resolveDesktopManagedCli("claude");
     return {
       shellEnv,
       claudePath: claudePath || null,
