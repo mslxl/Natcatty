@@ -5,8 +5,210 @@ import {
   MAX_PENDING_WRITE_COALESCE_BYTES_FLOOD,
   MAX_TERMINAL_PLAIN_WRITE_CHUNK_BYTES,
   MAX_TERMINAL_UNBROKEN_WRITE_CHUNK_BYTES,
+  MAX_TERMINAL_WRITE_QUEUE_DRAIN_BYTES,
 } from "./terminalFlowConstants";
-import { createWriteCoalescer, type WriteCoalescer } from "./writeCoalescer.ts";
+import { shouldDegradeTerminalSideWork } from "./terminalOutputPressure";
+import {
+  createWriteCoalescer,
+  type WriteCoalesceScheduleMode,
+  type WriteCoalescer,
+} from "./writeCoalescer.ts";
+
+const ESC = String.fromCharCode(0x1b);
+/** 8-bit C1 CSI (0x9b); xterm accepts this as equivalent to ESC [. */
+const C1_CSI = String.fromCharCode(0x9b);
+const ALT_SCREEN_DECSET = new Set(["47", "1047", "1049"]);
+/** Cap incomplete CSI param buffer (real sequences are far shorter). */
+const MAX_INCOMPLETE_CSI_PARAMS = 48;
+
+type IncompletePrivateCsi = {
+  /** 0=ESC, 1=ESC[, 2=ESC[? or C1?, 3=C1 alone */
+  phase: 0 | 1 | 2 | 3;
+  /** Accumulated private-mode params after '?' */
+  params: string;
+};
+
+/** Incomplete private CSI state retained across coalescer flushes. */
+const incompleteAltScreenCsiByTerm = new WeakMap<XTerm, IncompletePrivateCsi>();
+/**
+ * Set after a complete enter-alt-screen CSI is observed, until xterm reports
+ * `buffer.active.type === "alternate"` (parser is async relative to our schedule).
+ */
+const pendingAltScreenEntryByTerm = new WeakMap<XTerm, true>();
+/** True once we have observed the alternate buffer live on this term. */
+const observedAltScreenByTerm = new WeakMap<XTerm, true>();
+
+const isPrivateParamCharCode = (code: number): boolean =>
+  (code >= 0x30 && code <= 0x39) || code === 0x3b;
+
+type AltScreenProbeResult = {
+  needsRaf: boolean;
+  incomplete: IncompletePrivateCsi | null;
+  lastTransition: "enter" | "leave" | null;
+};
+
+/**
+ * Single left-to-right scan for 7-bit (`ESC[?…`) and 8-bit (`CSI?…`) private
+ * DECSET modes that enter/leave the alternate screen. Resumes from incomplete
+ * parser state so long param lists can span PTY/schedule flushes.
+ */
+const probeAltScreenScheduling = (
+  data: string,
+  resume: IncompletePrivateCsi | null,
+): AltScreenProbeResult => {
+  let phase: IncompletePrivateCsi["phase"] | null = resume?.phase ?? null;
+  let params = resume?.params ?? "";
+  let lastTransition: "enter" | "leave" | null = null;
+  let incomplete: IncompletePrivateCsi | null = null;
+
+  const finishPrivate = (final: string): void => {
+    const parts = params.split(";").filter(Boolean);
+    if (parts.some((param) => ALT_SCREEN_DECSET.has(param))) {
+      lastTransition = final === "h" ? "enter" : "leave";
+    }
+    phase = null;
+    params = "";
+  };
+
+  for (let i = 0; i < data.length; i += 1) {
+    const ch = data.charAt(i);
+    const code = data.charCodeAt(i);
+
+    if (phase === null) {
+      if (ch === ESC) {
+        phase = 0;
+        params = "";
+        continue;
+      }
+      if (ch === C1_CSI) {
+        phase = 3;
+        params = "";
+        continue;
+      }
+      continue;
+    }
+
+    if (phase === 0) {
+      // After ESC: expect '[' (CSI) or 'c' (RIS full reset).
+      if (ch === "[") {
+        phase = 1;
+        continue;
+      }
+      if (ch === "c") {
+        // RIS returns the terminal to the normal screen without DECSET leave.
+        lastTransition = "leave";
+        phase = null;
+        params = "";
+        continue;
+      }
+      phase = null;
+      params = "";
+      i -= 1; // reprocess this char as potential start
+      continue;
+    }
+
+    if (phase === 1) {
+      // After ESC[: expect '?'
+      if (ch === "?") {
+        phase = 2;
+        params = "";
+        continue;
+      }
+      phase = null;
+      params = "";
+      i -= 1;
+      continue;
+    }
+
+    if (phase === 3) {
+      // After C1 CSI: expect '?'
+      if (ch === "?") {
+        phase = 2;
+        params = "";
+        continue;
+      }
+      phase = null;
+      params = "";
+      i -= 1;
+      continue;
+    }
+
+    // phase === 2: private params then final byte
+    if (isPrivateParamCharCode(code)) {
+      if (params.length < MAX_INCOMPLETE_CSI_PARAMS) {
+        params += ch;
+      }
+      continue;
+    }
+    if (ch === "h" || ch === "l") {
+      finishPrivate(ch);
+      continue;
+    }
+    // Abort incomplete private mode. ESC / C1 start a new sequence (xterm does
+    // the same) — reprocess this byte as a fresh introducer.
+    phase = null;
+    params = "";
+    if (ch === ESC || ch === C1_CSI) {
+      i -= 1;
+    }
+  }
+
+  if (phase !== null) {
+    incomplete = { phase, params };
+  }
+
+  return {
+    needsRaf: lastTransition === "enter" || incomplete !== null,
+    incomplete,
+    lastTransition,
+  };
+};
+
+const isTerminalAlternateScreenActive = (term: XTerm): boolean => {
+  try {
+    return (term.buffer?.active as { type?: string } | undefined)?.type === "alternate";
+  } catch {
+    return false;
+  }
+};
+
+const noteAltScreenScheduleProbe = (term: XTerm, chunk: string): boolean => {
+  // Always scan the chunk first so leave-alt CSI is observed even while
+  // buffer.active still reports "alternate" (parser lags our write schedule).
+  const resume = incompleteAltScreenCsiByTerm.get(term) ?? null;
+  const probe = probeAltScreenScheduling(chunk, resume);
+  if (probe.incomplete) {
+    incompleteAltScreenCsiByTerm.set(term, probe.incomplete);
+  } else {
+    incompleteAltScreenCsiByTerm.delete(term);
+  }
+
+  if (probe.lastTransition === "leave") {
+    pendingAltScreenEntryByTerm.delete(term);
+    observedAltScreenByTerm.delete(term);
+  } else if (probe.lastTransition === "enter") {
+    // Complete enter CSI observed; xterm may still report normal until parse.
+    pendingAltScreenEntryByTerm.set(term, true);
+  }
+
+  if (isTerminalAlternateScreenActive(term)) {
+    // Buffer realized alternate — drop enter-pending (no longer needed).
+    observedAltScreenByTerm.set(term, true);
+    pendingAltScreenEntryByTerm.delete(term);
+    return true;
+  }
+
+  // Left alternate without a recognized leave CSI (e.g. RIS / ESC c).
+  if (observedAltScreenByTerm.has(term)) {
+    observedAltScreenByTerm.delete(term);
+    pendingAltScreenEntryByTerm.delete(term);
+  }
+
+  return (
+    probe.needsRaf
+    || pendingAltScreenEntryByTerm.has(term)
+  );
+};
 
 type CoalescerByteCapResolver = () => number;
 type CoalescerFlushGate = () => boolean;
@@ -116,17 +318,41 @@ const hasLongUnbrokenRun = (data: string, maxRunBytes: number): boolean => {
   return data.length - runStart > maxRunBytes;
 };
 
+/**
+ * Cap how much plain text reaches xterm in one write().
+ *
+ * Tabby's FlowControl thresholds ~128KB before tracking write callbacks.
+ * Multi-line floods (`seq`, log dumps) are plain text with newlines — they
+ * must use the same cap as long unbroken runs. Leaving them at the coalescer
+ * pending cap (1MB) feeds hundreds of thousands of buffer lines into a single
+ * parse turn and freezes the whole Electron UI.
+ */
 const resolveTerminalWriteBatchBytes = (
   data: string,
   maxPendingBytes: number,
-): number => (
-  isPlainTerminalOutput(data)
-    && hasLongUnbrokenRun(data, MAX_TERMINAL_UNBROKEN_WRITE_CHUNK_BYTES)
-    ? MAX_TERMINAL_UNBROKEN_WRITE_CHUNK_BYTES
-    : data.length > MAX_TERMINAL_PLAIN_WRITE_CHUNK_BYTES && isPlainTerminalOutput(data)
-      ? MAX_TERMINAL_PLAIN_WRITE_CHUNK_BYTES
-    : maxPendingBytes
-);
+): number => {
+  if (!isPlainTerminalOutput(data)) {
+    return maxPendingBytes;
+  }
+  if (hasLongUnbrokenRun(data, MAX_TERMINAL_UNBROKEN_WRITE_CHUNK_BYTES)) {
+    return Math.min(maxPendingBytes, MAX_TERMINAL_UNBROKEN_WRITE_CHUNK_BYTES);
+  }
+  return Math.min(maxPendingBytes, MAX_TERMINAL_PLAIN_WRITE_CHUNK_BYTES);
+};
+
+/**
+ * Cooperative yield budget between sliced xterm writes.
+ *
+ * Plain bulk dumps yield after every slice (~128KB, Tabby-like) so paint and
+ * input can run between shards. CSI/TUI batches keep a larger drain budget so
+ * multi-chunk frames are not chopped into stuttery 128KB pauses.
+ */
+const resolveSliceYieldBudgetBytes = (data: string, batchSize: number): number => {
+  if (isPlainTerminalOutput(data)) {
+    return Math.max(1, batchSize);
+  }
+  return Math.max(MAX_TERMINAL_UNBROKEN_WRITE_CHUNK_BYTES, MAX_TERMINAL_WRITE_QUEUE_DRAIN_BYTES);
+};
 
 const writeLargeTerminalBatch = (
   data: string,
@@ -141,8 +367,10 @@ const writeLargeTerminalBatch = (
 ): void => {
   const batchSize = Math.max(1, maxBatchBytes);
   const isSliced = data.length > batchSize;
+  const yieldBudget = resolveSliceYieldBudgetBytes(data, batchSize);
   let offset = 0;
   let remainingIngressBytes = Math.max(0, ingressBytes);
+  let bytesSinceYield = 0;
 
   while (offset < data.length) {
     const end = Math.min(data.length, offset + batchSize);
@@ -156,12 +384,15 @@ const writeLargeTerminalBatch = (
         remainingIngressBytes,
       );
     remainingIngressBytes -= sliceIngress;
+    const isLast = end >= data.length;
+    bytesSinceYield += slice.length;
+    const shouldYield = isSliced && !isLast && bytesSinceYield >= yieldBudget;
+    if (shouldYield) {
+      bytesSinceYield = 0;
+    }
     const nextOptions = {
       ...options,
-      ...(isSliced ? {
-        deferStart: true,
-        yieldAfter: true,
-      } : {}),
+      ...(shouldYield ? { yieldAfter: true } : {}),
     };
     writeNow(
       slice,
@@ -185,6 +416,9 @@ export const enqueueCoalescedTerminalWrite = (
   }
   terminalWriteCoalescerWriters.set(term, writeNow);
   if (canAutoFlush && data.length > maxPendingBytes) {
+    // Oversized batches skip the coalescer frame arm, but still must latch
+    // enter-alt-screen so follow-up repaint chunks use rAF.
+    noteAltScreenScheduleProbe(term, data);
     writeLargeTerminalBatch(
       data,
       ingressBytes,
@@ -219,6 +453,30 @@ export const enqueueCoalescedTerminalWrite = (
     }, {
       getMaxPendingBytes: () => resolveCoalescerByteCap(term),
       shouldFlushScheduledFrame: () => terminalWriteCoalescerFlushGates.get(term)?.() ?? true,
+      // Tabby streams normal-screen output without waiting for vsync. Keep rAF
+      // for alternate-screen TUIs (including the enter-alt burst before xterm
+      // has switched buffer.active.type) so multi-chunk repaints stay atomic.
+      // When rAF is unavailable (Node unit tests), prefer the "raf" mode so the
+      // coalescer falls back to an immediate flush (legacy test contract).
+      resolveScheduleMode: ({ nextChunk }): WriteCoalesceScheduleMode => {
+        // Probe always runs (handles leave while buffer is still alternate).
+        // O(chunk) parser state — no quadratic pending joins.
+        if (noteAltScreenScheduleProbe(term, nextChunk)) {
+          return "raf";
+        }
+        // Bulk pressure: prefer rAF so the browser can paint between flushes.
+        // Microtask packing of seq/log floods pins the main thread for many
+        // consecutive turns (Tabby instead back-pressures on write callbacks).
+        if (shouldDegradeTerminalSideWork(term)) {
+          return "raf";
+        }
+        const canUseMicrotask = typeof queueMicrotask === "function"
+          && typeof globalThis.requestAnimationFrame === "function";
+        if (canUseMicrotask) {
+          return "microtask";
+        }
+        return "raf";
+      },
     });
     terminalWriteCoalescers.set(term, coalescer);
   }
@@ -256,6 +514,9 @@ export const resetTerminalWriteCoalescer = (term: XTerm): void => {
   terminalWriteCoalescerByteCapResolvers.delete(term);
   terminalWriteCoalescerFlushGates.delete(term);
   terminalWriteCoalescerWriters.delete(term);
+  incompleteAltScreenCsiByTerm.delete(term);
+  pendingAltScreenEntryByTerm.delete(term);
+  observedAltScreenByTerm.delete(term);
 };
 
 export const getTerminalWriteCoalescerPendingBytes = (term: XTerm): number =>
@@ -268,6 +529,14 @@ export const abortTerminalWriteCoalescer = (
   term: XTerm,
   onDropped?: (bytes: number) => void,
 ): void => {
+  // Always clear alt-screen schedule state, even when no coalescer exists.
+  // Oversized direct-write path can latch enter-alt via noteAltScreenScheduleProbe
+  // without creating a coalescer; if Ctrl-C drops that queued batch before xterm
+  // parses it, a sticky latch would force rAF for later normal-screen output.
+  incompleteAltScreenCsiByTerm.delete(term);
+  pendingAltScreenEntryByTerm.delete(term);
+  observedAltScreenByTerm.delete(term);
+
   const coalescer = terminalWriteCoalescers.get(term);
   if (!coalescer) return;
   const ingressDropped = takePendingIngressBytes(

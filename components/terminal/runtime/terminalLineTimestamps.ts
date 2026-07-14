@@ -1,5 +1,7 @@
 import type { Terminal as XTerm } from "@xterm/xterm";
 
+import { shouldSkipTerminalLineTimestamps } from "./terminalOutputPressure";
+
 export type TerminalLineTimestampSegment =
   | { kind: "data"; data: string }
   | { kind: "timestamp"; label: string };
@@ -1134,19 +1136,37 @@ export const writeTerminalDataWithLineTimestamps = (
   diagnostics?: TerminalLineTimestampDiagnostics,
 ) => {
   const shouldMeasureDiagnostics = Boolean(diagnostics);
-  const registerMarker = (term as XTerm & { registerMarker?: unknown }).registerMarker;
-  if (typeof registerMarker !== "function") {
+  const writeFallbackOnly = (fallbackData: string, onComplete: () => void): void => {
     const writeStartedAt = shouldMeasureDiagnostics ? performance.now() : 0;
-    term.write(data, () => {
+    term.write(fallbackData, () => {
       if (diagnostics) {
         diagnostics.onStep?.({
           kind: "fallback-write",
-          dataChars: data.length,
+          dataChars: fallbackData.length,
           writeCallbackMs: performance.now() - writeStartedAt,
         });
       }
-      done();
+      onComplete();
     });
+  };
+
+  const registerMarker = (term as XTerm & { registerMarker?: unknown }).registerMarker;
+  if (typeof registerMarker !== "function") {
+    writeFallbackOnly(data, done);
+    return;
+  }
+
+  // Only skip markers under true flood / long-line pressure — not merely
+  // "scrollback full + multi-line" (that would drop timestamps for docker ps
+  // after a prior seq). Product semantics: each line can show a gutter stamp.
+  if (shouldSkipTerminalLineTimestamps(term)) {
+    const store = getTimestampStore(term);
+    store.segmenter.setAlternateScreenActive(
+      ((term.buffer?.active as { type?: string } | undefined)?.type) === "alternate",
+    );
+    store.segmenter.reset();
+    store.timestampOnlyPrefix = "";
+    writeFallbackOnly(data, done);
     return;
   }
 
@@ -1182,19 +1202,7 @@ export const writeTerminalDataWithLineTimestamps = (
       parsedChars: parsedData.length,
     });
   }
-  const writeFallbackData = (fallbackData: string, onComplete: () => void): void => {
-    const writeStartedAt = shouldMeasureDiagnostics ? performance.now() : 0;
-    term.write(fallbackData, () => {
-      if (diagnostics) {
-        diagnostics.onStep?.({
-          kind: "fallback-write",
-          dataChars: fallbackData.length,
-          writeCallbackMs: performance.now() - writeStartedAt,
-        });
-      }
-      onComplete();
-    });
-  };
+  const writeFallbackData = writeFallbackOnly;
   if (
     timestampOnlyPrefix.length === 0
     && parsedData === dataForTimestamps

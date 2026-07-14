@@ -86,6 +86,8 @@ export class KeywordHighlighter implements IDisposable {
   private compiledRules: CompiledRule[] = [];
   private lineDecorations = new Map<number, LineDecorationState>();
   private debounceTimer: NodeJS.Timeout | null = null;
+  /** Single quiet-window catch-up after bulk dumps (no per-write schedule). */
+  private bulkPressureCatchUpTimer: NodeJS.Timeout | null = null;
   private animationFrameId: number | null = null;
   private lastRefreshTime: number = 0;
   private matchCache = new Map<string, CachedDecorationRange[]>();
@@ -116,9 +118,9 @@ export class KeywordHighlighter implements IDisposable {
   private static readonly WRITE_BURST_OVERSCAN_SCALE = 0.35;
   private static readonly WRITE_BURST_BUDGET_SCALE = 0.5;
   private static readonly WRITE_BURST_CHUNK_SCALE = 0.5;
-  private static readonly WRITE_BURST_DEBOUNCE_MS = 140;
-  private static readonly WRITE_BURST_IMMEDIATE_MIN_INTERVAL_MS = 32;
-  private static readonly WRITE_BURST_HIGHLIGHT_PAUSE_MS = 180;
+  private static readonly WRITE_BURST_DEBOUNCE_MS = 180;
+  private static readonly WRITE_BURST_IMMEDIATE_MIN_INTERVAL_MS = 48;
+  private static readonly WRITE_BURST_HIGHLIGHT_PAUSE_MS = 260;
 
   constructor(term: XTerm) {
     this.term = term;
@@ -138,12 +140,29 @@ export class KeywordHighlighter implements IDisposable {
       // with the freshly rendered content instead of trailing behind it.
       this.term.onWriteParsed(() => {
         const pressure = getTerminalOutputPressure(this.term);
+        if (pressure.background) {
+          // Hidden panes: avoid immediate scans that fight xterm, but still arm a
+          // debounced refresh. Reveal only flushes writes/repaints — without a
+          // scheduled tick, decorations for hidden-pane output never apply if no
+          // further write/scroll/resize happens after show (Codex PR review).
+          this.updateWriteBurst();
+          this.markVisibleRangeDirty();
+          this.triggerRefresh("debounced", "write");
+          return;
+        }
         if (
           pressure.longLine
           || pressure.largeOutput
-          || pressure.background
-          || this.isInputProtectionActive(performance.now())
         ) {
+          this.updateWriteBurst();
+          // Tabby has no keyword path. During bulk dumps do not schedule
+          // decoration work at all (debounced scans still compete with xterm).
+          // Mark dirty + one quiet catch-up after pressure drops.
+          this.markVisibleRangeDirty();
+          this.scheduleBulkPressureCatchUp();
+          return;
+        }
+        if (this.isInputProtectionActive(performance.now())) {
           this.updateWriteBurst();
           this.markVisibleRangeDirty();
           this.triggerRefresh("debounced", "write");
@@ -212,12 +231,46 @@ export class KeywordHighlighter implements IDisposable {
     this.disposables = [];
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer);
+      this.debounceTimer = null;
+    }
+    if (this.bulkPressureCatchUpTimer) {
+      clearTimeout(this.bulkPressureCatchUpTimer);
+      this.bulkPressureCatchUpTimer = null;
     }
     if (this.animationFrameId !== null) {
       cancelAnimationFrame(this.animationFrameId);
       this.animationFrameId = null;
     }
     this.matchCache.clear();
+  }
+
+  /**
+   * After bulk/large-output dumps, apply keyword decorations once output is
+   * quiet. Avoids per-write timer/rAF work during the flood (Tabby has none).
+   */
+  private scheduleBulkPressureCatchUp(): void {
+    if (this.bulkPressureCatchUpTimer !== null) return;
+    const quietMs = Math.max(
+      48,
+      XTERM_PERFORMANCE_CONFIG.highlighting.largeOutputQuietMs ?? 480,
+    );
+    const tick = (): void => {
+      this.bulkPressureCatchUpTimer = null;
+      if (!this.enabled || this.compiledRules.length === 0) return;
+      const pressure = getTerminalOutputPressure(this.term);
+      // Only largeOutput is time-bounded. longLine stays sticky until a later
+      // short write updates pressure — waiting on it would poll forever after a
+      // single threshold-sized line with no follow-up (Codex review).
+      if (pressure.largeOutput) {
+        this.bulkPressureCatchUpTimer = setTimeout(tick, 50);
+        return;
+      }
+      this.markVisibleRangeDirty();
+      // One catch-up scan after the dump — immediate so decorations appear
+      // without another full large-output debounce wait.
+      this.triggerRefresh("immediate", "write");
+    };
+    this.bulkPressureCatchUpTimer = setTimeout(tick, quietMs);
   }
 
   /** Shared refresh execution for both rAF and timer callbacks. */
@@ -983,6 +1036,28 @@ export class KeywordHighlighter implements IDisposable {
   private getAdaptiveHighlightingProfile(now = performance.now()) {
     const config = XTERM_PERFORMANCE_CONFIG.highlighting;
     const overscanLines = this.getBaseOverscanLines();
+    const pressure = getTerminalOutputPressure(this.term);
+    const underOutputPressure = pressure.largeOutput || pressure.longLine || pressure.background;
+
+    if (underOutputPressure) {
+      return {
+        overscanLines: Math.max(4, Math.round(overscanLines * 0.25)),
+        writeRefreshBudgetMs: Math.max(1, Math.floor(config.writeRefreshBudgetMs * 0.35)),
+        dirtySegmentChunkSize: Math.max(8, Math.round(config.dirtySegmentChunkSize * 0.35)),
+        debounceMs: Math.max(
+          config.debounceMs,
+          config.largeOutputDebounceMs ?? KeywordHighlighter.WRITE_BURST_DEBOUNCE_MS,
+          KeywordHighlighter.WRITE_BURST_DEBOUNCE_MS,
+        ),
+        immediateMinIntervalMs: Math.max(
+          config.immediateMinIntervalMs,
+          config.largeOutputImmediateMinIntervalMs
+            ?? KeywordHighlighter.WRITE_BURST_IMMEDIATE_MIN_INTERVAL_MS,
+          KeywordHighlighter.WRITE_BURST_IMMEDIATE_MIN_INTERVAL_MS,
+        ),
+      };
+    }
+
     if (!this.isWriteBurstActive(now)) {
       return {
         overscanLines,

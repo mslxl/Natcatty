@@ -30,6 +30,7 @@ import {
   noteTerminalOutputPressureData,
   resetTerminalOutputPressure,
   setTerminalOutputPressureVisibility,
+  shouldDegradeTerminalSideWork,
 } from "./terminalOutputPressure";
 import { createSudoPasswordAutofill } from "./terminalSudoAutofill";
 import {
@@ -135,7 +136,9 @@ type TerminalSessionWriteOptions = CoalescedTerminalWriteOptions & {
 const BACKGROUND_OUTPUT_FLUSH_MAX_PASSES = 64;
 const LARGE_WRITE_FLUSH_WATCHDOG_BYTES = 64 * 1024;
 const LARGE_WRITE_FLUSH_WATCHDOG_MS = 250;
-const VISIBLE_WRITE_IDLE_FLUSH_MS = 64;
+// With microtask coalescing, idle flush is only a safety net for rAF TUI path
+// and any leftover queue work — keep it short so the last batch does not lag.
+const VISIBLE_WRITE_IDLE_FLUSH_MS = 24;
 const HIDDEN_PANE_DRAIN_MS = 160;
 const visibleWriteIdleFlushTimers = new WeakMap<XTerm, ReturnType<typeof setTimeout>>();
 const hiddenPaneDrainTimers = new WeakMap<XTerm, ReturnType<typeof setTimeout>>();
@@ -326,7 +329,9 @@ export const getFlowController = (
   setTerminalWriteCoalescerByteCapResolver(term, () => (
     resolveFloodCoalescerByteCap(
       controller!.isPaused(),
-      isTerminalWriteQueueInFloodMode(term),
+      // Treat bulk/large-output pressure like queue flood so we stop packing
+      // multi-MB seq dumps into a single microtask flush (UI freeze).
+      isTerminalWriteQueueInFloodMode(term) || shouldDegradeTerminalSideWork(term),
     )
   ));
   setTerminalWriteCoalescerFlushGate(term, () => ctx.isVisibleRef?.current !== false);
@@ -416,6 +421,10 @@ export const writeSessionData = (
   );
 };
 
+/** True when a batch has no ESC/C1 CSI — safe to skip TUI/filter transforms. */
+const isPlainTerminalDisplayData = (data: string): boolean =>
+  !data.includes("\x1b") && !data.includes("\x9b");
+
 const writeSessionDataImmediate = (
   ctx: TerminalSessionStartersContext,
   term: XTerm,
@@ -424,29 +433,47 @@ const writeSessionDataImmediate = (
   writeOptions: TerminalSessionWriteOptions = {},
 ) => {
   const flow = getFlowController(ctx, term);
+  // Tabby-like: under bulk pressure, force a yield after sizable shards so the
+  // event loop can paint/input between xterm parses (serial queue otherwise
+  // chains the next write the moment the callback fires).
+  const bulkYieldAfter = shouldDegradeTerminalSideWork(term)
+    && ingressBytes >= XTERM_WRITE_CALLBACK_FAST_PATH_MAX_BYTES;
   enqueueTerminalWrite(term, ingressBytes, (done) => {
     const shouldMeasurePerf = Boolean(writeOptions.perfTrace);
     const queueItemStartedAt = shouldMeasurePerf ? performance.now() : 0;
     const prepareStartedAt = shouldMeasurePerf ? performance.now() : 0;
     const settings = ctx.terminalSettingsRef?.current ?? ctx.terminalSettings;
+    const forcePromptNewLine = settings?.forcePromptNewLine ?? false;
+    // Always run filter + paste bookkeeping (stateful). Bulk-plain only skips
+    // erase-scrollback / prompt cosmetics when the *post-paste* stream is still
+    // plain and forcePromptNewLine is off (Codex: long paste cleanup must run).
     const filteredData = filterTerminalSessionData(term, data);
-    const displayData = appendEraseScrollbackAfterFullErases(filteredData, {
+    const afterErase = appendEraseScrollbackAfterFullErases(filteredData, {
       wipeScrollback: settings?.clearWipesScrollback ?? true,
       normalScreen: term.buffer?.active?.type !== "alternate",
     });
-    const forcePromptNewLine = settings?.forcePromptNewLine ?? false;
-    if (!forcePromptNewLine && ctx.promptLineBreakStateRef?.current) {
-      ctx.promptLineBreakStateRef.current.pendingCommand = false;
-      ctx.promptLineBreakStateRef.current.suppressNextPromptCache = false;
+    const pasteDisplayData = prepareTerminalDataForUserPasteDisplay(term, afterErase);
+    const bulkPlainPath = shouldDegradeTerminalSideWork(term)
+      && isPlainTerminalDisplayData(pasteDisplayData)
+      && !forcePromptNewLine;
+    let preparedDisplayData: string;
+    let prepareMs = 0;
+    if (bulkPlainPath) {
+      preparedDisplayData = pasteDisplayData;
+      prepareMs = shouldMeasurePerf ? performance.now() - prepareStartedAt : 0;
+    } else {
+      if (!forcePromptNewLine && ctx.promptLineBreakStateRef?.current) {
+        ctx.promptLineBreakStateRef.current.pendingCommand = false;
+        ctx.promptLineBreakStateRef.current.suppressNextPromptCache = false;
+      }
+      preparedDisplayData = prepareTerminalDataForPromptLineBreak(
+        term,
+        pasteDisplayData,
+        ctx.promptLineBreakStateRef?.current,
+        forcePromptNewLine,
+      );
+      prepareMs = shouldMeasurePerf ? performance.now() - prepareStartedAt : 0;
     }
-    const pasteDisplayData = prepareTerminalDataForUserPasteDisplay(term, displayData);
-    const preparedDisplayData = prepareTerminalDataForPromptLineBreak(
-      term,
-      pasteDisplayData,
-      ctx.promptLineBreakStateRef?.current,
-      forcePromptNewLine,
-    );
-    const prepareMs = shouldMeasurePerf ? performance.now() - prepareStartedAt : 0;
     ctx.onTerminalLogData?.(pasteDisplayData);
     const clearPasteResidualAndCapture = () => {
       const cleanupData = clearPasteResidualAfterTerminalWrite(term);
@@ -455,6 +482,7 @@ const writeSessionDataImmediate = (
       }
     };
     const syncPrompt = () => {
+      if (bulkPlainPath) return;
       if (forcePromptNewLine) {
         syncPromptLineBreakState(term, ctx.promptLineBreakStateRef?.current);
       }
@@ -517,10 +545,13 @@ const writeSessionDataImmediate = (
             totalMs: roundMs(now - queueItemStartedAt),
             deferredAck: deferFlowAck,
             lineTimestamps: summarizeLineTimestampPerf(lineTimestampPerf),
+            bulkPlainPath,
           });
         }
         callback();
       };
+      // writeTerminalDataWithLineTimestamps skips markers only under true flood
+      // (not saturated multi-line), preserving per-line gutter timestamps.
       writeTerminalDataWithLineTimestamps(
         term,
         preparedDisplayData,
@@ -573,7 +604,9 @@ const writeSessionDataImmediate = (
     });
   }, {
     deferStart: writeOptions.deferStart,
-    yieldAfter: writeOptions.yieldAfter,
+    // Intermediate plain shards set yieldAfter via writeLargeTerminalBatch;
+    // bulk pressure also yields after sizable items (Tabby FlowControl intent).
+    yieldAfter: writeOptions.yieldAfter === true || bulkYieldAfter,
   });
 };
 
