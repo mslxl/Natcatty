@@ -35,18 +35,19 @@ export function resolveGroupActivateAction(input: {
 }
 
 /**
- * Visual focus styles for vault host/group cards.
- * Must read clearly vs hover: solid accent border + light primary wash.
+ * Focus styles for vault host/group cards.
+ * Unfocused: no extra border/bg (caller keeps hover only).
+ * Focused: accent border only — no fill, no ring wash.
  */
 export function hostCardFocusClassName(
   viewMode: 'grid' | 'list' | 'tree',
   isFocused: boolean,
 ): string {
   if (!isFocused) return '';
-  // Full accent edge (not /opacity border) so selection is obvious at a glance
+  // Grid soft-card already draws a border; force accent color (beat .soft-card).
   if (viewMode === 'grid') {
-    return 'border-2 border-primary bg-primary/10 ring-2 ring-primary/40 shadow-[0_0_0_1px_hsl(var(--primary))]';
+    return '!border-primary';
   }
-  // List/tree rows: accent outline + wash (distinct from hover bg-secondary)
-  return 'border border-primary bg-primary/10 ring-1 ring-primary/50';
+  // List/tree: no chrome until selected — add accent border only.
+  return 'border border-primary';
 }
