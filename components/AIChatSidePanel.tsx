@@ -686,24 +686,6 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     };
   }, []);
 
-  const buildDiscoveredAgentRuntimeModelTarget = useCallback((agent: DiscoveredAgent): SdkRuntimeModelTarget | null => {
-    const sdkBackend = agent.sdkBackend ?? agent.command;
-    if (sdkBackend !== 'opencode') return null;
-    const command = agent.binPath || agent.path || agent.command;
-    const agentId = `discovered_${agent.command}`;
-    return {
-      agentId,
-      cacheKey: buildSdkRuntimeModelCacheKey({
-        id: agentId,
-        command,
-        sdkBackend,
-        env: command ? { OPENCODE_BIN: command } : undefined,
-      }),
-      sdkBackend,
-      agentCommand: command,
-    };
-  }, []);
-
   const applySdkRuntimeModelCatalog = useCallback((
     agentId: string,
     catalog: SdkRuntimeModelCatalog,
@@ -781,10 +763,12 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       applySdkRuntimeModelCatalog(target.agentId, cached);
     }
 
+    // Respect renderer TTL / in-flight coalescing for all SDK agents including
+    // OpenCode. Forced refresh used to re-spawn opencode on every effect re-run
+    // even when the user never selected OpenCode (#2184). Manual refresh still
+    // passes force via the model selector path.
     let cancelled = false;
-    void loadSdkRuntimeModelCatalog(target, {
-      force: target.sdkBackend === 'opencode',
-    }).then((catalog) => {
+    void loadSdkRuntimeModelCatalog(target).then((catalog) => {
       if (cancelled || !catalog) return;
       applySdkRuntimeModelCatalog(target.agentId, catalog, { adoptCurrentModel: true });
     });
@@ -797,51 +781,6 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     currentAgentConfig,
     isCodexManagedAgent,
     buildExternalAgentRuntimeModelTarget,
-    loadSdkRuntimeModelCatalog,
-    applySdkRuntimeModelCatalog,
-  ]);
-
-  useEffect(() => {
-    if (!isVisible) return;
-    const targets = new Map<string, SdkRuntimeModelTarget>();
-    const configuredTargetCacheKeys = new Set<string>();
-
-    for (const agent of externalAgents) {
-      if (!agent.enabled || getExternalAgentSdkBackend(agent) !== 'opencode') continue;
-      const target = buildExternalAgentRuntimeModelTarget(agent);
-      if (target) {
-        targets.set(target.cacheKey, target);
-        configuredTargetCacheKeys.add(target.cacheKey);
-      }
-    }
-
-    for (const agent of discoveredAgents) {
-      const target = buildDiscoveredAgentRuntimeModelTarget(agent);
-      if (target) targets.set(target.cacheKey, target);
-    }
-
-    if (targets.size === 0) return;
-
-    let cancelled = false;
-    for (const target of targets.values()) {
-      void loadSdkRuntimeModelCatalog(target, { logErrors: false })
-        .then((catalog) => {
-          if (cancelled || !catalog) return;
-          if (configuredTargetCacheKeys.has(target.cacheKey)) {
-            applySdkRuntimeModelCatalog(target.agentId, catalog);
-          }
-        });
-    }
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    isVisible,
-    externalAgents,
-    discoveredAgents,
-    buildExternalAgentRuntimeModelTarget,
-    buildDiscoveredAgentRuntimeModelTarget,
     loadSdkRuntimeModelCatalog,
     applySdkRuntimeModelCatalog,
   ]);

@@ -43,6 +43,17 @@ test("SDK model cache keys include resolved CLI path", () => {
   );
 });
 
+test("SDK model cache keys include catalog-affecting agent environment", () => {
+  assert.notEqual(
+    buildSdkModelCacheKey("opencode", "/usr/bin/opencode", { HOME: "/Users/a", OPENCODE_CONFIG_DIR: "/a/config" }),
+    buildSdkModelCacheKey("opencode", "/usr/bin/opencode", { HOME: "/Users/b", OPENCODE_CONFIG_DIR: "/b/config" }),
+  );
+  assert.equal(
+    buildSdkModelCacheKey("opencode", "/usr/bin/opencode", { HOME: "/Users/a" }),
+    buildSdkModelCacheKey("opencode", "/usr/bin/opencode", { HOME: "/Users/a" }),
+  );
+});
+
 test("normalizeSdkListModelsResult preserves current model ids from object results", () => {
   assert.deepEqual(normalizeSdkListModelsResult({
     currentModelId: "openai/gpt-5.1",
@@ -57,10 +68,13 @@ test("normalizeSdkListModelsResult preserves current model ids from object resul
   });
 });
 
-test("shouldCacheSdkRuntimeModels skips OpenCode model catalogs", () => {
-  assert.equal(shouldCacheSdkRuntimeModels("opencode"), false);
+test("shouldCacheSdkRuntimeModels caches all SDK backends including OpenCode", () => {
+  // OpenCode used to skip the cache, which re-spawned opencode servers on every
+  // model-catalog probe (#2184). TTL still bounds staleness.
+  assert.equal(shouldCacheSdkRuntimeModels("opencode"), true);
   assert.equal(shouldCacheSdkRuntimeModels("claude"), true);
   assert.equal(shouldCacheSdkRuntimeModels("codebuddy"), true);
+  assert.equal(shouldCacheSdkRuntimeModels("copilot"), true);
 });
 
 test("SDK resume only uses the current backend/path session key", () => {

@@ -11,12 +11,16 @@ const { realpathSync } = require("node:fs");
 
 const VALID_BACKENDS = new Set(listBackends());
 
-// Pre-flight model catalog cache. claude/copilot enumerate models via the SDK
-// (supportedModels / listModels); spawning the CLI is ~1-2s, so cache per backend
-// and always degrade to [] on error/timeout (the renderer keeps its presets).
+// Pre-flight model catalog cache. SDK listModels often spawns a CLI/server
+// (~1-2s+), so cache per backend+binPath and coalesce in-flight loads.
+// Always degrade to [] on error/timeout (the renderer keeps its presets).
+// OpenCode is included: catalogs can drift outside Netcatty, but a short TTL
+// is far cheaper than spawning a new opencode process on every panel render
+// (issue #2184).
 const MODEL_CACHE_TTL_MS = 5 * 60 * 1000;
 const MODEL_LIST_TIMEOUT_MS = 10000;
 const sdkModelCache = new Map();
+const sdkModelInFlight = new Map();
 const { parseSdkSessionIdentity: parseSdkSessionIdentityPayload, SDK_SESSION_ID_PREFIX } = require("../../../shared/sdkSessionIdentity.cjs");
 const { isPathLikeCommand } = require("../../../shared/pathLikeCommand.cjs");
 
@@ -38,12 +42,30 @@ function buildSdkSessionKey(chatSessionId, backendKey, binPath) {
   ].join("\u0000");
 }
 
-function buildSdkModelCacheKey(backendKey, binPath) {
-  return [String(backendKey || ""), String(binPath || "")].join("\u0000");
+// Environment that can change an SDK agent's model catalog without changing the
+// binary path (especially OpenCode HOME / XDG / config overrides).
+const SDK_MODEL_CACHE_ENV_KEYS = [
+  "HOME",
+  "USERPROFILE",
+  "XDG_CONFIG_HOME",
+  "OPENCODE_BIN",
+  "OPENCODE_CONFIG",
+  "OPENCODE_CONFIG_DIR",
+  "OPENCODE_CONFIG_CONTENT",
+  "CLAUDE_CODE_EXECUTABLE",
+  "CODEBUDDY_CODE_PATH",
+  "CURSOR_API_KEY",
+];
+
+function buildSdkModelCacheKey(backendKey, binPath, env) {
+  const envFingerprint = SDK_MODEL_CACHE_ENV_KEYS
+    .map((key) => `${key}=${env?.[key] == null ? "" : String(env[key])}`)
+    .join("\u0000");
+  return [String(backendKey || ""), String(binPath || ""), envFingerprint].join("\u0000");
 }
 
-function shouldCacheSdkRuntimeModels(backendKey) {
-  return backendKey !== "opencode";
+function shouldCacheSdkRuntimeModels(_backendKey) {
+  return true;
 }
 
 function normalizeSdkListModelsResult(raw) {
@@ -83,10 +105,14 @@ function resolveSdkResumeSessionId({
   return existingSessionId && !hasConfiguredCommand ? existingSessionId : undefined;
 }
 
-function withTimeout(promise, ms) {
+function withTimeout(promise, ms, abortController) {
   let timer;
   const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`list-models timed out after ${ms}ms`)), ms);
+    timer = setTimeout(() => {
+      const error = new Error(`list-models timed out after ${ms}ms`);
+      try { abortController?.abort?.(error); } catch {}
+      reject(error);
+    }, ms);
   });
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
@@ -474,20 +500,51 @@ function registerSdkStreamHandlers(ctx) {
           resolveCodexExecutableForSdk,
           resolveCodebuddyExecutableForSdk,
         });
-        // claude/copilot enumerate models via the SDK; codex has no catalog (its
-        // driver returns []), so the renderer falls back to curated presets.
-        // OpenCode model catalogs are user-config driven and can change outside
-        // Netcatty, so do not cache them behind the generic SDK cache.
-        const cacheKey = buildSdkModelCacheKey(backendKey, binPath);
+        // claude/copilot/opencode enumerate models via the SDK; codex has no
+        // catalog (its driver returns []), so the renderer falls back to curated
+        // presets. Cache + in-flight coalescing avoid spawn storms (#2184).
+        const cacheKey = buildSdkModelCacheKey(backendKey, binPath, env);
         const shouldCacheModels = shouldCacheSdkRuntimeModels(backendKey);
         const cached = shouldCacheModels ? sdkModelCache.get(cacheKey) : null;
         if (cached && Date.now() - cached.at < MODEL_CACHE_TTL_MS) {
           return { ok: true, currentModelId: cached.currentModelId || null, models: cached.models };
         }
-        const raw = await withTimeout(driver.listModels({ binPath, env }), MODEL_LIST_TIMEOUT_MS);
-        const { currentModelId, models } = normalizeSdkListModelsResult(raw);
-        if (shouldCacheModels) sdkModelCache.set(cacheKey, { at: Date.now(), currentModelId, models });
-        return { ok: true, currentModelId, models };
+
+        const existing = sdkModelInFlight.get(cacheKey);
+        if (existing) return await existing;
+
+        const loadPromise = (async () => {
+          const abortController = new AbortController();
+          try {
+            const raw = await withTimeout(
+              driver.listModels({ binPath, env, abortController }),
+              MODEL_LIST_TIMEOUT_MS,
+              abortController,
+            );
+            const { currentModelId, models } = normalizeSdkListModelsResult(raw);
+            // Do not cache degraded empty catalogs: listOpenCodeModels and
+            // other drivers often return [] on timeout/startup failure, and
+            // pinning that for TTL would block recovery (matches renderer
+            // sdkRuntimeModelCache behavior).
+            if (shouldCacheModels && (models.length > 0 || currentModelId)) {
+              sdkModelCache.set(cacheKey, { at: Date.now(), currentModelId, models });
+            }
+            return { ok: true, currentModelId, models };
+          } catch (err) {
+            // Degrade to [] so the renderer keeps its curated presets (never empty).
+            console.debug(`[sdk] list-models(${backendKey}) unavailable, using curated presets`);
+            return { ok: true, currentModelId: null, models: [] };
+          }
+        })();
+
+        sdkModelInFlight.set(cacheKey, loadPromise);
+        try {
+          return await loadPromise;
+        } finally {
+          if (sdkModelInFlight.get(cacheKey) === loadPromise) {
+            sdkModelInFlight.delete(cacheKey);
+          }
+        }
       } catch (err) {
         // Degrade to [] so the renderer keeps its curated presets (never empty).
         console.debug(`[sdk] list-models(${backendKey}) unavailable, using curated presets`);

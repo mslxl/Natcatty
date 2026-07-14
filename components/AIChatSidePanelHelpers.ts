@@ -20,7 +20,20 @@ type SdkRuntimeModelRefreshOptions = {
 };
 
 const SDK_RUNTIME_MODEL_CACHE_TTL_MS = 5 * 60 * 1000;
-const MODEL_CACHE_ENV_HINTS = ['CLAUDE_CODE_EXECUTABLE', 'CODEBUDDY_CODE_PATH', 'OPENCODE_BIN'] as const;
+// Keep in sync with main-process SDK_MODEL_CACHE_ENV_KEYS: profile-affecting
+// env must bust the renderer cache so we re-query after OpenCode config switches.
+const MODEL_CACHE_ENV_HINTS = [
+  'HOME',
+  'USERPROFILE',
+  'XDG_CONFIG_HOME',
+  'OPENCODE_BIN',
+  'OPENCODE_CONFIG',
+  'OPENCODE_CONFIG_DIR',
+  'OPENCODE_CONFIG_CONTENT',
+  'CLAUDE_CODE_EXECUTABLE',
+  'CODEBUDDY_CODE_PATH',
+  'CURSOR_API_KEY',
+] as const;
 
 function cloneCatalog(catalog: SdkRuntimeModelCatalog): SdkRuntimeModelCatalog {
   return {

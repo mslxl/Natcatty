@@ -148,7 +148,12 @@ const DRIVER_REGISTRY = {
       });
     },
     async listModels(ctx) {
-      return opencode.listOpenCodeModels({ env: ctx.env, binPath: ctx.binPath });
+      return opencode.listOpenCodeModels({
+        env: ctx.env,
+        binPath: ctx.binPath,
+        abortController: ctx.abortController,
+        signal: ctx.abortController?.signal || ctx.signal,
+      });
     },
   },
 };
