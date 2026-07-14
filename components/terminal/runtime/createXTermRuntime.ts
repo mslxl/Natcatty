@@ -969,15 +969,35 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     }
     hideHistoryPreview();
 
-    // Sudo password hint: while a hint is pending, Enter confirms (paste the
-    // saved password + submit); any other visible key dismisses it so the user
-    // can type the password manually. Checked before autocomplete so Enter
-    // pastes the password instead of submitting an empty line.
+    // Password prompt assist (sudo/su): while pending, Enter confirms the
+    // selected/host password; arrows move the picker; Esc soft-dismisses (keeps
+    // arm so the list can re-open). Checked before autocomplete so Enter pastes
+    // the password instead of submitting an empty line.
     const sudoAutofill = ctx.sudoAutofillRef?.current;
     if (sudoAutofill?.isPromptPending()) {
       if (shouldSendShiftEnterText(e, ctx.terminalSettingsRef.current)) {
         sudoAutofill.cancelHint();
         // fall through: Shift+Enter sends the configured terminal text
+      } else if (
+        sudoAutofill.isPickerPending()
+        && e.key === "ArrowDown"
+        && !e.altKey
+        && !e.ctrlKey
+        && !e.metaKey
+      ) {
+        e.preventDefault();
+        sudoAutofill.moveSelection(1);
+        return false;
+      } else if (
+        sudoAutofill.isPickerPending()
+        && e.key === "ArrowUp"
+        && !e.altKey
+        && !e.ctrlKey
+        && !e.metaKey
+      ) {
+        e.preventDefault();
+        sudoAutofill.moveSelection(-1);
+        return false;
       } else if (
         e.key === "Enter" &&
         !e.altKey &&
@@ -997,6 +1017,20 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         sudoAutofill.cancelHint();
         // fall through: key becomes the first char of the manually typed password
       }
+    } else if (
+      sudoAutofill?.canReshowAssist()
+      && !e.altKey
+      && !e.ctrlKey
+      && !e.metaKey
+      && (e.key === "Escape" || e.key === "ArrowDown" || e.key === "ArrowUp")
+    ) {
+      // Soft-dismissed but still on Password: — Esc/arrows re-open the assist.
+      e.preventDefault();
+      if (sudoAutofill.tryReshowAssist()) {
+        if (e.key === "ArrowDown") sudoAutofill.moveSelection(1);
+        if (e.key === "ArrowUp") sudoAutofill.moveSelection(-1);
+      }
+      return false;
     }
 
     // Autocomplete key handler (must be checked before other handlers)

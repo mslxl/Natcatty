@@ -44,7 +44,8 @@ import {
 import { classifyDistroId, shouldProbeSessionCwd } from "../domain/host";
 import { resolveHostSshConnectionTimeouts } from "../domain/sshConnectionTimeouts";
 import { supportsZmodemTerminalDragDrop } from "../lib/zmodemDragDrop";
-import { resolveHostAuth } from "../domain/sshAuth";
+import { resolveHostAuth, resolveHostAutofillPassword } from "../domain/sshAuth";
+import { listPasswordPromptFillCandidates } from "../domain/passwordPromptAssist";
 import { useTerminalBackend } from "../application/state/useTerminalBackend";
 import {
   TERMINAL_AUTO_RECONNECT_DELAY_MS,
@@ -119,6 +120,7 @@ import {
 } from "./terminal/runtime/promptLineBreak";
 import {
   prepareSudoAutofillInput,
+  type PasswordPromptPickerState,
   type SudoPasswordAutofill,
 } from "./terminal/runtime/terminalSudoAutofill";
 import {
@@ -266,6 +268,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   sessionLog,
   sshDebugLogEnabled,
   sudoAutofillPassword,
+  sudoAutofillCandidates,
   showSelectionAIAction = true,
   onAddSelectionToAI,
   sessionDisplayName,
@@ -605,8 +608,32 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const getSessionConnectedRef = useRef(() => statusRef.current === "connected" && Boolean(sessionRef.current));
   getSessionConnectedRef.current = () => statusRef.current === "connected" && Boolean(sessionRef.current);
   const sudoAutofillRef = useRef<SudoPasswordAutofill | null>(null);
-  const sudoAutofillPasswordRef = useRef(sudoAutofillPassword);
-  sudoAutofillPasswordRef.current = sudoAutofillPassword;
+  // Prefer parent-supplied candidates (TerminalLayer); otherwise derive from
+  // host/keys/identities so standalone popups (TerminalPopupPage) still work.
+  const resolvedSudoAutofillCandidates = useMemo(
+    () =>
+      sudoAutofillCandidates
+      ?? listPasswordPromptFillCandidates({ host, keys, identities }),
+    [sudoAutofillCandidates, host, keys, identities],
+  );
+  const resolvedSudoAutofillPassword = useMemo(
+    () =>
+      sudoAutofillPassword
+      ?? resolveHostAutofillPassword({ host, keys, identities }),
+    [sudoAutofillPassword, host, keys, identities],
+  );
+  const sudoAutofillPasswordRef = useRef(resolvedSudoAutofillPassword);
+  sudoAutofillPasswordRef.current = resolvedSudoAutofillPassword;
+  const sudoAutofillCandidatesRef = useRef(resolvedSudoAutofillCandidates);
+  sudoAutofillCandidatesRef.current = resolvedSudoAutofillCandidates;
+  const [passwordPickerState, setPasswordPickerState] = useState<PasswordPromptPickerState | null>(null);
+  const passwordPickerRef = useRef<
+    ((active: boolean, state: PasswordPromptPickerState | null) => boolean) | undefined
+  >(undefined);
+  passwordPickerRef.current = (active, state) => {
+    setPasswordPickerState(active && state ? state : null);
+    return true;
+  };
 
   const [chainProgress, setChainProgress] = useState<{
     currentHop: number;
@@ -861,8 +888,28 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
   const pendingAuthRef = useRef<PendingAuth>(null);
   useEffect(() => {
-    sudoAutofillRef.current?.updatePassword(sudoAutofillPassword);
-  }, [sudoAutofillPassword]);
+    sudoAutofillRef.current?.updatePassword(resolvedSudoAutofillPassword);
+  }, [resolvedSudoAutofillPassword]);
+  useEffect(() => {
+    sudoAutofillRef.current?.updateCandidates(resolvedSudoAutofillCandidates);
+  }, [resolvedSudoAutofillCandidates]);
+  useEffect(() => {
+    const mode = terminalSettings?.passwordPromptAssist ?? "hint";
+    sudoAutofillRef.current?.updateMode(mode);
+  }, [terminalSettings?.passwordPromptAssist]);
+  // Drop a stale picker if the session disconnects/reconnects — exit teardown
+  // nulls sudoAutofillRef without calling onPicker(false).
+  useEffect(() => {
+    if (status === "disconnected" || status === "connecting") {
+      setPasswordPickerState(null);
+    }
+  }, [status]);
+  const handlePasswordPickerSelect = useCallback((id: string) => {
+    sudoAutofillRef.current?.confirmFill(id);
+  }, []);
+  const passwordPickerTitle = t("terminal.passwordPicker.title");
+  const passwordPickerEmptyText = t("terminal.passwordPicker.empty");
+  const sudoHintText = t("terminal.sudoHint.pressEnter");
   const sessionStartersRef = useRef<ReturnType<typeof createTerminalSessionStarters> | null>(null);
   const auth = useTerminalAuthState({
     host,
@@ -1376,6 +1423,9 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     disposeRuntimeOnly();
     beginHibernatedSessionListeners(backendId);
     hibernatedRef.current = true;
+    // Hibernation rebuilds the autofill controller on wake; drop any open
+    // picker so it cannot stay visible against a non-pending controller.
+    setPasswordPickerState(null);
     logger.info("[Terminal] Hibernated runtime", {
       sessionId,
       snapshotChars: hibernateSnapshotRef.current.length,
@@ -1482,6 +1532,9 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     promptLineBreakStateRef,
     sudoAutofillRef,
     onSudoHint: (active: boolean) => sudoHintRef.current?.(active) ?? false,
+    onPasswordPromptPicker: (active, state) => passwordPickerRef.current?.(active, state) ?? false,
+    sudoAutofillCandidates: resolvedSudoAutofillCandidates,
+    sudoAutofillCandidatesRef,
     updateStatus,
     setStatus,
     setError,
@@ -1557,7 +1610,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     onCommandSubmitted,
     sessionLog,
     sshDebugLogEnabled,
-    sudoAutofillPassword,
+    sudoAutofillPassword: resolvedSudoAutofillPassword,
     sudoAutofillPasswordRef,
   });
   sessionStartersRef.current = sessionStarters;
@@ -2681,6 +2734,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     }
 
     wakeInProgressRef.current = true;
+    setPasswordPickerState(null);
 
     const stopHibernateListeners = () => {
       const backendId = sessionRef.current;
@@ -2798,7 +2852,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
           onDismiss={dismissScriptOverlay}
           compactTopChrome={terminalSettings?.showHostInfoBar === false}
         />
-      ) : null, selectionOverlayPosition, sessionDisplayName, sessionId, sessionRef, setIsComposeBarOpen, setShowLogs, shouldShowConnectionDialog, showLogs, showSelectionAIAction, snippets, status, sudoHintRef, sudoHintText: t("terminal.sudoHint.pressEnter"), t, termRef, terminalBackend, terminalContextActions, terminalCwdTracker, terminalPreviewVars, terminalSettings, timeLeft, toast, zmodem }} />
+      ) : null, selectionOverlayPosition, sessionDisplayName, sessionId, sessionRef, setIsComposeBarOpen, setShowLogs, shouldShowConnectionDialog, showLogs, showSelectionAIAction, snippets, status, sudoHintRef, sudoHintText, passwordPickerState, onPasswordPickerSelect: handlePasswordPickerSelect, passwordPickerTitle, passwordPickerEmptyText, t, termRef, terminalBackend, terminalContextActions, terminalCwdTracker, terminalPreviewVars, terminalSettings, timeLeft, toast, zmodem }} />
       <ScriptSaveRecordingDialog
         open={saveRecordingOpen}
         code={recordedCode}

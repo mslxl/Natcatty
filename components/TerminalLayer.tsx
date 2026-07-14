@@ -38,6 +38,7 @@ import type { DropEntry } from '../lib/sftpFileUtils';
 import { Host, KnownHost, TerminalSession, Workspace } from '../types';
 import { applySessionFontSizeToHost } from '../domain/terminalAppearance';
 import { resolveHostAutofillPassword } from '../domain/sshAuth';
+import { listPasswordPromptFillCandidates } from '../domain/passwordPromptAssist';
 import {
   resolveEffectiveTerminalHost,
   resolveTerminalChainHosts,
@@ -891,16 +892,35 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const sessionSudoAutofillPasswordsMap = useMemo(() => {
     const map = new Map<string, string | undefined>();
     for (const session of sessions) {
-      const rawHost = hostMap.get(session.hostId);
-      if (rawHost) {
+      // Use the effective session host (group defaults / proxy materialization
+      // applied) so a password inherited from group settings is available.
+      const sessionHost = sessionHostsMap.get(session.id);
+      if (sessionHost) {
         // Resolve through identity references too (host.identityId), not just
         // host.password, so a password stored in a Keychain identity is filled
         // (issue #1284) — same resolution SSH login uses.
-        map.set(session.id, resolveHostAutofillPassword({ host: rawHost, keys, identities }));
+        map.set(session.id, resolveHostAutofillPassword({ host: sessionHost, keys, identities }));
       }
     }
     return map;
-  }, [hostMap, sessions, keys, identities]);
+  }, [sessionHostsMap, sessions, keys, identities]);
+
+  const sessionSudoAutofillCandidatesMap = useMemo(() => {
+    const map = new Map<
+      string,
+      ReturnType<typeof listPasswordPromptFillCandidates> | undefined
+    >();
+    for (const session of sessions) {
+      const sessionHost = sessionHostsMap.get(session.id);
+      if (sessionHost) {
+        map.set(
+          session.id,
+          listPasswordPromptFillCandidates({ host: sessionHost, keys, identities }),
+        );
+      }
+    }
+    return map;
+  }, [sessionHostsMap, sessions, keys, identities]);
 
   const handleTerminalFontSizeChange = useCallback((sessionId: string, nextFontSize: number) => {
     const session = sessionsRef.current.find((candidate) => candidate.id === sessionId);
@@ -1708,6 +1728,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     resolvedSessionHostIds,
     sessionLogConfig,
     sessionSudoAutofillPasswordsMap,
+    sessionSudoAutofillCandidatesMap,
     sessions,
     sessionsRef,
     setEditorWordWrap,
