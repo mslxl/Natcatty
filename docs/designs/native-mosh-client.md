@@ -49,12 +49,12 @@ Enforced upstream from `moshcatty-0.1.2` via MoshCatty release CI
 (`scripts/assert-max-glibc.sh`). Do not pin packaging to pre-0.1.2 Linux
 assets (they require GLIBC 2.34).
 
-## Windows compatibility floor
+## MoshCatty compatibility floor
 
-Netcatty requires `moshcatty-0.1.6+`. That release includes stock-aligned speculative local echo hardening
-(host-before-ack Confirm, Pending-continue, geometry vs content redraw)
-on top of the 0.1.5 Diff path (#2121) and 0.1.4 ConPTY fixes. Packaging must not resolve or accept an
-older MoshCatty release.
+Netcatty requires `moshcatty-0.1.7+`. That release reconstructs each numbered remote state from its declared
+base before display, preventing duplicate characters when parallel updates share a base on high-latency links.
+It builds on the 0.1.6 speculative local echo hardening, the 0.1.5 Diff path, and the 0.1.4 ConPTY fixes.
+Packaging must not resolve or accept an older MoshCatty release.
 
 ## Decision log
 
@@ -69,8 +69,10 @@ older MoshCatty release.
   keep Mosh sessions on Netcatty's primary terminal screen so highlighting and
   scrollback remain available.
 - **2026-07-11:** Speculative local echo (prediction underlines) lives in
-  MoshCatty (`DisplayPipeline`, `MOSH_PREDICTION_DISPLAY`). Prefer
-  `moshcatty-0.1.6+` so high-latency typing matches stock mosh / Termius
-  (Netcatty #2121). Netcatty does not implement prediction in the renderer.
+  MoshCatty (`DisplayPipeline`, `MOSH_PREDICTION_DISPLAY`). Version 0.1.6
+  introduced prediction hardening for Netcatty #2121; Netcatty does not
+  implement prediction in the renderer.
 - **2026-07-12:** Require `moshcatty-0.1.6+` for #2121 prediction; handshake
   failure messaging when `MOSH CONNECT` is missing (#2128).
+- **2026-07-15:** Require `moshcatty-0.1.7+` for #2121 numbered-state
+  reconstruction, which fixes duplicate display on high-latency links.
