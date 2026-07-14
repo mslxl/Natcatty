@@ -105,6 +105,37 @@ const expandPromptUserInputToFullLine = (
   return prompt;
 };
 
+/** Status / cwd chrome that must not be recorded as a submitted command. */
+const isDecorationOnlyCommand = (command: string): boolean => {
+  const t = command.trim();
+  if (!t) return true;
+  if (t === "~" || t.startsWith("~/")) return true;
+  if (/^[✗✔+*!]$/.test(t)) return true;
+  if (/^git:\([^)]*\)/.test(t)) return true;
+  // "git:(main) ✗" leftovers after a partial cache strip
+  if (/git:\([^)]*\)/.test(t) || /[✗✔]/.test(t)) {
+    const stripped = t
+      .replace(/git:\([^)]*\)/g, " ")
+      .replace(/[✗✔+*!]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!stripped) return true;
+    if (/^(?:su|sudo|doas)(?:\s|$)/i.test(stripped)) return false;
+    if (!/\s/.test(stripped) && !/^(?:su|sudo|doas)$/i.test(stripped)) return true;
+  }
+  return false;
+};
+
+const hasThemedPromptMarker = (promptText: string): boolean => {
+  if (isBareThemedTerminator(promptText)) return true;
+  if (/[❯❮→➜➤⟩»›]/.test(promptText)) return true;
+  for (const ch of promptText) {
+    const code = ch.charCodeAt(0);
+    if (code >= 0xE000 && code <= 0xF8FF) return true;
+  }
+  return false;
+};
+
 /**
  * When the prompt has no trailing space (`user@host:~$su -`), the detector
  * may not find a boundary. Fall back to the last known prompt prefix.
@@ -115,8 +146,10 @@ const resolveFromCachedPromptPrefix = (
 ): string => {
   const cached = lastPromptText ?? "";
   if (!cached) return "";
-  const fullInput = readFullLineAfterPrompt(term, cached);
-  return fullInput?.trim() ?? "";
+  const fullInput = readFullLineAfterPrompt(term, cached)?.trim() ?? "";
+  // Reject partial-cache leftovers like "git:(main) ✗" (#2191 review).
+  if (!fullInput || isDecorationOnlyCommand(fullInput)) return "";
+  return fullInput;
 };
 
 export const shouldRecordShellHistory = (
@@ -216,10 +249,24 @@ export const resolveLiveSubmittedCommand = (
 
   // Complete themed / Powerline prompts already isolate the command in
   // userInput (including multiword sudo whoami). getCommandToRecordOnEnter
-  // refuses multiword themed input, so accept the detector split here.
+  // refuses multiword themed input, so accept the detector split here —
+  // but never treat a lone cwd token as a command (⚡ ➜  git ).
   if (!isBareThemedTerminator(prompt.promptText)) {
     const liveTrimmed = prompt.userInput.trim();
-    if (liveTrimmed && prompt.promptText.trim().length > 0) {
+    if (
+      liveTrimmed
+      && prompt.promptText.trim().length > 0
+      && !isDecorationOnlyCommand(liveTrimmed)
+    ) {
+      const rawTokens = liveTrimmed.split(/\s+/).filter(Boolean);
+      if (
+        rawTokens.length <= 1
+        && hasThemedPromptMarker(prompt.promptText)
+        && !/^(?:su|sudo|doas)$/i.test(liveTrimmed)
+      ) {
+        // Single bare word after a themed prompt is usually cwd chrome.
+        return peelThemedCommandFromPrompt(prompt);
+      }
       return liveTrimmed;
     }
   }
@@ -230,7 +277,6 @@ export const resolveLiveSubmittedCommand = (
 /**
  * True when a live "command" is really empty-prompt chrome (cwd / git status)
  * left in userInput by the detector — not a history-recalled command.
- * Only applies to bare-glyph themed prompts where that pollution happens.
  */
 const isEmptyPromptDecoration = (
   live: string,
@@ -238,17 +284,15 @@ const isEmptyPromptDecoration = (
 ): boolean => {
   const command = live.trim();
   if (!command) return true;
-  if (!isBareThemedTerminator(prompt.promptText)) return false;
+  if (isDecorationOnlyCommand(command)) return true;
 
-  if (command === "~" || command.startsWith("~/")) return true;
-  if (/^git:\([^)]*\)/.test(command)) return true;
-  if (/^[✗✔+*!]$/.test(command)) return true;
+  // Bare glyph or multi-glyph themed prompts can leave a single cwd token.
+  if (!hasThemedPromptMarker(prompt.promptText)) return false;
 
   const rawTokens = prompt.userInput.trim().split(/\s+/).filter(Boolean);
   if (rawTokens.length <= 1) {
     // One-word history of su/sudo/doas must still arm password assist (❯ su).
     if (/^(?:su|sudo|doas)$/i.test(command)) return false;
-    // Single cwd token left in userInput (" git " / " netcatty ").
     return true;
   }
 
@@ -272,11 +316,27 @@ export const resolveSubmittedShellCommand = (
   if (!term) return buffered;
 
   const alignedResult = getAlignedPrompt(term, commandBuffer, true);
-  const aligned = alignedResult.alignedTyped?.trim() ?? "";
-  if (aligned) return aligned;
 
   // Expand past the cursor / across wraps so Enter sees the full recalled command.
   const prompt = expandPromptUserInputToFullLine(term, alignedResult.prompt);
+  const liveFromPrompt = prompt.isAtPrompt
+    ? resolveLiveSubmittedCommand(prompt, lastPromptText)
+    : "";
+
+  const aligned = alignedResult.alignedTyped?.trim() ?? "";
+  // Aligned buffer can match a stale mid-line prefix after history recall
+  // (typed "s", recalled "su -", cursor after "s"). Prefer the longer live line.
+  if (aligned) {
+    if (
+      liveFromPrompt
+      && liveFromPrompt.startsWith(aligned)
+      && liveFromPrompt.length > aligned.length
+    ) {
+      return liveFromPrompt;
+    }
+    return aligned;
+  }
+
   if (!prompt.isAtPrompt) {
     // No-space prompts (`user@host:~$su -`) often fail boundary detection;
     // recover via the last fully-detected prompt prefix (#2191 review).
@@ -286,7 +346,7 @@ export const resolveSubmittedShellCommand = (
     return buffered;
   }
 
-  const live = resolveLiveSubmittedCommand(prompt, lastPromptText);
+  const live = liveFromPrompt;
   if (!buffered) {
     // Empty Enter on a themed prompt must not treat cwd/git chrome as a command
     // (would pollute history and can false-arm su/sudo assist).

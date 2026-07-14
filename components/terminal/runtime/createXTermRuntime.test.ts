@@ -229,6 +229,28 @@ test("resolveSubmittedShellCommand strips themed prompt chrome without stale cac
     ),
     "su -",
   );
+  // Stale partial cache on empty themed prompt must not record git chrome.
+  assert.equal(
+    resolveSubmittedShellCommand(
+      "",
+      createFakeTerm("➜  netcatty git:(main) ✗ ") as never,
+      "➜  netcatty ",
+    ),
+    "",
+  );
+  // Prefixed themed terminator + cwd token is not a command.
+  assert.equal(
+    resolveSubmittedShellCommand("", createFakeTerm("⚡ ➜  git ") as never),
+    "",
+  );
+  // Stale buffer aligned to mid-line prefix after history recall.
+  assert.equal(
+    resolveSubmittedShellCommand(
+      "s",
+      createFakeTerm("user@host:~$ su -", "user@host:~$ s".length) as never,
+    ),
+    "su -",
+  );
 });
 
 test("resolveSubmittedShellCommand prefers live line when history replaces a typed prefix (#2191)", () => {
