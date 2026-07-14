@@ -293,9 +293,6 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
       lastSourceSessionIdRef.current,
       activeSessionId,
     );
-    if (activeSessionId) {
-      lastSourceSessionIdRef.current = activeSessionId;
-    }
 
     const hasBackendSession = (connectionId: string) => !!s.getSftpIdForConnection(connectionId);
     const activeTab = s.leftTabs.tabs.find((tab) => tab.id === s.leftTabs.activeTabId) ?? null;
@@ -321,9 +318,17 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
         activeTabConnectionKey,
       )
     ) {
+      if (activeSessionId) {
+        lastSourceSessionIdRef.current = activeSessionId;
+      }
       return;
     }
+    // Defer advancing the session cursor while interactive work blocks rebind,
+    // so sessionChanged stays true once the editor/dialog closes.
     if (hasActiveWork) return;
+    if (activeSessionId) {
+      lastSourceSessionIdRef.current = activeSessionId;
+    }
 
     logger.info("[SftpSidePanel] Auto-connect triggered", {
       hostId: activeHost.id,
