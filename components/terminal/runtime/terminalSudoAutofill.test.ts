@@ -6,6 +6,7 @@ import {
   isExplicitSudoPrompt,
   isSudoPasswordPrompt,
   shouldArmSudoPasswordAutofill,
+  shouldDismissPasswordAssistOnInput,
 } from "./terminalSudoAutofill";
 
 // --- isSudoPasswordPrompt: relaxed — any password/密码/口令 line ending in a
@@ -115,6 +116,60 @@ test("cancelHint clears the hint without filling", () => {
   assert.deepEqual(writes, []);
   assert.deepEqual(hints, [true, false]);
   assert.equal(autofill.isPromptPending(), false);
+});
+
+// --- paste dismisses assist so Enter is not hijacked (#2198) ---
+
+test("shouldDismissPasswordAssistOnInput detects paste and typed content", () => {
+  assert.equal(shouldDismissPasswordAssistOnInput("remote-secret"), true);
+  assert.equal(shouldDismissPasswordAssistOnInput("\x1b[200~remote-secret\x1b[201~"), true);
+  assert.equal(shouldDismissPasswordAssistOnInput("x"), true);
+  // Enter is confirmFill, not user content
+  assert.equal(shouldDismissPasswordAssistOnInput("\r"), false);
+  assert.equal(shouldDismissPasswordAssistOnInput("\n"), false);
+  // Control keys are handled separately
+  assert.equal(shouldDismissPasswordAssistOnInput("\x7f"), false);
+  assert.equal(shouldDismissPasswordAssistOnInput("\x1b"), false);
+  assert.equal(shouldDismissPasswordAssistOnInput(""), false);
+});
+
+test("clipboard paste dismisses pending hint so confirmFill no longer fires", () => {
+  // Nested SSH: assist offers jump-host password, user pastes the remote host
+  // password from clipboard, then presses Enter — Enter must submit the paste,
+  // not append the saved host password (#2198).
+  const { autofill, writes, hints } = make("jump-host-password");
+  autofill.armForCommand("sudo whoami");
+  autofill.handleOutput("[sudo] password for alice: ");
+  assert.equal(autofill.isPromptPending(), true);
+
+  assert.equal(
+    autofill.dismissOnUserContentInput("\x1b[200~remote-host-password\x1b[201~"),
+    true,
+  );
+  assert.equal(autofill.isPromptPending(), false);
+  assert.deepEqual(hints, [true, false]);
+
+  // Simulated Enter after paste must not inject the jump-host password
+  autofill.confirmFill();
+  assert.deepEqual(writes, []);
+});
+
+test("plain multi-char paste dismisses pending hint", () => {
+  const { autofill, writes, hints } = make("jump-host-password");
+  autofill.handleOutput("[sudo] password for alice: ");
+  assert.equal(autofill.dismissOnUserContentInput("remote-host-password"), true);
+  assert.equal(autofill.isPromptPending(), false);
+  assert.deepEqual(hints, [true, false]);
+  autofill.confirmFill();
+  assert.deepEqual(writes, []);
+});
+
+test("Enter alone does not dismiss via dismissOnUserContentInput", () => {
+  const { autofill, hints } = make();
+  autofill.handleOutput("[sudo] password for alice: ");
+  assert.equal(autofill.dismissOnUserContentInput("\r"), false);
+  assert.equal(autofill.isPromptPending(), true);
+  assert.deepEqual(hints, [true]);
 });
 
 test("Esc soft-dismiss keeps arm so assist can re-open on the same Password prompt", () => {
