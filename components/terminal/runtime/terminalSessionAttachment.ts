@@ -554,8 +554,8 @@ const writeSessionDataImmediate = (
         }
         callback();
       };
-      // writeTerminalDataWithLineTimestamps already falls through to term.write
-      // when shouldDegradeTerminalSideWork is true (no registerMarker storms).
+      // writeTerminalDataWithLineTimestamps skips markers only under true flood
+      // (not saturated multi-line), preserving per-line gutter timestamps.
       writeTerminalDataWithLineTimestamps(
         term,
         preparedDisplayData,

@@ -28,6 +28,12 @@ type TerminalOutputPressureState = {
   background: boolean;
   largeOutput: boolean;
   largeOutputUntil: number;
+  /**
+   * Separate, stricter flood gate for line-timestamp markers. Full scrollback +
+   * multi-line (e.g. `docker ps`) must NOT drop per-line timestamps — only true
+   * high-rate dumps (seq/yes) skip registerMarker storms.
+   */
+  timestampFloodUntil: number;
   longLine: boolean;
   consecutiveUnbrokenBytes: number;
   /** True rolling window samples for high-rate small-chunk detection. */
@@ -47,6 +53,12 @@ const LARGE_OUTPUT_RATE_WINDOW_MS = 100;
 /** Lower than a full 128KB xterm shard so pressure leads the first write batch. */
 const LARGE_OUTPUT_RATE_BYTES = 16 * 1024;
 /**
+ * Only skip line-timestamp markers at true flood rates. Early large-output
+ * (16KB) and saturated multi-line still degrade highlight/prep, but keep the
+ * product rule: each output line can get a gutter timestamp.
+ */
+const TIMESTAMP_SKIP_RATE_BYTES = 64 * 1024;
+/**
  * When scrollback is already full, any multi-line or modest chunk should arm
  * bulk mode: every new line trims, and marker/highlight work multiplies cost.
  */
@@ -61,6 +73,7 @@ const getOrCreateState = (term: XTerm): TerminalOutputPressureState => {
       background: false,
       largeOutput: false,
       largeOutputUntil: 0,
+      timestampFloodUntil: 0,
       longLine: false,
       consecutiveUnbrokenBytes: 0,
       recentSamples: [],
@@ -196,6 +209,9 @@ export const noteTerminalOutputPressureData = (
       || data.length >= SATURATED_SCROLLBACK_BULK_MIN_BYTES
     );
 
+  const trueFlood = data.length >= TERMINAL_LONG_LINE_PRESSURE_BYTES
+    || recentBytes >= TIMESTAMP_SKIP_RATE_BYTES;
+
   if (
     data.length >= TERMINAL_LONG_LINE_PRESSURE_BYTES
     || recentBytes >= LARGE_OUTPUT_RATE_BYTES
@@ -206,12 +222,21 @@ export const noteTerminalOutputPressureData = (
     state.largeOutput = false;
   }
 
+  // Timestamp markers: only suppress under true flood / long lines — never for
+  // "scrollback full + docker ps" style multi-line output.
+  if (trueFlood) {
+    state.timestampFloodUntil = now + quietMs;
+  }
+
   const { maxRunBytes, trailingRunBytes } = measureUnbrokenRuns(
     data,
     state.consecutiveUnbrokenBytes,
   );
   state.consecutiveUnbrokenBytes = trailingRunBytes;
   state.longLine = maxRunBytes >= TERMINAL_LONG_LINE_PRESSURE_BYTES;
+  if (state.longLine) {
+    state.timestampFloodUntil = Math.max(state.timestampFloodUntil, now + quietMs);
+  }
 };
 
 export const setTerminalOutputPressureVisibility = (
@@ -231,6 +256,13 @@ export const setTerminalOutputPressureLargeOutput = (
   state.largeOutputUntil = largeOutput
     ? performance.now() + quietMs
     : 0;
+  // Explicit large-output flag is used by tests/flood paths that also suppress
+  // timestamp storms; clear both gates when turning off.
+  if (largeOutput) {
+    state.timestampFloodUntil = state.largeOutputUntil;
+  } else {
+    state.timestampFloodUntil = 0;
+  }
 };
 
 export const getTerminalOutputPressure = (
@@ -258,13 +290,26 @@ export const getTerminalOutputPressure = (
 };
 
 /**
- * True when hot-path side work (timestamps, highlight scans) should degrade so
- * xterm can keep painting bulk output smoothly — closer to Tabby's near-empty
- * write path (FlowControl + xterm.write only).
+ * True when hot-path side work (highlight scans, prep, coalesce) should degrade
+ * so xterm can keep painting bulk output smoothly — closer to Tabby's
+ * near-empty write path (FlowControl + xterm.write only).
  */
 export const shouldDegradeTerminalSideWork = (term: XTerm): boolean => {
   const pressure = getTerminalOutputPressure(term);
   return pressure.background || pressure.largeOutput || pressure.longLine;
+};
+
+/**
+ * Whether line-timestamp registerMarker work should be skipped.
+ *
+ * Stricter than {@link shouldDegradeTerminalSideWork}: full-scrollback multi-line
+ * output (docker ps, short command output) must still stamp each line. Only
+ * true flood rates / long lines suppress markers.
+ */
+export const shouldSkipTerminalLineTimestamps = (term: XTerm): boolean => {
+  const state = getOrCreateState(term);
+  if (state.longLine) return true;
+  return performance.now() < state.timestampFloodUntil;
 };
 
 export const resetTerminalOutputPressure = (term: XTerm): void => {

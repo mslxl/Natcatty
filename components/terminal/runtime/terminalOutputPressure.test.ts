@@ -10,6 +10,7 @@ import {
   resetTerminalOutputPressure,
   setTerminalOutputPressureVisibility,
   shouldDegradeTerminalSideWork,
+  shouldSkipTerminalLineTimestamps,
 } from "./terminalOutputPressure.ts";
 import { TERMINAL_LONG_LINE_PRESSURE_BYTES } from "./terminalFlowConstants.ts";
 import { XTERM_PERFORMANCE_CONFIG } from "../../../infrastructure/config/xtermPerformance.ts";
@@ -181,6 +182,48 @@ test("does not treat an empty buffer as scrollback-saturated", () => {
   assert.equal(getTerminalOutputPressure(term).largeOutput, false);
   assert.equal(getTerminalOutputPressure(term).scrollbackSaturated, false);
   resetTerminalOutputPressure(term);
+});
+
+test("saturated multi-line degrades side work but keeps line timestamps", () => {
+  const term = createFakeTerm({
+    rows: 24,
+    options: { scrollback: 1000 },
+    buffer: { active: { length: 1020, baseY: 996 } },
+  });
+
+  // docker-ps-sized multi-line on a full scrollback: highlight/prep may degrade,
+  // but per-line gutter timestamps must still stamp.
+  noteTerminalOutputPressureData(term, "CONTAINER ID   IMAGE\n".repeat(20));
+  assert.equal(shouldDegradeTerminalSideWork(term), true);
+  assert.equal(shouldSkipTerminalLineTimestamps(term), false);
+
+  resetTerminalOutputPressure(term);
+});
+
+test("true flood rate skips line timestamps", () => {
+  const term = createFakeTerm();
+  const originalNow = performance.now.bind(performance);
+  let now = 20_000;
+
+  Object.defineProperty(performance, "now", {
+    configurable: true,
+    value: () => now,
+  });
+
+  try {
+    // 64KB+ inside the rate window → timestamp flood gate.
+    for (let index = 0; index < 64; index += 1) {
+      noteTerminalOutputPressureData(term, `${"z".repeat(1023)}\n`);
+    }
+    assert.equal(shouldSkipTerminalLineTimestamps(term), true);
+    assert.equal(shouldDegradeTerminalSideWork(term), true);
+  } finally {
+    Object.defineProperty(performance, "now", {
+      configurable: true,
+      value: originalNow,
+    });
+    resetTerminalOutputPressure(term);
+  }
 });
 
 test("rate detector uses a true rolling window across early tiny samples", () => {

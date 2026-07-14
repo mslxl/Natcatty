@@ -1,6 +1,6 @@
 import type { Terminal as XTerm } from "@xterm/xterm";
 
-import { shouldDegradeTerminalSideWork } from "./terminalOutputPressure";
+import { shouldSkipTerminalLineTimestamps } from "./terminalOutputPressure";
 
 export type TerminalLineTimestampSegment =
   | { kind: "data"; data: string }
@@ -1156,10 +1156,10 @@ export const writeTerminalDataWithLineTimestamps = (
     return;
   }
 
-  // Under bulk/background pressure, skip registerMarker storms so the xterm
-  // write path stays close to Tabby. Reset segmenter state so the first quiet
-  // line after flood does not inherit a half-parsed escape / mid-line cursor.
-  if (shouldDegradeTerminalSideWork(term)) {
+  // Only skip markers under true flood / long-line pressure — not merely
+  // "scrollback full + multi-line" (that would drop timestamps for docker ps
+  // after a prior seq). Product semantics: each line can show a gutter stamp.
+  if (shouldSkipTerminalLineTimestamps(term)) {
     const store = getTimestampStore(term);
     store.segmenter.setAlternateScreenActive(
       ((term.buffer?.active as { type?: string } | undefined)?.type) === "alternate",
