@@ -39,48 +39,44 @@ export const shouldRecordShellHistory = (
 ): boolean => {
   if (!term) return true;
 
+  const trimmed = command.trim();
   const { prompt, alignedTyped } = getAlignedPrompt(term, command, true);
   if (!prompt.isAtPrompt) return false;
-  if (alignedTyped?.trim() === command.trim()) return true;
+  if (alignedTyped?.trim() === trimmed) return true;
 
   if (reconcilePromptWithExternalCommand(prompt, command)) return true;
 
-  const liveCommand = prompt.userInput.trim();
-  if (liveCommand.length === 0) {
-    return !isNonPromptLine(`${prompt.promptText}${command.trim()}`);
-  }
-  return liveCommand === command.trim();
-};
-
-/**
- * Read the command currently shown on the prompt line, stripping themed
- * prompt chrome (➜  ~ / git status decorations) when needed.
- *
- * Uses lastPromptText when it still matches; otherwise peels decoration via
- * the same reconcile rules as autocomplete so a stale cache after `cd` does
- * not leave su/sudo unarmed (#2191).
- */
-export const resolveLiveSubmittedCommand = (
-  prompt: PromptDetectionResult,
-  lastPromptText?: string,
-): string => {
-  if (!prompt.isAtPrompt) return "";
-
-  const cachedPrompt = lastPromptText ?? "";
-  if (cachedPrompt) {
-    const fullLine = `${prompt.promptText}${prompt.userInput}`;
-    if (fullLine.startsWith(cachedPrompt)) {
-      const fromCachedPrompt = fullLine.slice(cachedPrompt.length).trim();
-      if (fromCachedPrompt) return fromCachedPrompt;
+  // History recall on themed prompts: live userInput still includes cwd/git
+  // chrome, but reconcile can attribute it back to the prompt (#2191).
+  if (trimmed) {
+    const reconciled = reconcilePromptWithTypedInput(prompt, trimmed);
+    if (reconciled !== prompt && reconciled.userInput.trim() === trimmed) {
+      return true;
     }
   }
 
-  // Clean standard prompts (user@host:~$ su -).
-  const direct = getCommandToRecordOnEnter(prompt, null, "", true);
-  if (direct) return direct;
+  const liveCommand = prompt.userInput.trim();
+  if (liveCommand.length === 0) {
+    return !isNonPromptLine(`${prompt.promptText}${trimmed}`);
+  }
+  return liveCommand === trimmed;
+};
 
-  // Themed prompts: try space-aligned suffixes and keep the split that
-  // attributes the most text to the prompt (fullest decoration strip).
+/** Bare omz/p10k glyph alone — detector often leaves cwd/git chrome in userInput. */
+const isBareThemedTerminator = (promptText: string): boolean => {
+  const trimmed = promptText.trim();
+  if (trimmed.length !== 1) return false;
+  const code = trimmed.charCodeAt(0);
+  return /[❯❮→➜➤⟩»›]/.test(trimmed) || (code >= 0xE000 && code <= 0xF8FF);
+};
+
+/**
+ * Peel themed cwd/git chrome from userInput by trying space-aligned suffixes
+ * and keeping the split that attributes the most text to the prompt.
+ */
+const peelThemedCommandFromPrompt = (
+  prompt: PromptDetectionResult,
+): string => {
   const live = prompt.userInput;
   let best: { command: string; promptLength: number } | null = null;
   for (let start = 0; start < live.length; start += 1) {
@@ -96,6 +92,60 @@ export const resolveLiveSubmittedCommand = (
     }
   }
   return best?.command ?? "";
+};
+
+/**
+ * Read the command currently shown on the prompt line, stripping themed
+ * prompt chrome (➜  ~ / git status decorations) when needed.
+ *
+ * lastPromptText is only trusted when the remainder reconciles against the
+ * original detector split (avoids partial-cache pollution and over-peeling
+ * a clean remainder down to "-"). Complete Powerline prompts keep the
+ * detector's multiword userInput (#2191).
+ */
+export const resolveLiveSubmittedCommand = (
+  prompt: PromptDetectionResult,
+  lastPromptText?: string,
+): string => {
+  if (!prompt.isAtPrompt) return "";
+
+  // Clean standard prompts (user@host:~$ su -).
+  const direct = getCommandToRecordOnEnter(prompt, null, "", true);
+  if (direct) return direct;
+
+  // Incomplete bare-glyph split (➜  + cwd/git in userInput): peel chrome.
+  if (isBareThemedTerminator(prompt.promptText)) {
+    const peeled = peelThemedCommandFromPrompt(prompt);
+    if (peeled) return peeled;
+  }
+
+  // Cached full prompt: accept remainder only when it reconciles on the
+  // original line (partial cache after git:(main) must not win).
+  const cachedPrompt = lastPromptText ?? "";
+  if (cachedPrompt) {
+    const fullLine = `${prompt.promptText}${prompt.userInput}`;
+    if (fullLine.startsWith(cachedPrompt)) {
+      const remainder = fullLine.slice(cachedPrompt.length).trim();
+      if (remainder && prompt.userInput.endsWith(remainder)) {
+        const reconciled = reconcilePromptWithTypedInput(prompt, remainder);
+        if (reconciled !== prompt && reconciled.userInput.trim() === remainder) {
+          return remainder;
+        }
+      }
+    }
+  }
+
+  // Complete themed / Powerline prompts already isolate the command in
+  // userInput (including multiword sudo whoami). getCommandToRecordOnEnter
+  // refuses multiword themed input, so accept the detector split here.
+  if (!isBareThemedTerminator(prompt.promptText)) {
+    const liveTrimmed = prompt.userInput.trim();
+    if (liveTrimmed && prompt.promptText.trim().length > 0) {
+      return liveTrimmed;
+    }
+  }
+
+  return peelThemedCommandFromPrompt(prompt);
 };
 
 /**

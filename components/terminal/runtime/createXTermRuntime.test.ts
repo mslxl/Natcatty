@@ -170,6 +170,23 @@ test("resolveSubmittedShellCommand strips themed prompt chrome without stale cac
     ),
     "su -",
   );
+  // Partial cache after git status appears must peel remaining decoration.
+  assert.equal(
+    resolveSubmittedShellCommand(
+      "",
+      createFakeTerm("➜  netcatty git:(main) ✗ su -") as never,
+      "➜  netcatty ",
+    ),
+    "su -",
+  );
+  // Complete Powerline prompts isolate multiword sudo already.
+  assert.equal(
+    resolveSubmittedShellCommand(
+      "",
+      createFakeTerm("\uE0B6 root \uE0B0 ~ \uE0B0 sudo whoami") as never,
+    ),
+    "sudo whoami",
+  );
 });
 
 test("resolveSubmittedShellCommand prefers live line when history replaces a typed prefix (#2191)", () => {
