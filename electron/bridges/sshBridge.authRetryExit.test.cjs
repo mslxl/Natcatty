@@ -5,6 +5,7 @@ const fs = require("node:fs");
 const Module = require("node:module");
 const os = require("node:os");
 const path = require("node:path");
+const keyboardInteractiveHandler = require("./keyboardInteractiveHandler.cjs");
 const sessionLogStreamManager = require("./sessionLogStreamManager.cjs");
 
 function makeSender(events = null) {
@@ -91,6 +92,75 @@ function loadBridgeWithAuthRetryMocks(t, options = {}) {
       this.connectOpts = opts;
       const eventName = connectEvents[MockSSHClient.connectCount++] || "auth-error";
       setImmediate(() => {
+        if (
+          eventName === "repeated-keyboard-interactive" ||
+          eventName === "excessive-keyboard-interactive"
+        ) {
+          this.authMethodsOffered = [];
+          this.keyboardInteractiveResponses = [];
+          this.emit("connect");
+          this.emit("handshake");
+
+          const offerNext = (methodsLeft, partialSuccess) => {
+            let offered;
+            opts.authHandler(methodsLeft, partialSuccess, (method) => {
+              offered = method;
+              this.authMethodsOffered.push(method);
+            });
+            return offered;
+          };
+
+          offerNext(null, null);
+          const firstInteractive = offerNext(["keyboard-interactive"], false);
+          if (firstInteractive !== "keyboard-interactive") {
+            const err = new Error("All configured authentication methods failed");
+            err.level = "client-authentication";
+            this.emit("error", err);
+            return;
+          }
+
+          this.emit(
+            "keyboard-interactive",
+            "Login authentication",
+            "",
+            "",
+            [{ prompt: "Password:", echo: false }],
+            (responses) => {
+              this.keyboardInteractiveResponses.push(responses);
+              const secondInteractive = offerNext(["keyboard-interactive"], true);
+              if (secondInteractive !== "keyboard-interactive") {
+                const err = new Error("All configured authentication methods failed");
+                err.level = "client-authentication";
+                this.emit("error", err);
+                return;
+              }
+
+              this.emit(
+                "keyboard-interactive",
+                "Keyboard-interactive authentication prompts from server",
+                "为保障主机安全，请输入二次认证密码，如有疑问，请联系xxx，电话xxx。",
+                "",
+                [{ prompt: "Secondary Authentication Password:", echo: false }],
+                (secondResponses) => {
+                  this.keyboardInteractiveResponses.push(secondResponses);
+                  if (eventName === "excessive-keyboard-interactive") {
+                    const thirdInteractive = offerNext(["keyboard-interactive"], true);
+                    const err = new Error(
+                      thirdInteractive === false
+                        ? "All configured authentication methods failed"
+                        : "Repeated keyboard-interactive limit was not enforced",
+                    );
+                    err.level = "client-authentication";
+                    this.emit("error", err);
+                    return;
+                  }
+                  this.emit("ready");
+                },
+              );
+            },
+          );
+          return;
+        }
         if (eventName === "auth-error") {
           const err = new Error("All configured authentication methods failed");
           err.level = "client-authentication";
@@ -179,6 +249,119 @@ function loadBridgeWithAuthRetryMocks(t, options = {}) {
 
   return { bridge, MockSSHClient };
 }
+
+test("terminal SSH supports consecutive keyboard-interactive factors (#2150)", async (t) => {
+  const { bridge, MockSSHClient } = loadBridgeWithAuthRetryMocks(t, {
+    connectEvents: ["repeated-keyboard-interactive"],
+  });
+  const ipcMain = makeIpcMain();
+  bridge.init({ sessions: new Map(), electronModule: {} });
+  bridge.registerHandlers(ipcMain);
+  const sender = makeSender();
+  const send = sender.send.bind(sender);
+  sender.send = (channel, payload) => {
+    send(channel, payload);
+    if (channel === "netcatty:keyboard-interactive") {
+      keyboardInteractiveHandler.handleResponse(
+        { sender },
+        {
+          requestId: payload.requestId,
+          responses: ["secondary-password"],
+          cancelled: false,
+        },
+      );
+    }
+  };
+
+  const result = await ipcMain.handlers.get("netcatty:start")(
+    { sender },
+    {
+      sessionId: "repeated-ki-session",
+      hostname: "corp-edr.example.com",
+      username: "alice",
+      authMethod: "password",
+      password: "login-password",
+      useSshAgent: false,
+      port: 22,
+      knownHosts: [],
+    },
+  );
+
+  assert.deepEqual(result, { sessionId: "repeated-ki-session" });
+  assert.deepEqual(
+    MockSSHClient.instances[0].authMethodsOffered,
+    ["none", "keyboard-interactive", "keyboard-interactive"],
+  );
+  assert.deepEqual(
+    MockSSHClient.instances[0].keyboardInteractiveResponses,
+    [["login-password"], ["secondary-password"]],
+  );
+  const promptEvents = sender.sent.filter((message) => (
+    message.channel === "netcatty:keyboard-interactive"
+  ));
+  assert.equal(promptEvents.length, 1);
+  assert.equal(
+    promptEvents[0].payload.prompts[0].prompt,
+    "Secondary Authentication Password:",
+  );
+  assert.equal(
+    promptEvents[0].payload.instructions,
+    "为保障主机安全，请输入二次认证密码，如有疑问，请联系xxx，电话xxx。",
+  );
+  assert.equal(promptEvents[0].payload.savedPassword, null);
+  assert.equal(promptEvents[0].payload.allowSavePassword, false);
+  assert.equal(promptEvents[0].payload.scope, "terminal");
+});
+
+test("terminal SSH stops after two successful keyboard-interactive factors", async (t) => {
+  const { bridge, MockSSHClient } = loadBridgeWithAuthRetryMocks(t, {
+    connectEvents: ["excessive-keyboard-interactive"],
+  });
+  const ipcMain = makeIpcMain();
+  bridge.init({ sessions: new Map(), electronModule: {} });
+  bridge.registerHandlers(ipcMain);
+  const sender = makeSender();
+  const send = sender.send.bind(sender);
+  sender.send = (channel, payload) => {
+    send(channel, payload);
+    if (channel === "netcatty:keyboard-interactive") {
+      keyboardInteractiveHandler.handleResponse(
+        { sender },
+        {
+          requestId: payload.requestId,
+          responses: ["secondary-password"],
+          cancelled: false,
+        },
+      );
+    }
+  };
+
+  await assert.rejects(
+    ipcMain.handlers.get("netcatty:start")(
+      { sender },
+      {
+        sessionId: "excessive-ki-session",
+        hostname: "corp-edr.example.com",
+        username: "alice",
+        authMethod: "password",
+        password: "login-password",
+        useSshAgent: false,
+        port: 22,
+        knownHosts: [],
+      },
+    ),
+    /All configured authentication methods failed/,
+  );
+
+  assert.deepEqual(
+    MockSSHClient.instances[0].authMethodsOffered,
+    ["none", "keyboard-interactive", "keyboard-interactive", false],
+  );
+  assert.deepEqual(
+    MockSSHClient.instances[0].keyboardInteractiveResponses,
+    [["login-password"], ["secondary-password"]],
+  );
+});
 
 test("fresh SSH sessions preserve the server locale for the default UTF-8 charset", async (t) => {
   const { bridge, MockSSHClient } = loadBridgeWithAuthRetryMocks(t, {
