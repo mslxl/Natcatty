@@ -206,6 +206,12 @@ export const useSftpConnections = ({
       if (!activeTabId) return;
 
       const isReconnectAttempt = reconnectingRef.current[side];
+      // Capture path before we replace the connection so auto-reconnect can
+      // land back where the user was browsing instead of home.
+      const previousPath = getActivePane(side)?.connection?.currentPath;
+      const effectiveInitialPath =
+        options?.initialPath
+        ?? (isReconnectAttempt && previousPath ? previousPath : undefined);
 
       // Notify caller of the tab ID synchronously, before any async work.
       // This allows callers to map metadata (e.g. connection keys) to the tab
@@ -289,7 +295,7 @@ export const useSftpConnections = ({
           homeDir = isWindows ? "C:\\Users\\damao" : "/Users/damao";
         }
 
-        const startPath = options?.initialPath || homeDir;
+        const startPath = effectiveInitialPath || homeDir;
 
         const connection: SftpConnection = {
           id: connectionId,
@@ -343,7 +349,7 @@ export const useSftpConnections = ({
         const { initialPath, sharedHostCache, cachedStartPath } = resolveRemoteSftpStartState({
           filenameEncoding,
           ignoreSharedCache: options?.ignoreSharedCache,
-          initialPath: options?.initialPath,
+          initialPath: effectiveInitialPath,
           sharedHostCacheCandidate,
         });
 

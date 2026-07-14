@@ -22,6 +22,7 @@ import { useSftpBackend } from "../application/state/useSftpBackend";
 import { useSftpFileAssociations } from "../application/state/useSftpFileAssociations";
 import { getParentPath, isConcreteTransferTargetPath } from "../application/state/sftp/utils";
 import { buildCacheKey } from "../application/state/sftp/sharedRemoteHostCache";
+import { resolveSftpAutoConnectPath } from "../application/state/sftp/sftpReopenLocation";
 import { logger } from "../lib/logger";
 import type { DropEntry } from "../lib/sftpFileUtils";
 import { Host, Identity, KnownHost, SSHKey } from "../types";
@@ -235,6 +236,8 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   const lastAppliedInitialLocationKeyRef = useRef<string | null>(null);
   const handledPendingUploadIdRef = useRef<string | null>(null);
   const tabConnectionKeyMapRef = useRef<Map<string, string>>(new Map());
+  /** Last browsed path per endpoint — survives session switches while the panel stays open. */
+  const lastBrowsedPathByConnectionKeyRef = useRef<Map<string, string>>(new Map());
   const [interactiveWorkActive, setInteractiveWorkActive] = useState(false);
   const [sftpUiReady, setSftpUiReady] = useState(false);
 
@@ -289,9 +292,6 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
       lastSourceSessionIdRef.current,
       activeSessionId,
     );
-    if (sessionChanged) {
-      connectedKeyRef.current = null;
-    }
     if (activeSessionId) {
       lastSourceSessionIdRef.current = activeSessionId;
     }
@@ -299,9 +299,10 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     const hasBackendSession = (connectionId: string) => !!s.getSftpIdForConnection(connectionId);
     const activeTab = s.leftTabs.tabs.find((tab) => tab.id === s.leftTabs.activeTabId) ?? null;
     const activeConnectionId = activeTab?.connection?.id;
+    // Same-host terminal focus changes used to force a reconnect (and often
+    // dropped back to $HOME). Keep a healthy tab for this endpoint instead.
     if (
-      !sessionChanged
-      && shouldSkipSftpSidePanelAutoConnect(
+      shouldSkipSftpSidePanelAutoConnect(
         connectionKey,
         connectedKeyRef.current,
         activeTab,
@@ -317,18 +318,17 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
       hostLabel: activeHost.label,
       protocol: activeHost.protocol,
       hostname: activeHost.hostname,
+      sessionChanged,
     });
 
     const tabs = s.leftTabs.tabs;
-    const existingTab = sessionChanged
-      ? null
-      : findReusableSftpSidePanelTab(
-        tabs,
-        activeHost.id,
-        connectionKey,
-        tabConnectionKeyMapRef.current,
-        hasBackendSession,
-      );
+    const existingTab = findReusableSftpSidePanelTab(
+      tabs,
+      activeHost.id,
+      connectionKey,
+      tabConnectionKeyMapRef.current,
+      hasBackendSession,
+    );
     if (existingTab) {
       s.selectTab("left", existingTab.id);
       connectedKeyRef.current = connectionKey;
@@ -338,17 +338,24 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
 
     const currentConn = s.leftPane.connection;
     const needsNewTab = !!(currentConn && currentConn.status === "connected");
+    const rememberedPath = lastBrowsedPathByConnectionKeyRef.current.get(connectionKey);
+    const initialPath = resolveSftpAutoConnectPath({
+      explicitPath:
+        initialLocation?.hostId === activeHost.id ? initialLocation.path : null,
+      rememberedPath,
+    });
 
     connectedKeyRef.current = connectionKey;
     connectedHostObjRef.current = activeHost;
     s.connect("left", activeHost, {
       sourceSessionId: activeSessionId ?? undefined,
+      ...(initialPath ? { initialPath } : undefined),
       ...(needsNewTab ? { forceNewTab: true } : undefined),
       onTabCreated: (tabId) => {
         tabConnectionKeyMapRef.current.set(tabId, connectionKey);
       },
     });
-  }, [activeHost, activeSessionId, interactiveWorkActive]);
+  }, [activeHost, activeSessionId, initialLocation, interactiveWorkActive]);
 
   useEffect(() => {
     if (!activeHost || !isVisible) return;
@@ -409,6 +416,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     if (!connection.currentPath) return;
     const connectionKey = tabConnectionKeyMapRef.current.get(sftp.leftPane.id);
     if (!connectionKey) return;
+    lastBrowsedPathByConnectionKeyRef.current.set(connectionKey, connection.currentPath);
     onCurrentPathChangeRef.current?.({
       hostId: connection.hostId,
       connectionKey,

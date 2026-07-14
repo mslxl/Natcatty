@@ -84,15 +84,22 @@ test("shouldResetSftpSidePanelSourceSession detects terminal session changes", (
   assert.equal(shouldResetSftpSidePanelSourceSession("sess-a", null), false);
 });
 
-test("shouldSkipSftpSidePanelAutoConnect returns false after terminal session changes", () => {
+test("healthy same-endpoint tabs still skip auto-connect after a terminal session change", () => {
   const tab = remoteConnectedTab();
+  // Session focus changes must not tear down a healthy SFTP tab for the same host.
+  assert.equal(shouldResetSftpSidePanelSourceSession("sess-a", "sess-b"), true);
   assert.equal(
     shouldSkipSftpSidePanelAutoConnect("host-key", "host-key", tab, true),
     true,
   );
-  // Caller gates on sessionChanged before invoking skip — stale reuse must not win.
   assert.equal(
-    shouldResetSftpSidePanelSourceSession("sess-a", "sess-b"),
-    true,
+    findReusableSftpSidePanelTab(
+      [tab],
+      "host-1",
+      "host-key",
+      new Map([[tab.id, "host-key"]]),
+      () => true,
+    ),
+    tab,
   );
 });

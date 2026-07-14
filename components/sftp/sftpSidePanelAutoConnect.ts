@@ -46,7 +46,7 @@ export function findReusableSftpSidePanelTab(
   return candidate;
 }
 
-/** True when the linked terminal SSH session changed and SFTP must rebind. */
+/** True when the linked terminal SSH session id changed. */
 export function shouldResetSftpSidePanelSourceSession(
   previousSessionId: string | null | undefined,
   nextSessionId: string | null | undefined,
