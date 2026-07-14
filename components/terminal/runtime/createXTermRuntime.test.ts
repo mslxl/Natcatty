@@ -142,13 +142,17 @@ test("resolveSubmittedShellCommand recovers ↑ history when keystroke buffer is
   );
 });
 
-test("resolveSubmittedShellCommand strips themed prompt chrome via cached prompt (#2191)", () => {
-  // Without cache, themed cwd decoration must not become the command (#806).
+test("resolveSubmittedShellCommand strips themed prompt chrome without stale cache (#2191)", () => {
+  // Themed decoration must not become the command (#806); peel via reconcile.
   assert.equal(
     resolveSubmittedShellCommand("", createFakeTerm("➜  git su -") as never),
-    "",
+    "su -",
   );
-  // After a prior typed command, lastPromptText includes the decoration.
+  assert.equal(
+    resolveSubmittedShellCommand("", createFakeTerm("➜  ~ sudo whoami") as never),
+    "sudo whoami",
+  );
+  // Cached prompt still works when present (including after prompt-changing cd).
   assert.equal(
     resolveSubmittedShellCommand(
       "",
@@ -157,13 +161,31 @@ test("resolveSubmittedShellCommand strips themed prompt chrome via cached prompt
     ),
     "su -",
   );
+  // Stale cache from before `cd` must not block themed history recall.
   assert.equal(
     resolveSubmittedShellCommand(
       "",
-      createFakeTerm("➜  ~ sudo whoami") as never,
+      createFakeTerm("➜  git su -") as never,
       "➜  ~ ",
     ),
-    "sudo whoami",
+    "su -",
+  );
+});
+
+test("resolveSubmittedShellCommand prefers live line when history replaces a typed prefix (#2191)", () => {
+  // User typed "s" then ↑ recalled "su -" — buffer still holds the stale prefix.
+  assert.equal(
+    resolveSubmittedShellCommand("s", createFakeTerm("user@host:~$ su -") as never),
+    "su -",
+  );
+  assert.equal(
+    resolveSubmittedShellCommand("s", createFakeTerm("➜  git su -") as never),
+    "su -",
+  );
+  // Echo lag: buffer ahead of live echo keeps the typed command.
+  assert.equal(
+    resolveSubmittedShellCommand("su -", createFakeTerm("user@host:~$ su") as never),
+    "su -",
   );
 });
 
