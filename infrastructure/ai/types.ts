@@ -440,6 +440,12 @@ export interface AgentModelPreset {
   description?: string;
   /** Codex thinking levels (model ID sent as `id/thinking`) */
   thinkingLevels?: string[];
+  /**
+   * Default effort used when auto-selecting a model with thinkingLevels.
+   * Must be one of `thinkingLevels` when set. Do not infer from array order —
+   * UI lists levels low→high but catalog defaults are usually mid-range.
+   */
+  defaultThinkingLevel?: string;
 }
 
 export const CLAUDE_MODEL_PRESETS: AgentModelPreset[] = [
@@ -458,34 +464,46 @@ const CODEX_REASONING_LEVELS = ['low', 'medium', 'high', 'xhigh'] as const;
 const CODEX_REASONING_LEVELS_5_6 = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const;
 const CODEX_REASONING_LEVELS_5_6_LUNA = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 
+function codexPreset(
+  id: string,
+  name: string,
+  thinkingLevels: readonly string[],
+  defaultThinkingLevel: string,
+  description?: string,
+): AgentModelPreset {
+  return {
+    id,
+    name,
+    description,
+    thinkingLevels: [...thinkingLevels],
+    defaultThinkingLevel,
+  };
+}
+
 export const CODEX_MODEL_PRESETS: AgentModelPreset[] = [
-  {
-    id: 'gpt-5.6-sol',
-    name: 'GPT-5.6 Sol',
-    description: 'Latest',
-    thinkingLevels: [...CODEX_REASONING_LEVELS_5_6],
-  },
-  {
-    id: 'gpt-5.6-terra',
-    name: 'GPT-5.6 Terra',
-    description: 'Balanced',
-    thinkingLevels: [...CODEX_REASONING_LEVELS_5_6],
-  },
-  {
-    id: 'gpt-5.6-luna',
-    name: 'GPT-5.6 Luna',
-    description: 'Fast',
-    thinkingLevels: [...CODEX_REASONING_LEVELS_5_6_LUNA],
-  },
-  { id: 'gpt-5.5', name: 'GPT-5.5', thinkingLevels: [...CODEX_REASONING_LEVELS] },
-  { id: 'gpt-5.4', name: 'GPT-5.4', thinkingLevels: [...CODEX_REASONING_LEVELS] },
-  {
-    id: 'gpt-5.4-mini',
-    name: 'GPT-5.4 Mini',
-    description: 'Small & fast',
-    thinkingLevels: [...CODEX_REASONING_LEVELS],
-  },
+  // default_reasoning_level from openai/codex models-manager catalog
+  codexPreset('gpt-5.6-sol', 'GPT-5.6 Sol', CODEX_REASONING_LEVELS_5_6, 'low', 'Latest'),
+  codexPreset('gpt-5.6-terra', 'GPT-5.6 Terra', CODEX_REASONING_LEVELS_5_6, 'medium', 'Balanced'),
+  codexPreset('gpt-5.6-luna', 'GPT-5.6 Luna', CODEX_REASONING_LEVELS_5_6_LUNA, 'medium', 'Fast'),
+  codexPreset('gpt-5.5', 'GPT-5.5', CODEX_REASONING_LEVELS, 'medium'),
+  codexPreset('gpt-5.4', 'GPT-5.4', CODEX_REASONING_LEVELS, 'medium'),
+  codexPreset('gpt-5.4-mini', 'GPT-5.4 Mini', CODEX_REASONING_LEVELS, 'medium', 'Small & fast'),
+  // Still visibility:list in upstream catalog; keep selectable so stored
+  // gpt-5.2/* selections are not silently forced onto Sol.
+  codexPreset('gpt-5.2', 'GPT-5.2', CODEX_REASONING_LEVELS, 'medium'),
 ];
+
+/** Resolve the model id (with optional /effort) for auto-selection. */
+export function resolveAgentModelSelection(preset: AgentModelPreset): string {
+  const levels = preset.thinkingLevels;
+  if (!levels?.length) return preset.id;
+  const preferred = preset.defaultThinkingLevel;
+  if (preferred && levels.includes(preferred)) {
+    return `${preset.id}/${preferred}`;
+  }
+  // Conservative fallback: first listed effort (usually the cheapest/fastest).
+  return `${preset.id}/${levels[0]}`;
+}
 
 export const CURSOR_MODEL_PRESETS: AgentModelPreset[] = [
   { id: 'composer-2.5', name: 'Composer 2.5', description: 'Recommended' },

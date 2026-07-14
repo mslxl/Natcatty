@@ -13,7 +13,7 @@ import type {
   ExternalAgentConfig,
 } from '../infrastructure/ai/types';
 import type { ExecutorContext } from '../infrastructure/ai/cattyAgent/executor';
-import { getAgentModelPresets } from '../infrastructure/ai/types';
+import { getAgentModelPresets, resolveAgentModelSelection } from '../infrastructure/ai/types';
 import { getExternalAgentSdkBackend, getManualAgentCommand, matchesManagedAgentConfig } from '../infrastructure/ai/managedAgents';
 import { useAgentDiscovery } from '../application/state/useAgentDiscovery';
 import {
@@ -863,11 +863,9 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       return stored;
     }
     if (agentModelPresets.length > 0) {
-      const first = agentModelPresets[0];
-      if (first.thinkingLevels?.length) {
-        return `${first.id}/${first.thinkingLevels[first.thinkingLevels.length - 1]}`;
-      }
-      return first.id;
+      // Use catalog defaultThinkingLevel — do not pick last array entry
+      // (that made GPT-5.6 Sol default to ultra).
+      return resolveAgentModelSelection(agentModelPresets[0]);
     }
     return undefined;
   }, [currentAgentConfig, currentAgentId, agentModelMap, agentModelPresets]);

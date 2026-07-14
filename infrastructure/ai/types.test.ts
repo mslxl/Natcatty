@@ -6,6 +6,7 @@ import {
   CODEBUDDY_MODEL_PRESETS,
   CODEX_MODEL_PRESETS,
   getAgentModelPresets,
+  resolveAgentModelSelection,
 } from './types';
 
 test('getAgentModelPresets returns CodeBuddy fallback models for command paths', () => {
@@ -32,9 +33,13 @@ test('CODEX_MODEL_PRESETS lists GPT-5.6 Sol/Terra/Luna with official reasoning l
       'gpt-5.5',
       'gpt-5.4',
       'gpt-5.4-mini',
+      'gpt-5.2',
     ],
   );
   assert.equal(byId['gpt-5.6-sol']?.description, 'Latest');
+  assert.equal(byId['gpt-5.6-sol']?.defaultThinkingLevel, 'low');
+  assert.equal(byId['gpt-5.6-terra']?.defaultThinkingLevel, 'medium');
+  assert.equal(byId['gpt-5.6-luna']?.defaultThinkingLevel, 'medium');
   assert.deepEqual(byId['gpt-5.6-sol']?.thinkingLevels, [
     'low',
     'medium',
@@ -62,6 +67,27 @@ test('CODEX_MODEL_PRESETS lists GPT-5.6 Sol/Terra/Luna with official reasoning l
   assert.deepEqual(byId['gpt-5.5']?.thinkingLevels, ['low', 'medium', 'high', 'xhigh']);
   assert.deepEqual(byId['gpt-5.4']?.thinkingLevels, ['low', 'medium', 'high', 'xhigh']);
   assert.deepEqual(byId['gpt-5.4-mini']?.thinkingLevels, ['low', 'medium', 'high', 'xhigh']);
+  assert.deepEqual(byId['gpt-5.2']?.thinkingLevels, ['low', 'medium', 'high', 'xhigh']);
+});
+
+test('resolveAgentModelSelection uses catalog default effort, not last array entry', () => {
+  assert.equal(resolveAgentModelSelection(CODEX_MODEL_PRESETS[0]!), 'gpt-5.6-sol/low');
+  assert.equal(
+    resolveAgentModelSelection(CODEX_MODEL_PRESETS.find((m) => m.id === 'gpt-5.6-terra')!),
+    'gpt-5.6-terra/medium',
+  );
+  assert.equal(
+    resolveAgentModelSelection({
+      id: 'custom',
+      name: 'Custom',
+      thinkingLevels: ['low', 'high'],
+    }),
+    'custom/low',
+  );
+  assert.equal(
+    resolveAgentModelSelection({ id: 'plain', name: 'Plain' }),
+    'plain',
+  );
 });
 
 test('getAgentModelPresets resolves Windows command paths with backslashes', () => {
