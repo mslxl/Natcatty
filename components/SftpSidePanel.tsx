@@ -399,9 +399,11 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     }
 
     const currentConn = s.leftPane.connection;
-    // Replace in place only for the same endpoint. A different endpoint (even
-    // under the same hostId) keeps the old tab so promoted editors still have
-    // a live connection to save against.
+    // Replace in place only when it is safe. Keep the old tab when:
+    // - local is active (distinct endpoint)
+    // - the target endpoint key differs
+    // - same-endpoint rebind would drop a connection still used by promoted
+    //   editor tabs (they save via the old connection id)
     const currentConnectionKey = currentConn && !currentConn.isLocal
       ? (
         s.getConnectionCacheKey?.(currentConn.id)
@@ -409,17 +411,20 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
         ?? null
       )
       : null;
+    const hasEditorBoundToCurrentConnection = !!(
+      currentConn
+      && editorTabStore.getTabs().some((tab) => tab.sessionId === currentConn.id)
+    );
     const needsNewTab = !!(
       currentConn
       && currentConn.status === "connected"
       && (
-        // Local is its own endpoint; never overwrite it in place when moving
-        // to a remote host (promoted editors keep the old connection id).
         currentConn.isLocal
         || (
           currentConnectionKey
           && currentConnectionKey !== connectionKey
         )
+        || (sessionChanged && hasEditorBoundToCurrentConnection)
       )
     );
     const rememberedPath = lastBrowsedPathByConnectionKeyRef.current.get(connectionKey);
