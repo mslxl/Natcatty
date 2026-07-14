@@ -282,6 +282,7 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
             onRunSnippet={runSnippet}
             onOpenLogView={openLogView}
             showRecentHosts={settings.showRecentHosts}
+            hostClickBehavior={settings.hostClickBehavior}
             showOnlyUngroupedHostsInRoot={settings.showOnlyUngroupedHostsInRoot}
             navigateToSection={navigateToSection}
             onNavigateToSectionHandled={() => setNavigateToSection(null)}

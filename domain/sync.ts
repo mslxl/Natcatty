@@ -250,6 +250,8 @@ export interface SyncPayload {
     sftpGlobalBookmarks?: import('./models').SftpBookmark[];
     // Vault: show recently connected hosts
     showRecentHosts?: boolean;
+    // Vault: host click activates immediately, or select-then-click-again
+    hostClickBehavior?: 'connect' | 'select';
     // Vault: root list shows only ungrouped hosts
     showOnlyUngroupedHostsInRoot?: boolean;
     // Top tabs: show standalone SFTP view tab

@@ -33,6 +33,8 @@ function SettingsAppearanceTab(props: {
   setCustomCSS: (css: string) => void;
   showRecentHosts: boolean;
   setShowRecentHosts: (enabled: boolean) => void;
+  hostClickBehavior: "connect" | "select";
+  setHostClickBehavior: (behavior: "connect" | "select") => void;
   showOnlyUngroupedHostsInRoot: boolean;
   setShowOnlyUngroupedHostsInRoot: (enabled: boolean) => void;
   showSftpTab: boolean;
@@ -66,6 +68,8 @@ function SettingsAppearanceTab(props: {
     setCustomCSS,
     showRecentHosts,
     setShowRecentHosts,
+    hostClickBehavior,
+    setHostClickBehavior,
     showOnlyUngroupedHostsInRoot,
     setShowOnlyUngroupedHostsInRoot,
     showSftpTab,
@@ -389,6 +393,15 @@ function SettingsAppearanceTab(props: {
           description={t('settings.vault.showRecentHostsDesc')}
         >
           <Toggle checked={showRecentHosts} onChange={setShowRecentHosts} />
+        </SettingRow>
+        <SettingRow
+          label={t('settings.vault.selectBeforeConnect')}
+          description={t('settings.vault.selectBeforeConnectDesc')}
+        >
+          <Toggle
+            checked={hostClickBehavior === 'select'}
+            onChange={(enabled) => setHostClickBehavior(enabled ? 'select' : 'connect')}
+          />
         </SettingRow>
         <SettingRow
           label={t('settings.vault.showOnlyUngroupedHostsInRoot')}

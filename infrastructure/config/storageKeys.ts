@@ -187,6 +187,7 @@ export const STORAGE_KEY_WORKSPACE_FOCUS_STYLE = 'netcatty_workspace_focus_style
 
 // Vault: Show Recently Connected hosts section
 export const STORAGE_KEY_SHOW_RECENT_HOSTS = 'netcatty_show_recent_hosts_v1';
+export const STORAGE_KEY_HOST_CLICK_BEHAVIOR = 'netcatty_host_click_behavior_v1';
 export const STORAGE_KEY_SHOW_ONLY_UNGROUPED_HOSTS_IN_ROOT = 'netcatty_show_only_ungrouped_hosts_in_root_v1';
 
 // Top tabs: Show standalone SFTP view tab

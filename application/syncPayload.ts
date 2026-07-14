@@ -67,6 +67,7 @@ import {
   STORAGE_KEY_SFTP_GLOBAL_BOOKMARKS,
   STORAGE_KEY_CUSTOM_THEMES,
   STORAGE_KEY_SHOW_RECENT_HOSTS,
+  STORAGE_KEY_HOST_CLICK_BEHAVIOR,
   STORAGE_KEY_SHOW_ONLY_UNGROUPED_HOSTS_IN_ROOT,
   STORAGE_KEY_SHOW_SFTP_TAB,
   STORAGE_KEY_SHOW_HOST_TREE_SIDEBAR,
@@ -246,6 +247,7 @@ export const SYNCABLE_SETTING_STORAGE_KEYS = [
   STORAGE_KEY_SFTP_DEFAULT_VIEW_MODE,
   STORAGE_KEY_SFTP_GLOBAL_BOOKMARKS,
   STORAGE_KEY_SHOW_RECENT_HOSTS,
+  STORAGE_KEY_HOST_CLICK_BEHAVIOR,
   STORAGE_KEY_SHOW_ONLY_UNGROUPED_HOSTS_IN_ROOT,
   STORAGE_KEY_SHOW_SFTP_TAB,
   STORAGE_KEY_SHELL_ONLY_TAB_NUMBER_SHORTCUTS,
@@ -456,6 +458,10 @@ export function collectSyncableSettings(): SyncPayload['settings'] {
 
   const showRecent = localStorageAdapter.readBoolean(STORAGE_KEY_SHOW_RECENT_HOSTS);
   if (showRecent != null) settings.showRecentHosts = showRecent;
+  const hostClickBehavior = localStorageAdapter.readString(STORAGE_KEY_HOST_CLICK_BEHAVIOR);
+  if (hostClickBehavior === 'connect' || hostClickBehavior === 'select') {
+    settings.hostClickBehavior = hostClickBehavior;
+  }
   const showOnlyUngroupedHostsInRoot = localStorageAdapter.readBoolean(STORAGE_KEY_SHOW_ONLY_UNGROUPED_HOSTS_IN_ROOT);
   if (showOnlyUngroupedHostsInRoot != null) settings.showOnlyUngroupedHostsInRoot = showOnlyUngroupedHostsInRoot;
   const showSftpTab = localStorageAdapter.readBoolean(STORAGE_KEY_SHOW_SFTP_TAB);
@@ -661,6 +667,9 @@ async function applySyncableSettings(settings: NonNullable<SyncPayload['settings
   if (settings.sftpGlobalBookmarks != null) localStorageAdapter.write(STORAGE_KEY_SFTP_GLOBAL_BOOKMARKS, settings.sftpGlobalBookmarks);
 
   if (settings.showRecentHosts != null) localStorageAdapter.writeBoolean(STORAGE_KEY_SHOW_RECENT_HOSTS, settings.showRecentHosts);
+  if (settings.hostClickBehavior === 'connect' || settings.hostClickBehavior === 'select') {
+    localStorageAdapter.writeString(STORAGE_KEY_HOST_CLICK_BEHAVIOR, settings.hostClickBehavior);
+  }
   if (settings.showOnlyUngroupedHostsInRoot != null) {
     localStorageAdapter.writeBoolean(
       STORAGE_KEY_SHOW_ONLY_UNGROUPED_HOSTS_IN_ROOT,

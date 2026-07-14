@@ -246,6 +246,8 @@ export const zhTWCoreMessages: Messages = {
   'settings.vault.title': '主機庫',
   'settings.vault.showRecentHosts': '顯示最近連線的主機',
   'settings.vault.showRecentHostsDesc': '在主機列表頂部顯示最近連線過的主機',
+  'settings.vault.selectBeforeConnect': '先選取再連線',
+  'settings.vault.selectBeforeConnectDesc': '單擊選取主機（網格模式顯示強調色邊框），再次單擊連線；分組同理。預設仍為單擊直接連線。',
   'settings.vault.showOnlyUngroupedHostsInRoot': '根目錄只顯示未分組主機',
   'settings.vault.showOnlyUngroupedHostsInRootDesc': '開啟後，主機庫根目錄的主機列表只顯示沒有分組的主機，已分組主機請從左側分組進入檢視。',
   'settings.vault.showSftpTab': '顯示 SFTP 標籤頁',
