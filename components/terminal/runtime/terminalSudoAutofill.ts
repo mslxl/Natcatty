@@ -128,6 +128,12 @@ export type SudoPasswordAutofill = {
    * a fresh su/sudo command is armed (#2191).
    */
   abort: () => void;
+  /**
+   * Soft-dismiss when the user pastes or types their own secret so Enter is
+   * not hijacked for confirmFill after clipboard paste (#2198).
+   * Returns true when the assist UI was dismissed.
+   */
+  dismissOnUserContentInput: (data: string) => boolean;
   isPromptPending: () => boolean;
   /** True only while the multi-credential picker UI is open (not the hint). */
   isPickerPending: () => boolean;
@@ -174,6 +180,36 @@ export const getSingleBracketedPasteLine = (data: string): string | null => {
   const text = unwrapBracketedPaste(data);
   if (!text || /[\r\n]/.test(text)) return null;
   return text;
+};
+
+/**
+ * True when terminal input is the user supplying their own password text
+ * (typed char or clipboard paste), not Enter confirmation or Esc/Backspace.
+ *
+ * Used to dismiss password-prompt assist so a later Enter submits what the
+ * user pasted instead of hijacking Enter for the host session password
+ * (nested SSH / jump host, #2198).
+ */
+export const shouldDismissPasswordAssistOnInput = (data: string): boolean => {
+  if (!data) return false;
+  // Enter alone is handled by the key handler as confirmFill — do not dismiss.
+  if (data === "\r" || data === "\n" || data === "\r\n") return false;
+  // Bracketed paste always means the user is inserting their own text.
+  if (data.startsWith(BRACKETED_PASTE_START) || data.includes(BRACKETED_PASTE_START)) {
+    return true;
+  }
+  // Plain multi-char paste (no leading ESC / CSI).
+  if (data.length > 1 && !data.startsWith("\x1b")) {
+    return true;
+  }
+  // Single printable character — mirrors the key handler's cancelHint path.
+  // Exclude DEL (0x7f); Backspace/Esc are handled separately and must not
+  // count as "user password content" for onData-side dismissal.
+  const code = data.charCodeAt(0);
+  if (data.length === 1 && code >= 32 && code !== 0x7f) {
+    return true;
+  }
+  return false;
 };
 
 // Arm the autofill when a sudo/su command is submitted. The user's input is sent
@@ -360,6 +396,18 @@ export const createSudoPasswordAutofill = (_options: {
     return showHostPasswordHint();
   };
 
+  /** Soft dismiss: hide UI but keep arm + tail so Esc/arrows can re-open. */
+  const softDismissPendingUi = () => {
+    if (!pending) return;
+    pending = false;
+    hideUi();
+    dismissedWhileArmed = isArmActiveNow();
+    if (!dismissedWhileArmed) {
+      armedKind = null;
+      armedUntil = Number.NEGATIVE_INFINITY;
+    }
+  };
+
   return {
     armForCommand: (command: string) => {
       // Clear any prior arm/hint first: a non-sudo/su command must not leave a
@@ -468,16 +516,12 @@ export const createSudoPasswordAutofill = (_options: {
       }
     },
     cancelHint: () => {
-      if (!pending) return;
-      // Soft dismiss: hide UI but keep arm + tail so Esc/arrows can re-open
-      // while still on the Password: line, and so a re-prompt can auto-show.
-      pending = false;
-      hideUi();
-      dismissedWhileArmed = isArmActiveNow();
-      if (!dismissedWhileArmed) {
-        armedKind = null;
-        armedUntil = Number.NEGATIVE_INFINITY;
-      }
+      softDismissPendingUi();
+    },
+    dismissOnUserContentInput: (data: string) => {
+      if (!pending || !shouldDismissPasswordAssistOnInput(data)) return false;
+      softDismissPendingUi();
+      return true;
     },
     abort: () => {
       disarm();

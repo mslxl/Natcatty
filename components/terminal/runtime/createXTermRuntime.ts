@@ -764,6 +764,11 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     data: string,
     options?: { source?: "terminal" | "shift-enter" },
   ) => {
+    // Clipboard paste / typed password while assist is open must dismiss the
+    // hint first. Otherwise Enter is still hijacked for confirmFill and can
+    // append the host session password after the user's pasted secret (#2198).
+    ctx.sudoAutofillRef?.current?.dismissOnUserContentInput(data);
+
     const inputSource = options?.source ?? "terminal";
     const id = ctx.sessionRef.current;
     const dataToWrite = data;
@@ -976,6 +981,8 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     // selected/host password; arrows move the picker; Esc soft-dismisses (keeps
     // arm so the list can re-open). Checked before autocomplete so Enter pastes
     // the password instead of submitting an empty line.
+    // Paste is handled in handleTerminalInputData (dismissOnUserContentInput)
+    // because clipboard paste does not go through this key handler (#2198).
     const sudoAutofill = ctx.sudoAutofillRef?.current;
     if (sudoAutofill?.isPromptPending()) {
       if (shouldSendShiftEnterText(e, ctx.terminalSettingsRef.current)) {
