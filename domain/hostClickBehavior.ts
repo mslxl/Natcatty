@@ -36,10 +36,8 @@ export function resolveGroupActivateAction(input: {
 
 /**
  * Focus styles for vault host/group cards.
- * Unfocused: no visible fill. Focused: accent edge only (no bg wash).
- *
- * List/tree use inset ring so content/padding does not shift when selected
- * (adding a real border would push icons inward and look like extra padding).
+ * - Grid: recolor existing soft-card border to accent.
+ * - List/tree: hover-like background fill only (no border).
  */
 export function hostCardFocusClassName(
   viewMode: 'grid' | 'list' | 'tree',
@@ -50,6 +48,6 @@ export function hostCardFocusClassName(
   if (viewMode === 'grid') {
     return '!border-primary';
   }
-  // Inset ring draws on top of padding without changing layout.
-  return 'ring-1 ring-inset ring-primary';
+  // List/tree: same glass fill as hover — no border.
+  return 'bg-secondary/60';
 }

@@ -119,14 +119,14 @@ test('resolveGroupActivateAction: select mode focuses then opens', () => {
   );
 });
 
-test('hostCardFocusClassName: grid recolors border; list uses inset ring without fill', () => {
+test('hostCardFocusClassName: grid recolors border; list uses hover-like fill', () => {
   assert.equal(hostCardFocusClassName('grid', false), '');
   assert.equal(hostCardFocusClassName('list', false), '');
   const grid = hostCardFocusClassName('grid', true);
   assert.match(grid, /border-primary/);
   assert.doesNotMatch(grid, /bg-/);
   const list = hostCardFocusClassName('list', true);
-  assert.match(list, /ring-inset/);
-  assert.match(list, /ring-primary/);
-  assert.doesNotMatch(list, /bg-/);
+  assert.match(list, /bg-secondary/);
+  assert.doesNotMatch(list, /border/);
+  assert.doesNotMatch(list, /ring-/);
 });
