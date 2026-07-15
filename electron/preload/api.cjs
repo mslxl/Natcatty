@@ -465,8 +465,8 @@ function createPreloadApi(ctx) {
   chmodSftp: async (sftpId, path, mode, encoding) => {
     return ipcRenderer.invoke("netcatty:sftp:chmod", { sftpId, path, mode, encoding });
   },
-  getSftpHomeDir: async (sftpId) => {
-    return ipcRenderer.invoke("netcatty:sftp:homeDir", { sftpId });
+  getSftpHomeDir: async (sftpId, encoding) => {
+    return ipcRenderer.invoke("netcatty:sftp:homeDir", { sftpId, encoding });
   },
   // Write binary with real-time progress callback
   writeSftpBinaryWithProgress: async (sftpId, path, content, transferId, encoding, onProgress, onComplete, onError) => {

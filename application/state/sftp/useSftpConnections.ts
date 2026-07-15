@@ -551,7 +551,7 @@ export const useSftpConnections = ({
 
             if (bridge?.getSftpHomeDir) {
               try {
-                const result = await bridge.getSftpHomeDir(sftpId);
+                const result = await bridge.getSftpHomeDir(sftpId, host.sftpEncoding);
                 if (result?.success && result.homeDir) {
                   startPath = result.homeDir;
                   homeDir = result.homeDir;

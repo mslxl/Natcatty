@@ -173,6 +173,12 @@ const encodePathForSession = (sftpId, inputPath, requestedEncoding) => {
   return encodePath(inputPath, encoding);
 };
 
+/** Resolve the effective filename encoding for a live SFTP/SCP session. */
+const getResolvedFilenameEncoding = (sftpId, requestedEncoding) => {
+  if (!sftpId) return requestedEncoding || "utf-8";
+  return resolveEncodingForRequest(sftpId, requestedEncoding);
+};
+
 const hasSftpChannelApi = (value) =>
   !!value &&
   typeof value.readdir === "function" &&
@@ -1186,6 +1192,7 @@ module.exports = {
   _resetAlgorithmSupportCacheForTests,
   requireSftpChannel,
   encodePathForSession,
+  getResolvedFilenameEncoding,
   ensureRemoteDirForSession,
   clearSftpEncodingState,
   clearSftpEncodingStateByPrefix,

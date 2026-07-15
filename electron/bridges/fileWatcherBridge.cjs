@@ -206,7 +206,15 @@ async function handleFileChange(watchId, webContents) {
     // Upload to remote (SCP-mode sessions have no SFTP channel — use SCP backend).
     const { isScpModeClient, getScpBackendForClient } = require("./sftpBridge/scpBackend.cjs");
     if (isScpModeClient(client)) {
-      const enc = encoding && encoding !== "auto" ? encoding : "utf-8";
+      // Prefer session-resolved encoding (auto may have upgraded to gb18030).
+      let enc = encoding;
+      try {
+        const { getResolvedFilenameEncoding } = require("./sftpBridge.cjs");
+        if (typeof getResolvedFilenameEncoding === "function") {
+          enc = getResolvedFilenameEncoding(sftpId, encoding) || encoding;
+        }
+      } catch { /* ignore */ }
+      if (!enc || enc === "auto") enc = "utf-8";
       await getScpBackendForClient(client).writeFile(remotePath, content, { encoding: enc });
     } else {
       const encodedPath = encodePathForSession(sftpId, remotePath, encoding);
