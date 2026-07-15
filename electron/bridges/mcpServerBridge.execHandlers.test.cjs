@@ -84,6 +84,23 @@ function createExecHandlerTestContext({ sessions, backgroundJobs }) {
   return ctx;
 }
 
+test("SFTP cancellation targets one terminal session and waits for cleanup", async () => {
+  const ctx = createExecHandlerTestContext({ sessions: new Map(), backgroundJobs: new Map() });
+  const events = [];
+  ctx.registerSftpOp("chat-1", "session-1", async () => {
+    await nextTick();
+    events.push("session-1-clean");
+  });
+  ctx.registerSftpOp("chat-1", "session-2", () => {
+    events.push("session-2-clean");
+  });
+
+  await ctx.cancelSftpOpsForTerminalSession("chat-1", "session-1");
+
+  assert.deepEqual(events, ["session-1-clean"]);
+  assert.equal(ctx.activeSessionSftpOps.size, 1);
+});
+
 test("MCP terminal_start chat cancel during shellKind probe aborts before PTY write", async () => {
   const pty = new FakePty();
   const deferred = createDeferredShellProbeConn();

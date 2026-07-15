@@ -61,11 +61,11 @@ function createSftpHandlerApi(ctx) {
         }
         return closePromise;
       };
-      const unregisterSftpOp = registerSftpOp(chatSessionId, () => {
+      const unregisterSftpOp = registerSftpOp(chatSessionId, params.sessionId, () => {
         if (!cancellationError) {
           cancellationError = new Error("Cancelled");
         }
-        void closeSftpHandle().catch(() => {
+        return closeSftpHandle().catch(() => {
           // Ignore close failures while cancelling a worker-backed SFTP handle.
         });
       });
@@ -145,11 +145,15 @@ function createSftpHandlerApi(ctx) {
           }, cancelCleanupGraceMs);
         }
       };
-      const unregisterSftpOp = registerSftpOp(chatSessionId, () => {
+      const unregisterSftpOp = registerSftpOp(chatSessionId, params.sessionId, () => {
         if (!cancellationError) {
           cancellationError = new Error("Cancelled");
         }
         requestAbort(cancellationError);
+        closeRequested = true;
+        return closeSftpHandle().catch(() => {
+          // Ignore close failures while cancelling the SFTP operation.
+        });
       });
       try {
         if (timeoutMs) {

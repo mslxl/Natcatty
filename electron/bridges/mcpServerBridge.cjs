@@ -94,6 +94,8 @@ function disconnectExternalMcpClients() {
 // Each chat session only sees the hosts registered for its scope.
 const scopedMetadata = new Map();
 const scopedAttachments = new Map(); // chatSessionId -> Map<filePath, attachment>
+const { createSessionOwnershipRegistry } = require("./mcpServerBridge/sessionOwnership.cjs");
+const openedSessionOwnership = createSessionOwnershipRegistry();
 
 // Command safety checking (reuse from aiBridge)
 let commandBlocklist = [];
@@ -120,7 +122,7 @@ const activeExecChatSessions = new Map(); // chatSessionId -> { sessionId, comma
 const backgroundJobs = new Map(); // jobId -> job metadata
 const workerBackgroundJobs = new Map(); // jobId -> { chatSessionId, sessionId }
 const activeSessionExecutions = new Map(); // sessionId -> { kind, startedAt, token }
-const activeSessionSftpOps = new Map(); // opId -> { chatSessionId, cancel }
+const activeSessionSftpOps = new Map(); // opId -> { chatSessionId, sessionId, cancel }
 const pendingSessionWriteApprovals = new Map(); // sessionId -> method
 const DEFAULT_BACKGROUND_JOB_TIMEOUT_MS = 60 * 60 * 1000;
 const DEFAULT_BACKGROUND_JOB_POLL_INTERVAL_MS = 30 * 1000;
@@ -297,6 +299,7 @@ const {
   cancelBackgroundJobsForSession,
   registerSftpOp,
   cancelSftpOpsForSession,
+  cancelSftpOpsForTerminalSession,
   cancelAllSftpOps,
   readBackgroundJobSnapshot,
   createOutputWindow,
@@ -1099,6 +1102,29 @@ const dispatchCapabilityRpc = createCapabilityRpcDispatcher({
   isChatSessionCancelled,
   requestApprovalFromRenderer,
   USER_DENIED_MESSAGE,
+  onHostOpened: (chatSessionId, sessionId) => {
+    openedSessionOwnership.register(chatSessionId, sessionId);
+  },
+  validateSessionClose: (params = {}) => {
+    const scopeErr = validateSessionScope(
+      params.sessionId,
+      params.chatSessionId,
+      params.scopedSessionIds,
+    );
+    if (scopeErr) return { ok: false, error: scopeErr };
+    return openedSessionOwnership.validate(params.chatSessionId, params.sessionId);
+  },
+  beforeSessionClose: (params = {}) => cancelSftpOpsForTerminalSession(
+    params.chatSessionId,
+    params.sessionId,
+  ),
+  onSessionClosed: (sessionId) => {
+    openedSessionOwnership.forgetSession(sessionId);
+    for (const scoped of scopedMetadata.values()) {
+      scoped.sessionIds = scoped.sessionIds.filter((id) => id !== sessionId);
+      scoped.metadata.delete(sessionId);
+    }
+  },
 });
 
 /**
@@ -1687,6 +1713,7 @@ const configAndCleanupApi = createConfigAndCleanupApi({
   getScopedSessionIds, scopedMetadata, scopedAttachments, cancelledChatSessions, cancelBackgroundJobsForSession,
   cancelWorkerBackgroundJobsForSession,
   clearPendingApprovals, cancelSftpOpsForSession, sftpBridge,
+  clearOpenedSessionScope: openedSessionOwnership.clearScope,
 });
 const { resolveMcpServerRuntimeCommand, buildMcpServerConfig, cleanupScopedMetadata } = configAndCleanupApi;
 

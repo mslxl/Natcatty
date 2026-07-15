@@ -103,6 +103,58 @@ test("dispatchCapabilityRpc denies public vault host notes set when approval rej
   assert.match(result.error, /denied/i);
 });
 
+test("dispatchCapabilityRpc closes an owned session through the renderer bridge", async () => {
+  const calls = [];
+  const closed = [];
+  const lifecycle = [];
+  const dispatch = createTestDispatcher({
+    validateSessionClose: (params) => {
+      assert.equal(params.chatSessionId, "chat-1");
+      assert.equal(params.sessionId, "session-1");
+      return { ok: true };
+    },
+    beforeSessionClose: async () => {
+      await Promise.resolve();
+      lifecycle.push("sftp-clean");
+    },
+    onSessionClosed: (sessionId) => closed.push(sessionId),
+    invokeVaultAgent: async (op, params) => {
+      lifecycle.push("session-close");
+      calls.push({ op, params });
+      return { ok: true, sessionId: params.sessionId, status: "closed" };
+    },
+  });
+
+  const result = await dispatch("public/session/close", {
+    chatSessionId: "chat-1",
+    sessionId: "session-1",
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls, [{ op: "session.close", params: { sessionId: "session-1" } }]);
+  assert.deepEqual(closed, ["session-1"]);
+  assert.deepEqual(lifecycle, ["sftp-clean", "session-close"]);
+});
+
+test("dispatchCapabilityRpc refuses to close a session outside ownership", async () => {
+  let invoked = false;
+  const dispatch = createTestDispatcher({
+    validateSessionClose: () => ({ ok: false, error: "not owned" }),
+    invokeVaultAgent: async () => {
+      invoked = true;
+      return { ok: true };
+    },
+  });
+
+  const result = await dispatch("public/session/close", {
+    chatSessionId: "chat-1",
+    sessionId: "session-2",
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(invoked, false);
+});
+
 test("dispatchCapabilityRpc routes vault hosts create to vault service", async () => {
   let invokedOp = null;
   const dispatch = createTestDispatcher({

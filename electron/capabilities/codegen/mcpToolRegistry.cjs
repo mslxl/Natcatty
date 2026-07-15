@@ -7,6 +7,7 @@ const TERMINAL_EXECUTE_TOOLS = new Set(["terminal_execute"]);
 const TERMINAL_START_TOOLS = new Set(["terminal_start"]);
 const TERMINAL_POLL_TOOLS = new Set(["terminal_poll"]);
 const TERMINAL_STOP_TOOLS = new Set(["terminal_stop"]);
+const SESSION_CLOSE_TOOLS = new Set(["session_close"]);
 const CONTEXT_TOOLS = new Set(["get_environment"]);
 const ATTACHMENT_LIST_TOOLS = new Set(["list_attachments"]);
 const ATTACHMENT_READ_TOOLS = new Set(["read_attachment"]);
@@ -101,6 +102,14 @@ function createToolHandler(toolDef, deps) {
         ? { ...scopeParams, jobId: args.jobId, offset: args.offset || 0 }
         : { ...scopeParams, jobId: args.jobId };
       const result = await rpcCall(rpcMethod, params);
+      if (!result.ok) {
+        return { content: [{ type: "text", text: formatRpcError(result) }], isError: true };
+      }
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    }
+
+    if (SESSION_CLOSE_TOOLS.has(mcpTool)) {
+      const result = await rpcCall(rpcMethod, { ...scopeParams, sessionId: args.sessionId });
       if (!result.ok) {
         return { content: [{ type: "text", text: formatRpcError(result) }], isError: true };
       }

@@ -21,6 +21,9 @@ const TOOL_INPUT_FIELDS = Object.freeze({
     jobId: { type: "string", description: "The background job ID returned by terminal_start." },
   },
   "session.environment": {},
+  "session.close": {
+    sessionId: { type: "string", description: "The session ID returned by host_open." },
+  },
   "attachment.list": {},
   "attachment.read": {
     filePath: { type: "string", optional: true, description: "Exact local attachment path." },
@@ -377,7 +380,7 @@ const MODEL_DESCRIPTION_HINTS = Object.freeze({
   "vault.host.notes.set":
     "Host metadata notes on a saved host — not Vault → Notes sidebar entries. Prefer vault_notes_create/update when the user wants vault notes they can open in the Notes sidebar.",
   "vault.host.open":
-    "Opens a terminal tab for a saved vault host (same as clicking the host in Netcatty). Connection may still be establishing when the tool returns — use get_environment or wait briefly before terminal_execute if needed. Auth prompts (passphrase / keyboard-interactive) still require the user in the Netcatty UI.",
+    "Opens a terminal tab for a saved vault host (same as clicking the host in Netcatty). Connection may still be establishing when the tool returns — use get_environment or wait briefly before terminal_execute if needed. Call session_close with the returned sessionId when the task is finished. Auth prompts (passphrase / keyboard-interactive) still require the user in the Netcatty UI.",
   "vault.host.import":
     "Only for text in known export formats (PuTTY reg, MobaXterm ini, CSV template, SecureCRT, ssh_config). If attached host text is unknown or auto-detection fails, use read_attachment content, extract fields yourself, and call vault_hosts_create.",
   "vault.hosts.create":

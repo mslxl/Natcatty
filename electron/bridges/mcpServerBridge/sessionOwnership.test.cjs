@@ -1,0 +1,34 @@
+"use strict";
+
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const { createSessionOwnershipRegistry } = require("./sessionOwnership.cjs");
+
+test("session ownership is isolated by AI scope", () => {
+  const ownership = createSessionOwnershipRegistry();
+  ownership.register("chat-a", "session-1");
+
+  assert.equal(ownership.validate("chat-a", "session-1").ok, true);
+  assert.equal(ownership.validate("chat-b", "session-1").ok, false);
+  assert.match(ownership.validate("chat-b", "session-1").error, /not opened/i);
+});
+
+test("forgetSession revokes ownership from every scope", () => {
+  const ownership = createSessionOwnershipRegistry();
+  ownership.register("chat-a", "session-1");
+  ownership.register("chat-b", "session-1");
+  ownership.forgetSession("session-1");
+
+  assert.equal(ownership.validate("chat-a", "session-1").ok, false);
+  assert.equal(ownership.validate("chat-b", "session-1").ok, false);
+});
+
+test("clearScope only revokes the deleted chat scope", () => {
+  const ownership = createSessionOwnershipRegistry();
+  ownership.register("chat-a", "session-1");
+  ownership.register("chat-b", "session-2");
+  ownership.clearScope("chat-a");
+
+  assert.equal(ownership.validate("chat-a", "session-1").ok, false);
+  assert.equal(ownership.validate("chat-b", "session-2").ok, true);
+});

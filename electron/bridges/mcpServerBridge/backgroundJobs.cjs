@@ -21,12 +21,12 @@ function createBackgroundJobApi(ctx) {
       }
     }
     
-    function registerSftpOp(chatSessionId, cancel) {
+    function registerSftpOp(chatSessionId, sessionId, cancel) {
       if (!chatSessionId || typeof cancel !== "function") {
         return () => {};
       }
       const opId = `sftp_${Date.now().toString(36)}_${(++activeSftpOpSeq).toString(36)}`;
-      activeSessionSftpOps.set(opId, { chatSessionId, cancel });
+      activeSessionSftpOps.set(opId, { chatSessionId, sessionId, cancel });
       return () => {
         activeSessionSftpOps.delete(opId);
       };
@@ -47,6 +47,21 @@ function createBackgroundJobApi(ctx) {
       if (pending.length) {
         await Promise.allSettled(pending);
       }
+    }
+
+    async function cancelSftpOpsForTerminalSession(chatSessionId, sessionId) {
+      if (!chatSessionId || !sessionId) return;
+      const pending = [];
+      for (const [opId, entry] of activeSessionSftpOps) {
+        if (entry.chatSessionId !== chatSessionId || entry.sessionId !== sessionId) continue;
+        activeSessionSftpOps.delete(opId);
+        try {
+          pending.push(Promise.resolve(entry.cancel()));
+        } catch {
+          // Ignore cancellation failures for already-closed SFTP handles.
+        }
+      }
+      if (pending.length) await Promise.allSettled(pending);
     }
     
     function cancelAllSftpOps() {
@@ -248,6 +263,7 @@ function createBackgroundJobApi(ctx) {
       cancelBackgroundJobsForSession,
       registerSftpOp,
       cancelSftpOpsForSession,
+      cancelSftpOpsForTerminalSession,
       cancelAllSftpOps,
       readBackgroundJobSnapshot,
       createOutputWindow,
