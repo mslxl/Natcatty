@@ -802,7 +802,6 @@ export async function handleVaultAgentOp(
       }, params.path, params.defaults, deps.identities, deps.proxyProfiles, {
         create: op === 'group.create',
         newPath: params.newPath,
-        resolveEffectiveHost: deps.resolveEffectiveHost,
       });
       if (!result.ok) return result;
       deps.updateCustomGroups(result.state.groups);

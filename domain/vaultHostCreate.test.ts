@@ -290,6 +290,11 @@ test('applyVaultHostUpdate changes default ports when switching protocols', () =
   assert.equal(explicitPort.updatedHost.port, 2323);
   assert.equal(serialToSsh.updatedHost.port, 22);
   assert.equal(serialToTelnet.updatedHost.port, 23);
+  const backToSerial = applyVaultHostUpdate(
+    [serialToSsh.updatedHost], [], serial.id, { protocol: 'serial' },
+  );
+  assert.equal(backToSerial.ok, true);
+  if (backToSerial.ok) assert.equal(backToSerial.updatedHost.port, 115200);
 });
 
 test('applyVaultHostUpdate requires serial settings when switching to serial', () => {

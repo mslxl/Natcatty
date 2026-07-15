@@ -495,7 +495,9 @@ export function applyVaultHostUpdate(
       ...(lineMode !== undefined ? { lineMode } : {}),
       ...(backspaceBehavior !== undefined ? { backspaceBehavior: backspaceBehavior as 'default' | 'ctrl-h' } : {}),
     };
-    if (updated.protocol === 'serial') updated.port = baudRate;
+  }
+  if (updated.protocol === 'serial' && updated.serialConfig) {
+    updated.port = updated.serialConfig.baudRate;
   }
   if (
     protocol.provided

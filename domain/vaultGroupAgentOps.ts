@@ -1,4 +1,5 @@
 import type { GroupConfig, Host, Identity, ManagedSource, ProxyProfile } from './models';
+import { applyGroupDefaults, resolveGroupDefaults } from './groupConfig';
 
 type GroupState = {
   groups: string[];
@@ -124,7 +125,7 @@ export function upsertGroup(
   defaults: unknown,
   identities: Identity[],
   proxyProfiles: ProxyProfile[],
-  options: { create?: boolean; newPath?: unknown; resolveEffectiveHost?: (host: Host) => Host } = {},
+  options: { create?: boolean; newPath?: unknown } = {},
 ): Result {
   const path = normalizePath(pathValue);
   if (!path) return { ok: false, error: 'path is required.' };
@@ -148,19 +149,34 @@ export function upsertGroup(
       .find((candidate) => occupiedPaths.has(candidate));
     if (collision) return { ok: false, error: `Group "${collision}" already exists.` };
   }
+  const rename = (candidate: string) => candidate === path
+    ? newPath
+    : candidate.startsWith(`${path}/`) ? `${newPath}${candidate.slice(path.length)}` : candidate;
   const current = state.configs.find((config) => config.path === path) ?? { path };
+  const prospectiveConfig = { ...current, path: newPath };
+  const prospectiveConfigs = [
+    ...state.configs
+      .filter((config) => config.path !== path)
+      .map((config) => ({ ...config, path: rename(config.path) })),
+    prospectiveConfig,
+  ];
+  const resolveProspectiveHost = (host: Host): Host => {
+    const prospectiveHost = host.group ? { ...host, group: rename(host.group) } : host;
+    if (!prospectiveHost.group) return prospectiveHost;
+    return applyGroupDefaults(
+      prospectiveHost,
+      resolveGroupDefaults(prospectiveHost.group, prospectiveConfigs),
+    );
+  };
   const patched = patchGroupConfig(
-    { ...current, path: newPath },
+    prospectiveConfig,
     defaults,
     identities,
     proxyProfiles,
     state.hosts,
-    options.resolveEffectiveHost,
+    resolveProspectiveHost,
   );
   if ('error' in patched) return { ok: false, error: patched.error };
-  const rename = (candidate: string) => candidate === path
-    ? newPath
-    : candidate.startsWith(`${path}/`) ? `${newPath}${candidate.slice(path.length)}` : candidate;
   const groups = options.create
     ? Array.from(new Set([...state.groups, newPath]))
     : Array.from(new Set(state.groups.map(rename)));

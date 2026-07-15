@@ -37,22 +37,42 @@ describe('vaultGroupAgentOps', () => {
       id: 'local', label: 'Local', hostname: 'localhost', username: '', protocol: 'local', tags: [], os: 'linux',
     };
     const inheritedHost: Host = {
-      id: 'inherited', label: 'Inherited', hostname: 'inherited.test', username: 'root', tags: [], os: 'linux',
+      id: 'inherited', label: 'Inherited', hostname: 'inherited.test', username: 'root', group: 'telnet/child', tags: [], os: 'linux',
     };
-    const state = { groups: ['prod'], configs: [], hosts: [...hosts, localHost, inheritedHost], managedSources: [] };
+    const state = {
+      groups: ['prod', 'telnet', 'telnet/child'],
+      configs: [{ path: 'telnet', protocol: 'telnet' as const }],
+      hosts: [...hosts, localHost, inheritedHost],
+      managedSources: [],
+    };
 
     const localResult = upsertGroup(state, 'prod', '{"jumpHostIds":["local"]}', [], proxyProfiles);
-    const inheritedResult = upsertGroup(
-      state,
-      'prod',
-      '{"jumpHostIds":["inherited"]}',
-      [],
-      proxyProfiles,
-      { resolveEffectiveHost: (host) => host.id === inheritedHost.id ? { ...host, protocol: 'telnet' } : host },
-    );
+    const inheritedResult = upsertGroup(state, 'prod', '{"jumpHostIds":["inherited"]}', [], proxyProfiles);
 
     assert.equal(localResult.ok, false);
     assert.equal(inheritedResult.ok, false);
+  });
+
+  it('validates jump hosts against their destination group after a rename', () => {
+    const jump: Host = {
+      id: 'moving-jump', label: 'Moving jump', hostname: 'jump.test', username: 'root',
+      group: 'ssh/prod', tags: [], os: 'linux',
+    };
+    const toTelnet = upsertGroup({
+      groups: ['ssh', 'ssh/prod', 'telnet'],
+      configs: [{ path: 'ssh', protocol: 'ssh' }, { path: 'telnet', protocol: 'telnet' }],
+      hosts: [jump],
+      managedSources: [],
+    }, 'ssh/prod', '{"jumpHostIds":["moving-jump"]}', [], proxyProfiles, { newPath: 'telnet/prod' });
+    const toSsh = upsertGroup({
+      groups: ['ssh', 'telnet', 'telnet/prod'],
+      configs: [{ path: 'ssh', protocol: 'ssh' }, { path: 'telnet', protocol: 'telnet' }],
+      hosts: [{ ...jump, group: 'telnet/prod' }],
+      managedSources: [],
+    }, 'telnet/prod', '{"jumpHostIds":["moving-jump"]}', [], proxyProfiles, { newPath: 'ssh/prod' });
+
+    assert.equal(toTelnet.ok, false);
+    assert.equal(toSsh.ok, true);
   });
 
   it('keeps create distinct from update and rejects self-descendant moves', () => {
