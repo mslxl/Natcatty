@@ -114,7 +114,7 @@ export function patchGroupConfig(
       next.identityFileId = undefined;
       next.identityFilePaths = undefined;
     } else {
-      next.username = undefined;
+      if (!Object.hasOwn(defaults, 'username')) next.username = undefined;
       next.authMethod = undefined;
     }
   }

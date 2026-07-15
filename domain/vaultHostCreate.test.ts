@@ -384,7 +384,7 @@ test('applyVaultHostUpdate keeps referenced jump hosts SSH-capable', () => {
   if (!groupInheritedResult.ok) assert.match(groupInheritedResult.error, /used as a jump host must keep an SSH/i);
 });
 
-test('applyVaultHostUpdate rejects indirect jump host cycles', () => {
+test('applyVaultHostUpdate allows reciprocal independent jump settings', () => {
   const first: Host = {
     id: 'first', label: 'first', hostname: 'first.example.com', username: 'root',
     port: 22, protocol: 'ssh', hostChain: { hostIds: ['second'] }, tags: [], os: 'linux',
@@ -398,8 +398,7 @@ test('applyVaultHostUpdate rejects indirect jump host cycles', () => {
     [first, second], [], second.id, { jumpHostIds: [first.id] },
   );
 
-  assert.equal(result.ok, false);
-  if (!result.ok) assert.match(result.error, /cycle detected/i);
+  assert.equal(result.ok, true);
 });
 
 test('applyVaultHostUpdate validates jump hosts inherited from the destination group', () => {

@@ -4,7 +4,7 @@ export type VaultJumpGraphIssue = {
   key: string;
   targetId: string;
   jumpHostId: string;
-  kind: 'self' | 'missing' | 'protocol' | 'cycle';
+  kind: 'self' | 'missing' | 'protocol';
   error: string;
 };
 
@@ -62,48 +62,6 @@ export function collectVaultJumpGraphIssues(
         issues.set(issue.key, issue);
       }
     }
-  }
-
-  const visited = new Set<string>();
-  const activeIndexes = new Map<string, number>();
-  const stack: string[] = [];
-  const canonicalCycleKey = (cycle: string[]): string => {
-    const rotations = cycle.map((_, index) => [
-      ...cycle.slice(index),
-      ...cycle.slice(0, index),
-    ].join('>'));
-    return `cycle:${rotations.sort()[0]}`;
-  };
-  const visit = (hostId: string): void => {
-    visited.add(hostId);
-    activeIndexes.set(hostId, stack.length);
-    stack.push(hostId);
-    const host = effectiveHosts.get(hostId);
-    for (const jumpHostId of host?.hostChain?.hostIds ?? []) {
-      if (!effectiveHosts.has(jumpHostId)) continue;
-      const activeIndex = activeIndexes.get(jumpHostId);
-      if (activeIndex !== undefined) {
-        const cycle = stack.slice(activeIndex);
-        const key = canonicalCycleKey(cycle);
-        if (!issues.has(key)) {
-          issues.set(key, {
-            key,
-            targetId: hostId,
-            jumpHostId,
-            kind: 'cycle',
-            error: `Jump host cycle detected: ${[...cycle, jumpHostId].join(' -> ')}.`,
-          });
-        }
-      } else if (!visited.has(jumpHostId)) {
-        visit(jumpHostId);
-      }
-    }
-    stack.pop();
-    activeIndexes.delete(hostId);
-  };
-
-  for (const hostId of effectiveHosts.keys()) {
-    if (!visited.has(hostId)) visit(hostId);
   }
 
   return issues;
