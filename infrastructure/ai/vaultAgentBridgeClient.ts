@@ -545,6 +545,12 @@ export async function handleVaultAgentOp(
         return { ok: false, error: 'passphrase must be a string.' };
       }
       const passphrase = typeof params.passphrase === 'string' ? params.passphrase : undefined;
+      const effectiveKeyPathInput = params.keyPath ?? params.keypath;
+      const clearedLocalKeyPath = passphrase === ''
+        && typeof effectiveKeyPathInput === 'string'
+        && !effectiveKeyPathInput.trim()
+        ? currentHost.identityFilePaths?.find((path) => path.trim())?.trim()
+        : undefined;
       const hasHostPatch = VAULT_HOST_UPDATE_FIELDS.some((field) => (
         Object.prototype.hasOwnProperty.call(params, field)
       ));
@@ -574,7 +580,7 @@ export async function handleVaultAgentOp(
       }
 
       if (passphraseProvided) {
-        let keyPath = resolveEffectiveHostKeyPath(updatedHost, deps);
+        let keyPath = clearedLocalKeyPath ?? resolveEffectiveHostKeyPath(updatedHost, deps);
         if (!keyPath && passphrase === '') {
           keyPath = resolveEffectiveHostKeyPath(currentHost, deps);
         }

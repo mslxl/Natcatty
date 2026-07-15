@@ -760,6 +760,7 @@ function App({ settings }: { settings: SettingsState }) {
       const keyIds = event.keyIds ?? [];
       console.log('[App] Passphrase auth failed for keys:', { keyPaths, keyIds });
       void removeDefaultKeyPassphraseAliases(keyPaths).then((aliases) => {
+        if (keyPaths.length > 0 && aliases.length === 0) return;
         const withoutReferencePassphrases = clearReferenceKeyPassphrases(keysRef.current, aliases);
         const updated = clearKeyPassphrasesByIds(withoutReferencePassphrases, keyIds);
         if (updated !== keysRef.current) {

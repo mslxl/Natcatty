@@ -44,33 +44,104 @@ export async function resolveDefaultKeyPassphraseAliases(keyPath: string): Promi
 }
 
 export async function saveDefaultKeyPassphrase(keyPath: string, passphrase: string): Promise<void> {
-  const store = localStorageAdapter.read<Record<string, string>>(STORAGE_KEY_DEFAULT_KEY_PASSPHRASES) ?? {};
   const aliases = await resolveDefaultKeyPassphraseAliases(keyPath);
+  const encrypted = await encryptField(passphrase) ?? passphrase;
+  const store = localStorageAdapter.read<Record<string, string>>(STORAGE_KEY_DEFAULT_KEY_PASSPHRASES) ?? {};
   const aliasKeys = matchingPathKeys(aliases);
   for (const storedPath of Object.keys(store)) {
     if (storedPath !== keyPath && aliasKeys.has(defaultKeyPassphrasePathKey(storedPath))) {
       delete store[storedPath];
     }
   }
-  store[keyPath] = await encryptField(passphrase) ?? passphrase;
+  store[keyPath] = encrypted;
   localStorageAdapter.write(STORAGE_KEY_DEFAULT_KEY_PASSPHRASES, store);
 }
 
-export async function loadDefaultKeyPassphrase(keyPath: string): Promise<string | null> {
+function matchingStoreEntriesChanged(
+  previous: Record<string, string>,
+  latest: Record<string, string> | null,
+  aliasKeys: Set<string>,
+): boolean {
+  const paths = new Set([
+    ...Object.keys(previous),
+    ...Object.keys(latest ?? {}),
+  ]);
+  for (const path of paths) {
+    if (
+      aliasKeys.has(defaultKeyPassphrasePathKey(path))
+      && previous[path] !== latest?.[path]
+    ) return true;
+  }
+  return false;
+}
+
+async function loadDefaultKeyPassphraseOnce(keyPath: string): Promise<{
+  retry: boolean;
+  value: string | null;
+}> {
   const store = localStorageAdapter.read<Record<string, string>>(STORAGE_KEY_DEFAULT_KEY_PASSPHRASES);
+  if (!store) return { retry: false, value: null };
   const aliases = await resolveDefaultKeyPassphraseAliases(keyPath);
   const aliasKeys = matchingPathKeys(aliases);
-  const storedPath = Object.keys(store ?? {}).find((path) => (
+  const storedPaths = Object.keys(store).filter((path) => (
     aliasKeys.has(defaultKeyPassphrasePathKey(path))
   ));
-  const enc = storedPath ? store?.[storedPath] : undefined;
-  if (!enc) return null;
-  const decrypted = await decryptField(enc);
-  if (!decrypted || isEncryptedCredentialPlaceholder(decrypted)) {
-    removeDefaultKeyPassphrases(aliases);
-    return null;
+  const exactIndex = storedPaths.indexOf(keyPath);
+  if (exactIndex > 0) {
+    storedPaths.unshift(storedPaths.splice(exactIndex, 1)[0]);
   }
-  return decrypted;
+
+  const invalidEntries = new Map<string, string>();
+  for (const storedPath of storedPaths) {
+    const decrypted = await decryptField(store[storedPath]);
+    if (decrypted && !isEncryptedCredentialPlaceholder(decrypted)) {
+      const latestStore = localStorageAdapter.read<Record<string, string>>(STORAGE_KEY_DEFAULT_KEY_PASSPHRASES);
+      if (matchingStoreEntriesChanged(store, latestStore, aliasKeys)) {
+        return { retry: true, value: null };
+      }
+      if (latestStore) {
+        let changed = false;
+        for (const duplicatePath of storedPaths) {
+          if (duplicatePath !== storedPath && duplicatePath in latestStore) {
+            delete latestStore[duplicatePath];
+            changed = true;
+          }
+        }
+        if (changed) {
+          localStorageAdapter.write(STORAGE_KEY_DEFAULT_KEY_PASSPHRASES, latestStore);
+        }
+      }
+      return { retry: false, value: decrypted };
+    }
+    invalidEntries.set(storedPath, store[storedPath]);
+  }
+  if (invalidEntries.size > 0) {
+    const latestStore = localStorageAdapter.read<Record<string, string>>(STORAGE_KEY_DEFAULT_KEY_PASSPHRASES);
+    if (matchingStoreEntriesChanged(store, latestStore, aliasKeys)) {
+      return { retry: true, value: null };
+    }
+    if (latestStore) {
+      let changed = false;
+      for (const [storedPath, invalidValue] of invalidEntries) {
+        if (latestStore[storedPath] === invalidValue) {
+          delete latestStore[storedPath];
+          changed = true;
+        }
+      }
+      if (changed) {
+        localStorageAdapter.write(STORAGE_KEY_DEFAULT_KEY_PASSPHRASES, latestStore);
+      }
+    }
+  }
+  return { retry: false, value: null };
+}
+
+export async function loadDefaultKeyPassphrase(keyPath: string): Promise<string | null> {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const result = await loadDefaultKeyPassphraseOnce(keyPath);
+    if (!result.retry) return result.value;
+  }
+  return null;
 }
 
 export function removeDefaultKeyPassphrases(keyPaths: string[]): void {
@@ -90,10 +161,30 @@ export function removeDefaultKeyPassphrases(keyPaths: string[]): void {
 }
 
 export async function removeDefaultKeyPassphraseAliases(keyPaths: string[]): Promise<string[]> {
+  const before = localStorageAdapter.read<Record<string, string>>(STORAGE_KEY_DEFAULT_KEY_PASSPHRASES) ?? {};
   const aliases = Array.from(new Set((await Promise.all(
     keyPaths.map(resolveDefaultKeyPassphraseAliases),
   )).flat()));
-  removeDefaultKeyPassphrases(aliases);
+  const aliasKeys = matchingPathKeys(aliases);
+  const latest = localStorageAdapter.read<Record<string, string>>(STORAGE_KEY_DEFAULT_KEY_PASSPHRASES) ?? {};
+  const matchingPaths = new Set([...Object.keys(before), ...Object.keys(latest)].filter((path) => (
+    aliasKeys.has(defaultKeyPassphrasePathKey(path))
+  )));
+  for (const path of matchingPaths) {
+    if (before[path] !== latest[path]) {
+      return [];
+    }
+  }
+  let changed = false;
+  for (const path of matchingPaths) {
+    if (path in latest) {
+      delete latest[path];
+      changed = true;
+    }
+  }
+  if (changed) {
+    localStorageAdapter.write(STORAGE_KEY_DEFAULT_KEY_PASSPHRASES, latest);
+  }
   return aliases;
 }
 

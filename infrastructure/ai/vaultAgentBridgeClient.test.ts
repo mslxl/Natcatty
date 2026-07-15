@@ -501,6 +501,98 @@ describe('handleVaultAgentOp vault hosts', () => {
     assert.deepEqual(deps.getHosts()[0]?.identityFilePaths, []);
   });
 
+  it('host.update clears the removed local key passphrase without touching a shared identity key', async () => {
+    const removedKeyPaths: string[][] = [];
+    const deps = createDeps({
+      hosts: [{
+        id: 'host-1',
+        label: 'identity with old local key',
+        hostname: 'key.example.com',
+        username: 'deploy',
+        port: 22,
+        tags: [],
+        os: 'linux',
+        identityId: 'identity-1',
+        identityFilePaths: ['~/.ssh/id_old_local'],
+        authMethod: 'key',
+      }],
+      keys: [{
+        id: 'shared-key',
+        label: 'shared key',
+        type: 'ED25519',
+        category: 'key',
+        source: 'reference',
+        filePath: '~/.ssh/id_shared',
+        privateKey: '',
+        created: 1,
+      }],
+      identities: [{
+        id: 'identity-1',
+        label: 'shared identity',
+        username: 'deploy',
+        authMethod: 'key',
+        keyId: 'shared-key',
+        created: 1,
+      }],
+      removeKeyPassphrases: (keyPaths) => {
+        removedKeyPaths.push(keyPaths);
+      },
+    });
+
+    const result = await handleVaultAgentOp(
+      'host.update',
+      { hostId: 'host-1', keyPath: '', passphrase: '' },
+      deps,
+    );
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(removedKeyPaths, [['~/.ssh/id_old_local']]);
+    assert.deepEqual(deps.getHosts()[0]?.identityFilePaths, []);
+    assert.equal(deps.getHosts()[0]?.identityId, 'identity-1');
+  });
+
+  it('host.update treats a whitespace-only key path as clearing the old local key', async () => {
+    const removedKeyPaths: string[][] = [];
+    const deps = createDeps({
+      hosts: [{
+        id: 'host-1', label: 'host', hostname: 'key.example.com', username: 'deploy',
+        tags: [], os: 'linux', identityFilePaths: ['~/.ssh/id_old'], authMethod: 'key',
+      }],
+      removeKeyPassphrases: (keyPaths) => removedKeyPaths.push(keyPaths),
+    });
+
+    const result = await handleVaultAgentOp(
+      'host.update',
+      { hostId: 'host-1', keyPath: '   ', passphrase: '' },
+      deps,
+    );
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(removedKeyPaths, [['~/.ssh/id_old']]);
+    assert.deepEqual(deps.getHosts()[0]?.identityFilePaths, []);
+  });
+
+  it('host.update gives keyPath priority over an empty keypath alias', async () => {
+    const removedKeyPaths: string[][] = [];
+    const deps = createDeps({
+      hosts: [{
+        id: 'host-1', label: 'host', hostname: 'key.example.com', username: 'deploy',
+        tags: [], os: 'linux', identityFilePaths: ['~/.ssh/id_old'], authMethod: 'key',
+      }],
+      removeKeyPassphrases: (keyPaths) => removedKeyPaths.push(keyPaths),
+    });
+
+    const result = await handleVaultAgentOp(
+      'host.update',
+      { hostId: 'host-1', keyPath: '~/.ssh/id_new', keypath: '', passphrase: '' },
+      deps,
+    );
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(removedKeyPaths, [['~/.ssh/id_new']]);
+    assert.deepEqual(deps.getHosts()[0]?.identityFilePaths, ['~/.ssh/id_new']);
+  });
+
   it('host.update uses a newly selected key path for the saved passphrase', async () => {
     const savedKeyPaths: string[] = [];
     const deps = createDeps({

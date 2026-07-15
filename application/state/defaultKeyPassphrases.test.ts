@@ -81,6 +81,73 @@ test("loadDefaultKeyPassphrase removes undecryptable credential placeholders", a
   );
 });
 
+test("loadDefaultKeyPassphrase cleanup preserves a passphrase saved concurrently", async (t) => {
+  installLocalStorage(t);
+  let releaseFirstHomeLookup: (() => void) | undefined;
+  const firstHomeLookup = new Promise<void>((resolve) => {
+    releaseFirstHomeLookup = resolve;
+  });
+  let homeLookupCount = 0;
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      netcatty: {
+        getHomeDir: async () => {
+          homeLookupCount += 1;
+          if (homeLookupCount === 1) await firstHomeLookup;
+          return "/Users/alice";
+        },
+      },
+    },
+  });
+  globalThis.localStorage.setItem(
+    STORAGE_KEY_DEFAULT_KEY_PASSPHRASES,
+    JSON.stringify({ "/Users/alice/.ssh/id_old": "enc:v1:djEwYWJj" }),
+  );
+
+  const pendingLoad = loadDefaultKeyPassphrase("/Users/alice/.ssh/id_old");
+  await saveDefaultKeyPassphrase("/Users/alice/.ssh/id_new", "new-passphrase");
+  releaseFirstHomeLookup?.();
+
+  assert.equal(await pendingLoad, null);
+  assert.equal(
+    await loadDefaultKeyPassphrase("/Users/alice/.ssh/id_new"),
+    "new-passphrase",
+  );
+});
+
+test("loadDefaultKeyPassphrase retries when the same path is saved concurrently", async (t) => {
+  installLocalStorage(t);
+  let releaseFirstHomeLookup: (() => void) | undefined;
+  const firstHomeLookup = new Promise<void>((resolve) => {
+    releaseFirstHomeLookup = resolve;
+  });
+  let homeLookupCount = 0;
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      netcatty: {
+        getHomeDir: async () => {
+          homeLookupCount += 1;
+          if (homeLookupCount === 1) await firstHomeLookup;
+          return "/Users/alice";
+        },
+      },
+    },
+  });
+  const keyPath = "/Users/alice/.ssh/id_ed25519";
+  globalThis.localStorage.setItem(
+    STORAGE_KEY_DEFAULT_KEY_PASSPHRASES,
+    JSON.stringify({ [keyPath]: "old-passphrase" }),
+  );
+
+  const pendingLoad = loadDefaultKeyPassphrase(keyPath);
+  await saveDefaultKeyPassphrase(keyPath, "new-passphrase");
+  releaseFirstHomeLookup?.();
+
+  assert.equal(await pendingLoad, "new-passphrase");
+});
+
 test("loadDefaultKeyPassphrase returns plain stored passphrases", async (t) => {
   installLocalStorage(t);
   const keyPath = "/Users/alice/.ssh/id_ed25519";
@@ -117,6 +184,78 @@ test("loadDefaultKeyPassphrase matches an expanded connection path to a saved ho
   assert.equal(
     await loadDefaultKeyPassphrase("/Users/alice/.ssh/id_ed25519"),
     "saved by agent",
+  );
+});
+
+test("loadDefaultKeyPassphrase prefers an exact saved path over a stale alias", async (t) => {
+  installLocalStorage(t);
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: { netcatty: { getHomeDir: async () => "/Users/alice" } },
+  });
+  globalThis.localStorage.setItem(
+    STORAGE_KEY_DEFAULT_KEY_PASSPHRASES,
+    JSON.stringify({
+      "~/.ssh/id_ed25519": "enc:v1:djEwYWJj",
+      "/Users/alice/.ssh/id_ed25519": "valid-exact-passphrase",
+    }),
+  );
+
+  assert.equal(
+    await loadDefaultKeyPassphrase("/Users/alice/.ssh/id_ed25519"),
+    "valid-exact-passphrase",
+  );
+  assert.deepEqual(
+    JSON.parse(globalThis.localStorage.getItem(STORAGE_KEY_DEFAULT_KEY_PASSPHRASES) ?? "{}"),
+    { "/Users/alice/.ssh/id_ed25519": "valid-exact-passphrase" },
+  );
+});
+
+test("loadDefaultKeyPassphrase falls back to a valid alias and removes an invalid exact value", async (t) => {
+  installLocalStorage(t);
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: { netcatty: { getHomeDir: async () => "/Users/alice" } },
+  });
+  globalThis.localStorage.setItem(
+    STORAGE_KEY_DEFAULT_KEY_PASSPHRASES,
+    JSON.stringify({
+      "~/.ssh/id_ed25519": "valid-alias-passphrase",
+      "/Users/alice/.ssh/id_ed25519": "enc:v1:djEwYWJj",
+    }),
+  );
+
+  assert.equal(
+    await loadDefaultKeyPassphrase("/Users/alice/.ssh/id_ed25519"),
+    "valid-alias-passphrase",
+  );
+  assert.deepEqual(
+    JSON.parse(globalThis.localStorage.getItem(STORAGE_KEY_DEFAULT_KEY_PASSPHRASES) ?? "{}"),
+    { "~/.ssh/id_ed25519": "valid-alias-passphrase" },
+  );
+});
+
+test("loadDefaultKeyPassphrase consolidates conflicting valid aliases around the exact path", async (t) => {
+  installLocalStorage(t);
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: { netcatty: { getHomeDir: async () => "/Users/alice" } },
+  });
+  globalThis.localStorage.setItem(
+    STORAGE_KEY_DEFAULT_KEY_PASSPHRASES,
+    JSON.stringify({
+      "~/.ssh/id_ed25519": "old-alias-passphrase",
+      "/Users/alice/.ssh/id_ed25519": "new-exact-passphrase",
+    }),
+  );
+
+  assert.equal(
+    await loadDefaultKeyPassphrase("/Users/alice/.ssh/id_ed25519"),
+    "new-exact-passphrase",
+  );
+  assert.equal(
+    await loadDefaultKeyPassphrase("~/.ssh/id_ed25519"),
+    "new-exact-passphrase",
   );
 });
 
@@ -173,6 +312,39 @@ test("removeDefaultKeyPassphraseAliases clears relative and expanded paths", asy
   ], aliases);
   assert.equal(clearedKeys[0].passphrase, undefined);
   assert.equal(clearedKeys[0].savePassphrase, false);
+});
+
+test("removeDefaultKeyPassphraseAliases preserves a corrected passphrase saved during alias lookup", async (t) => {
+  installLocalStorage(t);
+  let releaseFirstHomeLookup: (() => void) | undefined;
+  const firstHomeLookup = new Promise<void>((resolve) => {
+    releaseFirstHomeLookup = resolve;
+  });
+  let homeLookupCount = 0;
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      netcatty: {
+        getHomeDir: async () => {
+          homeLookupCount += 1;
+          if (homeLookupCount === 1) await firstHomeLookup;
+          return "/Users/alice";
+        },
+      },
+    },
+  });
+  const keyPath = "/Users/alice/.ssh/id_ed25519";
+  globalThis.localStorage.setItem(
+    STORAGE_KEY_DEFAULT_KEY_PASSPHRASES,
+    JSON.stringify({ [keyPath]: "old-passphrase" }),
+  );
+
+  const pendingRemoval = removeDefaultKeyPassphraseAliases([keyPath]);
+  await saveDefaultKeyPassphrase(keyPath, "corrected-passphrase");
+  releaseFirstHomeLookup?.();
+
+  assert.deepEqual(await pendingRemoval, []);
+  assert.equal(await loadDefaultKeyPassphrase(keyPath), "corrected-passphrase");
 });
 
 test("rememberKeyPassphrase updates a reference key stored under an expanded alias", async (t) => {
