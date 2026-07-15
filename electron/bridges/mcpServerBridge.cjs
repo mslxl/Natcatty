@@ -298,6 +298,8 @@ const backgroundJobApi = createBackgroundJobApi({
 const {
   createBackgroundJobId,
   cancelBackgroundJobsForSession,
+  cancelBackgroundJobsForTerminalSession,
+  settleBackgroundJobsForTerminalSession,
   registerSftpOp,
   cancelSftpOpsForSession,
   cancelSftpOpsForTerminalSession,
@@ -1120,10 +1122,13 @@ const dispatchCapabilityRpc = createCapabilityRpcDispatcher({
   },
   beforeSessionClose: async (params = {}) => {
     beginTerminalSessionClose(params.sessionId);
+    cancelBackgroundJobsForTerminalSession(params.sessionId);
+    await cancelWorkerBackgroundJobsForTerminalSession(params.sessionId);
     await cancelSftpOpsForTerminalSession(params.sessionId);
   },
   afterSessionClose: (params = {}) => endTerminalSessionClose(params.sessionId),
-  onSessionClosed: (sessionId) => {
+  onSessionClosed: async (sessionId) => {
+    await settleBackgroundJobsForTerminalSession(sessionId);
     openedSessionOwnership.forgetSession(sessionId);
     for (const scoped of scopedMetadata.values()) {
       scoped.sessionIds = scoped.sessionIds.filter((id) => id !== sessionId);
@@ -1371,6 +1376,25 @@ function cancelWorkerBackgroundJobsForSession(chatSessionId) {
   } catch {
     // Worker may already be gone while cancelling a torn-down chat/session.
   }
+}
+
+async function cancelWorkerBackgroundJobsForTerminalSession(sessionId) {
+  if (!sessionId) return;
+  const matchingJobs = [];
+  const pending = [];
+  for (const [jobId, job] of workerBackgroundJobs) {
+    if (job.sessionId !== sessionId) continue;
+    matchingJobs.push(jobId);
+    if (terminalWorkerManager?.request) {
+      pending.push(terminalWorkerManager.request("netcatty:ai:jobStop", {
+        jobId,
+        sessionId,
+        chatSessionId: job.chatSessionId || null,
+      }, {}));
+    }
+  }
+  if (pending.length) await Promise.allSettled(pending);
+  for (const jobId of matchingJobs) workerBackgroundJobs.delete(jobId);
 }
 
 let builtinRpcHandlerRegistry = null;
@@ -1717,6 +1741,7 @@ const configAndCleanupApi = createConfigAndCleanupApi({
   process, existsSync, path, __dirname, toUnpackedAsarPath, DEBUG_MCP,
   getScopedSessionIds, scopedMetadata, scopedAttachments, cancelledChatSessions, cancelBackgroundJobsForSession,
   cancelWorkerBackgroundJobsForSession,
+  cancelWorkerBackgroundJobsForTerminalSession,
   clearPendingApprovals, cancelSftpOpsForSession, sftpBridge,
   clearOpenedSessionScope: openedSessionOwnership.clearScope,
 });
@@ -1753,6 +1778,7 @@ module.exports = {
   cancelAllPtyExecs,
   cancelPtyExecsForSession,
   cancelWorkerBackgroundJobsForSession,
+  cancelWorkerBackgroundJobsForTerminalSession,
   cancelSftpOpsForSession,
   getSessionMeta,
   cleanupScopedMetadata,

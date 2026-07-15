@@ -20,6 +20,36 @@ function createBackgroundJobApi(ctx) {
         }
       }
     }
+
+    function cancelBackgroundJobsForTerminalSession(sessionId) {
+      if (!sessionId) return;
+      for (const [, job] of backgroundJobs) {
+        if (job.sessionId !== sessionId) continue;
+        if (job.status !== "running" && job.status !== "stopping") continue;
+        try {
+          job.handle?.cancel?.();
+        } catch {
+          // The terminal close below will still tear down the underlying stream.
+        }
+        job.status = "stopping";
+        job.error = "Cancellation requested";
+        job.updatedAt = Date.now();
+      }
+    }
+
+    async function settleBackgroundJobsForTerminalSession(sessionId) {
+      if (!sessionId) return;
+      const matchingJobs = [];
+      const pending = [];
+      for (const [jobId, job] of backgroundJobs) {
+        if (job.sessionId !== sessionId) continue;
+        matchingJobs.push([jobId, job]);
+        if (job.handle?.resultPromise) pending.push(job.handle.resultPromise);
+      }
+      if (pending.length) await Promise.allSettled(pending);
+      for (const [jobId] of matchingJobs) backgroundJobs.delete(jobId);
+      activeSessionExecutions.delete(sessionId);
+    }
     
     function registerSftpOp(chatSessionId, sessionId, cancel) {
       if (!chatSessionId || typeof cancel !== "function") {
@@ -282,6 +312,8 @@ function createBackgroundJobApi(ctx) {
     return {
       createBackgroundJobId,
       cancelBackgroundJobsForSession,
+      cancelBackgroundJobsForTerminalSession,
+      settleBackgroundJobsForTerminalSession,
       registerSftpOp,
       cancelSftpOpsForSession,
       cancelSftpOpsForTerminalSession,

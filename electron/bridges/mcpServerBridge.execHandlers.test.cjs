@@ -136,6 +136,40 @@ test("overlapping closes keep SFTP blocked until the last close finishes", () =>
   assert.equal(ctx.activeSessionSftpOps.size, 1);
 });
 
+test("terminal close cancels and removes background jobs for that terminal", async () => {
+  let cancelCount = 0;
+  let settleJob;
+  const resultPromise = new Promise((resolve) => {
+    settleJob = resolve;
+  });
+  const backgroundJobs = new Map([
+    ["job-1", {
+      sessionId: "session-1",
+      status: "running",
+      handle: {
+        cancel: () => { cancelCount += 1; },
+        resultPromise,
+      },
+    }],
+    ["job-2", { sessionId: "session-2", status: "running", handle: {} }],
+  ]);
+  const ctx = createExecHandlerTestContext({ sessions: new Map(), backgroundJobs });
+  ctx.activeSessionExecutions.set("session-1", { kind: "job", token: "token-1" });
+
+  ctx.cancelBackgroundJobsForTerminalSession("session-1");
+  assert.equal(cancelCount, 1);
+  assert.equal(backgroundJobs.get("job-1").status, "stopping");
+
+  const settling = ctx.settleBackgroundJobsForTerminalSession("session-1");
+  assert.equal(backgroundJobs.has("job-1"), true);
+  settleJob({ error: "Cancelled" });
+  await settling;
+
+  assert.equal(backgroundJobs.has("job-1"), false);
+  assert.equal(backgroundJobs.has("job-2"), true);
+  assert.equal(ctx.activeSessionExecutions.has("session-1"), false);
+});
+
 test("MCP terminal_start chat cancel during shellKind probe aborts before PTY write", async () => {
   const pty = new FakePty();
   const deferred = createDeferredShellProbeConn();

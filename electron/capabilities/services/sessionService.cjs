@@ -19,7 +19,7 @@ function createSessionService(ctx = {}) {
       try {
         await beforeClose?.(params);
         const result = await invokeSessionAgent("session.close", { sessionId: params.sessionId });
-        if (result?.ok !== false) onClosed?.(params.sessionId);
+        if (result?.ok !== false) await onClosed?.(params.sessionId);
         return result;
       } finally {
         await afterClose?.(params);
