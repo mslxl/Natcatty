@@ -260,9 +260,11 @@ function parseLsLaOutput(stdout, { basePath = "" } = {}) {
     const perm = match[2];
     const size = Number(match[3]) || 0;
     let name = match[5];
-    // strip " -> target" for symlinks
-    const arrow = name.indexOf(" -> ");
-    if (arrow >= 0) name = name.slice(0, arrow);
+    // strip " -> target" only for symlink rows (backslash filenames may contain " -> ")
+    if (typeChar === "l") {
+      const arrow = name.indexOf(" -> ");
+      if (arrow >= 0) name = name.slice(0, arrow);
+    }
     name = name.trim();
     if (!name || name === "." || name === "..") continue;
     // when listing a directory, ls -la path shows path prefix sometimes — use basename

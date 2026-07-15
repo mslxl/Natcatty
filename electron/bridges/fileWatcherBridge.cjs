@@ -203,9 +203,15 @@ async function handleFileChange(watchId, webContents) {
     
     console.log(`[FileWatcher] Syncing ${content.length} bytes to ${remotePath}`);
     
-    // Upload to remote
-    const encodedPath = encodePathForSession(sftpId, remotePath, encoding);
-    await client.put(content, encodedPath);
+    // Upload to remote (SCP-mode sessions have no SFTP channel — use SCP backend).
+    const { isScpModeClient, getScpBackendForClient } = require("./sftpBridge/scpBackend.cjs");
+    if (isScpModeClient(client)) {
+      const enc = encoding && encoding !== "auto" ? encoding : "utf-8";
+      await getScpBackendForClient(client).writeFile(remotePath, content, { encoding: enc });
+    } else {
+      const encodedPath = encodePathForSession(sftpId, remotePath, encoding);
+      await client.put(content, encodedPath);
+    }
     
     console.log(`[FileWatcher] Sync complete: ${remotePath}`);
     

@@ -895,7 +895,11 @@ function createFileOpsApi(ctx) {
 
       if (isScpModeClient(client)) {
         try {
-          const encoding = resolveEncodingForRequest(sftpId, payload?.encoding);
+          // Prefer payload encoding; otherwise session-resolved state from prior lists.
+          const encoding = resolveEncodingForRequest(
+            sftpId,
+            payload?.encoding || sftpEncodingState.get(sftpId)?.resolved || "auto",
+          );
           const home = await getScpBackendForClient(client).homeDir({
             signal: payload?.abortSignal || null,
             encoding: encoding === "auto" ? "utf-8" : encoding,
