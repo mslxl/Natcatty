@@ -34,6 +34,20 @@ export function resolveGroupActivateAction(input: {
   return 'select';
 }
 
+export function shouldClearHostFocusOnBackgroundClick(input: {
+  behavior: HostClickBehavior;
+  isMultiSelectMode: boolean;
+  clickedWithinHostList: boolean;
+  clickedHostOrGroup: boolean;
+}): boolean {
+  return (
+    input.behavior === 'select' &&
+    !input.isMultiSelectMode &&
+    input.clickedWithinHostList &&
+    !input.clickedHostOrGroup
+  );
+}
+
 /**
  * Focus styles for vault host/group cards.
  * - Grid: recolor existing soft-card border to accent.

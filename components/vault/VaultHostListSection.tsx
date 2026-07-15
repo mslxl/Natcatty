@@ -16,6 +16,7 @@ import {
   hostCardFocusClassName,
   resolveGroupActivateAction,
   resolveHostActivateAction,
+  shouldClearHostFocusOnBackgroundClick,
   type HostClickBehavior,
 } from "../../domain/hostClickBehavior";
 import type { Host } from "../../domain/models";
@@ -88,6 +89,22 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
     setSelectedGroupPath(groupPath);
   }, [focusedGroupPath, hostClickBehavior, setSelectedGroupPath]);
 
+  const handleHostListClick = React.useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    const target = event.target;
+    const clickedWithinHostList = target instanceof Node
+      && event.currentTarget.contains(target);
+    const clickedHostOrGroup = target instanceof Element
+      && !!target.closest("[data-host-id], [data-group-path]");
+    if (!shouldClearHostFocusOnBackgroundClick({
+      behavior: hostClickBehavior,
+      isMultiSelectMode,
+      clickedWithinHostList,
+      clickedHostOrGroup,
+    })) return;
+    setFocusedHostId(null);
+    setFocusedGroupPath(null);
+  }, [hostClickBehavior, isMultiSelectMode]);
+
 
   const handleHostDragStart = React.useCallback((e: React.DragEvent, hostId: string) => {
     e.dataTransfer.effectAllowed = "move";
@@ -150,6 +167,7 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
             !isHostsSectionActive && "hidden",
           )}
           data-section="vault-host-list"
+          onClick={handleHostListClick}
           onDragOverCapture={(e) => {
             const target = (e.target as Element | null)?.closest("[data-host-id], [data-group-path]");
             if (target) e.preventDefault();
