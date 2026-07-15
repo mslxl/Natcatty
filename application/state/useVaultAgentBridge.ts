@@ -9,7 +9,7 @@ import {
 import {
   clearReferenceKeyPassphrases,
   rememberKeyPassphrase,
-  removeDefaultKeyPassphrases,
+  removeDefaultKeyPassphraseAliases,
 } from '../defaultKeyPassphrases';
 
 export interface UseVaultAgentBridgeInput {
@@ -122,9 +122,9 @@ export function useVaultAgentBridge(input: UseVaultAgentBridgeInput): void {
           },
         }),
         removeKeyPassphrases: async (keyPaths) => {
-          removeDefaultKeyPassphrases(keyPaths);
+          const aliases = await removeDefaultKeyPassphraseAliases(keyPaths);
           const currentKeys = vaultSnapshotRef.current.keys;
-          const updatedKeys = clearReferenceKeyPassphrases(currentKeys, keyPaths);
+          const updatedKeys = clearReferenceKeyPassphrases(currentKeys, aliases);
           if (updatedKeys !== currentKeys) {
             vaultSnapshotRef.current.keys = updatedKeys;
             await current.updateKeys(updatedKeys);
