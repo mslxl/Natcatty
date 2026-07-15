@@ -160,6 +160,9 @@ export interface Host {
   // Version 1 distinguishes the explicit per-host login choices from the
   // legacy "password" default, which did not mean password-only.
   authPolicyVersion?: 1;
+  // Legacy no-op field from earlier MFA experiments. Auth always uses
+  // password-first with automatic keyboard-interactive fallback (#2150 / #2217).
+  requiresMfa?: boolean;
   // Use the local SSH agent for login. This is separate from agentForwarding,
   // which exposes the local agent to the remote host after login.
   useSshAgent?: boolean;

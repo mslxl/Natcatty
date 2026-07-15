@@ -222,6 +222,17 @@ function createMoshSessionApi(ctx) {
         }
       }
     }
+
+    function buildMoshPreferredAuthentications({ authMethod, requiresMfa = false, hasPassword = false, hasPublicKey = false }) {
+      if (authMethod === "password") {
+        return requiresMfa ? "keyboard-interactive,password" : "password,keyboard-interactive";
+      }
+      if (!requiresMfa) return "";
+      if (hasPublicKey && hasPassword) return "publickey,keyboard-interactive,password";
+      if (hasPublicKey) return "publickey,keyboard-interactive";
+      if (hasPassword) return "keyboard-interactive,password";
+      return "keyboard-interactive";
+    }
     
     async function buildMoshSshAuthArgs(options, sessionId) {
       const sshArgs = [];
@@ -301,6 +312,7 @@ function createMoshSessionApi(ctx) {
         }
 
         const hasSelectedIdentity = sshArgs.some((arg) => arg === "-i");
+        const hasPassword = typeof options.password === "string" && options.password.length > 0;
         if (
           (options.authMethod === "key" || options.authMethod === "certificate")
           && !hasSelectedIdentity
@@ -322,7 +334,15 @@ function createMoshSessionApi(ctx) {
 
         if (options.authMethod === "password") {
           sshArgs.push("-o", "PubkeyAuthentication=no");
-          sshArgs.push("-o", "PreferredAuthentications=password,keyboard-interactive");
+        }
+        const preferredAuthentications = buildMoshPreferredAuthentications({
+          authMethod: options.authMethod,
+          requiresMfa: !!options.requiresMfa,
+          hasPassword,
+          hasPublicKey: Boolean(options.useSshAgent || hasSelectedIdentity),
+        });
+        if (preferredAuthentications) {
+          sshArgs.push("-o", `PreferredAuthentications=${preferredAuthentications}`);
         }
       } catch (err) {
         cleanupMoshAuthTempFiles(tempFiles);

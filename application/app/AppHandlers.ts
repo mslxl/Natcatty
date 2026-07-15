@@ -227,29 +227,54 @@ export function handleEscapeKeyDownImpl(getCtx: AppContextGetter, e: KeyboardEve
   }
 }
 
-export function handleKeyboardInteractiveSubmitImpl(getCtx: AppContextGetter, requestId: string, responses: string[], savePassword?: string) {
-  const { hosts, keyboardInteractiveQueue, netcattyBridge, sessions, setKeyboardInteractiveQueue, updateHosts } = getCtx();
+export function handleKeyboardInteractiveSubmitImpl(
+  getCtx: AppContextGetter,
+  requestId: string,
+  responses: string[],
+  savePassword?: string,
+) {
+  const {
+    hosts,
+    keyboardInteractiveQueue,
+    netcattyBridge,
+    sessions,
+    setKeyboardInteractiveQueue,
+    updateHosts,
+  } = getCtx();
 {
     const bridge = netcattyBridge.get();
     if (bridge?.respondKeyboardInteractive) {
       void bridge.respondKeyboardInteractive(requestId, responses, false);
     }
-    // Save password to host if requested — never for second-factor / EDR prompts
+    const request = keyboardInteractiveQueue.find(r => r.requestId === requestId);
+    const session = request?.sessionId
+      ? sessions.find(s => s.id === request.sessionId)
+      : undefined;
+    const explicitHostId = typeof request?.hostId === "string" ? request.hostId : undefined;
+    const canUseExplicitHost = !!explicitHostId;
+    // Only mutate the destination host when the prompting hostname matches —
+    // jump-host challenges without an explicit hostId must not rewrite the target host.
+    const canUpdateDestinationHost = !!(
+      session?.hostId
+      && (!request?.hostname || request.hostname === session.hostname)
+    );
+    const hostIdToUpdate = canUseExplicitHost
+      ? explicitHostId
+      : canUpdateDestinationHost
+        ? session.hostId
+        : undefined;
+    const host = hostIdToUpdate
+      ? hosts.find(h => h.id === hostIdToUpdate)
+      : undefined;
+    // Save password to host if requested - never for second-factor / EDR prompts
     // (allowSavePassword === false) so a secondary secret cannot overwrite the
     // host login password (#2150 / Codex review on #2151).
-    if (savePassword) {
-      const request = keyboardInteractiveQueue.find(r => r.requestId === requestId);
-      if (request?.sessionId && request.allowSavePassword !== false) {
-        const session = sessions.find(s => s.id === request.sessionId);
-        // Only save when the prompting hostname matches the session's host,
-        // to avoid overwriting the destination host's password with a jump host's password
-        if (session?.hostId && (!request.hostname || request.hostname === session.hostname)) {
-          const host = hosts.find(h => h.id === session.hostId);
-          if (host) {
-            updateHosts(hosts.map(h => h.id === host.id ? { ...h, password: savePassword, savePassword: true } : h));
-          }
-        }
-      }
+    if (savePassword && host && request?.allowSavePassword !== false) {
+      updateHosts(hosts.map(h => h.id === host.id ? {
+        ...h,
+        password: savePassword,
+        savePassword: true,
+      } : h));
     }
     // Remove from queue by requestId
     setKeyboardInteractiveQueue(prev => prev.filter(r => r.requestId !== requestId));

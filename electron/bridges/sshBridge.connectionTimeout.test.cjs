@@ -153,6 +153,9 @@ test("SSH start automatic mode tries local keys before its saved password", asyn
     const labels = collectAuthMethods(MockSSHClient.instances[0].connectOpts.authHandler);
     assert.ok(labels.includes("publickey"), `expected publickey; got ${labels.join(",")}`);
     assert.ok(labels.indexOf("publickey") < labels.indexOf("password"), labels.join(","));
+    assert.ok(labels.indexOf("publickey") < labels.indexOf("keyboard-interactive"), labels.join(","));
+    // Default hosts keep password before keyboard-interactive.
+    assert.ok(labels.indexOf("password") < labels.indexOf("keyboard-interactive"), labels.join(","));
   });
 });
 

@@ -834,8 +834,54 @@ function isPasswordProvided(password) {
  * @returns {{ authHandler: Function|Array, privateKey: string|null, agent: string|Object|null, usedDefaultKeys: boolean }}
 * @param {Array} [options.unlockedEncryptedKeys] - Array of unlocked encrypted keys with passphrases
  */
+/**
+ * Append the SSH password method (always password-first).
+ * Keyboard-interactive is added separately as last-resort fallback so dual-
+ * method servers still reach multi-round PAM/EDR after password fails or only
+ * partially succeeds (#2150 / #2217).
+ *
+ * skipPasswordMethod (2FA_RETRY): omit the password method so the full
+ * conversation happens over keyboard-interactive; the saved host password can
+ * still autofill the first password-looking KI prompt.
+ *
+ * @param {Array} authMethods
+ * @param {{ hasPassword: boolean, skipPasswordMethod?: boolean, asObjects?: boolean }} opts
+ */
+function appendPasswordAuthMethods(authMethods, { hasPassword, skipPasswordMethod = false, asObjects = false } = {}) {
+  if (!hasPassword || skipPasswordMethod) return;
+  if (asObjects) {
+    authMethods.push({ type: "password", id: "password" });
+  } else {
+    authMethods.push("password");
+  }
+}
+
+function ensureKeyboardInteractiveMethod(authMethods, { asObjects = false } = {}) {
+  if (asObjects) {
+    if (!authMethods.some((method) => method.type === "keyboard-interactive")) {
+      authMethods.push({ type: "keyboard-interactive", id: "keyboard-interactive" });
+    }
+    return;
+  }
+  if (!authMethods.includes("keyboard-interactive")) {
+    authMethods.push("keyboard-interactive");
+  }
+}
+
 function buildAuthHandler(options) {
-  const { privateKey, password, passphrase, agent, username, logPrefix = "[SSH]", unlockedEncryptedKeys = [], defaultKeys = [], sshAgentSocketOverride, onAuthAttempt } = options;
+  const {
+    privateKey,
+    password,
+    passphrase,
+    agent,
+    username,
+    logPrefix = "[SSH]",
+    unlockedEncryptedKeys = [],
+    defaultKeys = [],
+    sshAgentSocketOverride,
+    onAuthAttempt,
+    skipPasswordMethod = false,
+  } = options;
 
   // Determine what type of explicit auth the user configured
   const hasExplicitKey = !!privateKey;
@@ -914,8 +960,12 @@ function buildAuthHandler(options) {
     const authMethods = ["none"]; // Always try none first per RFC 4252
     if (effectiveAgent) authMethods.push("agent");
     if (!isPasswordOnly && privateKey) authMethods.push("publickey");
-    if (password) authMethods.push("password");
-    authMethods.push("keyboard-interactive");
+    appendPasswordAuthMethods(authMethods, {
+      hasPassword: !!password,
+      skipPasswordMethod,
+      asObjects: false,
+    });
+    ensureKeyboardInteractiveMethod(authMethods, { asObjects: false });
 
     const authPhase = createAuthPhase();
     return {
@@ -930,7 +980,7 @@ function buildAuthHandler(options) {
   // Build comprehensive authMethods array with all auth options
   // Order depends on what user explicitly configured:
   // - Password-only: password -> keyboard-interactive (no default-key fallback)
-  // - Key-only: user key -> password -> agent -> default keys -> keyboard-interactive
+    // - Key-only: user key -> password -> agent -> default keys -> keyboard-interactive
   // - Agent configured: agent -> user key -> password -> default keys -> keyboard-interactive
   // - No explicit auth: agent -> default keys -> keyboard-interactive
   const authMethods = [];
@@ -938,9 +988,11 @@ function buildAuthHandler(options) {
   if (isPasswordOnly) {
     // Password-only: respect user's explicit choice, no key/agent fallback.
     // Matches startSSHSession (issue #2079) and avoids #266 passphrase prompts.
-    if (password) {
-      authMethods.push({ type: "password", id: "password" });
-    }
+    appendPasswordAuthMethods(authMethods, {
+      hasPassword: !!password,
+      skipPasswordMethod,
+      asObjects: true,
+    });
   } else if (isAutomatic) {
     // Automatic: mirror the familiar OpenSSH-style order. Try local key
     // sources first, then use a saved password as the final non-interactive
@@ -963,9 +1015,11 @@ function buildAuthHandler(options) {
         id: `publickey-default-${keyInfo.keyName}`
       });
     }
-    if (password) {
-      authMethods.push({ type: "password", id: "password" });
-    }
+    appendPasswordAuthMethods(authMethods, {
+      hasPassword: !!password,
+      skipPasswordMethod,
+      asObjects: true,
+    });
   } else if (isKeyOnly) {
     // Key-only: user key first, then password (if any), then agent/default keys as fallback
 
@@ -978,9 +1032,11 @@ function buildAuthHandler(options) {
     });
 
     // 2. Password (if configured alongside key)
-    if (password) {
-      authMethods.push({ type: "password", id: "password" });
-    }
+    appendPasswordAuthMethods(authMethods, {
+      hasPassword: !!password,
+      skipPasswordMethod,
+      asObjects: true,
+    });
 
     // 3. System agent as fallback (AFTER user's key)
     if (sshAgentSocket) {
@@ -1014,9 +1070,11 @@ function buildAuthHandler(options) {
     }
 
     // 3. Password (if configured)
-    if (password) {
-      authMethods.push({ type: "password", id: "password" });
-    }
+    appendPasswordAuthMethods(authMethods, {
+      hasPassword: !!password,
+      skipPasswordMethod,
+      asObjects: true,
+    });
 
     // 4. Default keys as fallback
     for (const keyInfo of fallbackKeys) {
@@ -1048,8 +1106,8 @@ function buildAuthHandler(options) {
     });
   }
 
-  // Keyboard-interactive as last resort
-  authMethods.push({ type: "keyboard-interactive", id: "keyboard-interactive" });
+  // Keyboard-interactive as last-resort fallback for PAM/EDR multi-round auth.
+  ensureKeyboardInteractiveMethod(authMethods, { asObjects: true });
 
   console.log(`${logPrefix} Auth methods configured`, {
     isAutomatic,
@@ -1057,12 +1115,12 @@ function buildAuthHandler(options) {
     hasUserKey: !!privateKey,
     hasPassword: !!password,
     hasAgent: !!effectiveAgent,
+    skipPasswordMethod: !!skipPasswordMethod,
     methodCount: authMethods.length,
     methods: authMethods.map(m => m.id),
   });
 
   // Use dynamic authHandler to try all keys
-  let authIndex = 0;
   let lastAttemptedLabel = null;
   const attemptedMethodIds = new Set();
   const succeededMethodIds = new Set();
@@ -1108,7 +1166,6 @@ function buildAuthHandler(options) {
       // Start a fresh pass for the next factor. Methods merely unavailable in
       // the previous phase become eligible again, while methods actually
       // rejected or already successful stay suppressed.
-      authIndex = 0;
       attemptedMethodIds.clear();
       for (const methodId of failedMethodIds) {
         attemptedMethodIds.add(methodId);
@@ -1131,14 +1188,30 @@ function buildAuthHandler(options) {
       }
     }
 
-    while (authIndex < authMethods.length) {
-      const method = authMethods[authIndex];
-      authIndex++;
+    // After any successful factor, prefer keyboard-interactive for the next
+    // factor when the server still advertises it. Password-first remains for
+    // the first factor; this is automatic KI fallback without a host switch.
+    if (
+      authPhase.hadPartialSuccess
+      && availableMethods.includes("keyboard-interactive")
+      && !attemptedMethodIds.has("keyboard-interactive")
+    ) {
+      const kiMethod = authMethods.find((method) => method.type === "keyboard-interactive");
+      if (kiMethod) {
+        attemptedMethodIds.add(kiMethod.id);
+        lastAttemptedLabel = "keyboard-interactive";
+        lastAttemptedType = "keyboard-interactive";
+        lastAttemptedMethodId = kiMethod.id;
+        onAuthAttempt?.("keyboard-interactive");
+        return callback("keyboard-interactive");
+      }
+    }
 
+    for (const method of authMethods) {
       if (attemptedMethodIds.has(method.id)) continue;
-      attemptedMethodIds.add(method.id);
 
       if (method.type === "agent" && (availableMethods.includes("publickey") || availableMethods.includes("agent"))) {
+        attemptedMethodIds.add(method.id);
         console.log(`${logPrefix} Trying agent auth`);
         lastAttemptedLabel = "SSH agent";
         lastAttemptedType = "agent";
@@ -1146,6 +1219,7 @@ function buildAuthHandler(options) {
         onAuthAttempt?.("SSH agent");
         return callback("agent");
       } else if (method.type === "publickey" && availableMethods.includes("publickey")) {
+        attemptedMethodIds.add(method.id);
         console.log(`${logPrefix} Trying publickey auth:`, method.id);
         // Build a readable label for the key
         const keyLabel = method.id.startsWith("publickey-default-")
@@ -1169,6 +1243,7 @@ function buildAuthHandler(options) {
         }
         return callback(pubkeyAuth);
       } else if (method.type === "password" && availableMethods.includes("password")) {
+        attemptedMethodIds.add(method.id);
         console.log(`${logPrefix} Trying password auth`);
         lastAttemptedLabel = "password";
         lastAttemptedType = "password";
@@ -1180,6 +1255,7 @@ function buildAuthHandler(options) {
           password,
         });
       } else if (method.type === "keyboard-interactive" && availableMethods.includes("keyboard-interactive")) {
+        attemptedMethodIds.add(method.id);
         lastAttemptedLabel = "keyboard-interactive";
         lastAttemptedType = "keyboard-interactive";
         lastAttemptedMethodId = method.id;
@@ -1254,6 +1330,46 @@ const OTP_PROMPT_PATTERN = new RegExp(
   "i",
 );
 
+// Narrower than OTP_PROMPT_PATTERN: used only for suggesting host-level MFA.
+// Password-change words such as "confirm password" still block auto-fill via
+// OTP_PROMPT_PATTERN, but they must not make a normal host become MFA-first.
+const MFA_SUGGESTION_PROMPT_PATTERN = new RegExp(
+  [
+    "one[\\s-]?time",
+    "\\botp\\b",
+    "verification",
+    "passcode",
+    "\\btoken\\b",
+    "2fa",
+    "two[\\s-]?factor",
+    "multi[\\s-]?factor",
+    "\\bmfa\\b",
+    "second\\s+factor",
+    "secondary(?:\\s+\\w+){0,3}\\s+passw",
+    "second(?:\\s+\\w+){0,3}\\s+passw",
+    "additional(?:\\s+\\w+){0,3}\\s+passw",
+    "\\bedr\\b",
+    "duo",
+    "动态",
+    "一次性",
+    "验证码",
+    "验证信息",
+    "令牌",
+    "双因素",
+    "多因素",
+    "短信验证",
+    "手机验证",
+    "二次",
+    "安全密码",
+    "挑战码",
+  ].join("|"),
+  "i",
+);
+
+// Password-expiry / password-change keyboard-interactive forms are not MFA.
+const PASSWORD_CHANGE_PROMPT_PATTERN =
+  /\b(?:current|old|new)\s+(?:unix\s+)?passw|confirm\s+(?:new\s+)?passw|re[-\s]?enter\s+(?:new\s+)?passw/i;
+
 // Latin-script + CJK keywords for "this prompt is asking for a reusable
 // password". Only consulted AFTER OTP_PROMPT_PATTERN clears, so phrases like
 // "One-time password", "动态密码", or "二次密码" never reach this step.
@@ -1263,6 +1379,8 @@ const OTP_PROMPT_PATTERN = new RegExp(
 // — strictly no worse than the old "always prompt" baseline.
 const PASSWORD_PROMPT_PATTERN = /passw(or)?d|密\s*码|口\s*令/i;
 const MAX_KEYBOARD_INTERACTIVE_FACTORS = 2;
+const EDR_SECONDARY_AUTH_FALLBACK_INSTRUCTIONS =
+  "为保障主机安全，请输入二次认证密码，如有疑问，请联系xxx，电话xxx。";
 
 /**
  * Shared auth-phase state for keyboard-interactive auto-fill decisions.
@@ -1392,6 +1510,20 @@ function createOrderedStringAuthHandler(order, authPhase, onAuthAttempt) {
       ? methodsLeft
       : null;
 
+    // After a successful factor, prefer keyboard-interactive when the server
+    // still allows it (automatic KI fallback; no host MFA switch required).
+    if (
+      authPhase.hadPartialSuccess
+      && order.includes("keyboard-interactive")
+      && !attempted.has("keyboard-interactive")
+      && (!available || available.includes("keyboard-interactive"))
+    ) {
+      attempted.add("keyboard-interactive");
+      lastOffered = "keyboard-interactive";
+      onAuthAttempt?.(attemptLabel("keyboard-interactive"));
+      return callback("keyboard-interactive");
+    }
+
     for (const method of order) {
       if (attempted.has(method)) continue;
       if (available) {
@@ -1476,11 +1608,39 @@ function shouldPrefillSavedPassword(prompts, password, { skipAutoFill = false, c
   return true;
 }
 
+function getFallbackKeyboardInteractiveInstructions(prompts) {
+  if (!Array.isArray(prompts) || prompts.length !== 1) return "";
+  const prompt = typeof prompts[0]?.prompt === "string" ? prompts[0].prompt : "";
+  return /secondary\s+authentication\s+password/i.test(prompt)
+    ? EDR_SECONDARY_AUTH_FALLBACK_INSTRUCTIONS
+    : "";
+}
+
+/**
+ * Whether a keyboard-interactive challenge looks like a secondary / EDR /
+ * OTP factor (not the ordinary first-factor host password). Used for modal
+ * copy and optional "enable MFA mode on this host" suggestions.
+ */
+function looksLikeSecondaryAuthChallenge(name, instructions, prompts, extraContext = "") {
+  const parts = [name, instructions, extraContext];
+  if (Array.isArray(prompts)) {
+    for (const prompt of prompts) {
+      if (prompt && typeof prompt.prompt === "string") parts.push(prompt.prompt);
+    }
+  }
+  const haystack = parts.filter((part) => typeof part === "string" && part.trim()).join("\n");
+  if (!haystack) return false;
+  if (PASSWORD_CHANGE_PROMPT_PATTERN.test(haystack)) return false;
+  return MFA_SUGGESTION_PROMPT_PATTERN.test(haystack)
+    || /secondary\s+authentication\s+password/i.test(haystack);
+}
+
 /**
  * Create a keyboard-interactive event handler
  * @param {Object} options
  * @param {Object} options.sender - Electron webContents sender
  * @param {string} options.sessionId - Session/connection ID
+ * @param {string} [options.hostId] - Owning vault host ID, when known.
  * @param {string} options.hostname - Host being connected to
  * @param {string} [options.password] - Saved password; used both as the
  *   one-click fill button payload and as the auto-fill for the single-
@@ -1499,12 +1659,16 @@ function shouldPrefillSavedPassword(prompts, password, { skipAutoFill = false, c
  *   IPC is sent to the renderer.
  * @param {Function} [options.onUserResponded] - Called when the renderer
  *   sends a response back (after the modal closed).
+ * @param {Function} [options.getAuthBanner] - Returns the most recent SSH
+ *   USERAUTH_BANNER text for this connection, if the server sent one before
+ *   the keyboard-interactive challenge.
  * @returns {Function} - Event handler for 'keyboard-interactive' event
  */
 function createKeyboardInteractiveHandler(options) {
   const {
     sender,
     sessionId,
+    hostId,
     hostname,
     password,
     logPrefix = "[SSH]",
@@ -1513,6 +1677,7 @@ function createKeyboardInteractiveHandler(options) {
     onAutoFill,
     onPromptShown,
     onUserResponded,
+    getAuthBanner,
   } = options;
   // ssh2 may re-invoke the keyboard-interactive event on auth failure with a
   // fresh challenge. If our first auto-fill attempt was wrong, falling back
@@ -1534,9 +1699,23 @@ function createKeyboardInteractiveHandler(options) {
       return;
     }
 
-    // name + instructions often carry the real EDR banner (e.g. "请输入二次认证密码")
-    // while prompts[i].prompt is only the short English field label.
-    const contextText = [name, instructions].filter((s) => typeof s === "string" && s.trim()).join("\n");
+    let authBanner = "";
+    try {
+      authBanner = typeof getAuthBanner === "function" ? String(getAuthBanner() || "").trim() : "";
+    } catch (err) {
+      console.warn(`${logPrefix} getAuthBanner callback threw`, err);
+    }
+    const fallbackInstructions = getFallbackKeyboardInteractiveInstructions(prompts);
+    const modalInstructions = instructions || authBanner || fallbackInstructions;
+
+    // name + keyboard-interactive instructions often carry the real EDR
+    // warning (e.g. "请输入二次认证密码") while prompts[i].prompt is only the
+    // short English field label. USERAUTH_BANNER is intentionally display-only:
+    // it can be a generic corporate legal/MFA banner before an ordinary first
+    // factor Password: prompt.
+    const contextText = [name, instructions, fallbackInstructions]
+      .filter((s) => typeof s === "string" && s.trim())
+      .join("\n");
 
     let skipAutoFill = false;
     try {
@@ -1544,6 +1723,8 @@ function createKeyboardInteractiveHandler(options) {
     } catch (err) {
       console.warn(`${logPrefix} shouldSkipAutoFill callback threw`, err);
     }
+    const autoFillablePasswordChallenge =
+      isAutoFillablePasswordChallenge(prompts, password, contextText);
 
     // After a first factor already succeeded (partialSuccess), never reuse the
     // saved login password for a later keyboard-interactive challenge — even
@@ -1552,7 +1733,7 @@ function createKeyboardInteractiveHandler(options) {
     if (
       !skipAutoFill &&
       !autoFilledOnce &&
-      isAutoFillablePasswordChallenge(prompts, password, contextText)
+      autoFillablePasswordChallenge
     ) {
       autoFilledOnce = true;
       console.log(`${logPrefix} Auto-filling saved password into single keyboard-interactive prompt`);
@@ -1611,8 +1792,9 @@ function createKeyboardInteractiveHandler(options) {
     safeSend(sender, "netcatty:keyboard-interactive", {
       requestId,
       sessionId,
+      hostId,
       name: name || hostname,
-      instructions: instructions || "",
+      instructions: modalInstructions,
       prompts: promptsData,
       hostname: hostname,
       savedPassword: savedPasswordForModal,
@@ -1720,6 +1902,8 @@ module.exports = {
   resolveIdentityAgentPath,
   prepareSystemSshAgentForAuth,
   buildAuthHandler,
+  appendPasswordAuthMethods,
+  ensureKeyboardInteractiveMethod,
   createAuthPhase,
   markAuthPhasePartialSuccess,
   canRepeatKeyboardInteractive,
@@ -1728,6 +1912,7 @@ module.exports = {
   createKeyboardInteractiveHandler,
   isAutoFillablePasswordChallenge,
   shouldPrefillSavedPassword,
+  looksLikeSecondaryAuthChallenge,
   applyAuthToConnOpts,
   safeSend,
   requestPassphrasesForEncryptedKeys,

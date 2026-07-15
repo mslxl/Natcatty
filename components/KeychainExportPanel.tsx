@@ -232,6 +232,7 @@ export const KeychainExportPanel: React.FC<KeychainExportPanelProps> = ({
                       // Execute via SSH
                       const result = await execCommand({
                         hostname: effectiveExportHost.hostname,
+                        hostId: effectiveExportHost.id,
                         username: exportAuth.username || "root",
                         port: effectiveExportHost.port || 22,
                         authMethod: exportAuth.authMethod,

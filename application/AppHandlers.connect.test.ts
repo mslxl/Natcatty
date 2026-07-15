@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   flushQueuedTrayPanelConnectHostsImpl,
   handleConnectToHostImpl,
+  handleKeyboardInteractiveSubmitImpl,
   handleTrayPanelConnectRequestImpl,
 } from './app/AppHandlers.ts';
 import type { Host } from '../types';
@@ -115,4 +116,152 @@ test('queued tray panel connects flush in order', () => {
 
   assert.deepEqual(connectedHostIds, ['host-1', 'host-2']);
   assert.deepEqual(pendingHostIds, []);
+});
+
+test('keyboard-interactive submit can save login password for the session host', () => {
+  let hosts: Host[] = [{
+    ...baseHost,
+    password: 'old-password',
+    savePassword: false,
+  }];
+  let queue = [{
+    requestId: 'ki-1',
+    sessionId: 'session-1',
+    hostname: baseHost.hostname,
+    allowSavePassword: true,
+  }];
+  const bridgeResponses: unknown[] = [];
+  const hostUpdates: Host[][] = [];
+
+  handleKeyboardInteractiveSubmitImpl(
+    () => ({
+      hosts,
+      keyboardInteractiveQueue: queue,
+      netcattyBridge: {
+        get: () => ({
+          respondKeyboardInteractive: (...args: unknown[]) => {
+            bridgeResponses.push(args);
+          },
+        }),
+      },
+      sessions: [{
+        id: 'session-1',
+        hostId: baseHost.id,
+        hostname: baseHost.hostname,
+      }],
+      setKeyboardInteractiveQueue: (updater: (items: typeof queue) => typeof queue) => {
+        queue = updater(queue);
+      },
+      updateHosts: (nextHosts: Host[]) => {
+        hostUpdates.push(nextHosts);
+        hosts = nextHosts;
+      },
+    }),
+    'ki-1',
+    ['login-password', 'otp-code'],
+    'new-login-password',
+  );
+
+  assert.equal(hostUpdates.length, 1);
+  assert.deepEqual(hosts[0], {
+    ...baseHost,
+    password: 'new-login-password',
+    savePassword: true,
+  });
+  assert.deepEqual(queue, []);
+  assert.equal(bridgeResponses.length, 1);
+});
+
+test('keyboard-interactive submit does not save secondary password when allowSavePassword is false', () => {
+  let hosts: Host[] = [{
+    ...baseHost,
+    password: 'login-password',
+  }];
+  let queue = [{
+    requestId: 'ki-external',
+    sessionId: 'sftp-connection-1',
+    hostId: baseHost.id,
+    scope: 'external',
+    hostname: baseHost.hostname,
+    allowSavePassword: false,
+  }];
+  let hostUpdates = 0;
+
+  handleKeyboardInteractiveSubmitImpl(
+    () => ({
+      hosts,
+      keyboardInteractiveQueue: queue,
+      netcattyBridge: {
+        get: () => ({
+          respondKeyboardInteractive: () => {},
+        }),
+      },
+      sessions: [],
+      setKeyboardInteractiveQueue: (updater: (items: typeof queue) => typeof queue) => {
+        queue = updater(queue);
+      },
+      updateHosts: (nextHosts: Host[]) => {
+        hostUpdates += 1;
+        hosts = nextHosts;
+      },
+    }),
+    'ki-external',
+    ['secondary-password'],
+    'should-not-save',
+  );
+
+  assert.equal(hostUpdates, 0);
+  assert.equal(hosts[0].password, 'login-password');
+  assert.deepEqual(queue, []);
+});
+
+test('keyboard-interactive submit uses explicit hostId when saving password', () => {
+  const jumpHost: Host = {
+    ...baseHost,
+    id: 'jump-1',
+    label: 'Jump',
+    hostname: 'jump.example.com',
+    password: 'old-jump-password',
+  };
+  let hosts: Host[] = [{
+    ...baseHost,
+    password: 'target-password',
+  }, jumpHost];
+  let queue = [{
+    requestId: 'ki-jump',
+    sessionId: 'terminal-session-1',
+    hostId: jumpHost.id,
+    scope: 'terminal',
+    hostname: jumpHost.hostname,
+    allowSavePassword: true,
+  }];
+
+  handleKeyboardInteractiveSubmitImpl(
+    () => ({
+      hosts,
+      keyboardInteractiveQueue: queue,
+      netcattyBridge: {
+        get: () => ({
+          respondKeyboardInteractive: () => {},
+        }),
+      },
+      sessions: [{
+        id: 'terminal-session-1',
+        hostId: baseHost.id,
+        hostname: baseHost.hostname,
+      }],
+      setKeyboardInteractiveQueue: (updater: (items: typeof queue) => typeof queue) => {
+        queue = updater(queue);
+      },
+      updateHosts: (nextHosts: Host[]) => {
+        hosts = nextHosts;
+      },
+    }),
+    'ki-jump',
+    ['jump-login-password'],
+    'new-jump-password',
+  );
+
+  assert.equal(hosts.find((host) => host.id === baseHost.id)?.password, 'target-password');
+  assert.equal(hosts.find((host) => host.id === jumpHost.id)?.password, 'new-jump-password');
 });

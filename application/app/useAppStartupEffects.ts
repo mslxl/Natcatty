@@ -12,8 +12,9 @@ type KeyboardInteractiveScope = "terminal" | "external";
 type KeyboardInteractiveRequestLike = {
   scope?: KeyboardInteractiveScope;
   sessionId?: string;
+  hostId?: string;
 };
-type SessionIdLike = { id: string };
+type SessionIdLike = { id: string; hostId?: string; hostname?: string };
 
 export function shouldQueueKeyboardInteractiveRequest(
   request: KeyboardInteractiveRequestLike,
@@ -198,6 +199,7 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
       setKeyboardInteractiveQueue(prev => [...prev, {
         requestId: request.requestId,
         sessionId: request.sessionId,
+        hostId: request.hostId,
         name: request.name,
         instructions: request.instructions,
         prompts: request.prompts,

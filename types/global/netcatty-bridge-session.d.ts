@@ -53,6 +53,7 @@ declare global {
       keyId?: string;
       passphrase?: string;
       authMethod?: import("../../domain/models").HostAuthMethod;
+      requiresMfa?: boolean;
       identityFilePaths?: string[];
       useSshAgent?: boolean;
       agentPublicKeys?: string[];
@@ -84,6 +85,7 @@ declare global {
     startEtSession?(options: {
       sessionId?: string;
       hostname: string;
+      hostId?: string;
       username?: string;
       password?: string;
       privateKey?: string;
@@ -91,6 +93,7 @@ declare global {
       keyId?: string;
       passphrase?: string;
       authMethod?: import("../../domain/models").HostAuthMethod;
+      requiresMfa?: boolean;
       identityFilePaths?: string[];
       useSshAgent?: boolean;
       agentPublicKeys?: string[];
@@ -175,9 +178,11 @@ declare global {
     getDefaultKeys?(): Promise<Array<{ name: string; path: string }>>;
     execCommand(options: {
       hostname: string;
+      hostId?: string;
       username: string;
       port?: number;
       authMethod?: import("../../domain/models").HostAuthMethod;
+      requiresMfa?: boolean;
       password?: string;
       privateKey?: string;
       certificate?: string;
@@ -387,6 +392,7 @@ declare global {
       cb: (request: {
         requestId: string;
         sessionId: string;
+        hostId?: string;
         name: string;
         instructions: string;
         prompts: Array<{ prompt: string; echo: boolean }>;

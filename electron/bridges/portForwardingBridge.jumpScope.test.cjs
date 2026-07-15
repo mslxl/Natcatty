@@ -3,6 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
+const { readFileSync } = require("node:fs");
 const { Duplex } = require("node:stream");
 const Module = require("node:module");
 
@@ -169,6 +170,15 @@ test("port forwarding routes jump-host keyboard-interactive prompts through the 
   } finally {
     await bridge.stopPortForward(event, { tunnelId: "pf-jump-scope" });
   }
+});
+
+test("port forwarding forwards target hostId to keyboard-interactive prompts", () => {
+  const source = readFileSync(require.resolve("./portForwardingBridge.cjs"), "utf8");
+  assert.match(source, /hostname,\s*hostId,\s*port = 22,/);
+  assert.match(
+    source,
+    /conn\.on\("keyboard-interactive", createKeyboardInteractiveHandler\(\{\s*sender,\s*sessionId: tunnelId,\s*hostId,/,
+  );
 });
 
 test("strict target agent selection keeps default keys available to jump hosts", async (t) => {

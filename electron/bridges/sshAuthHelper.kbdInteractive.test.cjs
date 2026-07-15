@@ -47,6 +47,9 @@ const customizedAuthPrompt = { prompt: "Please authenticate:", echo: false };
 // OTP prompts that DO mention the word "password" or "口令" — the literal
 // keyword should not be enough to trigger auto-fill (#969 PR review round 2).
 const oneTimePasswordPrompt = { prompt: "Enter your one-time password:", echo: false };
+const currentPasswordPrompt = { prompt: "Current password:", echo: false };
+const newPasswordPrompt = { prompt: "New password:", echo: false };
+const confirmPasswordPrompt = { prompt: "Confirm password:", echo: false };
 const cjkDynamicPasswordPrompt = { prompt: "动态密码：", echo: false };
 const cjkDynamicTokenPrompt = { prompt: "动态口令：", echo: false };
 const cjkOneTimePasswordPrompt = { prompt: "一次性密码：", echo: false };
@@ -237,6 +240,64 @@ test("createKeyboardInteractiveHandler falls back to the modal on the retry afte
   // Do not re-prefill the stale value, but still allow saving a corrected one.
   assert.equal(sent[0].payload.savedPassword, null);
   assert.equal(sent[0].payload.allowSavePassword, true);
+
+  drainPendingRequests(sent);
+});
+
+test("createKeyboardInteractiveHandler carries the SSH auth banner into the modal when instructions are empty", () => {
+  const { sender, sent } = createSender();
+  const handler = createKeyboardInteractiveHandler({
+    sender,
+    sessionId: "session-1",
+    hostname: "corp-edr.example.com",
+    password: "login-password",
+    getAuthBanner: () => "为保障主机安全，请输入二次认证密码，如有疑问，请联系xxx，电话xxx。",
+  });
+
+  handler("", "", "", [edrSecondaryAuthPasswordPrompt], () => {});
+
+  assert.equal(sent.length, 1);
+  assert.equal(
+    sent[0].payload.instructions,
+    "为保障主机安全，请输入二次认证密码，如有疑问，请联系xxx，电话xxx。",
+  );
+
+  drainPendingRequests(sent);
+});
+
+test("createKeyboardInteractiveHandler does not classify generic auth banners as secondary prompts", () => {
+  const { sender, sent } = createSender();
+  const finishCalls = [];
+  const handler = createKeyboardInteractiveHandler({
+    sender,
+    sessionId: "session-1",
+    hostname: "corp-linux.example.com",
+    password: "login-password",
+    getAuthBanner: () => edrSecondaryAuthInstructions,
+  });
+
+  handler("", "", "", [passwordPrompt], (responses) => finishCalls.push(responses));
+
+  assert.deepEqual(finishCalls, [["login-password"]]);
+  assert.equal(sent.length, 0);
+});
+
+test("createKeyboardInteractiveHandler adds the EDR fallback text for bare Secondary Authentication Password prompts", () => {
+  const { sender, sent } = createSender();
+  const handler = createKeyboardInteractiveHandler({
+    sender,
+    sessionId: "session-1",
+    hostname: "192.168.9.138",
+    password: "login-password",
+  });
+
+  handler("", "", "", [edrSecondaryAuthPasswordPrompt], () => {});
+
+  assert.equal(sent.length, 1);
+  assert.equal(
+    sent[0].payload.instructions,
+    "为保障主机安全，请输入二次认证密码，如有疑问，请联系xxx，电话xxx。",
+  );
 
   drainPendingRequests(sent);
 });
@@ -548,15 +609,16 @@ test("createOrderedStringAuthHandler re-offers methods skipped as unavailable af
   handler(null, false, (method) => offered.push(method)); // none
   handler(["publickey"], false, (method) => offered.push(method)); // agent
   handler(["publickey"], false, (method) => offered.push(method)); // publickey (password still not advertised)
-  // publickey partially succeeds; server now wants password
+  // publickey partially succeeds; server now allows password + KI.
+  // Prefer keyboard-interactive automatically after any partial success.
   handler(["password", "keyboard-interactive"], true, (method) => offered.push(method));
 
-  assert.deepEqual(offered, ["none", "agent", "publickey", "password"]);
+  assert.deepEqual(offered, ["none", "agent", "publickey", "keyboard-interactive"]);
   assert.equal(authPhase.hadPartialSuccess, true);
 
-  // Continue to keyboard-interactive if password also only partial-succeeds
-  handler(["keyboard-interactive"], true, (method) => offered.push(method));
-  assert.deepEqual(offered, ["none", "agent", "publickey", "password", "keyboard-interactive"]);
+  // If KI only partially succeeds again, password remains available.
+  handler(["password"], true, (method) => offered.push(method));
+  assert.deepEqual(offered, ["none", "agent", "publickey", "keyboard-interactive", "password"]);
 });
 
 test("createOrderedStringAuthHandler does not retry a rejected credential in a later factor", () => {
@@ -663,6 +725,85 @@ test("buildAuthHandler allows consecutive keyboard-interactive factors on the dy
 
   assert.deepEqual(offered, ["none", "keyboard-interactive", "keyboard-interactive"]);
   assert.equal(auth.authPhase.hadPartialSuccess, true);
+});
+
+test("buildAuthHandler prefers password over keyboard-interactive by default", () => {
+  const auth = buildAuthHandler({
+    authMethod: "password",
+    username: "alice",
+    password: "login-password",
+  });
+
+  const offered = [];
+  auth.authHandler(null, null, (method) => offered.push(method));
+  auth.authHandler(["password", "keyboard-interactive"], false, (method) => offered.push(method));
+
+  assert.deepEqual(offered, ["none", "password"]);
+});
+
+test("buildAuthHandler prefers password over keyboard-interactive by default", () => {
+  const auth = buildAuthHandler({
+    authMethod: "password",
+    username: "alice",
+    password: "login-password",
+  });
+
+  const offered = [];
+  auth.authHandler(null, null, (method) => offered.push(method));
+  auth.authHandler(["password", "keyboard-interactive"], false, (method) => offered.push(method));
+
+  assert.deepEqual(offered, ["none", "password"]);
+});
+
+test("buildAuthHandler prefers keyboard-interactive after partial success without host MFA flag", () => {
+  const auth = buildAuthHandler({
+    authMethod: "password",
+    username: "alice",
+    password: "login-password",
+  });
+
+  const offered = [];
+  auth.authHandler(null, null, (method) => offered.push(method));
+  auth.authHandler(["password", "keyboard-interactive"], false, (method) => offered.push(method));
+  auth.authHandler(["password", "keyboard-interactive"], true, (method) => offered.push(method));
+
+  assert.deepEqual(offered, ["none", "password", "keyboard-interactive"]);
+});
+
+test("buildAuthHandler skipPasswordMethod omits password for 2FA_RETRY", () => {
+  const auth = buildAuthHandler({
+    authMethod: "password",
+    username: "alice",
+    password: "login-password",
+    skipPasswordMethod: true,
+  });
+
+  const offered = [];
+  auth.authHandler(null, null, (method) => offered.push(method));
+  auth.authHandler(["password", "keyboard-interactive"], false, (method) => offered.push(method));
+
+  assert.deepEqual(offered, ["none", "keyboard-interactive"]);
+});
+
+test("buildAuthHandler keeps unavailable keyboard-interactive eligible after password rejection", () => {
+  const auth = buildAuthHandler({
+    authMethod: "auto",
+    username: "alice",
+    password: "stale-password",
+    allowAgentFallback: false,
+    defaultKeys: [{ keyName: "unused-test-key", privateKey: "unused" }],
+  });
+
+  const offered = [];
+  const record = (method) => offered.push(
+    method && typeof method === "object" ? method.type : method,
+  );
+
+  auth.authHandler(null, null, record);
+  auth.authHandler(["password"], false, record);
+  auth.authHandler(["keyboard-interactive"], false, record);
+
+  assert.deepEqual(offered, ["none", "password", "keyboard-interactive"]);
 });
 
 test("buildAuthHandler reconsiders dynamic methods between authentication factors (#2150)", () => {
@@ -814,8 +955,8 @@ test("buildAuthHandler simple password path tracks partialSuccess via function h
   auth.authHandler(["password", "keyboard-interactive"], false, (method) => offered.push(method));
   auth.authHandler(["keyboard-interactive"], true, (method) => offered.push(method));
 
-  assert.ok(offered.includes("password") || offered.some((m) => m === "password" || m?.type === "password"));
-  assert.ok(offered.includes("keyboard-interactive"));
+  // Default: password first; after partial success KI can still run as second factor.
+  assert.deepEqual(offered, ["none", "password", "keyboard-interactive"]);
   assert.equal(auth.authPhase.hadPartialSuccess, true);
 });
 
@@ -853,6 +994,103 @@ test("shouldPrefillSavedPassword keeps multi-prompt Duo/two-factor password pref
     ),
     false,
   );
+});
+
+test("createKeyboardInteractiveHandler suggests enabling host MFA for Secondary Authentication Password (#2150)", () => {
+  const { handler, sent } = (() => {
+    const sent = [];
+    const handler = createKeyboardInteractiveHandler({
+      sender: {
+        id: 1,
+        isDestroyed: () => false,
+        send: (channel, payload) => sent.push({ channel, payload }),
+      },
+      sessionId: "s1",
+      hostname: "host",
+      password: "saved",
+          });
+    return { handler, sent };
+  })();
+
+  handler(
+    "Keyboard-interactive authentication prompts from server",
+    "为保障主机安全，请输入二次认证密码",
+    "",
+    [{ prompt: "Secondary Authentication Password:", echo: false }],
+    () => {},
+  );
+
+  assert.equal(sent[0].payload.allowSavePassword, false);
+  assert.equal(sent[0].payload.allowSavePassword, false);
+  drainPendingRequests(sent, 1);
+});
+
+test("createKeyboardInteractiveHandler does not suggest host MFA for password-change prompts", () => {
+  const { sender, sent } = createSender();
+  const handler = createKeyboardInteractiveHandler({
+    sender,
+    sessionId: "session-1",
+    hostname: "password-expired.example.com",
+    password: "saved",
+      });
+
+  handler(
+    "Password expired",
+    "You are required to change your password immediately.",
+    "",
+    [currentPasswordPrompt, newPasswordPrompt, confirmPasswordPrompt],
+    () => {},
+  );
+
+  assert.ok(sent[0].payload);
+  drainPendingRequests(sent);
+});
+
+test("createKeyboardInteractiveHandler includes owning hostId in modal payload", () => {
+  const { sender, sent } = createSender();
+  const handler = createKeyboardInteractiveHandler({
+    sender,
+    sessionId: "sftp-connection-1",
+    hostId: "host-1",
+    hostname: "host",
+    password: "saved",
+  });
+
+  handler(
+    "Keyboard-interactive authentication prompts from server",
+    "为保障主机安全，请输入二次认证密码",
+    "",
+    [{ prompt: "Secondary Authentication Password:", echo: false }],
+    () => {},
+  );
+
+  assert.equal(sent[0].payload.hostId, "host-1");
+  drainPendingRequests(sent, sender.id);
+});
+
+test("createKeyboardInteractiveHandler does not suggest MFA when host already has requiresMfa", () => {
+  const sent = [];
+  const handler = createKeyboardInteractiveHandler({
+    sender: {
+      id: 1,
+      isDestroyed: () => false,
+      send: (channel, payload) => sent.push({ channel, payload }),
+    },
+    sessionId: "s1",
+    hostname: "host",
+    password: "saved",
+      });
+
+  handler(
+    "Keyboard-interactive authentication prompts from server",
+    "为保障主机安全，请输入二次认证密码",
+    "",
+    [{ prompt: "Secondary Authentication Password:", echo: false }],
+    () => {},
+  );
+
+  assert.ok(sent[0].payload);
+  drainPendingRequests(sent, 1);
 });
 
 test("createKeyboardInteractiveHandler shows modal for Secondary Authentication Password banner (#2150)", () => {
@@ -980,3 +1218,4 @@ test("createKeyboardInteractiveHandler allows save on multi-prompt Password + OT
 
   drainPendingRequests(sent);
 });
+

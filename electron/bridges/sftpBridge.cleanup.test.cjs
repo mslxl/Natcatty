@@ -76,6 +76,14 @@ test("openSftp clears its authentication timer when SSH becomes ready", () => {
   );
 });
 
+test("openSftp forwards target hostId to keyboard-interactive prompts", () => {
+  const source = readFileSync(require.resolve("./sftpBridge/openConnection.cjs"), "utf8");
+  assert.match(
+    source,
+    /const kiHandler = createKeyboardInteractiveHandler\(\{\s*sender: event\.sender,\s*sessionId: connId,\s*hostId: options\.hostId,/,
+  );
+});
+
 test("openSftp cleans an opened proxy socket when target key passphrase is cancelled", async (t) => {
   const originalRequestPassphrase = passphraseHandler.requestPassphrase;
   t.after(() => {

@@ -649,6 +649,8 @@ function createStartSessionApi(ctx) {
           hostLabel: options.hostLabel || options.label,
           hasJumpHosts: (options.jumpHosts || []).length > 0,
           hasProxy: !!options.proxy,
+          tcpConnectTimeoutMs,
+          authReadyTimeoutMs,
         });
         const conn = new SSHClient();
         let chainConnections = [];
@@ -928,18 +930,20 @@ function createStartSessionApi(ctx) {
 
         if (authAgent) {
           const order = ["none", "agent"];
-          if (connectOpts.password) order.push("password");
+          if (connectOpts.password) {
+            order.push("password");
+          }
           // Default key fallback only when this is not password-only (issue #266 / #2079).
           // Must also set connectOpts.privateKey for ssh2 to actually try publickey auth.
           if (defaultKeyInfo && !hasUserConfiguredKey(options) && !isPasswordOnlyAuth) {
             connectOpts.privateKey = defaultKeyInfo.privateKey;
             order.push("publickey");
           }
-          order.push("keyboard-interactive");
+          if (!order.includes("keyboard-interactive")) order.push("keyboard-interactive");
           // Function form so authPhase.hadPartialSuccess updates for cert/agent
           // first-factor + keyboard-interactive second-factor (#2150).
           connectOpts.authHandler = createOrderedStringAuthHandler(order, authPhase);
-          log("Auth order (agent mode)", { order });
+          log("Auth order (agent mode)", { order, skipPasswordMethod: !!options._skipPasswordMethod });
         } else {
           // Build dynamic auth handler for fallback support
           const authMethods = [];
@@ -959,7 +963,7 @@ function createStartSessionApi(ctx) {
                 id: `publickey-default-${keyInfo.keyName}`
               });
             }
-            if (connectOpts.password) {
+            if (connectOpts.password && !options._skipPasswordMethod) {
               authMethods.push({ type: "password", id: "password" });
             }
           } else {
@@ -973,8 +977,9 @@ function createStartSessionApi(ctx) {
               authMethods.push({ type: "agent", id: "agent" });
             }
 
-            // Then try password if available (explicit user choice)
-            if (connectOpts.password) {
+            // Then try password if available (explicit user choice).
+            // MFA hosts put keyboard-interactive first so EDR secondary factors are not skipped.
+            if (connectOpts.password && !options._skipPasswordMethod) {
               authMethods.push({ type: "password", id: "password" });
             }
 
@@ -1007,8 +1012,11 @@ function createStartSessionApi(ctx) {
             });
           }
 
-          // Finally try keyboard-interactive
-          authMethods.push({ type: "keyboard-interactive", id: "keyboard-interactive" });
+          // Keyboard-interactive as last resort, or already placed before password
+          // as last-resort fallback for multi-factor / EDR.
+          if (!authMethods.some((method) => method.type === "keyboard-interactive")) {
+            authMethods.push({ type: "keyboard-interactive", id: "keyboard-interactive" });
+          }
 
           log("Auth methods configured", {
             methods: authMethods.map(m => ({ type: m.type, id: m.id, isDefault: m.isDefault || false })),
@@ -1031,7 +1039,6 @@ function createStartSessionApi(ctx) {
           // Always use dynamic authHandler to ensure consistent "none" probing
           // and auth method logging regardless of how many methods are configured
           if (authMethods.length >= 1) {
-            let authIndex = 0;
             // Track methods that have been attempted (to avoid re-trying on failure)
             // This prevents reusing the same key when server requires multiple publickey auth steps
             // and also prevents re-attempting failed methods
@@ -1047,7 +1054,7 @@ function createStartSessionApi(ctx) {
             let hadPartialSuccess = false;
 
             connectOpts.authHandler = (methodsLeft, partialSuccess, callback) => {
-              log("authHandler called", { methodsLeft, partialSuccess, authIndex, attemptedMethodIds: Array.from(attemptedMethodIds) });
+              log("authHandler called", { methodsLeft, partialSuccess, attemptedMethodIds: Array.from(attemptedMethodIds) });
 
               // Log rejection of previous method
               if (lastTriedMethod && !partialSuccess) {
@@ -1113,48 +1120,56 @@ function createStartSessionApi(ctx) {
 
                 log("Partial success - server requires additional auth", { methodsLeft, succeeded: Array.from(succeededMethodIds), attemptedMethodIds: Array.from(attemptedMethodIds) });
 
-                // Find a method from our list that matches what the server wants
-                // Skip methods that have already been attempted
-                for (const serverMethod of methodsLeft) {
-                  // Map server method names to our method types
-                  const matchingMethod = authMethods.find(m => {
-                    // Skip already attempted methods
-                    if (attemptedMethodIds.has(m.id)) return false;
-                    if (serverMethod === "keyboard-interactive" && m.type === "keyboard-interactive") return true;
-                    if (serverMethod === "password" && m.type === "password") return true;
-                    if (serverMethod === "publickey" && (m.type === "publickey" || m.type === "agent")) return true;
-                    return false;
-                  });
+                // Next-factor selection: prefer keyboard-interactive when the
+                // server still allows it (automatic KI fallback after any
+                // partial success). Otherwise walk authMethods in order.
+                const partialCandidates = [];
+                for (const matchingMethod of authMethods) {
+                  if (attemptedMethodIds.has(matchingMethod.id)) continue;
+                  const serverMethod =
+                    matchingMethod.type === "agent" || matchingMethod.type === "publickey"
+                      ? "publickey"
+                      : matchingMethod.type;
+                  if (!methodsLeft.includes(serverMethod) && !methodsLeft.includes(matchingMethod.type)) {
+                    continue;
+                  }
+                  partialCandidates.push(matchingMethod);
+                }
+                const preferredPartial =
+                  partialCandidates.find((method) => method.type === "keyboard-interactive")
+                  || partialCandidates[0];
+                if (preferredPartial) {
+                  const matchingMethod = preferredPartial;
+                  const serverMethod =
+                    matchingMethod.type === "agent" || matchingMethod.type === "publickey"
+                      ? "publickey"
+                      : matchingMethod.type;
+                  log("Found matching method for partial success", { serverMethod, matchingMethod: matchingMethod.id });
+                  attemptedMethodIds.add(matchingMethod.id);
+                  lastTriedMethod = matchingMethod.id;
 
-                  if (matchingMethod) {
-                    log("Found matching method for partial success", { serverMethod, matchingMethod: matchingMethod.id });
-                    // Mark as attempted BEFORE returning to prevent re-use on failure
-                    attemptedMethodIds.add(matchingMethod.id);
-                    lastTriedMethod = matchingMethod.id;
-
-                    if (matchingMethod.type === "keyboard-interactive") {
-                      log("Trying keyboard-interactive auth (partial success)", { id: matchingMethod.id });
-                      return callback("keyboard-interactive");
-                    } else if (matchingMethod.type === "password") {
-                      log("Trying password auth (partial success)", { id: matchingMethod.id });
-                      return callback({
-                        type: "password",
-                        username: connectOpts.username,
-                        password: connectOpts.password,
-                      });
-                    } else if (matchingMethod.type === "agent") {
-                      const agentType = typeof connectOpts.agent === "string" ? "path" : "NetcattyAgent";
-                      log("Trying agent auth (partial success)", { id: matchingMethod.id, agentType });
-                      return callback("agent");
-                    } else if (matchingMethod.type === "publickey") {
-                      log("Trying publickey auth (partial success)", { id: matchingMethod.id });
-                      return callback({
-                        type: "publickey",
-                        username: connectOpts.username,
-                        key: matchingMethod.key,
-                        passphrase: matchingMethod.passphrase,
-                      });
-                    }
+                  if (matchingMethod.type === "keyboard-interactive") {
+                    log("Trying keyboard-interactive auth (partial success)", { id: matchingMethod.id });
+                    return callback("keyboard-interactive");
+                  } else if (matchingMethod.type === "password") {
+                    log("Trying password auth (partial success)", { id: matchingMethod.id });
+                    return callback({
+                      type: "password",
+                      username: connectOpts.username,
+                      password: connectOpts.password,
+                    });
+                  } else if (matchingMethod.type === "agent") {
+                    const agentType = typeof connectOpts.agent === "string" ? "path" : "NetcattyAgent";
+                    log("Trying agent auth (partial success)", { id: matchingMethod.id, agentType });
+                    return callback("agent");
+                  } else if (matchingMethod.type === "publickey") {
+                    log("Trying publickey auth (partial success)", { id: matchingMethod.id });
+                    return callback({
+                      type: "publickey",
+                      username: connectOpts.username,
+                      key: matchingMethod.key,
+                      passphrase: matchingMethod.passphrase,
+                    });
                   }
                 }
                 // No matching method found for partial success
@@ -1162,10 +1177,7 @@ function createStartSessionApi(ctx) {
                 return callback(false);
               }
 
-              while (authIndex < authMethods.length) {
-                const method = authMethods[authIndex];
-                authIndex++;
-
+              for (const method of authMethods) {
                 // Skip methods that have already been attempted (e.g., during partial success handling)
                 if (attemptedMethodIds.has(method.id)) {
                   log("Skipping already attempted method", { method: method.id });
@@ -1286,6 +1298,9 @@ function createStartSessionApi(ctx) {
         return new Promise((resolve, reject) => {
           const logPrefix = hasJumpHosts ? '[Chain]' : '[SSH]';
           let settled = false;
+          const connectionStartedAt = Date.now();
+          let connectionStage = "connecting";
+          let authBanner = "";
           let detachX11Forwarding = null;
           // Reference-counted descriptor for this connection. Created when the
           // shell channel opens; shared with any tabs that later reuse this
@@ -1323,8 +1338,15 @@ function createStartSessionApi(ctx) {
             runWhenProxyConnectionReady(conn._sock, () => {
               try { conn._sock?.setTimeout?.(0); } catch { }
               clearAuthReadyTimer();
+              connectionStage = "tcp-connected";
               authReadyTimer = setTimeout(() => conn.emit("timeout"), authReadyTimeoutMs);
               authReadyTimer.unref?.();
+              log("target tcp connected", {
+                sessionId,
+                hostname: options.hostname,
+                elapsedMs: Date.now() - connectionStartedAt,
+                authReadyTimeoutMs,
+              });
               sendProgress(totalHops, totalHops, options.hostname, 'tcp-connected');
               enableSshNoDelay(conn);
             });
@@ -1332,17 +1354,33 @@ function createStartSessionApi(ctx) {
           if (connectOpts.sock) enableTcpNoDelay(connectOpts.sock);
 
           conn.once("handshake", () => {
+            connectionStage = "handshake";
             console.log(`${logPrefix} ${options.hostname} handshake complete`);
-            log("target handshake complete", { sessionId, hostname: options.hostname });
+            log("target handshake complete", {
+              sessionId,
+              hostname: options.hostname,
+              elapsedMs: Date.now() - connectionStartedAt,
+            });
             sendProgress(totalHops, totalHops, options.hostname, 'authenticating');
+          });
+
+          conn.on("banner", (message) => {
+            authBanner = String(message || "").trim();
+            log("auth banner received", {
+              sessionId,
+              hostname: options.hostname,
+              length: authBanner.length,
+            });
           });
 
           conn.once("ready", () => {
             clearAuthReadyTimer();
+            connectionStage = "ready";
             console.log(`${logPrefix} ${options.hostname} ready`);
             log("target ready", {
               sessionId,
               hostname: options.hostname,
+              elapsedMs: Date.now() - connectionStartedAt,
               remoteSshVersion: (conn && typeof conn._remoteVer === 'string') ? conn._remoteVer : '',
             });
 
@@ -1544,7 +1582,15 @@ function createStartSessionApi(ctx) {
             clearAuthReadyTimer();
             console.error(`${logPrefix} ${options.hostname} connection timeout`);
             const err = new Error(`Connection timeout to ${options.hostname}`);
-            log("connection timeout", { sessionId, hostname: options.hostname, error: err.message });
+            log("connection timeout", {
+              sessionId,
+              hostname: options.hostname,
+              error: err.message,
+              stage: connectionStage,
+              elapsedMs: Date.now() - connectionStartedAt,
+              tcpConnectTimeoutMs,
+              authReadyTimeoutMs,
+            });
             const contents = event.sender;
             sendProgress(totalHops, totalHops, options.hostname, 'error', err.message);
             safeSend(contents, "netcatty:exit", { sessionId, exitCode: 1, error: err.message, reason: "timeout" });
@@ -1625,10 +1671,12 @@ function createStartSessionApi(ctx) {
           conn.on("keyboard-interactive", createKeyboardInteractiveHandler({
             sender,
             sessionId,
+            hostId: options.hostId,
             hostname: options.hostname,
             password: options.password,
             logPrefix,
             scope: "terminal",
+            getAuthBanner: () => authBanner,
             shouldSkipAutoFill: () => shouldSkipKiPasswordAutoFill(authPhase),
             onAutoFill: () => sendProgress(
               totalHops, totalHops, options.hostname, 'auth-attempt', 'using saved password',
@@ -1658,14 +1706,38 @@ function createStartSessionApi(ctx) {
             // Try agent FIRST (this is what regular SSH does - it checks ssh-agent before key files)
             if (connectOpts.agent) authMethods.push("agent");
             if (connectOpts.privateKey) authMethods.push("publickey");
-            if (connectOpts.password) authMethods.push("password");
+            if (connectOpts.password && !options._skipPasswordMethod) {
+              authMethods.push("password");
+            }
             authMethods.push("keyboard-interactive");
-            connectOpts.authHandler = authMethods;
-            log("Using simple array authHandler", { authMethods, usedDefaultKeyAsPrimary });
+            const dedupedAuthMethods = Array.from(new Set(authMethods));
+            connectOpts.authHandler = dedupedAuthMethods;
+            log("Using simple array authHandler", {
+              authMethods: dedupedAuthMethods,
+              usedDefaultKeyAsPrimary,
+              });
           }
           // If authHandler is a function, it already handles keyboard-interactive
 
           console.log(`${logPrefix} Connecting to ${options.hostname}...`);
+          log("connect options prepared", {
+            sessionId,
+            hostname: options.hostname,
+            port: options.port || 22,
+            hasSocket: !!connectOpts.sock,
+            hasProxy,
+            jumpHostCount: jumpHosts.length,
+            timeout: connectOpts.timeout,
+            readyTimeout: connectOpts.readyTimeout,
+            tryKeyboard: connectOpts.tryKeyboard,
+            hasPassword: !!connectOpts.password,
+            hasPrivateKey: !!connectOpts.privateKey,
+            hasAgent: !!connectOpts.agent,
+            authHandlerType: Array.isArray(connectOpts.authHandler) ? "array" : typeof connectOpts.authHandler,
+            authMethods: Array.isArray(connectOpts.authHandler)
+              ? connectOpts.authHandler
+              : undefined,
+          });
           conn.connect(connectOpts);
         });
       } catch (err) {
