@@ -53,38 +53,37 @@ function createFileOpsApi(ctx) {
               } else if (encoding !== "gb18030") {
                 encoding = updateResolvedEncoding(payload.sftpId, "auto", "utf-8");
               }
-              if (needsGb) {
-                // Parse with detected encoding and resolve symlink targets.
-                const records = parseListRecords(raw.stdout, "gb18030");
-                const entries = [];
-                for (const rec of records) {
-                  const entry = {
-                    name: rec.name,
-                    type: rec.type,
-                    linkTarget: rec.type === "symlink" ? "file" : null,
-                    size: `${rec.size || 0} bytes`,
-                    lastModified: new Date(rec.modifyTime || Date.now()).toISOString(),
-                    permissions: rec.permissions,
-                  };
-                  if (rec.type === "symlink") {
-                    try {
-                      const full = `${String(basePath).replace(/\/+$/, "")}/${rec.name}`.replace(/\/+/g, "/") || rec.name;
-                      // Follow the link with shell [ -d ] (stat marks the link itself as type l).
-                      const adapters = require("./scpBackend.cjs").createSshExecAdapters(client.client);
-                      const { shellQuotePath } = require("./scpShell.cjs");
-                      const probe = await adapters.exec(
-                        `p=${shellQuotePath(full, "gb18030")}; if [ -d "$p" ]; then echo directory; else echo file; fi`,
-                        { signal: payload?.abortSignal || null },
-                      );
-                      entry.linkTarget = (probe.stdout || "").includes("directory") ? "directory" : "file";
-                    } catch {
-                      entry.linkTarget = null;
-                    }
+              // Reuse the probe listing instead of listing the directory twice.
+              const listEnc = needsGb ? "gb18030" : (encoding === "gb18030" ? "gb18030" : "utf-8");
+              const records = parseListRecords(raw.stdout, listEnc);
+              const entries = [];
+              for (const rec of records) {
+                const entry = {
+                  name: rec.name,
+                  type: rec.type,
+                  linkTarget: rec.type === "symlink" ? "file" : null,
+                  size: `${rec.size || 0} bytes`,
+                  lastModified: new Date(rec.modifyTime || Date.now()).toISOString(),
+                  permissions: rec.permissions,
+                };
+                if (rec.type === "symlink") {
+                  try {
+                    const full = `${String(basePath).replace(/\/+$/, "")}/${rec.name}`.replace(/\/+/g, "/") || rec.name;
+                    const trackedExec = client.__netcattyScpTrackedExec
+                      || require("./scpBackend.cjs").createSshExecAdapters(client.client).exec;
+                    const { shellQuotePath } = require("./scpShell.cjs");
+                    const probe = await trackedExec(
+                      `p=${shellQuotePath(full, listEnc)}; if [ -d "$p" ]; then echo directory; else echo file; fi`,
+                      { signal: payload?.abortSignal || null },
+                    );
+                    entry.linkTarget = (probe.stdout || "").includes("directory") ? "directory" : "file";
+                  } catch {
+                    entry.linkTarget = null;
                   }
-                  entries.push(entry);
                 }
-                return entries;
+                entries.push(entry);
               }
+              return entries;
             }
           } catch {
             // Keep previously resolved encoding (e.g. gb18030); do not demote on probe failure.

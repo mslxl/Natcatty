@@ -1077,6 +1077,14 @@ function createOpenConnectionApi(ctx) {
             };
 
             if (fileProtocol === "scp") {
+              if (options.sudo) {
+                // Forced SCP cannot provide sudo elevation; reject contradictory host data.
+                try { sshClient.end(); } catch { /* ignore */ }
+                reject(new Error(
+                  "Sudo Mode is not supported with File Protocol set to SCP. Disable Sudo Mode or use Auto/SFTP.",
+                ));
+                return;
+              }
               console.log(`[SFTP] Forced SCP mode for connection: ${connId}`);
               void finishScp(null);
               return;
