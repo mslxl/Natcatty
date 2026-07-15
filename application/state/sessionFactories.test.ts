@@ -34,7 +34,7 @@ test("createHostTerminalSession keeps telnet deep-link default port for ssh host
   assert.equal(session.port, 23);
 });
 
-test("serial session factories snapshot legacy configs as explicit default Backspace", () => {
+test("serial session factories snapshot effective legacy Backspace behavior", () => {
   const savedHostSession = createHostTerminalSession("session-1", host({
     protocol: "serial",
     hostname: "COM3",
@@ -44,12 +44,26 @@ test("serial session factories snapshot legacy configs as explicit default Backs
       path: "COM3",
       baudRate: 115200,
     },
+    backspaceBehavior: "ctrl-h",
   }));
   const quickSession = createSerialTerminalSession("session-2", {
     path: "COM4",
     baudRate: 9600,
   });
+  const explicitDefaultSession = createHostTerminalSession("session-3", host({
+    protocol: "serial",
+    hostname: "COM5",
+    port: 115200,
+    username: "",
+    backspaceBehavior: "ctrl-h",
+    serialConfig: {
+      path: "COM5",
+      baudRate: 115200,
+      backspaceBehavior: "default",
+    },
+  }));
 
-  assert.equal(savedHostSession.serialConfig?.backspaceBehavior, "default");
+  assert.equal(savedHostSession.serialConfig?.backspaceBehavior, "ctrl-h");
   assert.equal(quickSession.serialConfig?.backspaceBehavior, "default");
+  assert.equal(explicitDefaultSession.serialConfig?.backspaceBehavior, "default");
 });

@@ -156,7 +156,7 @@ test("buildSessionRestorePayload preserves serial sessions with empty usernames"
   assert.equal(payload.sessions[0].protocol, "serial");
 });
 
-test("buildSessionRestorePayload snapshots missing serial Backspace behavior as default", () => {
+test("buildSessionRestorePayload preserves missing Backspace behavior on legacy serial sessions", () => {
   const payload = buildSessionRestorePayload({
     sessions: [{
       ...session("s1"),
@@ -173,7 +173,7 @@ test("buildSessionRestorePayload snapshots missing serial Backspace behavior as 
     now: 123,
   });
 
-  assert.equal(payload.sessions[0].serialConfig?.backspaceBehavior, "default");
+  assert.equal(payload.sessions[0].serialConfig?.backspaceBehavior, undefined);
 });
 
 test("buildSessionRestorePayload preserves serial-only workspaces", () => {

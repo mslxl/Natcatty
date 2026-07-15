@@ -37,9 +37,13 @@ export const createLocalTerminalSession = (
   localStartDir: options?.localStartDir,
 });
 
-export const snapshotSerialConfig = (config: SerialConfig): SerialConfig => ({
+export const snapshotSerialConfig = (
+  config: SerialConfig,
+  legacyBackspaceBehavior?: Host["backspaceBehavior"],
+): SerialConfig => ({
   ...config,
-  backspaceBehavior: config.backspaceBehavior ?? "default",
+  backspaceBehavior: config.backspaceBehavior
+    ?? (legacyBackspaceBehavior === "ctrl-h" ? "ctrl-h" : "default"),
 });
 
 export const createSerialTerminalSession = (
@@ -67,16 +71,19 @@ export const createHostTerminalSession = (
   host: Host,
 ): TerminalSession => {
   if (host.protocol === "serial") {
-    const serialConfig = snapshotSerialConfig(host.serialConfig || {
-      path: host.hostname,
-      baudRate: host.port || 115200,
-      dataBits: 8,
-      stopBits: 1,
-      parity: "none",
-      flowControl: "none",
-      localEcho: false,
-      lineMode: false,
-    });
+    const serialConfig = snapshotSerialConfig(
+      host.serialConfig || {
+        path: host.hostname,
+        baudRate: host.port || 115200,
+        dataBits: 8,
+        stopBits: 1,
+        parity: "none",
+        flowControl: "none",
+        localEcho: false,
+        lineMode: false,
+      },
+      host.backspaceBehavior,
+    );
     const portName = serialConfig.path.split("/").pop() || serialConfig.path;
     return {
       id: sessionId,

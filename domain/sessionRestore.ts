@@ -109,9 +109,13 @@ const sanitizeSerialConfig = (value: unknown): SerialConfig | undefined => {
     ...(isOneOf(value.flowControl, ["none", "xon/xoff", "rts/cts"] as const) ? { flowControl: value.flowControl } : {}),
     ...(readBoolean(value, "localEcho") !== undefined ? { localEcho: readBoolean(value, "localEcho") } : {}),
     ...(readBoolean(value, "lineMode") !== undefined ? { lineMode: readBoolean(value, "lineMode") } : {}),
-    backspaceBehavior: isOneOf(value.backspaceBehavior, ["default", "ctrl-h"] as const)
-      ? value.backspaceBehavior
-      : "default",
+    // A missing value identifies a session saved before serial-specific
+    // Backspace snapshots existed. Keep it missing so a saved-host session can
+    // still pick up its legacy host or group Ctrl+H setting. New sessions
+    // always persist an explicit "default" or "ctrl-h" value.
+    ...(isOneOf(value.backspaceBehavior, ["default", "ctrl-h"] as const)
+      ? { backspaceBehavior: value.backspaceBehavior }
+      : {}),
   };
 };
 

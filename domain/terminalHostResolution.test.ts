@@ -200,6 +200,45 @@ test("resolveTerminalSessionHost applies serial Ctrl-H backspace behavior from s
   assert.equal(resolved.backspaceBehavior, "ctrl-h");
 });
 
+test("resolveTerminalSessionHost preserves inherited Ctrl-H for legacy restored serial sessions", () => {
+  const host: Host = {
+    id: "target",
+    label: "Serial: COM3",
+    hostname: "COM3",
+    username: "",
+    port: 115200,
+    protocol: "serial",
+    tags: [],
+    os: "linux",
+    group: "serial-devices",
+    serialConfig: {
+      path: "COM3",
+      baudRate: 115200,
+    },
+  };
+
+  const resolved = resolveTerminalSessionHost({
+    session: {
+      ...baseSession,
+      hostLabel: "Serial: COM3",
+      hostname: "COM3",
+      username: "",
+      port: undefined,
+      protocol: "serial",
+      serialConfig: {
+        path: "COM3",
+        baudRate: 115200,
+      },
+    },
+    hosts: [host],
+    groupConfigs: [{ path: "serial-devices", backspaceBehavior: "ctrl-h" }],
+    proxyProfiles,
+    localOs: "windows",
+  });
+
+  assert.equal(resolved.backspaceBehavior, "ctrl-h");
+});
+
 test("resolveTerminalSessionHost keeps the serial Backspace behavior captured by the session", () => {
   const host: Host = {
     id: "target",
