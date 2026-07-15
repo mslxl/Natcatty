@@ -1063,7 +1063,6 @@ function App({ settings }: { settings: SettingsState }) {
     proxyProfiles,
     managedSources,
     terminalSettings,
-    resolveEffectiveHost,
     updateHosts,
     updateSnippets,
     customGroups,

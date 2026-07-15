@@ -288,6 +288,11 @@ test("stop by rule id reports cleanup failures and keeps the tunnel retryable", 
     failed: 1,
     errors: ["passphrase prompt: abort failed"],
   });
+  assert.deepEqual(await getPortForwardStatus(event, { tunnelId }), {
+    tunnelId,
+    status: "connecting",
+    type: "local",
+  });
 
   AbortController.prototype.abort = originalAbort;
   assert.deepEqual(stopPortForwardByRuleId(event, { ruleId: "cleanup-failure-rule" }), {

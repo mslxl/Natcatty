@@ -1,5 +1,7 @@
 import { useEffect, useRef } from 'react';
+import { applyGroupDefaults, resolveGroupDefaults } from '../../domain/groupConfig';
 import type { GroupConfig, Host, Identity, KnownHost, ManagedSource, PortForwardingRule, ProxyProfile, Snippet, SSHKey, TerminalSettings, VaultNote } from '../../domain/models';
+import { materializeHostProxyProfile } from '../../domain/proxyProfiles';
 import {
   handleVaultAgentOp,
   registerVaultAgentHandler,
@@ -17,7 +19,6 @@ export interface UseVaultAgentBridgeInput {
   proxyProfiles: ProxyProfile[];
   managedSources: ManagedSource[];
   terminalSettings?: Pick<TerminalSettings, 'keepaliveInterval' | 'keepaliveCountMax'>;
-  resolveEffectiveHost: (host: Host) => Host;
   updateHosts: (hosts: Host[]) => void;
   updateSnippets: (snippets: Snippet[]) => void;
   customGroups: string[];
@@ -60,6 +61,22 @@ export const haveSameVaultAgentSnapshot = (
 ): boolean => (Object.keys(left) as Array<keyof VaultAgentSnapshot>)
   .every((key) => left[key] === right[key]);
 
+export function resolveVaultAgentEffectiveHost(
+  host: Host,
+  groupConfigs: GroupConfig[],
+  proxyProfiles: ProxyProfile[],
+): Host {
+  const validProxyProfileIds = new Set(proxyProfiles.map((profile) => profile.id));
+  const withGroupDefaults = host.group
+    ? applyGroupDefaults(
+        host,
+        resolveGroupDefaults(host.group, groupConfigs, { validProxyProfileIds }),
+        { validProxyProfileIds },
+      )
+    : applyGroupDefaults(host, {}, { validProxyProfileIds });
+  return materializeHostProxyProfile(withGroupDefaults, proxyProfiles);
+}
+
 export function useVaultAgentBridge(input: UseVaultAgentBridgeInput): void {
   const inputRef = useRef(input);
   inputRef.current = input;
@@ -89,7 +106,11 @@ export function useVaultAgentBridge(input: UseVaultAgentBridgeInput): void {
         knownHosts: current.knownHosts,
         proxyProfiles: current.proxyProfiles,
         terminalSettings: current.terminalSettings,
-        resolveEffectiveHost: current.resolveEffectiveHost,
+        resolveEffectiveHost: (host) => resolveVaultAgentEffectiveHost(
+          host,
+          vaultSnapshotRef.current.groupConfigs,
+          current.proxyProfiles,
+        ),
         updateHostNotes: (hostId, notes) => {
           const nextHosts = vaultSnapshotRef.current.hosts.map((host) => (
             host.id === hostId ? { ...host, notes } : host

@@ -41,6 +41,7 @@ function isTunnelCancelled(tunnelState) {
 
 function cancelTunnel(tunnelId, tunnel, sendStatus, { deleteEntry = false } = {}) {
   if (!tunnel) return;
+  const previousStatus = tunnel.status;
   const errors = [];
   const cleanup = (label, action) => {
     try {
@@ -53,7 +54,6 @@ function cancelTunnel(tunnelId, tunnel, sendStatus, { deleteEntry = false } = {}
     }
   };
   tunnel.cancelled = true;
-  tunnel.status = 'inactive';
   if (tunnel.server) {
     if (cleanup('server', () => tunnel.server.close())) tunnel.server = null;
   }
@@ -71,12 +71,14 @@ function cancelTunnel(tunnelId, tunnel, sendStatus, { deleteEntry = false } = {}
   if (tunnel.conn) {
     if (cleanup('SSH connection', () => tunnel.conn.end())) tunnel.conn = null;
   }
-  sendStatus?.('inactive');
   if (errors.length > 0) {
+    tunnel.status = previousStatus;
     tunnel.cleanupFailed = true;
     throw new Error(errors.join('; '));
   }
+  tunnel.status = 'inactive';
   tunnel.cleanupFailed = false;
+  sendStatus?.('inactive');
   if (deleteEntry) {
     portForwardingTunnels.delete(tunnelId);
   }
