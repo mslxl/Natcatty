@@ -2351,7 +2351,10 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       reconnectWakeTokenRef.current = wakeToken;
       updateStatus("connecting");
       void wakeForReconnect().then((woke) => {
-        if (reconnectWakeTokenRef.current !== wakeToken) return;
+        if (reconnectWakeTokenRef.current !== wakeToken) {
+          disposeRuntimeOnly();
+          return;
+        }
         reconnectWakeTokenRef.current = null;
         reconnectWakeInFlightRef.current = false;
         if (woke) {
@@ -2360,7 +2363,10 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         }
         updateStatus("disconnected");
       }).catch(() => {
-        if (reconnectWakeTokenRef.current !== wakeToken) return;
+        if (reconnectWakeTokenRef.current !== wakeToken) {
+          disposeRuntimeOnly();
+          return;
+        }
         reconnectWakeTokenRef.current = null;
         reconnectWakeInFlightRef.current = false;
         updateStatus("disconnected");
