@@ -72,6 +72,21 @@ describe('vaultGroupAgentOps', () => {
     assert.equal(inheritedTelnet.ok, false);
   });
 
+  it('allows valid group edits when unrelated legacy transport settings are invalid', () => {
+    const result = upsertGroup({
+      groups: ['legacy', 'valid'],
+      configs: [{ path: 'legacy', protocol: 'telnet', moshEnabled: true }],
+      hosts: [{
+        id: 'legacy-host', label: 'legacy', hostname: 'legacy.test', username: 'root',
+        group: 'legacy', protocol: 'telnet', moshEnabled: true, tags: [], os: 'linux',
+      }],
+      managedSources: [],
+    }, 'valid', { username: 'deploy' }, [], proxyProfiles);
+
+    assert.equal(result.ok, true);
+    if (result.ok) assert.equal(result.config?.username, 'deploy');
+  });
+
   it('validates jump hosts against their destination group after a rename', () => {
     const jump: Host = {
       id: 'moving-jump', label: 'Moving jump', hostname: 'jump.test', username: 'root',

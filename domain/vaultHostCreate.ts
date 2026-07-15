@@ -365,6 +365,9 @@ export function applyVaultHostUpdate(
     if (!nextProtocol) {
       return { ok: false, error: 'protocol must be ssh, telnet, local, or serial.' };
     }
+    if (current.protocol === 'serial' && nextProtocol !== 'serial' && !hostname.provided) {
+      return { ok: false, error: 'hostname is required when changing a serial host to a network protocol.' };
+    }
     if (
       nextProtocol !== 'serial'
       && !port.provided
@@ -736,6 +739,9 @@ export function applyVaultHostUpdate(
   }
 
   updated = sanitizeHost(updated);
+  if (updated.protocol === 'serial' && updated.serialConfig) {
+    updated.hostname = updated.serialConfig.path;
+  }
   const hosts = [...existingHosts];
   hosts[hostIndex] = updated;
   const jumpGraphIssue = findIntroducedVaultJumpGraphIssue(

@@ -47,6 +47,32 @@ const resolveEffectiveHostForConfigs = (configs: GroupConfig[]) => (host: Host):
   ? applyGroupDefaults(host, resolveGroupDefaults(host.group, configs))
   : host;
 
+const hasInvalidTransport = (value: Pick<Host, 'protocol' | 'moshEnabled' | 'etEnabled'>): boolean => (
+  Boolean(value.moshEnabled && value.etEnabled) || Boolean(
+    value.protocol !== undefined
+    && value.protocol !== 'ssh'
+    && (value.moshEnabled || value.etEnabled)
+  )
+);
+
+const collectTransportIssueKeys = (
+  state: Pick<GroupState, 'groups' | 'configs' | 'hosts'>,
+  canonicalGroupPath: (path: string) => string = (path) => path,
+): Set<string> => {
+  const issues = new Set<string>();
+  const groupPaths = new Set([...state.groups, ...state.configs.map((config) => config.path)]);
+  for (const groupPath of groupPaths) {
+    if (hasInvalidTransport(resolveGroupDefaults(groupPath, state.configs))) {
+      issues.add(`group:${canonicalGroupPath(groupPath)}`);
+    }
+  }
+  const resolveHost = resolveEffectiveHostForConfigs(state.configs);
+  for (const host of state.hosts) {
+    if (hasInvalidTransport(resolveHost(host))) issues.add(`host:${host.id}`);
+  }
+  return issues;
+};
+
 const findIntroducedJumpGraphIssue = (before: GroupState, after: GroupState) =>
   findIntroducedVaultJumpGraphIssue(
     before.hosts,
@@ -241,29 +267,20 @@ export function upsertGroup(
     hosts: state.hosts.map((host) => host.group ? { ...host, group: rename(host.group) } : host),
     managedSources: state.managedSources.map((source) => ({ ...source, groupName: rename(source.groupName) })),
   };
-  const invalidGroupTransport = groups.find((groupPath) => {
-    const effective = resolveGroupDefaults(groupPath, configs);
-    return (effective.moshEnabled && effective.etEnabled) || (
-      effective.protocol !== undefined
-      && effective.protocol !== 'ssh'
-      && (effective.moshEnabled || effective.etEnabled)
-    );
-  });
-  if (invalidGroupTransport) {
-    return { ok: false, error: `Group "${invalidGroupTransport}" has incompatible Mosh, ET, or protocol defaults.` };
-  }
-  const invalidHostTransport = nextState.hosts.find((host) => {
-    const effective = host.group
-      ? applyGroupDefaults(host, resolveGroupDefaults(host.group, configs))
-      : host;
-    return (effective.moshEnabled && effective.etEnabled) || (
-      effective.protocol !== undefined
-      && effective.protocol !== 'ssh'
-      && (effective.moshEnabled || effective.etEnabled)
-    );
-  });
-  if (invalidHostTransport) {
-    return { ok: false, error: `Host "${invalidHostTransport.id}" has incompatible inherited Mosh, ET, or protocol settings.` };
+  const beforeTransportIssues = collectTransportIssueKeys(state);
+  const renamedGroupPaths = new Map(
+    [...state.groups, ...state.configs.map((config) => config.path)]
+      .filter((candidate) => candidate === path || candidate.startsWith(`${path}/`))
+      .map((candidate) => [rename(candidate), candidate]),
+  );
+  const afterTransportIssues = collectTransportIssueKeys(
+    nextState,
+    (groupPath) => renamedGroupPaths.get(groupPath) ?? groupPath,
+  );
+  const introducedTransportIssue = [...afterTransportIssues]
+    .find((issue) => !beforeTransportIssues.has(issue));
+  if (introducedTransportIssue) {
+    return { ok: false, error: `${introducedTransportIssue} has incompatible inherited Mosh, ET, or protocol settings.` };
   }
   const regressedJumpHostId = findReferencedJumpHostProtocolRegression(state, nextState);
   if (regressedJumpHostId) {

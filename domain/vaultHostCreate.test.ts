@@ -274,13 +274,19 @@ test('applyVaultHostUpdate changes default ports when switching protocols', () =
   const toSsh = applyVaultHostUpdate([telnet], [], telnet.id, { protocol: 'ssh' });
   const keepCustom = applyVaultHostUpdate([custom], [], custom.id, { protocol: 'telnet' });
   const explicitPort = applyVaultHostUpdate([ssh], [], ssh.id, { protocol: 'telnet', port: 2323 });
-  const serialToSsh = applyVaultHostUpdate([serial], [], serial.id, { protocol: 'ssh' });
-  const serialToTelnet = applyVaultHostUpdate([serial], [], serial.id, { protocol: 'telnet' });
+  const missingNetworkHostname = applyVaultHostUpdate([serial], [], serial.id, { protocol: 'ssh' });
+  const serialToSsh = applyVaultHostUpdate(
+    [serial], [], serial.id, { protocol: 'ssh', hostname: 'ssh.example.com' },
+  );
+  const serialToTelnet = applyVaultHostUpdate(
+    [serial], [], serial.id, { protocol: 'telnet', hostname: 'telnet.example.com' },
+  );
 
   assert.equal(toTelnet.ok, true);
   assert.equal(toSsh.ok, true);
   assert.equal(keepCustom.ok, true);
   assert.equal(explicitPort.ok, true);
+  assert.equal(missingNetworkHostname.ok, false);
   assert.equal(serialToSsh.ok, true);
   assert.equal(serialToTelnet.ok, true);
   if (!toTelnet.ok || !toSsh.ok || !keepCustom.ok || !explicitPort.ok || !serialToSsh.ok || !serialToTelnet.ok) return;
@@ -290,6 +296,8 @@ test('applyVaultHostUpdate changes default ports when switching protocols', () =
   assert.equal(explicitPort.updatedHost.port, 2323);
   assert.equal(serialToSsh.updatedHost.port, 22);
   assert.equal(serialToTelnet.updatedHost.port, 23);
+  assert.equal(serialToSsh.updatedHost.hostname, 'ssh.example.com');
+  assert.equal(serialToTelnet.updatedHost.hostname, 'telnet.example.com');
   const backToSerial = applyVaultHostUpdate(
     [serialToSsh.updatedHost], [], serial.id, { protocol: 'serial' },
   );
@@ -657,6 +665,14 @@ test('applyVaultHostUpdate preserves repeated SSH mode and synchronizes serial p
   assert.equal(switchedBackToSerial.ok, true);
   if (!switchedBackToSerial.ok) return;
   assert.equal(switchedBackToSerial.updatedHost.hostname, '/dev/ttyUSB0');
+
+  const whitespacePath = applyVaultHostUpdate([serialHost], [], serialHost.id, {
+    serialConfig: { path: '/tmp/serial link', baudRate: 9600 },
+  });
+  assert.equal(whitespacePath.ok, true);
+  if (!whitespacePath.ok) return;
+  assert.equal(whitespacePath.updatedHost.hostname, '/tmp/serial link');
+  assert.equal(whitespacePath.updatedHost.serialConfig?.path, '/tmp/serial link');
 });
 
 test('applyVaultHostUpdate validates Mosh and ET against inherited connection settings', () => {
