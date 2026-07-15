@@ -54,6 +54,8 @@ describe("scpProtocol control lines", () => {
     assert.throws(() => sanitizeScpBasename("../x"), ScpProtocolError);
     assert.throws(() => buildFileControlLine({ size: 1, name: "a/b" }), ScpProtocolError);
     assert.throws(() => parseControlLine("C0644 1 a/b"), ScpProtocolError);
+    // Backslash is valid on POSIX; do not reject.
+    assert.equal(sanitizeScpBasename("a\\b"), "a\\b");
   });
 
   it("consumeAck handles ok error and fatal", () => {

@@ -13,9 +13,67 @@ function createFileOpsApi(ctx) {
       if (isScpModeClient(client)) {
         const backend = getScpBackendForClient(client);
         const basePath = payload.path || ".";
-        const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
+        const requestedEncoding = normalizeEncoding(payload.encoding);
+        let encoding = resolveEncodingForRequest(payload.sftpId, requestedEncoding);
+        if (requestedEncoding === "auto") {
+          // Detect from raw basename bytes (base64 field) before final decode.
+          try {
+            const adapters = require("./scpBackend.cjs").createSshExecAdapters(client.client);
+            const { buildListCommand, parseListRecords } = require("./scpShell.cjs");
+            const raw = await adapters.exec(buildListCommand(basePath, "utf-8"), {
+              signal: payload?.abortSignal || null,
+            });
+            if (raw.code === 0 && raw.stdout) {
+              let needsGb = false;
+              for (const line of String(raw.stdout).split(/\r?\n/)) {
+                if (!line) continue;
+                const parts = line.split("|");
+                if (parts.length < 5) continue;
+                try {
+                  // eslint-disable-next-line no-new
+                  new TextDecoder("utf-8", { fatal: true }).decode(Buffer.from(parts[4], "base64"));
+                } catch {
+                  needsGb = true;
+                  break;
+                }
+              }
+              encoding = updateResolvedEncoding(payload.sftpId, "auto", needsGb ? "gb18030" : "utf-8");
+              if (needsGb) {
+                // Parse with detected encoding and resolve symlink targets.
+                const records = parseListRecords(raw.stdout, "gb18030");
+                const entries = [];
+                for (const rec of records) {
+                  const entry = {
+                    name: rec.name,
+                    type: rec.type,
+                    linkTarget: rec.type === "symlink" ? "file" : null,
+                    size: `${rec.size || 0} bytes`,
+                    lastModified: new Date(rec.modifyTime || Date.now()).toISOString(),
+                    permissions: rec.permissions,
+                  };
+                  if (rec.type === "symlink") {
+                    try {
+                      const full = `${String(basePath).replace(/\/+$/, "")}/${rec.name}`.replace(/\/+/g, "/") || rec.name;
+                      const st = await backend.stat(full, {
+                        encoding: "gb18030",
+                        signal: payload?.abortSignal || null,
+                      });
+                      entry.linkTarget = st.isDirectory ? "directory" : "file";
+                    } catch {
+                      entry.linkTarget = null;
+                    }
+                  }
+                  entries.push(entry);
+                }
+                return entries;
+              }
+            }
+          } catch {
+            encoding = updateResolvedEncoding(payload.sftpId, "auto", "utf-8");
+          }
+        }
         return await backend.list(basePath, {
-          encoding,
+          encoding: encoding === "auto" ? "utf-8" : encoding,
           signal: payload?.abortSignal || null,
         });
       }

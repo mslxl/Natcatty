@@ -98,7 +98,9 @@ function parseControlLine(line) {
   const mode = parseInt(match[2], 8);
   const size = Number(match[3]);
   const name = match[4];
-  if (!name || name.includes("/") || name.includes("\\") || name === ".." || name === ".") {
+  // Only reject path separators used by remote paths (/). Backslash is a valid
+  // POSIX filename character and must be allowed for download control lines.
+  if (!name || name.includes("/") || name === ".." || name === ".") {
     throw new ScpProtocolError(`Invalid SCP entry name: ${name}`);
   }
   if (kind === "file" && (!Number.isFinite(size) || size < 0)) {
@@ -182,7 +184,7 @@ function sanitizeScpBasename(name) {
   if (name.includes("\0")) {
     throw new ScpProtocolError("SCP entry name must not contain NUL");
   }
-  if (name.includes("/") || name.includes("\\") || name === ".." || name === ".") {
+  if (name.includes("/") || name === ".." || name === ".") {
     throw new ScpProtocolError(`SCP entry name must be a simple basename: ${name}`);
   }
   // Control line is space-delimited; reject newlines

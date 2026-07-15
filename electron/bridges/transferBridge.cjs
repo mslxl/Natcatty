@@ -711,7 +711,9 @@ async function startTransfer(event, payload, onProgress) {
         const client = sftpClients.get(sourceSftpId);
         if (!client) throw new Error("Source SFTP session not found");
         if (isScpModeClient(client)) {
-          const st = await getScpBackendForClient(client).stat(sourcePath);
+          const st = await getScpBackendForClient(client).stat(sourcePath, {
+            encoding: resolveEncodingForRequest(sourceSftpId, sourceEncoding),
+          });
           fileSize = st.size;
         } else {
           await requireSftpChannel(client);
