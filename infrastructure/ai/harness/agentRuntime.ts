@@ -4,7 +4,13 @@ import type { AgentBackend, AgentEvent, AgentEventListener } from './types';
 import { ToolOutputStore } from './toolOutputStore';
 import { ToolResultDedup } from './toolResultDedup';
 import { SessionStateStore } from './sessionState';
-import type { TurnDriver, TurnInput, TurnResult } from './turnDrivers/types';
+import type {
+  TurnDriver,
+  TurnInput,
+  TurnResult,
+  TurnSteerInput,
+  TurnSteerResult,
+} from './turnDrivers/types';
 
 let turnCounter = 0;
 
@@ -214,5 +220,12 @@ export class AgentRuntime {
       backend: active?.backend ?? 'catty',
     });
     await this.waitForActiveTurn(chatSessionId);
+  }
+
+  async steerTurn(input: TurnSteerInput): Promise<TurnSteerResult> {
+    const active = this.activeTurns.get(input.chatSessionId);
+    if (!active) return { status: 'inactive' };
+    if (!active.driver.steer) return { status: 'unsupported' };
+    return active.driver.steer(input);
   }
 }

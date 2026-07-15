@@ -189,6 +189,7 @@ export const PromptInputSubmit = forwardRef<HTMLButtonElement, PromptInputSubmit
               ref={ref}
               type={isRunning ? 'button' : 'submit'}
               onClick={isRunning ? handleClick : undefined}
+              aria-label={tooltipLabel}
               variant="ghost"
               disabled={disabled && !isRunning}
               className={cn(

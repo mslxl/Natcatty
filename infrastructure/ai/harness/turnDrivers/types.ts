@@ -113,6 +113,36 @@ export interface TurnResult {
   reason: 'completed' | 'aborted' | 'error';
 }
 
+export type TurnSteerFailureReason =
+  | 'not-steerable'
+  | 'busy'
+  | 'inactive'
+  | 'unsupported'
+  | 'cancelled'
+  | 'failed';
+
+export type TurnSteerResult =
+  | { status: 'accepted'; assistantMessageId: string }
+  | {
+      status: TurnSteerFailureReason;
+      message?: string;
+      turnKind?: 'review' | 'compact';
+    };
+
+export interface TurnSteerInput {
+  chatSessionId: string;
+  userMessageId: string;
+  userText: string;
+  prompt: string;
+  attachments?: ChatMessageAttachment[];
+  attachedImages: Array<{
+    base64Data: string;
+    mediaType: string;
+    filename?: string;
+    filePath?: string;
+  }>;
+}
+
 export interface TurnDriverContext {
   turnId: string;
   chatSessionId: string;
@@ -129,6 +159,7 @@ export interface TurnDriverContext {
 export interface TurnDriver {
   readonly backend: AgentBackend;
   run(input: TurnInput, ctx: TurnDriverContext): Promise<void>;
+  steer?(input: TurnSteerInput): Promise<TurnSteerResult>;
   abort?(chatSessionId: string): void;
 }
 

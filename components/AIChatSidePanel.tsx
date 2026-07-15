@@ -92,6 +92,10 @@ type SdkRuntimeModelTarget = {
   agentCommand?: string;
   codexRuntime?: 'sdk' | 'app-server';
 };
+type SteerWarning = {
+  reason: 'not-steerable' | 'busy' | 'inactive' | 'unsupported' | 'cancelled' | 'failed';
+  turnKind?: 'review' | 'compact';
+};
 
 const USER_SKILLS_STATUS_CACHE_TTL_MS = 60_000;
 let userSkillsStatusCache: {
@@ -295,6 +299,8 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   const [showHistory, setShowHistory] = useState(false);
   const [runtimeAgentModelPresets, setRuntimeAgentModelPresets] = useState<Record<string, AgentModelPreset[]>>({});
   const [runtimeModelWarnings, setRuntimeModelWarnings] = useState<Record<string, string>>({});
+  const [steerWarnings, setSteerWarnings] = useState<Record<string, SteerWarning>>({});
+  const [steeringSessionId, setSteeringSessionId] = useState<string | null>(null);
   const [userSkillOptions, setUserSkillOptions] = useState<UserSkillOption[]>([]);
   const [userSkillsStatusVersion, setUserSkillsStatusVersion] = useState(0);
   const { openSettingsWindow } = useWindowControls();
@@ -309,6 +315,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     abortControllersRef,
     sendToCattyAgent,
     sendToExternalAgent,
+    steerExternalAgent,
     reportStreamError,
     activeCompaction,
   } = useAIChatStreaming({
@@ -361,6 +368,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   );
   const activeSessionId = normalizedPanelView.mode === 'session' ? normalizedPanelView.sessionId : null;
   const isStreaming = activeSessionId ? streamingSessionIds.has(activeSessionId) : false;
+  const isSteering = activeSessionId != null && steeringSessionId === activeSessionId;
   const currentAgentId = activeSession?.agentId ?? currentDraft?.agentId ?? defaultAgentId;
   const inputValue = currentDraft?.text ?? '';
   const files = currentDraft?.attachments ?? [];
@@ -807,6 +815,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   ]);
 
   const isCodexAppServer = isCodexManagedAgent && currentAgentConfig?.codexRuntime === 'app-server';
+  const canSteerCurrentTurn = Boolean(activeSessionId && isStreaming && isCodexAppServer);
   const hasCodexCustomConfig = codexCustomConfigResolved && isCodexManagedAgent && !isCodexAppServer;
 
   const agentModelPresets = useMemo(() => {
@@ -1106,6 +1115,57 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     clearScopeDraft, showScopeSessionView, setActiveSessionId,
   ]);
 
+  const handleSteer = useCallback(async () => {
+    const sessionId = activeSessionRef.current?.id;
+    const draft = currentDraftRef.current;
+    if (!sessionId || !draft || steeringSessionId || !canSteerCurrentTurn) return;
+
+    const trimmed = draft.text.trim();
+    const attachments = draft.attachments.map((file) => ({
+      base64Data: file.base64Data,
+      mediaType: file.mediaType,
+      filename: file.filename,
+      filePath: file.filePath,
+      terminalSelection: file.terminalSelection,
+      previewText: file.previewText,
+      lineCount: file.lineCount,
+    }));
+    const hasTerminalSelectionAttachments = attachments.some(isTerminalSelectionAttachment);
+    if (!trimmed && !hasTerminalSelectionAttachments) return;
+
+    const userMessageId = generateId();
+    const modelPrompt = buildPromptWithTerminalSelectionAttachments(trimmed, attachments);
+    const modelAttachments = attachments.filter((attachment) => !isTerminalSelectionAttachment(attachment));
+    setSteerWarnings(current => {
+      const next = { ...current };
+      delete next[sessionId];
+      return next;
+    });
+    setSteeringSessionId(sessionId);
+    try {
+      const result = await steerExternalAgent({
+        chatSessionId: sessionId,
+        userMessageId,
+        userText: trimmed,
+        prompt: modelPrompt,
+        attachments,
+        attachedImages: modelAttachments,
+      });
+      if (result.status === 'accepted') {
+        if (currentDraftRef.current === draft) clearScopeDraft();
+        return;
+      }
+      if (result.status !== 'cancelled') {
+        setSteerWarnings(current => ({
+          ...current,
+          [sessionId]: { reason: result.status, turnKind: result.turnKind },
+        }));
+      }
+    } finally {
+      setSteeringSessionId(current => current === sessionId ? null : current);
+    }
+  }, [canSteerCurrentTurn, clearScopeDraft, steerExternalAgent, steeringSessionId]);
+
   const stopStreamingForSession = useCallback(async (sessionId: string) => {
     const controller = abortControllersRef.current.get(sessionId);
     setStreamingForScope(sessionId, false);
@@ -1136,8 +1196,41 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
 
   const handleStop = useCallback(() => {
     if (!activeSessionId) return;
+    setSteeringSessionId(current => current === activeSessionId ? null : current);
+    setSteerWarnings(current => {
+      const next = { ...current };
+      delete next[activeSessionId];
+      return next;
+    });
     stopStreamingForSession(activeSessionId);
   }, [activeSessionId, stopStreamingForSession]);
+
+  useEffect(() => {
+    if (!activeSessionId || isStreaming) return;
+    setSteeringSessionId(current => current === activeSessionId ? null : current);
+    setSteerWarnings(current => {
+      if (!current[activeSessionId]) return current;
+      const next = { ...current };
+      delete next[activeSessionId];
+      return next;
+    });
+  }, [activeSessionId, isStreaming]);
+
+  const steerWarning = useMemo(() => {
+    if (!activeSessionId) return undefined;
+    const warning = steerWarnings[activeSessionId];
+    if (!warning) return undefined;
+    if (warning.reason === 'not-steerable' && warning.turnKind === 'review') {
+      return t('ai.codex.steer.notSteerableReview');
+    }
+    if (warning.reason === 'not-steerable' && warning.turnKind === 'compact') {
+      return t('ai.codex.steer.notSteerableCompact');
+    }
+    if (warning.reason === 'busy') return t('ai.codex.steer.busy');
+    if (warning.reason === 'inactive') return t('ai.codex.steer.inactive');
+    if (warning.reason === 'unsupported') return t('ai.codex.steer.unsupported');
+    return t('ai.codex.steer.failed');
+  }, [activeSessionId, steerWarnings, t]);
 
   const handleSelectSession = useCallback(
     (sessionId: string) => {
@@ -1236,7 +1329,12 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         inputValue={inputValue}
         setInputValue={setInputValue}
         handleSend={handleSend}
+        handleSteer={handleSteer}
         handleStop={handleStop}
+        canSteer={canSteerCurrentTurn}
+        isSteering={isSteering}
+        steerWarning={steerWarning}
+        lockTurnConfiguration={Boolean(isStreaming && isCodexAppServer)}
         canSendCurrentAgent={canSendCurrentAgent}
         providerDisplayName={providerDisplayName}
         modelDisplayName={modelDisplayName}

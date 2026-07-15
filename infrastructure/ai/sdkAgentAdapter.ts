@@ -68,11 +68,26 @@ interface SdkAgentBridge {
     codexRuntime?: 'sdk' | 'app-server',
     permissionMode?: AIPermissionMode,
   ): Promise<{ ok: boolean; error?: unknown }>;
+  aiSdkAgentSteer?(
+    requestId: string,
+    chatSessionId: string,
+    prompt: string,
+    images: FileAttachment[] | undefined,
+    clientUserMessageId: string,
+  ): Promise<SdkAgentSteerResult>;
   aiSdkAgentCancel(requestId: string, chatSessionId?: string): Promise<{ ok: boolean }>;
   onAiSdkAgentEvent(requestId: string, cb: (event: StreamEvent) => void): () => void;
   onAiSdkAgentDone(requestId: string, cb: () => void): () => void;
   onAiSdkAgentError(requestId: string, cb: (error: unknown) => void): () => void;
 }
+
+export type SdkAgentSteerResult =
+  | { status: 'accepted' }
+  | {
+      status: 'not-steerable' | 'busy' | 'inactive' | 'unsupported' | 'cancelled' | 'failed';
+      message?: string;
+      turnKind?: 'review' | 'compact';
+    };
 
 interface StreamEvent {
   type: string;
@@ -84,6 +99,32 @@ export interface FileAttachment {
   mediaType: string;
   filename?: string;
   filePath?: string;
+}
+
+export async function steerSdkAgentTurn(
+  bridge: unknown,
+  requestId: string,
+  chatSessionId: string,
+  prompt: string,
+  images: FileAttachment[] | undefined,
+  clientUserMessageId: string,
+): Promise<SdkAgentSteerResult> {
+  const sdkBridge = bridge as SdkAgentBridge | null;
+  if (!sdkBridge?.aiSdkAgentSteer) return { status: 'unsupported' };
+  try {
+    return await sdkBridge.aiSdkAgentSteer(
+      requestId,
+      chatSessionId,
+      prompt,
+      images,
+      clientUserMessageId,
+    );
+  } catch (error) {
+    return {
+      status: 'failed',
+      message: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 async function buildAgentEnvWithStoredApiKey(

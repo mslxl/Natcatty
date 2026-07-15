@@ -1224,6 +1224,15 @@ function createPreloadApi(ctx) {
   aiSdkAgentStream: async (requestId, chatSessionId, sdkBackend, prompt, cwd, providerId, model, existingSessionId, historyMessages, images, toolIntegrationMode, defaultTargetSession, userSkillsContext, agentEnv, agentCommand, codexRuntime, permissionMode) => {
     return ipcRenderer.invoke("netcatty:ai:sdk-agent:stream", { requestId, chatSessionId, sdkBackend, prompt, cwd, providerId, model, existingSessionId, historyMessages, images, toolIntegrationMode, defaultTargetSession, userSkillsContext, agentEnv, agentCommand, codexRuntime, permissionMode });
   },
+  aiSdkAgentSteer: async (requestId, chatSessionId, prompt, images, clientUserMessageId) => {
+    return ipcRenderer.invoke("netcatty:ai:sdk-agent:steer", {
+      requestId,
+      chatSessionId,
+      prompt,
+      images,
+      clientUserMessageId,
+    });
+  },
   aiSdkAgentListModels: async (sdkBackend, cwd, providerId, chatSessionId, agentEnv, agentCommand, codexRuntime) => {
     return ipcRenderer.invoke("netcatty:ai:sdk-agent:list-models", { sdkBackend, cwd, providerId, chatSessionId, agentEnv, agentCommand, codexRuntime });
   },

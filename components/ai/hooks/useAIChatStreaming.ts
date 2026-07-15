@@ -18,6 +18,10 @@ import type {
 } from '../../../infrastructure/ai/types';
 import type { ExecutorContext } from '../../../infrastructure/ai/cattyAgent/executor';
 import { getAgentRuntime } from '../../../infrastructure/ai/harness/globalAgentRuntime';
+import type {
+  TurnSteerInput,
+  TurnSteerResult,
+} from '../../../infrastructure/ai/harness/turnDrivers/types';
 import { classifyError } from '../../../infrastructure/ai/errorClassifier';
 import { latestAISessionsSnapshot } from '../../../application/state/aiStateSnapshots';
 import {
@@ -81,6 +85,7 @@ export interface UseAIChatStreamingReturn {
     attachedImages: Array<{ base64Data: string; mediaType: string; filename?: string; filePath?: string }>,
     context: SendToExternalContext,
   ) => Promise<void>;
+  steerExternalAgent: (input: TurnSteerInput) => Promise<TurnSteerResult>;
   reportStreamError: (sessionId: string, abortSignal: AbortSignal, err: unknown) => void;
   activeCompaction: import('./useAgentCompactionUi').ActiveCompactionUi | null;
 }
@@ -208,6 +213,10 @@ export function useAIChatStreaming({
     });
   }, [uiCallbacks]);
 
+  const steerExternalAgent = useCallback(async (input: TurnSteerInput) => {
+    return getAgentRuntime().steerTurn(input);
+  }, []);
+
   const sendToCattyAgent = useCallback(async (
     sessionId: string,
     sendScopeKey: string,
@@ -245,6 +254,7 @@ export function useAIChatStreaming({
     abortControllersRef,
     sendToCattyAgent,
     sendToExternalAgent,
+    steerExternalAgent,
     reportStreamError,
     activeCompaction,
   };

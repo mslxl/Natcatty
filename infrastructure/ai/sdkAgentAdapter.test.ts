@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { formatSdkAgentErrorForDisplay, runSdkAgentTurn } from './sdkAgentAdapter';
+import { formatSdkAgentErrorForDisplay, runSdkAgentTurn, steerSdkAgentTurn } from './sdkAgentAdapter';
 import type { SdkAgentCallbacks } from './sdkAgentAdapter';
 import type { ExternalAgentConfig } from './types';
 
@@ -24,6 +24,32 @@ const sdkConfig: ExternalAgentConfig = {
   enabled: true,
   sdkBackend: 'codex',
 };
+
+test('steerSdkAgentTurn forwards the active request and preserves typed outcomes', async () => {
+  const calls: unknown[][] = [];
+  const result = await steerSdkAgentTurn({
+    aiSdkAgentSteer: async (...args: unknown[]) => {
+      calls.push(args);
+      return { status: 'not-steerable', turnKind: 'review' };
+    },
+  }, 'request-1', 'chat-1', 'change direction', [{
+    base64Data: 'aGVsbG8=',
+    mediaType: 'image/png',
+    filename: 'image.png',
+  }], 'user-1');
+
+  assert.deepEqual(result, { status: 'not-steerable', turnKind: 'review' });
+  assert.deepEqual(calls[0], [
+    'request-1',
+    'chat-1',
+    'change direction',
+    [{ base64Data: 'aGVsbG8=', mediaType: 'image/png', filename: 'image.png' }],
+    'user-1',
+  ]);
+  assert.deepEqual(await steerSdkAgentTurn({}, 'request-1', 'chat-1', 'text', undefined, 'user-1'), {
+    status: 'unsupported',
+  });
+});
 
 test('formatSdkAgentErrorForDisplay preserves nested SDK agent error messages', () => {
   assert.equal(
