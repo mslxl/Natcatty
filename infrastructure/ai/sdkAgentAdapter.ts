@@ -5,7 +5,12 @@
  * official SDK drivers and forwards stream events to the renderer.
  */
 
-import type { AIToolIntegrationMode, ExternalAgentConfig } from './types';
+import type {
+  AgentActivity,
+  AgentUsage,
+  AIToolIntegrationMode,
+  ExternalAgentConfig,
+} from './types';
 import { getExternalAgentSdkBackend, getManualAgentCommand } from './managedAgents';
 import { encodeSdkSessionIdentity } from './harness/sdkSessionIdentity';
 import { globalTraceStore, mapSdkStreamEventToAgentEvents } from './harness';
@@ -31,6 +36,11 @@ export interface SdkAgentCallbacks {
   onThinkingDone: () => void;
   onToolCall: (toolName: string, args: Record<string, unknown>, toolCallId?: string) => void;
   onToolResult: (toolCallId: string, result: string, toolName?: string) => void;
+  onFileChange?: (activity: Extract<AgentActivity, { type: 'file_change' }>) => void;
+  onWebSearch?: (activity: Extract<AgentActivity, { type: 'web_search' }>) => void;
+  onPlanUpdate?: (activity: Extract<AgentActivity, { type: 'plan_update' }>) => void;
+  onWarning?: (activity: Extract<AgentActivity, { type: 'warning' }>) => void;
+  onUsage?: (usage: AgentUsage) => void;
   onStatus?: (message: string) => void;
   onError: (error: string) => void;
   onDone: () => void;
@@ -349,6 +359,62 @@ function handleStreamEvent(event: StreamEvent, callbacks: SdkAgentCallbacks): bo
         ? output
         : JSON.stringify(output);
       callbacks.onToolResult(toolCallId, result, toolName);
+      return false;
+    }
+    case 'file-change': {
+      callbacks.onFileChange?.({
+        id: (event.itemId as string) || '',
+        type: 'file_change',
+        status: event.status === 'failed' ? 'failed' : 'completed',
+        changes: Array.isArray(event.changes)
+          ? event.changes as Extract<AgentActivity, { type: 'file_change' }>['changes']
+          : [],
+      });
+      return false;
+    }
+    case 'web-search': {
+      callbacks.onWebSearch?.({
+        id: (event.itemId as string) || '',
+        type: 'web_search',
+        status: event.status === 'completed' ? 'completed' : 'running',
+        query: (event.query as string) || '',
+      });
+      return false;
+    }
+    case 'plan-update': {
+      callbacks.onPlanUpdate?.({
+        id: (event.itemId as string) || '',
+        type: 'plan_update',
+        status: event.status === 'completed' ? 'completed' : 'running',
+        items: Array.isArray(event.items)
+          ? event.items as Extract<AgentActivity, { type: 'plan_update' }>['items']
+          : [],
+      });
+      return false;
+    }
+    case 'warning': {
+      const message = (event.message as string) || '';
+      if (message) {
+        callbacks.onWarning?.({
+          id: (event.itemId as string) || '',
+          type: 'warning',
+          status: 'completed',
+          message,
+        });
+      }
+      return false;
+    }
+    case 'usage': {
+      const inputTokens = Number(event.inputTokens) || 0;
+      const outputTokens = Number(event.outputTokens) || 0;
+      callbacks.onUsage?.({
+        inputTokens,
+        cachedInputTokens: Number(event.cachedInputTokens) || 0,
+        outputTokens,
+        reasoningTokens: Number(event.reasoningTokens) || 0,
+        totalTokens: Number(event.totalTokens) || inputTokens + outputTokens,
+        estimated: false,
+      });
       return false;
     }
     case 'status': {

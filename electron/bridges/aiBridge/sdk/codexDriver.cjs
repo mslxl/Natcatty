@@ -201,6 +201,31 @@ function translateCodexEvent(event, emitter, state) {
     emitter.emitError(event.error?.message || "Codex turn failed");
     return;
   }
+  if (event.type === "error") {
+    closeReasoning();
+    emitter.emitError(event.message || "Codex stream failed");
+    return;
+  }
+  if (event.type === "turn.completed") {
+    const usage = event.usage;
+    const hasUsage = usage && [
+      usage.input_tokens,
+      usage.cached_input_tokens,
+      usage.output_tokens,
+      usage.reasoning_output_tokens,
+    ].some((value) => Number.isFinite(value));
+    if (!hasUsage) return;
+    const inputTokens = Number(usage.input_tokens) || 0;
+    const outputTokens = Number(usage.output_tokens) || 0;
+    emitter.usage({
+      inputTokens,
+      cachedInputTokens: Number(usage.cached_input_tokens) || 0,
+      outputTokens,
+      reasoningTokens: Number(usage.reasoning_output_tokens) || 0,
+      totalTokens: inputTokens + outputTokens,
+    });
+    return;
+  }
   if (!["item.started", "item.updated", "item.completed"].includes(event.type) || !event.item) return;
 
   const item = event.item;
@@ -237,6 +262,34 @@ function translateCodexEvent(event, emitter, state) {
       }
       return;
     }
+    case "file_change":
+      if (event.type === "item.completed") {
+        emitter.fileChange(
+          item.id,
+          Array.isArray(item.changes) ? item.changes : [],
+          item.status === "failed" ? "failed" : "completed",
+        );
+      }
+      return;
+    case "web_search":
+      emitter.webSearch(
+        item.id,
+        item.query || "",
+        event.type === "item.completed" ? "completed" : "running",
+      );
+      return;
+    case "todo_list":
+      emitter.planUpdate(
+        item.id,
+        Array.isArray(item.items) ? item.items : [],
+        event.type === "item.completed" ? "completed" : "running",
+      );
+      return;
+    case "error":
+      if (event.type === "item.completed") {
+        emitter.warning(item.id, item.message || "Codex reported a recoverable error");
+      }
+      return;
     default:
       return;
   }

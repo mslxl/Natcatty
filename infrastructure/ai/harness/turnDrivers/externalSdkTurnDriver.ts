@@ -1,7 +1,9 @@
 import { getExternalAgentSdkBackend } from '../../managedAgents';
 import { runSdkAgentTurn, type SdkAgentCallbacks } from '../../sdkAgentAdapter';
 import { getNetcattyBridge, generateId, resolveUserSkillsContext, isToolResultError } from '../../../../components/ai/hooks/aiChatStreamingSupport';
+import type { AgentActivity, AgentUsage } from '../../types';
 import type { ExternalTurnInput, TurnDriver, TurnDriverContext } from './types';
+import { resolveEstimatedUsageFallback, upsertAgentActivity } from './externalSdkEventState';
 
 export class ExternalSdkTurnDriver implements TurnDriver {
   readonly backend = 'external-sdk' as const;
@@ -71,6 +73,19 @@ async function runExternalTurn(input: ExternalTurnInput, ctx: TurnDriverContext)
   };
 
   const toolNamesByCallId = new Map<string, string>();
+  let actualUsageReported = false;
+  const updateActivity = (activity: AgentActivity) => {
+    maybeCreateAssistantMsg();
+    ui.updateLastMessage(sessionId, msg => ({
+      ...msg,
+      agentActivities: upsertAgentActivity(msg.agentActivities, activity),
+      statusText: undefined,
+    }));
+  };
+  const updateUsage = (usage: AgentUsage) => {
+    maybeCreateAssistantMsg();
+    ui.updateLastMessage(sessionId, msg => ({ ...msg, usage }));
+  };
   const callbacks: SdkAgentCallbacks = {
     onTextDelta: (text: string) => {
       maybeCreateAssistantMsg();
@@ -130,6 +145,14 @@ async function runExternalTurn(input: ExternalTurnInput, ctx: TurnDriverContext)
       });
       needsNewAssistantMsg = true;
     },
+    onFileChange: updateActivity,
+    onWebSearch: updateActivity,
+    onPlanUpdate: updateActivity,
+    onWarning: updateActivity,
+    onUsage: (usage: AgentUsage) => {
+      actualUsageReported = true;
+      updateUsage(usage);
+    },
     onStatus: (message: string) => {
       maybeCreateAssistantMsg();
       ui.updateLastMessage(sessionId, msg => ({ ...msg, statusText: message }));
@@ -167,14 +190,18 @@ async function runExternalTurn(input: ExternalTurnInput, ctx: TurnDriverContext)
       },
     );
 
-    ctx.emit({
-      id: `usage-${ctx.turnId}`,
-      type: 'usage',
-      promptTokens: 0,
-      completionTokens: 0,
-      totalTokens: Math.ceil(trimmed.length / 4),
-      estimated: true,
-    } as import('../types').AgentEvent);
+    const estimatedUsage = resolveEstimatedUsageFallback(trimmed, actualUsageReported);
+    if (estimatedUsage) {
+      updateUsage(estimatedUsage);
+      ctx.emit({
+        id: `usage-${ctx.turnId}`,
+        type: 'usage',
+        promptTokens: estimatedUsage.inputTokens,
+        completionTokens: estimatedUsage.outputTokens,
+        totalTokens: estimatedUsage.totalTokens,
+        estimated: true,
+      } as import('../types').AgentEvent);
+    }
   } finally {
     ui.setStreamingForScope(sessionId, false);
   }
