@@ -260,21 +260,36 @@ test('applyVaultHostUpdate changes default ports when switching protocols', () =
     protocol: 'telnet',
   };
   const custom: Host = { ...ssh, id: 'custom', label: 'custom', port: 2222 };
+  const serial: Host = {
+    ...ssh,
+    id: 'serial',
+    label: 'serial',
+    hostname: '/dev/ttyUSB0',
+    port: 115200,
+    protocol: 'serial',
+    serialConfig: { path: '/dev/ttyUSB0', baudRate: 115200 },
+  };
 
   const toTelnet = applyVaultHostUpdate([ssh], [], ssh.id, { protocol: 'telnet' });
   const toSsh = applyVaultHostUpdate([telnet], [], telnet.id, { protocol: 'ssh' });
   const keepCustom = applyVaultHostUpdate([custom], [], custom.id, { protocol: 'telnet' });
   const explicitPort = applyVaultHostUpdate([ssh], [], ssh.id, { protocol: 'telnet', port: 2323 });
+  const serialToSsh = applyVaultHostUpdate([serial], [], serial.id, { protocol: 'ssh' });
+  const serialToTelnet = applyVaultHostUpdate([serial], [], serial.id, { protocol: 'telnet' });
 
   assert.equal(toTelnet.ok, true);
   assert.equal(toSsh.ok, true);
   assert.equal(keepCustom.ok, true);
   assert.equal(explicitPort.ok, true);
-  if (!toTelnet.ok || !toSsh.ok || !keepCustom.ok || !explicitPort.ok) return;
+  assert.equal(serialToSsh.ok, true);
+  assert.equal(serialToTelnet.ok, true);
+  if (!toTelnet.ok || !toSsh.ok || !keepCustom.ok || !explicitPort.ok || !serialToSsh.ok || !serialToTelnet.ok) return;
   assert.equal(toTelnet.updatedHost.port, 23);
   assert.equal(toSsh.updatedHost.port, 22);
   assert.equal(keepCustom.updatedHost.port, 2222);
   assert.equal(explicitPort.updatedHost.port, 2323);
+  assert.equal(serialToSsh.updatedHost.port, 22);
+  assert.equal(serialToTelnet.updatedHost.port, 23);
 });
 
 test('applyVaultHostUpdate requires serial settings when switching to serial', () => {
@@ -294,8 +309,37 @@ test('applyVaultHostUpdate requires serial settings when switching to serial', (
   assert.equal(configured.ok, true);
   if (configured.ok) {
     assert.equal(configured.updatedHost.protocol, 'serial');
+    assert.equal(configured.updatedHost.port, 115200);
     assert.equal(configured.updatedHost.serialConfig?.baudRate, 115200);
   }
+});
+
+test('applyVaultHostUpdate only accepts SSH-capable jump hosts', () => {
+  const target: Host = {
+    id: 'target', label: 'target', hostname: 'target.example.com', username: 'root',
+    port: 22, protocol: 'ssh', tags: [], os: 'linux',
+  };
+  const localJump: Host = {
+    id: 'local', label: 'local', hostname: 'localhost', username: '',
+    port: 22, protocol: 'local', tags: [], os: 'linux',
+  };
+  const inheritedJump: Host = {
+    id: 'inherited', label: 'inherited', hostname: 'inherited.example.com', username: 'root',
+    port: 22, tags: [], os: 'linux',
+  };
+
+  const localResult = applyVaultHostUpdate(
+    [target, localJump], [], target.id, { jumpHostIds: [localJump.id] },
+  );
+  const inheritedResult = applyVaultHostUpdate(
+    [target, inheritedJump], [], target.id, { jumpHostIds: [inheritedJump.id] },
+    { resolveEffectiveHost: (host) => host.id === inheritedJump.id ? { ...host, protocol: 'telnet' } : host },
+  );
+
+  assert.equal(localResult.ok, false);
+  if (!localResult.ok) assert.match(localResult.error, /does not support SSH jump/i);
+  assert.equal(inheritedResult.ok, false);
+  if (!inheritedResult.ok) assert.match(inheritedResult.error, /does not support SSH jump/i);
 });
 
 test('applyVaultHostUpdate keeps legacy serial hosts editable without serialConfig', () => {

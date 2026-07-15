@@ -94,6 +94,9 @@ const parsePort = (raw: unknown): number | undefined => {
 const defaultPortForProtocol = (protocol: HostProtocol | undefined): number =>
   protocol === 'telnet' ? DEFAULT_TELNET_PORT : DEFAULT_SSH_PORT;
 
+const supportsSshJump = (host: Host): boolean =>
+  host.protocol === undefined || host.protocol === 'ssh';
+
 const parseBoolean = (raw: unknown): boolean | undefined => {
   if (typeof raw === 'boolean') return raw;
   if (typeof raw !== 'string') return undefined;
@@ -360,7 +363,11 @@ export function applyVaultHostUpdate(
     if (
       nextProtocol !== 'serial'
       && !port.provided
-      && (current.port === undefined || current.port === defaultPortForProtocol(current.protocol))
+      && (
+        current.protocol === 'serial'
+        || current.port === undefined
+        || current.port === defaultPortForProtocol(current.protocol)
+      )
     ) {
       updated.port = defaultPortForProtocol(nextProtocol);
     }
@@ -395,6 +402,13 @@ export function applyVaultHostUpdate(
     if (normalizedIds.includes(hostId)) return { ok: false, error: 'A host cannot use itself as a jump host.' };
     const missing = normalizedIds.find((id) => !existingHosts.some((candidate) => candidate.id === id));
     if (missing) return { ok: false, error: `Jump host "${missing}" was not found.` };
+    const unsupported = normalizedIds.find((id) => {
+      const candidate = existingHosts.find((host) => host.id === id);
+      if (!candidate) return false;
+      const effectiveCandidate = options.resolveEffectiveHost?.(candidate) ?? candidate;
+      return !supportsSshJump(effectiveCandidate);
+    });
+    if (unsupported) return { ok: false, error: `Jump host "${unsupported}" does not support SSH jump connections.` };
     updated.hostChain = { hostIds: normalizedIds };
   }
   if (proxyProfileId.provided) {
@@ -481,6 +495,7 @@ export function applyVaultHostUpdate(
       ...(lineMode !== undefined ? { lineMode } : {}),
       ...(backspaceBehavior !== undefined ? { backspaceBehavior: backspaceBehavior as 'default' | 'ctrl-h' } : {}),
     };
+    if (updated.protocol === 'serial') updated.port = baudRate;
   }
   if (
     protocol.provided

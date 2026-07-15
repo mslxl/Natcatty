@@ -32,6 +32,29 @@ describe('vaultGroupAgentOps', () => {
     assert.equal(upsertGroup(state, 'prod', '{"jumpHostIds":["missing"]}', [], proxyProfiles).ok, false);
   });
 
+  it('rejects jump hosts that do not resolve to SSH', () => {
+    const localHost: Host = {
+      id: 'local', label: 'Local', hostname: 'localhost', username: '', protocol: 'local', tags: [], os: 'linux',
+    };
+    const inheritedHost: Host = {
+      id: 'inherited', label: 'Inherited', hostname: 'inherited.test', username: 'root', tags: [], os: 'linux',
+    };
+    const state = { groups: ['prod'], configs: [], hosts: [...hosts, localHost, inheritedHost], managedSources: [] };
+
+    const localResult = upsertGroup(state, 'prod', '{"jumpHostIds":["local"]}', [], proxyProfiles);
+    const inheritedResult = upsertGroup(
+      state,
+      'prod',
+      '{"jumpHostIds":["inherited"]}',
+      [],
+      proxyProfiles,
+      { resolveEffectiveHost: (host) => host.id === inheritedHost.id ? { ...host, protocol: 'telnet' } : host },
+    );
+
+    assert.equal(localResult.ok, false);
+    assert.equal(inheritedResult.ok, false);
+  });
+
   it('keeps create distinct from update and rejects self-descendant moves', () => {
     const state = { groups: ['prod', 'prod/web'], configs: [{ path: 'prod' }], hosts, managedSources: [] };
     assert.equal(upsertGroup(state, 'prod', '{}', [], proxyProfiles, { create: true }).ok, false);

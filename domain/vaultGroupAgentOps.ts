@@ -44,6 +44,7 @@ export function patchGroupConfig(
   identities: Identity[],
   proxyProfiles: ProxyProfile[],
   hosts: Host[],
+  resolveEffectiveHost?: (host: Host) => Host,
 ): { ok: true; config: GroupConfig } | { ok: false; error: string } {
   const defaults = parseDefaults(rawDefaults);
   if ('error' in defaults) return { ok: false, error: String(defaults.error) };
@@ -86,6 +87,13 @@ export function patchGroupConfig(
     if (new Set(hostIds).size !== hostIds.length) return { ok: false, error: 'jumpHostIds must not contain duplicates.' };
     const missing = hostIds.find((id) => !hosts.some((host) => host.id === id));
     if (missing) return { ok: false, error: `Jump host "${missing}" was not found.` };
+    const unsupported = hostIds.find((id) => {
+      const host = hosts.find((candidate) => candidate.id === id);
+      if (!host) return false;
+      const effectiveHost = resolveEffectiveHost?.(host) ?? host;
+      return effectiveHost.protocol !== undefined && effectiveHost.protocol !== 'ssh';
+    });
+    if (unsupported) return { ok: false, error: `Jump host "${unsupported}" does not support SSH jump connections.` };
     next.hostChain = { hostIds };
   }
   if (Object.hasOwn(defaults, 'environmentVariables')) {
@@ -116,7 +124,7 @@ export function upsertGroup(
   defaults: unknown,
   identities: Identity[],
   proxyProfiles: ProxyProfile[],
-  options: { create?: boolean; newPath?: unknown } = {},
+  options: { create?: boolean; newPath?: unknown; resolveEffectiveHost?: (host: Host) => Host } = {},
 ): Result {
   const path = normalizePath(pathValue);
   if (!path) return { ok: false, error: 'path is required.' };
@@ -141,7 +149,14 @@ export function upsertGroup(
     if (collision) return { ok: false, error: `Group "${collision}" already exists.` };
   }
   const current = state.configs.find((config) => config.path === path) ?? { path };
-  const patched = patchGroupConfig({ ...current, path: newPath }, defaults, identities, proxyProfiles, state.hosts);
+  const patched = patchGroupConfig(
+    { ...current, path: newPath },
+    defaults,
+    identities,
+    proxyProfiles,
+    state.hosts,
+    options.resolveEffectiveHost,
+  );
   if ('error' in patched) return { ok: false, error: patched.error };
   const rename = (candidate: string) => candidate === path
     ? newPath
