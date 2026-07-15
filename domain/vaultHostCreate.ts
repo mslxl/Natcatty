@@ -5,7 +5,6 @@ const DEFAULT_SSH_PORT = 22;
 const UNSAFE_SSH_CONFIG_VALUE = /[\r\n\0]/;
 const UNSAFE_SSH_JUMP_HOSTNAME = /[\s,@#]/;
 const UNSAFE_SSH_JUMP_USERNAME = /[\s,#]/;
-const UNSAFE_SSH_HOST_ALIAS = /[*?!,[\]@#]/;
 
 const isSafeSshConfigValue = (value: string): boolean =>
   !UNSAFE_SSH_CONFIG_VALUE.test(value);
@@ -15,9 +14,6 @@ const isSafeSshJumpHostname = (value: string): boolean =>
 
 const isSafeSshJumpUsername = (value: string): boolean =>
   !UNSAFE_SSH_JUMP_USERNAME.test(value);
-
-const isSafeSshHostAlias = (value: string): boolean =>
-  !UNSAFE_SSH_HOST_ALIAS.test(value.replace(/\s/g, ''));
 
 export type VaultHostDraftProtocol = Exclude<HostProtocol, 'mosh' | 'et' | 'serial'>;
 
@@ -434,9 +430,6 @@ export function applyVaultHostUpdate(
       .sort((a, b) => b.groupName.length - a.groupName.length)[0];
     const canBeManaged = !updated.protocol || updated.protocol === 'ssh';
     if (targetManagedSource && canBeManaged) {
-      if (!isSafeSshHostAlias(updated.label)) {
-        return { ok: false, error: 'label contains characters that are unsafe in SSH host aliases.' };
-      }
       if (label.provided || current.managedSourceId !== targetManagedSource.id) {
         updated.label = updated.label.replace(/\s/g, '');
       }

@@ -281,7 +281,7 @@ test('applyVaultHostUpdate limits SSH syntax checks to managed aliases and activ
     jump.id,
     { username: 'alice@example.com' },
   );
-  const badAlias = applyVaultHostUpdate(
+  const encodedAlias = applyVaultHostUpdate(
     [managedTarget],
     [],
     managedTarget.id,
@@ -311,12 +311,14 @@ test('applyVaultHostUpdate limits SSH syntax checks to managed aliases and activ
   );
 
   assert.equal(directUsername.ok, true);
-  assert.equal(badAlias.ok, false);
+  assert.equal(encodedAlias.ok, true);
   assert.equal(badJumpHostname.ok, false);
   assert.equal(badJumpUsername.ok, false);
   assert.equal(emailJumpUsername.ok, true);
   if (!directUsername.ok) return;
   assert.equal(directUsername.updatedHost.username, 'alice@example.com');
+  if (!encodedAlias.ok) return;
+  assert.equal(encodedAlias.updatedHost.label, '*');
 });
 
 test('applyVaultHostUpdate clears only the local key path when another identity is selected', () => {
