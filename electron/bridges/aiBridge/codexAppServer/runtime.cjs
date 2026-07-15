@@ -102,6 +102,19 @@ function mapAppServerModels(rawModels) {
     }));
 }
 
+function resolveAppServerModelSelection(model) {
+  if (!model) return null;
+  const defaultThinkingLevel = model.defaultThinkingLevel;
+  if (
+    defaultThinkingLevel
+    && Array.isArray(model.thinkingLevels)
+    && model.thinkingLevels.includes(defaultThinkingLevel)
+  ) {
+    return `${model.id}/${defaultThinkingLevel}`;
+  }
+  return model.id;
+}
+
 class CodexAppServerRuntime {
   constructor({
     appVersion = "0.0.0",
@@ -260,8 +273,9 @@ class CodexAppServerRuntime {
       cursor = response?.nextCursor || null;
     } while (cursor);
     const models = mapAppServerModels(all);
+    const defaultModel = models.find((model) => model.isDefault);
     return {
-      currentModelId: models.find((model) => model.isDefault)?.id || null,
+      currentModelId: resolveAppServerModelSelection(defaultModel),
       models,
     };
   }
@@ -543,6 +557,9 @@ class CodexAppServerRuntime {
           : kind === "permissions"
             ? { cwd: params.cwd, reason: params.reason, permissions: params.permissions }
             : undefined,
+      availableDecisions: kind === "command" && Array.isArray(params.availableDecisions)
+        ? params.availableDecisions
+        : undefined,
       questions: kind === "user-input" ? params.questions || [] : undefined,
       autoResolutionMs: kind === "user-input" ? params.autoResolutionMs : undefined,
     };
@@ -673,6 +690,7 @@ module.exports = {
   mapAppServerModels,
   normalizeFileChanges,
   normalizeGrantedPermissions,
+  resolveAppServerModelSelection,
   resolveCodexPermissionConfig,
   stringifyMcpContent,
 };

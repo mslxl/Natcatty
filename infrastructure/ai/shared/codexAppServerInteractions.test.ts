@@ -53,16 +53,33 @@ test('Codex App Server interaction gate replays requests and forwards typed resp
     chatSessionId: 'chat-1',
     toolName: 'codex.command',
     args: { command: 'npm test' },
+    availableDecisions: ['accept', 'decline', 'cancel'],
   });
   assert.equal(received.length, 0);
   assert.equal(approvals[0].source, 'codex-app-server');
+  assert.equal(approvals[0].allowSession, false);
 
   const replayedApprovals: ApprovalRequest[] = [];
   replayPendingApprovals((approval) => replayedApprovals.push(approval));
   assert.equal(replayedApprovals[0].toolCallId, 'approval-1');
-  resolveApproval('approval-1', { approved: true, scope: 'session' });
+  resolveApproval('approval-1', { approved: true, scope: 'once' });
   await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(responses[0], { interactionId: 'approval-1', decision: 'session' });
+  assert.deepEqual(responses[0], { interactionId: 'approval-1', decision: 'once' });
+
+  requestListener?.({
+    interactionId: 'approval-session',
+    source: 'codex-app-server',
+    kind: 'command',
+    requestId: 'request-1',
+    chatSessionId: 'chat-1',
+    toolName: 'codex.command',
+    args: { command: 'npm test' },
+    availableDecisions: ['accept', 'acceptForSession', 'decline', 'cancel'],
+  });
+  assert.equal(approvals[1].allowSession, true);
+  resolveApproval('approval-session', { approved: true, scope: 'session' });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(responses[1], { interactionId: 'approval-session', decision: 'session' });
 
   requestListener?.({
     interactionId: 'approval-stop',
@@ -75,7 +92,7 @@ test('Codex App Server interaction gate replays requests and forwards typed resp
   });
   clearAllPendingApprovals('chat-1');
   await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(responses[1], { interactionId: 'approval-stop', decision: 'cancel' });
+  assert.deepEqual(responses[2], { interactionId: 'approval-stop', decision: 'cancel' });
 
   requestListener?.({
     interactionId: 'input-1',
@@ -90,7 +107,7 @@ test('Codex App Server interaction gate replays requests and forwards typed resp
   replayPendingCodexAppServerInteractions((interaction) => replayedInputs.push(interaction));
   assert.equal(replayedInputs[0].interactionId, 'input-1');
   await respondCodexUserInput('input-1', { mode: { answers: ['safe'] } });
-  assert.deepEqual(responses[2], {
+  assert.deepEqual(responses[3], {
     interactionId: 'input-1',
     answers: { mode: { answers: ['safe'] } },
   });

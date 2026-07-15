@@ -4,6 +4,12 @@ import {
 } from './approvalGate';
 
 export type CodexApprovalDecision = 'once' | 'session' | 'reject' | 'cancel';
+export type CodexCommandApprovalDecision =
+  | 'accept'
+  | 'acceptForSession'
+  | 'decline'
+  | 'cancel'
+  | Record<string, unknown>;
 
 export interface CodexUserInputQuestion {
   id: string;
@@ -24,6 +30,7 @@ export type CodexAppServerInteraction =
       itemId?: string;
       toolName: string;
       args: Record<string, unknown>;
+      availableDecisions?: CodexCommandApprovalDecision[];
     }
   | {
       interactionId: string;
@@ -46,6 +53,9 @@ const clearedListeners = new Set<ClearedListener>();
 function registerCodexApproval(
   interaction: Extract<CodexAppServerInteraction, { kind: 'command' | 'file-change' | 'permissions' }>,
 ): void {
+  const allowSession = interaction.kind === 'command'
+    ? interaction.availableDecisions?.includes('acceptForSession') === true
+    : true;
   registerExternalApproval({
     toolCallId: interaction.interactionId,
     itemId: interaction.itemId,
@@ -54,7 +64,7 @@ function registerCodexApproval(
     chatSessionId: interaction.chatSessionId,
     source: 'codex-app-server',
     approvalType: interaction.kind,
-    allowSession: true,
+    allowSession,
   }, (resolution) => {
     const decision: CodexApprovalDecision = resolution.cancelled
       ? 'cancel'

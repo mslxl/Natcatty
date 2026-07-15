@@ -29,15 +29,26 @@ class FakeConnection {
     if (method === "turn/interrupt") return {};
     if (method === "model/list") {
       return {
-        data: [{
-          id: "gpt-test",
-          displayName: "GPT Test",
-          description: "Test model",
-          hidden: false,
-          supportedReasoningEfforts: [{ reasoningEffort: "low" }, { reasoningEffort: "high" }],
-          defaultReasoningEffort: "high",
-          isDefault: true,
-        }],
+        data: [
+          {
+            id: "gpt-first",
+            displayName: "GPT First",
+            description: "First model in the catalog",
+            hidden: false,
+            supportedReasoningEfforts: [{ reasoningEffort: "low" }],
+            defaultReasoningEffort: "low",
+            isDefault: false,
+          },
+          {
+            id: "gpt-test",
+            displayName: "GPT Test",
+            description: "Server default model",
+            hidden: false,
+            supportedReasoningEfforts: [{ reasoningEffort: "low" }, { reasoningEffort: "high" }],
+            defaultReasoningEffort: "high",
+            isDefault: true,
+          },
+        ],
         nextCursor: null,
       };
     }
@@ -161,9 +172,17 @@ test("runtime routes native approvals and request_user_input responses", async (
   await connection.serverRequest({
     id: 70,
     method: "item/commandExecution/requestApproval",
-    params: { threadId: "thread-1", turnId: "turn-1", itemId: "cmd-1", command: "npm test", cwd: "/repo" },
+    params: {
+      threadId: "thread-1",
+      turnId: "turn-1",
+      itemId: "cmd-1",
+      command: "npm test",
+      cwd: "/repo",
+      availableDecisions: ["accept", "acceptForSession", "decline", "cancel"],
+    },
   });
   assert.equal(interaction.kind, "command");
+  assert.deepEqual(interaction.availableDecisions, ["accept", "acceptForSession", "decline", "cancel"]);
   runtime.respondInteraction(interaction.interactionId, { decision: "session" });
   assert.deepEqual(connection.responses.at(-1), { id: 70, result: { decision: "acceptForSession" } });
 
@@ -287,7 +306,8 @@ test("model and file-change normalization preserve UI contract", async () => {
   });
   const catalog = await runtime.listModels({ binPath: "/bin/codex", env: {} });
   assert.equal(connection.requests[0].method, "model/list");
-  assert.equal(catalog.currentModelId, "gpt-test");
-  assert.deepEqual(catalog.models[0].thinkingLevels, ["low", "high"]);
-  assert.equal(catalog.models[0].defaultThinkingLevel, "high");
+  assert.equal(catalog.currentModelId, "gpt-test/high");
+  assert.equal(catalog.models[0].id, "gpt-first");
+  assert.deepEqual(catalog.models[1].thinkingLevels, ["low", "high"]);
+  assert.equal(catalog.models[1].defaultThinkingLevel, "high");
 });

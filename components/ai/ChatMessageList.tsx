@@ -538,15 +538,21 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({
                               onApproveOnce={() => codexApproval
                                 ? handleApproveOnce(codexApproval.approvalId)
                                 : handleApproveOnce(tc.id)}
-                              onAlwaysAllow={() => codexApproval
-                                ? handleAlwaysAllow(codexApproval.approvalId, codexApproval.request)
-                                : handleAlwaysAllow(tc.id, pendingApprovals.get(tc.id) ?? {
-                                    toolCallId: tc.id,
-                                    toolName: tc.name,
-                                    args: tc.arguments ?? {},
-                                    chatSessionId: activeSessionId ?? undefined,
-                                  })}
-                              alwaysAllowLabel={codexApproval ? t('ai.codex.appServer.approval.allowSession') : undefined}
+                              onAlwaysAllow={codexApproval?.request.allowSession === false
+                                ? undefined
+                                : () => codexApproval
+                                  ? handleAlwaysAllow(codexApproval.approvalId, codexApproval.request)
+                                  : handleAlwaysAllow(tc.id, pendingApprovals.get(tc.id) ?? {
+                                      toolCallId: tc.id,
+                                      toolName: tc.name,
+                                      args: tc.arguments ?? {},
+                                      chatSessionId: activeSessionId ?? undefined,
+                                    })}
+                              alwaysAllowLabel={codexApproval?.request.allowSession === false
+                                ? undefined
+                                : codexApproval
+                                  ? t('ai.codex.appServer.approval.allowSession')
+                                  : undefined}
                               onReject={() => codexApproval
                                 ? handleReject(codexApproval.approvalId)
                                 : handleReject(tc.id)}
@@ -619,15 +625,21 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({
                       onApproveOnce={() => codexApproval
                         ? handleApproveOnce(codexApproval.approvalId)
                         : handleApproveOnce(tc.id)}
-                      onAlwaysAllow={() => codexApproval
-                        ? handleAlwaysAllow(codexApproval.approvalId, codexApproval.request)
-                        : handleAlwaysAllow(tc.id, pendingApprovals.get(tc.id) ?? {
-                            toolCallId: tc.id,
-                            toolName: tc.name,
-                            args: tc.arguments ?? {},
-                            chatSessionId: activeSessionId ?? undefined,
-                          })}
-                      alwaysAllowLabel={codexApproval ? t('ai.codex.appServer.approval.allowSession') : undefined}
+                      onAlwaysAllow={codexApproval?.request.allowSession === false
+                        ? undefined
+                        : () => codexApproval
+                          ? handleAlwaysAllow(codexApproval.approvalId, codexApproval.request)
+                          : handleAlwaysAllow(tc.id, pendingApprovals.get(tc.id) ?? {
+                              toolCallId: tc.id,
+                              toolName: tc.name,
+                              args: tc.arguments ?? {},
+                              chatSessionId: activeSessionId ?? undefined,
+                            })}
+                      alwaysAllowLabel={codexApproval?.request.allowSession === false
+                        ? undefined
+                        : codexApproval
+                          ? t('ai.codex.appServer.approval.allowSession')
+                          : undefined}
                       onReject={() => codexApproval
                         ? handleReject(codexApproval.approvalId)
                         : handleReject(tc.id)}
@@ -681,8 +693,12 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({
                   isInterrupted={false}
                   approvalStatus="pending"
                   onApproveOnce={() => handleApproveOnce(approvalId)}
-                  onAlwaysAllow={() => handleAlwaysAllow(approvalId, request)}
-                  alwaysAllowLabel={t('ai.codex.appServer.approval.allowSession')}
+                  onAlwaysAllow={request.allowSession === false
+                    ? undefined
+                    : () => handleAlwaysAllow(approvalId, request)}
+                  alwaysAllowLabel={request.allowSession === false
+                    ? undefined
+                    : t('ai.codex.appServer.approval.allowSession')}
                   onReject={() => handleReject(approvalId)}
                 />
               </div>
