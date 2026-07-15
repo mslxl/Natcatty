@@ -496,6 +496,7 @@ export function useSettingsStorageSync({
     setEditorWordWrapState,
     setFollowAppTerminalThemeState,
     setGlobalHotkeyEnabled,
+    setHostClickBehaviorState,
     setWindowOpacity,
     setAppIconVariant,
     setHotkeyScheme,

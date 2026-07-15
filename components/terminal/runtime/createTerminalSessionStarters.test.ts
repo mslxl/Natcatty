@@ -231,36 +231,6 @@ for (const protocol of ["Mosh", "ET"] as const) {
   });
 }
 
-test("Mosh forwards host MFA mode to the bridge", async () => {
-  let capturedOptions: Record<string, unknown> | null = null;
-  const terminalBackend = {
-    moshAvailable: () => true,
-    startMoshSession: async (options: Record<string, unknown>) => {
-      capturedOptions = options;
-      return "mosh-session";
-    },
-    onMoshSessionReady: () => noop,
-    onSessionData: () => noop,
-    onSessionExit: () => noop,
-    writeToSession: noop,
-    resizeSession: noop,
-  };
-  const ctx = createStarterContext({
-    host: {
-      id: "host-1",
-      label: "Mosh MFA host",
-      hostname: "mosh-mfa.example.test",
-      username: "alice",
-      authMethod: "password",
-      password: "saved-secret",
-    },
-    terminalBackend,
-  });
-
-  await createTerminalSessionStarters(ctx as never).startMosh(createTermStub() as never);
-
-});
-
 for (const protocol of ["Mosh", "ET"] as const) {
   test(`${protocol} keeps an imported private key when agent filtering is unavailable`, async () => {
     let capturedOptions: Record<string, unknown> | null = null;

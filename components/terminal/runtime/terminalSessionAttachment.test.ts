@@ -456,7 +456,7 @@ test("writeSessionData keeps the current perf trace when hidden output is flushe
     logs.push(String(message));
   };
   try {
-    withAnimationFrameQueue((schedule) => {
+    withAnimationFrameQueue(() => {
       withDocumentVisibility("hidden", () => {
         writeSessionData(ctx as never, term, payload, payload.length, {
           terminalPerf: {

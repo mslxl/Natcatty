@@ -293,7 +293,7 @@ function TerminalLayerSidePanelInner({ ctx }: { ctx: SidePanelContext }) {
       };
     }
     return parts;
-  }, [activeSidePanelTab, partitionSidePanelTabs, sidePanelTabLayout]);
+  }, [activeSidePanelTab, partitionSidePanelTabs]);
 
   const sidePanelCustomizeItems = useMemo(
     () =>
