@@ -110,18 +110,36 @@ async function runExternalTurn(
   let activeAssistantMessageId = assistantMsgId;
   let steerInFlight = false;
   let ended = false;
-  const bufferedUiOperations: Array<() => void> = [];
+  interface BufferedUiOperation {
+    operation: () => void;
+    flushBeforeSteerBoundary: boolean;
+  }
+  const bufferedUiOperations: BufferedUiOperation[] = [];
 
-  const runOrBufferUiOperation = (operation: () => void) => {
+  const runOrBufferUiOperation = (
+    operation: () => void,
+    options: { flushBeforeSteerBoundary?: boolean } = {},
+  ) => {
     if (steerInFlight) {
-      bufferedUiOperations.push(operation);
+      bufferedUiOperations.push({
+        operation,
+        flushBeforeSteerBoundary: options.flushBeforeSteerBoundary === true,
+      });
       return;
     }
     operation();
   };
-  const flushBufferedUiOperations = () => {
+  const flushBufferedUiOperations = (
+    shouldFlush: (entry: BufferedUiOperation) => boolean = () => true,
+  ) => {
     const operations = bufferedUiOperations.splice(0);
-    operations.forEach(operation => operation());
+    operations.forEach((entry) => {
+      if (shouldFlush(entry)) {
+        entry.operation();
+      } else {
+        bufferedUiOperations.push(entry);
+      }
+    });
   };
   const maybeCreateAssistantMsg = () => {
     if (!needsNewAssistantMsg) return;
@@ -141,6 +159,7 @@ async function runExternalTurn(
   };
 
   const toolNamesByCallId = new Map<string, string>();
+  const toolCallMessageIds = new Map<string, string>();
   const activityMessageIds = new Map<string, string>();
   let actualUsageReported = false;
   const updateActivity = (activity: AgentActivity) => {
@@ -190,8 +209,10 @@ async function runExternalTurn(
     onToolCall: (toolName: string, args: Record<string, unknown>, toolCallId?: string) => {
       runOrBufferUiOperation(() => {
         const id = toolCallId || `tc_${Date.now()}`;
+        maybeCreateAssistantMsg();
         toolNamesByCallId.set(id, toolName);
-        updateActiveAssistant(msg => ({
+        toolCallMessageIds.set(id, activeAssistantMessageId);
+        ui.updateMessageById(sessionId, activeAssistantMessageId, msg => ({
           ...msg,
           toolCalls: [...(msg.toolCalls || []), { id, name: toolName, arguments: args }],
           executionStatus: 'running',
@@ -200,15 +221,23 @@ async function runExternalTurn(
       });
     },
     onToolResult: (toolCallId: string, result: string, toolName?: string) => {
+      const existingToolCallMessageId = toolCallMessageIds.get(toolCallId);
       runOrBufferUiOperation(() => {
         const effectiveToolName = toolName ?? toolNamesByCallId.get(toolCallId);
-        updateActiveAssistant(msg => {
+        const toolCallMessageId = existingToolCallMessageId
+          ?? toolCallMessageIds.get(toolCallId);
+        const updateToolCallOwner = (msg: ChatMessage) => {
           if (msg.role !== 'assistant' || msg.executionStatus !== 'running') return msg;
           const updatedToolCalls = effectiveToolName && !effectiveToolName.includes('sdk_agent_dynamic_tool') && msg.toolCalls
             ? msg.toolCalls.map(tc => tc.id === toolCallId && !tc.name ? { ...tc, name: effectiveToolName } : tc)
             : msg.toolCalls;
           return { ...msg, toolCalls: updatedToolCalls, executionStatus: 'completed', statusText: undefined };
-        });
+        };
+        if (toolCallMessageId) {
+          ui.updateMessageById(sessionId, toolCallMessageId, updateToolCallOwner);
+        } else {
+          updateActiveAssistant(updateToolCallOwner);
+        }
         ui.addMessageToSession(sessionId, {
           id: generateId(),
           role: 'tool',
@@ -223,6 +252,11 @@ async function runExternalTurn(
           executionStatus: 'completed',
         });
         needsNewAssistantMsg = true;
+      }, {
+        // A result for a tool call already rendered before steering belongs to
+        // that original assistant segment. Commit it before adding the steer
+        // user/continuation boundary so tool-call history stays contiguous.
+        flushBeforeSteerBoundary: existingToolCallMessageId !== undefined,
       });
     },
     onFileChange: (activity) => runOrBufferUiOperation(() => updateActivity(activity)),
@@ -266,6 +300,7 @@ async function runExternalTurn(
       );
 
       if (result.status === 'accepted' && !ended && !signal.aborted) {
+        flushBufferedUiOperations(entry => entry.flushBeforeSteerBoundary);
         ui.addMessageToSession(sessionId, {
           id: steerInput.userMessageId,
           role: 'user',

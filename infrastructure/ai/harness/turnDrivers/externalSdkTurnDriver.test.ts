@@ -289,6 +289,119 @@ test('accepted steering persists a user bubble and routes buffered output to a c
   await run;
 });
 
+test('accepted steering keeps buffered results for existing tool calls on their original assistant message', async () => {
+  let onEvent: ((event: Record<string, unknown>) => void) | undefined;
+  let onDone: (() => void) | undefined;
+  let releaseSteer: (() => void) | undefined;
+  const bridge: Record<string, (...args: unknown[]) => unknown> = {
+    onAiSdkAgentEvent: (_requestId, callback) => {
+      onEvent = callback as (event: Record<string, unknown>) => void;
+      return () => {};
+    },
+    onAiSdkAgentDone: (_requestId, callback) => {
+      onDone = callback as () => void;
+      return () => {};
+    },
+    onAiSdkAgentError: () => () => {},
+    aiSdkAgentCancel: async () => ({ ok: true }),
+    aiSdkAgentStream: async () => ({ ok: true }),
+    aiSdkAgentSteer: async () => {
+      onEvent?.({
+        type: 'tool-result',
+        toolName: 'shell',
+        toolCallId: 'tool-before-steer',
+        output: 'completed before steer acceptance',
+      });
+      await new Promise<void>(resolve => { releaseSteer = resolve; });
+      return { status: 'accepted' };
+    },
+  };
+  const session: AISession = {
+    id: 'chat-steer-tool-result',
+    title: 'Steer tool result',
+    agentId: 'codex',
+    scope: { type: 'global' },
+    messages: [{ id: 'assistant-initial', role: 'assistant', content: '', timestamp: 1 }],
+    createdAt: 1,
+    updatedAt: 1,
+  };
+  const ui: TurnUiCallbacks = {
+    addMessageToSession: (_sessionId, message) => session.messages.push(message),
+    updateLastMessage: () => { throw new Error('steering must not update the last message implicitly'); },
+    updateMessageById: (_sessionId, messageId, updater) => {
+      const index = session.messages.findIndex(message => message.id === messageId);
+      if (index >= 0) session.messages[index] = updater(session.messages[index]);
+    },
+    reportStreamError: () => {},
+    setStreamingForScope: () => {},
+    getLatestSession: () => session,
+  };
+  const controller = new AbortController();
+  const run = externalSdkTurnDriver.run({
+    backend: 'external-sdk',
+    chatSessionId: session.id,
+    assistantMsgId: 'assistant-initial',
+    userText: 'initial prompt',
+    signal: controller.signal,
+    agentConfig: {
+      id: 'codex', name: 'Codex', command: 'codex', enabled: true,
+      sdkBackend: 'codex', codexRuntime: 'app-server',
+    },
+    attachedImages: [],
+    context: {
+      terminalSessions: [], providers: [], toolIntegrationMode: 'mcp',
+      selectedUserSkillSlugs: [], permissionMode: 'confirm',
+    },
+    bridge,
+    ui,
+  }, {
+    turnId: 'turn-steer-tool-result', chatSessionId: session.id, sessionId: session.id,
+    backend: 'external-sdk', signal: controller.signal, emit: () => {},
+    toolOutputStore: new ToolOutputStore(), toolResultDedup: new ToolResultDedup(),
+    sessionStateStore: new SessionStateStore(),
+  });
+  await waitFor(() => Boolean(onEvent));
+  onEvent?.({
+    type: 'tool-call',
+    toolName: 'shell',
+    toolCallId: 'tool-before-steer',
+    args: { command: 'sleep 1' },
+  });
+  assert.equal(session.messages[0].executionStatus, 'running');
+
+  const steer = externalSdkTurnDriver.steer({
+    chatSessionId: session.id,
+    userMessageId: 'user-steer-tool-result',
+    userText: 'change direction',
+    prompt: 'change direction',
+    attachments: [],
+    attachedImages: [],
+  });
+  await waitFor(() => Boolean(releaseSteer));
+  assert.equal(session.messages.length, 1);
+  assert.equal(session.messages[0].executionStatus, 'running');
+
+  releaseSteer?.();
+  const result = await steer;
+
+  assert.equal(result.status, 'accepted');
+  assert.deepEqual(
+    session.messages.map(message => message.role),
+    ['assistant', 'tool', 'user', 'assistant'],
+  );
+  assert.equal(session.messages[0].executionStatus, 'completed');
+  assert.equal(session.messages[0].toolCalls?.[0]?.id, 'tool-before-steer');
+  assert.equal(session.messages[1].toolResults?.[0]?.toolCallId, 'tool-before-steer');
+  assert.equal(session.messages[2].content, 'change direction');
+  assert.equal(session.messages[3].content, '');
+
+  onEvent?.({ type: 'text-delta', textDelta: 'continued after steer' });
+  assert.equal(session.messages[3].content, 'continued after steer');
+
+  onDone?.();
+  await run;
+});
+
 test('failed steering keeps buffered output on the original assistant message', async () => {
   let onEvent: ((event: Record<string, unknown>) => void) | undefined;
   let onDone: (() => void) | undefined;
