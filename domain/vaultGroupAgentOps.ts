@@ -1,0 +1,166 @@
+import type { GroupConfig, Host, Identity, ManagedSource, ProxyProfile } from './models';
+
+type GroupState = {
+  groups: string[];
+  configs: GroupConfig[];
+  hosts: Host[];
+  managedSources: ManagedSource[];
+};
+
+type Result = { ok: true; state: GroupState; config?: GroupConfig } | { ok: false; error: string };
+
+const normalizePath = (value: unknown): string => String(value ?? '')
+  .replace(/\\/g, '/')
+  .split('/')
+  .map((part) => part.trim())
+  .filter(Boolean)
+  .join('/');
+
+function parseDefaults(value: unknown): Record<string, unknown> | { error: string } {
+  if (value === undefined || value === null || value === '') return {};
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
+  if (typeof value !== 'string') return { error: 'defaults must be a JSON object.' };
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : { error: 'defaults must be a JSON object.' };
+  } catch {
+    return { error: 'defaults must be a valid JSON object.' };
+  }
+}
+
+const bool = (value: unknown): boolean | undefined => {
+  if (typeof value === 'boolean') return value;
+  const normalized = String(value ?? '').toLowerCase();
+  if (['true', '1', 'yes'].includes(normalized)) return true;
+  if (['false', '0', 'no'].includes(normalized)) return false;
+  return undefined;
+};
+
+export function patchGroupConfig(
+  current: GroupConfig,
+  rawDefaults: unknown,
+  identities: Identity[],
+  proxyProfiles: ProxyProfile[],
+  hosts: Host[],
+): { ok: true; config: GroupConfig } | { ok: false; error: string } {
+  const defaults = parseDefaults(rawDefaults);
+  if ('error' in defaults) return { ok: false, error: String(defaults.error) };
+  const next: GroupConfig = { ...current };
+  if (Object.hasOwn(defaults, 'username')) next.username = String(defaults.username ?? '');
+  if (Object.hasOwn(defaults, 'startupCommand')) next.startupCommand = String(defaults.startupCommand ?? '');
+  if (Object.hasOwn(defaults, 'moshServerPath')) next.moshServerPath = String(defaults.moshServerPath ?? '');
+  if (Object.hasOwn(defaults, 'identityId')) {
+    const identityId = String(defaults.identityId ?? '');
+    const identity = identities.find((item) => item.id === identityId);
+    if (identityId && !identity) return { ok: false, error: `Identity "${identityId}" was not found.` };
+    next.identityId = identityId;
+    if (identity) {
+      next.username = identity.username;
+      next.authMethod = identity.authMethod;
+      next.password = undefined;
+      next.identityFileId = undefined;
+      next.identityFilePaths = undefined;
+    }
+  }
+  if (Object.hasOwn(defaults, 'proxyProfileId')) {
+    const proxyProfileId = String(defaults.proxyProfileId ?? '');
+    if (proxyProfileId && !proxyProfiles.some((profile) => profile.id === proxyProfileId)) {
+      return { ok: false, error: `Proxy profile "${proxyProfileId}" was not found.` };
+    }
+    next.proxyProfileId = proxyProfileId;
+    next.proxyConfig = undefined;
+  }
+  if (Object.hasOwn(defaults, 'jumpHostIds')) {
+    let ids: unknown = defaults.jumpHostIds;
+    if (typeof ids === 'string') {
+      try { ids = JSON.parse(ids); } catch { return { ok: false, error: 'jumpHostIds must be a JSON array.' }; }
+    }
+    if (!Array.isArray(ids)) return { ok: false, error: 'jumpHostIds must be an array.' };
+    const hostIds = ids.map(String).map((id) => id.trim()).filter(Boolean);
+    if (new Set(hostIds).size !== hostIds.length) return { ok: false, error: 'jumpHostIds must not contain duplicates.' };
+    const missing = hostIds.find((id) => !hosts.some((host) => host.id === id));
+    if (missing) return { ok: false, error: `Jump host "${missing}" was not found.` };
+    next.hostChain = { hostIds };
+  }
+  if (Object.hasOwn(defaults, 'environmentVariables')) {
+    const raw = defaults.environmentVariables;
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      return { ok: false, error: 'environmentVariables must be a JSON object.' };
+    }
+    next.environmentVariables = Object.entries(raw).map(([name, value]) => ({ name, value: String(value ?? '') }));
+  }
+  for (const key of ['moshEnabled', 'etEnabled'] as const) {
+    if (Object.hasOwn(defaults, key)) {
+      const parsed = bool(defaults[key]);
+      if (parsed === undefined) return { ok: false, error: `${key} must be true or false.` };
+      next[key] = parsed;
+    }
+  }
+  if (Object.hasOwn(defaults, 'etPort')) {
+    const etPort = Number(defaults.etPort);
+    if (!Number.isInteger(etPort) || etPort < 1 || etPort > 65535) return { ok: false, error: 'etPort must be between 1 and 65535.' };
+    next.etPort = etPort;
+  }
+  return { ok: true, config: next };
+}
+
+export function upsertGroup(
+  state: GroupState,
+  pathValue: unknown,
+  defaults: unknown,
+  identities: Identity[],
+  proxyProfiles: ProxyProfile[],
+  options: { create?: boolean; newPath?: unknown } = {},
+): Result {
+  const path = normalizePath(pathValue);
+  if (!path) return { ok: false, error: 'path is required.' };
+  if (!options.create && !state.groups.includes(path)) return { ok: false, error: `Group "${path}" was not found.` };
+  const newPath = normalizePath(options.newPath ?? path);
+  if (!newPath) return { ok: false, error: 'newPath must not be empty.' };
+  if (newPath !== path && state.groups.includes(newPath)) return { ok: false, error: `Group "${newPath}" already exists.` };
+  const current = state.configs.find((config) => config.path === path) ?? { path };
+  const patched = patchGroupConfig({ ...current, path: newPath }, defaults, identities, proxyProfiles, state.hosts);
+  if ('error' in patched) return { ok: false, error: patched.error };
+  const rename = (candidate: string) => candidate === path
+    ? newPath
+    : candidate.startsWith(`${path}/`) ? `${newPath}${candidate.slice(path.length)}` : candidate;
+  const groups = options.create
+    ? Array.from(new Set([...state.groups, newPath]))
+    : Array.from(new Set(state.groups.map(rename)));
+  const configs = [
+    ...state.configs.filter((config) => config.path !== path).map((config) => ({ ...config, path: rename(config.path) })),
+    patched.config,
+  ];
+  return {
+    ok: true,
+    state: {
+      groups,
+      configs,
+      hosts: state.hosts.map((host) => host.group ? { ...host, group: rename(host.group) } : host),
+      managedSources: state.managedSources.map((source) => ({ ...source, groupName: rename(source.groupName) })),
+    },
+    config: patched.config,
+  };
+}
+
+export function deleteGroup(state: GroupState, pathValue: unknown, deleteHosts: boolean): Result {
+  const path = normalizePath(pathValue);
+  if (!path || !state.groups.includes(path)) return { ok: false, error: `Group "${path}" was not found.` };
+  if (state.managedSources.some((source) => source.groupName === path || source.groupName.startsWith(`${path}/`))) {
+    return { ok: false, error: 'Managed groups must be unmanaged before the AI can delete them.' };
+  }
+  const inside = (candidate?: string) => Boolean(candidate && (candidate === path || candidate.startsWith(`${path}/`)));
+  return {
+    ok: true,
+    state: {
+      groups: state.groups.filter((group) => !inside(group)),
+      configs: state.configs.filter((config) => !inside(config.path)),
+      hosts: deleteHosts
+        ? state.hosts.filter((host) => !inside(host.group))
+        : state.hosts.map((host) => inside(host.group) ? { ...host, group: undefined, managedSourceId: undefined } : host),
+      managedSources: state.managedSources,
+    },
+  };
+}

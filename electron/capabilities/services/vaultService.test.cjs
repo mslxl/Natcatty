@@ -61,3 +61,23 @@ test("vault service delegates host update and delete to vault agent bridge", asy
   assert.equal(calls[1].op, "host.delete");
   assert.deepEqual(calls[1].params, { hostId: "host-1" });
 });
+
+test("vault service delegates identities, groups, proxies, and note deletion", async () => {
+  const calls = [];
+  const service = createVaultService({
+    invokeVaultAgent: async (op, params) => {
+      calls.push({ op, params });
+      return { ok: true };
+    },
+  });
+  await service.listIdentities();
+  await service.listProxyProfiles();
+  await service.listGroups();
+  await service.createGroup({ path: "prod" });
+  await service.updateGroup({ path: "prod", defaults: "{}" });
+  await service.deleteGroup({ path: "prod" });
+  await service.deleteNote({ noteId: "note-1" });
+  assert.deepEqual(calls.map((call) => call.op), [
+    "identity.list", "proxyProfile.list", "group.list", "group.create", "group.update", "group.delete", "note.delete",
+  ]);
+});

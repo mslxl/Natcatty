@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import type { Host, Snippet, VaultNote } from '../../domain/models';
+import type { GroupConfig, Host, ManagedSource, PortForwardingRule, ProxyProfile, Snippet, VaultNote } from '../../domain/models';
 import { handleVaultAgentOp, runSerializedVaultAgentRequest, type VaultAgentApiDeps } from './vaultAgentBridgeClient';
 
 type DepsSeed = {
@@ -8,6 +8,10 @@ type DepsSeed = {
   notes?: VaultNote[];
   snippets?: Snippet[];
   customGroups?: string[];
+  groupConfigs?: GroupConfig[];
+  portForwardingRules?: PortForwardingRule[];
+  proxyProfiles?: ProxyProfile[];
+  managedSources?: ManagedSource[];
 };
 
 function createDeps(
@@ -17,19 +21,34 @@ function createDeps(
   let notes = overrides.notes ?? [];
   let snippets = overrides.snippets ?? [];
   let customGroups = overrides.customGroups ?? [];
+  let groupConfigs = overrides.groupConfigs ?? [];
+  let portForwardingRules = overrides.portForwardingRules ?? [];
+  let managedSources = overrides.managedSources ?? [];
 
   const base: VaultAgentApiDeps = {
     getHosts: () => hosts,
     getNotes: () => notes,
     getCustomGroups: () => customGroups,
     snippets,
-    portForwardingRules: [],
+    getGroupConfigs: () => groupConfigs,
+    getPortForwardingRules: () => portForwardingRules,
+    getManagedSources: () => managedSources,
+    proxyProfiles: overrides.proxyProfiles ?? [],
     keys: [],
     identities: [],
     resolveEffectiveHost: (host) => host,
     updateHostNotes: () => {},
     updateCustomGroups: (groups) => {
       customGroups = groups;
+    },
+    updateGroupConfigs: (configs) => {
+      groupConfigs = configs;
+    },
+    updatePortForwardingRules: (rules) => {
+      portForwardingRules = rules;
+    },
+    updateManagedSources: (sources) => {
+      managedSources = sources;
     },
     updateHosts: (nextHosts) => {
       hosts = nextHosts;
@@ -73,6 +92,18 @@ function createDeps(
     updateCustomGroups: (groups) => {
       base.updateCustomGroups(groups);
       overrides.updateCustomGroups?.(groups);
+    },
+    updateGroupConfigs: (configs) => {
+      base.updateGroupConfigs(configs);
+      overrides.updateGroupConfigs?.(configs);
+    },
+    updatePortForwardingRules: (rules) => {
+      base.updatePortForwardingRules(rules);
+      overrides.updatePortForwardingRules?.(rules);
+    },
+    updateManagedSources: (sources) => {
+      base.updateManagedSources(sources);
+      overrides.updateManagedSources?.(sources);
     },
   };
 }
@@ -145,6 +176,20 @@ describe('handleVaultAgentOp vault notes', () => {
     assert.equal(updated[0]?.[0]?.title, 'New title');
     assert.equal(updated[0]?.[0]?.content, 'new body');
     assert.ok((updated[0]?.[0]?.updatedAt ?? 0) >= 100);
+  });
+
+  it('note.delete removes the selected vault note', async () => {
+    const deps = createDeps({
+      notes: [
+        { id: 'note-1', title: 'One', content: 'a', createdAt: 1, updatedAt: 1 },
+        { id: 'note-2', title: 'Two', content: 'b', createdAt: 2, updatedAt: 2 },
+      ],
+    });
+
+    const result = await handleVaultAgentOp('note.delete', { noteId: 'note-1' }, deps);
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(deps.getNotes().map((note) => note.id), ['note-2']);
   });
 
   it('sequential note.create calls accumulate instead of overwriting prior notes', async () => {
@@ -511,6 +556,113 @@ describe('handleVaultAgentOp vault hosts', () => {
     assert.equal(updatedHosts[0]?.length, 2);
     assert.ok(updatedGroups[0]?.includes('prod/web'));
     assert.equal((result as { addedCount?: number }).addedCount, 2);
+  });
+});
+
+describe('handleVaultAgentOp vault management gaps', () => {
+  const host: Host = {
+    id: 'host-1',
+    label: 'prod',
+    hostname: '10.0.0.1',
+    username: 'root',
+    tags: [],
+    os: 'linux',
+  };
+
+  it('lists safe identity metadata and binds an existing identity to a host', async () => {
+    const deps = createDeps({
+      hosts: [host],
+      identities: [{
+        id: 'identity-1',
+        label: 'Production deploy',
+        username: 'deploy',
+        authMethod: 'password',
+        password: 'must-not-leak',
+        created: 1,
+      }],
+    });
+
+    const listed = await handleVaultAgentOp('identity.list', {}, deps);
+    assert.equal(listed.ok, true);
+    assert.equal(JSON.stringify(listed).includes('must-not-leak'), false);
+
+    const updated = await handleVaultAgentOp(
+      'host.update',
+      { hostId: 'host-1', identityId: 'identity-1' },
+      deps,
+    );
+    assert.equal(updated.ok, true);
+    assert.equal(deps.getHosts()[0]?.identityId, 'identity-1');
+    assert.equal(deps.getHosts()[0]?.username, 'deploy');
+  });
+
+  it('updates advanced connection settings on a host', async () => {
+    const jump: Host = { ...host, id: 'jump-1', label: 'jump', hostname: 'jump.test' };
+    const deps = createDeps({
+      hosts: [host, jump],
+      proxyProfiles: [{
+        id: 'proxy-1',
+        label: 'Office proxy',
+        config: { type: 'socks5', host: '127.0.0.1', port: 1080, password: 'hidden' },
+        createdAt: 1,
+      }],
+    });
+
+    const result = await handleVaultAgentOp('host.update', {
+      hostId: 'host-1',
+      jumpHostIds: '["jump-1"]',
+      proxyProfileId: 'proxy-1',
+      startupCommand: 'tmux attach || tmux',
+      environmentVariables: '{"APP_ENV":"production"}',
+      moshEnabled: 'true',
+      moshServerPath: '/usr/local/bin/mosh-server',
+      etEnabled: 'true',
+      etPort: 2022,
+    }, deps);
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(deps.getHosts()[0]?.hostChain?.hostIds, ['jump-1']);
+    assert.equal(deps.getHosts()[0]?.proxyProfileId, 'proxy-1');
+    assert.deepEqual(deps.getHosts()[0]?.environmentVariables, [{ name: 'APP_ENV', value: 'production' }]);
+    assert.equal(JSON.stringify(result).includes('hidden'), false);
+  });
+
+  it('creates, updates, and deletes port forwarding rules', async () => {
+    const deps = createDeps({ hosts: [host] });
+    const created = await handleVaultAgentOp('portforward.rules.create', {
+      label: 'Web', type: 'local', localPort: 8080, bindAddress: '127.0.0.1',
+      remoteHost: '127.0.0.1', remotePort: 80, hostId: 'host-1',
+    }, deps);
+    assert.equal(created.ok, true);
+    const ruleId = (created as { rule?: { id?: string } }).rule?.id ?? '';
+
+    assert.equal((await handleVaultAgentOp('portforward.rules.update', { ruleId, localPort: 8081 }, deps)).ok, true);
+    assert.equal((await handleVaultAgentOp('portforward.rules.duplicate', { ruleId }, deps)).ok, true);
+    assert.equal(deps.getPortForwardingRules().length, 2);
+    assert.equal((await handleVaultAgentOp('portforward.rules.delete', { ruleId }, deps)).ok, true);
+    assert.equal(deps.getPortForwardingRules().length, 1);
+  });
+
+  it('manages groups and applies reusable defaults without exposing secrets', async () => {
+    const deps = createDeps({
+      hosts: [{ ...host, group: 'prod' }],
+      identities: [{ id: 'identity-1', label: 'Deploy', username: 'deploy', authMethod: 'key', keyId: 'key-1', created: 1 }],
+      proxyProfiles: [{ id: 'proxy-1', label: 'Proxy', config: { type: 'http', host: 'proxy.test', port: 8080, password: 'hidden' }, createdAt: 1 }],
+      customGroups: ['prod'],
+    });
+
+    const updated = await handleVaultAgentOp('group.update', {
+      path: 'prod',
+      defaults: '{"username":"deploy","identityId":"identity-1","proxyProfileId":"proxy-1"}',
+    }, deps);
+    assert.equal(updated.ok, true);
+    assert.equal(deps.getGroupConfigs()[0]?.username, 'deploy');
+    assert.equal(JSON.stringify(updated).includes('hidden'), false);
+
+    const removed = await handleVaultAgentOp('group.delete', { path: 'prod' }, deps);
+    assert.equal(removed.ok, true);
+    assert.equal(deps.getCustomGroups().includes('prod'), false);
+    assert.equal(deps.getHosts()[0]?.group, undefined);
   });
 });
 

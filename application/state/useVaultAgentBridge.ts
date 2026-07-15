@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import type { Host, Identity, ManagedSource, PortForwardingRule, Snippet, SSHKey, TerminalSettings, VaultNote } from '../../domain/models';
+import type { GroupConfig, Host, Identity, ManagedSource, PortForwardingRule, ProxyProfile, Snippet, SSHKey, TerminalSettings, VaultNote } from '../../domain/models';
 import {
   handleVaultAgentOp,
   registerVaultAgentHandler,
@@ -13,6 +13,7 @@ export interface UseVaultAgentBridgeInput {
   portForwardingRules: PortForwardingRule[];
   keys: SSHKey[];
   identities: Identity[];
+  proxyProfiles: ProxyProfile[];
   managedSources: ManagedSource[];
   terminalSettings?: Pick<TerminalSettings, 'keepaliveInterval' | 'keepaliveCountMax'>;
   resolveEffectiveHost: (host: Host) => Host;
@@ -20,6 +21,10 @@ export interface UseVaultAgentBridgeInput {
   updateSnippets: (snippets: Snippet[]) => void;
   customGroups: string[];
   updateCustomGroups: (groups: string[]) => void;
+  groupConfigs: GroupConfig[];
+  updateGroupConfigs: (configs: GroupConfig[]) => void;
+  updateManagedSources: (sources: ManagedSource[]) => void;
+  updatePortForwardingRules: (rules: PortForwardingRule[]) => void;
   notes: VaultNote[];
   updateNotes: (notes: VaultNote[]) => void;
   startTunnel: VaultAgentApiDeps['startTunnel'];
@@ -32,6 +37,9 @@ type VaultAgentSnapshot = {
   notes: VaultNote[];
   snippets: Snippet[];
   customGroups: string[];
+  groupConfigs: GroupConfig[];
+  portForwardingRules: PortForwardingRule[];
+  managedSources: ManagedSource[];
 };
 
 export function useVaultAgentBridge(input: UseVaultAgentBridgeInput): void {
@@ -43,12 +51,18 @@ export function useVaultAgentBridge(input: UseVaultAgentBridgeInput): void {
     notes: input.notes,
     snippets: input.snippets,
     customGroups: input.customGroups,
+    groupConfigs: input.groupConfigs,
+    portForwardingRules: input.portForwardingRules,
+    managedSources: input.managedSources,
   });
   const lastSyncedVaultInputRef = useRef({
     hosts: input.hosts,
     notes: input.notes,
     snippets: input.snippets,
     customGroups: input.customGroups,
+    groupConfigs: input.groupConfigs,
+    portForwardingRules: input.portForwardingRules,
+    managedSources: input.managedSources,
   });
 
   if (
@@ -56,18 +70,27 @@ export function useVaultAgentBridge(input: UseVaultAgentBridgeInput): void {
     || input.notes !== lastSyncedVaultInputRef.current.notes
     || input.snippets !== lastSyncedVaultInputRef.current.snippets
     || input.customGroups !== lastSyncedVaultInputRef.current.customGroups
+    || input.groupConfigs !== lastSyncedVaultInputRef.current.groupConfigs
+    || input.portForwardingRules !== lastSyncedVaultInputRef.current.portForwardingRules
+    || input.managedSources !== lastSyncedVaultInputRef.current.managedSources
   ) {
     vaultSnapshotRef.current = {
       hosts: input.hosts,
       notes: input.notes,
       snippets: input.snippets,
       customGroups: input.customGroups,
+      groupConfigs: input.groupConfigs,
+      portForwardingRules: input.portForwardingRules,
+      managedSources: input.managedSources,
     };
     lastSyncedVaultInputRef.current = {
       hosts: input.hosts,
       notes: input.notes,
       snippets: input.snippets,
       customGroups: input.customGroups,
+      groupConfigs: input.groupConfigs,
+      portForwardingRules: input.portForwardingRules,
+      managedSources: input.managedSources,
     };
   }
 
@@ -78,11 +101,13 @@ export function useVaultAgentBridge(input: UseVaultAgentBridgeInput): void {
         getHosts: () => vaultSnapshotRef.current.hosts,
         getNotes: () => vaultSnapshotRef.current.notes,
         getCustomGroups: () => vaultSnapshotRef.current.customGroups,
+        getGroupConfigs: () => vaultSnapshotRef.current.groupConfigs,
+        getPortForwardingRules: () => vaultSnapshotRef.current.portForwardingRules,
+        getManagedSources: () => vaultSnapshotRef.current.managedSources,
         snippets: vaultSnapshotRef.current.snippets,
-        portForwardingRules: current.portForwardingRules,
         keys: current.keys,
         identities: current.identities,
-        managedSources: current.managedSources,
+        proxyProfiles: current.proxyProfiles,
         terminalSettings: current.terminalSettings,
         resolveEffectiveHost: current.resolveEffectiveHost,
         updateHostNotes: (hostId, notes) => {
@@ -95,6 +120,18 @@ export function useVaultAgentBridge(input: UseVaultAgentBridgeInput): void {
         updateCustomGroups: (groups) => {
           vaultSnapshotRef.current.customGroups = groups;
           current.updateCustomGroups(groups);
+        },
+        updateGroupConfigs: (configs) => {
+          vaultSnapshotRef.current.groupConfigs = configs;
+          current.updateGroupConfigs(configs);
+        },
+        updatePortForwardingRules: (rules) => {
+          vaultSnapshotRef.current.portForwardingRules = rules;
+          current.updatePortForwardingRules(rules);
+        },
+        updateManagedSources: (sources) => {
+          vaultSnapshotRef.current.managedSources = sources;
+          current.updateManagedSources(sources);
         },
         updateHosts: (hosts) => {
           vaultSnapshotRef.current.hosts = hosts;

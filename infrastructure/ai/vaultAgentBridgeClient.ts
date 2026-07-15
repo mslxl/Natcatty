@@ -1,4 +1,4 @@
-import type { Host, Identity, ManagedSource, PortForwardingRule, Snippet, SSHKey, TerminalSettings, VaultNote } from '../../domain/models';
+import type { GroupConfig, Host, Identity, ManagedSource, PortForwardingRule, ProxyProfile, Snippet, SSHKey, TerminalSettings, VaultNote } from '../../domain/models';
 import {
   normalizeVaultNotes,
   sanitizeNoteTitle,
@@ -46,6 +46,12 @@ import {
 } from '../../domain/vaultImport';
 import { resolveHostAuth } from '../../domain/sshAuth';
 import { netcattyBridge } from '../services/netcattyBridge';
+import {
+  createPortForwardingRule,
+  duplicatePortForwardingRule,
+  updatePortForwardingRule,
+} from '../../domain/portForwardingAgentOps';
+import { deleteGroup, upsertGroup } from '../../domain/vaultGroupAgentOps';
 
 const SENSITIVE_HOST_KEYS = new Set([
   'password',
@@ -148,6 +154,23 @@ function serializeVaultNoteForAgent(note: VaultNote) {
     linkedHostIds: note.linkedHostIds,
     createdAt: note.createdAt,
     updatedAt: note.updatedAt,
+  };
+}
+
+function sanitizeGroupConfigForAgent(config: GroupConfig): Record<string, unknown> {
+  const { password: _password, telnetPassword: _telnetPassword, proxyConfig, ...safe } = config;
+  return {
+    ...safe,
+    ...(proxyConfig ? {
+      proxyConfig: {
+        type: proxyConfig.type,
+        host: proxyConfig.host,
+        port: proxyConfig.port,
+        command: proxyConfig.command,
+        identityId: proxyConfig.identityId,
+        username: proxyConfig.username,
+      },
+    } : {}),
   };
 }
 
@@ -287,15 +310,20 @@ export interface VaultAgentApiDeps {
   getHosts: () => Host[];
   getNotes: () => VaultNote[];
   getCustomGroups: () => string[];
+  getGroupConfigs: () => GroupConfig[];
+  getPortForwardingRules: () => PortForwardingRule[];
+  getManagedSources: () => ManagedSource[];
   snippets: Snippet[];
-  portForwardingRules: PortForwardingRule[];
   keys: SSHKey[];
   identities: Identity[];
-  managedSources?: ManagedSource[];
+  proxyProfiles: ProxyProfile[];
   terminalSettings?: Pick<TerminalSettings, 'keepaliveInterval' | 'keepaliveCountMax'>;
   resolveEffectiveHost: (host: Host) => Host;
   updateHostNotes: (hostId: string, notes: string) => void;
   updateCustomGroups: (groups: string[]) => void;
+  updateGroupConfigs: (configs: GroupConfig[]) => void;
+  updatePortForwardingRules: (rules: PortForwardingRule[]) => void;
+  updateManagedSources: (sources: ManagedSource[]) => void;
   updateHosts: (hosts: Host[]) => void;
   updateNotes: (notes: VaultNote[]) => void;
   updateSnippets: (snippets: Snippet[]) => void;
@@ -504,8 +532,9 @@ export async function handleVaultAgentOp(
         params,
         {
           resolveEffectiveHost: deps.resolveEffectiveHost,
-          managedSources: deps.managedSources,
+          managedSources: deps.getManagedSources(),
           identities: deps.identities,
+          proxyProfiles: deps.proxyProfiles,
         },
       );
       if (!updated.ok) return updated;
@@ -677,6 +706,78 @@ export async function handleVaultAgentOp(
       );
       deps.updateNotes(nextNotes);
       return { ok: true, note: serializeVaultNoteForAgent(note) };
+    }
+    case 'note.delete': {
+      const noteId = String(params.noteId || '');
+      if (!deps.getNotes().some((note) => note.id === noteId)) {
+        return { ok: false, error: `Vault note "${noteId}" was not found.` };
+      }
+      deps.updateNotes(normalizeVaultNotes(deps.getNotes().filter((note) => note.id !== noteId)));
+      return { ok: true, noteId };
+    }
+    case 'identity.list': {
+      return {
+        ok: true,
+        identities: deps.identities.map((identity) => ({
+          id: identity.id,
+          label: identity.label,
+          username: identity.username,
+          authMethod: identity.authMethod,
+          keyId: identity.keyId,
+        })),
+      };
+    }
+    case 'proxyProfile.list': {
+      return {
+        ok: true,
+        proxyProfiles: deps.proxyProfiles.map((profile) => ({
+          id: profile.id,
+          label: profile.label,
+          type: profile.config.type,
+          host: profile.config.host,
+          port: profile.config.port,
+        })),
+      };
+    }
+    case 'group.list': {
+      const configs = new Map(deps.getGroupConfigs().map((config) => [config.path, config]));
+      return {
+        ok: true,
+        groups: deps.getCustomGroups().map((path) => {
+          const config = configs.get(path);
+          if (!config) return { path };
+          return { path, defaults: sanitizeGroupConfigForAgent(config) };
+        }),
+      };
+    }
+    case 'group.create':
+    case 'group.update': {
+      const result = upsertGroup({
+        groups: deps.getCustomGroups(),
+        configs: deps.getGroupConfigs(),
+        hosts: deps.getHosts(),
+        managedSources: deps.getManagedSources(),
+      }, params.path, params.defaults, deps.identities, deps.proxyProfiles, {
+        create: op === 'group.create',
+        newPath: params.newPath,
+      });
+      if (!result.ok) return result;
+      deps.updateCustomGroups(result.state.groups);
+      deps.updateGroupConfigs(result.state.configs);
+      deps.updateHosts(result.state.hosts);
+      deps.updateManagedSources(result.state.managedSources);
+      return { ok: true, group: sanitizeGroupConfigForAgent(result.config ?? { path: String(params.path) }) };
+    }
+    case 'group.delete': {
+      const result = deleteGroup({
+        groups: deps.getCustomGroups(), configs: deps.getGroupConfigs(), hosts: deps.getHosts(),
+        managedSources: deps.getManagedSources(),
+      }, params.path, parseOptionalBoolean(params.deleteHosts) ?? false);
+      if (!result.ok) return result;
+      deps.updateCustomGroups(result.state.groups);
+      deps.updateGroupConfigs(result.state.configs);
+      deps.updateHosts(result.state.hosts);
+      return { ok: true, path: String(params.path), deletedHosts: parseOptionalBoolean(params.deleteHosts) ?? false };
     }
     case 'snippets.list': {
       return {
@@ -880,12 +981,43 @@ export async function handleVaultAgentOp(
     case 'portforward.rules.list': {
       return {
         ok: true,
-        rules: deps.portForwardingRules.map(sanitizePortForwardRuleForAgent),
+        rules: deps.getPortForwardingRules().map(sanitizePortForwardRuleForAgent),
       };
+    }
+    case 'portforward.rules.create': {
+      const result = createPortForwardingRule(deps.getPortForwardingRules(), deps.getHosts(), params);
+      if (!result.ok) return result;
+      deps.updatePortForwardingRules(result.value.rules);
+      return { ok: true, rule: sanitizePortForwardRuleForAgent(result.value.rule) };
+    }
+    case 'portforward.rules.update': {
+      const ruleId = String(params.ruleId || '');
+      const result = updatePortForwardingRule(deps.getPortForwardingRules(), deps.getHosts(), ruleId, params);
+      if (!result.ok) return result;
+      deps.updatePortForwardingRules(result.value.rules);
+      return { ok: true, rule: sanitizePortForwardRuleForAgent(result.value.rule) };
+    }
+    case 'portforward.rules.duplicate': {
+      const ruleId = String(params.ruleId || '');
+      const result = duplicatePortForwardingRule(deps.getPortForwardingRules(), ruleId);
+      if (!result.ok) return result;
+      deps.updatePortForwardingRules(result.value.rules);
+      return { ok: true, rule: sanitizePortForwardRuleForAgent(result.value.rule) };
+    }
+    case 'portforward.rules.delete': {
+      const ruleId = String(params.ruleId || '');
+      const rule = deps.getPortForwardingRules().find((entry) => entry.id === ruleId);
+      if (!rule) return { ok: false, error: `Port forwarding rule "${ruleId}" was not found.` };
+      if (rule.status !== 'inactive') {
+        const stopped = await deps.stopTunnel(ruleId);
+        if (!stopped.success) return { ok: false, error: stopped.error || 'Failed to stop port forwarding tunnel.' };
+      }
+      deps.updatePortForwardingRules(deps.getPortForwardingRules().filter((entry) => entry.id !== ruleId));
+      return { ok: true, ruleId };
     }
     case 'portforward.start': {
       const ruleId = String(params.ruleId || '');
-      const rule = deps.portForwardingRules.find((entry) => entry.id === ruleId);
+      const rule = deps.getPortForwardingRules().find((entry) => entry.id === ruleId);
       if (!rule) return { ok: false, error: `Port forwarding rule "${ruleId}" was not found.` };
       if (!rule.hostId) return { ok: false, error: 'Rule has no associated host.' };
       const rawHost = deps.getHosts().find((entry) => entry.id === rule.hostId);

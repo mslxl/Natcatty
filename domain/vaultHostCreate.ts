@@ -1,4 +1,4 @@
-import type { Host, HostProtocol, Identity, ManagedSource } from './models';
+import type { Host, HostProtocol, Identity, ManagedSource, ProxyProfile } from './models';
 import { sanitizeHost } from './host';
 
 const DEFAULT_SSH_PORT = 22;
@@ -43,6 +43,7 @@ export interface VaultHostUpdateOptions {
   resolveEffectiveHost?: (host: Host) => Host;
   managedSources?: ManagedSource[];
   identities?: Identity[];
+  proxyProfiles?: ProxyProfile[];
 }
 
 export interface VaultHostCreateIssue {
@@ -284,7 +285,20 @@ export function applyVaultHostUpdate(
   const tags = firstProvided(source, ['tags']);
   const notes = firstProvided(source, ['notes']);
   const protocol = firstProvided(source, ['protocol']);
-  const provided = [label, hostname, port, username, password, savePassword, keyPath, group, tags, notes, protocol]
+  const identityId = firstProvided(source, ['identityId']);
+  const jumpHostIds = firstProvided(source, ['jumpHostIds']);
+  const proxyProfileId = firstProvided(source, ['proxyProfileId']);
+  const startupCommand = firstProvided(source, ['startupCommand']);
+  const startupCommandRunMode = firstProvided(source, ['startupCommandRunMode']);
+  const environmentVariables = firstProvided(source, ['environmentVariables']);
+  const moshEnabled = firstProvided(source, ['moshEnabled']);
+  const moshServerPath = firstProvided(source, ['moshServerPath']);
+  const etEnabled = firstProvided(source, ['etEnabled']);
+  const etPort = firstProvided(source, ['etPort']);
+  const serialConfig = firstProvided(source, ['serialConfig']);
+  const provided = [label, hostname, port, username, password, savePassword, keyPath, group, tags, notes, protocol,
+    identityId, jumpHostIds, proxyProfileId, startupCommand, startupCommandRunMode, environmentVariables,
+    moshEnabled, moshServerPath, etEnabled, etPort, serialConfig]
     .some((entry) => entry.provided);
   if (!provided) return { ok: false, error: 'At least one host field is required.' };
 
@@ -326,9 +340,10 @@ export function applyVaultHostUpdate(
     updated.group = normalizeGroupPath(group.value);
   }
   if (protocol.provided) {
-    const nextProtocol = normalizeProtocol(protocol.value);
+    const rawProtocol = typeof protocol.value === 'string' ? protocol.value.trim().toLowerCase() : '';
+    const nextProtocol = rawProtocol === 'serial' ? 'serial' : normalizeProtocol(protocol.value);
     if (!nextProtocol) {
-      return { ok: false, error: 'protocol must be ssh, telnet, or local.' };
+      return { ok: false, error: 'protocol must be ssh, telnet, local, or serial.' };
     }
     if (
       !port.provided
@@ -337,6 +352,114 @@ export function applyVaultHostUpdate(
       updated.port = defaultPortForProtocol(nextProtocol);
     }
     updated.protocol = nextProtocol;
+  }
+
+  if (identityId.provided) {
+    if (typeof identityId.value !== 'string') return { ok: false, error: 'identityId must be a string.' };
+    const nextIdentityId = identityId.value.trim();
+    const identity = options.identities?.find((item) => item.id === nextIdentityId);
+    if (nextIdentityId && !identity) return { ok: false, error: `Identity "${nextIdentityId}" was not found.` };
+    updated.identityId = nextIdentityId;
+    if (identity) {
+      updated.username = identity.username;
+      updated.authMethod = identity.authMethod;
+      updated.authPolicyVersion = 1;
+      updated.password = undefined;
+      updated.identityFileId = undefined;
+      updated.identityFilePaths = undefined;
+      updated.useSshAgent = false;
+    }
+  }
+
+  if (jumpHostIds.provided) {
+    let ids: unknown = jumpHostIds.value;
+    if (typeof ids === 'string') {
+      try { ids = JSON.parse(ids); } catch { return { ok: false, error: 'jumpHostIds must be a valid JSON array.' }; }
+    }
+    if (!Array.isArray(ids)) return { ok: false, error: 'jumpHostIds must be an array.' };
+    const normalizedIds = ids.map(String).map((id) => id.trim()).filter(Boolean);
+    if (new Set(normalizedIds).size !== normalizedIds.length) return { ok: false, error: 'jumpHostIds must not contain duplicates.' };
+    if (normalizedIds.includes(hostId)) return { ok: false, error: 'A host cannot use itself as a jump host.' };
+    const missing = normalizedIds.find((id) => !existingHosts.some((candidate) => candidate.id === id));
+    if (missing) return { ok: false, error: `Jump host "${missing}" was not found.` };
+    updated.hostChain = { hostIds: normalizedIds };
+  }
+  if (proxyProfileId.provided) {
+    if (typeof proxyProfileId.value !== 'string') return { ok: false, error: 'proxyProfileId must be a string.' };
+    const nextProxyProfileId = proxyProfileId.value.trim();
+    if (nextProxyProfileId && !options.proxyProfiles?.some((profile) => profile.id === nextProxyProfileId)) {
+      return { ok: false, error: `Proxy profile "${nextProxyProfileId}" was not found.` };
+    }
+    updated.proxyProfileId = nextProxyProfileId;
+    updated.proxyConfig = undefined;
+  }
+  if (startupCommand.provided) {
+    if (typeof startupCommand.value !== 'string') return { ok: false, error: 'startupCommand must be a string.' };
+    updated.startupCommand = startupCommand.value;
+  }
+  if (startupCommandRunMode.provided) {
+    const mode = String(startupCommandRunMode.value ?? '');
+    if (mode !== 'paste' && mode !== 'lineDelay' && mode !== '') return { ok: false, error: 'startupCommandRunMode must be paste or lineDelay.' };
+    updated.startupCommandRunMode = mode === 'lineDelay' ? 'lineDelay' : undefined;
+  }
+  if (environmentVariables.provided) {
+    let raw: unknown = environmentVariables.value;
+    if (typeof raw === 'string') {
+      try { raw = JSON.parse(raw); } catch { return { ok: false, error: 'environmentVariables must be valid JSON.' }; }
+    }
+    if (Array.isArray(raw)) {
+      const entries = raw.map((item) => item as Record<string, unknown>);
+      if (entries.some((item) => typeof item?.name !== 'string')) return { ok: false, error: 'environmentVariables array entries require name and value.' };
+      updated.environmentVariables = entries.map((item) => ({ name: String(item.name), value: String(item.value ?? '') }));
+    } else if (raw && typeof raw === 'object') {
+      updated.environmentVariables = Object.entries(raw as Record<string, unknown>).map(([name, value]) => ({ name, value: String(value ?? '') }));
+    } else return { ok: false, error: 'environmentVariables must be a JSON object or array.' };
+  }
+  for (const entry of [{ field: moshEnabled, key: 'moshEnabled' }, { field: etEnabled, key: 'etEnabled' }] as const) {
+    if (entry.field.provided) {
+      const value = parseBoolean(entry.field.value);
+      if (value === undefined) return { ok: false, error: `${entry.key} must be true or false.` };
+      updated[entry.key] = value;
+    }
+  }
+  if (moshServerPath.provided) updated.moshServerPath = String(moshServerPath.value ?? '') || undefined;
+  if (etPort.provided) {
+    const value = parsePort(etPort.value);
+    if (value === undefined) return { ok: false, error: 'etPort must be an integer between 1 and 65535.' };
+    updated.etPort = value;
+  }
+  if (serialConfig.provided) {
+    let raw: unknown = serialConfig.value;
+    if (typeof raw === 'string') {
+      try { raw = JSON.parse(raw); } catch { return { ok: false, error: 'serialConfig must be valid JSON.' }; }
+    }
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ok: false, error: 'serialConfig must be a JSON object.' };
+    const config = raw as Record<string, unknown>;
+    const path = String(config.path ?? '').trim();
+    const baudRate = Number(config.baudRate);
+    if (!path || !Number.isInteger(baudRate) || baudRate <= 0) return { ok: false, error: 'serialConfig requires path and a positive baudRate.' };
+    const dataBits = config.dataBits === undefined ? undefined : Number(config.dataBits);
+    if (dataBits !== undefined && ![5, 6, 7, 8].includes(dataBits)) return { ok: false, error: 'serialConfig.dataBits must be 5, 6, 7, or 8.' };
+    const stopBits = config.stopBits === undefined ? undefined : Number(config.stopBits);
+    if (stopBits !== undefined && ![1, 1.5, 2].includes(stopBits)) return { ok: false, error: 'serialConfig.stopBits must be 1, 1.5, or 2.' };
+    const parity = config.parity === undefined ? undefined : String(config.parity);
+    if (parity !== undefined && !['none', 'even', 'odd', 'mark', 'space'].includes(parity)) return { ok: false, error: 'serialConfig.parity is invalid.' };
+    const flowControl = config.flowControl === undefined ? undefined : String(config.flowControl);
+    if (flowControl !== undefined && !['none', 'xon/xoff', 'rts/cts'].includes(flowControl)) return { ok: false, error: 'serialConfig.flowControl is invalid.' };
+    const localEcho = config.localEcho === undefined ? undefined : parseBoolean(config.localEcho);
+    if (config.localEcho !== undefined && localEcho === undefined) return { ok: false, error: 'serialConfig.localEcho must be true or false.' };
+    const lineMode = config.lineMode === undefined ? undefined : parseBoolean(config.lineMode);
+    if (config.lineMode !== undefined && lineMode === undefined) return { ok: false, error: 'serialConfig.lineMode must be true or false.' };
+    updated.serialConfig = {
+      path,
+      baudRate,
+      ...(dataBits !== undefined ? { dataBits: dataBits as 5 | 6 | 7 | 8 } : {}),
+      ...(stopBits !== undefined ? { stopBits: stopBits as 1 | 1.5 | 2 } : {}),
+      ...(parity !== undefined ? { parity: parity as 'none' | 'even' | 'odd' | 'mark' | 'space' } : {}),
+      ...(flowControl !== undefined ? { flowControl: flowControl as 'none' | 'xon/xoff' | 'rts/cts' } : {}),
+      ...(localEcho !== undefined ? { localEcho } : {}),
+      ...(lineMode !== undefined ? { lineMode } : {}),
+    };
   }
 
   const effectiveBeforeSavePassword = options.resolveEffectiveHost?.(updated) ?? updated;

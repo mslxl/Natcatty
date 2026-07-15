@@ -15,6 +15,22 @@ function createPortForwardService(ctx = {}) {
       }
       return invokeVaultAgent("portforward.rules.list", {});
     },
+    createRule: async (params = {}) => {
+      if (typeof invokeVaultAgent !== "function") return { ok: false, error: "Vault agent bridge is unavailable." };
+      return invokeVaultAgent("portforward.rules.create", params);
+    },
+    updateRule: async (params = {}) => {
+      if (typeof invokeVaultAgent !== "function") return { ok: false, error: "Vault agent bridge is unavailable." };
+      return invokeVaultAgent("portforward.rules.update", params);
+    },
+    duplicateRule: async (params = {}) => {
+      if (typeof invokeVaultAgent !== "function") return { ok: false, error: "Vault agent bridge is unavailable." };
+      return invokeVaultAgent("portforward.rules.duplicate", params);
+    },
+    deleteRule: async (params = {}) => {
+      if (typeof invokeVaultAgent !== "function") return { ok: false, error: "Vault agent bridge is unavailable." };
+      return invokeVaultAgent("portforward.rules.delete", params);
+    },
     listTunnels: async () => {
       const tunnels = await portForwardingBridge.listPortForwards();
       return { ok: true, tunnels };
