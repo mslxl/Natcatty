@@ -57,10 +57,11 @@ export function buildSdkRuntimeModelCacheKey(agent: {
   sdkBackend?: string;
   acpCommand?: string;
   env?: Record<string, string>;
+  codexRuntime?: 'sdk' | 'app-server';
 }): string {
   const sdkBackend = agent.sdkBackend || agent.acpCommand || '';
   const envHints = MODEL_CACHE_ENV_HINTS.map((key) => `${key}=${agent.env?.[key] ?? ''}`);
-  return [agent.id, sdkBackend, agent.command ?? '', ...envHints].join('\u0000');
+  return [agent.id, sdkBackend, agent.command ?? '', agent.codexRuntime ?? 'sdk', ...envHints].join('\u0000');
 }
 
 export function createSdkRuntimeModelCache(options: SdkRuntimeModelCacheOptions = {}) {
@@ -123,7 +124,8 @@ export function modelPresetsContainId(presets: AgentModelPreset[], modelId: stri
 
 export function shouldLoadSdkRuntimeModels(agent?: ExternalAgentConfig): boolean {
   const sdkBackend = getExternalAgentSdkBackend(agent);
-  return sdkBackend === 'claude'
+  return (sdkBackend === 'codex' && agent?.codexRuntime === 'app-server')
+    || sdkBackend === 'claude'
     || sdkBackend === 'copilot'
     || sdkBackend === 'codebuddy'
     || sdkBackend === 'opencode';

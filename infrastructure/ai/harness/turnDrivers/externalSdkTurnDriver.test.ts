@@ -150,6 +150,7 @@ test('plan updates replace the same activity across tool message boundaries', as
       providers: [],
       toolIntegrationMode: 'mcp',
       selectedUserSkillSlugs: [],
+      permissionMode: 'confirm',
     },
     bridge,
     ui,

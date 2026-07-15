@@ -2,13 +2,14 @@
 
 const SDK_SESSION_ID_PREFIX = "netcatty-sdk-session:";
 
-function encodeSdkSessionIdentity(sessionId, sdkBackend, binPath) {
+function encodeSdkSessionIdentity(sessionId, sdkBackend, binPath, runtime = "sdk") {
   if (!sessionId || !sdkBackend) return sessionId;
   const payload = {
     v: 1,
     id: sessionId,
     backend: sdkBackend,
     binPath: binPath || "",
+    runtime: runtime === "app-server" ? "app-server" : "sdk",
   };
   return `${SDK_SESSION_ID_PREFIX}${encodeURIComponent(JSON.stringify(payload))}`;
 }

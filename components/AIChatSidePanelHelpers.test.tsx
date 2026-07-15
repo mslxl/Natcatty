@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  buildSdkRuntimeModelCacheKey,
   createSdkRuntimeModelCache,
   modelPresetsContainId,
   normalizeSdkRuntimeModelPresets,
@@ -36,7 +37,24 @@ test('shouldLoadSdkRuntimeModels includes SDK agents with model catalogs', () =>
   assert.equal(shouldLoadSdkRuntimeModels(agent('codebuddy')), true);
   assert.equal(shouldLoadSdkRuntimeModels(agent('opencode')), true);
   assert.equal(shouldLoadSdkRuntimeModels(agent('codex')), false);
+  assert.equal(shouldLoadSdkRuntimeModels({ ...agent('codex'), codexRuntime: 'app-server' }), true);
   assert.equal(shouldLoadSdkRuntimeModels(undefined), false);
+});
+
+test('Codex App Server model discovery uses a separate cache identity', () => {
+  const sdk = buildSdkRuntimeModelCacheKey({
+    id: 'discovered_codex',
+    command: '/bin/codex',
+    sdkBackend: 'codex',
+    codexRuntime: 'sdk',
+  });
+  const appServer = buildSdkRuntimeModelCacheKey({
+    id: 'discovered_codex',
+    command: '/bin/codex',
+    sdkBackend: 'codex',
+    codexRuntime: 'app-server',
+  });
+  assert.notEqual(sdk, appServer);
 });
 
 test('shouldAdoptSdkCurrentModel keeps SDK defaults when no runtime list is returned', () => {

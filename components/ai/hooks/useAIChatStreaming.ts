@@ -113,6 +113,7 @@ export interface SendToExternalContext {
   selectedAgentModel?: string;
   toolIntegrationMode: AIToolIntegrationMode;
   selectedUserSkillSlugs?: string[];
+  permissionMode: AIPermissionMode;
 }
 
 export function useAIChatStreaming({

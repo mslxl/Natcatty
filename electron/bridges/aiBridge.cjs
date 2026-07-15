@@ -861,6 +861,9 @@ function cleanup() {
     }
     registeredContext.sdkActiveStreams.clear();
   }
+  try {
+    registeredContext?.codexAppServerRuntime?.close?.();
+  } catch {}
 
   for (const [id, session] of codexLoginSessions) {
     try {

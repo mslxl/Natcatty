@@ -37,13 +37,25 @@ export interface ApprovalRequest {
   /** Optional chat session scope — used to clear only relevant approvals on stop */
   chatSessionId?: string;
   capabilityId?: string;
+  source?: 'catty' | 'mcp' | 'codex-app-server';
+  approvalType?: 'command' | 'file-change' | 'permissions';
+  itemId?: string;
+  allowSession?: boolean;
 }
 
 export interface ResolveApprovalOptions {
   approved: boolean;
   persistGrant?: PermissionGrantRule;
   persistGrants?: PermissionGrantRule[];
+  scope?: 'once' | 'session';
+  cancelled?: boolean;
 }
+
+export type ApprovalResolution = {
+  approved: boolean;
+  scope: 'once' | 'session';
+  cancelled: boolean;
+};
 
 export type GrantPersister = (rule: PermissionGrantRule) => void;
 
@@ -82,7 +94,7 @@ export function registerGrantPersister(persister: GrantPersister): () => void {
 // SDK approvals have a real `resolve` callback; MCP approvals use a no-op
 // (the real resolution goes via IPC in resolveApproval).
 const pendingApprovals = new Map<string, {
-  resolve: (approved: boolean) => void;
+  resolve: (resolution: ApprovalResolution) => void;
   request: ApprovalRequest;
 }>();
 
@@ -110,7 +122,7 @@ function emitApprovalEvent(
   const base = {
     sessionId,
     chatSessionId: request.chatSessionId,
-    backend: 'catty' as const,
+    backend: request.source === 'codex-app-server' ? 'external-sdk' as const : 'catty' as const,
     timestamp: Date.now(),
     toolCallId: request.toolCallId,
     toolName: request.toolName,
@@ -179,9 +191,9 @@ export function requestApproval(
   return new Promise<boolean>((resolve) => {
     let timerId: ReturnType<typeof setTimeout> | null = null;
 
-    const wrappedResolve = (approved: boolean) => {
+    const wrappedResolve = (resolution: ApprovalResolution) => {
       if (timerId) { clearTimeout(timerId); timerId = null; }
-      resolve(approved);
+      resolve(resolution.approved);
     };
 
     pendingApprovals.set(toolCallId, { resolve: wrappedResolve, request });
@@ -190,7 +202,7 @@ export function requestApproval(
     timerId = setTimeout(() => {
       if (pendingApprovals.has(toolCallId)) {
         pendingApprovals.delete(toolCallId);
-        wrappedResolve(false);
+        wrappedResolve({ approved: false, scope: 'once', cancelled: false });
         emitApprovalEvent('approval_resolved', request, { outcome: 'timeout' });
         // Notify UI to remove the stale card
         for (const cl of clearedListeners) {
@@ -219,18 +231,23 @@ export function resolveApproval(
   const persistGrants = typeof decision === 'boolean'
     ? undefined
     : (decision.persistGrants ?? (persistGrant ? [persistGrant] : undefined));
+  const resolution: ApprovalResolution = {
+    approved,
+    scope: typeof decision === 'boolean' ? 'once' : (decision.scope ?? 'once'),
+    cancelled: typeof decision === 'boolean' ? false : decision.cancelled === true,
+  };
 
   const entry = pendingApprovals.get(toolCallId);
   const request = entry?.request;
 
   if (entry) {
     pendingApprovals.delete(toolCallId);
-    entry.resolve(approved);
+    entry.resolve(resolution);
   }
 
   if (request) {
     let persistedGrantId: string | undefined;
-    if (approved && persistGrants?.length) {
+    if (approved && request.source !== 'codex-app-server' && persistGrants?.length) {
       for (const grant of persistGrants) {
         grantPersister?.(grant);
         persistedGrantId = grant.id;
@@ -281,6 +298,30 @@ export function replayPendingApprovals(listener: ApprovalRequestListener): void 
   }
 }
 
+export function registerExternalApproval(
+  request: ApprovalRequest,
+  onResolve: (resolution: ApprovalResolution) => void,
+): void {
+  if (pendingApprovals.has(request.toolCallId)) return;
+  emitApprovalEvent('approval_requested', request);
+  pendingApprovals.set(request.toolCallId, { request, resolve: onResolve });
+  for (const listener of listeners) {
+    try { listener(request); } catch { /* ignore listener errors */ }
+  }
+}
+
+export function clearPendingApprovalIds(toolCallIds: string[]): void {
+  const clearedIds: string[] = [];
+  for (const toolCallId of toolCallIds) {
+    if (pendingApprovals.delete(toolCallId)) clearedIds.push(toolCallId);
+  }
+  if (clearedIds.length > 0) {
+    for (const listener of clearedListeners) {
+      try { listener(clearedIds); } catch { /* ignore listener errors */ }
+    }
+  }
+}
+
 /**
  * Check if a specific toolCallId has a pending approval.
  */
@@ -303,7 +344,7 @@ export function clearAllPendingApprovals(chatSessionId?: string): void {
   if (!chatSessionId) {
     // Clear everything (legacy / global stop)
     for (const [id, entry] of pendingApprovals) {
-      entry.resolve(false);
+      entry.resolve({ approved: false, scope: 'once', cancelled: true });
       clearedIds.push(id);
     }
     pendingApprovals.clear();
@@ -312,7 +353,7 @@ export function clearAllPendingApprovals(chatSessionId?: string): void {
     for (const [id, entry] of pendingApprovals) {
       if (entry.request.chatSessionId === chatSessionId) {
         pendingApprovals.delete(id);
-        entry.resolve(false);
+        entry.resolve({ approved: false, scope: 'once', cancelled: true });
         clearedIds.push(id);
       }
     }
@@ -361,6 +402,7 @@ export function setupMcpApprovalBridge(): () => void {
       args: payload.args,
       chatSessionId: payload.chatSessionId,
       capabilityId: resolveCapabilityId(payload.toolName),
+      source: 'mcp',
     };
 
     // Store in pendingApprovals so it survives unmount/remount

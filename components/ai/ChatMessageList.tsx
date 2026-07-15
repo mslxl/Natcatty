@@ -21,6 +21,7 @@ import { ToolCall } from '../ai-elements/tool-call';
 import ThinkingBlock from './ThinkingBlock';
 import AgentActivityGroup from './AgentActivityGroup';
 import ToolCallGroup from './ToolCallGroup';
+import { CodexUserInputCard } from './CodexUserInputCard';
 import {
   VaultArtifactNavigationProvider,
   type VaultArtifactNavSection,
@@ -41,6 +42,13 @@ import {
   resolveApproval,
   type ApprovalRequest,
 } from '../../infrastructure/ai/shared/approvalGate';
+import {
+  onCodexAppServerInteraction,
+  onCodexAppServerInteractionCleared,
+  replayPendingCodexAppServerInteractions,
+  respondCodexUserInput,
+  type CodexAppServerInteraction,
+} from '../../infrastructure/ai/shared/codexAppServerInteractions';
 import {
   buildGrantsFromApproval,
   resolveCapabilityId,
@@ -106,6 +114,7 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({
   // Track pending approvals from the approval gate
   const [pendingApprovals, setPendingApprovals] = useState<Map<string, ApprovalRequest>>(new Map());
   const [resolvedApprovals, setResolvedApprovals] = useState<Map<string, boolean>>(new Map());
+  const [pendingCodexInteractions, setPendingCodexInteractions] = useState<Map<string, CodexAppServerInteraction>>(new Map());
 
   // Subscribe to approval gate events (SDK + MCP tool calls)
   useEffect(() => {
@@ -129,13 +138,39 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({
     });
   }, []);
 
-  const handleApproveOnce = useCallback((toolCallId: string) => {
-    resolveApproval(toolCallId, true);
-    setPendingApprovals(prev => { const m = new Map(prev); m.delete(toolCallId); return m; });
-    setResolvedApprovals(prev => new Map(prev).set(toolCallId, true));
+  useEffect(() => {
+    const handler = (interaction: CodexAppServerInteraction) => {
+      setPendingCodexInteractions((current) => new Map(current).set(interaction.interactionId, interaction));
+    };
+    const unsubscribe = onCodexAppServerInteraction(handler);
+    replayPendingCodexAppServerInteractions(handler);
+    return unsubscribe;
   }, []);
 
+  useEffect(() => onCodexAppServerInteractionCleared((interactionIds) => {
+    setPendingCodexInteractions((current) => {
+      const next = new Map(current);
+      for (const interactionId of interactionIds) next.delete(interactionId);
+      return next;
+    });
+  }), []);
+
+  const handleApproveOnce = useCallback((toolCallId: string) => {
+    const request = pendingApprovals.get(toolCallId);
+    resolveApproval(toolCallId, request?.source === 'codex-app-server'
+      ? { approved: true, scope: 'once' }
+      : true);
+    setPendingApprovals(prev => { const m = new Map(prev); m.delete(toolCallId); return m; });
+    setResolvedApprovals(prev => new Map(prev).set(request?.itemId ?? toolCallId, true));
+  }, [pendingApprovals]);
+
   const handleAlwaysAllow = useCallback((toolCallId: string, request: ApprovalRequest) => {
+    if (request.source === 'codex-app-server') {
+      resolveApproval(toolCallId, { approved: true, scope: 'session' });
+      setPendingApprovals(prev => { const m = new Map(prev); m.delete(toolCallId); return m; });
+      setResolvedApprovals(prev => new Map(prev).set(request.itemId ?? toolCallId, true));
+      return;
+    }
     const capabilityId = request.capabilityId ?? resolveCapabilityId(request.toolName);
     const persistGrants = buildGrantsFromApproval(capabilityId, request.args, request.chatSessionId);
     resolveApproval(toolCallId, { approved: true, persistGrants });
@@ -144,10 +179,31 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({
   }, []);
 
   const handleReject = useCallback((toolCallId: string) => {
+    const request = pendingApprovals.get(toolCallId);
     resolveApproval(toolCallId, false);
     setPendingApprovals(prev => { const m = new Map(prev); m.delete(toolCallId); return m; });
-    setResolvedApprovals(prev => new Map(prev).set(toolCallId, false));
+    setResolvedApprovals(prev => new Map(prev).set(request?.itemId ?? toolCallId, false));
+  }, [pendingApprovals]);
+
+  const handleCodexUserInput = useCallback((
+    interactionId: string,
+    answers: Record<string, { answers: string[] }>,
+  ) => {
+    void respondCodexUserInput(interactionId, answers).catch((error) => {
+      console.error('[Codex App Server] Failed to answer request_user_input:', error);
+    });
   }, []);
+  const codexApprovalByItemId = useMemo(() => {
+    const byItemId = new Map<string, { approvalId: string; request: ApprovalRequest }>();
+    for (const [approvalId, request] of pendingApprovals) {
+      if (request.source !== 'codex-app-server' || !request.itemId) continue;
+      byItemId.set(request.itemId, { approvalId, request });
+    }
+    return byItemId;
+  }, [pendingApprovals]);
+  const renderedToolCallIds = useMemo(() => new Set(
+    messages.flatMap((message) => (message.toolCalls || []).map((toolCall) => toolCall.id)),
+  ), [messages]);
   const [preview, setPreview] = useState<{ src: string; name: string } | null>(null);
   const [zoom, setZoom] = useState(100);
   const [dragged, setDragged] = useState(false);
@@ -462,7 +518,8 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({
                   return (
                     <ToolCallGroup count={unresolvedTcs.length} defaultExpanded={false}>
                       {unresolvedTcs.map((tc) => {
-                        const isPending = pendingApprovals.has(tc.id);
+                        const codexApproval = codexApprovalByItemId.get(tc.id);
+                        const isPending = pendingApprovals.has(tc.id) || Boolean(codexApproval);
                         const resolved = resolvedApprovals.get(tc.id);
                         const approvalStatus = isPending
                           ? "pending" as const
@@ -478,14 +535,21 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({
                               args={tc.arguments}
                               isInterrupted={!isPending}
                               approvalStatus={approvalStatus}
-                              onApproveOnce={() => handleApproveOnce(tc.id)}
-                              onAlwaysAllow={() => handleAlwaysAllow(tc.id, pendingApprovals.get(tc.id) ?? {
-                                toolCallId: tc.id,
-                                toolName: tc.name,
-                                args: tc.arguments ?? {},
-                                chatSessionId: activeSessionId ?? undefined,
-                              })}
-                              onReject={() => handleReject(tc.id)}
+                              onApproveOnce={() => codexApproval
+                                ? handleApproveOnce(codexApproval.approvalId)
+                                : handleApproveOnce(tc.id)}
+                              onAlwaysAllow={() => codexApproval
+                                ? handleAlwaysAllow(codexApproval.approvalId, codexApproval.request)
+                                : handleAlwaysAllow(tc.id, pendingApprovals.get(tc.id) ?? {
+                                    toolCallId: tc.id,
+                                    toolName: tc.name,
+                                    args: tc.arguments ?? {},
+                                    chatSessionId: activeSessionId ?? undefined,
+                                  })}
+                              alwaysAllowLabel={codexApproval ? t('ai.codex.appServer.approval.allowSession') : undefined}
+                              onReject={() => codexApproval
+                                ? handleReject(codexApproval.approvalId)
+                                : handleReject(tc.id)}
                             />
                           </div>
                         );
@@ -535,7 +599,8 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({
           return (
             <ToolCallGroup count={pendingTcs.length} defaultExpanded={isActive}>
               {pendingTcs.map((tc) => {
-                const isPending = pendingApprovals.has(tc.id);
+                const codexApproval = codexApprovalByItemId.get(tc.id);
+                const isPending = pendingApprovals.has(tc.id) || Boolean(codexApproval);
                 const resolved = resolvedApprovals.get(tc.id);
                 const approvalStatus = isPending
                   ? "pending" as const
@@ -551,14 +616,21 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({
                       args={tc.arguments}
                       isLoading={isToolRunning && !isPending}
                       approvalStatus={approvalStatus}
-                      onApproveOnce={() => handleApproveOnce(tc.id)}
-                      onAlwaysAllow={() => handleAlwaysAllow(tc.id, pendingApprovals.get(tc.id) ?? {
-                        toolCallId: tc.id,
-                        toolName: tc.name,
-                        args: tc.arguments ?? {},
-                        chatSessionId: activeSessionId ?? undefined,
-                      })}
-                      onReject={() => handleReject(tc.id)}
+                      onApproveOnce={() => codexApproval
+                        ? handleApproveOnce(codexApproval.approvalId)
+                        : handleApproveOnce(tc.id)}
+                      onAlwaysAllow={() => codexApproval
+                        ? handleAlwaysAllow(codexApproval.approvalId, codexApproval.request)
+                        : handleAlwaysAllow(tc.id, pendingApprovals.get(tc.id) ?? {
+                            toolCallId: tc.id,
+                            toolName: tc.name,
+                            args: tc.arguments ?? {},
+                            chatSessionId: activeSessionId ?? undefined,
+                          })}
+                      alwaysAllowLabel={codexApproval ? t('ai.codex.appServer.approval.allowSession') : undefined}
+                      onReject={() => codexApproval
+                        ? handleReject(codexApproval.approvalId)
+                        : handleReject(tc.id)}
                     />
                   </div>
                 );
@@ -594,6 +666,40 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({
               </React.Profiler>
             );
           })}
+
+        {!hideToolCalls && Array.from(pendingApprovals.entries())
+          .filter(([, request]) => request.source === 'codex-app-server')
+          .filter(([, request]) => !request.itemId || !renderedToolCallIds.has(request.itemId))
+          .filter(([, request]) => !activeSessionId || request.chatSessionId === activeSessionId)
+          .map(([approvalId, request]) => (
+            <React.Profiler key={approvalId} {...getAIPanelProfilerProps('AIChatPanel.ToolCall.Approval')}>
+              <div>
+                <ToolCall
+                  name={request.toolName}
+                  args={request.args}
+                  isLoading={false}
+                  isInterrupted={false}
+                  approvalStatus="pending"
+                  onApproveOnce={() => handleApproveOnce(approvalId)}
+                  onAlwaysAllow={() => handleAlwaysAllow(approvalId, request)}
+                  alwaysAllowLabel={t('ai.codex.appServer.approval.allowSession')}
+                  onReject={() => handleReject(approvalId)}
+                />
+              </div>
+            </React.Profiler>
+          ))}
+
+        {Array.from(pendingCodexInteractions.values())
+          .filter((interaction): interaction is Extract<CodexAppServerInteraction, { kind: 'user-input' }> => interaction.kind === 'user-input')
+          .filter((interaction) => !activeSessionId || interaction.chatSessionId === activeSessionId)
+          .map((interaction) => (
+            <CodexUserInputCard
+              key={interaction.interactionId}
+              interaction={interaction}
+              onSubmit={(answers) => handleCodexUserInput(interaction.interactionId, answers)}
+              onSkip={() => handleCodexUserInput(interaction.interactionId, {})}
+            />
+          ))}
         {/* Transient compaction status — inline, no banner */}
         {showCompactionStatus && activeCompaction && (
           <div className="py-1">

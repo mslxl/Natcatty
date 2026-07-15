@@ -230,6 +230,8 @@ export interface AgentInfo {
 }
 
 // External agent config. Managed agents route through official SDK backends.
+export type CodexRuntime = 'sdk' | 'app-server';
+
 export interface ExternalAgentConfig {
   id: string;
   name: string;
@@ -242,6 +244,8 @@ export interface ExternalAgentConfig {
   available?: boolean;
   /** SDK backend key for managed agents (claude|codex|copilot|cursor|codebuddy|opencode). */
   sdkBackend?: string;
+  /** Experimental Codex transport. Missing values keep the existing SDK behavior. */
+  codexRuntime?: CodexRuntime;
   /** Internal: whether the managed command was set manually or auto-detected. */
   commandSource?: "manual" | "auto";
   /**

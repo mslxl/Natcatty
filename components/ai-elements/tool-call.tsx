@@ -145,11 +145,13 @@ export interface ToolCallProps extends HTMLAttributes<HTMLDivElement> {
   onApproveOnce?: () => void;
   /** Called when user approves and persists an always-allow grant rule. */
   onAlwaysAllow?: () => void;
+  /** Optional source-specific label for the persistent/session approval action. */
+  alwaysAllowLabel?: string;
 }
 
 export const ToolCall = ({
   name, args, result, isError, isLoading, isInterrupted,
-  approvalStatus, onApprove, onReject, onApproveOnce, onAlwaysAllow,
+  approvalStatus, onApprove, onReject, onApproveOnce, onAlwaysAllow, alwaysAllowLabel,
   className, ...props
 }: ToolCallProps) => {
   const { t } = useI18n();
@@ -314,7 +316,7 @@ export const ToolCall = ({
                   onClick={handleAlwaysAllow}
                 >
                   <Check size={12} className="shrink-0" />
-                  <span className="truncate">{t('ai.chat.alwaysAllow')}</span>
+                  <span className="truncate">{alwaysAllowLabel || t('ai.chat.alwaysAllow')}</span>
                 </Button>
               </div>
             </div>

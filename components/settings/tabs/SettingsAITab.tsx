@@ -30,6 +30,7 @@ import { notifyUserSkillsStatusChanged } from "../../ai/userSkillsStatusEvents";
 
 import type {
   AgentPathInfo,
+  CodexAppServerStatus,
   CodexIntegrationStatus,
   CodexLoginSession,
   UserSkillsStatusResult,
@@ -206,6 +207,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
   const [codexLoginSession, setCodexLoginSession] = useState<CodexLoginSession | null>(null);
   const [isCodexLoading, setIsCodexLoading] = useState(false);
   const [codexError, setCodexError] = useState<string | null>(null);
+  const [codexAppServerStatus, setCodexAppServerStatus] = useState<CodexAppServerStatus | null>(null);
   const initialManagedPathsRef = useRef<{
     codex: string;
     claude: string;
@@ -592,6 +594,39 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
     codexCommittedPath
   ), [codexCommittedPath]);
 
+  const codexManagedAgent = useMemo(
+    () => externalAgents.find((agent) => agent.id === "discovered_codex"),
+    [externalAgents],
+  );
+  const codexRuntime = codexManagedAgent?.codexRuntime ?? 'sdk';
+
+  const refreshCodexAppServerStatus = useCallback(async () => {
+    const bridge = getBridge();
+    if (!bridge?.codexAppServerGetStatus || !codexCommittedPath) {
+      setCodexAppServerStatus(null);
+      return;
+    }
+    setCodexAppServerStatus({ available: false, checking: true });
+    try {
+      const result = await bridge.codexAppServerGetStatus(codexCommittedPath, codexManagedAgent?.env);
+      setCodexAppServerStatus({
+        available: result?.available === true,
+        error: result?.available ? undefined : result?.error,
+      });
+    } catch (error) {
+      setCodexAppServerStatus({
+        available: false,
+        error: normalizeCodexBridgeError(error),
+      });
+    }
+  }, [codexCommittedPath, codexManagedAgent?.env]);
+
+  const handleCodexRuntimeChange = useCallback((runtime: 'sdk' | 'app-server') => {
+    setExternalAgents((agents) => agents.map((agent) => (
+      agent.id === "discovered_codex" ? { ...agent, codexRuntime: runtime } : agent
+    )));
+  }, [setExternalAgents]);
+
   // Validate a custom path for an agent.
   const handleCheckCustomPath = useCallback(async (agentKey: ManagedAgentKey) => {
     const customPath = agentKey === "codex"
@@ -653,6 +688,13 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
       void refreshCodexIntegration({ codexPath: getCodexPathOverride() });
     }, 620);
   }, [activeSubTab, getCodexPathOverride, refreshCodexIntegration]);
+
+  useEffect(() => {
+    if (activeSubTab !== "agents" || !codexPathInfo?.available) return;
+    return scheduleAfterFirstPaint(() => {
+      void refreshCodexAppServerStatus();
+    }, 760);
+  }, [activeSubTab, codexPathInfo?.available, refreshCodexAppServerStatus]);
 
   useEffect(() => {
     if (!codexLoginSession || codexLoginSession.state !== "running") {
@@ -922,6 +964,9 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
               onCancel={() => void handleCancelCodexLogin()}
               onOpenUrl={handleOpenCodexLoginUrl}
               onLogout={() => void handleCodexLogout()}
+              appServerRuntime={codexRuntime}
+              appServerStatus={codexAppServerStatus}
+              onAppServerRuntimeChange={handleCodexRuntimeChange}
             />
           </SettingsSection>
 
