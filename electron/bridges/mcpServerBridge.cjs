@@ -121,6 +121,7 @@ const cancelledChatSessions = new Set();
 const activeExecChatSessions = new Map(); // chatSessionId -> { sessionId, command, startedAt }
 const backgroundJobs = new Map(); // jobId -> job metadata
 const workerBackgroundJobs = new Map(); // jobId -> { chatSessionId, sessionId }
+const pendingWorkerJobStarts = new Map(); // sessionId -> Set<{ chatSessionId, cancelled }>
 const activeSessionExecutions = new Map(); // sessionId -> { kind, startedAt, token }
 const activeSessionSftpOps = new Map(); // opId -> { chatSessionId, sessionId, cancel }
 const closingTerminalSessions = new Map(); // sessionId -> overlapping close request count
@@ -387,6 +388,7 @@ function shutdownHost({ preserveScopedMetadata = false } = {}) {
     }
   }
   backgroundJobs.clear();
+  pendingWorkerJobStarts.clear();
   activeSessionExecutions.clear();
 }
 
@@ -1290,6 +1292,9 @@ async function handleWorkerJobStart(params = {}) {
   if (!terminalWorkerManager?.request) {
     return { ok: false, error: "Session not found" };
   }
+  if (closingTerminalSessions.has(sessionId)) {
+    return { ok: false, error: `Session "${sessionId}" is closing.` };
+  }
 
   const chatSessionId = params?.chatSessionId || null;
   const meta = getSessionMeta(sessionId, chatSessionId) || {};
@@ -1300,6 +1305,14 @@ async function handleWorkerJobStart(params = {}) {
     }
   }
 
+  const pendingStart = { chatSessionId, cancelled: false };
+  let pendingForSession = pendingWorkerJobStarts.get(sessionId);
+  if (!pendingForSession) {
+    pendingForSession = new Set();
+    pendingWorkerJobStarts.set(sessionId, pendingForSession);
+  }
+  pendingForSession.add(pendingStart);
+
   try {
     const result = await terminalWorkerManager.request("netcatty:ai:jobStart", {
       sessionId,
@@ -1309,6 +1322,14 @@ async function handleWorkerJobStart(params = {}) {
       sessionMeta: meta,
     }, {});
     if (result?.ok && result.jobId) {
+      if (pendingStart.cancelled || closingTerminalSessions.has(sessionId)) {
+        await waitForWorkerCleanup(terminalWorkerManager.request("netcatty:ai:jobStop", {
+          jobId: result.jobId,
+          sessionId,
+          chatSessionId,
+        }, {}));
+        return { ok: false, error: "Session is closing.", jobId: result.jobId, status: "cancelled" };
+      }
       workerBackgroundJobs.set(result.jobId, {
         chatSessionId: chatSessionId || null,
         sessionId,
@@ -1317,6 +1338,9 @@ async function handleWorkerJobStart(params = {}) {
     return result;
   } catch (err) {
     return { ok: false, error: err?.message || String(err) };
+  } finally {
+    pendingForSession.delete(pendingStart);
+    if (pendingForSession.size === 0) pendingWorkerJobStarts.delete(sessionId);
   }
 }
 
@@ -1366,6 +1390,11 @@ async function handleWorkerJobStop(params = {}) {
 
 function cancelWorkerBackgroundJobsForSession(chatSessionId) {
   if (!chatSessionId) return;
+  for (const pendingStarts of pendingWorkerJobStarts.values()) {
+    for (const pendingStart of pendingStarts) {
+      if (pendingStart.chatSessionId === chatSessionId) pendingStart.cancelled = true;
+    }
+  }
   for (const [jobId, job] of workerBackgroundJobs) {
     if (job.chatSessionId === chatSessionId) {
       workerBackgroundJobs.delete(jobId);
@@ -1378,19 +1407,33 @@ function cancelWorkerBackgroundJobsForSession(chatSessionId) {
   }
 }
 
+function waitForWorkerCleanup(requestPromise) {
+  const timeoutMs = Math.max(1, Math.min(commandTimeoutMs, 5000));
+  let timer = null;
+  const timeoutPromise = new Promise((resolve) => {
+    timer = setTimeout(resolve, timeoutMs);
+  });
+  return Promise.race([requestPromise, timeoutPromise]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
 async function cancelWorkerBackgroundJobsForTerminalSession(sessionId) {
   if (!sessionId) return;
+  for (const pendingStart of pendingWorkerJobStarts.get(sessionId) || []) {
+    pendingStart.cancelled = true;
+  }
   const matchingJobs = [];
   const pending = [];
   for (const [jobId, job] of workerBackgroundJobs) {
     if (job.sessionId !== sessionId) continue;
     matchingJobs.push(jobId);
     if (terminalWorkerManager?.request) {
-      pending.push(terminalWorkerManager.request("netcatty:ai:jobStop", {
+      pending.push(waitForWorkerCleanup(terminalWorkerManager.request("netcatty:ai:jobStop", {
         jobId,
         sessionId,
         chatSessionId: job.chatSessionId || null,
-      }, {}));
+      }, {})));
     }
   }
   if (pending.length) await Promise.allSettled(pending);
@@ -1462,6 +1505,14 @@ async function dispatch(method, params) {
   if (method !== "netcatty/getContext" && params?.sessionId) {
     const scopeErr = validateSessionScope(params.sessionId, params?.chatSessionId, params?.scopedSessionIds);
     if (scopeErr) return { ok: false, error: scopeErr };
+  }
+
+  if (
+    (capability?.id === "terminal.execute" || capability?.id === "terminal.start")
+    && params?.sessionId
+    && closingTerminalSessions.has(params.sessionId)
+  ) {
+    return { ok: false, error: `Session "${params.sessionId}" is closing.` };
   }
 
   if ((capability?.id === "terminal.execute" || capability?.id === "terminal.start") && params?.sessionId) {
