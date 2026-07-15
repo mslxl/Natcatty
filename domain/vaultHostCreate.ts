@@ -393,6 +393,12 @@ export function applyVaultHostUpdate(
       updated.identityFileId = undefined;
       updated.identityFilePaths = undefined;
       updated.useSshAgent = false;
+    } else if (current.identityId) {
+      updated.authMethod = 'auto';
+      updated.authPolicyVersion = 1;
+      updated.identityFileId = undefined;
+      updated.identityFilePaths = undefined;
+      updated.useSshAgent = undefined;
     }
   }
 

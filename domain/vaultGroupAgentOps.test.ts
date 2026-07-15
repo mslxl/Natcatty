@@ -157,6 +157,13 @@ describe('vaultGroupAgentOps', () => {
       assert.equal(detached.config?.username, undefined);
       assert.equal(detached.config?.authMethod, undefined);
     }
+    const manualUsername = upsertGroup(state, 'prod', '{"username":"ops"}', [identity], proxyProfiles);
+    assert.equal(manualUsername.ok, true);
+    if (manualUsername.ok) {
+      assert.equal(manualUsername.config?.username, 'ops');
+      assert.equal(manualUsername.config?.identityId, '');
+      assert.equal(manualUsername.config?.authMethod, undefined);
+    }
   });
 
   it('moves hosts to root by default and refuses managed group deletion', () => {

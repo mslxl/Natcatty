@@ -843,9 +843,16 @@ describe('handleVaultAgentOp vault management gaps', () => {
     assert.equal(serializedList.includes('startup-secret'), false);
     assert.equal(serializedList.includes('environment-secret'), false);
     assert.equal(serializedList.includes('proxy-command-secret'), false);
-    assert.equal(serializedList.includes('/Users/alice'), false);
+    assert.equal(serializedList.includes('id_prod'), false);
+    assert.equal(serializedList.includes('/Users/alice/bin/mosh-server'), true);
     assert.equal(serializedList.includes('key-1'), false);
     assert.equal(serializedList.includes('deploy'), true);
+
+    const invalidDelete = await handleVaultAgentOp('group.delete', {
+      path: 'prod', deleteHosts: 'ture',
+    }, deps);
+    assert.equal(invalidDelete.ok, false);
+    assert.equal(deps.getCustomGroups().includes('prod'), true);
 
     const removed = await handleVaultAgentOp('group.delete', { path: 'prod' }, deps);
     assert.equal(removed.ok, true);

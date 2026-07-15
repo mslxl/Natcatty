@@ -178,6 +178,7 @@ const SAFE_GROUP_CONFIG_KEYS = [
   'algorithms',
   'charset',
   'moshEnabled',
+  'moshServerPath',
   'etEnabled',
   'etPort',
   'telnetEnabled',
@@ -817,15 +818,19 @@ export async function handleVaultAgentOp(
       return { ok: true, group: sanitizeGroupConfigForAgent(result.config ?? { path: String(params.path) }) };
     }
     case 'group.delete': {
+      const deleteHosts = parseOptionalBoolean(params.deleteHosts);
+      if (params.deleteHosts !== undefined && deleteHosts === undefined) {
+        return { ok: false, error: 'deleteHosts must be true or false.' };
+      }
       const result = deleteGroup({
         groups: deps.getCustomGroups(), configs: deps.getGroupConfigs(), hosts: deps.getHosts(),
         managedSources: deps.getManagedSources(),
-      }, params.path, parseOptionalBoolean(params.deleteHosts) ?? false);
+      }, params.path, deleteHosts ?? false);
       if (!result.ok) return result;
       deps.updateCustomGroups(result.state.groups);
       deps.updateGroupConfigs(result.state.configs);
       deps.updateHosts(result.state.hosts);
-      return { ok: true, path: String(params.path), deletedHosts: parseOptionalBoolean(params.deleteHosts) ?? false };
+      return { ok: true, path: String(params.path), deletedHosts: deleteHosts ?? false };
     }
     case 'snippets.list': {
       return {

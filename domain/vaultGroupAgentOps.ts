@@ -88,7 +88,17 @@ export function patchGroupConfig(
   const defaults = parseDefaults(rawDefaults);
   if ('error' in defaults) return { ok: false, error: String(defaults.error) };
   const next: GroupConfig = { ...current };
-  if (Object.hasOwn(defaults, 'username')) next.username = String(defaults.username ?? '');
+  if (Object.hasOwn(defaults, 'username')) {
+    next.username = String(defaults.username ?? '');
+    if (!Object.hasOwn(defaults, 'identityId') && current.identityId) {
+      next.identityId = '';
+      next.authMethod = undefined;
+      next.password = undefined;
+      next.savePassword = undefined;
+      next.identityFileId = undefined;
+      next.identityFilePaths = undefined;
+    }
+  }
   if (Object.hasOwn(defaults, 'startupCommand')) next.startupCommand = String(defaults.startupCommand ?? '');
   if (Object.hasOwn(defaults, 'moshServerPath')) next.moshServerPath = String(defaults.moshServerPath ?? '');
   if (Object.hasOwn(defaults, 'identityId')) {

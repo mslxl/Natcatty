@@ -384,6 +384,24 @@ test('applyVaultHostUpdate keeps referenced jump hosts SSH-capable', () => {
   if (!groupInheritedResult.ok) assert.match(groupInheritedResult.error, /used as a jump host must keep an SSH/i);
 });
 
+test('applyVaultHostUpdate rejects indirect jump host cycles', () => {
+  const first: Host = {
+    id: 'first', label: 'first', hostname: 'first.example.com', username: 'root',
+    port: 22, protocol: 'ssh', hostChain: { hostIds: ['second'] }, tags: [], os: 'linux',
+  };
+  const second: Host = {
+    id: 'second', label: 'second', hostname: 'second.example.com', username: 'root',
+    port: 22, protocol: 'ssh', tags: [], os: 'linux',
+  };
+
+  const result = applyVaultHostUpdate(
+    [first, second], [], second.id, { jumpHostIds: [first.id] },
+  );
+
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.match(result.error, /cycle detected/i);
+});
+
 test('applyVaultHostUpdate validates jump hosts inherited from the destination group', () => {
   const jump: Host = {
     id: 'jump', label: 'jump', hostname: 'jump.example.com', username: 'root',
@@ -823,6 +841,22 @@ test('applyVaultHostUpdate clears only the local key path when another identity 
   assert.equal(keychainResult.updatedHost.identityFileId, 'key-1');
   assert.equal(keychainResult.updatedHost.authMethod, 'key');
   assert.deepEqual(keychainResult.updatedHost.identityFilePaths, []);
+});
+
+test('applyVaultHostUpdate resets identity-derived key auth when detaching an identity', () => {
+  const host: Host = {
+    id: 'host', label: 'host', hostname: 'host.example.com', username: 'deploy',
+    identityId: 'identity-1', authMethod: 'key', authPolicyVersion: 1,
+    useSshAgent: false, tags: [], os: 'linux',
+  };
+
+  const result = applyVaultHostUpdate([host], [], host.id, { identityId: '' });
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.updatedHost.identityId, '');
+  assert.equal(result.updatedHost.authMethod, 'auto');
+  assert.equal(result.updatedHost.useSshAgent, undefined);
 });
 
 test('applyVaultHostUpdate rejects saved password changes when password saving is disabled', () => {
