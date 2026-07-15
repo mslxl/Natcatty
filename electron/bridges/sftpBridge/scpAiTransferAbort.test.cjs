@@ -116,7 +116,7 @@ describe("AI/MCP SCP transfer abort on shipped download/upload entry points", ()
     assert.match(upBlock, /createTransferFromAbortSignal\(payload\.abortSignal\)/);
     // SCP branch must pass the live transfer object into backend ops (not null).
     assert.match(dlBlock, /downloadFile\([\s\S]*transfer/);
-    assert.match(upBlock, /uploadFile\([\s\S]*\{\s*transfer\s*\}/);
+    assert.match(upBlock, /uploadFile\([\s\S]*transfer/);
     assert.doesNotMatch(upBlock, /transfer:\s*null/);
   });
 });

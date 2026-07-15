@@ -17,6 +17,8 @@ function createFileOpsApi(ctx) {
         let encoding = resolveEncodingForRequest(payload.sftpId, requestedEncoding);
         if (requestedEncoding === "auto") {
           // Detect from raw basename bytes (base64 field) before final decode.
+          // Only upgrade to gb18030 on positive non-UTF-8 evidence; never demote
+          // a previously resolved gb18030 session when a dir is ASCII-only.
           try {
             const adapters = require("./scpBackend.cjs").createSshExecAdapters(client.client);
             const { buildListCommand, parseListRecords } = require("./scpShell.cjs");
@@ -37,7 +39,11 @@ function createFileOpsApi(ctx) {
                   break;
                 }
               }
-              encoding = updateResolvedEncoding(payload.sftpId, "auto", needsGb ? "gb18030" : "utf-8");
+              if (needsGb) {
+                encoding = updateResolvedEncoding(payload.sftpId, "auto", "gb18030");
+              } else if (encoding !== "gb18030") {
+                encoding = updateResolvedEncoding(payload.sftpId, "auto", "utf-8");
+              }
               if (needsGb) {
                 // Parse with detected encoding and resolve symlink targets.
                 const records = parseListRecords(raw.stdout, "gb18030");
