@@ -1,6 +1,7 @@
 import React from 'react';
 
 import type { useI18n } from '../../application/i18n/I18nProvider';
+import type { TerminalSession } from '../../types';
 import { ContextMenuContent, ContextMenuItem } from '../ui/context-menu';
 
 type TranslateFn = ReturnType<typeof useI18n>['t'];
@@ -12,6 +13,7 @@ interface SessionTabContextMenuContentProps {
   onCopySessionToNewWindow?: (sessionId: string) => void;
   onDetachSession?: (sessionId: string) => void;
   onReconnectSession: (sessionId: string) => void;
+  sessionStatus: TerminalSession['status'];
   onRenameSession: (sessionId: string) => void;
   renderBulkCloseItems?: (anchorId: string) => React.ReactNode;
   t: TranslateFn;
@@ -24,13 +26,17 @@ export function SessionTabContextMenuContent({
   onCopySessionToNewWindow,
   onDetachSession,
   onReconnectSession,
+  sessionStatus,
   onRenameSession,
   renderBulkCloseItems,
   t,
 }: SessionTabContextMenuContentProps) {
   return (
     <ContextMenuContent>
-      <ContextMenuItem onClick={() => onReconnectSession(sessionId)}>
+      <ContextMenuItem
+        disabled={isSessionReconnectDisabled(sessionStatus)}
+        onClick={() => onReconnectSession(sessionId)}
+      >
         {t('terminal.menu.reconnect')}
       </ContextMenuItem>
       <ContextMenuItem onClick={() => onRenameSession(sessionId)}>
@@ -58,3 +64,7 @@ export function SessionTabContextMenuContent({
     </ContextMenuContent>
   );
 }
+
+export const isSessionReconnectDisabled = (status: TerminalSession['status']): boolean => (
+  status === 'connecting'
+);

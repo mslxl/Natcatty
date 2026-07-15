@@ -206,6 +206,7 @@ const WorkspaceFocusSessionRow = memo<WorkspaceFocusSessionRowProps>(({
         onCopySessionToNewWindow={onCopySessionToNewWindow}
         onDetachSession={onDetachSessionFromWorkspace}
         onReconnectSession={terminalReconnectRegistry.request}
+        sessionStatus={session.status}
         onRenameSession={onStartRename}
         t={t}
       />

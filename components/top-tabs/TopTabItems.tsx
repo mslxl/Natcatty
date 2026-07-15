@@ -687,6 +687,7 @@ export const SessionTopTab: React.FC<SessionTopTabProps> = memo(({
         onCopySession={onCopySession}
         onCopySessionToNewWindow={onCopySessionToNewWindow}
         onReconnectSession={terminalReconnectRegistry.request}
+        sessionStatus={session.status}
         onRenameSession={onRenameSession}
         renderBulkCloseItems={renderBulkCloseItems}
         t={t}
