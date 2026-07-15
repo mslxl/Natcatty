@@ -640,6 +640,16 @@ export function applyVaultHostUpdate(
     }
     updated.notes = notes.value.trim() || undefined;
   }
+  if (protocol.provided || group.provided) {
+    const isReferencedAsJumpHost = existingHosts.some((candidate) => (
+      candidate.id !== current.id
+      && candidate.hostChain?.hostIds?.includes(current.id)
+    ));
+    const effectiveUpdated = options.resolveEffectiveHost?.(updated) ?? updated;
+    if (isReferencedAsJumpHost && !supportsSshJump(effectiveUpdated)) {
+      return { ok: false, error: 'A host used as a jump host must keep an SSH connection type.' };
+    }
+  }
   if (options.managedSources) {
     const targetManagedSource = options.managedSources
       .filter((sourceInfo) => (

@@ -342,6 +342,30 @@ test('applyVaultHostUpdate only accepts SSH-capable jump hosts', () => {
   if (!inheritedResult.ok) assert.match(inheritedResult.error, /does not support SSH jump/i);
 });
 
+test('applyVaultHostUpdate keeps referenced jump hosts SSH-capable', () => {
+  const jump: Host = {
+    id: 'jump', label: 'jump', hostname: 'jump.example.com', username: 'root',
+    port: 22, protocol: 'ssh', tags: [], os: 'linux',
+  };
+  const target: Host = {
+    id: 'target', label: 'target', hostname: 'target.example.com', username: 'root',
+    port: 22, protocol: 'ssh', hostChain: { hostIds: [jump.id] }, tags: [], os: 'linux',
+  };
+
+  const directResult = applyVaultHostUpdate(
+    [jump, target], [], jump.id, { protocol: 'telnet' },
+  );
+  const inheritedResult = applyVaultHostUpdate(
+    [jump, target], [], jump.id, { group: 'telnet-hosts' },
+    { resolveEffectiveHost: (host) => host.group === 'telnet-hosts' ? { ...host, protocol: 'telnet' } : host },
+  );
+
+  assert.equal(directResult.ok, false);
+  if (!directResult.ok) assert.match(directResult.error, /used as a jump host must keep an SSH/i);
+  assert.equal(inheritedResult.ok, false);
+  if (!inheritedResult.ok) assert.match(inheritedResult.error, /used as a jump host must keep an SSH/i);
+});
+
 test('applyVaultHostUpdate keeps legacy serial hosts editable without serialConfig', () => {
   const legacySerial: Host = {
     id: 'serial', label: 'Old serial', hostname: '/dev/ttyUSB0', username: '',
