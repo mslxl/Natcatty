@@ -106,6 +106,8 @@ export interface SerialConfig {
   flowControl?: SerialFlowControl; // Flow control (default: 'none')
   localEcho?: boolean; // Force local echo (default: false, rely on remote echo)
   lineMode?: boolean; // Line mode - buffer input and send on Enter (default: false)
+  // Store the default explicitly so an open/restored session keeps its launch-time behavior.
+  backspaceBehavior?: 'default' | 'ctrl-h';
 }
 
 // Per-protocol configuration

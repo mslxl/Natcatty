@@ -61,6 +61,7 @@ import {
   shouldSendShiftEnterText,
 } from "./shiftEnterText";
 import { formatSerialLocalEcho } from "./serialLocalEcho";
+import { mapTerminalBackspaceInput } from "./terminalBackspaceInput";
 import { formatTelnetLocalEcho } from "./telnetLocalEcho";
 import {
   isTerminalFontSizeAction,
@@ -780,7 +781,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
           ? { text: "", lineEnding: data as "\r" | "\n" }
           : null;
     const onBroadcastInput = ctx.onBroadcastInputRef.current;
-    const broadcastDataBeforeSudo = (data === "\x7f" && ctx.host.backspaceBehavior === "ctrl-h") ? "\x08" : data;
+    const broadcastDataBeforeSudo = mapTerminalBackspaceInput(data, ctx.host.backspaceBehavior);
     const willBroadcastInput = !!id && shouldBroadcastTerminalUserInput(term, broadcastDataBeforeSudo, {
       isBroadcastEnabled: ctx.isBroadcastEnabledRef.current,
       hasBroadcastInputHandler: !!onBroadcastInput,
@@ -852,10 +853,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       } else {
         // Character mode (default): send immediately
         // When backspaceBehavior is configured, remap the Backspace key output
-        let outData = dataToWrite;
-        if (dataToWrite === "\x7f" && ctx.host.backspaceBehavior === "ctrl-h") {
-          outData = "\x08";
-        }
+        const outData = mapTerminalBackspaceInput(dataToWrite, ctx.host.backspaceBehavior);
         ctx.onOutputTriggerUserInputRef?.current?.(outData);
         ctx.terminalBackend.writeToSession(id, outData);
 
@@ -871,7 +869,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       }
 
       // Use remapped data so broadcast peers also receive the correct byte
-      const broadcastData = (dataToWrite === "\x7f" && ctx.host.backspaceBehavior === "ctrl-h") ? "\x08" : data;
+      const broadcastData = mapTerminalBackspaceInput(dataToWrite, ctx.host.backspaceBehavior);
       if (willBroadcastInput) {
         onBroadcastInput?.(broadcastData, ctx.sessionId);
       }

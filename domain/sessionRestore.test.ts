@@ -111,6 +111,7 @@ test("buildSessionRestorePayload deeply allowlists serial config fields", () => 
         flowControl: "none",
         localEcho: true,
         lineMode: true,
+        backspaceBehavior: "ctrl-h",
         password: "do-not-store",
       },
     } as TerminalSession & { serialConfig: TerminalSession["serialConfig"] & { password: string } }],
@@ -129,6 +130,7 @@ test("buildSessionRestorePayload deeply allowlists serial config fields", () => 
     flowControl: "none",
     localEcho: true,
     lineMode: true,
+    backspaceBehavior: "ctrl-h",
   });
 });
 
@@ -152,6 +154,26 @@ test("buildSessionRestorePayload preserves serial sessions with empty usernames"
   assert.equal(payload.sessions.length, 1);
   assert.equal(payload.sessions[0].username, "");
   assert.equal(payload.sessions[0].protocol, "serial");
+});
+
+test("buildSessionRestorePayload preserves missing Backspace behavior on legacy serial sessions", () => {
+  const payload = buildSessionRestorePayload({
+    sessions: [{
+      ...session("s1"),
+      username: "",
+      protocol: "serial",
+      serialConfig: {
+        path: "/dev/tty.usbserial",
+        baudRate: 115200,
+      },
+    }],
+    workspaces: [],
+    tabOrder: ["s1"],
+    activeTabId: "s1",
+    now: 123,
+  });
+
+  assert.equal(payload.sessions[0].serialConfig?.backspaceBehavior, undefined);
 });
 
 test("buildSessionRestorePayload preserves serial-only workspaces", () => {
@@ -386,6 +408,7 @@ test("sanitizeSessionRestorePayload deeply allowlists unknown serial config fiel
         flowControl: "none",
         localEcho: true,
         lineMode: true,
+        backspaceBehavior: "default",
         secret: "do-not-store",
       },
     }],
@@ -401,6 +424,7 @@ test("sanitizeSessionRestorePayload deeply allowlists unknown serial config fiel
     flowControl: "none",
     localEcho: true,
     lineMode: true,
+    backspaceBehavior: "default",
   });
 });
 
