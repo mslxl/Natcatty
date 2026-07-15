@@ -899,16 +899,61 @@ function getScpBackendForClient(client) {
     stream.on?.("error", untrack);
     return stream;
   };
+  // Wrap base.exec so shell list/stat/mkdir streams are also abortable on closeSftp.
+  const trackedExec = (command, options = {}) => new Promise((resolve, reject) => {
+    const signal = options.signal || null;
+    if (signal?.aborted) {
+      reject(new Error("Transfer cancelled"));
+      return;
+    }
+    let settled = false;
+    let streamRef = null;
+    const cleanup = () => {
+      if (streamRef) {
+        try { client.__netcattyScpActiveStreams.delete(streamRef); } catch { /* ignore */ }
+      }
+      if (signal) {
+        try { signal.removeEventListener("abort", onAbort); } catch { /* ignore */ }
+      }
+    };
+    const finish = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      fn(value);
+    };
+    const onAbort = () => {
+      try { streamRef?.close?.(); } catch { /* ignore */ }
+      try { streamRef?.destroy?.(); } catch { /* ignore */ }
+      finish(reject, new Error("Transfer cancelled"));
+    };
+    if (signal) signal.addEventListener("abort", onAbort, { once: true });
+    sshClient.exec(command, (err, stream) => {
+      if (err) {
+        finish(reject, err);
+        return;
+      }
+      if (settled) {
+        try { stream.close?.(); } catch { /* ignore */ }
+        return;
+      }
+      streamRef = stream;
+      track(stream);
+      let stdout = "";
+      let stderr = "";
+      stream.on("data", (d) => { stdout += d.toString(); });
+      stream.stderr?.on("data", (d) => { stderr += d.toString(); });
+      stream.on("close", (code) => finish(resolve, { stdout, stderr, code }));
+      stream.on("error", (streamErr) => finish(reject, streamErr));
+    });
+  });
   const adapters = {
-    exec: async (command, options = {}) => base.exec(command, options),
+    exec: trackedExec,
     execStream: async (command, options = {}) => {
       const stream = await base.execStream(command, options);
       return track(stream);
     },
   };
-  // Also track streams opened via plain exec (list/stat) by wrapping sshClient.exec
-  // is harder; for shell ops the AbortSignal path is preferred. Track via a helper
-  // that closeSftp can use for stream-based transfers.
   const backend = createScpBackend(adapters);
   client.__netcattyScpBackend = backend;
   return backend;
