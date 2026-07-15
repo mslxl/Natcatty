@@ -390,7 +390,7 @@ export interface VaultAgentApiDeps {
    * Open a vault host as a terminal tab (same path as tray / host list click).
    * Must return the new sessionId so MCP can target terminal tools.
    */
-  openHost?: (hostId: string) => {
+  openHost?: (host: Host) => {
     ok: true;
     sessionId: string;
     host: Host;
@@ -474,11 +474,13 @@ export async function handleVaultAgentOp(
     case 'host.open': {
       const hostId = String(params.hostId || '').trim();
       if (!hostId) return { ok: false, error: 'hostId is required.' };
+      const host = deps.getHosts().find((entry) => entry.id === hostId);
+      if (!host) return { ok: false, error: `Host "${hostId}" was not found.` };
       if (typeof deps.openHost !== 'function') {
         return { ok: false, error: 'Host open is not available in this window.' };
       }
 
-      const opened = deps.openHost(hostId);
+      const opened = deps.openHost(host);
       if (!opened.ok) {
         return { ok: false, error: opened.error };
       }

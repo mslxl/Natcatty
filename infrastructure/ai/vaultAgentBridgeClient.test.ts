@@ -63,10 +63,8 @@ function createDeps(
     startTunnel: async () => ({ success: true }),
     stopTunnel: async () => ({ success: true }),
     stopRuleTunnels: async () => ({ success: true }),
-    openHost: (hostId) => {
-      const host = hosts.find((entry) => entry.id === hostId);
-      if (!host) return { ok: false, error: `Host "${hostId}" was not found.` };
-      return { ok: true, sessionId: `session-${hostId}`, host };
+    openHost: (host) => {
+      return { ok: true, sessionId: `session-${host.id}`, host };
     },
   };
 
@@ -284,6 +282,28 @@ describe('handleVaultAgentOp vault hosts', () => {
     assert.equal((result as { hostId?: string }).hostId, 'host-open-1');
     assert.equal((result as { status?: string }).status, 'connecting');
     assert.equal((result as { host?: { hostname?: string } }).host?.hostname, 'edge.example.com');
+  });
+
+  it('opens a host created by the immediately preceding request', async () => {
+    let openedHost: Host | undefined;
+    const deps = createDeps({
+      openHost: (hostToOpen: Host) => {
+        openedHost = hostToOpen;
+        return { ok: true, sessionId: `session-${hostToOpen.id}`, host: hostToOpen };
+      },
+    });
+    const created = await handleVaultAgentOp('hosts.create', {
+      hosts: JSON.stringify([{
+        label: 'New host', hostname: 'new.example.com', username: 'deploy',
+      }]),
+    }, deps);
+    const hostId = (created as { previewHosts?: Array<{ id?: string }> }).previewHosts?.[0]?.id ?? '';
+
+    const opened = await handleVaultAgentOp('host.open', { hostId }, deps);
+
+    assert.equal(opened.ok, true);
+    assert.equal(openedHost?.id, hostId);
+    assert.equal(openedHost?.hostname, 'new.example.com');
   });
 
   it('host.open fails for missing host ids', async () => {

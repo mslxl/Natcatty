@@ -11,6 +11,8 @@ const {
   stopPortForward,
   stopPortForwardByRuleId,
   getPortForwardStatus,
+  cancelTunnel,
+  shouldFinalizeTunnelClose,
 } = require("./portForwardingBridge.cjs");
 
 function createEncryptedKey(t) {
@@ -51,6 +53,31 @@ function createCapturingSender(onSend = () => {}) {
     send: (channel, payload) => onSend(channel, payload),
   };
 }
+
+test("failed active tunnel cleanup never publishes an inactive close", () => {
+  let wouldPublishDuringCleanup;
+  const tunnel = {
+    status: "active",
+    server: {
+      close() {
+        throw new Error("server close failed");
+      },
+    },
+    conn: {
+      end() {
+        wouldPublishDuringCleanup = shouldFinalizeTunnelClose(tunnel);
+      },
+    },
+  };
+
+  assert.throws(
+    () => cancelTunnel("pf-active-cleanup-failure", tunnel, () => {}),
+    /server close failed/,
+  );
+  assert.equal(wouldPublishDuringCleanup, false);
+  assert.equal(shouldFinalizeTunnelClose(tunnel), false);
+  assert.equal(tunnel.status, "active");
+});
 
 test("port forwarding can be stopped while waiting for a key passphrase", async (t) => {
   const keyPath = createEncryptedKey(t);

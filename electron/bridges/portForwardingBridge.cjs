@@ -39,6 +39,10 @@ function isTunnelCancelled(tunnelState) {
   return Boolean(tunnelState?.cancelled);
 }
 
+function shouldFinalizeTunnelClose(tunnel) {
+  return !tunnel?.cleanupFailed && !tunnel?.cleanupInProgress;
+}
+
 function cancelTunnel(tunnelId, tunnel, sendStatus, { deleteEntry = false } = {}) {
   if (!tunnel) return;
   const previousStatus = tunnel.status;
@@ -54,6 +58,7 @@ function cancelTunnel(tunnelId, tunnel, sendStatus, { deleteEntry = false } = {}
     }
   };
   tunnel.cancelled = true;
+  tunnel.cleanupInProgress = true;
   if (tunnel.server) {
     if (cleanup('server', () => tunnel.server.close())) tunnel.server = null;
   }
@@ -74,10 +79,12 @@ function cancelTunnel(tunnelId, tunnel, sendStatus, { deleteEntry = false } = {}
   if (errors.length > 0) {
     tunnel.status = previousStatus;
     tunnel.cleanupFailed = true;
+    tunnel.cleanupInProgress = false;
     throw new Error(errors.join('; '));
   }
   tunnel.status = 'inactive';
   tunnel.cleanupFailed = false;
+  tunnel.cleanupInProgress = false;
   sendStatus?.('inactive');
   if (deleteEntry) {
     portForwardingTunnels.delete(tunnelId);
@@ -654,8 +661,8 @@ async function startPortForward(event, payload) {
         if (tunnel.pendingConn) {
           try { tunnel.pendingConn.end(); } catch { /* ignore */ }
         }
-        sendStatus('inactive');
-        if (!tunnel.cleanupFailed) {
+        if (shouldFinalizeTunnelClose(tunnel)) {
+          sendStatus('inactive');
           portForwardingTunnels.delete(tunnelId);
         }
       }
@@ -798,4 +805,6 @@ module.exports = {
   listPortForwards,
   stopAllPortForwards,
   stopPortForwardByRuleId,
+  cancelTunnel,
+  shouldFinalizeTunnelClose,
 };

@@ -1039,19 +1039,15 @@ function App({ settings }: { settings: SettingsState }) {
     return handleConnectToHostImpl(() => ({ addConnectionLog, connectToHost, host, identities, keys, resolveEffectiveHost, resolveHostAuth, systemInfoRef }), host);
   }, [addConnectionLog, connectToHost, resolveEffectiveHost, identities, keys]);
 
-  const openHostForVaultAgent = useCallback((hostId: string) => {
-    const host = hosts.find((item) => item.id === hostId);
-    if (!host) {
-      return { ok: false as const, error: `Host "${hostId}" was not found.` };
-    }
+  const openHostForVaultAgent = useCallback((host: Host) => {
     const sessionId = handleConnectToHost(host);
     if (!sessionId) {
-      return { ok: false as const, error: `Failed to open host "${hostId}".` };
+      return { ok: false as const, error: `Failed to open host "${host.id}".` };
     }
     // Surface the main window for external MCP / CLI open requests.
     void netcattyBridge.get()?.openMainWindow?.();
     return { ok: true as const, sessionId, host };
-  }, [handleConnectToHost, hosts]);
+  }, [handleConnectToHost]);
 
   useVaultAgentBridge({
     hosts,

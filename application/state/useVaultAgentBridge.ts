@@ -150,7 +150,7 @@ export function useVaultAgentBridge(input: UseVaultAgentBridgeInput): void {
         stopTunnel: current.stopTunnel,
         stopRuleTunnels: current.stopRuleTunnels,
         openHost: current.openHost
-          ? (hostId) => current.openHost!(hostId)
+          ? (host) => current.openHost!(host)
           : undefined,
       });
     });
