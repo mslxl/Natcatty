@@ -1566,10 +1566,12 @@ function createKeyboardInteractiveHandler(options) {
     const fallbackInstructions = getFallbackKeyboardInteractiveInstructions(prompts);
     const modalInstructions = instructions || authBanner || fallbackInstructions;
 
-    // name + instructions/banner often carry the real EDR warning (e.g.
-    // "请输入二次认证密码") while prompts[i].prompt is only the short English
-    // field label.
-    const contextText = [name, instructions, authBanner, fallbackInstructions]
+    // name + keyboard-interactive instructions often carry the real EDR
+    // warning (e.g. "请输入二次认证密码") while prompts[i].prompt is only the
+    // short English field label. USERAUTH_BANNER is intentionally display-only:
+    // it can be a generic corporate legal/MFA banner before an ordinary first
+    // factor Password: prompt.
+    const contextText = [name, instructions, fallbackInstructions]
       .filter((s) => typeof s === "string" && s.trim())
       .join("\n");
 

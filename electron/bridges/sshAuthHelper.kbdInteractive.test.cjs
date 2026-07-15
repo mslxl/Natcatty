@@ -262,6 +262,23 @@ test("createKeyboardInteractiveHandler carries the SSH auth banner into the moda
   drainPendingRequests(sent);
 });
 
+test("createKeyboardInteractiveHandler does not classify generic auth banners as secondary prompts", () => {
+  const { sender, sent } = createSender();
+  const finishCalls = [];
+  const handler = createKeyboardInteractiveHandler({
+    sender,
+    sessionId: "session-1",
+    hostname: "corp-linux.example.com",
+    password: "login-password",
+    getAuthBanner: () => edrSecondaryAuthInstructions,
+  });
+
+  handler("", "", "", [passwordPrompt], (responses) => finishCalls.push(responses));
+
+  assert.deepEqual(finishCalls, [["login-password"]]);
+  assert.equal(sent.length, 0);
+});
+
 test("createKeyboardInteractiveHandler adds the EDR fallback text for bare Secondary Authentication Password prompts", () => {
   const { sender, sent } = createSender();
   const handler = createKeyboardInteractiveHandler({

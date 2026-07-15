@@ -1,5 +1,5 @@
-// 创建时间: 2026-07-15
-// 功能说明: 校验键盘交互认证弹窗的服务器提示文本格式
+// Created: 2026-07-15
+// Purpose: verify keyboard-interactive modal server prompt formatting.
 
 import test from "node:test";
 import assert from "node:assert/strict";
