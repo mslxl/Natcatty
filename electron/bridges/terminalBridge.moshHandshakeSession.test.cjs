@@ -243,6 +243,42 @@ test("startMoshSession password-only mode disables public-key authentication", a
   assert.ok(h.spawns[0].args.includes("PreferredAuthentications=password,keyboard-interactive"));
 });
 
+test("startMoshSession MFA password mode prefers keyboard-interactive", async (t) => {
+  const h = makeHarness(t);
+  await h.bridge.startMoshSession(
+    h.event,
+    {
+      ...h.options,
+      authMethod: "password",
+      password: "saved-secret",
+      requiresMfa: true,
+      useSshAgent: false,
+    },
+    { moshClientLookup: h.lookupOpts },
+  );
+
+  assert.ok(h.spawns[0].args.includes("PubkeyAuthentication=no"));
+  assert.ok(h.spawns[0].args.includes("PreferredAuthentications=keyboard-interactive,password"));
+});
+
+test("startMoshSession MFA auto mode keeps publickey first and prefers keyboard-interactive", async (t) => {
+  const h = makeHarness(t);
+  await h.bridge.startMoshSession(
+    h.event,
+    {
+      ...h.options,
+      authMethod: "auto",
+      password: "saved-secret",
+      requiresMfa: true,
+      identityFilePaths: [path.join(os.tmpdir(), "netcatty-mosh-mfa-id_ed25519")],
+      useSshAgent: false,
+    },
+    { moshClientLookup: h.lookupOpts },
+  );
+
+  assert.ok(h.spawns[0].args.includes("PreferredAuthentications=publickey,keyboard-interactive,password"));
+});
+
 test("startMoshSession key mode never probes unrelated default identities", async (t) => {
   const h = makeHarness(t);
   await h.bridge.startMoshSession(

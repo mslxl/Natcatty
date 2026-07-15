@@ -1039,6 +1039,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           ? (effectivePassphrase || sanitizeCredentialValue(key.passphrase))
           : undefined,
         identityFilePaths: moshIdentityFilePaths,
+        requiresMfa: !!ctx.host.requiresMfa,
         ...moshAgentAuth,
         port: ctx.host.port || 22,
         moshServerPath: ctx.host.moshServerPath,

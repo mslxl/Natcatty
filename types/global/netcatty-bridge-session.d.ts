@@ -53,6 +53,7 @@ declare global {
       keyId?: string;
       passphrase?: string;
       authMethod?: import("../../domain/models").HostAuthMethod;
+      requiresMfa?: boolean;
       identityFilePaths?: string[];
       useSshAgent?: boolean;
       agentPublicKeys?: string[];
