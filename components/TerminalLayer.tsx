@@ -605,7 +605,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     sourceSessionId?: string | null;
   }) => {
     const { tabId, host, initialPath, pendingUploadEntries, sourceSessionId } = params;
-    const connectionKey = buildCacheKey(host.id, host.hostname, host.port, host.protocol, host.sftpSudo, host.username);
+    const connectionKey = buildCacheKey(host.id, host.hostname, host.port, host.protocol, host.sftpSudo, host.username, host.sftpFileProtocol);
     const memoryKey = getSftpReopenMemoryKey({ tabId, sourceSessionId });
     const effectiveInitialPath = resolveSftpOpenLocation({
       hostId: host.id,
@@ -650,7 +650,8 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       && currentHost.port === host.port
       && currentHost.protocol === host.protocol
       && currentHost.username === host.username
-      && currentHost.sftpSudo === host.sftpSudo;
+      && currentHost.sftpSudo === host.sftpSudo
+      && (currentHost.sftpFileProtocol || "auto") === (host.sftpFileProtocol || "auto");
 
     const isClosing = !shouldKeepOpen && isOpen && isSameEndpoint;
 

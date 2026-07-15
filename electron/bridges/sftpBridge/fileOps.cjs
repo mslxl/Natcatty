@@ -1,9 +1,109 @@
 /* eslint-disable no-undef */
 function createFileOpsApi(ctx) {
   with (ctx) {
+    const {
+      getScpBackendForClient,
+      isScpModeClient,
+      abortScpClientStreams,
+    } = require("./scpBackend.cjs");
+
     async function listSftp(event, payload) {
       const client = sftpClients.get(payload.sftpId);
       if (!client) throw new Error("SFTP session not found");
+
+      if (isScpModeClient(client)) {
+        const backend = getScpBackendForClient(client);
+        const basePath = payload.path || ".";
+        const requestedEncoding = normalizeEncoding(payload.encoding);
+        let encoding = resolveEncodingForRequest(payload.sftpId, requestedEncoding);
+        if (requestedEncoding === "auto") {
+          // Detect from raw basename bytes (base64 field) before final decode.
+          // Only upgrade to gb18030 on positive non-UTF-8 evidence; never demote
+          // a previously resolved gb18030 session when a dir is ASCII-only.
+          try {
+            // Use tracked backend exec path (getScpBackendForClient wraps exec) so
+            // closeSftp can abort a hung auto-detect probe on shared sessions.
+            const tracked = getScpBackendForClient(client);
+            const { buildListCommand, parseListRecords } = require("./scpShell.cjs");
+            // Access list via a private-ish path: run list with utf-8 first internally
+            // by exec through backend's run path — use list then re-detect from raw is heavy;
+            // call shell builders via client-tracked adapter stored on backend deps.
+            const adapters = client.__netcattyScpTrackedExec
+              ? { exec: client.__netcattyScpTrackedExec }
+              : require("./scpBackend.cjs").createSshExecAdapters(client.client);
+            const raw = await adapters.exec(buildListCommand(basePath, "utf-8"), {
+              signal: payload?.abortSignal || null,
+            });
+            if (raw.code === 0 && raw.stdout) {
+              let needsGb = false;
+              let parsedAny = false;
+              for (const line of String(raw.stdout).split(/\r?\n/)) {
+                if (!line) continue;
+                const parts = line.split("|");
+                if (parts.length < 5) continue;
+                if (parts[4]) parsedAny = true;
+                try {
+                  // eslint-disable-next-line no-new
+                  new TextDecoder("utf-8", { fatal: true }).decode(Buffer.from(parts[4], "base64"));
+                } catch {
+                  needsGb = true;
+                  break;
+                }
+              }
+              // Empty basenames (no base64/openssl on remote) → fall through to backend.list
+              // which can use the ls -la fallback path.
+              if (!parsedAny && String(raw.stdout).trim()) {
+                throw new Error("list probe produced no parseable basenames");
+              }
+              if (needsGb) {
+                encoding = updateResolvedEncoding(payload.sftpId, "auto", "gb18030");
+              } else if (encoding !== "gb18030") {
+                encoding = updateResolvedEncoding(payload.sftpId, "auto", "utf-8");
+              }
+              // Reuse the probe listing instead of listing the directory twice.
+              const listEnc = needsGb ? "gb18030" : (encoding === "gb18030" ? "gb18030" : "utf-8");
+              const records = parseListRecords(raw.stdout, listEnc);
+              const entries = [];
+              for (const rec of records) {
+                const entry = {
+                  name: rec.name,
+                  type: rec.type,
+                  linkTarget: rec.type === "symlink" ? "file" : null,
+                  size: `${rec.size || 0} bytes`,
+                  lastModified: new Date(rec.modifyTime || Date.now()).toISOString(),
+                  permissions: rec.permissions,
+                };
+                if (rec.type === "symlink") {
+                  try {
+                    const full = `${String(basePath).replace(/\/+$/, "")}/${rec.name}`.replace(/\/+/g, "/") || rec.name;
+                    const trackedExec = client.__netcattyScpTrackedExec
+                      || require("./scpBackend.cjs").createSshExecAdapters(client.client).exec;
+                    const { shellQuotePath } = require("./scpShell.cjs");
+                    const probe = await trackedExec(
+                      `p=${shellQuotePath(full, listEnc)}; if [ -d "$p" ]; then echo directory; else echo file; fi`,
+                      { signal: payload?.abortSignal || null },
+                    );
+                    entry.linkTarget = (probe.stdout || "").includes("directory") ? "directory" : "file";
+                  } catch {
+                    entry.linkTarget = null;
+                  }
+                }
+                entries.push(entry);
+              }
+              return entries;
+            }
+          } catch {
+            // Keep previously resolved encoding (e.g. gb18030); do not demote on probe failure.
+            if (encoding === "auto") {
+              encoding = "utf-8";
+            }
+          }
+        }
+        return await backend.list(basePath, {
+          encoding: encoding === "auto" ? "utf-8" : encoding,
+          signal: payload?.abortSignal || null,
+        });
+      }
     
       const requestedEncoding = normalizeEncoding(payload.encoding);
       const basePath = payload.path || ".";
@@ -130,6 +230,15 @@ function createFileOpsApi(ctx) {
     async function readSftp(event, payload) {
       const client = sftpClients.get(payload.sftpId);
       if (!client) throw new Error("SFTP session not found");
+
+      if (isScpModeClient(client)) {
+        const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
+        const buffer = await getScpBackendForClient(client).readFile(payload.path, {
+          encoding,
+          signal: payload?.abortSignal || null,
+        });
+        return buffer.toString();
+      }
     
       await requireSftpChannel(client);
       const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
@@ -144,6 +253,15 @@ function createFileOpsApi(ctx) {
     async function readSftpBinary(event, payload) {
       const client = sftpClients.get(payload.sftpId);
       if (!client) throw new Error("SFTP session not found");
+
+      if (isScpModeClient(client)) {
+        const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
+        const buffer = await getScpBackendForClient(client).readFile(payload.path, {
+          encoding,
+          signal: payload?.abortSignal || null,
+        });
+        return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+      }
     
       await requireSftpChannel(client);
       const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
@@ -164,6 +282,37 @@ function createFileOpsApi(ctx) {
     async function writeSftp(event, payload) {
       const client = sftpClients.get(payload.sftpId);
       if (!client) throw new Error("SFTP session not found");
+
+      // Normalize CRLF → LF so scripts edited on Windows don't break when
+      // saved to a Linux/macOS host. LF is universally supported (Windows
+      // 10+ notepad handles it), while CRLF in shell scripts causes
+      // "command not found" and syntax errors on Linux.
+      const normalized = payload.content.replace(/\r\n/g, '\n');
+
+      if (isScpModeClient(client)) {
+        const backend = getScpBackendForClient(client);
+        const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
+        const scpOpts = { encoding, signal: payload?.abortSignal || null };
+        let existingMode = null;
+        try {
+          const st = await backend.stat(payload.path, scpOpts);
+          if (typeof st.mode === "number" && st.mode > 0) {
+            existingMode = st.mode & 0o7777;
+          }
+        } catch (_err) {
+          // new file
+        }
+        await backend.writeFile(payload.path, Buffer.from(normalized, "utf-8"), {
+          mode: existingMode != null ? existingMode : 0o0644,
+          ...scpOpts,
+        });
+        if (existingMode != null) {
+          try { await backend.chmod(payload.path, existingMode, scpOpts); } catch (err) {
+            console.warn(`[scp] Failed to restore permissions on ${payload.path}:`, err?.message || err);
+          }
+        }
+        return true;
+      }
     
       await requireSftpChannel(client);
       const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
@@ -180,11 +329,6 @@ function createFileOpsApi(ctx) {
         // File does not exist — treat as a new file and let the server apply defaults.
       }
     
-      // Normalize CRLF → LF so scripts edited on Windows don't break when
-      // saved to a Linux/macOS host. LF is universally supported (Windows
-      // 10+ notepad handles it), while CRLF in shell scripts causes
-      // "command not found" and syntax errors on Linux.
-      const normalized = payload.content.replace(/\r\n/g, '\n');
       await client.put(Buffer.from(normalized, "utf-8"), encodedPath);
     
       if (existingMode !== null) {
@@ -207,6 +351,15 @@ function createFileOpsApi(ctx) {
     async function writeSftpBinary(event, payload) {
       const client = sftpClients.get(payload.sftpId);
       if (!client) throw new Error("SFTP session not found");
+
+      if (isScpModeClient(client)) {
+        const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
+        await getScpBackendForClient(client).writeFile(payload.path, Buffer.from(payload.content), {
+          encoding,
+          signal: payload?.abortSignal || null,
+        });
+        return true;
+      }
     
       await requireSftpChannel(client);
       const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
@@ -225,6 +378,66 @@ function createFileOpsApi(ctx) {
       if (!client) throw new Error("SFTP session not found");
     
       const { sftpId, path: remotePath, content, transferId } = payload;
+
+      if (isScpModeClient(client)) {
+        const onProgress = payload.onProgress;
+        const onComplete = payload.onComplete;
+        const onError = payload.onError;
+        const buffer = Buffer.isBuffer(content) ? content : Buffer.from(content);
+        const totalBytes = buffer.length;
+        const transfer = { cancelled: false, abort: null };
+        activeSftpUploads.set(transferId, {
+          cancelled: false,
+          stream: null,
+          transfer,
+        });
+        try {
+          const encoding = resolveEncodingForRequest(sftpId, payload.encoding);
+          await getScpBackendForClient(client).uploadBuffer(buffer, remotePath, {
+            transfer,
+            encoding: encoding === "auto" ? "utf-8" : encoding,
+            onProgress: (transferred, total) => {
+              if (typeof onProgress === "function") {
+                onProgress(transferred, total || totalBytes, 0);
+              } else {
+                const contents = electronModule.webContents.fromId(event.sender.id);
+                contents?.send("netcatty:upload:progress", {
+                  transferId,
+                  transferred,
+                  totalBytes: total || totalBytes,
+                  speed: 0,
+                });
+              }
+            },
+          });
+          if (activeSftpUploads.get(transferId)?.cancelled || transfer.cancelled) {
+            const contents = electronModule.webContents.fromId(event.sender.id);
+            contents?.send("netcatty:upload:cancelled", { transferId });
+            return { success: false, transferId, cancelled: true };
+          }
+          if (typeof onComplete === "function") onComplete();
+          else {
+            const contents = electronModule.webContents.fromId(event.sender.id);
+            contents?.send("netcatty:upload:complete", { transferId });
+          }
+          return { success: true, transferId };
+        } catch (err) {
+          if (activeSftpUploads.get(transferId)?.cancelled || transfer.cancelled || /cancel/i.test(err.message || "")) {
+            const contents = electronModule.webContents.fromId(event.sender.id);
+            contents?.send("netcatty:upload:cancelled", { transferId });
+            return { success: false, transferId, cancelled: true };
+          }
+          if (typeof onError === "function") onError(err.message);
+          else {
+            const contents = electronModule.webContents.fromId(event.sender.id);
+            contents?.send("netcatty:upload:error", { transferId, error: err.message });
+          }
+          throw err;
+        } finally {
+          activeSftpUploads.delete(transferId);
+        }
+      }
+
       await requireSftpChannel(client);
       const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
       const encodedPath = encodePath(remotePath, encoding);
@@ -384,6 +597,10 @@ function createFileOpsApi(ctx) {
       const uploadState = activeSftpUploads.get(transferId);
       if (uploadState) {
         uploadState.cancelled = true;
+        if (uploadState.transfer) {
+          uploadState.transfer.cancelled = true;
+          try { uploadState.transfer.abort?.(); } catch { /* ignore */ }
+        }
         try {
           uploadState.stream?.destroy();
         } catch (err) {
@@ -412,6 +629,19 @@ function createFileOpsApi(ctx) {
       }
     
       try {
+        if (isScpModeClient(client)) {
+          // Abort in-flight scp/exec channels first so agent Stop/timeout via
+          // closeSftp actually stops transfers without needing a serialized AbortSignal.
+          try { abortScpClientStreams(client); } catch { /* ignore */ }
+          // Only tear down SSH sockets we own (fresh dials). Session-backed /
+          // reused-terminal clients share the terminal SSH connection — ending
+          // it here would disconnect the interactive shell.
+          const ownsSocket = !client.__netcattySessionBacked && !client.__netcattySourceSessionId;
+          if (ownsSocket) {
+            try { client.client?.end?.(); } catch { /* ignore */ }
+            try { client.client?.destroy?.(); } catch { /* ignore */ }
+          }
+        }
         await client.end();
       } catch (err) {
         console.warn("SFTP close failed", err);
@@ -435,6 +665,16 @@ function createFileOpsApi(ctx) {
      * Create a directory
      */
     async function mkdirSftp(event, payload) {
+      const client = sftpClients.get(payload.sftpId);
+      if (client && isScpModeClient(client)) {
+        const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
+        await getScpBackendForClient(client).mkdir(payload.path, {
+          recursive: true,
+          encoding,
+          signal: payload?.abortSignal || null,
+        });
+        return true;
+      }
       await ensureRemoteDirForSession(payload.sftpId, payload.path, payload.encoding);
       return true;
     }
@@ -475,6 +715,17 @@ function createFileOpsApi(ctx) {
     async function deleteSftp(event, payload) {
       const client = sftpClients.get(payload.sftpId);
       if (!client) throw new Error("SFTP session not found");
+
+      if (isScpModeClient(client)) {
+        throwIfAborted(payload?.abortSignal || null);
+        const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
+        await getScpBackendForClient(client).remove(payload.path, {
+          recursive: true,
+          encoding,
+          signal: payload?.abortSignal || null,
+        });
+        return true;
+      }
     
       const signal = payload?.abortSignal || null;
       const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
@@ -555,6 +806,15 @@ function createFileOpsApi(ctx) {
     async function renameSftp(event, payload) {
       const client = sftpClients.get(payload.sftpId);
       if (!client) throw new Error("SFTP session not found");
+
+      if (isScpModeClient(client)) {
+        const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
+        await getScpBackendForClient(client).rename(payload.oldPath, payload.newPath, {
+          encoding,
+          signal: payload?.abortSignal || null,
+        });
+        return true;
+      }
     
       await requireSftpChannel(client);
       const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
@@ -570,6 +830,21 @@ function createFileOpsApi(ctx) {
     async function statSftp(event, payload) {
       const client = sftpClients.get(payload.sftpId);
       if (!client) throw new Error("SFTP session not found");
+
+      if (isScpModeClient(client)) {
+        const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
+        const st = await getScpBackendForClient(client).stat(payload.path, {
+          encoding,
+          signal: payload?.abortSignal || null,
+        });
+        return {
+          name: path.basename(payload.path),
+          type: st.isDirectory ? "directory" : st.isSymbolicLink ? "symlink" : "file",
+          size: st.size,
+          lastModified: st.modifyTime,
+          permissions: st.mode ? (st.mode & 0o777).toString(8) : st.permissions,
+        };
+      }
     
       await requireSftpChannel(client);
       const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
@@ -590,6 +865,15 @@ function createFileOpsApi(ctx) {
     async function chmodSftp(event, payload) {
       const client = sftpClients.get(payload.sftpId);
       if (!client) throw new Error("SFTP session not found");
+
+      if (isScpModeClient(client)) {
+        const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
+        await getScpBackendForClient(client).chmod(payload.path, payload.mode, {
+          encoding,
+          signal: payload?.abortSignal || null,
+        });
+        return true;
+      }
     
       await requireSftpChannel(client);
       const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
@@ -608,6 +892,30 @@ function createFileOpsApi(ctx) {
       if (!client) return { success: false, error: "SFTP session not found" };
       const signal = payload?.abortSignal || null;
       throwIfAborted(signal);
+
+      if (isScpModeClient(client)) {
+        try {
+          // Prefer payload encoding; otherwise session-resolved state from prior lists.
+          const requestedEncoding = normalizeEncoding(
+            payload?.encoding || sftpEncodingState.get(sftpId)?.requested || "auto",
+          );
+          const encoding = resolveEncodingForRequest(sftpId, requestedEncoding);
+          const home = await getScpBackendForClient(client).homeDir({
+            signal: payload?.abortSignal || null,
+            encoding: encoding === "auto" ? "utf-8" : encoding,
+            // When $HOME has GB18030 bytes and we still thought utf-8, promote session
+            // encoding so subsequent list/path quotes use the right charset.
+            onDetectedEncoding: (detected) => {
+              if (requestedEncoding === "auto" && detected === "gb18030") {
+                updateResolvedEncoding(sftpId, "auto", "gb18030");
+              }
+            },
+          });
+          return { success: true, homeDir: home };
+        } catch (err) {
+          return { success: false, error: err?.message || String(err) };
+        }
+      }
     
       // Method 1: SSH exec `echo ~` (with 5s timeout to avoid hanging on
       // hosts with blocking shell init scripts or forced commands)
