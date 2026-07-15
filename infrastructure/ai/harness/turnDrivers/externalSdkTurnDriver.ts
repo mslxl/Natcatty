@@ -59,11 +59,16 @@ async function runExternalTurn(input: ExternalTurnInput, ctx: TurnDriverContext)
   }
 
   let needsNewAssistantMsg = false;
+  const latestMessage = ui.getLatestSession?.(sessionId)?.messages.at(-1);
+  let activeAssistantMessageId = latestMessage?.role === 'assistant'
+    ? latestMessage.id
+    : undefined;
   const maybeCreateAssistantMsg = () => {
     if (needsNewAssistantMsg) {
       needsNewAssistantMsg = false;
+      activeAssistantMessageId = generateId();
       ui.addMessageToSession(sessionId, {
-        id: generateId(),
+        id: activeAssistantMessageId,
         role: 'assistant',
         content: '',
         timestamp: Date.now(),
@@ -73,9 +78,30 @@ async function runExternalTurn(input: ExternalTurnInput, ctx: TurnDriverContext)
   };
 
   const toolNamesByCallId = new Map<string, string>();
+  const activityMessageIds = new Map<string, string>();
   let actualUsageReported = false;
   const updateActivity = (activity: AgentActivity) => {
+    const activityMessageId = activityMessageIds.get(activity.id);
+    if (activityMessageId) {
+      ui.updateMessageById(sessionId, activityMessageId, msg => ({
+        ...msg,
+        agentActivities: upsertAgentActivity(msg.agentActivities, activity),
+        statusText: undefined,
+      }));
+      return;
+    }
+
     maybeCreateAssistantMsg();
+    if (activeAssistantMessageId) {
+      activityMessageIds.set(activity.id, activeAssistantMessageId);
+      ui.updateMessageById(sessionId, activeAssistantMessageId, msg => ({
+        ...msg,
+        agentActivities: upsertAgentActivity(msg.agentActivities, activity),
+        statusText: undefined,
+      }));
+      return;
+    }
+
     ui.updateLastMessage(sessionId, msg => ({
       ...msg,
       agentActivities: upsertAgentActivity(msg.agentActivities, activity),

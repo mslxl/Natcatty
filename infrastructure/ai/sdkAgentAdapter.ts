@@ -13,7 +13,8 @@ import type {
 } from './types';
 import { getExternalAgentSdkBackend, getManualAgentCommand } from './managedAgents';
 import { encodeSdkSessionIdentity } from './harness/sdkSessionIdentity';
-import { globalTraceStore, mapSdkStreamEventToAgentEvents } from './harness';
+import { mapSdkStreamEventToAgentEvents } from './harness/agentEventAdapter';
+import { globalTraceStore } from './harness/traceStore';
 import { decryptField } from '../persistence/secureFieldAdapter';
 
 export interface DefaultTargetSessionHint {
