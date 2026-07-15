@@ -146,7 +146,16 @@ export function buildVaultHostFromDraft(
     ? rawLabel.trim()
     : hostname;
   const username = typeof draft.username === 'string' ? draft.username.trim() : '';
-  const password = typeof draft.password === 'string' && draft.password ? draft.password : undefined;
+  const savePasswordInput = firstProvided(draft as Record<string, unknown>, ['savePassword']);
+  const savePassword = savePasswordInput.provided
+    ? parseBoolean(savePasswordInput.value)
+    : undefined;
+  if (savePasswordInput.provided && savePassword === undefined) {
+    return { ok: false, error: 'savePassword must be true or false.' };
+  }
+  const password = savePassword !== false && typeof draft.password === 'string' && draft.password
+    ? draft.password
+    : undefined;
   const keyPath = parseKeyPath(draft);
   const tags = parseTags(draft.tags);
   if (!tags.ok) return tags;
@@ -162,6 +171,7 @@ export function buildVaultHostFromDraft(
       port,
       username,
       password,
+      ...(savePassword !== undefined ? { savePassword } : {}),
       group: normalizeGroupPath(draft.group),
       tags: tags.tags,
       os: 'linux',
@@ -246,6 +256,9 @@ export function applyVaultHostUpdate(
     }
     updated.protocol = nextProtocol;
   }
+
+  const effectiveBeforeSavePassword = options.resolveEffectiveHost?.(updated) ?? updated;
+
   if (savePassword.provided) {
     const nextSavePassword = parseBoolean(savePassword.value);
     if (nextSavePassword === undefined) {
@@ -256,14 +269,30 @@ export function applyVaultHostUpdate(
   }
 
   const effectiveCurrent = options.resolveEffectiveHost?.(updated) ?? updated;
+  const selectedIdentityId = effectiveCurrent.identityId ?? effectiveBeforeSavePassword.identityId;
+  const selectedIdentity = selectedIdentityId
+    ? options.identities?.find((identity) => identity.id === selectedIdentityId)
+    : undefined;
 
   if (username.provided) {
     if (typeof username.value !== 'string') {
       return { ok: false, error: 'username must be a string.' };
     }
     updated.username = username.value.trim();
-    if (effectiveCurrent.identityId) {
+    if (selectedIdentityId) {
       updated.identityId = '';
+    }
+  }
+  if (savePassword.provided && updated.savePassword === false && !username.provided && selectedIdentity) {
+    if (selectedIdentity.authMethod === 'password') {
+      updated.identityId = '';
+      updated.username = selectedIdentity.username;
+      updated.authMethod = 'password';
+      updated.authPolicyVersion = 1;
+    } else {
+      updated.identityId = selectedIdentity.id;
+      updated.authMethod = selectedIdentity.authMethod;
+      updated.authPolicyVersion = 1;
     }
   }
   if (password.provided) {
@@ -284,16 +313,16 @@ export function applyVaultHostUpdate(
       && typeof keyPath.value === 'string'
       && !keyPath.value.trim();
     if (password.value && keyPathIsEmpty) {
+      if (selectedIdentity && !username.provided) {
+        updated.username = selectedIdentity.username;
+      }
       updated.authMethod = 'password';
       updated.authPolicyVersion = 1;
       updated.identityId = '';
       updated.identityFileId = undefined;
       updated.identityFilePaths = undefined;
       updated.useSshAgent = false;
-    } else if (effectiveCurrent.identityId) {
-      const selectedIdentity = options.identities?.find(
-        (identity) => identity.id === effectiveCurrent.identityId,
-      );
+    } else if (selectedIdentityId) {
       if (selectedIdentity?.authMethod === 'password') {
         updated.identityId = '';
         updated.username = username.provided
@@ -301,7 +330,7 @@ export function applyVaultHostUpdate(
           : selectedIdentity.username;
         updated.authMethod = 'password';
         updated.authPolicyVersion = 1;
-      } else if (selectedIdentity) {
+      } else if (selectedIdentity && !username.provided) {
         updated.identityId = selectedIdentity.id;
         updated.authMethod = selectedIdentity.authMethod;
         updated.authPolicyVersion = 1;
@@ -353,7 +382,9 @@ export function applyVaultHostUpdate(
       .sort((a, b) => b.groupName.length - a.groupName.length)[0];
     const canBeManaged = !updated.protocol || updated.protocol === 'ssh';
     if (targetManagedSource && canBeManaged) {
-      updated.label = updated.label.replace(/\s/g, '');
+      if (label.provided || current.managedSourceId !== targetManagedSource.id) {
+        updated.label = updated.label.replace(/\s/g, '');
+      }
       updated.managedSourceId = targetManagedSource.id;
     } else if (options.managedSources.length > 0 || !canBeManaged) {
       updated.managedSourceId = undefined;

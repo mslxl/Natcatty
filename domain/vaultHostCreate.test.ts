@@ -46,6 +46,31 @@ test('buildVaultHostFromDraft accepts host aliases and a referenced key path', (
   assert.equal(built.host.password, undefined);
 });
 
+test('buildVaultHostFromDraft does not retain a password when saving is disabled', () => {
+  const built = buildVaultHostFromDraft({
+    hostname: '10.0.0.20',
+    username: 'deploy',
+    password: 'do-not-save',
+    savePassword: 'false',
+  });
+
+  assert.equal(built.ok, true);
+  if (!built.ok) return;
+  assert.equal(built.host.password, undefined);
+  assert.equal(built.host.savePassword, false);
+});
+
+test('buildVaultHostFromDraft rejects an invalid password-saving option', () => {
+  const built = buildVaultHostFromDraft({
+    hostname: '10.0.0.20',
+    savePassword: 'sometimes',
+  });
+
+  assert.equal(built.ok, false);
+  if (built.ok) return;
+  assert.match(built.error, /true or false/i);
+});
+
 test('parseVaultHostDraftsInput accepts JSON array strings', () => {
   const parsed = parseVaultHostDraftsInput(JSON.stringify([
     { hostname: '10.0.0.1', username: 'root' },
@@ -279,6 +304,46 @@ test('applyVaultHostUpdate switches to password auth when clearing a key path', 
   assert.deepEqual(result.updatedHost.identityFilePaths, []);
 });
 
+test('applyVaultHostUpdate keeps an inherited identity username when switching to password auth', () => {
+  const existing: Host = {
+    id: 'host-1',
+    label: 'host',
+    hostname: '10.0.0.1',
+    username: '',
+    group: 'prod',
+    tags: [],
+    os: 'linux',
+  };
+  const identity: Identity = {
+    id: 'identity-1',
+    label: 'shared key',
+    username: 'deploy',
+    authMethod: 'key',
+    keyId: 'key-1',
+    created: 1,
+  };
+  const resolveEffectiveHost = (host: Host): Host => applyGroupDefaults(host, {
+    identityId: identity.id,
+    username: identity.username,
+    authMethod: identity.authMethod,
+    identityFileId: identity.keyId,
+  });
+
+  const result = applyVaultHostUpdate(
+    [existing],
+    [],
+    existing.id,
+    { password: 'new-secret', savePassword: true, keyPath: '' },
+    { identities: [identity], resolveEffectiveHost },
+  );
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.updatedHost.username, 'deploy');
+  assert.equal(result.updatedHost.identityId, '');
+  assert.equal(result.updatedHost.authMethod, 'password');
+});
+
 test('applyVaultHostUpdate preserves key login when only the password changes', () => {
   const existing: Host = {
     id: 'host-1',
@@ -357,14 +422,34 @@ test('applyVaultHostUpdate preserves an inherited key identity when the password
     { password: '' },
     { identities: [identity], resolveEffectiveHost },
   );
+  const disabled = applyVaultHostUpdate(
+    [existing],
+    [],
+    existing.id,
+    { savePassword: 'false' },
+    { identities: [identity], resolveEffectiveHost },
+  );
+  const changedUsername = applyVaultHostUpdate(
+    [existing],
+    [],
+    existing.id,
+    { username: 'ops', password: 'fallback' },
+    { identities: [identity], resolveEffectiveHost },
+  );
 
   assert.equal(updated.ok, true);
   assert.equal(cleared.ok, true);
-  if (!updated.ok || !cleared.ok) return;
+  assert.equal(disabled.ok, true);
+  assert.equal(changedUsername.ok, true);
+  if (!updated.ok || !cleared.ok || !disabled.ok || !changedUsername.ok) return;
   assert.equal(updated.updatedHost.identityId, identity.id);
   assert.equal(resolveEffectiveHost(updated.updatedHost).authMethod, 'key');
   assert.equal(cleared.updatedHost.identityId, identity.id);
   assert.equal(resolveEffectiveHost(cleared.updatedHost).authMethod, 'key');
+  assert.equal(disabled.updatedHost.identityId, identity.id);
+  assert.equal(resolveEffectiveHost(disabled.updatedHost).authMethod, 'key');
+  assert.equal(changedUsername.updatedHost.username, 'ops');
+  assert.equal(changedUsername.updatedHost.identityId, '');
 });
 
 test('applyVaultHostUpdate detaches a password identity so the new password takes effect', () => {
@@ -426,6 +511,42 @@ test('applyVaultHostUpdate detaches a password identity when clearing the passwo
     [],
     existing.id,
     { password: '' },
+    { identities: [identity] },
+  );
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.updatedHost.password, undefined);
+  assert.equal(result.updatedHost.savePassword, false);
+  assert.equal(result.updatedHost.username, 'deploy');
+  assert.equal(result.updatedHost.identityId, '');
+  assert.equal(result.updatedHost.authMethod, 'password');
+});
+
+test('applyVaultHostUpdate detaches a password identity when disabling saved passwords', () => {
+  const existing: Host = {
+    id: 'host-1',
+    label: 'host',
+    hostname: '10.0.0.1',
+    username: 'root',
+    tags: [],
+    os: 'linux',
+    identityId: 'identity-1',
+  };
+  const identity: Identity = {
+    id: 'identity-1',
+    label: 'shared password',
+    username: 'deploy',
+    authMethod: 'password',
+    password: 'old-secret',
+    created: 1,
+  };
+
+  const result = applyVaultHostUpdate(
+    [existing],
+    [],
+    existing.id,
+    { savePassword: 'false' },
     { identities: [identity] },
   );
 
@@ -656,15 +777,33 @@ test('applyVaultHostUpdate keeps managed-source ownership aligned with group and
     { protocol: 'telnet' },
     options,
   );
+  const changedNotes = applyVaultHostUpdate(
+    [managedHost],
+    [],
+    managedHost.id,
+    { notes: 'keep the display name' },
+    options,
+  );
+  const renamed = applyVaultHostUpdate(
+    [managedHost],
+    [],
+    managedHost.id,
+    { label: 'new managed name' },
+    options,
+  );
 
   assert.equal(movedOut.ok, true);
   assert.equal(movedIn.ok, true);
   assert.equal(changedProtocol.ok, true);
-  if (!movedOut.ok || !movedIn.ok || !changedProtocol.ok) return;
+  assert.equal(changedNotes.ok, true);
+  assert.equal(renamed.ok, true);
+  if (!movedOut.ok || !movedIn.ok || !changedProtocol.ok || !changedNotes.ok || !renamed.ok) return;
   assert.equal(movedOut.updatedHost.managedSourceId, undefined);
   assert.equal(movedIn.updatedHost.managedSourceId, managedSource.id);
   assert.equal(movedIn.updatedHost.label, 'regularhost');
   assert.equal(changedProtocol.updatedHost.managedSourceId, undefined);
+  assert.equal(changedNotes.updatedHost.label, 'managed host');
+  assert.equal(renamed.updatedHost.label, 'newmanagedname');
 });
 
 test('applyVaultHostDelete removes only the requested host', () => {
