@@ -99,19 +99,27 @@ test("createMoshConnectSniffer.flush recovers ConPTY CSI after an unterminated C
   assert.deepEqual(r2.parsed, { port: 60005, key: "ABCDEFGHIJKLMNOPQRSTUV==" });
 });
 
-test("buildSshHandshakeCommand omits -t and uses default port", () => {
+test("buildSshHandshakeCommand mirrors stock mosh SSH PTY startup", () => {
   const got = buildSshHandshakeCommand({ host: "example.com", username: "alice" });
   assert.equal(got.command, "ssh");
-  assert.deepEqual(got.args, [
-    "alice@example.com",
-    "--",
-    "LC_ALL='en_US.UTF-8' mosh-server new -s",
-  ]);
+  assert.deepEqual(got.args.slice(0, 4), ["-n", "-tt", "alice@example.com", "--"]);
+  assert.match(got.args.at(-1), /^sh -c /);
+  assert.doesNotMatch(got.args.at(-1), /env LC_ALL=/);
+  assert.match(got.args.at(-1), /exec mosh-server new -s -l .*LANG=en_US\.UTF-8/);
+});
+
+test("buildSshHandshakeCommand reports the exact server address selected by SSH", () => {
+  const got = buildSshHandshakeCommand({ host: "multi-address.example", username: "alice" });
+  const remoteCommand = got.args.at(-1);
+
+  assert.match(remoteCommand, /SSH_CONNECTION/);
+  assert.match(remoteCommand, /MOSH IP/);
+  assert.match(remoteCommand, /\$3/);
 });
 
 test("buildSshHandshakeCommand passes a non-default port via -p", () => {
   const got = buildSshHandshakeCommand({ host: "example.com", port: 2222 });
-  assert.deepEqual(got.args.slice(0, 2), ["-p", "2222"]);
+  assert.deepEqual(got.args.slice(0, 4), ["-n", "-tt", "-p", "2222"]);
 });
 
 test("buildSshHandshakeCommand interpolates lang and moshServer overrides", () => {
@@ -120,7 +128,8 @@ test("buildSshHandshakeCommand interpolates lang and moshServer overrides", () =
     lang: "zh_CN.UTF-8",
     moshServer: "/opt/mosh/bin/mosh-server new -s -c 256",
   });
-  assert.equal(got.args.at(-1), "LC_ALL='zh_CN.UTF-8' /opt/mosh/bin/mosh-server new -s -c 256");
+  assert.match(got.args.at(-1), /zh_CN\.UTF-8/);
+  assert.match(got.args.at(-1), /\/opt\/mosh\/bin\/mosh-server new -s -c 256/);
 });
 
 test("buildSshHandshakeCommand shell-quotes lang values", () => {
@@ -128,7 +137,29 @@ test("buildSshHandshakeCommand shell-quotes lang values", () => {
     host: "h",
     lang: "C; touch /tmp/netcatty-owned",
   });
-  assert.equal(got.args.at(-1), "LC_ALL='C; touch /tmp/netcatty-owned' mosh-server new -s");
+  assert.match(
+    got.args.at(-1),
+    /-l '\\''LANG=C; touch \/tmp\/netcatty-owned'\\''/,
+  );
+});
+
+test("buildSshHandshakeCommand preserves the stock locale variable order", () => {
+  const got = buildSshHandshakeCommand({
+    host: "example.com",
+    lang: "en_US.UTF-8",
+    locales: {
+      LC_ALL: "zh_CN.UTF-8",
+      LC_CTYPE: "ja_JP.UTF-8",
+      LANG: "C",
+      PATH: "/tmp/ignored",
+    },
+  });
+
+  const remote = got.args.at(-1);
+  assert.ok(remote.indexOf("LANG=C") < remote.indexOf("LC_CTYPE=ja_JP.UTF-8"));
+  assert.ok(remote.indexOf("LC_CTYPE=ja_JP.UTF-8") < remote.indexOf("LC_ALL=zh_CN.UTF-8"));
+  assert.equal((remote.match(/ -l /g) || []).length, 3);
+  assert.doesNotMatch(remote, /PATH=/);
 });
 
 test("buildMoshServerCommand treats custom server input as a path", () => {
@@ -246,8 +277,14 @@ test("createMoshConnectSniffer trims its ring buffer so old data doesn't accumul
 
 test("buildMoshClientEnv injects MOSH_KEY without mutating the input env", () => {
   const base = { LANG: "C", PATH: "/x" };
-  const env = buildMoshClientEnv({ baseEnv: base, key: "deadbeef", lang: "C" });
+  const env = buildMoshClientEnv({
+    baseEnv: base,
+    key: "deadbeef",
+    lang: "C",
+    fallbackHost: "public.example",
+  });
   assert.equal(env.MOSH_KEY, "deadbeef");
+  assert.equal(env.MOSH_FALLBACK_HOST, "public.example");
   assert.equal(env.PATH, "/x");
   assert.equal(base.MOSH_KEY, undefined, "input env should not be mutated");
 });
@@ -255,6 +292,14 @@ test("buildMoshClientEnv injects MOSH_KEY without mutating the input env", () =>
 test("buildMoshClientEnv defaults TERM when missing", () => {
   const env = buildMoshClientEnv({ baseEnv: {}, key: "k", lang: "C" });
   assert.equal(env.TERM, "xterm-256color");
+});
+
+test("buildMoshClientEnv drops a stale fallback host when this handshake has none", () => {
+  const base = { MOSH_FALLBACK_HOST: "stale.example" };
+  const env = buildMoshClientEnv({ baseEnv: base, key: "k", lang: "C" });
+
+  assert.equal(env.MOSH_FALLBACK_HOST, undefined);
+  assert.equal(base.MOSH_FALLBACK_HOST, "stale.example", "input env should not be mutated");
 });
 
 test("resolveSshExecutable prefers PATH lookups", () => {

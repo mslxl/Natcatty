@@ -14,12 +14,13 @@ const fs = require("node:fs");
 const https = require("node:https");
 
 // MoshCatty pure-Rust releases only.
-// Minimum 0.1.6: prediction hardening (host-before-ack Confirm, Pending-continue,
-// geometry vs content redraw, kill_epoch/ESC/scroll fixes). 0.1.5 introduced Diff path.
+// Minimum 0.1.7: reconstruct numbered remote states before display, preventing
+// duplicate characters when parallel updates share a base on high-RTT links.
+// 0.1.6 added prediction hardening; 0.1.5 introduced the Diff path.
 // 0.1.4 ConPTY shortcut; 0.1.2+ Linux glibc floors match Netcatty.
 // Allow semver prerelease (-rc1) and build metadata (+meta); no path separators.
 const TAG_RE = /^moshcatty-[A-Za-z0-9._+-]+$/;
-const MIN_VERSION = { major: 0, minor: 1, patch: 6 };
+const MIN_VERSION = { major: 0, minor: 1, patch: 7 };
 const MIN_TAG = `moshcatty-${MIN_VERSION.major}.${MIN_VERSION.minor}.${MIN_VERSION.patch}`;
 
 function log(msg) {
@@ -72,8 +73,8 @@ function validateReleaseTag(tag) {
   if (!isAtLeastMinRelease(value)) {
     throw new Error(
       `mosh binary release ${value} is below minimum ${MIN_TAG} `
-        + "(0.1.6 includes prediction hardening after 0.1.5 Diff path; "
-        + "prereleases of the floor e.g. 0.1.6-rc1 are not accepted)",
+        + "(0.1.7 fixes duplicate display on high-latency parallel state updates; "
+        + "prereleases of the floor e.g. 0.1.7-rc1 are not accepted)",
     );
   }
   return value;

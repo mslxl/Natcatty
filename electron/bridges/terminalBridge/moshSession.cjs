@@ -388,18 +388,22 @@ function createMoshSessionApi(ctx) {
         port: options.port,
         username: options.username,
         lang,
+        locales: optionsEnv,
         moshServer: moshHandshake.buildMoshServerCommand(options.moshServerPath),
         sshArgs: moshAuth.sshArgs,
       });
     
       const { buildTerminalProcessEnv } = require("../httpNetworkProxyBridge.cjs");
       const sshEnv = { ...buildTerminalProcessEnv(process.env), ...optionsEnv, TERM: "xterm-256color" };
-      // macOS Terminal/iTerm export LC_CTYPE=UTF-8 (a bare value, not a real
-      // locale name). System ssh_config has `SendEnv LC_*`, so without scrubbing
-      // these the remote shell tries to setlocale("UTF-8") and prints a warning
-      // on every connection. mosh-server sets the locale it needs separately.
+      // Do not let ssh_config SendEnv force the local locale onto the remote
+      // process. The handshake passes the configured locale variables through
+      // mosh-server's stock `-l` fallback mechanism instead, so a minimal host
+      // can keep its working native C.UTF-8 locale when a requested locale is
+      // not installed.
       for (const key of Object.keys(sshEnv)) {
-        if (key.startsWith("LC_")) delete sshEnv[key];
+        if (key === "LANG" || key === "LANGUAGE" || key.startsWith("LC_")) {
+          delete sshEnv[key];
+        }
       }
       applyMoshSshAgentEnvironment(sshEnv, options);
     
@@ -577,10 +581,10 @@ function createMoshSessionApi(ctx) {
         // "[mosh-server detached]" alone is not mistaken for a successful
         // session that immediately closed (Netcatty #2121 residual connect).
         const handshakeHint =
-          "\r\n[Mosh handshake failed: did not receive a valid MOSH CONNECT "
-          + "line from mosh-server. Confirm mosh-server is installed on the "
-          + "remote host, the SSH login succeeded, and UDP ports for mosh "
-          + "are reachable from this machine.]\r\n";
+          "\r\n[Mosh handshake failed during SSH startup: did not receive a valid "
+          + "MOSH CONNECT line from mosh-server. The UDP client was not started. "
+          + "Confirm the SSH login succeeded and mosh-server started correctly "
+          + "on the remote host.]\r\n";
         try {
           bufferData(handshakeHint);
           sessionLogStreamManager.appendData(sessionId, handshakeHint);
@@ -595,7 +599,7 @@ function createMoshSessionApi(ctx) {
             exitCode,
             signal,
             reason: "error",
-            error: "Mosh handshake failed: no MOSH CONNECT from mosh-server",
+            error: "Mosh SSH startup failed: no MOSH CONNECT from mosh-server (UDP client not started)",
           });
           closeTerminalOutputSession?.(sessionId);
           sessions.delete(sessionId);
@@ -629,6 +633,9 @@ function createMoshSessionApi(ctx) {
         baseEnv: { ...buildTerminalProcessEnv(process.env), ...optionsEnv, TERM: "xterm-256color" },
         key: parsed.key,
         lang,
+        fallbackHost: parsed.host && parsed.host !== options.hostname
+          ? options.hostname
+          : undefined,
       });
       // Netcatty owns the terminal buffer. Keeping MoshCatty on the primary
       // screen preserves scrollback and lets renderer features such as keyword
