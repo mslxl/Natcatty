@@ -1124,48 +1124,47 @@ function createStartSessionApi(ctx) {
 
                 log("Partial success - server requires additional auth", { methodsLeft, succeeded: Array.from(succeededMethodIds), attemptedMethodIds: Array.from(attemptedMethodIds) });
 
-                // Find a method from our list that matches what the server wants
-                // Skip methods that have already been attempted
-                for (const serverMethod of methodsLeft) {
-                  // Map server method names to our method types
-                  const matchingMethod = authMethods.find(m => {
-                    // Skip already attempted methods
-                    if (attemptedMethodIds.has(m.id)) return false;
-                    if (serverMethod === "keyboard-interactive" && m.type === "keyboard-interactive") return true;
-                    if (serverMethod === "password" && m.type === "password") return true;
-                    if (serverMethod === "publickey" && (m.type === "publickey" || m.type === "agent")) return true;
-                    return false;
-                  });
+                // Find a locally preferred method that the server allows for
+                // this next factor. Preserve Netcatty's KI-before-password
+                // ordering instead of letting the server's methodsLeft order
+                // make password win when both are advertised (#2150).
+                for (const matchingMethod of authMethods) {
+                  if (attemptedMethodIds.has(matchingMethod.id)) continue;
+                  const serverMethod =
+                    matchingMethod.type === "agent" || matchingMethod.type === "publickey"
+                      ? "publickey"
+                      : matchingMethod.type;
+                  if (!methodsLeft.includes(serverMethod) && !methodsLeft.includes(matchingMethod.type)) {
+                    continue;
+                  }
 
-                  if (matchingMethod) {
-                    log("Found matching method for partial success", { serverMethod, matchingMethod: matchingMethod.id });
-                    // Mark as attempted BEFORE returning to prevent re-use on failure
-                    attemptedMethodIds.add(matchingMethod.id);
-                    lastTriedMethod = matchingMethod.id;
+                  log("Found matching method for partial success", { serverMethod, matchingMethod: matchingMethod.id });
+                  // Mark as attempted BEFORE returning to prevent re-use on failure
+                  attemptedMethodIds.add(matchingMethod.id);
+                  lastTriedMethod = matchingMethod.id;
 
-                    if (matchingMethod.type === "keyboard-interactive") {
-                      log("Trying keyboard-interactive auth (partial success)", { id: matchingMethod.id });
-                      return callback("keyboard-interactive");
-                    } else if (matchingMethod.type === "password") {
-                      log("Trying password auth (partial success)", { id: matchingMethod.id });
-                      return callback({
-                        type: "password",
-                        username: connectOpts.username,
-                        password: connectOpts.password,
-                      });
-                    } else if (matchingMethod.type === "agent") {
-                      const agentType = typeof connectOpts.agent === "string" ? "path" : "NetcattyAgent";
-                      log("Trying agent auth (partial success)", { id: matchingMethod.id, agentType });
-                      return callback("agent");
-                    } else if (matchingMethod.type === "publickey") {
-                      log("Trying publickey auth (partial success)", { id: matchingMethod.id });
-                      return callback({
-                        type: "publickey",
-                        username: connectOpts.username,
-                        key: matchingMethod.key,
-                        passphrase: matchingMethod.passphrase,
-                      });
-                    }
+                  if (matchingMethod.type === "keyboard-interactive") {
+                    log("Trying keyboard-interactive auth (partial success)", { id: matchingMethod.id });
+                    return callback("keyboard-interactive");
+                  } else if (matchingMethod.type === "password") {
+                    log("Trying password auth (partial success)", { id: matchingMethod.id });
+                    return callback({
+                      type: "password",
+                      username: connectOpts.username,
+                      password: connectOpts.password,
+                    });
+                  } else if (matchingMethod.type === "agent") {
+                    const agentType = typeof connectOpts.agent === "string" ? "path" : "NetcattyAgent";
+                    log("Trying agent auth (partial success)", { id: matchingMethod.id, agentType });
+                    return callback("agent");
+                  } else if (matchingMethod.type === "publickey") {
+                    log("Trying publickey auth (partial success)", { id: matchingMethod.id });
+                    return callback({
+                      type: "publickey",
+                      username: connectOpts.username,
+                      key: matchingMethod.key,
+                      passphrase: matchingMethod.passphrase,
+                    });
                   }
                 }
                 // No matching method found for partial success
