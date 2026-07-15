@@ -134,6 +134,28 @@ test("startMoshSession handshake path returns the same shape as the legacy path"
   assert.deepEqual(result, { sessionId: "mosh-test-session" });
 });
 
+test("startMoshSession offers all locale settings to mosh-server without exporting them through SSH", async (t) => {
+  const h = makeHarness(t);
+  h.options.env = {
+    LANG: "C",
+    LANGUAGE: "zh_CN:zh",
+    LC_CTYPE: "ja_JP.UTF-8",
+    LC_ALL: "zh_CN.UTF-8",
+  };
+
+  await h.bridge.startMoshSession(h.event, h.options, { moshClientLookup: h.lookupOpts });
+
+  assert.equal(h.spawns[0].opts.env.LANG, undefined);
+  assert.equal(h.spawns[0].opts.env.LANGUAGE, undefined);
+  assert.equal(h.spawns[0].opts.env.LC_CTYPE, undefined);
+  assert.equal(h.spawns[0].opts.env.LC_ALL, undefined);
+  const remote = h.spawns[0].args.at(-1);
+  assert.ok(remote.indexOf("LANG=C") < remote.indexOf("LANGUAGE=zh_CN:zh"));
+  assert.ok(remote.indexOf("LANGUAGE=zh_CN:zh") < remote.indexOf("LC_CTYPE=ja_JP.UTF-8"));
+  assert.ok(remote.indexOf("LC_CTYPE=ja_JP.UTF-8") < remote.indexOf("LC_ALL=zh_CN.UTF-8"));
+  assert.equal((remote.match(/ -l /g) || []).length, 4);
+});
+
 test("startMoshSession keeps the original hostname as a UDP fallback", async (t) => {
   const h = makeHarness(t);
   await h.bridge.startMoshSession(h.event, h.options, { moshClientLookup: h.lookupOpts });

@@ -368,18 +368,22 @@ function createMoshSessionApi(ctx) {
         port: options.port,
         username: options.username,
         lang,
+        locales: optionsEnv,
         moshServer: moshHandshake.buildMoshServerCommand(options.moshServerPath),
         sshArgs: moshAuth.sshArgs,
       });
     
       const { buildTerminalProcessEnv } = require("../httpNetworkProxyBridge.cjs");
       const sshEnv = { ...buildTerminalProcessEnv(process.env), ...optionsEnv, TERM: "xterm-256color" };
-      // macOS Terminal/iTerm export LC_CTYPE=UTF-8 (a bare value, not a real
-      // locale name). System ssh_config has `SendEnv LC_*`, so without scrubbing
-      // these the remote shell tries to setlocale("UTF-8") and prints a warning
-      // on every connection. mosh-server sets the locale it needs separately.
+      // Do not let ssh_config SendEnv force the local locale onto the remote
+      // process. The handshake passes the configured locale variables through
+      // mosh-server's stock `-l` fallback mechanism instead, so a minimal host
+      // can keep its working native C.UTF-8 locale when a requested locale is
+      // not installed.
       for (const key of Object.keys(sshEnv)) {
-        if (key.startsWith("LC_")) delete sshEnv[key];
+        if (key === "LANG" || key === "LANGUAGE" || key.startsWith("LC_")) {
+          delete sshEnv[key];
+        }
       }
       applyMoshSshAgentEnvironment(sshEnv, options);
     

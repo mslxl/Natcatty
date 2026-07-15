@@ -104,7 +104,8 @@ test("buildSshHandshakeCommand mirrors stock mosh SSH PTY startup", () => {
   assert.equal(got.command, "ssh");
   assert.deepEqual(got.args.slice(0, 4), ["-n", "-tt", "alice@example.com", "--"]);
   assert.match(got.args.at(-1), /^sh -c /);
-  assert.match(got.args.at(-1), /exec env LC_ALL=.*en_US\.UTF-8.*mosh-server new -s/);
+  assert.doesNotMatch(got.args.at(-1), /env LC_ALL=/);
+  assert.match(got.args.at(-1), /exec mosh-server new -s -l .*LANG=en_US\.UTF-8/);
 });
 
 test("buildSshHandshakeCommand reports the exact server address selected by SSH", () => {
@@ -138,8 +139,27 @@ test("buildSshHandshakeCommand shell-quotes lang values", () => {
   });
   assert.match(
     got.args.at(-1),
-    /LC_ALL='\\''C; touch \/tmp\/netcatty-owned'\\'' mosh-server new -s/,
+    /-l '\\''LANG=C; touch \/tmp\/netcatty-owned'\\''/,
   );
+});
+
+test("buildSshHandshakeCommand preserves the stock locale variable order", () => {
+  const got = buildSshHandshakeCommand({
+    host: "example.com",
+    lang: "en_US.UTF-8",
+    locales: {
+      LC_ALL: "zh_CN.UTF-8",
+      LC_CTYPE: "ja_JP.UTF-8",
+      LANG: "C",
+      PATH: "/tmp/ignored",
+    },
+  });
+
+  const remote = got.args.at(-1);
+  assert.ok(remote.indexOf("LANG=C") < remote.indexOf("LC_CTYPE=ja_JP.UTF-8"));
+  assert.ok(remote.indexOf("LC_CTYPE=ja_JP.UTF-8") < remote.indexOf("LC_ALL=zh_CN.UTF-8"));
+  assert.equal((remote.match(/ -l /g) || []).length, 3);
+  assert.doesNotMatch(remote, /PATH=/);
 });
 
 test("buildMoshServerCommand treats custom server input as a path", () => {

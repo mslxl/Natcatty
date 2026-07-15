@@ -39,6 +39,23 @@ const ANSI_ESCAPE_RE = /\u001b(?:\[[0-9;?]*[ -/]*[@-~]|\][^\u0007\u001b]*(?:\u00
 const MOSH_CONNECT_RE = /MOSH CONNECT[ \t]+(\d{1,5})[ \t]+([A-Za-z0-9+/]+={0,2})(?![A-Za-z0-9+/=])/;
 const MOSH_IP_RE = /MOSH IP[ \t]+(\S+)/;
 const PROTOCOL_MARKERS = ["MOSH CONNECT", "MOSH IP"];
+const MOSH_LOCALE_NAMES = [
+  "LANG",
+  "LANGUAGE",
+  "LC_CTYPE",
+  "LC_NUMERIC",
+  "LC_TIME",
+  "LC_COLLATE",
+  "LC_MONETARY",
+  "LC_MESSAGES",
+  "LC_PAPER",
+  "LC_NAME",
+  "LC_ADDRESS",
+  "LC_TELEPHONE",
+  "LC_MEASUREMENT",
+  "LC_IDENTIFICATION",
+  "LC_ALL",
+];
 
 function shellQuote(value) {
   const text = String(value);
@@ -197,7 +214,8 @@ function parseMoshConnect(buffer) {
  * @param {string} opts.host        — hostname or IP
  * @param {number} [opts.port]      — ssh port (omit for default 22)
  * @param {string} [opts.username]  — ssh user (defaults to ssh's choice)
- * @param {string} [opts.lang]      — LC_ALL override for mosh-server
+ * @param {string} [opts.lang]      — UTF-8 locale offered to mosh-server
+ * @param {object} [opts.locales]    — client locale variables offered in stock order
  * @param {string} [opts.moshServer]— remote command (default "mosh-server new")
  * @param {string[]} [opts.sshArgs] — extra args passed to ssh (e.g. -i path)
  * @returns {{ command: string, args: string[] }}
@@ -222,9 +240,23 @@ function buildSshHandshakeCommand(opts) {
   // sh-compatible. The sniffer validates and hides the MOSH IP marker.
   const lang = opts.lang || "en_US.UTF-8";
   const moshServer = opts.moshServer || "mosh-server new -s";
+  const localeAssignments = MOSH_LOCALE_NAMES
+    .filter((name) => Object.prototype.hasOwnProperty.call(opts.locales || {}, name))
+    .map((name) => `${name}=${String(opts.locales[name])}`);
+  if (localeAssignments.length === 0) {
+    localeAssignments.push(`LANG=${lang}`);
+  }
+  const localeArgs = localeAssignments
+    .map((assignment) => ` -l ${shellQuote(assignment)}`)
+    .join("");
   const remoteScript = "if [ -n \"$SSH_CONNECTION\" ]; then "
     + "set -- $SSH_CONNECTION; printf '\\nMOSH IP %s\\n' \"$3\"; fi; "
-    + `exec env LC_ALL=${shellQuote(lang)} ${moshServer}`;
+    // Match the stock wrapper's `mosh-server -l NAME=value` behavior. The
+    // server first keeps a working UTF-8 locale from the remote host and only
+    // applies the client locales if it needs a fallback. Forcing LC_ALL here
+    // makes startup fail on minimal hosts that do not install the requested
+    // locale even when their native C.UTF-8 locale is perfectly usable.
+    + `exec ${moshServer}${localeArgs}`;
   args.push(`sh -c ${shellQuote(remoteScript)}`);
   return { command: "ssh", args };
 }
