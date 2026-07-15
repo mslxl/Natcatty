@@ -882,10 +882,50 @@ function getScpBackendForClient(client) {
   if (!sshClient || typeof sshClient.exec !== "function") {
     throw new Error("SCP mode requires an SSH session with exec support");
   }
-  const adapters = createSshExecAdapters(sshClient);
+  // Track live exec streams so closeSftp can abort in-flight ops without
+  // tearing down a shared terminal SSH socket.
+  if (!client.__netcattyScpActiveStreams) {
+    client.__netcattyScpActiveStreams = new Set();
+  }
+  const base = createSshExecAdapters(sshClient);
+  const track = (stream) => {
+    if (!stream) return stream;
+    client.__netcattyScpActiveStreams.add(stream);
+    const untrack = () => {
+      try { client.__netcattyScpActiveStreams.delete(stream); } catch { /* ignore */ }
+    };
+    stream.on?.("close", untrack);
+    stream.on?.("end", untrack);
+    stream.on?.("error", untrack);
+    return stream;
+  };
+  const adapters = {
+    exec: async (command, options = {}) => base.exec(command, options),
+    execStream: async (command, options = {}) => {
+      const stream = await base.execStream(command, options);
+      return track(stream);
+    },
+  };
+  // Also track streams opened via plain exec (list/stat) by wrapping sshClient.exec
+  // is harder; for shell ops the AbortSignal path is preferred. Track via a helper
+  // that closeSftp can use for stream-based transfers.
   const backend = createScpBackend(adapters);
   client.__netcattyScpBackend = backend;
   return backend;
+}
+
+/**
+ * Abort all in-flight SCP exec streams for a client without ending the SSH socket.
+ * Used when closeSftp is called for session-backed handles (agent Stop/timeout).
+ */
+function abortScpClientStreams(client) {
+  const streams = client?.__netcattyScpActiveStreams;
+  if (!streams || typeof streams.forEach !== "function") return;
+  for (const stream of [...streams]) {
+    try { stream.close?.(); } catch { /* ignore */ }
+    try { stream.destroy?.(); } catch { /* ignore */ }
+    try { streams.delete(stream); } catch { /* ignore */ }
+  }
 }
 
 module.exports = {
@@ -893,6 +933,7 @@ module.exports = {
   createSshExecAdapters,
   createTransferFromAbortSignal,
   getScpBackendForClient,
+  abortScpClientStreams,
   isScpModeClient,
   shellQuote,
   modeToPermissionsString,

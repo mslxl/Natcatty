@@ -4,6 +4,7 @@ function createFileOpsApi(ctx) {
     const {
       getScpBackendForClient,
       isScpModeClient,
+      abortScpClientStreams,
     } = require("./scpBackend.cjs");
 
     async function listSftp(event, payload) {
@@ -612,6 +613,9 @@ function createFileOpsApi(ctx) {
     
       try {
         if (isScpModeClient(client)) {
+          // Abort in-flight scp/exec channels first so agent Stop/timeout via
+          // closeSftp actually stops transfers without needing a serialized AbortSignal.
+          try { abortScpClientStreams(client); } catch { /* ignore */ }
           // Only tear down SSH sockets we own (fresh dials). Session-backed /
           // reused-terminal clients share the terminal SSH connection — ending
           // it here would disconnect the interactive shell.
