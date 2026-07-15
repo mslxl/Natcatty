@@ -85,7 +85,7 @@ const TOOL_INPUT_FIELDS = Object.freeze({
     hosts: {
       type: "string",
       description:
-        "JSON array of host objects you extracted from the user's text. Each object: hostname (required; host/ip aliases accepted), label (name alias accepted), port, username, password, keyPath (local private-key file path), group, tags (array or comma-separated string), notes (Host Details remarks — NOT Vault sidebar Notes), protocol (ssh|telnet|local).",
+        "JSON array of host objects you extracted from the user's text. Each object: hostname (required; host/ip aliases accepted), label (name alias accepted), port, username, password, keyPath or keypath (local private-key file path), group, tags (array or comma-separated string), notes (Host Details remarks — NOT Vault sidebar Notes), protocol (ssh|telnet|local).",
     },
     dryRun: {
       type: "string",
@@ -109,6 +109,7 @@ const TOOL_INPUT_FIELDS = Object.freeze({
     username: { type: "string", optional: true, description: "New login username." },
     password: { type: "string", optional: true, description: "New password. Empty string clears it." },
     keyPath: { type: "string", optional: true, description: "Local private-key file path. Empty string clears the referenced path." },
+    keypath: { type: "string", optional: true, description: "Alias for keyPath." },
     group: { type: "string", optional: true, description: "New group path. Empty string moves the host to the root." },
     tags: { type: "string", optional: true, description: "JSON array or comma-separated tag names. Empty string clears tags." },
     notes: { type: "string", optional: true, description: "Host Details remarks. Empty string clears notes." },

@@ -131,6 +131,102 @@ test('applyVaultHostUpdate can switch a host to a referenced key path', () => {
   assert.equal(result.updatedHost.identityId, '');
 });
 
+test('applyVaultHostUpdate parses JSON array tag strings', () => {
+  const existing: Host = {
+    id: 'host-1',
+    label: 'host',
+    hostname: '10.0.0.1',
+    username: 'root',
+    tags: [],
+    os: 'linux',
+  };
+
+  const result = applyVaultHostUpdate([existing], [], 'host-1', {
+    tags: '["prod", "api", "prod"]',
+  });
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.deepEqual(result.updatedHost.tags, ['prod', 'api']);
+});
+
+test('applyVaultHostUpdate rejects malformed JSON tag strings', () => {
+  const existing: Host = {
+    id: 'host-1',
+    label: 'host',
+    hostname: '10.0.0.1',
+    username: 'root',
+    tags: ['keep'],
+    os: 'linux',
+  };
+
+  const result = applyVaultHostUpdate([existing], [], 'host-1', {
+    tags: '["prod"',
+  });
+
+  assert.equal(result.ok, false);
+  if (result.ok) return;
+  assert.match(result.error, /valid JSON array/i);
+});
+
+test('applyVaultHostUpdate clears only the local key path when another identity is selected', () => {
+  const identityHost: Host = {
+    id: 'identity-host',
+    label: 'identity host',
+    hostname: 'identity.example.com',
+    username: 'root',
+    tags: [],
+    os: 'linux',
+    identityId: 'identity-1',
+    identityFilePaths: ['~/.ssh/old'],
+    authMethod: 'key',
+  };
+  const keychainHost: Host = {
+    id: 'keychain-host',
+    label: 'keychain host',
+    hostname: 'keychain.example.com',
+    username: 'root',
+    tags: [],
+    os: 'linux',
+    identityFileId: 'key-1',
+    identityFilePaths: ['~/.ssh/old'],
+    authMethod: 'key',
+  };
+
+  const identityResult = applyVaultHostUpdate([identityHost], [], identityHost.id, { keyPath: '' });
+  const keychainResult = applyVaultHostUpdate([keychainHost], [], keychainHost.id, { keyPath: '' });
+
+  assert.equal(identityResult.ok, true);
+  assert.equal(keychainResult.ok, true);
+  if (!identityResult.ok || !keychainResult.ok) return;
+  assert.equal(identityResult.updatedHost.identityId, 'identity-1');
+  assert.equal(identityResult.updatedHost.authMethod, 'key');
+  assert.equal(identityResult.updatedHost.identityFilePaths, undefined);
+  assert.equal(keychainResult.updatedHost.identityFileId, 'key-1');
+  assert.equal(keychainResult.updatedHost.authMethod, 'key');
+  assert.equal(keychainResult.updatedHost.identityFilePaths, undefined);
+});
+
+test('applyVaultHostUpdate rejects saved password changes when password saving is disabled', () => {
+  const existing: Host = {
+    id: 'host-1',
+    label: 'host',
+    hostname: '10.0.0.1',
+    username: 'root',
+    tags: [],
+    os: 'linux',
+    savePassword: false,
+  };
+
+  const result = applyVaultHostUpdate([existing], [], 'host-1', {
+    password: 'do-not-persist',
+  });
+
+  assert.equal(result.ok, false);
+  if (result.ok) return;
+  assert.match(result.error, /not to save passwords/i);
+});
+
 test('applyVaultHostDelete removes only the requested host', () => {
   const hosts: Host[] = [
     { id: 'host-1', label: 'one', hostname: 'one', username: 'root', tags: [], os: 'linux' },

@@ -360,6 +360,50 @@ describe('handleVaultAgentOp vault hosts', () => {
     assert.equal((result as { deletedHost?: { id?: string } }).deletedHost?.id, 'host-1');
   });
 
+  it('host.update and host.delete never return nested proxy passwords', async () => {
+    const host: Host = {
+      id: 'host-1',
+      label: 'proxied',
+      hostname: '10.0.0.1',
+      username: 'root',
+      tags: [],
+      os: 'linux',
+      proxyConfig: {
+        type: 'http',
+        host: 'proxy.example.com',
+        port: 8080,
+        username: 'proxy-user',
+        password: 'proxy-secret',
+      },
+    };
+    const updateDeps = createDeps({ hosts: [host] });
+    const deleteDeps = createDeps({ hosts: [host] });
+
+    const updateResult = await handleVaultAgentOp(
+      'host.update',
+      { hostId: host.id, notes: 'updated' },
+      updateDeps,
+    );
+    const deleteResult = await handleVaultAgentOp(
+      'host.delete',
+      { hostId: host.id },
+      deleteDeps,
+    );
+
+    assert.equal(updateResult.ok, true);
+    assert.equal(deleteResult.ok, true);
+    const updatedProxy = (updateResult as {
+      host?: { proxyConfig?: Record<string, unknown> };
+    }).host?.proxyConfig;
+    const deletedProxy = (deleteResult as {
+      deletedHost?: { proxyConfig?: Record<string, unknown> };
+    }).deletedHost?.proxyConfig;
+    assert.equal(updatedProxy?.host, 'proxy.example.com');
+    assert.equal(deletedProxy?.host, 'proxy.example.com');
+    assert.equal('password' in (updatedProxy ?? {}), false);
+    assert.equal('password' in (deletedProxy ?? {}), false);
+  });
+
   it('host.import dryRun previews parsed hosts without writing', async () => {
     const updatedHosts: Host[][] = [];
     const result = await handleVaultAgentOp(

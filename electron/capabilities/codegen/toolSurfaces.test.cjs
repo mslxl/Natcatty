@@ -56,6 +56,8 @@ test("listMcpTools includes vault host update and delete for external MCP client
   const remove = tools.find((tool) => tool.mcpTool === "vault_hosts_delete");
   assert.equal(update?.capabilityId, "vault.host.update");
   assert.equal(update?.publicRpcMethod, "public/vault/hosts/update");
+  assert.ok(update?.inputShape.keyPath);
+  assert.ok(update?.inputShape.keypath);
   assert.equal(remove?.capabilityId, "vault.host.delete");
   assert.equal(remove?.publicRpcMethod, "public/vault/hosts/delete");
 });

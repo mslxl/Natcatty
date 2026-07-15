@@ -58,6 +58,12 @@ export function sanitizeHostForAgent(host: Host): Record<string, unknown> {
   const sanitized: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(host)) {
     if (SENSITIVE_HOST_KEYS.has(key)) continue;
+    if (key === 'proxyConfig' && value && typeof value === 'object' && !Array.isArray(value)) {
+      const safeProxyConfig = { ...(value as Record<string, unknown>) };
+      delete safeProxyConfig.password;
+      sanitized[key] = safeProxyConfig;
+      continue;
+    }
     sanitized[key] = value;
   }
   return sanitized;

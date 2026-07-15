@@ -58,17 +58,37 @@ const parsePort = (raw: unknown): number | undefined => {
   return Number.isFinite(port) && port >= 1 && port <= 65535 ? port : undefined;
 };
 
-const parseTags = (raw: unknown): string[] => {
-  if (Array.isArray(raw)) {
-    return Array.from(
-      new Set(raw.map((entry) => String(entry).trim()).filter(Boolean)),
-    );
+const normalizeTags = (values: unknown[]): string[] => Array.from(
+  new Set(values.map((entry) => String(entry).trim()).filter(Boolean)),
+);
+
+const parseTags = (
+  raw: unknown,
+): { ok: true; tags: string[] } | { ok: false; error: string } => {
+  if (raw === undefined || raw === null || raw === '') return { ok: true, tags: [] };
+  if (Array.isArray(raw)) return { ok: true, tags: normalizeTags(raw) };
+  if (typeof raw !== 'string') {
+    return { ok: false, error: 'tags must be an array or comma-separated string.' };
   }
-  if (typeof raw !== 'string') return [];
-  return raw
-    .split(/[,;，]/g)
-    .map((entry) => entry.trim())
-    .filter(Boolean);
+
+  const trimmed = raw.trim();
+  if (!trimmed) return { ok: true, tags: [] };
+  if (trimmed.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      if (!Array.isArray(parsed)) {
+        return { ok: false, error: 'tags JSON must be an array.' };
+      }
+      return { ok: true, tags: normalizeTags(parsed) };
+    } catch {
+      return { ok: false, error: 'tags must be a valid JSON array.' };
+    }
+  }
+
+  return {
+    ok: true,
+    tags: normalizeTags(trimmed.split(/[,;，]/g)),
+  };
 };
 
 const hasOwn = (value: object, key: string): boolean =>
@@ -112,6 +132,8 @@ export function buildVaultHostFromDraft(
   const username = typeof draft.username === 'string' ? draft.username.trim() : '';
   const password = typeof draft.password === 'string' && draft.password ? draft.password : undefined;
   const keyPath = parseKeyPath(draft);
+  const tags = parseTags(draft.tags);
+  if (!tags.ok) return tags;
   const notes = typeof draft.notes === 'string' && draft.notes.trim() ? draft.notes.trim() : undefined;
   const now = Date.now();
 
@@ -125,7 +147,7 @@ export function buildVaultHostFromDraft(
       username,
       password,
       group: normalizeGroupPath(draft.group),
-      tags: parseTags(draft.tags),
+      tags: tags.tags,
       os: 'linux',
       protocol,
       createdAt: now,
@@ -203,6 +225,12 @@ export function applyVaultHostUpdate(
     if (typeof password.value !== 'string') {
       return { ok: false, error: 'password must be a string.' };
     }
+    if (password.value && current.savePassword === false) {
+      return {
+        ok: false,
+        error: 'This host is configured not to save passwords. Enable password saving before updating it.',
+      };
+    }
     updated.password = password.value || undefined;
     if (password.value && !keyPath.provided) {
       updated.authMethod = 'password';
@@ -219,11 +247,17 @@ export function applyVaultHostUpdate(
     }
     const nextKeyPath = keyPath.value.trim();
     updated.identityFilePaths = nextKeyPath ? [nextKeyPath] : undefined;
-    updated.identityFileId = undefined;
-    updated.identityId = '';
-    updated.authMethod = nextKeyPath ? 'key' : 'auto';
-    updated.authPolicyVersion = 1;
-    updated.useSshAgent = nextKeyPath ? false : undefined;
+    if (nextKeyPath) {
+      updated.identityFileId = undefined;
+      updated.identityId = '';
+      updated.authMethod = 'key';
+      updated.authPolicyVersion = 1;
+      updated.useSshAgent = false;
+    } else if (!updated.identityId && !updated.identityFileId && updated.authMethod === 'key') {
+      updated.authMethod = 'auto';
+      updated.authPolicyVersion = 1;
+      updated.useSshAgent = undefined;
+    }
   }
   if (group.provided) {
     if (typeof group.value !== 'string') {
@@ -231,7 +265,11 @@ export function applyVaultHostUpdate(
     }
     updated.group = normalizeGroupPath(group.value);
   }
-  if (tags.provided) updated.tags = parseTags(tags.value);
+  if (tags.provided) {
+    const nextTags = parseTags(tags.value);
+    if (!nextTags.ok) return nextTags;
+    updated.tags = nextTags.tags;
+  }
   if (notes.provided) {
     if (typeof notes.value !== 'string') {
       return { ok: false, error: 'notes must be a string.' };
