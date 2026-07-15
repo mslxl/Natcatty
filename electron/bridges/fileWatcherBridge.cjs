@@ -203,9 +203,30 @@ async function handleFileChange(watchId, webContents) {
     
     console.log(`[FileWatcher] Syncing ${content.length} bytes to ${remotePath}`);
     
-    // Upload to remote
-    const encodedPath = encodePathForSession(sftpId, remotePath, encoding);
-    await client.put(content, encodedPath);
+    // Upload to remote (SCP-mode sessions have no SFTP channel — use SCP backend).
+    const { isScpModeClient, getScpBackendForClient } = require("./sftpBridge/scpBackend.cjs");
+    if (isScpModeClient(client)) {
+      // Prefer session-resolved encoding (auto may have upgraded to gb18030).
+      let enc = encoding;
+      try {
+        const { getResolvedFilenameEncoding } = require("./sftpBridge.cjs");
+        if (typeof getResolvedFilenameEncoding === "function") {
+          enc = getResolvedFilenameEncoding(sftpId, encoding) || encoding;
+        }
+      } catch { /* ignore */ }
+      if (!enc || enc === "auto") enc = "utf-8";
+      const backend = getScpBackendForClient(client);
+      let existingMode = 0o0644;
+      try {
+        const st = await backend.stat(remotePath, { encoding: enc });
+        if (typeof st.mode === "number" && st.mode > 0) existingMode = st.mode & 0o7777;
+      } catch { /* new file defaults */ }
+      await backend.writeFile(remotePath, content, { encoding: enc, mode: existingMode });
+      try { await backend.chmod(remotePath, existingMode, { encoding: enc }); } catch { /* ignore */ }
+    } else {
+      const encodedPath = encodePathForSession(sftpId, remotePath, encoding);
+      await client.put(content, encodedPath);
+    }
     
     console.log(`[FileWatcher] Sync complete: ${remotePath}`);
     

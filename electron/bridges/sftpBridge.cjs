@@ -173,6 +173,12 @@ const encodePathForSession = (sftpId, inputPath, requestedEncoding) => {
   return encodePath(inputPath, encoding);
 };
 
+/** Resolve the effective filename encoding for a live SFTP/SCP session. */
+const getResolvedFilenameEncoding = (sftpId, requestedEncoding) => {
+  if (!sftpId) return requestedEncoding || "utf-8";
+  return resolveEncodingForRequest(sftpId, requestedEncoding);
+};
+
 const hasSftpChannelApi = (value) =>
   !!value &&
   typeof value.readdir === "function" &&
@@ -487,6 +493,16 @@ const ensureRemoteDirForSession = async (sftpId, dirPath, requestedEncoding) => 
 
   if (!dirPath || dirPath === ".") return true;
 
+  const { isScpModeClient, getScpBackendForClient } = require("./sftpBridge/scpBackend.cjs");
+  if (isScpModeClient(client)) {
+    const encoding = resolveEncodingForRequest(sftpId, requestedEncoding);
+    await getScpBackendForClient(client).mkdir(dirPath, {
+      recursive: true,
+      encoding: encoding === "auto" ? "utf-8" : encoding,
+    });
+    return true;
+  }
+
   const encoding = resolveEncodingForRequest(sftpId, requestedEncoding);
   const sftp = await requireSftpChannel(client);
 
@@ -793,15 +809,90 @@ async function openSftpForSession(_event, payload) {
     refHolder,
     sourceSessionId: sessionId,
   });
+  const { normalizeFileProtocol } = require("./sftpBridge/scpShell.cjs");
+  const { getScpBackendForClient } = require("./sftpBridge/scpBackend.cjs");
+  // Prefer explicit payload, then the host preference stored when the SSH
+  // session started (Catty/MCP/clipboard open without fileProtocol).
+  const fileProtocol = normalizeFileProtocol(
+    payload?.fileProtocol
+      ?? session?.sftpFileProtocol
+      ?? session?.fileProtocol,
+  );
+  const {
+    createBoundedProbeSignal,
+    SCP_PROBE_TIMEOUT_MS,
+  } = require("./sftpBridge/openConnection.cjs");
+  const probeTimeoutMs = Number.isFinite(payload?.timeoutMs) && payload.timeoutMs > 0
+    ? payload.timeoutMs
+    : SCP_PROBE_TIMEOUT_MS;
+
+  async function probeScpCapability() {
+    const bounded = createBoundedProbeSignal(payload?.abortSignal || null, probeTimeoutMs);
+    try {
+      await getScpBackendForClient(client).homeDir({ signal: bounded.signal });
+      const { createSshExecAdapters } = require("./sftpBridge/scpBackend.cjs");
+      const adapters = createSshExecAdapters(sshClient);
+      const scpProbe = await adapters.exec(
+        "command -v scp >/dev/null 2>&1 || which scp >/dev/null 2>&1",
+        { signal: bounded.signal },
+      );
+      if (scpProbe.code !== 0) {
+        throw new Error("SCP binary not available on remote host");
+      }
+    } catch (err) {
+      if (bounded.timedOut && !payload?.abortSignal?.aborted) {
+        throw new Error(`SCP mode probe timed out after ${probeTimeoutMs}ms`);
+      }
+      throw err;
+    } finally {
+      bounded.dispose();
+    }
+  }
+
   try {
-    await requireSftpChannel(client, {
-      signal: payload?.abortSignal,
-      timeoutMs: payload?.timeoutMs,
-    });
+    if (fileProtocol === "scp") {
+      client.__netcattyFileProtocol = "scp";
+      client.sftp = null;
+      // Probe must succeed: SCP mode requires working SSH exec + scp binary.
+      await probeScpCapability();
+      throwIfAborted(payload?.abortSignal);
+      copySftpEncodingState(payload?.encodingStateKey, sftpId);
+      sftpClients.set(sftpId, client);
+      return { ok: true, sftpId, fileProtocol: "scp" };
+    }
+
+    try {
+      await requireSftpChannel(client, {
+        signal: payload?.abortSignal,
+        timeoutMs: payload?.timeoutMs,
+      });
+      client.__netcattyFileProtocol = "sftp";
+    } catch (sftpErr) {
+      if (fileProtocol === "sftp") throw sftpErr;
+      // Auto: SCP-mode fallback for hosts without SFTP subsystem (e.g. some NAS/root)
+      console.warn(
+        `[SFTP] openSftpForSession SFTP channel failed for ${sessionId}; falling back to SCP mode:`,
+        sftpErr?.message || String(sftpErr),
+      );
+      client.__netcattyFileProtocol = "scp";
+      client.sftp = null;
+      try {
+        await probeScpCapability();
+      } catch (probeErr) {
+        throw new Error(
+          `SFTP unavailable and SCP-mode probe failed: ${probeErr?.message || String(probeErr)}`,
+        );
+      }
+      throwIfAborted(payload?.abortSignal);
+      copySftpEncodingState(payload?.encodingStateKey, sftpId);
+      sftpClients.set(sftpId, client);
+      return { ok: true, sftpId, fileProtocol: "scp" };
+    }
+
     throwIfAborted(payload?.abortSignal);
     copySftpEncodingState(payload?.encodingStateKey, sftpId);
     sftpClients.set(sftpId, client);
-    return { ok: true, sftpId };
+    return { ok: true, sftpId, fileProtocol: "sftp" };
   } catch (err) {
     try {
       await client.end();
@@ -815,6 +906,48 @@ async function openSftpForSession(_event, payload) {
 async function downloadSftpToLocal(_event, payload) {
   const client = sftpClients.get(payload.sftpId);
   if (!client) throw new Error("SFTP session not found");
+
+  const {
+    isScpModeClient,
+    getScpBackendForClient,
+    createTransferFromAbortSignal,
+  } = require("./sftpBridge/scpBackend.cjs");
+  if (isScpModeClient(client)) {
+    throwIfAborted(payload.abortSignal);
+    const transfer = createTransferFromAbortSignal(payload.abortSignal);
+    // Stage to a temp path first so a failed/cancelled transfer never truncates
+    // an existing local destination (matches SFTP branch behavior).
+    const stagedFilePath = tempDirBridge.getTempFilePath(
+      path.basename(payload.localPath || payload.remotePath || "download"),
+    );
+    try {
+      const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
+      await getScpBackendForClient(client).downloadFile(payload.remotePath, stagedFilePath, {
+        transfer,
+        encoding: encoding === "auto" ? "utf-8" : encoding,
+        signal: payload.abortSignal || null,
+      });
+      throwIfAborted(payload.abortSignal);
+      if (transfer?.cancelled) {
+        throw createAbortError(payload.abortSignal, "Transfer cancelled");
+      }
+      try {
+        await fs.promises.rename(stagedFilePath, payload.localPath);
+      } catch (err) {
+        if (err?.code !== "EXDEV" && err?.code !== "EEXIST" && err?.code !== "EPERM") {
+          throw err;
+        }
+        await fs.promises.copyFile(stagedFilePath, payload.localPath);
+        await fs.promises.unlink(stagedFilePath);
+      }
+      return { success: true, localPath: payload.localPath };
+    } catch (err) {
+      try { await fs.promises.unlink(stagedFilePath); } catch { /* ignore */ }
+      throw err;
+    } finally {
+      try { transfer?.detachAbortSignal?.(); } catch { /* ignore */ }
+    }
+  }
 
   const sftp = await requireSftpChannel(client);
   const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
@@ -849,6 +982,66 @@ async function downloadSftpToLocal(_event, payload) {
 async function uploadLocalToSftp(_event, payload) {
   const client = sftpClients.get(payload.sftpId);
   if (!client) throw new Error("SFTP session not found");
+
+  const {
+    isScpModeClient,
+    getScpBackendForClient,
+    createTransferFromAbortSignal,
+  } = require("./sftpBridge/scpBackend.cjs");
+  if (isScpModeClient(client)) {
+    throwIfAborted(payload.abortSignal);
+    const transfer = createTransferFromAbortSignal(payload.abortSignal);
+    const backend = getScpBackendForClient(client);
+    const encodingRaw = resolveEncodingForRequest(payload.sftpId, payload.encoding);
+    const encoding = encodingRaw === "auto" ? "utf-8" : encodingRaw;
+    // Upload to a staged remote name, then rename into place so a cancelled or
+    // failed transfer cannot leave a truncated original (matches SFTP path).
+    const stagedRemotePath = buildStagedRemotePath(payload.remotePath);
+    const backupRemotePath = buildBackupRemotePath(payload.remotePath);
+    try {
+      await backend.uploadFile(payload.localPath, stagedRemotePath, {
+        transfer,
+        encoding,
+        signal: payload.abortSignal || null,
+      });
+      throwIfAborted(payload.abortSignal);
+      if (transfer?.cancelled) {
+        throw createAbortError(payload.abortSignal, "Transfer cancelled");
+      }
+      // Best-effort atomic replace: move existing target aside, then promote staged.
+      // Never move a directory aside — uploading a file onto a directory path would
+      // otherwise end up recursively deleting the whole tree via backup cleanup.
+      let movedExisting = false;
+      try {
+        const existing = await backend.stat(payload.remotePath, { encoding });
+        if (existing?.isDirectory) {
+          throw new Error(`Remote path is a directory: ${payload.remotePath}`);
+        }
+        await backend.rename(payload.remotePath, backupRemotePath, { encoding });
+        movedExisting = true;
+      } catch (statOrRenameErr) {
+        if (/directory/i.test(statOrRenameErr?.message || "")) throw statOrRenameErr;
+        // Destination may not exist yet (ENOENT) — continue with staged promote.
+      }
+      try {
+        await backend.rename(stagedRemotePath, payload.remotePath, { encoding });
+      } catch (renameErr) {
+        if (movedExisting) {
+          try { await backend.rename(backupRemotePath, payload.remotePath, { encoding }); } catch { /* ignore */ }
+        }
+        throw renameErr;
+      }
+      if (movedExisting) {
+        try { await backend.remove(backupRemotePath, { recursive: false, encoding }); } catch { /* ignore */ }
+      }
+      return { success: true, remotePath: payload.remotePath };
+    } catch (err) {
+      try { await backend.remove(stagedRemotePath, { recursive: false, encoding }); } catch { /* ignore */ }
+      throw err;
+    } finally {
+      try { transfer?.detachAbortSignal?.(); } catch { /* ignore */ }
+    }
+  }
 
   await requireSftpChannel(client);
   const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
@@ -1012,6 +1205,7 @@ module.exports = {
   _resetAlgorithmSupportCacheForTests,
   requireSftpChannel,
   encodePathForSession,
+  getResolvedFilenameEncoding,
   ensureRemoteDirForSession,
   clearSftpEncodingState,
   clearSftpEncodingStateByPrefix,

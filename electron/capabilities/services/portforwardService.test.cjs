@@ -26,3 +26,20 @@ test("portforward start delegates to vault agent bridge after approval path", as
   assert.equal(invokedOp, "portforward.start");
   assert.equal(result.ok, true);
 });
+
+test("portforward rule mutations delegate to the renderer vault", async () => {
+  const calls = [];
+  const service = createPortForwardService({
+    invokeVaultAgent: async (op, params) => {
+      calls.push({ op, params });
+      return { ok: true };
+    },
+  });
+  await service.createRule({ label: "Web" });
+  await service.updateRule({ ruleId: "rule-1", localPort: 8081 });
+  await service.duplicateRule({ ruleId: "rule-1" });
+  await service.deleteRule({ ruleId: "rule-1" });
+  assert.deepEqual(calls.map((call) => call.op), [
+    "portforward.rules.create", "portforward.rules.update", "portforward.rules.duplicate", "portforward.rules.delete",
+  ]);
+});

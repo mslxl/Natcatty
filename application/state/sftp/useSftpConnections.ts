@@ -225,6 +225,7 @@ export const useSftpConnections = ({
           host.protocol,
           host.sftpSudo,
           host.username,
+          host.sftpFileProtocol,
         );
       if (
         reconnectingRef.current[side]
@@ -285,7 +286,7 @@ export const useSftpConnections = ({
       if (host !== "local") {
         connectionCacheKeyMapRef.current.set(
           connectionId,
-          buildCacheKey(host.id, host.hostname, host.port, host.protocol, host.sftpSudo, host.username),
+          buildCacheKey(host.id, host.hostname, host.port, host.protocol, host.sftpSudo, host.username, host.sftpFileProtocol),
         );
       }
 
@@ -371,7 +372,7 @@ export const useSftpConnections = ({
           }));
         }
       } else {
-        const hostCacheKey = buildCacheKey(host.id, host.hostname, host.port, host.protocol, host.sftpSudo, host.username);
+        const hostCacheKey = buildCacheKey(host.id, host.hostname, host.port, host.protocol, host.sftpSudo, host.username, host.sftpFileProtocol);
         const sharedHostCacheCandidate = options?.ignoreSharedCache
           ? null
           : getSharedRemoteHostCache(hostCacheKey);
@@ -550,7 +551,7 @@ export const useSftpConnections = ({
 
             if (bridge?.getSftpHomeDir) {
               try {
-                const result = await bridge.getSftpHomeDir(sftpId);
+                const result = await bridge.getSftpHomeDir(sftpId, host.sftpEncoding);
                 if (result?.success && result.homeDir) {
                   startPath = result.homeDir;
                   homeDir = result.homeDir;
