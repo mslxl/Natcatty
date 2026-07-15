@@ -763,6 +763,42 @@ test('applyVaultHostUpdate preserves a password identity credential when changin
   assert.equal(result.updatedHost.authMethod, 'password');
 });
 
+test('applyVaultHostUpdate keeps password prompts when changing username without saving the password', () => {
+  const identity: Identity = {
+    id: 'identity-1',
+    label: 'shared password',
+    username: 'deploy',
+    authMethod: 'password',
+    password: 'shared-secret',
+    created: 1,
+  };
+  const existing: Host = {
+    id: 'host-1',
+    label: 'host',
+    hostname: 'host.example.com',
+    username: 'deploy',
+    identityId: identity.id,
+    tags: [],
+    os: 'linux',
+  };
+
+  const result = applyVaultHostUpdate(
+    [existing],
+    [],
+    existing.id,
+    { username: 'ops', savePassword: false },
+    { identities: [identity] },
+  );
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.updatedHost.username, 'ops');
+  assert.equal(result.updatedHost.identityId, '');
+  assert.equal(result.updatedHost.password, undefined);
+  assert.equal(result.updatedHost.savePassword, false);
+  assert.equal(result.updatedHost.authMethod, 'password');
+});
+
 test('applyVaultHostUpdate validates passwords against the destination group', () => {
   const existing: Host = {
     id: 'host-1',

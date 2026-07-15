@@ -307,12 +307,10 @@ export function applyVaultHostUpdate(
     if (selectedIdentityId) {
       updated.identityId = '';
       if (selectedIdentity?.authMethod === 'password') {
-        if (updated.savePassword === false) {
-          updated.authMethod = 'auto';
-        } else {
+        if (updated.savePassword !== false) {
           updated.password = selectedIdentity.password;
-          updated.authMethod = 'password';
         }
+        updated.authMethod = 'password';
         updated.authPolicyVersion = 1;
       } else if (selectedIdentity?.keyId) {
         updated.identityFileId = selectedIdentity.keyId;
