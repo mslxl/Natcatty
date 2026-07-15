@@ -1,6 +1,13 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { translateCodexEvent, buildCodexConstructorOptions, buildCodexThreadOptions, buildCodexPromptInput, runCodexTurn } = require("./codexDriver.cjs");
+const {
+  translateCodexEvent,
+  buildCodexConstructorOptions,
+  buildCodexThreadOptions,
+  buildCodexPromptInput,
+  runCodexTurn,
+  toCodexMcpConfig,
+} = require("./codexDriver.cjs");
 
 function collector() {
   const events = [];
@@ -344,6 +351,20 @@ test("buildCodexConstructorOptions sets path override + env + mcp config table",
   });
   // request visible reasoning summaries (default "auto" emits none in exec mode)
   assert.equal(opts.config.model_reasoning_summary, "concise");
+});
+
+test("toCodexMcpConfig can delegate MCP approval to the embedding client", () => {
+  const config = toCodexMcpConfig([{
+    name: "netcatty-remote-hosts",
+    command: "/abs/electron",
+    args: ["/abs/server.cjs"],
+    env: [],
+  }], { defaultToolsApprovalMode: "approve" });
+
+  assert.equal(
+    config["netcatty-remote-hosts"].default_tools_approval_mode,
+    "approve",
+  );
 });
 
 test("buildCodexThreadOptions enables MCP via danger-full-access + approvalPolicy never", () => {

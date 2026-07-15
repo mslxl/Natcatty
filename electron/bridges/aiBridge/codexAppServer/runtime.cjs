@@ -38,7 +38,14 @@ function resolveCodexPermissionConfig(permissionMode) {
 
 function buildThreadConfig(injectedMcpServers) {
   return {
-    mcp_servers: toCodexMcpConfig(injectedMcpServers),
+    // Netcatty already applies its Observer/Confirm/Auto policy inside the MCP
+    // bridge. Tell Codex not to add a second MCP approval prompt: App Server
+    // otherwise routes the stable MCP elicitation request back to this client,
+    // and rejecting/omitting that duplicate prompt surfaces as
+    // "user rejected MCP tool call" before Netcatty's own gate can run.
+    mcp_servers: toCodexMcpConfig(injectedMcpServers, {
+      defaultToolsApprovalMode: "approve",
+    }),
     model_reasoning_summary: "concise",
   };
 }
@@ -83,6 +90,12 @@ function buildTurnInput(prompt, attachments) {
     input.push({ type: "localImage", path: attachment.filePath });
   }
   return input;
+}
+
+function getActiveTurnNotSteerableKind(error) {
+  const turnKind = error?.data?.activeTurnNotSteerable?.turnKind
+    ?? error?.data?.codexErrorInfo?.activeTurnNotSteerable?.turnKind;
+  return turnKind === "review" || turnKind === "compact" ? turnKind : null;
 }
 
 function mapAppServerModels(rawModels) {
@@ -223,6 +236,7 @@ class CodexAppServerRuntime {
       settled: false,
       cancelRequested: false,
       interruptPromise: null,
+      steerPromise: null,
       reasoningOpen: false,
       streamedTextByItem: new Map(),
       streamedReasoningByItem: new Map(),
@@ -278,6 +292,71 @@ class CodexAppServerRuntime {
       currentModelId: resolveAppServerModelSelection(defaultModel),
       models,
     };
+  }
+
+  async steerTurn(requestId, {
+    chatSessionId,
+    prompt,
+    attachments,
+    clientUserMessageId,
+  } = {}) {
+    const context = this.activeByRequest.get(requestId);
+    if (!context || context.settled || context.chatSessionId !== chatSessionId) {
+      return { status: "inactive" };
+    }
+    if (context.cancelRequested || context.signal?.aborted) {
+      return { status: "cancelled" };
+    }
+    if (!context.turnId) {
+      return { status: "busy", message: "Codex turn is still starting" };
+    }
+    if (context.steerPromise) {
+      return { status: "busy", message: "A Codex instruction is already being sent" };
+    }
+
+    const steerPromise = (async () => {
+      try {
+        const response = await context.connection.request("turn/steer", {
+          threadId: context.threadId,
+          expectedTurnId: context.turnId,
+          input: buildTurnInput(prompt, attachments),
+          clientUserMessageId: clientUserMessageId || null,
+        });
+        if (context.cancelRequested || context.signal?.aborted || context.settled) {
+          return { status: "cancelled" };
+        }
+        if (response?.turnId && response.turnId !== context.turnId) {
+          return {
+            status: "failed",
+            message: "Codex App Server returned a different turn id while steering",
+          };
+        }
+        return { status: "accepted" };
+      } catch (error) {
+        const turnKind = getActiveTurnNotSteerableKind(error);
+        if (turnKind) {
+          return {
+            status: "not-steerable",
+            turnKind,
+            message: error?.message || "The active Codex turn cannot be steered",
+          };
+        }
+        if (context.cancelRequested || context.signal?.aborted || context.settled) {
+          return { status: "cancelled" };
+        }
+        return {
+          status: "failed",
+          message: error?.message || String(error),
+        };
+      }
+    })();
+
+    context.steerPromise = steerPromise;
+    try {
+      return await steerPromise;
+    } finally {
+      if (context.steerPromise === steerPromise) context.steerPromise = null;
+    }
   }
 
   #assignTurnId(context, turnId) {
@@ -687,6 +766,7 @@ module.exports = {
   INTERACTION_TIMEOUT_MS,
   buildThreadConfig,
   buildTurnInput,
+  getActiveTurnNotSteerableKind,
   mapAppServerModels,
   normalizeFileChanges,
   normalizeGrantedPermissions,

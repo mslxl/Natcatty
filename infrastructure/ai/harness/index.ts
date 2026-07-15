@@ -15,6 +15,11 @@ export type {
   ModelCallStartEvent,
   StepEndEvent,
 } from './types';
+export type {
+  TurnSteerFailureReason,
+  TurnSteerInput,
+  TurnSteerResult,
+} from './turnDrivers/types';
 
 export { TraceStore, globalTraceStore } from './traceStore';
 export type { TraceExport } from './traceStore';

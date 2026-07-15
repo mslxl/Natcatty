@@ -166,6 +166,17 @@ export interface PanelBridge extends NetcattyBridge {
   aiSetChatSessionCancelled?(chatSessionId: string, cancelled?: boolean): Promise<{ ok: boolean; error?: string }>;
   aiMcpSyncPermissionGrants?(grants: Array<Record<string, unknown>>): Promise<{ ok: boolean; count?: number; error?: string }>;
   aiSdkAgentCancel?: (requestId: string, chatSessionId?: string) => Promise<{ ok: boolean; error?: string }>;
+  aiSdkAgentSteer?: (
+    requestId: string,
+    chatSessionId: string,
+    prompt: string,
+    images: Array<{ base64Data: string; mediaType: string; filename?: string; filePath?: string }> | undefined,
+    clientUserMessageId: string,
+  ) => Promise<{
+    status: 'accepted' | 'not-steerable' | 'busy' | 'inactive' | 'unsupported' | 'cancelled' | 'failed';
+    message?: string;
+    turnKind?: 'review' | 'compact';
+  }>;
   aiSdkAgentCleanup?: (chatSessionId: string) => Promise<{ ok: boolean }>;
   aiUserSkillsGetStatus?: () => Promise<{
     ok: boolean;

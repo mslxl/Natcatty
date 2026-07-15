@@ -122,3 +122,61 @@ test('AgentRuntime stopTurn delegates to active driver', async () => {
   const runtime = new AgentRuntime({ drivers: [driver] });
   await runtime.stopTurn('chat-2');
 });
+
+test('AgentRuntime delegates steering only while a compatible turn is active', async () => {
+  let releaseRun: (() => void) | undefined;
+  class SteeringDriver implements TurnDriver {
+    readonly backend = 'catty' as const;
+    async run(): Promise<void> {
+      await new Promise<void>(resolve => { releaseRun = resolve; });
+    }
+    async steer() {
+      return { status: 'accepted' as const, assistantMessageId: 'assistant-next' };
+    }
+  }
+  const runtime = new AgentRuntime({ drivers: [new SteeringDriver()] });
+  const run = runtime.runTurn({
+    backend: 'catty',
+    chatSessionId: 'chat-steer',
+    sendScopeKey: 'chat-steer',
+    userText: 'initial',
+    signal: new AbortController().signal,
+    currentSession: undefined,
+    assistantMsgId: 'assistant-1',
+    context: {
+      activeProvider: undefined,
+      activeModelId: '',
+      scopeType: 'terminal',
+      globalPermissionMode: 'confirm',
+      terminalSessions: [],
+      autoTitleSession: () => {},
+    },
+    maxIterations: 5,
+    ui: {
+      addMessageToSession: () => {},
+      updateLastMessage: () => {},
+      updateMessageById: () => {},
+      reportStreamError: () => {},
+      setStreamingForScope: () => {},
+    },
+  });
+  await new Promise<void>(resolve => setImmediate(resolve));
+
+  assert.deepEqual(await runtime.steerTurn({
+    chatSessionId: 'chat-steer',
+    userMessageId: 'user-1',
+    userText: 'change',
+    prompt: 'change',
+    attachedImages: [],
+  }), { status: 'accepted', assistantMessageId: 'assistant-next' });
+
+  releaseRun?.();
+  await run;
+  assert.deepEqual(await runtime.steerTurn({
+    chatSessionId: 'chat-steer',
+    userMessageId: 'user-2',
+    userText: 'too late',
+    prompt: 'too late',
+    attachedImages: [],
+  }), { status: 'inactive' });
+});

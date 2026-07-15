@@ -168,6 +168,11 @@ declare global {
       error?: string;
     }>;
     aiSdkAgentStream?(requestId: string, chatSessionId: string, sdkBackend: string, prompt: string, cwd?: string, providerId?: string, model?: string, existingSessionId?: string, historyMessages?: Array<{ role: 'user' | 'assistant'; content: string }>, images?: Array<{ base64Data: string; mediaType: string; filename?: string; filePath?: string }>, toolIntegrationMode?: 'mcp' | 'skills', defaultTargetSession?: { sessionId: string; hostname: string; label: string; os?: string; username?: string; protocol?: string; shellType?: string; deviceType?: string; connected: boolean; source: 'scope-target' | 'only-connected-in-scope' }, userSkillsContext?: string, agentEnv?: Record<string, string>, agentCommand?: string, codexRuntime?: 'sdk' | 'app-server', permissionMode?: 'observer' | 'confirm' | 'auto'): Promise<{ ok: boolean; error?: string }>;
+    aiSdkAgentSteer?(requestId: string, chatSessionId: string, prompt: string, images: Array<{ base64Data: string; mediaType: string; filename?: string; filePath?: string }> | undefined, clientUserMessageId: string): Promise<{
+      status: 'accepted' | 'not-steerable' | 'busy' | 'inactive' | 'unsupported' | 'cancelled' | 'failed';
+      message?: string;
+      turnKind?: 'review' | 'compact';
+    }>;
     aiSdkAgentListModels?(sdkBackend: string, cwd?: string, providerId?: string, chatSessionId?: string, agentEnv?: Record<string, string>, agentCommand?: string, codexRuntime?: 'sdk' | 'app-server'): Promise<{ ok: boolean; models?: Array<{ id: string; name: string; description?: string; thinkingLevels?: string[]; defaultThinkingLevel?: string }>; currentModelId?: string | null; warning?: string; error?: string }>;
     codexAppServerGetStatus?(agentCommand?: string, agentEnv?: Record<string, string>): Promise<{ ok: boolean; available: boolean; error?: string }>;
     onCodexAppServerInteractionRequest?(cb: (payload: Record<string, unknown>) => void): () => void;

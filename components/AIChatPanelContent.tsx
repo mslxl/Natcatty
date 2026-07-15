@@ -51,7 +51,12 @@ interface AIChatPanelContentProps {
   inputValue: string;
   setInputValue: (value: string) => void;
   handleSend: () => void;
+  handleSteer: () => void;
   handleStop: () => void;
+  canSteer: boolean;
+  isSteering: boolean;
+  steerWarning?: string;
+  lockTurnConfiguration: boolean;
   canSendCurrentAgent: boolean;
   providerDisplayName?: string;
   modelDisplayName?: string;
@@ -106,7 +111,12 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
   inputValue,
   setInputValue,
   handleSend,
+  handleSteer,
   handleStop,
+  canSteer,
+  isSteering,
+  steerWarning,
+  lockTurnConfiguration,
   canSendCurrentAgent,
   providerDisplayName,
   modelDisplayName,
@@ -259,7 +269,11 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
           {!hideInput && (
             <React.Profiler {...getAIPanelProfilerProps('AIChatPanel.Input')}>
               <div>
-                {modelCatalogWarning ? (
+                {steerWarning ? (
+                  <div role="status" className="mx-3 mb-1.5 rounded-md border border-amber-500/25 bg-amber-500/10 px-2.5 py-1.5 text-[11px] leading-4 text-amber-600 dark:text-amber-400">
+                    {steerWarning}
+                  </div>
+                ) : modelCatalogWarning ? (
                   <div role="status" className="mx-3 mb-1.5 rounded-md border border-amber-500/25 bg-amber-500/10 px-2.5 py-1.5 text-[11px] leading-4 text-amber-600 dark:text-amber-400">
                     {modelCatalogWarning}
                   </div>
@@ -268,8 +282,12 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
                   value={inputValue}
                   onChange={setInputValue}
                   onSend={handleSend}
+                  onSteer={handleSteer}
                   onStop={handleStop}
                   isStreaming={isStreaming}
+                  canSteer={canSteer}
+                  isSteering={isSteering}
+                  lockTurnConfiguration={lockTurnConfiguration}
                   disabled={!canSendCurrentAgent}
                   providerName={providerDisplayName}
                   modelName={modelDisplayName}

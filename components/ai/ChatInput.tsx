@@ -6,7 +6,7 @@
  * and a bottom toolbar with muted controls + subtle send button.
  */
 
-import { AtSign, Check, ChevronDown, ChevronRight, Cpu, Expand, Eye, FileText, ImageIcon, MessageSquare, Package, Plus, ShieldCheck, SquareTerminal, X, Zap } from 'lucide-react';
+import { ArrowUp, AtSign, Check, ChevronDown, ChevronRight, Cpu, Expand, Eye, FileText, ImageIcon, Loader2, MessageSquare, Package, Plus, ShieldCheck, SquareTerminal, X, Zap } from 'lucide-react';
 import { filterQuickMessages, buildSlashCommandItems, filterUserSkillsForSlash, getSlashCommandItemKey, isSystemStopSlashCommand, type AIQuickMessage, type SlashCommandItem, type UserSkillSlashOption } from '../../infrastructure/ai/quickMessages';
 import { SlashCommandPicker } from './SlashCommandPicker';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -58,8 +58,12 @@ interface ChatInputProps {
   value: string;
   onChange: (value: string) => void;
   onSend: () => void;
+  onSteer?: () => void;
   onStop?: () => void;
   isStreaming?: boolean;
+  canSteer?: boolean;
+  isSteering?: boolean;
+  lockTurnConfiguration?: boolean;
   disabled?: boolean;
   providerName?: string;
   modelName?: string;
@@ -106,8 +110,12 @@ const ChatInput: React.FC<ChatInputProps> = ({
   value,
   onChange,
   onSend,
+  onSteer,
   onStop,
   isStreaming = false,
+  canSteer = false,
+  isSteering = false,
+  lockTurnConfiguration = false,
   disabled = false,
   providerName,
   modelName,
@@ -131,6 +139,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
 }) => {
   const { t } = useI18n();
   const hasTerminalSelectionAttachment = files.some((file) => file.terminalSelection);
+  const composerDisabled = disabled || isSteering;
   const [expanded, setExpanded] = useState(false);
   // Consolidate menu state into a single discriminated union to prevent multiple menus open simultaneously
   type ActiveMenu = 'model' | 'attach' | 'atMention' | 'slashCommand' | 'perm' | null;
@@ -258,14 +267,18 @@ const ChatInput: React.FC<ChatInputProps> = ({
   }, [findSlashTrigger, getInputPanelMenuPos, value]);
 
   const userSkillOptions = useMemo<UserSkillSlashOption[]>(
-    () => userSkills.map((skill) => ({
+    () => (lockTurnConfiguration ? [] : userSkills).map((skill) => ({
       id: skill.id,
       slug: skill.slug,
       name: skill.name,
       description: skill.description,
     })),
-    [userSkills],
+    [lockTurnConfiguration, userSkills],
   );
+
+  useEffect(() => {
+    if (lockTurnConfiguration && (showModelPicker || showPermPicker)) closeAllMenus();
+  }, [closeAllMenus, lockTurnConfiguration, showModelPicker, showPermPicker]);
 
   const quickMessageSlugSet = useMemo(
     () => new Set(quickMessages.map((message) => message.slug)),
@@ -306,12 +319,13 @@ const ChatInput: React.FC<ChatInputProps> = ({
   }, [slashRange, value]);
 
   const insertUserSkillToken = useCallback((skill: { slug: string }) => {
+    if (lockTurnConfiguration) return;
     onAddUserSkill?.(skill.slug);
     if (slashRange) {
       onChange(removeSlashQueryFromInput());
     }
     closeAllMenus();
-  }, [closeAllMenus, onAddUserSkill, onChange, removeSlashQueryFromInput, slashRange]);
+  }, [closeAllMenus, lockTurnConfiguration, onAddUserSkill, onChange, removeSlashQueryFromInput, slashRange]);
 
   const insertQuickMessage = useCallback((message: AIQuickMessage) => {
     if (slashRange) {
@@ -437,6 +451,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
   }, [showAtMention, hosts, showSlashCommandPicker, menuPos, activeMenuIndex, handleSelectAtMention, handleSlashCommandKeyDown, closeAllMenus]);
 
   const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    if (composerDisabled) return;
     const pastedFiles = Array.from(e.clipboardData.items)
       .map((item: DataTransferItem) => item.getAsFile())
       .filter((f): f is File => !!f);
@@ -444,15 +459,16 @@ const ChatInput: React.FC<ChatInputProps> = ({
       e.preventDefault();
       onAddFiles?.(pastedFiles);
     }
-  }, [onAddFiles]);
+  }, [composerDisabled, onAddFiles]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
+    if (composerDisabled) return;
     const droppedFiles = Array.from(e.dataTransfer.files);
     if (droppedFiles.length > 0) {
       onAddFiles?.(droppedFiles);
     }
-  }, [onAddFiles]);
+  }, [composerDisabled, onAddFiles]);
 
   const defaultPlaceholder = agentName
     ? t('ai.chat.placeholder').replace('{agent}', agentName)
@@ -465,9 +481,13 @@ const ChatInput: React.FC<ChatInputProps> = ({
         onChange('');
         return;
       }
+      if (isStreaming && canSteer) {
+        onSteer?.();
+        return;
+      }
       onSend();
     },
-    [onSend, onStop, onChange, value],
+    [canSteer, isStreaming, onSend, onSteer, onStop, onChange, value],
   );
 
   const status: PromptInputStatus = isStreaming ? 'streaming' : 'idle';
@@ -532,7 +552,10 @@ const ChatInput: React.FC<ChatInputProps> = ({
   return (
     <div className="shrink-0 px-4 pb-4">
       <div ref={inputShellRef} className="relative">
-      <PromptInput onSubmit={handleSubmit}>
+      <PromptInput
+        onSubmit={handleSubmit}
+        allowEmptySubmit={hasTerminalSelectionAttachment}
+      >
         {/* File attachment chips */}
         {files.length > 0 && (
           <div className="flex gap-1.5 px-3 pt-2 pb-0.5 flex-wrap">
@@ -564,6 +587,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
                 <button
                   type="button"
                   onClick={() => onRemoveFile?.(file.id)}
+                  disabled={composerDisabled}
                   className="h-3.5 w-3.5 rounded-sm flex items-center justify-center opacity-50 hover:opacity-100 hover:bg-muted/50 transition-opacity cursor-pointer shrink-0"
                 >
                   <X size={8} />
@@ -605,6 +629,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
                         <button
                           type="button"
                           onClick={() => onRemoveUserSkill?.(skill.slug)}
+                          disabled={lockTurnConfiguration}
                           className="inline-flex h-4.5 w-4.5 items-center justify-center rounded-full text-foreground/42 hover:bg-primary/10 hover:text-foreground/72 transition-colors cursor-pointer"
                           aria-label={`Remove skill ${skill.name || skill.slug}`}
                         >
@@ -623,8 +648,8 @@ const ChatInput: React.FC<ChatInputProps> = ({
             value={value}
             onChange={(e) => handleInputChange(e.target.value)}
             onKeyDown={handleTextareaKeyDown}
-            placeholder={placeholder || defaultPlaceholder}
-            disabled={disabled}
+            placeholder={placeholder || (isStreaming && canSteer ? t('ai.codex.steer.placeholder') : defaultPlaceholder)}
+            disabled={composerDisabled}
             className={[
               selectedUserSkills.length > 0 ? 'pt-1.5' : undefined,
               expanded ? 'max-h-[220px]' : undefined,
@@ -741,6 +766,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
                 <button
                   ref={attachBtnRef}
                   type="button"
+                  disabled={composerDisabled}
                   onClick={() => {
                     if (!showAttachMenu) {
                       const rect = attachBtnRef.current?.getBoundingClientRect();
@@ -817,7 +843,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
               ref={modelBtnRef}
               type="button"
               onClick={() => {
-                if (!hasModelPicker) return;
+                if (!hasModelPicker || lockTurnConfiguration) return;
                 if (!showModelPicker) {
                   const rect = modelBtnRef.current?.getBoundingClientRect();
                   if (rect) {
@@ -835,7 +861,8 @@ const ChatInput: React.FC<ChatInputProps> = ({
                   closeAllMenus();
                 }
               }}
-              className={`${chipClassName} min-w-0 ${hasModelPicker ? 'cursor-pointer hover:bg-muted/24 transition-colors' : ''}`}
+              disabled={lockTurnConfiguration}
+              className={`${chipClassName} min-w-0 ${hasModelPicker && !lockTurnConfiguration ? 'cursor-pointer hover:bg-muted/24 transition-colors' : 'opacity-60'}`}
               aria-label={hasProviderSwitcher ? 'Select provider and model' : 'Select model'}
               aria-expanded={showModelPicker}
             >
@@ -994,7 +1021,9 @@ const ChatInput: React.FC<ChatInputProps> = ({
                     <button
                       ref={permBtnRef}
                       type="button"
+                      disabled={lockTurnConfiguration}
                       onClick={() => {
+                        if (lockTurnConfiguration) return;
                         if (!showPermPicker) {
                           const rect = permBtnRef.current?.getBoundingClientRect();
                           if (rect) setMenuPos({ left: rect.left, bottom: window.innerHeight - rect.top + 6 });
@@ -1038,6 +1067,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
                         <button
                           key={mode}
                           type="button"
+                          disabled={lockTurnConfiguration}
                           role="option"
                           aria-selected={permissionMode === mode}
                           onClick={() => {
@@ -1068,11 +1098,30 @@ const ChatInput: React.FC<ChatInputProps> = ({
           <div className="flex-1 min-w-0" />
 
           <div className="flex items-center gap-1">
-            <PromptInputSubmit
-              status={status}
-              onStop={onStop}
-              disabled={(!value.trim() && !hasTerminalSelectionAttachment) || disabled}
-            />
+            {isStreaming && canSteer ? (
+              <>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="submit"
+                      disabled={(!value.trim() && !hasTerminalSelectionAttachment) || composerDisabled}
+                      aria-label={isSteering ? t('ai.codex.steer.sending') : t('ai.codex.steer.addInstruction')}
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-foreground/20 bg-foreground text-background shadow-sm transition-colors hover:bg-foreground/90 disabled:border-border/80 disabled:bg-muted/52 disabled:text-foreground/72"
+                    >
+                      {isSteering ? <Loader2 size={14} className="animate-spin" /> : <ArrowUp size={14} />}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>{isSteering ? t('ai.codex.steer.sending') : t('ai.codex.steer.addInstruction')}</TooltipContent>
+                </Tooltip>
+                <PromptInputSubmit status="streaming" onStop={onStop} />
+              </>
+            ) : (
+              <PromptInputSubmit
+                status={status}
+                onStop={onStop}
+                disabled={(!value.trim() && !hasTerminalSelectionAttachment) || disabled}
+              />
+            )}
           </div>
         </PromptInputFooter>
       </PromptInput>

@@ -26,6 +26,11 @@ class FakeConnection {
       if (this.turnStartGate) await this.turnStartGate;
       return { turn: { id: this.turnId } };
     }
+    if (method === "turn/steer") {
+      if (this.turnSteerGate) await this.turnSteerGate;
+      if (this.turnSteerError) throw this.turnSteerError;
+      return { turnId: this.turnId };
+    }
     if (method === "turn/interrupt") return {};
     if (method === "model/list") {
       return {
@@ -150,6 +155,43 @@ test("runtime maps lifecycle, activities, usage, and retry warnings", async () =
   assert.ok(emitter.events.some((event) => event[0] === "done"));
 });
 
+test("runtime delegates injected MCP approvals to Netcatty's policy gate", async () => {
+  let connection;
+  const runtime = new CodexAppServerRuntime({
+    connectionFactory: (options) => (connection = new FakeConnection(options)),
+  });
+  const run = runtime.runTurn({
+    requestId: "request-mcp-policy",
+    chatSessionId: "chat-mcp-policy",
+    prompt: "inspect the terminal",
+    permissionMode: "confirm",
+    env: {},
+    binPath: "/bin/codex",
+    injectedMcpServers: [{
+      name: "netcatty-remote-hosts",
+      command: "/abs/electron",
+      args: ["/abs/server.cjs"],
+      env: [{ name: "NETCATTY_MCP_PERMISSION_MODE", value: "confirm" }],
+    }],
+    emitter: createEmitter(),
+  });
+  await waitFor(() => connection?.requests.some((request) => request.method === "turn/start"));
+
+  const threadStart = connection.requests.find((request) => request.method === "thread/start");
+  assert.deepEqual(threadStart.params.config.mcp_servers["netcatty-remote-hosts"], {
+    command: "/abs/electron",
+    args: ["/abs/server.cjs"],
+    env: { NETCATTY_MCP_PERMISSION_MODE: "confirm" },
+    default_tools_approval_mode: "approve",
+  });
+
+  connection.notify({
+    method: "turn/completed",
+    params: { threadId: "thread-1", turn: { id: "turn-1", status: "completed", error: null } },
+  });
+  await run;
+});
+
 test("runtime routes native approvals and request_user_input responses", async () => {
   let connection;
   let interaction;
@@ -212,6 +254,141 @@ test("runtime routes native approvals and request_user_input responses", async (
   assert.deepEqual(connection.responses.at(-1), { id: 71, result: { answers: { choice: { answers: ["safe"] } } } });
 
   connection.notify({ method: "turn/completed", params: { threadId: "thread-1", turn: { id: "turn-1", status: "completed", error: null } } });
+  await run;
+});
+
+test("runtime steers the active turn with text, local images, and a stable user message id", async () => {
+  let connection;
+  const runtime = new CodexAppServerRuntime({
+    connectionFactory: (options) => (connection = new FakeConnection(options)),
+  });
+  const run = runtime.runTurn({
+    requestId: "request-steer",
+    chatSessionId: "chat-steer",
+    prompt: "initial",
+    permissionMode: "confirm",
+    env: {},
+    binPath: "/bin/codex",
+    injectedMcpServers: [],
+    emitter: createEmitter(),
+  });
+  await waitFor(() => connection?.requests.some((request) => request.method === "turn/start"));
+
+  const result = await runtime.steerTurn("request-steer", {
+    chatSessionId: "chat-steer",
+    prompt: "use this image",
+    attachments: [
+      { filePath: "/tmp/image.png", mediaType: "image/png" },
+      { filePath: "/tmp/notes.txt", mediaType: "text/plain" },
+    ],
+    clientUserMessageId: "user-steer-1",
+  });
+
+  assert.deepEqual(result, { status: "accepted" });
+  assert.deepEqual(connection.requests.find((request) => request.method === "turn/steer"), {
+    method: "turn/steer",
+    params: {
+      threadId: "thread-1",
+      expectedTurnId: "turn-1",
+      input: [
+        { type: "text", text: "use this image", text_elements: [] },
+        { type: "localImage", path: "/tmp/image.png" },
+      ],
+      clientUserMessageId: "user-steer-1",
+    },
+  });
+
+  connection.notify({ method: "turn/completed", params: { threadId: "thread-1", turn: { id: "turn-1", status: "completed", error: null } } });
+  await run;
+});
+
+test("runtime serializes steering and classifies non-steerable turns", async () => {
+  let connection;
+  let releaseSteer;
+  const runtime = new CodexAppServerRuntime({
+    connectionFactory: (options) => {
+      connection = new FakeConnection(options);
+      connection.turnSteerGate = new Promise((resolve) => { releaseSteer = resolve; });
+      return connection;
+    },
+  });
+  const run = runtime.runTurn({
+    requestId: "request-steer-busy",
+    chatSessionId: "chat-steer-busy",
+    prompt: "initial",
+    permissionMode: "confirm",
+    env: {},
+    binPath: "/bin/codex",
+    injectedMcpServers: [],
+    emitter: createEmitter(),
+  });
+  await waitFor(() => connection?.requests.some((request) => request.method === "turn/start"));
+
+  const first = runtime.steerTurn("request-steer-busy", {
+    chatSessionId: "chat-steer-busy",
+    prompt: "first",
+    clientUserMessageId: "user-first",
+  });
+  await waitFor(() => connection.requests.some((request) => request.method === "turn/steer"));
+  assert.equal((await runtime.steerTurn("request-steer-busy", {
+    chatSessionId: "chat-steer-busy",
+    prompt: "second",
+    clientUserMessageId: "user-second",
+  })).status, "busy");
+  releaseSteer();
+  assert.equal((await first).status, "accepted");
+
+  const error = new Error("active turn cannot be steered");
+  error.data = { activeTurnNotSteerable: { turnKind: "review" } };
+  connection.turnSteerError = error;
+  const rejected = await runtime.steerTurn("request-steer-busy", {
+    chatSessionId: "chat-steer-busy",
+    prompt: "review change",
+    clientUserMessageId: "user-review",
+  });
+  assert.deepEqual(rejected, {
+    status: "not-steerable",
+    turnKind: "review",
+    message: "active turn cannot be steered",
+  });
+
+  connection.notify({ method: "turn/completed", params: { threadId: "thread-1", turn: { id: "turn-1", status: "completed", error: null } } });
+  await run;
+});
+
+test("stop during steering cancels the UI result without creating a replacement turn", async () => {
+  let connection;
+  let releaseSteer;
+  const runtime = new CodexAppServerRuntime({
+    connectionFactory: (options) => {
+      connection = new FakeConnection(options);
+      connection.turnSteerGate = new Promise((resolve) => { releaseSteer = resolve; });
+      return connection;
+    },
+  });
+  const run = runtime.runTurn({
+    requestId: "request-steer-stop",
+    chatSessionId: "chat-steer-stop",
+    prompt: "initial",
+    permissionMode: "confirm",
+    env: {},
+    binPath: "/bin/codex",
+    injectedMcpServers: [],
+    emitter: createEmitter(),
+  });
+  await waitFor(() => connection?.requests.some((request) => request.method === "turn/start"));
+  const steer = runtime.steerTurn("request-steer-stop", {
+    chatSessionId: "chat-steer-stop",
+    prompt: "too late",
+    clientUserMessageId: "user-steer-stop",
+  });
+  await waitFor(() => connection.requests.some((request) => request.method === "turn/steer"));
+  assert.equal(await runtime.cancelTurn("request-steer-stop"), true);
+  releaseSteer();
+  assert.equal((await steer).status, "cancelled");
+  assert.equal(connection.requests.filter((request) => request.method === "turn/start").length, 1);
+
+  connection.notify({ method: "turn/completed", params: { threadId: "thread-1", turn: { id: "turn-1", status: "interrupted", error: null } } });
   await run;
 });
 

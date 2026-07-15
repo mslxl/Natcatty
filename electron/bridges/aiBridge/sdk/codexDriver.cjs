@@ -39,7 +39,7 @@ function buildCodexPromptInput(prompt, attachments) {
   ];
 }
 
-function toCodexMcpConfig(injectedMcpServers) {
+function toCodexMcpConfig(injectedMcpServers, { defaultToolsApprovalMode } = {}) {
   const mcp_servers = {};
   for (const cfg of injectedMcpServers || []) {
     if (!cfg || !cfg.name) continue;
@@ -47,6 +47,9 @@ function toCodexMcpConfig(injectedMcpServers) {
       command: cfg.command,
       args: cfg.args || [],
       env: mcpEnvPairsToObject(cfg.env),
+      ...(defaultToolsApprovalMode
+        ? { default_tools_approval_mode: defaultToolsApprovalMode }
+        : {}),
     };
   }
   return mcp_servers;

@@ -310,6 +310,7 @@ function registerSdkStreamHandlers(ctx) {
     // chatSessionId -> { sessionId } for resume; controller per requestId.
     const sdkActiveStreams = new Map(); // requestId -> AbortController
     const sdkRequestSessions = new Map(); // requestId -> chatSessionId
+    const sdkRequestRuntimes = new Map(); // requestId -> { backendKey, codexRuntime }
     const sdkSessionIds = new Map(); // chatSessionId -> last sessionId
     const codexAppServerRuntime = new CodexAppServerRuntime({
       appVersion: electronModule?.app?.getVersion?.() || "0.0.0",
@@ -399,6 +400,7 @@ function registerSdkStreamHandlers(ctx) {
           const codexRuntime = backendKey === "codex" && requestedCodexRuntime === "app-server"
             ? "app-server"
             : "sdk";
+          sdkRequestRuntimes.set(requestId, { backendKey, codexRuntime });
 
           const hasConfiguredCommand = isPathLikeCommand(agentCommand);
           const sdkSessionKey = buildSdkSessionKey(chatSessionId, backendKey, binPath, codexRuntime);
@@ -504,6 +506,7 @@ function registerSdkStreamHandlers(ctx) {
         } finally {
           sdkActiveStreams.delete(requestId);
           sdkRequestSessions.delete(requestId);
+          sdkRequestRuntimes.delete(requestId);
         }
       },
     );
@@ -605,6 +608,43 @@ function registerSdkStreamHandlers(ctx) {
             : undefined,
         };
       }
+    });
+
+    ipcMain.handle("netcatty:ai:sdk-agent:steer", async (event, payload) => {
+      if (!validateSender(event)) return { status: "failed", message: "Unauthorized IPC sender" };
+      const requestId = String(payload?.requestId || "");
+      const chatSessionId = String(payload?.chatSessionId || "");
+      const prompt = String(payload?.prompt || "");
+      const clientUserMessageId = String(payload?.clientUserMessageId || "");
+      if (!requestId || !chatSessionId || !clientUserMessageId) {
+        return { status: "failed", message: "Invalid Codex steer request" };
+      }
+      if (sdkRequestSessions.get(requestId) !== chatSessionId) {
+        return { status: "inactive" };
+      }
+      const runtime = sdkRequestRuntimes.get(requestId);
+      if (!runtime) return { status: "busy" };
+      if (runtime?.backendKey !== "codex" || runtime.codexRuntime !== "app-server") {
+        return { status: "unsupported" };
+      }
+
+      const stagedAttachments = [];
+      const steerPrompt = buildSdkTurnPrompt({
+        prompt,
+        replayHistory: false,
+        attachments: payload?.images,
+        onStagedAttachment: (attachment) => stagedAttachments.push(attachment),
+      });
+      mcpServerBridge.updateAttachmentMetadata?.(stagedAttachments, chatSessionId);
+      const result = await codexAppServerRuntime.steerTurn(requestId, {
+        chatSessionId,
+        prompt: steerPrompt,
+        attachments: stagedAttachments,
+        clientUserMessageId,
+      });
+      return result.status === "inactive" && sdkActiveStreams.has(requestId)
+        ? { status: "busy" }
+        : result;
     });
 
     ipcMain.handle("netcatty:ai:sdk-agent:cancel", async (event, { requestId, chatSessionId }) => {
