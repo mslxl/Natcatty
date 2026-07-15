@@ -1057,6 +1057,7 @@ function App({ settings }: { settings: SettingsState }) {
     terminalSettings,
     resolveEffectiveHost,
     updateHosts,
+    updateKeys,
     updateSnippets,
     customGroups,
     updateCustomGroups,

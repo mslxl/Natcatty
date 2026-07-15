@@ -85,7 +85,7 @@ const TOOL_INPUT_FIELDS = Object.freeze({
     hosts: {
       type: "string",
       description:
-        "JSON array of host objects you extracted from the user's text. Each object: hostname (required; host/ip aliases accepted), label (name alias accepted), port, username, password, keyPath or keypath (local private-key file path), group, tags (array or comma-separated string), notes (Host Details remarks — NOT Vault sidebar Notes), protocol (ssh|telnet|local).",
+        "JSON array of host objects you extracted from the user's text. Each object: hostname (required; host/ip aliases accepted), label (name alias accepted), port, username, password, keyPath or keypath (local private-key file path), passphrase (saved passphrase for that key path), group, tags (array or comma-separated string), notes (Host Details remarks — NOT Vault sidebar Notes), protocol (ssh|telnet|local).",
     },
     dryRun: {
       type: "string",
@@ -111,6 +111,7 @@ const TOOL_INPUT_FIELDS = Object.freeze({
     savePassword: { type: "string", optional: true, description: "Set to true or false to enable or disable saved passwords. Pass true when setting a new password after clearing one." },
     keyPath: { type: "string", optional: true, description: "Local private-key file path. Empty string clears and blocks an inherited path." },
     keypath: { type: "string", optional: true, description: "Alias for keyPath." },
+    passphrase: { type: "string", optional: true, description: "Saved passphrase for the host's local private-key path. Empty string clears the saved passphrase." },
     group: { type: "string", optional: true, description: "New group path. Empty string moves the host to the root." },
     tags: { type: "string", optional: true, description: "JSON array or comma-separated tag names. Empty string clears tags." },
     notes: { type: "string", optional: true, description: "Host Details remarks. Empty string clears notes." },
@@ -323,9 +324,9 @@ const MODEL_DESCRIPTION_HINTS = Object.freeze({
   "vault.host.import":
     "Only for text in known export formats (PuTTY reg, MobaXterm ini, CSV template, SecureCRT, ssh_config). If attached host text is unknown or auto-detection fails, use read_attachment content, extract fields yourself, and call vault_hosts_create.",
   "vault.hosts.create":
-    "Use when the user wants to add/create a host in Vault → Hosts (创建主机、SSH 连接凭据). NOT for Vault → Notes sidebar docs. Put SSH password in password, or a local private-key file path in keyPath; put long remarks/admin tables in host notes. Never fall back to vault_notes_create if this fails.",
+    "Use when the user wants to add/create a host in Vault → Hosts (创建主机、SSH 连接凭据). NOT for Vault → Notes sidebar docs. Put SSH password in password, or a local private-key file path in keyPath. If that key is encrypted and the user supplied its passphrase, put it in passphrase so later connections do not prompt. Put long remarks/admin tables in host notes. Never fall back to vault_notes_create if this fails.",
   "vault.host.update":
-    "Update only fields the user requested. Use vault_hosts_list first to resolve hostId. Empty group, tags, notes, password, or keyPath values clear those fields.",
+    "Update only fields the user requested. Use vault_hosts_list first to resolve hostId. Empty group, tags, notes, password, keyPath, or passphrase values clear those fields or saved credentials.",
   "vault.host.delete":
     "Permanently deletes one saved host. Use vault_hosts_list first to resolve hostId and rely on the normal write approval flow before deleting.",
   "vault.note.create":

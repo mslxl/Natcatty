@@ -52,13 +52,16 @@ test("listCattyToolSpecs includes vault host tools and SFTP transfer", () => {
 
 test("listMcpTools includes vault host update and delete for external MCP clients", () => {
   const tools = listMcpTools();
+  const create = tools.find((tool) => tool.mcpTool === "vault_hosts_create");
   const update = tools.find((tool) => tool.mcpTool === "vault_hosts_update");
   const remove = tools.find((tool) => tool.mcpTool === "vault_hosts_delete");
+  assert.match(create?.inputShape.hosts?.description ?? "", /passphrase/i);
   assert.equal(update?.capabilityId, "vault.host.update");
   assert.equal(update?.publicRpcMethod, "public/vault/hosts/update");
   assert.ok(update?.inputShape.keyPath);
   assert.ok(update?.inputShape.keypath);
   assert.ok(update?.inputShape.savePassword);
+  assert.ok(update?.inputShape.passphrase);
   assert.equal(remove?.capabilityId, "vault.host.delete");
   assert.equal(remove?.publicRpcMethod, "public/vault/hosts/delete");
 });

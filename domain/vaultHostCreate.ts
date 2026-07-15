@@ -31,6 +31,7 @@ export interface VaultHostDraft {
   savePassword?: unknown;
   keyPath?: unknown;
   keypath?: unknown;
+  passphrase?: unknown;
   group?: unknown;
   tags?: unknown;
   notes?: unknown;
@@ -48,6 +49,12 @@ export interface VaultHostUpdateOptions {
 export interface VaultHostCreateIssue {
   index: number;
   error: string;
+}
+
+export interface VaultHostKeyPassphrase {
+  hostId: string;
+  keyPath: string;
+  passphrase: string;
 }
 
 const normalizeGroupPath = (raw: unknown): string | undefined => {
@@ -217,6 +224,12 @@ export function buildVaultHostFromDraft(
   const keyPath = parseKeyPath(draft);
   if (keyPath && !isSafeSshConfigValue(keyPath)) {
     return { ok: false, error: 'keyPath must not contain line breaks or null bytes.' };
+  }
+  if (draft.passphrase !== undefined && draft.passphrase !== null && typeof draft.passphrase !== 'string') {
+    return { ok: false, error: 'passphrase must be a string.' };
+  }
+  if (typeof draft.passphrase === 'string' && draft.passphrase && !keyPath) {
+    return { ok: false, error: 'keyPath is required when passphrase is provided.' };
   }
   const tags = parseTags(draft.tags);
   if (!tags.ok) return tags;
@@ -566,9 +579,10 @@ export function parseVaultHostDraftsInput(
 
 export function buildVaultHostsFromDrafts(
   drafts: VaultHostDraft[],
-): { hosts: Host[]; issues: VaultHostCreateIssue[] } {
+): { hosts: Host[]; issues: VaultHostCreateIssue[]; keyPassphrases: VaultHostKeyPassphrase[] } {
   const hosts: Host[] = [];
   const issues: VaultHostCreateIssue[] = [];
+  const keyPassphrases: VaultHostKeyPassphrase[] = [];
 
   drafts.forEach((draft, index) => {
     const built = buildVaultHostFromDraft(draft);
@@ -577,9 +591,13 @@ export function buildVaultHostsFromDrafts(
       return;
     }
     hosts.push(built.host);
+    const keyPath = parseKeyPath(draft);
+    if (keyPath && typeof draft.passphrase === 'string' && draft.passphrase) {
+      keyPassphrases.push({ hostId: built.host.id, keyPath, passphrase: draft.passphrase });
+    }
   });
 
-  return { hosts, issues };
+  return { hosts, issues, keyPassphrases };
 }
 
 export function applyVaultHostCreates(

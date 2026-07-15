@@ -3,6 +3,26 @@ import { isEncryptedCredentialPlaceholder } from "../domain/credentials";
 import { STORAGE_KEY_DEFAULT_KEY_PASSPHRASES } from "../infrastructure/config/storageKeys";
 import { localStorageAdapter } from "../infrastructure/persistence/localStorageAdapter";
 import { encryptField, decryptField } from "../infrastructure/persistence/secureFieldAdapter";
+import { netcattyBridge } from "../infrastructure/services/netcattyBridge";
+
+async function resolveDefaultKeyPassphraseAliases(keyPath: string): Promise<string[]> {
+  const aliases = new Set([keyPath]);
+  try {
+    const homeDir = await netcattyBridge.get()?.getHomeDir?.();
+    if (!homeDir) return [...aliases];
+
+    const normalizedHome = homeDir.replace(/\\/g, "/").replace(/\/$/u, "");
+    const normalizedKeyPath = keyPath.replace(/\\/g, "/");
+    if (normalizedKeyPath.startsWith(`${normalizedHome}/`)) {
+      aliases.add(`~/${normalizedKeyPath.slice(normalizedHome.length + 1)}`);
+    } else if (normalizedKeyPath.startsWith("~/")) {
+      aliases.add(`${normalizedHome}/${normalizedKeyPath.slice(2)}`);
+    }
+  } catch {
+    // The renderer bridge may be unavailable in tests or web fallback mode.
+  }
+  return [...aliases];
+}
 
 export async function saveDefaultKeyPassphrase(keyPath: string, passphrase: string): Promise<void> {
   const store = localStorageAdapter.read<Record<string, string>>(STORAGE_KEY_DEFAULT_KEY_PASSPHRASES) ?? {};
@@ -12,11 +32,12 @@ export async function saveDefaultKeyPassphrase(keyPath: string, passphrase: stri
 
 export async function loadDefaultKeyPassphrase(keyPath: string): Promise<string | null> {
   const store = localStorageAdapter.read<Record<string, string>>(STORAGE_KEY_DEFAULT_KEY_PASSPHRASES);
-  const enc = store?.[keyPath];
+  const aliases = await resolveDefaultKeyPassphraseAliases(keyPath);
+  const enc = aliases.map((alias) => store?.[alias]).find(Boolean);
   if (!enc) return null;
   const decrypted = await decryptField(enc);
   if (!decrypted || isEncryptedCredentialPlaceholder(decrypted)) {
-    removeDefaultKeyPassphrases([keyPath]);
+    removeDefaultKeyPassphrases(aliases);
     return null;
   }
   return decrypted;

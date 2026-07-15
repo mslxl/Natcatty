@@ -54,6 +54,24 @@ const SENSITIVE_HOST_KEYS = new Set([
   'passphrase',
 ]);
 
+const VAULT_HOST_UPDATE_FIELDS = [
+  'label',
+  'name',
+  'hostname',
+  'host',
+  'ip',
+  'port',
+  'username',
+  'password',
+  'savePassword',
+  'keyPath',
+  'keypath',
+  'group',
+  'tags',
+  'notes',
+  'protocol',
+] as const;
+
 export function sanitizeHostForAgent(host: Host): Record<string, unknown> {
   const sanitized: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(host)) {
@@ -297,6 +315,8 @@ export interface VaultAgentApiDeps {
   updateHostNotes: (hostId: string, notes: string) => void;
   updateCustomGroups: (groups: string[]) => void;
   updateHosts: (hosts: Host[]) => void;
+  saveKeyPassphrase: (keyPath: string, passphrase: string) => Promise<void>;
+  removeKeyPassphrases: (keyPaths: string[]) => Promise<void> | void;
   updateNotes: (notes: VaultNote[]) => void;
   updateSnippets: (snippets: Snippet[]) => void;
   startTunnel: (
@@ -325,6 +345,16 @@ export interface VaultAgentApiDeps {
     ok: false;
     error: string;
   };
+}
+
+function resolveEffectiveHostKeyPath(host: Host, deps: VaultAgentApiDeps): string | undefined {
+  const effectiveHost = deps.resolveEffectiveHost(host);
+  const resolvedAuth = resolveHostAuth({
+    host: effectiveHost,
+    keys: deps.keys,
+    identities: deps.identities,
+  });
+  return resolvedAuth.identityFilePath ?? effectiveHost.identityFilePaths?.[0];
 }
 
 async function registerOpenedSessionInMcpScope(
@@ -439,7 +469,11 @@ export async function handleVaultAgentOp(
 
       const dryRun = parseOptionalBoolean(params.dryRun) ?? false;
       const skipDuplicates = parseOptionalBoolean(params.skipDuplicates) ?? true;
-      const { hosts: builtHosts, issues: buildIssues } = buildVaultHostsFromDrafts(parsedDrafts.drafts);
+      const {
+        hosts: builtHosts,
+        issues: buildIssues,
+        keyPassphrases,
+      } = buildVaultHostsFromDrafts(parsedDrafts.drafts);
 
       if (builtHosts.length === 0) {
         return {
@@ -479,6 +513,13 @@ export async function handleVaultAgentOp(
         };
       }
 
+      const addedHostIds = new Set(merged.addedHosts.map((host) => host.id));
+      for (const entry of keyPassphrases) {
+        if (addedHostIds.has(entry.hostId)) {
+          await deps.saveKeyPassphrase(entry.keyPath, entry.passphrase);
+        }
+      }
+
       deps.updateHosts(merged.hosts);
       deps.updateCustomGroups(merged.customGroups);
 
@@ -497,25 +538,65 @@ export async function handleVaultAgentOp(
       const hostId = String(params.hostId || '').trim();
       if (!hostId) return { ok: false, error: 'hostId is required.' };
       const currentHosts = deps.getHosts();
-      const updated = applyVaultHostUpdate(
-        currentHosts,
-        deps.getCustomGroups(),
-        hostId,
-        params,
-        {
-          resolveEffectiveHost: deps.resolveEffectiveHost,
-          managedSources: deps.managedSources,
-          identities: deps.identities,
-        },
-      );
-      if (!updated.ok) return updated;
+      const currentHost = currentHosts.find((host) => host.id === hostId);
+      if (!currentHost) return { ok: false, error: `Host "${hostId}" was not found.` };
+      const passphraseProvided = Object.prototype.hasOwnProperty.call(params, 'passphrase');
+      if (passphraseProvided && typeof params.passphrase !== 'string') {
+        return { ok: false, error: 'passphrase must be a string.' };
+      }
+      const passphrase = typeof params.passphrase === 'string' ? params.passphrase : undefined;
+      const hasHostPatch = VAULT_HOST_UPDATE_FIELDS.some((field) => (
+        Object.prototype.hasOwnProperty.call(params, field)
+      ));
+      if (!hasHostPatch && !passphraseProvided) {
+        return { ok: false, error: 'At least one host field is required.' };
+      }
 
-      deps.updateHosts(updated.hosts);
-      deps.updateCustomGroups(updated.customGroups);
+      let updatedHost = currentHost;
+      let updatedHosts: Host[] | undefined;
+      let updatedCustomGroups: string[] | undefined;
+      if (hasHostPatch) {
+        const updated = applyVaultHostUpdate(
+          currentHosts,
+          deps.getCustomGroups(),
+          hostId,
+          params,
+          {
+            resolveEffectiveHost: deps.resolveEffectiveHost,
+            managedSources: deps.managedSources,
+            identities: deps.identities,
+          },
+        );
+        if (!updated.ok) return updated;
+        updatedHost = updated.updatedHost;
+        updatedHosts = updated.hosts;
+        updatedCustomGroups = updated.customGroups;
+      }
+
+      if (passphraseProvided) {
+        let keyPath = resolveEffectiveHostKeyPath(updatedHost, deps);
+        if (!keyPath && passphrase === '') {
+          keyPath = resolveEffectiveHostKeyPath(currentHost, deps);
+        }
+        if (!keyPath) {
+          return { ok: false, error: 'A keyPath is required when passphrase is provided.' };
+        }
+        if (passphrase) {
+          await deps.saveKeyPassphrase(keyPath, passphrase);
+        } else {
+          await deps.removeKeyPassphrases([keyPath]);
+        }
+      }
+
+      if (updatedHosts && updatedCustomGroups) {
+        deps.updateHosts(updatedHosts);
+        deps.updateCustomGroups(updatedCustomGroups);
+      }
+
       return {
         ok: true,
         hostId,
-        host: sanitizeHostForAgent(updated.updatedHost),
+        host: sanitizeHostForAgent(updatedHost),
       };
     }
     case 'host.delete': {

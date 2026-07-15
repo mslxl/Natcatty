@@ -6,6 +6,11 @@ import {
   setupVaultAgentBridge,
   type VaultAgentApiDeps,
 } from '../../infrastructure/ai/vaultAgentBridgeClient';
+import {
+  clearReferenceKeyPassphrases,
+  rememberKeyPassphrase,
+  removeDefaultKeyPassphrases,
+} from '../defaultKeyPassphrases';
 
 export interface UseVaultAgentBridgeInput {
   hosts: Host[];
@@ -17,6 +22,7 @@ export interface UseVaultAgentBridgeInput {
   terminalSettings?: Pick<TerminalSettings, 'keepaliveInterval' | 'keepaliveCountMax'>;
   resolveEffectiveHost: (host: Host) => Host;
   updateHosts: (hosts: Host[]) => void;
+  updateKeys: (keys: SSHKey[]) => Promise<unknown> | unknown;
   updateSnippets: (snippets: Snippet[]) => void;
   customGroups: string[];
   updateCustomGroups: (groups: string[]) => void;
@@ -29,6 +35,7 @@ export interface UseVaultAgentBridgeInput {
 
 type VaultAgentSnapshot = {
   hosts: Host[];
+  keys: SSHKey[];
   notes: VaultNote[];
   snippets: Snippet[];
   customGroups: string[];
@@ -40,12 +47,14 @@ export function useVaultAgentBridge(input: UseVaultAgentBridgeInput): void {
 
   const vaultSnapshotRef = useRef<VaultAgentSnapshot>({
     hosts: input.hosts,
+    keys: input.keys,
     notes: input.notes,
     snippets: input.snippets,
     customGroups: input.customGroups,
   });
   const lastSyncedVaultInputRef = useRef({
     hosts: input.hosts,
+    keys: input.keys,
     notes: input.notes,
     snippets: input.snippets,
     customGroups: input.customGroups,
@@ -53,18 +62,21 @@ export function useVaultAgentBridge(input: UseVaultAgentBridgeInput): void {
 
   if (
     input.hosts !== lastSyncedVaultInputRef.current.hosts
+    || input.keys !== lastSyncedVaultInputRef.current.keys
     || input.notes !== lastSyncedVaultInputRef.current.notes
     || input.snippets !== lastSyncedVaultInputRef.current.snippets
     || input.customGroups !== lastSyncedVaultInputRef.current.customGroups
   ) {
     vaultSnapshotRef.current = {
       hosts: input.hosts,
+      keys: input.keys,
       notes: input.notes,
       snippets: input.snippets,
       customGroups: input.customGroups,
     };
     lastSyncedVaultInputRef.current = {
       hosts: input.hosts,
+      keys: input.keys,
       notes: input.notes,
       snippets: input.snippets,
       customGroups: input.customGroups,
@@ -80,7 +92,7 @@ export function useVaultAgentBridge(input: UseVaultAgentBridgeInput): void {
         getCustomGroups: () => vaultSnapshotRef.current.customGroups,
         snippets: vaultSnapshotRef.current.snippets,
         portForwardingRules: current.portForwardingRules,
-        keys: current.keys,
+        keys: vaultSnapshotRef.current.keys,
         identities: current.identities,
         managedSources: current.managedSources,
         terminalSettings: current.terminalSettings,
@@ -99,6 +111,24 @@ export function useVaultAgentBridge(input: UseVaultAgentBridgeInput): void {
         updateHosts: (hosts) => {
           vaultSnapshotRef.current.hosts = hosts;
           current.updateHosts(hosts);
+        },
+        saveKeyPassphrase: (keyPath, passphrase) => rememberKeyPassphrase({
+          keyPath,
+          passphrase,
+          keys: vaultSnapshotRef.current.keys,
+          updateKeys: current.updateKeys,
+          setCurrentKeys: (keys) => {
+            vaultSnapshotRef.current.keys = keys;
+          },
+        }),
+        removeKeyPassphrases: async (keyPaths) => {
+          removeDefaultKeyPassphrases(keyPaths);
+          const currentKeys = vaultSnapshotRef.current.keys;
+          const updatedKeys = clearReferenceKeyPassphrases(currentKeys, keyPaths);
+          if (updatedKeys !== currentKeys) {
+            vaultSnapshotRef.current.keys = updatedKeys;
+            await current.updateKeys(updatedKeys);
+          }
         },
         updateNotes: (notes) => {
           vaultSnapshotRef.current.notes = notes;

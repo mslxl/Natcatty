@@ -5,6 +5,7 @@ import {
   clearReferenceKeyPassphrases,
   loadDefaultKeyPassphrase,
   rememberKeyPassphrase,
+  saveDefaultKeyPassphrase,
   shouldUpdateReferenceKeyPassphrase,
 } from "../defaultKeyPassphrases";
 import { STORAGE_KEY_DEFAULT_KEY_PASSPHRASES } from "../../infrastructure/config/storageKeys";
@@ -88,6 +89,34 @@ test("loadDefaultKeyPassphrase returns plain stored passphrases", async (t) => {
   );
 
   assert.equal(await loadDefaultKeyPassphrase(keyPath), "correct horse battery staple");
+});
+
+test("saveDefaultKeyPassphrase makes the passphrase available to the connection prompt", async (t) => {
+  installLocalStorage(t);
+  const keyPath = "/Users/alice/.ssh/id_ed25519";
+
+  await saveDefaultKeyPassphrase(keyPath, "saved by agent");
+
+  assert.equal(await loadDefaultKeyPassphrase(keyPath), "saved by agent");
+});
+
+test("loadDefaultKeyPassphrase matches an expanded connection path to a saved home-relative path", async (t) => {
+  installLocalStorage(t);
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      netcatty: {
+        getHomeDir: async () => "/Users/alice",
+      },
+    },
+  });
+
+  await saveDefaultKeyPassphrase("~/.ssh/id_ed25519", "saved by agent");
+
+  assert.equal(
+    await loadDefaultKeyPassphrase("/Users/alice/.ssh/id_ed25519"),
+    "saved by agent",
+  );
 });
 
 test("clearReferenceKeyPassphrases clears matching reference key paths only", () => {

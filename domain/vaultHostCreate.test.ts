@@ -103,11 +103,24 @@ test('buildVaultHostFromDraft rejects hostnames containing internal whitespace',
 test('buildVaultHostFromDraft rejects invalid host objects and optional field types', () => {
   const invalidDraft = buildVaultHostFromDraft(null as unknown as VaultHostDraft);
   const invalidKeyPath = buildVaultHostFromDraft({ hostname: 'host.example.com', keyPath: 123 });
+  const invalidPassphrase = buildVaultHostFromDraft({
+    hostname: 'host.example.com',
+    keyPath: '~/.ssh/id_ed25519',
+    passphrase: 123,
+  });
+  const missingKeyPath = buildVaultHostFromDraft({
+    hostname: 'host.example.com',
+    passphrase: 'secret',
+  });
 
   assert.equal(invalidDraft.ok, false);
   assert.equal(invalidKeyPath.ok, false);
+  assert.equal(invalidPassphrase.ok, false);
+  assert.equal(missingKeyPath.ok, false);
   if (!invalidDraft.ok) assert.match(invalidDraft.error, /must be an object/i);
   if (!invalidKeyPath.ok) assert.match(invalidKeyPath.error, /keyPath must be a string/i);
+  if (!invalidPassphrase.ok) assert.match(invalidPassphrase.error, /passphrase must be a string/i);
+  if (!missingKeyPath.ok) assert.match(missingKeyPath.error, /keyPath is required/i);
 });
 
 test('buildVaultHostFromDraft rejects SSH config line injection', () => {
