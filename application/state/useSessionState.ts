@@ -1,7 +1,13 @@
 import { MouseEvent,useCallback,useEffect,useMemo,useRef,useState } from 'react';
 import { ConnectionLog,Host,SerialConfig,Snippet,TerminalSession,Workspace,WorkspaceViewMode } from '../../domain/models';
 import { addLogView, getLogViewTabId, removeLogView, type LogView } from './logViewState';
-import { createHostTerminalSession, createLocalTerminalSession, createSerialTerminalSession, type LocalTerminalOptions } from './sessionFactories';
+import {
+  createHostTerminalSession,
+  createLocalTerminalSession,
+  createSerialTerminalSession,
+  snapshotSerialConfig,
+  type LocalTerminalOptions,
+} from './sessionFactories';
 import { isScriptSnippet } from '../../domain/snippetScript.ts';
 import {
 appendPaneToWorkspaceRoot,
@@ -520,7 +526,7 @@ export const useSessionState = ({
     const newSessions: TerminalSession[] = hosts.map(host => {
       // Handle serial hosts specially
       if (host.protocol === 'serial') {
-        const serialConfig: SerialConfig = host.serialConfig || {
+        const serialConfig = snapshotSerialConfig(host.serialConfig || {
           path: host.hostname,
           baudRate: host.port || 115200,
           dataBits: 8,
@@ -529,7 +535,7 @@ export const useSessionState = ({
           flowControl: 'none',
           localEcho: false,
           lineMode: false,
-        };
+        });
 
         const portName = serialConfig.path.split('/').pop() || serialConfig.path;
         return {
@@ -602,7 +608,7 @@ export const useSessionState = ({
       }
       const host = target.host;
       if (host.protocol === 'serial') {
-        const serialConfig: SerialConfig = host.serialConfig || {
+        const serialConfig = snapshotSerialConfig(host.serialConfig || {
           path: host.hostname,
           baudRate: host.port || 115200,
           dataBits: 8,
@@ -611,7 +617,7 @@ export const useSessionState = ({
           flowControl: 'none',
           localEcho: false,
           lineMode: false,
-        };
+        });
         const portName = serialConfig.path.split('/').pop() || serialConfig.path;
         return {
           id: crypto.randomUUID(),

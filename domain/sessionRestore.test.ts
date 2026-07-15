@@ -156,6 +156,26 @@ test("buildSessionRestorePayload preserves serial sessions with empty usernames"
   assert.equal(payload.sessions[0].protocol, "serial");
 });
 
+test("buildSessionRestorePayload snapshots missing serial Backspace behavior as default", () => {
+  const payload = buildSessionRestorePayload({
+    sessions: [{
+      ...session("s1"),
+      username: "",
+      protocol: "serial",
+      serialConfig: {
+        path: "/dev/tty.usbserial",
+        baudRate: 115200,
+      },
+    }],
+    workspaces: [],
+    tabOrder: ["s1"],
+    activeTabId: "s1",
+    now: 123,
+  });
+
+  assert.equal(payload.sessions[0].serialConfig?.backspaceBehavior, "default");
+});
+
 test("buildSessionRestorePayload preserves serial-only workspaces", () => {
   const payload = buildSessionRestorePayload({
     sessions: [{
