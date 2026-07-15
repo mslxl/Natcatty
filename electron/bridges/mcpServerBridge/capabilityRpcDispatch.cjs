@@ -13,6 +13,8 @@ const SERVICE_BINDINGS = Object.freeze({
   "vault.host.list": { domain: "vault", method: "listHosts" },
   "vault.host.open": { domain: "vault", method: "openHost" },
   "vault.hosts.create": { domain: "vault", method: "createHosts" },
+  "vault.host.update": { domain: "vault", method: "updateHost" },
+  "vault.host.delete": { domain: "vault", method: "deleteHost" },
   "vault.host.import": { domain: "vault", method: "importHosts" },
   "vault.host.notes.get": { domain: "vault", method: "getHostNotes" },
   "vault.host.notes.set": { domain: "vault", method: "setHostNotes" },

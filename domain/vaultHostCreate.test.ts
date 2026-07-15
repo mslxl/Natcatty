@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 
 import type { Host } from './models.ts';
 import {
+  applyVaultHostDelete,
   applyVaultHostCreates,
+  applyVaultHostUpdate,
   buildVaultHostFromDraft,
   buildVaultHostsFromDrafts,
   parseVaultHostDraftsInput,
@@ -24,6 +26,23 @@ test('buildVaultHostFromDraft maps minimal unstructured fields to a vault host',
   assert.equal(built.host.username, 'ubuntu');
   assert.equal(built.host.group, 'infra/prod');
   assert.deepEqual(built.host.tags, ['web', 'nginx']);
+});
+
+test('buildVaultHostFromDraft accepts host aliases and a referenced key path', () => {
+  const built = buildVaultHostFromDraft({
+    name: 'prod api',
+    ip: '10.0.0.10',
+    username: 'deploy',
+    keyPath: '~/.ssh/id_ed25519',
+  });
+
+  assert.equal(built.ok, true);
+  if (!built.ok) return;
+  assert.equal(built.host.label, 'prod api');
+  assert.equal(built.host.hostname, '10.0.0.10');
+  assert.equal(built.host.authMethod, 'key');
+  assert.deepEqual(built.host.identityFilePaths, ['~/.ssh/id_ed25519']);
+  assert.equal(built.host.password, undefined);
 });
 
 test('parseVaultHostDraftsInput accepts JSON array strings', () => {
@@ -55,4 +74,72 @@ test('applyVaultHostCreates writes sanitized hosts into the vault list', () => {
   assert.equal(merged.addedCount, 1);
   assert.equal(merged.hosts.length, 2);
   assert.ok(merged.customGroups.includes('prod'));
+});
+
+test('applyVaultHostUpdate changes only provided fields and adds a new group', () => {
+  const existing: Host = {
+    id: 'host-1',
+    label: 'old label',
+    hostname: '10.0.0.1',
+    username: 'root',
+    port: 22,
+    tags: ['keep'],
+    os: 'linux',
+    notes: 'old notes',
+  };
+
+  const result = applyVaultHostUpdate([existing], ['legacy'], 'host-1', {
+    name: 'new label',
+    host: 'server.example.com',
+    port: 2222,
+    group: 'prod/api',
+    notes: '',
+  });
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.updatedHost.label, 'new label');
+  assert.equal(result.updatedHost.hostname, 'server.example.com');
+  assert.equal(result.updatedHost.port, 2222);
+  assert.equal(result.updatedHost.username, 'root');
+  assert.deepEqual(result.updatedHost.tags, ['keep']);
+  assert.equal(result.updatedHost.notes, undefined);
+  assert.ok(result.customGroups.includes('prod/api'));
+});
+
+test('applyVaultHostUpdate can switch a host to a referenced key path', () => {
+  const existing: Host = {
+    id: 'host-1',
+    label: 'host',
+    hostname: '10.0.0.1',
+    username: 'root',
+    port: 22,
+    tags: [],
+    os: 'linux',
+    password: 'secret',
+    authMethod: 'password',
+  };
+
+  const result = applyVaultHostUpdate([existing], [], 'host-1', {
+    keyPath: '/Users/alice/.ssh/id_ed25519',
+  });
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.updatedHost.authMethod, 'key');
+  assert.deepEqual(result.updatedHost.identityFilePaths, ['/Users/alice/.ssh/id_ed25519']);
+  assert.equal(result.updatedHost.identityId, '');
+});
+
+test('applyVaultHostDelete removes only the requested host', () => {
+  const hosts: Host[] = [
+    { id: 'host-1', label: 'one', hostname: 'one', username: 'root', tags: [], os: 'linux' },
+    { id: 'host-2', label: 'two', hostname: 'two', username: 'root', tags: [], os: 'linux' },
+  ];
+
+  const result = applyVaultHostDelete(hosts, 'host-1');
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.deletedHost.id, 'host-1');
+  assert.deepEqual(result.hosts.map((host) => host.id), ['host-2']);
 });

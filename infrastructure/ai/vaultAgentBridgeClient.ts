@@ -31,7 +31,9 @@ import {
   waitForScriptRun,
 } from '../../application/state/scriptAutomationCoordinator.ts';
 import {
+  applyVaultHostDelete,
   applyVaultHostCreates,
+  applyVaultHostUpdate,
   buildVaultHostsFromDrafts,
   parseVaultHostDraftsInput,
 } from '../../domain/vaultHostCreate';
@@ -482,6 +484,38 @@ export async function handleVaultAgentOp(
         skippedExistingCount: merged.skippedExistingCount,
         issues: buildIssues,
         previewHosts: merged.addedHosts.map((host) => sanitizeHostForAgent(host)),
+      };
+    }
+    case 'host.update': {
+      const hostId = String(params.hostId || '').trim();
+      if (!hostId) return { ok: false, error: 'hostId is required.' };
+      const updated = applyVaultHostUpdate(
+        deps.getHosts(),
+        deps.getCustomGroups(),
+        hostId,
+        params,
+      );
+      if (!updated.ok) return updated;
+
+      deps.updateHosts(updated.hosts);
+      deps.updateCustomGroups(updated.customGroups);
+      return {
+        ok: true,
+        hostId,
+        host: sanitizeHostForAgent(updated.updatedHost),
+      };
+    }
+    case 'host.delete': {
+      const hostId = String(params.hostId || '').trim();
+      if (!hostId) return { ok: false, error: 'hostId is required.' };
+      const deleted = applyVaultHostDelete(deps.getHosts(), hostId);
+      if (!deleted.ok) return deleted;
+
+      deps.updateHosts(deleted.hosts);
+      return {
+        ok: true,
+        hostId,
+        deletedHost: sanitizeHostForAgent(deleted.deletedHost),
       };
     }
     case 'host.import': {

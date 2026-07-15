@@ -120,6 +120,40 @@ test("dispatchCapabilityRpc routes vault hosts create to vault service", async (
   assert.equal(result.ok, true);
 });
 
+test("dispatchCapabilityRpc routes vault host update to vault service", async () => {
+  let invokedOp = null;
+  let invokedParams = null;
+  const dispatch = createTestDispatcher({
+    invokeVaultAgent: async (op, params) => {
+      invokedOp = op;
+      invokedParams = params;
+      return { ok: true, hostId: params.hostId };
+    },
+  });
+
+  const result = await dispatch("vault/hosts/update", {
+    hostId: "host-1",
+    label: "updated",
+  });
+  assert.equal(invokedOp, "host.update");
+  assert.equal(invokedParams.label, "updated");
+  assert.equal(result.ok, true);
+});
+
+test("dispatchCapabilityRpc routes vault host delete to vault service", async () => {
+  let invokedOp = null;
+  const dispatch = createTestDispatcher({
+    invokeVaultAgent: async (op, params) => {
+      invokedOp = op;
+      return { ok: true, hostId: params.hostId };
+    },
+  });
+
+  const result = await dispatch("vault/hosts/delete", { hostId: "host-1" });
+  assert.equal(invokedOp, "host.delete");
+  assert.equal(result.ok, true);
+});
+
 test("dispatchCapabilityRpc routes vault hosts import to vault service", async () => {
   let invokedOp = null;
   const dispatch = createTestDispatcher({

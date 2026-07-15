@@ -7,15 +7,22 @@ export type VaultHostDraftProtocol = Exclude<HostProtocol, 'mosh' | 'et' | 'seri
 
 export interface VaultHostDraft {
   label?: unknown;
+  name?: unknown;
   hostname?: unknown;
+  host?: unknown;
+  ip?: unknown;
   port?: unknown;
   username?: unknown;
   password?: unknown;
+  keyPath?: unknown;
+  keypath?: unknown;
   group?: unknown;
   tags?: unknown;
   notes?: unknown;
   protocol?: unknown;
 }
+
+export type VaultHostUpdatePatch = VaultHostDraft;
 
 export interface VaultHostCreateIssue {
   index: number;
@@ -64,6 +71,24 @@ const parseTags = (raw: unknown): string[] => {
     .filter(Boolean);
 };
 
+const hasOwn = (value: object, key: string): boolean =>
+  Object.prototype.hasOwnProperty.call(value, key);
+
+const firstProvided = (
+  value: Record<string, unknown>,
+  keys: string[],
+): { provided: boolean; value?: unknown } => {
+  for (const key of keys) {
+    if (hasOwn(value, key)) return { provided: true, value: value[key] };
+  }
+  return { provided: false };
+};
+
+const parseKeyPath = (draft: VaultHostDraft): string | undefined => {
+  const raw = draft.keyPath ?? draft.keypath;
+  return typeof raw === 'string' && raw.trim() ? raw.trim() : undefined;
+};
+
 export const buildVaultHostMergeKey = (
   host: Pick<Host, 'hostname' | 'port' | 'username' | 'protocol'>,
 ): string =>
@@ -72,18 +97,21 @@ export const buildVaultHostMergeKey = (
 export function buildVaultHostFromDraft(
   draft: VaultHostDraft,
 ): { ok: true; host: Host } | { ok: false; error: string } {
-  const hostname = typeof draft.hostname === 'string' ? draft.hostname.trim() : '';
+  const rawHostname = draft.hostname ?? draft.host ?? draft.ip;
+  const hostname = typeof rawHostname === 'string' ? rawHostname.trim() : '';
   if (!hostname) {
     return { ok: false, error: 'hostname is required.' };
   }
 
   const protocol = normalizeProtocol(draft.protocol) ?? 'ssh';
   const port = parsePort(draft.port) ?? (protocol === 'telnet' ? 23 : DEFAULT_SSH_PORT);
-  const label = typeof draft.label === 'string' && draft.label.trim()
-    ? draft.label.trim()
+  const rawLabel = draft.label ?? draft.name;
+  const label = typeof rawLabel === 'string' && rawLabel.trim()
+    ? rawLabel.trim()
     : hostname;
   const username = typeof draft.username === 'string' ? draft.username.trim() : '';
   const password = typeof draft.password === 'string' && draft.password ? draft.password : undefined;
+  const keyPath = parseKeyPath(draft);
   const notes = typeof draft.notes === 'string' && draft.notes.trim() ? draft.notes.trim() : undefined;
   const now = Date.now();
 
@@ -101,8 +129,142 @@ export function buildVaultHostFromDraft(
       os: 'linux',
       protocol,
       createdAt: now,
+      ...(keyPath
+        ? {
+          identityFilePaths: [keyPath],
+          authMethod: 'key' as const,
+          authPolicyVersion: 1 as const,
+          useSshAgent: false,
+        }
+        : {}),
       ...(notes ? { notes } : {}),
     },
+  };
+}
+
+export function applyVaultHostUpdate(
+  existingHosts: Host[],
+  existingGroups: string[],
+  hostId: string,
+  patch: VaultHostUpdatePatch,
+): {
+  ok: true;
+  hosts: Host[];
+  customGroups: string[];
+  updatedHost: Host;
+} | { ok: false; error: string } {
+  const hostIndex = existingHosts.findIndex((host) => host.id === hostId);
+  if (hostIndex < 0) return { ok: false, error: `Host "${hostId}" was not found.` };
+
+  const source = patch as Record<string, unknown>;
+  const label = firstProvided(source, ['label', 'name']);
+  const hostname = firstProvided(source, ['hostname', 'host', 'ip']);
+  const port = firstProvided(source, ['port']);
+  const username = firstProvided(source, ['username']);
+  const password = firstProvided(source, ['password']);
+  const keyPath = firstProvided(source, ['keyPath', 'keypath']);
+  const group = firstProvided(source, ['group']);
+  const tags = firstProvided(source, ['tags']);
+  const notes = firstProvided(source, ['notes']);
+  const protocol = firstProvided(source, ['protocol']);
+  const provided = [label, hostname, port, username, password, keyPath, group, tags, notes, protocol]
+    .some((entry) => entry.provided);
+  if (!provided) return { ok: false, error: 'At least one host field is required.' };
+
+  const current = existingHosts[hostIndex];
+  let updated: Host = { ...current };
+
+  if (label.provided) {
+    if (typeof label.value !== 'string' || !label.value.trim()) {
+      return { ok: false, error: 'label must not be empty.' };
+    }
+    updated.label = label.value.trim();
+  }
+  if (hostname.provided) {
+    if (typeof hostname.value !== 'string' || !hostname.value.trim()) {
+      return { ok: false, error: 'hostname must not be empty.' };
+    }
+    updated.hostname = hostname.value.trim();
+  }
+  if (port.provided) {
+    const parsedPort = parsePort(port.value);
+    if (parsedPort === undefined) {
+      return { ok: false, error: 'port must be between 1 and 65535.' };
+    }
+    updated.port = parsedPort;
+  }
+  if (username.provided) {
+    if (typeof username.value !== 'string') {
+      return { ok: false, error: 'username must be a string.' };
+    }
+    updated.username = username.value.trim();
+  }
+  if (password.provided) {
+    if (typeof password.value !== 'string') {
+      return { ok: false, error: 'password must be a string.' };
+    }
+    updated.password = password.value || undefined;
+    if (password.value && !keyPath.provided) {
+      updated.authMethod = 'password';
+      updated.authPolicyVersion = 1;
+      updated.identityId = '';
+      updated.identityFileId = undefined;
+      updated.identityFilePaths = undefined;
+      updated.useSshAgent = false;
+    }
+  }
+  if (keyPath.provided) {
+    if (typeof keyPath.value !== 'string') {
+      return { ok: false, error: 'keyPath must be a string.' };
+    }
+    const nextKeyPath = keyPath.value.trim();
+    updated.identityFilePaths = nextKeyPath ? [nextKeyPath] : undefined;
+    updated.identityFileId = undefined;
+    updated.identityId = '';
+    updated.authMethod = nextKeyPath ? 'key' : 'auto';
+    updated.authPolicyVersion = 1;
+    updated.useSshAgent = nextKeyPath ? false : undefined;
+  }
+  if (group.provided) {
+    if (typeof group.value !== 'string') {
+      return { ok: false, error: 'group must be a string.' };
+    }
+    updated.group = normalizeGroupPath(group.value);
+  }
+  if (tags.provided) updated.tags = parseTags(tags.value);
+  if (notes.provided) {
+    if (typeof notes.value !== 'string') {
+      return { ok: false, error: 'notes must be a string.' };
+    }
+    updated.notes = notes.value.trim() || undefined;
+  }
+  if (protocol.provided) {
+    const nextProtocol = normalizeProtocol(protocol.value);
+    if (!nextProtocol) {
+      return { ok: false, error: 'protocol must be ssh, telnet, or local.' };
+    }
+    updated.protocol = nextProtocol;
+  }
+
+  updated = sanitizeHost(updated);
+  const hosts = [...existingHosts];
+  hosts[hostIndex] = updated;
+  const customGroups = updated.group
+    ? Array.from(new Set([...existingGroups, updated.group]))
+    : [...existingGroups];
+  return { ok: true, hosts, customGroups, updatedHost: updated };
+}
+
+export function applyVaultHostDelete(
+  existingHosts: Host[],
+  hostId: string,
+): { ok: true; hosts: Host[]; deletedHost: Host } | { ok: false; error: string } {
+  const deletedHost = existingHosts.find((host) => host.id === hostId);
+  if (!deletedHost) return { ok: false, error: `Host "${hostId}" was not found.` };
+  return {
+    ok: true,
+    hosts: existingHosts.filter((host) => host.id !== hostId),
+    deletedHost,
   };
 }
 
