@@ -341,7 +341,10 @@ export function applyVaultHostUpdate(
     if (!isSafeSshConfigValue(hostname.value)) {
       return { ok: false, error: 'hostname must not contain line breaks or null bytes.' };
     }
-    if (HOSTNAME_WHITESPACE.test(hostname.value.trim())) {
+    const requestedProtocol = protocol.provided
+      ? String(protocol.value ?? '').trim().toLowerCase()
+      : current.protocol;
+    if (requestedProtocol !== 'serial' && HOSTNAME_WHITESPACE.test(hostname.value.trim())) {
       return { ok: false, error: 'hostname must not contain whitespace.' };
     }
     updated.hostname = hostname.value.trim();
@@ -498,6 +501,9 @@ export function applyVaultHostUpdate(
     const path = String(config.path ?? '').trim();
     const baudRate = Number(config.baudRate);
     if (!path || !Number.isInteger(baudRate) || baudRate <= 0) return { ok: false, error: 'serialConfig requires path and a positive baudRate.' };
+    if (!isSafeSshConfigValue(path)) {
+      return { ok: false, error: 'serialConfig.path must not contain line breaks or null bytes.' };
+    }
     const dataBits = config.dataBits === undefined ? undefined : Number(config.dataBits);
     if (dataBits !== undefined && ![5, 6, 7, 8].includes(dataBits)) return { ok: false, error: 'serialConfig.dataBits must be 5, 6, 7, or 8.' };
     const stopBits = config.stopBits === undefined ? undefined : Number(config.stopBits);

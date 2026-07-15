@@ -583,6 +583,7 @@ test('applyVaultHostUpdate rejects malformed advanced connection settings', () =
     { patch: { etPort: 0 }, error: /between 1 and 65535/i },
     { patch: { serialConfig: '{' }, error: /valid JSON/i },
     { patch: { serialConfig: {} }, error: /requires path and a positive baudRate/i },
+    { patch: { serialConfig: { path: '/dev/ttyUSB0\nspoof', baudRate: 9600 } }, error: /line breaks or null bytes/i },
     { patch: { serialConfig: { path: '/dev/ttyUSB0', baudRate: 9600, dataBits: 9 } }, error: /dataBits/i },
     { patch: { serialConfig: { path: '/dev/ttyUSB0', baudRate: 9600, stopBits: 3 } }, error: /stopBits/i },
     { patch: { serialConfig: { path: '/dev/ttyUSB0', baudRate: 9600, parity: 'bad' } }, error: /parity/i },
@@ -673,6 +674,22 @@ test('applyVaultHostUpdate preserves repeated SSH mode and synchronizes serial p
   if (!whitespacePath.ok) return;
   assert.equal(whitespacePath.updatedHost.hostname, '/tmp/serial link');
   assert.equal(whitespacePath.updatedHost.serialConfig?.path, '/tmp/serial link');
+
+  const hostnameOnlyWhitespacePath = applyVaultHostUpdate([serialHost], [], serialHost.id, {
+    hostname: '/tmp/serial link',
+  });
+  assert.equal(hostnameOnlyWhitespacePath.ok, true);
+  if (!hostnameOnlyWhitespacePath.ok) return;
+  assert.equal(hostnameOnlyWhitespacePath.updatedHost.hostname, '/tmp/serial link');
+  assert.equal(hostnameOnlyWhitespacePath.updatedHost.serialConfig?.path, '/tmp/serial link');
+
+  const matchingWhitespacePaths = applyVaultHostUpdate([serialHost], [], serialHost.id, {
+    hostname: '/tmp/serial link',
+    serialConfig: { path: '/tmp/serial link', baudRate: 9600 },
+  });
+  assert.equal(matchingWhitespacePaths.ok, true);
+  if (!matchingWhitespacePaths.ok) return;
+  assert.equal(matchingWhitespacePaths.updatedHost.hostname, '/tmp/serial link');
 });
 
 test('applyVaultHostUpdate validates Mosh and ET against inherited connection settings', () => {
