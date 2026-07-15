@@ -65,6 +65,30 @@
     "agentKind": "global"
   },
   {
+    "capabilityId": "session.close",
+    "toolName": "session_close",
+    "rpcMethod": "session/close",
+    "localExecution": false,
+    "description": "Close a terminal session previously opened by host_open in the current AI scope.",
+    "inputShape": {
+      "sessionId": {
+        "type": "string",
+        "optional": false,
+        "description": "The session ID returned by host_open."
+      }
+    },
+    "policy": {
+      "write": true,
+      "sensitiveRead": false,
+      "longRunning": false,
+      "requiresChatSession": true,
+      "bypassesObserverBlock": true,
+      "bypassesApproval": true,
+      "bypassesChatCancel": true
+    },
+    "agentKind": "global"
+  },
+  {
     "capabilityId": "terminal.execute",
     "toolName": "terminal_execute",
     "rpcMethod": "netcatty/exec",
@@ -561,7 +585,7 @@
     "toolName": "host_open",
     "rpcMethod": "vault/hosts/open",
     "localExecution": false,
-    "description": "Open a vault host by creating a new terminal tab and starting the connection. Returns the new sessionId so you can run terminal/SFTP tools against it. Use vault_hosts_list first when you only know the label or hostname. Opens a terminal tab for a saved vault host (same as clicking the host in Netcatty). Connection may still be establishing when the tool returns — use get_environment or wait briefly before terminal_execute if needed. Auth prompts (passphrase / keyboard-interactive) still require the user in the Netcatty UI.",
+    "description": "Open a vault host by creating a new terminal tab and starting the connection. Returns the new sessionId so you can run terminal/SFTP tools against it. Use vault_hosts_list first when you only know the label or hostname. Opens a terminal tab for a saved vault host (same as clicking the host in Netcatty). Connection may still be establishing when the tool returns — use get_environment or wait briefly before terminal_execute if needed. Call session_close with the returned sessionId when the task is finished. Auth prompts (passphrase / keyboard-interactive) still require the user in the Netcatty UI.",
     "inputShape": {
       "hostId": {
         "type": "string",

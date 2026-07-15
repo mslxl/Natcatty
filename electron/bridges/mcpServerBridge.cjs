@@ -94,6 +94,8 @@ function disconnectExternalMcpClients() {
 // Each chat session only sees the hosts registered for its scope.
 const scopedMetadata = new Map();
 const scopedAttachments = new Map(); // chatSessionId -> Map<filePath, attachment>
+const { createSessionOwnershipRegistry } = require("./mcpServerBridge/sessionOwnership.cjs");
+const openedSessionOwnership = createSessionOwnershipRegistry();
 
 // Command safety checking (reuse from aiBridge)
 let commandBlocklist = [];
@@ -119,13 +121,16 @@ const cancelledChatSessions = new Set();
 const activeExecChatSessions = new Map(); // chatSessionId -> { sessionId, command, startedAt }
 const backgroundJobs = new Map(); // jobId -> job metadata
 const workerBackgroundJobs = new Map(); // jobId -> { chatSessionId, sessionId }
+const pendingWorkerJobStarts = new Map(); // sessionId -> Set<{ chatSessionId, cancelled }>
 const activeSessionExecutions = new Map(); // sessionId -> { kind, startedAt, token }
-const activeSessionSftpOps = new Map(); // opId -> { chatSessionId, cancel }
+const activeSessionSftpOps = new Map(); // opId -> { chatSessionId, sessionId, cancel }
+const closingTerminalSessions = new Map(); // sessionId -> overlapping close request count
 const pendingSessionWriteApprovals = new Map(); // sessionId -> method
 const DEFAULT_BACKGROUND_JOB_TIMEOUT_MS = 60 * 60 * 1000;
 const DEFAULT_BACKGROUND_JOB_POLL_INTERVAL_MS = 30 * 1000;
 const BACKGROUND_JOB_RETENTION_MS = 10 * 60 * 1000;
 const MAX_BACKGROUND_JOB_OUTPUT_CHARS = 256 * 1024;
+const SESSION_CLOSE_CLEANUP_TIMEOUT_MS = 5000;
 let activeSftpOpSeq = 0;
 
 // ── Approval gate (for confirm mode with SDK/MCP agents) ──
@@ -288,15 +293,21 @@ const { createBackgroundJobApi } = require("./mcpServerBridge/backgroundJobs.cjs
 const backgroundJobApi = createBackgroundJobApi({
   get activeSftpOpSeq() { return activeSftpOpSeq; },
   set activeSftpOpSeq(value) { activeSftpOpSeq = value; },
-  backgroundJobs, activeSessionSftpOps, activeSessionExecutions, crypto,
+  backgroundJobs, activeSessionSftpOps, activeSessionExecutions, closingTerminalSessions, crypto,
   BACKGROUND_JOB_RETENTION_MS, DEFAULT_BACKGROUND_JOB_POLL_INTERVAL_MS, MAX_BACKGROUND_JOB_OUTPUT_CHARS,
+  SESSION_CLOSE_CLEANUP_TIMEOUT_MS,
   debugLog, sftpBridge,
 });
 const {
   createBackgroundJobId,
   cancelBackgroundJobsForSession,
+  cancelBackgroundJobsForTerminalSession,
+  settleBackgroundJobsForTerminalSession,
   registerSftpOp,
   cancelSftpOpsForSession,
+  cancelSftpOpsForTerminalSession,
+  beginTerminalSessionClose,
+  endTerminalSessionClose,
   cancelAllSftpOps,
   readBackgroundJobSnapshot,
   createOutputWindow,
@@ -379,6 +390,7 @@ function shutdownHost({ preserveScopedMetadata = false } = {}) {
     }
   }
   backgroundJobs.clear();
+  pendingWorkerJobStarts.clear();
   activeSessionExecutions.clear();
 }
 
@@ -1099,6 +1111,34 @@ const dispatchCapabilityRpc = createCapabilityRpcDispatcher({
   isChatSessionCancelled,
   requestApprovalFromRenderer,
   USER_DENIED_MESSAGE,
+  captureHostOpenScope: (chatSessionId) => openedSessionOwnership.captureGeneration(chatSessionId),
+  onHostOpened: (chatSessionId, sessionId, generation) => {
+    openedSessionOwnership.register(chatSessionId, sessionId, generation);
+  },
+  validateSessionClose: (params = {}) => {
+    const scopeErr = validateSessionScope(
+      params.sessionId,
+      params.chatSessionId,
+      params.scopedSessionIds,
+    );
+    if (scopeErr) return { ok: false, error: scopeErr };
+    return openedSessionOwnership.validate(params.chatSessionId, params.sessionId);
+  },
+  beforeSessionClose: async (params = {}) => {
+    beginTerminalSessionClose(params.sessionId);
+    cancelBackgroundJobsForTerminalSession(params.sessionId);
+    await cancelWorkerBackgroundJobsForTerminalSession(params.sessionId);
+    await cancelSftpOpsForTerminalSession(params.sessionId);
+  },
+  afterSessionClose: (params = {}) => endTerminalSessionClose(params.sessionId),
+  onSessionClosed: async (sessionId) => {
+    await settleBackgroundJobsForTerminalSession(sessionId);
+    openedSessionOwnership.forgetSession(sessionId);
+    for (const scoped of scopedMetadata.values()) {
+      scoped.sessionIds = scoped.sessionIds.filter((id) => id !== sessionId);
+      scoped.metadata.delete(sessionId);
+    }
+  },
 });
 
 /**
@@ -1254,6 +1294,9 @@ async function handleWorkerJobStart(params = {}) {
   if (!terminalWorkerManager?.request) {
     return { ok: false, error: "Session not found" };
   }
+  if (closingTerminalSessions.has(sessionId)) {
+    return { ok: false, error: `Session "${sessionId}" is closing.` };
+  }
 
   const chatSessionId = params?.chatSessionId || null;
   const meta = getSessionMeta(sessionId, chatSessionId) || {};
@@ -1264,6 +1307,14 @@ async function handleWorkerJobStart(params = {}) {
     }
   }
 
+  const pendingStart = { chatSessionId, cancelled: false };
+  let pendingForSession = pendingWorkerJobStarts.get(sessionId);
+  if (!pendingForSession) {
+    pendingForSession = new Set();
+    pendingWorkerJobStarts.set(sessionId, pendingForSession);
+  }
+  pendingForSession.add(pendingStart);
+
   try {
     const result = await terminalWorkerManager.request("netcatty:ai:jobStart", {
       sessionId,
@@ -1273,6 +1324,14 @@ async function handleWorkerJobStart(params = {}) {
       sessionMeta: meta,
     }, {});
     if (result?.ok && result.jobId) {
+      if (pendingStart.cancelled || closingTerminalSessions.has(sessionId)) {
+        await waitForWorkerCleanup(terminalWorkerManager.request("netcatty:ai:jobStop", {
+          jobId: result.jobId,
+          sessionId,
+          chatSessionId,
+        }, {}));
+        return { ok: false, error: "Session is closing.", jobId: result.jobId, status: "cancelled" };
+      }
       workerBackgroundJobs.set(result.jobId, {
         chatSessionId: chatSessionId || null,
         sessionId,
@@ -1281,6 +1340,9 @@ async function handleWorkerJobStart(params = {}) {
     return result;
   } catch (err) {
     return { ok: false, error: err?.message || String(err) };
+  } finally {
+    pendingForSession.delete(pendingStart);
+    if (pendingForSession.size === 0) pendingWorkerJobStarts.delete(sessionId);
   }
 }
 
@@ -1330,6 +1392,11 @@ async function handleWorkerJobStop(params = {}) {
 
 function cancelWorkerBackgroundJobsForSession(chatSessionId) {
   if (!chatSessionId) return;
+  for (const pendingStarts of pendingWorkerJobStarts.values()) {
+    for (const pendingStart of pendingStarts) {
+      if (pendingStart.chatSessionId === chatSessionId) pendingStart.cancelled = true;
+    }
+  }
   for (const [jobId, job] of workerBackgroundJobs) {
     if (job.chatSessionId === chatSessionId) {
       workerBackgroundJobs.delete(jobId);
@@ -1340,6 +1407,39 @@ function cancelWorkerBackgroundJobsForSession(chatSessionId) {
   } catch {
     // Worker may already be gone while cancelling a torn-down chat/session.
   }
+}
+
+function waitForWorkerCleanup(requestPromise) {
+  const timeoutMs = Math.max(1, Math.min(commandTimeoutMs, 5000));
+  let timer = null;
+  const timeoutPromise = new Promise((resolve) => {
+    timer = setTimeout(resolve, timeoutMs);
+  });
+  return Promise.race([requestPromise, timeoutPromise]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
+async function cancelWorkerBackgroundJobsForTerminalSession(sessionId) {
+  if (!sessionId) return;
+  for (const pendingStart of pendingWorkerJobStarts.get(sessionId) || []) {
+    pendingStart.cancelled = true;
+  }
+  const matchingJobs = [];
+  const pending = [];
+  for (const [jobId, job] of workerBackgroundJobs) {
+    if (job.sessionId !== sessionId) continue;
+    matchingJobs.push(jobId);
+    if (terminalWorkerManager?.request) {
+      pending.push(waitForWorkerCleanup(terminalWorkerManager.request("netcatty:ai:jobStop", {
+        jobId,
+        sessionId,
+        chatSessionId: job.chatSessionId || null,
+      }, {})));
+    }
+  }
+  if (pending.length) await Promise.allSettled(pending);
+  for (const jobId of matchingJobs) workerBackgroundJobs.delete(jobId);
 }
 
 let builtinRpcHandlerRegistry = null;
@@ -1409,6 +1509,14 @@ async function dispatch(method, params) {
     if (scopeErr) return { ok: false, error: scopeErr };
   }
 
+  if (
+    (capability?.id === "terminal.execute" || capability?.id === "terminal.start")
+    && params?.sessionId
+    && closingTerminalSessions.has(params.sessionId)
+  ) {
+    return { ok: false, error: `Session "${params.sessionId}" is closing.` };
+  }
+
   if ((capability?.id === "terminal.execute" || capability?.id === "terminal.start") && params?.sessionId) {
     const busy = getSessionBusyError(params.sessionId);
     if (busy) return busy;
@@ -1435,6 +1543,20 @@ async function dispatch(method, params) {
       const approved = await requestApprovalFromRenderer(method, toolArgs, chatSessionId);
       if (!approved) {
         return { ok: false, error: USER_DENIED_MESSAGE };
+      }
+    }
+    if (
+      (capability?.id === "terminal.execute" || capability?.id === "terminal.start")
+      && params?.sessionId
+    ) {
+      const scopeErr = validateSessionScope(
+        params.sessionId,
+        params?.chatSessionId,
+        params?.scopedSessionIds,
+      );
+      if (scopeErr) return { ok: false, error: scopeErr };
+      if (closingTerminalSessions.has(params.sessionId)) {
+        return { ok: false, error: `Session "${params.sessionId}" is closing.` };
       }
     }
     const handler = getBuiltinRpcHandlerRegistry().get(method);
@@ -1686,7 +1808,9 @@ const configAndCleanupApi = createConfigAndCleanupApi({
   process, existsSync, path, __dirname, toUnpackedAsarPath, DEBUG_MCP,
   getScopedSessionIds, scopedMetadata, scopedAttachments, cancelledChatSessions, cancelBackgroundJobsForSession,
   cancelWorkerBackgroundJobsForSession,
+  cancelWorkerBackgroundJobsForTerminalSession,
   clearPendingApprovals, cancelSftpOpsForSession, sftpBridge,
+  clearOpenedSessionScope: openedSessionOwnership.clearScope,
 });
 const { resolveMcpServerRuntimeCommand, buildMcpServerConfig, cleanupScopedMetadata } = configAndCleanupApi;
 
@@ -1721,6 +1845,7 @@ module.exports = {
   cancelAllPtyExecs,
   cancelPtyExecsForSession,
   cancelWorkerBackgroundJobsForSession,
+  cancelWorkerBackgroundJobsForTerminalSession,
   cancelSftpOpsForSession,
   getSessionMeta,
   cleanupScopedMetadata,

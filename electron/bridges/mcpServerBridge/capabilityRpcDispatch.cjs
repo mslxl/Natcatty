@@ -5,6 +5,7 @@ const { getCapabilityByRpcMethod } = require("../../capabilities/registry.cjs");
 const { getMcpToolNameForRpcMethod } = require("../../capabilities/adapters/mcpAdapter.cjs");
 const { createVaultService } = require("../../capabilities/services/vaultService.cjs");
 const { createPortForwardService } = require("../../capabilities/services/portforwardService.cjs");
+const { createSessionService } = require("../../capabilities/services/sessionService.cjs");
 
 const UNROUTED = Symbol("capability-rpc-unrouted");
 
@@ -57,6 +58,7 @@ const SERVICE_BINDINGS = Object.freeze({
   "portforward.tunnels.list": { domain: "portforward", method: "listTunnels" },
   "portforward.start": { domain: "portforward", method: "start" },
   "portforward.stop": { domain: "portforward", method: "stop" },
+  "session.close": { domain: "session", method: "close" },
 });
 
 function resolveCapabilitySurface(rpcMethod) {
@@ -87,9 +89,17 @@ function createCapabilityRpcDispatcher(deps) {
 
   const vaultService = createVaultService({ invokeVaultAgent });
   const portforwardService = createPortForwardService({ invokeVaultAgent });
+  const sessionService = createSessionService({
+    invokeSessionAgent: invokeVaultAgent,
+    validateClose: deps.validateSessionClose,
+    beforeClose: deps.beforeSessionClose,
+    afterClose: deps.afterSessionClose,
+    onClosed: deps.onSessionClosed,
+  });
   const services = {
     vault: vaultService,
     portforward: portforwardService,
+    session: sessionService,
   };
 
   return async function dispatchCapabilityRpc(rpcMethod, params = {}) {
@@ -148,7 +158,14 @@ function createCapabilityRpcDispatcher(deps) {
       };
     }
 
-    return handler(params);
+    const hostOpenGeneration = capability.id === "vault.host.open"
+      ? deps.captureHostOpenScope?.(params?.chatSessionId)
+      : null;
+    const result = await handler(params);
+    if (capability.id === "vault.host.open" && result?.ok !== false && result?.sessionId) {
+      deps.onHostOpened?.(params?.chatSessionId, result.sessionId, hostOpenGeneration);
+    }
+    return result;
   };
 }
 

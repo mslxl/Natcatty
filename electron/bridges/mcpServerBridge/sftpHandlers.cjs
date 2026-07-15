@@ -22,15 +22,10 @@ function createSftpHandlerApi(ctx) {
       return !mainSessions?.get?.(params.sessionId);
     }
 
-    function requestWorkerSftp(channel, payload, options = {}) {
-      const manager = getWorkerManager();
-      if (!manager?.request) {
-        return Promise.reject(new Error("Terminal worker is unavailable"));
-      }
+    function waitForWorkerSftpRequest(requestPromise, options = {}) {
       const timeoutMs = Number.isFinite(options.timeoutMs) && options.timeoutMs > 0
         ? options.timeoutMs
         : 0;
-      const requestPromise = manager.request(channel, payload, {});
       if (!timeoutMs) return requestPromise;
 
       let timer = null;
@@ -44,6 +39,14 @@ function createSftpHandlerApi(ctx) {
       });
     }
 
+    function requestWorkerSftp(channel, payload, options = {}) {
+      const manager = getWorkerManager();
+      if (!manager?.request) {
+        return Promise.reject(new Error("Terminal worker is unavailable"));
+      }
+      return waitForWorkerSftpRequest(manager.request(channel, payload, {}), options);
+    }
+
     async function withWorkerSessionBackedSftp(params, workerChannel, options = {}) {
       if (!workerChannel) throw new Error("Worker SFTP channel is required");
       const chatSessionId = typeof params?.chatSessionId === "string" && params.chatSessionId ? params.chatSessionId : null;
@@ -51,31 +54,57 @@ function createSftpHandlerApi(ctx) {
       const timeoutMs = Number.isFinite(options.timeoutMs) && options.timeoutMs > 0 ? options.timeoutMs : 0;
       const operationName = options.operationName || "SFTP operation";
       let sftpId = null;
+      let pendingOpenPromise = null;
+      let boundedOpenPromise = null;
       let closePromise = null;
+      let closeRequested = false;
       let cancellationError = null;
 
-      const closeSftpHandle = () => {
+      const closeKnownSftpHandle = () => {
         if (!sftpId) return Promise.resolve();
         if (!closePromise) {
           closePromise = requestWorkerSftp("netcatty:sftp:close", { sftpId, encodingStateKey });
         }
         return closePromise;
       };
-      const unregisterSftpOp = registerSftpOp(chatSessionId, () => {
+      const closeSftpHandle = async () => {
+        closeRequested = true;
+        if (!sftpId && boundedOpenPromise) {
+          try {
+            const opened = await boundedOpenPromise;
+            sftpId = opened?.sftpId || null;
+          } catch {
+            // Do not let an unresponsive worker open block cancellation. If it
+            // eventually succeeds, the late-result handler below closes it.
+          }
+        }
+        return closeKnownSftpHandle();
+      };
+      const unregisterSftpOp = registerSftpOp(chatSessionId, params.sessionId, () => {
         if (!cancellationError) {
           cancellationError = new Error("Cancelled");
         }
-        void closeSftpHandle().catch(() => {
+        return closeSftpHandle().catch(() => {
           // Ignore close failures while cancelling a worker-backed SFTP handle.
         });
       });
 
       try {
-        const opened = await requestWorkerSftp("netcatty:sftp:openForSession", {
+        const manager = getWorkerManager();
+        pendingOpenPromise = manager.request("netcatty:sftp:openForSession", {
           sessionId: params.sessionId,
           encodingStateKey,
           timeoutMs,
-        }, { timeoutMs, operationName });
+        }, {});
+        boundedOpenPromise = waitForWorkerSftpRequest(pendingOpenPromise, { timeoutMs, operationName });
+        void pendingOpenPromise.then((lateOpened) => {
+          if (!sftpId) sftpId = lateOpened?.sftpId || null;
+          if (closeRequested) return closeKnownSftpHandle();
+          return undefined;
+        }).catch(() => {
+          // The bounded request reports open failures to the active operation.
+        });
+        const opened = await boundedOpenPromise;
         sftpId = opened?.sftpId;
         if (!sftpId) throw new Error("Failed to open session-backed SFTP handle");
         if (cancellationError) throw cancellationError;
@@ -145,11 +174,15 @@ function createSftpHandlerApi(ctx) {
           }, cancelCleanupGraceMs);
         }
       };
-      const unregisterSftpOp = registerSftpOp(chatSessionId, () => {
+      const unregisterSftpOp = registerSftpOp(chatSessionId, params.sessionId, () => {
         if (!cancellationError) {
           cancellationError = new Error("Cancelled");
         }
         requestAbort(cancellationError);
+        closeRequested = true;
+        return closeSftpHandle().catch(() => {
+          // Ignore close failures while cancelling the SFTP operation.
+        });
       });
       try {
         if (timeoutMs) {

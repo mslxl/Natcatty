@@ -429,6 +429,12 @@ export interface VaultAgentApiDeps {
     ok: false;
     error: string;
   };
+  closeSession?: (sessionId: string) => {
+    ok: true;
+  } | {
+    ok: false;
+    error: string;
+  };
 }
 
 function resolveEffectiveHostKeyPath(host: Host, deps: VaultAgentApiDeps): string | undefined {
@@ -500,6 +506,16 @@ export async function handleVaultAgentOp(
   deps: VaultAgentApiDeps,
 ): Promise<Record<string, unknown>> {
   switch (op) {
+    case 'session.close': {
+      const sessionId = String(params.sessionId || '').trim();
+      if (!sessionId) return { ok: false, error: 'sessionId is required.' };
+      if (typeof deps.closeSession !== 'function') {
+        return { ok: false, error: 'Session close is not available in this window.' };
+      }
+      const closed = deps.closeSession(sessionId);
+      if (!closed.ok) return closed;
+      return { ok: true, sessionId, status: 'closed' };
+    }
     case 'host.get': {
       const hostId = String(params.hostId || '');
       const host = deps.getHosts().find((entry) => entry.id === hostId);

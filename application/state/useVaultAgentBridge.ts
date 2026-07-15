@@ -39,6 +39,7 @@ export interface UseVaultAgentBridgeInput {
   stopTunnel: VaultAgentApiDeps['stopTunnel'];
   stopRuleTunnels: VaultAgentApiDeps['stopRuleTunnels'];
   openHost?: VaultAgentApiDeps['openHost'];
+  closeSession?: VaultAgentApiDeps['closeSession'];
 }
 
 type VaultAgentSnapshot = {
@@ -177,6 +178,9 @@ export function useVaultAgentBridge(input: UseVaultAgentBridgeInput): void {
         stopRuleTunnels: current.stopRuleTunnels,
         openHost: current.openHost
           ? (host) => current.openHost!(host)
+          : undefined,
+        closeSession: current.closeSession
+          ? (sessionId) => current.closeSession!(sessionId)
           : undefined,
       });
     });

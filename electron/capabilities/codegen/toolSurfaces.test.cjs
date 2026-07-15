@@ -74,6 +74,22 @@ test("listMcpTools includes host_open for external MCP clients", () => {
   assert.equal(hostOpen.publicRpcMethod, "public/vault/hosts/open");
 });
 
+test("session_close is exposed to agents and external MCP clients", () => {
+  const mcpTool = listMcpTools().find((tool) => tool.mcpTool === "session_close");
+  assert.ok(mcpTool);
+  assert.equal(mcpTool.capabilityId, "session.close");
+  assert.equal(mcpTool.publicRpcMethod, "public/session/close");
+
+  const cattyTool = listCattyToolSpecs().find((tool) => tool.toolName === "session_close");
+  assert.ok(cattyTool);
+  assert.equal(cattyTool.rpcMethod, "session/close");
+});
+
+test("host_open tells agents to close sessions after use", () => {
+  const hostOpen = listMcpTools().find((tool) => tool.mcpTool === "host_open");
+  assert.match(hostOpen?.description || "", /session_close/i);
+});
+
 test("vault host import tool description routes unknown attached host text to host creation", () => {
   const importSpec = listCattyToolSpecs().find((spec) => spec.capabilityId === "vault.host.import");
   assert.ok(importSpec);
@@ -195,4 +211,27 @@ test("registerMcpTools registers one handler per catalog MCP tool", () => {
   });
   assert.equal(count, listMcpTools().length);
   assert.equal(registered.length, listMcpTools().length);
+});
+
+test("session_close remains available as a cleanup action in observer mode", async () => {
+  let handler = null;
+  let guardCalls = 0;
+  const fakeServer = {
+    tool(name, _description, _shape, candidate) {
+      if (name === "session_close") handler = candidate;
+    },
+  };
+  registerMcpTools(fakeServer, {
+    rpcCall: async (_method, params) => ({ ok: true, sessionId: params.sessionId, status: "closed" }),
+    scopeParams: { chatSessionId: "chat-1" },
+    guardWriteOperation: () => {
+      guardCalls += 1;
+      return "Observer mode";
+    },
+    catalogDescription: (_name, fallback) => fallback,
+  });
+
+  const result = await handler({ sessionId: "session-1" });
+  assert.equal(result.isError, undefined);
+  assert.equal(guardCalls, 0);
 });

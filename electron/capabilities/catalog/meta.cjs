@@ -137,6 +137,25 @@ const META_CAPABILITIES = [
       cli: { command: ["session"] },
     },
   },
+  {
+    id: "session.close",
+    domain: "session",
+    status: CAPABILITY_STATUS.IMPLEMENTED,
+    description: "Close a terminal session previously opened by host_open in the current AI scope.",
+    policy: {
+      write: true,
+      sensitiveRead: false,
+      longRunning: false,
+      requiresChatSession: true,
+      bypassesObserverBlock: true,
+      bypassesApproval: true,
+      bypassesChatCancel: true,
+    },
+    surfaces: {
+      global: { rpcMethod: "session/close" },
+      public: { rpcMethod: "public/session/close", mcpTool: "session_close" },
+    },
+  },
 ];
 
 module.exports = { META_CAPABILITIES };

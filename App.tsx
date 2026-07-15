@@ -1063,6 +1063,15 @@ function App({ settings }: { settings: SettingsState }) {
     return { ok: true as const, sessionId, host };
   }, [handleConnectToHost]);
 
+  const closeSessionForVaultAgent = useCallback((sessionId: string) => {
+    if (!sessions.some((session) => session.id === sessionId)) {
+      return { ok: false as const, error: `Session "${sessionId}" was not found.` };
+    }
+    netcattyBridge.get()?.closeSession?.(sessionId);
+    closeSession(sessionId);
+    return { ok: true as const };
+  }, [closeSession, sessions]);
+
   useVaultAgentBridge({
     hosts,
     snippets,
@@ -1088,6 +1097,7 @@ function App({ settings }: { settings: SettingsState }) {
     stopTunnel,
     stopRuleTunnels,
     openHost: openHostForVaultAgent,
+    closeSession: closeSessionForVaultAgent,
   });
 
   const _handleSshDeepLink = useEffectEvent((payload: { url?: string }) => {

@@ -286,6 +286,37 @@ describe('handleVaultAgentOp vault hosts', () => {
     assert.equal((result as { host?: { hostname?: string } }).host?.hostname, 'edge.example.com');
   });
 
+  it('session.close closes the matching terminal session', async () => {
+    const closed: string[] = [];
+    const result = await handleVaultAgentOp(
+      'session.close',
+      { sessionId: 'session-host-open-1' },
+      createDeps({
+        closeSession: (sessionId) => {
+          closed.push(sessionId);
+          return { ok: true };
+        },
+      }),
+    );
+
+    assert.equal(result.ok, true);
+    assert.equal((result as { status?: string }).status, 'closed');
+    assert.deepEqual(closed, ['session-host-open-1']);
+  });
+
+  it('session.close reports unavailable sessions without claiming success', async () => {
+    const result = await handleVaultAgentOp(
+      'session.close',
+      { sessionId: 'missing' },
+      createDeps({
+        closeSession: () => ({ ok: false, error: 'Session "missing" was not found.' }),
+      }),
+    );
+
+    assert.equal(result.ok, false);
+    assert.match(String((result as { error?: string }).error), /not found/i);
+  });
+
   it('opens a host created by the immediately preceding request', async () => {
     let openedHost: Host | undefined;
     const deps = createDeps({
