@@ -552,7 +552,10 @@ const ChatInput: React.FC<ChatInputProps> = ({
   return (
     <div className="shrink-0 px-4 pb-4">
       <div ref={inputShellRef} className="relative">
-      <PromptInput onSubmit={handleSubmit}>
+      <PromptInput
+        onSubmit={handleSubmit}
+        allowEmptySubmit={hasTerminalSelectionAttachment}
+      >
         {/* File attachment chips */}
         {files.length > 0 && (
           <div className="flex gap-1.5 px-3 pt-2 pb-0.5 flex-wrap">
