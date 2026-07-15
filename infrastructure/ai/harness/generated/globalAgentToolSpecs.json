@@ -699,7 +699,7 @@
       "protocol": {
         "type": "string",
         "optional": true,
-        "description": "New protocol: ssh, telnet, or local."
+        "description": "New protocol: ssh, telnet, local, or serial."
       },
       "identityId": {
         "type": "string",
@@ -754,7 +754,7 @@
       "serialConfig": {
         "type": "string",
         "optional": true,
-        "description": "JSON object with path and baudRate for serial connections."
+        "description": "JSON object for serial connections: path, baudRate, and optional dataBits, stopBits, parity, flowControl, localEcho, lineMode."
       }
     },
     "policy": {

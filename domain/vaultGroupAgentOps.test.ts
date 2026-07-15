@@ -38,6 +38,29 @@ describe('vaultGroupAgentOps', () => {
     assert.equal(upsertGroup(state, 'prod', '{}', [], proxyProfiles, { newPath: 'prod/archive' }).ok, false);
   });
 
+  it('clears identity-derived defaults when replacing or detaching an identity', () => {
+    const state = {
+      groups: ['prod'],
+      configs: [{ path: 'prod', identityId: 'old', username: 'old-user', authMethod: 'password' as const, savePassword: true }],
+      hosts,
+      managedSources: [],
+    };
+    const identity = { id: 'new', label: 'New', username: 'deploy', authMethod: 'key' as const, keyId: 'key-1', created: 1 };
+    const replaced = upsertGroup(state, 'prod', '{"identityId":"new"}', [identity], proxyProfiles);
+    assert.equal(replaced.ok, true);
+    if (replaced.ok) {
+      assert.equal(replaced.config?.username, 'deploy');
+      assert.equal(replaced.config?.savePassword, undefined);
+    }
+    const detached = upsertGroup(state, 'prod', '{"identityId":""}', [identity], proxyProfiles);
+    assert.equal(detached.ok, true);
+    if (detached.ok) {
+      assert.equal(detached.config?.identityId, '');
+      assert.equal(detached.config?.username, undefined);
+      assert.equal(detached.config?.authMethod, undefined);
+    }
+  });
+
   it('moves hosts to root by default and refuses managed group deletion', () => {
     const state = { groups: ['prod', 'prod/web'], configs: [{ path: 'prod' }], hosts, managedSources: [] };
     const removed = deleteGroup(state, 'prod', false);
@@ -47,5 +70,15 @@ describe('vaultGroupAgentOps', () => {
       ...state, managedSources: [{ id: 'source-1', groupName: 'prod' } as ManagedSource],
     }, 'prod', false);
     assert.equal(managed.ok, false);
+  });
+
+  it('preserves managed status when deleting a subgroup under a managed parent', () => {
+    const managedHosts = hosts.map((host) => host.group === 'prod/web' ? { ...host, managedSourceId: 'source-1' } : host);
+    const result = deleteGroup({
+      groups: ['prod', 'prod/web'], configs: [], hosts: managedHosts,
+      managedSources: [{ id: 'source-1', groupName: 'prod' } as ManagedSource],
+    }, 'prod/web', false);
+    assert.equal(result.ok, true);
+    if (result.ok) assert.equal(result.state.hosts[0]?.managedSourceId, 'source-1');
   });
 });

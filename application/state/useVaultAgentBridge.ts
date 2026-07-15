@@ -52,15 +52,11 @@ const selectVaultAgentSnapshot = (input: UseVaultAgentBridgeInput): VaultAgentSn
   managedSources: input.managedSources,
 });
 
-const haveSameVaultAgentSnapshot = (left: VaultAgentSnapshot, right: VaultAgentSnapshot): boolean => (
-  left.hosts === right.hosts
-  && left.notes === right.notes
-  && left.snippets === right.snippets
-  && left.customGroups === right.customGroups
-  && left.groupConfigs === right.groupConfigs
-  && left.portForwardingRules === right.portForwardingRules
-  && left.managedSources === right.managedSources
-);
+export const haveSameVaultAgentSnapshot = (
+  left: VaultAgentSnapshot,
+  right: VaultAgentSnapshot,
+): boolean => (Object.keys(left) as Array<keyof VaultAgentSnapshot>)
+  .every((key) => left[key] === right[key]);
 
 export function useVaultAgentBridge(input: UseVaultAgentBridgeInput): void {
   const inputRef = useRef(input);

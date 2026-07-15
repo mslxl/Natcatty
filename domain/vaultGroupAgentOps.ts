@@ -60,8 +60,12 @@ export function patchGroupConfig(
       next.username = identity.username;
       next.authMethod = identity.authMethod;
       next.password = undefined;
+      next.savePassword = undefined;
       next.identityFileId = undefined;
       next.identityFilePaths = undefined;
+    } else {
+      next.username = undefined;
+      next.authMethod = undefined;
     }
   }
   if (Object.hasOwn(defaults, 'proxyProfileId')) {
@@ -154,6 +158,7 @@ export function deleteGroup(state: GroupState, pathValue: unknown, deleteHosts: 
     return { ok: false, error: 'Managed groups must be unmanaged before the AI can delete them.' };
   }
   const inside = (candidate?: string) => Boolean(candidate && (candidate === path || candidate.startsWith(`${path}/`)));
+  const hasManagedParent = state.managedSources.some((source) => path.startsWith(`${source.groupName}/`));
   return {
     ok: true,
     state: {
@@ -161,7 +166,9 @@ export function deleteGroup(state: GroupState, pathValue: unknown, deleteHosts: 
       configs: state.configs.filter((config) => !inside(config.path)),
       hosts: deleteHosts
         ? state.hosts.filter((host) => !inside(host.group))
-        : state.hosts.map((host) => inside(host.group) ? { ...host, group: undefined, managedSourceId: undefined } : host),
+        : state.hosts.map((host) => inside(host.group)
+          ? { ...host, group: undefined, ...(hasManagedParent ? {} : { managedSourceId: undefined }) }
+          : host),
       managedSources: state.managedSources,
     },
   };
