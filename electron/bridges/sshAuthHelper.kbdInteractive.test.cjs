@@ -47,6 +47,9 @@ const customizedAuthPrompt = { prompt: "Please authenticate:", echo: false };
 // OTP prompts that DO mention the word "password" or "口令" — the literal
 // keyword should not be enough to trigger auto-fill (#969 PR review round 2).
 const oneTimePasswordPrompt = { prompt: "Enter your one-time password:", echo: false };
+const currentPasswordPrompt = { prompt: "Current password:", echo: false };
+const newPasswordPrompt = { prompt: "New password:", echo: false };
+const confirmPasswordPrompt = { prompt: "Confirm password:", echo: false };
 const cjkDynamicPasswordPrompt = { prompt: "动态密码：", echo: false };
 const cjkDynamicTokenPrompt = { prompt: "动态口令：", echo: false };
 const cjkOneTimePasswordPrompt = { prompt: "一次性密码：", echo: false };
@@ -1010,6 +1013,28 @@ test("createKeyboardInteractiveHandler suggests enabling host MFA for Secondary 
   assert.equal(sent[0].payload.suggestEnableMfa, true);
   assert.equal(sent[0].payload.allowSavePassword, false);
   drainPendingRequests(sent, 1);
+});
+
+test("createKeyboardInteractiveHandler does not suggest host MFA for password-change prompts", () => {
+  const { sender, sent } = createSender();
+  const handler = createKeyboardInteractiveHandler({
+    sender,
+    sessionId: "session-1",
+    hostname: "password-expired.example.com",
+    password: "saved",
+    requiresMfa: false,
+  });
+
+  handler(
+    "Password expired",
+    "You are required to change your password immediately.",
+    "",
+    [currentPasswordPrompt, newPasswordPrompt, confirmPasswordPrompt],
+    () => {},
+  );
+
+  assert.equal(sent[0].payload.suggestEnableMfa, false);
+  drainPendingRequests(sent);
 });
 
 test("createKeyboardInteractiveHandler includes owning hostId in modal payload", () => {

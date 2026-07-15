@@ -1321,6 +1321,46 @@ const OTP_PROMPT_PATTERN = new RegExp(
   "i",
 );
 
+// Narrower than OTP_PROMPT_PATTERN: used only for suggesting host-level MFA.
+// Password-change words such as "confirm password" still block auto-fill via
+// OTP_PROMPT_PATTERN, but they must not make a normal host become MFA-first.
+const MFA_SUGGESTION_PROMPT_PATTERN = new RegExp(
+  [
+    "one[\\s-]?time",
+    "\\botp\\b",
+    "verification",
+    "passcode",
+    "\\btoken\\b",
+    "2fa",
+    "two[\\s-]?factor",
+    "multi[\\s-]?factor",
+    "\\bmfa\\b",
+    "second\\s+factor",
+    "secondary(?:\\s+\\w+){0,3}\\s+passw",
+    "second(?:\\s+\\w+){0,3}\\s+passw",
+    "additional(?:\\s+\\w+){0,3}\\s+passw",
+    "\\bedr\\b",
+    "duo",
+    "动态",
+    "一次性",
+    "验证码",
+    "验证信息",
+    "令牌",
+    "双因素",
+    "多因素",
+    "短信验证",
+    "手机验证",
+    "二次",
+    "安全密码",
+    "挑战码",
+  ].join("|"),
+  "i",
+);
+
+// Password-expiry / password-change keyboard-interactive forms are not MFA.
+const PASSWORD_CHANGE_PROMPT_PATTERN =
+  /\b(?:current|old|new)\s+(?:unix\s+)?passw|confirm\s+(?:new\s+)?passw|re[-\s]?enter\s+(?:new\s+)?passw/i;
+
 // Latin-script + CJK keywords for "this prompt is asking for a reusable
 // password". Only consulted AFTER OTP_PROMPT_PATTERN clears, so phrases like
 // "One-time password", "动态密码", or "二次密码" never reach this step.
@@ -1567,7 +1607,8 @@ function looksLikeSecondaryAuthChallenge(name, instructions, prompts, extraConte
   }
   const haystack = parts.filter((part) => typeof part === "string" && part.trim()).join("\n");
   if (!haystack) return false;
-  return OTP_PROMPT_PATTERN.test(haystack)
+  if (PASSWORD_CHANGE_PROMPT_PATTERN.test(haystack)) return false;
+  return MFA_SUGGESTION_PROMPT_PATTERN.test(haystack)
     || /secondary\s+authentication\s+password/i.test(haystack);
 }
 
