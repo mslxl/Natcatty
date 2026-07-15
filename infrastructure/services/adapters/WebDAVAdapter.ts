@@ -48,9 +48,9 @@ const parseSyncedFileJson = (raw: string): SyncedFile => {
 };
 
 /**
- * Atomic replace: temp PUT + MOVE; only if MOVE fails after a successful temp
- * write, DELETE + PUT. Never touch the existing vault if temp PUT fails, and
- * never fall back to in-place PUT when destination delete fails (#2223).
+ * Prefer temp PUT + MOVE; fall back to in-place PUT padded with spaces up to
+ * the previous length so non-truncating servers leave only JSON-legal
+ * whitespace (no DELETE empty-file race) (#2223).
  */
 const putWebdavFileReplacing = async (
   client: WebDAVClient,
@@ -59,16 +59,8 @@ const putWebdavFileReplacing = async (
 ): Promise<void> => {
   const suffix = `${Date.now().toString(16)}${Math.random().toString(16).slice(2, 10)}`;
   const tmpPath = `${path}.tmp-${suffix}`;
-
-  // If temp write fails, leave the existing vault untouched.
-  await client.putFileContents(tmpPath, body, { overwrite: true });
-
-  try {
-    await client.moveFile(tmpPath, path, { overwrite: true });
-    return;
-  } catch {
-    // fall through to DELETE + PUT
-  }
+  const bodyBuffer =
+    typeof Buffer !== 'undefined' ? Buffer.from(body, 'utf8') : null;
 
   const cleanupTemp = async () => {
     try {
@@ -76,60 +68,47 @@ const putWebdavFileReplacing = async (
         await client.deleteFile(tmpPath);
       }
     } catch {
-      // best-effort temp cleanup
+      // best-effort
     }
   };
 
-  // If delete fails, leave the old vault alone (no in-place PUT).
   try {
-    let exists = false;
+    await client.putFileContents(tmpPath, body, { overwrite: true });
     try {
-      exists = await client.exists(path);
-    } catch (error) {
-      throw new Error(
-        `WebDAV replace aborted: could not check existing file before overwrite (${
-          error instanceof Error ? error.message : String(error)
-        })`,
-      );
+      await client.moveFile(tmpPath, path, { overwrite: true });
+      return;
+    } catch {
+      await cleanupTemp();
     }
-    if (exists) {
-      try {
-        await client.deleteFile(path);
-      } catch (error) {
-        throw new Error(
-          `WebDAV replace aborted: could not delete existing file before overwrite (${
-            error instanceof Error ? error.message : String(error)
-          })`,
-        );
-      }
-      let stillExists = false;
-      try {
-        stillExists = await client.exists(path);
-      } catch {
-        stillExists = true;
-      }
-      if (stillExists) {
-        throw new Error(
-          'WebDAV replace aborted: existing file still present after delete; refusing in-place overwrite',
-        );
-      }
-    }
-  } catch (error) {
+  } catch {
     await cleanupTemp();
-    throw error;
   }
 
+  let existingLen = 0;
   try {
-    await client.putFileContents(path, body, { overwrite: true });
-  } catch (error) {
-    // Destination is already gone. Retry once; keep temp if still failing.
-    try {
-      await client.putFileContents(path, body, { overwrite: true });
-    } catch {
-      throw error;
+    if (await client.exists(path)) {
+      const existing = await client.getFileContents(path, { format: 'text' });
+      if (existing != null) {
+        existingLen =
+          typeof Buffer !== 'undefined'
+            ? Buffer.byteLength(String(existing), 'utf8')
+            : new TextEncoder().encode(String(existing)).length;
+      }
     }
+  } catch {
+    existingLen = 0;
   }
-  await cleanupTemp();
+
+  const bodyLen =
+    bodyBuffer != null
+      ? bodyBuffer.length
+      : new TextEncoder().encode(body).length;
+  if (existingLen > bodyLen) {
+    const pad = ' '.repeat(existingLen - bodyLen);
+    await client.putFileContents(path, body + pad, { overwrite: true });
+  } else {
+    await client.putFileContents(path, body, { overwrite: true });
+  }
 };
 
 export class WebDAVAdapter {
