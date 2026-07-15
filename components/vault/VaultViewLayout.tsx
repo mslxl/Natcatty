@@ -834,6 +834,7 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
           initialData={editingHost}
           allTags={allTags}
           groups={allGroupPaths}
+          groupDefaults={editingHostGroupDefaults}
           onSave={(host) => {
             onUpdateHosts(upsertHostById(hosts, host));
             setIsHostPanelOpen(false);

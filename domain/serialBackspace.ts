@@ -1,0 +1,32 @@
+import type { GroupConfig, Host, SerialConfig } from "./models";
+
+export type SerialBackspaceBehavior = NonNullable<SerialConfig["backspaceBehavior"]>;
+
+export const resolveSerialBackspaceFormValue = (
+  host: Pick<Host, "serialConfig" | "backspaceBehavior">,
+  groupDefaults?: Pick<GroupConfig, "backspaceBehavior">,
+): SerialBackspaceBehavior => (
+  host.serialConfig?.backspaceBehavior
+  ?? (host.backspaceBehavior === "ctrl-h" ? "ctrl-h" : undefined)
+  ?? (groupDefaults?.backspaceBehavior === "ctrl-h" ? "ctrl-h" : "default")
+);
+
+export const resolveSerialBackspaceOverrideOnSave = ({
+  initialHost,
+  selectedGroup,
+  selectedBehavior,
+  behaviorChanged,
+}: {
+  initialHost: Pick<Host, "group" | "serialConfig" | "backspaceBehavior">;
+  selectedGroup: string;
+  selectedBehavior: SerialBackspaceBehavior;
+  behaviorChanged: boolean;
+}): SerialConfig["backspaceBehavior"] => {
+  const hasExplicitBehavior = initialHost.serialConfig?.backspaceBehavior !== undefined
+    || initialHost.backspaceBehavior === "ctrl-h";
+  const groupChanged = selectedGroup !== (initialHost.group || "");
+
+  return hasExplicitBehavior || behaviorChanged || groupChanged
+    ? selectedBehavior
+    : undefined;
+};

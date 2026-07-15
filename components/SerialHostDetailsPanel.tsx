@@ -6,7 +6,11 @@ import { ChevronDown, ChevronUp, Save, Tag, Usb } from 'lucide-react';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useI18n } from '../application/i18n/I18nProvider';
 import { useTerminalBackend } from '../application/state/useTerminalBackend';
-import type { Host, SerialConfig, SerialFlowControl, SerialParity } from '../domain/models';
+import type { GroupConfig, Host, SerialConfig, SerialFlowControl, SerialParity } from '../domain/models';
+import {
+  resolveSerialBackspaceFormValue,
+  resolveSerialBackspaceOverrideOnSave,
+} from '../domain/serialBackspace';
 
 import { Button } from './ui/button';
 import { Combobox, ComboboxOption, MultiCombobox } from './ui/combobox';
@@ -37,6 +41,7 @@ interface SerialHostDetailsPanelProps {
   initialData: Host;
   allTags?: string[];
   groups?: string[];
+  groupDefaults?: Partial<GroupConfig>;
   onSave: (host: Host) => void;
   onCancel: () => void;
   layout?: AsidePanelLayout;
@@ -54,6 +59,7 @@ export const SerialHostDetailsPanel: React.FC<SerialHostDetailsPanelPropsWithRes
   initialData,
   allTags = [],
   groups = [],
+  groupDefaults,
   onSave,
   onCancel,
   layout = 'overlay',
@@ -77,10 +83,10 @@ export const SerialHostDetailsPanel: React.FC<SerialHostDetailsPanelPropsWithRes
   const [flowControl, setFlowControl] = useState<SerialFlowControl>(initialData.serialConfig?.flowControl || 'none');
   const [localEcho, setLocalEcho] = useState(initialData.serialConfig?.localEcho || false);
   const [lineMode, setLineMode] = useState(initialData.serialConfig?.lineMode || false);
-  const [backspaceBehavior, setBackspaceBehavior] = useState<SerialConfig['backspaceBehavior']>(
-    initialData.serialConfig?.backspaceBehavior
-      ?? (initialData.backspaceBehavior === 'ctrl-h' ? 'ctrl-h' : 'default'),
+  const [backspaceBehavior, setBackspaceBehavior] = useState(
+    resolveSerialBackspaceFormValue(initialData, groupDefaults),
   );
+  const [backspaceBehaviorChanged, setBackspaceBehaviorChanged] = useState(false);
   const [charset, setCharset] = useState(initialData.charset || 'UTF-8');
   const [tags, setTags] = useState<string[]>(initialData.tags || []);
   const [group, setGroup] = useState(initialData.group || '');
@@ -114,7 +120,12 @@ export const SerialHostDetailsPanel: React.FC<SerialHostDetailsPanelPropsWithRes
       flowControl,
       localEcho,
       lineMode,
-      backspaceBehavior,
+      backspaceBehavior: resolveSerialBackspaceOverrideOnSave({
+        initialHost: initialData,
+        selectedGroup: group,
+        selectedBehavior: backspaceBehavior,
+        behaviorChanged: backspaceBehaviorChanged,
+      }),
     };
 
     const portName = selectedPort.split('/').pop() || selectedPort;
@@ -405,7 +416,10 @@ export const SerialHostDetailsPanel: React.FC<SerialHostDetailsPanelPropsWithRes
                 <Label htmlFor="serial-backspace">{t('serial.field.backspaceBehavior')}</Label>
                 <Select
                   value={backspaceBehavior}
-                  onValueChange={(value) => setBackspaceBehavior(value === 'ctrl-h' ? 'ctrl-h' : 'default')}
+                  onValueChange={(value) => {
+                    setBackspaceBehavior(value === 'ctrl-h' ? 'ctrl-h' : 'default');
+                    setBackspaceBehaviorChanged(true);
+                  }}
                 >
                   <SelectTrigger id="serial-backspace">
                     <SelectValue />
