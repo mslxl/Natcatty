@@ -231,25 +231,22 @@ main();
       });
     }
 
-    function buildPreferredAuthentications({ authMethod, requiresMfa = false, hasPassword = false, hasPublicKey = false }) {
+    // ET's internal ssh is driven through SSH_ASKPASS, so secondary-factor
+    // prompts cannot be routed to Netcatty's renderer modal from this path.
+    function buildPreferredAuthentications({ authMethod, hasPassword = false, hasPublicKey = false }) {
       if (authMethod === "password") {
-        return requiresMfa ? "keyboard-interactive,password" : "password,keyboard-interactive";
+        return "password,keyboard-interactive";
       }
       if (authMethod === "auto") {
-        return requiresMfa
-          ? "publickey,keyboard-interactive,password"
-          : "publickey,password,keyboard-interactive";
+        return "publickey,password,keyboard-interactive";
       }
       if (hasPublicKey) {
-        if (requiresMfa) {
-          return hasPassword ? "publickey,keyboard-interactive,password" : "publickey,keyboard-interactive";
-        }
         return hasPassword ? "publickey,password,keyboard-interactive" : "publickey";
       }
       if (hasPassword) {
-        return requiresMfa ? "keyboard-interactive,password" : "password,keyboard-interactive";
+        return "password,keyboard-interactive";
       }
-      return requiresMfa ? "keyboard-interactive" : "";
+      return "";
     }
 
     function createEtAskpassArtifacts(sshDir, askpassEntries) {

@@ -155,7 +155,7 @@ test("prepareEtSshEnvironment password mode overrides a stale agent toggle", (t)
   assert.match(config, /PreferredAuthentications password,keyboard-interactive/);
 });
 
-test("prepareEtSshEnvironment prefers keyboard-interactive for MFA password mode", (t) => {
+test("prepareEtSshEnvironment keeps password before keyboard-interactive for MFA password mode", (t) => {
   const { api } = makeApi(t);
   const env = api.prepareEtSshEnvironment("sess-mfa-password", {
     hostname: "h",
@@ -167,7 +167,7 @@ test("prepareEtSshEnvironment prefers keyboard-interactive for MFA password mode
 
   assert.ok(env.sshOptions.includes("PubkeyAuthentication=no"));
   const config = fs.readFileSync(path.join(env.env.HOME, ".ssh", "config"), "utf8");
-  assert.match(config, /PreferredAuthentications keyboard-interactive,password/);
+  assert.match(config, /PreferredAuthentications password,keyboard-interactive/);
 });
 
 test("prepareEtSshEnvironment automatic mode tries real local keys before a saved password", (t) => {
@@ -189,7 +189,7 @@ test("prepareEtSshEnvironment automatic mode tries real local keys before a save
   assert.match(config, /PreferredAuthentications publickey,password,keyboard-interactive/);
 });
 
-test("prepareEtSshEnvironment keeps publickey first and prefers keyboard-interactive for MFA auto mode", (t) => {
+test("prepareEtSshEnvironment keeps password before keyboard-interactive for MFA auto mode", (t) => {
   const { api, base } = makeApi(t);
   const defaultKeyPath = path.join(base, "home", ".ssh", "id_ed25519_sk");
   fs.mkdirSync(path.dirname(defaultKeyPath), { recursive: true });
@@ -205,7 +205,7 @@ test("prepareEtSshEnvironment keeps publickey first and prefers keyboard-interac
 
   assert.ok(env.sshOptions.includes(`IdentityFile=${defaultKeyPath.replace(/\\/g, "/")}`));
   const config = fs.readFileSync(path.join(env.env.HOME, ".ssh", "config"), "utf8");
-  assert.match(config, /PreferredAuthentications publickey,keyboard-interactive,password/);
+  assert.match(config, /PreferredAuthentications publickey,password,keyboard-interactive/);
 });
 
 test("prepareEtSshEnvironment automatic mode tries standard keys before custom keys", (t) => {
@@ -630,7 +630,7 @@ test("prepareEtSshEnvironment applies automatic authentication to a jump host", 
   assert.match(config, /Host jump\.example[\s\S]*PreferredAuthentications publickey,password,keyboard-interactive/);
 });
 
-test("prepareEtSshEnvironment prefers keyboard-interactive for MFA jump hosts", (t) => {
+test("prepareEtSshEnvironment keeps password before keyboard-interactive for MFA jump hosts", (t) => {
   const { api } = makeApi(t);
   const env = api.prepareEtSshEnvironment("sess-mfa-jump", {
     hostname: "target.example",
@@ -647,7 +647,7 @@ test("prepareEtSshEnvironment prefers keyboard-interactive for MFA jump hosts", 
   });
 
   const config = fs.readFileSync(path.join(env.env.HOME, ".ssh", "config"), "utf8");
-  assert.match(config, /Host jump\.example[\s\S]*PreferredAuthentications keyboard-interactive,password/);
+  assert.match(config, /Host jump\.example[\s\S]*PreferredAuthentications password,keyboard-interactive/);
 });
 
 test("prepareEtSshEnvironment keeps interactive authentication for an automatic jump host", (t) => {
