@@ -14,6 +14,155 @@ const {
 
 const SYNC_FILE_NAME = "netcatty-vault.json";
 
+/**
+ * Some WebDAV servers (esp. lightweight / local ones) overwrite existing
+ * files without truncating when the new body is shorter. That leaves trailing
+ * non-whitespace bytes from the previous longer body and breaks JSON.parse
+ * (#2223).
+ *
+ * Strategy:
+ * 1) Prefer fixed-name temp PUT + MOVE (atomic, exact size) when supported.
+ * 2) Otherwise in-place PUT padded with spaces to at least the previous
+ *    length, then re-read and verify JSON. Retry with a larger pad if a
+ *    concurrent writer grew the file (stale-length race). JSON.parse
+ *    ignores trailing whitespace, so the canonical path never needs DELETE.
+ */
+const serializeSyncedFileBody = (syncedFile) =>
+  Buffer.from(JSON.stringify(syncedFile), "utf8");
+
+const safeDeleteWebdavPath = async (client, path) => {
+  try {
+    if (await client.exists(path)) {
+      await client.deleteFile(path);
+    }
+  } catch {
+    // Best-effort cleanup only (temp files).
+  }
+};
+
+/** Pad body with spaces so non-truncating PUTs cannot leave garbage. */
+const padBodyToAtLeast = (bodyBuffer, minLength) => {
+  if (!minLength || minLength <= bodyBuffer.length) return bodyBuffer;
+  return Buffer.concat([bodyBuffer, Buffer.alloc(minLength - bodyBuffer.length, 0x20)]);
+};
+
+/**
+ * Strict upload check: remote must be exactly the intended body, optionally
+ * followed only by whitespace. Do NOT use parseSyncedFileJson here — that
+ * helper intentionally recovers trailing garbage on download.
+ */
+const remoteMatchesUploadedBody = (remoteText, bodyBuffer) => {
+  const bodyText = bodyBuffer.toString("utf8");
+  if (!remoteText.startsWith(bodyText)) return false;
+  return /^\s*$/.test(remoteText.slice(bodyText.length));
+};
+
+const readExistingByteLengthStrict = async (client, path) => {
+  let exists = false;
+  try {
+    exists = await client.exists(path);
+  } catch (error) {
+    throw new Error(
+      `WebDAV replace aborted: could not check existing file (${
+        error instanceof Error ? error.message : String(error)
+      })`
+    );
+  }
+  if (!exists) return 0;
+  try {
+    const existing = await client.getFileContents(path, { format: "text" });
+    if (existing == null) return 0;
+    return Buffer.byteLength(String(existing), "utf8");
+  } catch (error) {
+    throw new Error(
+      `WebDAV replace aborted: could not read existing file length (${
+        error instanceof Error ? error.message : String(error)
+      })`
+    );
+  }
+};
+
+const readRemoteText = async (client, path) => {
+  const remote = await client.getFileContents(path, { format: "text" });
+  return String(remote ?? "");
+};
+
+const putWebdavFileReplacing = async (client, path, bodyBuffer) => {
+  // Fixed temp name so failed cleanups cannot accumulate one full vault per sync.
+  const tmpPath = `${path}.tmp`;
+
+  // Optional atomic path: pad temp (in case a stale non-truncated .tmp remains),
+  // MOVE into place, then strictly verify the destination.
+  try {
+    let tmpMinLen = 0;
+    try {
+      tmpMinLen = await readExistingByteLengthStrict(client, tmpPath);
+    } catch {
+      tmpMinLen = 0;
+    }
+    await client.putFileContents(tmpPath, padBodyToAtLeast(bodyBuffer, tmpMinLen), {
+      overwrite: true,
+    });
+    await client.moveFile(tmpPath, path, { overwrite: true });
+    const movedText = await readRemoteText(client, path);
+    if (remoteMatchesUploadedBody(movedText, bodyBuffer)) {
+      return;
+    }
+  } catch {
+    // fall through to padded in-place PUT
+  }
+  await safeDeleteWebdavPath(client, tmpPath);
+
+  // Keep the canonical path visible. Pad + strict verify so non-truncating
+  // servers and concurrent writers that grow the remote cannot leave garbage.
+  let minLen = await readExistingByteLengthStrict(client, path);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const payload = padBodyToAtLeast(bodyBuffer, minLen);
+    await client.putFileContents(path, payload, { overwrite: true });
+    let remoteText = "";
+    try {
+      remoteText = await readRemoteText(client, path);
+    } catch (error) {
+      throw new Error(
+        `WebDAV upload verification failed: could not re-read file (${
+          error instanceof Error ? error.message : String(error)
+        })`
+      );
+    }
+    if (remoteMatchesUploadedBody(remoteText, bodyBuffer)) {
+      return;
+    }
+    minLen = Math.max(minLen, Buffer.byteLength(remoteText, "utf8"), bodyBuffer.length);
+  }
+  throw new Error(
+    "WebDAV upload verification failed: remote file still does not match uploaded body after padded PUT"
+  );
+};
+
+/**
+ * Recover from trailing garbage left by non-truncating WebDAV PUT overwrites.
+ * Node/V8 reports: "Unexpected non-whitespace character after JSON at position N".
+ */
+const parseSyncedFileJson = (raw) => {
+  const text = String(raw ?? "");
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const match = /Unexpected non-whitespace character after JSON at position (\d+)/i.exec(
+      message
+    );
+    if (match) {
+      const pos = Number(match[1]);
+      if (Number.isFinite(pos) && pos > 0 && pos <= text.length) {
+        return JSON.parse(text.slice(0, pos));
+      }
+    }
+    throw error;
+  }
+};
+
 let electronModuleRef = null;
 
 const isHttpsEndpoint = (endpoint) => {
@@ -208,7 +357,8 @@ const handleWebdavUpload = async (config, syncedFile) => {
   try {
     const client = await buildWebdavClient(config);
     const path = getWebdavPath();
-    await client.putFileContents(path, JSON.stringify(syncedFile), { overwrite: true });
+    const body = serializeSyncedFileBody(syncedFile);
+    await putWebdavFileReplacing(client, path, body);
     return { resourceId: path };
   } catch (error) {
     throw wrapWebdavError("upload", error, config);
@@ -223,7 +373,7 @@ const handleWebdavDownload = async (config) => {
     if (!exists) return { syncedFile: null };
     const data = await client.getFileContents(path, { format: "text" });
     if (!data) return { syncedFile: null };
-    return { syncedFile: JSON.parse(String(data)) };
+    return { syncedFile: parseSyncedFileJson(data) };
   } catch (error) {
     throw wrapWebdavError("download", error, config);
   }
@@ -350,6 +500,10 @@ module.exports = {
   registerHandlers,
   // Exposed for tests
   handleWebdavInitialize,
+  handleWebdavUpload,
+  handleWebdavDownload,
+  parseSyncedFileJson,
+  putWebdavFileReplacing,
   buildBasicAuthHeader,
   buildS3Client,
 };
