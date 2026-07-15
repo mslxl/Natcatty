@@ -215,6 +215,11 @@ test("writeSessionData clears renderer backlog while deferring IPC ack", () => {
     writeSessionData(ctx as never, term, "x".repeat(ingressPerWrite));
   }
   flushTerminalWriteCoalescer(term);
+  for (let guard = 0; guard < 1000 && flushTerminalWriteQueueBypassingTimers(term); guard += 1) {
+    // A busy full-suite run can cross the queue's turn budget and defer the
+    // next synchronous fake write. Drain those intentional timer yields before
+    // asserting the completed-backlog state.
+  }
 
   const flow = getFlowController(ctx as never, term);
   assert.equal(flow.pendingBytes(), 0);
