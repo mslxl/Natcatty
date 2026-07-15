@@ -137,6 +137,34 @@ test("SDK resume uses persisted session identity only when backend and path matc
   );
 });
 
+test("Codex sessions never resume across SDK and App Server runtimes", () => {
+  const sdkIdentity = `netcatty-sdk-session:${encodeURIComponent(JSON.stringify({
+    v: 1,
+    id: "sdk-thread",
+    backend: "codex",
+    binPath: "/usr/bin/codex",
+    runtime: "sdk",
+  }))}`;
+  assert.equal(resolveSdkResumeSessionId({
+    sdkSessionIds: new Map(),
+    sdkSessionKey: buildSdkSessionKey("chat-1", "codex", "/usr/bin/codex", "app-server"),
+    existingSessionId: sdkIdentity,
+    backendKey: "codex",
+    binPath: "/usr/bin/codex",
+    runtime: "app-server",
+    hasConfiguredCommand: false,
+  }), undefined);
+  assert.equal(resolveSdkResumeSessionId({
+    sdkSessionIds: new Map(),
+    sdkSessionKey: buildSdkSessionKey("chat-1", "codex", "/usr/bin/codex", "app-server"),
+    existingSessionId: "legacy-thread",
+    backendKey: "codex",
+    binPath: "/usr/bin/codex",
+    runtime: "app-server",
+    hasConfiguredCommand: false,
+  }), undefined);
+});
+
 test("SDK resume keeps legacy session ids only when no manual command is configured", () => {
   assert.equal(
     resolveSdkResumeSessionId({

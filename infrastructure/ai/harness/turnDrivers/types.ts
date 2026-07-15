@@ -75,6 +75,7 @@ export interface ExternalTurnContext {
   selectedAgentModel?: string;
   toolIntegrationMode: AIToolIntegrationMode;
   selectedUserSkillSlugs?: string[];
+  permissionMode: AIPermissionMode;
 }
 
 export interface CattyTurnInput {

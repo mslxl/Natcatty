@@ -43,5 +43,8 @@ jobs:
           npm run generate:capability-tools
           git diff --exit-code infrastructure/ai/harness/generated/cattyToolSpecs.json
 
+      - name: Verify Codex App Server schema
+        run: npm run check:codex-app-server-schema
+
       - name: Test
         run: npm test

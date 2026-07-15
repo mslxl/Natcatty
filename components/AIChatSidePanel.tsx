@@ -54,6 +54,7 @@ import { getScopedHistorySessions } from './ai/scopedHistorySessions';
 import { buildExternalAgentHistoryMessagesForBridge } from './ai/externalAgentHistory';
 import { canSendWithAgent, findEnabledExternalAgent } from './ai/agentSendEligibility';
 import { registerGrantPersister } from '../infrastructure/ai/shared/approvalGate';
+import { setupCodexAppServerInteractionBridge } from '../infrastructure/ai/shared/codexAppServerInteractions';
 import { stopAgentTurn } from '../infrastructure/ai/harness/agentStop';
 import { getAgentRuntime } from '../infrastructure/ai/harness/globalAgentRuntime';
 import { useAIPermissionGrantsState } from '../application/state/useAIPermissionGrantsState';
@@ -89,6 +90,7 @@ type SdkRuntimeModelTarget = {
   sdkBackend: string;
   agentEnv?: Record<string, string>;
   agentCommand?: string;
+  codexRuntime?: 'sdk' | 'app-server';
 };
 
 const USER_SKILLS_STATUS_CACHE_TTL_MS = 60_000;
@@ -292,6 +294,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
 
   const [showHistory, setShowHistory] = useState(false);
   const [runtimeAgentModelPresets, setRuntimeAgentModelPresets] = useState<Record<string, AgentModelPreset[]>>({});
+  const [runtimeModelWarnings, setRuntimeModelWarnings] = useState<Record<string, string>>({});
   const [userSkillOptions, setUserSkillOptions] = useState<UserSkillOption[]>([]);
   const [userSkillsStatusVersion, setUserSkillsStatusVersion] = useState(0);
   const { openSettingsWindow } = useWindowControls();
@@ -683,6 +686,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       sdkBackend,
       agentEnv: agent.env,
       agentCommand: getManualAgentCommand(agent),
+      codexRuntime: sdkBackend === 'codex' ? (agent.codexRuntime ?? 'sdk') : undefined,
     };
   }, []);
 
@@ -732,10 +736,21 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
           `models_${target.agentId}`,
           target.agentEnv,
           target.agentCommand,
+          target.codexRuntime,
         );
         if (!result?.ok || !Array.isArray(result.models)) {
           throw new Error(result?.error || 'Failed to load SDK agent models');
         }
+        setRuntimeModelWarnings((current) => {
+          const next = { ...current };
+          if (result.warning && target.codexRuntime === 'app-server') {
+            next[target.agentId] = t('ai.codex.appServer.modelCatalogWarning');
+            console.warn('[AIChatSidePanel] Codex App Server model catalog unavailable:', result.warning);
+          } else {
+            delete next[target.agentId];
+          }
+          return next;
+        });
         return {
           currentModelId: result.currentModelId ?? null,
           models: result.models,
@@ -743,12 +758,18 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       },
       { force: options.force },
     ).catch((err) => {
+      if (target.codexRuntime === 'app-server') {
+        setRuntimeModelWarnings((current) => ({
+          ...current,
+          [target.agentId]: t('ai.codex.appServer.modelCatalogWarning'),
+        }));
+      }
       if (options.logErrors !== false) {
         console.warn('[AIChatSidePanel] Failed to load SDK agent models:', err);
       }
       return null;
     });
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     if (!isVisible) return;
@@ -785,7 +806,8 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     applySdkRuntimeModelCatalog,
   ]);
 
-  const hasCodexCustomConfig = codexCustomConfigResolved && isCodexManagedAgent;
+  const isCodexAppServer = isCodexManagedAgent && currentAgentConfig?.codexRuntime === 'app-server';
+  const hasCodexCustomConfig = codexCustomConfigResolved && isCodexManagedAgent && !isCodexAppServer;
 
   const agentModelPresets = useMemo(() => {
     const runtimePresets = runtimeAgentModelPresets[currentAgentId];
@@ -1035,6 +1057,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
             selectedAgentModel,
             toolIntegrationMode,
             selectedUserSkillSlugs: selectedSkillSlugs,
+            permissionMode: globalPermissionMode,
           });
         } catch (err) {
           reportStreamError(sessionId, abortController.signal, err);
@@ -1108,6 +1131,8 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   useEffect(() => {
     return registerGrantPersister((rule) => { addGrant(rule); });
   }, [addGrant]);
+
+  useEffect(() => setupCodexAppServerInteractionBridge(), []);
 
   const handleStop = useCallback(() => {
     if (!activeSessionId) return;
@@ -1215,6 +1240,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         canSendCurrentAgent={canSendCurrentAgent}
         providerDisplayName={providerDisplayName}
         modelDisplayName={modelDisplayName}
+        modelCatalogWarning={runtimeModelWarnings[currentAgentId]}
         agentModelPresets={agentModelPresets}
         selectedAgentModel={selectedAgentModel}
         handleAgentModelSelect={handleAgentModelSelect}

@@ -106,6 +106,25 @@ test('buildManagedAgentState stores SDK backend keys for discovered managed agen
   assert.equal(copilotState.agents[0].acpArgs, undefined);
 });
 
+test('buildManagedAgentState preserves the experimental Codex runtime across path refreshes', () => {
+  const state = buildManagedAgentState(
+    [{
+      id: 'discovered_codex',
+      name: 'Codex CLI',
+      command: '/old/codex',
+      enabled: true,
+      sdkBackend: 'codex',
+      codexRuntime: 'app-server',
+    }],
+    'discovered_codex',
+    'codex',
+    { path: '/new/codex', version: '0.144.3', available: true },
+  );
+
+  assert.equal(state.agents[0].codexRuntime, 'app-server');
+  assert.equal(state.agents[0].command, '/new/codex');
+});
+
 test('getInitialManagedAgentPaths ignores auto-detected command paths', () => {
   const state = buildManagedAgentState(
     [],

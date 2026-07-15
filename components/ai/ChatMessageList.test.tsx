@@ -5,7 +5,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { I18nProvider } from "../../application/i18n/I18nProvider.tsx";
 import type { ChatMessage } from "../../infrastructure/ai/types.ts";
-import ChatMessageList, { shouldProvideVaultArtifactNavigation } from "./ChatMessageList.tsx";
+import type { ApprovalRequest } from "../../infrastructure/ai/shared/approvalGate.ts";
+import ChatMessageList, {
+  buildCodexApprovalRenderPlan,
+  shouldProvideVaultArtifactNavigation,
+} from "./ChatMessageList.tsx";
 import { TooltipProvider } from "../ui/tooltip.tsx";
 
 const makeMessage = (index: number): ChatMessage => ({
@@ -385,4 +389,49 @@ test("ChatMessageList wires vault artifact navigation when only note open is ava
 
 test("ChatMessageList leaves vault artifact navigation disabled without open actions", () => {
   assert.equal(shouldProvideVaultArtifactNavigation({}), false);
+});
+
+test("Codex approval render plan preserves every approval for the same item", () => {
+  const codexRequest = (
+    toolCallId: string,
+    itemId: string,
+    command: string,
+    chatSessionId = "chat-1",
+  ): ApprovalRequest => ({
+    toolCallId,
+    itemId,
+    toolName: "codex.command",
+    args: { command },
+    chatSessionId,
+    source: "codex-app-server",
+    approvalType: "command",
+    allowSession: false,
+  });
+  const pendingApprovals = new Map<string, ApprovalRequest>([
+    ["approval-1", codexRequest("approval-1", "item-1", "echo one")],
+    ["approval-2", codexRequest("approval-2", "item-1", "echo two")],
+    ["approval-3", codexRequest("approval-3", "item-2", "echo standalone")],
+    ["approval-other-session", codexRequest("approval-other-session", "item-1", "echo hidden", "chat-2")],
+    ["regular-approval", {
+      toolCallId: "regular-approval",
+      toolName: "terminal_execute",
+      args: { command: "pwd" },
+      chatSessionId: "chat-1",
+    }],
+  ]);
+
+  const plan = buildCodexApprovalRenderPlan(
+    pendingApprovals,
+    new Set(["item-1"]),
+    "chat-1",
+  );
+
+  assert.deepEqual(
+    plan.byItemId.get("item-1")?.map(({ approvalId }) => approvalId),
+    ["approval-1", "approval-2"],
+  );
+  assert.deepEqual(
+    plan.standalone.map(({ approvalId }) => approvalId),
+    ["approval-3"],
+  );
 });

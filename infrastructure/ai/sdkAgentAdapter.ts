@@ -8,6 +8,7 @@
 import type {
   AgentActivity,
   AgentUsage,
+  AIPermissionMode,
   AIToolIntegrationMode,
   ExternalAgentConfig,
 } from './types';
@@ -64,6 +65,8 @@ interface SdkAgentBridge {
     userSkillsContext?: string,
     agentEnv?: Record<string, string>,
     agentCommand?: string,
+    codexRuntime?: 'sdk' | 'app-server',
+    permissionMode?: AIPermissionMode,
   ): Promise<{ ok: boolean; error?: unknown }>;
   aiSdkAgentCancel(requestId: string, chatSessionId?: string): Promise<{ ok: boolean }>;
   onAiSdkAgentEvent(requestId: string, cb: (event: StreamEvent) => void): () => void;
@@ -169,6 +172,7 @@ export async function runSdkAgentTurn(
   toolIntegrationMode?: AIToolIntegrationMode,
   defaultTargetSession?: DefaultTargetSessionHint,
   userSkillsContext?: string,
+  permissionMode?: AIPermissionMode,
   harnessOptions?: {
     traceSink?: (event: import('./harness/types').AgentEvent) => void;
     skipHarnessTrace?: boolean;
@@ -284,6 +288,8 @@ export async function runSdkAgentTurn(
     userSkillsContext,
     agentEnv,
     agentCommand,
+    sdkBackend === 'codex' ? (config.codexRuntime ?? 'sdk') : undefined,
+    permissionMode,
   ).then((result) => {
     if (result?.ok === false) {
       settle(() => {
@@ -430,6 +436,7 @@ function handleStreamEvent(event: StreamEvent, callbacks: SdkAgentCallbacks): bo
           sessionId,
           event.sdkBackend as string | undefined,
           event.binPath as string | undefined,
+          event.runtime === 'app-server' ? 'app-server' : 'sdk',
         ));
       }
       return false;

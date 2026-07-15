@@ -39,6 +39,25 @@ External SDK turns normalize file changes, web searches, plan updates, recoverab
 
 **Stop** always goes through `stopAgentTurn()` (UI, `/stop`, MCP). Do not add parallel abort paths in hooks.
 
+### Codex App Server (experimental)
+
+Codex can opt into a persistent `codex app-server --stdio` runtime under
+`electron/bridges/aiBridge/codexAppServer/`; the existing TypeScript SDK remains
+the default. The main process owns JSONL RPC correlation, thread/turn routing,
+native approvals, `request_user_input`, model discovery, and process cleanup.
+
+- Session identities include the Codex runtime; SDK and App Server threads must
+  never resume across runtimes.
+- Observer maps to `read-only + never`, Confirm to `read-only + on-request`, and
+  Auto to `danger-full-access + never`.
+- App Server native “allow for session” decisions are session-scoped Codex
+  grants and must not become persistent Netcatty permission grants.
+- `turn/completed` is the terminal lifecycle event. Retryable `error`
+  notifications are warnings; process exit is fatal.
+- Regenerate the committed protocol contract with
+  `npm run generate:codex-app-server-schema` after upgrading Codex, and verify it
+  with `npm run check:codex-app-server-schema`.
+
 ### AI SDK v7 (Catty path)
 
 Catty sidebar turns use **Vercel AI SDK 7** via `streamText` in `turnDrivers/cattyStreamProcessor.ts`. Key conventions:

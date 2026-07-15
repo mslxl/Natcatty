@@ -208,6 +208,7 @@ async function runExternalTurn(input: ExternalTurnInput, ctx: TurnDriverContext)
       context.toolIntegrationMode,
       context.defaultTargetSession,
       userSkillsContext,
+      context.permissionMode,
       {
         traceSink: (event) => ctx.emit(event),
         skipHarnessTrace: true,
