@@ -257,6 +257,55 @@ const VAULT_CAPABILITIES = [
     },
   },
   {
+    id: "vault.note.delete",
+    domain: "vault",
+    status: CAPABILITY_STATUS.IMPLEMENTED,
+    description: "Delete a Vault → Notes entry by id.",
+    policy: { write: true, sensitiveRead: false, longRunning: false, requiresChatSession: false, bypassesObserverBlock: false, bypassesApproval: false, bypassesChatCancel: false },
+    surfaces: {
+      global: { rpcMethod: "vault/notes/delete" },
+      public: { rpcMethod: "public/vault/notes/delete", mcpTool: "vault_notes_delete" },
+    },
+  },
+  {
+    id: "vault.identity.list",
+    domain: "vault",
+    status: CAPABILITY_STATUS.IMPLEMENTED,
+    description: "List reusable vault identities without passwords, private keys, or passphrases.",
+    policy: { write: false, sensitiveRead: true, longRunning: false, requiresChatSession: false, bypassesObserverBlock: false, bypassesApproval: true, bypassesChatCancel: true },
+    surfaces: {
+      global: { rpcMethod: "vault/identities/list" },
+      public: { rpcMethod: "public/vault/identities/list", mcpTool: "vault_identities_list" },
+    },
+  },
+  {
+    id: "vault.proxyProfile.list",
+    domain: "vault",
+    status: CAPABILITY_STATUS.IMPLEMENTED,
+    description: "List reusable proxy profiles without credentials.",
+    policy: { write: false, sensitiveRead: true, longRunning: false, requiresChatSession: false, bypassesObserverBlock: false, bypassesApproval: true, bypassesChatCancel: true },
+    surfaces: {
+      global: { rpcMethod: "vault/proxyProfiles/list" },
+      public: { rpcMethod: "public/vault/proxyProfiles/list", mcpTool: "vault_proxy_profiles_list" },
+    },
+  },
+  ...[
+    ["vault.group.list", "List vault groups and their safe default settings.", "list", "vault_groups_list", false],
+    ["vault.group.create", "Create a vault group with optional default connection settings.", "create", "vault_groups_create", true],
+    ["vault.group.update", "Update or rename a vault group and its default connection settings.", "update", "vault_groups_update", true],
+    ["vault.group.delete", "Delete a vault group, moving its hosts to the root unless deleteHosts is true.", "delete", "vault_groups_delete", true],
+  ].map(([id, description, action, mcpTool, write]) => ({
+    id,
+    domain: "vault",
+    status: CAPABILITY_STATUS.IMPLEMENTED,
+    description,
+    policy: { write, sensitiveRead: false, longRunning: false, requiresChatSession: false, bypassesObserverBlock: false, bypassesApproval: !write, bypassesChatCancel: !write },
+    surfaces: {
+      global: { rpcMethod: `vault/groups/${action}` },
+      public: { rpcMethod: `public/vault/groups/${action}`, mcpTool },
+    },
+  })),
+  {
     id: "vault.snippets.list",
     domain: "vault",
     status: CAPABILITY_STATUS.IMPLEMENTED,

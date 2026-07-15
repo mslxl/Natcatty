@@ -15,6 +15,7 @@ import {
   startPortForward,
   stopAllPortForwards,
   stopAndCleanupRule,
+  stopAndCleanupRuleAndWait,
   stopPortForward,
   syncWithBackend,
 } from "../../infrastructure/services/portForwardingService";
@@ -77,6 +78,7 @@ export interface UsePortForwardingStateResult {
     ruleId: string,
     onStatusChange?: (status: PortForwardingRule["status"]) => void,
   ) => Promise<{ success: boolean; error?: string }>;
+  stopRuleTunnels: (ruleId: string) => Promise<{ success: boolean; error?: string }>;
 
   filteredRules: PortForwardingRule[];
   selectedRule: PortForwardingRule | undefined;
@@ -492,6 +494,7 @@ export const usePortForwardingState = (): UsePortForwardingStateResult => {
     setRuleStatus,
     startTunnel,
     stopTunnel,
+    stopRuleTunnels: stopAndCleanupRuleAndWait,
 
     filteredRules,
     selectedRule,

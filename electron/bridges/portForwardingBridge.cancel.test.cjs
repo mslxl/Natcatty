@@ -11,6 +11,8 @@ const {
   stopPortForward,
   stopPortForwardByRuleId,
   getPortForwardStatus,
+  cancelTunnel,
+  shouldFinalizeTunnelClose,
 } = require("./portForwardingBridge.cjs");
 
 function createEncryptedKey(t) {
@@ -51,6 +53,31 @@ function createCapturingSender(onSend = () => {}) {
     send: (channel, payload) => onSend(channel, payload),
   };
 }
+
+test("failed active tunnel cleanup never publishes an inactive close", () => {
+  let wouldPublishDuringCleanup;
+  const tunnel = {
+    status: "active",
+    server: {
+      close() {
+        throw new Error("server close failed");
+      },
+    },
+    conn: {
+      end() {
+        wouldPublishDuringCleanup = shouldFinalizeTunnelClose(tunnel);
+      },
+    },
+  };
+
+  assert.throws(
+    () => cancelTunnel("pf-active-cleanup-failure", tunnel, () => {}),
+    /server close failed/,
+  );
+  assert.equal(wouldPublishDuringCleanup, false);
+  assert.equal(shouldFinalizeTunnelClose(tunnel), false);
+  assert.equal(tunnel.status, "active");
+});
 
 test("port forwarding can be stopped while waiting for a key passphrase", async (t) => {
   const keyPath = createEncryptedKey(t);
@@ -211,7 +238,11 @@ test("stop by rule id only cancels the matching passphrase prompt", async (t) =>
   assert.ok(firstRequest);
   assert.ok(secondRequest);
 
-  assert.deepEqual(stopPortForwardByRuleId(event, { ruleId: "rule" }), { stopped: 1 });
+  assert.deepEqual(stopPortForwardByRuleId(event, { ruleId: "rule" }), {
+    stopped: 1,
+    failed: 0,
+    errors: [],
+  });
   assert.deepEqual(await firstStart, {
     tunnelId: firstTunnelId,
     success: false,
@@ -237,6 +268,67 @@ test("stop by rule id only cancels the matching passphrase prompt", async (t) =>
   });
   assert.deepEqual(await secondStart, {
     tunnelId: secondTunnelId,
+    success: false,
+    cancelled: true,
+  });
+});
+
+test("stop by rule id reports cleanup failures and keeps the tunnel retryable", async (t) => {
+  const keyPath = createEncryptedKey(t);
+  if (!keyPath) return;
+  const privateKey = fs.readFileSync(keyPath, "utf8");
+  let passphraseRequest;
+  const promptStarted = new Promise((resolve) => {
+    passphraseRequest = resolve;
+  });
+  const event = {
+    sender: createCapturingSender((channel, payload) => {
+      if (channel === "netcatty:passphrase-request") passphraseRequest(payload);
+    }),
+  };
+  const tunnelId = "pf-rule-cleanup-failure";
+  const startPromise = startPortForward(event, {
+    ruleId: "cleanup-failure-rule",
+    tunnelId,
+    type: "local",
+    localPort: 0,
+    bindAddress: "127.0.0.1",
+    remoteHost: "127.0.0.1",
+    remotePort: 80,
+    hostname: "cleanup-failure.example",
+    username: "alice",
+    privateKey,
+    keyId: "cleanup-failure-key",
+  });
+  await promptStarted;
+
+  const originalAbort = AbortController.prototype.abort;
+  AbortController.prototype.abort = function abortFailure() {
+    throw new Error("abort failed");
+  };
+  t.after(() => {
+    AbortController.prototype.abort = originalAbort;
+  });
+
+  assert.deepEqual(stopPortForwardByRuleId(event, { ruleId: "cleanup-failure-rule" }), {
+    stopped: 0,
+    failed: 1,
+    errors: ["passphrase prompt: abort failed"],
+  });
+  assert.deepEqual(await getPortForwardStatus(event, { tunnelId }), {
+    tunnelId,
+    status: "connecting",
+    type: "local",
+  });
+
+  AbortController.prototype.abort = originalAbort;
+  assert.deepEqual(stopPortForwardByRuleId(event, { ruleId: "cleanup-failure-rule" }), {
+    stopped: 1,
+    failed: 0,
+    errors: [],
+  });
+  assert.deepEqual(await startPromise, {
+    tunnelId,
     success: false,
     cancelled: true,
   });

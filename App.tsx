@@ -402,7 +402,13 @@ function App({ settings }: { settings: SettingsState }) {
   }, [createSessionFromCloneSource, isVaultInitialized, pendingNewWindowSession]);
 
   // Get port forwarding rules and import function
-  const { rules: portForwardingRules, importRules: importPortForwardingRules, startTunnel, stopTunnel } = usePortForwardingState();
+  const {
+    rules: portForwardingRules,
+    importRules: importPortForwardingRules,
+    startTunnel,
+    stopTunnel,
+    stopRuleTunnels,
+  } = usePortForwardingState();
 
   // App-level External MCP session sync (before TerminalLayer lazy-mount).
   useExternalMcpSessionSync({
@@ -1022,7 +1028,7 @@ function App({ settings }: { settings: SettingsState }) {
   ), [createWorkspaceFromTargets, resolveEffectiveHost]);
 
   // Wrapper to connect to host with logging
-  const handleConnectToHost = useCallback((host: Host) => {
+  const handleConnectToHost = useCallback((host: Host, alreadyEffective = false) => {
     if (host.ephemeral) {
       setEphemeralHosts((previous) => {
         const existingIndex = previous.findIndex((candidate) => candidate.id === host.id);
@@ -1030,22 +1036,30 @@ function App({ settings }: { settings: SettingsState }) {
         return previous.map((candidate, index) => index === existingIndex ? host : candidate);
       });
     }
-    return handleConnectToHostImpl(() => ({ addConnectionLog, connectToHost, host, identities, keys, resolveEffectiveHost, resolveHostAuth, systemInfoRef }), host);
+    const effectiveHostResolver = alreadyEffective
+      ? (candidate: Host) => candidate
+      : resolveEffectiveHost;
+    return handleConnectToHostImpl(() => ({
+      addConnectionLog,
+      connectToHost,
+      host,
+      identities,
+      keys,
+      resolveEffectiveHost: effectiveHostResolver,
+      resolveHostAuth,
+      systemInfoRef,
+    }), host);
   }, [addConnectionLog, connectToHost, resolveEffectiveHost, identities, keys]);
 
-  const openHostForVaultAgent = useCallback((hostId: string) => {
-    const host = hosts.find((item) => item.id === hostId);
-    if (!host) {
-      return { ok: false as const, error: `Host "${hostId}" was not found.` };
-    }
-    const sessionId = handleConnectToHost(host);
+  const openHostForVaultAgent = useCallback((host: Host) => {
+    const sessionId = handleConnectToHost(host, true);
     if (!sessionId) {
-      return { ok: false as const, error: `Failed to open host "${hostId}".` };
+      return { ok: false as const, error: `Failed to open host "${host.id}".` };
     }
     // Surface the main window for external MCP / CLI open requests.
     void netcattyBridge.get()?.openMainWindow?.();
     return { ok: true as const, sessionId, host };
-  }, [handleConnectToHost, hosts]);
+  }, [handleConnectToHost]);
 
   useVaultAgentBridge({
     hosts,
@@ -1053,17 +1067,23 @@ function App({ settings }: { settings: SettingsState }) {
     portForwardingRules,
     keys,
     identities,
+    knownHosts: effectiveKnownHosts,
+    proxyProfiles,
     managedSources,
     terminalSettings,
-    resolveEffectiveHost,
     updateHosts,
     updateSnippets,
     customGroups,
     updateCustomGroups,
+    groupConfigs,
+    updateGroupConfigs,
+    updateManagedSources,
+    updatePortForwardingRules: importPortForwardingRules,
     notes,
     updateNotes,
     startTunnel,
     stopTunnel,
+    stopRuleTunnels,
     openHost: openHostForVaultAgent,
   });
 

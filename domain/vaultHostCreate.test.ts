@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import type { Host, Identity, ManagedSource } from './models.ts';
+import type { Host, Identity, ManagedSource, ProxyProfile } from './models.ts';
 import { applyGroupDefaults } from './groupConfig.ts';
 import {
   applyVaultHostDelete,
@@ -11,6 +11,7 @@ import {
   buildVaultHostsFromDrafts,
   parseVaultHostDraftsInput,
   type VaultHostDraft,
+  type VaultHostUpdatePatch,
 } from './vaultHostCreate.ts';
 
 test('buildVaultHostFromDraft maps minimal unstructured fields to a vault host', () => {
@@ -259,21 +260,480 @@ test('applyVaultHostUpdate changes default ports when switching protocols', () =
     protocol: 'telnet',
   };
   const custom: Host = { ...ssh, id: 'custom', label: 'custom', port: 2222 };
+  const serial: Host = {
+    ...ssh,
+    id: 'serial',
+    label: 'serial',
+    hostname: '/dev/ttyUSB0',
+    port: 115200,
+    protocol: 'serial',
+    serialConfig: { path: '/dev/ttyUSB0', baudRate: 115200 },
+  };
 
   const toTelnet = applyVaultHostUpdate([ssh], [], ssh.id, { protocol: 'telnet' });
   const toSsh = applyVaultHostUpdate([telnet], [], telnet.id, { protocol: 'ssh' });
   const keepCustom = applyVaultHostUpdate([custom], [], custom.id, { protocol: 'telnet' });
   const explicitPort = applyVaultHostUpdate([ssh], [], ssh.id, { protocol: 'telnet', port: 2323 });
+  const missingNetworkHostname = applyVaultHostUpdate([serial], [], serial.id, { protocol: 'ssh' });
+  const serialToSsh = applyVaultHostUpdate(
+    [serial], [], serial.id, { protocol: 'ssh', hostname: 'ssh.example.com' },
+  );
+  const serialToTelnet = applyVaultHostUpdate(
+    [serial], [], serial.id, { protocol: 'telnet', hostname: 'telnet.example.com' },
+  );
 
   assert.equal(toTelnet.ok, true);
   assert.equal(toSsh.ok, true);
   assert.equal(keepCustom.ok, true);
   assert.equal(explicitPort.ok, true);
-  if (!toTelnet.ok || !toSsh.ok || !keepCustom.ok || !explicitPort.ok) return;
+  assert.equal(missingNetworkHostname.ok, false);
+  assert.equal(serialToSsh.ok, true);
+  assert.equal(serialToTelnet.ok, true);
+  if (!toTelnet.ok || !toSsh.ok || !keepCustom.ok || !explicitPort.ok || !serialToSsh.ok || !serialToTelnet.ok) return;
   assert.equal(toTelnet.updatedHost.port, 23);
   assert.equal(toSsh.updatedHost.port, 22);
   assert.equal(keepCustom.updatedHost.port, 2222);
   assert.equal(explicitPort.updatedHost.port, 2323);
+  assert.equal(serialToSsh.updatedHost.port, 22);
+  assert.equal(serialToTelnet.updatedHost.port, 23);
+  assert.equal(serialToSsh.updatedHost.hostname, 'ssh.example.com');
+  assert.equal(serialToTelnet.updatedHost.hostname, 'telnet.example.com');
+  const backToSerial = applyVaultHostUpdate(
+    [serialToSsh.updatedHost], [], serial.id, { protocol: 'serial' },
+  );
+  assert.equal(backToSerial.ok, true);
+  if (backToSerial.ok) assert.equal(backToSerial.updatedHost.port, 115200);
+});
+
+test('applyVaultHostUpdate requires serial settings when switching to serial', () => {
+  const ssh: Host = {
+    id: 'ssh', label: 'ssh', hostname: 'ssh.example.com', username: 'root',
+    port: 22, protocol: 'ssh', tags: [], os: 'linux',
+  };
+
+  const missingConfig = applyVaultHostUpdate([ssh], [], ssh.id, { protocol: 'serial' });
+  assert.equal(missingConfig.ok, false);
+  if (!missingConfig.ok) assert.match(missingConfig.error, /serialConfig is required/i);
+
+  const configured = applyVaultHostUpdate([ssh], [], ssh.id, {
+    protocol: 'serial',
+    serialConfig: { path: '/dev/ttyUSB0', baudRate: 115200 },
+  });
+  assert.equal(configured.ok, true);
+  if (configured.ok) {
+    assert.equal(configured.updatedHost.protocol, 'serial');
+    assert.equal(configured.updatedHost.port, 115200);
+    assert.equal(configured.updatedHost.serialConfig?.baudRate, 115200);
+  }
+});
+
+test('applyVaultHostUpdate only accepts SSH-capable jump hosts', () => {
+  const target: Host = {
+    id: 'target', label: 'target', hostname: 'target.example.com', username: 'root',
+    port: 22, protocol: 'ssh', tags: [], os: 'linux',
+  };
+  const localJump: Host = {
+    id: 'local', label: 'local', hostname: 'localhost', username: '',
+    port: 22, protocol: 'local', tags: [], os: 'linux',
+  };
+  const inheritedJump: Host = {
+    id: 'inherited', label: 'inherited', hostname: 'inherited.example.com', username: 'root',
+    port: 22, tags: [], os: 'linux',
+  };
+
+  const localResult = applyVaultHostUpdate(
+    [target, localJump], [], target.id, { jumpHostIds: [localJump.id] },
+  );
+  const inheritedResult = applyVaultHostUpdate(
+    [target, inheritedJump], [], target.id, { jumpHostIds: [inheritedJump.id] },
+    { resolveEffectiveHost: (host) => host.id === inheritedJump.id ? { ...host, protocol: 'telnet' } : host },
+  );
+
+  assert.equal(localResult.ok, false);
+  if (!localResult.ok) assert.match(localResult.error, /does not support SSH jump/i);
+  assert.equal(inheritedResult.ok, false);
+  if (!inheritedResult.ok) assert.match(inheritedResult.error, /does not support SSH jump/i);
+});
+
+test('applyVaultHostUpdate keeps referenced jump hosts SSH-capable', () => {
+  const jump: Host = {
+    id: 'jump', label: 'jump', hostname: 'jump.example.com', username: 'root',
+    port: 22, protocol: 'ssh', tags: [], os: 'linux',
+  };
+  const target: Host = {
+    id: 'target', label: 'target', hostname: 'target.example.com', username: 'root',
+    port: 22, protocol: 'ssh', hostChain: { hostIds: [jump.id] }, tags: [], os: 'linux',
+  };
+
+  const directResult = applyVaultHostUpdate(
+    [jump, target], [], jump.id, { protocol: 'telnet' },
+  );
+  const inheritedResult = applyVaultHostUpdate(
+    [jump, target], [], jump.id, { group: 'telnet-hosts' },
+    { resolveEffectiveHost: (host) => host.group === 'telnet-hosts' ? { ...host, protocol: 'telnet' } : host },
+  );
+  const groupInheritedResult = applyVaultHostUpdate(
+    [jump, { ...target, hostChain: undefined, group: 'prod' }],
+    [],
+    jump.id,
+    { protocol: 'telnet' },
+    {
+      resolveEffectiveHost: (host) => host.group === 'prod'
+        ? { ...host, hostChain: { hostIds: [jump.id] } }
+        : host,
+    },
+  );
+
+  assert.equal(directResult.ok, false);
+  if (!directResult.ok) assert.match(directResult.error, /used as a jump host must keep an SSH/i);
+  assert.equal(inheritedResult.ok, false);
+  if (!inheritedResult.ok) assert.match(inheritedResult.error, /used as a jump host must keep an SSH/i);
+  assert.equal(groupInheritedResult.ok, false);
+  if (!groupInheritedResult.ok) assert.match(groupInheritedResult.error, /used as a jump host must keep an SSH/i);
+});
+
+test('applyVaultHostUpdate allows reciprocal independent jump settings', () => {
+  const first: Host = {
+    id: 'first', label: 'first', hostname: 'first.example.com', username: 'root',
+    port: 22, protocol: 'ssh', hostChain: { hostIds: ['second'] }, tags: [], os: 'linux',
+  };
+  const second: Host = {
+    id: 'second', label: 'second', hostname: 'second.example.com', username: 'root',
+    port: 22, protocol: 'ssh', tags: [], os: 'linux',
+  };
+
+  const result = applyVaultHostUpdate(
+    [first, second], [], second.id, { jumpHostIds: [first.id] },
+  );
+
+  assert.equal(result.ok, true);
+});
+
+test('applyVaultHostUpdate validates jump hosts inherited from the destination group', () => {
+  const jump: Host = {
+    id: 'jump', label: 'jump', hostname: 'jump.example.com', username: 'root',
+    port: 23, protocol: 'telnet', tags: [], os: 'linux',
+  };
+  const target: Host = {
+    id: 'target', label: 'target', hostname: 'target.example.com', username: 'root',
+    port: 22, protocol: 'ssh', tags: [], os: 'linux',
+  };
+
+  const unsupported = applyVaultHostUpdate(
+    [jump, target],
+    [],
+    target.id,
+    { group: 'unsupported-jump' },
+    {
+      resolveEffectiveHost: (host) => host.group === 'unsupported-jump'
+        ? { ...host, hostChain: { hostIds: [jump.id] } }
+        : host,
+    },
+  );
+  const selfReference = applyVaultHostUpdate(
+    [jump, target],
+    [],
+    target.id,
+    { group: 'self-jump' },
+    {
+      resolveEffectiveHost: (host) => host.group === 'self-jump'
+        ? { ...host, hostChain: { hostIds: [target.id] } }
+        : host,
+    },
+  );
+
+  assert.equal(unsupported.ok, false);
+  if (!unsupported.ok) assert.match(unsupported.error, /does not support SSH jump/i);
+  assert.equal(selfReference.ok, false);
+  if (!selfReference.ok) assert.match(selfReference.error, /cannot use itself/i);
+});
+
+test('applyVaultHostUpdate keeps jump hosts referenced only by empty group defaults SSH-capable', () => {
+  const jump: Host = {
+    id: 'jump', label: 'jump', hostname: 'jump.example.com', username: 'root',
+    port: 22, protocol: 'ssh', tags: [], os: 'linux',
+  };
+
+  const result = applyVaultHostUpdate(
+    [jump],
+    [],
+    jump.id,
+    { protocol: 'telnet' },
+    { groupConfigs: [{ path: 'empty-group', hostChain: { hostIds: [jump.id] } }] },
+  );
+
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.match(result.error, /group jump host must keep an SSH/i);
+});
+
+test('applyVaultHostUpdate keeps legacy serial hosts editable without serialConfig', () => {
+  const legacySerial: Host = {
+    id: 'serial', label: 'Old serial', hostname: '/dev/ttyUSB0', username: '',
+    port: 115200, protocol: 'serial', tags: [], os: 'linux',
+  };
+
+  const result = applyVaultHostUpdate([legacySerial], [], legacySerial.id, { label: 'Renamed serial' });
+
+  assert.equal(result.ok, true);
+  if (result.ok) assert.equal(result.updatedHost.label, 'Renamed serial');
+});
+
+test('applyVaultHostUpdate applies and clears advanced connection settings', () => {
+  const host: Host = {
+    id: 'host-1', label: 'host', hostname: 'host.example.com', username: 'root',
+    port: 22, protocol: 'ssh', tags: [], os: 'linux',
+  };
+  const jump: Host = {
+    id: 'jump-1', label: 'jump', hostname: 'jump.example.com', username: 'root', tags: [], os: 'linux',
+  };
+  const identity: Identity = {
+    id: 'identity-1', label: 'deploy', username: 'deploy', authMethod: 'key', keyId: 'key-1', created: 1,
+  };
+  const proxyProfile: ProxyProfile = {
+    id: 'proxy-1', label: 'proxy', config: { type: 'socks5', host: '127.0.0.1', port: 1080 }, createdAt: 1,
+  };
+  const patch: VaultHostUpdatePatch = {
+    protocol: 'serial',
+    identityId: identity.id,
+    jumpHostIds: [jump.id],
+    proxyProfileId: proxyProfile.id,
+    startupCommand: 'tmux attach || tmux',
+    startupCommandRunMode: 'lineDelay',
+    environmentVariables: [{ name: 'APP_ENV', value: 'production' }],
+    moshEnabled: false,
+    moshServerPath: '/usr/local/bin/mosh-server',
+    etEnabled: false,
+    etPort: 2022,
+    serialConfig: {
+      path: '/dev/ttyUSB0', baudRate: 115200, dataBits: 8, stopBits: 1,
+      parity: 'none', flowControl: 'rts/cts', localEcho: true, lineMode: false,
+    },
+  };
+
+  const result = applyVaultHostUpdate(
+    [host, jump], [], host.id, patch,
+    { identities: [identity], proxyProfiles: [proxyProfile] },
+  );
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.updatedHost.protocol, 'serial');
+  assert.equal(result.updatedHost.hostname, '/dev/ttyUSB0');
+  assert.equal(result.updatedHost.identityId, identity.id);
+  assert.equal(result.updatedHost.username, 'deploy');
+  assert.deepEqual(result.updatedHost.hostChain, { hostIds: [jump.id] });
+  assert.equal(result.updatedHost.proxyProfileId, proxyProfile.id);
+  assert.equal(result.updatedHost.startupCommand, 'tmux attach || tmux');
+  assert.equal(result.updatedHost.startupCommandRunMode, 'lineDelay');
+  assert.deepEqual(result.updatedHost.environmentVariables, [{ name: 'APP_ENV', value: 'production' }]);
+  assert.equal(result.updatedHost.moshEnabled, false);
+  assert.equal(result.updatedHost.moshServerPath, '/usr/local/bin/mosh-server');
+  assert.equal(result.updatedHost.etEnabled, false);
+  assert.equal(result.updatedHost.etPort, 2022);
+  assert.deepEqual(result.updatedHost.serialConfig, {
+    path: '/dev/ttyUSB0', baudRate: 115200, dataBits: 8, stopBits: 1,
+    parity: 'none', flowControl: 'rts/cts', localEcho: true, lineMode: false,
+  });
+
+  const cleared = applyVaultHostUpdate([result.updatedHost, jump], [], host.id, {
+    jumpHostIds: [],
+    proxyProfileId: '',
+    startupCommand: '',
+    startupCommandRunMode: '',
+    environmentVariables: {},
+    moshEnabled: false,
+    moshServerPath: '',
+    etEnabled: false,
+  }, { identities: [identity], proxyProfiles: [proxyProfile] });
+  assert.equal(cleared.ok, true);
+  if (!cleared.ok) return;
+  assert.deepEqual(cleared.updatedHost.hostChain, { hostIds: [] });
+  assert.equal(cleared.updatedHost.proxyProfileId, '');
+  assert.equal(cleared.updatedHost.startupCommand, '');
+  assert.equal(cleared.updatedHost.startupCommandRunMode, undefined);
+  assert.deepEqual(cleared.updatedHost.environmentVariables, []);
+  assert.equal(cleared.updatedHost.moshEnabled, false);
+  assert.equal(cleared.updatedHost.moshServerPath, undefined);
+  assert.equal(cleared.updatedHost.etEnabled, false);
+});
+
+test('applyVaultHostUpdate rejects malformed advanced connection settings', () => {
+  const host: Host = {
+    id: 'host-1', label: 'host', hostname: 'host.example.com', username: 'root', tags: [], os: 'linux',
+  };
+  const jump: Host = {
+    id: 'jump-1', label: 'jump', hostname: 'jump.example.com', username: 'root', tags: [], os: 'linux',
+  };
+  const cases: Array<{ patch: VaultHostUpdatePatch; error: RegExp }> = [
+    { patch: { protocol: 'unknown' }, error: /protocol/i },
+    { patch: { identityId: 42 }, error: /identityId must be a string/i },
+    { patch: { identityId: 'missing' }, error: /Identity .* was not found/i },
+    { patch: { jumpHostIds: '["jump-1"' }, error: /valid JSON array/i },
+    { patch: { jumpHostIds: [host.id] }, error: /cannot use itself/i },
+    { patch: { jumpHostIds: [jump.id, jump.id] }, error: /duplicates/i },
+    { patch: { jumpHostIds: ['missing'] }, error: /Jump host .* was not found/i },
+    { patch: { proxyProfileId: 'missing' }, error: /Proxy profile .* was not found/i },
+    { patch: { startupCommand: 42 }, error: /startupCommand must be a string/i },
+    { patch: { startupCommandRunMode: 'fast' }, error: /paste or lineDelay/i },
+    { patch: { environmentVariables: '{' }, error: /valid JSON/i },
+    { patch: { environmentVariables: [{ value: 'missing-name' }] }, error: /require name and value/i },
+    { patch: { moshEnabled: 'maybe' }, error: /moshEnabled must be true or false/i },
+    { patch: { etEnabled: 'maybe' }, error: /etEnabled must be true or false/i },
+    { patch: { moshEnabled: true, etEnabled: true }, error: /cannot both be enabled/i },
+    { patch: { protocol: 'serial', moshEnabled: true, serialConfig: { path: '/dev/ttyUSB0', baudRate: 9600 } }, error: /require the SSH protocol/i },
+    { patch: { etPort: 0 }, error: /between 1 and 65535/i },
+    { patch: { serialConfig: '{' }, error: /valid JSON/i },
+    { patch: { serialConfig: {} }, error: /requires path and a positive baudRate/i },
+    { patch: { serialConfig: { path: '/dev/ttyUSB0\nspoof', baudRate: 9600 } }, error: /line breaks or null bytes/i },
+    { patch: { serialConfig: { path: '/dev/ttyUSB0', baudRate: 9600, dataBits: 9 } }, error: /dataBits/i },
+    { patch: { serialConfig: { path: '/dev/ttyUSB0', baudRate: 9600, stopBits: 3 } }, error: /stopBits/i },
+    { patch: { serialConfig: { path: '/dev/ttyUSB0', baudRate: 9600, parity: 'bad' } }, error: /parity/i },
+    { patch: { serialConfig: { path: '/dev/ttyUSB0', baudRate: 9600, flowControl: 'bad' } }, error: /flowControl/i },
+    { patch: { serialConfig: { path: '/dev/ttyUSB0', baudRate: 9600, localEcho: 'maybe' } }, error: /localEcho/i },
+    { patch: { serialConfig: { path: '/dev/ttyUSB0', baudRate: 9600, lineMode: 'maybe' } }, error: /lineMode/i },
+    { patch: { serialConfig: { path: '/dev/ttyUSB0', baudRate: 9600, backspaceBehavior: 'bad' } }, error: /backspaceBehavior/i },
+  ];
+
+  for (const entry of cases) {
+    const result = applyVaultHostUpdate([host, jump], [], host.id, entry.patch, {
+      identities: [], proxyProfiles: [],
+    });
+    assert.equal(result.ok, false, JSON.stringify(entry.patch));
+    if (!result.ok) assert.match(result.error, entry.error);
+  }
+});
+
+test('applyVaultHostUpdate keeps Mosh and ET mutually exclusive and clears them for other protocols', () => {
+  const host: Host = {
+    id: 'host-1', label: 'host', hostname: 'host.example.com', username: 'root',
+    protocol: 'ssh', moshEnabled: true, tags: [], os: 'linux',
+  };
+
+  const switchedToEt = applyVaultHostUpdate([host], [], host.id, { etEnabled: true });
+  assert.equal(switchedToEt.ok, true);
+  if (!switchedToEt.ok) return;
+  assert.equal(switchedToEt.updatedHost.moshEnabled, false);
+  assert.equal(switchedToEt.updatedHost.etEnabled, true);
+
+  const switchedToTelnet = applyVaultHostUpdate(
+    [switchedToEt.updatedHost], [], host.id, { protocol: 'telnet' },
+  );
+  assert.equal(switchedToTelnet.ok, true);
+  if (!switchedToTelnet.ok) return;
+  assert.equal(switchedToTelnet.updatedHost.moshEnabled, false);
+  assert.equal(switchedToTelnet.updatedHost.etEnabled, false);
+});
+
+test('applyVaultHostUpdate preserves repeated SSH mode and synchronizes serial paths both ways', () => {
+  const moshHost: Host = {
+    id: 'mosh-1', label: 'mosh', hostname: 'host.example.com', username: 'root',
+    protocol: 'ssh', moshEnabled: true, tags: [], os: 'linux',
+  };
+  const repeatedSsh = applyVaultHostUpdate([moshHost], [], moshHost.id, {
+    protocol: 'ssh', label: 'renamed',
+  });
+  assert.equal(repeatedSsh.ok, true);
+  if (!repeatedSsh.ok) return;
+  assert.equal(repeatedSsh.updatedHost.moshEnabled, true);
+
+  const serialHost: Host = {
+    id: 'serial-1', label: 'serial', hostname: '/dev/ttyUSB0', username: '',
+    protocol: 'serial', port: 9600, serialConfig: { path: '/dev/ttyUSB0', baudRate: 9600 },
+    tags: [], os: 'linux',
+  };
+  const updatedPath = applyVaultHostUpdate([serialHost], [], serialHost.id, {
+    hostname: '/dev/ttyUSB1',
+  });
+  assert.equal(updatedPath.ok, true);
+  if (!updatedPath.ok) return;
+  assert.equal(updatedPath.updatedHost.hostname, '/dev/ttyUSB1');
+  assert.equal(updatedPath.updatedHost.serialConfig?.path, '/dev/ttyUSB1');
+
+  const conflictingPaths = applyVaultHostUpdate([serialHost], [], serialHost.id, {
+    hostname: '/dev/ttyUSB1',
+    serialConfig: { path: '/dev/ttyUSB2', baudRate: 9600 },
+  });
+  assert.equal(conflictingPaths.ok, false);
+  if (!conflictingPaths.ok) assert.match(conflictingPaths.error, /must match/i);
+
+  const retainedSerialSettings: Host = {
+    ...serialHost,
+    protocol: 'ssh',
+    hostname: 'server.example.com',
+  };
+  const switchedBackToSerial = applyVaultHostUpdate(
+    [retainedSerialSettings], [], retainedSerialSettings.id, { protocol: 'serial' },
+  );
+  assert.equal(switchedBackToSerial.ok, true);
+  if (!switchedBackToSerial.ok) return;
+  assert.equal(switchedBackToSerial.updatedHost.hostname, '/dev/ttyUSB0');
+
+  const whitespacePath = applyVaultHostUpdate([serialHost], [], serialHost.id, {
+    serialConfig: { path: '/tmp/serial link', baudRate: 9600 },
+  });
+  assert.equal(whitespacePath.ok, true);
+  if (!whitespacePath.ok) return;
+  assert.equal(whitespacePath.updatedHost.hostname, '/tmp/serial link');
+  assert.equal(whitespacePath.updatedHost.serialConfig?.path, '/tmp/serial link');
+
+  const hostnameOnlyWhitespacePath = applyVaultHostUpdate([serialHost], [], serialHost.id, {
+    hostname: '/tmp/serial link',
+  });
+  assert.equal(hostnameOnlyWhitespacePath.ok, true);
+  if (!hostnameOnlyWhitespacePath.ok) return;
+  assert.equal(hostnameOnlyWhitespacePath.updatedHost.hostname, '/tmp/serial link');
+  assert.equal(hostnameOnlyWhitespacePath.updatedHost.serialConfig?.path, '/tmp/serial link');
+
+  const matchingWhitespacePaths = applyVaultHostUpdate([serialHost], [], serialHost.id, {
+    hostname: '/tmp/serial link',
+    serialConfig: { path: '/tmp/serial link', baudRate: 9600 },
+  });
+  assert.equal(matchingWhitespacePaths.ok, true);
+  if (!matchingWhitespacePaths.ok) return;
+  assert.equal(matchingWhitespacePaths.updatedHost.hostname, '/tmp/serial link');
+});
+
+test('applyVaultHostUpdate validates Mosh and ET against inherited connection settings', () => {
+  const host: Host = {
+    id: 'host-1', label: 'host', hostname: 'host.example.com', username: 'root',
+    group: 'inherited', tags: [], os: 'linux',
+  };
+  const inheritedTelnet = applyVaultHostUpdate([host], [], host.id, { moshEnabled: true }, {
+    resolveEffectiveHost: (candidate) => ({ ...candidate, protocol: 'telnet' }),
+  });
+  assert.equal(inheritedTelnet.ok, false);
+  if (!inheritedTelnet.ok) assert.match(inheritedTelnet.error, /require the SSH protocol/i);
+
+  const inheritedEt = applyVaultHostUpdate([host], [], host.id, { moshEnabled: true }, {
+    resolveEffectiveHost: (candidate) => ({ ...candidate, etEnabled: true }),
+  });
+  assert.equal(inheritedEt.ok, false);
+  if (!inheritedEt.ok) assert.match(inheritedEt.error, /cannot both be enabled/i);
+});
+
+test('applyVaultHostUpdate preserves serial Backspace override semantics', () => {
+  for (const backspaceBehavior of ['ctrl-h', 'default', undefined] as const) {
+    const host: Host = {
+      id: `serial-${backspaceBehavior ?? 'inherited'}`,
+      label: 'serial',
+      hostname: 'serial',
+      username: '',
+      protocol: 'serial',
+      tags: [],
+      os: 'linux',
+      serialConfig: {
+        path: '/dev/ttyUSB0',
+        baudRate: 9600,
+        ...(backspaceBehavior !== undefined ? { backspaceBehavior } : {}),
+      },
+    };
+
+    const updated = applyVaultHostUpdate([host], [], host.id, {
+      serialConfig: { path: '/dev/ttyUSB0', baudRate: 115200 },
+    });
+    assert.equal(updated.ok, true);
+    if (!updated.ok) continue;
+    assert.equal(updated.updatedHost.serialConfig?.backspaceBehavior, backspaceBehavior);
+  }
 });
 
 test('applyVaultHostUpdate can switch a host to a referenced key path', () => {
@@ -500,6 +960,22 @@ test('applyVaultHostUpdate clears only the local key path when another identity 
   assert.equal(keychainResult.updatedHost.identityFileId, 'key-1');
   assert.equal(keychainResult.updatedHost.authMethod, 'key');
   assert.deepEqual(keychainResult.updatedHost.identityFilePaths, []);
+});
+
+test('applyVaultHostUpdate resets identity-derived key auth when detaching an identity', () => {
+  const host: Host = {
+    id: 'host', label: 'host', hostname: 'host.example.com', username: 'deploy',
+    identityId: 'identity-1', authMethod: 'key', authPolicyVersion: 1,
+    useSshAgent: false, tags: [], os: 'linux',
+  };
+
+  const result = applyVaultHostUpdate([host], [], host.id, { identityId: '' });
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.updatedHost.identityId, '');
+  assert.equal(result.updatedHost.authMethod, 'auto');
+  assert.equal(result.updatedHost.useSshAgent, undefined);
 });
 
 test('applyVaultHostUpdate rejects saved password changes when password saving is disabled', () => {
@@ -1264,4 +1740,50 @@ test('applyVaultHostDelete removes only the requested host', () => {
   if (!result.ok) return;
   assert.equal(result.deletedHost.id, 'host-1');
   assert.deepEqual(result.hosts.map((host) => host.id), ['host-2']);
+});
+
+test('applyVaultHostDelete keeps jump hosts that are still referenced', () => {
+  const jump: Host = {
+    id: 'jump', label: 'jump', hostname: 'jump.example.com', username: 'root',
+    port: 22, protocol: 'ssh', tags: [], os: 'linux',
+  };
+  const directTarget: Host = {
+    id: 'direct', label: 'direct', hostname: 'direct.example.com', username: 'root',
+    port: 22, protocol: 'ssh', hostChain: { hostIds: [jump.id] }, tags: [], os: 'linux',
+  };
+  const inheritedTarget: Host = {
+    id: 'inherited', label: 'inherited', hostname: 'inherited.example.com', username: 'root',
+    port: 22, protocol: 'ssh', group: 'prod', tags: [], os: 'linux',
+  };
+
+  const directResult = applyVaultHostDelete([jump, directTarget], jump.id);
+  const inheritedResult = applyVaultHostDelete(
+    [jump, inheritedTarget],
+    jump.id,
+    (host) => host.group === 'prod'
+      ? { ...host, hostChain: { hostIds: [jump.id] } }
+      : host,
+  );
+
+  assert.equal(directResult.ok, false);
+  if (!directResult.ok) assert.match(directResult.error, /still used as a jump host/i);
+  assert.equal(inheritedResult.ok, false);
+  if (!inheritedResult.ok) assert.match(inheritedResult.error, /still used as a jump host/i);
+});
+
+test('applyVaultHostDelete keeps jump hosts referenced by empty group defaults', () => {
+  const jump: Host = {
+    id: 'jump', label: 'jump', hostname: 'jump.example.com', username: 'root',
+    port: 22, protocol: 'ssh', tags: [], os: 'linux',
+  };
+
+  const result = applyVaultHostDelete(
+    [jump],
+    jump.id,
+    undefined,
+    [{ path: 'empty-group', hostChain: { hostIds: [jump.id] } }],
+  );
+
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.match(result.error, /still used as a group jump host/i);
 });

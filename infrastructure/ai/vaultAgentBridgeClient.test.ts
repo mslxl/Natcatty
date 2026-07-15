@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import type { Host, Snippet, VaultNote } from '../../domain/models';
+import type { GroupConfig, Host, ManagedSource, PortForwardingRule, ProxyProfile, Snippet, VaultNote } from '../../domain/models';
 import { handleVaultAgentOp, runSerializedVaultAgentRequest, type VaultAgentApiDeps } from './vaultAgentBridgeClient';
 
 type DepsSeed = {
@@ -8,6 +8,10 @@ type DepsSeed = {
   notes?: VaultNote[];
   snippets?: Snippet[];
   customGroups?: string[];
+  groupConfigs?: GroupConfig[];
+  portForwardingRules?: PortForwardingRule[];
+  proxyProfiles?: ProxyProfile[];
+  managedSources?: ManagedSource[];
 };
 
 function createDeps(
@@ -17,19 +21,35 @@ function createDeps(
   let notes = overrides.notes ?? [];
   let snippets = overrides.snippets ?? [];
   let customGroups = overrides.customGroups ?? [];
+  let groupConfigs = overrides.groupConfigs ?? [];
+  let portForwardingRules = overrides.portForwardingRules ?? [];
+  let managedSources = overrides.managedSources ?? [];
 
   const base: VaultAgentApiDeps = {
     getHosts: () => hosts,
     getNotes: () => notes,
     getCustomGroups: () => customGroups,
     snippets,
-    portForwardingRules: [],
+    getGroupConfigs: () => groupConfigs,
+    getPortForwardingRules: () => portForwardingRules,
+    getManagedSources: () => managedSources,
+    proxyProfiles: overrides.proxyProfiles ?? [],
     keys: [],
     identities: [],
+    knownHosts: [],
     resolveEffectiveHost: (host) => host,
     updateHostNotes: () => {},
     updateCustomGroups: (groups) => {
       customGroups = groups;
+    },
+    updateGroupConfigs: (configs) => {
+      groupConfigs = configs;
+    },
+    updatePortForwardingRules: (rules) => {
+      portForwardingRules = rules;
+    },
+    updateManagedSources: (sources) => {
+      managedSources = sources;
     },
     updateHosts: (nextHosts) => {
       hosts = nextHosts;
@@ -42,10 +62,9 @@ function createDeps(
     },
     startTunnel: async () => ({ success: true }),
     stopTunnel: async () => ({ success: true }),
-    openHost: (hostId) => {
-      const host = hosts.find((entry) => entry.id === hostId);
-      if (!host) return { ok: false, error: `Host "${hostId}" was not found.` };
-      return { ok: true, sessionId: `session-${hostId}`, host };
+    stopRuleTunnels: async () => ({ success: true }),
+    openHost: (host) => {
+      return { ok: true, sessionId: `session-${host.id}`, host };
     },
   };
 
@@ -73,6 +92,18 @@ function createDeps(
     updateCustomGroups: (groups) => {
       base.updateCustomGroups(groups);
       overrides.updateCustomGroups?.(groups);
+    },
+    updateGroupConfigs: (configs) => {
+      base.updateGroupConfigs(configs);
+      overrides.updateGroupConfigs?.(configs);
+    },
+    updatePortForwardingRules: (rules) => {
+      base.updatePortForwardingRules(rules);
+      overrides.updatePortForwardingRules?.(rules);
+    },
+    updateManagedSources: (sources) => {
+      base.updateManagedSources(sources);
+      overrides.updateManagedSources?.(sources);
     },
   };
 }
@@ -145,6 +176,20 @@ describe('handleVaultAgentOp vault notes', () => {
     assert.equal(updated[0]?.[0]?.title, 'New title');
     assert.equal(updated[0]?.[0]?.content, 'new body');
     assert.ok((updated[0]?.[0]?.updatedAt ?? 0) >= 100);
+  });
+
+  it('note.delete removes the selected vault note', async () => {
+    const deps = createDeps({
+      notes: [
+        { id: 'note-1', title: 'One', content: 'a', createdAt: 1, updatedAt: 1 },
+        { id: 'note-2', title: 'Two', content: 'b', createdAt: 2, updatedAt: 2 },
+      ],
+    });
+
+    const result = await handleVaultAgentOp('note.delete', { noteId: 'note-1' }, deps);
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(deps.getNotes().map((note) => note.id), ['note-2']);
   });
 
   it('sequential note.create calls accumulate instead of overwriting prior notes', async () => {
@@ -237,6 +282,59 @@ describe('handleVaultAgentOp vault hosts', () => {
     assert.equal((result as { hostId?: string }).hostId, 'host-open-1');
     assert.equal((result as { status?: string }).status, 'connecting');
     assert.equal((result as { host?: { hostname?: string } }).host?.hostname, 'edge.example.com');
+  });
+
+  it('opens a host created by the immediately preceding request', async () => {
+    let openedHost: Host | undefined;
+    const deps = createDeps({
+      openHost: (hostToOpen: Host) => {
+        openedHost = hostToOpen;
+        return { ok: true, sessionId: `session-${hostToOpen.id}`, host: hostToOpen };
+      },
+    });
+    const created = await handleVaultAgentOp('hosts.create', {
+      hosts: JSON.stringify([{
+        label: 'New host', hostname: 'new.example.com', username: 'deploy',
+      }]),
+    }, deps);
+    const hostId = (created as { previewHosts?: Array<{ id?: string }> }).previewHosts?.[0]?.id ?? '';
+
+    const opened = await handleVaultAgentOp('host.open', { hostId }, deps);
+
+    assert.equal(opened.ok, true);
+    assert.equal(openedHost?.id, hostId);
+    assert.equal(openedHost?.hostname, 'new.example.com');
+  });
+
+  it('opens a host with group defaults changed by the immediately preceding request', async () => {
+    const groupedHost: Host = {
+      id: 'grouped-host', label: 'Grouped', hostname: 'grouped.example.com',
+      username: 'root', group: 'production', tags: [], os: 'linux',
+    };
+    let openedHost: Host | undefined;
+    let deps: VaultAgentApiDeps;
+    deps = createDeps({
+      hosts: [groupedHost],
+      customGroups: ['production'],
+      groupConfigs: [{ path: 'production', username: 'old-user' }],
+      resolveEffectiveHost: (hostToResolve) => ({
+        ...hostToResolve,
+        username: deps.getGroupConfigs().find((config) => config.path === hostToResolve.group)?.username
+          ?? hostToResolve.username,
+      }),
+      openHost: (hostToOpen) => {
+        openedHost = hostToOpen;
+        return { ok: true, sessionId: `session-${hostToOpen.id}`, host: hostToOpen };
+      },
+    });
+
+    assert.equal((await handleVaultAgentOp('group.update', {
+      path: 'production',
+      defaults: '{"username":"new-user"}',
+    }, deps)).ok, true);
+    assert.equal((await handleVaultAgentOp('host.open', { hostId: groupedHost.id }, deps)).ok, true);
+
+    assert.equal(openedHost?.username, 'new-user');
   });
 
   it('host.open fails for missing host ids', async () => {
@@ -429,6 +527,22 @@ describe('handleVaultAgentOp vault hosts', () => {
     assert.equal((result as { deletedHost?: { id?: string } }).deletedHost?.id, 'host-1');
   });
 
+  it('host.delete keeps jump hosts referenced by empty group defaults', async () => {
+    const jump: Host = {
+      id: 'jump', label: 'jump', hostname: 'jump.example.com', username: 'root',
+      protocol: 'ssh', tags: [], os: 'linux',
+    };
+    const deps = createDeps({
+      hosts: [jump],
+      groupConfigs: [{ path: 'prod', hostChain: { hostIds: [jump.id] } }],
+    });
+
+    const result = await handleVaultAgentOp('host.delete', { hostId: jump.id }, deps);
+
+    assert.equal(result.ok, false);
+    assert.deepEqual(deps.getHosts().map((current) => current.id), [jump.id]);
+  });
+
   it('host.update and host.delete never return nested proxy passwords', async () => {
     const host: Host = {
       id: 'host-1',
@@ -511,6 +625,421 @@ describe('handleVaultAgentOp vault hosts', () => {
     assert.equal(updatedHosts[0]?.length, 2);
     assert.ok(updatedGroups[0]?.includes('prod/web'));
     assert.equal((result as { addedCount?: number }).addedCount, 2);
+  });
+});
+
+describe('handleVaultAgentOp vault management gaps', () => {
+  const host: Host = {
+    id: 'host-1',
+    label: 'prod',
+    hostname: '10.0.0.1',
+    username: 'root',
+    tags: [],
+    os: 'linux',
+  };
+
+  it('lists safe identity metadata and binds an existing identity to a host', async () => {
+    const deps = createDeps({
+      hosts: [host],
+      identities: [{
+        id: 'identity-1',
+        label: 'Production deploy',
+        username: 'deploy',
+        authMethod: 'password',
+        password: 'must-not-leak',
+        created: 1,
+      }],
+    });
+
+    const listed = await handleVaultAgentOp('identity.list', {}, deps);
+    assert.equal(listed.ok, true);
+    assert.equal(JSON.stringify(listed).includes('must-not-leak'), false);
+
+    const updated = await handleVaultAgentOp(
+      'host.update',
+      { hostId: 'host-1', identityId: 'identity-1' },
+      deps,
+    );
+    assert.equal(updated.ok, true);
+    assert.equal(deps.getHosts()[0]?.identityId, 'identity-1');
+    assert.equal(deps.getHosts()[0]?.username, 'deploy');
+  });
+
+  it('updates advanced connection settings on a host', async () => {
+    const jump: Host = { ...host, id: 'jump-1', label: 'jump', hostname: 'jump.test' };
+    const deps = createDeps({
+      hosts: [host, jump],
+      proxyProfiles: [{
+        id: 'proxy-1',
+        label: 'Office proxy',
+        config: { type: 'socks5', host: '127.0.0.1', port: 1080, password: 'hidden' },
+        createdAt: 1,
+      }],
+    });
+
+    const result = await handleVaultAgentOp('host.update', {
+      hostId: 'host-1',
+      jumpHostIds: '["jump-1"]',
+      proxyProfileId: 'proxy-1',
+      startupCommand: 'tmux attach || tmux',
+      environmentVariables: '{"APP_ENV":"production"}',
+      moshEnabled: 'true',
+      moshServerPath: '/usr/local/bin/mosh-server',
+      etEnabled: 'false',
+      etPort: 2022,
+    }, deps);
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(deps.getHosts()[0]?.hostChain?.hostIds, ['jump-1']);
+    assert.equal(deps.getHosts()[0]?.proxyProfileId, 'proxy-1');
+    assert.deepEqual(deps.getHosts()[0]?.environmentVariables, [{ name: 'APP_ENV', value: 'production' }]);
+    assert.equal(JSON.stringify(result).includes('hidden'), false);
+  });
+
+  it('creates, updates, and deletes port forwarding rules', async () => {
+    const deps = createDeps({ hosts: [host] });
+    const created = await handleVaultAgentOp('portforward.rules.create', {
+      label: 'Web', type: 'local', localPort: 8080, bindAddress: '127.0.0.1',
+      remoteHost: '127.0.0.1', remotePort: 80, hostId: 'host-1',
+    }, deps);
+    assert.equal(created.ok, true);
+    const ruleId = (created as { rule?: { id?: string } }).rule?.id ?? '';
+
+    assert.equal((await handleVaultAgentOp('portforward.rules.update', { ruleId, localPort: 8081 }, deps)).ok, true);
+    assert.equal((await handleVaultAgentOp('portforward.rules.duplicate', { ruleId }, deps)).ok, true);
+    assert.equal(deps.getPortForwardingRules().length, 2);
+    assert.equal((await handleVaultAgentOp('portforward.rules.delete', { ruleId }, deps)).ok, true);
+    assert.equal(deps.getPortForwardingRules().length, 1);
+  });
+
+  it('reports an inactive rule after changing a running forwarding connection', async () => {
+    const rule: PortForwardingRule = {
+      id: 'rule-1', label: 'Web', type: 'local', localPort: 8080,
+      bindAddress: '127.0.0.1', remoteHost: '127.0.0.1', remotePort: 80,
+      hostId: host.id, status: 'active', createdAt: 1,
+    };
+    let stopCalls = 0;
+    const deps = createDeps({
+      hosts: [host],
+      portForwardingRules: [rule],
+      stopRuleTunnels: async () => {
+        stopCalls += 1;
+        return { success: true };
+      },
+    });
+
+    const result = await handleVaultAgentOp('portforward.rules.update', {
+      ruleId: rule.id,
+      localPort: 8081,
+    }, deps);
+
+    assert.equal(result.ok, true);
+    assert.equal(stopCalls, 1);
+    assert.equal((result as { rule?: { status?: string } }).rule?.status, 'inactive');
+    assert.equal(deps.getPortForwardingRules()[0]?.status, 'inactive');
+  });
+
+  it('preserves forwarding rule changes made while an old tunnel is stopping', async () => {
+    const rule: PortForwardingRule = {
+      id: 'rule-1', label: 'Web', type: 'local', localPort: 8080,
+      bindAddress: '127.0.0.1', remoteHost: '127.0.0.1', remotePort: 80,
+      hostId: host.id, status: 'active', createdAt: 1,
+    };
+    const concurrentRule: PortForwardingRule = {
+      id: 'rule-2', label: 'Database', type: 'local', localPort: 5432,
+      bindAddress: '127.0.0.1', remoteHost: '127.0.0.1', remotePort: 5432,
+      hostId: host.id, status: 'inactive', createdAt: 2,
+    };
+    let deps: VaultAgentApiDeps;
+    deps = createDeps({
+      hosts: [host],
+      portForwardingRules: [rule],
+      stopRuleTunnels: async () => {
+        deps.updatePortForwardingRules([...deps.getPortForwardingRules(), concurrentRule]);
+        return { success: true };
+      },
+    });
+
+    const result = await handleVaultAgentOp('portforward.rules.update', {
+      ruleId: rule.id,
+      localPort: 8081,
+    }, deps);
+
+    assert.equal(result.ok, true);
+    assert.equal(deps.getPortForwardingRules().find((entry) => entry.id === rule.id)?.localPort, 8081);
+    assert.equal(deps.getPortForwardingRules().find((entry) => entry.id === concurrentRule.id)?.label, 'Database');
+  });
+
+  it('reports a stopped rule as inactive when the same connection was saved concurrently', async () => {
+    const rule: PortForwardingRule = {
+      id: 'rule-1', label: 'Web', type: 'local', localPort: 8080,
+      bindAddress: '127.0.0.1', remoteHost: '127.0.0.1', remotePort: 80,
+      hostId: host.id, status: 'active', createdAt: 1,
+    };
+    let deps: VaultAgentApiDeps;
+    deps = createDeps({
+      hosts: [host],
+      portForwardingRules: [rule],
+      stopRuleTunnels: async () => {
+        deps.updatePortForwardingRules([{
+          ...rule,
+          localPort: 8081,
+          status: 'active',
+          error: 'stale error',
+        }]);
+        return { success: true };
+      },
+    });
+
+    const result = await handleVaultAgentOp('portforward.rules.update', {
+      ruleId: rule.id,
+      localPort: 8081,
+    }, deps);
+
+    assert.equal(result.ok, true);
+    assert.equal((result as { rule?: { status?: string; error?: string } }).rule?.status, 'inactive');
+    assert.equal((result as { rule?: { status?: string; error?: string } }).rule?.error, undefined);
+    assert.equal(deps.getPortForwardingRules()[0]?.status, 'inactive');
+    assert.equal(deps.getPortForwardingRules()[0]?.error, undefined);
+  });
+
+  it('does not restore a forwarding rule deleted while its old tunnel is stopping', async () => {
+    const rule: PortForwardingRule = {
+      id: 'rule-1', label: 'Web', type: 'local', localPort: 8080,
+      bindAddress: '127.0.0.1', remoteHost: '127.0.0.1', remotePort: 80,
+      hostId: host.id, status: 'active', createdAt: 1,
+    };
+    let deps: VaultAgentApiDeps;
+    deps = createDeps({
+      hosts: [host],
+      portForwardingRules: [rule],
+      stopRuleTunnels: async () => {
+        deps.updatePortForwardingRules([]);
+        return { success: true };
+      },
+    });
+
+    const result = await handleVaultAgentOp('portforward.rules.update', {
+      ruleId: rule.id,
+      localPort: 8081,
+    }, deps);
+
+    assert.equal(result.ok, false);
+    assert.deepEqual(deps.getPortForwardingRules(), []);
+  });
+
+  it('cleans up backend tunnels before editing an inactive forwarding rule', async () => {
+    const rule: PortForwardingRule = {
+      id: 'rule-1', label: 'Web', type: 'local', localPort: 8080,
+      bindAddress: '127.0.0.1', remoteHost: '127.0.0.1', remotePort: 80,
+      hostId: host.id, status: 'inactive', createdAt: 1,
+    };
+    let cleanupCalls = 0;
+    const deps = createDeps({
+      hosts: [host],
+      portForwardingRules: [rule],
+      stopRuleTunnels: async () => {
+        cleanupCalls += 1;
+        return { success: true };
+      },
+    });
+
+    const result = await handleVaultAgentOp('portforward.rules.update', {
+      ruleId: rule.id,
+      localPort: 8081,
+    }, deps);
+
+    assert.equal(result.ok, true);
+    assert.equal(cleanupCalls, 1);
+  });
+
+  it('keeps a running forwarding rule unchanged when stopping its old tunnel fails', async () => {
+    const rule: PortForwardingRule = {
+      id: 'rule-1', label: 'Web', type: 'local', localPort: 8080,
+      bindAddress: '127.0.0.1', remoteHost: '127.0.0.1', remotePort: 80,
+      hostId: host.id, status: 'active', createdAt: 1,
+    };
+    const deps = createDeps({
+      hosts: [host],
+      portForwardingRules: [rule],
+      stopRuleTunnels: async () => ({ success: false, error: 'stop failed' }),
+    });
+
+    const result = await handleVaultAgentOp('portforward.rules.update', {
+      ruleId: rule.id,
+      localPort: 8081,
+    }, deps);
+
+    assert.equal(result.ok, false);
+    assert.equal(deps.getPortForwardingRules()[0]?.localPort, 8080);
+    assert.equal(deps.getPortForwardingRules()[0]?.status, 'active');
+  });
+
+  it('passes trusted host records when the agent starts port forwarding', async () => {
+    const rule: PortForwardingRule = {
+      id: 'rule-1', label: 'Web', type: 'local', localPort: 8080,
+      bindAddress: '127.0.0.1', remoteHost: '127.0.0.1', remotePort: 80,
+      hostId: host.id, status: 'inactive', createdAt: 1,
+    };
+    const knownHosts = [{
+      id: 'known-1',
+      hostname: host.hostname,
+      port: 22,
+      keyType: 'ssh-ed25519',
+      publicKey: 'AAAAC3NzaC1lZDI1NTE5AAAAITest',
+      discoveredAt: 1,
+    }];
+    let forwardedKnownHosts: VaultAgentApiDeps['knownHosts'] | undefined;
+    const deps = createDeps({
+      hosts: [host],
+      knownHosts,
+      portForwardingRules: [rule],
+      startTunnel: async (
+        _rule,
+        _host,
+        _hosts,
+        _keys,
+        _identities,
+        _onStatusChange,
+        _enableReconnect,
+        _terminalSettings,
+        receivedKnownHosts,
+      ) => {
+        forwardedKnownHosts = receivedKnownHosts;
+        return { success: true };
+      },
+    });
+
+    const result = await handleVaultAgentOp('portforward.start', { ruleId: rule.id }, deps);
+
+    assert.equal(result.ok, true);
+    assert.equal(forwardedKnownHosts, knownHosts);
+  });
+
+  it('does not start a forwarding rule whose host was changed to serial', async () => {
+    const serialHost: Host = { ...host, protocol: 'serial' };
+    const rule: PortForwardingRule = {
+      id: 'rule-1', label: 'Web', type: 'local', localPort: 8080,
+      bindAddress: '127.0.0.1', remoteHost: '127.0.0.1', remotePort: 80,
+      hostId: host.id, status: 'inactive', createdAt: 1,
+    };
+    let startCalls = 0;
+    const deps = createDeps({
+      hosts: [serialHost],
+      portForwardingRules: [rule],
+      startTunnel: async () => {
+        startCalls += 1;
+        return { success: true };
+      },
+    });
+
+    const result = await handleVaultAgentOp('portforward.start', { ruleId: rule.id }, deps);
+
+    assert.equal(result.ok, false);
+    assert.equal(startCalls, 0);
+  });
+
+  it('rejects forwarding rules when the host inherits an unsupported protocol', async () => {
+    const rule: PortForwardingRule = {
+      id: 'rule-1', label: 'Web', type: 'local', localPort: 8080,
+      bindAddress: '127.0.0.1', remoteHost: '127.0.0.1', remotePort: 80,
+      hostId: host.id, status: 'inactive', createdAt: 1,
+    };
+    let startCalls = 0;
+    const deps = createDeps({
+      hosts: [host],
+      portForwardingRules: [rule],
+      resolveEffectiveHost: (current) => ({ ...current, protocol: 'telnet' }),
+      startTunnel: async () => {
+        startCalls += 1;
+        return { success: true };
+      },
+    });
+
+    const createResult = await handleVaultAgentOp('portforward.rules.create', {
+      label: 'Inherited', type: 'local', localPort: 8081,
+      remoteHost: '127.0.0.1', remotePort: 81, hostId: host.id,
+    }, deps);
+    const updateResult = await handleVaultAgentOp('portforward.rules.update', {
+      ruleId: rule.id, label: 'Renamed',
+    }, deps);
+    const duplicateResult = await handleVaultAgentOp('portforward.rules.duplicate', {
+      ruleId: rule.id,
+    }, deps);
+    const startResult = await handleVaultAgentOp('portforward.start', { ruleId: rule.id }, deps);
+
+    for (const result of [createResult, updateResult, duplicateResult, startResult]) {
+      assert.equal(result.ok, false);
+      if (!result.ok) assert.match(String(result.error), /does not support port forwarding/i);
+    }
+    assert.equal(startCalls, 0);
+    assert.deepEqual(deps.getPortForwardingRules(), [rule]);
+  });
+
+  it('persists an inactive status after stopping a forwarding rule', async () => {
+    const rule: PortForwardingRule = {
+      id: 'rule-1', label: 'Web', type: 'local', localPort: 8080,
+      bindAddress: '127.0.0.1', remoteHost: '127.0.0.1', remotePort: 80,
+      hostId: host.id, status: 'active', error: 'stale', createdAt: 1,
+    };
+    const deps = createDeps({ hosts: [host], portForwardingRules: [rule] });
+
+    const stopped = await handleVaultAgentOp('portforward.stop', { ruleId: rule.id }, deps);
+    const listed = await handleVaultAgentOp('portforward.rules.list', {}, deps);
+
+    assert.equal(stopped.ok, true);
+    assert.equal(deps.getPortForwardingRules()[0]?.status, 'inactive');
+    assert.equal(deps.getPortForwardingRules()[0]?.error, undefined);
+    assert.equal((listed as { rules?: Array<{ status?: string }> }).rules?.[0]?.status, 'inactive');
+  });
+
+  it('manages groups and applies reusable defaults without exposing secrets', async () => {
+    const deps = createDeps({
+      hosts: [{ ...host, group: 'prod' }],
+      identities: [{ id: 'identity-1', label: 'Deploy', username: 'deploy', authMethod: 'key', keyId: 'key-1', created: 1 }],
+      proxyProfiles: [{ id: 'proxy-1', label: 'Proxy', config: { type: 'http', host: 'proxy.test', port: 8080, password: 'hidden' }, createdAt: 1 }],
+      customGroups: ['prod'],
+      groupConfigs: [{
+        path: 'prod',
+        startupCommand: 'echo startup-secret',
+        environmentVariables: [{ name: 'TOKEN', value: 'environment-secret' }],
+        identityFileId: 'key-1',
+        identityFilePaths: ['/Users/alice/.ssh/id_prod'],
+        moshServerPath: '/Users/alice/bin/mosh-server',
+        proxyConfig: {
+          type: 'command', host: 'proxy.internal', port: 22, command: 'proxy-command-secret',
+        },
+      }],
+    });
+
+    const updated = await handleVaultAgentOp('group.update', {
+      path: 'prod',
+      defaults: '{"username":"deploy","identityId":"identity-1","proxyProfileId":"proxy-1"}',
+    }, deps);
+    assert.equal(updated.ok, true);
+    assert.equal(deps.getGroupConfigs()[0]?.username, 'deploy');
+    assert.equal(JSON.stringify(updated).includes('hidden'), false);
+
+    const listed = await handleVaultAgentOp('group.list', {}, deps);
+    const serializedList = JSON.stringify(listed);
+    assert.equal(serializedList.includes('startup-secret'), false);
+    assert.equal(serializedList.includes('environment-secret'), false);
+    assert.equal(serializedList.includes('proxy-command-secret'), false);
+    assert.equal(serializedList.includes('id_prod'), false);
+    assert.equal(serializedList.includes('/Users/alice/bin/mosh-server'), true);
+    assert.equal(serializedList.includes('key-1'), false);
+    assert.equal(serializedList.includes('deploy'), true);
+
+    const invalidDelete = await handleVaultAgentOp('group.delete', {
+      path: 'prod', deleteHosts: 'ture',
+    }, deps);
+    assert.equal(invalidDelete.ok, false);
+    assert.equal(deps.getCustomGroups().includes('prod'), true);
+
+    const removed = await handleVaultAgentOp('group.delete', { path: 'prod' }, deps);
+    assert.equal(removed.ok, true);
+    assert.equal(deps.getCustomGroups().includes('prod'), false);
+    assert.equal(deps.getHosts()[0]?.group, undefined);
   });
 });
 

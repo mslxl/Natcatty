@@ -1,5 +1,9 @@
-import type { Host, HostProtocol, Identity, ManagedSource } from './models';
+import type { GroupConfig, Host, HostProtocol, Identity, ManagedSource, ProxyProfile } from './models';
 import { sanitizeHost } from './host';
+import {
+  findIntroducedVaultJumpGraphIssue,
+  findVaultGroupConfigJumpReference,
+} from './vaultJumpGraph';
 
 const DEFAULT_SSH_PORT = 22;
 const DEFAULT_TELNET_PORT = 23;
@@ -37,12 +41,26 @@ export interface VaultHostDraft {
   protocol?: unknown;
 }
 
-export type VaultHostUpdatePatch = VaultHostDraft;
+export interface VaultHostUpdatePatch extends VaultHostDraft {
+  identityId?: unknown;
+  jumpHostIds?: unknown;
+  proxyProfileId?: unknown;
+  startupCommand?: unknown;
+  startupCommandRunMode?: unknown;
+  environmentVariables?: unknown;
+  moshEnabled?: unknown;
+  moshServerPath?: unknown;
+  etEnabled?: unknown;
+  etPort?: unknown;
+  serialConfig?: unknown;
+}
 
 export interface VaultHostUpdateOptions {
   resolveEffectiveHost?: (host: Host) => Host;
+  groupConfigs?: GroupConfig[];
   managedSources?: ManagedSource[];
   identities?: Identity[];
+  proxyProfiles?: ProxyProfile[];
 }
 
 export interface VaultHostCreateIssue {
@@ -80,6 +98,9 @@ const parsePort = (raw: unknown): number | undefined => {
 
 const defaultPortForProtocol = (protocol: HostProtocol | undefined): number =>
   protocol === 'telnet' ? DEFAULT_TELNET_PORT : DEFAULT_SSH_PORT;
+
+const supportsSshJump = (host: Host): boolean =>
+  host.protocol === undefined || host.protocol === 'ssh';
 
 const parseBoolean = (raw: unknown): boolean | undefined => {
   if (typeof raw === 'boolean') return raw;
@@ -284,7 +305,20 @@ export function applyVaultHostUpdate(
   const tags = firstProvided(source, ['tags']);
   const notes = firstProvided(source, ['notes']);
   const protocol = firstProvided(source, ['protocol']);
-  const provided = [label, hostname, port, username, password, savePassword, keyPath, group, tags, notes, protocol]
+  const identityId = firstProvided(source, ['identityId']);
+  const jumpHostIds = firstProvided(source, ['jumpHostIds']);
+  const proxyProfileId = firstProvided(source, ['proxyProfileId']);
+  const startupCommand = firstProvided(source, ['startupCommand']);
+  const startupCommandRunMode = firstProvided(source, ['startupCommandRunMode']);
+  const environmentVariables = firstProvided(source, ['environmentVariables']);
+  const moshEnabled = firstProvided(source, ['moshEnabled']);
+  const moshServerPath = firstProvided(source, ['moshServerPath']);
+  const etEnabled = firstProvided(source, ['etEnabled']);
+  const etPort = firstProvided(source, ['etPort']);
+  const serialConfig = firstProvided(source, ['serialConfig']);
+  const provided = [label, hostname, port, username, password, savePassword, keyPath, group, tags, notes, protocol,
+    identityId, jumpHostIds, proxyProfileId, startupCommand, startupCommandRunMode, environmentVariables,
+    moshEnabled, moshServerPath, etEnabled, etPort, serialConfig]
     .some((entry) => entry.provided);
   if (!provided) return { ok: false, error: 'At least one host field is required.' };
 
@@ -307,7 +341,10 @@ export function applyVaultHostUpdate(
     if (!isSafeSshConfigValue(hostname.value)) {
       return { ok: false, error: 'hostname must not contain line breaks or null bytes.' };
     }
-    if (HOSTNAME_WHITESPACE.test(hostname.value.trim())) {
+    const requestedProtocol = protocol.provided
+      ? String(protocol.value ?? '').trim().toLowerCase()
+      : current.protocol;
+    if (requestedProtocol !== 'serial' && HOSTNAME_WHITESPACE.test(hostname.value.trim())) {
       return { ok: false, error: 'hostname must not contain whitespace.' };
     }
     updated.hostname = hostname.value.trim();
@@ -326,20 +363,209 @@ export function applyVaultHostUpdate(
     updated.group = normalizeGroupPath(group.value);
   }
   if (protocol.provided) {
-    const nextProtocol = normalizeProtocol(protocol.value);
+    const rawProtocol = typeof protocol.value === 'string' ? protocol.value.trim().toLowerCase() : '';
+    const nextProtocol = rawProtocol === 'serial' ? 'serial' : normalizeProtocol(protocol.value);
     if (!nextProtocol) {
-      return { ok: false, error: 'protocol must be ssh, telnet, or local.' };
+      return { ok: false, error: 'protocol must be ssh, telnet, local, or serial.' };
+    }
+    if (current.protocol === 'serial' && nextProtocol !== 'serial' && !hostname.provided) {
+      return { ok: false, error: 'hostname is required when changing a serial host to a network protocol.' };
     }
     if (
-      !port.provided
-      && (current.port === undefined || current.port === defaultPortForProtocol(current.protocol))
+      nextProtocol !== 'serial'
+      && !port.provided
+      && (
+        current.protocol === 'serial'
+        || current.port === undefined
+        || current.port === defaultPortForProtocol(current.protocol)
+      )
     ) {
       updated.port = defaultPortForProtocol(nextProtocol);
     }
     updated.protocol = nextProtocol;
+    if (nextProtocol !== 'ssh') {
+      updated.moshEnabled = false;
+      updated.etEnabled = false;
+    }
+  }
+
+  if (identityId.provided) {
+    if (typeof identityId.value !== 'string') return { ok: false, error: 'identityId must be a string.' };
+    const nextIdentityId = identityId.value.trim();
+    const identity = options.identities?.find((item) => item.id === nextIdentityId);
+    if (nextIdentityId && !identity) return { ok: false, error: `Identity "${nextIdentityId}" was not found.` };
+    updated.identityId = nextIdentityId;
+    if (identity) {
+      updated.username = identity.username;
+      updated.authMethod = identity.authMethod;
+      updated.authPolicyVersion = 1;
+      updated.password = undefined;
+      updated.identityFileId = undefined;
+      updated.identityFilePaths = undefined;
+      updated.useSshAgent = false;
+    } else if (current.identityId) {
+      updated.authMethod = 'auto';
+      updated.authPolicyVersion = 1;
+      updated.identityFileId = undefined;
+      updated.identityFilePaths = undefined;
+      updated.useSshAgent = undefined;
+    }
+  }
+
+  if (jumpHostIds.provided) {
+    let ids: unknown = jumpHostIds.value;
+    if (typeof ids === 'string') {
+      try { ids = JSON.parse(ids); } catch { return { ok: false, error: 'jumpHostIds must be a valid JSON array.' }; }
+    }
+    if (!Array.isArray(ids)) return { ok: false, error: 'jumpHostIds must be an array.' };
+    const normalizedIds = ids.map(String).map((id) => id.trim()).filter(Boolean);
+    if (new Set(normalizedIds).size !== normalizedIds.length) return { ok: false, error: 'jumpHostIds must not contain duplicates.' };
+    if (normalizedIds.includes(hostId)) return { ok: false, error: 'A host cannot use itself as a jump host.' };
+    const missing = normalizedIds.find((id) => !existingHosts.some((candidate) => candidate.id === id));
+    if (missing) return { ok: false, error: `Jump host "${missing}" was not found.` };
+    const unsupported = normalizedIds.find((id) => {
+      const candidate = existingHosts.find((host) => host.id === id);
+      if (!candidate) return false;
+      const effectiveCandidate = options.resolveEffectiveHost?.(candidate) ?? candidate;
+      return !supportsSshJump(effectiveCandidate);
+    });
+    if (unsupported) return { ok: false, error: `Jump host "${unsupported}" does not support SSH jump connections.` };
+    updated.hostChain = { hostIds: normalizedIds };
+  }
+  if (proxyProfileId.provided) {
+    if (typeof proxyProfileId.value !== 'string') return { ok: false, error: 'proxyProfileId must be a string.' };
+    const nextProxyProfileId = proxyProfileId.value.trim();
+    if (nextProxyProfileId && !options.proxyProfiles?.some((profile) => profile.id === nextProxyProfileId)) {
+      return { ok: false, error: `Proxy profile "${nextProxyProfileId}" was not found.` };
+    }
+    updated.proxyProfileId = nextProxyProfileId;
+    updated.proxyConfig = undefined;
+  }
+  if (startupCommand.provided) {
+    if (typeof startupCommand.value !== 'string') return { ok: false, error: 'startupCommand must be a string.' };
+    updated.startupCommand = startupCommand.value;
+  }
+  if (startupCommandRunMode.provided) {
+    const mode = String(startupCommandRunMode.value ?? '');
+    if (mode !== 'paste' && mode !== 'lineDelay' && mode !== '') return { ok: false, error: 'startupCommandRunMode must be paste or lineDelay.' };
+    updated.startupCommandRunMode = mode === 'lineDelay' ? 'lineDelay' : undefined;
+  }
+  if (environmentVariables.provided) {
+    let raw: unknown = environmentVariables.value;
+    if (typeof raw === 'string') {
+      try { raw = JSON.parse(raw); } catch { return { ok: false, error: 'environmentVariables must be valid JSON.' }; }
+    }
+    if (Array.isArray(raw)) {
+      const entries = raw.map((item) => item as Record<string, unknown>);
+      if (entries.some((item) => typeof item?.name !== 'string')) return { ok: false, error: 'environmentVariables array entries require name and value.' };
+      updated.environmentVariables = entries.map((item) => ({ name: String(item.name), value: String(item.value ?? '') }));
+    } else if (raw && typeof raw === 'object') {
+      updated.environmentVariables = Object.entries(raw as Record<string, unknown>).map(([name, value]) => ({ name, value: String(value ?? '') }));
+    } else return { ok: false, error: 'environmentVariables must be a JSON object or array.' };
+  }
+  const nextMoshEnabled = moshEnabled.provided ? parseBoolean(moshEnabled.value) : undefined;
+  const nextEtEnabled = etEnabled.provided ? parseBoolean(etEnabled.value) : undefined;
+  if (moshEnabled.provided && nextMoshEnabled === undefined) {
+    return { ok: false, error: 'moshEnabled must be true or false.' };
+  }
+  if (etEnabled.provided && nextEtEnabled === undefined) {
+    return { ok: false, error: 'etEnabled must be true or false.' };
+  }
+  if (nextMoshEnabled === true && nextEtEnabled === true) {
+    return { ok: false, error: 'Mosh and ET cannot both be enabled.' };
+  }
+  if (moshEnabled.provided) {
+    updated.moshEnabled = nextMoshEnabled;
+    if (nextMoshEnabled) updated.etEnabled = false;
+  }
+  if (etEnabled.provided) {
+    updated.etEnabled = nextEtEnabled;
+    if (nextEtEnabled) updated.moshEnabled = false;
+  }
+  if (updated.protocol !== undefined && updated.protocol !== 'ssh' && (updated.moshEnabled || updated.etEnabled)) {
+    return { ok: false, error: 'Mosh and ET require the SSH protocol.' };
+  }
+  if (moshServerPath.provided) updated.moshServerPath = String(moshServerPath.value ?? '') || undefined;
+  if (etPort.provided) {
+    const value = parsePort(etPort.value);
+    if (value === undefined) return { ok: false, error: 'etPort must be an integer between 1 and 65535.' };
+    updated.etPort = value;
+  }
+  if (serialConfig.provided) {
+    let raw: unknown = serialConfig.value;
+    if (typeof raw === 'string') {
+      try { raw = JSON.parse(raw); } catch { return { ok: false, error: 'serialConfig must be valid JSON.' }; }
+    }
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ok: false, error: 'serialConfig must be a JSON object.' };
+    const config = raw as Record<string, unknown>;
+    const path = String(config.path ?? '').trim();
+    const baudRate = Number(config.baudRate);
+    if (!path || !Number.isInteger(baudRate) || baudRate <= 0) return { ok: false, error: 'serialConfig requires path and a positive baudRate.' };
+    if (!isSafeSshConfigValue(path)) {
+      return { ok: false, error: 'serialConfig.path must not contain line breaks or null bytes.' };
+    }
+    const dataBits = config.dataBits === undefined ? undefined : Number(config.dataBits);
+    if (dataBits !== undefined && ![5, 6, 7, 8].includes(dataBits)) return { ok: false, error: 'serialConfig.dataBits must be 5, 6, 7, or 8.' };
+    const stopBits = config.stopBits === undefined ? undefined : Number(config.stopBits);
+    if (stopBits !== undefined && ![1, 1.5, 2].includes(stopBits)) return { ok: false, error: 'serialConfig.stopBits must be 1, 1.5, or 2.' };
+    const parity = config.parity === undefined ? undefined : String(config.parity);
+    if (parity !== undefined && !['none', 'even', 'odd', 'mark', 'space'].includes(parity)) return { ok: false, error: 'serialConfig.parity is invalid.' };
+    const flowControl = config.flowControl === undefined ? undefined : String(config.flowControl);
+    if (flowControl !== undefined && !['none', 'xon/xoff', 'rts/cts'].includes(flowControl)) return { ok: false, error: 'serialConfig.flowControl is invalid.' };
+    const localEcho = config.localEcho === undefined ? undefined : parseBoolean(config.localEcho);
+    if (config.localEcho !== undefined && localEcho === undefined) return { ok: false, error: 'serialConfig.localEcho must be true or false.' };
+    const lineMode = config.lineMode === undefined ? undefined : parseBoolean(config.lineMode);
+    if (config.lineMode !== undefined && lineMode === undefined) return { ok: false, error: 'serialConfig.lineMode must be true or false.' };
+    const rawBackspaceBehavior = config.backspaceBehavior;
+    const backspaceBehavior = rawBackspaceBehavior === undefined
+      ? updated.serialConfig?.backspaceBehavior
+      : String(rawBackspaceBehavior);
+    if (backspaceBehavior !== undefined && !['default', 'ctrl-h'].includes(backspaceBehavior)) {
+      return { ok: false, error: 'serialConfig.backspaceBehavior must be default or ctrl-h.' };
+    }
+    updated.serialConfig = {
+      path,
+      baudRate,
+      ...(dataBits !== undefined ? { dataBits: dataBits as 5 | 6 | 7 | 8 } : {}),
+      ...(stopBits !== undefined ? { stopBits: stopBits as 1 | 1.5 | 2 } : {}),
+      ...(parity !== undefined ? { parity: parity as 'none' | 'even' | 'odd' | 'mark' | 'space' } : {}),
+      ...(flowControl !== undefined ? { flowControl: flowControl as 'none' | 'xon/xoff' | 'rts/cts' } : {}),
+      ...(localEcho !== undefined ? { localEcho } : {}),
+      ...(lineMode !== undefined ? { lineMode } : {}),
+      ...(backspaceBehavior !== undefined ? { backspaceBehavior: backspaceBehavior as 'default' | 'ctrl-h' } : {}),
+    };
+  }
+  if (updated.protocol === 'serial' && updated.serialConfig) {
+    if (serialConfig.provided && hostname.provided && updated.hostname !== updated.serialConfig.path) {
+      return { ok: false, error: 'hostname and serialConfig.path must match for serial hosts.' };
+    }
+    if (hostname.provided && !serialConfig.provided) {
+      updated.serialConfig = { ...updated.serialConfig, path: updated.hostname };
+    } else {
+      updated.hostname = updated.serialConfig.path;
+    }
+    updated.port = updated.serialConfig.baudRate;
+  }
+  if (
+    protocol.provided
+    && current.protocol !== 'serial'
+    && updated.protocol === 'serial'
+    && !updated.serialConfig
+  ) {
+    return { ok: false, error: 'serialConfig is required when protocol is serial.' };
   }
 
   const effectiveBeforeSavePassword = options.resolveEffectiveHost?.(updated) ?? updated;
+  if (effectiveBeforeSavePassword.moshEnabled && effectiveBeforeSavePassword.etEnabled) {
+    return { ok: false, error: 'Mosh and ET cannot both be enabled.' };
+  }
+  if (
+    effectiveBeforeSavePassword.protocol !== undefined
+    && effectiveBeforeSavePassword.protocol !== 'ssh'
+    && (effectiveBeforeSavePassword.moshEnabled || effectiveBeforeSavePassword.etEnabled)
+  ) {
+    return { ok: false, error: 'Mosh and ET require the SSH protocol.' };
+  }
 
   if (savePassword.provided) {
     const nextSavePassword = parseBoolean(savePassword.value);
@@ -519,8 +745,33 @@ export function applyVaultHostUpdate(
   }
 
   updated = sanitizeHost(updated);
+  if (updated.protocol === 'serial' && updated.serialConfig) {
+    updated.hostname = updated.serialConfig.path;
+  }
   const hosts = [...existingHosts];
   hosts[hostIndex] = updated;
+  const jumpGraphIssue = findIntroducedVaultJumpGraphIssue(
+    existingHosts,
+    hosts,
+    options.resolveEffectiveHost,
+  );
+  if (jumpGraphIssue) {
+    if (jumpGraphIssue.kind === 'protocol' && jumpGraphIssue.jumpHostId === current.id) {
+      return { ok: false, error: 'A host used as a jump host must keep an SSH connection type.' };
+    }
+    return { ok: false, error: jumpGraphIssue.error };
+  }
+  const groupConfigReference = findVaultGroupConfigJumpReference(
+    options.groupConfigs ?? [],
+    current.id,
+  );
+  if (groupConfigReference) {
+    const effectiveBefore = options.resolveEffectiveHost?.(current) ?? current;
+    const effectiveAfter = options.resolveEffectiveHost?.(updated) ?? updated;
+    if (supportsSshJump(effectiveBefore) && !supportsSshJump(effectiveAfter)) {
+      return { ok: false, error: 'A host used as a group jump host must keep an SSH connection type.' };
+    }
+  }
   const customGroups = updated.group
     ? Array.from(new Set([...existingGroups, updated.group]))
     : [...existingGroups];
@@ -530,12 +781,27 @@ export function applyVaultHostUpdate(
 export function applyVaultHostDelete(
   existingHosts: Host[],
   hostId: string,
+  resolveEffectiveHost?: (host: Host) => Host,
+  groupConfigs: GroupConfig[] = [],
 ): { ok: true; hosts: Host[]; deletedHost: Host } | { ok: false; error: string } {
   const deletedHost = existingHosts.find((host) => host.id === hostId);
   if (!deletedHost) return { ok: false, error: `Host "${hostId}" was not found.` };
+  if (findVaultGroupConfigJumpReference(groupConfigs, hostId)) {
+    return { ok: false, error: `Host "${hostId}" is still used as a group jump host.` };
+  }
+  const hosts = existingHosts.filter((host) => host.id !== hostId);
+  const jumpGraphIssue = findIntroducedVaultJumpGraphIssue(
+    existingHosts,
+    hosts,
+    resolveEffectiveHost,
+  );
+  if (jumpGraphIssue?.kind === 'missing' && jumpGraphIssue.jumpHostId === hostId) {
+    return { ok: false, error: `Host "${hostId}" is still used as a jump host.` };
+  }
+  if (jumpGraphIssue) return { ok: false, error: jumpGraphIssue.error };
   return {
     ok: true,
-    hosts: existingHosts.filter((host) => host.id !== hostId),
+    hosts,
     deletedHost,
   };
 }

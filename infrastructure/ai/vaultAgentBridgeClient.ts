@@ -1,4 +1,4 @@
-import type { Host, Identity, ManagedSource, PortForwardingRule, Snippet, SSHKey, TerminalSettings, VaultNote } from '../../domain/models';
+import type { GroupConfig, Host, Identity, KnownHost, ManagedSource, PortForwardingRule, ProxyProfile, Snippet, SSHKey, TerminalSettings, VaultNote } from '../../domain/models';
 import {
   normalizeVaultNotes,
   sanitizeNoteTitle,
@@ -46,6 +46,14 @@ import {
 } from '../../domain/vaultImport';
 import { resolveHostAuth } from '../../domain/sshAuth';
 import { netcattyBridge } from '../services/netcattyBridge';
+import {
+  createPortForwardingRule,
+  duplicatePortForwardingRule,
+  hasPortForwardingConnectionChanged,
+  updatePortForwardingRule,
+  validatePortForwardingHost,
+} from '../../domain/portForwardingAgentOps';
+import { deleteGroup, upsertGroup } from '../../domain/vaultGroupAgentOps';
 
 const SENSITIVE_HOST_KEYS = new Set([
   'password',
@@ -148,6 +156,63 @@ function serializeVaultNoteForAgent(note: VaultNote) {
     linkedHostIds: note.linkedHostIds,
     createdAt: note.createdAt,
     updatedAt: note.updatedAt,
+  };
+}
+
+const SAFE_GROUP_CONFIG_KEYS = [
+  'path',
+  'order',
+  'username',
+  'authMethod',
+  'identityId',
+  'port',
+  'protocol',
+  'deviceType',
+  'agentForwarding',
+  'proxyProfileId',
+  'hostChain',
+  'startupCommandRunMode',
+  'loginScriptId',
+  'legacyAlgorithms',
+  'skipEcdsaHostKey',
+  'algorithms',
+  'charset',
+  'moshEnabled',
+  'moshServerPath',
+  'etEnabled',
+  'etPort',
+  'telnetEnabled',
+  'telnetPort',
+  'telnetIdentityId',
+  'telnetUsername',
+  'theme',
+  'themeOverride',
+  'fontFamily',
+  'fontFamilyOverride',
+  'fontSize',
+  'fontSizeOverride',
+  'fontWeight',
+  'fontWeightOverride',
+  'backspaceBehavior',
+] as const satisfies readonly (keyof GroupConfig)[];
+
+function sanitizeGroupConfigForAgent(config: GroupConfig): Record<string, unknown> {
+  const safe = Object.fromEntries(
+    SAFE_GROUP_CONFIG_KEYS
+      .filter((key) => Object.hasOwn(config, key))
+      .map((key) => [key, config[key]]),
+  );
+  return {
+    ...safe,
+    ...(config.proxyConfig ? {
+      proxyConfig: {
+        type: config.proxyConfig.type,
+        host: config.proxyConfig.host,
+        port: config.proxyConfig.port,
+        identityId: config.proxyConfig.identityId,
+        username: config.proxyConfig.username,
+      },
+    } : {}),
   };
 }
 
@@ -287,15 +352,21 @@ export interface VaultAgentApiDeps {
   getHosts: () => Host[];
   getNotes: () => VaultNote[];
   getCustomGroups: () => string[];
+  getGroupConfigs: () => GroupConfig[];
+  getPortForwardingRules: () => PortForwardingRule[];
+  getManagedSources: () => ManagedSource[];
   snippets: Snippet[];
-  portForwardingRules: PortForwardingRule[];
   keys: SSHKey[];
   identities: Identity[];
-  managedSources?: ManagedSource[];
+  knownHosts: KnownHost[];
+  proxyProfiles: ProxyProfile[];
   terminalSettings?: Pick<TerminalSettings, 'keepaliveInterval' | 'keepaliveCountMax'>;
   resolveEffectiveHost: (host: Host) => Host;
   updateHostNotes: (hostId: string, notes: string) => void;
   updateCustomGroups: (groups: string[]) => void;
+  updateGroupConfigs: (configs: GroupConfig[]) => void;
+  updatePortForwardingRules: (rules: PortForwardingRule[]) => void;
+  updateManagedSources: (sources: ManagedSource[]) => void;
   updateHosts: (hosts: Host[]) => void;
   updateNotes: (notes: VaultNote[]) => void;
   updateSnippets: (snippets: Snippet[]) => void;
@@ -308,16 +379,18 @@ export interface VaultAgentApiDeps {
     onStatusChange?: (status: PortForwardingRule['status'], error?: string) => void,
     enableReconnect?: boolean,
     terminalSettings?: Pick<TerminalSettings, 'keepaliveInterval' | 'keepaliveCountMax'>,
+    knownHosts?: KnownHost[],
   ) => Promise<{ success: boolean; error?: string }>;
   stopTunnel: (
     ruleId: string,
     onStatusChange?: (status: PortForwardingRule['status']) => void,
   ) => Promise<{ success: boolean; error?: string }>;
+  stopRuleTunnels: (ruleId: string) => Promise<{ success: boolean; error?: string }>;
   /**
    * Open a vault host as a terminal tab (same path as tray / host list click).
    * Must return the new sessionId so MCP can target terminal tools.
    */
-  openHost?: (hostId: string) => {
+  openHost?: (host: Host) => {
     ok: true;
     sessionId: string;
     host: Host;
@@ -401,16 +474,18 @@ export async function handleVaultAgentOp(
     case 'host.open': {
       const hostId = String(params.hostId || '').trim();
       if (!hostId) return { ok: false, error: 'hostId is required.' };
+      const host = deps.getHosts().find((entry) => entry.id === hostId);
+      if (!host) return { ok: false, error: `Host "${hostId}" was not found.` };
       if (typeof deps.openHost !== 'function') {
         return { ok: false, error: 'Host open is not available in this window.' };
       }
 
-      const opened = deps.openHost(hostId);
+      const effectiveHost = deps.resolveEffectiveHost(host);
+      const opened = deps.openHost(effectiveHost);
       if (!opened.ok) {
         return { ok: false, error: opened.error };
       }
 
-      const effectiveHost = deps.resolveEffectiveHost(opened.host);
       const chatSessionId = typeof params.chatSessionId === 'string'
         ? params.chatSessionId
         : undefined;
@@ -504,8 +579,10 @@ export async function handleVaultAgentOp(
         params,
         {
           resolveEffectiveHost: deps.resolveEffectiveHost,
-          managedSources: deps.managedSources,
+          groupConfigs: deps.getGroupConfigs(),
+          managedSources: deps.getManagedSources(),
           identities: deps.identities,
+          proxyProfiles: deps.proxyProfiles,
         },
       );
       if (!updated.ok) return updated;
@@ -521,7 +598,12 @@ export async function handleVaultAgentOp(
     case 'host.delete': {
       const hostId = String(params.hostId || '').trim();
       if (!hostId) return { ok: false, error: 'hostId is required.' };
-      const deleted = applyVaultHostDelete(deps.getHosts(), hostId);
+      const deleted = applyVaultHostDelete(
+        deps.getHosts(),
+        hostId,
+        deps.resolveEffectiveHost,
+        deps.getGroupConfigs(),
+      );
       if (!deleted.ok) return deleted;
 
       deps.updateHosts(deleted.hosts);
@@ -677,6 +759,82 @@ export async function handleVaultAgentOp(
       );
       deps.updateNotes(nextNotes);
       return { ok: true, note: serializeVaultNoteForAgent(note) };
+    }
+    case 'note.delete': {
+      const noteId = String(params.noteId || '');
+      if (!deps.getNotes().some((note) => note.id === noteId)) {
+        return { ok: false, error: `Vault note "${noteId}" was not found.` };
+      }
+      deps.updateNotes(normalizeVaultNotes(deps.getNotes().filter((note) => note.id !== noteId)));
+      return { ok: true, noteId };
+    }
+    case 'identity.list': {
+      return {
+        ok: true,
+        identities: deps.identities.map((identity) => ({
+          id: identity.id,
+          label: identity.label,
+          username: identity.username,
+          authMethod: identity.authMethod,
+          keyId: identity.keyId,
+        })),
+      };
+    }
+    case 'proxyProfile.list': {
+      return {
+        ok: true,
+        proxyProfiles: deps.proxyProfiles.map((profile) => ({
+          id: profile.id,
+          label: profile.label,
+          type: profile.config.type,
+          host: profile.config.host,
+          port: profile.config.port,
+        })),
+      };
+    }
+    case 'group.list': {
+      const configs = new Map(deps.getGroupConfigs().map((config) => [config.path, config]));
+      return {
+        ok: true,
+        groups: deps.getCustomGroups().map((path) => {
+          const config = configs.get(path);
+          if (!config) return { path };
+          return { path, defaults: sanitizeGroupConfigForAgent(config) };
+        }),
+      };
+    }
+    case 'group.create':
+    case 'group.update': {
+      const result = upsertGroup({
+        groups: deps.getCustomGroups(),
+        configs: deps.getGroupConfigs(),
+        hosts: deps.getHosts(),
+        managedSources: deps.getManagedSources(),
+      }, params.path, params.defaults, deps.identities, deps.proxyProfiles, {
+        create: op === 'group.create',
+        newPath: params.newPath,
+      });
+      if (!result.ok) return result;
+      deps.updateCustomGroups(result.state.groups);
+      deps.updateGroupConfigs(result.state.configs);
+      deps.updateHosts(result.state.hosts);
+      deps.updateManagedSources(result.state.managedSources);
+      return { ok: true, group: sanitizeGroupConfigForAgent(result.config ?? { path: String(params.path) }) };
+    }
+    case 'group.delete': {
+      const deleteHosts = parseOptionalBoolean(params.deleteHosts);
+      if (params.deleteHosts !== undefined && deleteHosts === undefined) {
+        return { ok: false, error: 'deleteHosts must be true or false.' };
+      }
+      const result = deleteGroup({
+        groups: deps.getCustomGroups(), configs: deps.getGroupConfigs(), hosts: deps.getHosts(),
+        managedSources: deps.getManagedSources(),
+      }, params.path, deleteHosts ?? false);
+      if (!result.ok) return result;
+      deps.updateCustomGroups(result.state.groups);
+      deps.updateGroupConfigs(result.state.configs);
+      deps.updateHosts(result.state.hosts);
+      return { ok: true, path: String(params.path), deletedHosts: deleteHosts ?? false };
     }
     case 'snippets.list': {
       return {
@@ -880,23 +1038,90 @@ export async function handleVaultAgentOp(
     case 'portforward.rules.list': {
       return {
         ok: true,
-        rules: deps.portForwardingRules.map(sanitizePortForwardRuleForAgent),
+        rules: deps.getPortForwardingRules().map(sanitizePortForwardRuleForAgent),
       };
+    }
+    case 'portforward.rules.create': {
+      const effectiveHosts = deps.getHosts().map((host) => deps.resolveEffectiveHost(host));
+      const result = createPortForwardingRule(deps.getPortForwardingRules(), effectiveHosts, params, {
+        id: crypto.randomUUID(), now: Date.now(),
+      });
+      if (!result.ok) return result;
+      deps.updatePortForwardingRules(result.value.rules);
+      return { ok: true, rule: sanitizePortForwardRuleForAgent(result.value.rule) };
+    }
+    case 'portforward.rules.update': {
+      const ruleId = String(params.ruleId || '');
+      const currentRules = deps.getPortForwardingRules();
+      const existingRule = currentRules.find((entry) => entry.id === ruleId);
+      const effectiveHosts = deps.getHosts().map((host) => deps.resolveEffectiveHost(host));
+      let result = updatePortForwardingRule(currentRules, effectiveHosts, ruleId, params);
+      if (!result.ok) return result;
+      if (
+        existingRule
+        && hasPortForwardingConnectionChanged(existingRule, result.value.rule)
+      ) {
+        const stopped = await deps.stopRuleTunnels(ruleId);
+        if (!stopped.success) {
+          return { ok: false, error: stopped.error || 'Failed to stop port forwarding tunnel.' };
+        }
+        const latestHosts = deps.getHosts().map((host) => deps.resolveEffectiveHost(host));
+        result = updatePortForwardingRule(
+          deps.getPortForwardingRules(),
+          latestHosts,
+          ruleId,
+          params,
+        );
+        if (!result.ok) return result;
+        const stoppedRule = {
+          ...result.value.rule,
+          status: 'inactive' as const,
+          error: undefined,
+        };
+        result = {
+          ok: true,
+          value: {
+            rules: result.value.rules.map((rule) => rule.id === ruleId ? stoppedRule : rule),
+            rule: stoppedRule,
+          },
+        };
+      }
+      deps.updatePortForwardingRules(result.value.rules);
+      return { ok: true, rule: sanitizePortForwardRuleForAgent(result.value.rule) };
+    }
+    case 'portforward.rules.duplicate': {
+      const ruleId = String(params.ruleId || '');
+      const effectiveHosts = deps.getHosts().map((host) => deps.resolveEffectiveHost(host));
+      const result = duplicatePortForwardingRule(deps.getPortForwardingRules(), effectiveHosts, ruleId, {
+        id: crypto.randomUUID(), now: Date.now(),
+      });
+      if (!result.ok) return result;
+      deps.updatePortForwardingRules(result.value.rules);
+      return { ok: true, rule: sanitizePortForwardRuleForAgent(result.value.rule) };
+    }
+    case 'portforward.rules.delete': {
+      const ruleId = String(params.ruleId || '');
+      const rule = deps.getPortForwardingRules().find((entry) => entry.id === ruleId);
+      if (!rule) return { ok: false, error: `Port forwarding rule "${ruleId}" was not found.` };
+      const stopped = await deps.stopRuleTunnels(ruleId);
+      if (!stopped.success) return { ok: false, error: stopped.error || 'Failed to stop port forwarding tunnel.' };
+      deps.updatePortForwardingRules(deps.getPortForwardingRules().filter((entry) => entry.id !== ruleId));
+      return { ok: true, ruleId };
     }
     case 'portforward.start': {
       const ruleId = String(params.ruleId || '');
-      const rule = deps.portForwardingRules.find((entry) => entry.id === ruleId);
+      const rule = deps.getPortForwardingRules().find((entry) => entry.id === ruleId);
       if (!rule) return { ok: false, error: `Port forwarding rule "${ruleId}" was not found.` };
       if (!rule.hostId) return { ok: false, error: 'Rule has no associated host.' };
-      const rawHost = deps.getHosts().find((entry) => entry.id === rule.hostId);
-      if (!rawHost) return { ok: false, error: `Host "${rule.hostId}" was not found.` };
-      const host = deps.resolveEffectiveHost(rawHost);
+      const effectiveHosts = deps.getHosts().map((host) => deps.resolveEffectiveHost(host));
+      const validatedHost = validatePortForwardingHost(effectiveHosts, rule.hostId);
+      if (!validatedHost.ok) return validatedHost;
+      const host = validatedHost.value;
       try {
         resolveHostAuth({ host, keys: deps.keys, identities: deps.identities });
       } catch (err) {
         return { ok: false, error: err instanceof Error ? err.message : String(err) };
       }
-      const effectiveHosts = deps.getHosts().map((entry) => deps.resolveEffectiveHost(entry));
       const result = await deps.startTunnel(
         rule,
         host,
@@ -906,6 +1131,7 @@ export async function handleVaultAgentOp(
         undefined,
         false,
         deps.terminalSettings,
+        deps.knownHosts,
       );
       if (!result.success) {
         return { ok: false, error: result.error || 'Failed to start port forwarding tunnel.' };
@@ -914,10 +1140,13 @@ export async function handleVaultAgentOp(
     }
     case 'portforward.stop': {
       const ruleId = String(params.ruleId || '');
-      const result = await deps.stopTunnel(ruleId);
+      const result = await deps.stopRuleTunnels(ruleId);
       if (!result.success) {
         return { ok: false, error: result.error || 'Failed to stop port forwarding tunnel.' };
       }
+      deps.updatePortForwardingRules(deps.getPortForwardingRules().map((rule) => (
+        rule.id === ruleId ? { ...rule, status: 'inactive', error: undefined } : rule
+      )));
       return { ok: true, ruleId };
     }
     default:
