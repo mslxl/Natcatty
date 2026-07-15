@@ -12,12 +12,16 @@ function createOpenConnectionApi(ctx) {
     async function activateScpMode(client, { probe = true, signal = null } = {}) {
       client.__netcattyFileProtocol = "scp";
       client.sftp = null;
-      // Ensure closeSftp can tear down the SSH socket even when sftp is null.
+      // Ensure closeSftp can tear down owned SSH sockets even when sftp is null.
+      // Never end a shared terminal session socket.
       if (typeof client.end === "function" && !client.__netcattyScpEndWrapped) {
         const prevEnd = client.end.bind(client);
         client.end = async (...args) => {
-          try { client.client?.end?.(); } catch { /* ignore */ }
-          try { client.client?.destroy?.(); } catch { /* ignore */ }
+          const ownsSocket = !client.__netcattySessionBacked && !client.__netcattySourceSessionId;
+          if (ownsSocket) {
+            try { client.client?.end?.(); } catch { /* ignore */ }
+            try { client.client?.destroy?.(); } catch { /* ignore */ }
+          }
           return prevEnd(...args);
         };
         client.__netcattyScpEndWrapped = true;

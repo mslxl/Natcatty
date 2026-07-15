@@ -253,7 +253,7 @@ function createScpBackend(deps = {}) {
     return abs;
   }
 
-  async function readFile(remotePath) {
+  async function readFile(remotePath, options = {}) {
     // Prefer scp -f for binary fidelity; also works when cat is restricted.
     const chunks = [];
     await downloadToWritable(remotePath, {
@@ -261,7 +261,13 @@ function createScpBackend(deps = {}) {
         chunks.push(Buffer.from(buf));
       },
       end: () => {},
-    }, { fileSize: null, transfer: null, onProgress: null });
+    }, {
+      fileSize: null,
+      transfer: options.transfer || null,
+      onProgress: null,
+      encoding: options.encoding || "utf-8",
+      signal: options.signal || null,
+    });
     return Buffer.concat(chunks);
   }
 
@@ -276,6 +282,8 @@ function createScpBackend(deps = {}) {
           transfer: options.transfer || null,
           onProgress: options.onProgress || null,
           mode: options.mode,
+          encoding: options.encoding || "utf-8",
+          signal: options.signal || null,
         });
       } finally {
         try { await fsModule.promises.unlink(tmpLocal); } catch { /* ignore */ }
@@ -287,6 +295,8 @@ function createScpBackend(deps = {}) {
       transfer: options.transfer || null,
       onProgress: options.onProgress || null,
       mode: options.mode || 0o0644,
+      encoding: options.encoding || "utf-8",
+      signal: options.signal || null,
     });
     return true;
   }

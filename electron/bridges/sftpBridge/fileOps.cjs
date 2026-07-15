@@ -147,7 +147,11 @@ function createFileOpsApi(ctx) {
       if (!client) throw new Error("SFTP session not found");
 
       if (isScpModeClient(client)) {
-        const buffer = await getScpBackendForClient(client).readFile(payload.path);
+        const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
+        const buffer = await getScpBackendForClient(client).readFile(payload.path, {
+          encoding,
+          signal: payload?.abortSignal || null,
+        });
         return buffer.toString();
       }
     
@@ -166,7 +170,11 @@ function createFileOpsApi(ctx) {
       if (!client) throw new Error("SFTP session not found");
 
       if (isScpModeClient(client)) {
-        const buffer = await getScpBackendForClient(client).readFile(payload.path);
+        const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
+        const buffer = await getScpBackendForClient(client).readFile(payload.path, {
+          encoding,
+          signal: payload?.abortSignal || null,
+        });
         return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
       }
     
@@ -198,9 +206,11 @@ function createFileOpsApi(ctx) {
 
       if (isScpModeClient(client)) {
         const backend = getScpBackendForClient(client);
+        const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
+        const scpOpts = { encoding, signal: payload?.abortSignal || null };
         let existingMode = null;
         try {
-          const st = await backend.stat(payload.path);
+          const st = await backend.stat(payload.path, scpOpts);
           if (typeof st.mode === "number" && st.mode > 0) {
             existingMode = st.mode & 0o7777;
           }
@@ -209,9 +219,10 @@ function createFileOpsApi(ctx) {
         }
         await backend.writeFile(payload.path, Buffer.from(normalized, "utf-8"), {
           mode: existingMode != null ? existingMode : 0o0644,
+          ...scpOpts,
         });
         if (existingMode != null) {
-          try { await backend.chmod(payload.path, existingMode); } catch (err) {
+          try { await backend.chmod(payload.path, existingMode, scpOpts); } catch (err) {
             console.warn(`[scp] Failed to restore permissions on ${payload.path}:`, err?.message || err);
           }
         }
@@ -257,7 +268,11 @@ function createFileOpsApi(ctx) {
       if (!client) throw new Error("SFTP session not found");
 
       if (isScpModeClient(client)) {
-        await getScpBackendForClient(client).writeFile(payload.path, Buffer.from(payload.content));
+        const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
+        await getScpBackendForClient(client).writeFile(payload.path, Buffer.from(payload.content), {
+          encoding,
+          signal: payload?.abortSignal || null,
+        });
         return true;
       }
     
@@ -528,9 +543,14 @@ function createFileOpsApi(ctx) {
     
       try {
         if (isScpModeClient(client)) {
-          // ssh2-sftp-client.end() may not tear down the SSH socket when sftp is null.
-          try { client.client?.end?.(); } catch { /* ignore */ }
-          try { client.client?.destroy?.(); } catch { /* ignore */ }
+          // Only tear down SSH sockets we own (fresh dials). Session-backed /
+          // reused-terminal clients share the terminal SSH connection — ending
+          // it here would disconnect the interactive shell.
+          const ownsSocket = !client.__netcattySessionBacked && !client.__netcattySourceSessionId;
+          if (ownsSocket) {
+            try { client.client?.end?.(); } catch { /* ignore */ }
+            try { client.client?.destroy?.(); } catch { /* ignore */ }
+          }
         }
         await client.end();
       } catch (err) {
@@ -557,8 +577,10 @@ function createFileOpsApi(ctx) {
     async function mkdirSftp(event, payload) {
       const client = sftpClients.get(payload.sftpId);
       if (client && isScpModeClient(client)) {
+        const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
         await getScpBackendForClient(client).mkdir(payload.path, {
           recursive: true,
+          encoding,
           signal: payload?.abortSignal || null,
         });
         return true;
@@ -606,8 +628,10 @@ function createFileOpsApi(ctx) {
 
       if (isScpModeClient(client)) {
         throwIfAborted(payload?.abortSignal || null);
+        const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
         await getScpBackendForClient(client).remove(payload.path, {
           recursive: true,
+          encoding,
           signal: payload?.abortSignal || null,
         });
         return true;
@@ -694,7 +718,9 @@ function createFileOpsApi(ctx) {
       if (!client) throw new Error("SFTP session not found");
 
       if (isScpModeClient(client)) {
+        const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
         await getScpBackendForClient(client).rename(payload.oldPath, payload.newPath, {
+          encoding,
           signal: payload?.abortSignal || null,
         });
         return true;
@@ -716,7 +742,9 @@ function createFileOpsApi(ctx) {
       if (!client) throw new Error("SFTP session not found");
 
       if (isScpModeClient(client)) {
+        const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
         const st = await getScpBackendForClient(client).stat(payload.path, {
+          encoding,
           signal: payload?.abortSignal || null,
         });
         return {
@@ -749,7 +777,9 @@ function createFileOpsApi(ctx) {
       if (!client) throw new Error("SFTP session not found");
 
       if (isScpModeClient(client)) {
+        const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
         await getScpBackendForClient(client).chmod(payload.path, payload.mode, {
+          encoding,
           signal: payload?.abortSignal || null,
         });
         return true;
