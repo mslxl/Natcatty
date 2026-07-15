@@ -54,11 +54,14 @@ function createFileOpsApi(ctx) {
                   if (rec.type === "symlink") {
                     try {
                       const full = `${String(basePath).replace(/\/+$/, "")}/${rec.name}`.replace(/\/+/g, "/") || rec.name;
-                      const st = await backend.stat(full, {
-                        encoding: "gb18030",
-                        signal: payload?.abortSignal || null,
-                      });
-                      entry.linkTarget = st.isDirectory ? "directory" : "file";
+                      // Follow the link with shell [ -d ] (stat marks the link itself as type l).
+                      const adapters = require("./scpBackend.cjs").createSshExecAdapters(client.client);
+                      const { shellQuotePath } = require("./scpShell.cjs");
+                      const probe = await adapters.exec(
+                        `p=${shellQuotePath(full, "gb18030")}; if [ -d "$p" ]; then echo directory; else echo file; fi`,
+                        { signal: payload?.abortSignal || null },
+                      );
+                      entry.linkTarget = (probe.stdout || "").includes("directory") ? "directory" : "file";
                     } catch {
                       entry.linkTarget = null;
                     }
@@ -365,8 +368,10 @@ function createFileOpsApi(ctx) {
           transfer,
         });
         try {
+          const encoding = resolveEncodingForRequest(sftpId, payload.encoding);
           await getScpBackendForClient(client).uploadBuffer(buffer, remotePath, {
             transfer,
+            encoding: encoding === "auto" ? "utf-8" : encoding,
             onProgress: (transferred, total) => {
               if (typeof onProgress === "function") {
                 onProgress(transferred, total || totalBytes, 0);

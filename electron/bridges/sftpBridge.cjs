@@ -489,7 +489,11 @@ const ensureRemoteDirForSession = async (sftpId, dirPath, requestedEncoding) => 
 
   const { isScpModeClient, getScpBackendForClient } = require("./sftpBridge/scpBackend.cjs");
   if (isScpModeClient(client)) {
-    await getScpBackendForClient(client).mkdir(dirPath, { recursive: true });
+    const encoding = resolveEncodingForRequest(sftpId, requestedEncoding);
+    await getScpBackendForClient(client).mkdir(dirPath, {
+      recursive: true,
+      encoding: encoding === "auto" ? "utf-8" : encoding,
+    });
     return true;
   }
 
@@ -898,8 +902,11 @@ async function downloadSftpToLocal(_event, payload) {
       path.basename(payload.localPath || payload.remotePath || "download"),
     );
     try {
+      const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
       await getScpBackendForClient(client).downloadFile(payload.remotePath, stagedFilePath, {
         transfer,
+        encoding: encoding === "auto" ? "utf-8" : encoding,
+        signal: payload.abortSignal || null,
       });
       throwIfAborted(payload.abortSignal);
       if (transfer?.cancelled) {
@@ -966,12 +973,18 @@ async function uploadLocalToSftp(_event, payload) {
     throwIfAborted(payload.abortSignal);
     const transfer = createTransferFromAbortSignal(payload.abortSignal);
     const backend = getScpBackendForClient(client);
+    const encodingRaw = resolveEncodingForRequest(payload.sftpId, payload.encoding);
+    const encoding = encodingRaw === "auto" ? "utf-8" : encodingRaw;
     // Upload to a staged remote name, then rename into place so a cancelled or
     // failed transfer cannot leave a truncated original (matches SFTP path).
     const stagedRemotePath = buildStagedRemotePath(payload.remotePath);
     const backupRemotePath = buildBackupRemotePath(payload.remotePath);
     try {
-      await backend.uploadFile(payload.localPath, stagedRemotePath, { transfer });
+      await backend.uploadFile(payload.localPath, stagedRemotePath, {
+        transfer,
+        encoding,
+        signal: payload.abortSignal || null,
+      });
       throwIfAborted(payload.abortSignal);
       if (transfer?.cancelled) {
         throw createAbortError(payload.abortSignal, "Transfer cancelled");
@@ -979,25 +992,25 @@ async function uploadLocalToSftp(_event, payload) {
       // Best-effort atomic replace: move existing target aside, then promote staged.
       let movedExisting = false;
       try {
-        await backend.rename(payload.remotePath, backupRemotePath);
+        await backend.rename(payload.remotePath, backupRemotePath, { encoding });
         movedExisting = true;
       } catch {
         // Destination may not exist yet.
       }
       try {
-        await backend.rename(stagedRemotePath, payload.remotePath);
+        await backend.rename(stagedRemotePath, payload.remotePath, { encoding });
       } catch (renameErr) {
         if (movedExisting) {
-          try { await backend.rename(backupRemotePath, payload.remotePath); } catch { /* ignore */ }
+          try { await backend.rename(backupRemotePath, payload.remotePath, { encoding }); } catch { /* ignore */ }
         }
         throw renameErr;
       }
       if (movedExisting) {
-        try { await backend.remove(backupRemotePath, { recursive: false }); } catch { /* ignore */ }
+        try { await backend.remove(backupRemotePath, { recursive: false, encoding }); } catch { /* ignore */ }
       }
       return { success: true, remotePath: payload.remotePath };
     } catch (err) {
-      try { await backend.remove(stagedRemotePath, { recursive: false }); } catch { /* ignore */ }
+      try { await backend.remove(stagedRemotePath, { recursive: false, encoding }); } catch { /* ignore */ }
       throw err;
     } finally {
       try { transfer?.detachAbortSignal?.(); } catch { /* ignore */ }
