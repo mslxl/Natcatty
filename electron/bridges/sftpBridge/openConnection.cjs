@@ -28,42 +28,22 @@ function createOpenConnectionApi(ctx) {
       }
       if (probe) {
         const backend = getScpBackendForClient(client);
-        // Cheap probe: home dir resolves via shell exec
+        // Require a working shell AND scp binary — transfers need `scp -t/-f`.
         await backend.homeDir({ signal }).catch(async () => {
-          // Some minimal environments still support scp/list without $HOME — try pwd
-          const sshClient = client.client;
-          if (!sshClient?.exec) throw new Error("SCP mode requires SSH exec");
-          await new Promise((resolve, reject) => {
-            if (signal?.aborted) {
-              reject(new Error("Transfer cancelled"));
-              return;
-            }
-            let streamRef = null;
-            const onAbort = () => {
-              try { streamRef?.close?.(); } catch { /* ignore */ }
-              reject(new Error("Transfer cancelled"));
-            };
-            if (signal) signal.addEventListener("abort", onAbort, { once: true });
-            sshClient.exec("pwd", (err, stream) => {
-              if (err) {
-                if (signal) signal.removeEventListener("abort", onAbort);
-                return reject(err);
-              }
-              streamRef = stream;
-              let out = "";
-              stream.on("data", (d) => { out += d.toString(); });
-              stream.on("close", (code) => {
-                if (signal) signal.removeEventListener("abort", onAbort);
-                if (code === 0 && out.trim()) resolve();
-                else reject(new Error("SCP mode shell probe failed"));
-              });
-              stream.on("error", (streamErr) => {
-                if (signal) signal.removeEventListener("abort", onAbort);
-                reject(streamErr);
-              });
-            });
-          });
+          const adapters = require("./scpBackend.cjs").createSshExecAdapters(client.client);
+          const pwd = await adapters.exec("pwd", { signal });
+          if (pwd.code !== 0 || !(pwd.stdout || "").trim()) {
+            throw new Error("SCP mode shell probe failed");
+          }
         });
+        const adapters = require("./scpBackend.cjs").createSshExecAdapters(client.client);
+        const scpProbe = await adapters.exec(
+          "command -v scp >/dev/null 2>&1 || which scp >/dev/null 2>&1",
+          { signal },
+        );
+        if (scpProbe.code !== 0) {
+          throw new Error("SCP binary not available on remote host (command -v scp failed)");
+        }
       }
       return client;
     }

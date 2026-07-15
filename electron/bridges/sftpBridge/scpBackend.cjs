@@ -302,11 +302,15 @@ function createScpBackend(deps = {}) {
   }
 
   async function uploadFile(localPath, remotePath, options = {}) {
+    // Always use a fresh size for the SCP wire header so a shrinking/growing
+    // file between enqueue and open cannot desync the remote scp -t peer.
     const st = await fsModule.promises.stat(localPath);
-    const fileSize = Number.isFinite(options.fileSize) ? options.fileSize : st.size;
+    const fileSize = st.size;
     const mode = options.mode != null ? options.mode : (st.mode & 0o777);
     const transfer = options.transfer || null;
     const onProgress = options.onProgress || null;
+    const encoding = options.encoding || "utf-8";
+    const signal = options.signal || null;
 
     const remoteParent = pathModule.posix.dirname(remotePath) || ".";
     const baseName = pathModule.posix.basename(remotePath);
@@ -315,10 +319,9 @@ function createScpBackend(deps = {}) {
 
     // Ensure parent exists
     if (remoteParent && remoteParent !== ".") {
-      await mkdir(remoteParent, { recursive: true });
+      await mkdir(remoteParent, { recursive: true, encoding, signal });
     }
 
-    const encoding = options.encoding || "utf-8";
     const command = buildScpSinkCommand(remoteParent, encoding);
     const stream = await execStream(command, { signal: options.signal || transfer?.signal || null });
     const abort = () => {
@@ -411,13 +414,14 @@ function createScpBackend(deps = {}) {
     const remoteParent = pathModule.posix.dirname(remotePath) || ".";
     const baseName = pathModule.posix.basename(remotePath);
 
+    const encoding = options.encoding || "utf-8";
+    const signal = options.signal || null;
     if (remoteParent && remoteParent !== ".") {
-      await mkdir(remoteParent, { recursive: true });
+      await mkdir(remoteParent, { recursive: true, encoding, signal });
     }
 
-    const encoding = options.encoding || "utf-8";
     const command = buildScpSinkCommand(remoteParent, encoding);
-    const stream = await execStream(command, { signal: options.signal || transfer?.signal || null });
+    const stream = await execStream(command, { signal: signal || transfer?.signal || null });
     const abort = () => {
       try { stream.close?.(); } catch { /* ignore */ }
       try { stream.destroy?.(); } catch { /* ignore */ }
@@ -564,10 +568,23 @@ function createScpBackend(deps = {}) {
                   if (typeof onProgress === "function") {
                     onProgress(transferred, expectedSize || transferred);
                   }
-                  // Backpressure: wait for the local write stream to drain.
+                  // Backpressure: wait for drain, or fail if the writable errors.
                   if (canContinue === false) {
-                    await new Promise((resolveDrain) => {
-                      writable.once("drain", resolveDrain);
+                    await new Promise((resolveDrain, rejectDrain) => {
+                      const onDrain = () => {
+                        cleanup();
+                        resolveDrain();
+                      };
+                      const onWritableError = (err) => {
+                        cleanup();
+                        rejectDrain(err);
+                      };
+                      const cleanup = () => {
+                        writable.removeListener("drain", onDrain);
+                        writable.removeListener("error", onWritableError);
+                      };
+                      writable.once("drain", onDrain);
+                      writable.once("error", onWritableError);
                     });
                   }
                 } else if (ev.type === "file-end") {
@@ -619,6 +636,12 @@ function createScpBackend(deps = {}) {
         }
         finish(err);
       });
+      if (typeof writable?.on === "function") {
+        writable.on("error", (err) => {
+          finish(err || new Error("Local write stream failed"));
+          try { stream.close?.(); } catch { /* ignore */ }
+        });
+      }
       stream.on("close", () => {
         if (settled) return;
         // Abort closes the stream; surface cancel rather than protocol incompleteness.
