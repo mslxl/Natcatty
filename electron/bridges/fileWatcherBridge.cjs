@@ -215,7 +215,14 @@ async function handleFileChange(watchId, webContents) {
         }
       } catch { /* ignore */ }
       if (!enc || enc === "auto") enc = "utf-8";
-      await getScpBackendForClient(client).writeFile(remotePath, content, { encoding: enc });
+      const backend = getScpBackendForClient(client);
+      let existingMode = 0o0644;
+      try {
+        const st = await backend.stat(remotePath, { encoding: enc });
+        if (typeof st.mode === "number" && st.mode > 0) existingMode = st.mode & 0o7777;
+      } catch { /* new file defaults */ }
+      await backend.writeFile(remotePath, content, { encoding: enc, mode: existingMode });
+      try { await backend.chmod(remotePath, existingMode, { encoding: enc }); } catch { /* ignore */ }
     } else {
       const encodedPath = encodePathForSession(sftpId, remotePath, encoding);
       await client.put(content, encodedPath);

@@ -497,7 +497,10 @@ function createScpBackend(deps = {}) {
     let fileSize = Number.isFinite(options.fileSize) ? options.fileSize : null;
     if (fileSize == null) {
       try {
-        const st = await stat(remotePath);
+        const st = await stat(remotePath, {
+          encoding: options.encoding || "utf-8",
+          signal: options.signal || null,
+        });
         fileSize = st.size;
       } catch {
         fileSize = 0;
@@ -507,8 +510,15 @@ function createScpBackend(deps = {}) {
     await fsModule.promises.mkdir(pathModule.dirname(localPath), { recursive: true });
     const writeStream = fsModule.createWriteStream(localPath);
     if (transfer) transfer.writeStream = writeStream;
+    // Attach error listener immediately — createWriteStream can emit before we open SCP.
+    let earlyWriteError = null;
+    const onEarlyWriteError = (err) => {
+      earlyWriteError = err || new Error("Local write stream failed");
+    };
+    writeStream.on("error", onEarlyWriteError);
 
     try {
+      if (earlyWriteError) throw earlyWriteError;
       await downloadToWritable(remotePath, writeStream, {
         fileSize,
         transfer,
@@ -516,6 +526,7 @@ function createScpBackend(deps = {}) {
         encoding: options.encoding || "utf-8",
         signal: options.signal || null,
       });
+      if (earlyWriteError) throw earlyWriteError;
       await new Promise((resolve, reject) => {
         writeStream.end((err) => (err ? reject(err) : resolve()));
       });
@@ -524,6 +535,8 @@ function createScpBackend(deps = {}) {
       try { writeStream.destroy(); } catch { /* ignore */ }
       try { await fsModule.promises.unlink(localPath); } catch { /* ignore */ }
       throw err;
+    } finally {
+      try { writeStream.removeListener("error", onEarlyWriteError); } catch { /* ignore */ }
     }
   }
 
