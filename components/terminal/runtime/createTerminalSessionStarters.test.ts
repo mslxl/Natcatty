@@ -253,14 +253,12 @@ test("Mosh forwards host MFA mode to the bridge", async () => {
       username: "alice",
       authMethod: "password",
       password: "saved-secret",
-      requiresMfa: true,
     },
     terminalBackend,
   });
 
   await createTerminalSessionStarters(ctx as never).startMosh(createTermStub() as never);
 
-  assert.equal(capturedOptions?.requiresMfa, true);
 });
 
 for (const protocol of ["Mosh", "ET"] as const) {

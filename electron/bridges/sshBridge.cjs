@@ -715,7 +715,6 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
         passphrase: connOpts.passphrase,
         agent: connOpts.agent,
         username: connOpts.username,
-        requiresMfa: !!jump.requiresMfa,
         logPrefix: `[Chain] Hop ${i + 1}`,
         unlockedEncryptedKeys: systemAuthAgent && jump.identitiesOnly
           ? []
@@ -830,7 +829,6 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
           password: jump.password,
           logPrefix: `[Chain] Hop ${i + 1}/${totalHops}`,
           scope: keyboardInteractiveScope,
-          requiresMfa: !!jump.requiresMfa,
           getAuthBanner: () => authBanner,
           shouldSkipAutoFill: () => shouldSkipKiPasswordAutoFill(hopAuthPhase),
           onAutoFill: () => sendProgress(

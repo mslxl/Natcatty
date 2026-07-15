@@ -931,7 +931,6 @@ function createStartSessionApi(ctx) {
         if (authAgent) {
           const order = ["none", "agent"];
           if (connectOpts.password) {
-            if (options.requiresMfa) order.push("keyboard-interactive");
             order.push("password");
           }
           // Default key fallback only when this is not password-only (issue #266 / #2079).
@@ -944,7 +943,7 @@ function createStartSessionApi(ctx) {
           // Function form so authPhase.hadPartialSuccess updates for cert/agent
           // first-factor + keyboard-interactive second-factor (#2150).
           connectOpts.authHandler = createOrderedStringAuthHandler(order, authPhase);
-          log("Auth order (agent mode)", { order, requiresMfa: !!options.requiresMfa });
+          log("Auth order (agent mode)", { order, skipPasswordMethod: !!options._skipPasswordMethod });
         } else {
           // Build dynamic auth handler for fallback support
           const authMethods = [];
@@ -964,10 +963,7 @@ function createStartSessionApi(ctx) {
                 id: `publickey-default-${keyInfo.keyName}`
               });
             }
-            if (connectOpts.password) {
-              if (options.requiresMfa) {
-                authMethods.push({ type: "keyboard-interactive", id: "keyboard-interactive" });
-              }
+            if (connectOpts.password && !options._skipPasswordMethod) {
               authMethods.push({ type: "password", id: "password" });
             }
           } else {
@@ -983,10 +979,7 @@ function createStartSessionApi(ctx) {
 
             // Then try password if available (explicit user choice).
             // MFA hosts put keyboard-interactive first so EDR secondary factors are not skipped.
-            if (connectOpts.password) {
-              if (options.requiresMfa) {
-                authMethods.push({ type: "keyboard-interactive", id: "keyboard-interactive" });
-              }
+            if (connectOpts.password && !options._skipPasswordMethod) {
               authMethods.push({ type: "password", id: "password" });
             }
 
@@ -1020,7 +1013,7 @@ function createStartSessionApi(ctx) {
           }
 
           // Keyboard-interactive as last resort, or already placed before password
-          // when this host has requiresMfa enabled.
+          // as last-resort fallback for multi-factor / EDR.
           if (!authMethods.some((method) => method.type === "keyboard-interactive")) {
             authMethods.push({ type: "keyboard-interactive", id: "keyboard-interactive" });
           }
@@ -1127,10 +1120,10 @@ function createStartSessionApi(ctx) {
 
                 log("Partial success - server requires additional auth", { methodsLeft, succeeded: Array.from(succeededMethodIds), attemptedMethodIds: Array.from(attemptedMethodIds) });
 
-                // Find a locally preferred method that the server allows for
-                // this next factor. Preserve Netcatty's KI-before-password
-                // ordering instead of letting the server's methodsLeft order
-                // make password win when both are advertised (#2150).
+                // Next-factor selection: prefer keyboard-interactive when the
+                // server still allows it (automatic KI fallback after any
+                // partial success). Otherwise walk authMethods in order.
+                const partialCandidates = [];
                 for (const matchingMethod of authMethods) {
                   if (attemptedMethodIds.has(matchingMethod.id)) continue;
                   const serverMethod =
@@ -1140,9 +1133,18 @@ function createStartSessionApi(ctx) {
                   if (!methodsLeft.includes(serverMethod) && !methodsLeft.includes(matchingMethod.type)) {
                     continue;
                   }
-
+                  partialCandidates.push(matchingMethod);
+                }
+                const preferredPartial =
+                  partialCandidates.find((method) => method.type === "keyboard-interactive")
+                  || partialCandidates[0];
+                if (preferredPartial) {
+                  const matchingMethod = preferredPartial;
+                  const serverMethod =
+                    matchingMethod.type === "agent" || matchingMethod.type === "publickey"
+                      ? "publickey"
+                      : matchingMethod.type;
                   log("Found matching method for partial success", { serverMethod, matchingMethod: matchingMethod.id });
-                  // Mark as attempted BEFORE returning to prevent re-use on failure
                   attemptedMethodIds.add(matchingMethod.id);
                   lastTriedMethod = matchingMethod.id;
 
@@ -1674,7 +1676,6 @@ function createStartSessionApi(ctx) {
             password: options.password,
             logPrefix,
             scope: "terminal",
-            requiresMfa: !!options.requiresMfa,
             getAuthBanner: () => authBanner,
             shouldSkipAutoFill: () => shouldSkipKiPasswordAutoFill(authPhase),
             onAutoFill: () => sendProgress(
@@ -1705,12 +1706,8 @@ function createStartSessionApi(ctx) {
             // Try agent FIRST (this is what regular SSH does - it checks ssh-agent before key files)
             if (connectOpts.agent) authMethods.push("agent");
             if (connectOpts.privateKey) authMethods.push("publickey");
-            if (connectOpts.password) {
-              if (options.requiresMfa) {
-                authMethods.push("keyboard-interactive", "password");
-              } else {
-                authMethods.push("password");
-              }
+            if (connectOpts.password && !options._skipPasswordMethod) {
+              authMethods.push("password");
             }
             authMethods.push("keyboard-interactive");
             const dedupedAuthMethods = Array.from(new Set(authMethods));
@@ -1718,8 +1715,7 @@ function createStartSessionApi(ctx) {
             log("Using simple array authHandler", {
               authMethods: dedupedAuthMethods,
               usedDefaultKeyAsPrimary,
-              requiresMfa: !!options.requiresMfa,
-            });
+              });
           }
           // If authHandler is a function, it already handles keyboard-interactive
 

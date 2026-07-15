@@ -285,7 +285,6 @@ function createOpenConnectionApi(ctx) {
             passphrase: connOpts.passphrase,
             agent: connOpts.agent,
             username: connOpts.username,
-            requiresMfa: !!jump.requiresMfa,
             logPrefix: `[SFTP Chain] Hop ${i + 1}`,
             unlockedEncryptedKeys: systemAuthAgent && jump.identitiesOnly
               ? []
@@ -387,7 +386,6 @@ function createOpenConnectionApi(ctx) {
               password: jump.password,
               logPrefix: `[SFTP Chain] Hop ${i + 1}/${jumpHosts.length}`,
               scope: "external",
-              requiresMfa: !!jump.requiresMfa,
               getAuthBanner: () => authBanner,
               shouldSkipAutoFill: () => shouldSkipKiPasswordAutoFill(hopAuthPhase),
             });
@@ -992,7 +990,6 @@ function createOpenConnectionApi(ctx) {
         passphrase: connectOpts.passphrase,
         agent: connectOpts.agent,
         username: connectOpts.username,
-        requiresMfa: !!options.requiresMfa,
         logPrefix: "[SFTP]",
         defaultKeys: systemAuthAgent && options.identitiesOnly ? [] : defaultKeys,
         sshAgentSocketOverride: agentSocket,
@@ -1014,7 +1011,6 @@ function createOpenConnectionApi(ctx) {
         password: options.password,
         logPrefix: "[SFTP]",
         scope: "external",
-        requiresMfa: !!options.requiresMfa,
         getAuthBanner: () => authBanner,
         shouldSkipAutoFill: () => shouldSkipKiPasswordAutoFill(sftpAuthPhase),
       });

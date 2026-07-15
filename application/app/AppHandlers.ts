@@ -232,7 +232,6 @@ export function handleKeyboardInteractiveSubmitImpl(
   requestId: string,
   responses: string[],
   savePassword?: string,
-  enableRequiresMfa?: boolean,
 ) {
   const {
     hosts,
@@ -241,8 +240,6 @@ export function handleKeyboardInteractiveSubmitImpl(
     sessions,
     setKeyboardInteractiveQueue,
     updateHosts,
-    t,
-    toast,
   } = getCtx();
 {
     const bridge = netcattyBridge.get();
@@ -272,32 +269,12 @@ export function handleKeyboardInteractiveSubmitImpl(
     // Save password to host if requested - never for second-factor / EDR prompts
     // (allowSavePassword === false) so a secondary secret cannot overwrite the
     // host login password (#2150 / Codex review on #2151).
-    const shouldSavePassword = !!(
-      savePassword
-      && host
-      && request?.allowSavePassword !== false
-    );
-    // Persist host-level MFA mode when the secondary-auth modal suggested it
-    // and the user left the checkbox on (#2150 / #2217).
-    const shouldEnableRequiresMfa = !!(
-      enableRequiresMfa
-      && host
-      && !host.requiresMfa
-    );
-
-    if (host && (shouldSavePassword || shouldEnableRequiresMfa)) {
+    if (savePassword && host && request?.allowSavePassword !== false) {
       updateHosts(hosts.map(h => h.id === host.id ? {
         ...h,
-        ...(shouldSavePassword ? { password: savePassword, savePassword: true } : {}),
-        ...(shouldEnableRequiresMfa ? { requiresMfa: true } : {}),
+        password: savePassword,
+        savePassword: true,
       } : h));
-      if (shouldEnableRequiresMfa) {
-        toast?.info?.(
-          typeof t === "function"
-            ? t("keyboard.interactive.mfaEnabled")
-            : "Secondary verification mode saved for this host",
-        );
-      }
     }
     // Remove from queue by requestId
     setKeyboardInteractiveQueue(prev => prev.filter(r => r.requestId !== requestId));

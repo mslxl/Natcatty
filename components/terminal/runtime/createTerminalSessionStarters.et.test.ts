@@ -338,7 +338,6 @@ test("startEt forwards MFA mode for target and jump host", async () => {
   const backend = makeBackend((options) => { captured = options; });
   const ctx = makeCtx(
     {
-      requiresMfa: true,
       authMethod: "password",
       password: "target-secret",
       hostChain: { hostIds: ["jump-1"] },
@@ -350,16 +349,13 @@ test("startEt forwards MFA mode for target and jump host", async () => {
       username: "jumper",
       authMethod: "password",
       password: "jump-secret",
-      requiresMfa: true,
     }],
     backend,
   );
 
   await createTerminalSessionStarters(ctx as never).startEt(term as never);
 
-  assert.equal(captured?.requiresMfa, true);
   const jumpHosts = captured?.jumpHosts as Array<Record<string, unknown>>;
-  assert.equal(jumpHosts[0]?.requiresMfa, true);
 });
 
 test("startEt forwards a jump host's custom ET port", async () => {

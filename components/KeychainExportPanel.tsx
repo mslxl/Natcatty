@@ -236,7 +236,6 @@ export const KeychainExportPanel: React.FC<KeychainExportPanelProps> = ({
                         username: exportAuth.username || "root",
                         port: effectiveExportHost.port || 22,
                         authMethod: exportAuth.authMethod,
-                        requiresMfa: !!effectiveExportHost.requiresMfa,
                         password: exportPassword,
                         privateKey: exportKeyAuth.privateKey,
                         certificate: exportAuth.key?.certificate,

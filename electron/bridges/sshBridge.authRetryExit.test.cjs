@@ -125,6 +125,34 @@ function loadBridgeWithAuthRetryMocks(t, options = {}) {
                   ? ["agent"]
             : ["keyboard-interactive"];
           const firstInteractive = offerNext(firstMethods, false);
+          if (eventName === "password-and-keyboard-interactive") {
+            // Password-first: login password method, then KI for secondary factor.
+            if (firstInteractive?.type !== "password") {
+              const err = new Error("All configured authentication methods failed");
+              err.level = "client-authentication";
+              this.emit("error", err);
+              return;
+            }
+            const secondFactor = offerNext(["password", "keyboard-interactive"], true);
+            if (secondFactor !== "keyboard-interactive") {
+              const err = new Error("All configured authentication methods failed");
+              err.level = "client-authentication";
+              this.emit("error", err);
+              return;
+            }
+            this.emit(
+              "keyboard-interactive",
+              "Keyboard-interactive authentication prompts from server",
+              "为保障主机安全，请输入二次认证密码，如有疑问，请联系xxx，电话xxx。",
+              "",
+              [{ prompt: "Secondary Authentication Password:", echo: false }],
+              (responses) => {
+                this.keyboardInteractiveResponses.push(responses);
+                this.emit("ready");
+              },
+            );
+            return;
+          }
           if (eventName === "publickey-then-password-and-keyboard-interactive") {
             if (firstInteractive?.type !== "publickey") {
               const err = new Error("All configured authentication methods failed");
@@ -407,11 +435,10 @@ test("terminal SSH supports consecutive keyboard-interactive factors (#2150)", a
   );
   assert.equal(promptEvents[0].payload.savedPassword, null);
   assert.equal(promptEvents[0].payload.allowSavePassword, false);
-  assert.equal(promptEvents[0].payload.suggestEnableMfa, true);
-  assert.equal(promptEvents[0].payload.scope, "terminal");
+    assert.equal(promptEvents[0].payload.scope, "terminal");
 });
 
-test("terminal SSH prefers keyboard-interactive when requiresMfa and both methods are advertised", async (t) => {
+test("terminal SSH password-first then keyboard-interactive when both methods are advertised", async (t) => {
   const { bridge, MockSSHClient } = loadBridgeWithAuthRetryMocks(t, {
     connectEvents: ["password-and-keyboard-interactive"],
   });
@@ -442,7 +469,6 @@ test("terminal SSH prefers keyboard-interactive when requiresMfa and both method
       username: "alice",
       authMethod: "password",
       password: "login-password",
-      requiresMfa: true,
       useSshAgent: false,
       port: 22,
       knownHosts: [],
@@ -451,12 +477,14 @@ test("terminal SSH prefers keyboard-interactive when requiresMfa and both method
 
   assert.deepEqual(result, { sessionId: "password-or-ki-session" });
   assert.deepEqual(
-    MockSSHClient.instances[0].authMethodsOffered,
-    ["none", "keyboard-interactive", "keyboard-interactive"],
+    MockSSHClient.instances[0].authMethodsOffered.map((method) => (
+      method && typeof method === "object" ? method.type : method
+    )),
+    ["none", "password", "keyboard-interactive"],
   );
   assert.deepEqual(
     MockSSHClient.instances[0].keyboardInteractiveResponses,
-    [["login-password"], ["secondary-password"]],
+    [["secondary-password"]],
   );
 });
 
@@ -543,7 +571,6 @@ test("terminal SSH prefers keyboard-interactive after publickey partial success"
       authMethod: "key",
       privateKey: "INLINE_PRIVATE_KEY",
       password: "login-password",
-      requiresMfa: true,
       useSshAgent: false,
       port: 22,
       knownHosts: [],
@@ -563,7 +590,7 @@ test("terminal SSH prefers keyboard-interactive after publickey partial success"
   );
 });
 
-test("terminal SSH certificate auth prefers keyboard-interactive after agent partial success when requiresMfa", async (t) => {
+test("terminal SSH certificate auth prefers keyboard-interactive after agent partial success after partial success", async (t) => {
   const { bridge, MockSSHClient } = loadBridgeWithAuthRetryMocks(t, {
     connectEvents: ["agent-then-password-and-keyboard-interactive"],
     parseKeyResult: {},
@@ -597,7 +624,6 @@ test("terminal SSH certificate auth prefers keyboard-interactive after agent par
       certificate: "ssh-rsa-cert-v01@openssh.com AAAA test-cert",
       privateKey: "INLINE_PRIVATE_KEY",
       password: "login-password",
-      requiresMfa: true,
       useSshAgent: false,
       port: 22,
       knownHosts: [],

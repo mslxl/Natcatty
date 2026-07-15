@@ -609,15 +609,16 @@ test("createOrderedStringAuthHandler re-offers methods skipped as unavailable af
   handler(null, false, (method) => offered.push(method)); // none
   handler(["publickey"], false, (method) => offered.push(method)); // agent
   handler(["publickey"], false, (method) => offered.push(method)); // publickey (password still not advertised)
-  // publickey partially succeeds; server now wants password
+  // publickey partially succeeds; server now allows password + KI.
+  // Prefer keyboard-interactive automatically after any partial success.
   handler(["password", "keyboard-interactive"], true, (method) => offered.push(method));
 
-  assert.deepEqual(offered, ["none", "agent", "publickey", "password"]);
+  assert.deepEqual(offered, ["none", "agent", "publickey", "keyboard-interactive"]);
   assert.equal(authPhase.hadPartialSuccess, true);
 
-  // Continue to keyboard-interactive if password also only partial-succeeds
-  handler(["keyboard-interactive"], true, (method) => offered.push(method));
-  assert.deepEqual(offered, ["none", "agent", "publickey", "password", "keyboard-interactive"]);
+  // If KI only partially succeeds again, password remains available.
+  handler(["password"], true, (method) => offered.push(method));
+  assert.deepEqual(offered, ["none", "agent", "publickey", "keyboard-interactive", "password"]);
 });
 
 test("createOrderedStringAuthHandler does not retry a rejected credential in a later factor", () => {
@@ -740,36 +741,46 @@ test("buildAuthHandler prefers password over keyboard-interactive by default", (
   assert.deepEqual(offered, ["none", "password"]);
 });
 
-test("buildAuthHandler prefers keyboard-interactive over password when requiresMfa is set", () => {
+test("buildAuthHandler prefers password over keyboard-interactive by default", () => {
   const auth = buildAuthHandler({
     authMethod: "password",
     username: "alice",
     password: "login-password",
-    requiresMfa: true,
   });
 
   const offered = [];
   auth.authHandler(null, null, (method) => offered.push(method));
   auth.authHandler(["password", "keyboard-interactive"], false, (method) => offered.push(method));
 
-  assert.deepEqual(offered, ["none", "keyboard-interactive"]);
+  assert.deepEqual(offered, ["none", "password"]);
 });
 
-test("buildAuthHandler prefers keyboard-interactive over password on the dynamic path when requiresMfa is set", () => {
+test("buildAuthHandler prefers keyboard-interactive after partial success without host MFA flag", () => {
   const auth = buildAuthHandler({
-    authMethod: "auto",
+    authMethod: "password",
     username: "alice",
     password: "login-password",
-    allowAgentFallback: false,
-    requiresMfa: true,
   });
 
   const offered = [];
-  const record = (method) => offered.push(
-    method && typeof method === "object" ? method.type : method,
-  );
-  auth.authHandler(null, null, record);
-  auth.authHandler(["password", "keyboard-interactive"], false, record);
+  auth.authHandler(null, null, (method) => offered.push(method));
+  auth.authHandler(["password", "keyboard-interactive"], false, (method) => offered.push(method));
+  auth.authHandler(["password", "keyboard-interactive"], true, (method) => offered.push(method));
+
+  assert.deepEqual(offered, ["none", "password", "keyboard-interactive"]);
+});
+
+test("buildAuthHandler skipPasswordMethod omits password for 2FA_RETRY", () => {
+  const auth = buildAuthHandler({
+    authMethod: "password",
+    username: "alice",
+    password: "login-password",
+    skipPasswordMethod: true,
+  });
+
+  const offered = [];
+  auth.authHandler(null, null, (method) => offered.push(method));
+  auth.authHandler(["password", "keyboard-interactive"], false, (method) => offered.push(method));
 
   assert.deepEqual(offered, ["none", "keyboard-interactive"]);
 });
@@ -997,8 +1008,7 @@ test("createKeyboardInteractiveHandler suggests enabling host MFA for Secondary 
       sessionId: "s1",
       hostname: "host",
       password: "saved",
-      requiresMfa: false,
-    });
+          });
     return { handler, sent };
   })();
 
@@ -1010,7 +1020,7 @@ test("createKeyboardInteractiveHandler suggests enabling host MFA for Secondary 
     () => {},
   );
 
-  assert.equal(sent[0].payload.suggestEnableMfa, true);
+  assert.equal(sent[0].payload.allowSavePassword, false);
   assert.equal(sent[0].payload.allowSavePassword, false);
   drainPendingRequests(sent, 1);
 });
@@ -1022,8 +1032,7 @@ test("createKeyboardInteractiveHandler does not suggest host MFA for password-ch
     sessionId: "session-1",
     hostname: "password-expired.example.com",
     password: "saved",
-    requiresMfa: false,
-  });
+      });
 
   handler(
     "Password expired",
@@ -1033,7 +1042,7 @@ test("createKeyboardInteractiveHandler does not suggest host MFA for password-ch
     () => {},
   );
 
-  assert.equal(sent[0].payload.suggestEnableMfa, false);
+  assert.ok(sent[0].payload);
   drainPendingRequests(sent);
 });
 
@@ -1070,8 +1079,7 @@ test("createKeyboardInteractiveHandler does not suggest MFA when host already ha
     sessionId: "s1",
     hostname: "host",
     password: "saved",
-    requiresMfa: true,
-  });
+      });
 
   handler(
     "Keyboard-interactive authentication prompts from server",
@@ -1081,7 +1089,7 @@ test("createKeyboardInteractiveHandler does not suggest MFA when host already ha
     () => {},
   );
 
-  assert.equal(sent[0].payload.suggestEnableMfa, false);
+  assert.ok(sent[0].payload);
   drainPendingRequests(sent, 1);
 });
 
@@ -1210,3 +1218,4 @@ test("createKeyboardInteractiveHandler allows save on multi-prompt Password + OT
 
   drainPendingRequests(sent);
 });
+

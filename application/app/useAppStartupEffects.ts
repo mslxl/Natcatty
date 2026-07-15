@@ -194,21 +194,6 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
 
     const unsubscribe = bridge.onKeyboardInteractive((request) => {
       if (!shouldQueueKeyboardInteractiveRequest(request, sessionsRef.current)) return;
-      const owningTerminalSession = request.sessionId
-        ? sessionsRef.current.find((session) => session.id === request.sessionId)
-        : undefined;
-      const hasExplicitOwningHost = !!(
-        request.hostId &&
-        hosts.some((host: any) => host?.id === request.hostId)
-      );
-      const hasOwningHost = !!(
-        hasExplicitOwningHost ||
-        (
-          request.scope === "terminal" &&
-          owningTerminalSession?.hostId &&
-          (!request.hostname || request.hostname === owningTerminalSession.hostname)
-        )
-      );
       console.log('[App] Keyboard-interactive request received:', request);
       // Add to queue instead of replacing - supports multiple concurrent sessions
       setKeyboardInteractiveQueue(prev => [...prev, {
@@ -221,14 +206,13 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
         hostname: request.hostname,
         savedPassword: request.savedPassword,
         allowSavePassword: request.allowSavePassword !== false,
-        suggestEnableMfa: request.suggestEnableMfa === true && hasOwningHost,
       }]);
     });
 
     return () => {
       unsubscribe?.();
     };
-  }, [enabled, hosts, setKeyboardInteractiveQueue]);
+  }, [enabled, setKeyboardInteractiveQueue]);
 
 
 }

@@ -118,12 +118,11 @@ test('queued tray panel connects flush in order', () => {
   assert.deepEqual(pendingHostIds, []);
 });
 
-test('keyboard-interactive submit preserves saved password when enabling MFA', () => {
+test('keyboard-interactive submit can save login password for the session host', () => {
   let hosts: Host[] = [{
     ...baseHost,
     password: 'old-password',
     savePassword: false,
-    requiresMfa: false,
   }];
   let queue = [{
     requestId: 'ki-1',
@@ -133,7 +132,6 @@ test('keyboard-interactive submit preserves saved password when enabling MFA', (
   }];
   const bridgeResponses: unknown[] = [];
   const hostUpdates: Host[][] = [];
-  const toasts: string[] = [];
 
   handleKeyboardInteractiveSubmitImpl(
     () => ({
@@ -154,8 +152,6 @@ test('keyboard-interactive submit preserves saved password when enabling MFA', (
       setKeyboardInteractiveQueue: (updater: (items: typeof queue) => typeof queue) => {
         queue = updater(queue);
       },
-      t: (key: string) => key,
-      toast: { info: (message: string) => toasts.push(message) },
       updateHosts: (nextHosts: Host[]) => {
         hostUpdates.push(nextHosts);
         hosts = nextHosts;
@@ -164,7 +160,6 @@ test('keyboard-interactive submit preserves saved password when enabling MFA', (
     'ki-1',
     ['login-password', 'otp-code'],
     'new-login-password',
-    true,
   );
 
   assert.equal(hostUpdates.length, 1);
@@ -172,17 +167,15 @@ test('keyboard-interactive submit preserves saved password when enabling MFA', (
     ...baseHost,
     password: 'new-login-password',
     savePassword: true,
-    requiresMfa: true,
   });
   assert.deepEqual(queue, []);
-  assert.deepEqual(toasts, ['keyboard.interactive.mfaEnabled']);
   assert.equal(bridgeResponses.length, 1);
 });
 
-test('keyboard-interactive submit can enable MFA for external requests with hostId', () => {
+test('keyboard-interactive submit does not save secondary password when allowSavePassword is false', () => {
   let hosts: Host[] = [{
     ...baseHost,
-    requiresMfa: false,
+    password: 'login-password',
   }];
   let queue = [{
     requestId: 'ki-external',
@@ -192,8 +185,7 @@ test('keyboard-interactive submit can enable MFA for external requests with host
     hostname: baseHost.hostname,
     allowSavePassword: false,
   }];
-  const hostUpdates: Host[][] = [];
-  const toasts: string[] = [];
+  let hostUpdates = 0;
 
   handleKeyboardInteractiveSubmitImpl(
     () => ({
@@ -208,36 +200,32 @@ test('keyboard-interactive submit can enable MFA for external requests with host
       setKeyboardInteractiveQueue: (updater: (items: typeof queue) => typeof queue) => {
         queue = updater(queue);
       },
-      t: (key: string) => key,
-      toast: { info: (message: string) => toasts.push(message) },
       updateHosts: (nextHosts: Host[]) => {
-        hostUpdates.push(nextHosts);
+        hostUpdates += 1;
         hosts = nextHosts;
       },
     }),
     'ki-external',
     ['secondary-password'],
-    undefined,
-    true,
+    'should-not-save',
   );
 
-  assert.equal(hostUpdates.length, 1);
-  assert.equal(hosts[0].requiresMfa, true);
+  assert.equal(hostUpdates, 0);
+  assert.equal(hosts[0].password, 'login-password');
   assert.deepEqual(queue, []);
-  assert.deepEqual(toasts, ['keyboard.interactive.mfaEnabled']);
 });
 
-test('keyboard-interactive submit uses explicit hostId instead of rewriting the terminal target', () => {
+test('keyboard-interactive submit uses explicit hostId when saving password', () => {
   const jumpHost: Host = {
     ...baseHost,
     id: 'jump-1',
     label: 'Jump',
     hostname: 'jump.example.com',
-    requiresMfa: false,
+    password: 'old-jump-password',
   };
   let hosts: Host[] = [{
     ...baseHost,
-    requiresMfa: false,
+    password: 'target-password',
   }, jumpHost];
   let queue = [{
     requestId: 'ki-jump',
@@ -245,7 +233,7 @@ test('keyboard-interactive submit uses explicit hostId instead of rewriting the 
     hostId: jumpHost.id,
     scope: 'terminal',
     hostname: jumpHost.hostname,
-    allowSavePassword: false,
+    allowSavePassword: true,
   }];
 
   handleKeyboardInteractiveSubmitImpl(
@@ -265,18 +253,15 @@ test('keyboard-interactive submit uses explicit hostId instead of rewriting the 
       setKeyboardInteractiveQueue: (updater: (items: typeof queue) => typeof queue) => {
         queue = updater(queue);
       },
-      t: (key: string) => key,
-      toast: { info: () => {} },
       updateHosts: (nextHosts: Host[]) => {
         hosts = nextHosts;
       },
     }),
     'ki-jump',
-    ['secondary-password'],
-    undefined,
-    true,
+    ['jump-login-password'],
+    'new-jump-password',
   );
 
-  assert.equal(hosts.find((host) => host.id === baseHost.id)?.requiresMfa, false);
-  assert.equal(hosts.find((host) => host.id === jumpHost.id)?.requiresMfa, true);
+  assert.equal(hosts.find((host) => host.id === baseHost.id)?.password, 'target-password');
+  assert.equal(hosts.find((host) => host.id === jumpHost.id)?.password, 'new-jump-password');
 });
