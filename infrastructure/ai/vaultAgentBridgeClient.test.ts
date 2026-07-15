@@ -741,6 +741,43 @@ describe('handleVaultAgentOp vault management gaps', () => {
     assert.equal(startCalls, 0);
   });
 
+  it('rejects forwarding rules when the host inherits an unsupported protocol', async () => {
+    const rule: PortForwardingRule = {
+      id: 'rule-1', label: 'Web', type: 'local', localPort: 8080,
+      bindAddress: '127.0.0.1', remoteHost: '127.0.0.1', remotePort: 80,
+      hostId: host.id, status: 'inactive', createdAt: 1,
+    };
+    let startCalls = 0;
+    const deps = createDeps({
+      hosts: [host],
+      portForwardingRules: [rule],
+      resolveEffectiveHost: (current) => ({ ...current, protocol: 'telnet' }),
+      startTunnel: async () => {
+        startCalls += 1;
+        return { success: true };
+      },
+    });
+
+    const createResult = await handleVaultAgentOp('portforward.rules.create', {
+      label: 'Inherited', type: 'local', localPort: 8081,
+      remoteHost: '127.0.0.1', remotePort: 81, hostId: host.id,
+    }, deps);
+    const updateResult = await handleVaultAgentOp('portforward.rules.update', {
+      ruleId: rule.id, label: 'Renamed',
+    }, deps);
+    const duplicateResult = await handleVaultAgentOp('portforward.rules.duplicate', {
+      ruleId: rule.id,
+    }, deps);
+    const startResult = await handleVaultAgentOp('portforward.start', { ruleId: rule.id }, deps);
+
+    for (const result of [createResult, updateResult, duplicateResult, startResult]) {
+      assert.equal(result.ok, false);
+      if (!result.ok) assert.match(String(result.error), /does not support port forwarding/i);
+    }
+    assert.equal(startCalls, 0);
+    assert.deepEqual(deps.getPortForwardingRules(), [rule]);
+  });
+
   it('persists an inactive status after stopping a forwarding rule', async () => {
     const rule: PortForwardingRule = {
       id: 'rule-1', label: 'Web', type: 'local', localPort: 8080,

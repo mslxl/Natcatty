@@ -1027,7 +1027,8 @@ export async function handleVaultAgentOp(
       };
     }
     case 'portforward.rules.create': {
-      const result = createPortForwardingRule(deps.getPortForwardingRules(), deps.getHosts(), params, {
+      const effectiveHosts = deps.getHosts().map((host) => deps.resolveEffectiveHost(host));
+      const result = createPortForwardingRule(deps.getPortForwardingRules(), effectiveHosts, params, {
         id: crypto.randomUUID(), now: Date.now(),
       });
       if (!result.ok) return result;
@@ -1038,7 +1039,8 @@ export async function handleVaultAgentOp(
       const ruleId = String(params.ruleId || '');
       const currentRules = deps.getPortForwardingRules();
       const existingRule = currentRules.find((entry) => entry.id === ruleId);
-      const result = updatePortForwardingRule(currentRules, deps.getHosts(), ruleId, params);
+      const effectiveHosts = deps.getHosts().map((host) => deps.resolveEffectiveHost(host));
+      const result = updatePortForwardingRule(currentRules, effectiveHosts, ruleId, params);
       if (!result.ok) return result;
       if (
         existingRule
@@ -1054,7 +1056,8 @@ export async function handleVaultAgentOp(
     }
     case 'portforward.rules.duplicate': {
       const ruleId = String(params.ruleId || '');
-      const result = duplicatePortForwardingRule(deps.getPortForwardingRules(), deps.getHosts(), ruleId, {
+      const effectiveHosts = deps.getHosts().map((host) => deps.resolveEffectiveHost(host));
+      const result = duplicatePortForwardingRule(deps.getPortForwardingRules(), effectiveHosts, ruleId, {
         id: crypto.randomUUID(), now: Date.now(),
       });
       if (!result.ok) return result;
@@ -1075,16 +1078,15 @@ export async function handleVaultAgentOp(
       const rule = deps.getPortForwardingRules().find((entry) => entry.id === ruleId);
       if (!rule) return { ok: false, error: `Port forwarding rule "${ruleId}" was not found.` };
       if (!rule.hostId) return { ok: false, error: 'Rule has no associated host.' };
-      const validatedHost = validatePortForwardingHost(deps.getHosts(), rule.hostId);
+      const effectiveHosts = deps.getHosts().map((host) => deps.resolveEffectiveHost(host));
+      const validatedHost = validatePortForwardingHost(effectiveHosts, rule.hostId);
       if (!validatedHost.ok) return validatedHost;
-      const rawHost = validatedHost.value;
-      const host = deps.resolveEffectiveHost(rawHost);
+      const host = validatedHost.value;
       try {
         resolveHostAuth({ host, keys: deps.keys, identities: deps.identities });
       } catch (err) {
         return { ok: false, error: err instanceof Error ? err.message : String(err) };
       }
-      const effectiveHosts = deps.getHosts().map((entry) => deps.resolveEffectiveHost(entry));
       const result = await deps.startTunnel(
         rule,
         host,
