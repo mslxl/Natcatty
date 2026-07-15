@@ -117,6 +117,52 @@ test("MCP/Catty terminal_execute proxies to worker when terminal sessions live i
   ]);
 });
 
+test("approved worker command is rejected when its session scope disappeared while waiting", async () => {
+  let approvalId = null;
+  let workerRequestCount = 0;
+  const bridge = loadFreshBridge();
+  bridge.init({
+    sessions: new Map(),
+    electronModule: null,
+    terminalWorkerManager: {
+      request() {
+        workerRequestCount += 1;
+        return Promise.resolve({ ok: true, stdout: "unexpected" });
+      },
+    },
+  });
+  bridge.setMainWindowGetter(() => ({
+    isDestroyed: () => false,
+    webContents: {
+      id: 1,
+      send(channel, payload) {
+        if (channel === "netcatty:ai:mcp:approval-request") approvalId = payload.approvalId;
+      },
+    },
+  }));
+  bridge.setPermissionMode("confirm");
+  bridge.setCommandBlocklist([]);
+  bridge.updateSessionMetadata([
+    { sessionId: "ssh-approval", protocol: "ssh", connected: true },
+  ], "chat-approval");
+
+  const pending = bridge.dispatchBuiltinRpc("netcatty/exec", {
+    sessionId: "ssh-approval",
+    command: "pwd",
+    chatSessionId: "chat-approval",
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(approvalId);
+
+  bridge.updateSessionMetadata([], "chat-approval");
+  bridge.resolveApprovalFromRenderer(approvalId, true);
+  const result = await pending;
+
+  assert.equal(result.ok, false);
+  assert.match(result.error, /scope/);
+  assert.equal(workerRequestCount, 0);
+});
+
 test("MCP/Catty SFTP tools proxy to worker when terminal sessions live in worker", async () => {
   const requests = [];
   const bridge = loadFreshBridge();

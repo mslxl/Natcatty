@@ -1545,6 +1545,20 @@ async function dispatch(method, params) {
         return { ok: false, error: USER_DENIED_MESSAGE };
       }
     }
+    if (
+      (capability?.id === "terminal.execute" || capability?.id === "terminal.start")
+      && params?.sessionId
+    ) {
+      const scopeErr = validateSessionScope(
+        params.sessionId,
+        params?.chatSessionId,
+        params?.scopedSessionIds,
+      );
+      if (scopeErr) return { ok: false, error: scopeErr };
+      if (closingTerminalSessions.has(params.sessionId)) {
+        return { ok: false, error: `Session "${params.sessionId}" is closing.` };
+      }
+    }
     const handler = getBuiltinRpcHandlerRegistry().get(method);
     if (!handler) {
       throw new Error(`Unknown method: ${method}`);
