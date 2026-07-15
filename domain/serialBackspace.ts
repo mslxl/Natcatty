@@ -2,6 +2,15 @@ import type { GroupConfig, Host, SerialConfig } from "./models";
 
 export type SerialBackspaceBehavior = NonNullable<SerialConfig["backspaceBehavior"]>;
 
+export const prepareSerialConfigForSavedHost = (
+  config: SerialConfig,
+): SerialConfig => {
+  const { backspaceBehavior, ...rest } = config;
+  return backspaceBehavior === "ctrl-h"
+    ? { ...rest, backspaceBehavior }
+    : rest;
+};
+
 export const resolveSerialBackspaceFormValue = (
   host: Pick<Host, "serialConfig" | "backspaceBehavior">,
   groupDefaults?: Pick<GroupConfig, "backspaceBehavior">,

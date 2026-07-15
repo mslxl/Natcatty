@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { Host } from "../../domain/models";
+import { applyGroupDefaults } from "../../domain/groupConfig";
+import { prepareSerialConfigForSavedHost } from "../../domain/serialBackspace";
 import { buildTelnetDeepLinkConnectionHost } from "../../domain/telnetDeepLink";
 import { createHostTerminalSession, createSerialTerminalSession } from "./sessionFactories";
 
@@ -66,4 +68,26 @@ test("serial session factories snapshot effective legacy Backspace behavior", ()
   assert.equal(savedHostSession.serialConfig?.backspaceBehavior, "ctrl-h");
   assert.equal(quickSession.serialConfig?.backspaceBehavior, "default");
   assert.equal(explicitDefaultSession.serialConfig?.backspaceBehavior, "default");
+});
+
+test("saved quick-connect hosts can inherit Ctrl-H after moving into a group", () => {
+  const savedHost = host({
+    protocol: "serial",
+    hostname: "COM3",
+    port: 115200,
+    username: "",
+    group: "network/serial",
+    serialConfig: prepareSerialConfigForSavedHost({
+      path: "COM3",
+      baudRate: 115200,
+      backspaceBehavior: "default",
+    }),
+  });
+  const effectiveHost = applyGroupDefaults(savedHost, {
+    backspaceBehavior: "ctrl-h",
+  });
+
+  const session = createHostTerminalSession("session-1", effectiveHost);
+
+  assert.equal(session.serialConfig?.backspaceBehavior, "ctrl-h");
 });

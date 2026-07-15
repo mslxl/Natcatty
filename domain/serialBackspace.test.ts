@@ -2,9 +2,38 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  prepareSerialConfigForSavedHost,
   resolveSerialBackspaceFormValue,
   resolveSerialBackspaceOverrideOnSave,
 } from "./serialBackspace";
+
+test("saved quick-connect hosts omit the default Backspace override", () => {
+  const config = {
+    path: "COM3",
+    baudRate: 115200,
+    backspaceBehavior: "default" as const,
+  };
+
+  const saved = prepareSerialConfigForSavedHost(config);
+
+  assert.deepEqual(saved, {
+    path: "COM3",
+    baudRate: 115200,
+  });
+  assert.equal(config.backspaceBehavior, "default");
+});
+
+test("saved quick-connect hosts retain an explicit Ctrl-H override", () => {
+  assert.deepEqual(prepareSerialConfigForSavedHost({
+    path: "COM3",
+    baudRate: 115200,
+    backspaceBehavior: "ctrl-h",
+  }), {
+    path: "COM3",
+    baudRate: 115200,
+    backspaceBehavior: "ctrl-h",
+  });
+});
 
 test("serial Backspace form shows inherited Ctrl-H without creating an override", () => {
   const initialHost = {

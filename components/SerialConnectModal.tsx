@@ -7,6 +7,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useI18n } from '../application/i18n/I18nProvider';
 import { useTerminalBackend } from '../application/state/useTerminalBackend';
 import type { Host, SerialConfig, SerialFlowControl, SerialParity } from '../domain/models';
+import { prepareSerialConfigForSavedHost } from '../domain/serialBackspace';
 import { cn } from '../lib/utils';
 import { Button } from './ui/button';
 import { Combobox, type ComboboxOption } from './ui/combobox';
@@ -136,7 +137,7 @@ export const SerialConnectModal: React.FC<SerialConnectModalProps> = ({
         protocol: 'serial',
         createdAt: Date.now(),
         charset,
-        serialConfig: config, // Store full serial configuration for connection
+        serialConfig: prepareSerialConfigForSavedHost(config),
       };
       onSaveHost(host);
     }
