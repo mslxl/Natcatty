@@ -109,7 +109,9 @@ const sanitizeSerialConfig = (value: unknown): SerialConfig | undefined => {
     ...(isOneOf(value.flowControl, ["none", "xon/xoff", "rts/cts"] as const) ? { flowControl: value.flowControl } : {}),
     ...(readBoolean(value, "localEcho") !== undefined ? { localEcho: readBoolean(value, "localEcho") } : {}),
     ...(readBoolean(value, "lineMode") !== undefined ? { lineMode: readBoolean(value, "lineMode") } : {}),
-    ...(value.backspaceBehavior === "ctrl-h" ? { backspaceBehavior: value.backspaceBehavior } : {}),
+    ...(isOneOf(value.backspaceBehavior, ["default", "ctrl-h"] as const)
+      ? { backspaceBehavior: value.backspaceBehavior }
+      : {}),
   };
 };
 

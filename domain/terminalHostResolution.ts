@@ -27,6 +27,14 @@ interface ResolveTerminalChainHostsOptions {
   validProxyProfileIds?: ReadonlySet<string>;
 }
 
+const resolveSerialBackspaceBehavior = (
+  serialConfig: Host["serialConfig"],
+): Host["backspaceBehavior"] | null => {
+  if (serialConfig?.backspaceBehavior === "ctrl-h") return "ctrl-h";
+  if (serialConfig?.backspaceBehavior === "default") return undefined;
+  return null;
+};
+
 export function resolveEffectiveTerminalHost({
   host,
   groupConfigs,
@@ -67,7 +75,7 @@ function buildFallbackHostFromSession(
     etEnabled: session.etEnabled,
     charset: session.charset,
     serialConfig: session.serialConfig,
-    backspaceBehavior: session.serialConfig?.backspaceBehavior,
+    backspaceBehavior: session.serialConfig?.backspaceBehavior === "ctrl-h" ? "ctrl-h" : undefined,
     localShell: session.localShell,
     localShellArgs: session.localShellArgs,
     localShellName: session.localShellName,
@@ -96,8 +104,14 @@ export function resolveTerminalSessionHost({
   const port = session.port ?? existingHost.port;
   const moshEnabled = session.moshEnabled ?? existingHost.moshEnabled;
   const etEnabled = session.etEnabled ?? existingHost.etEnabled;
+  const sessionSerialBackspace = resolveSerialBackspaceBehavior(session.serialConfig);
+  const hostSerialBackspace = resolveSerialBackspaceBehavior(existingHost.serialConfig);
   const backspaceBehavior = protocol === "serial"
-    ? existingHost.serialConfig?.backspaceBehavior ?? existingHost.backspaceBehavior
+    ? sessionSerialBackspace !== null
+      ? sessionSerialBackspace
+      : hostSerialBackspace !== null
+        ? hostSerialBackspace
+        : existingHost.backspaceBehavior
     : existingHost.backspaceBehavior;
 
   if (

@@ -66,7 +66,7 @@ export const SerialConnectModal: React.FC<SerialConnectModalProps> = ({
   const [flowControl, setFlowControl] = useState<SerialFlowControl>('none');
   const [localEcho, setLocalEcho] = useState(false);
   const [lineMode, setLineMode] = useState(false);
-  const [backspaceBehavior, setBackspaceBehavior] = useState<SerialConfig['backspaceBehavior']>();
+  const [backspaceBehavior, setBackspaceBehavior] = useState<SerialConfig['backspaceBehavior']>('default');
   const [charset, setCharset] = useState('UTF-8');
 
   // Save configuration state
@@ -353,8 +353,8 @@ export const SerialConnectModal: React.FC<SerialConnectModalProps> = ({
                 <div className="space-y-2">
                   <Label htmlFor="serial-backspace">{t('serial.field.backspaceBehavior')}</Label>
                   <Select
-                    value={backspaceBehavior ?? 'default'}
-                    onValueChange={(value) => setBackspaceBehavior(value === 'ctrl-h' ? 'ctrl-h' : undefined)}
+                    value={backspaceBehavior}
+                    onValueChange={(value) => setBackspaceBehavior(value === 'ctrl-h' ? 'ctrl-h' : 'default')}
                   >
                     <SelectTrigger id="serial-backspace">
                       <SelectValue />

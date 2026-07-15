@@ -388,6 +388,7 @@ test("sanitizeSessionRestorePayload deeply allowlists unknown serial config fiel
         flowControl: "none",
         localEcho: true,
         lineMode: true,
+        backspaceBehavior: "default",
         secret: "do-not-store",
       },
     }],
@@ -403,6 +404,7 @@ test("sanitizeSessionRestorePayload deeply allowlists unknown serial config fiel
     flowControl: "none",
     localEcho: true,
     lineMode: true,
+    backspaceBehavior: "default",
   });
 });
 

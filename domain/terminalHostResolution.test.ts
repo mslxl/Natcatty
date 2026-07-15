@@ -200,6 +200,69 @@ test("resolveTerminalSessionHost applies serial Ctrl-H backspace behavior from s
   assert.equal(resolved.backspaceBehavior, "ctrl-h");
 });
 
+test("resolveTerminalSessionHost keeps the serial Backspace behavior captured by the session", () => {
+  const host: Host = {
+    id: "target",
+    label: "Serial: COM3",
+    hostname: "COM3",
+    username: "",
+    port: 115200,
+    protocol: "serial",
+    tags: [],
+    os: "linux",
+    serialConfig: {
+      path: "COM3",
+      baudRate: 115200,
+      backspaceBehavior: "default",
+    },
+  };
+
+  const ctrlHSession = resolveTerminalSessionHost({
+    session: {
+      ...baseSession,
+      hostname: "COM3",
+      username: "",
+      protocol: "serial",
+      serialConfig: {
+        path: "COM3",
+        baudRate: 115200,
+        backspaceBehavior: "ctrl-h",
+      },
+    },
+    hosts: [host],
+    groupConfigs: [],
+    proxyProfiles,
+    localOs: "windows",
+  });
+
+  const defaultSession = resolveTerminalSessionHost({
+    session: {
+      ...baseSession,
+      hostname: "COM3",
+      username: "",
+      protocol: "serial",
+      serialConfig: {
+        path: "COM3",
+        baudRate: 115200,
+        backspaceBehavior: "default",
+      },
+    },
+    hosts: [{
+      ...host,
+      serialConfig: {
+        ...host.serialConfig!,
+        backspaceBehavior: "ctrl-h",
+      },
+    }],
+    groupConfigs: [],
+    proxyProfiles,
+    localOs: "windows",
+  });
+
+  assert.equal(ctrlHSession.backspaceBehavior, "ctrl-h");
+  assert.equal(defaultSession.backspaceBehavior, undefined);
+});
+
 test("resolveTerminalSessionHost suppresses inherited network device mode for Mosh sessions", () => {
   const host: Host = {
     id: "target",

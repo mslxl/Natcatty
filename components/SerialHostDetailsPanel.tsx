@@ -78,7 +78,8 @@ export const SerialHostDetailsPanel: React.FC<SerialHostDetailsPanelPropsWithRes
   const [localEcho, setLocalEcho] = useState(initialData.serialConfig?.localEcho || false);
   const [lineMode, setLineMode] = useState(initialData.serialConfig?.lineMode || false);
   const [backspaceBehavior, setBackspaceBehavior] = useState<SerialConfig['backspaceBehavior']>(
-    initialData.serialConfig?.backspaceBehavior ?? initialData.backspaceBehavior,
+    initialData.serialConfig?.backspaceBehavior
+      ?? (initialData.backspaceBehavior === 'ctrl-h' ? 'ctrl-h' : 'default'),
   );
   const [charset, setCharset] = useState(initialData.charset || 'UTF-8');
   const [tags, setTags] = useState<string[]>(initialData.tags || []);
@@ -403,8 +404,8 @@ export const SerialHostDetailsPanel: React.FC<SerialHostDetailsPanelPropsWithRes
               <div className="space-y-2">
                 <Label htmlFor="serial-backspace">{t('serial.field.backspaceBehavior')}</Label>
                 <Select
-                  value={backspaceBehavior ?? 'default'}
-                  onValueChange={(value) => setBackspaceBehavior(value === 'ctrl-h' ? 'ctrl-h' : undefined)}
+                  value={backspaceBehavior}
+                  onValueChange={(value) => setBackspaceBehavior(value === 'ctrl-h' ? 'ctrl-h' : 'default')}
                 >
                   <SelectTrigger id="serial-backspace">
                     <SelectValue />
