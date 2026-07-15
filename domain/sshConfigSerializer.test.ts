@@ -95,3 +95,35 @@ test("serializeHostsToSshConfig rejects line injection in serialized fields", ()
     );
   }
 });
+
+test("serializeHostsToSshConfig rejects Host pattern injection", () => {
+  assert.throws(
+    () => serializeHostsToSshConfig([makeHost({ label: "*" })]),
+    /pattern or separator/i,
+  );
+});
+
+test("serializeHostsToSshConfig rejects ProxyJump separator injection", () => {
+  const target = makeHost({
+    id: "target",
+    hostChain: { hostIds: ["jump"] },
+  });
+  const jump = makeHost({
+    id: "jump",
+    hostname: "legit.example,attacker.example",
+  });
+  const badUsernameJump = makeHost({
+    id: "jump",
+    hostname: "jump.example.com",
+    username: "root@attacker.example",
+  });
+
+  assert.throws(
+    () => serializeHostsToSshConfig([target], [target, jump]),
+    /ProxyJump separator/i,
+  );
+  assert.throws(
+    () => serializeHostsToSshConfig([target], [target, badUsernameJump]),
+    /ProxyJump separator/i,
+  );
+});

@@ -3,9 +3,17 @@ import { sanitizeHost } from './host';
 
 const DEFAULT_SSH_PORT = 22;
 const UNSAFE_SSH_CONFIG_VALUE = /[\r\n\0]/;
+const UNSAFE_SSH_ENDPOINT_COMPONENT = /[\s,@#]/;
+const UNSAFE_SSH_HOST_ALIAS = /[*?!,[\]@#]/;
 
 const isSafeSshConfigValue = (value: string): boolean =>
   !UNSAFE_SSH_CONFIG_VALUE.test(value);
+
+const isSafeSshEndpointComponent = (value: string): boolean =>
+  !UNSAFE_SSH_ENDPOINT_COMPONENT.test(value);
+
+const isSafeSshHostAlias = (value: string): boolean =>
+  !UNSAFE_SSH_HOST_ALIAS.test(value.replace(/\s/g, ''));
 
 export type VaultHostDraftProtocol = Exclude<HostProtocol, 'mosh' | 'et' | 'serial'>;
 
@@ -145,6 +153,9 @@ export function buildVaultHostFromDraft(
   if (!isSafeSshConfigValue(hostname)) {
     return { ok: false, error: 'hostname must not contain line breaks or null bytes.' };
   }
+  if (!isSafeSshEndpointComponent(hostname)) {
+    return { ok: false, error: 'hostname contains characters that are unsafe in SSH connection settings.' };
+  }
 
   const protocol = normalizeProtocol(draft.protocol) ?? 'ssh';
   const port = parsePort(draft.port) ?? (protocol === 'telnet' ? 23 : DEFAULT_SSH_PORT);
@@ -156,8 +167,14 @@ export function buildVaultHostFromDraft(
   if (!isSafeSshConfigValue(label)) {
     return { ok: false, error: 'label must not contain line breaks or null bytes.' };
   }
+  if (!isSafeSshHostAlias(label)) {
+    return { ok: false, error: 'label contains characters that are unsafe in SSH host aliases.' };
+  }
   if (!isSafeSshConfigValue(username)) {
     return { ok: false, error: 'username must not contain line breaks or null bytes.' };
+  }
+  if (username && !isSafeSshEndpointComponent(username)) {
+    return { ok: false, error: 'username contains characters that are unsafe in SSH connection settings.' };
   }
   const savePasswordInput = firstProvided(draft as Record<string, unknown>, ['savePassword']);
   const savePassword = savePasswordInput.provided
@@ -247,6 +264,9 @@ export function applyVaultHostUpdate(
     if (!isSafeSshConfigValue(label.value)) {
       return { ok: false, error: 'label must not contain line breaks or null bytes.' };
     }
+    if (!isSafeSshHostAlias(label.value)) {
+      return { ok: false, error: 'label contains characters that are unsafe in SSH host aliases.' };
+    }
     updated.label = label.value.trim();
   }
   if (hostname.provided) {
@@ -255,6 +275,9 @@ export function applyVaultHostUpdate(
     }
     if (!isSafeSshConfigValue(hostname.value)) {
       return { ok: false, error: 'hostname must not contain line breaks or null bytes.' };
+    }
+    if (!isSafeSshEndpointComponent(hostname.value.trim())) {
+      return { ok: false, error: 'hostname contains characters that are unsafe in SSH connection settings.' };
     }
     updated.hostname = hostname.value.trim();
   }
@@ -302,6 +325,9 @@ export function applyVaultHostUpdate(
     }
     if (!isSafeSshConfigValue(username.value)) {
       return { ok: false, error: 'username must not contain line breaks or null bytes.' };
+    }
+    if (username.value.trim() && !isSafeSshEndpointComponent(username.value.trim())) {
+      return { ok: false, error: 'username contains characters that are unsafe in SSH connection settings.' };
     }
     updated.username = username.value.trim();
     if (selectedIdentityId) {

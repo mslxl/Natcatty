@@ -84,6 +84,19 @@ test('buildVaultHostFromDraft rejects SSH config line injection', () => {
   }
 });
 
+test('buildVaultHostFromDraft rejects SSH pattern and ProxyJump separators', () => {
+  for (const draft of [
+    { hostname: 'host.example.com', label: '*' },
+    { hostname: 'first.example.com,second.example.com' },
+    { hostname: 'host.example.com', username: 'user@attacker.example' },
+  ]) {
+    const built = buildVaultHostFromDraft(draft);
+    assert.equal(built.ok, false);
+    if (built.ok) continue;
+    assert.match(built.error, /unsafe in SSH/i);
+  }
+});
+
 test('parseVaultHostDraftsInput accepts JSON array strings', () => {
   const parsed = parseVaultHostDraftsInput(JSON.stringify([
     { hostname: '10.0.0.1', username: 'root' },
@@ -228,6 +241,28 @@ test('applyVaultHostUpdate rejects SSH config line injection', () => {
     assert.equal(result.ok, false);
     if (result.ok) continue;
     assert.match(result.error, /line breaks or null bytes/i);
+  }
+});
+
+test('applyVaultHostUpdate rejects SSH pattern and ProxyJump separators', () => {
+  const existing: Host = {
+    id: 'host-1',
+    label: 'host',
+    hostname: 'host.example.com',
+    username: 'root',
+    tags: [],
+    os: 'linux',
+  };
+
+  for (const patch of [
+    { label: '*' },
+    { hostname: 'first.example.com,second.example.com' },
+    { username: 'user@attacker.example' },
+  ]) {
+    const result = applyVaultHostUpdate([existing], [], existing.id, patch);
+    assert.equal(result.ok, false);
+    if (result.ok) continue;
+    assert.match(result.error, /unsafe in SSH/i);
   }
 });
 

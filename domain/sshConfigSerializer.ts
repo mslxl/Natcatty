@@ -5,10 +5,26 @@ const DEFAULT_SSH_PORT = 22;
 const MANAGED_BLOCK_BEGIN = "# BEGIN NETCATTY MANAGED - DO NOT EDIT THIS BLOCK";
 const MANAGED_BLOCK_END = "# END NETCATTY MANAGED";
 const UNSAFE_SSH_CONFIG_VALUE = /[\r\n\0]/;
+const UNSAFE_SSH_PROXY_JUMP_COMPONENT = /[\s,@#]/;
+const UNSAFE_SSH_HOST_ALIAS = /[*?!,[\]@#]/;
 
 const assertSafeSshConfigValue = (value: string, field: string): void => {
   if (UNSAFE_SSH_CONFIG_VALUE.test(value)) {
     throw new Error(`${field} must not contain line breaks or null bytes.`);
+  }
+};
+
+const assertSafeSshHostAlias = (value: string): void => {
+  assertSafeSshConfigValue(value, "Host alias");
+  if (UNSAFE_SSH_HOST_ALIAS.test(value)) {
+    throw new Error("Host alias contains SSH pattern or separator characters.");
+  }
+};
+
+const assertSafeProxyJumpComponent = (value: string, field: string): void => {
+  assertSafeSshConfigValue(value, field);
+  if (UNSAFE_SSH_PROXY_JUMP_COMPONENT.test(value)) {
+    throw new Error(`${field} contains SSH ProxyJump separator characters.`);
   }
 };
 
@@ -29,7 +45,9 @@ const isIPv6 = (hostname: string): boolean => {
 const serializeJumpHost = (host: Host, managedHostIds: Set<string>): string => {
   assertSafeSshConfigValue(host.label, "Jump host label");
   assertSafeSshConfigValue(host.hostname, "Jump host hostname");
-  assertSafeSshConfigValue(host.username, "Jump host username");
+  if (host.username) {
+    assertSafeProxyJumpComponent(host.username, "Jump host username");
+  }
   let result = "";
   if (host.username) {
     result += `${host.username}@`;
@@ -41,9 +59,11 @@ const serializeJumpHost = (host: Host, managedHostIds: Set<string>): string => {
   if (managedHostIds.has(host.id) && host.label) {
     // Use sanitized label (same as the Host block alias)
     hostPart = host.label.replace(/\s/g, '') || host.hostname;
+    assertSafeSshHostAlias(hostPart);
   } else {
     // Jump host is outside managed config, use hostname directly
     hostPart = host.hostname;
+    assertSafeProxyJumpComponent(hostPart, "Jump host hostname");
   }
 
   // For IPv6 addresses, always wrap in brackets to disambiguate colons
@@ -114,6 +134,7 @@ export const serializeHostsToSshConfig = (hosts: Host[], allHosts?: Host[]): str
     const lines: string[] = [];
     // Sanitize alias by removing spaces (SSH config doesn't allow spaces in Host patterns)
     const alias = (host.label?.replace(/\s/g, '') || host.hostname);
+    assertSafeSshHostAlias(alias);
     lines.push(`Host ${alias}`);
 
     if (host.hostname !== alias) {
