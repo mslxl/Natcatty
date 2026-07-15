@@ -854,11 +854,21 @@ async function startTransfer(event, payload, onProgress) {
         if (!sourceClient) throw new Error("Source SFTP session not found");
         if (!targetClient) throw new Error("Target SFTP session not found");
 
-        const encodedSourcePath = encodePathForSession(sourceSftpId, sourcePath, sourceEncoding);
+        const encodedSourcePath = isScpModeClient(sourceClient)
+          ? sourcePath
+          : encodePathForSession(sourceSftpId, sourcePath, sourceEncoding);
         const downloadProgress = (transferred) => {
           sendProgress(Math.floor(transferred / 2), fileSize);
         };
-        await downloadFile(encodedSourcePath, tempPath, sourceClient, fileSize, transfer, downloadProgress);
+        await downloadFile(
+          encodedSourcePath,
+          tempPath,
+          sourceClient,
+          fileSize,
+          transfer,
+          downloadProgress,
+          resolveEncodingForRequest(sourceSftpId, sourceEncoding),
+        );
 
         if (transfer.cancelled) {
           try { await fs.promises.unlink(tempPath); } catch { }
@@ -868,11 +878,21 @@ async function startTransfer(event, payload, onProgress) {
         const dir = path.dirname(targetPath).replace(/\\/g, '/');
         try { await ensureRemoteDirForSession(targetSftpId, dir, targetEncoding); } catch { }
 
-        const encodedTargetPath = encodePathForSession(targetSftpId, targetPath, targetEncoding);
+        const encodedTargetPath = isScpModeClient(targetClient)
+          ? targetPath
+          : encodePathForSession(targetSftpId, targetPath, targetEncoding);
         const uploadProgress = (transferred) => {
           sendProgress(Math.floor(fileSize / 2) + Math.floor(transferred / 2), fileSize);
         };
-        await uploadFile(tempPath, encodedTargetPath, targetClient, fileSize, transfer, uploadProgress);
+        await uploadFile(
+          tempPath,
+          encodedTargetPath,
+          targetClient,
+          fileSize,
+          transfer,
+          uploadProgress,
+          resolveEncodingForRequest(targetSftpId, targetEncoding),
+        );
 
         try { await fs.promises.unlink(tempPath); } catch { }
       }

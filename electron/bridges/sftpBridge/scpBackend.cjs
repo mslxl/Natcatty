@@ -353,9 +353,10 @@ function createScpBackend(deps = {}) {
 
       let transferred = 0;
       // Arm the final ACK listener before the trailing NUL so a fast remote cannot
-      // race past waitForAck and hang the upload.
+      // race past waitForAck and hang the upload. Race it with the stream so a
+      // mid-stream remote error/cancel does not leave an unhandled rejection.
       const finalAck = waitForAck(stream, transfer);
-      await new Promise((resolve, reject) => {
+      const streamDone = new Promise((resolve, reject) => {
         const readStream = fsModule.createReadStream(localPath, { highWaterMark: 256 * 1024 });
         if (transfer) transfer.readStream = readStream;
 
@@ -395,7 +396,7 @@ function createScpBackend(deps = {}) {
         stream.on("error", finish);
       });
 
-      await finalAck;
+      await Promise.all([streamDone, finalAck]);
       await closeStream(stream);
       if (transfer?.cancelled) throw new Error("Transfer cancelled");
       if (typeof onProgress === "function") onProgress(fileSize, fileSize);
@@ -525,7 +526,7 @@ function createScpBackend(deps = {}) {
       };
     }
 
-    const parser = createSourceStreamParser();
+    const parser = createSourceStreamParser({ encoding });
     let transferred = 0;
     let expectedSize = fileSize;
     let gotFile = false;

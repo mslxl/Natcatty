@@ -805,7 +805,9 @@ function createFileOpsApi(ctx) {
 
       if (isScpModeClient(client)) {
         try {
-          const home = await getScpBackendForClient(client).homeDir();
+          const home = await getScpBackendForClient(client).homeDir({
+            signal: payload?.abortSignal || null,
+          });
           return { success: true, homeDir: home };
         } catch (err) {
           return { success: false, error: err?.message || String(err) };

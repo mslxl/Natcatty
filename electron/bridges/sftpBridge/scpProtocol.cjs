@@ -196,12 +196,26 @@ function sanitizeScpBasename(name) {
  * Incremental parser for an SCP source stream (download from remote).
  * Feed buffers; yields control events and file data chunks.
  */
-function createSourceStreamParser() {
+function createSourceStreamParser(options = {}) {
+  const encoding = String(options.encoding || "utf-8").toLowerCase();
   let buf = Buffer.alloc(0);
   let phase = "await-control"; // await-control | await-data | done
   let pendingFile = null;
   let remaining = 0;
   let needTrailingNul = false;
+
+  const decodeControlName = (nameBytes) => {
+    if (encoding === "gb18030" || encoding === "gbk" || encoding === "gb2312") {
+      try {
+        // eslint-disable-next-line global-require
+        const iconv = require("iconv-lite");
+        return iconv.decode(nameBytes, "gb18030");
+      } catch {
+        return nameBytes.toString("utf8");
+      }
+    }
+    return nameBytes.toString("utf8");
+  };
 
   return {
     get phase() {
@@ -219,7 +233,28 @@ function createSourceStreamParser() {
           if (nl < 0) break;
           const lineBuf = buf.subarray(0, nl);
           buf = buf.subarray(nl + 1);
-          const parsed = parseControlLine(lineBuf);
+          // Decode basename with session encoding when C/D lines carry non-UTF-8 bytes.
+          let lineForParse = lineBuf;
+          if (lineBuf.length > 0 && (lineBuf[0] === 0x43 || lineBuf[0] === 0x44)) {
+            // C/Dmmmm size name — find third space-separated field start
+            let spaces = 0;
+            let nameStart = -1;
+            for (let i = 0; i < lineBuf.length; i += 1) {
+              if (lineBuf[i] === 0x20) {
+                spaces += 1;
+                if (spaces === 2) {
+                  nameStart = i + 1;
+                  break;
+                }
+              }
+            }
+            if (nameStart > 0 && nameStart < lineBuf.length) {
+              const head = lineBuf.subarray(0, nameStart).toString("utf8");
+              const name = decodeControlName(lineBuf.subarray(nameStart));
+              lineForParse = Buffer.from(`${head}${name}`, "utf8");
+            }
+          }
+          const parsed = parseControlLine(lineForParse);
           if (parsed.kind === "time") {
             events.push({ type: "time", raw: parsed.raw });
             continue;
