@@ -10,7 +10,7 @@
  * Windows (which has no Perl wrapper).
  *
  * Flow (driven by terminalBridge.startMoshSession):
- *   1. spawn `ssh -t [-p port] [user@]host -- mosh-server new -s ...`
+ *   1. spawn `ssh -n -tt [-p port] [user@]host -- mosh-server new -s ...`
  *      inside a node-pty, sized to the renderer's cols/rows so password
  *      / 2FA prompts render natively.
  *   2. forward every byte from the ssh PTY to the renderer (parsing
@@ -182,9 +182,13 @@ function parseMoshConnect(buffer) {
 /**
  * Build the argv for the ssh bootstrap command.
  *
- *   ssh -t [-p port] [user@]host -- LC_ALL=... mosh-server new -s [...]
+ *   ssh -n -tt [-p port] [user@]host -- LC_ALL=... mosh-server new -s [...]
  *
- * `-t` allocates a remote TTY so password / 2FA prompts work; `--`
+ * `-tt` mirrors the stock Mosh wrapper. Besides supporting password / 2FA
+ * prompts, it makes mosh-server drain the CONNECT line before its launcher
+ * exits; this avoids losing stdout while Windows ConPTY merges the SSH
+ * stdout/stderr streams. `-n` keeps the remote command from consuming input;
+ * OpenSSH authentication prompts still use the controlling PTY. `--`
  * separates ssh's options from the remote command we want it to run.
  * The remote command runs `mosh-server new` and exits, with the magic
  * line emitted to stdout.
@@ -200,12 +204,7 @@ function parseMoshConnect(buffer) {
  */
 function buildSshHandshakeCommand(opts) {
   if (!opts || !opts.host) throw new Error("buildSshHandshakeCommand: host is required");
-  // No -t / -tt by default: this command only runs `mosh-server new`
-  // and immediately exits; mosh-server itself doesn't need a TTY for
-  // the `new` subcommand (it prints MOSH CONNECT to stdout and forks
-  // into the background). Forcing a TTY would require -tt and break
-  // BatchMode-friendly stdout capture.
-  const args = [];
+  const args = ["-n", "-tt"];
   if (opts.port && Number(opts.port) !== 22) {
     args.push("-p", String(opts.port));
   }

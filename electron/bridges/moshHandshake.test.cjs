@@ -99,10 +99,12 @@ test("createMoshConnectSniffer.flush recovers ConPTY CSI after an unterminated C
   assert.deepEqual(r2.parsed, { port: 60005, key: "ABCDEFGHIJKLMNOPQRSTUV==" });
 });
 
-test("buildSshHandshakeCommand omits -t and uses default port", () => {
+test("buildSshHandshakeCommand mirrors stock mosh SSH PTY startup", () => {
   const got = buildSshHandshakeCommand({ host: "example.com", username: "alice" });
   assert.equal(got.command, "ssh");
   assert.deepEqual(got.args, [
+    "-n",
+    "-tt",
     "alice@example.com",
     "--",
     "LC_ALL='en_US.UTF-8' mosh-server new -s",
@@ -111,7 +113,7 @@ test("buildSshHandshakeCommand omits -t and uses default port", () => {
 
 test("buildSshHandshakeCommand passes a non-default port via -p", () => {
   const got = buildSshHandshakeCommand({ host: "example.com", port: 2222 });
-  assert.deepEqual(got.args.slice(0, 2), ["-p", "2222"]);
+  assert.deepEqual(got.args.slice(0, 4), ["-n", "-tt", "-p", "2222"]);
 });
 
 test("buildSshHandshakeCommand interpolates lang and moshServer overrides", () => {
