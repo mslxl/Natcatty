@@ -1106,6 +1106,9 @@ export async function handleVaultAgentOp(
       if (!result.success) {
         return { ok: false, error: result.error || 'Failed to stop port forwarding tunnel.' };
       }
+      deps.updatePortForwardingRules(deps.getPortForwardingRules().map((rule) => (
+        rule.id === ruleId ? { ...rule, status: 'inactive', error: undefined } : rule
+      )));
       return { ok: true, ruleId };
     }
     default:
