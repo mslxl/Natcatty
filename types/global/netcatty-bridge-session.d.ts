@@ -175,9 +175,11 @@ declare global {
     getDefaultKeys?(): Promise<Array<{ name: string; path: string }>>;
     execCommand(options: {
       hostname: string;
+      hostId?: string;
       username: string;
       port?: number;
       authMethod?: import("../../domain/models").HostAuthMethod;
+      requiresMfa?: boolean;
       password?: string;
       privateKey?: string;
       certificate?: string;
