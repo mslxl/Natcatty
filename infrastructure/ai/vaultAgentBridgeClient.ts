@@ -495,11 +495,14 @@ export async function handleVaultAgentOp(
     case 'host.update': {
       const hostId = String(params.hostId || '').trim();
       if (!hostId) return { ok: false, error: 'hostId is required.' };
+      const currentHosts = deps.getHosts();
+      const currentHost = currentHosts.find((host) => host.id === hostId);
       const updated = applyVaultHostUpdate(
-        deps.getHosts(),
+        currentHosts,
         deps.getCustomGroups(),
         hostId,
         params,
+        { effectiveHost: currentHost ? deps.resolveEffectiveHost(currentHost) : undefined },
       );
       if (!updated.ok) return updated;
 

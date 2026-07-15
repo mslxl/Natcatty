@@ -24,6 +24,10 @@ export interface VaultHostDraft {
 
 export type VaultHostUpdatePatch = VaultHostDraft;
 
+export interface VaultHostUpdateOptions {
+  effectiveHost?: Host;
+}
+
 export interface VaultHostCreateIssue {
   index: number;
   error: string;
@@ -169,6 +173,7 @@ export function applyVaultHostUpdate(
   existingGroups: string[],
   hostId: string,
   patch: VaultHostUpdatePatch,
+  options: VaultHostUpdateOptions = {},
 ): {
   ok: true;
   hosts: Host[];
@@ -194,6 +199,9 @@ export function applyVaultHostUpdate(
   if (!provided) return { ok: false, error: 'At least one host field is required.' };
 
   const current = existingHosts[hostIndex];
+  const effectiveCurrent = options.effectiveHost?.id === current.id
+    ? options.effectiveHost
+    : current;
   let updated: Host = { ...current };
 
   if (label.provided) {
@@ -220,19 +228,25 @@ export function applyVaultHostUpdate(
       return { ok: false, error: 'username must be a string.' };
     }
     updated.username = username.value.trim();
+    if (effectiveCurrent.identityId) {
+      updated.identityId = '';
+    }
   }
   if (password.provided) {
     if (typeof password.value !== 'string') {
       return { ok: false, error: 'password must be a string.' };
     }
-    if (password.value && current.savePassword === false) {
+    if (password.value && effectiveCurrent.savePassword === false) {
       return {
         ok: false,
         error: 'This host is configured not to save passwords. Enable password saving before updating it.',
       };
     }
     updated.password = password.value || undefined;
-    if (password.value && !keyPath.provided) {
+    const keyPathIsEmpty = keyPath.provided
+      && typeof keyPath.value === 'string'
+      && !keyPath.value.trim();
+    if (password.value && (!keyPath.provided || keyPathIsEmpty)) {
       updated.authMethod = 'password';
       updated.authPolicyVersion = 1;
       updated.identityId = '';

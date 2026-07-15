@@ -659,7 +659,7 @@
       "username": {
         "type": "string",
         "optional": true,
-        "description": "New login username."
+        "description": "New login username. Clears any reusable identity binding so this value takes effect."
       },
       "password": {
         "type": "string",

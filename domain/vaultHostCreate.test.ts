@@ -227,6 +227,99 @@ test('applyVaultHostUpdate rejects saved password changes when password saving i
   assert.match(result.error, /not to save passwords/i);
 });
 
+test('applyVaultHostUpdate respects inherited password saving opt-out', () => {
+  const existing: Host = {
+    id: 'host-1',
+    label: 'host',
+    hostname: '10.0.0.1',
+    username: 'root',
+    tags: [],
+    os: 'linux',
+  };
+
+  const result = applyVaultHostUpdate(
+    [existing],
+    [],
+    'host-1',
+    { password: 'do-not-persist' },
+    { effectiveHost: { ...existing, savePassword: false } },
+  );
+
+  assert.equal(result.ok, false);
+  if (result.ok) return;
+  assert.match(result.error, /not to save passwords/i);
+});
+
+test('applyVaultHostUpdate switches to password auth when clearing a key path', () => {
+  const existing: Host = {
+    id: 'host-1',
+    label: 'host',
+    hostname: '10.0.0.1',
+    username: 'root',
+    tags: [],
+    os: 'linux',
+    identityId: 'identity-1',
+    identityFileId: 'key-1',
+    identityFilePaths: ['~/.ssh/old'],
+    authMethod: 'key',
+  };
+
+  const result = applyVaultHostUpdate([existing], [], 'host-1', {
+    password: 'new-secret',
+    keyPath: '',
+  });
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.updatedHost.authMethod, 'password');
+  assert.equal(result.updatedHost.password, 'new-secret');
+  assert.equal(result.updatedHost.identityId, '');
+  assert.equal(result.updatedHost.identityFileId, undefined);
+  assert.equal(result.updatedHost.identityFilePaths, undefined);
+});
+
+test('applyVaultHostUpdate detaches direct and inherited identities when changing username', () => {
+  const directIdentityHost: Host = {
+    id: 'direct-host',
+    label: 'direct host',
+    hostname: 'direct.example.com',
+    username: 'old-user',
+    tags: [],
+    os: 'linux',
+    identityId: 'identity-1',
+  };
+  const inheritedIdentityHost: Host = {
+    id: 'inherited-host',
+    label: 'inherited host',
+    hostname: 'inherited.example.com',
+    username: 'old-user',
+    tags: [],
+    os: 'linux',
+  };
+
+  const directResult = applyVaultHostUpdate(
+    [directIdentityHost],
+    [],
+    directIdentityHost.id,
+    { username: 'new-user' },
+  );
+  const inheritedResult = applyVaultHostUpdate(
+    [inheritedIdentityHost],
+    [],
+    inheritedIdentityHost.id,
+    { username: 'new-user' },
+    { effectiveHost: { ...inheritedIdentityHost, identityId: 'identity-from-group' } },
+  );
+
+  assert.equal(directResult.ok, true);
+  assert.equal(inheritedResult.ok, true);
+  if (!directResult.ok || !inheritedResult.ok) return;
+  assert.equal(directResult.updatedHost.username, 'new-user');
+  assert.equal(directResult.updatedHost.identityId, '');
+  assert.equal(inheritedResult.updatedHost.username, 'new-user');
+  assert.equal(inheritedResult.updatedHost.identityId, '');
+});
+
 test('applyVaultHostDelete removes only the requested host', () => {
   const hosts: Host[] = [
     { id: 'host-1', label: 'one', hostname: 'one', username: 'root', tags: [], os: 'linux' },

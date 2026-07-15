@@ -106,7 +106,7 @@ const TOOL_INPUT_FIELDS = Object.freeze({
     host: { type: "string", optional: true, description: "Alias for hostname." },
     ip: { type: "string", optional: true, description: "Alias for hostname." },
     port: { type: "number", optional: true, description: "New connection port (1-65535)." },
-    username: { type: "string", optional: true, description: "New login username." },
+    username: { type: "string", optional: true, description: "New login username. Clears any reusable identity binding so this value takes effect." },
     password: { type: "string", optional: true, description: "New password. Empty string clears it." },
     keyPath: { type: "string", optional: true, description: "Local private-key file path. Empty string clears the referenced path." },
     keypath: { type: "string", optional: true, description: "Alias for keyPath." },

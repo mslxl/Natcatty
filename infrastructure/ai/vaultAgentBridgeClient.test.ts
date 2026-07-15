@@ -345,6 +345,43 @@ describe('handleVaultAgentOp vault hosts', () => {
     assert.ok(deps.getCustomGroups().includes('prod'));
   });
 
+  it('host.update applies effective inherited credential settings', async () => {
+    const host: Host = {
+      id: 'host-1',
+      label: 'inherited',
+      hostname: '10.0.0.1',
+      username: 'root',
+      port: 22,
+      tags: [],
+      os: 'linux',
+    };
+    const passwordDeps = createDeps({
+      hosts: [host],
+      resolveEffectiveHost: (current) => ({ ...current, savePassword: false }),
+    });
+    const identityDeps = createDeps({
+      hosts: [host],
+      resolveEffectiveHost: (current) => ({ ...current, identityId: 'identity-from-group' }),
+    });
+
+    const passwordResult = await handleVaultAgentOp(
+      'host.update',
+      { hostId: host.id, password: 'do-not-persist' },
+      passwordDeps,
+    );
+    const usernameResult = await handleVaultAgentOp(
+      'host.update',
+      { hostId: host.id, username: 'deploy' },
+      identityDeps,
+    );
+
+    assert.equal(passwordResult.ok, false);
+    assert.equal(passwordDeps.getHosts()[0]?.password, undefined);
+    assert.equal(usernameResult.ok, true);
+    assert.equal(identityDeps.getHosts()[0]?.username, 'deploy');
+    assert.equal(identityDeps.getHosts()[0]?.identityId, '');
+  });
+
   it('host.delete removes the requested host', async () => {
     const deps = createDeps({
       hosts: [
