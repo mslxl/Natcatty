@@ -24,6 +24,7 @@ PORT=60050
 TMUX_SOCKET="mc2121-$$"
 CURRENT_SCREEN=
 CURRENT_CASE_DIR=
+CURRENT_KEY=
 PCAP_PID=
 
 require_root() {
@@ -35,7 +36,7 @@ require_root() {
 
 require_tools() {
   local tool
-  for tool in ip tc tmux timeout tcpdump python3 awk grep base64 head ps readlink mosh-server; do
+  for tool in ip tc tmux timeout tcpdump python3 awk grep sed base64 head ps readlink mosh-server; do
     command -v "$tool" >/dev/null || {
       echo "Missing required command: $tool" >&2
       exit 2
@@ -137,12 +138,15 @@ start_session() {
   CURRENT_CASE_DIR="${case_dir}"
   server_output=$(ip netns exec "${NS_SERVER}" env LANG=C.UTF-8 TERM=xterm-256color \
     mosh-server new -s -i "${host}" -p "${PORT}" -l LANG=C.UTF-8 2>&1)
-  printf '%s\n' "${server_output}" >"${case_dir}/server.log"
   key=$(printf '%s\n' "${server_output}" | awk '$1 == "MOSH" && $2 == "CONNECT" { print $4; exit }')
   if [[ -z ${key} ]]; then
     echo "${name}: mosh-server did not return a session key" >&2
     return 1
   fi
+  CURRENT_KEY=${key}
+  printf '%s\n' "${server_output}" \
+    | sed -E 's/^(MOSH CONNECT [0-9]+) [^[:space:]]+$/\1 [REDACTED]/' \
+    >"${case_dir}/server.log"
 
   CURRENT_SCREEN="${case_dir}/client.screen"
   ip netns exec "${NS_CLIENT}" env \
@@ -233,12 +237,19 @@ assert_exact_sequence() {
 
 verify_ipv6_capture() {
   local pcap_file=$1
-  python3 - "${pcap_file}" <<'PY'
+  local key=$2
+  python3 - "${pcap_file}" "${key}" <<'PY'
+import base64
+import collections
 import struct
 import sys
 import ipaddress
 
+from cryptography.hazmat.primitives.ciphers.aead import AESOCB3
+
 path = sys.argv[1]
+key = base64.b64decode(sys.argv[2] + "==")
+cipher = AESOCB3(key)
 with open(path, "rb") as handle:
     header = handle.read(24)
     if len(header) != 24:
@@ -257,6 +268,7 @@ with open(path, "rb") as handle:
     server_packets = 0
     server_udp_payload = 0
     server_address = ipaddress.IPv6Address("fd21:21::2").packed
+    fragment_groups = collections.defaultdict(set)
     while True:
         record = handle.read(16)
         if not record:
@@ -278,6 +290,17 @@ with open(path, "rb") as handle:
             udp_length = struct.unpack("!H", frame[58:60])[0]
             server_packets += 1
             server_udp_payload += max(0, udp_length - 8)
+            datagram = frame[62 : 62 + udp_length - 8]
+            if len(datagram) >= 24:
+                nonce = b"\x00" * 4 + datagram[:8]
+                try:
+                    plaintext = cipher.decrypt(nonce, datagram[8:], b"")
+                except Exception:
+                    continue
+                if len(plaintext) >= 14:
+                    instruction_id = int.from_bytes(plaintext[4:12], "big")
+                    fragment_num = int.from_bytes(plaintext[12:14], "big") & 0x7FFF
+                    fragment_groups[instruction_id].add(fragment_num)
 
 if server_packets < 2 or server_udp_payload <= 1280:
     raise SystemExit(
@@ -288,11 +311,15 @@ if max_ipv6_length > 1280:
     raise SystemExit(f"IPv6 packet exceeded MTU 1280: {max_ipv6_length}")
 if fragment_headers:
     raise SystemExit(f"IPv6 Fragment Headers observed: {fragment_headers}")
+largest_fragment_group = max((len(group) for group in fragment_groups.values()), default=0)
+if largest_fragment_group < 2:
+    raise SystemExit("capture did not contain a multi-fragment Mosh instruction")
 print(
     "pcap verified: "
     f"packets={packets}, server_packets={server_packets}, "
     f"server_udp_payload={server_udp_payload}, "
-    f"max_ipv6_packet={max_ipv6_length}, fragment_headers=0"
+    f"max_ipv6_packet={max_ipv6_length}, fragment_headers=0, "
+    f"largest_mosh_fragment_group={largest_fragment_group}"
 )
 PY
 }
@@ -392,7 +419,8 @@ test_ipv6_minimum_mtu() {
   finish_session
   sleep 1
   stop_capture
-  verify_ipv6_capture "${pcap_file}"
+  verify_ipv6_capture "${pcap_file}" "${CURRENT_KEY}"
+  CURRENT_KEY=
   restore_ipv4_addresses
   echo "PASS IPv6 MTU 1280 with application-level splitting and no network fragmentation"
 }
