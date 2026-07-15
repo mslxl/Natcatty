@@ -46,6 +46,13 @@ require_tools() {
     echo "MoshCatty binary is not executable: ${MOSHCATTY_BIN}" >&2
     exit 2
   fi
+  if ! python3 - <<'PY' >/dev/null 2>&1
+from cryptography.hazmat.primitives.ciphers.aead import AESOCB3
+PY
+  then
+    echo "Missing Python AES-OCB3 support. Install Ubuntu package python3-cryptography." >&2
+    exit 2
+  fi
 }
 
 cleanup_client() {
@@ -238,9 +245,10 @@ assert_exact_sequence() {
 verify_ipv6_capture() {
   local pcap_file=$1
   local key=$2
-  python3 - "${pcap_file}" "${key}" <<'PY'
+  python3 - "${pcap_file}" 3<<<"${key}" <<'PY'
 import base64
 import collections
+import os
 import struct
 import sys
 import ipaddress
@@ -248,7 +256,8 @@ import ipaddress
 from cryptography.hazmat.primitives.ciphers.aead import AESOCB3
 
 path = sys.argv[1]
-key = base64.b64decode(sys.argv[2] + "==")
+with os.fdopen(3) as key_pipe:
+    key = base64.b64decode(key_pipe.read().strip() + "==")
 cipher = AESOCB3(key)
 with open(path, "rb") as handle:
     header = handle.read(24)
