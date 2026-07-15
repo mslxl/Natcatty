@@ -70,6 +70,17 @@ const putWebdavFileReplacing = async (
     // fall through to DELETE + PUT
   }
 
+  const cleanupTemp = async () => {
+    try {
+      if (await client.exists(tmpPath)) {
+        await client.deleteFile(tmpPath);
+      }
+    } catch {
+      // best-effort temp cleanup
+    }
+  };
+
+  // If delete fails, leave the old vault alone (no in-place PUT).
   try {
     let exists = false;
     try {
@@ -103,16 +114,22 @@ const putWebdavFileReplacing = async (
         );
       }
     }
+  } catch (error) {
+    await cleanupTemp();
+    throw error;
+  }
+
+  try {
     await client.putFileContents(path, body, { overwrite: true });
-  } finally {
+  } catch (error) {
+    // Destination is already gone. Retry once; keep temp if still failing.
     try {
-      if (await client.exists(tmpPath)) {
-        await client.deleteFile(tmpPath);
-      }
+      await client.putFileContents(path, body, { overwrite: true });
     } catch {
-      // best-effort temp cleanup
+      throw error;
     }
   }
+  await cleanupTemp();
 };
 
 export class WebDAVAdapter {

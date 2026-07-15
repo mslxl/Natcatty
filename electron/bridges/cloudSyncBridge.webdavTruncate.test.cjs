@@ -346,3 +346,33 @@ test("DELETE denied aborts fallback instead of non-truncating in-place PUT", asy
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+test("final PUT failure keeps temp recovery copy (does not wipe remote vault)", async () => {
+  const { server, endpoint, files } = await startBuggyTruncateWebdavServer({
+    denyMove: true,
+    // Final path only — temp paths end with .tmp-<hex>
+    rejectPutMatching: /\/netcatty-vault\.json$/,
+  });
+  const config = {
+    endpoint,
+    authType: "basic",
+    username: "u",
+    password: "p",
+  };
+
+  try {
+    files.set("/netcatty-vault.json", Buffer.from(JSON.stringify(longSyncedFile), "utf8"));
+    await assert.rejects(
+      () => handleWebdavUpload(config, shortSyncedFile),
+      /WebDAV upload failed|507|Insufficient/i
+    );
+    // Destination was deleted as part of fallback; final PUT failed.
+    assert.equal(files.has("/netcatty-vault.json"), false);
+    // Known-good body must remain on a temp recovery path.
+    const tmpKeys = [...files.keys()].filter((k) => k.includes(".tmp-"));
+    assert.equal(tmpKeys.length, 1);
+    assert.equal(files.get(tmpKeys[0]).toString("utf8"), JSON.stringify(shortSyncedFile));
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});

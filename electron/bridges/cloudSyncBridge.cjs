@@ -83,15 +83,30 @@ const putWebdavFileReplacing = async (client, path, bodyBuffer) => {
     return;
   } catch {
     // MOVE unsupported or failed — fall through to DELETE + PUT using the
-    // already-validated temp body. Clean up temp in finally.
+    // already-validated temp body.
+  }
+
+  // Only after a successful temp write: remove destination, then recreate it.
+  // If delete fails, leave the old vault alone and do not attempt in-place PUT.
+  try {
+    await deleteWebdavPathForReplace(client, path);
+  } catch (error) {
+    await safeDeleteWebdavPath(client, tmpPath);
+    throw error;
   }
 
   try {
-    await deleteWebdavPathForReplace(client, path);
     await client.putFileContents(path, bodyBuffer, { overwrite: true });
-  } finally {
-    await safeDeleteWebdavPath(client, tmpPath);
+  } catch (error) {
+    // Destination is already gone. Retry once; keep temp if still failing.
+    try {
+      await client.putFileContents(path, bodyBuffer, { overwrite: true });
+    } catch {
+      throw error;
+    }
   }
+  // Only remove temp after destination holds the new body.
+  await safeDeleteWebdavPath(client, tmpPath);
 };
 
 /**
