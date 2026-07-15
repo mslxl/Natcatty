@@ -561,10 +561,10 @@ function createMoshSessionApi(ctx) {
         // "[mosh-server detached]" alone is not mistaken for a successful
         // session that immediately closed (Netcatty #2121 residual connect).
         const handshakeHint =
-          "\r\n[Mosh handshake failed: did not receive a valid MOSH CONNECT "
-          + "line from mosh-server. Confirm mosh-server is installed on the "
-          + "remote host, the SSH login succeeded, and UDP ports for mosh "
-          + "are reachable from this machine.]\r\n";
+          "\r\n[Mosh handshake failed during SSH startup: did not receive a valid "
+          + "MOSH CONNECT line from mosh-server. The UDP client was not started. "
+          + "Confirm the SSH login succeeded and mosh-server started correctly "
+          + "on the remote host.]\r\n";
         try {
           bufferData(handshakeHint);
           sessionLogStreamManager.appendData(sessionId, handshakeHint);
@@ -579,7 +579,7 @@ function createMoshSessionApi(ctx) {
             exitCode,
             signal,
             reason: "error",
-            error: "Mosh handshake failed: no MOSH CONNECT from mosh-server",
+            error: "Mosh SSH startup failed: no MOSH CONNECT from mosh-server (UDP client not started)",
           });
           closeTerminalOutputSession?.(sessionId);
           sessions.delete(sessionId);

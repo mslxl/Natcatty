@@ -251,6 +251,17 @@ test("startMoshSession handshake path sends the existing exit event on failure",
     dataChunks.some((chunk) => /Mosh handshake failed/i.test(chunk)),
     "renderer should receive an explicit handshake-failure hint",
   );
+  const handshakeHint = dataChunks.find((chunk) => /Mosh handshake failed/i.test(chunk));
+  assert.match(
+    handshakeHint,
+    /UDP client was not started/i,
+    "the hint should explain that UDP has not started yet",
+  );
+  assert.doesNotMatch(
+    handshakeHint,
+    /UDP ports.*reachable/i,
+    "an SSH bootstrap failure must not send users to UDP diagnostics",
+  );
 });
 
 test("startMoshSession writes the saved password when ssh prompts for one", async (t) => {
