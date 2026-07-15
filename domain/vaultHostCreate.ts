@@ -1,4 +1,4 @@
-import type { Host, HostProtocol } from './models';
+import type { Host, HostProtocol, ManagedSource } from './models';
 import { sanitizeHost } from './host';
 
 const DEFAULT_SSH_PORT = 22;
@@ -14,6 +14,7 @@ export interface VaultHostDraft {
   port?: unknown;
   username?: unknown;
   password?: unknown;
+  savePassword?: unknown;
   keyPath?: unknown;
   keypath?: unknown;
   group?: unknown;
@@ -25,7 +26,8 @@ export interface VaultHostDraft {
 export type VaultHostUpdatePatch = VaultHostDraft;
 
 export interface VaultHostUpdateOptions {
-  effectiveHost?: Host;
+  resolveEffectiveHost?: (host: Host) => Host;
+  managedSources?: ManagedSource[];
 }
 
 export interface VaultHostCreateIssue {
@@ -60,6 +62,15 @@ const parsePort = (raw: unknown): number | undefined => {
   if (!trimmed) return undefined;
   const port = parseInt(trimmed, 10);
   return Number.isFinite(port) && port >= 1 && port <= 65535 ? port : undefined;
+};
+
+const parseBoolean = (raw: unknown): boolean | undefined => {
+  if (typeof raw === 'boolean') return raw;
+  if (typeof raw !== 'string') return undefined;
+  const normalized = raw.trim().toLowerCase();
+  if (normalized === 'true' || normalized === '1' || normalized === 'yes') return true;
+  if (normalized === 'false' || normalized === '0' || normalized === 'no') return false;
+  return undefined;
 };
 
 const normalizeTags = (values: unknown[]): string[] => Array.from(
@@ -189,19 +200,17 @@ export function applyVaultHostUpdate(
   const port = firstProvided(source, ['port']);
   const username = firstProvided(source, ['username']);
   const password = firstProvided(source, ['password']);
+  const savePassword = firstProvided(source, ['savePassword']);
   const keyPath = firstProvided(source, ['keyPath', 'keypath']);
   const group = firstProvided(source, ['group']);
   const tags = firstProvided(source, ['tags']);
   const notes = firstProvided(source, ['notes']);
   const protocol = firstProvided(source, ['protocol']);
-  const provided = [label, hostname, port, username, password, keyPath, group, tags, notes, protocol]
+  const provided = [label, hostname, port, username, password, savePassword, keyPath, group, tags, notes, protocol]
     .some((entry) => entry.provided);
   if (!provided) return { ok: false, error: 'At least one host field is required.' };
 
   const current = existingHosts[hostIndex];
-  const effectiveCurrent = options.effectiveHost?.id === current.id
-    ? options.effectiveHost
-    : current;
   let updated: Host = { ...current };
 
   if (label.provided) {
@@ -223,6 +232,30 @@ export function applyVaultHostUpdate(
     }
     updated.port = parsedPort;
   }
+  if (group.provided) {
+    if (typeof group.value !== 'string') {
+      return { ok: false, error: 'group must be a string.' };
+    }
+    updated.group = normalizeGroupPath(group.value);
+  }
+  if (protocol.provided) {
+    const nextProtocol = normalizeProtocol(protocol.value);
+    if (!nextProtocol) {
+      return { ok: false, error: 'protocol must be ssh, telnet, or local.' };
+    }
+    updated.protocol = nextProtocol;
+  }
+  if (savePassword.provided) {
+    const nextSavePassword = parseBoolean(savePassword.value);
+    if (nextSavePassword === undefined) {
+      return { ok: false, error: 'savePassword must be true or false.' };
+    }
+    updated.savePassword = nextSavePassword;
+    if (!nextSavePassword) updated.password = undefined;
+  }
+
+  const effectiveCurrent = options.resolveEffectiveHost?.(updated) ?? updated;
+
   if (username.provided) {
     if (typeof username.value !== 'string') {
       return { ok: false, error: 'username must be a string.' };
@@ -243,10 +276,13 @@ export function applyVaultHostUpdate(
       };
     }
     updated.password = password.value || undefined;
+    if (!password.value) {
+      updated.savePassword = false;
+    }
     const keyPathIsEmpty = keyPath.provided
       && typeof keyPath.value === 'string'
       && !keyPath.value.trim();
-    if (password.value && (!keyPath.provided || keyPathIsEmpty)) {
+    if (password.value && keyPathIsEmpty) {
       updated.authMethod = 'password';
       updated.authPolicyVersion = 1;
       updated.identityId = '';
@@ -260,24 +296,25 @@ export function applyVaultHostUpdate(
       return { ok: false, error: 'keyPath must be a string.' };
     }
     const nextKeyPath = keyPath.value.trim();
-    updated.identityFilePaths = nextKeyPath ? [nextKeyPath] : undefined;
+    updated.identityFilePaths = nextKeyPath ? [nextKeyPath] : [];
     if (nextKeyPath) {
       updated.identityFileId = undefined;
       updated.identityId = '';
       updated.authMethod = 'key';
       updated.authPolicyVersion = 1;
       updated.useSshAgent = false;
-    } else if (!updated.identityId && !updated.identityFileId && updated.authMethod === 'key') {
+    } else if (
+      !updated.identityId
+      && !updated.identityFileId
+      && !effectiveCurrent.identityId
+      && !effectiveCurrent.identityFileId
+      && updated.authMethod !== 'password'
+      && effectiveCurrent.authMethod === 'key'
+    ) {
       updated.authMethod = 'auto';
       updated.authPolicyVersion = 1;
       updated.useSshAgent = undefined;
     }
-  }
-  if (group.provided) {
-    if (typeof group.value !== 'string') {
-      return { ok: false, error: 'group must be a string.' };
-    }
-    updated.group = normalizeGroupPath(group.value);
   }
   if (tags.provided) {
     const nextTags = parseTags(tags.value);
@@ -290,12 +327,20 @@ export function applyVaultHostUpdate(
     }
     updated.notes = notes.value.trim() || undefined;
   }
-  if (protocol.provided) {
-    const nextProtocol = normalizeProtocol(protocol.value);
-    if (!nextProtocol) {
-      return { ok: false, error: 'protocol must be ssh, telnet, or local.' };
+  if (options.managedSources) {
+    const targetManagedSource = options.managedSources
+      .filter((sourceInfo) => (
+        updated.group === sourceInfo.groupName
+        || updated.group?.startsWith(`${sourceInfo.groupName}/`)
+      ))
+      .sort((a, b) => b.groupName.length - a.groupName.length)[0];
+    const canBeManaged = !updated.protocol || updated.protocol === 'ssh';
+    if (targetManagedSource && canBeManaged) {
+      updated.label = updated.label.replace(/\s/g, '');
+      updated.managedSourceId = targetManagedSource.id;
+    } else if (options.managedSources.length > 0 || !canBeManaged) {
+      updated.managedSourceId = undefined;
     }
-    updated.protocol = nextProtocol;
   }
 
   updated = sanitizeHost(updated);

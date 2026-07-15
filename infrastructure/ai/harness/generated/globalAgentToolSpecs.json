@@ -664,12 +664,17 @@
       "password": {
         "type": "string",
         "optional": true,
-        "description": "New password. Empty string clears it."
+        "description": "New password without changing the current login method. Empty string clears it and blocks inherited saved passwords. Pair with keyPath set to an empty string to switch from key login to password login."
+      },
+      "savePassword": {
+        "type": "string",
+        "optional": true,
+        "description": "Set to true or false to enable or disable saved passwords. Pass true when setting a new password after clearing one."
       },
       "keyPath": {
         "type": "string",
         "optional": true,
-        "description": "Local private-key file path. Empty string clears the referenced path."
+        "description": "Local private-key file path. Empty string clears and blocks an inherited path."
       },
       "keypath": {
         "type": "string",

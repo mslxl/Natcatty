@@ -382,6 +382,38 @@ describe('handleVaultAgentOp vault hosts', () => {
     assert.equal(identityDeps.getHosts()[0]?.identityId, '');
   });
 
+  it('host.update aligns managed-source ownership when moving groups', async () => {
+    const deps = createDeps({
+      hosts: [{
+        id: 'host-1',
+        label: 'managed host',
+        hostname: '10.0.0.1',
+        username: 'root',
+        group: 'managed',
+        tags: [],
+        os: 'linux',
+        managedSourceId: 'source-1',
+      }],
+      managedSources: [{
+        id: 'source-1',
+        type: 'ssh_config',
+        filePath: '~/.ssh/config',
+        groupName: 'managed',
+        lastSyncedAt: 1,
+      }],
+    });
+
+    const result = await handleVaultAgentOp(
+      'host.update',
+      { hostId: 'host-1', group: '' },
+      deps,
+    );
+
+    assert.equal(result.ok, true);
+    assert.equal(deps.getHosts()[0]?.group, undefined);
+    assert.equal(deps.getHosts()[0]?.managedSourceId, undefined);
+  });
+
   it('host.delete removes the requested host', async () => {
     const deps = createDeps({
       hosts: [

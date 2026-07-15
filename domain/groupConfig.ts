@@ -209,6 +209,7 @@ export function applyGroupDefaults(
 
   for (const key of INHERITABLE_KEYS) {
     if (shouldSkipGroupSshCredentialBundle && SSH_CREDENTIAL_KEYS.has(key)) continue;
+    if (key === 'password' && effective.savePassword === false) continue;
     if (key === 'telnetIdentityId' && hostHasManualTelnetCredentials) continue;
     if (key === 'proxyProfileId') {
       if (host.proxyConfig !== undefined || !groupDefaults.proxyProfileId) continue;

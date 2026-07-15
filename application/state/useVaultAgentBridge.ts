@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import type { Host, Identity, PortForwardingRule, Snippet, SSHKey, TerminalSettings, VaultNote } from '../../domain/models';
+import type { Host, Identity, ManagedSource, PortForwardingRule, Snippet, SSHKey, TerminalSettings, VaultNote } from '../../domain/models';
 import {
   handleVaultAgentOp,
   registerVaultAgentHandler,
@@ -13,6 +13,7 @@ export interface UseVaultAgentBridgeInput {
   portForwardingRules: PortForwardingRule[];
   keys: SSHKey[];
   identities: Identity[];
+  managedSources: ManagedSource[];
   terminalSettings?: Pick<TerminalSettings, 'keepaliveInterval' | 'keepaliveCountMax'>;
   resolveEffectiveHost: (host: Host) => Host;
   updateHosts: (hosts: Host[]) => void;
@@ -81,6 +82,7 @@ export function useVaultAgentBridge(input: UseVaultAgentBridgeInput): void {
         portForwardingRules: current.portForwardingRules,
         keys: current.keys,
         identities: current.identities,
+        managedSources: current.managedSources,
         terminalSettings: current.terminalSettings,
         resolveEffectiveHost: current.resolveEffectiveHost,
         updateHostNotes: (hostId, notes) => {

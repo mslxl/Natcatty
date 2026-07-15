@@ -1,4 +1,4 @@
-import type { Host, Identity, PortForwardingRule, Snippet, SSHKey, TerminalSettings, VaultNote } from '../../domain/models';
+import type { Host, Identity, ManagedSource, PortForwardingRule, Snippet, SSHKey, TerminalSettings, VaultNote } from '../../domain/models';
 import {
   normalizeVaultNotes,
   sanitizeNoteTitle,
@@ -291,6 +291,7 @@ export interface VaultAgentApiDeps {
   portForwardingRules: PortForwardingRule[];
   keys: SSHKey[];
   identities: Identity[];
+  managedSources?: ManagedSource[];
   terminalSettings?: Pick<TerminalSettings, 'keepaliveInterval' | 'keepaliveCountMax'>;
   resolveEffectiveHost: (host: Host) => Host;
   updateHostNotes: (hostId: string, notes: string) => void;
@@ -496,13 +497,15 @@ export async function handleVaultAgentOp(
       const hostId = String(params.hostId || '').trim();
       if (!hostId) return { ok: false, error: 'hostId is required.' };
       const currentHosts = deps.getHosts();
-      const currentHost = currentHosts.find((host) => host.id === hostId);
       const updated = applyVaultHostUpdate(
         currentHosts,
         deps.getCustomGroups(),
         hostId,
         params,
-        { effectiveHost: currentHost ? deps.resolveEffectiveHost(currentHost) : undefined },
+        {
+          resolveEffectiveHost: deps.resolveEffectiveHost,
+          managedSources: deps.managedSources,
+        },
       );
       if (!updated.ok) return updated;
 
