@@ -33,6 +33,8 @@ export interface KeyboardInteractiveRequest {
   savedPassword?: string | null;
   /** When false, hide save-password UI (second-factor / EDR challenges). Default true. */
   allowSavePassword?: boolean;
+  /** When true, offer to persist host-level MFA mode for next connections. */
+  suggestEnableMfa?: boolean;
 }
 
 type KeyboardInteractiveServerPromptInput = Pick<
@@ -101,7 +103,12 @@ const isAPasswordPrompt = (prompt: KeyboardInteractivePrompt) => {
 
 interface KeyboardInteractiveModalProps {
   request: KeyboardInteractiveRequest | null;
-  onSubmit: (requestId: string, responses: string[], savePassword?: string) => void;
+  onSubmit: (
+    requestId: string,
+    responses: string[],
+    savePassword?: string,
+    enableRequiresMfa?: boolean,
+  ) => void;
   onCancel: (requestId: string) => void;
 }
 
@@ -115,6 +122,7 @@ export const KeyboardInteractiveModal: React.FC<KeyboardInteractiveModalProps> =
   const [showPasswords, setShowPasswords] = useState<boolean[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [savePassword, setSavePassword] = useState(false);
+  const [enableRequiresMfa, setEnableRequiresMfa] = useState(false);
 
   // Index of the first password prompt (if any)
   const passwordPromptIndex = useMemo(() => {
@@ -134,6 +142,8 @@ export const KeyboardInteractiveModal: React.FC<KeyboardInteractiveModalProps> =
       setShowPasswords(request.prompts.map(() => false));
       setIsSubmitting(false);
       setSavePassword(false);
+      // Default the MFA host flag on when we detect secondary wording — user can uncheck.
+      setEnableRequiresMfa(!!request.suggestEnableMfa);
     }
   }, [request, passwordPromptIndex]);
 
@@ -162,8 +172,22 @@ export const KeyboardInteractiveModal: React.FC<KeyboardInteractiveModalProps> =
       canSavePassword && savePassword && passwordPromptIndex >= 0
         ? responses[passwordPromptIndex]
         : undefined;
-    onSubmit(request.requestId, responses, passwordToSave);
-  }, [request, responses, onSubmit, isSubmitting, savePassword, passwordPromptIndex, canSavePassword]);
+    onSubmit(
+      request.requestId,
+      responses,
+      passwordToSave,
+      request.suggestEnableMfa ? enableRequiresMfa : false,
+    );
+  }, [
+    request,
+    responses,
+    onSubmit,
+    isSubmitting,
+    savePassword,
+    passwordPromptIndex,
+    canSavePassword,
+    enableRequiresMfa,
+  ]);
 
   const handleCancel = useCallback(() => {
     if (!request) return;
@@ -268,6 +292,21 @@ export const KeyboardInteractiveModal: React.FC<KeyboardInteractiveModalProps> =
               </div>
             );
           })}
+
+          {request.suggestEnableMfa && (
+            <label className="flex items-start gap-2 cursor-pointer select-none rounded-md border border-border/60 bg-muted/30 px-3 py-2">
+              <input
+                type="checkbox"
+                checked={enableRequiresMfa}
+                onChange={(e) => setEnableRequiresMfa(e.target.checked)}
+                disabled={isSubmitting}
+                className="mt-0.5 accent-primary"
+              />
+              <span className="text-xs text-muted-foreground leading-snug">
+                {t("keyboard.interactive.enableMfa")}
+              </span>
+            </label>
+          )}
         </div>
 
         <div className="flex items-center justify-between pt-2">

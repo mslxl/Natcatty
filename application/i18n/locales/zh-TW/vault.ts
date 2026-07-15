@@ -209,6 +209,8 @@ export const zhTWVaultMessages: Messages = {
   'hostDetails.auth.certificate': '憑證',
   'hostDetails.auth.certificate.desc': '使用選取的 SSH 憑證；如果同時儲存了密碼，可在失敗後嘗試密碼。',
   'hostDetails.auth.credentialRequired': '儲存這種登入方式前，請先選擇金鑰或憑證。',
+  'hostDetails.auth.requiresMfa': '二次驗證（MFA / EDR）',
+  'hostDetails.auth.requiresMfa.desc': '公司 EDR、二次密碼等場景請開啟。開啟後優先走鍵盤互動認證，避免略過二次驗證。',
   'hostDetails.identity.suggestions': '身份',
   'hostDetails.identity.missing': '身份不存在',
   'hostDetails.credential.keyCertificate': '金鑰 / 憑證 / 本機金鑰',

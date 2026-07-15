@@ -394,6 +394,8 @@ declare global {
         savedPassword?: string | null;
         /** When false, UI must not offer saving the response as the host password. */
         allowSavePassword?: boolean;
+        /** When true, UI may offer enabling host-level MFA mode for next logins. */
+        suggestEnableMfa?: boolean;
         scope?: "terminal" | "external";
       }) => void
     ): () => void;

@@ -196,6 +196,7 @@ function createExecCommandApi(ctx) {
             passphrase: connectOpts.passphrase,
             agent: connectOpts.agent,
             username: connectOpts.username,
+            requiresMfa: !!payload.requiresMfa,
             logPrefix: "[SSH Exec]",
             defaultKeys,
             sshAgentSocketOverride: fallbackAgentSocket,
@@ -215,6 +216,7 @@ function createExecCommandApi(ctx) {
             password: payload.password,
             logPrefix: "[SSH Exec]",
             scope: "external",
+            requiresMfa: !!payload.requiresMfa,
             getAuthBanner: () => authBanner,
             shouldSkipAutoFill: () => shouldSkipKiPasswordAutoFill(execAuthPhase),
           }));

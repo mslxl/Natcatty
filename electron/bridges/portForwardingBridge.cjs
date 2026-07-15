@@ -125,6 +125,7 @@ async function startPortForward(event, payload) {
     identitiesOnly,
     addKeysToAgent,
     useKeychain,
+    requiresMfa,
     legacyAlgorithms,
     skipEcdsaHostKey,
     algorithmOverrides,
@@ -299,6 +300,7 @@ async function startPortForward(event, payload) {
       passphrase: connectOpts.passphrase,
       agent: connectOpts.agent,
       username: connectOpts.username,
+      requiresMfa: !!requiresMfa,
       logPrefix: "[PortForward]",
       defaultKeys,
       sshAgentSocketOverride: fallbackAgentSocket,
@@ -417,6 +419,7 @@ async function startPortForward(event, payload) {
     password,
     logPrefix: "[PortForward]",
     scope: "external",
+    requiresMfa: !!requiresMfa,
     getAuthBanner: () => authBanner,
     shouldSkipAutoFill: () => shouldSkipKiPasswordAutoFill(portForwardAuthPhase),
   }));

@@ -814,6 +814,8 @@ export const zhTWTerminalMessages: Messages = {
   'keyboard.interactive.submit': '提交',
   'keyboard.interactive.verifying': '驗證中...',
   'keyboard.interactive.savePassword': '儲存密碼',
+  'keyboard.interactive.enableMfa': '記住這台主機：下次起按二次驗證（MFA / EDR）方式登入',
+  'keyboard.interactive.mfaEnabled': '已為這台主機開啟二次驗證模式',
 
   // Passphrase Modal for encrypted SSH keys
   'passphrase.title': 'SSH 金鑰密碼',

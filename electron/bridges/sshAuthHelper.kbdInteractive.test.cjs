@@ -723,7 +723,7 @@ test("buildAuthHandler allows consecutive keyboard-interactive factors on the dy
   assert.equal(auth.authPhase.hadPartialSuccess, true);
 });
 
-test("buildAuthHandler prefers keyboard-interactive over password on explicit password auth", () => {
+test("buildAuthHandler prefers password over keyboard-interactive by default", () => {
   const auth = buildAuthHandler({
     authMethod: "password",
     username: "alice",
@@ -734,15 +734,31 @@ test("buildAuthHandler prefers keyboard-interactive over password on explicit pa
   auth.authHandler(null, null, (method) => offered.push(method));
   auth.authHandler(["password", "keyboard-interactive"], false, (method) => offered.push(method));
 
+  assert.deepEqual(offered, ["none", "password"]);
+});
+
+test("buildAuthHandler prefers keyboard-interactive over password when requiresMfa is set", () => {
+  const auth = buildAuthHandler({
+    authMethod: "password",
+    username: "alice",
+    password: "login-password",
+    requiresMfa: true,
+  });
+
+  const offered = [];
+  auth.authHandler(null, null, (method) => offered.push(method));
+  auth.authHandler(["password", "keyboard-interactive"], false, (method) => offered.push(method));
+
   assert.deepEqual(offered, ["none", "keyboard-interactive"]);
 });
 
-test("buildAuthHandler prefers keyboard-interactive over password on the dynamic path", () => {
+test("buildAuthHandler prefers keyboard-interactive over password on the dynamic path when requiresMfa is set", () => {
   const auth = buildAuthHandler({
     authMethod: "auto",
     username: "alice",
     password: "login-password",
     allowAgentFallback: false,
+    requiresMfa: true,
   });
 
   const offered = [];
@@ -925,7 +941,8 @@ test("buildAuthHandler simple password path tracks partialSuccess via function h
   auth.authHandler(["password", "keyboard-interactive"], false, (method) => offered.push(method));
   auth.authHandler(["keyboard-interactive"], true, (method) => offered.push(method));
 
-  assert.deepEqual(offered, ["none", "keyboard-interactive", "keyboard-interactive"]);
+  // Default: password first; after partial success KI can still run as second factor.
+  assert.deepEqual(offered, ["none", "password", "keyboard-interactive"]);
   assert.equal(auth.authPhase.hadPartialSuccess, true);
 });
 
@@ -963,6 +980,60 @@ test("shouldPrefillSavedPassword keeps multi-prompt Duo/two-factor password pref
     ),
     false,
   );
+});
+
+test("createKeyboardInteractiveHandler suggests enabling host MFA for Secondary Authentication Password (#2150)", () => {
+  const { handler, sent } = (() => {
+    const sent = [];
+    const handler = createKeyboardInteractiveHandler({
+      sender: {
+        id: 1,
+        isDestroyed: () => false,
+        send: (channel, payload) => sent.push({ channel, payload }),
+      },
+      sessionId: "s1",
+      hostname: "host",
+      password: "saved",
+      requiresMfa: false,
+    });
+    return { handler, sent };
+  })();
+
+  handler(
+    "Keyboard-interactive authentication prompts from server",
+    "为保障主机安全，请输入二次认证密码",
+    "",
+    [{ prompt: "Secondary Authentication Password:", echo: false }],
+    () => {},
+  );
+
+  assert.equal(sent[0].payload.suggestEnableMfa, true);
+  assert.equal(sent[0].payload.allowSavePassword, false);
+});
+
+test("createKeyboardInteractiveHandler does not suggest MFA when host already has requiresMfa", () => {
+  const sent = [];
+  const handler = createKeyboardInteractiveHandler({
+    sender: {
+      id: 1,
+      isDestroyed: () => false,
+      send: (channel, payload) => sent.push({ channel, payload }),
+    },
+    sessionId: "s1",
+    hostname: "host",
+    password: "saved",
+    requiresMfa: true,
+  });
+
+  handler(
+    "Keyboard-interactive authentication prompts from server",
+    "为保障主机安全，请输入二次认证密码",
+    "",
+    [{ prompt: "Secondary Authentication Password:", echo: false }],
+    () => {},
+  );
+
+  assert.equal(sent[0].payload.suggestEnableMfa, false);
 });
 
 test("createKeyboardInteractiveHandler shows modal for Secondary Authentication Password banner (#2150)", () => {

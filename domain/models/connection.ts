@@ -160,6 +160,10 @@ export interface Host {
   // Version 1 distinguishes the explicit per-host login choices from the
   // legacy "password" default, which did not mean password-only.
   authPolicyVersion?: 1;
+  // When true, prefer keyboard-interactive before the SSH password method so
+  // PAM/EDR secondary factors hanging on KI are not skipped. Default/off keeps
+  // password-first for ordinary hosts (see #2150 / #2217).
+  requiresMfa?: boolean;
   // Use the local SSH agent for login. This is separate from agentForwarding,
   // which exposes the local agent to the remote host after login.
   useSshAgent?: boolean;

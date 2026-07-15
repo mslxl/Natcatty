@@ -814,6 +814,8 @@ export const zhCNTerminalMessages: Messages = {
   'keyboard.interactive.submit': '提交',
   'keyboard.interactive.verifying': '验证中...',
   'keyboard.interactive.savePassword': '保存密码',
+  'keyboard.interactive.enableMfa': '记住这台主机：下次起按二次验证（MFA / EDR）方式登录',
+  'keyboard.interactive.mfaEnabled': '已为这台主机开启二次验证模式',
 
   // Passphrase Modal for encrypted SSH keys
   'passphrase.title': 'SSH 密钥密码',

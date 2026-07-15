@@ -764,6 +764,8 @@ export const enTerminalMessages: Messages = {
   'keyboard.interactive.submit': 'Submit',
   'keyboard.interactive.verifying': 'Verifying...',
   'keyboard.interactive.savePassword': 'Save password',
+  'keyboard.interactive.enableMfa': 'Remember for this host: always treat as secondary verification (MFA / EDR)',
+  'keyboard.interactive.mfaEnabled': 'Secondary verification mode saved for this host',
 
   // Passphrase Modal for encrypted SSH keys
   'passphrase.title': 'SSH Key Passphrase',

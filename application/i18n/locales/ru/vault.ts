@@ -683,6 +683,8 @@ export const ruVaultMessages: Messages = {
   'hostDetails.auth.certificate': 'Сертификат',
   'hostDetails.auth.certificate.desc': 'Использовать выбранный SSH-сертификат и сохранённый пароль как запасной вариант.',
   'hostDetails.auth.credentialRequired': 'Перед сохранением этого способа входа выберите ключ или сертификат.',
+  'hostDetails.auth.requiresMfa': 'Доп. проверка (MFA / EDR)',
+  'hostDetails.auth.requiresMfa.desc': 'Включите для хостов с вторым паролем или кодом после входа. Netcatty предпочтёт keyboard-interactive, чтобы не пропустить этот шаг.',
   'hostDetails.identity.suggestions': 'Идентификаторы',
   'hostDetails.identity.missing': 'Идентификатор не найден',
   'hostDetails.credential.keyCertificate': 'Ключ, сертификат, локальный файл ключа',

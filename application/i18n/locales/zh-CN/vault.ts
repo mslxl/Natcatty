@@ -209,6 +209,8 @@ export const zhCNVaultMessages: Messages = {
   'hostDetails.auth.certificate': '证书',
   'hostDetails.auth.certificate.desc': '使用选中的 SSH 证书；如果同时保存了密码，可在失败后尝试密码。',
   'hostDetails.auth.credentialRequired': '保存这种登录方式前，请先选择密钥或证书。',
+  'hostDetails.auth.requiresMfa': '二次验证（MFA / EDR）',
+  'hostDetails.auth.requiresMfa.desc': '公司 EDR、二次密码等场景请打开。打开后优先走键盘交互认证，避免跳过二次验证。',
   'hostDetails.identity.suggestions': '身份',
   'hostDetails.identity.missing': '身份不存在',
   'hostDetails.credential.keyCertificate': '密钥 / 证书 / 本地密钥',

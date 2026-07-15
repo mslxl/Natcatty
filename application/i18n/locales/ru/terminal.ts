@@ -769,6 +769,8 @@ export const ruTerminalMessages: Messages = {
   'keyboard.interactive.submit': 'Отправить',
   'keyboard.interactive.verifying': 'Проверка...',
   'keyboard.interactive.savePassword': 'Сохранить пароль',
+  'keyboard.interactive.enableMfa': 'Запомнить для этого хоста: всегда считать вход MFA / EDR',
+  'keyboard.interactive.mfaEnabled': 'Режим дополнительной проверки сохранён для этого хоста',
 
   // Passphrase Modal for encrypted SSH keys
   'passphrase.title': 'Парольная фраза SSH-ключа',

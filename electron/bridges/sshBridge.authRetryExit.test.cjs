@@ -344,10 +344,11 @@ test("terminal SSH supports consecutive keyboard-interactive factors (#2150)", a
   );
   assert.equal(promptEvents[0].payload.savedPassword, null);
   assert.equal(promptEvents[0].payload.allowSavePassword, false);
+  assert.equal(promptEvents[0].payload.suggestEnableMfa, true);
   assert.equal(promptEvents[0].payload.scope, "terminal");
 });
 
-test("terminal SSH prefers keyboard-interactive when password and keyboard-interactive are both advertised", async (t) => {
+test("terminal SSH prefers keyboard-interactive when requiresMfa and both methods are advertised", async (t) => {
   const { bridge, MockSSHClient } = loadBridgeWithAuthRetryMocks(t, {
     connectEvents: ["password-and-keyboard-interactive"],
   });
@@ -378,6 +379,7 @@ test("terminal SSH prefers keyboard-interactive when password and keyboard-inter
       username: "alice",
       authMethod: "password",
       password: "login-password",
+      requiresMfa: true,
       useSshAgent: false,
       port: 22,
       knownHosts: [],

@@ -651,6 +651,8 @@ export const enVaultMessages: Messages = {
   'hostDetails.auth.certificate': 'Certificate',
   'hostDetails.auth.certificate.desc': 'Use the selected SSH certificate, with the saved password as a fallback when present.',
   'hostDetails.auth.credentialRequired': 'Select a key or certificate before saving this login method.',
+  'hostDetails.auth.requiresMfa': 'Secondary verification (MFA / EDR)',
+  'hostDetails.auth.requiresMfa.desc': 'Turn this on for hosts that ask for a second password or code after login. Netcatty will prefer keyboard-interactive auth so that step is not skipped.',
   'hostDetails.identity.suggestions': 'Identities',
   'hostDetails.identity.missing': 'Identity not found',
   'hostDetails.credential.keyCertificate': 'Key, Certificate, Local Key File',

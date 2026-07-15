@@ -962,7 +962,9 @@ function createStartSessionApi(ctx) {
               });
             }
             if (connectOpts.password) {
-              authMethods.push({ type: "keyboard-interactive", id: "keyboard-interactive" });
+              if (options.requiresMfa) {
+                authMethods.push({ type: "keyboard-interactive", id: "keyboard-interactive" });
+              }
               authMethods.push({ type: "password", id: "password" });
             }
           } else {
@@ -976,9 +978,12 @@ function createStartSessionApi(ctx) {
               authMethods.push({ type: "agent", id: "agent" });
             }
 
-            // Then try password if available (explicit user choice)
+            // Then try password if available (explicit user choice).
+            // MFA hosts put keyboard-interactive first so EDR secondary factors are not skipped.
             if (connectOpts.password) {
-              authMethods.push({ type: "keyboard-interactive", id: "keyboard-interactive" });
+              if (options.requiresMfa) {
+                authMethods.push({ type: "keyboard-interactive", id: "keyboard-interactive" });
+              }
               authMethods.push({ type: "password", id: "password" });
             }
 
@@ -1011,8 +1016,8 @@ function createStartSessionApi(ctx) {
             });
           }
 
-          // Finally try keyboard-interactive when it was not already placed
-          // before password for PAM/EDR password prompts.
+          // Keyboard-interactive as last resort, or already placed before password
+          // when this host has requiresMfa enabled.
           if (!authMethods.some((method) => method.type === "keyboard-interactive")) {
             authMethods.push({ type: "keyboard-interactive", id: "keyboard-interactive" });
           }
@@ -1666,6 +1671,7 @@ function createStartSessionApi(ctx) {
             password: options.password,
             logPrefix,
             scope: "terminal",
+            requiresMfa: !!options.requiresMfa,
             getAuthBanner: () => authBanner,
             shouldSkipAutoFill: () => shouldSkipKiPasswordAutoFill(authPhase),
             onAutoFill: () => sendProgress(
@@ -1696,11 +1702,21 @@ function createStartSessionApi(ctx) {
             // Try agent FIRST (this is what regular SSH does - it checks ssh-agent before key files)
             if (connectOpts.agent) authMethods.push("agent");
             if (connectOpts.privateKey) authMethods.push("publickey");
-            if (connectOpts.password) authMethods.push("keyboard-interactive", "password");
+            if (connectOpts.password) {
+              if (options.requiresMfa) {
+                authMethods.push("keyboard-interactive", "password");
+              } else {
+                authMethods.push("password");
+              }
+            }
             authMethods.push("keyboard-interactive");
             const dedupedAuthMethods = Array.from(new Set(authMethods));
             connectOpts.authHandler = dedupedAuthMethods;
-            log("Using simple array authHandler", { authMethods: dedupedAuthMethods, usedDefaultKeyAsPrimary });
+            log("Using simple array authHandler", {
+              authMethods: dedupedAuthMethods,
+              usedDefaultKeyAsPrimary,
+              requiresMfa: !!options.requiresMfa,
+            });
           }
           // If authHandler is a function, it already handles keyboard-interactive
 

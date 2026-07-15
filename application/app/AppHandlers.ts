@@ -227,28 +227,58 @@ export function handleEscapeKeyDownImpl(getCtx: AppContextGetter, e: KeyboardEve
   }
 }
 
-export function handleKeyboardInteractiveSubmitImpl(getCtx: AppContextGetter, requestId: string, responses: string[], savePassword?: string) {
-  const { hosts, keyboardInteractiveQueue, netcattyBridge, sessions, setKeyboardInteractiveQueue, updateHosts } = getCtx();
+export function handleKeyboardInteractiveSubmitImpl(
+  getCtx: AppContextGetter,
+  requestId: string,
+  responses: string[],
+  savePassword?: string,
+  enableRequiresMfa?: boolean,
+) {
+  const {
+    hosts,
+    keyboardInteractiveQueue,
+    netcattyBridge,
+    sessions,
+    setKeyboardInteractiveQueue,
+    updateHosts,
+    t,
+    toast,
+  } = getCtx();
 {
     const bridge = netcattyBridge.get();
     if (bridge?.respondKeyboardInteractive) {
       void bridge.respondKeyboardInteractive(requestId, responses, false);
     }
+    const request = keyboardInteractiveQueue.find(r => r.requestId === requestId);
+    const session = request?.sessionId
+      ? sessions.find(s => s.id === request.sessionId)
+      : undefined;
+    // Only mutate the destination host when the prompting hostname matches —
+    // jump-host challenges must not rewrite the target host.
+    const canUpdateDestinationHost = !!(
+      session?.hostId
+      && (!request?.hostname || request.hostname === session.hostname)
+    );
     // Save password to host if requested — never for second-factor / EDR prompts
     // (allowSavePassword === false) so a secondary secret cannot overwrite the
     // host login password (#2150 / Codex review on #2151).
-    if (savePassword) {
-      const request = keyboardInteractiveQueue.find(r => r.requestId === requestId);
-      if (request?.sessionId && request.allowSavePassword !== false) {
-        const session = sessions.find(s => s.id === request.sessionId);
-        // Only save when the prompting hostname matches the session's host,
-        // to avoid overwriting the destination host's password with a jump host's password
-        if (session?.hostId && (!request.hostname || request.hostname === session.hostname)) {
-          const host = hosts.find(h => h.id === session.hostId);
-          if (host) {
-            updateHosts(hosts.map(h => h.id === host.id ? { ...h, password: savePassword, savePassword: true } : h));
-          }
-        }
+    if (savePassword && canUpdateDestinationHost && request?.allowSavePassword !== false) {
+      const host = hosts.find(h => h.id === session.hostId);
+      if (host) {
+        updateHosts(hosts.map(h => h.id === host.id ? { ...h, password: savePassword, savePassword: true } : h));
+      }
+    }
+    // Persist host-level MFA mode when the secondary-auth modal suggested it
+    // and the user left the checkbox on (#2150 / #2217).
+    if (enableRequiresMfa && canUpdateDestinationHost) {
+      const host = hosts.find(h => h.id === session.hostId);
+      if (host && !host.requiresMfa) {
+        updateHosts(hosts.map(h => h.id === host.id ? { ...h, requiresMfa: true } : h));
+        toast?.info?.(
+          typeof t === "function"
+            ? t("keyboard.interactive.mfaEnabled")
+            : "Secondary verification mode saved for this host",
+        );
       }
     }
     // Remove from queue by requestId

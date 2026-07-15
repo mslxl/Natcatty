@@ -204,6 +204,7 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
         hostname: request.hostname,
         savedPassword: request.savedPassword,
         allowSavePassword: request.allowSavePassword !== false,
+        suggestEnableMfa: request.suggestEnableMfa === true,
       }]);
     });
 
