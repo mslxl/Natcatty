@@ -96,11 +96,11 @@ test("serializeHostsToSshConfig rejects line injection in serialized fields", ()
   }
 });
 
-test("serializeHostsToSshConfig rejects Host pattern injection", () => {
-  assert.throws(
-    () => serializeHostsToSshConfig([makeHost({ label: "*" })]),
-    /pattern or separator/i,
-  );
+test("serializeHostsToSshConfig encodes Host pattern characters as literal aliases", () => {
+  const config = serializeHostsToSshConfig([makeHost({ label: "prod*@example" })]);
+
+  assert.match(config, /^Host prod-2a--40-example$/m);
+  assert.doesNotMatch(config, /^Host .*[*@]/m);
 });
 
 test("serializeHostsToSshConfig rejects ProxyJump separator injection", () => {

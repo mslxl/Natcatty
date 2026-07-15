@@ -7,7 +7,8 @@ const MANAGED_BLOCK_END = "# END NETCATTY MANAGED";
 const UNSAFE_SSH_CONFIG_VALUE = /[\r\n\0]/;
 const UNSAFE_SSH_PROXY_JUMP_HOSTNAME = /[\s,@#]/;
 const UNSAFE_SSH_PROXY_JUMP_USERNAME = /[\s,#]/;
-const UNSAFE_SSH_HOST_ALIAS = /[*?!,[\]@#]/;
+const SSH_HOST_ALIAS_ESCAPE = /[*?!,[\]@#]/g;
+const UNSAFE_SSH_HOST_MATCH_LITERAL = /[\s*?!,[\]@#]/;
 
 const assertSafeSshConfigValue = (value: string, field: string): void => {
   if (UNSAFE_SSH_CONFIG_VALUE.test(value)) {
@@ -15,12 +16,19 @@ const assertSafeSshConfigValue = (value: string, field: string): void => {
   }
 };
 
-const assertSafeSshHostAlias = (value: string): void => {
-  assertSafeSshConfigValue(value, "Host alias");
-  if (UNSAFE_SSH_HOST_ALIAS.test(value)) {
-    throw new Error("Host alias contains SSH pattern or separator characters.");
-  }
+export const toSafeSshHostAlias = (label: string, hostname: string): string => {
+  assertSafeSshConfigValue(label, "Host label");
+  assertSafeSshConfigValue(hostname, "Host hostname");
+  const alias = label.replace(/\s/g, '') || hostname.replace(/\s/g, '');
+  if (!alias) throw new Error("Host alias must not be empty.");
+  return alias.replace(
+    SSH_HOST_ALIAS_ESCAPE,
+    (character) => `-${character.codePointAt(0)?.toString(16)}-`,
+  );
 };
+
+export const isSafeSshHostMatchLiteral = (value: string): boolean =>
+  !UNSAFE_SSH_CONFIG_VALUE.test(value) && !UNSAFE_SSH_HOST_MATCH_LITERAL.test(value);
 
 const assertSafeProxyJumpHostname = (value: string): void => {
   assertSafeSshConfigValue(value, "Jump host hostname");
@@ -66,9 +74,8 @@ const serializeJumpHost = (host: Host, managedHostIds: Set<string>): string => {
   // and sanitize it by removing spaces. Otherwise use hostname directly.
   let hostPart: string;
   if (managedHostIds.has(host.id) && host.label) {
-    // Use sanitized label (same as the Host block alias)
-    hostPart = host.label.replace(/\s/g, '') || host.hostname;
-    assertSafeSshHostAlias(hostPart);
+    // Use the same literal-safe alias as the Host block.
+    hostPart = toSafeSshHostAlias(host.label, host.hostname);
   } else {
     // Jump host is outside managed config, use hostname directly
     hostPart = host.hostname;
@@ -141,9 +148,8 @@ export const serializeHostsToSshConfig = (hosts: Host[], allHosts?: Host[]): str
     assertSafeSshConfigValue(host.username, "Host username");
 
     const lines: string[] = [];
-    // Sanitize alias by removing spaces (SSH config doesn't allow spaces in Host patterns)
-    const alias = (host.label?.replace(/\s/g, '') || host.hostname);
-    assertSafeSshHostAlias(alias);
+    // Encode SSH pattern characters so UI display names remain usable as literal aliases.
+    const alias = toSafeSshHostAlias(host.label, host.hostname);
     lines.push(`Host ${alias}`);
 
     if (host.hostname !== alias) {

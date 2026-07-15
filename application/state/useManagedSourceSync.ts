@@ -3,6 +3,8 @@ import { Host, ManagedSource } from "../../domain/models";
 import {
   serializeHostsToSshConfig,
   mergeWithExistingSshConfig,
+  toSafeSshHostAlias,
+  isSafeSshHostMatchLiteral,
 } from "../../domain/sshConfigSerializer";
 import { netcattyBridge } from "../../infrastructure/services/netcattyBridge";
 
@@ -87,9 +89,11 @@ export const useManagedSourceSync = ({
         for (const host of managedHosts) {
           if (!host.protocol || host.protocol === "ssh") {
             // Add both hostname and sanitized label (alias) for matching
-            managedHostnameSet.add(host.hostname.toLowerCase());
+            if (isSafeSshHostMatchLiteral(host.hostname)) {
+              managedHostnameSet.add(host.hostname.toLowerCase());
+            }
             if (host.label) {
-              managedHostnameSet.add(host.label.replace(/\s/g, "").toLowerCase());
+              managedHostnameSet.add(toSafeSshHostAlias(host.label, host.hostname).toLowerCase());
             }
           }
         }
