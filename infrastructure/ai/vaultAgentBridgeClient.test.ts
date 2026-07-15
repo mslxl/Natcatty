@@ -649,6 +649,12 @@ describe('handleVaultAgentOp vault management gaps', () => {
       identities: [{ id: 'identity-1', label: 'Deploy', username: 'deploy', authMethod: 'key', keyId: 'key-1', created: 1 }],
       proxyProfiles: [{ id: 'proxy-1', label: 'Proxy', config: { type: 'http', host: 'proxy.test', port: 8080, password: 'hidden' }, createdAt: 1 }],
       customGroups: ['prod'],
+      groupConfigs: [{
+        path: 'prod',
+        startupCommand: 'echo startup-secret',
+        environmentVariables: [{ name: 'TOKEN', value: 'environment-secret' }],
+        proxyConfig: { type: 'command', command: 'proxy-command-secret' },
+      }],
     });
 
     const updated = await handleVaultAgentOp('group.update', {
@@ -658,6 +664,13 @@ describe('handleVaultAgentOp vault management gaps', () => {
     assert.equal(updated.ok, true);
     assert.equal(deps.getGroupConfigs()[0]?.username, 'deploy');
     assert.equal(JSON.stringify(updated).includes('hidden'), false);
+
+    const listed = await handleVaultAgentOp('group.list', {}, deps);
+    const serializedList = JSON.stringify(listed);
+    assert.equal(serializedList.includes('startup-secret'), false);
+    assert.equal(serializedList.includes('environment-secret'), false);
+    assert.equal(serializedList.includes('proxy-command-secret'), false);
+    assert.equal(serializedList.includes('deploy'), true);
 
     const removed = await handleVaultAgentOp('group.delete', { path: 'prod' }, deps);
     assert.equal(removed.ok, true);

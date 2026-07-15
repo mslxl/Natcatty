@@ -158,7 +158,14 @@ function serializeVaultNoteForAgent(note: VaultNote) {
 }
 
 function sanitizeGroupConfigForAgent(config: GroupConfig): Record<string, unknown> {
-  const { password: _password, telnetPassword: _telnetPassword, proxyConfig, ...safe } = config;
+  const {
+    password: _password,
+    telnetPassword: _telnetPassword,
+    startupCommand: _startupCommand,
+    environmentVariables: _environmentVariables,
+    proxyConfig,
+    ...safe
+  } = config;
   return {
     ...safe,
     ...(proxyConfig ? {
@@ -166,7 +173,6 @@ function sanitizeGroupConfigForAgent(config: GroupConfig): Record<string, unknow
         type: proxyConfig.type,
         host: proxyConfig.host,
         port: proxyConfig.port,
-        command: proxyConfig.command,
         identityId: proxyConfig.identityId,
         username: proxyConfig.username,
       },

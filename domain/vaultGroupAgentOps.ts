@@ -125,7 +125,21 @@ export function upsertGroup(
   const newPath = normalizePath(options.newPath ?? path);
   if (!newPath) return { ok: false, error: 'newPath must not be empty.' };
   if (newPath.startsWith(`${path}/`)) return { ok: false, error: 'A group cannot be moved inside itself.' };
-  if (newPath !== path && state.groups.includes(newPath)) return { ok: false, error: `Group "${newPath}" already exists.` };
+  if (newPath !== path) {
+    const belongsToRenamedTree = (candidate: string) => candidate === path || candidate.startsWith(`${path}/`);
+    const renameCandidate = (candidate: string) => candidate === path
+      ? newPath
+      : `${newPath}${candidate.slice(path.length)}`;
+    const occupiedPaths = new Set([
+      ...state.groups.filter((candidate) => !belongsToRenamedTree(candidate)),
+      ...state.configs.map((config) => config.path).filter((candidate) => !belongsToRenamedTree(candidate)),
+    ]);
+    const collision = [...state.groups, ...state.configs.map((config) => config.path)]
+      .filter(belongsToRenamedTree)
+      .map(renameCandidate)
+      .find((candidate) => occupiedPaths.has(candidate));
+    if (collision) return { ok: false, error: `Group "${collision}" already exists.` };
+  }
   const current = state.configs.find((config) => config.path === path) ?? { path };
   const patched = patchGroupConfig({ ...current, path: newPath }, defaults, identities, proxyProfiles, state.hosts);
   if ('error' in patched) return { ok: false, error: patched.error };

@@ -38,6 +38,18 @@ describe('vaultGroupAgentOps', () => {
     assert.equal(upsertGroup(state, 'prod', '{}', [], proxyProfiles, { newPath: 'prod/archive' }).ok, false);
   });
 
+  it('rejects renames whose descendants collide with existing groups or configs', () => {
+    const groupCollision = upsertGroup({
+      groups: ['prod', 'prod/web', 'archive/web'], configs: [], hosts, managedSources: [],
+    }, 'prod', '{}', [], proxyProfiles, { newPath: 'archive' });
+    assert.equal(groupCollision.ok, false);
+
+    const configCollision = upsertGroup({
+      groups: ['prod', 'prod/web'], configs: [{ path: 'archive/web' }], hosts, managedSources: [],
+    }, 'prod', '{}', [], proxyProfiles, { newPath: 'archive' });
+    assert.equal(configCollision.ok, false);
+  });
+
   it('clears identity-derived defaults when replacing or detaching an identity', () => {
     const state = {
       groups: ['prod'],
