@@ -363,8 +363,7 @@ function createScpBackend(deps = {}) {
 
     try {
       // Register for ACK before the remote can reply (and before we write).
-      const readyAck = waitForAck(stream, transfer);
-      await readyAck;
+      await waitForAck(stream, transfer);
 
       const control = buildFileControlLine({
         mode,
@@ -372,9 +371,9 @@ function createScpBackend(deps = {}) {
         name: baseName,
         encoding,
       });
-      const afterControlAck = waitForAck(stream, transfer);
-      await writeAll(stream, control);
-      await afterControlAck;
+      // Arm ACK before write so a fast remote cannot race; if write fails, swallow
+      // the orphaned ACK rejection (stream close would otherwise go unhandled).
+      await writeAndWaitAck(stream, control, transfer);
 
       let transferred = 0;
       // Arm the final ACK listener before the trailing NUL so a fast remote cannot
@@ -421,7 +420,14 @@ function createScpBackend(deps = {}) {
         stream.on("error", finish);
       });
 
-      await Promise.all([streamDone, finalAck]);
+      try {
+        await Promise.all([streamDone, finalAck]);
+      } catch (err) {
+        // Whichever side loses first must not leave the other as unhandled rejection.
+        void streamDone.catch(() => {});
+        void finalAck.catch(() => {});
+        throw err;
+      }
       await closeStream(stream);
       if (transfer?.cancelled) throw new Error("Transfer cancelled");
       if (typeof onProgress === "function") onProgress(fileSize, fileSize);
@@ -462,14 +468,12 @@ function createScpBackend(deps = {}) {
 
     try {
       await waitForAck(stream, transfer);
-      const afterControl = waitForAck(stream, transfer);
-      await writeAll(stream, buildFileControlLine({
+      await writeAndWaitAck(stream, buildFileControlLine({
         mode,
         size: fileSize,
         name: baseName,
         encoding,
-      }));
-      await afterControl;
+      }), transfer);
 
       const chunkSize = 256 * 1024;
       let offset = 0;
@@ -480,9 +484,8 @@ function createScpBackend(deps = {}) {
         offset = end;
         if (typeof onProgress === "function") onProgress(offset, fileSize);
       }
-      const afterNul = waitForAck(stream, transfer);
-      await writeAll(stream, Buffer.from([0x00]));
-      await afterNul;
+      // Arm final ACK before trailing NUL; swallow orphan if write fails.
+      await writeAndWaitAck(stream, Buffer.from([0x00]), transfer);
       await closeStream(stream);
       return true;
     } catch (err) {
@@ -708,6 +711,24 @@ function createScpBackend(deps = {}) {
     });
 
     if (transfer?.cancelled) throw new Error("Transfer cancelled");
+  }
+
+  /**
+   * Write a buffer then wait for the peer ACK. Arms the ACK listener before the
+   * write so a fast remote cannot race past waitForAck. If the write fails (or
+   * anything throws before the ACK settles), the orphaned ACK rejection is
+   * swallowed so process-level unhandledRejection does not fire when the
+   * stream later closes under abort().
+   */
+  async function writeAndWaitAck(stream, buffer, transfer) {
+    const ack = waitForAck(stream, transfer);
+    try {
+      await writeAll(stream, buffer);
+      await ack;
+    } catch (err) {
+      void ack.catch(() => {});
+      throw err;
+    }
   }
 
   function waitForAck(stream, transfer) {
