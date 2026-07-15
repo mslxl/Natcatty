@@ -378,6 +378,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const hibernateRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fullHibernateRuntimeRef = useRef<(() => Promise<boolean>) | null>(null);
   const wakeInProgressRef = useRef(false);
+  const wakePromiseRef = useRef<Promise<boolean> | null>(null);
   const sessionRef = useRef<string | null>(null);
   const isBootActiveRef = useRef(false);
   const hasConnectedRef = useRef(false);
@@ -395,6 +396,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const startReconnectRef = useRef<((mode: "manual" | "auto") => void) | null>(null);
   const wakeHibernatedRuntimeForReconnectRef = useRef<(() => Promise<boolean>) | null>(null);
   const reconnectWakeInFlightRef = useRef(false);
+  const reconnectWakeTokenRef = useRef<symbol | null>(null);
   const manualReconnectRequestRef = useRef<() => void>(() => {});
   const terminalDataCapturedRef = useRef(false);
   const connectionLogBufferRef = useRef(createConnectionLogBuffer(MAX_CONNECTION_LOG_DATA_CHARS));
@@ -407,6 +409,10 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const mouseTrackingRef = useRef(false);
   const serialLineBufferRef = useRef<string>("");
   const telnetLocalEchoRef = useRef(false);
+
+  useEffect(() => () => {
+    reconnectWakeTokenRef.current = null;
+  }, [sessionId]);
 
   const terminalSettingsRef = useRef(terminalSettings);
   terminalSettingsRef.current = terminalSettings;
@@ -2341,8 +2347,12 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         return;
       }
       reconnectWakeInFlightRef.current = true;
+      const wakeToken = Symbol();
+      reconnectWakeTokenRef.current = wakeToken;
       updateStatus("connecting");
       void wakeForReconnect().then((woke) => {
+        if (reconnectWakeTokenRef.current !== wakeToken) return;
+        reconnectWakeTokenRef.current = null;
         reconnectWakeInFlightRef.current = false;
         if (woke) {
           startReconnectRef.current?.(mode);
@@ -2350,6 +2360,8 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         }
         updateStatus("disconnected");
       }).catch(() => {
+        if (reconnectWakeTokenRef.current !== wakeToken) return;
+        reconnectWakeTokenRef.current = null;
         reconnectWakeInFlightRef.current = false;
         updateStatus("disconnected");
       });
@@ -2770,10 +2782,12 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     getPayload: () => TerminalHibernateWakePayload,
     options: { sessionConnected: boolean },
   ): boolean | Promise<boolean> => {
-    if (wakeInProgressRef.current || hasRuntimeRef.current) {
+    if (wakeInProgressRef.current) {
+      return wakePromiseRef.current ?? false;
+    }
+    if (hasRuntimeRef.current) {
       logger.warn("[Terminal] Wake skipped", {
         sessionId,
-        wakeInProgress: wakeInProgressRef.current,
         hasRuntime: hasRuntimeRef.current,
       });
       return false;
@@ -2809,7 +2823,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       }
     };
 
-    return wakeTerminalFromHibernate({
+    const wakePromise = wakeTerminalFromHibernate({
       refs: terminalRuntimeRefs,
       runtimeContext,
       container,
@@ -2833,7 +2847,12 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       return false;
     }).finally(() => {
       wakeInProgressRef.current = false;
+      if (wakePromiseRef.current === wakePromise) {
+        wakePromiseRef.current = null;
+      }
     });
+    wakePromiseRef.current = wakePromise;
+    return wakePromise;
   }, [sessionId, terminalBackend, terminalRuntimeRefs, resizeSession, terminalSettings]);
 
   wakeHibernatedRuntimeForReconnectRef.current = async () => {

@@ -100,22 +100,37 @@ test("auto reconnect connected history ref is initialized after status state exi
 
 test("reconnect wakes a hibernated terminal before requiring a terminal instance", () => {
   const source = readFileSync(new URL("../Terminal.tsx", import.meta.url), "utf8");
+  const wakePromiseRefIndex = source.indexOf("const wakePromiseRef = useRef<Promise<boolean> | null>(null)");
   const wakeGuardRefIndex = source.indexOf("const reconnectWakeInFlightRef = useRef(false)");
+  const wakeTokenRefIndex = source.indexOf("const reconnectWakeTokenRef = useRef<symbol | null>(null)");
+  const wakeTokenCleanupIndex = source.indexOf("reconnectWakeTokenRef.current = null", wakeTokenRefIndex);
   const reconnectIndex = source.indexOf("const startReconnect = ");
   const hibernatedBranchIndex = source.indexOf('!termRef.current && hibernatedRef.current', reconnectIndex);
   const duplicateWakeGuardIndex = source.indexOf("if (reconnectWakeInFlightRef.current) return", hibernatedBranchIndex);
   const markWakeInFlightIndex = source.indexOf("reconnectWakeInFlightRef.current = true", duplicateWakeGuardIndex);
   const connectingIndex = source.indexOf('updateStatus("connecting")', markWakeInFlightIndex);
   const wakeCallIndex = source.indexOf("wakeHibernatedRuntimeForReconnectRef.current", hibernatedBranchIndex);
+  const wakeInvocationIndex = source.indexOf("void wakeForReconnect()", wakeCallIndex);
+  const wakeJoinIndex = source.indexOf("return wakePromiseRef.current ?? false", source.indexOf("const wakeFromHibernateRuntime"));
+  const wakeTokenIndex = source.indexOf("const wakeToken = Symbol()", hibernatedBranchIndex);
+  const staleWakeGuardIndex = source.indexOf("reconnectWakeTokenRef.current !== wakeToken", wakeInvocationIndex);
   const missingTermReturnIndex = source.indexOf("if (!termRef.current) return;", reconnectIndex);
 
+  assert.notEqual(wakePromiseRefIndex, -1);
   assert.notEqual(wakeGuardRefIndex, -1);
+  assert.notEqual(wakeTokenRefIndex, -1);
+  assert.notEqual(wakeTokenCleanupIndex, -1);
+  assert.ok(wakeTokenCleanupIndex < reconnectIndex);
   assert.notEqual(reconnectIndex, -1);
   assert.notEqual(hibernatedBranchIndex, -1);
   assert.notEqual(duplicateWakeGuardIndex, -1);
   assert.notEqual(markWakeInFlightIndex, -1);
   assert.notEqual(connectingIndex, -1);
   assert.notEqual(wakeCallIndex, -1);
+  assert.notEqual(wakeInvocationIndex, -1);
+  assert.notEqual(wakeJoinIndex, -1);
+  assert.notEqual(wakeTokenIndex, -1);
+  assert.notEqual(staleWakeGuardIndex, -1);
   assert.notEqual(missingTermReturnIndex, -1);
   assert.ok(
     hibernatedBranchIndex < missingTermReturnIndex && wakeCallIndex < missingTermReturnIndex,
@@ -124,6 +139,10 @@ test("reconnect wakes a hibernated terminal before requiring a terminal instance
   assert.ok(
     duplicateWakeGuardIndex < markWakeInFlightIndex && markWakeInFlightIndex < connectingIndex,
     "hibernated reconnect must block duplicate requests before beginning an asynchronous wake",
+  );
+  assert.ok(
+    wakeTokenIndex < wakeInvocationIndex && wakeInvocationIndex < staleWakeGuardIndex,
+    "closing a terminal must be able to invalidate a pending hibernated reconnect",
   );
 });
 
