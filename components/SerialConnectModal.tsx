@@ -66,6 +66,7 @@ export const SerialConnectModal: React.FC<SerialConnectModalProps> = ({
   const [flowControl, setFlowControl] = useState<SerialFlowControl>('none');
   const [localEcho, setLocalEcho] = useState(false);
   const [lineMode, setLineMode] = useState(false);
+  const [backspaceBehavior, setBackspaceBehavior] = useState<SerialConfig['backspaceBehavior']>();
   const [charset, setCharset] = useState('UTF-8');
 
   // Save configuration state
@@ -116,6 +117,7 @@ export const SerialConnectModal: React.FC<SerialConnectModalProps> = ({
       flowControl,
       localEcho,
       lineMode,
+      backspaceBehavior,
     };
 
     // Save as host if checkbox is checked and onSaveHost is provided
@@ -348,6 +350,25 @@ export const SerialConnectModal: React.FC<SerialConnectModalProps> = ({
 
               {/* Terminal Options */}
               <div className="space-y-3 pt-2 border-t border-border/60">
+                <div className="space-y-2">
+                  <Label htmlFor="serial-backspace">{t('serial.field.backspaceBehavior')}</Label>
+                  <Select
+                    value={backspaceBehavior ?? 'default'}
+                    onValueChange={(value) => setBackspaceBehavior(value === 'ctrl-h' ? 'ctrl-h' : undefined)}
+                  >
+                    <SelectTrigger id="serial-backspace">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="default">{t('serial.backspace.default')}</SelectItem>
+                      <SelectItem value="ctrl-h">{t('serial.backspace.ctrlH')}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    {t('serial.field.backspaceBehaviorDesc')}
+                  </p>
+                </div>
+
                 <div className="flex items-center justify-between">
                   <div className="space-y-0.5">
                     <Label htmlFor="local-echo" className="text-sm font-medium cursor-pointer">

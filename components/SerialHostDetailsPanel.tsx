@@ -77,6 +77,9 @@ export const SerialHostDetailsPanel: React.FC<SerialHostDetailsPanelPropsWithRes
   const [flowControl, setFlowControl] = useState<SerialFlowControl>(initialData.serialConfig?.flowControl || 'none');
   const [localEcho, setLocalEcho] = useState(initialData.serialConfig?.localEcho || false);
   const [lineMode, setLineMode] = useState(initialData.serialConfig?.lineMode || false);
+  const [backspaceBehavior, setBackspaceBehavior] = useState<SerialConfig['backspaceBehavior']>(
+    initialData.serialConfig?.backspaceBehavior ?? initialData.backspaceBehavior,
+  );
   const [charset, setCharset] = useState(initialData.charset || 'UTF-8');
   const [tags, setTags] = useState<string[]>(initialData.tags || []);
   const [group, setGroup] = useState(initialData.group || '');
@@ -110,6 +113,7 @@ export const SerialHostDetailsPanel: React.FC<SerialHostDetailsPanelPropsWithRes
       flowControl,
       localEcho,
       lineMode,
+      backspaceBehavior,
     };
 
     const portName = selectedPort.split('/').pop() || selectedPort;
@@ -122,6 +126,7 @@ export const SerialHostDetailsPanel: React.FC<SerialHostDetailsPanelPropsWithRes
       group,
       charset,
       serialConfig: config,
+      backspaceBehavior: undefined,
       notes: notes.trim() || undefined,
     };
 
@@ -395,6 +400,25 @@ export const SerialHostDetailsPanel: React.FC<SerialHostDetailsPanelPropsWithRes
 
             {/* Terminal Options */}
             <div className="space-y-3 pt-2 border-t border-border/60">
+              <div className="space-y-2">
+                <Label htmlFor="serial-backspace">{t('serial.field.backspaceBehavior')}</Label>
+                <Select
+                  value={backspaceBehavior ?? 'default'}
+                  onValueChange={(value) => setBackspaceBehavior(value === 'ctrl-h' ? 'ctrl-h' : undefined)}
+                >
+                  <SelectTrigger id="serial-backspace">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="default">{t('serial.backspace.default')}</SelectItem>
+                    <SelectItem value="ctrl-h">{t('serial.backspace.ctrlH')}</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  {t('serial.field.backspaceBehaviorDesc')}
+                </p>
+              </div>
+
               <div className="flex items-center justify-between">
                 <div className="space-y-0.5">
                   <Label htmlFor="local-echo" className="text-sm font-medium cursor-pointer">

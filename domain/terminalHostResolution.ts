@@ -67,6 +67,7 @@ function buildFallbackHostFromSession(
     etEnabled: session.etEnabled,
     charset: session.charset,
     serialConfig: session.serialConfig,
+    backspaceBehavior: session.serialConfig?.backspaceBehavior,
     localShell: session.localShell,
     localShellArgs: session.localShellArgs,
     localShellName: session.localShellName,
@@ -95,12 +96,16 @@ export function resolveTerminalSessionHost({
   const port = session.port ?? existingHost.port;
   const moshEnabled = session.moshEnabled ?? existingHost.moshEnabled;
   const etEnabled = session.etEnabled ?? existingHost.etEnabled;
+  const backspaceBehavior = protocol === "serial"
+    ? existingHost.serialConfig?.backspaceBehavior ?? existingHost.backspaceBehavior
+    : existingHost.backspaceBehavior;
 
   if (
     protocol === existingHost.protocol &&
     port === existingHost.port &&
     moshEnabled === existingHost.moshEnabled &&
-    etEnabled === existingHost.etEnabled
+    etEnabled === existingHost.etEnabled &&
+    backspaceBehavior === existingHost.backspaceBehavior
   ) {
     return suppressDeviceTypeForShellTransport(existingHost);
   }
@@ -111,6 +116,7 @@ export function resolveTerminalSessionHost({
     port,
     moshEnabled,
     etEnabled,
+    backspaceBehavior,
   });
 }
 

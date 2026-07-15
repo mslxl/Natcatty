@@ -106,6 +106,8 @@ export interface SerialConfig {
   flowControl?: SerialFlowControl; // Flow control (default: 'none')
   localEcho?: boolean; // Force local echo (default: false, rely on remote echo)
   lineMode?: boolean; // Line mode - buffer input and send on Enter (default: false)
+  // Some network-device consoles expect BS (0x08) instead of xterm's DEL (0x7f).
+  backspaceBehavior?: 'ctrl-h';
 }
 
 // Per-protocol configuration
