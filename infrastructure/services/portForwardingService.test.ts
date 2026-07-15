@@ -2,7 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { Host, PortForwardingRule, SSHKey } from "../../domain/models.ts";
-import { startPortForward, stopAndCleanupRuleAndWait } from "./portForwardingService.ts";
+import {
+  getActiveConnection,
+  startPortForward,
+  stopAndCleanupRule,
+  stopAndCleanupRuleAndWait,
+} from "./portForwardingService.ts";
 
 const host = (overrides: Partial<Host> = {}): Host => ({
   id: "host-1",
@@ -84,6 +89,36 @@ test("stopAndCleanupRuleAndWait reports backend stop failures", async () => {
 
   assert.equal(result.success, false);
   assert.match(result.error ?? "", /backend stop failed/);
+});
+
+test("stopAndCleanupRule still clears local reconnect state after backend stop failures", async () => {
+  installBridgeStub();
+  await startPortForward(
+    rule({ id: "background-cleanup-rule" }),
+    host(),
+    [],
+    [],
+    [],
+    () => undefined,
+    true,
+  );
+  assert.ok(getActiveConnection("background-cleanup-rule"));
+
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      netcatty: {
+        stopPortForwardByRuleId: async () => {
+          throw new Error("backend stop failed");
+        },
+      },
+    },
+  });
+
+  stopAndCleanupRule("background-cleanup-rule");
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.equal(getActiveConnection("background-cleanup-rule"), undefined);
 });
 
 test("startPortForward forwards system agent settings", async () => {

@@ -182,21 +182,20 @@ export const getActiveRuleIds = (): string[] => {
     .map(([ruleId]) => ruleId);
 };
 
+const finishRuleCleanup = (ruleId: string): void => {
+  clearReconnectTimer(ruleId);
+  const conn = activeConnections.get(ruleId);
+  conn?.unsubscribe?.();
+  activeConnections.delete(ruleId);
+  broadcastReconnectCancel(ruleId);
+};
+
 /** Stop every tunnel for a rule and cancel reconnects in every window. */
 export const stopAndCleanupRuleAndWait = async (
   ruleId: string,
 ): Promise<{ success: boolean; error?: string }> => {
   clearReconnectTimer(ruleId);
   const conn = activeConnections.get(ruleId);
-  const finishLocalCleanup = () => {
-    if (!conn) return;
-    conn.unsubscribe?.();
-    activeConnections.delete(ruleId);
-  };
-  const finishAllCleanup = () => {
-    finishLocalCleanup();
-    broadcastReconnectCancel(ruleId);
-  };
 
   // Use stopPortForwardByRuleId so every tunnel for this rule is marked
   // cancelled before its sockets are closed.
@@ -204,7 +203,7 @@ export const stopAndCleanupRuleAndWait = async (
   if (bridge?.stopPortForwardByRuleId) {
     try {
       await bridge.stopPortForwardByRuleId(ruleId);
-      finishAllCleanup();
+      finishRuleCleanup(ruleId);
       return { success: true };
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
@@ -215,19 +214,24 @@ export const stopAndCleanupRuleAndWait = async (
   if (conn && bridge?.stopPortForward) {
     try {
       const result = await bridge.stopPortForward(conn.tunnelId);
-      if (result.success) finishAllCleanup();
+      if (result.success) finishRuleCleanup(ruleId);
       return result;
     } catch (err) {
       return { success: false, error: err instanceof Error ? err.message : String(err) };
     }
   }
-  finishAllCleanup();
+  finishRuleCleanup(ruleId);
   return { success: true };
 };
 
 /** Fire-and-forget compatibility wrapper for imports and local UI actions. */
 export const stopAndCleanupRule = (ruleId: string): void => {
-  void stopAndCleanupRuleAndWait(ruleId);
+  void stopAndCleanupRuleAndWait(ruleId).then(
+    (result) => {
+      if (!result.success) finishRuleCleanup(ruleId);
+    },
+    () => finishRuleCleanup(ruleId),
+  );
 };
 
 // Tunnel ID prefix and UUID regex pattern for parsing
