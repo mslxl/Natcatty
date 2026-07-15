@@ -290,9 +290,8 @@ test("padded in-place PUT keeps JSON parseable when MOVE is unsupported (#2223)"
     assert.equal(afterShort.length, Buffer.byteLength(JSON.stringify(longSyncedFile), "utf8"));
     assert.match(text, /^\{[\s\S]*\}\s*$/);
     assert.deepEqual(JSON.parse(text), shortSyncedFile);
-    for (const key of files.keys()) {
-      assert.ok(!key.includes(".tmp-"), `leftover temp file: ${key}`);
-    }
+    // Fixed temp name must be cleaned up when DELETE works.
+    assert.equal(files.has("/netcatty-vault.json.tmp"), false);
     const downloaded = await handleWebdavDownload(config);
     assert.deepEqual(downloaded.syncedFile, shortSyncedFile);
   } finally {
@@ -303,7 +302,7 @@ test("padded in-place PUT keeps JSON parseable when MOVE is unsupported (#2223)"
 test("padded fallback still works when temp PUT is rejected", async () => {
   const { server, endpoint, files } = await startBuggyTruncateWebdavServer({
     denyMove: true,
-    rejectPutMatching: /\.tmp-/,
+    rejectPutMatching: /\.tmp$/,
   });
   const config = {
     endpoint,
@@ -323,7 +322,7 @@ test("padded fallback still works when temp PUT is rejected", async () => {
   }
 });
 
-test("canonical vault stays present during padded fallback (no DELETE gap)", async () => {
+test("canonical vault stays present; fixed temp does not accumulate when DELETE denied", async () => {
   const { server, endpoint, files } = await startBuggyTruncateWebdavServer({
     denyMove: true,
     denyDelete: true,
@@ -338,9 +337,50 @@ test("canonical vault stays present during padded fallback (no DELETE gap)", asy
   try {
     files.set("/netcatty-vault.json", Buffer.from(JSON.stringify(longSyncedFile), "utf8"));
     await handleWebdavUpload(config, shortSyncedFile);
+    await handleWebdavUpload(config, shortSyncedFile);
     const remaining = files.get("/netcatty-vault.json");
     assert.ok(remaining, "vault must never disappear during fallback");
     assert.deepEqual(JSON.parse(remaining.toString("utf8")), shortSyncedFile);
+    // At most one fixed temp path — never one random full vault per sync.
+    const tmpKeys = [...files.keys()].filter((k) => k.includes(".tmp"));
+    assert.ok(tmpKeys.length <= 1);
+    assert.deepEqual(tmpKeys, tmpKeys.length ? ["/netcatty-vault.json.tmp"] : tmpKeys);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("read length failure aborts instead of unpadded corrupt PUT", async () => {
+  const { server, endpoint, files } = await startBuggyTruncateWebdavServer({
+    denyMove: true,
+  });
+  const config = {
+    endpoint,
+    authType: "basic",
+    username: "u",
+    password: "p",
+  };
+
+  // Break GET so length read fails after MOVE fallback.
+  const original = server.listeners("request")[0];
+  server.removeAllListeners("request");
+  server.on("request", (req, res) => {
+    if ((req.method || "").toUpperCase() === "GET") {
+      res.writeHead(500);
+      res.end("boom");
+      return;
+    }
+    original.call(server, req, res);
+  });
+
+  try {
+    files.set("/netcatty-vault.json", Buffer.from(JSON.stringify(longSyncedFile), "utf8"));
+    await assert.rejects(
+      () => handleWebdavUpload(config, shortSyncedFile),
+      /could not read existing file length|WebDAV upload failed/i
+    );
+    // Original vault must remain untouched (GET failed before PUT).
+    assert.equal(files.get("/netcatty-vault.json").toString("utf8"), JSON.stringify(longSyncedFile));
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }

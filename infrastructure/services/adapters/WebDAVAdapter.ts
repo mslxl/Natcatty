@@ -47,20 +47,22 @@ const parseSyncedFileJson = (raw: string): SyncedFile => {
   }
 };
 
+const utf8ByteLength = (value: string): number =>
+  typeof Buffer !== 'undefined'
+    ? Buffer.byteLength(value, 'utf8')
+    : new TextEncoder().encode(value).length;
+
 /**
- * Prefer temp PUT + MOVE; fall back to in-place PUT padded with spaces up to
- * the previous length so non-truncating servers leave only JSON-legal
- * whitespace (no DELETE empty-file race) (#2223).
+ * Prefer fixed-name temp PUT + MOVE; else padded in-place PUT with verify
+ * so non-truncating / concurrent writers cannot leave invalid JSON (#2223).
  */
 const putWebdavFileReplacing = async (
   client: WebDAVClient,
   path: string,
   body: string,
 ): Promise<void> => {
-  const suffix = `${Date.now().toString(16)}${Math.random().toString(16).slice(2, 10)}`;
-  const tmpPath = `${path}.tmp-${suffix}`;
-  const bodyBuffer =
-    typeof Buffer !== 'undefined' ? Buffer.from(body, 'utf8') : null;
+  const tmpPath = `${path}.tmp`;
+  const bodyLen = utf8ByteLength(body);
 
   const cleanupTemp = async () => {
     try {
@@ -74,41 +76,72 @@ const putWebdavFileReplacing = async (
 
   try {
     await client.putFileContents(tmpPath, body, { overwrite: true });
-    try {
-      await client.moveFile(tmpPath, path, { overwrite: true });
-      return;
-    } catch {
-      await cleanupTemp();
-    }
+    await client.moveFile(tmpPath, path, { overwrite: true });
+    return;
   } catch {
     await cleanupTemp();
   }
 
-  let existingLen = 0;
+  let exists = false;
   try {
-    if (await client.exists(path)) {
-      const existing = await client.getFileContents(path, { format: 'text' });
-      if (existing != null) {
-        existingLen =
-          typeof Buffer !== 'undefined'
-            ? Buffer.byteLength(String(existing), 'utf8')
-            : new TextEncoder().encode(String(existing)).length;
-      }
-    }
-  } catch {
-    existingLen = 0;
+    exists = await client.exists(path);
+  } catch (error) {
+    throw new Error(
+      `WebDAV replace aborted: could not check existing file (${
+        error instanceof Error ? error.message : String(error)
+      })`,
+    );
   }
 
-  const bodyLen =
-    bodyBuffer != null
-      ? bodyBuffer.length
-      : new TextEncoder().encode(body).length;
-  if (existingLen > bodyLen) {
-    const pad = ' '.repeat(existingLen - bodyLen);
-    await client.putFileContents(path, body + pad, { overwrite: true });
-  } else {
-    await client.putFileContents(path, body, { overwrite: true });
+  let minLen = bodyLen;
+  if (exists) {
+    try {
+      const existing = await client.getFileContents(path, { format: 'text' });
+      if (existing != null) {
+        minLen = Math.max(minLen, utf8ByteLength(String(existing)));
+      }
+    } catch (error) {
+      throw new Error(
+        `WebDAV replace aborted: could not read existing file length (${
+          error instanceof Error ? error.message : String(error)
+        })`,
+      );
+    }
   }
+
+  let lastVerifyError: unknown = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const payload =
+      minLen > bodyLen ? body + ' '.repeat(minLen - bodyLen) : body;
+    await client.putFileContents(path, payload, { overwrite: true });
+    let remoteText = '';
+    try {
+      const remote = await client.getFileContents(path, { format: 'text' });
+      remoteText = String(remote ?? '');
+    } catch (error) {
+      throw new Error(
+        `WebDAV upload verification failed: could not re-read file (${
+          error instanceof Error ? error.message : String(error)
+        })`,
+      );
+    }
+    try {
+      parseSyncedFileJson(remoteText);
+      return;
+    } catch (error) {
+      lastVerifyError = error;
+      minLen = Math.max(minLen, utf8ByteLength(remoteText), bodyLen);
+    }
+  }
+  const detail =
+    lastVerifyError instanceof Error
+      ? lastVerifyError.message
+      : String(lastVerifyError || '');
+  throw new Error(
+    `WebDAV upload verification failed: remote file still not valid JSON after padded PUT${
+      detail ? ` (${detail})` : ''
+    }`,
+  );
 };
 
 export class WebDAVAdapter {
