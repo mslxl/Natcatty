@@ -1,6 +1,9 @@
 // AI Provider types
 import defaultCommandBlocklist from '../../lib/commandBlocklist.json';
+import type { AgentActivity, AgentUsage } from '../../domain/agentActivity';
 import type { ProviderContinuation } from './providerContinuation';
+
+export type { AgentActivity, AgentUsage } from '../../domain/agentActivity';
 
 export type AIProviderId =
   | 'openai'
@@ -124,6 +127,8 @@ export interface ChatMessage {
   providerContinuation?: ProviderContinuation;
   toolCalls?: ToolCall[];
   toolResults?: ToolResult[];
+  agentActivities?: AgentActivity[];
+  usage?: AgentUsage;
   timestamp: number;
   model?: string;
   providerId?: AIProviderId;

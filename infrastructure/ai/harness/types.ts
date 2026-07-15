@@ -9,6 +9,9 @@ export type AgentEventType =
   | 'reasoning_delta'
   | 'tool_call'
   | 'tool_result'
+  | 'file_change'
+  | 'web_search'
+  | 'plan_update'
   | 'approval_requested'
   | 'approval_resolved'
   | 'compaction'
@@ -65,6 +68,27 @@ export interface ToolResultEvent extends AgentEventBase {
   isError?: boolean;
 }
 
+export interface FileChangeEvent extends AgentEventBase {
+  type: 'file_change';
+  itemId: string;
+  status: 'completed' | 'failed';
+  changes: Array<{ path: string; kind: 'add' | 'delete' | 'update' }>;
+}
+
+export interface WebSearchEvent extends AgentEventBase {
+  type: 'web_search';
+  itemId: string;
+  query: string;
+  status: 'running' | 'completed';
+}
+
+export interface PlanUpdateEvent extends AgentEventBase {
+  type: 'plan_update';
+  itemId: string;
+  status: 'running' | 'completed';
+  items: Array<{ text: string; completed: boolean }>;
+}
+
 export interface ApprovalRequestedEvent extends AgentEventBase {
   type: 'approval_requested';
   toolCallId: string;
@@ -117,7 +141,9 @@ export interface ErrorEvent extends AgentEventBase {
 export interface UsageEvent extends AgentEventBase {
   type: 'usage';
   promptTokens: number;
+  cachedPromptTokens?: number;
   completionTokens: number;
+  reasoningTokens?: number;
   totalTokens: number;
   estimated?: boolean;
 }
@@ -158,6 +184,9 @@ export type AgentEvent =
   | ReasoningDeltaEvent
   | ToolCallEvent
   | ToolResultEvent
+  | FileChangeEvent
+  | WebSearchEvent
+  | PlanUpdateEvent
   | ApprovalRequestedEvent
   | ApprovalResolvedEvent
   | CompactionEvent

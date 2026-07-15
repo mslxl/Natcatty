@@ -19,6 +19,7 @@ import {
 import { Message, MessageContent, MessageResponse } from '../ai-elements/message';
 import { ToolCall } from '../ai-elements/tool-call';
 import ThinkingBlock from './ThinkingBlock';
+import AgentActivityGroup from './AgentActivityGroup';
 import ToolCallGroup from './ToolCallGroup';
 import {
   VaultArtifactNavigationProvider,
@@ -393,6 +394,15 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({
                   />
                 )}
 
+                {!isUser && (message.agentActivities?.length || message.usage) && (
+                  <AgentActivityGroup
+                    activities={message.agentActivities}
+                    usage={message.usage}
+                    isStreaming={!!isThisStreaming}
+                    t={t}
+                  />
+                )}
+
                 {/* User attachments (images, files) — fallback to legacy `images` field */}
                 {isUser && !hideAttachments && (message.attachments ?? message.images)?.length && (
                   <div className="flex gap-1.5 flex-wrap mb-1">
@@ -736,7 +746,9 @@ function areMessagesEqual(prev: ChatMessageListProps, next: ChatMessageListProps
         p.executionStatus !== n.executionStatus ||
         p.errorInfo !== n.errorInfo ||
         p.toolCalls !== n.toolCalls ||
-        p.toolResults !== n.toolResults
+        p.toolResults !== n.toolResults ||
+        p.agentActivities !== n.agentActivities ||
+        p.usage !== n.usage
       ) {
         return false;
       }

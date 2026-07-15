@@ -1025,7 +1025,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         }
         try {
           const existingExternalSessionId = currentSession?.externalSessionId;
-          await sendToExternalAgent(sessionId, modelPrompt, agentConfig, abortController, modelAttachments, {
+          await sendToExternalAgent(sessionId, assistantMsgId, modelPrompt, agentConfig, abortController, modelAttachments, {
             existingSessionId: existingExternalSessionId,
             updateExternalSessionId: updateSessionExternalSessionId,
             historyMessages: buildExternalAgentHistoryMessagesForBridge(currentSession?.messages ?? [], existingExternalSessionId),

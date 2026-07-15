@@ -36,6 +36,69 @@ test("ChatMessageList only renders the recent message batch by default", () => {
   assert.match(markup, /message-59/);
 });
 
+test("ChatMessageList renders Codex activities and actual usage", () => {
+  const messages: ChatMessage[] = [{
+    id: "assistant-activity",
+    role: "assistant",
+    content: "Done",
+    timestamp: 1,
+    agentActivities: [
+      {
+        id: "plan-1",
+        type: "plan_update",
+        status: "running",
+        items: [{ text: "Map Codex events", completed: false }],
+      },
+      {
+        id: "search-1",
+        type: "web_search",
+        status: "completed",
+        query: "Codex SDK event types",
+      },
+      {
+        id: "patch-1",
+        type: "file_change",
+        status: "completed",
+        changes: [{ path: "src/app.ts", kind: "update" }],
+      },
+      {
+        id: "warning-1",
+        type: "warning",
+        status: "completed",
+        message: "A recoverable warning",
+      },
+    ],
+    usage: {
+      inputTokens: 100,
+      cachedInputTokens: 40,
+      outputTokens: 25,
+      reasoningTokens: 10,
+      totalTokens: 125,
+    },
+  }];
+
+  const markup = renderToStaticMarkup(
+    React.createElement(
+      I18nProvider,
+      { locale: "en" },
+      React.createElement(
+        TooltipProvider,
+        null,
+        React.createElement(ChatMessageList, { messages, isStreaming: true }),
+      ),
+    ),
+  );
+
+  assert.match(markup, /Agent activity/);
+  assert.match(markup, /Map Codex events/);
+  assert.match(markup, /Codex SDK event types/);
+  assert.match(markup, /src\/app\.ts/);
+  assert.match(markup, /A recoverable warning/);
+  assert.match(markup, /Tokens 125/);
+  assert.match(markup, /cached 40/);
+  assert.match(markup, /reasoning 10/);
+});
+
 test("ChatMessageList renders external MCP vault tool results as artifact cards", () => {
   const messages: ChatMessage[] = [
     {

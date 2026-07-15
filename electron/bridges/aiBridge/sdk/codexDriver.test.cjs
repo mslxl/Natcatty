@@ -12,6 +12,11 @@ function collector() {
       reasoningEnd: () => events.push({ k: "reasoningEnd" }),
       toolCall: (n, a, id) => events.push({ k: "toolCall", n, a, id }),
       toolResult: (id, o, n) => events.push({ k: "toolResult", id, o, n }),
+      fileChange: (id, changes, status) => events.push({ k: "fileChange", id, changes, status }),
+      webSearch: (id, query, status) => events.push({ k: "webSearch", id, query, status }),
+      planUpdate: (id, items, status) => events.push({ k: "planUpdate", id, items, status }),
+      warning: (id, message) => events.push({ k: "warning", id, message }),
+      usage: (usage) => events.push({ k: "usage", usage }),
       status: (m) => events.push({ k: "status", m }),
       sessionId: (s) => events.push({ k: "sessionId", s }),
       emitError: (e) => events.push({ k: "error", e }),
@@ -155,10 +160,98 @@ test("turn.failed -> error event", () => {
   assert.deepEqual(events, [{ k: "error", e: "stale login" }]);
 });
 
-test("turn.completed is a no-op event-wise", () => {
+test("turn.completed emits actual token usage", () => {
+  const { events, emitter } = collector();
+  translateCodexEvent({
+    type: "turn.completed",
+    usage: {
+      input_tokens: 100,
+      cached_input_tokens: 40,
+      output_tokens: 25,
+      reasoning_output_tokens: 10,
+    },
+  }, emitter);
+  assert.deepEqual(events, [{
+    k: "usage",
+    usage: {
+      inputTokens: 100,
+      cachedInputTokens: 40,
+      outputTokens: 25,
+      reasoningTokens: 10,
+      totalTokens: 125,
+    },
+  }]);
+});
+
+test("turn.completed without usage preserves the estimated fallback", () => {
   const { events, emitter } = collector();
   translateCodexEvent({ type: "turn.completed", usage: {} }, emitter);
   assert.deepEqual(events, []);
+});
+
+test("file changes emit once on completion", () => {
+  const { events, emitter } = collector();
+  const item = {
+    id: "patch-1",
+    type: "file_change",
+    changes: [{ path: "src/app.ts", kind: "update" }],
+    status: "completed",
+  };
+  translateCodexEvent({ type: "item.started", item }, emitter);
+  translateCodexEvent({ type: "item.completed", item }, emitter);
+  assert.deepEqual(events, [{
+    k: "fileChange",
+    id: "patch-1",
+    changes: item.changes,
+    status: "completed",
+  }]);
+});
+
+test("web search and todo list updates keep stable item ids", () => {
+  const { events, emitter } = collector();
+  translateCodexEvent({
+    type: "item.started",
+    item: { id: "search-1", type: "web_search", query: "Codex SDK events" },
+  }, emitter);
+  translateCodexEvent({
+    type: "item.completed",
+    item: { id: "search-1", type: "web_search", query: "Codex SDK events" },
+  }, emitter);
+  translateCodexEvent({
+    type: "item.updated",
+    item: {
+      id: "plan-1",
+      type: "todo_list",
+      items: [{ text: "Map events", completed: false }],
+    },
+  }, emitter);
+  translateCodexEvent({
+    type: "item.completed",
+    item: {
+      id: "plan-1",
+      type: "todo_list",
+      items: [{ text: "Map events", completed: true }],
+    },
+  }, emitter);
+  assert.deepEqual(events.map((event) => [event.k, event.id, event.status]), [
+    ["webSearch", "search-1", "running"],
+    ["webSearch", "search-1", "completed"],
+    ["planUpdate", "plan-1", "running"],
+    ["planUpdate", "plan-1", "completed"],
+  ]);
+});
+
+test("item errors are recoverable warnings while stream errors are fatal", () => {
+  const { events, emitter } = collector();
+  translateCodexEvent({
+    type: "item.completed",
+    item: { id: "warning-1", type: "error", message: "Search result was unavailable" },
+  }, emitter);
+  translateCodexEvent({ type: "error", message: "stream disconnected" }, emitter);
+  assert.deepEqual(events, [
+    { k: "warning", id: "warning-1", message: "Search result was unavailable" },
+    { k: "error", e: "stream disconnected" },
+  ]);
 });
 
 test("runCodexTurn captures+emits the thread id early so an aborted turn still resumes", async () => {
