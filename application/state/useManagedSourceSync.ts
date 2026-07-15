@@ -21,6 +21,10 @@ export const haveSameManagedSshAgentFields = (previous: Host, current: Host): bo
   && previous.identitiesOnly === current.identitiesOnly
   && previous.addKeysToAgent === current.addKeysToAgent
   && previous.useKeychain === current.useKeychain
+  && (previous.identityFilePaths?.length ?? 0) === (current.identityFilePaths?.length ?? 0)
+  && (previous.identityFilePaths ?? []).every(
+    (path, index) => path === current.identityFilePaths?.[index],
+  )
 );
 
 export const useManagedSourceSync = ({

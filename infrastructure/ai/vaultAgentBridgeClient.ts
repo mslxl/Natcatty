@@ -505,6 +505,7 @@ export async function handleVaultAgentOp(
         {
           resolveEffectiveHost: deps.resolveEffectiveHost,
           managedSources: deps.managedSources,
+          identities: deps.identities,
         },
       );
       if (!updated.ok) return updated;

@@ -107,7 +107,7 @@ const TOOL_INPUT_FIELDS = Object.freeze({
     ip: { type: "string", optional: true, description: "Alias for hostname." },
     port: { type: "number", optional: true, description: "New connection port (1-65535)." },
     username: { type: "string", optional: true, description: "New login username. Clears any reusable identity binding so this value takes effect." },
-    password: { type: "string", optional: true, description: "New password without changing the current login method. Empty string clears it and blocks inherited saved passwords. Pair with keyPath set to an empty string to switch from key login to password login." },
+    password: { type: "string", optional: true, description: "New password without changing key-based login. Password identities are detached so the new value takes effect. Empty string clears it and blocks inherited saved passwords. Pair with keyPath set to an empty string to switch from key login to password login." },
     savePassword: { type: "string", optional: true, description: "Set to true or false to enable or disable saved passwords. Pass true when setting a new password after clearing one." },
     keyPath: { type: "string", optional: true, description: "Local private-key file path. Empty string clears and blocks an inherited path." },
     keypath: { type: "string", optional: true, description: "Alias for keyPath." },

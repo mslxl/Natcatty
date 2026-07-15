@@ -664,7 +664,7 @@
       "password": {
         "type": "string",
         "optional": true,
-        "description": "New password without changing the current login method. Empty string clears it and blocks inherited saved passwords. Pair with keyPath set to an empty string to switch from key login to password login."
+        "description": "New password without changing key-based login. Password identities are detached so the new value takes effect. Empty string clears it and blocks inherited saved passwords. Pair with keyPath set to an empty string to switch from key login to password login."
       },
       "savePassword": {
         "type": "string",

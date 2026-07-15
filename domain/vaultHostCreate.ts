@@ -1,4 +1,4 @@
-import type { Host, HostProtocol, ManagedSource } from './models';
+import type { Host, HostProtocol, Identity, ManagedSource } from './models';
 import { sanitizeHost } from './host';
 
 const DEFAULT_SSH_PORT = 22;
@@ -28,6 +28,7 @@ export type VaultHostUpdatePatch = VaultHostDraft;
 export interface VaultHostUpdateOptions {
   resolveEffectiveHost?: (host: Host) => Host;
   managedSources?: ManagedSource[];
+  identities?: Identity[];
 }
 
 export interface VaultHostCreateIssue {
@@ -289,6 +290,18 @@ export function applyVaultHostUpdate(
       updated.identityFileId = undefined;
       updated.identityFilePaths = undefined;
       updated.useSshAgent = false;
+    } else if (password.value && effectiveCurrent.identityId) {
+      const selectedIdentity = options.identities?.find(
+        (identity) => identity.id === effectiveCurrent.identityId,
+      );
+      if (selectedIdentity?.authMethod === 'password') {
+        updated.identityId = '';
+        updated.username = username.provided
+          ? updated.username
+          : selectedIdentity.username;
+        updated.authMethod = 'password';
+        updated.authPolicyVersion = 1;
+      }
     }
   }
   if (keyPath.provided) {

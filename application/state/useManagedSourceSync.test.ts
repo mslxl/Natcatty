@@ -36,3 +36,21 @@ test("managed SSH source comparison tracks every agent setting", () => {
 
   assert.equal(haveSameManagedSshAgentFields(host, { ...host }), true);
 });
+
+test("managed SSH source comparison tracks identity file paths", () => {
+  const withPaths = {
+    ...host,
+    identityFilePaths: ["~/.ssh/id_ed25519", "~/.ssh/id_backup"],
+  };
+
+  assert.equal(haveSameManagedSshAgentFields(host, withPaths), false);
+  assert.equal(haveSameManagedSshAgentFields(withPaths, host), false);
+  assert.equal(haveSameManagedSshAgentFields(withPaths, {
+    ...withPaths,
+    identityFilePaths: [...withPaths.identityFilePaths],
+  }), true);
+  assert.equal(haveSameManagedSshAgentFields(withPaths, {
+    ...withPaths,
+    identityFilePaths: [...withPaths.identityFilePaths].reverse(),
+  }), false);
+});

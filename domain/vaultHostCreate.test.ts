@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import type { Host, ManagedSource } from './models.ts';
+import type { Host, Identity, ManagedSource } from './models.ts';
 import { applyGroupDefaults } from './groupConfig.ts';
 import {
   applyVaultHostDelete,
@@ -292,10 +292,22 @@ test('applyVaultHostUpdate preserves key login when only the password changes', 
     identityFilePaths: ['~/.ssh/key'],
     authMethod: 'key',
   };
+  const identity: Identity = {
+    id: 'identity-1',
+    label: 'shared key',
+    username: 'root',
+    authMethod: 'key',
+    keyId: 'key-1',
+    created: 1,
+  };
 
-  const result = applyVaultHostUpdate([existing], [], existing.id, {
-    password: 'new-secret',
-  });
+  const result = applyVaultHostUpdate(
+    [existing],
+    [],
+    existing.id,
+    { password: 'new-secret' },
+    { identities: [identity] },
+  );
 
   assert.equal(result.ok, true);
   if (!result.ok) return;
@@ -304,6 +316,41 @@ test('applyVaultHostUpdate preserves key login when only the password changes', 
   assert.equal(result.updatedHost.identityId, 'identity-1');
   assert.equal(result.updatedHost.identityFileId, 'key-1');
   assert.deepEqual(result.updatedHost.identityFilePaths, ['~/.ssh/key']);
+});
+
+test('applyVaultHostUpdate detaches a password identity so the new password takes effect', () => {
+  const existing: Host = {
+    id: 'host-1',
+    label: 'host',
+    hostname: '10.0.0.1',
+    username: 'root',
+    tags: [],
+    os: 'linux',
+    identityId: 'identity-1',
+  };
+  const identity: Identity = {
+    id: 'identity-1',
+    label: 'shared password',
+    username: 'deploy',
+    authMethod: 'password',
+    password: 'old-secret',
+    created: 1,
+  };
+
+  const result = applyVaultHostUpdate(
+    [existing],
+    [],
+    existing.id,
+    { password: 'new-secret' },
+    { identities: [identity] },
+  );
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.updatedHost.password, 'new-secret');
+  assert.equal(result.updatedHost.username, 'deploy');
+  assert.equal(result.updatedHost.identityId, '');
+  assert.equal(result.updatedHost.authMethod, 'password');
 });
 
 test('applyVaultHostUpdate can re-enable saved passwords after clearing one', () => {
