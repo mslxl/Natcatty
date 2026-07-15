@@ -8,6 +8,11 @@ import {
   setupVaultAgentBridge,
   type VaultAgentApiDeps,
 } from '../../infrastructure/ai/vaultAgentBridgeClient';
+import {
+  clearReferenceKeyPassphrases,
+  rememberKeyPassphrase,
+  removeDefaultKeyPassphraseAliases,
+} from '../defaultKeyPassphrases';
 
 export interface UseVaultAgentBridgeInput {
   hosts: Host[];
@@ -20,6 +25,7 @@ export interface UseVaultAgentBridgeInput {
   managedSources: ManagedSource[];
   terminalSettings?: Pick<TerminalSettings, 'keepaliveInterval' | 'keepaliveCountMax'>;
   updateHosts: (hosts: Host[]) => void;
+  updateKeys: (keys: SSHKey[]) => Promise<unknown> | unknown;
   updateSnippets: (snippets: Snippet[]) => void;
   customGroups: string[];
   updateCustomGroups: (groups: string[]) => void;
@@ -37,6 +43,7 @@ export interface UseVaultAgentBridgeInput {
 
 type VaultAgentSnapshot = {
   hosts: Host[];
+  keys: SSHKey[];
   notes: VaultNote[];
   snippets: Snippet[];
   customGroups: string[];
@@ -47,6 +54,7 @@ type VaultAgentSnapshot = {
 
 const selectVaultAgentSnapshot = (input: UseVaultAgentBridgeInput): VaultAgentSnapshot => ({
   hosts: input.hosts,
+  keys: input.keys,
   notes: input.notes,
   snippets: input.snippets,
   customGroups: input.customGroups,
@@ -101,7 +109,7 @@ export function useVaultAgentBridge(input: UseVaultAgentBridgeInput): void {
         getPortForwardingRules: () => vaultSnapshotRef.current.portForwardingRules,
         getManagedSources: () => vaultSnapshotRef.current.managedSources,
         snippets: vaultSnapshotRef.current.snippets,
-        keys: current.keys,
+        keys: vaultSnapshotRef.current.keys,
         identities: current.identities,
         knownHosts: current.knownHosts,
         proxyProfiles: current.proxyProfiles,
@@ -137,6 +145,24 @@ export function useVaultAgentBridge(input: UseVaultAgentBridgeInput): void {
         updateHosts: (hosts) => {
           vaultSnapshotRef.current.hosts = hosts;
           current.updateHosts(hosts);
+        },
+        saveKeyPassphrase: (keyPath, passphrase) => rememberKeyPassphrase({
+          keyPath,
+          passphrase,
+          keys: vaultSnapshotRef.current.keys,
+          updateKeys: current.updateKeys,
+          setCurrentKeys: (keys) => {
+            vaultSnapshotRef.current.keys = keys;
+          },
+        }),
+        removeKeyPassphrases: async (keyPaths) => {
+          const aliases = await removeDefaultKeyPassphraseAliases(keyPaths);
+          const currentKeys = vaultSnapshotRef.current.keys;
+          const updatedKeys = clearReferenceKeyPassphrases(currentKeys, aliases);
+          if (updatedKeys !== currentKeys) {
+            vaultSnapshotRef.current.keys = updatedKeys;
+            await current.updateKeys(updatedKeys);
+          }
         },
         updateNotes: (notes) => {
           vaultSnapshotRef.current.notes = notes;

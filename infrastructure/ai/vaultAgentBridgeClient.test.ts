@@ -54,6 +54,8 @@ function createDeps(
     updateHosts: (nextHosts) => {
       hosts = nextHosts;
     },
+    saveKeyPassphrase: async () => {},
+    removeKeyPassphrases: () => {},
     updateNotes: (nextNotes) => {
       notes = nextNotes;
     },
@@ -395,6 +397,68 @@ describe('handleVaultAgentOp vault hosts', () => {
     assert.equal('privateKey' in (preview ?? {}), false);
   });
 
+  it('hosts.create saves a referenced key passphrase without returning it', async () => {
+    const savedPassphrases: Array<{ keyPath: string; passphrase: string }> = [];
+    const deps = createDeps({ hosts: [] });
+    Object.assign(deps, {
+      saveKeyPassphrase: async (keyPath: string, passphrase: string) => {
+        savedPassphrases.push({ keyPath, passphrase });
+      },
+    });
+
+    const result = await handleVaultAgentOp(
+      'hosts.create',
+      {
+        hosts: JSON.stringify([
+          {
+            hostname: 'encrypted-key.example.com',
+            username: 'deploy',
+            keyPath: '~/.ssh/id_encrypted',
+            passphrase: 'correct horse battery staple',
+          },
+        ]),
+      },
+      deps,
+    );
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(savedPassphrases, [{
+      keyPath: '~/.ssh/id_encrypted',
+      passphrase: 'correct horse battery staple',
+    }]);
+    assert.equal('passphrase' in (deps.getHosts()[0] ?? {}), false);
+    const preview = (result as { previewHosts?: Array<Record<string, unknown>> }).previewHosts?.[0];
+    assert.equal('passphrase' in (preview ?? {}), false);
+  });
+
+  it('hosts.create dry run never saves a referenced key passphrase', async () => {
+    const savedPassphrases: string[] = [];
+    const deps = createDeps({
+      hosts: [],
+      saveKeyPassphrase: async (_keyPath, passphrase) => {
+        savedPassphrases.push(passphrase);
+      },
+    });
+
+    const result = await handleVaultAgentOp(
+      'hosts.create',
+      {
+        dryRun: true,
+        hosts: JSON.stringify([{
+          hostname: 'encrypted-key.example.com',
+          keyPath: '~/.ssh/id_encrypted',
+          passphrase: 'must not be saved',
+        }]),
+      },
+      deps,
+    );
+
+    assert.equal(result.ok, true);
+    assert.equal((result as { dryRun?: boolean }).dryRun, true);
+    assert.deepEqual(savedPassphrases, []);
+    assert.equal(deps.getHosts().length, 0);
+  });
+
   it('sequential hosts.create calls accumulate instead of dropping prior hosts', async () => {
     const deps = createDeps({ hosts: [], customGroups: [] });
 
@@ -441,6 +505,248 @@ describe('handleVaultAgentOp vault hosts', () => {
     assert.equal(deps.getHosts()[0]?.username, 'root');
     assert.deepEqual(deps.getHosts()[0]?.tags, ['keep']);
     assert.ok(deps.getCustomGroups().includes('prod'));
+  });
+
+  it('host.update saves a passphrase for the host key path without returning it', async () => {
+    const savedPassphrases: Array<{ keyPath: string; passphrase: string }> = [];
+    const deps = createDeps({
+      hosts: [{
+        id: 'host-1',
+        label: 'encrypted key',
+        hostname: 'key.example.com',
+        username: 'deploy',
+        port: 22,
+        tags: [],
+        os: 'linux',
+        identityFilePaths: ['~/.ssh/id_encrypted'],
+        authMethod: 'key',
+      }],
+      saveKeyPassphrase: async (keyPath, passphrase) => {
+        savedPassphrases.push({ keyPath, passphrase });
+      },
+    });
+
+    const result = await handleVaultAgentOp(
+      'host.update',
+      { hostId: 'host-1', passphrase: 'updated secret' },
+      deps,
+    );
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(savedPassphrases, [{
+      keyPath: '~/.ssh/id_encrypted',
+      passphrase: 'updated secret',
+    }]);
+    assert.equal('passphrase' in ((result as { host?: Record<string, unknown> }).host ?? {}), false);
+  });
+
+  it('host.update clears a saved passphrase for the host key path', async () => {
+    const removedKeyPaths: string[][] = [];
+    const deps = createDeps({
+      hosts: [{
+        id: 'host-1',
+        label: 'encrypted key',
+        hostname: 'key.example.com',
+        username: 'deploy',
+        port: 22,
+        tags: [],
+        os: 'linux',
+        identityFilePaths: ['~/.ssh/id_encrypted'],
+        authMethod: 'key',
+      }],
+      removeKeyPassphrases: (keyPaths) => {
+        removedKeyPaths.push(keyPaths);
+      },
+    });
+
+    const result = await handleVaultAgentOp(
+      'host.update',
+      { hostId: 'host-1', passphrase: '' },
+      deps,
+    );
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(removedKeyPaths, [['~/.ssh/id_encrypted']]);
+  });
+
+  it('host.update can clear the key path and its saved passphrase together', async () => {
+    const removedKeyPaths: string[][] = [];
+    const deps = createDeps({
+      hosts: [{
+        id: 'host-1',
+        label: 'encrypted key',
+        hostname: 'key.example.com',
+        username: 'deploy',
+        port: 22,
+        tags: [],
+        os: 'linux',
+        identityFilePaths: ['~/.ssh/id_encrypted'],
+        authMethod: 'key',
+      }],
+      removeKeyPassphrases: (keyPaths) => {
+        removedKeyPaths.push(keyPaths);
+      },
+    });
+
+    const result = await handleVaultAgentOp(
+      'host.update',
+      { hostId: 'host-1', keyPath: '', passphrase: '' },
+      deps,
+    );
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(removedKeyPaths, [['~/.ssh/id_encrypted']]);
+    assert.deepEqual(deps.getHosts()[0]?.identityFilePaths, []);
+  });
+
+  it('host.update clears the removed local key passphrase without touching a shared identity key', async () => {
+    const removedKeyPaths: string[][] = [];
+    const deps = createDeps({
+      hosts: [{
+        id: 'host-1',
+        label: 'identity with old local key',
+        hostname: 'key.example.com',
+        username: 'deploy',
+        port: 22,
+        tags: [],
+        os: 'linux',
+        identityId: 'identity-1',
+        identityFilePaths: ['~/.ssh/id_old_local'],
+        authMethod: 'key',
+      }],
+      keys: [{
+        id: 'shared-key',
+        label: 'shared key',
+        type: 'ED25519',
+        category: 'key',
+        source: 'reference',
+        filePath: '~/.ssh/id_shared',
+        privateKey: '',
+        created: 1,
+      }],
+      identities: [{
+        id: 'identity-1',
+        label: 'shared identity',
+        username: 'deploy',
+        authMethod: 'key',
+        keyId: 'shared-key',
+        created: 1,
+      }],
+      removeKeyPassphrases: (keyPaths) => {
+        removedKeyPaths.push(keyPaths);
+      },
+    });
+
+    const result = await handleVaultAgentOp(
+      'host.update',
+      { hostId: 'host-1', keyPath: '', passphrase: '' },
+      deps,
+    );
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(removedKeyPaths, [['~/.ssh/id_old_local']]);
+    assert.deepEqual(deps.getHosts()[0]?.identityFilePaths, []);
+    assert.equal(deps.getHosts()[0]?.identityId, 'identity-1');
+  });
+
+  it('host.update treats a whitespace-only key path as clearing the old local key', async () => {
+    const removedKeyPaths: string[][] = [];
+    const deps = createDeps({
+      hosts: [{
+        id: 'host-1', label: 'host', hostname: 'key.example.com', username: 'deploy',
+        tags: [], os: 'linux', identityFilePaths: ['~/.ssh/id_old'], authMethod: 'key',
+      }],
+      removeKeyPassphrases: (keyPaths) => removedKeyPaths.push(keyPaths),
+    });
+
+    const result = await handleVaultAgentOp(
+      'host.update',
+      { hostId: 'host-1', keyPath: '   ', passphrase: '' },
+      deps,
+    );
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(removedKeyPaths, [['~/.ssh/id_old']]);
+    assert.deepEqual(deps.getHosts()[0]?.identityFilePaths, []);
+  });
+
+  it('host.update gives keyPath priority over an empty keypath alias', async () => {
+    const removedKeyPaths: string[][] = [];
+    const deps = createDeps({
+      hosts: [{
+        id: 'host-1', label: 'host', hostname: 'key.example.com', username: 'deploy',
+        tags: [], os: 'linux', identityFilePaths: ['~/.ssh/id_old'], authMethod: 'key',
+      }],
+      removeKeyPassphrases: (keyPaths) => removedKeyPaths.push(keyPaths),
+    });
+
+    const result = await handleVaultAgentOp(
+      'host.update',
+      { hostId: 'host-1', keyPath: '~/.ssh/id_new', keypath: '', passphrase: '' },
+      deps,
+    );
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(removedKeyPaths, [['~/.ssh/id_new']]);
+    assert.deepEqual(deps.getHosts()[0]?.identityFilePaths, ['~/.ssh/id_new']);
+  });
+
+  it('host.update uses a newly selected key path for the saved passphrase', async () => {
+    const savedKeyPaths: string[] = [];
+    const deps = createDeps({
+      hosts: [{
+        id: 'host-1',
+        label: 'encrypted key',
+        hostname: 'key.example.com',
+        username: 'deploy',
+        port: 22,
+        tags: [],
+        os: 'linux',
+        identityFilePaths: ['~/.ssh/id_old'],
+        authMethod: 'key',
+      }],
+      saveKeyPassphrase: async (keyPath) => {
+        savedKeyPaths.push(keyPath);
+      },
+    });
+
+    const result = await handleVaultAgentOp(
+      'host.update',
+      {
+        hostId: 'host-1',
+        keyPath: '~/.ssh/id_new',
+        passphrase: 'new secret',
+      },
+      deps,
+    );
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(savedKeyPaths, ['~/.ssh/id_new']);
+    assert.deepEqual(deps.getHosts()[0]?.identityFilePaths, ['~/.ssh/id_new']);
+  });
+
+  it('host.update rejects a passphrase without a key path before changing the host', async () => {
+    const deps = createDeps({
+      hosts: [{
+        id: 'host-1',
+        label: 'original',
+        hostname: 'password.example.com',
+        username: 'deploy',
+        port: 22,
+        tags: [],
+        os: 'linux',
+      }],
+    });
+
+    const result = await handleVaultAgentOp(
+      'host.update',
+      { hostId: 'host-1', label: 'must not change', passphrase: 'orphan secret' },
+      deps,
+    );
+
+    assert.equal(result.ok, false);
+    assert.match(String((result as { error?: string }).error), /keyPath/i);
+    assert.equal(deps.getHosts()[0]?.label, 'original');
   });
 
   it('host.update applies effective inherited credential settings', async () => {

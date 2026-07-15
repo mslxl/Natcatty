@@ -7,7 +7,7 @@ type Snapshot = Parameters<typeof haveSameVaultAgentSnapshot>[0];
 describe('haveSameVaultAgentSnapshot', () => {
   it('compares every snapshot field by reference', () => {
     const snapshot: Snapshot = {
-      hosts: [], notes: [], snippets: [], customGroups: [], groupConfigs: [],
+      hosts: [], keys: [], notes: [], snippets: [], customGroups: [], groupConfigs: [],
       portForwardingRules: [], managedSources: [],
     };
     assert.equal(haveSameVaultAgentSnapshot(snapshot, { ...snapshot }), true);

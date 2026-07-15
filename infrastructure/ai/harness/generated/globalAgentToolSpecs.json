@@ -585,12 +585,12 @@
     "toolName": "vault_hosts_create",
     "rpcMethod": "vault/hosts/create",
     "localExecution": false,
-    "description": "Create vault hosts from structured host objects. Use when the user wants to add/create a host (Vault → Hosts). NOT for Vault → Notes sidebar documentation. Use when the user wants to add/create a host in Vault → Hosts (创建主机、SSH 连接凭据). NOT for Vault → Notes sidebar docs. Put SSH password in password, or a local private-key file path in keyPath; put long remarks/admin tables in host notes. Never fall back to vault_notes_create if this fails.",
+    "description": "Create vault hosts from structured host objects. Use when the user wants to add/create a host (Vault → Hosts). NOT for Vault → Notes sidebar documentation. Use when the user wants to add/create a host in Vault → Hosts (创建主机、SSH 连接凭据). NOT for Vault → Notes sidebar docs. Put SSH password in password, or a local private-key file path in keyPath. If that key is encrypted and the user supplied its passphrase, put it in passphrase so later connections do not prompt. Put long remarks/admin tables in host notes. Never fall back to vault_notes_create if this fails.",
     "inputShape": {
       "hosts": {
         "type": "string",
         "optional": false,
-        "description": "JSON array of host objects you extracted from the user's text. Each object: hostname (required; host/ip aliases accepted), label (name alias accepted), port, username, password, keyPath or keypath (local private-key file path), group, tags (array or comma-separated string), notes (Host Details remarks — NOT Vault sidebar Notes), protocol (ssh|telnet|local)."
+        "description": "JSON array of host objects you extracted from the user's text. Each object: hostname (required; host/ip aliases accepted), label (name alias accepted), port, username, password, keyPath or keypath (local private-key file path), passphrase (saved passphrase for that key path), group, tags (array or comma-separated string), notes (Host Details remarks — NOT Vault sidebar Notes), protocol (ssh|telnet|local)."
       },
       "dryRun": {
         "type": "string",
@@ -619,7 +619,7 @@
     "toolName": "vault_hosts_update",
     "rpcMethod": "vault/hosts/update",
     "localExecution": false,
-    "description": "Update selected fields on an existing vault host. Use vault_hosts_list first to resolve the hostId. Update only fields the user requested. Use vault_hosts_list first to resolve hostId. Empty group, tags, notes, password, or keyPath values clear those fields.",
+    "description": "Update selected fields on an existing vault host. Use vault_hosts_list first to resolve the hostId. Update only fields the user requested. Use vault_hosts_list first to resolve hostId. Empty group, tags, notes, password, keyPath, or passphrase values clear those fields or saved credentials.",
     "inputShape": {
       "hostId": {
         "type": "string",
@@ -680,6 +680,11 @@
         "type": "string",
         "optional": true,
         "description": "Alias for keyPath."
+      },
+      "passphrase": {
+        "type": "string",
+        "optional": true,
+        "description": "Saved passphrase for the host's local private-key path. Empty string clears the saved passphrase."
       },
       "group": {
         "type": "string",
