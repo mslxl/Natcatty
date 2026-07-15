@@ -25,6 +25,68 @@ const normalizeEndpoint = (endpoint: string): string => {
 const ensureLeadingSlash = (value: string): string =>
   value.startsWith('/') ? value : `/${value}`;
 
+/**
+ * Recover from trailing garbage left by non-truncating WebDAV PUT overwrites
+ * (#2223). Node/V8: "Unexpected non-whitespace character after JSON at position N".
+ */
+const parseSyncedFileJson = (raw: string): SyncedFile => {
+  try {
+    return JSON.parse(raw) as SyncedFile;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const match = /Unexpected non-whitespace character after JSON at position (\d+)/i.exec(
+      message,
+    );
+    if (match) {
+      const pos = Number(match[1]);
+      if (Number.isFinite(pos) && pos > 0 && pos <= raw.length) {
+        return JSON.parse(raw.slice(0, pos)) as SyncedFile;
+      }
+    }
+    throw error;
+  }
+};
+
+/**
+ * Atomic replace: temp PUT + MOVE, fallback DELETE + PUT.
+ * Avoids trailing-byte corruption when a shorter body overwrites a longer file
+ * on WebDAV servers that do not truncate on PUT (#2223).
+ */
+const putWebdavFileReplacing = async (
+  client: WebDAVClient,
+  path: string,
+  body: string,
+): Promise<void> => {
+  const suffix = `${Date.now().toString(16)}${Math.random().toString(16).slice(2, 10)}`;
+  const tmpPath = `${path}.tmp-${suffix}`;
+  let tmpWritten = false;
+  try {
+    await client.putFileContents(tmpPath, body, { overwrite: true });
+    tmpWritten = true;
+    await client.moveFile(tmpPath, path, { overwrite: true });
+    return;
+  } catch {
+    if (tmpWritten) {
+      try {
+        if (await client.exists(tmpPath)) {
+          await client.deleteFile(tmpPath);
+        }
+      } catch {
+        // best-effort cleanup
+      }
+    }
+  }
+
+  try {
+    if (await client.exists(path)) {
+      await client.deleteFile(path);
+    }
+  } catch {
+    // continue; put with overwrite may still work
+  }
+  await client.putFileContents(path, body, { overwrite: true });
+};
+
 export class WebDAVAdapter {
   private config: WebDAVConfig | null;
   private resource: string | null;
@@ -91,7 +153,7 @@ export class WebDAVAdapter {
       }
       const client = this.getClient();
       const path = this.getSyncPath();
-      await client.putFileContents(path, JSON.stringify(syncedFile), { overwrite: true });
+      await putWebdavFileReplacing(client, path, JSON.stringify(syncedFile));
       this.resource = path;
       return path;
     });
@@ -113,7 +175,7 @@ export class WebDAVAdapter {
       if (!exists) return null;
       const data = await client.getFileContents(path, { format: 'text' });
       if (!data) return null;
-      return JSON.parse(data as string) as SyncedFile;
+      return parseSyncedFileJson(data as string);
     });
   }
 

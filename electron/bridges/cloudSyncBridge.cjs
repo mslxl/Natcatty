@@ -1,4 +1,5 @@
 const { createClient, AuthType } = require("webdav");
+const crypto = require("crypto");
 const https = require("https");
 const { NodeHttpHandler } = require("@smithy/node-http-handler");
 const {
@@ -13,6 +14,69 @@ const {
 } = require("./httpNetworkProxyAgent.cjs");
 
 const SYNC_FILE_NAME = "netcatty-vault.json";
+
+/**
+ * Some WebDAV servers (esp. lightweight / local ones) overwrite existing
+ * files without truncating when the new body is shorter. That leaves trailing
+ * bytes from the previous longer body and breaks JSON.parse on download
+ * (#2223). Prefer an atomic temp-PUT + MOVE replace; fall back to DELETE +
+ * PUT so the target is recreated at the correct length.
+ */
+const serializeSyncedFileBody = (syncedFile) =>
+  Buffer.from(JSON.stringify(syncedFile), "utf8");
+
+const safeDeleteWebdavPath = async (client, path) => {
+  try {
+    if (await client.exists(path)) {
+      await client.deleteFile(path);
+    }
+  } catch {
+    // Best-effort cleanup / pre-replace delete.
+  }
+};
+
+const putWebdavFileReplacing = async (client, path, bodyBuffer) => {
+  const tmpPath = `${path}.tmp-${crypto.randomBytes(8).toString("hex")}`;
+  let tmpWritten = false;
+  try {
+    await client.putFileContents(tmpPath, bodyBuffer, { overwrite: true });
+    tmpWritten = true;
+    await client.moveFile(tmpPath, path, { overwrite: true });
+    return;
+  } catch {
+    if (tmpWritten) {
+      await safeDeleteWebdavPath(client, tmpPath);
+    }
+  }
+
+  // Fallback for servers without reliable MOVE, or if temp write failed.
+  await safeDeleteWebdavPath(client, path);
+  await client.putFileContents(path, bodyBuffer, { overwrite: true });
+};
+
+/**
+ * Recover from trailing garbage left by non-truncating WebDAV PUT overwrites.
+ * Node/V8 reports: "Unexpected non-whitespace character after JSON at position N".
+ */
+const parseSyncedFileJson = (raw) => {
+  const text = String(raw ?? "");
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const match = /Unexpected non-whitespace character after JSON at position (\d+)/i.exec(
+      message
+    );
+    if (match) {
+      const pos = Number(match[1]);
+      if (Number.isFinite(pos) && pos > 0 && pos <= text.length) {
+        return JSON.parse(text.slice(0, pos));
+      }
+    }
+    throw error;
+  }
+};
 
 let electronModuleRef = null;
 
@@ -208,7 +272,8 @@ const handleWebdavUpload = async (config, syncedFile) => {
   try {
     const client = await buildWebdavClient(config);
     const path = getWebdavPath();
-    await client.putFileContents(path, JSON.stringify(syncedFile), { overwrite: true });
+    const body = serializeSyncedFileBody(syncedFile);
+    await putWebdavFileReplacing(client, path, body);
     return { resourceId: path };
   } catch (error) {
     throw wrapWebdavError("upload", error, config);
@@ -223,7 +288,7 @@ const handleWebdavDownload = async (config) => {
     if (!exists) return { syncedFile: null };
     const data = await client.getFileContents(path, { format: "text" });
     if (!data) return { syncedFile: null };
-    return { syncedFile: JSON.parse(String(data)) };
+    return { syncedFile: parseSyncedFileJson(data) };
   } catch (error) {
     throw wrapWebdavError("download", error, config);
   }
@@ -350,6 +415,10 @@ module.exports = {
   registerHandlers,
   // Exposed for tests
   handleWebdavInitialize,
+  handleWebdavUpload,
+  handleWebdavDownload,
+  parseSyncedFileJson,
+  putWebdavFileReplacing,
   buildBasicAuthHeader,
   buildS3Client,
 };
