@@ -40,17 +40,20 @@ export interface KeyboardInteractiveRequest {
 
 type KeyboardInteractiveServerPromptInput = Pick<
   KeyboardInteractiveRequest,
-  "name" | "instructions" | "prompts"
+  "name" | "instructions" | "prompts" | "hostname"
 >;
 
 /** Formats the server-supplied keyboard-interactive prompt block for display. */
 export function formatKeyboardInteractiveServerPrompt(request: KeyboardInteractiveServerPromptInput): string {
   const lines: string[] = [];
   const name = request.name?.trim();
-  if (name) {
+  const hostname = request.hostname?.trim();
+  const instructions = request.instructions?.trim();
+  const hasServerText = !!instructions || !!(name && name !== hostname);
+  if (!hasServerText) return "";
+  if (name && name !== hostname) {
     lines.push(name.endsWith(":") ? name : `${name}:`);
   }
-  const instructions = request.instructions?.trim();
   if (instructions) {
     for (const line of instructions.split(/\r?\n/).map((part) => part.trim()).filter(Boolean)) {
       lines.push(`| ${line}`);

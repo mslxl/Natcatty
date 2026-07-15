@@ -24,3 +24,8 @@ test('key export passes the selected vault key to agent filtering', () => {
 test('key export defaults blank usernames the same way as other SSH entry points', () => {
   assert.match(source, /username: exportAuth\.username \|\| "root"/);
 });
+
+test('key export forwards host MFA metadata to one-off exec commands', () => {
+  assert.match(source, /hostId: effectiveExportHost\.id/);
+  assert.match(source, /requiresMfa: !!effectiveExportHost\.requiresMfa/);
+});

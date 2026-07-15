@@ -8,6 +8,7 @@ import { formatKeyboardInteractiveServerPrompt } from "./KeyboardInteractiveModa
 
 test("formatKeyboardInteractiveServerPrompt preserves server instructions and prompt labels", () => {
   const text = formatKeyboardInteractiveServerPrompt({
+    hostname: "192.168.9.138",
     name: "Keyboard-interactive authentication prompts from server",
     instructions: "为保障主机安全，请输入二次认证密码，如有疑问，请联系xxx，电话xxx。",
     prompts: [
@@ -26,4 +27,20 @@ test("formatKeyboardInteractiveServerPrompt preserves server instructions and pr
       "| Secondary Authentication Password:",
     ].join("\n"),
   );
+});
+
+test("formatKeyboardInteractiveServerPrompt omits hostname-only fallback prompts", () => {
+  const text = formatKeyboardInteractiveServerPrompt({
+    hostname: "192.168.9.138",
+    name: "192.168.9.138",
+    instructions: "",
+    prompts: [
+      {
+        prompt: "Password:",
+        echo: false,
+      },
+    ],
+  });
+
+  assert.equal(text, "");
 });
