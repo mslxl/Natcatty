@@ -238,6 +238,38 @@ test("worker SFTP cancellation waits for a pending open and closes its late hand
   assert.equal(requests[1].payload.sftpId, "worker-sftp-late");
 });
 
+test("worker SFTP cancellation stays bounded when open never responds", async () => {
+  const bridge = loadFreshBridge();
+  bridge.init({
+    sessions: new Map(),
+    electronModule: null,
+    terminalWorkerManager: {
+      request(channel) {
+        if (channel === "netcatty:sftp:openForSession") return new Promise(() => {});
+        return Promise.reject(new Error(`unexpected worker request: ${channel}`));
+      },
+    },
+  });
+  bridge.setPermissionMode("auto");
+  bridge.setCommandTimeout(0.01);
+  bridge.updateSessionMetadata([
+    { sessionId: "ssh-stalled", hostname: "host.example", protocol: "ssh", connected: true },
+  ], "chat-stalled");
+
+  const operation = bridge.dispatchBuiltinRpc("netcatty/sftp/list", {
+    sessionId: "ssh-stalled",
+    path: "/var/log",
+    chatSessionId: "chat-stalled",
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  const startedAt = Date.now();
+  const cancellation = bridge.cancelSftpOpsForSession("chat-stalled");
+
+  await assert.rejects(operation, /timed out/);
+  await cancellation;
+  assert.ok(Date.now() - startedAt < 2000, "cancellation should honor the bounded open timeout");
+});
+
 test("MCP/Catty terminal_start, poll, and stop proxy worker background jobs", async () => {
   const requests = [];
   const bridge = loadFreshBridge();

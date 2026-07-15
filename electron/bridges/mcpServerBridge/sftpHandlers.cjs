@@ -55,23 +55,30 @@ function createSftpHandlerApi(ctx) {
       const operationName = options.operationName || "SFTP operation";
       let sftpId = null;
       let pendingOpenPromise = null;
+      let boundedOpenPromise = null;
       let closePromise = null;
+      let closeRequested = false;
       let cancellationError = null;
 
-      const closeSftpHandle = async () => {
-        if (!sftpId && pendingOpenPromise) {
-          try {
-            const opened = await pendingOpenPromise;
-            sftpId = opened?.sftpId || null;
-          } catch {
-            // A failed open has no worker SFTP handle to close.
-          }
-        }
+      const closeKnownSftpHandle = () => {
         if (!sftpId) return Promise.resolve();
         if (!closePromise) {
           closePromise = requestWorkerSftp("netcatty:sftp:close", { sftpId, encodingStateKey });
         }
         return closePromise;
+      };
+      const closeSftpHandle = async () => {
+        closeRequested = true;
+        if (!sftpId && boundedOpenPromise) {
+          try {
+            const opened = await boundedOpenPromise;
+            sftpId = opened?.sftpId || null;
+          } catch {
+            // Do not let an unresponsive worker open block cancellation. If it
+            // eventually succeeds, the late-result handler below closes it.
+          }
+        }
+        return closeKnownSftpHandle();
       };
       const unregisterSftpOp = registerSftpOp(chatSessionId, params.sessionId, () => {
         if (!cancellationError) {
@@ -89,7 +96,15 @@ function createSftpHandlerApi(ctx) {
           encodingStateKey,
           timeoutMs,
         }, {});
-        const opened = await waitForWorkerSftpRequest(pendingOpenPromise, { timeoutMs, operationName });
+        boundedOpenPromise = waitForWorkerSftpRequest(pendingOpenPromise, { timeoutMs, operationName });
+        void pendingOpenPromise.then((lateOpened) => {
+          if (!sftpId) sftpId = lateOpened?.sftpId || null;
+          if (closeRequested) return closeKnownSftpHandle();
+          return undefined;
+        }).catch(() => {
+          // The bounded request reports open failures to the active operation.
+        });
+        const opened = await boundedOpenPromise;
         sftpId = opened?.sftpId;
         if (!sftpId) throw new Error("Failed to open session-backed SFTP handle");
         if (cancellationError) throw cancellationError;
