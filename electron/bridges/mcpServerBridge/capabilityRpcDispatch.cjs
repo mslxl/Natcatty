@@ -157,9 +157,12 @@ function createCapabilityRpcDispatcher(deps) {
       };
     }
 
+    const hostOpenGeneration = capability.id === "vault.host.open"
+      ? deps.captureHostOpenScope?.(params?.chatSessionId)
+      : null;
     const result = await handler(params);
     if (capability.id === "vault.host.open" && result?.ok !== false && result?.sessionId) {
-      deps.onHostOpened?.(params?.chatSessionId, result.sessionId);
+      deps.onHostOpened?.(params?.chatSessionId, result.sessionId, hostOpenGeneration);
     }
     return result;
   };

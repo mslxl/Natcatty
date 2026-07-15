@@ -155,6 +155,24 @@ test("dispatchCapabilityRpc refuses to close a session outside ownership", async
   assert.equal(invoked, false);
 });
 
+test("dispatchCapabilityRpc preserves the host-open scope generation across the async bridge", async () => {
+  const registrations = [];
+  const dispatch = createTestDispatcher({
+    captureHostOpenScope: (chatSessionId) => {
+      assert.equal(chatSessionId, "chat-1");
+      return 7;
+    },
+    onHostOpened: (chatSessionId, sessionId, generation) => {
+      registrations.push({ chatSessionId, sessionId, generation });
+    },
+    invokeVaultAgent: async () => ({ ok: true, sessionId: "session-1" }),
+  });
+
+  await dispatch("public/vault/hosts/open", { chatSessionId: "chat-1", hostId: "host-1" });
+
+  assert.deepEqual(registrations, [{ chatSessionId: "chat-1", sessionId: "session-1", generation: 7 }]);
+});
+
 test("dispatchCapabilityRpc routes vault hosts create to vault service", async () => {
   let invokedOp = null;
   const dispatch = createTestDispatcher({

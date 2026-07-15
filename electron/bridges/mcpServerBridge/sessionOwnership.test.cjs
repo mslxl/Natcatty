@@ -32,3 +32,15 @@ test("clearScope only revokes the deleted chat scope", () => {
   assert.equal(ownership.validate("chat-a", "session-1").ok, false);
   assert.equal(ownership.validate("chat-b", "session-2").ok, true);
 });
+
+test("a host open that finishes after scope cleanup cannot restore ownership", () => {
+  const ownership = createSessionOwnershipRegistry();
+  const generation = ownership.captureGeneration("chat-a");
+  ownership.clearScope("chat-a");
+
+  assert.equal(ownership.register("chat-a", "session-1", generation), false);
+  assert.equal(ownership.validate("chat-a", "session-1").ok, false);
+
+  const nextGeneration = ownership.captureGeneration("chat-a");
+  assert.equal(ownership.register("chat-a", "session-2", nextGeneration), true);
+});

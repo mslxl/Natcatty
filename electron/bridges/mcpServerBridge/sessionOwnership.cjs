@@ -2,9 +2,21 @@
 
 function createSessionOwnershipRegistry() {
   const ownedByScope = new Map();
+  const scopeGenerations = new Map();
 
-  function register(chatSessionId, sessionId) {
+  function captureGeneration(chatSessionId) {
+    if (!chatSessionId) return null;
+    return scopeGenerations.get(chatSessionId) || 0;
+  }
+
+  function register(chatSessionId, sessionId, expectedGeneration = null) {
     if (!chatSessionId || !sessionId) return false;
+    if (
+      expectedGeneration !== null
+      && expectedGeneration !== captureGeneration(chatSessionId)
+    ) {
+      return false;
+    }
     const owned = ownedByScope.get(chatSessionId) || new Set();
     owned.add(sessionId);
     ownedByScope.set(chatSessionId, owned);
@@ -31,9 +43,10 @@ function createSessionOwnershipRegistry() {
 
   function clearScope(chatSessionId) {
     ownedByScope.delete(chatSessionId);
+    scopeGenerations.set(chatSessionId, captureGeneration(chatSessionId) + 1);
   }
 
-  return { register, validate, forgetSession, clearScope };
+  return { captureGeneration, register, validate, forgetSession, clearScope };
 }
 
 module.exports = { createSessionOwnershipRegistry };

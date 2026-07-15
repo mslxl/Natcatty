@@ -91,13 +91,16 @@ test("SFTP cancellation targets one terminal session and waits for cleanup", asy
     await nextTick();
     events.push("session-1-clean");
   });
+  ctx.registerSftpOp("chat-2", "session-1", () => {
+    events.push("session-1-other-scope-clean");
+  });
   ctx.registerSftpOp("chat-1", "session-2", () => {
     events.push("session-2-clean");
   });
 
-  await ctx.cancelSftpOpsForTerminalSession("chat-1", "session-1");
+  await ctx.cancelSftpOpsForTerminalSession("session-1");
 
-  assert.deepEqual(events, ["session-1-clean"]);
+  assert.deepEqual(events, ["session-1-other-scope-clean", "session-1-clean"]);
   assert.equal(ctx.activeSessionSftpOps.size, 1);
 });
 

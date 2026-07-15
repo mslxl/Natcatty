@@ -49,11 +49,11 @@ function createBackgroundJobApi(ctx) {
       }
     }
 
-    async function cancelSftpOpsForTerminalSession(chatSessionId, sessionId) {
-      if (!chatSessionId || !sessionId) return;
+    async function cancelSftpOpsForTerminalSession(sessionId) {
+      if (!sessionId) return;
       const pending = [];
       for (const [opId, entry] of activeSessionSftpOps) {
-        if (entry.chatSessionId !== chatSessionId || entry.sessionId !== sessionId) continue;
+        if (entry.sessionId !== sessionId) continue;
         activeSessionSftpOps.delete(opId);
         try {
           pending.push(Promise.resolve(entry.cancel()));

@@ -1102,8 +1102,9 @@ const dispatchCapabilityRpc = createCapabilityRpcDispatcher({
   isChatSessionCancelled,
   requestApprovalFromRenderer,
   USER_DENIED_MESSAGE,
-  onHostOpened: (chatSessionId, sessionId) => {
-    openedSessionOwnership.register(chatSessionId, sessionId);
+  captureHostOpenScope: (chatSessionId) => openedSessionOwnership.captureGeneration(chatSessionId),
+  onHostOpened: (chatSessionId, sessionId, generation) => {
+    openedSessionOwnership.register(chatSessionId, sessionId, generation);
   },
   validateSessionClose: (params = {}) => {
     const scopeErr = validateSessionScope(
@@ -1114,10 +1115,7 @@ const dispatchCapabilityRpc = createCapabilityRpcDispatcher({
     if (scopeErr) return { ok: false, error: scopeErr };
     return openedSessionOwnership.validate(params.chatSessionId, params.sessionId);
   },
-  beforeSessionClose: (params = {}) => cancelSftpOpsForTerminalSession(
-    params.chatSessionId,
-    params.sessionId,
-  ),
+  beforeSessionClose: (params = {}) => cancelSftpOpsForTerminalSession(params.sessionId),
   onSessionClosed: (sessionId) => {
     openedSessionOwnership.forgetSession(sessionId);
     for (const scoped of scopedMetadata.values()) {
