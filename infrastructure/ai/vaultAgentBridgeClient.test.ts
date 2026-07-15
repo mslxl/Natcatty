@@ -688,6 +688,62 @@ describe('handleVaultAgentOp vault management gaps', () => {
     assert.equal(deps.getPortForwardingRules()[0]?.status, 'inactive');
   });
 
+  it('preserves forwarding rule changes made while an old tunnel is stopping', async () => {
+    const rule: PortForwardingRule = {
+      id: 'rule-1', label: 'Web', type: 'local', localPort: 8080,
+      bindAddress: '127.0.0.1', remoteHost: '127.0.0.1', remotePort: 80,
+      hostId: host.id, status: 'active', createdAt: 1,
+    };
+    const concurrentRule: PortForwardingRule = {
+      id: 'rule-2', label: 'Database', type: 'local', localPort: 5432,
+      bindAddress: '127.0.0.1', remoteHost: '127.0.0.1', remotePort: 5432,
+      hostId: host.id, status: 'inactive', createdAt: 2,
+    };
+    let deps: VaultAgentApiDeps;
+    deps = createDeps({
+      hosts: [host],
+      portForwardingRules: [rule],
+      stopRuleTunnels: async () => {
+        deps.updatePortForwardingRules([...deps.getPortForwardingRules(), concurrentRule]);
+        return { success: true };
+      },
+    });
+
+    const result = await handleVaultAgentOp('portforward.rules.update', {
+      ruleId: rule.id,
+      localPort: 8081,
+    }, deps);
+
+    assert.equal(result.ok, true);
+    assert.equal(deps.getPortForwardingRules().find((entry) => entry.id === rule.id)?.localPort, 8081);
+    assert.equal(deps.getPortForwardingRules().find((entry) => entry.id === concurrentRule.id)?.label, 'Database');
+  });
+
+  it('does not restore a forwarding rule deleted while its old tunnel is stopping', async () => {
+    const rule: PortForwardingRule = {
+      id: 'rule-1', label: 'Web', type: 'local', localPort: 8080,
+      bindAddress: '127.0.0.1', remoteHost: '127.0.0.1', remotePort: 80,
+      hostId: host.id, status: 'active', createdAt: 1,
+    };
+    let deps: VaultAgentApiDeps;
+    deps = createDeps({
+      hosts: [host],
+      portForwardingRules: [rule],
+      stopRuleTunnels: async () => {
+        deps.updatePortForwardingRules([]);
+        return { success: true };
+      },
+    });
+
+    const result = await handleVaultAgentOp('portforward.rules.update', {
+      ruleId: rule.id,
+      localPort: 8081,
+    }, deps);
+
+    assert.equal(result.ok, false);
+    assert.deepEqual(deps.getPortForwardingRules(), []);
+  });
+
   it('cleans up backend tunnels before editing an inactive forwarding rule', async () => {
     const rule: PortForwardingRule = {
       id: 'rule-1', label: 'Web', type: 'local', localPort: 8080,

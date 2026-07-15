@@ -1053,7 +1053,7 @@ export async function handleVaultAgentOp(
       const currentRules = deps.getPortForwardingRules();
       const existingRule = currentRules.find((entry) => entry.id === ruleId);
       const effectiveHosts = deps.getHosts().map((host) => deps.resolveEffectiveHost(host));
-      const result = updatePortForwardingRule(currentRules, effectiveHosts, ruleId, params);
+      let result = updatePortForwardingRule(currentRules, effectiveHosts, ruleId, params);
       if (!result.ok) return result;
       if (
         existingRule
@@ -1063,6 +1063,14 @@ export async function handleVaultAgentOp(
         if (!stopped.success) {
           return { ok: false, error: stopped.error || 'Failed to stop port forwarding tunnel.' };
         }
+        const latestHosts = deps.getHosts().map((host) => deps.resolveEffectiveHost(host));
+        result = updatePortForwardingRule(
+          deps.getPortForwardingRules(),
+          latestHosts,
+          ruleId,
+          params,
+        );
+        if (!result.ok) return result;
       }
       deps.updatePortForwardingRules(result.value.rules);
       return { ok: true, rule: sanitizePortForwardRuleForAgent(result.value.rule) };
