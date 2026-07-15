@@ -1,7 +1,7 @@
 "use strict";
 
 function createSessionService(ctx = {}) {
-  const { invokeSessionAgent, validateClose, beforeClose, onClosed } = ctx;
+  const { invokeSessionAgent, validateClose, beforeClose, afterClose, onClosed } = ctx;
 
   return {
     close: async (params = {}) => {
@@ -16,10 +16,14 @@ function createSessionService(ctx = {}) {
         return { ok: false, error: "Session close bridge is unavailable." };
       }
 
-      await beforeClose?.(params);
-      const result = await invokeSessionAgent("session.close", { sessionId: params.sessionId });
-      if (result?.ok !== false) onClosed?.(params.sessionId);
-      return result;
+      try {
+        await beforeClose?.(params);
+        const result = await invokeSessionAgent("session.close", { sessionId: params.sessionId });
+        if (result?.ok !== false) onClosed?.(params.sessionId);
+        return result;
+      } finally {
+        await afterClose?.(params);
+      }
     },
   };
 }

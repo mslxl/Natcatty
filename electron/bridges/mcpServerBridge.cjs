@@ -123,6 +123,7 @@ const backgroundJobs = new Map(); // jobId -> job metadata
 const workerBackgroundJobs = new Map(); // jobId -> { chatSessionId, sessionId }
 const activeSessionExecutions = new Map(); // sessionId -> { kind, startedAt, token }
 const activeSessionSftpOps = new Map(); // opId -> { chatSessionId, sessionId, cancel }
+const closingTerminalSessions = new Set();
 const pendingSessionWriteApprovals = new Map(); // sessionId -> method
 const DEFAULT_BACKGROUND_JOB_TIMEOUT_MS = 60 * 60 * 1000;
 const DEFAULT_BACKGROUND_JOB_POLL_INTERVAL_MS = 30 * 1000;
@@ -290,7 +291,7 @@ const { createBackgroundJobApi } = require("./mcpServerBridge/backgroundJobs.cjs
 const backgroundJobApi = createBackgroundJobApi({
   get activeSftpOpSeq() { return activeSftpOpSeq; },
   set activeSftpOpSeq(value) { activeSftpOpSeq = value; },
-  backgroundJobs, activeSessionSftpOps, activeSessionExecutions, crypto,
+  backgroundJobs, activeSessionSftpOps, activeSessionExecutions, closingTerminalSessions, crypto,
   BACKGROUND_JOB_RETENTION_MS, DEFAULT_BACKGROUND_JOB_POLL_INTERVAL_MS, MAX_BACKGROUND_JOB_OUTPUT_CHARS,
   debugLog, sftpBridge,
 });
@@ -300,6 +301,8 @@ const {
   registerSftpOp,
   cancelSftpOpsForSession,
   cancelSftpOpsForTerminalSession,
+  beginTerminalSessionClose,
+  endTerminalSessionClose,
   cancelAllSftpOps,
   readBackgroundJobSnapshot,
   createOutputWindow,
@@ -1115,7 +1118,11 @@ const dispatchCapabilityRpc = createCapabilityRpcDispatcher({
     if (scopeErr) return { ok: false, error: scopeErr };
     return openedSessionOwnership.validate(params.chatSessionId, params.sessionId);
   },
-  beforeSessionClose: (params = {}) => cancelSftpOpsForTerminalSession(params.sessionId),
+  beforeSessionClose: async (params = {}) => {
+    beginTerminalSessionClose(params.sessionId);
+    await cancelSftpOpsForTerminalSession(params.sessionId);
+  },
+  afterSessionClose: (params = {}) => endTerminalSessionClose(params.sessionId),
   onSessionClosed: (sessionId) => {
     openedSessionOwnership.forgetSession(sessionId);
     for (const scoped of scopedMetadata.values()) {

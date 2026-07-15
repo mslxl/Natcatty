@@ -93,6 +93,7 @@ function createCapabilityRpcDispatcher(deps) {
     invokeSessionAgent: invokeVaultAgent,
     validateClose: deps.validateSessionClose,
     beforeClose: deps.beforeSessionClose,
+    afterClose: deps.afterSessionClose,
     onClosed: deps.onSessionClosed,
   });
   const services = {

@@ -117,6 +117,9 @@ test("dispatchCapabilityRpc closes an owned session through the renderer bridge"
       await Promise.resolve();
       lifecycle.push("sftp-clean");
     },
+    afterSessionClose: async () => {
+      lifecycle.push("close-finished");
+    },
     onSessionClosed: (sessionId) => closed.push(sessionId),
     invokeVaultAgent: async (op, params) => {
       lifecycle.push("session-close");
@@ -133,7 +136,7 @@ test("dispatchCapabilityRpc closes an owned session through the renderer bridge"
   assert.equal(result.ok, true);
   assert.deepEqual(calls, [{ op: "session.close", params: { sessionId: "session-1" } }]);
   assert.deepEqual(closed, ["session-1"]);
-  assert.deepEqual(lifecycle, ["sftp-clean", "session-close"]);
+  assert.deepEqual(lifecycle, ["sftp-clean", "session-close", "close-finished"]);
 });
 
 test("dispatchCapabilityRpc refuses to close a session outside ownership", async () => {

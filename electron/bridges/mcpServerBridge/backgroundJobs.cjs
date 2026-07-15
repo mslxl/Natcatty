@@ -25,6 +25,14 @@ function createBackgroundJobApi(ctx) {
       if (!chatSessionId || typeof cancel !== "function") {
         return () => {};
       }
+      if (closingTerminalSessions?.has(sessionId)) {
+        try {
+          void Promise.resolve(cancel()).catch(() => {});
+        } catch {
+          // The session is already closing; a failed redundant cancellation is harmless.
+        }
+        return () => {};
+      }
       const opId = `sftp_${Date.now().toString(36)}_${(++activeSftpOpSeq).toString(36)}`;
       activeSessionSftpOps.set(opId, { chatSessionId, sessionId, cancel });
       return () => {
@@ -62,6 +70,14 @@ function createBackgroundJobApi(ctx) {
         }
       }
       if (pending.length) await Promise.allSettled(pending);
+    }
+
+    function beginTerminalSessionClose(sessionId) {
+      if (sessionId) closingTerminalSessions?.add(sessionId);
+    }
+
+    function endTerminalSessionClose(sessionId) {
+      if (sessionId) closingTerminalSessions?.delete(sessionId);
     }
     
     function cancelAllSftpOps() {
@@ -264,6 +280,8 @@ function createBackgroundJobApi(ctx) {
       registerSftpOp,
       cancelSftpOpsForSession,
       cancelSftpOpsForTerminalSession,
+      beginTerminalSessionClose,
+      endTerminalSessionClose,
       cancelAllSftpOps,
       readBackgroundJobSnapshot,
       createOutputWindow,
