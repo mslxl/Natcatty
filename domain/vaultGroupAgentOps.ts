@@ -116,9 +116,11 @@ export function upsertGroup(
 ): Result {
   const path = normalizePath(pathValue);
   if (!path) return { ok: false, error: 'path is required.' };
+  if (options.create && state.groups.includes(path)) return { ok: false, error: `Group "${path}" already exists.` };
   if (!options.create && !state.groups.includes(path)) return { ok: false, error: `Group "${path}" was not found.` };
   const newPath = normalizePath(options.newPath ?? path);
   if (!newPath) return { ok: false, error: 'newPath must not be empty.' };
+  if (newPath.startsWith(`${path}/`)) return { ok: false, error: 'A group cannot be moved inside itself.' };
   if (newPath !== path && state.groups.includes(newPath)) return { ok: false, error: `Group "${newPath}" already exists.` };
   const current = state.configs.find((config) => config.path === path) ?? { path };
   const patched = patchGroupConfig({ ...current, path: newPath }, defaults, identities, proxyProfiles, state.hosts);

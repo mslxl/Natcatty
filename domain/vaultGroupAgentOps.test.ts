@@ -32,6 +32,12 @@ describe('vaultGroupAgentOps', () => {
     assert.equal(upsertGroup(state, 'prod', '{"jumpHostIds":["missing"]}', [], proxyProfiles).ok, false);
   });
 
+  it('keeps create distinct from update and rejects self-descendant moves', () => {
+    const state = { groups: ['prod', 'prod/web'], configs: [{ path: 'prod' }], hosts, managedSources: [] };
+    assert.equal(upsertGroup(state, 'prod', '{}', [], proxyProfiles, { create: true }).ok, false);
+    assert.equal(upsertGroup(state, 'prod', '{}', [], proxyProfiles, { newPath: 'prod/archive' }).ok, false);
+  });
+
   it('moves hosts to root by default and refuses managed group deletion', () => {
     const state = { groups: ['prod', 'prod/web'], configs: [{ path: 'prod' }], hosts, managedSources: [] };
     const removed = deleteGroup(state, 'prod', false);
