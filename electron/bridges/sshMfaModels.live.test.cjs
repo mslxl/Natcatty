@@ -3,19 +3,23 @@
  *
  * Always runs:
  *   - Mock models A / B / C / password-only against Netcatty-style auth ordering
+ *     (credentials below are synthetic fixture strings, not real lab secrets)
  *
- * Optionally runs against the lab host when SSH_MFA_LIVE=1:
- *   host default 192.168.139.227
- *
- *   Lab users (configured on that host):
- *     edrpw   - password method only
- *     edrtest - dual keyboard-interactive (password + TOTP)
- *     edrmix  - dual keyboard-interactive (password + TOTP, alternate secret)
- *     edrsec  - dual keyboard-interactive (password + Secondary Authentication Password)
+ * Optionally runs against a lab host when env is fully configured:
+ *   SSH_MFA_LIVE=1
+ *   SSH_MFA_HOST=...
+ *   SSH_MFA_PORT=22 (optional)
+ *   SSH_MFA_EDRPW_PASSWORD=...
+ *   SSH_MFA_EDRTEST_PASSWORD=...
+ *   SSH_MFA_EDRTEST_TOTP_SECRET=...
+ *   SSH_MFA_EDRMIX_PASSWORD=...
+ *   SSH_MFA_EDRMIX_TOTP_SECRET=...
+ *   SSH_MFA_EDRSEC_PASSWORD=...
+ *   SSH_MFA_EDRSEC_SECONDARY=...
  *
  * Usage:
  *   node --test electron/bridges/sshMfaModels.live.test.cjs
- *   SSH_MFA_LIVE=1 node --test electron/bridges/sshMfaModels.live.test.cjs
+ *   SSH_MFA_LIVE=1 SSH_MFA_HOST=... ... node --test electron/bridges/sshMfaModels.live.test.cjs
  */
 
 const test = require("node:test");
@@ -25,31 +29,50 @@ const crypto = require("node:crypto");
 const Module = require("node:module");
 const path = require("node:path");
 
-const LIVE = process.env.SSH_MFA_LIVE === "1" || process.env.SSH_MFA_LIVE === "true";
-const LIVE_HOST = process.env.SSH_MFA_HOST || "192.168.139.227";
+const LIVE_FLAG = process.env.SSH_MFA_LIVE === "1" || process.env.SSH_MFA_LIVE === "true";
+const LIVE_HOST = process.env.SSH_MFA_HOST || "";
 const LIVE_PORT = Number(process.env.SSH_MFA_PORT || 22);
 
+function env(name) {
+  const value = process.env[name];
+  return typeof value === "string" && value.length > 0 ? value : "";
+}
+
+// Live credentials are NEVER hardcoded — supply via environment for private lab runs.
 const LAB = {
-  edrpw: { username: "edrpw", password: "PwOnly001!", model: "password-only" },
+  edrpw: {
+    username: env("SSH_MFA_EDRPW_USER") || "edrpw",
+    password: env("SSH_MFA_EDRPW_PASSWORD"),
+    model: "password-only",
+  },
   edrtest: {
-    username: "edrtest",
-    password: "LoginPass001",
-    totpSecret: "2MN5RI3YQSYQDRSGV3ZKTUBHXI",
+    username: env("SSH_MFA_EDRTEST_USER") || "edrtest",
+    password: env("SSH_MFA_EDRTEST_PASSWORD"),
+    totpSecret: env("SSH_MFA_EDRTEST_TOTP_SECRET"),
     model: "B-dual-ki-totp",
   },
   edrmix: {
-    username: "edrmix",
-    password: "MixLogin001!",
-    totpSecret: "JBSWY3DPEHPK3PXP",
+    username: env("SSH_MFA_EDRMIX_USER") || "edrmix",
+    password: env("SSH_MFA_EDRMIX_PASSWORD"),
+    totpSecret: env("SSH_MFA_EDRMIX_TOTP_SECRET"),
     model: "B-dual-ki-totp-alt",
   },
   edrsec: {
-    username: "edrsec",
-    password: "SecLogin001!",
-    secondaryPassword: "SecondaryPass002",
+    username: env("SSH_MFA_EDRSEC_USER") || "edrsec",
+    password: env("SSH_MFA_EDRSEC_PASSWORD"),
+    secondaryPassword: env("SSH_MFA_EDRSEC_SECONDARY"),
     model: "B-dual-ki-secondary-password",
   },
 };
+
+function hasLiveCreds(entry) {
+  if (!entry?.password) return false;
+  if ("totpSecret" in entry && entry.model.includes("totp") && !entry.totpSecret) return false;
+  if ("secondaryPassword" in entry && entry.model.includes("secondary") && !entry.secondaryPassword) return false;
+  return true;
+}
+
+const LIVE = LIVE_FLAG && !!LIVE_HOST;
 
 function base32Decode(secret) {
   const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
@@ -476,9 +499,12 @@ test("mock model C: password full success skips KI (documents remaining gap)", a
 // Live lab host
 // ---------------------------------------------------------------------------
 
-const liveTest = LIVE ? test : test.skip;
+const liveEdrpw = LIVE && hasLiveCreds(LAB.edrpw) ? test : test.skip;
+const liveEdrtest = LIVE && hasLiveCreds(LAB.edrtest) ? test : test.skip;
+const liveEdrmix = LIVE && hasLiveCreds(LAB.edrmix) ? test : test.skip;
+const liveEdrsec = LIVE && hasLiveCreds(LAB.edrsec) ? test : test.skip;
 
-liveTest("live edrpw: password method only", async () => {
+liveEdrpw("live edrpw: password method only", async () => {
   const result = await connectWithNetcattyOrder({
     host: LIVE_HOST,
     port: LIVE_PORT,
@@ -491,7 +517,7 @@ liveTest("live edrpw: password method only", async () => {
   assert.equal(result.kiRounds.length, 0);
 });
 
-liveTest("live edrtest: dual KI password + TOTP (model B)", async () => {
+liveEdrtest("live edrtest: dual KI password + TOTP (model B)", async () => {
   const result = await connectWithNetcattyOrder({
     host: LIVE_HOST,
     port: LIVE_PORT,
@@ -507,7 +533,7 @@ liveTest("live edrtest: dual KI password + TOTP (model B)", async () => {
   assert.match(prompts, /code/i);
 });
 
-liveTest("live edrmix: dual KI password + TOTP alt secret (model B variant)", async () => {
+liveEdrmix("live edrmix: dual KI password + TOTP alt secret (model B variant)", async () => {
   const result = await connectWithNetcattyOrder({
     host: LIVE_HOST,
     port: LIVE_PORT,
@@ -519,7 +545,7 @@ liveTest("live edrmix: dual KI password + TOTP alt secret (model B variant)", as
   assert.ok(result.kiRounds.length >= 2);
 });
 
-liveTest("live edrsec: dual KI with Secondary Authentication Password prompt", async () => {
+liveEdrsec("live edrsec: dual KI with Secondary Authentication Password prompt", async () => {
   const result = await connectWithNetcattyOrder({
     host: LIVE_HOST,
     port: LIVE_PORT,
