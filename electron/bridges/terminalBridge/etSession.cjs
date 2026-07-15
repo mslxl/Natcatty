@@ -231,6 +231,27 @@ main();
       });
     }
 
+    function buildPreferredAuthentications({ authMethod, requiresMfa = false, hasPassword = false, hasPublicKey = false }) {
+      if (authMethod === "password") {
+        return requiresMfa ? "keyboard-interactive,password" : "password,keyboard-interactive";
+      }
+      if (authMethod === "auto") {
+        return requiresMfa
+          ? "publickey,keyboard-interactive,password"
+          : "publickey,password,keyboard-interactive";
+      }
+      if (hasPublicKey) {
+        if (requiresMfa) {
+          return hasPassword ? "publickey,keyboard-interactive,password" : "publickey,keyboard-interactive";
+        }
+        return hasPassword ? "publickey,password,keyboard-interactive" : "publickey";
+      }
+      if (hasPassword) {
+        return requiresMfa ? "keyboard-interactive,password" : "password,keyboard-interactive";
+      }
+      return requiresMfa ? "keyboard-interactive" : "";
+    }
+
     function createEtAskpassArtifacts(sshDir, askpassEntries) {
       if (!Array.isArray(askpassEntries) || askpassEntries.length === 0) {
         return { env: {}, artifacts: [] };
@@ -441,21 +462,21 @@ main();
       // NOTE: values with commas (e.g. "password,keyboard-interactive") MUST go into
       // the config file — ET on Windows passes --ssh-option values through cmd.exe
       // which treats commas as argument delimiters.
-      if (options.authMethod === "auto") {
-        configLines.push("PreferredAuthentications publickey,password,keyboard-interactive");
-      } else if (options.authMethod === "password") {
+      const targetPreferredAuthentications = buildPreferredAuthentications({
+        authMethod: options.authMethod,
+        requiresMfa: !!options.requiresMfa,
+        hasPassword,
+        hasPublicKey: Boolean(options.useSshAgent || identityPaths.length > 0),
+      });
+      if (options.authMethod === "password") {
         sshOptions.push("PubkeyAuthentication=no");
-        configLines.push("PreferredAuthentications password,keyboard-interactive");
-      } else if (options.useSshAgent && hasPassword) {
-        configLines.push("PreferredAuthentications publickey,password,keyboard-interactive");
-      } else if (options.useSshAgent) {
-        sshOptions.push("PreferredAuthentications=publickey");
-      } else if (identityPaths.length > 0 && hasPassword) {
-        configLines.push("PreferredAuthentications publickey,password,keyboard-interactive");
-      } else if (identityPaths.length > 0) {
-        sshOptions.push("PreferredAuthentications=publickey");
-      } else if (hasPassword) {
-        configLines.push("PreferredAuthentications password,keyboard-interactive");
+      }
+      if (targetPreferredAuthentications) {
+        if (targetPreferredAuthentications.includes(",")) {
+          configLines.push(`PreferredAuthentications ${targetPreferredAuthentications}`);
+        } else {
+          sshOptions.push(`PreferredAuthentications=${targetPreferredAuthentications}`);
+        }
       }
 
       sshOptions.push("KbdInteractiveAuthentication=yes");
@@ -561,14 +582,21 @@ main();
           for (const keyPath of defaultIdentityPaths) {
             jumpConfigLines.push(`  IdentityFile ${quoteSshConfigValue(keyPath)}`);
           }
-          jumpConfigLines.push("  PreferredAuthentications publickey,password,keyboard-interactive");
         } else if (jump.authMethod === "password") {
           jumpConfigLines.push("  PubkeyAuthentication no");
-          jumpConfigLines.push("  PreferredAuthentications password,keyboard-interactive");
-        } else if (jump.authMethod === "key" || jump.authMethod === "certificate") {
-          jumpConfigLines.push(jump.password
-            ? "  PreferredAuthentications publickey,password,keyboard-interactive"
-            : "  PreferredAuthentications publickey");
+        }
+
+        const jumpPreferredAuthentications = buildPreferredAuthentications({
+          authMethod: jump.authMethod,
+          requiresMfa: !!jump.requiresMfa,
+          hasPassword: typeof jump.password === "string" && jump.password.length > 0,
+          hasPublicKey: Boolean(
+            jump.useSshAgent ||
+            jumpConfigLines.some((line) => line.startsWith("  IdentityFile ")),
+          ),
+        });
+        if (jumpPreferredAuthentications) {
+          jumpConfigLines.push(`  PreferredAuthentications ${jumpPreferredAuthentications}`);
         }
 
         // Jump host certificate

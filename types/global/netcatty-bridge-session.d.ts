@@ -84,6 +84,7 @@ declare global {
     startEtSession?(options: {
       sessionId?: string;
       hostname: string;
+      hostId?: string;
       username?: string;
       password?: string;
       privateKey?: string;
@@ -91,6 +92,7 @@ declare global {
       keyId?: string;
       passphrase?: string;
       authMethod?: import("../../domain/models").HostAuthMethod;
+      requiresMfa?: boolean;
       identityFilePaths?: string[];
       useSshAgent?: boolean;
       agentPublicKeys?: string[];

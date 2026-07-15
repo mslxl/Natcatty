@@ -45,6 +45,7 @@ declare global {
     port: number;
     username: string;
     authMethod?: import("./domain/models").HostAuthMethod;
+    requiresMfa?: boolean;
     password?: string;
     privateKey?: string;
     certificate?: string;
