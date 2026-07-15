@@ -159,6 +159,9 @@ export function patchGroupConfig(
       next[key] = parsed;
     }
   }
+  if (next.moshEnabled && next.etEnabled) {
+    return { ok: false, error: 'Mosh and ET cannot both be enabled.' };
+  }
   if (Object.hasOwn(defaults, 'etPort')) {
     const etPort = Number(defaults.etPort);
     if (!Number.isInteger(etPort) || etPort < 1 || etPort > 65535) return { ok: false, error: 'etPort must be between 1 and 65535.' };

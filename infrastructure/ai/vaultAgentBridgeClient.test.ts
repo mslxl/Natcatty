@@ -634,7 +634,7 @@ describe('handleVaultAgentOp vault management gaps', () => {
       environmentVariables: '{"APP_ENV":"production"}',
       moshEnabled: 'true',
       moshServerPath: '/usr/local/bin/mosh-server',
-      etEnabled: 'true',
+      etEnabled: 'false',
       etPort: 2022,
     }, deps);
 

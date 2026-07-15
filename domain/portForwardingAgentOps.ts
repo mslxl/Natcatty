@@ -83,6 +83,8 @@ function buildRule(
       hostId,
       autoStart,
       status: existing?.status ?? 'inactive',
+      error: existing?.error,
+      lastUsedAt: existing?.lastUsedAt,
       createdAt: existing?.createdAt ?? newRule!.now,
       order: existing?.order,
     },

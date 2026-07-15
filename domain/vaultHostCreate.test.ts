@@ -492,9 +492,9 @@ test('applyVaultHostUpdate applies and clears advanced connection settings', () 
     startupCommand: 'tmux attach || tmux',
     startupCommandRunMode: 'lineDelay',
     environmentVariables: [{ name: 'APP_ENV', value: 'production' }],
-    moshEnabled: true,
+    moshEnabled: false,
     moshServerPath: '/usr/local/bin/mosh-server',
-    etEnabled: true,
+    etEnabled: false,
     etPort: 2022,
     serialConfig: {
       path: '/dev/ttyUSB0', baudRate: 115200, dataBits: 8, stopBits: 1,
@@ -509,6 +509,7 @@ test('applyVaultHostUpdate applies and clears advanced connection settings', () 
   assert.equal(result.ok, true);
   if (!result.ok) return;
   assert.equal(result.updatedHost.protocol, 'serial');
+  assert.equal(result.updatedHost.hostname, '/dev/ttyUSB0');
   assert.equal(result.updatedHost.identityId, identity.id);
   assert.equal(result.updatedHost.username, 'deploy');
   assert.deepEqual(result.updatedHost.hostChain, { hostIds: [jump.id] });
@@ -516,9 +517,9 @@ test('applyVaultHostUpdate applies and clears advanced connection settings', () 
   assert.equal(result.updatedHost.startupCommand, 'tmux attach || tmux');
   assert.equal(result.updatedHost.startupCommandRunMode, 'lineDelay');
   assert.deepEqual(result.updatedHost.environmentVariables, [{ name: 'APP_ENV', value: 'production' }]);
-  assert.equal(result.updatedHost.moshEnabled, true);
+  assert.equal(result.updatedHost.moshEnabled, false);
   assert.equal(result.updatedHost.moshServerPath, '/usr/local/bin/mosh-server');
-  assert.equal(result.updatedHost.etEnabled, true);
+  assert.equal(result.updatedHost.etEnabled, false);
   assert.equal(result.updatedHost.etPort, 2022);
   assert.deepEqual(result.updatedHost.serialConfig, {
     path: '/dev/ttyUSB0', baudRate: 115200, dataBits: 8, stopBits: 1,
@@ -569,6 +570,8 @@ test('applyVaultHostUpdate rejects malformed advanced connection settings', () =
     { patch: { environmentVariables: [{ value: 'missing-name' }] }, error: /require name and value/i },
     { patch: { moshEnabled: 'maybe' }, error: /moshEnabled must be true or false/i },
     { patch: { etEnabled: 'maybe' }, error: /etEnabled must be true or false/i },
+    { patch: { moshEnabled: true, etEnabled: true }, error: /cannot both be enabled/i },
+    { patch: { protocol: 'serial', moshEnabled: true, serialConfig: { path: '/dev/ttyUSB0', baudRate: 9600 } }, error: /require the SSH protocol/i },
     { patch: { etPort: 0 }, error: /between 1 and 65535/i },
     { patch: { serialConfig: '{' }, error: /valid JSON/i },
     { patch: { serialConfig: {} }, error: /requires path and a positive baudRate/i },
@@ -588,6 +591,27 @@ test('applyVaultHostUpdate rejects malformed advanced connection settings', () =
     assert.equal(result.ok, false, JSON.stringify(entry.patch));
     if (!result.ok) assert.match(result.error, entry.error);
   }
+});
+
+test('applyVaultHostUpdate keeps Mosh and ET mutually exclusive and clears them for other protocols', () => {
+  const host: Host = {
+    id: 'host-1', label: 'host', hostname: 'host.example.com', username: 'root',
+    protocol: 'ssh', moshEnabled: true, tags: [], os: 'linux',
+  };
+
+  const switchedToEt = applyVaultHostUpdate([host], [], host.id, { etEnabled: true });
+  assert.equal(switchedToEt.ok, true);
+  if (!switchedToEt.ok) return;
+  assert.equal(switchedToEt.updatedHost.moshEnabled, false);
+  assert.equal(switchedToEt.updatedHost.etEnabled, true);
+
+  const switchedToTelnet = applyVaultHostUpdate(
+    [switchedToEt.updatedHost], [], host.id, { protocol: 'telnet' },
+  );
+  assert.equal(switchedToTelnet.ok, true);
+  if (!switchedToTelnet.ok) return;
+  assert.equal(switchedToTelnet.updatedHost.moshEnabled, false);
+  assert.equal(switchedToTelnet.updatedHost.etEnabled, false);
 });
 
 test('applyVaultHostUpdate preserves serial Backspace override semantics', () => {

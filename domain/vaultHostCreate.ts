@@ -377,6 +377,8 @@ export function applyVaultHostUpdate(
       updated.port = defaultPortForProtocol(nextProtocol);
     }
     updated.protocol = nextProtocol;
+    updated.moshEnabled = false;
+    updated.etEnabled = false;
   }
 
   if (identityId.provided) {
@@ -453,12 +455,27 @@ export function applyVaultHostUpdate(
       updated.environmentVariables = Object.entries(raw as Record<string, unknown>).map(([name, value]) => ({ name, value: String(value ?? '') }));
     } else return { ok: false, error: 'environmentVariables must be a JSON object or array.' };
   }
-  for (const entry of [{ field: moshEnabled, key: 'moshEnabled' }, { field: etEnabled, key: 'etEnabled' }] as const) {
-    if (entry.field.provided) {
-      const value = parseBoolean(entry.field.value);
-      if (value === undefined) return { ok: false, error: `${entry.key} must be true or false.` };
-      updated[entry.key] = value;
-    }
+  const nextMoshEnabled = moshEnabled.provided ? parseBoolean(moshEnabled.value) : undefined;
+  const nextEtEnabled = etEnabled.provided ? parseBoolean(etEnabled.value) : undefined;
+  if (moshEnabled.provided && nextMoshEnabled === undefined) {
+    return { ok: false, error: 'moshEnabled must be true or false.' };
+  }
+  if (etEnabled.provided && nextEtEnabled === undefined) {
+    return { ok: false, error: 'etEnabled must be true or false.' };
+  }
+  if (nextMoshEnabled === true && nextEtEnabled === true) {
+    return { ok: false, error: 'Mosh and ET cannot both be enabled.' };
+  }
+  if (moshEnabled.provided) {
+    updated.moshEnabled = nextMoshEnabled;
+    if (nextMoshEnabled) updated.etEnabled = false;
+  }
+  if (etEnabled.provided) {
+    updated.etEnabled = nextEtEnabled;
+    if (nextEtEnabled) updated.moshEnabled = false;
+  }
+  if (updated.protocol !== undefined && updated.protocol !== 'ssh' && (updated.moshEnabled || updated.etEnabled)) {
+    return { ok: false, error: 'Mosh and ET require the SSH protocol.' };
   }
   if (moshServerPath.provided) updated.moshServerPath = String(moshServerPath.value ?? '') || undefined;
   if (etPort.provided) {
@@ -506,6 +523,7 @@ export function applyVaultHostUpdate(
       ...(lineMode !== undefined ? { lineMode } : {}),
       ...(backspaceBehavior !== undefined ? { backspaceBehavior: backspaceBehavior as 'default' | 'ctrl-h' } : {}),
     };
+    if (updated.protocol === 'serial') updated.hostname = path;
   }
   if (updated.protocol === 'serial' && updated.serialConfig) {
     updated.port = updated.serialConfig.baudRate;

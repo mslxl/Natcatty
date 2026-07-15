@@ -30,6 +30,7 @@ describe('vaultGroupAgentOps', () => {
     assert.equal(upsertGroup(state, 'prod', '{"identityId":"missing"}', [], proxyProfiles).ok, false);
     assert.equal(upsertGroup(state, 'prod', '{"proxyProfileId":"missing"}', [], proxyProfiles).ok, false);
     assert.equal(upsertGroup(state, 'prod', '{"jumpHostIds":["missing"]}', [], proxyProfiles).ok, false);
+    assert.equal(upsertGroup(state, 'prod', '{"moshEnabled":true,"etEnabled":true}', [], proxyProfiles).ok, false);
   });
 
   it('rejects jump hosts that do not resolve to SSH', () => {

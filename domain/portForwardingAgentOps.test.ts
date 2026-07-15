@@ -40,16 +40,23 @@ describe('portForwardingAgentOps', () => {
     const rule: PortForwardingRule = {
       id: 'rule-1', label: 'Web', type: 'local', localPort: 8080, bindAddress: '127.0.0.1',
       remoteHost: '127.0.0.1', remotePort: 80, hostId: 'host-1', status: 'active', createdAt: 10,
+      error: 'previous warning', lastUsedAt: 9,
     };
     const updated = updatePortForwardingRule([rule], [host], 'rule-1', { localPort: 8081 });
     assert.equal(updated.ok, true);
     if (updated.ok) {
       assert.equal(updated.value.rule.id, 'rule-1');
       assert.equal(updated.value.rule.status, 'inactive');
+      assert.equal(updated.value.rule.error, undefined);
+      assert.equal(updated.value.rule.lastUsedAt, 9);
     }
     const relabeled = updatePortForwardingRule([rule], [host], 'rule-1', { label: 'Renamed' });
     assert.equal(relabeled.ok, true);
-    if (relabeled.ok) assert.equal(relabeled.value.rule.status, 'active');
+    if (relabeled.ok) {
+      assert.equal(relabeled.value.rule.status, 'active');
+      assert.equal(relabeled.value.rule.error, 'previous warning');
+      assert.equal(relabeled.value.rule.lastUsedAt, 9);
+    }
     const duplicated = duplicatePortForwardingRule([rule], [host], 'rule-1', { id: 'rule-2', now: 20 });
     assert.equal(duplicated.ok, true);
     if (duplicated.ok) {
