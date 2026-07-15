@@ -539,6 +539,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
         host.protocol,
         host.sftpSudo,
         host.username,
+        host.sftpFileProtocol,
       );
     }
     tabConnectionKeyMapRef.current.set(sftp.leftPane.id, connectionKey);

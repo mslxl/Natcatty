@@ -36,10 +36,12 @@ function createFileOpsApi(ctx) {
             });
             if (raw.code === 0 && raw.stdout) {
               let needsGb = false;
+              let parsedAny = false;
               for (const line of String(raw.stdout).split(/\r?\n/)) {
                 if (!line) continue;
                 const parts = line.split("|");
                 if (parts.length < 5) continue;
+                if (parts[4]) parsedAny = true;
                 try {
                   // eslint-disable-next-line no-new
                   new TextDecoder("utf-8", { fatal: true }).decode(Buffer.from(parts[4], "base64"));
@@ -47,6 +49,11 @@ function createFileOpsApi(ctx) {
                   needsGb = true;
                   break;
                 }
+              }
+              // Empty basenames (no base64/openssl on remote) → fall through to backend.list
+              // which can use the ls -la fallback path.
+              if (!parsedAny && String(raw.stdout).trim()) {
+                throw new Error("list probe produced no parseable basenames");
               }
               if (needsGb) {
                 encoding = updateResolvedEncoding(payload.sftpId, "auto", "gb18030");
@@ -888,8 +895,10 @@ function createFileOpsApi(ctx) {
 
       if (isScpModeClient(client)) {
         try {
+          const encoding = resolveEncodingForRequest(sftpId, payload?.encoding);
           const home = await getScpBackendForClient(client).homeDir({
             signal: payload?.abortSignal || null,
+            encoding: encoding === "auto" ? "utf-8" : encoding,
           });
           return { success: true, homeDir: home };
         } catch (err) {

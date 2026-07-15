@@ -990,12 +990,19 @@ async function uploadLocalToSftp(_event, payload) {
         throw createAbortError(payload.abortSignal, "Transfer cancelled");
       }
       // Best-effort atomic replace: move existing target aside, then promote staged.
+      // Never move a directory aside — uploading a file onto a directory path would
+      // otherwise end up recursively deleting the whole tree via backup cleanup.
       let movedExisting = false;
       try {
+        const existing = await backend.stat(payload.remotePath, { encoding });
+        if (existing?.isDirectory) {
+          throw new Error(`Remote path is a directory: ${payload.remotePath}`);
+        }
         await backend.rename(payload.remotePath, backupRemotePath, { encoding });
         movedExisting = true;
-      } catch {
-        // Destination may not exist yet.
+      } catch (statOrRenameErr) {
+        if (/directory/i.test(statOrRenameErr?.message || "")) throw statOrRenameErr;
+        // Destination may not exist yet (ENOENT) — continue with staged promote.
       }
       try {
         await backend.rename(stagedRemotePath, payload.remotePath, { encoding });

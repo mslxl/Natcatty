@@ -238,8 +238,33 @@ function createScpBackend(deps = {}) {
 
   async function homeDir(options = {}) {
     const signal = options.signal || null;
-    const result = await runOrThrow(buildHomeCommand(), { signal });
-    const home = (result.stdout || "").trim();
+    const encoding = options.encoding || "utf-8";
+    // Prefer a marker so we know base64 succeeded (raw $HOME may also contain '/').
+    const result = await runOrThrow(
+      'if command -v base64 >/dev/null 2>&1; then printf "B64:"; printf "%s" "$HOME" | base64 | tr -d "\\r\\n"; '
+      + 'elif command -v openssl >/dev/null 2>&1; then printf "B64:"; printf "%s" "$HOME" | openssl base64 | tr -d "\\r\\n"; '
+      + 'else printf "RAW:%s" "$HOME"; fi',
+      { signal },
+    );
+    let home = (result.stdout || "").trim();
+    if (home.startsWith("B64:")) {
+      try {
+        const raw = Buffer.from(home.slice(4), "base64");
+        const enc = String(encoding).toLowerCase();
+        if (enc === "gb18030" || enc === "gbk" || enc === "gb2312") {
+          // eslint-disable-next-line global-require
+          const iconv = require("iconv-lite");
+          home = iconv.decode(raw, "gb18030");
+        } else {
+          home = raw.toString("utf8");
+        }
+      } catch {
+        home = "";
+      }
+    } else if (home.startsWith("RAW:")) {
+      home = home.slice(4);
+    }
+    home = (home || "").trim();
     if (home) return home;
     throw new ScpShellError("Could not determine home directory");
   }
