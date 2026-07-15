@@ -122,7 +122,6 @@ export const SerialHostDetailsPanel: React.FC<SerialHostDetailsPanelPropsWithRes
       lineMode,
       backspaceBehavior: resolveSerialBackspaceOverrideOnSave({
         initialHost: initialData,
-        selectedGroup: group,
         selectedBehavior: backspaceBehavior,
         behaviorChanged: backspaceBehaviorChanged,
       }),

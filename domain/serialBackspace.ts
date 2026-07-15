@@ -22,20 +22,17 @@ export const resolveSerialBackspaceFormValue = (
 
 export const resolveSerialBackspaceOverrideOnSave = ({
   initialHost,
-  selectedGroup,
   selectedBehavior,
   behaviorChanged,
 }: {
-  initialHost: Pick<Host, "group" | "serialConfig" | "backspaceBehavior">;
-  selectedGroup: string;
+  initialHost: Pick<Host, "serialConfig" | "backspaceBehavior">;
   selectedBehavior: SerialBackspaceBehavior;
   behaviorChanged: boolean;
 }): SerialConfig["backspaceBehavior"] => {
   const hasExplicitBehavior = initialHost.serialConfig?.backspaceBehavior !== undefined
     || initialHost.backspaceBehavior === "ctrl-h";
-  const groupChanged = selectedGroup !== (initialHost.group || "");
 
-  return hasExplicitBehavior || behaviorChanged || groupChanged
+  return hasExplicitBehavior || behaviorChanged
     ? selectedBehavior
     : undefined;
 };

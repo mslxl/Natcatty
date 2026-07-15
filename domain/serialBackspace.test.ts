@@ -46,7 +46,6 @@ test("serial Backspace form shows inherited Ctrl-H without creating an override"
   });
   const savedBehavior = resolveSerialBackspaceOverrideOnSave({
     initialHost,
-    selectedGroup: "network/serial",
     selectedBehavior,
     behaviorChanged: false,
   });
@@ -64,7 +63,6 @@ test("serial Backspace form keeps default inheritance unset when untouched", () 
   const selectedBehavior = resolveSerialBackspaceFormValue(initialHost);
   const savedBehavior = resolveSerialBackspaceOverrideOnSave({
     initialHost,
-    selectedGroup: "network/serial",
     selectedBehavior,
     behaviorChanged: false,
   });
@@ -90,19 +88,17 @@ test("serial Backspace form preserves explicit and migrated host overrides", () 
 
   assert.equal(resolveSerialBackspaceOverrideOnSave({
     initialHost: explicitDefaultHost,
-    selectedGroup: "network/serial",
     selectedBehavior: "default",
     behaviorChanged: false,
   }), "default");
   assert.equal(resolveSerialBackspaceOverrideOnSave({
     initialHost: legacyCtrlHHost,
-    selectedGroup: "network/serial",
     selectedBehavior: "ctrl-h",
     behaviorChanged: false,
   }), "ctrl-h");
 });
 
-test("serial Backspace form saves a deliberate change or group move explicitly", () => {
+test("serial Backspace form saves a deliberate selection change explicitly", () => {
   const initialHost = {
     group: "network/serial",
     serialConfig: { path: "COM3", baudRate: 115200 },
@@ -110,14 +106,25 @@ test("serial Backspace form saves a deliberate change or group move explicitly",
 
   assert.equal(resolveSerialBackspaceOverrideOnSave({
     initialHost,
-    selectedGroup: "network/serial",
     selectedBehavior: "default",
     behaviorChanged: true,
   }), "default");
+});
+
+test("serial Backspace form keeps inherited behavior unset across group moves", () => {
+  const initialHost = {
+    group: "network/serial",
+    serialConfig: { path: "COM3", baudRate: 115200 },
+  };
+
   assert.equal(resolveSerialBackspaceOverrideOnSave({
     initialHost,
-    selectedGroup: "other",
+    selectedBehavior: "default",
+    behaviorChanged: false,
+  }), undefined);
+  assert.equal(resolveSerialBackspaceOverrideOnSave({
+    initialHost,
     selectedBehavior: "ctrl-h",
     behaviorChanged: false,
-  }), "ctrl-h");
+  }), undefined);
 });
