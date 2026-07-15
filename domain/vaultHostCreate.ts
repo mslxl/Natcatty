@@ -4,6 +4,7 @@ import { sanitizeHost } from './host';
 const DEFAULT_SSH_PORT = 22;
 const DEFAULT_TELNET_PORT = 23;
 const UNSAFE_SSH_CONFIG_VALUE = /[\r\n\0]/;
+const HOSTNAME_WHITESPACE = /\s/;
 const UNSAFE_SSH_JUMP_HOSTNAME = /[\s,@#]/;
 const UNSAFE_SSH_JUMP_USERNAME = /[\s,#]/;
 
@@ -148,6 +149,9 @@ export const buildVaultHostMergeKey = (
 export function buildVaultHostFromDraft(
   draft: VaultHostDraft,
 ): { ok: true; host: Host } | { ok: false; error: string } {
+  if (!draft || typeof draft !== 'object' || Array.isArray(draft)) {
+    return { ok: false, error: 'host must be an object.' };
+  }
   const rawHostname = draft.hostname ?? draft.host ?? draft.ip;
   const hostname = typeof rawHostname === 'string' ? rawHostname.trim() : '';
   if (!hostname) {
@@ -155,6 +159,9 @@ export function buildVaultHostFromDraft(
   }
   if (!isSafeSshConfigValue(hostname)) {
     return { ok: false, error: 'hostname must not contain line breaks or null bytes.' };
+  }
+  if (HOSTNAME_WHITESPACE.test(hostname)) {
+    return { ok: false, error: 'hostname must not contain whitespace.' };
   }
 
   const parsedProtocol = normalizeProtocol(draft.protocol);
@@ -174,9 +181,15 @@ export function buildVaultHostFromDraft(
   }
   const port = parsedPort ?? defaultPortForProtocol(protocol);
   const rawLabel = draft.label ?? draft.name;
+  if (rawLabel !== undefined && rawLabel !== null && typeof rawLabel !== 'string') {
+    return { ok: false, error: 'label must be a string.' };
+  }
   const label = typeof rawLabel === 'string' && rawLabel.trim()
     ? rawLabel.trim()
     : hostname;
+  if (draft.username !== undefined && draft.username !== null && typeof draft.username !== 'string') {
+    return { ok: false, error: 'username must be a string.' };
+  }
   const username = typeof draft.username === 'string' ? draft.username.trim() : '';
   if (!isSafeSshConfigValue(label)) {
     return { ok: false, error: 'label must not contain line breaks or null bytes.' };
@@ -191,15 +204,28 @@ export function buildVaultHostFromDraft(
   if (savePasswordInput.provided && savePassword === undefined) {
     return { ok: false, error: 'savePassword must be true or false.' };
   }
+  if (draft.password !== undefined && draft.password !== null && typeof draft.password !== 'string') {
+    return { ok: false, error: 'password must be a string.' };
+  }
   const password = savePassword !== false && typeof draft.password === 'string' && draft.password
     ? draft.password
     : undefined;
+  const rawKeyPath = draft.keyPath ?? draft.keypath;
+  if (rawKeyPath !== undefined && rawKeyPath !== null && typeof rawKeyPath !== 'string') {
+    return { ok: false, error: 'keyPath must be a string.' };
+  }
   const keyPath = parseKeyPath(draft);
   if (keyPath && !isSafeSshConfigValue(keyPath)) {
     return { ok: false, error: 'keyPath must not contain line breaks or null bytes.' };
   }
   const tags = parseTags(draft.tags);
   if (!tags.ok) return tags;
+  if (draft.group !== undefined && draft.group !== null && typeof draft.group !== 'string') {
+    return { ok: false, error: 'group must be a string.' };
+  }
+  if (draft.notes !== undefined && draft.notes !== null && typeof draft.notes !== 'string') {
+    return { ok: false, error: 'notes must be a string.' };
+  }
   const notes = typeof draft.notes === 'string' && draft.notes.trim() ? draft.notes.trim() : undefined;
   const now = Date.now();
 
@@ -280,6 +306,9 @@ export function applyVaultHostUpdate(
     }
     if (!isSafeSshConfigValue(hostname.value)) {
       return { ok: false, error: 'hostname must not contain line breaks or null bytes.' };
+    }
+    if (HOSTNAME_WHITESPACE.test(hostname.value.trim())) {
+      return { ok: false, error: 'hostname must not contain whitespace.' };
     }
     updated.hostname = hostname.value.trim();
   }

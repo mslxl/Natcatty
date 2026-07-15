@@ -10,6 +10,7 @@ import {
   buildVaultHostFromDraft,
   buildVaultHostsFromDrafts,
   parseVaultHostDraftsInput,
+  type VaultHostDraft,
 } from './vaultHostCreate.ts';
 
 test('buildVaultHostFromDraft maps minimal unstructured fields to a vault host', () => {
@@ -87,6 +88,26 @@ test('buildVaultHostFromDraft rejects an unsupported protocol instead of using S
   assert.equal(built.ok, false);
   if (built.ok) return;
   assert.match(built.error, /ssh, telnet, or local/i);
+});
+
+test('buildVaultHostFromDraft rejects hostnames containing internal whitespace', () => {
+  for (const hostname of ['db prod.example.com', 'db\tprod.example.com']) {
+    const built = buildVaultHostFromDraft({ hostname });
+
+    assert.equal(built.ok, false);
+    if (built.ok) continue;
+    assert.match(built.error, /must not contain whitespace/i);
+  }
+});
+
+test('buildVaultHostFromDraft rejects invalid host objects and optional field types', () => {
+  const invalidDraft = buildVaultHostFromDraft(null as unknown as VaultHostDraft);
+  const invalidKeyPath = buildVaultHostFromDraft({ hostname: 'host.example.com', keyPath: 123 });
+
+  assert.equal(invalidDraft.ok, false);
+  assert.equal(invalidKeyPath.ok, false);
+  if (!invalidDraft.ok) assert.match(invalidDraft.error, /must be an object/i);
+  if (!invalidKeyPath.ok) assert.match(invalidKeyPath.error, /keyPath must be a string/i);
 });
 
 test('buildVaultHostFromDraft rejects SSH config line injection', () => {
@@ -196,6 +217,26 @@ test('applyVaultHostUpdate rejects non-integer ports instead of changing them', 
     assert.equal(result.ok, false);
     if (result.ok) continue;
     assert.match(result.error, /integer between 1 and 65535/i);
+  }
+});
+
+test('applyVaultHostUpdate rejects hostnames containing internal whitespace', () => {
+  const existing: Host = {
+    id: 'host-1',
+    label: 'host',
+    hostname: 'old.example.com',
+    username: 'root',
+    port: 22,
+    tags: [],
+    os: 'linux',
+  };
+
+  for (const hostname of ['db prod.example.com', 'db\tprod.example.com']) {
+    const result = applyVaultHostUpdate([existing], [], existing.id, { hostname });
+
+    assert.equal(result.ok, false);
+    if (result.ok) continue;
+    assert.match(result.error, /must not contain whitespace/i);
   }
 });
 
