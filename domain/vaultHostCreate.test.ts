@@ -423,6 +423,24 @@ test('applyVaultHostUpdate validates jump hosts inherited from the destination g
   if (!selfReference.ok) assert.match(selfReference.error, /cannot use itself/i);
 });
 
+test('applyVaultHostUpdate keeps jump hosts referenced only by empty group defaults SSH-capable', () => {
+  const jump: Host = {
+    id: 'jump', label: 'jump', hostname: 'jump.example.com', username: 'root',
+    port: 22, protocol: 'ssh', tags: [], os: 'linux',
+  };
+
+  const result = applyVaultHostUpdate(
+    [jump],
+    [],
+    jump.id,
+    { protocol: 'telnet' },
+    { groupConfigs: [{ path: 'empty-group', hostChain: { hostIds: [jump.id] } }] },
+  );
+
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.match(result.error, /group jump host must keep an SSH/i);
+});
+
 test('applyVaultHostUpdate keeps legacy serial hosts editable without serialConfig', () => {
   const legacySerial: Host = {
     id: 'serial', label: 'Old serial', hostname: '/dev/ttyUSB0', username: '',
@@ -1598,4 +1616,21 @@ test('applyVaultHostDelete keeps jump hosts that are still referenced', () => {
   if (!directResult.ok) assert.match(directResult.error, /still used as a jump host/i);
   assert.equal(inheritedResult.ok, false);
   if (!inheritedResult.ok) assert.match(inheritedResult.error, /still used as a jump host/i);
+});
+
+test('applyVaultHostDelete keeps jump hosts referenced by empty group defaults', () => {
+  const jump: Host = {
+    id: 'jump', label: 'jump', hostname: 'jump.example.com', username: 'root',
+    port: 22, protocol: 'ssh', tags: [], os: 'linux',
+  };
+
+  const result = applyVaultHostDelete(
+    [jump],
+    jump.id,
+    undefined,
+    [{ path: 'empty-group', hostChain: { hostIds: [jump.id] } }],
+  );
+
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.match(result.error, /still used as a group jump host/i);
 });

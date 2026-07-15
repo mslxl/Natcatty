@@ -1,6 +1,9 @@
-import type { Host, HostProtocol, Identity, ManagedSource, ProxyProfile } from './models';
+import type { GroupConfig, Host, HostProtocol, Identity, ManagedSource, ProxyProfile } from './models';
 import { sanitizeHost } from './host';
-import { findIntroducedVaultJumpGraphIssue } from './vaultJumpGraph';
+import {
+  findIntroducedVaultJumpGraphIssue,
+  findVaultGroupConfigJumpReference,
+} from './vaultJumpGraph';
 
 const DEFAULT_SSH_PORT = 22;
 const DEFAULT_TELNET_PORT = 23;
@@ -54,6 +57,7 @@ export interface VaultHostUpdatePatch extends VaultHostDraft {
 
 export interface VaultHostUpdateOptions {
   resolveEffectiveHost?: (host: Host) => Host;
+  groupConfigs?: GroupConfig[];
   managedSources?: ManagedSource[];
   identities?: Identity[];
   proxyProfiles?: ProxyProfile[];
@@ -702,6 +706,17 @@ export function applyVaultHostUpdate(
     }
     return { ok: false, error: jumpGraphIssue.error };
   }
+  const groupConfigReference = findVaultGroupConfigJumpReference(
+    options.groupConfigs ?? [],
+    current.id,
+  );
+  if (groupConfigReference) {
+    const effectiveBefore = options.resolveEffectiveHost?.(current) ?? current;
+    const effectiveAfter = options.resolveEffectiveHost?.(updated) ?? updated;
+    if (supportsSshJump(effectiveBefore) && !supportsSshJump(effectiveAfter)) {
+      return { ok: false, error: 'A host used as a group jump host must keep an SSH connection type.' };
+    }
+  }
   const customGroups = updated.group
     ? Array.from(new Set([...existingGroups, updated.group]))
     : [...existingGroups];
@@ -712,9 +727,13 @@ export function applyVaultHostDelete(
   existingHosts: Host[],
   hostId: string,
   resolveEffectiveHost?: (host: Host) => Host,
+  groupConfigs: GroupConfig[] = [],
 ): { ok: true; hosts: Host[]; deletedHost: Host } | { ok: false; error: string } {
   const deletedHost = existingHosts.find((host) => host.id === hostId);
   if (!deletedHost) return { ok: false, error: `Host "${hostId}" was not found.` };
+  if (findVaultGroupConfigJumpReference(groupConfigs, hostId)) {
+    return { ok: false, error: `Host "${hostId}" is still used as a group jump host.` };
+  }
   const hosts = existingHosts.filter((host) => host.id !== hostId);
   const jumpGraphIssue = findIntroducedVaultJumpGraphIssue(
     existingHosts,

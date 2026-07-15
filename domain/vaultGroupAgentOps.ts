@@ -1,6 +1,9 @@
 import type { GroupConfig, Host, Identity, ManagedSource, ProxyProfile } from './models';
 import { applyGroupDefaults, resolveGroupDefaults } from './groupConfig';
-import { findIntroducedVaultJumpGraphIssue } from './vaultJumpGraph';
+import {
+  findIntroducedVaultJumpGraphIssue,
+  findVaultGroupConfigJumpReference,
+} from './vaultJumpGraph';
 
 type GroupState = {
   groups: string[];
@@ -230,6 +233,15 @@ export function deleteGroup(state: GroupState, pathValue: unknown, deleteHosts: 
         : host),
     managedSources: state.managedSources,
   };
+  const deletedHostIds = state.hosts
+    .filter((host) => !nextState.hosts.some((candidate) => candidate.id === host.id))
+    .map((host) => host.id);
+  const referencedDeletedHostId = deletedHostIds.find((hostId) => (
+    findVaultGroupConfigJumpReference(nextState.configs, hostId)
+  ));
+  if (referencedDeletedHostId) {
+    return { ok: false, error: `Host "${referencedDeletedHostId}" is still used as a group jump host.` };
+  }
   const jumpGraphIssue = findIntroducedJumpGraphIssue(state, nextState);
   if (jumpGraphIssue) return { ok: false, error: jumpGraphIssue.error };
   return { ok: true, state: nextState };

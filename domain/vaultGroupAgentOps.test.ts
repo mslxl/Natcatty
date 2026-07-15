@@ -163,6 +163,18 @@ describe('vaultGroupAgentOps', () => {
     assert.equal(result.ok, false);
   });
 
+  it('refuses to delete hosts referenced by empty group defaults outside the deleted group', () => {
+    const jump = { ...hosts[1]!, group: 'temporary' };
+    const result = deleteGroup({
+      groups: ['temporary', 'empty'],
+      configs: [{ path: 'empty', hostChain: { hostIds: [jump.id] } }],
+      hosts: [jump],
+      managedSources: [],
+    }, 'temporary', true);
+
+    assert.equal(result.ok, false);
+  });
+
   it('preserves managed status when deleting a subgroup under a managed parent', () => {
     const managedHosts = hosts.map((host) => host.group === 'prod/web' ? { ...host, managedSourceId: 'source-1' } : host);
     const result = deleteGroup({

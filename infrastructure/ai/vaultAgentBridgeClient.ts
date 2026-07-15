@@ -574,6 +574,7 @@ export async function handleVaultAgentOp(
         params,
         {
           resolveEffectiveHost: deps.resolveEffectiveHost,
+          groupConfigs: deps.getGroupConfigs(),
           managedSources: deps.getManagedSources(),
           identities: deps.identities,
           proxyProfiles: deps.proxyProfiles,
@@ -592,7 +593,12 @@ export async function handleVaultAgentOp(
     case 'host.delete': {
       const hostId = String(params.hostId || '').trim();
       if (!hostId) return { ok: false, error: 'hostId is required.' };
-      const deleted = applyVaultHostDelete(deps.getHosts(), hostId, deps.resolveEffectiveHost);
+      const deleted = applyVaultHostDelete(
+        deps.getHosts(),
+        hostId,
+        deps.resolveEffectiveHost,
+        deps.getGroupConfigs(),
+      );
       if (!deleted.ok) return deleted;
 
       deps.updateHosts(deleted.hosts);

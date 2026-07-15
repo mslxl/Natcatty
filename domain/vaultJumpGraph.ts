@@ -1,4 +1,4 @@
-import type { Host } from './models';
+import type { GroupConfig, Host } from './models';
 
 export type VaultJumpGraphIssue = {
   key: string;
@@ -9,6 +9,13 @@ export type VaultJumpGraphIssue = {
 };
 
 const identity = (host: Host): Host => host;
+
+export function findVaultGroupConfigJumpReference(
+  configs: GroupConfig[],
+  hostId: string,
+): GroupConfig | undefined {
+  return configs.find((config) => config.hostChain?.hostIds?.includes(hostId));
+}
 
 export function collectVaultJumpGraphIssues(
   hosts: Host[],
