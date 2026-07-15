@@ -42,11 +42,13 @@ export interface PortForwardingConnection {
   reconnectTimeoutId?: ReturnType<typeof setTimeout>;
   reconnectDueAt?: number;
   reconnectTimerCallback?: () => void;
+  reconnectStartAuthorized?: boolean;
 }
 
 // Map to track active connections
 const activeConnections = new Map<string, PortForwardingConnection>();
 const rulesPendingCleanup = new Set<string>();
+const ruleCleanupPromises = new Map<string, Promise<{ success: boolean; error?: string }>>();
 const deferredReconnects = new Map<string, {
   enableReconnect: boolean;
   onStatusChange: (status: PortForwardingRule['status'], error?: string) => void;
@@ -201,6 +203,7 @@ const scheduleReconnectIfNeeded = (
       currentConn.reconnectDueAt = undefined;
       currentConn.reconnectTimerCallback = undefined;
       if (reconnectCallback) {
+        currentConn.reconnectStartAuthorized = true;
         reconnectCallback(ruleId, onStatusChange);
       }
     };
@@ -267,51 +270,67 @@ const resumeReconnectAfterFailedCleanup = (
 };
 
 /** Stop every tunnel for a rule and cancel reconnects in every window. */
-export const stopAndCleanupRuleAndWait = async (
+export const stopAndCleanupRuleAndWait = (
   ruleId: string,
 ): Promise<{ success: boolean; error?: string }> => {
-  const conn = activeConnections.get(ruleId);
-  rulesPendingCleanup.add(ruleId);
-  const pausedReconnect = pauseReconnectTimer(ruleId);
+  const existingCleanup = ruleCleanupPromises.get(ruleId);
+  if (existingCleanup) return existingCleanup;
 
-  // Use stopPortForwardByRuleId so every tunnel for this rule is marked
-  // cancelled before its sockets are closed.
-  const bridge = netcattyBridge.get();
-  if (bridge?.stopPortForwardByRuleId) {
-    try {
-      const result = await bridge.stopPortForwardByRuleId(ruleId);
-      if ((result.failed ?? 0) > 0) {
-        const error = result.errors?.filter(Boolean).join('; ') ||
-          `Failed to stop ${result.failed} port forwarding tunnel(s)`;
-        logger.warn(`[PortForwardingService] Backend stopByRuleId failed for ${ruleId}: ${error}`);
+  const cleanupPromise = (async () => {
+    const conn = activeConnections.get(ruleId);
+    rulesPendingCleanup.add(ruleId);
+    const pausedReconnect = pauseReconnectTimer(ruleId);
+
+    // Use stopPortForwardByRuleId so every tunnel for this rule is marked
+    // cancelled before its sockets are closed.
+    const bridge = netcattyBridge.get();
+    if (bridge?.stopPortForwardByRuleId) {
+      try {
+        const result = await bridge.stopPortForwardByRuleId(ruleId);
+        if ((result.failed ?? 0) > 0) {
+          const error = result.errors?.filter(Boolean).join('; ') ||
+            `Failed to stop ${result.failed} port forwarding tunnel(s)`;
+          logger.warn(`[PortForwardingService] Backend stopByRuleId failed for ${ruleId}: ${error}`);
+          resumeReconnectAfterFailedCleanup(ruleId, pausedReconnect);
+          return { success: false, error };
+        }
+        finishRuleCleanup(ruleId);
+        return { success: true };
+      } catch (err) {
+        const error = err instanceof Error ? err.message : String(err);
+        logger.warn(`[PortForwardingService] Backend stopByRuleId failed for ${ruleId}:`, err);
         resumeReconnectAfterFailedCleanup(ruleId, pausedReconnect);
         return { success: false, error };
       }
-      finishRuleCleanup(ruleId);
-      return { success: true };
-    } catch (err) {
-      const error = err instanceof Error ? err.message : String(err);
-      logger.warn(`[PortForwardingService] Backend stopByRuleId failed for ${ruleId}:`, err);
-      resumeReconnectAfterFailedCleanup(ruleId, pausedReconnect);
-      return { success: false, error };
     }
-  }
-  if (conn && bridge?.stopPortForward) {
-    try {
-      const result = await bridge.stopPortForward(conn.tunnelId);
-      if (result.success) {
-        finishRuleCleanup(ruleId);
-      } else {
+    if (conn && bridge?.stopPortForward) {
+      try {
+        const result = await bridge.stopPortForward(conn.tunnelId);
+        if (result.success) {
+          finishRuleCleanup(ruleId);
+        } else {
+          resumeReconnectAfterFailedCleanup(ruleId, pausedReconnect);
+        }
+        return result;
+      } catch (err) {
         resumeReconnectAfterFailedCleanup(ruleId, pausedReconnect);
+        return { success: false, error: err instanceof Error ? err.message : String(err) };
       }
-      return result;
-    } catch (err) {
-      resumeReconnectAfterFailedCleanup(ruleId, pausedReconnect);
-      return { success: false, error: err instanceof Error ? err.message : String(err) };
     }
-  }
-  finishRuleCleanup(ruleId);
-  return { success: true };
+    finishRuleCleanup(ruleId);
+    return { success: true };
+  })();
+
+  ruleCleanupPromises.set(ruleId, cleanupPromise);
+  void cleanupPromise.then(
+    () => {
+      if (ruleCleanupPromises.get(ruleId) === cleanupPromise) ruleCleanupPromises.delete(ruleId);
+    },
+    () => {
+      if (ruleCleanupPromises.get(ruleId) === cleanupPromise) ruleCleanupPromises.delete(ruleId);
+    },
+  );
+  return cleanupPromise;
 };
 
 /** Fire-and-forget compatibility wrapper for imports and local UI actions. */
@@ -497,6 +516,18 @@ export const startPortForward = async (
 ): Promise<{ success: boolean; error?: string }> => {
   const globalTerminalSettings = { ...FALLBACK_TERMINAL_SETTINGS, ...(terminalSettings ?? {}) };
   const bridge = netcattyBridge.get();
+  if (rulesPendingCleanup.has(rule.id)) {
+    return { success: false, error: 'This port forwarding rule is currently being stopped.' };
+  }
+  const existingConnection = activeConnections.get(rule.id);
+  if (
+    existingConnection
+    && (existingConnection.status === 'active' || existingConnection.status === 'connecting')
+    && !existingConnection.reconnectStartAuthorized
+  ) {
+    return { success: true };
+  }
+  if (existingConnection) existingConnection.reconnectStartAuthorized = false;
   
   // Clear any existing reconnect timer
   clearReconnectTimer(rule.id);

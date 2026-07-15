@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import type { GroupConfig, Host, Identity, ManagedSource, PortForwardingRule, ProxyProfile, Snippet, SSHKey, TerminalSettings, VaultNote } from '../../domain/models';
+import type { GroupConfig, Host, Identity, KnownHost, ManagedSource, PortForwardingRule, ProxyProfile, Snippet, SSHKey, TerminalSettings, VaultNote } from '../../domain/models';
 import {
   handleVaultAgentOp,
   registerVaultAgentHandler,
@@ -13,6 +13,7 @@ export interface UseVaultAgentBridgeInput {
   portForwardingRules: PortForwardingRule[];
   keys: SSHKey[];
   identities: Identity[];
+  knownHosts: KnownHost[];
   proxyProfiles: ProxyProfile[];
   managedSources: ManagedSource[];
   terminalSettings?: Pick<TerminalSettings, 'keepaliveInterval' | 'keepaliveCountMax'>;
@@ -85,6 +86,7 @@ export function useVaultAgentBridge(input: UseVaultAgentBridgeInput): void {
         snippets: vaultSnapshotRef.current.snippets,
         keys: current.keys,
         identities: current.identities,
+        knownHosts: current.knownHosts,
         proxyProfiles: current.proxyProfiles,
         terminalSettings: current.terminalSettings,
         resolveEffectiveHost: current.resolveEffectiveHost,

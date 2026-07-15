@@ -36,6 +36,7 @@ function createDeps(
     proxyProfiles: overrides.proxyProfiles ?? [],
     keys: [],
     identities: [],
+    knownHosts: [],
     resolveEffectiveHost: (host) => host,
     updateHostNotes: () => {},
     updateCustomGroups: (groups) => {
@@ -732,6 +733,47 @@ describe('handleVaultAgentOp vault management gaps', () => {
     assert.equal(result.ok, false);
     assert.equal(deps.getPortForwardingRules()[0]?.localPort, 8080);
     assert.equal(deps.getPortForwardingRules()[0]?.status, 'active');
+  });
+
+  it('passes trusted host records when the agent starts port forwarding', async () => {
+    const rule: PortForwardingRule = {
+      id: 'rule-1', label: 'Web', type: 'local', localPort: 8080,
+      bindAddress: '127.0.0.1', remoteHost: '127.0.0.1', remotePort: 80,
+      hostId: host.id, status: 'inactive', createdAt: 1,
+    };
+    const knownHosts = [{
+      id: 'known-1',
+      hostname: host.hostname,
+      port: 22,
+      keyType: 'ssh-ed25519',
+      publicKey: 'AAAAC3NzaC1lZDI1NTE5AAAAITest',
+      discoveredAt: 1,
+    }];
+    let forwardedKnownHosts: VaultAgentApiDeps['knownHosts'] | undefined;
+    const deps = createDeps({
+      hosts: [host],
+      knownHosts,
+      portForwardingRules: [rule],
+      startTunnel: async (
+        _rule,
+        _host,
+        _hosts,
+        _keys,
+        _identities,
+        _onStatusChange,
+        _enableReconnect,
+        _terminalSettings,
+        receivedKnownHosts,
+      ) => {
+        forwardedKnownHosts = receivedKnownHosts;
+        return { success: true };
+      },
+    });
+
+    const result = await handleVaultAgentOp('portforward.start', { ruleId: rule.id }, deps);
+
+    assert.equal(result.ok, true);
+    assert.equal(forwardedKnownHosts, knownHosts);
   });
 
   it('does not start a forwarding rule whose host was changed to serial', async () => {

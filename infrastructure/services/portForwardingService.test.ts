@@ -214,6 +214,120 @@ test("stopAndCleanupRuleAndWait blocks a pending reconnect while stop succeeds",
   assert.equal(getActiveConnection("stopping-rule"), undefined);
 });
 
+test("stopAndCleanupRuleAndWait coalesces overlapping cleanup calls", async () => {
+  let stopCalls = 0;
+  let resolveStop: ((value: { stopped: number; failed: number; errors: string[] }) => void) | undefined;
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      netcatty: {
+        stopPortForwardByRuleId: async () => {
+          stopCalls += 1;
+          return new Promise<{ stopped: number; failed: number; errors: string[] }>((resolve) => {
+            resolveStop = resolve;
+          });
+        },
+      },
+    },
+  });
+
+  const first = stopAndCleanupRuleAndWait("overlapping-rule");
+  const second = stopAndCleanupRuleAndWait("overlapping-rule");
+
+  assert.equal(first, second);
+  assert.equal(stopCalls, 1);
+  resolveStop?.({ stopped: 1, failed: 0, errors: [] });
+  assert.deepEqual(await first, { success: true });
+  assert.deepEqual(await second, { success: true });
+});
+
+test("startPortForward rejects starts while the rule is pending cleanup", async () => {
+  let resolveStop: ((value: { stopped: number; failed: number; errors: string[] }) => void) | undefined;
+  let startCalls = 0;
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      netcatty: {
+        stopPortForwardByRuleId: async () => (
+          new Promise<{ stopped: number; failed: number; errors: string[] }>((resolve) => {
+            resolveStop = resolve;
+          })
+        ),
+        startPortForward: async () => {
+          startCalls += 1;
+          return { success: true };
+        },
+        onPortForwardStatus: () => undefined,
+      },
+    },
+  });
+  const stopping = stopAndCleanupRuleAndWait("start-during-stop-rule");
+
+  const blocked = await startPortForward(
+    rule({ id: "start-during-stop-rule" }),
+    host(),
+    [],
+    [],
+    [],
+    () => undefined,
+  );
+
+  assert.equal(blocked.success, false);
+  assert.match(blocked.error ?? "", /currently being stopped/i);
+  assert.equal(startCalls, 0);
+  resolveStop?.({ stopped: 0, failed: 1, errors: ["stop failed"] });
+  assert.equal((await stopping).success, false);
+
+  const allowed = await startPortForward(
+    rule({ id: "start-during-stop-rule" }),
+    host(),
+    [],
+    [],
+    [],
+    () => undefined,
+  );
+  assert.equal(allowed.success, true);
+  assert.equal(startCalls, 1);
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      netcatty: {
+        stopPortForwardByRuleId: async () => ({ stopped: 1, failed: 0, errors: [] }),
+      },
+    },
+  });
+  stopAndCleanupRule("start-during-stop-rule");
+  await new Promise<void>((resolve) => setImmediate(resolve));
+});
+
+test("startPortForward treats repeated active starts as idempotent", async () => {
+  let startCalls = 0;
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      netcatty: {
+        startPortForward: async () => {
+          startCalls += 1;
+          return { success: true };
+        },
+        stopPortForwardByRuleId: async () => ({ stopped: 1, failed: 0, errors: [] }),
+        onPortForwardStatus: () => undefined,
+      },
+    },
+  });
+  const repeatedRule = rule({ id: "repeated-rule" });
+
+  const first = await startPortForward(repeatedRule, host(), [], [], [], () => undefined);
+  const second = await startPortForward(repeatedRule, host(), [], [], [], () => undefined);
+
+  assert.equal(first.success, true);
+  assert.equal(second.success, true);
+  assert.equal(startCalls, 1);
+  assert.ok(getActiveConnection("repeated-rule"));
+  stopAndCleanupRule("repeated-rule");
+  await new Promise<void>((resolve) => setImmediate(resolve));
+});
+
 test("stopAndCleanupRule still clears local reconnect state after backend stop failures", async () => {
   installBridgeStub();
   await startPortForward(

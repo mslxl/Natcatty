@@ -1059,6 +1059,7 @@ function App({ settings }: { settings: SettingsState }) {
     portForwardingRules,
     keys,
     identities,
+    knownHosts: effectiveKnownHosts,
     proxyProfiles,
     managedSources,
     terminalSettings,

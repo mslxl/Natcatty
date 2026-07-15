@@ -1,4 +1,4 @@
-import type { GroupConfig, Host, Identity, ManagedSource, PortForwardingRule, ProxyProfile, Snippet, SSHKey, TerminalSettings, VaultNote } from '../../domain/models';
+import type { GroupConfig, Host, Identity, KnownHost, ManagedSource, PortForwardingRule, ProxyProfile, Snippet, SSHKey, TerminalSettings, VaultNote } from '../../domain/models';
 import {
   normalizeVaultNotes,
   sanitizeNoteTitle,
@@ -358,6 +358,7 @@ export interface VaultAgentApiDeps {
   snippets: Snippet[];
   keys: SSHKey[];
   identities: Identity[];
+  knownHosts: KnownHost[];
   proxyProfiles: ProxyProfile[];
   terminalSettings?: Pick<TerminalSettings, 'keepaliveInterval' | 'keepaliveCountMax'>;
   resolveEffectiveHost: (host: Host) => Host;
@@ -378,6 +379,7 @@ export interface VaultAgentApiDeps {
     onStatusChange?: (status: PortForwardingRule['status'], error?: string) => void,
     enableReconnect?: boolean,
     terminalSettings?: Pick<TerminalSettings, 'keepaliveInterval' | 'keepaliveCountMax'>,
+    knownHosts?: KnownHost[],
   ) => Promise<{ success: boolean; error?: string }>;
   stopTunnel: (
     ruleId: string,
@@ -1107,6 +1109,7 @@ export async function handleVaultAgentOp(
         undefined,
         false,
         deps.terminalSettings,
+        deps.knownHosts,
       );
       if (!result.success) {
         return { ok: false, error: result.error || 'Failed to start port forwarding tunnel.' };
