@@ -35,6 +35,33 @@ export interface KeyboardInteractiveRequest {
   allowSavePassword?: boolean;
 }
 
+type KeyboardInteractiveServerPromptInput = Pick<
+  KeyboardInteractiveRequest,
+  "name" | "instructions" | "prompts"
+>;
+
+/** Formats the server-supplied keyboard-interactive prompt block for display. */
+export function formatKeyboardInteractiveServerPrompt(request: KeyboardInteractiveServerPromptInput): string {
+  const lines: string[] = [];
+  const name = request.name?.trim();
+  if (name) {
+    lines.push(name.endsWith(":") ? name : `${name}:`);
+  }
+  const instructions = request.instructions?.trim();
+  if (instructions) {
+    for (const line of instructions.split(/\r?\n/).map((part) => part.trim()).filter(Boolean)) {
+      lines.push(`| ${line}`);
+    }
+  }
+  for (const prompt of request.prompts || []) {
+    const promptText = prompt.prompt?.trim();
+    if (promptText) {
+      lines.push(`| ${promptText}`);
+    }
+  }
+  return lines.join("\n");
+}
+
 const isAPasswordPrompt = (prompt: KeyboardInteractivePrompt) => {
   if (prompt.echo) return false;
   const lower = prompt.prompt.toLowerCase();
@@ -155,12 +182,12 @@ export const KeyboardInteractiveModal: React.FC<KeyboardInteractiveModalProps> =
 
   if (!request) return null;
 
-  const title = request.name?.trim() || t("keyboard.interactive.title");
+  const serverPromptText = formatKeyboardInteractiveServerPrompt(request);
+  const title = t("keyboard.interactive.title");
   const description =
-    request.instructions?.trim() ||
-    (request.hostname
+    request.hostname
       ? t("keyboard.interactive.descWithHost", { hostname: request.hostname })
-      : t("keyboard.interactive.desc"));
+      : t("keyboard.interactive.desc");
 
   return (
     <Dialog open={!!request} onOpenChange={(open) => !open && handleCancel()}>
@@ -180,17 +207,26 @@ export const KeyboardInteractiveModal: React.FC<KeyboardInteractiveModalProps> =
         </DialogHeader>
 
         <div className="space-y-4 py-2">
+          {serverPromptText && (
+            <pre className="max-h-36 overflow-auto rounded-md border border-border/60 bg-muted/45 px-3 py-2 text-xs leading-relaxed text-foreground whitespace-pre-wrap [overflow-wrap:anywhere]">
+              {serverPromptText}
+            </pre>
+          )}
+
           {request.prompts.map((prompt, index) => {
             const isPassword = !prompt.echo;
             const showPassword = showPasswords[index];
+            const showPromptLabel = !(serverPromptText && request.prompts.length === 1);
             // Clean up prompt text (remove trailing colon and whitespace)
             const promptLabel = prompt.prompt.replace(/:\s*$/, "").trim();
 
             return (
               <div key={index} className="space-y-2">
-                <Label htmlFor={`ki-prompt-${index}`}>
-                  {promptLabel || t("keyboard.interactive.response")}
-                </Label>
+                {showPromptLabel && (
+                  <Label htmlFor={`ki-prompt-${index}`}>
+                    {promptLabel || t("keyboard.interactive.response")}
+                  </Label>
+                )}
                 <div className="relative">
                   <Input
                     id={`ki-prompt-${index}`}

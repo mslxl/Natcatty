@@ -204,6 +204,7 @@ async function startPortForward(event, payload) {
 
   let defaultKeys = [];
   let portForwardAuthPhase = { hadPartialSuccess: false, passwordAlreadySucceeded: false };
+  let authBanner = "";
   try {
     const fallbackAgentSocket = useSshAgent === false
       ? null
@@ -406,6 +407,9 @@ async function startPortForward(event, payload) {
   }
 
   // Handle keyboard-interactive authentication (2FA/MFA)
+  conn.on("banner", (message) => {
+    authBanner = String(message || "").trim();
+  });
   conn.on("keyboard-interactive", createKeyboardInteractiveHandler({
     sender,
     sessionId: tunnelId,
@@ -413,6 +417,7 @@ async function startPortForward(event, payload) {
     password,
     logPrefix: "[PortForward]",
     scope: "external",
+    getAuthBanner: () => authBanner,
     shouldSkipAutoFill: () => shouldSkipKiPasswordAutoFill(portForwardAuthPhase),
   }));
 

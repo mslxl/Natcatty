@@ -185,6 +185,7 @@ function createExecCommandApi(ctx) {
     
         if (payload.password) connectOpts.password = payload.password;
     
+        let authBanner = "";
         if (enableKeyboardInteractive) {
           connectOpts.tryKeyboard = true;
     
@@ -203,7 +204,10 @@ function createExecCommandApi(ctx) {
     
           applyAuthToConnOpts(connectOpts, authConfig);
           const execAuthPhase = authConfig.authPhase || { hadPartialSuccess: false };
-    
+
+          conn.on("banner", (message) => {
+            authBanner = String(message || "").trim();
+          });
           conn.on("keyboard-interactive", createKeyboardInteractiveHandler({
             sender,
             sessionId,
@@ -211,6 +215,7 @@ function createExecCommandApi(ctx) {
             password: payload.password,
             logPrefix: "[SSH Exec]",
             scope: "external",
+            getAuthBanner: () => authBanner,
             shouldSkipAutoFill: () => shouldSkipKiPasswordAutoFill(execAuthPhase),
           }));
         } else if (connectOpts.agent) {

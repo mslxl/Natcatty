@@ -760,6 +760,7 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
       await new Promise((resolve, reject) => {
         let settled = false;
         let authReadyTimer = null;
+        let authBanner = "";
         const clearAuthReadyTimer = () => {
           if (authReadyTimer) {
             clearTimeout(authReadyTimer);
@@ -816,6 +817,9 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
           sendProgress(i + 1, totalHops + 1, hopLabel, 'error', errMsg);
           reject(new Error(errMsg));
         });
+        conn.on('banner', (message) => {
+          authBanner = String(message || "").trim();
+        });
         // Handle keyboard-interactive authentication for jump hosts (2FA/MFA)
         conn.on('keyboard-interactive', createKeyboardInteractiveHandler({
           sender,
@@ -824,6 +828,7 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
           password: jump.password,
           logPrefix: `[Chain] Hop ${i + 1}/${totalHops}`,
           scope: keyboardInteractiveScope,
+          getAuthBanner: () => authBanner,
           shouldSkipAutoFill: () => shouldSkipKiPasswordAutoFill(hopAuthPhase),
           onAutoFill: () => sendProgress(
             i + 1, totalHops + 1, hopLabel, 'auth-attempt', 'using saved password',

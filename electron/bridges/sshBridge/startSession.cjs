@@ -649,6 +649,8 @@ function createStartSessionApi(ctx) {
           hostLabel: options.hostLabel || options.label,
           hasJumpHosts: (options.jumpHosts || []).length > 0,
           hasProxy: !!options.proxy,
+          tcpConnectTimeoutMs,
+          authReadyTimeoutMs,
         });
         const conn = new SSHClient();
         let chainConnections = [];
@@ -960,6 +962,7 @@ function createStartSessionApi(ctx) {
               });
             }
             if (connectOpts.password) {
+              authMethods.push({ type: "keyboard-interactive", id: "keyboard-interactive" });
               authMethods.push({ type: "password", id: "password" });
             }
           } else {
@@ -975,6 +978,7 @@ function createStartSessionApi(ctx) {
 
             // Then try password if available (explicit user choice)
             if (connectOpts.password) {
+              authMethods.push({ type: "keyboard-interactive", id: "keyboard-interactive" });
               authMethods.push({ type: "password", id: "password" });
             }
 
@@ -1007,8 +1011,11 @@ function createStartSessionApi(ctx) {
             });
           }
 
-          // Finally try keyboard-interactive
-          authMethods.push({ type: "keyboard-interactive", id: "keyboard-interactive" });
+          // Finally try keyboard-interactive when it was not already placed
+          // before password for PAM/EDR password prompts.
+          if (!authMethods.some((method) => method.type === "keyboard-interactive")) {
+            authMethods.push({ type: "keyboard-interactive", id: "keyboard-interactive" });
+          }
 
           log("Auth methods configured", {
             methods: authMethods.map(m => ({ type: m.type, id: m.id, isDefault: m.isDefault || false })),
@@ -1286,6 +1293,9 @@ function createStartSessionApi(ctx) {
         return new Promise((resolve, reject) => {
           const logPrefix = hasJumpHosts ? '[Chain]' : '[SSH]';
           let settled = false;
+          const connectionStartedAt = Date.now();
+          let connectionStage = "connecting";
+          let authBanner = "";
           let detachX11Forwarding = null;
           // Reference-counted descriptor for this connection. Created when the
           // shell channel opens; shared with any tabs that later reuse this
@@ -1323,8 +1333,15 @@ function createStartSessionApi(ctx) {
             runWhenProxyConnectionReady(conn._sock, () => {
               try { conn._sock?.setTimeout?.(0); } catch { }
               clearAuthReadyTimer();
+              connectionStage = "tcp-connected";
               authReadyTimer = setTimeout(() => conn.emit("timeout"), authReadyTimeoutMs);
               authReadyTimer.unref?.();
+              log("target tcp connected", {
+                sessionId,
+                hostname: options.hostname,
+                elapsedMs: Date.now() - connectionStartedAt,
+                authReadyTimeoutMs,
+              });
               sendProgress(totalHops, totalHops, options.hostname, 'tcp-connected');
               enableSshNoDelay(conn);
             });
@@ -1332,17 +1349,33 @@ function createStartSessionApi(ctx) {
           if (connectOpts.sock) enableTcpNoDelay(connectOpts.sock);
 
           conn.once("handshake", () => {
+            connectionStage = "handshake";
             console.log(`${logPrefix} ${options.hostname} handshake complete`);
-            log("target handshake complete", { sessionId, hostname: options.hostname });
+            log("target handshake complete", {
+              sessionId,
+              hostname: options.hostname,
+              elapsedMs: Date.now() - connectionStartedAt,
+            });
             sendProgress(totalHops, totalHops, options.hostname, 'authenticating');
+          });
+
+          conn.on("banner", (message) => {
+            authBanner = String(message || "").trim();
+            log("auth banner received", {
+              sessionId,
+              hostname: options.hostname,
+              length: authBanner.length,
+            });
           });
 
           conn.once("ready", () => {
             clearAuthReadyTimer();
+            connectionStage = "ready";
             console.log(`${logPrefix} ${options.hostname} ready`);
             log("target ready", {
               sessionId,
               hostname: options.hostname,
+              elapsedMs: Date.now() - connectionStartedAt,
               remoteSshVersion: (conn && typeof conn._remoteVer === 'string') ? conn._remoteVer : '',
             });
 
@@ -1544,7 +1577,15 @@ function createStartSessionApi(ctx) {
             clearAuthReadyTimer();
             console.error(`${logPrefix} ${options.hostname} connection timeout`);
             const err = new Error(`Connection timeout to ${options.hostname}`);
-            log("connection timeout", { sessionId, hostname: options.hostname, error: err.message });
+            log("connection timeout", {
+              sessionId,
+              hostname: options.hostname,
+              error: err.message,
+              stage: connectionStage,
+              elapsedMs: Date.now() - connectionStartedAt,
+              tcpConnectTimeoutMs,
+              authReadyTimeoutMs,
+            });
             const contents = event.sender;
             sendProgress(totalHops, totalHops, options.hostname, 'error', err.message);
             safeSend(contents, "netcatty:exit", { sessionId, exitCode: 1, error: err.message, reason: "timeout" });
@@ -1629,6 +1670,7 @@ function createStartSessionApi(ctx) {
             password: options.password,
             logPrefix,
             scope: "terminal",
+            getAuthBanner: () => authBanner,
             shouldSkipAutoFill: () => shouldSkipKiPasswordAutoFill(authPhase),
             onAutoFill: () => sendProgress(
               totalHops, totalHops, options.hostname, 'auth-attempt', 'using saved password',
@@ -1658,14 +1700,33 @@ function createStartSessionApi(ctx) {
             // Try agent FIRST (this is what regular SSH does - it checks ssh-agent before key files)
             if (connectOpts.agent) authMethods.push("agent");
             if (connectOpts.privateKey) authMethods.push("publickey");
-            if (connectOpts.password) authMethods.push("password");
+            if (connectOpts.password) authMethods.push("keyboard-interactive", "password");
             authMethods.push("keyboard-interactive");
-            connectOpts.authHandler = authMethods;
-            log("Using simple array authHandler", { authMethods, usedDefaultKeyAsPrimary });
+            const dedupedAuthMethods = Array.from(new Set(authMethods));
+            connectOpts.authHandler = dedupedAuthMethods;
+            log("Using simple array authHandler", { authMethods: dedupedAuthMethods, usedDefaultKeyAsPrimary });
           }
           // If authHandler is a function, it already handles keyboard-interactive
 
           console.log(`${logPrefix} Connecting to ${options.hostname}...`);
+          log("connect options prepared", {
+            sessionId,
+            hostname: options.hostname,
+            port: options.port || 22,
+            hasSocket: !!connectOpts.sock,
+            hasProxy,
+            jumpHostCount: jumpHosts.length,
+            timeout: connectOpts.timeout,
+            readyTimeout: connectOpts.readyTimeout,
+            tryKeyboard: connectOpts.tryKeyboard,
+            hasPassword: !!connectOpts.password,
+            hasPrivateKey: !!connectOpts.privateKey,
+            hasAgent: !!connectOpts.agent,
+            authHandlerType: Array.isArray(connectOpts.authHandler) ? "array" : typeof connectOpts.authHandler,
+            authMethods: Array.isArray(connectOpts.authHandler)
+              ? connectOpts.authHandler
+              : undefined,
+          });
           conn.connect(connectOpts);
         });
       } catch (err) {

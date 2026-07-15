@@ -94,7 +94,8 @@ function loadBridgeWithAuthRetryMocks(t, options = {}) {
       setImmediate(() => {
         if (
           eventName === "repeated-keyboard-interactive" ||
-          eventName === "excessive-keyboard-interactive"
+          eventName === "excessive-keyboard-interactive" ||
+          eventName === "password-and-keyboard-interactive"
         ) {
           this.authMethodsOffered = [];
           this.keyboardInteractiveResponses = [];
@@ -111,7 +112,10 @@ function loadBridgeWithAuthRetryMocks(t, options = {}) {
           };
 
           offerNext(null, null);
-          const firstInteractive = offerNext(["keyboard-interactive"], false);
+          const firstMethods = eventName === "password-and-keyboard-interactive"
+            ? ["publickey", "password", "keyboard-interactive"]
+            : ["keyboard-interactive"];
+          const firstInteractive = offerNext(firstMethods, false);
           if (firstInteractive !== "keyboard-interactive") {
             const err = new Error("All configured authentication methods failed");
             err.level = "client-authentication";
@@ -311,6 +315,54 @@ test("terminal SSH supports consecutive keyboard-interactive factors (#2150)", a
   assert.equal(promptEvents[0].payload.savedPassword, null);
   assert.equal(promptEvents[0].payload.allowSavePassword, false);
   assert.equal(promptEvents[0].payload.scope, "terminal");
+});
+
+test("terminal SSH prefers keyboard-interactive when password and keyboard-interactive are both advertised", async (t) => {
+  const { bridge, MockSSHClient } = loadBridgeWithAuthRetryMocks(t, {
+    connectEvents: ["password-and-keyboard-interactive"],
+  });
+  const ipcMain = makeIpcMain();
+  bridge.init({ sessions: new Map(), electronModule: {} });
+  bridge.registerHandlers(ipcMain);
+  const sender = makeSender();
+  const send = sender.send.bind(sender);
+  sender.send = (channel, payload) => {
+    send(channel, payload);
+    if (channel === "netcatty:keyboard-interactive") {
+      keyboardInteractiveHandler.handleResponse(
+        { sender },
+        {
+          requestId: payload.requestId,
+          responses: ["secondary-password"],
+          cancelled: false,
+        },
+      );
+    }
+  };
+
+  const result = await ipcMain.handlers.get("netcatty:start")(
+    { sender },
+    {
+      sessionId: "password-or-ki-session",
+      hostname: "corp-edr.example.com",
+      username: "alice",
+      authMethod: "password",
+      password: "login-password",
+      useSshAgent: false,
+      port: 22,
+      knownHosts: [],
+    },
+  );
+
+  assert.deepEqual(result, { sessionId: "password-or-ki-session" });
+  assert.deepEqual(
+    MockSSHClient.instances[0].authMethodsOffered,
+    ["none", "keyboard-interactive", "keyboard-interactive"],
+  );
+  assert.deepEqual(
+    MockSSHClient.instances[0].keyboardInteractiveResponses,
+    [["login-password"], ["secondary-password"]],
+  );
 });
 
 test("terminal SSH stops after two successful keyboard-interactive factors", async (t) => {

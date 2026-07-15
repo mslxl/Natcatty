@@ -914,8 +914,10 @@ function buildAuthHandler(options) {
     const authMethods = ["none"]; // Always try none first per RFC 4252
     if (effectiveAgent) authMethods.push("agent");
     if (!isPasswordOnly && privateKey) authMethods.push("publickey");
-    if (password) authMethods.push("password");
-    authMethods.push("keyboard-interactive");
+    if (password) authMethods.push("keyboard-interactive", "password");
+    if (!authMethods.includes("keyboard-interactive")) {
+      authMethods.push("keyboard-interactive");
+    }
 
     const authPhase = createAuthPhase();
     return {
@@ -939,6 +941,7 @@ function buildAuthHandler(options) {
     // Password-only: respect user's explicit choice, no key/agent fallback.
     // Matches startSSHSession (issue #2079) and avoids #266 passphrase prompts.
     if (password) {
+      authMethods.push({ type: "keyboard-interactive", id: "keyboard-interactive" });
       authMethods.push({ type: "password", id: "password" });
     }
   } else if (isAutomatic) {
@@ -964,6 +967,7 @@ function buildAuthHandler(options) {
       });
     }
     if (password) {
+      authMethods.push({ type: "keyboard-interactive", id: "keyboard-interactive" });
       authMethods.push({ type: "password", id: "password" });
     }
   } else if (isKeyOnly) {
@@ -979,6 +983,7 @@ function buildAuthHandler(options) {
 
     // 2. Password (if configured alongside key)
     if (password) {
+      authMethods.push({ type: "keyboard-interactive", id: "keyboard-interactive" });
       authMethods.push({ type: "password", id: "password" });
     }
 
@@ -1015,6 +1020,7 @@ function buildAuthHandler(options) {
 
     // 3. Password (if configured)
     if (password) {
+      authMethods.push({ type: "keyboard-interactive", id: "keyboard-interactive" });
       authMethods.push({ type: "password", id: "password" });
     }
 
@@ -1048,8 +1054,11 @@ function buildAuthHandler(options) {
     });
   }
 
-  // Keyboard-interactive as last resort
-  authMethods.push({ type: "keyboard-interactive", id: "keyboard-interactive" });
+  // Keyboard-interactive as last resort when it was not already placed before
+  // password for PAM/EDR password prompts.
+  if (!authMethods.some((method) => method.type === "keyboard-interactive")) {
+    authMethods.push({ type: "keyboard-interactive", id: "keyboard-interactive" });
+  }
 
   console.log(`${logPrefix} Auth methods configured`, {
     isAutomatic,
@@ -1263,6 +1272,8 @@ const OTP_PROMPT_PATTERN = new RegExp(
 // — strictly no worse than the old "always prompt" baseline.
 const PASSWORD_PROMPT_PATTERN = /passw(or)?d|密\s*码|口\s*令/i;
 const MAX_KEYBOARD_INTERACTIVE_FACTORS = 2;
+const EDR_SECONDARY_AUTH_FALLBACK_INSTRUCTIONS =
+  "为保障主机安全，请输入二次认证密码，如有疑问，请联系xxx，电话xxx。";
 
 /**
  * Shared auth-phase state for keyboard-interactive auto-fill decisions.
@@ -1476,6 +1487,14 @@ function shouldPrefillSavedPassword(prompts, password, { skipAutoFill = false, c
   return true;
 }
 
+function getFallbackKeyboardInteractiveInstructions(prompts) {
+  if (!Array.isArray(prompts) || prompts.length !== 1) return "";
+  const prompt = typeof prompts[0]?.prompt === "string" ? prompts[0].prompt : "";
+  return /secondary\s+authentication\s+password/i.test(prompt)
+    ? EDR_SECONDARY_AUTH_FALLBACK_INSTRUCTIONS
+    : "";
+}
+
 /**
  * Create a keyboard-interactive event handler
  * @param {Object} options
@@ -1499,6 +1518,9 @@ function shouldPrefillSavedPassword(prompts, password, { skipAutoFill = false, c
  *   IPC is sent to the renderer.
  * @param {Function} [options.onUserResponded] - Called when the renderer
  *   sends a response back (after the modal closed).
+ * @param {Function} [options.getAuthBanner] - Returns the most recent SSH
+ *   USERAUTH_BANNER text for this connection, if the server sent one before
+ *   the keyboard-interactive challenge.
  * @returns {Function} - Event handler for 'keyboard-interactive' event
  */
 function createKeyboardInteractiveHandler(options) {
@@ -1513,6 +1535,7 @@ function createKeyboardInteractiveHandler(options) {
     onAutoFill,
     onPromptShown,
     onUserResponded,
+    getAuthBanner,
   } = options;
   // ssh2 may re-invoke the keyboard-interactive event on auth failure with a
   // fresh challenge. If our first auto-fill attempt was wrong, falling back
@@ -1534,9 +1557,21 @@ function createKeyboardInteractiveHandler(options) {
       return;
     }
 
-    // name + instructions often carry the real EDR banner (e.g. "请输入二次认证密码")
-    // while prompts[i].prompt is only the short English field label.
-    const contextText = [name, instructions].filter((s) => typeof s === "string" && s.trim()).join("\n");
+    let authBanner = "";
+    try {
+      authBanner = typeof getAuthBanner === "function" ? String(getAuthBanner() || "").trim() : "";
+    } catch (err) {
+      console.warn(`${logPrefix} getAuthBanner callback threw`, err);
+    }
+    const fallbackInstructions = getFallbackKeyboardInteractiveInstructions(prompts);
+    const modalInstructions = instructions || authBanner || fallbackInstructions;
+
+    // name + instructions/banner often carry the real EDR warning (e.g.
+    // "请输入二次认证密码") while prompts[i].prompt is only the short English
+    // field label.
+    const contextText = [name, instructions, authBanner, fallbackInstructions]
+      .filter((s) => typeof s === "string" && s.trim())
+      .join("\n");
 
     let skipAutoFill = false;
     try {
@@ -1544,6 +1579,8 @@ function createKeyboardInteractiveHandler(options) {
     } catch (err) {
       console.warn(`${logPrefix} shouldSkipAutoFill callback threw`, err);
     }
+    const autoFillablePasswordChallenge =
+      isAutoFillablePasswordChallenge(prompts, password, contextText);
 
     // After a first factor already succeeded (partialSuccess), never reuse the
     // saved login password for a later keyboard-interactive challenge — even
@@ -1552,7 +1589,7 @@ function createKeyboardInteractiveHandler(options) {
     if (
       !skipAutoFill &&
       !autoFilledOnce &&
-      isAutoFillablePasswordChallenge(prompts, password, contextText)
+      autoFillablePasswordChallenge
     ) {
       autoFilledOnce = true;
       console.log(`${logPrefix} Auto-filling saved password into single keyboard-interactive prompt`);
@@ -1612,7 +1649,7 @@ function createKeyboardInteractiveHandler(options) {
       requestId,
       sessionId,
       name: name || hostname,
-      instructions: instructions || "",
+      instructions: modalInstructions,
       prompts: promptsData,
       hostname: hostname,
       savedPassword: savedPasswordForModal,

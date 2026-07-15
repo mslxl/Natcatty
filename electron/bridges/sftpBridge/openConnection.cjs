@@ -373,6 +373,10 @@ function createOpenConnectionApi(ctx) {
               clearAuthReadyTimer();
               reject(new Error(`Connection closed before authentication completed for ${hopLabel}`));
             });
+            let authBanner = "";
+            conn.on('banner', (message) => {
+              authBanner = String(message || "").trim();
+            });
             // Handle keyboard-interactive authentication for jump hosts (2FA/MFA)
             const sftpChainKiHandler = createKeyboardInteractiveHandler({
               sender,
@@ -381,6 +385,7 @@ function createOpenConnectionApi(ctx) {
               password: jump.password,
               logPrefix: `[SFTP Chain] Hop ${i + 1}/${jumpHosts.length}`,
               scope: "external",
+              getAuthBanner: () => authBanner,
               shouldSkipAutoFill: () => shouldSkipKiPasswordAutoFill(hopAuthPhase),
             });
             conn.on('keyboard-interactive', (name, instructions, lang, prompts, finish) => {
@@ -993,6 +998,7 @@ function createOpenConnectionApi(ctx) {
       });
       applyAuthToConnOpts(connectOpts, authConfig);
       const sftpAuthPhase = authConfig.authPhase || { hadPartialSuccess: false };
+      let authBanner = "";
     
       // Create keyboard-interactive handler using shared helper
       const kiHandler = createKeyboardInteractiveHandler({
@@ -1002,11 +1008,15 @@ function createOpenConnectionApi(ctx) {
         password: options.password,
         logPrefix: "[SFTP]",
         scope: "external",
+        getAuthBanner: () => authBanner,
         shouldSkipAutoFill: () => shouldSkipKiPasswordAutoFill(sftpAuthPhase),
       });
     
       // Add keyboard-interactive listener BEFORE connecting
       // Wrap to emit progress events for the SFTP connection log
+      client.on("banner", (message) => {
+        authBanner = String(message || "").trim();
+      });
       client.on("keyboard-interactive", (name, instructions, lang, prompts, finish) => {
         if (prompts && prompts.length > 0) {
           sendSftpProgress(event.sender, connId, options.hostname, 'auth-attempt', 'waiting for user input...');

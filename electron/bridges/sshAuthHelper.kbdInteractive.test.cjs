@@ -241,6 +241,47 @@ test("createKeyboardInteractiveHandler falls back to the modal on the retry afte
   drainPendingRequests(sent);
 });
 
+test("createKeyboardInteractiveHandler carries the SSH auth banner into the modal when instructions are empty", () => {
+  const { sender, sent } = createSender();
+  const handler = createKeyboardInteractiveHandler({
+    sender,
+    sessionId: "session-1",
+    hostname: "corp-edr.example.com",
+    password: "login-password",
+    getAuthBanner: () => "为保障主机安全，请输入二次认证密码，如有疑问，请联系xxx，电话xxx。",
+  });
+
+  handler("", "", "", [edrSecondaryAuthPasswordPrompt], () => {});
+
+  assert.equal(sent.length, 1);
+  assert.equal(
+    sent[0].payload.instructions,
+    "为保障主机安全，请输入二次认证密码，如有疑问，请联系xxx，电话xxx。",
+  );
+
+  drainPendingRequests(sent);
+});
+
+test("createKeyboardInteractiveHandler adds the EDR fallback text for bare Secondary Authentication Password prompts", () => {
+  const { sender, sent } = createSender();
+  const handler = createKeyboardInteractiveHandler({
+    sender,
+    sessionId: "session-1",
+    hostname: "192.168.9.138",
+    password: "login-password",
+  });
+
+  handler("", "", "", [edrSecondaryAuthPasswordPrompt], () => {});
+
+  assert.equal(sent.length, 1);
+  assert.equal(
+    sent[0].payload.instructions,
+    "为保障主机安全，请输入二次认证密码，如有疑问，请联系xxx，电话xxx。",
+  );
+
+  drainPendingRequests(sent);
+});
+
 test("createKeyboardInteractiveHandler does not prefill after a prior auto-fill round (#2150)", () => {
   // Multi-round keyboard-interactive without partialSuccess between rounds:
   // round 1 auto-fills the login password; round 2 looks like Password: again
@@ -665,6 +706,38 @@ test("buildAuthHandler allows consecutive keyboard-interactive factors on the dy
   assert.equal(auth.authPhase.hadPartialSuccess, true);
 });
 
+test("buildAuthHandler prefers keyboard-interactive over password on explicit password auth", () => {
+  const auth = buildAuthHandler({
+    authMethod: "password",
+    username: "alice",
+    password: "login-password",
+  });
+
+  const offered = [];
+  auth.authHandler(null, null, (method) => offered.push(method));
+  auth.authHandler(["password", "keyboard-interactive"], false, (method) => offered.push(method));
+
+  assert.deepEqual(offered, ["none", "keyboard-interactive"]);
+});
+
+test("buildAuthHandler prefers keyboard-interactive over password on the dynamic path", () => {
+  const auth = buildAuthHandler({
+    authMethod: "auto",
+    username: "alice",
+    password: "login-password",
+    allowAgentFallback: false,
+  });
+
+  const offered = [];
+  const record = (method) => offered.push(
+    method && typeof method === "object" ? method.type : method,
+  );
+  auth.authHandler(null, null, record);
+  auth.authHandler(["password", "keyboard-interactive"], false, record);
+
+  assert.deepEqual(offered, ["none", "keyboard-interactive"]);
+});
+
 test("buildAuthHandler reconsiders dynamic methods between authentication factors (#2150)", () => {
   const auth = buildAuthHandler({
     authMethod: "auto",
@@ -814,8 +887,7 @@ test("buildAuthHandler simple password path tracks partialSuccess via function h
   auth.authHandler(["password", "keyboard-interactive"], false, (method) => offered.push(method));
   auth.authHandler(["keyboard-interactive"], true, (method) => offered.push(method));
 
-  assert.ok(offered.includes("password") || offered.some((m) => m === "password" || m?.type === "password"));
-  assert.ok(offered.includes("keyboard-interactive"));
+  assert.deepEqual(offered, ["none", "keyboard-interactive", "keyboard-interactive"]);
   assert.equal(auth.authPhase.hadPartialSuccess, true);
 });
 
