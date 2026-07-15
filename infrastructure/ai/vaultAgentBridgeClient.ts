@@ -985,7 +985,9 @@ export async function handleVaultAgentOp(
       };
     }
     case 'portforward.rules.create': {
-      const result = createPortForwardingRule(deps.getPortForwardingRules(), deps.getHosts(), params);
+      const result = createPortForwardingRule(deps.getPortForwardingRules(), deps.getHosts(), params, {
+        id: crypto.randomUUID(), now: Date.now(),
+      });
       if (!result.ok) return result;
       deps.updatePortForwardingRules(result.value.rules);
       return { ok: true, rule: sanitizePortForwardRuleForAgent(result.value.rule) };
@@ -999,7 +1001,9 @@ export async function handleVaultAgentOp(
     }
     case 'portforward.rules.duplicate': {
       const ruleId = String(params.ruleId || '');
-      const result = duplicatePortForwardingRule(deps.getPortForwardingRules(), ruleId);
+      const result = duplicatePortForwardingRule(deps.getPortForwardingRules(), ruleId, {
+        id: crypto.randomUUID(), now: Date.now(),
+      });
       if (!result.ok) return result;
       deps.updatePortForwardingRules(result.value.rules);
       return { ok: true, rule: sanitizePortForwardRuleForAgent(result.value.rule) };

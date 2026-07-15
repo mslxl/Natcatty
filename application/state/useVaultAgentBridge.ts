@@ -42,56 +42,37 @@ type VaultAgentSnapshot = {
   managedSources: ManagedSource[];
 };
 
+const selectVaultAgentSnapshot = (input: UseVaultAgentBridgeInput): VaultAgentSnapshot => ({
+  hosts: input.hosts,
+  notes: input.notes,
+  snippets: input.snippets,
+  customGroups: input.customGroups,
+  groupConfigs: input.groupConfigs,
+  portForwardingRules: input.portForwardingRules,
+  managedSources: input.managedSources,
+});
+
+const haveSameVaultAgentSnapshot = (left: VaultAgentSnapshot, right: VaultAgentSnapshot): boolean => (
+  left.hosts === right.hosts
+  && left.notes === right.notes
+  && left.snippets === right.snippets
+  && left.customGroups === right.customGroups
+  && left.groupConfigs === right.groupConfigs
+  && left.portForwardingRules === right.portForwardingRules
+  && left.managedSources === right.managedSources
+);
+
 export function useVaultAgentBridge(input: UseVaultAgentBridgeInput): void {
   const inputRef = useRef(input);
   inputRef.current = input;
 
-  const vaultSnapshotRef = useRef<VaultAgentSnapshot>({
-    hosts: input.hosts,
-    notes: input.notes,
-    snippets: input.snippets,
-    customGroups: input.customGroups,
-    groupConfigs: input.groupConfigs,
-    portForwardingRules: input.portForwardingRules,
-    managedSources: input.managedSources,
-  });
-  const lastSyncedVaultInputRef = useRef({
-    hosts: input.hosts,
-    notes: input.notes,
-    snippets: input.snippets,
-    customGroups: input.customGroups,
-    groupConfigs: input.groupConfigs,
-    portForwardingRules: input.portForwardingRules,
-    managedSources: input.managedSources,
-  });
+  const selectedSnapshot = selectVaultAgentSnapshot(input);
+  const vaultSnapshotRef = useRef<VaultAgentSnapshot>(selectedSnapshot);
+  const lastSyncedVaultInputRef = useRef<VaultAgentSnapshot>(selectedSnapshot);
 
-  if (
-    input.hosts !== lastSyncedVaultInputRef.current.hosts
-    || input.notes !== lastSyncedVaultInputRef.current.notes
-    || input.snippets !== lastSyncedVaultInputRef.current.snippets
-    || input.customGroups !== lastSyncedVaultInputRef.current.customGroups
-    || input.groupConfigs !== lastSyncedVaultInputRef.current.groupConfigs
-    || input.portForwardingRules !== lastSyncedVaultInputRef.current.portForwardingRules
-    || input.managedSources !== lastSyncedVaultInputRef.current.managedSources
-  ) {
-    vaultSnapshotRef.current = {
-      hosts: input.hosts,
-      notes: input.notes,
-      snippets: input.snippets,
-      customGroups: input.customGroups,
-      groupConfigs: input.groupConfigs,
-      portForwardingRules: input.portForwardingRules,
-      managedSources: input.managedSources,
-    };
-    lastSyncedVaultInputRef.current = {
-      hosts: input.hosts,
-      notes: input.notes,
-      snippets: input.snippets,
-      customGroups: input.customGroups,
-      groupConfigs: input.groupConfigs,
-      portForwardingRules: input.portForwardingRules,
-      managedSources: input.managedSources,
-    };
+  if (!haveSameVaultAgentSnapshot(selectedSnapshot, lastSyncedVaultInputRef.current)) {
+    vaultSnapshotRef.current = selectedSnapshot;
+    lastSyncedVaultInputRef.current = selectedSnapshot;
   }
 
   useEffect(() => {

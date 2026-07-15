@@ -2,6 +2,7 @@ import type { Host, PortForwardingRule } from './models';
 import { getNextVaultOrder } from './vaultOrder';
 
 type Result<T> = { ok: true; value: T } | { ok: false; error: string };
+type NewRuleValues = { id: string; now: number };
 
 const parsePort = (value: unknown, name: string): Result<number> => {
   const parsed = typeof value === 'number' ? value : Number(String(value ?? ''));
@@ -14,6 +15,7 @@ function buildRule(
   source: Record<string, unknown>,
   hosts: Host[],
   existing?: PortForwardingRule,
+  newRule?: NewRuleValues,
 ): Result<PortForwardingRule> {
   const type = source.type === undefined ? existing?.type : String(source.type).trim();
   if (type !== 'local' && type !== 'remote' && type !== 'dynamic') {
@@ -33,7 +35,7 @@ function buildRule(
     if ('error' in parsedRemotePort) return { ok: false, error: parsedRemotePort.error };
     remotePort = parsedRemotePort.value;
   }
-  const now = Date.now();
+  if (!existing && !newRule) return { ok: false, error: 'New rule id and timestamp are required.' };
   let autoStart = existing?.autoStart ?? false;
   if (source.autoStart !== undefined) {
     if (typeof source.autoStart === 'boolean') autoStart = source.autoStart;
@@ -47,7 +49,7 @@ function buildRule(
   return {
     ok: true,
     value: {
-      id: existing?.id ?? crypto.randomUUID(),
+      id: existing?.id ?? newRule!.id,
       label: String(source.label ?? existing?.label ?? `${type} ${localPort.value}`).trim() || `${type} ${localPort.value}`,
       type,
       localPort: localPort.value,
@@ -56,7 +58,7 @@ function buildRule(
       hostId,
       autoStart,
       status: existing?.status ?? 'inactive',
-      createdAt: existing?.createdAt ?? now,
+      createdAt: existing?.createdAt ?? newRule!.now,
       order: existing?.order,
     },
   };
@@ -66,8 +68,9 @@ export function createPortForwardingRule(
   rules: PortForwardingRule[],
   hosts: Host[],
   source: Record<string, unknown>,
+  newRule: NewRuleValues,
 ): Result<{ rules: PortForwardingRule[]; rule: PortForwardingRule }> {
-  const built = buildRule(source, hosts);
+  const built = buildRule(source, hosts, undefined, newRule);
   if ('error' in built) return { ok: false, error: built.error };
   const rule = { ...built.value, order: getNextVaultOrder(rules) };
   return { ok: true, value: { rules: [...rules, rule], rule } };
@@ -92,17 +95,18 @@ export function updatePortForwardingRule(
 export function duplicatePortForwardingRule(
   rules: PortForwardingRule[],
   ruleId: string,
+  newRule: NewRuleValues,
 ): Result<{ rules: PortForwardingRule[]; rule: PortForwardingRule }> {
   const existing = rules.find((rule) => rule.id === ruleId);
   if (!existing) return { ok: false, error: `Port forwarding rule "${ruleId}" was not found.` };
   const rule: PortForwardingRule = {
     ...existing,
-    id: crypto.randomUUID(),
+    id: newRule.id,
     label: `${existing.label} (Copy)`,
     status: 'inactive',
     error: undefined,
     lastUsedAt: undefined,
-    createdAt: Date.now(),
+    createdAt: newRule.now,
     order: getNextVaultOrder(rules),
   };
   return { ok: true, value: { rules: [...rules, rule], rule } };
