@@ -338,12 +338,20 @@ function createScpBackend(deps = {}) {
       const readyAck = waitForAck(stream, transfer);
       await readyAck;
 
-      const control = buildFileControlLine({ mode, size: fileSize, name: baseName });
+      const control = buildFileControlLine({
+        mode,
+        size: fileSize,
+        name: baseName,
+        encoding,
+      });
       const afterControlAck = waitForAck(stream, transfer);
       await writeAll(stream, control);
       await afterControlAck;
 
       let transferred = 0;
+      // Arm the final ACK listener before the trailing NUL so a fast remote cannot
+      // race past waitForAck and hang the upload.
+      const finalAck = waitForAck(stream, transfer);
       await new Promise((resolve, reject) => {
         const readStream = fsModule.createReadStream(localPath, { highWaterMark: 256 * 1024 });
         if (transfer) transfer.readStream = readStream;
@@ -378,14 +386,13 @@ function createScpBackend(deps = {}) {
         });
         readStream.on("error", finish);
         readStream.on("end", () => {
-          // trailing NUL after file data
           stream.write(Buffer.from([0x00]));
           finish(null);
         });
         stream.on("error", finish);
       });
 
-      await waitForAck(stream, transfer);
+      await finalAck;
       await closeStream(stream);
       if (transfer?.cancelled) throw new Error("Transfer cancelled");
       if (typeof onProgress === "function") onProgress(fileSize, fileSize);
@@ -426,7 +433,12 @@ function createScpBackend(deps = {}) {
     try {
       await waitForAck(stream, transfer);
       const afterControl = waitForAck(stream, transfer);
-      await writeAll(stream, buildFileControlLine({ mode, size: fileSize, name: baseName }));
+      await writeAll(stream, buildFileControlLine({
+        mode,
+        size: fileSize,
+        name: baseName,
+        encoding,
+      }));
       await afterControl;
 
       const chunkSize = 256 * 1024;
@@ -471,6 +483,8 @@ function createScpBackend(deps = {}) {
         fileSize,
         transfer,
         onProgress,
+        encoding: options.encoding || "utf-8",
+        signal: options.signal || null,
       });
       await new Promise((resolve, reject) => {
         writeStream.end((err) => (err ? reject(err) : resolve()));

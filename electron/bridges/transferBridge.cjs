@@ -327,12 +327,13 @@ async function acquireIsolatedDownloadChannel(client, transfer) {
  * Upload a local file to SFTP using ssh2's fastPut (parallel SFTP requests).
  * Falls back to sequential stream piping if fastPut is unavailable.
  */
-async function uploadFile(localPath, remotePath, client, fileSize, transfer, sendProgress) {
+async function uploadFile(localPath, remotePath, client, fileSize, transfer, sendProgress, encoding = "utf-8") {
   if (isScpModeClient(client)) {
     const backend = getScpBackendForClient(client);
     await backend.uploadFile(localPath, remotePath, {
       fileSize,
       transfer,
+      encoding,
       onProgress: (transferred, total) => sendProgress(transferred, total || fileSize),
     });
     return;
@@ -458,12 +459,13 @@ async function uploadFile(localPath, remotePath, client, fileSize, transfer, sen
  * Download from SFTP to local file using ssh2's fastGet (parallel SFTP requests).
  * Falls back to sequential stream piping if fastGet is unavailable.
  */
-async function downloadFile(remotePath, localPath, client, fileSize, transfer, sendProgress) {
+async function downloadFile(remotePath, localPath, client, fileSize, transfer, sendProgress, encoding = "utf-8") {
   if (isScpModeClient(client)) {
     const backend = getScpBackendForClient(client);
     await backend.downloadFile(remotePath, localPath, {
       fileSize,
       transfer,
+      encoding,
       onProgress: (transferred, total) => sendProgress(transferred, total || fileSize),
     });
     return;
@@ -732,7 +734,15 @@ async function startTransfer(event, payload, onProgress) {
       const encodedTargetPath = isScpModeClient(client)
         ? targetPath
         : encodePathForSession(targetSftpId, targetPath, targetEncoding);
-      await uploadFile(sourcePath, encodedTargetPath, client, fileSize, transfer, sendProgress);
+      await uploadFile(
+        sourcePath,
+        encodedTargetPath,
+        client,
+        fileSize,
+        transfer,
+        sendProgress,
+        resolveEncodingForRequest(targetSftpId, targetEncoding),
+      );
 
     } else if (sourceType === 'sftp' && targetType === 'local') {
       const client = sftpClients.get(sourceSftpId);
@@ -744,7 +754,15 @@ async function startTransfer(event, payload, onProgress) {
       const encodedSourcePath = isScpModeClient(client)
         ? sourcePath
         : encodePathForSession(sourceSftpId, sourcePath, sourceEncoding);
-      await downloadFile(encodedSourcePath, targetPath, client, fileSize, transfer, sendProgress);
+      await downloadFile(
+        encodedSourcePath,
+        targetPath,
+        client,
+        fileSize,
+        transfer,
+        sendProgress,
+        resolveEncodingForRequest(sourceSftpId, sourceEncoding),
+      );
 
     } else if (sourceType === 'local' && targetType === 'local') {
       const dir = path.dirname(targetPath);

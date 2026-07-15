@@ -26,13 +26,27 @@ class ScpProtocolError extends Error {
  * Build a file control line: C0664 123 name\n
  * @param {{ mode?: number|string, size: number, name: string }} opts
  */
-function buildFileControlLine({ mode = 0o0644, size, name }) {
+function buildFileControlLine({ mode = 0o0644, size, name, encoding = "utf-8" }) {
   if (!Number.isFinite(size) || size < 0 || !Number.isInteger(size)) {
     throw new ScpProtocolError(`Invalid SCP file size: ${size}`);
   }
   const baseName = sanitizeScpBasename(name);
   const modeStr = normalizeModeOctal(mode);
-  return Buffer.from(`C${modeStr} ${size} ${baseName}\n`, "utf8");
+  const prefix = Buffer.from(`C${modeStr} ${size} `, "utf8");
+  const enc = String(encoding || "utf-8").toLowerCase();
+  let nameBuf;
+  if (enc === "gb18030" || enc === "gbk" || enc === "gb2312") {
+    try {
+      // eslint-disable-next-line global-require
+      const iconv = require("iconv-lite");
+      nameBuf = iconv.encode(baseName, "gb18030");
+    } catch {
+      nameBuf = Buffer.from(baseName, "utf8");
+    }
+  } else {
+    nameBuf = Buffer.from(baseName, "utf8");
+  }
+  return Buffer.concat([prefix, nameBuf, Buffer.from("\n", "utf8")]);
 }
 
 /**

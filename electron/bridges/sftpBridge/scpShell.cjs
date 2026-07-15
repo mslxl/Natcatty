@@ -91,7 +91,11 @@ function buildListCommand(remotePath, encoding = "utf-8") {
     '  [ -z "$size" ] && size=0',
     '  mtime=$(date -r "$f" +%s 2>/dev/null || stat -c %Y -- "$f" 2>/dev/null || stat -f %m -- "$f" 2>/dev/null || echo 0)',
     // basename base64: prefer base64 -w0 (GNU), fallback base64, then od
-    '  b64=$(printf "%s" "$f" | base64 2>/dev/null | tr -d "\\r\\n" || printf "%s" "$f" | openssl base64 2>/dev/null | tr -d "\\r\\n")',
+    // Prefer `base64` when present; otherwise openssl. Avoid `cmd | tr || fallback`
+    // because a missing base64 still lets tr succeed with empty input.
+    '  if command -v base64 >/dev/null 2>&1; then b64=$(printf "%s" "$f" | base64 2>/dev/null | tr -d "\\r\\n")',
+    '  elif command -v openssl >/dev/null 2>&1; then b64=$(printf "%s" "$f" | openssl base64 2>/dev/null | tr -d "\\r\\n")',
+    '  else b64=; fi',
     '  printf "%s|%s|%s|%s|%s\\n" "$t" "${mode:-?}" "$size" "$mtime" "$b64"',
     "done",
   ].join("\n");

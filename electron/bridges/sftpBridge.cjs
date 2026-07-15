@@ -806,9 +806,10 @@ async function openSftpForSession(_event, payload) {
     if (fileProtocol === "scp") {
       client.__netcattyFileProtocol = "scp";
       client.sftp = null;
+      // Probe must succeed: SCP mode requires working SSH exec. Do not pretend connected.
       await getScpBackendForClient(client).homeDir({
         signal: payload?.abortSignal || null,
-      }).catch(() => {});
+      });
       throwIfAborted(payload?.abortSignal);
       copySftpEncodingState(payload?.encodingStateKey, sftpId);
       sftpClients.set(sftpId, client);
@@ -830,9 +831,15 @@ async function openSftpForSession(_event, payload) {
       );
       client.__netcattyFileProtocol = "scp";
       client.sftp = null;
-      await getScpBackendForClient(client).homeDir({
-        signal: payload?.abortSignal || null,
-      }).catch(() => {});
+      try {
+        await getScpBackendForClient(client).homeDir({
+          signal: payload?.abortSignal || null,
+        });
+      } catch (probeErr) {
+        throw new Error(
+          `SFTP unavailable and SCP-mode probe failed: ${probeErr?.message || String(probeErr)}`,
+        );
+      }
       throwIfAborted(payload?.abortSignal);
       copySftpEncodingState(payload?.encodingStateKey, sftpId);
       sftpClients.set(sftpId, client);
