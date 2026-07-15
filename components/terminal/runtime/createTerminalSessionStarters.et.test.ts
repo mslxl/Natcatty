@@ -333,31 +333,6 @@ test("startEt connects with a single resolved jump host", async () => {
   assert.deepEqual(jumpHosts[0]?.identityFilePaths, ["/Users/alice/.ssh/jump_ed25519"]);
 });
 
-test("startEt forwards MFA mode for target and jump host", async () => {
-  let captured: Record<string, unknown> | null = null;
-  const backend = makeBackend((options) => { captured = options; });
-  const ctx = makeCtx(
-    {
-      authMethod: "password",
-      password: "target-secret",
-      hostChain: { hostIds: ["jump-1"] },
-    },
-    [{
-      id: "jump-1",
-      label: "Jump",
-      hostname: "jump.example.test",
-      username: "jumper",
-      authMethod: "password",
-      password: "jump-secret",
-    }],
-    backend,
-  );
-
-  await createTerminalSessionStarters(ctx as never).startEt(term as never);
-
-  const jumpHosts = captured?.jumpHosts as Array<Record<string, unknown>>;
-});
-
 test("startEt forwards a jump host's custom ET port", async () => {
   let captured: Record<string, unknown> | null = null;
   const backend = makeBackend((options) => { captured = options; });
