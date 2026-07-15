@@ -118,10 +118,21 @@ describe("scpShell quoting and commands", () => {
     assert.equal(buildScpSinkCommand("/tmp/out"), "scp -t -- '/tmp/out'");
     assert.equal(buildScpSourceCommand("/var/a b"), "scp -f -- '/var/a b'");
     assert.match(buildListCommand("/home/user"), /cd '\/home\/user'/);
+    // Must not emit invalid `do;` which breaks POSIX sh for-loops.
+    assert.doesNotMatch(buildListCommand("/home/user"), /do;/);
+    assert.match(buildListCommand("/home/user"), /do\n/);
     assert.match(buildMkdirCommand("/x/y"), /mkdir -p -- '\/x\/y'/);
     assert.match(buildDeleteCommand("/x", { recursive: true }), /rm -rf -- '\/x'/);
     assert.match(buildRenameCommand("/a", "/b"), /mv -- '\/a' '\/b'/);
     assert.match(buildChmodCommand("/a", "755"), /chmod 755 -- '\/a'/);
+  });
+
+  it("lsModeToNumber preserves setuid/setgid/sticky bits", () => {
+    const { lsModeToNumber } = require("./scpShell.cjs");
+    // -rwsr-sr-t : setuid+setgid+sticky with execute (lowercase s/t)
+    assert.equal(lsModeToNumber("-rwsr-sr-t"), 0o7755);
+    // -rwSrwSrwT : special bits without execute (uppercase S/T)
+    assert.equal(lsModeToNumber("-rwSrwSrwT"), 0o7666);
   });
 
   it("rejects unsafe remote paths for shell ops", () => {

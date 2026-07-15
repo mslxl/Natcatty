@@ -681,7 +681,14 @@ export const HostDetailsConnectionSections: React.FC<HostDetailsConnectionSectio
           >
             <Select
               value={form.sftpFileProtocol || "auto"}
-              onValueChange={(val) => update("sftpFileProtocol", val as Host["sftpFileProtocol"])}
+              onValueChange={(val) => {
+                const protocol = val as Host["sftpFileProtocol"];
+                update("sftpFileProtocol", protocol);
+                // SCP mode has no sudo-sftp elevation path; clear a contradictory saved flag.
+                if (protocol === "scp" && form.sftpSudo) {
+                  update("sftpSudo", false);
+                }
+              }}
             >
               <SelectTrigger className="h-10 w-32">
                 <SelectValue placeholder={t("hostDetails.sftp.fileProtocol.auto")} />

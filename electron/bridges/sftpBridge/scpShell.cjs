@@ -74,11 +74,11 @@ function buildScpSourceCommand(remotePath) {
 function buildListCommand(remotePath) {
   const p = assertSafeRemotePath(remotePath);
   const q = shellQuote(p);
-  // shellcheck-style: cd into dir, iterate non-hidden + hidden, skip . and ..
-  return [
-    `cd ${q} || exit 1`,
+  // Join the for-loop body with newlines so we never emit invalid `do;` (`;`
+  // after `do` is a syntax error on POSIX sh and would force the ls -la fallback).
+  const loop = [
+    "for f in * .[!.]* ..?*; do",
     // shell can expand * to literal * when empty — we guard with [ -e ]
-    'for f in * .[!.]* ..?*; do',
     '  [ -e "$f" ] || continue',
     '  [ "$f" = "." ] && continue',
     '  [ "$f" = ".." ] && continue',
@@ -94,7 +94,8 @@ function buildListCommand(remotePath) {
     '  b64=$(printf "%s" "$f" | base64 2>/dev/null | tr -d "\\r\\n" || printf "%s" "$f" | openssl base64 2>/dev/null | tr -d "\\r\\n")',
     '  printf "%s|%s|%s|%s|%s\\n" "$t" "${mode:-?}" "$size" "$mtime" "$b64"',
     "done",
-  ].join("; ");
+  ].join("\n");
+  return `cd ${q} || exit 1; ${loop}`;
 }
 
 /**
@@ -275,7 +276,8 @@ function lsModeToNumber(modeStr) {
   const bit = (ch, w, r, x) => {
     if (ch === "r") return r;
     if (ch === "w") return w;
-    if (ch === "x" || ch === "s" || ch === "t" || ch === "S" || ch === "T") return x;
+    // lowercase s/t include execute; uppercase S/T are special-bit-only
+    if (ch === "x" || ch === "s" || ch === "t") return x;
     return 0;
   };
   let mode = 0;
@@ -288,6 +290,10 @@ function lsModeToNumber(modeStr) {
   mode |= bit(perm[6], 0, 0o004, 0);
   mode |= bit(perm[7], 0o002, 0, 0);
   mode |= bit(perm[8], 0, 0, 0o001);
+  // Special bits: setuid / setgid / sticky (s/S in user/group exec, t/T in other)
+  if (perm[2] === "s" || perm[2] === "S") mode |= 0o4000;
+  if (perm[5] === "s" || perm[5] === "S") mode |= 0o2000;
+  if (perm[8] === "t" || perm[8] === "T") mode |= 0o1000;
   return mode;
 }
 
@@ -331,6 +337,7 @@ module.exports = {
   parseLsLaOutput,
   parseStatRecord,
   parseLsModeToPermissions,
+  lsModeToNumber,
   modeToPermissionsString,
   normalizeFileProtocol,
   isScpModeClient,
