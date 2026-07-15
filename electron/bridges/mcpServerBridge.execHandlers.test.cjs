@@ -52,7 +52,7 @@ function createExecHandlerTestContext({ sessions, backgroundJobs }) {
     sessions,
     backgroundJobs,
     activeSessionSftpOps: new Map(),
-    closingTerminalSessions: new Set(),
+    closingTerminalSessions: new Map(),
     activeSessionExecutions: new Map(),
     activePtyExecs: new Map(),
     crypto,
@@ -117,6 +117,23 @@ test("SFTP operations that start while a terminal is closing are cancelled immed
   assert.equal(cancelled, true);
   assert.equal(ctx.activeSessionSftpOps.size, 0);
   ctx.endTerminalSessionClose("session-1");
+});
+
+test("overlapping closes keep SFTP blocked until the last close finishes", () => {
+  const ctx = createExecHandlerTestContext({ sessions: new Map(), backgroundJobs: new Map() });
+  ctx.beginTerminalSessionClose("session-1");
+  ctx.beginTerminalSessionClose("session-1");
+  ctx.endTerminalSessionClose("session-1");
+
+  let cancelled = false;
+  ctx.registerSftpOp("chat-1", "session-1", () => {
+    cancelled = true;
+  });
+  assert.equal(cancelled, true);
+
+  ctx.endTerminalSessionClose("session-1");
+  ctx.registerSftpOp("chat-1", "session-1", () => {});
+  assert.equal(ctx.activeSessionSftpOps.size, 1);
 });
 
 test("MCP terminal_start chat cancel during shellKind probe aborts before PTY write", async () => {

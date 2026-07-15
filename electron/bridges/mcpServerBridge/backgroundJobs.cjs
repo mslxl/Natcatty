@@ -73,11 +73,16 @@ function createBackgroundJobApi(ctx) {
     }
 
     function beginTerminalSessionClose(sessionId) {
-      if (sessionId) closingTerminalSessions?.add(sessionId);
+      if (!sessionId) return;
+      const current = closingTerminalSessions?.get(sessionId) || 0;
+      closingTerminalSessions?.set(sessionId, current + 1);
     }
 
     function endTerminalSessionClose(sessionId) {
-      if (sessionId) closingTerminalSessions?.delete(sessionId);
+      if (!sessionId) return;
+      const current = closingTerminalSessions?.get(sessionId) || 0;
+      if (current <= 1) closingTerminalSessions?.delete(sessionId);
+      else closingTerminalSessions?.set(sessionId, current - 1);
     }
     
     function cancelAllSftpOps() {
