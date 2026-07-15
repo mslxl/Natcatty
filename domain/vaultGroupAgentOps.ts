@@ -55,6 +55,28 @@ const findIntroducedJumpGraphIssue = (before: GroupState, after: GroupState) =>
     resolveEffectiveHostForConfigs(after.configs),
   );
 
+const findReferencedJumpHostProtocolRegression = (
+  before: Pick<GroupState, 'configs' | 'hosts'>,
+  after: Pick<GroupState, 'configs' | 'hosts'>,
+): string | undefined => {
+  const referencedHostIds = new Set(
+    after.configs.flatMap((config) => config.hostChain?.hostIds ?? []),
+  );
+  const resolveBefore = resolveEffectiveHostForConfigs(before.configs);
+  const resolveAfter = resolveEffectiveHostForConfigs(after.configs);
+
+  return [...referencedHostIds].find((hostId) => {
+    const beforeHost = before.hosts.find((host) => host.id === hostId);
+    const afterHost = after.hosts.find((host) => host.id === hostId);
+    if (!beforeHost || !afterHost) return false;
+    const beforeProtocol = resolveBefore(beforeHost).protocol;
+    const afterProtocol = resolveAfter(afterHost).protocol;
+    return (beforeProtocol === undefined || beforeProtocol === 'ssh')
+      && afterProtocol !== undefined
+      && afterProtocol !== 'ssh';
+  });
+};
+
 export function patchGroupConfig(
   current: GroupConfig,
   rawDefaults: unknown,
@@ -206,6 +228,10 @@ export function upsertGroup(
     hosts: state.hosts.map((host) => host.group ? { ...host, group: rename(host.group) } : host),
     managedSources: state.managedSources.map((source) => ({ ...source, groupName: rename(source.groupName) })),
   };
+  const regressedJumpHostId = findReferencedJumpHostProtocolRegression(state, nextState);
+  if (regressedJumpHostId) {
+    return { ok: false, error: `Host "${regressedJumpHostId}" is still used as a group jump host and must keep an SSH connection type.` };
+  }
   const jumpGraphIssue = findIntroducedJumpGraphIssue(state, nextState);
   if (jumpGraphIssue) return { ok: false, error: jumpGraphIssue.error };
   return {

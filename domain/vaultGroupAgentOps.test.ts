@@ -98,6 +98,26 @@ describe('vaultGroupAgentOps', () => {
     assert.equal(selfResult.ok, false);
   });
 
+  it('keeps jump hosts referenced by empty group defaults SSH-capable after a rename', () => {
+    const jump: Host = {
+      id: 'jump', label: 'Jump', hostname: 'jump.test', username: 'root',
+      group: 'ssh/prod', tags: [], os: 'linux',
+    };
+    const result = upsertGroup({
+      groups: ['ssh', 'ssh/prod', 'telnet', 'empty'],
+      configs: [
+        { path: 'ssh', protocol: 'ssh' },
+        { path: 'telnet', protocol: 'telnet' },
+        { path: 'empty', hostChain: { hostIds: [jump.id] } },
+      ],
+      hosts: [jump],
+      managedSources: [],
+    }, 'ssh/prod', '{}', [], proxyProfiles, { newPath: 'telnet/prod' });
+
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.match(result.error, /must keep an SSH connection type/i);
+  });
+
   it('keeps create distinct from update and rejects self-descendant moves', () => {
     const state = { groups: ['prod', 'prod/web'], configs: [{ path: 'prod' }], hosts, managedSources: [] };
     assert.equal(upsertGroup(state, 'prod', '{}', [], proxyProfiles, { create: true }).ok, false);
