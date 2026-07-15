@@ -14,10 +14,17 @@ const {
  * in-place PUT overwrites existing content WITHOUT truncating when the new
  * body is shorter — leaving trailing bytes from the previous longer body.
  *
- * MOVE replaces the destination resource wholesale (correct server behavior
- * for rename/replace). DELETE removes the resource.
+ * Options:
+ * - denyMove: MOVE returns 405 (forces DELETE + PUT fallback)
+ * - denyDelete: DELETE returns 403 (fallback must abort, not in-place PUT)
+ * - rejectPutMatching: regex tested against path; matching PUT returns 507
  */
-function startBuggyTruncateWebdavServer() {
+function startBuggyTruncateWebdavServer(options = {}) {
+  const {
+    denyMove = false,
+    denyDelete = false,
+    rejectPutMatching = null,
+  } = options;
   /** @type {Map<string, Buffer>} */
   const files = new Map();
 
@@ -71,6 +78,12 @@ function startBuggyTruncateWebdavServer() {
       }
 
       if (method === "PUT") {
+        if (rejectPutMatching && rejectPutMatching.test(path)) {
+          await readBody(req);
+          res.writeHead(507, { "Content-Type": "text/plain" });
+          res.end("Insufficient Storage");
+          return;
+        }
         const incoming = await readBody(req);
         const existing = files.get(path);
         if (existing && incoming.length < existing.length) {
@@ -103,6 +116,11 @@ function startBuggyTruncateWebdavServer() {
       }
 
       if (method === "DELETE") {
+        if (denyDelete) {
+          res.writeHead(403, { "Content-Type": "text/plain" });
+          res.end("Forbidden");
+          return;
+        }
         files.delete(path);
         res.writeHead(204);
         res.end();
@@ -110,6 +128,11 @@ function startBuggyTruncateWebdavServer() {
       }
 
       if (method === "MOVE") {
+        if (denyMove) {
+          res.writeHead(405, { "Content-Type": "text/plain" });
+          res.end("Method Not Allowed");
+          return;
+        }
         const destHeader = req.headers.destination;
         if (!destHeader) {
           res.writeHead(400);
@@ -241,6 +264,84 @@ test("handleWebdavDownload recovers already-corrupt remote JSON (#2223)", async 
 
     const downloaded = await handleWebdavDownload(config);
     assert.deepEqual(downloaded.syncedFile, shortSyncedFile);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("DELETE+PUT fallback still produces clean JSON when MOVE is unsupported", async () => {
+  const { server, endpoint, files } = await startBuggyTruncateWebdavServer({
+    denyMove: true,
+  });
+  const config = {
+    endpoint,
+    authType: "basic",
+    username: "u",
+    password: "p",
+  };
+
+  try {
+    await handleWebdavUpload(config, longSyncedFile);
+    await handleWebdavUpload(config, shortSyncedFile);
+    const afterShort = files.get("/netcatty-vault.json");
+    assert.ok(afterShort);
+    assert.equal(afterShort.toString("utf8"), JSON.stringify(shortSyncedFile));
+    for (const key of files.keys()) {
+      assert.ok(!key.includes(".tmp-"), `leftover temp file: ${key}`);
+    }
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("temp PUT failure leaves the existing vault untouched", async () => {
+  const { server, endpoint, files } = await startBuggyTruncateWebdavServer({
+    // Reject only temp uploads; final path would still accept (but must not be tried).
+    rejectPutMatching: /\.tmp-/,
+  });
+  const config = {
+    endpoint,
+    authType: "basic",
+    username: "u",
+    password: "p",
+  };
+
+  try {
+    files.set("/netcatty-vault.json", Buffer.from(JSON.stringify(longSyncedFile), "utf8"));
+    await assert.rejects(
+      () => handleWebdavUpload(config, shortSyncedFile),
+      /WebDAV upload failed|507|Insufficient/i
+    );
+    const remaining = files.get("/netcatty-vault.json");
+    assert.ok(remaining);
+    assert.equal(remaining.toString("utf8"), JSON.stringify(longSyncedFile));
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("DELETE denied aborts fallback instead of non-truncating in-place PUT", async () => {
+  const { server, endpoint, files } = await startBuggyTruncateWebdavServer({
+    denyMove: true,
+    denyDelete: true,
+  });
+  const config = {
+    endpoint,
+    authType: "basic",
+    username: "u",
+    password: "p",
+  };
+
+  try {
+    files.set("/netcatty-vault.json", Buffer.from(JSON.stringify(longSyncedFile), "utf8"));
+    await assert.rejects(
+      () => handleWebdavUpload(config, shortSyncedFile),
+      /replace aborted|could not delete|WebDAV upload failed/i
+    );
+    const remaining = files.get("/netcatty-vault.json");
+    assert.ok(remaining);
+    // Must remain the original long file — not a non-truncated hybrid.
+    assert.equal(remaining.toString("utf8"), JSON.stringify(longSyncedFile));
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }

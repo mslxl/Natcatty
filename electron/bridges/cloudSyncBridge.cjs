@@ -19,8 +19,10 @@ const SYNC_FILE_NAME = "netcatty-vault.json";
  * Some WebDAV servers (esp. lightweight / local ones) overwrite existing
  * files without truncating when the new body is shorter. That leaves trailing
  * bytes from the previous longer body and breaks JSON.parse on download
- * (#2223). Prefer an atomic temp-PUT + MOVE replace; fall back to DELETE +
- * PUT so the target is recreated at the correct length.
+ * (#2223). Prefer an atomic temp-PUT + MOVE replace; only fall back to
+ * DELETE + PUT after the temp body is known-good. Never destroy the existing
+ * vault just because the new upload itself failed, and never fall back to
+ * in-place PUT if destination delete fails (that reintroduces #2223).
  */
 const serializeSyncedFileBody = (syncedFile) =>
   Buffer.from(JSON.stringify(syncedFile), "utf8");
@@ -31,27 +33,65 @@ const safeDeleteWebdavPath = async (client, path) => {
       await client.deleteFile(path);
     }
   } catch {
-    // Best-effort cleanup / pre-replace delete.
+    // Best-effort cleanup only (temp files).
+  }
+};
+
+/** Delete target if present; throw if it still exists afterward. */
+const deleteWebdavPathForReplace = async (client, path) => {
+  let exists = false;
+  try {
+    exists = await client.exists(path);
+  } catch (error) {
+    throw new Error(
+      `WebDAV replace aborted: could not check existing file before overwrite (${
+        error instanceof Error ? error.message : String(error)
+      })`
+    );
+  }
+  if (!exists) return;
+  try {
+    await client.deleteFile(path);
+  } catch (error) {
+    throw new Error(
+      `WebDAV replace aborted: could not delete existing file before overwrite (${
+        error instanceof Error ? error.message : String(error)
+      })`
+    );
+  }
+  let stillExists = false;
+  try {
+    stillExists = await client.exists(path);
+  } catch {
+    stillExists = true;
+  }
+  if (stillExists) {
+    throw new Error(
+      "WebDAV replace aborted: existing file still present after delete; refusing in-place overwrite"
+    );
   }
 };
 
 const putWebdavFileReplacing = async (client, path, bodyBuffer) => {
   const tmpPath = `${path}.tmp-${crypto.randomBytes(8).toString("hex")}`;
-  let tmpWritten = false;
+
+  // Write temp first. If this fails, leave the existing vault untouched.
+  await client.putFileContents(tmpPath, bodyBuffer, { overwrite: true });
+
   try {
-    await client.putFileContents(tmpPath, bodyBuffer, { overwrite: true });
-    tmpWritten = true;
     await client.moveFile(tmpPath, path, { overwrite: true });
     return;
   } catch {
-    if (tmpWritten) {
-      await safeDeleteWebdavPath(client, tmpPath);
-    }
+    // MOVE unsupported or failed — fall through to DELETE + PUT using the
+    // already-validated temp body. Clean up temp in finally.
   }
 
-  // Fallback for servers without reliable MOVE, or if temp write failed.
-  await safeDeleteWebdavPath(client, path);
-  await client.putFileContents(path, bodyBuffer, { overwrite: true });
+  try {
+    await deleteWebdavPathForReplace(client, path);
+    await client.putFileContents(path, bodyBuffer, { overwrite: true });
+  } finally {
+    await safeDeleteWebdavPath(client, tmpPath);
+  }
 };
 
 /**
