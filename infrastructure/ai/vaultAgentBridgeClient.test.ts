@@ -475,6 +475,28 @@ describe('handleVaultAgentOp vault hosts', () => {
     assert.equal((result as { deletedHost?: { id?: string } }).deletedHost?.id, 'host-1');
   });
 
+  it('host.delete keeps jump hosts referenced by group defaults', async () => {
+    const jump: Host = {
+      id: 'jump', label: 'jump', hostname: 'jump.example.com', username: 'root',
+      protocol: 'ssh', tags: [], os: 'linux',
+    };
+    const target: Host = {
+      id: 'target', label: 'target', hostname: 'target.example.com', username: 'root',
+      protocol: 'ssh', group: 'prod', tags: [], os: 'linux',
+    };
+    const deps = createDeps({
+      hosts: [jump, target],
+      resolveEffectiveHost: (current) => current.group === 'prod'
+        ? { ...current, hostChain: { hostIds: [jump.id] } }
+        : current,
+    });
+
+    const result = await handleVaultAgentOp('host.delete', { hostId: jump.id }, deps);
+
+    assert.equal(result.ok, false);
+    assert.deepEqual(deps.getHosts().map((current) => current.id), [jump.id, target.id]);
+  });
+
   it('host.update and host.delete never return nested proxy passwords', async () => {
     const host: Host = {
       id: 'host-1',

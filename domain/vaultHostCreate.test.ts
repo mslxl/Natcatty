@@ -384,6 +384,45 @@ test('applyVaultHostUpdate keeps referenced jump hosts SSH-capable', () => {
   if (!groupInheritedResult.ok) assert.match(groupInheritedResult.error, /used as a jump host must keep an SSH/i);
 });
 
+test('applyVaultHostUpdate validates jump hosts inherited from the destination group', () => {
+  const jump: Host = {
+    id: 'jump', label: 'jump', hostname: 'jump.example.com', username: 'root',
+    port: 23, protocol: 'telnet', tags: [], os: 'linux',
+  };
+  const target: Host = {
+    id: 'target', label: 'target', hostname: 'target.example.com', username: 'root',
+    port: 22, protocol: 'ssh', tags: [], os: 'linux',
+  };
+
+  const unsupported = applyVaultHostUpdate(
+    [jump, target],
+    [],
+    target.id,
+    { group: 'unsupported-jump' },
+    {
+      resolveEffectiveHost: (host) => host.group === 'unsupported-jump'
+        ? { ...host, hostChain: { hostIds: [jump.id] } }
+        : host,
+    },
+  );
+  const selfReference = applyVaultHostUpdate(
+    [jump, target],
+    [],
+    target.id,
+    { group: 'self-jump' },
+    {
+      resolveEffectiveHost: (host) => host.group === 'self-jump'
+        ? { ...host, hostChain: { hostIds: [target.id] } }
+        : host,
+    },
+  );
+
+  assert.equal(unsupported.ok, false);
+  if (!unsupported.ok) assert.match(unsupported.error, /does not support SSH jump/i);
+  assert.equal(selfReference.ok, false);
+  if (!selfReference.ok) assert.match(selfReference.error, /cannot use itself/i);
+});
+
 test('applyVaultHostUpdate keeps legacy serial hosts editable without serialConfig', () => {
   const legacySerial: Host = {
     id: 'serial', label: 'Old serial', hostname: '/dev/ttyUSB0', username: '',
@@ -1530,4 +1569,33 @@ test('applyVaultHostDelete removes only the requested host', () => {
   if (!result.ok) return;
   assert.equal(result.deletedHost.id, 'host-1');
   assert.deepEqual(result.hosts.map((host) => host.id), ['host-2']);
+});
+
+test('applyVaultHostDelete keeps jump hosts that are still referenced', () => {
+  const jump: Host = {
+    id: 'jump', label: 'jump', hostname: 'jump.example.com', username: 'root',
+    port: 22, protocol: 'ssh', tags: [], os: 'linux',
+  };
+  const directTarget: Host = {
+    id: 'direct', label: 'direct', hostname: 'direct.example.com', username: 'root',
+    port: 22, protocol: 'ssh', hostChain: { hostIds: [jump.id] }, tags: [], os: 'linux',
+  };
+  const inheritedTarget: Host = {
+    id: 'inherited', label: 'inherited', hostname: 'inherited.example.com', username: 'root',
+    port: 22, protocol: 'ssh', group: 'prod', tags: [], os: 'linux',
+  };
+
+  const directResult = applyVaultHostDelete([jump, directTarget], jump.id);
+  const inheritedResult = applyVaultHostDelete(
+    [jump, inheritedTarget],
+    jump.id,
+    (host) => host.group === 'prod'
+      ? { ...host, hostChain: { hostIds: [jump.id] } }
+      : host,
+  );
+
+  assert.equal(directResult.ok, false);
+  if (!directResult.ok) assert.match(directResult.error, /still used as a jump host/i);
+  assert.equal(inheritedResult.ok, false);
+  if (!inheritedResult.ok) assert.match(inheritedResult.error, /still used as a jump host/i);
 });

@@ -1,5 +1,6 @@
 import type { Host, HostProtocol, Identity, ManagedSource, ProxyProfile } from './models';
 import { sanitizeHost } from './host';
+import { findIntroducedVaultJumpGraphIssue } from './vaultJumpGraph';
 
 const DEFAULT_SSH_PORT = 22;
 const DEFAULT_TELNET_PORT = 23;
@@ -642,17 +643,6 @@ export function applyVaultHostUpdate(
     }
     updated.notes = notes.value.trim() || undefined;
   }
-  if (protocol.provided || group.provided) {
-    const isReferencedAsJumpHost = existingHosts.some((candidate) => {
-      if (candidate.id === current.id) return false;
-      const effectiveCandidate = options.resolveEffectiveHost?.(candidate) ?? candidate;
-      return effectiveCandidate.hostChain?.hostIds?.includes(current.id);
-    });
-    const effectiveUpdated = options.resolveEffectiveHost?.(updated) ?? updated;
-    if (isReferencedAsJumpHost && !supportsSshJump(effectiveUpdated)) {
-      return { ok: false, error: 'A host used as a jump host must keep an SSH connection type.' };
-    }
-  }
   if (options.managedSources) {
     const targetManagedSource = options.managedSources
       .filter((sourceInfo) => (
@@ -701,6 +691,17 @@ export function applyVaultHostUpdate(
   updated = sanitizeHost(updated);
   const hosts = [...existingHosts];
   hosts[hostIndex] = updated;
+  const jumpGraphIssue = findIntroducedVaultJumpGraphIssue(
+    existingHosts,
+    hosts,
+    options.resolveEffectiveHost,
+  );
+  if (jumpGraphIssue) {
+    if (jumpGraphIssue.kind === 'protocol' && jumpGraphIssue.jumpHostId === current.id) {
+      return { ok: false, error: 'A host used as a jump host must keep an SSH connection type.' };
+    }
+    return { ok: false, error: jumpGraphIssue.error };
+  }
   const customGroups = updated.group
     ? Array.from(new Set([...existingGroups, updated.group]))
     : [...existingGroups];
@@ -710,12 +711,23 @@ export function applyVaultHostUpdate(
 export function applyVaultHostDelete(
   existingHosts: Host[],
   hostId: string,
+  resolveEffectiveHost?: (host: Host) => Host,
 ): { ok: true; hosts: Host[]; deletedHost: Host } | { ok: false; error: string } {
   const deletedHost = existingHosts.find((host) => host.id === hostId);
   if (!deletedHost) return { ok: false, error: `Host "${hostId}" was not found.` };
+  const hosts = existingHosts.filter((host) => host.id !== hostId);
+  const jumpGraphIssue = findIntroducedVaultJumpGraphIssue(
+    existingHosts,
+    hosts,
+    resolveEffectiveHost,
+  );
+  if (jumpGraphIssue?.kind === 'missing' && jumpGraphIssue.jumpHostId === hostId) {
+    return { ok: false, error: `Host "${hostId}" is still used as a jump host.` };
+  }
+  if (jumpGraphIssue) return { ok: false, error: jumpGraphIssue.error };
   return {
     ok: true,
-    hosts: existingHosts.filter((host) => host.id !== hostId),
+    hosts,
     deletedHost,
   };
 }

@@ -1,5 +1,6 @@
 import type { GroupConfig, Host, Identity, ManagedSource, ProxyProfile } from './models';
 import { applyGroupDefaults, resolveGroupDefaults } from './groupConfig';
+import { findIntroducedVaultJumpGraphIssue } from './vaultJumpGraph';
 
 type GroupState = {
   groups: string[];
@@ -9,8 +10,6 @@ type GroupState = {
 };
 
 type Result = { ok: true; state: GroupState; config?: GroupConfig } | { ok: false; error: string };
-
-type JumpGraphIssue = { key: string; error: string };
 
 const normalizePath = (value: unknown): string => String(value ?? '')
   .replace(/\\/g, '/')
@@ -41,49 +40,17 @@ const bool = (value: unknown): boolean | undefined => {
   return undefined;
 };
 
-const collectJumpGraphIssues = (state: Pick<GroupState, 'configs' | 'hosts'>): Map<string, JumpGraphIssue> => {
-  const effectiveHosts = new Map(state.hosts.map((host) => {
-    const effectiveHost = host.group
-      ? applyGroupDefaults(host, resolveGroupDefaults(host.group, state.configs))
-      : host;
-    return [host.id, effectiveHost];
-  }));
-  const issues = new Map<string, JumpGraphIssue>();
-  for (const [targetId, target] of effectiveHosts) {
-    for (const jumpHostId of target.hostChain?.hostIds ?? []) {
-      if (jumpHostId === targetId) {
-        const issue = {
-          key: `${targetId}:${jumpHostId}:self`,
-          error: `Host "${targetId}" cannot use itself as an inherited jump host.`,
-        };
-        issues.set(issue.key, issue);
-        continue;
-      }
-      const jumpHost = effectiveHosts.get(jumpHostId);
-      if (!jumpHost) {
-        const issue = {
-          key: `${targetId}:${jumpHostId}:missing`,
-          error: `Jump host "${jumpHostId}" was not found.`,
-        };
-        issues.set(issue.key, issue);
-        continue;
-      }
-      if (jumpHost.protocol !== undefined && jumpHost.protocol !== 'ssh') {
-        const issue = {
-          key: `${targetId}:${jumpHostId}:protocol`,
-          error: `Jump host "${jumpHostId}" does not support SSH jump connections.`,
-        };
-        issues.set(issue.key, issue);
-      }
-    }
-  }
-  return issues;
-};
+const resolveEffectiveHostForConfigs = (configs: GroupConfig[]) => (host: Host): Host => host.group
+  ? applyGroupDefaults(host, resolveGroupDefaults(host.group, configs))
+  : host;
 
-const findIntroducedJumpGraphIssue = (before: GroupState, after: GroupState): JumpGraphIssue | undefined => {
-  const previousIssues = collectJumpGraphIssues(before);
-  return [...collectJumpGraphIssues(after).values()].find((issue) => !previousIssues.has(issue.key));
-};
+const findIntroducedJumpGraphIssue = (before: GroupState, after: GroupState) =>
+  findIntroducedVaultJumpGraphIssue(
+    before.hosts,
+    after.hosts,
+    resolveEffectiveHostForConfigs(before.configs),
+    resolveEffectiveHostForConfigs(after.configs),
+  );
 
 export function patchGroupConfig(
   current: GroupConfig,
