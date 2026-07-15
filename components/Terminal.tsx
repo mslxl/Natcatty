@@ -57,6 +57,7 @@ import { useStoredBoolean } from "../application/state/useStoredBoolean";
 import { readOptionalStoredStringValue, useStoredString } from "../application/state/useStoredString";
 import { useSessionLogBackend } from "../application/state/useSessionLogBackend";
 import { useTerminalLayoutSuppressActive } from "../application/state/terminalLayoutSuppressStore";
+import { terminalReconnectRegistry } from "../application/state/terminalReconnectRegistry";
 // SFTPModal removed - SFTP is now handled by SftpSidePanel in TerminalLayer
 import { Button } from "./ui/button";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "./ui/hover-card";
@@ -393,6 +394,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const autoReconnectAttemptRef = useRef(0);
   const startReconnectRef = useRef<((mode: "manual" | "auto") => void) | null>(null);
   const wakeHibernatedRuntimeForReconnectRef = useRef<(() => Promise<boolean>) | null>(null);
+  const manualReconnectRequestRef = useRef<() => void>(() => {});
   const terminalDataCapturedRef = useRef(false);
   const connectionLogBufferRef = useRef(createConnectionLogBuffer(MAX_CONNECTION_LOG_DATA_CHARS));
   const terminalLogSanitizerRef = useRef(createReplaySafeTerminalLogSanitizer());
@@ -2330,7 +2332,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   };
 
   const startReconnect = (mode: "manual" | "auto" = "manual") => {
-    if (!termRef.current && mode === "auto" && hibernatedRef.current) {
+    if (!termRef.current && hibernatedRef.current) {
       const wakeForReconnect = wakeHibernatedRuntimeForReconnectRef.current;
       if (!wakeForReconnect) {
         updateStatus("disconnected");
@@ -2338,7 +2340,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       }
       void wakeForReconnect().then((woke) => {
         if (woke) {
-          startReconnectRef.current?.("auto");
+          startReconnectRef.current?.(mode);
           return;
         }
         updateStatus("disconnected");
@@ -2437,6 +2439,11 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const handleRetry = () => {
     startReconnect("manual");
   };
+  manualReconnectRequestRef.current = handleRetry;
+  useEffect(() => terminalReconnectRegistry.register(
+    sessionId,
+    () => manualReconnectRequestRef.current(),
+  ), [sessionId]);
 
   const shouldShowConnectionDialog = shouldShowTerminalConnectionDialog({
     status,
@@ -2834,7 +2841,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       alternateScreen: hibernateAlternateScreenRef.current,
     });
 
-    logger.info("[Terminal] Waking hibernated runtime for auto reconnect", {
+    logger.info("[Terminal] Waking hibernated runtime for reconnect", {
       sessionId,
       snapshotChars: hibernateSnapshotRef.current.length,
       viewportChars: hibernateViewportSnapshotRef.current.length,

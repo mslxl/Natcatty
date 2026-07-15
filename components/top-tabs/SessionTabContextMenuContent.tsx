@@ -11,6 +11,7 @@ interface SessionTabContextMenuContentProps {
   onCopySession?: (sessionId: string) => void;
   onCopySessionToNewWindow?: (sessionId: string) => void;
   onDetachSession?: (sessionId: string) => void;
+  onReconnectSession: (sessionId: string) => void;
   onRenameSession: (sessionId: string) => void;
   renderBulkCloseItems?: (anchorId: string) => React.ReactNode;
   t: TranslateFn;
@@ -22,12 +23,16 @@ export function SessionTabContextMenuContent({
   onCopySession,
   onCopySessionToNewWindow,
   onDetachSession,
+  onReconnectSession,
   onRenameSession,
   renderBulkCloseItems,
   t,
 }: SessionTabContextMenuContentProps) {
   return (
     <ContextMenuContent>
+      <ContextMenuItem onClick={() => onReconnectSession(sessionId)}>
+        {t('terminal.menu.reconnect')}
+      </ContextMenuItem>
       <ContextMenuItem onClick={() => onRenameSession(sessionId)}>
         {t('common.rename')}
       </ContextMenuItem>

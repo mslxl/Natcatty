@@ -98,20 +98,20 @@ test("auto reconnect connected history ref is initialized after status state exi
   );
 });
 
-test("auto reconnect wakes a hibernated terminal before requiring a terminal instance", () => {
+test("reconnect wakes a hibernated terminal before requiring a terminal instance", () => {
   const source = readFileSync(new URL("../Terminal.tsx", import.meta.url), "utf8");
   const reconnectIndex = source.indexOf("const startReconnect = ");
-  const hibernatedAutoBranchIndex = source.indexOf('mode === "auto" && hibernatedRef.current', reconnectIndex);
-  const wakeCallIndex = source.indexOf("wakeHibernatedRuntimeForReconnectRef.current", hibernatedAutoBranchIndex);
+  const hibernatedBranchIndex = source.indexOf('!termRef.current && hibernatedRef.current', reconnectIndex);
+  const wakeCallIndex = source.indexOf("wakeHibernatedRuntimeForReconnectRef.current", hibernatedBranchIndex);
   const missingTermReturnIndex = source.indexOf("if (!termRef.current) return;", reconnectIndex);
 
   assert.notEqual(reconnectIndex, -1);
-  assert.notEqual(hibernatedAutoBranchIndex, -1);
+  assert.notEqual(hibernatedBranchIndex, -1);
   assert.notEqual(wakeCallIndex, -1);
   assert.notEqual(missingTermReturnIndex, -1);
   assert.ok(
-    hibernatedAutoBranchIndex < missingTermReturnIndex && wakeCallIndex < missingTermReturnIndex,
-    "auto reconnect must wake fully hibernated SSH sessions before the terminal guard can stop the retry",
+    hibernatedBranchIndex < missingTermReturnIndex && wakeCallIndex < missingTermReturnIndex,
+    "manual and auto reconnect must wake fully hibernated sessions before the terminal guard can stop the retry",
   );
 });
 

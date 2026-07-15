@@ -4,6 +4,7 @@ import { activeTabStore, useActiveTabId, useIsTabActive } from '../../applicatio
 import type { EditorTab } from '../../application/state/editorTabStore';
 import type { LogView } from '../../application/state/logViewState';
 import { useWindowControls } from '../../application/state/useWindowControls';
+import { terminalReconnectRegistry } from '../../application/state/terminalReconnectRegistry';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { getEffectiveHostDistro } from '../../domain/host';
 import { resolveHostIconAppearance, resolveHostIconColorAppearance } from '../../domain/hostIcon';
@@ -685,6 +686,7 @@ export const SessionTopTab: React.FC<SessionTopTabProps> = memo(({
         onCloseSession={onCloseSession}
         onCopySession={onCopySession}
         onCopySessionToNewWindow={onCopySessionToNewWindow}
+        onReconnectSession={terminalReconnectRegistry.request}
         onRenameSession={onRenameSession}
         renderBulkCloseItems={renderBulkCloseItems}
         t={t}

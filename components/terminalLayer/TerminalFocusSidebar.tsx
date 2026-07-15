@@ -2,6 +2,7 @@ import { Circle, Columns2, Plus, Search, Server } from 'lucide-react';
 import React, { memo, useCallback, useMemo, useState, type DragEvent, type MouseEvent } from 'react';
 
 import { useStoredNumber } from '../../application/state/useStoredNumber';
+import { terminalReconnectRegistry } from '../../application/state/terminalReconnectRegistry';
 import { resolveWorkspaceFocusSessionOrder } from '../../domain/workspace';
 import { resolveSessionTabTitle } from '../../domain/sessionTabTitle';
 import type { DynamicTabTitleMode } from '../../domain/models';
@@ -204,6 +205,7 @@ const WorkspaceFocusSessionRow = memo<WorkspaceFocusSessionRowProps>(({
         onCopySession={onCopySession}
         onCopySessionToNewWindow={onCopySessionToNewWindow}
         onDetachSession={onDetachSessionFromWorkspace}
+        onReconnectSession={terminalReconnectRegistry.request}
         onRenameSession={onStartRename}
         t={t}
       />
