@@ -1071,7 +1071,6 @@ function buildAuthHandler(options) {
   });
 
   // Use dynamic authHandler to try all keys
-  let authIndex = 0;
   let lastAttemptedLabel = null;
   const attemptedMethodIds = new Set();
   const succeededMethodIds = new Set();
@@ -1117,7 +1116,6 @@ function buildAuthHandler(options) {
       // Start a fresh pass for the next factor. Methods merely unavailable in
       // the previous phase become eligible again, while methods actually
       // rejected or already successful stay suppressed.
-      authIndex = 0;
       attemptedMethodIds.clear();
       for (const methodId of failedMethodIds) {
         attemptedMethodIds.add(methodId);
@@ -1140,14 +1138,11 @@ function buildAuthHandler(options) {
       }
     }
 
-    while (authIndex < authMethods.length) {
-      const method = authMethods[authIndex];
-      authIndex++;
-
+    for (const method of authMethods) {
       if (attemptedMethodIds.has(method.id)) continue;
-      attemptedMethodIds.add(method.id);
 
       if (method.type === "agent" && (availableMethods.includes("publickey") || availableMethods.includes("agent"))) {
+        attemptedMethodIds.add(method.id);
         console.log(`${logPrefix} Trying agent auth`);
         lastAttemptedLabel = "SSH agent";
         lastAttemptedType = "agent";
@@ -1155,6 +1150,7 @@ function buildAuthHandler(options) {
         onAuthAttempt?.("SSH agent");
         return callback("agent");
       } else if (method.type === "publickey" && availableMethods.includes("publickey")) {
+        attemptedMethodIds.add(method.id);
         console.log(`${logPrefix} Trying publickey auth:`, method.id);
         // Build a readable label for the key
         const keyLabel = method.id.startsWith("publickey-default-")
@@ -1178,6 +1174,7 @@ function buildAuthHandler(options) {
         }
         return callback(pubkeyAuth);
       } else if (method.type === "password" && availableMethods.includes("password")) {
+        attemptedMethodIds.add(method.id);
         console.log(`${logPrefix} Trying password auth`);
         lastAttemptedLabel = "password";
         lastAttemptedType = "password";
@@ -1189,6 +1186,7 @@ function buildAuthHandler(options) {
           password,
         });
       } else if (method.type === "keyboard-interactive" && availableMethods.includes("keyboard-interactive")) {
+        attemptedMethodIds.add(method.id);
         lastAttemptedLabel = "keyboard-interactive";
         lastAttemptedType = "keyboard-interactive";
         lastAttemptedMethodId = method.id;

@@ -755,6 +755,27 @@ test("buildAuthHandler prefers keyboard-interactive over password on the dynamic
   assert.deepEqual(offered, ["none", "keyboard-interactive"]);
 });
 
+test("buildAuthHandler keeps unavailable keyboard-interactive eligible after password rejection", () => {
+  const auth = buildAuthHandler({
+    authMethod: "auto",
+    username: "alice",
+    password: "stale-password",
+    allowAgentFallback: false,
+    defaultKeys: [{ keyName: "unused-test-key", privateKey: "unused" }],
+  });
+
+  const offered = [];
+  const record = (method) => offered.push(
+    method && typeof method === "object" ? method.type : method,
+  );
+
+  auth.authHandler(null, null, record);
+  auth.authHandler(["password"], false, record);
+  auth.authHandler(["keyboard-interactive"], false, record);
+
+  assert.deepEqual(offered, ["none", "password", "keyboard-interactive"]);
+});
+
 test("buildAuthHandler reconsiders dynamic methods between authentication factors (#2150)", () => {
   const auth = buildAuthHandler({
     authMethod: "auto",

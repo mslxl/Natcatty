@@ -1038,7 +1038,6 @@ function createStartSessionApi(ctx) {
           // Always use dynamic authHandler to ensure consistent "none" probing
           // and auth method logging regardless of how many methods are configured
           if (authMethods.length >= 1) {
-            let authIndex = 0;
             // Track methods that have been attempted (to avoid re-trying on failure)
             // This prevents reusing the same key when server requires multiple publickey auth steps
             // and also prevents re-attempting failed methods
@@ -1054,7 +1053,7 @@ function createStartSessionApi(ctx) {
             let hadPartialSuccess = false;
 
             connectOpts.authHandler = (methodsLeft, partialSuccess, callback) => {
-              log("authHandler called", { methodsLeft, partialSuccess, authIndex, attemptedMethodIds: Array.from(attemptedMethodIds) });
+              log("authHandler called", { methodsLeft, partialSuccess, attemptedMethodIds: Array.from(attemptedMethodIds) });
 
               // Log rejection of previous method
               if (lastTriedMethod && !partialSuccess) {
@@ -1169,10 +1168,7 @@ function createStartSessionApi(ctx) {
                 return callback(false);
               }
 
-              while (authIndex < authMethods.length) {
-                const method = authMethods[authIndex];
-                authIndex++;
-
+              for (const method of authMethods) {
                 // Skip methods that have already been attempted (e.g., during partial success handling)
                 if (attemptedMethodIds.has(method.id)) {
                   log("Skipping already attempted method", { method: method.id });
