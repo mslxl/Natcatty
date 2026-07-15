@@ -194,7 +194,6 @@ const finishRuleCleanup = (ruleId: string): void => {
 export const stopAndCleanupRuleAndWait = async (
   ruleId: string,
 ): Promise<{ success: boolean; error?: string }> => {
-  clearReconnectTimer(ruleId);
   const conn = activeConnections.get(ruleId);
 
   // Use stopPortForwardByRuleId so every tunnel for this rule is marked
@@ -202,7 +201,13 @@ export const stopAndCleanupRuleAndWait = async (
   const bridge = netcattyBridge.get();
   if (bridge?.stopPortForwardByRuleId) {
     try {
-      await bridge.stopPortForwardByRuleId(ruleId);
+      const result = await bridge.stopPortForwardByRuleId(ruleId);
+      if ((result.failed ?? 0) > 0) {
+        const error = result.errors?.filter(Boolean).join('; ') ||
+          `Failed to stop ${result.failed} port forwarding tunnel(s)`;
+        logger.warn(`[PortForwardingService] Backend stopByRuleId failed for ${ruleId}: ${error}`);
+        return { success: false, error };
+      }
       finishRuleCleanup(ruleId);
       return { success: true };
     } catch (err) {

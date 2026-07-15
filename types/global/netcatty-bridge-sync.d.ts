@@ -67,7 +67,11 @@ declare global {
     getPortForwardStatus?(tunnelId: string): Promise<PortForwardStatusResult>;
     listPortForwards?(): Promise<{ tunnelId: string; type: string; status: string }[]>;
     stopAllPortForwards?(): Promise<void>;
-    stopPortForwardByRuleId?(ruleId: string): Promise<{ stopped: number }>;
+    stopPortForwardByRuleId?(ruleId: string): Promise<{
+      stopped: number;
+      failed?: number;
+      errors?: string[];
+    }>;
     onPortForwardStatus?(tunnelId: string, cb: PortForwardStatusCallback): () => void;
 
     // Known Hosts

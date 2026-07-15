@@ -730,6 +730,8 @@ function stopAllPortForwards() {
  */
 function stopPortForwardByRuleId(_event, { ruleId }) {
   let stopped = 0;
+  let failed = 0;
+  const errors = [];
   for (const [tunnelId, tunnel] of portForwardingTunnels) {
     if (tunnel.ruleId === ruleId) {
       try {
@@ -738,10 +740,12 @@ function stopPortForwardByRuleId(_event, { ruleId }) {
         stopped++;
       } catch (err) {
         console.warn(`[PortForward] Failed to stop tunnel ${tunnelId}:`, err.message);
+        failed++;
+        errors.push(err instanceof Error ? err.message : String(err));
       }
     }
   }
-  return { stopped };
+  return { stopped, failed, errors };
 }
 
 /**

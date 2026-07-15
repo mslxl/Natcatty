@@ -211,7 +211,11 @@ test("stop by rule id only cancels the matching passphrase prompt", async (t) =>
   assert.ok(firstRequest);
   assert.ok(secondRequest);
 
-  assert.deepEqual(stopPortForwardByRuleId(event, { ruleId: "rule" }), { stopped: 1 });
+  assert.deepEqual(stopPortForwardByRuleId(event, { ruleId: "rule" }), {
+    stopped: 1,
+    failed: 0,
+    errors: [],
+  });
   assert.deepEqual(await firstStart, {
     tunnelId: firstTunnelId,
     success: false,
