@@ -896,13 +896,20 @@ function createFileOpsApi(ctx) {
       if (isScpModeClient(client)) {
         try {
           // Prefer payload encoding; otherwise session-resolved state from prior lists.
-          const encoding = resolveEncodingForRequest(
-            sftpId,
-            payload?.encoding || sftpEncodingState.get(sftpId)?.resolved || "auto",
+          const requestedEncoding = normalizeEncoding(
+            payload?.encoding || sftpEncodingState.get(sftpId)?.requested || "auto",
           );
+          const encoding = resolveEncodingForRequest(sftpId, requestedEncoding);
           const home = await getScpBackendForClient(client).homeDir({
             signal: payload?.abortSignal || null,
             encoding: encoding === "auto" ? "utf-8" : encoding,
+            // When $HOME has GB18030 bytes and we still thought utf-8, promote session
+            // encoding so subsequent list/path quotes use the right charset.
+            onDetectedEncoding: (detected) => {
+              if (requestedEncoding === "auto" && detected === "gb18030") {
+                updateResolvedEncoding(sftpId, "auto", "gb18030");
+              }
+            },
           });
           return { success: true, homeDir: home };
         } catch (err) {

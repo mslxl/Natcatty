@@ -236,6 +236,38 @@ function createScpBackend(deps = {}) {
     return true;
   }
 
+  /**
+   * Decode remote path bytes using the session encoding. When encoding is utf-8
+   * (including auto→utf-8 first open), invalid UTF-8 sequences fall back to
+   * gb18030 so Chinese $HOME paths open instead of becoming mojibake that then
+   * fails to list. Returns the decoded string and the encoding that produced it.
+   */
+  function decodeRemotePathBytes(raw, encoding = "utf-8") {
+    const buf = Buffer.isBuffer(raw) ? raw : Buffer.from(raw || "");
+    const enc = String(encoding || "utf-8").toLowerCase();
+    if (enc === "gb18030" || enc === "gbk" || enc === "gb2312") {
+      try {
+        // eslint-disable-next-line global-require
+        const iconv = require("iconv-lite");
+        return { text: iconv.decode(buf, "gb18030"), encoding: "gb18030" };
+      } catch {
+        return { text: buf.toString("utf8"), encoding: "utf-8" };
+      }
+    }
+    try {
+      const text = new TextDecoder("utf-8", { fatal: true }).decode(buf);
+      return { text, encoding: "utf-8" };
+    } catch {
+      try {
+        // eslint-disable-next-line global-require
+        const iconv = require("iconv-lite");
+        return { text: iconv.decode(buf, "gb18030"), encoding: "gb18030" };
+      } catch {
+        return { text: buf.toString("utf8"), encoding: "utf-8" };
+      }
+    }
+  }
+
   async function homeDir(options = {}) {
     const signal = options.signal || null;
     const encoding = options.encoding || "utf-8";
@@ -247,17 +279,13 @@ function createScpBackend(deps = {}) {
       { signal },
     );
     let home = (result.stdout || "").trim();
+    let usedEncoding = String(encoding || "utf-8").toLowerCase();
     if (home.startsWith("B64:")) {
       try {
         const raw = Buffer.from(home.slice(4), "base64");
-        const enc = String(encoding).toLowerCase();
-        if (enc === "gb18030" || enc === "gbk" || enc === "gb2312") {
-          // eslint-disable-next-line global-require
-          const iconv = require("iconv-lite");
-          home = iconv.decode(raw, "gb18030");
-        } else {
-          home = raw.toString("utf8");
-        }
+        const decoded = decodeRemotePathBytes(raw, encoding);
+        home = decoded.text;
+        usedEncoding = decoded.encoding;
       } catch {
         home = "";
       }
@@ -265,6 +293,13 @@ function createScpBackend(deps = {}) {
       home = home.slice(4);
     }
     home = (home || "").trim();
+    if (typeof options.onDetectedEncoding === "function" && usedEncoding) {
+      try {
+        options.onDetectedEncoding(usedEncoding);
+      } catch {
+        // ignore observer errors
+      }
+    }
     if (home) return home;
     throw new ScpShellError("Could not determine home directory");
   }

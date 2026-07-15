@@ -54,8 +54,9 @@ describe("scpBackend browse/manage with fake exec", () => {
         if (command.includes("rm ") || command.includes("rmdir")) return { stdout: "", stderr: "", code: 0 };
         if (command.includes("mv ")) return { stdout: "", stderr: "", code: 0 };
         if (command.includes("chmod ")) return { stdout: "", stderr: "", code: 0 };
-        if (command.startsWith("printf") || command.includes("$HOME")) {
-          return { stdout: "/home/test\n", stderr: "", code: 0 };
+        if (command.includes("$HOME") || command.includes('printf "B64:"') || command.includes('printf "RAW:')) {
+          const b64 = Buffer.from("/home/test", "utf8").toString("base64");
+          return { stdout: `B64:${b64}\n`, stderr: "", code: 0 };
         }
         if (command.includes("for f in")) {
           const name = Buffer.from("readme.txt").toString("base64");
@@ -159,6 +160,33 @@ describe("scpBackend browse/manage with fake exec", () => {
   it("resolves home directory", async () => {
     const home = await backend.homeDir();
     assert.equal(home, "/home/test");
+  });
+
+  it("falls back to gb18030 when $HOME bytes are not valid UTF-8", async () => {
+    const iconv = require("iconv-lite");
+    const pathBytes = Buffer.concat([
+      Buffer.from("/home/", "utf8"),
+      iconv.encode("用户", "gb18030"),
+    ]);
+    const b64 = pathBytes.toString("base64");
+    let detected = null;
+    backend = createScpBackend({
+      exec: async (command) => {
+        if (command.includes("$HOME") || command.includes('printf "B64:"')) {
+          return { stdout: `B64:${b64}\n`, stderr: "", code: 0 };
+        }
+        return { stdout: "", stderr: "", code: 0 };
+      },
+      execStream: async () => createMockStream(),
+    });
+    const home = await backend.homeDir({
+      encoding: "utf-8",
+      onDetectedEncoding: (enc) => {
+        detected = enc;
+      },
+    });
+    assert.equal(home, "/home/用户");
+    assert.equal(detected, "gb18030");
   });
 });
 
