@@ -692,6 +692,29 @@ describe('handleVaultAgentOp vault management gaps', () => {
     assert.equal(deps.getPortForwardingRules()[0]?.status, 'active');
   });
 
+  it('does not start a forwarding rule whose host was changed to serial', async () => {
+    const serialHost: Host = { ...host, protocol: 'serial' };
+    const rule: PortForwardingRule = {
+      id: 'rule-1', label: 'Web', type: 'local', localPort: 8080,
+      bindAddress: '127.0.0.1', remoteHost: '127.0.0.1', remotePort: 80,
+      hostId: host.id, status: 'inactive', createdAt: 1,
+    };
+    let startCalls = 0;
+    const deps = createDeps({
+      hosts: [serialHost],
+      portForwardingRules: [rule],
+      startTunnel: async () => {
+        startCalls += 1;
+        return { success: true };
+      },
+    });
+
+    const result = await handleVaultAgentOp('portforward.start', { ruleId: rule.id }, deps);
+
+    assert.equal(result.ok, false);
+    assert.equal(startCalls, 0);
+  });
+
   it('manages groups and applies reusable defaults without exposing secrets', async () => {
     const deps = createDeps({
       hosts: [{ ...host, group: 'prod' }],

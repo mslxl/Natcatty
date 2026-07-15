@@ -23,6 +23,20 @@ const parsePort = (value: unknown, name: string): Result<number> => {
     : { ok: false, error: `${name} must be an integer between 1 and 65535.` };
 };
 
+export const validatePortForwardingHost = (
+  hosts: Host[],
+  hostId: string | undefined,
+): Result<Host> => {
+  const host = hosts.find((candidate) => candidate.id === hostId);
+  if (!hostId || !host) {
+    return { ok: false, error: `Host "${hostId || ''}" was not found.` };
+  }
+  if (host.protocol === 'serial') {
+    return { ok: false, error: `Host "${hostId}" does not support port forwarding.` };
+  }
+  return { ok: true, value: host };
+};
+
 function buildRule(
   source: Record<string, unknown>,
   hosts: Host[],
@@ -36,13 +50,8 @@ function buildRule(
   const localPort = parsePort(source.localPort ?? existing?.localPort, 'localPort');
   if ('error' in localPort) return { ok: false, error: localPort.error };
   const hostId = source.hostId === undefined ? existing?.hostId : String(source.hostId).trim();
-  const host = hosts.find((candidate) => candidate.id === hostId);
-  if (!hostId || !host) {
-    return { ok: false, error: `Host "${hostId || ''}" was not found.` };
-  }
-  if (host.protocol === 'serial') {
-    return { ok: false, error: `Host "${hostId}" does not support port forwarding.` };
-  }
+  const validatedHost = validatePortForwardingHost(hosts, hostId);
+  if (!validatedHost.ok) return validatedHost;
   const remoteHost = source.remoteHost === undefined ? existing?.remoteHost : String(source.remoteHost).trim();
   let remotePort: number | undefined;
   if (type !== 'dynamic') {

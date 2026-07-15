@@ -51,6 +51,7 @@ import {
   duplicatePortForwardingRule,
   hasPortForwardingConnectionChanged,
   updatePortForwardingRule,
+  validatePortForwardingHost,
 } from '../../domain/portForwardingAgentOps';
 import { deleteGroup, upsertGroup } from '../../domain/vaultGroupAgentOps';
 
@@ -1076,8 +1077,9 @@ export async function handleVaultAgentOp(
       const rule = deps.getPortForwardingRules().find((entry) => entry.id === ruleId);
       if (!rule) return { ok: false, error: `Port forwarding rule "${ruleId}" was not found.` };
       if (!rule.hostId) return { ok: false, error: 'Rule has no associated host.' };
-      const rawHost = deps.getHosts().find((entry) => entry.id === rule.hostId);
-      if (!rawHost) return { ok: false, error: `Host "${rule.hostId}" was not found.` };
+      const validatedHost = validatePortForwardingHost(deps.getHosts(), rule.hostId);
+      if (!validatedHost.ok) return validatedHost;
+      const rawHost = validatedHost.value;
       const host = deps.resolveEffectiveHost(rawHost);
       try {
         resolveHostAuth({ host, keys: deps.keys, identities: deps.identities });
