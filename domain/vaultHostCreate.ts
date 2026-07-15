@@ -10,10 +10,10 @@ const isSafeSshConfigValue = (value: string): boolean =>
   !UNSAFE_SSH_CONFIG_VALUE.test(value);
 
 const isSafeSshJumpHostname = (value: string): boolean =>
-  !UNSAFE_SSH_JUMP_HOSTNAME.test(value);
+  !value.startsWith('-') && !UNSAFE_SSH_JUMP_HOSTNAME.test(value);
 
 const isSafeSshJumpUsername = (value: string): boolean =>
-  !UNSAFE_SSH_JUMP_USERNAME.test(value);
+  !value.startsWith('-') && !UNSAFE_SSH_JUMP_USERNAME.test(value);
 
 export type VaultHostDraftProtocol = Exclude<HostProtocol, 'mosh' | 'et' | 'serial'>;
 
@@ -315,7 +315,7 @@ export function applyVaultHostUpdate(
     if (selectedIdentityId) {
       updated.identityId = '';
       if (selectedIdentity?.authMethod === 'password') {
-        if (updated.savePassword !== false) {
+        if (effectiveCurrent.savePassword !== false) {
           updated.password = selectedIdentity.password;
         }
         updated.authMethod = 'password';
@@ -430,6 +430,16 @@ export function applyVaultHostUpdate(
       .sort((a, b) => b.groupName.length - a.groupName.length)[0];
     const canBeManaged = !updated.protocol || updated.protocol === 'ssh';
     if (targetManagedSource && canBeManaged) {
+      for (const jumpHostId of updated.hostChain?.hostIds ?? []) {
+        const jumpHost = existingHosts.find((candidate) => candidate.id === jumpHostId);
+        if (!jumpHost) continue;
+        if (!isSafeSshJumpHostname(jumpHost.hostname)) {
+          return { ok: false, error: 'hostname contains characters that are unsafe for an SSH jump host.' };
+        }
+        if (jumpHost.username && !isSafeSshJumpUsername(jumpHost.username)) {
+          return { ok: false, error: 'username contains characters that are unsafe for an SSH jump host.' };
+        }
+      }
       if (label.provided || current.managedSourceId !== targetManagedSource.id) {
         updated.label = updated.label.replace(/\s/g, '');
       }

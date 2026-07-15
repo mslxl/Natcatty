@@ -7,8 +7,9 @@ const MANAGED_BLOCK_END = "# END NETCATTY MANAGED";
 const UNSAFE_SSH_CONFIG_VALUE = /[\r\n\0]/;
 const UNSAFE_SSH_PROXY_JUMP_HOSTNAME = /[\s,@#]/;
 const UNSAFE_SSH_PROXY_JUMP_USERNAME = /[\s,#]/;
-const SSH_HOST_ALIAS_ESCAPE = /[*?!,[\]@#]/g;
+const UNSAFE_SSH_HOST_ALIAS = /[*?!,[\]@#]/;
 const UNSAFE_SSH_HOST_MATCH_LITERAL = /[\s*?!,[\]@#]/;
+const ENCODED_HOST_ALIAS_PREFIX = "netcatty-encoded-";
 
 const assertSafeSshConfigValue = (value: string, field: string): void => {
   if (UNSAFE_SSH_CONFIG_VALUE.test(value)) {
@@ -21,10 +22,13 @@ export const toSafeSshHostAlias = (label: string, hostname: string): string => {
   assertSafeSshConfigValue(hostname, "Host hostname");
   const alias = label.replace(/\s/g, '') || hostname.replace(/\s/g, '');
   if (!alias) throw new Error("Host alias must not be empty.");
-  return alias.replace(
-    SSH_HOST_ALIAS_ESCAPE,
-    (character) => `-${character.codePointAt(0)?.toString(16)}-`,
-  );
+  const needsEncoding = alias.startsWith('-')
+    || alias.startsWith(ENCODED_HOST_ALIAS_PREFIX)
+    || UNSAFE_SSH_HOST_ALIAS.test(alias);
+  if (!needsEncoding) return alias;
+  const encoded = Array.from(new TextEncoder().encode(alias), (byte) =>
+    byte.toString(16).padStart(2, '0')).join('');
+  return `${ENCODED_HOST_ALIAS_PREFIX}${encoded}`;
 };
 
 export const isSafeSshHostMatchLiteral = (value: string): boolean =>
@@ -32,7 +36,7 @@ export const isSafeSshHostMatchLiteral = (value: string): boolean =>
 
 const assertSafeProxyJumpHostname = (value: string): void => {
   assertSafeSshConfigValue(value, "Jump host hostname");
-  if (UNSAFE_SSH_PROXY_JUMP_HOSTNAME.test(value)) {
+  if (value.startsWith('-') || UNSAFE_SSH_PROXY_JUMP_HOSTNAME.test(value)) {
     throw new Error("Jump host hostname contains SSH ProxyJump separator characters.");
   }
 };
@@ -40,9 +44,14 @@ const assertSafeProxyJumpHostname = (value: string): void => {
 const assertSafeProxyJumpUsername = (value: string): void => {
   const field = "Jump host username";
   assertSafeSshConfigValue(value, field);
-  if (UNSAFE_SSH_PROXY_JUMP_USERNAME.test(value)) {
+  if (value.startsWith('-') || UNSAFE_SSH_PROXY_JUMP_USERNAME.test(value)) {
     throw new Error(`${field} contains SSH ProxyJump separator characters.`);
   }
+};
+
+const formatSshConfigArgument = (value: string): string => {
+  if (!/[\s"\\#]/.test(value)) return value;
+  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 };
 
 /**
@@ -157,7 +166,7 @@ export const serializeHostsToSshConfig = (hosts: Host[], allHosts?: Host[]): str
     }
 
     if (host.username) {
-      lines.push(`    User ${host.username}`);
+      lines.push(`    User ${formatSshConfigArgument(host.username)}`);
     }
 
     if (host.port && host.port !== DEFAULT_SSH_PORT) {

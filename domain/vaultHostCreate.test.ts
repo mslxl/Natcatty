@@ -309,12 +309,40 @@ test('applyVaultHostUpdate limits SSH syntax checks to managed aliases and activ
     { username: 'alice@example.com' },
     options,
   );
+  const optionLikeJumpHostname = applyVaultHostUpdate(
+    [jump, managedTarget],
+    [],
+    jump.id,
+    { hostname: '-oProxyCommand=run' },
+    options,
+  );
+  const unsafeJump: Host = {
+    ...jump,
+    id: 'unsafe-jump',
+    hostname: 'first.example.com,second.example.com',
+  };
+  const plainTarget: Host = {
+    ...managedTarget,
+    id: 'plain-target',
+    group: undefined,
+    managedSourceId: undefined,
+    hostChain: { hostIds: [unsafeJump.id] },
+  };
+  const movedInWithUnsafeJump = applyVaultHostUpdate(
+    [unsafeJump, plainTarget],
+    [],
+    plainTarget.id,
+    { group: 'managed' },
+    options,
+  );
 
   assert.equal(directUsername.ok, true);
   assert.equal(encodedAlias.ok, true);
   assert.equal(badJumpHostname.ok, false);
   assert.equal(badJumpUsername.ok, false);
   assert.equal(emailJumpUsername.ok, true);
+  assert.equal(optionLikeJumpHostname.ok, false);
+  assert.equal(movedInWithUnsafeJump.ok, false);
   if (!directUsername.ok) return;
   assert.equal(directUsername.updatedHost.username, 'alice@example.com');
   if (!encodedAlias.ok) return;
@@ -886,6 +914,47 @@ test('applyVaultHostUpdate keeps password prompts when changing username without
   assert.equal(result.updatedHost.identityId, '');
   assert.equal(result.updatedHost.password, undefined);
   assert.equal(result.updatedHost.savePassword, false);
+  assert.equal(result.updatedHost.authMethod, 'password');
+});
+
+test('applyVaultHostUpdate does not copy an inherited identity password when saving is disabled', () => {
+  const identity: Identity = {
+    id: 'identity-1',
+    label: 'shared password',
+    username: 'deploy',
+    authMethod: 'password',
+    password: 'shared-secret',
+    created: 1,
+  };
+  const existing: Host = {
+    id: 'host-1',
+    label: 'host',
+    hostname: 'host.example.com',
+    username: '',
+    group: 'locked',
+    tags: [],
+    os: 'linux',
+  };
+  const resolveEffectiveHost = (host: Host): Host => applyGroupDefaults(host, {
+    identityId: identity.id,
+    username: identity.username,
+    authMethod: identity.authMethod,
+    savePassword: false,
+  });
+
+  const result = applyVaultHostUpdate(
+    [existing],
+    [],
+    existing.id,
+    { username: 'ops' },
+    { identities: [identity], resolveEffectiveHost },
+  );
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.updatedHost.username, 'ops');
+  assert.equal(result.updatedHost.identityId, '');
+  assert.equal(result.updatedHost.password, undefined);
   assert.equal(result.updatedHost.authMethod, 'password');
 });
 

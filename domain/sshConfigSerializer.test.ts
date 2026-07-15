@@ -97,10 +97,21 @@ test("serializeHostsToSshConfig rejects line injection in serialized fields", ()
 });
 
 test("serializeHostsToSshConfig encodes Host pattern characters as literal aliases", () => {
-  const config = serializeHostsToSshConfig([makeHost({ label: "prod*@example" })]);
+  const encoded = serializeHostsToSshConfig([makeHost({ label: "prod*" })]);
+  const literal = serializeHostsToSshConfig([makeHost({ label: "prod-2a-" })]);
+  const leadingDash = serializeHostsToSshConfig([makeHost({ label: "-jump" })]);
 
-  assert.match(config, /^Host prod-2a--40-example$/m);
-  assert.doesNotMatch(config, /^Host .*[*@]/m);
+  assert.match(encoded, /^Host netcatty-encoded-/m);
+  assert.match(literal, /^Host prod-2a-$/m);
+  assert.notEqual(encoded.match(/^Host (.+)$/m)?.[1], literal.match(/^Host (.+)$/m)?.[1]);
+  assert.match(leadingDash, /^Host netcatty-encoded-/m);
+  assert.doesNotMatch(leadingDash, /^Host -/m);
+});
+
+test("serializeHostsToSshConfig quotes usernames containing spaces", () => {
+  const config = serializeHostsToSshConfig([makeHost({ username: "alice smith" })]);
+
+  assert.match(config, /^ {4}User "alice smith"$/m);
 });
 
 test("serializeHostsToSshConfig rejects ProxyJump separator injection", () => {
@@ -122,6 +133,11 @@ test("serializeHostsToSshConfig rejects ProxyJump separator injection", () => {
     hostname: "jump.example.com",
     username: "alice@example.com",
   });
+  const optionLikeJump = makeHost({
+    id: "jump",
+    hostname: "-oProxyCommand=run",
+    username: "",
+  });
 
   assert.throws(
     () => serializeHostsToSshConfig([target], [target, jump]),
@@ -134,5 +150,9 @@ test("serializeHostsToSshConfig rejects ProxyJump separator injection", () => {
   assert.match(
     serializeHostsToSshConfig([target], [target, emailUsernameJump]),
     /ProxyJump alice@example\.com@jump\.example\.com/,
+  );
+  assert.throws(
+    () => serializeHostsToSshConfig([target], [target, optionLikeJump]),
+    /ProxyJump separator/i,
   );
 });
