@@ -463,6 +463,13 @@ export function applyVaultHostUpdate(
     if (config.localEcho !== undefined && localEcho === undefined) return { ok: false, error: 'serialConfig.localEcho must be true or false.' };
     const lineMode = config.lineMode === undefined ? undefined : parseBoolean(config.lineMode);
     if (config.lineMode !== undefined && lineMode === undefined) return { ok: false, error: 'serialConfig.lineMode must be true or false.' };
+    const rawBackspaceBehavior = config.backspaceBehavior;
+    const backspaceBehavior = rawBackspaceBehavior === undefined
+      ? updated.serialConfig?.backspaceBehavior
+      : String(rawBackspaceBehavior);
+    if (backspaceBehavior !== undefined && !['default', 'ctrl-h'].includes(backspaceBehavior)) {
+      return { ok: false, error: 'serialConfig.backspaceBehavior must be default or ctrl-h.' };
+    }
     updated.serialConfig = {
       path,
       baudRate,
@@ -472,6 +479,7 @@ export function applyVaultHostUpdate(
       ...(flowControl !== undefined ? { flowControl: flowControl as 'none' | 'xon/xoff' | 'rts/cts' } : {}),
       ...(localEcho !== undefined ? { localEcho } : {}),
       ...(lineMode !== undefined ? { lineMode } : {}),
+      ...(backspaceBehavior !== undefined ? { backspaceBehavior: backspaceBehavior as 'default' | 'ctrl-h' } : {}),
     };
   }
   if (

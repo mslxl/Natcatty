@@ -418,6 +418,7 @@ test('applyVaultHostUpdate rejects malformed advanced connection settings', () =
     { patch: { serialConfig: { path: '/dev/ttyUSB0', baudRate: 9600, flowControl: 'bad' } }, error: /flowControl/i },
     { patch: { serialConfig: { path: '/dev/ttyUSB0', baudRate: 9600, localEcho: 'maybe' } }, error: /localEcho/i },
     { patch: { serialConfig: { path: '/dev/ttyUSB0', baudRate: 9600, lineMode: 'maybe' } }, error: /lineMode/i },
+    { patch: { serialConfig: { path: '/dev/ttyUSB0', baudRate: 9600, backspaceBehavior: 'bad' } }, error: /backspaceBehavior/i },
   ];
 
   for (const entry of cases) {
@@ -426,6 +427,32 @@ test('applyVaultHostUpdate rejects malformed advanced connection settings', () =
     });
     assert.equal(result.ok, false, JSON.stringify(entry.patch));
     if (!result.ok) assert.match(result.error, entry.error);
+  }
+});
+
+test('applyVaultHostUpdate preserves serial Backspace override semantics', () => {
+  for (const backspaceBehavior of ['ctrl-h', 'default', undefined] as const) {
+    const host: Host = {
+      id: `serial-${backspaceBehavior ?? 'inherited'}`,
+      label: 'serial',
+      hostname: 'serial',
+      username: '',
+      protocol: 'serial',
+      tags: [],
+      os: 'linux',
+      serialConfig: {
+        path: '/dev/ttyUSB0',
+        baudRate: 9600,
+        ...(backspaceBehavior !== undefined ? { backspaceBehavior } : {}),
+      },
+    };
+
+    const updated = applyVaultHostUpdate([host], [], host.id, {
+      serialConfig: { path: '/dev/ttyUSB0', baudRate: 115200 },
+    });
+    assert.equal(updated.ok, true);
+    if (!updated.ok) continue;
+    assert.equal(updated.updatedHost.serialConfig?.backspaceBehavior, backspaceBehavior);
   }
 });
 
