@@ -140,6 +140,7 @@ test('plan updates replace the same activity across tool message boundaries', as
   await externalSdkTurnDriver.run({
     backend: 'external-sdk',
     chatSessionId: session.id,
+    assistantMsgId: 'assistant-1',
     userText: 'Run the plan',
     signal: controller.signal,
     agentConfig,

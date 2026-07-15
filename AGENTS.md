@@ -5,6 +5,7 @@ This project is wired around three layers: domain (pure logic), application stat
 ## Current Agents (Roles)
 - **Domain** (`domain/`): Models and pure helpers. Examples:
   - `models.ts` defines Host/SSHKey/Snippet/Workspace entities.
+  - `agentActivity.ts` defines persisted agent activity and token usage records.
   - `host.ts` handles distro normalization and host sanitization.
   - `workspace.ts` contains workspace tree operations (split/insert/prune/sizing).
 - **Application State** (`application/state/`): Hooks that own state and persistence boundaries.
@@ -33,6 +34,8 @@ Turn orchestration is centralized in **AgentRuntime**; the React hook `useAIChat
 | Context | `contextManager.ts`, `contextBudget.ts`, `tokenEstimator.ts`, `sessionState.ts`, `staleContextPruner.ts`, `compactionPruner.ts`, `cattyRuntime.ts` | Pre-turn / step / 413 compaction, dynamic thresholds, SessionState reinjection, stale tool pruning |
 | Tools | `capabilityTools.ts`, `toolOutputStore.ts`, `toolResultDedup.ts` | Catalog tools, truncated output handles (`tool_output_read`), duplicate-read notices |
 | Trace | `traceStore.ts`, `agentEventAdapter.ts` | Session event log incl. `usage`, `performance`, and `CompactionTrace` |
+
+External SDK turns normalize file changes, web searches, plan updates, recoverable warnings, and token usage into the shared event protocol. These activity and usage records are stored on assistant messages so the compact activity view is restored with chat history.
 
 **Stop** always goes through `stopAgentTurn()` (UI, `/stop`, MCP). Do not add parallel abort paths in hooks.
 

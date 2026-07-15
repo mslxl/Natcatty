@@ -74,6 +74,7 @@ export interface UseAIChatStreamingReturn {
   ) => Promise<void>;
   sendToExternalAgent: (
     sessionId: string,
+    assistantMsgId: string,
     trimmed: string,
     agentConfig: ExternalAgentConfig,
     abortController: AbortController,
@@ -184,6 +185,7 @@ export function useAIChatStreaming({
 
   const sendToExternalAgent = useCallback(async (
     sessionId: string,
+    assistantMsgId: string,
     trimmed: string,
     agentConfig: ExternalAgentConfig,
     abortController: AbortController,
@@ -194,6 +196,7 @@ export function useAIChatStreaming({
     await getAgentRuntime().runTurn({
       backend: 'external-sdk',
       chatSessionId: sessionId,
+      assistantMsgId,
       userText: trimmed,
       signal: abortController.signal,
       agentConfig,

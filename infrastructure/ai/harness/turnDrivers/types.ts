@@ -95,6 +95,7 @@ export interface CattyTurnInput {
 export interface ExternalTurnInput {
   backend: 'external-sdk';
   chatSessionId: string;
+  assistantMsgId: string;
   userText: string;
   signal: AbortSignal;
   agentConfig: ExternalAgentConfig;

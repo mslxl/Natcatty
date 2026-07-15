@@ -11,7 +11,7 @@ import {
   Search,
 } from 'lucide-react';
 import React, { useEffect, useMemo, useState } from 'react';
-import type { AgentActivity, AgentUsage } from '../../infrastructure/ai/types';
+import type { AgentActivity, AgentUsage } from '../../domain/agentActivity';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../ui/collapsible';
 
 interface AgentActivityGroupProps {

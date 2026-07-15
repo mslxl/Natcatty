@@ -23,6 +23,7 @@ export class ExternalSdkTurnDriver implements TurnDriver {
 async function runExternalTurn(input: ExternalTurnInput, ctx: TurnDriverContext): Promise<void> {
   const {
     chatSessionId: sessionId,
+    assistantMsgId,
     userText: trimmed,
     signal,
     agentConfig,
@@ -59,10 +60,7 @@ async function runExternalTurn(input: ExternalTurnInput, ctx: TurnDriverContext)
   }
 
   let needsNewAssistantMsg = false;
-  const latestMessage = ui.getLatestSession?.(sessionId)?.messages.at(-1);
-  let activeAssistantMessageId = latestMessage?.role === 'assistant'
-    ? latestMessage.id
-    : undefined;
+  let activeAssistantMessageId = assistantMsgId;
   const maybeCreateAssistantMsg = () => {
     if (needsNewAssistantMsg) {
       needsNewAssistantMsg = false;
