@@ -278,6 +278,25 @@ describe('handleVaultAgentOp vault hosts', () => {
     assert.equal((result as { addedCount?: number }).addedCount, 2);
   });
 
+  it('hosts.create stores a referenced key path without private key content', async () => {
+    const deps = createDeps({ hosts: [] });
+    const result = await handleVaultAgentOp(
+      'hosts.create',
+      {
+        hosts: JSON.stringify([
+          { hostname: 'key.example.com', username: 'deploy', keyPath: '~/.ssh/id_ed25519' },
+        ]),
+      },
+      deps,
+    );
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(deps.getHosts()[0]?.identityFilePaths, ['~/.ssh/id_ed25519']);
+    assert.equal(deps.getHosts()[0]?.authMethod, 'key');
+    const preview = (result as { previewHosts?: Array<Record<string, unknown>> }).previewHosts?.[0];
+    assert.equal('privateKey' in (preview ?? {}), false);
+  });
+
   it('sequential hosts.create calls accumulate instead of dropping prior hosts', async () => {
     const deps = createDeps({ hosts: [], customGroups: [] });
 
@@ -296,6 +315,162 @@ describe('handleVaultAgentOp vault hosts', () => {
     assert.equal(second.ok, true);
     assert.equal(deps.getHosts().length, 2);
     assert.deepEqual(deps.getHosts().map((host) => host.hostname), ['10.0.0.1', '10.0.0.2']);
+  });
+
+  it('host.update changes selected fields and preserves unrelated host data', async () => {
+    const deps = createDeps({
+      hosts: [{
+        id: 'host-1',
+        label: 'old',
+        hostname: '10.0.0.1',
+        username: 'root',
+        port: 22,
+        tags: ['keep'],
+        os: 'linux',
+      }],
+      customGroups: [],
+    });
+
+    const result = await handleVaultAgentOp(
+      'host.update',
+      { hostId: 'host-1', name: 'new', ip: '10.0.0.2', group: 'prod' },
+      deps,
+    );
+
+    assert.equal(result.ok, true);
+    assert.equal(deps.getHosts()[0]?.label, 'new');
+    assert.equal(deps.getHosts()[0]?.hostname, '10.0.0.2');
+    assert.equal(deps.getHosts()[0]?.username, 'root');
+    assert.deepEqual(deps.getHosts()[0]?.tags, ['keep']);
+    assert.ok(deps.getCustomGroups().includes('prod'));
+  });
+
+  it('host.update applies effective inherited credential settings', async () => {
+    const host: Host = {
+      id: 'host-1',
+      label: 'inherited',
+      hostname: '10.0.0.1',
+      username: 'root',
+      port: 22,
+      tags: [],
+      os: 'linux',
+    };
+    const passwordDeps = createDeps({
+      hosts: [host],
+      resolveEffectiveHost: (current) => ({ ...current, savePassword: false }),
+    });
+    const identityDeps = createDeps({
+      hosts: [host],
+      resolveEffectiveHost: (current) => ({ ...current, identityId: 'identity-from-group' }),
+    });
+
+    const passwordResult = await handleVaultAgentOp(
+      'host.update',
+      { hostId: host.id, password: 'do-not-persist' },
+      passwordDeps,
+    );
+    const usernameResult = await handleVaultAgentOp(
+      'host.update',
+      { hostId: host.id, username: 'deploy' },
+      identityDeps,
+    );
+
+    assert.equal(passwordResult.ok, false);
+    assert.equal(passwordDeps.getHosts()[0]?.password, undefined);
+    assert.equal(usernameResult.ok, true);
+    assert.equal(identityDeps.getHosts()[0]?.username, 'deploy');
+    assert.equal(identityDeps.getHosts()[0]?.identityId, '');
+  });
+
+  it('host.update aligns managed-source ownership when moving groups', async () => {
+    const deps = createDeps({
+      hosts: [{
+        id: 'host-1',
+        label: 'managed host',
+        hostname: '10.0.0.1',
+        username: 'root',
+        group: 'managed',
+        tags: [],
+        os: 'linux',
+        managedSourceId: 'source-1',
+      }],
+      managedSources: [{
+        id: 'source-1',
+        type: 'ssh_config',
+        filePath: '~/.ssh/config',
+        groupName: 'managed',
+        lastSyncedAt: 1,
+      }],
+    });
+
+    const result = await handleVaultAgentOp(
+      'host.update',
+      { hostId: 'host-1', group: '' },
+      deps,
+    );
+
+    assert.equal(result.ok, true);
+    assert.equal(deps.getHosts()[0]?.group, undefined);
+    assert.equal(deps.getHosts()[0]?.managedSourceId, undefined);
+  });
+
+  it('host.delete removes the requested host', async () => {
+    const deps = createDeps({
+      hosts: [
+        { id: 'host-1', label: 'one', hostname: 'one', username: 'root', tags: [], os: 'linux' },
+        { id: 'host-2', label: 'two', hostname: 'two', username: 'root', tags: [], os: 'linux' },
+      ],
+    });
+
+    const result = await handleVaultAgentOp('host.delete', { hostId: 'host-1' }, deps);
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(deps.getHosts().map((host) => host.id), ['host-2']);
+    assert.equal((result as { deletedHost?: { id?: string } }).deletedHost?.id, 'host-1');
+  });
+
+  it('host.update and host.delete never return nested proxy passwords', async () => {
+    const host: Host = {
+      id: 'host-1',
+      label: 'proxied',
+      hostname: '10.0.0.1',
+      username: 'root',
+      tags: [],
+      os: 'linux',
+      proxyConfig: {
+        type: 'http',
+        host: 'proxy.example.com',
+        port: 8080,
+        username: 'proxy-user',
+        password: 'proxy-secret',
+      },
+    };
+    const updateDeps = createDeps({ hosts: [host] });
+    const deleteDeps = createDeps({ hosts: [host] });
+
+    const updateResult = await handleVaultAgentOp(
+      'host.update',
+      { hostId: host.id, notes: 'updated' },
+      updateDeps,
+    );
+    const deleteResult = await handleVaultAgentOp(
+      'host.delete',
+      { hostId: host.id },
+      deleteDeps,
+    );
+
+    assert.equal(updateResult.ok, true);
+    assert.equal(deleteResult.ok, true);
+    const updatedProxy = (updateResult as {
+      host?: { proxyConfig?: Record<string, unknown> };
+    }).host?.proxyConfig;
+    const deletedProxy = (deleteResult as {
+      deletedHost?: { proxyConfig?: Record<string, unknown> };
+    }).deletedHost?.proxyConfig;
+    assert.equal(updatedProxy?.host, 'proxy.example.com');
+    assert.equal(deletedProxy?.host, 'proxy.example.com');
+    assert.equal('password' in (updatedProxy ?? {}), false);
+    assert.equal('password' in (deletedProxy ?? {}), false);
   });
 
   it('host.import dryRun previews parsed hosts without writing', async () => {

@@ -360,6 +360,21 @@ test("applyGroupDefaults does not bypass a host no-save choice with a group iden
   assert.equal(result.authMethod, undefined);
 });
 
+test("applyGroupDefaults does not inherit a group password after a host clears it", () => {
+  const result = applyGroupDefaults(
+    host({ username: "", password: undefined, savePassword: false }),
+    {
+      username: "group-user",
+      password: "group-password",
+      authMethod: "password",
+    },
+  );
+
+  assert.equal(result.password, undefined);
+  assert.equal(result.savePassword, false);
+  assert.equal(result.authMethod, "password");
+});
+
 test("applyGroupDefaults keeps host manual Telnet credentials instead of a group identity", () => {
   const result = applyGroupDefaults(
     host({ telnetUsername: "host-user", telnetPassword: "host-password" }),

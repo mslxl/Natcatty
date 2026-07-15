@@ -1,4 +1,4 @@
-import type { Host, Identity, PortForwardingRule, Snippet, SSHKey, TerminalSettings, VaultNote } from '../../domain/models';
+import type { Host, Identity, ManagedSource, PortForwardingRule, Snippet, SSHKey, TerminalSettings, VaultNote } from '../../domain/models';
 import {
   normalizeVaultNotes,
   sanitizeNoteTitle,
@@ -31,7 +31,9 @@ import {
   waitForScriptRun,
 } from '../../application/state/scriptAutomationCoordinator.ts';
 import {
+  applyVaultHostDelete,
   applyVaultHostCreates,
+  applyVaultHostUpdate,
   buildVaultHostsFromDrafts,
   parseVaultHostDraftsInput,
 } from '../../domain/vaultHostCreate';
@@ -56,6 +58,12 @@ export function sanitizeHostForAgent(host: Host): Record<string, unknown> {
   const sanitized: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(host)) {
     if (SENSITIVE_HOST_KEYS.has(key)) continue;
+    if (key === 'proxyConfig' && value && typeof value === 'object' && !Array.isArray(value)) {
+      const safeProxyConfig = { ...(value as Record<string, unknown>) };
+      delete safeProxyConfig.password;
+      sanitized[key] = safeProxyConfig;
+      continue;
+    }
     sanitized[key] = value;
   }
   return sanitized;
@@ -283,6 +291,7 @@ export interface VaultAgentApiDeps {
   portForwardingRules: PortForwardingRule[];
   keys: SSHKey[];
   identities: Identity[];
+  managedSources?: ManagedSource[];
   terminalSettings?: Pick<TerminalSettings, 'keepaliveInterval' | 'keepaliveCountMax'>;
   resolveEffectiveHost: (host: Host) => Host;
   updateHostNotes: (hostId: string, notes: string) => void;
@@ -482,6 +491,44 @@ export async function handleVaultAgentOp(
         skippedExistingCount: merged.skippedExistingCount,
         issues: buildIssues,
         previewHosts: merged.addedHosts.map((host) => sanitizeHostForAgent(host)),
+      };
+    }
+    case 'host.update': {
+      const hostId = String(params.hostId || '').trim();
+      if (!hostId) return { ok: false, error: 'hostId is required.' };
+      const currentHosts = deps.getHosts();
+      const updated = applyVaultHostUpdate(
+        currentHosts,
+        deps.getCustomGroups(),
+        hostId,
+        params,
+        {
+          resolveEffectiveHost: deps.resolveEffectiveHost,
+          managedSources: deps.managedSources,
+          identities: deps.identities,
+        },
+      );
+      if (!updated.ok) return updated;
+
+      deps.updateHosts(updated.hosts);
+      deps.updateCustomGroups(updated.customGroups);
+      return {
+        ok: true,
+        hostId,
+        host: sanitizeHostForAgent(updated.updatedHost),
+      };
+    }
+    case 'host.delete': {
+      const hostId = String(params.hostId || '').trim();
+      if (!hostId) return { ok: false, error: 'hostId is required.' };
+      const deleted = applyVaultHostDelete(deps.getHosts(), hostId);
+      if (!deleted.ok) return deleted;
+
+      deps.updateHosts(deleted.hosts);
+      return {
+        ok: true,
+        hostId,
+        deletedHost: sanitizeHostForAgent(deleted.deletedHost),
       };
     }
     case 'host.import': {

@@ -1,20 +1,48 @@
-import type { Host, HostProtocol } from './models';
+import type { Host, HostProtocol, Identity, ManagedSource } from './models';
 import { sanitizeHost } from './host';
 
 const DEFAULT_SSH_PORT = 22;
+const DEFAULT_TELNET_PORT = 23;
+const UNSAFE_SSH_CONFIG_VALUE = /[\r\n\0]/;
+const HOSTNAME_WHITESPACE = /\s/;
+const UNSAFE_SSH_JUMP_HOSTNAME = /[\s,@#]/;
+const UNSAFE_SSH_JUMP_USERNAME = /[\s,#]/;
+
+const isSafeSshConfigValue = (value: string): boolean =>
+  !UNSAFE_SSH_CONFIG_VALUE.test(value);
+
+const isSafeSshJumpHostname = (value: string): boolean =>
+  !value.startsWith('-') && !UNSAFE_SSH_JUMP_HOSTNAME.test(value);
+
+const isSafeSshJumpUsername = (value: string): boolean =>
+  !value.startsWith('-') && !UNSAFE_SSH_JUMP_USERNAME.test(value);
 
 export type VaultHostDraftProtocol = Exclude<HostProtocol, 'mosh' | 'et' | 'serial'>;
 
 export interface VaultHostDraft {
   label?: unknown;
+  name?: unknown;
   hostname?: unknown;
+  host?: unknown;
+  ip?: unknown;
   port?: unknown;
   username?: unknown;
   password?: unknown;
+  savePassword?: unknown;
+  keyPath?: unknown;
+  keypath?: unknown;
   group?: unknown;
   tags?: unknown;
   notes?: unknown;
   protocol?: unknown;
+}
+
+export type VaultHostUpdatePatch = VaultHostDraft;
+
+export interface VaultHostUpdateOptions {
+  resolveEffectiveHost?: (host: Host) => Host;
+  managedSources?: ManagedSource[];
+  identities?: Identity[];
 }
 
 export interface VaultHostCreateIssue {
@@ -40,28 +68,77 @@ const normalizeProtocol = (raw: unknown): VaultHostDraftProtocol | undefined => 
 };
 
 const parsePort = (raw: unknown): number | undefined => {
-  if (typeof raw === 'number' && Number.isFinite(raw)) {
-    const port = Math.trunc(raw);
-    return port >= 1 && port <= 65535 ? port : undefined;
+  if (typeof raw === 'number') {
+    return Number.isInteger(raw) && raw >= 1 && raw <= 65535 ? raw : undefined;
   }
   if (typeof raw !== 'string') return undefined;
   const trimmed = raw.trim();
-  if (!trimmed) return undefined;
-  const port = parseInt(trimmed, 10);
-  return Number.isFinite(port) && port >= 1 && port <= 65535 ? port : undefined;
+  if (!/^\d+$/u.test(trimmed)) return undefined;
+  const port = Number(trimmed);
+  return Number.isInteger(port) && port >= 1 && port <= 65535 ? port : undefined;
 };
 
-const parseTags = (raw: unknown): string[] => {
-  if (Array.isArray(raw)) {
-    return Array.from(
-      new Set(raw.map((entry) => String(entry).trim()).filter(Boolean)),
-    );
+const defaultPortForProtocol = (protocol: HostProtocol | undefined): number =>
+  protocol === 'telnet' ? DEFAULT_TELNET_PORT : DEFAULT_SSH_PORT;
+
+const parseBoolean = (raw: unknown): boolean | undefined => {
+  if (typeof raw === 'boolean') return raw;
+  if (typeof raw !== 'string') return undefined;
+  const normalized = raw.trim().toLowerCase();
+  if (normalized === 'true' || normalized === '1' || normalized === 'yes') return true;
+  if (normalized === 'false' || normalized === '0' || normalized === 'no') return false;
+  return undefined;
+};
+
+const normalizeTags = (values: unknown[]): string[] => Array.from(
+  new Set(values.map((entry) => String(entry).trim()).filter(Boolean)),
+);
+
+const parseTags = (
+  raw: unknown,
+): { ok: true; tags: string[] } | { ok: false; error: string } => {
+  if (raw === undefined || raw === null || raw === '') return { ok: true, tags: [] };
+  if (Array.isArray(raw)) return { ok: true, tags: normalizeTags(raw) };
+  if (typeof raw !== 'string') {
+    return { ok: false, error: 'tags must be an array or comma-separated string.' };
   }
-  if (typeof raw !== 'string') return [];
-  return raw
-    .split(/[,;，]/g)
-    .map((entry) => entry.trim())
-    .filter(Boolean);
+
+  const trimmed = raw.trim();
+  if (!trimmed) return { ok: true, tags: [] };
+  if (trimmed.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      if (!Array.isArray(parsed)) {
+        return { ok: false, error: 'tags JSON must be an array.' };
+      }
+      return { ok: true, tags: normalizeTags(parsed) };
+    } catch {
+      return { ok: false, error: 'tags must be a valid JSON array.' };
+    }
+  }
+
+  return {
+    ok: true,
+    tags: normalizeTags(trimmed.split(/[,;，]/g)),
+  };
+};
+
+const hasOwn = (value: object, key: string): boolean =>
+  Object.prototype.hasOwnProperty.call(value, key);
+
+const firstProvided = (
+  value: Record<string, unknown>,
+  keys: string[],
+): { provided: boolean; value?: unknown } => {
+  for (const key of keys) {
+    if (hasOwn(value, key)) return { provided: true, value: value[key] };
+  }
+  return { provided: false };
+};
+
+const parseKeyPath = (draft: VaultHostDraft): string | undefined => {
+  const raw = draft.keyPath ?? draft.keypath;
+  return typeof raw === 'string' && raw.trim() ? raw.trim() : undefined;
 };
 
 export const buildVaultHostMergeKey = (
@@ -72,18 +149,83 @@ export const buildVaultHostMergeKey = (
 export function buildVaultHostFromDraft(
   draft: VaultHostDraft,
 ): { ok: true; host: Host } | { ok: false; error: string } {
-  const hostname = typeof draft.hostname === 'string' ? draft.hostname.trim() : '';
+  if (!draft || typeof draft !== 'object' || Array.isArray(draft)) {
+    return { ok: false, error: 'host must be an object.' };
+  }
+  const rawHostname = draft.hostname ?? draft.host ?? draft.ip;
+  const hostname = typeof rawHostname === 'string' ? rawHostname.trim() : '';
   if (!hostname) {
     return { ok: false, error: 'hostname is required.' };
   }
+  if (!isSafeSshConfigValue(hostname)) {
+    return { ok: false, error: 'hostname must not contain line breaks or null bytes.' };
+  }
+  if (HOSTNAME_WHITESPACE.test(hostname)) {
+    return { ok: false, error: 'hostname must not contain whitespace.' };
+  }
 
-  const protocol = normalizeProtocol(draft.protocol) ?? 'ssh';
-  const port = parsePort(draft.port) ?? (protocol === 'telnet' ? 23 : DEFAULT_SSH_PORT);
-  const label = typeof draft.label === 'string' && draft.label.trim()
-    ? draft.label.trim()
+  const parsedProtocol = normalizeProtocol(draft.protocol);
+  const hasProtocolInput = draft.protocol !== undefined
+    && draft.protocol !== null
+    && !(typeof draft.protocol === 'string' && !draft.protocol.trim());
+  if (hasProtocolInput && parsedProtocol === undefined) {
+    return { ok: false, error: 'protocol must be ssh, telnet, or local.' };
+  }
+  const protocol = parsedProtocol ?? 'ssh';
+  const parsedPort = parsePort(draft.port);
+  const hasPortInput = draft.port !== undefined
+    && draft.port !== null
+    && !(typeof draft.port === 'string' && !draft.port.trim());
+  if (hasPortInput && parsedPort === undefined) {
+    return { ok: false, error: 'port must be an integer between 1 and 65535.' };
+  }
+  const port = parsedPort ?? defaultPortForProtocol(protocol);
+  const rawLabel = draft.label ?? draft.name;
+  if (rawLabel !== undefined && rawLabel !== null && typeof rawLabel !== 'string') {
+    return { ok: false, error: 'label must be a string.' };
+  }
+  const label = typeof rawLabel === 'string' && rawLabel.trim()
+    ? rawLabel.trim()
     : hostname;
+  if (draft.username !== undefined && draft.username !== null && typeof draft.username !== 'string') {
+    return { ok: false, error: 'username must be a string.' };
+  }
   const username = typeof draft.username === 'string' ? draft.username.trim() : '';
-  const password = typeof draft.password === 'string' && draft.password ? draft.password : undefined;
+  if (!isSafeSshConfigValue(label)) {
+    return { ok: false, error: 'label must not contain line breaks or null bytes.' };
+  }
+  if (!isSafeSshConfigValue(username)) {
+    return { ok: false, error: 'username must not contain line breaks or null bytes.' };
+  }
+  const savePasswordInput = firstProvided(draft as Record<string, unknown>, ['savePassword']);
+  const savePassword = savePasswordInput.provided
+    ? parseBoolean(savePasswordInput.value)
+    : undefined;
+  if (savePasswordInput.provided && savePassword === undefined) {
+    return { ok: false, error: 'savePassword must be true or false.' };
+  }
+  if (draft.password !== undefined && draft.password !== null && typeof draft.password !== 'string') {
+    return { ok: false, error: 'password must be a string.' };
+  }
+  const password = savePassword !== false && typeof draft.password === 'string' && draft.password
+    ? draft.password
+    : undefined;
+  const rawKeyPath = draft.keyPath ?? draft.keypath;
+  if (rawKeyPath !== undefined && rawKeyPath !== null && typeof rawKeyPath !== 'string') {
+    return { ok: false, error: 'keyPath must be a string.' };
+  }
+  const keyPath = parseKeyPath(draft);
+  if (keyPath && !isSafeSshConfigValue(keyPath)) {
+    return { ok: false, error: 'keyPath must not contain line breaks or null bytes.' };
+  }
+  const tags = parseTags(draft.tags);
+  if (!tags.ok) return tags;
+  if (draft.group !== undefined && draft.group !== null && typeof draft.group !== 'string') {
+    return { ok: false, error: 'group must be a string.' };
+  }
+  if (draft.notes !== undefined && draft.notes !== null && typeof draft.notes !== 'string') {
+    return { ok: false, error: 'notes must be a string.' };
+  }
   const notes = typeof draft.notes === 'string' && draft.notes.trim() ? draft.notes.trim() : undefined;
   const now = Date.now();
 
@@ -96,13 +238,305 @@ export function buildVaultHostFromDraft(
       port,
       username,
       password,
+      ...(savePassword !== undefined ? { savePassword } : {}),
       group: normalizeGroupPath(draft.group),
-      tags: parseTags(draft.tags),
+      tags: tags.tags,
       os: 'linux',
       protocol,
       createdAt: now,
+      ...(keyPath
+        ? {
+          identityFilePaths: [keyPath],
+          authMethod: 'key' as const,
+          authPolicyVersion: 1 as const,
+          useSshAgent: false,
+        }
+        : {}),
       ...(notes ? { notes } : {}),
     },
+  };
+}
+
+export function applyVaultHostUpdate(
+  existingHosts: Host[],
+  existingGroups: string[],
+  hostId: string,
+  patch: VaultHostUpdatePatch,
+  options: VaultHostUpdateOptions = {},
+): {
+  ok: true;
+  hosts: Host[];
+  customGroups: string[];
+  updatedHost: Host;
+} | { ok: false; error: string } {
+  const hostIndex = existingHosts.findIndex((host) => host.id === hostId);
+  if (hostIndex < 0) return { ok: false, error: `Host "${hostId}" was not found.` };
+
+  const source = patch as Record<string, unknown>;
+  const label = firstProvided(source, ['label', 'name']);
+  const hostname = firstProvided(source, ['hostname', 'host', 'ip']);
+  const port = firstProvided(source, ['port']);
+  const username = firstProvided(source, ['username']);
+  const password = firstProvided(source, ['password']);
+  const savePassword = firstProvided(source, ['savePassword']);
+  const keyPath = firstProvided(source, ['keyPath', 'keypath']);
+  const group = firstProvided(source, ['group']);
+  const tags = firstProvided(source, ['tags']);
+  const notes = firstProvided(source, ['notes']);
+  const protocol = firstProvided(source, ['protocol']);
+  const provided = [label, hostname, port, username, password, savePassword, keyPath, group, tags, notes, protocol]
+    .some((entry) => entry.provided);
+  if (!provided) return { ok: false, error: 'At least one host field is required.' };
+
+  const current = existingHosts[hostIndex];
+  let updated: Host = { ...current };
+
+  if (label.provided) {
+    if (typeof label.value !== 'string' || !label.value.trim()) {
+      return { ok: false, error: 'label must not be empty.' };
+    }
+    if (!isSafeSshConfigValue(label.value)) {
+      return { ok: false, error: 'label must not contain line breaks or null bytes.' };
+    }
+    updated.label = label.value.trim();
+  }
+  if (hostname.provided) {
+    if (typeof hostname.value !== 'string' || !hostname.value.trim()) {
+      return { ok: false, error: 'hostname must not be empty.' };
+    }
+    if (!isSafeSshConfigValue(hostname.value)) {
+      return { ok: false, error: 'hostname must not contain line breaks or null bytes.' };
+    }
+    if (HOSTNAME_WHITESPACE.test(hostname.value.trim())) {
+      return { ok: false, error: 'hostname must not contain whitespace.' };
+    }
+    updated.hostname = hostname.value.trim();
+  }
+  if (port.provided) {
+    const parsedPort = parsePort(port.value);
+    if (parsedPort === undefined) {
+      return { ok: false, error: 'port must be an integer between 1 and 65535.' };
+    }
+    updated.port = parsedPort;
+  }
+  if (group.provided) {
+    if (typeof group.value !== 'string') {
+      return { ok: false, error: 'group must be a string.' };
+    }
+    updated.group = normalizeGroupPath(group.value);
+  }
+  if (protocol.provided) {
+    const nextProtocol = normalizeProtocol(protocol.value);
+    if (!nextProtocol) {
+      return { ok: false, error: 'protocol must be ssh, telnet, or local.' };
+    }
+    if (
+      !port.provided
+      && (current.port === undefined || current.port === defaultPortForProtocol(current.protocol))
+    ) {
+      updated.port = defaultPortForProtocol(nextProtocol);
+    }
+    updated.protocol = nextProtocol;
+  }
+
+  const effectiveBeforeSavePassword = options.resolveEffectiveHost?.(updated) ?? updated;
+
+  if (savePassword.provided) {
+    const nextSavePassword = parseBoolean(savePassword.value);
+    if (nextSavePassword === undefined) {
+      return { ok: false, error: 'savePassword must be true or false.' };
+    }
+    updated.savePassword = nextSavePassword;
+    if (!nextSavePassword) updated.password = undefined;
+  }
+
+  const effectiveCurrent = options.resolveEffectiveHost?.(updated) ?? updated;
+  const selectedIdentityId = effectiveCurrent.identityId ?? effectiveBeforeSavePassword.identityId;
+  const selectedIdentity = selectedIdentityId
+    ? options.identities?.find((identity) => identity.id === selectedIdentityId)
+    : undefined;
+
+  if (username.provided) {
+    if (typeof username.value !== 'string') {
+      return { ok: false, error: 'username must be a string.' };
+    }
+    if (!isSafeSshConfigValue(username.value)) {
+      return { ok: false, error: 'username must not contain line breaks or null bytes.' };
+    }
+    updated.username = username.value.trim();
+    if (selectedIdentityId) {
+      updated.identityId = '';
+      if (selectedIdentity?.authMethod === 'password') {
+        if (effectiveCurrent.savePassword !== false) {
+          updated.password = selectedIdentity.password;
+        }
+        updated.authMethod = 'password';
+        updated.authPolicyVersion = 1;
+      } else if (selectedIdentity?.keyId) {
+        updated.identityFileId = selectedIdentity.keyId;
+        updated.authMethod = selectedIdentity.authMethod;
+        updated.authPolicyVersion = 1;
+        updated.useSshAgent = false;
+      }
+    }
+  }
+  if (savePassword.provided && updated.savePassword === false && !username.provided && selectedIdentity) {
+    if (selectedIdentity.authMethod === 'password') {
+      updated.identityId = '';
+      updated.username = selectedIdentity.username;
+      updated.authMethod = 'password';
+      updated.authPolicyVersion = 1;
+    } else {
+      updated.identityId = selectedIdentity.id;
+      updated.authMethod = selectedIdentity.authMethod;
+      updated.authPolicyVersion = 1;
+    }
+  }
+  if (password.provided) {
+    if (typeof password.value !== 'string') {
+      return { ok: false, error: 'password must be a string.' };
+    }
+    if (password.value && effectiveCurrent.savePassword === false) {
+      return {
+        ok: false,
+        error: 'This host is configured not to save passwords. Enable password saving before updating it.',
+      };
+    }
+    updated.password = password.value || undefined;
+    if (!password.value) {
+      updated.savePassword = false;
+    }
+    const keyPathIsEmpty = keyPath.provided
+      && typeof keyPath.value === 'string'
+      && !keyPath.value.trim();
+    if (password.value && keyPathIsEmpty) {
+      if (selectedIdentity && !username.provided) {
+        updated.username = selectedIdentity.username;
+      }
+      updated.authMethod = 'password';
+      updated.authPolicyVersion = 1;
+      updated.identityId = '';
+      updated.identityFileId = undefined;
+      updated.identityFilePaths = undefined;
+      updated.useSshAgent = false;
+    } else if (selectedIdentityId) {
+      if (selectedIdentity?.authMethod === 'password') {
+        updated.identityId = '';
+        updated.username = username.provided
+          ? updated.username
+          : selectedIdentity.username;
+        updated.authMethod = 'password';
+        updated.authPolicyVersion = 1;
+      } else if (selectedIdentity && !username.provided) {
+        updated.identityId = selectedIdentity.id;
+        updated.authMethod = selectedIdentity.authMethod;
+        updated.authPolicyVersion = 1;
+      }
+    }
+  }
+  if (keyPath.provided) {
+    if (typeof keyPath.value !== 'string') {
+      return { ok: false, error: 'keyPath must be a string.' };
+    }
+    const nextKeyPath = keyPath.value.trim();
+    if (!isSafeSshConfigValue(nextKeyPath)) {
+      return { ok: false, error: 'keyPath must not contain line breaks or null bytes.' };
+    }
+    updated.identityFilePaths = nextKeyPath ? [nextKeyPath] : [];
+    if (nextKeyPath) {
+      updated.identityFileId = undefined;
+      updated.identityId = '';
+      updated.authMethod = 'key';
+      updated.authPolicyVersion = 1;
+      updated.useSshAgent = false;
+    } else if (
+      !updated.identityId
+      && !updated.identityFileId
+      && !effectiveCurrent.identityId
+      && !effectiveCurrent.identityFileId
+      && updated.authMethod !== 'password'
+      && effectiveCurrent.authMethod === 'key'
+    ) {
+      updated.authMethod = 'auto';
+      updated.authPolicyVersion = 1;
+      updated.useSshAgent = undefined;
+    }
+  }
+  if (tags.provided) {
+    const nextTags = parseTags(tags.value);
+    if (!nextTags.ok) return nextTags;
+    updated.tags = nextTags.tags;
+  }
+  if (notes.provided) {
+    if (typeof notes.value !== 'string') {
+      return { ok: false, error: 'notes must be a string.' };
+    }
+    updated.notes = notes.value.trim() || undefined;
+  }
+  if (options.managedSources) {
+    const targetManagedSource = options.managedSources
+      .filter((sourceInfo) => (
+        updated.group === sourceInfo.groupName
+        || updated.group?.startsWith(`${sourceInfo.groupName}/`)
+      ))
+      .sort((a, b) => b.groupName.length - a.groupName.length)[0];
+    const canBeManaged = !updated.protocol || updated.protocol === 'ssh';
+    if (targetManagedSource && canBeManaged) {
+      for (const jumpHostId of updated.hostChain?.hostIds ?? []) {
+        const jumpHost = existingHosts.find((candidate) => candidate.id === jumpHostId);
+        if (!jumpHost) continue;
+        if (!isSafeSshJumpHostname(jumpHost.hostname)) {
+          return { ok: false, error: 'hostname contains characters that are unsafe for an SSH jump host.' };
+        }
+        if (jumpHost.username && !isSafeSshJumpUsername(jumpHost.username)) {
+          return { ok: false, error: 'username contains characters that are unsafe for an SSH jump host.' };
+        }
+      }
+      if (label.provided || current.managedSourceId !== targetManagedSource.id) {
+        updated.label = updated.label.replace(/\s/g, '');
+      }
+      updated.managedSourceId = targetManagedSource.id;
+    } else if (options.managedSources.length > 0 || !canBeManaged) {
+      updated.managedSourceId = undefined;
+    }
+
+    const managedSourceIds = new Set(options.managedSources.map((sourceInfo) => sourceInfo.id));
+    const isManagedJumpHost = existingHosts.some((candidate) => (
+      candidate.id !== current.id
+      && candidate.managedSourceId
+      && managedSourceIds.has(candidate.managedSourceId)
+      && (!candidate.protocol || candidate.protocol === 'ssh')
+      && candidate.hostChain?.hostIds?.includes(current.id)
+    ));
+    if (isManagedJumpHost) {
+      if (!isSafeSshJumpHostname(updated.hostname)) {
+        return { ok: false, error: 'hostname contains characters that are unsafe for an SSH jump host.' };
+      }
+      if (updated.username && !isSafeSshJumpUsername(updated.username)) {
+        return { ok: false, error: 'username contains characters that are unsafe for an SSH jump host.' };
+      }
+    }
+  }
+
+  updated = sanitizeHost(updated);
+  const hosts = [...existingHosts];
+  hosts[hostIndex] = updated;
+  const customGroups = updated.group
+    ? Array.from(new Set([...existingGroups, updated.group]))
+    : [...existingGroups];
+  return { ok: true, hosts, customGroups, updatedHost: updated };
+}
+
+export function applyVaultHostDelete(
+  existingHosts: Host[],
+  hostId: string,
+): { ok: true; hosts: Host[]; deletedHost: Host } | { ok: false; error: string } {
+  const deletedHost = existingHosts.find((host) => host.id === hostId);
+  if (!deletedHost) return { ok: false, error: `Host "${hostId}" was not found.` };
+  return {
+    ok: true,
+    hosts: existingHosts.filter((host) => host.id !== hostId),
+    deletedHost,
   };
 }
 

@@ -1039,6 +1039,7 @@ function App({ settings }: { settings: SettingsState }) {
     portForwardingRules,
     keys,
     identities,
+    managedSources,
     terminalSettings,
     resolveEffectiveHost,
     updateHosts,

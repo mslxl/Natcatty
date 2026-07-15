@@ -41,11 +41,26 @@ test("listCattyToolSpecs includes vault host tools and SFTP transfer", () => {
   assert.ok(capabilityIds.includes("vault.host.list"));
   assert.ok(capabilityIds.includes("vault.host.open"));
   assert.ok(capabilityIds.includes("vault.hosts.create"));
+  assert.ok(capabilityIds.includes("vault.host.update"));
+  assert.ok(capabilityIds.includes("vault.host.delete"));
   assert.ok(capabilityIds.includes("vault.host.import"));
   assert.ok(capabilityIds.includes("vault.note.create"));
   assert.ok(capabilityIds.includes("vault.note.list"));
   assert.ok(capabilityIds.includes("sftp.download"));
   assert.ok(capabilityIds.includes("sftp.upload"));
+});
+
+test("listMcpTools includes vault host update and delete for external MCP clients", () => {
+  const tools = listMcpTools();
+  const update = tools.find((tool) => tool.mcpTool === "vault_hosts_update");
+  const remove = tools.find((tool) => tool.mcpTool === "vault_hosts_delete");
+  assert.equal(update?.capabilityId, "vault.host.update");
+  assert.equal(update?.publicRpcMethod, "public/vault/hosts/update");
+  assert.ok(update?.inputShape.keyPath);
+  assert.ok(update?.inputShape.keypath);
+  assert.ok(update?.inputShape.savePassword);
+  assert.equal(remove?.capabilityId, "vault.host.delete");
+  assert.equal(remove?.publicRpcMethod, "public/vault/hosts/delete");
 });
 
 test("listMcpTools includes host_open for external MCP clients", () => {

@@ -85,7 +85,7 @@ const TOOL_INPUT_FIELDS = Object.freeze({
     hosts: {
       type: "string",
       description:
-        "JSON array of host objects you extracted from the user's text. Each object: hostname (required), label, port, username, password, group, tags (array or comma-separated string), notes (Host Details remarks — NOT Vault sidebar Notes), protocol (ssh|telnet|local).",
+        "JSON array of host objects you extracted from the user's text. Each object: hostname (required; host/ip aliases accepted), label (name alias accepted), port, username, password, keyPath or keypath (local private-key file path), group, tags (array or comma-separated string), notes (Host Details remarks — NOT Vault sidebar Notes), protocol (ssh|telnet|local).",
     },
     dryRun: {
       type: "string",
@@ -97,6 +97,27 @@ const TOOL_INPUT_FIELDS = Object.freeze({
       optional: true,
       description: "Set to false to create even when a matching host already exists (default true).",
     },
+  },
+  "vault.host.update": {
+    hostId: { type: "string", description: "Vault host ID from vault_hosts_list." },
+    label: { type: "string", optional: true, description: "New display name." },
+    name: { type: "string", optional: true, description: "Alias for label." },
+    hostname: { type: "string", optional: true, description: "New hostname or IP address." },
+    host: { type: "string", optional: true, description: "Alias for hostname." },
+    ip: { type: "string", optional: true, description: "Alias for hostname." },
+    port: { type: "number", optional: true, description: "New connection port (1-65535)." },
+    username: { type: "string", optional: true, description: "New login username. Clears any reusable identity binding so this value takes effect." },
+    password: { type: "string", optional: true, description: "New password without changing key-based login. Password identities are detached so the new value takes effect. Empty string clears it and blocks inherited saved passwords. Pair with keyPath set to an empty string to switch from key login to password login." },
+    savePassword: { type: "string", optional: true, description: "Set to true or false to enable or disable saved passwords. Pass true when setting a new password after clearing one." },
+    keyPath: { type: "string", optional: true, description: "Local private-key file path. Empty string clears and blocks an inherited path." },
+    keypath: { type: "string", optional: true, description: "Alias for keyPath." },
+    group: { type: "string", optional: true, description: "New group path. Empty string moves the host to the root." },
+    tags: { type: "string", optional: true, description: "JSON array or comma-separated tag names. Empty string clears tags." },
+    notes: { type: "string", optional: true, description: "Host Details remarks. Empty string clears notes." },
+    protocol: { type: "string", optional: true, description: "New protocol: ssh, telnet, or local." },
+  },
+  "vault.host.delete": {
+    hostId: { type: "string", description: "Vault host ID from vault_hosts_list." },
   },
   "vault.host.import": {
     format: {
@@ -302,7 +323,11 @@ const MODEL_DESCRIPTION_HINTS = Object.freeze({
   "vault.host.import":
     "Only for text in known export formats (PuTTY reg, MobaXterm ini, CSV template, SecureCRT, ssh_config). If attached host text is unknown or auto-detection fails, use read_attachment content, extract fields yourself, and call vault_hosts_create.",
   "vault.hosts.create":
-    "Use when the user wants to add/create a host in Vault → Hosts (创建主机、SSH 连接凭据). NOT for Vault → Notes sidebar docs. Put SSH password in password field; long remarks/admin tables in host notes field. Never fall back to vault_notes_create if this fails.",
+    "Use when the user wants to add/create a host in Vault → Hosts (创建主机、SSH 连接凭据). NOT for Vault → Notes sidebar docs. Put SSH password in password, or a local private-key file path in keyPath; put long remarks/admin tables in host notes. Never fall back to vault_notes_create if this fails.",
+  "vault.host.update":
+    "Update only fields the user requested. Use vault_hosts_list first to resolve hostId. Empty group, tags, notes, password, or keyPath values clear those fields.",
+  "vault.host.delete":
+    "Permanently deletes one saved host. Use vault_hosts_list first to resolve hostId and rely on the normal write approval flow before deleting.",
   "vault.note.create":
     "Use ONLY when the user wants markdown documentation in Vault → Notes sidebar (保险箱笔记). Do NOT use when the user asked to create/add a host — use vault_hosts_create instead.",
   "vault.note.update":
