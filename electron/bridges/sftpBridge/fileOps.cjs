@@ -527,6 +527,11 @@ function createFileOpsApi(ctx) {
       }
     
       try {
+        if (isScpModeClient(client)) {
+          // ssh2-sftp-client.end() may not tear down the SSH socket when sftp is null.
+          try { client.client?.end?.(); } catch { /* ignore */ }
+          try { client.client?.destroy?.(); } catch { /* ignore */ }
+        }
         await client.end();
       } catch (err) {
         console.warn("SFTP close failed", err);

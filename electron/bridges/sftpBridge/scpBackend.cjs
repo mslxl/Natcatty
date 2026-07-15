@@ -109,7 +109,7 @@ function createScpBackend(deps = {}) {
     assertSafeRemotePath(dir === "." ? "." : dir);
     let records;
     try {
-      const result = await runOrThrow(buildListCommand(dir), { allowNonZero: true, signal });
+      const result = await runOrThrow(buildListCommand(dir, encoding), { allowNonZero: true, signal });
       if (result.code === 0) {
         records = parseListRecords(result.stdout, encoding);
         if (records.length === 0 && (result.stdout || "").trim()) {
@@ -121,7 +121,7 @@ function createScpBackend(deps = {}) {
       records = null;
     }
     if (!records) {
-      const ls = await runOrThrow(buildListCommandLs(dir), { signal });
+      const ls = await runOrThrow(buildListCommandLs(dir, encoding), { signal });
       records = parseLsLaOutput(ls.stdout, { basePath: dir });
     }
     // Resolve symlink targets so UI can navigate directory links
@@ -185,46 +185,54 @@ function createScpBackend(deps = {}) {
 
   async function stat(remotePath, options = {}) {
     const signal = options.signal || null;
-    const result = await runOrThrow(buildStatCommand(remotePath), { signal });
+    const encoding = options.encoding || "utf-8";
+    const result = await runOrThrow(buildStatCommand(remotePath, encoding), { signal });
     return parseStatRecord(result.stdout);
   }
 
   async function mkdir(remotePath, options = {}) {
     const signal = options.signal || null;
-    await runOrThrow(buildMkdirCommand(remotePath, { recursive: options.recursive !== false }), { signal });
+    const encoding = options.encoding || "utf-8";
+    await runOrThrow(buildMkdirCommand(remotePath, {
+      recursive: options.recursive !== false,
+      encoding,
+    }), { signal });
     return true;
   }
 
   async function remove(remotePath, options = {}) {
     const signal = options.signal || null;
+    const encoding = options.encoding || "utf-8";
     let recursive = !!options.recursive;
     if (!recursive) {
       try {
-        const st = await stat(remotePath, { signal });
+        const st = await stat(remotePath, { signal, encoding });
         recursive = st.isDirectory;
       } catch {
         // best-effort delete
       }
     }
-    await runOrThrow(buildDeleteCommand(remotePath, { recursive }), { signal });
+    await runOrThrow(buildDeleteCommand(remotePath, { recursive, encoding }), { signal });
     return true;
   }
 
   async function rename(oldPath, newPath, options = {}) {
     const signal = options.signal || null;
-    await runOrThrow(buildRenameCommand(oldPath, newPath), { signal });
+    const encoding = options.encoding || "utf-8";
+    await runOrThrow(buildRenameCommand(oldPath, newPath, encoding), { signal });
     return true;
   }
 
   async function chmod(remotePath, mode, options = {}) {
     const signal = options.signal || null;
+    const encoding = options.encoding || "utf-8";
     let modeStr;
     if (typeof mode === "number") {
       modeStr = (mode & 0o7777).toString(8);
     } else {
       modeStr = String(mode);
     }
-    await runOrThrow(buildChmodCommand(remotePath, modeStr), { signal });
+    await runOrThrow(buildChmodCommand(remotePath, modeStr, encoding), { signal });
     return true;
   }
 
@@ -238,7 +246,8 @@ function createScpBackend(deps = {}) {
 
   async function realpath(remotePath, options = {}) {
     const signal = options.signal || null;
-    const result = await runOrThrow(buildRealpathCommand(remotePath || "."), { signal });
+    const encoding = options.encoding || "utf-8";
+    const result = await runOrThrow(buildRealpathCommand(remotePath || ".", encoding), { signal });
     const abs = (result.stdout || "").trim().split(/\r?\n/)[0];
     if (!abs) throw new ScpShellError("Could not resolve remote path");
     return abs;
@@ -299,8 +308,9 @@ function createScpBackend(deps = {}) {
       await mkdir(remoteParent, { recursive: true });
     }
 
-    const command = buildScpSinkCommand(remoteParent);
-    const stream = await execStream(command);
+    const encoding = options.encoding || "utf-8";
+    const command = buildScpSinkCommand(remoteParent, encoding);
+    const stream = await execStream(command, { signal: options.signal || transfer?.signal || null });
     const abort = () => {
       try { stream.close?.(); } catch { /* ignore */ }
       try { stream.destroy?.(); } catch { /* ignore */ }
@@ -388,8 +398,9 @@ function createScpBackend(deps = {}) {
       await mkdir(remoteParent, { recursive: true });
     }
 
-    const command = buildScpSinkCommand(remoteParent);
-    const stream = await execStream(command);
+    const encoding = options.encoding || "utf-8";
+    const command = buildScpSinkCommand(remoteParent, encoding);
+    const stream = await execStream(command, { signal: options.signal || transfer?.signal || null });
     const abort = () => {
       try { stream.close?.(); } catch { /* ignore */ }
       try { stream.destroy?.(); } catch { /* ignore */ }
@@ -462,10 +473,18 @@ function createScpBackend(deps = {}) {
     }
   }
 
-  async function downloadToWritable(remotePath, writable, { fileSize, transfer, onProgress }) {
+  async function downloadToWritable(remotePath, writable, {
+    fileSize,
+    transfer,
+    onProgress,
+    encoding = "utf-8",
+    signal = null,
+  } = {}) {
     assertSafeRemotePath(remotePath);
-    const command = buildScpSourceCommand(remotePath);
-    const stream = await execStream(command);
+    const command = buildScpSourceCommand(remotePath, encoding);
+    const stream = await execStream(command, {
+      signal: signal || transfer?.signal || null,
+    });
     const abort = () => {
       try { stream.close?.(); } catch { /* ignore */ }
       try { stream.destroy?.(); } catch { /* ignore */ }

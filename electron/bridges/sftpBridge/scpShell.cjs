@@ -50,17 +50,17 @@ function assertSafeRemotePath(remotePath) {
  * Build `scp -t` sink command (upload to remote directory parent).
  * Destination is the directory that will receive the file named in the C line.
  */
-function buildScpSinkCommand(remoteDir) {
+function buildScpSinkCommand(remoteDir, encoding = "utf-8") {
   const dir = assertSafeRemotePath(remoteDir || ".");
-  return `scp -t -- ${shellQuote(dir)}`;
+  return `scp -t -- ${shellQuotePath(dir, encoding)}`;
 }
 
 /**
  * Build `scp -f` source command (download from remote path).
  */
-function buildScpSourceCommand(remotePath) {
+function buildScpSourceCommand(remotePath, encoding = "utf-8") {
   const p = assertSafeRemotePath(remotePath);
-  return `scp -f -- ${shellQuote(p)}`;
+  return `scp -f -- ${shellQuotePath(p, encoding)}`;
 }
 
 /**
@@ -71,9 +71,9 @@ function buildScpSourceCommand(remotePath) {
  *
  * Uses a POSIX-oriented shell loop; avoids GNU-only find -printf.
  */
-function buildListCommand(remotePath) {
+function buildListCommand(remotePath, encoding = "utf-8") {
   const p = assertSafeRemotePath(remotePath);
-  const q = shellQuote(p);
+  const q = shellQuotePath(p, encoding);
   // Join the for-loop body with newlines so we never emit invalid `do;` (`;`
   // after `do` is a syntax error on POSIX sh and would force the ls -la fallback).
   const loop = [
@@ -102,14 +102,15 @@ function buildListCommand(remotePath) {
  * Simpler listing using `ls -la` as a fallback parse path (for tests / remotes
  * where the loop above is too heavy). Primary runtime still prefers buildListCommand.
  */
-function buildListCommandLs(remotePath) {
+function buildListCommandLs(remotePath, encoding = "utf-8") {
   const p = assertSafeRemotePath(remotePath);
-  return `LC_ALL=C ls -la -- ${shellQuote(p)} 2>/dev/null || LC_ALL=C ls -la ${shellQuote(p)}`;
+  const q = shellQuotePath(p, encoding);
+  return `LC_ALL=C ls -la -- ${q} 2>/dev/null || LC_ALL=C ls -la ${q}`;
 }
 
-function buildStatCommand(remotePath) {
+function buildStatCommand(remotePath, encoding = "utf-8") {
   const p = assertSafeRemotePath(remotePath);
-  const q = shellQuote(p);
+  const q = shellQuotePath(p, encoding);
   // Emit: T|MODE_OCT|SIZE|MTIME|ABS
   return [
     `p=${q}`,
@@ -125,44 +126,46 @@ function buildStatCommand(remotePath) {
   ].join("; ");
 }
 
-function buildMkdirCommand(remotePath, { recursive = true } = {}) {
+function buildMkdirCommand(remotePath, { recursive = true, encoding = "utf-8" } = {}) {
   const p = assertSafeRemotePath(remotePath);
+  const q = shellQuotePath(p, encoding);
   return recursive
-    ? `mkdir -p -- ${shellQuote(p)}`
-    : `mkdir -- ${shellQuote(p)}`;
+    ? `mkdir -p -- ${q}`
+    : `mkdir -- ${q}`;
 }
 
-function buildDeleteCommand(remotePath, { recursive = false } = {}) {
+function buildDeleteCommand(remotePath, { recursive = false, encoding = "utf-8" } = {}) {
   const p = assertSafeRemotePath(remotePath);
+  const q = shellQuotePath(p, encoding);
   if (recursive) {
-    return `rm -rf -- ${shellQuote(p)}`;
+    return `rm -rf -- ${q}`;
   }
-  return `rm -f -- ${shellQuote(p)} 2>/dev/null || rmdir -- ${shellQuote(p)}`;
+  return `rm -f -- ${q} 2>/dev/null || rmdir -- ${q}`;
 }
 
-function buildRenameCommand(oldPath, newPath) {
-  const a = assertSafeRemotePath(oldPath);
-  const b = assertSafeRemotePath(newPath);
-  return `mv -- ${shellQuote(a)} ${shellQuote(b)}`;
+function buildRenameCommand(oldPath, newPath, encoding = "utf-8") {
+  const a = shellQuotePath(assertSafeRemotePath(oldPath), encoding);
+  const b = shellQuotePath(assertSafeRemotePath(newPath), encoding);
+  return `mv -- ${a} ${b}`;
 }
 
-function buildChmodCommand(remotePath, modeOctal) {
+function buildChmodCommand(remotePath, modeOctal, encoding = "utf-8") {
   const p = assertSafeRemotePath(remotePath);
   const mode = String(modeOctal);
   if (!/^[0-7]{3,4}$/.test(mode)) {
     throw new ScpShellError(`Invalid chmod mode: ${mode}`);
   }
   // Mode is validated digits-only; path is shell-quoted.
-  return `chmod ${mode} -- ${shellQuote(p)}`;
+  return `chmod ${mode} -- ${shellQuotePath(p, encoding)}`;
 }
 
 function buildHomeCommand() {
   return 'printf "%s\\n" "$HOME"';
 }
 
-function buildRealpathCommand(remotePath) {
+function buildRealpathCommand(remotePath, encoding = "utf-8") {
   const p = assertSafeRemotePath(remotePath);
-  const q = shellQuote(p);
+  const q = shellQuotePath(p, encoding);
   return (
     `realpath -- ${q} 2>/dev/null || ` +
     `readlink -f -- ${q} 2>/dev/null || ` +

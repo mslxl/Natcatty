@@ -806,7 +806,9 @@ async function openSftpForSession(_event, payload) {
     if (fileProtocol === "scp") {
       client.__netcattyFileProtocol = "scp";
       client.sftp = null;
-      await getScpBackendForClient(client).homeDir().catch(() => {});
+      await getScpBackendForClient(client).homeDir({
+        signal: payload?.abortSignal || null,
+      }).catch(() => {});
       throwIfAborted(payload?.abortSignal);
       copySftpEncodingState(payload?.encodingStateKey, sftpId);
       sftpClients.set(sftpId, client);
@@ -828,7 +830,9 @@ async function openSftpForSession(_event, payload) {
       );
       client.__netcattyFileProtocol = "scp";
       client.sftp = null;
-      await getScpBackendForClient(client).homeDir().catch(() => {});
+      await getScpBackendForClient(client).homeDir({
+        signal: payload?.abortSignal || null,
+      }).catch(() => {});
       throwIfAborted(payload?.abortSignal);
       copySftpEncodingState(payload?.encodingStateKey, sftpId);
       sftpClients.set(sftpId, client);

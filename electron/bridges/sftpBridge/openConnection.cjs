@@ -9,26 +9,54 @@ function createOpenConnectionApi(ctx) {
     /**
      * Mark a session client as SCP-mode and optionally probe shell access.
      */
-    async function activateScpMode(client, { probe = true } = {}) {
+    async function activateScpMode(client, { probe = true, signal = null } = {}) {
       client.__netcattyFileProtocol = "scp";
       client.sftp = null;
+      // Ensure closeSftp can tear down the SSH socket even when sftp is null.
+      if (typeof client.end === "function" && !client.__netcattyScpEndWrapped) {
+        const prevEnd = client.end.bind(client);
+        client.end = async (...args) => {
+          try { client.client?.end?.(); } catch { /* ignore */ }
+          try { client.client?.destroy?.(); } catch { /* ignore */ }
+          return prevEnd(...args);
+        };
+        client.__netcattyScpEndWrapped = true;
+      }
       if (probe) {
         const backend = getScpBackendForClient(client);
         // Cheap probe: home dir resolves via shell exec
-        await backend.homeDir().catch(async () => {
+        await backend.homeDir({ signal }).catch(async () => {
           // Some minimal environments still support scp/list without $HOME — try pwd
           const sshClient = client.client;
           if (!sshClient?.exec) throw new Error("SCP mode requires SSH exec");
           await new Promise((resolve, reject) => {
+            if (signal?.aborted) {
+              reject(new Error("Transfer cancelled"));
+              return;
+            }
+            let streamRef = null;
+            const onAbort = () => {
+              try { streamRef?.close?.(); } catch { /* ignore */ }
+              reject(new Error("Transfer cancelled"));
+            };
+            if (signal) signal.addEventListener("abort", onAbort, { once: true });
             sshClient.exec("pwd", (err, stream) => {
-              if (err) return reject(err);
+              if (err) {
+                if (signal) signal.removeEventListener("abort", onAbort);
+                return reject(err);
+              }
+              streamRef = stream;
               let out = "";
               stream.on("data", (d) => { out += d.toString(); });
               stream.on("close", (code) => {
+                if (signal) signal.removeEventListener("abort", onAbort);
                 if (code === 0 && out.trim()) resolve();
                 else reject(new Error("SCP mode shell probe failed"));
               });
-              stream.on("error", reject);
+              stream.on("error", (streamErr) => {
+                if (signal) signal.removeEventListener("abort", onAbort);
+                reject(streamErr);
+              });
             });
           });
         });
