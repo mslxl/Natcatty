@@ -402,7 +402,13 @@ function App({ settings }: { settings: SettingsState }) {
   }, [createSessionFromCloneSource, isVaultInitialized, pendingNewWindowSession]);
 
   // Get port forwarding rules and import function
-  const { rules: portForwardingRules, importRules: importPortForwardingRules, startTunnel, stopTunnel } = usePortForwardingState();
+  const {
+    rules: portForwardingRules,
+    importRules: importPortForwardingRules,
+    startTunnel,
+    stopTunnel,
+    stopRuleTunnels,
+  } = usePortForwardingState();
 
   // App-level External MCP session sync (before TerminalLayer lazy-mount).
   useExternalMcpSessionSync({
@@ -1069,6 +1075,7 @@ function App({ settings }: { settings: SettingsState }) {
     updateNotes,
     startTunnel,
     stopTunnel,
+    stopRuleTunnels,
     openHost: openHostForVaultAgent,
   });
 

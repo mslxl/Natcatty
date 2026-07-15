@@ -61,6 +61,7 @@ function createDeps(
     },
     startTunnel: async () => ({ success: true }),
     stopTunnel: async () => ({ success: true }),
+    stopRuleTunnels: async () => ({ success: true }),
     openHost: (hostId) => {
       const host = hosts.find((entry) => entry.id === hostId);
       if (!host) return { ok: false, error: `Host "${hostId}" was not found.` };
@@ -653,7 +654,7 @@ describe('handleVaultAgentOp vault management gaps', () => {
     const deps = createDeps({
       hosts: [host],
       portForwardingRules: [rule],
-      stopTunnel: async () => {
+      stopRuleTunnels: async () => {
         stopCalls += 1;
         return { success: true };
       },
@@ -670,6 +671,31 @@ describe('handleVaultAgentOp vault management gaps', () => {
     assert.equal(deps.getPortForwardingRules()[0]?.status, 'inactive');
   });
 
+  it('cleans up backend tunnels before editing an inactive forwarding rule', async () => {
+    const rule: PortForwardingRule = {
+      id: 'rule-1', label: 'Web', type: 'local', localPort: 8080,
+      bindAddress: '127.0.0.1', remoteHost: '127.0.0.1', remotePort: 80,
+      hostId: host.id, status: 'inactive', createdAt: 1,
+    };
+    let cleanupCalls = 0;
+    const deps = createDeps({
+      hosts: [host],
+      portForwardingRules: [rule],
+      stopRuleTunnels: async () => {
+        cleanupCalls += 1;
+        return { success: true };
+      },
+    });
+
+    const result = await handleVaultAgentOp('portforward.rules.update', {
+      ruleId: rule.id,
+      localPort: 8081,
+    }, deps);
+
+    assert.equal(result.ok, true);
+    assert.equal(cleanupCalls, 1);
+  });
+
   it('keeps a running forwarding rule unchanged when stopping its old tunnel fails', async () => {
     const rule: PortForwardingRule = {
       id: 'rule-1', label: 'Web', type: 'local', localPort: 8080,
@@ -679,7 +705,7 @@ describe('handleVaultAgentOp vault management gaps', () => {
     const deps = createDeps({
       hosts: [host],
       portForwardingRules: [rule],
-      stopTunnel: async () => ({ success: false, error: 'stop failed' }),
+      stopRuleTunnels: async () => ({ success: false, error: 'stop failed' }),
     });
 
     const result = await handleVaultAgentOp('portforward.rules.update', {

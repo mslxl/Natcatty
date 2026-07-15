@@ -182,35 +182,52 @@ export const getActiveRuleIds = (): string[] => {
     .map(([ruleId]) => ruleId);
 };
 
-/**
- * Stop and clean up a single rule's tunnel.
- * Used when a rule is deleted or replaced via import, where we need to ensure
- * the backend tunnel is torn down and all reconnect timers are cancelled.
- * This is a fire-and-forget cleanup — errors are logged but not propagated.
- */
-export const stopAndCleanupRule = (ruleId: string): void => {
+/** Stop every tunnel for a rule and cancel reconnects in every window. */
+export const stopAndCleanupRuleAndWait = async (
+  ruleId: string,
+): Promise<{ success: boolean; error?: string }> => {
   clearReconnectTimer(ruleId);
-
-  // Broadcast to other windows so they cancel any pending reconnect
-  // timers for this rule (e.g. main window has a reconnect scheduled
-  // but settings window just deleted the rule).
-  broadcastReconnectCancel(ruleId);
-
   const conn = activeConnections.get(ruleId);
-  if (conn) {
-    // Unsubscribe from status events
+  const finishLocalCleanup = () => {
+    if (!conn) return;
     conn.unsubscribe?.();
     activeConnections.delete(ruleId);
-  }
+  };
+  const finishAllCleanup = () => {
+    finishLocalCleanup();
+    broadcastReconnectCancel(ruleId);
+  };
 
   // Use stopPortForwardByRuleId so every tunnel for this rule is marked
   // cancelled before its sockets are closed.
   const bridge = netcattyBridge.get();
   if (bridge?.stopPortForwardByRuleId) {
-    bridge.stopPortForwardByRuleId(ruleId).catch((err: unknown) => {
+    try {
+      await bridge.stopPortForwardByRuleId(ruleId);
+      finishAllCleanup();
+      return { success: true };
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
       logger.warn(`[PortForwardingService] Backend stopByRuleId failed for ${ruleId}:`, err);
-    });
+      return { success: false, error };
+    }
   }
+  if (conn && bridge?.stopPortForward) {
+    try {
+      const result = await bridge.stopPortForward(conn.tunnelId);
+      if (result.success) finishAllCleanup();
+      return result;
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+  finishAllCleanup();
+  return { success: true };
+};
+
+/** Fire-and-forget compatibility wrapper for imports and local UI actions. */
+export const stopAndCleanupRule = (ruleId: string): void => {
+  void stopAndCleanupRuleAndWait(ruleId);
 };
 
 // Tunnel ID prefix and UUID regex pattern for parsing

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { Host, PortForwardingRule, SSHKey } from "../../domain/models.ts";
-import { startPortForward } from "./portForwardingService.ts";
+import { startPortForward, stopAndCleanupRuleAndWait } from "./portForwardingService.ts";
 
 const host = (overrides: Partial<Host> = {}): Host => ({
   id: "host-1",
@@ -47,6 +47,44 @@ const installBridgeStub = () => {
     getOptions: () => capturedOptions,
   };
 };
+
+test("stopAndCleanupRuleAndWait stops backend tunnels without a renderer connection", async () => {
+  let stoppedRuleId: string | undefined;
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      netcatty: {
+        stopPortForwardByRuleId: async (ruleId: string) => {
+          stoppedRuleId = ruleId;
+          return { stopped: 1 };
+        },
+      },
+    },
+  });
+
+  const result = await stopAndCleanupRuleAndWait("backend-only-rule");
+
+  assert.equal(result.success, true);
+  assert.equal(stoppedRuleId, "backend-only-rule");
+});
+
+test("stopAndCleanupRuleAndWait reports backend stop failures", async () => {
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      netcatty: {
+        stopPortForwardByRuleId: async () => {
+          throw new Error("backend stop failed");
+        },
+      },
+    },
+  });
+
+  const result = await stopAndCleanupRuleAndWait("failing-rule");
+
+  assert.equal(result.success, false);
+  assert.match(result.error ?? "", /backend stop failed/);
+});
 
 test("startPortForward forwards system agent settings", async () => {
   const bridge = installBridgeStub();

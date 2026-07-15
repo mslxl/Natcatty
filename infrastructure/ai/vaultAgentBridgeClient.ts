@@ -382,6 +382,7 @@ export interface VaultAgentApiDeps {
     ruleId: string,
     onStatusChange?: (status: PortForwardingRule['status']) => void,
   ) => Promise<{ success: boolean; error?: string }>;
+  stopRuleTunnels: (ruleId: string) => Promise<{ success: boolean; error?: string }>;
   /**
    * Open a vault host as a terminal tab (same path as tray / host list click).
    * Must return the new sessionId so MCP can target terminal tools.
@@ -1041,10 +1042,9 @@ export async function handleVaultAgentOp(
       if (!result.ok) return result;
       if (
         existingRule
-        && existingRule.status !== 'inactive'
         && hasPortForwardingConnectionChanged(existingRule, result.value.rule)
       ) {
-        const stopped = await deps.stopTunnel(ruleId);
+        const stopped = await deps.stopRuleTunnels(ruleId);
         if (!stopped.success) {
           return { ok: false, error: stopped.error || 'Failed to stop port forwarding tunnel.' };
         }
@@ -1065,10 +1065,8 @@ export async function handleVaultAgentOp(
       const ruleId = String(params.ruleId || '');
       const rule = deps.getPortForwardingRules().find((entry) => entry.id === ruleId);
       if (!rule) return { ok: false, error: `Port forwarding rule "${ruleId}" was not found.` };
-      if (rule.status !== 'inactive') {
-        const stopped = await deps.stopTunnel(ruleId);
-        if (!stopped.success) return { ok: false, error: stopped.error || 'Failed to stop port forwarding tunnel.' };
-      }
+      const stopped = await deps.stopRuleTunnels(ruleId);
+      if (!stopped.success) return { ok: false, error: stopped.error || 'Failed to stop port forwarding tunnel.' };
       deps.updatePortForwardingRules(deps.getPortForwardingRules().filter((entry) => entry.id !== ruleId));
       return { ok: true, ruleId };
     }
@@ -1104,7 +1102,7 @@ export async function handleVaultAgentOp(
     }
     case 'portforward.stop': {
       const ruleId = String(params.ruleId || '');
-      const result = await deps.stopTunnel(ruleId);
+      const result = await deps.stopRuleTunnels(ruleId);
       if (!result.success) {
         return { ok: false, error: result.error || 'Failed to stop port forwarding tunnel.' };
       }
