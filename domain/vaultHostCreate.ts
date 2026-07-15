@@ -377,8 +377,10 @@ export function applyVaultHostUpdate(
       updated.port = defaultPortForProtocol(nextProtocol);
     }
     updated.protocol = nextProtocol;
-    updated.moshEnabled = false;
-    updated.etEnabled = false;
+    if (nextProtocol !== 'ssh') {
+      updated.moshEnabled = false;
+      updated.etEnabled = false;
+    }
   }
 
   if (identityId.provided) {
@@ -523,9 +525,16 @@ export function applyVaultHostUpdate(
       ...(lineMode !== undefined ? { lineMode } : {}),
       ...(backspaceBehavior !== undefined ? { backspaceBehavior: backspaceBehavior as 'default' | 'ctrl-h' } : {}),
     };
-    if (updated.protocol === 'serial') updated.hostname = path;
   }
   if (updated.protocol === 'serial' && updated.serialConfig) {
+    if (serialConfig.provided && hostname.provided && updated.hostname !== updated.serialConfig.path) {
+      return { ok: false, error: 'hostname and serialConfig.path must match for serial hosts.' };
+    }
+    if (hostname.provided && !serialConfig.provided) {
+      updated.serialConfig = { ...updated.serialConfig, path: updated.hostname };
+    } else {
+      updated.hostname = updated.serialConfig.path;
+    }
     updated.port = updated.serialConfig.baudRate;
   }
   if (
@@ -538,6 +547,16 @@ export function applyVaultHostUpdate(
   }
 
   const effectiveBeforeSavePassword = options.resolveEffectiveHost?.(updated) ?? updated;
+  if (effectiveBeforeSavePassword.moshEnabled && effectiveBeforeSavePassword.etEnabled) {
+    return { ok: false, error: 'Mosh and ET cannot both be enabled.' };
+  }
+  if (
+    effectiveBeforeSavePassword.protocol !== undefined
+    && effectiveBeforeSavePassword.protocol !== 'ssh'
+    && (effectiveBeforeSavePassword.moshEnabled || effectiveBeforeSavePassword.etEnabled)
+  ) {
+    return { ok: false, error: 'Mosh and ET require the SSH protocol.' };
+  }
 
   if (savePassword.provided) {
     const nextSavePassword = parseBoolean(savePassword.value);

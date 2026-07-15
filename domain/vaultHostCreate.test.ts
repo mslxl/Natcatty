@@ -614,6 +614,69 @@ test('applyVaultHostUpdate keeps Mosh and ET mutually exclusive and clears them 
   assert.equal(switchedToTelnet.updatedHost.etEnabled, false);
 });
 
+test('applyVaultHostUpdate preserves repeated SSH mode and synchronizes serial paths both ways', () => {
+  const moshHost: Host = {
+    id: 'mosh-1', label: 'mosh', hostname: 'host.example.com', username: 'root',
+    protocol: 'ssh', moshEnabled: true, tags: [], os: 'linux',
+  };
+  const repeatedSsh = applyVaultHostUpdate([moshHost], [], moshHost.id, {
+    protocol: 'ssh', label: 'renamed',
+  });
+  assert.equal(repeatedSsh.ok, true);
+  if (!repeatedSsh.ok) return;
+  assert.equal(repeatedSsh.updatedHost.moshEnabled, true);
+
+  const serialHost: Host = {
+    id: 'serial-1', label: 'serial', hostname: '/dev/ttyUSB0', username: '',
+    protocol: 'serial', port: 9600, serialConfig: { path: '/dev/ttyUSB0', baudRate: 9600 },
+    tags: [], os: 'linux',
+  };
+  const updatedPath = applyVaultHostUpdate([serialHost], [], serialHost.id, {
+    hostname: '/dev/ttyUSB1',
+  });
+  assert.equal(updatedPath.ok, true);
+  if (!updatedPath.ok) return;
+  assert.equal(updatedPath.updatedHost.hostname, '/dev/ttyUSB1');
+  assert.equal(updatedPath.updatedHost.serialConfig?.path, '/dev/ttyUSB1');
+
+  const conflictingPaths = applyVaultHostUpdate([serialHost], [], serialHost.id, {
+    hostname: '/dev/ttyUSB1',
+    serialConfig: { path: '/dev/ttyUSB2', baudRate: 9600 },
+  });
+  assert.equal(conflictingPaths.ok, false);
+  if (!conflictingPaths.ok) assert.match(conflictingPaths.error, /must match/i);
+
+  const retainedSerialSettings: Host = {
+    ...serialHost,
+    protocol: 'ssh',
+    hostname: 'server.example.com',
+  };
+  const switchedBackToSerial = applyVaultHostUpdate(
+    [retainedSerialSettings], [], retainedSerialSettings.id, { protocol: 'serial' },
+  );
+  assert.equal(switchedBackToSerial.ok, true);
+  if (!switchedBackToSerial.ok) return;
+  assert.equal(switchedBackToSerial.updatedHost.hostname, '/dev/ttyUSB0');
+});
+
+test('applyVaultHostUpdate validates Mosh and ET against inherited connection settings', () => {
+  const host: Host = {
+    id: 'host-1', label: 'host', hostname: 'host.example.com', username: 'root',
+    group: 'inherited', tags: [], os: 'linux',
+  };
+  const inheritedTelnet = applyVaultHostUpdate([host], [], host.id, { moshEnabled: true }, {
+    resolveEffectiveHost: (candidate) => ({ ...candidate, protocol: 'telnet' }),
+  });
+  assert.equal(inheritedTelnet.ok, false);
+  if (!inheritedTelnet.ok) assert.match(inheritedTelnet.error, /require the SSH protocol/i);
+
+  const inheritedEt = applyVaultHostUpdate([host], [], host.id, { moshEnabled: true }, {
+    resolveEffectiveHost: (candidate) => ({ ...candidate, etEnabled: true }),
+  });
+  assert.equal(inheritedEt.ok, false);
+  if (!inheritedEt.ok) assert.match(inheritedEt.error, /cannot both be enabled/i);
+});
+
 test('applyVaultHostUpdate preserves serial Backspace override semantics', () => {
   for (const backspaceBehavior of ['ctrl-h', 'default', undefined] as const) {
     const host: Host = {

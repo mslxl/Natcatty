@@ -241,6 +241,30 @@ export function upsertGroup(
     hosts: state.hosts.map((host) => host.group ? { ...host, group: rename(host.group) } : host),
     managedSources: state.managedSources.map((source) => ({ ...source, groupName: rename(source.groupName) })),
   };
+  const invalidGroupTransport = groups.find((groupPath) => {
+    const effective = resolveGroupDefaults(groupPath, configs);
+    return (effective.moshEnabled && effective.etEnabled) || (
+      effective.protocol !== undefined
+      && effective.protocol !== 'ssh'
+      && (effective.moshEnabled || effective.etEnabled)
+    );
+  });
+  if (invalidGroupTransport) {
+    return { ok: false, error: `Group "${invalidGroupTransport}" has incompatible Mosh, ET, or protocol defaults.` };
+  }
+  const invalidHostTransport = nextState.hosts.find((host) => {
+    const effective = host.group
+      ? applyGroupDefaults(host, resolveGroupDefaults(host.group, configs))
+      : host;
+    return (effective.moshEnabled && effective.etEnabled) || (
+      effective.protocol !== undefined
+      && effective.protocol !== 'ssh'
+      && (effective.moshEnabled || effective.etEnabled)
+    );
+  });
+  if (invalidHostTransport) {
+    return { ok: false, error: `Host "${invalidHostTransport.id}" has incompatible inherited Mosh, ET, or protocol settings.` };
+  }
   const regressedJumpHostId = findReferencedJumpHostProtocolRegression(state, nextState);
   if (regressedJumpHostId) {
     return { ok: false, error: `Host "${regressedJumpHostId}" is still used as a group jump host and must keep an SSH connection type.` };

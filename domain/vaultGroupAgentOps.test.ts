@@ -54,6 +54,24 @@ describe('vaultGroupAgentOps', () => {
     assert.equal(inheritedResult.ok, false);
   });
 
+  it('rejects Mosh and ET defaults that conflict with inherited group settings', () => {
+    const inheritedEt = upsertGroup({
+      groups: ['prod', 'prod/child'],
+      configs: [{ path: 'prod', etEnabled: true }],
+      hosts: [],
+      managedSources: [],
+    }, 'prod/child', { moshEnabled: true }, [], proxyProfiles);
+    assert.equal(inheritedEt.ok, false);
+
+    const inheritedTelnet = upsertGroup({
+      groups: ['prod', 'prod/child'],
+      configs: [{ path: 'prod', protocol: 'telnet' }],
+      hosts: [],
+      managedSources: [],
+    }, 'prod/child', { moshEnabled: true }, [], proxyProfiles);
+    assert.equal(inheritedTelnet.ok, false);
+  });
+
   it('validates jump hosts against their destination group after a rename', () => {
     const jump: Host = {
       id: 'moving-jump', label: 'Moving jump', hostname: 'jump.test', username: 'root',
