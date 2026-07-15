@@ -60,6 +60,7 @@ function createExecHandlerTestContext({ sessions, backgroundJobs }) {
     BACKGROUND_JOB_RETENTION_MS: 10 * 60 * 1000,
     DEFAULT_BACKGROUND_JOB_POLL_INTERVAL_MS: 30 * 1000,
     MAX_BACKGROUND_JOB_OUTPUT_CHARS: 256 * 1024,
+    SESSION_CLOSE_CLEANUP_TIMEOUT_MS: 20,
     DEFAULT_BACKGROUND_JOB_TIMEOUT_MS: 60 * 60 * 1000,
     commandTimeoutMs: 5000,
     activeSftpOpSeq: 0,
@@ -103,6 +104,21 @@ test("SFTP cancellation targets one terminal session and waits for cleanup", asy
 
   assert.deepEqual(events, ["session-1-other-scope-clean", "session-1-clean"]);
   assert.equal(ctx.activeSessionSftpOps.size, 1);
+});
+
+test("terminal close does not hang on stalled SFTP cleanup", async () => {
+  const ctx = createExecHandlerTestContext({ sessions: new Map(), backgroundJobs: new Map() });
+  ctx.activeSessionSftpOps.set("sftp-stalled", {
+    chatSessionId: "chat-1",
+    sessionId: "session-1",
+    cancel: () => new Promise(() => {}),
+  });
+
+  const startedAt = Date.now();
+  await ctx.cancelSftpOpsForTerminalSession("session-1");
+
+  assert.ok(Date.now() - startedAt < 200, "session close cleanup should be bounded");
+  assert.equal(ctx.activeSessionSftpOps.size, 0);
 });
 
 test("SFTP operations that start while a terminal is closing are cancelled immediately", () => {

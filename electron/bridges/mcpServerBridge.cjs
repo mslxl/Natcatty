@@ -130,6 +130,7 @@ const DEFAULT_BACKGROUND_JOB_TIMEOUT_MS = 60 * 60 * 1000;
 const DEFAULT_BACKGROUND_JOB_POLL_INTERVAL_MS = 30 * 1000;
 const BACKGROUND_JOB_RETENTION_MS = 10 * 60 * 1000;
 const MAX_BACKGROUND_JOB_OUTPUT_CHARS = 256 * 1024;
+const SESSION_CLOSE_CLEANUP_TIMEOUT_MS = 5000;
 let activeSftpOpSeq = 0;
 
 // ── Approval gate (for confirm mode with SDK/MCP agents) ──
@@ -294,6 +295,7 @@ const backgroundJobApi = createBackgroundJobApi({
   set activeSftpOpSeq(value) { activeSftpOpSeq = value; },
   backgroundJobs, activeSessionSftpOps, activeSessionExecutions, closingTerminalSessions, crypto,
   BACKGROUND_JOB_RETENTION_MS, DEFAULT_BACKGROUND_JOB_POLL_INTERVAL_MS, MAX_BACKGROUND_JOB_OUTPUT_CHARS,
+  SESSION_CLOSE_CLEANUP_TIMEOUT_MS,
   debugLog, sftpBridge,
 });
 const {

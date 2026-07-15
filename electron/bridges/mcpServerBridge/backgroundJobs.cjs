@@ -1,6 +1,20 @@
 /* eslint-disable no-undef */
 function createBackgroundJobApi(ctx) {
   with (ctx) {
+    async function waitForSessionCloseCleanup(pending) {
+      if (!pending.length) return;
+      const allSettled = Promise.allSettled(pending);
+      const timeoutMs = Number.isFinite(SESSION_CLOSE_CLEANUP_TIMEOUT_MS)
+        ? Math.max(1, SESSION_CLOSE_CLEANUP_TIMEOUT_MS)
+        : 5000;
+      let timer = null;
+      const timeout = new Promise((resolve) => {
+        timer = setTimeout(resolve, timeoutMs);
+      });
+      await Promise.race([allSettled, timeout]);
+      if (timer) clearTimeout(timer);
+    }
+
     function createBackgroundJobId() {
       return `job_${Date.now().toString(36)}_${crypto.randomBytes(6).toString("hex")}`;
     }
@@ -46,7 +60,7 @@ function createBackgroundJobApi(ctx) {
         matchingJobs.push([jobId, job]);
         if (job.handle?.resultPromise) pending.push(job.handle.resultPromise);
       }
-      if (pending.length) await Promise.allSettled(pending);
+      await waitForSessionCloseCleanup(pending);
       for (const [jobId] of matchingJobs) backgroundJobs.delete(jobId);
       activeSessionExecutions.delete(sessionId);
     }
@@ -99,7 +113,7 @@ function createBackgroundJobApi(ctx) {
           // Ignore cancellation failures for already-closed SFTP handles.
         }
       }
-      if (pending.length) await Promise.allSettled(pending);
+      await waitForSessionCloseCleanup(pending);
     }
 
     function beginTerminalSessionClose(sessionId) {
