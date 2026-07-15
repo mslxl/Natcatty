@@ -719,6 +719,39 @@ describe('handleVaultAgentOp vault management gaps', () => {
     assert.equal(deps.getPortForwardingRules().find((entry) => entry.id === concurrentRule.id)?.label, 'Database');
   });
 
+  it('reports a stopped rule as inactive when the same connection was saved concurrently', async () => {
+    const rule: PortForwardingRule = {
+      id: 'rule-1', label: 'Web', type: 'local', localPort: 8080,
+      bindAddress: '127.0.0.1', remoteHost: '127.0.0.1', remotePort: 80,
+      hostId: host.id, status: 'active', createdAt: 1,
+    };
+    let deps: VaultAgentApiDeps;
+    deps = createDeps({
+      hosts: [host],
+      portForwardingRules: [rule],
+      stopRuleTunnels: async () => {
+        deps.updatePortForwardingRules([{
+          ...rule,
+          localPort: 8081,
+          status: 'active',
+          error: 'stale error',
+        }]);
+        return { success: true };
+      },
+    });
+
+    const result = await handleVaultAgentOp('portforward.rules.update', {
+      ruleId: rule.id,
+      localPort: 8081,
+    }, deps);
+
+    assert.equal(result.ok, true);
+    assert.equal((result as { rule?: { status?: string; error?: string } }).rule?.status, 'inactive');
+    assert.equal((result as { rule?: { status?: string; error?: string } }).rule?.error, undefined);
+    assert.equal(deps.getPortForwardingRules()[0]?.status, 'inactive');
+    assert.equal(deps.getPortForwardingRules()[0]?.error, undefined);
+  });
+
   it('does not restore a forwarding rule deleted while its old tunnel is stopping', async () => {
     const rule: PortForwardingRule = {
       id: 'rule-1', label: 'Web', type: 'local', localPort: 8080,

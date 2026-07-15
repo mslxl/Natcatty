@@ -1071,6 +1071,18 @@ export async function handleVaultAgentOp(
           params,
         );
         if (!result.ok) return result;
+        const stoppedRule = {
+          ...result.value.rule,
+          status: 'inactive' as const,
+          error: undefined,
+        };
+        result = {
+          ok: true,
+          value: {
+            rules: result.value.rules.map((rule) => rule.id === ruleId ? stoppedRule : rule),
+            rule: stoppedRule,
+          },
+        };
       }
       deps.updatePortForwardingRules(result.value.rules);
       return { ok: true, rule: sanitizePortForwardRuleForAgent(result.value.rule) };
