@@ -21,8 +21,16 @@ function createFileOpsApi(ctx) {
           // Only upgrade to gb18030 on positive non-UTF-8 evidence; never demote
           // a previously resolved gb18030 session when a dir is ASCII-only.
           try {
-            const adapters = require("./scpBackend.cjs").createSshExecAdapters(client.client);
+            // Use tracked backend exec path (getScpBackendForClient wraps exec) so
+            // closeSftp can abort a hung auto-detect probe on shared sessions.
+            const tracked = getScpBackendForClient(client);
             const { buildListCommand, parseListRecords } = require("./scpShell.cjs");
+            // Access list via a private-ish path: run list with utf-8 first internally
+            // by exec through backend's run path — use list then re-detect from raw is heavy;
+            // call shell builders via client-tracked adapter stored on backend deps.
+            const adapters = client.__netcattyScpTrackedExec
+              ? { exec: client.__netcattyScpTrackedExec }
+              : require("./scpBackend.cjs").createSshExecAdapters(client.client);
             const raw = await adapters.exec(buildListCommand(basePath, "utf-8"), {
               signal: payload?.abortSignal || null,
             });
@@ -79,7 +87,10 @@ function createFileOpsApi(ctx) {
               }
             }
           } catch {
-            encoding = updateResolvedEncoding(payload.sftpId, "auto", "utf-8");
+            // Keep previously resolved encoding (e.g. gb18030); do not demote on probe failure.
+            if (encoding === "auto") {
+              encoding = "utf-8";
+            }
           }
         }
         return await backend.list(basePath, {

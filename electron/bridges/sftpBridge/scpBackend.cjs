@@ -538,6 +538,8 @@ function createScpBackend(deps = {}) {
       const finish = (err) => {
         if (settled) return;
         settled = true;
+        // Explicit untrack before removeAllListeners (which would drop once handlers).
+        try { stream.__netcattyUntrack?.(); } catch { /* ignore */ }
         stream.removeAllListeners();
         if (err) reject(err);
         else resolve();
@@ -894,9 +896,10 @@ function getScpBackendForClient(client) {
     const untrack = () => {
       try { client.__netcattyScpActiveStreams.delete(stream); } catch { /* ignore */ }
     };
-    stream.on?.("close", untrack);
-    stream.on?.("end", untrack);
-    stream.on?.("error", untrack);
+    stream.__netcattyUntrack = untrack;
+    stream.once?.("close", untrack);
+    stream.once?.("end", untrack);
+    stream.once?.("error", untrack);
     return stream;
   };
   // Wrap base.exec so shell list/stat/mkdir streams are also abortable on closeSftp.
@@ -954,6 +957,7 @@ function getScpBackendForClient(client) {
       return track(stream);
     },
   };
+  client.__netcattyScpTrackedExec = trackedExec;
   const backend = createScpBackend(adapters);
   client.__netcattyScpBackend = backend;
   return backend;
