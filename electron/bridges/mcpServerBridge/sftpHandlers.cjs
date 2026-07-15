@@ -22,15 +22,10 @@ function createSftpHandlerApi(ctx) {
       return !mainSessions?.get?.(params.sessionId);
     }
 
-    function requestWorkerSftp(channel, payload, options = {}) {
-      const manager = getWorkerManager();
-      if (!manager?.request) {
-        return Promise.reject(new Error("Terminal worker is unavailable"));
-      }
+    function waitForWorkerSftpRequest(requestPromise, options = {}) {
       const timeoutMs = Number.isFinite(options.timeoutMs) && options.timeoutMs > 0
         ? options.timeoutMs
         : 0;
-      const requestPromise = manager.request(channel, payload, {});
       if (!timeoutMs) return requestPromise;
 
       let timer = null;
@@ -44,6 +39,14 @@ function createSftpHandlerApi(ctx) {
       });
     }
 
+    function requestWorkerSftp(channel, payload, options = {}) {
+      const manager = getWorkerManager();
+      if (!manager?.request) {
+        return Promise.reject(new Error("Terminal worker is unavailable"));
+      }
+      return waitForWorkerSftpRequest(manager.request(channel, payload, {}), options);
+    }
+
     async function withWorkerSessionBackedSftp(params, workerChannel, options = {}) {
       if (!workerChannel) throw new Error("Worker SFTP channel is required");
       const chatSessionId = typeof params?.chatSessionId === "string" && params.chatSessionId ? params.chatSessionId : null;
@@ -51,10 +54,19 @@ function createSftpHandlerApi(ctx) {
       const timeoutMs = Number.isFinite(options.timeoutMs) && options.timeoutMs > 0 ? options.timeoutMs : 0;
       const operationName = options.operationName || "SFTP operation";
       let sftpId = null;
+      let pendingOpenPromise = null;
       let closePromise = null;
       let cancellationError = null;
 
-      const closeSftpHandle = () => {
+      const closeSftpHandle = async () => {
+        if (!sftpId && pendingOpenPromise) {
+          try {
+            const opened = await pendingOpenPromise;
+            sftpId = opened?.sftpId || null;
+          } catch {
+            // A failed open has no worker SFTP handle to close.
+          }
+        }
         if (!sftpId) return Promise.resolve();
         if (!closePromise) {
           closePromise = requestWorkerSftp("netcatty:sftp:close", { sftpId, encodingStateKey });
@@ -71,11 +83,13 @@ function createSftpHandlerApi(ctx) {
       });
 
       try {
-        const opened = await requestWorkerSftp("netcatty:sftp:openForSession", {
+        const manager = getWorkerManager();
+        pendingOpenPromise = manager.request("netcatty:sftp:openForSession", {
           sessionId: params.sessionId,
           encodingStateKey,
           timeoutMs,
-        }, { timeoutMs, operationName });
+        }, {});
+        const opened = await waitForWorkerSftpRequest(pendingOpenPromise, { timeoutMs, operationName });
         sftpId = opened?.sftpId;
         if (!sftpId) throw new Error("Failed to open session-backed SFTP handle");
         if (cancellationError) throw cancellationError;

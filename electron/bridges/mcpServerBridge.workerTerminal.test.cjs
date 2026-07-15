@@ -194,6 +194,50 @@ test("MCP/Catty SFTP tools proxy to worker when terminal sessions live in worker
   ]);
 });
 
+test("worker SFTP cancellation waits for a pending open and closes its late handle", async () => {
+  let resolveOpen;
+  const openPromise = new Promise((resolve) => {
+    resolveOpen = resolve;
+  });
+  const requests = [];
+  const bridge = loadFreshBridge();
+  bridge.init({
+    sessions: new Map(),
+    electronModule: null,
+    terminalWorkerManager: {
+      request(channel, payload, options) {
+        requests.push({ channel, payload, options });
+        if (channel === "netcatty:sftp:openForSession") return openPromise;
+        if (channel === "netcatty:sftp:close") return Promise.resolve({ ok: true });
+        return Promise.reject(new Error(`unexpected worker request: ${channel}`));
+      },
+    },
+  });
+  bridge.setPermissionMode("auto");
+  bridge.setCommandTimeout(23);
+  bridge.updateSessionMetadata([
+    { sessionId: "ssh-pending", hostname: "host.example", protocol: "ssh", connected: true },
+  ], "chat-pending");
+
+  const operation = bridge.dispatchBuiltinRpc("netcatty/sftp/list", {
+    sessionId: "ssh-pending",
+    path: "/var/log",
+    chatSessionId: "chat-pending",
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  const cancellation = bridge.cancelSftpOpsForSession("chat-pending");
+
+  resolveOpen({ ok: true, sftpId: "worker-sftp-late" });
+  await cancellation;
+  await assert.rejects(operation, /Cancelled/);
+
+  assert.deepEqual(requests.map((entry) => entry.channel), [
+    "netcatty:sftp:openForSession",
+    "netcatty:sftp:close",
+  ]);
+  assert.equal(requests[1].payload.sftpId, "worker-sftp-late");
+});
+
 test("MCP/Catty terminal_start, poll, and stop proxy worker background jobs", async () => {
   const requests = [];
   const bridge = loadFreshBridge();
