@@ -1009,6 +1009,7 @@ function createOpenConnectionApi(ctx) {
       const kiHandler = createKeyboardInteractiveHandler({
         sender: event.sender,
         sessionId: connId,
+        hostId: options.hostId,
         hostname: options.hostname,
         password: options.password,
         logPrefix: "[SFTP]",

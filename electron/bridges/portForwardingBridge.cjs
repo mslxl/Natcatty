@@ -417,6 +417,7 @@ async function startPortForward(event, payload) {
   conn.on("keyboard-interactive", createKeyboardInteractiveHandler({
     sender,
     sessionId: tunnelId,
+    hostId,
     hostname,
     password,
     logPrefix: "[PortForward]",
