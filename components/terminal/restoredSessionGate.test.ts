@@ -100,18 +100,30 @@ test("auto reconnect connected history ref is initialized after status state exi
 
 test("reconnect wakes a hibernated terminal before requiring a terminal instance", () => {
   const source = readFileSync(new URL("../Terminal.tsx", import.meta.url), "utf8");
+  const wakeGuardRefIndex = source.indexOf("const reconnectWakeInFlightRef = useRef(false)");
   const reconnectIndex = source.indexOf("const startReconnect = ");
   const hibernatedBranchIndex = source.indexOf('!termRef.current && hibernatedRef.current', reconnectIndex);
+  const duplicateWakeGuardIndex = source.indexOf("if (reconnectWakeInFlightRef.current) return", hibernatedBranchIndex);
+  const markWakeInFlightIndex = source.indexOf("reconnectWakeInFlightRef.current = true", duplicateWakeGuardIndex);
+  const connectingIndex = source.indexOf('updateStatus("connecting")', markWakeInFlightIndex);
   const wakeCallIndex = source.indexOf("wakeHibernatedRuntimeForReconnectRef.current", hibernatedBranchIndex);
   const missingTermReturnIndex = source.indexOf("if (!termRef.current) return;", reconnectIndex);
 
+  assert.notEqual(wakeGuardRefIndex, -1);
   assert.notEqual(reconnectIndex, -1);
   assert.notEqual(hibernatedBranchIndex, -1);
+  assert.notEqual(duplicateWakeGuardIndex, -1);
+  assert.notEqual(markWakeInFlightIndex, -1);
+  assert.notEqual(connectingIndex, -1);
   assert.notEqual(wakeCallIndex, -1);
   assert.notEqual(missingTermReturnIndex, -1);
   assert.ok(
     hibernatedBranchIndex < missingTermReturnIndex && wakeCallIndex < missingTermReturnIndex,
     "manual and auto reconnect must wake fully hibernated sessions before the terminal guard can stop the retry",
+  );
+  assert.ok(
+    duplicateWakeGuardIndex < markWakeInFlightIndex && markWakeInFlightIndex < connectingIndex,
+    "hibernated reconnect must block duplicate requests before beginning an asynchronous wake",
   );
 });
 

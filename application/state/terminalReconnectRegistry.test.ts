@@ -13,10 +13,16 @@ test('a registered terminal session can be reconnected on request', () => {
   assert.deepEqual(requestedSessionIds, ['session-1']);
 });
 
-test('requesting a terminal session without a mounted handler is a no-op', () => {
+test('requesting a terminal session before its handler mounts reconnects after registration', () => {
   const registry = createTerminalReconnectRegistry();
+  const requests: string[] = [];
 
-  assert.equal(registry.request('missing-session'), false);
+  assert.equal(registry.request('session-1'), true);
+  assert.deepEqual(requests, []);
+
+  registry.register('session-1', () => requests.push('session-1'));
+
+  assert.deepEqual(requests, ['session-1']);
 });
 
 test('cleanup only removes the handler that created it', () => {

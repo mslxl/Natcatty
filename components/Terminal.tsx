@@ -394,6 +394,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const autoReconnectAttemptRef = useRef(0);
   const startReconnectRef = useRef<((mode: "manual" | "auto") => void) | null>(null);
   const wakeHibernatedRuntimeForReconnectRef = useRef<(() => Promise<boolean>) | null>(null);
+  const reconnectWakeInFlightRef = useRef(false);
   const manualReconnectRequestRef = useRef<() => void>(() => {});
   const terminalDataCapturedRef = useRef(false);
   const connectionLogBufferRef = useRef(createConnectionLogBuffer(MAX_CONNECTION_LOG_DATA_CHARS));
@@ -2333,16 +2334,23 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
   const startReconnect = (mode: "manual" | "auto" = "manual") => {
     if (!termRef.current && hibernatedRef.current) {
+      if (reconnectWakeInFlightRef.current) return;
       const wakeForReconnect = wakeHibernatedRuntimeForReconnectRef.current;
       if (!wakeForReconnect) {
         updateStatus("disconnected");
         return;
       }
+      reconnectWakeInFlightRef.current = true;
+      updateStatus("connecting");
       void wakeForReconnect().then((woke) => {
+        reconnectWakeInFlightRef.current = false;
         if (woke) {
           startReconnectRef.current?.(mode);
           return;
         }
+        updateStatus("disconnected");
+      }).catch(() => {
+        reconnectWakeInFlightRef.current = false;
         updateStatus("disconnected");
       });
       return;
