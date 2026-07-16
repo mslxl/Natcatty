@@ -36,7 +36,7 @@ const net = require("node:net");
 // offsets so the sniffer can redact the marker from the visible stream.
 // eslint-disable-next-line no-control-regex
 const ANSI_ESCAPE_RE = /\u001b(?:\[[0-9;?]*[ -/]*[@-~]|\][^\u0007\u001b]*(?:\u0007|\u001b\\)|[PX^_][^\u001b]*\u001b\\|.)/g;
-const MOSH_CONNECT_RE = /MOSH CONNECT[ \t]+(\d{1,5})[ \t]+([A-Za-z0-9+/]+={0,2})(?![A-Za-z0-9+/=])/;
+const MOSH_CONNECT_PREFIX_RE = /MOSH CONNECT[ \t]+(\d{1,5})[ \t]+/;
 const MOSH_IP_RE = /MOSH IP[ \t]+(\S+)/;
 const PROTOCOL_MARKERS = ["MOSH CONNECT", "MOSH IP"];
 const MOSH_LOCALE_NAMES = [
@@ -70,22 +70,95 @@ function stripAnsiEscapes(text) {
   return String(text || "").replace(ANSI_ESCAPE_RE, "");
 }
 
+function stripAnsiEscapesWithMap(text) {
+  const source = String(text || "");
+  let cleaned = "";
+  const cleanToOriginal = [];
+  let index = 0;
+  while (index < source.length) {
+    if (source[index] === "\u001b") {
+      ANSI_ESCAPE_RE.lastIndex = index;
+      const esc = ANSI_ESCAPE_RE.exec(source);
+      if (esc && esc.index === index) {
+        index = ANSI_ESCAPE_RE.lastIndex;
+        continue;
+      }
+    }
+    cleanToOriginal.push(index);
+    cleaned += source[index];
+    index += 1;
+  }
+  cleanToOriginal.push(source.length);
+  return { cleaned, cleanToOriginal };
+}
+
+function skipAnsiEscapes(text, offset) {
+  let pos = offset;
+  while (pos < text.length && text[pos] === "\u001b") {
+    ANSI_ESCAPE_RE.lastIndex = pos;
+    const esc = ANSI_ESCAPE_RE.exec(text);
+    if (!esc || esc.index !== pos) break;
+    pos = ANSI_ESCAPE_RE.lastIndex;
+  }
+  return pos;
+}
+
 function parseConnectLine(line) {
-  const cleaned = stripAnsiEscapes(line);
-  const m = MOSH_CONNECT_RE.exec(cleaned);
+  const { cleaned, cleanToOriginal } = stripAnsiEscapesWithMap(line);
+  const m = MOSH_CONNECT_PREFIX_RE.exec(cleaned);
   if (!m) return null;
   const port = Number(m[1]);
-  const key = m[2];
   if (!Number.isFinite(port) || port <= 0 || port > 65535) return null;
+
+  const connectIdx = cleanToOriginal[m.index];
+  const keyStartOffset = cleanToOriginal[m.index + m[0].length];
+  if (connectIdx === undefined || keyStartOffset === undefined) return null;
+
+  let key = "";
+  let pos = keyStartOffset;
+  while (pos < line.length && key.length < 22) {
+    const ch = line[pos];
+    if (ch === "\u001b") {
+      ANSI_ESCAPE_RE.lastIndex = pos;
+      const esc = ANSI_ESCAPE_RE.exec(line);
+      if (esc && esc.index === pos) {
+        pos = ANSI_ESCAPE_RE.lastIndex;
+        continue;
+      }
+    }
+    if (!/[A-Za-z0-9+/]/.test(ch)) return null;
+    key += ch;
+    pos += 1;
+  }
+
+  if (key.length !== 22) return null;
+
+  let paddingLookahead = skipAnsiEscapes(line, pos);
+
+  if (line.startsWith("==", paddingLookahead)) {
+    key += "==";
+    pos = paddingLookahead + 2;
+  } else if (line[paddingLookahead] === "=") {
+    const secondPaddingOffset = skipAnsiEscapes(line, paddingLookahead + 1);
+    if (line[secondPaddingOffset] === "=") {
+      key += "==";
+      pos = secondPaddingOffset + 1;
+    } else if (paddingLookahead === pos) {
+      return null;
+    }
+  } else if (paddingLookahead === pos && /[A-Za-z0-9+/=]/.test(line[pos] || "")) {
+    return null;
+  }
+
+  if (/[A-Za-z0-9+/=]/.test(line[pos] || "")) {
+    return null;
+  }
+
   if (!validMoshKey(key)) return null;
 
   // Map the cleaned match back onto the original line so redaction still
-  // covers ConPTY CSI that trailed the key (e.g. `\x1b[?25h`).
-  const connectIdx = line.indexOf("MOSH CONNECT");
-  if (connectIdx === -1) return null;
-  const keyIdx = line.indexOf(key, connectIdx);
-  if (keyIdx === -1) return null;
-  let matchEndOffset = keyIdx + key.length;
+  // covers ConPTY CSI that trailed or split the key (e.g. `\x1b[?25h`).
+  let matchEndOffset = pos;
   while (matchEndOffset < line.length) {
     const ch = line[matchEndOffset];
     if (ch === "\u001b") {
