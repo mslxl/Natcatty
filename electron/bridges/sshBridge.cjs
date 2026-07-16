@@ -1109,6 +1109,7 @@ async function startSSHSessionWrapper(event, options) {
   let loadedRetryableEncryptedKeys = false;
   let shouldSuppressInitialAuthExit = false;
   const canRetryEncryptedDefaults = canRetryWithEncryptedDefaultKeys(options);
+  const canRetryKeyboardInteractiveFirst = Boolean(options.password && !options._skipPasswordMethod);
   const mayReuseExistingSession = canRetryEncryptedDefaults && canReuseExistingSession(options);
   const loadRetryableEncryptedKeys = async () => {
     const allKeysWithEncrypted = await findAllDefaultPrivateKeysFromHelper({ includeEncrypted: true });
@@ -1119,11 +1120,13 @@ async function startSSHSessionWrapper(event, options) {
 
   if (canRetryEncryptedDefaults && !mayReuseExistingSession) {
     await loadRetryableEncryptedKeys();
-    shouldSuppressInitialAuthExit = retryableEncryptedKeys.length > 0;
+    shouldSuppressInitialAuthExit = retryableEncryptedKeys.length > 0 || canRetryKeyboardInteractiveFirst;
   } else if (mayReuseExistingSession) {
     // Let Copy Tab reuse an authenticated transport without waiting on key
     // discovery. If reuse falls back to a fresh connection and auth fails, the
     // catch path below lazily loads encrypted keys before deciding final failure.
+    shouldSuppressInitialAuthExit = true;
+  } else if (canRetryKeyboardInteractiveFirst) {
     shouldSuppressInitialAuthExit = true;
   }
 
@@ -1136,12 +1139,36 @@ async function startSSHSessionWrapper(event, options) {
     const isAuthError = isStartAuthError(err);
 
     if (isAuthError) {
+      let authErrorSource = err;
+
+      if (canRetryKeyboardInteractiveFirst && err.retryKeyboardInteractiveFirst) {
+        console.log('[SSH] Password auth removed keyboard-interactive; retrying with keyboard-interactive first...');
+        try {
+          return await startSSHSession(event, {
+            ...options,
+            _skipPasswordMethod: true,
+            _suppressPreShellAuthExit: shouldSuppressInitialAuthExit,
+          });
+        } catch (retryErr) {
+          const isRetryAuthError = isStartAuthError(retryErr);
+          if (isRetryAuthError) {
+            authErrorSource = retryErr;
+            console.log('[SSH] Keyboard-interactive-first retry failed authentication; checking remaining auth fallbacks...');
+          } else {
+            const connError = new Error(retryErr.message);
+            connError.level = retryErr.level || 'client-socket';
+            connError.code = retryErr.code;
+            throw connError;
+          }
+        }
+      }
+
       // Check if there are encrypted default keys we haven't tried yet
       // Only offer retry if no unlocked keys were provided in this attempt
       if (
         canRetryEncryptedDefaults
-        && canFailedHopRetryWithEncryptedDefaultKeys(options, err)
-        && !isStrictAgentAuthFailure(options, err)
+        && canFailedHopRetryWithEncryptedDefaultKeys(options, authErrorSource)
+        && !isStrictAgentAuthFailure(options, authErrorSource)
       ) {
         const encryptedKeys = loadedRetryableEncryptedKeys
           ? retryableEncryptedKeys
@@ -1214,19 +1241,19 @@ async function startSSHSessionWrapper(event, options) {
       }
 
       if (shouldSuppressInitialAuthExit) {
-        sendFinalStartFailureExit(event, options, err);
+        sendFinalStartFailureExit(event, options, authErrorSource);
       }
 
       // Re-throw with a clean error to avoid Electron printing full stack trace
       // The frontend will handle this as a normal auth failure for fallback
-      const authError = new Error(err.message);
+      const authError = new Error(authErrorSource.message);
       authError.level = 'client-authentication';
       authError.isAuthError = true;
-      if (err.isJumpHostAuthError) {
+      if (authErrorSource.isJumpHostAuthError) {
         authError.isJumpHostAuthError = true;
-        authError.jumpHostIndex = err.jumpHostIndex;
-        authError.jumpHostLabel = err.jumpHostLabel;
-        authError.jumpHostHostname = err.jumpHostHostname;
+        authError.jumpHostIndex = authErrorSource.jumpHostIndex;
+        authError.jumpHostLabel = authErrorSource.jumpHostLabel;
+        authError.jumpHostHostname = authErrorSource.jumpHostHostname;
       }
       throw authError;
     }
