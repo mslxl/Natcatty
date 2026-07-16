@@ -2,9 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { EncryptionService } from "../EncryptionService.ts";
-import { commitRemoteInspectionImpl } from "./authMethods.ts";
+import {
+  clearProviderMergeStateImpl,
+  commitRemoteInspectionImpl,
+} from "./authMethods.ts";
 import { syncToProviderImpl, uploadToProviderImpl } from "./providerSyncMethods.ts";
 import {
+  clearSyncBaseImpl,
   loadSyncSnapshotsImpl,
   saveSyncBaseImpl,
   syncAllProvidersImpl,
@@ -56,6 +60,38 @@ function remoteFile(provider: CloudProvider, version: number, updatedAt: number)
     payload: provider,
   };
 }
+
+test("provider identity changes clear v1 base, v2 baseline, and remote anchor together", () => {
+  const removed: string[] = [];
+  const manager = {
+    syncBaseKey: (provider: CloudProvider) => `base:${provider}`,
+    convergentProviderBaselineKey: (provider: CloudProvider) => `convergent:${provider}`,
+    removeFromStorage: (key: string) => removed.push(key),
+    clearSyncAnchor: (provider: CloudProvider) => removed.push(`anchor:${provider}`),
+  };
+
+  clearProviderMergeStateImpl.call(manager, "github");
+
+  assert.deepEqual(removed, ["base:github", "convergent:github", "anchor:github"]);
+});
+
+test("clearing all merge bases also removes every convergent provider baseline", () => {
+  const removed = new Set<string>();
+  const providers: CloudProvider[] = ["github", "google", "onedrive", "webdav", "s3"];
+  const manager = {
+    removeFromStorage: (key: string) => removed.add(key),
+    syncBaseKey: (provider?: CloudProvider) => `base:${provider ?? "default"}`,
+    syncSnapshotsKey: (provider?: CloudProvider) => `snapshots:${provider ?? "default"}`,
+    convergentProviderBaselineKey: (provider: CloudProvider) => `convergent:${provider}`,
+    clearSyncAnchor: () => {},
+  };
+
+  clearSyncBaseImpl.call(manager);
+
+  for (const provider of providers) {
+    assert.equal(removed.has(`convergent:${provider}`), true);
+  }
+});
 
 test("syncAllProviders uses the newest cloud payload without merging other remotes when cloud wins", async () => {
   const originalDecryptPayload = EncryptionService.decryptPayload;
@@ -189,6 +225,46 @@ test("syncToProvider uses the checked remote as metadata base when no stored bas
     }]);
   } finally {
     EncryptionService.decryptPayload = originalDecryptPayload;
+    EncryptionService.encryptPayload = originalEncryptPayload;
+  }
+});
+
+test("syncToProvider refuses to downgrade a checked convergent remote", async () => {
+  const checkedRemote = remoteFile("github", 3, 300);
+  checkedRemote.meta.syncSchemaVersion = 2;
+  let encrypted = false;
+  const originalEncryptPayload = EncryptionService.encryptPayload;
+  EncryptionService.encryptPayload = async () => {
+    encrypted = true;
+    return checkedRemote;
+  };
+  try {
+    const manager = {
+      masterPassword: "pw",
+      adapters: new Map(),
+      state: {
+        securityState: "UNLOCKED",
+        providers: { github: { status: "connected" } },
+        lastError: null,
+        syncState: "IDLE",
+        syncStrategy: "smartMerge",
+        localVersion: 1,
+        deviceId: "local-device",
+        deviceName: "Local",
+      },
+      getConnectedAdapter: async () => ({ provider: "github" }),
+      updateProviderStatus: () => {},
+      emit: () => {},
+      checkProviderConflict: async () => ({ conflict: false, remoteFile: checkedRemote }),
+      addSyncHistoryEntry: () => {},
+    };
+
+    const result = await syncToProviderImpl.call(manager, "github", payload("local"));
+
+    assert.equal(result.success, false);
+    assert.equal(encrypted, false);
+    assert.match(result.error ?? "", /Enable or migrate convergent sync/);
+  } finally {
     EncryptionService.encryptPayload = originalEncryptPayload;
   }
 });

@@ -92,6 +92,7 @@ import {
   STORAGE_KEY_PORT_FORWARDING,
 } from '../infrastructure/config/storageKeys';
 import { isTerminalSidePanelAutoOpenTab } from '../domain/terminalSidePanelAutoOpen';
+import { prepareRestoredPayloadConvergentWrites } from './convergentSyncReplica';
 
 // ---------------------------------------------------------------------------
 // Input types
@@ -947,9 +948,37 @@ export function applySyncPayload(
   return applyPayload(payload, importers, { includeLocalOnlyData: false });
 }
 
-export function applyLocalVaultPayload(
+export async function prepareLocalVaultPayloadApply(
   payload: SyncPayload,
   importers: SyncPayloadImporters,
+  dependencies: {
+    prepareConvergentRestore?: (
+      payload: SyncPayload,
+    ) => Promise<() => Promise<void>>;
+  } = {},
+): Promise<() => Promise<void>> {
+  const prepareConvergentRestore = dependencies.prepareConvergentRestore
+    ?? prepareRestoredPayloadConvergentWrites;
+  const commitConvergentRestore = await prepareConvergentRestore(payload);
+  return async () => {
+    await applyPayload(payload, importers, { includeLocalOnlyData: true });
+    await commitConvergentRestore();
+  };
+}
+
+export async function applyLocalVaultPayload(
+  payload: SyncPayload,
+  importers: SyncPayloadImporters,
+  dependencies: {
+    prepareConvergentRestore?: (
+      payload: SyncPayload,
+    ) => Promise<() => Promise<void>>;
+  } = {},
 ): Promise<void> {
-  return applyPayload(payload, importers, { includeLocalOnlyData: true });
+  const applyPreparedPayload = await prepareLocalVaultPayloadApply(
+    payload,
+    importers,
+    dependencies,
+  );
+  await applyPreparedPayload();
 }

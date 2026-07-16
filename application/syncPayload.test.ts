@@ -38,6 +38,7 @@ function installLocalStorage(): LocalStorageMock {
 const localStorage = installLocalStorage();
 const {
   applyLocalVaultPayload,
+  prepareLocalVaultPayloadApply,
   applySyncPayload,
   buildLocalVaultPayload,
   buildCloudSyncPayload,
@@ -1140,4 +1141,114 @@ test("applyLocalVaultPayload restores known hosts from local backups", async () 
 
   assert.ok(imported);
   assert.deepEqual(imported.knownHosts, [knownHost("kh-backup")]);
+});
+
+test("applyLocalVaultPayload prepares before import and commits after it succeeds", async () => {
+  const calls: string[] = [];
+  const payload: SyncPayload = {
+    hosts: [],
+    keys: [],
+    identities: [],
+    snippets: [],
+    customGroups: [],
+    syncedAt: 1,
+  };
+
+  await applyLocalVaultPayload(payload, {
+    importVaultData: () => {
+      calls.push("import");
+    },
+  }, {
+    prepareConvergentRestore: async () => {
+      calls.push("prepare");
+      return async () => {
+        calls.push("commit");
+      };
+    },
+  });
+
+  assert.deepEqual(calls, ["prepare", "import", "commit"]);
+});
+
+test("prepareLocalVaultPayloadApply does not import until the prepared callback runs", async () => {
+  const calls: string[] = [];
+  const payload: SyncPayload = {
+    hosts: [],
+    keys: [],
+    identities: [],
+    snippets: [],
+    customGroups: [],
+    syncedAt: 1,
+  };
+
+  const applyPreparedPayload = await prepareLocalVaultPayloadApply(payload, {
+    importVaultData: () => {
+      calls.push("import");
+    },
+  }, {
+    prepareConvergentRestore: async () => {
+      calls.push("prepare");
+      return async () => {
+        calls.push("commit");
+      };
+    },
+  });
+
+  assert.deepEqual(calls, ["prepare"]);
+  await applyPreparedPayload();
+  assert.deepEqual(calls, ["prepare", "import", "commit"]);
+});
+
+test("applyLocalVaultPayload leaves local data untouched when convergent preparation fails", async () => {
+  let imported = false;
+  const payload: SyncPayload = {
+    hosts: [],
+    keys: [],
+    identities: [],
+    snippets: [],
+    customGroups: [],
+    syncedAt: 1,
+  };
+
+  await assert.rejects(
+    () => applyLocalVaultPayload(payload, {
+      importVaultData: () => {
+        imported = true;
+      },
+    }, {
+      prepareConvergentRestore: async () => {
+        throw new Error("replica unavailable");
+      },
+    }),
+    /replica unavailable/,
+  );
+
+  assert.equal(imported, false);
+});
+
+test("applyLocalVaultPayload does not commit convergent writes when local import fails", async () => {
+  let committed = false;
+  const payload: SyncPayload = {
+    hosts: [],
+    keys: [],
+    identities: [],
+    snippets: [],
+    customGroups: [],
+    syncedAt: 1,
+  };
+
+  await assert.rejects(
+    () => applyLocalVaultPayload(payload, {
+      importVaultData: async () => {
+        throw new Error("local import failed");
+      },
+    }, {
+      prepareConvergentRestore: async () => async () => {
+        committed = true;
+      },
+    }),
+    /local import failed/,
+  );
+
+  assert.equal(committed, false);
 });
