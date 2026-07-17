@@ -187,6 +187,10 @@ invalid-request errors where the request ID cannot be recovered. Long-running
 operations use `$/progress` notifications with `begin`, `report`, and `end`
 values and stable string or integer progress tokens. A report may use an
 absolute percentage or an incremental percentage, never both.
+Numeric RPC IDs and progress tokens are restricted to non-negative JavaScript
+safe integers. Peers that need a larger opaque identifier use the string form;
+this prevents distinct JSON numbers from collapsing onto one correlation key
+when Electron or Node parses them.
 
 Stream control envelopes remain schema-valid JSON, but chunk data has three
 explicit encodings:
@@ -205,8 +209,10 @@ length before accepting credit. The contract exports `createJsonStreamChunk()`,
 `createMessagePortStreamEnvelope()` so every host path applies the same checks.
 The open frame is sequence 0 and grants the initial `windowBytes`; data and
 terminal frames begin at sequence 1. Sequence numbers increase independently in
-each sending direction. A producer subtracts every chunk's declared byte length
-from its credit and must stop at zero. `windowUpdate.creditBytes` grants an
+each sending direction and cannot exceed `Number.MAX_SAFE_INTEGER`. A producer
+must open a replacement stream before exhausting that range. It subtracts every
+chunk's declared byte length from its credit and must stop at zero.
+`windowUpdate.creditBytes` grants an
 additional amount rather than replacing the window, so retries and duplicate
 control frames cannot be interpreted as an absolute reset. A stdio peer must
 never emit the `transfer` encoding because stdio has no structured-clone

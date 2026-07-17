@@ -263,7 +263,7 @@ export type RpcFailure = {
   error: RpcErrorObject;
 };
 
-export type RpcId = (string) | (number);
+export type RpcId = (string) | (SafeUnsignedInteger);
 
 export type RpcMessage = (RpcRequest) | (RpcNotification) | (RpcSuccess) | (RpcFailure) | (RpcCancel) | (RpcProgressNotification) | (RuntimeInitializeRequest);
 
@@ -324,6 +324,10 @@ export type RuntimeInitializeSuccess = {
   id: RpcId;
   result: RuntimeInitializeResult;
 };
+
+export type SafePositiveInteger = number;
+
+export type SafeUnsignedInteger = number;
 
 export type SecretRef = {
   kind: "secret";
@@ -386,21 +390,21 @@ export type StreamFrame = ({
   windowBytes: number;
 }) | ({
   streamId: string;
-  sequence: number;
+  sequence: SafePositiveInteger;
   kind: "chunk";
   data: StreamChunkData;
 }) | ({
   streamId: string;
-  sequence: number;
+  sequence: SafePositiveInteger;
   kind: "end" | "cancel";
 }) | ({
   streamId: string;
-  sequence: number;
+  sequence: SafePositiveInteger;
   kind: "error";
   error: RpcErrorObject;
 }) | ({
   streamId: string;
-  sequence: number;
+  sequence: SafeUnsignedInteger;
   kind: "windowUpdate";
   creditBytes: number;
 });
@@ -422,3 +426,5 @@ export type ViewContribution = {
 };
 
 export type ViewLocation = "aside" | "panel" | "tab" | "modal" | "settings";
+
+export type WireIntegerLimits = {"maxSafeInteger":9007199254740991};

@@ -10,6 +10,9 @@ export {
   serializeJsonValue,
 } from "./jsonValue.js";
 export {
+  PLUGIN_WIRE_MAX_SAFE_INTEGER,
+} from "./generated/plugin-contract-limits.js";
+export {
   COMPANION_STDIO_MAX_CONTENT_BYTES,
   COMPANION_STDIO_MAX_HEADER_BYTES,
   ContentLengthFrameDecoder,

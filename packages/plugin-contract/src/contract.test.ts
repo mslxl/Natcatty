@@ -117,6 +117,7 @@ test("plugin manifest schema rejects unknown properties and traversal", () => {
 
 test("RPC, stream, permission, and provider schemas validate independently", () => {
   const rpc = validator("RpcRequest");
+  const rpcId = validator("RpcId");
   const rpcMessage = validator("RpcMessage");
   const failure = validator("RpcFailure");
   const progress = validator("RpcProgressNotification");
@@ -131,6 +132,9 @@ test("RPC, stream, permission, and provider schemas validate independently", () 
   const providerResult = validator("ProviderResult");
 
   assert.equal(rpc({ jsonrpc: "2.0", id: "1", method: "settings.get", deadlineMs: 1000 }), true);
+  assert.equal(rpcId(Number.MAX_SAFE_INTEGER), true, JSON.stringify(rpcId.errors));
+  assert.equal(rpcId(Number.MAX_SAFE_INTEGER + 1), false);
+  assert.equal(rpcId("9007199254740993"), true, JSON.stringify(rpcId.errors));
   assert.equal(rpcMessage({
     jsonrpc: "2.0",
     id: "init-1",
@@ -245,6 +249,35 @@ test("RPC, stream, permission, and provider schemas validate independently", () 
     kind: "chunk",
     data: { encoding: "base64", value: "AQID", byteLength: 3 },
   }), true, JSON.stringify(stream.errors));
+  assert.equal(stream({
+    streamId: "s1",
+    sequence: Number.MAX_SAFE_INTEGER,
+    kind: "chunk",
+    data: { encoding: "base64", value: "AQID", byteLength: 3 },
+  }), true, JSON.stringify(stream.errors));
+  for (const frame of [
+    {
+      streamId: "s1",
+      sequence: Number.MAX_SAFE_INTEGER + 1,
+      kind: "chunk",
+      data: { encoding: "base64", value: "AQID", byteLength: 3 },
+    },
+    { streamId: "s1", sequence: Number.MAX_SAFE_INTEGER + 1, kind: "end" },
+    {
+      streamId: "s1",
+      sequence: Number.MAX_SAFE_INTEGER + 1,
+      kind: "error",
+      error: { code: -32002, message: "unsafe sequence" },
+    },
+    {
+      streamId: "s1",
+      sequence: Number.MAX_SAFE_INTEGER + 1,
+      kind: "windowUpdate",
+      creditBytes: 4096,
+    },
+  ]) {
+    assert.equal(stream(frame), false, `unsafe stream sequence accepted: ${frame.kind}`);
+  }
   assert.equal(initialize({
     netcattyVersion: "1.2.3",
     apiVersion: "0.1.0-internal",

@@ -4,3 +4,4 @@
 
 export const PLUGIN_JSON_MAX_DEPTH = 128 as const;
 export const PLUGIN_JSON_MAX_NODES = 100000 as const;
+export const PLUGIN_WIRE_MAX_SAFE_INTEGER = 9007199254740991 as const;

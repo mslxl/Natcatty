@@ -15,6 +15,7 @@ import {
   createMessagePortStreamEnvelope,
   materializeStreamChunk,
 } from "./streamTransport.ts";
+import { PLUGIN_WIRE_MAX_SAFE_INTEGER } from "./generated/plugin-contract-limits.ts";
 
 test("validated JSON serialization matches standard JSON bytes for plain values", () => {
   const values = [
@@ -207,5 +208,27 @@ test("MessagePort stream envelopes carry and validate the transferred ArrayBuffe
       transfer,
     ),
     /Only transfer-encoded chunk frames/,
+  );
+  assert.deepEqual(createMessagePortStreamEnvelope({
+    streamId: "stream-1",
+    sequence: PLUGIN_WIRE_MAX_SAFE_INTEGER,
+    kind: "windowUpdate",
+    creditBytes: 4096,
+  }), {
+    frame: {
+      streamId: "stream-1",
+      sequence: PLUGIN_WIRE_MAX_SAFE_INTEGER,
+      kind: "windowUpdate",
+      creditBytes: 4096,
+    },
+  });
+  assert.throws(
+    () => createMessagePortStreamEnvelope({
+      streamId: "stream-1",
+      sequence: PLUGIN_WIRE_MAX_SAFE_INTEGER + 1,
+      kind: "windowUpdate",
+      creditBytes: 4096,
+    }),
+    /sequence must be a safe integer/,
   );
 });

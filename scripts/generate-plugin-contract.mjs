@@ -47,6 +47,23 @@ if (!Number.isSafeInteger(jsonValueLimits?.maxDepth) || jsonValueLimits.maxDepth
 if (!Number.isSafeInteger(jsonValueLimits?.maxNodes) || jsonValueLimits.maxNodes < 1) {
   throw new Error("JsonValueLimits.maxNodes must be a positive safe integer");
 }
+const wireIntegerLimits = schema.$defs.WireIntegerLimits?.const;
+if (wireIntegerLimits?.maxSafeInteger !== Number.MAX_SAFE_INTEGER) {
+  throw new Error("WireIntegerLimits.maxSafeInteger must equal Number.MAX_SAFE_INTEGER");
+}
+for (const [definitionName, minimum] of [
+  ["SafeUnsignedInteger", 0],
+  ["SafePositiveInteger", 1],
+]) {
+  const definition = schema.$defs[definitionName];
+  if (definition?.type !== "integer"
+    || definition.minimum !== minimum
+    || definition.maximum !== wireIntegerLimits.maxSafeInteger) {
+    throw new Error(
+      `${definitionName} must be bounded from ${minimum} through WireIntegerLimits.maxSafeInteger`,
+    );
+  }
+}
 
 function quoteProperty(name) {
   return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name) ? name : JSON.stringify(name);
@@ -141,6 +158,7 @@ const generatedLimits = [
   "",
   `export const PLUGIN_JSON_MAX_DEPTH = ${jsonValueLimits.maxDepth} as const;`,
   `export const PLUGIN_JSON_MAX_NODES = ${jsonValueLimits.maxNodes} as const;`,
+  `export const PLUGIN_WIRE_MAX_SAFE_INTEGER = ${wireIntegerLimits.maxSafeInteger} as const;`,
   "",
 ].join("\n");
 const normalizedSchema = `${JSON.stringify(schema, null, 2)}\n`;

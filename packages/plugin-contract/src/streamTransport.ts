@@ -3,6 +3,7 @@ import type {
   StreamChunkData,
   StreamFrame,
 } from "./generated/plugin-contract.js";
+import { PLUGIN_WIRE_MAX_SAFE_INTEGER } from "./generated/plugin-contract-limits.js";
 import { serializeJsonValue } from "./jsonValue.js";
 
 const BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -52,6 +53,19 @@ function assertChunkByteLength(byteLength: number): void {
     throw new RangeError(
       `Stream chunk byteLength must be an integer between 0 and ${PLUGIN_STREAM_MAX_CHUNK_BYTES}`,
     );
+  }
+}
+
+function assertStreamSequence(frame: StreamFrame): void {
+  const minimum = frame.kind === "open" || frame.kind === "windowUpdate" ? 0 : 1;
+  if (!Number.isSafeInteger(frame.sequence)
+    || frame.sequence < minimum
+    || frame.sequence > PLUGIN_WIRE_MAX_SAFE_INTEGER
+    || (frame.kind === "open" && frame.sequence !== 0)) {
+    const expected = frame.kind === "open"
+      ? "exactly 0"
+      : `a safe integer between ${minimum} and ${PLUGIN_WIRE_MAX_SAFE_INTEGER}`;
+    throw new RangeError(`Stream ${frame.kind} sequence must be ${expected}`);
   }
 }
 
@@ -168,6 +182,7 @@ export function createMessagePortStreamEnvelope(
   frame: StreamFrame,
   transfer?: ArrayBuffer,
 ): MessagePortStreamEnvelope {
+  assertStreamSequence(frame);
   if (frame.kind === "chunk") {
     materializeStreamChunk(frame.data, transfer);
   } else if (transfer !== undefined) {
