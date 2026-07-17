@@ -38,12 +38,19 @@ const toolOutputSessionDeletions = new Map();
 const toolOutputChatDeletionGenerations = new Map();
 const closedToolOutputTerminalSessions = new Set();
 
+function isSecureToolOutputStorageAvailable(safeStorage, platform = process.platform) {
+  if (!safeStorage?.isEncryptionAvailable?.()) return false;
+  if (platform !== "linux" || typeof safeStorage.getSelectedStorageBackend !== "function") return true;
+  const backend = safeStorage.getSelectedStorageBackend();
+  return backend !== "basic_text" && backend !== "unknown";
+}
+
 function getToolOutputChatDeletionGeneration(chatSessionId) {
   return toolOutputChatDeletionGenerations.get(chatSessionId) ?? 0;
 }
 
 async function loadOrCreateToolOutputSigningKey(safeStorage) {
-  if (!safeStorage?.isEncryptionAvailable?.()) return null;
+  if (!isSecureToolOutputStorageAvailable(safeStorage)) return null;
   const keyPath = path.join(getTempDir(), TOOL_OUTPUT_SIGNING_KEY_FILE);
   try {
     const stat = await fs.promises.lstat(keyPath);
@@ -98,7 +105,7 @@ function configureToolOutputSigningKey(electronModule) {
 }
 
 async function ensureToolOutputSigningKeyFile(key) {
-  if (!toolOutputSafeStorage?.isEncryptionAvailable?.()) return true;
+  if (!isSecureToolOutputStorageAvailable(toolOutputSafeStorage)) return true;
   const keyPath = path.join(getTempDir(), TOOL_OUTPUT_SIGNING_KEY_FILE);
   try {
     const stat = await fs.promises.lstat(keyPath);
@@ -983,4 +990,5 @@ module.exports = {
   cleanupExpiredToolOutputFiles,
   registerHandlers,
   resolvePrivateTempDir,
+  isSecureToolOutputStorageAvailable,
 };

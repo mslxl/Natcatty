@@ -692,3 +692,15 @@ test("tool output persistence reports when secure storage is unavailable", async
     { durable: false, reason: "Secure local storage is unavailable." },
   );
 });
+
+test("Linux basic_text and unknown backends are not treated as secure storage", () => {
+  const storage = backend => ({
+    isEncryptionAvailable: () => true,
+    getSelectedStorageBackend: () => backend,
+  });
+
+  assert.equal(tempDirBridge.isSecureToolOutputStorageAvailable(storage("basic_text"), "linux"), false);
+  assert.equal(tempDirBridge.isSecureToolOutputStorageAvailable(storage("unknown"), "linux"), false);
+  assert.equal(tempDirBridge.isSecureToolOutputStorageAvailable(storage("gnome_libsecret"), "linux"), true);
+  assert.equal(tempDirBridge.isSecureToolOutputStorageAvailable(storage("basic_text"), "darwin"), true);
+});
