@@ -378,6 +378,12 @@ arbitrary JavaScript without terminating the isolated runtime.
 The packer sorts UTF-8 package paths, stores fixed ZIP timestamps and file
 modes, and writes entries without platform-dependent compression output. The
 same files and manifest therefore produce the same archive bytes.
+The validated source-manifest byte length and SHA-256 are bound to the scanned
+manifest entry before writing; the archive writer then rechecks every scanned
+file while streaming it. A manifest changed after validation cannot be packaged
+under the previously validated object model. Source hashing enforces its byte
+budget during the read, and archive writing stops before emitting bytes beyond
+the scanned size, so a concurrently growing file cannot cause unbounded I/O.
 
 Package validation rejects:
 
@@ -388,6 +394,7 @@ Package validation rejects:
 - companion binaries whose SHA-256 does not match the manifest;
 - duplicate entries, encrypted entries, and unsupported compression methods;
 - missing entrypoints, views, package icons, and companion variants;
+- a source manifest whose packaged bytes differ from the validated snapshot;
 - excessive path, file, archive, or expanded-package sizes.
 
 These checks are repeated when reading `.ncpkg` files. Installation in phase 2

@@ -59,6 +59,13 @@ from validating and extracting different interpretations of one package.
 Manifest decoding is fatal UTF-8 on both source directories and archives.
 Malformed byte sequences cannot be normalized differently by separate package
 inspection and installation paths.
+The packer also binds the exact validated manifest bytes to the scanned package
+entry with byte length and SHA-256, then rechecks the entry while writing. A
+source manifest changed between semantic validation and archive creation is
+rejected instead of inheriting the decision made for older bytes.
+Every source hash read enforces the file budget incrementally, and the writer
+refuses the first byte beyond the scanned size. Concurrent file growth therefore
+fails before it can turn validation or packaging into unbounded disk I/O.
 
 ### Symbolic links and executable smuggling
 

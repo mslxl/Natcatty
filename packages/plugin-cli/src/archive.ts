@@ -19,7 +19,8 @@ import yauzl, { type Entry, type ZipFile } from "yauzl";
 import { IGNORED_ROOT_ENTRIES, PACKAGE_LIMITS } from "./constants.js";
 import {
   parseAndValidateManifestContents,
-  readAndValidateManifest,
+  readValidatedManifestSource,
+  type ValidatedManifestSource,
 } from "./manifest.js";
 import { assertSafePackagePath, PackagePathRegistry } from "./packagePath.js";
 
@@ -40,6 +41,20 @@ interface ScannedFile {
   readonly crc32: number;
   readonly sha256: string;
   readonly executable: boolean;
+}
+
+interface ScannedManifestIdentity {
+  readonly size: number;
+  readonly sha256: string;
+}
+
+export function assertManifestSnapshotMatches(
+  source: Pick<ValidatedManifestSource, "size" | "sha256">,
+  scanned: ScannedManifestIdentity | undefined,
+): void {
+  if (!scanned || scanned.size !== source.size || scanned.sha256 !== source.sha256) {
+    throw new Error("Plugin manifest changed after validation");
+  }
 }
 
 export interface PackageBuildResult {
@@ -66,6 +81,7 @@ function updateCrc32(current: number, chunk: Buffer): number {
 
 async function readRegularFile(
   filePath: string,
+  maxBytes: number,
   onChunk: (chunk: Buffer) => void,
 ): Promise<{ size: number; mode: number }> {
   const noFollow = "O_NOFOLLOW" in constants
@@ -80,6 +96,9 @@ async function readRegularFile(
     for await (const chunk of stream) {
       const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       size += buffer.byteLength;
+      if (size > maxBytes) {
+        throw new Error(`Package source exceeds ${maxBytes} bytes while reading: ${filePath}`);
+      }
       onChunk(buffer);
     }
     return { size, mode: fileStats.mode };
@@ -88,12 +107,13 @@ async function readRegularFile(
   }
 }
 
-async function hashFile(
+export async function hashFile(
   filePath: string,
+  maxBytes: number,
 ): Promise<{ crc32: number; sha256: string; size: number; mode: number }> {
   const sha256 = createHash("sha256");
   let crc = 0xffffffff;
-  const file = await readRegularFile(filePath, (buffer) => {
+  const file = await readRegularFile(filePath, maxBytes, (buffer) => {
     sha256.update(buffer);
     crc = updateCrc32(crc, buffer);
   });
@@ -148,8 +168,9 @@ async function resolveThroughExistingAncestor(targetPath: string): Promise<strin
 
 async function scanPackageDirectory(
   pluginDirectory: string,
-  manifest: PluginManifest,
+  manifestSource: ValidatedManifestSource,
 ): Promise<ScannedFile[]> {
+  const { manifest } = manifestSource;
   const registry = new PackagePathRegistry();
   const companionPaths = new Map(
     (manifest.companionExecutables ?? []).flatMap((companion) => (
@@ -199,7 +220,7 @@ async function scanPackageDirectory(
           `Plugin package exceeds ${PACKAGE_LIMITS.uncompressedBytes} uncompressed bytes`,
         );
       }
-      const hashes = await hashFile(absolutePath);
+      const hashes = await hashFile(absolutePath, PACKAGE_LIMITS.singleFileBytes);
       if (hashes.size !== fileStats.size || hashes.mode !== fileStats.mode) {
         throw new Error(`Package source changed while it was being scanned: ${packagePath}`);
       }
@@ -223,6 +244,10 @@ async function scanPackageDirectory(
   }
 
   await visit(pluginDirectory, "");
+  assertManifestSnapshotMatches(
+    manifestSource,
+    files.find(({ packagePath }) => packagePath === "netcatty.plugin.json"),
+  );
   const packagedPaths = new Set(files.map(({ packagePath }) => packagePath));
   const requiredPaths = [
     "netcatty.plugin.json",
@@ -335,6 +360,9 @@ async function writeArchive(files: readonly ScannedFile[], outputPath: string): 
         for await (const chunk of stream) {
           const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
           writtenBytes += buffer.byteLength;
+          if (writtenBytes > file.size) {
+            throw new Error(`Package source changed while it was being written: ${file.packagePath}`);
+          }
           sha256.update(buffer);
           crc = updateCrc32(crc, buffer);
           await writeBuffer(output, buffer);
@@ -391,11 +419,11 @@ export async function buildPluginPackage(
   ) {
     throw new Error("Plugin package output must be outside the plugin source directory");
   }
-  const manifest = await readAndValidateManifest(sourceDirectory);
-  const files = await scanPackageDirectory(sourceDirectory, manifest);
+  const manifestSource = await readValidatedManifestSource(sourceDirectory);
+  const files = await scanPackageDirectory(sourceDirectory, manifestSource);
   await writeArchive(files, resolvedOutputPath);
   const outputStats = await stat(resolvedOutputPath);
-  const archiveHash = await hashFile(resolvedOutputPath);
+  const archiveHash = await hashFile(resolvedOutputPath, PACKAGE_LIMITS.archiveBytes);
   return {
     outputPath: resolvedOutputPath,
     fileCount: files.length,
@@ -409,10 +437,10 @@ export async function validatePluginDirectory(
   pluginDirectory: string,
 ): Promise<PluginDirectoryValidationResult> {
   const sourceDirectory = path.resolve(pluginDirectory);
-  const manifest = await readAndValidateManifest(sourceDirectory);
-  const files = await scanPackageDirectory(sourceDirectory, manifest);
+  const manifestSource = await readValidatedManifestSource(sourceDirectory);
+  const files = await scanPackageDirectory(sourceDirectory, manifestSource);
   return {
-    manifest,
+    manifest: manifestSource.manifest,
     fileCount: files.length,
     uncompressedBytes: files.reduce((sum, file) => sum + file.size, 0),
   };

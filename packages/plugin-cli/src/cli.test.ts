@@ -16,7 +16,12 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
-import { buildPluginPackage, validatePluginPackage } from "./archive.ts";
+import {
+  assertManifestSnapshotMatches,
+  buildPluginPackage,
+  hashFile,
+  validatePluginPackage,
+} from "./archive.ts";
 import { checkPluginCompatibility } from "./compatibility.ts";
 import { PACKAGE_LIMITS } from "./constants.ts";
 import { initPlugin } from "./commands.ts";
@@ -610,4 +615,31 @@ test("manifest validation refuses symlinked source manifests", async (context) =
   await writeFile(target, JSON.stringify(manifest()));
   await symlink(target, path.join(root, "netcatty.plugin.json"));
   await assert.rejects(readAndValidateManifest(root), /must be a regular file/);
+});
+
+test("validated manifest snapshots reject changed package bytes", () => {
+  const snapshot = { size: 128, sha256: "a".repeat(64) };
+  assert.doesNotThrow(() => assertManifestSnapshotMatches(snapshot, snapshot));
+  assert.throws(
+    () => assertManifestSnapshotMatches(snapshot, { ...snapshot, size: 129 }),
+    /manifest changed after validation/,
+  );
+  assert.throws(
+    () => assertManifestSnapshotMatches(snapshot, { ...snapshot, sha256: "b".repeat(64) }),
+    /manifest changed after validation/,
+  );
+  assert.throws(
+    () => assertManifestSnapshotMatches(snapshot, undefined),
+    /manifest changed after validation/,
+  );
+});
+
+test("source hashing enforces its byte budget while reading", async (context) => {
+  const root = await mkdtemp(path.join(tmpdir(), "netcatty-plugin-source-limit-"));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const filePath = path.join(root, "growing.bin");
+  await writeFile(filePath, "1234");
+
+  await assert.rejects(hashFile(filePath, 3), /source exceeds 3 bytes while reading/);
+  assert.equal((await hashFile(filePath, 4)).size, 4);
 });

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import {
   lstat,
@@ -51,6 +52,12 @@ export interface ManifestValidationResult {
   readonly valid: boolean;
   readonly manifest?: PluginManifest;
   readonly errors: readonly string[];
+}
+
+export interface ValidatedManifestSource {
+  readonly manifest: PluginManifest;
+  readonly size: number;
+  readonly sha256: string;
 }
 
 function formatAjvError(error: ErrorObject): string {
@@ -520,9 +527,9 @@ export function parseAndValidateManifestContents(contents: Uint8Array): PluginMa
   return result.manifest;
 }
 
-export async function readAndValidateManifest(
+export async function readValidatedManifestSource(
   pluginDirectory: string,
-): Promise<PluginManifest> {
+): Promise<ValidatedManifestSource> {
   const manifestPath = path.join(pluginDirectory, "netcatty.plugin.json");
   const initialStats = await lstat(manifestPath);
   if (!initialStats.isFile()) {
@@ -566,5 +573,15 @@ export async function readAndValidateManifest(
   } finally {
     await handle.close();
   }
-  return parseAndValidateManifestContents(contents);
+  return {
+    manifest: parseAndValidateManifestContents(contents),
+    size: contents.byteLength,
+    sha256: createHash("sha256").update(contents).digest("hex"),
+  };
+}
+
+export async function readAndValidateManifest(
+  pluginDirectory: string,
+): Promise<PluginManifest> {
+  return (await readValidatedManifestSource(pluginDirectory)).manifest;
 }
