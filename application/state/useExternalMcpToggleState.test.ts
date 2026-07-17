@@ -5,8 +5,41 @@ import {
   normalizeExternalMcpIdleTimeoutMinutes,
   normalizeExternalMcpMode,
   normalizeSessionIdleTimeoutMinutes,
+  readExternalMcpFocusOnHostOpen,
   shouldStartExternalMcpOnStartup,
+  writeExternalMcpFocusOnHostOpen,
 } from './useExternalMcpToggleState.ts';
+
+function installMemoryLocalStorage() {
+  const previousLocalStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  const previousDispatchEvent = Object.getOwnPropertyDescriptor(globalThis, 'dispatchEvent');
+  const backing = new Map<string, string>();
+
+  const storage: Storage = {
+    get length() { return backing.size; },
+    clear() { backing.clear(); },
+    getItem(key: string) { return backing.get(key) ?? null; },
+    key(index: number) { return Array.from(backing.keys())[index] ?? null; },
+    removeItem(key: string) { backing.delete(key); },
+    setItem(key: string, value: string) { backing.set(key, value); },
+  };
+
+  Object.defineProperty(globalThis, 'localStorage', { value: storage, configurable: true });
+  Object.defineProperty(globalThis, 'dispatchEvent', { value: () => true, configurable: true });
+
+  return () => {
+    if (previousLocalStorage) {
+      Object.defineProperty(globalThis, 'localStorage', previousLocalStorage);
+    } else {
+      Reflect.deleteProperty(globalThis, 'localStorage');
+    }
+    if (previousDispatchEvent) {
+      Object.defineProperty(globalThis, 'dispatchEvent', previousDispatchEvent);
+    } else {
+      Reflect.deleteProperty(globalThis, 'dispatchEvent');
+    }
+  };
+}
 
 describe('useExternalMcpToggleState helpers', () => {
   it('normalizes mode and idle timeout', () => {
@@ -49,5 +82,18 @@ describe('useExternalMcpToggleState helpers', () => {
     assert.equal(plan.runtimeEnabled, true);
     assert.equal(plan.storedEnabled, true);
     assert.equal(plan.shouldPersistStoredEnabled, false);
+  });
+
+  it('focus-on-host-open defaults to true and round-trips through storage', () => {
+    const restore = installMemoryLocalStorage();
+    try {
+      assert.equal(readExternalMcpFocusOnHostOpen(), true);
+      writeExternalMcpFocusOnHostOpen(false);
+      assert.equal(readExternalMcpFocusOnHostOpen(), false);
+      writeExternalMcpFocusOnHostOpen(true);
+      assert.equal(readExternalMcpFocusOnHostOpen(), true);
+    } finally {
+      restore();
+    }
   });
 });

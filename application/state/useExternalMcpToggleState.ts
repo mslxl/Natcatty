@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   STORAGE_KEY_AI_EXTERNAL_MCP_ENABLED,
+  STORAGE_KEY_AI_EXTERNAL_MCP_FOCUS_ON_HOST_OPEN,
   STORAGE_KEY_AI_EXTERNAL_MCP_IDLE_TIMEOUT_MINUTES,
   STORAGE_KEY_AI_EXTERNAL_MCP_MODE,
   STORAGE_KEY_AI_SESSION_IDLE_TIMEOUT_MINUTES,
@@ -62,6 +63,16 @@ export function readExternalMcpIdleTimeoutMinutes(): number {
   return normalizeExternalMcpIdleTimeoutMinutes(
     localStorageAdapter.readNumber(STORAGE_KEY_AI_EXTERNAL_MCP_IDLE_TIMEOUT_MINUTES),
   );
+}
+
+/** Whether host_open should surface/focus the main window. Defaults to true (existing behavior). */
+export function readExternalMcpFocusOnHostOpen(): boolean {
+  return localStorageAdapter.readBoolean(STORAGE_KEY_AI_EXTERNAL_MCP_FOCUS_ON_HOST_OPEN) ?? true;
+}
+
+export function writeExternalMcpFocusOnHostOpen(focusOnHostOpen: boolean): void {
+  localStorageAdapter.writeBoolean(STORAGE_KEY_AI_EXTERNAL_MCP_FOCUS_ON_HOST_OPEN, focusOnHostOpen);
+  emitAIStateChanged(STORAGE_KEY_AI_EXTERNAL_MCP_FOCUS_ON_HOST_OPEN);
 }
 
 export function normalizeSessionIdleTimeoutMinutes(value: number | null): number {

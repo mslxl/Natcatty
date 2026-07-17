@@ -233,6 +233,8 @@ export const zhTWAiMessages: Messages = {
   'ai.externalMcp.idleTimeout': '閒置逾時',
   'ai.externalMcp.idleTimeout.description': '暫時模式下，若超過該分鐘數沒有 MCP 操作，將自動關閉對外 MCP。',
   'ai.externalMcp.idleTimeout.minutes': '分鐘',
+  'ai.externalMcp.focusOnHostOpen': 'host_open 時啟用視窗',
+  'ai.externalMcp.focusOnHostOpen.description': '當 MCP 用戶端開啟主機連線時，將主視窗切換到前景。關閉後可不受打擾地繼續目前工作。',
   'ai.externalMcp.sessionIdleTimeout': '已開啟工作階段閒置逾時',
   'ai.externalMcp.sessionIdleTimeout.description': 'AI 開啟的工作階段若超過該分鐘數沒有終端或檔案操作，將自動關閉。',
   'ai.externalMcp.usage.title': '使用說明',

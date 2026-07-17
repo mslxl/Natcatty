@@ -234,6 +234,8 @@ export const enAiMessages: Messages = {
   'ai.externalMcp.idleTimeout': 'Idle timeout',
   'ai.externalMcp.idleTimeout.description': 'In temporary mode, disable External MCP after this many minutes with no MCP operations.',
   'ai.externalMcp.idleTimeout.minutes': 'min',
+  'ai.externalMcp.focusOnHostOpen': 'Focus window on host_open',
+  'ai.externalMcp.focusOnHostOpen.description': 'When an MCP client opens a host, bring the main window to the foreground. Turn off to keep working without interruption.',
   'ai.externalMcp.sessionIdleTimeout': 'Opened session idle timeout',
   'ai.externalMcp.sessionIdleTimeout.description': 'Automatically close sessions opened by an AI after this many minutes without terminal or file activity.',
   'ai.externalMcp.usage.title': 'How to use',
