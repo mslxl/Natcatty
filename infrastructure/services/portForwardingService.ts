@@ -482,20 +482,15 @@ export const reconcileWithBackend = async (): Promise<{
       }
     }
 
-    // Case 1: renderer thinks tunnel is active/connecting, but backend
-    // says it's gone.  For 'connecting' entries seeded by a previous
-    // reconcile (observing another window's handshake), also evict if the
-    // backend no longer reports them — the handshake failed or was
-    // cancelled.  Only skip 'connecting' entries that this renderer
-    // initiated itself (they have an unsubscribe callback because this
-    // renderer called startPortForward and registered a status listener).
+    // Case 1: renderer thinks a tunnel is active/connecting, but backend
+    // says it's gone. Preserve only a local handshake that has not appeared
+    // in the backend yet, or a reconnect that is already scheduled.
     for (const [ruleId, conn] of activeConnections) {
       if (!backendRuleIds.has(ruleId)) {
-        // Skip only the short gap before a tunnel initiated by this renderer
-        // is first visible in the backend list.
-        // — the backend hasn't reported them yet because the handshake
-        // is still in progress.
-        if (conn.status === 'connecting' && conn.locallyInitiated) {
+        if (
+          conn.status === 'connecting'
+          && (conn.locallyInitiated || conn.reconnectTimerCallback)
+        ) {
           continue;
         }
         conn.unsubscribe?.();

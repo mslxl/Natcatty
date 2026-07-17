@@ -506,6 +506,7 @@ test("inactive close events preserve an already scheduled reconnect", async (t) 
     value: {
       netcatty: {
         startPortForward: async () => ({ success: true }),
+        listPortForwards: async () => [],
         stopPortForwardByRuleId: async () => ({ stopped: 1, failed: 0, errors: [] }),
         onPortForwardStatus: (_tunnelId: string, listener: typeof statusListener) => {
           statusListener = listener;
@@ -532,6 +533,11 @@ test("inactive close events preserve an already scheduled reconnect", async (t) 
   assert.equal(getActiveConnection(reconnectRule.id), scheduled);
   assert.ok(scheduled.reconnectTimerCallback);
   assert.equal(scheduled.status, "connecting");
+
+  await syncWithBackend();
+
+  assert.equal(getActiveConnection(reconnectRule.id), scheduled);
+  assert.ok(scheduled.reconnectTimerCallback);
 });
 
 test("startPortForward adopts a tunnel reused by the backend", async () => {
