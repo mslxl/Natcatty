@@ -186,6 +186,8 @@ export const STORAGE_KEY_AI_EXTERNAL_MCP_ENABLED = 'netcatty_ai_external_mcp_ena
 export const STORAGE_KEY_AI_EXTERNAL_MCP_MODE = 'netcatty_ai_external_mcp_mode_v1';
 /** External MCP idle timeout in minutes (temporary mode only). */
 export const STORAGE_KEY_AI_EXTERNAL_MCP_IDLE_TIMEOUT_MINUTES = 'netcatty_ai_external_mcp_idle_timeout_minutes_v1';
+/** External MCP: whether host_open should surface/focus the main window (default true). */
+export const STORAGE_KEY_AI_EXTERNAL_MCP_FOCUS_ON_HOST_OPEN = 'netcatty_ai_external_mcp_focus_on_host_open_v1';
 
 // SFTP Transfer Concurrency
 export const STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY = 'netcatty_sftp_transfer_concurrency_v1';

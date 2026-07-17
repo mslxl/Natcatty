@@ -53,7 +53,10 @@ import {
 import { getCredentialProtectionAvailability } from './infrastructure/services/credentialProtection';
 import { netcattyBridge } from './infrastructure/services/netcattyBridge';
 import { localStorageAdapter } from './infrastructure/persistence/localStorageAdapter';
-import { syncExternalMcpStartupState } from './application/state/useExternalMcpToggleState';
+import {
+  readExternalMcpFocusOnHostOpen,
+  syncExternalMcpStartupState,
+} from './application/state/useExternalMcpToggleState';
 import { useExternalMcpSessionSync } from './application/state/useExternalMcpSessionSync';
 import {
   STORAGE_KEY_DEBUG_HOTKEYS,
@@ -1084,8 +1087,11 @@ function App({ settings }: { settings: SettingsState }) {
     if (!sessionId) {
       return { ok: false as const, error: `Failed to open host "${host.id}".` };
     }
-    // Surface the main window for external MCP / CLI open requests.
-    void netcattyBridge.get()?.openMainWindow?.();
+    // Surface the main window for external MCP / CLI open requests, unless the
+    // user disabled this in Settings → AI → External MCP.
+    if (readExternalMcpFocusOnHostOpen()) {
+      void netcattyBridge.get()?.openMainWindow?.();
+    }
     return { ok: true as const, sessionId, host };
   }, [handleConnectToHost]);
 

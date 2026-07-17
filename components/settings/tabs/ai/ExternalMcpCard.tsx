@@ -4,8 +4,10 @@ import { useI18n } from "../../../../application/i18n/I18nProvider";
 import {
   normalizeExternalMcpIdleTimeoutMinutes,
   normalizeExternalMcpMode,
+  readExternalMcpFocusOnHostOpen,
   readExternalMcpIdleTimeoutMinutes,
   readExternalMcpMode,
+  writeExternalMcpFocusOnHostOpen,
   type ExternalMcpMode,
   useExternalMcpToggleState,
 } from "../../../../application/state/useExternalMcpToggleState";
@@ -295,6 +297,7 @@ export const ExternalMcpCard: React.FC = () => {
   const { enabled, setEnabled } = useExternalMcpToggleState();
   const [mode, setModeRaw] = useState<ExternalMcpMode>(() => readExternalMcpMode());
   const [idleTimeoutMinutes, setIdleTimeoutRaw] = useState<number>(() => readExternalMcpIdleTimeoutMinutes());
+  const [focusOnHostOpen, setFocusOnHostOpenRaw] = useState<boolean>(() => readExternalMcpFocusOnHostOpen());
   const [status, setStatus] = useState<ExternalMcpStatus | null>(null);
   const [selectedClient, setSelectedClient] = useState<ExternalMcpClient>("codex");
   const [codexStatus, setCodexStatus] = useState<ClientSetupStatus | null>(null);
@@ -330,6 +333,11 @@ export const ExternalMcpCard: React.FC = () => {
     emitAIStateChanged(STORAGE_KEY_AI_EXTERNAL_MCP_IDLE_TIMEOUT_MINUTES);
     pushConfig(mode, normalized);
   }, [mode, pushConfig]);
+
+  const setFocusOnHostOpen = useCallback((nextFocusOnHostOpen: boolean) => {
+    setFocusOnHostOpenRaw(nextFocusOnHostOpen);
+    writeExternalMcpFocusOnHostOpen(nextFocusOnHostOpen);
+  }, []);
 
   const refreshStatus = useCallback(async (options?: { quiet?: boolean; clients?: boolean }) => {
     const bridge = getBridge();
@@ -705,6 +713,13 @@ export const ExternalMcpCard: React.FC = () => {
             </div>
           </div>
         ) : null}
+        <div className="flex items-center justify-between gap-4">
+          <div className="min-w-0">
+            <div className="text-sm font-medium">{t("ai.externalMcp.focusOnHostOpen")}</div>
+            <div className="text-xs text-muted-foreground">{t("ai.externalMcp.focusOnHostOpen.description")}</div>
+          </div>
+          <Toggle checked={focusOnHostOpen} onChange={setFocusOnHostOpen} />
+        </div>
       </div>
 
       <div className="space-y-2">
