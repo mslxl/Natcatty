@@ -277,11 +277,6 @@ export const usePortForwardingAutoStart = ({
     autoStartExecutedRef.current = true;
 
     const runAutoStart = async () => {
-      // Load rules from storage
-      const rules = localStorageAdapter.read<PortForwardingRule[]>(
-        STORAGE_KEY_PORT_FORWARDING,
-      ) ?? [];
-
       // First sync with backend to get any active tunnels and subscribe this
       // renderer to their later disconnect/error events.
       await syncWithBackend({
@@ -293,6 +288,12 @@ export const usePortForwardingAutoStart = ({
           updateStoredRuleStatus(ruleId, status, error);
         },
       });
+
+      // Re-read after the async sync so another window's delete or auto-start
+      // change cannot launch a stale rule.
+      const rules = localStorageAdapter.read<PortForwardingRule[]>(
+        STORAGE_KEY_PORT_FORWARDING,
+      ) ?? [];
 
       // Only start rules that are not already active
       const autoStartRules = rules.filter((r) => {

@@ -16,6 +16,7 @@ const {
   cancelTunnel,
   publishTunnelStatus,
   shouldFinalizeTunnelClose,
+  isReusableTunnelStatus,
 } = require("./portForwardingBridge.cjs");
 
 function createEncryptedKey(t) {
@@ -56,6 +57,13 @@ function createCapturingSender(onSend = () => {}, id = 1) {
     send: (channel, payload) => onSend(channel, payload),
   };
 }
+
+test("only live or connecting tunnels are reusable", () => {
+  assert.equal(isReusableTunnelStatus("active"), true);
+  assert.equal(isReusableTunnelStatus("connecting"), true);
+  assert.equal(isReusableTunnelStatus("error"), false);
+  assert.equal(isReusableTunnelStatus("inactive"), false);
+});
 
 test("status publication removes destroyed renderer subscribers", () => {
   const received = [];

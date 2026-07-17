@@ -39,6 +39,10 @@ function isTunnelCancelled(tunnelState) {
   return Boolean(tunnelState?.cancelled);
 }
 
+function isReusableTunnelStatus(status) {
+  return status === 'active' || status === 'connecting';
+}
+
 function publishTunnelStatus(tunnelId, tunnel, status, error = null) {
   if (!tunnel) return;
   tunnel.status = status;
@@ -169,6 +173,13 @@ async function startPortForward(event, payload) {
           };
         }
         continue;
+      }
+      if (!isReusableTunnelStatus(existingTunnel.status)) {
+        return {
+          tunnelId: existingTunnelId,
+          success: false,
+          error: existingTunnel.error || 'The existing tunnel is no longer reusable.',
+        };
       }
       if (!(existingTunnel.subscribers instanceof Map)) {
         existingTunnel.subscribers = new Map();
@@ -909,4 +920,5 @@ module.exports = {
   cancelTunnel,
   publishTunnelStatus,
   shouldFinalizeTunnelClose,
+  isReusableTunnelStatus,
 };
