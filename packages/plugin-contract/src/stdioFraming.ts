@@ -186,7 +186,10 @@ export class ContentLengthFrameDecoder {
           this.#maxHeaderBytes + HEADER_SEPARATOR.byteLength,
         );
         if (separatorIndex === -1) {
-          if (this.#queue.byteLength > this.#maxHeaderBytes) {
+          const maximumIncompleteHeaderBytes = this.#maxHeaderBytes
+            + HEADER_SEPARATOR.byteLength
+            - 1;
+          if (this.#queue.byteLength > maximumIncompleteHeaderBytes) {
             throw new Error(`Companion stdio header exceeds ${this.#maxHeaderBytes} bytes`);
           }
           return messages;

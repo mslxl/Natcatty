@@ -133,6 +133,9 @@ export function materializeStreamChunk(
     }
     return { encoding: "binary", bytes };
   }
+  if ((data as { readonly encoding: unknown }).encoding !== "transfer") {
+    throw new Error("Unsupported stream chunk encoding");
+  }
   if (transfer === undefined) {
     throw new Error("Transfer stream chunks require an ArrayBuffer in the message envelope");
   }

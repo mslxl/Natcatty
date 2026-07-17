@@ -101,6 +101,13 @@ test("MessagePort stream envelopes carry and validate the transferred ArrayBuffe
     /require a real ArrayBuffer/,
   );
   assert.throws(
+    () => materializeStreamChunk(
+      { encoding: "bogus", byteLength: 4 } as never,
+      transfer,
+    ),
+    /Unsupported stream chunk encoding/,
+  );
+  assert.throws(
     () => createMessagePortStreamEnvelope(
       { streamId: "stream-1", sequence: 0, kind: "open", windowBytes: 65_536 },
       transfer,

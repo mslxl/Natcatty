@@ -91,3 +91,23 @@ test("content-length framing rejects ambiguous headers and oversized payloads", 
     /must be an integer between/,
   );
 });
+
+test("content-length framing accepts a split delimiter at the header byte limit", () => {
+  const maxHeaderBytes = 32;
+  const header = `Content-Length:${" ".repeat(16)}2`;
+  assert.equal(new TextEncoder().encode(header).byteLength, maxHeaderBytes);
+
+  const separator = "\r\n\r\n";
+  for (let split = 0; split <= separator.length; split += 1) {
+    const decoder = new ContentLengthFrameDecoder({ maxHeaderBytes });
+    assert.deepEqual(decoder.push(`${header}${separator.slice(0, split)}`), []);
+    assert.deepEqual(decoder.push(`${separator.slice(split)}{}`), [{}]);
+    assert.doesNotThrow(() => decoder.finish());
+  }
+
+  const oversized = new ContentLengthFrameDecoder({ maxHeaderBytes });
+  assert.throws(
+    () => oversized.push(`${header} \r\n\r\n{}`),
+    /header exceeds 32 bytes/,
+  );
+});
