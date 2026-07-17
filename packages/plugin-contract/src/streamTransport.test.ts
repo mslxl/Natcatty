@@ -14,6 +14,7 @@ import {
   PLUGIN_STREAM_MAX_ID_LENGTH,
   PLUGIN_STREAM_MAX_WINDOW_BYTES,
   PLUGIN_STREAM_MIN_WINDOW_BYTES,
+  assertStreamChunkData,
   assertStreamFrame,
   createBase64StreamChunk,
   createJsonStreamChunk,
@@ -150,6 +151,31 @@ test("base64 stream chunks round-trip bytes and reject length or encoding ambigu
     const roundTrip = materializeStreamChunk(createBase64StreamChunk(sample));
     assert.equal(roundTrip.encoding, "binary");
     assert.deepEqual(roundTrip.bytes, sample, `base64 length ${length}`);
+  }
+});
+
+test("stream chunk assertions validate inline bytes before accepting frames", () => {
+  const jsonChunk = createJsonStreamChunk({ text: "你好" });
+  const base64Chunk = createBase64StreamChunk(new Uint8Array([0, 1, 2, 255]));
+  assert.doesNotThrow(() => assertStreamChunkData(jsonChunk));
+  assert.doesNotThrow(() => assertStreamChunkData(base64Chunk));
+  assert.doesNotThrow(() => assertStreamChunkData({ encoding: "transfer", byteLength: 4 }));
+
+  const invalidInlineChunks: readonly [unknown, RegExp][] = [
+    [{ ...jsonChunk, byteLength: jsonChunk.byteLength + 1 }, /JSON byteLength mismatch/],
+    [{ ...base64Chunk, byteLength: base64Chunk.byteLength + 1 }, /base64 byteLength mismatch/],
+    [
+      { encoding: "base64", value: "not-base64", byteLength: 1 },
+      /canonical RFC 4648 base64/,
+    ],
+    [{ encoding: "base64", value: "AB==", byteLength: 1 }, /canonical RFC 4648 base64/],
+  ];
+  for (const [data, expectedError] of invalidInlineChunks) {
+    assert.throws(() => assertStreamChunkData(data), expectedError);
+    assert.throws(
+      () => assertStreamFrame({ streamId: "stream-1", sequence: 1, kind: "chunk", data }),
+      expectedError,
+    );
   }
 });
 

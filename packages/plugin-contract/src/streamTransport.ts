@@ -139,7 +139,7 @@ function parseRpcErrorObject(value: unknown): RpcErrorObject {
     : { code: error.code as RpcErrorObject["code"], message: error.message };
 }
 
-function parseStreamChunkData(value: unknown): StreamChunkData {
+function parseStreamChunkDataShape(value: unknown): StreamChunkData {
   const data = readJsonRecord(value, "Stream chunk data");
   if (data.encoding === "json") {
     assertExactKeys(data, ["encoding", "value", "byteLength"], "JSON stream chunk data");
@@ -168,6 +168,25 @@ function parseStreamChunkData(value: unknown): StreamChunkData {
   } else {
     throw new TypeError("Unsupported stream chunk encoding");
   }
+}
+
+function assertInlineStreamChunkBytes(data: StreamChunkData): void {
+  if (data.encoding === "json") {
+    const byteLength = serializedJsonByteLength(data.value);
+    if (byteLength !== data.byteLength) {
+      throw new Error(
+        `Stream JSON byteLength mismatch: declared ${data.byteLength}, encoded ${byteLength}`,
+      );
+    }
+  } else if (data.encoding === "base64") {
+    decodeValidatedBase64(data.value, data.byteLength);
+  }
+}
+
+function parseStreamChunkData(value: unknown): StreamChunkData {
+  const data = parseStreamChunkDataShape(value);
+  assertInlineStreamChunkBytes(data);
+  return data;
 }
 
 export function assertStreamChunkData(value: unknown): asserts value is StreamChunkData {
@@ -330,6 +349,16 @@ function decodeBase64(value: string): Uint8Array {
   return output;
 }
 
+function decodeValidatedBase64(value: string, declaredByteLength: number): Uint8Array {
+  const bytes = decodeBase64(value);
+  if (bytes.byteLength !== declaredByteLength) {
+    throw new Error(
+      `Stream base64 byteLength mismatch: declared ${declaredByteLength}, decoded ${bytes.byteLength}`,
+    );
+  }
+  return bytes;
+}
+
 export function createBase64StreamChunk(bytes: Uint8Array): StreamChunkData {
   assertChunkByteLength(bytes.byteLength);
   return {
@@ -357,24 +386,14 @@ function materializeValidatedStreamChunk(
     if (transfer !== undefined) {
       throw new Error("JSON stream chunks must not include a transferable buffer");
     }
-    const byteLength = serializedJsonByteLength(data.value);
-    if (byteLength !== data.byteLength) {
-      throw new Error(
-        `Stream JSON byteLength mismatch: declared ${data.byteLength}, encoded ${byteLength}`,
-      );
-    }
+    assertInlineStreamChunkBytes(data);
     return { encoding: "json", value: data.value };
   }
   if (data.encoding === "base64") {
     if (transfer !== undefined) {
       throw new Error("Base64 stream chunks must not include a transferable buffer");
     }
-    const bytes = decodeBase64(data.value);
-    if (bytes.byteLength !== data.byteLength) {
-      throw new Error(
-        `Stream base64 byteLength mismatch: declared ${data.byteLength}, decoded ${bytes.byteLength}`,
-      );
-    }
+    const bytes = decodeValidatedBase64(data.value, data.byteLength);
     return { encoding: "binary", bytes };
   }
   if (transfer === undefined) {
@@ -393,7 +412,7 @@ export function materializeStreamChunk(
   data: unknown,
   transfer?: ArrayBuffer,
 ): MaterializedStreamChunk {
-  return materializeValidatedStreamChunk(parseStreamChunkData(data), transfer);
+  return materializeValidatedStreamChunk(parseStreamChunkDataShape(data), transfer);
 }
 
 export function createMessagePortStreamEnvelope(
@@ -402,7 +421,11 @@ export function createMessagePortStreamEnvelope(
 ): MessagePortStreamEnvelope {
   const validatedFrame = parseStreamFrame(frame);
   if (validatedFrame.kind === "chunk") {
-    materializeValidatedStreamChunk(validatedFrame.data, transfer);
+    if (validatedFrame.data.encoding === "transfer") {
+      materializeValidatedStreamChunk(validatedFrame.data, transfer);
+    } else if (transfer !== undefined) {
+      throw new Error("Only transfer-encoded chunk frames may include an ArrayBuffer");
+    }
   } else if (transfer !== undefined) {
     throw new Error("Only transfer-encoded chunk frames may include an ArrayBuffer");
   }

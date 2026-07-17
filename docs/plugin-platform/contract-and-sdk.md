@@ -209,11 +209,15 @@ receiver validates JSON serialization, base64 decoding, or transferred buffer
 length before accepting credit. The contract exports `createJsonStreamChunk()`,
 `createBase64StreamChunk()`, `materializeStreamChunk()`, and
 `createMessagePortStreamEnvelope()` so every host path applies the same checks.
-`assertStreamFrame()` and the envelope helper accept untyped boundary values
-and reject unknown frame kinds, missing or additional properties, malformed
-chunk/error payloads, and stream IDs outside the Schema-owned 128-character
-limit. The helper returns a normalized frame assembled only from validated own
-data properties rather than returning the caller's object unchecked.
+`assertStreamChunkData()`, `assertStreamFrame()`, and the envelope helper accept
+untyped boundary values. Inline JSON and base64 assertions verify the encoded
+bytes against the declared length before a consumer advances sequence or credit
+state; transfer chunks defer that comparison until the envelope supplies the
+actual `ArrayBuffer`. The frame helpers also reject unknown frame kinds, missing
+or additional properties, malformed chunk/error payloads, and stream IDs
+outside the Schema-owned 128-character limit. The envelope helper returns a
+normalized frame assembled only from validated own data properties rather than
+returning the caller's object unchecked.
 The open frame is sequence 0 and grants the initial `windowBytes`; data and
 terminal frames begin at sequence 1. Sequence numbers increase independently in
 each sending direction and cannot exceed `Number.MAX_SAFE_INTEGER`. A producer
