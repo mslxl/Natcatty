@@ -90,6 +90,20 @@ test('SessionStateStore preserves a running job after a transient poll error', (
   assert.match(store.toReinjectionText('chat-1') ?? '', /do not restart/i);
 });
 
+test('SessionStateStore drops a job after poll confirms cancellation', () => {
+  const store = new SessionStateStore();
+  store.updateFromToolResult(
+    'chat-1', 'terminal_start', { sessionId: 'sess-1', command: 'npm run dev' },
+    JSON.stringify({ jobId: 'job-cancelled', status: 'running' }), false,
+  );
+  store.updateFromToolResult(
+    'chat-1', 'terminal_poll', { jobId: 'job-cancelled', offset: 0 },
+    JSON.stringify({ jobId: 'job-cancelled', status: 'cancelled', error: 'Cancelled' }), true,
+  );
+
+  assert.equal(store.get('chat-1').activeJobs['job-cancelled'], undefined);
+});
+
 test('SessionStateStore records the last terminal screen range read', () => {
   const store = new SessionStateStore();
   store.updateFromToolResult(

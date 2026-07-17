@@ -60,7 +60,7 @@ function parseResultObject(resultText: string): Record<string, unknown> | undefi
 
 function terminalJobDefinitelyGone(result: Record<string, unknown> | undefined, resultText: string): boolean {
   const status = typeof result?.status === 'string' ? result.status.toLowerCase() : '';
-  if (['completed', 'failed', 'stopped', 'exited', 'not_found'].includes(status)) return true;
+  if (['completed', 'failed', 'stopped', 'exited', 'cancelled', 'canceled', 'not_found'].includes(status)) return true;
   const error = typeof result?.error === 'string' ? result.error : resultText;
   return /\b(?:job|task)\b.{0,40}\b(?:not found|does not exist|no longer exists|already (?:finished|completed|exited|stopped))\b/i.test(error)
     || /\b(?:unknown|no such)\s+(?:job|task)\b/i.test(error);
