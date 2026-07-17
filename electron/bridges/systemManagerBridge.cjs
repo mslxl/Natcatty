@@ -63,7 +63,7 @@ function parseProcessLines(stdout) {
     }
 
     const busyBoxTopMatch = trimmed.match(
-      /^(\d+)\s+(\d+)\s+(\S+)\s+(\S+)\s+(\d+(?:\.\d+)?[mgtpezy]?)\s+([\d.]+)%\s+([\d.]+)%\s+(.+)$/i,
+      /^(\d+)\s+(\d+)\s+(\S+)\s+(\S+)\s+(\d+(?:\.\d+)?[mgtpezy]?)\s+([\d.]+)%?\s+(?:\d+\s+)?([\d.]+)%?\s+(.+)$/i,
     );
     if (busyBoxTopMatch) {
       const suffix = busyBoxTopMatch[5].slice(-1).toLowerCase();

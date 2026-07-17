@@ -19,7 +19,12 @@ function createFakeExecStream(stdout, options = {}) {
   return stream;
 }
 
-function runProcessCommandWithBusyBoxPs(command, { supportsWide = true, supportsTop = true } = {}) {
+function runProcessCommandWithBusyBoxPs(command, {
+  supportsWide = true,
+  supportsTop = true,
+  topHasCpuColumn = false,
+  topUsesPercentSymbols = true,
+} = {}) {
   const prefix = "exec sh -c '";
   assert.ok(command.startsWith(prefix) && command.endsWith("'"));
   const innerScript = command.slice(prefix.length, -1);
@@ -38,9 +43,15 @@ function runProcessCommandWithBusyBoxPs(command, { supportsWide = true, supports
     supportsTop ? "  :" : "  return 1",
     "  printf '%s\\n' 'Mem: 2059948K used, 14365980K free, 52256K shrd, 204K buff, 599840K cached'",
     "  printf '%s\\n' 'CPU:   0% usr   0% sys   0% nic  99% idle   0% io   0% irq   0% sirq'",
-    "  printf '%s\\n' '  PID  PPID USER     STAT   VSZ %VSZ %CPU COMMAND'",
-    "  printf '%s\\n' '    1     0 root     S     1356   1%   2% /sbin/procd'",
-    "  printf '%s\\n' '  411     1 root     R    97.6m  10%   7% /sbin/ubusd'",
+    topHasCpuColumn
+      ? "  printf '%s\\n' '  PID  PPID USER     STAT   VSZ %VSZ CPU %CPU COMMAND'"
+      : "  printf '%s\\n' '  PID  PPID USER     STAT   VSZ %VSZ %CPU COMMAND'",
+    topHasCpuColumn
+      ? `  printf '%s\\n' '    1     0 root     S     1356   1${topUsesPercentSymbols ? "%" : ".0"}   0   2${topUsesPercentSymbols ? "%" : ".0"} /sbin/procd'`
+      : `  printf '%s\\n' '    1     0 root     S     1356   1${topUsesPercentSymbols ? "%" : ".0"}   2${topUsesPercentSymbols ? "%" : ".0"} /sbin/procd'`,
+    topHasCpuColumn
+      ? `  printf '%s\\n' '  411     1 root     R    97.6m  10${topUsesPercentSymbols ? "%" : ".0"}   3   7${topUsesPercentSymbols ? "%" : ".0"} /sbin/ubusd'`
+      : `  printf '%s\\n' '  411     1 root     R    97.6m  10${topUsesPercentSymbols ? "%" : ".0"}   7${topUsesPercentSymbols ? "%" : ".0"} /sbin/ubusd'`,
     "}",
     "ps() {",
     "  printf '__PS_CALL__=%s\\n' \"$*\" >&3",
@@ -101,6 +112,64 @@ test("listProcesses preserves BusyBox top CPU and memory percentages", async () 
   assert.equal(result.processes[1].cpuPercent, 7);
   assert.equal(result.processes[1].memPercent, 10);
   assert.deepEqual(seenTopCalls, ["-b -n 1"]);
+});
+
+test("listProcesses accepts BusyBox top output with a CPU column", async () => {
+  const conn = {
+    exec(command, callback) {
+      const execution = runProcessCommandWithBusyBoxPs(command, { topHasCpuColumn: true });
+      callback(null, createFakeExecStream(execution.stdout, execution));
+    },
+  };
+  const sessions = new Map([["openwrt", { conn, type: "ssh" }]]);
+  const bridge = createSystemManagerBridge({
+    getSessions: () => sessions,
+    process,
+  });
+
+  const result = await bridge.listProcesses(null, { sessionId: "openwrt" });
+
+  assert.equal(result.success, true);
+  assert.equal(result.processes.length, 2);
+  assert.deepEqual(result.processes.map(({ pid, cpuPercent, memPercent, command }) => ({
+    pid,
+    cpuPercent,
+    memPercent,
+    command,
+  })), [
+    { pid: 1, cpuPercent: 2, memPercent: 1, command: "/sbin/procd" },
+    { pid: 411, cpuPercent: 7, memPercent: 10, command: "/sbin/ubusd" },
+  ]);
+});
+
+test("listProcesses accepts BusyBox top percentages without percent symbols", async () => {
+  const conn = {
+    exec(command, callback) {
+      const execution = runProcessCommandWithBusyBoxPs(command, {
+        topHasCpuColumn: true,
+        topUsesPercentSymbols: false,
+      });
+      callback(null, createFakeExecStream(execution.stdout, execution));
+    },
+  };
+  const sessions = new Map([["openwrt", { conn, type: "ssh" }]]);
+  const bridge = createSystemManagerBridge({
+    getSessions: () => sessions,
+    process,
+  });
+
+  const result = await bridge.listProcesses(null, { sessionId: "openwrt" });
+
+  assert.equal(result.success, true);
+  assert.deepEqual(result.processes.map(({ pid, cpuPercent, memPercent, command }) => ({
+    pid,
+    cpuPercent,
+    memPercent,
+    command,
+  })), [
+    { pid: 1, cpuPercent: 2, memPercent: 1, command: "/sbin/procd" },
+    { pid: 411, cpuPercent: 7, memPercent: 10, command: "/sbin/ubusd" },
+  ]);
 });
 
 test("listProcesses uses a ps format that works on CentOS 7 procps", async () => {
