@@ -54,6 +54,7 @@ export interface PortForwardingConnection {
 // Map to track active connections
 const activeConnections = new Map<string, PortForwardingConnection>();
 const rulesPendingCleanup = new Set<string>();
+const manualStopsInProgress = new Set<string>();
 const ruleCleanupPromises = new Map<string, Promise<{ success: boolean; error?: string }>>();
 const deferredReconnects = new Map<string, {
   enableReconnect: boolean;
@@ -466,6 +467,21 @@ export const syncWithBackend = async (
                   current.unsubscribe?.();
                   current.unsubscribe = undefined;
                   return;
+                }
+                if (
+                  !manualStopsInProgress.has(ruleId)
+                  && !rulesPendingCleanup.has(ruleId)
+                ) {
+                  const reconnectScheduled = scheduleReconnectIfNeeded(
+                    ruleId,
+                    connection.syncedShouldReconnect?.() ?? false,
+                    onStatusChange,
+                  );
+                  if (reconnectScheduled) {
+                    current.unsubscribe?.();
+                    current.unsubscribe = undefined;
+                    return;
+                  }
                 }
                 current.unsubscribe?.();
                 clearReconnectTimer(ruleId);
@@ -984,6 +1000,7 @@ export const stopPortForward = async (
     return { success: true };
   }
 
+  manualStopsInProgress.add(ruleId);
   try {
     if (bridge.stopPortForwardByRuleId) {
       const result = await bridge.stopPortForwardByRuleId(ruleId);
@@ -1017,6 +1034,8 @@ export const stopPortForward = async (
     }
     onStatusChange('error', error);
     return { success: false, error };
+  } finally {
+    manualStopsInProgress.delete(ruleId);
   }
 };
 
