@@ -411,9 +411,112 @@ export interface PortForwardingBackendSyncOptions {
   ) => void;
 }
 
+const backendSyncOptions: PortForwardingBackendSyncOptions = {};
+
+const rememberBackendSyncOptions = (options: PortForwardingBackendSyncOptions): void => {
+  if (options.shouldReconnect) backendSyncOptions.shouldReconnect = options.shouldReconnect;
+  if (options.onStatusChange) backendSyncOptions.onStatusChange = options.onStatusChange;
+};
+
+const configureSyncedConnection = (
+  connection: PortForwardingConnection,
+  ruleId: string,
+): void => {
+  if (backendSyncOptions.shouldReconnect) {
+    connection.syncedShouldReconnect = () =>
+      backendSyncOptions.shouldReconnect?.(ruleId) ?? false;
+  }
+  if (backendSyncOptions.onStatusChange) {
+    connection.syncedOnStatusChange = (status, error) => {
+      backendSyncOptions.onStatusChange?.(ruleId, status, error);
+    };
+  }
+};
+
+const subscribeSyncedConnection = async (
+  ruleId: string,
+  connection: PortForwardingConnection,
+): Promise<boolean> => {
+  const bridge = netcattyBridge.get();
+  if (!bridge) return activeConnections.get(ruleId) === connection;
+
+  if (!connection.unsubscribe) {
+    const onStatusChange = (status: PortForwardingRule['status'], error?: string) => {
+      connection.syncedOnStatusChange?.(status, error);
+    };
+    const unsubscribe = bridge.onPortForwardStatus?.(
+      connection.tunnelId,
+      (status, error) => {
+        const current = activeConnections.get(ruleId);
+        if (current !== connection) return;
+
+        if (status === 'inactive') {
+          if (current.reconnectTimerCallback) {
+            current.unsubscribe?.();
+            current.unsubscribe = undefined;
+            return;
+          }
+          if (
+            !manualStopsInProgress.has(ruleId)
+            && !rulesPendingCleanup.has(ruleId)
+          ) {
+            const reconnectScheduled = scheduleReconnectIfNeeded(
+              ruleId,
+              connection.syncedShouldReconnect?.() ?? false,
+              onStatusChange,
+            );
+            if (reconnectScheduled) {
+              current.unsubscribe?.();
+              current.unsubscribe = undefined;
+              return;
+            }
+          }
+          current.unsubscribe?.();
+          clearReconnectTimer(ruleId);
+          activeConnections.delete(ruleId);
+          onStatusChange('inactive');
+          return;
+        }
+
+        current.status = status;
+        current.error = error ?? undefined;
+        if (status === 'error') {
+          const reconnectScheduled = scheduleReconnectIfNeeded(
+            ruleId,
+            connection.syncedShouldReconnect?.() ?? false,
+            onStatusChange,
+          );
+          if (reconnectScheduled) return;
+        }
+        onStatusChange(status, error ?? undefined);
+      },
+    );
+    if (activeConnections.get(ruleId) === connection) {
+      connection.unsubscribe = unsubscribe;
+    } else {
+      unsubscribe?.();
+    }
+  }
+
+  const snapshot = await bridge.subscribePortForward?.(connection.tunnelId);
+  if (activeConnections.get(ruleId) !== connection) return false;
+  if (snapshot?.status === 'inactive') {
+    connection.unsubscribe?.();
+    activeConnections.delete(ruleId);
+    connection.syncedOnStatusChange?.('inactive');
+    return false;
+  }
+  if (snapshot) {
+    connection.status = resolveBackendStatus(snapshot.status);
+    connection.error = snapshot.error;
+  }
+  return true;
+};
+
 export const syncWithBackend = async (
   options: PortForwardingBackendSyncOptions = {},
 ): Promise<void> => {
+  rememberBackendSyncOptions(options);
   const bridge = netcattyBridge.get();
   
   if (!bridge?.listPortForwards) {
@@ -442,87 +545,10 @@ export const syncWithBackend = async (
             };
         connection.status = resolveBackendStatus(tunnel.status);
         connection.error = tunnel.error;
-        if (options.shouldReconnect) {
-          connection.syncedShouldReconnect = () => options.shouldReconnect?.(ruleId) ?? false;
-        }
-        if (options.onStatusChange) {
-          connection.syncedOnStatusChange = (status, error) => {
-            options.onStatusChange?.(ruleId, status, error);
-          };
-        }
+        configureSyncedConnection(connection, ruleId);
         activeConnections.set(ruleId, connection);
 
-        if (!connection.unsubscribe) {
-          const onStatusChange = (status: PortForwardingRule['status'], error?: string) => {
-            connection.syncedOnStatusChange?.(status, error);
-          };
-          const unsubscribe = bridge.onPortForwardStatus?.(
-            tunnel.tunnelId,
-            (status, error) => {
-              const current = activeConnections.get(ruleId);
-              if (current !== connection) return;
-
-              if (status === 'inactive') {
-                if (current.reconnectTimerCallback) {
-                  current.unsubscribe?.();
-                  current.unsubscribe = undefined;
-                  return;
-                }
-                if (
-                  !manualStopsInProgress.has(ruleId)
-                  && !rulesPendingCleanup.has(ruleId)
-                ) {
-                  const reconnectScheduled = scheduleReconnectIfNeeded(
-                    ruleId,
-                    connection.syncedShouldReconnect?.() ?? false,
-                    onStatusChange,
-                  );
-                  if (reconnectScheduled) {
-                    current.unsubscribe?.();
-                    current.unsubscribe = undefined;
-                    return;
-                  }
-                }
-                current.unsubscribe?.();
-                clearReconnectTimer(ruleId);
-                activeConnections.delete(ruleId);
-                onStatusChange('inactive');
-                return;
-              }
-
-              current.status = status;
-              current.error = error ?? undefined;
-              if (status === 'error') {
-                const reconnectScheduled = scheduleReconnectIfNeeded(
-                  ruleId,
-                  connection.syncedShouldReconnect?.() ?? false,
-                  onStatusChange,
-                );
-                if (reconnectScheduled) return;
-              }
-              onStatusChange(status, error ?? undefined);
-            },
-          );
-          if (activeConnections.get(ruleId) === connection) {
-            connection.unsubscribe = unsubscribe;
-          } else {
-            unsubscribe?.();
-          }
-
-        }
-
-        const snapshot = await bridge.subscribePortForward?.(tunnel.tunnelId);
-        if (activeConnections.get(ruleId) !== connection) continue;
-        if (snapshot?.status === 'inactive') {
-          connection.unsubscribe?.();
-          activeConnections.delete(ruleId);
-          connection.syncedOnStatusChange?.('inactive');
-          continue;
-        }
-        if (snapshot) {
-          connection.status = resolveBackendStatus(snapshot.status);
-          connection.error = snapshot.error;
-        }
+        if (!await subscribeSyncedConnection(ruleId, connection)) continue;
         
         logger.info(`[PortForwardingService] Synced active tunnel for rule ${ruleId}`);
       }
@@ -570,12 +596,18 @@ export const reconcileWithBackend = async (): Promise<{
 
         // Case 2: backend has it, renderer doesn't — insert it
         if (!activeConnections.has(ruleId)) {
-          activeConnections.set(ruleId, {
+          const connection: PortForwardingConnection = {
             ruleId,
             tunnelId: tunnel.tunnelId,
             status: resolveBackendStatus(tunnel.status),
             error: tunnel.error,
-          });
+          };
+          configureSyncedConnection(connection, ruleId);
+          activeConnections.set(ruleId, connection);
+          if (!await subscribeSyncedConnection(ruleId, connection)) {
+            result.gone.push(ruleId);
+            continue;
+          }
           result.appeared.push(ruleId);
         } else {
           // Case 3: renderer tracks it, but status may have changed

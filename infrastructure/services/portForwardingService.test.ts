@@ -188,6 +188,62 @@ test("syncWithBackend subscribes adopted auto-start tunnels for reconnect", asyn
   assert.ok(connection.reconnectTimerCallback);
 });
 
+test("heartbeat subscribes newly discovered auto-start tunnels for reconnect", async (t) => {
+  const statuses: string[] = [];
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      netcatty: {
+        listPortForwards: async () => [],
+      },
+    },
+  });
+  await syncWithBackend({
+    shouldReconnect: () => true,
+    onStatusChange: (_ruleId, status) => statuses.push(status),
+  });
+
+  let statusListener: ((status: PortForwardingRule["status"], error?: string | null) => void) | undefined;
+  const subscribedTunnelIds: string[] = [];
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      netcatty: {
+        listPortForwards: async () => [{
+          ruleId: "heartbeat-auto-start-rule",
+          tunnelId: "heartbeat-auto-start-tunnel",
+          type: "local",
+          status: "active",
+        }],
+        onPortForwardStatus: (_tunnelId: string, listener: typeof statusListener) => {
+          statusListener = listener;
+          return () => undefined;
+        },
+        subscribePortForward: async (tunnelId: string) => {
+          subscribedTunnelIds.push(tunnelId);
+          return { tunnelId, status: "active" };
+        },
+        stopPortForwardByRuleId: async () => ({ stopped: 1, failed: 0, errors: [] }),
+      },
+    },
+  });
+  setReconnectCallback(async () => ({ success: true }));
+  t.after(async () => {
+    setReconnectCallback(null);
+    await stopAndCleanupRuleAndWait("heartbeat-auto-start-rule");
+  });
+
+  const reconciliation = await reconcileWithBackend();
+  assert.deepEqual(reconciliation.appeared, ["heartbeat-auto-start-rule"]);
+  assert.deepEqual(subscribedTunnelIds, ["heartbeat-auto-start-tunnel"]);
+
+  statusListener?.("inactive");
+  const connection = getActiveConnection("heartbeat-auto-start-rule");
+  assert.ok(connection?.reconnectTimerCallback);
+  assert.equal(connection.status, "connecting");
+  assert.deepEqual(statuses, ["connecting"]);
+});
+
 test("syncWithBackend registers adopted tunnels without a status callback", async (t) => {
   const subscribedTunnelIds: string[] = [];
   Object.defineProperty(globalThis, "window", {
