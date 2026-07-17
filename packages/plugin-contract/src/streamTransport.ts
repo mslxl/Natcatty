@@ -1,20 +1,24 @@
 import type {
   JsonValue,
+  RpcErrorObject,
   StreamChunkData,
   StreamFrame,
 } from "./generated/plugin-contract.js";
 import {
+  PLUGIN_RPC_ERROR_CODES,
   PLUGIN_STREAM_MAX_CHUNK_BYTES,
   PLUGIN_STREAM_MAX_CREDIT_BYTES,
+  PLUGIN_STREAM_MAX_ID_LENGTH,
   PLUGIN_STREAM_MAX_WINDOW_BYTES,
   PLUGIN_STREAM_MIN_WINDOW_BYTES,
   PLUGIN_WIRE_MAX_SAFE_INTEGER,
 } from "./generated/plugin-contract-limits.js";
-import { serializeJsonValue } from "./jsonValue.js";
+import { assertJsonValue, serializeJsonValue } from "./jsonValue.js";
 
 export {
   PLUGIN_STREAM_MAX_CHUNK_BYTES,
   PLUGIN_STREAM_MAX_CREDIT_BYTES,
+  PLUGIN_STREAM_MAX_ID_LENGTH,
   PLUGIN_STREAM_MAX_WINDOW_BYTES,
   PLUGIN_STREAM_MIN_WINDOW_BYTES,
 } from "./generated/plugin-contract-limits.js";
@@ -30,6 +34,7 @@ export interface MessagePortStreamEnvelope {
 }
 
 const PLUGIN_STREAM_MAX_BASE64_CHARACTERS = 4 * Math.ceil(PLUGIN_STREAM_MAX_CHUNK_BYTES / 3);
+const RPC_ERROR_CODES = new Set<number>(PLUGIN_RPC_ERROR_CODES);
 
 export type MaterializedStreamChunk =
   | { readonly encoding: "json"; readonly value: JsonValue }
@@ -68,36 +73,215 @@ function assertChunkByteLength(byteLength: number): void {
   }
 }
 
-function assertStreamSequence(frame: StreamFrame): void {
-  const minimum = frame.kind === "open" || frame.kind === "windowUpdate" ? 0 : 1;
-  if (!Number.isSafeInteger(frame.sequence)
-    || frame.sequence < minimum
-    || frame.sequence > PLUGIN_WIRE_MAX_SAFE_INTEGER
-    || (frame.kind === "open" && frame.sequence !== 0)) {
-    const expected = frame.kind === "open"
-      ? "exactly 0"
-      : `a safe integer between ${minimum} and ${PLUGIN_WIRE_MAX_SAFE_INTEGER}`;
-    throw new RangeError(`Stream ${frame.kind} sequence must be ${expected}`);
+type JsonRecord = Record<string, JsonValue>;
+
+function readJsonRecord(value: unknown, label: string): JsonRecord {
+  assertJsonValue(value);
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError(`${label} must be a plain JSON object`);
+  }
+  const record: JsonRecord = Object.create(null) as JsonRecord;
+  for (const key of Object.keys(value)) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor || !("value" in descriptor)) {
+      throw new TypeError(`${label} must contain data properties only`);
+    }
+    record[key] = descriptor.value as JsonValue;
+  }
+  return record;
+}
+
+function assertExactKeys(
+  record: JsonRecord,
+  expectedKeys: readonly string[],
+  label: string,
+): void {
+  const actualKeys = Object.keys(record);
+  if (actualKeys.length !== expectedKeys.length
+    || expectedKeys.some((key) => !Object.hasOwn(record, key))) {
+    throw new TypeError(`${label} has missing or unsupported properties`);
   }
 }
 
-function assertStreamCredit(frame: StreamFrame): void {
-  if (frame.kind === "open") {
-    if (!Number.isInteger(frame.windowBytes)
-      || frame.windowBytes < PLUGIN_STREAM_MIN_WINDOW_BYTES
-      || frame.windowBytes > PLUGIN_STREAM_MAX_WINDOW_BYTES) {
-      throw new RangeError(
-        `Stream open windowBytes must be an integer between ${PLUGIN_STREAM_MIN_WINDOW_BYTES} and ${PLUGIN_STREAM_MAX_WINDOW_BYTES}`,
-      );
+function assertBoundedString(
+  value: JsonValue | undefined,
+  minimum: number,
+  maximum: number,
+  label: string,
+): asserts value is string {
+  if (typeof value !== "string") {
+    throw new TypeError(`${label} must be a string`);
+  }
+  const length = [...value].length;
+  if (length < minimum || length > maximum) {
+    throw new RangeError(`${label} must contain between ${minimum} and ${maximum} characters`);
+  }
+}
+
+function parseRpcErrorObject(value: unknown): RpcErrorObject {
+  const error = readJsonRecord(value, "Stream error");
+  const expectedKeys = Object.hasOwn(error, "data")
+    ? ["code", "message", "data"]
+    : ["code", "message"];
+  assertExactKeys(error, expectedKeys, "Stream error");
+  if (typeof error.code !== "number"
+    || !Number.isInteger(error.code)
+    || !RPC_ERROR_CODES.has(error.code)) {
+    throw new RangeError("Stream error code is not a supported RPC error code");
+  }
+  assertBoundedString(error.message, 1, 2048, "Stream error message");
+  return Object.hasOwn(error, "data")
+    ? {
+        code: error.code as RpcErrorObject["code"],
+        message: error.message,
+        data: error.data ?? null,
+      }
+    : { code: error.code as RpcErrorObject["code"], message: error.message };
+}
+
+function parseStreamChunkData(value: unknown): StreamChunkData {
+  const data = readJsonRecord(value, "Stream chunk data");
+  if (data.encoding === "json") {
+    assertExactKeys(data, ["encoding", "value", "byteLength"], "JSON stream chunk data");
+    if (typeof data.byteLength !== "number") {
+      throw new TypeError("Stream chunk byteLength must be a number");
     }
-  } else if (frame.kind === "windowUpdate"
-    && (!Number.isInteger(frame.creditBytes)
-      || frame.creditBytes < 1
-      || frame.creditBytes > PLUGIN_STREAM_MAX_CREDIT_BYTES)) {
+    assertChunkByteLength(data.byteLength);
+    return { encoding: "json", value: data.value ?? null, byteLength: data.byteLength };
+  } else if (data.encoding === "base64") {
+    assertExactKeys(data, ["encoding", "value", "byteLength"], "Base64 stream chunk data");
+    if (typeof data.value !== "string") {
+      throw new TypeError("Base64 stream chunk value must be a string");
+    }
+    if (typeof data.byteLength !== "number") {
+      throw new TypeError("Stream chunk byteLength must be a number");
+    }
+    assertChunkByteLength(data.byteLength);
+    return { encoding: "base64", value: data.value, byteLength: data.byteLength };
+  } else if (data.encoding === "transfer") {
+    assertExactKeys(data, ["encoding", "byteLength"], "Transfer stream chunk data");
+    if (typeof data.byteLength !== "number") {
+      throw new TypeError("Stream chunk byteLength must be a number");
+    }
+    assertChunkByteLength(data.byteLength);
+    return { encoding: "transfer", byteLength: data.byteLength };
+  } else {
+    throw new TypeError("Unsupported stream chunk encoding");
+  }
+}
+
+export function assertStreamChunkData(value: unknown): asserts value is StreamChunkData {
+  parseStreamChunkData(value);
+}
+
+function assertStreamSequence(kind: StreamFrame["kind"], sequence: number): void {
+  const minimum = kind === "open" || kind === "windowUpdate" ? 0 : 1;
+  if (!Number.isSafeInteger(sequence)
+    || sequence < minimum
+    || sequence > PLUGIN_WIRE_MAX_SAFE_INTEGER
+    || (kind === "open" && sequence !== 0)) {
+    const expected = kind === "open"
+      ? "exactly 0"
+      : `a safe integer between ${minimum} and ${PLUGIN_WIRE_MAX_SAFE_INTEGER}`;
+    throw new RangeError(`Stream ${kind} sequence must be ${expected}`);
+  }
+}
+
+function assertStreamWindowBytes(windowBytes: number): void {
+  if (!Number.isInteger(windowBytes)
+    || windowBytes < PLUGIN_STREAM_MIN_WINDOW_BYTES
+    || windowBytes > PLUGIN_STREAM_MAX_WINDOW_BYTES) {
+    throw new RangeError(
+      `Stream open windowBytes must be an integer between ${PLUGIN_STREAM_MIN_WINDOW_BYTES} and ${PLUGIN_STREAM_MAX_WINDOW_BYTES}`,
+    );
+  }
+}
+
+function assertStreamCreditBytes(creditBytes: number): void {
+  if (!Number.isInteger(creditBytes)
+    || creditBytes < 1
+    || creditBytes > PLUGIN_STREAM_MAX_CREDIT_BYTES) {
     throw new RangeError(
       `Stream windowUpdate creditBytes must be an integer between 1 and ${PLUGIN_STREAM_MAX_CREDIT_BYTES}`,
     );
   }
+}
+
+function parseStreamFrame(value: unknown): StreamFrame {
+  const frame = readJsonRecord(value, "Stream frame");
+  assertBoundedString(frame.streamId, 1, PLUGIN_STREAM_MAX_ID_LENGTH, "Stream frame streamId");
+  if (typeof frame.kind !== "string") {
+    throw new TypeError("Stream frame kind must be a string");
+  }
+  if (typeof frame.sequence !== "number") {
+    throw new TypeError("Stream frame sequence must be a number");
+  }
+  switch (frame.kind) {
+    case "open": {
+      assertExactKeys(frame, ["streamId", "sequence", "kind", "windowBytes"], "Open stream frame");
+      if (typeof frame.windowBytes !== "number") {
+        throw new TypeError("Stream open windowBytes must be a number");
+      }
+      assertStreamSequence(frame.kind, frame.sequence);
+      assertStreamWindowBytes(frame.windowBytes);
+      return {
+        streamId: frame.streamId,
+        sequence: 0,
+        kind: "open",
+        windowBytes: frame.windowBytes,
+      };
+    }
+    case "chunk": {
+      assertExactKeys(frame, ["streamId", "sequence", "kind", "data"], "Chunk stream frame");
+      assertStreamSequence(frame.kind, frame.sequence);
+      return {
+        streamId: frame.streamId,
+        sequence: frame.sequence,
+        kind: "chunk",
+        data: parseStreamChunkData(frame.data),
+      };
+    }
+    case "end":
+    case "cancel": {
+      assertExactKeys(frame, ["streamId", "sequence", "kind"], `${frame.kind} stream frame`);
+      assertStreamSequence(frame.kind, frame.sequence);
+      return { streamId: frame.streamId, sequence: frame.sequence, kind: frame.kind };
+    }
+    case "error": {
+      assertExactKeys(frame, ["streamId", "sequence", "kind", "error"], "Error stream frame");
+      assertStreamSequence(frame.kind, frame.sequence);
+      return {
+        streamId: frame.streamId,
+        sequence: frame.sequence,
+        kind: "error",
+        error: parseRpcErrorObject(frame.error),
+      };
+    }
+    case "windowUpdate": {
+      assertExactKeys(
+        frame,
+        ["streamId", "sequence", "kind", "creditBytes"],
+        "Window-update stream frame",
+      );
+      if (typeof frame.creditBytes !== "number") {
+        throw new TypeError("Stream windowUpdate creditBytes must be a number");
+      }
+      assertStreamSequence(frame.kind, frame.sequence);
+      assertStreamCreditBytes(frame.creditBytes);
+      return {
+        streamId: frame.streamId,
+        sequence: frame.sequence,
+        kind: "windowUpdate",
+        creditBytes: frame.creditBytes,
+      };
+    }
+    default:
+      throw new TypeError(`Unsupported stream frame kind: ${frame.kind}`);
+  }
+}
+
+export function assertStreamFrame(value: unknown): asserts value is StreamFrame {
+  parseStreamFrame(value);
 }
 
 function encodeBase64(bytes: Uint8Array): string {
@@ -165,11 +349,10 @@ export function createJsonStreamChunk(value: JsonValue): StreamChunkData {
   };
 }
 
-export function materializeStreamChunk(
+function materializeValidatedStreamChunk(
   data: StreamChunkData,
   transfer?: ArrayBuffer,
 ): MaterializedStreamChunk {
-  assertChunkByteLength(data.byteLength);
   if (data.encoding === "json") {
     if (transfer !== undefined) {
       throw new Error("JSON stream chunks must not include a transferable buffer");
@@ -194,9 +377,6 @@ export function materializeStreamChunk(
     }
     return { encoding: "binary", bytes };
   }
-  if ((data as { readonly encoding: unknown }).encoding !== "transfer") {
-    throw new Error("Unsupported stream chunk encoding");
-  }
   if (transfer === undefined) {
     throw new Error("Transfer stream chunks require an ArrayBuffer in the message envelope");
   }
@@ -209,16 +389,24 @@ export function materializeStreamChunk(
   return { encoding: "binary", bytes };
 }
 
+export function materializeStreamChunk(
+  data: unknown,
+  transfer?: ArrayBuffer,
+): MaterializedStreamChunk {
+  return materializeValidatedStreamChunk(parseStreamChunkData(data), transfer);
+}
+
 export function createMessagePortStreamEnvelope(
-  frame: StreamFrame,
+  frame: unknown,
   transfer?: ArrayBuffer,
 ): MessagePortStreamEnvelope {
-  assertStreamSequence(frame);
-  assertStreamCredit(frame);
-  if (frame.kind === "chunk") {
-    materializeStreamChunk(frame.data, transfer);
+  const validatedFrame = parseStreamFrame(frame);
+  if (validatedFrame.kind === "chunk") {
+    materializeValidatedStreamChunk(validatedFrame.data, transfer);
   } else if (transfer !== undefined) {
     throw new Error("Only transfer-encoded chunk frames may include an ArrayBuffer");
   }
-  return transfer === undefined ? { frame } : { frame, transfer };
+  return transfer === undefined
+    ? { frame: validatedFrame }
+    : { frame: validatedFrame, transfer };
 }

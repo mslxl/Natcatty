@@ -388,32 +388,34 @@ export type StreamChunkData = ({
 export type StreamCreditBytes = number;
 
 export type StreamFrame = ({
-  streamId: string;
+  streamId: StreamId;
   sequence: 0;
   kind: "open";
   windowBytes: StreamWindowBytes;
 }) | ({
-  streamId: string;
+  streamId: StreamId;
   sequence: SafePositiveInteger;
   kind: "chunk";
   data: StreamChunkData;
 }) | ({
-  streamId: string;
+  streamId: StreamId;
   sequence: SafePositiveInteger;
   kind: "end" | "cancel";
 }) | ({
-  streamId: string;
+  streamId: StreamId;
   sequence: SafePositiveInteger;
   kind: "error";
   error: RpcErrorObject;
 }) | ({
-  streamId: string;
+  streamId: StreamId;
   sequence: SafeUnsignedInteger;
   kind: "windowUpdate";
   creditBytes: StreamCreditBytes;
 });
 
-export type StreamLimits = {"maxChunkBytes":16777216,"minWindowBytes":1024,"maxWindowBytes":16777216,"maxCreditBytes":16777216};
+export type StreamId = string;
+
+export type StreamLimits = {"maxStreamIdLength":128,"maxChunkBytes":16777216,"minWindowBytes":1024,"maxWindowBytes":16777216,"maxCreditBytes":16777216};
 
 export type StreamWindowBytes = number;
 

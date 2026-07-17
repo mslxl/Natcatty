@@ -207,6 +207,11 @@ receiver validates JSON serialization, base64 decoding, or transferred buffer
 length before accepting credit. The contract exports `createJsonStreamChunk()`,
 `createBase64StreamChunk()`, `materializeStreamChunk()`, and
 `createMessagePortStreamEnvelope()` so every host path applies the same checks.
+`assertStreamFrame()` and the envelope helper accept untyped boundary values
+and reject unknown frame kinds, missing or additional properties, malformed
+chunk/error payloads, and stream IDs outside the Schema-owned 128-character
+limit. The helper returns a normalized frame assembled only from validated own
+data properties rather than returning the caller's object unchecked.
 The open frame is sequence 0 and grants the initial `windowBytes`; data and
 terminal frames begin at sequence 1. Sequence numbers increase independently in
 each sending direction and cannot exceed `Number.MAX_SAFE_INTEGER`. A producer
@@ -215,7 +220,9 @@ chunk's declared byte length from its credit and must stop at zero.
 The initial receive window is 1 KiB through 16 MiB, and each
 `windowUpdate.creditBytes` grant is 1 byte through 16 MiB. The public
 MessagePort envelope helper enforces the same Schema-owned ranges before
-returning a frame. `windowUpdate.creditBytes` grants an
+returning a frame. The generated runtime constants, including the stream ID,
+chunk, window, credit, safe-integer, and RPC error-code limits, are derived from
+the same Schema and checked for drift. `windowUpdate.creditBytes` grants an
 additional amount rather than replacing the window, so retries and duplicate
 control frames cannot be interpreted as an absolute reset. A stdio peer must
 never emit the `transfer` encoding because stdio has no structured-clone

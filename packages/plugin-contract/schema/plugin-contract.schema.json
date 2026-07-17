@@ -47,13 +47,19 @@
       "maximum": 9007199254740991
     },
     "StreamLimits": {
-      "description": "Host-enforced byte limits for stream chunks and receive-credit control frames.",
+      "description": "Host-enforced identifier and byte limits for stream frames.",
       "const": {
+        "maxStreamIdLength": 128,
         "maxChunkBytes": 16777216,
         "minWindowBytes": 1024,
         "maxWindowBytes": 16777216,
         "maxCreditBytes": 16777216
       }
+    },
+    "StreamId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
     },
     "StreamChunkByteLength": {
       "type": "integer",
@@ -822,7 +828,7 @@
           "type": "object",
           "required": ["streamId", "sequence", "kind", "windowBytes"],
           "properties": {
-            "streamId": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "streamId": { "$ref": "#/$defs/StreamId" },
             "sequence": { "const": 0 },
             "kind": { "const": "open" },
             "windowBytes": { "$ref": "#/$defs/StreamWindowBytes" }
@@ -833,7 +839,7 @@
           "type": "object",
           "required": ["streamId", "sequence", "kind", "data"],
           "properties": {
-            "streamId": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "streamId": { "$ref": "#/$defs/StreamId" },
             "sequence": { "$ref": "#/$defs/SafePositiveInteger" },
             "kind": { "const": "chunk" },
             "data": { "$ref": "#/$defs/StreamChunkData" }
@@ -844,7 +850,7 @@
           "type": "object",
           "required": ["streamId", "sequence", "kind"],
           "properties": {
-            "streamId": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "streamId": { "$ref": "#/$defs/StreamId" },
             "sequence": { "$ref": "#/$defs/SafePositiveInteger" },
             "kind": { "enum": ["end", "cancel"] }
           },
@@ -854,7 +860,7 @@
           "type": "object",
           "required": ["streamId", "sequence", "kind", "error"],
           "properties": {
-            "streamId": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "streamId": { "$ref": "#/$defs/StreamId" },
             "sequence": { "$ref": "#/$defs/SafePositiveInteger" },
             "kind": { "const": "error" },
             "error": { "$ref": "#/$defs/RpcErrorObject" }
@@ -865,7 +871,7 @@
           "type": "object",
           "required": ["streamId", "sequence", "kind", "creditBytes"],
           "properties": {
-            "streamId": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "streamId": { "$ref": "#/$defs/StreamId" },
             "sequence": { "$ref": "#/$defs/SafeUnsignedInteger" },
             "kind": { "const": "windowUpdate" },
             "creditBytes": { "$ref": "#/$defs/StreamCreditBytes" }

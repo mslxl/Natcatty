@@ -5,6 +5,8 @@ import test from "node:test";
 import Ajv2020 from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 
+import { assertStreamFrame } from "./streamTransport.ts";
+
 const schema = JSON.parse(
   await readFile(
     new URL("../schema/plugin-contract.schema.json", import.meta.url),
@@ -345,6 +347,90 @@ test("RPC, stream, permission, and provider schemas validate independently", () 
     error: { code: -32014, message: "Unavailable" },
   }), true);
   assert.equal(providerResult({ requestId: "r1", status: "failed" }), false);
+});
+
+test("runtime stream-frame validation stays aligned with the canonical schema", () => {
+  const validate = validator("StreamFrame");
+  const candidates: unknown[] = [
+    { streamId: "stream-1", sequence: 0, kind: "open", windowBytes: 1024 },
+    {
+      streamId: "stream-1",
+      sequence: 1,
+      kind: "chunk",
+      data: { encoding: "json", value: { text: "hello" }, byteLength: 16 },
+    },
+    {
+      streamId: "stream-1",
+      sequence: 1,
+      kind: "chunk",
+      data: { encoding: "base64", value: "AQID", byteLength: 3 },
+    },
+    {
+      streamId: "stream-1",
+      sequence: 1,
+      kind: "chunk",
+      data: { encoding: "transfer", byteLength: 3 },
+    },
+    { streamId: "stream-1", sequence: 1, kind: "end" },
+    { streamId: "stream-1", sequence: 1, kind: "cancel" },
+    {
+      streamId: "stream-1",
+      sequence: 1,
+      kind: "error",
+      error: { code: -32700, message: "Parse error" },
+    },
+    {
+      streamId: "stream-1",
+      sequence: 1,
+      kind: "error",
+      error: { code: -32016, message: "Unauthenticated", data: null },
+    },
+    { streamId: "stream-1", sequence: 0, kind: "windowUpdate", creditBytes: 1 },
+    { streamId: "😀".repeat(128), sequence: 1, kind: "end" },
+    { streamId: "😀".repeat(129), sequence: 1, kind: "end" },
+    { streamId: "stream-1", sequence: 1, kind: "bogus" },
+    { streamId: "stream-1", sequence: 0, kind: "open" },
+    { streamId: "stream-1", sequence: 0, kind: "open", windowBytes: 1024, extra: true },
+    {
+      streamId: "stream-1",
+      sequence: 0,
+      kind: "chunk",
+      data: { encoding: "transfer", byteLength: 0 },
+    },
+    {
+      streamId: "stream-1",
+      sequence: 1,
+      kind: "error",
+      error: { code: -1, message: "Unknown code" },
+    },
+    {
+      streamId: "stream-1",
+      sequence: 1,
+      kind: "error",
+      error: { code: -32001, message: "😀".repeat(2049) },
+    },
+    {
+      streamId: "stream-1",
+      sequence: Number.MAX_SAFE_INTEGER + 1,
+      kind: "windowUpdate",
+      creditBytes: 1,
+    },
+  ];
+
+  for (const candidate of candidates) {
+    const schemaAccepts = Boolean(validate(candidate));
+    let runtimeAccepts = true;
+    try {
+      assertStreamFrame(candidate);
+    } catch {
+      runtimeAccepts = false;
+    }
+    assert.equal(
+      runtimeAccepts,
+      schemaAccepts,
+      `runtime/schema stream validation drifted for ${JSON.stringify(candidate)}`,
+    );
+  }
 });
 
 test("permission and setting-control catalogs cover planned public surfaces", () => {

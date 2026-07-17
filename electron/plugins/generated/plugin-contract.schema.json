@@ -64,13 +64,19 @@
       "maximum": 9007199254740991
     },
     "StreamLimits": {
-      "description": "Host-enforced byte limits for stream chunks and receive-credit control frames.",
+      "description": "Host-enforced identifier and byte limits for stream frames.",
       "const": {
+        "maxStreamIdLength": 128,
         "maxChunkBytes": 16777216,
         "minWindowBytes": 1024,
         "maxWindowBytes": 16777216,
         "maxCreditBytes": 16777216
       }
+    },
+    "StreamId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
     },
     "StreamChunkByteLength": {
       "type": "integer",
@@ -1453,9 +1459,7 @@
           ],
           "properties": {
             "streamId": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 128
+              "$ref": "#/$defs/StreamId"
             },
             "sequence": {
               "const": 0
@@ -1479,9 +1483,7 @@
           ],
           "properties": {
             "streamId": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 128
+              "$ref": "#/$defs/StreamId"
             },
             "sequence": {
               "$ref": "#/$defs/SafePositiveInteger"
@@ -1504,9 +1506,7 @@
           ],
           "properties": {
             "streamId": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 128
+              "$ref": "#/$defs/StreamId"
             },
             "sequence": {
               "$ref": "#/$defs/SafePositiveInteger"
@@ -1530,9 +1530,7 @@
           ],
           "properties": {
             "streamId": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 128
+              "$ref": "#/$defs/StreamId"
             },
             "sequence": {
               "$ref": "#/$defs/SafePositiveInteger"
@@ -1556,9 +1554,7 @@
           ],
           "properties": {
             "streamId": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 128
+              "$ref": "#/$defs/StreamId"
             },
             "sequence": {
               "$ref": "#/$defs/SafeUnsignedInteger"

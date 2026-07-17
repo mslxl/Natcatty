@@ -10,6 +10,7 @@ export {
   serializeJsonValue,
 } from "./jsonValue.js";
 export {
+  PLUGIN_RPC_ERROR_CODES,
   PLUGIN_WIRE_MAX_SAFE_INTEGER,
 } from "./generated/plugin-contract-limits.js";
 export {
@@ -22,8 +23,11 @@ export {
 export {
   PLUGIN_STREAM_MAX_CHUNK_BYTES,
   PLUGIN_STREAM_MAX_CREDIT_BYTES,
+  PLUGIN_STREAM_MAX_ID_LENGTH,
   PLUGIN_STREAM_MAX_WINDOW_BYTES,
   PLUGIN_STREAM_MIN_WINDOW_BYTES,
+  assertStreamChunkData,
+  assertStreamFrame,
   createBase64StreamChunk,
   createJsonStreamChunk,
   createMessagePortStreamEnvelope,

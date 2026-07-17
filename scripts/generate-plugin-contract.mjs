@@ -64,7 +64,32 @@ for (const [definitionName, minimum] of [
     );
   }
 }
+const rpcErrorCodes = [
+  ...(schema.$defs.JsonRpcStandardErrorCode?.enum ?? []),
+  ...(schema.$defs.PluginWireErrorCode?.enum ?? []),
+];
+if (rpcErrorCodes.length === 0
+  || rpcErrorCodes.some((code) => !Number.isSafeInteger(code))
+  || new Set(rpcErrorCodes).size !== rpcErrorCodes.length) {
+  throw new Error("RPC error code definitions must contain unique safe integers");
+}
 const streamLimits = schema.$defs.StreamLimits?.const;
+const streamIdDefinition = schema.$defs.StreamId;
+if (!Number.isSafeInteger(streamLimits?.maxStreamIdLength)
+  || streamLimits.maxStreamIdLength < 1
+  || streamIdDefinition?.type !== "string"
+  || streamIdDefinition.minLength !== 1
+  || streamIdDefinition.maxLength !== streamLimits.maxStreamIdLength) {
+  throw new Error("StreamId must match the canonical StreamLimits.maxStreamIdLength");
+}
+const streamFrameBranches = schema.$defs.StreamFrame?.oneOf;
+if (!Array.isArray(streamFrameBranches)
+  || streamFrameBranches.length === 0
+  || streamFrameBranches.some(
+    (branch) => branch?.properties?.streamId?.$ref !== "#/$defs/StreamId",
+  )) {
+  throw new Error("Every StreamFrame branch must use the canonical StreamId definition");
+}
 for (const [name, minimum, maximum] of [
   ["StreamChunkByteLength", 0, streamLimits?.maxChunkBytes],
   ["StreamWindowBytes", streamLimits?.minWindowBytes, streamLimits?.maxWindowBytes],
@@ -178,6 +203,8 @@ const generatedLimits = [
   `export const PLUGIN_JSON_MAX_DEPTH = ${jsonValueLimits.maxDepth} as const;`,
   `export const PLUGIN_JSON_MAX_NODES = ${jsonValueLimits.maxNodes} as const;`,
   `export const PLUGIN_WIRE_MAX_SAFE_INTEGER = ${wireIntegerLimits.maxSafeInteger} as const;`,
+  `export const PLUGIN_RPC_ERROR_CODES = ${JSON.stringify(rpcErrorCodes)} as const;`,
+  `export const PLUGIN_STREAM_MAX_ID_LENGTH = ${streamLimits.maxStreamIdLength} as const;`,
   `export const PLUGIN_STREAM_MAX_CHUNK_BYTES = ${streamLimits.maxChunkBytes} as const;`,
   `export const PLUGIN_STREAM_MIN_WINDOW_BYTES = ${streamLimits.minWindowBytes} as const;`,
   `export const PLUGIN_STREAM_MAX_WINDOW_BYTES = ${streamLimits.maxWindowBytes} as const;`,

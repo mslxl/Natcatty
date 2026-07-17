@@ -11,8 +11,10 @@ import {
 import {
   PLUGIN_STREAM_MAX_CHUNK_BYTES,
   PLUGIN_STREAM_MAX_CREDIT_BYTES,
+  PLUGIN_STREAM_MAX_ID_LENGTH,
   PLUGIN_STREAM_MAX_WINDOW_BYTES,
   PLUGIN_STREAM_MIN_WINDOW_BYTES,
+  assertStreamFrame,
   createBase64StreamChunk,
   createJsonStreamChunk,
   createMessagePortStreamEnvelope,
@@ -259,7 +261,7 @@ test("MessagePort stream envelopes carry and validate the transferred ArrayBuffe
         kind: "open",
         windowBytes,
       }),
-      /windowBytes must be an integer between/,
+      /windowBytes must be an integer between|JSON numbers must be finite/,
     );
   }
   assert.doesNotThrow(() => createMessagePortStreamEnvelope({
@@ -280,7 +282,110 @@ test("MessagePort stream envelopes carry and validate the transferred ArrayBuffe
         kind: "windowUpdate",
         creditBytes,
       }),
-      /creditBytes must be an integer between/,
+      /creditBytes must be an integer between|JSON numbers must be finite/,
     );
   }
+});
+
+test("MessagePort stream envelopes reject frames outside the complete wire schema", () => {
+  const validError = {
+    streamId: "stream-1",
+    sequence: 1,
+    kind: "error",
+    error: { code: -32001, message: "cancelled", data: { retryable: false } },
+  };
+  assert.doesNotThrow(() => assertStreamFrame(validError));
+  assert.doesNotThrow(() => createMessagePortStreamEnvelope(validError));
+
+  const invalidFrames: readonly [unknown, RegExp][] = [
+    [null, /plain JSON object/],
+    [[], /plain JSON object/],
+    [{ streamId: "", sequence: 1, kind: "end" }, /between 1 and/],
+    [
+      { streamId: "x".repeat(PLUGIN_STREAM_MAX_ID_LENGTH + 1), sequence: 1, kind: "end" },
+      /between 1 and/,
+    ],
+    [{ streamId: "stream-1", sequence: 1, kind: "bogus" }, /Unsupported stream frame kind/],
+    [{ streamId: "stream-1", sequence: 0, kind: "open" }, /missing or unsupported/],
+    [
+      { streamId: "stream-1", sequence: 0, kind: "open", windowBytes: 4096, extra: true },
+      /missing or unsupported/,
+    ],
+    [{ streamId: "stream-1", sequence: 1, kind: "chunk", data: null }, /plain JSON object/],
+    [
+      {
+        streamId: "stream-1",
+        sequence: 1,
+        kind: "chunk",
+        data: { encoding: "bogus", byteLength: 0 },
+      },
+      /Unsupported stream chunk encoding/,
+    ],
+    [
+      {
+        streamId: "stream-1",
+        sequence: 1,
+        kind: "chunk",
+        data: { encoding: "transfer", byteLength: 0, value: "extra" },
+      },
+      /missing or unsupported/,
+    ],
+    [{ streamId: "stream-1", sequence: 1, kind: "end", data: null }, /missing or unsupported/],
+    [
+      {
+        streamId: "stream-1",
+        sequence: 1,
+        kind: "error",
+        error: { code: -1, message: "bad" },
+      },
+      /supported RPC error code/,
+    ],
+    [
+      {
+        streamId: "stream-1",
+        sequence: 1,
+        kind: "error",
+        error: { code: -32001, message: "", data: null },
+      },
+      /between 1 and/,
+    ],
+    [
+      {
+        streamId: "stream-1",
+        sequence: 1,
+        kind: "error",
+        error: { code: -32001, message: "bad", extra: true },
+      },
+      /missing or unsupported/,
+    ],
+    [{ streamId: "stream-1", sequence: 0, kind: "cancel" }, /sequence must be a safe integer/],
+    [
+      {
+        streamId: "stream-1",
+        sequence: 0,
+        kind: "windowUpdate",
+        creditBytes: 1,
+        extra: true,
+      },
+      /missing or unsupported/,
+    ],
+  ];
+  for (const [frame, expectedError] of invalidFrames) {
+    assert.throws(() => createMessagePortStreamEnvelope(frame), expectedError);
+  }
+
+  let getterRead = false;
+  const accessorFrame = { streamId: "stream-1", sequence: 1 } as Record<string, unknown>;
+  Object.defineProperty(accessorFrame, "kind", {
+    enumerable: true,
+    get: () => {
+      getterRead = true;
+      return "end";
+    },
+  });
+  assert.throws(
+    () => createMessagePortStreamEnvelope(accessorFrame),
+    /accessor properties/,
+  );
+  assert.equal(getterRead, false);
 });
