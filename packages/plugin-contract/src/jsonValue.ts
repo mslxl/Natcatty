@@ -27,7 +27,8 @@ function assertJsonValueInternal(value: unknown, ancestors: WeakSet<object>): vo
       }
       return;
     }
-    if (Object.prototype.toString.call(value) !== "[object Object]") {
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) {
       throw new TypeError("JSON objects must be plain records");
     }
     const stringKeys = Object.keys(value);
@@ -51,9 +52,37 @@ export function assertJsonValue(value: unknown): asserts value is JsonValue {
   assertJsonValueInternal(value, new WeakSet());
 }
 
+function serializeValidatedJsonValue(value: JsonValue): string {
+  if (value === null || typeof value !== "object") {
+    const serialized = JSON.stringify(value);
+    if (serialized === undefined) throw new TypeError("Value is not serializable JSON");
+    return serialized;
+  }
+  if (Array.isArray(value)) {
+    const serializedItems: string[] = [];
+    for (let index = 0; index < value.length; index += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+      if (!descriptor || !("value" in descriptor)) {
+        throw new TypeError("JSON arrays must contain data properties only");
+      }
+      serializedItems.push(serializeValidatedJsonValue(descriptor.value as JsonValue));
+    }
+    return `[${serializedItems.join(",")}]`;
+  }
+  const serializedEntries: string[] = [];
+  for (const key of Object.keys(value)) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor || !("value" in descriptor)) {
+      throw new TypeError("JSON objects must contain data properties only");
+    }
+    serializedEntries.push(
+      `${JSON.stringify(key)}:${serializeValidatedJsonValue(descriptor.value as JsonValue)}`,
+    );
+  }
+  return `{${serializedEntries.join(",")}}`;
+}
+
 export function serializeJsonValue(value: unknown): string {
   assertJsonValue(value);
-  const serialized = JSON.stringify(value);
-  if (serialized === undefined) throw new TypeError("Value is not serializable JSON");
-  return serialized;
+  return serializeValidatedJsonValue(value);
 }

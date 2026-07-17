@@ -3,7 +3,7 @@ import type {
   RpcMessage,
   StreamFrame,
 } from "./generated/plugin-contract.js";
-import { serializeJsonValue } from "./jsonValue.js";
+import { assertJsonValue, serializeJsonValue } from "./jsonValue.js";
 
 export const COMPANION_STDIO_MAX_HEADER_BYTES = 8 * 1024;
 export const COMPANION_STDIO_MAX_CONTENT_BYTES = 16 * 1024 * 1024;
@@ -205,13 +205,22 @@ export class ContentLengthFrameDecoder {
       if (this.#queue.byteLength < this.#expectedContentBytes) return messages;
       const content = this.#queue.consume(this.#expectedContentBytes);
       this.#expectedContentBytes = undefined;
+      let value: unknown;
       try {
-        messages.push(JSON.parse(utf8Decoder.decode(content)) as JsonValue);
+        value = JSON.parse(utf8Decoder.decode(content));
       } catch (error) {
         throw new Error(
           `Companion stdio payload is not valid UTF-8 JSON: ${error instanceof Error ? error.message : String(error)}`,
         );
       }
+      try {
+        assertJsonValue(value);
+      } catch (error) {
+        throw new Error(
+          `Companion stdio payload is outside the JSON value contract: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      messages.push(value);
     }
   }
 

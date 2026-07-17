@@ -90,6 +90,15 @@ test("content-length framing rejects ambiguous headers and oversized payloads", 
     }),
     /must be an integer between/,
   );
+
+  for (const payload of ["1e999", '{"value":1e999}']) {
+    const nonFinite = new ContentLengthFrameDecoder();
+    const payloadBytes = new TextEncoder().encode(payload).byteLength;
+    assert.throws(
+      () => nonFinite.push(`Content-Length: ${payloadBytes}\r\n\r\n${payload}`),
+      /outside the JSON value contract: JSON numbers must be finite/,
+    );
+  }
 });
 
 test("content-length framing accepts a split delimiter at the header byte limit", () => {

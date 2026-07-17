@@ -9,6 +9,27 @@ import {
   createMessagePortStreamEnvelope,
   materializeStreamChunk,
 } from "./streamTransport.ts";
+import { serializeJsonValue } from "./jsonValue.ts";
+
+test("validated JSON serialization matches standard JSON bytes for plain values", () => {
+  const values = [
+    null,
+    true,
+    false,
+    0,
+    -0,
+    1.25,
+    1e30,
+    "quotes \" slashes \\ controls \n unicode 你好",
+    [],
+    [null, true, 3, "value", { nested: [1, 2, 3] }],
+    { first: 1, second: "two", third: false },
+    { 10: "ten", 2: "two", tail: "last" },
+  ];
+  for (const value of values) {
+    assert.equal(serializeJsonValue(value), JSON.stringify(value));
+  }
+});
 
 test("JSON stream chunks use verified UTF-8 byte accounting", () => {
   const chunk = createJsonStreamChunk({ text: "你好" });
@@ -38,6 +59,31 @@ test("JSON stream chunks use verified UTF-8 byte accounting", () => {
     () => createJsonStreamChunk(accessor as never),
     /must not contain accessor properties/,
   );
+  class CustomJsonValue {
+    readonly value = "validated";
+
+    toJSON() {
+      return { value: "different" };
+    }
+  }
+  assert.throws(
+    () => createJsonStreamChunk(new CustomJsonValue() as never),
+    /plain records/,
+  );
+
+  const arrayWithInheritedToJson = ["validated"];
+  Object.setPrototypeOf(arrayWithInheritedToJson, {
+    toJSON: () => ["different"],
+  });
+  const inheritedToJsonChunk = createJsonStreamChunk(arrayWithInheritedToJson);
+  assert.equal(inheritedToJsonChunk.byteLength, new TextEncoder().encode('["validated"]').byteLength);
+
+  const nullPrototypeValue = Object.assign(Object.create(null), { value: "validated" });
+  assert.deepEqual(createJsonStreamChunk(nullPrototypeValue), {
+    encoding: "json",
+    value: nullPrototypeValue,
+    byteLength: new TextEncoder().encode('{"value":"validated"}').byteLength,
+  });
 });
 
 test("base64 stream chunks round-trip bytes and reject length or encoding ambiguity", () => {

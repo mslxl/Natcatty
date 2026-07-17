@@ -208,11 +208,13 @@ transfer list; the framing encoder rejects it.
 
 Public encoders validate runtime values instead of trusting TypeScript casts.
 They reject non-finite numbers, `undefined`, sparse arrays, accessors, symbols,
-cycles, and non-plain objects before serialization. Base64 must use canonical
-RFC 4648 padding bits, and every stream chunk remains bounded to 16 MiB even
-when a caller bypasses JSON Schema validation. This prevents a browser plugin
-and a native companion from computing different bytes for the same apparent
-message.
+cycles, and non-plain objects before serialization. Serialization reads only
+validated own data properties and does not invoke inherited `toJSON()` hooks,
+so prototype mutation cannot change the bytes after validation. Base64 must use
+canonical RFC 4648 padding bits, and every stream chunk remains bounded to 16
+MiB even when a caller bypasses JSON Schema validation. This prevents a browser
+plugin and a native companion from computing different bytes for the same
+apparent message.
 
 Advanced companion processes exchange UTF-8 JSON using this exact framing:
 
@@ -228,8 +230,10 @@ decoding but, when present, must be `application/json` with an optional UTF-8
 charset. Header names are case-insensitive and the default header limit is
 8 KiB; unknown or duplicate headers,
 non-ASCII header bytes, invalid UTF-8, malformed JSON, and frames above 16 MiB
-are rejected. Decoder options may lower but never raise the 16 MiB absolute
-content limit. `encodeContentLengthFrame()` and the incremental
+are rejected. Syntactically valid numbers that overflow JavaScript to a
+non-finite value are also rejected before a decoded message is returned.
+Decoder options may lower but never raise the 16 MiB absolute content limit.
+`encodeContentLengthFrame()` and the incremental
 `ContentLengthFrameDecoder` implement this contract without shell or line-based
 parsing. `finish()` detects truncated frames when a process exits.
 

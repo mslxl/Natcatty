@@ -114,6 +114,8 @@ Runtime decoders must apply exact schemas for reserved methods instead of
 accepting malformed reserved messages as generic RPC. Transferable stream data
 is brand-checked through the native `ArrayBuffer` internal slot; an object that
 only spoofs `Symbol.toStringTag` or `byteLength` is not a transferable buffer.
+JSON serialization reads validated own data properties directly and never
+executes inherited `toJSON()` hooks supplied through a hostile prototype.
 
 ### Update substitution and rollback
 
