@@ -5,6 +5,7 @@ import {
   mkdir,
   open,
   opendir,
+  realpath,
   rename,
   rm,
   stat,
@@ -108,6 +109,31 @@ function sortPackagePaths(left: ScannedFile, right: ScannedFile): number {
 function isExecutablePackageFile(packagePath: string, mode: number): boolean {
   return (mode & 0o111) !== 0
     || EXECUTABLE_EXTENSIONS.has(path.posix.extname(packagePath).toLowerCase());
+}
+
+function isSameOrDescendantPath(parentPath: string, candidatePath: string): boolean {
+  const relativePath = path.relative(parentPath, candidatePath);
+  return relativePath === ""
+    || (!path.isAbsolute(relativePath)
+      && relativePath !== ".."
+      && !relativePath.startsWith(`..${path.sep}`));
+}
+
+async function resolveThroughExistingAncestor(targetPath: string): Promise<string> {
+  let currentPath = targetPath;
+  const missingSegments: string[] = [];
+  while (true) {
+    try {
+      const resolvedAncestor = await realpath(currentPath);
+      return path.join(resolvedAncestor, ...missingSegments.reverse());
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+      const parentPath = path.dirname(currentPath);
+      if (parentPath === currentPath) throw error;
+      missingSegments.push(path.basename(currentPath));
+      currentPath = parentPath;
+    }
+  }
 }
 
 async function scanPackageDirectory(
@@ -341,6 +367,14 @@ export async function buildPluginPackage(
   const resolvedOutputPath = path.resolve(outputPath);
   if (!resolvedOutputPath.endsWith(".ncpkg")) {
     throw new Error("Plugin package output must use the .ncpkg extension");
+  }
+  const canonicalSourceDirectory = await realpath(sourceDirectory);
+  const canonicalOutputPath = await resolveThroughExistingAncestor(resolvedOutputPath);
+  if (
+    isSameOrDescendantPath(sourceDirectory, resolvedOutputPath)
+    || isSameOrDescendantPath(canonicalSourceDirectory, canonicalOutputPath)
+  ) {
+    throw new Error("Plugin package output must be outside the plugin source directory");
   }
   const manifest = await readAndValidateManifest(sourceDirectory);
   const files = await scanPackageDirectory(sourceDirectory, manifest);

@@ -253,6 +253,28 @@ test("packer ignores root dev artifacts without dropping nested runtime dependen
   assert.equal(validation.fileCount, 4);
 });
 
+test("packer rejects outputs inside the plugin source tree", async (context) => {
+  const root = await mkdtemp(path.join(tmpdir(), "netcatty-plugin-output-containment-"));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const directory = await createPlugin(root);
+  const nestedOutput = path.join(directory, "dist/plugin.ncpkg");
+  await writeFile(nestedOutput, "previous package output\n");
+
+  await assert.rejects(
+    buildPluginPackage(directory, nestedOutput),
+    /output must be outside the plugin source directory/,
+  );
+
+  if (process.platform !== "win32") {
+    const outputAlias = path.join(root, "output-alias");
+    await symlink(path.join(directory, "dist"), outputAlias);
+    await assert.rejects(
+      buildPluginPackage(directory, path.join(outputAlias, "plugin.ncpkg")),
+      /output must be outside the plugin source directory/,
+    );
+  }
+});
+
 test("manifest byte limit is enforced before JSON parsing", async (context) => {
   const root = await mkdtemp(path.join(tmpdir(), "netcatty-plugin-limit-"));
   context.after(() => rm(root, { recursive: true, force: true }));
