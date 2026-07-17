@@ -17,7 +17,10 @@ import type { IconReference, PluginManifest } from "@netcatty/plugin-contract";
 import yauzl, { type Entry, type ZipFile } from "yauzl";
 
 import { IGNORED_ROOT_ENTRIES, PACKAGE_LIMITS } from "./constants.js";
-import { readAndValidateManifest, validateManifestValue } from "./manifest.js";
+import {
+  parseAndValidateManifestContents,
+  readAndValidateManifest,
+} from "./manifest.js";
 import { assertSafePackagePath, PackagePathRegistry } from "./packagePath.js";
 
 const CRC32_TABLE = new Uint32Array(256);
@@ -435,6 +438,72 @@ interface ReadArchiveEntryResult {
   readonly contents?: Buffer;
 }
 
+interface LocalFileHeader {
+  readonly generalPurposeBitFlag: number;
+  readonly compressionMethod: number;
+  readonly crc32: number;
+  readonly compressedSize: number;
+  readonly uncompressedSize: number;
+  readonly fileName: Buffer;
+}
+
+interface ZipEntryWithRawName extends Entry {
+  readonly fileNameRaw?: Buffer;
+}
+
+interface ZipFileWithLocalHeader extends ZipFile {
+  readLocalFileHeader(
+    entry: Entry,
+    callback: (error: Error | null, header?: LocalFileHeader) => void,
+  ): void;
+}
+
+function readLocalFileHeader(zipFile: ZipFile, entry: Entry): Promise<LocalFileHeader> {
+  return new Promise((resolve, reject) => {
+    (zipFile as ZipFileWithLocalHeader).readLocalFileHeader(entry, (error, header) => {
+      if (error || !header) {
+        reject(error ?? new Error(`Unable to read local ZIP header: ${entry.fileName}`));
+      } else {
+        resolve(header);
+      }
+    });
+  });
+}
+
+async function validateLocalFileHeader(
+  zipFile: ZipFile,
+  entry: Entry,
+  packagePath: string,
+): Promise<void> {
+  if ((entry.generalPurposeBitFlag & 0x0800) === 0) {
+    throw new Error(`ZIP entry name must use UTF-8 encoding: ${packagePath}`);
+  }
+  if ((entry.generalPurposeBitFlag & 0x0008) !== 0) {
+    throw new Error(`ZIP data descriptors are not allowed: ${packagePath}`);
+  }
+  const centralName = (entry as ZipEntryWithRawName).fileNameRaw;
+  if (!centralName || !centralName.equals(Buffer.from(entry.fileName, "utf8"))) {
+    throw new Error(`ZIP central entry name is not canonical UTF-8: ${packagePath}`);
+  }
+  const local = await readLocalFileHeader(zipFile, entry);
+  if (!local.fileName.equals(centralName)) {
+    throw new Error(`ZIP local and central entry names differ: ${packagePath}`);
+  }
+  if (local.generalPurposeBitFlag !== entry.generalPurposeBitFlag) {
+    throw new Error(`ZIP local and central entry flags differ: ${packagePath}`);
+  }
+  if (local.compressionMethod !== entry.compressionMethod) {
+    throw new Error(`ZIP local and central compression methods differ: ${packagePath}`);
+  }
+  if (
+    local.crc32 !== entry.crc32
+    || local.compressedSize !== entry.compressedSize
+    || local.uncompressedSize !== entry.uncompressedSize
+  ) {
+    throw new Error(`ZIP local and central integrity metadata differ: ${packagePath}`);
+  }
+}
+
 function readEntry(
   zipFile: ZipFile,
   entry: Entry,
@@ -504,6 +573,7 @@ export async function validatePluginPackage(
           if (entry.compressionMethod !== 0 && entry.compressionMethod !== 8) {
             throw new Error(`Unsupported ZIP compression method: ${packagePath}`);
           }
+          await validateLocalFileHeader(zipFile, entry, packagePath);
           const mode = (entry.externalFileAttributes >>> 16) & 0xffff;
           const fileType = mode & 0o170000;
           if (fileType !== 0 && fileType !== 0o100000) {
@@ -540,22 +610,7 @@ export async function validatePluginPackage(
 
   const manifestEntry = entries.get("netcatty.plugin.json");
   if (!manifestEntry?.contents) throw new Error("Plugin package is missing netcatty.plugin.json");
-  if (manifestEntry.contents.byteLength > PACKAGE_LIMITS.manifestBytes) {
-    throw new Error("Plugin manifest exceeds the size limit");
-  }
-  let manifestValue: unknown;
-  try {
-    manifestValue = JSON.parse(manifestEntry.contents.toString("utf8"));
-  } catch (error) {
-    throw new Error(
-      `Plugin manifest is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-  const validation = validateManifestValue(manifestValue);
-  if (!validation.valid || !validation.manifest) {
-    throw new Error(`Plugin manifest is invalid:\n- ${validation.errors.join("\n- ")}`);
-  }
-  const manifest = validation.manifest;
+  const manifest = parseAndValidateManifestContents(manifestEntry.contents);
   const declaredCompanions = new Map(
     (manifest.companionExecutables ?? []).flatMap((companion) => (
       companion.variants.map((variant) => [variant.path, variant] as const)

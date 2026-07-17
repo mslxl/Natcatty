@@ -47,9 +47,18 @@ Windows, differ only by case, or exploit reserved device names. Extractors may
 then write outside staging or overwrite a different entry.
 
 The contract CLI accepts one normalized POSIX spelling for each path and
-rejects exact and case-folded duplicates. The phase 2 installer must run the
-same validation before extraction and must extract only under a newly created
-staging directory.
+rejects exact, Unicode compatibility, and case-folded duplicates. The phase 2
+installer must run the same validation before extraction and must extract only
+under a newly created staging directory.
+
+Every archive entry uses the ZIP UTF-8 flag. Validation compares the raw
+central-directory name with the local-header name and also requires matching
+flags, compression method, CRC, and sizes, preventing different ZIP readers
+from validating and extracting different interpretations of one package.
+
+Manifest decoding is fatal UTF-8 on both source directories and archives.
+Malformed byte sequences cannot be normalized differently by separate package
+inspection and installation paths.
 
 ### Symbolic links and executable smuggling
 

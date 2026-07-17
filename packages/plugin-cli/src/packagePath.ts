@@ -7,6 +7,14 @@ function containsControlCharacter(value: string): boolean {
   return [...value].some((character) => character.charCodeAt(0) <= 0x1f);
 }
 
+function portablePathKey(value: string): string {
+  return value
+    .normalize("NFKC")
+    .toUpperCase()
+    .toLowerCase()
+    .normalize("NFKC");
+}
+
 export function assertSafePackagePath(input: string): string {
   if (!input || input !== input.normalize("NFC")) {
     throw new Error(`Package path must be non-empty NFC text: ${JSON.stringify(input)}`);
@@ -48,7 +56,7 @@ export class PackagePathRegistry {
 
   add(input: string): string {
     const safePath = assertSafePackagePath(input);
-    const portableKey = safePath.toLowerCase();
+    const portableKey = portablePathKey(safePath);
     if (this.#filesExact.has(safePath) || this.#filesPortable.has(portableKey)) {
       throw new Error(`Duplicate or case-colliding package path: ${safePath}`);
     }
@@ -65,7 +73,7 @@ export class PackagePathRegistry {
       const ancestor = segments.slice(0, index).join("/");
       if (
         this.#filesExact.has(ancestor)
-        || this.#filesPortable.has(ancestor.toLowerCase())
+        || this.#filesPortable.has(portablePathKey(ancestor))
       ) {
         throw new Error(`File/directory package path collision: ${safePath}`);
       }
@@ -76,7 +84,7 @@ export class PackagePathRegistry {
     this.#filesPortable.add(portableKey);
     for (const ancestor of ancestors) {
       this.#directoriesExact.add(ancestor);
-      this.#directoriesPortable.add(ancestor.toLowerCase());
+      this.#directoriesPortable.add(portablePathKey(ancestor));
     }
     return safePath;
   }

@@ -19,7 +19,11 @@ import { buildPluginPackage, validatePluginPackage } from "./archive.ts";
 import { checkPluginCompatibility } from "./compatibility.ts";
 import { PACKAGE_LIMITS } from "./constants.ts";
 import { initPlugin } from "./commands.ts";
-import { readAndValidateManifest, validateManifestValue } from "./manifest.ts";
+import {
+  parseAndValidateManifestContents,
+  readAndValidateManifest,
+  validateManifestValue,
+} from "./manifest.ts";
 import { assertSafePackagePath, PackagePathRegistry } from "./packagePath.ts";
 
 const execFileAsync = promisify(execFile);
@@ -74,6 +78,15 @@ test("path validation rejects traversal, platform aliases, and duplicates", () =
   registry.add("dist/Plugin.js");
   assert.throws(() => registry.add("dist/plugin.js"), /case-colliding/);
 
+  for (const [first, second] of [
+    ["assets/Straße.txt", "assets/STRASSE.txt"],
+    ["assets/fullwidth-Ｓ.txt", "assets/fullwidth-S.txt"],
+  ]) {
+    const unicodeRegistry = new PackagePathRegistry();
+    unicodeRegistry.add(first);
+    assert.throws(() => unicodeRegistry.add(second), /case-colliding/);
+  }
+
   for (const paths of [
     ["dist", "dist/index.js"],
     ["dist/index.js", "dist"],
@@ -100,6 +113,15 @@ test("manifest validation reports permission and contribution mistakes", () => {
   assert.equal(result.valid, false);
   assert.match(result.errors.join("\n"), /both required and optional/);
   assert.match(result.errors.join("\n"), /undeclared command/);
+});
+
+test("manifest byte parsing rejects invalid UTF-8 before JSON validation", () => {
+  const validContents = new TextEncoder().encode(JSON.stringify(manifest()));
+  assert.equal(parseAndValidateManifestContents(validContents).id, "com.example.package-test");
+  assert.throws(
+    () => parseAndValidateManifestContents(Uint8Array.from([0x7b, 0x22, 0xff, 0x22, 0x7d])),
+    /not valid UTF-8 JSON/,
+  );
 });
 
 test("manifest validation rejects duplicate companion executable paths", () => {
@@ -380,6 +402,20 @@ test("archive validation rejects duplicate names and CRC corruption", async (con
   const corruptedPath = path.join(root, "corrupted.ncpkg");
   await writeFile(corruptedPath, corruptedBytes);
   await assert.rejects(validatePluginPackage(corruptedPath), /integrity check failed/);
+
+  const splitNameBytes = Buffer.from(validBytes);
+  const localName = Buffer.from("README.md");
+  const conflictingLocalName = Buffer.from("renamed.x");
+  assert.equal(localName.byteLength, conflictingLocalName.byteLength);
+  const localNameOffset = splitNameBytes.indexOf(localName);
+  assert.notEqual(localNameOffset, -1);
+  conflictingLocalName.copy(splitNameBytes, localNameOffset);
+  const splitNamePath = path.join(root, "split-name.ncpkg");
+  await writeFile(splitNamePath, splitNameBytes);
+  await assert.rejects(
+    validatePluginPackage(splitNamePath),
+    /local and central entry names differ/,
+  );
 });
 
 test("packer rejects symbolic links and undeclared executables", async (context) => {

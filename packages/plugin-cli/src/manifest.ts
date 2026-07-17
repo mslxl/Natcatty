@@ -23,6 +23,7 @@ const contractSchema = JSON.parse(await readFile(schemaPath, "utf8")) as object;
 const ajv = new Ajv2020({ allErrors: true, strict: true });
 addFormats(ajv);
 const validateSchema = ajv.compile<PluginManifest>(contractSchema);
+const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
 
 export interface ManifestValidationResult {
   readonly valid: boolean;
@@ -405,20 +406,16 @@ export function validateManifestValue(value: unknown): ManifestValidationResult 
     : { valid: false, errors: semanticErrors };
 }
 
-export async function readAndValidateManifest(
-  pluginDirectory: string,
-): Promise<PluginManifest> {
-  const manifestPath = path.join(pluginDirectory, "netcatty.plugin.json");
-  const contents = await readFile(manifestPath);
+export function parseAndValidateManifestContents(contents: Uint8Array): PluginManifest {
   if (contents.byteLength > PACKAGE_LIMITS.manifestBytes) {
     throw new Error(`Plugin manifest exceeds ${PACKAGE_LIMITS.manifestBytes} bytes`);
   }
   let value: unknown;
   try {
-    value = JSON.parse(contents.toString("utf8"));
+    value = JSON.parse(utf8Decoder.decode(contents));
   } catch (error) {
     throw new Error(
-      `Plugin manifest is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+      `Plugin manifest is not valid UTF-8 JSON: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
   const result = validateManifestValue(value);
@@ -426,4 +423,12 @@ export async function readAndValidateManifest(
     throw new Error(`Plugin manifest is invalid:\n- ${result.errors.join("\n- ")}`);
   }
   return result.manifest;
+}
+
+export async function readAndValidateManifest(
+  pluginDirectory: string,
+): Promise<PluginManifest> {
+  const manifestPath = path.join(pluginDirectory, "netcatty.plugin.json");
+  const contents = await readFile(manifestPath);
+  return parseAndValidateManifestContents(contents);
 }

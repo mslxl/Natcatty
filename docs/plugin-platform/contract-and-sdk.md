@@ -67,13 +67,19 @@ declares one or both execution entrypoints:
 }
 ```
 
+Manifest bytes must be valid UTF-8. Directory validation and archive validation
+share one fatal UTF-8 parser; invalid byte sequences are rejected instead of
+being replaced with `U+FFFD` before JSON and semantic validation.
+
 Paths use relative POSIX syntax and are limited to 128 Unicode code points and
 512 UTF-8 bytes. The schema and package validator reject absolute paths,
 drive-letter paths, repeated separators, backslashes, `.` and `..` segments,
 Windows reserved names, control or platform-special characters, and
 platform-specific trailing dots or spaces. The semantic package validator also
-requires NFC-normalized text; every official host consumer must run it after
-schema validation because JSON Schema cannot express Unicode normalization.
+requires NFC-normalized text and uses conservative Unicode compatibility/case
+folding when detecting path aliases; every official host consumer must run it
+after schema validation because JSON Schema cannot express these filesystem
+rules.
 Every entrypoint, view document, package icon, and companion variant must exist
 in the package.
 
@@ -356,6 +362,7 @@ same files and manifest therefore produce the same archive bytes.
 Package validation rejects:
 
 - path traversal, absolute paths, backslashes, and case-colliding names;
+- non-UTF-8 names and local/central ZIP header disagreements;
 - symbolic links and non-regular files;
 - executable files not declared as companion executables;
 - companion binaries whose SHA-256 does not match the manifest;
