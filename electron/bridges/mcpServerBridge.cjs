@@ -1112,18 +1112,33 @@ function setVaultAgentInvoker(fn) {
 
 let sessionService = null;
 const sessionIdleManager = createSessionIdleManager({
-  onIdle: async ({ chatSessionId, sessionId }) => {
+  onIdle: async ({ chatSessionId, sessionId }, activityVersion) => {
     const hasWorkerJob = await hasActiveWorkerJobForTerminalSession(sessionId);
-    if (sessionIdleManager.hasActivity(sessionId)) {
+    if (!sessionIdleManager.isIdleCheckCurrent(sessionId, activityVersion)) {
       return;
     }
     if (activeSessionExecutions.has(sessionId) || hasWorkerJob) {
       sessionIdleManager.resume(sessionId);
       return;
     }
+    if (!sessionIdleManager.beginIdleClose(sessionId, activityVersion)) {
+      return;
+    }
     await sessionService?.closeTracked({ chatSessionId, sessionId });
   },
 });
+
+function reportOpenedSessionActivity(event = {}) {
+  const sessionId = event?.sessionId;
+  if (!sessionId) return false;
+  if (event.phase === "begin") {
+    return sessionIdleManager.beginActivity(null, sessionId);
+  }
+  if (event.phase === "end") {
+    return sessionIdleManager.endActivity(null, sessionId);
+  }
+  return sessionIdleManager.touch(null, sessionId);
+}
 
 sessionService = createSessionService({
   invokeSessionAgent: (...args) => {
@@ -1922,6 +1937,7 @@ module.exports = {
   getCommandTimeoutMs,
   setSessionIdleTimeoutMinutes,
   getSessionIdleTimeoutMinutes,
+  reportOpenedSessionActivity,
   setMaxIterations,
   getMaxIterations,
   setPermissionMode,

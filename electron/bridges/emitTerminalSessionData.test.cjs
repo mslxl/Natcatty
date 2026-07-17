@@ -88,3 +88,19 @@ test("emitTerminalSessionData forwards terminal output metadata", () => {
   ]);
   configureTerminalSessionDataEmitter({});
 });
+
+test("emitTerminalSessionData reports terminal output as session activity", () => {
+  const activity = [];
+  configureTerminalSessionDataEmitter({
+    getSession: () => null,
+    outputChannel: { send: () => true },
+    onSessionActivity: (event) => activity.push(event),
+  });
+
+  emitTerminalSessionData(null, "session-activity", "output");
+
+  assert.deepEqual(activity, [
+    { sessionId: "session-activity", phase: "touch" },
+  ]);
+  configureTerminalSessionDataEmitter({});
+});

@@ -50,6 +50,8 @@ const {
 let sftpClients = null;
 let electronModule = null;
 let sessions = null;
+let reportOpenedSessionActivity = null;
+const rendererSftpSourceSessions = new Map();
 
 // Storage for jump host connections that need to be cleaned up
 const jumpConnectionsMap = new Map(); // connId -> { connections: SSHClient[], socket: stream }
@@ -523,6 +525,10 @@ function init(deps) {
   sftpClients = deps.sftpClients;
   electronModule = deps.electronModule;
   sessions = deps.sessions;
+  reportOpenedSessionActivity = typeof deps.reportOpenedSessionActivity === "function"
+    ? deps.reportOpenedSessionActivity
+    : null;
+  rendererSftpSourceSessions.clear();
 }
 
 function ensureRemoteSftpSupport(sessionId) {
@@ -1136,10 +1142,51 @@ const {
   getSftpHomeDir,
 } = fileOpsApi;
 
+function resolveRendererSftpSourceSession(channel, payload = {}) {
+  if (channel === "netcatty:sftp:openForSession") return payload.sessionId || null;
+  if (channel === "netcatty:sftp:open") return payload.sourceSessionId || null;
+  const sftpId = payload.sftpId;
+  if (!sftpId) return null;
+  return rendererSftpSourceSessions.get(sftpId)
+    || sftpClients?.get?.(sftpId)?.__netcattySourceSessionId
+    || null;
+}
+
+function reportSftpActivity(sessionId, phase) {
+  if (!sessionId) return;
+  try {
+    reportOpenedSessionActivity?.({ sessionId, phase });
+  } catch {
+    // Activity tracking must not interfere with SFTP operations.
+  }
+}
+
+function registerActivityHandle(ipcMain, channel, handler) {
+  ipcMain.handle(channel, async (event, payload) => {
+    const sourceSessionId = resolveRendererSftpSourceSession(channel, payload);
+    reportSftpActivity(sourceSessionId, "begin");
+    try {
+      const result = await handler(event, payload);
+      const sftpId = result?.sftpId;
+      if (sourceSessionId && sftpId) {
+        rendererSftpSourceSessions.set(sftpId, sourceSessionId);
+      }
+      return result;
+    } finally {
+      if (channel === "netcatty:sftp:close" && payload?.sftpId) {
+        rendererSftpSourceSessions.delete(payload.sftpId);
+      }
+      reportSftpActivity(sourceSessionId, "end");
+    }
+  });
+}
+
 function registerWorkerHandle(ipcMain, terminalWorkerManager, channel) {
-  ipcMain.handle(channel, (event, payload) => terminalWorkerManager.request(channel, payload, {
-    webContentsId: event?.sender?.id,
-  }));
+  registerActivityHandle(ipcMain, channel, (event, payload) => (
+    terminalWorkerManager.request(channel, payload, {
+      webContentsId: event?.sender?.id,
+    })
+  ));
 }
 
 /**
@@ -1170,24 +1217,26 @@ function registerHandlers(ipcMain, options = {}) {
     ].forEach((channel) => registerWorkerHandle(ipcMain, terminalWorkerManager, channel));
     return;
   }
-  ipcMain.handle("netcatty:sftp:open", openSftp);
-  ipcMain.handle("netcatty:sftp:openForSession", openSftpForSession);
-  ipcMain.handle("netcatty:sftp:list", listSftp);
-  ipcMain.handle("netcatty:sftp:read", readSftp);
-  ipcMain.handle("netcatty:sftp:readBinary", readSftpBinary);
-  ipcMain.handle("netcatty:sftp:write", writeSftp);
-  ipcMain.handle("netcatty:sftp:writeBinary", writeSftpBinary);
-  ipcMain.handle("netcatty:sftp:writeBinaryWithProgress", writeSftpBinaryWithProgress);
-  ipcMain.handle("netcatty:sftp:downloadToLocal", downloadSftpToLocal);
-  ipcMain.handle("netcatty:sftp:uploadLocal", uploadLocalToSftp);
-  ipcMain.handle("netcatty:sftp:cancelUpload", cancelSftpUpload);
-  ipcMain.handle("netcatty:sftp:close", closeSftp);
-  ipcMain.handle("netcatty:sftp:mkdir", mkdirSftp);
-  ipcMain.handle("netcatty:sftp:delete", deleteSftp);
-  ipcMain.handle("netcatty:sftp:rename", renameSftp);
-  ipcMain.handle("netcatty:sftp:stat", statSftp);
-  ipcMain.handle("netcatty:sftp:chmod", chmodSftp);
-  ipcMain.handle("netcatty:sftp:homeDir", getSftpHomeDir);
+  [
+    ["netcatty:sftp:open", openSftp],
+    ["netcatty:sftp:openForSession", openSftpForSession],
+    ["netcatty:sftp:list", listSftp],
+    ["netcatty:sftp:read", readSftp],
+    ["netcatty:sftp:readBinary", readSftpBinary],
+    ["netcatty:sftp:write", writeSftp],
+    ["netcatty:sftp:writeBinary", writeSftpBinary],
+    ["netcatty:sftp:writeBinaryWithProgress", writeSftpBinaryWithProgress],
+    ["netcatty:sftp:downloadToLocal", downloadSftpToLocal],
+    ["netcatty:sftp:uploadLocal", uploadLocalToSftp],
+    ["netcatty:sftp:cancelUpload", cancelSftpUpload],
+    ["netcatty:sftp:close", closeSftp],
+    ["netcatty:sftp:mkdir", mkdirSftp],
+    ["netcatty:sftp:delete", deleteSftp],
+    ["netcatty:sftp:rename", renameSftp],
+    ["netcatty:sftp:stat", statSftp],
+    ["netcatty:sftp:chmod", chmodSftp],
+    ["netcatty:sftp:homeDir", getSftpHomeDir],
+  ].forEach(([channel, handler]) => registerActivityHandle(ipcMain, channel, handler));
 }
 
 /**

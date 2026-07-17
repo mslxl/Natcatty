@@ -36,15 +36,17 @@ function createSessionIdleManager(options = {}) {
       entry.timer = null;
       const current = entries.get(entry.sessionId);
       if (current !== entry || entry.activeCount > 0 || entry.checking || entry.closing) return;
-      if (DateImpl.now() < expiresAt) {
+      const latestExpiresAt = entry.lastActivityAt + timeoutMinutes * 60 * 1000;
+      if (DateImpl.now() < latestExpiresAt) {
         schedule(entry);
         return;
       }
       entry.checking = true;
+      const activityVersion = entry.activityVersion;
       Promise.resolve(onIdle({
         chatSessionId: entry.chatSessionId,
         sessionId: entry.sessionId,
-      })).catch(() => {
+      }, activityVersion)).catch(() => {
         resume(entry.sessionId);
       });
     }, delay);
@@ -59,6 +61,7 @@ function createSessionIdleManager(options = {}) {
       chatSessionId,
       sessionId,
       lastActivityAt: DateImpl.now(),
+      activityVersion: 0,
       activeCount: 0,
       checking: false,
       closing: false,
@@ -73,8 +76,11 @@ function createSessionIdleManager(options = {}) {
     const entry = entries.get(sessionId);
     if (!entry || entry.closing) return false;
     entry.checking = false;
+    entry.activityVersion += 1;
     entry.lastActivityAt = DateImpl.now();
-    schedule(entry);
+    // Keep an existing timer instead of recreating it for every output chunk.
+    // Its callback rechecks lastActivityAt and extends the deadline as needed.
+    if (entry.timer == null) schedule(entry);
     return true;
   }
 
@@ -82,6 +88,7 @@ function createSessionIdleManager(options = {}) {
     const entry = entries.get(sessionId);
     if (!entry || entry.closing) return false;
     entry.checking = false;
+    entry.activityVersion += 1;
     entry.activeCount += 1;
     entry.lastActivityAt = DateImpl.now();
     clearTimer(entry);
@@ -91,6 +98,7 @@ function createSessionIdleManager(options = {}) {
   function endActivity(chatSessionId, sessionId) {
     const entry = entries.get(sessionId);
     if (!entry || entry.closing) return false;
+    entry.activityVersion += 1;
     entry.activeCount = Math.max(0, entry.activeCount - 1);
     entry.lastActivityAt = DateImpl.now();
     schedule(entry);
@@ -106,11 +114,28 @@ function createSessionIdleManager(options = {}) {
     return true;
   }
 
+  function beginIdleClose(sessionId, activityVersion) {
+    if (!isIdleCheckCurrent(sessionId, activityVersion)) return false;
+    return beginClose(sessionId);
+  }
+
+  function isIdleCheckCurrent(sessionId, activityVersion) {
+    const entry = entries.get(sessionId);
+    return Boolean(
+      entry
+      && entry.checking
+      && !entry.closing
+      && entry.activeCount === 0
+      && entry.activityVersion === activityVersion
+    );
+  }
+
   function resume(sessionId) {
     const entry = entries.get(sessionId);
     if (!entry) return false;
     entry.closing = false;
     entry.checking = false;
+    entry.activityVersion += 1;
     entry.activeCount = 0;
     entry.lastActivityAt = DateImpl.now();
     schedule(entry);
@@ -147,10 +172,12 @@ function createSessionIdleManager(options = {}) {
     beginActivity,
     endActivity,
     beginClose,
+    beginIdleClose,
     resume,
     forgetSession,
     isTracked: (sessionId) => entries.has(sessionId),
     hasActivity: (sessionId) => Boolean(entries.get(sessionId)?.activeCount),
+    isIdleCheckCurrent,
     isClosing: (sessionId) => Boolean(entries.get(sessionId)?.closing),
     setTimeoutMinutes,
     getTimeoutMinutes: () => timeoutMinutes,

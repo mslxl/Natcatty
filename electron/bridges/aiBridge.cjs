@@ -885,10 +885,15 @@ function cleanup() {
   mcpServerBridge.cleanup();
 }
 
+function reportOpenedSessionActivity(event) {
+  return mcpServerBridge.reportOpenedSessionActivity?.(event) ?? false;
+}
+
 module.exports = {
   init,
   registerHandlers,
   cleanup,
+  reportOpenedSessionActivity,
   buildExternalAgentSystemContext,
   buildExternalAgentContextualPrompt,
   getExternalMcpController: () => externalMcpController,
