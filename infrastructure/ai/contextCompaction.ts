@@ -8,6 +8,7 @@ import {
   estimateModelMessagesTokensWithKind,
   estimateUnknownTokens,
 } from "./harness/tokenEstimator";
+import { redactSecretsForModel } from "./harness/modelSecretRedaction";
 
 const REDACTED_PAYLOAD_PREVIEW_CHARS = 80;
 
@@ -206,8 +207,8 @@ function endsWithToolCall(message: ModelMessage | undefined): boolean {
 }
 
 function formatMessageContent(content: ModelMessage["content"]): string {
-  if (typeof content === "string") return content;
-  return JSON.stringify(sanitizeContentForCompaction(content), null, 2);
+  if (typeof content === "string") return redactSecretsForModel(content);
+  return redactSecretsForModel(JSON.stringify(sanitizeContentForCompaction(content), null, 2));
 }
 
 function sanitizeContentForCompaction(content: Exclude<ModelMessage["content"], string>): unknown {

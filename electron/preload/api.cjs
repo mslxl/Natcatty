@@ -915,6 +915,12 @@ function createPreloadApi(ctx) {
     ipcRenderer.invoke("netcatty:tempdir:getPath"),
   openTempDir: () =>
     ipcRenderer.invoke("netcatty:tempdir:open"),
+  writeToolOutputTemp: (handleId, content) =>
+    ipcRenderer.invoke("netcatty:tempdir:toolOutputWrite", { handleId, content }),
+  readToolOutputTemp: (filePath, request) =>
+    ipcRenderer.invoke("netcatty:tempdir:toolOutputRead", { path: filePath, request }),
+  deleteToolOutputTemp: (filePath) =>
+    ipcRenderer.invoke("netcatty:tempdir:toolOutputDelete", { path: filePath }),
 
   // Session Logs
   exportSessionLog: (payload) =>

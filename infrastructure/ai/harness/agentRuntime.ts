@@ -11,6 +11,9 @@ import type {
   TurnSteerInput,
   TurnSteerResult,
 } from './turnDrivers/types';
+import { globalTwoPassCompactionCache } from './twoPassCompaction';
+import { redactSecretsForModel, redactSecretsInValueForModel } from './modelSecretRedaction';
+import { globalTerminalMonitorGuard } from './terminalMonitorGuard';
 
 let turnCounter = 0;
 
@@ -36,7 +39,7 @@ export class AgentRuntime {
   private readonly listeners = new Set<AgentEventListener>();
   private readonly activeTurns = new Map<string, ActiveTurn>();
   private readonly activeTurnPromises = new Map<string, Promise<TurnResult>>();
-  private readonly toolOutputStores = new Map<string, ToolOutputStore>();
+  private readonly toolOutputStore = new ToolOutputStore();
   private readonly sessionStateStore: SessionStateStore;
   private readonly traceStore: typeof globalTraceStore;
 
@@ -49,12 +52,8 @@ export class AgentRuntime {
   }
 
   getToolOutputStore(chatSessionId: string): ToolOutputStore {
-    let store = this.toolOutputStores.get(chatSessionId);
-    if (!store) {
-      store = new ToolOutputStore();
-      this.toolOutputStores.set(chatSessionId, store);
-    }
-    return store;
+    void chatSessionId;
+    return this.toolOutputStore;
   }
 
   getSessionStateStore(): SessionStateStore {
@@ -62,9 +61,10 @@ export class AgentRuntime {
   }
 
   clearChatSession(chatSessionId: string): void {
-    this.toolOutputStores.get(chatSessionId)?.prune(chatSessionId);
-    this.toolOutputStores.delete(chatSessionId);
+    this.toolOutputStore.prune(chatSessionId);
     this.sessionStateStore.clear(chatSessionId);
+    globalTwoPassCompactionCache.clear(chatSessionId);
+    globalTerminalMonitorGuard.clearPrefix(`${chatSessionId}:`);
   }
 
   async waitForActiveTurn(chatSessionId: string): Promise<void> {
@@ -125,7 +125,7 @@ export class AgentRuntime {
       partial: Omit<AgentEvent, 'turnId' | 'sessionId' | 'chatSessionId' | 'backend' | 'timestamp'>
         & Partial<Pick<AgentEvent, 'turnId' | 'sessionId' | 'chatSessionId' | 'backend' | 'timestamp'>>,
     ) => {
-      const event = {
+      let event = {
         id: partial.id,
         type: partial.type,
         sessionId: partial.sessionId ?? chatSessionId,
@@ -136,7 +136,18 @@ export class AgentRuntime {
         ...partial,
       } as AgentEvent;
 
+      if (event.type === 'tool_result') {
+        event = {
+          ...event,
+          result: redactSecretsForModel(event.result),
+        };
+      }
+
       if (event.type === 'tool_call') {
+        event = {
+          ...event,
+          args: redactSecretsInValueForModel(event.args),
+        };
         toolCallMeta.set(event.toolCallId, {
           toolName: event.toolName,
           args: event.args,
@@ -153,10 +164,26 @@ export class AgentRuntime {
             event.result,
             event.isError,
           );
+          if (
+            !event.isError
+            && (toolName === 'session_close' || toolName === 'session.close')
+            && typeof meta?.args.sessionId === 'string'
+          ) {
+            toolOutputStore.pruneTerminalSession(chatSessionId, meta.args.sessionId);
+          }
         }
       }
       if (event.type === 'model_delta' && event.text) {
         sessionStateStore.mergeFromAssistantContent(chatSessionId, event.text);
+      }
+      if (event.type === 'file_change' && event.status === 'completed') {
+        sessionStateStore.mergeFileChanges(
+          chatSessionId,
+          event.changes.map(change => change.path),
+        );
+      }
+      if (event.type === 'plan_update') {
+        sessionStateStore.mergePlan(chatSessionId, event.items);
       }
 
       this.traceStore.append(event);

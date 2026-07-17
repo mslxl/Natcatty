@@ -95,6 +95,10 @@ function disconnectExternalMcpClients() {
 const scopedMetadata = new Map();
 const scopedAttachments = new Map(); // chatSessionId -> Map<filePath, attachment>
 const { createSessionOwnershipRegistry } = require("./mcpServerBridge/sessionOwnership.cjs");
+const {
+  createSessionIdleManager,
+  normalizeSessionIdleTimeoutMinutes,
+} = require("./mcpServerBridge/sessionIdleManager.cjs");
 const openedSessionOwnership = createSessionOwnershipRegistry();
 
 // Command safety checking (reuse from aiBridge)
@@ -392,6 +396,7 @@ function shutdownHost({ preserveScopedMetadata = false } = {}) {
   backgroundJobs.clear();
   pendingWorkerJobStarts.clear();
   activeSessionExecutions.clear();
+  sessionIdleManager.clearAll();
 }
 
 function echoCommandToSession(session, sessionId, command) {
@@ -423,6 +428,16 @@ function setCommandTimeout(seconds) {
 
 function getCommandTimeoutMs() {
   return commandTimeoutMs;
+}
+
+function setSessionIdleTimeoutMinutes(minutes) {
+  return sessionIdleManager.setTimeoutMinutes(
+    normalizeSessionIdleTimeoutMinutes(minutes),
+  );
+}
+
+function getSessionIdleTimeoutMinutes() {
+  return sessionIdleManager.getTimeoutMinutes();
 }
 
 function setMaxIterations(value) {
@@ -1087,12 +1102,90 @@ const {
   UNROUTED,
 } = require("./mcpServerBridge/capabilityRpcDispatch.cjs");
 const { buildBuiltinRpcHandlerRegistry } = require("./mcpServerBridge/builtinRpcHandlers.cjs");
+const { createSessionService } = require("../capabilities/services/sessionService.cjs");
 
 let invokeVaultAgentFn = null;
 
 function setVaultAgentInvoker(fn) {
   invokeVaultAgentFn = typeof fn === "function" ? fn : null;
 }
+
+let sessionService = null;
+const sessionIdleManager = createSessionIdleManager({
+  onIdle: async ({ chatSessionId, sessionId }, activityVersion) => {
+    const hasWorkerJob = await hasActiveWorkerJobForTerminalSession(sessionId);
+    if (!sessionIdleManager.isIdleCheckCurrent(sessionId, activityVersion)) {
+      return;
+    }
+    if (activeSessionExecutions.has(sessionId) || hasWorkerJob) {
+      sessionIdleManager.resume(sessionId);
+      return;
+    }
+    if (!sessionIdleManager.beginIdleClose(sessionId, activityVersion)) {
+      return;
+    }
+    await sessionService?.closeTracked({ chatSessionId, sessionId });
+  },
+});
+
+function reportOpenedSessionActivity(event = {}) {
+  const sessionId = event?.sessionId;
+  if (!sessionId) return false;
+  if (event.phase === "begin") {
+    return sessionIdleManager.beginActivity(null, sessionId);
+  }
+  if (event.phase === "end") {
+    return sessionIdleManager.endActivity(null, sessionId);
+  }
+  return sessionIdleManager.touch(null, sessionId);
+}
+
+sessionService = createSessionService({
+  invokeSessionAgent: (...args) => {
+    if (typeof invokeVaultAgentFn !== "function") {
+      return Promise.resolve({ ok: false, error: "Vault agent bridge is unavailable." });
+    }
+    return invokeVaultAgentFn(...args);
+  },
+  validateClose: (params = {}) => {
+    const scopeErr = validateSessionScope(
+      params.sessionId,
+      params.chatSessionId,
+      params.scopedSessionIds,
+    );
+    if (scopeErr) return { ok: false, error: scopeErr };
+    if (sessionIdleManager.isClosing(params.sessionId)) {
+      return { ok: false, error: `Session "${params.sessionId}" is closing.` };
+    }
+    return openedSessionOwnership.validate(params.chatSessionId, params.sessionId);
+  },
+  beforeClose: async (params = {}) => {
+    sessionIdleManager.beginClose(params.sessionId);
+    beginTerminalSessionClose(params.sessionId);
+    cancelBackgroundJobsForTerminalSession(params.sessionId);
+    await cancelWorkerBackgroundJobsForTerminalSession(params.sessionId);
+    await cancelSftpOpsForTerminalSession(params.sessionId);
+  },
+  afterClose: (params = {}, outcome = {}) => {
+    endTerminalSessionClose(params.sessionId);
+    if (outcome.closed) return;
+    if (outcome.notFound) {
+      sessionIdleManager.forgetSession(params.sessionId);
+      openedSessionOwnership.forgetSession(params.sessionId);
+      return;
+    }
+    sessionIdleManager.resume(params.sessionId);
+  },
+  onClosed: async (sessionId) => {
+    await settleBackgroundJobsForTerminalSession(sessionId);
+    sessionIdleManager.forgetSession(sessionId);
+    openedSessionOwnership.forgetSession(sessionId);
+    for (const scoped of scopedMetadata.values()) {
+      scoped.sessionIds = scoped.sessionIds.filter((id) => id !== sessionId);
+      scoped.metadata.delete(sessionId);
+    }
+  },
+});
 
 const dispatchCapabilityRpc = createCapabilityRpcDispatcher({
   invokeVaultAgent: (...args) => {
@@ -1111,33 +1204,11 @@ const dispatchCapabilityRpc = createCapabilityRpcDispatcher({
   isChatSessionCancelled,
   requestApprovalFromRenderer,
   USER_DENIED_MESSAGE,
+  sessionService,
   captureHostOpenScope: (chatSessionId) => openedSessionOwnership.captureGeneration(chatSessionId),
   onHostOpened: (chatSessionId, sessionId, generation) => {
     openedSessionOwnership.register(chatSessionId, sessionId, generation);
-  },
-  validateSessionClose: (params = {}) => {
-    const scopeErr = validateSessionScope(
-      params.sessionId,
-      params.chatSessionId,
-      params.scopedSessionIds,
-    );
-    if (scopeErr) return { ok: false, error: scopeErr };
-    return openedSessionOwnership.validate(params.chatSessionId, params.sessionId);
-  },
-  beforeSessionClose: async (params = {}) => {
-    beginTerminalSessionClose(params.sessionId);
-    cancelBackgroundJobsForTerminalSession(params.sessionId);
-    await cancelWorkerBackgroundJobsForTerminalSession(params.sessionId);
-    await cancelSftpOpsForTerminalSession(params.sessionId);
-  },
-  afterSessionClose: (params = {}) => endTerminalSessionClose(params.sessionId),
-  onSessionClosed: async (sessionId) => {
-    await settleBackgroundJobsForTerminalSession(sessionId);
-    openedSessionOwnership.forgetSession(sessionId);
-    for (const scoped of scopedMetadata.values()) {
-      scoped.sessionIds = scoped.sessionIds.filter((id) => id !== sessionId);
-      scoped.metadata.delete(sessionId);
-    }
+    sessionIdleManager.track(chatSessionId, sessionId);
   },
 });
 
@@ -1390,6 +1461,31 @@ async function handleWorkerJobStop(params = {}) {
   return result;
 }
 
+async function hasActiveWorkerJobForTerminalSession(sessionId) {
+  const matchingJobs = Array.from(workerBackgroundJobs.entries())
+    .filter(([, job]) => job?.sessionId === sessionId);
+  for (const [jobId, job] of matchingJobs) {
+    if (!terminalWorkerManager?.request) return true;
+    try {
+      const result = await terminalWorkerManager.request("netcatty:ai:jobPoll", {
+        jobId,
+        sessionId,
+        chatSessionId: job.chatSessionId || null,
+        offset: 0,
+      }, {});
+      if (result?.completed || (result?.ok === false && /not found/i.test(result?.error || ""))) {
+        workerBackgroundJobs.delete(jobId);
+        continue;
+      }
+      return true;
+    } catch {
+      // A transient worker failure should not close a possibly active session.
+      return true;
+    }
+  }
+  return false;
+}
+
 function cancelWorkerBackgroundJobsForSession(chatSessionId) {
   if (!chatSessionId) return;
   for (const pendingStarts of pendingWorkerJobStarts.values()) {
@@ -1533,6 +1629,18 @@ async function dispatch(method, params) {
     pendingSessionWriteApprovals.set(sessionWriteLockId, method);
   }
 
+  const tracksSessionActivity = Boolean(
+    params?.sessionId
+    && (
+      capability?.id === "terminal.execute"
+      || capability?.id === "terminal.start"
+      || capability?.id?.startsWith("sftp.")
+    )
+  );
+  const activityStarted = tracksSessionActivity
+    ? sessionIdleManager.beginActivity(params?.chatSessionId, params.sessionId)
+    : false;
+
   try {
     // Confirm mode: request user approval for write operations.
     // netcatty/jobStop bypasses approval — it's a stop/cancel action that
@@ -1564,19 +1672,22 @@ async function dispatch(method, params) {
       throw new Error(`Unknown method: ${method}`);
     }
     if (capability?.id === "terminal.execute" && params?.sessionId && !sessions?.get?.(params.sessionId)) {
-      return handleWorkerTerminalExec(params);
+      return await handleWorkerTerminalExec(params);
     }
     if (capability?.id === "terminal.start" && params?.sessionId && !sessions?.get?.(params.sessionId)) {
-      return handleWorkerJobStart(params);
+      return await handleWorkerJobStart(params);
     }
     if (capability?.id === "terminal.poll" && workerBackgroundJobs.has(params?.jobId)) {
-      return handleWorkerJobPoll(params);
+      return await handleWorkerJobPoll(params);
     }
     if (capability?.id === "terminal.stop" && workerBackgroundJobs.has(params?.jobId)) {
-      return handleWorkerJobStop(params);
+      return await handleWorkerJobStop(params);
     }
-    return handler(params);
+    return await handler(params);
   } finally {
+    if (activityStarted) {
+      sessionIdleManager.endActivity(params?.chatSessionId, params.sessionId);
+    }
     if (sessionWriteLockId) {
       pendingSessionWriteApprovals.delete(sessionWriteLockId);
     }
@@ -1810,6 +1921,7 @@ const configAndCleanupApi = createConfigAndCleanupApi({
   cancelWorkerBackgroundJobsForSession,
   cancelWorkerBackgroundJobsForTerminalSession,
   clearPendingApprovals, cancelSftpOpsForSession, sftpBridge,
+  preserveIdleSessionCleanup: sessionIdleManager.scopeCleared,
   clearOpenedSessionScope: openedSessionOwnership.clearScope,
 });
 const { resolveMcpServerRuntimeCommand, buildMcpServerConfig, cleanupScopedMetadata } = configAndCleanupApi;
@@ -1823,6 +1935,9 @@ module.exports = {
   setCommandBlocklist,
   setCommandTimeout,
   getCommandTimeoutMs,
+  setSessionIdleTimeoutMinutes,
+  getSessionIdleTimeoutMinutes,
+  reportOpenedSessionActivity,
   setMaxIterations,
   getMaxIterations,
   setPermissionMode,
@@ -1846,6 +1961,7 @@ module.exports = {
   cancelPtyExecsForSession,
   cancelWorkerBackgroundJobsForSession,
   cancelWorkerBackgroundJobsForTerminalSession,
+  hasActiveWorkerJobForTerminalSession,
   cancelSftpOpsForSession,
   getSessionMeta,
   cleanupScopedMetadata,

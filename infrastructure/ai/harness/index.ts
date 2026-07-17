@@ -39,7 +39,14 @@ export {
 export type { EstimateModelMessagesTokensInput, EstimateModelMessagesTokensResult } from './tokenEstimator';
 
 export { ToolOutputStore, globalToolOutputStore } from './toolOutputStore';
-export type { ToolOutputHandle, StoreToolOutputInput, ReadToolOutputInput } from './toolOutputStore';
+export type {
+  ToolOutputHandle,
+  StoreToolOutputInput,
+  ReadToolOutputInput,
+  ToolOutputReadResult,
+  ToolOutputPersistence,
+  ToolOutputStoreOptions,
+} from './toolOutputStore';
 
 export { ToolResultDedup, hashScopeKey, previewToolResult } from './toolResultDedup';
 export type { ToolResultDedupEntry } from './toolResultDedup';
@@ -73,6 +80,11 @@ export {
 
 export { SessionStateStore, globalSessionStateStore } from './sessionState';
 export type { CattySessionState } from './sessionState';
+
+export { repairToolMessageIntegrity } from './toolMessageIntegrity';
+export { redactSecretsForModel } from './modelSecretRedaction';
+export { buildPromptContextSnapshot } from './promptContextSnapshot';
+export type { PromptContextSnapshot } from './promptContextSnapshot';
 
 export { pruneStaleToolContext } from './staleContextPruner';
 export { pruneUntilFitsCompaction } from './compactionPruner';

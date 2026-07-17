@@ -77,6 +77,7 @@ let electronModule = null;
 let terminalOutputChannel = null;
 let selectZmodemUploadFiles = null;
 let selectZmodemDownloadDirectory = null;
+let reportOpenedSessionActivity = null;
 
 const DEFAULT_UTF8_LOCALE = "en_US.UTF-8";
 const LOGIN_SHELLS = new Set(["bash", "zsh", "fish", "ksh"]);
@@ -113,9 +114,13 @@ function init(deps) {
   terminalOutputChannel = deps.terminalOutputChannel || null;
   selectZmodemUploadFiles = deps.selectZmodemUploadFiles || null;
   selectZmodemDownloadDirectory = deps.selectZmodemDownloadDirectory || null;
+  reportOpenedSessionActivity = typeof deps.reportOpenedSessionActivity === "function"
+    ? deps.reportOpenedSessionActivity
+    : null;
   configureTerminalSessionDataEmitter({
     getSession: (sessionId) => sessions?.get(sessionId),
     outputChannel: terminalOutputChannel,
+    onSessionActivity: reportOpenedSessionActivity,
   });
   cleanupStaleEtTempDirs();
 }
@@ -990,6 +995,12 @@ function writeToSession(event, payload) {
   const session = sessions.get(payload.sessionId);
   if (!session) return;
 
+  try {
+    reportOpenedSessionActivity?.({ sessionId: payload.sessionId, phase: "touch" });
+  } catch {
+    // Activity tracking must not interfere with terminal input.
+  }
+
   if (!payload.automated && !isTerminalReportSequence(payload.data)) {
     clearPendingAutomatedWrites(session);
   }
@@ -1405,6 +1416,11 @@ function registerHandlers(ipcMain, options = {}) {
       // stream for the session.
       sessionLogStreamManager.registerSudoAutofillInput(payload?.sessionId, payload?.data);
       sessionLogStreamManager.registerProgrammaticCommandLogRewrite(payload?.sessionId, payload?.logRewrite);
+      try {
+        reportOpenedSessionActivity?.({ sessionId: payload?.sessionId, phase: "touch" });
+      } catch {
+        // Activity tracking must not interfere with terminal input.
+      }
       terminalWorkerManager.send("netcatty:write", payload, {
         webContentsId: event?.sender?.id,
       });

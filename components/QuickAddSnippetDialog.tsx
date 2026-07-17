@@ -154,6 +154,7 @@ export const QuickAddSnippetDialog: React.FC<QuickAddSnippetDialogProps> = ({
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
+      if (e.defaultPrevented) return;
       // Cmd/Ctrl+Enter from anywhere in the dialog saves the snippet.
       if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && canSave) {
         e.preventDefault();
@@ -162,6 +163,10 @@ export const QuickAddSnippetDialog: React.FC<QuickAddSnippetDialogProps> = ({
     },
     [canSave, handleSave],
   );
+
+  const handleSubmitShortcut = useCallback(() => {
+    if (canSave) handleSave();
+  }, [canSave, handleSave]);
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -199,6 +204,7 @@ export const QuickAddSnippetDialog: React.FC<QuickAddSnippetDialogProps> = ({
             label={t('snippets.field.scriptRequired')}
             value={command}
             onChange={setCommand}
+            onSubmitShortcut={handleSubmitShortcut}
             placeholder="echo hello"
           />
 

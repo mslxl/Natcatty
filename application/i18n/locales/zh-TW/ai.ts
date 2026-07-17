@@ -235,6 +235,8 @@ export const zhTWAiMessages: Messages = {
   'ai.externalMcp.idleTimeout.minutes': '分鐘',
   'ai.externalMcp.focusOnHostOpen': 'host_open 時啟用視窗',
   'ai.externalMcp.focusOnHostOpen.description': '當 MCP 用戶端開啟主機連線時，將主視窗切換到前景。關閉後可不受打擾地繼續目前工作。',
+  'ai.externalMcp.sessionIdleTimeout': '已開啟工作階段閒置逾時',
+  'ai.externalMcp.sessionIdleTimeout.description': 'AI 開啟的工作階段若超過該分鐘數沒有終端或檔案操作，將自動關閉。',
   'ai.externalMcp.usage.title': '使用說明',
   'ai.externalMcp.usage.keepRunning': '1. 開啟對外 MCP 開關，並保持 Netcatty 執行。',
   'ai.externalMcp.usage.localhost': '2. 用戶端透過本機 launcher 連線（僅 127.0.0.1）。關閉開關後會刪除 discovery。',

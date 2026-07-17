@@ -158,6 +158,10 @@ function createBridgeRegistrar(context) {
           MessageChannelMain: electronModule.MessageChannelMain,
         })
       : null;
+    const reportOpenedSessionActivity = (event) => aiBridge.reportOpenedSessionActivity?.(event);
+    terminalWorkerManager?.addOutputTap?.((sessionId) => {
+      reportOpenedSessionActivity({ sessionId, phase: "touch" });
+    });
     const deps = {
       sessions,
       sftpClients,
@@ -169,6 +173,7 @@ function createBridgeRegistrar(context) {
       userDataDir,
       terminalOutputChannel,
       terminalWorkerManager,
+      reportOpenedSessionActivity,
     };
   
     sshBridge.init(deps);

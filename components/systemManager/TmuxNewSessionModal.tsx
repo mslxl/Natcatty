@@ -78,10 +78,15 @@ export const TmuxNewSessionModal = memo(function TmuxNewSessionModal({
   }, [command, name, onCreate, t]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.defaultPrevented) return;
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !creating && name.trim()) {
       e.preventDefault();
       void handleCreate();
     }
+  }, [creating, handleCreate, name]);
+
+  const handleSubmitShortcut = useCallback(() => {
+    if (!creating && name.trim()) void handleCreate();
   }, [creating, handleCreate, name]);
 
   const handleCommandChange = useCallback((value: string) => {
@@ -145,6 +150,7 @@ export const TmuxNewSessionModal = memo(function TmuxNewSessionModal({
                 label={t('systemManager.tmux.newSessionCommand')}
                 value={command}
                 onChange={handleCommandChange}
+                onSubmitShortcut={handleSubmitShortcut}
                 placeholder={t('systemManager.tmux.newSessionCommandPlaceholder')}
                 defaultHeight={150}
                 maxHeight={260}

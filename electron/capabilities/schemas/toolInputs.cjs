@@ -344,8 +344,10 @@ const TOOL_INPUT_FIELDS = Object.freeze({
   },
   "harness.tool_output.read": {
     handleId: { type: "string", description: "Tool output handle id from a prior truncated result." },
-    mode: { type: "string", optional: true, description: "Which portion to read: head, tail, or full." },
-    maxChars: { type: "number", optional: true, description: "Maximum characters to return." },
+    mode: { type: "string", optional: true, description: "Which portion to read: head, tail, range, search, or bounded full." },
+    maxChars: { type: "number", optional: true, description: "Requested characters to return. The service enforces a hard upper bound." },
+    offset: { type: "number", optional: true, description: "Zero-based character offset for range reads or search continuation." },
+    query: { type: "string", optional: true, description: "Case-insensitive search text when mode is search." },
   },
   "harness.workspace.get_info": {},
   "harness.workspace.get_session_info": {

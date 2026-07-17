@@ -193,6 +193,7 @@ declare global {
       exposedSessionCount?: number;
       mode?: 'temporary' | 'persistent';
       idleTimeoutMinutes?: number;
+      sessionIdleTimeoutMinutes?: number;
       lastActivityAt?: number | null;
       idleExpiresAt?: number | null;
       permissionMode?: string;
@@ -203,6 +204,7 @@ declare global {
     externalMcpSetConfig?(config: {
       mode?: 'temporary' | 'persistent';
       idleTimeoutMinutes?: number;
+      sessionIdleTimeoutMinutes?: number;
     }): Promise<Record<string, unknown>>;
     externalMcpCodexGetStatus?(): Promise<Record<string, unknown>>;
     externalMcpCodexAdd?(): Promise<Record<string, unknown>>;

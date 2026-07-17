@@ -591,6 +591,10 @@ async function streamRequest(url, options, event, requestId, skipTLS) {
 
     const req = lib.request(parsedUrl, reqOpts,
       (res) => {
+        // Decode the response as one continuous UTF-8 stream. Calling
+        // Buffer#toString() on each network chunk corrupts multi-byte
+        // characters when a chunk boundary falls in the middle of one.
+        res.setEncoding("utf8");
         const statusCode = res.statusCode || 0;
         const statusText = res.statusMessage || "";
 
@@ -885,10 +889,15 @@ function cleanup() {
   mcpServerBridge.cleanup();
 }
 
+function reportOpenedSessionActivity(event) {
+  return mcpServerBridge.reportOpenedSessionActivity?.(event) ?? false;
+}
+
 module.exports = {
   init,
   registerHandlers,
   cleanup,
+  reportOpenedSessionActivity,
   buildExternalAgentSystemContext,
   buildExternalAgentContextualPrompt,
   getExternalMcpController: () => externalMcpController,

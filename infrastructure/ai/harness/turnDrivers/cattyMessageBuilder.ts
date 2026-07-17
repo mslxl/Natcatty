@@ -1,5 +1,6 @@
 import type { ModelMessage } from 'ai';
 import type { ChatMessage, ChatMessageAttachment, ToolResult } from '../../types';
+import { buildTerminalWriteFingerprint } from '../toolResultDedup';
 import {
   buildHistoricalToolReplayMaps,
   buildHistoricalToolResultReplayText,
@@ -20,6 +21,9 @@ import {
   type AssistantContentPart,
   type CattyProviderContinuationContext,
 } from '../../../../components/ai/hooks/aiChatStreamingSupport';
+import { redactSecretsInValueForModel } from '../modelSecretRedaction';
+import { fitLargeUserInputForModel } from '../largeUserInput';
+import type { ToolOutputStore } from '../toolOutputStore';
 
 const OPENAI_CHAT_ASSISTANT_FIELDS = Symbol('netcatty.openAIChatAssistantFields');
 
@@ -73,6 +77,8 @@ export interface BuildCattySdkMessagesInput {
   attachments?: ChatMessageAttachment[];
   continuationContext: CattyProviderContinuationContext;
   preserveTerminalToolResults?: ReadonlySet<ToolResult>;
+  chatSessionId: string;
+  toolOutputStore: ToolOutputStore;
   fieldsByMessage: Map<ModelMessage, OpenAIChatAssistantFields | undefined>;
 }
 
@@ -84,6 +90,8 @@ export function buildCattySdkMessages(input: BuildCattySdkMessagesInput): ModelM
     attachments,
     continuationContext,
     preserveTerminalToolResults = new Set<ToolResult>(),
+    chatSessionId,
+    toolOutputStore,
     fieldsByMessage,
   } = input;
 
@@ -96,9 +104,10 @@ export function buildCattySdkMessages(input: BuildCattySdkMessagesInput): ModelM
     const currentMessageFollowsToolResult = previousHistoryMessageWasToolResult;
     if (m.role === 'user') {
       const messageAttachments = m.attachments ?? m.images;
+      const boundedContent = fitLargeUserInputForModel(m.content, chatSessionId, toolOutputStore);
       sdkMessages.push({
         role: 'user',
-        content: buildHistoricalUserReplayContent(m.content, messageAttachments ?? []),
+        content: buildHistoricalUserReplayContent(boundedContent, messageAttachments ?? []),
       });
     } else if (m.role === 'assistant') {
       const activeContinuation = isProviderContinuationForSource(
@@ -140,7 +149,7 @@ export function buildCattySdkMessages(input: BuildCattySdkMessagesInput): ModelM
             type: 'tool-call' as const,
             toolCallId: tc.id,
             toolName: tc.name,
-            input: tc.arguments ?? {},
+            input: redactSecretsInValueForModel(tc.arguments ?? {}),
             ...(providerOptions ? { providerOptions } : {}),
           });
         }
@@ -246,6 +255,23 @@ export function collectToolResultsAfterMessage(
     }
   }
   return results;
+}
+
+export function collectPreservedTerminalWriteFingerprints(
+  messages: ChatMessage[],
+  messageId: string,
+  chatSessionId: string,
+): string[] {
+  const preservedResults = collectToolResultsAfterMessage(messages, messageId);
+  const { toolCallByToolResult } = buildHistoricalToolReplayMaps(messages);
+  const fingerprints: string[] = [];
+  for (const result of preservedResults) {
+    const call = toolCallByToolResult.get(result);
+    if (call?.name !== 'terminal_execute' && call?.name !== 'terminal_start') continue;
+    const fingerprint = buildTerminalWriteFingerprint(call.name, chatSessionId, call.arguments);
+    if (fingerprint) fingerprints.push(fingerprint);
+  }
+  return fingerprints;
 }
 
 export function createContinuationContext(

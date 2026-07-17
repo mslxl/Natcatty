@@ -236,6 +236,8 @@ export const zhCNAiMessages: Messages = {
   'ai.externalMcp.idleTimeout.minutes': '分钟',
   'ai.externalMcp.focusOnHostOpen': 'host_open 时激活窗口',
   'ai.externalMcp.focusOnHostOpen.description': '当 MCP 客户端打开主机连接时，将主窗口切换到前台。关闭后可不受打扰地继续当前工作。',
+  'ai.externalMcp.sessionIdleTimeout': '已打开会话空闲超时',
+  'ai.externalMcp.sessionIdleTimeout.description': 'AI 打开的会话若超过该分钟数没有终端或文件操作，将自动关闭。',
   'ai.externalMcp.usage.title': '使用说明',
   'ai.externalMcp.usage.keepRunning': '1. 打开对外 MCP 开关，并保持 Netcatty 运行。',
   'ai.externalMcp.usage.localhost': '2. 客户端通过本地 launcher 连接（仅 127.0.0.1）。关闭开关后会删除 discovery。',
