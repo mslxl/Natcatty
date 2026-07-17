@@ -643,6 +643,67 @@ test("startPortForward does not keep an adopted tunnel that stopped before subsc
   assert.deepEqual(statuses, ["connecting", "inactive"]);
 });
 
+test("startPortForward does not revive an adopted tunnel stopped during its snapshot", async () => {
+  let statusListener: ((status: PortForwardingRule["status"], error?: string | null) => void) | undefined;
+  let resolveSnapshot!: (snapshot: {
+    tunnelId: string;
+    status: PortForwardingRule["status"];
+  }) => void;
+  let markSnapshotRequested!: () => void;
+  const snapshotRequested = new Promise<void>((resolve) => {
+    markSnapshotRequested = resolve;
+  });
+  const snapshot = new Promise<{
+    tunnelId: string;
+    status: PortForwardingRule["status"];
+  }>((resolve) => {
+    resolveSnapshot = resolve;
+  });
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      netcatty: {
+        startPortForward: async () => ({
+          success: true,
+          tunnelId: "stopped-during-snapshot-tunnel",
+          reused: true,
+          status: "active",
+        }),
+        getPortForwardStatus: () => {
+          markSnapshotRequested();
+          return snapshot;
+        },
+        onPortForwardStatus: (_tunnelId: string, listener: typeof statusListener) => {
+          statusListener = listener;
+          return () => undefined;
+        },
+      },
+    },
+  });
+  const statuses: string[] = [];
+  const stoppedRule = rule({ id: "stopped-during-snapshot-rule" });
+
+  const resultPromise = startPortForward(
+    stoppedRule,
+    host(),
+    [],
+    [],
+    [],
+    (status) => statuses.push(status),
+  );
+  await snapshotRequested;
+  statusListener?.("inactive");
+  resolveSnapshot({
+    tunnelId: "stopped-during-snapshot-tunnel",
+    status: "active",
+  });
+  const result = await resultPromise;
+
+  assert.equal(result.success, false);
+  assert.equal(getActiveConnection(stoppedRule.id), undefined);
+  assert.deepEqual(statuses, ["connecting", "inactive"]);
+});
+
 test("startPortForward keeps cleanup-blocked backend tunnels in an error state", async () => {
   Object.defineProperty(globalThis, "window", {
     configurable: true,

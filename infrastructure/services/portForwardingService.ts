@@ -835,7 +835,13 @@ export const startPortForward = async (
       }
 
       const current = activeConnections.get(rule.id);
-      onStatusChange(current?.status ?? adoptedStatus, current?.error);
+      if (!current) {
+        return {
+          success: false,
+          error: 'Port forwarding tunnel stopped before adoption completed',
+        };
+      }
+      onStatusChange(current.status, current.error);
       return { success: true };
     }
     
