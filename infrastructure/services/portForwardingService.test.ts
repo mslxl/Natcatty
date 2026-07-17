@@ -5,6 +5,7 @@ import type { Host, PortForwardingRule, SSHKey } from "../../domain/models.ts";
 import { STORAGE_KEY_PF_RECONNECT_CANCEL } from "../config/storageKeys.ts";
 import {
   getActiveConnection,
+  reconcileWithBackend,
   setReconnectCallback,
   startPortForward,
   stopAndCleanupRule,
@@ -104,6 +105,35 @@ test("syncWithBackend binds backend tunnels by explicit rule id", async () => {
   assert.equal(result.success, true);
   assert.equal(stoppedTunnelId, "opaque-backend-tunnel-id");
   assert.deepEqual(statuses, ["inactive"]);
+});
+
+test("reconcileWithBackend reports an unavailable snapshot on query failure", async () => {
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      netcatty: {
+        listPortForwards: async () => {
+          throw new Error("backend temporarily unavailable");
+        },
+      },
+    },
+  });
+
+  assert.deepEqual(await reconcileWithBackend(), {
+    snapshotAvailable: false,
+    gone: [],
+    appeared: [],
+  });
+
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      netcatty: {
+        listPortForwards: async () => [],
+      },
+    },
+  });
+  assert.equal((await reconcileWithBackend()).snapshotAvailable, true);
 });
 
 test("syncWithBackend subscribes adopted auto-start tunnels for reconnect", async (t) => {

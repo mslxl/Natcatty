@@ -545,16 +545,22 @@ export const syncWithBackend = async (
  *    → add to activeConnections, return ruleId as "appeared"
  */
 export const reconcileWithBackend = async (): Promise<{
+  snapshotAvailable: boolean;
   gone: string[];
   appeared: string[];
 }> => {
-  const result = { gone: [] as string[], appeared: [] as string[] };
+  const result = {
+    snapshotAvailable: false,
+    gone: [] as string[],
+    appeared: [] as string[],
+  };
   const bridge = netcattyBridge.get();
 
   if (!bridge?.listPortForwards) return result;
 
   try {
     const backendTunnels = await bridge.listPortForwards();
+    result.snapshotAvailable = true;
     const backendRuleIds = new Set<string>();
 
     for (const tunnel of backendTunnels) {

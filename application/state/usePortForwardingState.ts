@@ -313,6 +313,7 @@ export const usePortForwardingState = (): UsePortForwardingStateResult => {
 
       const tick = async () => {
         const reconciliation = await reconcileWithBackend();
+        if (!reconciliation.snapshotAvailable) return;
         // Always re-derive the visible state. This also repairs a stale
         // cross-window storage write when the backend map itself did not change.
         const normalizedRules = normalizeRulesWithConnections(
