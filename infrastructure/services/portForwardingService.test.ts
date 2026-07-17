@@ -5,6 +5,7 @@ import type { Host, PortForwardingRule, SSHKey } from "../../domain/models.ts";
 import { STORAGE_KEY_PF_RECONNECT_CANCEL } from "../config/storageKeys.ts";
 import {
   getActiveConnection,
+  setReconnectCallback,
   startPortForward,
   stopAndCleanupRule,
   stopAndCleanupRuleAndWait,
@@ -496,6 +497,41 @@ test("inactive backend events remove the runtime tunnel immediately", async () =
   statusListener?.("inactive");
 
   assert.equal(getActiveConnection(disconnectedRule.id), undefined);
+});
+
+test("inactive close events preserve an already scheduled reconnect", async (t) => {
+  let statusListener: ((status: PortForwardingRule["status"], error?: string | null) => void) | undefined;
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      netcatty: {
+        startPortForward: async () => ({ success: true }),
+        stopPortForwardByRuleId: async () => ({ stopped: 1, failed: 0, errors: [] }),
+        onPortForwardStatus: (_tunnelId: string, listener: typeof statusListener) => {
+          statusListener = listener;
+          return () => undefined;
+        },
+      },
+    },
+  });
+  const reconnectRule = rule({ id: "error-close-reconnect-rule" });
+  setReconnectCallback(async () => ({ success: true }));
+  t.after(async () => {
+    setReconnectCallback(null);
+    await stopAndCleanupRuleAndWait(reconnectRule.id);
+  });
+
+  await startPortForward(reconnectRule, host(), [], [], [], () => undefined, true);
+  statusListener?.("error", "connection failed");
+  const scheduled = getActiveConnection(reconnectRule.id);
+  assert.ok(scheduled?.reconnectTimerCallback);
+  assert.equal(scheduled.status, "connecting");
+
+  statusListener?.("inactive");
+
+  assert.equal(getActiveConnection(reconnectRule.id), scheduled);
+  assert.ok(scheduled.reconnectTimerCallback);
+  assert.equal(scheduled.status, "connecting");
 });
 
 test("startPortForward adopts a tunnel reused by the backend", async () => {

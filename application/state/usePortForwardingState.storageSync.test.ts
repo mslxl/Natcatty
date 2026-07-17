@@ -149,3 +149,26 @@ test("cross-window stale status cannot override a known live tunnel", async (t) 
 
   assert.equal(snapshots[0]?.[0]?.status, "active");
 });
+
+test("same-window synchronization preserves an error without a runtime tunnel", (t) => {
+  const env = installEnvironment();
+  t.after(() => env.restore());
+  env.storage.setItem(STORAGE_KEY_PORT_FORWARDING, JSON.stringify([{
+    ...rule,
+    id: "failed-start-rule",
+    status: "error",
+    error: "Host not found",
+  }]));
+  const snapshots: PortForwardingRule[][] = [];
+  const handlers = createPortForwardingStorageSyncHandlers({
+    onRules: (rules) => snapshots.push(rules),
+  });
+
+  handlers.handleAdapterChange({
+    type: "netcatty:local-storage-adapter-changed",
+    detail: { key: STORAGE_KEY_PORT_FORWARDING },
+  } as unknown as CustomEvent<{ key: string }>);
+
+  assert.equal(snapshots[0]?.[0]?.status, "error");
+  assert.equal(snapshots[0]?.[0]?.error, "Host not found");
+});

@@ -212,7 +212,10 @@ const scheduleReconnectIfNeeded = (
     currentConn.reconnectTimerCallback = runReconnect;
     currentConn.reconnectTimeoutId = setTimeout(runReconnect, RECONNECT_DELAY_MS);
 
-    onStatusChange('connecting', `Reconnecting (${attempts}/${MAX_RECONNECT_ATTEMPTS})...`);
+    const reconnectMessage = `Reconnecting (${attempts}/${MAX_RECONNECT_ATTEMPTS})...`;
+    currentConn.status = 'connecting';
+    currentConn.error = reconnectMessage;
+    onStatusChange('connecting', reconnectMessage);
     return true;
   }
 
@@ -691,6 +694,12 @@ export const startPortForward = async (
     const handleTunnelStatus = (status: PortForwardingRule['status'], error?: string | null) => {
       const conn = activeConnections.get(rule.id);
       if (status === 'inactive') {
+        if (conn?.reconnectTimerCallback) {
+          conn.unsubscribe?.();
+          conn.unsubscribe = undefined;
+          conn.locallyInitiated = false;
+          return;
+        }
         conn?.unsubscribe?.();
         clearReconnectTimer(rule.id);
         activeConnections.delete(rule.id);

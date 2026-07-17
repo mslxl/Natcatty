@@ -158,7 +158,7 @@ export const createPortForwardingStorageSyncHandlers = ({
     handleAdapterChange(event: Event) {
       if (!isPortForwardingStorageEvent(event)) return;
       const storedRules = readStoredRules();
-      if (storedRules) onRules(normalizeRulesWithConnections(storedRules));
+      if (storedRules) onRules(mergeRulesWithKnownConnections(storedRules));
     },
     handleBrowserStorage(event: Event) {
       if (!isPortForwardingStorageEvent(event)) return;
