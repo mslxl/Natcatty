@@ -1,5 +1,5 @@
-// 创建时间: 2026-07-17
-// 功能说明: 验证 SFTP 在 EDR 移除 keyboard-interactive 后会改走 KI 优先重试。
+// Created: 2026-07-17
+// Purpose: Verify SFTP retries KI first after EDR removes keyboard-interactive.
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
