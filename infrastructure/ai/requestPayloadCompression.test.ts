@@ -29,6 +29,10 @@ test("compressVerboseText normalizes terminal control noise and huge payload lin
   assert.ok(output.length < 5_000);
 });
 
+test("compressVerboseText preserves CRLF-delimited lines", () => {
+  assert.equal(compressVerboseText("alpha\r\nbeta\r\n"), "alpha\nbeta\n");
+});
+
 test("truncateTextWithHeadAndTail keeps both ends of long terminal output", () => {
   const value = `${"A".repeat(500)}${"B".repeat(20_000)}${"C".repeat(500)}`;
   const truncated = truncateTextWithHeadAndTail(value, 2_000);

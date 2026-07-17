@@ -21,6 +21,8 @@ import {
   type CattyProviderContinuationContext,
 } from '../../../../components/ai/hooks/aiChatStreamingSupport';
 import { redactSecretsInValueForModel } from '../modelSecretRedaction';
+import { fitLargeUserInputForModel } from '../largeUserInput';
+import type { ToolOutputStore } from '../toolOutputStore';
 
 const OPENAI_CHAT_ASSISTANT_FIELDS = Symbol('netcatty.openAIChatAssistantFields');
 
@@ -74,6 +76,8 @@ export interface BuildCattySdkMessagesInput {
   attachments?: ChatMessageAttachment[];
   continuationContext: CattyProviderContinuationContext;
   preserveTerminalToolResults?: ReadonlySet<ToolResult>;
+  chatSessionId: string;
+  toolOutputStore: ToolOutputStore;
   fieldsByMessage: Map<ModelMessage, OpenAIChatAssistantFields | undefined>;
 }
 
@@ -85,6 +89,8 @@ export function buildCattySdkMessages(input: BuildCattySdkMessagesInput): ModelM
     attachments,
     continuationContext,
     preserveTerminalToolResults = new Set<ToolResult>(),
+    chatSessionId,
+    toolOutputStore,
     fieldsByMessage,
   } = input;
 
@@ -97,9 +103,10 @@ export function buildCattySdkMessages(input: BuildCattySdkMessagesInput): ModelM
     const currentMessageFollowsToolResult = previousHistoryMessageWasToolResult;
     if (m.role === 'user') {
       const messageAttachments = m.attachments ?? m.images;
+      const boundedContent = fitLargeUserInputForModel(m.content, chatSessionId, toolOutputStore);
       sdkMessages.push({
         role: 'user',
-        content: buildHistoricalUserReplayContent(m.content, messageAttachments ?? []),
+        content: buildHistoricalUserReplayContent(boundedContent, messageAttachments ?? []),
       });
     } else if (m.role === 'assistant') {
       const activeContinuation = isProviderContinuationForSource(

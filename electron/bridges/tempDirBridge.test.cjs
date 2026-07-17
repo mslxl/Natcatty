@@ -26,6 +26,21 @@ test("Netcatty temp root is a private directory owned by the current user", () =
   assert.equal(stat.isSymbolicLink(), false);
   assert.equal(stat.mode & 0o777, 0o700);
   if (typeof process.getuid === "function") assert.equal(stat.uid, process.getuid());
+  assert.equal(tempDirBridge.getTempDir(), tempRoot);
+});
+
+test("shared system temp roots resolve to a stable path under the user's home", async () => {
+  const root = await fs.promises.mkdtemp(path.join(require("node:os").tmpdir(), "netcatty-shared-root-"));
+  const fakeHome = path.join(root, "home");
+  await fs.promises.mkdir(fakeHome);
+  await fs.promises.chmod(root, 0o777);
+  try {
+    if (typeof process.getuid === "function") {
+      assert.equal(tempDirBridge.resolvePrivateTempDir(root, fakeHome), path.join(fakeHome, ".netcatty", "tmp"));
+    }
+  } finally {
+    await fs.promises.rm(root, { recursive: true, force: true });
+  }
 });
 
 test("tool output temp handlers write, read, and delete only Netcatty temp files", async () => {
@@ -80,4 +95,32 @@ test("startup cleanup removes expired orphaned tool output files", async () => {
   const deleted = await tempDirBridge.cleanupExpiredToolOutputFiles();
   assert.equal(deleted >= 1, true);
   assert.equal(fs.existsSync(filePath), false);
+});
+
+test("persisted tool output search advances only past rendered matches", async () => {
+  const handlers = new Map();
+  tempDirBridge.registerHandlers({ handle(channel, handler) { handlers.set(channel, handler); } });
+  const write = handlers.get("netcatty:tempdir:toolOutputWrite");
+  const read = handlers.get("netcatty:tempdir:toolOutputRead");
+  const remove = handlers.get("netcatty:tempdir:toolOutputDelete");
+  const saved = await write({}, { handleId: "search-pagination", content: "match middle match tail" });
+
+  try {
+    const first = await read({}, {
+      path: saved.path,
+      request: { mode: "search", query: "match", maxChars: 1 },
+    });
+    assert.doesNotMatch(first.content, /No matches found/);
+    assert.deepEqual(first.matchOffsets, [0]);
+    assert.equal(first.nextOffset, 5);
+    assert.equal(first.hasMore, true);
+
+    const second = await read({}, {
+      path: saved.path,
+      request: { mode: "search", query: "match", offset: first.nextOffset, maxChars: 30 },
+    });
+    assert.deepEqual(second.matchOffsets, [13]);
+  } finally {
+    await remove({}, { path: saved.path });
+  }
 });

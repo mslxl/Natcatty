@@ -70,6 +70,35 @@ test('ToolOutputStore searches stored output without returning the whole body', 
   assert.ok((result?.content.length ?? Infinity) < TOOL_OUTPUT_READ_MAX_CHARS);
 });
 
+test('ToolOutputStore search advances only past matches included in the response', () => {
+  const store = new ToolOutputStore();
+  const handle = store.store({
+    chatSessionId: 'chat-1',
+    capabilityId: 'terminal.execute',
+    content: 'match middle match tail',
+  });
+
+  const first = store.readChunk({
+    handleId: handle.id,
+    mode: 'search',
+    query: 'match',
+    maxChars: 1,
+  }, 'chat-1');
+  assert.doesNotMatch(first?.content ?? '', /No matches found/);
+  assert.deepEqual(first?.matchOffsets, [0]);
+  assert.equal(first?.nextOffset, 5);
+  assert.equal(first?.hasMore, true);
+
+  const second = store.readChunk({
+    handleId: handle.id,
+    mode: 'search',
+    query: 'match',
+    offset: first?.nextOffset,
+    maxChars: 30,
+  }, 'chat-1');
+  assert.deepEqual(second?.matchOffsets, [13]);
+});
+
 test('ToolOutputStore never splits a Unicode surrogate pair at page boundaries', () => {
   const store = new ToolOutputStore();
   const content = `${'a'.repeat(11_999)}😀中文结尾`;

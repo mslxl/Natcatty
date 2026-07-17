@@ -39,3 +39,30 @@ test('repairToolMessageIntegrity completes interrupted tool calls with a synthet
   assert.equal(result.messages.length, 2);
   assert.match(JSON.stringify(result.messages[1]), /interrupted before a result was recorded/);
 });
+
+test('repairToolMessageIntegrity pairs reused tool call ids by occurrence order', () => {
+  const messages: ModelMessage[] = [
+    {
+      role: 'assistant',
+      content: [{ type: 'tool-call', toolCallId: 'reused', toolName: 'terminal_poll', input: { jobId: 'first' } }],
+    },
+    {
+      role: 'tool',
+      content: [{ type: 'tool-result', toolCallId: 'reused', toolName: 'terminal_poll', output: { type: 'text', value: 'first result' } }],
+    },
+    {
+      role: 'assistant',
+      content: [{ type: 'tool-call', toolCallId: 'reused', toolName: 'terminal_poll', input: { jobId: 'second' } }],
+    },
+    {
+      role: 'tool',
+      content: [{ type: 'tool-result', toolCallId: 'reused', toolName: 'terminal_poll', output: { type: 'text', value: 'second result' } }],
+    },
+  ];
+
+  const result = repairToolMessageIntegrity(messages);
+  assert.equal(result.didAdjust, false);
+  assert.equal(result.messages, messages);
+  assert.match(JSON.stringify(result.messages), /first result/);
+  assert.match(JSON.stringify(result.messages), /second result/);
+});

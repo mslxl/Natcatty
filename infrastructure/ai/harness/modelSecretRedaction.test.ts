@@ -23,9 +23,37 @@ test('redactSecretsForModel removes common terminal secrets', () => {
 test('redactSecretsInValueForModel recursively redacts tool arguments', () => {
   const value = redactSecretsInValueForModel({
     command: 'curl --password swordfish',
-    nested: ['Authorization: Bearer secret_token_123456'],
+    nested: [
+      'Authorization: Bearer secret_token_123456',
+      {
+        password: 'short',
+        telnetPassword: 'telnet-secret',
+        passphrase: 'key-passphrase',
+        privateKey: 'not-a-pem-but-still-private',
+        apiKey: 'tiny-api-key',
+        clientSecret: 'client-secret',
+        authToken: 'auth-token',
+        username: 'operator',
+      },
+    ],
   });
-  assert.doesNotMatch(JSON.stringify(value), /swordfish|secret_token/);
+  const serialized = JSON.stringify(value);
+  assert.doesNotMatch(serialized, /swordfish|secret_token|short|telnet-secret|key-passphrase|not-a-pem|tiny-api-key|client-secret|auth-token/);
+  assert.match(serialized, /operator/);
+});
+
+test('redactSecretsForModel redacts JSON and quoted shell assignments', () => {
+  const input = [
+    '{"password":"short value","apiKey":"tiny","username":"operator"}',
+    "passphrase='two words'",
+    'client_secret = "quoted secret"',
+    'PRIVATE_KEY=one-line-key',
+  ].join('\n');
+
+  const output = redactSecretsForModel(input);
+  assert.doesNotMatch(output, /short value|tiny|two words|quoted secret|one-line-key/);
+  assert.match(output, /"username":"operator"/);
+  assert.equal((output.match(/\[REDACTED\]/g) ?? []).length, 5);
 });
 
 test('terminal fitting keeps raw output in the local handle but redacts model-visible text', () => {

@@ -336,6 +336,8 @@ function buildReadResult(
         cursor = match + Math.max(1, needle.length);
       }
       const excerpts: string[] = [];
+      const renderedOffsets: number[] = [];
+      let renderedChars = 0;
       for (const match of offsets) {
         const [start, end] = safeSliceBounds(
           content,
@@ -343,12 +345,24 @@ function buildReadResult(
           match + query.length + TOOL_OUTPUT_SEARCH_CONTEXT_CHARS,
         );
         const excerpt = `[match offset=${match}]\n${content.slice(start, end)}`;
-        if (excerpts.join('\n\n').length + excerpt.length > maxChars) break;
+        const separator = excerpts.length > 0 ? '\n\n' : '';
+        const available = maxChars - renderedChars - separator.length;
+        if (available <= 0) break;
+        if (excerpt.length > available) {
+          if (excerpts.length > 0) break;
+          const [, safeEnd] = safeSliceBounds(excerpt, 0, available);
+          excerpts.push(excerpt.slice(0, safeEnd));
+          renderedOffsets.push(match);
+          renderedChars += safeEnd;
+          break;
+        }
         excerpts.push(excerpt);
+        renderedOffsets.push(match);
+        renderedChars += separator.length + excerpt.length;
       }
       const rendered = excerpts.join('\n\n');
-      const nextOffset = offsets.length > 0
-        ? offsets[offsets.length - 1] + Math.max(1, query.length)
+      const nextOffset = renderedOffsets.length > 0
+        ? renderedOffsets[renderedOffsets.length - 1] + Math.max(1, query.length)
         : content.length;
       return {
         handleId: handle.id,
@@ -361,7 +375,7 @@ function buildReadResult(
         endOffset: nextOffset,
         nextOffset,
         hasMore: haystack.indexOf(needle, nextOffset) >= 0,
-        matchOffsets: offsets,
+        matchOffsets: renderedOffsets,
       };
     }
 

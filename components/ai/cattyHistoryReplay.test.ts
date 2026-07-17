@@ -57,7 +57,7 @@ test("buildHistoricalUserReplayContent replaces historical terminal selections w
   assert.doesNotMatch(result, /long terminal selection/);
 });
 
-test("buildHistoricalToolResultReplayText replaces historical terminal output with a replay placeholder", () => {
+test("buildHistoricalToolResultReplayText keeps bounded historical terminal evidence", () => {
   const toolCall: ToolCall = {
     id: "call-1",
     name: "terminal_execute",
@@ -74,12 +74,14 @@ test("buildHistoricalToolResultReplayText replaces historical terminal output wi
   assert.match(replay, /Historical terminal output omitted from replay/);
   assert.match(replay, /command=npm run build/);
   assert.match(replay, /status=error/);
-  assert.doesNotMatch(replay, /BUILD BUILD BUILD/);
+  assert.match(replay, /BUILD BUILD BUILD/);
+  assert.match(replay, /shortened for replay/);
+  assert.ok(replay.length < 4_600);
   assert.doesNotMatch(replay, /Re-run terminal_execute/);
   assert.match(replay, /do not execute the command again/i);
 });
 
-test("buildHistoricalToolResultReplayText omits terminal poll output too", () => {
+test("buildHistoricalToolResultReplayText bounds terminal poll output and keeps its job pointer", () => {
   const replay = buildHistoricalToolResultReplayText({
     toolCallId: "poll-1",
     content: "streamed output".repeat(5_000),
@@ -90,7 +92,40 @@ test("buildHistoricalToolResultReplayText omits terminal poll output too", () =>
   });
 
   assert.match(replay, /Historical terminal output omitted from replay/);
-  assert.doesNotMatch(replay, /streamed output/);
+  assert.match(replay, /streamed output/);
+  assert.match(replay, /jobId=job-1/);
+  assert.ok(replay.length < 4_600);
+});
+
+test("buildHistoricalToolResultReplayText preserves small output that has no saved handle", () => {
+  const replay = buildHistoricalToolResultReplayText({
+    toolCallId: "small-1",
+    content: "exit 1: configuration file is missing",
+    isError: true,
+  }, {
+    id: "small-1",
+    name: "terminal_execute",
+    arguments: { command: "deploy" },
+  });
+
+  assert.match(replay, /configuration file is missing/);
+  assert.match(replay, /Only the bounded historical output below is available/);
+  assert.doesNotMatch(replay, /saved output/i);
+});
+
+test("buildHistoricalToolResultReplayText preserves a large output handle from the tail", () => {
+  const handleId = "tool-output-stable-handle-123";
+  const replay = buildHistoricalToolResultReplayText({
+    toolCallId: "large-1",
+    content: `${"build line\n".repeat(2_000)}[output handle: stdout truncated for model context handleId=${handleId}]`,
+  }, {
+    id: "large-1",
+    name: "terminal_execute",
+    arguments: { command: "npm run build" },
+  });
+
+  assert.match(replay, new RegExp(`tool_output_read with handleId=${handleId}`));
+  assert.match(replay, new RegExp(`handleId=${handleId}`));
 });
 
 test("buildHistoricalToolResultReplayText keeps non-terminal tool results intact", () => {

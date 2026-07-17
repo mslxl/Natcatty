@@ -9,7 +9,9 @@ const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
 
-// Netcatty temp directory name
+// Keep the legacy name when the OS already provides a private per-user temp
+// root. Shared temp roots fall back to a stable directory under the user's home
+// so another OS user cannot claim Netcatty's path before startup.
 const NETCATTY_TEMP_DIR_NAME = "Netcatty";
 const MAX_TOOL_OUTPUT_TEMP_CHARS = 4_000_000;
 const MAX_TOOL_OUTPUT_TEMP_BYTES = 8_000_000;
@@ -23,6 +25,23 @@ let cachedTempDir = null;
 let cachedTempDirIdentity = null;
 let tempFileCounter = 0;
 
+function resolvePrivateTempDir(systemTempDir = os.tmpdir(), homeDir = os.homedir()) {
+  if (typeof process.getuid !== "function") {
+    return path.join(systemTempDir, NETCATTY_TEMP_DIR_NAME);
+  }
+  try {
+    const stat = fs.lstatSync(systemTempDir);
+    const isPrivate = stat.isDirectory()
+      && !stat.isSymbolicLink()
+      && stat.uid === process.getuid()
+      && (stat.mode & 0o077) === 0;
+    if (isPrivate) return path.join(systemTempDir, NETCATTY_TEMP_DIR_NAME);
+  } catch {
+    // Fall through to the stable per-user directory.
+  }
+  return path.join(homeDir, ".netcatty", "tmp");
+}
+
 /**
  * Get the Netcatty temp directory path
  * Creates the directory if it doesn't exist
@@ -33,8 +52,7 @@ function getTempDir() {
     return cachedTempDir;
   }
   
-  const systemTempDir = os.tmpdir();
-  const netcattyTempDir = path.join(systemTempDir, NETCATTY_TEMP_DIR_NAME);
+  const netcattyTempDir = resolvePrivateTempDir();
   
   try {
     if (!fs.existsSync(netcattyTempDir)) {
@@ -257,15 +275,29 @@ async function readToolOutputChunk(file, request, stat) {
       cursor = match + Math.max(1, needle.length);
     }
     const excerpts = [];
+    const renderedOffsets = [];
     let renderedChars = 0;
     for (const match of offsets) {
       const [start, end] = safeUtf16SliceBounds(content, match - TOOL_OUTPUT_SEARCH_CONTEXT_CHARS, match + query.length + TOOL_OUTPUT_SEARCH_CONTEXT_CHARS);
       const excerpt = `[match offset=${match}]\n${content.slice(start, end)}`;
-      if (renderedChars + excerpt.length > maxChars) break;
+      const separator = excerpts.length > 0 ? "\n\n" : "";
+      const available = maxChars - renderedChars - separator.length;
+      if (available <= 0) break;
+      if (excerpt.length > available) {
+        if (excerpts.length > 0) break;
+        const [, safeEnd] = safeUtf16SliceBounds(excerpt, 0, available);
+        excerpts.push(excerpt.slice(0, safeEnd));
+        renderedOffsets.push(match);
+        renderedChars += safeEnd;
+        break;
+      }
       excerpts.push(excerpt);
-      renderedChars += excerpt.length + 2;
+      renderedOffsets.push(match);
+      renderedChars += separator.length + excerpt.length;
     }
-    const nextOffset = offsets.length ? offsets[offsets.length - 1] + Math.max(1, query.length) : storedChars;
+    const nextOffset = renderedOffsets.length
+      ? renderedOffsets[renderedOffsets.length - 1] + Math.max(1, query.length)
+      : storedChars;
     return {
       mode,
       content: excerpts.join("\n\n") || `No matches found for "${query}".`,
@@ -274,7 +306,7 @@ async function readToolOutputChunk(file, request, stat) {
       endOffset: nextOffset,
       nextOffset,
       hasMore: haystack.indexOf(needle, nextOffset) >= 0,
-      matchOffsets: offsets,
+      matchOffsets: renderedOffsets,
     };
   }
 
@@ -366,4 +398,5 @@ module.exports = {
   getTempFilePath,
   cleanupExpiredToolOutputFiles,
   registerHandlers,
+  resolvePrivateTempDir,
 };

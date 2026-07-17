@@ -24,11 +24,11 @@ export function compressVerboseText(value: string): string {
   if (!value) return value;
 
   let compressed = value.replace(ANSI_ESCAPE_PATTERN, "");
+  compressed = compressed.replace(/\r\n/g, "\n");
   compressed = collapseCarriageReturnFrames(compressed);
   // eslint-disable-next-line no-control-regex
   compressed = compressed.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "");
   compressed = compressed.replace(LARGE_BASE64_PATTERN, match => `[base64-like payload omitted: ${match.length} chars]`);
-  compressed = compressed.replace(/\r\n/g, "\n");
   compressed = compressed.replace(/\n{4,}/g, "\n\n\n");
 
   const lines = compressed.split("\n").map(shortenVerboseLine);

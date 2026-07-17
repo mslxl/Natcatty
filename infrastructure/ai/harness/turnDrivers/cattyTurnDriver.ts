@@ -29,45 +29,6 @@ import { hadToolProgressBeforeRequestTooLarge, processCattyStream } from './catt
 import type { CattyTurnInput, TurnDriver, TurnDriverContext } from './types';
 import { fitLargeUserInputForModel } from '../largeUserInput';
 import { buildPromptContextSnapshot } from '../promptContextSnapshot';
-import type { SessionStateStore } from '../sessionState';
-
-export async function refreshRememberedTerminalJobs(input: {
-  chatSessionId: string;
-  sessionStateStore: SessionStateStore;
-  poll: (jobId: string, offset: number) => Promise<unknown>;
-}): Promise<void> {
-  const rememberedJobs = Object.entries(
-    input.sessionStateStore.get(input.chatSessionId).activeJobs,
-  ).slice(-5);
-  for (const [jobId, job] of rememberedJobs) {
-    try {
-      const refreshed = await input.poll(jobId, job.nextOffset);
-      const refreshedRecord = refreshed && typeof refreshed === 'object'
-        ? refreshed as Record<string, unknown>
-        : undefined;
-      const isError = Boolean(
-        refreshedRecord
-        && (
-          refreshedRecord.ok === false
-          || (typeof refreshedRecord.error === 'string' && refreshedRecord.error.trim().length > 0)
-        ),
-      );
-      input.sessionStateStore.updateFromToolResult(
-        input.chatSessionId,
-        'terminal_poll',
-        { jobId, offset: job.nextOffset },
-        JSON.stringify(
-          !isError && refreshed && typeof refreshed === 'object'
-            ? { ...refreshed as Record<string, unknown>, nextOffset: job.nextOffset }
-            : refreshed,
-        ),
-        isError,
-      );
-    } catch {
-      // Preserve the unverified job on transient bridge errors.
-    }
-  }
-}
 
 export class CattyTurnDriver implements TurnDriver {
   readonly backend = 'catty' as const;
@@ -210,6 +171,8 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
       attachments: includeCurrentUserMessage ? attachments : undefined,
       continuationContext,
       preserveTerminalToolResults: options.preserveTerminalToolResults,
+      chatSessionId: sessionId,
+      toolOutputStore: ctx.toolOutputStore,
       fieldsByMessage: openAIChatAssistantFieldsByMessage,
     });
 
@@ -260,17 +223,6 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
         compressForRequestTooLargeRetry?: boolean;
       },
     ): Promise<ModelMessage[]> => {
-      if (netcattyBridge.aiCapability) {
-        await refreshRememberedTerminalJobs({
-          chatSessionId: sessionId,
-          sessionStateStore: ctx.sessionStateStore,
-          poll: (jobId, offset) => netcattyBridge.aiCapability!(
-              'netcatty/jobPoll',
-              { jobId, offset },
-              sessionId,
-          ),
-        });
-      }
       const pendingHandles = ctx.toolOutputStore.listPendingHandles(sessionId);
       const sessionStateText = ctx.sessionStateStore.toReinjectionText(sessionId);
       const result = await compactCattyMessages({

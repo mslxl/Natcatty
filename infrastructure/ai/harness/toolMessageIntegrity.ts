@@ -8,19 +8,21 @@ export function repairToolMessageIntegrity(messages: ModelMessage[]): {
   messages: ModelMessage[];
   didAdjust: boolean;
 } {
-  const calls = new Map<string, string>();
-  for (const message of messages) {
-    if (message.role !== 'assistant' || !Array.isArray(message.content)) continue;
-    for (const part of message.content as unknown[]) {
-      if (!isRecord(part) || part.type !== 'tool-call' || typeof part.toolCallId !== 'string') continue;
-      calls.set(part.toolCallId, typeof part.toolName === 'string' ? part.toolName : 'unknown');
-    }
-  }
-
-  const seenResults = new Set<string>();
+  const pendingCalls = new Map<string, Array<Record<string, unknown>>>();
+  const matchedCalls = new Set<Record<string, unknown>>();
   let didAdjust = false;
   const sanitized: ModelMessage[] = [];
   for (const message of messages) {
+    if (message.role === 'assistant' && Array.isArray(message.content)) {
+      for (const part of message.content as unknown[]) {
+        if (!isRecord(part) || part.type !== 'tool-call' || typeof part.toolCallId !== 'string') continue;
+        const pending = pendingCalls.get(part.toolCallId) ?? [];
+        pending.push(part);
+        pendingCalls.set(part.toolCallId, pending);
+      }
+      sanitized.push(message);
+      continue;
+    }
     if (message.role !== 'tool' || !Array.isArray(message.content)) {
       sanitized.push(message);
       continue;
@@ -29,11 +31,13 @@ export function repairToolMessageIntegrity(messages: ModelMessage[]): {
       if (!isRecord(part) || part.type !== 'tool-result' || typeof part.toolCallId !== 'string') {
         return true;
       }
-      if (!calls.has(part.toolCallId) || seenResults.has(part.toolCallId)) {
+      const pending = pendingCalls.get(part.toolCallId);
+      const matchingCall = pending?.shift();
+      if (!matchingCall) {
         didAdjust = true;
         return false;
       }
-      seenResults.add(part.toolCallId);
+      matchedCalls.add(matchingCall);
       return true;
     });
     if (content.length === 0) {
@@ -54,7 +58,7 @@ export function repairToolMessageIntegrity(messages: ModelMessage[]): {
       isRecord(part)
       && part.type === 'tool-call'
       && typeof part.toolCallId === 'string'
-      && !seenResults.has(part.toolCallId)
+      && !matchedCalls.has(part)
     )) as Array<Record<string, unknown>>;
     if (missing.length === 0) continue;
     repaired.push({

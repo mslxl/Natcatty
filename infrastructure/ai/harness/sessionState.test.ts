@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { SessionStateStore } from './sessionState.ts';
-import { refreshRememberedTerminalJobs } from './turnDrivers/cattyTurnDriver.ts';
 
 test('SessionStateStore tracks terminal commands and reinjection text', () => {
   const store = new SessionStateStore();
@@ -71,25 +70,6 @@ test('SessionStateStore drops a remembered job after poll reports it missing', (
   );
   assert.equal(store.get('chat-1').activeJobs['job-lost'], undefined);
   assert.doesNotMatch(store.toReinjectionText('chat-1') ?? '', /Remembered terminal jobs/);
-});
-
-test('refreshRememberedTerminalJobs verifies saved offsets before compaction', async () => {
-  const store = new SessionStateStore();
-  store.updateFromToolResult(
-    'chat-1', 'terminal_start', { sessionId: 'sess-1', command: 'npm run dev' },
-    JSON.stringify({ jobId: 'job-live', status: 'running', nextOffset: 12 }), false,
-  );
-  const polls: Array<{ jobId: string; offset: number }> = [];
-  await refreshRememberedTerminalJobs({
-    chatSessionId: 'chat-1',
-    sessionStateStore: store,
-    poll: async (jobId, offset) => {
-      polls.push({ jobId, offset });
-      return { ok: true, jobId, status: 'running', nextOffset: 44, error: undefined };
-    },
-  });
-  assert.deepEqual(polls, [{ jobId: 'job-live', offset: 12 }]);
-  assert.equal(store.get('chat-1').activeJobs['job-live'].nextOffset, 12);
 });
 
 test('SessionStateStore records the last terminal screen range read', () => {
