@@ -51,6 +51,7 @@ import {
   getTypeMenuLabel,
   NewFormPanel,
   RuleCard,
+  stopRuntimeTunnelBeforeDelete,
   WizardContent,
 } from "./port-forwarding";
 
@@ -111,6 +112,7 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
     setRuleStatus,
     startTunnel,
     stopTunnel,
+    hasRuntimeTunnel,
     filteredRules,
     selectedRule: _selectedRule,
     preferFormMode,
@@ -215,7 +217,13 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
       setPendingOperations((prev) => new Set([...prev, rule.id]));
 
       try {
-        await stopTunnel(rule.id);
+        const result = await stopTunnel(rule.id);
+        if (!result.success && result.error) {
+          toast.error(
+            result.error,
+            t("pf.toast.titleWithLabel", { label: rule.label }),
+          );
+        }
       } finally {
         setPendingOperations((prev) => {
           const next = new Set(prev);
@@ -224,7 +232,7 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
         });
       }
     },
-    [stopTunnel],
+    [stopTunnel, t],
   );
 
   // Wizard state
@@ -443,9 +451,11 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
 
     setIsDeleting(true);
     try {
-      if (ruleToDelete.status === "active" || ruleToDelete.status === "connecting") {
-        await stopTunnel(ruleToDelete.id);
-      }
+      const stopped = await stopRuntimeTunnelBeforeDelete(
+        ruleToDelete.id,
+        stopTunnel,
+      );
+      if (!stopped) return;
       if (editingRule?.id === ruleToDelete.id) {
         closeEditPanel();
       }
@@ -457,7 +467,9 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
     }
   }, [ruleToDelete, stopTunnel, deleteRule, editingRule, closeEditPanel]);
 
-  const deleteTargetIsActive = ruleToDelete?.status === "active" || ruleToDelete?.status === "connecting";
+  const deleteTargetIsActive = Boolean(
+    ruleToDelete && hasRuntimeTunnel(ruleToDelete.id),
+  );
 
   // Handle wizard navigation
   // Flow for local: type -> local-config -> destination -> host-selection
@@ -741,6 +753,7 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
                     viewMode={viewMode}
                     isSelected={selectedRuleId === rule.id}
                     isPending={pendingOperations.has(rule.id)}
+                    canStop={hasRuntimeTunnel(rule.id)}
                     reorderProps={ruleReorder.getItemReorderProps(rule.id, `rule:${rule.id}`)}
                     onSelect={() => {
                       setSelectedRuleId(rule.id);

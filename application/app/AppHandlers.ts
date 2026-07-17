@@ -37,7 +37,7 @@ export function handleTrayJumpToSessionImpl(getCtx: AppContextGetter, sessionId:
 }
 
 export function handleTrayTogglePortForwardImpl(getCtx: AppContextGetter, ruleId: string, start: boolean) {
-  const { hosts, identities, keys, knownHosts, portForwardingRules, resolveEffectiveHost, startTunnel, stopTunnel, t, terminalSettings, toast } = getCtx();
+  const { hasRuntimeTunnel, hosts, identities, keys, knownHosts, portForwardingRules, resolveEffectiveHost, startTunnel, stopTunnel, t, terminalSettings, toast } = getCtx();
 {
     const rule = portForwardingRules.find((item) => item.id === ruleId);
     if (!rule) return;
@@ -48,14 +48,18 @@ export function handleTrayTogglePortForwardImpl(getCtx: AppContextGetter, ruleId
     }
 
     if (start) {
-      const effectiveHost = resolveEffectiveHost(host);
-      void startTunnel(rule, effectiveHost, hosts.map(resolveEffectiveHost), keys, identities, (status, error) => {
-        if (status === "error" && error) toast.error(error);
-      }, rule.autoStart, terminalSettings, knownHosts);
+      if (!hasRuntimeTunnel(ruleId)) {
+        const effectiveHost = resolveEffectiveHost(host);
+        void startTunnel(rule, effectiveHost, hosts.map(resolveEffectiveHost), keys, identities, (status, error) => {
+          if (status === "error" && error) toast.error(error);
+        }, rule.autoStart, terminalSettings, knownHosts);
+      }
       return;
     }
 
-    void stopTunnel(ruleId);
+    void stopTunnel(ruleId).then((result) => {
+      if (!result.success && result.error) toast.error(result.error);
+    });
   }
 }
 

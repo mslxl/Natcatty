@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { getAutoStartRuleBlockReason, isAutoStartProxyReady } from "./usePortForwardingAutoStart.ts";
+import {
+  getAutoStartRuleBlockReason,
+  isAutoStartProxyReady,
+  isPortForwardingAutoStartEnabled,
+} from "./usePortForwardingAutoStart.ts";
 import type { GroupConfig, Host, PortForwardingRule, ProxyProfile } from "../../domain/models.ts";
 
 const host = (overrides: Partial<Host> = {}): Host => ({
@@ -114,4 +118,10 @@ test("getAutoStartRuleBlockReason marks rules without a host", () => {
     getAutoStartRuleBlockReason(rule({ hostId: undefined }), [], [], [], () => true),
     "Rule host is not configured",
   );
+});
+
+test("reconnect eligibility follows the current auto-start setting", () => {
+  assert.equal(isPortForwardingAutoStartEnabled([rule({ autoStart: true })], "rule-1"), true);
+  assert.equal(isPortForwardingAutoStartEnabled([rule({ autoStart: false })], "rule-1"), false);
+  assert.equal(isPortForwardingAutoStartEnabled([], "rule-1"), false);
 });

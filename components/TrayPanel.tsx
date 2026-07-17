@@ -132,7 +132,12 @@ const TrayPanelContent: React.FC<TrayPanelContentProps> = ({ terminalSettings })
 
   const { hosts, keys, identities, proxyProfiles, groupConfigs, knownHosts, updateKnownHosts } = useVaultState();
   useSessionState({ persistSessionRestore: false });
-  const { rules: portForwardingRules, startTunnel, stopTunnel } = usePortForwardingState();
+  const {
+    rules: portForwardingRules,
+    startTunnel,
+    stopTunnel,
+    hasRuntimeTunnel,
+  } = usePortForwardingState();
   const activeTabId = useActiveTabId();
   const proxyProfileIdSet = useMemo(
     () => new Set(proxyProfiles.map((profile) => profile.id)),
@@ -359,6 +364,7 @@ const TrayPanelContent: React.FC<TrayPanelContentProps> = ({ terminalSettings })
               {portForwardingRules.map((rule) => {
                 const isConnecting = rule.status === "connecting";
                 const isActive = rule.status === "active";
+                const isStoppable = isConnecting || isActive || hasRuntimeTunnel(rule.id);
                 const label = rule.label || (rule.type === "dynamic"
                   ? `SOCKS:${rule.localPort}`
                   : `${rule.localPort} → ${rule.remoteHost}:${rule.remotePort}`);
@@ -374,8 +380,10 @@ const TrayPanelContent: React.FC<TrayPanelContentProps> = ({ terminalSettings })
                             toast.error(t("pf.error.hostNotFound"));
                             return;
                           }
-                          if (isActive) {
-                            void stopTunnel(rule.id);
+                          if (isStoppable) {
+                            void stopTunnel(rule.id).then((result) => {
+                              if (!result.success && result.error) toast.error(result.error);
+                            });
                           } else {
                             const resolveEffectiveHost = (host: Host) => {
                               const withGroupDefaults = host.group

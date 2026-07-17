@@ -11,8 +11,12 @@ const {
   stopPortForward,
   stopPortForwardByRuleId,
   getPortForwardStatus,
+  subscribePortForward,
+  listPortForwards,
   cancelTunnel,
+  publishTunnelStatus,
   shouldFinalizeTunnelClose,
+  isReusableTunnelStatus,
 } = require("./portForwardingBridge.cjs");
 
 function createEncryptedKey(t) {
@@ -46,16 +50,48 @@ function createSender() {
   return createCapturingSender();
 }
 
-function createCapturingSender(onSend = () => {}) {
+function createCapturingSender(onSend = () => {}, id = 1) {
   return {
-    id: 1,
+    id,
     isDestroyed: () => false,
     send: (channel, payload) => onSend(channel, payload),
   };
 }
 
-test("failed active tunnel cleanup never publishes an inactive close", () => {
+test("only live or connecting tunnels are reusable", () => {
+  assert.equal(isReusableTunnelStatus("active"), true);
+  assert.equal(isReusableTunnelStatus("connecting"), true);
+  assert.equal(isReusableTunnelStatus("error"), false);
+  assert.equal(isReusableTunnelStatus("inactive"), false);
+});
+
+test("status publication removes destroyed renderer subscribers", () => {
+  const received = [];
+  const destroyed = {
+    id: 1,
+    isDestroyed: () => true,
+    send: () => assert.fail("destroyed renderer must not receive status"),
+  };
+  const healthy = createCapturingSender((channel, payload) => {
+    received.push({ channel, payload });
+  }, 2);
+  const tunnel = {
+    subscribers: new Map([
+      [destroyed.id, destroyed],
+      [healthy.id, healthy],
+    ]),
+  };
+
+  publishTunnelStatus("pf-prune-subscribers", tunnel, "active");
+
+  assert.deepEqual(Array.from(tunnel.subscribers.keys()), [healthy.id]);
+  assert.equal(received.length, 1);
+  assert.equal(received[0]?.payload.status, "active");
+});
+
+test("failed active tunnel cleanup publishes an error instead of a false inactive state", () => {
   let wouldPublishDuringCleanup;
+  const statuses = [];
   const tunnel = {
     status: "active",
     server: {
@@ -71,12 +107,15 @@ test("failed active tunnel cleanup never publishes an inactive close", () => {
   };
 
   assert.throws(
-    () => cancelTunnel("pf-active-cleanup-failure", tunnel, () => {}),
+    () => cancelTunnel("pf-active-cleanup-failure", tunnel, (status, error) => {
+      statuses.push({ status, error });
+    }),
     /server close failed/,
   );
   assert.equal(wouldPublishDuringCleanup, false);
   assert.equal(shouldFinalizeTunnelClose(tunnel), false);
-  assert.equal(tunnel.status, "active");
+  assert.equal(tunnel.status, "error");
+  assert.deepEqual(statuses, [{ status: "error", error: "server: server close failed" }]);
 });
 
 test("port forwarding can be stopped while waiting for a key passphrase", async (t) => {
@@ -100,6 +139,7 @@ test("port forwarding can be stopped while waiting for a key passphrase", async 
     }),
   };
   const startPromise = startPortForward(event, {
+    ruleId: "rule-cancel-1",
     tunnelId,
     type: "local",
     localPort: 0,
@@ -118,11 +158,30 @@ test("port forwarding can be stopped while waiting for a key passphrase", async 
     status: "connecting",
     type: "local",
   });
+  assert.deepEqual(await listPortForwards(), [{
+    ruleId: "rule-cancel-1",
+    tunnelId,
+    type: "local",
+    status: "connecting",
+  }]);
+
+  const adoptedStatuses = [];
+  const adoptedEvent = {
+    sender: createCapturingSender((channel, payload) => {
+      if (channel === "netcatty:portforward:status") adoptedStatuses.push(payload);
+    }, 2),
+  };
+  assert.deepEqual(await subscribePortForward(adoptedEvent, { tunnelId }), {
+    tunnelId,
+    status: "connecting",
+    type: "local",
+  });
 
   assert.deepEqual(await stopPortForward(event, { tunnelId }), {
     tunnelId,
     success: true,
   });
+  assert.deepEqual(adoptedStatuses, [{ tunnelId, status: "inactive", error: null }]);
   assert.deepEqual(await getPortForwardStatus(event, { tunnelId }), {
     tunnelId,
     status: "inactive",
@@ -178,6 +237,94 @@ test("port forwarding stops when the key passphrase prompt is cancelled", async 
     tunnelId,
     status: "inactive",
   });
+});
+
+test("concurrent starts reuse the existing tunnel for the same rule", async (t) => {
+  const keyPath = createEncryptedKey(t);
+  if (!keyPath) return;
+  const privateKey = fs.readFileSync(keyPath, "utf8");
+
+  let promptCount = 0;
+  let firstPromptStarted;
+  const promptStarted = new Promise((resolve) => {
+    firstPromptStarted = resolve;
+  });
+  const event = {
+    sender: createCapturingSender((channel) => {
+      if (channel === "netcatty:passphrase-request") {
+        promptCount++;
+        firstPromptStarted();
+      }
+    }),
+  };
+  const secondEvent = {
+    sender: createCapturingSender((channel) => {
+      if (channel === "netcatty:portforward:status") {
+        throw new Error("renderer closed during send");
+      }
+    }, 2),
+  };
+  const thirdWindowEvents = [];
+  const thirdEvent = {
+    sender: createCapturingSender((channel, payload) => {
+      thirdWindowEvents.push({ channel, payload });
+    }, 3),
+  };
+  const payload = {
+    ruleId: "shared-rule",
+    type: "local",
+    localPort: 0,
+    bindAddress: "127.0.0.1",
+    remoteHost: "127.0.0.1",
+    remotePort: 80,
+    hostname: "example.test",
+    username: "alice",
+    privateKey,
+    keyId: "key-shared",
+  };
+
+  const firstStart = startPortForward(event, {
+    ...payload,
+    tunnelId: "pf-shared-rule-first",
+  });
+  await promptStarted;
+
+  const secondStart = await startPortForward(secondEvent, {
+    ...payload,
+    tunnelId: "pf-shared-rule-second",
+  });
+  const thirdStart = await startPortForward(thirdEvent, {
+    ...payload,
+    tunnelId: "pf-shared-rule-third",
+  });
+
+  assert.deepEqual(secondStart, {
+    tunnelId: "pf-shared-rule-first",
+    success: true,
+    reused: true,
+    status: "connecting",
+  });
+  assert.deepEqual(thirdStart, {
+    tunnelId: "pf-shared-rule-first",
+    success: true,
+    reused: true,
+    status: "connecting",
+  });
+  assert.equal(promptCount, 1);
+  assert.deepEqual(await listPortForwards(), [{
+    ruleId: "shared-rule",
+    tunnelId: "pf-shared-rule-first",
+    type: "local",
+    status: "connecting",
+  }]);
+
+  assert.equal(stopPortForwardByRuleId(event, { ruleId: "shared-rule" }).stopped, 1);
+  assert.ok(thirdWindowEvents.some(({ channel, payload }) => (
+    channel === "netcatty:portforward:status" &&
+    payload.tunnelId === "pf-shared-rule-first" &&
+    payload.status === "inactive"
+  )));
+  assert.equal((await firstStart).cancelled, true);
 });
 
 test("stop by rule id only cancels the matching passphrase prompt", async (t) => {
@@ -317,8 +464,28 @@ test("stop by rule id reports cleanup failures and keeps the tunnel retryable", 
   });
   assert.deepEqual(await getPortForwardStatus(event, { tunnelId }), {
     tunnelId,
-    status: "connecting",
+    status: "error",
     type: "local",
+    error: "passphrase prompt: abort failed",
+  });
+
+  assert.deepEqual(await startPortForward(event, {
+    ruleId: "cleanup-failure-rule",
+    tunnelId: "pf-rule-cleanup-failure-retry",
+    type: "local",
+    localPort: 0,
+    bindAddress: "127.0.0.1",
+    remoteHost: "127.0.0.1",
+    remotePort: 80,
+    hostname: "cleanup-failure.example",
+    username: "alice",
+    privateKey,
+    keyId: "cleanup-failure-key",
+  }), {
+    tunnelId,
+    success: false,
+    blockedByCleanup: true,
+    error: "The existing tunnel could not be cleaned up. Stop it successfully before restarting.",
   });
 
   AbortController.prototype.abort = originalAbort;

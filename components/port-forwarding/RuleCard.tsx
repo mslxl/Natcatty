@@ -21,6 +21,7 @@ export interface RuleCardProps {
     viewMode: ViewMode;
     isSelected: boolean;
     isPending: boolean;
+    canStop: boolean;
     reorderProps?: React.HTMLAttributes<HTMLDivElement>;
     onSelect: () => void;
     onEdit: () => void;
@@ -36,6 +37,7 @@ export const RuleCard: React.FC<RuleCardProps> = ({
     viewMode,
     isSelected,
     isPending,
+    canStop,
     reorderProps,
     onSelect,
     onEdit,
@@ -46,7 +48,8 @@ export const RuleCard: React.FC<RuleCardProps> = ({
 }) => {
     const { t } = useI18n();
     const isActive = rule.status === 'active';
-    const isInactive = rule.status === 'inactive' || rule.status === 'error';
+    const isStoppable = canStop || rule.status === 'active' || rule.status === 'connecting';
+    const isStartable = !isStoppable && (rule.status === 'inactive' || rule.status === 'error');
 
     return (
         <ContextMenu>
@@ -139,7 +142,7 @@ export const RuleCard: React.FC<RuleCardProps> = ({
                                 >
                                     <Loader2 size={12} className="animate-spin" />
                                 </Button>
-                            ) : isInactive ? (
+                            ) : isStartable ? (
                                 <Button
                                     size="icon"
                                     variant="ghost"
@@ -151,7 +154,7 @@ export const RuleCard: React.FC<RuleCardProps> = ({
                                 >
                                     <Play size={12} />
                                 </Button>
-                            ) : (rule.status === 'active' || rule.status === 'connecting') ? (
+                            ) : isStoppable ? (
                                 <Button
                                     size="icon"
                                     variant="ghost"
@@ -176,12 +179,12 @@ export const RuleCard: React.FC<RuleCardProps> = ({
                     <Copy className="mr-2 h-4 w-4" /> {t('action.duplicate')}
                 </ContextMenuItem>
                 <ContextMenuSeparator />
-                {isInactive && (
+                {isStartable && (
                     <ContextMenuItem onClick={onStart}>
                         <Play className="mr-2 h-4 w-4" /> {t('action.start')}
                     </ContextMenuItem>
                 )}
-                {(rule.status === 'active' || rule.status === 'connecting') && (
+                {isStoppable && (
                     <ContextMenuItem onClick={onStop}>
                         <Square className="mr-2 h-4 w-4" /> {t('action.stop')}
                     </ContextMenuItem>

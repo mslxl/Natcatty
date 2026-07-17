@@ -762,6 +762,9 @@ function createPreloadApi(ctx) {
   getPortForwardStatus: async (tunnelId) => {
     return ipcRenderer.invoke("netcatty:portforward:status", { tunnelId });
   },
+  subscribePortForward: async (tunnelId) => {
+    return ipcRenderer.invoke("netcatty:portforward:subscribe", { tunnelId });
+  },
   listPortForwards: async () => {
     return ipcRenderer.invoke("netcatty:portforward:list");
   },

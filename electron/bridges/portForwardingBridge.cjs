@@ -39,13 +39,32 @@ function isTunnelCancelled(tunnelState) {
   return Boolean(tunnelState?.cancelled);
 }
 
+function isReusableTunnelStatus(status) {
+  return status === 'active' || status === 'connecting';
+}
+
+function publishTunnelStatus(tunnelId, tunnel, status, error = null) {
+  if (!tunnel) return;
+  tunnel.status = status;
+  tunnel.error = error || undefined;
+  const subscribers = tunnel.subscribers instanceof Map
+    ? Array.from(tunnel.subscribers.entries())
+    : [];
+  for (const [subscriberId, subscriber] of subscribers) {
+    if (subscriber?.isDestroyed?.()) {
+      tunnel.subscribers.delete(subscriberId);
+      continue;
+    }
+    safeSend(subscriber, "netcatty:portforward:status", { tunnelId, status, error });
+  }
+}
+
 function shouldFinalizeTunnelClose(tunnel) {
   return !tunnel?.cleanupFailed && !tunnel?.cleanupInProgress;
 }
 
 function cancelTunnel(tunnelId, tunnel, sendStatus, { deleteEntry = false } = {}) {
   if (!tunnel) return;
-  const previousStatus = tunnel.status;
   const errors = [];
   const cleanup = (label, action) => {
     try {
@@ -77,10 +96,13 @@ function cancelTunnel(tunnelId, tunnel, sendStatus, { deleteEntry = false } = {}
     if (cleanup('SSH connection', () => tunnel.conn.end())) tunnel.conn = null;
   }
   if (errors.length > 0) {
-    tunnel.status = previousStatus;
+    const error = errors.join('; ');
+    tunnel.status = 'error';
+    tunnel.error = error;
     tunnel.cleanupFailed = true;
     tunnel.cleanupInProgress = false;
-    throw new Error(errors.join('; '));
+    sendStatus?.('error', error);
+    throw new Error(error);
   }
   tunnel.status = 'inactive';
   tunnel.cleanupFailed = false;
@@ -134,6 +156,44 @@ async function startPortForward(event, payload) {
     sshTcpConnectTimeoutMs,
     sshAuthReadyTimeoutMs,
   } = payload;
+
+  // The rule is the durable identity; tunnelId is only one renderer's
+  // attempt. Reuse an in-flight/live tunnel so two windows cannot create
+  // duplicate listeners for the same saved rule.
+  if (ruleId) {
+    for (const [existingTunnelId, existingTunnel] of portForwardingTunnels) {
+      if (existingTunnel.ruleId !== ruleId) continue;
+      if (existingTunnel.cancelled) {
+        if (existingTunnel.cleanupFailed) {
+          return {
+            tunnelId: existingTunnelId,
+            success: false,
+            blockedByCleanup: true,
+            error: 'The existing tunnel could not be cleaned up. Stop it successfully before restarting.',
+          };
+        }
+        continue;
+      }
+      if (!isReusableTunnelStatus(existingTunnel.status)) {
+        return {
+          tunnelId: existingTunnelId,
+          success: false,
+          error: existingTunnel.error || 'The existing tunnel is no longer reusable.',
+        };
+      }
+      if (!(existingTunnel.subscribers instanceof Map)) {
+        existingTunnel.subscribers = new Map();
+      }
+      existingTunnel.subscribers.set(event.sender.id, event.sender);
+      return {
+        tunnelId: existingTunnelId,
+        success: true,
+        reused: true,
+        status: existingTunnel.status || 'active',
+      };
+    }
+  }
+
   const connectionTimeouts = resolveSshConnectionTimeouts({
     sshTcpConnectTimeoutMs,
     sshAuthReadyTimeoutMs,
@@ -156,13 +216,12 @@ async function startPortForward(event, payload) {
     ruleId,
     status: 'connecting',
     webContentsId: sender.id,
+    subscribers: new Map([[sender.id, sender]]),
     cancelled: false,
   };
 
   const sendStatus = (status, error = null) => {
-    if (!sender.isDestroyed()) {
-      sender.send("netcatty:portforward:status", { tunnelId, status, error });
-    }
+    publishTunnelStatus(tunnelId, tunnelState, status, error);
   };
 
   // Keepalive policy:
@@ -713,10 +772,12 @@ async function stopPortForward(event, payload) {
   }
 
   try {
-    cancelTunnel(tunnelId, tunnel, null, { deleteEntry: true });
-    if (!event.sender.isDestroyed()) {
-      event.sender.send("netcatty:portforward:status", { tunnelId, status: 'inactive', error: null });
-    }
+    cancelTunnel(
+      tunnelId,
+      tunnel,
+      (status, error) => publishTunnelStatus(tunnelId, tunnel, status, error),
+      { deleteEntry: true },
+    );
     return { tunnelId, success: true };
   } catch (err) {
     return { tunnelId, success: false, error: err.message };
@@ -734,7 +795,36 @@ async function getPortForwardStatus(event, payload) {
     return { tunnelId, status: 'inactive' };
   }
 
-  return { tunnelId, status: tunnel.status || 'active', type: tunnel.type };
+  return {
+    tunnelId,
+    status: tunnel.status || 'active',
+    type: tunnel.type,
+    ...(tunnel.error ? { error: tunnel.error } : {}),
+  };
+}
+
+/**
+ * Register the calling renderer for status events from an existing tunnel and
+ * return the status from the same main-process turn.
+ */
+async function subscribePortForward(event, payload) {
+  const { tunnelId } = payload;
+  const tunnel = portForwardingTunnels.get(tunnelId);
+
+  if (!tunnel) {
+    return { tunnelId, status: 'inactive' };
+  }
+
+  if (!(tunnel.subscribers instanceof Map)) {
+    tunnel.subscribers = new Map();
+  }
+  tunnel.subscribers.set(event.sender.id, event.sender);
+  return {
+    tunnelId,
+    status: tunnel.status || 'active',
+    type: tunnel.type,
+    ...(tunnel.error ? { error: tunnel.error } : {}),
+  };
 }
 
 /**
@@ -744,9 +834,11 @@ async function listPortForwards() {
   const list = [];
   for (const [tunnelId, tunnel] of portForwardingTunnels) {
     list.push({
+      ruleId: tunnel.ruleId,
       tunnelId,
       type: tunnel.type,
       status: tunnel.status || 'active',
+      ...(tunnel.error ? { error: tunnel.error } : {}),
     });
   }
   return list;
@@ -759,7 +851,12 @@ function stopAllPortForwards() {
   console.log(`[PortForward] Stopping all ${portForwardingTunnels.size} active tunnels...`);
   for (const [tunnelId, tunnel] of portForwardingTunnels) {
       try {
-        cancelTunnel(tunnelId, tunnel, null, { deleteEntry: true });
+        cancelTunnel(
+          tunnelId,
+          tunnel,
+          (status, error) => publishTunnelStatus(tunnelId, tunnel, status, error),
+          { deleteEntry: true },
+        );
         console.log(`[PortForward] Stopped tunnel ${tunnelId}`);
     } catch (err) {
       console.warn(`[PortForward] Failed to stop tunnel ${tunnelId}:`, err.message);
@@ -780,7 +877,12 @@ function stopPortForwardByRuleId(_event, { ruleId }) {
   for (const [tunnelId, tunnel] of portForwardingTunnels) {
     if (tunnel.ruleId === ruleId) {
       try {
-        cancelTunnel(tunnelId, tunnel, null, { deleteEntry: true });
+        cancelTunnel(
+          tunnelId,
+          tunnel,
+          (status, error) => publishTunnelStatus(tunnelId, tunnel, status, error),
+          { deleteEntry: true },
+        );
         console.log(`[PortForward] Stopped tunnel ${tunnelId} for rule ${ruleId}`);
         stopped++;
       } catch (err) {
@@ -800,6 +902,7 @@ function registerHandlers(ipcMain) {
   ipcMain.handle("netcatty:portforward:start", startPortForward);
   ipcMain.handle("netcatty:portforward:stop", stopPortForward);
   ipcMain.handle("netcatty:portforward:status", getPortForwardStatus);
+  ipcMain.handle("netcatty:portforward:subscribe", subscribePortForward);
   ipcMain.handle("netcatty:portforward:list", listPortForwards);
   ipcMain.handle("netcatty:portforward:stopAll", () => stopAllPortForwards());
   ipcMain.handle("netcatty:portforward:stopByRuleId", stopPortForwardByRuleId);
@@ -810,9 +913,12 @@ module.exports = {
   startPortForward,
   stopPortForward,
   getPortForwardStatus,
+  subscribePortForward,
   listPortForwards,
   stopAllPortForwards,
   stopPortForwardByRuleId,
   cancelTunnel,
+  publishTunnelStatus,
   shouldFinalizeTunnelClose,
+  isReusableTunnelStatus,
 };
