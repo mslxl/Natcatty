@@ -7,7 +7,7 @@ not load or execute it inside Netcatty; the isolated host runtime arrives in PR
 From the repository root:
 
 ```bash
-npm run build --workspace @netcatty/example-hello-plugin
-npm exec --workspace @netcatty/plugin-cli -- netcatty-plugin validate examples/plugins/hello-netcatty
-npm exec --workspace @netcatty/plugin-cli -- netcatty-plugin compatibility examples/plugins/hello-netcatty --netcatty 0.0.0
+npm run build:plugin-packages
+npm exec -- netcatty-plugin validate examples/plugins/hello-netcatty
+npm exec -- netcatty-plugin compatibility examples/plugins/hello-netcatty --netcatty 0.0.0
 ```

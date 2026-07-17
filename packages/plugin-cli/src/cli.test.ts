@@ -34,6 +34,7 @@ import { assertSafePackagePath, PackagePathRegistry } from "./packagePath.ts";
 
 const execFileAsync = promisify(execFile);
 const cliPath = fileURLToPath(new URL("./cli.ts", import.meta.url));
+const repositoryRoot = fileURLToPath(new URL("../../../", import.meta.url));
 
 function crc32(contents: Buffer): number {
   let crc = 0xffffffff;
@@ -386,6 +387,24 @@ test("compatibility CLI checks a validated plugin target", async (context) => {
     ]),
     /Plugin is incompatible/,
   );
+});
+
+test("example README commands use repository-root CLI paths", async () => {
+  const readme = await readFile(
+    path.join(repositoryRoot, "examples/plugins/hello-netcatty/README.md"),
+    "utf8",
+  );
+
+  assert.match(readme, /npm run build:plugin-packages/);
+  assert.match(
+    readme,
+    /npm exec -- netcatty-plugin validate examples\/plugins\/hello-netcatty/,
+  );
+  assert.match(
+    readme,
+    /npm exec -- netcatty-plugin compatibility examples\/plugins\/hello-netcatty --netcatty 0\.0\.0/,
+  );
+  assert.doesNotMatch(readme, /npm exec --workspace @netcatty\/plugin-cli/);
 });
 
 test("init creates a valid TypeScript plugin skeleton", async (context) => {
