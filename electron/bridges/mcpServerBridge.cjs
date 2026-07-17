@@ -1114,6 +1114,9 @@ let sessionService = null;
 const sessionIdleManager = createSessionIdleManager({
   onIdle: async ({ chatSessionId, sessionId }) => {
     const hasWorkerJob = await hasActiveWorkerJobForTerminalSession(sessionId);
+    if (sessionIdleManager.hasActivity(sessionId)) {
+      return;
+    }
     if (activeSessionExecutions.has(sessionId) || hasWorkerJob) {
       sessionIdleManager.resume(sessionId);
       return;

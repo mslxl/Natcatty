@@ -29,18 +29,18 @@ function createSessionIdleManager(options = {}) {
 
   function schedule(entry) {
     clearTimer(entry);
-    if (entry.activeCount > 0 || entry.closing) return;
+    if (entry.activeCount > 0 || entry.checking || entry.closing) return;
     const expiresAt = entry.lastActivityAt + timeoutMinutes * 60 * 1000;
     const delay = Math.max(0, expiresAt - DateImpl.now());
     entry.timer = setTimeoutImpl(() => {
       entry.timer = null;
       const current = entries.get(entry.sessionId);
-      if (current !== entry || entry.activeCount > 0 || entry.closing) return;
+      if (current !== entry || entry.activeCount > 0 || entry.checking || entry.closing) return;
       if (DateImpl.now() < expiresAt) {
         schedule(entry);
         return;
       }
-      entry.closing = true;
+      entry.checking = true;
       Promise.resolve(onIdle({
         chatSessionId: entry.chatSessionId,
         sessionId: entry.sessionId,
@@ -60,6 +60,7 @@ function createSessionIdleManager(options = {}) {
       sessionId,
       lastActivityAt: DateImpl.now(),
       activeCount: 0,
+      checking: false,
       closing: false,
       timer: null,
     };
@@ -70,7 +71,8 @@ function createSessionIdleManager(options = {}) {
 
   function touch(chatSessionId, sessionId) {
     const entry = entries.get(sessionId);
-    if (!entry || entry.chatSessionId !== chatSessionId || entry.closing) return false;
+    if (!entry || entry.closing) return false;
+    entry.checking = false;
     entry.lastActivityAt = DateImpl.now();
     schedule(entry);
     return true;
@@ -78,7 +80,8 @@ function createSessionIdleManager(options = {}) {
 
   function beginActivity(chatSessionId, sessionId) {
     const entry = entries.get(sessionId);
-    if (!entry || entry.chatSessionId !== chatSessionId || entry.closing) return false;
+    if (!entry || entry.closing) return false;
+    entry.checking = false;
     entry.activeCount += 1;
     entry.lastActivityAt = DateImpl.now();
     clearTimer(entry);
@@ -87,7 +90,7 @@ function createSessionIdleManager(options = {}) {
 
   function endActivity(chatSessionId, sessionId) {
     const entry = entries.get(sessionId);
-    if (!entry || entry.chatSessionId !== chatSessionId || entry.closing) return false;
+    if (!entry || entry.closing) return false;
     entry.activeCount = Math.max(0, entry.activeCount - 1);
     entry.lastActivityAt = DateImpl.now();
     schedule(entry);
@@ -97,6 +100,7 @@ function createSessionIdleManager(options = {}) {
   function beginClose(sessionId) {
     const entry = entries.get(sessionId);
     if (!entry || entry.closing) return false;
+    entry.checking = false;
     entry.closing = true;
     clearTimer(entry);
     return true;
@@ -106,6 +110,7 @@ function createSessionIdleManager(options = {}) {
     const entry = entries.get(sessionId);
     if (!entry) return false;
     entry.closing = false;
+    entry.checking = false;
     entry.activeCount = 0;
     entry.lastActivityAt = DateImpl.now();
     schedule(entry);
@@ -145,6 +150,7 @@ function createSessionIdleManager(options = {}) {
     resume,
     forgetSession,
     isTracked: (sessionId) => entries.has(sessionId),
+    hasActivity: (sessionId) => Boolean(entries.get(sessionId)?.activeCount),
     isClosing: (sessionId) => Boolean(entries.get(sessionId)?.closing),
     setTimeoutMinutes,
     getTimeoutMinutes: () => timeoutMinutes,

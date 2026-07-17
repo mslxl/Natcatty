@@ -94,6 +94,59 @@ test("an in-flight operation cannot time out and gets a fresh idle window when i
   assert.deepEqual(closed, [{ chatSessionId: "chat-a", sessionId: "session-1" }]);
 });
 
+test("activity from another authorized scope renews the same terminal session", async () => {
+  const clock = createClock();
+  const closed = [];
+  const manager = createSessionIdleManager({
+    ...clock,
+    timeoutMinutes: 1,
+    onIdle: async (entry) => closed.push(entry),
+  });
+
+  manager.track("chat-owner", "session-1");
+  clock.advance(30_000);
+  assert.equal(manager.beginActivity("chat-other", "session-1"), true);
+  manager.endActivity("chat-other", "session-1");
+
+  clock.advance(59_999);
+  await Promise.resolve();
+  assert.deepEqual(closed, []);
+  clock.advance(1);
+  await Promise.resolve();
+  assert.deepEqual(closed, [{ chatSessionId: "chat-owner", sessionId: "session-1" }]);
+});
+
+test("activity starting while an idle check is pending prevents the close", async () => {
+  const clock = createClock();
+  const closed = [];
+  let releaseIdleCheck;
+  const idleCheck = new Promise((resolve) => {
+    releaseIdleCheck = resolve;
+  });
+  let manager;
+  manager = createSessionIdleManager({
+    ...clock,
+    timeoutMinutes: 1,
+    onIdle: async (entry) => {
+      await idleCheck;
+      if (!manager.hasActivity(entry.sessionId)) closed.push(entry);
+    },
+  });
+
+  manager.track("chat-owner", "session-1");
+  clock.advance(60_000);
+  assert.equal(manager.beginActivity("chat-other", "session-1"), true);
+  releaseIdleCheck();
+  await idleCheck;
+  await Promise.resolve();
+  assert.deepEqual(closed, []);
+
+  manager.endActivity("chat-other", "session-1");
+  clock.advance(60_000);
+  await Promise.resolve();
+  assert.deepEqual(closed, [{ chatSessionId: "chat-owner", sessionId: "session-1" }]);
+});
+
 test("a failed close resumes tracking while a successful close can be forgotten", async () => {
   const clock = createClock();
   let attempts = 0;
