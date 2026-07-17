@@ -244,6 +244,54 @@ test("heartbeat subscribes newly discovered auto-start tunnels for reconnect", a
   assert.deepEqual(statuses, ["connecting"]);
 });
 
+test("heartbeat replaces subscriptions when a rule gets a new backend tunnel", async (t) => {
+  let tunnelId = "replacement-old-tunnel";
+  const listeners = new Map<string, (status: PortForwardingRule["status"]) => void>();
+  const unsubscribedTunnelIds: string[] = [];
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      netcatty: {
+        listPortForwards: async () => [{
+          ruleId: "replacement-rule",
+          tunnelId,
+          type: "local",
+          status: "active",
+        }],
+        onPortForwardStatus: (
+          subscribedTunnelId: string,
+          listener: (status: PortForwardingRule["status"]) => void,
+        ) => {
+          listeners.set(subscribedTunnelId, listener);
+          return () => unsubscribedTunnelIds.push(subscribedTunnelId);
+        },
+        subscribePortForward: async (subscribedTunnelId: string) => ({
+          tunnelId: subscribedTunnelId,
+          status: "active",
+        }),
+        stopPortForwardByRuleId: async () => ({ stopped: 1, failed: 0, errors: [] }),
+      },
+    },
+  });
+  t.after(async () => {
+    await stopAndCleanupRuleAndWait("replacement-rule");
+  });
+
+  await syncWithBackend({ shouldReconnect: () => false });
+  const oldListener = listeners.get("replacement-old-tunnel");
+  assert.ok(oldListener);
+
+  tunnelId = "replacement-new-tunnel";
+  const reconciliation = await reconcileWithBackend();
+  assert.deepEqual(reconciliation.appeared, ["replacement-rule"]);
+  assert.deepEqual(unsubscribedTunnelIds, ["replacement-old-tunnel"]);
+  assert.ok(listeners.get("replacement-new-tunnel"));
+  assert.equal(getActiveConnection("replacement-rule")?.tunnelId, "replacement-new-tunnel");
+
+  oldListener("inactive");
+  assert.equal(getActiveConnection("replacement-rule")?.tunnelId, "replacement-new-tunnel");
+});
+
 test("syncWithBackend registers adopted tunnels without a status callback", async (t) => {
   const subscribedTunnelIds: string[] = [];
   Object.defineProperty(globalThis, "window", {

@@ -615,10 +615,27 @@ export const reconcileWithBackend = async (): Promise<{
           // in another window).
           const existing = activeConnections.get(ruleId)!;
           const backendStatus = resolveBackendStatus(tunnel.status);
+          if (existing.tunnelId !== tunnel.tunnelId) {
+            existing.unsubscribe?.();
+            const replacement: PortForwardingConnection = {
+              ruleId,
+              tunnelId: tunnel.tunnelId,
+              status: backendStatus,
+              error: tunnel.error,
+              reconnectAttempts: existing.reconnectAttempts ?? 0,
+            };
+            configureSyncedConnection(replacement, ruleId);
+            activeConnections.set(ruleId, replacement);
+            if (!await subscribeSyncedConnection(ruleId, replacement)) {
+              result.gone.push(ruleId);
+              continue;
+            }
+            result.appeared.push(ruleId);
+            continue;
+          }
           if (existing.status !== backendStatus || existing.error !== tunnel.error) {
             existing.status = backendStatus;
             existing.error = tunnel.error;
-            existing.tunnelId = tunnel.tunnelId;
             result.appeared.push(ruleId);
           }
         }
