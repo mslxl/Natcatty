@@ -263,7 +263,7 @@ export type RpcFailure = {
 
 export type RpcId = (string) | (number);
 
-export type RpcMessage = (RpcRequest) | (RpcNotification) | (RpcSuccess) | (RpcFailure) | (RpcCancel) | (RpcProgressNotification) | (RuntimeInitializeRequest) | (RuntimeInitializeSuccess);
+export type RpcMessage = (RpcRequest) | (RpcNotification) | (RpcSuccess) | (RpcFailure) | (RpcCancel) | (RpcProgressNotification) | (RuntimeInitializeRequest);
 
 export type RpcNotification = {
   jsonrpc: "2.0";

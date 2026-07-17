@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { runInNewContext } from "node:vm";
 
 import {
   PLUGIN_STREAM_MAX_CHUNK_BYTES,
@@ -92,13 +93,38 @@ test("MessagePort stream envelopes carry and validate the transferred ArrayBuffe
   assert.equal(materialized.encoding, "binary");
   assert.deepEqual(materialized.bytes, new Uint8Array([1, 2, 3, 4]));
 
+  const crossRealmTransfer = runInNewContext("new ArrayBuffer(4)") as ArrayBuffer;
+  assert.equal(crossRealmTransfer instanceof ArrayBuffer, false);
+  const crossRealmMaterialized = materializeStreamChunk(frame.data, crossRealmTransfer);
+  assert.equal(crossRealmMaterialized.encoding, "binary");
+  assert.equal(crossRealmMaterialized.bytes.byteLength, 4);
+
   assert.throws(
     () => createMessagePortStreamEnvelope(frame),
     /require an ArrayBuffer/,
   );
   assert.throws(
     () => createMessagePortStreamEnvelope(frame, { byteLength: 4 } as never),
-    /require a real ArrayBuffer/,
+    /require a real, attached ArrayBuffer/,
+  );
+  assert.throws(
+    () => createMessagePortStreamEnvelope(
+      frame,
+      {
+        byteLength: 4,
+        [Symbol.toStringTag]: "ArrayBuffer",
+      } as never,
+    ),
+    /require a real, attached ArrayBuffer/,
+  );
+  const detached = new ArrayBuffer(4);
+  structuredClone(detached, { transfer: [detached] });
+  assert.throws(
+    () => createMessagePortStreamEnvelope(
+      { ...frame, data: { ...frame.data, byteLength: 0 } },
+      detached,
+    ),
+    /require a real, attached ArrayBuffer/,
   );
   assert.throws(
     () => materializeStreamChunk(

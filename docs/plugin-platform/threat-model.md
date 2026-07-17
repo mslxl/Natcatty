@@ -110,6 +110,11 @@ message-rate and memory quotas, crash quarantine, and terminal interceptor
 circuit breakers. A failed plugin must not stop unrelated plugins or terminal
 sessions.
 
+Runtime decoders must apply exact schemas for reserved methods instead of
+accepting malformed reserved messages as generic RPC. Transferable stream data
+is brand-checked through the native `ArrayBuffer` internal slot; an object that
+only spoofs `Symbol.toStringTag` or `byteLength` is not a transferable buffer.
+
 ### Update substitution and rollback
 
 The final distribution stage uses signed repository metadata, publisher

@@ -263,6 +263,13 @@ Permission decisions and Provider results are also discriminated unions: an
 smuggle one, successful Provider results require `result`, and failed results
 require a stable RPC error.
 
+Reserved RPC methods cannot fall back to the generic request or notification
+shape. `plugin.initialize`, `$/progress`, and `$/cancelRequest` must validate
+against their dedicated schemas at the aggregate `RpcMessage` boundary. RPC
+responses are validated against the method recorded for their pending request;
+the generic success envelope alone is not sufficient to validate a
+method-specific result.
+
 ## TypeScript SDK
 
 `@netcatty/plugin-sdk` exports the generated contract types and a small set of

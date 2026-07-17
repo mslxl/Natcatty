@@ -529,6 +529,7 @@
     },
     "RpcRequest": {
       "type": "object",
+      "description": "A generic request. Reserved methods with dedicated schemas are excluded and must validate against their exact contract.",
       "required": ["jsonrpc", "id", "method"],
       "properties": {
         "jsonrpc": { "const": "2.0" },
@@ -538,15 +539,28 @@
         "deadlineMs": { "type": "integer", "minimum": 1, "maximum": 300000 },
         "cancellationId": { "type": "string", "minLength": 1, "maxLength": 128 }
       },
+      "not": {
+        "required": ["method"],
+        "properties": {
+          "method": { "enum": ["plugin.initialize", "$/cancelRequest", "$/progress"] }
+        }
+      },
       "additionalProperties": false
     },
     "RpcNotification": {
       "type": "object",
+      "description": "A generic notification. Reserved notifications with dedicated schemas are excluded and must validate against their exact contract.",
       "required": ["jsonrpc", "method"],
       "properties": {
         "jsonrpc": { "const": "2.0" },
         "method": { "type": "string", "minLength": 1, "maxLength": 256 },
         "params": { "$ref": "#/$defs/JsonValue" }
+      },
+      "not": {
+        "required": ["method"],
+        "properties": {
+          "method": { "enum": ["plugin.initialize", "$/cancelRequest", "$/progress"] }
+        }
       },
       "additionalProperties": false
     },
@@ -858,15 +872,15 @@
       "additionalProperties": false
     },
     "RpcMessage": {
-      "anyOf": [
+      "description": "A mutually exclusive RPC wire envelope. Reserved inbound methods use their exact schemas. Successful responses require method-specific validation through request correlation.",
+      "oneOf": [
         { "$ref": "#/$defs/RpcRequest" },
         { "$ref": "#/$defs/RpcNotification" },
         { "$ref": "#/$defs/RpcSuccess" },
         { "$ref": "#/$defs/RpcFailure" },
         { "$ref": "#/$defs/RpcCancel" },
         { "$ref": "#/$defs/RpcProgressNotification" },
-        { "$ref": "#/$defs/RuntimeInitializeRequest" },
-        { "$ref": "#/$defs/RuntimeInitializeSuccess" }
+        { "$ref": "#/$defs/RuntimeInitializeRequest" }
       ]
     },
     "PermissionGrantScope": {

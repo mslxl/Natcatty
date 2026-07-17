@@ -117,17 +117,83 @@ test("plugin manifest schema rejects unknown properties and traversal", () => {
 
 test("RPC, stream, permission, and provider schemas validate independently", () => {
   const rpc = validator("RpcRequest");
+  const rpcMessage = validator("RpcMessage");
   const failure = validator("RpcFailure");
   const progress = validator("RpcProgressNotification");
   const stream = validator("StreamFrame");
   const initialize = validator("RuntimeInitializeParams");
   const initializeRequest = validator("RuntimeInitializeRequest");
+  const initializeSuccess = validator("RuntimeInitializeSuccess");
   const permission = validator("PermissionRequest");
   const permissionDecision = validator("PermissionDecision");
   const provider = validator("ProviderRequest");
   const providerResult = validator("ProviderResult");
 
   assert.equal(rpc({ jsonrpc: "2.0", id: "1", method: "settings.get", deadlineMs: 1000 }), true);
+  assert.equal(rpcMessage({
+    jsonrpc: "2.0",
+    id: "init-1",
+    method: "plugin.initialize",
+    params: {
+      netcattyVersion: "1.0.0",
+      apiVersion: "0.1.0-internal",
+      supportedFeatures: [],
+    },
+  }), true, JSON.stringify(rpcMessage.errors));
+  for (const malformedReservedMessage of [
+    {
+      jsonrpc: "2.0",
+      id: "init-1",
+      method: "plugin.initialize",
+      params: { unsupportedShape: true },
+    },
+    {
+      jsonrpc: "2.0",
+      method: "$/progress",
+      params: { unsupportedShape: true },
+    },
+    {
+      jsonrpc: "2.0",
+      method: "$/cancelRequest",
+      params: { unsupportedShape: true },
+    },
+    {
+      jsonrpc: "2.0",
+      method: "plugin.initialize",
+      params: {
+        netcattyVersion: "1.0.0",
+        apiVersion: "0.1.0-internal",
+        supportedFeatures: [],
+      },
+    },
+    {
+      jsonrpc: "2.0",
+      id: "progress-as-request",
+      method: "$/progress",
+      params: { token: "build", value: { kind: "end" } },
+    },
+  ]) {
+    assert.equal(
+      rpcMessage(malformedReservedMessage),
+      false,
+      `reserved RPC method bypassed its exact schema: ${JSON.stringify(malformedReservedMessage)}`,
+    );
+  }
+  assert.equal(initializeSuccess({
+    jsonrpc: "2.0",
+    id: "init-1",
+    result: {
+      pluginId: "com.example.contract-test",
+      pluginVersion: "1.2.3",
+      apiVersion: "0.1.0-internal",
+      enabledFeatures: [],
+    },
+  }), true, JSON.stringify(initializeSuccess.errors));
+  assert.equal(initializeSuccess({
+    jsonrpc: "2.0",
+    id: "init-1",
+    result: { unsupportedShape: true },
+  }), false);
   assert.equal(failure({
     jsonrpc: "2.0",
     id: null,

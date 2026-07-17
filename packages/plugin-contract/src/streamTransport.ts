@@ -23,6 +23,22 @@ export type MaterializedStreamChunk =
   | { readonly encoding: "binary"; readonly bytes: Uint8Array };
 
 const jsonEncoder = new TextEncoder();
+const arrayBufferByteLength = Object.getOwnPropertyDescriptor(
+  ArrayBuffer.prototype,
+  "byteLength",
+)?.get;
+
+function materializeArrayBuffer(value: unknown): Uint8Array {
+  if (!arrayBufferByteLength) {
+    throw new TypeError("ArrayBuffer byteLength getter is unavailable");
+  }
+  try {
+    arrayBufferByteLength.call(value);
+    return new Uint8Array(value as ArrayBuffer);
+  } catch {
+    throw new TypeError("Transfer stream chunks require a real, attached ArrayBuffer");
+  }
+}
 
 function serializedJsonByteLength(value: JsonValue): number {
   const serialized = serializeJsonValue(value);
@@ -139,15 +155,13 @@ export function materializeStreamChunk(
   if (transfer === undefined) {
     throw new Error("Transfer stream chunks require an ArrayBuffer in the message envelope");
   }
-  if (Object.prototype.toString.call(transfer) !== "[object ArrayBuffer]") {
-    throw new TypeError("Transfer stream chunks require a real ArrayBuffer");
-  }
-  if (transfer.byteLength !== data.byteLength) {
+  const bytes = materializeArrayBuffer(transfer);
+  if (bytes.byteLength !== data.byteLength) {
     throw new Error(
-      `Stream transfer byteLength mismatch: declared ${data.byteLength}, received ${transfer.byteLength}`,
+      `Stream transfer byteLength mismatch: declared ${data.byteLength}, received ${bytes.byteLength}`,
     );
   }
-  return { encoding: "binary", bytes: new Uint8Array(transfer) };
+  return { encoding: "binary", bytes };
 }
 
 export function createMessagePortStreamEnvelope(
