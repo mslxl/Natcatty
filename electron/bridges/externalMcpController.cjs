@@ -15,6 +15,10 @@ const {
 const { createExternalMcpCodexSetup } = require("./externalMcp/codexSetup.cjs");
 const { createExternalMcpClaudeSetup } = require("./externalMcp/claudeSetup.cjs");
 const { createExternalMcpGrokSetup } = require("./externalMcp/grokSetup.cjs");
+const {
+  DEFAULT_SESSION_IDLE_TIMEOUT_MINUTES,
+  normalizeSessionIdleTimeoutMinutes,
+} = require("./mcpServerBridge/sessionIdleManager.cjs");
 
 const EXTERNAL_MCP_MODE_TEMPORARY = "temporary";
 const EXTERNAL_MCP_MODE_PERSISTENT = "persistent";
@@ -60,6 +64,7 @@ function createExternalMcpController(options = {}) {
   let error = null;
   let mode = EXTERNAL_MCP_MODE_TEMPORARY;
   let idleTimeoutMinutes = DEFAULT_IDLE_TIMEOUT_MINUTES;
+  let sessionIdleTimeoutMinutes = DEFAULT_SESSION_IDLE_TIMEOUT_MINUTES;
   let lastActivityAt = null;
   let idleExpiresAt = null;
   let idleTimer = null;
@@ -145,6 +150,7 @@ function createExternalMcpController(options = {}) {
       exposedSessionCount: getExposedSessionCount(),
       mode,
       idleTimeoutMinutes,
+      sessionIdleTimeoutMinutes,
       lastActivityAt,
       idleExpiresAt,
       permissionMode: bridge?.getPermissionMode?.() || "confirm",
@@ -378,11 +384,16 @@ function createExternalMcpController(options = {}) {
     const nextIdleTimeoutMinutes = config.idleTimeoutMinutes == null
       ? idleTimeoutMinutes
       : normalizeIdleTimeoutMinutes(config.idleTimeoutMinutes);
+    const nextSessionIdleTimeoutMinutes = config.sessionIdleTimeoutMinutes == null
+      ? sessionIdleTimeoutMinutes
+      : normalizeSessionIdleTimeoutMinutes(config.sessionIdleTimeoutMinutes);
     const modeChanged = nextMode !== mode;
     const timeoutChanged = nextIdleTimeoutMinutes !== idleTimeoutMinutes;
 
     mode = nextMode;
     idleTimeoutMinutes = nextIdleTimeoutMinutes;
+    sessionIdleTimeoutMinutes = nextSessionIdleTimeoutMinutes;
+    getBridge()?.setSessionIdleTimeoutMinutes?.(sessionIdleTimeoutMinutes);
 
     if ((modeChanged || timeoutChanged) && enabled && state === "running") {
       lastActivityAt = getNow();

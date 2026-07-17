@@ -3,6 +3,7 @@ import {
   STORAGE_KEY_AI_EXTERNAL_MCP_ENABLED,
   STORAGE_KEY_AI_EXTERNAL_MCP_IDLE_TIMEOUT_MINUTES,
   STORAGE_KEY_AI_EXTERNAL_MCP_MODE,
+  STORAGE_KEY_AI_SESSION_IDLE_TIMEOUT_MINUTES,
 } from '../../infrastructure/config/storageKeys';
 import { localStorageAdapter } from '../../infrastructure/persistence/localStorageAdapter';
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
@@ -13,10 +14,12 @@ export type ExternalMcpMode = 'temporary' | 'persistent';
 const DEFAULT_EXTERNAL_MCP_IDLE_TIMEOUT_MINUTES = 10;
 const MIN_EXTERNAL_MCP_IDLE_TIMEOUT_MINUTES = 1;
 const MAX_EXTERNAL_MCP_IDLE_TIMEOUT_MINUTES = 24 * 60;
+const DEFAULT_SESSION_IDLE_TIMEOUT_MINUTES = 30;
 
 type ExternalMcpConfig = {
   mode: ExternalMcpMode;
   idleTimeoutMinutes: number;
+  sessionIdleTimeoutMinutes: number;
 };
 
 type ExternalMcpBridge = {
@@ -61,6 +64,23 @@ export function readExternalMcpIdleTimeoutMinutes(): number {
   );
 }
 
+export function normalizeSessionIdleTimeoutMinutes(value: number | null): number {
+  if (!Number.isFinite(value)) return DEFAULT_SESSION_IDLE_TIMEOUT_MINUTES;
+  return Math.min(
+    MAX_EXTERNAL_MCP_IDLE_TIMEOUT_MINUTES,
+    Math.max(
+      MIN_EXTERNAL_MCP_IDLE_TIMEOUT_MINUTES,
+      Math.round(value ?? DEFAULT_SESSION_IDLE_TIMEOUT_MINUTES),
+    ),
+  );
+}
+
+export function readSessionIdleTimeoutMinutes(): number {
+  return normalizeSessionIdleTimeoutMinutes(
+    localStorageAdapter.readNumber(STORAGE_KEY_AI_SESSION_IDLE_TIMEOUT_MINUTES),
+  );
+}
+
 export function shouldStartExternalMcpOnStartup({
   enabled,
   mode,
@@ -82,10 +102,12 @@ export function createExternalMcpStartupSyncPlan({
   enabled,
   mode,
   idleTimeoutMinutes,
+  sessionIdleTimeoutMinutes,
 }: {
   enabled: boolean;
   mode: ExternalMcpMode;
   idleTimeoutMinutes: number;
+  sessionIdleTimeoutMinutes: number;
 }): ExternalMcpStartupSyncPlan {
   const runtimeEnabled = shouldStartExternalMcpOnStartup({ enabled, mode });
   const storedEnabled = runtimeEnabled;
@@ -93,6 +115,7 @@ export function createExternalMcpStartupSyncPlan({
     config: {
       mode,
       idleTimeoutMinutes,
+      sessionIdleTimeoutMinutes,
     },
     runtimeEnabled,
     storedEnabled,
@@ -105,6 +128,7 @@ export function readExternalMcpStartupSyncPlan(): ExternalMcpStartupSyncPlan {
     enabled: readExternalMcpStoredEnabled(),
     mode: readExternalMcpMode(),
     idleTimeoutMinutes: readExternalMcpIdleTimeoutMinutes(),
+    sessionIdleTimeoutMinutes: readSessionIdleTimeoutMinutes(),
   });
 }
 
@@ -112,6 +136,7 @@ export function syncExternalMcpConfig(bridge: ExternalMcpBridge | undefined = ne
   void bridge?.externalMcpSetConfig?.({
     mode: readExternalMcpMode(),
     idleTimeoutMinutes: readExternalMcpIdleTimeoutMinutes(),
+    sessionIdleTimeoutMinutes: readSessionIdleTimeoutMinutes(),
   });
 }
 

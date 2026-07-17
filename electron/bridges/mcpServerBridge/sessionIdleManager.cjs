@@ -1,0 +1,162 @@
+"use strict";
+
+const DEFAULT_SESSION_IDLE_TIMEOUT_MINUTES = 30;
+const MIN_SESSION_IDLE_TIMEOUT_MINUTES = 1;
+const MAX_SESSION_IDLE_TIMEOUT_MINUTES = 24 * 60;
+
+function normalizeSessionIdleTimeoutMinutes(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return DEFAULT_SESSION_IDLE_TIMEOUT_MINUTES;
+  return Math.min(
+    MAX_SESSION_IDLE_TIMEOUT_MINUTES,
+    Math.max(MIN_SESSION_IDLE_TIMEOUT_MINUTES, Math.round(parsed)),
+  );
+}
+
+function createSessionIdleManager(options = {}) {
+  const DateImpl = options.Date || Date;
+  const setTimeoutImpl = options.setTimeout || setTimeout;
+  const clearTimeoutImpl = options.clearTimeout || clearTimeout;
+  const onIdle = typeof options.onIdle === "function" ? options.onIdle : async () => {};
+  const entries = new Map();
+  let timeoutMinutes = normalizeSessionIdleTimeoutMinutes(options.timeoutMinutes);
+
+  function clearTimer(entry) {
+    if (entry.timer == null) return;
+    clearTimeoutImpl(entry.timer);
+    entry.timer = null;
+  }
+
+  function schedule(entry) {
+    clearTimer(entry);
+    if (entry.activeCount > 0 || entry.closing) return;
+    const expiresAt = entry.lastActivityAt + timeoutMinutes * 60 * 1000;
+    const delay = Math.max(0, expiresAt - DateImpl.now());
+    entry.timer = setTimeoutImpl(() => {
+      entry.timer = null;
+      const current = entries.get(entry.sessionId);
+      if (current !== entry || entry.activeCount > 0 || entry.closing) return;
+      if (DateImpl.now() < expiresAt) {
+        schedule(entry);
+        return;
+      }
+      entry.closing = true;
+      Promise.resolve(onIdle({
+        chatSessionId: entry.chatSessionId,
+        sessionId: entry.sessionId,
+      })).catch(() => {
+        resume(entry.sessionId);
+      });
+    }, delay);
+    entry.timer?.unref?.();
+  }
+
+  function track(chatSessionId, sessionId) {
+    if (!chatSessionId || !sessionId) return false;
+    const existing = entries.get(sessionId);
+    if (existing) clearTimer(existing);
+    const entry = {
+      chatSessionId,
+      sessionId,
+      lastActivityAt: DateImpl.now(),
+      activeCount: 0,
+      closing: false,
+      timer: null,
+    };
+    entries.set(sessionId, entry);
+    schedule(entry);
+    return true;
+  }
+
+  function touch(chatSessionId, sessionId) {
+    const entry = entries.get(sessionId);
+    if (!entry || entry.chatSessionId !== chatSessionId || entry.closing) return false;
+    entry.lastActivityAt = DateImpl.now();
+    schedule(entry);
+    return true;
+  }
+
+  function beginActivity(chatSessionId, sessionId) {
+    const entry = entries.get(sessionId);
+    if (!entry || entry.chatSessionId !== chatSessionId || entry.closing) return false;
+    entry.activeCount += 1;
+    entry.lastActivityAt = DateImpl.now();
+    clearTimer(entry);
+    return true;
+  }
+
+  function endActivity(chatSessionId, sessionId) {
+    const entry = entries.get(sessionId);
+    if (!entry || entry.chatSessionId !== chatSessionId || entry.closing) return false;
+    entry.activeCount = Math.max(0, entry.activeCount - 1);
+    entry.lastActivityAt = DateImpl.now();
+    schedule(entry);
+    return true;
+  }
+
+  function beginClose(sessionId) {
+    const entry = entries.get(sessionId);
+    if (!entry || entry.closing) return false;
+    entry.closing = true;
+    clearTimer(entry);
+    return true;
+  }
+
+  function resume(sessionId) {
+    const entry = entries.get(sessionId);
+    if (!entry) return false;
+    entry.closing = false;
+    entry.activeCount = 0;
+    entry.lastActivityAt = DateImpl.now();
+    schedule(entry);
+    return true;
+  }
+
+  function forgetSession(sessionId) {
+    const entry = entries.get(sessionId);
+    if (!entry) return false;
+    clearTimer(entry);
+    entries.delete(sessionId);
+    return true;
+  }
+
+  function setTimeoutMinutes(value) {
+    timeoutMinutes = normalizeSessionIdleTimeoutMinutes(value);
+    for (const entry of entries.values()) schedule(entry);
+    return timeoutMinutes;
+  }
+
+  function clearAll() {
+    for (const entry of entries.values()) clearTimer(entry);
+    entries.clear();
+  }
+
+  function scopeCleared() {
+    // Intentionally keep timers alive. A deleted/interrupted AI scope is one of
+    // the cases where the idle fallback is needed most.
+  }
+
+  return {
+    track,
+    touch,
+    beginActivity,
+    endActivity,
+    beginClose,
+    resume,
+    forgetSession,
+    isTracked: (sessionId) => entries.has(sessionId),
+    isClosing: (sessionId) => Boolean(entries.get(sessionId)?.closing),
+    setTimeoutMinutes,
+    getTimeoutMinutes: () => timeoutMinutes,
+    clearAll,
+    scopeCleared,
+  };
+}
+
+module.exports = {
+  DEFAULT_SESSION_IDLE_TIMEOUT_MINUTES,
+  MIN_SESSION_IDLE_TIMEOUT_MINUTES,
+  MAX_SESSION_IDLE_TIMEOUT_MINUTES,
+  normalizeSessionIdleTimeoutMinutes,
+  createSessionIdleManager,
+};

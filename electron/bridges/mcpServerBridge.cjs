@@ -95,6 +95,10 @@ function disconnectExternalMcpClients() {
 const scopedMetadata = new Map();
 const scopedAttachments = new Map(); // chatSessionId -> Map<filePath, attachment>
 const { createSessionOwnershipRegistry } = require("./mcpServerBridge/sessionOwnership.cjs");
+const {
+  createSessionIdleManager,
+  normalizeSessionIdleTimeoutMinutes,
+} = require("./mcpServerBridge/sessionIdleManager.cjs");
 const openedSessionOwnership = createSessionOwnershipRegistry();
 
 // Command safety checking (reuse from aiBridge)
@@ -392,6 +396,7 @@ function shutdownHost({ preserveScopedMetadata = false } = {}) {
   backgroundJobs.clear();
   pendingWorkerJobStarts.clear();
   activeSessionExecutions.clear();
+  sessionIdleManager.clearAll();
 }
 
 function echoCommandToSession(session, sessionId, command) {
@@ -423,6 +428,16 @@ function setCommandTimeout(seconds) {
 
 function getCommandTimeoutMs() {
   return commandTimeoutMs;
+}
+
+function setSessionIdleTimeoutMinutes(minutes) {
+  return sessionIdleManager.setTimeoutMinutes(
+    normalizeSessionIdleTimeoutMinutes(minutes),
+  );
+}
+
+function getSessionIdleTimeoutMinutes() {
+  return sessionIdleManager.getTimeoutMinutes();
 }
 
 function setMaxIterations(value) {
@@ -1087,12 +1102,67 @@ const {
   UNROUTED,
 } = require("./mcpServerBridge/capabilityRpcDispatch.cjs");
 const { buildBuiltinRpcHandlerRegistry } = require("./mcpServerBridge/builtinRpcHandlers.cjs");
+const { createSessionService } = require("../capabilities/services/sessionService.cjs");
 
 let invokeVaultAgentFn = null;
 
 function setVaultAgentInvoker(fn) {
   invokeVaultAgentFn = typeof fn === "function" ? fn : null;
 }
+
+let sessionService = null;
+const sessionIdleManager = createSessionIdleManager({
+  onIdle: async ({ chatSessionId, sessionId }) => {
+    const hasWorkerJob = Array.from(workerBackgroundJobs.values())
+      .some((job) => job?.sessionId === sessionId);
+    if (activeSessionExecutions.has(sessionId) || hasWorkerJob) {
+      sessionIdleManager.resume(sessionId);
+      return;
+    }
+    await sessionService?.closeTracked({ chatSessionId, sessionId });
+  },
+});
+
+sessionService = createSessionService({
+  invokeSessionAgent: (...args) => {
+    if (typeof invokeVaultAgentFn !== "function") {
+      return Promise.resolve({ ok: false, error: "Vault agent bridge is unavailable." });
+    }
+    return invokeVaultAgentFn(...args);
+  },
+  validateClose: (params = {}) => {
+    const scopeErr = validateSessionScope(
+      params.sessionId,
+      params.chatSessionId,
+      params.scopedSessionIds,
+    );
+    if (scopeErr) return { ok: false, error: scopeErr };
+    if (sessionIdleManager.isClosing(params.sessionId)) {
+      return { ok: false, error: `Session "${params.sessionId}" is closing.` };
+    }
+    return openedSessionOwnership.validate(params.chatSessionId, params.sessionId);
+  },
+  beforeClose: async (params = {}) => {
+    sessionIdleManager.beginClose(params.sessionId);
+    beginTerminalSessionClose(params.sessionId);
+    cancelBackgroundJobsForTerminalSession(params.sessionId);
+    await cancelWorkerBackgroundJobsForTerminalSession(params.sessionId);
+    await cancelSftpOpsForTerminalSession(params.sessionId);
+  },
+  afterClose: (params = {}, outcome = {}) => {
+    endTerminalSessionClose(params.sessionId);
+    if (!outcome.closed) sessionIdleManager.resume(params.sessionId);
+  },
+  onClosed: async (sessionId) => {
+    await settleBackgroundJobsForTerminalSession(sessionId);
+    sessionIdleManager.forgetSession(sessionId);
+    openedSessionOwnership.forgetSession(sessionId);
+    for (const scoped of scopedMetadata.values()) {
+      scoped.sessionIds = scoped.sessionIds.filter((id) => id !== sessionId);
+      scoped.metadata.delete(sessionId);
+    }
+  },
+});
 
 const dispatchCapabilityRpc = createCapabilityRpcDispatcher({
   invokeVaultAgent: (...args) => {
@@ -1111,33 +1181,11 @@ const dispatchCapabilityRpc = createCapabilityRpcDispatcher({
   isChatSessionCancelled,
   requestApprovalFromRenderer,
   USER_DENIED_MESSAGE,
+  sessionService,
   captureHostOpenScope: (chatSessionId) => openedSessionOwnership.captureGeneration(chatSessionId),
   onHostOpened: (chatSessionId, sessionId, generation) => {
     openedSessionOwnership.register(chatSessionId, sessionId, generation);
-  },
-  validateSessionClose: (params = {}) => {
-    const scopeErr = validateSessionScope(
-      params.sessionId,
-      params.chatSessionId,
-      params.scopedSessionIds,
-    );
-    if (scopeErr) return { ok: false, error: scopeErr };
-    return openedSessionOwnership.validate(params.chatSessionId, params.sessionId);
-  },
-  beforeSessionClose: async (params = {}) => {
-    beginTerminalSessionClose(params.sessionId);
-    cancelBackgroundJobsForTerminalSession(params.sessionId);
-    await cancelWorkerBackgroundJobsForTerminalSession(params.sessionId);
-    await cancelSftpOpsForTerminalSession(params.sessionId);
-  },
-  afterSessionClose: (params = {}) => endTerminalSessionClose(params.sessionId),
-  onSessionClosed: async (sessionId) => {
-    await settleBackgroundJobsForTerminalSession(sessionId);
-    openedSessionOwnership.forgetSession(sessionId);
-    for (const scoped of scopedMetadata.values()) {
-      scoped.sessionIds = scoped.sessionIds.filter((id) => id !== sessionId);
-      scoped.metadata.delete(sessionId);
-    }
+    sessionIdleManager.track(chatSessionId, sessionId);
   },
 });
 
@@ -1563,19 +1611,36 @@ async function dispatch(method, params) {
     if (!handler) {
       throw new Error(`Unknown method: ${method}`);
     }
-    if (capability?.id === "terminal.execute" && params?.sessionId && !sessions?.get?.(params.sessionId)) {
-      return handleWorkerTerminalExec(params);
+    const tracksSessionActivity = Boolean(
+      params?.sessionId
+      && (
+        capability?.id === "terminal.execute"
+        || capability?.id === "terminal.start"
+        || capability?.id?.startsWith("sftp.")
+      )
+    );
+    const activityStarted = tracksSessionActivity
+      ? sessionIdleManager.beginActivity(params?.chatSessionId, params.sessionId)
+      : false;
+    try {
+      if (capability?.id === "terminal.execute" && params?.sessionId && !sessions?.get?.(params.sessionId)) {
+        return await handleWorkerTerminalExec(params);
+      }
+      if (capability?.id === "terminal.start" && params?.sessionId && !sessions?.get?.(params.sessionId)) {
+        return await handleWorkerJobStart(params);
+      }
+      if (capability?.id === "terminal.poll" && workerBackgroundJobs.has(params?.jobId)) {
+        return await handleWorkerJobPoll(params);
+      }
+      if (capability?.id === "terminal.stop" && workerBackgroundJobs.has(params?.jobId)) {
+        return await handleWorkerJobStop(params);
+      }
+      return await handler(params);
+    } finally {
+      if (activityStarted) {
+        sessionIdleManager.endActivity(params?.chatSessionId, params.sessionId);
+      }
     }
-    if (capability?.id === "terminal.start" && params?.sessionId && !sessions?.get?.(params.sessionId)) {
-      return handleWorkerJobStart(params);
-    }
-    if (capability?.id === "terminal.poll" && workerBackgroundJobs.has(params?.jobId)) {
-      return handleWorkerJobPoll(params);
-    }
-    if (capability?.id === "terminal.stop" && workerBackgroundJobs.has(params?.jobId)) {
-      return handleWorkerJobStop(params);
-    }
-    return handler(params);
   } finally {
     if (sessionWriteLockId) {
       pendingSessionWriteApprovals.delete(sessionWriteLockId);
@@ -1810,6 +1875,7 @@ const configAndCleanupApi = createConfigAndCleanupApi({
   cancelWorkerBackgroundJobsForSession,
   cancelWorkerBackgroundJobsForTerminalSession,
   clearPendingApprovals, cancelSftpOpsForSession, sftpBridge,
+  preserveIdleSessionCleanup: sessionIdleManager.scopeCleared,
   clearOpenedSessionScope: openedSessionOwnership.clearScope,
 });
 const { resolveMcpServerRuntimeCommand, buildMcpServerConfig, cleanupScopedMetadata } = configAndCleanupApi;
@@ -1823,6 +1889,8 @@ module.exports = {
   setCommandBlocklist,
   setCommandTimeout,
   getCommandTimeoutMs,
+  setSessionIdleTimeoutMinutes,
+  getSessionIdleTimeoutMinutes,
   setMaxIterations,
   getMaxIterations,
   setPermissionMode,

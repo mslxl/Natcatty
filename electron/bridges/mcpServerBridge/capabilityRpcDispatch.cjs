@@ -89,7 +89,7 @@ function createCapabilityRpcDispatcher(deps) {
 
   const vaultService = createVaultService({ invokeVaultAgent });
   const portforwardService = createPortForwardService({ invokeVaultAgent });
-  const sessionService = createSessionService({
+  const sessionService = deps.sessionService || createSessionService({
     invokeSessionAgent: invokeVaultAgent,
     validateClose: deps.validateSessionClose,
     beforeClose: deps.beforeSessionClose,
