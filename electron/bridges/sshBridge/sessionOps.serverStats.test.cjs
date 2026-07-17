@@ -1,5 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const { spawnSync } = require("node:child_process");
 const { EventEmitter } = require("node:events");
 
 const { createSessionOpsApi } = require("./sessionOps.cjs");
@@ -53,6 +54,54 @@ function makeSessionOps(sessions) {
     // The rest of the sessionOps surface isn't exercised by getServerStats.
   });
 }
+
+function runStatsCommandWithBusyBoxTools(command) {
+  const script = [
+    "uname() { printf '%s\\n' Linux; }",
+    "nproc() { printf '%s\\n' 4; }",
+    "ps() { return 1; }",
+    "top() {",
+    "  printf '%s\\n' 'Mem: 256000K used, 768000K free, 0K shrd, 0K buff, 0K cached'",
+    "  printf '%s\\n' 'CPU:   0% usr   0% sys   0% nic 100% idle   0% io   0% irq   0% sirq'",
+    "  printf '%s\\n' '  PID  PPID USER     STAT   VSZ %VSZ %CPU COMMAND'",
+    "  printf '%s\\n' '    1     0 root     S     2048   2%   3% /sbin/procd'",
+    "}",
+    "df() {",
+    "  if [ \"$1\" = '-BG' ]; then return 1; fi",
+    "  printf '%s\\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on'",
+    "  printf '%s\\n' 'overlayfs:/overlay 1048576 262144 786432 25% /'",
+    "}",
+    command,
+  ].join("\n");
+  return spawnSync("sh", ["-c", script], { encoding: "utf8" });
+}
+
+test("getServerStats falls back to BusyBox tools for process and root disk data", async () => {
+  const sessions = new Map();
+  sessions.set("sid", {
+    type: "ssh",
+    _reuseEndpoint: { hostname: "router.test", port: 22 },
+    conn: {
+      exec(command, cb) {
+        const execution = runStatsCommandWithBusyBoxTools(command);
+        assert.equal(execution.status, 0, execution.stderr);
+        cb(null, fakeStream(execution.stdout));
+      },
+    },
+  });
+
+  const api = makeSessionOps(sessions);
+  const result = await api.getServerStats({ sender: {} }, { sessionId: "sid" });
+
+  assert.equal(result.success, true);
+  assert.deepEqual(result.stats.topProcesses, [
+    { pid: "1", memPercent: 2, command: "/sbin/procd" },
+  ]);
+  assert.deepEqual(result.stats.disks, [
+    { mountPoint: "/", used: 0.25, total: 1, percent: 25 },
+  ]);
+  assert.equal(result.stats.diskPercent, 25);
+});
 
 test("getServerStats opens a Mosh stats companion connection when session.conn is missing", async () => {
   const sessions = new Map();

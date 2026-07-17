@@ -19,7 +19,7 @@ function createFakeExecStream(stdout, options = {}) {
   return stream;
 }
 
-function runProcessCommandWithBusyBoxPs(command, { supportsWide = true } = {}) {
+function runProcessCommandWithBusyBoxPs(command, { supportsWide = true, supportsTop = true } = {}) {
   const prefix = "exec sh -c '";
   assert.ok(command.startsWith(prefix) && command.endsWith("'"));
   const innerScript = command.slice(prefix.length, -1);
@@ -33,6 +33,15 @@ function runProcessCommandWithBusyBoxPs(command, { supportsWide = true } = {}) {
     .join("\n");
   const fakePs = [
     "exec 3>&2",
+    "top() {",
+    "  printf '__TOP_CALL__=%s\\n' \"$*\" >&3",
+    supportsTop ? "  :" : "  return 1",
+    "  printf '%s\\n' 'Mem: 2059948K used, 14365980K free, 52256K shrd, 204K buff, 599840K cached'",
+    "  printf '%s\\n' 'CPU:   0% usr   0% sys   0% nic  99% idle   0% io   0% irq   0% sirq'",
+    "  printf '%s\\n' '  PID  PPID USER     STAT   VSZ %VSZ %CPU COMMAND'",
+    "  printf '%s\\n' '    1     0 root     S     1356   1%   2% /sbin/procd'",
+    "  printf '%s\\n' '  411     1 root     R    97.6m  10%   7% /sbin/ubusd'",
+    "}",
     "ps() {",
     "  printf '__PS_CALL__=%s\\n' \"$*\" >&3",
     "  if [ \"$1\" = '-eo' ]; then",
@@ -56,13 +65,43 @@ function runProcessCommandWithBusyBoxPs(command, { supportsWide = true } = {}) {
     .split("\n")
     .filter((line) => line.startsWith("__PS_CALL__="))
     .map((line) => line.slice("__PS_CALL__=".length));
+  const topCalls = String(result.stderr || "")
+    .split("\n")
+    .filter((line) => line.startsWith("__TOP_CALL__="))
+    .map((line) => line.slice("__TOP_CALL__=".length));
   return {
     stdout: String(result.stdout || ""),
     stderr: String(result.stderr || ""),
     code: result.status ?? 1,
     calls,
+    topCalls,
   };
 }
+
+test("listProcesses preserves BusyBox top CPU and memory percentages", async () => {
+  let seenTopCalls = [];
+  const conn = {
+    exec(command, callback) {
+      const execution = runProcessCommandWithBusyBoxPs(command);
+      seenTopCalls = execution.topCalls;
+      callback(null, createFakeExecStream(execution.stdout, execution));
+    },
+  };
+  const sessions = new Map([["openwrt", { conn, type: "ssh" }]]);
+  const bridge = createSystemManagerBridge({
+    getSessions: () => sessions,
+    process,
+  });
+
+  const result = await bridge.listProcesses(null, { sessionId: "openwrt" });
+
+  assert.equal(result.success, true);
+  assert.equal(result.processes[0].cpuPercent, 2);
+  assert.equal(result.processes[0].memPercent, 1);
+  assert.equal(result.processes[1].cpuPercent, 7);
+  assert.equal(result.processes[1].memPercent, 10);
+  assert.deepEqual(seenTopCalls, ["-b -n 1"]);
+});
 
 test("listProcesses uses a ps format that works on CentOS 7 procps", async () => {
   const compatiblePsFormat = "ps -eo pid= -o ppid= -o user= -o stat= -o pcpu= -o pmem= -o rss= -o vsz= -o etime= -o args=";
@@ -99,7 +138,7 @@ test("listProcesses uses a ps format that works on CentOS 7 procps", async () =>
   assert.doesNotMatch(seenCommand, /head\s+-n\s+2000/);
 });
 
-test("listProcesses returns processes from the default OpenWrt BusyBox ps format", async () => {
+test("listProcesses returns processes from the default OpenWrt BusyBox top format", async () => {
   let seenCommand = "";
   let seenPsCalls = [];
   const conn = {
@@ -125,8 +164,8 @@ test("listProcesses returns processes from the default OpenWrt BusyBox ps format
     ppid: 0,
     user: "root",
     stat: "S",
-    cpuPercent: 0,
-    memPercent: 0,
+    cpuPercent: 2,
+    memPercent: 1,
     rssKb: 0,
     vszKb: 1356,
     elapsed: "",
@@ -134,16 +173,15 @@ test("listProcesses returns processes from the default OpenWrt BusyBox ps format
   });
   assert.equal(result.processes[1].vszKb, 99942);
   assert.match(seenCommand, /ps ww/);
-  assert.equal(seenPsCalls.length, 2);
+  assert.equal(seenPsCalls.length, 1);
   assert.match(seenPsCalls[0], /^-eo pid=/);
-  assert.equal(seenPsCalls[1], "ww");
 });
 
 test("listProcesses falls back to plain BusyBox ps when wide output is unavailable", async () => {
   let seenPsCalls = [];
   const conn = {
     exec(command, callback) {
-      const execution = runProcessCommandWithBusyBoxPs(command, { supportsWide: false });
+      const execution = runProcessCommandWithBusyBoxPs(command, { supportsWide: false, supportsTop: false });
       seenPsCalls = execution.calls;
       callback(null, createFakeExecStream(execution.stdout, execution));
     },

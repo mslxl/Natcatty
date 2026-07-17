@@ -792,12 +792,12 @@ function createSessionOpsApi(ctx) {
         `meminfo=$(awk '/^MemTotal:/{t=$2} /^MemFree:/{f=$2} /^Buffers:/{b=$2} /^Cached:/{c=$2} /^SReclaimable:/{s=$2} /^SwapTotal:/{st=$2} /^SwapFree:/{sf=$2} END{printf "%d %d %d %d %d %d", t/1024, f/1024, b/1024, (c+s)/1024, st/1024, sf/1024}' /proc/meminfo 2>/dev/null || echo "")`,
         // Get top 10 processes by memory - with BusyBox fallback
         // GNU ps: ps -eo pid,%mem,comm --sort=-%mem
-        // BusyBox fallback: ps -o pid,vsz,comm and sort manually (BusyBox ps doesn't have %mem, use vsz instead)
-        `procs=$(ps -eo pid,%mem,comm --sort=-%mem 2>/dev/null | awk 'NR>1 && NR<=11 {gsub(/;/, "_", $3); printf "%s;%.1f;%s,", $1, $2, $3}' | sed 's/,$//' || ps -o pid,vsz,comm 2>/dev/null | awk 'NR>1 {gsub(/;/, "_", $3); print $2, $1, $3}' | sort -rn | head -10 | awk -v total=$(awk '/^MemTotal:/{print $2}' /proc/meminfo) '{if(total>0) pct=$1*100/total; else pct=0; printf "%s;%.1f;%s,", $2, pct, $3}' | sed 's/,$//' || echo "")`,
+        // BusyBox fallback: top exposes %VSZ/%CPU; minimal builds without top use plain ps VSZ.
+        `procs=$(if procraw=$(ps -eo pid,%mem,comm --sort=-%mem 2>/dev/null); then printf "%s\n" "$procraw" | awk 'NR>1 && NR<=11 {gsub(/;/, "_", $3); printf "%s;%.1f;%s,", $1, $2, $3}' | sed 's/,$//'; elif topraw=$(top -b -n 1 2>/dev/null); then printf "%s\n" "$topraw" | awk '$1 ~ /^[0-9]+$/ {pct=$6; gsub(/%/, "", pct); cmd=$8; gsub(/;/, "_", cmd); print pct, $1, cmd}' | sort -rn | head -10 | awk '{printf "%s;%.1f;%s,", $2, $1, $3}' | sed 's/,$//'; else ps ww 2>/dev/null | awk -v total=$(awk '/^MemTotal:/{print $2}' /proc/meminfo) '$1 ~ /^[0-9]+$/ {v=$3; unit=substr(v,length(v),1); mult=1; if(unit=="m"||unit=="M")mult=1024; else if(unit=="g"||unit=="G")mult=1048576; sub(/[mMgG]$/, "", v); pct=total>0?v*mult*100/total:0; cmd=$5; gsub(/;/, "_", cmd); print pct, $1, cmd}' | sort -rn | head -10 | awk '{printf "%s;%.1f;%s,", $2, $1, $3}' | sed 's/,$//'; fi)`,
         // Get all mounted disk info - with BusyBox fallback
         // GNU df: df -BG (block size in GB)
         // BusyBox fallback: df and calculate from 1K blocks, or df -h and parse units
-        `disks=$(df -BG 2>/dev/null | awk 'NR>1 && $1 ~ /^\\/dev/ {gsub(/G/,"",$2); gsub(/G/,"",$3); gsub(/%/,"",$5); printf "%s:%s:%s:%s,", $6, $3, $2, $5}' | sed 's/,$//' || df 2>/dev/null | awk 'NR>1 && $1 ~ /^\\/dev/ {total=$2/1048576; used=$3/1048576; pct=$5; gsub(/%/,"",pct); printf "%s:%.0f:%.0f:%s,", $6, used, total, pct}' | sed 's/,$//' || echo "")`,
+        `disks=$(if dfraw=$(df -BG 2>/dev/null); then printf "%s\n" "$dfraw" | awk 'NR>1 && ($6 == "/" || ($1 ~ /^\\/dev/ && $6 !~ /^\\/(etc|proc|sys|dev)(\\/|$)/)) {gsub(/G/,"",$2); gsub(/G/,"",$3); gsub(/%/,"",$5); printf "%s:%s:%s:%s,", $6, $3, $2, $5}' | sed 's/,$//'; else df -kP 2>/dev/null | awk 'NR>1 && ($6 == "/" || ($1 ~ /^\\/dev/ && $6 !~ /^\\/(etc|proc|sys|dev)(\\/|$)/)) {total=$2/1048576; used=$3/1048576; pct=$5; gsub(/%/,"",pct); printf "%s:%.2f:%.2f:%s,", $6, used, total, pct}' | sed 's/,$//'; fi)`,
         // Get network interface stats from /proc/net/dev (interface:rx_bytes:tx_bytes), excluding lo and virtual interfaces
         `net=$(cat /proc/net/dev 2>/dev/null | awk 'NR>2 {gsub(/^[ \\t]+/, ""); split($0, a, ":"); iface=a[1]; if(iface != "lo" && iface !~ /^veth/ && iface !~ /^docker/ && iface !~ /^br-/) {split(a[2], b); printf "%s:%s:%s,", iface, b[1], b[9]}}' | sed 's/,$//' || echo "")`,
         `hostname_value=$(hostname 2>/dev/null || uname -n 2>/dev/null || echo "")`,
@@ -986,8 +986,8 @@ function createSessionOpsApi(ctx) {
                     const diskParts = entry.split(':');
                     if (diskParts.length >= 4) {
                       const mountPoint = diskParts[0];
-                      const used = parseInt(diskParts[1], 10);
-                      const total = parseInt(diskParts[2], 10);
+                      const used = parseFloat(diskParts[1]);
+                      const total = parseFloat(diskParts[2]);
                       const percent = parseInt(diskParts[3], 10);
                       if (!isNaN(used) && !isNaN(total) && !isNaN(percent)) {
                         disks.push({ mountPoint, used, total, percent });
