@@ -15,6 +15,28 @@ function portablePathKey(value: string): string {
     .normalize("NFKC");
 }
 
+function assertPortablePathSyntax(value: string, originalInput: string): string[] {
+  if (value.startsWith("/") || /^[A-Za-z]:/.test(value) || value.includes("\\")) {
+    throw new Error(`Package path must be relative POSIX syntax: ${originalInput}`);
+  }
+  const segments = value.split("/");
+  if (segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
+    throw new Error(`Package path contains an unsafe segment: ${originalInput}`);
+  }
+  for (const segment of segments) {
+    if (
+      segment.endsWith(".")
+      || segment.endsWith(" ")
+      || WINDOWS_RESERVED_NAME.test(segment)
+      || WINDOWS_SPECIAL.test(segment)
+      || containsControlCharacter(segment)
+    ) {
+      throw new Error(`Package path is not portable across supported platforms: ${originalInput}`);
+    }
+  }
+  return segments;
+}
+
 export function assertSafePackagePath(input: string): string {
   if (!input || input !== input.normalize("NFC")) {
     throw new Error(`Package path must be non-empty NFC text: ${JSON.stringify(input)}`);
@@ -27,23 +49,12 @@ export function assertSafePackagePath(input: string): string {
   if (Buffer.byteLength(input, "utf8") > PACKAGE_LIMITS.pathBytes) {
     throw new Error(`Package path exceeds ${PACKAGE_LIMITS.pathBytes} UTF-8 bytes: ${input}`);
   }
-  if (input.startsWith("/") || /^[A-Za-z]:/.test(input) || input.includes("\\")) {
-    throw new Error(`Package path must be relative POSIX syntax: ${input}`);
-  }
-  const segments = input.split("/");
-  if (segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
-    throw new Error(`Package path contains an unsafe segment: ${input}`);
-  }
-  for (const segment of segments) {
-    if (
-      segment.endsWith(".")
-      || segment.endsWith(" ")
-      || WINDOWS_RESERVED_NAME.test(segment)
-      || WINDOWS_SPECIAL.test(segment)
-      || containsControlCharacter(segment)
-    ) {
-      throw new Error(`Package path is not portable across supported platforms: ${input}`);
-    }
+  const rawSegments = assertPortablePathSyntax(input, input);
+  const compatibilitySegments = assertPortablePathSyntax(input.normalize("NFKC"), input);
+  if (compatibilitySegments.length !== rawSegments.length) {
+    throw new Error(
+      `Package path changes directory structure after Unicode compatibility normalization: ${input}`,
+    );
   }
   return input;
 }

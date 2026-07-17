@@ -140,11 +140,19 @@ test("path validation rejects traversal, platform aliases, and duplicates", () =
     "folder/file ",
     "folder/file?.js",
     "a//b",
+    "a／b",
+    "a＼b",
+    "．．/x",
+    "．．",
+    "Ｃ：/x",
+    "assets/ＣＯＮ.txt",
+    "file．",
     "😀".repeat(129),
   ]) {
     assert.throws(() => assertSafePackagePath(unsafe));
   }
   assert.equal(assertSafePackagePath("😀".repeat(128)), "😀".repeat(128));
+  assert.equal(assertSafePackagePath("assets/fullwidth-Ｓ.txt"), "assets/fullwidth-Ｓ.txt");
   const registry = new PackagePathRegistry();
   registry.add("dist/Plugin.js");
   assert.throws(() => registry.add("dist/plugin.js"), /case-colliding/);

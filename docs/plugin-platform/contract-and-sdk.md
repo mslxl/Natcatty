@@ -77,9 +77,11 @@ drive-letter paths, repeated separators, backslashes, `.` and `..` segments,
 Windows reserved names, control or platform-special characters, and
 platform-specific trailing dots or spaces. The semantic package validator also
 requires NFC-normalized text and uses conservative Unicode compatibility/case
-folding when detecting path aliases; every official host consumer must run it
-after schema validation because JSON Schema cannot express these filesystem
-rules.
+folding when detecting path aliases. It applies the same syntax and portability
+checks after Unicode compatibility normalization, so compatibility characters
+cannot introduce separators, traversal segments, drive prefixes, reserved
+names, or trailing dots. Every official host consumer must run it after schema
+validation because JSON Schema cannot express these filesystem rules.
 Every entrypoint, view document, package icon, and companion variant must exist
 in the package.
 
