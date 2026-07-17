@@ -482,6 +482,7 @@ function init(deps) {
   configureTerminalSessionDataEmitter({
     getSession: (sessionId) => sessions?.get(sessionId),
     outputChannel: terminalOutputChannel,
+    onSessionActivity: deps.reportOpenedSessionActivity,
   });
 }
 

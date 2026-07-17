@@ -4,14 +4,17 @@ import { useI18n } from "../../../../application/i18n/I18nProvider";
 import {
   normalizeExternalMcpIdleTimeoutMinutes,
   normalizeExternalMcpMode,
+  normalizeSessionIdleTimeoutMinutes,
   readExternalMcpIdleTimeoutMinutes,
   readExternalMcpMode,
+  readSessionIdleTimeoutMinutes,
   type ExternalMcpMode,
   useExternalMcpToggleState,
 } from "../../../../application/state/useExternalMcpToggleState";
 import {
   STORAGE_KEY_AI_EXTERNAL_MCP_IDLE_TIMEOUT_MINUTES,
   STORAGE_KEY_AI_EXTERNAL_MCP_MODE,
+  STORAGE_KEY_AI_SESSION_IDLE_TIMEOUT_MINUTES,
 } from "../../../../infrastructure/config/storageKeys";
 import { localStorageAdapter } from "../../../../infrastructure/persistence/localStorageAdapter";
 import { emitAIStateChanged } from "../../../../application/state/aiStateEvents";
@@ -94,6 +97,7 @@ type ExternalMcpStatus = {
   exposedSessionCount?: number;
   mode?: ExternalMcpMode;
   idleTimeoutMinutes?: number;
+  sessionIdleTimeoutMinutes?: number;
   permissionMode?: string;
   error?: string | null;
 };
@@ -295,6 +299,7 @@ export const ExternalMcpCard: React.FC = () => {
   const { enabled, setEnabled } = useExternalMcpToggleState();
   const [mode, setModeRaw] = useState<ExternalMcpMode>(() => readExternalMcpMode());
   const [idleTimeoutMinutes, setIdleTimeoutRaw] = useState<number>(() => readExternalMcpIdleTimeoutMinutes());
+  const [sessionIdleTimeoutMinutes, setSessionIdleTimeoutRaw] = useState<number>(() => readSessionIdleTimeoutMinutes());
   const [status, setStatus] = useState<ExternalMcpStatus | null>(null);
   const [selectedClient, setSelectedClient] = useState<ExternalMcpClient>("codex");
   const [codexStatus, setCodexStatus] = useState<ClientSetupStatus | null>(null);
@@ -308,10 +313,11 @@ export const ExternalMcpCard: React.FC = () => {
   const [actionMessage, setActionMessage] = useState<{ tone: "error" | "warning" | "success"; text: string } | null>(null);
   const bridgeUnavailableMessage = t("ai.externalMcp.bridgeUnavailable");
 
-  const pushConfig = useCallback((nextMode: ExternalMcpMode, nextIdle: number) => {
+  const pushConfig = useCallback((nextMode: ExternalMcpMode, nextIdle: number, nextSessionIdle: number) => {
     void getBridge()?.externalMcpSetConfig?.({
       mode: nextMode,
       idleTimeoutMinutes: nextIdle,
+      sessionIdleTimeoutMinutes: nextSessionIdle,
     });
   }, []);
 
@@ -320,16 +326,24 @@ export const ExternalMcpCard: React.FC = () => {
     setModeRaw(normalized);
     localStorageAdapter.writeString(STORAGE_KEY_AI_EXTERNAL_MCP_MODE, normalized);
     emitAIStateChanged(STORAGE_KEY_AI_EXTERNAL_MCP_MODE);
-    pushConfig(normalized, idleTimeoutMinutes);
-  }, [idleTimeoutMinutes, pushConfig]);
+    pushConfig(normalized, idleTimeoutMinutes, sessionIdleTimeoutMinutes);
+  }, [idleTimeoutMinutes, pushConfig, sessionIdleTimeoutMinutes]);
 
   const setIdleTimeoutMinutes = useCallback((minutes: number) => {
     const normalized = normalizeExternalMcpIdleTimeoutMinutes(minutes);
     setIdleTimeoutRaw(normalized);
     localStorageAdapter.writeNumber(STORAGE_KEY_AI_EXTERNAL_MCP_IDLE_TIMEOUT_MINUTES, normalized);
     emitAIStateChanged(STORAGE_KEY_AI_EXTERNAL_MCP_IDLE_TIMEOUT_MINUTES);
-    pushConfig(mode, normalized);
-  }, [mode, pushConfig]);
+    pushConfig(mode, normalized, sessionIdleTimeoutMinutes);
+  }, [mode, pushConfig, sessionIdleTimeoutMinutes]);
+
+  const setSessionIdleTimeoutMinutes = useCallback((minutes: number) => {
+    const normalized = normalizeSessionIdleTimeoutMinutes(minutes);
+    setSessionIdleTimeoutRaw(normalized);
+    localStorageAdapter.writeNumber(STORAGE_KEY_AI_SESSION_IDLE_TIMEOUT_MINUTES, normalized);
+    emitAIStateChanged(STORAGE_KEY_AI_SESSION_IDLE_TIMEOUT_MINUTES);
+    pushConfig(mode, idleTimeoutMinutes, normalized);
+  }, [idleTimeoutMinutes, mode, pushConfig]);
 
   const refreshStatus = useCallback(async (options?: { quiet?: boolean; clients?: boolean }) => {
     const bridge = getBridge();
@@ -409,7 +423,7 @@ export const ExternalMcpCard: React.FC = () => {
   }, [enabled, refreshStatus]);
 
   useEffect(() => {
-    pushConfig(mode, idleTimeoutMinutes);
+    pushConfig(mode, idleTimeoutMinutes, sessionIdleTimeoutMinutes);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps -- sync stored config once on mount
 
   const bridgeStatusView = useMemo(() => getBridgeStatusView(status, enabled), [enabled, status]);
@@ -705,6 +719,27 @@ export const ExternalMcpCard: React.FC = () => {
             </div>
           </div>
         ) : null}
+        <div className="flex items-center justify-between gap-4">
+          <div className="min-w-0">
+            <div className="text-sm font-medium">{t("ai.externalMcp.sessionIdleTimeout")}</div>
+            <div className="text-xs text-muted-foreground">{t("ai.externalMcp.sessionIdleTimeout.description")}</div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <input
+              type="number"
+              min={1}
+              max={24 * 60}
+              value={sessionIdleTimeoutMinutes}
+              onChange={(event) => {
+                const minutes = Number.parseInt(event.currentTarget.value, 10);
+                if (!Number.isFinite(minutes)) return;
+                setSessionIdleTimeoutMinutes(minutes);
+              }}
+              className="w-20 rounded-md border border-border/60 bg-background px-2 py-1 text-sm"
+            />
+            <span className="text-xs text-muted-foreground">{t("ai.externalMcp.idleTimeout.minutes")}</span>
+          </div>
+        </div>
       </div>
 
       <div className="space-y-2">

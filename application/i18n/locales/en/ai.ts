@@ -234,6 +234,8 @@ export const enAiMessages: Messages = {
   'ai.externalMcp.idleTimeout': 'Idle timeout',
   'ai.externalMcp.idleTimeout.description': 'In temporary mode, disable External MCP after this many minutes with no MCP operations.',
   'ai.externalMcp.idleTimeout.minutes': 'min',
+  'ai.externalMcp.sessionIdleTimeout': 'Opened session idle timeout',
+  'ai.externalMcp.sessionIdleTimeout.description': 'Automatically close sessions opened by an AI after this many minutes without terminal or file activity.',
   'ai.externalMcp.usage.title': 'How to use',
   'ai.externalMcp.usage.keepRunning': '1. Turn on External MCP and keep Netcatty running.',
   'ai.externalMcp.usage.localhost': '2. Clients connect via the local launcher (127.0.0.1 only). Discovery is removed when you disable the switch.',

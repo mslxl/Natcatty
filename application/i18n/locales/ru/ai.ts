@@ -202,6 +202,8 @@ export const ruAiMessages: Messages = {
   'ai.externalMcp.idleTimeout': 'Таймаут простоя',
   'ai.externalMcp.idleTimeout.description': 'В временном режиме отключить External MCP после указанного числа минут без MCP-операций.',
   'ai.externalMcp.idleTimeout.minutes': 'мин',
+  'ai.externalMcp.sessionIdleTimeout': 'Тайм-аут открытого сеанса',
+  'ai.externalMcp.sessionIdleTimeout.description': 'Автоматически закрывать сеансы, открытые ИИ, после указанного числа минут без операций терминала или файлов.',
   'ai.externalMcp.usage.title': 'Как пользоваться',
   'ai.externalMcp.usage.keepRunning': '1. Включите External MCP и держите Netcatty запущенным.',
   'ai.externalMcp.usage.localhost': '2. Клиенты подключаются через локальный launcher (только 127.0.0.1). Discovery удаляется при отключении.',

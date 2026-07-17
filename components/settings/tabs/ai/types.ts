@@ -128,6 +128,7 @@ export interface NetcattyAiBridge {
   externalMcpSetConfig?: (config: {
     mode?: 'temporary' | 'persistent';
     idleTimeoutMinutes?: number;
+    sessionIdleTimeoutMinutes?: number;
   }) => Promise<Record<string, unknown>>;
   externalMcpCodexGetStatus?: () => Promise<Record<string, unknown>>;
   externalMcpCodexAdd?: () => Promise<Record<string, unknown>>;

@@ -423,6 +423,63 @@ test("MCP/Catty terminal_start, poll, and stop proxy worker background jobs", as
   });
 });
 
+test("idle cleanup drops completed worker jobs even when the agent never polled them", async () => {
+  const requests = [];
+  const bridge = loadFreshBridge();
+  bridge.init({
+    sessions: new Map(),
+    electronModule: null,
+    terminalWorkerManager: {
+      request(channel, payload) {
+        requests.push({ channel, payload });
+        if (channel === "netcatty:ai:jobStart") {
+          return Promise.resolve({
+            ok: true,
+            jobId: "worker-job-unpolled",
+            sessionId: payload.sessionId,
+            status: "running",
+          });
+        }
+        if (channel === "netcatty:ai:jobPoll") {
+          return Promise.resolve({
+            ok: true,
+            jobId: payload.jobId,
+            sessionId: payload.sessionId,
+            status: "completed",
+            completed: true,
+          });
+        }
+        return Promise.reject(new Error(`unexpected worker request: ${channel}`));
+      },
+    },
+  });
+  bridge.setPermissionMode("auto");
+  bridge.setCommandBlocklist([]);
+  bridge.updateSessionMetadata([
+    { sessionId: "ssh-unpolled", protocol: "ssh", connected: true },
+  ], "chat-unpolled");
+
+  const started = await bridge.dispatchBuiltinRpc("netcatty/jobStart", {
+    sessionId: "ssh-unpolled",
+    command: "sleep 1",
+    chatSessionId: "chat-unpolled",
+  });
+  assert.equal(started.ok, true);
+
+  assert.equal(await bridge.hasActiveWorkerJobForTerminalSession("ssh-unpolled"), false);
+  assert.deepEqual(requests.map((entry) => entry.channel), [
+    "netcatty:ai:jobStart",
+    "netcatty:ai:jobPoll",
+  ]);
+
+  const stalePoll = await bridge.dispatchBuiltinRpc("netcatty/jobPoll", {
+    jobId: "worker-job-unpolled",
+    chatSessionId: "chat-unpolled",
+  });
+  assert.equal(stalePoll.ok, false);
+  assert.match(stalePoll.error, /not found/i);
+});
+
 test("MCP/Catty chat cancellation forwards to worker background jobs", async () => {
   const requests = [];
   const sends = [];

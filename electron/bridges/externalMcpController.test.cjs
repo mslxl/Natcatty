@@ -13,6 +13,7 @@ const {
 
 function createFakeBridge({ port = 45555, token = "tok-1" } = {}) {
   const scoped = new Map();
+  const sessionIdleTimeouts = [];
   return {
     getOrCreateHost: async () => port,
     issueExternalMcpAuthToken: () => token,
@@ -39,7 +40,9 @@ function createFakeBridge({ port = 45555, token = "tok-1" } = {}) {
     setChatSessionCancelled: () => {},
     clearPendingApprovals: () => {},
     disconnectExternalMcpClients: () => {},
+    setSessionIdleTimeoutMinutes: (minutes) => sessionIdleTimeouts.push(minutes),
     _scoped: scoped,
+    _sessionIdleTimeouts: sessionIdleTimeouts,
   };
 }
 
@@ -165,6 +168,14 @@ describe("externalMcpController", () => {
     await controller.setEnabled(true);
     assert.equal(scheduled, 0);
     assert.equal(controller.getStatus().mode, "persistent");
+  });
+
+  it("syncs the opened-session idle timeout to the MCP bridge", () => {
+    const { controller, bridge } = createController();
+    const status = controller.setConfig({ sessionIdleTimeoutMinutes: 45 });
+
+    assert.equal(status.sessionIdleTimeoutMinutes, 45);
+    assert.deepEqual(bridge._sessionIdleTimeouts, [45]);
   });
 
   it("serializes overlapping enable/disable so final enable recovers", async () => {

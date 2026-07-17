@@ -4,6 +4,7 @@ import {
   createExternalMcpStartupSyncPlan,
   normalizeExternalMcpIdleTimeoutMinutes,
   normalizeExternalMcpMode,
+  normalizeSessionIdleTimeoutMinutes,
   shouldStartExternalMcpOnStartup,
 } from './useExternalMcpToggleState.ts';
 
@@ -14,6 +15,8 @@ describe('useExternalMcpToggleState helpers', () => {
     assert.equal(normalizeExternalMcpIdleTimeoutMinutes(null), 10);
     assert.equal(normalizeExternalMcpIdleTimeoutMinutes(0), 1);
     assert.equal(normalizeExternalMcpIdleTimeoutMinutes(99999), 24 * 60);
+    assert.equal(normalizeSessionIdleTimeoutMinutes(null), 30);
+    assert.equal(normalizeSessionIdleTimeoutMinutes(0), 1);
   });
 
   it('only starts on launch for persistent+enabled', () => {
@@ -27,11 +30,13 @@ describe('useExternalMcpToggleState helpers', () => {
       enabled: true,
       mode: 'temporary',
       idleTimeoutMinutes: 15,
+      sessionIdleTimeoutMinutes: 30,
     });
     assert.equal(plan.runtimeEnabled, false);
     assert.equal(plan.storedEnabled, false);
     assert.equal(plan.shouldPersistStoredEnabled, true);
     assert.equal(plan.config.idleTimeoutMinutes, 15);
+    assert.equal(plan.config.sessionIdleTimeoutMinutes, 30);
   });
 
   it('startup sync plan keeps persistent enabled', () => {
@@ -39,6 +44,7 @@ describe('useExternalMcpToggleState helpers', () => {
       enabled: true,
       mode: 'persistent',
       idleTimeoutMinutes: 20,
+      sessionIdleTimeoutMinutes: 45,
     });
     assert.equal(plan.runtimeEnabled, true);
     assert.equal(plan.storedEnabled, true);

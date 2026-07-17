@@ -9,6 +9,7 @@ const {
 
 let getSession = null;
 let outputChannel = null;
+let onSessionActivity = null;
 /** @type {Set<(sessionId: string, data: string) => void>} */
 const dataTaps = new Set();
 const emitPerfLogStateBySession = new Map();
@@ -16,6 +17,9 @@ const emitPerfLogStateBySession = new Map();
 function configureTerminalSessionDataEmitter(options = {}) {
   getSession = typeof options.getSession === "function" ? options.getSession : null;
   outputChannel = options.outputChannel || null;
+  onSessionActivity = typeof options.onSessionActivity === "function"
+    ? options.onSessionActivity
+    : null;
 }
 
 function addTerminalDataTap(listener) {
@@ -72,6 +76,13 @@ function getEmitPerfLogDetails(sessionId, terminalPerf, options = {}) {
 }
 
 function emitTerminalSessionData(contents, sessionId, data, options = {}) {
+  if (sessionId && data && onSessionActivity) {
+    try {
+      onSessionActivity({ sessionId, phase: "touch" });
+    } catch {
+      // Session activity tracking is best-effort and must not break output.
+    }
+  }
   if (getSession && sessionId && data) {
     const session = getSession(sessionId);
     if (session) {
