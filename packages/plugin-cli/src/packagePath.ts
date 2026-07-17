@@ -41,17 +41,43 @@ export function assertSafePackagePath(input: string): string {
 }
 
 export class PackagePathRegistry {
-  readonly #exact = new Set<string>();
-  readonly #portable = new Set<string>();
+  readonly #filesExact = new Set<string>();
+  readonly #filesPortable = new Set<string>();
+  readonly #directoriesExact = new Set<string>();
+  readonly #directoriesPortable = new Set<string>();
 
   add(input: string): string {
     const safePath = assertSafePackagePath(input);
     const portableKey = safePath.toLowerCase();
-    if (this.#exact.has(safePath) || this.#portable.has(portableKey)) {
+    if (this.#filesExact.has(safePath) || this.#filesPortable.has(portableKey)) {
       throw new Error(`Duplicate or case-colliding package path: ${safePath}`);
     }
-    this.#exact.add(safePath);
-    this.#portable.add(portableKey);
+    if (
+      this.#directoriesExact.has(safePath)
+      || this.#directoriesPortable.has(portableKey)
+    ) {
+      throw new Error(`File/directory package path collision: ${safePath}`);
+    }
+
+    const segments = safePath.split("/");
+    const ancestors: string[] = [];
+    for (let index = 1; index < segments.length; index += 1) {
+      const ancestor = segments.slice(0, index).join("/");
+      if (
+        this.#filesExact.has(ancestor)
+        || this.#filesPortable.has(ancestor.toLowerCase())
+      ) {
+        throw new Error(`File/directory package path collision: ${safePath}`);
+      }
+      ancestors.push(ancestor);
+    }
+
+    this.#filesExact.add(safePath);
+    this.#filesPortable.add(portableKey);
+    for (const ancestor of ancestors) {
+      this.#directoriesExact.add(ancestor);
+      this.#directoriesPortable.add(ancestor.toLowerCase());
+    }
     return safePath;
   }
 }

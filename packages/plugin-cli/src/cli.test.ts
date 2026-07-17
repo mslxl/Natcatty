@@ -66,6 +66,20 @@ test("path validation rejects traversal, platform aliases, and duplicates", () =
   const registry = new PackagePathRegistry();
   registry.add("dist/Plugin.js");
   assert.throws(() => registry.add("dist/plugin.js"), /case-colliding/);
+
+  for (const paths of [
+    ["dist", "dist/index.js"],
+    ["dist/index.js", "dist"],
+    ["DIST", "dist/index.js"],
+    ["dist/index.js", "DIST"],
+  ]) {
+    const collisionRegistry = new PackagePathRegistry();
+    collisionRegistry.add(paths[0]);
+    assert.throws(
+      () => collisionRegistry.add(paths[1]),
+      /File\/directory package path collision/,
+    );
+  }
 });
 
 test("manifest validation reports permission and contribution mistakes", () => {
@@ -123,6 +137,11 @@ test("archive validation rejects duplicate names and CRC corruption", async (con
     writeFile(path.join(directory, "a.txt"), "first\n"),
     writeFile(path.join(directory, "b.txt"), "second\n"),
   ]);
+  await mkdir(path.join(directory, "bbbbb"));
+  await Promise.all([
+    writeFile(path.join(directory, "aaaaa"), "parent-file\n"),
+    writeFile(path.join(directory, "bbbbb/file"), "child-file\n"),
+  ]);
   const validPath = path.join(root, "valid.ncpkg");
   await buildPluginPackage(directory, validPath);
   const validBytes = await readFile(validPath);
@@ -140,6 +159,26 @@ test("archive validation rejects duplicate names and CRC corruption", async (con
   const duplicatePath = path.join(root, "duplicate.ncpkg");
   await writeFile(duplicatePath, duplicateBytes);
   await assert.rejects(validatePluginPackage(duplicatePath), /Duplicate or case-colliding/);
+
+  const prefixCollisionBytes = Buffer.from(validBytes);
+  let prefixReplacements = 0;
+  for (const [source, target] of [
+    [Buffer.from("aaaaa"), Buffer.from("distx")],
+    [Buffer.from("bbbbb/file"), Buffer.from("distx/file")],
+  ]) {
+    for (let offset = prefixCollisionBytes.indexOf(source); offset !== -1;) {
+      target.copy(prefixCollisionBytes, offset);
+      prefixReplacements += 1;
+      offset = prefixCollisionBytes.indexOf(source, offset + source.byteLength);
+    }
+  }
+  assert.equal(prefixReplacements, 4, "ZIP should contain both local and central names");
+  const prefixCollisionPath = path.join(root, "prefix-collision.ncpkg");
+  await writeFile(prefixCollisionPath, prefixCollisionBytes);
+  await assert.rejects(
+    validatePluginPackage(prefixCollisionPath),
+    /File\/directory package path collision/,
+  );
 
   const corruptedBytes = Buffer.from(validBytes);
   const content = Buffer.from("# Package test\n");
