@@ -51,6 +51,7 @@ import {
   getTypeMenuLabel,
   NewFormPanel,
   RuleCard,
+  stopRuntimeTunnelBeforeDelete,
   WizardContent,
 } from "./port-forwarding";
 
@@ -450,9 +451,12 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
 
     setIsDeleting(true);
     try {
-      if (ruleToDelete.status === "active" || ruleToDelete.status === "connecting") {
-        await stopTunnel(ruleToDelete.id);
-      }
+      const stopped = await stopRuntimeTunnelBeforeDelete(
+        ruleToDelete.id,
+        hasRuntimeTunnel,
+        stopTunnel,
+      );
+      if (!stopped) return;
       if (editingRule?.id === ruleToDelete.id) {
         closeEditPanel();
       }
@@ -462,9 +466,11 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
       setShowDeleteConfirm(false);
       setRuleToDelete(null);
     }
-  }, [ruleToDelete, stopTunnel, deleteRule, editingRule, closeEditPanel]);
+  }, [ruleToDelete, hasRuntimeTunnel, stopTunnel, deleteRule, editingRule, closeEditPanel]);
 
-  const deleteTargetIsActive = ruleToDelete?.status === "active" || ruleToDelete?.status === "connecting";
+  const deleteTargetIsActive = Boolean(
+    ruleToDelete && hasRuntimeTunnel(ruleToDelete.id),
+  );
 
   // Handle wizard navigation
   // Flow for local: type -> local-config -> destination -> host-selection

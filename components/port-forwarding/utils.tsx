@@ -65,6 +65,15 @@ export function buildRuleSummary(
   }
 }
 
+export async function stopRuntimeTunnelBeforeDelete(
+  ruleId: string,
+  hasRuntimeTunnel: (ruleId: string) => boolean,
+  stopTunnel: (ruleId: string) => Promise<{ success: boolean }>,
+): Promise<boolean> {
+  if (!hasRuntimeTunnel(ruleId)) return true;
+  return (await stopTunnel(ruleId)).success;
+}
+
 /**
  * Get status color class for a rule
  */

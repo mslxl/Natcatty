@@ -95,6 +95,11 @@ export const getAutoStartRuleBlockReason = (
   return undefined;
 };
 
+export const isPortForwardingAutoStartEnabled = (
+  rules: PortForwardingRule[],
+  ruleId: string,
+): boolean => rules.some((rule) => rule.id === ruleId && rule.autoStart === true);
+
 /**
  * Auto-starts port forwarding rules that have autoStart enabled.
  * This hook should be called at the App level to run on app launch.
@@ -279,9 +284,11 @@ export const usePortForwardingAutoStart = ({
 
       // First sync with backend to get any active tunnels and subscribe this
       // renderer to their later disconnect/error events.
-      const rulesById = new Map(rules.map((rule) => [rule.id, rule]));
       await syncWithBackend({
-        shouldReconnect: (ruleId) => rulesById.get(ruleId)?.autoStart === true,
+        shouldReconnect: (ruleId) => isPortForwardingAutoStartEnabled(
+          localStorageAdapter.read<PortForwardingRule[]>(STORAGE_KEY_PORT_FORWARDING) ?? [],
+          ruleId,
+        ),
         onStatusChange: (ruleId, status, error) => {
           updateStoredRuleStatus(ruleId, status, error);
         },
