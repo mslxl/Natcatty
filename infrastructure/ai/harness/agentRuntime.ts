@@ -67,6 +67,10 @@ export class AgentRuntime {
     globalTerminalMonitorGuard.clearPrefix(`${chatSessionId}:`);
   }
 
+  clearTerminalSession(terminalSessionId: string): void {
+    this.toolOutputStore.pruneTerminalSessionEverywhere(terminalSessionId);
+  }
+
   async waitForActiveTurn(chatSessionId: string): Promise<void> {
     await this.activeTurnPromises.get(chatSessionId)?.catch(() => {});
   }
@@ -169,7 +173,7 @@ export class AgentRuntime {
             && (toolName === 'session_close' || toolName === 'session.close')
             && typeof meta?.args.sessionId === 'string'
           ) {
-            toolOutputStore.pruneTerminalSession(chatSessionId, meta.args.sessionId);
+            toolOutputStore.pruneTerminalSessionEverywhere(meta.args.sessionId);
           }
         }
       }

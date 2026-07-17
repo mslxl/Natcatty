@@ -576,6 +576,9 @@ function createCatalogTool(spec: CattyToolSpec) {
                   '',
                   `[monitor batch archived before shortening: rawChars=${poll.output.length} handleId=${handle.id}]`,
                   'Use tool_output_read with this handleId to search/read omitted details; the terminal nextOffset already advances past the raw batch.',
+                  ...(!toolOutputStore.isRestartPersistenceAvailable()
+                    ? ['Secure local storage is unavailable, so read this handle before closing the app.']
+                    : []),
                 ].join('\n');
               }
               poll = { ...poll, output };
@@ -664,7 +667,9 @@ function createCatalogTool(spec: CattyToolSpec) {
                 preview: handle.preview,
                 totalChars: handle.totalChars,
                 handleId: handle.id,
-                note: 'Full file content stored. Use tool_output_read with this handleId to read more.',
+                note: toolOutputStore.isRestartPersistenceAvailable()
+                  ? 'Full file content stored. Use tool_output_read with this handleId to read more.'
+                  : 'Full file content is available only until the app closes because secure local storage is unavailable. Use tool_output_read now.',
               };
             }
           }
@@ -688,6 +693,9 @@ function createCatalogTool(spec: CattyToolSpec) {
         }
         return fittedRaw;
       } finally {
+        if (toolOutputStore && deps.chatSessionId) {
+          await toolOutputStore.flush(deps.chatSessionId);
+        }
         slot?.release();
       }
     },

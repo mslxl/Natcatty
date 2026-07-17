@@ -1,5 +1,6 @@
 export interface ToolOutputHandle {
   id: string;
+  chatSessionId: string;
   capabilityId: string;
   sessionId?: string;
   totalChars: number;
@@ -12,6 +13,20 @@ export interface ToolOutputHandle {
   filePath?: string;
   spillPromise?: Promise<void>;
   evicted?: boolean;
+}
+
+export interface PersistedToolOutputRecord {
+  schemaVersion: 1;
+  handleId: string;
+  chatSessionId: string;
+  capabilityId: string;
+  terminalSessionId?: string;
+  totalChars: number;
+  storedChars: number;
+  sourceTruncated: boolean;
+  preview: string;
+  storedAt: number;
+  accessedAt: number;
 }
 
 export interface StoreToolOutputInput {
@@ -51,14 +66,20 @@ export const TOOL_OUTPUT_MAX_CHARS_PER_SESSION = 8_000_000;
 export const TOOL_OUTPUT_MAX_HANDLES_GLOBAL = 256;
 export const TOOL_OUTPUT_MAX_CHARS_GLOBAL = 32_000_000;
 export const TOOL_OUTPUT_TTL_MS = 30 * 60 * 1_000;
-export const TOOL_OUTPUT_SPILL_THRESHOLD_CHARS = 128_000;
+export const TOOL_OUTPUT_SPILL_THRESHOLD_CHARS = 0;
 const TOOL_OUTPUT_SEARCH_CONTEXT_CHARS = 320;
 const TOOL_OUTPUT_SEARCH_MAX_MATCHES = 20;
 
 export interface ToolOutputPersistence {
-  write(handleId: string, content: string): Promise<string>;
+  write(record: PersistedToolOutputRecord, content: string): Promise<string>;
+  restore?(
+    handleId: string,
+    chatSessionId: string,
+  ): Promise<{ path: string; record: PersistedToolOutputRecord } | null>;
   read(path: string, input: ReadToolOutputInput): Promise<Omit<ToolOutputReadResult, 'handleId' | 'storedChars' | 'sourceTruncated'> | null>;
   delete(path: string): Promise<void>;
+  deleteSession?(chatSessionId: string): Promise<void>;
+  deleteTerminalSession?(chatSessionId: string, terminalSessionId: string): Promise<void>;
 }
 
 export interface ToolOutputStoreOptions {
@@ -109,7 +130,14 @@ export class ToolOutputStore {
   private readonly ttlMs: number;
   private readonly spillThresholdChars: number;
   private readonly now: () => number;
+  private readonly restorePromises = new Map<string, Promise<ToolOutputHandle | undefined>>();
+  private readonly sessionGenerations = new Map<string, number>();
+  private readonly sessionDeletionPromises = new Map<string, Promise<void>>();
+  private readonly terminalMutationGenerations = new Map<string, number>();
+  private readonly deletedTerminalSessions = new Set<string>();
+  private readonly closedTerminalSessions = new Set<string>();
   private persistence?: ToolOutputPersistence;
+  private restartPersistenceAvailable = false;
 
   constructor(options: ToolOutputStoreOptions = {}) {
     this.maxHandleChars = options.maxHandleChars ?? TOOL_OUTPUT_MAX_HANDLE_CHARS;
@@ -123,8 +151,13 @@ export class ToolOutputStore {
     this.persistence = options.persistence;
   }
 
-  setPersistence(persistence: ToolOutputPersistence | undefined): void {
+  setPersistence(persistence: ToolOutputPersistence | undefined, restartPersistenceAvailable = Boolean(persistence)): void {
     this.persistence = persistence;
+    this.restartPersistenceAvailable = restartPersistenceAvailable;
+  }
+
+  isRestartPersistenceAvailable(): boolean {
+    return this.restartPersistenceAvailable;
   }
 
   store(input: StoreToolOutputInput): ToolOutputHandle {
@@ -133,6 +166,7 @@ export class ToolOutputStore {
     const now = this.now();
     const handle: ToolOutputHandle = {
       id: nextHandleId(),
+      chatSessionId: input.chatSessionId,
       capabilityId: input.capabilityId,
       sessionId: input.sessionId,
       totalChars: input.content.length,
@@ -143,6 +177,11 @@ export class ToolOutputStore {
       accessedAt: now,
       fullContent: retainedContent,
     };
+    if (input.sessionId && this.closedTerminalSessions.has(input.sessionId)) {
+      handle.evicted = true;
+      handle.fullContent = undefined;
+      return handle;
+    }
     const sessionMap = this.bySession.get(input.chatSessionId) ?? new Map<string, ToolOutputHandle>();
     sessionMap.set(handle.id, handle);
     this.bySession.set(input.chatSessionId, sessionMap);
@@ -174,6 +213,11 @@ export class ToolOutputStore {
     return [...(this.bySession.get(chatSessionId)?.values() ?? [])];
   }
 
+  async flush(chatSessionId: string): Promise<void> {
+    const handles = [...(this.bySession.get(chatSessionId)?.values() ?? [])];
+    await Promise.allSettled(handles.map(handle => handle.spillPromise));
+  }
+
   read(input: ReadToolOutputInput, chatSessionId?: string): string | null {
     return this.readChunk(input, chatSessionId)?.content ?? null;
   }
@@ -186,13 +230,19 @@ export class ToolOutputStore {
   }
 
   async readChunkAsync(input: ReadToolOutputInput, chatSessionId?: string): Promise<ToolOutputReadResult | null> {
-    const handle = this.get(input.handleId, chatSessionId);
+    let handle = this.get(input.handleId, chatSessionId);
+    if (!handle && chatSessionId) {
+      handle = await this.restoreHandle(input.handleId, chatSessionId);
+    }
     if (!handle) return null;
     await handle.spillPromise;
     if (handle.fullContent != null) return buildReadResult(handle, handle.fullContent, input);
     if (!handle.filePath || !this.persistence) return null;
     const persisted = await this.persistence.read(handle.filePath, input);
-    if (!persisted) return null;
+    if (!persisted) {
+      this.removeHandle(handle);
+      return null;
+    }
     return {
       ...persisted,
       handleId: handle.id,
@@ -203,29 +253,60 @@ export class ToolOutputStore {
   }
 
   prune(chatSessionId: string): void {
+    this.sessionGenerations.set(chatSessionId, (this.sessionGenerations.get(chatSessionId) ?? 0) + 1);
+    for (const key of this.deletedTerminalSessions) {
+      if (key.startsWith(`${chatSessionId}:`)) this.deletedTerminalSessions.delete(key);
+    }
     const sessionMap = this.bySession.get(chatSessionId);
     if (sessionMap) {
       for (const handle of sessionMap.values()) this.evictHandle(handle);
     }
     this.bySession.delete(chatSessionId);
+    const deletion = this.persistence?.deleteSession?.(chatSessionId)
+      .catch(() => {})
+      .then(() => {});
+    if (deletion) {
+      this.sessionDeletionPromises.set(chatSessionId, deletion);
+      void deletion.finally(() => {
+        if (this.sessionDeletionPromises.get(chatSessionId) === deletion) {
+          this.sessionDeletionPromises.delete(chatSessionId);
+        }
+      });
+    }
   }
 
   pruneTerminalSession(chatSessionId: string, terminalSessionId: string): void {
+    const terminalKey = `${chatSessionId}:${terminalSessionId}`;
+    this.deletedTerminalSessions.add(terminalKey);
+    this.terminalMutationGenerations.set(
+      terminalKey,
+      (this.terminalMutationGenerations.get(terminalKey) ?? 0) + 1,
+    );
     const sessionMap = this.bySession.get(chatSessionId);
-    if (!sessionMap) return;
-    for (const [handleId, handle] of sessionMap) {
-      if (handle.sessionId !== terminalSessionId) continue;
-      sessionMap.delete(handleId);
-      this.evictHandle(handle);
+    if (sessionMap) {
+      for (const [handleId, handle] of sessionMap) {
+        if (handle.sessionId !== terminalSessionId) continue;
+        sessionMap.delete(handleId);
+        this.evictHandle(handle);
+      }
+      if (sessionMap.size === 0) this.bySession.delete(chatSessionId);
     }
-    if (sessionMap.size === 0) this.bySession.delete(chatSessionId);
+    void this.persistence?.deleteTerminalSession?.(chatSessionId, terminalSessionId).catch(() => {});
+  }
+
+  pruneTerminalSessionEverywhere(terminalSessionId: string): void {
+    this.closedTerminalSessions.add(terminalSessionId);
+    const chatSessionIds = [...this.bySession.keys()];
+    for (const chatSessionId of chatSessionIds) {
+      this.pruneTerminalSession(chatSessionId, terminalSessionId);
+    }
   }
 
   private startSpill(handle: ToolOutputHandle): void {
     if (!this.persistence || (handle.fullContent?.length ?? 0) < this.spillThresholdChars) return;
     const persistence = this.persistence;
     const content = handle.fullContent!;
-    handle.spillPromise = persistence.write(handle.id, content).then(async path => {
+    handle.spillPromise = persistence.write(toPersistedRecord(handle), content).then(async path => {
       if (handle.evicted) {
         await persistence.delete(path);
         return;
@@ -257,7 +338,7 @@ export class ToolOutputStore {
       for (const [handleId, handle] of sessionMap) {
         if (handle.accessedAt > cutoff) continue;
         sessionMap.delete(handleId);
-        this.evictHandle(handle);
+        if (!handle.filePath) this.evictHandle(handle);
       }
       if (sessionMap.size === 0) this.bySession.delete(chatSessionId);
     }
@@ -285,6 +366,127 @@ export class ToolOutputStore {
       void this.persistence.delete(handle.filePath).catch(() => {});
     }
   }
+
+  private async restoreHandle(handleId: string, chatSessionId: string): Promise<ToolOutputHandle | undefined> {
+    if (!this.persistence?.restore) return undefined;
+    const pendingDeletion = this.sessionDeletionPromises.get(chatSessionId);
+    if (pendingDeletion) await pendingDeletion;
+    const key = `${chatSessionId}:${handleId}`;
+    const pending = this.restorePromises.get(key);
+    if (pending) return pending;
+
+    const generation = this.sessionGenerations.get(chatSessionId) ?? 0;
+    const terminalMutationGenerations = new Map(this.terminalMutationGenerations);
+    const restorePromise = this.restoreHandleImpl(
+      handleId,
+      chatSessionId,
+      generation,
+      terminalMutationGenerations,
+    ).finally(() => {
+      this.restorePromises.delete(key);
+    });
+    this.restorePromises.set(key, restorePromise);
+    return restorePromise;
+  }
+
+  private async restoreHandleImpl(
+    handleId: string,
+    chatSessionId: string,
+    generation: number,
+    terminalMutationGenerations: Map<string, number>,
+  ): Promise<ToolOutputHandle | undefined> {
+    const restored = await this.persistence?.restore?.(handleId, chatSessionId);
+    if (!restored || !isValidPersistedRecord(restored.record, handleId, chatSessionId)) return undefined;
+    const restoredTerminalKey = restored.record.terminalSessionId
+      ? `${chatSessionId}:${restored.record.terminalSessionId}`
+      : undefined;
+    if (
+      (this.sessionGenerations.get(chatSessionId) ?? 0) !== generation
+      || (
+        restoredTerminalKey
+        && (this.terminalMutationGenerations.get(restoredTerminalKey) ?? 0)
+          !== (terminalMutationGenerations.get(restoredTerminalKey) ?? 0)
+      )
+      || (
+        restoredTerminalKey
+        && this.deletedTerminalSessions.has(restoredTerminalKey)
+      )
+      || (
+        restored.record.terminalSessionId
+        && this.closedTerminalSessions.has(restored.record.terminalSessionId)
+      )
+    ) {
+      void this.persistence?.delete(restored.path).catch(() => {});
+      return undefined;
+    }
+
+    const record = restored.record;
+    const handle: ToolOutputHandle = {
+      id: record.handleId,
+      chatSessionId: record.chatSessionId,
+      capabilityId: record.capabilityId,
+      sessionId: record.terminalSessionId,
+      totalChars: record.totalChars,
+      storedChars: record.storedChars,
+      sourceTruncated: record.sourceTruncated,
+      preview: record.preview,
+      storedAt: record.storedAt,
+      accessedAt: this.now(),
+      filePath: restored.path,
+    };
+    const sessionMap = this.bySession.get(chatSessionId) ?? new Map<string, ToolOutputHandle>();
+    const existing = sessionMap.get(handleId);
+    if (existing) return existing;
+    sessionMap.set(handleId, handle);
+    this.bySession.set(chatSessionId, sessionMap);
+    this.enforceSessionLimits(chatSessionId, sessionMap);
+    this.enforceGlobalLimits();
+    return sessionMap.get(handleId);
+  }
+
+  private removeHandle(handle: ToolOutputHandle): void {
+    const sessionMap = this.bySession.get(handle.chatSessionId);
+    sessionMap?.delete(handle.id);
+    if (sessionMap?.size === 0) this.bySession.delete(handle.chatSessionId);
+    this.evictHandle(handle);
+  }
+}
+
+function toPersistedRecord(handle: ToolOutputHandle): PersistedToolOutputRecord {
+  return {
+    schemaVersion: 1,
+    handleId: handle.id,
+    chatSessionId: handle.chatSessionId,
+    capabilityId: handle.capabilityId,
+    terminalSessionId: handle.sessionId,
+    totalChars: handle.totalChars,
+    storedChars: handle.storedChars,
+    sourceTruncated: handle.sourceTruncated,
+    preview: handle.preview,
+    storedAt: handle.storedAt,
+    accessedAt: handle.accessedAt,
+  };
+}
+
+function isValidPersistedRecord(
+  record: PersistedToolOutputRecord,
+  handleId: string,
+  chatSessionId: string,
+): boolean {
+  return record?.schemaVersion === 1
+    && record.handleId === handleId
+    && record.chatSessionId === chatSessionId
+    && typeof record.capabilityId === 'string'
+    && record.capabilityId.length > 0
+    && Number.isFinite(record.totalChars)
+    && record.totalChars >= 0
+    && Number.isFinite(record.storedChars)
+    && record.storedChars >= 0
+    && record.storedChars <= TOOL_OUTPUT_MAX_HANDLE_CHARS
+    && typeof record.sourceTruncated === 'boolean'
+    && typeof record.preview === 'string'
+    && Number.isFinite(record.storedAt)
+    && Number.isFinite(record.accessedAt);
 }
 
 function retainBoundedContent(content: string, maxChars: number): string {

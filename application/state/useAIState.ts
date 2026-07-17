@@ -49,12 +49,14 @@ import {
 } from './aiDraftState';
 import { convertFilesToUploads } from './useFileUpload';
 import { removeProviderReferences } from './aiProviderCleanup';
+import { getAgentRuntime } from '../../infrastructure/ai/harness/globalAgentRuntime';
 
 import {
   AI_STATE_CHANGED_DRAFTS_BY_SCOPE,
   AI_STATE_CHANGED_PANEL_VIEW_BY_SCOPE,
   bumpDraftMutationVersion,
   bumpDraftUploadGeneration,
+  cleanupDeletedAIChatSessions,
   cleanupSdkAgentSessions,
   cleanupOrphanedAISessions,
   getAIBridge,
@@ -620,7 +622,7 @@ export function useAIState() {
   }, [defaultAgentId, persistSessions, setActiveSessionId]);
 
   const deleteSession = useCallback((sessionId: string, scopeKey?: string) => {
-    cleanupSdkAgentSessions([sessionId]);
+    cleanupDeletedAIChatSessions([sessionId]);
     if (persistTimerRef.current) {
       clearTimeout(persistTimerRef.current);
       persistTimerRef.current = null;
@@ -662,7 +664,7 @@ export function useAIState() {
     const removedSessionIds = sessionsRef.current
       .filter(s => s.scope.type === scopeType && s.scope.targetId === targetId)
       .map(s => s.id);
-    cleanupSdkAgentSessions(removedSessionIds);
+    cleanupDeletedAIChatSessions(removedSessionIds);
     if (persistTimerRef.current) {
       clearTimeout(persistTimerRef.current);
       persistTimerRef.current = null;
@@ -765,6 +767,8 @@ export function useAIState() {
   }, [debouncedPersistSessions]);
 
   const clearSessionMessages = useCallback((sessionId: string) => {
+    getAgentRuntime().clearChatSession(sessionId);
+    void getAIBridge()?.deleteChatToolOutputsTemp?.(sessionId).catch(() => {});
     if (persistTimerRef.current) {
       clearTimeout(persistTimerRef.current);
       persistTimerRef.current = null;
