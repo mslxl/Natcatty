@@ -173,19 +173,33 @@ test("stopPortForward keeps the live status when backend cleanup fails", async (
           statusListener = listener;
           return () => undefined;
         },
-        stopPortForwardByRuleId: async () => ({
-          stopped: 0,
-          failed: 1,
-          errors: ["listener close failed"],
-        }),
+        stopPortForwardByRuleId: async () => {
+          statusListener?.("error", "listener close failed");
+          return {
+            stopped: 0,
+            failed: 1,
+            errors: ["listener close failed"],
+          };
+        },
       },
     },
   });
 
   const liveRule = rule({ id: "stop-failure-rule" });
-  await startPortForward(liveRule, host(), [], [], [], () => undefined);
+  const runtimeStatuses: string[] = [];
+  setReconnectCallback(async () => ({ success: true }));
+  await startPortForward(
+    liveRule,
+    host(),
+    [],
+    [],
+    [],
+    (status) => runtimeStatuses.push(status),
+    true,
+  );
   statusListener?.("active");
   t.after(async () => {
+    setReconnectCallback(null);
     Object.defineProperty(globalThis, "window", {
       configurable: true,
       value: {
@@ -202,7 +216,9 @@ test("stopPortForward keeps the live status when backend cleanup fails", async (
 
   assert.equal(result.success, false);
   assert.match(result.error ?? "", /listener close failed/);
+  assert.equal(runtimeStatuses.at(-1), "connecting");
   assert.equal(getActiveConnection(liveRule.id)?.status, "error");
+  assert.equal(getActiveConnection(liveRule.id)?.reconnectTimeoutId, undefined);
   assert.deepEqual(statuses, ["error"]);
 });
 

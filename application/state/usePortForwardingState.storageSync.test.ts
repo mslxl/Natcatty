@@ -7,7 +7,10 @@ import {
   startPortForward,
   stopAndCleanupRuleAndWait,
 } from "../../infrastructure/services/portForwardingService.ts";
-import { createPortForwardingStorageSyncHandlers } from "./usePortForwardingState.ts";
+import {
+  createPortForwardingStorageSyncHandlers,
+  normalizeRulesWithConnections,
+} from "./usePortForwardingState.ts";
 
 const rule: PortForwardingRule = {
   id: "startup-rule",
@@ -171,4 +174,16 @@ test("same-window synchronization preserves an error without a runtime tunnel", 
 
   assert.equal(snapshots[0]?.[0]?.status, "error");
   assert.equal(snapshots[0]?.[0]?.error, "Host not found");
+});
+
+test("heartbeat normalization preserves an error without a runtime tunnel", () => {
+  const normalized = normalizeRulesWithConnections([{
+    ...rule,
+    id: "heartbeat-error-rule",
+    status: "error",
+    error: "Authentication failed",
+  }]);
+
+  assert.equal(normalized[0]?.status, "error");
+  assert.equal(normalized[0]?.error, "Authentication failed");
 });

@@ -104,7 +104,7 @@ const setGlobalRules = (newRules: PortForwardingRule[]) => {
   localStorageAdapter.write(STORAGE_KEY_PORT_FORWARDING, globalRules);
 };
 
-const normalizeRulesWithConnections = (rules: PortForwardingRule[]): PortForwardingRule[] => {
+export const normalizeRulesWithConnections = (rules: PortForwardingRule[]): PortForwardingRule[] => {
   return rules.map((rule): PortForwardingRule => {
     const connection = getActiveConnection(rule.id);
     if (connection) {
@@ -114,6 +114,8 @@ const normalizeRulesWithConnections = (rules: PortForwardingRule[]): PortForward
         error: connection.error,
       };
     }
+
+    if (rule.status === "error") return rule;
 
     return {
       ...rule,

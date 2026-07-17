@@ -895,7 +895,9 @@ export const stopPortForward = async (
       if ((result.failed ?? 0) > 0) {
         const error = result.errors?.filter(Boolean).join('; ') ||
           `Failed to stop ${result.failed} port forwarding tunnel(s)`;
+        clearReconnectTimer(ruleId);
         if (conn) {
+          conn.reconnectStartAuthorized = false;
           conn.status = 'error';
           conn.error = error;
         }
@@ -912,6 +914,13 @@ export const stopPortForward = async (
     return { success: true };
   } catch (err) {
     const error = err instanceof Error ? err.message : 'Unknown error';
+    clearReconnectTimer(ruleId);
+    if (conn) {
+      conn.reconnectStartAuthorized = false;
+      conn.status = 'error';
+      conn.error = error;
+    }
+    onStatusChange('error', error);
     return { success: false, error };
   }
 };
