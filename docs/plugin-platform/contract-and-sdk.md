@@ -222,6 +222,13 @@ MiB even when a caller bypasses JSON Schema validation. This prevents a browser
 plugin and a native companion from computing different bytes for the same
 apparent message.
 
+All public JSON validators also enforce a maximum nesting depth of 128 and a
+maximum of 100,000 values per message. Manifest validation applies the same
+structural budget before invoking the recursive JSON Schema validator. Deep or
+pathologically wide payloads are therefore rejected as ordinary validation
+failures instead of exhausting the JavaScript call stack or monopolizing the
+runtime.
+
 Advanced companion processes exchange UTF-8 JSON using this exact framing:
 
 ```text

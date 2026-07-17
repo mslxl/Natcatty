@@ -124,6 +124,40 @@ test("manifest byte parsing rejects invalid UTF-8 before JSON validation", () =>
   );
 });
 
+test("manifest validation safely rejects excessive JSON nesting", () => {
+  let nested: unknown = null;
+  for (let depth = 0; depth < 5_000; depth += 1) {
+    nested = [nested];
+  }
+  const result = validateManifestValue(manifest({
+    permissions: { required: ["commands"] },
+    contributes: {
+      commands: [{ id: "com.example.package-test.run", title: "Run" }],
+      keybindings: [{
+        command: "com.example.package-test.run",
+        key: "ctrl+x",
+        args: nested,
+      }],
+    },
+  }));
+  assert.equal(result.valid, false);
+  assert.match(result.errors.join("\n"), /must not exceed .* levels/);
+
+  const wideResult = validateManifestValue(manifest({
+    permissions: { required: ["commands"] },
+    contributes: {
+      commands: [{ id: "com.example.package-test.run", title: "Run" }],
+      keybindings: [{
+        command: "com.example.package-test.run",
+        key: "ctrl+x",
+        args: Array.from({ length: 100_000 }, () => null),
+      }],
+    },
+  }));
+  assert.equal(wideResult.valid, false);
+  assert.match(wideResult.errors.join("\n"), /must not contain more than .* nodes/);
+});
+
 test("manifest validation rejects duplicate companion executable paths", () => {
   const result = validateManifestValue(manifest({
     companionExecutables: [

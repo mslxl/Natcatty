@@ -79,6 +79,12 @@ limits on archive bytes, expanded bytes, individual files, entry count,
 manifest bytes, and path bytes. The installer must enforce limits while
 streaming, before committing package metadata.
 
+A byte limit alone does not bound parser work: a small manifest can contain
+thousands of nested arrays or a very large number of tiny JSON values. Manifest
+validation therefore applies explicit depth and node-count budgets before the
+recursive JSON Schema validator runs. Exceeding either budget is an ordinary
+package validation failure, not an uncaught stack overflow.
+
 ## Runtime attacks reserved for later phases
 
 ### Renderer escape
@@ -125,6 +131,8 @@ is brand-checked through the native `ArrayBuffer` internal slot; an object that
 only spoofs `Symbol.toStringTag` or `byteLength` is not a transferable buffer.
 JSON serialization reads validated own data properties directly and never
 executes inherited `toJSON()` hooks supplied through a hostile prototype.
+All RPC and stream JSON values use the same depth and node-count budgets so a
+validly framed peer cannot consume an unbounded call stack or validation loop.
 
 ### Update substitution and rollback
 

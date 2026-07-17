@@ -19,7 +19,25 @@ const require = createRequire(import.meta.url);
 const schemaPath = require.resolve(
   "@netcatty/plugin-contract/schema/plugin-contract.schema.json",
 );
-const contractSchema = JSON.parse(await readFile(schemaPath, "utf8")) as object;
+interface PluginContractSchema extends Record<string, unknown> {
+  readonly $defs: {
+    readonly JsonValueLimits: {
+      readonly const: {
+        readonly maxDepth: number;
+        readonly maxNodes: number;
+      };
+    };
+  };
+}
+
+const contractSchema = JSON.parse(
+  await readFile(schemaPath, "utf8"),
+) as PluginContractSchema;
+const manifestJsonLimits = contractSchema.$defs.JsonValueLimits.const;
+if (!Number.isSafeInteger(manifestJsonLimits.maxDepth) || manifestJsonLimits.maxDepth < 1
+  || !Number.isSafeInteger(manifestJsonLimits.maxNodes) || manifestJsonLimits.maxNodes < 1) {
+  throw new Error("Plugin contract JSON value limits are invalid");
+}
 const ajv = new Ajv2020({ allErrors: true, strict: true });
 addFormats(ajv);
 const validateSchema = ajv.compile<PluginManifest>(contractSchema);
@@ -34,6 +52,71 @@ export interface ManifestValidationResult {
 function formatAjvError(error: ErrorObject): string {
   const location = error.instancePath || "/";
   return `${location} ${error.message ?? "is invalid"}`;
+}
+
+function assertManifestJsonStructure(root: unknown): void {
+  const stack: Array<{ value: unknown; depth: number }> = [{ value: root, depth: 0 }];
+  const seen = new WeakSet<object>();
+  let nodes = 0;
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current) break;
+    if (current.depth > manifestJsonLimits.maxDepth) {
+      throw new RangeError(
+        `JSON values must not exceed ${manifestJsonLimits.maxDepth} levels of nesting`,
+      );
+    }
+    nodes += 1;
+    if (nodes > manifestJsonLimits.maxNodes) {
+      throw new RangeError(
+        `JSON values must not contain more than ${manifestJsonLimits.maxNodes} nodes`,
+      );
+    }
+    const { value } = current;
+    if (value === null || typeof value === "string" || typeof value === "boolean") continue;
+    if (typeof value === "number") {
+      if (!Number.isFinite(value)) throw new TypeError("JSON numbers must be finite");
+      continue;
+    }
+    if (typeof value !== "object") {
+      throw new TypeError(`Unsupported JSON value type: ${typeof value}`);
+    }
+    if (seen.has(value)) throw new TypeError("JSON values must not contain shared references");
+    seen.add(value);
+    const nextDepth = current.depth + 1;
+    if (Array.isArray(value)) {
+      const keys = Object.keys(value);
+      const ownKeys = Reflect.ownKeys(value);
+      if (keys.length !== value.length || ownKeys.length !== value.length + 1) {
+        throw new TypeError("JSON arrays must be dense and contain no named properties");
+      }
+      for (let index = value.length - 1; index >= 0; index -= 1) {
+        const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+        if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) {
+          throw new TypeError("JSON arrays must contain enumerable data properties only");
+        }
+        stack.push({ value: descriptor.value, depth: nextDepth });
+      }
+      continue;
+    }
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) {
+      throw new TypeError("JSON objects must be plain records");
+    }
+    const stringKeys = Object.keys(value);
+    const ownKeys = Reflect.ownKeys(value);
+    if (ownKeys.length !== stringKeys.length) {
+      throw new TypeError("JSON objects must not contain symbols or non-enumerable properties");
+    }
+    for (let index = stringKeys.length - 1; index >= 0; index -= 1) {
+      const key = stringKeys[index];
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (!descriptor || !("value" in descriptor)) {
+        throw new TypeError("JSON objects must not contain accessor properties");
+      }
+      stack.push({ value: descriptor.value, depth: nextDepth });
+    }
+  }
 }
 
 function permissionName(declaration: PermissionDeclaration): PluginPermission {
@@ -394,6 +477,14 @@ function packageIconPaths(icon: IconReference | undefined): string[] {
 }
 
 export function validateManifestValue(value: unknown): ManifestValidationResult {
+  try {
+    assertManifestJsonStructure(value);
+  } catch (error) {
+    return {
+      valid: false,
+      errors: [error instanceof Error ? error.message : String(error)],
+    };
+  }
   if (!validateSchema(value)) {
     return {
       valid: false,

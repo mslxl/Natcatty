@@ -1,6 +1,35 @@
 import type { JsonValue } from "./generated/plugin-contract.js";
+import {
+  PLUGIN_JSON_MAX_DEPTH,
+  PLUGIN_JSON_MAX_NODES,
+} from "./generated/plugin-contract-limits.js";
 
-function assertJsonValueInternal(value: unknown, ancestors: WeakSet<object>): void {
+export {
+  PLUGIN_JSON_MAX_DEPTH,
+  PLUGIN_JSON_MAX_NODES,
+} from "./generated/plugin-contract-limits.js";
+
+interface JsonValidationBudget {
+  nodes: number;
+}
+
+function assertJsonValueInternal(
+  value: unknown,
+  ancestors: WeakSet<object>,
+  depth: number,
+  budget: JsonValidationBudget,
+): void {
+  if (depth > PLUGIN_JSON_MAX_DEPTH) {
+    throw new RangeError(
+      `JSON values must not exceed ${PLUGIN_JSON_MAX_DEPTH} levels of nesting`,
+    );
+  }
+  budget.nodes += 1;
+  if (budget.nodes > PLUGIN_JSON_MAX_NODES) {
+    throw new RangeError(
+      `JSON values must not contain more than ${PLUGIN_JSON_MAX_NODES} nodes`,
+    );
+  }
   if (value === null || typeof value === "string" || typeof value === "boolean") return;
   if (typeof value === "number") {
     if (!Number.isFinite(value)) throw new TypeError("JSON numbers must be finite");
@@ -23,7 +52,7 @@ function assertJsonValueInternal(value: unknown, ancestors: WeakSet<object>): vo
         if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) {
           throw new TypeError("JSON arrays must contain enumerable data properties only");
         }
-        assertJsonValueInternal(descriptor.value, ancestors);
+        assertJsonValueInternal(descriptor.value, ancestors, depth + 1, budget);
       }
       return;
     }
@@ -41,7 +70,7 @@ function assertJsonValueInternal(value: unknown, ancestors: WeakSet<object>): vo
       if (!descriptor || !("value" in descriptor)) {
         throw new TypeError("JSON objects must not contain accessor properties");
       }
-      assertJsonValueInternal(descriptor.value, ancestors);
+      assertJsonValueInternal(descriptor.value, ancestors, depth + 1, budget);
     }
   } finally {
     ancestors.delete(value);
@@ -49,7 +78,7 @@ function assertJsonValueInternal(value: unknown, ancestors: WeakSet<object>): vo
 }
 
 export function assertJsonValue(value: unknown): asserts value is JsonValue {
-  assertJsonValueInternal(value, new WeakSet());
+  assertJsonValueInternal(value, new WeakSet(), 0, { nodes: 0 });
 }
 
 function serializeValidatedJsonValue(value: JsonValue): string {

@@ -3,7 +3,12 @@ export const PLUGIN_MANIFEST_FILE = "netcatty.plugin.json" as const;
 export const PLUGIN_PACKAGE_EXTENSION = ".ncpkg" as const;
 
 export type * from "./generated/plugin-contract.js";
-export { assertJsonValue, serializeJsonValue } from "./jsonValue.js";
+export {
+  PLUGIN_JSON_MAX_DEPTH,
+  PLUGIN_JSON_MAX_NODES,
+  assertJsonValue,
+  serializeJsonValue,
+} from "./jsonValue.js";
 export {
   COMPANION_STDIO_MAX_CONTENT_BYTES,
   COMPANION_STDIO_MAX_HEADER_BYTES,

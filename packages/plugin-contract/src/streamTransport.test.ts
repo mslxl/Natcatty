@@ -3,13 +3,18 @@ import test from "node:test";
 import { runInNewContext } from "node:vm";
 
 import {
+  PLUGIN_JSON_MAX_DEPTH,
+  PLUGIN_JSON_MAX_NODES,
+  assertJsonValue,
+  serializeJsonValue,
+} from "./jsonValue.ts";
+import {
   PLUGIN_STREAM_MAX_CHUNK_BYTES,
   createBase64StreamChunk,
   createJsonStreamChunk,
   createMessagePortStreamEnvelope,
   materializeStreamChunk,
 } from "./streamTransport.ts";
-import { serializeJsonValue } from "./jsonValue.ts";
 
 test("validated JSON serialization matches standard JSON bytes for plain values", () => {
   const values = [
@@ -29,6 +34,23 @@ test("validated JSON serialization matches standard JSON bytes for plain values"
   for (const value of values) {
     assert.equal(serializeJsonValue(value), JSON.stringify(value));
   }
+});
+
+test("JSON validation rejects excessive structural depth and node counts", () => {
+  let deepValue: unknown = null;
+  for (let depth = 0; depth <= PLUGIN_JSON_MAX_DEPTH; depth += 1) {
+    deepValue = [deepValue];
+  }
+  assert.throws(
+    () => assertJsonValue(deepValue),
+    new RegExp(`must not exceed ${PLUGIN_JSON_MAX_DEPTH} levels`),
+  );
+
+  const wideValue = Array.from({ length: PLUGIN_JSON_MAX_NODES }, () => null);
+  assert.throws(
+    () => assertJsonValue(wideValue),
+    new RegExp(`must not contain more than ${PLUGIN_JSON_MAX_NODES} nodes`),
+  );
 });
 
 test("JSON stream chunks use verified UTF-8 byte accounting", () => {

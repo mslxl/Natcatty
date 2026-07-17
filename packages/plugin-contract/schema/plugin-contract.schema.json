@@ -23,6 +23,13 @@
         }
       ]
     },
+    "JsonValueLimits": {
+      "description": "Host-enforced structural limits for every plugin protocol JSON value.",
+      "const": {
+        "maxDepth": 128,
+        "maxNodes": 100000
+      }
+    },
     "RelativePackagePath": {
       "type": "string",
       "minLength": 1,

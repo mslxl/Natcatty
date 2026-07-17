@@ -41,6 +41,8 @@ export type JsonRpcStandardErrorCode = -32700 | -32600 | -32601 | -32602 | -3260
 
 export type JsonValue = (JsonPrimitive) | (Array<JsonValue>) | ({ [key: string]: JsonValue });
 
+export type JsonValueLimits = {"maxDepth":128,"maxNodes":100000};
+
 export type KeybindingContribution = {
   command: ContributionId;
   key: string;
