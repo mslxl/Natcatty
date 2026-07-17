@@ -46,15 +46,22 @@ export class ToolResultDedup {
     return this.terminalJobSessions.get(jobId);
   }
 
-  enableWriteReplay(): void {
+  enableWriteReplay(preservedFingerprints: Iterable<string> = []): void {
     this.replayableWrites = new Map(
       Array.from(this.completedWrites, ([fingerprint, results]) => [fingerprint, [...results]]),
     );
     this.writeReplayEnabled = true;
+    for (const fingerprint of preservedFingerprints) {
+      this.consumeReplay(fingerprint);
+    }
   }
 
   replayCompletedWrite(fingerprint: string): unknown | undefined {
     if (!this.writeReplayEnabled) return undefined;
+    return this.consumeReplay(fingerprint);
+  }
+
+  private consumeReplay(fingerprint: string): unknown | undefined {
     const results = this.replayableWrites.get(fingerprint);
     const result = results?.shift();
     if (results?.length === 0) this.replayableWrites.delete(fingerprint);
@@ -92,6 +99,16 @@ export class ToolResultDedup {
 
 export function hashScopeKey(parts: Array<string | undefined>): string {
   return parts.filter(Boolean).join('|');
+}
+
+export function buildTerminalWriteFingerprint(
+  toolName: 'terminal_execute' | 'terminal_start',
+  chatSessionId: string | undefined,
+  args: { sessionId?: unknown; command?: unknown },
+): string | undefined {
+  if (typeof args.sessionId !== 'string' || typeof args.command !== 'string') return undefined;
+  const fingerprintToolName = toolName === 'terminal_start' ? 'terminal.start:write' : toolName;
+  return `${fingerprintToolName}:${hashScopeKey([chatSessionId, args.sessionId, args.command])}`;
 }
 
 export function previewToolResult(result: unknown): string {

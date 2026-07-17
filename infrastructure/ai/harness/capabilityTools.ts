@@ -25,6 +25,7 @@ import {
 import type { ToolOutputStore } from './toolOutputStore';
 import { TOOL_OUTPUT_READ_MAX_CHARS } from './toolOutputStore';
 import {
+  buildTerminalWriteFingerprint,
   hashScopeKey,
   hashToolResult,
   previewToolResult,
@@ -412,9 +413,10 @@ function createCatalogTool(spec: CattyToolSpec) {
 
         if (spec.capabilityId === 'terminal.execute') {
           const { sessionId: sid, command } = args as { sessionId: string; command: string };
-          const writeFingerprint = toolResultDedup?.fingerprintFor(
-            spec.toolName,
-            hashScopeKey([deps.chatSessionId, sid, command]),
+          const writeFingerprint = buildTerminalWriteFingerprint(
+            'terminal_execute',
+            deps.chatSessionId,
+            { sessionId: sid, command },
           );
           const replay = writeFingerprint
             ? toolResultDedup?.replayCompletedWrite(writeFingerprint)
@@ -496,13 +498,10 @@ function createCatalogTool(spec: CattyToolSpec) {
         }
 
         const terminalStartFingerprint = spec.capabilityId === 'terminal.start'
-          ? toolResultDedup?.fingerprintFor(
-              'terminal.start:write',
-              hashScopeKey([
-                deps.chatSessionId,
-                String((args as { sessionId?: unknown }).sessionId ?? ''),
-                String((args as { command?: unknown }).command ?? ''),
-              ]),
+          ? buildTerminalWriteFingerprint(
+              'terminal_start',
+              deps.chatSessionId,
+              args as { sessionId?: unknown; command?: unknown },
             )
           : undefined;
         const terminalStartReplay = terminalStartFingerprint

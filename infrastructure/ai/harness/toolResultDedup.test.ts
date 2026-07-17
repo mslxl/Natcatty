@@ -21,3 +21,12 @@ test('completed write replay is ordered, one-shot, and scoped to the current tur
   assert.equal(dedup.replayCompletedWrite('same-command'), undefined);
   assert.equal(dedup.replayCompletedWrite('later-command'), undefined);
 });
+
+test('completed writes already present in retry history are not replayed', () => {
+  const dedup = new ToolResultDedup();
+  dedup.beginTurn();
+  dedup.rememberCompletedWrite('preserved-command', 'old result');
+  dedup.enableWriteReplay(['preserved-command']);
+
+  assert.equal(dedup.replayCompletedWrite('preserved-command'), undefined);
+});

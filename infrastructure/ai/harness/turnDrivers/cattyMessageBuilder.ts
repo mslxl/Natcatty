@@ -1,5 +1,6 @@
 import type { ModelMessage } from 'ai';
 import type { ChatMessage, ChatMessageAttachment, ToolResult } from '../../types';
+import { buildTerminalWriteFingerprint } from '../toolResultDedup';
 import {
   buildHistoricalToolReplayMaps,
   buildHistoricalToolResultReplayText,
@@ -254,6 +255,25 @@ export function collectToolResultsAfterMessage(
     }
   }
   return results;
+}
+
+export function collectPreservedTerminalWriteFingerprints(
+  messages: ChatMessage[],
+  messageId: string,
+  chatSessionId: string,
+): string[] {
+  const preservedResults = collectToolResultsAfterMessage(messages, messageId);
+  const callsById = new Map(
+    messages.flatMap(message => message.toolCalls ?? []).map(call => [call.id, call] as const),
+  );
+  const fingerprints: string[] = [];
+  for (const result of preservedResults) {
+    const call = callsById.get(result.toolCallId);
+    if (call?.name !== 'terminal_execute' && call?.name !== 'terminal_start') continue;
+    const fingerprint = buildTerminalWriteFingerprint(call.name, chatSessionId, call.arguments);
+    if (fingerprint) fingerprints.push(fingerprint);
+  }
+  return fingerprints;
 }
 
 export function createContinuationContext(

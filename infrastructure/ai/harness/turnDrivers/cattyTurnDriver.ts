@@ -22,6 +22,7 @@ import { getNetcattyBridge, generateId, resolveUserSkillsContext } from '../../.
 import {
   buildCattySdkMessages,
   collectOpenAIChatAssistantFieldsForMessages,
+  collectPreservedTerminalWriteFingerprints,
   collectToolResultsAfterMessage,
   createContinuationContext,
 } from './cattyMessageBuilder';
@@ -346,13 +347,18 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
       }
 
       console.warn('[Catty] Request hit HTTP 413; forcing context compaction and retrying once.', streamErr);
-      ctx.toolResultDedup.enableWriteReplay();
       const hadToolProgress = hadToolProgressBeforeRequestTooLarge(streamErr);
       let retryBaseMessages = messagesForStream;
       let retryAssistantMsgId = assistantMsgId;
+      let preservedWriteFingerprints: string[] = [];
       if (hadToolProgress) {
         const latestSession = ui.getLatestSession?.(sessionId);
         if (latestSession) {
+          preservedWriteFingerprints = collectPreservedTerminalWriteFingerprints(
+            latestSession.messages,
+            assistantMsgId,
+            sessionId,
+          );
           retryBaseMessages = buildSdkMessages(latestSession.messages, false, {
             preserveTerminalToolResults: collectToolResultsAfterMessage(
               latestSession.messages,
@@ -382,6 +388,7 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
           pendingApproval: undefined,
         }));
       }
+      ctx.toolResultDedup.enableWriteReplay(preservedWriteFingerprints);
       const retryMessages = prepareMessagesForStream(await compactMessages(retryBaseMessages, {
         force: true,
         compressForRequestTooLargeRetry: true,

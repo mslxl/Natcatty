@@ -7,6 +7,7 @@ import {
 } from './capabilityTools';
 import { ToolOutputStore } from './toolOutputStore';
 import { ToolResultDedup } from './toolResultDedup';
+import { collectPreservedTerminalWriteFingerprints } from './turnDrivers/cattyMessageBuilder';
 
 describe('capabilityTools session queue keys', () => {
   it('does not queue read-only harness tools behind terminal session writes', () => {
@@ -224,6 +225,58 @@ describe('capabilityTools result fitting', () => {
     };
     assert.equal(executions, 2);
     assert.equal(intentionalRepeat.replayedCompletedResult, undefined);
+  });
+
+  it('executes an intentional repeat when the completed result is already in retry history', async () => {
+    let executions = 0;
+    const dedup = new ToolResultDedup();
+    dedup.beginTurn();
+    const { tools, toolsContext } = createCattyToolsFromCatalog(
+      {
+        aiExec: async () => {
+          executions += 1;
+          return { ok: true, stdout: `run ${executions}`, stderr: '', exitCode: 0 };
+        },
+      },
+      {
+        sessions: [{
+          sessionId: 'session-1',
+          hostId: 'host-1',
+          hostname: 'prod',
+          label: 'prod',
+          connected: true,
+        }],
+      },
+      [], 'auto', undefined, 'chat-1', undefined, dedup,
+    );
+    const execute = withCattyToolContext(tools.terminal_execute, toolsContext.terminal_execute);
+    const args = { sessionId: 'session-1', command: 'npm test' };
+    await execute.execute(args);
+    const retryHistory = [
+      {
+        id: 'assistant-progress',
+        role: 'assistant' as const,
+        content: '',
+        timestamp: 1,
+        toolCalls: [{ id: 'call-1', name: 'terminal_execute', arguments: args }],
+      },
+      {
+        id: 'tool-progress',
+        role: 'tool' as const,
+        content: '',
+        timestamp: 2,
+        toolResults: [{ toolCallId: 'call-1', content: 'run 1' }],
+      },
+    ];
+    dedup.enableWriteReplay(collectPreservedTerminalWriteFingerprints(
+      retryHistory,
+      'assistant-progress',
+      'chat-1',
+    ));
+
+    const repeat = await execute.execute(args) as { replayedCompletedResult?: boolean };
+    assert.equal(executions, 2);
+    assert.equal(repeat.replayedCompletedResult, undefined);
   });
 
   it('replays a started background job instead of starting it twice after retry compaction', async () => {
