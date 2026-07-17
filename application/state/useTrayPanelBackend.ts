@@ -50,6 +50,7 @@ export const useTrayPanelBackend = () => {
           remotePort?: number;
           status: "inactive" | "connecting" | "active" | "error";
           hostId?: string;
+          canStop?: boolean;
         }>;
       }) => void,
     ) => {

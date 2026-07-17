@@ -32,12 +32,17 @@ function createContext(options: { requestedStart: boolean; hasRuntimeTunnel: boo
   return calls;
 }
 
-test('tray retries stop when a failed cleanup left a runtime tunnel', () => {
+test('tray ignores a stale start request when the tunnel is already running', () => {
   const calls = createContext({ requestedStart: true, hasRuntimeTunnel: true });
-  assert.deepEqual(calls, { start: 0, stop: 1 });
+  assert.deepEqual(calls, { start: 0, stop: 0 });
 });
 
 test('tray starts an inactive rule when no runtime tunnel exists', () => {
   const calls = createContext({ requestedStart: true, hasRuntimeTunnel: false });
   assert.deepEqual(calls, { start: 1, stop: 0 });
+});
+
+test('tray stop requests remain idempotent', () => {
+  const calls = createContext({ requestedStart: false, hasRuntimeTunnel: false });
+  assert.deepEqual(calls, { start: 0, stop: 1 });
 });

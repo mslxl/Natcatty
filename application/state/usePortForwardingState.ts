@@ -527,6 +527,11 @@ export const usePortForwardingState = (): UsePortForwardingStateResult => {
     [setRuleStatus],
   );
 
+  const hasRuntimeTunnel = useCallback((ruleId: string) => {
+    const connection = getActiveConnection(ruleId);
+    return connection !== undefined && connection.status !== "inactive";
+  }, []);
+
   // Filter and sort rules
   const filteredRules = useMemo(() => {
     let result = [...rules];
@@ -593,10 +598,7 @@ export const usePortForwardingState = (): UsePortForwardingStateResult => {
     startTunnel,
     stopTunnel,
     stopRuleTunnels: stopAndCleanupRuleAndWait,
-    hasRuntimeTunnel: (ruleId) => {
-      const connection = getActiveConnection(ruleId);
-      return connection !== undefined && connection.status !== "inactive";
-    },
+    hasRuntimeTunnel,
 
     filteredRules,
     selectedRule,

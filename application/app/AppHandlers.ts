@@ -47,11 +47,13 @@ export function handleTrayTogglePortForwardImpl(getCtx: AppContextGetter, ruleId
       return;
     }
 
-    if (start && !hasRuntimeTunnel(ruleId)) {
-      const effectiveHost = resolveEffectiveHost(host);
-      void startTunnel(rule, effectiveHost, hosts.map(resolveEffectiveHost), keys, identities, (status, error) => {
-        if (status === "error" && error) toast.error(error);
-      }, rule.autoStart, terminalSettings, knownHosts);
+    if (start) {
+      if (!hasRuntimeTunnel(ruleId)) {
+        const effectiveHost = resolveEffectiveHost(host);
+        void startTunnel(rule, effectiveHost, hosts.map(resolveEffectiveHost), keys, identities, (status, error) => {
+          if (status === "error" && error) toast.error(error);
+        }, rule.autoStart, terminalSettings, knownHosts);
+      }
       return;
     }
 

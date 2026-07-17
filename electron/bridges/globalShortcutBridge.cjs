@@ -31,7 +31,7 @@ const STATUS_TEXT = {
 // Dynamic tray menu data (synced from renderer)
 let trayMenuData = {
   sessions: [],        // { id, label, hostLabel, status }
-  portForwardRules: [], // { id, label, type, localPort, remoteHost, remotePort, status, hostId }
+  portForwardRules: [], // { id, label, type, localPort, remoteHost, remotePort, status, hostId, canStop }
   hosts: [],           // { id, label, hostname, group, pinned, lastConnectedAt }
 };
 
@@ -754,6 +754,7 @@ function buildTrayMenuTemplate() {
     for (const rule of trayMenuData.portForwardRules) {
       const isActive = rule.status === "active";
       const isConnecting = rule.status === "connecting";
+      const isStoppable = isActive || isConnecting || rule.canStop === true;
       const statusText =
         rule.status === "active"
           ? STATUS_TEXT.portForward.active
@@ -773,7 +774,7 @@ function buildTrayMenuTemplate() {
         click: () => {
           const win = getMainWindow();
           if (win) {
-            win.webContents?.send("netcatty:tray:togglePortForward", rule.id, !isActive);
+            win.webContents?.send("netcatty:tray:togglePortForward", rule.id, !isStoppable);
           }
         },
       });

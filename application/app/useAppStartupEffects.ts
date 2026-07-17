@@ -27,7 +27,7 @@ export function shouldQueueKeyboardInteractiveRequest(
 
 export function useAppStartupEffects(ctx: StartupEffectsContext) {
   const {dismissUpdate, enabled = true, groupConfigs, hosts, identities,
-    installUpdate, isVaultInitialized, keys, knownHosts, openSettingsWindow, portForwardingRules, proxyProfiles, sessions, setKeyboardInteractiveQueue,
+    hasRuntimeTunnel, installUpdate, isVaultInitialized, keys, knownHosts, openSettingsWindow, portForwardingRules, proxyProfiles, sessions, setKeyboardInteractiveQueue,
     t, terminalSettings, updateState, workspaces,
   } = ctx;
   const sessionsRef = useRef(sessions);
@@ -146,7 +146,10 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
 
       void bridge.updateTrayMenuData({
         sessions: sessionsForTray,
-        portForwardRules: portForwardingRules,
+        portForwardRules: portForwardingRules.map((rule: any) => ({
+          ...rule,
+          canStop: hasRuntimeTunnel(rule.id),
+        })),
         hosts: hostsForSystemMenu,
       });
     }, 250);
@@ -155,7 +158,7 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [enabled, hosts, sessions, portForwardingRules, workspaces]);
+  }, [enabled, hasRuntimeTunnel, hosts, sessions, portForwardingRules, workspaces]);
 
   // Quit guard: block app exit while any editor tab has unsaved changes.
   // Main process sends "app:query-dirty-editors"; we respond with the result.

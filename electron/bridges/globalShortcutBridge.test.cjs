@@ -567,6 +567,47 @@ test("tray icon event registration is platform-dependent", async () => {
   });
 });
 
+test("native tray sends an explicit stop for a runtime-present error rule", async () => {
+  await withPlatform("linux", async () => {
+    const bridge = loadBridge();
+    const electronModule = createElectronStub();
+    const sentMessages = [];
+    const win = new FakeWindow();
+    win.webContents = {
+      send(channel, ...args) {
+        sentMessages.push([channel, ...args]);
+      },
+    };
+    electronModule.BrowserWindow.getAllWindows = () => [win];
+    const { ipcMain } = await enableCloseToTray(bridge, electronModule);
+
+    await ipcMain.handlers.get("netcatty:tray:updateMenuData")(null, {
+      portForwardRules: [{
+        id: "cleanup-failed-rule",
+        label: "Cleanup failed",
+        type: "local",
+        localPort: 8080,
+        remoteHost: "127.0.0.1",
+        remotePort: 80,
+        status: "error",
+        canStop: true,
+      }],
+    });
+
+    const ruleItem = bridge.getTray().contextMenu.template.find(
+      (item) => item.label?.includes("Cleanup failed"),
+    );
+    assert.ok(ruleItem);
+    ruleItem.click();
+    assert.deepEqual(sentMessages, [[
+      "netcatty:tray:togglePortForward",
+      "cleanup-failed-rule",
+      false,
+    ]]);
+    bridge.cleanup();
+  });
+});
+
 test("mac dock menu lists saved hosts and forwards connect actions", async () => {
   await withPlatform("darwin", async () => {
     const bridge = loadBridge();
