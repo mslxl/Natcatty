@@ -313,10 +313,10 @@ async function main(argv = process.argv.slice(2), env = process.env) {
     release = await resolveMoshBinRelease(env);
   }
   if (!release) {
-    log("MOSH_BIN_RELEASE is unset - skipping. Set it (e.g. moshcatty-0.1.7) to bundle mosh-client into the package.");
+    log("MOSH_BIN_RELEASE is unset - skipping. Set it (e.g. moshcatty-0.1.8) to bundle mosh-client into the package.");
     return 0;
   }
-  // Reject pre-0.1.7 pins (missing numbered-state reconstruction for #2121) even when MOSH_BIN_RELEASE is set
+  // Reject pre-0.1.8 pins (unsafe local backspace prediction for #2275) even when MOSH_BIN_RELEASE is set
   // without going through --resolve-release.
   release = validateReleaseTag(release);
 

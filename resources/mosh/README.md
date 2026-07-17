@@ -18,7 +18,7 @@ Netcatty runs SSH + `mosh-server` bootstrap itself, then launches this binary
 Each tarball contains **only** the client binary (no Cygwin DLLs, no terminfo).
 Windows builds static-link the MSVC CRT (`moshcatty-0.1.1+`).
 
-Release tags: `moshcatty-*` (require `moshcatty-0.1.7+`) from
+Release tags: `moshcatty-*` (require `moshcatty-0.1.8+`) from
 `binaricat/MoshCatty`, with `SHA256SUMS`.
 
 ### Linux glibc floors
@@ -37,8 +37,8 @@ were built on Ubuntu runners and require GLIBC 2.34.
 ## Fetch
 
 ```sh
-# Optional pin (0.1.7+ reconstructs parallel remote states before display)
-export MOSH_BIN_RELEASE=moshcatty-0.1.7
+# Optional pin (0.1.8+ disables unsafe local backspace prediction)
+export MOSH_BIN_RELEASE=moshcatty-0.1.8
 npm run fetch:mosh
 
 # Dev: host platform; resolves latest moshcatty-* if unset
