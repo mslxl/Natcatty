@@ -104,7 +104,10 @@ const setGlobalRules = (newRules: PortForwardingRule[]) => {
   localStorageAdapter.write(STORAGE_KEY_PORT_FORWARDING, globalRules);
 };
 
-export const normalizeRulesWithConnections = (rules: PortForwardingRule[]): PortForwardingRule[] => {
+export const normalizeRulesWithConnections = (
+  rules: PortForwardingRule[],
+  reconciledGoneRuleIds: ReadonlySet<string> = new Set(),
+): PortForwardingRule[] => {
   return rules.map((rule): PortForwardingRule => {
     const connection = getActiveConnection(rule.id);
     if (connection) {
@@ -112,6 +115,14 @@ export const normalizeRulesWithConnections = (rules: PortForwardingRule[]): Port
         ...rule,
         status: connection.status,
         error: connection.error,
+      };
+    }
+
+    if (reconciledGoneRuleIds.has(rule.id)) {
+      return {
+        ...rule,
+        status: "inactive" as const,
+        error: undefined,
       };
     }
 
@@ -296,10 +307,13 @@ export const usePortForwardingState = (): UsePortForwardingStateResult => {
       const HEARTBEAT_INTERVAL_MS = 4_000;
 
       const tick = async () => {
-        await reconcileWithBackend();
+        const reconciliation = await reconcileWithBackend();
         // Always re-derive the visible state. This also repairs a stale
         // cross-window storage write when the backend map itself did not change.
-        const normalizedRules = normalizeRulesWithConnections(globalRules);
+        const normalizedRules = normalizeRulesWithConnections(
+          globalRules,
+          new Set(reconciliation.gone),
+        );
         if (havePortForwardingRuntimeStatesChanged(globalRules, normalizedRules)) {
           setGlobalRules(normalizedRules);
         }

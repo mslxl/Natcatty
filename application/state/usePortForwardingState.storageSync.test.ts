@@ -189,6 +189,18 @@ test("heartbeat normalization preserves an error without a runtime tunnel", () =
   assert.equal(normalized[0]?.error, "Authentication failed");
 });
 
+test("heartbeat normalization clears an error for a reconciled-away tunnel", () => {
+  const normalized = normalizeRulesWithConnections([{
+    ...rule,
+    id: "cleanup-error-rule",
+    status: "error",
+    error: "Failed to stop tunnel",
+  }], new Set(["cleanup-error-rule"]));
+
+  assert.equal(normalized[0]?.status, "inactive");
+  assert.equal(normalized[0]?.error, undefined);
+});
+
 test("heartbeat writes only when a visible runtime state changes", () => {
   const current = [{ ...rule, status: "inactive" as const }];
   const unchanged = [{ ...rule, status: "inactive" as const }];
