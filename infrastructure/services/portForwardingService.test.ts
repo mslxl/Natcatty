@@ -463,6 +463,40 @@ test("stopPortForward preserves an untracked backend tunnel after cleanup fails"
   await stopAndCleanupRuleAndWait("untracked-failed-stop-rule");
 });
 
+test("stopPortForward preserves an untracked backend tunnel when cleanup rejects", async () => {
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      netcatty: {
+        stopPortForwardByRuleId: async () => {
+          throw new Error("backend stop request rejected");
+        },
+      },
+    },
+  });
+
+  const statuses: string[] = [];
+  const result = await stopPortForward(
+    "untracked-rejected-stop-rule",
+    (status) => statuses.push(status),
+  );
+
+  assert.equal(result.success, false);
+  assert.match(result.error ?? "", /request rejected/);
+  assert.equal(getActiveConnection("untracked-rejected-stop-rule")?.status, "error");
+  assert.deepEqual(statuses, ["error"]);
+
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      netcatty: {
+        stopPortForwardByRuleId: async () => ({ stopped: 1, failed: 0, errors: [] }),
+      },
+    },
+  });
+  await stopAndCleanupRuleAndWait("untracked-rejected-stop-rule");
+});
+
 test("stopPortForward cancels reconnects scheduled in other windows", async (t) => {
   const previousLocalStorage = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
   const writes: Array<[string, string]> = [];

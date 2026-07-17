@@ -259,6 +259,22 @@ const finishRuleCleanup = (ruleId: string): void => {
   broadcastReconnectCancel(ruleId);
 };
 
+const preserveFailedStopConnection = (
+  ruleId: string,
+  connection: PortForwardingConnection | undefined,
+  error: string,
+): void => {
+  const failedConnection = connection ?? {
+    ruleId,
+    tunnelId: `untracked-${ruleId}`,
+    status: 'error' as const,
+  };
+  failedConnection.reconnectStartAuthorized = false;
+  failedConnection.status = 'error';
+  failedConnection.error = error;
+  activeConnections.set(ruleId, failedConnection);
+};
+
 const resumeReconnectAfterFailedCleanup = (
   ruleId: string,
   pausedReconnect?: PausedReconnectTimer,
@@ -1063,15 +1079,7 @@ export const stopPortForward = async (
         const error = result.errors?.filter(Boolean).join('; ') ||
           `Failed to stop ${result.failed} port forwarding tunnel(s)`;
         clearReconnectTimer(ruleId);
-        const failedConnection = conn ?? {
-          ruleId,
-          tunnelId: `untracked-${ruleId}`,
-          status: 'error' as const,
-        };
-        failedConnection.reconnectStartAuthorized = false;
-        failedConnection.status = 'error';
-        failedConnection.error = error;
-        activeConnections.set(ruleId, failedConnection);
+        preserveFailedStopConnection(ruleId, conn, error);
         onStatusChange('error', error);
         return { success: false, error };
       }
@@ -1086,11 +1094,7 @@ export const stopPortForward = async (
   } catch (err) {
     const error = err instanceof Error ? err.message : 'Unknown error';
     clearReconnectTimer(ruleId);
-    if (conn) {
-      conn.reconnectStartAuthorized = false;
-      conn.status = 'error';
-      conn.error = error;
-    }
+    preserveFailedStopConnection(ruleId, conn, error);
     onStatusChange('error', error);
     return { success: false, error };
   } finally {
