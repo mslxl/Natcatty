@@ -57,11 +57,10 @@ test("bundled locales include port forwarding summary copy for every forwarding 
   }
 });
 
-test("delete waits for runtime cleanup and retains the rule on failure", async () => {
+test("delete always verifies backend cleanup and retains the rule on failure", async () => {
   let stopCalls = 0;
   assert.equal(await stopRuntimeTunnelBeforeDelete(
     "rule-1",
-    () => true,
     async () => {
       stopCalls++;
       return { success: false };
@@ -71,11 +70,10 @@ test("delete waits for runtime cleanup and retains the rule on failure", async (
 
   assert.equal(await stopRuntimeTunnelBeforeDelete(
     "rule-1",
-    () => false,
     async () => {
       stopCalls++;
       return { success: true };
     },
   ), true);
-  assert.equal(stopCalls, 1);
+  assert.equal(stopCalls, 2);
 });

@@ -453,7 +453,6 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
     try {
       const stopped = await stopRuntimeTunnelBeforeDelete(
         ruleToDelete.id,
-        hasRuntimeTunnel,
         stopTunnel,
       );
       if (!stopped) return;
@@ -466,7 +465,7 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
       setShowDeleteConfirm(false);
       setRuleToDelete(null);
     }
-  }, [ruleToDelete, hasRuntimeTunnel, stopTunnel, deleteRule, editingRule, closeEditPanel]);
+  }, [ruleToDelete, stopTunnel, deleteRule, editingRule, closeEditPanel]);
 
   const deleteTargetIsActive = Boolean(
     ruleToDelete && hasRuntimeTunnel(ruleToDelete.id),
