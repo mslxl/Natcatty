@@ -87,19 +87,50 @@ export function isStreamingMonitorCommand(command: unknown): boolean {
     if (tokens.length === 0) return false;
     if (tokens[0]?.toLowerCase() === 'watch') return true;
 
-    const commandTokens = tokens.map(token => token.toLowerCase());
-    const argsStart = commandTokens[0] === 'tail' || commandTokens[0] === 'journalctl'
-      ? 1
-      : commandTokens[0] === 'docker' && commandTokens[1] === 'logs'
-        ? 2
-        : commandTokens[0] === 'docker' && commandTokens[1] === 'compose' && commandTokens[2] === 'logs'
-          ? 3
-          : commandTokens[0] === 'kubectl' && commandTokens[1] === 'logs'
-            ? 2
-            : -1;
+    const argsStart = findMonitorArgsStart(tokens);
     if (argsStart < 0) return false;
     return tokens.slice(argsStart).some(arg => /^--follow(?:=.+)?$/i.test(arg) || /^-[^-\s]*[fF]/.test(arg));
   });
+}
+
+function findMonitorArgsStart(tokens: string[]): number {
+  const command = tokens[0]?.toLowerCase();
+  if (command === 'tail' || command === 'journalctl') return 1;
+  if (command === 'kubectl') {
+    const logsIndex = skipCommandOptions(tokens, 1, new Set([
+      '-n', '--namespace', '--context', '--kubeconfig', '--cluster', '--user',
+      '--request-timeout', '-s', '--server', '--token', '--as', '--as-group',
+      '--cache-dir', '--certificate-authority', '--client-certificate', '--client-key',
+      '--tls-server-name',
+    ]));
+    return tokens[logsIndex]?.toLowerCase() === 'logs' ? logsIndex + 1 : -1;
+  }
+  if (command === 'docker') {
+    const subcommandIndex = skipCommandOptions(tokens, 1, new Set([
+      '--config', '-c', '--context', '-H', '--host', '-l', '--log-level',
+    ]));
+    const subcommand = tokens[subcommandIndex]?.toLowerCase();
+    if (subcommand === 'logs') return subcommandIndex + 1;
+    if (subcommand !== 'compose') return -1;
+    const logsIndex = skipCommandOptions(tokens, subcommandIndex + 1, new Set([
+      '-f', '--file', '-p', '--project-name', '--profile', '--project-directory',
+      '--env-file', '--parallel', '--progress', '--ansi',
+    ]));
+    return tokens[logsIndex]?.toLowerCase() === 'logs' ? logsIndex + 1 : -1;
+  }
+  return -1;
+}
+
+function skipCommandOptions(tokens: string[], start: number, optionsWithValues: ReadonlySet<string>): number {
+  let index = start;
+  while (tokens[index]?.startsWith('-')) {
+    const option = tokens[index]!;
+    index += 1;
+    if (option === '--') break;
+    const optionName = canonicalOptionName(option);
+    if (optionsWithValues.has(optionName) && !option.includes('=') && index < tokens.length) index += 1;
+  }
+  return index;
 }
 
 function tokenizeCommandSegment(segment: string): string[] {
@@ -114,14 +145,14 @@ function unwrapMonitorCommandPrefixes(input: string[]): string[] {
       tokens.shift();
       consumeWrapperOptions(tokens, new Set([
         '-u', '--user', '-g', '--group', '-h', '--host', '-p', '--prompt',
-        '-c', '--close-from', '-r', '--chroot', '-d', '--chdir', '-t', '--command-timeout',
+        '-C', '--close-from', '-R', '--chroot', '-D', '--chdir', '-T', '--command-timeout',
         '-r', '--role', '-t', '--type',
       ]));
       continue;
     }
     if (wrapper === 'env') {
       tokens.shift();
-      consumeWrapperOptions(tokens, new Set(['-u', '--unset', '-c', '--chdir', '-s', '--split-string']));
+      consumeWrapperOptions(tokens, new Set(['-u', '--unset', '-C', '--chdir', '-S', '--split-string']));
       while (tokens[0] && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[0])) tokens.shift();
       continue;
     }
@@ -145,9 +176,14 @@ function consumeWrapperOptions(tokens: string[], optionsWithValues: ReadonlySet<
   while (tokens[0]?.startsWith('-')) {
     const option = tokens.shift()!;
     if (option === '--') break;
-    const optionName = option.split('=', 1)[0]!.toLowerCase();
+    const optionName = canonicalOptionName(option);
     if (optionsWithValues.has(optionName) && !option.includes('=') && tokens.length > 0) tokens.shift();
   }
+}
+
+function canonicalOptionName(option: string): string {
+  const optionName = option.split('=', 1)[0]!;
+  return optionName.startsWith('--') ? optionName.toLowerCase() : optionName;
 }
 
 function fitMonitorBatch(output: string): string {

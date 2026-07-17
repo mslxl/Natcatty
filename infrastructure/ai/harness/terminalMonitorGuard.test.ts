@@ -64,6 +64,12 @@ test('isStreamingMonitorCommand recognizes common wrappers and compose logs', ()
   assert.equal(isStreamingMonitorCommand('stdbuf -oL kubectl logs -f pod/api'), true);
   assert.equal(isStreamingMonitorCommand('timeout 60s tail -f app.log'), true);
   assert.equal(isStreamingMonitorCommand('docker compose logs -f api'), true);
+  assert.equal(isStreamingMonitorCommand('sudo -H journalctl -f -u nginx'), true);
+  assert.equal(isStreamingMonitorCommand('kubectl -n production logs -f pod/api'), true);
+  assert.equal(isStreamingMonitorCommand('kubectl --context prod logs --follow pod/api'), true);
+  assert.equal(isStreamingMonitorCommand('docker --context prod logs -f api'), true);
+  assert.equal(isStreamingMonitorCommand('docker compose -f compose.prod.yml logs -f api'), true);
+  assert.equal(isStreamingMonitorCommand('docker compose -p demo logs -f api'), true);
   assert.equal(isStreamingMonitorCommand('sudo tail -n 10 app.log'), false);
   assert.equal(isStreamingMonitorCommand('timeout 60s journalctl --since 5m'), false);
 });
