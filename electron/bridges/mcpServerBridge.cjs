@@ -1113,8 +1113,7 @@ function setVaultAgentInvoker(fn) {
 let sessionService = null;
 const sessionIdleManager = createSessionIdleManager({
   onIdle: async ({ chatSessionId, sessionId }) => {
-    const hasWorkerJob = Array.from(workerBackgroundJobs.values())
-      .some((job) => job?.sessionId === sessionId);
+    const hasWorkerJob = await hasActiveWorkerJobForTerminalSession(sessionId);
     if (activeSessionExecutions.has(sessionId) || hasWorkerJob) {
       sessionIdleManager.resume(sessionId);
       return;
@@ -1151,7 +1150,13 @@ sessionService = createSessionService({
   },
   afterClose: (params = {}, outcome = {}) => {
     endTerminalSessionClose(params.sessionId);
-    if (!outcome.closed) sessionIdleManager.resume(params.sessionId);
+    if (outcome.closed) return;
+    if (outcome.notFound) {
+      sessionIdleManager.forgetSession(params.sessionId);
+      openedSessionOwnership.forgetSession(params.sessionId);
+      return;
+    }
+    sessionIdleManager.resume(params.sessionId);
   },
   onClosed: async (sessionId) => {
     await settleBackgroundJobsForTerminalSession(sessionId);
@@ -1438,6 +1443,31 @@ async function handleWorkerJobStop(params = {}) {
   return result;
 }
 
+async function hasActiveWorkerJobForTerminalSession(sessionId) {
+  const matchingJobs = Array.from(workerBackgroundJobs.entries())
+    .filter(([, job]) => job?.sessionId === sessionId);
+  for (const [jobId, job] of matchingJobs) {
+    if (!terminalWorkerManager?.request) return true;
+    try {
+      const result = await terminalWorkerManager.request("netcatty:ai:jobPoll", {
+        jobId,
+        sessionId,
+        chatSessionId: job.chatSessionId || null,
+        offset: 0,
+      }, {});
+      if (result?.completed || (result?.ok === false && /not found/i.test(result?.error || ""))) {
+        workerBackgroundJobs.delete(jobId);
+        continue;
+      }
+      return true;
+    } catch {
+      // A transient worker failure should not close a possibly active session.
+      return true;
+    }
+  }
+  return false;
+}
+
 function cancelWorkerBackgroundJobsForSession(chatSessionId) {
   if (!chatSessionId) return;
   for (const pendingStarts of pendingWorkerJobStarts.values()) {
@@ -1581,6 +1611,18 @@ async function dispatch(method, params) {
     pendingSessionWriteApprovals.set(sessionWriteLockId, method);
   }
 
+  const tracksSessionActivity = Boolean(
+    params?.sessionId
+    && (
+      capability?.id === "terminal.execute"
+      || capability?.id === "terminal.start"
+      || capability?.id?.startsWith("sftp.")
+    )
+  );
+  const activityStarted = tracksSessionActivity
+    ? sessionIdleManager.beginActivity(params?.chatSessionId, params.sessionId)
+    : false;
+
   try {
     // Confirm mode: request user approval for write operations.
     // netcatty/jobStop bypasses approval — it's a stop/cancel action that
@@ -1611,37 +1653,23 @@ async function dispatch(method, params) {
     if (!handler) {
       throw new Error(`Unknown method: ${method}`);
     }
-    const tracksSessionActivity = Boolean(
-      params?.sessionId
-      && (
-        capability?.id === "terminal.execute"
-        || capability?.id === "terminal.start"
-        || capability?.id?.startsWith("sftp.")
-      )
-    );
-    const activityStarted = tracksSessionActivity
-      ? sessionIdleManager.beginActivity(params?.chatSessionId, params.sessionId)
-      : false;
-    try {
-      if (capability?.id === "terminal.execute" && params?.sessionId && !sessions?.get?.(params.sessionId)) {
-        return await handleWorkerTerminalExec(params);
-      }
-      if (capability?.id === "terminal.start" && params?.sessionId && !sessions?.get?.(params.sessionId)) {
-        return await handleWorkerJobStart(params);
-      }
-      if (capability?.id === "terminal.poll" && workerBackgroundJobs.has(params?.jobId)) {
-        return await handleWorkerJobPoll(params);
-      }
-      if (capability?.id === "terminal.stop" && workerBackgroundJobs.has(params?.jobId)) {
-        return await handleWorkerJobStop(params);
-      }
-      return await handler(params);
-    } finally {
-      if (activityStarted) {
-        sessionIdleManager.endActivity(params?.chatSessionId, params.sessionId);
-      }
+    if (capability?.id === "terminal.execute" && params?.sessionId && !sessions?.get?.(params.sessionId)) {
+      return await handleWorkerTerminalExec(params);
     }
+    if (capability?.id === "terminal.start" && params?.sessionId && !sessions?.get?.(params.sessionId)) {
+      return await handleWorkerJobStart(params);
+    }
+    if (capability?.id === "terminal.poll" && workerBackgroundJobs.has(params?.jobId)) {
+      return await handleWorkerJobPoll(params);
+    }
+    if (capability?.id === "terminal.stop" && workerBackgroundJobs.has(params?.jobId)) {
+      return await handleWorkerJobStop(params);
+    }
+    return await handler(params);
   } finally {
+    if (activityStarted) {
+      sessionIdleManager.endActivity(params?.chatSessionId, params.sessionId);
+    }
     if (sessionWriteLockId) {
       pendingSessionWriteApprovals.delete(sessionWriteLockId);
     }
@@ -1914,6 +1942,7 @@ module.exports = {
   cancelPtyExecsForSession,
   cancelWorkerBackgroundJobsForSession,
   cancelWorkerBackgroundJobsForTerminalSession,
+  hasActiveWorkerJobForTerminalSession,
   cancelSftpOpsForSession,
   getSessionMeta,
   cleanupScopedMetadata,

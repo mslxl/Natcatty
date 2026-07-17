@@ -26,7 +26,11 @@ function createSessionService(ctx = {}) {
       }
       return result;
     } finally {
-      await afterClose?.(params, { closed, result });
+      await afterClose?.(params, {
+        closed,
+        notFound: /\bwas not found\b/i.test(result?.error || ""),
+        result,
+      });
     }
   }
 

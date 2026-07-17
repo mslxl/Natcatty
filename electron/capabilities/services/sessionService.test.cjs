@@ -35,5 +35,21 @@ test("failed closes report the outcome so idle tracking can resume", async () =>
   const result = await service.closeTracked({ sessionId: "session-1" });
   assert.equal(result.ok, false);
   assert.equal(outcome.closed, false);
+  assert.equal(outcome.notFound, false);
   assert.deepEqual(outcome.result, result);
+});
+
+test("already-missing sessions are distinguished from retryable close failures", async () => {
+  let outcome = null;
+  const service = createSessionService({
+    invokeSessionAgent: async () => ({ ok: false, error: 'Session "gone" was not found.' }),
+    afterClose: async (_params, value) => {
+      outcome = value;
+    },
+  });
+
+  const result = await service.closeTracked({ sessionId: "gone" });
+  assert.equal(result.ok, false);
+  assert.equal(outcome.closed, false);
+  assert.equal(outcome.notFound, true);
 });
