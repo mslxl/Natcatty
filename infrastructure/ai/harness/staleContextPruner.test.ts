@@ -424,6 +424,35 @@ test('pruneStaleToolContext tiers generic old tool results while protecting rece
   assert.match(serialized, /tail-11/);
 });
 
+test('pruneStaleToolContext retains old successful write outcomes', () => {
+  const messages: ModelMessage[] = [
+    {
+      role: 'assistant',
+      content: [{
+        type: 'tool-call',
+        toolCallId: 'write-1',
+        toolName: 'sftp_write',
+        input: { sessionId: 'sess-1', path: '/etc/app.conf', content: 'enabled=true' },
+      }],
+    },
+    {
+      role: 'tool',
+      content: [{
+        type: 'tool-result',
+        toolCallId: 'write-1',
+        toolName: 'sftp_write',
+        output: { type: 'text', value: 'write succeeded: /etc/app.conf' },
+      }],
+    },
+    ...Array.from({ length: 11 }, (_, index) => ({ role: 'user' as const, content: `later ${index}` })),
+  ];
+
+  const result = pruneStaleToolContext(messages, { underBudgetPressure: true });
+  const serialized = JSON.stringify(result.messages);
+  assert.match(serialized, /write succeeded: \/etc\/app\.conf/);
+  assert.doesNotMatch(serialized, /older tool result omitted/);
+});
+
 test('pruneStaleToolContext redacts commands in old terminal placeholders', () => {
   const messages: ModelMessage[] = [
     ...terminalExecutePair('t1', 'sess-1', 'curl --password swordfish', 'old-output'),

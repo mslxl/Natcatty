@@ -543,7 +543,11 @@ function createCatalogTool(spec: CattyToolSpec) {
         ) {
           let poll = raw as Record<string, unknown>;
           const monitorKey = `${deps.chatSessionId ?? 'global'}:${String(poll.jobId ?? args.jobId ?? '')}`;
-          if (isStreamingMonitorCommand(poll.command) && typeof poll.output === 'string') {
+          if (
+            isStreamingMonitorCommand(poll.command)
+            && typeof poll.output === 'string'
+            && poll.output.trim().length > 0
+          ) {
             const guarded = globalTerminalMonitorGuard.process(monitorKey, poll.output);
             if (guarded.action === 'stop') {
               const stopResult = await invokeCapabilityRpc(

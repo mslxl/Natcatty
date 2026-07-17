@@ -80,6 +80,17 @@ function isSftpReadTool(toolName: string): boolean {
     || toolName === 'sftp_read_file';
 }
 
+function isSafeReadOnlyToolName(toolName: string): boolean {
+  const segments = toolName.toLowerCase().split(/[._-]+/);
+  const readMarkers = new Set(['read', 'get', 'list', 'search', 'fetch', 'inspect', 'status', 'info', 'poll']);
+  const writeMarkers = new Set([
+    'write', 'set', 'update', 'create', 'delete', 'remove', 'start', 'stop', 'close',
+    'execute', 'exec', 'run', 'upload', 'download', 'move', 'copy', 'rename', 'kill',
+  ]);
+  return segments.some(segment => readMarkers.has(segment))
+    && !segments.some(segment => writeMarkers.has(segment));
+}
+
 function readFingerprint(toolName: string, args: unknown): string | null {
   if (!isRecord(args)) return null;
   if (toolName === 'terminal_poll' || toolName === 'terminal.poll') {
@@ -256,7 +267,7 @@ export function pruneStaleToolContext(
       }
       if (underBudgetPressure) {
         const age = userTurnsAfter[index];
-        if (age > 10 && !isError) {
+        if (age > 10 && !isError && isSafeReadOnlyToolName(toolName)) {
           return `[older tool result omitted: tool=${toolName || 'unknown'}, chars=${text.length}]`;
         }
         if (age >= 3 && text.length > 4_000) {

@@ -603,4 +603,32 @@ describe('capabilityTools terminal polling', () => {
     assert.ok(result.output.length <= 3_000);
     assert.ok(result.output.split('\n')[0].length <= 500);
   });
+
+  it('does not count empty monitor polls as output bursts', async () => {
+    let polls = 0;
+    const { tools, toolsContext } = createCattyToolsFromCatalog(
+      {
+        aiCapability: async () => ({
+          ok: true,
+          jobId: 'quiet-monitor-job',
+          command: 'tail -f /var/log/app.log',
+          status: 'running',
+          output: polls++ < 12 ? '' : 'first new line',
+          nextOffset: 0,
+        }),
+      },
+      { sessions: [] },
+      [],
+      'auto',
+      undefined,
+      'chat-quiet-monitor',
+    );
+    const poll = withCattyToolContext(tools.terminal_poll, toolsContext.terminal_poll);
+    for (let index = 0; index < 12; index += 1) {
+      await poll.execute({ jobId: 'quiet-monitor-job', offset: 0 });
+    }
+    const result = await poll.execute({ jobId: 'quiet-monitor-job', offset: 0 }) as { output: string };
+
+    assert.equal(result.output, 'first new line');
+  });
 });
