@@ -11,15 +11,20 @@ import {
   extractLatestUserGoal,
   prepareTurnContext,
 } from './contextManager';
-import type { AgentEventListener, CompactionTrace } from './types';
+import type { CompactionTrace } from './types';
 import { buildCattyCompactionTimeout } from './streamTimeouts';
 import {
   COMPACTION_PROMPT_RESERVE,
   COMPACTION_SUMMARY_MAX_OUTPUT_TOKENS,
   DEFAULT_MAX_OUTPUT_TOKENS,
   resolveEffectiveMaxOutputTokens,
+  computeCompactionThreshold,
+  computeTotalInputTokens,
 } from './contextBudget';
 import { pruneUntilFitsCompaction } from './compactionPruner';
+import type { ToolOutputStore } from './toolOutputStore';
+import { storeCompactionArchive, storeCompactionArtifact } from './compactionArtifacts';
+import { globalTwoPassCompactionCache } from './twoPassCompaction';
 
 export interface CompactCattyMessagesInput {
   messages: ModelMessage[];
@@ -36,6 +41,7 @@ export interface CompactCattyMessagesInput {
   maxOutputTokens?: number;
   onCompactionStart?: (trigger: 'pre-turn' | '413-retry' | 'force') => void;
   onCompaction?: (trace: CompactionTrace) => void;
+  toolOutputStore?: ToolOutputStore;
   reinjection?: {
     permissionMode?: import('../types').AIPermissionMode;
     sessionScopeSummary?: string;
@@ -48,15 +54,13 @@ export interface CompactCattyMessagesResult {
   trace?: CompactionTrace;
 }
 
-function createEventListener(
-  input: CompactCattyMessagesInput,
-): AgentEventListener | undefined {
-  if (!input.onCompaction) return undefined;
-  return (event) => {
-    if (event.type === 'compaction') {
-      input.onCompaction?.(event.trace);
-    }
-  };
+export function buildCompactionFailureArchiveNotice(
+  archiveHandleId: string | undefined,
+  sourceTruncated: boolean,
+): string | undefined {
+  return archiveHandleId
+    ? `Compaction summary failed. Earlier ${sourceTruncated ? 'bounded' : 'exact'} conversation remains available at tool output handle ${archiveHandleId}; search/read it before guessing missing details.`
+    : undefined;
 }
 
 export async function compactCattyMessages(
@@ -70,6 +74,49 @@ export async function compactCattyMessages(
     ?? input.provider?.advancedParams?.maxTokens
     ?? DEFAULT_MAX_OUTPUT_TOKENS;
   const providerId = input.provider?.providerId;
+  let archiveHandleId: string | undefined;
+  let archiveSourceTruncated = false;
+  let artifactHandleId: string | undefined;
+  let archiveChars: number | undefined;
+  let twoPassCacheHit = false;
+  let twoPassPrefixMessages: number | undefined;
+  const reservedTokens = input.reservedTokens?.() ?? 0;
+  const threshold = computeCompactionThreshold({ contextWindow, maxOutputTokens });
+  const estimatedInput = computeTotalInputTokens({
+    messages: input.messages,
+    providerId,
+    reservedTokens,
+  });
+  const prewarmThreshold = Math.max(1, threshold - Math.ceil(contextWindow * 0.1));
+  if (
+    !input.force
+    && input.trigger !== '413-retry'
+    && estimatedInput >= prewarmThreshold
+    && estimatedInput < threshold
+    && input.chatSessionId
+    && input.modelId
+  ) {
+    globalTwoPassCompactionCache.start(
+      input.chatSessionId,
+      input.modelId,
+      input.messages,
+      async prefix => {
+        const result = await generateText({
+          model: input.model,
+          instructions: CONTEXT_COMPACTION_SYSTEM_PROMPT,
+          messages: [{
+            role: 'user',
+            content: `Create the first-pass note for this stable earlier prefix. Preserve exact decisions, paths, commands, errors, and unfinished work:\n\n${formatMessagesForCompaction(prefix)}`,
+          }],
+          abortSignal: input.abortSignal,
+          maxOutputTokens: COMPACTION_SUMMARY_MAX_OUTPUT_TOKENS,
+          temperature: 0,
+          timeout: buildCattyCompactionTimeout(),
+        });
+        return result.text;
+      },
+    );
+  }
 
   const summarize = async (messagesToSummarize: ModelMessage[]) => {
     const summarizeTrigger = input.trigger === '413-retry' || input.compressForRequestTooLargeRetry
@@ -92,19 +139,57 @@ export async function compactCattyMessages(
       availableForInput: Math.max(1, availableForInput),
       providerId,
     });
+    const cached = input.chatSessionId && input.modelId
+      ? await globalTwoPassCompactionCache.consume(input.chatSessionId, input.modelId, pruned)
+      : undefined;
+    twoPassCacheHit = Boolean(cached);
+    twoPassPrefixMessages = cached?.prefixLength;
+    const formattedHistory = cached
+      ? [
+          `[FIRST-PASS NOTE FOR ${cached.prefixLength} EARLIER MESSAGES]\n${cached.note}`,
+          `[REMAINING EXACT MESSAGES]\n${formatMessagesForCompaction(pruned.slice(cached.prefixLength))}`,
+        ].join('\n\n')
+      : formatMessagesForCompaction(pruned);
+    const exactFormattedHistory = formatMessagesForCompaction(messagesToSummarize);
+    archiveChars = exactFormattedHistory.length;
+    if (input.toolOutputStore && input.chatSessionId) {
+      const archive = storeCompactionArchive(
+        input.toolOutputStore,
+        input.chatSessionId,
+        exactFormattedHistory,
+      );
+      archiveHandleId = archive.id;
+      archiveSourceTruncated = archive.sourceTruncated;
+    }
     const result = await generateText({
       model: input.model,
       instructions: CONTEXT_COMPACTION_SYSTEM_PROMPT,
       messages: [{
         role: 'user',
-        content: `Summarize this earlier conversation context for the next model turn:\n\n${formatMessagesForCompaction(pruned)}`,
+        content: `Summarize this earlier conversation context for the next model turn:\n\n${formattedHistory}`,
       }],
       abortSignal: input.abortSignal,
       maxOutputTokens: COMPACTION_SUMMARY_MAX_OUTPUT_TOKENS,
       temperature: 0,
       timeout: buildCattyCompactionTimeout(),
     });
-    return result.text;
+    if (input.toolOutputStore && input.chatSessionId) {
+      artifactHandleId = storeCompactionArtifact(
+        input.toolOutputStore,
+        input.chatSessionId,
+        {
+          trigger: summarizeTrigger,
+          modelId: input.modelId,
+          archiveHandleId,
+          formattedHistory,
+          summary: result.text,
+        },
+      ).id;
+    }
+    const archiveNotice = archiveHandleId
+      ? `\n\n[Earlier ${archiveSourceTruncated ? 'bounded conversation archive (source exceeded the local archive cap)' : 'exact conversation'} archived locally: handleId=${archiveHandleId}. Use tool_output_read search/range only when the summary lacks a needed exact detail.]`
+      : '';
+    return `${result.text}${archiveNotice}`;
   };
 
   const trigger = input.trigger ?? (input.force ? 'force' : 'pre-turn');
@@ -123,14 +208,23 @@ export async function compactCattyMessages(
       summarize,
       sessionId: input.sessionId,
       chatSessionId: input.chatSessionId,
-      onEvent: createEventListener(input),
+      onEvent: undefined,
       reinjection: {
         ...input.reinjection,
         userGoal: extractLatestUserGoal(input.messages),
       },
       providerId,
     });
-    return { messages: prepared.messages, trace: prepared.trace };
+    const trace = prepared.trace ? {
+      ...prepared.trace,
+      archiveHandleId,
+      artifactHandleId,
+      archiveChars,
+      twoPassCacheHit,
+      twoPassPrefixMessages,
+    } : undefined;
+    if (trace) input.onCompaction?.(trace);
+    return { messages: prepared.messages, trace };
   } catch (err) {
     if (input.abortSignal.aborted) throw err;
     console.warn('[Harness] Context compaction failed; falling back to recent messages only:', err);
@@ -144,9 +238,26 @@ export async function compactCattyMessages(
       protectRecentMessages: DEFAULT_PROTECT_RECENT_MESSAGES,
       sessionId: input.sessionId,
       chatSessionId: input.chatSessionId,
-      onEvent: createEventListener(input),
+      onEvent: undefined,
+      reinjection: {
+        ...input.reinjection,
+        sessionScopeSummary: [
+          input.reinjection?.sessionScopeSummary,
+          buildCompactionFailureArchiveNotice(archiveHandleId, archiveSourceTruncated),
+        ].filter(Boolean).join('\n') || undefined,
+        userGoal: extractLatestUserGoal(input.messages),
+      },
     });
-    return { messages: fallback.messages, trace: fallback.trace };
+    const trace = fallback.trace ? {
+      ...fallback.trace,
+      archiveHandleId,
+      artifactHandleId,
+      archiveChars,
+      twoPassCacheHit,
+      twoPassPrefixMessages,
+    } : undefined;
+    if (trace) input.onCompaction?.(trace);
+    return { messages: fallback.messages, trace };
   }
 }
 

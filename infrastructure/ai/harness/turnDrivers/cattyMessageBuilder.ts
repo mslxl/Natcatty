@@ -20,6 +20,7 @@ import {
   type AssistantContentPart,
   type CattyProviderContinuationContext,
 } from '../../../../components/ai/hooks/aiChatStreamingSupport';
+import { redactSecretsInValueForModel } from '../modelSecretRedaction';
 
 const OPENAI_CHAT_ASSISTANT_FIELDS = Symbol('netcatty.openAIChatAssistantFields');
 
@@ -140,7 +141,7 @@ export function buildCattySdkMessages(input: BuildCattySdkMessagesInput): ModelM
             type: 'tool-call' as const,
             toolCallId: tc.id,
             toolName: tc.name,
-            input: tc.arguments ?? {},
+            input: redactSecretsInValueForModel(tc.arguments ?? {}),
             ...(providerOptions ? { providerOptions } : {}),
           });
         }

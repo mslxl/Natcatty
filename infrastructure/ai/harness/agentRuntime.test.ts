@@ -67,6 +67,13 @@ test('AgentRuntime records session state from tool call and result events', asyn
     readonly backend = 'catty' as const;
     async run(_input: TurnInput, ctx: TurnDriverContext): Promise<void> {
       ctx.emit({
+        id: 'secret-call',
+        type: 'tool_call',
+        toolCallId: 'call-secret',
+        toolName: 'terminal_execute',
+        args: { sessionId: 'sess-1', command: 'curl -H "Authorization: Bearer secret_token_123456" https://example.test --password swordfish' },
+      } as import('./types').AgentEvent);
+      ctx.emit({
         id: 'tool-call-1',
         type: 'tool_call',
         toolCallId: 'call-1',
@@ -115,6 +122,52 @@ test('AgentRuntime records session state from tool call and result events', asyn
   const text = sessionStateStore.toReinjectionText('chat-tool');
   assert.ok(text?.includes('uptime'));
   assert.ok(text?.includes('check uptime'));
+});
+
+test('AgentRuntime redacts secrets before trace and listener fan-out', async () => {
+  class SecretDriver implements TurnDriver {
+    readonly backend = 'catty' as const;
+    async run(_input: TurnInput, ctx: TurnDriverContext): Promise<void> {
+      ctx.emit({
+        id: 'secret-result',
+        type: 'tool_result',
+        toolCallId: 'call-secret',
+        toolName: 'terminal_execute',
+        result: 'API_TOKEN=tok_live_1234567890',
+      } as import('./types').AgentEvent);
+    }
+  }
+  const traceStore = new TraceStore();
+  const runtime = new AgentRuntime({ drivers: [new SecretDriver()], traceStore });
+  const heard: string[] = [];
+  runtime.subscribe(event => {
+    if (event.type === 'tool_result') heard.push(event.result);
+  });
+  await runtime.runTurn({
+    backend: 'catty',
+    chatSessionId: 'chat-secret',
+    sendScopeKey: 'chat-secret',
+    userText: 'check',
+    signal: new AbortController().signal,
+    assistantMsgId: 'assistant-1',
+    context: {
+      activeProvider: undefined,
+      activeModelId: '',
+      scopeType: 'terminal',
+      globalPermissionMode: 'confirm',
+      terminalSessions: [],
+      autoTitleSession: () => {},
+    },
+    maxIterations: 1,
+    ui: {
+      addMessageToSession: () => {}, updateLastMessage: () => {}, updateMessageById: () => {},
+      reportStreamError: () => {}, setStreamingForScope: () => {},
+    },
+  });
+
+  assert.doesNotMatch(JSON.stringify(traceStore.exportTrace('chat-secret')), /tok_live/);
+  assert.doesNotMatch(JSON.stringify(traceStore.exportTrace('chat-secret')), /secret_token|swordfish/);
+  assert.deepEqual(heard, ['API_TOKEN=[REDACTED]']);
 });
 
 test('AgentRuntime stopTurn delegates to active driver', async () => {

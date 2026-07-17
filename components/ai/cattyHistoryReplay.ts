@@ -1,5 +1,6 @@
 import type { ChatMessage, ChatMessageAttachment, ToolCall, ToolResult } from "../../infrastructure/ai/types";
 import { isTerminalSelectionAttachment } from "../../application/state/terminalSelectionAttachment";
+import { redactSecretsForModel } from "../../infrastructure/ai/harness/modelSecretRedaction";
 
 const MAX_ATTACHMENT_PLACEHOLDER_DETAIL_CHARS = 120;
 const MAX_TOOL_COMMAND_CHARS = 220;
@@ -125,14 +126,19 @@ export function buildHistoricalToolResultReplayText(
 
   const details = [
     `toolCallId=${result.toolCallId}`,
-    getToolCommand(toolCall) ? `command=${truncateInline(getToolCommand(toolCall) ?? "", MAX_TOOL_COMMAND_CHARS)}` : undefined,
+    getToolCommand(toolCall) ? `command=${truncateInline(redactSecretsForModel(getToolCommand(toolCall) ?? ""), MAX_TOOL_COMMAND_CHARS)}` : undefined,
     `outputChars=${result.content.length}`,
     result.isError ? "status=error" : "status=success",
   ].filter(Boolean).join(", ");
 
-  return `[Historical terminal output omitted from replay: ${details}. Re-run terminal_execute if exact output is needed.]`;
+  return `[Historical terminal output omitted from replay: ${details}. This tool call already completed; do not execute the command again. Read the saved output or poll the existing job if more detail is needed.]`;
 }
 
 function isTerminalToolName(toolName: string): boolean {
-  return toolName === "terminal" || toolName === "terminal_exec" || toolName === "terminal_execute";
+  return toolName === "terminal"
+    || toolName === "terminal_exec"
+    || toolName === "terminal_execute"
+    || toolName === "terminal_start"
+    || toolName === "terminal_poll"
+    || toolName === "terminal_read_context";
 }

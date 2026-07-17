@@ -27,6 +27,47 @@ import {
 } from './cattyMessageBuilder';
 import { hadToolProgressBeforeRequestTooLarge, processCattyStream } from './cattyStreamProcessor';
 import type { CattyTurnInput, TurnDriver, TurnDriverContext } from './types';
+import { fitLargeUserInputForModel } from '../largeUserInput';
+import { buildPromptContextSnapshot } from '../promptContextSnapshot';
+import type { SessionStateStore } from '../sessionState';
+
+export async function refreshRememberedTerminalJobs(input: {
+  chatSessionId: string;
+  sessionStateStore: SessionStateStore;
+  poll: (jobId: string, offset: number) => Promise<unknown>;
+}): Promise<void> {
+  const rememberedJobs = Object.entries(
+    input.sessionStateStore.get(input.chatSessionId).activeJobs,
+  ).slice(-5);
+  for (const [jobId, job] of rememberedJobs) {
+    try {
+      const refreshed = await input.poll(jobId, job.nextOffset);
+      const refreshedRecord = refreshed && typeof refreshed === 'object'
+        ? refreshed as Record<string, unknown>
+        : undefined;
+      const isError = Boolean(
+        refreshedRecord
+        && (
+          refreshedRecord.ok === false
+          || (typeof refreshedRecord.error === 'string' && refreshedRecord.error.trim().length > 0)
+        ),
+      );
+      input.sessionStateStore.updateFromToolResult(
+        input.chatSessionId,
+        'terminal_poll',
+        { jobId, offset: job.nextOffset },
+        JSON.stringify(
+          !isError && refreshed && typeof refreshed === 'object'
+            ? { ...refreshed as Record<string, unknown>, nextOffset: job.nextOffset }
+            : refreshed,
+        ),
+        isError,
+      );
+    } catch {
+      // Preserve the unverified job on transient bridge errors.
+    }
+  }
+}
 
 export class CattyTurnDriver implements TurnDriver {
   readonly backend = 'catty' as const;
@@ -57,7 +98,34 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
     ui,
   } = input;
 
-  const netcattyBridge = bridge ?? getNetcattyBridge();
+  const netcattyBridge = (bridge ?? getNetcattyBridge()) as NonNullable<ReturnType<typeof getNetcattyBridge>>;
+  const toolOutputTempBridge = netcattyBridge as typeof netcattyBridge & {
+    writeToolOutputTemp?: (handleId: string, content: string) => Promise<{ ok: boolean; path?: string; error?: string }>;
+    readToolOutputTemp?: (
+      path: string,
+      request: import('../toolOutputStore').ReadToolOutputInput,
+    ) => Promise<Omit<import('../toolOutputStore').ToolOutputReadResult, 'handleId' | 'storedChars' | 'sourceTruncated'> | null>;
+    deleteToolOutputTemp?: (path: string) => Promise<{ ok: boolean }>;
+  };
+  if (
+    toolOutputTempBridge.writeToolOutputTemp
+    && toolOutputTempBridge.readToolOutputTemp
+    && toolOutputTempBridge.deleteToolOutputTemp
+  ) {
+    ctx.toolOutputStore.setPersistence({
+      write: async (handleId, content) => {
+        const result = await toolOutputTempBridge.writeToolOutputTemp!(handleId, content);
+        if (!result.ok || !result.path) {
+          throw new Error(result.error || 'Unable to persist tool output.');
+        }
+        return result.path;
+      },
+      read: (path, request) => toolOutputTempBridge.readToolOutputTemp!(path, request),
+      delete: async path => {
+        await toolOutputTempBridge.deleteToolOutputTemp!(path);
+      },
+    });
+  }
   await clearChatSessionCancelled(sessionId, netcattyBridge);
   if (netcattyBridge.aiMcpUpdateSessions) {
     await netcattyBridge.aiMcpUpdateSessions(context.terminalSessions, sessionId);
@@ -70,6 +138,7 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
     trimmed,
     context.selectedUserSkillSlugs,
   );
+  const modelUserText = fitLargeUserInputForModel(trimmed, sessionId, ctx.toolOutputStore);
   const getExecutorContext = context.getExecutorContext ?? (() => ({
     sessions: context.terminalSessions,
     workspaceId: context.scopeType === 'workspace' ? context.scopeTargetId : undefined,
@@ -102,6 +171,23 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
   }
 
   const activeModelId = context.activeModelId || context.activeProvider.defaultModel || '';
+  const promptContext = buildPromptContextSnapshot({
+    providerId: context.activeProvider.providerId,
+    modelId: activeModelId,
+    permissionMode: context.permissionMode ?? context.globalPermissionMode,
+    scopeType: context.scopeType,
+    scopeLabel: context.scopeLabel,
+    toolNames: Object.keys(tools),
+    selectedSkillSlugs: context.selectedUserSkillSlugs,
+    systemPrompt,
+    webSearchEnabled: isWebSearchReady(context.webSearchConfig),
+    hostSessionIds: context.terminalSessions.map(session => session.sessionId),
+  });
+  ctx.emit({
+    id: `context-snapshot-${ctx.turnId}`,
+    type: 'context_snapshot',
+    snapshot: promptContext,
+  } as import('../types').AgentEvent);
   const continuationContext = createContinuationContext(
     context.activeProvider.id,
     context.activeProvider.providerId,
@@ -120,7 +206,7 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
     ) => buildCattySdkMessages({
       allMessages,
       includeCurrentUserMessage,
-      trimmed,
+      trimmed: modelUserText,
       attachments: includeCurrentUserMessage ? attachments : undefined,
       continuationContext,
       preserveTerminalToolResults: options.preserveTerminalToolResults,
@@ -174,6 +260,17 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
         compressForRequestTooLargeRetry?: boolean;
       },
     ): Promise<ModelMessage[]> => {
+      if (netcattyBridge.aiCapability) {
+        await refreshRememberedTerminalJobs({
+          chatSessionId: sessionId,
+          sessionStateStore: ctx.sessionStateStore,
+          poll: (jobId, offset) => netcattyBridge.aiCapability!(
+              'netcatty/jobPoll',
+              { jobId, offset },
+              sessionId,
+          ),
+        });
+      }
       const pendingHandles = ctx.toolOutputStore.listPendingHandles(sessionId);
       const sessionStateText = ctx.sessionStateStore.toReinjectionText(sessionId);
       const result = await compactCattyMessages({
@@ -185,6 +282,7 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
         reservedTokens: getRequestReserveTokens,
         maxOutputTokens,
         model,
+        toolOutputStore: ctx.toolOutputStore,
         abortSignal: signal,
         trigger: options.force ? 'force' : options.compressForRequestTooLargeRetry ? '413-retry' : 'pre-turn',
         force: options.force,
@@ -234,6 +332,7 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
       scopeType: context.scopeType,
       scopeLabel: context.scopeLabel,
       userGoal: extractLatestUserGoal(messagesForStream),
+      promptContext,
     });
     const commandTimeoutSeconds =
       Number.isFinite(context.commandTimeout) && context.commandTimeout > 0
@@ -295,6 +394,7 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
       }
 
       console.warn('[Catty] Request hit HTTP 413; forcing context compaction and retrying once.', streamErr);
+      ctx.toolResultDedup.enableWriteReplay();
       const hadToolProgress = hadToolProgressBeforeRequestTooLarge(streamErr);
       let retryBaseMessages = messagesForStream;
       let retryAssistantMsgId = assistantMsgId;
