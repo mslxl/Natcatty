@@ -19,6 +19,7 @@ import {
   type SyncPayload,
   type SyncResult,
   type SyncHistoryEntry,
+  type ConvergentFieldConflict,
   type WebDAVConfig,
   type S3Config,
   formatLastSync,
@@ -35,10 +36,30 @@ import {
 import type { ShrinkFinding } from '../../domain/syncGuards';
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
 import type { DeviceFlowState } from '../../infrastructure/services/adapters/GitHubAdapter';
+import {
+  getConvergentSyncLocalConfig,
+  getConvergentSyncLocalConfigSnapshot,
+  pauseConvergentSync,
+  refreshConvergentSyncLocalConfigSnapshot,
+  setConvergentSyncLocalConfig,
+  subscribeConvergentSyncLocalConfig,
+  type ConvergentSyncLocalConfig,
+} from '../../infrastructure/services/convergentSyncConfig';
 
 // ============================================================================
 // Types
 // ============================================================================
+
+type ConvergentPayloadApplier = (
+  payload: SyncPayload,
+  commitReplica: () => Promise<void>,
+) => Promise<void>;
+
+interface CloudSyncRunOptions {
+  overrideShrink?: boolean;
+  conflictActionOverride?: CloudSyncConflictAction;
+  applyConvergentPayload?: ConvergentPayloadApplier;
+}
 
 export interface CloudSyncHook {
   // State
@@ -59,6 +80,8 @@ export interface CloudSyncHook {
   remoteUpdatedAt: number;
   syncHistory: SyncHistoryEntry[];
   pendingLocalSync: boolean;
+  convergentConflicts: ConvergentFieldConflict[];
+  convergentSyncConfig: ConvergentSyncLocalConfig;
   pendingBrowserAuthProvider: 'google' | 'onedrive' | null;
   
   // Computed
@@ -97,11 +120,31 @@ export interface CloudSyncHook {
   resetProviderStatus: (provider: CloudProvider) => void;
 
   // Sync Actions
-  syncNow: (payload: SyncPayload, opts?: { overrideShrink?: boolean; conflictActionOverride?: CloudSyncConflictAction }) => Promise<Map<CloudProvider, SyncResult>>;
-  syncToProvider: (provider: CloudProvider, payload: SyncPayload, opts?: { overrideShrink?: boolean }) => Promise<SyncResult>;
+  syncNow: (payload: SyncPayload, opts?: CloudSyncRunOptions) => Promise<Map<CloudProvider, SyncResult>>;
+  syncToProvider: (
+    provider: CloudProvider,
+    payload: SyncPayload,
+    opts?: Pick<CloudSyncRunOptions, 'overrideShrink' | 'applyConvergentPayload'>,
+  ) => Promise<SyncResult>;
   downloadFromProvider: (provider: CloudProvider) => Promise<RemoteSyncPayload | null>;
   commitRemoteInspection: (provider: CloudProvider, remoteFile: SyncedFile, payload: SyncPayload, opts?: { recordDownload?: boolean }) => Promise<void>;
   resolveConflict: (resolution: ConflictResolution) => Promise<RemoteSyncPayload | null>;
+  resolveConvergentConflict: (
+    addressKey: string,
+    candidateDot: string,
+    applyPayload: (
+      payload: SyncPayload,
+      commitReplica: () => Promise<void>,
+    ) => Promise<void>,
+  ) => Promise<{ payload: SyncPayload; results: Map<CloudProvider, SyncResult> }>;
+  downgradeConvergentSync: (
+    confirmed: boolean,
+    buildLocalPayload: () => SyncPayload | Promise<SyncPayload>,
+    applyPayload: (
+      payload: SyncPayload,
+      commitReplica: () => Promise<void>,
+    ) => Promise<void>,
+  ) => Promise<Map<CloudProvider, SyncResult>>;
 
   // Gist Revision History
   getGistRevisionHistory: () => Promise<Array<{ version: string; date: Date }>>;
@@ -122,6 +165,8 @@ export interface CloudSyncHook {
   setAutoSync: (enabled: boolean, intervalMinutes?: number) => void;
   setDeviceName: (name: string) => void;
   setSyncStrategy: (strategy: CloudSyncStrategy) => void;
+  setConvergentSyncEnabled: (enabled: boolean) => ConvergentSyncLocalConfig;
+  refreshConvergentSyncConfig: () => ConvergentSyncLocalConfig;
 
   // Local Data Reset
   resetLocalVersion: () => void;
@@ -208,6 +253,11 @@ export const useCloudSync = (): CloudSyncHook => {
   const activeOAuthProviderRef = useRef<'google' | 'onedrive' | null>(null);
   const activeGitHubAuthAbortRef = useRef<AbortController | null>(null);
   const activeGitHubAuthAttemptIdRef = useRef<number | null>(null);
+  const convergentSyncConfig = useSyncExternalStore(
+    subscribeConvergentSyncLocalConfig,
+    getConvergentSyncLocalConfigSnapshot,
+    getConvergentSyncLocalConfigSnapshot,
+  );
 
   // Auto-unlock: if a master key exists, retrieve the persisted password (Electron safeStorage)
   // and unlock silently so users don't have to manage a LOCKED state in the UI.
@@ -245,6 +295,14 @@ export const useCloudSync = (): CloudSyncHook => {
       }
     })();
   }, [state.securityState, state.masterKeyConfig]);
+
+  useEffect(() => {
+    if (state.securityState !== 'UNLOCKED') return;
+    if (!getConvergentSyncLocalConfig().initialized) return;
+    void manager.refreshConvergentConflicts().catch(() => {
+      // A missing/corrupt replica is surfaced by the next explicit sync.
+    });
+  }, [state.securityState]);
   
   // ========== Computed Values ==========
   
@@ -674,12 +732,16 @@ export const useCloudSync = (): CloudSyncHook => {
     throw new Error('Vault is locked');
   }, []);
 
-  const syncNowWithUnlock = useCallback(async (payload: SyncPayload, opts?: { overrideShrink?: boolean; conflictActionOverride?: CloudSyncConflictAction }) => {
+  const syncNowWithUnlock = useCallback(async (payload: SyncPayload, opts?: CloudSyncRunOptions) => {
     await ensureUnlocked();
     return await manager.syncAllProviders(payload, opts);
   }, [ensureUnlocked]);
 
-  const syncToProviderWithUnlock = useCallback(async (provider: CloudProvider, payload: SyncPayload, opts?: { overrideShrink?: boolean }) => {
+  const syncToProviderWithUnlock = useCallback(async (
+    provider: CloudProvider,
+    payload: SyncPayload,
+    opts?: Pick<CloudSyncRunOptions, 'overrideShrink' | 'applyConvergentPayload'>,
+  ) => {
     await ensureUnlocked();
     return await manager.syncToProvider(provider, payload, opts);
   }, [ensureUnlocked]);
@@ -713,6 +775,42 @@ export const useCloudSync = (): CloudSyncHook => {
     await ensureUnlocked();
     return await manager.resolveConflict(resolution);
   }, [ensureUnlocked]);
+
+  const resolveConvergentConflictWithUnlock = useCallback(async (
+    addressKey: string,
+    candidateDot: string,
+    applyPayload: (
+      payload: SyncPayload,
+      commitReplica: () => Promise<void>,
+    ) => Promise<void>,
+  ) => {
+    await ensureUnlocked();
+    return manager.resolveConvergentConflict(addressKey, candidateDot, applyPayload);
+  }, [ensureUnlocked]);
+
+  const refreshConvergentSyncConfig = useCallback(() => {
+    return refreshConvergentSyncLocalConfigSnapshot();
+  }, []);
+
+  const setConvergentSyncEnabled = useCallback((enabled: boolean) => {
+    const current = getConvergentSyncLocalConfig();
+    const next = enabled
+      ? setConvergentSyncLocalConfig({ enabled: true, initialized: current.initialized })
+      : pauseConvergentSync();
+    return next;
+  }, []);
+
+  const downgradeConvergentSyncWithUnlock = useCallback(async (
+    confirmed: boolean,
+    buildLocalPayload: () => SyncPayload | Promise<SyncPayload>,
+    applyPayload: (
+      payload: SyncPayload,
+      commitReplica: () => Promise<void>,
+    ) => Promise<void>,
+  ) => {
+    await ensureUnlocked();
+    return manager.downgradeConvergentSync(confirmed, buildLocalPayload, applyPayload);
+  }, [ensureUnlocked]);
   
   return {
     // State
@@ -733,6 +831,8 @@ export const useCloudSync = (): CloudSyncHook => {
     remoteUpdatedAt: state.remoteUpdatedAt,
     syncHistory: state.syncHistory,
     pendingLocalSync: state.pendingLocalSync,
+    convergentConflicts: state.convergentConflicts,
+    convergentSyncConfig,
     pendingBrowserAuthProvider: pendingBrowserAuth?.provider ?? null,
     
     // Computed
@@ -765,6 +865,8 @@ export const useCloudSync = (): CloudSyncHook => {
     downloadFromProvider: downloadFromProviderWithUnlock,
     commitRemoteInspection: commitRemoteInspectionWithUnlock,
     resolveConflict: resolveConflictWithUnlock,
+    resolveConvergentConflict: resolveConvergentConflictWithUnlock,
+    downgradeConvergentSync: downgradeConvergentSyncWithUnlock,
 
     // Gist Revision History (#679)
     getGistRevisionHistory: manager.getGistRevisionHistory.bind(manager),
@@ -774,6 +876,8 @@ export const useCloudSync = (): CloudSyncHook => {
     setAutoSync,
     setDeviceName,
     setSyncStrategy,
+    setConvergentSyncEnabled,
+    refreshConvergentSyncConfig,
 
     // Local Data Reset
     resetLocalVersion: () => manager.resetLocalVersion(),

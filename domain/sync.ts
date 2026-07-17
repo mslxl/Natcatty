@@ -506,12 +506,18 @@ export interface SyncResult {
   conflictDetected?: boolean;
   /** Present when sync produced or selected a payload that caller should apply locally */
   mergedPayload?: import('./sync').SyncPayload;
+  /** True when convergent sync already applied mergedPayload and committed its replica atomically. */
+  mergedPayloadApplied?: boolean;
   /** Present with a downloaded payload so callers can commit the remote anchor after local apply succeeds. */
   remoteFile?: SyncedFile;
   /** True when a shrink-detection guard blocked the upload */
   shrinkBlocked?: boolean;
   /** The finding that triggered the shrink block or force-push */
   finding?: ShrinkFinding;
+  /** Field-level conflicts retained by convergent sync v2. */
+  convergentConflicts?: ConvergentFieldConflict[];
+  /** Number of retained v2 conflicts; duplicated for lightweight status views. */
+  convergentConflictCount?: number;
 }
 
 export interface RemoteSyncPayload {

@@ -8,6 +8,8 @@ import { summarizeSyncChanges, withSyncReliabilityMeta } from '../../../domain/s
 import { detectSuspiciousShrink, type ShrinkFinding } from '../../../domain/syncGuards';
 import { resolveCloudSyncConflictAction } from '../../../domain/syncStrategy';
 import { assertConvergentSyncWriteCompatible } from '../../../domain/convergentSync';
+import { getConvergentSyncLocalConfig } from '../convergentSyncConfig';
+import { syncAllProvidersConvergentlyImpl } from './convergentSyncRuntimeMethods';
 import type { CloudAdapter } from '../adapters';
 import type GitHubAdapter from '../adapters/GitHubAdapter';
 import type {
@@ -263,11 +265,63 @@ export function buildPayloadImpl(this: any,data: {
     };
   }
 
+export function selectConvergentSyncToProviderResult(
+  provider: CloudProvider,
+  results: Map<CloudProvider, SyncResult>,
+): SyncResult {
+  const requested = results.get(provider) ?? {
+    success: false,
+    provider,
+    action: 'none',
+    error: 'Provider is not available for convergent sync',
+  } satisfies SyncResult;
+  if (requested.mergedPayload) return requested;
+
+  // Convergent sync fans out to every provider. A non-target provider can
+  // verify a newer joined replica even when the requested provider fails;
+  // preserve that aggregate payload so the caller can update the local vault
+  // before reporting the requested provider's failure.
+  const aggregateMergedPayload = [...results.values()]
+    .find((result) => result.mergedPayload);
+  return aggregateMergedPayload?.mergedPayload
+    ? {
+        ...requested,
+        mergedPayload: aggregateMergedPayload.mergedPayload,
+        ...(aggregateMergedPayload.mergedPayloadApplied
+          ? { mergedPayloadApplied: true }
+          : {}),
+      }
+    : requested;
+}
+
 export async function syncToProviderImpl(this: any,
   provider: CloudProvider,
   payload: SyncPayload,
-  opts: { overrideShrink?: boolean } = {},
+  opts: {
+    overrideShrink?: boolean;
+    applyConvergentPayload?: (
+      payload: SyncPayload,
+      commitReplica: () => Promise<void>,
+    ) => Promise<void>;
+  } = {},
 ): Promise<SyncResult> {
+    const convergentConfig = getConvergentSyncLocalConfig();
+    if (convergentConfig.initialized) {
+      if (!convergentConfig.enabled) {
+        return {
+          success: false,
+          provider,
+          action: 'none',
+          error: 'Convergent sync is paused on this device',
+        };
+      }
+      const results = await syncAllProvidersConvergentlyImpl.call(this, payload, {
+        overrideShrink: opts.overrideShrink,
+        applyPayload: opts.applyConvergentPayload,
+      });
+      return selectConvergentSyncToProviderResult(provider, results);
+    }
+
     if (this.state.securityState !== 'UNLOCKED') {
       return {
         success: false,

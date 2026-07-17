@@ -1,7 +1,6 @@
 # Convergent Sync Protocol and Migration
 
-Status: experimental protocol layer; provider state-machine integration and UI
-remain in the final follow-up PR.
+Status: experimental end-to-end implementation.
 
 Issue: [#2245](https://github.com/binaricat/Netcatty/issues/2245)
 
@@ -85,11 +84,17 @@ downgrade confirmation.
 
 Local vault backups remain materialized snapshots and never carry the active
 replica. Migration initialization uses the existing protected-apply transaction:
-it snapshots the live vault when the user confirms, creates a required encrypted
-safety backup, holds the cross-window restore barrier, applies the previewed
-materialized payload, persists the canonical replica, and only then marks v2
-initialized. Edits made while the preview was open are therefore recoverable.
-The sync manager must still be unlocked immediately before this transaction;
+under the convergent Web Lock it rebuilds the current cloud-sync payload and
+compares it with the snapshot used for the preview. Any intervening local edit
+aborts initialization and requires a new preview. An unchanged vault gets a
+required encrypted safety backup, holds the cross-window restore barrier,
+applies the previewed materialized payload, persists the canonical replica, and
+only then marks v2 initialized. Before releasing the same Web Lock, migration
+forces a convergent read/merge/write/verify cycle so unchanged v1 materialized
+data still receives a v2 envelope on every connected provider. Concurrent
+provider edits discovered by that cycle are protected and applied locally;
+partial publication remains visible as a provider error and pending sync. The
+sync manager must still be unlocked immediately before this transaction;
 otherwise initialization fails before any backup, sentinel, or local mutation.
 A crash or failure after mutation starts leaves the existing apply sentinel set
 so auto-sync cannot publish a partial migration.
@@ -112,10 +117,66 @@ In-memory entities are normalized with the same JSON serialization semantics
 as encrypted sync payloads before validation, so optional `undefined` model
 fields are omitted instead of preventing migration.
 
-## Follow-up boundary
+## Provider convergence state machine
 
-This change deliberately does not replace the current provider loop. The final
-PR will enable unordered provider joins, Web Locks serialization, local-first
-replica persistence, three-round read-merge-write-verify uploads, conflict
-resolution UI, secret masking, localized migration controls, and explicit cloud
-downgrade propagation.
+An initialized device holds one canonical replica shared by every provider.
+Each sync acquires an exclusive Web Lock; environments without Web Locks fail
+closed so two renderer windows cannot allocate and upload competing local
+states. Disabling the experimental switch pauses the v2 path and never falls
+through to the legacy writer.
+
+The runtime downloads every connected provider before choosing an outgoing
+state. `smartMerge` joins local writes and all remote branches, `preferLocal`
+joins first and then creates causal local writes that dominate the joined
+registers, and `preferCloud` adopts the unordered remote join. The canonical
+state containing locally generated dots is encrypted and persisted before any
+provider upload. Downloaded remote-only dots are committed to the local replica
+only after at least one provider verifies the joined state; a total network
+failure therefore leaves the durable replica aligned with the unchanged local
+vault and safely retries the remote branch later.
+Before `smartMerge` or `preferLocal` turns a local snapshot into writes, the
+existing suspicious-shrink guard compares it with the materialized replica.
+Mass deletion is blocked before dots are allocated or persisted unless the
+user performs the existing one-shot force operation.
+
+Providers then run at most three read-merge-write-verify rounds. Every round:
+
+1. downloads and joins in memory any state that appeared since the initial read;
+2. uploads the same expected vector to available providers;
+3. reads each provider back and accepts the write only when the returned vector
+   dominates the expected vector;
+4. joins verified remote supersets and repeats when they contain new concurrent
+   state.
+
+The retry delay uses short full jitter. One unavailable provider remains an
+error and leaves local sync pending, but it does not roll back providers that
+verified successfully. Because locally generated causal writes are durable
+before network I/O, application restart retries the same dots instead of
+regenerating them. Provider baselines and the joined canonical replica advance
+only after read-back verification.
+
+## Conflict resolution and downgrade
+
+Materialization exposes retained conflicts by register address. Choosing a
+candidate writes a new device value whose context observes every candidate;
+the resolution therefore dominates stale replicas and propagates through the
+normal provider state machine. If propagation discovers additional concurrent
+provider writes, Netcatty applies the final canonical materialization locally
+before releasing the same Web Lock. Secret-bearing fields are detected from
+their address and nested field names, including objects nested inside atomic
+arrays. Their UI renders only “set” or “empty”; values are never formatted,
+logged, or inserted into DOM text.
+
+Explicit downgrade holds the same Web Lock and downloads every connected
+provider before writing anything. Netcatty first converts edits made while v2
+was paused into causal writes over the local replica, then joins those writes
+with every remote state. It applies the joined payload behind a protective
+backup and blocks downgrade until any newly discovered field conflicts are
+resolved. It then writes the joined materialized v1 snapshot to every provider,
+downloads it again, and verifies both the absence of v2 metadata and equality
+of cloud data.
+Only after every provider verifies does Netcatty clear the local replica,
+provider baselines, and experimental configuration, still inside the same Web
+Lock. A partial downgrade keeps the joined local v2 state and refreshed
+provider baselines so the user can retry safely without losing remote-only
+dots.

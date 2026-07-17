@@ -50,20 +50,41 @@ export default function SettingsSyncTab(props: {
     );
   }, [vault, getEffectivePortForwardingRules]);
 
+  const onApplyMigrationPayload = useCallback(
+    (payload: SyncPayload) =>
+      applySyncPayload(payload, {
+        importVaultData: importDataFromString,
+        importPortForwardingRules,
+        onSettingsApplied,
+      }),
+    [importDataFromString, importPortForwardingRules, onSettingsApplied],
+  );
+
   const onApplyPayload = useCallback(
     (payload: SyncPayload) =>
       applyProtectedSyncPayload({
         buildPreApplyPayload: onBuildLocalPayload,
-        applyPayload: () =>
-          applySyncPayload(payload, {
-            importVaultData: importDataFromString,
-            importPortForwardingRules,
-            onSettingsApplied,
-          }),
+        applyPayload: () => onApplyMigrationPayload(payload),
         translateProtectiveBackupFailure: (message) =>
           t("cloudSync.localBackups.protectiveBackupFailed", { message }),
       }),
-    [importDataFromString, importPortForwardingRules, onBuildLocalPayload, onSettingsApplied, t],
+    [onApplyMigrationPayload, onBuildLocalPayload, t],
+  );
+
+  const onApplyConvergentPayload = useCallback(
+    (
+      payload: SyncPayload,
+      commitReplica: () => Promise<void>,
+    ) => applyProtectedSyncPayload({
+      buildPreApplyPayload: onBuildLocalPayload,
+      applyPayload: async () => {
+        await onApplyMigrationPayload(payload);
+        await commitReplica();
+      },
+      translateProtectiveBackupFailure: (message) =>
+        t("cloudSync.localBackups.protectiveBackupFailed", { message }),
+    }),
+    [onApplyMigrationPayload, onBuildLocalPayload, t],
   );
 
   const onApplyLocalPayload = useCallback(
@@ -91,7 +112,10 @@ export default function SettingsSyncTab(props: {
     <SettingsTabContent value="sync">
       <CloudSyncSettings
         onBuildPayload={onBuildPayload}
+        onBuildLocalPayload={onBuildLocalPayload}
+        onApplyMigrationPayload={onApplyMigrationPayload}
         onApplyPayload={onApplyPayload}
+        onApplyConvergentPayload={onApplyConvergentPayload}
         onApplyLocalPayload={onApplyLocalPayload}
         onClearLocalData={clearAllLocalData}
       />

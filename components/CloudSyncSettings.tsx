@@ -20,7 +20,21 @@ import { useI18n } from '../application/i18n/I18nProvider';
 import {
     findSyncPayloadEncryptedCredentialPaths,
 } from '../domain/credentials';
-import { isProviderReadyForSync, type CloudProvider, type SyncPayload, type SyncResult, type WebDAVAuthType, type WebDAVConfig, type S3Config } from '../domain/sync';
+import {
+    isProviderReadyForSync,
+    type CloudProvider,
+    type ConvergentMigrationPreview,
+    type SyncPayload,
+    type SyncResult,
+    type WebDAVAuthType,
+    type WebDAVConfig,
+    type S3Config,
+} from '../domain/sync';
+import {
+    initializePreparedConvergentMigration,
+    prepareConvergentSyncMigration,
+    type PreparedConvergentMigration,
+} from '../application/convergentSyncMigration';
 import type { ShrinkFinding } from '../domain/syncGuards';
 import { SyncBlockedBanner } from './sync/SyncBlockedBanner';
 import { Button } from './ui/button';
@@ -33,14 +47,23 @@ import { CloudSyncDialogs } from './cloud-sync/CloudSyncDialogs';
 import { CloudSyncDashboardTabs } from './cloud-sync/CloudSyncDashboardTabs';
 interface SyncDashboardProps {
     onBuildPayload: () => SyncPayload | Promise<SyncPayload>;
+    onBuildLocalPayload: () => SyncPayload;
+    onApplyMigrationPayload: (payload: SyncPayload) => void | Promise<void>;
     onApplyPayload: (payload: SyncPayload) => void | Promise<void>;
+    onApplyConvergentPayload: (
+        payload: SyncPayload,
+        commitReplica: () => Promise<void>,
+    ) => Promise<void>;
     onApplyLocalPayload?: (payload: SyncPayload) => void | Promise<void>;
     onClearLocalData?: () => void;
 }
 
 const SyncDashboard: React.FC<SyncDashboardProps> = ({
     onBuildPayload,
+    onBuildLocalPayload,
+    onApplyMigrationPayload,
     onApplyPayload,
+    onApplyConvergentPayload,
     onApplyLocalPayload,
     onClearLocalData,
 }) => {
@@ -112,6 +135,7 @@ const SyncDashboard: React.FC<SyncDashboardProps> = ({
             toast.info(t('cloudSync.connect.browserCancelled'));
         }
         sync.cancelOAuthConnect();
+        if (sync.convergentSyncConfig.initialized) return;
         const providers: CloudProvider[] = ['github', 'google', 'onedrive', 'webdav', 's3'];
         for (const provider of providers) {
             if (provider === current) continue;
@@ -161,7 +185,9 @@ const SyncDashboard: React.FC<SyncDashboardProps> = ({
         if (hasConnectingProvider && sync.providers[provider].status !== 'connecting') {
             return true;
         }
-        return sync.hasAnyConnectedProvider && !isProviderReadyForSync(sync.providers[provider]);
+        return !sync.convergentSyncConfig.initialized
+            && sync.hasAnyConnectedProvider
+            && !isProviderReadyForSync(sync.providers[provider]);
     };
 
     const beginPendingConnect = (provider: CloudProvider): boolean => {
@@ -238,6 +264,11 @@ const SyncDashboard: React.FC<SyncDashboardProps> = ({
     // local-backups tab without a separate DOM query.
     const [activeTab, setActiveTab] = useState<'providers' | 'status'>('providers');
 
+    const [preparedConvergentMigration, setPreparedConvergentMigration] = useState<PreparedConvergentMigration | null>(null);
+    const [convergentPreview, setConvergentPreview] = useState<ConvergentMigrationPreview | null>(null);
+    const [convergentBusy, setConvergentBusy] = useState(false);
+    const [convergentError, setConvergentError] = useState<string | null>(null);
+
     const ensureSyncablePayload = useCallback(
         (payload: SyncPayload): boolean => {
             const encryptedCredentialPaths = findSyncPayloadEncryptedCredentialPaths(payload);
@@ -248,6 +279,108 @@ const SyncDashboard: React.FC<SyncDashboardProps> = ({
         },
         [t],
     );
+
+    const handleToggleConvergent = useCallback(async (enabled: boolean) => {
+        setConvergentError(null);
+        if (!enabled) {
+            sync.setConvergentSyncEnabled(false);
+            setPreparedConvergentMigration(null);
+            setConvergentPreview(null);
+            return;
+        }
+        if (sync.convergentSyncConfig.initialized) {
+            sync.setConvergentSyncEnabled(true);
+            return;
+        }
+        setConvergentBusy(true);
+        setActiveTab('status');
+        try {
+            const localPayload = await onBuildPayload();
+            if (!ensureSyncablePayload(localPayload)) return;
+            const prepared = await prepareConvergentSyncMigration(localPayload);
+            setPreparedConvergentMigration(prepared);
+            setConvergentPreview(prepared.plan.preview);
+        } catch (error) {
+            setConvergentError(error instanceof Error ? error.message : t('common.unknownError'));
+        } finally {
+            setConvergentBusy(false);
+        }
+    }, [ensureSyncablePayload, onBuildPayload, sync, t]);
+
+    const handleConfirmConvergentMigration = useCallback(async () => {
+        if (!preparedConvergentMigration) return;
+        setConvergentBusy(true);
+        setConvergentError(null);
+        try {
+            await initializePreparedConvergentMigration({
+                prepared: preparedConvergentMigration,
+                buildCurrentPayload: onBuildPayload,
+                buildPreApplyPayload: onBuildLocalPayload,
+                applyPayload: onApplyMigrationPayload,
+                translateProtectiveBackupFailure: (message) =>
+                    t('cloudSync.localBackups.protectiveBackupFailed', { message }),
+            });
+            sync.refreshConvergentSyncConfig();
+            setPreparedConvergentMigration(null);
+            setConvergentPreview(null);
+            toast.success(t('cloudSync.convergent.enabled'));
+        } catch (error) {
+            setConvergentError(error instanceof Error ? error.message : t('common.unknownError'));
+        } finally {
+            setConvergentBusy(false);
+        }
+    }, [onApplyMigrationPayload, onBuildLocalPayload, onBuildPayload, preparedConvergentMigration, sync, t]);
+
+    const handleResolveConvergentConflict = useCallback(async (
+        addressKey: string,
+        candidateDot: string,
+    ) => {
+        setConvergentBusy(true);
+        setConvergentError(null);
+        try {
+            const { results } = await sync.resolveConvergentConflict(
+                addressKey,
+                candidateDot,
+                onApplyConvergentPayload,
+            );
+            const failed = [...results.values()].find((result) => !result.success);
+            if (failed) throw new Error(failed.error || t('sync.autoSync.syncFailed'));
+            toast.success(t('cloudSync.convergent.conflict.resolved'));
+        } catch (error) {
+            setConvergentError(error instanceof Error ? error.message : t('common.unknownError'));
+        } finally {
+            setConvergentBusy(false);
+        }
+    }, [onApplyConvergentPayload, sync, t]);
+
+    const handleDowngradeConvergent = useCallback(async () => {
+        if (!window.confirm(t('cloudSync.convergent.downgrade.confirm'))) return;
+        setConvergentBusy(true);
+        setConvergentError(null);
+        try {
+            const results = await sync.downgradeConvergentSync(
+                true,
+                async () => {
+                    const localPayload = await onBuildPayload();
+                    if (!ensureSyncablePayload(localPayload)) {
+                        throw new Error(t('sync.credentialsUnavailable'));
+                    }
+                    return localPayload;
+                },
+                onApplyConvergentPayload,
+            );
+            const failed = [...results.values()].find((result) => !result.success);
+            if (failed) throw new Error(failed.error || t('sync.autoSync.syncFailed'));
+            sync.refreshConvergentSyncConfig();
+            setPreparedConvergentMigration(null);
+            setConvergentPreview(null);
+            toast.success(t('cloudSync.convergent.downgrade.done'));
+        } catch (error) {
+            setConvergentError(error instanceof Error ? error.message : t('common.unknownError'));
+        } finally {
+            setConvergentBusy(false);
+        }
+    }, [ensureSyncablePayload, onApplyConvergentPayload, onBuildPayload, sync, t]);
 
     // Handle conflict detection
     useEffect(() => {
@@ -525,18 +658,23 @@ const SyncDashboard: React.FC<SyncDashboardProps> = ({
         try {
             const payload = await onBuildPayload();
             if (!ensureSyncablePayload(payload)) return;
-            const result = await sync.syncToProvider(provider, payload);
+            const result = await sync.syncToProvider(provider, payload, {
+                applyConvergentPayload: onApplyConvergentPayload,
+            });
+
+            // Convergent sync fans out to every provider. Even if the
+            // requested provider fails, another provider can verify a newer
+            // joined replica that must be applied before reporting the error.
+            if (result.mergedPayload && !result.mergedPayloadApplied && onApplyPayload) {
+                await Promise.resolve(onApplyPayload(result.mergedPayload));
+                if (result.remoteFile) {
+                    await sync.commitRemoteInspection(result.provider, result.remoteFile, result.mergedPayload, {
+                        recordDownload: true,
+                    });
+                }
+            }
 
             if (result.success) {
-                // Apply merged data if a three-way merge happened
-                if (result.mergedPayload && onApplyPayload) {
-                    await Promise.resolve(onApplyPayload(result.mergedPayload));
-                    if (result.remoteFile) {
-                        await sync.commitRemoteInspection(result.provider, result.remoteFile, result.mergedPayload, {
-                            recordDownload: true,
-                        });
-                    }
-                }
                 toast.success(t('cloudSync.sync.success', { provider }));
             } else if (result.conflictDetected) {
                 // Conflict modal will show automatically
@@ -581,14 +719,17 @@ const SyncDashboard: React.FC<SyncDashboardProps> = ({
 
                 let results: Map<CloudProvider, SyncResult> | null = null;
                 await withRestoreBarrier(async () => {
-                    results = await sync.syncNow(localPayload, { overrideShrink: true });
+                    results = await sync.syncNow(localPayload, {
+                        overrideShrink: true,
+                        applyConvergentPayload: onApplyConvergentPayload,
+                    });
                 });
 
                 if (results) {
                     // Apply any merged payload BEFORE closing the modal so local state
                     // reflects what's now on cloud (in case remote changed during the merge).
                     for (const result of (results as Map<CloudProvider, SyncResult>).values()) {
-                        if (result.mergedPayload) {
+                        if (result.mergedPayload && !result.mergedPayloadApplied) {
                             await Promise.resolve(onApplyPayload(result.mergedPayload));
                             if (result.remoteFile) {
                                 await sync.commitRemoteInspection(result.provider, result.remoteFile, result.mergedPayload, {
@@ -748,6 +889,20 @@ const SyncDashboard: React.FC<SyncDashboardProps> = ({
                 onApplyPayload={onApplyPayload}
                 onApplyLocalPayload={onApplyLocalPayload}
                 setShowClearLocalDialog={setShowClearLocalDialog}
+                convergentConfig={sync.convergentSyncConfig}
+                convergentPreview={convergentPreview}
+                convergentBusy={convergentBusy}
+                convergentError={convergentError}
+                convergentConflicts={sync.convergentConflicts}
+                onToggleConvergent={handleToggleConvergent}
+                onConfirmConvergentMigration={handleConfirmConvergentMigration}
+                onCancelConvergentMigration={() => {
+                    setPreparedConvergentMigration(null);
+                    setConvergentPreview(null);
+                    setConvergentError(null);
+                }}
+                onResolveConvergentConflict={handleResolveConvergentConflict}
+                onDowngradeConvergent={handleDowngradeConvergent}
             />
 
             <CloudSyncDialogs
@@ -848,6 +1003,7 @@ const SyncDashboard: React.FC<SyncDashboardProps> = ({
                 setShowClearLocalDialog={setShowClearLocalDialog}
                 onBuildPayload={onBuildPayload}
                 onApplyPayload={onApplyPayload}
+                onApplyConvergentPayload={onApplyConvergentPayload}
                 onClearLocalData={onClearLocalData}
                 ensureSyncablePayload={ensureSyncablePayload}
                 showForcePushConfirm={showForcePushConfirm}
@@ -865,7 +1021,13 @@ const SyncDashboard: React.FC<SyncDashboardProps> = ({
 
 interface CloudSyncSettingsProps {
     onBuildPayload: () => SyncPayload | Promise<SyncPayload>;
+    onBuildLocalPayload: () => SyncPayload;
+    onApplyMigrationPayload: (payload: SyncPayload) => void | Promise<void>;
     onApplyPayload: (payload: SyncPayload) => void | Promise<void>;
+    onApplyConvergentPayload: (
+        payload: SyncPayload,
+        commitReplica: () => Promise<void>,
+    ) => Promise<void>;
     onApplyLocalPayload?: (payload: SyncPayload) => void | Promise<void>;
     onClearLocalData?: () => void;
 }

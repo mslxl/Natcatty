@@ -15,6 +15,8 @@ import {
 import { detectSuspiciousShrink, type ShrinkFinding } from '../../../domain/syncGuards';
 import { resolveCloudSyncConflictAction, type CloudSyncConflictAction } from '../../../domain/syncStrategy';
 import { assertConvergentSyncWriteCompatible } from '../../../domain/convergentSync';
+import { getConvergentSyncLocalConfig } from '../convergentSyncConfig';
+import { syncAllProvidersConvergentlyImpl } from './convergentSyncRuntimeMethods';
 import type { CloudAdapter } from '../adapters';
 import type {
   CloudProvider,
@@ -91,11 +93,41 @@ async function rememberCurrentSyncBaseSnapshot(this: any, provider?: CloudProvid
 
 export async function syncAllProvidersImpl(this: any,
   inputPayload?: SyncPayload,
-  opts: { overrideShrink?: boolean; conflictActionOverride?: CloudSyncConflictAction } = {},
+  opts: {
+    overrideShrink?: boolean;
+    conflictActionOverride?: CloudSyncConflictAction;
+    applyConvergentPayload?: (
+      payload: SyncPayload,
+      commitReplica: () => Promise<void>,
+    ) => Promise<void>;
+  } = {},
 ): Promise<Map<CloudProvider, SyncResult>> {
     const results = new Map<CloudProvider, SyncResult>();
     let payload = inputPayload;
     let wasMerged = false;
+
+    const convergentConfig = getConvergentSyncLocalConfig();
+    if (convergentConfig.initialized && inputPayload) {
+      if (convergentConfig.enabled) {
+        return syncAllProvidersConvergentlyImpl.call(this, inputPayload, {
+          ...opts,
+          applyPayload: opts.applyConvergentPayload,
+        });
+      }
+      const message = 'Convergent sync is paused on this device';
+      for (const [provider, connection] of Object.entries(
+        this.state.providers as Record<CloudProvider, ProviderConnection>,
+      )) {
+        if (!isProviderReadyForSync(connection)) continue;
+        results.set(provider as CloudProvider, {
+          success: false,
+          provider: provider as CloudProvider,
+          action: 'none',
+          error: message,
+        });
+      }
+      return results;
+    }
 
     const overrideShrinkRequested = opts.overrideShrink === true;
     const syncSecurityGeneration = getSyncSecurityGeneration(this);
