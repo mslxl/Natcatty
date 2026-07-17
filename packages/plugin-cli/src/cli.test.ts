@@ -30,6 +30,59 @@ import { assertSafePackagePath, PackagePathRegistry } from "./packagePath.ts";
 const execFileAsync = promisify(execFile);
 const cliPath = fileURLToPath(new URL("./cli.ts", import.meta.url));
 
+function crc32(contents: Buffer): number {
+  let crc = 0xffffffff;
+  for (const byte of contents) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc & 1) === 1 ? 0xedb88320 ^ (crc >>> 1) : crc >>> 1;
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function createStoredZipEntry(entryName: string, contents: Buffer): Buffer {
+  const encodedName = Buffer.from(entryName);
+  const checksum = crc32(contents);
+  const localHeader = Buffer.alloc(30 + encodedName.byteLength);
+  localHeader.writeUInt32LE(0x04034b50, 0);
+  localHeader.writeUInt16LE(20, 4);
+  localHeader.writeUInt16LE(0x0800, 6);
+  localHeader.writeUInt16LE(0, 8);
+  localHeader.writeUInt16LE(0, 10);
+  localHeader.writeUInt16LE(33, 12);
+  localHeader.writeUInt32LE(checksum, 14);
+  localHeader.writeUInt32LE(contents.byteLength, 18);
+  localHeader.writeUInt32LE(contents.byteLength, 22);
+  localHeader.writeUInt16LE(encodedName.byteLength, 26);
+  encodedName.copy(localHeader, 30);
+
+  const centralHeader = Buffer.alloc(46 + encodedName.byteLength);
+  centralHeader.writeUInt32LE(0x02014b50, 0);
+  centralHeader.writeUInt16LE(20, 4);
+  centralHeader.writeUInt16LE(20, 6);
+  centralHeader.writeUInt16LE(0x0800, 8);
+  centralHeader.writeUInt16LE(0, 10);
+  centralHeader.writeUInt16LE(0, 12);
+  centralHeader.writeUInt16LE(33, 14);
+  centralHeader.writeUInt32LE(checksum, 16);
+  centralHeader.writeUInt32LE(contents.byteLength, 20);
+  centralHeader.writeUInt32LE(contents.byteLength, 24);
+  centralHeader.writeUInt16LE(encodedName.byteLength, 28);
+  centralHeader.writeUInt32LE((0o100644 << 16) >>> 0, 38);
+  centralHeader.writeUInt32LE(0, 42);
+  encodedName.copy(centralHeader, 46);
+
+  const centralOffset = localHeader.byteLength + contents.byteLength;
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(1, 8);
+  end.writeUInt16LE(1, 10);
+  end.writeUInt32LE(centralHeader.byteLength, 12);
+  end.writeUInt32LE(centralOffset, 16);
+  return Buffer.concat([localHeader, contents, centralHeader, end]);
+}
+
 function manifest(overrides: Record<string, unknown> = {}) {
   return {
     manifestVersion: 1,
@@ -376,6 +429,22 @@ test("packing is deterministic and the archive validates", async (context) => {
   const validation = await validatePluginPackage(first);
   assert.equal(validation.manifest.id, "com.example.package-test");
   assert.equal(validation.fileCount, 3);
+});
+
+test("archive validation rejects oversized manifests before buffering", async (context) => {
+  const root = await mkdtemp(path.join(tmpdir(), "netcatty-plugin-archive-manifest-limit-"));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const oversizedPath = path.join(root, "oversized-manifest.ncpkg");
+  const oversizedBytes = createStoredZipEntry(
+    "netcatty.plugin.json",
+    Buffer.alloc(PACKAGE_LIMITS.manifestBytes + 1, 0x20),
+  );
+  await writeFile(oversizedPath, oversizedBytes);
+
+  await assert.rejects(
+    validatePluginPackage(oversizedPath),
+    new RegExp(`Plugin manifest exceeds ${PACKAGE_LIMITS.manifestBytes} bytes`),
+  );
 });
 
 test("archive validation rejects duplicate names and CRC corruption", async (context) => {

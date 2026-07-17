@@ -582,6 +582,12 @@ export async function validatePluginPackage(
           if (entry.uncompressedSize > PACKAGE_LIMITS.singleFileBytes) {
             throw new Error(`Plugin file exceeds size limit: ${packagePath}`);
           }
+          if (
+            packagePath === "netcatty.plugin.json"
+            && entry.uncompressedSize > PACKAGE_LIMITS.manifestBytes
+          ) {
+            throw new Error(`Plugin manifest exceeds ${PACKAGE_LIMITS.manifestBytes} bytes`);
+          }
           totalBytes += entry.uncompressedSize;
           if (totalBytes > PACKAGE_LIMITS.uncompressedBytes) {
             throw new Error("Plugin package exceeds the uncompressed size limit");
