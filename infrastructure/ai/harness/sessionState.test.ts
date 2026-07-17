@@ -72,6 +72,24 @@ test('SessionStateStore drops a remembered job after poll reports it missing', (
   assert.doesNotMatch(store.toReinjectionText('chat-1') ?? '', /Remembered terminal jobs/);
 });
 
+test('SessionStateStore preserves a running job after a transient poll error', () => {
+  const store = new SessionStateStore();
+  store.updateFromToolResult(
+    'chat-1', 'terminal_start', { sessionId: 'sess-1', command: 'npm run dev' },
+    JSON.stringify({ jobId: 'job-running', status: 'running', nextOffset: 420 }), false,
+  );
+  store.updateFromToolResult(
+    'chat-1', 'terminal_poll', { jobId: 'job-running', offset: 420 },
+    JSON.stringify({ error: 'temporary IPC timeout' }), true,
+  );
+
+  const job = store.get('chat-1').activeJobs['job-running'];
+  assert.equal(job.status, 'unverified');
+  assert.equal(job.nextOffset, 420);
+  assert.match(store.toReinjectionText('chat-1') ?? '', /job-running/);
+  assert.match(store.toReinjectionText('chat-1') ?? '', /do not restart/i);
+});
+
 test('SessionStateStore records the last terminal screen range read', () => {
   const store = new SessionStateStore();
   store.updateFromToolResult(

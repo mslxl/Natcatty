@@ -58,6 +58,14 @@ function parseResultObject(resultText: string): Record<string, unknown> | undefi
   }
 }
 
+function terminalJobDefinitelyGone(result: Record<string, unknown> | undefined, resultText: string): boolean {
+  const status = typeof result?.status === 'string' ? result.status.toLowerCase() : '';
+  if (['completed', 'failed', 'stopped', 'exited', 'not_found'].includes(status)) return true;
+  const error = typeof result?.error === 'string' ? result.error : resultText;
+  return /\b(?:job|task)\b.{0,40}\b(?:not found|does not exist|no longer exists|already (?:finished|completed|exited|stopped))\b/i.test(error)
+    || /\b(?:unknown|no such)\s+(?:job|task)\b/i.test(error);
+}
+
 export class SessionStateStore {
   private readonly bySession = new Map<string, CattySessionState>();
 
@@ -179,8 +187,15 @@ export class SessionStateStore {
           delete state.activeJobs[jobId];
         }
       } else if (jobId && state.activeJobs[jobId]) {
-        state.activeJobs = { ...state.activeJobs };
-        delete state.activeJobs[jobId];
+        if (terminalJobDefinitelyGone(result, resultText)) {
+          state.activeJobs = { ...state.activeJobs };
+          delete state.activeJobs[jobId];
+        } else {
+          state.activeJobs = {
+            ...state.activeJobs,
+            [jobId]: { ...state.activeJobs[jobId], status: 'unverified' },
+          };
+        }
       }
     }
 
