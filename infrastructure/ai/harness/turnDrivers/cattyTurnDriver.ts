@@ -117,9 +117,14 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
           await toolOutputTempBridge.deleteTerminalToolOutputsTemp!(chatSessionId, terminalSessionId);
         }
         : undefined,
-    }, Boolean(persistenceStatus?.durable));
+      deleteTerminalEverywhere: toolOutputTempBridge.deleteTerminalToolOutputsEverywhereTemp
+        ? async terminalSessionId => {
+          await toolOutputTempBridge.deleteTerminalToolOutputsEverywhereTemp!(terminalSessionId);
+        }
+        : undefined,
+    });
   } else {
-    ctx.toolOutputStore.setPersistence?.(undefined, false);
+    ctx.toolOutputStore.setPersistence?.(undefined);
   }
   await clearChatSessionCancelled(sessionId, netcattyBridge);
   if (netcattyBridge.aiMcpUpdateSessions) {

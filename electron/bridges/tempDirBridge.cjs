@@ -35,17 +35,38 @@ let tempFileCounter = 0;
 let toolOutputSigningKeyPromise = Promise.resolve(crypto.randomBytes(32));
 let toolOutputSafeStorage = null;
 const toolOutputSessionDeletions = new Map();
+const toolOutputChatDeletionGenerations = new Map();
 const closedToolOutputTerminalSessions = new Set();
+
+function getToolOutputChatDeletionGeneration(chatSessionId) {
+  return toolOutputChatDeletionGenerations.get(chatSessionId) ?? 0;
+}
 
 async function loadOrCreateToolOutputSigningKey(safeStorage) {
   if (!safeStorage?.isEncryptionAvailable?.()) return null;
   const keyPath = path.join(getTempDir(), TOOL_OUTPUT_SIGNING_KEY_FILE);
   try {
     const stat = await fs.promises.lstat(keyPath);
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > 4096) return null;
-    const encrypted = await fs.promises.readFile(keyPath);
-    const decoded = Buffer.from(safeStorage.decryptString(encrypted), "base64");
-    return decoded.length === 32 ? decoded : null;
+    if (stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1 && stat.size <= 4096) {
+      let encrypted;
+      try {
+        encrypted = await fs.promises.readFile(keyPath);
+      } catch {
+        // A transient read failure must not destroy the only key for existing output.
+        return null;
+      }
+      try {
+        const decoded = Buffer.from(safeStorage.decryptString(encrypted), "base64");
+        if (decoded.length === 32) return decoded;
+      } catch {
+        // Replace a key that the current secure storage can no longer decrypt.
+      }
+    }
+    if ((stat.isFile() || stat.isSymbolicLink())) {
+      await fs.promises.unlink(keyPath);
+    } else {
+      return null;
+    }
   } catch (error) {
     if (error?.code !== "ENOENT") return null;
   }
@@ -562,9 +583,24 @@ async function cleanupExpiredToolOutputFiles(now = Date.now()) {
         }
         continue;
       }
-      if (!signingKeyAvailable) continue;
       if (!file.endsWith(".log.meta.json")) continue;
       const manifestPath = path.join(tempDir, file);
+      if (!signingKeyAvailable) {
+        try {
+          const stat = await fs.promises.lstat(manifestPath);
+          if (stat.isSymbolicLink() || !stat.isFile()) continue;
+          const contentPath = manifestPath.slice(0, -".meta.json".length);
+          if (now - stat.mtimeMs >= TOOL_OUTPUT_PERSISTED_TTL_MS) {
+            if (await safeUnlink(manifestPath)) deletedCount += 1;
+            if (await safeUnlink(contentPath)) deletedCount += 1;
+          } else {
+            managedContent.add(path.basename(contentPath));
+          }
+        } catch {
+          // Best-effort startup cleanup.
+        }
+        continue;
+      }
       const entry = await readSafeManifest(manifestPath);
       if (!entry) {
         try {
@@ -587,7 +623,6 @@ async function cleanupExpiredToolOutputFiles(now = Date.now()) {
       if (await safeUnlink(entry.manifestPath)) deletedCount += 1;
       if (await safeUnlink(entry.contentPath)) deletedCount += 1;
     }
-    if (!signingKeyAvailable) return deletedCount;
     for (const file of files) {
       if (!file.includes("_tool-output-") || !file.endsWith(".log")) continue;
       if (managedContent.has(file)) continue;
@@ -738,6 +773,7 @@ function registerHandlers(ipcMain, shell, electronModule) {
       return { ok: false, error: "Tool output exceeds the temp-file limit." };
     }
     const ownershipMarker = toolOutputOwnershipMarker(record.chatSessionId, record.terminalSessionId);
+    const chatDeletionGeneration = getToolOutputChatDeletionGeneration(record.chatSessionId);
     const filePath = getTempFilePath(`${ownershipMarker.slice(1)}${record.handleId}.log`);
     const manifestPath = toolOutputManifestPath(filePath);
     const pendingManifestPath = getTempFilePath(`${record.handleId}.manifest.pending`);
@@ -746,6 +782,9 @@ function registerHandlers(ipcMain, shell, electronModule) {
         throw new Error("Terminal session is already closed.");
       }
       await toolOutputSessionDeletions.get(record.chatSessionId);
+      if (getToolOutputChatDeletionGeneration(record.chatSessionId) !== chatDeletionGeneration) {
+        throw new Error("Chat session was cleared while output was being saved.");
+      }
       const signingKey = await toolOutputSigningKeyPromise;
       if (!signingKey) throw new Error("Secure local storage is unavailable.");
       if (!await ensureToolOutputSigningKeyFile(signingKey)) {
@@ -765,11 +804,27 @@ function registerHandlers(ipcMain, shell, electronModule) {
         flag: "wx",
       });
       await fs.promises.rename(pendingManifestPath, manifestPath);
+      if (getToolOutputChatDeletionGeneration(record.chatSessionId) !== chatDeletionGeneration) {
+        await deleteToolOutputPair(filePath);
+        throw new Error("Chat session was cleared while output was being saved.");
+      }
       if (record.terminalSessionId && closedToolOutputTerminalSessions.has(record.terminalSessionId)) {
         await deleteToolOutputPair(filePath);
         throw new Error("Terminal session closed while output was being saved.");
       }
       await enforcePersistedToolOutputLimits();
+      const persistedEntry = await readSafeManifest(manifestPath);
+      if (!persistedEntry || path.resolve(persistedEntry.contentPath) !== path.resolve(filePath)) {
+        throw new Error("Saved output was removed while enforcing storage limits.");
+      }
+      if (getToolOutputChatDeletionGeneration(record.chatSessionId) !== chatDeletionGeneration) {
+        await deleteToolOutputPair(filePath);
+        throw new Error("Chat session was cleared while output was being saved.");
+      }
+      if (record.terminalSessionId && closedToolOutputTerminalSessions.has(record.terminalSessionId)) {
+        await deleteToolOutputPair(filePath);
+        throw new Error("Terminal session closed while output was being saved.");
+      }
       return { ok: true, path: filePath, manifestPath };
     } catch (error) {
       await Promise.allSettled([
@@ -785,7 +840,9 @@ function registerHandlers(ipcMain, shell, electronModule) {
     const handleId = String(payload.handleId ?? "");
     const chatSessionId = String(payload.chatSessionId ?? "");
     if (!isBoundedString(handleId, 200) || !isBoundedString(chatSessionId, 512)) return null;
+    const chatDeletionGeneration = getToolOutputChatDeletionGeneration(chatSessionId);
     await toolOutputSessionDeletions.get(chatSessionId);
+    if (getToolOutputChatDeletionGeneration(chatSessionId) !== chatDeletionGeneration) return null;
     const entries = await listToolOutputManifestEntries();
     const entry = entries.find(candidate => (
       candidate.manifest.record.handleId === handleId
@@ -815,6 +872,10 @@ function registerHandlers(ipcMain, shell, electronModule) {
       return null;
     }
     await touchToolOutputEntry(entry);
+    if (getToolOutputChatDeletionGeneration(chatSessionId) !== chatDeletionGeneration) {
+      await deleteToolOutputPair(entry.contentPath);
+      return null;
+    }
     if (
       entry.manifest.record.terminalSessionId
       && closedToolOutputTerminalSessions.has(entry.manifest.record.terminalSessionId)
@@ -832,6 +893,10 @@ function registerHandlers(ipcMain, shell, electronModule) {
     const filePath = payload.path;
     const manifestEntry = await readSafeManifest(toolOutputManifestPath(filePath));
     if (!manifestEntry || path.resolve(manifestEntry.contentPath) !== path.resolve(filePath)) return null;
+    const chatSessionId = manifestEntry.manifest.record.chatSessionId;
+    const chatDeletionGeneration = getToolOutputChatDeletionGeneration(chatSessionId);
+    await toolOutputSessionDeletions.get(chatSessionId);
+    if (getToolOutputChatDeletionGeneration(chatSessionId) !== chatDeletionGeneration) return null;
     if (
       manifestEntry.manifest.record.terminalSessionId
       && closedToolOutputTerminalSessions.has(manifestEntry.manifest.record.terminalSessionId)
@@ -851,6 +916,10 @@ function registerHandlers(ipcMain, shell, electronModule) {
     const content = verified.contentBuffer.toString("utf16le");
     const result = !payload.request ? content : await readToolOutputChunk(content, payload.request);
     await touchToolOutputEntry(manifestEntry);
+    if (getToolOutputChatDeletionGeneration(chatSessionId) !== chatDeletionGeneration) {
+      await deleteToolOutputPair(manifestEntry.contentPath);
+      return null;
+    }
     if (
       manifestEntry.manifest.record.terminalSessionId
       && closedToolOutputTerminalSessions.has(manifestEntry.manifest.record.terminalSessionId)
@@ -870,6 +939,10 @@ function registerHandlers(ipcMain, shell, electronModule) {
   ipcMain.handle("netcatty:tempdir:toolOutputDeleteSession", async (_event, payload = {}) => {
     const chatSessionId = String(payload.chatSessionId ?? "");
     if (!isBoundedString(chatSessionId, 512)) return { deletedCount: 0 };
+    toolOutputChatDeletionGenerations.set(
+      chatSessionId,
+      getToolOutputChatDeletionGeneration(chatSessionId) + 1,
+    );
     const existing = toolOutputSessionDeletions.get(chatSessionId);
     if (existing) return existing;
     const deletion = (async () => {

@@ -108,7 +108,7 @@ function fitString(value: string, ctx: FitValueContext): string {
     fieldPath: formatFieldPath(ctx.path),
     totalChars: value.length,
     handleId,
-    restartPersistenceAvailable: ctx.toolOutputStore?.isRestartPersistenceAvailable(),
+    restartPersistenceAvailable: false,
   });
 }
 

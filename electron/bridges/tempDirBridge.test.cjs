@@ -159,6 +159,76 @@ test("tool output temp writer rejects output arriving after terminal close", asy
   assert.match(saved.error, /already closed/);
 });
 
+test("chat deletion wins when a persisted output write is already in flight", async () => {
+  const handlers = new Map();
+  tempDirBridge.registerHandlers({ handle(channel, handler) { handlers.set(channel, handler); } });
+  const chatSessionId = `chat-deleted-during-write-${Date.now()}`;
+  const handleId = `write-delete-race-${Date.now()}`;
+  const originalWriteFile = fs.promises.writeFile;
+  let signalWriteStarted;
+  const writeStarted = new Promise(resolve => { signalWriteStarted = resolve; });
+  let releaseWrite;
+  const writeReleased = new Promise(resolve => { releaseWrite = resolve; });
+  fs.promises.writeFile = async (filePath, ...args) => {
+    if (String(filePath).endsWith('.log')) {
+      signalWriteStarted();
+      await writeReleased;
+    }
+    return originalWriteFile(filePath, ...args);
+  };
+
+  try {
+    const now = Date.now();
+    const writing = handlers.get("netcatty:tempdir:toolOutputWrite")({}, {
+      record: {
+        schemaVersion: 1,
+        handleId,
+        chatSessionId,
+        capabilityId: "terminal.execute",
+        totalChars: 6,
+        storedChars: 6,
+        sourceTruncated: false,
+        preview: "secret",
+        storedAt: now,
+        accessedAt: now,
+      },
+      content: "secret",
+    });
+    await writeStarted;
+    await handlers.get("netcatty:tempdir:toolOutputDeleteSession")({}, { chatSessionId });
+    releaseWrite();
+
+    const saved = await writing;
+    assert.equal(saved.ok, false);
+    assert.match(saved.error, /cleared while output was being saved/);
+    assert.equal(
+      await handlers.get("netcatty:tempdir:toolOutputRestore")({}, { handleId, chatSessionId }),
+      null,
+    );
+
+    const later = await handlers.get("netcatty:tempdir:toolOutputWrite")({}, {
+      record: {
+        schemaVersion: 1,
+        handleId: `${handleId}-later`,
+        chatSessionId,
+        capabilityId: "terminal.execute",
+        totalChars: 5,
+        storedChars: 5,
+        sourceTruncated: false,
+        preview: "later",
+        storedAt: Date.now(),
+        accessedAt: Date.now(),
+      },
+      content: "later",
+    });
+    assert.equal(later.ok, true);
+    await handlers.get("netcatty:tempdir:toolOutputDelete")({}, { path: later.path });
+  } finally {
+    fs.promises.writeFile = originalWriteFile;
+    releaseWrite?.();
+  }
+});
+
 test("terminal close wins when a persisted output read is already in flight", async () => {
   const handlers = new Map();
   tempDirBridge.registerHandlers({ handle(channel, handler) { handlers.set(channel, handler); } });
@@ -239,6 +309,40 @@ test("startup cleanup removes abandoned pending manifests", async () => {
 
   assert.equal(deleted >= 1, true);
   assert.equal(fs.existsSync(filePath), false);
+});
+
+test("startup cleanup still expires tool outputs when secure storage is unavailable", async () => {
+  const root = await fs.promises.mkdtemp(path.join(require("node:os").tmpdir(), "netcatty-key-unavailable-"));
+  const fakeHome = path.join(root, "home");
+  await fs.promises.mkdir(fakeHome);
+  await fs.promises.chmod(root, 0o700);
+  try {
+    const script = [
+      'const fs = require("node:fs");',
+      'const bridge = require("./electron/bridges/tempDirBridge.cjs");',
+      'bridge.registerHandlers({ handle() {} }, undefined, { safeStorage: { isEncryptionAvailable: () => false } });',
+      'const contentPath = bridge.getTempFilePath("tool-output-key-lost.log");',
+      'const manifestPath = `${contentPath}.meta.json`;',
+      'fs.writeFileSync(contentPath, "secret");',
+      'fs.writeFileSync(manifestPath, "unreadable without key");',
+      'const old = new Date(Date.now() - 31 * 24 * 60 * 60 * 1_000);',
+      'fs.utimesSync(contentPath, old, old);',
+      'fs.utimesSync(manifestPath, old, old);',
+      '(async () => {',
+      '  const deleted = await bridge.cleanupExpiredToolOutputFiles();',
+      '  console.log(JSON.stringify({ deleted, contentExists: fs.existsSync(contentPath), manifestExists: fs.existsSync(manifestPath) }));',
+      '})();',
+    ].join("\n");
+    const result = spawnSync(process.execPath, ["-e", script], {
+      cwd: path.resolve(__dirname, "../.."),
+      env: { ...process.env, TMPDIR: root, HOME: fakeHome },
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, /"deleted":2,"contentExists":false,"manifestExists":false/);
+  } finally {
+    await fs.promises.rm(root, { recursive: true, force: true });
+  }
 });
 
 test("managed tool output survives short restarts and expires after thirty days", async () => {
@@ -425,6 +529,53 @@ test("tool output verification detects same-size edits even when mtime is restor
   assert.equal(fs.existsSync(saved.manifestPath), false);
 });
 
+test("tool output writer reports when quota enforcement evicts the new output", async () => {
+  const handlers = new Map();
+  tempDirBridge.registerHandlers({ handle(channel, handler) { handlers.set(channel, handler); } });
+  const chatSessionId = `quota-eviction-${Date.now()}`;
+  const write = handlers.get("netcatty:tempdir:toolOutputWrite");
+  try {
+    for (let index = 0; index < 64; index += 1) {
+      const saved = await write({}, {
+        record: {
+          schemaVersion: 1,
+          handleId: `quota-newer-${index}`,
+          chatSessionId,
+          capabilityId: "terminal.execute",
+          totalChars: 1,
+          storedChars: 1,
+          sourceTruncated: false,
+          preview: "x",
+          storedAt: Date.now(),
+          accessedAt: Date.now() + 60_000,
+        },
+        content: "x",
+      });
+      assert.equal(saved.ok, true);
+    }
+
+    const evicted = await write({}, {
+      record: {
+        schemaVersion: 1,
+        handleId: "quota-old-clock",
+        chatSessionId,
+        capabilityId: "terminal.execute",
+        totalChars: 1,
+        storedChars: 1,
+        sourceTruncated: false,
+        preview: "y",
+        storedAt: 1,
+        accessedAt: 1,
+      },
+      content: "y",
+    });
+    assert.equal(evicted.ok, false);
+    assert.match(evicted.error, /removed while enforcing storage limits/);
+  } finally {
+    await handlers.get("netcatty:tempdir:toolOutputDeleteSession")({}, { chatSessionId });
+  }
+});
+
 test("tool output signing key survives a real process restart", async () => {
   const root = await fs.promises.mkdtemp(path.join(require("node:os").tmpdir(), "netcatty-tool-output-restart-"));
   const fakeHome = path.join(root, "home");
@@ -505,8 +656,12 @@ test("tool output signing key survives a real process restart", async () => {
     assert.equal(wrongKey.status, 0, wrongKey.stderr || wrongKey.stdout);
     assert.match(wrongKey.stdout, /RESULT:\{"restored":false,"content":null\}/);
     const remainingFiles = await fs.promises.readdir(persistedDir);
-    assert.equal(remainingFiles.some(file => file.endsWith(".log")), true);
-    assert.equal(remainingFiles.some(file => file.endsWith(".log.meta.json")), true);
+    assert.equal(remainingFiles.some(file => file.endsWith(".log")), false);
+    assert.equal(remainingFiles.some(file => file.endsWith(".log.meta.json")), false);
+
+    const recoveredWrite = run("write", "different-secret");
+    assert.equal(recoveredWrite.status, 0, recoveredWrite.stderr || recoveredWrite.stdout);
+    assert.match(recoveredWrite.stdout, /RESULT:.*"ok":true/);
 
     const deletedTerminal = run("delete-terminal", "different-secret");
     assert.equal(deletedTerminal.status, 0, deletedTerminal.stderr || deletedTerminal.stdout);

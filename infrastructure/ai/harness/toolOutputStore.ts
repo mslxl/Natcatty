@@ -80,6 +80,7 @@ export interface ToolOutputPersistence {
   delete(path: string): Promise<void>;
   deleteSession?(chatSessionId: string): Promise<void>;
   deleteTerminalSession?(chatSessionId: string, terminalSessionId: string): Promise<void>;
+  deleteTerminalEverywhere?(terminalSessionId: string): Promise<void>;
 }
 
 export interface ToolOutputStoreOptions {
@@ -137,7 +138,6 @@ export class ToolOutputStore {
   private readonly deletedTerminalSessions = new Set<string>();
   private readonly closedTerminalSessions = new Set<string>();
   private persistence?: ToolOutputPersistence;
-  private restartPersistenceAvailable = false;
 
   constructor(options: ToolOutputStoreOptions = {}) {
     this.maxHandleChars = options.maxHandleChars ?? TOOL_OUTPUT_MAX_HANDLE_CHARS;
@@ -151,13 +151,12 @@ export class ToolOutputStore {
     this.persistence = options.persistence;
   }
 
-  setPersistence(persistence: ToolOutputPersistence | undefined, restartPersistenceAvailable = Boolean(persistence)): void {
+  setPersistence(persistence: ToolOutputPersistence | undefined): void {
     this.persistence = persistence;
-    this.restartPersistenceAvailable = restartPersistenceAvailable;
   }
 
-  isRestartPersistenceAvailable(): boolean {
-    return this.restartPersistenceAvailable;
+  resolveRestartPersistenceNotices<T>(value: T, chatSessionId: string): T {
+    return this.resolveRestartPersistenceNoticesValue(value, chatSessionId) as T;
   }
 
   store(input: StoreToolOutputInput): ToolOutputHandle {
@@ -300,6 +299,7 @@ export class ToolOutputStore {
     for (const chatSessionId of chatSessionIds) {
       this.pruneTerminalSession(chatSessionId, terminalSessionId);
     }
+    void this.persistence?.deleteTerminalEverywhere?.(terminalSessionId).catch(() => {});
   }
 
   private startSpill(handle: ToolOutputHandle): void {
@@ -316,6 +316,38 @@ export class ToolOutputStore {
     }).catch(() => {
       // Keep the in-memory copy if persistence is temporarily unavailable.
     });
+  }
+
+  private resolveRestartPersistenceNoticesValue(value: unknown, chatSessionId: string): unknown {
+    if (typeof value === 'string') {
+      return this.resolveRestartPersistenceNoticeString(value, chatSessionId);
+    }
+    if (Array.isArray(value)) {
+      return value.map(entry => this.resolveRestartPersistenceNoticesValue(entry, chatSessionId));
+    }
+    if (!value || typeof value !== 'object') return value;
+
+    const record = value as Record<string, unknown>;
+    const handleId = typeof record.handleId === 'string' ? record.handleId : undefined;
+    return Object.fromEntries(Object.entries(record).map(([key, entry]) => {
+      if (typeof entry === 'string' && handleId && this.isHandleRestartPersistent(handleId, chatSessionId)) {
+        return [key, removeRestartPersistenceWarning(entry)];
+      }
+      return [key, this.resolveRestartPersistenceNoticesValue(entry, chatSessionId)];
+    }));
+  }
+
+  private resolveRestartPersistenceNoticeString(value: string, chatSessionId: string): string {
+    const handleIds = [...value.matchAll(/handleId=(tool-output-[A-Za-z0-9-]+)/g)]
+      .map(match => match[1]);
+    if (!handleIds.length) return value;
+    return handleIds.every(handleId => this.isHandleRestartPersistent(handleId, chatSessionId))
+      ? removeRestartPersistenceWarning(value)
+      : value;
+  }
+
+  private isHandleRestartPersistent(handleId: string, chatSessionId: string): boolean {
+    return Boolean(this.bySession.get(chatSessionId)?.get(handleId)?.filePath);
   }
 
   private enforceSessionLimits(chatSessionId: string, sessionMap: Map<string, ToolOutputHandle>): void {
@@ -450,6 +482,18 @@ export class ToolOutputStore {
     if (sessionMap?.size === 0) this.bySession.delete(handle.chatSessionId);
     this.evictHandle(handle);
   }
+}
+
+function removeRestartPersistenceWarning(value: string): string {
+  return value
+    .replace(' restartPersistence=unavailable (read before closing the app)', '')
+    .replace('This saved output is available only until the app closes. Read this handle before closing the app.', '')
+    .replace(
+      'Full file content is available only until the app closes. Use tool_output_read now.',
+      'Full file content stored. Use tool_output_read with this handleId to read more.',
+    )
+    .replace(/\n{3,}/g, '\n\n')
+    .trimEnd();
 }
 
 function toPersistedRecord(handle: ToolOutputHandle): PersistedToolOutputRecord {

@@ -316,6 +316,25 @@ test('ToolOutputStore can delete durable terminal handles that were never restor
   assert.deepEqual(deletedTerminalSessions, [['chat-after-restart', 'terminal-closed']]);
 });
 
+test('ToolOutputStore deletes unopened durable handles when a terminal closes', async () => {
+  const deletedTerminals: string[] = [];
+  const store = new ToolOutputStore({
+    persistence: {
+      write: async () => '/tmp/unused',
+      read: async () => null,
+      delete: async () => {},
+      deleteTerminalEverywhere: async terminalSessionId => {
+        deletedTerminals.push(terminalSessionId);
+      },
+    },
+  });
+
+  store.pruneTerminalSessionEverywhere('terminal-unopened-after-restart');
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  assert.deepEqual(deletedTerminals, ['terminal-unopened-after-restart']);
+});
+
 test('ToolOutputStore does not persist output that arrives after its terminal closed', async () => {
   let writes = 0;
   const store = new ToolOutputStore({
@@ -566,6 +585,34 @@ test('ToolOutputStore flush waits until a handle is durable before a tool can re
   finishWrite('/netcatty/durable.log');
   await flushing;
   assert.equal(handle.filePath, '/netcatty/durable.log');
+});
+
+test('ToolOutputStore reports restart persistence only after the individual spill succeeds', async () => {
+  let failWrite = true;
+  const store = new ToolOutputStore({
+    persistence: {
+      write: async () => {
+        if (failWrite) throw new Error('disk full');
+        return '/netcatty/durable.log';
+      },
+      restore: async () => null,
+      read: async () => null,
+      delete: async () => {},
+    },
+  });
+  const failed = store.store({ chatSessionId: 'chat-1', capabilityId: 'test', content: 'memory only' });
+  const failedNotice = `[output handle: handleId=${failed.id} restartPersistence=unavailable (read before closing the app)]`;
+  await store.flush('chat-1');
+  assert.equal(store.resolveRestartPersistenceNotices(failedNotice, 'chat-1'), failedNotice);
+
+  failWrite = false;
+  const durable = store.store({ chatSessionId: 'chat-1', capabilityId: 'test', content: 'saved' });
+  const durableNotice = `[output handle: handleId=${durable.id} restartPersistence=unavailable (read before closing the app)]`;
+  await store.flush('chat-1');
+  assert.equal(
+    store.resolveRestartPersistenceNotices(durableNotice, 'chat-1'),
+    `[output handle: handleId=${durable.id}]`,
+  );
 });
 
 test('ToolOutputStore enforces a shared quota across chat sessions', () => {

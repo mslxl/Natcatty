@@ -57,7 +57,6 @@ import {
   bumpDraftMutationVersion,
   bumpDraftUploadGeneration,
   cleanupDeletedAIChatSessions,
-  cleanupSdkAgentSessions,
   cleanupOrphanedAISessions,
   getAIBridge,
   getDraftUploadGeneration,

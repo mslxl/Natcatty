@@ -75,7 +75,7 @@ export function fitTerminalExecuteResultForModel(
       totalStdoutChars: result.stdout.length,
       totalStderrChars: result.stderr.length,
       handleId,
-      restartPersistenceAvailable: options?.toolOutputStore?.isRestartPersistenceAvailable(),
+      restartPersistenceAvailable: false,
     };
     fitted.stdout = appendOutputHandleNotice(stdout, handle, 'stdout');
     if (result.stderr) {
