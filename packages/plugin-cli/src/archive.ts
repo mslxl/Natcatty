@@ -13,7 +13,7 @@ import {
 import path from "node:path";
 import { once } from "node:events";
 
-import type { PluginManifest } from "@netcatty/plugin-contract";
+import type { IconReference, PluginManifest } from "@netcatty/plugin-contract";
 import yauzl, { type Entry, type ZipFile } from "yauzl";
 
 import { IGNORED_ROOT_ENTRIES, PACKAGE_LIMITS } from "./constants.js";
@@ -111,6 +111,13 @@ function isExecutablePackageFile(packagePath: string, mode: number): boolean {
     || EXECUTABLE_EXTENSIONS.has(path.posix.extname(packagePath).toLowerCase());
 }
 
+function packageIconPaths(icon: IconReference | undefined): string[] {
+  if (icon?.kind !== "package") return [];
+  return icon.dark
+    ? [icon.light, icon.dark]
+    : [icon.light];
+}
+
 function isSameOrDescendantPath(parentPath: string, candidatePath: string): boolean {
   const relativePath = path.relative(parentPath, candidatePath);
   return relativePath === ""
@@ -142,7 +149,9 @@ async function scanPackageDirectory(
 ): Promise<ScannedFile[]> {
   const registry = new PackagePathRegistry();
   const companionPaths = new Map(
-    (manifest.companionExecutables ?? []).map((companion) => [companion.path, companion]),
+    (manifest.companionExecutables ?? []).flatMap((companion) => (
+      companion.variants.map((variant) => [variant.path, variant] as const)
+    )),
   );
   const files: ScannedFile[] = [];
   let totalBytes = 0;
@@ -217,6 +226,9 @@ async function scanPackageDirectory(
     manifest.main.browser,
     manifest.main.node,
     ...(manifest.contributes?.views ?? []).map(({ entry }) => entry),
+    ...(manifest.contributes?.commands ?? []).flatMap(({ icon }) => packageIconPaths(icon)),
+    ...(manifest.contributes?.menus ?? []).flatMap(({ icon }) => packageIconPaths(icon)),
+    ...(manifest.contributes?.views ?? []).flatMap(({ icon }) => packageIconPaths(icon)),
     ...companionPaths.keys(),
   ].filter((entryPath): entryPath is string => Boolean(entryPath));
   for (const requiredPath of requiredPaths) {
@@ -545,7 +557,9 @@ export async function validatePluginPackage(
   }
   const manifest = validation.manifest;
   const declaredCompanions = new Map(
-    (manifest.companionExecutables ?? []).map((companion) => [companion.path, companion]),
+    (manifest.companionExecutables ?? []).flatMap((companion) => (
+      companion.variants.map((variant) => [variant.path, variant] as const)
+    )),
   );
   for (const [packagePath, entry] of entries) {
     const isExecutable = isExecutablePackageFile(packagePath, entry.mode);
@@ -557,6 +571,9 @@ export async function validatePluginPackage(
     manifest.main.browser,
     manifest.main.node,
     ...(manifest.contributes?.views ?? []).map(({ entry }) => entry),
+    ...(manifest.contributes?.commands ?? []).flatMap(({ icon }) => packageIconPaths(icon)),
+    ...(manifest.contributes?.menus ?? []).flatMap(({ icon }) => packageIconPaths(icon)),
+    ...(manifest.contributes?.views ?? []).flatMap(({ icon }) => packageIconPaths(icon)),
   ].filter((entryPath): entryPath is string => Boolean(entryPath));
   for (const requiredPath of requiredPaths) {
     if (!entries.has(requiredPath)) {

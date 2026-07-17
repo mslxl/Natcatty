@@ -1,4 +1,13 @@
-import type { JsonValue } from "@netcatty/plugin-contract";
+import type {
+  FeatureId,
+  JsonValue,
+  PluginErrorData,
+  PluginErrorName,
+  PluginId,
+  PluginWireErrorCode,
+  RpcErrorObject,
+  SemanticVersion,
+} from "@netcatty/plugin-contract";
 
 export type * from "@netcatty/plugin-contract";
 
@@ -34,7 +43,10 @@ export interface PluginSecretStore {
 }
 
 export interface PluginContext {
-  readonly pluginId: string;
+  readonly pluginId: PluginId;
+  readonly netcattyVersion: SemanticVersion;
+  readonly apiVersion: SemanticVersion;
+  readonly enabledFeatures: ReadonlySet<FeatureId>;
   readonly subscriptions: DisposableStore;
   readonly storage: PluginKeyValueStore;
   readonly secrets: PluginSecretStore;
@@ -46,16 +58,26 @@ export interface NetcattyPlugin {
   deactivate?(): void | Promise<void>;
 }
 
-export type PluginErrorCode =
-  | "cancelled"
-  | "deadline_exceeded"
-  | "invalid_argument"
-  | "not_found"
-  | "permission_denied"
-  | "resource_exhausted"
-  | "unavailable"
-  | "unsupported"
-  | "internal";
+export type PluginErrorCode = PluginErrorName;
+
+export const PLUGIN_ERROR_WIRE_CODES = {
+  cancelled: -32001,
+  unknown: -32002,
+  invalid_argument: -32003,
+  deadline_exceeded: -32004,
+  not_found: -32005,
+  already_exists: -32006,
+  permission_denied: -32007,
+  resource_exhausted: -32008,
+  failed_precondition: -32009,
+  aborted: -32010,
+  out_of_range: -32011,
+  unsupported: -32012,
+  internal: -32013,
+  unavailable: -32014,
+  data_loss: -32015,
+  unauthenticated: -32016,
+} as const satisfies Readonly<Record<PluginErrorCode, PluginWireErrorCode>>;
 
 export class PluginError extends Error {
   readonly code: PluginErrorCode;
@@ -67,6 +89,17 @@ export class PluginError extends Error {
     this.code = code;
     this.details = details;
   }
+}
+
+export function pluginErrorToRpcError(error: PluginError): RpcErrorObject {
+  const data: PluginErrorData = error.details === undefined
+    ? { pluginCode: error.code }
+    : { pluginCode: error.code, details: error.details };
+  return {
+    code: PLUGIN_ERROR_WIRE_CODES[error.code],
+    message: error.message,
+    data,
+  };
 }
 
 export class CancellationError extends PluginError {

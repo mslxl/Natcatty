@@ -17,7 +17,9 @@ public protocol. It uses JSON Schema 2020-12 and defines:
 - permission declarations;
 - setting, command, menu, view, and provider contributions;
 - JSON-RPC requests, notifications, results, cancellation, and errors;
-- stream frames and flow-control windows;
+- runtime initialization, feature negotiation, and progress notifications;
+- JSON and binary stream frames with flow-control windows;
+- companion-process Content-Length framing;
 - permission requests and decisions;
 - provider requests and results.
 
@@ -33,9 +35,10 @@ therefore reject a schema edit whose SDK or Electron representation was not
 regenerated.
 
 The contract is intentionally marked internal. Compatibility is not promised
-until the final rollout PR freezes API 1.0. During the internal period, every
-breaking change must update the schema identifier and generated artifacts in
-the same commit.
+until the final rollout PR freezes API 1.0. Review revisions made before this
+first contract is merged remain `0.1.0-internal`; after a contract revision is
+merged, every breaking change must update the schema identifier, workspace
+package versions, and generated artifacts in the same commit.
 
 ## Package layout
 
@@ -51,7 +54,11 @@ declares one or both execution entrypoints:
   "publisher": "example",
   "engines": {
     "netcatty": ">=0.0.0",
-    "api": "0.1.0-internal"
+    "api": ">=0.1.0-internal <0.2.0"
+  },
+  "features": {
+    "required": ["netcatty.rpc.progress"],
+    "optional": ["netcatty.stream.binary"]
   },
   "main": {
     "browser": "dist/browser.js",
@@ -67,12 +74,194 @@ Windows reserved names, control or platform-special characters, and
 platform-specific trailing dots or spaces. The semantic package validator also
 requires NFC-normalized text; every official host consumer must run it after
 schema validation because JSON Schema cannot express Unicode normalization.
-Every entrypoint, view document, and companion executable must exist in the
-package.
+Every entrypoint, view document, package icon, and companion variant must exist
+in the package.
 
 Browser and Node entrypoints express placement, not permission. The future
 runtime still evaluates the manifest permissions, trust level, and user grants
 before activating either entrypoint.
+
+Each advanced companion has a stable contribution ID and one or more platform
+variants. A variant binds one package path and SHA-256 digest to one or more
+compatible OS/architecture targets, allowing a universal script to be shared
+while macOS, Linux, and Windows native binaries remain distinct. A companion
+cannot declare the same target platform twice, and no two companion variants
+may claim the same package path.
+
+## Contribution identity
+
+Every setting, command, view, provider, and companion executable has a globally
+unique contribution ID. Its exact prefix is the owning plugin ID followed by a
+dot:
+
+```text
+<pluginId>.<localContributionName>
+com.netcatty.hello.sayHello
+com.netcatty.hello.settings.greeting
+```
+
+The schema requires a namespaced contribution shape. Semantic validation then
+checks the dynamic relationship to `manifest.id`; a contribution declared by
+`com.netcatty.hello` cannot use `com.other.plugin.sayHello`. Menu command
+references and `onCommand:` activation events must resolve to commands declared
+by the same manifest. This prevents two independently installed plugins from
+claiming the same command, setting, provider, view, or companion identifier.
+The same ID also cannot be reused across registry kinds within one plugin, so a
+command and a view never compete for one routing key.
+Activation uses one canonical top-level registry. The supported events are
+`onStartupFinished`, `onCommand:<id>`, `onView:<id>`, and `onProvider:<id>`;
+every targeted ID must resolve to a contribution in the same manifest. Provider
+entries do not carry a second, potentially conflicting activation field.
+
+Commands own their canonical title, description, icon, and enablement state.
+Menus can override the title or icon for a particular placement and declare an
+alternate command, visibility, enablement, checked state, ordering, and whether
+the resolved keybinding is displayed. Keybindings are separate contributions:
+each binding names its command, portable fallback key, optional macOS/Linux/
+Windows overrides, Context Key condition, and JSON command arguments. This
+avoids treating one command-level shortcut as the only binding and permits the
+host to resolve platform conflicts centrally. Menu and keybinding command
+references must resolve to commands in the same manifest.
+
+Icons are discriminated references. A `theme` icon names a host-owned icon; a
+`package` icon names a required light asset and optional dark asset. Package icon
+paths receive the same normalization, traversal, archive-presence, and integrity
+checks as code and view entrypoints. Views also declare placement, order,
+visibility, icon, and whether their isolated context remains alive while hidden.
+All `when`, `enablement`, and `checked` values are opaque host-parsed Context Key
+expressions; plugin code never evaluates or injects them into native UI.
+
+## Compatibility and feature negotiation
+
+Both `engines.netcatty` and `engines.api` are node-semver ranges. Schema
+validation rejects unsafe range characters, while the semantic validator uses
+the complete node-semver grammar. An exact API version is a valid range, but
+plugins should normally declare the compatible internal API interval so the
+intent is explicit. Prerelease versions are not globally enabled: a range must
+name a compatible prerelease baseline explicitly, so `<0.2.0` does not silently
+accept `0.2.0-alpha`.
+
+The optional manifest `features` object separates required and optional feature
+IDs. Required and optional sets cannot overlap. During runtime initialization,
+the host sends the `plugin.initialize` JSON-RPC method using
+`RuntimeInitializeRequest` and `RuntimeInitializeParams` with its exact Netcatty
+version, API version, and supported features. The plugin answers with
+`RuntimeInitializeSuccess` and `RuntimeInitializeResult`, including only the
+features enabled for that runtime.
+Initialization must fail before activation when either engine range is not
+satisfied or a required feature is unavailable. Optional features are enabled
+only when both sides support them.
+
+The CLI exposes the same algorithm before installation or packaging:
+
+```bash
+netcatty-plugin compatibility ./my-plugin \
+  --netcatty 1.4.0 \
+  --api 0.1.0-internal \
+  --features netcatty.rpc.progress,netcatty.stream.binary
+```
+
+`checkPluginCompatibility()` is also exported for the phase-2 package manager
+and runtime. It returns the enabled optional features, missing required features,
+and deterministic incompatibility reasons rather than a single boolean.
+
+Before applying a version-specific full schema, a host reads
+`PluginManifestHeader`. This bootstrap shape deliberately permits unknown fields
+and future positive `manifestVersion` values while validating identity, plugin
+version, and engine ranges. The host can therefore select a supported schema or
+report a precise API/schema incompatibility before the strict full manifest
+validator rejects unknown fields. The full `PluginManifest` remains closed with
+`additionalProperties: false` so misspelled security declarations never become
+silent no-ops.
+
+## RPC, progress, streams, and companion stdio
+
+Control messages follow JSON-RPC 2.0. `RpcFailure.id` is nullable for parse and
+invalid-request errors where the request ID cannot be recovered. Long-running
+operations use `$/progress` notifications with `begin`, `report`, and `end`
+values and stable string or integer progress tokens. A report may use an
+absolute percentage or an incremental percentage, never both.
+
+Stream control envelopes remain schema-valid JSON, but chunk data has three
+explicit encodings:
+
+- `json` carries a normal JSON value;
+- `base64` carries binary bytes over JSON-only transports such as companion
+  stdio;
+- `transfer` declares that the `MessagePortStreamEnvelope` carries an
+  `ArrayBuffer` in its `transfer` property. The sender passes that same buffer
+  in the structured-clone transfer list.
+
+The declared `byteLength` is the UTF-8 JSON or unencoded binary byte count. A
+receiver validates JSON serialization, base64 decoding, or transferred buffer
+length before accepting credit. The contract exports `createJsonStreamChunk()`,
+`createBase64StreamChunk()`, `materializeStreamChunk()`, and
+`createMessagePortStreamEnvelope()` so every host path applies the same checks.
+The open frame is sequence 0 and grants the initial `windowBytes`; data and
+terminal frames begin at sequence 1. Sequence numbers increase independently in
+each sending direction. A producer subtracts every chunk's declared byte length
+from its credit and must stop at zero. `windowUpdate.creditBytes` grants an
+additional amount rather than replacing the window, so retries and duplicate
+control frames cannot be interpreted as an absolute reset. A stdio peer must
+never emit the `transfer` encoding because stdio has no structured-clone
+transfer list; the framing encoder rejects it.
+
+Public encoders validate runtime values instead of trusting TypeScript casts.
+They reject non-finite numbers, `undefined`, sparse arrays, accessors, symbols,
+cycles, and non-plain objects before serialization. Base64 must use canonical
+RFC 4648 padding bits, and every stream chunk remains bounded to 16 MiB even
+when a caller bypasses JSON Schema validation. This prevents a browser plugin
+and a native companion from computing different bytes for the same apparent
+message.
+
+Advanced companion processes exchange UTF-8 JSON using this exact framing:
+
+```text
+Content-Length: <decimal UTF-8 byte length>\r\n
+Content-Type: application/json; charset=utf-8\r\n
+\r\n
+<JSON bytes>
+```
+
+`Content-Length` is required exactly once. `Content-Type` is optional when
+decoding but, when present, must be `application/json` with an optional UTF-8
+charset. Header names are case-insensitive and the default header limit is
+8 KiB; unknown or duplicate headers,
+non-ASCII header bytes, invalid UTF-8, malformed JSON, and frames above 16 MiB
+are rejected. Decoder options may lower but never raise the 16 MiB absolute
+content limit. `encodeContentLengthFrame()` and the incremental
+`ContentLengthFrameDecoder` implement this contract without shell or line-based
+parsing. `finish()` detects truncated frames when a process exits.
+
+JSON-RPC standard failures retain their standard integer codes. SDK
+`PluginError` values use stable implementation-defined codes in JSON-RPC's
+reserved server-error range:
+
+| SDK code | Wire code |
+| --- | ---: |
+| `cancelled` | -32001 |
+| `unknown` | -32002 |
+| `invalid_argument` | -32003 |
+| `deadline_exceeded` | -32004 |
+| `not_found` | -32005 |
+| `already_exists` | -32006 |
+| `permission_denied` | -32007 |
+| `resource_exhausted` | -32008 |
+| `failed_precondition` | -32009 |
+| `aborted` | -32010 |
+| `out_of_range` | -32011 |
+| `unsupported` | -32012 |
+| `internal` | -32013 |
+| `unavailable` | -32014 |
+| `data_loss` | -32015 |
+| `unauthenticated` | -32016 |
+
+`pluginErrorToRpcError()` performs the mapping and includes the stable SDK code
+in `error.data.pluginCode` so clients can preserve meaning without parsing text.
+Permission decisions and Provider results are also discriminated unions: an
+`allow` decision requires a grant scope, denied/cancelled decisions cannot
+smuggle one, successful Provider results require `result`, and failed results
+require a stable RPC error.
 
 ## TypeScript SDK
 
@@ -84,10 +273,42 @@ lifecycle primitives:
 - `CancellationTokenSource` provides cooperative cancellation without exposing
   host abort controllers;
 - `PluginError` carries a stable machine-readable error code and JSON details;
-- `PluginContext` defines storage, secret storage, logging, and subscriptions.
+- `PluginContext` exposes the exact Netcatty/API versions, negotiated feature
+  set, storage, secret storage, logging, and subscriptions.
 
 The context interfaces are contracts only in phase 1. The isolated host in
 phase 2 and capability brokers in phase 3 provide their implementations.
+
+Permission names already use the phase-3 enforcement boundaries: clipboard
+read/write, terminal metadata/output/input and input/output interception, Vault
+metadata/write/credentials, SFTP read/write, filesystem read/write, network
+origins, companion execution, and each Provider registration class are separate
+grants. A broad permission such as `terminal.read` or `filesystem` is not part
+of the contract. Setting controls likewise include the complete planned native
+set, including radio, slider, font, file/directory, sortable list, and structured
+table controls. Secret settings cannot opt into sync; list and table controls
+must declare a host-validated `valueSchema`. Defaults are checked against the
+control's value type, declared options, numeric range, and step; duplicate
+option values and invalid text patterns fail package validation. File and
+directory paths are device-local values and cannot opt into cloud sync.
+Semantic validation also requires every contribution class to declare its
+capability: commands, menus, views,
+settings, companion executables, and each Provider kind cannot appear without
+the matching required or optional permission. Companion-specific permission
+lists reuse the same canonical permission catalog and must be a subset of the
+manifest declarations. Provider capability IDs use the same lowercase,
+namespaced feature-ID grammar as runtime negotiation.
+Provider `configurationSchema` values are declarative JSON data interpreted by
+the host's restricted schema validator; providers never receive a way to inject
+configuration UI code into Netcatty.
+
+Terminal Provider declarations are also tied to their least-privilege data
+capabilities. Completion requires `terminal.complete`; text-derived visual
+providers require terminal output plus decoration access; backgrounds require
+decoration access only. Raw interception is represented by two distinct kinds,
+`terminal.interceptor.input` and `terminal.interceptor.output`, and each requires
+its matching high-risk permission. One generic interceptor kind cannot be used
+to acquire both directions implicitly.
 
 Plugin entrypoints should return or register every acquired resource:
 
@@ -107,10 +328,12 @@ arbitrary JavaScript without terminating the isolated runtime.
 
 ## CLI
 
-`@netcatty/plugin-cli` supplies four commands:
+`@netcatty/plugin-cli` supplies five commands:
 
 - `init` creates a minimal TypeScript plugin;
 - `validate` checks a source directory or packaged archive;
+- `compatibility` checks Netcatty/API ranges and negotiates required and
+  optional features;
 - `build` validates the manifest and runs the plugin's npm build script without
   a shell;
 - `pack` emits a deterministic `.ncpkg` archive.
@@ -126,7 +349,7 @@ Package validation rejects:
 - executable files not declared as companion executables;
 - companion binaries whose SHA-256 does not match the manifest;
 - duplicate entries, encrypted entries, and unsupported compression methods;
-- missing entrypoints and views;
+- missing entrypoints, views, package icons, and companion variants;
 - excessive path, file, archive, or expanded-package sizes.
 
 These checks are repeated when reading `.ncpkg` files. Installation in phase 2
@@ -141,8 +364,10 @@ later:
    accepting an unvalidated message.
 2. Unknown manifest properties are rejected within API 0.1. This prevents a
    misspelled security declaration from silently becoming ineffective.
-3. Runtime RPC payloads are JSON values. Native objects, functions, Electron
-   handles, DOM nodes, and cyclic values cannot cross the boundary.
+3. Runtime control envelopes are JSON values. Binary stream data crosses a
+   MessagePort only through the declared `ArrayBuffer` envelope property and
+   the matching structured-clone transfer list; native objects,
+   functions, Electron handles, DOM nodes, and cyclic values remain forbidden.
 4. Permission declarations do not grant access. They only make a future user
    grant possible.
 5. Required and optional permission sets cannot overlap.
@@ -155,6 +380,39 @@ later:
 10. Manifest schema validation is followed by semantic package validation.
     This enforces NFC paths and content-dependent rules that JSON Schema cannot
     represent by itself.
+11. Contribution IDs use the exact owning plugin ID as their namespace.
+12. Engine ranges and required features are checked before activation.
+13. Companion stdio uses bounded Content-Length-framed UTF-8 JSON; newline JSON
+    and unbounded reads are not compatible transports.
+
+## Phase-consumer audit and evolution rules
+
+The cross-phase contract was checked against every planned consumer:
+
+| Phase | Contract used without importing application internals |
+| --- | --- |
+| PR 2 runtime | manifest header/full validation, `plugin.initialize`, JSON-RPC, progress, cancellation, framing, streams |
+| PR 3 security | plugin identity, permission declarations, RPC error mapping, deadlines and cancellation IDs |
+| PR 4 contributions | namespaced settings, commands, menus, views and strict semantic references |
+| PR 5 terminal providers | namespaced provider IDs, provider request/result envelopes and bounded streams |
+| PR 6 data pipeline | MessagePort transfer envelopes, base64 stdio fallback, sequence and receive-window fields |
+| PR 7 connection/auth/import | provider kinds and configuration schemas, platform-specific companion variants, framing, stable failures and progress |
+| PR 8 sync | namespaced sync providers and JSON/binary bounded transport |
+| PR 9 rollout | schema/API selection, compatibility reporting and the final API 1.0 freeze |
+
+The contract tests construct representative manifests for the contribution UI,
+ordinary terminal Provider, privileged input/output interceptor, and combined
+connection/authentication/sync/importer phases. These fixtures are validated by
+the same strict schema and semantic validator used by the CLI, so a later edit
+cannot silently make a planned phase inexpressible.
+
+Core meanings are never changed in place after merge: contribution ownership,
+RPC method names, error-code mappings, framing, stream encodings, and feature
+negotiation require a new contract revision for incompatible changes. New
+setting controls, permission names, provider capabilities, or optional fields
+may be added only with an API/schema revision; a plugin that uses them declares
+the matching API range and required feature. This keeps strict validation while
+giving old hosts a deterministic fail-closed path through the manifest header.
 
 ## Repository commands
 

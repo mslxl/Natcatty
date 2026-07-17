@@ -57,8 +57,9 @@ A symbolic link can make an apparently safe relative path resolve outside the
 package. An executable bit can also hide an undeclared native program among
 ordinary assets.
 
-Packages cannot contain symbolic links. Executable files must appear in
-`companionExecutables`; their content SHA-256 is part of the manifest. A later
+Packages cannot contain symbolic links. Executable files must appear in a
+platform-specific `companionExecutables[].variants` entry; every variant binds
+its package path, supported target platforms, and content SHA-256. A later
 signature covers both the manifest and deterministic archive.
 
 ### Resource exhaustion

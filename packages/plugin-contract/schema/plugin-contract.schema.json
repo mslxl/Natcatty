@@ -29,17 +29,35 @@
       "maxLength": 128,
       "pattern": "^(?!/)(?![A-Za-z]:)(?!.*//)(?!.*\\\\)(?!.*[\\u0000-\\u001F<>:\"|?*])(?!\\.{1,2}(?:/|$))(?!.*\\/\\.{1,2}(?:/|$))(?!(?:[Cc][Oo][Nn]|[Pp][Rr][Nn]|[Aa][Uu][Xx]|[Nn][Uu][Ll]|[Cc][Oo][Mm][1-9]|[Ll][Pp][Tt][1-9])(?:\\.[^/]*)?(?:/|$))(?!.*\\/(?:[Cc][Oo][Nn]|[Pp][Rr][Nn]|[Aa][Uu][Xx]|[Nn][Uu][Ll]|[Cc][Oo][Mm][1-9]|[Ll][Pp][Tt][1-9])(?:\\.[^/]*)?(?:/|$))(?!.*[. ](?:/|$))[^/]+(?:/[^/]+)*$"
     },
-    "Identifier": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 128,
-      "pattern": "^[A-Za-z][A-Za-z0-9]*(?:[._-][A-Za-z0-9]+)*$"
-    },
     "PluginId": {
       "type": "string",
       "minLength": 3,
       "maxLength": 128,
       "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$"
+    },
+    "ContributionId": {
+      "type": "string",
+      "minLength": 5,
+      "maxLength": 192,
+      "description": "A globally unique contribution id. Semantic validation requires the exact '<pluginId>.' prefix.",
+      "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+\\.[A-Za-z][A-Za-z0-9_-]*(?:\\.[A-Za-z][A-Za-z0-9_-]*)*$"
+    },
+    "FeatureId": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 128,
+      "pattern": "^[a-z][a-z0-9-]*(?:\\.[a-z0-9][a-z0-9_-]*)+$"
+    },
+    "SemanticVersion": {
+      "type": "string",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-(?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$"
+    },
+    "SemverRange": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "A node-semver compatible range. Official consumers must also run semantic validation.",
+      "pattern": "^(?! *$)[0-9A-Za-z<>=~^*xX|.\\-+ ]+$"
     },
     "LocalizedText": {
       "oneOf": [
@@ -56,22 +74,35 @@
       "type": "string",
       "enum": [
         "storage",
-        "settings",
+        "settings.read",
+        "settings.write",
         "commands",
         "menus",
         "views",
-        "terminal.read",
+        "clipboard.read",
+        "clipboard.write",
+        "terminal.metadata",
+        "terminal.output",
+        "terminal.input",
         "terminal.decorate",
         "terminal.complete",
-        "terminal.transform",
-        "connection",
-        "authentication",
-        "sync",
-        "import",
+        "terminal.intercept.input",
+        "terminal.intercept.output",
+        "vault.metadata",
+        "vault.write",
+        "vault.credentials",
+        "sftp.read",
+        "sftp.write",
         "network",
-        "filesystem",
+        "filesystem.read",
+        "filesystem.write",
         "secrets",
-        "companion.execute"
+        "companion.execute",
+        "provider.terminal",
+        "provider.connection",
+        "provider.authentication",
+        "provider.sync",
+        "provider.importer"
       ]
     },
     "PermissionDeclaration": {
@@ -124,10 +155,83 @@
       "type": "object",
       "required": ["netcatty", "api"],
       "properties": {
-        "netcatty": { "type": "string", "minLength": 1, "maxLength": 128 },
-        "api": { "const": "0.1.0-internal" }
+        "netcatty": { "$ref": "#/$defs/SemverRange" },
+        "api": { "$ref": "#/$defs/SemverRange" }
       },
       "additionalProperties": false
+    },
+    "PluginEngineHeader": {
+      "type": "object",
+      "required": ["netcatty", "api"],
+      "properties": {
+        "netcatty": { "$ref": "#/$defs/SemverRange" },
+        "api": { "$ref": "#/$defs/SemverRange" }
+      },
+      "additionalProperties": true
+    },
+    "PluginFeatures": {
+      "type": "object",
+      "properties": {
+        "required": {
+          "type": "array",
+          "maxItems": 128,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/FeatureId" }
+        },
+        "optional": {
+          "type": "array",
+          "maxItems": 128,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/FeatureId" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "ActivationEvent": {
+      "oneOf": [
+        { "const": "onStartupFinished" },
+        {
+          "type": "string",
+          "maxLength": 256,
+          "pattern": "^on(?:Command|View|Provider):[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+\\.[A-Za-z][A-Za-z0-9_-]*(?:\\.[A-Za-z][A-Za-z0-9_-]*)*$"
+        }
+      ]
+    },
+    "ContextKeyExpression": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "description": "A host-parsed Context Key expression. Plugins must not evaluate this string themselves."
+    },
+    "ThemeIcon": {
+      "type": "object",
+      "required": ["kind", "name"],
+      "properties": {
+        "kind": { "const": "theme" },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-z][a-z0-9-]*$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "PackageIcon": {
+      "type": "object",
+      "required": ["kind", "light"],
+      "properties": {
+        "kind": { "const": "package" },
+        "light": { "$ref": "#/$defs/RelativePackagePath" },
+        "dark": { "$ref": "#/$defs/RelativePackagePath" }
+      },
+      "additionalProperties": false
+    },
+    "IconReference": {
+      "oneOf": [
+        { "$ref": "#/$defs/ThemeIcon" },
+        { "$ref": "#/$defs/PackageIcon" }
+      ]
     },
     "SettingScope": {
       "type": "string",
@@ -137,15 +241,21 @@
       "type": "string",
       "enum": [
         "switch",
+        "radio",
         "select",
         "multiselect",
         "text",
         "textarea",
         "number",
+        "slider",
         "password",
         "color",
+        "font",
+        "file",
+        "directory",
         "keybinding",
-        "path"
+        "list",
+        "table"
       ]
     },
     "SettingOption": {
@@ -162,7 +272,7 @@
       "type": "object",
       "required": ["id", "label", "control", "scope"],
       "properties": {
-        "id": { "$ref": "#/$defs/Identifier" },
+        "id": { "$ref": "#/$defs/ContributionId" },
         "label": { "$ref": "#/$defs/LocalizedText" },
         "description": { "$ref": "#/$defs/LocalizedText" },
         "control": { "$ref": "#/$defs/SettingControl" },
@@ -177,9 +287,14 @@
         },
         "minimum": { "type": "number" },
         "maximum": { "type": "number" },
+        "step": { "type": "number", "exclusiveMinimum": 0 },
         "pattern": { "type": "string", "maxLength": 512 },
         "placeholder": { "$ref": "#/$defs/LocalizedText" },
-        "when": { "type": "string", "maxLength": 1024 }
+        "when": { "$ref": "#/$defs/ContextKeyExpression" },
+        "restartRequired": { "type": "boolean", "default": false },
+        "sync": { "type": "boolean", "default": false },
+        "sortable": { "type": "boolean", "default": false },
+        "valueSchema": { "$ref": "#/$defs/JsonValue" }
       },
       "additionalProperties": false
     },
@@ -187,12 +302,26 @@
       "type": "object",
       "required": ["id", "title"],
       "properties": {
-        "id": { "$ref": "#/$defs/Identifier" },
+        "id": { "$ref": "#/$defs/ContributionId" },
         "title": { "$ref": "#/$defs/LocalizedText" },
         "category": { "$ref": "#/$defs/LocalizedText" },
         "description": { "$ref": "#/$defs/LocalizedText" },
-        "enablement": { "type": "string", "maxLength": 1024 },
-        "defaultKeybinding": { "type": "string", "maxLength": 128 }
+        "icon": { "$ref": "#/$defs/IconReference" },
+        "enablement": { "$ref": "#/$defs/ContextKeyExpression" }
+      },
+      "additionalProperties": false
+    },
+    "KeybindingContribution": {
+      "type": "object",
+      "required": ["command", "key"],
+      "properties": {
+        "command": { "$ref": "#/$defs/ContributionId" },
+        "key": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "mac": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "linux": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "windows": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "when": { "$ref": "#/$defs/ContextKeyExpression" },
+        "args": { "$ref": "#/$defs/JsonValue" }
       },
       "additionalProperties": false
     },
@@ -211,11 +340,17 @@
       "type": "object",
       "required": ["command", "location"],
       "properties": {
-        "command": { "$ref": "#/$defs/Identifier" },
+        "command": { "$ref": "#/$defs/ContributionId" },
+        "alt": { "$ref": "#/$defs/ContributionId" },
         "location": { "$ref": "#/$defs/MenuLocation" },
+        "title": { "$ref": "#/$defs/LocalizedText" },
+        "icon": { "$ref": "#/$defs/IconReference" },
         "group": { "type": "string", "maxLength": 128 },
         "order": { "type": "number" },
-        "when": { "type": "string", "maxLength": 1024 }
+        "when": { "$ref": "#/$defs/ContextKeyExpression" },
+        "enablement": { "$ref": "#/$defs/ContextKeyExpression" },
+        "checked": { "$ref": "#/$defs/ContextKeyExpression" },
+        "showKeybinding": { "type": "boolean", "default": true }
       },
       "additionalProperties": false
     },
@@ -227,11 +362,13 @@
       "type": "object",
       "required": ["id", "title", "location", "entry"],
       "properties": {
-        "id": { "$ref": "#/$defs/Identifier" },
+        "id": { "$ref": "#/$defs/ContributionId" },
         "title": { "$ref": "#/$defs/LocalizedText" },
         "location": { "$ref": "#/$defs/ViewLocation" },
         "entry": { "$ref": "#/$defs/RelativePackagePath" },
-        "when": { "type": "string", "maxLength": 1024 },
+        "icon": { "$ref": "#/$defs/IconReference" },
+        "order": { "type": "number" },
+        "when": { "$ref": "#/$defs/ContextKeyExpression" },
         "retainContextWhenHidden": { "type": "boolean", "default": false }
       },
       "additionalProperties": false
@@ -247,7 +384,8 @@
         "terminal.semantic",
         "terminal.prompt",
         "terminal.background",
-        "terminal.interceptor",
+        "terminal.interceptor.input",
+        "terminal.interceptor.output",
         "connection",
         "authentication",
         "sync",
@@ -258,49 +396,63 @@
       "type": "object",
       "required": ["id", "label", "kind"],
       "properties": {
-        "id": { "$ref": "#/$defs/Identifier" },
+        "id": { "$ref": "#/$defs/ContributionId" },
         "label": { "$ref": "#/$defs/LocalizedText" },
         "description": { "$ref": "#/$defs/LocalizedText" },
         "kind": { "$ref": "#/$defs/ProviderKind" },
-        "activationEvent": { "type": "string", "minLength": 1, "maxLength": 256 },
         "capabilities": {
           "type": "array",
           "maxItems": 64,
           "uniqueItems": true,
-          "items": { "type": "string", "minLength": 1, "maxLength": 128 }
+          "items": { "$ref": "#/$defs/FeatureId" }
         },
-        "configuration": { "$ref": "#/$defs/JsonValue" }
+        "configurationSchema": { "$ref": "#/$defs/JsonValue" }
+      },
+      "additionalProperties": false
+    },
+    "CompanionPlatform": {
+      "type": "string",
+      "enum": [
+        "darwin-arm64",
+        "darwin-x64",
+        "linux-arm64",
+        "linux-x64",
+        "win32-arm64",
+        "win32-x64"
+      ]
+    },
+    "CompanionExecutableVariant": {
+      "type": "object",
+      "required": ["path", "platforms", "sha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/RelativePackagePath" },
+        "platforms": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 6,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/CompanionPlatform" }
+        },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
       },
       "additionalProperties": false
     },
     "CompanionExecutable": {
       "type": "object",
-      "required": ["id", "path", "platforms", "sha256"],
+      "required": ["id", "variants"],
       "properties": {
-        "id": { "$ref": "#/$defs/Identifier" },
-        "path": { "$ref": "#/$defs/RelativePackagePath" },
-        "platforms": {
+        "id": { "$ref": "#/$defs/ContributionId" },
+        "variants": {
           "type": "array",
           "minItems": 1,
           "maxItems": 12,
-          "uniqueItems": true,
-          "items": {
-            "enum": [
-              "darwin-arm64",
-              "darwin-x64",
-              "linux-arm64",
-              "linux-x64",
-              "win32-arm64",
-              "win32-x64"
-            ]
-          }
+          "items": { "$ref": "#/$defs/CompanionExecutableVariant" }
         },
-        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
         "permissions": {
           "type": "array",
           "maxItems": 32,
           "uniqueItems": true,
-          "items": { "type": "string", "minLength": 1, "maxLength": 128 }
+          "items": { "$ref": "#/$defs/PluginPermission" }
         }
       },
       "additionalProperties": false
@@ -310,11 +462,24 @@
       "properties": {
         "settings": { "type": "array", "maxItems": 512, "items": { "$ref": "#/$defs/SettingContribution" } },
         "commands": { "type": "array", "maxItems": 512, "items": { "$ref": "#/$defs/CommandContribution" } },
+        "keybindings": { "type": "array", "maxItems": 1024, "items": { "$ref": "#/$defs/KeybindingContribution" } },
         "menus": { "type": "array", "maxItems": 1024, "items": { "$ref": "#/$defs/MenuContribution" } },
         "views": { "type": "array", "maxItems": 128, "items": { "$ref": "#/$defs/ViewContribution" } },
         "providers": { "type": "array", "maxItems": 256, "items": { "$ref": "#/$defs/ProviderContribution" } }
       },
       "additionalProperties": false
+    },
+    "PluginManifestHeader": {
+      "type": "object",
+      "required": ["manifestVersion", "id", "version", "engines"],
+      "properties": {
+        "$schema": { "type": "string", "format": "uri-reference" },
+        "manifestVersion": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "id": { "$ref": "#/$defs/PluginId" },
+        "version": { "$ref": "#/$defs/SemanticVersion" },
+        "engines": { "$ref": "#/$defs/PluginEngineHeader" }
+      },
+      "additionalProperties": true
     },
     "PluginManifest": {
       "type": "object",
@@ -326,21 +491,19 @@
         "name": { "type": "string", "minLength": 1, "maxLength": 128 },
         "displayName": { "$ref": "#/$defs/LocalizedText" },
         "description": { "$ref": "#/$defs/LocalizedText" },
-        "version": {
-          "type": "string",
-          "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$"
-        },
+        "version": { "$ref": "#/$defs/SemanticVersion" },
         "publisher": { "type": "string", "minLength": 1, "maxLength": 128 },
         "license": { "type": "string", "maxLength": 128 },
         "homepage": { "type": "string", "format": "uri" },
         "repository": { "type": "string", "format": "uri" },
         "engines": { "$ref": "#/$defs/PluginEngines" },
+        "features": { "$ref": "#/$defs/PluginFeatures" },
         "main": { "$ref": "#/$defs/PluginEntrypoints" },
         "activationEvents": {
           "type": "array",
           "maxItems": 256,
           "uniqueItems": true,
-          "items": { "type": "string", "minLength": 1, "maxLength": 256 }
+          "items": { "$ref": "#/$defs/ActivationEvent" }
         },
         "permissions": { "$ref": "#/$defs/PermissionSet" },
         "contributes": { "$ref": "#/$defs/PluginContributions" },
@@ -356,6 +519,12 @@
       "oneOf": [
         { "type": "string", "minLength": 1, "maxLength": 128 },
         { "type": "integer", "minimum": 0 }
+      ]
+    },
+    "NullableRpcId": {
+      "oneOf": [
+        { "$ref": "#/$defs/RpcId" },
+        { "type": "null" }
       ]
     },
     "RpcRequest": {
@@ -391,11 +560,55 @@
       },
       "additionalProperties": false
     },
+    "JsonRpcStandardErrorCode": {
+      "type": "integer",
+      "enum": [-32700, -32600, -32601, -32602, -32603]
+    },
+    "PluginWireErrorCode": {
+      "type": "integer",
+      "enum": [-32001, -32002, -32003, -32004, -32005, -32006, -32007, -32008, -32009, -32010, -32011, -32012, -32013, -32014, -32015, -32016]
+    },
+    "PluginErrorName": {
+      "type": "string",
+      "enum": [
+        "cancelled",
+        "unknown",
+        "deadline_exceeded",
+        "invalid_argument",
+        "not_found",
+        "already_exists",
+        "permission_denied",
+        "resource_exhausted",
+        "failed_precondition",
+        "aborted",
+        "out_of_range",
+        "unavailable",
+        "unsupported",
+        "internal",
+        "data_loss",
+        "unauthenticated"
+      ]
+    },
+    "PluginErrorData": {
+      "type": "object",
+      "required": ["pluginCode"],
+      "properties": {
+        "pluginCode": { "$ref": "#/$defs/PluginErrorName" },
+        "details": { "$ref": "#/$defs/JsonValue" }
+      },
+      "additionalProperties": false
+    },
+    "RpcErrorCode": {
+      "oneOf": [
+        { "$ref": "#/$defs/JsonRpcStandardErrorCode" },
+        { "$ref": "#/$defs/PluginWireErrorCode" }
+      ]
+    },
     "RpcErrorObject": {
       "type": "object",
       "required": ["code", "message"],
       "properties": {
-        "code": { "type": "integer" },
+        "code": { "$ref": "#/$defs/RpcErrorCode" },
         "message": { "type": "string", "minLength": 1, "maxLength": 2048 },
         "data": { "$ref": "#/$defs/JsonValue" }
       },
@@ -406,8 +619,75 @@
       "required": ["jsonrpc", "id", "error"],
       "properties": {
         "jsonrpc": { "const": "2.0" },
-        "id": { "$ref": "#/$defs/RpcId" },
+        "id": { "$ref": "#/$defs/NullableRpcId" },
         "error": { "$ref": "#/$defs/RpcErrorObject" }
+      },
+      "additionalProperties": false
+    },
+    "ProgressToken": {
+      "$ref": "#/$defs/RpcId"
+    },
+    "ProgressBegin": {
+      "type": "object",
+      "required": ["kind", "title"],
+      "properties": {
+        "kind": { "const": "begin" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "message": { "type": "string", "maxLength": 1024 },
+        "percentage": { "type": "number", "minimum": 0, "maximum": 100 },
+        "cancellable": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "ProgressReport": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": { "const": "report" },
+        "message": { "type": "string", "maxLength": 1024 },
+        "percentage": { "type": "number", "minimum": 0, "maximum": 100 },
+        "increment": { "type": "number", "minimum": 0, "maximum": 100 }
+      },
+      "not": {
+        "required": ["percentage", "increment"],
+        "properties": {
+          "percentage": true,
+          "increment": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "ProgressEnd": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": { "const": "end" },
+        "message": { "type": "string", "maxLength": 1024 }
+      },
+      "additionalProperties": false
+    },
+    "ProgressValue": {
+      "oneOf": [
+        { "$ref": "#/$defs/ProgressBegin" },
+        { "$ref": "#/$defs/ProgressReport" },
+        { "$ref": "#/$defs/ProgressEnd" }
+      ]
+    },
+    "RpcProgressNotification": {
+      "type": "object",
+      "required": ["jsonrpc", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": { "const": "$/progress" },
+        "params": {
+          "type": "object",
+          "required": ["token", "value"],
+          "properties": {
+            "token": { "$ref": "#/$defs/ProgressToken" },
+            "value": { "$ref": "#/$defs/ProgressValue" }
+          },
+          "additionalProperties": false
+        }
       },
       "additionalProperties": false
     },
@@ -428,14 +708,51 @@
       },
       "additionalProperties": false
     },
+    "StreamChunkData": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["encoding", "value", "byteLength"],
+          "properties": {
+            "encoding": { "const": "json" },
+            "value": { "$ref": "#/$defs/JsonValue" },
+            "byteLength": { "type": "integer", "minimum": 0, "maximum": 16777216 }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["encoding", "value", "byteLength"],
+          "properties": {
+            "encoding": { "const": "base64" },
+            "value": {
+              "type": "string",
+              "maxLength": 22369624,
+              "contentEncoding": "base64"
+            },
+            "byteLength": { "type": "integer", "minimum": 0, "maximum": 16777216 }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["encoding", "byteLength"],
+          "properties": {
+            "encoding": { "const": "transfer" },
+            "byteLength": { "type": "integer", "minimum": 0, "maximum": 16777216 }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
     "StreamFrame": {
       "oneOf": [
         {
           "type": "object",
-          "required": ["streamId", "sequence", "kind"],
+          "required": ["streamId", "sequence", "kind", "windowBytes"],
           "properties": {
             "streamId": { "type": "string", "minLength": 1, "maxLength": 128 },
-            "sequence": { "type": "integer", "minimum": 0 },
+            "sequence": { "const": 0 },
             "kind": { "const": "open" },
             "windowBytes": { "type": "integer", "minimum": 1024, "maximum": 16777216 }
           },
@@ -446,10 +763,9 @@
           "required": ["streamId", "sequence", "kind", "data"],
           "properties": {
             "streamId": { "type": "string", "minLength": 1, "maxLength": 128 },
-            "sequence": { "type": "integer", "minimum": 0 },
+            "sequence": { "type": "integer", "minimum": 1 },
             "kind": { "const": "chunk" },
-            "data": { "$ref": "#/$defs/JsonValue" },
-            "byteLength": { "type": "integer", "minimum": 0, "maximum": 16777216 }
+            "data": { "$ref": "#/$defs/StreamChunkData" }
           },
           "additionalProperties": false
         },
@@ -458,7 +774,7 @@
           "required": ["streamId", "sequence", "kind"],
           "properties": {
             "streamId": { "type": "string", "minLength": 1, "maxLength": 128 },
-            "sequence": { "type": "integer", "minimum": 0 },
+            "sequence": { "type": "integer", "minimum": 1 },
             "kind": { "enum": ["end", "cancel"] }
           },
           "additionalProperties": false
@@ -468,7 +784,7 @@
           "required": ["streamId", "sequence", "kind", "error"],
           "properties": {
             "streamId": { "type": "string", "minLength": 1, "maxLength": 128 },
-            "sequence": { "type": "integer", "minimum": 0 },
+            "sequence": { "type": "integer", "minimum": 1 },
             "kind": { "const": "error" },
             "error": { "$ref": "#/$defs/RpcErrorObject" }
           },
@@ -476,15 +792,81 @@
         },
         {
           "type": "object",
-          "required": ["streamId", "sequence", "kind", "windowBytes"],
+          "required": ["streamId", "sequence", "kind", "creditBytes"],
           "properties": {
             "streamId": { "type": "string", "minLength": 1, "maxLength": 128 },
             "sequence": { "type": "integer", "minimum": 0 },
             "kind": { "const": "windowUpdate" },
-            "windowBytes": { "type": "integer", "minimum": 1, "maximum": 16777216 }
+            "creditBytes": { "type": "integer", "minimum": 1, "maximum": 16777216 }
           },
           "additionalProperties": false
         }
+      ]
+    },
+    "RuntimeInitializeParams": {
+      "type": "object",
+      "required": ["netcattyVersion", "apiVersion", "supportedFeatures"],
+      "properties": {
+        "netcattyVersion": { "$ref": "#/$defs/SemanticVersion" },
+        "apiVersion": { "$ref": "#/$defs/SemanticVersion" },
+        "supportedFeatures": {
+          "type": "array",
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/FeatureId" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "RuntimeInitializeResult": {
+      "type": "object",
+      "required": ["pluginId", "pluginVersion", "apiVersion", "enabledFeatures"],
+      "properties": {
+        "pluginId": { "$ref": "#/$defs/PluginId" },
+        "pluginVersion": { "$ref": "#/$defs/SemanticVersion" },
+        "apiVersion": { "$ref": "#/$defs/SemanticVersion" },
+        "enabledFeatures": {
+          "type": "array",
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/FeatureId" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "RuntimeInitializeRequest": {
+      "type": "object",
+      "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "$ref": "#/$defs/RpcId" },
+        "method": { "const": "plugin.initialize" },
+        "params": { "$ref": "#/$defs/RuntimeInitializeParams" },
+        "deadlineMs": { "type": "integer", "minimum": 1, "maximum": 300000 },
+        "cancellationId": { "type": "string", "minLength": 1, "maxLength": 128 }
+      },
+      "additionalProperties": false
+    },
+    "RuntimeInitializeSuccess": {
+      "type": "object",
+      "required": ["jsonrpc", "id", "result"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "$ref": "#/$defs/RpcId" },
+        "result": { "$ref": "#/$defs/RuntimeInitializeResult" }
+      },
+      "additionalProperties": false
+    },
+    "RpcMessage": {
+      "anyOf": [
+        { "$ref": "#/$defs/RpcRequest" },
+        { "$ref": "#/$defs/RpcNotification" },
+        { "$ref": "#/$defs/RpcSuccess" },
+        { "$ref": "#/$defs/RpcFailure" },
+        { "$ref": "#/$defs/RpcCancel" },
+        { "$ref": "#/$defs/RpcProgressNotification" },
+        { "$ref": "#/$defs/RuntimeInitializeRequest" },
+        { "$ref": "#/$defs/RuntimeInitializeSuccess" }
       ]
     },
     "PermissionGrantScope": {
@@ -505,31 +887,44 @@
           "items": { "type": "string", "minLength": 1, "maxLength": 2048 }
         },
         "reason": { "type": "string", "minLength": 1, "maxLength": 1024 },
-        "operationId": { "type": "string", "maxLength": 128 }
+        "operationId": { "type": "string", "minLength": 1, "maxLength": 128 }
       },
       "additionalProperties": false
     },
     "PermissionDecision": {
-      "type": "object",
-      "required": ["requestId", "decision"],
-      "properties": {
-        "requestId": { "type": "string", "minLength": 1, "maxLength": 128 },
-        "decision": { "enum": ["allow", "deny", "cancel"] },
-        "scope": { "$ref": "#/$defs/PermissionGrantScope" },
-        "resources": {
-          "type": "array",
-          "maxItems": 128,
-          "uniqueItems": true,
-          "items": { "type": "string", "minLength": 1, "maxLength": 2048 }
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["requestId", "decision", "scope"],
+          "properties": {
+            "requestId": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "decision": { "const": "allow" },
+            "scope": { "$ref": "#/$defs/PermissionGrantScope" },
+            "resources": {
+              "type": "array",
+              "maxItems": 128,
+              "uniqueItems": true,
+              "items": { "type": "string", "minLength": 1, "maxLength": 2048 }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["requestId", "decision"],
+          "properties": {
+            "requestId": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "decision": { "enum": ["deny", "cancel"] }
+          },
+          "additionalProperties": false
         }
-      },
-      "additionalProperties": false
+      ]
     },
     "ProviderRequest": {
       "type": "object",
       "required": ["providerId", "operation", "requestId"],
       "properties": {
-        "providerId": { "$ref": "#/$defs/Identifier" },
+        "providerId": { "$ref": "#/$defs/ContributionId" },
         "operation": { "type": "string", "minLength": 1, "maxLength": 128 },
         "requestId": { "type": "string", "minLength": 1, "maxLength": 128 },
         "payload": { "$ref": "#/$defs/JsonValue" },
@@ -539,15 +934,37 @@
       "additionalProperties": false
     },
     "ProviderResult": {
-      "type": "object",
-      "required": ["requestId", "status"],
-      "properties": {
-        "requestId": { "type": "string", "minLength": 1, "maxLength": 128 },
-        "status": { "enum": ["ok", "cancelled", "failed"] },
-        "result": { "$ref": "#/$defs/JsonValue" },
-        "error": { "$ref": "#/$defs/RpcErrorObject" }
-      },
-      "additionalProperties": false
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["requestId", "status", "result"],
+          "properties": {
+            "requestId": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "status": { "const": "ok" },
+            "result": { "$ref": "#/$defs/JsonValue" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["requestId", "status"],
+          "properties": {
+            "requestId": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "status": { "const": "cancelled" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["requestId", "status", "error"],
+          "properties": {
+            "requestId": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "status": { "const": "failed" },
+            "error": { "$ref": "#/$defs/RpcErrorObject" }
+          },
+          "additionalProperties": false
+        }
+      ]
     }
   }
 }

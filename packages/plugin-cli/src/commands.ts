@@ -40,7 +40,7 @@ export async function initPlugin(
     publisher: options.id.split(".")[0] || "local",
     engines: {
       netcatty: ">=0.0.0",
-      api: "0.1.0-internal",
+      api: ">=0.1.0-internal <0.2.0",
     },
     main: { browser: "dist/index.js" },
     activationEvents: ["onStartupFinished"],

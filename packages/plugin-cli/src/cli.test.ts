@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   mkdir,
@@ -10,13 +11,19 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import { buildPluginPackage, validatePluginPackage } from "./archive.ts";
+import { checkPluginCompatibility } from "./compatibility.ts";
 import { PACKAGE_LIMITS } from "./constants.ts";
 import { initPlugin } from "./commands.ts";
 import { readAndValidateManifest, validateManifestValue } from "./manifest.ts";
 import { assertSafePackagePath, PackagePathRegistry } from "./packagePath.ts";
+
+const execFileAsync = promisify(execFile);
+const cliPath = fileURLToPath(new URL("./cli.ts", import.meta.url));
 
 function manifest(overrides: Record<string, unknown> = {}) {
   return {
@@ -25,7 +32,7 @@ function manifest(overrides: Record<string, unknown> = {}) {
     name: "package-test",
     version: "1.0.0",
     publisher: "example",
-    engines: { netcatty: ">=1.0.0", api: "0.1.0-internal" },
+    engines: { netcatty: ">=1.0.0 <2.0.0", api: ">=0.1.0-internal <0.2.0" },
     main: { browser: "dist/index.js" },
     ...overrides,
   };
@@ -86,8 +93,8 @@ test("manifest validation reports permission and contribution mistakes", () => {
   const result = validateManifestValue(manifest({
     permissions: { required: ["network"], optional: ["network"] },
     contributes: {
-      commands: [{ id: "package.run", title: "Run" }],
-      menus: [{ command: "package.missing", location: "commandPalette" }],
+      commands: [{ id: "com.example.package-test.run", title: "Run" }],
+      menus: [{ command: "com.example.package-test.missing", location: "commandPalette" }],
     },
   }));
   assert.equal(result.valid, false);
@@ -99,22 +106,171 @@ test("manifest validation rejects duplicate companion executable paths", () => {
   const result = validateManifestValue(manifest({
     companionExecutables: [
       {
-        id: "helper-one",
-        path: "bin/helper",
-        platforms: ["linux-x64"],
-        sha256: "0".repeat(64),
+        id: "com.example.package-test.helper-one",
+        variants: [{
+          path: "bin/helper",
+          platforms: ["linux-x64"],
+          sha256: "0".repeat(64),
+        }],
       },
       {
-        id: "helper-two",
-        path: "bin/helper",
-        platforms: ["darwin-arm64"],
-        sha256: "1".repeat(64),
+        id: "com.example.package-test.helper-two",
+        variants: [{
+          path: "bin/helper",
+          platforms: ["darwin-arm64"],
+          sha256: "1".repeat(64),
+        }],
       },
     ],
   }));
 
   assert.equal(result.valid, false);
   assert.match(result.errors.join("\n"), /Duplicate companion executable path: bin\/helper/);
+});
+
+test("manifest validation supports platform-specific companion variants", () => {
+  const result = validateManifestValue(manifest({
+    permissions: { required: ["companion.execute"] },
+    companionExecutables: [{
+      id: "com.example.package-test.helper",
+      variants: [
+        {
+          path: "bin/helper-darwin",
+          platforms: ["darwin-arm64", "darwin-x64"],
+          sha256: "0".repeat(64),
+        },
+        {
+          path: "bin/helper-linux",
+          platforms: ["linux-arm64", "linux-x64"],
+          sha256: "1".repeat(64),
+        },
+      ],
+    }],
+  }));
+  assert.equal(result.valid, true, result.errors.join("\n"));
+
+  const duplicatePlatform = validateManifestValue(manifest({
+    permissions: { required: ["companion.execute"] },
+    companionExecutables: [{
+      id: "com.example.package-test.helper",
+      variants: [
+        {
+          path: "bin/helper-one",
+          platforms: ["linux-x64"],
+          sha256: "0".repeat(64),
+        },
+        {
+          path: "bin/helper-two",
+          platforms: ["linux-x64"],
+          sha256: "1".repeat(64),
+        },
+      ],
+    }],
+  }));
+  assert.equal(duplicatePlatform.valid, false);
+  assert.match(duplicatePlatform.errors.join("\n"), /Duplicate companion platform/);
+});
+
+test("packaging treats contributed package icons as required safe files", async (context) => {
+  const root = await mkdtemp(path.join(tmpdir(), "netcatty-plugin-icons-"));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const directory = await createPlugin(root);
+  const manifestPath = path.join(directory, "netcatty.plugin.json");
+  await writeFile(manifestPath, `${JSON.stringify(manifest({
+    permissions: { required: ["commands"] },
+    contributes: {
+      commands: [{
+        id: "com.example.package-test.run",
+        title: "Run",
+        icon: {
+          kind: "package",
+          light: "assets/run-light.svg",
+          dark: "assets/run-dark.svg",
+        },
+      }],
+    },
+  }), null, 2)}\n`);
+
+  await assert.rejects(
+    buildPluginPackage(directory, path.join(root, "missing-icons.ncpkg")),
+    /missing package file: assets\/run-light\.svg/,
+  );
+
+  await mkdir(path.join(directory, "assets"));
+  await Promise.all([
+    writeFile(path.join(directory, "assets/run-light.svg"), "<svg></svg>"),
+    writeFile(path.join(directory, "assets/run-dark.svg"), "<svg></svg>"),
+  ]);
+  const output = path.join(root, "with-icons.ncpkg");
+  await buildPluginPackage(directory, output);
+  const result = await validatePluginPackage(output);
+  assert.equal(result.manifest.id, "com.example.package-test");
+});
+
+test("compatibility checks engine ranges and negotiates declared features", () => {
+  const pluginManifest = manifest({
+    features: {
+      required: ["netcatty.rpc.progress"],
+      optional: ["netcatty.stream.binary", "netcatty.view.theme"],
+    },
+  });
+  const compatible = checkPluginCompatibility(pluginManifest, {
+    netcattyVersion: "1.4.0",
+    features: ["netcatty.rpc.progress", "netcatty.stream.binary"],
+  });
+  assert.equal(compatible.compatible, true);
+  assert.deepEqual(compatible.enabledFeatures, [
+    "netcatty.rpc.progress",
+    "netcatty.stream.binary",
+  ]);
+
+  const incompatible = checkPluginCompatibility(pluginManifest, {
+    netcattyVersion: "2.0.0",
+    apiVersion: "0.2.0",
+    features: [],
+  });
+  assert.equal(incompatible.compatible, false);
+  assert.deepEqual(incompatible.missingRequiredFeatures, ["netcatty.rpc.progress"]);
+  assert.match(incompatible.errors.join("\n"), /does not satisfy/);
+  assert.match(incompatible.errors.join("\n"), /Missing required features/);
+
+  const nextApiPrerelease = checkPluginCompatibility(pluginManifest, {
+    netcattyVersion: "1.4.0",
+    apiVersion: "0.2.0-alpha.1",
+    features: ["netcatty.rpc.progress"],
+  });
+  assert.equal(nextApiPrerelease.compatible, false);
+  assert.match(nextApiPrerelease.errors.join("\n"), /plugin API version .* does not satisfy/);
+});
+
+test("compatibility CLI checks a validated plugin target", async (context) => {
+  const root = await mkdtemp(path.join(tmpdir(), "netcatty-plugin-compatibility-"));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const directory = await createPlugin(root);
+
+  const compatible = await execFileAsync(process.execPath, [
+    "--import",
+    "tsx",
+    cliPath,
+    "compatibility",
+    directory,
+    "--netcatty",
+    "1.5.0",
+  ]);
+  assert.match(compatible.stdout, /Compatible: com\.example\.package-test@1\.0\.0/);
+
+  await assert.rejects(
+    execFileAsync(process.execPath, [
+      "--import",
+      "tsx",
+      cliPath,
+      "compatibility",
+      directory,
+      "--netcatty",
+      "2.0.0",
+    ]),
+    /Plugin is incompatible/,
+  );
 });
 
 test("init creates a valid TypeScript plugin skeleton", async (context) => {

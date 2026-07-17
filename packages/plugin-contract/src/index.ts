@@ -3,3 +3,20 @@ export const PLUGIN_MANIFEST_FILE = "netcatty.plugin.json" as const;
 export const PLUGIN_PACKAGE_EXTENSION = ".ncpkg" as const;
 
 export type * from "./generated/plugin-contract.js";
+export { assertJsonValue, serializeJsonValue } from "./jsonValue.js";
+export {
+  COMPANION_STDIO_MAX_CONTENT_BYTES,
+  COMPANION_STDIO_MAX_HEADER_BYTES,
+  ContentLengthFrameDecoder,
+  encodeContentLengthFrame,
+  type ContentLengthFrameDecoderOptions,
+} from "./stdioFraming.js";
+export {
+  PLUGIN_STREAM_MAX_CHUNK_BYTES,
+  createBase64StreamChunk,
+  createJsonStreamChunk,
+  createMessagePortStreamEnvelope,
+  materializeStreamChunk,
+  type MaterializedStreamChunk,
+  type MessagePortStreamEnvelope,
+} from "./streamTransport.js";

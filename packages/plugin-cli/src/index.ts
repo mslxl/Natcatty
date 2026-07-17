@@ -15,6 +15,11 @@ export {
   type InitPluginOptions,
 } from "./commands.js";
 export {
+  checkPluginCompatibility,
+  type PluginCompatibilityResult,
+  type PluginCompatibilityTarget,
+} from "./compatibility.js";
+export {
   readAndValidateManifest,
   validateManifestValue,
   type ManifestValidationResult,

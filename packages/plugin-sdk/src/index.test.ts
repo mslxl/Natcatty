@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
@@ -7,8 +8,48 @@ import {
   definePlugin,
   DisposableStore,
   PluginError,
+  PLUGIN_ERROR_WIRE_CODES,
+  pluginErrorToRpcError,
   throwIfCancellationRequested,
 } from "./index.ts";
+
+test("PluginError maps stable SDK codes to stable JSON-RPC wire errors", () => {
+  const error = new PluginError("permission_denied", "Approval required", { scope: "terminal" });
+  assert.deepEqual(pluginErrorToRpcError(error), {
+    code: -32007,
+    message: "Approval required",
+    data: {
+      pluginCode: "permission_denied",
+      details: { scope: "terminal" },
+    },
+  });
+  assert.equal(PLUGIN_ERROR_WIRE_CODES.cancelled, -32001);
+  assert.equal(PLUGIN_ERROR_WIRE_CODES.internal, -32013);
+  assert.equal(new Set(Object.values(PLUGIN_ERROR_WIRE_CODES)).size, 16);
+  for (const code of Object.keys(PLUGIN_ERROR_WIRE_CODES)) {
+    const mapped = pluginErrorToRpcError(new PluginError(
+      code as keyof typeof PLUGIN_ERROR_WIRE_CODES,
+      code,
+    ));
+    assert.equal(mapped.code, PLUGIN_ERROR_WIRE_CODES[code as keyof typeof PLUGIN_ERROR_WIRE_CODES]);
+    assert.deepEqual(mapped.data, { pluginCode: code });
+  }
+});
+
+test("PluginError wire mapping covers the exact contract schema enums", async () => {
+  const schema = JSON.parse(await readFile(
+    new URL("../../plugin-contract/schema/plugin-contract.schema.json", import.meta.url),
+    "utf8",
+  ));
+  assert.deepEqual(
+    Object.keys(PLUGIN_ERROR_WIRE_CODES).sort(),
+    [...schema.$defs.PluginErrorName.enum].sort(),
+  );
+  assert.deepEqual(
+    Object.values(PLUGIN_ERROR_WIRE_CODES).sort((left, right) => left - right),
+    [...schema.$defs.PluginWireErrorCode.enum].sort((left, right) => left - right),
+  );
+});
 
 test("definePlugin preserves the exact plugin object", () => {
   const plugin = definePlugin({ activate() {} });

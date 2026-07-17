@@ -13,25 +13,26 @@
   "license": "GPL-3.0-or-later",
   "engines": {
     "netcatty": ">=0.0.0",
-    "api": "0.1.0-internal"
+    "api": ">=0.1.0-internal <0.2.0"
   },
   "main": {
     "browser": "dist/index.js"
   },
   "activationEvents": [
-    "onCommand:hello.sayHello"
+    "onCommand:com.netcatty.hello.sayHello"
   ],
   "permissions": {
     "required": [
       "commands",
-      "settings"
+      "settings.read",
+      "menus"
     ],
     "optional": []
   },
   "contributes": {
     "settings": [
       {
-        "id": "hello.greeting",
+        "id": "com.netcatty.hello.greeting",
         "label": "Greeting",
         "description": "Text used by the example command.",
         "control": "text",
@@ -41,14 +42,14 @@
     ],
     "commands": [
       {
-        "id": "hello.sayHello",
+        "id": "com.netcatty.hello.sayHello",
         "title": "Say Hello",
         "category": "Examples"
       }
     ],
     "menus": [
       {
-        "command": "hello.sayHello",
+        "command": "com.netcatty.hello.sayHello",
         "location": "commandPalette",
         "group": "examples",
         "order": 10

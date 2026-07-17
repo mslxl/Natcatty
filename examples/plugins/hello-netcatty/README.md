@@ -9,4 +9,5 @@ From the repository root:
 ```bash
 npm run build --workspace @netcatty/example-hello-plugin
 npm exec --workspace @netcatty/plugin-cli -- netcatty-plugin validate examples/plugins/hello-netcatty
+npm exec --workspace @netcatty/plugin-cli -- netcatty-plugin compatibility examples/plugins/hello-netcatty --netcatty 0.0.0
 ```
