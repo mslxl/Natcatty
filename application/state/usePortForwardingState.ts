@@ -125,6 +125,19 @@ export const normalizeRulesWithConnections = (rules: PortForwardingRule[]): Port
   });
 };
 
+export const havePortForwardingRuntimeStatesChanged = (
+  current: PortForwardingRule[],
+  next: PortForwardingRule[],
+): boolean => {
+  if (current.length !== next.length) return true;
+  return next.some((rule, index) => {
+    const existing = current[index];
+    return existing?.id !== rule.id
+      || existing.status !== rule.status
+      || existing.error !== rule.error;
+  });
+};
+
 const mergeRulesWithKnownConnections = (rules: PortForwardingRule[]): PortForwardingRule[] => {
   return rules.map((rule): PortForwardingRule => {
     const connection = getActiveConnection(rule.id);
@@ -286,7 +299,10 @@ export const usePortForwardingState = (): UsePortForwardingStateResult => {
         await reconcileWithBackend();
         // Always re-derive the visible state. This also repairs a stale
         // cross-window storage write when the backend map itself did not change.
-        setGlobalRules(normalizeRulesWithConnections(globalRules));
+        const normalizedRules = normalizeRulesWithConnections(globalRules);
+        if (havePortForwardingRuntimeStatesChanged(globalRules, normalizedRules)) {
+          setGlobalRules(normalizedRules);
+        }
       };
 
       intervalId = setInterval(tick, HEARTBEAT_INTERVAL_MS);

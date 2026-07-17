@@ -9,6 +9,7 @@ import {
 } from "../../infrastructure/services/portForwardingService.ts";
 import {
   createPortForwardingStorageSyncHandlers,
+  havePortForwardingRuntimeStatesChanged,
   normalizeRulesWithConnections,
 } from "./usePortForwardingState.ts";
 
@@ -186,4 +187,13 @@ test("heartbeat normalization preserves an error without a runtime tunnel", () =
 
   assert.equal(normalized[0]?.status, "error");
   assert.equal(normalized[0]?.error, "Authentication failed");
+});
+
+test("heartbeat writes only when a visible runtime state changes", () => {
+  const current = [{ ...rule, status: "inactive" as const }];
+  const unchanged = [{ ...rule, status: "inactive" as const }];
+  const repaired = [{ ...rule, status: "active" as const }];
+
+  assert.equal(havePortForwardingRuntimeStatesChanged(current, unchanged), false);
+  assert.equal(havePortForwardingRuntimeStatesChanged(current, repaired), true);
 });
