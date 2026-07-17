@@ -158,6 +158,37 @@ test("syncWithBackend subscribes adopted auto-start tunnels for reconnect", asyn
   assert.ok(connection.reconnectTimerCallback);
 });
 
+test("syncWithBackend registers adopted tunnels without a status callback", async (t) => {
+  const subscribedTunnelIds: string[] = [];
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      netcatty: {
+        listPortForwards: async () => [{
+          ruleId: "plain-synced-rule",
+          tunnelId: "plain-synced-tunnel",
+          type: "local",
+          status: "active",
+        }],
+        onPortForwardStatus: () => () => undefined,
+        subscribePortForward: async (tunnelId: string) => {
+          subscribedTunnelIds.push(tunnelId);
+          return { tunnelId, status: "active" };
+        },
+        stopPortForwardByRuleId: async () => ({ stopped: 1, failed: 0, errors: [] }),
+      },
+    },
+  });
+  t.after(async () => {
+    await stopAndCleanupRuleAndWait("plain-synced-rule");
+  });
+
+  await syncWithBackend();
+
+  assert.deepEqual(subscribedTunnelIds, ["plain-synced-tunnel"]);
+  assert.equal(getActiveConnection("plain-synced-rule")?.status, "active");
+});
+
 test("stopPortForward asks the backend to stop a rule even without local tracking", async () => {
   let stoppedRuleId: string | undefined;
   Object.defineProperty(globalThis, "window", {

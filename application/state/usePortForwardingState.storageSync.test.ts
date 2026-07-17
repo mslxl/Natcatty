@@ -10,6 +10,7 @@ import {
 import {
   createPortForwardingStorageSyncHandlers,
   havePortForwardingRuntimeStatesChanged,
+  hasPortForwardingRuntimePresenceChanged,
   normalizeRulesWithConnections,
 } from "./usePortForwardingState.ts";
 
@@ -208,4 +209,15 @@ test("heartbeat writes only when a visible runtime state changes", () => {
 
   assert.equal(havePortForwardingRuntimeStatesChanged(current, unchanged), false);
   assert.equal(havePortForwardingRuntimeStatesChanged(current, repaired), true);
+});
+
+test("heartbeat notifies when only runtime tunnel presence changes", () => {
+  assert.equal(hasPortForwardingRuntimePresenceChanged({
+    gone: [],
+    appeared: ["cleanup-error-rule"],
+  }), true);
+  assert.equal(hasPortForwardingRuntimePresenceChanged({
+    gone: [],
+    appeared: [],
+  }), false);
 });

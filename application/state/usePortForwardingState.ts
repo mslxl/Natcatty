@@ -149,6 +149,11 @@ export const havePortForwardingRuntimeStatesChanged = (
   });
 };
 
+export const hasPortForwardingRuntimePresenceChanged = (reconciliation: {
+  gone: string[];
+  appeared: string[];
+}): boolean => reconciliation.gone.length > 0 || reconciliation.appeared.length > 0;
+
 const mergeRulesWithKnownConnections = (rules: PortForwardingRule[]): PortForwardingRule[] => {
   return rules.map((rule): PortForwardingRule => {
     const connection = getActiveConnection(rule.id);
@@ -316,6 +321,12 @@ export const usePortForwardingState = (): UsePortForwardingStateResult => {
         );
         if (havePortForwardingRuntimeStatesChanged(globalRules, normalizedRules)) {
           setGlobalRules(normalizedRules);
+        } else if (hasPortForwardingRuntimePresenceChanged(reconciliation)) {
+          // Runtime presence affects Start/Stop actions even when the visible
+          // status and error already match. Notify React without rewriting the
+          // unchanged persisted configuration.
+          globalRules = normalizedRules;
+          notifyListeners();
         }
       };
 
