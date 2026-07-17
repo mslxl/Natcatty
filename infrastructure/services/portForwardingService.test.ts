@@ -488,6 +488,10 @@ test("startPortForward adopts a tunnel reused by the backend", async () => {
           status: "active",
         }),
         stopPortForwardByRuleId: async () => ({ stopped: 1, failed: 0, errors: [] }),
+        getPortForwardStatus: async () => ({
+          tunnelId: "existing-backend-tunnel",
+          status: "active",
+        }),
         onPortForwardStatus: (tunnelId: string, listener: (status: PortForwardingRule["status"], error?: string | null) => void) => {
           statusListeners.set(tunnelId, listener);
           return () => {
@@ -519,6 +523,42 @@ test("startPortForward adopts a tunnel reused by the backend", async () => {
   assert.equal(getActiveConnection(reusedRule.id)?.status, "error");
   assert.deepEqual(statuses, ["connecting", "active", "error"]);
   await stopAndCleanupRuleAndWait(reusedRule.id);
+});
+
+test("startPortForward does not keep an adopted tunnel that stopped before subscription", async () => {
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      netcatty: {
+        startPortForward: async () => ({
+          success: true,
+          tunnelId: "already-stopped-tunnel",
+          reused: true,
+          status: "connecting",
+        }),
+        getPortForwardStatus: async () => ({
+          tunnelId: "already-stopped-tunnel",
+          status: "inactive",
+        }),
+        onPortForwardStatus: () => () => undefined,
+      },
+    },
+  });
+  const statuses: string[] = [];
+  const stoppedRule = rule({ id: "stopped-before-adoption-rule" });
+
+  const result = await startPortForward(
+    stoppedRule,
+    host(),
+    [],
+    [],
+    [],
+    (status) => statuses.push(status),
+  );
+
+  assert.equal(result.success, false);
+  assert.equal(getActiveConnection(stoppedRule.id), undefined);
+  assert.deepEqual(statuses, ["connecting", "inactive"]);
 });
 
 test("startPortForward keeps cleanup-blocked backend tunnels in an error state", async () => {

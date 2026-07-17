@@ -123,6 +123,18 @@ const normalizeRulesWithConnections = (rules: PortForwardingRule[]): PortForward
   });
 };
 
+const mergeRulesWithKnownConnections = (rules: PortForwardingRule[]): PortForwardingRule[] => {
+  return rules.map((rule): PortForwardingRule => {
+    const connection = getActiveConnection(rule.id);
+    if (!connection) return rule;
+    return {
+      ...rule,
+      status: connection.status,
+      error: connection.error,
+    };
+  });
+};
+
 const isPortForwardingStorageEvent = (event: Event): boolean => {
   const key = event.type === "storage"
     ? (event as StorageEvent).key
@@ -151,7 +163,7 @@ export const createPortForwardingStorageSyncHandlers = ({
     handleBrowserStorage(event: Event) {
       if (!isPortForwardingStorageEvent(event)) return;
       const storedRules = readStoredRules();
-      if (storedRules) onRules(storedRules);
+      if (storedRules) onRules(mergeRulesWithKnownConnections(storedRules));
     },
   };
 };
@@ -269,10 +281,9 @@ export const usePortForwardingState = (): UsePortForwardingStateResult => {
       const HEARTBEAT_INTERVAL_MS = 4_000;
 
       const tick = async () => {
-        const { gone, appeared } = await reconcileWithBackend();
-        if (gone.length === 0 && appeared.length === 0) return;
-
-        // Re-derive statuses from the now-updated activeConnections map
+        await reconcileWithBackend();
+        // Always re-derive the visible state. This also repairs a stale
+        // cross-window storage write when the backend map itself did not change.
         setGlobalRules(normalizeRulesWithConnections(globalRules));
       };
 

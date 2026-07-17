@@ -37,7 +37,7 @@ export function handleTrayJumpToSessionImpl(getCtx: AppContextGetter, sessionId:
 }
 
 export function handleTrayTogglePortForwardImpl(getCtx: AppContextGetter, ruleId: string, start: boolean) {
-  const { hosts, identities, keys, knownHosts, portForwardingRules, resolveEffectiveHost, startTunnel, stopTunnel, t, terminalSettings, toast } = getCtx();
+  const { hasRuntimeTunnel, hosts, identities, keys, knownHosts, portForwardingRules, resolveEffectiveHost, startTunnel, stopTunnel, t, terminalSettings, toast } = getCtx();
 {
     const rule = portForwardingRules.find((item) => item.id === ruleId);
     if (!rule) return;
@@ -47,7 +47,7 @@ export function handleTrayTogglePortForwardImpl(getCtx: AppContextGetter, ruleId
       return;
     }
 
-    if (start) {
+    if (start && !hasRuntimeTunnel(ruleId)) {
       const effectiveHost = resolveEffectiveHost(host);
       void startTunnel(rule, effectiveHost, hosts.map(resolveEffectiveHost), keys, identities, (status, error) => {
         if (status === "error" && error) toast.error(error);

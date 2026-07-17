@@ -37,6 +37,7 @@ export interface PortForwardingConnection {
   status: 'inactive' | 'connecting' | 'active' | 'error';
   error?: string;
   unsubscribe?: () => void;
+  locallyInitiated?: boolean;
   // Reconnect state
   reconnectAttempts?: number;
   reconnectTimeoutId?: ReturnType<typeof setTimeout>;
@@ -487,10 +488,11 @@ export const reconcileWithBackend = async (): Promise<{
     // renderer called startPortForward and registered a status listener).
     for (const [ruleId, conn] of activeConnections) {
       if (!backendRuleIds.has(ruleId)) {
-        // Skip locally-initiated connecting tunnels (have unsubscribe)
+        // Skip only the short gap before a tunnel initiated by this renderer
+        // is first visible in the backend list.
         // — the backend hasn't reported them yet because the handshake
         // is still in progress.
-        if (conn.status === 'connecting' && conn.unsubscribe) {
+        if (conn.status === 'connecting' && conn.locallyInitiated) {
           continue;
         }
         conn.unsubscribe?.();
@@ -691,6 +693,7 @@ export const startPortForward = async (
       if (conn) {
         conn.status = status;
         conn.error = error ?? undefined;
+        if (status !== 'connecting') conn.locallyInitiated = false;
       }
       
       // Handle auto-reconnect on error/disconnect
@@ -712,6 +715,7 @@ export const startPortForward = async (
       tunnelId,
       status: 'connecting',
       unsubscribe,
+      locallyInitiated: true,
       reconnectAttempts: existingConn?.reconnectAttempts ?? 0,
     });
     
@@ -800,9 +804,27 @@ export const startPortForward = async (
         tunnelId: result.tunnelId,
         status: adoptedStatus,
         unsubscribe: adoptedUnsubscribe,
+        locallyInitiated: false,
         reconnectAttempts: existingConn?.reconnectAttempts ?? 0,
       });
-      onStatusChange(adoptedStatus);
+
+      // Close the reply/listener race: an adopted tunnel may have stopped
+      // after the backend replied but before this renderer subscribed.
+      const snapshot = await bridge.getPortForwardStatus?.(result.tunnelId);
+      const adoptedConnection = activeConnections.get(rule.id);
+      if (snapshot && adoptedConnection?.tunnelId === result.tunnelId) {
+        if (snapshot.status === 'inactive') {
+          adoptedUnsubscribe?.();
+          activeConnections.delete(rule.id);
+          onStatusChange('inactive');
+          return { success: false, error: 'Port forwarding tunnel stopped before adoption completed' };
+        }
+        adoptedConnection.status = snapshot.status;
+        adoptedConnection.error = snapshot.error;
+      }
+
+      const current = activeConnections.get(rule.id);
+      onStatusChange(current?.status ?? adoptedStatus, current?.error);
       return { success: true };
     }
     

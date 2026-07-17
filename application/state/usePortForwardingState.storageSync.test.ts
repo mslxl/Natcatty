@@ -122,3 +122,30 @@ test("cross-window status writes stay active before this window discovers the tu
   assert.equal(snapshots.length, 1);
   assert.equal(snapshots[0]?.[0]?.status, "active");
 });
+
+test("cross-window stale status cannot override a known live tunnel", async (t) => {
+  const env = installEnvironment();
+  const liveRule = { ...rule, id: "known-live-rule" };
+  t.after(async () => {
+    await stopAndCleanupRuleAndWait(liveRule.id);
+    env.restore();
+  });
+
+  await startPortForward(liveRule, host, [host], [], [], () => undefined, true);
+  env.emitStatus("active");
+  env.storage.setItem(STORAGE_KEY_PORT_FORWARDING, JSON.stringify([{
+    ...liveRule,
+    status: "inactive",
+  }]));
+  const snapshots: PortForwardingRule[][] = [];
+  const handlers = createPortForwardingStorageSyncHandlers({
+    onRules: (rules) => snapshots.push(rules),
+  });
+
+  handlers.handleBrowserStorage({
+    type: "storage",
+    key: STORAGE_KEY_PORT_FORWARDING,
+  } as StorageEvent);
+
+  assert.equal(snapshots[0]?.[0]?.status, "active");
+});

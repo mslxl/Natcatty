@@ -412,6 +412,7 @@ function App({ settings }: { settings: SettingsState }) {
     startTunnel,
     stopTunnel,
     stopRuleTunnels,
+    hasRuntimeTunnel,
   } = usePortForwardingState();
 
   // App-level External MCP session sync (before TerminalLayer lazy-mount).
@@ -627,7 +628,7 @@ function App({ settings }: { settings: SettingsState }) {
   // Window controls - must be before update toast effect which uses openSettingsWindow
   const { openSettingsWindow } = useWindowControls();
   const _handleTrayJumpToSession = useEffectEvent((sessionId: string) => { return handleTrayJumpToSessionImpl(() => ({ sessionId, sessions, setActiveTabId, setWorkspaceFocusedSession }), sessionId); });
-  const _handleTrayTogglePortForward = useEffectEvent((ruleId: string, start: boolean) => { return handleTrayTogglePortForwardImpl(() => ({ hosts, identities, keys, knownHosts: effectiveKnownHosts, portForwardingRules, resolveEffectiveHost, ruleId, start, startTunnel, stopTunnel, t, terminalSettings, toast, undefined }), ruleId, start); });
+  const _handleTrayTogglePortForward = useEffectEvent((ruleId: string, start: boolean) => { return handleTrayTogglePortForwardImpl(() => ({ hasRuntimeTunnel, hosts, identities, keys, knownHosts: effectiveKnownHosts, portForwardingRules, resolveEffectiveHost, ruleId, start, startTunnel, stopTunnel, t, terminalSettings, toast, undefined }), ruleId, start); });
   const _handleTrayPanelConnect = useEffectEvent((hostId: string) => { return handleTrayPanelConnectImpl(() => ({ addConnectionLog, connectToHost, hostId, hosts, identities, keys, resolveEffectiveHost, resolveHostAuth, systemInfoRef, t, toast }), hostId); });
   const _handleTrayPanelConnectRequest = useEffectEvent((hostId: string) => { return handleTrayPanelConnectRequestImpl(() => ({ connectNow: _handleTrayPanelConnect, hostId, isVaultInitialized, queueConnect: (queuedHostId: string) => setPendingTrayPanelConnectHostIds((prev) => [...prev, queuedHostId]) }), hostId); });
   const _handleGlobalHotkeyKeyDown = useEffectEvent((e: KeyboardEvent) => { return handleGlobalHotkeyKeyDownImpl(() => ({ HOTKEY_DEBUG, closeTabKeyStr, e, executeHotkeyAction, hotkeyScheme, keyBindings, matchesKeyBinding }), e); });
