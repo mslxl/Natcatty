@@ -39,7 +39,7 @@ function resolvePrivateTempDir(systemTempDir = os.tmpdir(), homeDir = os.homedir
   } catch {
     // Fall through to the stable per-user directory.
   }
-  return path.join(homeDir, ".netcatty", "tmp");
+  return path.join(homeDir, ".netcatty", "tmp", NETCATTY_TEMP_DIR_NAME);
 }
 
 /**

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { TerminalMonitorGuard } from './terminalMonitorGuard';
+import { isStreamingMonitorCommand, TerminalMonitorGuard } from './terminalMonitorGuard';
 import { applyMonitorStopResult } from './capabilityTools';
 
 test('TerminalMonitorGuard bounds lines and batches', () => {
@@ -43,4 +43,16 @@ test('monitor stop result does not claim success when the backend stop failed', 
   );
   assert.equal(accepted.status, 'stopping');
   assert.match(String(accepted.output), /stop requested/);
+});
+
+test('isStreamingMonitorCommand requires an actual follow option', () => {
+  assert.equal(isStreamingMonitorCommand('tail app-file.log'), false);
+  assert.equal(isStreamingMonitorCommand('tail -n 10 foo.log'), false);
+  assert.equal(isStreamingMonitorCommand('journalctl --since 5m foo'), false);
+  assert.equal(isStreamingMonitorCommand('tail -f app.log'), true);
+  assert.equal(isStreamingMonitorCommand('tail -n0F app.log'), true);
+  assert.equal(isStreamingMonitorCommand('journalctl --follow -u nginx'), true);
+  assert.equal(isStreamingMonitorCommand('docker logs -f api'), true);
+  assert.equal(isStreamingMonitorCommand('kubectl logs --follow pod/api'), true);
+  assert.equal(isStreamingMonitorCommand('cd /srv && watch npm test'), true);
 });

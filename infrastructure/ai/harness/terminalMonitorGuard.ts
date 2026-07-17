@@ -82,7 +82,14 @@ export class TerminalMonitorGuard {
 
 export function isStreamingMonitorCommand(command: unknown): boolean {
   if (typeof command !== 'string') return false;
-  return /(?:^|[;&|]\s*)(?:tail\s+[^\n]*-[^\n]*f|watch\s+|journalctl\s+[^\n]*-[^\n]*f|docker\s+logs\s+[^\n]*-[^\n]*f|kubectl\s+logs\s+[^\n]*-[^\n]*f)/i.test(command.trim());
+  return command.split(/[;&|]+/).some((rawSegment) => {
+    const segment = rawSegment.trim();
+    if (/^watch(?:\s|$)/i.test(segment)) return true;
+    const match = segment.match(/^(?:tail|journalctl|(?:docker|kubectl)\s+logs)(?:\s+(.*))?$/i);
+    if (!match) return false;
+    const args = match[1] ?? '';
+    return /(?:^|\s)(?:--follow(?:=[^\s]+)?|-[^-\s]*[fF][^\s]*)(?=\s|$)/.test(args);
+  });
 }
 
 function fitMonitorBatch(output: string): string {

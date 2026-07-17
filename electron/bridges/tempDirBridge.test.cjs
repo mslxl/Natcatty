@@ -37,7 +37,7 @@ test("shared system temp roots resolve to a stable path under the user's home", 
   await fs.promises.chmod(root, 0o777);
   try {
     if (typeof process.getuid === "function") {
-      assert.equal(tempDirBridge.resolvePrivateTempDir(root, fakeHome), path.join(fakeHome, ".netcatty", "tmp"));
+      assert.equal(tempDirBridge.resolvePrivateTempDir(root, fakeHome), path.join(fakeHome, ".netcatty", "tmp", "Netcatty"));
     }
   } finally {
     await fs.promises.rm(root, { recursive: true, force: true });
