@@ -263,12 +263,10 @@ export function collectPreservedTerminalWriteFingerprints(
   chatSessionId: string,
 ): string[] {
   const preservedResults = collectToolResultsAfterMessage(messages, messageId);
-  const callsById = new Map(
-    messages.flatMap(message => message.toolCalls ?? []).map(call => [call.id, call] as const),
-  );
+  const { toolCallByToolResult } = buildHistoricalToolReplayMaps(messages);
   const fingerprints: string[] = [];
   for (const result of preservedResults) {
-    const call = callsById.get(result.toolCallId);
+    const call = toolCallByToolResult.get(result);
     if (call?.name !== 'terminal_execute' && call?.name !== 'terminal_start') continue;
     const fingerprint = buildTerminalWriteFingerprint(call.name, chatSessionId, call.arguments);
     if (fingerprint) fingerprints.push(fingerprint);

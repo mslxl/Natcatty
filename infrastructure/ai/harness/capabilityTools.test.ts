@@ -6,7 +6,7 @@ import {
   withCattyToolContext,
 } from './capabilityTools';
 import { ToolOutputStore } from './toolOutputStore';
-import { ToolResultDedup } from './toolResultDedup';
+import { buildTerminalWriteFingerprint, ToolResultDedup } from './toolResultDedup';
 import { collectPreservedTerminalWriteFingerprints } from './turnDrivers/cattyMessageBuilder';
 
 describe('capabilityTools session queue keys', () => {
@@ -277,6 +277,37 @@ describe('capabilityTools result fitting', () => {
     const repeat = await execute.execute(args) as { replayedCompletedResult?: boolean };
     assert.equal(executions, 2);
     assert.equal(repeat.replayedCompletedResult, undefined);
+  });
+
+  it('pairs reused tool call IDs with the nearest preceding terminal command', () => {
+    const commandA = { sessionId: 'session-1', command: 'npm test a' };
+    const commandB = { sessionId: 'session-1', command: 'npm test b' };
+    const retryHistory = [
+      {
+        id: 'assistant-a', role: 'assistant' as const, content: '', timestamp: 1,
+        toolCalls: [{ id: 'reused-call', name: 'terminal_execute', arguments: commandA }],
+      },
+      {
+        id: 'tool-a', role: 'tool' as const, content: '', timestamp: 2,
+        toolResults: [{ toolCallId: 'reused-call', content: 'result a' }],
+      },
+      {
+        id: 'assistant-b', role: 'assistant' as const, content: '', timestamp: 3,
+        toolCalls: [{ id: 'reused-call', name: 'terminal_execute', arguments: commandB }],
+      },
+      {
+        id: 'tool-b', role: 'tool' as const, content: '', timestamp: 4,
+        toolResults: [{ toolCallId: 'reused-call', content: 'result b' }],
+      },
+    ];
+
+    assert.deepEqual(
+      collectPreservedTerminalWriteFingerprints(retryHistory, 'assistant-a', 'chat-1'),
+      [
+        buildTerminalWriteFingerprint('terminal_execute', 'chat-1', commandA),
+        buildTerminalWriteFingerprint('terminal_execute', 'chat-1', commandB),
+      ],
+    );
   });
 
   it('replays a started background job instead of starting it twice after retry compaction', async () => {
