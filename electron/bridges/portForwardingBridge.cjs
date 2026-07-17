@@ -44,9 +44,13 @@ function publishTunnelStatus(tunnelId, tunnel, status, error = null) {
   tunnel.status = status;
   tunnel.error = error || undefined;
   const subscribers = tunnel.subscribers instanceof Map
-    ? Array.from(tunnel.subscribers.values())
+    ? Array.from(tunnel.subscribers.entries())
     : [];
-  for (const subscriber of subscribers) {
+  for (const [subscriberId, subscriber] of subscribers) {
+    if (subscriber?.isDestroyed?.()) {
+      tunnel.subscribers.delete(subscriberId);
+      continue;
+    }
     safeSend(subscriber, "netcatty:portforward:status", { tunnelId, status, error });
   }
 }
@@ -877,5 +881,6 @@ module.exports = {
   stopAllPortForwards,
   stopPortForwardByRuleId,
   cancelTunnel,
+  publishTunnelStatus,
   shouldFinalizeTunnelClose,
 };

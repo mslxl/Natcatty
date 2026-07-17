@@ -13,6 +13,7 @@ const {
   getPortForwardStatus,
   listPortForwards,
   cancelTunnel,
+  publishTunnelStatus,
   shouldFinalizeTunnelClose,
 } = require("./portForwardingBridge.cjs");
 
@@ -54,6 +55,30 @@ function createCapturingSender(onSend = () => {}, id = 1) {
     send: (channel, payload) => onSend(channel, payload),
   };
 }
+
+test("status publication removes destroyed renderer subscribers", () => {
+  const received = [];
+  const destroyed = {
+    id: 1,
+    isDestroyed: () => true,
+    send: () => assert.fail("destroyed renderer must not receive status"),
+  };
+  const healthy = createCapturingSender((channel, payload) => {
+    received.push({ channel, payload });
+  }, 2);
+  const tunnel = {
+    subscribers: new Map([
+      [destroyed.id, destroyed],
+      [healthy.id, healthy],
+    ]),
+  };
+
+  publishTunnelStatus("pf-prune-subscribers", tunnel, "active");
+
+  assert.deepEqual(Array.from(tunnel.subscribers.keys()), [healthy.id]);
+  assert.equal(received.length, 1);
+  assert.equal(received[0]?.payload.status, "active");
+});
 
 test("failed active tunnel cleanup publishes an error instead of a false inactive state", () => {
   let wouldPublishDuringCleanup;
