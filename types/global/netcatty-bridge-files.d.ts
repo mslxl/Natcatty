@@ -62,6 +62,14 @@ declare global {
     clearTempDir?(): Promise<{ deletedCount: number; failedCount: number; error?: string }>;
     getTempDirPath?(): Promise<string>;
     openTempDir?(): Promise<{ success: boolean }>;
+    writeToolOutputTemp?(handleId: string, content: string): Promise<{ ok: boolean; path?: string; error?: string }>;
+    readToolOutputTemp?(filePath: string, request?: {
+      mode?: 'head' | 'tail' | 'full' | 'range' | 'search';
+      maxChars?: number;
+      offset?: number;
+      query?: string;
+    }): Promise<unknown | null>;
+    deleteToolOutputTemp?(filePath: string): Promise<{ ok: boolean }>;
 
     // Session Logs
     exportSessionLog?(payload: {

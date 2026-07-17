@@ -1,5 +1,6 @@
 import { compressVerboseText, truncateTextWithHeadAndTail } from '../requestPayloadCompression';
 import type { ToolOutputStore } from './toolOutputStore';
+import { redactSecretsForModel } from './modelSecretRedaction';
 
 export const MAX_LIVE_TERMINAL_STDOUT_CHARS = 24_000;
 export const MAX_LIVE_TERMINAL_STDERR_CHARS = 12_000;
@@ -31,16 +32,17 @@ export function fitTerminalExecuteResultForModel(
   options?: FitTerminalExecuteResultOptions,
 ): TerminalExecuteResult {
   const stdout = truncateTextWithHeadAndTail(
-    compressVerboseText(result.stdout),
+    redactSecretsForModel(compressVerboseText(result.stdout)),
     MAX_LIVE_TERMINAL_STDOUT_CHARS,
   );
   const stderr = truncateTextWithHeadAndTail(
-    compressVerboseText(result.stderr),
+    redactSecretsForModel(compressVerboseText(result.stderr)),
     MAX_LIVE_TERMINAL_STDERR_CHARS,
   );
 
   const fitted: TerminalExecuteResult = {
     ...result,
+    command: result.command ? redactSecretsForModel(result.command) : result.command,
     stdout,
     stderr,
   };
@@ -68,7 +70,7 @@ export function fitTerminalExecuteResultForModel(
     const handle: TerminalOutputHandle = {
       kind: 'terminal-output',
       sessionId: result.sessionId ?? 'unknown',
-      command: result.command,
+      command: result.command ? redactSecretsForModel(result.command) : result.command,
       totalStdoutChars: result.stdout.length,
       totalStderrChars: result.stderr.length,
       handleId,

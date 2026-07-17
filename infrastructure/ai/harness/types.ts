@@ -20,6 +20,7 @@ export type AgentEventType =
   | 'performance'
   | 'model_call_start'
   | 'step_end'
+  | 'context_snapshot'
   | 'error'
   | 'turn_end';
 
@@ -41,6 +42,11 @@ export interface AgentEventBase {
 export interface TurnStartEvent extends AgentEventBase {
   type: 'turn_start';
   backendLabel?: string;
+}
+
+export interface ContextSnapshotEvent extends AgentEventBase {
+  type: 'context_snapshot';
+  snapshot: import('./promptContextSnapshot').PromptContextSnapshot;
 }
 
 export interface ModelDeltaEvent extends AgentEventBase {
@@ -119,6 +125,11 @@ export interface CompactionTrace {
   didLlmSummarize: boolean;
   did413Fallback: boolean;
   estimatorKind?: TokenEstimatorKind;
+  archiveHandleId?: string;
+  artifactHandleId?: string;
+  archiveChars?: number;
+  twoPassCacheHit?: boolean;
+  twoPassPrefixMessages?: number;
 }
 
 export interface CompactionEvent extends AgentEventBase {
@@ -180,6 +191,7 @@ export interface TurnEndEvent extends AgentEventBase {
 
 export type AgentEvent =
   | TurnStartEvent
+  | ContextSnapshotEvent
   | ModelDeltaEvent
   | ReasoningDeltaEvent
   | ToolCallEvent
