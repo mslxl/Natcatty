@@ -370,24 +370,28 @@ export type SettingOption = {
 
 export type SettingScope = "application" | "workspace" | "host" | "session" | "device";
 
+export type StreamChunkByteLength = number;
+
 export type StreamChunkData = ({
   encoding: "json";
   value: JsonValue;
-  byteLength: number;
+  byteLength: StreamChunkByteLength;
 }) | ({
   encoding: "base64";
   value: string;
-  byteLength: number;
+  byteLength: StreamChunkByteLength;
 }) | ({
   encoding: "transfer";
-  byteLength: number;
+  byteLength: StreamChunkByteLength;
 });
+
+export type StreamCreditBytes = number;
 
 export type StreamFrame = ({
   streamId: string;
   sequence: 0;
   kind: "open";
-  windowBytes: number;
+  windowBytes: StreamWindowBytes;
 }) | ({
   streamId: string;
   sequence: SafePositiveInteger;
@@ -406,8 +410,12 @@ export type StreamFrame = ({
   streamId: string;
   sequence: SafeUnsignedInteger;
   kind: "windowUpdate";
-  creditBytes: number;
+  creditBytes: StreamCreditBytes;
 });
+
+export type StreamLimits = {"maxChunkBytes":16777216,"minWindowBytes":1024,"maxWindowBytes":16777216,"maxCreditBytes":16777216};
+
+export type StreamWindowBytes = number;
 
 export type ThemeIcon = {
   kind: "theme";

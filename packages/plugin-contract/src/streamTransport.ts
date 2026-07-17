@@ -3,8 +3,21 @@ import type {
   StreamChunkData,
   StreamFrame,
 } from "./generated/plugin-contract.js";
-import { PLUGIN_WIRE_MAX_SAFE_INTEGER } from "./generated/plugin-contract-limits.js";
+import {
+  PLUGIN_STREAM_MAX_CHUNK_BYTES,
+  PLUGIN_STREAM_MAX_CREDIT_BYTES,
+  PLUGIN_STREAM_MAX_WINDOW_BYTES,
+  PLUGIN_STREAM_MIN_WINDOW_BYTES,
+  PLUGIN_WIRE_MAX_SAFE_INTEGER,
+} from "./generated/plugin-contract-limits.js";
 import { serializeJsonValue } from "./jsonValue.js";
+
+export {
+  PLUGIN_STREAM_MAX_CHUNK_BYTES,
+  PLUGIN_STREAM_MAX_CREDIT_BYTES,
+  PLUGIN_STREAM_MAX_WINDOW_BYTES,
+  PLUGIN_STREAM_MIN_WINDOW_BYTES,
+} from "./generated/plugin-contract-limits.js";
 
 const BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 const BASE64_VALUE = new Map(
@@ -16,7 +29,6 @@ export interface MessagePortStreamEnvelope {
   readonly transfer?: ArrayBuffer;
 }
 
-export const PLUGIN_STREAM_MAX_CHUNK_BYTES = 16 * 1024 * 1024;
 const PLUGIN_STREAM_MAX_BASE64_CHARACTERS = 4 * Math.ceil(PLUGIN_STREAM_MAX_CHUNK_BYTES / 3);
 
 export type MaterializedStreamChunk =
@@ -66,6 +78,25 @@ function assertStreamSequence(frame: StreamFrame): void {
       ? "exactly 0"
       : `a safe integer between ${minimum} and ${PLUGIN_WIRE_MAX_SAFE_INTEGER}`;
     throw new RangeError(`Stream ${frame.kind} sequence must be ${expected}`);
+  }
+}
+
+function assertStreamCredit(frame: StreamFrame): void {
+  if (frame.kind === "open") {
+    if (!Number.isInteger(frame.windowBytes)
+      || frame.windowBytes < PLUGIN_STREAM_MIN_WINDOW_BYTES
+      || frame.windowBytes > PLUGIN_STREAM_MAX_WINDOW_BYTES) {
+      throw new RangeError(
+        `Stream open windowBytes must be an integer between ${PLUGIN_STREAM_MIN_WINDOW_BYTES} and ${PLUGIN_STREAM_MAX_WINDOW_BYTES}`,
+      );
+    }
+  } else if (frame.kind === "windowUpdate"
+    && (!Number.isInteger(frame.creditBytes)
+      || frame.creditBytes < 1
+      || frame.creditBytes > PLUGIN_STREAM_MAX_CREDIT_BYTES)) {
+    throw new RangeError(
+      `Stream windowUpdate creditBytes must be an integer between 1 and ${PLUGIN_STREAM_MAX_CREDIT_BYTES}`,
+    );
   }
 }
 
@@ -183,6 +214,7 @@ export function createMessagePortStreamEnvelope(
   transfer?: ArrayBuffer,
 ): MessagePortStreamEnvelope {
   assertStreamSequence(frame);
+  assertStreamCredit(frame);
   if (frame.kind === "chunk") {
     materializeStreamChunk(frame.data, transfer);
   } else if (transfer !== undefined) {

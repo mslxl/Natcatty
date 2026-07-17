@@ -21,6 +21,9 @@ export {
 } from "./stdioFraming.js";
 export {
   PLUGIN_STREAM_MAX_CHUNK_BYTES,
+  PLUGIN_STREAM_MAX_CREDIT_BYTES,
+  PLUGIN_STREAM_MAX_WINDOW_BYTES,
+  PLUGIN_STREAM_MIN_WINDOW_BYTES,
   createBase64StreamChunk,
   createJsonStreamChunk,
   createMessagePortStreamEnvelope,

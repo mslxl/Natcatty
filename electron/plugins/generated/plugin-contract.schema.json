@@ -63,6 +63,30 @@
       "minimum": 1,
       "maximum": 9007199254740991
     },
+    "StreamLimits": {
+      "description": "Host-enforced byte limits for stream chunks and receive-credit control frames.",
+      "const": {
+        "maxChunkBytes": 16777216,
+        "minWindowBytes": 1024,
+        "maxWindowBytes": 16777216,
+        "maxCreditBytes": 16777216
+      }
+    },
+    "StreamChunkByteLength": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 16777216
+    },
+    "StreamWindowBytes": {
+      "type": "integer",
+      "minimum": 1024,
+      "maximum": 16777216
+    },
+    "StreamCreditBytes": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 16777216
+    },
     "RelativePackagePath": {
       "type": "string",
       "minLength": 1,
@@ -1372,9 +1396,7 @@
               "$ref": "#/$defs/JsonValue"
             },
             "byteLength": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 16777216
+              "$ref": "#/$defs/StreamChunkByteLength"
             }
           },
           "additionalProperties": false
@@ -1396,9 +1418,7 @@
               "contentEncoding": "base64"
             },
             "byteLength": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 16777216
+              "$ref": "#/$defs/StreamChunkByteLength"
             }
           },
           "additionalProperties": false
@@ -1414,9 +1434,7 @@
               "const": "transfer"
             },
             "byteLength": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 16777216
+              "$ref": "#/$defs/StreamChunkByteLength"
             }
           },
           "additionalProperties": false
@@ -1446,9 +1464,7 @@
               "const": "open"
             },
             "windowBytes": {
-              "type": "integer",
-              "minimum": 1024,
-              "maximum": 16777216
+              "$ref": "#/$defs/StreamWindowBytes"
             }
           },
           "additionalProperties": false
@@ -1551,9 +1567,7 @@
               "const": "windowUpdate"
             },
             "creditBytes": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 16777216
+              "$ref": "#/$defs/StreamCreditBytes"
             }
           },
           "additionalProperties": false

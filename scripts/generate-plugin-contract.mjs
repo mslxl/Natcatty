@@ -64,6 +64,25 @@ for (const [definitionName, minimum] of [
     );
   }
 }
+const streamLimits = schema.$defs.StreamLimits?.const;
+for (const [name, minimum, maximum] of [
+  ["StreamChunkByteLength", 0, streamLimits?.maxChunkBytes],
+  ["StreamWindowBytes", streamLimits?.minWindowBytes, streamLimits?.maxWindowBytes],
+  ["StreamCreditBytes", 1, streamLimits?.maxCreditBytes],
+]) {
+  if (!Number.isSafeInteger(minimum)
+    || !Number.isSafeInteger(maximum)
+    || minimum < 0
+    || maximum < minimum) {
+    throw new Error(`StreamLimits contains an invalid range for ${name}`);
+  }
+  const definition = schema.$defs[name];
+  if (definition?.type !== "integer"
+    || definition.minimum !== minimum
+    || definition.maximum !== maximum) {
+    throw new Error(`${name} must match the canonical StreamLimits range`);
+  }
+}
 
 function quoteProperty(name) {
   return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name) ? name : JSON.stringify(name);
@@ -159,6 +178,10 @@ const generatedLimits = [
   `export const PLUGIN_JSON_MAX_DEPTH = ${jsonValueLimits.maxDepth} as const;`,
   `export const PLUGIN_JSON_MAX_NODES = ${jsonValueLimits.maxNodes} as const;`,
   `export const PLUGIN_WIRE_MAX_SAFE_INTEGER = ${wireIntegerLimits.maxSafeInteger} as const;`,
+  `export const PLUGIN_STREAM_MAX_CHUNK_BYTES = ${streamLimits.maxChunkBytes} as const;`,
+  `export const PLUGIN_STREAM_MIN_WINDOW_BYTES = ${streamLimits.minWindowBytes} as const;`,
+  `export const PLUGIN_STREAM_MAX_WINDOW_BYTES = ${streamLimits.maxWindowBytes} as const;`,
+  `export const PLUGIN_STREAM_MAX_CREDIT_BYTES = ${streamLimits.maxCreditBytes} as const;`,
   "",
 ].join("\n");
 const normalizedSchema = `${JSON.stringify(schema, null, 2)}\n`;

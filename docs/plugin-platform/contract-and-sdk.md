@@ -212,7 +212,10 @@ terminal frames begin at sequence 1. Sequence numbers increase independently in
 each sending direction and cannot exceed `Number.MAX_SAFE_INTEGER`. A producer
 must open a replacement stream before exhausting that range. It subtracts every
 chunk's declared byte length from its credit and must stop at zero.
-`windowUpdate.creditBytes` grants an
+The initial receive window is 1 KiB through 16 MiB, and each
+`windowUpdate.creditBytes` grant is 1 byte through 16 MiB. The public
+MessagePort envelope helper enforces the same Schema-owned ranges before
+returning a frame. `windowUpdate.creditBytes` grants an
 additional amount rather than replacing the window, so retries and duplicate
 control frames cannot be interpreted as an absolute reset. A stdio peer must
 never emit the `transfer` encoding because stdio has no structured-clone

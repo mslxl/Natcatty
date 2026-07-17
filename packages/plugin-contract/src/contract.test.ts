@@ -218,6 +218,14 @@ test("RPC, stream, permission, and provider schemas validate independently", () 
     },
   }), false);
   assert.equal(stream({ streamId: "s1", sequence: 0, kind: "open", windowBytes: 65536 }), true);
+  assert.equal(stream({ streamId: "s1", sequence: 0, kind: "open", windowBytes: 1024 }), true);
+  assert.equal(stream({ streamId: "s1", sequence: 0, kind: "open", windowBytes: 1023 }), false);
+  assert.equal(stream({
+    streamId: "s1",
+    sequence: 0,
+    kind: "open",
+    windowBytes: 16_777_217,
+  }), false);
   assert.equal(stream({ streamId: "s1", sequence: 0, kind: "open" }), false);
   assert.equal(stream({
     streamId: "s1",
@@ -237,6 +245,18 @@ test("RPC, stream, permission, and provider schemas validate independently", () 
     kind: "windowUpdate",
     creditBytes: 4096,
   }), true, JSON.stringify(stream.errors));
+  assert.equal(stream({
+    streamId: "s1",
+    sequence: 0,
+    kind: "windowUpdate",
+    creditBytes: 0,
+  }), false);
+  assert.equal(stream({
+    streamId: "s1",
+    sequence: 0,
+    kind: "windowUpdate",
+    creditBytes: 16_777_217,
+  }), false);
   assert.equal(stream({
     streamId: "s1",
     sequence: 0,

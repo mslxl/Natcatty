@@ -10,6 +10,9 @@ import {
 } from "./jsonValue.ts";
 import {
   PLUGIN_STREAM_MAX_CHUNK_BYTES,
+  PLUGIN_STREAM_MAX_CREDIT_BYTES,
+  PLUGIN_STREAM_MAX_WINDOW_BYTES,
+  PLUGIN_STREAM_MIN_WINDOW_BYTES,
   createBase64StreamChunk,
   createJsonStreamChunk,
   createMessagePortStreamEnvelope,
@@ -231,4 +234,53 @@ test("MessagePort stream envelopes carry and validate the transferred ArrayBuffe
     }),
     /sequence must be a safe integer/,
   );
+  assert.doesNotThrow(() => createMessagePortStreamEnvelope({
+    streamId: "stream-1",
+    sequence: 0,
+    kind: "open",
+    windowBytes: PLUGIN_STREAM_MIN_WINDOW_BYTES,
+  }));
+  assert.doesNotThrow(() => createMessagePortStreamEnvelope({
+    streamId: "stream-1",
+    sequence: 0,
+    kind: "open",
+    windowBytes: PLUGIN_STREAM_MAX_WINDOW_BYTES,
+  }));
+  for (const windowBytes of [
+    0,
+    PLUGIN_STREAM_MIN_WINDOW_BYTES - 1,
+    PLUGIN_STREAM_MAX_WINDOW_BYTES + 1,
+    Number.POSITIVE_INFINITY,
+  ]) {
+    assert.throws(
+      () => createMessagePortStreamEnvelope({
+        streamId: "stream-1",
+        sequence: 0,
+        kind: "open",
+        windowBytes,
+      }),
+      /windowBytes must be an integer between/,
+    );
+  }
+  assert.doesNotThrow(() => createMessagePortStreamEnvelope({
+    streamId: "stream-1",
+    sequence: 0,
+    kind: "windowUpdate",
+    creditBytes: PLUGIN_STREAM_MAX_CREDIT_BYTES,
+  }));
+  for (const creditBytes of [
+    0,
+    PLUGIN_STREAM_MAX_CREDIT_BYTES + 1,
+    Number.POSITIVE_INFINITY,
+  ]) {
+    assert.throws(
+      () => createMessagePortStreamEnvelope({
+        streamId: "stream-1",
+        sequence: 0,
+        kind: "windowUpdate",
+        creditBytes,
+      }),
+      /creditBytes must be an integer between/,
+    );
+  }
 });

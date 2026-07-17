@@ -5,3 +5,7 @@
 export const PLUGIN_JSON_MAX_DEPTH = 128 as const;
 export const PLUGIN_JSON_MAX_NODES = 100000 as const;
 export const PLUGIN_WIRE_MAX_SAFE_INTEGER = 9007199254740991 as const;
+export const PLUGIN_STREAM_MAX_CHUNK_BYTES = 16777216 as const;
+export const PLUGIN_STREAM_MIN_WINDOW_BYTES = 1024 as const;
+export const PLUGIN_STREAM_MAX_WINDOW_BYTES = 16777216 as const;
+export const PLUGIN_STREAM_MAX_CREDIT_BYTES = 16777216 as const;
