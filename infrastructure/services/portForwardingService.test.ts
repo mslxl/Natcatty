@@ -106,6 +106,52 @@ test("syncWithBackend binds backend tunnels by explicit rule id", async () => {
   assert.deepEqual(statuses, ["inactive"]);
 });
 
+test("syncWithBackend subscribes adopted auto-start tunnels for reconnect", async (t) => {
+  let statusListener: ((status: PortForwardingRule["status"], error?: string | null) => void) | undefined;
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      netcatty: {
+        listPortForwards: async () => [{
+          ruleId: "synced-auto-start-rule",
+          tunnelId: "synced-auto-start-tunnel",
+          type: "local",
+          status: "active",
+        }],
+        onPortForwardStatus: (_tunnelId: string, listener: typeof statusListener) => {
+          statusListener = listener;
+          return () => undefined;
+        },
+        stopPortForwardByRuleId: async () => ({ stopped: 1, failed: 0, errors: [] }),
+      },
+    },
+  });
+  const statuses: Array<{ status: PortForwardingRule["status"]; error?: string }> = [];
+  setReconnectCallback(async () => ({ success: true }));
+  t.after(async () => {
+    setReconnectCallback(null);
+    await stopAndCleanupRuleAndWait("synced-auto-start-rule");
+  });
+
+  await syncWithBackend({
+    shouldReconnect: () => true,
+    onStatusChange: (_ruleId, status, error) => statuses.push({ status, error }),
+  });
+  statusListener?.("error", "connection lost");
+
+  const connection = getActiveConnection("synced-auto-start-rule");
+  assert.ok(connection?.reconnectTimerCallback);
+  assert.equal(connection.status, "connecting");
+  assert.deepEqual(statuses, [{
+    status: "connecting",
+    error: "Reconnecting (1/5)...",
+  }]);
+
+  statusListener?.("inactive");
+  assert.equal(getActiveConnection("synced-auto-start-rule"), connection);
+  assert.ok(connection.reconnectTimerCallback);
+});
+
 test("stopPortForward asks the backend to stop a rule even without local tracking", async () => {
   let stoppedRuleId: string | undefined;
   Object.defineProperty(globalThis, "window", {

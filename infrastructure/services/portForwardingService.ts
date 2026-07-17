@@ -396,7 +396,18 @@ const resolveBackendStatus = (status: string): PortForwardingConnection['status'
  * Called on app startup to restore state of tunnels that may still be running
  * This updates the local activeConnections map to match the backend state.
  */
-export const syncWithBackend = async (): Promise<void> => {
+export interface PortForwardingBackendSyncOptions {
+  shouldReconnect?: (ruleId: string) => boolean;
+  onStatusChange?: (
+    ruleId: string,
+    status: PortForwardingRule['status'],
+    error?: string,
+  ) => void;
+}
+
+export const syncWithBackend = async (
+  options: PortForwardingBackendSyncOptions = {},
+): Promise<void> => {
   const bridge = netcattyBridge.get();
   
   if (!bridge?.listPortForwards) {
@@ -411,13 +422,64 @@ export const syncWithBackend = async (): Promise<void> => {
     for (const tunnel of activeTunnels) {
       const ruleId = resolveBackendRuleId(tunnel);
       if (ruleId) {
+        const existing = activeConnections.get(ruleId);
+        if (existing?.tunnelId !== tunnel.tunnelId) existing?.unsubscribe?.();
+
         // Update local connection tracking
-        activeConnections.set(ruleId, {
-          ruleId,
-          tunnelId: tunnel.tunnelId,
-          status: resolveBackendStatus(tunnel.status),
-          error: tunnel.error,
-        });
+        const connection: PortForwardingConnection = existing?.tunnelId === tunnel.tunnelId
+          ? existing
+          : {
+              ruleId,
+              tunnelId: tunnel.tunnelId,
+              status: resolveBackendStatus(tunnel.status),
+              reconnectAttempts: existing?.reconnectAttempts ?? 0,
+            };
+        connection.status = resolveBackendStatus(tunnel.status);
+        connection.error = tunnel.error;
+        activeConnections.set(ruleId, connection);
+
+        if (!connection.unsubscribe && options.onStatusChange) {
+          const onStatusChange = (status: PortForwardingRule['status'], error?: string) => {
+            options.onStatusChange?.(ruleId, status, error);
+          };
+          const unsubscribe = bridge.onPortForwardStatus?.(
+            tunnel.tunnelId,
+            (status, error) => {
+              const current = activeConnections.get(ruleId);
+              if (current !== connection) return;
+
+              if (status === 'inactive') {
+                if (current.reconnectTimerCallback) {
+                  current.unsubscribe?.();
+                  current.unsubscribe = undefined;
+                  return;
+                }
+                current.unsubscribe?.();
+                clearReconnectTimer(ruleId);
+                activeConnections.delete(ruleId);
+                onStatusChange('inactive');
+                return;
+              }
+
+              current.status = status;
+              current.error = error ?? undefined;
+              if (status === 'error') {
+                const reconnectScheduled = scheduleReconnectIfNeeded(
+                  ruleId,
+                  options.shouldReconnect?.(ruleId) ?? false,
+                  onStatusChange,
+                );
+                if (reconnectScheduled) return;
+              }
+              onStatusChange(status, error ?? undefined);
+            },
+          );
+          if (activeConnections.get(ruleId) === connection) {
+            connection.unsubscribe = unsubscribe;
+          } else {
+            unsubscribe?.();
+          }
+        }
         
         logger.info(`[PortForwardingService] Synced active tunnel for rule ${ruleId}`);
       }
