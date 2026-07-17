@@ -57,6 +57,58 @@ test("content-length framing rejects ambiguous headers and oversized payloads", 
     }),
     /cannot be encoded over companion stdio/,
   );
+  let accessorReads = 0;
+  const accessorFrame = { streamId: "stream-1", sequence: 1 } as Record<string, unknown>;
+  Object.defineProperty(accessorFrame, "kind", {
+    enumerable: true,
+    get() {
+      accessorReads += 1;
+      return "chunk";
+    },
+  });
+  assert.throws(
+    () => encodeContentLengthFrame(accessorFrame as never),
+    /must not contain accessor properties/,
+  );
+  assert.equal(accessorReads, 0, "framing must reject accessors without invoking them");
+
+  let proxyReads = 0;
+  const proxyFrame = new Proxy({
+    streamId: "stream-1",
+    sequence: 1,
+    kind: "chunk",
+    data: { encoding: "transfer", byteLength: 4 },
+  }, {
+    get(target, property, receiver) {
+      proxyReads += 1;
+      return Reflect.get(target, property, receiver);
+    },
+  });
+  assert.throws(
+    () => encodeContentLengthFrame(proxyFrame),
+    /cannot be encoded over companion stdio/,
+  );
+  assert.equal(proxyReads, 0, "framing must inspect descriptor values instead of reading proxy fields");
+
+  let inheritedReads = 0;
+  const pollutedPrototype = {} as Record<string, unknown>;
+  Object.defineProperty(pollutedPrototype, "kind", {
+    enumerable: true,
+    get() {
+      inheritedReads += 1;
+      return "chunk";
+    },
+  });
+  const pollutedFrame = Object.assign(Object.create(pollutedPrototype), {
+    streamId: "stream-1",
+    sequence: 1,
+    data: { encoding: "transfer", byteLength: 4 },
+  });
+  assert.throws(
+    () => encodeContentLengthFrame(pollutedFrame),
+    /plain records/,
+  );
+  assert.equal(inheritedReads, 0, "framing must reject polluted prototypes without reading them");
   const duplicate = new ContentLengthFrameDecoder();
   assert.throws(
     () => duplicate.push("Content-Length: 2\r\ncontent-length: 2\r\n\r\n{}"),

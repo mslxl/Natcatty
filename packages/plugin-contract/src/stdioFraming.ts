@@ -3,7 +3,10 @@ import type {
   RpcMessage,
   StreamFrame,
 } from "./generated/plugin-contract.js";
-import { assertJsonValue, serializeJsonValue } from "./jsonValue.js";
+import {
+  assertJsonValue,
+  serializeJsonValueWithPropertyObserver,
+} from "./jsonValue.js";
 
 export const COMPANION_STDIO_MAX_HEADER_BYTES = 8 * 1024;
 export const COMPANION_STDIO_MAX_CONTENT_BYTES = 16 * 1024 * 1024;
@@ -154,18 +157,20 @@ function parseContentLength(headerBytes: Uint8Array, maxContentBytes: number): n
 export function encodeContentLengthFrame(
   value: JsonValue | RpcMessage | StreamFrame,
 ): Uint8Array {
-  if (typeof value === "object"
-    && value !== null
-    && "kind" in value
-    && value.kind === "chunk"
-    && "data" in value
-    && typeof value.data === "object"
-    && value.data !== null
-    && "encoding" in value.data
-    && value.data.encoding === "transfer") {
+  let rootKind: JsonValue | undefined;
+  let rootDataEncoding: JsonValue | undefined;
+  const serialized = serializeJsonValueWithPropertyObserver(value, (observation) => {
+    if (observation.depth === 0 && observation.key === "kind") {
+      rootKind = observation.value;
+    } else if (observation.depth === 1
+      && observation.parentKey === "data"
+      && observation.key === "encoding") {
+      rootDataEncoding = observation.value;
+    }
+  });
+  if (rootKind === "chunk" && rootDataEncoding === "transfer") {
     throw new Error("Transfer stream chunks cannot be encoded over companion stdio");
   }
-  const serialized = serializeJsonValue(value);
   const content = encoder.encode(serialized);
   if (content.byteLength === 0 || content.byteLength > COMPANION_STDIO_MAX_CONTENT_BYTES) {
     throw new Error(

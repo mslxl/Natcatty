@@ -81,7 +81,23 @@ export function assertJsonValue(value: unknown): asserts value is JsonValue {
   assertJsonValueInternal(value, new WeakSet(), 0, { nodes: 0 });
 }
 
-function serializeValidatedJsonValue(value: JsonValue): string {
+export interface JsonValuePropertyObservation {
+  readonly depth: number;
+  readonly parentKey: string | number | undefined;
+  readonly key: string | number;
+  readonly value: JsonValue;
+}
+
+export type JsonValuePropertyObserver = (
+  observation: JsonValuePropertyObservation,
+) => void;
+
+function serializeValidatedJsonValue(
+  value: JsonValue,
+  observer: JsonValuePropertyObserver | undefined,
+  depth: number,
+  parentKey: string | number | undefined,
+): string {
   if (value === null || typeof value !== "object") {
     const serialized = JSON.stringify(value);
     if (serialized === undefined) throw new TypeError("Value is not serializable JSON");
@@ -94,7 +110,9 @@ function serializeValidatedJsonValue(value: JsonValue): string {
       if (!descriptor || !("value" in descriptor)) {
         throw new TypeError("JSON arrays must contain data properties only");
       }
-      serializedItems.push(serializeValidatedJsonValue(descriptor.value as JsonValue));
+      const item = descriptor.value as JsonValue;
+      observer?.({ depth, parentKey, key: index, value: item });
+      serializedItems.push(serializeValidatedJsonValue(item, observer, depth + 1, index));
     }
     return `[${serializedItems.join(",")}]`;
   }
@@ -104,14 +122,28 @@ function serializeValidatedJsonValue(value: JsonValue): string {
     if (!descriptor || !("value" in descriptor)) {
       throw new TypeError("JSON objects must contain data properties only");
     }
+    const propertyValue = descriptor.value as JsonValue;
+    observer?.({ depth, parentKey, key, value: propertyValue });
     serializedEntries.push(
-      `${JSON.stringify(key)}:${serializeValidatedJsonValue(descriptor.value as JsonValue)}`,
+      `${JSON.stringify(key)}:${serializeValidatedJsonValue(
+        propertyValue,
+        observer,
+        depth + 1,
+        key,
+      )}`,
     );
   }
   return `{${serializedEntries.join(",")}}`;
 }
 
-export function serializeJsonValue(value: unknown): string {
+export function serializeJsonValueWithPropertyObserver(
+  value: unknown,
+  observer: JsonValuePropertyObserver | undefined,
+): string {
   assertJsonValue(value);
-  return serializeValidatedJsonValue(value);
+  return serializeValidatedJsonValue(value, observer, 0, undefined);
+}
+
+export function serializeJsonValue(value: unknown): string {
+  return serializeJsonValueWithPropertyObserver(value, undefined);
 }
