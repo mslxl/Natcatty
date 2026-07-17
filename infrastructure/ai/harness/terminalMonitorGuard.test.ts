@@ -56,3 +56,14 @@ test('isStreamingMonitorCommand requires an actual follow option', () => {
   assert.equal(isStreamingMonitorCommand('kubectl logs --follow pod/api'), true);
   assert.equal(isStreamingMonitorCommand('cd /srv && watch npm test'), true);
 });
+
+test('isStreamingMonitorCommand recognizes common wrappers and compose logs', () => {
+  assert.equal(isStreamingMonitorCommand('sudo journalctl -f -u nginx'), true);
+  assert.equal(isStreamingMonitorCommand('sudo -u root tail -f /var/log/syslog'), true);
+  assert.equal(isStreamingMonitorCommand('env LANG=C tail --follow app.log'), true);
+  assert.equal(isStreamingMonitorCommand('stdbuf -oL kubectl logs -f pod/api'), true);
+  assert.equal(isStreamingMonitorCommand('timeout 60s tail -f app.log'), true);
+  assert.equal(isStreamingMonitorCommand('docker compose logs -f api'), true);
+  assert.equal(isStreamingMonitorCommand('sudo tail -n 10 app.log'), false);
+  assert.equal(isStreamingMonitorCommand('timeout 60s journalctl --since 5m'), false);
+});
