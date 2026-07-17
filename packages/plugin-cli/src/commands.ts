@@ -27,6 +27,7 @@ export async function initPlugin(
     throw new Error(`Target directory is not empty: ${directory}`);
   }
   const displayName = options.name?.trim() || options.id.split(".").at(-1) || options.id;
+  const activationMessage = JSON.stringify(`${displayName} activated`);
   const packageName = options.id.replaceAll(".", "-");
   const manifest: PluginManifest = {
     $schema: "https://netcatty.com/schemas/plugins/0.1.0-internal/plugin-contract.schema.json",
@@ -83,7 +84,7 @@ export async function initPlugin(
     ),
     writeFile(
       path.join(directory, "src/index.ts"),
-      `import { definePlugin } from "@netcatty/plugin-sdk";\n\nexport default definePlugin({\n  activate(context) {\n    context.logger.info("${displayName} activated");\n  },\n});\n`,
+      `import { definePlugin } from "@netcatty/plugin-sdk";\n\nexport default definePlugin({\n  activate(context) {\n    context.logger.info(${activationMessage});\n  },\n});\n`,
       "utf8",
     ),
   ]);

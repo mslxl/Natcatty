@@ -107,6 +107,20 @@ test("init creates a valid TypeScript plugin skeleton", async (context) => {
   assert.match(await readFile(path.join(directory, "src/index.ts"), "utf8"), /definePlugin/);
 });
 
+test("init safely serializes the display name in generated TypeScript", async (context) => {
+  const root = await mkdtemp(path.join(tmpdir(), "netcatty-plugin-init-escape-"));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const directory = path.join(root, "created");
+  const displayName = 'A "quoted" \\ plugin\nnext line';
+
+  await initPlugin(directory, { id: "com.example.escaped", name: displayName });
+
+  const source = await readFile(path.join(directory, "src/index.ts"), "utf8");
+  assert.ok(
+    source.includes(`context.logger.info(${JSON.stringify(`${displayName} activated`)});`),
+  );
+});
+
 test("packing is deterministic and the archive validates", async (context) => {
   const root = await mkdtemp(path.join(tmpdir(), "netcatty-plugin-pack-"));
   context.after(() => rm(root, { recursive: true, force: true }));

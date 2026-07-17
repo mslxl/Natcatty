@@ -54,3 +54,34 @@ test("CancellationTokenSource notifies listeners once", () => {
     CancellationError,
   );
 });
+
+test("CancellationTokenSource notifies every listener before reporting failures", () => {
+  const source = new CancellationTokenSource();
+  const calls: string[] = [];
+  source.token.onCancellationRequested(() => {
+    calls.push("failing");
+    throw new Error("listener failed");
+  });
+  source.token.onCancellationRequested(() => calls.push("surviving"));
+
+  assert.throws(
+    () => source.cancel(),
+    (error) => error instanceof AggregateError
+      && error.errors.length === 1
+      && error.errors[0] instanceof Error
+      && error.errors[0].message === "listener failed",
+  );
+  assert.deepEqual(calls, ["failing", "surviving"]);
+  assert.equal(source.token.isCancellationRequested, true);
+  assert.doesNotThrow(() => source.cancel());
+});
+
+test("CancellationTokenSource finishes disposal when a cancellation listener fails", () => {
+  const source = new CancellationTokenSource();
+  source.token.onCancellationRequested(() => {
+    throw new Error("listener failed");
+  });
+
+  assert.throws(() => source.dispose(true), AggregateError);
+  assert.doesNotThrow(() => source.dispose(true));
+});

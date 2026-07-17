@@ -146,7 +146,17 @@ class MutableCancellationToken implements CancellationToken {
     this.#isCancellationRequested = true;
     const listeners = [...this.#listeners];
     this.#listeners.clear();
-    for (const listener of listeners) listener();
+    const errors: unknown[] = [];
+    for (const listener of listeners) {
+      try {
+        listener();
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    if (errors.length > 0) {
+      throw new AggregateError(errors, "One or more cancellation listeners failed");
+    }
   }
 
   dispose(): void {
@@ -168,9 +178,12 @@ export class CancellationTokenSource implements Disposable {
 
   dispose(cancel = false): void {
     if (this.#isDisposed) return;
-    if (cancel) this.#token.cancel();
-    this.#token.dispose();
-    this.#isDisposed = true;
+    try {
+      if (cancel) this.#token.cancel();
+    } finally {
+      this.#token.dispose();
+      this.#isDisposed = true;
+    }
   }
 }
 
