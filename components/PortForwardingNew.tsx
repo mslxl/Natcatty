@@ -111,6 +111,7 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
     setRuleStatus,
     startTunnel,
     stopTunnel,
+    hasRuntimeTunnel,
     filteredRules,
     selectedRule: _selectedRule,
     preferFormMode,
@@ -215,7 +216,13 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
       setPendingOperations((prev) => new Set([...prev, rule.id]));
 
       try {
-        await stopTunnel(rule.id);
+        const result = await stopTunnel(rule.id);
+        if (!result.success && result.error) {
+          toast.error(
+            result.error,
+            t("pf.toast.titleWithLabel", { label: rule.label }),
+          );
+        }
       } finally {
         setPendingOperations((prev) => {
           const next = new Set(prev);
@@ -224,7 +231,7 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
         });
       }
     },
-    [stopTunnel],
+    [stopTunnel, t],
   );
 
   // Wizard state
@@ -741,6 +748,7 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
                     viewMode={viewMode}
                     isSelected={selectedRuleId === rule.id}
                     isPending={pendingOperations.has(rule.id)}
+                    canStop={hasRuntimeTunnel(rule.id)}
                     reorderProps={ruleReorder.getItemReorderProps(rule.id, `rule:${rule.id}`)}
                     onSelect={() => {
                       setSelectedRuleId(rule.id);

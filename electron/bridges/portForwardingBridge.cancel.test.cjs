@@ -47,16 +47,17 @@ function createSender() {
   return createCapturingSender();
 }
 
-function createCapturingSender(onSend = () => {}) {
+function createCapturingSender(onSend = () => {}, id = 1) {
   return {
-    id: 1,
+    id,
     isDestroyed: () => false,
     send: (channel, payload) => onSend(channel, payload),
   };
 }
 
-test("failed active tunnel cleanup never publishes an inactive close", () => {
+test("failed active tunnel cleanup publishes an error instead of a false inactive state", () => {
   let wouldPublishDuringCleanup;
+  const statuses = [];
   const tunnel = {
     status: "active",
     server: {
@@ -72,12 +73,15 @@ test("failed active tunnel cleanup never publishes an inactive close", () => {
   };
 
   assert.throws(
-    () => cancelTunnel("pf-active-cleanup-failure", tunnel, () => {}),
+    () => cancelTunnel("pf-active-cleanup-failure", tunnel, (status, error) => {
+      statuses.push({ status, error });
+    }),
     /server close failed/,
   );
   assert.equal(wouldPublishDuringCleanup, false);
   assert.equal(shouldFinalizeTunnelClose(tunnel), false);
-  assert.equal(tunnel.status, "active");
+  assert.equal(tunnel.status, "error");
+  assert.deepEqual(statuses, [{ status: "error", error: "server: server close failed" }]);
 });
 
 test("port forwarding can be stopped while waiting for a key passphrase", async (t) => {
@@ -206,6 +210,12 @@ test("concurrent starts reuse the existing tunnel for the same rule", async (t) 
       }
     }),
   };
+  const secondWindowEvents = [];
+  const secondEvent = {
+    sender: createCapturingSender((channel, payload) => {
+      secondWindowEvents.push({ channel, payload });
+    }, 2),
+  };
   const payload = {
     ruleId: "shared-rule",
     type: "local",
@@ -225,7 +235,7 @@ test("concurrent starts reuse the existing tunnel for the same rule", async (t) 
   });
   await promptStarted;
 
-  const secondStart = await startPortForward(event, {
+  const secondStart = await startPortForward(secondEvent, {
     ...payload,
     tunnelId: "pf-shared-rule-second",
   });
@@ -245,6 +255,11 @@ test("concurrent starts reuse the existing tunnel for the same rule", async (t) 
   }]);
 
   assert.equal(stopPortForwardByRuleId(event, { ruleId: "shared-rule" }).stopped, 1);
+  assert.ok(secondWindowEvents.some(({ channel, payload }) => (
+    channel === "netcatty:portforward:status" &&
+    payload.tunnelId === "pf-shared-rule-first" &&
+    payload.status === "inactive"
+  )));
   assert.equal((await firstStart).cancelled, true);
 });
 
@@ -385,8 +400,28 @@ test("stop by rule id reports cleanup failures and keeps the tunnel retryable", 
   });
   assert.deepEqual(await getPortForwardStatus(event, { tunnelId }), {
     tunnelId,
-    status: "connecting",
+    status: "error",
     type: "local",
+    error: "passphrase prompt: abort failed",
+  });
+
+  assert.deepEqual(await startPortForward(event, {
+    ruleId: "cleanup-failure-rule",
+    tunnelId: "pf-rule-cleanup-failure-retry",
+    type: "local",
+    localPort: 0,
+    bindAddress: "127.0.0.1",
+    remoteHost: "127.0.0.1",
+    remotePort: 80,
+    hostname: "cleanup-failure.example",
+    username: "alice",
+    privateKey,
+    keyId: "cleanup-failure-key",
+  }), {
+    tunnelId,
+    success: false,
+    blockedByCleanup: true,
+    error: "The existing tunnel could not be cleaned up. Stop it successfully before restarting.",
   });
 
   AbortController.prototype.abort = originalAbort;

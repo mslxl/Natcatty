@@ -39,13 +39,26 @@ function isTunnelCancelled(tunnelState) {
   return Boolean(tunnelState?.cancelled);
 }
 
+function publishTunnelStatus(tunnelId, tunnel, status, error = null) {
+  if (!tunnel) return;
+  tunnel.status = status;
+  tunnel.error = error || undefined;
+  const subscribers = tunnel.subscribers instanceof Map
+    ? Array.from(tunnel.subscribers.values())
+    : [];
+  for (const subscriber of subscribers) {
+    if (!subscriber?.isDestroyed?.()) {
+      subscriber.send("netcatty:portforward:status", { tunnelId, status, error });
+    }
+  }
+}
+
 function shouldFinalizeTunnelClose(tunnel) {
   return !tunnel?.cleanupFailed && !tunnel?.cleanupInProgress;
 }
 
 function cancelTunnel(tunnelId, tunnel, sendStatus, { deleteEntry = false } = {}) {
   if (!tunnel) return;
-  const previousStatus = tunnel.status;
   const errors = [];
   const cleanup = (label, action) => {
     try {
@@ -77,10 +90,13 @@ function cancelTunnel(tunnelId, tunnel, sendStatus, { deleteEntry = false } = {}
     if (cleanup('SSH connection', () => tunnel.conn.end())) tunnel.conn = null;
   }
   if (errors.length > 0) {
-    tunnel.status = previousStatus;
+    const error = errors.join('; ');
+    tunnel.status = 'error';
+    tunnel.error = error;
     tunnel.cleanupFailed = true;
     tunnel.cleanupInProgress = false;
-    throw new Error(errors.join('; '));
+    sendStatus?.('error', error);
+    throw new Error(error);
   }
   tunnel.status = 'inactive';
   tunnel.cleanupFailed = false;
@@ -141,7 +157,21 @@ async function startPortForward(event, payload) {
   if (ruleId) {
     for (const [existingTunnelId, existingTunnel] of portForwardingTunnels) {
       if (existingTunnel.ruleId !== ruleId) continue;
-      if (existingTunnel.cancelled && !existingTunnel.cleanupFailed) continue;
+      if (existingTunnel.cancelled) {
+        if (existingTunnel.cleanupFailed) {
+          return {
+            tunnelId: existingTunnelId,
+            success: false,
+            blockedByCleanup: true,
+            error: 'The existing tunnel could not be cleaned up. Stop it successfully before restarting.',
+          };
+        }
+        continue;
+      }
+      if (!(existingTunnel.subscribers instanceof Map)) {
+        existingTunnel.subscribers = new Map();
+      }
+      existingTunnel.subscribers.set(event.sender.id, event.sender);
       return {
         tunnelId: existingTunnelId,
         success: true,
@@ -173,13 +203,12 @@ async function startPortForward(event, payload) {
     ruleId,
     status: 'connecting',
     webContentsId: sender.id,
+    subscribers: new Map([[sender.id, sender]]),
     cancelled: false,
   };
 
   const sendStatus = (status, error = null) => {
-    if (!sender.isDestroyed()) {
-      sender.send("netcatty:portforward:status", { tunnelId, status, error });
-    }
+    publishTunnelStatus(tunnelId, tunnelState, status, error);
   };
 
   // Keepalive policy:
@@ -730,10 +759,12 @@ async function stopPortForward(event, payload) {
   }
 
   try {
-    cancelTunnel(tunnelId, tunnel, null, { deleteEntry: true });
-    if (!event.sender.isDestroyed()) {
-      event.sender.send("netcatty:portforward:status", { tunnelId, status: 'inactive', error: null });
-    }
+    cancelTunnel(
+      tunnelId,
+      tunnel,
+      (status, error) => publishTunnelStatus(tunnelId, tunnel, status, error),
+      { deleteEntry: true },
+    );
     return { tunnelId, success: true };
   } catch (err) {
     return { tunnelId, success: false, error: err.message };
@@ -751,7 +782,12 @@ async function getPortForwardStatus(event, payload) {
     return { tunnelId, status: 'inactive' };
   }
 
-  return { tunnelId, status: tunnel.status || 'active', type: tunnel.type };
+  return {
+    tunnelId,
+    status: tunnel.status || 'active',
+    type: tunnel.type,
+    ...(tunnel.error ? { error: tunnel.error } : {}),
+  };
 }
 
 /**
@@ -765,6 +801,7 @@ async function listPortForwards() {
       tunnelId,
       type: tunnel.type,
       status: tunnel.status || 'active',
+      ...(tunnel.error ? { error: tunnel.error } : {}),
     });
   }
   return list;
@@ -777,7 +814,12 @@ function stopAllPortForwards() {
   console.log(`[PortForward] Stopping all ${portForwardingTunnels.size} active tunnels...`);
   for (const [tunnelId, tunnel] of portForwardingTunnels) {
       try {
-        cancelTunnel(tunnelId, tunnel, null, { deleteEntry: true });
+        cancelTunnel(
+          tunnelId,
+          tunnel,
+          (status, error) => publishTunnelStatus(tunnelId, tunnel, status, error),
+          { deleteEntry: true },
+        );
         console.log(`[PortForward] Stopped tunnel ${tunnelId}`);
     } catch (err) {
       console.warn(`[PortForward] Failed to stop tunnel ${tunnelId}:`, err.message);
@@ -798,7 +840,12 @@ function stopPortForwardByRuleId(_event, { ruleId }) {
   for (const [tunnelId, tunnel] of portForwardingTunnels) {
     if (tunnel.ruleId === ruleId) {
       try {
-        cancelTunnel(tunnelId, tunnel, null, { deleteEntry: true });
+        cancelTunnel(
+          tunnelId,
+          tunnel,
+          (status, error) => publishTunnelStatus(tunnelId, tunnel, status, error),
+          { deleteEntry: true },
+        );
         console.log(`[PortForward] Stopped tunnel ${tunnelId} for rule ${ruleId}`);
         stopped++;
       } catch (err) {

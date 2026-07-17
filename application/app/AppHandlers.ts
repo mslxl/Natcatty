@@ -55,7 +55,9 @@ export function handleTrayTogglePortForwardImpl(getCtx: AppContextGetter, ruleId
       return;
     }
 
-    void stopTunnel(ruleId);
+    void stopTunnel(ruleId).then((result) => {
+      if (!result.success && result.error) toast.error(result.error);
+    });
   }
 }
 

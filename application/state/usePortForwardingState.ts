@@ -79,9 +79,10 @@ export interface UsePortForwardingStateResult {
   ) => Promise<{ success: boolean; error?: string }>;
   stopTunnel: (
     ruleId: string,
-    onStatusChange?: (status: PortForwardingRule["status"]) => void,
+    onStatusChange?: (status: PortForwardingRule["status"], error?: string) => void,
   ) => Promise<{ success: boolean; error?: string }>;
   stopRuleTunnels: (ruleId: string) => Promise<{ success: boolean; error?: string }>;
+  hasRuntimeTunnel: (ruleId: string) => boolean;
 
   filteredRules: PortForwardingRule[];
   selectedRule: PortForwardingRule | undefined;
@@ -134,22 +135,24 @@ export const createPortForwardingStorageSyncHandlers = ({
 }: {
   onRules: (rules: PortForwardingRule[]) => void;
 }) => {
-  const syncFromStorage = () => {
+  const readStoredRules = (): PortForwardingRule[] | null => {
     const storedRules = localStorageAdapter.read<PortForwardingRule[]>(
       STORAGE_KEY_PORT_FORWARDING,
     );
-    if (storedRules && Array.isArray(storedRules)) {
-      onRules(normalizeRulesWithConnections(storedRules));
-    }
-  };
-
-  const handleChange = (event: Event) => {
-    if (isPortForwardingStorageEvent(event)) syncFromStorage();
+    return storedRules && Array.isArray(storedRules) ? storedRules : null;
   };
 
   return {
-    handleAdapterChange: handleChange,
-    handleBrowserStorage: handleChange,
+    handleAdapterChange(event: Event) {
+      if (!isPortForwardingStorageEvent(event)) return;
+      const storedRules = readStoredRules();
+      if (storedRules) onRules(normalizeRulesWithConnections(storedRules));
+    },
+    handleBrowserStorage(event: Event) {
+      if (!isPortForwardingStorageEvent(event)) return;
+      const storedRules = readStoredRules();
+      if (storedRules) onRules(storedRules);
+    },
   };
 };
 
@@ -457,13 +460,13 @@ export const usePortForwardingState = (): UsePortForwardingStateResult => {
   const stopTunnel = useCallback(
     async (
       ruleId: string,
-      onStatusChange?: (status: PortForwardingRule["status"]) => void,
+      onStatusChange?: (status: PortForwardingRule["status"], error?: string) => void,
     ) => {
       // Clear any pending reconnect timer when manually stopping
       clearReconnectTimer(ruleId);
-      return stopPortForward(ruleId, (status) => {
-        setRuleStatus(ruleId, status);
-        onStatusChange?.(status);
+      return stopPortForward(ruleId, (status, error) => {
+        setRuleStatus(ruleId, status, error);
+        onStatusChange?.(status, error);
       });
     },
     [setRuleStatus],
@@ -535,6 +538,7 @@ export const usePortForwardingState = (): UsePortForwardingStateResult => {
     startTunnel,
     stopTunnel,
     stopRuleTunnels: stopAndCleanupRuleAndWait,
+    hasRuntimeTunnel: (ruleId) => getActiveConnection(ruleId) !== undefined,
 
     filteredRules,
     selectedRule,

@@ -382,6 +382,11 @@ const resolveBackendRuleId = (tunnel: { ruleId?: string; tunnelId: string }): st
   return explicitRuleId || parseRuleIdFromTunnelId(tunnel.tunnelId);
 };
 
+const resolveBackendStatus = (status: string): PortForwardingConnection['status'] => {
+  if (status === 'active' || status === 'connecting' || status === 'error') return status;
+  return 'connecting';
+};
+
 /**
  * Sync active connections with backend
  * Called on app startup to restore state of tunnels that may still be running
@@ -406,7 +411,8 @@ export const syncWithBackend = async (): Promise<void> => {
         activeConnections.set(ruleId, {
           ruleId,
           tunnelId: tunnel.tunnelId,
-          status: (tunnel.status === 'active' ? 'active' : 'connecting') as 'active' | 'connecting',
+          status: resolveBackendStatus(tunnel.status),
+          error: tunnel.error,
         });
         
         logger.info(`[PortForwardingService] Synced active tunnel for rule ${ruleId}`);
@@ -452,7 +458,8 @@ export const reconcileWithBackend = async (): Promise<{
           activeConnections.set(ruleId, {
             ruleId,
             tunnelId: tunnel.tunnelId,
-            status: (tunnel.status === 'active' ? 'active' : 'connecting') as 'active' | 'connecting',
+            status: resolveBackendStatus(tunnel.status),
+            error: tunnel.error,
           });
           result.appeared.push(ruleId);
         } else {
@@ -460,9 +467,10 @@ export const reconcileWithBackend = async (): Promise<{
           // (e.g. connecting → active after SSH handshake completed
           // in another window).
           const existing = activeConnections.get(ruleId)!;
-          const backendStatus = (tunnel.status === 'active' ? 'active' : 'connecting') as 'active' | 'connecting';
-          if (existing.status !== backendStatus) {
+          const backendStatus = resolveBackendStatus(tunnel.status);
+          if (existing.status !== backendStatus || existing.error !== tunnel.error) {
             existing.status = backendStatus;
+            existing.error = tunnel.error;
             existing.tunnelId = tunnel.tunnelId;
             result.appeared.push(ruleId);
           }
@@ -678,11 +686,11 @@ export const startPortForward = async (
     }
 
     // Subscribe to status updates first
-    const unsubscribe = bridge.onPortForwardStatus?.(tunnelId, (status, error) => {
+    const handleTunnelStatus = (status: PortForwardingRule['status'], error?: string | null) => {
       const conn = activeConnections.get(rule.id);
       if (conn) {
         conn.status = status;
-        conn.error = error;
+        conn.error = error ?? undefined;
       }
       
       // Handle auto-reconnect on error/disconnect
@@ -694,7 +702,8 @@ export const startPortForward = async (
       }
       
       onStatusChange(status, error ?? undefined);
-    });
+    };
+    const unsubscribe = bridge.onPortForwardStatus?.(tunnelId, handleTunnelStatus);
     
     // Store connection info (preserve reconnect attempts if this is a reconnect)
     const existingConn = activeConnections.get(rule.id);
@@ -753,6 +762,18 @@ export const startPortForward = async (
         return { success: false, error: undefined };
       }
 
+      if (result.blockedByCleanup && result.tunnelId) {
+        unsubscribe?.();
+        activeConnections.set(rule.id, {
+          ruleId: rule.id,
+          tunnelId: result.tunnelId,
+          status: 'error',
+          error: result.error,
+        });
+        onStatusChange('error', result.error);
+        return { success: false, error: result.error };
+      }
+
       // Check if we should attempt reconnect
       const reconnectScheduled = scheduleReconnectIfNeeded(rule.id, enableReconnect, onStatusChange);
       if (reconnectScheduled) {
@@ -770,10 +791,15 @@ export const startPortForward = async (
       // tunnel instead of keeping this renderer's unused attempt id.
       unsubscribe?.();
       const adoptedStatus = result.status === 'active' ? 'active' : 'connecting';
+      const adoptedUnsubscribe = bridge.onPortForwardStatus?.(
+        result.tunnelId,
+        handleTunnelStatus,
+      );
       activeConnections.set(rule.id, {
         ruleId: rule.id,
         tunnelId: result.tunnelId,
         status: adoptedStatus,
+        unsubscribe: adoptedUnsubscribe,
         reconnectAttempts: existingConn?.reconnectAttempts ?? 0,
       });
       onStatusChange(adoptedStatus);
@@ -808,7 +834,7 @@ export const startPortForward = async (
  */
 export const stopPortForward = async (
   ruleId: string,
-  onStatusChange: (status: PortForwardingRule['status']) => void
+  onStatusChange: (status: PortForwardingRule['status'], error?: string) => void
 ): Promise<{ success: boolean; error?: string }> => {
   const bridge = netcattyBridge.get();
   const conn = activeConnections.get(ruleId);
@@ -836,6 +862,11 @@ export const stopPortForward = async (
       if ((result.failed ?? 0) > 0) {
         const error = result.errors?.filter(Boolean).join('; ') ||
           `Failed to stop ${result.failed} port forwarding tunnel(s)`;
+        if (conn) {
+          conn.status = 'error';
+          conn.error = error;
+        }
+        onStatusChange('error', error);
         return { success: false, error };
       }
     } else if (conn && bridge.stopPortForward) {
@@ -843,8 +874,7 @@ export const stopPortForward = async (
       if (!result.success) return result;
     }
 
-    conn?.unsubscribe?.();
-    activeConnections.delete(ruleId);
+    finishRuleCleanup(ruleId);
     onStatusChange('inactive');
     return { success: true };
   } catch (err) {

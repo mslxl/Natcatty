@@ -99,3 +99,26 @@ test("same-window auto-start status writes refresh the visible rule from the liv
   assert.equal(snapshots.length, 1);
   assert.equal(snapshots[0]?.[0]?.status, "active");
 });
+
+test("cross-window status writes stay active before this window discovers the tunnel", (t) => {
+  const env = installEnvironment();
+  t.after(() => env.restore());
+
+  env.storage.setItem(STORAGE_KEY_PORT_FORWARDING, JSON.stringify([{
+    ...rule,
+    id: "other-window-rule",
+    status: "active",
+  }]));
+  const snapshots: PortForwardingRule[][] = [];
+  const handlers = createPortForwardingStorageSyncHandlers({
+    onRules: (rules) => snapshots.push(rules),
+  });
+
+  handlers.handleBrowserStorage({
+    type: "storage",
+    key: STORAGE_KEY_PORT_FORWARDING,
+  } as StorageEvent);
+
+  assert.equal(snapshots.length, 1);
+  assert.equal(snapshots[0]?.[0]?.status, "active");
+});
