@@ -450,6 +450,10 @@ function openZip(filePath: string): Promise<ZipFile> {
   return new Promise((resolve, reject) => {
     yauzl.open(
       filePath,
+      // Security invariant: for deflated entries, validateEntrySizes inserts an
+      // AssertByteCountStream that rejects an overflowing chunk before it is
+      // forwarded to readEntry(). Combined with the metadata limits below,
+      // captured manifest contents cannot exceed PACKAGE_LIMITS.manifestBytes.
       { lazyEntries: true, decodeStrings: true, strictFileNames: true, validateEntrySizes: true },
       (error, zipFile) => {
         if (error || !zipFile) reject(error ?? new Error("Unable to open plugin archive"));

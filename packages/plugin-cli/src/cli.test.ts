@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
+import { deflateRawSync } from "node:zlib";
 import test from "node:test";
 
 import {
@@ -47,19 +48,29 @@ function crc32(contents: Buffer): number {
   return (crc ^ 0xffffffff) >>> 0;
 }
 
-function createStoredZipEntry(entryName: string, contents: Buffer): Buffer {
+function createZipEntry(
+  entryName: string,
+  contents: Buffer,
+  options: {
+    readonly compressionMethod?: 0 | 8;
+    readonly declaredUncompressedSize?: number;
+  } = {},
+): Buffer {
+  const compressionMethod = options.compressionMethod ?? 0;
+  const encodedContents = compressionMethod === 8 ? deflateRawSync(contents) : contents;
+  const declaredUncompressedSize = options.declaredUncompressedSize ?? contents.byteLength;
   const encodedName = Buffer.from(entryName);
   const checksum = crc32(contents);
   const localHeader = Buffer.alloc(30 + encodedName.byteLength);
   localHeader.writeUInt32LE(0x04034b50, 0);
   localHeader.writeUInt16LE(20, 4);
   localHeader.writeUInt16LE(0x0800, 6);
-  localHeader.writeUInt16LE(0, 8);
+  localHeader.writeUInt16LE(compressionMethod, 8);
   localHeader.writeUInt16LE(0, 10);
   localHeader.writeUInt16LE(33, 12);
   localHeader.writeUInt32LE(checksum, 14);
-  localHeader.writeUInt32LE(contents.byteLength, 18);
-  localHeader.writeUInt32LE(contents.byteLength, 22);
+  localHeader.writeUInt32LE(encodedContents.byteLength, 18);
+  localHeader.writeUInt32LE(declaredUncompressedSize, 22);
   localHeader.writeUInt16LE(encodedName.byteLength, 26);
   encodedName.copy(localHeader, 30);
 
@@ -68,25 +79,25 @@ function createStoredZipEntry(entryName: string, contents: Buffer): Buffer {
   centralHeader.writeUInt16LE(20, 4);
   centralHeader.writeUInt16LE(20, 6);
   centralHeader.writeUInt16LE(0x0800, 8);
-  centralHeader.writeUInt16LE(0, 10);
+  centralHeader.writeUInt16LE(compressionMethod, 10);
   centralHeader.writeUInt16LE(0, 12);
   centralHeader.writeUInt16LE(33, 14);
   centralHeader.writeUInt32LE(checksum, 16);
-  centralHeader.writeUInt32LE(contents.byteLength, 20);
-  centralHeader.writeUInt32LE(contents.byteLength, 24);
+  centralHeader.writeUInt32LE(encodedContents.byteLength, 20);
+  centralHeader.writeUInt32LE(declaredUncompressedSize, 24);
   centralHeader.writeUInt16LE(encodedName.byteLength, 28);
   centralHeader.writeUInt32LE((0o100644 << 16) >>> 0, 38);
   centralHeader.writeUInt32LE(0, 42);
   encodedName.copy(centralHeader, 46);
 
-  const centralOffset = localHeader.byteLength + contents.byteLength;
+  const centralOffset = localHeader.byteLength + encodedContents.byteLength;
   const end = Buffer.alloc(22);
   end.writeUInt32LE(0x06054b50, 0);
   end.writeUInt16LE(1, 8);
   end.writeUInt16LE(1, 10);
   end.writeUInt32LE(centralHeader.byteLength, 12);
   end.writeUInt32LE(centralOffset, 16);
-  return Buffer.concat([localHeader, contents, centralHeader, end]);
+  return Buffer.concat([localHeader, encodedContents, centralHeader, end]);
 }
 
 function manifest(overrides: Record<string, unknown> = {}) {
@@ -459,7 +470,7 @@ test("archive validation rejects oversized manifests before buffering", async (c
   const root = await mkdtemp(path.join(tmpdir(), "netcatty-plugin-archive-manifest-limit-"));
   context.after(() => rm(root, { recursive: true, force: true }));
   const oversizedPath = path.join(root, "oversized-manifest.ncpkg");
-  const oversizedBytes = createStoredZipEntry(
+  const oversizedBytes = createZipEntry(
     "netcatty.plugin.json",
     Buffer.alloc(PACKAGE_LIMITS.manifestBytes + 1, 0x20),
   );
@@ -468,6 +479,24 @@ test("archive validation rejects oversized manifests before buffering", async (c
   await assert.rejects(
     validatePluginPackage(oversizedPath),
     new RegExp(`Plugin manifest exceeds ${PACKAGE_LIMITS.manifestBytes} bytes`),
+  );
+
+  const forgedSizePath = path.join(root, "forged-size-manifest.ncpkg");
+  const forgedSizeBytes = createZipEntry(
+    "netcatty.plugin.json",
+    Buffer.alloc(PACKAGE_LIMITS.manifestBytes + 1, 0x20),
+    {
+      compressionMethod: 8,
+      declaredUncompressedSize: PACKAGE_LIMITS.manifestBytes,
+    },
+  );
+  await writeFile(forgedSizePath, forgedSizeBytes);
+
+  await assert.rejects(
+    validatePluginPackage(forgedSizePath),
+    new RegExp(
+      `too many bytes in the stream\\. expected ${PACKAGE_LIMITS.manifestBytes}\\. got at least ${PACKAGE_LIMITS.manifestBytes + 1}`,
+    ),
   );
 });
 
