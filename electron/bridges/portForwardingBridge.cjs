@@ -793,6 +793,30 @@ async function getPortForwardStatus(event, payload) {
 }
 
 /**
+ * Register the calling renderer for status events from an existing tunnel and
+ * return the status from the same main-process turn.
+ */
+async function subscribePortForward(event, payload) {
+  const { tunnelId } = payload;
+  const tunnel = portForwardingTunnels.get(tunnelId);
+
+  if (!tunnel) {
+    return { tunnelId, status: 'inactive' };
+  }
+
+  if (!(tunnel.subscribers instanceof Map)) {
+    tunnel.subscribers = new Map();
+  }
+  tunnel.subscribers.set(event.sender.id, event.sender);
+  return {
+    tunnelId,
+    status: tunnel.status || 'active',
+    type: tunnel.type,
+    ...(tunnel.error ? { error: tunnel.error } : {}),
+  };
+}
+
+/**
  * List all active port forwards
  */
 async function listPortForwards() {
@@ -867,6 +891,7 @@ function registerHandlers(ipcMain) {
   ipcMain.handle("netcatty:portforward:start", startPortForward);
   ipcMain.handle("netcatty:portforward:stop", stopPortForward);
   ipcMain.handle("netcatty:portforward:status", getPortForwardStatus);
+  ipcMain.handle("netcatty:portforward:subscribe", subscribePortForward);
   ipcMain.handle("netcatty:portforward:list", listPortForwards);
   ipcMain.handle("netcatty:portforward:stopAll", () => stopAllPortForwards());
   ipcMain.handle("netcatty:portforward:stopByRuleId", stopPortForwardByRuleId);
@@ -877,6 +902,7 @@ module.exports = {
   startPortForward,
   stopPortForward,
   getPortForwardStatus,
+  subscribePortForward,
   listPortForwards,
   stopAllPortForwards,
   stopPortForwardByRuleId,

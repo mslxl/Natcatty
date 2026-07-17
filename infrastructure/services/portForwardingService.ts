@@ -479,6 +479,19 @@ export const syncWithBackend = async (
           } else {
             unsubscribe?.();
           }
+
+          const snapshot = await bridge.subscribePortForward?.(tunnel.tunnelId);
+          if (activeConnections.get(ruleId) !== connection) continue;
+          if (snapshot?.status === 'inactive') {
+            connection.unsubscribe?.();
+            activeConnections.delete(ruleId);
+            onStatusChange('inactive');
+            continue;
+          }
+          if (snapshot) {
+            connection.status = resolveBackendStatus(snapshot.status);
+            connection.error = snapshot.error;
+          }
         }
         
         logger.info(`[PortForwardingService] Synced active tunnel for rule ${ruleId}`);

@@ -66,6 +66,12 @@ declare global {
     stopPortForward?(tunnelId: string): Promise<PortForwardResult>;
     getPortForwardStatus?(tunnelId: string): Promise<PortForwardStatusResult>;
     listPortForwards?(): Promise<{ ruleId?: string; tunnelId: string; type: string; status: string; error?: string }[]>;
+    subscribePortForward?(tunnelId: string): Promise<{
+      tunnelId: string;
+      type?: string;
+      status: 'inactive' | 'connecting' | 'active' | 'error';
+      error?: string;
+    }>;
     stopAllPortForwards?(): Promise<void>;
     stopPortForwardByRuleId?(ruleId: string): Promise<{
       stopped: number;

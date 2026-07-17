@@ -108,6 +108,7 @@ test("syncWithBackend binds backend tunnels by explicit rule id", async () => {
 
 test("syncWithBackend subscribes adopted auto-start tunnels for reconnect", async (t) => {
   let statusListener: ((status: PortForwardingRule["status"], error?: string | null) => void) | undefined;
+  const subscribedTunnelIds: string[] = [];
   Object.defineProperty(globalThis, "window", {
     configurable: true,
     value: {
@@ -121,6 +122,10 @@ test("syncWithBackend subscribes adopted auto-start tunnels for reconnect", asyn
         onPortForwardStatus: (_tunnelId: string, listener: typeof statusListener) => {
           statusListener = listener;
           return () => undefined;
+        },
+        subscribePortForward: async (tunnelId: string) => {
+          subscribedTunnelIds.push(tunnelId);
+          return { tunnelId, status: "active" };
         },
         stopPortForwardByRuleId: async () => ({ stopped: 1, failed: 0, errors: [] }),
       },
@@ -137,6 +142,7 @@ test("syncWithBackend subscribes adopted auto-start tunnels for reconnect", asyn
     shouldReconnect: () => true,
     onStatusChange: (_ruleId, status, error) => statuses.push({ status, error }),
   });
+  assert.deepEqual(subscribedTunnelIds, ["synced-auto-start-tunnel"]);
   statusListener?.("error", "connection lost");
 
   const connection = getActiveConnection("synced-auto-start-rule");

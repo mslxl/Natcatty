@@ -11,6 +11,7 @@ const {
   stopPortForward,
   stopPortForwardByRuleId,
   getPortForwardStatus,
+  subscribePortForward,
   listPortForwards,
   cancelTunnel,
   publishTunnelStatus,
@@ -156,10 +157,23 @@ test("port forwarding can be stopped while waiting for a key passphrase", async 
     status: "connecting",
   }]);
 
+  const adoptedStatuses = [];
+  const adoptedEvent = {
+    sender: createCapturingSender((channel, payload) => {
+      if (channel === "netcatty:portforward:status") adoptedStatuses.push(payload);
+    }, 2),
+  };
+  assert.deepEqual(await subscribePortForward(adoptedEvent, { tunnelId }), {
+    tunnelId,
+    status: "connecting",
+    type: "local",
+  });
+
   assert.deepEqual(await stopPortForward(event, { tunnelId }), {
     tunnelId,
     success: true,
   });
+  assert.deepEqual(adoptedStatuses, [{ tunnelId, status: "inactive", error: null }]);
   assert.deepEqual(await getPortForwardStatus(event, { tunnelId }), {
     tunnelId,
     status: "inactive",
