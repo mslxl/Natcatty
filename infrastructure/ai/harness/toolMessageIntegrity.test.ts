@@ -66,3 +66,26 @@ test('repairToolMessageIntegrity pairs reused tool call ids by occurrence order'
   assert.match(JSON.stringify(result.messages), /first result/);
   assert.match(JSON.stringify(result.messages), /second result/);
 });
+
+test('repairToolMessageIntegrity pairs a reused id with the nearest preceding call', () => {
+  const messages: ModelMessage[] = [
+    {
+      role: 'assistant',
+      content: [{ type: 'tool-call', toolCallId: 'reused', toolName: 'terminal_execute', input: { command: 'old' } }],
+    },
+    {
+      role: 'assistant',
+      content: [{ type: 'tool-call', toolCallId: 'reused', toolName: 'terminal_execute', input: { command: 'new' } }],
+    },
+    {
+      role: 'tool',
+      content: [{ type: 'tool-result', toolCallId: 'reused', toolName: 'terminal_execute', output: { type: 'text', value: 'new result' } }],
+    },
+  ];
+
+  const result = repairToolMessageIntegrity(messages);
+  assert.equal(result.didAdjust, true);
+  assert.deepEqual(result.messages.map(message => message.role), ['assistant', 'tool', 'assistant', 'tool']);
+  assert.match(JSON.stringify(result.messages[1]), /interrupted before a result was recorded/);
+  assert.match(JSON.stringify(result.messages[3]), /new result/);
+});

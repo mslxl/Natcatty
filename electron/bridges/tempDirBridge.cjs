@@ -48,8 +48,14 @@ function resolvePrivateTempDir(systemTempDir = os.tmpdir(), homeDir = os.homedir
  */
 function getTempDir() {
   if (cachedTempDir) {
-    assertSafeTempDir(cachedTempDir, cachedTempDirIdentity);
-    return cachedTempDir;
+    try {
+      assertSafeTempDir(cachedTempDir, cachedTempDirIdentity);
+      return cachedTempDir;
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+      cachedTempDir = null;
+      cachedTempDirIdentity = null;
+    }
   }
   
   const netcattyTempDir = resolvePrivateTempDir();

@@ -32,7 +32,10 @@ export function repairToolMessageIntegrity(messages: ModelMessage[]): {
         return true;
       }
       const pending = pendingCalls.get(part.toolCallId);
-      const matchingCall = pending?.shift();
+      // Reused provider IDs are paired with the nearest preceding unresolved
+      // call. This also handles an older interrupted call followed by a new
+      // call that reused the same ID.
+      const matchingCall = pending?.pop();
       if (!matchingCall) {
         didAdjust = true;
         return false;

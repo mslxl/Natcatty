@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
 const fs = require("node:fs");
+const { spawnSync } = require("node:child_process");
 const tempDirBridge = require("./tempDirBridge.cjs");
 
 test("getTempFilePath is unique for duplicate names in the same millisecond", () => {
@@ -38,6 +39,31 @@ test("shared system temp roots resolve to a stable path under the user's home", 
     if (typeof process.getuid === "function") {
       assert.equal(tempDirBridge.resolvePrivateTempDir(root, fakeHome), path.join(fakeHome, ".netcatty", "tmp"));
     }
+  } finally {
+    await fs.promises.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("cached temp root is recreated after OS cleanup", async () => {
+  const root = await fs.promises.mkdtemp(path.join(require("node:os").tmpdir(), "netcatty-private-root-"));
+  const fakeHome = path.join(root, "home");
+  await fs.promises.mkdir(fakeHome);
+  await fs.promises.chmod(root, 0o700);
+  try {
+    const script = [
+      'const fs = require("node:fs");',
+      'const bridge = require("./electron/bridges/tempDirBridge.cjs");',
+      'const first = bridge.getTempDir();',
+      'fs.rmSync(first, { recursive: true, force: true });',
+      'const second = bridge.getTempDir();',
+      'if (first !== second || !fs.statSync(second).isDirectory()) process.exit(2);',
+    ].join("\n");
+    const result = spawnSync(process.execPath, ["-e", script], {
+      cwd: path.resolve(__dirname, "../.."),
+      env: { ...process.env, TMPDIR: root, HOME: fakeHome },
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
   } finally {
     await fs.promises.rm(root, { recursive: true, force: true });
   }
