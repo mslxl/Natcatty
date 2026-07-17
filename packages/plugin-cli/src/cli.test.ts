@@ -46,9 +46,23 @@ async function createPlugin(root: string): Promise<string> {
 }
 
 test("path validation rejects traversal, platform aliases, and duplicates", () => {
-  for (const unsafe of ["../escape", "/absolute", "C:/drive", "a\\b", "a/../b", "CON", "a//b"]) {
+  for (const unsafe of [
+    "../escape",
+    "/absolute",
+    "C:/drive",
+    "a\\b",
+    "a/../b",
+    "CON",
+    "assets/PRN.txt",
+    "file.",
+    "folder/file ",
+    "folder/file?.js",
+    "a//b",
+    "😀".repeat(129),
+  ]) {
     assert.throws(() => assertSafePackagePath(unsafe));
   }
+  assert.equal(assertSafePackagePath("😀".repeat(128)), "😀".repeat(128));
   const registry = new PackagePathRegistry();
   registry.add("dist/Plugin.js");
   assert.throws(() => registry.add("dist/plugin.js"), /case-colliding/);

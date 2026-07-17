@@ -60,9 +60,13 @@ declares one or both execution entrypoints:
 }
 ```
 
-Paths use relative POSIX syntax. Absolute paths, drive-letter paths,
-backslashes, `.` and `..` segments, Unicode normalization ambiguity, Windows
-reserved names, and platform-specific trailing dots or spaces are rejected.
+Paths use relative POSIX syntax and are limited to 128 Unicode code points and
+512 UTF-8 bytes. The schema and package validator reject absolute paths,
+drive-letter paths, repeated separators, backslashes, `.` and `..` segments,
+Windows reserved names, control or platform-special characters, and
+platform-specific trailing dots or spaces. The semantic package validator also
+requires NFC-normalized text; every official host consumer must run it after
+schema validation because JSON Schema cannot express Unicode normalization.
 Every entrypoint, view document, and companion executable must exist in the
 package.
 
@@ -148,6 +152,9 @@ later:
    slow plugin cannot retain an unbounded host request.
 9. Stream sequence numbers and receive windows are part of the public protocol;
    producers must stop when the receiver's advertised capacity is exhausted.
+10. Manifest schema validation is followed by semantic package validation.
+    This enforces NFC paths and content-dependent rules that JSON Schema cannot
+    represent by itself.
 
 ## Repository commands
 

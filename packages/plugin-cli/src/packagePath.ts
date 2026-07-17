@@ -11,6 +11,11 @@ export function assertSafePackagePath(input: string): string {
   if (!input || input !== input.normalize("NFC")) {
     throw new Error(`Package path must be non-empty NFC text: ${JSON.stringify(input)}`);
   }
+  if ([...input].length > PACKAGE_LIMITS.pathCharacters) {
+    throw new Error(
+      `Package path exceeds ${PACKAGE_LIMITS.pathCharacters} Unicode characters: ${input}`,
+    );
+  }
   if (Buffer.byteLength(input, "utf8") > PACKAGE_LIMITS.pathBytes) {
     throw new Error(`Package path exceeds ${PACKAGE_LIMITS.pathBytes} UTF-8 bytes: ${input}`);
   }

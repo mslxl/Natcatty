@@ -38,15 +38,28 @@ const validManifest = {
 test("plugin manifest schema accepts the internal contract", () => {
   const validate = validator("PluginManifest");
   assert.equal(validate(validManifest), true, JSON.stringify(validate.errors));
+  assert.equal(
+    validate({ ...validManifest, main: { browser: "😀".repeat(128) } }),
+    true,
+    JSON.stringify(validate.errors),
+  );
 });
 
 test("plugin manifest schema rejects unknown properties and traversal", () => {
   const validate = validator("PluginManifest");
   assert.equal(validate({ ...validManifest, unexpected: true }), false);
-  assert.equal(
-    validate({ ...validManifest, main: { browser: "../outside.js" } }),
-    false,
-  );
+  for (const browser of [
+    "../outside.js",
+    "dist//chunk.js",
+    "CON",
+    "assets/PRN.txt",
+    "file.",
+    "folder/file ",
+    "folder/file?.js",
+    "😀".repeat(129),
+  ]) {
+    assert.equal(validate({ ...validManifest, main: { browser } }), false, browser);
+  }
 });
 
 test("RPC, stream, permission, and provider schemas validate independently", () => {

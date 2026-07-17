@@ -4,6 +4,7 @@ export const PACKAGE_LIMITS = Object.freeze({
   singleFileBytes: 50 * 1024 * 1024,
   manifestBytes: 1024 * 1024,
   fileCount: 5_000,
+  pathCharacters: 128,
   pathBytes: 512,
 });
 
