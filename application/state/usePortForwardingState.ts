@@ -549,7 +549,10 @@ export const usePortForwardingState = (): UsePortForwardingStateResult => {
     startTunnel,
     stopTunnel,
     stopRuleTunnels: stopAndCleanupRuleAndWait,
-    hasRuntimeTunnel: (ruleId) => getActiveConnection(ruleId) !== undefined,
+    hasRuntimeTunnel: (ruleId) => {
+      const connection = getActiveConnection(ruleId);
+      return connection !== undefined && connection.status !== "inactive";
+    },
 
     filteredRules,
     selectedRule,

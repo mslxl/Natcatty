@@ -210,11 +210,18 @@ test("concurrent starts reuse the existing tunnel for the same rule", async (t) 
       }
     }),
   };
-  const secondWindowEvents = [];
   const secondEvent = {
-    sender: createCapturingSender((channel, payload) => {
-      secondWindowEvents.push({ channel, payload });
+    sender: createCapturingSender((channel) => {
+      if (channel === "netcatty:portforward:status") {
+        throw new Error("renderer closed during send");
+      }
     }, 2),
+  };
+  const thirdWindowEvents = [];
+  const thirdEvent = {
+    sender: createCapturingSender((channel, payload) => {
+      thirdWindowEvents.push({ channel, payload });
+    }, 3),
   };
   const payload = {
     ruleId: "shared-rule",
@@ -239,8 +246,18 @@ test("concurrent starts reuse the existing tunnel for the same rule", async (t) 
     ...payload,
     tunnelId: "pf-shared-rule-second",
   });
+  const thirdStart = await startPortForward(thirdEvent, {
+    ...payload,
+    tunnelId: "pf-shared-rule-third",
+  });
 
   assert.deepEqual(secondStart, {
+    tunnelId: "pf-shared-rule-first",
+    success: true,
+    reused: true,
+    status: "connecting",
+  });
+  assert.deepEqual(thirdStart, {
     tunnelId: "pf-shared-rule-first",
     success: true,
     reused: true,
@@ -255,7 +272,7 @@ test("concurrent starts reuse the existing tunnel for the same rule", async (t) 
   }]);
 
   assert.equal(stopPortForwardByRuleId(event, { ruleId: "shared-rule" }).stopped, 1);
-  assert.ok(secondWindowEvents.some(({ channel, payload }) => (
+  assert.ok(thirdWindowEvents.some(({ channel, payload }) => (
     channel === "netcatty:portforward:status" &&
     payload.tunnelId === "pf-shared-rule-first" &&
     payload.status === "inactive"

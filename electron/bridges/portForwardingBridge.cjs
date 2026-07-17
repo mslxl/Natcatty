@@ -47,9 +47,7 @@ function publishTunnelStatus(tunnelId, tunnel, status, error = null) {
     ? Array.from(tunnel.subscribers.values())
     : [];
   for (const subscriber of subscribers) {
-    if (!subscriber?.isDestroyed?.()) {
-      subscriber.send("netcatty:portforward:status", { tunnelId, status, error });
-    }
+    safeSend(subscriber, "netcatty:portforward:status", { tunnelId, status, error });
   }
 }
 

@@ -690,6 +690,13 @@ export const startPortForward = async (
     // Subscribe to status updates first
     const handleTunnelStatus = (status: PortForwardingRule['status'], error?: string | null) => {
       const conn = activeConnections.get(rule.id);
+      if (status === 'inactive') {
+        conn?.unsubscribe?.();
+        clearReconnectTimer(rule.id);
+        activeConnections.delete(rule.id);
+        onStatusChange('inactive');
+        return;
+      }
       if (conn) {
         conn.status = status;
         conn.error = error ?? undefined;

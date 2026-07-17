@@ -474,6 +474,30 @@ test("startPortForward treats repeated active starts as idempotent", async () =>
   await new Promise<void>((resolve) => setImmediate(resolve));
 });
 
+test("inactive backend events remove the runtime tunnel immediately", async () => {
+  let statusListener: ((status: PortForwardingRule["status"], error?: string | null) => void) | undefined;
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      netcatty: {
+        startPortForward: async () => ({ success: true }),
+        onPortForwardStatus: (_tunnelId: string, listener: typeof statusListener) => {
+          statusListener = listener;
+          return () => undefined;
+        },
+      },
+    },
+  });
+  const disconnectedRule = rule({ id: "inactive-event-rule" });
+
+  await startPortForward(disconnectedRule, host(), [], [], [], () => undefined);
+  assert.ok(getActiveConnection(disconnectedRule.id));
+
+  statusListener?.("inactive");
+
+  assert.equal(getActiveConnection(disconnectedRule.id), undefined);
+});
+
 test("startPortForward adopts a tunnel reused by the backend", async () => {
   let unsubscribed = false;
   const statusListeners = new Map<string, (status: PortForwardingRule["status"], error?: string | null) => void>();
