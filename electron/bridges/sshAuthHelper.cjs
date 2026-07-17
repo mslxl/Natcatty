@@ -1132,6 +1132,7 @@ function buildAuthHandler(options) {
   const authPhase = createAuthPhase();
   let lastAttemptedType = null;
   let lastAttemptedMethodId = null;
+  let passwordAttemptSawKeyboardInteractive = false;
 
   let triedNone = false;
 
@@ -1153,6 +1154,14 @@ function buildAuthHandler(options) {
     // Log rejection of previous method (authHandler is called again when server rejects)
     if (lastAttemptedLabel && !partialSuccess) {
       onAuthAttempt?.(`${lastAttemptedLabel} rejected`);
+      if (
+        lastAttemptedType === "password" &&
+        passwordAttemptSawKeyboardInteractive &&
+        Array.isArray(methodsLeft) &&
+        !methodsLeft.includes("keyboard-interactive")
+      ) {
+        authPhase.retryKeyboardInteractiveFirst = true;
+      }
       if (lastAttemptedMethodId) {
         failedMethodIds.add(lastAttemptedMethodId);
       }
@@ -1248,6 +1257,7 @@ function buildAuthHandler(options) {
         lastAttemptedLabel = "password";
         lastAttemptedType = "password";
         lastAttemptedMethodId = method.id;
+        passwordAttemptSawKeyboardInteractive = availableMethods.includes("keyboard-interactive");
         onAuthAttempt?.("password");
         return callback({
           type: "password",

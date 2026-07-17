@@ -19,13 +19,13 @@ function makeSender() {
 }
 
 /** Load the SFTP bridge with ssh2-sftp-client mocked for auth retry scenarios. */
-function loadSftpBridgeWithAuthRetryMocks(t) {
+function loadSftpBridgeWithAuthRetryMocks(t, options = {}) {
   const bridgePath = require.resolve("./sftpBridge.cjs");
   const authHelperPath = require.resolve("./sshAuthHelper.cjs");
   const originalLoad = Module._load;
   const realAuthHelper = require(authHelperPath);
 
-  /** Mock SFTP client that simulates password rejection removing KI, then KI-first success. */
+  /** Mock SFTP client that simulates password rejection removing KI, then KI retry success. */
   class MockSftpClient extends EventEmitter {
     /** Create a mock ssh2-sftp-client instance with an embedded ssh2 client emitter. */
     constructor() {
@@ -68,7 +68,20 @@ function loadSftpBridgeWithAuthRetryMocks(t) {
         };
 
         offerNext(null, null);
-        const first = offerNext(["password", "keyboard-interactive"], false);
+        const firstMethods = options.dynamicAuth
+          ? ["publickey", "password", "keyboard-interactive"]
+          : ["password", "keyboard-interactive"];
+        const first = offerNext(firstMethods, false);
+        if (attemptIndex === 1 && options.dynamicAuth) {
+          assert.equal(first?.type, "publickey");
+          const password = offerNext(["password", "keyboard-interactive"], false);
+          assert.equal(password?.type, "password");
+          offerNext(["publickey"], false);
+          const err = new Error("All configured authentication methods failed");
+          err.level = "client-authentication";
+          this.client.emit("error", err);
+          return;
+        }
         if (attemptIndex === 1) {
           assert.equal(first, "password");
           offerNext(["publickey"], false);
@@ -78,7 +91,13 @@ function loadSftpBridgeWithAuthRetryMocks(t) {
           return;
         }
 
-        assert.equal(first, "keyboard-interactive");
+        if (options.dynamicAuth) {
+          assert.equal(first?.type, "publickey");
+          const keyboardInteractive = offerNext(["keyboard-interactive"], false);
+          assert.equal(keyboardInteractive, "keyboard-interactive");
+        } else {
+          assert.equal(first, "keyboard-interactive");
+        }
         this.client.emit("ready");
       });
     }
@@ -97,7 +116,7 @@ function loadSftpBridgeWithAuthRetryMocks(t) {
     if (request === "./sshAuthHelper.cjs") {
       return {
         ...realAuthHelper,
-        findAllDefaultPrivateKeys: async () => [],
+        findAllDefaultPrivateKeys: async () => options.defaultKeys || [],
         getAvailableAgentSocket: async () => null,
         prepareSystemSshAgentForAuth: async () => null,
       };
@@ -147,4 +166,47 @@ test("openSftp retries keyboard-interactive first when password rejection remove
     "keyboard-interactive",
   ]);
   assert.equal(sftpClients.has("sftp-edr-mfa"), true);
+});
+
+test("openSftp retries keyboard-interactive after dynamic auth password rejection removes KI", async (t) => {
+  const { bridge, MockSftpClient } = loadSftpBridgeWithAuthRetryMocks(t, {
+    dynamicAuth: true,
+    defaultKeys: [{
+      privateKey: "-----BEGIN OPENSSH PRIVATE KEY-----\nmock-default-key\n-----END OPENSSH PRIVATE KEY-----",
+      keyPath: "id_ed25519",
+      keyName: "id_ed25519",
+    }],
+  });
+  const sftpClients = new Map();
+  bridge.init({ sftpClients, sessions: new Map(), electronModule: {} });
+
+  const result = await bridge.openSftp(
+    { sender: makeSender() },
+    {
+      sessionId: "sftp-edr-mfa-auto",
+      hostname: "192.168.9.138",
+      port: 22,
+      username: "root",
+      authMethod: "auto",
+      password: "saved-login-password",
+      sshTcpConnectTimeoutMs: 45_000,
+      sshAuthReadyTimeoutMs: 300_000,
+    },
+  );
+
+  assert.equal(result.sftpId, "sftp-edr-mfa-auto");
+  assert.equal(MockSftpClient.instances.length, 2);
+  assert.deepEqual(
+    MockSftpClient.instances[0].authMethodsOffered.map((method) => (
+      method?.type === "publickey" ? "publickey" : method?.type || method
+    )),
+    ["none", "publickey", "password", false],
+  );
+  assert.deepEqual(
+    MockSftpClient.instances[1].authMethodsOffered.map((method) => (
+      method?.type === "publickey" ? "publickey" : method?.type || method
+    )),
+    ["none", "publickey", "keyboard-interactive"],
+  );
+  assert.equal(sftpClients.has("sftp-edr-mfa-auto"), true);
 });
