@@ -9,13 +9,17 @@ export class ToolResultDedup {
   private turnNumber = 0;
   private readonly cache = new Map<string, ToolResultDedupEntry>();
   private readonly consumedBudgets = new Map<string, number>();
-  private readonly completedWrites = new Map<string, unknown>();
+  private readonly completedWrites = new Map<string, unknown[]>();
+  private replayableWrites = new Map<string, unknown[]>();
   private readonly terminalJobSessions = new Map<string, string>();
   private writeReplayEnabled = false;
 
   beginTurn(): void {
     this.turnNumber += 1;
     this.consumedBudgets.clear();
+    this.completedWrites.clear();
+    this.replayableWrites.clear();
+    this.writeReplayEnabled = false;
   }
 
   reset(): void {
@@ -23,12 +27,15 @@ export class ToolResultDedup {
     this.turnNumber = 0;
     this.consumedBudgets.clear();
     this.completedWrites.clear();
+    this.replayableWrites.clear();
     this.terminalJobSessions.clear();
     this.writeReplayEnabled = false;
   }
 
   rememberCompletedWrite(fingerprint: string, result: unknown): void {
-    this.completedWrites.set(fingerprint, result);
+    const results = this.completedWrites.get(fingerprint) ?? [];
+    results.push(result);
+    this.completedWrites.set(fingerprint, results);
   }
 
   rememberTerminalJobSession(jobId: string, sessionId: string): void {
@@ -40,12 +47,18 @@ export class ToolResultDedup {
   }
 
   enableWriteReplay(): void {
+    this.replayableWrites = new Map(
+      Array.from(this.completedWrites, ([fingerprint, results]) => [fingerprint, [...results]]),
+    );
     this.writeReplayEnabled = true;
   }
 
   replayCompletedWrite(fingerprint: string): unknown | undefined {
     if (!this.writeReplayEnabled) return undefined;
-    return this.completedWrites.get(fingerprint);
+    const results = this.replayableWrites.get(fingerprint);
+    const result = results?.shift();
+    if (results?.length === 0) this.replayableWrites.delete(fingerprint);
+    return result;
   }
 
   takeBudget(key: string, requested: number, limit: number): number {

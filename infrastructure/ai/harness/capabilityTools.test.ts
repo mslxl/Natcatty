@@ -218,6 +218,12 @@ describe('capabilityTools result fitting', () => {
 
     assert.equal(executions, 1);
     assert.equal(replay.replayedCompletedResult, true);
+
+    const intentionalRepeat = await execute.execute({ sessionId: 'session-1', command: 'deploy production' }) as {
+      replayedCompletedResult?: boolean;
+    };
+    assert.equal(executions, 2);
+    assert.equal(intentionalRepeat.replayedCompletedResult, undefined);
   });
 
   it('replays a started background job instead of starting it twice after retry compaction', async () => {
@@ -247,6 +253,14 @@ describe('capabilityTools result fitting', () => {
     assert.equal(replay.replayedCompletedResult, true);
     assert.doesNotMatch(replay.command ?? '', /swordfish/);
     assert.match(replay.output ?? '', /tool output handle/);
+
+    const intentionalRestart = await start.execute({ sessionId: 'session-1', command: 'npm run build' }) as {
+      replayedCompletedResult?: boolean;
+      jobId?: string;
+    };
+    assert.equal(starts, 2);
+    assert.equal(intentionalRestart.jobId, 'job-2');
+    assert.equal(intentionalRestart.replayedCompletedResult, undefined);
   });
 });
 

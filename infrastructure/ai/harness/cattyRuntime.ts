@@ -150,7 +150,10 @@ export async function compactCattyMessages(
           `[REMAINING EXACT MESSAGES]\n${formatMessagesForCompaction(pruned.slice(cached.prefixLength))}`,
         ].join('\n\n')
       : formatMessagesForCompaction(pruned);
-    const exactFormattedHistory = formatMessagesForCompaction(messagesToSummarize);
+    // Archive the untouched turn input. messagesToSummarize has already passed
+    // through integrity repair and stale-result pruning, so it is not an exact
+    // recovery source even though it is the right input for the summary model.
+    const exactFormattedHistory = formatMessagesForCompaction(input.messages);
     archiveChars = exactFormattedHistory.length;
     if (input.toolOutputStore && input.chatSessionId) {
       const archive = storeCompactionArchive(
@@ -187,7 +190,7 @@ export async function compactCattyMessages(
       ).id;
     }
     const archiveNotice = archiveHandleId
-      ? `\n\n[Earlier ${archiveSourceTruncated ? 'bounded conversation archive (source exceeded the local archive cap)' : 'exact conversation'} archived locally: handleId=${archiveHandleId}. Use tool_output_read search/range only when the summary lacks a needed exact detail.]`
+      ? `\n\n[${archiveSourceTruncated ? 'Bounded conversation snapshot (source exceeded the local archive cap)' : 'Exact conversation snapshot'} archived locally: handleId=${archiveHandleId}. Use tool_output_read search/range only when the summary lacks a needed exact detail.]`
       : '';
     return `${result.text}${archiveNotice}`;
   };
