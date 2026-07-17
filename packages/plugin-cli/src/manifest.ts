@@ -60,6 +60,13 @@ function findDuplicateIds(manifest: PluginManifest): string[] {
 
 function validateSemantics(manifest: PluginManifest): string[] {
   const errors = findDuplicateIds(manifest);
+  const companionPaths = new Set<string>();
+  for (const companion of manifest.companionExecutables ?? []) {
+    if (companionPaths.has(companion.path)) {
+      errors.push(`Duplicate companion executable path: ${companion.path}`);
+    }
+    companionPaths.add(companion.path);
+  }
   const requiredPermissions = new Set(
     (manifest.permissions?.required ?? []).map(permissionName),
   );

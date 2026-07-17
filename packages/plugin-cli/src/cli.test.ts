@@ -95,6 +95,28 @@ test("manifest validation reports permission and contribution mistakes", () => {
   assert.match(result.errors.join("\n"), /undeclared command/);
 });
 
+test("manifest validation rejects duplicate companion executable paths", () => {
+  const result = validateManifestValue(manifest({
+    companionExecutables: [
+      {
+        id: "helper-one",
+        path: "bin/helper",
+        platforms: ["linux-x64"],
+        sha256: "0".repeat(64),
+      },
+      {
+        id: "helper-two",
+        path: "bin/helper",
+        platforms: ["darwin-arm64"],
+        sha256: "1".repeat(64),
+      },
+    ],
+  }));
+
+  assert.equal(result.valid, false);
+  assert.match(result.errors.join("\n"), /Duplicate companion executable path: bin\/helper/);
+});
+
 test("init creates a valid TypeScript plugin skeleton", async (context) => {
   const root = await mkdtemp(path.join(tmpdir(), "netcatty-plugin-init-"));
   context.after(() => rm(root, { recursive: true, force: true }));
