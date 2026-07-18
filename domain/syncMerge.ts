@@ -257,11 +257,20 @@ function isIdArray(arr: unknown[]): boolean {
   return arr.length > 0 && typeof arr[0] === 'object' && arr[0] !== null && 'id' in arr[0];
 }
 
+/** Treat an explicit empty object as a reset marker during the first cloud merge. */
+function isEmptyPlainObject(value: unknown): value is Record<string, never> {
+  return value !== null &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    Object.keys(value).length === 0;
+}
+
 /** Recursively merge two plain objects against a base using three-way logic. */
 function mergeSettingsDeep(
   base: Record<string, unknown>,
   local: Record<string, unknown>,
   remote: Record<string, unknown>,
+  preferRemoteOnConflict: boolean,
 ): Record<string, unknown> {
   const allKeys = new Set([
     ...Object.keys(base),
@@ -289,11 +298,28 @@ function mergeSettingsDeep(
         typeof lVal === 'object' && !Array.isArray(lVal) &&
         typeof rVal === 'object' && !Array.isArray(rVal)
       ) {
-        merged[key] = mergeSettingsDeep(
-          (bVal && typeof bVal === 'object' && !Array.isArray(bVal) ? bVal : {}) as Record<string, unknown>,
-          lVal as Record<string, unknown>,
-          rVal as Record<string, unknown>,
+        merged[key] = preferRemoteOnConflict && isEmptyPlainObject(rVal)
+          ? rVal
+          : mergeSettingsDeep(
+            (bVal && typeof bVal === 'object' && !Array.isArray(bVal) ? bVal : {}) as Record<string, unknown>,
+            lVal as Record<string, unknown>,
+            rVal as Record<string, unknown>,
+            preferRemoteOnConflict,
+          );
+      } else if (
+        preferRemoteOnConflict &&
+        Array.isArray(lVal) && Array.isArray(rVal) &&
+        (isIdArray(lVal) || isIdArray(rVal) || isIdArray(Array.isArray(bVal) ? bVal as unknown[] : []))
+      ) {
+        const bArr = Array.isArray(bVal) ? bVal as Array<{ id: string }> : [];
+        const result = mergeEntityArrays(
+          bArr,
+          rVal as Array<{ id: string }>,
+          lVal as Array<{ id: string }>,
         );
+        merged[key] = result.merged;
+      } else if (preferRemoteOnConflict && rVal !== undefined) {
+        merged[key] = rVal;
       } else if (lVal !== undefined) {
         merged[key] = lVal;
       }
@@ -306,6 +332,7 @@ function mergeSettings(
   base: SettingsObj | undefined,
   local: SettingsObj | undefined,
   remote: SettingsObj | undefined,
+  preferRemoteOnConflict: boolean,
 ): SettingsObj | undefined {
   if (!local && !remote) return undefined;
   if (!local) return remote;
@@ -341,19 +368,30 @@ function mergeSettings(
         typeof lVal === 'object' && !Array.isArray(lVal) &&
         typeof rVal === 'object' && !Array.isArray(rVal)
       ) {
-        merged[key] = mergeSettingsDeep(
-          (bVal && typeof bVal === 'object' && !Array.isArray(bVal) ? bVal : {}) as Record<string, unknown>,
-          lVal as Record<string, unknown>,
-          rVal as Record<string, unknown>,
-        );
+        merged[key] = preferRemoteOnConflict && isEmptyPlainObject(rVal)
+          ? rVal
+          : mergeSettingsDeep(
+            (bVal && typeof bVal === 'object' && !Array.isArray(bVal) ? bVal : {}) as Record<string, unknown>,
+            lVal as Record<string, unknown>,
+            rVal as Record<string, unknown>,
+            preferRemoteOnConflict,
+          );
       } else if (
         Array.isArray(lVal) && Array.isArray(rVal) &&
         (isIdArray(lVal) || isIdArray(rVal) || isIdArray(Array.isArray(bVal) ? bVal as unknown[] : []))
       ) {
         // Array of objects with `id` (e.g. customTerminalThemes) — entity merge
         const bArr = Array.isArray(bVal) ? bVal as Array<{ id: string }> : [];
-        const result = mergeEntityArrays(bArr, lVal as Array<{ id: string }>, rVal as Array<{ id: string }>);
+        const preferred = preferRemoteOnConflict ? rVal : lVal;
+        const other = preferRemoteOnConflict ? lVal : rVal;
+        const result = mergeEntityArrays(
+          bArr,
+          preferred as Array<{ id: string }>,
+          other as Array<{ id: string }>,
+        );
         merged[key] = result.merged;
+      } else if (preferRemoteOnConflict && rVal !== undefined) {
+        merged[key] = rVal;
       } else if (lVal !== undefined) {
         merged[key] = lVal;
       }
@@ -488,7 +526,19 @@ export function mergeSyncPayloads(
   );
 
   // Merge settings
-  const settings = mergeSettings(b.settings, local.settings, remote.settings);
+  // With no trusted base, the remote payload represents the established
+  // cloud replica while a newly installed client has already persisted its
+  // initial defaults. Treating both as additions and preferring local would
+  // keep those defaults and make settings appear not to sync at all. Prefer
+  // the cloud value only for same-field conflicts on this first merge; fields
+  // present on just one side are still preserved. Once a base exists, retain
+  // the existing local-wins three-way conflict policy.
+  const settings = mergeSettings(
+    b.settings,
+    local.settings,
+    remote.settings,
+    base === null,
+  );
 
   // Deduplicate global SFTP bookmarks by path (IDs are random per device)
   if (settings?.sftpGlobalBookmarks && settings.sftpGlobalBookmarks.length > 0) {

@@ -257,6 +257,167 @@ test("mergeSyncPayloads carries deletion records forward after applying a tombst
   }]);
 });
 
+test("mergeSyncPayloads adopts cloud settings on the first merge without a base", () => {
+  const result = mergeSyncPayloads(
+    null,
+    payload({
+      settings: {
+        theme: "dark",
+        terminalFontSize: 14,
+        terminalSettings: {
+          cursorBlink: true,
+          copyOnSelect: false,
+        },
+      },
+    }),
+    payload({
+      settings: {
+        theme: "light",
+        terminalFontSize: 18,
+        terminalSettings: {
+          cursorBlink: false,
+          copyOnSelect: true,
+        },
+      },
+    }),
+  );
+
+  assert.deepEqual(result.payload.settings, {
+    theme: "light",
+    terminalFontSize: 18,
+    terminalSettings: {
+      cursorBlink: false,
+      copyOnSelect: true,
+    },
+  });
+});
+
+test("mergeSyncPayloads preserves one-sided settings on the first merge", () => {
+  const result = mergeSyncPayloads(
+    null,
+    payload({
+      settings: {
+        customCSS: ".terminal { opacity: 0.9; }",
+        terminalSettings: { copyOnSelect: true },
+      },
+    }),
+    payload({
+      settings: {
+        theme: "system",
+        terminalSettings: { cursorBlink: false },
+      },
+    }),
+  );
+
+  assert.deepEqual(result.payload.settings, {
+    customCSS: ".terminal { opacity: 0.9; }",
+    theme: "system",
+    terminalSettings: {
+      copyOnSelect: true,
+      cursorBlink: false,
+    },
+  });
+});
+
+test("mergeSyncPayloads honors empty cloud setting maps as resets on the first merge", () => {
+  const result = mergeSyncPayloads(
+    null,
+    payload({
+      settings: {
+        customKeyBindings: {
+          copy: { mac: "meta+c", pc: "ctrl+c" },
+        },
+        ai: {
+          agentModelMap: { codex: "gpt-local" },
+          agentProviderMap: { codex: "openai-local" },
+          activeModelId: "local-model",
+        },
+      },
+    }),
+    payload({
+      settings: {
+        customKeyBindings: {},
+        ai: {
+          agentModelMap: {},
+          agentProviderMap: {},
+          activeProviderId: "cloud-provider",
+        },
+      },
+    }),
+  );
+
+  assert.deepEqual(result.payload.settings, {
+    customKeyBindings: {},
+    ai: {
+      agentModelMap: {},
+      agentProviderMap: {},
+      activeModelId: "local-model",
+      activeProviderId: "cloud-provider",
+    },
+  });
+});
+
+test("mergeSyncPayloads retains unique nested setting entries while cloud wins duplicate ids", () => {
+  const result = mergeSyncPayloads(
+    null,
+    payload({
+      settings: {
+        ai: {
+          providers: [
+            { id: "shared", name: "Local shared" },
+            { id: "local-only", name: "Local only" },
+          ],
+        },
+      },
+    }),
+    payload({
+      settings: {
+        ai: {
+          providers: [
+            { id: "shared", name: "Cloud shared" },
+            { id: "cloud-only", name: "Cloud only" },
+          ],
+        },
+      },
+    }),
+  );
+
+  assert.deepEqual(result.payload.settings?.ai?.providers, [
+    { id: "shared", name: "Cloud shared" },
+    { id: "cloud-only", name: "Cloud only" },
+    { id: "local-only", name: "Local only" },
+  ]);
+});
+
+test("mergeSyncPayloads keeps local settings conflict policy when a base exists", () => {
+  const base = payload({
+    settings: {
+      theme: "system",
+      terminalSettings: { cursorBlink: true },
+    },
+  });
+  const result = mergeSyncPayloads(
+    base,
+    payload({
+      settings: {
+        theme: "dark",
+        terminalSettings: { cursorBlink: false },
+      },
+    }),
+    payload({
+      settings: {
+        theme: "light",
+        terminalSettings: { cursorBlink: true },
+      },
+    }),
+  );
+
+  assert.deepEqual(result.payload.settings, {
+    theme: "dark",
+    terminalSettings: { cursorBlink: false },
+  });
+});
+
 test("mergeSyncPayloads treats missing optional arrays as legacy payloads, not deletions", () => {
   const identity = {
     id: "identity-1",
