@@ -319,6 +319,44 @@ test("mergeSyncPayloads preserves one-sided settings on the first merge", () => 
   });
 });
 
+test("mergeSyncPayloads honors empty cloud setting maps as resets on the first merge", () => {
+  const result = mergeSyncPayloads(
+    null,
+    payload({
+      settings: {
+        customKeyBindings: {
+          copy: { mac: "meta+c", pc: "ctrl+c" },
+        },
+        ai: {
+          agentModelMap: { codex: "gpt-local" },
+          agentProviderMap: { codex: "openai-local" },
+          activeModelId: "local-model",
+        },
+      },
+    }),
+    payload({
+      settings: {
+        customKeyBindings: {},
+        ai: {
+          agentModelMap: {},
+          agentProviderMap: {},
+          activeProviderId: "cloud-provider",
+        },
+      },
+    }),
+  );
+
+  assert.deepEqual(result.payload.settings, {
+    customKeyBindings: {},
+    ai: {
+      agentModelMap: {},
+      agentProviderMap: {},
+      activeModelId: "local-model",
+      activeProviderId: "cloud-provider",
+    },
+  });
+});
+
 test("mergeSyncPayloads retains unique nested setting entries while cloud wins duplicate ids", () => {
   const result = mergeSyncPayloads(
     null,

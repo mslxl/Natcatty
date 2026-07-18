@@ -257,6 +257,14 @@ function isIdArray(arr: unknown[]): boolean {
   return arr.length > 0 && typeof arr[0] === 'object' && arr[0] !== null && 'id' in arr[0];
 }
 
+/** Treat an explicit empty object as a reset marker during the first cloud merge. */
+function isEmptyPlainObject(value: unknown): value is Record<string, never> {
+  return value !== null &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    Object.keys(value).length === 0;
+}
+
 /** Recursively merge two plain objects against a base using three-way logic. */
 function mergeSettingsDeep(
   base: Record<string, unknown>,
@@ -290,12 +298,14 @@ function mergeSettingsDeep(
         typeof lVal === 'object' && !Array.isArray(lVal) &&
         typeof rVal === 'object' && !Array.isArray(rVal)
       ) {
-        merged[key] = mergeSettingsDeep(
-          (bVal && typeof bVal === 'object' && !Array.isArray(bVal) ? bVal : {}) as Record<string, unknown>,
-          lVal as Record<string, unknown>,
-          rVal as Record<string, unknown>,
-          preferRemoteOnConflict,
-        );
+        merged[key] = preferRemoteOnConflict && isEmptyPlainObject(rVal)
+          ? rVal
+          : mergeSettingsDeep(
+            (bVal && typeof bVal === 'object' && !Array.isArray(bVal) ? bVal : {}) as Record<string, unknown>,
+            lVal as Record<string, unknown>,
+            rVal as Record<string, unknown>,
+            preferRemoteOnConflict,
+          );
       } else if (
         preferRemoteOnConflict &&
         Array.isArray(lVal) && Array.isArray(rVal) &&
@@ -358,12 +368,14 @@ function mergeSettings(
         typeof lVal === 'object' && !Array.isArray(lVal) &&
         typeof rVal === 'object' && !Array.isArray(rVal)
       ) {
-        merged[key] = mergeSettingsDeep(
-          (bVal && typeof bVal === 'object' && !Array.isArray(bVal) ? bVal : {}) as Record<string, unknown>,
-          lVal as Record<string, unknown>,
-          rVal as Record<string, unknown>,
-          preferRemoteOnConflict,
-        );
+        merged[key] = preferRemoteOnConflict && isEmptyPlainObject(rVal)
+          ? rVal
+          : mergeSettingsDeep(
+            (bVal && typeof bVal === 'object' && !Array.isArray(bVal) ? bVal : {}) as Record<string, unknown>,
+            lVal as Record<string, unknown>,
+            rVal as Record<string, unknown>,
+            preferRemoteOnConflict,
+          );
       } else if (
         Array.isArray(lVal) && Array.isArray(rVal) &&
         (isIdArray(lVal) || isIdArray(rVal) || isIdArray(Array.isArray(bVal) ? bVal as unknown[] : []))
