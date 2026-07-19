@@ -19,7 +19,11 @@ const { PluginManager } = require("./pluginManager.cjs");
 const { PluginNetworkBroker } = require("./networkBroker.cjs");
 const { PluginPermissionEngine } = require("./permissionEngine.cjs");
 const { PluginProtocol } = require("./pluginProtocol.cjs");
-const { RuntimeSupervisor, assertStorageParams } = require("./runtimeSupervisor.cjs");
+const {
+  RuntimeSupervisor,
+  assertStorageParams,
+  resolveDefaultRuntimeKind,
+} = require("./runtimeSupervisor.cjs");
 const { PluginQuotaManager } = require("./quotaManager.cjs");
 const { registerSecurePluginCapabilities } = require("./secureCapabilities.cjs");
 const { PluginSecretStore } = require("./secretStore.cjs");
@@ -111,9 +115,7 @@ function createPluginHostService(options) {
     if (configuredRegistry && typeof configuredRegistry.then === "function") {
       throw new TypeError("Plugin host RPC registry configuration must be synchronous");
     }
-    const requestedRuntimeResolver = options.resolveRuntimeKind ?? (({ plugin }) => (
-      plugin.manifest.main.browser ? "browser" : "utility"
-    ));
+    const requestedRuntimeResolver = options.resolveRuntimeKind ?? resolveDefaultRuntimeKind;
     const resolveRuntimeKind = async (context) => {
       const kind = await requestedRuntimeResolver(context);
       if (

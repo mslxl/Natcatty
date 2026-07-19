@@ -80,7 +80,8 @@ authority. Phase 9 must also require a verified publisher principal before the
 advanced path can be publicly enabled.
 
 Required resource-scoped permissions (`network`, filesystem read/write, and
-companion execution) must declare non-empty activation-time resource bounds.
+companion execution) must declare non-empty activation-time resource bounds;
+the all-resources `*` wildcard is not a valid bound.
 The string shorthand remains available only for optional declarations, whose
 concrete resource is approved on first use. A package update therefore cannot
 activate first and defer a newly required resource decision until later.
@@ -88,6 +89,8 @@ activate first and defer a newly required resource decision until later.
 Native companions are an advanced-runtime capability. Their manifests require
 a Node utility entrypoint plus `runtime.advanced`, and `companion.start` rejects
 browser runtime identities before permission middleware can persist a grant.
+The first-party placement path selects the utility runtime whenever companions
+are declared, including manifests that also provide a browser entrypoint.
 The supervisor repeats the placement check immediately before reserving or
 spawning a process. Phase 9 adds verified publisher trust to this same boundary.
 

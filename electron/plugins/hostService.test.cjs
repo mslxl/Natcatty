@@ -139,6 +139,54 @@ test("runtime trust placement precedes required and advanced permission prompts"
   ]);
 });
 
+test("first-party placement selects the utility runtime for companion manifests", async (context) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-plugin-host-service-"));
+  context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const requested = [];
+  const service = createPluginHostService({
+    ...createOptions(root),
+    requestPermissionDecision: async (request) => {
+      requested.push(request.permission);
+      return { requestId: request.requestId, decision: "allow", scope: "application" };
+    },
+  });
+  context.after(() => service.manager.shutdown());
+  const manifest = {
+    manifestVersion: 1,
+    id: "com.example.companion-placement",
+    name: "companion-placement",
+    version: "1.0.0",
+    publisher: "example",
+    engines: { netcatty: ">=0.0.0", api: ">=0.1.0-internal <0.2.0" },
+    main: { browser: "browser.js", node: "node.js" },
+    permissions: {
+      required: [
+        "runtime.advanced",
+        {
+          permission: "companion.execute",
+          resources: ["com.example.companion-placement.helper"],
+        },
+      ],
+    },
+    companionExecutables: [{
+      id: "com.example.companion-placement.helper",
+      variants: [{
+        path: "bin/helper",
+        platforms: [`${process.platform}-${process.arch}`],
+        sha256: "0".repeat(64),
+      }],
+    }],
+  };
+
+  assert.equal(await service.runtimeSupervisor.resolveRuntimeKind({
+    plugin: { id: manifest.id, activeVersion: manifest.version, manifest },
+    availableKinds: ["browser", "utility"],
+    securityPrincipal: "unsigned-package:companion-placement",
+    signal: new AbortController().signal,
+  }), "utility");
+  assert.deepEqual(requested, ["companion.execute", "runtime.advanced"]);
+});
+
 test("secure host methods fail closed without an approver while public logging remains available", async (context) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-plugin-host-service-"));
   context.after(() => fs.rmSync(root, { recursive: true, force: true }));

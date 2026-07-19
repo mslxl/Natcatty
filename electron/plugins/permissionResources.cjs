@@ -6,12 +6,9 @@ const path = require("node:path");
 const contractSchema = require("./generated/plugin-contract.schema.json");
 
 const PLUGIN_PERMISSIONS = new Set(contractSchema.$defs.PluginPermission.enum);
-const RESOURCE_SCOPED_PERMISSIONS = new Set([
-  "network",
-  "filesystem.read",
-  "filesystem.write",
-  "companion.execute",
-]);
+const RESOURCE_SCOPED_PERMISSIONS = new Set(
+  contractSchema.$defs.ResourceScopedPermission.enum,
+);
 
 function assertPluginPermission(permission) {
   if (!PLUGIN_PERMISSIONS.has(permission)) {
@@ -115,8 +112,13 @@ function normalizePermissionDeclarations(manifest) {
         : [...new Set((value.resources ?? []).map((resource) => (
             canonicalizePermissionResource(permission, resource)
           )))].sort();
-      if (required && RESOURCE_SCOPED_PERMISSIONS.has(permission) && resources.length === 0) {
-        throw new TypeError(`Required permission ${permission} must declare resources`);
+      if (required && RESOURCE_SCOPED_PERMISSIONS.has(permission)) {
+        if (resources.length === 0) {
+          throw new TypeError(`Required permission ${permission} must declare resources`);
+        }
+        if (resources.includes("*")) {
+          throw new TypeError(`Required permission ${permission} must not use wildcard resources`);
+        }
       }
       declarations.set(permission, Object.freeze({
         permission,

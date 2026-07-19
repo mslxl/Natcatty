@@ -42,6 +42,11 @@ function freezeJson(value) {
   return Object.freeze(value);
 }
 
+function resolveDefaultRuntimeKind({ plugin }) {
+  if (plugin.manifest.companionExecutables?.length) return "utility";
+  return plugin.manifest.main.browser ? "browser" : "utility";
+}
+
 class RuntimeSupervisor {
   constructor(options) {
     this.electron = options.electron;
@@ -62,9 +67,7 @@ class RuntimeSupervisor {
     if (this.runtimeMessageGuard != null && typeof this.runtimeMessageGuard !== "function") {
       throw new TypeError("Plugin runtime message guard must be a function");
     }
-    this.resolveRuntimeKind = options.resolveRuntimeKind ?? (({ plugin }) => (
-      plugin.manifest.main.browser ? "browser" : "utility"
-    ));
+    this.resolveRuntimeKind = options.resolveRuntimeKind ?? resolveDefaultRuntimeKind;
     this.resolveSecurityPrincipal = options.resolveSecurityPrincipal
       ?? (({ plugin }) => defaultSecurityPrincipal(plugin.manifest, plugin.archiveSha256));
     if (typeof this.resolveRuntimeKind !== "function" || typeof this.resolveSecurityPrincipal !== "function") {
@@ -631,4 +634,9 @@ class RuntimeSupervisor {
   }
 }
 
-module.exports = { RuntimeSupervisor, assertStorageParams, freezeJson };
+module.exports = {
+  RuntimeSupervisor,
+  assertStorageParams,
+  freezeJson,
+  resolveDefaultRuntimeKind,
+};

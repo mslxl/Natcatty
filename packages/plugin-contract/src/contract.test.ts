@@ -68,6 +68,11 @@ test("required resource-scoped permissions declare activation-time bounds", () =
     ["companion.execute", "com.example.contract-test.helper"],
   ] as const;
   assert.deepEqual(
+    schema.$defs.ResourceScopedPermission.enum,
+    resourceScoped.map(([permission]) => permission),
+    "the resource-scoped permission catalog must track every bounded permission",
+  );
+  assert.deepEqual(
     schema.$defs.NonResourceScopedPermission.enum,
     schema.$defs.PluginPermission.enum.filter(
       (permission: string) => !resourceScoped.some(([scoped]) => scoped === permission),
@@ -83,6 +88,10 @@ test("required resource-scoped permissions declare activation-time bounds", () =
       ...validManifest,
       permissions: { required: [{ permission, resources: [resource] }] },
     }), true, JSON.stringify(validate.errors));
+    assert.equal(validate({
+      ...validManifest,
+      permissions: { required: [{ permission, resources: ["*"] }] },
+    }), false, `${permission} must not accept a wildcard activation bound`);
     assert.equal(validate({
       ...validManifest,
       permissions: { optional: [permission] },

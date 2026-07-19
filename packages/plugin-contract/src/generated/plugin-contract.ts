@@ -4,6 +4,8 @@
 
 export type ActivationEvent = "onStartupFinished" | `onCommand:${ContributionId}` | `onView:${ContributionId}` | `onProvider:${ContributionId}`;
 
+export type BoundedPermissionResource = string;
+
 export type CommandContribution = {
   id: ContributionId;
   title: LocalizedText;
@@ -261,7 +263,15 @@ export type ProviderResult = ({
 
 export type RelativePackagePath = string;
 
-export type RequiredPermissionDeclaration = (NonResourceScopedPermission) | (PermissionResourceDeclaration);
+export type RequiredPermissionDeclaration = (NonResourceScopedPermission) | (RequiredPermissionResourceDeclaration);
+
+export type RequiredPermissionResourceDeclaration = {
+  permission: ResourceScopedPermission;
+  resources: Array<BoundedPermissionResource>;
+  reason?: string;
+};
+
+export type ResourceScopedPermission = "network" | "filesystem.read" | "filesystem.write" | "companion.execute";
 
 export type RpcCancel = {
   jsonrpc: "2.0";

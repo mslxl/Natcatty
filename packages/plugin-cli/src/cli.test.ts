@@ -238,6 +238,12 @@ test("resource-scoped required permissions must declare activation-time bounds",
     }));
     assert.equal(bounded.valid, true, bounded.errors.join("\n"));
 
+    const wildcard = validateManifestValue(manifest({
+      permissions: { required: [{ permission, resources: ["*"] }] },
+    }));
+    assert.equal(wildcard.valid, false, permission);
+    assert.match(wildcard.errors.join("\n"), /must not use the wildcard resource/u);
+
     const optional = validateManifestValue(manifest({
       permissions: { optional: [permission] },
     }));
@@ -252,9 +258,9 @@ test("manifest validation applies the runtime resource limit for each permission
     ["companion.execute", 193, 192],
   ] as const) {
     const result = validateManifestValue(manifest({
-      permissions: {
-        required: [{ permission, resources: ["x".repeat(length)] }],
-      },
+      permissions: permission === "storage"
+        ? { optional: [{ permission, resources: ["x".repeat(length)] }] }
+        : { required: [{ permission, resources: ["x".repeat(length)] }] },
     }));
     assert.equal(result.valid, false);
     assert.match(

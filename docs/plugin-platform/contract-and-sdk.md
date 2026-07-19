@@ -104,8 +104,10 @@ while macOS, Linux, and Windows native binaries remain distinct. A companion
 cannot declare the same target platform twice, and no two companion variants
 may claim the same package path. A manifest with companions must also provide a
 Node utility entrypoint and declare both `runtime.advanced` and a resource-bound
-`companion.execute` permission. An ordinary browser placement cannot authorize
-or launch a companion.
+`companion.execute` permission. The first-party placement resolver selects the
+utility entrypoint for companion manifests even when a browser entrypoint is
+also present. An ordinary browser placement cannot authorize or launch a
+companion.
 
 ## Contribution identity
 

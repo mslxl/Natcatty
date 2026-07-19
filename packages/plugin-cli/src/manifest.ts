@@ -32,6 +32,9 @@ interface PluginContractSchema extends Record<string, unknown> {
         readonly maxNodes: number;
       };
     };
+    readonly ResourceScopedPermission: {
+      readonly enum: readonly PluginPermission[];
+    };
   };
 }
 
@@ -140,12 +143,9 @@ function permissionResourceLimit(permission: PluginPermission): number {
   return 2_048;
 }
 
-const resourceScopedPermissions = new Set<PluginPermission>([
-  "network",
-  "filesystem.read",
-  "filesystem.write",
-  "companion.execute",
-]);
+const resourceScopedPermissions = new Set<PluginPermission>(
+  contractSchema.$defs.ResourceScopedPermission.enum,
+);
 
 function validateRequiredPermissionBounds(value: unknown): string[] {
   if (!value || typeof value !== "object" || Array.isArray(value)) return [];
@@ -153,11 +153,22 @@ function validateRequiredPermissionBounds(value: unknown): string[] {
   if (!permissions || typeof permissions !== "object" || Array.isArray(permissions)) return [];
   const required = (permissions as { required?: unknown }).required;
   if (!Array.isArray(required)) return [];
-  return required.flatMap((declaration) => (
-    typeof declaration === "string" && resourceScopedPermissions.has(declaration as PluginPermission)
-      ? [`Required permission ${declaration} must declare explicit resources`]
-      : []
-  ));
+  return required.flatMap((declaration) => {
+    if (typeof declaration === "string") {
+      return resourceScopedPermissions.has(declaration as PluginPermission)
+        ? [`Required permission ${declaration} must declare explicit resources`]
+        : [];
+    }
+    if (!declaration || typeof declaration !== "object" || Array.isArray(declaration)) return [];
+    const permission = (declaration as { permission?: unknown }).permission;
+    const resources = (declaration as { resources?: unknown }).resources;
+    return typeof permission === "string"
+      && resourceScopedPermissions.has(permission as PluginPermission)
+      && Array.isArray(resources)
+      && resources.includes("*")
+      ? [`Required permission ${permission} must not use the wildcard resource`]
+      : [];
+  });
 }
 
 function validatePermissionResourceLimits(manifest: PluginManifest): string[] {

@@ -447,7 +447,7 @@ test("session grants require a host-owned session identifier", async (context) =
   database.close();
 });
 
-test("required preflight rejects resource-scoped permissions without activation bounds", async (context) => {
+test("required preflight rejects missing or wildcard resource-scoped activation bounds", async (context) => {
   const database = createDatabase(context);
   const requested = [];
   const engine = new PluginPermissionEngine({
@@ -463,6 +463,12 @@ test("required preflight rejects resource-scoped permissions without activation 
     activeVersion: pluginManifest.version,
     manifest: pluginManifest,
   }), /must declare resources/u);
+  const wildcardManifest = manifest({ required: [{ permission: "network", resources: ["*"] }] });
+  await assert.rejects(engine.authorizeRequired({
+    id: wildcardManifest.id,
+    activeVersion: wildcardManifest.version,
+    manifest: wildcardManifest,
+  }), /must not use wildcard resources/u);
   assert.deepEqual(requested, []);
   database.close();
 });
