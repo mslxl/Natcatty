@@ -67,9 +67,14 @@ function createFixture(context, runtimeFactory, supervisorOptions = {}) {
 
 test("supervisor prefers the ordinary browser runtime and enforces negotiated identity", async (context) => {
   const calls = [];
+  const initialEnvironment = { locale: "en", theme: "light", reducedMotion: false, highContrast: false };
+  const activationEnvironment = { locale: "zh-CN", theme: "dark", reducedMotion: true, highContrast: true };
+  let environment = initialEnvironment;
   const fixture = createFixture(context, () => ({
-    async start(config) {
+    async start(config, options) {
       calls.push(["start", config]);
+      environment = activationEnvironment;
+      assert.deepEqual(options.getActivationEnvironment(), activationEnvironment);
       return {
         pluginId: config.pluginId,
         pluginVersion: config.pluginVersion,
@@ -78,7 +83,13 @@ test("supervisor prefers the ordinary browser runtime and enforces negotiated id
       };
     },
     async stop() { calls.push(["stop"]); },
-  }));
+  }), {
+    getInitialEnvironment(identity) {
+      assert.equal(identity.pluginId, "com.example.runtime-test");
+      assert.match(identity.runtimeId, /^[0-9a-f-]+$/u);
+      return environment;
+    },
+  });
 
   const started = await fixture.supervisor.start(fixture.manifest.id);
   assert.deepEqual(started, fixture.supervisor.getRuntimeIdentity(fixture.manifest.id));
@@ -88,6 +99,8 @@ test("supervisor prefers the ordinary browser runtime and enforces negotiated id
   assert.equal(fixture.runtimeOptions[0].plugin.manifest.main.browser, "dist/browser.js");
   assert.equal(fixture.database.getActivePlugin(fixture.manifest.id).runtime.kind, "browser");
   assert.equal(fixture.database.getActivePlugin(fixture.manifest.id).runtime.status, "running");
+  assert.deepEqual(calls[0][1].environment, initialEnvironment);
+  assert.equal(Object.isFrozen(calls[0][1].environment), true);
   await fixture.supervisor.stop(fixture.manifest.id);
   assert.deepEqual(calls.map(([kind]) => kind), ["start", "stop"]);
 });

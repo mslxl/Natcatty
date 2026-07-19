@@ -383,7 +383,9 @@ export async function startPluginRuntime({ port, config, loadPlugin }) {
     commandHandlers: new Map(),
     settingsChanged: createEmitter(),
     environmentChanged: createEmitter(),
-    environment: {},
+    environment: config.environment && typeof config.environment === "object" && !Array.isArray(config.environment)
+      ? { ...config.environment }
+      : {},
     viewMessages: new Map(),
   };
   const pluginModule = await loadPlugin(config.entryUrl);
@@ -406,6 +408,10 @@ export async function startPluginRuntime({ port, config, loadPlugin }) {
     if (message.method === "plugin.activate") {
       if (!context) throw new PluginError("failed_precondition", "Plugin must be initialized first");
       if (!activated) {
+        if (message.params?.environment && typeof message.params.environment === "object"
+          && !Array.isArray(message.params.environment)) {
+          runtimeApi.environment = { ...message.params.environment };
+        }
         const disposable = await plugin.activate(context);
         if (disposable && typeof disposable.dispose === "function") context.subscriptions.add(disposable);
         activated = true;

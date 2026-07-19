@@ -178,6 +178,7 @@ function createPluginHostService(options) {
       resolveRuntimeKind,
       resolveSecurityPrincipal: options.resolveSecurityPrincipal,
       runtimeMessageGuard,
+      getInitialEnvironment: () => contributionService.getEnvironment(),
       runtimeResourceMonitor: quotaManager,
       runtimeCleanup: async (identity) => {
         leaseStore.revokeRuntime(identity.runtimeId);

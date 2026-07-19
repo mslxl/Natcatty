@@ -47,7 +47,8 @@ class PluginViewHost {
       }
     }));
     this.subscriptions.push(this.contributionService.onDidChange?.((event) => {
-      if (!["plugin-disabled", "runtime-quarantined"].includes(event.reason) || !event.pluginId) return;
+      if (!["plugin-disabled", "runtime-stopped", "runtime-error", "runtime-quarantined"].includes(event.reason)
+        || !event.pluginId) return;
       for (const instance of [...this.instances.values()]) {
         if (instance.pluginId === event.pluginId) void this.close(instance.instanceId);
       }

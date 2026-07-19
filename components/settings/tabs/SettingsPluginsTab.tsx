@@ -1,6 +1,7 @@
 import { ArrowDown, ArrowUp, FolderOpen } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
 
+import { normalizePluginKeyboardEvent } from '../../../application/state/pluginKeybindings';
 import { usePluginContributions } from '../../../application/state/usePluginContributions';
 import { useI18n } from '../../../application/i18n/I18nProvider';
 import { Button } from '../../ui/button';
@@ -205,14 +206,8 @@ function PluginSettingField({
           disabled={saving}
           onKeyDown={(event) => {
             event.preventDefault();
-            if (["Control", "Shift", "Alt", "Meta"].includes(event.key)) return;
-            const key = [
-              event.metaKey ? 'meta' : '',
-              event.ctrlKey ? 'ctrl' : '',
-              event.altKey ? 'alt' : '',
-              event.shiftKey ? 'shift' : '',
-              event.key.toLowerCase(),
-            ].filter(Boolean).join('+');
+            const key = normalizePluginKeyboardEvent(event.nativeEvent);
+            if (!key) return;
             setValue(key);
             void save(key);
           }}

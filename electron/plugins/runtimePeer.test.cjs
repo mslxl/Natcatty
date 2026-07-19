@@ -230,12 +230,16 @@ test("runtime peer exposes contribution APIs and routes host UI events", async (
       netcattyVersion: "1.0.0",
       apiVersion: "0.1.0-internal",
       enabledFeatures: [],
+      environment: { locale: "en-GB", theme: "light", reducedMotion: false, highContrast: true },
     },
     async loadPlugin() {
       return {
         default: {
           async activate(context) {
             pluginContext = context;
+            assert.equal(context.environment.locale, "fr-FR");
+            assert.equal(context.environment.theme, "dark");
+            assert.equal(context.environment.highContrast, true);
             context.settings.onDidChange((event) => events.push(["settings", event.settingId]));
             context.environment.onDidChange((event) => events.push(["environment", event.locale, event.theme]));
             context.views.onDidReceiveMessage("com.example.ui.view", (message) => events.push(["view", message]));
@@ -261,7 +265,9 @@ test("runtime peer exposes contribution APIs and routes host UI events", async (
     apiVersion: "0.1.0-internal",
     supportedFeatures: [],
   });
-  await host.request("plugin.activate", {});
+  await host.request("plugin.activate", {
+    environment: { locale: "fr-FR", theme: "dark", reducedMotion: true, highContrast: true },
+  });
   assert.deepEqual(await host.request("plugin.command.execute", {
     command: "com.example.ui.hello",
     args: { name: "Catty" },

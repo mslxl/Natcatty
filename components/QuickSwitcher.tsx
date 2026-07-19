@@ -33,32 +33,34 @@ export function buildPluginPaletteItems(
   trimmedQuery: string,
 ): QuickSwitcherItem[] {
   return plugins.flatMap((plugin) => {
-    const menuByCommand = new Map(plugin.menus
+    const commandById = new Map(plugin.commands.map((command) => [command.id, command] as const));
+    const paletteMenus = plugin.menus
       .filter((menu) => menu.location === 'commandPalette' && menu.visible)
-      .map((menu) => [menu.command, menu] as const));
-    const commands: QuickSwitcherItem[] = plugin.commands
-      .filter((command) => menuByCommand.has(command.id))
-      .filter((command) => !trimmedQuery || matchesSearchQuery(
+      .sort((left, right) => (left.group ?? '').localeCompare(right.group ?? '')
+        || (left.order ?? 0) - (right.order ?? 0)
+        || left.id.localeCompare(right.id));
+    const commands: QuickSwitcherItem[] = paletteMenus
+      .map((menu) => ({ menu, command: commandById.get(menu.command) }))
+      .filter((entry): entry is typeof entry & { command: NonNullable<typeof entry.command> } => Boolean(entry.command))
+      .filter(({ menu, command }) => !trimmedQuery || matchesSearchQuery(
         trimmedQuery,
-        menuByCommand.get(command.id)?.title ?? command.title,
+        menu.title ?? command.title,
         command.category ?? '',
         plugin.displayName,
       ))
-      .map((command) => {
-        const menu = menuByCommand.get(command.id)!;
-        return {
-          type: 'plugin-command',
-          id: command.id,
-          title: menu.title,
-          pluginTitle: plugin.displayName,
-          enabled: command.enabled && menu.enabled,
-          ...(menu.alt ? { altCommand: menu.alt } : {}),
-          ...(menu.shortcut ? { shortcut: menu.shortcut } : {}),
-        };
-      });
+      .map(({ command, menu }) => ({
+        type: 'plugin-command',
+        id: command.id,
+        title: menu.title,
+        pluginTitle: plugin.displayName,
+        enabled: command.enabled && menu.enabled,
+        ...(menu.alt ? { altCommand: menu.alt } : {}),
+        ...(menu.shortcut ? { shortcut: menu.shortcut } : {}),
+      }));
     const views: QuickSwitcherItem[] = plugin.views
       .filter((view) => view.visible)
       .filter((view) => !trimmedQuery || matchesSearchQuery(trimmedQuery, view.title, plugin.displayName, view.id))
+      .sort((left, right) => (left.order ?? 0) - (right.order ?? 0) || left.id.localeCompare(right.id))
       .map((view) => ({
         type: 'plugin-view',
         id: view.id,

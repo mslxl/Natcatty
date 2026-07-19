@@ -199,6 +199,35 @@ test("runtime quarantine clears owned Context Keys and publishes contribution re
   assert.equal(snapshot.plugins[0].menus[0].visible, false);
 });
 
+test("every terminal runtime state clears runtime-owned Context Keys", async (context) => {
+  const pluginManifest = manifest();
+  const { service } = setup(context, pluginManifest);
+  const registry = new PluginHostRpcRegistry();
+  service.registerRpcCapabilities(registry);
+  const routes = registry.createRoutes({
+    pluginId: pluginManifest.id,
+    pluginVersion: pluginManifest.version,
+    runtimeId: "runtime-terminal",
+    runtimeKind: "browser",
+    manifest: pluginManifest,
+  });
+  const changes = [];
+  service.onDidChange((event) => changes.push(event));
+  for (const status of ["stopped", "error"]) {
+    await routes.requestHandlers["contextKeys.set"]({
+      key: `${pluginManifest.id}.ready`,
+      value: true,
+    }, { signal: new AbortController().signal });
+    assert.equal(service.snapshot().plugins[0].commands[0].enabled, true);
+
+    service.onRuntimeStateChanged({ pluginId: pluginManifest.id, status });
+
+    assert.equal(changes.at(-1).reason, `runtime-${status}`);
+    assert.equal(changes.at(-1).pluginId, pluginManifest.id);
+    assert.equal(service.snapshot().plugins[0].commands[0].enabled, false);
+  }
+});
+
 test("menu and keybinding enablement include the target command state", async (context) => {
   const pluginManifest = manifest();
   pluginManifest.contributes.menus[0].enablement = `${pluginManifest.id}.paletteEnabled`;
@@ -286,6 +315,7 @@ test("lazy activation receives the latest host environment before its first cont
   const { service } = setup(context, pluginManifest, { runtimeSupervisor });
   const environment = { locale: "zh-CN", theme: "dark", reducedMotion: true, highContrast: false };
   await service.setEnvironment(environment);
+  assert.deepEqual(service.getEnvironment(), environment);
   assert.deepEqual(calls, []);
 
   await service.activateView(`${pluginManifest.id}.view`);
@@ -400,11 +430,36 @@ test("Provider contributions expose a PR 5 lazy activation seam", async (context
   const pluginManifest = manifest("com.example.provider", ["onProvider:com.example.provider.completion"]);
   pluginManifest.contributes.providers = [{
     id: "com.example.provider.completion",
-    label: "Completion",
+    label: { en: "Completion", "zh-CN": "补全" },
+    description: { en: "Complete input", "zh-CN": "补全输入" },
     kind: "terminal.completion",
+  }, {
+    id: "com.example.provider.connection",
+    label: "Connection",
+    kind: "connection",
   }];
-  const { calls, service } = setup(context, pluginManifest);
+  const calls = [];
+  const identity = { pluginId: pluginManifest.id, runtimeId: "runtime-provider-1" };
+  const { service } = setup(context, pluginManifest, {
+    runtimeSupervisor: {
+      async start(pluginId) { calls.push(`start:${pluginId}`); return identity; },
+      async notify() {},
+      async request() { return null; },
+    },
+  });
+  assert.deepEqual(service.listProviders({ kind: "terminal.completion" }), [{
+    pluginId: pluginManifest.id,
+    pluginVersion: pluginManifest.version,
+    pluginDisplayName: "贡献",
+    provider: {
+      id: "com.example.provider.completion",
+      label: "补全",
+      description: "补全输入",
+      kind: "terminal.completion",
+    },
+  }]);
   const result = await service.activateProvider("com.example.provider.completion");
   assert.equal(result.provider.id, "com.example.provider.completion");
+  assert.deepEqual(result.identity, identity);
   assert.deepEqual(calls, ["start:com.example.provider"]);
 });

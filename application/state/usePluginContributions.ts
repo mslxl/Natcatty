@@ -6,6 +6,18 @@ const EMPTY_SNAPSHOT: NetcattyPluginContributionSnapshot = Object.freeze({
   plugins: Object.freeze([]),
 });
 
+export function failClosedPluginContributionLoad(cause: unknown): {
+  available: false;
+  snapshot: NetcattyPluginContributionSnapshot;
+  error: Error;
+} {
+  return {
+    available: false,
+    snapshot: EMPTY_SNAPSHOT,
+    error: cause instanceof Error ? cause : new Error(String(cause)),
+  };
+}
+
 export function comparePluginMenus(
   left: NetcattyPluginContributionSnapshot['plugins'][number]['menus'][number],
   right: NetcattyPluginContributionSnapshot['plugins'][number]['menus'][number],
@@ -60,8 +72,10 @@ export function usePluginContributions(
       setSnapshot(await bridge.getPluginContributions(JSON.parse(queryKey)));
       setError(null);
     } catch (cause) {
-      setAvailable(false);
-      setError(cause instanceof Error ? cause : new Error(String(cause)));
+      const failure = failClosedPluginContributionLoad(cause);
+      setAvailable(failure.available);
+      setSnapshot(failure.snapshot);
+      setError(failure.error);
     } finally {
       setLoading(false);
     }

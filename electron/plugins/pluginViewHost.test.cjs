@@ -205,20 +205,22 @@ test("view setup failures dispose protocol registrations before exposing an inst
   assert.equal(value.views.length, 0);
 });
 
-test("runtime quarantine closes every open view owned by the plugin", async () => {
-  const value = fixture();
-  const { owner, sender } = value.createOwner();
-  await value.host.open({
-    viewId: "com.example.view.panel",
-    scopeId: "window-1",
-    instanceId: "view-quarantined",
-    bounds: { x: 0, y: 0, width: 320, height: 240 },
-  }, sender);
-  assert.equal(owner.children.length, 1);
+test("terminal runtime states close every open view owned by the plugin", async () => {
+  for (const reason of ["runtime-stopped", "runtime-error", "runtime-quarantined"]) {
+    const value = fixture();
+    const { owner, sender } = value.createOwner();
+    await value.host.open({
+      viewId: "com.example.view.panel",
+      scopeId: "window-1",
+      instanceId: `view-${reason}`,
+      bounds: { x: 0, y: 0, width: 320, height: 240 },
+    }, sender);
+    assert.equal(owner.children.length, 1);
 
-  value.changeListener()({ reason: "runtime-quarantined", pluginId: "com.example.view" });
-  await new Promise((resolve) => setImmediate(resolve));
+    value.changeListener()({ reason, pluginId: "com.example.view" });
+    await new Promise((resolve) => setImmediate(resolve));
 
-  assert.equal(owner.children.length, 0);
-  assert.deepEqual(value.disposals.sort(), ["session", "view"]);
+    assert.equal(owner.children.length, 0);
+    assert.deepEqual(value.disposals.sort(), ["session", "view"]);
+  }
 });

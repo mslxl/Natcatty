@@ -16,6 +16,12 @@ Providers is first used. `onCommand:`, `onView:`, and `onProvider:` therefore
 share one idempotent supervisor boundary. Contribution IDs and plugin-created
 Context Keys must begin with the exact owning plugin ID.
 
+The Provider seam also exposes an immutable, localized enumeration independent
+of database internals and returns the current runtime identity after lazy
+activation. PR 5 can therefore build and retire terminal Provider registries
+without importing package-storage structures or guessing which activation owns
+an in-flight request.
+
 Disabling, replacing, or uninstalling a plugin first removes its contribution
 surface and closes its custom views, then stops the runtime. Background work
 lives in the runtime, not in a view, so closing one view does not stop an

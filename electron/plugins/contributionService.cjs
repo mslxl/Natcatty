@@ -260,9 +260,13 @@ class PluginContributionService {
   }
 
   onRuntimeStateChanged(event) {
-    if (event?.status !== "quarantined" || typeof event.pluginId !== "string") return;
+    if (!["stopped", "error", "quarantined"].includes(event?.status) || typeof event.pluginId !== "string") return;
     this.#clearRuntimeOwnedState(event.pluginId);
-    this.#emitChange("runtime-quarantined", event.pluginId);
+    this.#emitChange(`runtime-${event.status}`, event.pluginId);
+  }
+
+  getEnvironment() {
+    return this.environment;
   }
 
   #clearRuntimeOwnedState(pluginId) {
@@ -297,7 +301,7 @@ class PluginContributionService {
     }
     // Declared UI contributions are implicit lazy activation points. This keeps
     // manifest activationEvents backward compatible while avoiding eager start.
-    await this.#startPlugin(plugin.id);
+    return this.#startPlugin(plugin.id);
   }
 
   async #startPlugin(pluginId) {
@@ -345,8 +349,38 @@ class PluginContributionService {
 
   async activateProvider(providerId) {
     const { plugin, contribution } = this.#findContribution("providers", providerId);
-    await this.#ensureActivated(plugin, `onProvider:${providerId}`);
-    return { plugin, provider: contribution };
+    const identity = await this.#ensureActivated(plugin, `onProvider:${providerId}`);
+    return Object.freeze({ plugin, provider: contribution, identity: identity ?? null });
+  }
+
+  listProviders(options = {}) {
+    if (options.kind != null && (typeof options.kind !== "string" || options.kind.length < 1)) {
+      throw invalidArgument("Plugin Provider kind is invalid");
+    }
+    const locale = options.locale ?? this.getLocale();
+    const providers = [];
+    for (const plugin of this.database.listPlugins()) {
+      if (!isContributionAvailable(plugin)) continue;
+      for (const provider of plugin.manifest.contributes?.providers ?? []) {
+        if (options.kind != null && provider.kind !== options.kind) continue;
+        providers.push({
+          pluginId: plugin.id,
+          pluginVersion: plugin.activeVersion,
+          pluginDisplayName: resolveLocalizedText(
+            plugin.manifest.displayName ?? plugin.manifest.name,
+            locale,
+          ),
+          provider: {
+            ...provider,
+            label: resolveLocalizedText(provider.label, locale),
+            description: provider.description == null
+              ? undefined
+              : resolveLocalizedText(provider.description, locale),
+          },
+        });
+      }
+    }
+    return freezeJson(providers);
   }
 
   #settingRecord(pluginId, settingId) {

@@ -1,6 +1,11 @@
 import { X } from 'lucide-react';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import {
+  normalizePluginKeyboardEvent,
+  normalizePluginShortcut,
+  resolvePluginShortcutPlatform,
+} from '../../application/state/pluginKeybindings';
 import { usePluginContributions } from '../../application/state/usePluginContributions';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { Button } from '../ui/button';
@@ -63,31 +68,16 @@ export function PluginContributionHost({
     const bindings = snapshot.plugins.flatMap((plugin) => plugin.keybindings)
       .filter((binding) => binding.enabled)
       .sort((left, right) => `${left.command}:${left.key}`.localeCompare(`${right.command}:${right.key}`));
+    const platformKey = resolvePluginShortcutPlatform(navigator.platform);
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing) return;
       const target = event.target as HTMLElement | null;
       if (target?.closest('input, textarea, select, [contenteditable="true"]')) return;
-      const platformKey = /Mac|iPhone|iPad/.test(navigator.platform)
-        ? 'mac'
-        : /Win/.test(navigator.platform)
-          ? 'windows'
-          : 'linux';
-      const pressed = [
-        event.metaKey ? 'meta' : '',
-        event.ctrlKey ? 'ctrl' : '',
-        event.altKey ? 'alt' : '',
-        event.shiftKey ? 'shift' : '',
-        event.key.length === 1 ? event.key.toLowerCase() : event.key.toLowerCase(),
-      ].filter(Boolean).join('+');
+      const pressed = normalizePluginKeyboardEvent(event);
+      if (!pressed) return;
       const binding = bindings.find((candidate) => {
         const declared = candidate[platformKey] ?? candidate.key;
-        const normalized = declared.toLowerCase()
-          .replace(/commandorcontrol|cmdorctrl|mod/gu, /Mac|iPhone|iPad/.test(navigator.platform) ? 'meta' : 'ctrl')
-          .replace(/command|cmd/gu, 'meta')
-          .replace(/control/gu, 'ctrl')
-          .replace(/option/gu, 'alt')
-          .replace(/\s*\+\s*/gu, '+');
-        return normalized === pressed;
+        return normalizePluginShortcut(declared, platformKey) === pressed;
       });
       if (!binding) return;
       event.preventDefault();

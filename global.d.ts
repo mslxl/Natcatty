@@ -345,7 +345,7 @@ declare global {
         showKeybinding?: boolean;
       }>;
       settings: ReadonlyArray<NetcattyPluginSettingContribution>;
-      views: ReadonlyArray<{ id: string; title: string; location: string; entry: string; visible: boolean; retainContextWhenHidden?: boolean }>;
+      views: ReadonlyArray<{ id: string; title: string; location: string; entry: string; order?: number; visible: boolean; retainContextWhenHidden?: boolean }>;
     }>;
   }
 

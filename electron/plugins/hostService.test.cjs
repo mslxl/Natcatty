@@ -69,6 +69,18 @@ test("host service forwards the transport quota guard to the runtime supervisor"
   assert.deepEqual(guarded, { identity, message });
 });
 
+test("host service seeds the latest contribution environment before runtime activation", async (context) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-plugin-host-service-"));
+  context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const service = createPluginHostService(createOptions(root));
+  context.after(() => service.manager.shutdown());
+  const environment = { locale: "zh-CN", theme: "dark", reducedMotion: true, highContrast: false };
+
+  await service.contributionService.setEnvironment(environment);
+
+  assert.deepEqual(service.runtimeSupervisor.getInitialEnvironment(), environment);
+});
+
 test("runtime cleanup revokes leases before awaiting companion teardown", async (context) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-plugin-host-service-"));
   context.after(() => fs.rmSync(root, { recursive: true, force: true }));

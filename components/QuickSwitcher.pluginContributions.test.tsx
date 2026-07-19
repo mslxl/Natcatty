@@ -42,3 +42,30 @@ test('plugin palette items preserve menu-specific enablement', () => {
   }]);
   assert.equal(buildPluginPaletteItems(pluginSnapshot(true), '')[0]?.enabled, true);
 });
+
+test('plugin palette items honor declared menu ordering', () => {
+  const plugins = pluginSnapshot(true);
+  const plugin = plugins[0];
+  const ordered = [{
+    ...plugin,
+    commands: [
+      ...plugin.commands,
+      { id: 'com.example.palette.first', title: 'First command', enabled: true },
+    ],
+    menus: [
+      { ...plugin.menus[0], group: 'navigation', order: 20 },
+      {
+        ...plugin.menus[0],
+        id: 'com.example.palette:menu:1',
+        command: 'com.example.palette.first',
+        title: 'First from palette',
+        group: 'navigation',
+        order: 10,
+      },
+    ],
+  }];
+  assert.deepEqual(buildPluginPaletteItems(ordered, '').map((item) => item.id), [
+    'com.example.palette.first',
+    'com.example.palette.run',
+  ]);
+});
