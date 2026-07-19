@@ -112,12 +112,17 @@ migration sources.
 An installed manifest can declare browser, Node, or both entrypoints. During
 the internal preview the host uses this deterministic placement rule:
 
-- a browser entrypoint is preferred whenever it exists;
-- a Node entrypoint is used only when no browser entrypoint exists.
+- a manifest that declares native companions is placed in the Node utility
+  runtime, including when it also declares a browser entrypoint; companion
+  manifests must provide the Node entrypoint, `runtime.advanced`, and bounded
+  `companion.execute` resources;
+- otherwise, a browser entrypoint is preferred whenever it exists;
+- a Node entrypoint is used when no browser entrypoint exists.
 
-The rule keeps dual-target plugins on the least-privileged runtime. A later
-trust phase may permit a user to select an advanced Node implementation, but it
-must not silently upgrade an ordinary plugin.
+The rule keeps ordinary dual-target plugins on the least-privileged runtime
+while making the companion exception explicit and fail closed. A later trust
+phase adds verified publisher identity to the advanced Node path; it must not
+silently upgrade an ordinary plugin.
 
 ### Ordinary browser runtime
 
