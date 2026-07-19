@@ -59,6 +59,46 @@ test("plugin manifest schema accepts the internal contract", () => {
   assert.equal(validate({ ...validManifest, version: "1.0.0-01" }), false);
 });
 
+test("required resource-scoped permissions declare activation-time bounds", () => {
+  const validate = validator("PluginManifest");
+  const resourceScoped = [
+    ["network", "https://example.com"],
+    ["filesystem.read", "/tmp/plugin-read"],
+    ["filesystem.write", "/tmp/plugin-write"],
+    ["companion.execute", "com.example.contract-test.helper"],
+  ] as const;
+  assert.deepEqual(
+    schema.$defs.ResourceScopedPermission.enum,
+    resourceScoped.map(([permission]) => permission),
+    "the resource-scoped permission catalog must track every bounded permission",
+  );
+  assert.deepEqual(
+    schema.$defs.NonResourceScopedPermission.enum,
+    schema.$defs.PluginPermission.enum.filter(
+      (permission: string) => !resourceScoped.some(([scoped]) => scoped === permission),
+    ),
+    "the required-permission shorthand catalog must track every non-resource permission",
+  );
+  for (const [permission, resource] of resourceScoped) {
+    assert.equal(validate({
+      ...validManifest,
+      permissions: { required: [permission] },
+    }), false, `${permission} must not be an unbounded required declaration`);
+    assert.equal(validate({
+      ...validManifest,
+      permissions: { required: [{ permission, resources: [resource] }] },
+    }), true, JSON.stringify(validate.errors));
+    assert.equal(validate({
+      ...validManifest,
+      permissions: { required: [{ permission, resources: ["*"] }] },
+    }), false, `${permission} must not accept a wildcard activation bound`);
+    assert.equal(validate({
+      ...validManifest,
+      permissions: { optional: [permission] },
+    }), true, JSON.stringify(validate.errors));
+  }
+});
+
 test("manifest header remains forward-readable before version-specific validation", () => {
   const validateHeader = validator("PluginManifestHeader");
   assert.equal(validateHeader({
@@ -130,6 +170,7 @@ test("RPC, stream, permission, and provider schemas validate independently", () 
   const permission = validator("PermissionRequest");
   const permissionDecision = validator("PermissionDecision");
   const secretRef = validator("SecretRef");
+  const credentialRef = validator("CredentialRef");
   const provider = validator("ProviderRequest");
   const providerResult = validator("ProviderResult");
 
@@ -323,17 +364,56 @@ test("RPC, stream, permission, and provider schemas validate independently", () 
   assert.equal(permission({
     requestId: "p1",
     pluginId: "com.example.contract-test",
+    pluginVersion: "1.2.3",
+    pluginName: "Contract test",
+    publisher: "example",
+    runtimeId: "runtime-1",
+    runtimeKind: "browser",
     permission: "network",
     reason: "Fetch completion metadata",
     resources: ["https://api.example.com"],
+    resourceKinds: ["exact"],
+    operationId: "network:https://api.example.com",
+    sessionId: "terminal-session-1",
   }), true);
+  assert.equal(permission({
+    requestId: "p2",
+    pluginId: "com.example.contract-test",
+    permission: "filesystem.read",
+    reason: "Read a long absolute path",
+    resources: [`/${"a".repeat(4_096)}`],
+    resourceKinds: ["directory"],
+  }), true, JSON.stringify(permission.errors));
+  assert.equal(permission({
+    requestId: "p2-invalid",
+    pluginId: "com.example.contract-test",
+    permission: "filesystem.read",
+    reason: "Reject an unknown resource kind",
+    resources: ["/tmp"],
+    resourceKinds: ["subtree"],
+  }), false);
+  assert.equal(permission({
+    requestId: "p3",
+    pluginId: "com.example.contract-test",
+    permission: "network",
+    reason: "Reject unknown runtime placement",
+    runtimeKind: "renderer",
+  }), false);
   assert.equal(permissionDecision({ requestId: "p1", decision: "allow", scope: "once" }), true);
   assert.equal(permissionDecision({ requestId: "p1", decision: "allow" }), false);
   assert.equal(permissionDecision({ requestId: "p1", decision: "deny", scope: "always" }), false);
-  assert.equal(secretRef({ kind: "secret", id: "secret-reference-1" }), true);
-  assert.equal(secretRef({ kind: "secret", id: "short" }), false);
-  assert.equal(secretRef({ kind: "secret", id: "secret-reference-1", value: "plaintext" }), false);
+  assert.equal(secretRef({ kind: "secret", id: "secret-reference-1", key: "api-key" }), true);
+  assert.equal(secretRef({ kind: "secret", id: "secret-reference-1" }), false);
+  assert.equal(secretRef({ kind: "secret", id: "short", key: "api-key" }), false);
+  assert.equal(secretRef({
+    kind: "secret",
+    id: "secret-reference-1",
+    key: "api-key",
+    value: "plaintext",
+  }), false);
   assert.equal(secretRef({ kind: "credential", id: "secret-reference-1" }), false);
+  assert.equal(credentialRef({ kind: "credential", id: "credential-ref-1" }), true);
+  assert.equal(credentialRef({ kind: "secret", id: "credential-ref-1", key: "api-key" }), false);
   assert.equal(provider({
     providerId: "com.example.contract-test.completion",
     operation: "provideCompletions",
@@ -443,6 +523,7 @@ test("permission and setting-control catalogs cover planned public surfaces", ()
     "vault.credentials",
     "sftp.write",
     "filesystem.write",
+    "runtime.advanced",
     "provider.connection",
     "provider.sync",
   ]) {
@@ -701,16 +782,21 @@ test("semantic namespacing covers every contribution registry and near-prefix co
   }];
   assert.equal(validateManifestValue({
     ...validManifest,
+    main: { ...validManifest.main, node: "dist/node.js" },
     contributes: contributions,
     permissions: {
       required: [
+        "runtime.advanced",
         "settings.read",
         "commands",
         "menus",
         "views",
         "provider.terminal",
         "terminal.complete",
-        "companion.execute",
+        {
+          permission: "companion.execute",
+          resources: ["com.example.contract-test.helper"],
+        },
       ],
       optional: [],
     },
@@ -836,8 +922,10 @@ test("planned phase consumers are representable without private application type
     },
     {
       ...validManifest,
+      main: { ...validManifest.main, node: "dist/node.js" },
       permissions: {
         required: [
+          "runtime.advanced",
           "provider.terminal",
           "terminal.complete",
           "terminal.output",
@@ -890,13 +978,18 @@ test("planned phase consumers are representable without private application type
     },
     {
       ...validManifest,
+      main: { ...validManifest.main, node: "dist/node.js" },
       permissions: {
         required: [
+          "runtime.advanced",
           "provider.connection",
           "provider.authentication",
           "provider.sync",
           "provider.importer",
-          "companion.execute",
+          {
+            permission: "companion.execute",
+            resources: ["com.example.contract-test.helper"],
+          },
         ],
       },
       contributes: {

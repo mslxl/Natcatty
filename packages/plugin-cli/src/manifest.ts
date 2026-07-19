@@ -32,6 +32,9 @@ interface PluginContractSchema extends Record<string, unknown> {
         readonly maxNodes: number;
       };
     };
+    readonly ResourceScopedPermission: {
+      readonly enum: readonly PluginPermission[];
+    };
   };
 }
 
@@ -134,6 +137,59 @@ function permissionName(declaration: PermissionDeclaration): PluginPermission {
   return typeof declaration === "string" ? declaration : declaration.permission;
 }
 
+function permissionResourceLimit(permission: PluginPermission): number {
+  if (permission === "filesystem.read" || permission === "filesystem.write") return 8_192;
+  if (permission === "companion.execute") return 192;
+  return 2_048;
+}
+
+const resourceScopedPermissions = new Set<PluginPermission>(
+  contractSchema.$defs.ResourceScopedPermission.enum,
+);
+
+function validateRequiredPermissionBounds(value: unknown): string[] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  const permissions = (value as { permissions?: unknown }).permissions;
+  if (!permissions || typeof permissions !== "object" || Array.isArray(permissions)) return [];
+  const required = (permissions as { required?: unknown }).required;
+  if (!Array.isArray(required)) return [];
+  return required.flatMap((declaration) => {
+    if (typeof declaration === "string") {
+      return resourceScopedPermissions.has(declaration as PluginPermission)
+        ? [`Required permission ${declaration} must declare explicit resources`]
+        : [];
+    }
+    if (!declaration || typeof declaration !== "object" || Array.isArray(declaration)) return [];
+    const permission = (declaration as { permission?: unknown }).permission;
+    const resources = (declaration as { resources?: unknown }).resources;
+    return typeof permission === "string"
+      && resourceScopedPermissions.has(permission as PluginPermission)
+      && Array.isArray(resources)
+      && resources.includes("*")
+      ? [`Required permission ${permission} must not use the wildcard resource`]
+      : [];
+  });
+}
+
+function validatePermissionResourceLimits(manifest: PluginManifest): string[] {
+  const errors: string[] = [];
+  for (const declaration of [
+    ...(manifest.permissions?.required ?? []),
+    ...(manifest.permissions?.optional ?? []),
+  ]) {
+    if (typeof declaration === "string") continue;
+    const maximum = permissionResourceLimit(declaration.permission);
+    for (const resource of declaration.resources) {
+      if (resource.length > maximum) {
+        errors.push(
+          `Permission resource for ${declaration.permission} exceeds ${maximum} characters`,
+        );
+      }
+    }
+  }
+  return errors;
+}
+
 function findDuplicateIds(manifest: PluginManifest): string[] {
   const errors: string[] = [];
   const groups = [
@@ -185,6 +241,7 @@ function validateSemantics(manifest: PluginManifest): string[] {
   const errors = [
     ...findDuplicateIds(manifest),
     ...validateOwnedContributionIds(manifest),
+    ...validatePermissionResourceLimits(manifest),
   ];
   for (const [engine, range] of Object.entries(manifest.engines)) {
     if (validRange(range) === null) {
@@ -252,6 +309,11 @@ function validateSemantics(manifest: PluginManifest): string[] {
     "Setting contributions",
   );
   requirePermission(
+    Boolean(manifest.main.node),
+    "runtime.advanced",
+    "Node utility entrypoints",
+  );
+  requirePermission(
     Boolean(manifest.contributes?.commands?.length),
     "commands",
     "Command contributions",
@@ -263,6 +325,14 @@ function validateSemantics(manifest: PluginManifest): string[] {
     "companion.execute",
     "Companion executables",
   );
+  requirePermission(
+    Boolean(manifest.companionExecutables?.length),
+    "runtime.advanced",
+    "Companion executables",
+  );
+  if (manifest.companionExecutables?.length && !manifest.main.node) {
+    errors.push("Companion executables require a Node utility entrypoint");
+  }
   const providerPermissions = new Map<string, readonly PluginPermission[]>([
     ["terminal.completion", ["provider.terminal", "terminal.complete"]],
     ["terminal.decoration", ["provider.terminal", "terminal.output", "terminal.decorate"]],
@@ -495,6 +565,10 @@ export function validateManifestValue(value: unknown): ManifestValidationResult 
       valid: false,
       errors: [error instanceof Error ? error.message : String(error)],
     };
+  }
+  const requiredPermissionErrors = validateRequiredPermissionBounds(value);
+  if (requiredPermissionErrors.length > 0) {
+    return { valid: false, errors: requiredPermissionErrors };
   }
   if (!validateSchema(value)) {
     return {

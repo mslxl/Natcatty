@@ -109,12 +109,40 @@
       "pattern": "^[a-z][a-z0-9-]*(?:\\.[a-z0-9][a-z0-9_-]*)+$"
     },
     "SecretRef": {
-      "description": "An opaque host-issued reference to secret material. The identifier is never sufficient authority on its own; privileged consumers must revalidate plugin ownership and operation scope.",
+      "description": "A host-issued reference to secret material. The random identifier is opaque and never sufficient authority on its own. The non-secret key binds permission authorization to the packaged manifest resource; privileged consumers must revalidate identifier ownership, key binding, and operation scope.",
+      "type": "object",
+      "required": ["kind", "id", "key"],
+      "properties": {
+        "kind": { "const": "secret" },
+        "id": { "type": "string", "minLength": 16, "maxLength": 256 },
+        "key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[^\\u0000]+$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "CredentialRef": {
+      "description": "An opaque host-issued reference to a Netcatty-owned credential. The host validates ownership and provider-operation scope before issuing a plaintext lease.",
       "type": "object",
       "required": ["kind", "id"],
       "properties": {
-        "kind": { "const": "secret" },
+        "kind": { "const": "credential" },
         "id": { "type": "string", "minLength": 16, "maxLength": 256 }
+      },
+      "additionalProperties": false
+    },
+    "SecretLeaseRef": {
+      "description": "An opaque, operation-bound, single-consumption lease. Only a host capability broker can consume it after revalidating runtime identity and operation scope.",
+      "type": "object",
+      "required": ["kind", "id", "operationId", "expiresAt"],
+      "properties": {
+        "kind": { "const": "secret-lease" },
+        "id": { "type": "string", "minLength": 32, "maxLength": 256 },
+        "operationId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "expiresAt": { "$ref": "#/$defs/SafePositiveInteger" }
       },
       "additionalProperties": false
     },
@@ -144,6 +172,7 @@
       "type": "string",
       "enum": [
         "storage",
+        "runtime.advanced",
         "settings.read",
         "settings.write",
         "commands",
@@ -175,25 +204,110 @@
         "provider.importer"
       ]
     },
+    "NonResourceScopedPermission": {
+      "description": "A permission whose complete activation-time scope is represented by the permission name itself.",
+      "type": "string",
+      "enum": [
+        "storage",
+        "runtime.advanced",
+        "settings.read",
+        "settings.write",
+        "commands",
+        "menus",
+        "views",
+        "clipboard.read",
+        "clipboard.write",
+        "terminal.metadata",
+        "terminal.output",
+        "terminal.input",
+        "terminal.decorate",
+        "terminal.complete",
+        "terminal.intercept.input",
+        "terminal.intercept.output",
+        "vault.metadata",
+        "vault.write",
+        "vault.credentials",
+        "sftp.read",
+        "sftp.write",
+        "secrets",
+        "provider.terminal",
+        "provider.connection",
+        "provider.authentication",
+        "provider.sync",
+        "provider.importer"
+      ]
+    },
+    "ResourceScopedPermission": {
+      "description": "A permission whose approval must be constrained to explicit canonical resources.",
+      "type": "string",
+      "enum": [
+        "network",
+        "filesystem.read",
+        "filesystem.write",
+        "companion.execute"
+      ]
+    },
+    "PermissionResource": {
+      "description": "A host-canonicalized permission resource. Filesystem resources may be absolute platform paths; other permission kinds impose narrower runtime limits.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "BoundedPermissionResource": {
+      "description": "An explicit resource bound; the all-resources wildcard is not an activation-time bound.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192,
+      "not": { "const": "*" }
+    },
+    "PermissionResourceKind": {
+      "description": "Whether a canonical resource grant covers only that resource or a filesystem directory subtree.",
+      "type": "string",
+      "enum": ["exact", "directory"]
+    },
+    "PermissionResourceDeclaration": {
+      "type": "object",
+      "required": ["permission", "resources"],
+      "properties": {
+        "permission": { "$ref": "#/$defs/PluginPermission" },
+        "resources": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 128,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/PermissionResource" }
+        },
+        "reason": { "type": "string", "maxLength": 1024 }
+      },
+      "additionalProperties": false
+    },
     "PermissionDeclaration": {
       "oneOf": [
         { "$ref": "#/$defs/PluginPermission" },
-        {
-          "type": "object",
-          "required": ["permission", "resources"],
-          "properties": {
-            "permission": { "$ref": "#/$defs/PluginPermission" },
-            "resources": {
-              "type": "array",
-              "minItems": 1,
-              "maxItems": 128,
-              "uniqueItems": true,
-              "items": { "type": "string", "minLength": 1, "maxLength": 2048 }
-            },
-            "reason": { "type": "string", "maxLength": 1024 }
-          },
-          "additionalProperties": false
-        }
+        { "$ref": "#/$defs/PermissionResourceDeclaration" }
+      ]
+    },
+    "RequiredPermissionResourceDeclaration": {
+      "type": "object",
+      "required": ["permission", "resources"],
+      "properties": {
+        "permission": { "$ref": "#/$defs/ResourceScopedPermission" },
+        "resources": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 128,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/BoundedPermissionResource" }
+        },
+        "reason": { "type": "string", "maxLength": 1024 }
+      },
+      "additionalProperties": false
+    },
+    "RequiredPermissionDeclaration": {
+      "description": "Required resource-scoped permissions must name their complete activation-time approval bounds.",
+      "oneOf": [
+        { "$ref": "#/$defs/NonResourceScopedPermission" },
+        { "$ref": "#/$defs/RequiredPermissionResourceDeclaration" }
       ]
     },
     "PermissionSet": {
@@ -202,7 +316,7 @@
         "required": {
           "type": "array",
           "maxItems": 64,
-          "items": { "$ref": "#/$defs/PermissionDeclaration" }
+          "items": { "$ref": "#/$defs/RequiredPermissionDeclaration" }
         },
         "optional": {
           "type": "array",
@@ -963,15 +1077,26 @@
       "properties": {
         "requestId": { "type": "string", "minLength": 1, "maxLength": 128 },
         "pluginId": { "$ref": "#/$defs/PluginId" },
+        "pluginVersion": { "$ref": "#/$defs/SemanticVersion" },
+        "pluginName": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "publisher": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "runtimeId": { "type": ["string", "null"], "minLength": 1, "maxLength": 128 },
+        "runtimeKind": { "type": ["string", "null"], "enum": ["browser", "utility", null] },
         "permission": { "$ref": "#/$defs/PluginPermission" },
         "resources": {
           "type": "array",
           "maxItems": 128,
           "uniqueItems": true,
-          "items": { "type": "string", "minLength": 1, "maxLength": 2048 }
+          "items": { "$ref": "#/$defs/PermissionResource" }
+        },
+        "resourceKinds": {
+          "type": "array",
+          "maxItems": 128,
+          "items": { "$ref": "#/$defs/PermissionResourceKind" }
         },
         "reason": { "type": "string", "minLength": 1, "maxLength": 1024 },
-        "operationId": { "type": "string", "minLength": 1, "maxLength": 128 }
+        "operationId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "sessionId": { "type": "string", "minLength": 1, "maxLength": 128 }
       },
       "additionalProperties": false
     },
@@ -988,7 +1113,7 @@
               "type": "array",
               "maxItems": 128,
               "uniqueItems": true,
-              "items": { "type": "string", "minLength": 1, "maxLength": 2048 }
+              "items": { "$ref": "#/$defs/PermissionResource" }
             }
           },
           "additionalProperties": false

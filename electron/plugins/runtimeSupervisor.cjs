@@ -17,6 +17,10 @@ const {
   createDefaultPluginHostRpcRegistry,
 } = require("./hostRpcRegistry.cjs");
 const {
+  assertSecurityPrincipal,
+  defaultSecurityPrincipal,
+} = require("./permissionResources.cjs");
+const {
   PLUGIN_CONTAINMENT_ERROR_CODE,
   UtilityPluginRuntime,
 } = require("./utilityPluginRuntime.cjs");
@@ -36,6 +40,11 @@ function freezeJson(value) {
   if (!value || typeof value !== "object" || Object.isFrozen(value)) return value;
   for (const item of Array.isArray(value) ? value : Object.values(value)) freezeJson(item);
   return Object.freeze(value);
+}
+
+function resolveDefaultRuntimeKind({ plugin }) {
+  if (plugin.manifest.companionExecutables?.length) return "utility";
+  return plugin.manifest.main.browser ? "browser" : "utility";
 }
 
 class RuntimeSupervisor {
@@ -58,9 +67,12 @@ class RuntimeSupervisor {
     if (this.runtimeMessageGuard != null && typeof this.runtimeMessageGuard !== "function") {
       throw new TypeError("Plugin runtime message guard must be a function");
     }
-    this.resolveRuntimeKind = options.resolveRuntimeKind ?? (({ plugin }) => (
-      plugin.manifest.main.browser ? "browser" : "utility"
-    ));
+    this.resolveRuntimeKind = options.resolveRuntimeKind ?? resolveDefaultRuntimeKind;
+    this.resolveSecurityPrincipal = options.resolveSecurityPrincipal
+      ?? (({ plugin }) => defaultSecurityPrincipal(plugin.manifest, plugin.archiveSha256));
+    if (typeof this.resolveRuntimeKind !== "function" || typeof this.resolveSecurityPrincipal !== "function") {
+      throw new TypeError("Plugin runtime placement and security-principal resolvers must be functions");
+    }
     this.utilityModuleMappings = options.utilityModuleMappings ?? {
       "@netcatty/plugin-sdk": pathToFileURL(path.join(
         this.appRoot, "node_modules", "@netcatty", "plugin-sdk", "dist", "index.js",
@@ -73,6 +85,12 @@ class RuntimeSupervisor {
       browser: (runtimeOptions) => new BrowserPluginRuntime(runtimeOptions),
       utility: (runtimeOptions) => new UtilityPluginRuntime(runtimeOptions),
     };
+    this.runtimeResourceMonitor = options.runtimeResourceMonitor ?? null;
+    this.runtimeCleanup = options.runtimeCleanup ?? null;
+    if (this.runtimeCleanup != null && typeof this.runtimeCleanup !== "function") {
+      throw new TypeError("Plugin runtime cleanup must be a function");
+    }
+    this.resourceMonitors = new Map();
     this.runtimes = new Map();
     this.runtimeIdentities = new Map();
     this.starting = new Map();
@@ -119,6 +137,7 @@ class RuntimeSupervisor {
       pluginVersion: identity.pluginVersion,
       runtimeId: identity.runtimeId,
       runtimeKind: identity.runtimeKind,
+      securityPrincipal: identity.securityPrincipal,
       token: params.token,
       value: freezeJson(structuredClone(params.value)),
     });
@@ -134,6 +153,7 @@ class RuntimeSupervisor {
       pluginVersion: identity?.pluginVersion ?? details.pluginVersion ?? null,
       runtimeId: identity?.runtimeId ?? null,
       runtimeKind: identity?.runtimeKind ?? details.kind ?? null,
+      securityPrincipal: identity?.securityPrincipal ?? null,
       status,
       error: details.error == null ? null : String(details.error),
       quarantinedAt: details.quarantinedAt ?? null,
@@ -211,9 +231,13 @@ class RuntimeSupervisor {
       ...(plugin.manifest.main.node ? ["utility"] : []),
     ]);
     const placementPlugin = freezeJson(structuredClone(plugin));
+    const securityPrincipal = assertSecurityPrincipal(await raceWithAbort(Promise.resolve(
+      this.resolveSecurityPrincipal(Object.freeze({ plugin: placementPlugin, signal })),
+    ), signal));
     const kind = await raceWithAbort(Promise.resolve(this.resolveRuntimeKind(Object.freeze({
       plugin: placementPlugin,
       availableKinds,
+      securityPrincipal,
       signal,
     }))), signal);
     signal.throwIfAborted();
@@ -235,6 +259,7 @@ class RuntimeSupervisor {
       pluginVersion: plugin.activeVersion,
       runtimeId: randomUUID(),
       runtimeKind: kind,
+      securityPrincipal,
       manifest: freezeJson(structuredClone(plugin.manifest)),
       packageRoot,
       logger,
@@ -269,6 +294,7 @@ class RuntimeSupervisor {
             : undefined,
           onIncomingStream: routes.onIncomingStream,
           onProgress: (params) => this.#emitProgress(identity, params),
+          onProcessReady: () => this.#installRuntimeResourceMonitor(identity, runtime),
           logger,
           onExit,
           onProtocolError,
@@ -286,6 +312,7 @@ class RuntimeSupervisor {
             : undefined,
           onIncomingStream: routes.onIncomingStream,
           onProgress: (params) => this.#emitProgress(identity, params),
+          onProcessReady: () => this.#installRuntimeResourceMonitor(identity, runtime),
           logger,
           onExit,
           onProtocolError,
@@ -313,18 +340,24 @@ class RuntimeSupervisor {
       }
       identity.assertCurrent();
       this.#setRuntimeState(identity, "running");
+      this.#installRuntimeResourceMonitor(identity, runtime);
       return this.getRuntimeIdentity(pluginId);
     } catch (error) {
       const stillOwned = this.runtimes.get(pluginId) === runtime;
+      let stopError;
       let cleanupError;
       if (stillOwned) {
         this.runtimes.delete(pluginId);
         this.runtimeIdentities.delete(pluginId);
-        try { await runtime.stop(); } catch (stopError) { cleanupError = stopError; }
+        this.#releaseRuntimeResources(identity);
+        try { await runtime.stop(); } catch (caughtError) { stopError = caughtError; }
+        try { await this.#cleanupRuntime(identity); } catch (caughtError) { cleanupError = caughtError; }
       }
-      if (stillOwned && cleanupError?.code === PLUGIN_CONTAINMENT_ERROR_CODE) {
-        this.#recordContainmentFailure(identity, cleanupError);
-        throw cleanupError;
+      const containmentError = cleanupError
+        ?? (stopError?.code === PLUGIN_CONTAINMENT_ERROR_CODE ? stopError : null);
+      if (stillOwned && containmentError) {
+        this.#recordContainmentFailure(identity, containmentError);
+        throw containmentError;
       }
       if (stillOwned) await this.#recordFailure(identity, error);
       throw error;
@@ -366,6 +399,13 @@ class RuntimeSupervisor {
     if (this.runtimes.get(pluginId) !== runtime) return;
     this.runtimes.delete(pluginId);
     this.runtimeIdentities.delete(pluginId);
+    this.#releaseRuntimeResources(identity);
+    try {
+      await this.#cleanupRuntime(identity);
+    } catch (error) {
+      this.#recordContainmentFailure(identity, error);
+      return;
+    }
     if (details.containmentFailed) {
       this.#recordContainmentFailure(identity, details.error);
       return;
@@ -428,14 +468,23 @@ class RuntimeSupervisor {
     }
     this.runtimes.delete(pluginId);
     this.runtimeIdentities.delete(pluginId);
+    this.#releaseRuntimeResources(identity);
     let stopError;
+    let cleanupError;
     try {
       await runtime.stop();
     } catch (error) {
       stopError = error;
+    }
+    try {
+      await this.#cleanupRuntime(identity);
+    } catch (error) {
+      cleanupError = error;
     } finally {
-      if (stopError?.code === PLUGIN_CONTAINMENT_ERROR_CODE) {
-        this.#recordContainmentFailure(identity, stopError);
+      const containmentError = cleanupError
+        ?? (stopError?.code === PLUGIN_CONTAINMENT_ERROR_CODE ? stopError : null);
+      if (containmentError) {
+        this.#recordContainmentFailure(identity, containmentError);
       } else {
         this.#setRuntimeState(identity, "stopped", {
           kind: plugin?.runtime?.kind,
@@ -443,6 +492,7 @@ class RuntimeSupervisor {
         });
       }
     }
+    if (cleanupError) throw cleanupError;
     if (stopError?.code === PLUGIN_CONTAINMENT_ERROR_CODE) throw stopError;
   }
 
@@ -450,6 +500,39 @@ class RuntimeSupervisor {
     await this.stop(pluginId);
     this.database.clearQuarantine(pluginId);
     return this.start(pluginId);
+  }
+
+  #releaseRuntimeResources(identity) {
+    if (!identity) return;
+    this.resourceMonitors.get(identity.runtimeId)?.dispose?.();
+    this.resourceMonitors.delete(identity.runtimeId);
+    this.runtimeResourceMonitor?.releaseRuntime?.(identity.runtimeId);
+  }
+
+  async #cleanupRuntime(identity) {
+    if (!identity || !this.runtimeCleanup) return;
+    await this.runtimeCleanup(Object.freeze({
+      pluginId: identity.pluginId,
+      pluginVersion: identity.pluginVersion,
+      runtimeId: identity.runtimeId,
+      runtimeKind: identity.runtimeKind,
+      securityPrincipal: identity.securityPrincipal,
+    }));
+  }
+
+  #installRuntimeResourceMonitor(identity, runtime) {
+    if (!this.runtimeResourceMonitor || this.resourceMonitors.has(identity.runtimeId)) return;
+    const monitor = this.runtimeResourceMonitor.trackRuntime(identity, runtime);
+    this.resourceMonitors.set(identity.runtimeId, monitor);
+  }
+
+  async enforcePolicyViolation(identity, error) {
+    const current = this.runtimeIdentities.get(identity.pluginId);
+    if (!current || current.runtimeId !== identity.runtimeId) return;
+    const plugin = this.database.getActivePlugin(identity.pluginId);
+    if (plugin?.enabled) this.database.setEnabled(identity.pluginId, false);
+    await this.stop(identity.pluginId);
+    this.#setRuntimeState(identity, "error", { error: error?.message ?? String(error) });
   }
 
   getRuntimeIdentity(pluginId) {
@@ -460,6 +543,7 @@ class RuntimeSupervisor {
       pluginVersion: identity.pluginVersion,
       runtimeId: identity.runtimeId,
       runtimeKind: identity.runtimeKind,
+      securityPrincipal: identity.securityPrincipal,
     });
   }
 
@@ -543,9 +627,16 @@ class RuntimeSupervisor {
     await Promise.allSettled([...this.runtimes.keys()].map((pluginId) => this.stop(pluginId)));
     await Promise.allSettled([...this.starting.values()]);
     await Promise.allSettled([...this.stopping.values()]);
+    for (const identity of this.runtimeIdentities.values()) this.#releaseRuntimeResources(identity);
+    this.resourceMonitors.clear();
     this.runtimeListeners.clear();
     this.progressListeners.clear();
   }
 }
 
-module.exports = { RuntimeSupervisor, assertStorageParams, freezeJson };
+module.exports = {
+  RuntimeSupervisor,
+  assertStorageParams,
+  freezeJson,
+  resolveDefaultRuntimeKind,
+};

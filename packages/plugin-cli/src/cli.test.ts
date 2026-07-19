@@ -206,7 +206,10 @@ test("path validation rejects traversal, platform aliases, and duplicates", () =
 
 test("manifest validation reports permission and contribution mistakes", () => {
   const result = validateManifestValue(manifest({
-    permissions: { required: ["network"], optional: ["network"] },
+    permissions: {
+      required: [{ permission: "network", resources: ["https://example.com"] }],
+      optional: ["network"],
+    },
     contributes: {
       commands: [{ id: "com.example.package-test.run", title: "Run" }],
       menus: [{ command: "com.example.package-test.missing", location: "commandPalette" }],
@@ -215,6 +218,77 @@ test("manifest validation reports permission and contribution mistakes", () => {
   assert.equal(result.valid, false);
   assert.match(result.errors.join("\n"), /both required and optional/);
   assert.match(result.errors.join("\n"), /undeclared command/);
+});
+
+test("resource-scoped required permissions must declare activation-time bounds", () => {
+  for (const [permission, resource] of [
+    ["network", "https://example.com"],
+    ["filesystem.read", "/tmp/plugin-read"],
+    ["filesystem.write", "/tmp/plugin-write"],
+    ["companion.execute", "com.example.package-test.helper"],
+  ] as const) {
+    const unbounded = validateManifestValue(manifest({
+      permissions: { required: [permission] },
+    }));
+    assert.equal(unbounded.valid, false, permission);
+    assert.match(unbounded.errors.join("\n"), /must declare explicit resources/u);
+
+    const bounded = validateManifestValue(manifest({
+      permissions: { required: [{ permission, resources: [resource] }] },
+    }));
+    assert.equal(bounded.valid, true, bounded.errors.join("\n"));
+
+    const wildcard = validateManifestValue(manifest({
+      permissions: { required: [{ permission, resources: ["*"] }] },
+    }));
+    assert.equal(wildcard.valid, false, permission);
+    assert.match(wildcard.errors.join("\n"), /must not use the wildcard resource/u);
+
+    const optional = validateManifestValue(manifest({
+      permissions: { optional: [permission] },
+    }));
+    assert.equal(optional.valid, true, optional.errors.join("\n"));
+  }
+});
+
+test("manifest validation applies the runtime resource limit for each permission", () => {
+  for (const [permission, length, expectedLimit] of [
+    ["network", 2_049, 2_048],
+    ["storage", 2_049, 2_048],
+    ["companion.execute", 193, 192],
+  ] as const) {
+    const result = validateManifestValue(manifest({
+      permissions: permission === "storage"
+        ? { optional: [{ permission, resources: ["x".repeat(length)] }] }
+        : { required: [{ permission, resources: ["x".repeat(length)] }] },
+    }));
+    assert.equal(result.valid, false);
+    assert.match(
+      result.errors.join("\n"),
+      new RegExp(`Permission resource for ${permission.replace(".", "\\.")} exceeds ${expectedLimit}`),
+    );
+  }
+
+  const filesystem = validateManifestValue(manifest({
+    permissions: {
+      required: [{ permission: "filesystem.read", resources: [`/${"x".repeat(4_096)}`] }],
+    },
+  }));
+  assert.equal(filesystem.valid, true, filesystem.errors.join("\n"));
+});
+
+test("Node utility entrypoints require the explicit advanced-runtime permission", () => {
+  const missing = validateManifestValue(manifest({
+    main: { node: "dist/index.js" },
+  }));
+  assert.equal(missing.valid, false);
+  assert.match(missing.errors.join("\n"), /requires declared permission: runtime\.advanced/);
+
+  const declared = validateManifestValue(manifest({
+    main: { node: "dist/index.js" },
+    permissions: { required: ["runtime.advanced"] },
+  }));
+  assert.equal(declared.valid, true, declared.errors.join("\n"));
 });
 
 test("manifest byte parsing rejects invalid UTF-8 before JSON validation", () => {
@@ -288,7 +362,16 @@ test("manifest validation rejects duplicate companion executable paths", () => {
 
 test("manifest validation supports platform-specific companion variants", () => {
   const result = validateManifestValue(manifest({
-    permissions: { required: ["companion.execute"] },
+    main: { browser: "dist/index.js", node: "dist/index.js" },
+    permissions: {
+      required: [
+        "runtime.advanced",
+        {
+          permission: "companion.execute",
+          resources: ["com.example.package-test.helper"],
+        },
+      ],
+    },
     companionExecutables: [{
       id: "com.example.package-test.helper",
       variants: [
@@ -308,7 +391,16 @@ test("manifest validation supports platform-specific companion variants", () => 
   assert.equal(result.valid, true, result.errors.join("\n"));
 
   const duplicatePlatform = validateManifestValue(manifest({
-    permissions: { required: ["companion.execute"] },
+    main: { browser: "dist/index.js", node: "dist/index.js" },
+    permissions: {
+      required: [
+        "runtime.advanced",
+        {
+          permission: "companion.execute",
+          resources: ["com.example.package-test.helper"],
+        },
+      ],
+    },
     companionExecutables: [{
       id: "com.example.package-test.helper",
       variants: [
@@ -327,6 +419,36 @@ test("manifest validation supports platform-specific companion variants", () => 
   }));
   assert.equal(duplicatePlatform.valid, false);
   assert.match(duplicatePlatform.errors.join("\n"), /Duplicate companion platform/);
+});
+
+test("companion executables require an advanced utility placement", () => {
+  const companionExecutables = [{
+    id: "com.example.package-test.helper",
+    variants: [{
+      path: "bin/helper",
+      platforms: ["linux-x64"],
+      sha256: "0".repeat(64),
+    }],
+  }];
+  const companionPermission = {
+    permission: "companion.execute" as const,
+    resources: ["com.example.package-test.helper"],
+  };
+
+  const browserOnly = validateManifestValue(manifest({
+    permissions: { required: [companionPermission] },
+    companionExecutables,
+  }));
+  assert.equal(browserOnly.valid, false);
+  assert.match(browserOnly.errors.join("\n"), /require a Node utility entrypoint/u);
+
+  const missingAdvanced = validateManifestValue(manifest({
+    main: { browser: "dist/index.js", node: "dist/index.js" },
+    permissions: { required: [companionPermission] },
+    companionExecutables,
+  }));
+  assert.equal(missingAdvanced.valid, false);
+  assert.match(missingAdvanced.errors.join("\n"), /requires declared permission: runtime\.advanced/u);
 });
 
 test("packaging treats contributed package icons as required safe files", async (context) => {
@@ -512,7 +634,16 @@ test("logical content identity follows companion declarations across ZIP mode en
   await writeFile(
     path.join(directory, "netcatty.plugin.json"),
     `${JSON.stringify(manifest({
-      permissions: { required: ["companion.execute"] },
+      main: { browser: "dist/index.js", node: "dist/index.js" },
+      permissions: {
+        required: [
+          "runtime.advanced",
+          {
+            permission: "companion.execute",
+            resources: ["com.example.package-test.helper"],
+          },
+        ],
+      },
       companionExecutables: [{
         id: "com.example.package-test.helper",
         variants: [{

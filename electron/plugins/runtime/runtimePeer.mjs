@@ -2,6 +2,7 @@ import {
   CancellationTokenSource,
   DisposableStore,
   PluginError,
+  PLUGIN_ERROR_WIRE_CODES,
   pluginErrorToRpcError,
 } from "@netcatty/plugin-sdk";
 import { createMessagePortStreamEnvelope } from "@netcatty/plugin-contract";
@@ -13,6 +14,18 @@ const RPC_ERRORS = {
   cancelled: -32001,
   unsupported: -32012,
 };
+
+const PLUGIN_ERROR_NAMES_BY_WIRE_CODE = new Map(
+  Object.entries(PLUGIN_ERROR_WIRE_CODES).map(([name, code]) => [code, name]),
+);
+
+function pluginErrorNameFromRpcError(error) {
+  if (typeof error?.data?.pluginCode === "string") return error.data.pluginCode;
+  if (error?.code === RPC_ERRORS.methodNotFound) return "unsupported";
+  if (error?.code === RPC_ERRORS.invalidParams) return "invalid_argument";
+  if (error?.code === RPC_ERRORS.internal) return "internal";
+  return PLUGIN_ERROR_NAMES_BY_WIRE_CODE.get(error?.code) ?? "unknown";
+}
 
 function messageData(value) {
   return value && typeof value === "object" && "data" in value ? value.data : value;
@@ -90,19 +103,25 @@ function createHostClient(transport) {
     pending.delete(`${typeof message.id}:${String(message.id)}`);
     if (message.error) {
       request.reject(new PluginError(
-        message.error.data?.pluginCode ?? "unknown",
+        pluginErrorNameFromRpcError(message.error),
         message.error.message,
         message.error.data?.details,
       ));
     } else request.resolve(message.result);
     return true;
   }
-  function request(method, params) {
+  function request(method, params, options = {}) {
     const id = nextId;
     nextId = nextId === Number.MAX_SAFE_INTEGER ? 0 : nextId + 1;
     return new Promise((resolve, reject) => {
       pending.set(`${typeof id}:${String(id)}`, { resolve, reject });
-      transport.post({ jsonrpc: "2.0", id, method, params });
+      transport.post({
+        jsonrpc: "2.0",
+        id,
+        method,
+        params,
+        ...(options.deadlineMs === undefined ? {} : { deadlineMs: options.deadlineMs }),
+      });
     });
   }
   function notify(method, params) {
@@ -123,6 +142,40 @@ function assertStorageKey(key) {
   return key;
 }
 
+function assertCredentialRef(credential) {
+  if (
+    !credential
+    || typeof credential !== "object"
+    || (credential.kind !== "secret" && credential.kind !== "credential")
+    || typeof credential.id !== "string"
+    || credential.id.length < 16
+    || credential.id.length > 256
+  ) throw new PluginError("invalid_argument", "Credential reference is invalid");
+  if (
+    credential.kind === "secret"
+    && (
+      typeof credential.key !== "string"
+      || credential.key.length < 1
+      || credential.key.length > 256
+      || credential.key.includes("\0")
+    )
+  ) throw new PluginError("invalid_argument", "Credential reference is invalid");
+  return credential.kind === "secret"
+    ? { kind: "secret", id: credential.id, key: credential.key }
+    : { kind: "credential", id: credential.id };
+}
+
+function forwardedDeadline(value, maximum) {
+  return Number.isSafeInteger(value) && value >= 1 && value <= maximum ? value : undefined;
+}
+
+function assertCompanionId(companionId) {
+  if (typeof companionId !== "string" || companionId.length < 5 || companionId.length > 192) {
+    throw new PluginError("invalid_argument", "Companion ID is invalid");
+  }
+  return companionId;
+}
+
 function createPluginContext(config, client) {
   const subscriptions = new DisposableStore();
   const storage = {
@@ -135,9 +188,73 @@ function createPluginContext(config, client) {
     keys: () => client.request("storage.keys", {}).then((result) => result?.keys ?? []),
   };
   const secrets = {
-    get: () => Promise.reject(new PluginError("unsupported", "Plugin secrets require the permission runtime")),
-    set: () => Promise.reject(new PluginError("unsupported", "Plugin secrets require the permission runtime")),
-    delete: () => Promise.reject(new PluginError("unsupported", "Plugin secrets require the permission runtime")),
+    get: (key) => client.request("secrets.get", { key: assertStorageKey(key) })
+      .then((result) => result?.found ? result.secret : undefined),
+    set: (key, value) => client.request("secrets.set", {
+      key: assertStorageKey(key),
+      value,
+    }).then((result) => result.secret),
+    delete: (key) => client.request("secrets.delete", { key: assertStorageKey(key) })
+      .then(() => undefined),
+  };
+  const credentials = {
+    createLease: (secret, options) => client.request("credentials.createLease", {
+      secret: assertCredentialRef(secret),
+      operationId: options?.operationId,
+      purpose: options?.purpose,
+      ...(options?.ttlMs === undefined ? {} : { ttlMs: options.ttlMs }),
+    }),
+  };
+  const network = {
+    request: (request) => client.request("network.request", request, {
+      deadlineMs: forwardedDeadline(request?.timeoutMs, 300_000),
+    }),
+  };
+  const filesystem = {
+    readFile: (filePath, options = {}) => client.request("filesystem.readFile", {
+      path: filePath,
+      ...options,
+    }).then((result) => result.data),
+    writeFile: (filePath, data, options = {}) => client.request("filesystem.writeFile", {
+      path: filePath,
+      data,
+      ...options,
+    }).then(() => undefined),
+    stat: (filePath) => client.request("filesystem.stat", { path: filePath }),
+    readDirectory: (directoryPath) => client.request("filesystem.readDirectory", { path: directoryPath })
+      .then((result) => result.entries),
+  };
+  const companions = {
+    start: async (companionId) => {
+      const result = await client.request("companion.start", {
+        companionId: assertCompanionId(companionId),
+      });
+      let stopped = false;
+      let stopPromise = null;
+      const stop = () => {
+        if (stopped) return Promise.resolve();
+        if (stopPromise) return stopPromise;
+        stopPromise = client.request("companion.stop", { handleId: result.handleId })
+          .then(() => { stopped = true; })
+          .finally(() => { stopPromise = null; });
+        return stopPromise;
+      };
+      return Object.freeze({
+        id: result.handleId,
+        request: (method, params, options = {}) => client.request(
+          "companion.request",
+          {
+            handleId: result.handleId,
+            method,
+            ...(params === undefined ? {} : { params }),
+            ...options,
+          },
+          { deadlineMs: forwardedDeadline(options.timeoutMs, 60_000) },
+        ),
+        stop,
+        dispose() { void stop().catch(() => {}); },
+      });
+    },
   };
   const logger = Object.fromEntries(["debug", "info", "warn", "error"].map((level) => [
     level,
@@ -155,6 +272,10 @@ function createPluginContext(config, client) {
     subscriptions,
     storage,
     secrets,
+    credentials,
+    network,
+    filesystem,
+    companions,
     logger,
   };
 }

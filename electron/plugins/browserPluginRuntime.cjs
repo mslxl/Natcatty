@@ -54,6 +54,7 @@ class BrowserPluginRuntime {
     this.onIncomingStream = options.onIncomingStream;
     this.onBeforeMessage = options.onBeforeMessage;
     this.onProgress = options.onProgress;
+    this.onProcessReady = options.onProcessReady ?? (() => {});
     this.logger = options.logger ?? { write() {} };
     this.onExit = options.onExit ?? (() => {});
     this.onProtocolError = options.onProtocolError ?? (() => {});
@@ -153,6 +154,7 @@ class BrowserPluginRuntime {
         preload: this.preloadPath,
       },
     });
+    this.onProcessReady();
     const contents = this.window.webContents;
     contents.setWebRTCIPHandlingPolicy("disable_non_proxied_udp");
     contents.on("console-message", (details) => {
@@ -284,6 +286,11 @@ class BrowserPluginRuntime {
   openStream(streamId, windowBytes) {
     if (!this.router) return Promise.reject(new Error("Plugin browser runtime is not connected"));
     return this.router.streams.openOutgoing(streamId, windowBytes);
+  }
+
+  getProcessId() {
+    if (!this.window || this.window.isDestroyed()) return null;
+    return this.window.webContents.getOSProcessId?.() ?? null;
   }
 
   #handleExit(error) {

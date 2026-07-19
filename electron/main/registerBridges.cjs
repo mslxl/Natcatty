@@ -98,7 +98,18 @@ function createBridgeRegistrar(context) {
       env: process.env,
       createService: () => {
         const { createPluginHostService } = require("../plugins/hostService.cjs");
-        return createPluginHostService({ app, electron: electronModule });
+        const {
+          createNativePermissionDecisionProvider,
+        } = require("../plugins/nativePermissionDecision.cjs");
+        return createPluginHostService({
+          app,
+          electron: electronModule,
+          safeStorage,
+          requestPermissionDecision: createNativePermissionDecisionProvider({
+            dialog: electronModule.dialog,
+            window: win,
+          }),
+        });
       },
       registerShutdown: (handler) => {
         const { registerPluginShutdown } = require("../plugins/shutdownCoordinator.cjs");

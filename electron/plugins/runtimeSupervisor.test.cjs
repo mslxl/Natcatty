@@ -82,6 +82,7 @@ test("supervisor prefers the ordinary browser runtime and enforces negotiated id
 
   const started = await fixture.supervisor.start(fixture.manifest.id);
   assert.deepEqual(started, fixture.supervisor.getRuntimeIdentity(fixture.manifest.id));
+  assert.match(started.securityPrincipal, /^unsigned-package:/u);
   assert.equal(Object.hasOwn(started, "request"), false);
   assert.equal(Object.hasOwn(started, "stop"), false);
   assert.equal(fixture.runtimeOptions[0].plugin.manifest.main.browser, "dist/browser.js");
@@ -113,6 +114,48 @@ test("supervisor verifies immutable package contents before runtime placement", 
   );
   assert.equal(placementCalls, 0);
   assert.deepEqual(fixture.runtimeOptions, []);
+});
+
+test("supervisor attaches the runtime quota monitor before activation completes", async (context) => {
+  const events = [];
+  let releaseActivation;
+  let signalProcessReady;
+  const activation = new Promise((resolve) => { releaseActivation = resolve; });
+  const processReady = new Promise((resolve) => { signalProcessReady = resolve; });
+  const fixture = createFixture(context, (options) => ({
+    async start(config) {
+      events.push("start");
+      options.onProcessReady();
+      events.push("process-ready");
+      signalProcessReady();
+      await activation;
+      return {
+        pluginId: config.pluginId,
+        pluginVersion: config.pluginVersion,
+        apiVersion: config.apiVersion,
+        enabledFeatures: config.enabledFeatures,
+      };
+    },
+    async stop() {},
+  }), {
+    runtimeResourceMonitor: {
+      trackRuntime() {
+        events.push("monitor");
+        return { dispose() {} };
+      },
+      releaseRuntime() {},
+    },
+  });
+  const starting = fixture.supervisor.start(fixture.manifest.id);
+  await processReady;
+  try {
+    assert.deepEqual(events, ["start", "monitor", "process-ready"]);
+  } finally {
+    releaseActivation();
+  }
+  await starting;
+  assert.equal(events.filter((event) => event === "monitor").length, 1);
+  await fixture.supervisor.stop(fixture.manifest.id);
 });
 
 test("repeated activation failures quarantine after the third crash window event", async (context) => {
@@ -574,6 +617,75 @@ test("lazy activation waits until the previous runtime has fully stopped", async
   const secondIdentity = await restarting;
   assert.equal(factoryCalls, 2);
   assert.notEqual(secondIdentity.runtimeId, firstIdentity.runtimeId);
+});
+
+test("runtime stop waits for companion cleanup before it resolves", async (context) => {
+  const events = [];
+  let markCleanupEntered;
+  let releaseCleanup;
+  const cleanupEntered = new Promise((resolve) => { markCleanupEntered = resolve; });
+  const cleanupReleased = new Promise((resolve) => { releaseCleanup = resolve; });
+  const fixture = createFixture(context, () => ({
+    async start(config) {
+      return {
+        pluginId: config.pluginId,
+        pluginVersion: config.pluginVersion,
+        apiVersion: config.apiVersion,
+        enabledFeatures: config.enabledFeatures,
+      };
+    },
+    async stop() { events.push("runtime-stop"); },
+  }), {
+    async runtimeCleanup(identity) {
+      events.push(`cleanup:${identity.runtimeId}`);
+      markCleanupEntered(identity);
+      await cleanupReleased;
+    },
+  });
+  const identity = await fixture.supervisor.start(fixture.manifest.id);
+  let settled = false;
+  const stopping = fixture.supervisor.stop(fixture.manifest.id).finally(() => { settled = true; });
+  const cleanupIdentity = await cleanupEntered;
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(settled, false);
+  assert.deepEqual(cleanupIdentity, identity);
+  assert.deepEqual(events, ["runtime-stop", `cleanup:${identity.runtimeId}`]);
+  releaseCleanup();
+  await stopping;
+  assert.equal(fixture.database.getActivePlugin(fixture.manifest.id).runtime.status, "stopped");
+});
+
+test("companion cleanup containment failure is persisted and blocks restart", async (context) => {
+  const fixture = createFixture(context, () => ({
+    async start(config) {
+      return {
+        pluginId: config.pluginId,
+        pluginVersion: config.pluginVersion,
+        apiVersion: config.apiVersion,
+        enabledFeatures: config.enabledFeatures,
+      };
+    },
+    async stop() {},
+  }), {
+    async runtimeCleanup() { throw new Error("companion process tree survived"); },
+  });
+  await fixture.supervisor.start(fixture.manifest.id);
+
+  await assert.rejects(
+    fixture.supervisor.stop(fixture.manifest.id),
+    /companion process tree survived/,
+  );
+  const plugin = fixture.database.getActivePlugin(fixture.manifest.id);
+  assert.equal(plugin.enabled, false);
+  assert.equal(plugin.runtime.status, "quarantined");
+  assert.match(plugin.runtime.lastError, /companion process tree survived/);
+  assert.notEqual(plugin.runtime.quarantinedAt, null);
+  fixture.database.setEnabled(fixture.manifest.id, true);
+  fixture.database.clearQuarantine(fixture.manifest.id);
+  await assert.rejects(
+    fixture.supervisor.start(fixture.manifest.id),
+    /restart Netcatty before starting it again/,
+  );
 });
 
 test("containment failure disables the plugin and blocks replacement activation until restart", async (context) => {
