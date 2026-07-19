@@ -4,7 +4,6 @@ const { createHash, randomUUID } = require("node:crypto");
 
 const { PluginRpcError, RPC_ERRORS, raceWithAbort } = require("./rpcRouter.cjs");
 const {
-  RESOURCE_SCOPED_PERMISSIONS,
   assertPluginPermission,
   canonicalizePermissionResource,
   declarationAllowsResource,
@@ -552,9 +551,6 @@ class PluginPermissionEngine {
     };
     for (const declaration of declarations.values()) {
       if (!declaration.required || skipPermissions.has(declaration.permission)) continue;
-      if (RESOURCE_SCOPED_PERMISSIONS.has(declaration.permission) && declaration.resources.length === 0) {
-        continue;
-      }
       await this.authorize(context, {
         permission: declaration.permission,
         resources: declaration.resources.length ? declaration.resources : ["*"],

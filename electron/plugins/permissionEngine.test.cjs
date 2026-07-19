@@ -447,7 +447,7 @@ test("session grants require a host-owned session identifier", async (context) =
   database.close();
 });
 
-test("required preflight grants non-resource permissions but defers concrete resource choices", async (context) => {
+test("required preflight rejects resource-scoped permissions without activation bounds", async (context) => {
   const database = createDatabase(context);
   const requested = [];
   const engine = new PluginPermissionEngine({
@@ -457,8 +457,31 @@ test("required preflight grants non-resource permissions but defers concrete res
       return { requestId: request.requestId, decision: "allow", scope: "application" };
     },
   });
+  const pluginManifest = manifest({ required: ["network"] });
+  await assert.rejects(engine.authorizeRequired({
+    id: pluginManifest.id,
+    activeVersion: pluginManifest.version,
+    manifest: pluginManifest,
+  }), /must declare resources/u);
+  assert.deepEqual(requested, []);
+  database.close();
+});
+
+test("required preflight prompts for non-resource permissions and bounded resources", async (context) => {
+  const database = createDatabase(context);
+  const requested = [];
+  const engine = new PluginPermissionEngine({
+    database,
+    requestDecision: async (request) => {
+      requested.push({ permission: request.permission, resources: request.resources });
+      return { requestId: request.requestId, decision: "allow", scope: "application" };
+    },
+  });
   const pluginManifest = {
-    ...manifest({ required: ["runtime.advanced", "network"] }),
+    ...manifest({ required: [
+      "runtime.advanced",
+      { permission: "network", resources: ["https://example.com"] },
+    ] }),
     main: { node: "index.js" },
   };
   await engine.authorizeRequired({
@@ -466,7 +489,10 @@ test("required preflight grants non-resource permissions but defers concrete res
     activeVersion: pluginManifest.version,
     manifest: pluginManifest,
   });
-  assert.deepEqual(requested, ["runtime.advanced"]);
+  assert.deepEqual(requested, [
+    { permission: "runtime.advanced", resources: ["*"] },
+    { permission: "network", resources: ["https://example.com"] },
+  ]);
   database.close();
 });
 

@@ -204,6 +204,39 @@
         "provider.importer"
       ]
     },
+    "NonResourceScopedPermission": {
+      "description": "A permission whose complete activation-time scope is represented by the permission name itself.",
+      "type": "string",
+      "enum": [
+        "storage",
+        "runtime.advanced",
+        "settings.read",
+        "settings.write",
+        "commands",
+        "menus",
+        "views",
+        "clipboard.read",
+        "clipboard.write",
+        "terminal.metadata",
+        "terminal.output",
+        "terminal.input",
+        "terminal.decorate",
+        "terminal.complete",
+        "terminal.intercept.input",
+        "terminal.intercept.output",
+        "vault.metadata",
+        "vault.write",
+        "vault.credentials",
+        "sftp.read",
+        "sftp.write",
+        "secrets",
+        "provider.terminal",
+        "provider.connection",
+        "provider.authentication",
+        "provider.sync",
+        "provider.importer"
+      ]
+    },
     "PermissionResource": {
       "description": "A host-canonicalized permission resource. Filesystem resources may be absolute platform paths; other permission kinds impose narrower runtime limits.",
       "type": "string",
@@ -215,25 +248,33 @@
       "type": "string",
       "enum": ["exact", "directory"]
     },
+    "PermissionResourceDeclaration": {
+      "type": "object",
+      "required": ["permission", "resources"],
+      "properties": {
+        "permission": { "$ref": "#/$defs/PluginPermission" },
+        "resources": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 128,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/PermissionResource" }
+        },
+        "reason": { "type": "string", "maxLength": 1024 }
+      },
+      "additionalProperties": false
+    },
     "PermissionDeclaration": {
       "oneOf": [
         { "$ref": "#/$defs/PluginPermission" },
-        {
-          "type": "object",
-          "required": ["permission", "resources"],
-          "properties": {
-            "permission": { "$ref": "#/$defs/PluginPermission" },
-            "resources": {
-              "type": "array",
-              "minItems": 1,
-              "maxItems": 128,
-              "uniqueItems": true,
-              "items": { "$ref": "#/$defs/PermissionResource" }
-            },
-            "reason": { "type": "string", "maxLength": 1024 }
-          },
-          "additionalProperties": false
-        }
+        { "$ref": "#/$defs/PermissionResourceDeclaration" }
+      ]
+    },
+    "RequiredPermissionDeclaration": {
+      "description": "Required resource-scoped permissions must name their complete activation-time approval bounds.",
+      "oneOf": [
+        { "$ref": "#/$defs/NonResourceScopedPermission" },
+        { "$ref": "#/$defs/PermissionResourceDeclaration" }
       ]
     },
     "PermissionSet": {
@@ -242,7 +283,7 @@
         "required": {
           "type": "array",
           "maxItems": 64,
-          "items": { "$ref": "#/$defs/PermissionDeclaration" }
+          "items": { "$ref": "#/$defs/RequiredPermissionDeclaration" }
         },
         "optional": {
           "type": "array",

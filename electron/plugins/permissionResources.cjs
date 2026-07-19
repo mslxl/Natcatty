@@ -115,6 +115,9 @@ function normalizePermissionDeclarations(manifest) {
         : [...new Set((value.resources ?? []).map((resource) => (
             canonicalizePermissionResource(permission, resource)
           )))].sort();
+      if (required && RESOURCE_SCOPED_PERMISSIONS.has(permission) && resources.length === 0) {
+        throw new TypeError(`Required permission ${permission} must declare resources`);
+      }
       declarations.set(permission, Object.freeze({
         permission,
         required,

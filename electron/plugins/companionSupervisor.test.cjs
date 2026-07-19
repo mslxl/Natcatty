@@ -32,6 +32,16 @@ function runtimeContext(packageRoot, digest, overrides = {}) {
     securityPrincipal: "unsigned-package:test",
     packageRoot,
     manifest: {
+      main: { node: "dist/node.js" },
+      permissions: {
+        required: [
+          "runtime.advanced",
+          {
+            permission: "companion.execute",
+            resources: ["com.example.companion.helper"],
+          },
+        ],
+      },
       companionExecutables: [{
         id: "com.example.companion.helper",
         variants: [{ path: "bin/helper", platforms: [`${process.platform}-${process.arch}`], sha256: digest }],
@@ -41,6 +51,50 @@ function runtimeContext(packageRoot, digest, overrides = {}) {
     ...overrides,
   };
 }
+
+test("ordinary browser runtimes cannot authorize or launch native companions", async (context) => {
+  const root = createRoot(context);
+  let spawnCalls = 0;
+  const supervisor = new PluginCompanionSupervisor({
+    paths: { data: path.join(root, "data") },
+    spawn: () => {
+      spawnCalls += 1;
+      throw new Error("browser companion must never spawn");
+    },
+  });
+  const browser = runtimeContext(root, "0".repeat(64), {
+    runtimeKind: "browser",
+    manifest: {
+      main: { browser: "dist/browser.js" },
+      permissions: {
+        required: [{
+          permission: "companion.execute",
+          resources: ["com.example.companion.helper"],
+        }],
+      },
+      companionExecutables: [{
+        id: "com.example.companion.helper",
+        variants: [{
+          path: "bin/helper",
+          platforms: [`${process.platform}-${process.arch}`],
+          sha256: "0".repeat(64),
+        }],
+      }],
+    },
+  });
+  assert.throws(
+    () => supervisor.describeStartAuthorization({
+      companionId: "com.example.companion.helper",
+    }, browser),
+    (error) => error.code === RPC_ERRORS.permissionDenied,
+  );
+  await assert.rejects(
+    supervisor.start({ companionId: "com.example.companion.helper" }, browser),
+    (error) => error.code === RPC_ERRORS.permissionDenied,
+  );
+  assert.equal(spawnCalls, 0);
+  await supervisor.shutdown();
+});
 
 class FakeChild extends EventEmitter {
   constructor(contract, responseId = (id) => id) {

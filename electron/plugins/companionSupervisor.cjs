@@ -47,6 +47,16 @@ function assertCompanionMethod(value) {
   return value;
 }
 
+function assertAdvancedCompanionContext(context) {
+  if (context?.runtimeKind !== "utility" || typeof context.manifest?.main?.node !== "string") {
+    throw new PluginRpcError(
+      RPC_ERRORS.permissionDenied,
+      "Plugin companions require an advanced utility runtime",
+      { pluginCode: "permission_denied" },
+    );
+  }
+}
+
 function rpcIdKey(id) {
   return `${typeof id}:${String(id)}`;
 }
@@ -357,7 +367,8 @@ class PluginCompanionSupervisor {
     return { handleId: assertHandleId(params.handleId) };
   }
 
-  describeStartAuthorization(params) {
+  describeStartAuthorization(params, context) {
+    assertAdvancedCompanionContext(context);
     const value = this.validateStart(params);
     return {
       permission: "companion.execute",
@@ -399,6 +410,7 @@ class PluginCompanionSupervisor {
 
   async start(params, context) {
     if (this.closed) throw new PluginRpcError(RPC_ERRORS.unavailable, "Plugin companion supervisor is closed");
+    assertAdvancedCompanionContext(context);
     const { companionId } = this.validateStart(params);
     const releaseReservation = this.#reserveStart(context.runtimeId);
     return this.#startReserved(companionId, context).finally(releaseReservation);

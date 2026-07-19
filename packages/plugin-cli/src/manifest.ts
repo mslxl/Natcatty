@@ -140,6 +140,26 @@ function permissionResourceLimit(permission: PluginPermission): number {
   return 2_048;
 }
 
+const resourceScopedPermissions = new Set<PluginPermission>([
+  "network",
+  "filesystem.read",
+  "filesystem.write",
+  "companion.execute",
+]);
+
+function validateRequiredPermissionBounds(value: unknown): string[] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  const permissions = (value as { permissions?: unknown }).permissions;
+  if (!permissions || typeof permissions !== "object" || Array.isArray(permissions)) return [];
+  const required = (permissions as { required?: unknown }).required;
+  if (!Array.isArray(required)) return [];
+  return required.flatMap((declaration) => (
+    typeof declaration === "string" && resourceScopedPermissions.has(declaration as PluginPermission)
+      ? [`Required permission ${declaration} must declare explicit resources`]
+      : []
+  ));
+}
+
 function validatePermissionResourceLimits(manifest: PluginManifest): string[] {
   const errors: string[] = [];
   for (const declaration of [
@@ -294,6 +314,14 @@ function validateSemantics(manifest: PluginManifest): string[] {
     "companion.execute",
     "Companion executables",
   );
+  requirePermission(
+    Boolean(manifest.companionExecutables?.length),
+    "runtime.advanced",
+    "Companion executables",
+  );
+  if (manifest.companionExecutables?.length && !manifest.main.node) {
+    errors.push("Companion executables require a Node utility entrypoint");
+  }
   const providerPermissions = new Map<string, readonly PluginPermission[]>([
     ["terminal.completion", ["provider.terminal", "terminal.complete"]],
     ["terminal.decoration", ["provider.terminal", "terminal.output", "terminal.decorate"]],
@@ -526,6 +554,10 @@ export function validateManifestValue(value: unknown): ManifestValidationResult 
       valid: false,
       errors: [error instanceof Error ? error.message : String(error)],
     };
+  }
+  const requiredPermissionErrors = validateRequiredPermissionBounds(value);
+  if (requiredPermissionErrors.length > 0) {
+    return { valid: false, errors: requiredPermissionErrors };
   }
   if (!validateSchema(value)) {
     return {

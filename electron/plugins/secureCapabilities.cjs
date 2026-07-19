@@ -107,7 +107,9 @@ function registerSecurePluginCapabilities(registry, options) {
   ), {
     metadata: { capability: "companion", mutating: true, permission: "companion.execute" },
     validateParams: (params) => options.companionSupervisor.validateStart(params),
-    authorization: (params) => options.companionSupervisor.describeStartAuthorization(params),
+    authorization: (params, context) => (
+      options.companionSupervisor.describeStartAuthorization(params, context)
+    ),
   });
   registry.registerRequest("companion.request", (params, context) => (
     options.companionSupervisor.request(params, context)

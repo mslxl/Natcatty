@@ -76,6 +76,8 @@ export type MenuContribution = {
 
 export type MenuLocation = "commandPalette" | "application" | "host/context" | "terminal/context" | "terminal/toolbar" | "statusBar";
 
+export type NonResourceScopedPermission = "storage" | "runtime.advanced" | "settings.read" | "settings.write" | "commands" | "menus" | "views" | "clipboard.read" | "clipboard.write" | "terminal.metadata" | "terminal.output" | "terminal.input" | "terminal.decorate" | "terminal.complete" | "terminal.intercept.input" | "terminal.intercept.output" | "vault.metadata" | "vault.write" | "vault.credentials" | "sftp.read" | "sftp.write" | "secrets" | "provider.terminal" | "provider.connection" | "provider.authentication" | "provider.sync" | "provider.importer";
+
 export type NullableRpcId = (RpcId) | (null);
 
 export type PackageIcon = {
@@ -94,11 +96,7 @@ export type PermissionDecision = ({
   decision: "deny" | "cancel";
 });
 
-export type PermissionDeclaration = (PluginPermission) | ({
-  permission: PluginPermission;
-  resources: Array<PermissionResource>;
-  reason?: string;
-});
+export type PermissionDeclaration = (PluginPermission) | (PermissionResourceDeclaration);
 
 export type PermissionGrantScope = "once" | "session" | "application" | "always";
 
@@ -120,10 +118,16 @@ export type PermissionRequest = {
 
 export type PermissionResource = string;
 
+export type PermissionResourceDeclaration = {
+  permission: PluginPermission;
+  resources: Array<PermissionResource>;
+  reason?: string;
+};
+
 export type PermissionResourceKind = "exact" | "directory";
 
 export type PermissionSet = {
-  required?: Array<PermissionDeclaration>;
+  required?: Array<RequiredPermissionDeclaration>;
   optional?: Array<PermissionDeclaration>;
 };
 
@@ -256,6 +260,8 @@ export type ProviderResult = ({
 });
 
 export type RelativePackagePath = string;
+
+export type RequiredPermissionDeclaration = (NonResourceScopedPermission) | (PermissionResourceDeclaration);
 
 export type RpcCancel = {
   jsonrpc: "2.0";

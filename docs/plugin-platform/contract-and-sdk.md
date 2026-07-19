@@ -102,7 +102,10 @@ variants. A variant binds one package path and SHA-256 digest to one or more
 compatible OS/architecture targets, allowing a universal script to be shared
 while macOS, Linux, and Windows native binaries remain distinct. A companion
 cannot declare the same target platform twice, and no two companion variants
-may claim the same package path.
+may claim the same package path. A manifest with companions must also provide a
+Node utility entrypoint and declare both `runtime.advanced` and a resource-bound
+`companion.execute` permission. An ordinary browser placement cannot authorize
+or launch a companion.
 
 ## Contribution identity
 

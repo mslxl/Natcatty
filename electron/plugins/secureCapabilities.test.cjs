@@ -112,3 +112,48 @@ test("filesystem RPC authorization fixes resource kind by operation without host
     [target, "exact"],
   ]);
 });
+
+test("companion start authorization receives host-owned runtime placement", () => {
+  const registrations = new Map();
+  const registry = {
+    use() {},
+    registerRequest(method, handler, options) { registrations.set(method, { handler, options }); },
+  };
+  const middlewareOwner = { createMiddleware: () => async (_context, next) => next() };
+  const broker = new Proxy({}, { get: () => () => ({}) });
+  let observedContext;
+  const companionSupervisor = {
+    validateStart: (params) => params,
+    describeStartAuthorization(params, context) {
+      observedContext = context;
+      return {
+        permission: "companion.execute",
+        resources: [params.companionId],
+      };
+    },
+    validateRequest: (params) => params,
+    validateStop: (params) => params,
+    describeHandleAuthorization: () => ({
+      permission: "companion.execute",
+      resources: ["com.example.secure.helper"],
+    }),
+    start: async () => null,
+    request: async () => null,
+    stop: async () => null,
+  };
+  registerSecurePluginCapabilities(registry, {
+    quotaManager: middlewareOwner,
+    permissionEngine: middlewareOwner,
+    secretStore: {},
+    credentialBroker: broker,
+    networkBroker: broker,
+    filesystemBroker: broker,
+    companionSupervisor,
+    assertLeaseParams: (params) => params,
+  });
+  const runtimeContext = { runtimeKind: "utility", runtimeId: "runtime-advanced" };
+  registrations.get("companion.start").options.authorization({
+    companionId: "com.example.secure.helper",
+  }, runtimeContext);
+  assert.equal(observedContext, runtimeContext);
+});

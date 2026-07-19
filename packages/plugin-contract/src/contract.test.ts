@@ -59,6 +59,37 @@ test("plugin manifest schema accepts the internal contract", () => {
   assert.equal(validate({ ...validManifest, version: "1.0.0-01" }), false);
 });
 
+test("required resource-scoped permissions declare activation-time bounds", () => {
+  const validate = validator("PluginManifest");
+  const resourceScoped = [
+    ["network", "https://example.com"],
+    ["filesystem.read", "/tmp/plugin-read"],
+    ["filesystem.write", "/tmp/plugin-write"],
+    ["companion.execute", "com.example.contract-test.helper"],
+  ] as const;
+  assert.deepEqual(
+    schema.$defs.NonResourceScopedPermission.enum,
+    schema.$defs.PluginPermission.enum.filter(
+      (permission: string) => !resourceScoped.some(([scoped]) => scoped === permission),
+    ),
+    "the required-permission shorthand catalog must track every non-resource permission",
+  );
+  for (const [permission, resource] of resourceScoped) {
+    assert.equal(validate({
+      ...validManifest,
+      permissions: { required: [permission] },
+    }), false, `${permission} must not be an unbounded required declaration`);
+    assert.equal(validate({
+      ...validManifest,
+      permissions: { required: [{ permission, resources: [resource] }] },
+    }), true, JSON.stringify(validate.errors));
+    assert.equal(validate({
+      ...validManifest,
+      permissions: { optional: [permission] },
+    }), true, JSON.stringify(validate.errors));
+  }
+});
+
 test("manifest header remains forward-readable before version-specific validation", () => {
   const validateHeader = validator("PluginManifestHeader");
   assert.equal(validateHeader({
@@ -742,16 +773,21 @@ test("semantic namespacing covers every contribution registry and near-prefix co
   }];
   assert.equal(validateManifestValue({
     ...validManifest,
+    main: { ...validManifest.main, node: "dist/node.js" },
     contributes: contributions,
     permissions: {
       required: [
+        "runtime.advanced",
         "settings.read",
         "commands",
         "menus",
         "views",
         "provider.terminal",
         "terminal.complete",
-        "companion.execute",
+        {
+          permission: "companion.execute",
+          resources: ["com.example.contract-test.helper"],
+        },
       ],
       optional: [],
     },
@@ -877,8 +913,10 @@ test("planned phase consumers are representable without private application type
     },
     {
       ...validManifest,
+      main: { ...validManifest.main, node: "dist/node.js" },
       permissions: {
         required: [
+          "runtime.advanced",
           "provider.terminal",
           "terminal.complete",
           "terminal.output",
@@ -931,13 +969,18 @@ test("planned phase consumers are representable without private application type
     },
     {
       ...validManifest,
+      main: { ...validManifest.main, node: "dist/node.js" },
       permissions: {
         required: [
+          "runtime.advanced",
           "provider.connection",
           "provider.authentication",
           "provider.sync",
           "provider.importer",
-          "companion.execute",
+          {
+            permission: "companion.execute",
+            resources: ["com.example.contract-test.helper"],
+          },
         ],
       },
       contributes: {
