@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants, createReadStream, createWriteStream } from "node:fs";
 import {
+  chmod,
   lstat,
   mkdir,
   open,
@@ -63,12 +64,14 @@ export interface PackageBuildResult {
   readonly uncompressedBytes: number;
   readonly archiveBytes: number;
   readonly sha256: string;
+  readonly contentSha256: string;
 }
 
 export interface PackageValidationResult {
   readonly manifest: PluginManifest;
   readonly fileCount: number;
   readonly uncompressedBytes: number;
+  readonly contentSha256: string;
 }
 
 export type PluginDirectoryValidationResult = PackageValidationResult;
@@ -129,6 +132,40 @@ function sortPackagePaths(left: ScannedFile, right: ScannedFile): number {
   return Buffer.compare(Buffer.from(left.packagePath), Buffer.from(right.packagePath));
 }
 
+interface PackageContentIdentity {
+  readonly packagePath: string;
+  readonly size: number;
+  readonly sha256: string;
+  readonly executable: boolean;
+}
+
+/**
+ * Hash the logical package contents instead of the ZIP representation. This
+ * keeps integrity checks stable across valid ZIP encoders and compression
+ * choices while binding every path, byte length, executable bit, and file
+ * digest into one versioned identity.
+ */
+export function computePackageContentSha256(
+  entries: readonly PackageContentIdentity[],
+): string {
+  const hash = createHash("sha256");
+  hash.update("netcatty-plugin-content-v1\0", "utf8");
+  const ordered = [...entries].sort((left, right) => (
+    Buffer.compare(Buffer.from(left.packagePath), Buffer.from(right.packagePath))
+  ));
+  for (const entry of ordered) {
+    const packagePath = Buffer.from(entry.packagePath, "utf8");
+    const header = Buffer.allocUnsafe(13);
+    header.writeUInt32BE(packagePath.byteLength, 0);
+    header.writeBigUInt64BE(BigInt(entry.size), 4);
+    header.writeUInt8(entry.executable ? 1 : 0, 12);
+    hash.update(header);
+    hash.update(packagePath);
+    hash.update(Buffer.from(entry.sha256, "hex"));
+  }
+  return hash.digest("hex");
+}
+
 function isExecutablePackageFile(packagePath: string, mode: number): boolean {
   return (mode & 0o111) !== 0
     || EXECUTABLE_EXTENSIONS.has(path.posix.extname(packagePath).toLowerCase());
@@ -169,6 +206,7 @@ async function resolveThroughExistingAncestor(targetPath: string): Promise<strin
 async function scanPackageDirectory(
   pluginDirectory: string,
   manifestSource: ValidatedManifestSource,
+  options: { allowIgnoredRootEntries?: boolean } = {},
 ): Promise<ScannedFile[]> {
   const { manifest } = manifestSource;
   const registry = new PackagePathRegistry();
@@ -189,6 +227,9 @@ async function scanPackageDirectory(
         relativeDirectory === ""
         && (IGNORED_ROOT_ENTRIES.has(entry.name) || entry.name.endsWith(".ncpkg"))
       ) {
+        if (options.allowIgnoredRootEntries === false) {
+          throw new Error(`Installed plugin contains an unpackaged root entry: ${entry.name}`);
+        }
         continue;
       }
       const relativePath = relativeDirectory
@@ -430,19 +471,22 @@ export async function buildPluginPackage(
     uncompressedBytes: files.reduce((sum, file) => sum + file.size, 0),
     archiveBytes: outputStats.size,
     sha256: archiveHash.sha256,
+    contentSha256: computePackageContentSha256(files),
   };
 }
 
 export async function validatePluginDirectory(
   pluginDirectory: string,
+  options: { allowIgnoredRootEntries?: boolean } = {},
 ): Promise<PluginDirectoryValidationResult> {
   const sourceDirectory = path.resolve(pluginDirectory);
   const manifestSource = await readValidatedManifestSource(sourceDirectory);
-  const files = await scanPackageDirectory(sourceDirectory, manifestSource);
+  const files = await scanPackageDirectory(sourceDirectory, manifestSource, options);
   return {
     manifest: manifestSource.manifest,
     fileCount: files.length,
     uncompressedBytes: files.reduce((sum, file) => sum + file.size, 0),
+    contentSha256: computePackageContentSha256(files),
   };
 }
 
@@ -536,45 +580,66 @@ async function validateLocalFileHeader(
   }
 }
 
-function readEntry(
+async function readEntry(
   zipFile: ZipFile,
   entry: Entry,
   captureContents: boolean,
+  outputPath?: string,
 ): Promise<ReadArchiveEntryResult> {
-  return new Promise((resolve, reject) => {
+  const stream = await new Promise<NodeJS.ReadableStream>((resolve, reject) => {
     zipFile.openReadStream(entry, (error, stream) => {
       if (error || !stream) {
         reject(error ?? new Error(`Unable to read archive entry: ${entry.fileName}`));
         return;
       }
-      const chunks: Buffer[] = [];
-      const sha256 = createHash("sha256");
-      let crc = 0xffffffff;
-      let bytes = 0;
-      stream.on("data", (chunk: Buffer) => {
-        const buffer = Buffer.from(chunk);
-        bytes += chunk.byteLength;
-        if (bytes > PACKAGE_LIMITS.singleFileBytes) {
-          stream.destroy(new Error(`Plugin file exceeds size limit: ${entry.fileName}`));
-          return;
-        }
-        sha256.update(buffer);
-        crc = updateCrc32(crc, buffer);
-        if (captureContents) chunks.push(buffer);
-      });
-      stream.once("error", reject);
-      stream.once("end", () => resolve({
-        bytes,
-        crc32: (crc ^ 0xffffffff) >>> 0,
-        sha256: sha256.digest("hex"),
-        contents: captureContents ? Buffer.concat(chunks) : undefined,
-      }));
+      resolve(stream);
     });
   });
+  const chunks: Buffer[] = [];
+  const sha256 = createHash("sha256");
+  let crc = 0xffffffff;
+  let bytes = 0;
+  let outputHandle;
+  try {
+    if (outputPath) {
+      await mkdir(path.dirname(outputPath), { recursive: true, mode: 0o700 });
+      outputHandle = await open(outputPath, "wx", 0o600);
+    }
+    for await (const chunk of stream) {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      bytes += buffer.byteLength;
+      if (bytes > PACKAGE_LIMITS.singleFileBytes) {
+        throw new Error(`Plugin file exceeds size limit: ${entry.fileName}`);
+      }
+      sha256.update(buffer);
+      crc = updateCrc32(crc, buffer);
+      if (captureContents) chunks.push(buffer);
+      if (outputHandle) {
+        let written = 0;
+        while (written < buffer.length) {
+          const result = await outputHandle.write(buffer, written, buffer.length - written);
+          if (result.bytesWritten === 0) {
+            throw new Error(`Unable to extract the complete archive entry: ${entry.fileName}`);
+          }
+          written += result.bytesWritten;
+        }
+      }
+    }
+    if (outputHandle) await outputHandle.sync();
+    return {
+      bytes,
+      crc32: (crc ^ 0xffffffff) >>> 0,
+      sha256: sha256.digest("hex"),
+      contents: captureContents ? Buffer.concat(chunks) : undefined,
+    };
+  } finally {
+    await outputHandle?.close();
+  }
 }
 
-export async function validatePluginPackage(
+async function inspectPluginPackage(
   archivePath: string,
+  extractionDirectory?: string,
 ): Promise<PackageValidationResult> {
   const archiveStats = await stat(archivePath);
   if (archiveStats.size > PACKAGE_LIMITS.archiveBytes) {
@@ -582,7 +647,12 @@ export async function validatePluginPackage(
   }
   const zipFile = await openZip(archivePath);
   const registry = new PackagePathRegistry();
-  const entries = new Map<string, { contents?: Buffer; mode: number; sha256: string }>();
+  const entries = new Map<string, {
+    contents?: Buffer;
+    mode: number;
+    sha256: string;
+    size: number;
+  }>();
   let totalBytes = 0;
 
   await new Promise<void>((resolve, reject) => {
@@ -628,6 +698,7 @@ export async function validatePluginPackage(
             zipFile,
             entry,
             packagePath === "netcatty.plugin.json",
+            extractionDirectory ? path.join(extractionDirectory, ...packagePath.split("/")) : undefined,
           );
           if (result.bytes !== entry.uncompressedSize || result.crc32 !== entry.crc32) {
             throw new Error(`ZIP entry integrity check failed: ${packagePath}`);
@@ -636,6 +707,7 @@ export async function validatePluginPackage(
             contents: result.contents,
             mode,
             sha256: result.sha256,
+            size: result.bytes,
           });
           zipFile.readEntry();
         } catch (error) {
@@ -680,5 +752,45 @@ export async function validatePluginPackage(
       throw new Error(`Companion SHA-256 mismatch: ${companionPath}`);
     }
   }
-  return { manifest, fileCount: entries.size, uncompressedBytes: totalBytes };
+  if (extractionDirectory) {
+    for (const [packagePath] of entries) {
+      await chmod(
+        path.join(extractionDirectory, ...packagePath.split("/")),
+        declaredCompanions.has(packagePath) ? 0o700 : 0o600,
+      );
+    }
+  }
+  const contentSha256 = computePackageContentSha256(
+    [...entries].map(([packagePath, entry]) => ({
+      packagePath,
+      size: entry.size,
+      sha256: entry.sha256,
+      executable: declaredCompanions.has(packagePath),
+    })),
+  );
+  return { manifest, fileCount: entries.size, uncompressedBytes: totalBytes, contentSha256 };
+}
+
+export async function validatePluginPackage(
+  archivePath: string,
+): Promise<PackageValidationResult> {
+  return inspectPluginPackage(archivePath);
+}
+
+/**
+ * Validates and extracts an immutable package snapshot into a new directory.
+ * Failed or incomplete destinations are always removed so only callers that
+ * receive a successful result can atomically publish the staged directory.
+ */
+export async function extractPluginPackage(
+  archivePath: string,
+  destinationDirectory: string,
+): Promise<PackageValidationResult> {
+  await mkdir(destinationDirectory, { recursive: false, mode: 0o700 });
+  try {
+    return await inspectPluginPackage(archivePath, destinationDirectory);
+  } catch (error) {
+    await rm(destinationDirectory, { recursive: true, force: true });
+    throw error;
+  }
 }

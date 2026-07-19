@@ -88,6 +88,9 @@ const {
   writeSshDeepLinkEnabledPreference,
 } = require("./deepLink.cjs");
 const { getReusableMainWindow } = require("./mainWindowReuse.cjs");
+const { createAppContentWindowClosedHandler } = require("./appWindowLifecycle.cjs");
+const { PLUGIN_PROTOCOL_SCHEME } = require("./plugins/constants.cjs");
+const { runPluginShutdown } = require("./plugins/shutdownCoordinator.cjs");
 const {
   OPEN_TERMINAL_PATH_CHANNEL,
   collectOpenTerminalPathArgs,
@@ -107,9 +110,19 @@ try {
         stream: true,
       },
     },
+    {
+      scheme: PLUGIN_PROTOCOL_SCHEME,
+      privileges: {
+        standard: true,
+        secure: true,
+        supportFetchAPI: true,
+        corsEnabled: false,
+        codeCache: true,
+      },
+    },
   ]);
 } catch (err) {
-  console.warn("[Main] Failed to register app:// scheme privileges:", err);
+  console.warn("[Main] Failed to register custom scheme privileges:", err);
 }
 
 // Apply ssh2 protocol patch needed for OpenSSH sk-* signature layouts.
@@ -460,7 +473,12 @@ const registerBridges = createBridgeRegistrar({
  * Create the main application window
  */
 async function createWindow() {
-  const win = await getWindowManager().createWindow(electronModule, {
+  const windowManager = getWindowManager();
+  windowManager.setAppContentWindowClosedHandler(createAppContentWindowClosedHandler({
+    app,
+    windowManager,
+  }));
+  const win = await windowManager.createWindow(electronModule, {
     preload,
     devServerUrl: effectiveDevServerUrl,
     isDev,
@@ -1138,8 +1156,19 @@ if (!gotLock) {
   // !isQuitting would stop firing).
   const commitQuit = () => {
     getWindowManager().setIsQuitting(true);
-    quitConfirmed = true;
-    app.quit();
+    quitGuardChannelBusy = true;
+    void runPluginShutdown()
+      .then(({ timedOut }) => {
+        if (timedOut) console.warn("[Plugins] Shutdown deadline elapsed; continuing app quit");
+      })
+      .catch((error) => {
+        console.warn("[Plugins] Shutdown failed; continuing app quit:", error);
+      })
+      .finally(() => {
+        quitGuardChannelBusy = false;
+        quitConfirmed = true;
+        app.quit();
+      });
   };
 
   app.on("before-quit", (event) => {
@@ -1167,11 +1196,11 @@ if (!gotLock) {
     // BrowserWindow.getAllWindows() could pick tray/settings windows whose
     // renderers don't listen for app:query-dirty-editors and would force the
     // timeout fallback on every quit.
-    const appContentWindows = typeof getWindowManager().getAppContentWindows === "function"
-      ? getWindowManager().getAppContentWindows()
+    const dirtyEditorWindows = typeof getWindowManager().getDirtyEditorWindows === "function"
+      ? getWindowManager().getDirtyEditorWindows()
       : null;
-    const mainWindows = Array.isArray(appContentWindows)
-      ? appContentWindows
+    const mainWindows = Array.isArray(dirtyEditorWindows)
+      ? dirtyEditorWindows
       : typeof getWindowManager().getMainWindows === "function"
         ? getWindowManager().getMainWindows()
         : [getWindowManager().getMainWindow()].filter(Boolean);
@@ -1190,6 +1219,9 @@ if (!gotLock) {
       .map((candidate) => candidate.webContents)
       .filter(Boolean);
     if (queryableWebContents.length === 0) {
+      // Plugin shutdown is asynchronous, so the original quit must remain
+      // cancelled until commitQuit re-enters app.quit() after deactivation.
+      event.preventDefault();
       commitQuit();
       return;
     }

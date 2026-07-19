@@ -12,6 +12,7 @@ function createMainWindowApi(ctx) {
         onRegisterBridge,
         electronDir,
         route,
+        onAppContentWindowClosed,
         registerAsMainWindow = true,
         persistWindowState = registerAsMainWindow,
         registerAsAppContentWindow = true,
@@ -147,7 +148,7 @@ function createMainWindowApi(ctx) {
           mainWindow = win;
         }
       } else if (registerAsAppContentWindow && typeof registerAppContentWindow === "function") {
-        registerAppContentWindow(win);
+        registerAppContentWindow(win, { queryDirtyEditors: true });
       }
     
       // Clear reference when the main window is destroyed
@@ -168,6 +169,17 @@ function createMainWindowApi(ctx) {
           }
         } else if (registerAsAppContentWindow && typeof unregisterAppContentWindow === "function") {
           unregisterAppContentWindow(win);
+        }
+        if (registerAsAppContentWindow) {
+          try {
+            if (typeof notifyAppContentWindowClosed === "function") {
+              notifyAppContentWindowClosed(win);
+            } else {
+              onAppContentWindowClosed?.(win);
+            }
+          } catch {
+            // The application-level close fallback must not disrupt teardown.
+          }
         }
       });
     

@@ -89,6 +89,28 @@ function createBridgeRegistrar(context) {
     const aiBridge = getAiBridge();
     const httpNetworkProxyBridge = getHttpNetworkProxyBridge();
     const vaultBackupBridge = getVaultBackupBridge();
+    const {
+      createTrustedPluginBridgeSender,
+      registerPluginBridge,
+    } = require("../plugins/pluginBridge.cjs");
+    const { startDevelopmentPluginHost } = require("../plugins/hostBootstrap.cjs");
+    const pluginHostService = startDevelopmentPluginHost({
+      env: process.env,
+      createService: () => {
+        const { createPluginHostService } = require("../plugins/hostService.cjs");
+        return createPluginHostService({ app, electron: electronModule });
+      },
+      registerShutdown: (handler) => {
+        const { registerPluginShutdown } = require("../plugins/shutdownCoordinator.cjs");
+        return registerPluginShutdown(handler);
+      },
+      logger: console,
+    });
+    registerPluginBridge(ipcMain, {
+      manager: pluginHostService?.manager,
+      env: process.env,
+      isTrustedSender: createTrustedPluginBridgeSender({ devServerUrl: effectiveDevServerUrl }),
+    });
   
     const getCloudSyncPasswordPath = () => {
       try {

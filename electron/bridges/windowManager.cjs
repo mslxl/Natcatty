@@ -32,6 +32,8 @@ const THEME_COLORS = {
 let mainWindow = null;
 const mainWindows = new Set();
 const appContentWindows = new Set();
+const dirtyEditorWindows = new Set();
+let appContentWindowClosedHandler = null;
 let lastFocusedMainWindow = null;
 let settingsWindow = null;
 let currentTheme = "light";
@@ -88,6 +90,17 @@ function debugLog(...args) {
 
 function setIsQuitting(nextValue) {
   isQuitting = Boolean(nextValue);
+}
+
+function setAppContentWindowClosedHandler(handler) {
+  if (handler != null && typeof handler !== "function") {
+    throw new TypeError("App content window close handler must be a function");
+  }
+  appContentWindowClosedHandler = handler ?? null;
+}
+
+function notifyAppContentWindowClosed(win) {
+  appContentWindowClosedHandler?.(win);
 }
 
 function shouldCloseWindowFromInput(input) {
@@ -294,7 +307,11 @@ function pruneAppContentWindows() {
   for (const win of Array.from(appContentWindows)) {
     if (!win || win.isDestroyed?.()) {
       appContentWindows.delete(win);
+      dirtyEditorWindows.delete(win);
     }
+  }
+  for (const win of Array.from(dirtyEditorWindows)) {
+    if (!appContentWindows.has(win)) dirtyEditorWindows.delete(win);
   }
 }
 
@@ -308,25 +325,32 @@ function getAppContentWindowList() {
   return Array.from(appContentWindows).filter((win) => isWindowUsable(win));
 }
 
+function getDirtyEditorWindowList() {
+  pruneAppContentWindows();
+  return Array.from(dirtyEditorWindows).filter((win) => isWindowUsable(win));
+}
+
 function rememberMainWindow(win) {
   if (!win || win.isDestroyed?.()) return;
   lastFocusedMainWindow = win;
   mainWindow = win;
 }
 
-function registerAppContentWindow(win) {
+function registerAppContentWindow(win, options = {}) {
   if (!win || win.isDestroyed?.()) return;
   appContentWindows.add(win);
+  if (options.queryDirtyEditors === true) dirtyEditorWindows.add(win);
 }
 
 function unregisterAppContentWindow(win) {
   if (!win) return;
   appContentWindows.delete(win);
+  dirtyEditorWindows.delete(win);
 }
 
 function registerMainWindow(win) {
   if (!win || win.isDestroyed?.()) return;
-  registerAppContentWindow(win);
+  registerAppContentWindow(win, { queryDirtyEditors: true });
   mainWindows.add(win);
   rememberMainWindow(win);
   try {
@@ -898,6 +922,8 @@ const mainWindowApi = createMainWindowApi({
   unregisterMainWindow,
   registerAppContentWindow,
   unregisterAppContentWindow,
+  notifyAppContentWindowClosed,
+  setAppContentWindowClosedHandler,
   getMainWindowCount,
   applyWindowOpacityToWindow,
   resolveLiveAppIcon,
@@ -972,6 +998,9 @@ const terminalPopupWindowApi = createTerminalPopupWindowApi({
   sendWhenRendererReady,
   showAndFocusWindow,
   resolveSettingsWindowBounds,
+  registerAppContentWindow,
+  unregisterAppContentWindow,
+  notifyAppContentWindowClosed,
 });
 const { openTerminalPopupWindow, closeTerminalPopupWindow } = terminalPopupWindowApi;
 
@@ -1311,12 +1340,14 @@ module.exports = {
   getMainWindow,
   getMainWindows: getMainWindowList,
   getAppContentWindows: getAppContentWindowList,
+  getDirtyEditorWindows: getDirtyEditorWindowList,
   getMainWindowCount,
   isMainWindow,
   registerMainWindow,
   unregisterMainWindow,
   registerAppContentWindow,
   unregisterAppContentWindow,
+  setAppContentWindowClosedHandler,
   getSettingsWindow,
   isWindowUsable,
   registerWindowHandlers,
