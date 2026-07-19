@@ -272,6 +272,131 @@ test("manual session log save dialog only offers log files and normalizes extens
   }
 });
 
+test("manual session logs honor the configured plain-text format", async () => {
+  const directory = path.join(TEMP_ROOT, `manual-txt-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  const selectedPath = path.join(directory, "manual");
+  const expectedPath = `${selectedPath}.txt`;
+  const sessionId = `session-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  let dialogOptions;
+  const dialogMock = {
+    showSaveDialog: async (options) => {
+      dialogOptions = options;
+      return { canceled: false, filePath: selectedPath };
+    },
+  };
+  const {
+    startManualSessionLog,
+    stopManualSessionLog,
+  } = loadBridgeWithDialog(dialogMock);
+  const sessionLogStreamManager = require("./sessionLogStreamManager.cjs");
+
+  try {
+    const startResult = await startManualSessionLog(null, {
+      sessionId,
+      sessionName: "Linux host",
+      preferredDirectory: directory,
+      format: "txt",
+      initialLine: "root@host:~# ",
+    });
+    assert.equal(startResult.success, true);
+    assert.equal(startResult.filePath, expectedPath);
+    assert.match(dialogOptions.defaultPath, /\.txt$/);
+    assert.deepEqual(dialogOptions.filters[0], { name: "Text Files", extensions: ["txt"] });
+
+    sessionLogStreamManager.appendData(
+      sessionId,
+      "\u001b[31mdisplay\u001b[0m\r\npage 1\r\n--More--\r        \rpage 2\r\n",
+    );
+    const stopResult = await stopManualSessionLog(null, { sessionId });
+
+    assert.equal(stopResult.filePath, expectedPath);
+    assert.equal(fs.readFileSync(expectedPath, "utf8"), "root@host:~# display\npage 1\npage 2");
+  } finally {
+    await sessionLogStreamManager.cleanupAll();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("manual session logs honor HTML format and timestamps", async () => {
+  const directory = path.join(TEMP_ROOT, `manual-html-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  const filePath = path.join(directory, "manual.html");
+  const sessionId = `session-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const dialogMock = {
+    showSaveDialog: async () => ({ canceled: false, filePath }),
+  };
+  const {
+    startManualSessionLog,
+    stopManualSessionLog,
+  } = loadBridgeWithDialog(dialogMock);
+  const sessionLogStreamManager = require("./sessionLogStreamManager.cjs");
+
+  try {
+    const startResult = await startManualSessionLog(null, {
+      sessionId,
+      sessionName: "HTML / host:22",
+      preferredDirectory: directory,
+      format: "html",
+      timestampsEnabled: true,
+      initialLine: "",
+    });
+    assert.equal(startResult.success, true);
+
+    sessionLogStreamManager.appendData(sessionId, "ready\r\n");
+    await stopManualSessionLog(null, { sessionId });
+
+    const content = fs.readFileSync(filePath, "utf8");
+    assert.match(content, /<!DOCTYPE html>/);
+    assert.match(content, /HTML \/ host:22/);
+    assert.doesNotMatch(content, /HTML _ host_22/);
+    assert.match(content, /\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] ready/);
+  } finally {
+    await sessionLogStreamManager.cleanupAll();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("manual rendered logs report final write failures", async () => {
+  const directory = path.join(TEMP_ROOT, `manual-write-failure-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  const filePath = path.join(directory, "manual.txt");
+  const sessionId = `session-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const dialogMock = {
+    showSaveDialog: async () => ({ canceled: false, filePath }),
+  };
+  const {
+    startManualSessionLog,
+    stopManualSessionLog,
+  } = loadBridgeWithDialog(dialogMock);
+  const sessionLogStreamManager = require("./sessionLogStreamManager.cjs");
+  const originalWriteFile = fs.promises.writeFile;
+
+  try {
+    const startResult = await startManualSessionLog(null, {
+      sessionId,
+      sessionName: "failing host",
+      preferredDirectory: directory,
+      format: "txt",
+      initialLine: "",
+    });
+    assert.equal(startResult.success, true);
+    sessionLogStreamManager.appendData(sessionId, "body\r\n");
+
+    fs.promises.writeFile = async () => {
+      throw new Error("disk full");
+    };
+    const stopResult = await stopManualSessionLog(null, { sessionId });
+
+    assert.deepEqual(stopResult, {
+      success: false,
+      stopped: true,
+      error: "Failed to finalize session log",
+    });
+  } finally {
+    fs.promises.writeFile = originalWriteFile;
+    await sessionLogStreamManager.cleanupAll();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("registerHandlers taps terminal worker output into main-process manual session logs", async () => {
   const directory = path.join(TEMP_ROOT, `manual-worker-tap-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   const filePath = path.join(directory, "manual.log");

@@ -14,6 +14,7 @@ const {
 const FILE_NAME_UNSAFE_CHARS = new Set(["<", ">", ":", "\"", "/", "\\", "|", "?", "*"]);
 const WINDOWS_RESERVED_DEVICE_NAME = /^(con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\..*)?$/i;
 const manualSessionLogTokens = new Map();
+const SESSION_LOG_FORMATS = new Set(["txt", "raw", "html"]);
 
 function isControlCharacter(char) {
   const code = char.codePointAt(0);
@@ -266,14 +267,17 @@ async function startManualSessionLog(event, payload = {}) {
   const targetDirectory = typeof preferredDirectory === "string" && preferredDirectory.trim()
     ? preferredDirectory.trim()
     : require("node:os").homedir();
-  const safeSessionName = safePathSegment(sessionName || sessionId, "session");
-  const defaultPath = path.join(targetDirectory, `${safeSessionName}_${toLocalISOString(new Date())}.log`);
+  const format = SESSION_LOG_FORMATS.has(payload.format) ? payload.format : "raw";
+  const extension = format === "raw" ? "log" : format;
+  const displaySessionName = sessionName || sessionId;
+  const safeSessionName = safePathSegment(displaySessionName, "session");
+  const defaultPath = path.join(targetDirectory, `${safeSessionName}_${toLocalISOString(new Date())}.${extension}`);
 
   try {
     const result = await dialog.showSaveDialog({
       defaultPath,
       filters: [
-        { name: "Log Files", extensions: ["log"] },
+        { name: format === "txt" ? "Text Files" : format === "html" ? "HTML Files" : "Log Files", extensions: [extension] },
         { name: "All Files", extensions: ["*"] },
       ],
     });
@@ -282,16 +286,17 @@ async function startManualSessionLog(event, payload = {}) {
       return { success: true, started: false, canceled: true };
     }
 
-    const filePath = normalizeManualSessionLogFilePath(result.filePath);
+    const filePath = normalizeManualSessionLogFilePath(result.filePath, extension);
     if (filePath !== result.filePath && !(await confirmManualSessionLogOverwrite(filePath))) {
       return { success: true, started: false, canceled: true };
     }
 
     const startResult = sessionLogStreamManager.startStreamToFile(sessionId, {
       filePath,
-      format: "raw",
-      hostLabel: safeSessionName,
+      format,
+      hostLabel: displaySessionName,
       startTime: Date.now(),
+      timestampsEnabled: Boolean(payload.timestampsEnabled),
       initialLine: typeof initialLine === "string" ? initialLine : "",
       separateInitialLineBeforeLeadingCarriageReturn: true,
       stopRequiresToken: true,
@@ -308,8 +313,8 @@ async function startManualSessionLog(event, payload = {}) {
   }
 }
 
-function normalizeManualSessionLogFilePath(filePath) {
-  return path.extname(filePath).toLowerCase() === ".log" ? filePath : `${filePath}.log`;
+function normalizeManualSessionLogFilePath(filePath, extension = "log") {
+  return path.extname(filePath).toLowerCase() === `.${extension}` ? filePath : `${filePath}.${extension}`;
 }
 
 async function confirmManualSessionLogOverwrite(filePath) {
@@ -351,6 +356,7 @@ async function stopManualSessionLog(event, payload = {}) {
     if (!filePath) {
       if (!sessionLogStreamManager.hasStream(sessionId)) {
         manualSessionLogTokens.delete(sessionId);
+        return { success: false, stopped: true, error: "Failed to finalize session log" };
       }
       return { success: true, stopped: false };
     }
