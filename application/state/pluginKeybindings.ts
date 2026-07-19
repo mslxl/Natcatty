@@ -32,6 +32,31 @@ const NAMED_KEYS = new Map<string, string>([
   ['+', 'plus'],
   ['tab', 'tab'],
 ]);
+const PLUGIN_SHORTCUT_EDITABLE_SELECTOR = [
+  'input',
+  'textarea',
+  'select',
+  '[contenteditable]',
+  '[role="textbox"]',
+  '.monaco-editor',
+  '.monaco-diff-editor',
+  '.monaco-inputbox',
+  '.monaco-menu-container',
+].join(', ');
+
+function hasEditableShortcutAncestor(node: unknown): boolean {
+  const closest = (node as { closest?: (selector: string) => unknown } | null)?.closest;
+  return typeof closest === 'function'
+    && Boolean(closest.call(node, PLUGIN_SHORTCUT_EDITABLE_SELECTOR));
+}
+
+export function isPluginShortcutEditableEvent(event: {
+  target: EventTarget | null;
+  composedPath?: () => EventTarget[];
+}): boolean {
+  if (hasEditableShortcutAncestor(event.target)) return true;
+  return event.composedPath?.().some(hasEditableShortcutAncestor) ?? false;
+}
 
 function normalizeModifier(token: string, platform: PluginShortcutPlatform): string | null {
   switch (token) {

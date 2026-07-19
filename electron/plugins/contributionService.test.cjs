@@ -6,7 +6,7 @@ const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 
-const { PluginContributionService } = require("./contributionService.cjs");
+const { assertJsonValue, PluginContributionService } = require("./contributionService.cjs");
 const { PluginDatabase } = require("./database.cjs");
 const { PluginHostRpcRegistry } = require("./hostRpcRegistry.cjs");
 const { PluginPermissionEngine } = require("./permissionEngine.cjs");
@@ -80,6 +80,15 @@ function setup(context, pluginManifest, options = {}) {
   });
   return { calls, database, secretStore, service, secrets };
 }
+
+test("plugin contribution values enforce the exact JSON value boundary", () => {
+  assert.deepEqual(assertJsonValue({ nested: [null, true, 1, "ok"] }), {
+    nested: [null, true, 1, "ok"],
+  });
+  for (const value of [new Date(), new Map(), Number.NaN, Number.POSITIVE_INFINITY, undefined]) {
+    assert.throws(() => assertJsonValue(value), /bounded JSON value/u);
+  }
+});
 
 test("only onStartupFinished plugins activate during contribution initialization", async (context) => {
   const pluginManifest = manifest("com.example.startup", ["onStartupFinished"]);
@@ -333,6 +342,53 @@ test("surface-specific view conditions are evaluated from the requesting host co
   }).plugins[0].views[0].visible, true);
 });
 
+test("menu placements use their own source-specific host contexts", (context) => {
+  const pluginManifest = manifest("com.example.menu-contexts");
+  pluginManifest.contributes.commands = [{
+    id: `${pluginManifest.id}.toolbar`,
+    title: "Toolbar command",
+    enablement: "netcatty.surface == 'terminal/toolbar' && terminal.sessionId == 'session-1'",
+  }, {
+    id: `${pluginManifest.id}.status`,
+    title: "Status command",
+    enablement: "netcatty.surface == 'statusBar' && terminal.sessionId == 'session-1'",
+  }];
+  pluginManifest.contributes.menus = [{
+    command: `${pluginManifest.id}.toolbar`,
+    location: "terminal/toolbar",
+    when: "netcatty.surface == 'terminal/toolbar'",
+  }, {
+    command: `${pluginManifest.id}.status`,
+    location: "statusBar",
+    when: "netcatty.surface == 'statusBar'",
+  }];
+  const { service } = setup(context, pluginManifest);
+  const toolbarContext = { "netcatty.surface": "terminal/toolbar", "terminal.sessionId": "session-1" };
+  const statusBarContext = { "netcatty.surface": "statusBar", "terminal.sessionId": "session-1" };
+
+  const snapshot = service.snapshot({
+    context: toolbarContext,
+    menuContexts: {
+      "terminal/toolbar": toolbarContext,
+      statusBar: statusBarContext,
+    },
+  });
+
+  assert.deepEqual(snapshot.plugins[0].menus.map((menu) => ({
+    command: menu.command,
+    visible: menu.visible,
+    enabled: menu.enabled,
+  })), [{
+    command: `${pluginManifest.id}.toolbar`,
+    visible: true,
+    enabled: true,
+  }, {
+    command: `${pluginManifest.id}.status`,
+    visible: true,
+    enabled: true,
+  }]);
+});
+
 test("lazy activation receives the latest host environment before its first contribution call", async (context) => {
   const pluginManifest = manifest("com.example.environment", ["onView:com.example.environment.view"]);
   const calls = [];
@@ -402,6 +458,34 @@ test("numeric setting writes enforce the declared range and step", async (contex
     service.updateSetting(pluginManifest.id, `${pluginManifest.id}.opacity`, 1.1),
     /above its maximum/u,
   );
+});
+
+test("contextual settings expose values only for an explicit host-owned scope", async (context) => {
+  const pluginManifest = manifest("com.example.scoped-settings");
+  pluginManifest.contributes.settings.push({
+    id: `${pluginManifest.id}.workspace-label`,
+    label: "Workspace label",
+    control: "text",
+    scope: "workspace",
+    default: "default-label",
+  });
+  const { service } = setup(context, pluginManifest);
+  await service.updateSetting(
+    pluginManifest.id,
+    `${pluginManifest.id}.workspace-label`,
+    "production",
+    "workspace-1",
+  );
+
+  const withoutScope = service.snapshot().plugins[0].settings
+    .find((setting) => setting.id.endsWith(".workspace-label"));
+  assert.equal(withoutScope.scopeId, null);
+  assert.equal(withoutScope.value, "default-label");
+
+  const withScope = service.snapshot({ scopeIds: { workspace: "workspace-1" } }).plugins[0].settings
+    .find((setting) => setting.id.endsWith(".workspace-label"));
+  assert.equal(withScope.scopeId, "workspace-1");
+  assert.equal(withScope.value, "production");
 });
 
 test("user settings and view state survive package removal", async (context) => {

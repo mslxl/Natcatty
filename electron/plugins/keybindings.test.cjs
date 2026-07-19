@@ -14,4 +14,7 @@ test("plugin keybindings convert to bounded Electron accelerators", () => {
   assert.equal(toElectronAccelerator("mod+ctrl+h"), undefined);
   assert.equal(toElectronAccelerator("ctrl+not-a-key"), undefined);
   assert.equal(toElectronAccelerator("ctrl+h+g"), undefined);
+  assert.equal(toElectronAccelerator("ctrl++p"), undefined);
+  assert.equal(toElectronAccelerator("+ctrl+p"), undefined);
+  assert.equal(toElectronAccelerator("ctrl+p+"), undefined);
 });

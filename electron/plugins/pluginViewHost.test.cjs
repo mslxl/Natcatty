@@ -168,6 +168,17 @@ test("custom views use an ephemeral sandbox and deny direct browser capabilities
   assert.equal(navigation.prevented, true);
   assert.deepEqual(contentsView.bounds, { x: 5, y: 6, width: 700, height: 500 });
   assert.equal(owner.children.length, 1);
+  const environment = {
+    locale: "zh-CN",
+    theme: "dark",
+    reducedMotion: true,
+    highContrast: false,
+    themeTokens: { "--background": "220 10% 10%" },
+  };
+  value.host.setEnvironment(environment);
+  assert.deepEqual(await value.ipcHandlers.get("netcatty-plugin-view:get-environment")(
+    { sender: contentsView.webContents },
+  ), environment);
   value.host.setVisible("view-1", false, sender);
   assert.equal(contentsView.visible, false);
   assert.deepEqual(await value.ipcHandlers.get("netcatty-plugin-view:execute-command")(

@@ -35,6 +35,7 @@ const renderToolbar = (
       I18nProvider,
       { locale: "en" },
       React.createElement(TerminalToolbar, {
+        sessionId: 'session-1',
         status,
         host,
         onOpenSFTP: () => {},

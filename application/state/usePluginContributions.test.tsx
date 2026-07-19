@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import {
   createPluginContributionRefreshGuard,
   failClosedPluginContributionLoad,
+  resolvePluginContributionLoadState,
   usePluginContributions,
 } from './usePluginContributions';
 
@@ -26,6 +27,24 @@ test('plugin contribution refresh failures discard the last successful snapshot'
   assert.equal(failure.available, false);
   assert.equal(failure.snapshot.plugins.length, 0);
   assert.match(failure.error.message, /bridge unavailable/u);
+});
+
+test('plugin contribution query changes hide the prior snapshot synchronously', () => {
+  const staleSnapshot = {
+    locale: 'en',
+    plugins: [{ id: 'com.example.stale' }],
+  } as NetcattyPluginContributionSnapshot;
+  const selected = resolvePluginContributionLoadState({
+    currentQueryKey: '{"context":{"terminal.sessionId":"session-2"}}',
+    loadedQueryKey: '{"context":{"terminal.sessionId":"session-1"}}',
+    snapshot: staleSnapshot,
+    available: true,
+    loading: false,
+  });
+
+  assert.equal(selected.available, false);
+  assert.equal(selected.loading, true);
+  assert.equal(selected.snapshot.plugins.length, 0);
 });
 
 test('plugin contribution refreshes reject stale asynchronous results', async () => {

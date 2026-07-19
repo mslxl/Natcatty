@@ -1370,6 +1370,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
         customAccent={customAccent}
         terminalSettings={terminalSettings}
         sessionId={session.id}
+        workspaceId={session.workspaceId}
         restoreState={session.restoreState}
         shellType={session.shellType}
         lastCwd={session.lastCwd}

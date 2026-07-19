@@ -2,6 +2,7 @@ import { X } from 'lucide-react';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
+  isPluginShortcutEditableEvent,
   normalizePluginKeyboardEvent,
   normalizePluginShortcut,
   resolvePluginShortcutPlatform,
@@ -11,11 +12,13 @@ import {
   resolvePluginRetainedViewKey,
   resolvePluginViewWindowScope,
 } from '../../application/state/pluginViewScopes';
+import { PLUGIN_THEME_TOKEN_NAMES } from '../../application/state/pluginContributionEnvironment';
 import { usePluginContributions } from '../../application/state/usePluginContributions';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { Button } from '../ui/button';
 
 export const OPEN_PLUGIN_VIEW_EVENT = 'netcatty:open-plugin-view';
+const DEFAULT_KEYBINDING_CONTEXT = Object.freeze({ 'netcatty.surface': 'keybinding' });
 
 interface OpenPluginViewDetail {
   viewId: string;
@@ -36,14 +39,18 @@ export function requestOpenPluginView(detail: OpenPluginViewDetail) {
 export function PluginContributionHost({
   locale,
   theme,
+  themeTokens: suppliedThemeTokens,
+  keybindingContext = DEFAULT_KEYBINDING_CONTEXT,
 }: {
   locale: string;
   theme: string;
+  themeTokens?: Record<string, string>;
+  keybindingContext?: Record<string, unknown>;
 }) {
   const { t } = useI18n();
   const [requested, setRequested] = useState<OpenPluginViewDetail | null>(null);
   const contributions = usePluginContributions({
-    context: { 'netcatty.surface': 'keybinding' },
+    context: keybindingContext,
   });
   const viewContributions = usePluginContributions({
     context: requested?.context ?? { 'netcatty.surface': 'view' },
@@ -83,8 +90,7 @@ export function PluginContributionHost({
     const platformKey = resolvePluginShortcutPlatform(navigator.platform);
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing) return;
-      const target = event.target as HTMLElement | null;
-      if (target?.closest('input, textarea, select, [contenteditable="true"]')) return;
+      if (isPluginShortcutEditableEvent(event)) return;
       const pressed = normalizePluginKeyboardEvent(event);
       if (!pressed) return;
       const binding = bindings.find((candidate) => {
@@ -93,11 +99,11 @@ export function PluginContributionHost({
       });
       if (!binding) return;
       event.preventDefault();
-      void executeCommand(binding.command, binding.args, { 'netcatty.surface': 'keybinding' });
+      void executeCommand(binding.command, binding.args, keybindingContext);
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [executeCommand, snapshot.plugins]);
+  }, [executeCommand, keybindingContext, snapshot.plugins]);
 
   useEffect(() => {
     const listener = (event: Event) => setRequested((event as CustomEvent<OpenPluginViewDetail>).detail);
@@ -240,10 +246,9 @@ export function PluginContributionHost({
     let frame = 0;
     const publish = () => {
       frame = 0;
-      const styles = getComputedStyle(document.documentElement);
-      const themeTokens = Object.fromEntries([
-        '--background', '--foreground', '--muted', '--muted-foreground', '--border', '--primary', '--primary-foreground',
-      ].map((name) => [name, styles.getPropertyValue(name).trim()]));
+      const styles = suppliedThemeTokens ? null : getComputedStyle(document.documentElement);
+      const themeTokens = suppliedThemeTokens ?? Object.fromEntries(PLUGIN_THEME_TOKEN_NAMES
+        .map((name) => [name, styles?.getPropertyValue(name).trim() ?? '']));
       void setEnvironment({
         locale,
         theme,
@@ -266,7 +271,7 @@ export function PluginContributionHost({
       observer.disconnect();
       for (const query of queries) query.removeEventListener?.('change', schedulePublish);
     };
-  }, [contributions.available, locale, setEnvironment, theme]);
+  }, [contributions.available, locale, setEnvironment, suppliedThemeTokens, theme]);
 
   useEffect(() => () => {
     const current = instanceRef.current;

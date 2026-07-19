@@ -10,6 +10,7 @@ const VIEW_CHANNELS = Object.freeze({
   postMessage: "netcatty-plugin-view:post-message",
   executeCommand: "netcatty-plugin-view:execute-command",
   getState: "netcatty-plugin-view:get-state",
+  getEnvironment: "netcatty-plugin-view:get-environment",
   setState: "netcatty-plugin-view:set-state",
 });
 
@@ -83,6 +84,10 @@ class PluginViewHost {
     ipcMain.handle(VIEW_CHANNELS.getState, (event) => {
       const instance = instanceFor(event);
       return this.database.getViewState(instance.pluginId, instance.viewId, instance.scopeId);
+    });
+    ipcMain.handle(VIEW_CHANNELS.getEnvironment, (event) => {
+      instanceFor(event);
+      return structuredClone(this.environment);
     });
     ipcMain.handle(VIEW_CHANNELS.setState, (event, state) => {
       const instance = instanceFor(event);

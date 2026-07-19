@@ -296,6 +296,7 @@ declare global {
   interface NetcattyPluginContributionQuery {
     locale?: string;
     context?: Record<string, unknown>;
+    menuContexts?: Partial<Record<string, Record<string, unknown>>>;
     scopeIds?: Partial<Record<'workspace' | 'host' | 'session' | 'device', string>>;
   }
 

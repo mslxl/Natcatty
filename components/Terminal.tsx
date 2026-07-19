@@ -224,6 +224,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   customAccent = "",
   terminalSettings,
   sessionId,
+  workspaceId,
   restoreState,
   shellType,
   lastCwd,
@@ -2631,6 +2632,8 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
   const renderControls = useCallback((opts?: { showClose?: boolean }) => (
     <TerminalToolbar
+      sessionId={sessionId}
+      workspaceId={workspaceId}
       status={status}
       host={host}
       compactToolbar={compactToolbar}
@@ -2712,6 +2715,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     status,
     terminalEncoding,
     recorder,
+    workspaceId,
   ]);
 
   const terminalPreviewVars = useMemo(() => {
@@ -2973,7 +2977,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
           onDismiss={dismissScriptOverlay}
           compactTopChrome={terminalSettings?.showHostInfoBar === false}
         />
-      ) : null, selectionOverlayPosition, sessionDisplayName, sessionId, sessionRef, setIsComposeBarOpen, setShowLogs, shouldShowConnectionDialog, showLogs, showSelectionAIAction, snippets, status, sudoHintRef, sudoHintText, passwordPickerState, onPasswordPickerSelect: handlePasswordPickerSelect, passwordPickerTitle, passwordPickerEmptyText, t, termRef, terminalBackend, terminalContextActions, terminalCwdTracker, terminalPreviewVars, terminalSettings, timeLeft, toast, zmodem }} />
+      ) : null, selectionOverlayPosition, sessionDisplayName, sessionId, workspaceId, sessionRef, setIsComposeBarOpen, setShowLogs, shouldShowConnectionDialog, showLogs, showSelectionAIAction, snippets, status, sudoHintRef, sudoHintText, passwordPickerState, onPasswordPickerSelect: handlePasswordPickerSelect, passwordPickerTitle, passwordPickerEmptyText, t, termRef, terminalBackend, terminalContextActions, terminalCwdTracker, terminalPreviewVars, terminalSettings, timeLeft, toast, zmodem }} />
       <ScriptSaveRecordingDialog
         open={saveRecordingOpen}
         code={recordedCode}

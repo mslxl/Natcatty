@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { Suspense, lazy, useCallback, useMemo } from 'react';
 import { AlertTriangle, Download, Trash2 } from 'lucide-react';
-import { activeTabStore, toEditorTabId, useIsEditorTabActive } from '../state/activeTabStore';
+import { activeTabStore, toEditorTabId, useActiveTabId, useIsEditorTabActive } from '../state/activeTabStore';
 import { editorTabStore } from '../state/editorTabStore';
 import { releaseEditorTabSaveCoordinator, saveEditorTab } from '../state/editorTabSave';
 import { useTerminalHostTreeLayoutWidth } from '../state/terminalHostTreeStore';
@@ -25,6 +25,8 @@ import { getUiThemeById } from '../../infrastructure/config/uiThemes';
 import { buildAppThemeCssVars } from '../state/settingsStateDefaults';
 import { useMainWindowInputFocusRecovery } from '../state/useMainWindowInputFocusRecovery';
 import { PluginContributionHost } from '../../components/plugins/PluginContributionHost';
+import { resolveActivePluginKeybindingContext } from '../state/pluginContributionContexts';
+import { selectPluginThemeTokens } from '../state/pluginContributionEnvironment';
 
 const LazyProtocolSelectDialog = lazy(() => import('../../components/ProtocolSelectDialog'));
 const LazyQuickSwitcher = lazy(() =>
@@ -56,6 +58,7 @@ const TextEditorTabFallback = ({ tabId }: { tabId: string }) => {
 type AppViewContext = Record<string, any>;
 
 export function AppView({ ctx }: { ctx: AppViewContext }) {
+  const activeTabId = useActiveTabId();
   const {
     resetSessionRename,
     resetWorkspaceRename,
@@ -121,6 +124,16 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
       colorScheme: resolvedTheme,
     } as React.CSSProperties;
   }, [accentMode, customAccent, resolvedTheme, settings.darkUiThemeId, settings.lightUiThemeId]);
+
+  const pluginKeybindingContext = useMemo(() => resolveActivePluginKeybindingContext({
+    activeTabId,
+    sessions,
+    workspaces,
+  }), [activeTabId, sessions, workspaces]);
+  const pluginThemeTokens = useMemo(
+    () => selectPluginThemeTokens(appThemeStyle as Record<string, unknown>),
+    [appThemeStyle],
+  );
 
   return (
     <SnippetExecutionProvider>
@@ -669,7 +682,12 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
         onSkip={handlePassphraseSkip}
       />
 
-      <PluginContributionHost locale={settings.uiLanguage} theme={resolvedTheme} />
+      <PluginContributionHost
+        locale={settings.uiLanguage}
+        theme={resolvedTheme}
+        themeTokens={pluginThemeTokens}
+        keybindingContext={pluginKeybindingContext}
+      />
 
       {/* Empty vault vs cloud data confirmation dialog (#679).
           This dialog intentionally cannot be dismissed — the user MUST

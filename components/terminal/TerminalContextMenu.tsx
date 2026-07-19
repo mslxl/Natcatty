@@ -29,9 +29,15 @@ import {
 } from '../ui/context-menu';
 import { isMiddleClickContextMenuEvent } from './runtime/middleClickBehavior';
 import { comparePluginMenus, usePluginContributions } from '../../application/state/usePluginContributions';
+import { buildTerminalPluginContributionContext } from '../../application/state/pluginContributionContexts';
 
 export interface TerminalContextMenuProps {
   children: React.ReactNode;
+  sessionId: string;
+  workspaceId?: string;
+  status: 'connecting' | 'connected' | 'disconnected';
+  hostId?: string;
+  hostProtocol?: string;
   hasSelection?: boolean;
   hotkeyScheme?: 'disabled' | 'mac' | 'pc';
   keyBindings?: KeyBinding[];
@@ -132,6 +138,11 @@ export const shouldOpenTerminalContextMenu = ({
 
 export const TerminalContextMenu: React.FC<TerminalContextMenuProps> = ({
   children,
+  sessionId,
+  workspaceId,
+  status,
+  hostId,
+  hostProtocol,
   hasSelection = false,
   hotkeyScheme = 'mac',
   keyBindings,
@@ -156,14 +167,18 @@ export const TerminalContextMenu: React.FC<TerminalContextMenuProps> = ({
   onDetach,
 }) => {
   const { t } = useI18n();
-  const pluginContributions = usePluginContributions({
-    context: {
-      'netcatty.surface': 'terminal/context',
-      'terminal.hasSelection': hasSelection,
-      'terminal.alternateScreen': isAlternateScreen,
-      'terminal.reconnectable': Boolean(isReconnectable),
-    },
+  const terminalContext = buildTerminalPluginContributionContext({
+    surface: 'terminal/context',
+    sessionId,
+    status,
+    hostId,
+    hostProtocol,
+    workspaceId,
+    hasSelection,
+    alternateScreen: isAlternateScreen,
+    reconnectable: Boolean(isReconnectable),
   });
+  const pluginContributions = usePluginContributions({ context: terminalContext });
   const pluginMenus = pluginContributions.snapshot.plugins.flatMap((plugin) => plugin.menus)
     .filter((menu) => menu.location === 'terminal/context' && menu.visible)
     .sort(comparePluginMenus);
@@ -376,10 +391,7 @@ export const TerminalContextMenu: React.FC<TerminalContextMenuProps> = ({
                   key={menu.id}
                   disabled={!menu.enabled}
                   onClick={(event) => void pluginContributions.executeCommand(event.altKey && menu.alt ? menu.alt : menu.command, undefined, {
-                    'netcatty.surface': 'terminal/context',
-                    'terminal.hasSelection': hasSelection,
-                    'terminal.alternateScreen': isAlternateScreen,
-                    'terminal.reconnectable': Boolean(isReconnectable),
+                    ...terminalContext,
                   }).catch(() => {})}
                 >
                   {menu.title}

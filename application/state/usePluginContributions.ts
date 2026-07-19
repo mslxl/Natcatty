@@ -6,6 +6,25 @@ const EMPTY_SNAPSHOT: NetcattyPluginContributionSnapshot = Object.freeze({
   plugins: Object.freeze([]),
 });
 
+export function resolvePluginContributionLoadState({
+  currentQueryKey,
+  loadedQueryKey,
+  snapshot,
+  available,
+  loading,
+}: {
+  currentQueryKey: string;
+  loadedQueryKey: string;
+  snapshot: NetcattyPluginContributionSnapshot;
+  available: boolean;
+  loading: boolean;
+}): Pick<UsePluginContributionsResult, 'available' | 'loading' | 'snapshot'> {
+  if (currentQueryKey !== loadedQueryKey) {
+    return { available: false, loading: true, snapshot: EMPTY_SNAPSHOT };
+  }
+  return { available, loading, snapshot };
+}
+
 export function failClosedPluginContributionLoad(cause: unknown): {
   available: false;
   snapshot: NetcattyPluginContributionSnapshot;
@@ -62,7 +81,10 @@ export function usePluginContributions(
 ): UsePluginContributionsResult {
   const bridge = typeof window === 'undefined' ? undefined : netcattyBridge.get();
   const queryKey = useMemo(() => JSON.stringify(query), [query]);
-  const [snapshot, setSnapshot] = useState<NetcattyPluginContributionSnapshot>(EMPTY_SNAPSHOT);
+  const [loadedSnapshot, setLoadedSnapshot] = useState(() => ({
+    queryKey,
+    snapshot: EMPTY_SNAPSHOT,
+  }));
   const [available, setAvailable] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
@@ -73,7 +95,7 @@ export function usePluginContributions(
     if (!bridge?.getPluginRuntimeStatus || !bridge.getPluginContributions) {
       if (!isCurrent()) return;
       setAvailable(false);
-      setSnapshot(EMPTY_SNAPSHOT);
+      setLoadedSnapshot({ queryKey, snapshot: EMPTY_SNAPSHOT });
       setLoading(false);
       return;
     }
@@ -82,19 +104,19 @@ export function usePluginContributions(
       if (!isCurrent()) return;
       setAvailable(status.available);
       if (!status.available) {
-        setSnapshot(EMPTY_SNAPSHOT);
+        setLoadedSnapshot({ queryKey, snapshot: EMPTY_SNAPSHOT });
         setError(null);
         return;
       }
       const nextSnapshot = await bridge.getPluginContributions(JSON.parse(queryKey));
       if (!isCurrent()) return;
-      setSnapshot(nextSnapshot);
+      setLoadedSnapshot({ queryKey, snapshot: nextSnapshot });
       setError(null);
     } catch (cause) {
       if (!isCurrent()) return;
       const failure = failClosedPluginContributionLoad(cause);
       setAvailable(failure.available);
-      setSnapshot(failure.snapshot);
+      setLoadedSnapshot({ queryKey, snapshot: failure.snapshot });
       setError(failure.error);
     } finally {
       if (isCurrent()) setLoading(false);
@@ -168,11 +190,19 @@ export function usePluginContributions(
     await bridge.setPluginEnvironment(environment);
   }, [bridge]);
 
-  return {
+  const currentLoadState = resolvePluginContributionLoadState({
+    currentQueryKey: queryKey,
+    loadedQueryKey: loadedSnapshot.queryKey,
+    snapshot: loadedSnapshot.snapshot,
     available,
     loading,
+  });
+
+  return {
+    available: currentLoadState.available,
+    loading: currentLoadState.loading,
     error,
-    snapshot,
+    snapshot: currentLoadState.snapshot,
     refresh,
     executeCommand,
     updateSetting,

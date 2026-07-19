@@ -542,6 +542,10 @@ function validateSemantics(manifest: PluginManifest): string[] {
     if (setting.pattern !== undefined) {
       const patternError = settingPatternError(setting.pattern);
       if (patternError) errors.push(`${setting.control} setting ${patternError}: ${setting.id}`);
+      else if (typeof setting.default === "string"
+        && !new RegExp(setting.pattern, "u").test(setting.default)) {
+        errors.push(`${setting.control} setting default does not match its pattern: ${setting.id}`);
+      }
     }
     if (setting.control === "password" && !setting.secret) {
       errors.push(`password setting must be marked secret: ${setting.id}`);

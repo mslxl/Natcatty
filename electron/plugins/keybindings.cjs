@@ -42,8 +42,8 @@ const NAMED_KEYS = new Map([
 
 function toElectronAccelerator(shortcut) {
   if (typeof shortcut !== "string" || shortcut.length < 1 || shortcut.length > 128) return undefined;
-  const tokens = shortcut.split("+").map((token) => token.trim()).filter(Boolean);
-  if (tokens.length < 1 || tokens.length > 5) return undefined;
+  const tokens = shortcut.split("+").map((token) => token.trim());
+  if (tokens.some((token) => token.length === 0) || tokens.length > 5) return undefined;
   const modifiers = [];
   const seen = new Set();
   let key;

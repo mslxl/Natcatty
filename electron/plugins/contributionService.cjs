@@ -3,6 +3,7 @@
 const { createHash } = require("node:crypto");
 
 const { assertPluginContextKey, evaluateContextKeyExpression } = require("./contextKeys.cjs");
+const { assertPluginJsonValue } = require("./jsonBoundary.cjs");
 const { compileRestrictedJsonSchema } = require("./restrictedJsonSchema.cjs");
 const { PluginRpcError, RPC_ERRORS } = require("./rpcRouter.cjs");
 
@@ -31,10 +32,9 @@ function freezeJson(value) {
 }
 
 function assertJsonValue(value, label = "value") {
-  let serialized;
-  try { serialized = JSON.stringify(value); } catch { throw invalidArgument(`Plugin ${label} must be JSON serializable`); }
-  if (serialized === undefined || Buffer.byteLength(serialized) > MAX_SETTING_BYTES) {
-    throw invalidArgument(`Plugin ${label} exceeds the ${MAX_SETTING_BYTES} byte limit`);
+  try { assertPluginJsonValue(value, { maxBytes: MAX_SETTING_BYTES }); }
+  catch (error) {
+    throw invalidArgument(`Plugin ${label} must be a bounded JSON value: ${error?.message ?? error}`);
   }
   return value;
 }
@@ -481,17 +481,22 @@ class PluginContributionService {
           keybindingByCommand.set(keybinding.command, keybinding);
         }
       }
-      const menus = (contributes.menus ?? []).map((menu, index) => ({
-        ...menu,
-        id: `${plugin.id}:menu:${index}`,
-        title: menu.title == null ? commandById.get(menu.command)?.title ?? menu.command : localize(menu.title),
-        visible: evaluateContextKeyExpression(menu.when, context),
-        enabled: evaluateContextKeyExpression(menu.enablement, context) && commandById.get(menu.command)?.enabled !== false,
-        checked: menu.checked == null ? undefined : evaluateContextKeyExpression(menu.checked, context),
-        shortcut: menu.showKeybinding === false
-          ? undefined
-          : resolvePlatformKeybinding(keybindingByCommand.get(menu.command), options.platform),
-      }));
+      const menus = (contributes.menus ?? []).map((menu, index) => {
+        const menuContext = this.#context(options.menuContexts?.[menu.location] ?? options.context);
+        const command = commandById.get(menu.command);
+        return {
+          ...menu,
+          id: `${plugin.id}:menu:${index}`,
+          title: menu.title == null ? command?.title ?? menu.command : localize(menu.title),
+          visible: evaluateContextKeyExpression(menu.when, menuContext),
+          enabled: evaluateContextKeyExpression(menu.enablement, menuContext)
+            && evaluateContextKeyExpression(command?.enablement, menuContext),
+          checked: menu.checked == null ? undefined : evaluateContextKeyExpression(menu.checked, menuContext),
+          shortcut: menu.showKeybinding === false
+            ? undefined
+            : resolvePlatformKeybinding(keybindingByCommand.get(menu.command), options.platform),
+        };
+      });
       const settings = (contributes.settings ?? []).map((setting) => {
         const requestedScopeId = options.scopeIds?.[setting.scope];
         const scopeId = setting.scope === "application"

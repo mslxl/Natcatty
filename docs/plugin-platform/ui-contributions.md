@@ -33,7 +33,9 @@ Netcatty renders setting declarations with host-owned controls. The supported
 controls are switches, radio/select/multiselect, text and password fields,
 textarea, number and slider, color, font, file and directory paths, keybindings,
 lists, and tables. The main process validates every write against the declared
-control, options, numeric range, text pattern, and structured value schema.
+control, options, numeric range, text pattern, and structured value schema. The
+package validator applies the same constraints to declared defaults before a
+plugin can install.
 
 Plugin patterns use a deliberately restricted regular-expression subset:
 lookarounds, backreferences, and quantified groups are rejected, and patterned
@@ -44,7 +46,10 @@ formats, conditionals, unevaluated properties, and executable extensions are
 not accepted.
 
 Application, device, workspace, host, and session values are keyed separately.
-Settings and restored view state are user-owned records with no foreign-key
+Context-aware host surfaces supply their own scope IDs; a central settings
+surface without a current workspace, host, or session shows those fields as
+contextual instead of reading or writing an ambiguous record. Settings and
+restored view state are user-owned records with no foreign-key
 cascade to installed package versions, so uninstall does not erase them. The
 platform is unreleased, so both tables are part of the complete schema at
 `user_version = 1`; there is no migration chain.
@@ -71,12 +76,21 @@ JavaScript evaluation. Invalid, oversized, or over-complex expressions evaluate
 to false. Plugin runtimes may update only keys in their own namespace.
 
 Platform keybindings are resolved by Netcatty and ignored while the user is
-typing in an input, textarea, select, or editable element. Command enablement is
-rechecked in the main process, so stale renderer state cannot execute a disabled
-command. Menu placements display the first active platform binding unless the
-manifest suppresses it, and holding Alt selects the declared same-plugin
-alternate command. Application-menu accelerators pass through a strict bounded
-parser before reaching Electron.
+typing in an input, textarea, select, any contenteditable or textbox role, or a
+Monaco editor surface. Command enablement is rechecked in the main process, and
+renderer snapshots fail closed immediately when their host context changes, so
+stale UI cannot execute a context-gated action. Menu placements display the
+first active platform binding unless the manifest suppresses it, and holding Alt
+selects the declared same-plugin alternate command. Application-menu
+accelerators pass through a strict bounded parser before reaching Electron.
+
+Terminal context-menu, toolbar, status-bar, and active-terminal keybinding
+invocations receive host-owned `terminal.sessionId`, `terminal.status`,
+`host.id`, `host.protocol`, and, when applicable, `workspace.id` Context Keys.
+Toolbar and status-bar placements are evaluated against their own surface
+contexts rather than sharing one renderer snapshot context. This gives the PR 5
+Terminal Provider layer a stable session identity without exposing xterm or
+allowing renderer-supplied plugin keys to override runtime-owned Context Keys.
 
 ## Sandboxed custom views
 
@@ -104,8 +118,11 @@ Retained views are still disposed on owner shutdown, plugin disable, runtime
 quarantine, or host shutdown; the flag never extends ownership or permissions.
 
 The preload exposes only `postMessage`, same-plugin `executeCommand`, state
-get/set, runtime messages, and environment changes. Messages and state use the
-same bounded JSON boundary as control-plane RPC.
+get/set, runtime messages, and environment changes. It caches environment
+updates before view code subscribes and uses an owner-checked getter as a
+fallback, so late subscribers still receive their initial environment. Messages,
+state, command arguments, and Context Key values use the exact bounded JSON
+value boundary rather than relying on `JSON.stringify` coercion.
 
 ## Themes, localization, and accessibility
 
