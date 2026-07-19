@@ -183,6 +183,36 @@ function assertOwnedContributionId(pluginId, id, label) {
   return id;
 }
 
+function assertOwnedContextKey(pluginId, key) {
+  const prefix = `${pluginId}.`;
+  const suffix = typeof key === "string" && key.startsWith(prefix)
+    ? key.slice(prefix.length)
+    : "";
+  if (!/^[A-Za-z0-9_][A-Za-z0-9_:-]{0,255}$/u.test(suffix)
+    || key.length > 256) {
+    throw new PluginError("invalid_argument", "Plugin Context Key ID is invalid");
+  }
+  return key;
+}
+
+function normalizeRuntimeEnvironment(value) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const sourceTokens = source.themeTokens && typeof source.themeTokens === "object"
+    && !Array.isArray(source.themeTokens)
+    ? source.themeTokens
+    : {};
+  const themeTokens = Object.freeze(Object.fromEntries(
+    Object.entries(sourceTokens).filter(([key, token]) => key.length > 0 && typeof token === "string"),
+  ));
+  return Object.freeze({
+    locale: typeof source.locale === "string" ? source.locale : "en",
+    theme: typeof source.theme === "string" ? source.theme : "system",
+    reducedMotion: source.reducedMotion === true,
+    highContrast: source.highContrast === true,
+    themeTokens,
+  });
+}
+
 function createEmitter() {
   const listeners = new Set();
   return {
@@ -313,7 +343,7 @@ function createPluginContext(config, client, runtimeApi) {
   };
   const contextKeys = {
     set: (key, value) => client.request("contextKeys.set", {
-      key: assertOwnedContributionId(config.pluginId, key, "Plugin Context Key"),
+      key: assertOwnedContextKey(config.pluginId, key),
       value,
     }).then(() => undefined),
   };
@@ -346,6 +376,7 @@ function createPluginContext(config, client, runtimeApi) {
     get theme() { return runtimeApi.environment.theme ?? "system"; },
     get reducedMotion() { return runtimeApi.environment.reducedMotion === true; },
     get highContrast() { return runtimeApi.environment.highContrast === true; },
+    get themeTokens() { return runtimeApi.environment.themeTokens; },
     onDidChange: runtimeApi.environmentChanged.event,
   };
   const logger = Object.fromEntries(["debug", "info", "warn", "error"].map((level) => [
@@ -389,9 +420,7 @@ export async function startPluginRuntime({ port, config, loadPlugin }) {
     commandHandlers: new Map(),
     settingsChanged: createEmitter(),
     environmentChanged: createEmitter(),
-    environment: config.environment && typeof config.environment === "object" && !Array.isArray(config.environment)
-      ? { ...config.environment }
-      : {},
+    environment: normalizeRuntimeEnvironment(config.environment),
     viewMessages: new Map(),
   };
   const pluginModule = await loadPlugin(config.entryUrl);
@@ -416,7 +445,7 @@ export async function startPluginRuntime({ port, config, loadPlugin }) {
       if (!activated) {
         if (message.params?.environment && typeof message.params.environment === "object"
           && !Array.isArray(message.params.environment)) {
-          runtimeApi.environment = { ...message.params.environment };
+          runtimeApi.environment = normalizeRuntimeEnvironment(message.params.environment);
         }
         const disposable = await plugin.activate(context);
         if (disposable && typeof disposable.dispose === "function") context.subscriptions.add(disposable);
@@ -448,7 +477,7 @@ export async function startPluginRuntime({ port, config, loadPlugin }) {
       return true;
     }
     if (message.method === "plugin.environment.changed") {
-      runtimeApi.environment = { ...(message.params ?? {}) };
+      runtimeApi.environment = normalizeRuntimeEnvironment(message.params);
       runtimeApi.environmentChanged.fire(runtimeApi.environment);
       return true;
     }

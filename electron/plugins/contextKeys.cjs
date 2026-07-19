@@ -5,6 +5,7 @@ const MAX_TOKENS = 256;
 const IDENTIFIER = /^[A-Za-z0-9_][A-Za-z0-9_.:-]{0,255}/u;
 const FULL_IDENTIFIER = /^[A-Za-z0-9_][A-Za-z0-9_.:-]{0,255}$/u;
 const PLUGIN_ID = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/u;
+const PLUGIN_CONTEXT_KEY_SUFFIX = /^[A-Za-z0-9_][A-Za-z0-9_:-]{0,255}$/u;
 
 class ContextKeySyntaxError extends Error {
   constructor(message) {
@@ -144,7 +145,11 @@ function assertPluginContextKey(pluginId, key) {
   if (typeof pluginId !== "string" || pluginId.length > 128 || !PLUGIN_ID.test(pluginId)) {
     throw new TypeError("Plugin ID is invalid");
   }
-  if (typeof key !== "string" || !key.startsWith(`${pluginId}.`) || !FULL_IDENTIFIER.test(key)) {
+  const prefix = `${pluginId}.`;
+  const suffix = typeof key === "string" && key.startsWith(prefix)
+    ? key.slice(prefix.length)
+    : "";
+  if (typeof key !== "string" || !FULL_IDENTIFIER.test(key) || !PLUGIN_CONTEXT_KEY_SUFFIX.test(suffix)) {
     throw new TypeError(`Plugin Context Key must be namespaced to ${pluginId}`);
   }
   return key;

@@ -152,6 +152,7 @@ class PluginContributionService {
     this.secretStore = options.secretStore;
     this.getLocale = options.getLocale ?? (() => "en");
     this.contextKeys = new Map();
+    this.contextKeyOwners = new Map();
     this.listeners = new Set();
     this.viewMessageListeners = new Set();
     this.environment = null;
@@ -179,7 +180,12 @@ class PluginContributionService {
     registry.registerRequest("contextKeys.set", (params, context) => {
       const key = assertPluginContextKey(context.pluginId, params?.key);
       assertJsonValue(params?.value, "Context Key value");
+      const owner = this.contextKeyOwners.get(key);
+      if (owner != null && owner !== context.pluginId) {
+        throw invalidArgument("Plugin Context Key is owned by another plugin");
+      }
       this.contextKeys.set(key, freezeJson(params.value));
+      this.contextKeyOwners.set(key, context.pluginId);
       this.#emitChange("context-key", context.pluginId);
       return null;
     }, {
@@ -270,8 +276,10 @@ class PluginContributionService {
 
   #clearRuntimeOwnedState(pluginId) {
     this.runtimeEnvironmentState.delete(pluginId);
-    for (const key of [...this.contextKeys.keys()]) {
-      if (key.startsWith(`${pluginId}.`)) this.contextKeys.delete(key);
+    for (const [key, owner] of [...this.contextKeyOwners.entries()]) {
+      if (owner !== pluginId) continue;
+      this.contextKeyOwners.delete(key);
+      this.contextKeys.delete(key);
     }
   }
 
@@ -402,11 +410,10 @@ class PluginContributionService {
   async updateSetting(pluginId, settingId, value, scopeId, options = {}) {
     const { setting } = this.#settingRecord(pluginId, settingId);
     const normalizedScopeId = normalizeScopeId(setting.scope, scopeId);
+    assertSettingValue(setting, value);
     if (setting.secret) {
-      if (typeof value !== "string") throw invalidArgument(`${setting.id} secret value must be a string`);
       this.secretStore.set(pluginId, secretSettingKey(setting.id, setting.scope, normalizedScopeId), value);
     } else {
-      assertSettingValue(setting, value);
       this.database.setSetting(pluginId, setting.id, setting.scope, normalizedScopeId, value);
     }
     this.#emitChange("setting-updated", pluginId);

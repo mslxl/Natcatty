@@ -348,7 +348,8 @@ lifecycle primitives:
   set, storage, opaque secret references, credential leases, mediated network
   and filesystem access, companion handles, contribution settings, command
   registration/execution, Context Keys, view messaging/state, locale/theme/
-  accessibility environment, logging, and subscriptions.
+  application theme tokens/accessibility environment, logging, and
+  subscriptions.
 
 Phase-4 contribution methods stay on the same validated control plane. The
 runtime registers command handlers only after activation; the host routes

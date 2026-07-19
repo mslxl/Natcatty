@@ -13,8 +13,10 @@ Enabled plugins are not started merely because they contribute UI. The host
 starts `onStartupFinished` plugins during contribution initialization and
 otherwise activates a runtime when one of its declared commands, views, or
 Providers is first used. `onCommand:`, `onView:`, and `onProvider:` therefore
-share one idempotent supervisor boundary. Contribution IDs and plugin-created
-Context Keys must begin with the exact owning plugin ID.
+share one idempotent supervisor boundary. Contribution IDs must begin with the
+owning plugin ID. Plugin-created Context Keys use the exact owning plugin ID
+followed by one local key segment; nested dot segments are rejected so plugin
+IDs that share a prefix cannot claim each other's UI state.
 
 The Provider seam also exposes an immutable, localized enumeration independent
 of database internals and returns the current runtime identity after lazy
@@ -73,7 +75,8 @@ into a native menu or the React tree.
 Context Key expressions use a bounded parser for literals, namespaced keys,
 parentheses, `!`, `&&`, `||`, equality/ordering, `in`, and `not in`. There is no
 JavaScript evaluation. Invalid, oversized, or over-complex expressions evaluate
-to false. Plugin runtimes may update only keys in their own namespace.
+to false. Plugin runtimes may update only one-segment keys in their own exact
+namespace.
 
 Platform keybindings are resolved by Netcatty and ignored while the user is
 typing in an input, textarea, select, any contenteditable or textbox role, or a

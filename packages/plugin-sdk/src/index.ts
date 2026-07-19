@@ -90,6 +90,7 @@ export interface PluginEnvironmentChangeEvent {
   readonly theme: string;
   readonly reducedMotion: boolean;
   readonly highContrast: boolean;
+  readonly themeTokens: Readonly<Record<string, string>>;
 }
 
 export interface PluginEnvironment extends PluginEnvironmentChangeEvent {

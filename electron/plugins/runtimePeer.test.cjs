@@ -230,7 +230,13 @@ test("runtime peer exposes contribution APIs and routes host UI events", async (
       netcattyVersion: "1.0.0",
       apiVersion: "0.1.0-internal",
       enabledFeatures: [],
-      environment: { locale: "en-GB", theme: "light", reducedMotion: false, highContrast: true },
+      environment: {
+        locale: "en-GB",
+        theme: "light",
+        reducedMotion: false,
+        highContrast: true,
+        themeTokens: { "--background": "initial" },
+      },
     },
     async loadPlugin() {
       return {
@@ -240,8 +246,17 @@ test("runtime peer exposes contribution APIs and routes host UI events", async (
             assert.equal(context.environment.locale, "fr-FR");
             assert.equal(context.environment.theme, "dark");
             assert.equal(context.environment.highContrast, true);
+            assert.deepEqual(context.environment.themeTokens, { "--background": "active" });
+            assert.throws(() => {
+              context.environment.themeTokens["--background"] = "mutated";
+            }, /read only/u);
             context.settings.onDidChange((event) => events.push(["settings", event.settingId]));
-            context.environment.onDidChange((event) => events.push(["environment", event.locale, event.theme]));
+            context.environment.onDidChange((event) => events.push([
+              "environment",
+              event.locale,
+              event.theme,
+              event.themeTokens["--background"],
+            ]));
             context.views.onDidReceiveMessage("com.example.ui.view", (message) => events.push(["view", message]));
             context.commands.registerCommand("com.example.ui.hello", async (args, invocation) => ({ args, source: invocation.source }));
             context.commands.registerCommand("com.example.ui.void", async () => undefined);
@@ -270,7 +285,13 @@ test("runtime peer exposes contribution APIs and routes host UI events", async (
     supportedFeatures: [],
   });
   await host.request("plugin.activate", {
-    environment: { locale: "fr-FR", theme: "dark", reducedMotion: true, highContrast: true },
+    environment: {
+      locale: "fr-FR",
+      theme: "dark",
+      reducedMotion: true,
+      highContrast: true,
+      themeTokens: { "--background": "active" },
+    },
   });
   assert.deepEqual(await host.request("plugin.command.execute", {
     command: "com.example.ui.hello",
@@ -287,15 +308,22 @@ test("runtime peer exposes contribution APIs and routes host UI events", async (
   }), "new");
 
   host.notify("plugin.settings.changed", { settingId: "com.example.ui.greeting", scope: "application", scopeId: "application", source: "host" });
-  host.notify("plugin.environment.changed", { locale: "zh-CN", theme: "dark", reducedMotion: true, highContrast: false });
+  host.notify("plugin.environment.changed", {
+    locale: "zh-CN",
+    theme: "dark",
+    reducedMotion: true,
+    highContrast: false,
+    themeTokens: { "--background": "updated" },
+  });
   host.notify("plugin.view.message", { viewId: "com.example.ui.view", message: { ping: true } });
   await new Promise((resolve) => setImmediate(resolve));
 
   assert.equal(pluginContext.environment.locale, "zh-CN");
   assert.equal(pluginContext.environment.reducedMotion, true);
+  assert.deepEqual(pluginContext.environment.themeTokens, { "--background": "updated" });
   assert.deepEqual(events, [
     ["settings", "com.example.ui.greeting"],
-    ["environment", "zh-CN", "dark"],
+    ["environment", "zh-CN", "dark", "updated"],
     ["view", { ping: true }],
   ]);
   assert.deepEqual(calls, [

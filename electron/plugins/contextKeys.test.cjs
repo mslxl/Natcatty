@@ -33,9 +33,14 @@ test("Context Keys fail closed for invalid or over-complex expressions", () => {
 test("plugin-created Context Keys must use the owning namespace", () => {
   assert.equal(assertPluginContextKey("com.example.plugin", "com.example.plugin.ready"), "com.example.plugin.ready");
   assert.equal(assertPluginContextKey("1.example.plugin", "1.example.plugin.ready"), "1.example.plugin.ready");
+  assert.equal(assertPluginContextKey("com.example", "com.example.ready"), "com.example.ready");
   assert.equal(evaluateContextKeyExpression("1.example.plugin.ready", {
     "1.example.plugin.ready": true,
   }), true);
   assert.equal(evaluateContextKeyExpression("1.5 < 2", {}), true);
   assert.throws(() => assertPluginContextKey("com.example.plugin", "terminal.connected"), /namespaced/u);
+  assert.throws(
+    () => assertPluginContextKey("com.example", "com.example.plugin.ready"),
+    /namespaced/u,
+  );
 });

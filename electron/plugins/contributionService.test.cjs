@@ -6,7 +6,7 @@ const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 
-const { assertJsonValue, PluginContributionService } = require("./contributionService.cjs");
+const { assertJsonValue, MAX_SETTING_BYTES, PluginContributionService } = require("./contributionService.cjs");
 const { PluginDatabase } = require("./database.cjs");
 const { PluginHostRpcRegistry } = require("./hostRpcRegistry.cjs");
 const { PluginPermissionEngine } = require("./permissionEngine.cjs");
@@ -44,11 +44,7 @@ function manifest(id = "com.example.contributions", activationEvents = []) {
   };
 }
 
-function setup(context, pluginManifest, options = {}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-plugin-contributions-"));
-  context.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const database = new PluginDatabase(path.join(root, "plugins.sqlite"));
-  context.after(() => database.close());
+function installPlugin(database, pluginManifest) {
   database.installVersion({
     pluginId: pluginManifest.id,
     version: pluginManifest.version,
@@ -56,6 +52,14 @@ function setup(context, pluginManifest, options = {}) {
     archiveSha256: "a".repeat(64),
     packageRelativePath: `${pluginManifest.id}/${pluginManifest.version}/package`,
   }, { enable: true });
+}
+
+function setup(context, pluginManifest, options = {}) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-plugin-contributions-"));
+  context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const database = new PluginDatabase(path.join(root, "plugins.sqlite"));
+  context.after(() => database.close());
+  installPlugin(database, pluginManifest);
   const secrets = new Map();
   const secretStore = {
     getReference(pluginId, key) { return secrets.has(`${pluginId}:${key}`) ? secrets.get(`${pluginId}:${key}`).ref : null; },
@@ -165,6 +169,68 @@ test("Context Keys remain available without an unrelated menus permission", asyn
     }, { signal: new AbortController().signal }),
     /must be namespaced to/u,
   );
+});
+
+test("Context Key ownership stays exact for plugin IDs that share a prefix", async (context) => {
+  const shorter = manifest("com.example");
+  const longer = manifest("com.example.foo");
+  const { database, service } = setup(context, shorter);
+  installPlugin(database, longer);
+  const registry = new PluginHostRpcRegistry();
+  service.registerRpcCapabilities(registry);
+  const transport = { signal: new AbortController().signal };
+  const longerRoutes = registry.createRoutes({
+    pluginId: longer.id,
+    pluginVersion: longer.version,
+    runtimeId: "runtime-longer",
+    runtimeKind: "browser",
+    manifest: longer,
+  });
+  const shorterRoutes = registry.createRoutes({
+    pluginId: shorter.id,
+    pluginVersion: shorter.version,
+    runtimeId: "runtime-shorter",
+    runtimeKind: "browser",
+    manifest: shorter,
+  });
+
+  await longerRoutes.requestHandlers["contextKeys.set"]({
+    key: `${longer.id}.ready`,
+    value: true,
+  }, transport);
+  await assert.rejects(
+    shorterRoutes.requestHandlers["contextKeys.set"]({
+      key: `${longer.id}.ready`,
+      value: false,
+    }, transport),
+    /must be namespaced to/u,
+  );
+
+  service.onRuntimeStateChanged({ pluginId: shorter.id, status: "stopped" });
+  const longerSnapshot = service.snapshot().plugins.find((plugin) => plugin.id === longer.id);
+  assert.equal(longerSnapshot.commands[0].enabled, true);
+});
+
+test("secret settings enforce patterns and size bounds before safeStorage", async (context) => {
+  const pluginManifest = manifest("com.example.secret-constraints");
+  const secretSetting = pluginManifest.contributes.settings.find((setting) => setting.secret);
+  secretSetting.pattern = "^[A-Z]{4}$";
+  const { secrets, service } = setup(context, pluginManifest);
+
+  await service.updateSetting(pluginManifest.id, secretSetting.id, "ABCD");
+  assert.equal([...secrets.values()][0].value, "ABCD");
+  await assert.rejects(
+    service.updateSetting(pluginManifest.id, secretSetting.id, "invalid"),
+    /does not match its pattern/u,
+  );
+  assert.equal([...secrets.values()][0].value, "ABCD");
+
+  delete secretSetting.pattern;
+  await assert.rejects(
+    service.updateSetting(pluginManifest.id, secretSetting.id, "x".repeat(MAX_SETTING_BYTES)),
+    /bounded JSON value/u,
+  );
+  assert.equal([...secrets.values()][0].value, "ABCD");
 });
 
 test("host invocation context cannot override plugin-owned Context Keys", async (context) => {
