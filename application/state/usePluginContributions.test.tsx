@@ -2,7 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 
-import { failClosedPluginContributionLoad, usePluginContributions } from './usePluginContributions';
+import {
+  createPluginContributionRefreshGuard,
+  failClosedPluginContributionLoad,
+  usePluginContributions,
+} from './usePluginContributions';
 
 function Probe() {
   const contributions = usePluginContributions();
@@ -22,4 +26,25 @@ test('plugin contribution refresh failures discard the last successful snapshot'
   assert.equal(failure.available, false);
   assert.equal(failure.snapshot.plugins.length, 0);
   assert.match(failure.error.message, /bridge unavailable/u);
+});
+
+test('plugin contribution refreshes reject stale asynchronous results', async () => {
+  const guard = createPluginContributionRefreshGuard();
+  const committed: string[] = [];
+  const oldRequestIsCurrent = guard.begin();
+  let resolveOld: (() => void) | undefined;
+  const oldRequest = new Promise<void>((resolve) => { resolveOld = resolve; }).then(() => {
+    if (oldRequestIsCurrent()) committed.push('old');
+  });
+
+  const newRequestIsCurrent = guard.begin();
+  if (newRequestIsCurrent()) committed.push('new');
+  resolveOld?.();
+  await oldRequest;
+
+  assert.deepEqual(committed, ['new']);
+  assert.equal(oldRequestIsCurrent(), false);
+  assert.equal(newRequestIsCurrent(), true);
+  guard.invalidate();
+  assert.equal(newRequestIsCurrent(), false);
 });

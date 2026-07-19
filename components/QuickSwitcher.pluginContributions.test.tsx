@@ -33,7 +33,8 @@ function pluginSnapshot(menuEnabled: boolean): NetcattyPluginContributionSnapsho
 test('plugin palette items preserve menu-specific enablement', () => {
   assert.deepEqual(buildPluginPaletteItems(pluginSnapshot(false), ''), [{
     type: 'plugin-command',
-    id: 'com.example.palette.run',
+    id: 'com.example.palette:menu:0',
+    commandId: 'com.example.palette.run',
     title: 'Run from palette',
     pluginTitle: 'Palette plugin',
     enabled: false,
@@ -65,7 +66,25 @@ test('plugin palette items honor declared menu ordering', () => {
     ],
   }];
   assert.deepEqual(buildPluginPaletteItems(ordered, '').map((item) => item.id), [
-    'com.example.palette.first',
-    'com.example.palette.run',
+    'com.example.palette:menu:1',
+    'com.example.palette:menu:0',
   ]);
+});
+
+test('plugin palette items keep repeated placements independently addressable', () => {
+  const plugins = pluginSnapshot(true);
+  plugins[0].menus.push({
+    ...plugins[0].menus[0],
+    id: 'com.example.palette:menu:1',
+    title: 'Run another way',
+  });
+
+  const items = buildPluginPaletteItems(plugins, '');
+  assert.deepEqual(items.map(({ id, commandId }) => ({ id, commandId })), [{
+    id: 'com.example.palette:menu:0',
+    commandId: 'com.example.palette.run',
+  }, {
+    id: 'com.example.palette:menu:1',
+    commandId: 'com.example.palette.run',
+  }]);
 });

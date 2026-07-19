@@ -9,6 +9,7 @@ const test = require("node:test");
 const { PluginContributionService } = require("./contributionService.cjs");
 const { PluginDatabase } = require("./database.cjs");
 const { PluginHostRpcRegistry } = require("./hostRpcRegistry.cjs");
+const { PluginPermissionEngine } = require("./permissionEngine.cjs");
 
 function manifest(id = "com.example.contributions", activationEvents = []) {
   return {
@@ -122,6 +123,39 @@ test("commands activate lazily and Context Keys are evaluated by the host", asyn
     `start:${pluginManifest.id}`,
     `request:${pluginManifest.id}:plugin.command.execute`,
   ]);
+});
+
+test("Context Keys remain available without an unrelated menus permission", async (context) => {
+  const pluginManifest = manifest("com.example.command-only", ["onCommand:com.example.command-only.hello"]);
+  pluginManifest.permissions = { required: ["commands"] };
+  pluginManifest.contributes.settings = [];
+  pluginManifest.contributes.menus = [];
+  pluginManifest.contributes.views = [];
+  const { database, service } = setup(context, pluginManifest);
+  const registry = new PluginHostRpcRegistry();
+  registry.use(new PluginPermissionEngine({ database }).createMiddleware());
+  service.registerRpcCapabilities(registry);
+  const routes = registry.createRoutes({
+    pluginId: pluginManifest.id,
+    pluginVersion: pluginManifest.version,
+    runtimeId: "runtime-command-only",
+    runtimeKind: "browser",
+    manifest: pluginManifest,
+  });
+
+  await routes.requestHandlers["contextKeys.set"]({
+    key: `${pluginManifest.id}.ready`,
+    value: true,
+  }, { signal: new AbortController().signal });
+
+  assert.equal(service.snapshot().plugins[0].commands[0].enabled, true);
+  await assert.rejects(
+    routes.requestHandlers["contextKeys.set"]({
+      key: "com.example.other.ready",
+      value: true,
+    }, { signal: new AbortController().signal }),
+    /must be namespaced to/u,
+  );
 });
 
 test("host invocation context cannot override plugin-owned Context Keys", async (context) => {

@@ -8,6 +8,7 @@ import { Button } from '../../ui/button';
 import { Input } from '../../ui/input';
 import { SettingsTabContent } from '../settings-ui';
 import { requestOpenPluginView } from '../../plugins/PluginContributionHost';
+import { parsePluginStructuredSettingValue } from './pluginSettingValues';
 
 function PluginSettingField({
   pluginId,
@@ -169,7 +170,7 @@ function PluginSettingField({
             disabled={saving}
             onChange={(event) => setValue(event.target.value)}
             onBlur={() => {
-              try { void save(JSON.parse(String(value))); }
+              try { void save(parsePluginStructuredSettingValue(value)); }
               catch { setError(t('settings.plugins.validJsonArray')); }
             }}
             className="min-h-28 w-full max-w-xl rounded-md border border-input bg-background px-3 py-2 font-mono text-xs"

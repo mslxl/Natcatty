@@ -298,7 +298,13 @@ function createPluginContext(config, client, runtimeApi) {
       if (typeof handler !== "function") throw new PluginError("invalid_argument", "Plugin command handler must be a function");
       if (runtimeApi.commandHandlers.has(id)) throw new PluginError("already_exists", `Plugin command is already registered: ${id}`);
       runtimeApi.commandHandlers.set(id, handler);
-      return Object.freeze({ dispose: () => runtimeApi.commandHandlers.delete(id) });
+      return Object.freeze({
+        dispose() {
+          if (runtimeApi.commandHandlers.get(id) === handler) {
+            runtimeApi.commandHandlers.delete(id);
+          }
+        },
+      });
     },
     executeCommand: (commandId, args) => client.request("commands.execute", {
       command: assertOwnedContributionId(config.pluginId, commandId, "Plugin command"),

@@ -6,6 +6,11 @@ import {
   normalizePluginShortcut,
   resolvePluginShortcutPlatform,
 } from '../../application/state/pluginKeybindings';
+import {
+  canRetainPluginViewInScope,
+  resolvePluginRetainedViewKey,
+  resolvePluginViewWindowScope,
+} from '../../application/state/pluginViewScopes';
 import { usePluginContributions } from '../../application/state/usePluginContributions';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { Button } from '../ui/button';
@@ -20,6 +25,7 @@ interface OpenPluginViewDetail {
 interface HostedPluginView {
   id: string;
   viewId: string;
+  scopeId: string;
   retainContextWhenHidden: boolean;
 }
 
@@ -61,6 +67,12 @@ export function PluginContributionHost({
     .find(({ view }) => view.id === requested?.viewId && view.visible) ?? null,
   [requested?.viewId, viewContributions.snapshot.plugins]);
   const activeViewId = activeView?.view.id;
+  const viewScopeId = typeof window === 'undefined'
+    ? 'window:server'
+    : resolvePluginViewWindowScope(window.location);
+  const retainedViewKey = activeViewId
+    ? resolvePluginRetainedViewKey(activeViewId, viewScopeId)
+    : null;
 
   useEffect(() => { closeViewRef.current = closeView; }, [closeView]);
 
@@ -98,11 +110,12 @@ export function PluginContributionHost({
       await closeView(current.id);
       return;
     }
-    retainedViewsRef.current.set(current.viewId, current);
+    const key = resolvePluginRetainedViewKey(current.viewId, current.scopeId);
+    retainedViewsRef.current.set(key, current);
     try {
       await setViewVisibility(current.id, false);
     } catch {
-      retainedViewsRef.current.delete(current.viewId);
+      retainedViewsRef.current.delete(key);
       await closeView(current.id);
     }
   }, [closeView, setViewVisibility]);
@@ -116,15 +129,29 @@ export function PluginContributionHost({
   }, [hideOrClose]);
 
   useEffect(() => {
-    if (!instance) return;
-    if (requested?.viewId === instance.viewId && activeViewId === instance.viewId) return;
-    instanceRef.current = null;
-    setInstance(null);
-    void hideOrClose(instance);
-  }, [activeViewId, hideOrClose, instance, requested?.viewId]);
+    for (const [key, retained] of retainedViewsRef.current) {
+      if (canRetainPluginViewInScope(retained.scopeId, viewScopeId)) continue;
+      retainedViewsRef.current.delete(key);
+      void closeView(retained.id).catch(() => {});
+    }
+  }, [closeView, viewScopeId]);
 
   useEffect(() => {
-    if (!activeViewId || !mountRef.current || instance) return;
+    if (!instance) return;
+    if (requested?.viewId === instance.viewId
+      && activeViewId === instance.viewId
+      && instance.scopeId === viewScopeId) return;
+    instanceRef.current = null;
+    setInstance(null);
+    if (canRetainPluginViewInScope(instance.scopeId, viewScopeId)) {
+      void hideOrClose(instance);
+    } else {
+      void closeView(instance.id).catch(() => {});
+    }
+  }, [activeViewId, closeView, hideOrClose, instance, requested?.viewId, viewScopeId]);
+
+  useEffect(() => {
+    if (!activeViewId || !retainedViewKey || !mountRef.current || instance) return;
     let cancelled = false;
     const bounds = mountRef.current.getBoundingClientRect();
     const nextBounds = {
@@ -134,9 +161,9 @@ export function PluginContributionHost({
       height: Math.max(1, Math.round(bounds.height)),
     };
     void (async () => {
-      let opened = retainedViewsRef.current.get(activeViewId) ?? null;
+      let opened = retainedViewsRef.current.get(retainedViewKey) ?? null;
       if (opened) {
-        retainedViewsRef.current.delete(activeViewId);
+        retainedViewsRef.current.delete(retainedViewKey);
         try {
           await setViewBounds(opened.id, nextBounds);
           await setViewVisibility(opened.id, true);
@@ -148,13 +175,14 @@ export function PluginContributionHost({
       if (!opened) {
         const result = await openView({
           viewId: activeViewId,
-          scopeId: `window:${window.location.pathname || 'main'}`,
+          scopeId: viewScopeId,
           bounds: nextBounds,
           context: requested?.context,
         });
         opened = {
           id: result.instanceId,
           viewId: activeViewId,
+          scopeId: viewScopeId,
           retainContextWhenHidden: activeView.view.retainContextWhenHidden === true,
         };
       }
@@ -175,9 +203,11 @@ export function PluginContributionHost({
     hideOrClose,
     instance,
     openView,
+    retainedViewKey,
     requested?.context,
     setViewBounds,
     setViewVisibility,
+    viewScopeId,
   ]);
 
   useEffect(() => {

@@ -245,6 +245,10 @@ test("runtime peer exposes contribution APIs and routes host UI events", async (
             context.views.onDidReceiveMessage("com.example.ui.view", (message) => events.push(["view", message]));
             context.commands.registerCommand("com.example.ui.hello", async (args, invocation) => ({ args, source: invocation.source }));
             context.commands.registerCommand("com.example.ui.void", async () => undefined);
+            const staleDisposable = context.commands.registerCommand("com.example.ui.replaceable", async () => "old");
+            staleDisposable.dispose();
+            context.commands.registerCommand("com.example.ui.replaceable", async () => "new");
+            staleDisposable.dispose();
             assert.equal(await context.settings.get("com.example.ui.greeting"), "value:com.example.ui.greeting");
             assert.deepEqual(await context.settings.update("com.example.ui.greeting", "hello"), { restartRequired: false });
             assert.equal(await context.commands.executeCommand("com.example.ui.hello", { nested: true }), "host-result");
@@ -277,6 +281,10 @@ test("runtime peer exposes contribution APIs and routes host UI events", async (
     command: "com.example.ui.void",
     invocation: { source: "palette" },
   }), null);
+  assert.equal(await host.request("plugin.command.execute", {
+    command: "com.example.ui.replaceable",
+    invocation: { source: "palette" },
+  }), "new");
 
   host.notify("plugin.settings.changed", { settingId: "com.example.ui.greeting", scope: "application", scopeId: "application", source: "host" });
   host.notify("plugin.environment.changed", { locale: "zh-CN", theme: "dark", reducedMotion: true, highContrast: false });

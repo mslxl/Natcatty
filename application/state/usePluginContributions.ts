@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
 
 const EMPTY_SNAPSHOT: NetcattyPluginContributionSnapshot = Object.freeze({
@@ -27,6 +27,19 @@ export function comparePluginMenus(
     || left.id.localeCompare(right.id);
 }
 
+export function createPluginContributionRefreshGuard() {
+  let generation = 0;
+  return Object.freeze({
+    begin() {
+      const requestGeneration = ++generation;
+      return () => generation === requestGeneration;
+    },
+    invalidate() {
+      generation += 1;
+    },
+  });
+}
+
 export interface UsePluginContributionsResult {
   available: boolean;
   loading: boolean;
@@ -53,9 +66,12 @@ export function usePluginContributions(
   const [available, setAvailable] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+  const refreshGuard = useRef(createPluginContributionRefreshGuard());
 
   const refresh = useCallback(async () => {
+    const isCurrent = refreshGuard.current.begin();
     if (!bridge?.getPluginRuntimeStatus || !bridge.getPluginContributions) {
+      if (!isCurrent()) return;
       setAvailable(false);
       setSnapshot(EMPTY_SNAPSHOT);
       setLoading(false);
@@ -63,27 +79,35 @@ export function usePluginContributions(
     }
     try {
       const status = await bridge.getPluginRuntimeStatus();
+      if (!isCurrent()) return;
       setAvailable(status.available);
       if (!status.available) {
         setSnapshot(EMPTY_SNAPSHOT);
         setError(null);
         return;
       }
-      setSnapshot(await bridge.getPluginContributions(JSON.parse(queryKey)));
+      const nextSnapshot = await bridge.getPluginContributions(JSON.parse(queryKey));
+      if (!isCurrent()) return;
+      setSnapshot(nextSnapshot);
       setError(null);
     } catch (cause) {
+      if (!isCurrent()) return;
       const failure = failClosedPluginContributionLoad(cause);
       setAvailable(failure.available);
       setSnapshot(failure.snapshot);
       setError(failure.error);
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   }, [bridge, queryKey]);
 
   useEffect(() => {
     void refresh();
-    return bridge?.onPluginContributionsChanged?.(() => { void refresh(); });
+    const unsubscribe = bridge?.onPluginContributionsChanged?.(() => { void refresh(); });
+    return () => {
+      refreshGuard.current.invalidate();
+      unsubscribe?.();
+    };
   }, [bridge, refresh]);
 
   const executeCommand = useCallback(async (command: string, args?: unknown, context?: Record<string, unknown>) => {

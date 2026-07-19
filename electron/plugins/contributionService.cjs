@@ -183,8 +183,7 @@ class PluginContributionService {
       this.#emitChange("context-key", context.pluginId);
       return null;
     }, {
-      metadata: { capability: "menus", mutating: true, permission: "menus" },
-      authorization: { permission: "menus", resources: ["*"], reason: "Update plugin UI state" },
+      metadata: { capability: "contextKeys", mutating: true, public: true },
     });
     registry.registerRequest("views.getState", (params, context) => {
       const view = this.#assertOwnedContribution(context.manifest, "views", params?.viewId, context.pluginId);

@@ -17,8 +17,7 @@ import { buildQuickSwitcherShells, useDiscoveredShells, getShellIconPath, isMono
 import { usePluginContributions } from "../application/state/usePluginContributions";
 import { requestOpenPluginView } from "./plugins/PluginContributionHost";
 
-type QuickSwitcherItem = {
-  type: "host" | "tab" | "workspace" | "action" | "shell" | "plugin-command" | "plugin-view";
+type QuickSwitcherItemBase = {
   id: string;
   data?: Host | TerminalSession | Workspace;
   pluginTitle?: string;
@@ -27,6 +26,11 @@ type QuickSwitcherItem = {
   altCommand?: string;
   shortcut?: string;
 };
+
+type QuickSwitcherItem = QuickSwitcherItemBase & (
+  | { type: "plugin-command"; commandId: string }
+  | { type: "host" | "tab" | "workspace" | "action" | "shell" | "plugin-view"; commandId?: never }
+);
 
 export function buildPluginPaletteItems(
   plugins: NetcattyPluginContributionSnapshot['plugins'],
@@ -50,7 +54,8 @@ export function buildPluginPaletteItems(
       ))
       .map(({ command, menu }) => ({
         type: 'plugin-command',
-        id: command.id,
+        id: menu.id,
+        commandId: command.id,
         title: menu.title,
         pluginTitle: plugin.displayName,
         enabled: command.enabled && menu.enabled,
@@ -350,7 +355,7 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
       case "plugin-command":
         if (item.enabled !== false) {
           void pluginContributions.executeCommand(
-            useAlternate && item.altCommand ? item.altCommand : item.id,
+            useAlternate && item.altCommand ? item.altCommand : item.commandId,
             undefined,
             { 'netcatty.surface': 'commandPalette' },
           ).catch(() => {});
