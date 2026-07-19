@@ -119,3 +119,52 @@ test("runtime peer exposes secure host capabilities over the canonical RPC trans
   host.close();
   assert.deepEqual(lifecycle, ["activate", "deactivate"]);
 });
+
+test("runtime companion handles retry a failed stop request", async () => {
+  const { startPluginRuntime } = await import("./runtime/runtimePeer.mjs");
+  const { port1, port2 } = new MessageChannel();
+  let stopCalls = 0;
+  const host = new PluginRpcRouter({
+    pluginId: "com.example.retry-stop",
+    send(message) { port1.postMessage(message); },
+    handlers: {
+      "companion.start": async () => ({ handleId: "companion-handle-000000000001" }),
+      "companion.stop": async () => {
+        stopCalls += 1;
+        if (stopCalls === 1) throw new Error("transient stop failure");
+        return null;
+      },
+    },
+  });
+  port1.on("message", (message) => host.accept(message));
+  const peer = await startPluginRuntime({
+    port: port2,
+    config: {
+      pluginId: "com.example.retry-stop",
+      pluginVersion: "1.0.0",
+      netcattyVersion: "1.0.0",
+      apiVersion: "0.1.0-internal",
+      enabledFeatures: [],
+    },
+    async loadPlugin() {
+      return {
+        default: {
+          async activate(context) {
+            const companion = await context.companions.start("com.example.retry-stop.helper");
+            await assert.rejects(companion.stop());
+            await companion.stop();
+          },
+        },
+      };
+    },
+  });
+  await host.request("plugin.initialize", {
+    netcattyVersion: "1.0.0",
+    apiVersion: "0.1.0-internal",
+    supportedFeatures: [],
+  });
+  await host.request("plugin.activate", {});
+  assert.equal(stopCalls, 2);
+  await peer.dispose();
+  host.close();
+});

@@ -39,14 +39,16 @@ function registerSecurePluginCapabilities(registry, options) {
     validateParams: (params) => assertSecretParams(params),
     authorization: (params) => secretAuthorization(params, "Read"),
   });
-  registry.registerRequest("secrets.set", async ({ key, value }, context) => ({
-    secret: options.secretStore.set(context.pluginId, key, value),
-  }), {
+  registry.registerRequest("secrets.set", async ({ key, value }, context) => {
+    await context.assertActive();
+    return { secret: options.secretStore.set(context.pluginId, key, value) };
+  }, {
     metadata: { capability: "secrets", mutating: true, permission: "secrets" },
     validateParams: (params) => assertSecretParams(params, { value: true }),
     authorization: (params) => secretAuthorization(params, "Store"),
   });
   registry.registerRequest("secrets.delete", async ({ key }, context) => {
+    await context.assertActive();
     options.secretStore.delete(context.pluginId, key);
     return null;
   }, {

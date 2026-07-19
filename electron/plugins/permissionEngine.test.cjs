@@ -201,6 +201,8 @@ test("permission requests stay inside the canonical UI contract bounds", async (
   assert.match(captured.operationId, /^sha256:[a-f0-9]{64}$/u);
   assert.equal(Object.hasOwn(captured, "sessionId"), false);
   assert.equal(Object.isFrozen(captured), true);
+  assert.deepEqual(captured.resourceKinds, ["exact"]);
+  assert.equal(Object.isFrozen(captured.resourceKinds), true);
   const validateRequest = createDefinitionValidator("PermissionRequest");
   assert.equal(validateRequest(captured), true, JSON.stringify(validateRequest.errors));
   await assert.rejects(engine.authorize(runtimeContext(pluginManifest), {
@@ -208,6 +210,12 @@ test("permission requests stay inside the canonical UI contract bounds", async (
     resources: Array(129).fill("*"),
     reason: "Too many resources",
   }), /resources are invalid/);
+  await assert.rejects(engine.authorize(runtimeContext(pluginManifest), {
+    permission: "storage",
+    resources: ["*"],
+    resourceKinds: [],
+    reason: "Misaligned resource kinds",
+  }), /resource kinds are invalid/);
   await assert.rejects(engine.authorize(runtimeContext(pluginManifest), {
     permission: "storage",
     resources: ["*"],
@@ -278,7 +286,7 @@ test("permission shutdown aborts pending prompts before grants can persist", asy
 });
 
 for (const scope of ["application", "session", "always"]) {
-test(`${scope} resource grants canonicalize origins and cover filesystem descendants`, async (context) => {
+test(`${scope} directory grants canonicalize origins and cover filesystem descendants`, async (context) => {
   const database = createDatabase(context);
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-permission-root-"));
   context.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -294,7 +302,6 @@ test(`${scope} resource grants canonicalize origins and cover filesystem descend
         requestId: request.requestId,
         decision: "allow",
         scope,
-        resources: request.permission === "filesystem.read" ? [root] : request.resources,
       };
     },
   });
@@ -310,8 +317,9 @@ test(`${scope} resource grants canonicalize origins and cover filesystem descend
   }
   await engine.authorize(runtimeContext(pluginManifest), {
     permission: "filesystem.read",
-    resources: [child],
-    reason: "Read file",
+    resources: [root],
+    resourceKinds: ["directory"],
+    reason: "Read directory",
     ...(scope === "session" ? { sessionId: "terminal-session-1" } : {}),
   });
   const promptsBeforeDescendant = prompts;
@@ -322,13 +330,61 @@ test(`${scope} resource grants canonicalize origins and cover filesystem descend
     ...(scope === "session" ? { sessionId: "terminal-session-1" } : {}),
   });
   assert.equal(prompts, promptsBeforeDescendant);
-  assert.equal(permissionResourceCovers("filesystem.read", root, child), true);
-  assert.equal(permissionResourceCovers("filesystem.read", root, `${root}-outside`), false);
+  assert.equal(permissionResourceCovers("filesystem.read", root, child), false);
+  assert.equal(permissionResourceCovers("filesystem.read", root, child, "directory"), true);
+  assert.equal(permissionResourceCovers("filesystem.read", root, `${root}-outside`, "directory"), false);
   assert.equal(canonicalizeNetworkOrigin("https://example.com/"), "https://example.com");
   assert.throws(() => canonicalizeNetworkOrigin("https://example.com/path"), /without credentials or a path/);
   database.close();
 });
 }
+
+test("an exact file grant cannot become a directory subtree grant after replacement", async (context) => {
+  const database = createDatabase(context);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-permission-file-"));
+  context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const selected = path.join(root, "selected");
+  fs.writeFileSync(selected, "file");
+  let prompts = 0;
+  const engine = new PluginPermissionEngine({
+    database,
+    requestDecision: async (request) => {
+      prompts += 1;
+      return { requestId: request.requestId, decision: "allow", scope: "always" };
+    },
+  });
+  const pluginManifest = manifest({ optional: [{
+    permission: "filesystem.read",
+    resources: [root],
+  }] });
+  await engine.authorize(runtimeContext(pluginManifest), {
+    permission: "filesystem.read",
+    resources: [selected],
+    resourceKinds: ["exact"],
+    reason: "Read file",
+  });
+  fs.rmSync(selected);
+  fs.mkdirSync(selected);
+  const child = path.join(selected, "child.txt");
+  fs.writeFileSync(child, "child");
+  await engine.authorize(runtimeContext(pluginManifest), {
+    permission: "filesystem.read",
+    resources: [selected],
+    resourceKinds: ["directory"],
+    reason: "Read replacement directory",
+  });
+  await engine.authorize(runtimeContext(pluginManifest), {
+    permission: "filesystem.read",
+    resources: [child],
+    resourceKinds: ["exact"],
+    reason: "Read replacement child",
+  });
+  assert.equal(prompts, 2);
+  assert.deepEqual(database.listPermissionGrants(pluginManifest.id).map((grant) => (
+    [grant.resource, grant.resourceKind]
+  )), [[selected, "directory"]]);
+  database.close();
+});
 
 test("companion resources accept canonical contribution identifiers", () => {
   const { canonicalizeCompanionResource } = require("./permissionResources.cjs");

@@ -35,6 +35,7 @@ test("filesystem broker uses canonical authorization for bounded read, write, st
   });
 
   const readAuthorization = await broker.describeReadAuthorization({ path: source });
+  assert.deepEqual(readAuthorization.resourceKinds, ["exact"]);
   assert.deepEqual(
     await broker.readFile({ path: source }, runtimeContext(readAuthorization)),
     { data: "hello" },
@@ -42,6 +43,7 @@ test("filesystem broker uses canonical authorization for bounded read, write, st
   assert.equal((await broker.stat({ path: source }, runtimeContext(readAuthorization))).kind, "file");
 
   const writeAuthorization = await broker.describeWriteAuthorization({ path: target, data: "world" });
+  assert.deepEqual(writeAuthorization.resourceKinds, ["exact"]);
   await broker.writeFile({ path: target, data: "world" }, runtimeContext(writeAuthorization));
   assert.equal(await fsp.readFile(target, "utf8"), "world");
   const overwriteAuthorization = await broker.describeWriteAuthorization({
@@ -56,6 +58,7 @@ test("filesystem broker uses canonical authorization for bounded read, write, st
   assert.equal(await fsp.readFile(target, "utf8"), "short");
 
   const listAuthorization = await broker.describeReadAuthorization({ path: root });
+  assert.deepEqual(listAuthorization.resourceKinds, ["directory"]);
   const list = await broker.readDirectory({ path: root }, runtimeContext(listAuthorization));
   assert.deepEqual(list.entries.map(({ name }) => name), ["source.txt", "target.txt"]);
   assert.deepEqual(charges, [
@@ -94,6 +97,73 @@ test("filesystem path swaps after authorization fail closed", async (context) =>
     broker.readFile({ path: link }, runtimeContext(authorization)),
     (error) => error.code === RPC_ERRORS.permissionDenied,
   );
+});
+
+test("filesystem directory replacement between authorization and open fails closed", async (context) => {
+  const root = createRoot(context);
+  const selected = path.join(root, "selected");
+  const replacement = path.join(root, "replacement");
+  const original = path.join(root, "original");
+  await Promise.all([
+    fsp.mkdir(selected),
+    fsp.mkdir(replacement),
+  ]);
+  await Promise.all([
+    fsp.writeFile(path.join(selected, "allowed.txt"), "allowed"),
+    fsp.writeFile(path.join(replacement, "secret.txt"), "secret"),
+  ]);
+  let swapped = false;
+  const broker = new PluginFilesystemBroker({
+    fileSystem: {
+      ...fsp,
+      async opendir(directoryPath, options) {
+        if (!swapped) {
+          swapped = true;
+          await fsp.rename(selected, original);
+          await fsp.rename(replacement, selected);
+        }
+        return fsp.opendir(directoryPath, options);
+      },
+    },
+  });
+  const authorization = await broker.describeReadAuthorization({ path: selected });
+  await assert.rejects(
+    broker.readDirectory({ path: selected }, runtimeContext(authorization)),
+    (error) => error.code === RPC_ERRORS.permissionDenied,
+  );
+});
+
+test("filesystem writes recheck runtime activity immediately before mutation", async (context) => {
+  const root = createRoot(context);
+  const target = path.join(root, "target.txt");
+  await fsp.writeFile(target, "original");
+  let active = true;
+  let armed = false;
+  const broker = new PluginFilesystemBroker({
+    fileSystem: {
+      ...fsp,
+      async stat(filePath, options) {
+        const stats = await fsp.stat(filePath, options);
+        if (armed) active = false;
+        return stats;
+      },
+    },
+  });
+  const authorization = await broker.describeWriteAuthorization({
+    path: target,
+    data: "replacement",
+    overwrite: true,
+  });
+  armed = true;
+  await assert.rejects(broker.writeFile({
+    path: target,
+    data: "replacement",
+    overwrite: true,
+  }, {
+    ...runtimeContext(authorization),
+    assertActive: async () => { if (!active) throw new Error("runtime stopped"); },
+  }), /runtime stopped/);
+  assert.equal(await fsp.readFile(target, "utf8"), "original");
 });
 
 test("filesystem broker rejects oversized and non-canonical payloads", async (context) => {

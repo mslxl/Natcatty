@@ -112,12 +112,15 @@ export type PermissionRequest = {
   runtimeKind?: "browser" | "utility" | null;
   permission: PluginPermission;
   resources?: Array<PermissionResource>;
+  resourceKinds?: Array<PermissionResourceKind>;
   reason: string;
   operationId?: string;
   sessionId?: string;
 };
 
 export type PermissionResource = string;
+
+export type PermissionResourceKind = "exact" | "directory";
 
 export type PermissionSet = {
   required?: Array<PermissionDeclaration>;

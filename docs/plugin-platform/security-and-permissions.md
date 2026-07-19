@@ -4,8 +4,9 @@ Status: phase 3 internal preview (`0.1.0-internal`)
 
 This phase is available only with `NETCATTY_PLUGIN_DEV=1`. It is deliberately
 usable by later contribution and Provider phases, but it is not a public plugin
-release. There is no renderer permission UI yet. If the host does not inject a
-decision provider, interactive permission requests fail closed.
+release. There is no renderer permission UI yet. The first-party development
+bootstrap injects a native Electron confirmation dialog; embedders that do not
+inject a decision provider still fail closed.
 
 ## Authority model
 
@@ -51,17 +52,20 @@ utility runtime.
 - `application` is held in memory until explicit revoke or shutdown.
 - `always` is persisted in `plugin_permission_grants`.
 
-All lifetimes use the same resource-coverage function. A filesystem directory
-grant covers its descendants with path-boundary comparison; an origin or
-companion grant is exact; `*` is valid only when the manifest declaration also
-allows it. Concurrent identical prompts coalesce. Prompt timeout, runtime abort,
+All lifetimes use the same resource-coverage function. Every resource carries
+an explicit `exact` or `directory` kind. Only a filesystem `directory` grant
+covers descendants with path-boundary comparison; a file remains exact even if
+the path is later replaced by a directory. Origins and companions are exact;
+`*` is valid only when the manifest declaration also allows it. Concurrent
+identical prompts coalesce. Prompt timeout, runtime abort,
 cancel, denial, absence of a decision provider, and stale activation all fail
 closed. Grant/use/deny/revoke events enter the bounded security audit.
 
 `PermissionRequest` is part of the canonical Schema and carries plugin display
-identity, version, runtime placement, permission, canonical resources, reason,
-operation and optional host session. This is the complete PR-4 UI handoff; the
-renderer must return the same request ID and one canonical lifetime decision.
+identity, version, runtime placement, permission, canonical resources and their
+aligned resource kinds, reason, operation and optional host session. This is
+the complete PR-4 UI handoff; the renderer must return the same request ID and
+one canonical lifetime decision.
 
 ## Host-mediated capabilities
 
@@ -86,10 +90,12 @@ replay POST bodies as GET requests.
 Read, write, stat and directory listing require an absolute path. Authorization
 uses the real path (or real parent for a new file), and the handler requires the
 same canonical resource after permission middleware. File opens use
-`O_NOFOLLOW` where supported and recheck the opened object. Reads use the actual
-handle bytes rather than trusting a pre-read size, with a 1 MiB cap. Writes are
-exclusive unless overwrite is explicit, create mode is `0600`, and listing is
-limited to 1,000 entries.
+`O_NOFOLLOW` where supported and recheck the opened object. Directory listing
+uses an opened directory handle and inode revalidation, so a path replacement
+cannot redirect a previously authorized list. Reads use the actual handle bytes
+rather than trusting a pre-read size, with a 1 MiB cap. Writes are exclusive
+unless overwrite is explicit, create mode is `0600`, recheck runtime activity
+immediately before mutation, and listing is limited to 1,000 entries.
 
 ### Secrets and credentials
 
@@ -118,6 +124,9 @@ empty argument vector, private plugin data directory, minimal environment,
 `shell:false`, bounded Content-Length JSON-RPC, at most four processes per
 runtime and 64 pending calls per process. Companion-to-host methods receive
 method-not-found; privileged work remains in the main host brokers.
+Timed-out companion RPC identifiers are retired until one late response is
+discarded, and the runtime SDK retries a failed stop rather than marking the
+handle locally stopped before the host confirms cleanup.
 
 Shutdown requests termination, escalates to SIGKILL, and still waits for exit.
 An unreaped companion is a containment failure and disables its plugin. Runtime

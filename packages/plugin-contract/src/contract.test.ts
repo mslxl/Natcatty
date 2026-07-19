@@ -332,6 +332,7 @@ test("RPC, stream, permission, and provider schemas validate independently", () 
     permission: "network",
     reason: "Fetch completion metadata",
     resources: ["https://api.example.com"],
+    resourceKinds: ["exact"],
     operationId: "network:https://api.example.com",
     sessionId: "terminal-session-1",
   }), true);
@@ -341,7 +342,16 @@ test("RPC, stream, permission, and provider schemas validate independently", () 
     permission: "filesystem.read",
     reason: "Read a long absolute path",
     resources: [`/${"a".repeat(4_096)}`],
+    resourceKinds: ["directory"],
   }), true, JSON.stringify(permission.errors));
+  assert.equal(permission({
+    requestId: "p2-invalid",
+    pluginId: "com.example.contract-test",
+    permission: "filesystem.read",
+    reason: "Reject an unknown resource kind",
+    resources: ["/tmp"],
+    resourceKinds: ["subtree"],
+  }), false);
   assert.equal(permission({
     requestId: "p3",
     pluginId: "com.example.contract-test",

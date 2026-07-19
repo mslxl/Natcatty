@@ -14,7 +14,7 @@ const REQUIRED_SCHEMA_COLUMNS = Object.freeze({
   plugin_runtime_state: ["plugin_id", "plugin_version", "status", "runtime_kind", "last_error", "quarantined_at", "updated_at"],
   plugin_crashes: ["plugin_id", "plugin_version", "crashed_at"],
   plugin_kv: ["plugin_id", "key", "value_json", "updated_at"],
-  plugin_permission_grants: ["plugin_id", "permission", "resource", "declaration_hash", "granted_at"],
+  plugin_permission_grants: ["plugin_id", "permission", "resource", "resource_kind", "declaration_hash", "granted_at"],
   plugin_secrets: ["plugin_id", "key", "secret_ref", "ciphertext", "created_at", "updated_at"],
   plugin_security_audit: ["id", "plugin_id", "event", "details_json", "created_at"],
 });
@@ -104,6 +104,7 @@ class PluginDatabase {
             plugin_id TEXT NOT NULL,
             permission TEXT NOT NULL,
             resource TEXT NOT NULL,
+            resource_kind TEXT NOT NULL CHECK (resource_kind IN ('exact', 'directory')),
             declaration_hash TEXT NOT NULL,
             granted_at INTEGER NOT NULL,
             PRIMARY KEY (plugin_id, permission, resource)
@@ -425,7 +426,7 @@ class PluginDatabase {
 
   listPermissionGrants(pluginId) {
     return this.db.prepare(`
-      SELECT plugin_id, permission, resource, declaration_hash, granted_at
+      SELECT plugin_id, permission, resource, resource_kind, declaration_hash, granted_at
       FROM plugin_permission_grants
       WHERE plugin_id = ?
       ORDER BY permission COLLATE BINARY, resource COLLATE BINARY
@@ -433,6 +434,7 @@ class PluginDatabase {
       pluginId: row.plugin_id,
       permission: row.permission,
       resource: row.resource,
+      resourceKind: row.resource_kind,
       declarationHash: row.declaration_hash,
       grantedAt: Number(row.granted_at),
     }));
@@ -441,15 +443,17 @@ class PluginDatabase {
   upsertPermissionGrant(record) {
     this.db.prepare(`
       INSERT INTO plugin_permission_grants(
-        plugin_id, permission, resource, declaration_hash, granted_at
-      ) VALUES (?, ?, ?, ?, ?)
+        plugin_id, permission, resource, resource_kind, declaration_hash, granted_at
+      ) VALUES (?, ?, ?, ?, ?, ?)
       ON CONFLICT(plugin_id, permission, resource) DO UPDATE SET
+        resource_kind = excluded.resource_kind,
         declaration_hash = excluded.declaration_hash,
         granted_at = excluded.granted_at
     `).run(
       record.pluginId,
       record.permission,
       record.resource,
+      record.resourceKind,
       record.declarationHash,
       this.clock(),
     );

@@ -81,23 +81,23 @@ function assertPathParams(params) {
   return { path: assertAbsolutePath(params.path) };
 }
 
-async function resolveExistingPath(requestedPath) {
-  const canonical = await fsp.realpath(requestedPath);
-  const stats = await fsp.lstat(canonical);
+async function resolveExistingPath(requestedPath, fileSystem = fsp) {
+  const canonical = await fileSystem.realpath(requestedPath);
+  const stats = await fileSystem.lstat(canonical);
   if (stats.isSymbolicLink()) throw invalidArgument("Plugin filesystem path cannot resolve to a symbolic link");
   return { canonical, stats };
 }
 
-async function resolveWritePath(requestedPath) {
+async function resolveWritePath(requestedPath, fileSystem = fsp) {
   try {
-    const existing = await resolveExistingPath(requestedPath);
+    const existing = await resolveExistingPath(requestedPath, fileSystem);
     if (!existing.stats.isFile()) throw invalidArgument("Plugin filesystem write target is not a file");
     return existing.canonical;
   } catch (error) {
     if (error?.code !== "ENOENT") throw error;
   }
-  const parent = await fsp.realpath(path.dirname(requestedPath));
-  const parentStats = await fsp.lstat(parent);
+  const parent = await fileSystem.realpath(path.dirname(requestedPath));
+  const parentStats = await fileSystem.lstat(parent);
   if (!parentStats.isDirectory() || parentStats.isSymbolicLink()) {
     throw invalidArgument("Plugin filesystem write parent is not a real directory");
   }
@@ -156,9 +156,24 @@ function assertSameOpenedFile(openedStats, pathStats) {
   }
 }
 
+function assertSameOpenedDirectory(expectedStats, pathStats) {
+  if (
+    !expectedStats.isDirectory()
+    || !pathStats.isDirectory()
+    || expectedStats.dev !== pathStats.dev
+    || expectedStats.ino !== pathStats.ino
+  ) {
+    throw new PluginRpcError(
+      RPC_ERRORS.permissionDenied,
+      "Plugin filesystem directory changed after authorization",
+    );
+  }
+}
+
 class PluginFilesystemBroker {
   constructor(options = {}) {
     this.quotaManager = options.quotaManager ?? null;
+    this.fileSystem = options.fileSystem ?? fsp;
   }
 
   validateRead(params) { return assertReadParams(params); }
@@ -175,10 +190,11 @@ class PluginFilesystemBroker {
 
   async describeReadAuthorization(params) {
     const value = assertReadParams(params);
-    const { canonical } = await resolveExistingPath(value.path);
+    const { canonical, stats } = await resolveExistingPath(value.path, this.fileSystem);
     return {
       permission: "filesystem.read",
       resources: [canonical],
+      resourceKinds: [stats.isDirectory() ? "directory" : "exact"],
       reason: `Read ${canonical}`,
       operationId: `filesystem.read:${canonical}`,
     };
@@ -186,10 +202,11 @@ class PluginFilesystemBroker {
 
   async describeWriteAuthorization(params) {
     const value = assertWriteParams(params);
-    const canonical = await resolveWritePath(value.path);
+    const canonical = await resolveWritePath(value.path, this.fileSystem);
     return {
       permission: "filesystem.write",
       resources: [canonical],
+      resourceKinds: ["exact"],
       reason: `Write ${canonical}`,
       operationId: `filesystem.write:${canonical}`,
     };
@@ -197,19 +214,19 @@ class PluginFilesystemBroker {
 
   async readFile(params, context) {
     const value = assertReadParams(params);
-    const { canonical, stats } = await resolveExistingPath(value.path);
+    const { canonical, stats } = await resolveExistingPath(value.path, this.fileSystem);
     assertAuthorizedPath(context, "filesystem.read", canonical);
     if (!stats.isFile()) throw invalidArgument("Plugin filesystem read target is not a file");
     if (stats.size > value.maxBytes) {
       throw new PluginRpcError(RPC_ERRORS.resourceExhausted, "Plugin filesystem file is too large");
     }
-    const handle = await fsp.open(canonical, fs.constants.O_RDONLY | NOFOLLOW);
+    const handle = await this.fileSystem.open(canonical, fs.constants.O_RDONLY | NOFOLLOW);
     try {
       const openedStats = await handle.stat();
       if (!openedStats.isFile() || openedStats.size > value.maxBytes) {
         throw new PluginRpcError(RPC_ERRORS.resourceExhausted, "Plugin filesystem file changed or is too large");
       }
-      assertAuthorizedPath(context, "filesystem.read", await fsp.realpath(canonical));
+      assertAuthorizedPath(context, "filesystem.read", await this.fileSystem.realpath(canonical));
       const bytes = await readBoundedFileHandle(handle, value.maxBytes);
       this.quotaManager?.chargeBytes(context.runtimeId, "filesystem", bytes.byteLength);
       await context.assertActive();
@@ -221,7 +238,7 @@ class PluginFilesystemBroker {
 
   async writeFile(params, context) {
     const value = assertWriteParams(params);
-    const canonical = await resolveWritePath(value.path);
+    const canonical = await resolveWritePath(value.path, this.fileSystem);
     assertAuthorizedPath(context, "filesystem.write", canonical);
     this.quotaManager?.chargeBytes(context.runtimeId, "filesystem", value.bytes.byteLength);
     await context.assertActive();
@@ -229,11 +246,15 @@ class PluginFilesystemBroker {
       | fs.constants.O_CREAT
       | NOFOLLOW
       | (value.overwrite ? 0 : fs.constants.O_EXCL);
-    const handle = await fsp.open(canonical, flags, 0o600);
+    const handle = await this.fileSystem.open(canonical, flags, 0o600);
     try {
-      assertAuthorizedPath(context, "filesystem.write", await fsp.realpath(canonical));
-      const [openedStats, pathStats] = await Promise.all([handle.stat(), fsp.stat(canonical)]);
+      assertAuthorizedPath(context, "filesystem.write", await this.fileSystem.realpath(canonical));
+      const [openedStats, pathStats] = await Promise.all([
+        handle.stat(),
+        this.fileSystem.stat(canonical),
+      ]);
       assertSameOpenedFile(openedStats, pathStats);
+      await context.assertActive();
       if (value.overwrite) await handle.truncate(0);
       await handle.writeFile(value.bytes);
       await handle.sync();
@@ -246,7 +267,7 @@ class PluginFilesystemBroker {
 
   async stat(params, context) {
     const value = assertPathParams(params);
-    const { canonical, stats } = await resolveExistingPath(value.path);
+    const { canonical, stats } = await resolveExistingPath(value.path, this.fileSystem);
     assertAuthorizedPath(context, "filesystem.read", canonical);
     await context.assertActive();
     return {
@@ -258,19 +279,35 @@ class PluginFilesystemBroker {
 
   async readDirectory(params, context) {
     const value = assertPathParams(params);
-    const { canonical, stats } = await resolveExistingPath(value.path);
+    const { canonical, stats } = await resolveExistingPath(value.path, this.fileSystem);
     assertAuthorizedPath(context, "filesystem.read", canonical);
     if (!stats.isDirectory()) throw invalidArgument("Plugin filesystem directory target is not a directory");
-    const entries = await fsp.readdir(canonical, { withFileTypes: true });
-    if (entries.length > MAX_DIRECTORY_ENTRIES) {
-      throw new PluginRpcError(RPC_ERRORS.resourceExhausted, "Plugin filesystem directory has too many entries");
+    const directory = await this.fileSystem.opendir(canonical);
+    try {
+      assertSameOpenedDirectory(stats, await this.fileSystem.stat(canonical));
+      const entries = [];
+      for (;;) {
+        const entry = await directory.read();
+        if (entry === null) break;
+        entries.push(entry);
+        if (entries.length > MAX_DIRECTORY_ENTRIES) {
+          throw new PluginRpcError(
+            RPC_ERRORS.resourceExhausted,
+            "Plugin filesystem directory has too many entries",
+          );
+        }
+      }
+      assertSameOpenedDirectory(stats, await this.fileSystem.stat(canonical));
+      await context.assertActive();
+      return {
+        entries: entries
+          .map((entry) => ({ name: entry.name, kind: entryKind(entry) }))
+          .sort((left, right) => left.name.localeCompare(right.name, "en")),
+      };
+    } finally {
+      try { await directory.close(); }
+      catch (error) { if (error?.code !== "ERR_DIR_CLOSED") throw error; }
     }
-    await context.assertActive();
-    return {
-      entries: entries
-        .map((entry) => ({ name: entry.name, kind: entryKind(entry) }))
-        .sort((left, right) => left.name.localeCompare(right.name, "en")),
-    };
   }
 }
 
@@ -281,6 +318,7 @@ module.exports = {
   assertAbsolutePath,
   assertAuthorizedPath,
   assertSameOpenedFile,
+  assertSameOpenedDirectory,
   assertPathParams,
   assertReadParams,
   assertWriteParams,

@@ -82,11 +82,19 @@ function normalizeForFilesystemComparison(value) {
   return process.platform === "win32" ? normalized.toLocaleLowerCase("en-US") : normalized;
 }
 
-function permissionResourceCovers(permission, grantResource, requestedResource) {
+function permissionResourceCovers(
+  permission,
+  grantResource,
+  requestedResource,
+  resourceKind = "exact",
+  requestedResourceKind = "exact",
+) {
   if (grantResource === "*") return true;
   if (permission === "filesystem.read" || permission === "filesystem.write") {
+    if (requestedResourceKind === "directory" && resourceKind !== "directory") return false;
     const parent = normalizeForFilesystemComparison(grantResource);
     const candidate = normalizeForFilesystemComparison(requestedResource);
+    if (resourceKind !== "directory") return parent === candidate;
     const relative = path.relative(parent, candidate);
     return relative === ""
       || (!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`));
@@ -158,6 +166,9 @@ function declarationAllowsResource(declaration, requestedResource) {
     declaration.permission,
     resource,
     requestedResource,
+    declaration.permission === "filesystem.read" || declaration.permission === "filesystem.write"
+      ? "directory"
+      : "exact",
   ));
 }
 

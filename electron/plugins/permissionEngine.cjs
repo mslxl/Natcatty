@@ -56,10 +56,41 @@ function normalizePermissionSessionId(value) {
 }
 
 function normalizePermissionResources(permission, values, label = "Plugin permission resources") {
+  return normalizePermissionResourceDescriptors(permission, values, undefined, label)
+    .map(({ resource }) => resource);
+}
+
+function normalizePermissionResourceDescriptors(
+  permission,
+  values,
+  resourceKinds,
+  label = "Plugin permission resources",
+) {
   try {
-    return [...new Set(values.map((resource) => (
-      canonicalizePermissionResource(permission, resource)
-    )))].sort();
+    if (
+      resourceKinds !== undefined
+      && (!Array.isArray(resourceKinds) || resourceKinds.length !== values.length)
+    ) throw new TypeError("Resource kinds must align with resources");
+    const descriptors = new Map();
+    for (const [index, value] of values.entries()) {
+      const resource = canonicalizePermissionResource(permission, value);
+      const resourceKind = resourceKinds?.[index] ?? "exact";
+      if (
+        (resourceKind !== "exact" && resourceKind !== "directory")
+        || (resourceKind === "directory"
+          && permission !== "filesystem.read"
+          && permission !== "filesystem.write")
+        || (resource === "*" && resourceKind !== "exact")
+      ) throw new TypeError("Resource kind is invalid");
+      const previous = descriptors.get(resource);
+      if (previous && previous.resourceKind !== resourceKind) {
+        throw new TypeError("Duplicate resources cannot have conflicting kinds");
+      }
+      descriptors.set(resource, Object.freeze({ resource, resourceKind }));
+    }
+    return [...descriptors.values()].sort((left, right) => (
+      left.resource.localeCompare(right.resource, "en")
+    ));
   } catch {
     throw permissionDenied(`${label} are invalid`, { permission });
   }
@@ -109,6 +140,7 @@ function immutableRequest(request) {
   return Object.freeze({
     ...request,
     resources: Object.freeze([...request.resources]),
+    resourceKinds: Object.freeze([...request.resourceKinds]),
   });
 }
 
@@ -136,24 +168,47 @@ class PluginPermissionEngine {
     return `${sessionId}\0${grantKey}`;
   }
 
-  #createMemoryGrant(context, permission, declarationHash, resource, scope, sessionId) {
+  #createMemoryGrant(
+    context,
+    permission,
+    declarationHash,
+    resource,
+    resourceKind,
+    scope,
+    sessionId,
+  ) {
     return Object.freeze({
       pluginId: context.pluginId,
       permission,
       declarationHash,
       resource,
+      resourceKind,
       scope,
       sessionId: sessionId ?? null,
       grantedAt: this.clock(),
     });
   }
 
-  #memoryGrantCovers(grant, context, permission, declarationHash, resource, sessionId) {
+  #memoryGrantCovers(
+    grant,
+    context,
+    permission,
+    declarationHash,
+    resource,
+    resourceKind,
+    sessionId,
+  ) {
     return grant.pluginId === context.pluginId
       && grant.permission === permission
       && grant.declarationHash === declarationHash
       && (grant.scope !== "session" || grant.sessionId === sessionId)
-      && permissionResourceCovers(permission, grant.resource, resource);
+      && permissionResourceCovers(
+        permission,
+        grant.resource,
+        resource,
+        grant.resourceKind,
+        resourceKind,
+      );
   }
 
   #assertDeclared(context, permission, resources) {
@@ -178,26 +233,49 @@ class PluginPermissionEngine {
     };
   }
 
-  #hasGrant(context, permission, declarationHash, resource, sessionId) {
+  #hasGrant(context, permission, declarationHash, resource, resourceKind, sessionId) {
     if ([...this.applicationGrants.values()].some((grant) => (
-      this.#memoryGrantCovers(grant, context, permission, declarationHash, resource, sessionId)
+      this.#memoryGrantCovers(
+        grant,
+        context,
+        permission,
+        declarationHash,
+        resource,
+        resourceKind,
+        sessionId,
+      )
     ))) return true;
     if (sessionId && [...this.sessionGrants.values()].some((grant) => (
-      this.#memoryGrantCovers(grant, context, permission, declarationHash, resource, sessionId)
+      this.#memoryGrantCovers(
+        grant,
+        context,
+        permission,
+        declarationHash,
+        resource,
+        resourceKind,
+        sessionId,
+      )
     ))) return true;
     return this.database.listPermissionGrants(context.pluginId).some((grant) => (
       grant.permission === permission
       && grant.declarationHash === declarationHash
-      && permissionResourceCovers(permission, grant.resource, resource)
+      && permissionResourceCovers(
+        permission,
+        grant.resource,
+        resource,
+        grant.resourceKind,
+        resourceKind,
+      )
     ));
   }
 
-  #hasAllGrants(context, permission, declarationHash, resources, sessionId) {
-    return resources.every((resource) => this.#hasGrant(
+  #hasAllGrants(context, permission, declarationHash, resources, resourceKinds, sessionId) {
+    return resources.every((resource, index) => this.#hasGrant(
       context,
       permission,
       declarationHash,
       resource,
+      resourceKinds[index],
       sessionId,
     ));
   }
@@ -210,22 +288,42 @@ class PluginPermissionEngine {
       descriptor.resources !== undefined
       && (!Array.isArray(descriptor.resources) || descriptor.resources.length > 128)
     ) throw permissionDenied("Plugin permission resources are invalid");
+    if (
+      descriptor.resourceKinds !== undefined
+      && (
+        !Array.isArray(descriptor.resourceKinds)
+        || descriptor.resourceKinds.length > 128
+        || !Array.isArray(descriptor.resources)
+        || descriptor.resourceKinds.length !== descriptor.resources.length
+      )
+    ) throw permissionDenied("Plugin permission resource kinds are invalid");
     descriptor = Object.freeze({
       ...descriptor,
       reason: normalizePermissionReason(descriptor.reason, permission),
       operationId: normalizePermissionOperationId(descriptor.operationId),
       sessionId: normalizePermissionSessionId(descriptor.sessionId),
     });
-    const resources = normalizePermissionResources(
+    const resourceDescriptors = normalizePermissionResourceDescriptors(
       permission,
       descriptor.resources?.length ? descriptor.resources : ["*"],
+      descriptor.resources?.length ? descriptor.resourceKinds : undefined,
     );
+    const resources = resourceDescriptors.map(({ resource }) => resource);
+    const resourceKinds = resourceDescriptors.map(({ resourceKind }) => resourceKind);
     const { declaration, declarationHash } = this.#assertDeclared(context, permission, resources);
-    if (this.#hasAllGrants(context, permission, declarationHash, resources, descriptor.sessionId)) {
+    if (this.#hasAllGrants(
+      context,
+      permission,
+      declarationHash,
+      resources,
+      resourceKinds,
+      descriptor.sessionId,
+    )) {
       if (AUDITED_PERMISSION_USES.has(permission)) {
         this.database.recordSecurityAudit(context.pluginId, "permission.used", {
           permission,
           resources,
+          resourceKinds,
           runtimeId: context.runtimeId ?? null,
           operationId: descriptor.operationId ?? null,
         });
@@ -249,6 +347,7 @@ class PluginPermissionEngine {
       permission,
       declarationHash,
       resources,
+      resourceKinds,
       descriptor.operationId ?? null,
       descriptor.sessionId ?? null,
     ]);
@@ -256,7 +355,14 @@ class PluginPermissionEngine {
     let ownsPrompt = false;
     if (!pending) {
       ownsPrompt = true;
-      pending = this.#requestGrant(context, descriptor, resources, declaration, declarationHash)
+      pending = this.#requestGrant(
+        context,
+        descriptor,
+        resources,
+        resourceKinds,
+        declaration,
+        declarationHash,
+      )
         .finally(() => this.pending.delete(pendingKey));
       this.pending.set(pendingKey, pending);
     }
@@ -268,7 +374,14 @@ class PluginPermissionEngine {
     return Object.freeze({ declaration, resources, scope: grant.scope });
   }
 
-  async #requestGrant(context, descriptor, resources, declaration, declarationHash) {
+  async #requestGrant(
+    context,
+    descriptor,
+    resources,
+    resourceKinds,
+    declaration,
+    declarationHash,
+  ) {
     const requestId = randomUUID();
     const request = immutableRequest({
       requestId,
@@ -280,6 +393,7 @@ class PluginPermissionEngine {
       runtimeKind: context.runtimeKind ?? null,
       permission: descriptor.permission,
       resources,
+      resourceKinds,
       reason: descriptor.reason,
       ...(descriptor.operationId === undefined ? {} : { operationId: descriptor.operationId }),
       ...(descriptor.sessionId === undefined ? {} : { sessionId: descriptor.sessionId }),
@@ -353,15 +467,28 @@ class PluginPermissionEngine {
     if (!decisionResources.every((resource) => declarationAllowsResource(declaration, resource))) {
       throw permissionDenied("Plugin permission decision exceeds the manifest declaration");
     }
-    if (!resources.every((requested) => decisionResources.some((granted) => (
-      permissionResourceCovers(descriptor.permission, granted, requested)
+    const decisionResourceDescriptors = decisionResources.map((resource) => {
+      const requestedIndex = resources.indexOf(resource);
+      return Object.freeze({
+        resource,
+        resourceKind: requestedIndex === -1 ? "exact" : resourceKinds[requestedIndex],
+      });
+    });
+    if (!resources.every((requested) => decisionResourceDescriptors.some((granted) => (
+      permissionResourceCovers(
+        descriptor.permission,
+        granted.resource,
+        requested,
+        granted.resourceKind,
+        resourceKinds[resources.indexOf(requested)],
+      )
     )))) {
       throw permissionDenied("Plugin permission decision does not cover the requested resources");
     }
     if (decision.scope === "session" && !descriptor.sessionId) {
       throw permissionDenied("Session-scoped plugin permission requires a host-owned session");
     }
-    for (const resource of decisionResources) {
+    for (const { resource, resourceKind } of decisionResourceDescriptors) {
       const grantKey = this.#grantKey(
         context.pluginId,
         descriptor.permission,
@@ -374,6 +501,7 @@ class PluginPermissionEngine {
           descriptor.permission,
           declarationHash,
           resource,
+          resourceKind,
           decision.scope,
         ));
       }
@@ -385,6 +513,7 @@ class PluginPermissionEngine {
             descriptor.permission,
             declarationHash,
             resource,
+            resourceKind,
             decision.scope,
             descriptor.sessionId,
           ),
@@ -395,6 +524,7 @@ class PluginPermissionEngine {
           pluginId: context.pluginId,
           permission: descriptor.permission,
           resource,
+          resourceKind,
           declarationHash,
         });
       }
@@ -402,6 +532,7 @@ class PluginPermissionEngine {
     this.database.recordSecurityAudit(context.pluginId, "permission.granted", {
       permission: descriptor.permission,
       resources: decisionResources,
+      resourceKinds: decisionResourceDescriptors.map(({ resourceKind }) => resourceKind),
       scope: decision.scope,
       operationId: descriptor.operationId ?? null,
     });
@@ -527,6 +658,7 @@ module.exports = {
   PluginPermissionEngine,
   normalizePermissionOperationId,
   normalizePermissionReason,
+  normalizePermissionResourceDescriptors,
   normalizePermissionResources,
   normalizePermissionSessionId,
   normalizeDecision,

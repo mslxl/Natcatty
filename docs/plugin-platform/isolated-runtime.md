@@ -6,8 +6,9 @@ This document describes the isolated runtime introduced in phase 2 and secured
 by phase 3 of the plugin platform tracked by
 [#2269](https://github.com/binaricat/Netcatty/issues/2269). The runtime remains
 hidden behind `NETCATTY_PLUGIN_DEV=1`; there is no public settings entry or
-permission prompt yet. Without an injected host decision provider, every
-interactive capability request fails closed.
+renderer permission UI yet. The first-party development bootstrap uses a native
+Electron confirmation dialog. A host without an injected decision provider
+still fails every interactive capability request closed.
 
 ## Installation transaction
 

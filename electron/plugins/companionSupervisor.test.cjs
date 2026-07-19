@@ -65,6 +65,24 @@ class FakeChild extends EventEmitter {
   }
 }
 
+class ManualChild extends EventEmitter {
+  constructor(contract) {
+    super();
+    this.stdin = new PassThrough();
+    this.stdout = new PassThrough();
+    this.stderr = new PassThrough();
+    this.exitCode = null;
+    this.signalCode = null;
+    this.messages = [];
+    const decoder = new contract.ContentLengthFrameDecoder();
+    this.stdin.on("data", (chunk) => this.messages.push(...decoder.push(chunk)));
+  }
+
+  respond(contract, id, result) {
+    this.stdout.write(contract.encodeContentLengthFrame({ jsonrpc: "2.0", id, result }));
+  }
+}
+
 test("companion RPC correlation keeps numeric and string IDs distinct", async () => {
   const contract = await import("@netcatty/plugin-contract");
   const child = new FakeChild(contract, (id) => String(id));
@@ -76,6 +94,30 @@ test("companion RPC correlation keeps numeric and string IDs distinct", async ()
   });
   await assert.rejects(peer.request("echo", null, 1_000), /unknown response ID/);
   assert.deepEqual(errors, ["Plugin companion returned an unknown response ID"]);
+});
+
+test("companion RPC ignores one late timed-out response and never reuses its ID", async () => {
+  const contract = await import("@netcatty/plugin-contract");
+  const child = new ManualChild(contract);
+  const errors = [];
+  const peer = new CompanionRpcPeer({
+    child,
+    contract,
+    onProtocolError: (error) => errors.push(error.message),
+  });
+  await assert.rejects(
+    peer.request("slow", null, 5),
+    (error) => error.code === RPC_ERRORS.deadlineExceeded,
+  );
+  assert.equal(child.messages[0].id, 0);
+  peer.nextId = 0;
+  const next = peer.request("next", { value: 1 }, 1_000);
+  assert.equal(child.messages[1].id, 1);
+  child.respond(contract, 0, { late: true });
+  child.respond(contract, 1, { ok: true });
+  assert.deepEqual(await next, { ok: true });
+  assert.deepEqual(errors, []);
+  peer.close();
 });
 
 test("companion launch verifies digest immediately and never spawns a mismatch", async (context) => {

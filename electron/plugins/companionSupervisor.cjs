@@ -85,6 +85,7 @@ class CompanionRpcPeer {
     this.contract = options.contract;
     this.onProtocolError = options.onProtocolError;
     this.pending = new Map();
+    this.retiredResponseIds = new Set();
     this.nextId = 0;
     this.closed = false;
     this.decoder = new this.contract.ContentLengthFrameDecoder();
@@ -122,7 +123,10 @@ class CompanionRpcPeer {
       }
       const key = rpcIdKey(message.id);
       const pending = this.pending.get(key);
-      if (!pending) throw new Error("Plugin companion returned an unknown response ID");
+      if (!pending) {
+        if (this.retiredResponseIds.delete(key)) return;
+        throw new Error("Plugin companion returned an unknown response ID");
+      }
       this.pending.delete(key);
       clearTimeout(pending.timer);
       if (message.error) {
@@ -144,12 +148,24 @@ class CompanionRpcPeer {
   }
 
   #allocateRequestId() {
-    for (let attempt = 0; attempt <= this.pending.size; attempt += 1) {
+    for (
+      let attempt = 0;
+      attempt <= this.pending.size + this.retiredResponseIds.size;
+      attempt += 1
+    ) {
       const id = this.nextId;
       this.nextId = this.nextId === Number.MAX_SAFE_INTEGER ? 0 : this.nextId + 1;
-      if (!this.pending.has(rpcIdKey(id))) return id;
+      const key = rpcIdKey(id);
+      if (!this.pending.has(key) && !this.retiredResponseIds.has(key)) return id;
     }
     throw new PluginRpcError(RPC_ERRORS.resourceExhausted, "No companion RPC correlation ID is available");
+  }
+
+  #retireResponseId(key) {
+    this.retiredResponseIds.add(key);
+    while (this.retiredResponseIds.size > MAX_COMPANION_PENDING) {
+      this.retiredResponseIds.delete(this.retiredResponseIds.values().next().value);
+    }
   }
 
   request(method, params, timeoutMs) {
@@ -162,6 +178,7 @@ class CompanionRpcPeer {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(key);
+        this.#retireResponseId(key);
         reject(new PluginRpcError(RPC_ERRORS.deadlineExceeded, `Companion request timed out: ${method}`));
       }, timeoutMs);
       timer.unref?.();
@@ -190,6 +207,7 @@ class CompanionRpcPeer {
       pending.reject(error);
     }
     this.pending.clear();
+    this.retiredResponseIds.clear();
     try { this.child.stdin.end(); } catch {}
   }
 }

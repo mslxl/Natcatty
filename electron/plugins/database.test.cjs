@@ -79,7 +79,7 @@ test("initial schema scopes runtime and crash state to immutable plugin versions
   );
   assert.deepEqual(
     database.db.prepare("PRAGMA table_info(plugin_permission_grants)").all().map(({ name }) => name),
-    ["plugin_id", "permission", "resource", "declaration_hash", "granted_at"],
+    ["plugin_id", "permission", "resource", "resource_kind", "declaration_hash", "granted_at"],
   );
   assert.deepEqual(
     database.db.prepare("PRAGMA table_info(plugin_secrets)").all().map(({ name }) => name),
@@ -102,6 +102,7 @@ test("user-owned security records survive package uninstall in the complete v1 s
     pluginId: pluginManifest.id,
     permission: "network",
     resource: "https://example.com",
+    resourceKind: "exact",
     declarationHash: "b".repeat(64),
   });
   database.upsertSecret({
@@ -115,7 +116,10 @@ test("user-owned security records survive package uninstall in the complete v1 s
   database.removePlugin(pluginManifest.id);
 
   assert.equal(database.getActivePlugin(pluginManifest.id), null);
-  assert.equal(database.listPermissionGrants(pluginManifest.id).length, 1);
+  assert.deepEqual(database.listPermissionGrants(pluginManifest.id).map((grant) => ({
+    resource: grant.resource,
+    resourceKind: grant.resourceKind,
+  })), [{ resource: "https://example.com", resourceKind: "exact" }]);
   assert.equal(database.getSecretByKey(pluginManifest.id, "api-key").secretRef, "secret-reference-0000000000000000");
   assert.deepEqual(database.listSecurityAudit(pluginManifest.id)[0].details, { permission: "network" });
   database.close();

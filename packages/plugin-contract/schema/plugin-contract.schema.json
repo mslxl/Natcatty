@@ -204,6 +204,11 @@
       "minLength": 1,
       "maxLength": 8192
     },
+    "PermissionResourceKind": {
+      "description": "Whether a canonical resource grant covers only that resource or a filesystem directory subtree.",
+      "type": "string",
+      "enum": ["exact", "directory"]
+    },
     "PermissionDeclaration": {
       "oneOf": [
         { "$ref": "#/$defs/PluginPermission" },
@@ -1003,6 +1008,11 @@
           "maxItems": 128,
           "uniqueItems": true,
           "items": { "$ref": "#/$defs/PermissionResource" }
+        },
+        "resourceKinds": {
+          "type": "array",
+          "maxItems": 128,
+          "items": { "$ref": "#/$defs/PermissionResourceKind" }
         },
         "reason": { "type": "string", "minLength": 1, "maxLength": 1024 },
         "operationId": { "type": "string", "minLength": 1, "maxLength": 128 },

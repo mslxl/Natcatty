@@ -194,10 +194,14 @@ function createPluginContext(config, client) {
         companionId: assertCompanionId(companionId),
       });
       let stopped = false;
-      const stop = async () => {
-        if (stopped) return;
-        stopped = true;
-        await client.request("companion.stop", { handleId: result.handleId });
+      let stopPromise = null;
+      const stop = () => {
+        if (stopped) return Promise.resolve();
+        if (stopPromise) return stopPromise;
+        stopPromise = client.request("companion.stop", { handleId: result.handleId })
+          .then(() => { stopped = true; })
+          .finally(() => { stopPromise = null; });
+        return stopPromise;
       };
       return Object.freeze({
         id: result.handleId,

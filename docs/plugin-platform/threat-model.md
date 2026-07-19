@@ -243,5 +243,6 @@ ordinary secret RPC. A credential consumer must redeem a one-use lease bound to
 plugin, runtime, operation, abort signal and a maximum 60-second lifetime.
 Transport, capability, log, byte, process-count, pending-call, memory and CPU
 quotas contain abusive runtimes and companions. The capability boundary remains
-disabled unless `NETCATTY_PLUGIN_DEV=1` is set, and without a renderer decision
-provider interactive permission requests fail closed.
+disabled unless `NETCATTY_PLUGIN_DEV=1` is set. The first-party development path
+injects a native Electron decision provider; any host without a decision
+provider fails interactive permission requests closed.
