@@ -62,7 +62,7 @@ function registerSecurePluginCapabilities(registry, options) {
   ), {
     metadata: { capability: "credentials", mutating: true, permission: "secrets" },
     validateParams: options.assertLeaseParams,
-    authorization: (params, context) => options.credentialBroker.describeAuthorization(params, context),
+    authorization: (params) => options.credentialBroker.describeAuthorization(params),
   });
 
   registry.registerRequest("network.request", (params, context) => (
@@ -78,21 +78,21 @@ function registerSecurePluginCapabilities(registry, options) {
   ), {
     metadata: { capability: "filesystem", mutating: false, permission: "filesystem.read" },
     validateParams: (params) => options.filesystemBroker.validateRead(params),
-    authorization: (params) => options.filesystemBroker.describeReadAuthorization(params),
+    authorization: (params) => options.filesystemBroker.describeReadAuthorization(params, "exact"),
   });
   registry.registerRequest("filesystem.stat", (params, context) => (
     options.filesystemBroker.stat(params, context)
   ), {
     metadata: { capability: "filesystem", mutating: false, permission: "filesystem.read" },
     validateParams: (params) => options.filesystemBroker.validatePath(params),
-    authorization: (params) => options.filesystemBroker.describeReadAuthorization(params),
+    authorization: (params) => options.filesystemBroker.describeReadAuthorization(params, "exact"),
   });
   registry.registerRequest("filesystem.readDirectory", (params, context) => (
     options.filesystemBroker.readDirectory(params, context)
   ), {
     metadata: { capability: "filesystem", mutating: false, permission: "filesystem.read" },
     validateParams: (params) => options.filesystemBroker.validatePath(params),
-    authorization: (params) => options.filesystemBroker.describeReadAuthorization(params),
+    authorization: (params) => options.filesystemBroker.describeReadAuthorization(params, "directory"),
   });
   registry.registerRequest("filesystem.writeFile", (params, context) => (
     options.filesystemBroker.writeFile(params, context)

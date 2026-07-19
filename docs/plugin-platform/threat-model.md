@@ -232,10 +232,12 @@ semantics. A new principal or changed required/resource declaration requires a
 new decision.
 
 Network access is origin-scoped, cookie-free and redirect-by-redirect. File
-access is absolute-realpath scoped and binds the path authorized by middleware
-to the object used by the handler. Arbitrary-path creation is denied until a
-portable opened-parent implementation exists; overwriting an existing regular
-file remains available without exposing a parent-symlink creation race.
+access authorizes a normalized absolute request without probing the filesystem,
+then resolves it after permission and requires the caller to have supplied that
+canonical real path. Opened reads are bound to the authorized pre-open inode and
+the current path inode. Arbitrary-path creation is denied until a portable
+opened-parent implementation exists; overwriting an existing regular file
+remains available without exposing a parent-symlink creation race.
 Companion executables are package-contained, digest-verified immediately before
 shell-free spawn, host-RPC clients only, and their complete process group/tree
 must be reaped before their handle is released. Failure to contain a companion

@@ -53,20 +53,9 @@ class PluginCredentialBroker {
     )) throw new TypeError("Credential resolver must validate and resolve credential references");
   }
 
-  async describeAuthorization(params, context) {
+  describeAuthorization(params) {
     const validated = assertLeaseParams(params);
     if (validated.secret.kind === "credential") {
-      if (!this.credentialResolver) {
-        throw new PluginRpcError(RPC_ERRORS.unavailable, "Netcatty credential access is unavailable");
-      }
-      await this.credentialResolver.assertReference(validated.secret, {
-        pluginId: context.pluginId,
-        runtimeId: context.runtimeId,
-        operationId: validated.operationId,
-        purpose: validated.purpose,
-        signal: context.signal,
-      });
-      await context.assertActive();
       return {
         permission: "vault.credentials",
         resources: [`credential:${validated.secret.id}`],
@@ -74,10 +63,9 @@ class PluginCredentialBroker {
         operationId: validated.operationId,
       };
     }
-    const secret = this.secretStore.getRecordByReference(context.pluginId, validated.secret);
     return {
       permission: "secrets",
-      resources: [`secret:${secret.key}`],
+      resources: [`secret-ref:${validated.secret.id}`],
       reason: `Use plugin secret for ${validated.purpose}`,
       operationId: validated.operationId,
     };

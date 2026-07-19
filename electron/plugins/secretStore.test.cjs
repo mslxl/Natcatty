@@ -157,11 +157,13 @@ test("Netcatty credentials resolve only when a one-use provider lease is consume
   const secretStore = new PluginSecretStore({ database, safeStorage: fakeSafeStorage() });
   const leaseStore = new SecretLeaseStore({ secretStore });
   let resolved = 0;
+  let referenceChecks = 0;
   const broker = new PluginCredentialBroker({
     secretStore,
     leaseStore,
     credentialResolver: {
       assertReference: async (reference, leaseContext) => {
+        referenceChecks += 1;
         assert.equal(reference.id, "vault-credential-1");
         assert.equal(leaseContext.operationId, "connection:open-1");
       },
@@ -185,8 +187,10 @@ test("Netcatty credentials resolve only when a one-use provider lease is consume
     operationId: "connection:open-1",
     purpose: "Authenticate connection",
   };
-  assert.equal((await broker.describeAuthorization(params, runtime)).permission, "vault.credentials");
+  assert.deepEqual(broker.describeAuthorization(params).resources, ["credential:vault-credential-1"]);
+  assert.equal(referenceChecks, 0);
   const lease = await broker.createLease(params, runtime);
+  assert.equal(referenceChecks, 1);
   assert.equal(resolved, 0);
   assert.equal(await broker.consumeLease(runtime, lease, "connection:open-1"), "host-owned-plaintext");
   assert.equal(resolved, 1);
@@ -196,6 +200,58 @@ test("Netcatty credentials resolve only when a one-use provider lease is consume
   );
   leaseStore.shutdown();
   database.close();
+});
+
+test("credential authorization descriptors do not probe opaque references before permission", async () => {
+  let credentialChecks = 0;
+  let secretChecks = 0;
+  const broker = new PluginCredentialBroker({
+    secretStore: {
+      getRecordByReference() {
+        secretChecks += 1;
+        throw new Error("unknown plugin secret");
+      },
+    },
+    leaseStore: { issue: () => { throw new Error("lease must not be issued"); } },
+    credentialResolver: {
+      async assertReference() {
+        credentialChecks += 1;
+        throw new Error("unknown Netcatty credential");
+      },
+      async resolve() { throw new Error("credential must not resolve"); },
+    },
+  });
+  const base = {
+    operationId: "connection:open-1",
+    purpose: "Authenticate connection",
+  };
+  assert.deepEqual(broker.describeAuthorization({
+    ...base,
+    secret: { kind: "credential", id: "unknown-credential" },
+  }).resources, ["credential:unknown-credential"]);
+  assert.deepEqual(broker.describeAuthorization({
+    ...base,
+    secret: { kind: "secret", id: "unknown-secret-reference" },
+  }).resources, ["secret-ref:unknown-secret-reference"]);
+  assert.equal(credentialChecks, 0);
+  assert.equal(secretChecks, 0);
+
+  const runtime = {
+    pluginId: "com.example.provider",
+    runtimeId: "runtime-provider",
+    signal: new AbortController().signal,
+    assertActive: async () => {},
+  };
+  await assert.rejects(broker.createLease({
+    ...base,
+    secret: { kind: "credential", id: "unknown-credential" },
+  }, runtime), /unknown Netcatty credential/);
+  assert.equal(credentialChecks, 1);
+  await assert.rejects(broker.createLease({
+    ...base,
+    secret: { kind: "secret", id: "unknown-secret-reference" },
+  }, runtime), /unknown plugin secret/);
+  assert.equal(secretChecks, 1);
 });
 
 test("credential lease resolution cannot return plaintext after operation cancellation", async (context) => {

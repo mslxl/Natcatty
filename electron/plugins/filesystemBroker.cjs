@@ -198,32 +198,34 @@ class PluginFilesystemBroker {
   }
   validatePath(params) { return assertPathParams(params); }
 
-  async describeReadAuthorization(params) {
-    const value = assertReadParams(params);
-    const { canonical, stats } = await resolveExistingPath(value.path, this.fileSystem);
+  describeReadAuthorization(params, resourceKind = "exact") {
+    const value = assertPathParams(params);
+    if (resourceKind !== "exact" && resourceKind !== "directory") {
+      throw invalidArgument("Plugin filesystem authorization kind is invalid");
+    }
     return {
       permission: "filesystem.read",
-      resources: [canonical],
-      resourceKinds: [stats.isDirectory() ? "directory" : "exact"],
-      reason: `Read ${canonical}`,
-      operationId: `filesystem.read:${canonical}`,
+      resources: [value.path],
+      resourceKinds: [resourceKind],
+      reason: `Read ${value.path}`,
+      operationId: `filesystem.read:${value.path}`,
     };
   }
 
-  async describeWriteAuthorization(params) {
+  describeWriteAuthorization(params) {
     const value = assertSecureWriteMode(assertWriteParams(params));
-    const canonical = await resolveWritePath(value.path, this.fileSystem);
     return {
       permission: "filesystem.write",
-      resources: [canonical],
+      resources: [value.path],
       resourceKinds: ["exact"],
-      reason: `Write ${canonical}`,
-      operationId: `filesystem.write:${canonical}`,
+      reason: `Write ${value.path}`,
+      operationId: `filesystem.write:${value.path}`,
     };
   }
 
   async readFile(params, context) {
     const value = assertReadParams(params);
+    assertAuthorizedPath(context, "filesystem.read", value.path);
     const { canonical, stats } = await resolveExistingPath(value.path, this.fileSystem);
     assertAuthorizedPath(context, "filesystem.read", canonical);
     if (!stats.isFile()) throw invalidArgument("Plugin filesystem read target is not a file");
@@ -232,8 +234,13 @@ class PluginFilesystemBroker {
     }
     const handle = await this.fileSystem.open(canonical, fs.constants.O_RDONLY | NOFOLLOW);
     try {
-      const openedStats = await handle.stat();
-      if (!openedStats.isFile() || openedStats.size > value.maxBytes) {
+      const [openedStats, pathStats] = await Promise.all([
+        handle.stat(),
+        this.fileSystem.stat(canonical),
+      ]);
+      assertSameOpenedFile(openedStats, stats);
+      assertSameOpenedFile(openedStats, pathStats);
+      if (openedStats.size > value.maxBytes) {
         throw new PluginRpcError(RPC_ERRORS.resourceExhausted, "Plugin filesystem file changed or is too large");
       }
       assertAuthorizedPath(context, "filesystem.read", await this.fileSystem.realpath(canonical));
@@ -248,6 +255,7 @@ class PluginFilesystemBroker {
 
   async writeFile(params, context) {
     const value = assertSecureWriteMode(assertWriteParams(params));
+    assertAuthorizedPath(context, "filesystem.write", value.path);
     const canonical = await resolveWritePath(value.path, this.fileSystem);
     assertAuthorizedPath(context, "filesystem.write", canonical);
     this.quotaManager?.chargeBytes(context.runtimeId, "filesystem", value.bytes.byteLength);
@@ -274,6 +282,7 @@ class PluginFilesystemBroker {
 
   async stat(params, context) {
     const value = assertPathParams(params);
+    assertAuthorizedPath(context, "filesystem.read", value.path);
     const { canonical, stats } = await resolveExistingPath(value.path, this.fileSystem);
     assertAuthorizedPath(context, "filesystem.read", canonical);
     await context.assertActive();
@@ -286,6 +295,7 @@ class PluginFilesystemBroker {
 
   async readDirectory(params, context) {
     const value = assertPathParams(params);
+    assertAuthorizedPath(context, "filesystem.read", value.path);
     const { canonical, stats } = await resolveExistingPath(value.path, this.fileSystem);
     assertAuthorizedPath(context, "filesystem.read", canonical);
     if (!stats.isDirectory()) throw invalidArgument("Plugin filesystem directory target is not a directory");

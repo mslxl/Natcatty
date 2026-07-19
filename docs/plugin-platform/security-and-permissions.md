@@ -12,10 +12,11 @@ inject a decision provider still fail closed.
 
 Every privileged plugin-to-host method is registered in
 `PluginHostRpcRegistry` with one explicit authorization descriptor. Parameters
-are validated first; asynchronous resource resolution then produces canonical
-resources; quota and permission middleware run immediately before the handler.
-An unclassified method is denied. The only current public method is bounded,
-redacted logging.
+are validated first; the descriptor is then built without probing protected
+host state, and quota and permission middleware run immediately before the
+handler. Filesystem and credential existence checks happen only after that
+permission boundary. An unclassified method is denied. The only current public
+method is bounded, redacted logging.
 
 The host supplies immutable plugin ID, version, runtime ID, placement, manifest,
 package root, cancellation signal, active-runtime guard, and security principal.
@@ -90,18 +91,21 @@ replay POST bodies as GET requests.
 ### Filesystem
 
 Read, write, stat and directory listing require an absolute path. Authorization
-uses the real path, and the handler requires the same canonical resource after
-permission middleware. File opens use
-`O_NOFOLLOW` where supported and recheck the opened object. Directory listing
-uses an opened directory handle and inode revalidation, so a path replacement
-cannot redirect a previously authorized list. Reads use the actual handle bytes
-rather than trusting a pre-read size, with a 1 MiB cap. Arbitrary-path writes
-currently require an existing regular file and explicit overwrite; no
-`O_CREAT` path exists because Node cannot portably bind creation to an opened
-parent-directory handle across macOS, Linux, and Windows. A later native
-implementation can add secure relative creation behind the same SDK method.
-Writes recheck runtime activity immediately before mutation, and listing is
-limited to 1,000 entries.
+first uses only the normalized requested path, so an ungranted request cannot
+probe path existence, type, symlink targets or real paths. After permission,
+the handler resolves the real path and requires it to equal the authorized
+resource; callers must therefore supply an already canonical path and symlink
+aliases fail closed. File opens use `O_NOFOLLOW` where supported and bind the
+opened handle to both the pre-open authorized inode and the current path inode.
+Directory listing uses an opened directory handle and inode revalidation, so a
+path replacement cannot redirect a previously authorized list. Reads use the
+actual handle bytes rather than trusting a pre-read size, with a 1 MiB cap.
+Arbitrary-path writes currently require an existing regular file and explicit
+overwrite; no `O_CREAT` path exists because Node cannot portably bind creation
+to an opened parent-directory handle across macOS, Linux, and Windows. A later
+native implementation can add secure relative creation behind the same SDK
+method. Writes recheck runtime activity immediately before mutation, and
+listing is limited to 1,000 entries.
 
 ### Secrets and credentials
 
@@ -116,9 +120,11 @@ single-consumption, opaque, maximum 60 seconds, and bound to plugin, active
 runtime, operation ID, abort signal and secret ownership. Only a host capability
 broker can redeem it. A plugin-owned `SecretRef`, a Netcatty-owned opaque
 `CredentialRef`, or a lease ID alone is not authority. Netcatty credential
-references use an injected main-process resolver that validates the reference
-before prompting and again before lease issue, but resolves plaintext only when
-the one-use lease is consumed. This is the stable credential handoff used by
+references use an injected main-process resolver. Authorization treats both
+secret and credential references as opaque identifiers and does not reveal
+whether they exist; ownership and existence are checked only after permission,
+immediately before lease issue. Plaintext resolves only when the one-use lease
+is consumed. This is the stable credential handoff used by
 connection/authentication Providers in PR 7.
 
 ### Companion executables

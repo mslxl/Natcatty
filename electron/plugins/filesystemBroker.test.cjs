@@ -13,7 +13,7 @@ const { RPC_ERRORS } = require("./rpcRouter.cjs");
 function createRoot(context) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-plugin-filesystem-"));
   context.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  return root;
+  return fs.realpathSync(root);
 }
 
 function runtimeContext(authorization) {
@@ -68,7 +68,7 @@ test("filesystem broker uses canonical authorization for bounded read, write, st
   );
   assert.equal(await fsp.readFile(target, "utf8"), "short");
 
-  const listAuthorization = await broker.describeReadAuthorization({ path: root });
+  const listAuthorization = await broker.describeReadAuthorization({ path: root }, "directory");
   assert.deepEqual(listAuthorization.resourceKinds, ["directory"]);
   const list = await broker.readDirectory({ path: root }, runtimeContext(listAuthorization));
   assert.deepEqual(list.entries.map(({ name }) => name), ["source.txt", "target.txt"]);
@@ -102,6 +102,47 @@ test("filesystem write quota is enforced before mutating the target", async (con
   assert.equal(await fsp.readFile(target, "utf8"), "original");
 });
 
+test("filesystem authorization descriptors never probe path existence before permission", async (context) => {
+  const root = createRoot(context);
+  const missing = path.join(root, "missing.txt");
+  let filesystemCalls = 0;
+  const broker = new PluginFilesystemBroker({
+    fileSystem: new Proxy({}, {
+      get() {
+        return async () => {
+          filesystemCalls += 1;
+          throw new Error("filesystem must not be queried while describing authorization");
+        };
+      },
+    }),
+  });
+  assert.deepEqual(broker.describeReadAuthorization({ path: missing }), {
+    permission: "filesystem.read",
+    resources: [missing],
+    resourceKinds: ["exact"],
+    reason: `Read ${missing}`,
+    operationId: `filesystem.read:${missing}`,
+  });
+  assert.deepEqual(broker.describeReadAuthorization({ path: root }, "directory").resourceKinds, ["directory"]);
+  assert.deepEqual(broker.describeWriteAuthorization({
+    path: missing,
+    data: "blocked",
+    overwrite: true,
+  }).resources, [missing]);
+  await assert.rejects(
+    broker.readFile({ path: missing }, runtimeContext(null)),
+    (error) => error.code === RPC_ERRORS.permissionDenied,
+  );
+  await assert.rejects(
+    broker.writeFile(
+      { path: missing, data: "blocked", overwrite: true },
+      runtimeContext(null),
+    ),
+    (error) => error.code === RPC_ERRORS.permissionDenied,
+  );
+  assert.equal(filesystemCalls, 0);
+});
+
 test("filesystem writes reject missing targets without opening or creating them", async (context) => {
   const root = createRoot(context);
   const target = path.join(root, "missing.txt");
@@ -115,15 +156,16 @@ test("filesystem writes reject missing targets without opening or creating them"
       },
     },
   });
+  const authorization = broker.describeWriteAuthorization({
+    path: target,
+    data: "blocked",
+    overwrite: true,
+  });
   await assert.rejects(
-    broker.describeWriteAuthorization({ path: target, data: "blocked", overwrite: true }),
-    (error) => error.code === RPC_ERRORS.failedPrecondition,
-  );
-  await assert.rejects(
-    broker.writeFile({ path: target, data: "blocked", overwrite: true }, runtimeContext({
-      permission: "filesystem.write",
-      resources: [target],
-    })),
+    broker.writeFile(
+      { path: target, data: "blocked", overwrite: true },
+      runtimeContext(authorization),
+    ),
     (error) => error.code === RPC_ERRORS.failedPrecondition,
   );
   assert.equal(openCalls, 0);
@@ -174,7 +216,7 @@ test("filesystem directory replacement between authorization and open fails clos
       },
     },
   });
-  const authorization = await broker.describeReadAuthorization({ path: selected });
+  const authorization = await broker.describeReadAuthorization({ path: selected }, "directory");
   await assert.rejects(
     broker.readDirectory({ path: selected }, runtimeContext(authorization)),
     (error) => error.code === RPC_ERRORS.permissionDenied,
@@ -212,6 +254,36 @@ test("filesystem writes recheck runtime activity immediately before mutation", a
     assertActive: async () => { if (!active) throw new Error("runtime stopped"); },
   }), /runtime stopped/);
   assert.equal(await fsp.readFile(target, "utf8"), "original");
+});
+
+test("filesystem reads reject a replacement inode opened after authorization", async (context) => {
+  const root = createRoot(context);
+  const target = path.join(root, "selected.txt");
+  const original = path.join(root, "original.txt");
+  const replacement = path.join(root, "replacement.txt");
+  await Promise.all([
+    fsp.writeFile(target, "allowed"),
+    fsp.writeFile(replacement, "secret"),
+  ]);
+  let swapped = false;
+  const broker = new PluginFilesystemBroker({
+    fileSystem: {
+      ...fsp,
+      async open(filePath, flags, mode) {
+        if (!swapped) {
+          swapped = true;
+          await fsp.rename(target, original);
+          await fsp.rename(replacement, target);
+        }
+        return fsp.open(filePath, flags, mode);
+      },
+    },
+  });
+  const authorization = broker.describeReadAuthorization({ path: target });
+  await assert.rejects(
+    broker.readFile({ path: target }, runtimeContext(authorization)),
+    (error) => error.code === RPC_ERRORS.permissionDenied,
+  );
 });
 
 test("filesystem broker rejects oversized and non-canonical payloads", async (context) => {

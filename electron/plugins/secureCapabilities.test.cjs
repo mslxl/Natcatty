@@ -58,3 +58,57 @@ test("secret mutations recheck runtime activity immediately before commit", asyn
   );
   assert.deepEqual(events, ["active", "set", "active", "delete"]);
 });
+
+test("filesystem RPC authorization fixes resource kind by operation without host I/O", () => {
+  const registrations = new Map();
+  const registry = {
+    use() {},
+    registerRequest(method, handler, options) { registrations.set(method, { handler, options }); },
+  };
+  const middlewareOwner = { createMiddleware: () => async (_context, next) => next() };
+  const filesystemCalls = [];
+  const filesystemBroker = {
+    validateRead: (params) => params,
+    validateWrite: (params) => params,
+    validatePath: (params) => params,
+    describeReadAuthorization(params, resourceKind) {
+      filesystemCalls.push([params.path, resourceKind]);
+      return { permission: "filesystem.read", resources: [params.path], resourceKinds: [resourceKind] };
+    },
+    describeWriteAuthorization(params) {
+      filesystemCalls.push([params.path, "exact"]);
+      return { permission: "filesystem.write", resources: [params.path], resourceKinds: ["exact"] };
+    },
+    readFile: async () => null,
+    stat: async () => null,
+    readDirectory: async () => null,
+    writeFile: async () => null,
+  };
+  const broker = new Proxy({}, { get: () => () => ({}) });
+  registerSecurePluginCapabilities(registry, {
+    quotaManager: middlewareOwner,
+    permissionEngine: middlewareOwner,
+    secretStore: {},
+    credentialBroker: broker,
+    networkBroker: broker,
+    filesystemBroker,
+    companionSupervisor: broker,
+    assertLeaseParams: (params) => params,
+  });
+
+  const target = "/canonical/target";
+  for (const method of ["filesystem.readFile", "filesystem.stat", "filesystem.readDirectory"]) {
+    registrations.get(method).options.authorization({ path: target });
+  }
+  registrations.get("filesystem.writeFile").options.authorization({
+    path: target,
+    data: "value",
+    overwrite: true,
+  });
+  assert.deepEqual(filesystemCalls, [
+    [target, "exact"],
+    [target, "exact"],
+    [target, "directory"],
+    [target, "exact"],
+  ]);
+});
