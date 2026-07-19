@@ -12,6 +12,12 @@ interface OpenPluginViewDetail {
   context?: Record<string, unknown>;
 }
 
+interface HostedPluginView {
+  id: string;
+  viewId: string;
+  retainContextWhenHidden: boolean;
+}
+
 export function requestOpenPluginView(detail: OpenPluginViewDetail) {
   window.dispatchEvent(new CustomEvent(OPEN_PLUGIN_VIEW_EVENT, { detail }));
 }
@@ -24,23 +30,31 @@ export function PluginContributionHost({
   theme: string;
 }) {
   const { t } = useI18n();
-  const contributions = usePluginContributions();
+  const [requested, setRequested] = useState<OpenPluginViewDetail | null>(null);
+  const contributions = usePluginContributions({
+    context: { 'netcatty.surface': 'keybinding' },
+  });
+  const viewContributions = usePluginContributions({
+    context: requested?.context ?? { 'netcatty.surface': 'view' },
+  });
   const {
     snapshot,
     executeCommand,
     openView,
     closeView,
     setViewBounds,
+    setViewVisibility,
     setEnvironment,
   } = contributions;
-  const [requested, setRequested] = useState<OpenPluginViewDetail | null>(null);
-  const [instance, setInstance] = useState<{ id: string; viewId: string } | null>(null);
-  const instanceRef = useRef<{ id: string; viewId: string } | null>(null);
+  const [instance, setInstance] = useState<HostedPluginView | null>(null);
+  const instanceRef = useRef<HostedPluginView | null>(null);
+  const retainedViewsRef = useRef(new Map<string, HostedPluginView>());
   const closeViewRef = useRef(closeView);
   const mountRef = useRef<HTMLDivElement>(null);
-  const activeView = useMemo(() => snapshot.plugins
+  const activeView = useMemo(() => viewContributions.snapshot.plugins
     .flatMap((plugin) => plugin.views.map((view) => ({ plugin, view })))
-    .find(({ view }) => view.id === requested?.viewId) ?? null, [snapshot.plugins, requested?.viewId]);
+    .find(({ view }) => view.id === requested?.viewId && view.visible) ?? null,
+  [requested?.viewId, viewContributions.snapshot.plugins]);
   const activeViewId = activeView?.view.id;
 
   useEffect(() => { closeViewRef.current = closeView; }, [closeView]);
@@ -89,49 +103,92 @@ export function PluginContributionHost({
     return () => window.removeEventListener(OPEN_PLUGIN_VIEW_EVENT, listener);
   }, []);
 
+  const hideOrClose = useCallback(async (current: HostedPluginView) => {
+    if (!current.retainContextWhenHidden) {
+      await closeView(current.id);
+      return;
+    }
+    retainedViewsRef.current.set(current.viewId, current);
+    try {
+      await setViewVisibility(current.id, false);
+    } catch {
+      retainedViewsRef.current.delete(current.viewId);
+      await closeView(current.id);
+    }
+  }, [closeView, setViewVisibility]);
+
   const close = useCallback(async () => {
     const current = instanceRef.current;
     instanceRef.current = null;
     setInstance(null);
     setRequested(null);
-    if (current) await closeView(current.id);
-  }, [closeView]);
+    if (current) await hideOrClose(current);
+  }, [hideOrClose]);
 
   useEffect(() => {
     if (!instance) return;
     if (requested?.viewId === instance.viewId && activeViewId === instance.viewId) return;
     instanceRef.current = null;
     setInstance(null);
-    void closeView(instance.id);
-  }, [activeViewId, closeView, instance, requested?.viewId]);
+    void hideOrClose(instance);
+  }, [activeViewId, hideOrClose, instance, requested?.viewId]);
 
   useEffect(() => {
     if (!activeViewId || !mountRef.current || instance) return;
     let cancelled = false;
     const bounds = mountRef.current.getBoundingClientRect();
-    void openView({
-      viewId: activeViewId,
-      scopeId: `window:${window.location.pathname || 'main'}`,
-      bounds: {
-        x: Math.round(bounds.x),
-        y: Math.round(bounds.y),
-        width: Math.max(1, Math.round(bounds.width)),
-        height: Math.max(1, Math.round(bounds.height)),
-      },
-      context: requested?.context,
-    }).then((result) => {
+    const nextBounds = {
+      x: Math.round(bounds.x),
+      y: Math.round(bounds.y),
+      width: Math.max(1, Math.round(bounds.width)),
+      height: Math.max(1, Math.round(bounds.height)),
+    };
+    void (async () => {
+      let opened = retainedViewsRef.current.get(activeViewId) ?? null;
+      if (opened) {
+        retainedViewsRef.current.delete(activeViewId);
+        try {
+          await setViewBounds(opened.id, nextBounds);
+          await setViewVisibility(opened.id, true);
+        } catch {
+          try { await closeView(opened.id); } catch {}
+          opened = null;
+        }
+      }
+      if (!opened) {
+        const result = await openView({
+          viewId: activeViewId,
+          scopeId: `window:${window.location.pathname || 'main'}`,
+          bounds: nextBounds,
+          context: requested?.context,
+        });
+        opened = {
+          id: result.instanceId,
+          viewId: activeViewId,
+          retainContextWhenHidden: activeView.view.retainContextWhenHidden === true,
+        };
+      }
       if (cancelled) {
-        void closeView(result.instanceId);
+        await hideOrClose(opened);
         return;
       }
-      const opened = { id: result.instanceId, viewId: activeViewId };
       instanceRef.current = opened;
       setInstance(opened);
-    }).catch(() => {
+    })().catch(() => {
       if (!cancelled) setRequested(null);
     });
     return () => { cancelled = true; };
-  }, [activeViewId, closeView, instance, openView, requested?.context]);
+  }, [
+    activeView?.view.retainContextWhenHidden,
+    activeViewId,
+    closeView,
+    hideOrClose,
+    instance,
+    openView,
+    requested?.context,
+    setViewBounds,
+    setViewVisibility,
+  ]);
 
   useEffect(() => {
     if (!instance || !mountRef.current) return;
@@ -157,20 +214,47 @@ export function PluginContributionHost({
 
   useEffect(() => {
     if (!contributions.available) return;
-    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const highContrast = window.matchMedia('(forced-colors: active)').matches
-      || window.matchMedia('(prefers-contrast: more)').matches;
-    const styles = getComputedStyle(document.documentElement);
-    const themeTokens = Object.fromEntries([
-      '--background', '--foreground', '--muted', '--muted-foreground', '--border', '--primary', '--primary-foreground',
-    ].map((name) => [name, styles.getPropertyValue(name).trim()]));
-    void setEnvironment({ locale, theme, reducedMotion, highContrast, themeTokens }).catch(() => {});
+    const reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const forcedColorsQuery = window.matchMedia('(forced-colors: active)');
+    const contrastQuery = window.matchMedia('(prefers-contrast: more)');
+    let frame = 0;
+    const publish = () => {
+      frame = 0;
+      const styles = getComputedStyle(document.documentElement);
+      const themeTokens = Object.fromEntries([
+        '--background', '--foreground', '--muted', '--muted-foreground', '--border', '--primary', '--primary-foreground',
+      ].map((name) => [name, styles.getPropertyValue(name).trim()]));
+      void setEnvironment({
+        locale,
+        theme,
+        reducedMotion: reducedMotionQuery.matches,
+        highContrast: forcedColorsQuery.matches || contrastQuery.matches,
+        themeTokens,
+      }).catch(() => {});
+    };
+    const schedulePublish = () => {
+      if (frame) cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(publish);
+    };
+    const queries = [reducedMotionQuery, forcedColorsQuery, contrastQuery];
+    for (const query of queries) query.addEventListener?.('change', schedulePublish);
+    const observer = new MutationObserver(schedulePublish);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'style'] });
+    publish();
+    return () => {
+      if (frame) cancelAnimationFrame(frame);
+      observer.disconnect();
+      for (const query of queries) query.removeEventListener?.('change', schedulePublish);
+    };
   }, [contributions.available, locale, setEnvironment, theme]);
 
   useEffect(() => () => {
     const current = instanceRef.current;
     instanceRef.current = null;
-    if (current) void closeViewRef.current(current.id);
+    const retained = [...retainedViewsRef.current.values()];
+    retainedViewsRef.current.clear();
+    const ids = new Set([current?.id, ...retained.map((view) => view.id)].filter(Boolean));
+    for (const id of ids) void closeViewRef.current(id as string);
   }, []);
 
   if (!requested || !activeView) return null;

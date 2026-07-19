@@ -18,6 +18,7 @@ const CHANNELS = Object.freeze({
   openView: "netcatty:plugins:open-view",
   closeView: "netcatty:plugins:close-view",
   setViewBounds: "netcatty:plugins:set-view-bounds",
+  setViewVisibility: "netcatty:plugins:set-view-visibility",
   viewMessage: "netcatty:plugins:view-message",
   viewMessagePosted: "netcatty:plugins:view-message-posted",
 });
@@ -124,6 +125,11 @@ function registerPluginBridge(ipcMain, options) {
   handle(CHANNELS.setViewBounds, async (_activeManager, payload, event) => {
     if (!viewHost) throw new Error("Plugin views are unavailable");
     viewHost.setBounds(payload?.instanceId, payload?.bounds, event.sender);
+    return null;
+  });
+  handle(CHANNELS.setViewVisibility, async (_activeManager, payload, event) => {
+    if (!viewHost) throw new Error("Plugin views are unavailable");
+    viewHost.setVisible(payload?.instanceId, payload?.visible, event.sender);
     return null;
   });
   handle(CHANNELS.viewMessage, async (_activeManager, payload, event) => {

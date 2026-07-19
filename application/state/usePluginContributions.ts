@@ -28,6 +28,7 @@ export interface UsePluginContributionsResult {
   openView(payload: NetcattyPluginViewOpenRequest): Promise<{ instanceId: string }>;
   closeView(instanceId: string): Promise<void>;
   setViewBounds(instanceId: string, bounds: { x: number; y: number; width: number; height: number }): Promise<void>;
+  setViewVisibility(instanceId: string, visible: boolean): Promise<void>;
   setEnvironment(environment: NetcattyPluginEnvironment): Promise<void>;
 }
 
@@ -119,6 +120,11 @@ export function usePluginContributions(
     await bridge.setPluginViewBounds(instanceId, bounds);
   }, [bridge]);
 
+  const setViewVisibility = useCallback(async (instanceId: string, visible: boolean) => {
+    if (!bridge?.setPluginViewVisibility) return;
+    await bridge.setPluginViewVisibility(instanceId, visible);
+  }, [bridge]);
+
   const setEnvironment = useCallback(async (environment: NetcattyPluginEnvironment) => {
     if (!bridge?.setPluginEnvironment) return;
     await bridge.setPluginEnvironment(environment);
@@ -137,6 +143,7 @@ export function usePluginContributions(
     openView,
     closeView,
     setViewBounds,
+    setViewVisibility,
     setEnvironment,
   };
 }

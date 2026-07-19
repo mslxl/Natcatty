@@ -468,7 +468,11 @@ export async function startPluginRuntime({ port, config, loadPlugin }) {
     const source = new CancellationTokenSource();
     if (cancellationId) cancellation.set(cancellationId, source);
     void handleRequest(message).then(
-      (result) => transport.post({ jsonrpc: "2.0", id: message.id, result }),
+      (result) => transport.post({
+        jsonrpc: "2.0",
+        id: message.id,
+        result: result === undefined ? null : result,
+      }),
       (error) => {
         const rpcError = normalizeError(error);
         transport.post(makeRpcFailure(message.id, rpcError.code, rpcError.message, rpcError.data));

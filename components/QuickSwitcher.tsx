@@ -24,7 +24,51 @@ type QuickSwitcherItem = {
   pluginTitle?: string;
   title?: string;
   enabled?: boolean;
+  altCommand?: string;
+  shortcut?: string;
 };
+
+export function buildPluginPaletteItems(
+  plugins: NetcattyPluginContributionSnapshot['plugins'],
+  trimmedQuery: string,
+): QuickSwitcherItem[] {
+  return plugins.flatMap((plugin) => {
+    const menuByCommand = new Map(plugin.menus
+      .filter((menu) => menu.location === 'commandPalette' && menu.visible)
+      .map((menu) => [menu.command, menu] as const));
+    const commands: QuickSwitcherItem[] = plugin.commands
+      .filter((command) => menuByCommand.has(command.id))
+      .filter((command) => !trimmedQuery || matchesSearchQuery(
+        trimmedQuery,
+        menuByCommand.get(command.id)?.title ?? command.title,
+        command.category ?? '',
+        plugin.displayName,
+      ))
+      .map((command) => {
+        const menu = menuByCommand.get(command.id)!;
+        return {
+          type: 'plugin-command',
+          id: command.id,
+          title: menu.title,
+          pluginTitle: plugin.displayName,
+          enabled: command.enabled && menu.enabled,
+          ...(menu.alt ? { altCommand: menu.alt } : {}),
+          ...(menu.shortcut ? { shortcut: menu.shortcut } : {}),
+        };
+      });
+    const views: QuickSwitcherItem[] = plugin.views
+      .filter((view) => view.visible)
+      .filter((view) => !trimmedQuery || matchesSearchQuery(trimmedQuery, view.title, plugin.displayName, view.id))
+      .map((view) => ({
+        type: 'plugin-view',
+        id: view.id,
+        title: view.title,
+        pluginTitle: plugin.displayName,
+        enabled: true,
+      }));
+    return [...commands, ...views];
+  });
+}
 import { DistroAvatar } from "./DistroAvatar";
 import { Input } from "./ui/input";
 import { ScrollArea } from "./ui/scroll-area";
@@ -199,32 +243,10 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
     );
   }, [trimmedQuery, workspaces]);
   const shouldShowLocalTerminalFallback = filteredShells.length === 0 && !!onCreateLocalTerminal && !trimmedQuery;
-  const pluginPaletteItems = useMemo(() => pluginContributions.snapshot.plugins.flatMap((plugin) => {
-    const commandIds = new Set(plugin.menus
-      .filter((menu) => menu.location === 'commandPalette' && menu.visible)
-      .map((menu) => menu.command));
-    const commands: QuickSwitcherItem[] = plugin.commands
-      .filter((command) => commandIds.has(command.id))
-      .filter((command) => !trimmedQuery || matchesSearchQuery(trimmedQuery, command.title, command.category ?? '', plugin.displayName))
-      .map((command) => ({
-        type: 'plugin-command',
-        id: command.id,
-        title: command.title,
-        pluginTitle: plugin.displayName,
-        enabled: command.enabled,
-      }));
-    const views: QuickSwitcherItem[] = plugin.views
-      .filter((view) => view.visible)
-      .filter((view) => !trimmedQuery || matchesSearchQuery(trimmedQuery, view.title, plugin.displayName, view.id))
-      .map((view) => ({
-        type: 'plugin-view',
-        id: view.id,
-        title: view.title,
-        pluginTitle: plugin.displayName,
-        enabled: true,
-      }));
-    return [...commands, ...views];
-  }), [pluginContributions.snapshot.plugins, trimmedQuery]);
+  const pluginPaletteItems = useMemo(() => buildPluginPaletteItems(
+    pluginContributions.snapshot.plugins,
+    trimmedQuery,
+  ), [pluginContributions.snapshot.plugins, trimmedQuery]);
 
   // Always show categorized view (Hosts/Tabs/Quick connect)
   const showCategorized = true;
@@ -295,11 +317,11 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
     } else if (e.key === "Enter" && flatItems.length > 0) {
       e.preventDefault();
       const item = flatItems[selectedIndex];
-      handleItemSelect(item);
+      handleItemSelect(item, e.altKey);
     }
   };
 
-  const handleItemSelect = (item: QuickSwitcherItem) => {
+  const handleItemSelect = (item: QuickSwitcherItem, useAlternate = false) => {
     switch (item.type) {
       case "host":
         onSelect(item.data as Host);
@@ -325,7 +347,11 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
       }
       case "plugin-command":
         if (item.enabled !== false) {
-          void pluginContributions.executeCommand(item.id, undefined, { 'netcatty.surface': 'commandPalette' }).catch(() => {});
+          void pluginContributions.executeCommand(
+            useAlternate && item.altCommand ? item.altCommand : item.id,
+            undefined,
+            { 'netcatty.surface': 'commandPalette' },
+          ).catch(() => {});
           onClose();
         }
         break;
@@ -589,7 +615,7 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
                       key={`${item.type}:${item.id}`}
                       disabled={item.enabled === false}
                       className={`flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors ${isSelected ? 'bg-primary/15' : 'hover:bg-muted/50'} disabled:opacity-50`}
-                      onClick={() => handleItemSelect(item)}
+                      onClick={(event) => handleItemSelect(item, event.altKey)}
                       onMouseEnter={() => setSelectedIndex(idx)}
                     >
                       <div className="flex h-6 w-6 items-center justify-center text-muted-foreground"><Puzzle size={16} /></div>
@@ -597,6 +623,7 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
                         <div className="truncate text-sm font-medium">{item.title}</div>
                         <div className="truncate text-[10px] text-muted-foreground">{item.pluginTitle}</div>
                       </div>
+                      {item.shortcut && <kbd className="text-[10px] text-muted-foreground">{item.shortcut}</kbd>}
                     </button>
                   );
                 })}

@@ -144,6 +144,7 @@ test("custom views load packaged resources only with a network-denying document 
   const roots = createRoots(context);
   fs.writeFileSync(path.join(roots.packageRoot, "view.html"), "<!doctype html><script src=\"view.js\"></script>\n");
   fs.writeFileSync(path.join(roots.packageRoot, "view.js"), "globalThis.ready = true;\n");
+  fs.writeFileSync(path.join(roots.packageRoot, "view.svg"), "<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>\n");
   let handler;
   const protocol = new PluginProtocol(roots);
   protocol.registerSession({
@@ -162,6 +163,15 @@ test("custom views load packaged resources only with a network-denying document 
   assert.match(page.headers.get("content-security-policy"), /connect-src 'none'/u);
   assert.match(page.headers.get("content-security-policy"), /frame-src 'none'/u);
   assert.match(page.headers.get("permissions-policy"), /clipboard-write=\(\)/u);
+  const svgRegistration = protocol.registerView({
+    pluginId: "com.example.svg-view",
+    packageRoot: roots.packageRoot,
+    entry: "view.svg",
+  });
+  const svgPage = await handler({ method: "GET", url: svgRegistration.url });
+  assert.equal(svgPage.headers.get("content-type"), "image/svg+xml");
+  assert.match(svgPage.headers.get("content-security-policy"), /worker-src 'none'/u);
+  assert.match(svgPage.headers.get("permissions-policy"), /camera=\(\)/u);
   assert.equal((await handler({
     method: "GET",
     url: `netcatty-plugin://${registration.token}/package/view.js`,

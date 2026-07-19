@@ -4,7 +4,7 @@ import React from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { sanitizeHost } from '../../domain/host';
 import type { Host } from '../../types';
-import { ContextMenuContent, ContextMenuItem } from '../ui/context-menu';
+import { ContextMenuContent, ContextMenuItem, ContextMenuShortcut } from '../ui/context-menu';
 import { comparePluginMenus, usePluginContributions } from '../../application/state/usePluginContributions';
 
 export interface HostTreeHostContextMenuHandlers {
@@ -64,13 +64,15 @@ export const HostTreeHostContextMenuContent: React.FC<
         <ContextMenuItem
           key={menu.id}
           disabled={!menu.enabled}
-          onClick={() => void pluginContributions.executeCommand(menu.command, { hostId: safeHost.id }, {
+          onClick={(event) => void pluginContributions.executeCommand(event.altKey && menu.alt ? menu.alt : menu.command, { hostId: safeHost.id }, {
             'netcatty.surface': 'host/context',
             'host.id': safeHost.id,
             'host.protocol': safeHost.protocol ?? 'ssh',
           }).catch(() => {})}
         >
           {menu.title}
+          {menu.checked && <span className="ml-auto pl-4" aria-hidden="true">✓</span>}
+          {menu.shortcut && <ContextMenuShortcut>{menu.shortcut}</ContextMenuShortcut>}
         </ContextMenuItem>
       ))}
     </ContextMenuContent>

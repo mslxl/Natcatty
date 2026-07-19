@@ -92,6 +92,13 @@ function assertSettingValue(setting, value) {
       if (typeof value !== "number" || !Number.isFinite(value)) throw invalidArgument(`${setting.id} must be finite`);
       if (setting.minimum != null && value < setting.minimum) throw invalidArgument(`${setting.id} is below its minimum`);
       if (setting.maximum != null && value > setting.maximum) throw invalidArgument(`${setting.id} is above its maximum`);
+      if (setting.step != null) {
+        const steps = (value - (setting.minimum ?? 0)) / setting.step;
+        const tolerance = Number.EPSILON * Math.max(1, Math.abs(steps)) * 16;
+        if (Math.abs(steps - Math.round(steps)) > tolerance) {
+          throw invalidArgument(`${setting.id} does not align to its step`);
+        }
+      }
       break;
     case "list": case "table":
       if (!Array.isArray(value)) throw invalidArgument(`${setting.id} must be an array`);
@@ -124,6 +131,20 @@ function shouldActivateOnStartup(manifest) {
   return activationEvents(manifest).has("onStartupFinished");
 }
 
+function resolvePlatformKeybinding(keybinding, platform = process.platform) {
+  if (!keybinding) return undefined;
+  if (platform === "darwin") return keybinding.mac ?? keybinding.key;
+  if (platform === "win32") return keybinding.windows ?? keybinding.key;
+  if (platform === "linux") return keybinding.linux ?? keybinding.key;
+  return keybinding.key;
+}
+
+function isContributionAvailable(plugin) {
+  return plugin?.enabled === true
+    && plugin.manifest != null
+    && plugin.runtime?.quarantinedAt == null;
+}
+
 class PluginContributionService {
   constructor(options) {
     this.database = options.database;
@@ -133,6 +154,9 @@ class PluginContributionService {
     this.contextKeys = new Map();
     this.listeners = new Set();
     this.viewMessageListeners = new Set();
+    this.environment = null;
+    this.environmentRevision = 0;
+    this.runtimeEnvironmentState = new Map();
     this.initialized = false;
   }
 
@@ -198,7 +222,7 @@ class PluginContributionService {
     this.initialized = true;
     for (const plugin of this.database.listPlugins()) {
       if (!plugin.enabled || plugin.runtime.quarantinedAt != null || !shouldActivateOnStartup(plugin.manifest)) continue;
-      try { await this.runtimeSupervisor.start(plugin.id); } catch {}
+      try { await this.#startPlugin(plugin.id); } catch {}
     }
     this.#emitChange("initialized");
   }
@@ -225,22 +249,33 @@ class PluginContributionService {
   async onPluginEnabled(pluginId) {
     const plugin = this.database.getActivePlugin(pluginId);
     if (!plugin?.enabled) throw notFound(`Plugin is not enabled: ${pluginId}`);
-    if (shouldActivateOnStartup(plugin.manifest)) await this.runtimeSupervisor.start(pluginId);
+    if (shouldActivateOnStartup(plugin.manifest)) await this.#startPlugin(pluginId);
     this.#emitChange("plugin-enabled", pluginId);
     return plugin;
   }
 
   onPluginDisabled(pluginId) {
+    this.#clearRuntimeOwnedState(pluginId);
+    this.#emitChange("plugin-disabled", pluginId);
+  }
+
+  onRuntimeStateChanged(event) {
+    if (event?.status !== "quarantined" || typeof event.pluginId !== "string") return;
+    this.#clearRuntimeOwnedState(event.pluginId);
+    this.#emitChange("runtime-quarantined", event.pluginId);
+  }
+
+  #clearRuntimeOwnedState(pluginId) {
+    this.runtimeEnvironmentState.delete(pluginId);
     for (const key of [...this.contextKeys.keys()]) {
       if (key.startsWith(`${pluginId}.`)) this.contextKeys.delete(key);
     }
-    this.#emitChange("plugin-disabled", pluginId);
   }
 
   #findContribution(kind, id) {
     if (typeof id !== "string") throw invalidArgument(`Plugin ${kind} ID is required`);
     for (const plugin of this.database.listPlugins()) {
-      if (!plugin.enabled || !plugin.manifest) continue;
+      if (!isContributionAvailable(plugin)) continue;
       const contribution = getContribution(plugin.manifest, kind, id);
       if (contribution) return { plugin, contribution };
     }
@@ -262,7 +297,22 @@ class PluginContributionService {
     }
     // Declared UI contributions are implicit lazy activation points. This keeps
     // manifest activationEvents backward compatible while avoiding eager start.
-    await this.runtimeSupervisor.start(plugin.id);
+    await this.#startPlugin(plugin.id);
+  }
+
+  async #startPlugin(pluginId) {
+    const identity = await this.runtimeSupervisor.start(pluginId);
+    if (this.environment == null) return identity;
+    const runtimeId = identity?.runtimeId ?? null;
+    const seeded = this.runtimeEnvironmentState.get(pluginId);
+    if (runtimeId != null && seeded?.runtimeId === runtimeId && seeded.revision === this.environmentRevision) {
+      return identity;
+    }
+    await this.runtimeSupervisor.notify(pluginId, "plugin.environment.changed", this.environment);
+    if (runtimeId != null) {
+      this.runtimeEnvironmentState.set(pluginId, { runtimeId, revision: this.environmentRevision });
+    }
+    return identity;
   }
 
   async executeCommand(commandId, args, invocation = {}) {
@@ -301,7 +351,7 @@ class PluginContributionService {
 
   #settingRecord(pluginId, settingId) {
     const plugin = this.database.getActivePlugin(pluginId);
-    if (!plugin?.enabled || !plugin.manifest) throw notFound(`Plugin is not enabled: ${pluginId}`);
+    if (!isContributionAvailable(plugin)) throw notFound(`Plugin is not enabled: ${pluginId}`);
     const setting = this.#assertOwnedContribution(plugin.manifest, "settings", settingId, pluginId);
     return { plugin, setting };
   }
@@ -368,7 +418,7 @@ class PluginContributionService {
   }
 
   #context(extra) {
-    return Object.assign(Object.create(null), Object.fromEntries(this.contextKeys), extra ?? {});
+    return Object.assign(Object.create(null), extra ?? {}, Object.fromEntries(this.contextKeys));
   }
 
   snapshot(options = {}) {
@@ -376,7 +426,7 @@ class PluginContributionService {
     const context = this.#context(options.context);
     const plugins = [];
     for (const plugin of this.database.listPlugins()) {
-      if (!plugin.enabled || !plugin.manifest) continue;
+      if (!isContributionAvailable(plugin)) continue;
       const contributes = plugin.manifest.contributes ?? {};
       const localize = (value) => resolveLocalizedText(value, locale);
       const commands = (contributes.commands ?? []).map((command) => ({
@@ -387,6 +437,17 @@ class PluginContributionService {
         enabled: evaluateContextKeyExpression(command.enablement, context),
       }));
       const commandById = new Map(commands.map((command) => [command.id, command]));
+      const keybindings = (contributes.keybindings ?? []).map((keybinding) => ({
+        ...keybinding,
+        enabled: evaluateContextKeyExpression(keybinding.when, context)
+          && commandById.get(keybinding.command)?.enabled !== false,
+      }));
+      const keybindingByCommand = new Map();
+      for (const keybinding of keybindings) {
+        if (keybinding.enabled && !keybindingByCommand.has(keybinding.command)) {
+          keybindingByCommand.set(keybinding.command, keybinding);
+        }
+      }
       const menus = (contributes.menus ?? []).map((menu, index) => ({
         ...menu,
         id: `${plugin.id}:menu:${index}`,
@@ -394,6 +455,9 @@ class PluginContributionService {
         visible: evaluateContextKeyExpression(menu.when, context),
         enabled: evaluateContextKeyExpression(menu.enablement, context) && commandById.get(menu.command)?.enabled !== false,
         checked: menu.checked == null ? undefined : evaluateContextKeyExpression(menu.checked, context),
+        shortcut: menu.showKeybinding === false
+          ? undefined
+          : resolvePlatformKeybinding(keybindingByCommand.get(menu.command), options.platform),
       }));
       const settings = (contributes.settings ?? []).map((setting) => {
         const requestedScopeId = options.scopeIds?.[setting.scope];
@@ -434,10 +498,7 @@ class PluginContributionService {
         displayName: localize(plugin.manifest.displayName ?? plugin.manifest.name),
         description: localize(plugin.manifest.description ?? ""),
         commands,
-        keybindings: (contributes.keybindings ?? []).map((keybinding) => ({
-          ...keybinding,
-          enabled: evaluateContextKeyExpression(keybinding.when, context),
-        })),
+        keybindings,
         menus,
         settings,
         views,
@@ -448,10 +509,20 @@ class PluginContributionService {
 
   async setEnvironment(environment) {
     assertJsonValue(environment, "environment");
+    this.environment = freezeJson(environment);
+    this.environmentRevision += 1;
     for (const plugin of this.database.listPlugins()) {
       if (!plugin.enabled || plugin.runtime.status !== "running") continue;
-      try { await this.runtimeSupervisor.notify(plugin.id, "plugin.environment.changed", freezeJson(environment)); }
-      catch {}
+      try {
+        await this.runtimeSupervisor.notify(plugin.id, "plugin.environment.changed", this.environment);
+        const identity = this.runtimeSupervisor.getRuntimeIdentity?.(plugin.id);
+        if (identity?.runtimeId) {
+          this.runtimeEnvironmentState.set(plugin.id, {
+            runtimeId: identity.runtimeId,
+            revision: this.environmentRevision,
+          });
+        }
+      } catch {}
     }
     this.#emitChange("environment");
   }
@@ -466,6 +537,8 @@ module.exports = {
   compileSettingPattern,
   normalizeScopeId,
   resolveLocalizedText,
+  resolvePlatformKeybinding,
   secretSettingKey,
+  isContributionAvailable,
   shouldActivateOnStartup,
 };

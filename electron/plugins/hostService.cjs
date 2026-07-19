@@ -107,6 +107,7 @@ function createPluginHostService(options) {
       start: (...args) => runtimeSupervisor.start(...args),
       request: (...args) => runtimeSupervisor.request(...args),
       notify: (...args) => runtimeSupervisor.notify(...args),
+      getRuntimeIdentity: (...args) => runtimeSupervisor.getRuntimeIdentity(...args),
     });
     const contributionService = new PluginContributionService({
       database,
@@ -184,6 +185,7 @@ function createPluginHostService(options) {
       },
       utilityModuleMappings: options.utilityModuleMappings ?? createUtilityModuleMappings(moduleResources),
     });
+    runtimeSupervisor.onDidChangeRuntime((event) => contributionService.onRuntimeStateChanged(event));
     quotaManager.setViolationHandler((identity, error) => (
       runtimeSupervisor.enforcePolicyViolation(identity, error)
     ));

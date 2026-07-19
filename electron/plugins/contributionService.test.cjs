@@ -37,6 +37,7 @@ function manifest(id = "com.example.contributions", activationEvents = []) {
       }],
       commands: [{ id: `${id}.hello`, title: { en: "Say hello", "zh-CN": "打招呼" }, enablement: `${id}.ready` }],
       menus: [{ command: `${id}.hello`, location: "commandPalette", when: `${id}.visible` }],
+      keybindings: [{ command: `${id}.hello`, key: "ctrl+shift+h", when: `${id}.visible` }],
       views: [{ id: `${id}.view`, title: "Example view", location: "aside", entry: "view.html" }],
     },
   };
@@ -112,12 +113,185 @@ test("commands activate lazily and Context Keys are evaluated by the host", asyn
   assert.equal(snapshot.plugins[0].commands[0].enabled, true);
   assert.equal(snapshot.plugins[0].menus[0].visible, true);
   assert.equal(snapshot.plugins[0].menus[0].checked, undefined);
+  assert.equal(snapshot.plugins[0].menus[0].shortcut, "ctrl+shift+h");
+  assert.equal(snapshot.plugins[0].keybindings[0].enabled, true);
 
   const result = await service.executeCommand(`${pluginManifest.id}.hello`, { name: "Catty" });
   assert.equal(result.command, `${pluginManifest.id}.hello`);
   assert.deepEqual(calls.slice(-2), [
     `start:${pluginManifest.id}`,
     `request:${pluginManifest.id}:plugin.command.execute`,
+  ]);
+});
+
+test("host invocation context cannot override plugin-owned Context Keys", async (context) => {
+  const pluginManifest = manifest(undefined, ["onCommand:com.example.contributions.hello"]);
+  const { service } = setup(context, pluginManifest);
+  const registry = new PluginHostRpcRegistry();
+  service.registerRpcCapabilities(registry);
+  const routes = registry.createRoutes({
+    pluginId: pluginManifest.id,
+    pluginVersion: pluginManifest.version,
+    runtimeId: "runtime-1",
+    runtimeKind: "browser",
+    manifest: pluginManifest,
+  });
+  await routes.requestHandlers["contextKeys.set"]({
+    key: `${pluginManifest.id}.ready`,
+    value: false,
+  }, { signal: new AbortController().signal });
+
+  await assert.rejects(service.executeCommand(`${pluginManifest.id}.hello`, undefined, {
+    context: { [`${pluginManifest.id}.ready`]: true },
+  }), /command is disabled/u);
+});
+
+test("quarantined plugins are excluded from snapshots and contribution lookup", async (context) => {
+  const pluginManifest = manifest(undefined, ["onCommand:com.example.contributions.hello"]);
+  const { database, service } = setup(context, pluginManifest);
+  database.recordCrash(pluginManifest.id, pluginManifest.version, 300_000, 3);
+  database.recordCrash(pluginManifest.id, pluginManifest.version, 300_000, 3);
+  database.recordCrash(pluginManifest.id, pluginManifest.version, 300_000, 3);
+
+  assert.deepEqual(service.snapshot().plugins, []);
+  await assert.rejects(
+    service.executeCommand(`${pluginManifest.id}.hello`),
+    /contribution was not found/u,
+  );
+  await assert.rejects(
+    service.getSetting(pluginManifest.id, `${pluginManifest.id}.greeting`),
+    /Plugin is not enabled/u,
+  );
+});
+
+test("runtime quarantine clears owned Context Keys and publishes contribution removal", async (context) => {
+  const pluginManifest = manifest();
+  const { database, service } = setup(context, pluginManifest);
+  const registry = new PluginHostRpcRegistry();
+  service.registerRpcCapabilities(registry);
+  const routes = registry.createRoutes({
+    pluginId: pluginManifest.id,
+    pluginVersion: pluginManifest.version,
+    runtimeId: "runtime-1",
+    runtimeKind: "browser",
+    manifest: pluginManifest,
+  });
+  const transport = { signal: new AbortController().signal };
+  await routes.requestHandlers["contextKeys.set"]({ key: `${pluginManifest.id}.ready`, value: true }, transport);
+  await routes.requestHandlers["contextKeys.set"]({ key: `${pluginManifest.id}.visible`, value: true }, transport);
+  const changes = [];
+  service.onDidChange((event) => changes.push(event));
+
+  database.recordCrash(pluginManifest.id, pluginManifest.version, 300_000, 3);
+  database.recordCrash(pluginManifest.id, pluginManifest.version, 300_000, 3);
+  database.recordCrash(pluginManifest.id, pluginManifest.version, 300_000, 3);
+  service.onRuntimeStateChanged({
+    pluginId: pluginManifest.id,
+    status: "quarantined",
+  });
+
+  assert.equal(changes.at(-1).reason, "runtime-quarantined");
+  assert.equal(changes.at(-1).pluginId, pluginManifest.id);
+  assert.deepEqual(service.snapshot().plugins, []);
+  database.clearQuarantine(pluginManifest.id, pluginManifest.version);
+  const snapshot = service.snapshot();
+  assert.equal(snapshot.plugins[0].commands[0].enabled, false);
+  assert.equal(snapshot.plugins[0].menus[0].visible, false);
+});
+
+test("menu and keybinding enablement include the target command state", async (context) => {
+  const pluginManifest = manifest();
+  pluginManifest.contributes.menus[0].enablement = `${pluginManifest.id}.paletteEnabled`;
+  const { service } = setup(context, pluginManifest);
+  const registry = new PluginHostRpcRegistry();
+  service.registerRpcCapabilities(registry);
+  const routes = registry.createRoutes({
+    pluginId: pluginManifest.id,
+    pluginVersion: pluginManifest.version,
+    runtimeId: "runtime-1",
+    runtimeKind: "browser",
+    manifest: pluginManifest,
+  });
+  const transport = { signal: new AbortController().signal };
+  await routes.requestHandlers["contextKeys.set"]({ key: `${pluginManifest.id}.visible`, value: true }, transport);
+  await routes.requestHandlers["contextKeys.set"]({ key: `${pluginManifest.id}.ready`, value: true }, transport);
+
+  let snapshot = service.snapshot();
+  assert.equal(snapshot.plugins[0].commands[0].enabled, true);
+  assert.equal(snapshot.plugins[0].menus[0].enabled, false);
+  assert.equal(snapshot.plugins[0].keybindings[0].enabled, true);
+
+  await routes.requestHandlers["contextKeys.set"]({ key: `${pluginManifest.id}.ready`, value: false }, transport);
+  snapshot = service.snapshot();
+  assert.equal(snapshot.plugins[0].keybindings[0].enabled, false);
+});
+
+test("menu shortcut display uses the current platform and honors explicit suppression", async (context) => {
+  const pluginManifest = manifest();
+  pluginManifest.contributes.keybindings[0].mac = "cmd+shift+h";
+  const { service } = setup(context, pluginManifest);
+
+  assert.equal(service.snapshot({ platform: "darwin" }).plugins[0].menus[0].shortcut, undefined);
+  const registry = new PluginHostRpcRegistry();
+  service.registerRpcCapabilities(registry);
+  const routes = registry.createRoutes({
+    pluginId: pluginManifest.id,
+    pluginVersion: pluginManifest.version,
+    runtimeId: "runtime-1",
+    runtimeKind: "browser",
+    manifest: pluginManifest,
+  });
+  const transport = { signal: new AbortController().signal };
+  await routes.requestHandlers["contextKeys.set"]({ key: `${pluginManifest.id}.visible`, value: true }, transport);
+  await routes.requestHandlers["contextKeys.set"]({ key: `${pluginManifest.id}.ready`, value: true }, transport);
+
+  const visible = service.snapshot({ platform: "darwin" });
+  assert.equal(visible.plugins[0].menus[0].shortcut, "cmd+shift+h");
+
+  const suppressedManifest = manifest("com.example.shortcut-suppressed");
+  delete suppressedManifest.contributes.commands[0].enablement;
+  delete suppressedManifest.contributes.keybindings[0].when;
+  suppressedManifest.contributes.menus[0].showKeybinding = false;
+  const suppressed = setup(context, suppressedManifest);
+  assert.equal(suppressed.service.snapshot({ platform: "darwin" }).plugins[0].menus[0].shortcut, undefined);
+});
+
+test("surface-specific view conditions are evaluated from the requesting host context", (context) => {
+  const pluginManifest = manifest();
+  pluginManifest.contributes.views[0].when = "netcatty.surface == 'settings'";
+  const { service } = setup(context, pluginManifest);
+
+  assert.equal(service.snapshot().plugins[0].views[0].visible, false);
+  assert.equal(service.snapshot({
+    context: { "netcatty.surface": "commandPalette" },
+  }).plugins[0].views[0].visible, false);
+  assert.equal(service.snapshot({
+    context: { "netcatty.surface": "settings" },
+  }).plugins[0].views[0].visible, true);
+});
+
+test("lazy activation receives the latest host environment before its first contribution call", async (context) => {
+  const pluginManifest = manifest("com.example.environment", ["onView:com.example.environment.view"]);
+  const calls = [];
+  const runtimeSupervisor = {
+    async start(pluginId) {
+      calls.push(["start", pluginId]);
+      return { runtimeId: "runtime-environment-1" };
+    },
+    async notify(pluginId, method, params) {
+      calls.push(["notify", pluginId, method, params]);
+    },
+    async request() { return null; },
+  };
+  const { service } = setup(context, pluginManifest, { runtimeSupervisor });
+  const environment = { locale: "zh-CN", theme: "dark", reducedMotion: true, highContrast: false };
+  await service.setEnvironment(environment);
+  assert.deepEqual(calls, []);
+
+  await service.activateView(`${pluginManifest.id}.view`);
+  assert.deepEqual(calls, [
+    ["start", pluginManifest.id],
+    ["notify", pluginManifest.id, "plugin.environment.changed", environment],
   ]);
 });
 
@@ -139,6 +313,31 @@ test("settings validate declared controls and secrets never enter settings stora
   assert.equal([...secrets.values()][0].value, "plaintext");
   await service.resetSetting(pluginManifest.id, `${pluginManifest.id}.greeting`);
   assert.equal(await service.getSetting(pluginManifest.id, `${pluginManifest.id}.greeting`), "hello");
+});
+
+test("numeric setting writes enforce the declared range and step", async (context) => {
+  const pluginManifest = manifest("com.example.numeric-setting");
+  pluginManifest.contributes.settings.push({
+    id: `${pluginManifest.id}.opacity`,
+    label: "Opacity",
+    control: "slider",
+    scope: "application",
+    minimum: 0.1,
+    maximum: 1,
+    step: 0.1,
+    default: 0.5,
+  });
+  const { service } = setup(context, pluginManifest);
+
+  await service.updateSetting(pluginManifest.id, `${pluginManifest.id}.opacity`, 0.3);
+  await assert.rejects(
+    service.updateSetting(pluginManifest.id, `${pluginManifest.id}.opacity`, 0.35),
+    /align to its step/u,
+  );
+  await assert.rejects(
+    service.updateSetting(pluginManifest.id, `${pluginManifest.id}.opacity`, 1.1),
+    /above its maximum/u,
+  );
 });
 
 test("user settings and view state survive package removal", async (context) => {

@@ -67,7 +67,10 @@ to false. Plugin runtimes may update only keys in their own namespace.
 Platform keybindings are resolved by Netcatty and ignored while the user is
 typing in an input, textarea, select, or editable element. Command enablement is
 rechecked in the main process, so stale renderer state cannot execute a disabled
-command.
+command. Menu placements display the first active platform binding unless the
+manifest suppresses it, and holding Alt selects the declared same-plugin
+alternate command. Application-menu accelerators pass through a strict bounded
+parser before reaching Electron.
 
 ## Sandboxed custom views
 
@@ -89,6 +92,11 @@ that created it; another renderer window cannot resize, message, or close it.
 Owner closure, plugin disable, setup failure, and host shutdown all dispose the
 view and its protocol/session registrations.
 
+Views declaring `retainContextWhenHidden` are hidden without destroying their
+owner-bound `WebContentsView` and are restored with fresh bounds when reopened.
+Retained views are still disposed on owner shutdown, plugin disable, runtime
+quarantine, or host shutdown; the flag never extends ownership or permissions.
+
 The preload exposes only `postMessage`, same-plugin `executeCommand`, state
 get/set, runtime messages, and environment changes. Messages and state use the
 same bounded JSON boundary as control-plane RPC.
@@ -99,7 +107,9 @@ Localized manifest text is resolved by exact locale, language base, English,
 default, then the first declared value. Native contribution labels are plain
 text. Open custom views receive locale, light/dark/system theme identity,
 host-owned CSS color tokens, reduced-motion preference, forced/high-contrast
-preference, and subsequent environment changes. Netcatty retains the accessible
+preference, and subsequent environment changes. Theme-token mutations and
+accessibility media-query changes are observed while the host is open, rather
+than only at initial view creation. Netcatty retains the accessible
 name and close control around every custom view; modal placements use dialog
 semantics, while aside, panel, tab, and settings placements use named regions.
 

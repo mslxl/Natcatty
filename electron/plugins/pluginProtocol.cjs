@@ -182,7 +182,7 @@ class PluginProtocol {
       const file = await readContainedFile(root, fileSegments);
       const contentType = CONTENT_TYPES.get(path.extname(file.filePath).toLowerCase())
         ?? "application/octet-stream";
-      const viewHeaders = registration.kind === "view" && contentType.startsWith("text/html") ? {
+      const viewHeaders = registration.kind === "view" ? {
         "Content-Security-Policy": csp,
         "Permissions-Policy": "camera=(), microphone=(), geolocation=(), display-capture=(), usb=(), serial=(), hid=(), payment=(), fullscreen=(), clipboard-read=(), clipboard-write=()",
       } : {};

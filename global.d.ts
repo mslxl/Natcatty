@@ -287,6 +287,7 @@ declare global {
     openPluginView?(payload: NetcattyPluginViewOpenRequest): Promise<{ instanceId: string }>;
     closePluginView?(instanceId: string): Promise<void>;
     setPluginViewBounds?(instanceId: string, bounds: { x: number; y: number; width: number; height: number }): Promise<void>;
+    setPluginViewVisibility?(instanceId: string, visible: boolean): Promise<void>;
     postPluginViewMessage?(instanceId: string, message: unknown): Promise<void>;
     onPluginContributionsChanged?(callback: (event: { reason: string; pluginId: string | null; revision: number }) => void): () => void;
     onPluginViewMessage?(callback: (event: { pluginId: string; viewId: string; message: unknown }) => void): () => void;
@@ -329,7 +330,20 @@ declare global {
       description: string;
       commands: ReadonlyArray<{ id: string; title: string; category?: string; description?: string; enabled: boolean }>;
       keybindings: ReadonlyArray<{ command: string; key: string; mac?: string; linux?: string; windows?: string; args?: unknown; enabled: boolean }>;
-      menus: ReadonlyArray<{ id: string; command: string; location: string; title: string; visible: boolean; enabled: boolean; checked?: boolean; order?: number; group?: string }>;
+      menus: ReadonlyArray<{
+        id: string;
+        command: string;
+        alt?: string;
+        location: string;
+        title: string;
+        visible: boolean;
+        enabled: boolean;
+        checked?: boolean;
+        order?: number;
+        group?: string;
+        shortcut?: string;
+        showKeybinding?: boolean;
+      }>;
       settings: ReadonlyArray<NetcattyPluginSettingContribution>;
       views: ReadonlyArray<{ id: string; title: string; location: string; entry: string; visible: boolean; retainContextWhenHidden?: boolean }>;
     }>;

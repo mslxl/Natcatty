@@ -275,7 +275,9 @@ function PluginSettingField({
 
 export default function SettingsPluginsTab() {
   const { t } = useI18n();
-  const contributions = usePluginContributions();
+  const contributions = usePluginContributions({
+    context: { 'netcatty.surface': 'settings' },
+  });
   const hasVisibleContributions = contributions.snapshot.plugins.some((plugin) => (
     plugin.settings.some((setting) => setting.visible)
     || plugin.views.some((view) => view.visible && view.location === 'settings')

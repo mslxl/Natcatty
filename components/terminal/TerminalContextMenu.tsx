@@ -375,7 +375,7 @@ export const TerminalContextMenu: React.FC<TerminalContextMenuProps> = ({
                 <ContextMenuItem
                   key={menu.id}
                   disabled={!menu.enabled}
-                  onClick={() => void pluginContributions.executeCommand(menu.command, undefined, {
+                  onClick={(event) => void pluginContributions.executeCommand(event.altKey && menu.alt ? menu.alt : menu.command, undefined, {
                     'netcatty.surface': 'terminal/context',
                     'terminal.hasSelection': hasSelection,
                     'terminal.alternateScreen': isAlternateScreen,
@@ -384,6 +384,7 @@ export const TerminalContextMenu: React.FC<TerminalContextMenuProps> = ({
                 >
                   {menu.title}
                   {menu.checked && <span className="ml-auto pl-4" aria-hidden="true">✓</span>}
+                  {menu.shortcut && <ContextMenuShortcut>{menu.shortcut}</ContextMenuShortcut>}
                 </ContextMenuItem>
               ))}
             </>

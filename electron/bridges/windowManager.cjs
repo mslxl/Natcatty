@@ -1282,6 +1282,7 @@ function buildAppMenu(Menu, app, isMac, language = currentLanguage) {
           enabled: item.enabled !== false,
           type: item.checked == null ? "normal" : "checkbox",
           checked: item.checked === true,
+          accelerator: item.accelerator,
           click: item.click,
         });
       }

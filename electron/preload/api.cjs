@@ -82,6 +82,10 @@ function createPreloadApi(ctx) {
   openPluginView: (payload) => ipcRenderer.invoke("netcatty:plugins:open-view", payload),
   closePluginView: (instanceId) => ipcRenderer.invoke("netcatty:plugins:close-view", { instanceId }),
   setPluginViewBounds: (instanceId, bounds) => ipcRenderer.invoke("netcatty:plugins:set-view-bounds", { instanceId, bounds }),
+  setPluginViewVisibility: (instanceId, visible) => ipcRenderer.invoke("netcatty:plugins:set-view-visibility", {
+    instanceId,
+    visible: visible === true,
+  }),
   postPluginViewMessage: (instanceId, message) => ipcRenderer.invoke("netcatty:plugins:view-message", { instanceId, message }),
   onPluginContributionsChanged: (callback) => {
     const listener = (_event, payload) => callback(payload);

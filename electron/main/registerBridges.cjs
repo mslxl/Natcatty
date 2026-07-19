@@ -93,6 +93,7 @@ function createBridgeRegistrar(context) {
       createTrustedPluginBridgeSender,
       registerPluginBridge,
     } = require("../plugins/pluginBridge.cjs");
+    const { toElectronAccelerator } = require("../plugins/keybindings.cjs");
     const { startDevelopmentPluginHost } = require("../plugins/hostBootstrap.cjs");
     const pluginHostService = startDevelopmentPluginHost({
       env: process.env,
@@ -136,6 +137,7 @@ function createBridgeRegistrar(context) {
         windowManager.setPluginApplicationMenuProvider?.(() => {
           const snapshot = pluginHostService.contributionService.snapshot({
             locale: windowManager.getCurrentLanguage?.() ?? "en",
+            context: { "netcatty.surface": "application" },
           });
           return snapshot.plugins.flatMap((plugin) => plugin.menus
             .filter((menu) => menu.location === "application" && menu.visible)
@@ -147,9 +149,12 @@ function createBridgeRegistrar(context) {
               checked: menu.checked,
               group: menu.group ?? "",
               order: menu.order ?? 0,
-              click: () => {
-                void pluginHostService.contributionService.executeCommand(menu.command, undefined, {
+              accelerator: toElectronAccelerator(menu.shortcut),
+              click: (_menuItem, _window, event) => {
+                const command = event?.altKey && menu.alt ? menu.alt : menu.command;
+                void pluginHostService.contributionService.executeCommand(command, undefined, {
                   source: "application-menu",
+                  context: { "netcatty.surface": "application" },
                 }).catch((error) => console.warn("[Plugins] Application command failed:", error?.message ?? error));
               },
             })));

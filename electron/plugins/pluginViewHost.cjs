@@ -47,7 +47,7 @@ class PluginViewHost {
       }
     }));
     this.subscriptions.push(this.contributionService.onDidChange?.((event) => {
-      if (event.reason !== "plugin-disabled" || !event.pluginId) return;
+      if (!["plugin-disabled", "runtime-quarantined"].includes(event.reason) || !event.pluginId) return;
       for (const instance of [...this.instances.values()]) {
         if (instance.pluginId === event.pluginId) void this.close(instance.instanceId);
       }
@@ -195,6 +195,12 @@ class PluginViewHost {
   setBounds(instanceId, bounds, sender) {
     const instance = this.#ownedInstance(instanceId, sender);
     instance.view.setBounds(normalizeBounds(bounds));
+  }
+
+  setVisible(instanceId, visible, sender) {
+    if (typeof visible !== "boolean") throw new TypeError("Plugin view visibility must be a boolean");
+    const instance = this.#ownedInstance(instanceId, sender);
+    instance.view.setVisible(visible);
   }
 
   async postMessage(instanceId, message, sender) {

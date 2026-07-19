@@ -32,6 +32,7 @@ function fixture(options = {}) {
       views.push(this);
     }
     setBounds(bounds) { this.bounds = bounds; }
+    setVisible(visible) { this.visible = visible; }
   }
   const electron = {
     ipcMain: { handle(channel, handler) { ipcHandlers.set(channel, handler); } },
@@ -69,10 +70,11 @@ function fixture(options = {}) {
     },
   };
   let viewListener;
+  let changeListener;
   const contributionService = {
     runtimeSupervisor: { async notify(...args) { return args; } },
     onDidPostViewMessage(listener) { viewListener = listener; return { dispose() {} }; },
-    onDidChange() { return { dispose() {} }; },
+    onDidChange(listener) { changeListener = listener; return { dispose() {} }; },
     async activateView() {
       return {
         plugin: { id: "com.example.view", activeVersion: "1.0.0" },
@@ -105,7 +107,17 @@ function fixture(options = {}) {
     senderOwners.set(sender, owner);
     return { owner, sender };
   }
-  return { contributionService, createOwner, disposals, host, ipcHandlers, sessions, viewListener: () => viewListener, views };
+  return {
+    changeListener: () => changeListener,
+    contributionService,
+    createOwner,
+    disposals,
+    host,
+    ipcHandlers,
+    sessions,
+    viewListener: () => viewListener,
+    views,
+  };
 }
 
 test("plugin view bounds reject unsafe or oversized geometry", () => {
@@ -156,6 +168,8 @@ test("custom views use an ephemeral sandbox and deny direct browser capabilities
   assert.equal(navigation.prevented, true);
   assert.deepEqual(contentsView.bounds, { x: 5, y: 6, width: 700, height: 500 });
   assert.equal(owner.children.length, 1);
+  value.host.setVisible("view-1", false, sender);
+  assert.equal(contentsView.visible, false);
   assert.deepEqual(await value.ipcHandlers.get("netcatty-plugin-view:execute-command")(
     { sender: contentsView.webContents },
     { command: "com.example.view.run", args: { selected: 1 } },
@@ -170,6 +184,7 @@ test("custom views use an ephemeral sandbox and deny direct browser capabilities
   });
 
   const other = value.createOwner();
+  assert.throws(() => value.host.setVisible("view-1", true, other.sender), /another window/u);
   assert.throws(() => value.host.setBounds("view-1", { x: 0, y: 0, width: 1, height: 1 }, other.sender), /another window/u);
   await assert.rejects(value.host.close("view-1", other.sender), /another window/u);
   owner.emit("closed");
@@ -188,4 +203,22 @@ test("view setup failures dispose protocol registrations before exposing an inst
   }, sender), /proxy unavailable/u);
   assert.deepEqual(value.disposals.sort(), ["session", "view"]);
   assert.equal(value.views.length, 0);
+});
+
+test("runtime quarantine closes every open view owned by the plugin", async () => {
+  const value = fixture();
+  const { owner, sender } = value.createOwner();
+  await value.host.open({
+    viewId: "com.example.view.panel",
+    scopeId: "window-1",
+    instanceId: "view-quarantined",
+    bounds: { x: 0, y: 0, width: 320, height: 240 },
+  }, sender);
+  assert.equal(owner.children.length, 1);
+
+  value.changeListener()({ reason: "runtime-quarantined", pluginId: "com.example.view" });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(owner.children.length, 0);
+  assert.deepEqual(value.disposals.sort(), ["session", "view"]);
 });

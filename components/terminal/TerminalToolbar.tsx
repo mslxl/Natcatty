@@ -974,7 +974,7 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
               className={menu.location === 'statusBar' ? 'h-6 gap-1 px-2 text-[11px]' : buttonBase}
               disabled={!menu.enabled}
               aria-pressed={menu.checked}
-              onClick={() => void pluginContributions.executeCommand(menu.command, undefined, {
+              onClick={(event) => void pluginContributions.executeCommand(event.altKey && menu.alt ? menu.alt : menu.command, undefined, {
                 'netcatty.surface': menu.location,
                 'terminal.status': status,
                 'host.id': host?.id ?? '',
@@ -985,7 +985,7 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
               {menu.location === 'statusBar' && <span>{menu.title}</span>}
             </Button>
           </TooltipTrigger>
-          <TooltipContent side="bottom">{menu.title}</TooltipContent>
+          <TooltipContent side="bottom">{menu.title}{menu.shortcut ? ` (${menu.shortcut})` : ''}</TooltipContent>
         </Tooltip>
       ))}
 
