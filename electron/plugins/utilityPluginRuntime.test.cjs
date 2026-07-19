@@ -65,6 +65,7 @@ test("utility runtime launches without a shell using a minimal environment", asy
   }
   const child = new FakeChild();
   const onBeforeMessage = () => {};
+  let processReadyCalls = 0;
   const runtime = new UtilityPluginRuntime({
     utilityProcess: {
       fork(_bootstrap, _args, options) {
@@ -81,6 +82,7 @@ test("utility runtime launches without a shell using a minimal environment", asy
     moduleMappings: {},
     handlers: {},
     onBeforeMessage,
+    onProcessReady: () => { processReadyCalls += 1; },
     logger: { write() {} },
   });
   await runtime.start({
@@ -99,6 +101,7 @@ test("utility runtime launches without a shell using a minimal environment", asy
   assert.equal(Object.hasOwn(forkOptions, "shell"), false);
   assert.equal(Object.hasOwn(forkOptions.env, "NODE_OPTIONS"), false);
   assert.equal(Object.hasOwn(forkOptions.env, "HOME"), false);
+  assert.equal(processReadyCalls, 1);
 });
 
 test("utility runtime stop waits for the child exit before releasing the activation", async (context) => {

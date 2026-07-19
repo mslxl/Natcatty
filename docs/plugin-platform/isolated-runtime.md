@@ -176,6 +176,10 @@ capability grants, companion digest policy and quotas. Phase 9 still adds
 publisher signatures and distribution trust. This is one reason the entire
 runtime remains behind the local development gate.
 
+CPU and memory monitoring attaches when the BrowserWindow renderer or utility
+process is created and samples immediately, so initialization and activation
+run inside the same quota boundary as the steady-state runtime.
+
 `runtime.advanced` is consent to ambient Node, filesystem and network APIs in
 the contained utility process. It is not a promise that the fine-grained browser
 brokers can sandbox Node built-ins. Ordinary plugins remain broker-only; public

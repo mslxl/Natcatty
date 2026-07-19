@@ -359,6 +359,11 @@ The isolated host and phase-3 capability brokers provide these implementations.
 No renderer decision provider means requests fail closed; a manifest declaration
 never grants authority by itself.
 
+`PluginFilesystemClient.writeFile()` currently requires `{ overwrite: true }`
+and an existing regular file. This preserves one stable SDK method while the
+cross-platform host denies unsafe arbitrary-path creation until it can bind a
+new child to an opened parent directory without a path race.
+
 Permission names already use the phase-3 enforcement boundaries: clipboard
 read/write, terminal metadata/output/input and input/output interception, Vault
 metadata/write/credentials, SFTP read/write, filesystem read/write, network

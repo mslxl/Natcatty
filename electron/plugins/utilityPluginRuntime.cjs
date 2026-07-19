@@ -78,6 +78,7 @@ class UtilityPluginRuntime {
     this.onIncomingStream = options.onIncomingStream;
     this.onBeforeMessage = options.onBeforeMessage;
     this.onProgress = options.onProgress;
+    this.onProcessReady = options.onProcessReady ?? (() => {});
     this.logger = options.logger;
     this.onExit = options.onExit ?? (() => {});
     this.onProtocolError = options.onProtocolError ?? (() => {});
@@ -130,6 +131,7 @@ class UtilityPluginRuntime {
       allowLoadingUnsignedLibraries: false,
       disclaim: process.platform === "darwin",
     });
+    this.onProcessReady();
     this.exitPromise = new Promise((resolve) => { this.resolveExit = resolve; });
     this.child.on("error", (_type, location) => {
       this.#beginTermination(new Error(`Plugin utility fatal error at ${location}`));

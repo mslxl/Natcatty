@@ -10,7 +10,11 @@ const path = require("node:path");
 const { PassThrough } = require("node:stream");
 const test = require("node:test");
 
-const { CompanionRpcPeer, PluginCompanionSupervisor } = require("./companionSupervisor.cjs");
+const {
+  CompanionRpcPeer,
+  PluginCompanionSupervisor,
+  terminateCompanionProcessTree,
+} = require("./companionSupervisor.cjs");
 const { RPC_ERRORS } = require("./rpcRouter.cjs");
 
 function createRoot(context) {
@@ -165,6 +169,7 @@ test("companion runs shell-free with sanitized environment and bounded host-only
   assert.equal(spawns[0].command, await fsp.realpath(executable));
   assert.deepEqual(spawns[0].args, []);
   assert.equal(spawns[0].options.shell, false);
+  assert.equal(spawns[0].options.detached, process.platform !== "win32");
   assert.deepEqual(Object.keys(spawns[0].options.env).sort(), ["LANG", "LC_ALL"]);
 
   assert.deepEqual(await supervisor.request({
@@ -181,6 +186,71 @@ test("companion runs shell-free with sanitized environment and bounded host-only
   );
   await supervisor.stop({ handleId: handle.handleId }, runtime);
   assert.equal(spawns[0].child.signalCode, "SIGTERM");
+  await supervisor.shutdown();
+});
+
+test("Windows companion termination uses shell-free tree cleanup for both stages", async () => {
+  const calls = [];
+  await terminateCompanionProcessTree({
+    pid: 1234,
+    exitCode: null,
+    signalCode: null,
+  }, {
+    platform: "win32",
+    delay: async () => {},
+    execFile(executable, args, options, callback) {
+      calls.push({ executable, args, options });
+      callback(null);
+    },
+  });
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[0].args, ["/PID", "1234", "/T"]);
+  assert.deepEqual(calls[1].args, ["/PID", "1234", "/T", "/F"]);
+  assert.equal(calls[0].options.windowsHide, true);
+});
+
+test("companion stop reaps its POSIX descendant process group", {
+  skip: process.platform === "win32" || /\s/u.test(process.execPath),
+}, async (context) => {
+  const root = createRoot(context);
+  const packageRoot = path.join(root, "package");
+  const executable = path.join(packageRoot, "bin/helper");
+  const dataDirectory = path.join(root, "data", "com.example.companion");
+  const pidFile = path.join(dataDirectory, "descendant.pid");
+  await fsp.mkdir(path.dirname(executable), { recursive: true });
+  const contents = Buffer.from(`#!${process.execPath}\n`
+    + `const fs = require("node:fs");\n`
+    + `const { spawn } = require("node:child_process");\n`
+    + `process.on("SIGTERM", () => {});\n`
+    + `const child = spawn(process.execPath, ["-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"], { stdio: "ignore" });\n`
+    + `fs.writeFileSync("descendant.pid", String(child.pid));\n`
+    + `setInterval(() => {}, 1000);\n`);
+  await fsp.writeFile(executable, contents, { mode: 0o755 });
+  await fsp.chmod(executable, 0o755);
+  const digest = createHash("sha256").update(contents).digest("hex");
+  const supervisor = new PluginCompanionSupervisor({ paths: { data: path.join(root, "data") } });
+  const runtime = runtimeContext(packageRoot, digest);
+  const handle = await supervisor.start({ companionId: "com.example.companion.helper" }, runtime);
+  let descendantPid;
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    try {
+      descendantPid = Number(await fsp.readFile(pidFile, "utf8"));
+      break;
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+  assert.ok(Number.isSafeInteger(descendantPid) && descendantPid > 0);
+  context.after(() => {
+    if (!descendantPid) return;
+    try { process.kill(descendantPid, "SIGKILL"); } catch {}
+  });
+  await supervisor.stop({ handleId: handle.handleId }, runtime);
+  await assert.rejects(
+    Promise.resolve().then(() => process.kill(descendantPid, 0)),
+    (error) => error?.code === "ESRCH",
+  );
   await supervisor.shutdown();
 });
 

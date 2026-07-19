@@ -79,7 +79,7 @@ test("runtime peer exposes secure host capabilities over the canonical RPC trans
             assert.equal(vaultLease.operationId, "connection:login");
             assert.equal((await context.network.request({ url: "https://example.com" })).status, 200);
             assert.equal(await context.filesystem.readFile("/tmp/file"), "read:/tmp/file");
-            await context.filesystem.writeFile("/tmp/file", "ok");
+            await context.filesystem.writeFile("/tmp/file", "ok", { overwrite: true });
             assert.equal((await context.filesystem.stat("/tmp/file")).kind, "file");
             assert.equal((await context.filesystem.readDirectory("/tmp")).length, 1);
             const companion = await context.companions.start("com.example.peer.helper");

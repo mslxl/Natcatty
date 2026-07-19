@@ -1,25 +1,37 @@
 "use strict";
 
 const MAX_VISIBLE_RESOURCES = 20;
+const MAX_VISIBLE_FIELD_LENGTH = 1_024;
+const UNSAFE_DISPLAY_CHARACTERS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/gu;
+
+function escapePermissionText(value, maxLength = MAX_VISIBLE_FIELD_LENGTH) {
+  const text = String(value).slice(0, maxLength);
+  return text.replace(UNSAFE_DISPLAY_CHARACTERS, (character) => {
+    if (character === "\n") return "\\n";
+    if (character === "\r") return "\\r";
+    if (character === "\t") return "\\t";
+    return `\\u${character.codePointAt(0).toString(16).padStart(4, "0")}`;
+  });
+}
 
 function describePermissionRequest(request) {
   const identity = request.pluginName
-    ? `${request.pluginName} (${request.pluginId})`
-    : request.pluginId;
+    ? `${escapePermissionText(request.pluginName)} (${escapePermissionText(request.pluginId)})`
+    : escapePermissionText(request.pluginId);
   const resources = request.resources ?? [];
   const resourceKinds = request.resourceKinds ?? [];
   const visibleResources = resources.slice(0, MAX_VISIBLE_RESOURCES).map((resource, index) => {
     const suffix = resourceKinds[index] === "directory" ? " (directory and descendants)" : "";
-    return `- ${resource}${suffix}`;
+    return `- ${escapePermissionText(resource)}${suffix}`;
   });
   if (resources.length > visibleResources.length) {
     visibleResources.push(`- …and ${resources.length - visibleResources.length} more`);
   }
   return [
     `Plugin: ${identity}`,
-    ...(request.publisher ? [`Publisher: ${request.publisher}`] : []),
-    `Permission: ${request.permission}`,
-    `Reason: ${request.reason}`,
+    ...(request.publisher ? [`Publisher: ${escapePermissionText(request.publisher)}`] : []),
+    `Permission: ${escapePermissionText(request.permission)}`,
+    `Reason: ${escapePermissionText(request.reason)}`,
     ...(visibleResources.length ? ["Resources:", ...visibleResources] : []),
   ].join("\n");
 }
@@ -44,7 +56,7 @@ function createNativePermissionDecisionProvider(options) {
     const messageBoxOptions = {
       type: "warning",
       title: "Plugin permission request",
-      message: `${request.pluginName ?? request.pluginId} requests ${request.permission}`,
+      message: `${escapePermissionText(request.pluginName ?? request.pluginId)} requests ${escapePermissionText(request.permission)}`,
       detail: describePermissionRequest(request),
       buttons: choices.map(({ label }) => label),
       defaultId: 0,
@@ -69,7 +81,9 @@ function createNativePermissionDecisionProvider(options) {
 }
 
 module.exports = {
+  MAX_VISIBLE_FIELD_LENGTH,
   MAX_VISIBLE_RESOURCES,
   createNativePermissionDecisionProvider,
   describePermissionRequest,
+  escapePermissionText,
 };

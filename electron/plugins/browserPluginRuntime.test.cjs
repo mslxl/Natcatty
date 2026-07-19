@@ -78,6 +78,7 @@ test("browser host waits for preload and the installed plugin RPC listener", asy
   const port1 = new FakePort();
   const port2 = new FakePort();
   const onBeforeMessage = () => {};
+  let processReadyCalls = 0;
   let sessionDisposed = false;
   const runtime = new BrowserPluginRuntime({
     electron: {
@@ -101,6 +102,7 @@ test("browser host waits for preload and the installed plugin RPC listener", asy
     preloadPath: "/runtime/browserPreload.cjs",
     handlers: {},
     onBeforeMessage,
+    onProcessReady: () => { processReadyCalls += 1; },
   });
 
   const started = runtime.start({
@@ -112,6 +114,7 @@ test("browser host waits for preload and the installed plugin RPC listener", asy
     enabledFeatures: [],
   });
   await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(processReadyCalls, 1);
   contents.emit("ipc-message", {}, "netcatty-plugin:preload-ready");
   resolveLoading();
   await new Promise((resolve) => setImmediate(resolve));

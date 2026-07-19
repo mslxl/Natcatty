@@ -287,6 +287,7 @@ class RuntimeSupervisor {
             : undefined,
           onIncomingStream: routes.onIncomingStream,
           onProgress: (params) => this.#emitProgress(identity, params),
+          onProcessReady: () => this.#installRuntimeResourceMonitor(identity, runtime),
           logger,
           onExit,
           onProtocolError,
@@ -304,6 +305,7 @@ class RuntimeSupervisor {
             : undefined,
           onIncomingStream: routes.onIncomingStream,
           onProgress: (params) => this.#emitProgress(identity, params),
+          onProcessReady: () => this.#installRuntimeResourceMonitor(identity, runtime),
           logger,
           onExit,
           onProtocolError,
@@ -331,10 +333,7 @@ class RuntimeSupervisor {
       }
       identity.assertCurrent();
       this.#setRuntimeState(identity, "running");
-      if (this.runtimeResourceMonitor) {
-        const monitor = this.runtimeResourceMonitor.trackRuntime(identity, runtime);
-        this.resourceMonitors.set(identity.runtimeId, monitor);
-      }
+      this.#installRuntimeResourceMonitor(identity, runtime);
       return this.getRuntimeIdentity(pluginId);
     } catch (error) {
       const stillOwned = this.runtimes.get(pluginId) === runtime;
@@ -482,6 +481,12 @@ class RuntimeSupervisor {
     this.resourceMonitors.get(identity.runtimeId)?.dispose?.();
     this.resourceMonitors.delete(identity.runtimeId);
     this.runtimeResourceMonitor?.releaseRuntime?.(identity.runtimeId);
+  }
+
+  #installRuntimeResourceMonitor(identity, runtime) {
+    if (!this.runtimeResourceMonitor || this.resourceMonitors.has(identity.runtimeId)) return;
+    const monitor = this.runtimeResourceMonitor.trackRuntime(identity, runtime);
+    this.resourceMonitors.set(identity.runtimeId, monitor);
   }
 
   async enforcePolicyViolation(identity, error) {

@@ -28,7 +28,10 @@ test("filesystem broker uses canonical authorization for bounded read, write, st
   const root = createRoot(context);
   const source = path.join(root, "source.txt");
   const target = path.join(root, "target.txt");
-  await fsp.writeFile(source, "hello");
+  await Promise.all([
+    fsp.writeFile(source, "hello"),
+    fsp.writeFile(target, "prior"),
+  ]);
   const charges = [];
   const broker = new PluginFilesystemBroker({
     quotaManager: { chargeBytes: (...args) => charges.push(args) },
@@ -42,9 +45,17 @@ test("filesystem broker uses canonical authorization for bounded read, write, st
   );
   assert.equal((await broker.stat({ path: source }, runtimeContext(readAuthorization))).kind, "file");
 
-  const writeAuthorization = await broker.describeWriteAuthorization({ path: target, data: "world" });
+  const writeAuthorization = await broker.describeWriteAuthorization({
+    path: target,
+    data: "world",
+    overwrite: true,
+  });
   assert.deepEqual(writeAuthorization.resourceKinds, ["exact"]);
-  await broker.writeFile({ path: target, data: "world" }, runtimeContext(writeAuthorization));
+  await broker.writeFile({
+    path: target,
+    data: "world",
+    overwrite: true,
+  }, runtimeContext(writeAuthorization));
   assert.equal(await fsp.readFile(target, "utf8"), "world");
   const overwriteAuthorization = await broker.describeWriteAuthorization({
     path: target,
@@ -68,17 +79,54 @@ test("filesystem broker uses canonical authorization for bounded read, write, st
   ]);
 });
 
-test("filesystem write quota is enforced before creating the target", async (context) => {
+test("filesystem write quota is enforced before mutating the target", async (context) => {
   const root = createRoot(context);
   const target = path.join(root, "target.txt");
+  await fsp.writeFile(target, "original");
   const broker = new PluginFilesystemBroker({
     quotaManager: { chargeBytes: () => { throw new Error("quota denied"); } },
   });
-  const authorization = await broker.describeWriteAuthorization({ path: target, data: "blocked" });
+  const authorization = await broker.describeWriteAuthorization({
+    path: target,
+    data: "blocked",
+    overwrite: true,
+  });
   await assert.rejects(
-    broker.writeFile({ path: target, data: "blocked" }, runtimeContext(authorization)),
+    broker.writeFile({
+      path: target,
+      data: "blocked",
+      overwrite: true,
+    }, runtimeContext(authorization)),
     /quota denied/,
   );
+  assert.equal(await fsp.readFile(target, "utf8"), "original");
+});
+
+test("filesystem writes reject missing targets without opening or creating them", async (context) => {
+  const root = createRoot(context);
+  const target = path.join(root, "missing.txt");
+  let openCalls = 0;
+  const broker = new PluginFilesystemBroker({
+    fileSystem: {
+      ...fsp,
+      async open(...args) {
+        openCalls += 1;
+        return fsp.open(...args);
+      },
+    },
+  });
+  await assert.rejects(
+    broker.describeWriteAuthorization({ path: target, data: "blocked", overwrite: true }),
+    (error) => error.code === RPC_ERRORS.failedPrecondition,
+  );
+  await assert.rejects(
+    broker.writeFile({ path: target, data: "blocked", overwrite: true }, runtimeContext({
+      permission: "filesystem.write",
+      resources: [target],
+    })),
+    (error) => error.code === RPC_ERRORS.failedPrecondition,
+  );
+  assert.equal(openCalls, 0);
   await assert.rejects(fsp.stat(target), (error) => error.code === "ENOENT");
 });
 

@@ -116,6 +116,42 @@ test("supervisor verifies immutable package contents before runtime placement", 
   assert.deepEqual(fixture.runtimeOptions, []);
 });
 
+test("supervisor attaches the runtime quota monitor before activation completes", async (context) => {
+  const events = [];
+  let releaseActivation;
+  const activation = new Promise((resolve) => { releaseActivation = resolve; });
+  const fixture = createFixture(context, (options) => ({
+    async start(config) {
+      events.push("start");
+      options.onProcessReady();
+      events.push("process-ready");
+      await activation;
+      return {
+        pluginId: config.pluginId,
+        pluginVersion: config.pluginVersion,
+        apiVersion: config.apiVersion,
+        enabledFeatures: config.enabledFeatures,
+      };
+    },
+    async stop() {},
+  }), {
+    runtimeResourceMonitor: {
+      trackRuntime() {
+        events.push("monitor");
+        return { dispose() {} };
+      },
+      releaseRuntime() {},
+    },
+  });
+  const starting = fixture.supervisor.start(fixture.manifest.id);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(events, ["start", "monitor", "process-ready"]);
+  releaseActivation();
+  await starting;
+  assert.equal(events.filter((event) => event === "monitor").length, 1);
+  await fixture.supervisor.stop(fixture.manifest.id);
+});
+
 test("repeated activation failures quarantine after the third crash window event", async (context) => {
   const fixture = createFixture(context, () => ({
     async start() { throw new Error("activation failed"); },

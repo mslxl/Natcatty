@@ -4,7 +4,7 @@ const { createHash, randomUUID } = require("node:crypto");
 const fs = require("node:fs");
 const fsp = require("node:fs/promises");
 const path = require("node:path");
-const { spawn: nodeSpawn } = require("node:child_process");
+const { execFile: nodeExecFile, spawn: nodeSpawn } = require("node:child_process");
 
 const { isPathInside } = require("./paths.cjs");
 const { canonicalizeCompanionResource } = require("./permissionResources.cjs");
@@ -13,6 +13,9 @@ const { PluginRpcError, RPC_ERRORS } = require("./rpcRouter.cjs");
 const MAX_COMPANIONS_PER_RUNTIME = 4;
 const MAX_COMPANION_PENDING = 64;
 const MAX_COMPANION_STDERR_BYTES = 64 * 1024;
+const COMPANION_TERMINATION_GRACE_MS = 500;
+const COMPANION_CONTAINMENT_TIMEOUT_MS = 2_000;
+const PROCESS_TREE_POLL_MS = 25;
 
 function platformKey(platform = process.platform, arch = process.arch) {
   return `${platform}-${arch}`;
@@ -46,6 +49,97 @@ function assertCompanionMethod(value) {
 
 function rpcIdKey(id) {
   return `${typeof id}:${String(id)}`;
+}
+
+function delay(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function waitUntilStopped(isAlive, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (isAlive()) {
+    if (Date.now() >= deadline) return false;
+    await delay(Math.min(PROCESS_TREE_POLL_MS, Math.max(1, deadline - Date.now())));
+  }
+  return true;
+}
+
+function isPosixProcessGroupAlive(pid, kill = process.kill) {
+  try {
+    kill(-pid, 0);
+    return true;
+  } catch (error) {
+    if (error?.code === "ESRCH") return false;
+    if (error?.code === "EPERM") return true;
+    throw error;
+  }
+}
+
+function signalPosixProcessGroup(pid, signal, kill = process.kill) {
+  try {
+    kill(-pid, signal);
+    return true;
+  } catch (error) {
+    if (error?.code === "ESRCH") return false;
+    throw error;
+  }
+}
+
+function runTaskkill(pid, force, execFile = nodeExecFile) {
+  const systemRoot = process.env.SystemRoot || "C:\\Windows";
+  const executable = path.join(systemRoot, "System32", "taskkill.exe");
+  const args = ["/PID", String(pid), "/T", ...(force ? ["/F"] : [])];
+  return new Promise((resolve) => {
+    execFile(executable, args, {
+      windowsHide: true,
+      timeout: force ? COMPANION_CONTAINMENT_TIMEOUT_MS : COMPANION_TERMINATION_GRACE_MS,
+    }, (error) => resolve(error == null));
+  });
+}
+
+async function terminateDirectChild(child) {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  try { child.kill(); } catch {}
+  if (await waitUntilStopped(
+    () => child.exitCode === null && child.signalCode === null,
+    COMPANION_TERMINATION_GRACE_MS,
+  )) return;
+  try { child.kill("SIGKILL"); } catch {}
+  if (await waitUntilStopped(
+    () => child.exitCode === null && child.signalCode === null,
+    COMPANION_CONTAINMENT_TIMEOUT_MS - COMPANION_TERMINATION_GRACE_MS,
+  )) return;
+  throw new Error("Plugin companion direct process did not exit");
+}
+
+async function terminateCompanionProcessTree(child, options = {}) {
+  const platform = options.platform ?? process.platform;
+  const pid = child?.pid;
+  if (!Number.isSafeInteger(pid) || pid <= 0) {
+    await terminateDirectChild(child);
+    return;
+  }
+  if (platform === "win32") {
+    const graceful = await runTaskkill(pid, false, options.execFile);
+    await (options.delay ?? delay)(COMPANION_TERMINATION_GRACE_MS);
+    const forced = await runTaskkill(pid, true, options.execFile);
+    if (!graceful && !forced && child.exitCode === null && child.signalCode === null) {
+      throw new Error("Plugin companion process tree could not be terminated");
+    }
+    return;
+  }
+  const kill = options.kill ?? process.kill;
+  signalPosixProcessGroup(pid, "SIGTERM", kill);
+  if (await waitUntilStopped(
+    () => isPosixProcessGroupAlive(pid, kill),
+    COMPANION_TERMINATION_GRACE_MS,
+  )) return;
+  signalPosixProcessGroup(pid, "SIGKILL", kill);
+  if (await waitUntilStopped(
+    () => isPosixProcessGroupAlive(pid, kill),
+    COMPANION_CONTAINMENT_TIMEOUT_MS - COMPANION_TERMINATION_GRACE_MS,
+  )) return;
+  throw new Error("Plugin companion process group could not be reaped");
 }
 
 async function sha256File(filePath) {
@@ -220,6 +314,8 @@ class PluginCompanionSupervisor {
     this.arch = options.arch ?? process.arch;
     this.quotaManager = options.quotaManager ?? null;
     this.onContainmentFailure = options.onContainmentFailure ?? (() => {});
+    this.terminateProcessTree = options.terminateProcessTree
+      ?? ((child) => terminateCompanionProcessTree(child, { platform: this.platform }));
     this.handles = new Map();
     this.startingCounts = new Map();
     this.contractPromise = null;
@@ -328,6 +424,7 @@ class PluginCompanionSupervisor {
       shell: false,
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
+      detached: this.platform !== "win32",
     });
     const handleId = randomUUID();
     const record = {
@@ -354,8 +451,7 @@ class PluginCompanionSupervisor {
     });
     child.once("exit", () => {
       peer.close();
-      this.quotaManager?.releaseProcess?.(record.quotaResourceId);
-      this.handles.delete(handleId);
+      if (!record.stopping) void this.#stopRecord(record).catch(() => {});
     });
     try {
       await new Promise((resolve, reject) => {
@@ -424,43 +520,24 @@ class PluginCompanionSupervisor {
   async #stopRecord(record) {
     if (record.stopping) return record.stopPromise;
     record.stopping = true;
-    record.stopPromise = new Promise((resolve, reject) => {
-      if (record.child.exitCode !== null || record.child.signalCode !== null) {
-        resolve();
-        return;
-      }
-      const onExit = () => {
-        clearTimeout(killTimer);
-        clearTimeout(containmentTimer);
-        resolve();
-      };
-      const killTimer = setTimeout(() => {
-        try { record.child.kill("SIGKILL"); } catch {}
-      }, 500);
-      const containmentTimer = setTimeout(() => {
-        clearTimeout(killTimer);
-        record.child.removeListener("exit", onExit);
-        reject(new PluginRpcError(
-          RPC_ERRORS.failedPrecondition,
-          `Plugin companion could not be reaped: ${record.companionId}`,
-        ));
-      }, 2_000);
-      killTimer.unref?.();
-      containmentTimer.unref?.();
-      record.child.once("exit", onExit);
-      try { record.child.kill(); } catch {}
-    }).then(() => {
+    record.stopPromise = Promise.resolve().then(() => this.terminateProcessTree(record.child)).then(() => {
       record.peer.close();
+      this.quotaManager?.releaseProcess?.(record.quotaResourceId);
       this.handles.delete(record.handleId);
     }, async (error) => {
-      record.peer.close(error);
+      const containmentError = new PluginRpcError(
+        RPC_ERRORS.failedPrecondition,
+        `Plugin companion could not be reaped: ${record.companionId}`,
+        { cause: error?.message ?? String(error) },
+      );
+      record.peer.close(containmentError);
       record.stopping = false;
       record.stopPromise = null;
       await this.onContainmentFailure(Object.freeze({
         pluginId: record.pluginId,
         runtimeId: record.runtimeId,
-      }), error);
-      throw error;
+      }), containmentError);
+      throw containmentError;
     });
     return record.stopPromise;
   }
@@ -479,6 +556,8 @@ class PluginCompanionSupervisor {
 }
 
 module.exports = {
+  COMPANION_CONTAINMENT_TIMEOUT_MS,
+  COMPANION_TERMINATION_GRACE_MS,
   CompanionRpcPeer,
   MAX_COMPANIONS_PER_RUNTIME,
   MAX_COMPANION_PENDING,
@@ -488,5 +567,8 @@ module.exports = {
   platformKey,
   resolveCompanionVariant,
   rpcIdKey,
+  isPosixProcessGroupAlive,
+  signalPosixProcessGroup,
   sha256File,
+  terminateCompanionProcessTree,
 };

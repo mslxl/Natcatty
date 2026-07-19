@@ -69,14 +69,14 @@ test("runtime process quotas report sustained CPU and memory violations", async 
   });
   const runtime = { getProcessId: () => 123 };
   manager.trackRuntime({ runtimeId: "runtime-1" }, runtime);
-  await samples[0]();
+  await new Promise((resolve) => setImmediate(resolve));
   await samples[0]();
   assert.deepEqual(violations, ["Plugin sustained CPU quota exceeded"]);
   assert.equal(cleared.length, 1);
 
   metrics = { memoryBytes: 101, cpuPercent: 0 };
   manager.trackRuntime({ runtimeId: "runtime-2" }, runtime);
-  await samples[1]();
+  await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(violations, [
     "Plugin sustained CPU quota exceeded",
     "Plugin memory quota exceeded",

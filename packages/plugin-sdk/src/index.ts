@@ -87,7 +87,10 @@ export interface PluginFilesystemStat {
 
 export interface PluginFilesystemClient {
   readFile(path: string, options?: Readonly<{ encoding?: "utf8" | "base64"; maxBytes?: number }>): Promise<string>;
-  writeFile(path: string, data: string, options?: Readonly<{ encoding?: "utf8" | "base64"; overwrite?: boolean }>): Promise<void>;
+  writeFile(path: string, data: string, options: Readonly<{
+    encoding?: "utf8" | "base64";
+    overwrite: true;
+  }>): Promise<void>;
   stat(path: string): Promise<PluginFilesystemStat>;
   readDirectory(path: string): Promise<readonly PluginFilesystemEntry[]>;
 }

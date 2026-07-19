@@ -65,7 +65,9 @@ closed. Grant/use/deny/revoke events enter the bounded security audit.
 identity, version, runtime placement, permission, canonical resources and their
 aligned resource kinds, reason, operation and optional host session. This is
 the complete PR-4 UI handoff; the renderer must return the same request ID and
-one canonical lifetime decision.
+one canonical lifetime decision. The native fallback visibly escapes control,
+line-separator, and bidirectional-control characters in every plugin-controlled
+display field so untrusted text cannot forge labels or resource lines.
 
 ## Host-mediated capabilities
 
@@ -88,14 +90,18 @@ replay POST bodies as GET requests.
 ### Filesystem
 
 Read, write, stat and directory listing require an absolute path. Authorization
-uses the real path (or real parent for a new file), and the handler requires the
-same canonical resource after permission middleware. File opens use
+uses the real path, and the handler requires the same canonical resource after
+permission middleware. File opens use
 `O_NOFOLLOW` where supported and recheck the opened object. Directory listing
 uses an opened directory handle and inode revalidation, so a path replacement
 cannot redirect a previously authorized list. Reads use the actual handle bytes
-rather than trusting a pre-read size, with a 1 MiB cap. Writes are exclusive
-unless overwrite is explicit, create mode is `0600`, recheck runtime activity
-immediately before mutation, and listing is limited to 1,000 entries.
+rather than trusting a pre-read size, with a 1 MiB cap. Arbitrary-path writes
+currently require an existing regular file and explicit overwrite; no
+`O_CREAT` path exists because Node cannot portably bind creation to an opened
+parent-directory handle across macOS, Linux, and Windows. A later native
+implementation can add secure relative creation behind the same SDK method.
+Writes recheck runtime activity immediately before mutation, and listing is
+limited to 1,000 entries.
 
 ### Secrets and credentials
 
@@ -128,9 +134,13 @@ Timed-out companion RPC identifiers are retired until one late response is
 discarded, and the runtime SDK retries a failed stop rather than marking the
 handle locally stopped before the host confirms cleanup.
 
-Shutdown requests termination, escalates to SIGKILL, and still waits for exit.
-An unreaped companion is a containment failure and disables its plugin. Runtime
-stop events revoke leases and release all owned companion handles.
+On POSIX, companions start in a dedicated process group; shutdown signals the
+whole group, escalates the whole group to `SIGKILL`, and waits until it no longer
+exists. Windows uses shell-free `taskkill /T` for both graceful and forced tree
+cleanup. A direct parent exit also starts tree cleanup before the handle or
+quota monitor is released. An unreaped companion tree is a containment failure
+and disables its plugin. Runtime stop events revoke leases and release all owned
+companion handles.
 
 ## Quotas and failure behavior
 
@@ -138,7 +148,10 @@ The raw-message token bucket runs before schema traversal. Capability
 concurrency/rate, logging rate, per-category byte windows, companion count and
 pending RPC limits bound retained work. Electron process metrics enforce memory
 and sustained-CPU policy for browser/utility runtimes and companion processes.
-A process policy violation disables and stops only its owning plugin.
+The runtime monitor is attached and takes its first sample immediately when the
+BrowserWindow renderer or utility process is created, before initialize or
+activation runs. A process policy violation disables and stops only its owning
+plugin.
 
 Network, filesystem, secret, credential and companion handlers recheck the
 active runtime immediately before commits or returned results. Cancellation,

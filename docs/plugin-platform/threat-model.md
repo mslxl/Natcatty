@@ -233,8 +233,11 @@ new decision.
 
 Network access is origin-scoped, cookie-free and redirect-by-redirect. File
 access is absolute-realpath scoped and binds the path authorized by middleware
-to the object used by the handler. Companion executables are package-contained,
-digest-verified immediately before shell-free spawn, host-RPC clients only, and
+to the object used by the handler. Arbitrary-path creation is denied until a
+portable opened-parent implementation exists; overwriting an existing regular
+file remains available without exposing a parent-symlink creation race.
+Companion executables are package-contained, digest-verified immediately before
+shell-free spawn, host-RPC clients only, and their complete process group/tree
 must be reaped before their handle is released. Failure to contain a companion
 disables its plugin.
 
@@ -245,4 +248,6 @@ Transport, capability, log, byte, process-count, pending-call, memory and CPU
 quotas contain abusive runtimes and companions. The capability boundary remains
 disabled unless `NETCATTY_PLUGIN_DEV=1` is set. The first-party development path
 injects a native Electron decision provider; any host without a decision
-provider fails interactive permission requests closed.
+provider fails interactive permission requests closed. Runtime CPU/memory
+monitoring begins at process creation rather than after plugin activation, and
+native prompt text escapes control and bidirectional formatting characters.

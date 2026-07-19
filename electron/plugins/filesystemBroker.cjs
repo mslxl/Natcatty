@@ -74,6 +74,16 @@ function assertWriteParams(params) {
   };
 }
 
+function assertSecureWriteMode(value) {
+  if (!value.overwrite) {
+    throw new PluginRpcError(
+      RPC_ERRORS.failedPrecondition,
+      "Plugin filesystem writes require explicit overwrite of an existing file",
+    );
+  }
+  return value;
+}
+
 function assertPathParams(params) {
   if (!params || typeof params !== "object" || Array.isArray(params)) {
     throw invalidArgument("Plugin filesystem parameters are invalid");
@@ -94,14 +104,14 @@ async function resolveWritePath(requestedPath, fileSystem = fsp) {
     if (!existing.stats.isFile()) throw invalidArgument("Plugin filesystem write target is not a file");
     return existing.canonical;
   } catch (error) {
-    if (error?.code !== "ENOENT") throw error;
+    if (error?.code === "ENOENT") {
+      throw new PluginRpcError(
+        RPC_ERRORS.failedPrecondition,
+        "Plugin filesystem writes require an existing regular file",
+      );
+    }
+    throw error;
   }
-  const parent = await fileSystem.realpath(path.dirname(requestedPath));
-  const parentStats = await fileSystem.lstat(parent);
-  if (!parentStats.isDirectory() || parentStats.isSymbolicLink()) {
-    throw invalidArgument("Plugin filesystem write parent is not a real directory");
-  }
-  return path.join(parent, path.basename(requestedPath));
 }
 
 function entryKind(entry) {
@@ -201,7 +211,7 @@ class PluginFilesystemBroker {
   }
 
   async describeWriteAuthorization(params) {
-    const value = assertWriteParams(params);
+    const value = assertSecureWriteMode(assertWriteParams(params));
     const canonical = await resolveWritePath(value.path, this.fileSystem);
     return {
       permission: "filesystem.write",
@@ -237,15 +247,12 @@ class PluginFilesystemBroker {
   }
 
   async writeFile(params, context) {
-    const value = assertWriteParams(params);
+    const value = assertSecureWriteMode(assertWriteParams(params));
     const canonical = await resolveWritePath(value.path, this.fileSystem);
     assertAuthorizedPath(context, "filesystem.write", canonical);
     this.quotaManager?.chargeBytes(context.runtimeId, "filesystem", value.bytes.byteLength);
     await context.assertActive();
-    const flags = fs.constants.O_WRONLY
-      | fs.constants.O_CREAT
-      | NOFOLLOW
-      | (value.overwrite ? 0 : fs.constants.O_EXCL);
+    const flags = fs.constants.O_WRONLY | NOFOLLOW;
     const handle = await this.fileSystem.open(canonical, flags, 0o600);
     try {
       assertAuthorizedPath(context, "filesystem.write", await this.fileSystem.realpath(canonical));
@@ -321,6 +328,7 @@ module.exports = {
   assertSameOpenedDirectory,
   assertPathParams,
   assertReadParams,
+  assertSecureWriteMode,
   assertWriteParams,
   resolveExistingPath,
   resolveWritePath,

@@ -4,9 +4,11 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 
 const {
+  MAX_VISIBLE_FIELD_LENGTH,
   MAX_VISIBLE_RESOURCES,
   createNativePermissionDecisionProvider,
   describePermissionRequest,
+  escapePermissionText,
 } = require("./nativePermissionDecision.cjs");
 
 function permissionRequest(overrides = {}) {
@@ -76,4 +78,29 @@ test("native permission request details are bounded and preserve resource kinds"
   }));
   assert.match(detail, /and 5 more/u);
   assert.doesNotMatch(detail, /\/path\/24/u);
+});
+
+test("native permission dialogs visibly escape control and bidi characters", async () => {
+  let captured;
+  const provider = createNativePermissionDecisionProvider({
+    dialog: {
+      async showMessageBox(options) {
+        captured = options;
+        return { response: 0 };
+      },
+    },
+  });
+  await provider(permissionRequest({
+    pluginName: "Plugin\nPermission: vault.credentials",
+    publisher: "publisher\u202e",
+    reason: "Read this\r\nAlways Allow",
+    resources: ["/safe\nPermission: runtime.advanced"],
+    resourceKinds: ["exact"],
+  }));
+  assert.match(captured.message, /Plugin\\nPermission: vault\.credentials/u);
+  assert.match(captured.detail, /publisher\\u202e/u);
+  assert.match(captured.detail, /Read this\\r\\nAlways Allow/u);
+  assert.match(captured.detail, /\/safe\\nPermission: runtime\.advanced/u);
+  assert.equal(captured.detail.split("\n").filter((line) => line.startsWith("Permission:")).length, 1);
+  assert.equal(escapePermissionText("x".repeat(MAX_VISIBLE_FIELD_LENGTH + 20)).length, MAX_VISIBLE_FIELD_LENGTH);
 });

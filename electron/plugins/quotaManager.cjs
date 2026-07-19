@@ -177,6 +177,7 @@ class PluginQuotaManager {
       },
     });
     this.monitors.set(resourceId, monitor);
+    void sample();
     return monitor;
   }
 

@@ -54,6 +54,7 @@ class BrowserPluginRuntime {
     this.onIncomingStream = options.onIncomingStream;
     this.onBeforeMessage = options.onBeforeMessage;
     this.onProgress = options.onProgress;
+    this.onProcessReady = options.onProcessReady ?? (() => {});
     this.logger = options.logger ?? { write() {} };
     this.onExit = options.onExit ?? (() => {});
     this.onProtocolError = options.onProtocolError ?? (() => {});
@@ -153,6 +154,7 @@ class BrowserPluginRuntime {
         preload: this.preloadPath,
       },
     });
+    this.onProcessReady();
     const contents = this.window.webContents;
     contents.setWebRTCIPHandlingPolicy("disable_non_proxied_udp");
     contents.on("console-message", (details) => {
