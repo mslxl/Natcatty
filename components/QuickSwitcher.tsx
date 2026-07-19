@@ -6,6 +6,7 @@ import {
   Search,
   Terminal,
   TerminalSquare,
+  Puzzle,
 } from "lucide-react";
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "../application/i18n/I18nProvider";
@@ -13,11 +14,16 @@ import { Host, TerminalSession, TerminalSettings, Workspace } from "../types";
 import { KeyBinding } from "../domain/models";
 import { matchesSearchQuery } from "../lib/searchMatcher";
 import { buildQuickSwitcherShells, useDiscoveredShells, getShellIconPath, isMonochromeShellIcon } from "../lib/useDiscoveredShells";
+import { usePluginContributions } from "../application/state/usePluginContributions";
+import { requestOpenPluginView } from "./plugins/PluginContributionHost";
 
 type QuickSwitcherItem = {
-  type: "host" | "tab" | "workspace" | "action" | "shell";
+  type: "host" | "tab" | "workspace" | "action" | "shell" | "plugin-command" | "plugin-view";
   id: string;
   data?: Host | TerminalSession | Workspace;
+  pluginTitle?: string;
+  title?: string;
+  enabled?: boolean;
 };
 import { DistroAvatar } from "./DistroAvatar";
 import { Input } from "./ui/input";
@@ -94,6 +100,9 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
 }) => {
   const { t } = useI18n();
   const discoveredShells = useDiscoveredShells();
+  const pluginContributions = usePluginContributions({
+    context: { 'netcatty.surface': 'commandPalette' },
+  });
   const quickSwitcherShells = useMemo(() => (
     buildQuickSwitcherShells(
       discoveredShells,
@@ -190,6 +199,32 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
     );
   }, [trimmedQuery, workspaces]);
   const shouldShowLocalTerminalFallback = filteredShells.length === 0 && !!onCreateLocalTerminal && !trimmedQuery;
+  const pluginPaletteItems = useMemo(() => pluginContributions.snapshot.plugins.flatMap((plugin) => {
+    const commandIds = new Set(plugin.menus
+      .filter((menu) => menu.location === 'commandPalette' && menu.visible)
+      .map((menu) => menu.command));
+    const commands: QuickSwitcherItem[] = plugin.commands
+      .filter((command) => commandIds.has(command.id))
+      .filter((command) => !trimmedQuery || matchesSearchQuery(trimmedQuery, command.title, command.category ?? '', plugin.displayName))
+      .map((command) => ({
+        type: 'plugin-command',
+        id: command.id,
+        title: command.title,
+        pluginTitle: plugin.displayName,
+        enabled: command.enabled,
+      }));
+    const views: QuickSwitcherItem[] = plugin.views
+      .filter((view) => view.visible)
+      .filter((view) => !trimmedQuery || matchesSearchQuery(trimmedQuery, view.title, plugin.displayName, view.id))
+      .map((view) => ({
+        type: 'plugin-view',
+        id: view.id,
+        title: view.title,
+        pluginTitle: plugin.displayName,
+        enabled: true,
+      }));
+    return [...commands, ...views];
+  }), [pluginContributions.snapshot.plugins, trimmedQuery]);
 
   // Always show categorized view (Hosts/Tabs/Quick connect)
   const showCategorized = true;
@@ -221,6 +256,7 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
       } else if (shouldShowLocalTerminalFallback) {
         items.push({ type: "action", id: "local-terminal" });
       }
+      items.push(...pluginPaletteItems);
     } else {
       // Recent connections only
       results.forEach((host) =>
@@ -230,6 +266,7 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
       filteredShells.forEach((shell) =>
         items.push({ type: "shell", id: shell.id }),
       );
+      items.push(...pluginPaletteItems);
     }
 
     // Build index map for O(1) lookup
@@ -239,7 +276,7 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
     });
 
     return { flatItems: items, itemIndexMap: indexMap };
-  }, [showCategorized, results, builtInTabs, filteredOrphanSessions, filteredWorkspaces, filteredShells, shouldShowLocalTerminalFallback]);
+  }, [showCategorized, results, builtInTabs, filteredOrphanSessions, filteredWorkspaces, filteredShells, shouldShowLocalTerminalFallback, pluginPaletteItems]);
 
   // O(1) index lookup
   const getItemIndex = useCallback((type: string, id: string) => {
@@ -286,6 +323,16 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
         }
         break;
       }
+      case "plugin-command":
+        if (item.enabled !== false) {
+          void pluginContributions.executeCommand(item.id, undefined, { 'netcatty.surface': 'commandPalette' }).catch(() => {});
+          onClose();
+        }
+        break;
+      case "plugin-view":
+        requestOpenPluginView({ viewId: item.id, context: { 'netcatty.surface': 'commandPalette' } });
+        onClose();
+        break;
     }
   };
 
@@ -525,6 +572,34 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
                   </div>
                   <span className="text-sm font-medium">{t("qs.localTerminal")}</span>
                 </div>
+              </div>
+            )}
+
+            {pluginPaletteItems.length > 0 && (
+              <div>
+                <div className="px-4 py-1.5">
+                  <span className="text-xs font-medium text-muted-foreground">{t('settings.tab.plugins')}</span>
+                </div>
+                {pluginPaletteItems.map((item) => {
+                  const idx = getItemIndex(item.type, item.id);
+                  const isSelected = idx === selectedIndex;
+                  return (
+                    <button
+                      type="button"
+                      key={`${item.type}:${item.id}`}
+                      disabled={item.enabled === false}
+                      className={`flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors ${isSelected ? 'bg-primary/15' : 'hover:bg-muted/50'} disabled:opacity-50`}
+                      onClick={() => handleItemSelect(item)}
+                      onMouseEnter={() => setSelectedIndex(idx)}
+                    >
+                      <div className="flex h-6 w-6 items-center justify-center text-muted-foreground"><Puzzle size={16} /></div>
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-medium">{item.title}</div>
+                        <div className="truncate text-[10px] text-muted-foreground">{item.pluginTitle}</div>
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
             )}
           </div>

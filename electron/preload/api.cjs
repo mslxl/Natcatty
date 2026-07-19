@@ -64,6 +64,35 @@ function createPreloadApi(ctx) {
   }),
   restartPlugin: (pluginId) => ipcRenderer.invoke("netcatty:plugins:restart", { pluginId }),
   uninstallPlugin: (pluginId) => ipcRenderer.invoke("netcatty:plugins:uninstall", { pluginId }),
+  getPluginContributions: (options) => ipcRenderer.invoke("netcatty:plugins:contributions", options ?? {}),
+  executePluginCommand: (command, args, context) => ipcRenderer.invoke("netcatty:plugins:execute-command", {
+    command,
+    ...(args === undefined ? {} : { args }),
+    ...(context === undefined ? {} : { context }),
+  }),
+  updatePluginSetting: (pluginId, settingId, value, scopeId) => ipcRenderer.invoke(
+    "netcatty:plugins:update-setting",
+    { pluginId, settingId, value, ...(scopeId === undefined ? {} : { scopeId }) },
+  ),
+  resetPluginSetting: (pluginId, settingId, scopeId) => ipcRenderer.invoke(
+    "netcatty:plugins:reset-setting",
+    { pluginId, settingId, ...(scopeId === undefined ? {} : { scopeId }) },
+  ),
+  setPluginEnvironment: (environment) => ipcRenderer.invoke("netcatty:plugins:set-environment", environment),
+  openPluginView: (payload) => ipcRenderer.invoke("netcatty:plugins:open-view", payload),
+  closePluginView: (instanceId) => ipcRenderer.invoke("netcatty:plugins:close-view", { instanceId }),
+  setPluginViewBounds: (instanceId, bounds) => ipcRenderer.invoke("netcatty:plugins:set-view-bounds", { instanceId, bounds }),
+  postPluginViewMessage: (instanceId, message) => ipcRenderer.invoke("netcatty:plugins:view-message", { instanceId, message }),
+  onPluginContributionsChanged: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("netcatty:plugins:contributions-changed", listener);
+    return () => ipcRenderer.removeListener("netcatty:plugins:contributions-changed", listener);
+  },
+  onPluginViewMessage: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("netcatty:plugins:view-message-posted", listener);
+    return () => ipcRenderer.removeListener("netcatty:plugins:view-message-posted", listener);
+  },
   getWindowsPtyInfo: () => {
     if (process.platform !== "win32") {
       return null;

@@ -1,0 +1,117 @@
+# Plugin UI contributions
+
+Status: internal preview (`0.1.0-internal`), development gate only
+
+Phase 4 of [#2269](https://github.com/binaricat/Netcatty/issues/2269)
+connects the manifest contribution contract to Netcatty's native UI and to a
+separate sandbox for fully custom views. It does not expose Electron IPC, React
+components, the main document, or a browser network stack to plugin code.
+
+## Activation and ownership
+
+Enabled plugins are not started merely because they contribute UI. The host
+starts `onStartupFinished` plugins during contribution initialization and
+otherwise activates a runtime when one of its declared commands, views, or
+Providers is first used. `onCommand:`, `onView:`, and `onProvider:` therefore
+share one idempotent supervisor boundary. Contribution IDs and plugin-created
+Context Keys must begin with the exact owning plugin ID.
+
+Disabling, replacing, or uninstalling a plugin first removes its contribution
+surface and closes its custom views, then stops the runtime. Background work
+lives in the runtime, not in a view, so closing one view does not stop an
+otherwise active plugin.
+
+## Native settings
+
+Netcatty renders setting declarations with host-owned controls. The supported
+controls are switches, radio/select/multiselect, text and password fields,
+textarea, number and slider, color, font, file and directory paths, keybindings,
+lists, and tables. The main process validates every write against the declared
+control, options, numeric range, text pattern, and structured value schema.
+
+Plugin patterns use a deliberately restricted regular-expression subset:
+lookarounds, backreferences, and quantified groups are rejected, and patterned
+input has a small independent length limit. List and table values use a bounded
+JSON Schema subset with explicit types, bounded arrays/strings/numbers, closed
+object properties, `required`, `enum`, and `const`. `$ref`, `pattern`, custom
+formats, conditionals, unevaluated properties, and executable extensions are
+not accepted.
+
+Application, device, workspace, host, and session values are keyed separately.
+Settings and restored view state are user-owned records with no foreign-key
+cascade to installed package versions, so uninstall does not erase them. The
+platform is unreleased, so both tables are part of the complete schema at
+`user_version = 1`; there is no migration chain.
+
+Secret settings never enter the settings table or a renderer snapshot. The
+host stores plaintext only through the phase-3 safeStorage-backed secret store,
+shows a configured indicator, and exposes an opaque `SecretRef` to the owning
+runtime. Only non-secret fields explicitly declaring `sync: true` may be used by
+the future encrypted sidecar sync phase.
+
+## Commands, menus, and Context Keys
+
+Commands are registered in the plugin runtime after activation and invoked
+through the host's validated `plugin.command.execute` request. A plugin runtime
+or custom view may execute only commands owned by the same plugin. The native
+host provides command-palette, application-menu, host-context, terminal-context,
+terminal-toolbar, and status-bar placements. Visibility, enablement, and checked
+state are computed by the host before rendering; plugin HTML is never inserted
+into a native menu or the React tree.
+
+Context Key expressions use a bounded parser for literals, namespaced keys,
+parentheses, `!`, `&&`, `||`, equality/ordering, `in`, and `not in`. There is no
+JavaScript evaluation. Invalid, oversized, or over-complex expressions evaluate
+to false. Plugin runtimes may update only keys in their own namespace.
+
+Platform keybindings are resolved by Netcatty and ignored while the user is
+typing in an input, textarea, select, or editable element. Command enablement is
+rechecked in the main process, so stale renderer state cannot execute a disabled
+command.
+
+## Sandboxed custom views
+
+Each open custom view is a lazily created `WebContentsView` with:
+
+- `sandbox: true`, context isolation, web security, and no Node integration;
+- a private ephemeral session and a fixed black-hole proxy;
+- browser permissions, downloads, popups, webviews, drag navigation, and
+  navigation away from the registered entry document denied;
+- a protocol token scoped to one plugin package;
+- a CSP with `connect-src 'none'`, no frames, workers, objects, media, forms, or
+  base-URL changes; and
+- a Permissions Policy denying camera, microphone, location, display capture,
+  USB, serial, HID, payment, fullscreen, and clipboard capabilities.
+
+The protocol serves package files only. A view cannot load host runtime modules
+or another plugin's package. The view instance is bound to the Netcatty window
+that created it; another renderer window cannot resize, message, or close it.
+Owner closure, plugin disable, setup failure, and host shutdown all dispose the
+view and its protocol/session registrations.
+
+The preload exposes only `postMessage`, same-plugin `executeCommand`, state
+get/set, runtime messages, and environment changes. Messages and state use the
+same bounded JSON boundary as control-plane RPC.
+
+## Themes, localization, and accessibility
+
+Localized manifest text is resolved by exact locale, language base, English,
+default, then the first declared value. Native contribution labels are plain
+text. Open custom views receive locale, light/dark/system theme identity,
+host-owned CSS color tokens, reduced-motion preference, forced/high-contrast
+preference, and subsequent environment changes. Netcatty retains the accessible
+name and close control around every custom view; modal placements use dialog
+semantics, while aside, panel, tab, and settings placements use named regions.
+
+## SDK surface
+
+`PluginContext` now provides:
+
+- `settings.get`, `settings.update`, and `settings.onDidChange`;
+- `commands.registerCommand` and same-plugin `commands.executeCommand`;
+- `contextKeys.set`;
+- view message/state methods; and
+- current locale/theme/accessibility values plus `environment.onDidChange`.
+
+These methods remain JSON-RPC control-plane operations. Terminal hot-path data
+is intentionally deferred to PRs 5 and 6.

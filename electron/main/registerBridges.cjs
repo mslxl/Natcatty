@@ -109,6 +109,7 @@ function createBridgeRegistrar(context) {
             dialog: electronModule.dialog,
             window: win,
           }),
+          getLocale: () => getWindowManager().getCurrentLanguage?.() ?? "en",
         });
       },
       registerShutdown: (handler) => {
@@ -119,9 +120,44 @@ function createBridgeRegistrar(context) {
     });
     registerPluginBridge(ipcMain, {
       manager: pluginHostService?.manager,
+      contributionService: pluginHostService?.contributionService,
+      viewHost: pluginHostService?.viewHost,
       env: process.env,
       isTrustedSender: createTrustedPluginBridgeSender({ devServerUrl: effectiveDevServerUrl }),
+      broadcast: (channel, payload) => {
+        for (const window of electronModule.BrowserWindow.getAllWindows()) {
+          if (!window.isDestroyed()) window.webContents.send(channel, payload);
+        }
+      },
     });
+    if (pluginHostService?.contributionService) {
+      const windowManager = getWindowManager();
+      const refreshPluginApplicationMenu = () => {
+        windowManager.setPluginApplicationMenuProvider?.(() => {
+          const snapshot = pluginHostService.contributionService.snapshot({
+            locale: windowManager.getCurrentLanguage?.() ?? "en",
+          });
+          return snapshot.plugins.flatMap((plugin) => plugin.menus
+            .filter((menu) => menu.location === "application" && menu.visible)
+            .sort((left, right) => (left.order ?? 0) - (right.order ?? 0))
+            .map((menu) => ({
+              id: menu.id,
+              label: menu.title,
+              enabled: menu.enabled,
+              checked: menu.checked,
+              group: menu.group ?? "",
+              order: menu.order ?? 0,
+              click: () => {
+                void pluginHostService.contributionService.executeCommand(menu.command, undefined, {
+                  source: "application-menu",
+                }).catch((error) => console.warn("[Plugins] Application command failed:", error?.message ?? error));
+              },
+            })));
+        });
+      };
+      refreshPluginApplicationMenu();
+      pluginHostService.contributionService.onDidChange(refreshPluginApplicationMenu);
+    }
   
     const getCloudSyncPasswordPath = () => {
       try {

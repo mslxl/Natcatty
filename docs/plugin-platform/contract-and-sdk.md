@@ -346,7 +346,17 @@ lifecycle primitives:
 - `PluginError` carries a stable machine-readable error code and JSON details;
 - `PluginContext` exposes the exact Netcatty/API versions, negotiated feature
   set, storage, opaque secret references, credential leases, mediated network
-  and filesystem access, companion handles, logging, and subscriptions.
+  and filesystem access, companion handles, contribution settings, command
+  registration/execution, Context Keys, view messaging/state, locale/theme/
+  accessibility environment, logging, and subscriptions.
+
+Phase-4 contribution methods stay on the same validated control plane. The
+runtime registers command handlers only after activation; the host routes
+`plugin.command.execute` back to the owning runtime. Setting reads and writes
+are scoped by the declaration, view state is namespaced by plugin/view/window,
+and environment changes arrive as notifications. Custom-view preload APIs are
+separate from `PluginContext` and cannot acquire the runtime's capability
+objects.
 
 `PluginSecretStore.get()` never returns plaintext. It returns a host-issued
 `SecretRef`. Its random ID stays opaque; its non-secret `key` binds later lease
@@ -382,9 +392,12 @@ grants. A broad permission such as `terminal.read` or `filesystem` is not part
 of the contract. Setting controls likewise include the complete planned native
 set, including radio, slider, font, file/directory, sortable list, and structured
 table controls. Secret settings cannot opt into sync; list and table controls
-must declare a host-validated `valueSchema`. Defaults are checked against the
-control's value type, declared options, numeric range, and step; duplicate
-option values and invalid text patterns fail package validation. File and
+must declare a host-validated `valueSchema`. The accepted schema subset has
+bounded depth/nodes, explicit types and closed object properties; executable or
+backtracking features such as `$ref`, `pattern`, formats and conditionals are
+rejected. Defaults are checked against the control's value type, declared
+options, numeric range, step, and structured schema; duplicate option values
+and unsafe text patterns fail package validation. File and
 directory paths are device-local values and cannot opt into cloud sync.
 Semantic validation also requires every contribution class to declare its
 capability: commands, menus, views,

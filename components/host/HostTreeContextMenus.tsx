@@ -5,6 +5,7 @@ import { useI18n } from '../../application/i18n/I18nProvider';
 import { sanitizeHost } from '../../domain/host';
 import type { Host } from '../../types';
 import { ContextMenuContent, ContextMenuItem } from '../ui/context-menu';
+import { comparePluginMenus, usePluginContributions } from '../../application/state/usePluginContributions';
 
 export interface HostTreeHostContextMenuHandlers {
   onConnect: (host: Host) => void;
@@ -26,6 +27,16 @@ export const HostTreeHostContextMenuContent: React.FC<
 }) => {
   const { t } = useI18n();
   const safeHost = sanitizeHost(host);
+  const pluginContributions = usePluginContributions({
+    context: {
+      'netcatty.surface': 'host/context',
+      'host.id': safeHost.id,
+      'host.protocol': safeHost.protocol ?? 'ssh',
+    },
+  });
+  const pluginMenus = pluginContributions.snapshot.plugins.flatMap((plugin) => plugin.menus)
+    .filter((menu) => menu.location === 'host/context' && menu.visible)
+    .sort(comparePluginMenus);
 
   return (
     <ContextMenuContent>
@@ -49,6 +60,19 @@ export const HostTreeHostContextMenuContent: React.FC<
       >
         <Server className="mr-2 h-4 w-4" /> {t('action.delete')}
       </ContextMenuItem>
+      {pluginMenus.map((menu) => (
+        <ContextMenuItem
+          key={menu.id}
+          disabled={!menu.enabled}
+          onClick={() => void pluginContributions.executeCommand(menu.command, { hostId: safeHost.id }, {
+            'netcatty.surface': 'host/context',
+            'host.id': safeHost.id,
+            'host.protocol': safeHost.protocol ?? 'ssh',
+          }).catch(() => {})}
+        >
+          {menu.title}
+        </ContextMenuItem>
+      ))}
     </ContextMenuContent>
   );
 };

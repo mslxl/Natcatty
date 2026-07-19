@@ -85,6 +85,16 @@ test("initial schema scopes runtime and crash state to immutable plugin versions
     database.db.prepare("PRAGMA table_info(plugin_secrets)").all().map(({ name }) => name),
     ["plugin_id", "key", "secret_ref", "ciphertext", "created_at", "updated_at"],
   );
+  assert.deepEqual(
+    database.db.prepare("PRAGMA table_info(plugin_settings)").all().map(({ name }) => name),
+    ["plugin_id", "setting_id", "scope", "scope_id", "value_json", "updated_at"],
+  );
+  assert.deepEqual(
+    database.db.prepare("PRAGMA table_info(plugin_view_state)").all().map(({ name }) => name),
+    ["plugin_id", "view_id", "scope_id", "state_json", "updated_at"],
+  );
+  assert.deepEqual(database.db.prepare("PRAGMA foreign_key_list(plugin_settings)").all(), []);
+  assert.deepEqual(database.db.prepare("PRAGMA foreign_key_list(plugin_view_state)").all(), []);
   database.close();
 });
 

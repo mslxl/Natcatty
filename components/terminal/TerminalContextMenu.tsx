@@ -28,6 +28,7 @@ import {
   ContextMenuTrigger,
 } from '../ui/context-menu';
 import { isMiddleClickContextMenuEvent } from './runtime/middleClickBehavior';
+import { comparePluginMenus, usePluginContributions } from '../../application/state/usePluginContributions';
 
 export interface TerminalContextMenuProps {
   children: React.ReactNode;
@@ -155,6 +156,17 @@ export const TerminalContextMenu: React.FC<TerminalContextMenuProps> = ({
   onDetach,
 }) => {
   const { t } = useI18n();
+  const pluginContributions = usePluginContributions({
+    context: {
+      'netcatty.surface': 'terminal/context',
+      'terminal.hasSelection': hasSelection,
+      'terminal.alternateScreen': isAlternateScreen,
+      'terminal.reconnectable': Boolean(isReconnectable),
+    },
+  });
+  const pluginMenus = pluginContributions.snapshot.plugins.flatMap((plugin) => plugin.menus)
+    .filter((menu) => menu.location === 'terminal/context' && menu.visible)
+    .sort(comparePluginMenus);
   const isMac = hotkeyScheme === 'mac';
   // Tracks the .workspace-pane whose context menu is currently open so we can
   // keep its `:focus-within`-driven opacity stable while focus is in the
@@ -353,6 +365,27 @@ export const TerminalContextMenu: React.FC<TerminalContextMenuProps> = ({
                 <SquareArrowOutUpRight size={14} className="mr-2" />
                 {t('terminal.menu.detach')}
               </ContextMenuItem>
+            </>
+          )}
+
+          {pluginMenus.length > 0 && (
+            <>
+              <ContextMenuSeparator />
+              {pluginMenus.map((menu) => (
+                <ContextMenuItem
+                  key={menu.id}
+                  disabled={!menu.enabled}
+                  onClick={() => void pluginContributions.executeCommand(menu.command, undefined, {
+                    'netcatty.surface': 'terminal/context',
+                    'terminal.hasSelection': hasSelection,
+                    'terminal.alternateScreen': isAlternateScreen,
+                    'terminal.reconnectable': Boolean(isReconnectable),
+                  }).catch(() => {})}
+                >
+                  {menu.title}
+                  {menu.checked && <span className="ml-auto pl-4" aria-hidden="true">✓</span>}
+                </ContextMenuItem>
+              ))}
             </>
           )}
 

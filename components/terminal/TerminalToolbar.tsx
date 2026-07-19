@@ -16,6 +16,7 @@ import {
   Languages,
   MoreVertical,
   Palette,
+  Puzzle,
   Search,
   TextCursorInput,
   Upload,
@@ -35,6 +36,7 @@ import { ToolbarCustomizeContextMenu } from '../ui/toolbar-item-layout';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip';
 import { cn } from '../../lib/utils';
 import HostKeywordHighlightPopover from './HostKeywordHighlightPopover';
+import { comparePluginMenus, usePluginContributions } from '../../application/state/usePluginContributions';
 
 export const TERMINAL_TOOLBAR_ITEM_IDS = [
   'highlight',
@@ -143,6 +145,17 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
   onStartRecording,
 }) => {
   const { t } = useI18n();
+  const pluginContributions = usePluginContributions({
+    context: {
+      'netcatty.surface': 'terminal/toolbar',
+      'terminal.status': status,
+      'host.id': host?.id ?? '',
+      'host.protocol': host?.protocol ?? 'ssh',
+    },
+  });
+  const pluginToolbarMenus = pluginContributions.snapshot.plugins.flatMap((plugin) => plugin.menus)
+    .filter((menu) => (menu.location === 'terminal/toolbar' || menu.location === 'statusBar') && menu.visible)
+    .sort(comparePluginMenus);
   const [highlightPopoverOpen, setHighlightPopoverOpen] = useState(false);
   const [scriptsPopoverOpen, setScriptsPopoverOpen] = useState(false);
   // Overflow popover + encoding submenu are both controlled so that
@@ -951,6 +964,30 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
           </Popover>
         )}
       </ToolbarCustomizeContextMenu>
+
+      {pluginToolbarMenus.map((menu) => (
+        <Tooltip key={menu.id}>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size={menu.location === 'statusBar' ? 'sm' : 'icon'}
+              className={menu.location === 'statusBar' ? 'h-6 gap-1 px-2 text-[11px]' : buttonBase}
+              disabled={!menu.enabled}
+              aria-pressed={menu.checked}
+              onClick={() => void pluginContributions.executeCommand(menu.command, undefined, {
+                'netcatty.surface': menu.location,
+                'terminal.status': status,
+                'host.id': host?.id ?? '',
+                'host.protocol': host?.protocol ?? 'ssh',
+              }).catch(() => {})}
+            >
+              <Puzzle size={12} />
+              {menu.location === 'statusBar' && <span>{menu.title}</span>}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">{menu.title}</TooltipContent>
+        </Tooltip>
+      ))}
 
       {recordingIndicator}
 

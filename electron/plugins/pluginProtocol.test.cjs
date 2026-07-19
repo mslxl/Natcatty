@@ -139,3 +139,39 @@ test("browser runtime import maps accept reviewed host modules without protocol 
   });
   assert.equal(await moduleResponse.text(), "export const ui = true;\n");
 });
+
+test("custom views load packaged resources only with a network-denying document policy", async (context) => {
+  const roots = createRoots(context);
+  fs.writeFileSync(path.join(roots.packageRoot, "view.html"), "<!doctype html><script src=\"view.js\"></script>\n");
+  fs.writeFileSync(path.join(roots.packageRoot, "view.js"), "globalThis.ready = true;\n");
+  let handler;
+  const protocol = new PluginProtocol(roots);
+  protocol.registerSession({
+    protocol: {
+      handle(_scheme, callback) { handler = callback; },
+      unhandle() {},
+    },
+  });
+  const registration = protocol.registerView({
+    pluginId: "com.example.view",
+    packageRoot: roots.packageRoot,
+    entry: "view.html",
+  });
+  const page = await handler({ method: "GET", url: registration.url });
+  assert.equal(page.status, 200);
+  assert.match(page.headers.get("content-security-policy"), /connect-src 'none'/u);
+  assert.match(page.headers.get("content-security-policy"), /frame-src 'none'/u);
+  assert.match(page.headers.get("permissions-policy"), /clipboard-write=\(\)/u);
+  assert.equal((await handler({
+    method: "GET",
+    url: `netcatty-plugin://${registration.token}/package/view.js`,
+  })).status, 200);
+  assert.equal((await handler({
+    method: "GET",
+    url: `netcatty-plugin://${registration.token}/__host/runtime/browserRuntime.mjs`,
+  })).status, 404);
+  assert.equal((await handler({
+    method: "GET",
+    url: `netcatty-plugin://${registration.token}/index.html`,
+  })).status, 404);
+});

@@ -5,7 +5,8 @@ Status: internal preview (`0.1.0-internal`)
 This document describes the isolated runtime introduced in phase 2 and secured
 by phase 3 of the plugin platform tracked by
 [#2269](https://github.com/binaricat/Netcatty/issues/2269). The runtime remains
-hidden behind `NETCATTY_PLUGIN_DEV=1`; there is no public settings entry or
+hidden behind `NETCATTY_PLUGIN_DEV=1`; phase 4 adds a development-only native
+settings/contribution surface, but there is no production plugin entry or
 renderer permission UI yet. The first-party development bootstrap uses a native
 Electron confirmation dialog. A host without an injected decision provider
 still fails every interactive capability request closed.
@@ -284,7 +285,8 @@ The renderer management bridge exposes status, list, install, enable/disable,
 restart and uninstall operations. The main process checks both the explicit
 environment gate and the sender's trusted Netcatty origin for every operation.
 With the gate off, the host service is not constructed and installed plugins do
-not activate. Phase 4 will add the hidden management UI on top of this bridge.
+not activate. Phase 4 adds the hidden settings, command, menu, and view UI on top
+of this bridge without changing the production gate.
 
 ## Packaged-resource invariant
 

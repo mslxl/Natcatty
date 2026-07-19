@@ -279,6 +279,76 @@ declare global {
     setPluginEnabled?(pluginId: string, enabled: boolean): Promise<NetcattyInstalledPlugin>;
     restartPlugin?(pluginId: string): Promise<NetcattyInstalledPlugin>;
     uninstallPlugin?(pluginId: string): Promise<boolean>;
+    getPluginContributions?(options?: NetcattyPluginContributionQuery): Promise<NetcattyPluginContributionSnapshot>;
+    executePluginCommand?(command: string, args?: unknown, context?: Record<string, unknown>): Promise<unknown>;
+    updatePluginSetting?(pluginId: string, settingId: string, value: unknown, scopeId?: string): Promise<{ restartRequired: boolean }>;
+    resetPluginSetting?(pluginId: string, settingId: string, scopeId?: string): Promise<{ restartRequired: boolean }>;
+    setPluginEnvironment?(environment: NetcattyPluginEnvironment): Promise<void>;
+    openPluginView?(payload: NetcattyPluginViewOpenRequest): Promise<{ instanceId: string }>;
+    closePluginView?(instanceId: string): Promise<void>;
+    setPluginViewBounds?(instanceId: string, bounds: { x: number; y: number; width: number; height: number }): Promise<void>;
+    postPluginViewMessage?(instanceId: string, message: unknown): Promise<void>;
+    onPluginContributionsChanged?(callback: (event: { reason: string; pluginId: string | null; revision: number }) => void): () => void;
+    onPluginViewMessage?(callback: (event: { pluginId: string; viewId: string; message: unknown }) => void): () => void;
+  }
+
+  interface NetcattyPluginContributionQuery {
+    locale?: string;
+    context?: Record<string, unknown>;
+    scopeIds?: Partial<Record<'workspace' | 'host' | 'session' | 'device', string>>;
+  }
+
+  interface NetcattyPluginSettingContribution {
+    id: string;
+    label: string;
+    description?: string;
+    placeholder?: string;
+    control: string;
+    scope: string;
+    scopeId: string | null;
+    value?: unknown;
+    secret?: boolean;
+    configured: boolean;
+    visible: boolean;
+    restartRequired?: boolean;
+    required?: boolean;
+    options?: ReadonlyArray<{ value: string; label: string; description?: string }>;
+    minimum?: number;
+    maximum?: number;
+    step?: number;
+    sortable?: boolean;
+    valueSchema?: unknown;
+  }
+
+  interface NetcattyPluginContributionSnapshot {
+    locale: string;
+    plugins: ReadonlyArray<{
+      id: string;
+      version: string;
+      displayName: string;
+      description: string;
+      commands: ReadonlyArray<{ id: string; title: string; category?: string; description?: string; enabled: boolean }>;
+      keybindings: ReadonlyArray<{ command: string; key: string; mac?: string; linux?: string; windows?: string; args?: unknown; enabled: boolean }>;
+      menus: ReadonlyArray<{ id: string; command: string; location: string; title: string; visible: boolean; enabled: boolean; checked?: boolean; order?: number; group?: string }>;
+      settings: ReadonlyArray<NetcattyPluginSettingContribution>;
+      views: ReadonlyArray<{ id: string; title: string; location: string; entry: string; visible: boolean; retainContextWhenHidden?: boolean }>;
+    }>;
+  }
+
+  interface NetcattyPluginEnvironment {
+    locale: string;
+    theme: string;
+    reducedMotion: boolean;
+    highContrast: boolean;
+    themeTokens?: Record<string, string>;
+  }
+
+  interface NetcattyPluginViewOpenRequest {
+    viewId: string;
+    instanceId?: string;
+    scopeId: string;
+    bounds?: { x: number; y: number; width: number; height: number };
+    context?: Record<string, unknown>;
   }
 
   interface Window {

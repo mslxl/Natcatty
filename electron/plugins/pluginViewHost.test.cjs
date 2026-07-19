@@ -1,0 +1,191 @@
+"use strict";
+
+const assert = require("node:assert/strict");
+const { EventEmitter } = require("node:events");
+const test = require("node:test");
+
+const { PluginViewHost, normalizeBounds } = require("./pluginViewHost.cjs");
+
+function fixture(options = {}) {
+  const ipcHandlers = new Map();
+  const senderOwners = new Map();
+  const sessions = [];
+  const views = [];
+  let nextContentsId = 10;
+  class FakeContents extends EventEmitter {
+    constructor() {
+      super();
+      this.id = nextContentsId++;
+      this.sent = [];
+      this.destroyed = false;
+    }
+    setWindowOpenHandler(handler) { this.windowOpenHandler = handler; }
+    async loadURL(url) { this.loadedUrl = url; }
+    send(channel, payload) { this.sent.push([channel, payload]); }
+    isDestroyed() { return this.destroyed; }
+    close() { this.destroyed = true; this.emit("destroyed"); }
+  }
+  class FakeWebContentsView {
+    constructor(optionsValue) {
+      this.options = optionsValue;
+      this.webContents = new FakeContents();
+      views.push(this);
+    }
+    setBounds(bounds) { this.bounds = bounds; }
+  }
+  const electron = {
+    ipcMain: { handle(channel, handler) { ipcHandlers.set(channel, handler); } },
+    BrowserWindow: { fromWebContents(sender) { return senderOwners.get(sender) ?? null; } },
+    WebContentsView: FakeWebContentsView,
+    session: {
+      fromPartition(partition, sessionOptions) {
+        const pluginSession = new EventEmitter();
+        pluginSession.partition = partition;
+        pluginSession.options = sessionOptions;
+        pluginSession.permissions = {};
+        pluginSession.webRequest = {
+          onBeforeRequest(handler) { pluginSession.beforeRequest = handler; },
+        };
+        pluginSession.setProxy = options.setProxy ?? (async (proxy) => { pluginSession.proxy = proxy; });
+        pluginSession.setPermissionCheckHandler = (handler) => { pluginSession.permissions.check = handler; };
+        pluginSession.setPermissionRequestHandler = (handler) => { pluginSession.permissions.request = handler; };
+        pluginSession.setDevicePermissionHandler = (handler) => { pluginSession.permissions.device = handler; };
+        sessions.push(pluginSession);
+        return pluginSession;
+      },
+    },
+  };
+  const disposals = [];
+  const protocol = {
+    registerView() {
+      return {
+        token: "view-token",
+        url: "netcatty-plugin://view-token/package/view.html",
+        dispose() { disposals.push("view"); },
+      };
+    },
+    registerSession() {
+      return { dispose() { disposals.push("session"); } };
+    },
+  };
+  let viewListener;
+  const contributionService = {
+    runtimeSupervisor: { async notify(...args) { return args; } },
+    onDidPostViewMessage(listener) { viewListener = listener; return { dispose() {} }; },
+    onDidChange() { return { dispose() {} }; },
+    async activateView() {
+      return {
+        plugin: { id: "com.example.view", activeVersion: "1.0.0" },
+        view: { id: "com.example.view.panel", entry: "view.html", location: "aside" },
+      };
+    },
+    async executeCommand(command, args, invocation) { return { command, args, invocation }; },
+  };
+  const state = new Map();
+  const host = new PluginViewHost({
+    electron,
+    protocol,
+    packageStore: { async preparePackageRoot() { return "/package"; } },
+    database: {
+      getViewState(pluginId, viewId, scopeId) { return state.get(`${pluginId}:${viewId}:${scopeId}`); },
+      setViewState(pluginId, viewId, scopeId, value) { state.set(`${pluginId}:${viewId}:${scopeId}`, value); },
+    },
+    contributionService,
+    preloadPath: "/runtime/viewPreload.cjs",
+  });
+  function createOwner() {
+    const owner = new EventEmitter();
+    owner.children = [];
+    owner.isDestroyed = () => false;
+    owner.contentView = {
+      addChildView(view) { owner.children.push(view); },
+      removeChildView(view) { owner.children = owner.children.filter((entry) => entry !== view); },
+    };
+    const sender = {};
+    senderOwners.set(sender, owner);
+    return { owner, sender };
+  }
+  return { contributionService, createOwner, disposals, host, ipcHandlers, sessions, viewListener: () => viewListener, views };
+}
+
+test("plugin view bounds reject unsafe or oversized geometry", () => {
+  assert.deepEqual(normalizeBounds({ x: 1, y: 2, width: 640, height: 480 }), { x: 1, y: 2, width: 640, height: 480 });
+  assert.throws(() => normalizeBounds({ x: 0.5, y: 0, width: 1, height: 1 }), /safe integers/u);
+  assert.throws(() => normalizeBounds({ x: 0, y: 0, width: 20_000, height: 1 }), /invalid/u);
+});
+
+test("custom views use an ephemeral sandbox and deny direct browser capabilities", async () => {
+  const value = fixture();
+  const { owner, sender } = value.createOwner();
+  const opened = await value.host.open({
+    viewId: "com.example.view.panel",
+    scopeId: "window-1",
+    instanceId: "view-1",
+    bounds: { x: 5, y: 6, width: 700, height: 500 },
+  }, sender);
+  assert.deepEqual(opened, { instanceId: "view-1" });
+  const contentsView = value.views[0];
+  assert.deepEqual(contentsView.options.webPreferences, {
+    sandbox: true,
+    nodeIntegration: false,
+    nodeIntegrationInSubFrames: false,
+    nodeIntegrationInWorker: false,
+    contextIsolation: true,
+    webSecurity: true,
+    devTools: false,
+    disableDialogs: true,
+    navigateOnDragDrop: false,
+    session: value.sessions[0],
+    preload: "/runtime/viewPreload.cjs",
+  });
+  assert.match(value.sessions[0].partition, /^netcatty-plugin-view-/u);
+  assert.deepEqual(value.sessions[0].options, { cache: false });
+  assert.equal(value.sessions[0].permissions.check(), false);
+  assert.equal(value.sessions[0].permissions.device(), false);
+  let permissionDecision;
+  value.sessions[0].permissions.request(null, "camera", (decision) => { permissionDecision = decision; });
+  assert.equal(permissionDecision, false);
+  let allowed;
+  value.sessions[0].beforeRequest({ url: "netcatty-plugin://view-token/package/view.js" }, (decision) => { allowed = decision; });
+  assert.deepEqual(allowed, { cancel: false });
+  value.sessions[0].beforeRequest({ url: "https://example.com/track" }, (decision) => { allowed = decision; });
+  assert.deepEqual(allowed, { cancel: true });
+  assert.deepEqual(contentsView.webContents.windowOpenHandler(), { action: "deny" });
+  const navigation = { prevented: false, preventDefault() { this.prevented = true; } };
+  contentsView.webContents.emit("will-navigate", navigation, "https://example.com");
+  assert.equal(navigation.prevented, true);
+  assert.deepEqual(contentsView.bounds, { x: 5, y: 6, width: 700, height: 500 });
+  assert.equal(owner.children.length, 1);
+  assert.deepEqual(await value.ipcHandlers.get("netcatty-plugin-view:execute-command")(
+    { sender: contentsView.webContents },
+    { command: "com.example.view.run", args: { selected: 1 } },
+  ), {
+    command: "com.example.view.run",
+    args: { selected: 1 },
+    invocation: {
+      source: "view",
+      callerPluginId: "com.example.view",
+      context: { "netcatty.view": "com.example.view.panel" },
+    },
+  });
+
+  const other = value.createOwner();
+  assert.throws(() => value.host.setBounds("view-1", { x: 0, y: 0, width: 1, height: 1 }, other.sender), /another window/u);
+  await assert.rejects(value.host.close("view-1", other.sender), /another window/u);
+  owner.emit("closed");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(owner.children.length, 0);
+  assert.deepEqual(value.disposals.sort(), ["session", "view"]);
+});
+
+test("view setup failures dispose protocol registrations before exposing an instance", async () => {
+  const value = fixture({ setProxy: async () => { throw new Error("proxy unavailable"); } });
+  const { sender } = value.createOwner();
+  await assert.rejects(value.host.open({
+    viewId: "com.example.view.panel",
+    scopeId: "window-1",
+    bounds: { x: 0, y: 0, width: 10, height: 10 },
+  }, sender), /proxy unavailable/u);
+  assert.deepEqual(value.disposals.sort(), ["session", "view"]);
+  assert.equal(value.views.length, 0);
+});

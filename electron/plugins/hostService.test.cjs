@@ -32,7 +32,7 @@ test("host RPC registry configuration is complete before runtime initialization"
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-plugin-host-service-"));
   context.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const service = createPluginHostService(createOptions(root, (registry) => {
-    registry.registerRequest("settings.get", () => null);
+    registry.registerRequest("custom.test", () => null);
   }));
   context.after(() => service.database.close());
   const routes = service.rpcRegistry.createRoutes({
@@ -41,7 +41,7 @@ test("host RPC registry configuration is complete before runtime initialization"
     runtimeId: "runtime-1",
     runtimeKind: "browser",
   });
-  assert.equal(typeof routes.requestHandlers["settings.get"], "function");
+  assert.equal(typeof routes.requestHandlers["custom.test"], "function");
 });
 
 test("async host RPC registry configuration fails before a service can start", (context) => {
@@ -310,7 +310,7 @@ test("custom host methods without an explicit authorization classification are d
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-plugin-host-service-"));
   context.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const service = createPluginHostService(createOptions(root, (registry) => {
-    registry.registerRequest("settings.get", () => ({ value: true }));
+    registry.registerRequest("custom.unclassified", () => ({ value: true }));
   }));
   context.after(() => service.manager.shutdown());
   const routes = service.rpcRegistry.createRoutes({
@@ -321,7 +321,7 @@ test("custom host methods without an explicit authorization classification are d
     manifest: { permissions: { optional: ["settings.read"] } },
   });
   await assert.rejects(
-    routes.requestHandlers["settings.get"]({}, transportContext()),
+    routes.requestHandlers["custom.unclassified"]({}, transportContext()),
     /no authorization policy/,
   );
 });

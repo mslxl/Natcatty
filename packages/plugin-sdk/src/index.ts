@@ -45,6 +45,57 @@ export interface PluginSecretStore {
   delete(key: string): Promise<void>;
 }
 
+export interface PluginSettingOptions {
+  readonly scopeId?: string;
+}
+
+export interface PluginSettingChangeEvent {
+  readonly settingId: string;
+  readonly scope: string;
+  readonly scopeId: string;
+  readonly source: "host" | "plugin";
+}
+
+export interface PluginSettings {
+  get<T extends JsonValue | SecretRef>(settingId: string, options?: PluginSettingOptions): Promise<T | undefined>;
+  update(settingId: string, value: JsonValue, options?: PluginSettingOptions): Promise<Readonly<{ restartRequired: boolean }>>;
+  onDidChange(listener: (event: PluginSettingChangeEvent) => void): Disposable;
+}
+
+export interface PluginCommandInvocation {
+  readonly source: "host" | "plugin" | string;
+  readonly context?: Readonly<Record<string, JsonValue>>;
+}
+
+export type PluginCommandHandler = (args: JsonValue | undefined, invocation: PluginCommandInvocation) => JsonValue | void | Promise<JsonValue | void>;
+
+export interface PluginCommands {
+  registerCommand(commandId: string, handler: PluginCommandHandler): Disposable;
+  executeCommand<T extends JsonValue = JsonValue>(commandId: string, args?: JsonValue): Promise<T>;
+}
+
+export interface PluginContextKeys {
+  set(key: string, value: JsonValue): Promise<void>;
+}
+
+export interface PluginViews {
+  onDidReceiveMessage(viewId: string, listener: (message: JsonValue) => void): Disposable;
+  postMessage(viewId: string, message: JsonValue): void;
+  getState<T extends JsonValue = JsonValue>(viewId: string, scopeId: string): Promise<T | undefined>;
+  setState(viewId: string, scopeId: string, state: JsonValue): Promise<void>;
+}
+
+export interface PluginEnvironmentChangeEvent {
+  readonly locale: string;
+  readonly theme: string;
+  readonly reducedMotion: boolean;
+  readonly highContrast: boolean;
+}
+
+export interface PluginEnvironment extends PluginEnvironmentChangeEvent {
+  onDidChange(listener: (event: PluginEnvironmentChangeEvent) => void): Disposable;
+}
+
 export interface PluginCredentialLeaseOptions {
   readonly operationId: string;
   readonly purpose: string;
@@ -120,6 +171,11 @@ export interface PluginContext {
   readonly enabledFeatures: ReadonlySet<FeatureId>;
   readonly subscriptions: DisposableStore;
   readonly storage: PluginKeyValueStore;
+  readonly settings: PluginSettings;
+  readonly commands: PluginCommands;
+  readonly contextKeys: PluginContextKeys;
+  readonly views: PluginViews;
+  readonly environment: PluginEnvironment;
   readonly secrets: PluginSecretStore;
   readonly credentials: PluginCredentialBroker;
   readonly network: PluginNetworkClient;

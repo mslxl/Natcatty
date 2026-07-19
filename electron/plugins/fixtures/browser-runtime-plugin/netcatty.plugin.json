@@ -11,6 +11,7 @@
   "main": {
     "browser": "index.js"
   },
+  "activationEvents": ["onStartupFinished"],
   "permissions": {
     "required": ["storage"]
   }

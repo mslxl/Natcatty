@@ -50,6 +50,15 @@ const ajv = new Ajv2020({ allErrors: true, strict: true });
 addFormats(ajv);
 const validateSchema = ajv.compile<PluginManifest>(contractSchema);
 const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
+const MAX_SETTING_PATTERN_LENGTH = 512;
+const MAX_RESTRICTED_SCHEMA_DEPTH = 8;
+const MAX_RESTRICTED_SCHEMA_NODES = 256;
+const RESTRICTED_SCHEMA_TYPES = new Set(["array", "boolean", "integer", "null", "number", "object", "string"]);
+const RESTRICTED_SCHEMA_KEYWORDS = new Set([
+  "additionalProperties", "const", "enum", "items", "maxItems", "maxLength", "maximum",
+  "minItems", "minLength", "minimum", "properties", "required", "type",
+]);
+const FORBIDDEN_SCHEMA_PROPERTY_NAMES = new Set(["__proto__", "constructor", "prototype"]);
 
 export interface ManifestValidationResult {
   readonly valid: boolean;
@@ -66,6 +75,105 @@ export interface ValidatedManifestSource {
 function formatAjvError(error: ErrorObject): string {
   const location = error.instancePath || "/";
   return `${location} ${error.message ?? "is invalid"}`;
+}
+
+function plainRecord(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function settingPatternError(source: string): string | null {
+  if (source.length < 1 || source.length > MAX_SETTING_PATTERN_LENGTH
+    || /\(\?/u.test(source) || /\\(?:[1-9]|k<)/u.test(source)
+    || /\)(?:[*+?]|\{\d+(?:,\d*)?\})/u.test(source)) {
+    return "pattern uses an unsafe regular-expression feature";
+  }
+  try { new RegExp(source, "u"); }
+  catch { return "pattern is invalid"; }
+  return null;
+}
+
+function restrictedSettingSchemaErrors(root: unknown): string[] {
+  const errors: string[] = [];
+  const stack: Array<{ schema: unknown; depth: number }> = [{ schema: root, depth: 0 }];
+  let nodes = 0;
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current || !plainRecord(current.schema)) {
+      errors.push("valueSchema must contain plain schema objects");
+      continue;
+    }
+    nodes += 1;
+    if (nodes > MAX_RESTRICTED_SCHEMA_NODES || current.depth > MAX_RESTRICTED_SCHEMA_DEPTH) {
+      errors.push("valueSchema is too complex");
+      break;
+    }
+    const schema = current.schema;
+    for (const keyword of Object.keys(schema)) {
+      if (!RESTRICTED_SCHEMA_KEYWORDS.has(keyword)) errors.push(`valueSchema keyword is not allowed: ${keyword}`);
+    }
+    if (!RESTRICTED_SCHEMA_TYPES.has(schema.type as string)) {
+      errors.push("every valueSchema node must declare one supported type");
+    }
+    if (current.depth === 0 && schema.type !== "array") errors.push("valueSchema root must use type array");
+    if (schema.type === "array") {
+      if (!plainRecord(schema.items)) errors.push("array valueSchema nodes require one items schema");
+      else stack.push({ schema: schema.items, depth: current.depth + 1 });
+    } else if (schema.items !== undefined || schema.minItems !== undefined || schema.maxItems !== undefined) {
+      errors.push("valueSchema array keywords require type array");
+    }
+    if (schema.type === "object") {
+      if (!plainRecord(schema.properties)) errors.push("object valueSchema nodes require properties");
+      else {
+        for (const [name, child] of Object.entries(schema.properties)) {
+          if (name.length < 1 || name.length > 128 || name.includes("\0")
+            || FORBIDDEN_SCHEMA_PROPERTY_NAMES.has(name)) {
+            errors.push(`valueSchema property name is invalid: ${name}`);
+          }
+          stack.push({ schema: child, depth: current.depth + 1 });
+        }
+        if (schema.required !== undefined && (!Array.isArray(schema.required)
+          || new Set(schema.required).size !== schema.required.length
+          || schema.required.some((name) => typeof name !== "string" || !Object.hasOwn(schema.properties as object, name)))) {
+          errors.push("valueSchema required fields are invalid");
+        }
+      }
+      if (schema.additionalProperties !== false) errors.push("object valueSchema nodes must deny additionalProperties");
+    } else if (schema.properties !== undefined || schema.required !== undefined || schema.additionalProperties !== undefined) {
+      errors.push("valueSchema object keywords require type object");
+    }
+    for (const name of ["minItems", "maxItems", "minLength", "maxLength"] as const) {
+      if (schema[name] !== undefined && (!Number.isSafeInteger(schema[name]) || (schema[name] as number) < 0)) {
+        errors.push(`valueSchema ${name} must be a non-negative safe integer`);
+      }
+    }
+    for (const name of ["minimum", "maximum"] as const) {
+      if (schema[name] !== undefined && (typeof schema[name] !== "number" || !Number.isFinite(schema[name]))) {
+        errors.push(`valueSchema ${name} must be finite`);
+      }
+    }
+    if (typeof schema.minItems === "number" && typeof schema.maxItems === "number" && schema.minItems > schema.maxItems) {
+      errors.push("valueSchema minItems must not exceed maxItems");
+    }
+    if (typeof schema.minLength === "number" && typeof schema.maxLength === "number" && schema.minLength > schema.maxLength) {
+      errors.push("valueSchema minLength must not exceed maxLength");
+    }
+    if (typeof schema.minimum === "number" && typeof schema.maximum === "number" && schema.minimum > schema.maximum) {
+      errors.push("valueSchema minimum must not exceed maximum");
+    }
+    if (schema.type !== "string" && (schema.minLength !== undefined || schema.maxLength !== undefined)) {
+      errors.push("valueSchema string keywords require type string");
+    }
+    if (!["integer", "number"].includes(String(schema.type))
+      && (schema.minimum !== undefined || schema.maximum !== undefined)) {
+      errors.push("valueSchema numeric keywords require type number or integer");
+    }
+    if (schema.enum !== undefined && (!Array.isArray(schema.enum) || schema.enum.length < 1 || schema.enum.length > 256)) {
+      errors.push("valueSchema enum is invalid");
+    }
+  }
+  return [...new Set(errors)];
 }
 
 function assertManifestJsonStructure(root: unknown): void {
@@ -432,11 +540,8 @@ function validateSemantics(manifest: PluginManifest): string[] {
       errors.push(`${setting.control} setting must not declare a text pattern: ${setting.id}`);
     }
     if (setting.pattern !== undefined) {
-      try {
-        new RegExp(setting.pattern);
-      } catch {
-        errors.push(`${setting.control} setting has an invalid pattern: ${setting.id}`);
-      }
+      const patternError = settingPatternError(setting.pattern);
+      if (patternError) errors.push(`${setting.control} setting ${patternError}: ${setting.id}`);
     }
     if (setting.control === "password" && !setting.secret) {
       errors.push(`password setting must be marked secret: ${setting.id}`);
@@ -455,6 +560,20 @@ function validateSemantics(manifest: PluginManifest): string[] {
     }
     if (["list", "table"].includes(setting.control) && setting.valueSchema === undefined) {
       errors.push(`${setting.control} setting requires valueSchema: ${setting.id}`);
+    }
+    if (["list", "table"].includes(setting.control) && setting.valueSchema !== undefined) {
+      const schemaErrors = restrictedSettingSchemaErrors(setting.valueSchema);
+      for (const error of schemaErrors) errors.push(`${setting.control} setting ${error}: ${setting.id}`);
+      if (schemaErrors.length === 0) {
+        try {
+          const validateDefault = ajv.compile(setting.valueSchema as object);
+          if (setting.default !== undefined && !validateDefault(setting.default)) {
+            errors.push(`${setting.control} setting default does not match valueSchema: ${setting.id}`);
+          }
+        } catch (error) {
+          errors.push(`${setting.control} setting valueSchema is invalid: ${setting.id}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
     }
     if (!["list", "table"].includes(setting.control) && setting.valueSchema !== undefined) {
       errors.push(`${setting.control} setting must not declare valueSchema: ${setting.id}`);

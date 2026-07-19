@@ -11,6 +11,7 @@
   "main": {
     "node": "index.js"
   },
+  "activationEvents": ["onStartupFinished"],
   "permissions": {
     "required": ["runtime.advanced", "storage"]
   }

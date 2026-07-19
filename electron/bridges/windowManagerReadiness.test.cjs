@@ -15,6 +15,7 @@ const {
   notifyWindowWillHide,
   requestWindowCommandClose,
   sendWhenRendererReady,
+  setPluginApplicationMenuProvider,
   shouldCloseWindowFromInput,
   unregisterMainWindow,
 } = require("./windowManager.cjs");
@@ -419,6 +420,61 @@ test("buildAppMenu keeps app reload click-only so custom reload-like shortcuts r
   });
 
   assert.deepEqual(calls, ["reload"]);
+});
+
+test("buildAppMenu renders localized plugin commands with checked and disabled state", () => {
+  let capturedTemplate = null;
+  const Menu = {
+    buildFromTemplate(template) {
+      capturedTemplate = template;
+      return { template };
+    },
+  };
+  const calls = [];
+  setPluginApplicationMenuProvider(() => [
+    {
+      id: "com.example.menu.toggle",
+      label: "切换功能",
+      enabled: false,
+      checked: true,
+      group: "navigation",
+      click: () => calls.push("clicked"),
+    },
+    {
+      id: "com.example.menu.open",
+      label: "打开视图",
+      group: "views",
+      click: () => calls.push("opened"),
+    },
+  ]);
+  try {
+    buildAppMenu(Menu, { name: "Netcatty" }, false, "zh-CN");
+    const pluginsMenu = capturedTemplate.find((item) => item.label === "插件");
+    assert.ok(pluginsMenu);
+    assert.deepEqual(pluginsMenu.submenu.map(({ id, label, enabled, checked, type }) => ({
+      id, label, enabled, checked, type,
+    })), [
+      {
+        id: "com.example.menu.toggle",
+        label: "切换功能",
+        enabled: false,
+        checked: true,
+        type: "checkbox",
+      },
+      { id: undefined, label: undefined, enabled: undefined, checked: undefined, type: "separator" },
+      {
+        id: "com.example.menu.open",
+        label: "打开视图",
+        enabled: true,
+        checked: false,
+        type: "normal",
+      },
+    ]);
+    pluginsMenu.submenu[0].click();
+    assert.deepEqual(calls, ["clicked"]);
+  } finally {
+    setPluginApplicationMenuProvider(null);
+  }
 });
 
 test("requestWindowCommandClose sends command-close to renderer-capable windows", () => {

@@ -24,6 +24,7 @@ import { AppHostTreeLayer } from './AppHostTreeLayer';
 import { getUiThemeById } from '../../infrastructure/config/uiThemes';
 import { buildAppThemeCssVars } from '../state/settingsStateDefaults';
 import { useMainWindowInputFocusRecovery } from '../state/useMainWindowInputFocusRecovery';
+import { PluginContributionHost } from '../../components/plugins/PluginContributionHost';
 
 const LazyProtocolSelectDialog = lazy(() => import('../../components/ProtocolSelectDialog'));
 const LazyQuickSwitcher = lazy(() =>
@@ -667,6 +668,8 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
         onCancel={handlePassphraseCancel}
         onSkip={handlePassphraseSkip}
       />
+
+      <PluginContributionHost locale={settings.uiLanguage} theme={resolvedTheme} />
 
       {/* Empty vault vs cloud data confirmation dialog (#679).
           This dialog intentionally cannot be dismissed — the user MUST

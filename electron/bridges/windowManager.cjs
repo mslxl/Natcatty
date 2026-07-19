@@ -43,6 +43,7 @@ let cachedNativeTheme = null;
 
 let handlersRegistered = false; // Prevent duplicate IPC handler registration
 let menuDeps = null;
+let pluginApplicationMenuProvider = null;
 let electronApp = null; // Reference to Electron app for userData path
 let isQuitting = false;
 // Set right before electron-updater's quitAndInstall() drives app.quit() for a
@@ -261,9 +262,10 @@ function getWindowBoundsState(win, overrideBounds) {
 }
 
 const MENU_LABELS = {
-  en: { edit: "Edit", view: "View", window: "Window", reload: "Reload", closeWindow: "Close Window" },
-  "zh-CN": { edit: "编辑", view: "视图", window: "窗口", reload: "重新加载", closeWindow: "关闭窗口" },
-  "zh-TW": { edit: "編輯", view: "檢視", window: "視窗", reload: "重新載入", closeWindow: "關閉視窗" },
+  en: { edit: "Edit", view: "View", plugins: "Plugins", window: "Window", reload: "Reload", closeWindow: "Close Window" },
+  ru: { edit: "Правка", view: "Вид", plugins: "Плагины", window: "Окно", reload: "Перезагрузить", closeWindow: "Закрыть окно" },
+  "zh-CN": { edit: "编辑", view: "视图", plugins: "插件", window: "窗口", reload: "重新加载", closeWindow: "关闭窗口" },
+  "zh-TW": { edit: "編輯", view: "檢視", plugins: "外掛程式", window: "視窗", reload: "重新載入", closeWindow: "關閉視窗" },
 };
 
 function tMenu(language, key) {
@@ -279,7 +281,19 @@ function tMenu(language, key) {
 function rebuildApplicationMenu() {
   if (!menuDeps?.Menu || !menuDeps?.app) return;
   const menu = buildAppMenu(menuDeps.Menu, menuDeps.app, menuDeps.isMac, currentLanguage);
-  menuDeps.Menu.setApplicationMenu(menu);
+  menuDeps.Menu.setApplicationMenu?.(menu);
+}
+
+function setPluginApplicationMenuProvider(provider) {
+  if (provider != null && typeof provider !== "function") {
+    throw new TypeError("Plugin application menu provider must be a function");
+  }
+  pluginApplicationMenuProvider = provider ?? null;
+  rebuildApplicationMenu();
+}
+
+function getCurrentLanguage() {
+  return currentLanguage;
 }
 
 function getWindowForIpcEvent(event) {
@@ -1247,6 +1261,35 @@ function buildAppMenu(Menu, app, isMac, language = currentLanguage) {
         { role: "togglefullscreen" },
       ],
     },
+    ...(() => {
+      let items = [];
+      try { items = pluginApplicationMenuProvider?.() ?? []; } catch {}
+      if (!Array.isArray(items) || items.length === 0) return [];
+      const sortedItems = [...items].sort((left, right) => (
+        String(left.group ?? "").localeCompare(String(right.group ?? ""))
+        || Number(left.order ?? 0) - Number(right.order ?? 0)
+        || String(left.id ?? "").localeCompare(String(right.id ?? ""))
+      ));
+      const submenu = [];
+      let previousGroup = null;
+      for (const item of sortedItems) {
+        const group = String(item.group ?? "");
+        if (previousGroup != null && group !== previousGroup) submenu.push({ type: "separator" });
+        previousGroup = group;
+        submenu.push({
+          id: item.id,
+          label: item.label,
+          enabled: item.enabled !== false,
+          type: item.checked == null ? "normal" : "checkbox",
+          checked: item.checked === true,
+          click: item.click,
+        });
+      }
+      return [{
+        label: tMenu(language, "plugins"),
+        submenu,
+      }];
+    })(),
     {
       label: tMenu(language, "window"),
       submenu: [
@@ -1337,6 +1380,8 @@ module.exports = {
   closeTerminalPopupWindow,
   prewarmSettingsWindow,
   buildAppMenu,
+  getCurrentLanguage,
+  setPluginApplicationMenuProvider,
   getMainWindow,
   getMainWindows: getMainWindowList,
   getAppContentWindows: getAppContentWindowList,

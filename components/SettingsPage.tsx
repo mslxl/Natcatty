@@ -2,7 +2,7 @@
  * Settings Page - Standalone settings window content
  * This component is rendered in a separate Electron window
  */
-import { AppWindow, Cloud, FileType, HardDrive, Keyboard, Palette, Sparkles, TerminalSquare, X } from "lucide-react";
+import { AppWindow, Cloud, FileType, HardDrive, Keyboard, Palette, Puzzle, Sparkles, TerminalSquare, X } from "lucide-react";
 import React, { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useSettingsState } from "../application/state/useSettingsState";
 import { useAISettingsState } from "../application/state/useAISettingsState";
@@ -21,6 +21,8 @@ import { LazyLoadBoundary } from "./ui/lazy-load-boundary";
 import { ExternalMcpApprovalsHost } from "./ai/ExternalMcpApprovalsHost";
 import { useExternalMcpGrantPersister } from "./ai/useExternalMcpGrantPersister";
 import { setupMcpApprovalBridge } from "../infrastructure/ai/shared/approvalGate";
+import { usePluginContributions } from "../application/state/usePluginContributions";
+import { PluginContributionHost } from "./plugins/PluginContributionHost";
 
 const LazySettingsApplicationTab = lazy(() => import("./SettingsApplicationTab"));
 const LazySettingsAppearanceTab = lazy(() => import("./settings/tabs/SettingsAppearanceTab"));
@@ -30,6 +32,7 @@ const LazySettingsAITab = lazy(() => import("./settings/tabs/SettingsAITab"));
 const LazySettingsSyncTab = lazy(() => import("./settings/tabs/SettingsSyncTab"));
 const LazySettingsTerminalTab = lazy(() => import("./settings/tabs/SettingsTerminalTab"));
 const LazySettingsSystemTab = lazy(() => import("./settings/tabs/SettingsSystemTab"));
+const LazySettingsPluginsTab = lazy(() => import("./settings/tabs/SettingsPluginsTab"));
 
 const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 
@@ -304,6 +307,7 @@ const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }
     });
     const [activeTab, setActiveTab] = useState("application");
     const [mountedTabs, setMountedTabs] = useState(() => new Set(["application"]));
+    const { available: pluginRuntimeAvailable } = usePluginContributions();
 
     useEffect(() => {
         notifyRendererReady();
@@ -375,6 +379,12 @@ const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }
                             <AppWindow size={14} className={settingsTabIconClassName} />
                             <span className={settingsTabLabelClassName}>{t("settings.tab.application")}</span>
                         </TabsTrigger>
+                        {pluginRuntimeAvailable && (
+                            <TabsTrigger value="plugins" className={settingsTabTriggerClassName}>
+                                <Puzzle size={14} className={settingsTabIconClassName} />
+                                <span className={settingsTabLabelClassName}>{t("settings.tab.plugins")}</span>
+                            </TabsTrigger>
+                        )}
                         <TabsTrigger
                             value="appearance"
                             className={settingsTabTriggerClassName}
@@ -585,10 +595,16 @@ const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }
                             />
                         </SettingsLazyTab>
                     )}
+                    {mountedTabs.has("plugins") && pluginRuntimeAvailable && (
+                        <SettingsLazyTab value="plugins">
+                            <LazySettingsPluginsTab />
+                        </SettingsLazyTab>
+                    )}
                 </div>
             </Tabs>
         </div>
         <ExternalMcpApprovalsHost />
+        <PluginContributionHost locale={settings.uiLanguage} theme={settings.resolvedTheme} />
         </>
     );
 };
