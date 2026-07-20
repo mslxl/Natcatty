@@ -194,3 +194,82 @@ test('plugin terminal link host performs no request when neither Provider kind i
   assert.deepEqual(links, []);
   assert.equal(requests, 0);
 });
+
+test('plugin terminal link host rejects async results after the buffer line changes', async () => {
+  let provider: { provideLinks(line: number, callback: (links?: unknown[]) => void): void } | undefined;
+  let lineText = 'visit example';
+  let resolveLinks: ((value: {
+    stale: false;
+    results: Array<{ providerId: string; status: 'ok'; result: unknown }>;
+  }) => void) | undefined;
+  const term = {
+    element: undefined,
+    buffer: { active: { getLine() { return { translateToString() { return lineText; } }; } } },
+    registerLinkProvider(next: typeof provider) {
+      provider = next;
+      return { dispose() {} };
+    },
+  };
+  registerPluginTerminalLinkProvider({
+    term: term as never,
+    request(kind) {
+      if (kind === 'terminal.hover') return Promise.resolve({ stale: false, results: [] });
+      return new Promise((resolve) => { resolveLinks = resolve; });
+    },
+    canActivate: () => true,
+    async openExternal() {},
+  });
+
+  const result = new Promise<unknown[]>((resolve) => {
+    provider?.provideLinks(1, (links) => resolve(links ?? []));
+  });
+  lineText = 'unrelated output';
+  resolveLinks?.({
+    stale: false,
+    results: [{
+      providerId: 'com.example.links',
+      status: 'ok',
+      result: { links: [{ start: 6, length: 7, uri: 'https://example.com' }] },
+    }],
+  });
+  assert.deepEqual(await result, []);
+});
+
+test('plugin terminal link activation revalidates the accepted buffer line', async () => {
+  let provider: { provideLinks(line: number, callback: (links?: unknown[]) => void): void } | undefined;
+  let lineText = 'visit example';
+  const opened: string[] = [];
+  const term = {
+    element: undefined,
+    buffer: { active: { getLine() { return { translateToString() { return lineText; } }; } } },
+    registerLinkProvider(next: typeof provider) {
+      provider = next;
+      return { dispose() {} };
+    },
+  };
+  registerPluginTerminalLinkProvider({
+    term: term as never,
+    async request(kind) {
+      return kind === 'terminal.link'
+        ? {
+            stale: false,
+            results: [{
+              providerId: 'com.example.links',
+              status: 'ok',
+              result: { links: [{ start: 6, length: 7, uri: 'https://example.com' }] },
+            }],
+          }
+        : { stale: false, results: [] };
+    },
+    canActivate: () => true,
+    async openExternal(uri) { opened.push(uri); },
+  });
+
+  const links = await new Promise<Array<{ activate(event: MouseEvent): void }>>((resolve) => {
+    provider?.provideLinks(1, (value) => resolve((value ?? []) as Array<{ activate(event: MouseEvent): void }>));
+  });
+  lineText = 'unrelated output';
+  links[0]?.activate({} as MouseEvent);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(opened, []);
+});

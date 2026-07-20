@@ -2588,7 +2588,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       if (!retryStillActive()) return;
       if (host.protocol === "serial") {
         sessionStarters.startSerial(term);
-      } else if (host.protocol === "local" || host.hostname === "localhost") {
+      } else if (effectiveTerminalProtocol === 'local') {
         sessionStarters.startLocal(term);
       } else if (host.protocol === "telnet") {
         sessionStarters.startTelnet(term);
@@ -2905,6 +2905,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     commandBufferRef,
     scriptRecorderRef: recorderRef,
     passwordPromptActiveRef,
+    allowHostStyleGreaterThanPrompt: isNetworkDevice,
     onOutputTriggerUserInputRef: noteOutputTriggerUserInputRef,
     promptLineBreakStateRef,
     sudoAutofillRef,

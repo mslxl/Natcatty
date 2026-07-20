@@ -7,6 +7,15 @@ test('effective terminal protocol reflects enabled ET and Mosh transports', () =
   assert.equal(resolveEffectiveTerminalProtocol({ protocol: 'ssh' }), 'ssh');
   assert.equal(resolveEffectiveTerminalProtocol({ protocol: 'ssh', moshEnabled: true }), 'mosh');
   assert.equal(resolveEffectiveTerminalProtocol({ protocol: 'ssh', etEnabled: true }), 'et');
+  assert.equal(resolveEffectiveTerminalProtocol({ protocol: 'ssh', hostname: 'localhost' }), 'local');
+  assert.equal(
+    resolveEffectiveTerminalProtocol({ protocol: 'ssh', hostname: 'localhost', moshEnabled: true }),
+    'mosh',
+  );
+  assert.equal(
+    resolveEffectiveTerminalProtocol({ protocol: 'ssh', hostname: 'localhost', etEnabled: true }),
+    'et',
+  );
   assert.equal(
     resolveEffectiveTerminalProtocol({ protocol: 'ssh', moshEnabled: true, etEnabled: true }),
     'mosh',

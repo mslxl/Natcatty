@@ -205,15 +205,20 @@ export function registerPluginTerminalLinkProvider(options: {
           callback(undefined);
           return;
         }
+        const currentLine = lineTextAt(options.term, bufferLineNumber);
+        if (currentLine == null || currentLine.text !== line.text) {
+          callback(undefined);
+          return;
+        }
         const links = linkResponse.results.flatMap((result) => result.status === 'ok'
-          ? normalizePluginLinkResult(result.providerId, result.result, line.text.length)
+          ? normalizePluginLinkResult(result.providerId, result.result, currentLine.text.length)
           : []);
         const hovers = hoverResponse.results.flatMap((result) => result.status === 'ok'
-          ? normalizePluginHoverResult(result.providerId, result.result, line.text.length)
+          ? normalizePluginHoverResult(result.providerId, result.result, currentLine.text.length)
           : []);
         const consumedHoverKeys = new Set<string>();
         const result: ILink[] = links.flatMap((link) => {
-          const cellRange = pluginTerminalCellRange(line, link.start, link.length);
+          const cellRange = pluginTerminalCellRange(currentLine, link.start, link.length);
           if (!cellRange) return [];
           const hover = matchingHover(hovers, link.providerId, link.start, link.length);
           if (hover) consumedHoverKeys.add(`${hover.providerId}\0${hover.start}\0${hover.length}`);
@@ -223,30 +228,43 @@ export function registerPluginTerminalLinkProvider(options: {
               start: { x: cellRange.x + 1, y: bufferLineNumber },
               end: { x: cellRange.x + cellRange.width, y: bufferLineNumber },
             },
-            text: line.text.slice(link.start, link.start + link.length),
+            text: currentLine.text.slice(link.start, link.start + link.length),
             decorations: { pointerCursor: true, underline: true },
             activate: (event) => {
-              if (options.canActivate(event)) void options.openExternal(link.uri).catch(() => {});
+              if (lineTextAt(options.term, bufferLineNumber)?.text === currentLine.text
+                && options.canActivate(event)) void options.openExternal(link.uri).catch(() => {});
             },
             ...(hoverText ? {
-              hover: (event: MouseEvent) => tooltip.show(event, hoverText),
+              hover: (event: MouseEvent) => {
+                if (lineTextAt(options.term, bufferLineNumber)?.text === currentLine.text) {
+                  tooltip.show(event, hoverText);
+                } else {
+                  tooltip.hide();
+                }
+              },
               leave: () => tooltip.hide(),
             } : {}),
           }];
         });
         for (const hover of hovers) {
           if (consumedHoverKeys.has(`${hover.providerId}\0${hover.start}\0${hover.length}`)) continue;
-          const cellRange = pluginTerminalCellRange(line, hover.start, hover.length);
+          const cellRange = pluginTerminalCellRange(currentLine, hover.start, hover.length);
           if (!cellRange) continue;
           result.push({
             range: {
               start: { x: cellRange.x + 1, y: bufferLineNumber },
               end: { x: cellRange.x + cellRange.width, y: bufferLineNumber },
             },
-            text: line.text.slice(hover.start, hover.start + hover.length),
+            text: currentLine.text.slice(hover.start, hover.start + hover.length),
             decorations: { pointerCursor: false, underline: false },
             activate: () => {},
-            hover: (event: MouseEvent) => tooltip.show(event, hover.contents),
+            hover: (event: MouseEvent) => {
+              if (lineTextAt(options.term, bufferLineNumber)?.text === currentLine.text) {
+                tooltip.show(event, hover.contents);
+              } else {
+                tooltip.hide();
+              }
+            },
             leave: () => tooltip.hide(),
           });
         }

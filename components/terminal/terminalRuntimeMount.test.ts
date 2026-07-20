@@ -135,6 +135,8 @@ test('session launch paths use the same effective protocol as Provider snapshots
     terminalSource,
     /if \(effectiveTerminalProtocol !== 'mosh'\) \{[\s\S]*?onMoshSessionReady/,
   );
+  assert.doesNotMatch(effectsSource, /effectiveTerminalProtocol === "local" \|\| host\.hostname === "localhost"/);
+  assert.doesNotMatch(terminalSource, /host\.protocol === "local" \|\| host\.hostname === "localhost"/);
   assert.match(
     terminalSource,
     /if \(effectiveTerminalProtocol === 'mosh' && !moshShellReady\)[\s\S]*?\}, \[effectiveTerminalProtocol, host, isPendingScriptAlreadyHandled/,
@@ -177,6 +179,10 @@ test('terminal view derives the network-device prompt policy before autocomplete
     /const isNetworkDevice = host\.deviceType === 'network'[\s\S]*?classifyDistroId\(host\.distro\) === 'network-device';/,
   );
   assert.match(terminalViewSource, /allowHostStyleGreaterThanPrompt=\{isNetworkDevice\}/);
+  assert.match(
+    terminalSource,
+    /xTermRuntimeContextRef\.current = \{[\s\S]*?allowHostStyleGreaterThanPrompt: isNetworkDevice,/,
+  );
 });
 
 test('backend exits are forwarded to the Provider lifecycle with their exit code', () => {

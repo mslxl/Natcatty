@@ -531,6 +531,47 @@ test('visual Provider host discards normal-buffer matcher results after alternat
   host.dispose();
 });
 
+test('visual Provider host invalidates an in-flight matcher immediately when output changes', async () => {
+  let onWriteParsed: (() => void) | undefined;
+  let matcherSignal: AbortSignal | undefined;
+  let decorations = 0;
+  let lineText = 'failed';
+  const term = {
+    element: null,
+    buffer: {
+      active: {
+        type: 'normal',
+        baseY: 0,
+        cursorY: 0,
+        getLine() { return { isWrapped: false, translateToString() { return lineText; } }; },
+      },
+    },
+    onWriteParsed(listener: () => void) { onWriteParsed = listener; return { dispose() {} }; },
+    registerMarker() { return { dispose() {} }; },
+    registerDecoration() { decorations += 1; return { dispose() {}, onRender() {} }; },
+  };
+  const host = new PluginTerminalVisualProviderHost({
+    term: term as never,
+    matcherQuietMs: 1,
+    isProviderAvailable: (kind) => kind === 'terminal.matcher',
+    request(_kind, _operation, _payload, _deadlineMs, _supersessionKey, signal) {
+      matcherSignal = signal;
+      return new Promise((resolve) => {
+        signal?.addEventListener('abort', () => resolve({ stale: true, results: [] }), { once: true });
+      });
+    },
+  });
+  onWriteParsed?.();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(matcherSignal?.aborted, false);
+
+  lineText = 'new output';
+  onWriteParsed?.();
+  assert.equal(matcherSignal?.aborted, true);
+  assert.equal(decorations, 0);
+  host.dispose();
+});
+
 test('visual Provider host reacts to reduced-motion preference changes', async () => {
   let listener: ((event: { matches: boolean }) => void) | undefined;
   let removed = false;

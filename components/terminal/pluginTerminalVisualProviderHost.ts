@@ -135,6 +135,7 @@ export class PluginTerminalVisualProviderHost implements IDisposable {
   readonly #matcherDecorations: Array<IDecoration | IMarker | undefined> = [];
   readonly #annotationDecorations: Array<IDecoration | IMarker | undefined> = [];
   readonly #requestControllers = new Set<AbortController>();
+  readonly #matcherRequestControllers = new Set<AbortController>();
   #matcherTimer: ReturnType<typeof setTimeout> | undefined;
   #matcherGeneration = 0;
   #annotationGeneration = 0;
@@ -194,7 +195,13 @@ export class PluginTerminalVisualProviderHost implements IDisposable {
       });
     }
     this.#isProviderAvailable = options.isProviderAvailable ?? (() => true);
-    this.#disposables.push(this.#term.onWriteParsed(() => this.#scheduleMatcherRefresh()));
+    this.#disposables.push(this.#term.onWriteParsed(() => {
+      this.#matcherGeneration += 1;
+      for (const controller of this.#matcherRequestControllers) controller.abort();
+      this.#matcherRequestControllers.clear();
+      disposeAll(this.#matcherDecorations);
+      this.#scheduleMatcherRefresh();
+    }));
     if (this.#active && this.#visible && this.#isProviderAvailable('terminal.background')) {
       void this.refreshBackground('runtime-created', options.terminalBackground);
     }
@@ -208,6 +215,7 @@ export class PluginTerminalVisualProviderHost implements IDisposable {
   ): Promise<PluginTerminalProviderCallResponse> {
     const controller = new AbortController();
     this.#requestControllers.add(controller);
+    if (kind === 'terminal.matcher') this.#matcherRequestControllers.add(controller);
     try {
       return await waitForPluginTerminalProviderResponse(
         this.#request(
@@ -223,12 +231,14 @@ export class PluginTerminalVisualProviderHost implements IDisposable {
       );
     } finally {
       this.#requestControllers.delete(controller);
+      this.#matcherRequestControllers.delete(controller);
     }
   }
 
   #abortProviderRequests(): void {
     for (const controller of this.#requestControllers) controller.abort();
     this.#requestControllers.clear();
+    this.#matcherRequestControllers.clear();
   }
 
   async commandSubmitted(command: string): Promise<void> {
