@@ -221,6 +221,11 @@ if (isDev) {
   app.setName("Netcatty Dev");
   app.setPath("userData", path.join(app.getPath("userData"), "dev"));
 }
+const { applyPortableDataDirectory } = require("./portableData.cjs");
+const portableData = applyPortableDataDirectory({ app });
+if (portableData) {
+  console.info(`[Main] Portable data directory: ${portableData.dataDirectory}`);
+}
 const preload = path.join(__dirname, "preload.cjs");
 const isMac = process.platform === "darwin";
 const appIconManager = require("./bridges/appIconManager.cjs");

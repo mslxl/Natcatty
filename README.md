@@ -206,6 +206,8 @@ Download the latest release for your platform from [GitHub Releases](https://git
 
 Or browse all releases at [GitHub Releases](https://github.com/binaricat/Netcatty/releases).
 
+> **Windows portable data:** Exit Netcatty, then create a folder named `data` beside `Netcatty.exe` (zip build) or beside the portable launcher. Netcatty will store its profile there on the next launch. Saved passwords and private keys remain protected by the Windows user account that created them, so they must be re-entered after moving the folder to another computer or Windows account.
+
 > **macOS Users:** Current releases are expected to be code-signed and notarized. If Gatekeeper still warns, make sure you downloaded the latest official build from GitHub Releases.
 
 ### Nix / NixOS
