@@ -30,6 +30,7 @@ function setup(options = {}) {
   const notifications = [];
   const permissionCalls = [];
   const active = new Set(options.activePluginIds ?? []);
+  let contributionListener = null;
   const contributionService = {
     listProviders({ kind } = {}) {
       return kind == null ? providers : providers.filter((entry) => entry.provider.kind === kind);
@@ -59,6 +60,10 @@ function setup(options = {}) {
           securityPrincipal: `principal:${entry.pluginId}`,
         },
       };
+    },
+    onDidChange(listener) {
+      contributionListener = listener;
+      return Object.freeze({ dispose() { contributionListener = null; } });
     },
   };
   const runtimeSupervisor = {
@@ -92,6 +97,7 @@ function setup(options = {}) {
     calls,
     notifications,
     permissionCalls,
+    emitContributionChange() { contributionListener?.(); },
     service: new PluginTerminalProviderService({ contributionService, permissionEngine, runtimeSupervisor }),
   };
 }
@@ -362,6 +368,35 @@ test("failed and cancelled Provider results never authorize later lifecycle deli
     ]);
     assert.deepEqual(notifications, []);
   }
+});
+
+test("terminal lifecycle cleanup removes authorizations for unavailable providers and disposed sessions", async () => {
+  const providers = [provider("com.example.alpha", "com.example.alpha.completion", "terminal.completion")];
+  const { emitContributionChange, service } = setup({ providers });
+  await service.invokeProvider({
+    providerId: "com.example.alpha.completion",
+    kind: "terminal.completion",
+    operation: "provide",
+    requestId: "authorize-cleanup",
+    payload: { session },
+  });
+  assert.equal(service.lifecycleAuthorizations.size, 1);
+
+  providers.length = 0;
+  emitContributionChange();
+  assert.equal(service.lifecycleAuthorizations.size, 0);
+
+  providers.push(provider("com.example.alpha", "com.example.alpha.completion", "terminal.completion"));
+  await service.invokeProvider({
+    providerId: "com.example.alpha.completion",
+    kind: "terminal.completion",
+    operation: "provide",
+    requestId: "authorize-dispose",
+    payload: { session },
+  });
+  assert.equal(service.lifecycleAuthorizations.size, 1);
+  await service.publishSessionEvent({ type: "disposed", session });
+  assert.equal(service.lifecycleAuthorizations.size, 0);
 });
 
 test("terminal Provider fan-out enforces the per-request Provider quota", async () => {

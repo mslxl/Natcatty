@@ -221,10 +221,30 @@ class PluginTerminalProviderService {
     this.runtimeSupervisor = options.runtimeSupervisor;
     this.permissionEngine = options.permissionEngine;
     this.lifecycleAuthorizations = new Map();
+    this.contributionService.onDidChange?.(() => {
+      this.pruneLifecycleAuthorizations(this.activeTerminalProviderPluginIds());
+    });
   }
 
   lifecycleAuthorizationKey(pluginId, sessionId) {
     return `${pluginId}\0${sessionId}`;
+  }
+
+  activeTerminalProviderPluginIds() {
+    const pluginIds = new Set();
+    for (const entry of this.contributionService.listProviders()) {
+      if (TERMINAL_PROVIDER_KIND_SET.has(entry.provider.kind)) pluginIds.add(entry.pluginId);
+    }
+    return pluginIds;
+  }
+
+  pruneLifecycleAuthorizations(pluginIds, sessionId = null) {
+    for (const [key, authorization] of this.lifecycleAuthorizations) {
+      if ((sessionId == null || authorization.sessionId === sessionId)
+        && !pluginIds.has(authorization.identity.pluginId)) {
+        this.lifecycleAuthorizations.delete(key);
+      }
+    }
   }
 
   rememberLifecycleAuthorization(activation, identity, sessionId) {
@@ -240,6 +260,7 @@ class PluginTerminalProviderService {
           securityPrincipal: identity.securityPrincipal,
         }),
         identity,
+        sessionId,
       }),
     );
   }
@@ -398,10 +419,8 @@ class PluginTerminalProviderService {
   async publishSessionEvent(event) {
     const normalized = normalizeTerminalSessionEvent(event);
     const sessionId = normalized.session.sessionId;
-    const pluginIds = new Set();
-    for (const entry of this.contributionService.listProviders()) {
-      if (TERMINAL_PROVIDER_KIND_SET.has(entry.provider.kind)) pluginIds.add(entry.pluginId);
-    }
+    const pluginIds = this.activeTerminalProviderPluginIds();
+    this.pruneLifecycleAuthorizations(pluginIds, sessionId);
     const deliveries = await Promise.all([...pluginIds].sort().map(async (pluginId) => {
       const key = this.lifecycleAuthorizationKey(pluginId, sessionId);
       const authorization = this.lifecycleAuthorizations.get(key);
@@ -430,6 +449,11 @@ class PluginTerminalProviderService {
         return Object.freeze({ pluginId, delivered: false });
       }
     }));
+    if (normalized.type === "disposed") {
+      for (const [key, authorization] of this.lifecycleAuthorizations) {
+        if (authorization.sessionId === sessionId) this.lifecycleAuthorizations.delete(key);
+      }
+    }
     return freezeJson(deliveries);
   }
 }
