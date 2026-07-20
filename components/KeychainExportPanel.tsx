@@ -257,6 +257,7 @@ export const KeychainExportPanel: React.FC<KeychainExportPanelProps> = ({
                         sshTcpConnectTimeoutMs: connectionTimeouts.tcpConnectTimeoutSeconds * 1000,
                         sshAuthReadyTimeoutMs: connectionTimeouts.authReadyTimeoutSeconds * 1000,
                         enableKeyboardInteractive: true,
+                        requiresMfa: !!effectiveExportHost.requiresMfa,
                         sessionId: `export-key:${effectiveExportHost.id}:${panel.key.id}`,
                       });
 

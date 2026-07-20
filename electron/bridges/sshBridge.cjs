@@ -711,6 +711,7 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
           : await getAvailableAgentSocket();
       const authConfig = buildAuthHandler({
         authMethod: jump.authMethod,
+        requiresMfa: !!jump.requiresMfa,
         privateKey: connOpts.privateKey,
         password: connOpts.password,
         passphrase: connOpts.passphrase,

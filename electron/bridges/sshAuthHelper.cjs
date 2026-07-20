@@ -835,20 +835,33 @@ function isPasswordProvided(password) {
 * @param {Array} [options.unlockedEncryptedKeys] - Array of unlocked encrypted keys with passphrases
  */
 /**
- * Append the SSH password method (always password-first).
- * Keyboard-interactive is added separately as last-resort fallback so dual-
- * method servers still reach multi-round PAM/EDR after password fails or only
- * partially succeeds (#2150 / #2217).
+ * Append the saved-password methods. MFA/PAM hosts can require the login
+ * password to be submitted through keyboard-interactive and may withdraw that
+ * method after a rejected plain-password request, so those hosts put KI first.
+ * Other hosts retain the established password-first order.
  *
  * skipPasswordMethod (2FA_RETRY): omit the password method so the full
  * conversation happens over keyboard-interactive; the saved host password can
  * still autofill the first password-looking KI prompt.
  *
  * @param {Array} authMethods
- * @param {{ hasPassword: boolean, skipPasswordMethod?: boolean, asObjects?: boolean }} opts
+ * @param {{ hasPassword: boolean, skipPasswordMethod?: boolean, preferKeyboardInteractive?: boolean, asObjects?: boolean }} opts
  */
-function appendPasswordAuthMethods(authMethods, { hasPassword, skipPasswordMethod = false, asObjects = false } = {}) {
-  if (!hasPassword || skipPasswordMethod) return;
+function appendPasswordAuthMethods(authMethods, {
+  hasPassword,
+  skipPasswordMethod = false,
+  preferKeyboardInteractive = false,
+  asObjects = false,
+} = {}) {
+  if (skipPasswordMethod) return;
+  if (preferKeyboardInteractive) {
+    if (asObjects) {
+      authMethods.push({ type: "keyboard-interactive", id: "keyboard-interactive" });
+    } else {
+      authMethods.push("keyboard-interactive");
+    }
+  }
+  if (!hasPassword) return;
   if (asObjects) {
     authMethods.push({ type: "password", id: "password" });
   } else {
@@ -881,6 +894,7 @@ function buildAuthHandler(options) {
     sshAgentSocketOverride,
     onAuthAttempt,
     skipPasswordMethod = false,
+    requiresMfa = false,
   } = options;
 
   // Determine what type of explicit auth the user configured
@@ -963,6 +977,7 @@ function buildAuthHandler(options) {
     appendPasswordAuthMethods(authMethods, {
       hasPassword: !!password,
       skipPasswordMethod,
+      preferKeyboardInteractive: requiresMfa,
       asObjects: false,
     });
     ensureKeyboardInteractiveMethod(authMethods, { asObjects: false });
@@ -978,11 +993,9 @@ function buildAuthHandler(options) {
   }
 
   // Build comprehensive authMethods array with all auth options
-  // Order depends on what user explicitly configured:
-  // - Password-only: password -> keyboard-interactive (no default-key fallback)
-    // - Key-only: user key -> password -> agent -> default keys -> keyboard-interactive
-  // - Agent configured: agent -> user key -> password -> default keys -> keyboard-interactive
-  // - No explicit auth: agent -> default keys -> keyboard-interactive
+  // Order depends on what user explicitly configured. requiresMfa moves
+  // keyboard-interactive ahead of password, while an explicitly selected key,
+  // certificate, or agent remains the first factor.
   const authMethods = [];
 
   if (isPasswordOnly) {
@@ -991,12 +1004,16 @@ function buildAuthHandler(options) {
     appendPasswordAuthMethods(authMethods, {
       hasPassword: !!password,
       skipPasswordMethod,
+      preferKeyboardInteractive: requiresMfa,
       asObjects: true,
     });
   } else if (isAutomatic) {
-    // Automatic: mirror the familiar OpenSSH-style order. Try local key
-    // sources first, then use a saved password as the final non-interactive
-    // fallback before keyboard-interactive prompts.
+    // Automatic normally mirrors the familiar OpenSSH-style order. With MFA
+    // enabled and no saved password, prompt before probing discovered keys so
+    // repeated key attempts cannot exhaust a server's authentication limit.
+    if (requiresMfa && !hasExplicitPassword) {
+      authMethods.push({ type: "keyboard-interactive", id: "keyboard-interactive" });
+    }
     if (effectiveAgent) {
       authMethods.push({ type: "agent", id: "agent" });
     }
@@ -1018,6 +1035,7 @@ function buildAuthHandler(options) {
     appendPasswordAuthMethods(authMethods, {
       hasPassword: !!password,
       skipPasswordMethod,
+      preferKeyboardInteractive: requiresMfa && hasExplicitPassword,
       asObjects: true,
     });
   } else if (isKeyOnly) {
@@ -1035,6 +1053,7 @@ function buildAuthHandler(options) {
     appendPasswordAuthMethods(authMethods, {
       hasPassword: !!password,
       skipPasswordMethod,
+      preferKeyboardInteractive: requiresMfa,
       asObjects: true,
     });
 
@@ -1073,6 +1092,7 @@ function buildAuthHandler(options) {
     appendPasswordAuthMethods(authMethods, {
       hasPassword: !!password,
       skipPasswordMethod,
+      preferKeyboardInteractive: requiresMfa,
       asObjects: true,
     });
 

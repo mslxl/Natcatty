@@ -98,3 +98,15 @@ test("localized vault messages include host icon labels", () => {
     assert.deepEqual(missing, [], `${locale.name} is missing host icon labels`);
   }
 });
+
+test("localized vault messages include interactive authentication labels", () => {
+  const keys = [
+    "hostDetails.auth.mfaFirst",
+    "hostDetails.auth.mfaFirst.desc",
+  ];
+
+  for (const locale of LOCALIZED_SETTINGS_LOCALES) {
+    const missing = keys.filter((key) => !locale.messages[key]);
+    assert.deepEqual(missing, [], `${locale.name} is missing interactive authentication labels`);
+  }
+});

@@ -771,6 +771,7 @@ test("startMosh omits identity file paths when password auth is explicit", async
       hostname: "example.test",
       username: "alice",
       authMethod: "password",
+      requiresMfa: true,
       password: "saved-secret",
       identityFilePaths: ["/should/not/be/used"],
       port: 2200,
@@ -811,6 +812,7 @@ test("startMosh omits identity file paths when password auth is explicit", async
 
   assert.ok(capturedOptions);
   assert.equal(capturedOptions.password, "saved-secret");
+  assert.equal(capturedOptions.requiresMfa, true);
   assert.equal(capturedOptions.identityFilePaths, undefined);
 });
 

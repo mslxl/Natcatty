@@ -112,11 +112,12 @@ test("buildSftpHostCredentials forwards target and jump-host timeouts", () => {
 });
 
 test("buildSftpHostCredentials keeps automatic auth per target and jump host", () => {
-  const jumpHost = host({ id: "jump-1", authMethod: "auto", password: "jump-secret" });
+  const jumpHost = host({ id: "jump-1", authMethod: "auto", password: "jump-secret", requiresMfa: true });
   const credentials = buildSftpHostCredentials({
     host: host({
       authMethod: "auto",
       password: "target-secret",
+      requiresMfa: true,
       hostChain: { hostIds: ["jump-1"] },
     }),
     hosts: [jumpHost],
@@ -125,7 +126,9 @@ test("buildSftpHostCredentials keeps automatic auth per target and jump host", (
   });
 
   assert.equal(credentials.authMethod, "auto");
+  assert.equal(credentials.requiresMfa, true);
   assert.equal(credentials.jumpHosts?.[0]?.authMethod, "auto");
+  assert.equal(credentials.jumpHosts?.[0]?.requiresMfa, true);
 });
 
 test("buildSftpHostCredentials drops stale identity paths for password-only hosts", () => {

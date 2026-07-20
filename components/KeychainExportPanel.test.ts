@@ -27,4 +27,5 @@ test('key export defaults blank usernames the same way as other SSH entry points
 
 test('key export forwards host MFA metadata to one-off exec commands', () => {
   assert.match(source, /hostId: effectiveExportHost\.id/);
+  assert.match(source, /requiresMfa: !!effectiveExportHost\.requiresMfa/);
 });
