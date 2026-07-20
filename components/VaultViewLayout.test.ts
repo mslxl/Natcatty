@@ -29,3 +29,9 @@ test("vault sidebar toggle keeps an accessible action label", () => {
     /aria-label=\{sidebarCollapsed \? t\("vault\.sidebar\.expand"\) : t\("vault\.sidebar\.collapse"\)\}/,
   );
 });
+
+test("keychain deletion clears the remembered passphrase through the vault handler", () => {
+  assert.match(vaultViewLayoutSource, /const handleDeleteVaultKey = React\.useCallback/);
+  assert.match(vaultViewLayoutSource, /void deleteVaultKey\(\{/);
+  assert.match(vaultViewLayoutSource, /onDelete=\{handleDeleteVaultKey\}/);
+});

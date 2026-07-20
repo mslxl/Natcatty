@@ -188,27 +188,31 @@ export async function removeDefaultKeyPassphraseAliases(keyPaths: string[]): Pro
   return aliases;
 }
 
-export async function deleteVaultKey(keys: SSHKey[], keyId: string): Promise<SSHKey[]> {
-  const key = keys.find((candidate) => candidate.id === keyId);
-  if (!key) return keys;
+export async function deleteVaultKey(args: {
+  keyId: string;
+  getKeys: () => SSHKey[];
+  updateKeys: (keys: SSHKey[]) => void;
+}): Promise<void> {
+  const keys = args.getKeys();
+  const key = keys.find((candidate) => candidate.id === args.keyId);
+  if (!key) return;
 
-  const remainingKeys = keys.filter((candidate) => candidate.id !== keyId);
-  if (key.source === "reference" && key.filePath) {
-    const deletedAliases = matchingPathKeys(
-      await resolveDefaultKeyPassphraseAliases(key.filePath),
-    );
-    const remainingReferencePaths = remainingKeys
-      .filter((candidate) => candidate.source === "reference" && candidate.filePath)
-      .map((candidate) => candidate.filePath!);
-    const remainingAliases = matchingPathKeys((await Promise.all(
-      remainingReferencePaths.map(resolveDefaultKeyPassphraseAliases),
-    )).flat());
-    const pathStillReferenced = [...deletedAliases].some((path) => remainingAliases.has(path));
-    if (!pathStillReferenced) {
-      await removeDefaultKeyPassphraseAliases([key.filePath]);
-    }
+  args.updateKeys(keys.filter((candidate) => candidate.id !== args.keyId));
+  if (key.source !== "reference" || !key.filePath) return;
+
+  const deletedAliases = matchingPathKeys(
+    await resolveDefaultKeyPassphraseAliases(key.filePath),
+  );
+  const currentReferencePaths = args.getKeys()
+    .filter((candidate) => candidate.source === "reference" && candidate.filePath)
+    .map((candidate) => candidate.filePath!);
+  const currentAliases = matchingPathKeys((await Promise.all(
+    currentReferencePaths.map(resolveDefaultKeyPassphraseAliases),
+  )).flat());
+  const pathStillReferenced = [...deletedAliases].some((path) => currentAliases.has(path));
+  if (!pathStillReferenced) {
+    await removeDefaultKeyPassphraseAliases([key.filePath]);
   }
-  return remainingKeys;
 }
 
 export function clearReferenceKeyPassphrases(keys: SSHKey[], keyPaths: string[]): SSHKey[] {

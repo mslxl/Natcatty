@@ -28,6 +28,8 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
     resizeAriaLabel: t("vault.panel.resizeWidth"),
   };
   const [isSidebarResizing, setIsSidebarResizing] = React.useState(false);
+  const keyListRef = React.useRef(keys);
+  keyListRef.current = keys;
   const newHostActionsRef = React.useRef<HTMLDivElement>(null);
   const sessionActionsRef = React.useRef<HTMLDivElement>(null);
   const sidebarMinWidth = 56;
@@ -36,6 +38,18 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
     sidebarMinWidth,
     Math.min(sidebarMaxWidth, Number(sidebarWidth) || 208),
   );
+  const handleDeleteVaultKey = React.useCallback((keyId: string) => {
+    void deleteVaultKey({
+      keyId,
+      getKeys: () => keyListRef.current,
+      updateKeys: (updatedKeys) => {
+        keyListRef.current = updatedKeys;
+        void onUpdateKeys(updatedKeys);
+      },
+    }).catch((error) => {
+      console.error("[Vault] Failed to clear a deleted key's remembered passphrase.", error);
+    });
+  }, [onUpdateKeys]);
   const handleSidebarResizeStart = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     event.preventDefault();
     event.stopPropagation();
@@ -664,9 +678,7 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
                 )
               }
               onReorderKeys={onUpdateKeys}
-              onDelete={(id) => {
-                void deleteVaultKey(keys, id).then(onUpdateKeys);
-              }}
+              onDelete={handleDeleteVaultKey}
               onSaveIdentity={(identity) =>
                 onUpdateIdentities(
                   identities.find((ex) => ex.id === identity.id)

@@ -65,11 +65,18 @@ const referenceKey = (): SSHKey => ({
 test("deleting a reference key also forgets its remembered passphrase", async (t) => {
   installLocalStorage(t);
   const key = referenceKey();
+  let keys = [key];
   await saveDefaultKeyPassphrase(key.filePath!, "remembered-passphrase");
 
-  const remainingKeys = await deleteVaultKey([key], key.id);
+  await deleteVaultKey({
+    keyId: key.id,
+    getKeys: () => keys,
+    updateKeys: (updated) => {
+      keys = updated;
+    },
+  });
 
-  assert.deepEqual(remainingKeys, []);
+  assert.deepEqual(keys, []);
   assert.equal(await loadDefaultKeyPassphrase(key.filePath!), null);
 });
 
@@ -77,14 +84,94 @@ test("deleting one reference keeps the passphrase while another key uses the sam
   installLocalStorage(t);
   const key = referenceKey();
   const duplicate = { ...key, id: "duplicate-reference" };
+  let keys = [key, duplicate];
   await saveDefaultKeyPassphrase(key.filePath!, "remembered-passphrase");
 
-  const remainingKeys = await deleteVaultKey([key, duplicate], key.id);
+  await deleteVaultKey({
+    keyId: key.id,
+    getKeys: () => keys,
+    updateKeys: (updated) => {
+      keys = updated;
+    },
+  });
 
-  assert.deepEqual(remainingKeys, [duplicate]);
+  assert.deepEqual(keys, [duplicate]);
   assert.equal(
     await loadDefaultKeyPassphrase(key.filePath!),
     "remembered-passphrase",
+  );
+});
+
+test("deleting a key cannot overwrite a concurrent key-list update", async (t) => {
+  installLocalStorage(t);
+  const key = referenceKey();
+  const concurrentReference = { ...key, id: "concurrent-reference" };
+  let keys = [key];
+  await saveDefaultKeyPassphrase(key.filePath!, "remembered-passphrase");
+  let releaseHomeLookup: (() => void) | undefined;
+  const homeLookup = new Promise<void>((resolve) => {
+    releaseHomeLookup = resolve;
+  });
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: { netcatty: { getHomeDir: async () => {
+      await homeLookup;
+      return "/Users/alice";
+    } } },
+  });
+
+  const deletion = deleteVaultKey({
+    keyId: key.id,
+    getKeys: () => keys,
+    updateKeys: (updated) => {
+      keys = updated;
+    },
+  });
+  assert.deepEqual(keys, []);
+  keys = [concurrentReference];
+  releaseHomeLookup?.();
+  await deletion;
+
+  assert.deepEqual(keys, [concurrentReference]);
+  assert.equal(
+    await loadDefaultKeyPassphrase(key.filePath!),
+    "remembered-passphrase",
+  );
+});
+
+test("deleting a Windows reference clears remembered path aliases", async (t) => {
+  installLocalStorage(t);
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: { netcatty: { getHomeDir: async () => "C:\\Users\\Alice" } },
+  });
+  const key = {
+    ...referenceKey(),
+    filePath: "~/.ssh/id_ed25519",
+  };
+  let keys = [key];
+  globalThis.localStorage.setItem(
+    STORAGE_KEY_DEFAULT_KEY_PASSPHRASES,
+    JSON.stringify({
+      "~/.ssh/id_ed25519": "old-relative",
+      "C:\\Users\\Alice\\.ssh\\id_ed25519": "old-native",
+      "C:/Users/Alice/.ssh/id_ed25519": "old-normalized",
+      "C:/Users/Alice/.ssh/other": "keep",
+    }),
+  );
+
+  await deleteVaultKey({
+    keyId: key.id,
+    getKeys: () => keys,
+    updateKeys: (updated) => {
+      keys = updated;
+    },
+  });
+
+  assert.deepEqual(keys, []);
+  assert.deepEqual(
+    JSON.parse(globalThis.localStorage.getItem(STORAGE_KEY_DEFAULT_KEY_PASSPHRASES) ?? "{}"),
+    { "C:/Users/Alice/.ssh/other": "keep" },
   );
 });
 
