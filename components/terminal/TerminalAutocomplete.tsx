@@ -1,5 +1,5 @@
 import ReactDOM from "react-dom";
-import type { ComponentProps, RefObject } from "react";
+import { useCallback, type ComponentProps, type RefObject } from "react";
 import type { Terminal as XTerm } from "@xterm/xterm";
 import {
   useTerminalAutocomplete,
@@ -8,6 +8,8 @@ import {
 } from "./autocomplete";
 import type { Snippet } from "../../domain/models";
 import { usePaneVisible } from "./paneVisibilityStore";
+import { getWindowPluginTerminalProviderRegistry } from "../../application/state/pluginTerminalProviderRegistry";
+import { provideTerminalCompletions } from "./autocomplete/terminalCompletionProviders";
 
 type PopupProps = ComponentProps<typeof AutocompletePopup>;
 
@@ -21,6 +23,8 @@ interface TerminalAutocompleteProps {
   hostOs: "linux" | "windows" | "macos";
   settings?: Partial<AutocompleteSettings>;
   protocol?: string;
+  workspaceId?: string;
+  status?: "connecting" | "connected" | "disconnected";
   getCwd?: () => string | undefined;
   onAcceptText: (text: string) => void;
   snippets?: Snippet[];
@@ -56,6 +60,8 @@ export function TerminalAutocomplete({
   hostOs,
   settings,
   protocol,
+  workspaceId,
+  status = "connected",
   getCwd,
   onAcceptText,
   snippets,
@@ -73,6 +79,25 @@ export function TerminalAutocomplete({
   // Self-subscribe to this pane's visibility so toggling it doesn't have to
   // flow through (and re-render) the TerminalView ctx.
   const visible = usePaneVisible(sessionId);
+  const provideCompletions = useCallback(async (input: string, options: Parameters<typeof import("./autocomplete/completionEngine").getCompletions>[1]) => {
+    const normalizedProtocol: NetcattyTerminalSessionSnapshot['protocol'] =
+      protocol === "telnet" || protocol === "local" || protocol === "serial" ? protocol : "ssh";
+    return provideTerminalCompletions(getWindowPluginTerminalProviderRegistry(), {
+      input,
+      session: {
+        sessionId,
+        ...(hostId ? { hostId } : {}),
+        ...(workspaceId ? { workspaceId } : {}),
+        protocol: normalizedProtocol,
+        status,
+        ...(options.cwd ? { cwd: options.cwd } : {}),
+      },
+      hostOs,
+      cwdSource: options.cwdSource,
+      snippets: options.snippets,
+      maximum: options.maxResults ?? 15,
+    });
+  }, [hostId, hostOs, protocol, sessionId, status, workspaceId]);
   const autocomplete = useTerminalAutocomplete({
     termRef,
     containerRef,
@@ -85,6 +110,7 @@ export function TerminalAutocomplete({
     onAcceptSnippet,
     protocol,
     getCwd,
+    provideCompletions,
   });
 
   // Surface the handlers for runtime wiring. They have stable identities

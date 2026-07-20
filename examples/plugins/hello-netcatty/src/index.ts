@@ -13,5 +13,30 @@ export default definePlugin({
         return { greeting: greeting ?? "Hello from Netcatty" };
       },
     ));
+    context.subscriptions.add(context.providers.register(
+      "com.netcatty.hello.completion",
+      "terminal.completion",
+      ({ payload }) => {
+        const input = typeof payload === "object" && payload !== null && !Array.isArray(payload)
+          && typeof payload.input === "string"
+          ? payload.input
+          : "";
+        return input && "netcatty-hello".startsWith(input)
+          ? { items: [{ text: "netcatty-hello", displayText: "Netcatty hello", score: 5_000 }] }
+          : { items: [] };
+      },
+    ));
+    context.subscriptions.add(context.providers.register(
+      "com.netcatty.hello.decoration",
+      "terminal.decoration",
+      () => ({
+        rules: [{
+          id: "greeting",
+          label: "Netcatty greeting",
+          patterns: ["\\bHello from Netcatty\\b"],
+          color: "#34D399",
+        }],
+      }),
+    ));
   },
 });

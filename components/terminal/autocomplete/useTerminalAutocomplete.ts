@@ -134,6 +134,8 @@ interface UseTerminalAutocompleteOptions {
   snippets?: Snippet[];
   /** Accept a snippet — clears typed input then runs it (host-canonical send) */
   onAcceptSnippet?: (snippet: Snippet) => void;
+  /** Host-owned completion Provider adapter; defaults to Netcatty's built-in Provider. */
+  provideCompletions?: typeof getCompletions;
 }
 
 export interface TerminalAutocompleteHandle {
@@ -154,7 +156,7 @@ export { getCommandToRecordOnEnter } from "./terminalAutocompletePrompt";
 export function useTerminalAutocomplete(
   options: UseTerminalAutocompleteOptions,
 ): TerminalAutocompleteHandle {
-  const { termRef, containerRef, sessionId, hostId, hostOs, settings: userSettings, onAcceptText, protocol, getCwd, snippets, onAcceptSnippet } = options;
+  const { termRef, containerRef, sessionId, hostId, hostOs, settings: userSettings, onAcceptText, protocol, getCwd, snippets, onAcceptSnippet, provideCompletions } = options;
   const rawSettings: AutocompleteSettings = {
     ...DEFAULT_AUTOCOMPLETE_SETTINGS,
     ...userSettings,
@@ -190,6 +192,8 @@ export function useTerminalAutocomplete(
   protocolRef.current = protocol;
   const getCwdRef = useRef(getCwd);
   getCwdRef.current = getCwd;
+  const provideCompletionsRef = useRef(provideCompletions ?? getCompletions);
+  provideCompletionsRef.current = provideCompletions ?? getCompletions;
 
   const [state, setState] = useState<AutocompleteState>(EMPTY_STATE);
 
@@ -666,7 +670,7 @@ export function useTerminalAutocomplete(
     );
 
     // Single query for both ghost text and popup
-    let completions = await getCompletions(input, {
+    let completions = await provideCompletionsRef.current(input, {
       hostId: hostIdRef.current,
       os: hostOsRef.current,
       maxResults: settingsRef.current.maxSuggestions,

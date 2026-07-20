@@ -31,6 +31,7 @@ const { PluginQuotaManager } = require("./quotaManager.cjs");
 const { registerSecurePluginCapabilities } = require("./secureCapabilities.cjs");
 const { PluginSecretStore } = require("./secretStore.cjs");
 const { SecretLeaseStore } = require("./secretLease.cjs");
+const { PluginTerminalProviderService } = require("./terminalProviderService.cjs");
 
 function getElectronProcessMetrics(app, pid) {
   const metric = app.getAppMetrics?.().find((candidate) => candidate.pid === pid);
@@ -194,6 +195,11 @@ function createPluginHostService(options) {
       utilityModuleMappings: options.utilityModuleMappings ?? createUtilityModuleMappings(moduleResources),
     });
     runtimeSupervisor.onDidChangeRuntime((event) => contributionService.onRuntimeStateChanged(event));
+    const terminalProviderService = new PluginTerminalProviderService({
+      contributionService,
+      permissionEngine,
+      runtimeSupervisor,
+    });
     quotaManager.setViolationHandler((identity, error) => (
       runtimeSupervisor.enforcePolicyViolation(identity, error)
     ));
@@ -238,6 +244,7 @@ function createPluginHostService(options) {
       rpcRegistry,
       runtimeSupervisor,
       secretStore,
+      terminalProviderService,
       viewHost,
     };
   } catch (error) {

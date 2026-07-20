@@ -1,5 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any, react-hooks/exhaustive-deps */
-import { useRef } from 'react';
+import { useCallback, useRef, useState } from 'react';
+import { getWindowPluginTerminalProviderRegistry } from '../../application/state/pluginTerminalProviderRegistry';
+import { mergePluginDecorationRules, normalizePluginDecorationResult } from '../../domain/pluginTerminalProviders';
 import { resolveFontWeightBold } from '../../lib/fontWeightAvailability';
 import { bundledFamiliesInStack } from '../../lib/fontAvailability';
 import { isMacPlatform } from '../../lib/utils';
@@ -168,6 +170,66 @@ export function resolveSelectionOverlayPosition(term: any, container: HTMLElemen
 export function useTerminalEffects(ctx: TerminalEffectsContext) {
   const { CONNECTION_TIMEOUT, Error, XTERM_PERFORMANCE_CONFIG, applyUserCursorPreference, auth, autocompleteCloseRef, autocompleteInputRef, autocompleteKeyEventRef, captureTerminalLogData, chainHosts, chainProgress, clearTerminalCwd, commandBufferRef, connectionLogBufferRef, containerRef, createPromptLineBreakState, createReplaySafeTerminalLogSanitizer, createXTermRuntime, deferTerminalResizeRef, disableTerminalFontZoomRef, effectiveFontSize, effectiveFontWeight, effectiveTheme, error, executeSnippetCommand, finalizeTerminalLogData, fitAddonRef, fontFamilyId, fontSize, fontWeightFixupDoneRef, forceCloseHibernatedSession, forceSyncRenderAfterResize, handleOsc52ReadRequest, handleTerminalDataCaptureOnce, hasConnectedRef, hasRuntimeRef, host, hotkeySchemeRef, hibernatedRef, identities, inWorkspace, isBootActiveRef, isBroadcastEnabledRef, isComposeBarOpen, isConnectionAwaitingUserInput, isConnectionPastTcpDial, isFocusMode, isFocused, isLocalConnection, isNetworkDevice, isResizing, isRestoringSelectionRef, isSearchOpen, isSerialConnection, isVisible, isVisibleRef, keyBindingsRef, keys, knownCwdRef, lastFittedSizeRef, lastToastedErrorRef, logger, mouseTrackingRef, needsHostKeyVerification, onBroadcastInputRef, onBroadcastInterruptPriorityChange, onCommandExecuted, onCommandSubmitted, onHotkeyActionRef, onOutputTriggerUserInputRef, onSnippetExecutorChange, onTerminalCwdChange, onTerminalTitleChange, onTerminalBell, onTerminalFontSizeChange, paneLayoutKey, passwordPromptActiveRef, pendingAuthRef, pendingOutputScrollRef, prepareRestoredReconnect, prevIsResizingRef, promptLineBreakStateRef, resizeSession, resolveHostAuth, resolvedFontFamily, safeFit, scriptRecorderRef, searchAddonRef, serialConfig, serialLineBufferRef, serializeAddonRef, sessionId, sessionRef, sessionStarters, setError, setHasMouseTracking, setHasSelection, setIsCancelling, setIsDisconnectedDialogDismissed, requestSearchFocus, setNeedsHostKeyVerification, setPendingHostKeyInfo, setPendingHostKeyRequestId, setProgressLogs, setProgressValue, setSelectionOverlayPosition, setShowLogs, setStatus, setTimeLeft, shouldEnableNativeUserInputAutoScroll, shouldProbeSessionCwd, shouldStartTerminalBackend, onSnippetShortkeyRef, snippetsRef, splitResizeActive, status, statusRef, sudoAutofillRef, t, teardown, telnetLocalEchoRef, termRef, terminalAltKeyOptions, terminalBackend, terminalContextActionsRef, terminalCwdTracker, terminalDataCapturedRef, terminalLogSanitizerRef, terminalSettings, terminalSettingsRef, toHostKeyInfo, toast, updateStatus, useEffect, useLayoutEffect, xtermRuntimeRef, zmodem, zmodemToastedRef, restoreState } = ctx;
   const hibernateHiddenTabs = resolveTerminalHibernateEnabledForProtocol(terminalSettings, host.protocol);
+  const pluginTerminalRegistry = getWindowPluginTerminalProviderRegistry();
+  const [pluginDecorationRules, setPluginDecorationRules] = useState<
+    ReturnType<typeof normalizePluginDecorationResult>
+  >(Object.freeze([]));
+  const publishPluginTerminalEvent = (
+    type: NetcattyTerminalSessionEvent['type'],
+    details: Partial<NetcattyTerminalSessionSnapshot> = {},
+  ) => {
+    if (!pluginTerminalRegistry) return;
+    const protocol: NetcattyTerminalSessionSnapshot['protocol'] =
+      host.protocol === 'telnet' || host.protocol === 'local' || host.protocol === 'serial'
+        ? host.protocol
+        : 'ssh';
+    void pluginTerminalRegistry.publishSessionEvent({
+      type,
+      session: {
+        sessionId,
+        ...(host.id ? { hostId: host.id } : {}),
+        protocol,
+        status: statusRef.current,
+        ...(knownCwdRef.current ? { cwd: knownCwdRef.current } : {}),
+        ...details,
+      },
+    }).catch(() => {});
+  };
+  const pluginAwareOnCommandSubmitted = (...args: Parameters<NonNullable<typeof onCommandSubmitted>>) => {
+    publishPluginTerminalEvent('commandSubmitted');
+    onCommandSubmitted?.(...args);
+  };
+  const refreshPluginDecorationRules = useCallback(async (reason: string) => {
+    if (!pluginTerminalRegistry || status !== 'connected') {
+      setPluginDecorationRules(Object.freeze([]));
+      return;
+    }
+    const protocol: NetcattyTerminalSessionSnapshot['protocol'] =
+      host.protocol === 'telnet' || host.protocol === 'local' || host.protocol === 'serial'
+        ? host.protocol
+        : 'ssh';
+    try {
+      const response = await pluginTerminalRegistry.request({
+        kind: 'terminal.decoration',
+        operation: 'provideDecorations',
+        session: {
+          sessionId,
+          ...(host.id ? { hostId: host.id } : {}),
+          protocol,
+          status: statusRef.current,
+          ...(knownCwdRef.current ? { cwd: knownCwdRef.current } : {}),
+        },
+        payload: { reason },
+        deadlineMs: 1_500,
+      });
+      if (response.stale) return;
+      setPluginDecorationRules(mergePluginDecorationRules(response.results.map((result) => result.status === 'ok'
+        ? normalizePluginDecorationResult(result.providerId, result.result)
+        : Object.freeze([]))));
+    } catch {
+      setPluginDecorationRules(Object.freeze([]));
+    }
+  }, [host.id, host.protocol, pluginTerminalRegistry, sessionId, status]);
   const isRendererActive = isVisible || !hibernateHiddenTabs;
   const isRendererActiveRef = useRef(isRendererActive);
   isRendererActiveRef.current = isRendererActive;
@@ -186,6 +248,13 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       // Merge global rules with host-level rules
       const globalRules = terminalSettings?.keywordHighlightRules ?? [];
       const hostRules = host?.keywordHighlightRules ?? [];
+      const providerRules = pluginDecorationRules.map((rule) => ({
+        id: rule.id,
+        label: rule.label,
+        patterns: [...rule.patterns],
+        color: rule.color,
+        enabled: true,
+      }));
 
       const globalEnabled = terminalSettings?.keywordHighlightEnabled ?? false;
       // Host-level toggle: undefined = inherit global, true/false = explicit override
@@ -198,9 +267,10 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
 
       const mergedRules = [
         ...(effectiveGlobalEnabled ? globalRules : []),
-        ...(effectiveHostEnabled ? hostRules : [])
+        ...(effectiveHostEnabled ? hostRules : []),
+        ...providerRules,
       ];
-      const isEnabled = effectiveGlobalEnabled || effectiveHostEnabled;
+      const isEnabled = effectiveGlobalEnabled || effectiveHostEnabled || providerRules.length > 0;
 
       xtermRuntimeRef.current.keywordHighlighter.setRules(mergedRules, isEnabled);
     }
@@ -208,8 +278,17 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     terminalSettings?.keywordHighlightEnabled,
     terminalSettings?.keywordHighlightRules,
     host?.keywordHighlightEnabled,
-    host?.keywordHighlightRules
+    host?.keywordHighlightRules,
+    pluginDecorationRules,
   ]);
+
+  useEffect(() => {
+    void refreshPluginDecorationRules('session-state');
+  }, [refreshPluginDecorationRules]);
+
+  useEffect(() => pluginTerminalRegistry?.onDidChangeProviders(() => {
+    void refreshPluginDecorationRules('contributions-changed');
+  }), [pluginTerminalRegistry, refreshPluginDecorationRules]);
 
 
   // Work around xterm.js WebGL renderer bug: glyphs rendered via the constructor
@@ -261,6 +340,8 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
         if (!cancelled && !terminalCwdTracker.getRendererCwd() && result.success && result.cwd) {
           const cwd = terminalCwdTracker.setRendererCwd(result.cwd);
           knownCwdRef.current = cwd;
+          publishPluginTerminalEvent('cwdChanged', { ...(cwd ? { cwd } : {}) });
+          void refreshPluginDecorationRules('cwd-changed');
           onTerminalCwdChange?.(sessionId, cwd ?? null);
         }
       } catch {
@@ -362,7 +443,11 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
           sessionId,
           statusRef,
           onCommandExecuted,
-          onCommandSubmitted,
+          onCommandSubmitted: pluginAwareOnCommandSubmitted,
+          onResize: (cols: number, rows: number) => publishPluginTerminalEvent('resized', { cols, rows }),
+          onAlternateScreenChange: (alternateScreen: boolean) => (
+            publishPluginTerminalEvent('alternateScreenChanged', { alternateScreen })
+          ),
           commandBufferRef,
           promptLineBreakStateRef,
           scriptRecorderRef,
@@ -379,9 +464,12 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
           onCwdChange: (cwd: string) => {
             terminalCwdTracker.setRendererCwd(cwd);
             knownCwdRef.current = cwd;
+            publishPluginTerminalEvent('cwdChanged', { cwd });
+            void refreshPluginDecorationRules('cwd-changed');
             onTerminalCwdChange?.(sessionId, cwd, { source: 'osc7' });
           },
           onTitleChange: (title: string | null) => {
+            publishPluginTerminalEvent('titleChanged', { ...(title ? { title } : {}) });
             onTerminalTitleChange?.(sessionId, title);
           },
           onBell: () => {

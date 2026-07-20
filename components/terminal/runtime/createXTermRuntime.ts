@@ -197,6 +197,8 @@ export type CreateXTermRuntimeContext = {
     hostLabel: string,
     sessionId: string,
   ) => void;
+  onResize?: (cols: number, rows: number) => void;
+  onAlternateScreenChange?: (active: boolean) => void;
   commandBufferRef: RefObject<string>;
   promptLineBreakStateRef?: RefObject<PromptLineBreakState>;
   scriptRecorderRef?: RefObject<{
@@ -744,6 +746,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   );
   const historyPreviewBufferChangeDisposable = term.buffer.onBufferChange(() => {
     hideHistoryPreview();
+    ctx.onAlternateScreenChange?.(term.buffer.active.type === "alternate");
   });
 
   const writeLocalTerminalData = (nextData: string) => {
@@ -1469,6 +1472,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     if (resizeTimeout) clearTimeout(resizeTimeout);
     resizeTimeout = setTimeout(() => {
       ctx.terminalBackend.resizeSession(id, cols, rows);
+      ctx.onResize?.(cols, rows);
       resizeTimeout = null;
     }, resizeDebounceMs);
   });

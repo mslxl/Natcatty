@@ -42,6 +42,7 @@ test("host RPC registry configuration is complete before runtime initialization"
     runtimeKind: "browser",
   });
   assert.equal(typeof routes.requestHandlers["custom.test"], "function");
+  assert.equal(typeof service.terminalProviderService.provide, "function");
 });
 
 test("async host RPC registry configuration fails before a service can start", (context) => {

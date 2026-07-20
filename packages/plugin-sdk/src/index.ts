@@ -5,6 +5,7 @@ import type {
   PluginErrorData,
   PluginErrorName,
   PluginId,
+  ProviderKind,
   PluginWireErrorCode,
   RpcErrorObject,
   SecretLeaseRef,
@@ -83,6 +84,64 @@ export interface PluginViews {
   postMessage(viewId: string, message: JsonValue): void;
   getState<T extends JsonValue = JsonValue>(viewId: string, scopeId: string): Promise<T | undefined>;
   setState(viewId: string, scopeId: string, state: JsonValue): Promise<void>;
+}
+
+export interface PluginProviderInvocation<TPayload extends JsonValue = JsonValue> {
+  readonly providerId: string;
+  readonly kind: ProviderKind;
+  readonly operation: string;
+  readonly requestId: string;
+  readonly payload: TPayload | undefined;
+  readonly deadlineMs: number | undefined;
+  readonly cancellationToken: CancellationToken;
+}
+
+export type PluginProviderHandler<
+  TPayload extends JsonValue = JsonValue,
+  TResult extends JsonValue = JsonValue,
+> = (invocation: PluginProviderInvocation<TPayload>) => TResult | void | Promise<TResult | void>;
+
+export interface PluginProviders {
+  register<TPayload extends JsonValue = JsonValue, TResult extends JsonValue = JsonValue>(
+    providerId: string,
+    kind: ProviderKind,
+    handler: PluginProviderHandler<TPayload, TResult>,
+  ): Disposable;
+}
+
+export interface TerminalSessionSnapshot {
+  readonly sessionId: string;
+  readonly hostId?: string;
+  readonly workspaceId?: string;
+  readonly protocol: "ssh" | "telnet" | "local" | "serial";
+  readonly status: "connecting" | "connected" | "disconnected";
+  readonly cwd?: string;
+  readonly title?: string;
+  readonly shellType?: "posix" | "fish" | "powershell" | "cmd" | "unknown";
+  readonly cols?: number;
+  readonly rows?: number;
+  readonly alternateScreen?: boolean;
+}
+
+export interface TerminalSessionEvent {
+  readonly type:
+    | "snapshot"
+    | "created"
+    | "connected"
+    | "reconnected"
+    | "cwdChanged"
+    | "titleChanged"
+    | "resized"
+    | "alternateScreenChanged"
+    | "commandSubmitted"
+    | "disconnected"
+    | "disposed";
+  readonly session: TerminalSessionSnapshot;
+  readonly exitCode?: number;
+}
+
+export interface PluginTerminalSessions {
+  onDidChange(listener: (event: TerminalSessionEvent) => void): Disposable;
 }
 
 export interface PluginEnvironmentChangeEvent {
@@ -176,6 +235,8 @@ export interface PluginContext {
   readonly commands: PluginCommands;
   readonly contextKeys: PluginContextKeys;
   readonly views: PluginViews;
+  readonly providers: PluginProviders;
+  readonly terminals: PluginTerminalSessions;
   readonly environment: PluginEnvironment;
   readonly secrets: PluginSecretStore;
   readonly credentials: PluginCredentialBroker;

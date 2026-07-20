@@ -1,0 +1,69 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import type { PluginTerminalProviderRegistry } from '../../../application/state/pluginTerminalProviderRegistry.ts';
+import { provideTerminalCompletions } from './terminalCompletionProviders.ts';
+
+test('terminal completion adapter merges validated plugin results through the host Provider path', async () => {
+  const calls: unknown[] = [];
+  const registry = {
+    async request(request: unknown) {
+      calls.push(request);
+      return {
+        requestId: 'request-1',
+        stale: false,
+        results: [{
+          pluginId: 'com.example',
+          pluginVersion: '1.0.0',
+          providerId: 'com.example.completion',
+          kind: 'terminal.completion',
+          requestId: 'provider-1',
+          status: 'ok',
+          result: {
+            items: [
+              { text: 'zzzzunlikely-command', displayText: 'Plugin command', score: 50_000 },
+              { text: '', score: 100_000 },
+            ],
+          },
+        }],
+      } as const;
+    },
+  } as unknown as PluginTerminalProviderRegistry;
+  const results = await provideTerminalCompletions(registry, {
+    input: 'zzzzunlikely',
+    session: { sessionId: 'session-1', protocol: 'ssh', status: 'connected' },
+    hostOs: 'linux',
+    maximum: 8,
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(results[0].text, 'zzzzunlikely-command');
+  assert.equal(results[0].source, 'plugin');
+  assert.equal(results[0].providerId, 'com.example.completion');
+  assert.equal(results.some((item) => item.text === ''), false);
+});
+
+test('terminal completion adapter ignores stale plugin responses', async () => {
+  const registry = {
+    async request() { return { requestId: 'request-1', stale: true, results: [] }; },
+  } as unknown as PluginTerminalProviderRegistry;
+  const results = await provideTerminalCompletions(registry, {
+    input: 'zzzzunlikely',
+    session: { sessionId: 'session-1', protocol: 'ssh', status: 'connected' },
+    hostOs: 'linux',
+    maximum: 8,
+  });
+  assert.equal(results.some((item) => item.source === 'plugin'), false);
+});
+
+test('terminal completion adapter preserves built-in results when the plugin bridge fails', async () => {
+  const registry = {
+    async request() { throw new Error('bridge unavailable'); },
+  } as unknown as PluginTerminalProviderRegistry;
+  const results = await provideTerminalCompletions(registry, {
+    input: 'zzzzunlikely',
+    session: { sessionId: 'session-1', protocol: 'ssh', status: 'connected' },
+    hostOs: 'linux',
+    maximum: 8,
+  });
+  assert.ok(Array.isArray(results));
+});

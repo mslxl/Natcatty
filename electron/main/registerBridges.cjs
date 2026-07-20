@@ -122,6 +122,7 @@ function createBridgeRegistrar(context) {
     registerPluginBridge(ipcMain, {
       manager: pluginHostService?.manager,
       contributionService: pluginHostService?.contributionService,
+      terminalProviderService: pluginHostService?.terminalProviderService,
       resolveContributionIcon: (payload) => pluginHostService?.contributionIconService?.resolve(payload),
       viewHost: pluginHostService?.viewHost,
       env: process.env,

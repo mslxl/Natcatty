@@ -57,6 +57,7 @@ import { useStoredBoolean } from "../application/state/useStoredBoolean";
 import { readOptionalStoredStringValue, useStoredString } from "../application/state/useStoredString";
 import { useSessionLogBackend } from "../application/state/useSessionLogBackend";
 import { useTerminalLayoutSuppressActive } from "../application/state/terminalLayoutSuppressStore";
+import { usePluginTerminalSessionLifecycle } from "../application/state/usePluginTerminalSessionLifecycle";
 import { terminalReconnectRegistry } from "../application/state/terminalReconnectRegistry";
 // SFTPModal removed - SFTP is now handled by SftpSidePanel in TerminalLayer
 import { Button } from "./ui/button";
@@ -810,7 +811,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
             host,
             sessionId,
             onCommandExecuted,
-            onCommandSubmitted,
+            onCommandSubmitted: pluginAwareOnCommandSubmitted,
             commandBufferRef,
             promptLineBreakStateRef,
           }, termRef.current);
@@ -1542,6 +1543,37 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     disposeRuntimeOnly();
   };
 
+  const pluginTerminalLifecycle = usePluginTerminalSessionLifecycle({
+    sessionId,
+    hostId: host.id,
+    workspaceId,
+    protocol: host.protocol,
+    status,
+    shellType,
+    initialCwd: knownCwdRef.current ?? lastCwd,
+  });
+  const pluginAwareOnCommandSubmitted = useCallback((
+    command: string,
+    commandHostId: string,
+    hostLabel: string,
+    commandSessionId: string,
+  ) => {
+    pluginTerminalLifecycle.onCommandSubmitted();
+    onCommandSubmitted?.(command, commandHostId, hostLabel, commandSessionId);
+  }, [onCommandSubmitted, pluginTerminalLifecycle]);
+  const pluginAwareOnTerminalCwdChange = useCallback((
+    changedSessionId: string,
+    cwd: string | null,
+    meta?: { source?: 'osc7' },
+  ) => {
+    pluginTerminalLifecycle.onCwdChanged(cwd);
+    onTerminalCwdChange?.(changedSessionId, cwd, meta);
+  }, [onTerminalCwdChange, pluginTerminalLifecycle]);
+  const pluginAwareOnTerminalTitleChange = useCallback((changedSessionId: string, title: string | null) => {
+    pluginTerminalLifecycle.onTitleChanged(title);
+    onTerminalTitleChange?.(changedSessionId, title);
+  }, [onTerminalTitleChange, pluginTerminalLifecycle]);
+
   const sessionStarters = createTerminalSessionStarters({
     host,
     keys,
@@ -1646,7 +1678,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     onProgrammaticCommandLogRewrite: queueProgrammaticCommandLogRewrite,
     onOsDetected,
     onCommandExecuted,
-    onCommandSubmitted,
+    onCommandSubmitted: pluginAwareOnCommandSubmitted,
     sessionLog,
     sshDebugLogEnabled,
     sudoAutofillPassword: resolvedSudoAutofillPassword,
@@ -2753,7 +2785,9 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     sessionId,
     statusRef,
     onCommandExecuted,
-    onCommandSubmitted,
+    onCommandSubmitted: pluginAwareOnCommandSubmitted,
+    onResize: pluginTerminalLifecycle.onResized,
+    onAlternateScreenChange: pluginTerminalLifecycle.onAlternateScreenChanged,
     commandBufferRef,
     scriptRecorderRef: recorderRef,
     passwordPromptActiveRef,
@@ -2769,10 +2803,10 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     onCwdChange: (cwd: string) => {
       terminalCwdTracker.setRendererCwd(cwd);
       knownCwdRef.current = cwd;
-      onTerminalCwdChange?.(sessionId, cwd);
+      pluginAwareOnTerminalCwdChange(sessionId, cwd);
     },
     onTitleChange: (title: string | null) => {
-      onTerminalTitleChange?.(sessionId, title);
+      pluginAwareOnTerminalTitleChange(sessionId, title);
     },
     onBell: () => {
       onTerminalBell?.(sessionId);

@@ -194,3 +194,83 @@ test("plugin setting scope catalogs are bounded, sender-owned, and merged for se
   assert.deepEqual(await ipcMain.handlers.get(CHANNELS.getScopeCatalog)(settingsWindow), afterFirstWindowClosed);
   assert.deepEqual(broadcasts.at(-1), [CHANNELS.scopeCatalogChanged, afterFirstWindowClosed]);
 });
+
+test("plugin terminal Provider bridge owns cancellation by renderer sender", async () => {
+  const ipcMain = createIpcMain();
+  const calls = [];
+  let destroyed;
+  const terminalProviderService = {
+    listProviders(options) {
+      calls.push(["list", options]);
+      return [{ provider: { id: "com.example.completion" } }];
+    },
+    async provide(request, options) {
+      calls.push(["provide", request]);
+      return new Promise((resolve) => {
+        options.signal.addEventListener("abort", () => resolve([{ status: "cancelled" }]), { once: true });
+      });
+    },
+    async publishSessionEvent(event) {
+      calls.push(["event", event]);
+      return [{ pluginId: "com.example", delivered: true }];
+    },
+  };
+  registerPluginBridge(ipcMain, {
+    manager: { initialize: async () => {} },
+    terminalProviderService,
+    env: { NETCATTY_PLUGIN_DEV: "1" },
+    isTrustedSender: () => true,
+  });
+  const event = {
+    sender: {
+      id: 42,
+      once(name, listener) { if (name === "destroyed") destroyed = listener; },
+    },
+  };
+
+  assert.deepEqual(await ipcMain.handlers.get(CHANNELS.terminalProviders)(event, {
+    kind: "terminal.completion",
+  }), [{ provider: { id: "com.example.completion" } }]);
+  const pending = ipcMain.handlers.get(CHANNELS.terminalProvide)(event, {
+    requestId: "renderer-request-1",
+    kind: "terminal.completion",
+    operation: "provideCompletions",
+    session: { sessionId: "session-1" },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(await ipcMain.handlers.get(CHANNELS.terminalCancel)(event, {
+    requestId: "renderer-request-1",
+  }), true);
+  assert.deepEqual(await pending, [{ status: "cancelled" }]);
+  assert.equal(await ipcMain.handlers.get(CHANNELS.terminalCancel)(event, {
+    requestId: "renderer-request-1",
+  }), false);
+  assert.deepEqual(await ipcMain.handlers.get(CHANNELS.terminalSessionEvent)(event, {
+    type: "created",
+    session: { sessionId: "session-1" },
+  }), [{ pluginId: "com.example", delivered: true }]);
+  assert.equal(typeof destroyed, "function");
+  const destroyedPending = ipcMain.handlers.get(CHANNELS.terminalProvide)(event, {
+    requestId: "renderer-request-destroyed",
+    kind: "terminal.completion",
+    operation: "provideCompletions",
+    session: { sessionId: "session-1" },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  destroyed();
+  assert.deepEqual(await destroyedPending, [{ status: "cancelled" }]);
+  assert.deepEqual(calls, [
+    ["list", { kind: "terminal.completion" }],
+    ["provide", {
+      kind: "terminal.completion",
+      operation: "provideCompletions",
+      session: { sessionId: "session-1" },
+    }],
+    ["event", { type: "created", session: { sessionId: "session-1" } }],
+    ["provide", {
+      kind: "terminal.completion",
+      operation: "provideCompletions",
+      session: { sessionId: "session-1" },
+    }],
+  ]);
+});

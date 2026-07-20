@@ -35,7 +35,7 @@ import type { Snippet } from "../../../domain/models";
 import type { AutocompleteCwdSource } from "./terminalAutocompleteLayout";
 
 /** Source indicator for where a suggestion came from */
-export type SuggestionSource = "history" | "command" | "subcommand" | "option" | "arg" | "path" | "snippet";
+export type SuggestionSource = "history" | "command" | "subcommand" | "option" | "arg" | "path" | "snippet" | "plugin";
 
 export interface CompletionSuggestion {
   /** The text to insert */
@@ -54,6 +54,8 @@ export interface CompletionSuggestion {
   fileType?: "file" | "directory" | "symlink";
   /** For snippet suggestions: the source snippet (used by the accept path). */
   snippet?: Snippet;
+  /** For plugin suggestions: the owning Provider contribution. */
+  providerId?: string;
 }
 
 export interface CompletionContext {

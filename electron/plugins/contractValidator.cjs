@@ -28,6 +28,8 @@ function formatValidationErrors(errors) {
 
 const rpcMessageValidator = createDefinitionValidator("RpcMessage");
 const initializeResultValidator = createDefinitionValidator("RuntimeInitializeResult");
+const providerRequestValidator = createDefinitionValidator("ProviderRequest");
+const providerResultValidator = createDefinitionValidator("ProviderResult");
 const streamFrameValidator = createDefinitionValidator("StreamFrame");
 
 function assertContractValue(validator, value, label) {
@@ -47,6 +49,16 @@ function assertInitializeResult(value) {
   return assertContractValue(initializeResultValidator, value, "Initialize result");
 }
 
+function assertProviderRequest(value) {
+  assertPluginJsonValue(value, { maxBytes: PLUGIN_RPC_MAX_JSON_BYTES });
+  return assertContractValue(providerRequestValidator, value, "Provider request");
+}
+
+function assertProviderResult(value) {
+  assertPluginJsonValue(value, { maxBytes: PLUGIN_RPC_MAX_JSON_BYTES });
+  return assertContractValue(providerResultValidator, value, "Provider result");
+}
+
 function assertStreamFrameSchema(value) {
   assertPluginJsonValue(value, { maxBytes: PLUGIN_STREAM_MAX_FRAME_JSON_BYTES });
   return assertContractValue(streamFrameValidator, value, "Stream frame");
@@ -58,6 +70,8 @@ function resolveContractRuntimePath(...segments) {
 
 module.exports = {
   assertInitializeResult,
+  assertProviderRequest,
+  assertProviderResult,
   assertRpcMessage,
   assertStreamFrameSchema,
   createDefinitionValidator,

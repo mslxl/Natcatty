@@ -336,3 +336,127 @@ test("runtime peer exposes contribution APIs and routes host UI events", async (
   await peer.dispose();
   host.close();
 });
+
+test("runtime peer registers provider handlers and routes immutable terminal lifecycle events", async () => {
+  const { startPluginRuntime } = await import("./runtime/runtimePeer.mjs");
+  const { port1, port2 } = new MessageChannel();
+  const host = new PluginRpcRouter({
+    pluginId: "com.example.provider",
+    send(message) { port1.postMessage(message); },
+  });
+  port1.on("message", (message) => host.accept(message));
+  const invocations = [];
+  const terminalEvents = [];
+  let cancellationObservedResolve;
+  const cancellationObserved = new Promise((resolve) => {
+    cancellationObservedResolve = resolve;
+  });
+  const peer = await startPluginRuntime({
+    port: port2,
+    config: {
+      pluginId: "com.example.provider",
+      pluginVersion: "1.0.0",
+      netcattyVersion: "1.0.0",
+      apiVersion: "0.1.0-internal",
+      enabledFeatures: [],
+    },
+    async loadPlugin() {
+      return {
+        default: {
+          async activate(context) {
+            context.terminals.onDidChange((event) => terminalEvents.push(event));
+            const staleDisposable = context.providers.register(
+              "com.example.provider.completion",
+              "terminal.completion",
+              async () => "stale",
+            );
+            staleDisposable.dispose();
+            context.providers.register(
+              "com.example.provider.completion",
+              "terminal.completion",
+              async (invocation) => {
+                invocations.push(invocation);
+                if (invocation.operation === "wait") {
+                  await new Promise((resolve) => {
+                    invocation.cancellationToken.onCancellationRequested(() => {
+                      cancellationObservedResolve();
+                      resolve();
+                    });
+                  });
+                }
+                return { items: [{ label: "status" }] };
+              },
+            );
+            staleDisposable.dispose();
+          },
+        },
+      };
+    },
+  });
+  await host.request("plugin.initialize", {
+    netcattyVersion: "1.0.0",
+    apiVersion: "0.1.0-internal",
+    supportedFeatures: [],
+  });
+  await host.request("plugin.activate", {});
+
+  assert.deepEqual(await host.request("provider.invoke", {
+    providerId: "com.example.provider.completion",
+    kind: "terminal.completion",
+    operation: "provide",
+    requestId: "request-1",
+    payload: { input: "sta" },
+    deadlineMs: 1_000,
+  }), {
+    requestId: "request-1",
+    status: "ok",
+    result: { items: [{ label: "status" }] },
+  });
+  assert.equal(invocations.length, 1);
+  assert.equal(invocations[0].providerId, "com.example.provider.completion");
+  assert.equal(invocations[0].kind, "terminal.completion");
+  assert.equal(invocations[0].operation, "provide");
+  assert.equal(invocations[0].deadlineMs, 1_000);
+  assert.equal(invocations[0].cancellationToken.isCancellationRequested, false);
+  assert.equal(Object.isFrozen(invocations[0].payload), true);
+
+  await assert.rejects(
+    host.request("provider.invoke", {
+      providerId: "com.example.provider.completion",
+      kind: "terminal.hover",
+      operation: "provide",
+      requestId: "request-kind-mismatch",
+    }),
+    (error) => error?.code === RPC_ERRORS.failedPrecondition,
+  );
+
+  const event = {
+    type: "cwdChanged",
+    session: {
+      sessionId: "session-1",
+      protocol: "ssh",
+      status: "connected",
+      cwd: "/srv/app",
+    },
+  };
+  host.notify("plugin.terminal.event", event);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(terminalEvents, [event]);
+  assert.equal(Object.isFrozen(terminalEvents[0]), true);
+  assert.equal(Object.isFrozen(terminalEvents[0].session), true);
+
+  const controller = new AbortController();
+  const cancelledRequest = host.request("provider.invoke", {
+    providerId: "com.example.provider.completion",
+    kind: "terminal.completion",
+    operation: "wait",
+    requestId: "request-cancelled",
+  }, { signal: controller.signal });
+  await new Promise((resolve) => setImmediate(resolve));
+  controller.abort();
+  await assert.rejects(cancelledRequest, (error) => error?.code === RPC_ERRORS.cancelled);
+  await cancellationObserved;
+
+  await peer.dispose();
+  host.close();
+});

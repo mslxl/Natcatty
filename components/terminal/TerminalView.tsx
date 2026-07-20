@@ -776,6 +776,8 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
             hostOs={autocompleteHostOs}
             settings={autocompleteSettings}
             protocol={host.protocol}
+            workspaceId={workspaceId}
+            status={status}
             getCwd={() => terminalCwdTracker.getRendererCwd() ?? knownCwdRef.current}
             onAcceptText={(text) => autocompleteAcceptTextRef.current?.(text)}
             snippets={snippets}
