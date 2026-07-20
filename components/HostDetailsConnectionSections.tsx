@@ -169,6 +169,20 @@ export const HostDetailsConnectionSections: React.FC<HostDetailsConnectionSectio
                     </button>
                   ))}
                 </div>
+                <div className="mt-2 flex items-center justify-between gap-3 rounded-md border border-border/60 bg-background px-2.5 py-2">
+                  <div className="min-w-0">
+                    <div className="text-xs font-medium text-foreground">
+                      {t("hostDetails.auth.mfaFirst")}
+                    </div>
+                    <div className="text-[11px] text-muted-foreground">
+                      {t("hostDetails.auth.mfaFirst.desc")}
+                    </div>
+                  </div>
+                  <Switch
+                    checked={!!form.requiresMfa}
+                    onCheckedChange={(val) => update("requiresMfa" as keyof Host, val)}
+                  />
+                </div>
             </div>
             {selectedIdentity ? (
               <div className="flex items-center gap-2 h-10 px-3 rounded-md border border-border/70 bg-secondary/60">

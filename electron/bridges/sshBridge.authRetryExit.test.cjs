@@ -621,6 +621,56 @@ test("terminal SSH retries keyboard-interactive first when password rejection re
   );
 });
 
+test("terminal SSH requiresMfa prefers keyboard-interactive before password", async (t) => {
+  const { bridge, MockSSHClient } = loadBridgeWithAuthRetryMocks(t, {
+    connectEvents: ["mfa-keyboard-interactive-before-password"],
+  });
+  const ipcMain = makeIpcMain();
+  bridge.init({ sessions: new Map(), electronModule: {} });
+  bridge.registerHandlers(ipcMain);
+  const sender = makeSender();
+  const send = sender.send.bind(sender);
+  sender.send = (channel, payload) => {
+    send(channel, payload);
+    if (channel === "netcatty:keyboard-interactive") {
+      keyboardInteractiveHandler.handleResponse(
+        { sender },
+        {
+          requestId: payload.requestId,
+          responses: ["secondary-password"],
+          cancelled: false,
+        },
+      );
+    }
+  };
+
+  const result = await ipcMain.handlers.get("netcatty:start")(
+    { sender },
+    {
+      sessionId: "mfa-ki-preferred-session",
+      hostname: "corp-edr.example.com",
+      username: "alice",
+      authMethod: "password",
+      requiresMfa: true,
+      password: "login-password",
+      useSshAgent: false,
+      port: 22,
+      knownHosts: [],
+    },
+  );
+
+  assert.deepEqual(result, { sessionId: "mfa-ki-preferred-session" });
+  assert.equal(MockSSHClient.instances.length, 1);
+  assert.deepEqual(
+    MockSSHClient.instances[0].authMethodsOffered,
+    ["none", "keyboard-interactive", "keyboard-interactive"],
+  );
+  assert.deepEqual(
+    MockSSHClient.instances[0].keyboardInteractiveResponses,
+    [["login-password"], ["secondary-password"]],
+  );
+});
+
 test("failed keyboard-interactive retry still offers encrypted default key fallback", async (t) => {
   const events = [];
   const { bridge, MockSSHClient } = loadBridgeWithAuthRetryMocks(t, {

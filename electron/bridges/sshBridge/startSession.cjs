@@ -964,6 +964,9 @@ function createStartSessionApi(ctx) {
                 id: `publickey-default-${keyInfo.keyName}`
               });
             }
+            if (options.requiresMfa && connectOpts.password && !options._skipPasswordMethod) {
+              authMethods.push({ type: "keyboard-interactive", id: "keyboard-interactive" });
+            }
             if (connectOpts.password && !options._skipPasswordMethod) {
               authMethods.push({ type: "password", id: "password" });
             }
@@ -978,8 +981,13 @@ function createStartSessionApi(ctx) {
               authMethods.push({ type: "agent", id: "agent" });
             }
 
+            // MFA/PAM hosts can reject the SSH "password" method while accepting
+            // the login password through keyboard-interactive.
+            if (options.requiresMfa && connectOpts.password && !options._skipPasswordMethod) {
+              authMethods.push({ type: "keyboard-interactive", id: "keyboard-interactive" });
+            }
+
             // Then try password if available (explicit user choice).
-            // MFA hosts put keyboard-interactive first so EDR secondary factors are not skipped.
             if (connectOpts.password && !options._skipPasswordMethod) {
               authMethods.push({ type: "password", id: "password" });
             }

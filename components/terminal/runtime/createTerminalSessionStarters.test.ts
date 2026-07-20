@@ -3020,6 +3020,7 @@ test("startSSH forwards per-host SSH settings to the native bridge", async () =>
       username: "alice",
       port: 22,
       password: "pw",
+      requiresMfa: true,
       sshTcpConnectTimeoutSeconds: 45,
       sshAuthReadyTimeoutSeconds: 300,
     },
@@ -3062,6 +3063,7 @@ test("startSSH forwards per-host SSH settings to the native bridge", async () =>
   await createTerminalSessionStarters(ctx as unknown as TerminalSessionStartersContext).startSSH(term);
 
   assert.equal(capturedOptions?.sshDebugLogEnabled, true);
+  assert.equal(capturedOptions?.requiresMfa, true);
   assert.equal(capturedOptions?.sshTcpConnectTimeoutMs, 45_000);
   assert.equal(capturedOptions?.sshAuthReadyTimeoutMs, 300_000);
 });

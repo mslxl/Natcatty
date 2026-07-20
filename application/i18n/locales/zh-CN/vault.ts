@@ -208,6 +208,8 @@ export const zhCNVaultMessages: Messages = {
   'hostDetails.auth.key.desc': '使用选中的密钥；如果同时保存了密码，可在失败后尝试密码。',
   'hostDetails.auth.certificate': '证书',
   'hostDetails.auth.certificate.desc': '使用选中的 SSH 证书；如果同时保存了密码，可在失败后尝试密码。',
+  'hostDetails.auth.mfaFirst': '优先交互式认证',
+  'hostDetails.auth.mfaFirst.desc': '适用于必须通过 keyboard-interactive 输入密码和 MFA 的服务器。',
   'hostDetails.auth.credentialRequired': '保存这种登录方式前，请先选择密钥或证书。',
   'hostDetails.identity.suggestions': '身份',
   'hostDetails.identity.missing': '身份不存在',

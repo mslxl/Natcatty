@@ -520,6 +520,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           hostId: ctx.host.id,
           username: effectiveUsername,
           authMethod,
+          requiresMfa: !!ctx.host.requiresMfa,
           port: ctx.host.port || 22,
           password: attempt.password,
           privateKey: attempt.key?.source === 'reference' ? undefined : sanitizeCredentialValue(attempt.key?.privateKey),
