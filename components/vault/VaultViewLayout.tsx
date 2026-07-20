@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import React from "react";
+import { deleteVaultKey } from "../../application/defaultKeyPassphrases";
 import { preserveConcurrentHostLineTimestampUpdate } from "../../domain/host";
 import { STORAGE_KEY_VAULT_HOST_PANEL_WIDTH } from "@/infrastructure/config/storageKeys.ts";
 import { VaultHostListSection } from "./VaultHostListSection";
@@ -663,7 +664,9 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
                 )
               }
               onReorderKeys={onUpdateKeys}
-              onDelete={(id) => onUpdateKeys(keys.filter((k) => k.id !== id))}
+              onDelete={(id) => {
+                void deleteVaultKey(keys, id).then(onUpdateKeys);
+              }}
               onSaveIdentity={(identity) =>
                 onUpdateIdentities(
                   identities.find((ex) => ex.id === identity.id)

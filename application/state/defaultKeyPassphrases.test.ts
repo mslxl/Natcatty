@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   clearKeyPassphrasesByIds,
   clearReferenceKeyPassphrases,
+  deleteVaultKey,
   loadDefaultKeyPassphrase,
   rememberKeyPassphrase,
   removeDefaultKeyPassphraseAliases,
@@ -59,6 +60,32 @@ const referenceKey = (): SSHKey => ({
   filePath: "/Users/alice/.ssh/id_ed25519",
   privateKey: "",
   created: 1,
+});
+
+test("deleting a reference key also forgets its remembered passphrase", async (t) => {
+  installLocalStorage(t);
+  const key = referenceKey();
+  await saveDefaultKeyPassphrase(key.filePath!, "remembered-passphrase");
+
+  const remainingKeys = await deleteVaultKey([key], key.id);
+
+  assert.deepEqual(remainingKeys, []);
+  assert.equal(await loadDefaultKeyPassphrase(key.filePath!), null);
+});
+
+test("deleting one reference keeps the passphrase while another key uses the same file", async (t) => {
+  installLocalStorage(t);
+  const key = referenceKey();
+  const duplicate = { ...key, id: "duplicate-reference" };
+  await saveDefaultKeyPassphrase(key.filePath!, "remembered-passphrase");
+
+  const remainingKeys = await deleteVaultKey([key, duplicate], key.id);
+
+  assert.deepEqual(remainingKeys, [duplicate]);
+  assert.equal(
+    await loadDefaultKeyPassphrase(key.filePath!),
+    "remembered-passphrase",
+  );
 });
 
 test("loadDefaultKeyPassphrase removes undecryptable credential placeholders", async (t) => {
