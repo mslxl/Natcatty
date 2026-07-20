@@ -176,7 +176,61 @@ function assertCompanionId(companionId) {
   return companionId;
 }
 
-function createPluginContext(config, client) {
+function assertOwnedContributionId(pluginId, id, label) {
+  if (typeof id !== "string" || !id.startsWith(`${pluginId}.`) || id.length > 256) {
+    throw new PluginError("invalid_argument", `${label} ID is invalid`);
+  }
+  return id;
+}
+
+function assertOwnedContextKey(pluginId, key) {
+  const prefix = `${pluginId}.`;
+  const suffix = typeof key === "string" && key.startsWith(prefix)
+    ? key.slice(prefix.length)
+    : "";
+  if (!/^[A-Za-z0-9_][A-Za-z0-9_:-]{0,255}$/u.test(suffix)
+    || key.length > 256) {
+    throw new PluginError("invalid_argument", "Plugin Context Key ID is invalid");
+  }
+  return key;
+}
+
+function normalizeRuntimeEnvironment(value) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const sourceTokens = source.themeTokens && typeof source.themeTokens === "object"
+    && !Array.isArray(source.themeTokens)
+    ? source.themeTokens
+    : {};
+  const themeTokens = Object.freeze(Object.fromEntries(
+    Object.entries(sourceTokens).filter(([key, token]) => key.length > 0 && typeof token === "string"),
+  ));
+  return Object.freeze({
+    locale: typeof source.locale === "string" ? source.locale : "en",
+    theme: typeof source.theme === "string" ? source.theme : "system",
+    reducedMotion: source.reducedMotion === true,
+    highContrast: source.highContrast === true,
+    themeTokens,
+  });
+}
+
+function createEmitter() {
+  const listeners = new Set();
+  return {
+    event(listener) {
+      if (typeof listener !== "function") throw new PluginError("invalid_argument", "Plugin event listener must be a function");
+      listeners.add(listener);
+      return Object.freeze({ dispose: () => listeners.delete(listener) });
+    },
+    fire(value) {
+      for (const listener of [...listeners]) {
+        try { listener(value); } catch {}
+      }
+    },
+    clear() { listeners.clear(); },
+  };
+}
+
+function createPluginContext(config, client, runtimeApi) {
   const subscriptions = new DisposableStore();
   const storage = {
     get: (key) => client.request("storage.get", { key: assertStorageKey(key) })
@@ -256,6 +310,75 @@ function createPluginContext(config, client) {
       });
     },
   };
+  const settings = {
+    get: (settingId, options = {}) => client.request("settings.get", {
+      settingId: assertOwnedContributionId(config.pluginId, settingId, "Plugin setting"),
+      ...(options.scopeId === undefined ? {} : { scopeId: options.scopeId }),
+    }).then((result) => result?.found ? result.value : undefined),
+    update: (settingId, value, options = {}) => client.request("settings.update", {
+      settingId: assertOwnedContributionId(config.pluginId, settingId, "Plugin setting"),
+      value,
+      ...(options.scopeId === undefined ? {} : { scopeId: options.scopeId }),
+    }).then((result) => result ?? { restartRequired: false }),
+    onDidChange: runtimeApi.settingsChanged.event,
+  };
+  const commands = {
+    registerCommand(commandId, handler) {
+      const id = assertOwnedContributionId(config.pluginId, commandId, "Plugin command");
+      if (typeof handler !== "function") throw new PluginError("invalid_argument", "Plugin command handler must be a function");
+      if (runtimeApi.commandHandlers.has(id)) throw new PluginError("already_exists", `Plugin command is already registered: ${id}`);
+      runtimeApi.commandHandlers.set(id, handler);
+      return Object.freeze({
+        dispose() {
+          if (runtimeApi.commandHandlers.get(id) === handler) {
+            runtimeApi.commandHandlers.delete(id);
+          }
+        },
+      });
+    },
+    executeCommand: (commandId, args) => client.request("commands.execute", {
+      command: assertOwnedContributionId(config.pluginId, commandId, "Plugin command"),
+      ...(args === undefined ? {} : { args }),
+    }),
+  };
+  const contextKeys = {
+    set: (key, value) => client.request("contextKeys.set", {
+      key: assertOwnedContextKey(config.pluginId, key),
+      value,
+    }).then(() => undefined),
+  };
+  const views = {
+    onDidReceiveMessage(viewId, listener) {
+      const id = assertOwnedContributionId(config.pluginId, viewId, "Plugin view");
+      let emitter = runtimeApi.viewMessages.get(id);
+      if (!emitter) {
+        emitter = createEmitter();
+        runtimeApi.viewMessages.set(id, emitter);
+      }
+      return emitter.event(listener);
+    },
+    postMessage: (viewId, message) => client.notify("views.postMessage", {
+      viewId: assertOwnedContributionId(config.pluginId, viewId, "Plugin view"),
+      message,
+    }),
+    getState: (viewId, scopeId) => client.request("views.getState", {
+      viewId: assertOwnedContributionId(config.pluginId, viewId, "Plugin view"),
+      scopeId,
+    }).then((result) => result?.state),
+    setState: (viewId, scopeId, state) => client.request("views.setState", {
+      viewId: assertOwnedContributionId(config.pluginId, viewId, "Plugin view"),
+      scopeId,
+      state,
+    }).then(() => undefined),
+  };
+  const environment = {
+    get locale() { return runtimeApi.environment.locale ?? "en"; },
+    get theme() { return runtimeApi.environment.theme ?? "system"; },
+    get reducedMotion() { return runtimeApi.environment.reducedMotion === true; },
+    get highContrast() { return runtimeApi.environment.highContrast === true; },
+    get themeTokens() { return runtimeApi.environment.themeTokens; },
+    onDidChange: runtimeApi.environmentChanged.event,
+  };
   const logger = Object.fromEntries(["debug", "info", "warn", "error"].map((level) => [
     level,
     (message, fields) => client.notify("log.write", {
@@ -271,6 +394,11 @@ function createPluginContext(config, client) {
     enabledFeatures: new Set(config.enabledFeatures),
     subscriptions,
     storage,
+    settings,
+    commands,
+    contextKeys,
+    views,
+    environment,
     secrets,
     credentials,
     network,
@@ -288,6 +416,13 @@ export async function startPluginRuntime({ port, config, loadPlugin }) {
   let context;
   let activated = false;
   let deactivated = false;
+  const runtimeApi = {
+    commandHandlers: new Map(),
+    settingsChanged: createEmitter(),
+    environmentChanged: createEmitter(),
+    environment: normalizeRuntimeEnvironment(config.environment),
+    viewMessages: new Map(),
+  };
   const pluginModule = await loadPlugin(config.entryUrl);
   plugin = pluginModule?.default;
   if (!plugin || typeof plugin.activate !== "function") {
@@ -297,7 +432,7 @@ export async function startPluginRuntime({ port, config, loadPlugin }) {
   async function handleRequest(message) {
     if (message.method === "plugin.initialize") {
       if (context) throw new PluginError("failed_precondition", "Plugin is already initialized");
-      context = createPluginContext(config, client);
+      context = createPluginContext(config, client, runtimeApi);
       return {
         pluginId: config.pluginId,
         pluginVersion: config.pluginVersion,
@@ -308,6 +443,10 @@ export async function startPluginRuntime({ port, config, loadPlugin }) {
     if (message.method === "plugin.activate") {
       if (!context) throw new PluginError("failed_precondition", "Plugin must be initialized first");
       if (!activated) {
+        if (message.params?.environment && typeof message.params.environment === "object"
+          && !Array.isArray(message.params.environment)) {
+          runtimeApi.environment = normalizeRuntimeEnvironment(message.params.environment);
+        }
         const disposable = await plugin.activate(context);
         if (disposable && typeof disposable.dispose === "function") context.subscriptions.add(disposable);
         activated = true;
@@ -322,7 +461,32 @@ export async function startPluginRuntime({ port, config, loadPlugin }) {
       }
       return null;
     }
+    if (message.method === "plugin.command.execute") {
+      if (!activated || !context) throw new PluginError("failed_precondition", "Plugin is not activated");
+      const command = assertOwnedContributionId(config.pluginId, message.params?.command, "Plugin command");
+      const handler = runtimeApi.commandHandlers.get(command);
+      if (!handler) throw new PluginError("failed_precondition", `Plugin command has no registered handler: ${command}`);
+      return await handler(message.params?.args, message.params?.invocation);
+    }
     throw new PluginError("unsupported", `Unsupported host method: ${message.method}`);
+  }
+
+  function handleNotification(message) {
+    if (message.method === "plugin.settings.changed") {
+      runtimeApi.settingsChanged.fire(message.params);
+      return true;
+    }
+    if (message.method === "plugin.environment.changed") {
+      runtimeApi.environment = normalizeRuntimeEnvironment(message.params);
+      runtimeApi.environmentChanged.fire(runtimeApi.environment);
+      return true;
+    }
+    if (message.method === "plugin.view.message") {
+      const viewId = assertOwnedContributionId(config.pluginId, message.params?.viewId, "Plugin view");
+      runtimeApi.viewMessages.get(viewId)?.fire(message.params?.message);
+      return true;
+    }
+    return false;
   }
 
   const dispose = transport.onMessage((message) => {
@@ -337,12 +501,19 @@ export async function startPluginRuntime({ port, config, loadPlugin }) {
       cancellation.get(message.params?.cancellationId)?.cancel();
       return;
     }
-    if (!Object.hasOwn(message, "id")) return;
+    if (!Object.hasOwn(message, "id")) {
+      try { handleNotification(message); } catch { transport.close(); }
+      return;
+    }
     const cancellationId = message.cancellationId;
     const source = new CancellationTokenSource();
     if (cancellationId) cancellation.set(cancellationId, source);
     void handleRequest(message).then(
-      (result) => transport.post({ jsonrpc: "2.0", id: message.id, result }),
+      (result) => transport.post({
+        jsonrpc: "2.0",
+        id: message.id,
+        result: result === undefined ? null : result,
+      }),
       (error) => {
         const rpcError = normalizeError(error);
         transport.post(makeRpcFailure(message.id, rpcError.code, rpcError.message, rpcError.data));
@@ -358,6 +529,10 @@ export async function startPluginRuntime({ port, config, loadPlugin }) {
       dispose();
       client.close();
       for (const source of cancellation.values()) source.cancel();
+      runtimeApi.commandHandlers.clear();
+      runtimeApi.settingsChanged.clear();
+      runtimeApi.environmentChanged.clear();
+      for (const emitter of runtimeApi.viewMessages.values()) emitter.clear();
       cancellation.clear();
       if (!deactivated) {
         await plugin.deactivate?.();

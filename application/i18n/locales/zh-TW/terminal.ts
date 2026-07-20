@@ -631,6 +631,7 @@ export const zhTWTerminalMessages: Messages = {
   // Tabs
   'tabs.closeSessionAria': '關閉工作階段',
   'tabs.closeLogViewAria': '關閉日誌檢視',
+  'tabs.closePluginViewAria': '關閉 {title}',
   'tabs.logPrefix': '日誌：',
   'tabs.logLocal': '本機',
   'tabs.copyTab': '複製標籤頁',

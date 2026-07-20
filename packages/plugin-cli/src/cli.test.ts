@@ -220,6 +220,25 @@ test("manifest validation reports permission and contribution mistakes", () => {
   assert.match(result.errors.join("\n"), /undeclared command/);
 });
 
+test("text setting defaults must satisfy their declared pattern", () => {
+  const result = validateManifestValue(manifest({
+    permissions: { required: ["settings.read", "settings.write"] },
+    contributes: {
+      settings: [{
+        id: "com.example.package-test.channel",
+        label: "Channel",
+        control: "text",
+        scope: "application",
+        pattern: "^(stable|beta)$",
+        default: "nightly",
+      }],
+    },
+  }));
+
+  assert.equal(result.valid, false);
+  assert.match(result.errors.join("\n"), /default does not match its pattern/u);
+});
+
 test("resource-scoped required permissions must declare activation-time bounds", () => {
   for (const [permission, resource] of [
     ["network", "https://example.com"],

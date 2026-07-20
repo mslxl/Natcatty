@@ -124,6 +124,7 @@ export interface TerminalProps {
   customAccent?: string;
   terminalSettings?: TerminalSettings;
   sessionId: string;
+  workspaceId?: string;
   restoreState?: TerminalSession["restoreState"];
   shellType?: TerminalSession["shellType"];
   lastCwd?: string;

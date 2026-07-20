@@ -35,6 +35,9 @@ import { ToolbarCustomizeContextMenu } from '../ui/toolbar-item-layout';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip';
 import { cn } from '../../lib/utils';
 import HostKeywordHighlightPopover from './HostKeywordHighlightPopover';
+import { collectOwnedPluginMenus, comparePluginMenus, usePluginContributions } from '../../application/state/usePluginContributions';
+import { buildTerminalPluginContributionContext } from '../../application/state/pluginContributionContexts';
+import { PluginContributionIcon } from '../plugins/PluginContributionIcon';
 
 export const TERMINAL_TOOLBAR_ITEM_IDS = [
   'highlight',
@@ -77,6 +80,8 @@ export const TERMINAL_TOOLBAR_LAYOUT_DEFAULTS: ToolbarItemLayoutDefaults = {
 };
 
 export interface TerminalToolbarProps {
+  sessionId: string;
+  workspaceId?: string;
   status: 'connecting' | 'connected' | 'disconnected';
   host?: Host;
   /** Popup/minimal mode: compose bar, search, and snippets only. */
@@ -113,6 +118,8 @@ export interface TerminalToolbarProps {
 }
 
 export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
+  sessionId,
+  workspaceId,
   status,
   host,
   compactToolbar = false,
@@ -143,6 +150,32 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
   onStartRecording,
 }) => {
   const { t } = useI18n();
+  const terminalContext = buildTerminalPluginContributionContext({
+    surface: 'terminal/toolbar',
+    sessionId,
+    status,
+    hostId: host?.id,
+    hostProtocol: host?.protocol ?? 'ssh',
+    workspaceId,
+  });
+  const statusBarContext = buildTerminalPluginContributionContext({
+    surface: 'statusBar',
+    sessionId,
+    status,
+    hostId: host?.id,
+    hostProtocol: host?.protocol ?? 'ssh',
+    workspaceId,
+  });
+  const pluginContributions = usePluginContributions({
+    context: terminalContext,
+    menuContexts: {
+      'terminal/toolbar': terminalContext,
+      statusBar: statusBarContext,
+    },
+  });
+  const pluginToolbarMenus = collectOwnedPluginMenus(pluginContributions.snapshot.plugins)
+    .filter((menu) => (menu.location === 'terminal/toolbar' || menu.location === 'statusBar') && menu.visible)
+    .sort(comparePluginMenus);
   const [highlightPopoverOpen, setHighlightPopoverOpen] = useState(false);
   const [scriptsPopoverOpen, setScriptsPopoverOpen] = useState(false);
   // Overflow popover + encoding submenu are both controlled so that
@@ -951,6 +984,27 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
           </Popover>
         )}
       </ToolbarCustomizeContextMenu>
+
+      {pluginToolbarMenus.map((menu) => (
+        <Tooltip key={menu.id}>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size={menu.location === 'statusBar' ? 'sm' : 'icon'}
+              className={menu.location === 'statusBar' ? 'h-6 gap-1 px-2 text-[11px]' : buttonBase}
+              disabled={!menu.enabled}
+              aria-pressed={menu.checked}
+              onClick={(event) => void pluginContributions.executeCommand(event.altKey && menu.alt ? menu.alt : menu.command, undefined, {
+                ...(menu.location === 'statusBar' ? statusBarContext : terminalContext),
+              }).catch(() => {})}
+            >
+              <PluginContributionIcon pluginId={menu.pluginId} icon={menu.icon} size={12} />
+              {menu.location === 'statusBar' && <span>{menu.title}</span>}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">{menu.title}{menu.shortcut ? ` (${menu.shortcut})` : ''}</TooltipContent>
+        </Tooltip>
+      ))}
 
       {recordingIndicator}
 

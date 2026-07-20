@@ -67,6 +67,10 @@ class RuntimeSupervisor {
     if (this.runtimeMessageGuard != null && typeof this.runtimeMessageGuard !== "function") {
       throw new TypeError("Plugin runtime message guard must be a function");
     }
+    this.getInitialEnvironment = options.getInitialEnvironment ?? (() => null);
+    if (typeof this.getInitialEnvironment !== "function") {
+      throw new TypeError("Plugin initial-environment provider must be a function");
+    }
     this.resolveRuntimeKind = options.resolveRuntimeKind ?? resolveDefaultRuntimeKind;
     this.resolveSecurityPrincipal = options.resolveSecurityPrincipal
       ?? (({ plugin }) => defaultSecurityPrincipal(plugin.manifest, plugin.archiveSha256));
@@ -161,6 +165,26 @@ class RuntimeSupervisor {
     for (const listener of [...this.runtimeListeners]) {
       try { listener(event); } catch {}
     }
+  }
+
+  #snapshotInitialEnvironment(identity) {
+    identity.assertCurrent();
+    const providedEnvironment = this.getInitialEnvironment(Object.freeze({
+      pluginId: identity.pluginId,
+      pluginVersion: identity.pluginVersion,
+      runtimeId: identity.runtimeId,
+      runtimeKind: identity.runtimeKind,
+    }));
+    if (providedEnvironment && typeof providedEnvironment.then === "function") {
+      throw new TypeError("Plugin initial-environment provider must be synchronous");
+    }
+    if (providedEnvironment != null
+      && (typeof providedEnvironment !== "object" || Array.isArray(providedEnvironment))) {
+      throw new TypeError("Plugin initial environment must be an object or null");
+    }
+    return providedEnvironment == null
+      ? null
+      : freezeJson(structuredClone(providedEnvironment));
   }
 
   #isInstalledVersion(identity) {
@@ -321,6 +345,7 @@ class RuntimeSupervisor {
     this.runtimeIdentities.set(pluginId, identity);
     this.#setRuntimeState(identity, "starting");
     try {
+      const environment = this.#snapshotInitialEnvironment(identity);
       const initialized = await raceWithAbort(Promise.resolve(runtime.start({
         pluginId,
         pluginVersion: plugin.activeVersion,
@@ -328,7 +353,11 @@ class RuntimeSupervisor {
         apiVersion: this.apiVersion,
         supportedFeatures: this.supportedFeatures,
         enabledFeatures: compatibility.enabledFeatures,
-      }, { signal })), signal);
+        environment,
+      }, {
+        signal,
+        getActivationEnvironment: () => this.#snapshotInitialEnvironment(identity),
+      })), signal);
       if (
         initialized.pluginId !== pluginId
         || initialized.pluginVersion !== plugin.activeVersion

@@ -5,6 +5,11 @@ class PluginManager {
     this.database = options.database;
     this.packageStore = options.packageStore;
     this.runtimeSupervisor = options.runtimeSupervisor;
+    this.contributionService = options.contributionService ?? {
+      initialize: () => this.runtimeSupervisor.startEnabled(),
+      onPluginDisabled() {},
+      onPluginEnabled: (pluginId) => this.runtimeSupervisor.start(pluginId),
+    };
     this.beforeClose = options.beforeClose ?? null;
     this.initialized = false;
     this.initializePromise = null;
@@ -20,7 +25,7 @@ class PluginManager {
 
   async #initialize() {
     await this.packageStore.initialize();
-    await this.runtimeSupervisor.startEnabled();
+    await this.contributionService.initialize();
     this.initialized = true;
   }
 
@@ -51,6 +56,7 @@ class PluginManager {
           beforeActivate: async ({ pluginId, previousPlugin }) => {
             if (!previousPlugin?.enabled) return;
             this.database.setEnabled(pluginId, false);
+            this.contributionService.onPluginDisabled(pluginId);
             stoppedPlugin = { pluginId, version: previousPlugin.activeVersion };
             await this.runtimeSupervisor.stop(pluginId);
           },
@@ -61,7 +67,7 @@ class PluginManager {
           if (current?.activeVersion === stoppedPlugin.version) {
             this.database.setEnabled(stoppedPlugin.pluginId, true);
             try {
-              await this.runtimeSupervisor.start(stoppedPlugin.pluginId);
+              await this.contributionService.onPluginEnabled(stoppedPlugin.pluginId);
             } catch {
               this.database.setEnabled(stoppedPlugin.pluginId, false);
             }
@@ -71,16 +77,17 @@ class PluginManager {
       }
       if (plugin?.enabled) {
         try {
-          await this.runtimeSupervisor.start(plugin.id);
+          await this.contributionService.onPluginEnabled(plugin.id);
         } catch (error) {
           this.database.setEnabled(plugin.id, false);
+          this.contributionService.onPluginDisabled(plugin.id);
           if (stoppedPlugin && stoppedPlugin.version !== plugin.activeVersion) {
             try {
               this.database.setActiveVersion(stoppedPlugin.pluginId, stoppedPlugin.version, {
                 enabled: true,
                 expectedActiveVersion: plugin.activeVersion,
               });
-              await this.runtimeSupervisor.start(stoppedPlugin.pluginId);
+              await this.contributionService.onPluginEnabled(stoppedPlugin.pluginId);
             } catch {
               const restored = this.database.getActivePlugin(stoppedPlugin.pluginId);
               if (restored?.activeVersion === stoppedPlugin.version && restored.enabled) {
@@ -104,13 +111,15 @@ class PluginManager {
           this.database.clearQuarantine(pluginId, plugin.activeVersion);
         }
         this.database.setEnabled(pluginId, true);
-        try { await this.runtimeSupervisor.start(pluginId); }
+        try { await this.contributionService.onPluginEnabled(pluginId); }
         catch (error) {
           this.database.setEnabled(pluginId, false);
+          this.contributionService.onPluginDisabled(pluginId);
           throw error;
         }
       } else {
         this.database.setEnabled(pluginId, false);
+        this.contributionService.onPluginDisabled(pluginId);
         await this.runtimeSupervisor.stop(pluginId);
       }
       return this.database.getActivePlugin(pluginId);
@@ -129,7 +138,10 @@ class PluginManager {
     return this.#mutate(async () => {
       await this.#ready();
       const plugin = this.database.getActivePlugin(pluginId);
-      if (plugin) this.database.setEnabled(pluginId, false);
+      if (plugin) {
+        this.database.setEnabled(pluginId, false);
+        this.contributionService.onPluginDisabled(pluginId);
+      }
       await this.runtimeSupervisor.stop(pluginId);
       return this.packageStore.uninstall(pluginId);
     });

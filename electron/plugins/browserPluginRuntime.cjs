@@ -72,7 +72,7 @@ class BrowserPluginRuntime {
   }
 
   async start(runtimeConfig, options = {}) {
-    const { signal } = options;
+    const { signal, getActivationEnvironment } = options;
     this.#assertStarting(signal);
     const { BrowserWindow, MessageChannelMain, session } = this.electron;
     if (!BrowserWindow || !MessageChannelMain || !session?.fromPartition) {
@@ -250,7 +250,12 @@ class BrowserPluginRuntime {
       supportedFeatures: config.supportedFeatures,
     }, { timeoutMs: PLUGIN_ACTIVATION_TIMEOUT_MS });
     this.#assertStarting(signal);
-    await this.router.request("plugin.activate", {}, { timeoutMs: PLUGIN_ACTIVATION_TIMEOUT_MS });
+    const activationEnvironment = typeof getActivationEnvironment === "function"
+      ? getActivationEnvironment()
+      : config.environment;
+    await this.router.request("plugin.activate", activationEnvironment == null
+      ? {}
+      : { environment: activationEnvironment }, { timeoutMs: PLUGIN_ACTIVATION_TIMEOUT_MS });
     this.#assertStarting(signal);
     return initialized;
   }

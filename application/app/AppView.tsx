@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import React, { Suspense, lazy, useCallback, useMemo } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useMemo } from 'react';
 import { AlertTriangle, Download, Trash2 } from 'lucide-react';
-import { activeTabStore, toEditorTabId, useIsEditorTabActive } from '../state/activeTabStore';
+import { activeTabStore, toEditorTabId, useActiveTabId, useIsEditorTabActive } from '../state/activeTabStore';
 import { editorTabStore } from '../state/editorTabStore';
 import { releaseEditorTabSaveCoordinator, saveEditorTab } from '../state/editorTabSave';
 import { useTerminalHostTreeLayoutWidth } from '../state/terminalHostTreeStore';
@@ -24,6 +24,12 @@ import { AppHostTreeLayer } from './AppHostTreeLayer';
 import { getUiThemeById } from '../../infrastructure/config/uiThemes';
 import { buildAppThemeCssVars } from '../state/settingsStateDefaults';
 import { useMainWindowInputFocusRecovery } from '../state/useMainWindowInputFocusRecovery';
+import { PluginContributionHost } from '../../components/plugins/PluginContributionHost';
+import { resolveActivePluginKeybindingContext } from '../state/pluginContributionContexts';
+import { selectPluginThemeTokens } from '../state/pluginContributionEnvironment';
+import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
+import { pluginViewTabStore, usePluginViewTabs } from '../state/pluginViewTabStore';
+import { buildPluginSettingScopeCatalog } from '../state/usePluginSettingScopeCatalog';
 
 const LazyProtocolSelectDialog = lazy(() => import('../../components/ProtocolSelectDialog'));
 const LazyQuickSwitcher = lazy(() =>
@@ -55,6 +61,8 @@ const TextEditorTabFallback = ({ tabId }: { tabId: string }) => {
 type AppViewContext = Record<string, any>;
 
 export function AppView({ ctx }: { ctx: AppViewContext }) {
+  const activeTabId = useActiveTabId();
+  const pluginViewTabs = usePluginViewTabs();
   const {
     resetSessionRename,
     resetWorkspaceRename,
@@ -120,6 +128,35 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
       colorScheme: resolvedTheme,
     } as React.CSSProperties;
   }, [accentMode, customAccent, resolvedTheme, settings.darkUiThemeId, settings.lightUiThemeId]);
+
+  const pluginKeybindingContext = useMemo(() => resolveActivePluginKeybindingContext({
+    activeTabId,
+    sessions,
+    workspaces,
+  }), [activeTabId, sessions, workspaces]);
+  const pluginThemeTokens = useMemo(
+    () => selectPluginThemeTokens(appThemeStyle as Record<string, unknown>),
+    [appThemeStyle],
+  );
+
+  const closePluginViewTab = useCallback((tabId: string) => {
+    const index = orderedTabsWithEditors.indexOf(tabId);
+    if (activeTabStore.getActiveTabId() === tabId) {
+      const next = orderedTabsWithEditors[index - 1] ?? orderedTabsWithEditors[index + 1] ?? 'vault';
+      activeTabStore.setActiveTabId(next === tabId ? 'vault' : next);
+    }
+    pluginViewTabStore.close(tabId);
+  }, [orderedTabsWithEditors]);
+
+  useEffect(() => {
+    const catalog = buildPluginSettingScopeCatalog({
+      hosts,
+      workspaces,
+      sessions,
+      deviceLabel: t('settings.plugins.thisDevice'),
+    });
+    void netcattyBridge.get()?.setPluginScopeCatalog?.(catalog).catch(() => {});
+  }, [hosts, sessions, t, workspaces]);
 
   return (
     <SnippetExecutionProvider>
@@ -205,6 +242,8 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
         showHostTreeSidebar={settings.showHostTreeSidebar}
         dynamicTabTitleMode={settings.terminalSettings.dynamicTabTitleMode}
         editorTabs={editorTabs}
+        pluginViewTabs={pluginViewTabs}
+        onClosePluginViewTab={closePluginViewTab}
         onRequestCloseEditorTab={handleRequestCloseEditorTab}
         hostById={hostById}
       />
@@ -453,6 +492,13 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
             </Suspense>
           </LazyLoadBoundary>
         ))}
+
+        <PluginContributionHost
+          locale={settings.uiLanguage}
+          theme={resolvedTheme}
+          themeTokens={pluginThemeTokens}
+          keybindingContext={pluginKeybindingContext}
+        />
       </div>
 
       {/* Global "quick add / edit snippet" dialog, triggered by the

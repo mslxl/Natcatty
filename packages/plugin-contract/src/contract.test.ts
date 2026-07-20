@@ -719,6 +719,66 @@ test("setting control semantics fail closed for secrets, sync, and structured va
       ],
       default: ["same", "same"],
     }, /duplicate option value/],
+    [{
+      id: "com.example.contract-test.pattern",
+      label: "Pattern",
+      control: "text",
+      scope: "application",
+      pattern: "^(a+)+$",
+    }, /unsafe regular-expression feature/],
+    [{
+      id: "com.example.contract-test.structured-pattern",
+      label: "Structured pattern",
+      control: "table",
+      scope: "application",
+      valueSchema: {
+        type: "array",
+        items: { type: "string", pattern: "^ok$" },
+      },
+    }, /valueSchema keyword is not allowed: pattern/],
+    [{
+      id: "com.example.contract-test.structured-default",
+      label: "Structured default",
+      control: "table",
+      scope: "application",
+      valueSchema: {
+        type: "array",
+        items: { type: "integer", minimum: 1 },
+      },
+      default: [0],
+    }, /default does not match valueSchema/],
+    [{
+      id: "com.example.contract-test.structured-range",
+      label: "Structured range",
+      control: "list",
+      scope: "application",
+      valueSchema: {
+        type: "array",
+        minItems: 2,
+        maxItems: 1,
+        items: { type: "string" },
+      },
+    }, /minItems must not exceed maxItems/],
+    [{
+      id: "com.example.contract-test.structured-integer-range",
+      label: "Structured integer range",
+      control: "list",
+      scope: "application",
+      valueSchema: {
+        type: "array",
+        items: { type: "integer", minimum: 1.2, maximum: 1.8 },
+      },
+    }, /integer range must contain a valid integer/],
+    [{
+      id: "com.example.contract-test.structured-keyword-type",
+      label: "Structured keyword type",
+      control: "table",
+      scope: "application",
+      valueSchema: {
+        type: "array",
+        items: { type: "boolean", minLength: 1 },
+      },
+    }, /string keywords require type string/],
   ] as const) {
     const result = validateManifestValue({
       ...base,

@@ -28,9 +28,17 @@ import {
   ContextMenuTrigger,
 } from '../ui/context-menu';
 import { isMiddleClickContextMenuEvent } from './runtime/middleClickBehavior';
+import { collectOwnedPluginMenus, comparePluginMenus, usePluginContributions } from '../../application/state/usePluginContributions';
+import { buildTerminalPluginContributionContext } from '../../application/state/pluginContributionContexts';
+import { PluginContributionIcon } from '../plugins/PluginContributionIcon';
 
 export interface TerminalContextMenuProps {
   children: React.ReactNode;
+  sessionId: string;
+  workspaceId?: string;
+  status: 'connecting' | 'connected' | 'disconnected';
+  hostId?: string;
+  hostProtocol?: string;
   hasSelection?: boolean;
   hotkeyScheme?: 'disabled' | 'mac' | 'pc';
   keyBindings?: KeyBinding[];
@@ -131,6 +139,11 @@ export const shouldOpenTerminalContextMenu = ({
 
 export const TerminalContextMenu: React.FC<TerminalContextMenuProps> = ({
   children,
+  sessionId,
+  workspaceId,
+  status,
+  hostId,
+  hostProtocol,
   hasSelection = false,
   hotkeyScheme = 'mac',
   keyBindings,
@@ -155,6 +168,21 @@ export const TerminalContextMenu: React.FC<TerminalContextMenuProps> = ({
   onDetach,
 }) => {
   const { t } = useI18n();
+  const terminalContext = buildTerminalPluginContributionContext({
+    surface: 'terminal/context',
+    sessionId,
+    status,
+    hostId,
+    hostProtocol,
+    workspaceId,
+    hasSelection,
+    alternateScreen: isAlternateScreen,
+    reconnectable: Boolean(isReconnectable),
+  });
+  const pluginContributions = usePluginContributions({ context: terminalContext });
+  const pluginMenus = collectOwnedPluginMenus(pluginContributions.snapshot.plugins)
+    .filter((menu) => menu.location === 'terminal/context' && menu.visible)
+    .sort(comparePluginMenus);
   const isMac = hotkeyScheme === 'mac';
   // Tracks the .workspace-pane whose context menu is currently open so we can
   // keep its `:focus-within`-driven opacity stable while focus is in the
@@ -353,6 +381,26 @@ export const TerminalContextMenu: React.FC<TerminalContextMenuProps> = ({
                 <SquareArrowOutUpRight size={14} className="mr-2" />
                 {t('terminal.menu.detach')}
               </ContextMenuItem>
+            </>
+          )}
+
+          {pluginMenus.length > 0 && (
+            <>
+              <ContextMenuSeparator />
+              {pluginMenus.map((menu) => (
+                <ContextMenuItem
+                  key={menu.id}
+                  disabled={!menu.enabled}
+                  onClick={(event) => void pluginContributions.executeCommand(event.altKey && menu.alt ? menu.alt : menu.command, undefined, {
+                    ...terminalContext,
+                  }).catch(() => {})}
+                >
+                  <PluginContributionIcon pluginId={menu.pluginId} icon={menu.icon} className="mr-2" />
+                  {menu.title}
+                  {menu.checked && <span className="ml-auto pl-4" aria-hidden="true">✓</span>}
+                  {menu.shortcut && <ContextMenuShortcut>{menu.shortcut}</ContextMenuShortcut>}
+                </ContextMenuItem>
+              ))}
             </>
           )}
 

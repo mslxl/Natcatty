@@ -4,7 +4,9 @@ import React from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { sanitizeHost } from '../../domain/host';
 import type { Host } from '../../types';
-import { ContextMenuContent, ContextMenuItem } from '../ui/context-menu';
+import { ContextMenuContent, ContextMenuItem, ContextMenuShortcut } from '../ui/context-menu';
+import { collectOwnedPluginMenus, comparePluginMenus, usePluginContributions } from '../../application/state/usePluginContributions';
+import { PluginContributionIcon } from '../plugins/PluginContributionIcon';
 
 export interface HostTreeHostContextMenuHandlers {
   onConnect: (host: Host) => void;
@@ -26,6 +28,16 @@ export const HostTreeHostContextMenuContent: React.FC<
 }) => {
   const { t } = useI18n();
   const safeHost = sanitizeHost(host);
+  const pluginContributions = usePluginContributions({
+    context: {
+      'netcatty.surface': 'host/context',
+      'host.id': safeHost.id,
+      'host.protocol': safeHost.protocol ?? 'ssh',
+    },
+  });
+  const pluginMenus = collectOwnedPluginMenus(pluginContributions.snapshot.plugins)
+    .filter((menu) => menu.location === 'host/context' && menu.visible)
+    .sort(comparePluginMenus);
 
   return (
     <ContextMenuContent>
@@ -49,6 +61,22 @@ export const HostTreeHostContextMenuContent: React.FC<
       >
         <Server className="mr-2 h-4 w-4" /> {t('action.delete')}
       </ContextMenuItem>
+      {pluginMenus.map((menu) => (
+        <ContextMenuItem
+          key={menu.id}
+          disabled={!menu.enabled}
+          onClick={(event) => void pluginContributions.executeCommand(event.altKey && menu.alt ? menu.alt : menu.command, { hostId: safeHost.id }, {
+            'netcatty.surface': 'host/context',
+            'host.id': safeHost.id,
+            'host.protocol': safeHost.protocol ?? 'ssh',
+          }).catch(() => {})}
+        >
+          <PluginContributionIcon pluginId={menu.pluginId} icon={menu.icon} className="mr-2" />
+          {menu.title}
+          {menu.checked && <span className="ml-auto pl-4" aria-hidden="true">✓</span>}
+          {menu.shortcut && <ContextMenuShortcut>{menu.shortcut}</ContextMenuShortcut>}
+        </ContextMenuItem>
+      ))}
     </ContextMenuContent>
   );
 };

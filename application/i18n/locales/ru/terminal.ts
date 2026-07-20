@@ -613,6 +613,7 @@ export const ruTerminalMessages: Messages = {
   // Tabs
   'tabs.closeSessionAria': 'Закрыть сессию',
   'tabs.closeLogViewAria': 'Закрыть просмотр журнала',
+  'tabs.closePluginViewAria': 'Закрыть {title}',
   'tabs.logPrefix': 'Журнал:',
   'tabs.logLocal': 'Локальный',
   'tabs.copyTab': 'Копировать вкладку',

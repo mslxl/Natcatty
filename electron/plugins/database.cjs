@@ -14,6 +14,8 @@ const REQUIRED_SCHEMA_COLUMNS = Object.freeze({
   plugin_runtime_state: ["plugin_id", "plugin_version", "status", "runtime_kind", "last_error", "quarantined_at", "updated_at"],
   plugin_crashes: ["plugin_id", "plugin_version", "crashed_at"],
   plugin_kv: ["plugin_id", "key", "value_json", "updated_at"],
+  plugin_settings: ["plugin_id", "setting_id", "scope", "scope_id", "value_json", "updated_at"],
+  plugin_view_state: ["plugin_id", "view_id", "scope_id", "state_json", "updated_at"],
   plugin_permission_grants: ["plugin_id", "permission", "resource", "resource_kind", "declaration_hash", "granted_at"],
   plugin_secrets: ["plugin_id", "key", "secret_ref", "ciphertext", "created_at", "updated_at"],
   plugin_security_audit: ["id", "plugin_id", "event", "details_json", "created_at"],
@@ -100,6 +102,27 @@ class PluginDatabase {
             updated_at INTEGER NOT NULL,
             PRIMARY KEY (plugin_id, key)
           );
+          CREATE TABLE plugin_settings (
+            plugin_id TEXT NOT NULL,
+            setting_id TEXT NOT NULL,
+            scope TEXT NOT NULL CHECK (scope IN ('application', 'workspace', 'host', 'session', 'device')),
+            scope_id TEXT NOT NULL,
+            value_json TEXT NOT NULL,
+            updated_at INTEGER NOT NULL,
+            PRIMARY KEY (plugin_id, setting_id, scope, scope_id)
+          );
+          CREATE INDEX plugin_settings_lookup
+            ON plugin_settings(plugin_id, scope, scope_id, setting_id);
+          CREATE TABLE plugin_view_state (
+            plugin_id TEXT NOT NULL,
+            view_id TEXT NOT NULL,
+            scope_id TEXT NOT NULL,
+            state_json TEXT NOT NULL,
+            updated_at INTEGER NOT NULL,
+            PRIMARY KEY (plugin_id, view_id, scope_id)
+          );
+          CREATE INDEX plugin_view_state_lookup
+            ON plugin_view_state(plugin_id, scope_id, view_id);
           CREATE TABLE plugin_permission_grants (
             plugin_id TEXT NOT NULL,
             permission TEXT NOT NULL,
@@ -422,6 +445,74 @@ class PluginDatabase {
     return this.db.prepare(
       "SELECT key FROM plugin_kv WHERE plugin_id = ? ORDER BY key COLLATE BINARY",
     ).all(pluginId).map((row) => row.key);
+  }
+
+  getSetting(pluginId, settingId, scope, scopeId) {
+    const row = this.db.prepare(`
+      SELECT value_json FROM plugin_settings
+      WHERE plugin_id = ? AND setting_id = ? AND scope = ? AND scope_id = ?
+    `).get(pluginId, settingId, scope, scopeId);
+    return row ? parseJson(row.value_json, "setting value") : undefined;
+  }
+
+  setSetting(pluginId, settingId, scope, scopeId, value) {
+    const serialized = JSON.stringify(value);
+    if (serialized === undefined) throw new TypeError("Plugin setting value must be JSON serializable");
+    this.db.prepare(`
+      INSERT INTO plugin_settings(plugin_id, setting_id, scope, scope_id, value_json, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(plugin_id, setting_id, scope, scope_id) DO UPDATE SET
+        value_json = excluded.value_json,
+        updated_at = excluded.updated_at
+    `).run(pluginId, settingId, scope, scopeId, serialized, this.clock());
+  }
+
+  deleteSetting(pluginId, settingId, scope, scopeId) {
+    this.db.prepare(`
+      DELETE FROM plugin_settings
+      WHERE plugin_id = ? AND setting_id = ? AND scope = ? AND scope_id = ?
+    `).run(pluginId, settingId, scope, scopeId);
+  }
+
+  listSettings(pluginId) {
+    return this.db.prepare(`
+      SELECT setting_id, scope, scope_id, value_json, updated_at
+      FROM plugin_settings WHERE plugin_id = ?
+      ORDER BY setting_id COLLATE BINARY, scope COLLATE BINARY, scope_id COLLATE BINARY
+    `).all(pluginId).map((row) => ({
+      settingId: row.setting_id,
+      scope: row.scope,
+      scopeId: row.scope_id,
+      value: parseJson(row.value_json, "setting value"),
+      updatedAt: Number(row.updated_at),
+    }));
+  }
+
+  getViewState(pluginId, viewId, scopeId) {
+    const row = this.db.prepare(`
+      SELECT state_json FROM plugin_view_state
+      WHERE plugin_id = ? AND view_id = ? AND scope_id = ?
+    `).get(pluginId, viewId, scopeId);
+    return row ? parseJson(row.state_json, "view state") : undefined;
+  }
+
+  setViewState(pluginId, viewId, scopeId, state) {
+    const serialized = JSON.stringify(state);
+    if (serialized === undefined) throw new TypeError("Plugin view state must be JSON serializable");
+    this.db.prepare(`
+      INSERT INTO plugin_view_state(plugin_id, view_id, scope_id, state_json, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(plugin_id, view_id, scope_id) DO UPDATE SET
+        state_json = excluded.state_json,
+        updated_at = excluded.updated_at
+    `).run(pluginId, viewId, scopeId, serialized, this.clock());
+  }
+
+  deleteViewState(pluginId, viewId, scopeId) {
+    this.db.prepare(`
+      DELETE FROM plugin_view_state
+      WHERE plugin_id = ? AND view_id = ? AND scope_id = ?
+    `).run(pluginId, viewId, scopeId);
   }
 
   listPermissionGrants(pluginId) {

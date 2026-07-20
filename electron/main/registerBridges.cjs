@@ -93,6 +93,7 @@ function createBridgeRegistrar(context) {
       createTrustedPluginBridgeSender,
       registerPluginBridge,
     } = require("../plugins/pluginBridge.cjs");
+    const { toElectronAccelerator } = require("../plugins/keybindings.cjs");
     const { startDevelopmentPluginHost } = require("../plugins/hostBootstrap.cjs");
     const pluginHostService = startDevelopmentPluginHost({
       env: process.env,
@@ -109,6 +110,7 @@ function createBridgeRegistrar(context) {
             dialog: electronModule.dialog,
             window: win,
           }),
+          getLocale: () => getWindowManager().getCurrentLanguage?.() ?? "en",
         });
       },
       registerShutdown: (handler) => {
@@ -119,9 +121,105 @@ function createBridgeRegistrar(context) {
     });
     registerPluginBridge(ipcMain, {
       manager: pluginHostService?.manager,
+      contributionService: pluginHostService?.contributionService,
+      resolveContributionIcon: (payload) => pluginHostService?.contributionIconService?.resolve(payload),
+      viewHost: pluginHostService?.viewHost,
       env: process.env,
       isTrustedSender: createTrustedPluginBridgeSender({ devServerUrl: effectiveDevServerUrl }),
+      broadcast: (channel, payload) => {
+        for (const window of electronModule.BrowserWindow.getAllWindows()) {
+          if (!window.isDestroyed()) window.webContents.send(channel, payload);
+        }
+      },
     });
+    if (pluginHostService?.contributionService) {
+      const windowManager = getWindowManager();
+      const {
+        createThemeContributionNativeImage,
+        resolveApplicationMenuIconReference,
+      } = require("../plugins/themeContributionIcon.cjs");
+      const applicationMenuPackageIcons = new Map();
+      const pendingApplicationMenuPackageIcons = new Map();
+      let applicationMenuIconGeneration = 0;
+      const applicationMenuProvider = () => {
+          const snapshot = pluginHostService.contributionService.snapshot({
+            locale: windowManager.getCurrentLanguage?.() ?? "en",
+            context: { "netcatty.surface": "application" },
+          });
+          return snapshot.plugins.flatMap((plugin) => {
+            const commandById = new Map(plugin.commands.map((command) => [command.id, command]));
+            return plugin.menus
+            .filter((menu) => menu.location === "application" && menu.visible)
+            .sort((left, right) => (left.order ?? 0) - (right.order ?? 0))
+            .map((menu) => {
+              const iconReference = resolveApplicationMenuIconReference(menu, commandById);
+              let icon;
+              if (iconReference?.kind === "theme") {
+                icon = createThemeContributionNativeImage(
+                  electronModule.nativeImage,
+                  iconReference,
+                  electronModule.nativeTheme?.shouldUseDarkColors === true,
+                );
+              } else if (iconReference?.kind === "package" && pluginHostService.contributionIconService) {
+                const iconKey = JSON.stringify([plugin.id, iconReference.light, iconReference.dark ?? null]);
+                const resolved = applicationMenuPackageIcons.get(iconKey);
+                if (resolved) {
+                  const dataUrl = electronModule.nativeTheme?.shouldUseDarkColors && resolved.dark
+                    ? resolved.dark
+                    : resolved.light;
+                  const candidate = electronModule.nativeImage?.createFromDataURL?.(dataUrl);
+                  if (candidate && !candidate.isEmpty?.()) icon = candidate;
+                } else if (!pendingApplicationMenuPackageIcons.has(iconKey)) {
+                  const generation = applicationMenuIconGeneration;
+                  const pending = pluginHostService.contributionIconService.resolve({
+                    pluginId: plugin.id,
+                    icon: iconReference,
+                  }).then((next) => {
+                    if (generation !== applicationMenuIconGeneration) return;
+                    applicationMenuPackageIcons.set(iconKey, next);
+                    windowManager.setPluginApplicationMenuProvider?.(applicationMenuProvider);
+                  }).catch(() => {}).finally(() => {
+                    if (pendingApplicationMenuPackageIcons.get(iconKey) === pending) {
+                      pendingApplicationMenuPackageIcons.delete(iconKey);
+                    }
+                  });
+                  pendingApplicationMenuPackageIcons.set(iconKey, pending);
+                }
+              }
+              return {
+              id: menu.id,
+              label: menu.title,
+              icon,
+              enabled: menu.enabled,
+              checked: menu.checked,
+              group: menu.group ?? "",
+              order: menu.order ?? 0,
+              accelerator: toElectronAccelerator(menu.shortcut),
+              click: (_menuItem, _window, event) => {
+                const command = event?.altKey && menu.alt ? menu.alt : menu.command;
+                void pluginHostService.contributionService.executeCommand(command, undefined, {
+                  source: "application-menu",
+                  context: { "netcatty.surface": "application" },
+                }).catch((error) => console.warn("[Plugins] Application command failed:", error?.message ?? error));
+              },
+              };
+            });
+          });
+      };
+      const refreshPluginApplicationMenu = ({ invalidateIcons = false } = {}) => {
+        if (invalidateIcons) {
+          applicationMenuIconGeneration += 1;
+          applicationMenuPackageIcons.clear();
+          pendingApplicationMenuPackageIcons.clear();
+        }
+        windowManager.setPluginApplicationMenuProvider?.(applicationMenuProvider);
+      };
+      refreshPluginApplicationMenu();
+      pluginHostService.contributionService.onDidChange(() => refreshPluginApplicationMenu({ invalidateIcons: true }));
+      electronModule.nativeTheme?.on?.("updated", () => {
+        windowManager.setPluginApplicationMenuProvider?.(applicationMenuProvider);
+      });
+    }
   
     const getCloudSyncPasswordPath = () => {
       try {

@@ -192,3 +192,147 @@ test("runtime companion handles retry a failed stop request", async () => {
   await peer.dispose();
   host.close();
 });
+
+test("runtime peer exposes contribution APIs and routes host UI events", async () => {
+  const { startPluginRuntime } = await import("./runtime/runtimePeer.mjs");
+  const { port1, port2 } = new MessageChannel();
+  const calls = [];
+  const host = new PluginRpcRouter({
+    pluginId: "com.example.ui",
+    send(message) { port1.postMessage(message); },
+    handlers: {
+      "settings.get": async ({ settingId }) => ({ found: true, value: `value:${settingId}` }),
+      "settings.update": async ({ settingId, value }) => {
+        calls.push(["setting", settingId, value]);
+        return { restartRequired: false };
+      },
+      "commands.execute": async ({ command, args }) => {
+        calls.push(["execute", command, args]);
+        return "host-result";
+      },
+      "contextKeys.set": async ({ key, value }) => { calls.push(["context", key, value]); return null; },
+      "views.getState": async ({ viewId, scopeId }) => ({ state: { viewId, scopeId } }),
+      "views.setState": async ({ viewId, scopeId, state }) => {
+        calls.push(["view-state", viewId, scopeId, state]);
+        return null;
+      },
+      "views.postMessage": async ({ viewId, message }) => { calls.push(["view-message", viewId, message]); },
+    },
+  });
+  port1.on("message", (message) => host.accept(message));
+  const events = [];
+  let pluginContext;
+  const peer = await startPluginRuntime({
+    port: port2,
+    config: {
+      pluginId: "com.example.ui",
+      pluginVersion: "1.0.0",
+      netcattyVersion: "1.0.0",
+      apiVersion: "0.1.0-internal",
+      enabledFeatures: [],
+      environment: {
+        locale: "en-GB",
+        theme: "light",
+        reducedMotion: false,
+        highContrast: true,
+        themeTokens: { "--background": "initial" },
+      },
+    },
+    async loadPlugin() {
+      return {
+        default: {
+          async activate(context) {
+            pluginContext = context;
+            assert.equal(context.environment.locale, "fr-FR");
+            assert.equal(context.environment.theme, "dark");
+            assert.equal(context.environment.highContrast, true);
+            assert.deepEqual(context.environment.themeTokens, { "--background": "active" });
+            assert.throws(() => {
+              context.environment.themeTokens["--background"] = "mutated";
+            }, /read only/u);
+            context.settings.onDidChange((event) => events.push(["settings", event.settingId]));
+            context.environment.onDidChange((event) => events.push([
+              "environment",
+              event.locale,
+              event.theme,
+              event.themeTokens["--background"],
+            ]));
+            context.views.onDidReceiveMessage("com.example.ui.view", (message) => events.push(["view", message]));
+            context.commands.registerCommand("com.example.ui.hello", async (args, invocation) => ({ args, source: invocation.source }));
+            context.commands.registerCommand("com.example.ui.void", async () => undefined);
+            const staleDisposable = context.commands.registerCommand("com.example.ui.replaceable", async () => "old");
+            staleDisposable.dispose();
+            context.commands.registerCommand("com.example.ui.replaceable", async () => "new");
+            staleDisposable.dispose();
+            assert.equal(await context.settings.get("com.example.ui.greeting"), "value:com.example.ui.greeting");
+            assert.deepEqual(await context.settings.update("com.example.ui.greeting", "hello"), { restartRequired: false });
+            assert.equal(await context.commands.executeCommand("com.example.ui.hello", { nested: true }), "host-result");
+            await context.contextKeys.set("com.example.ui.ready", true);
+            assert.deepEqual(await context.views.getState("com.example.ui.view", "window-1"), {
+              viewId: "com.example.ui.view",
+              scopeId: "window-1",
+            });
+            await context.views.setState("com.example.ui.view", "window-1", { selected: 2 });
+            context.views.postMessage("com.example.ui.view", { ready: true });
+          },
+        },
+      };
+    },
+  });
+  await host.request("plugin.initialize", {
+    netcattyVersion: "1.0.0",
+    apiVersion: "0.1.0-internal",
+    supportedFeatures: [],
+  });
+  await host.request("plugin.activate", {
+    environment: {
+      locale: "fr-FR",
+      theme: "dark",
+      reducedMotion: true,
+      highContrast: true,
+      themeTokens: { "--background": "active" },
+    },
+  });
+  assert.deepEqual(await host.request("plugin.command.execute", {
+    command: "com.example.ui.hello",
+    args: { name: "Catty" },
+    invocation: { source: "palette" },
+  }), { args: { name: "Catty" }, source: "palette" });
+  assert.equal(await host.request("plugin.command.execute", {
+    command: "com.example.ui.void",
+    invocation: { source: "palette" },
+  }), null);
+  assert.equal(await host.request("plugin.command.execute", {
+    command: "com.example.ui.replaceable",
+    invocation: { source: "palette" },
+  }), "new");
+
+  host.notify("plugin.settings.changed", { settingId: "com.example.ui.greeting", scope: "application", scopeId: "application", source: "host" });
+  host.notify("plugin.environment.changed", {
+    locale: "zh-CN",
+    theme: "dark",
+    reducedMotion: true,
+    highContrast: false,
+    themeTokens: { "--background": "updated" },
+  });
+  host.notify("plugin.view.message", { viewId: "com.example.ui.view", message: { ping: true } });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(pluginContext.environment.locale, "zh-CN");
+  assert.equal(pluginContext.environment.reducedMotion, true);
+  assert.deepEqual(pluginContext.environment.themeTokens, { "--background": "updated" });
+  assert.deepEqual(events, [
+    ["settings", "com.example.ui.greeting"],
+    ["environment", "zh-CN", "dark", "updated"],
+    ["view", { ping: true }],
+  ]);
+  assert.deepEqual(calls, [
+    ["setting", "com.example.ui.greeting", "hello"],
+    ["execute", "com.example.ui.hello", { nested: true }],
+    ["context", "com.example.ui.ready", true],
+    ["view-state", "com.example.ui.view", "window-1", { selected: 2 }],
+    ["view-message", "com.example.ui.view", { ready: true }],
+  ]);
+  await peer.dispose();
+  host.close();
+});
