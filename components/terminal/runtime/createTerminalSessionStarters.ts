@@ -331,6 +331,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         port: jumpHost.port || 22,
         username: jumpAuth.username || "root",
         authMethod: jumpAuth.authMethod,
+        requiresMfa: !!jumpHost.requiresMfa,
         password: jumpPassword,
         privateKey: jumpKey?.source === 'reference' ? undefined : jumpPrivateKey,
         certificate: jumpKey?.certificate,

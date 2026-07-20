@@ -549,6 +549,7 @@ test("startSSH resolves jump host proxy credentials from an identity", async () 
       label: "Jump",
       hostname: "jump.example.test",
       username: "jump",
+      requiresMfa: true,
       sshTcpConnectTimeoutSeconds: 75,
       sshAuthReadyTimeoutSeconds: 360,
       proxyConfig: {
@@ -580,6 +581,7 @@ test("startSSH resolves jump host proxy credentials from an identity", async () 
   });
   assert.equal(capturedOptions?.sshTcpConnectTimeoutMs, 50_000);
   assert.equal(capturedOptions?.sshAuthReadyTimeoutMs, 240_000);
+  assert.equal(jumpHosts[0]?.requiresMfa, true);
   assert.equal(jumpHosts[0]?.sshTcpConnectTimeoutMs, 75_000);
   assert.equal(jumpHosts[0]?.sshAuthReadyTimeoutMs, 360_000);
 });
