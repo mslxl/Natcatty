@@ -6,6 +6,7 @@ import { applyTerminalKeywordHighlightRules } from './terminalKeywordHighlightRu
 
 const effectsSource = readFileSync(new URL('./useTerminalEffects.ts', import.meta.url), 'utf8');
 const terminalSource = readFileSync(new URL('../Terminal.tsx', import.meta.url), 'utf8');
+const terminalViewSource = readFileSync(new URL('./TerminalView.tsx', import.meta.url), 'utf8');
 const xtermRuntimeSource = readFileSync(new URL('./runtime/createXTermRuntime.ts', import.meta.url), 'utf8');
 
 test('hibernate runtime keyword setup restores plugin decoration rules', () => {
@@ -113,14 +114,37 @@ test('terminal Provider snapshots use the selected ET or Mosh transport througho
   assert.match(terminalSource, /protocol: effectiveTerminalProtocol,\s*status,/);
 });
 
-test('password-prompt input is consumed before every semantic command callback', () => {
+test('session launch paths use the same effective protocol as Provider snapshots', () => {
   assert.match(
-    xtermRuntimeSource,
-    /const sensitive = ctx\.passwordPromptActiveRef\?\.current === true;[\s\S]*?recordTerminalCommandExecution\([\s\S]*?\{ sensitive \},\s*\);/,
+    terminalSource,
+    /if \(effectiveTerminalProtocol === 'mosh'\)[\s\S]*?starters\.startMosh\(term\);[\s\S]*?if \(effectiveTerminalProtocol === 'et'\)/,
   );
   assert.match(
     terminalSource,
-    /const sensitive = passwordPromptActiveRef\.current;[\s\S]*?recordTerminalCommandExecution\([\s\S]*?\{ sensitive \}\);/,
+    /else if \(effectiveTerminalProtocol === 'mosh'\)[\s\S]*?sessionStarters\.startMosh\(term\);[\s\S]*?else if \(effectiveTerminalProtocol === 'et'\)/,
+  );
+  assert.match(
+    effectsSource,
+    /else if \(effectiveTerminalProtocol === "mosh"\)[\s\S]*?sessionStarters\.startMosh\(term\)[\s\S]*?else if \(effectiveTerminalProtocol === "et"\)/,
+  );
+  assert.match(
+    terminalSource,
+    /useState\(\(\) => effectiveTerminalProtocol !== 'mosh'\)/,
+  );
+  assert.match(
+    terminalSource,
+    /if \(effectiveTerminalProtocol !== 'mosh'\) \{[\s\S]*?onMoshSessionReady/,
+  );
+});
+
+test('password-prompt input is consumed before every semantic command callback', () => {
+  assert.match(
+    xtermRuntimeSource,
+    /const sensitive = ctx\.passwordPromptActiveRef\?\.current === true;[\s\S]*?recordTerminalCommandExecution\([\s\S]*?\{ sensitive, allowHostStyleGreaterThanPrompt: ctx\.allowHostStyleGreaterThanPrompt \},\s*\);/,
+  );
+  assert.match(
+    terminalSource,
+    /const sensitive = passwordPromptActiveRef\.current;[\s\S]*?recordTerminalCommandExecution\([\s\S]*?\{ sensitive, allowHostStyleGreaterThanPrompt: isNetworkDevice \}\);/,
   );
 });
 
@@ -129,6 +153,14 @@ test('terminal output treats unknown prompt-shaped input boundaries as sensitive
   assert.match(terminalSource, /isUntrustedTerminalInputPrompt\([\s\S]*?promptSecurityOptions/);
   assert.match(terminalSource, /passwordPromptActiveRef\.current = true;[\s\S]*?autocompleteCloseRef\.current\?\.\(\);/);
   assert.match(terminalSource, /isConfirmedTerminalShellPrompt\([\s\S]*?passwordPromptActiveRef\.current = false;/);
+});
+
+test('terminal view derives the network-device prompt policy before autocomplete renders', () => {
+  assert.match(
+    terminalViewSource,
+    /const isNetworkDevice = host\.deviceType === 'network'[\s\S]*?classifyDistroId\(host\.distro\) === 'network-device';/,
+  );
+  assert.match(terminalViewSource, /allowHostStyleGreaterThanPrompt=\{isNetworkDevice\}/);
 });
 
 test('backend exits are forwarded to the Provider lifecycle with their exit code', () => {

@@ -7,7 +7,7 @@ const {
   assertProviderResult,
 } = require("./contractValidator.cjs");
 const { assertPluginJsonValue } = require("./jsonBoundary.cjs");
-const { PluginRpcError, RPC_ERRORS } = require("./rpcRouter.cjs");
+const { PluginRpcError, RPC_ERRORS, raceWithAbort } = require("./rpcRouter.cjs");
 
 const MAX_PROVIDER_JSON_BYTES = 128 * 1024;
 const MAX_TERMINAL_PROVIDERS_PER_REQUEST = 32;
@@ -611,7 +611,12 @@ class PluginTerminalProviderService {
     try { assertProviderRequest(request); }
     catch (error) { throw invalidArgument(error?.message ?? "Provider request is invalid"); }
     throwIfCancelled(options.signal);
-    const activation = await this.contributionService.activateProvider(request.providerId);
+    const activationOperation = Promise.resolve(
+      this.contributionService.activateProvider(request.providerId),
+    );
+    const activation = options.signal
+      ? await raceWithAbort(activationOperation, options.signal)
+      : await activationOperation;
     throwIfCancelled(options.signal);
     if (activation.provider.kind !== kind) {
       throw new PluginRpcError(RPC_ERRORS.failedPrecondition, "Plugin Provider kind changed during activation");

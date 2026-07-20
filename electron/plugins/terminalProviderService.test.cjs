@@ -39,6 +39,7 @@ function setup(options = {}) {
       calls.push(["activate", providerId]);
       const entry = providers.find((candidate) => candidate.provider.id === providerId);
       if (!entry) throw new PluginRpcError(RPC_ERRORS.notFound, "missing provider");
+      if (options.activateProvider) return options.activateProvider(entry);
       active.add(entry.pluginId);
       return {
         plugin: {
@@ -192,6 +193,51 @@ test("terminal Provider invocation lazily activates, forwards deadlines, and fre
       securityPrincipal: "principal:com.example.alpha",
     } },
   ]]);
+});
+
+test("terminal Provider cancellation releases a request while lazy activation is pending", async () => {
+  let releaseActivation;
+  let activationStarted;
+  const started = new Promise((resolve) => { activationStarted = resolve; });
+  const activationGate = new Promise((resolve) => { releaseActivation = resolve; });
+  const fixture = setup({
+    async activateProvider(entry) {
+      activationStarted();
+      await activationGate;
+      return {
+        plugin: {
+          id: entry.pluginId,
+          activeVersion: entry.pluginVersion,
+          manifest: {
+            id: entry.pluginId,
+            permissions: { required: ["provider.terminal", "terminal.complete"] },
+          },
+        },
+        provider: entry.provider,
+        identity: {
+          pluginId: entry.pluginId,
+          pluginVersion: entry.pluginVersion,
+          runtimeId: `runtime:${entry.pluginId}`,
+          runtimeKind: "browser",
+          securityPrincipal: `principal:${entry.pluginId}`,
+        },
+      };
+    },
+  });
+  const controller = new AbortController();
+  const pending = fixture.service.provide({
+    kind: "terminal.completion",
+    operation: "provideCompletions",
+    session,
+    payload: completionPayload(),
+  }, { signal: controller.signal });
+  await started;
+  controller.abort();
+  const result = await pending;
+  assert.equal(result.length, 2);
+  assert.equal(result.every((entry) => entry.status === "cancelled"), true);
+  assert.equal(fixture.calls.some((call) => call[0] === "request"), false);
+  releaseActivation();
 });
 
 test("terminal session snapshots preserve built-in and namespaced protocol identities", async () => {

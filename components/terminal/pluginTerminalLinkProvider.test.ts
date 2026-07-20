@@ -124,6 +124,52 @@ test('plugin terminal link host releases xterm when activation or permission wor
   assert.equal(signals.every((signal) => signal.aborted), true);
 });
 
+test('plugin terminal link host aborts and suppresses in-flight scrollback on hide or disconnect', async () => {
+  let provider: { provideLinks(line: number, callback: (links?: unknown[]) => void): void } | undefined;
+  const signals: AbortSignal[] = [];
+  let requests = 0;
+  const term = {
+    element: undefined,
+    buffer: { active: { getLine() { return { translateToString() { return 'secret scrollback'; } }; } } },
+    registerLinkProvider(next: typeof provider) {
+      provider = next;
+      return { dispose() {} };
+    },
+  };
+  const host = registerPluginTerminalLinkProvider({
+    term: term as never,
+    request: (_kind, _operation, _payload, _deadlineMs, _supersessionKey, signal) => {
+      requests += 1;
+      if (signal) signals.push(signal);
+      return new Promise((resolve) => {
+        signal?.addEventListener('abort', () => resolve({ stale: true, results: [] }), { once: true });
+      });
+    },
+    canActivate: () => true,
+    async openExternal() {},
+  });
+
+  const hiddenResult = new Promise<unknown[]>((resolve) => {
+    provider?.provideLinks(1, (value) => resolve(value ?? []));
+  });
+  host.setVisible(false);
+  assert.deepEqual(await hiddenResult, []);
+  assert.equal(signals.length, 2);
+  assert.equal(signals.every((signal) => signal.aborted), true);
+  provider?.provideLinks(1, (value) => assert.equal(value, undefined));
+  assert.equal(requests, 2);
+
+  host.setVisible(true);
+  const disconnectedResult = new Promise<unknown[]>((resolve) => {
+    provider?.provideLinks(1, (value) => resolve(value ?? []));
+  });
+  host.setActive(false);
+  assert.deepEqual(await disconnectedResult, []);
+  assert.equal(signals.slice(2).every((signal) => signal.aborted), true);
+  provider?.provideLinks(1, (value) => assert.equal(value, undefined));
+  assert.equal(requests, 4);
+});
+
 test('plugin terminal link host performs no request when neither Provider kind is declared', async () => {
   let provider: { provideLinks(line: number, callback: (links?: unknown[]) => void): void } | undefined;
   let requests = 0;

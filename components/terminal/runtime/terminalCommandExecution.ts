@@ -1,7 +1,10 @@
 import type { RefObject } from "react";
 import type { Terminal as XTerm } from "@xterm/xterm";
 import type { Host } from "../../../types";
-import { isSensitiveTerminalChallenge } from "../../../domain/terminalPromptSecurity";
+import {
+  isConfirmedTerminalShellPrompt,
+  isSensitiveTerminalChallenge,
+} from "../../../domain/terminalPromptSecurity";
 import {
   markPromptLineBreakCommandPending,
   type PromptLineBreakState,
@@ -26,6 +29,12 @@ type TerminalCommandExecutionContext = {
     sessionId: string,
   ) => void;
   onCommandSubmitted?: (
+    command: string,
+    hostId: string,
+    hostLabel: string,
+    sessionId: string,
+  ) => void;
+  onTrustedCommandSubmitted?: (
     command: string,
     hostId: string,
     hostLabel: string,
@@ -646,7 +655,7 @@ export const recordTerminalCommandExecution = (
   command: string,
   ctx: TerminalCommandExecutionContext,
   term?: XTerm | null,
-  options?: { sensitive?: boolean },
+  options?: { sensitive?: boolean; allowHostStyleGreaterThanPrompt?: boolean },
 ): string | null => {
   if (options?.sensitive || isSensitiveTerminalChallenge(readCurrentLogicalTerminalLine(term))) {
     ctx.commandBufferRef.current = "";
@@ -657,7 +666,17 @@ export const recordTerminalCommandExecution = (
   if (cmd) {
     ctx.onCommandSubmitted?.(cmd, ctx.host.id, ctx.host.label, ctx.sessionId);
   }
+  const alignedPrompt = term ? getAlignedPrompt(term, command, true).prompt : null;
+  const trustedPrompt = Boolean(
+    term && alignedPrompt?.isAtPrompt
+    && isConfirmedTerminalShellPrompt(alignedPrompt.promptText, {
+      allowHostStyleGreaterThan: options?.allowHostStyleGreaterThanPrompt,
+    }),
+  );
   if (cmd && shouldRecordShellHistory(cmd, term)) {
+    if (trustedPrompt) {
+      ctx.onTrustedCommandSubmitted?.(cmd, ctx.host.id, ctx.host.label, ctx.sessionId);
+    }
     ctx.onCommandExecuted?.(cmd, ctx.host.id, ctx.host.label, ctx.sessionId);
     ctx.commandBufferRef.current = "";
     markPromptLineBreakCommandPending(ctx.promptLineBreakStateRef, term, cmd);

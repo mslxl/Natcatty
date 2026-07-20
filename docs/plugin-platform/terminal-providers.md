@@ -94,7 +94,9 @@ application Provider adapters as plugins:
   URLs, reuse the host link-modifier policy, and render hover text with host
   DOM nodes rather than plugin HTML. UTF-16 result boundaries are mapped back
   to xterm cells so wide and combining characters cannot shift activation or
-  decoration ranges;
+  decoration ranges. Requests pause while the terminal is hidden or
+  disconnected, and in-flight results are aborted and invalidated on either
+  transition;
 - matcher Providers receive at most the latest 32 parsed logical normal-buffer
   lines in one batch. Wrapped physical rows are joined before invocation and
   exact logical ranges are split back across host-owned xterm decorations.
@@ -102,8 +104,11 @@ application Provider adapters as plugins:
   that exact line, the combined request text is capped below the 128 KiB
   Provider envelope, and at most 64 logical matches remain visible.
   Alternate-screen output is excluded;
-- semantic Providers receive only the bounded submitted command and require
-  `terminal.input`; prompt Providers receive no command or raw output. Their
+- semantic Providers receive only a bounded command submitted from a
+  positively confirmed shell prompt (or an explicitly identified network
+  device prompt) and require `terminal.input`. Authentication challenges,
+  REPL input, and other untrusted prompt-shaped input never reach ordinary
+  Providers. Prompt Providers receive no command or raw output. Their
   bounded annotations are rendered at host-detected command completion. A
   prompt line is included only when the shared host detector confirms an empty
   shell prompt, so the last output line is never mislabeled as prompt context;

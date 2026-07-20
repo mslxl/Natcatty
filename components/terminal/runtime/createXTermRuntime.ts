@@ -15,6 +15,7 @@ import { fontStore } from "../../../application/state/fontStore";
 import { KeywordHighlighter } from "../keywordHighlight";
 import {
   registerPluginTerminalLinkProvider,
+  type PluginTerminalLinkProviderHost,
   type RequestPluginTerminalProviders,
 } from "../pluginTerminalLinkProvider";
 import { PluginTerminalVisualProviderHost } from "../pluginTerminalVisualProviderHost";
@@ -146,6 +147,7 @@ export type XTermRuntime = {
   currentCwd: string | undefined;
   keywordHighlighter: KeywordHighlighter;
   pluginProviderHost: PluginTerminalVisualProviderHost | null;
+  pluginLinkProviderHost: PluginTerminalLinkProviderHost | null;
   /**
    * Clear the WebGL renderer's glyph texture atlas so glyphs re-rasterize on the
    * next frame. No-op when the DOM renderer is active. Used to recover from the
@@ -205,6 +207,12 @@ export type CreateXTermRuntimeContext = {
     hostLabel: string,
     sessionId: string,
   ) => void;
+  onTrustedCommandSubmitted?: (
+    command: string,
+    hostId: string,
+    hostLabel: string,
+    sessionId: string,
+  ) => void;
   onCommandCompleted?: () => void;
   requestPluginTerminalProviders?: RequestPluginTerminalProviders;
   pluginProviderVisible?: boolean;
@@ -221,6 +229,7 @@ export type CreateXTermRuntimeContext = {
     recordEnter: (options?: { sensitive?: boolean }) => Promise<void>;
   } | undefined>;
   passwordPromptActiveRef?: RefObject<boolean>;
+  allowHostStyleGreaterThanPrompt?: boolean;
   onOutputTriggerUserInputRef?: RefObject<((data: string) => void) | undefined>;
   sudoAutofillRef?: RefObject<SudoPasswordAutofill | null>;
   // Opens the search bar, or refocuses its input if already open. Used by the
@@ -624,13 +633,15 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     if (canActivateTerminalLink(event)) void openTerminalLink(uri);
   });
   term.loadAddon(webLinksAddon);
-  const pluginLinkProviderDisposable = ctx.requestPluginTerminalProviders
+  const pluginLinkProviderHost = ctx.requestPluginTerminalProviders
     ? registerPluginTerminalLinkProvider({
         term,
         request: ctx.requestPluginTerminalProviders,
         canActivate: canActivateTerminalLink,
         openExternal: openTerminalLink,
         isProviderAvailable: ctx.isPluginTerminalProviderAvailable,
+        active: ctx.statusRef.current === 'connected',
+        visible: ctx.pluginProviderVisible ?? true,
       })
     : null;
   const pluginProviderHost = ctx.requestPluginTerminalProviders
@@ -825,7 +836,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         ctx.commandBufferRef.current,
         ctx,
         term,
-        { sensitive },
+        { sensitive, allowHostStyleGreaterThanPrompt: ctx.allowHostStyleGreaterThanPrompt },
       );
       handledSubmittedInput = true;
       if (!willBroadcastInput) {
@@ -848,7 +859,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
           `${ctx.commandBufferRef.current}${pastedCommand.command}`,
           ctx,
           term,
-          { sensitive },
+          { sensitive, allowHostStyleGreaterThanPrompt: ctx.allowHostStyleGreaterThanPrompt },
         );
         handledSubmittedInput = true;
         if (recordedCommand) {
@@ -1532,6 +1543,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     searchAddon,
     keywordHighlighter,
     pluginProviderHost,
+    pluginLinkProviderHost,
     clearTextureAtlas: clearWebglTextureAtlas,
     ensureWebglRenderer: loadWebglRenderer,
     suspendWebglRenderer,
@@ -1558,7 +1570,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       historyPreviewBufferChangeDisposable.dispose();
       stopDprWatch();
       keywordHighlighter.dispose();
-      pluginLinkProviderDisposable?.dispose();
+      pluginLinkProviderHost?.dispose();
       pluginProviderHost?.dispose();
       eraseScrollbackDisposable.dispose();
       dec2026SyncStartDisposable.dispose();

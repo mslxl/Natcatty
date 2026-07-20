@@ -243,7 +243,6 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     markTerminalCommandCompletionPending(promptLineBreakStateRef);
     publishPluginTerminalRuntimeLifecycleEvent(pluginTerminalLifecycle, 'commandSubmitted');
     void xtermRuntimeRef.current?.pluginProviderHost?.commandSubmitted(args[0]);
-    onCommandSubmitted?.(...args);
   };
   const pluginAwareOnCommandCompleted = () => {
     publishPluginTerminalRuntimeLifecycleEvent(pluginTerminalLifecycle, 'commandCompleted');
@@ -372,6 +371,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       xtermRuntimeRef.current?.pluginProviderHost?.providerAvailabilityChanged(
         effectiveTheme.colors.background,
       );
+      xtermRuntimeRef.current?.pluginLinkProviderHost?.providerAvailabilityChanged();
     };
     void refresh('initial-enumeration');
     return pluginTerminalRegistry?.onDidChangeProviders(() => {
@@ -390,6 +390,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       status === 'connected',
       effectiveTheme.colors.background,
     );
+    xtermRuntimeRef.current?.pluginLinkProviderHost?.setActive(status === 'connected');
   }, [effectiveTheme.colors.background, status, xtermRuntimeRef]);
 
   useEffect(() => {
@@ -397,6 +398,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       isVisible,
       effectiveTheme.colors.background,
     );
+    xtermRuntimeRef.current?.pluginLinkProviderHost?.setVisible(isVisible);
   }, [effectiveTheme.colors.background, isVisible, xtermRuntimeRef]);
 
 
@@ -548,7 +550,8 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
           sessionId,
           statusRef,
           onCommandExecuted,
-          onCommandSubmitted: pluginAwareOnCommandSubmitted,
+          onCommandSubmitted,
+          onTrustedCommandSubmitted: pluginAwareOnCommandSubmitted,
           onCommandCompleted: pluginAwareOnCommandCompleted,
           requestPluginTerminalProviders,
           pluginProviderVisible: isVisible,
@@ -567,6 +570,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
           promptLineBreakStateRef,
           scriptRecorderRef,
           passwordPromptActiveRef,
+          allowHostStyleGreaterThanPrompt: isNetworkDevice,
           onOutputTriggerUserInputRef,
           sudoAutofillRef,
           requestSearchFocus,
@@ -653,27 +657,27 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
           return;
         }
 
-        if (host.protocol === "serial") {
+        if (effectiveTerminalProtocol === "serial") {
           setBackendConnectingStatus();
           setProgressLogs(["Initializing serial connection..."]);
           await sessionStarters.startSerial(term);
           if (disposed) return;
-        } else if (host.protocol === "local" || host.hostname === "localhost") {
+        } else if (effectiveTerminalProtocol === "local" || host.hostname === "localhost") {
           setBackendConnectingStatus();
           setProgressLogs(["Initializing local shell..."]);
           await sessionStarters.startLocal(term);
           if (disposed) return;
-        } else if (host.protocol === "telnet") {
+        } else if (effectiveTerminalProtocol === "telnet") {
           setBackendConnectingStatus();
           setProgressLogs(["Initializing Telnet connection..."]);
           await sessionStarters.startTelnet(term);
           if (disposed) return;
-        } else if (host.moshEnabled) {
+        } else if (effectiveTerminalProtocol === "mosh") {
           setBackendConnectingStatus();
           setProgressLogs(["Initializing Mosh connection..."]);
           await sessionStarters.startMosh(term);
           if (disposed) return;
-        } else if (host.etEnabled) {
+        } else if (effectiveTerminalProtocol === "et") {
           setBackendConnectingStatus();
           setProgressLogs(["Initializing EternalTerminal connection..."]);
           await sessionStarters.startEt(term);

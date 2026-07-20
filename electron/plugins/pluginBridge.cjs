@@ -1,6 +1,7 @@
 "use strict";
 
 const { isPluginDevelopmentEnabled } = require("./constants.cjs");
+const { raceWithAbort } = require("./rpcRouter.cjs");
 
 const CHANNELS = Object.freeze({
   status: "netcatty:plugins:status",
@@ -234,7 +235,7 @@ function registerPluginBridge(ipcMain, options) {
     const controller = new AbortController();
     requests.set(requestId, controller);
     try {
-      await resolveManager();
+      await raceWithAbort(resolveManager(), controller.signal);
       const { requestId: _requestId, ...providerRequest } = payload;
       return await terminalProviderService.provide(providerRequest, { signal: controller.signal });
     } finally {

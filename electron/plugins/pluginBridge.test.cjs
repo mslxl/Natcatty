@@ -275,7 +275,7 @@ test("plugin terminal Provider bridge owns cancellation by renderer sender", asy
   ]);
 });
 
-test("plugin terminal Provider bridge preserves cancellation during host initialization", async () => {
+test("plugin terminal Provider bridge releases cancellation during host initialization", async () => {
   const ipcMain = createIpcMain();
   let releaseInitialization;
   let initializationStarted;
@@ -309,8 +309,16 @@ test("plugin terminal Provider bridge preserves cancellation during host initial
   assert.equal(await ipcMain.handlers.get(CHANNELS.terminalCancel)(event, {
     requestId: "cancel-during-initialize",
   }), true);
+  await assert.rejects(pending, (error) => error?.name === "AbortError");
+  assert.equal(observedSignals.length, 0);
   releaseInitialization();
-  assert.deepEqual(await pending, [{ status: "cancelled" }]);
+  const retry = await ipcMain.handlers.get(CHANNELS.terminalProvide)(event, {
+    requestId: "after-cancelled-initialize",
+    kind: "terminal.completion",
+    operation: "provideCompletions",
+    session: { sessionId: "session-1" },
+  });
+  assert.deepEqual(retry, [{ status: "ok" }]);
   assert.equal(observedSignals.length, 1);
-  assert.equal(observedSignals[0].aborted, true);
+  assert.equal(observedSignals[0].aborted, false);
 });

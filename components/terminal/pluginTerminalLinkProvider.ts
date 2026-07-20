@@ -50,6 +50,12 @@ export type RequestPluginTerminalProviders = (
   signal?: AbortSignal,
 ) => Promise<PluginTerminalProviderCallResponse>;
 
+export interface PluginTerminalLinkProviderHost extends IDisposable {
+  setActive(active: boolean): void;
+  setVisible(visible: boolean): void;
+  providerAvailabilityChanged(): void;
+}
+
 function lineTextAt(term: XTerm, bufferLineNumber: number): PluginTerminalBufferText | null {
   const line = term.buffer.active.getLine(bufferLineNumber - 1);
   if (!line) return null;
@@ -125,24 +131,45 @@ export function registerPluginTerminalLinkProvider(options: {
   openExternal(uri: string): Promise<void>;
   responseTimeoutMs?: number;
   isProviderAvailable?(kind: NetcattyTerminalProviderKind): boolean;
-}): IDisposable {
+  active?: boolean;
+  visible?: boolean;
+}): PluginTerminalLinkProviderHost {
   const tooltip = createTooltip(options.term);
   let disposed = false;
-  const requestWithTimeout = (
+  let active = options.active ?? true;
+  let visible = options.visible ?? true;
+  let generation = 0;
+  const controllers = new Set<AbortController>();
+  const invalidate = () => {
+    generation += 1;
+    tooltip.hide();
+    for (const controller of controllers) controller.abort();
+    controllers.clear();
+  };
+  const requestWithTimeout = async (
     kind: NetcattyTerminalProviderKind,
     operation: string,
     payload: Readonly<Record<string, unknown>>,
     supersessionKey: string,
   ) => {
     const controller = new AbortController();
-    return waitForPluginTerminalProviderResponse(
-      options.request(kind, operation, payload, 750, supersessionKey, controller.signal),
-      options.responseTimeoutMs ?? PROVIDER_RESPONSE_TIMEOUT_MS,
-      () => controller.abort(),
-    );
+    controllers.add(controller);
+    try {
+      return await waitForPluginTerminalProviderResponse(
+        options.request(kind, operation, payload, 750, supersessionKey, controller.signal),
+        options.responseTimeoutMs ?? PROVIDER_RESPONSE_TIMEOUT_MS,
+        () => controller.abort(),
+      );
+    } finally {
+      controllers.delete(controller);
+    }
   };
   const provider: ILinkProvider = {
     provideLinks(bufferLineNumber, callback) {
+      if (disposed || !active || !visible) {
+        callback(undefined);
+        return;
+      }
       const linkAvailable = options.isProviderAvailable?.('terminal.link') ?? true;
       const hoverAvailable = options.isProviderAvailable?.('terminal.hover') ?? true;
       if (!linkAvailable && !hoverAvailable) {
@@ -154,6 +181,7 @@ export function registerPluginTerminalLinkProvider(options: {
         callback(undefined);
         return;
       }
+      const requestGeneration = generation;
       void Promise.all([
         linkAvailable
           ? requestWithTimeout(
@@ -172,7 +200,8 @@ export function registerPluginTerminalLinkProvider(options: {
             )
           : Promise.resolve({ stale: false, results: Object.freeze([]) }),
       ]).then(([linkResponse, hoverResponse]) => {
-        if (disposed || linkResponse.stale || hoverResponse.stale) {
+        if (disposed || !active || !visible || requestGeneration !== generation
+          || linkResponse.stale || hoverResponse.stale) {
           callback(undefined);
           return;
         }
@@ -227,9 +256,23 @@ export function registerPluginTerminalLinkProvider(options: {
   };
   const registration = options.term.registerLinkProvider(provider);
   return {
+    setActive(nextActive) {
+      if (active === nextActive) return;
+      active = nextActive;
+      invalidate();
+    },
+    setVisible(nextVisible) {
+      if (visible === nextVisible) return;
+      visible = nextVisible;
+      invalidate();
+    },
+    providerAvailabilityChanged() {
+      invalidate();
+    },
     dispose() {
       if (disposed) return;
       disposed = true;
+      invalidate();
       tooltip.dispose();
       registration.dispose();
     },

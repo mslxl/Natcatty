@@ -306,6 +306,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   // Initial TCP dial timeout. Authentication prompts use their own backend timeout.
   const hostConnectionTimeouts = resolveHostSshConnectionTimeouts(host);
   const CONNECTION_TIMEOUT = hostConnectionTimeouts.tcpConnectTimeoutSeconds * 1000;
+  const effectiveTerminalProtocol = resolveEffectiveTerminalProtocol(host);
   const { t } = useI18n();
   const connectScriptsConsumedRef = useRef(false);
   const connectScriptsCompletedIdsRef = useRef(new Set<string>());
@@ -317,7 +318,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   // mosh-client is ready (#2199). closeSession clears preload ready
   // listeners for this session id — resubscribe synchronously before each
   // startMosh (not only in a useEffect, which can lose a race with reconnect).
-  const [moshShellReady, setMoshShellReady] = useState(() => !host.moshEnabled);
+  const [moshShellReady, setMoshShellReady] = useState(() => effectiveTerminalProtocol !== 'mosh');
   const disposeMoshReadyRef = useRef<(() => void) | null>(null);
   const [saveRecordingOpen, setSaveRecordingOpen] = useState(false);
   const [recordedCode, setRecordedCode] = useState('');
@@ -444,7 +445,6 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   onTerminalDataCaptureRef.current = onTerminalDataCapture;
   const isVisibleRef = useRef(isVisible);
   isVisibleRef.current = isVisible;
-  const effectiveTerminalProtocol = resolveEffectiveTerminalProtocol(host);
   const hibernateEnabled = resolveTerminalHibernateEnabledForProtocol(
     terminalSettings,
     effectiveTerminalProtocol,
@@ -829,10 +829,11 @@ const TerminalComponent: React.FC<TerminalProps> = ({
             host,
             sessionId,
             onCommandExecuted,
-            onCommandSubmitted: pluginAwareOnCommandSubmitted,
+            onCommandSubmitted,
+            onTrustedCommandSubmitted: pluginAwareOnCommandSubmitted,
             commandBufferRef,
             promptLineBreakStateRef,
-          }, termRef.current, { sensitive });
+          }, termRef.current, { sensitive, allowHostStyleGreaterThanPrompt: isNetworkDevice });
         } else if (ch === "\x15") {
           // Ctrl+U: clear line — reset command buffer (fuzzy match sends this)
           commandBufferRef.current = "";
@@ -963,11 +964,11 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     onStartSession: (term) => {
       const starters = sessionStartersRef.current;
       if (!starters) return;
-      if (host.moshEnabled) {
+      if (effectiveTerminalProtocol === 'mosh') {
         starters.startMosh(term);
         return;
       }
-      if (host.etEnabled) {
+      if (effectiveTerminalProtocol === 'et') {
         starters.startEt(term);
         return;
       }
@@ -1594,6 +1595,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         xtermRuntimeRef.current?.pluginProviderHost?.providerAvailabilityChanged(
           effectiveTheme.colors.background,
         );
+        xtermRuntimeRef.current?.pluginLinkProviderHost?.providerAvailabilityChanged();
       });
     });
   }, [
@@ -1642,7 +1644,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     pluginTerminalLifecycle.onCommandSubmitted();
     void xtermRuntimeRef.current?.pluginProviderHost?.commandSubmitted(command);
     onCommandSubmitted?.(command, commandHostId, hostLabel, commandSessionId);
-  }, [onCommandSubmitted, pluginTerminalLifecycle]);
+  }, [pluginTerminalLifecycle]);
   const pluginAwareOnCommandCompleted = useCallback(() => {
     pluginTerminalLifecycle.onCommandCompleted();
     void xtermRuntimeRef.current?.pluginProviderHost?.commandCompleted();
@@ -1788,7 +1790,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     onProgrammaticCommandLogRewrite: queueProgrammaticCommandLogRewrite,
     onOsDetected,
     onCommandExecuted,
-    onCommandSubmitted: pluginAwareOnCommandSubmitted,
+    onCommandSubmitted,
     onCommandCompleted: pluginAwareOnCommandCompleted,
     sessionLog,
     sshDebugLogEnabled,
@@ -1802,10 +1804,10 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       connectScriptsConsumedRef.current = false;
       connectScriptsCompletedIdsRef.current = new Set();
     }
-    if (status === 'disconnected' && host.moshEnabled) {
+    if (status === 'disconnected' && effectiveTerminalProtocol === 'mosh') {
       setMoshShellReady(false);
     }
-  }, [host.moshEnabled, status]);
+  }, [effectiveTerminalProtocol, status]);
 
   // Synchronously (re)register the mosh ready listener. Must run before
   // startMosh on retry: cleanupSession/closeSession wipes preload listeners,
@@ -1813,7 +1815,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const prepareMoshReadySubscription = useCallback(() => {
     disposeMoshReadyRef.current?.();
     disposeMoshReadyRef.current = null;
-    if (!host.moshEnabled) {
+    if (effectiveTerminalProtocol !== 'mosh') {
       setMoshShellReady(true);
       return;
     }
@@ -1826,7 +1828,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     disposeMoshReadyRef.current = terminalBackend.onMoshSessionReady(sessionId, () => {
       setMoshShellReady(true);
     }) ?? null;
-  }, [host.moshEnabled, sessionId, terminalBackend]);
+  }, [effectiveTerminalProtocol, sessionId, terminalBackend]);
 
   useEffect(() => {
     prepareMoshReadySubscription();
@@ -1865,7 +1867,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
   useEffect(() => {
     if (status !== 'connected') return;
-    if (host.moshEnabled && !moshShellReady) return;
+    if (effectiveTerminalProtocol === 'mosh' && !moshShellReady) return;
 
     let pendingOne: Snippet | undefined;
     if (pendingScript && isScriptSnippet(pendingScript)) {
@@ -2594,11 +2596,11 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         sessionStarters.startLocal(term);
       } else if (host.protocol === "telnet") {
         sessionStarters.startTelnet(term);
-      } else if (host.moshEnabled) {
+      } else if (effectiveTerminalProtocol === 'mosh') {
         // Defensive: xterm.write may fire after another cleanup raced us.
         prepareMoshReadySubscription();
         sessionStarters.startMosh(term);
-      } else if (host.etEnabled) {
+      } else if (effectiveTerminalProtocol === 'et') {
         sessionStarters.startEt(term);
       } else {
         sessionStarters.startSSH(term);
@@ -2896,7 +2898,8 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     sessionId,
     statusRef,
     onCommandExecuted,
-    onCommandSubmitted: pluginAwareOnCommandSubmitted,
+    onCommandSubmitted,
+    onTrustedCommandSubmitted: pluginAwareOnCommandSubmitted,
     onCommandCompleted: pluginAwareOnCommandCompleted,
     requestPluginTerminalProviders,
     pluginProviderVisible: isVisible,
