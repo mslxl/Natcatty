@@ -199,6 +199,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     operation: string,
     payload: Readonly<Record<string, unknown>>,
     deadlineMs: number,
+    supersessionKey?: string,
   ) => {
     if (!pluginTerminalRegistry) {
       return Object.freeze({ stale: false, results: Object.freeze([]) });
@@ -220,6 +221,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       },
       payload,
       deadlineMs,
+      supersessionKey,
     });
   }, [host.id, host.protocol, knownCwdRef, pluginTerminalRegistry, sessionId, shellType, statusRef, termRef, workspaceId]);
   const [pluginDecorationRules, setPluginDecorationRules] = useState<

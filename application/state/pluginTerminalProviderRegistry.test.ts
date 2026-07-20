@@ -44,6 +44,43 @@ test('terminal Provider registry cancels superseded requests and suppresses stal
   assert.deepEqual(firstResult.results, []);
 });
 
+test('terminal Provider registry scopes link supersession per buffer line', async () => {
+  const cancellations: string[] = [];
+  const resolvers: Array<(value: ReadonlyArray<NetcattyTerminalProviderResult>) => void> = [];
+  const registry = new PluginTerminalProviderRegistry({
+    async listPluginTerminalProviders() { return []; },
+    providePluginTerminal() { return new Promise((resolve) => resolvers.push(resolve)); },
+    async cancelPluginTerminalRequest(requestId) { cancellations.push(requestId); return true; },
+    async publishPluginTerminalSessionEvent() { return []; },
+  });
+  const firstLine = registry.request({
+    kind: 'terminal.link',
+    operation: 'provideLinks',
+    session,
+    supersessionKey: 'line:1',
+  });
+  const secondLine = registry.request({
+    kind: 'terminal.link',
+    operation: 'provideLinks',
+    session,
+    supersessionKey: 'line:2',
+  });
+  assert.equal(cancellations.length, 0);
+  const replacementFirstLine = registry.request({
+    kind: 'terminal.link',
+    operation: 'provideLinks',
+    session,
+    supersessionKey: 'line:1',
+  });
+  assert.equal(cancellations.length, 1);
+  resolvers[1]([]);
+  resolvers[2]([]);
+  assert.equal((await secondLine).stale, false);
+  assert.equal((await replacementFirstLine).stale, false);
+  resolvers[0]([]);
+  assert.equal((await firstLine).stale, true);
+});
+
 test('terminal Provider registry returns a stale response when a superseded bridge request rejects', async () => {
   const resolvers: Array<{
     resolve: (value: ReadonlyArray<NetcattyTerminalProviderResult>) => void;

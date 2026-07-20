@@ -355,6 +355,9 @@ function assertTerminalProviderOkResult(kind, value, payload) {
     for (const candidate of result.layers) {
       const layer = assertPlainRecord(candidate, "Terminal background layer");
       assertVisibleString(layer.id, "Terminal background layer ID", 128);
+      if (typeof layer.color !== "string") {
+        throw new TypeError("Terminal background layer color is required");
+      }
       assertOptionalColor(layer.color, "Terminal background layer color");
       if (layer.opacity != null
         && (typeof layer.opacity !== "number"

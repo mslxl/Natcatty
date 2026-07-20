@@ -23,8 +23,8 @@ function freezeValue<T>(value: T): Readonly<T> {
   return clone as Readonly<T>;
 }
 
-function requestKey(sessionId: string, kind: NetcattyTerminalProviderKind): string {
-  return `${sessionId}\0${kind}`;
+function requestKey(sessionId: string, kind: NetcattyTerminalProviderKind, supersessionKey: string): string {
+  return `${sessionId}\0${kind}\0${supersessionKey}`;
 }
 
 function createRequestId(): string {
@@ -79,19 +79,29 @@ export class PluginTerminalProviderRegistry {
   }
 
   async request(
-    request: Omit<NetcattyTerminalProviderRequest, 'requestId'>,
+    request: Omit<NetcattyTerminalProviderRequest, 'requestId'> & { supersessionKey?: string },
   ): Promise<PluginTerminalProviderResponse> {
     if (this.#disposed) return Object.freeze({ requestId: '', stale: true, results: Object.freeze([]) });
+    const { supersessionKey: rawSupersessionKey, ...providerRequest } = request;
+    const supersessionKey = typeof rawSupersessionKey === 'string'
+      && rawSupersessionKey.length > 0
+      && rawSupersessionKey.length <= 128
+      ? rawSupersessionKey
+      : 'default';
     const previousSession = this.#sessionSnapshots.get(request.session.sessionId);
     const session = freezeValue({ ...(previousSession ?? {}), ...request.session });
     this.#sessionSnapshots.set(session.sessionId, session);
-    const key = requestKey(session.sessionId, request.kind);
+    const key = requestKey(session.sessionId, request.kind, supersessionKey);
     const previousRequestId = this.#activeRequests.get(key);
     if (previousRequestId) void this.#bridge.cancelPluginTerminalRequest(previousRequestId).catch(() => false);
     const requestId = createRequestId();
     this.#activeRequests.set(key, requestId);
     try {
-      const results = freezeValue(await this.#bridge.providePluginTerminal({ ...request, session, requestId }));
+      const results = freezeValue(await this.#bridge.providePluginTerminal({
+        ...providerRequest,
+        session,
+        requestId,
+      }));
       const stale = this.#disposed || this.#activeRequests.get(key) !== requestId;
       return Object.freeze({
         requestId,

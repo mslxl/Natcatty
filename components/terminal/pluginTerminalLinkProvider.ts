@@ -44,6 +44,7 @@ export type RequestPluginTerminalProviders = (
   operation: string,
   payload: Readonly<Record<string, unknown>>,
   deadlineMs: number,
+  supersessionKey?: string,
 ) => Promise<PluginTerminalProviderCallResponse>;
 
 function lineTextAt(term: XTerm, bufferLineNumber: number): PluginTerminalBufferText | null {
@@ -140,6 +141,7 @@ export function registerPluginTerminalLinkProvider(options: {
               'provideLinks',
               { line: line.text, bufferLineNumber },
               750,
+              `line:${bufferLineNumber}`,
             ), options.responseTimeoutMs ?? PROVIDER_RESPONSE_TIMEOUT_MS)
           : Promise.resolve({ stale: false, results: Object.freeze([]) }),
         hoverAvailable
@@ -148,6 +150,7 @@ export function registerPluginTerminalLinkProvider(options: {
               'provideHovers',
               { line: line.text, bufferLineNumber },
               750,
+              `line:${bufferLineNumber}`,
             ), options.responseTimeoutMs ?? PROVIDER_RESPONSE_TIMEOUT_MS)
           : Promise.resolve({ stale: false, results: Object.freeze([]) }),
       ]).then(([linkResponse, hoverResponse]) => {

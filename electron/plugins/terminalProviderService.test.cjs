@@ -401,6 +401,23 @@ test("terminal matcher, semantic, prompt, and background results use operation-s
   });
   assert.equal(oversizedMatcherResponse[0].status, "failed");
   assert.equal(oversizedMatcherResponse[0].error.code, RPC_ERRORS.dataLoss);
+
+  const missingBackgroundColor = setup({
+    request: async (_pluginId, _method, params) => ({
+      requestId: params.requestId,
+      status: "ok",
+      result: { layers: [{ id: "missing-color", opacity: 0.1 }] },
+    }),
+    providers: [provider("com.example.alpha", "com.example.alpha.background", "terminal.background")],
+  });
+  const missingColorResponse = await missingBackgroundColor.service.provide({
+    kind: "terminal.background",
+    operation: "provideBackgrounds",
+    session,
+    payload: { reason: "runtime-created" },
+  });
+  assert.equal(missingColorResponse[0].status, "failed");
+  assert.equal(missingColorResponse[0].error.code, RPC_ERRORS.dataLoss);
 });
 
 test("terminal Provider invocation authorizes optional permissions before sending session data", async () => {

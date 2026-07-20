@@ -1601,6 +1601,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     operation,
     payload,
     deadlineMs,
+    supersessionKey,
   ) => {
     if (!pluginTerminalProviderRegistry) {
       return Object.freeze({ stale: false, results: Object.freeze([]) });
@@ -1622,6 +1623,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       },
       payload,
       deadlineMs,
+      supersessionKey,
     });
   }, [host.id, host.protocol, pluginTerminalProviderRegistry, sessionId, shellType, workspaceId]);
   const pluginAwareOnCommandSubmitted = useCallback((

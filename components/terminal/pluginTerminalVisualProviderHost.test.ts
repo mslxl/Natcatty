@@ -261,3 +261,99 @@ test('visual Provider host keeps the terminal output hot path idle without decla
   assert.equal(requests, 0);
   host.dispose();
 });
+
+test('visual Provider host reacts to reduced-motion preference changes', async () => {
+  let listener: ((event: { matches: boolean }) => void) | undefined;
+  let removed = false;
+  const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    value: {
+      matchMedia() {
+        return {
+          matches: false,
+          addEventListener(_type: string, next: typeof listener) { listener = next; },
+          removeEventListener() { removed = true; },
+        };
+      },
+    },
+  });
+  try {
+    let requests = 0;
+    const term = {
+      element: null,
+      buffer: { active: { type: 'normal', baseY: 0, cursorY: 0, getLine() { return undefined; } } },
+      onWriteParsed() { return { dispose() {} }; },
+      registerMarker() { return null; },
+      registerDecoration() { return undefined; },
+    };
+    const host = new PluginTerminalVisualProviderHost({
+      term: term as never,
+      async request(kind) {
+        if (kind === 'terminal.background') requests += 1;
+        return {
+          stale: false,
+          results: [{ providerId: 'background', status: 'ok', result: {
+            layers: [],
+            refreshAfterMs: 250,
+          } }],
+        };
+      },
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(requests, 1);
+    listener?.({ matches: true });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.equal(requests, 1);
+    listener?.({ matches: false });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(requests, 2);
+    host.dispose();
+    assert.equal(removed, true);
+  } finally {
+    if (originalWindow) Object.defineProperty(globalThis, 'window', originalWindow);
+    else Reflect.deleteProperty(globalThis, 'window');
+  }
+});
+
+test('visual Provider host does not expose a truncated wrapped logical-line suffix', async () => {
+  let onWriteParsed: (() => void) | undefined;
+  const matcherPayloads: Array<{ lines?: unknown[] }> = [];
+  const term = {
+    element: null,
+    buffer: {
+      active: {
+        type: 'normal',
+        baseY: 0,
+        cursorY: 256,
+        getLine(line: number) {
+          if (line < 256) {
+            return { isWrapped: true, translateToString() { return 'x'; } };
+          }
+          if (line === 256) {
+            return { isWrapped: false, translateToString() { return 'prompt'; } };
+          }
+          return undefined;
+        },
+      },
+    },
+    onWriteParsed(next: () => void) { onWriteParsed = next; return { dispose() {} }; },
+    registerMarker() { return null; },
+    registerDecoration() { return undefined; },
+  };
+  const host = new PluginTerminalVisualProviderHost({
+    term: term as never,
+    matcherQuietMs: 1,
+    isProviderAvailable: (kind) => kind === 'terminal.matcher',
+    async request(kind, _operation, payload) {
+      if (kind === 'terminal.matcher') matcherPayloads.push(payload);
+      return { stale: false, results: [] };
+    },
+  });
+  onWriteParsed?.();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.deepEqual(matcherPayloads, [{
+    lines: [{ lineId: '256:256', line: 'prompt', bufferLineNumber: 257 }],
+  }]);
+  host.dispose();
+});

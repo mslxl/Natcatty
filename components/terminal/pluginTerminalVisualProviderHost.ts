@@ -55,6 +55,7 @@ function recentLogicalLines(term: XTerm): readonly MatcherLine[] {
     firstAbsoluteY -= 1;
   }
   const lines: MatcherLine[] = [];
+  let skipPartialLogicalLine = buffer.getLine(firstAbsoluteY)?.isWrapped === true;
   let current: {
     startAbsoluteY: number;
     line: string;
@@ -68,6 +69,10 @@ function recentLogicalLines(term: XTerm): readonly MatcherLine[] {
   for (let absoluteY = firstAbsoluteY; absoluteY <= lastAbsoluteY; absoluteY += 1) {
     const bufferLine = buffer.getLine(absoluteY);
     if (!bufferLine) continue;
+    if (skipPartialLogicalLine) {
+      if (bufferLine.isWrapped) continue;
+      skipPartialLogicalLine = false;
+    }
     if (!bufferLine.isWrapped || !current) {
       if (current?.line && current.line.length <= 8_192) {
         const endAbsoluteY = current.segments.at(-1)?.absoluteY ?? current.startAbsoluteY;
@@ -141,7 +146,7 @@ export class PluginTerminalVisualProviderHost implements IDisposable {
   #terminalBackground: string | undefined;
   #active: boolean;
   #visible: boolean;
-  readonly #reducedMotion: boolean;
+  #reducedMotion: boolean;
   readonly #isProviderAvailable: (kind: NetcattyTerminalProviderKind) => boolean;
   #providerAvailabilityGeneration = 0;
   #disposed = false;
@@ -166,10 +171,26 @@ export class PluginTerminalVisualProviderHost implements IDisposable {
     this.#terminalBackground = options.terminalBackground;
     this.#active = options.active ?? true;
     this.#visible = options.visible ?? true;
-    this.#reducedMotion = options.reducedMotion
-      ?? (typeof window !== 'undefined'
-        && typeof window.matchMedia === 'function'
-        && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    const reducedMotionQuery = options.reducedMotion === undefined
+      && typeof window !== 'undefined'
+      && typeof window.matchMedia === 'function'
+      ? window.matchMedia('(prefers-reduced-motion: reduce)')
+      : null;
+    this.#reducedMotion = options.reducedMotion ?? reducedMotionQuery?.matches ?? false;
+    if (reducedMotionQuery) {
+      const onReducedMotionChanged = (event: MediaQueryListEvent) => {
+        this.#reducedMotion = event.matches;
+        clearTimeout(this.#backgroundTimer);
+        this.#backgroundTimer = undefined;
+        if (!event.matches && this.#active && this.#visible) {
+          void this.refreshBackground('reduced-motion-changed', this.#terminalBackground);
+        }
+      };
+      reducedMotionQuery.addEventListener('change', onReducedMotionChanged);
+      this.#disposables.push({
+        dispose: () => reducedMotionQuery.removeEventListener('change', onReducedMotionChanged),
+      });
+    }
     this.#isProviderAvailable = options.isProviderAvailable ?? (() => true);
     this.#disposables.push(this.#term.onWriteParsed(() => this.#scheduleMatcherRefresh()));
     if (this.#active && this.#visible && this.#isProviderAvailable('terminal.background')) {

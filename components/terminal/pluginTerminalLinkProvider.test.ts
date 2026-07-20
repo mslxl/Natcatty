@@ -6,7 +6,7 @@ import { registerPluginTerminalLinkProvider } from './pluginTerminalLinkProvider
 test('plugin terminal link host requests bounded line links and honors activation policy', async () => {
   let provider: { provideLinks(line: number, callback: (links?: unknown[]) => void): void } | undefined;
   let registrationDisposed = false;
-  const requests: Array<[string, string, unknown]> = [];
+  const requests: Array<[string, string, unknown, string | undefined]> = [];
   const opened: string[] = [];
   const term = {
     element: undefined,
@@ -25,8 +25,8 @@ test('plugin terminal link host requests bounded line links and honors activatio
   };
   const disposable = registerPluginTerminalLinkProvider({
     term: term as never,
-    async request(kind, operation, payload) {
-      requests.push([kind, operation, payload]);
+    async request(kind, operation, payload, _deadlineMs, supersessionKey) {
+      requests.push([kind, operation, payload, supersessionKey]);
       if (kind === 'terminal.link') {
         return {
           stale: false,
@@ -51,6 +51,7 @@ test('plugin terminal link host requests bounded line links and honors activatio
     ['terminal.link', 'provideLinks'],
     ['terminal.hover', 'provideHovers'],
   ]);
+  assert.deepEqual(requests.map((request) => request[3]), ['line:1', 'line:1']);
   assert.equal(links[0]?.text, 'example');
   assert.deepEqual(links[0]?.range, {
     start: { x: 7, y: 1 },
