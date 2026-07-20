@@ -23,6 +23,17 @@ const SEARCH_OPTIONS = {
   decorations: SEARCH_DECORATIONS,
 } as const;
 
+export const resetTerminalSearch = (
+  searchAddon: Pick<SearchAddon, "findNext"> | null,
+  searchTermRef: { current: string },
+): void => {
+  searchTermRef.current = "";
+  // The addon's empty-search path clears both its decorations and the terminal
+  // selection used for the active match. clearDecorations() alone leaves that
+  // selection visible.
+  searchAddon?.findNext("", SEARCH_OPTIONS);
+};
+
 export const useTerminalSearch = ({
   searchAddonRef,
   termRef,
@@ -72,6 +83,7 @@ export const useTerminalSearch = ({
     (term: string): boolean => {
       const searchAddon = searchAddonRef.current;
       if (!searchAddon || !term) {
+        resetTerminalSearch(searchAddon, searchTermRef);
         setSearchMatchCount(null);
         return false;
       }
