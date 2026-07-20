@@ -14,6 +14,11 @@ import {
 import { fontStore } from "../../../application/state/fontStore";
 import { KeywordHighlighter } from "../keywordHighlight";
 import {
+  registerPluginTerminalLinkProvider,
+  type RequestPluginTerminalProviders,
+} from "../pluginTerminalLinkProvider";
+import { PluginTerminalVisualProviderHost } from "../pluginTerminalVisualProviderHost";
+import {
   XTERM_PERFORMANCE_CONFIG,
   resolveXTermScrollback,
   type XTermPlatform,
@@ -140,6 +145,7 @@ export type XTermRuntime = {
   /** Current working directory detected via OSC 7 */
   currentCwd: string | undefined;
   keywordHighlighter: KeywordHighlighter;
+  pluginProviderHost: PluginTerminalVisualProviderHost | null;
   /**
    * Clear the WebGL renderer's glyph texture atlas so glyphs re-rasterize on the
    * next frame. No-op when the DOM renderer is active. Used to recover from the
@@ -200,6 +206,9 @@ export type CreateXTermRuntimeContext = {
     sessionId: string,
   ) => void;
   onCommandCompleted?: () => void;
+  requestPluginTerminalProviders?: RequestPluginTerminalProviders;
+  pluginProviderVisible?: boolean;
+  isPluginTerminalProviderAvailable?: (kind: NetcattyTerminalProviderKind) => boolean;
   onResize?: (cols: number, rows: number) => void;
   onAlternateScreenChange?: (active: boolean) => void;
   commandBufferRef: RefObject<string>;
@@ -585,37 +594,55 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     });
   }
 
-  const webLinksAddon = new WebLinksAddon((event, uri) => {
+  const canActivateTerminalLink = (event: MouseEvent): boolean => {
     const currentLinkModifier = ctx.terminalSettingsRef.current?.linkModifier ?? "none";
-    let shouldOpen = false;
     switch (currentLinkModifier) {
       case "none":
-        shouldOpen = true;
-        break;
+        return true;
       case "ctrl":
-        shouldOpen = event.ctrlKey;
-        break;
+        return event.ctrlKey;
       case "alt":
-        shouldOpen = event.altKey;
-        break;
+        return event.altKey;
       case "meta":
-        shouldOpen = event.metaKey;
-        break;
+        return event.metaKey;
     }
-    if (!shouldOpen) return;
+    return false;
+  };
+  const openTerminalLink = async (uri: string): Promise<void> => {
+    if (!/^https?:\/\//iu.test(String(uri || ""))) {
+      logger.warn("[XTerm] Refusing to open non-http(s) link:", uri);
+      return;
+    }
 
     if (ctx.terminalBackend.openExternalAvailable()) {
-      void ctx.terminalBackend.openExternal(uri);
+      await ctx.terminalBackend.openExternal(uri);
     } else {
-      const safeUri = String(uri || "");
-      if (/^https?:\/\//i.test(safeUri)) {
-        window.open(safeUri, "_blank", "noopener,noreferrer");
-      } else {
-        logger.warn("[XTerm] Refusing to open non-http(s) link:", safeUri);
-      }
+      window.open(uri, "_blank", "noopener,noreferrer");
     }
+  };
+  const webLinksAddon = new WebLinksAddon((event, uri) => {
+    if (canActivateTerminalLink(event)) void openTerminalLink(uri);
   });
   term.loadAddon(webLinksAddon);
+  const pluginLinkProviderDisposable = ctx.requestPluginTerminalProviders
+    ? registerPluginTerminalLinkProvider({
+        term,
+        request: ctx.requestPluginTerminalProviders,
+        canActivate: canActivateTerminalLink,
+        openExternal: openTerminalLink,
+        isProviderAvailable: ctx.isPluginTerminalProviderAvailable,
+      })
+    : null;
+  const pluginProviderHost = ctx.requestPluginTerminalProviders
+    ? new PluginTerminalVisualProviderHost({
+        term,
+        request: ctx.requestPluginTerminalProviders,
+        terminalBackground: ctx.terminalTheme.colors.background,
+        active: ctx.statusRef.current === 'connected',
+        visible: ctx.pluginProviderVisible ?? true,
+        isProviderAvailable: ctx.isPluginTerminalProviderAvailable,
+      })
+    : null;
 
   // Enable Unicode graphemes for accurate CJK / emoji / Nerd Font character width handling
   const unicodeGraphemes = new UnicodeGraphemesAddon();
@@ -1497,6 +1524,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     serializeAddon,
     searchAddon,
     keywordHighlighter,
+    pluginProviderHost,
     clearTextureAtlas: clearWebglTextureAtlas,
     ensureWebglRenderer: loadWebglRenderer,
     suspendWebglRenderer,
@@ -1523,6 +1551,8 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       historyPreviewBufferChangeDisposable.dispose();
       stopDprWatch();
       keywordHighlighter.dispose();
+      pluginLinkProviderDisposable?.dispose();
+      pluginProviderHost?.dispose();
       eraseScrollbackDisposable.dispose();
       dec2026SyncStartDisposable.dispose();
       dec2026SyncEndDisposable.dispose();

@@ -88,7 +88,55 @@ application Provider adapters as plugins:
 - decoration results are capped again at 64 total host rules after Provider
   fan-out, preventing many individually valid Providers from multiplying the
   renderer's regex workload. Normal boot and hibernate wake share the same
-  CWD-triggered decoration refresh path.
+  CWD-triggered decoration refresh path;
+- link and hover Providers receive one bounded physical xterm line and return
+  exact zero-based ranges. Links are restricted to credential-free HTTP(S)
+  URLs, reuse the host link-modifier policy, and render hover text with host
+  DOM nodes rather than plugin HTML. UTF-16 result boundaries are mapped back
+  to xterm cells so wide and combining characters cannot shift activation or
+  decoration ranges;
+- matcher Providers receive at most the latest 32 parsed logical normal-buffer
+  lines in one batch. Wrapped physical rows are joined before invocation and
+  exact logical ranges are split back across host-owned xterm decorations.
+  Each result identifies a host-provided `lineId`; ranges are validated against
+  that exact line, the combined request text is capped below the 128 KiB
+  Provider envelope, and at most 64 logical matches remain visible.
+  Alternate-screen output is excluded;
+- semantic Providers receive only the bounded submitted command and require
+  `terminal.input`; prompt Providers receive no command or raw output. Their
+  bounded annotations are rendered at host-detected command completion;
+- background Providers return at most four solid-color presentation layers.
+  Per-layer opacity and the combined host overlay are capped at 0.35, plugin
+  HTML/CSS/images are never accepted, and the request includes the current
+  terminal background color for contrast-aware results. Providers may request
+  a 250-60000 ms host refresh cadence; refresh pauses while the terminal is
+  hidden or disconnected and is disabled when reduced motion is requested;
+- every ordinary visual adapter applies a renderer-owned end-to-end wait bound
+  around lazy activation, authorization, and runtime work. Stale generations,
+  disconnects, contribution changes, runtime replacement, and terminal
+  disposal cannot reapply old visual results. Provider availability is cached
+  from immutable enumeration without activation, so terminal output performs no
+  matcher/background RPC work when those contribution kinds are absent.
+
+The operation payload/result shapes for the ordinary adapters are intentionally
+declarative:
+
+- `terminal.link/provideLinks`: `{ line, bufferLineNumber }` ->
+  `{ links: [{ start, length, uri, label? }] }`;
+- `terminal.hover/provideHovers`: `{ line, bufferLineNumber }` ->
+  `{ hovers: [{ start, length, contents }] }`;
+- `terminal.matcher/provideMatches`: `{ lines: [{ lineId, line,
+  bufferLineNumber }] }` -> `{ matches: [{ lineId, start, length, label,
+  severity?, color? }] }`;
+- `terminal.semantic/provideSemantics`: `{ command }` -> classification,
+  destructive/idempotent flags, and bounded annotations;
+- `terminal.prompt/provideAnnotations`: a host reason -> bounded annotations;
+- `terminal.background/provideBackgrounds`: a host reason and optional current
+  terminal background -> bounded solid-color layers plus optional
+  `refreshAfterMs`.
+
+The SDK exports the matching payload, item, and result interfaces for all six
+operations so plugins do not need application-internal renderer types.
 
 The control-plane JSON budget remains 1 MiB, while each terminal Provider
 payload and result is additionally limited to 128 KiB. Default terminal

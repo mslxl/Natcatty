@@ -2,6 +2,9 @@ import { RegExpParser, type AST } from '@eslint-community/regexpp';
 
 export const MAX_PLUGIN_COMPLETION_ITEMS = 100;
 export const MAX_PLUGIN_DECORATION_RULES = 64;
+export const MAX_PLUGIN_TERMINAL_RANGES = 64;
+export const MAX_PLUGIN_PROMPT_ANNOTATIONS = 8;
+export const MAX_PLUGIN_BACKGROUND_LAYERS = 4;
 
 const pluginPatternParser = new RegExpParser({ ecmaVersion: 2025 });
 const MAX_PLUGIN_PATTERN_QUANTIFIERS = 32;
@@ -20,6 +23,52 @@ export interface PluginTerminalDecorationRule {
   readonly patterns: readonly string[];
   readonly color: string;
   readonly enabled: true;
+  readonly providerId: string;
+}
+
+export interface PluginTerminalTextRange {
+  readonly start: number;
+  readonly length: number;
+}
+
+export interface PluginTerminalLink extends PluginTerminalTextRange {
+  readonly uri: string;
+  readonly label?: string;
+  readonly providerId: string;
+}
+
+export interface PluginTerminalHover extends PluginTerminalTextRange {
+  readonly contents: string;
+  readonly providerId: string;
+}
+
+export interface PluginTerminalOutputMatch extends PluginTerminalTextRange {
+  readonly lineId: string;
+  readonly label: string;
+  readonly severity: 'info' | 'warning' | 'error' | 'success';
+  readonly color?: string;
+  readonly providerId: string;
+}
+
+export interface PluginTerminalAnnotation {
+  readonly text: string;
+  readonly color?: string;
+  readonly description?: string;
+  readonly providerId: string;
+}
+
+export interface PluginTerminalSemanticResult {
+  readonly classification?: string;
+  readonly description?: string;
+  readonly destructive: boolean;
+  readonly idempotent: boolean;
+  readonly annotations: readonly PluginTerminalAnnotation[];
+}
+
+export interface PluginTerminalBackgroundLayer {
+  readonly id: string;
+  readonly color: string;
+  readonly opacity: number;
   readonly providerId: string;
 }
 
@@ -53,6 +102,213 @@ function finiteScore(value: unknown): number {
 function freezeArray<T extends object>(values: T[]): readonly Readonly<T>[] {
   for (const value of values) Object.freeze(value);
   return Object.freeze(values);
+}
+
+function normalizeTextRange(
+  value: Record<string, unknown>,
+  lineLength: number,
+): PluginTerminalTextRange | null {
+  const start = value.start;
+  const length = value.length;
+  if (!Number.isInteger(start) || !Number.isInteger(length)) return null;
+  const normalizedStart = start as number;
+  const normalizedLength = length as number;
+  if (normalizedStart < 0
+    || normalizedLength < 1
+    || normalizedStart > lineLength
+    || normalizedLength > lineLength - normalizedStart) return null;
+  return { start: normalizedStart, length: normalizedLength };
+}
+
+function normalizeColor(value: unknown): string | undefined | null {
+  if (value == null) return undefined;
+  const color = boundedString(value, 9);
+  return color && /^#[0-9A-Fa-f]{6}(?:[0-9A-Fa-f]{2})?$/u.test(color) ? color : null;
+}
+
+function normalizeAnnotation(
+  providerId: string,
+  value: unknown,
+): PluginTerminalAnnotation | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const source = value as Record<string, unknown>;
+  const text = boundedString(source.text, 512);
+  const color = normalizeColor(source.color);
+  if (!text || color === null) return null;
+  return { text, ...(color === undefined ? {} : { color }), providerId };
+}
+
+export function normalizePluginLinkResult(
+  providerId: string,
+  value: unknown,
+  lineLength: number,
+): readonly PluginTerminalLink[] {
+  const source = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as { links?: unknown }
+    : null;
+  if (!Number.isInteger(lineLength) || lineLength < 0 || lineLength > 8_192
+    || !Array.isArray(source?.links) || source.links.length > MAX_PLUGIN_TERMINAL_RANGES) {
+    return Object.freeze([]);
+  }
+  const links: PluginTerminalLink[] = [];
+  for (const candidate of source.links) {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) continue;
+    const item = candidate as Record<string, unknown>;
+    const range = normalizeTextRange(item, lineLength);
+    const uri = boundedString(item.uri, 2_048);
+    const label = item.label == null ? undefined : boundedString(item.label, 256, true);
+    if (!range || !uri || (item.label != null && label == null)) continue;
+    try {
+      const parsed = new URL(uri);
+      if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') continue;
+      if (parsed.username || parsed.password) continue;
+    } catch {
+      continue;
+    }
+    links.push({ ...range, uri, ...(label === undefined ? {} : { label }), providerId });
+  }
+  return freezeArray(links);
+}
+
+export function normalizePluginHoverResult(
+  providerId: string,
+  value: unknown,
+  lineLength: number,
+): readonly PluginTerminalHover[] {
+  const source = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as { hovers?: unknown }
+    : null;
+  if (!Number.isInteger(lineLength) || lineLength < 0 || lineLength > 8_192
+    || !Array.isArray(source?.hovers) || source.hovers.length > MAX_PLUGIN_TERMINAL_RANGES) {
+    return Object.freeze([]);
+  }
+  const hovers: PluginTerminalHover[] = [];
+  for (const candidate of source.hovers) {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) continue;
+    const item = candidate as Record<string, unknown>;
+    const range = normalizeTextRange(item, lineLength);
+    const contents = boundedString(item.contents, 2_048);
+    if (!range || !contents) continue;
+    hovers.push({ ...range, contents, providerId });
+  }
+  return freezeArray(hovers);
+}
+
+export function normalizePluginMatcherResult(
+  providerId: string,
+  value: unknown,
+  lineLengths: ReadonlyMap<string, number>,
+): readonly PluginTerminalOutputMatch[] {
+  const source = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as { matches?: unknown }
+    : null;
+  if (!Array.isArray(source?.matches) || source.matches.length > MAX_PLUGIN_TERMINAL_RANGES) {
+    return Object.freeze([]);
+  }
+  const matches: PluginTerminalOutputMatch[] = [];
+  for (const candidate of source.matches) {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) continue;
+    const item = candidate as Record<string, unknown>;
+    const lineId = boundedString(item.lineId, 64);
+    const lineLength = lineId ? lineLengths.get(lineId) : undefined;
+    if (lineLength === undefined) continue;
+    const range = normalizeTextRange(item, lineLength);
+    const label = boundedString(item.label, 256);
+    const severity = item.severity ?? 'info';
+    const color = normalizeColor(item.color);
+    if (!range || !label || color === null
+      || !['info', 'warning', 'error', 'success'].includes(String(severity))) continue;
+    matches.push({
+      ...range,
+      lineId,
+      label,
+      severity: severity as PluginTerminalOutputMatch['severity'],
+      ...(color === undefined ? {} : { color }),
+      providerId,
+    });
+  }
+  return freezeArray(matches);
+}
+
+export function normalizePluginSemanticResult(
+  providerId: string,
+  value: unknown,
+): Readonly<PluginTerminalSemanticResult> {
+  const source = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+  const classification = source.classification == null
+    ? undefined
+    : boundedString(source.classification, 128);
+  const description = source.description == null
+    ? undefined
+    : boundedString(source.description, 1_024, true);
+  const annotationSource = Array.isArray(source.annotations)
+    && source.annotations.length <= MAX_PLUGIN_PROMPT_ANNOTATIONS
+    ? source.annotations
+    : [];
+  const annotations = annotationSource
+    .map((item) => normalizeAnnotation(providerId, item))
+    .filter((item): item is PluginTerminalAnnotation => item !== null);
+  return Object.freeze({
+    ...(classification ? { classification } : {}),
+    ...(description != null ? { description } : {}),
+    destructive: source.destructive === true,
+    idempotent: source.idempotent === true,
+    annotations: freezeArray(annotations),
+  });
+}
+
+export function normalizePluginPromptResult(
+  providerId: string,
+  value: unknown,
+): readonly PluginTerminalAnnotation[] {
+  const source = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as { annotations?: unknown }
+    : null;
+  if (!Array.isArray(source?.annotations)
+    || source.annotations.length > MAX_PLUGIN_PROMPT_ANNOTATIONS) return Object.freeze([]);
+  return freezeArray(source.annotations
+    .map((item) => normalizeAnnotation(providerId, item))
+    .filter((item): item is PluginTerminalAnnotation => item !== null));
+}
+
+export function normalizePluginBackgroundResult(
+  providerId: string,
+  value: unknown,
+): readonly PluginTerminalBackgroundLayer[] {
+  const source = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as { layers?: unknown }
+    : null;
+  if (!Array.isArray(source?.layers)
+    || source.layers.length > MAX_PLUGIN_BACKGROUND_LAYERS) return Object.freeze([]);
+  const layers: PluginTerminalBackgroundLayer[] = [];
+  const seen = new Set<string>();
+  for (const candidate of source.layers) {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) continue;
+    const item = candidate as Record<string, unknown>;
+    const localId = boundedString(item.id, 128);
+    const color = normalizeColor(item.color);
+    const opacity = item.opacity == null ? 1 : item.opacity;
+    if (!localId || !color || typeof opacity !== 'number' || !Number.isFinite(opacity)
+      || opacity < 0 || opacity > 0.35) continue;
+    const id = `${providerId}:${localId}`;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    layers.push({ id, color, opacity, providerId });
+  }
+  return freezeArray(layers);
+}
+
+export function normalizePluginBackgroundRefreshAfterMs(value: unknown): number | undefined {
+  const source = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as { refreshAfterMs?: unknown }
+    : null;
+  return Number.isInteger(source?.refreshAfterMs)
+    && (source?.refreshAfterMs as number) >= 250
+    && (source?.refreshAfterMs as number) <= 60_000
+    ? source?.refreshAfterMs as number
+    : undefined;
 }
 
 export function normalizePluginCompletionResult(

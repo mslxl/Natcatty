@@ -252,6 +252,157 @@ test("terminal Provider invocation rejects kind drift and malformed or oversized
   );
 });
 
+test("terminal link and hover results are validated against the host line", async () => {
+  for (const [kind, result] of [
+    ["terminal.link", { links: [{ start: 0, length: 4, uri: "https://example.com" }] }],
+    ["terminal.hover", { hovers: [{ start: 0, length: 4, contents: "Details" }] }],
+  ]) {
+    const fixture = setup({
+      request: async (_pluginId, _method, params) => ({
+        requestId: params.requestId,
+        status: "ok",
+        result,
+      }),
+      providers: [provider("com.example.alpha", `com.example.alpha.${kind}`, kind)],
+    });
+    const response = await fixture.service.provide({
+      kind,
+      operation: kind === "terminal.link" ? "provideLinks" : "provideHovers",
+      session,
+      payload: { line: "test" },
+    });
+    assert.equal(response[0].status, "ok");
+  }
+
+  const invalid = setup({
+    request: async (_pluginId, _method, params) => ({
+      requestId: params.requestId,
+      status: "ok",
+      result: { links: [{ start: 0, length: 99, uri: "javascript:alert(1)" }] },
+    }),
+    providers: [provider("com.example.alpha", "com.example.alpha.links", "terminal.link")],
+  });
+  const response = await invalid.service.provide({
+    kind: "terminal.link",
+    operation: "provideLinks",
+    session,
+    payload: { line: "test" },
+  });
+  assert.equal(response[0].status, "failed");
+  assert.equal(response[0].error.code, RPC_ERRORS.dataLoss);
+});
+
+test("terminal matcher, semantic, prompt, and background results use operation-specific validation", async () => {
+  const cases = [
+    ["terminal.matcher", { lines: [{ lineId: "line-1", line: "failed", bufferLineNumber: 1 }] }, {
+      matches: [{ lineId: "line-1", start: 0, length: 6, label: "Failure", severity: "error", color: "#ff0000" }],
+    }],
+    ["terminal.semantic", { command: "deploy" }, {
+      classification: "deployment",
+      destructive: true,
+      annotations: [{ text: "production", color: "#ff0000" }],
+    }],
+    ["terminal.prompt", { reason: "commandCompleted" }, {
+      annotations: [{ text: "venv", color: "#00ff00" }],
+    }],
+    ["terminal.background", { reason: "runtime-created" }, {
+      layers: [{ id: "tint", color: "#102030", opacity: 0.25 }],
+      refreshAfterMs: 250,
+    }],
+  ];
+  for (const [kind, payload, result] of cases) {
+    const fixture = setup({
+      request: async (_pluginId, _method, params) => ({
+        requestId: params.requestId,
+        status: "ok",
+        result,
+      }),
+      providers: [provider("com.example.alpha", `com.example.alpha.${kind}`, kind)],
+    });
+    const response = await fixture.service.provide({
+      kind,
+      operation: "provide",
+      session,
+      payload,
+    });
+    assert.equal(response[0].status, "ok", kind);
+  }
+
+  const invalid = setup({
+    request: async (_pluginId, _method, params) => ({
+      requestId: params.requestId,
+      status: "ok",
+      result: { layers: [{ id: "cover", color: "#000000", opacity: 1 }] },
+    }),
+    providers: [provider("com.example.alpha", "com.example.alpha.background", "terminal.background")],
+  });
+  const response = await invalid.service.provide({
+    kind: "terminal.background",
+    operation: "provideBackgrounds",
+    session,
+    payload: { reason: "runtime-created" },
+  });
+  assert.equal(response[0].status, "failed");
+  assert.equal(response[0].error.code, RPC_ERRORS.dataLoss);
+
+  const invalidMatcher = setup({
+    request: async (_pluginId, _method, params) => ({
+      requestId: params.requestId,
+      status: "ok",
+      result: { matches: [{ lineId: "other", start: 0, length: 1, label: "Hidden" }] },
+    }),
+    providers: [provider("com.example.alpha", "com.example.alpha.matcher", "terminal.matcher")],
+  });
+  const matcherResponse = await invalidMatcher.service.provide({
+    kind: "terminal.matcher",
+    operation: "provideMatches",
+    session,
+    payload: { lines: [{ lineId: "line-1", line: "failed", bufferLineNumber: 1 }] },
+  });
+  assert.equal(matcherResponse[0].status, "failed");
+  assert.equal(matcherResponse[0].error.code, RPC_ERRORS.dataLoss);
+
+  const invalidRefresh = setup({
+    request: async (_pluginId, _method, params) => ({
+      requestId: params.requestId,
+      status: "ok",
+      result: { layers: [], refreshAfterMs: 10 },
+    }),
+    providers: [provider("com.example.alpha", "com.example.alpha.background", "terminal.background")],
+  });
+  const refreshResponse = await invalidRefresh.service.provide({
+    kind: "terminal.background",
+    operation: "provideBackgrounds",
+    session,
+    payload: { reason: "runtime-created" },
+  });
+  assert.equal(refreshResponse[0].status, "failed");
+  assert.equal(refreshResponse[0].error.code, RPC_ERRORS.dataLoss);
+
+  const oversizedMatcherBatch = setup({
+    request: async (_pluginId, _method, params) => ({
+      requestId: params.requestId,
+      status: "ok",
+      result: { matches: [] },
+    }),
+    providers: [provider("com.example.alpha", "com.example.alpha.matcher", "terminal.matcher")],
+  });
+  const oversizedMatcherResponse = await oversizedMatcherBatch.service.provide({
+    kind: "terminal.matcher",
+    operation: "provideMatches",
+    session,
+    payload: {
+      lines: Array.from({ length: 13 }, (_, index) => ({
+        lineId: `line-${index}`,
+        line: "x".repeat(8_192),
+        bufferLineNumber: index + 1,
+      })),
+    },
+  });
+  assert.equal(oversizedMatcherResponse[0].status, "failed");
+  assert.equal(oversizedMatcherResponse[0].error.code, RPC_ERRORS.dataLoss);
+});
+
 test("terminal Provider invocation authorizes optional permissions before sending session data", async () => {
   const fixture = setup({
     authorize: async (_context, descriptor) => {

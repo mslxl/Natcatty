@@ -57,6 +57,10 @@ export class PluginTerminalProviderRegistry {
   constructor(bridge: PluginTerminalProviderBridge) {
     this.#bridge = bridge;
     this.#disposeContributionListener = bridge.onPluginContributionsChanged?.(() => {
+      for (const requestId of this.#activeRequests.values()) {
+        void this.#bridge.cancelPluginTerminalRequest(requestId).catch(() => false);
+      }
+      this.#activeRequests.clear();
       for (const listener of [...this.#providerListeners]) {
         try { listener(); } catch { /* isolate application listeners */ }
       }

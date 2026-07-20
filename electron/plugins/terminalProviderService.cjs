@@ -29,7 +29,7 @@ const TERMINAL_PROVIDER_PERMISSIONS = new Map([
   ["terminal.link", ["provider.terminal", "terminal.output", "terminal.decorate"]],
   ["terminal.hover", ["provider.terminal", "terminal.output", "terminal.decorate"]],
   ["terminal.matcher", ["provider.terminal", "terminal.output", "terminal.decorate"]],
-  ["terminal.semantic", ["provider.terminal", "terminal.output", "terminal.decorate"]],
+  ["terminal.semantic", ["provider.terminal", "terminal.input", "terminal.decorate"]],
   ["terminal.prompt", ["provider.terminal", "terminal.output", "terminal.decorate"]],
   ["terminal.background", ["provider.terminal", "terminal.decorate"]],
 ]);
@@ -173,6 +173,198 @@ function normalizeTerminalSessionEvent(value) {
   // Sensitive input/output interception belongs to the privileged PR 6 path.
   assertBoundedJson(event, "Terminal session event");
   return freezeJson(event);
+}
+
+function assertPlainRecord(value, label) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError(`${label} must be an object`);
+  }
+  return value;
+}
+
+function assertVisibleString(value, label, maximum) {
+  assertBoundedString(value, label, maximum);
+  for (const character of value) {
+    const codePoint = character.codePointAt(0) ?? 0;
+    if (codePoint <= 0x1f
+      || (codePoint >= 0x7f && codePoint <= 0x9f)
+      || (codePoint >= 0x202a && codePoint <= 0x202e)
+      || (codePoint >= 0x2066 && codePoint <= 0x2069)) {
+      throw new TypeError(`${label} contains unsafe control characters`);
+    }
+  }
+  return value;
+}
+
+function assertProviderTextRanges(value, options) {
+  const result = assertPlainRecord(value, `${options.label} result`);
+  const items = result[options.property];
+  if (!Array.isArray(items) || items.length > 64) {
+    throw new TypeError(`${options.label} result is invalid`);
+  }
+  const line = options.payload?.line;
+  if (typeof line !== "string" || line.length > 8_192) {
+    throw new TypeError(`${options.label} payload line is invalid`);
+  }
+  for (const candidate of items) {
+    const item = assertPlainRecord(candidate, `${options.label} item`);
+    if (!Number.isInteger(item.start)
+      || !Number.isInteger(item.length)
+      || item.start < 0
+      || item.length < 1
+      || item.start > line.length
+      || item.length > line.length - item.start) {
+      throw new TypeError(`${options.label} range is invalid`);
+    }
+    options.assertItem(item);
+  }
+}
+
+function assertOptionalColor(value, label) {
+  if (value == null) return;
+  const color = assertVisibleString(value, label, 9);
+  if (!/^#[0-9A-Fa-f]{6}(?:[0-9A-Fa-f]{2})?$/u.test(color)) {
+    throw new TypeError(`${label} is invalid`);
+  }
+}
+
+function assertAnnotations(value, label) {
+  if (!Array.isArray(value) || value.length > 8) throw new TypeError(`${label} is invalid`);
+  for (const candidate of value) {
+    const annotation = assertPlainRecord(candidate, `${label} item`);
+    assertVisibleString(annotation.text, `${label} text`, 512);
+    assertOptionalColor(annotation.color, `${label} color`);
+  }
+}
+
+function assertMatcherLines(payload) {
+  if (!Array.isArray(payload?.lines) || payload.lines.length < 1 || payload.lines.length > 32) {
+    throw new TypeError("Terminal matcher payload lines are invalid");
+  }
+  const lines = new Map();
+  let characterCount = 0;
+  for (const candidate of payload.lines) {
+    const item = assertPlainRecord(candidate, "Terminal matcher payload line");
+    const lineId = assertVisibleString(item.lineId, "Terminal matcher line ID", 64);
+    const line = assertVisibleString(item.line, "Terminal matcher line", 8_192);
+    characterCount += line.length;
+    if (characterCount > 96 * 1024) {
+      throw new TypeError("Terminal matcher payload exceeds its line budget");
+    }
+    if (lines.has(lineId)) throw new TypeError("Terminal matcher line IDs must be unique");
+    if (!Number.isInteger(item.bufferLineNumber) || item.bufferLineNumber < 1) {
+      throw new TypeError("Terminal matcher buffer line number is invalid");
+    }
+    lines.set(lineId, line);
+  }
+  return lines;
+}
+
+function assertTerminalProviderOkResult(kind, value, payload) {
+  if (kind === "terminal.link") {
+    assertProviderTextRanges(value, {
+      label: "Terminal link",
+      property: "links",
+      payload,
+      assertItem(item) {
+        const uri = assertVisibleString(item.uri, "Terminal link URI", 2_048);
+        const parsed = new URL(uri);
+        if ((parsed.protocol !== "https:" && parsed.protocol !== "http:")
+          || parsed.username || parsed.password) {
+          throw new TypeError("Terminal link URI is invalid");
+        }
+        if (item.label != null) assertVisibleString(item.label, "Terminal link label", 256);
+      },
+    });
+  }
+  if (kind === "terminal.hover") {
+    assertProviderTextRanges(value, {
+      label: "Terminal hover",
+      property: "hovers",
+      payload,
+      assertItem(item) {
+        assertVisibleString(item.contents, "Terminal hover contents", 2_048);
+      },
+    });
+  }
+  if (kind === "terminal.matcher") {
+    const result = assertPlainRecord(value, "Terminal matcher result");
+    const lines = assertMatcherLines(payload);
+    if (!Array.isArray(result.matches) || result.matches.length > 64) {
+      throw new TypeError("Terminal matcher result is invalid");
+    }
+    for (const candidate of result.matches) {
+      const item = assertPlainRecord(candidate, "Terminal matcher item");
+      const lineId = assertVisibleString(item.lineId, "Terminal matcher line ID", 64);
+      const line = lines.get(lineId);
+      if (line === undefined
+        || !Number.isInteger(item.start)
+        || !Number.isInteger(item.length)
+        || item.start < 0
+        || item.length < 1
+        || item.start > line.length
+        || item.length > line.length - item.start) {
+        throw new TypeError("Terminal matcher range is invalid");
+      }
+      assertVisibleString(item.label, "Terminal matcher label", 256);
+      if (item.severity != null && !["info", "warning", "error", "success"].includes(item.severity)) {
+        throw new TypeError("Terminal matcher severity is invalid");
+      }
+      assertOptionalColor(item.color, "Terminal matcher color");
+    }
+  }
+  if (kind === "terminal.semantic") {
+    const result = assertPlainRecord(value, "Terminal semantic result");
+    const command = payload?.command;
+    assertVisibleString(command, "Terminal semantic command", 4_096);
+    if (result.classification != null) {
+      assertVisibleString(result.classification, "Terminal semantic classification", 128);
+    }
+    if (result.description != null) {
+      assertVisibleString(result.description, "Terminal semantic description", 1_024);
+    }
+    if (result.destructive != null && typeof result.destructive !== "boolean") {
+      throw new TypeError("Terminal semantic destructive flag is invalid");
+    }
+    if (result.idempotent != null && typeof result.idempotent !== "boolean") {
+      throw new TypeError("Terminal semantic idempotent flag is invalid");
+    }
+    if (result.annotations != null) assertAnnotations(result.annotations, "Terminal semantic annotations");
+  }
+  if (kind === "terminal.prompt") {
+    const result = assertPlainRecord(value, "Terminal prompt result");
+    if (payload?.promptLine != null) {
+      assertVisibleString(payload.promptLine, "Terminal prompt line", 8_192);
+      if (!Number.isInteger(payload.bufferLineNumber) || payload.bufferLineNumber < 1) {
+        throw new TypeError("Terminal prompt buffer line number is invalid");
+      }
+    }
+    assertAnnotations(result.annotations, "Terminal prompt annotations");
+  }
+  if (kind === "terminal.background") {
+    const result = assertPlainRecord(value, "Terminal background result");
+    if (result.refreshAfterMs != null
+      && (!Number.isInteger(result.refreshAfterMs)
+        || result.refreshAfterMs < 250
+        || result.refreshAfterMs > 60_000)) {
+      throw new TypeError("Terminal background refresh cadence is invalid");
+    }
+    if (!Array.isArray(result.layers) || result.layers.length > 4) {
+      throw new TypeError("Terminal background layers are invalid");
+    }
+    for (const candidate of result.layers) {
+      const layer = assertPlainRecord(candidate, "Terminal background layer");
+      assertVisibleString(layer.id, "Terminal background layer ID", 128);
+      assertOptionalColor(layer.color, "Terminal background layer color");
+      if (layer.opacity != null
+        && (typeof layer.opacity !== "number"
+          || !Number.isFinite(layer.opacity)
+          || layer.opacity < 0
+          || layer.opacity > 0.35)) {
+        throw new TypeError("Terminal background layer opacity is invalid");
+      }
+    }
+  }
 }
 
 function providerFailure(requestId, error) {
@@ -362,6 +554,9 @@ class PluginTerminalProviderService {
     try {
       assertProviderResult(rawResult);
       assertBoundedJson(rawResult, "Provider result");
+      if (rawResult.status === "ok") {
+        assertTerminalProviderOkResult(kind, rawResult.result, request.payload);
+      }
       result = rawResult;
     } catch (error) {
       throw new PluginRpcError(RPC_ERRORS.dataLoss, `Plugin Provider returned an invalid result: ${error?.message ?? error}`);

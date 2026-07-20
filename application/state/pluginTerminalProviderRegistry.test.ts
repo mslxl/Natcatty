@@ -207,10 +207,11 @@ test('terminal Provider requests merge the latest lifecycle snapshot before invo
 test('terminal Provider registry forwards contribution lifecycle invalidation', () => {
   let bridgeListener: (() => void) | undefined;
   let disposed = false;
+  const cancellations: string[] = [];
   const registry = new PluginTerminalProviderRegistry({
     async listPluginTerminalProviders() { return []; },
     async providePluginTerminal() { return []; },
-    async cancelPluginTerminalRequest() { return false; },
+    async cancelPluginTerminalRequest(requestId) { cancellations.push(requestId); return true; },
     async publishPluginTerminalSessionEvent() { return []; },
     onPluginContributionsChanged(listener) {
       bridgeListener = listener;
@@ -219,8 +220,10 @@ test('terminal Provider registry forwards contribution lifecycle invalidation', 
   });
   let changes = 0;
   const unsubscribe = registry.onDidChangeProviders(() => { changes += 1; });
+  void registry.request({ kind: 'terminal.completion', operation: 'provide', session });
   bridgeListener?.();
   assert.equal(changes, 1);
+  assert.equal(cancellations.length, 1);
   unsubscribe();
   bridgeListener?.();
   assert.equal(changes, 1);

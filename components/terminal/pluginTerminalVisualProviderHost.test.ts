@@ -1,0 +1,263 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import { PluginTerminalVisualProviderHost } from './pluginTerminalVisualProviderHost.ts';
+
+test('visual Provider host renders bounded matcher, semantic, prompt, and background output', async () => {
+  const renderedElements: Array<Record<string, unknown>> = [];
+  const decorationOptions: unknown[] = [];
+  const rootChildren: Array<{ remove(): void }> = [];
+  let onWriteParsed: (() => void) | undefined;
+  const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
+  Object.defineProperty(globalThis, 'document', {
+    configurable: true,
+    value: {
+      createElement() {
+        const attributes = new Map<string, string>();
+        const element = {
+          className: '',
+          textContent: '',
+          title: '',
+          style: {} as Record<string, string>,
+          setAttribute(name: string, value: string) { attributes.set(name, value); },
+          remove() {
+            const index = rootChildren.indexOf(element);
+            if (index >= 0) rootChildren.splice(index, 1);
+          },
+        };
+        return element;
+      },
+    },
+  });
+  try {
+    const term = {
+      element: {
+        appendChild(element: { remove(): void }) { rootChildren.push(element); },
+      },
+      buffer: {
+        active: {
+          type: 'normal',
+          baseY: 0,
+          cursorY: 2,
+          getLine(line: number) {
+            if (line === 0) return { isWrapped: false, translateToString(trim: boolean) { return trim ? 'fail' : 'fail'; } };
+            if (line === 1) return { isWrapped: true, translateToString() { return 'ed'; } };
+            if (line === 2) return { isWrapped: false, translateToString() { return 'prompt'; } };
+            return undefined;
+          },
+        },
+      },
+      onWriteParsed(listener: () => void) {
+        onWriteParsed = listener;
+        return { dispose() {} };
+      },
+      registerMarker() {
+        return { dispose() {} };
+      },
+      registerDecoration(options: unknown) {
+        decorationOptions.push(options);
+        return {
+          dispose() {},
+          onRender(listener: (element: Record<string, unknown>) => void) {
+            const element = {
+              className: '',
+              textContent: '',
+              title: '',
+              style: {},
+              setAttribute() {},
+            };
+            renderedElements.push(element);
+            listener(element);
+            return { dispose() {} };
+          },
+        };
+      },
+    };
+    const kinds: string[] = [];
+    const matcherPayloads: unknown[] = [];
+    const promptPayloads: unknown[] = [];
+    const host = new PluginTerminalVisualProviderHost({
+      term: term as never,
+      matcherQuietMs: 1,
+      async request(kind, _operation, payload) {
+        kinds.push(kind);
+        if (kind === 'terminal.semantic') {
+          return {
+            stale: false,
+            results: [{ providerId: 'semantic', status: 'ok', result: {
+              classification: 'deployment',
+              destructive: true,
+              annotations: [{ text: 'production', color: '#ff0000' }],
+            } }],
+          };
+        }
+        if (kind === 'terminal.prompt') {
+          promptPayloads.push(payload);
+          return {
+            stale: false,
+            results: [{ providerId: 'prompt', status: 'ok', result: {
+              annotations: [{ text: 'venv', color: '#00ff00' }],
+            } }],
+          };
+        }
+        if (kind === 'terminal.matcher') {
+          matcherPayloads.push(payload);
+          return {
+            stale: false,
+            results: [{ providerId: 'matcher', status: 'ok', result: {
+              matches: [{ lineId: '0:1', start: 0, length: 6, label: 'Failure', severity: 'error' }],
+            } }],
+          };
+        }
+        return {
+          stale: false,
+          results: [{ providerId: 'background', status: 'ok', result: {
+            layers: [{ id: 'tint', color: '#102030', opacity: 0.2 }],
+          } }],
+        };
+      },
+    });
+
+    await host.commandSubmitted('deploy');
+    await host.commandCompleted();
+    onWriteParsed?.();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    assert.deepEqual(kinds.sort(), [
+      'terminal.background',
+      'terminal.matcher',
+      'terminal.prompt',
+      'terminal.semantic',
+    ]);
+    assert.equal(rootChildren.length, 1);
+    assert.deepEqual(matcherPayloads, [{
+      lines: [
+        { lineId: '0:1', line: 'failed', bufferLineNumber: 1 },
+        { lineId: '2:2', line: 'prompt', bufferLineNumber: 3 },
+      ],
+    }]);
+    assert.deepEqual(promptPayloads, [{
+      reason: 'commandCompleted',
+      promptLine: 'prompt',
+      bufferLineNumber: 3,
+    }]);
+    assert.equal(decorationOptions.length, 3);
+    assert.equal(renderedElements.filter((element) => element.title === 'Failure').length, 2);
+    assert.equal(renderedElements.some((element) => (
+      element.textContent === '[destructive] deployment | production | venv'
+    )), true);
+    assert.equal(renderedElements.some((element) => element.title === 'Failure'), true);
+
+    host.setActive(false);
+    assert.equal(rootChildren.length, 0);
+    host.dispose();
+  } finally {
+    if (originalDocument) Object.defineProperty(globalThis, 'document', originalDocument);
+    else Reflect.deleteProperty(globalThis, 'document');
+  }
+});
+
+test('visual Provider host bounds activation and permission waits end to end', async () => {
+  const term = {
+    element: null,
+    buffer: {
+      active: {
+        type: 'normal',
+        baseY: 0,
+        cursorY: 0,
+        getLine() { return { translateToString() { return 'failed'; } }; },
+      },
+    },
+    onWriteParsed() { return { dispose() {} }; },
+    registerMarker() { return null; },
+    registerDecoration() { return undefined; },
+  };
+  const host = new PluginTerminalVisualProviderHost({
+    term: term as never,
+    providerResponseTimeoutMs: 5,
+    async request() { return new Promise(() => {}); },
+  });
+  const result = await Promise.race([
+    host.commandSubmitted('deploy').then(() => 'completed'),
+    new Promise<'timed-out'>((resolve) => setTimeout(() => resolve('timed-out'), 100)),
+  ]);
+  assert.equal(result, 'completed');
+  host.dispose();
+});
+
+test('visual Provider background refresh pauses while hidden and under reduced motion', async () => {
+  let requests = 0;
+  const term = {
+    element: null,
+    buffer: {
+      active: {
+        type: 'normal',
+        baseY: 0,
+        cursorY: 0,
+        getLine() { return { translateToString() { return 'prompt'; } }; },
+      },
+    },
+    onWriteParsed() { return { dispose() {} }; },
+    registerMarker() { return null; },
+    registerDecoration() { return undefined; },
+  };
+  const host = new PluginTerminalVisualProviderHost({
+    term: term as never,
+    reducedMotion: true,
+    async request(kind) {
+      if (kind === 'terminal.background') requests += 1;
+      return {
+        stale: false,
+        results: [{ providerId: 'background', status: 'ok', result: {
+          layers: [],
+          refreshAfterMs: 250,
+        } }],
+      };
+    },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests, 1);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal(requests, 1);
+  host.setVisible(false);
+  await host.refreshBackground('hidden');
+  assert.equal(requests, 1);
+  host.setVisible(true);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests, 2);
+  host.dispose();
+});
+
+test('visual Provider host keeps the terminal output hot path idle without declared Providers', async () => {
+  let onWriteParsed: (() => void) | undefined;
+  let requests = 0;
+  const term = {
+    element: null,
+    buffer: {
+      active: {
+        type: 'normal',
+        baseY: 0,
+        cursorY: 0,
+        getLine() { return { translateToString() { return 'output'; } }; },
+      },
+    },
+    onWriteParsed(listener: () => void) {
+      onWriteParsed = listener;
+      return { dispose() {} };
+    },
+    registerMarker() { return null; },
+    registerDecoration() { return undefined; },
+  };
+  const host = new PluginTerminalVisualProviderHost({
+    term: term as never,
+    matcherQuietMs: 1,
+    isProviderAvailable: () => false,
+    async request() { requests += 1; return { stale: false, results: [] }; },
+  });
+  onWriteParsed?.();
+  await host.commandSubmitted('deploy');
+  await host.commandCompleted();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(requests, 0);
+  host.dispose();
+});

@@ -142,6 +142,99 @@ export interface TerminalSessionEvent {
   readonly exitCode?: number;
 }
 
+export interface TerminalTextRange {
+  readonly start: number;
+  readonly length: number;
+}
+
+export interface TerminalLinkItem extends TerminalTextRange {
+  readonly uri: string;
+  readonly label?: string;
+}
+
+export interface TerminalLineProviderPayload {
+  readonly line: string;
+  readonly bufferLineNumber: number;
+}
+
+export interface TerminalLinkResult {
+  readonly links: readonly TerminalLinkItem[];
+}
+
+export interface TerminalHoverItem extends TerminalTextRange {
+  readonly contents: string;
+}
+
+export interface TerminalHoverResult {
+  readonly hovers: readonly TerminalHoverItem[];
+}
+
+export interface TerminalMatcherLine {
+  readonly lineId: string;
+  readonly line: string;
+  readonly bufferLineNumber: number;
+}
+
+export interface TerminalMatcherPayload {
+  readonly lines: readonly TerminalMatcherLine[];
+}
+
+export interface TerminalOutputMatchItem extends TerminalTextRange {
+  /** Host-provided line identifier from the provideMatches request batch. */
+  readonly lineId: string;
+  readonly label: string;
+  readonly severity?: "info" | "warning" | "error" | "success";
+  readonly color?: string;
+}
+
+export interface TerminalMatcherResult {
+  readonly matches: readonly TerminalOutputMatchItem[];
+}
+
+export interface TerminalAnnotationItem {
+  readonly text: string;
+  readonly color?: string;
+}
+
+export interface TerminalSemanticResult {
+  readonly classification?: string;
+  readonly description?: string;
+  readonly destructive?: boolean;
+  readonly idempotent?: boolean;
+  readonly annotations?: readonly TerminalAnnotationItem[];
+}
+
+export interface TerminalSemanticPayload {
+  readonly command: string;
+}
+
+export interface TerminalPromptPayload {
+  readonly reason: "commandCompleted";
+  readonly promptLine?: string;
+  readonly bufferLineNumber?: number;
+}
+
+export interface TerminalPromptResult {
+  readonly annotations: readonly TerminalAnnotationItem[];
+}
+
+export interface TerminalBackgroundLayer {
+  readonly id: string;
+  readonly color: string;
+  readonly opacity?: number;
+}
+
+export interface TerminalBackgroundResult {
+  readonly layers: readonly TerminalBackgroundLayer[];
+  /** Optional bounded host refresh cadence. The host clamps this to 250-60000 ms. */
+  readonly refreshAfterMs?: number;
+}
+
+export interface TerminalBackgroundPayload {
+  readonly reason: string;
+  readonly terminalBackground?: string;
+}
+
 export interface PluginTerminalSessions {
   onDidChange(listener: (event: TerminalSessionEvent) => void): Disposable;
 }

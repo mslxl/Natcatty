@@ -5,8 +5,15 @@ import {
   isSafePluginDecorationPattern,
   mergePluginDecorationRules,
   mergePluginCompletionItems,
+  normalizePluginBackgroundResult,
+  normalizePluginBackgroundRefreshAfterMs,
   normalizePluginCompletionResult,
   normalizePluginDecorationResult,
+  normalizePluginHoverResult,
+  normalizePluginLinkResult,
+  normalizePluginMatcherResult,
+  normalizePluginPromptResult,
+  normalizePluginSemanticResult,
 } from './pluginTerminalProviders.ts';
 
 test('plugin completion results are bounded, normalized, ranked, and deduplicated', () => {
@@ -47,6 +54,72 @@ test('plugin completion results are bounded, normalized, ranked, and deduplicate
     score: 0,
     providerId: 'unsafe',
   }]);
+});
+
+test('ordinary terminal Provider results enforce exact ranges and safe visible values', () => {
+  assert.deepEqual(normalizePluginLinkResult('links', {
+    links: [
+      { start: 0, length: 7, uri: 'https://example.com/path', label: 'Example' },
+      { start: 0, length: 99, uri: 'https://example.com' },
+      { start: 0, length: 4, uri: 'javascript:alert(1)' },
+      { start: 0, length: 4, uri: 'https://user:secret@example.com' },
+    ],
+  }, 10), [{
+    start: 0,
+    length: 7,
+    uri: 'https://example.com/path',
+    label: 'Example',
+    providerId: 'links',
+  }]);
+  assert.deepEqual(normalizePluginHoverResult('hover', {
+    hovers: [{ start: 2, length: 3, contents: 'Details' }],
+  }, 10), [{ start: 2, length: 3, contents: 'Details', providerId: 'hover' }]);
+  assert.deepEqual(normalizePluginMatcherResult('matcher', {
+    matches: [{ lineId: 'line-1', start: 1, length: 4, label: 'Failure', severity: 'error', color: '#ff0000' }],
+  }, new Map([['line-1', 10]])), [{
+    lineId: 'line-1',
+    start: 1,
+    length: 4,
+    label: 'Failure',
+    severity: 'error',
+    color: '#ff0000',
+    providerId: 'matcher',
+  }]);
+  assert.deepEqual(normalizePluginMatcherResult('matcher', {
+    matches: [{ lineId: 'unknown', start: 0, length: 1, label: 'Hidden' }],
+  }, new Map([['line-1', 10]])), []);
+});
+
+test('semantic, prompt, and background results are bounded and presentation-only', () => {
+  assert.deepEqual(normalizePluginSemanticResult('semantic', {
+    classification: 'deployment',
+    description: 'Deploys the current build',
+    destructive: true,
+    idempotent: false,
+    annotations: [{ text: 'production', color: '#ff0000' }],
+  }), {
+    classification: 'deployment',
+    description: 'Deploys the current build',
+    destructive: true,
+    idempotent: false,
+    annotations: [{ text: 'production', color: '#ff0000', providerId: 'semantic' }],
+  });
+  assert.deepEqual(normalizePluginPromptResult('prompt', {
+    annotations: [{ text: 'venv', color: '#00ff00' }, { text: '\u202eevil' }],
+  }), [{ text: 'venv', color: '#00ff00', providerId: 'prompt' }]);
+  assert.deepEqual(normalizePluginBackgroundResult('background', {
+    layers: [
+      { id: 'tint', color: '#102030', opacity: 0.25 },
+      { id: 'invalid', color: 'url(https://example.com)', opacity: 1 },
+    ],
+  }), [{
+    id: 'background:tint',
+    color: '#102030',
+    opacity: 0.25,
+    providerId: 'background',
+  }]);
+  assert.equal(normalizePluginBackgroundRefreshAfterMs({ refreshAfterMs: 250 }), 250);
+  assert.equal(normalizePluginBackgroundRefreshAfterMs({ refreshAfterMs: 249 }), undefined);
 });
 
 test('plugin decoration results reject unsafe expressions and namespace rule identity', () => {
