@@ -38,3 +38,27 @@ test('hidden sftp tab is omitted from default number shortcut targets', () => {
     ['vault', 'session-1'],
   );
 });
+
+test('editor tabs already present in native ordering are not appended twice', () => {
+  assert.deepEqual(
+    buildNumberShortcutTabTargets({
+      showSftpTab: true,
+      shellOnlyTabNumberShortcuts: false,
+      orderedTabs: ['session-1', 'editor:file-1', 'plugin-view:one'],
+      editorTabIds: ['editor:file-1'],
+    }),
+    ['vault', 'sftp', 'session-1', 'editor:file-1', 'plugin-view:one'],
+  );
+});
+
+test('pinned tabs cannot be duplicated by a malformed persisted work ordering', () => {
+  assert.deepEqual(
+    buildNumberShortcutTabTargets({
+      showSftpTab: true,
+      shellOnlyTabNumberShortcuts: false,
+      orderedTabs: ['vault', 'session-1', 'sftp'],
+      editorTabIds: [],
+    }),
+    ['vault', 'sftp', 'session-1'],
+  );
+});

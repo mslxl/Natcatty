@@ -36,7 +36,7 @@ if (!process.versions.electron) {
       BrowserWindow: electron.BrowserWindow,
     });
     const rasterizedIcon = await rasterizeContributionIcon({
-      body: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="128" height="64"><rect width="128" height="64" fill="red"/></svg>'),
+      body: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 64"><rect width="128" height="64" fill="red"/></svg>'),
       mimeType: "image/svg+xml",
       width: 128,
       height: 64,

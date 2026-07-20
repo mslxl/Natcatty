@@ -51,7 +51,9 @@ Application, device, workspace, host, and session values are keyed separately.
 The central settings surface receives a bounded, host-owned catalog of current
 devices, workspaces, hosts, and sessions and requires the user to select an
 explicit target before editing a contextual value. It never reads or writes an
-ambiguous record. Font settings use the host font picker, while list and table
+ambiguous record. Each main window owns its catalog contribution; the host
+merges those contributions for the standalone settings window and withdraws a
+window's targets when its renderer closes. Font settings use the host font picker, while list and table
 settings use recursive schema-driven native controls rather than editable JSON.
 Settings and
 restored view state are user-owned records with no foreign-key
@@ -81,6 +83,9 @@ realpath containment checks, and pass byte, format, and dimension preflight
 before any image decoder sees plugin bytes. Decoding and resizing run through a
 bounded queue of disposable sandboxed renderer workers; only the resulting
 small PNG data URL reaches a Netcatty renderer or native application menu.
+ViewBox-only SVGs receive their inspected viewport inside that isolated worker,
+so common declarative SVG icons remain usable without trusting intrinsic
+decoder dimensions.
 
 Context Key expressions use a bounded parser for literals, namespaced keys,
 parentheses, `!`, `&&`, `||`, equality/ordering, `in`, and `not in`. There is no
@@ -153,7 +158,9 @@ value boundary rather than relying on `JSON.stringify` coercion.
 
 Localized manifest text is resolved by exact locale, language base, English,
 default, then the first declared value. Native contribution labels are plain
-text. Open custom views receive locale, light/dark/system theme identity,
+text. A localized snapshot refresh preserves the existing owner-bound view and
+native tab while labels reload; a host-context change still fails closed
+synchronously. Open custom views receive locale, light/dark/system theme identity,
 host-owned CSS color tokens, reduced-motion preference, forced/high-contrast
 preference, and subsequent environment changes. Theme-token mutations and
 accessibility media-query changes are observed while the host is open, rather

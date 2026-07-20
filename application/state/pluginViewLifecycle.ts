@@ -6,6 +6,43 @@ export interface HostedPluginViewState {
   tabId?: string;
 }
 
+export interface PluginViewSnapshotSelection<T> {
+  requestViewId: string;
+  contextKey: string;
+  value: T;
+}
+
+export function resolvePluginViewSnapshotSelection<T>({
+  resolved,
+  previous,
+  loading,
+  requestedViewId,
+  contextKey,
+}: {
+  resolved: T | null;
+  previous: PluginViewSnapshotSelection<T> | null;
+  loading: boolean;
+  requestedViewId: string | undefined;
+  contextKey: string;
+}): T | null {
+  if (resolved) return resolved;
+  if (!loading || !previous || previous.requestViewId !== requestedViewId
+    || previous.contextKey !== contextKey) return null;
+  return previous.value;
+}
+
+export function shouldReconcilePluginViewTabCatalog({
+  loading,
+  currentContextKey,
+  loadedContextKey,
+}: {
+  loading: boolean;
+  currentContextKey: string;
+  loadedContextKey: string;
+}): boolean {
+  return !loading || currentContextKey !== loadedContextKey;
+}
+
 export function reconcileClosedPluginView<T extends HostedPluginViewState>({
   current,
   retained,

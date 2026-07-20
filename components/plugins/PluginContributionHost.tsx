@@ -27,7 +27,10 @@ import {
   markPluginViewOpenTokensClosed,
   reconcileClosedPluginView,
   rememberClosedPluginViewInstance,
+  resolvePluginViewSnapshotSelection,
+  shouldReconcilePluginViewTabCatalog,
   withdrawPluginViewTab,
+  type PluginViewSnapshotSelection,
   type HostedPluginViewState,
 } from '../../application/state/pluginViewLifecycle';
 import { PluginContributionIcon } from './PluginContributionIcon';
@@ -63,13 +66,19 @@ export function PluginContributionHost({
   const pluginViewTabs = usePluginViewTabs();
   const activePluginTab = pluginViewTabs.find((tab) => tab.id === activeTabId) ?? null;
   const effectiveRequested = resolvePluginViewRequest(requested, activePluginTab);
+  const viewQueryContext = useMemo(
+    () => effectiveRequested?.context ?? { 'netcatty.surface': 'view' },
+    [effectiveRequested?.context],
+  );
+  const viewQueryContextKey = useMemo(() => JSON.stringify(viewQueryContext), [viewQueryContext]);
+  const tabQueryContextKey = useMemo(() => JSON.stringify(keybindingContext), [keybindingContext]);
   const contributions = usePluginContributions({
     locale,
     context: keybindingContext,
   });
   const viewContributions = usePluginContributions({
     locale,
-    context: effectiveRequested?.context ?? { 'netcatty.surface': 'view' },
+    context: viewQueryContext,
   });
   const {
     snapshot,
@@ -90,10 +99,20 @@ export function PluginContributionHost({
   const explicitlyClosedOpenTokensRef = useRef(new Set<symbol>());
   const closeViewRef = useRef(closeView);
   const mountRef = useRef<HTMLDivElement>(null);
-  const activeView = useMemo(() => viewContributions.snapshot.plugins
+  const resolvedActiveView = useMemo(() => viewContributions.snapshot.plugins
     .flatMap((plugin) => plugin.views.map((view) => ({ plugin, view })))
     .find(({ view }) => view.id === effectiveRequested?.viewId && view.visible) ?? null,
   [effectiveRequested?.viewId, viewContributions.snapshot.plugins]);
+  type ResolvedActiveView = NonNullable<typeof resolvedActiveView>;
+  const stableActiveViewRef = useRef<PluginViewSnapshotSelection<ResolvedActiveView> | null>(null);
+  const activeView = resolvePluginViewSnapshotSelection({
+    resolved: resolvedActiveView,
+    previous: stableActiveViewRef.current,
+    loading: viewContributions.loading,
+    requestedViewId: effectiveRequested?.viewId,
+    contextKey: viewQueryContextKey,
+  });
+  const loadedTabContextKeyRef = useRef(tabQueryContextKey);
   const activeViewId = activeView?.view.id;
   const viewScopeId = typeof window === 'undefined'
     ? 'window:server'
@@ -103,6 +122,17 @@ export function PluginContributionHost({
     : null;
 
   useEffect(() => { closeViewRef.current = closeView; }, [closeView]);
+
+  useEffect(() => {
+    if (viewContributions.loading) return;
+    stableActiveViewRef.current = resolvedActiveView && effectiveRequested?.viewId
+      ? {
+          requestViewId: effectiveRequested.viewId,
+          contextKey: viewQueryContextKey,
+          value: resolvedActiveView,
+        }
+      : null;
+  }, [effectiveRequested?.viewId, resolvedActiveView, viewContributions.loading, viewQueryContextKey]);
 
   useEffect(() => onViewClosed((event) => {
     const next = reconcileClosedPluginView({
@@ -173,6 +203,12 @@ export function PluginContributionHost({
   }, []);
 
   useEffect(() => {
+    if (!shouldReconcilePluginViewTabCatalog({
+      loading: contributions.loading,
+      currentContextKey: tabQueryContextKey,
+      loadedContextKey: loadedTabContextKeyRef.current,
+    })) return;
+    if (!contributions.loading) loadedTabContextKeyRef.current = tabQueryContextKey;
     const tabViews = contributions.snapshot.plugins.flatMap((plugin) => plugin.views
       .filter((view) => view.location === 'tab')
       .map((view) => ({
@@ -185,7 +221,7 @@ export function PluginContributionHost({
     const validViewIds = new Set(tabViews.map((view) => view.viewId));
     pluginViewTabStore.retain(validViewIds);
     pluginViewTabStore.refreshMetadata(tabViews);
-  }, [contributions.snapshot.plugins]);
+  }, [contributions.loading, contributions.snapshot.plugins, tabQueryContextKey]);
 
   useEffect(() => {
     if (!requested || activeView?.view.location !== 'tab') return;

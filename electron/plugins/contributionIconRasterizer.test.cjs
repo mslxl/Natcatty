@@ -4,8 +4,22 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 
 const {
+  browserRasterizeExpression,
   createIsolatedContributionIconRasterizer,
 } = require("./contributionIconRasterizer.cjs");
+
+test("viewBox-only SVG icons receive an explicit isolated raster viewport", () => {
+  const expression = browserRasterizeExpression({
+    source: Buffer.from('<svg viewBox="0 0 32 16"><path d="M0 0h1"/></svg>').toString("base64"),
+    mimeType: "image/svg+xml",
+    width: 32,
+    height: 16,
+    maxEdge: 64,
+  });
+  assert.match(expression, /DOMParser/u);
+  assert.match(expression, /setAttribute\("width"/u);
+  assert.match(expression, /setAttribute\("height"/u);
+});
 
 test("contribution icons rasterize in a disposable sandboxed network-denied window", async () => {
   let createdOptions;

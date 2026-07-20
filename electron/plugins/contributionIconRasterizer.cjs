@@ -19,7 +19,21 @@ function browserRasterizeExpression(payload) {
   return `(async (payload) => {
     const image = new Image();
     image.decoding = "sync";
-    image.src = "data:" + payload.mimeType + ";base64," + payload.source;
+    if (payload.mimeType === "image/svg+xml") {
+      const bytes = Uint8Array.from(atob(payload.source), (character) => character.charCodeAt(0));
+      const source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+      const document = new DOMParser().parseFromString(source, "image/svg+xml");
+      const root = document.documentElement;
+      if (root.localName !== "svg" || document.querySelector("parsererror")) {
+        throw new Error("Plugin contribution SVG icon is invalid");
+      }
+      root.setAttribute("width", String(payload.width));
+      root.setAttribute("height", String(payload.height));
+      const normalized = new XMLSerializer().serializeToString(root);
+      image.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(normalized);
+    } else {
+      image.src = "data:" + payload.mimeType + ";base64," + payload.source;
+    }
     await image.decode();
     if (image.naturalWidth !== payload.width || image.naturalHeight !== payload.height) {
       throw new Error("Plugin contribution icon dimensions changed during decoding");

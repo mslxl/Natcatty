@@ -6,6 +6,8 @@ import {
   markPluginViewOpenTokensClosed,
   reconcileClosedPluginView,
   rememberClosedPluginViewInstance,
+  resolvePluginViewSnapshotSelection,
+  shouldReconcilePluginViewTabCatalog,
   withdrawPluginViewTab,
   type HostedPluginViewState,
 } from './pluginViewLifecycle.ts';
@@ -100,4 +102,51 @@ test('explicit close marks only in-flight opens owned by the closed surface', ()
   ), 1);
   assert.deepEqual([...explicitlyClosed], [first]);
   assert.equal(markPluginViewOpenTokensClosed(opening, explicitlyClosed, null), 0);
+});
+
+test('locale-only snapshot refresh keeps the owned view alive without weakening context fail-closed behavior', () => {
+  const previous = {
+    requestViewId: 'publisher.plugin.view',
+    contextKey: '{"netcatty.surface":"view"}',
+    value: { id: 'resolved-view' },
+  };
+  assert.equal(resolvePluginViewSnapshotSelection({
+    resolved: null,
+    previous,
+    loading: true,
+    requestedViewId: previous.requestViewId,
+    contextKey: previous.contextKey,
+  }), previous.value);
+  assert.equal(resolvePluginViewSnapshotSelection({
+    resolved: null,
+    previous,
+    loading: true,
+    requestedViewId: previous.requestViewId,
+    contextKey: '{"netcatty.surface":"terminal/toolbar"}',
+  }), null);
+  assert.equal(resolvePluginViewSnapshotSelection({
+    resolved: null,
+    previous,
+    loading: false,
+    requestedViewId: previous.requestViewId,
+    contextKey: previous.contextKey,
+  }), null);
+});
+
+test('native tab catalog reconciliation pauses only for same-context localized reloads', () => {
+  assert.equal(shouldReconcilePluginViewTabCatalog({
+    loading: true,
+    currentContextKey: 'same',
+    loadedContextKey: 'same',
+  }), false);
+  assert.equal(shouldReconcilePluginViewTabCatalog({
+    loading: true,
+    currentContextKey: 'new',
+    loadedContextKey: 'old',
+  }), true);
+  assert.equal(shouldReconcilePluginViewTabCatalog({
+    loading: false,
+    currentContextKey: 'same',
+    loadedContextKey: 'same',
+  }), true);
 });

@@ -51,6 +51,25 @@ function normalizePluginScopeCatalog(value) {
   return Object.freeze(result);
 }
 
+function mergePluginScopeCatalogs(catalogs) {
+  const result = {};
+  let total = 0;
+  for (const kind of SCOPE_KINDS) {
+    const seen = new Set();
+    result[kind] = [];
+    for (const catalog of catalogs) {
+      for (const entry of catalog?.[kind] ?? []) {
+        if (seen.has(entry.id) || total >= 4096) continue;
+        seen.add(entry.id);
+        total += 1;
+        result[kind].push(entry);
+      }
+    }
+    Object.freeze(result[kind]);
+  }
+  return Object.freeze(result);
+}
+
 function createTrustedPluginBridgeSender(options = {}) {
   const devServerOrigin = options.devServerUrl ? new URL(options.devServerUrl).origin : null;
   return (event) => {
@@ -73,16 +92,30 @@ function registerPluginBridge(ipcMain, options) {
   const isTrustedSender = options.isTrustedSender;
   const defaultScopeCatalog = normalizePluginScopeCatalog({ device: [{ id: "device", label: "This device" }] });
   const scopeCatalogs = new Map();
+  const scopeCatalogOwners = new Map();
   const observedScopeCatalogSenders = new WeakSet();
   const scopeCatalogSenderKey = (event) => {
     const id = event?.sender?.id;
     return Number.isSafeInteger(id) && id > 0 ? id : "default";
   };
+  const currentScopeCatalog = () => mergePluginScopeCatalogs([
+    ...scopeCatalogs.values(),
+    defaultScopeCatalog,
+  ]);
+  const publishScopeCatalog = (event) => {
+    const catalog = currentScopeCatalog();
+    if (typeof options.broadcast === "function") options.broadcast(CHANNELS.scopeCatalogChanged, catalog);
+    else event?.sender?.send?.(CHANNELS.scopeCatalogChanged, catalog);
+  };
   const observeScopeCatalogSender = (event, key) => {
     const sender = event?.sender;
     if (!sender || typeof sender !== "object" || observedScopeCatalogSenders.has(sender)) return;
     observedScopeCatalogSenders.add(sender);
-    sender.once?.("destroyed", () => scopeCatalogs.delete(key));
+    sender.once?.("destroyed", () => {
+      if (scopeCatalogOwners.get(key) !== sender) return;
+      scopeCatalogOwners.delete(key);
+      if (scopeCatalogs.delete(key)) publishScopeCatalog();
+    });
   };
   const configured = isPluginDevelopmentEnabled(env)
     && Boolean(manager)
@@ -182,15 +215,14 @@ function registerPluginBridge(ipcMain, options) {
     await viewHost.postMessage(payload?.instanceId, payload?.message, event.sender);
     return null;
   });
-  handle(CHANNELS.getScopeCatalog, async (_activeManager, _payload, event) => (
-    scopeCatalogs.get(scopeCatalogSenderKey(event)) ?? defaultScopeCatalog
-  ));
+  handle(CHANNELS.getScopeCatalog, async () => currentScopeCatalog());
   handle(CHANNELS.setScopeCatalog, async (_activeManager, payload, event) => {
     const key = scopeCatalogSenderKey(event);
     const scopeCatalog = normalizePluginScopeCatalog(payload);
     scopeCatalogs.set(key, scopeCatalog);
+    scopeCatalogOwners.set(key, event?.sender);
     observeScopeCatalogSender(event, key);
-    event?.sender?.send?.(CHANNELS.scopeCatalogChanged, scopeCatalog);
+    publishScopeCatalog(event);
     return null;
   });
   contributionService?.onDidChange?.((event) => options.broadcast?.(CHANNELS.contributionsChanged, event));
@@ -201,6 +233,7 @@ function registerPluginBridge(ipcMain, options) {
 module.exports = {
   CHANNELS,
   createTrustedPluginBridgeSender,
+  mergePluginScopeCatalogs,
   normalizePluginScopeCatalog,
   registerPluginBridge,
 };
