@@ -892,5 +892,11 @@ export const zhCNCoreMessages: Messages = {
   'settings.plugins.configuredReplacement': '已配置 — 输入新值以替换',
   'settings.plugins.moveItemUp': '将 {label} 的第 {index} 项上移',
   'settings.plugins.moveItemDown': '将 {label} 的第 {index} 项下移',
+  'settings.plugins.addItem': '添加项目',
+  'settings.plugins.removeItem': '删除项目',
+  'settings.plugins.scopeTargets': '插件设置作用域',
+  'settings.plugins.scopeTarget': '{scope} 目标',
+  'settings.plugins.noScopeTargets': '暂无可用目标',
+  'settings.plugins.thisDevice': '此设备',
 
 };

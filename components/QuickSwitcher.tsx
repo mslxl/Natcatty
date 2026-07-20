@@ -16,6 +16,7 @@ import { matchesSearchQuery } from "../lib/searchMatcher";
 import { buildQuickSwitcherShells, useDiscoveredShells, getShellIconPath, isMonochromeShellIcon } from "../lib/useDiscoveredShells";
 import { usePluginContributions } from "../application/state/usePluginContributions";
 import { requestOpenPluginView } from "./plugins/PluginContributionHost";
+import { PluginContributionIcon } from "./plugins/PluginContributionIcon";
 
 type QuickSwitcherItemBase = {
   id: string;
@@ -25,6 +26,8 @@ type QuickSwitcherItemBase = {
   enabled?: boolean;
   altCommand?: string;
   shortcut?: string;
+  pluginId?: string;
+  icon?: NetcattyPluginIconReference;
 };
 
 type QuickSwitcherItem = QuickSwitcherItemBase & (
@@ -52,26 +55,33 @@ export function buildPluginPaletteItems(
         command.category ?? '',
         plugin.displayName,
       ))
-      .map(({ command, menu }) => ({
-        type: 'plugin-command',
-        id: menu.id,
-        commandId: command.id,
-        title: menu.title,
-        pluginTitle: plugin.displayName,
-        enabled: command.enabled && menu.enabled,
-        ...(menu.alt ? { altCommand: menu.alt } : {}),
-        ...(menu.shortcut ? { shortcut: menu.shortcut } : {}),
-      }));
+      .map(({ command, menu }) => {
+        const icon = menu.icon ?? command.icon;
+        return {
+          type: 'plugin-command' as const,
+          id: menu.id,
+          commandId: command.id,
+          title: menu.title,
+          pluginTitle: plugin.displayName,
+          pluginId: plugin.id,
+          enabled: command.enabled && menu.enabled,
+          ...(icon ? { icon } : {}),
+          ...(menu.alt ? { altCommand: menu.alt } : {}),
+          ...(menu.shortcut ? { shortcut: menu.shortcut } : {}),
+        };
+      });
     const views: QuickSwitcherItem[] = plugin.views
       .filter((view) => view.visible)
       .filter((view) => !trimmedQuery || matchesSearchQuery(trimmedQuery, view.title, plugin.displayName, view.id))
       .sort((left, right) => (left.order ?? 0) - (right.order ?? 0) || left.id.localeCompare(right.id))
       .map((view) => ({
-        type: 'plugin-view',
+        type: 'plugin-view' as const,
         id: view.id,
         title: view.title,
         pluginTitle: plugin.displayName,
+        pluginId: plugin.id,
         enabled: true,
+        ...(view.icon ? { icon: view.icon } : {}),
       }));
     return [...commands, ...views];
   });
@@ -625,7 +635,9 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
                       onClick={(event) => handleItemSelect(item, event.altKey)}
                       onMouseEnter={() => setSelectedIndex(idx)}
                     >
-                      <div className="flex h-6 w-6 items-center justify-center text-muted-foreground"><Puzzle size={16} /></div>
+                      <div className="flex h-6 w-6 items-center justify-center text-muted-foreground">
+                        <PluginContributionIcon pluginId={item.pluginId} icon={item.icon} size={16} />
+                      </div>
                       <div className="min-w-0 flex-1">
                         <div className="truncate text-sm font-medium">{item.title}</div>
                         <div className="truncate text-[10px] text-muted-foreground">{item.pluginTitle}</div>

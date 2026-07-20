@@ -72,9 +72,15 @@ function setup(context, pluginManifest, options = {}) {
   };
   const calls = [];
   const runtimeSupervisor = options.runtimeSupervisor ?? {
-    async start(pluginId) { calls.push(`start:${pluginId}`); },
+    async start(pluginId) {
+      calls.push(`start:${pluginId}`);
+      return { runtimeId: `runtime:${pluginId}`, pluginVersion: pluginManifest.version };
+    },
     async request(pluginId, method, params) { calls.push(`request:${pluginId}:${method}`); return params; },
     async notify(pluginId, method) { calls.push(`notify:${pluginId}:${method}`); },
+    getRuntimeIdentity(pluginId) {
+      return { runtimeId: `runtime:${pluginId}`, pluginVersion: pluginManifest.version };
+    },
   };
   const service = new PluginContributionService({
     database,
@@ -467,6 +473,7 @@ test("lazy activation receives the latest host environment before its first cont
       calls.push(["notify", pluginId, method, params]);
     },
     async request() { return null; },
+    getRuntimeIdentity() { return { runtimeId: "runtime-environment-1", pluginVersion: pluginManifest.version }; },
   };
   const { service } = setup(context, pluginManifest, { runtimeSupervisor });
   const environment = { locale: "zh-CN", theme: "dark", reducedMotion: true, highContrast: false };
@@ -479,6 +486,33 @@ test("lazy activation receives the latest host environment before its first cont
     ["start", pluginManifest.id],
     ["notify", pluginManifest.id, "plugin.environment.changed", environment],
   ]);
+});
+
+test("view activation identity fails closed after version or runtime replacement", async (context) => {
+  const pluginManifest = manifest("com.example.view-identity", ["onView:com.example.view-identity.view"]);
+  let runtimeId = "runtime-view-1";
+  const runtimeSupervisor = {
+    async start() { return { runtimeId, pluginVersion: pluginManifest.version }; },
+    async request() { return null; },
+    async notify() {},
+    getRuntimeIdentity() { return { runtimeId, pluginVersion: pluginManifest.version }; },
+  };
+  const { database, service } = setup(context, pluginManifest, { runtimeSupervisor });
+  const activated = await service.activateView(`${pluginManifest.id}.view`);
+  const expected = {
+    pluginId: activated.plugin.id,
+    pluginVersion: activated.plugin.activeVersion,
+    viewId: activated.view.id,
+    runtimeId: activated.identity.runtimeId,
+  };
+  assert.equal(service.assertViewActivationCurrent(expected).view.id, activated.view.id);
+
+  runtimeId = "runtime-view-2";
+  assert.throws(() => service.assertViewActivationCurrent(expected), /runtime ownership changed/u);
+
+  runtimeId = "runtime-view-1";
+  database.setEnabled(pluginManifest.id, false);
+  assert.throws(() => service.assertViewActivationCurrent(expected), /contribution was not found/u);
 });
 
 test("settings validate declared controls and secrets never enter settings storage", async (context) => {

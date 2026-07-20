@@ -950,5 +950,11 @@ Highlight the focused split pane:
   'settings.plugins.configuredReplacement': 'Configured — enter a replacement',
   'settings.plugins.moveItemUp': 'Move {label} item {index} up',
   'settings.plugins.moveItemDown': 'Move {label} item {index} down',
+  'settings.plugins.addItem': 'Add item',
+  'settings.plugins.removeItem': 'Remove item',
+  'settings.plugins.scopeTargets': 'Plugin setting scopes',
+  'settings.plugins.scopeTarget': '{scope} target',
+  'settings.plugins.noScopeTargets': 'No available targets',
+  'settings.plugins.thisDevice': 'This device',
 
 };

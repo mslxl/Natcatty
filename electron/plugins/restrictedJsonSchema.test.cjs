@@ -48,4 +48,8 @@ test("restricted setting schemas reject executable or ambiguous JSON Schema feat
     type: "object",
     properties: {},
   }), /additionalProperties/u);
+  assert.throws(() => assertRestrictedJsonSchema({
+    type: "array",
+    items: { type: "integer", minimum: 1.2, maximum: 1.8 },
+  }, { rootType: "array" }), /no valid value/u);
 });

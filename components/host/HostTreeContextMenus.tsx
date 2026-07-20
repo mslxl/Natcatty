@@ -5,7 +5,8 @@ import { useI18n } from '../../application/i18n/I18nProvider';
 import { sanitizeHost } from '../../domain/host';
 import type { Host } from '../../types';
 import { ContextMenuContent, ContextMenuItem, ContextMenuShortcut } from '../ui/context-menu';
-import { comparePluginMenus, usePluginContributions } from '../../application/state/usePluginContributions';
+import { collectOwnedPluginMenus, comparePluginMenus, usePluginContributions } from '../../application/state/usePluginContributions';
+import { PluginContributionIcon } from '../plugins/PluginContributionIcon';
 
 export interface HostTreeHostContextMenuHandlers {
   onConnect: (host: Host) => void;
@@ -34,7 +35,7 @@ export const HostTreeHostContextMenuContent: React.FC<
       'host.protocol': safeHost.protocol ?? 'ssh',
     },
   });
-  const pluginMenus = pluginContributions.snapshot.plugins.flatMap((plugin) => plugin.menus)
+  const pluginMenus = collectOwnedPluginMenus(pluginContributions.snapshot.plugins)
     .filter((menu) => menu.location === 'host/context' && menu.visible)
     .sort(comparePluginMenus);
 
@@ -70,6 +71,7 @@ export const HostTreeHostContextMenuContent: React.FC<
             'host.protocol': safeHost.protocol ?? 'ssh',
           }).catch(() => {})}
         >
+          <PluginContributionIcon pluginId={menu.pluginId} icon={menu.icon} className="mr-2" />
           {menu.title}
           {menu.checked && <span className="ml-auto pl-4" aria-hidden="true">✓</span>}
           {menu.shortcut && <ContextMenuShortcut>{menu.shortcut}</ContextMenuShortcut>}

@@ -760,6 +760,16 @@ test("setting control semantics fail closed for secrets, sync, and structured va
       },
     }, /minItems must not exceed maxItems/],
     [{
+      id: "com.example.contract-test.structured-integer-range",
+      label: "Structured integer range",
+      control: "list",
+      scope: "application",
+      valueSchema: {
+        type: "array",
+        items: { type: "integer", minimum: 1.2, maximum: 1.8 },
+      },
+    }, /integer range must contain a valid integer/],
+    [{
       id: "com.example.contract-test.structured-keyword-type",
       label: "Structured keyword type",
       control: "table",

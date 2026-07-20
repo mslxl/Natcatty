@@ -600,6 +600,7 @@ export const enTerminalMessages: Messages = {
   // Tabs
   'tabs.closeSessionAria': 'Close session',
   'tabs.closeLogViewAria': 'Close log view',
+  'tabs.closePluginViewAria': 'Close {title}',
   'tabs.logPrefix': 'Log:',
   'tabs.logLocal': 'Local',
   'tabs.copyTab': 'Copy Tab',

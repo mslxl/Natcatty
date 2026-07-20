@@ -631,6 +631,7 @@ export const zhCNTerminalMessages: Messages = {
   // Tabs
   'tabs.closeSessionAria': '关闭会话',
   'tabs.closeLogViewAria': '关闭日志视图',
+  'tabs.closePluginViewAria': '关闭 {title}',
   'tabs.logPrefix': '日志：',
   'tabs.logLocal': '本地',
   'tabs.copyTab': '复制标签页',

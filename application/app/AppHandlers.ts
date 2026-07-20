@@ -462,8 +462,8 @@ export async function confirmIfBusyLocalTerminalImpl(getCtx: AppContextGetter, s
 export async function closeTabsBatchImpl(getCtx: AppContextGetter, targetIds: string[]) {
   const { closeLogView, closeSessions, closeTabsInFlightRef, closeWorkspace, confirmIfBusyLocalTerminal, logViews, sessions, workspaces } = getCtx();
 {
-      if (targetIds.length === 0) return;
-      if (closeTabsInFlightRef.current) return;
+      if (targetIds.length === 0) return true;
+      if (closeTabsInFlightRef.current) return false;
 
       // Expand workspace ids into their constituent session ids so the busy
       // probe sees every local shell that's about to be killed.
@@ -482,7 +482,7 @@ export async function closeTabsBatchImpl(getCtx: AppContextGetter, targetIds: st
       closeTabsInFlightRef.current = true;
       try {
         const ok = await confirmIfBusyLocalTerminal(sessionIdsToProbe);
-        if (!ok) return;
+        if (!ok) return false;
         const standaloneSessionIds = targetIds.filter((tabId) => (
           sessions.some((session) => session.id === tabId)
         ));
@@ -496,6 +496,7 @@ export async function closeTabsBatchImpl(getCtx: AppContextGetter, targetIds: st
             closeLogView(tabId);
           }
         }
+        return true;
       } finally {
         closeTabsInFlightRef.current = false;
       }
@@ -503,7 +504,7 @@ export async function closeTabsBatchImpl(getCtx: AppContextGetter, targetIds: st
 }
 
 export function executeHotkeyActionImpl(getCtx: AppContextGetter, action: string, e: KeyboardEvent) {
-  const { IS_DEV, MOVE_FOCUS_DEBOUNCE_MS, activeTabStore, addConnectionLogRef, closeSession, closeTabInFlightRef, closeWorkspace, collectSessionIds, confirmIfBusyLocalTerminal, createLocalTerminalWithCurrentShell, editorTabs, fromEditorTabId, handleOpenSettingsRef, handleRequestCloseEditorTabRef, isEditorTabId, isQuickSwitcherOpen, lastMoveFocusTimeRef, moveFocusInWorkspace, orderedTabs, resolveCloseIntent, resolveSnippetsShortcutIntent, sessions, setActiveTabId, setAddToWorkspaceDialog, setIsQuickSwitcherOpen, setNavigateToSection, settings, splitSessionWithCurrentShell, systemInfoRef, toEditorTabId, toggleBroadcast, toggleScriptsSidePanelRef, toggleSidePanelRef, toggleWorkspaceViewMode, workspaces } = getCtx();
+  const { IS_DEV, MOVE_FOCUS_DEBOUNCE_MS, activeTabStore, addConnectionLogRef, closePluginViewTab, closeSession, closeTabInFlightRef, closeWorkspace, collectSessionIds, confirmIfBusyLocalTerminal, createLocalTerminalWithCurrentShell, editorTabs, fromEditorTabId, handleOpenSettingsRef, handleRequestCloseEditorTabRef, isEditorTabId, isPluginViewTabId, isQuickSwitcherOpen, lastMoveFocusTimeRef, moveFocusInWorkspace, orderedTabs, resolveCloseIntent, resolveSnippetsShortcutIntent, sessions, setActiveTabId, setAddToWorkspaceDialog, setIsQuickSwitcherOpen, setNavigateToSection, settings, splitSessionWithCurrentShell, systemInfoRef, toEditorTabId, toggleBroadcast, toggleScriptsSidePanelRef, toggleSidePanelRef, toggleWorkspaceViewMode, workspaces } = getCtx();
 {
     const shortcutTabs = buildNumberShortcutTabTargets({
       showSftpTab: settings.showSftpTab ?? true,
@@ -548,6 +549,11 @@ export function executeHotkeyActionImpl(getCtx: AppContextGetter, action: string
         const currentId = activeTabStore.getActiveTabId();
         if (!currentId || currentId === 'vault' || currentId === 'sftp') break;
         if (closeTabInFlightRef.current) break;
+
+        if (isPluginViewTabId?.(currentId)) {
+          closePluginViewTab?.(currentId);
+          break;
+        }
 
         // Editor tabs route through their own dirty-confirm close flow.
         if (isEditorTabId(currentId)) {

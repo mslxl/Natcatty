@@ -20,7 +20,10 @@ function fixture(options = {}) {
       this.destroyed = false;
     }
     setWindowOpenHandler(handler) { this.windowOpenHandler = handler; }
-    async loadURL(url) { this.loadedUrl = url; }
+    async loadURL(url) {
+      this.loadedUrl = url;
+      if (options.loadURL) await options.loadURL(this);
+    }
     send(channel, payload) { this.sent.push([channel, payload]); }
     isDestroyed() { return this.destroyed; }
     close() { this.destroyed = true; this.emit("destroyed"); }
@@ -62,15 +65,23 @@ function fixture(options = {}) {
       return {
         token: "view-token",
         url: "netcatty-plugin://view-token/package/view.html",
-        dispose() { disposals.push("view"); },
+        dispose() {
+          disposals.push("view");
+          if (options.disposeViewThrows) throw new Error("view cleanup failed");
+        },
       };
     },
     registerSession() {
-      return { dispose() { disposals.push("session"); } };
+      return { dispose() {
+        disposals.push("session");
+        if (options.disposeSessionThrows) throw new Error("session cleanup failed");
+      } };
     },
   };
   let viewListener;
   let changeListener;
+  let activationCurrent = true;
+  let activationChecks = 0;
   const contributionService = {
     runtimeSupervisor: { async notify(...args) { return args; } },
     onDidPostViewMessage(listener) { viewListener = listener; return { dispose() {} }; },
@@ -79,7 +90,19 @@ function fixture(options = {}) {
       return {
         plugin: { id: "com.example.view", activeVersion: "1.0.0" },
         view: { id: "com.example.view.panel", entry: "view.html", location: "aside" },
+        identity: { runtimeId: "runtime-view-1", pluginVersion: "1.0.0" },
       };
+    },
+    assertViewActivationCurrent(expected) {
+      activationChecks += 1;
+      if (!activationCurrent) throw new Error("Plugin view ownership changed while opening");
+      assert.deepEqual(expected, {
+        pluginId: "com.example.view",
+        pluginVersion: "1.0.0",
+        viewId: "com.example.view.panel",
+        runtimeId: "runtime-view-1",
+      });
+      return expected;
     },
     async executeCommand(command, args, invocation) { return { command, args, invocation }; },
   };
@@ -87,7 +110,12 @@ function fixture(options = {}) {
   const host = new PluginViewHost({
     electron,
     protocol,
-    packageStore: { async preparePackageRoot() { return "/package"; } },
+    packageStore: {
+      async preparePackageRoot() {
+        if (options.preparePackageRoot) await options.preparePackageRoot();
+        return "/package";
+      },
+    },
     database: {
       getViewState(pluginId, viewId, scopeId) { return state.get(`${pluginId}:${viewId}:${scopeId}`); },
       setViewState(pluginId, viewId, scopeId, value) { state.set(`${pluginId}:${viewId}:${scopeId}`, value); },
@@ -115,6 +143,8 @@ function fixture(options = {}) {
     host,
     ipcHandlers,
     sessions,
+    activationChecks: () => activationChecks,
+    setActivationCurrent(value) { activationCurrent = value; },
     viewListener: () => viewListener,
     views,
   };
@@ -168,6 +198,7 @@ test("custom views use an ephemeral sandbox and deny direct browser capabilities
   assert.equal(navigation.prevented, true);
   assert.deepEqual(contentsView.bounds, { x: 5, y: 6, width: 700, height: 500 });
   assert.equal(owner.children.length, 1);
+  assert.equal(value.activationChecks(), 2);
   const environment = {
     locale: "zh-CN",
     theme: "dark",
@@ -234,4 +265,79 @@ test("terminal runtime states close every open view owned by the plugin", async 
     assert.equal(owner.children.length, 0);
     assert.deepEqual(value.disposals.sort(), ["session", "view"]);
   }
+});
+
+test("plugin replacement during package preparation cannot publish a stale view", async () => {
+  let releasePackage;
+  const packageReady = new Promise((resolve) => { releasePackage = resolve; });
+  const value = fixture({ preparePackageRoot: () => packageReady });
+  const { owner, sender } = value.createOwner();
+  const opening = value.host.open({
+    viewId: "com.example.view.panel",
+    scopeId: "window-1",
+    instanceId: "view-replaced",
+    bounds: { x: 0, y: 0, width: 320, height: 240 },
+  }, sender);
+  value.setActivationCurrent(false);
+  releasePackage();
+
+  await assert.rejects(opening, /ownership changed/u);
+  assert.equal(owner.children.length, 0);
+  assert.equal(value.views.length, 0);
+});
+
+test("runtime shutdown cancels an in-flight view before it attaches and publishes a close event", async () => {
+  let releaseLoad;
+  const loadReady = new Promise((resolve) => { releaseLoad = resolve; });
+  const value = fixture({ loadURL: () => loadReady });
+  const { owner, sender } = value.createOwner();
+  const closed = [];
+  value.host.onDidClose((event) => closed.push(event));
+  const opening = value.host.open({
+    viewId: "com.example.view.panel",
+    scopeId: "window-1",
+    instanceId: "view-opening",
+    bounds: { x: 0, y: 0, width: 320, height: 240 },
+  }, sender);
+  while (value.views.length === 0) await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(owner.children.length, 0);
+
+  value.changeListener()({ reason: "runtime-stopped", pluginId: "com.example.view" });
+  await new Promise((resolve) => setImmediate(resolve));
+  releaseLoad();
+
+  await assert.rejects(opening, /ownership changed/u);
+  assert.equal(owner.children.length, 0);
+  assert.equal(value.views[0].webContents.destroyed, true);
+  assert.deepEqual(closed, [{
+    instanceId: "view-opening",
+    pluginId: "com.example.view",
+    viewId: "com.example.view.panel",
+    reason: "runtime-stopped",
+  }]);
+});
+
+test("view cleanup failures cannot suppress owner removal or the renderer close signal", async () => {
+  const value = fixture({ disposeViewThrows: true, disposeSessionThrows: true });
+  const { owner, sender } = value.createOwner();
+  const closed = [];
+  value.host.onDidClose((event) => closed.push(event));
+  await value.host.open({
+    viewId: "com.example.view.panel",
+    scopeId: "window-1",
+    instanceId: "view-cleanup-failure",
+    bounds: { x: 0, y: 0, width: 320, height: 240 },
+  }, sender);
+
+  await value.host.close("view-cleanup-failure", sender);
+
+  assert.equal(owner.children.length, 0);
+  assert.equal(value.views[0].webContents.destroyed, true);
+  assert.deepEqual(value.disposals, ["view", "session"]);
+  assert.deepEqual(closed, [{
+    instanceId: "view-cleanup-failure",
+    pluginId: "com.example.view",
+    viewId: "com.example.view.panel",
+    reason: "renderer-requested",
+  }]);
 });

@@ -37,6 +37,7 @@ test('plugin palette items preserve menu-specific enablement', () => {
     commandId: 'com.example.palette.run',
     title: 'Run from palette',
     pluginTitle: 'Palette plugin',
+    pluginId: 'com.example.palette',
     enabled: false,
     altCommand: 'com.example.palette.runAlternate',
     shortcut: 'ctrl+shift+r',

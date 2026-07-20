@@ -916,4 +916,10 @@ export const ruCoreMessages: Messages = {
   'settings.plugins.configuredReplacement': 'Настроено — введите новое значение для замены',
   'settings.plugins.moveItemUp': 'Переместить элемент {index} «{label}» вверх',
   'settings.plugins.moveItemDown': 'Переместить элемент {index} «{label}» вниз',
+  'settings.plugins.addItem': 'Добавить элемент',
+  'settings.plugins.removeItem': 'Удалить элемент',
+  'settings.plugins.scopeTargets': 'Области настроек плагинов',
+  'settings.plugins.scopeTarget': 'Цель {scope}',
+  'settings.plugins.noScopeTargets': 'Нет доступных целей',
+  'settings.plugins.thisDevice': 'Это устройство',
 };

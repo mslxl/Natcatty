@@ -170,6 +170,54 @@ test('quick switch hotkey toggles the quick switcher open state', () => {
   assert.equal(isQuickSwitcherOpen, false);
 });
 
+test('close tab hotkey routes native plugin view tabs through their owner', () => {
+  let closedTabId = '';
+  const pluginTabId = 'plugin-view:com.example.view:com.example.view.panel';
+  const noop = () => {};
+
+  executeHotkeyActionImpl(() => ({
+    IS_DEV: false,
+    MOVE_FOCUS_DEBOUNCE_MS: 0,
+    activeTabStore: { getActiveTabId: () => pluginTabId },
+    addConnectionLogRef: { current: noop },
+    closePluginViewTab: (tabId: string) => { closedTabId = tabId; },
+    closeSession: noop,
+    closeTabInFlightRef: { current: false },
+    closeWorkspace: noop,
+    collectSessionIds: () => [],
+    confirmIfBusyLocalTerminal: async () => true,
+    createLocalTerminalWithCurrentShell: noop,
+    editorTabs: [],
+    fromEditorTabId: () => null,
+    handleOpenSettingsRef: { current: noop },
+    handleRequestCloseEditorTabRef: { current: noop },
+    isEditorTabId: () => false,
+    isPluginViewTabId: (tabId: string) => tabId.startsWith('plugin-view:'),
+    isQuickSwitcherOpen: false,
+    lastMoveFocusTimeRef: { current: 0 },
+    moveFocusInWorkspace: noop,
+    orderedTabs: [pluginTabId],
+    resolveCloseIntent: () => ({ kind: 'noop' }),
+    resolveSnippetsShortcutIntent: () => ({ kind: 'noop' }),
+    sessions: [],
+    setActiveTabId: noop,
+    setAddToWorkspaceDialog: noop,
+    setIsQuickSwitcherOpen: noop,
+    setNavigateToSection: noop,
+    settings: { showSftpTab: true, shellOnlyTabNumberShortcuts: false },
+    splitSessionWithCurrentShell: noop,
+    systemInfoRef: { current: { username: 'user', hostname: 'host' } },
+    toEditorTabId: (id: string) => `editor:${id}`,
+    toggleBroadcast: noop,
+    toggleScriptsSidePanelRef: { current: noop },
+    toggleSidePanelRef: { current: noop },
+    toggleWorkspaceViewMode: noop,
+    workspaces: [],
+  }), 'closeTab', { key: 'w', metaKey: true } as KeyboardEvent);
+
+  assert.equal(closedTabId, pluginTabId);
+});
+
 test('next tab includes pinned tabs when shell-only shortcut mode is disabled', () => {
   let activeTabId = '';
   const noop = () => {};

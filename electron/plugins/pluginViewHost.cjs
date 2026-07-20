@@ -37,6 +37,7 @@ class PluginViewHost {
     this.preloadPath = options.preloadPath ?? path.join(__dirname, "runtime", "viewPreload.cjs");
     this.instances = new Map();
     this.byWebContentsId = new Map();
+    this.closeListeners = new Set();
     this.environment = { locale: "en", theme: "system", reducedMotion: false, highContrast: false };
     this.subscriptions = [];
     this.#registerIpc();
@@ -51,9 +52,14 @@ class PluginViewHost {
       if (!["plugin-disabled", "runtime-stopped", "runtime-error", "runtime-quarantined"].includes(event.reason)
         || !event.pluginId) return;
       for (const instance of [...this.instances.values()]) {
-        if (instance.pluginId === event.pluginId) void this.close(instance.instanceId);
+        if (instance.pluginId === event.pluginId) void this.close(instance.instanceId, undefined, event.reason);
       }
     }));
+  }
+
+  onDidClose(listener) {
+    this.closeListeners.add(listener);
+    return { dispose: () => this.closeListeners.delete(listener) };
   }
 
   #registerIpc() {
@@ -109,7 +115,17 @@ class PluginViewHost {
 
   async open(payload, sender) {
     if (!payload || typeof payload !== "object") throw new TypeError("Plugin view request is invalid");
-    const { plugin, view } = await this.contributionService.activateView(payload.viewId, { context: payload.context });
+    const { plugin, view, identity } = await this.contributionService.activateView(
+      payload.viewId,
+      { context: payload.context },
+    );
+    const activation = Object.freeze({
+      pluginId: plugin.id,
+      pluginVersion: plugin.activeVersion,
+      viewId: view.id,
+      runtimeId: identity?.runtimeId ?? null,
+    });
+    if (!activation.runtimeId) throw new Error("Plugin view runtime identity is unavailable");
     const scopeId = typeof payload.scopeId === "string" && payload.scopeId.length <= 256 ? payload.scopeId : null;
     if (!scopeId) throw new TypeError("Plugin view scope ID is required");
     const owner = this.electron.BrowserWindow.fromWebContents(sender);
@@ -119,6 +135,7 @@ class PluginViewHost {
       : randomUUID();
     if (this.instances.has(instanceId)) throw new Error(`Plugin view already exists: ${instanceId}`);
     const packageRoot = await this.packageStore.preparePackageRoot(plugin);
+    this.contributionService.assertViewActivationCurrent(activation, { context: payload.context });
     const partition = `netcatty-plugin-view-${randomUUID()}`;
     const pluginSession = this.electron.session.fromPartition(partition, { cache: false });
     let registration;
@@ -166,7 +183,7 @@ class PluginViewHost {
         if (url !== registration.url) event.preventDefault();
       });
       contents.on("will-attach-webview", (event) => event.preventDefault());
-      const ownerClosed = () => { void this.close(instanceId); };
+      const ownerClosed = () => { void this.close(instanceId, undefined, "owner-closed"); };
       const instance = {
         instanceId,
         pluginId: plugin.id,
@@ -178,18 +195,27 @@ class PluginViewHost {
         contents,
         registration,
         sessionRegistration,
+        state: "opening",
+        attached: false,
       };
       this.instances.set(instanceId, instance);
       this.byWebContentsId.set(contents.id, instance);
       owner.once?.("closed", ownerClosed);
-      owner.contentView.addChildView(contentsView);
-      contentsView.setBounds(normalizeBounds(payload.bounds));
-      contents.once("destroyed", () => { void this.close(instanceId); });
+      contents.once("destroyed", () => { void this.close(instanceId, undefined, "contents-destroyed"); });
       await contents.loadURL(registration.url);
+      this.contributionService.assertViewActivationCurrent(activation, { context: payload.context });
+      if (this.instances.get(instanceId) !== instance || instance.state !== "opening"
+        || owner.isDestroyed() || contents.isDestroyed()) {
+        throw new Error("Plugin view ownership changed while opening");
+      }
+      owner.contentView.addChildView(contentsView);
+      instance.attached = true;
+      contentsView.setBounds(normalizeBounds(payload.bounds));
+      instance.state = "open";
       contents.send("netcatty-plugin-view:environment", this.environment);
       return { instanceId };
     } catch (error) {
-      if (this.instances.has(instanceId)) await this.close(instanceId);
+      if (this.instances.has(instanceId)) await this.close(instanceId, undefined, "open-failed");
       else {
         try { registration?.dispose(); } catch {}
         try { sessionRegistration?.dispose(); } catch {}
@@ -223,25 +249,39 @@ class PluginViewHost {
     }
   }
 
-  async close(instanceId, sender) {
+  async close(instanceId, sender, reason = sender ? "renderer-requested" : "host-requested") {
     const instance = this.instances.get(instanceId);
     if (!instance) return;
     if (sender) this.#ownedInstance(instanceId, sender);
     this.instances.delete(instanceId);
     this.byWebContentsId.delete(instance.contents.id);
     try { instance.owner.removeListener?.("closed", instance.ownerClosed); } catch {}
-    try { instance.owner.contentView.removeChildView(instance.view); } catch {}
-    instance.registration.dispose();
-    instance.sessionRegistration.dispose();
-    if (!instance.contents.isDestroyed()) {
-      if (typeof instance.contents.close === "function") instance.contents.close();
-      else instance.contents.destroy?.();
+    if (instance.attached) {
+      try { instance.owner.contentView.removeChildView(instance.view); } catch {}
+    }
+    try { instance.registration.dispose(); } catch {}
+    try { instance.sessionRegistration.dispose(); } catch {}
+    try {
+      if (!instance.contents.isDestroyed()) {
+        if (typeof instance.contents.close === "function") instance.contents.close();
+        else instance.contents.destroy?.();
+      }
+    } catch {}
+    const event = Object.freeze({
+      instanceId: instance.instanceId,
+      pluginId: instance.pluginId,
+      viewId: instance.viewId,
+      reason,
+    });
+    for (const listener of this.closeListeners) {
+      try { listener(event); } catch {}
     }
   }
 
   async shutdown() {
     await Promise.all([...this.instances.keys()].map((instanceId) => this.close(instanceId)));
     for (const subscription of this.subscriptions.splice(0)) subscription?.dispose?.();
+    this.closeListeners.clear();
   }
 }
 

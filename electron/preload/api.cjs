@@ -65,6 +65,7 @@ function createPreloadApi(ctx) {
   restartPlugin: (pluginId) => ipcRenderer.invoke("netcatty:plugins:restart", { pluginId }),
   uninstallPlugin: (pluginId) => ipcRenderer.invoke("netcatty:plugins:uninstall", { pluginId }),
   getPluginContributions: (options) => ipcRenderer.invoke("netcatty:plugins:contributions", options ?? {}),
+  getPluginContributionIcon: (pluginId, icon) => ipcRenderer.invoke("netcatty:plugins:contribution-icon", { pluginId, icon }),
   executePluginCommand: (command, args, context) => ipcRenderer.invoke("netcatty:plugins:execute-command", {
     command,
     ...(args === undefined ? {} : { args }),
@@ -96,6 +97,18 @@ function createPreloadApi(ctx) {
     const listener = (_event, payload) => callback(payload);
     ipcRenderer.on("netcatty:plugins:view-message-posted", listener);
     return () => ipcRenderer.removeListener("netcatty:plugins:view-message-posted", listener);
+  },
+  onPluginViewClosed: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("netcatty:plugins:view-closed", listener);
+    return () => ipcRenderer.removeListener("netcatty:plugins:view-closed", listener);
+  },
+  getPluginScopeCatalog: () => ipcRenderer.invoke("netcatty:plugins:get-scope-catalog"),
+  setPluginScopeCatalog: (catalog) => ipcRenderer.invoke("netcatty:plugins:set-scope-catalog", catalog),
+  onPluginScopeCatalogChanged: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("netcatty:plugins:scope-catalog-changed", listener);
+    return () => ipcRenderer.removeListener("netcatty:plugins:scope-catalog-changed", listener);
   },
   getWindowsPtyInfo: () => {
     if (process.platform !== "win32") {

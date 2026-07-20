@@ -1,5 +1,5 @@
-import { ArrowDown, ArrowUp, FolderOpen } from 'lucide-react';
-import React, { useEffect, useState } from 'react';
+import { FolderOpen } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
 
 import { normalizePluginKeyboardEvent } from '../../../application/state/pluginKeybindings';
 import { usePluginContributions } from '../../../application/state/usePluginContributions';
@@ -9,6 +9,14 @@ import { Input } from '../../ui/input';
 import { SettingsTabContent } from '../settings-ui';
 import { requestOpenPluginView } from '../../plugins/PluginContributionHost';
 import { parsePluginStructuredSettingValue } from './pluginSettingValues';
+import { PluginStructuredSettingEditor } from './PluginStructuredSettingEditor';
+import { useAvailableFonts } from '../../../application/state/fontStore';
+import { TerminalFontSelect } from '../TerminalFontSelect';
+import {
+  resolvePluginSettingScopeSelection,
+  usePluginSettingScopeCatalog,
+} from '../../../application/state/usePluginSettingScopeCatalog';
+import { PluginContributionIcon } from '../../plugins/PluginContributionIcon';
 
 function PluginSettingField({
   pluginId,
@@ -16,12 +24,14 @@ function PluginSettingField({
   updateSetting,
   resetSetting,
   selectSettingPath,
+  availableFonts,
 }: {
   pluginId: string;
   setting: NetcattyPluginSettingContribution;
   updateSetting: ReturnType<typeof usePluginContributions>['updateSetting'];
   resetSetting: ReturnType<typeof usePluginContributions>['resetSetting'];
   selectSettingPath: ReturnType<typeof usePluginContributions>['selectSettingPath'];
+  availableFonts: ReturnType<typeof useAvailableFonts>;
 }) {
   const { t } = useI18n();
   const [value, setValue] = useState<unknown>(setting.secret ? '' : setting.value ?? '');
@@ -124,7 +134,7 @@ function PluginSettingField({
           placeholder={setting.placeholder}
           disabled={saving}
           onChange={(event) => setValue(event.target.value)}
-          onBlur={() => void save(value)}
+          onBlur={(event) => void save(event.currentTarget.value)}
           className="min-h-24 w-full max-w-xl rounded-md border border-input bg-background px-3 py-2 text-sm"
         />
       );
@@ -140,42 +150,37 @@ function PluginSettingField({
           step={setting.step}
           disabled={saving}
           onChange={(event) => setValue(Number(event.target.value))}
-          onBlur={() => void save(Number(value))}
+          onBlur={(event) => void save(Number(event.currentTarget.value))}
           className="max-w-sm"
         />
       );
     }
     if (setting.control === 'list' || setting.control === 'table') {
-      const structuredValue = Array.isArray(value) ? value : null;
-      const move = (from: number, to: number) => {
-        if (!structuredValue || to < 0 || to >= structuredValue.length) return;
-        const next = [...structuredValue];
-        const [item] = next.splice(from, 1);
-        next.splice(to, 0, item);
-        setValue(next);
-        void save(next);
-      };
       return (
-        <div className="space-y-2">
-          {setting.sortable && structuredValue && structuredValue.map((item, index) => (
-            <div key={`${setting.id}:${index}`} className="flex max-w-xl items-center gap-2 rounded border border-border/70 px-2 py-1.5">
-              <code className="min-w-0 flex-1 truncate text-xs">{JSON.stringify(item)}</code>
-              <Button type="button" variant="ghost" size="icon" className="h-7 w-7" disabled={saving || index === 0} onClick={() => move(index, index - 1)} aria-label={itemLabel('settings.plugins.moveItemUp', index)}><ArrowUp size={13} /></Button>
-              <Button type="button" variant="ghost" size="icon" className="h-7 w-7" disabled={saving || index === structuredValue.length - 1} onClick={() => move(index, index + 1)} aria-label={itemLabel('settings.plugins.moveItemDown', index)}><ArrowDown size={13} /></Button>
-            </div>
-          ))}
-          <textarea
-            aria-label={setting.label}
-            value={typeof value === 'string' ? value : JSON.stringify(value, null, 2)}
-            disabled={saving}
-            onChange={(event) => setValue(event.target.value)}
-            onBlur={() => {
-              try { void save(parsePluginStructuredSettingValue(value)); }
-              catch { setError(t('settings.plugins.validJsonArray')); }
-            }}
-            className="min-h-28 w-full max-w-xl rounded-md border border-input bg-background px-3 py-2 font-mono text-xs"
-          />
-        </div>
+        <PluginStructuredSettingEditor
+          setting={setting}
+          value={typeof value === 'string' ? parsePluginStructuredSettingValue(value) : value}
+          disabled={saving}
+          onChange={setValue}
+          onCommit={(next) => void save(next)}
+          labels={{
+            add: t('settings.plugins.addItem'),
+            remove: t('settings.plugins.removeItem'),
+            moveUp: (index) => itemLabel('settings.plugins.moveItemUp', index),
+            moveDown: (index) => itemLabel('settings.plugins.moveItemDown', index),
+          }}
+        />
+      );
+    }
+    if (setting.control === 'font') {
+      return (
+        <TerminalFontSelect
+          value={String(value)}
+          fonts={availableFonts}
+          disabled={saving}
+          onChange={(next) => { setValue(next); void save(next); }}
+          className="w-full max-w-xl"
+        />
       );
     }
     if (setting.control === 'file' || setting.control === 'directory') {
@@ -224,8 +229,9 @@ function PluginSettingField({
         placeholder={setting.secret && setting.configured ? t('settings.plugins.configuredReplacement') : setting.placeholder}
         disabled={saving}
         onChange={(event) => setValue(event.target.value)}
-        onBlur={() => {
-          if (!setting.secret || String(value).length > 0) void save(value);
+        onBlur={(event) => {
+          const next = event.currentTarget.value;
+          if (!setting.secret || next.length > 0) void save(next);
         }}
         className="max-w-xl"
       />
@@ -237,7 +243,6 @@ function PluginSettingField({
       <div className="flex items-start justify-between gap-4">
         <div>
           <label className="text-sm font-medium">{setting.label}</label>
-          {setting.description && <p className="mt-1 text-xs text-muted-foreground">{setting.description}</p>}
           <p className="mt-1 font-mono text-[10px] text-muted-foreground">{setting.id} · {setting.scope}</p>
         </div>
         {setting.restartRequired && <span className="rounded bg-amber-500/15 px-2 py-1 text-[10px] text-amber-700 dark:text-amber-300">{t('settings.plugins.restartRequired')}</span>}
@@ -271,9 +276,21 @@ function PluginSettingField({
 
 export default function SettingsPluginsTab() {
   const { t } = useI18n();
-  const contributions = usePluginContributions({
+  const availableFonts = useAvailableFonts();
+  const scopeCatalog = usePluginSettingScopeCatalog();
+  const [scopeIds, setScopeIds] = useState<Partial<Record<NetcattyPluginSettingScopeKind, string>>>({});
+  useEffect(() => {
+    setScopeIds((current) => resolvePluginSettingScopeSelection(scopeCatalog, current));
+  }, [scopeCatalog]);
+  const query = useMemo<NetcattyPluginContributionQuery>(() => ({
     context: { 'netcatty.surface': 'settings' },
-  });
+    scopeIds,
+  }), [scopeIds]);
+  const contributions = usePluginContributions(query);
+  const contextualScopes = useMemo(() => new Set(contributions.snapshot.plugins
+    .flatMap((plugin) => plugin.settings.map((setting) => setting.scope))
+    .filter((scope): scope is NetcattyPluginSettingScopeKind => scope !== 'application')),
+  [contributions.snapshot.plugins]);
   const hasVisibleContributions = contributions.snapshot.plugins.some((plugin) => (
     plugin.settings.some((setting) => setting.visible)
     || plugin.views.some((view) => view.visible && view.location === 'settings')
@@ -286,6 +303,23 @@ export default function SettingsPluginsTab() {
           <h2 className="text-xl font-semibold">{t('settings.plugins.title')}</h2>
           <p className="mt-1 text-sm text-muted-foreground">{t('settings.plugins.description')}</p>
         </div>
+        {contextualScopes.size > 0 && (
+          <section className="grid gap-3 rounded-lg border border-border/70 bg-muted/10 p-4 sm:grid-cols-2" aria-label={t('settings.plugins.scopeTargets')}>
+            {[...contextualScopes].map((kind) => (
+              <label key={kind} className="space-y-1 text-xs font-medium">
+                <span>{t('settings.plugins.scopeTarget').replace('{scope}', kind)}</span>
+                <select
+                  value={scopeIds[kind] ?? ''}
+                  onChange={(event) => setScopeIds((current) => ({ ...current, [kind]: event.target.value || undefined }))}
+                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm font-normal"
+                >
+                  {!scopeCatalog[kind].length && <option value="">{t('settings.plugins.noScopeTargets')}</option>}
+                  {scopeCatalog[kind].map((entry) => <option key={entry.id} value={entry.id}>{entry.label}</option>)}
+                </select>
+              </label>
+            ))}
+          </section>
+        )}
         {contributions.loading && <p className="text-sm text-muted-foreground">{t('settings.plugins.loading')}</p>}
         {contributions.error && <p role="alert" className="text-sm text-destructive">{contributions.error.message}</p>}
         {contributions.snapshot.plugins.map((plugin) => {
@@ -306,13 +340,17 @@ export default function SettingsPluginsTab() {
                   updateSetting={contributions.updateSetting}
                   resetSetting={contributions.resetSetting}
                   selectSettingPath={contributions.selectSettingPath}
+                  availableFonts={availableFonts}
                 />
               ))}
               {views.map((view) => (
                 <div key={view.id} className="flex items-center justify-between rounded-lg border border-border/70 bg-background p-4">
-                  <div>
+                  <div className="flex min-w-0 items-center gap-3">
+                    <PluginContributionIcon pluginId={plugin.id} icon={view.icon} size={18} className="shrink-0" />
+                    <div className="min-w-0">
                     <div className="text-sm font-medium">{view.title}</div>
                     <div className="font-mono text-[10px] text-muted-foreground">{view.id}</div>
+                    </div>
                   </div>
                   <Button type="button" variant="outline" size="sm" onClick={() => requestOpenPluginView({
                     viewId: view.id,

@@ -28,8 +28,9 @@ import {
   ContextMenuTrigger,
 } from '../ui/context-menu';
 import { isMiddleClickContextMenuEvent } from './runtime/middleClickBehavior';
-import { comparePluginMenus, usePluginContributions } from '../../application/state/usePluginContributions';
+import { collectOwnedPluginMenus, comparePluginMenus, usePluginContributions } from '../../application/state/usePluginContributions';
 import { buildTerminalPluginContributionContext } from '../../application/state/pluginContributionContexts';
+import { PluginContributionIcon } from '../plugins/PluginContributionIcon';
 
 export interface TerminalContextMenuProps {
   children: React.ReactNode;
@@ -179,7 +180,7 @@ export const TerminalContextMenu: React.FC<TerminalContextMenuProps> = ({
     reconnectable: Boolean(isReconnectable),
   });
   const pluginContributions = usePluginContributions({ context: terminalContext });
-  const pluginMenus = pluginContributions.snapshot.plugins.flatMap((plugin) => plugin.menus)
+  const pluginMenus = collectOwnedPluginMenus(pluginContributions.snapshot.plugins)
     .filter((menu) => menu.location === 'terminal/context' && menu.visible)
     .sort(comparePluginMenus);
   const isMac = hotkeyScheme === 'mac';
@@ -394,6 +395,7 @@ export const TerminalContextMenu: React.FC<TerminalContextMenuProps> = ({
                     ...terminalContext,
                   }).catch(() => {})}
                 >
+                  <PluginContributionIcon pluginId={menu.pluginId} icon={menu.icon} className="mr-2" />
                   {menu.title}
                   {menu.checked && <span className="ml-auto pl-4" aria-hidden="true">✓</span>}
                   {menu.shortcut && <ContextMenuShortcut>{menu.shortcut}</ContextMenuShortcut>}

@@ -102,6 +102,10 @@ function assertRestrictedJsonSchema(root, options = {}) {
     if (schema.minimum !== undefined && schema.maximum !== undefined && schema.minimum > schema.maximum) {
       throw new TypeError("Restricted setting schema minimum exceeds maximum");
     }
+    if (schema.type === "integer" && schema.minimum !== undefined && schema.maximum !== undefined
+      && Math.ceil(schema.minimum) > Math.floor(schema.maximum)) {
+      throw new TypeError("Restricted integer setting schema has no valid value");
+    }
     if (schema.type === "array") {
       if (!isPlainRecord(schema.items)) throw new TypeError("Restricted array schemas require one items schema");
       stack.push({ schema: schema.items, depth: current.depth + 1, label: `${current.label}.items` });

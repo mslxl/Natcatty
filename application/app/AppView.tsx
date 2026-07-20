@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import React, { Suspense, lazy, useCallback, useMemo } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useMemo } from 'react';
 import { AlertTriangle, Download, Trash2 } from 'lucide-react';
 import { activeTabStore, toEditorTabId, useActiveTabId, useIsEditorTabActive } from '../state/activeTabStore';
 import { editorTabStore } from '../state/editorTabStore';
@@ -27,6 +27,8 @@ import { useMainWindowInputFocusRecovery } from '../state/useMainWindowInputFocu
 import { PluginContributionHost } from '../../components/plugins/PluginContributionHost';
 import { resolveActivePluginKeybindingContext } from '../state/pluginContributionContexts';
 import { selectPluginThemeTokens } from '../state/pluginContributionEnvironment';
+import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
+import { pluginViewTabStore, usePluginViewTabs } from '../state/pluginViewTabStore';
 
 const LazyProtocolSelectDialog = lazy(() => import('../../components/ProtocolSelectDialog'));
 const LazyQuickSwitcher = lazy(() =>
@@ -59,6 +61,7 @@ type AppViewContext = Record<string, any>;
 
 export function AppView({ ctx }: { ctx: AppViewContext }) {
   const activeTabId = useActiveTabId();
+  const pluginViewTabs = usePluginViewTabs();
   const {
     resetSessionRename,
     resetWorkspaceRename,
@@ -134,6 +137,28 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
     () => selectPluginThemeTokens(appThemeStyle as Record<string, unknown>),
     [appThemeStyle],
   );
+
+  const closePluginViewTab = useCallback((tabId: string) => {
+    const index = orderedTabsWithEditors.indexOf(tabId);
+    if (activeTabStore.getActiveTabId() === tabId) {
+      const next = orderedTabsWithEditors[index - 1] ?? orderedTabsWithEditors[index + 1] ?? 'vault';
+      activeTabStore.setActiveTabId(next === tabId ? 'vault' : next);
+    }
+    pluginViewTabStore.close(tabId);
+  }, [orderedTabsWithEditors]);
+
+  useEffect(() => {
+    const catalog: NetcattyPluginScopeCatalog = {
+      host: hosts.map((host: any) => ({ id: host.id, label: host.label || host.hostname || host.id })),
+      workspace: workspaces.map((workspace: any) => ({ id: workspace.id, label: workspace.name || workspace.id })),
+      session: sessions.map((session: any) => ({
+        id: session.id,
+        label: session.customName || session.hostLabel || session.hostname || session.id,
+      })),
+      device: [{ id: 'device', label: t('settings.plugins.thisDevice') }],
+    };
+    void netcattyBridge.get()?.setPluginScopeCatalog?.(catalog).catch(() => {});
+  }, [hosts, sessions, t, workspaces]);
 
   return (
     <SnippetExecutionProvider>
@@ -219,6 +244,8 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
         showHostTreeSidebar={settings.showHostTreeSidebar}
         dynamicTabTitleMode={settings.terminalSettings.dynamicTabTitleMode}
         editorTabs={editorTabs}
+        pluginViewTabs={pluginViewTabs}
+        onClosePluginViewTab={closePluginViewTab}
         onRequestCloseEditorTab={handleRequestCloseEditorTab}
         hostById={hostById}
       />

@@ -16,7 +16,6 @@ import {
   Languages,
   MoreVertical,
   Palette,
-  Puzzle,
   Search,
   TextCursorInput,
   Upload,
@@ -36,8 +35,9 @@ import { ToolbarCustomizeContextMenu } from '../ui/toolbar-item-layout';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip';
 import { cn } from '../../lib/utils';
 import HostKeywordHighlightPopover from './HostKeywordHighlightPopover';
-import { comparePluginMenus, usePluginContributions } from '../../application/state/usePluginContributions';
+import { collectOwnedPluginMenus, comparePluginMenus, usePluginContributions } from '../../application/state/usePluginContributions';
 import { buildTerminalPluginContributionContext } from '../../application/state/pluginContributionContexts';
+import { PluginContributionIcon } from '../plugins/PluginContributionIcon';
 
 export const TERMINAL_TOOLBAR_ITEM_IDS = [
   'highlight',
@@ -173,7 +173,7 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
       statusBar: statusBarContext,
     },
   });
-  const pluginToolbarMenus = pluginContributions.snapshot.plugins.flatMap((plugin) => plugin.menus)
+  const pluginToolbarMenus = collectOwnedPluginMenus(pluginContributions.snapshot.plugins)
     .filter((menu) => (menu.location === 'terminal/toolbar' || menu.location === 'statusBar') && menu.visible)
     .sort(comparePluginMenus);
   const [highlightPopoverOpen, setHighlightPopoverOpen] = useState(false);
@@ -998,7 +998,7 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
                 ...(menu.location === 'statusBar' ? statusBarContext : terminalContext),
               }).catch(() => {})}
             >
-              <Puzzle size={12} />
+              <PluginContributionIcon pluginId={menu.pluginId} icon={menu.icon} size={12} />
               {menu.location === 'statusBar' && <span>{menu.title}</span>}
             </Button>
           </TooltipTrigger>

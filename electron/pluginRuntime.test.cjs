@@ -7,6 +7,7 @@ require("./plugins/browserPluginRuntime.test.cjs");
 require("./plugins/hostRpcRegistry.test.cjs");
 require("./plugins/hostBootstrap.test.cjs");
 require("./plugins/hostService.test.cjs");
+require("./plugins/contributionIconService.test.cjs");
 require("./plugins/jsonBoundary.test.cjs");
 require("./plugins/moduleResources.test.cjs");
 require("./plugins/packageStore.test.cjs");

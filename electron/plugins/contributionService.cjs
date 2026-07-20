@@ -350,8 +350,26 @@ class PluginContributionService {
     if (!evaluateContextKeyExpression(contribution.when, keys)) {
       throw new PluginRpcError(RPC_ERRORS.failedPrecondition, `Plugin view is unavailable: ${viewId}`);
     }
-    await this.#ensureActivated(plugin, `onView:${viewId}`);
-    return { plugin, view: contribution };
+    const identity = await this.#ensureActivated(plugin, `onView:${viewId}`);
+    return { plugin, view: contribution, identity: identity ?? null };
+  }
+
+  assertViewActivationCurrent(expected, params = {}) {
+    if (!expected || typeof expected !== "object") throw invalidArgument("Plugin view activation identity is invalid");
+    const { plugin, contribution } = this.#findContribution("views", expected.viewId);
+    if (plugin.id !== expected.pluginId || plugin.activeVersion !== expected.pluginVersion) {
+      throw new PluginRpcError(RPC_ERRORS.failedPrecondition, "Plugin view ownership changed while opening");
+    }
+    const keys = this.#context(params.context);
+    if (!evaluateContextKeyExpression(contribution.when, keys)) {
+      throw new PluginRpcError(RPC_ERRORS.failedPrecondition, `Plugin view is unavailable: ${expected.viewId}`);
+    }
+    const identity = this.runtimeSupervisor.getRuntimeIdentity?.(plugin.id) ?? null;
+    if (!identity?.runtimeId || identity.runtimeId !== expected.runtimeId
+      || identity.pluginVersion !== expected.pluginVersion) {
+      throw new PluginRpcError(RPC_ERRORS.failedPrecondition, "Plugin view runtime ownership changed while opening");
+    }
+    return { plugin, view: contribution, identity };
   }
 
   async activateProvider(providerId) {

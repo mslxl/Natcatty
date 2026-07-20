@@ -46,6 +46,19 @@ export function comparePluginMenus(
     || left.id.localeCompare(right.id);
 }
 
+export function collectOwnedPluginMenus(
+  plugins: NetcattyPluginContributionSnapshot['plugins'],
+) {
+  return plugins.flatMap((plugin) => {
+    const commandById = new Map(plugin.commands.map((command) => [command.id, command] as const));
+    return plugin.menus.map((menu) => ({
+      ...menu,
+      pluginId: plugin.id,
+      icon: menu.icon ?? commandById.get(menu.command)?.icon,
+    }));
+  });
+}
+
 export function createPluginContributionRefreshGuard() {
   let generation = 0;
   return Object.freeze({
@@ -74,6 +87,7 @@ export interface UsePluginContributionsResult {
   setViewBounds(instanceId: string, bounds: { x: number; y: number; width: number; height: number }): Promise<void>;
   setViewVisibility(instanceId: string, visible: boolean): Promise<void>;
   setEnvironment(environment: NetcattyPluginEnvironment): Promise<void>;
+  onViewClosed(callback: (event: NetcattyPluginViewClosedEvent) => void): () => void;
 }
 
 export function usePluginContributions(
@@ -190,6 +204,10 @@ export function usePluginContributions(
     await bridge.setPluginEnvironment(environment);
   }, [bridge]);
 
+  const onViewClosed = useCallback((callback: (event: NetcattyPluginViewClosedEvent) => void) => (
+    bridge?.onPluginViewClosed?.(callback) ?? (() => {})
+  ), [bridge]);
+
   const currentLoadState = resolvePluginContributionLoadState({
     currentQueryKey: queryKey,
     loadedQueryKey: loadedSnapshot.queryKey,
@@ -213,5 +231,6 @@ export function usePluginContributions(
     setViewBounds,
     setViewVisibility,
     setEnvironment,
+    onViewClosed,
   };
 }

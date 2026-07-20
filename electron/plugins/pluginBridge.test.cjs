@@ -7,6 +7,7 @@ const {
   CHANNELS,
   createTrustedPluginBridgeSender,
   registerPluginBridge,
+  normalizePluginScopeCatalog,
 } = require("./pluginBridge.cjs");
 
 function createIpcMain() {
@@ -90,4 +91,82 @@ test("plugin management availability follows asynchronous host initialization", 
     error.message.includes("disabled or unavailable") && error.cause === initializationError
   ));
   assert.equal(listCalls, 0);
+});
+
+test("plugin view host closures are broadcast to renderer windows", async () => {
+  const ipcMain = createIpcMain();
+  const broadcasts = [];
+  let closeListener;
+  registerPluginBridge(ipcMain, {
+    manager: { initialize: async () => {} },
+    contributionService: {},
+    viewHost: {
+      onDidClose(listener) { closeListener = listener; return { dispose() {} }; },
+    },
+    env: { NETCATTY_PLUGIN_DEV: "1" },
+    isTrustedSender: () => true,
+    broadcast: (...args) => broadcasts.push(args),
+  });
+  const event = {
+    instanceId: "view-1",
+    pluginId: "com.example.view",
+    viewId: "com.example.view.panel",
+    reason: "runtime-error",
+  };
+  closeListener(event);
+  assert.deepEqual(broadcasts, [[CHANNELS.viewClosed, event]]);
+});
+
+test("plugin contribution icon requests use the host-owned resolver", async () => {
+  const ipcMain = createIpcMain();
+  const calls = [];
+  registerPluginBridge(ipcMain, {
+    manager: { initialize: async () => {} },
+    resolveContributionIcon: async (payload) => {
+      calls.push(payload);
+      return { light: "data:image/png;base64,bGlnaHQ=" };
+    },
+    env: { NETCATTY_PLUGIN_DEV: "1" },
+    isTrustedSender: () => true,
+  });
+  const payload = {
+    pluginId: "com.example.icon",
+    icon: { kind: "package", light: "assets/icon.png" },
+  };
+
+  assert.deepEqual(await ipcMain.handlers.get(CHANNELS.contributionIcon)({}, payload), {
+    light: "data:image/png;base64,bGlnaHQ=",
+  });
+  assert.deepEqual(calls, [payload]);
+});
+
+test("plugin setting scope catalogs are bounded, deduplicated, and host-broadcast", async () => {
+  assert.deepEqual(normalizePluginScopeCatalog({
+    host: [{ id: "host-1", label: "Production" }, { id: "host-1", label: "Duplicate" }],
+    workspace: [{ id: "", label: "Invalid" }],
+  }), {
+    workspace: [],
+    host: [{ id: "host-1", label: "Production" }],
+    session: [],
+    device: [],
+  });
+
+  const ipcMain = createIpcMain();
+  const broadcasts = [];
+  registerPluginBridge(ipcMain, {
+    manager: { initialize: async () => {} },
+    env: { NETCATTY_PLUGIN_DEV: "1" },
+    isTrustedSender: () => true,
+    broadcast: (...args) => broadcasts.push(args),
+  });
+  const trusted = {};
+  const next = { host: [{ id: "host-1", label: "Production" }] };
+  await ipcMain.handlers.get(CHANNELS.setScopeCatalog)(trusted, next);
+  assert.deepEqual(await ipcMain.handlers.get(CHANNELS.getScopeCatalog)(trusted), {
+    workspace: [],
+    host: [{ id: "host-1", label: "Production" }],
+    session: [],
+    device: [],
+  });
+  assert.equal(broadcasts[0][0], CHANNELS.scopeCatalogChanged);
 });

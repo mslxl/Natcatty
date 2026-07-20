@@ -106,6 +106,17 @@ test('shared host tree recognizes active log view before tab ordering catches up
   }), true);
 });
 
+test('shared host tree stays hidden for native plugin view tabs', () => {
+  const pluginTabId = 'plugin-view:com.example.view:com.example.view.panel';
+  assert.equal(isHostTreeWorkTabSurface({
+    enabled: true,
+    activeTabId: pluginTabId,
+    orderedTabs: [pluginTabId],
+    sessionIds: new Set(),
+    workspaceIds: new Set(),
+  }), false);
+});
+
 test('terminal content surface is limited to sessions and workspaces', () => {
   const sessionIds = new Set(['session-1']);
   const workspaceIds = new Set(['workspace-1']);

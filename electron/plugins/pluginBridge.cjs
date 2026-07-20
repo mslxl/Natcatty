@@ -10,6 +10,7 @@ const CHANNELS = Object.freeze({
   restart: "netcatty:plugins:restart",
   uninstall: "netcatty:plugins:uninstall",
   contributions: "netcatty:plugins:contributions",
+  contributionIcon: "netcatty:plugins:contribution-icon",
   contributionsChanged: "netcatty:plugins:contributions-changed",
   executeCommand: "netcatty:plugins:execute-command",
   updateSetting: "netcatty:plugins:update-setting",
@@ -21,7 +22,34 @@ const CHANNELS = Object.freeze({
   setViewVisibility: "netcatty:plugins:set-view-visibility",
   viewMessage: "netcatty:plugins:view-message",
   viewMessagePosted: "netcatty:plugins:view-message-posted",
+  viewClosed: "netcatty:plugins:view-closed",
+  getScopeCatalog: "netcatty:plugins:get-scope-catalog",
+  setScopeCatalog: "netcatty:plugins:set-scope-catalog",
+  scopeCatalogChanged: "netcatty:plugins:scope-catalog-changed",
 });
+
+const SCOPE_KINDS = Object.freeze(["workspace", "host", "session", "device"]);
+
+function normalizePluginScopeCatalog(value) {
+  const source = value && typeof value === "object" ? value : {};
+  const result = {};
+  let total = 0;
+  for (const kind of SCOPE_KINDS) {
+    const entries = Array.isArray(source[kind]) ? source[kind] : [];
+    const seen = new Set();
+    result[kind] = [];
+    for (const entry of entries) {
+      const id = typeof entry?.id === "string" ? entry.id.trim() : "";
+      const label = typeof entry?.label === "string" ? entry.label.trim() : "";
+      if (!id || id.length > 256 || id.includes("\0") || !label || label.length > 512 || seen.has(id)) continue;
+      if (++total > 4096) throw new TypeError("Plugin setting scope catalog is too large");
+      seen.add(id);
+      result[kind].push(Object.freeze({ id, label }));
+    }
+    Object.freeze(result[kind]);
+  }
+  return Object.freeze(result);
+}
 
 function createTrustedPluginBridgeSender(options = {}) {
   const devServerOrigin = options.devServerUrl ? new URL(options.devServerUrl).origin : null;
@@ -43,6 +71,7 @@ function registerPluginBridge(ipcMain, options) {
   const viewHost = options.viewHost;
   const env = options.env ?? process.env;
   const isTrustedSender = options.isTrustedSender;
+  let scopeCatalog = normalizePluginScopeCatalog({ device: [{ id: "device", label: "This device" }] });
   const configured = isPluginDevelopmentEnabled(env)
     && Boolean(manager)
     && typeof manager.initialize === "function";
@@ -85,6 +114,10 @@ function registerPluginBridge(ipcMain, options) {
   handle(CHANNELS.contributions, async (_activeManager, payload) => {
     if (!contributionService) throw new Error("Plugin contributions are unavailable");
     return contributionService.snapshot(payload ?? {});
+  });
+  handle(CHANNELS.contributionIcon, async (_activeManager, payload) => {
+    if (!options.resolveContributionIcon) throw new Error("Plugin contribution icons are unavailable");
+    return options.resolveContributionIcon(payload);
   });
   handle(CHANNELS.executeCommand, async (_activeManager, payload) => {
     if (!contributionService) throw new Error("Plugin contributions are unavailable");
@@ -137,8 +170,20 @@ function registerPluginBridge(ipcMain, options) {
     await viewHost.postMessage(payload?.instanceId, payload?.message, event.sender);
     return null;
   });
+  handle(CHANNELS.getScopeCatalog, async () => scopeCatalog);
+  handle(CHANNELS.setScopeCatalog, async (_activeManager, payload) => {
+    scopeCatalog = normalizePluginScopeCatalog(payload);
+    options.broadcast?.(CHANNELS.scopeCatalogChanged, scopeCatalog);
+    return null;
+  });
   contributionService?.onDidChange?.((event) => options.broadcast?.(CHANNELS.contributionsChanged, event));
   contributionService?.onDidPostViewMessage?.((event) => options.broadcast?.(CHANNELS.viewMessagePosted, event));
+  viewHost?.onDidClose?.((event) => options.broadcast?.(CHANNELS.viewClosed, event));
 }
 
-module.exports = { CHANNELS, createTrustedPluginBridgeSender, registerPluginBridge };
+module.exports = {
+  CHANNELS,
+  createTrustedPluginBridgeSender,
+  normalizePluginScopeCatalog,
+  registerPluginBridge,
+};

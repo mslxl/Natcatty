@@ -2,6 +2,7 @@ import {
   fromEditorTabId,
   isEditorTabId,
 } from '../state/activeTabStore';
+import { isPluginViewTabId } from '../state/pluginViewTabStore';
 import { applyCustomAccentToTerminalTheme, resolveHostTerminalThemeId } from '../../domain/terminalAppearance';
 import { collectSessionIds } from '../../domain/workspace';
 import type { EditorTab } from '../state/editorTabStore';
@@ -79,6 +80,7 @@ export function isHostTreeWorkTabSurface({
 }): boolean {
   if (!enabled) return false;
   if (isRootPageTabId(activeTabId)) return false;
+  if (isPluginViewTabId(activeTabId)) return false;
   return orderedTabs.includes(activeTabId)
     || isEditorTabId(activeTabId)
     || logViewIds.has(activeTabId)

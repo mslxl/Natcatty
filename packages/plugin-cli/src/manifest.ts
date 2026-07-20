@@ -162,6 +162,10 @@ function restrictedSettingSchemaErrors(root: unknown): string[] {
     if (typeof schema.minimum === "number" && typeof schema.maximum === "number" && schema.minimum > schema.maximum) {
       errors.push("valueSchema minimum must not exceed maximum");
     }
+    if (schema.type === "integer" && typeof schema.minimum === "number" && typeof schema.maximum === "number"
+      && Math.ceil(schema.minimum) > Math.floor(schema.maximum)) {
+      errors.push("valueSchema integer range must contain a valid integer");
+    }
     if (schema.type !== "string" && (schema.minLength !== undefined || schema.maxLength !== undefined)) {
       errors.push("valueSchema string keywords require type string");
     }

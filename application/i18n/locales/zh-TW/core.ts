@@ -893,4 +893,10 @@ export const zhTWCoreMessages: Messages = {
   'settings.plugins.configuredReplacement': '已設定 — 輸入新值以取代',
   'settings.plugins.moveItemUp': '將 {label} 的第 {index} 項上移',
   'settings.plugins.moveItemDown': '將 {label} 的第 {index} 項下移',
+  'settings.plugins.addItem': '新增項目',
+  'settings.plugins.removeItem': '移除項目',
+  'settings.plugins.scopeTargets': '外掛程式設定範圍',
+  'settings.plugins.scopeTarget': '{scope} 目標',
+  'settings.plugins.noScopeTargets': '沒有可用的目標',
+  'settings.plugins.thisDevice': '此裝置',
 };

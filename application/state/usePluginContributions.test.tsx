@@ -3,6 +3,7 @@ import test from 'node:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 import {
+  collectOwnedPluginMenus,
   createPluginContributionRefreshGuard,
   failClosedPluginContributionLoad,
   resolvePluginContributionLoadState,
@@ -66,4 +67,26 @@ test('plugin contribution refreshes reject stale asynchronous results', async ()
   assert.equal(newRequestIsCurrent(), true);
   guard.invalidate();
   assert.equal(newRequestIsCurrent(), false);
+});
+
+test('owned menu rendering inherits command icons when a placement has no override', () => {
+  const commandIcon = { kind: 'theme', name: 'play' } as const;
+  const plugins = [{
+    id: 'com.example.menu',
+    commands: [{ id: 'com.example.menu.run', title: 'Run', enabled: true, icon: commandIcon }],
+    menus: [{
+      id: 'com.example.menu:menu:0',
+      command: 'com.example.menu.run',
+      location: 'terminal/toolbar',
+      title: 'Run',
+      visible: true,
+      enabled: true,
+    }],
+  }] as unknown as NetcattyPluginContributionSnapshot['plugins'];
+
+  assert.deepEqual(collectOwnedPluginMenus(plugins)[0], {
+    ...plugins[0].menus[0],
+    pluginId: 'com.example.menu',
+    icon: commandIcon,
+  });
 });

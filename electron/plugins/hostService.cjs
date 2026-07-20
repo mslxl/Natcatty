@@ -7,6 +7,7 @@ const { PluginDatabase } = require("./database.cjs");
 const { PluginCompanionSupervisor } = require("./companionSupervisor.cjs");
 const { PluginCredentialBroker, assertLeaseParams } = require("./credentialBroker.cjs");
 const { PluginContributionService } = require("./contributionService.cjs");
+const { PluginContributionIconService } = require("./contributionIconService.cjs");
 const { PluginFilesystemBroker } = require("./filesystemBroker.cjs");
 const { createDefaultPluginHostRpcRegistry } = require("./hostRpcRegistry.cjs");
 const {
@@ -52,6 +53,11 @@ function createPluginHostService(options) {
       netcattyVersion: options.app.getVersion(),
       apiVersion: PLUGIN_API_VERSION,
       supportedFeatures: options.supportedFeatures ?? [],
+    });
+    const contributionIconService = new PluginContributionIconService({
+      database,
+      packageStore,
+      nativeImage: options.electron.nativeImage,
     });
     const moduleResources = options.moduleResources
       ? normalizePluginModuleResources(options.moduleResources)
@@ -214,6 +220,7 @@ function createPluginHostService(options) {
     });
     return {
       companionSupervisor,
+      contributionIconService,
       contributionService,
       credentialBroker,
       database,

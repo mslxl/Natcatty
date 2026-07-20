@@ -48,9 +48,12 @@ formats, conditionals, unevaluated properties, and executable extensions are
 not accepted.
 
 Application, device, workspace, host, and session values are keyed separately.
-Context-aware host surfaces supply their own scope IDs; a central settings
-surface without a current workspace, host, or session shows those fields as
-contextual instead of reading or writing an ambiguous record. Settings and
+The central settings surface receives a bounded, host-owned catalog of current
+devices, workspaces, hosts, and sessions and requires the user to select an
+explicit target before editing a contextual value. It never reads or writes an
+ambiguous record. Font settings use the host font picker, while list and table
+settings use recursive schema-driven native controls rather than editable JSON.
+Settings and
 restored view state are user-owned records with no foreign-key
 cascade to installed package versions, so uninstall does not erase them. The
 platform is unreleased, so both tables are part of the complete schema at
@@ -71,6 +74,11 @@ host provides command-palette, application-menu, host-context, terminal-context,
 terminal-toolbar, and status-bar placements. Visibility, enablement, and checked
 state are computed by the host before rendering; plugin HTML is never inserted
 into a native menu or the React tree.
+
+Theme icons are resolved through a fixed host icon catalog. Package image icons
+must be declared by the currently active manifest, pass package-integrity and
+realpath containment checks, and are decoded and resized by the host under a
+small byte and dimension budget before a renderer receives a PNG data URL.
 
 Context Key expressions use a bounded parser for literals, namespaced keys,
 parentheses, `!`, `&&`, `||`, equality/ordering, `in`, and `not in`. There is no
@@ -115,10 +123,22 @@ that created it; another renderer window cannot resize, message, or close it.
 Owner closure, plugin disable, setup failure, and host shutdown all dispose the
 view and its protocol/session registrations.
 
+Opening is generation-bound: the host revalidates the exact plugin version and
+runtime identity after package preparation and again after document loading,
+before attaching the `WebContentsView`. Runtime stop, crash, quarantine,
+disable, uninstall, or replacement therefore cancels an in-flight open. Every
+host-side close is also broadcast to the owning renderer so retained and active
+view state, including native tabs, is withdrawn immediately.
+
 Views declaring `retainContextWhenHidden` are hidden without destroying their
 owner-bound `WebContentsView` and are restored with fresh bounds when reopened.
 Retained views are still disposed on owner shutdown, plugin disable, runtime
 quarantine, or host shutdown; the flag never extends ownership or permissions.
+
+Views declaring `location: "tab"` participate in Netcatty's draggable native
+top-tab model, including neighbor activation, middle-click and Cmd/Ctrl+W close,
+and close-others/right/all actions. They do not fall through to the overlay
+surface used by non-tab locations.
 
 The preload exposes only `postMessage`, same-plugin `executeCommand`, state
 get/set, runtime messages, and environment changes. It caches environment
