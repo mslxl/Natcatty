@@ -5,6 +5,7 @@ import test from 'node:test';
 import { applyTerminalKeywordHighlightRules } from './terminalKeywordHighlightRules.ts';
 
 const effectsSource = readFileSync(new URL('./useTerminalEffects.ts', import.meta.url), 'utf8');
+const terminalSource = readFileSync(new URL('../Terminal.tsx', import.meta.url), 'utf8');
 
 test('hibernate runtime keyword setup restores plugin decoration rules', () => {
   let applied: { rules: unknown[]; enabled: boolean } | undefined;
@@ -70,5 +71,24 @@ test('plugin decoration responses cannot apply after connection state invalidate
   assert.match(
     effectsSource,
     /catch \{\s*if \(\s*refreshGeneration !== pluginDecorationRefreshGenerationRef\.current\s*\|\|\s*statusRef\.current !== 'connected'/,
+  );
+});
+
+test('normal boot and hibernate wake share the refresh-capable runtime cwd handler', () => {
+  assert.match(
+    terminalSource,
+    /const pluginAwareOnRuntimeCwdChange = useCallback/,
+  );
+  assert.match(
+    terminalSource,
+    /pluginDecorationRefreshRef\.current\('cwd-changed'\);/,
+  );
+  assert.match(
+    terminalSource,
+    /onCwdChange: \(cwd: string\) => \{\s*pluginAwareOnRuntimeCwdChange\(cwd, \{ source: 'osc7' \}\);\s*},/,
+  );
+  assert.match(
+    effectsSource,
+    /onPluginRuntimeCwdChange\(cwd, \{ source: 'osc7' \}\);/,
   );
 });

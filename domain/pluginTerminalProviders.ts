@@ -123,14 +123,22 @@ const anyCharacterDomain = (): RegexCharacterDomain => ({
 });
 
 function characterDomain(value: number): RegexCharacterDomain {
-  return value <= 0x7f
-    ? { any: false, ascii: new Set([value]), nonAscii: false }
-    : { any: false, ascii: new Set(), nonAscii: true };
+  if (value > 0x7f) return { any: false, ascii: new Set(), nonAscii: true };
+  const ascii = new Set([value]);
+  addAsciiIgnoreCaseEquivalents(ascii);
+  return { any: false, ascii, nonAscii: false };
 }
 
 function addAsciiRange(target: Set<number>, minimum: number, maximum: number): void {
   for (let value = Math.max(0, minimum); value <= Math.min(0x7f, maximum); value += 1) {
     target.add(value);
+  }
+}
+
+function addAsciiIgnoreCaseEquivalents(target: Set<number>): void {
+  for (const value of [...target]) {
+    if (value >= 0x41 && value <= 0x5a) target.add(value + 0x20);
+    else if (value >= 0x61 && value <= 0x7a) target.add(value - 0x20);
   }
 }
 
@@ -149,6 +157,7 @@ function characterSetDomain(element: AST.CharacterSet): RegexCharacterDomain {
   } else {
     for (const value of [0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x20]) ascii.add(value);
   }
+  addAsciiIgnoreCaseEquivalents(ascii);
   return { any: false, ascii, nonAscii: element.kind !== 'digit' };
 }
 
@@ -176,6 +185,7 @@ function characterClassDomain(element: AST.CharacterClass): RegexCharacterDomain
     }
     return anyCharacterDomain();
   }
+  addAsciiIgnoreCaseEquivalents(ascii);
   return { any: false, ascii, nonAscii };
 }
 
@@ -248,11 +258,11 @@ export function isSafePluginDecorationPattern(source: string): boolean {
     && !/\)(?:[*+?]|\{\d+(?:,\d*)?\})/u.test(source))) return false;
   try {
     const pattern = pluginPatternParser.parsePattern(source, 0, source.length, {
-      unicode: true,
+      unicode: false,
       unicodeSets: false,
     });
     if (hasAmbiguousQuantifiedAtoms(pattern)) return false;
-    void new RegExp(source, 'u');
+    void new RegExp(source, 'gi');
     return true;
   } catch {
     return false;

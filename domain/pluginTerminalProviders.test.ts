@@ -53,6 +53,8 @@ test('plugin decoration results reject unsafe expressions and namespace rule ide
   assert.equal(isSafePluginDecorationPattern('\\berror\\b'), true);
   assert.equal(isSafePluginDecorationPattern('^(a+)+$'), false);
   assert.equal(isSafePluginDecorationPattern('a*a*a*a*a*a*a*a*a*a*b'), false);
+  assert.equal(isSafePluginDecorationPattern('a*A*B'), false);
+  assert.equal(isSafePluginDecorationPattern('[a-z]*[A-Z]*missing'), false);
   assert.equal(isSafePluginDecorationPattern('[a-z]*[m-z]*missing'), false);
   assert.equal(isSafePluginDecorationPattern('[a-f]*[0-9]*value'), true);
   assert.equal(isSafePluginDecorationPattern('\\berror\\s+\\d+\\b'), true);

@@ -12,12 +12,50 @@ interface PluginTerminalSessionLifecycleOptions {
   initialCwd?: string;
 }
 
-interface SnapshotState {
+export interface PluginTerminalSnapshotState {
   cwd?: string;
   title?: string;
   cols?: number;
   rows?: number;
   alternateScreen?: boolean;
+}
+
+type PluginTerminalStatusTransition = Readonly<{
+  snapshotState: PluginTerminalSnapshotState;
+  everConnected: boolean;
+  eventType?: 'connected' | 'reconnected' | 'disconnected';
+}>;
+
+export function transitionPluginTerminalConnectionState(
+  snapshotState: PluginTerminalSnapshotState,
+  status: PluginTerminalSessionLifecycleOptions['status'],
+  everConnected: boolean,
+): PluginTerminalStatusTransition {
+  const shouldClearConnectionFields = status === 'disconnected' || everConnected;
+  const nextSnapshotState: PluginTerminalSnapshotState = shouldClearConnectionFields
+    ? {
+        ...(snapshotState.cols == null ? {} : { cols: snapshotState.cols }),
+        ...(snapshotState.rows == null ? {} : { rows: snapshotState.rows }),
+      }
+    : { ...snapshotState };
+  if (status === 'connected') {
+    return Object.freeze({
+      snapshotState: nextSnapshotState,
+      everConnected: true,
+      eventType: everConnected ? 'reconnected' : 'connected',
+    });
+  }
+  if (status === 'disconnected') {
+    return Object.freeze({
+      snapshotState: nextSnapshotState,
+      everConnected,
+      eventType: 'disconnected',
+    });
+  }
+  return Object.freeze({
+    snapshotState: nextSnapshotState,
+    everConnected,
+  });
 }
 
 function normalizeProtocol(protocol: string | undefined): NetcattyTerminalSessionSnapshot['protocol'] {
@@ -36,7 +74,7 @@ export function usePluginTerminalSessionLifecycle(options: PluginTerminalSession
   const registry = getWindowPluginTerminalProviderRegistry();
   const metadataRef = useRef(options);
   metadataRef.current = options;
-  const snapshotStateRef = useRef<SnapshotState>({ cwd: options.initialCwd });
+  const snapshotStateRef = useRef<PluginTerminalSnapshotState>({ cwd: options.initialCwd });
   const everConnectedRef = useRef(false);
 
   const snapshot = useCallback((): NetcattyTerminalSessionSnapshot => {
@@ -72,12 +110,14 @@ export function usePluginTerminalSessionLifecycle(options: PluginTerminalSession
   }, [publish, registry]);
 
   useEffect(() => {
-    if (options.status === 'connected') {
-      publish(everConnectedRef.current ? 'reconnected' : 'connected');
-      everConnectedRef.current = true;
-    } else if (options.status === 'disconnected') {
-      publish('disconnected');
-    }
+    const transition = transitionPluginTerminalConnectionState(
+      snapshotStateRef.current,
+      options.status,
+      everConnectedRef.current,
+    );
+    snapshotStateRef.current = transition.snapshotState;
+    everConnectedRef.current = transition.everConnected;
+    if (transition.eventType) publish(transition.eventType);
   }, [options.status, publish]);
 
   const onCwdChanged = useCallback((cwd: string | null) => {

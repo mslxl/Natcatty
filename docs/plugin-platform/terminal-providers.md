@@ -44,6 +44,8 @@ Immediately before an invocation, a lazily activated Provider receives a
 events that occurred before activation.
 Lifecycle events cover creation, connection/reconnection, cwd/title/resize/
 alternate-screen changes, command submission, disconnect, and disposal.
+Connection-scoped cwd, title, and alternate-screen metadata is cleared before
+disconnect and reconnect publication; viewport dimensions remain available.
 Ongoing lifecycle delivery begins only after a successful invocation with a
 non-`once` `provider.terminal` grant. Each event rechecks that grant without
 opening a new prompt and remains bound to the exact plugin version, runtime ID,
@@ -74,10 +76,13 @@ application Provider adapters as plugins:
   friendly label cannot conceal a different command on previewless terminals;
 - decoration Providers return declarative rules only. Rule IDs are namespaced,
   counts and strings are bounded, colors must be explicit hex values, and
-  unsafe regular expressions are rejected before reaching the highlighter;
+  unsafe regular expressions are rejected under the same global,
+  case-insensitive semantics used by the renderer before reaching the
+  highlighter;
 - decoration results are capped again at 64 total host rules after Provider
   fan-out, preventing many individually valid Providers from multiplying the
-  renderer's regex workload.
+  renderer's regex workload. Normal boot and hibernate wake share the same
+  CWD-triggered decoration refresh path.
 
 The control-plane JSON budget remains 1 MiB, while each terminal Provider
 payload and result is additionally limited to 128 KiB. Default terminal
