@@ -188,6 +188,30 @@ export async function removeDefaultKeyPassphraseAliases(keyPaths: string[]): Pro
   return aliases;
 }
 
+export async function deleteVaultKey(args: {
+  keyId: string;
+  getKeys: () => SSHKey[];
+  updateKeys: (keys: SSHKey[]) => void;
+}): Promise<void> {
+  const keys = args.getKeys();
+  const key = keys.find((candidate) => candidate.id === args.keyId);
+  if (!key) return;
+
+  args.updateKeys(keys.filter((candidate) => candidate.id !== args.keyId));
+  if (key.source !== "reference" || !key.filePath) return;
+
+  const deletedAliases = await resolveDefaultKeyPassphraseAliases(key.filePath);
+  const deletedAliasKeys = matchingPathKeys(deletedAliases);
+  const currentReferencePathKeys = matchingPathKeys(args.getKeys()
+    .filter((candidate) => candidate.source === "reference" && candidate.filePath)
+    .map((candidate) => candidate.filePath!));
+  const pathStillReferenced = [...currentReferencePathKeys]
+    .some((path) => deletedAliasKeys.has(path));
+  if (!pathStillReferenced) {
+    removeDefaultKeyPassphrases(deletedAliases);
+  }
+}
+
 export function clearReferenceKeyPassphrases(keys: SSHKey[], keyPaths: string[]): SSHKey[] {
   const pathKeys = matchingPathKeys(keyPaths);
   let changed = false;

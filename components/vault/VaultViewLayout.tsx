@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import React from "react";
+import { deleteVaultKey } from "../../application/defaultKeyPassphrases";
 import { preserveConcurrentHostLineTimestampUpdate } from "../../domain/host";
 import { STORAGE_KEY_VAULT_HOST_PANEL_WIDTH } from "@/infrastructure/config/storageKeys.ts";
 import { VaultHostListSection } from "./VaultHostListSection";
@@ -27,6 +28,8 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
     resizeAriaLabel: t("vault.panel.resizeWidth"),
   };
   const [isSidebarResizing, setIsSidebarResizing] = React.useState(false);
+  const keyListRef = React.useRef(keys);
+  keyListRef.current = keys;
   const newHostActionsRef = React.useRef<HTMLDivElement>(null);
   const sessionActionsRef = React.useRef<HTMLDivElement>(null);
   const sidebarMinWidth = 56;
@@ -35,6 +38,18 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
     sidebarMinWidth,
     Math.min(sidebarMaxWidth, Number(sidebarWidth) || 208),
   );
+  const handleDeleteVaultKey = React.useCallback((keyId: string) => {
+    void deleteVaultKey({
+      keyId,
+      getKeys: () => keyListRef.current,
+      updateKeys: (updatedKeys) => {
+        keyListRef.current = updatedKeys;
+        void onUpdateKeys(updatedKeys);
+      },
+    }).catch((error) => {
+      console.error("[Vault] Failed to clear a deleted key's remembered passphrase.", error);
+    });
+  }, [onUpdateKeys]);
   const handleSidebarResizeStart = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     event.preventDefault();
     event.stopPropagation();
@@ -663,7 +678,7 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
                 )
               }
               onReorderKeys={onUpdateKeys}
-              onDelete={(id) => onUpdateKeys(keys.filter((k) => k.id !== id))}
+              onDelete={handleDeleteVaultKey}
               onSaveIdentity={(identity) =>
                 onUpdateIdentities(
                   identities.find((ex) => ex.id === identity.id)
