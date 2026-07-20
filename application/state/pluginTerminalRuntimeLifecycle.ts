@@ -1,5 +1,6 @@
 export interface PluginTerminalRuntimeLifecycleSink {
   onCommandSubmitted(): void;
+  onCommandCompleted(): void;
   onCwdChanged(cwd: string | null): void;
   onTitleChanged(title: string | null): void;
   onResized(cols: number, rows: number): void;
@@ -8,6 +9,7 @@ export interface PluginTerminalRuntimeLifecycleSink {
 
 export type PluginTerminalRuntimeLifecycleEventType =
   | 'commandSubmitted'
+  | 'commandCompleted'
   | 'cwdChanged'
   | 'titleChanged'
   | 'resized'
@@ -21,6 +23,9 @@ export function publishPluginTerminalRuntimeLifecycleEvent(
   switch (type) {
     case 'commandSubmitted':
       lifecycle.onCommandSubmitted();
+      return;
+    case 'commandCompleted':
+      lifecycle.onCommandCompleted();
       return;
     case 'cwdChanged':
       lifecycle.onCwdChanged(Object.hasOwn(details, 'cwd') ? details.cwd ?? null : null);

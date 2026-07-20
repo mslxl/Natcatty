@@ -148,11 +148,16 @@ export function usePluginTerminalSessionLifecycle(options: PluginTerminalSession
     publish('commandSubmitted');
   }, [publish]);
 
+  const onCommandCompleted = useCallback(() => {
+    publish('commandCompleted');
+  }, [publish]);
+
   return useMemo(() => ({
     onAlternateScreenChanged,
+    onCommandCompleted,
     onCommandSubmitted,
     onCwdChanged,
     onResized,
     onTitleChanged,
-  }), [onAlternateScreenChanged, onCommandSubmitted, onCwdChanged, onResized, onTitleChanged]);
+  }), [onAlternateScreenChanged, onCommandCompleted, onCommandSubmitted, onCwdChanged, onResized, onTitleChanged]);
 }

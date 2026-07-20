@@ -340,6 +340,14 @@ test("terminal lifecycle delivery targets only active Provider runtimes and stri
   assert.equal(notifications[0][1], "plugin.terminal.event");
   assert.equal(Object.hasOwn(notifications[0][2], "command"), false);
   assert.equal(Object.isFrozen(notifications[0][2].session), true);
+  await service.publishSessionEvent({
+    type: "commandCompleted",
+    session,
+    command: "export TOKEN=secret",
+    output: "secret",
+  });
+  assert.equal(Object.hasOwn(notifications.at(-1)[2], "command"), false);
+  assert.equal(Object.hasOwn(notifications.at(-1)[2], "output"), false);
   assert.deepEqual(normalizeTerminalSessionEvent({ type: "disposed", session }), {
     type: "disposed",
     session,

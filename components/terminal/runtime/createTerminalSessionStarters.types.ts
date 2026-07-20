@@ -195,6 +195,7 @@ export type TerminalSessionStartersContext = {
     hostLabel: string,
     sessionId: string,
   ) => void;
+  onCommandCompleted?: () => void;
 };
 
 export type TerminalSessionDataMeta = {

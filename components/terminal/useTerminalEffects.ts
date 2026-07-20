@@ -2,6 +2,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { getWindowPluginTerminalProviderRegistry } from '../../application/state/pluginTerminalProviderRegistry';
 import { publishPluginTerminalRuntimeLifecycleEvent } from '../../application/state/pluginTerminalRuntimeLifecycle';
+import { markTerminalCommandCompletionPending } from './runtime/promptLineBreak';
 import { mergePluginDecorationRules, normalizePluginDecorationResult } from '../../domain/pluginTerminalProviders';
 import { resolveFontWeightBold } from '../../lib/fontWeightAvailability';
 import { bundledFamiliesInStack } from '../../lib/fontAvailability';
@@ -181,6 +182,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
   }, []);
   ctx.pluginDecorationRulesRef.current = pluginDecorationRules;
   const pluginAwareOnCommandSubmitted = (...args: Parameters<NonNullable<typeof onCommandSubmitted>>) => {
+    markTerminalCommandCompletionPending(promptLineBreakStateRef);
     publishPluginTerminalRuntimeLifecycleEvent(pluginTerminalLifecycle, 'commandSubmitted');
     onCommandSubmitted?.(...args);
   };
@@ -440,6 +442,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
           statusRef,
           onCommandExecuted,
           onCommandSubmitted: pluginAwareOnCommandSubmitted,
+          onCommandCompleted: pluginTerminalLifecycle.onCommandCompleted,
           onResize: (cols: number, rows: number) => (
             publishPluginTerminalRuntimeLifecycleEvent(pluginTerminalLifecycle, 'resized', { cols, rows })
           ),

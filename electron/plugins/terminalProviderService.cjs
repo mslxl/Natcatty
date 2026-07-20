@@ -43,6 +43,7 @@ const TERMINAL_EVENT_TYPES = new Set([
   "resized",
   "alternateScreenChanged",
   "commandSubmitted",
+  "commandCompleted",
   "disconnected",
   "disposed",
 ]);

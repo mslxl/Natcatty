@@ -2,9 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  consumeOsc133CommandCompletion,
   createPromptLineBreakState,
+  detectTerminalCommandCompletions,
   insertPromptLineBreakBeforePrompt,
   markPromptLineBreakCommandPending,
+  markTerminalCommandCompletionPending,
   prepareTerminalDataForPromptLineBreak,
   syncPromptLineBreakState,
 } from "./promptLineBreak";
@@ -29,6 +32,41 @@ function createFakeTerm(lineText = "", cursorX = lineText.length) {
     },
   };
 }
+
+test("command completion tracking prefers OSC 133 and consumes one submitted command", () => {
+  const state = createPromptLineBreakState();
+  const stateRef = { current: state };
+  markTerminalCommandCompletionPending(stateRef);
+  markTerminalCommandCompletionPending(stateRef);
+
+  assert.equal(consumeOsc133CommandCompletion("C", state), false);
+  assert.equal(consumeOsc133CommandCompletion("D;0", state), true);
+  assert.equal(state.pendingCommandCompletions, 1);
+  assert.equal(consumeOsc133CommandCompletion("D;1", state), true);
+  assert.equal(consumeOsc133CommandCompletion("D;0", state), false);
+});
+
+test("command completion prompt fallback drains bounded submitted commands only at an empty prompt", () => {
+  const state = createPromptLineBreakState();
+  const stateRef = { current: state };
+  markTerminalCommandCompletionPending(stateRef);
+  markTerminalCommandCompletionPending(stateRef);
+
+  assert.equal(
+    detectTerminalCommandCompletions(createFakeTerm("$ echo pending") as never, state),
+    0,
+  );
+  assert.equal(state.pendingCommandCompletions, 2);
+  assert.equal(
+    detectTerminalCommandCompletions(createFakeTerm("$ ") as never, state),
+    2,
+  );
+  assert.equal(state.pendingCommandCompletions, 0);
+  assert.equal(
+    detectTerminalCommandCompletions(createFakeTerm("$ ") as never, state),
+    0,
+  );
+});
 
 function createWrappedFakeTerm(rows: string[], cursorY: number, cursorX: number, cols: number) {
   return {

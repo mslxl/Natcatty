@@ -46,7 +46,10 @@ Immediately before an invocation, a lazily activated Provider receives a
 `snapshot` event for the current session so it does not depend on lifecycle
 events that occurred before activation.
 Lifecycle events cover creation, connection/reconnection, cwd/title/resize/
-alternate-screen changes, command submission, disconnect, and disposal.
+alternate-screen changes, command submission, host-detected command completion,
+disconnect, and disposal. Completion events contain no command text or raw
+output and are emitted from OSC 133 completion markers when available, with a
+conservative next-prompt fallback for shells without integration markers.
 Connection-scoped cwd, title, and alternate-screen metadata is cleared before
 disconnect and reconnect publication; viewport dimensions remain available.
 Ongoing lifecycle delivery begins only after a successful invocation with a

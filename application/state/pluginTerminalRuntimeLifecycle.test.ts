@@ -7,6 +7,7 @@ test('terminal runtime lifecycle events share the canonical session lifecycle si
   const calls: unknown[][] = [];
   const lifecycle = {
     onCommandSubmitted() { calls.push(['commandSubmitted']); },
+    onCommandCompleted() { calls.push(['commandCompleted']); },
     onCwdChanged(cwd: string | null) { calls.push(['cwdChanged', cwd]); },
     onTitleChanged(title: string | null) { calls.push(['titleChanged', title]); },
     onResized(cols: number, rows: number) { calls.push(['resized', cols, rows]); },
@@ -22,6 +23,7 @@ test('terminal runtime lifecycle events share the canonical session lifecycle si
   publishPluginTerminalRuntimeLifecycleEvent(lifecycle, 'resized', { cols: 120, rows: 40 });
   publishPluginTerminalRuntimeLifecycleEvent(lifecycle, 'alternateScreenChanged', { alternateScreen: true });
   publishPluginTerminalRuntimeLifecycleEvent(lifecycle, 'commandSubmitted');
+  publishPluginTerminalRuntimeLifecycleEvent(lifecycle, 'commandCompleted');
 
   assert.deepEqual(calls, [
     ['cwdChanged', '/srv/app'],
@@ -31,5 +33,6 @@ test('terminal runtime lifecycle events share the canonical session lifecycle si
     ['resized', 120, 40],
     ['alternateScreenChanged', true],
     ['commandSubmitted'],
+    ['commandCompleted'],
   ]);
 });

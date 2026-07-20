@@ -99,6 +99,7 @@ import {
   shouldSuppressTerminalInputScrollForUserPaste,
 } from "./terminalUserPaste";
 import {
+  consumeOsc133CommandCompletion,
   type PromptLineBreakState,
 } from "./promptLineBreak";
 import { recordTerminalCommandExecution } from "./terminalCommandExecution";
@@ -198,6 +199,7 @@ export type CreateXTermRuntimeContext = {
     hostLabel: string,
     sessionId: string,
   ) => void;
+  onCommandCompleted?: () => void;
   onResize?: (cols: number, rows: number) => void;
   onAlternateScreenChange?: (active: boolean) => void;
   commandBufferRef: RefObject<string>;
@@ -1379,6 +1381,13 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     return true; // Indicate we handled the sequence
   });
 
+  const osc133Disposable = term.parser.registerOscHandler(133, (data) => {
+    if (consumeOsc133CommandCompletion(data, ctx.promptLineBreakStateRef?.current)) {
+      ctx.onCommandCompleted?.();
+    }
+    return true;
+  });
+
   // OSC 52 — clipboard integration
   // Format: 52;<target>;<base64-data>  (write)  or  52;<target>;?  (query/read)
   // <target> is typically "c" (clipboard) or "p" (primary selection)
@@ -1522,6 +1531,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       }
       kittyKeyboardDisposable.dispose();
       osc7Disposable.dispose();
+      osc133Disposable.dispose();
       osc52Disposable.dispose();
       titleChangeDisposable.dispose();
       bellDisposable.dispose();

@@ -428,6 +428,7 @@ declare global {
       | 'resized'
       | 'alternateScreenChanged'
       | 'commandSubmitted'
+      | 'commandCompleted'
       | 'disconnected'
       | 'disposed';
     session: NetcattyTerminalSessionSnapshot;

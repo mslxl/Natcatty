@@ -119,6 +119,7 @@ import { applyUserCursorPreference } from "./terminal/runtime/cursorPreference";
 import { terminalAltKeyOptions } from "./terminal/runtime/altKeyOptions";
 import {
   createPromptLineBreakState,
+  markTerminalCommandCompletionPending,
   type PromptLineBreakState,
 } from "./terminal/runtime/promptLineBreak";
 import {
@@ -1561,6 +1562,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     hostLabel: string,
     commandSessionId: string,
   ) => {
+    markTerminalCommandCompletionPending(promptLineBreakStateRef);
     pluginTerminalLifecycle.onCommandSubmitted();
     onCommandSubmitted?.(command, commandHostId, hostLabel, commandSessionId);
   }, [onCommandSubmitted, pluginTerminalLifecycle]);
@@ -1691,6 +1693,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     onOsDetected,
     onCommandExecuted,
     onCommandSubmitted: pluginAwareOnCommandSubmitted,
+    onCommandCompleted: pluginTerminalLifecycle.onCommandCompleted,
     sessionLog,
     sshDebugLogEnabled,
     sudoAutofillPassword: resolvedSudoAutofillPassword,
@@ -2798,6 +2801,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     statusRef,
     onCommandExecuted,
     onCommandSubmitted: pluginAwareOnCommandSubmitted,
+    onCommandCompleted: pluginTerminalLifecycle.onCommandCompleted,
     onResize: pluginTerminalLifecycle.onResized,
     onAlternateScreenChange: pluginTerminalLifecycle.onAlternateScreenChanged,
     commandBufferRef,

@@ -10,6 +10,7 @@ import {
   prepareTerminalDataForUserPasteDisplay,
 } from "./terminalUserPaste";
 import {
+  detectTerminalCommandCompletions,
   prepareTerminalDataForPromptLineBreak,
   syncPromptLineBreakState,
 } from "./promptLineBreak";
@@ -493,9 +494,19 @@ const writeSessionDataImmediate = (
         syncPromptLineBreakState(term, ctx.promptLineBreakStateRef?.current);
       }
     };
+    const publishCommandCompletion = () => {
+      const completed = detectTerminalCommandCompletions(
+        term,
+        ctx.promptLineBreakStateRef?.current,
+      );
+      for (let index = 0; index < completed; index += 1) {
+        ctx.onCommandCompleted?.();
+      }
+    };
     const finishQueueItem = () => {
       clearPasteResidualAndCapture();
       syncPrompt();
+      publishCommandCompletion();
       if (shouldScrollOnTerminalOutput(settings)) {
         handleTerminalOutputAutoScroll(ctx, term);
       }

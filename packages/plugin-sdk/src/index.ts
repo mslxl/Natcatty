@@ -135,6 +135,7 @@ export interface TerminalSessionEvent {
     | "resized"
     | "alternateScreenChanged"
     | "commandSubmitted"
+    | "commandCompleted"
     | "disconnected"
     | "disposed";
   readonly session: TerminalSessionSnapshot;
