@@ -26,7 +26,10 @@ const availableKey: SSHKey = {
   created: 1,
 };
 
-const renderConnectionSections = (formOverrides: Record<string, unknown> = {}) =>
+const renderConnectionSections = (
+  formOverrides: Record<string, unknown> = {},
+  groupDefaults?: Record<string, unknown>,
+) =>
   renderToStaticMarkup(
     React.createElement(
       TooltipProvider,
@@ -47,7 +50,7 @@ const renderConnectionSections = (formOverrides: Record<string, unknown> = {}) =
         },
         setForm: () => {},
         update: () => {},
-        groupDefaults: undefined,
+        groupDefaults,
         effectiveAuthMethod: formOverrides.effectiveAuthMethod || formOverrides.authMethod || "key",
         effectiveIdentityId: formOverrides.effectiveIdentityId || formOverrides.identityId,
         selectedIdentity: undefined,
@@ -114,6 +117,22 @@ test("host credentials expose automatic and password-only choices", () => {
   assert.match(markup, /hostDetails\.auth\.passwordOnly/);
   assert.match(markup, /hostDetails\.auth\.key/);
   assert.match(markup, /hostDetails\.auth\.certificate/);
+  assert.match(markup, /hostDetails\.auth\.mfaFirst/);
+});
+
+test("ET hosts do not offer the unsupported interactive-auth preference", () => {
+  const legacyEtMarkup = renderConnectionSections({ etEnabled: true });
+  const explicitEtMarkup = renderConnectionSections({ protocol: "et" });
+  const inheritedEtMarkup = renderConnectionSections({}, { etEnabled: true });
+  const hostOverrideMarkup = renderConnectionSections(
+    { etEnabled: false },
+    { etEnabled: true },
+  );
+
+  assert.doesNotMatch(legacyEtMarkup, /hostDetails\.auth\.mfaFirst/);
+  assert.doesNotMatch(explicitEtMarkup, /hostDetails\.auth\.mfaFirst/);
+  assert.doesNotMatch(inheritedEtMarkup, /hostDetails\.auth\.mfaFirst/);
+  assert.match(hostOverrideMarkup, /hostDetails\.auth\.mfaFirst/);
 });
 
 test("host authentication choices remain visible for a selected identity", () => {
