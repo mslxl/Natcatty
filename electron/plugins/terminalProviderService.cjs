@@ -176,7 +176,7 @@ function normalizeTerminalSessionEvent(value) {
     session: normalizeTerminalSessionSnapshot(value.session),
     ...(value.exitCode == null ? {} : { exitCode: value.exitCode }),
   };
-  if (event.exitCode != null && (!Number.isInteger(event.exitCode) || event.exitCode < -255 || event.exitCode > 255)) {
+  if (event.exitCode != null && !Number.isSafeInteger(event.exitCode)) {
     throw invalidArgument("Terminal session exit code is invalid");
   }
   // PR 5 lifecycle events intentionally exclude command text and raw output.

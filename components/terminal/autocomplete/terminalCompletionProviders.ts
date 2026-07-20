@@ -19,6 +19,8 @@ export interface TerminalCompletionProviderRequest {
   maximum: number;
   /** Internal end-to-end wait bound; tests may lower it deterministically. */
   pluginResponseTimeoutMs?: number;
+  /** Host security/session cancellation propagated to the plugin bridge. */
+  signal?: AbortSignal;
 }
 
 const DEFAULT_PLUGIN_COMPLETION_RESPONSE_TIMEOUT_MS = 800;
@@ -63,6 +65,9 @@ export async function provideTerminalCompletions(
     snippets: request.snippets,
   });
   const pluginRequestController = new AbortController();
+  const abortPluginRequest = () => pluginRequestController.abort();
+  request.signal?.addEventListener('abort', abortPluginRequest, { once: true });
+  if (request.signal?.aborted) pluginRequestController.abort();
   const pluginPromise = registry?.request({
     kind: 'terminal.completion',
     operation: 'provideCompletions',
@@ -80,15 +85,23 @@ export async function provideTerminalCompletions(
   const pluginResponseTimeoutMs = Number.isFinite(request.pluginResponseTimeoutMs)
     ? Math.max(1, Math.min(5_000, Math.trunc(request.pluginResponseTimeoutMs ?? 0)))
     : DEFAULT_PLUGIN_COMPLETION_RESPONSE_TIMEOUT_MS;
-  const [builtIn, pluginResponse] = await Promise.all([
-    builtInPromise,
-    waitForPluginCompletionResponse(
-      pluginPromise,
-      pluginResponseTimeoutMs,
-      () => pluginRequestController.abort(),
-    ),
-  ]);
-  if (pluginResponse.stale) return builtIn;
+  let builtIn: CompletionSuggestion[];
+  let pluginResponse: PluginCompletionResponse;
+  try {
+    [builtIn, pluginResponse] = await Promise.all([
+      builtInPromise,
+      waitForPluginCompletionResponse(
+        pluginPromise,
+        pluginResponseTimeoutMs,
+        () => pluginRequestController.abort(),
+      ),
+    ]);
+  } finally {
+    request.signal?.removeEventListener('abort', abortPluginRequest);
+  }
+  if (request.signal?.aborted || pluginRequestController.signal.aborted || pluginResponse.stale) {
+    return builtIn;
+  }
   const pluginGroups = pluginResponse.results.map((result) => result.status === 'ok'
     ? normalizePluginCompletionResult(result.providerId, result.result)
     : Object.freeze([]));

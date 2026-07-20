@@ -1,6 +1,7 @@
 import type { RefObject } from "react";
 import type { Terminal as XTerm } from "@xterm/xterm";
 import type { Host } from "../../../types";
+import { isSensitiveTerminalChallenge } from "../../../domain/terminalPromptSecurity";
 import {
   markPromptLineBreakCommandPending,
   type PromptLineBreakState,
@@ -79,6 +80,25 @@ const readFullLineAfterPrompt = (
     return combined.slice(promptText.length).replace(/\s+$/g, "");
   } catch {
     return null;
+  }
+};
+
+const readCurrentLogicalTerminalLine = (term?: XTerm | null): string => {
+  if (!term) return "";
+  try {
+    const buffer = term.buffer.active;
+    const cursorY = buffer.cursorY + buffer.baseY;
+    let firstRow = cursorY;
+    while (firstRow > 0 && buffer.getLine(firstRow)?.isWrapped) firstRow -= 1;
+    let line = "";
+    for (let row = firstRow; row <= cursorY; row += 1) {
+      const bufferLine = buffer.getLine(row);
+      if (!bufferLine) break;
+      line += bufferLine.translateToString(false);
+    }
+    return line.slice(-8_192);
+  } catch {
+    return "";
   }
 };
 
@@ -628,7 +648,7 @@ export const recordTerminalCommandExecution = (
   term?: XTerm | null,
   options?: { sensitive?: boolean },
 ): string | null => {
-  if (options?.sensitive) {
+  if (options?.sensitive || isSensitiveTerminalChallenge(readCurrentLogicalTerminalLine(term))) {
     ctx.commandBufferRef.current = "";
     return null;
   }

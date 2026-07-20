@@ -91,6 +91,43 @@ test('terminal completion adapter bounds plugin activation and authorization bef
   assert.equal(signal?.aborted, true);
 });
 
+test('terminal completion adapter aborts and discards plugin results when the host security gate closes', async () => {
+  let providerSignal: AbortSignal | undefined;
+  let resolveProvider: ((value: {
+    requestId: string;
+    stale: false;
+    results: readonly unknown[];
+  }) => void) | undefined;
+  const registry = {
+    request(_request: unknown, options?: { signal?: AbortSignal }) {
+      providerSignal = options?.signal;
+      return new Promise((resolve) => { resolveProvider = resolve as typeof resolveProvider; });
+    },
+  } as unknown as PluginTerminalProviderRegistry;
+  const securityController = new AbortController();
+  const pending = provideTerminalCompletions(registry, {
+    input: 'safe-command',
+    session: { sessionId: 'session-1', protocol: 'ssh', status: 'connected' },
+    hostOs: 'linux',
+    maximum: 8,
+    signal: securityController.signal,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  securityController.abort();
+  resolveProvider?.({
+    requestId: 'request-1',
+    stale: false,
+    results: [{
+      providerId: 'com.example.completion',
+      status: 'ok',
+      result: { items: [{ text: 'plugin-result', score: 50_000 }] },
+    }],
+  });
+  const results = await pending;
+  assert.equal(providerSignal?.aborted, true);
+  assert.equal(results.some((item) => item.source === 'plugin'), false);
+});
+
 test('terminal completion adapter preserves built-in snippet metadata on duplicate plugin text', async () => {
   const registry = {
     async request() {

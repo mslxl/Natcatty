@@ -56,11 +56,19 @@ test('disabled or absent plugin hosts do not receive terminal completion request
   const autocompleteSource = readFileSync(new URL('./TerminalAutocomplete.tsx', import.meta.url), 'utf8');
   assert.match(
     autocompleteSource,
-    /isPluginCompletionProviderAvailable\?\.\(\) === false\s*\n\s*\? null\s*\n\s*: getWindowPluginTerminalProviderRegistry\(\)/,
+    /const pluginRegistry = isPluginCompletionProviderAvailable\?\.\(\) === false[\s\S]*?shouldUsePluginTerminalCompletionProvider[\s\S]*?\? null\s*\n\s*: getWindowPluginTerminalProviderRegistry\(\)/,
   );
   assert.match(
     terminalSource,
     /isPluginTerminalProviderAvailable,/,
+  );
+  assert.match(
+    autocompleteSource,
+    /shouldUsePluginTerminalCompletionProvider\(\{[\s\S]*?sensitiveInputActive:[\s\S]*?promptText:/,
+  );
+  assert.match(
+    terminalSource,
+    /passwordPromptActiveRef,/,
   );
 });
 
@@ -114,6 +122,13 @@ test('password-prompt input is consumed before every semantic command callback',
     terminalSource,
     /const sensitive = passwordPromptActiveRef\.current;[\s\S]*?recordTerminalCommandExecution\([\s\S]*?\{ sensitive \}\);/,
   );
+});
+
+test('terminal output treats unknown prompt-shaped input boundaries as sensitive', () => {
+  assert.match(terminalSource, /const promptSecurityOptions = \{ allowHostStyleGreaterThan: isNetworkDevice \};/);
+  assert.match(terminalSource, /isUntrustedTerminalInputPrompt\([\s\S]*?promptSecurityOptions/);
+  assert.match(terminalSource, /passwordPromptActiveRef\.current = true;[\s\S]*?autocompleteCloseRef\.current\?\.\(\);/);
+  assert.match(terminalSource, /isConfirmedTerminalShellPrompt\([\s\S]*?passwordPromptActiveRef\.current = false;/);
 });
 
 test('backend exits are forwarded to the Provider lifecycle with their exit code', () => {

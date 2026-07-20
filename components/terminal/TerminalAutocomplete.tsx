@@ -10,6 +10,7 @@ import type { Snippet } from "../../domain/models";
 import { usePaneVisible } from "./paneVisibilityStore";
 import { getWindowPluginTerminalProviderRegistry } from "../../application/state/pluginTerminalProviderRegistry";
 import { provideTerminalCompletions } from "./autocomplete/terminalCompletionProviders";
+import { shouldUsePluginTerminalCompletionProvider } from "../../domain/terminalPromptSecurity";
 
 type PopupProps = ComponentProps<typeof AutocompletePopup>;
 
@@ -40,6 +41,8 @@ interface TerminalAutocompleteProps {
   sudoHintRef: HandlerRef<(active: boolean) => boolean>;
   sudoHintText: string;
   isPluginCompletionProviderAvailable?: () => boolean;
+  sensitiveInputActiveRef: RefObject<boolean>;
+  allowHostStyleGreaterThanPrompt?: boolean;
 }
 
 /**
@@ -77,13 +80,26 @@ export function TerminalAutocomplete({
   sudoHintRef,
   sudoHintText,
   isPluginCompletionProviderAvailable,
+  sensitiveInputActiveRef,
+  allowHostStyleGreaterThanPrompt = false,
 }: TerminalAutocompleteProps) {
   // Self-subscribe to this pane's visibility so toggling it doesn't have to
   // flow through (and re-render) the TerminalView ctx.
   const visible = usePaneVisible(sessionId);
-  const provideCompletions = useCallback(async (input: string, options: Parameters<typeof import("./autocomplete/completionEngine").getCompletions>[1]) => {
+  const provideCompletions = useCallback(async (
+    input: string,
+    options: Parameters<typeof import("./autocomplete/completionEngine").getCompletions>[1] & {
+      promptText: string;
+      signal?: AbortSignal;
+    },
+  ) => {
     const normalizedProtocol: NetcattyTerminalSessionSnapshot['protocol'] = protocol ?? "ssh";
     const pluginRegistry = isPluginCompletionProviderAvailable?.() === false
+      || !shouldUsePluginTerminalCompletionProvider({
+        sensitiveInputActive: sensitiveInputActiveRef.current === true,
+        promptText: options.promptText,
+        allowHostStyleGreaterThan: allowHostStyleGreaterThanPrompt,
+      })
       ? null
       : getWindowPluginTerminalProviderRegistry();
     return provideTerminalCompletions(pluginRegistry, {
@@ -100,8 +116,9 @@ export function TerminalAutocomplete({
       cwdSource: options.cwdSource,
       snippets: options.snippets,
       maximum: options.maxResults ?? 15,
+      signal: options.signal,
     });
-  }, [hostId, hostOs, isPluginCompletionProviderAvailable, protocol, sessionId, status, workspaceId]);
+  }, [allowHostStyleGreaterThanPrompt, hostId, hostOs, isPluginCompletionProviderAvailable, protocol, sensitiveInputActiveRef, sessionId, status, workspaceId]);
   const autocomplete = useTerminalAutocomplete({
     termRef,
     containerRef,

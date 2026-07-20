@@ -8,6 +8,7 @@
  */
 
 import type { Terminal as XTerm } from "@xterm/xterm";
+import { isSensitiveTerminalChallenge } from "../../../domain/terminalPromptSecurity";
 import { COMMON_SHELL_COMMANDS, NON_PROMPT_PATTERNS, PROMPT_CHARS } from "./promptDetectorPatterns";
 
 export interface PromptDetectionResult {
@@ -515,10 +516,12 @@ export function detectPrompt(term: XTerm): PromptDetectionResult {
   const lineText = line.translateToString(false);
 
   // Check for non-prompt patterns (pagers, editors, etc.)
-  if (isNonPromptLine(lineText)) return NO_PROMPT;
+  if (isSensitiveTerminalChallenge(lineText) || isNonPromptLine(lineText)) return NO_PROMPT;
   if (line.isWrapped) {
     const wrappedPrefix = getWrappedCursorPrefix(term);
-    if (wrappedPrefix && isNonPromptLine(wrappedPrefix)) return NO_PROMPT;
+    if (wrappedPrefix && (isSensitiveTerminalChallenge(wrappedPrefix) || isNonPromptLine(wrappedPrefix))) {
+      return NO_PROMPT;
+    }
   }
 
   // Empty line
@@ -563,7 +566,7 @@ export function detectPrompt(term: XTerm): PromptDetectionResult {
     const promptLine = buffer.getLine(promptRow);
     if (promptLine) {
       const promptLineText = promptLine.translateToString(false);
-      if (isNonPromptLine(promptLineText)) return NO_PROMPT;
+      if (isSensitiveTerminalChallenge(promptLineText) || isNonPromptLine(promptLineText)) return NO_PROMPT;
       const pEnd = findPromptBoundary(promptLineText);
       if (pEnd >= 0) {
         const promptText = promptLineText.substring(0, pEnd);
@@ -578,7 +581,8 @@ export function detectPrompt(term: XTerm): PromptDetectionResult {
         const charsBeforeCursorRow = (cursorY - promptRow) * totalCols - pEnd;
         const userInput = fullInput.substring(0, charsBeforeCursorRow + cursorX);
         const cursorOffset = userInput.length;
-        if (isNonPromptLine(promptText + userInput)) return NO_PROMPT;
+        if (isSensitiveTerminalChallenge(promptText + userInput)
+          || isNonPromptLine(promptText + userInput)) return NO_PROMPT;
 
         return { isAtPrompt: true, promptText, userInput, cursorOffset };
       }

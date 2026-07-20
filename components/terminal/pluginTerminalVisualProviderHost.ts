@@ -134,6 +134,7 @@ export class PluginTerminalVisualProviderHost implements IDisposable {
   readonly #disposables: IDisposable[] = [];
   readonly #matcherDecorations: Array<IDecoration | IMarker | undefined> = [];
   readonly #annotationDecorations: Array<IDecoration | IMarker | undefined> = [];
+  readonly #requestControllers = new Set<AbortController>();
   #matcherTimer: ReturnType<typeof setTimeout> | undefined;
   #matcherGeneration = 0;
   #annotationGeneration = 0;
@@ -199,29 +200,39 @@ export class PluginTerminalVisualProviderHost implements IDisposable {
     }
   }
 
-  #requestWithTimeout(
+  async #requestWithTimeout(
     kind: NetcattyTerminalProviderKind,
     operation: string,
     payload: Readonly<Record<string, unknown>>,
     supersessionKey?: string,
   ): Promise<PluginTerminalProviderCallResponse> {
     const controller = new AbortController();
-    return waitForPluginTerminalProviderResponse(
-      this.#request(
-        kind,
-        operation,
-        payload,
-        PROVIDER_DEADLINE_MS,
-        supersessionKey,
-        controller.signal,
-      ),
-      this.#providerResponseTimeoutMs,
-      () => controller.abort(),
-    );
+    this.#requestControllers.add(controller);
+    try {
+      return await waitForPluginTerminalProviderResponse(
+        this.#request(
+          kind,
+          operation,
+          payload,
+          PROVIDER_DEADLINE_MS,
+          supersessionKey,
+          controller.signal,
+        ),
+        this.#providerResponseTimeoutMs,
+        () => controller.abort(),
+      );
+    } finally {
+      this.#requestControllers.delete(controller);
+    }
+  }
+
+  #abortProviderRequests(): void {
+    for (const controller of this.#requestControllers) controller.abort();
+    this.#requestControllers.clear();
   }
 
   async commandSubmitted(command: string): Promise<void> {
-    if (this.#disposed || !this.#active || !this.#isProviderAvailable('terminal.semantic')
+    if (this.#disposed || !this.#active || !this.#visible || !this.#isProviderAvailable('terminal.semantic')
       || command.length < 1 || command.length > 4_096) return;
     if (this.#pendingSemantics.length >= 64) return;
     const providerGeneration = this.#providerAvailabilityGeneration;
@@ -237,7 +248,7 @@ export class PluginTerminalVisualProviderHost implements IDisposable {
           'provideSemantics',
           { command },
       );
-      if (this.#disposed || !this.#active || response.stale
+      if (this.#disposed || !this.#active || !this.#visible || response.stale
         || providerGeneration !== this.#providerAvailabilityGeneration) return;
       const annotations = response.results.flatMap((result) => {
         if (result.status !== 'ok') return [];
@@ -260,11 +271,12 @@ export class PluginTerminalVisualProviderHost implements IDisposable {
   }
 
   async commandCompleted(): Promise<void> {
-    if (this.#disposed || !this.#active) return;
+    if (this.#disposed || !this.#active || !this.#visible) return;
     const generation = ++this.#annotationGeneration;
     const pendingSemantic = this.#pendingSemantics.shift();
     await pendingSemantic?.ready;
-    if (this.#disposed || !this.#active || generation !== this.#annotationGeneration) return;
+    if (this.#disposed || !this.#active || !this.#visible
+      || generation !== this.#annotationGeneration) return;
     const semanticAnnotations = pendingSemantic?.annotations ?? Object.freeze([]);
     if (!this.#isProviderAvailable('terminal.prompt')) {
       this.#renderAnnotations(semanticAnnotations);
@@ -280,13 +292,15 @@ export class PluginTerminalVisualProviderHost implements IDisposable {
             ...(prompt ? { promptLine: prompt.line, bufferLineNumber: prompt.bufferLineNumber } : {}),
           },
       );
-      if (this.#disposed || !this.#active || response.stale || generation !== this.#annotationGeneration) return;
+      if (this.#disposed || !this.#active || !this.#visible || response.stale
+        || generation !== this.#annotationGeneration) return;
       const promptAnnotations = response.results.flatMap((result) => result.status === 'ok'
         ? normalizePluginPromptResult(result.providerId, result.result)
         : []);
       this.#renderAnnotations([...semanticAnnotations, ...promptAnnotations].slice(0, MAX_VISIBLE_ANNOTATIONS));
     } catch {
-      if (!this.#disposed && generation === this.#annotationGeneration) {
+      if (!this.#disposed && this.#active && this.#visible
+        && generation === this.#annotationGeneration) {
         this.#renderAnnotations(semanticAnnotations);
       }
     }
@@ -308,7 +322,8 @@ export class PluginTerminalVisualProviderHost implements IDisposable {
           'provideBackgrounds',
           { reason, ...(terminalBackground ? { terminalBackground } : {}) },
       );
-      if (this.#disposed || !this.#active || response.stale || generation !== this.#backgroundGeneration) return;
+      if (this.#disposed || !this.#active || !this.#visible || response.stale
+        || generation !== this.#backgroundGeneration) return;
       const layers = response.results.flatMap((result) => result.status === 'ok'
         ? normalizePluginBackgroundResult(result.providerId, result.result)
         : []).slice(0, 4);
@@ -327,7 +342,8 @@ export class PluginTerminalVisualProviderHost implements IDisposable {
         }
       }
     } catch {
-      if (!this.#disposed && generation === this.#backgroundGeneration) this.#renderBackground([]);
+      if (!this.#disposed && this.#active && this.#visible
+        && generation === this.#backgroundGeneration) this.#renderBackground([]);
     }
   }
 
@@ -357,7 +373,8 @@ export class PluginTerminalVisualProviderHost implements IDisposable {
           'provideMatches',
           { lines: lines.map(({ lineId, line, bufferLineNumber }) => ({ lineId, line, bufferLineNumber })) },
       );
-      if (this.#disposed || response.stale || generation !== this.#matcherGeneration) return;
+      if (this.#disposed || !this.#active || !this.#visible || response.stale
+        || generation !== this.#matcherGeneration) return;
       if (this.#term.buffer.active.type === 'alternate') {
         disposeAll(this.#matcherDecorations);
         return;
@@ -399,13 +416,15 @@ export class PluginTerminalVisualProviderHost implements IDisposable {
         }
       }
     } catch {
-      if (generation === this.#matcherGeneration) disposeAll(this.#matcherDecorations);
+      if (this.#active && this.#visible && generation === this.#matcherGeneration) {
+        disposeAll(this.#matcherDecorations);
+      }
     }
   }
 
   #renderAnnotations(annotations: readonly PluginTerminalAnnotation[]): void {
     disposeAll(this.#annotationDecorations);
-    if (annotations.length === 0 || this.#disposed) return;
+    if (annotations.length === 0 || this.#disposed || !this.#active || !this.#visible) return;
     const marker = this.#term.registerMarker(0);
     if (!marker) return;
     const decoration = this.#term.registerDecoration({ marker, anchor: 'right', x: 0, width: 1, layer: 'top' });
@@ -440,6 +459,7 @@ export class PluginTerminalVisualProviderHost implements IDisposable {
     clearTimeout(this.#backgroundTimer);
     this.#matcherTimer = undefined;
     this.#backgroundTimer = undefined;
+    this.#abortProviderRequests();
     this.#matcherGeneration += 1;
     this.#annotationGeneration += 1;
     this.#backgroundGeneration += 1;
@@ -456,6 +476,16 @@ export class PluginTerminalVisualProviderHost implements IDisposable {
     clearTimeout(this.#matcherTimer);
     this.#backgroundTimer = undefined;
     this.#matcherTimer = undefined;
+    this.#matcherGeneration += 1;
+    this.#annotationGeneration += 1;
+    this.#backgroundGeneration += 1;
+    this.#abortProviderRequests();
+    this.#pendingSemantics.splice(0);
+    if (!visible) {
+      disposeAll(this.#matcherDecorations);
+      disposeAll(this.#annotationDecorations);
+      this.#renderBackground([]);
+    }
     if (visible && this.#active) {
       void this.refreshBackground('terminal-visible', terminalBackground ?? this.#terminalBackground);
       this.#scheduleMatcherRefresh();
@@ -468,6 +498,7 @@ export class PluginTerminalVisualProviderHost implements IDisposable {
     this.#matcherGeneration += 1;
     this.#annotationGeneration += 1;
     this.#backgroundGeneration += 1;
+    this.#abortProviderRequests();
     this.#pendingSemantics.splice(0);
     disposeAll(this.#annotationDecorations);
     if (!this.#isProviderAvailable('terminal.background')) this.#renderBackground([]);
@@ -482,7 +513,7 @@ export class PluginTerminalVisualProviderHost implements IDisposable {
     this.#backgroundOverlay?.remove();
     this.#backgroundOverlay = null;
     const root = this.#term.element;
-    if (!root || layers.length === 0 || this.#disposed) return;
+    if (!root || layers.length === 0 || this.#disposed || !this.#active || !this.#visible) return;
     const overlay = document.createElement('div');
     overlay.setAttribute('aria-hidden', 'true');
     overlay.className = 'pointer-events-none absolute inset-0 z-[1]';
@@ -513,6 +544,7 @@ export class PluginTerminalVisualProviderHost implements IDisposable {
     this.#matcherGeneration += 1;
     this.#annotationGeneration += 1;
     this.#backgroundGeneration += 1;
+    this.#abortProviderRequests();
     this.#pendingSemantics.splice(0);
     disposeAll(this.#matcherDecorations);
     disposeAll(this.#annotationDecorations);

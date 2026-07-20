@@ -117,6 +117,13 @@ export interface AutocompleteState {
   subDirFocusLevel: number;
 }
 
+type HostCompletionProviderOptions = Parameters<typeof getCompletions>[1] & {
+  /** Host-owned prompt identity used to gate third-party Provider access. */
+  promptText: string;
+  /** Aborted whenever the prompt/session security state invalidates this query. */
+  signal?: AbortSignal;
+};
+
 interface UseTerminalAutocompleteOptions {
   termRef: RefObject<XTerm | null>;
   containerRef: RefObject<HTMLElement | null>;
@@ -135,7 +142,10 @@ interface UseTerminalAutocompleteOptions {
   /** Accept a snippet — clears typed input then runs it (host-canonical send) */
   onAcceptSnippet?: (snippet: Snippet) => void;
   /** Host-owned completion Provider adapter; defaults to Netcatty's built-in Provider. */
-  provideCompletions?: typeof getCompletions;
+  provideCompletions?: (
+    input: string,
+    options: HostCompletionProviderOptions,
+  ) => Promise<CompletionSuggestion[]>;
 }
 
 export interface TerminalAutocompleteHandle {
@@ -208,6 +218,7 @@ export function useTerminalAutocomplete(
   const suppressNextEnterRecordRef = useRef(false);
   /** Monotonic counter to invalidate stale async completion results */
   const fetchVersionRef = useRef(0);
+  const completionAbortRef = useRef<AbortController | null>(null);
   /** Last accepted suggestion text — for accurate history recording on fast Enter after accept */
   const lastAcceptedCommandRef = useRef<string | null>(null);
   /** The user's typed input that produced the current popup suggestions (live-preview baseline). */
@@ -332,6 +343,8 @@ export function useTerminalAutocomplete(
       debounceTimerRef.current = null;
     }
     ghostAddonRef.current?.hide();
+    completionAbortRef.current?.abort();
+    completionAbortRef.current = null;
     // Bump version to invalidate any in-flight async completions
     fetchVersionRef.current++;
     subDirFetchVersionRef.current++;
@@ -670,16 +683,27 @@ export function useTerminalAutocomplete(
     );
 
     // Single query for both ghost text and popup
-    let completions = await provideCompletionsRef.current(input, {
-      hostId: hostIdRef.current,
-      os: hostOsRef.current,
-      maxResults: settingsRef.current.maxSuggestions,
-      sessionId: sessionIdRef.current,
-      protocol: protocolRef.current,
-      cwd: cwdResolution.cwd,
-      cwdSource: cwdResolution.source,
-      snippets: snippetsRef.current,
-    });
+    completionAbortRef.current?.abort();
+    const completionController = new AbortController();
+    completionAbortRef.current = completionController;
+    let completions: CompletionSuggestion[];
+    try {
+      completions = await provideCompletionsRef.current(input, {
+        hostId: hostIdRef.current,
+        os: hostOsRef.current,
+        maxResults: settingsRef.current.maxSuggestions,
+        sessionId: sessionIdRef.current,
+        protocol: protocolRef.current,
+        cwd: cwdResolution.cwd,
+        cwdSource: cwdResolution.source,
+        snippets: snippetsRef.current,
+        promptText: prompt.promptText,
+        signal: completionController.signal,
+      });
+    } finally {
+      if (completionAbortRef.current === completionController) completionAbortRef.current = null;
+    }
+    if (completionController.signal.aborted) return;
     if (!settingsRef.current.allowLineReplacement) {
       completions = completions.filter((completion) =>
         completion.source !== "snippet" && completion.text.startsWith(input),
@@ -985,6 +1009,8 @@ export function useTerminalAutocomplete(
 
   const dispose = useCallback(() => {
     disposedRef.current = true;
+    completionAbortRef.current?.abort();
+    completionAbortRef.current = null;
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current);
     }

@@ -358,6 +358,98 @@ test('visual Provider background refresh pauses while hidden and under reduced m
   host.dispose();
 });
 
+test('visual Provider host aborts and invalidates in-flight visual requests when hidden', async () => {
+  let onWriteParsed: (() => void) | undefined;
+  let resolveBackground: ((value: {
+    stale: false;
+    results: Array<{ providerId: string; status: 'ok'; result: unknown }>;
+  }) => void) | undefined;
+  let resolveMatcher: typeof resolveBackground;
+  const signals = new Map<string, AbortSignal>();
+  const rootChildren: Array<{ remove(): void }> = [];
+  let decorations = 0;
+  const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
+  Object.defineProperty(globalThis, 'document', {
+    configurable: true,
+    value: {
+      createElement() {
+        const element = {
+          className: '',
+          style: {} as Record<string, string>,
+          setAttribute() {},
+          remove() {
+            const index = rootChildren.indexOf(element);
+            if (index >= 0) rootChildren.splice(index, 1);
+          },
+        };
+        return element;
+      },
+    },
+  });
+  try {
+    const term = {
+      element: { appendChild(element: { remove(): void }) { rootChildren.push(element); } },
+      buffer: {
+        active: {
+          type: 'normal',
+          baseY: 0,
+          cursorY: 0,
+          cursorX: 6,
+          getLine(line: number) {
+            if (line !== 0) return undefined;
+            return { isWrapped: false, translateToString() { return 'failed'; } };
+          },
+        },
+      },
+      onWriteParsed(listener: () => void) { onWriteParsed = listener; return { dispose() {} }; },
+      registerMarker() { return { dispose() {} }; },
+      registerDecoration() { decorations += 1; return { dispose() {}, onRender() {} }; },
+    };
+    const host = new PluginTerminalVisualProviderHost({
+      term: term as never,
+      matcherQuietMs: 1,
+      request(kind, _operation, _payload, _deadlineMs, _supersessionKey, signal) {
+        if (signal) signals.set(kind, signal);
+        return new Promise((resolve) => {
+          if (kind === 'terminal.background') resolveBackground = resolve;
+          if (kind === 'terminal.matcher') resolveMatcher = resolve;
+        });
+      },
+    });
+    onWriteParsed?.();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.deepEqual([...signals.keys()].sort(), ['terminal.background', 'terminal.matcher']);
+
+    host.setVisible(false);
+    assert.equal(signals.get('terminal.background')?.aborted, true);
+    assert.equal(signals.get('terminal.matcher')?.aborted, true);
+
+    resolveBackground?.({
+      stale: false,
+      results: [{ providerId: 'background', status: 'ok', result: {
+        layers: [{ id: 'late', color: '#102030', opacity: 0.2 }],
+        refreshAfterMs: 250,
+      } }],
+    });
+    resolveMatcher?.({
+      stale: false,
+      results: [{ providerId: 'matcher', status: 'ok', result: {
+        matches: [{ lineId: '0:0', start: 0, length: 6, label: 'Late' }],
+      } }],
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(rootChildren.length, 0);
+    assert.equal(decorations, 0);
+    const requestCount = signals.size;
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.equal(signals.size, requestCount);
+    host.dispose();
+  } finally {
+    if (originalDocument) Object.defineProperty(globalThis, 'document', originalDocument);
+    else Reflect.deleteProperty(globalThis, 'document');
+  }
+});
+
 test('visual Provider host keeps the terminal output hot path idle without declared Providers', async () => {
   let onWriteParsed: (() => void) | undefined;
   let requests = 0;

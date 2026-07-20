@@ -590,10 +590,36 @@ test("terminal lifecycle delivery targets only active Provider runtimes and stri
   });
   assert.equal(Object.hasOwn(notifications.at(-1)[2], "command"), false);
   assert.equal(Object.hasOwn(notifications.at(-1)[2], "output"), false);
+  await service.publishSessionEvent({
+    type: "disconnected",
+    session: { ...session, status: "disconnected" },
+    exitCode: 0xC0000005,
+  });
+  assert.equal(notifications.at(-1)[2].exitCode, 0xC0000005);
   assert.deepEqual(normalizeTerminalSessionEvent({ type: "disposed", session }), {
     type: "disposed",
     session,
   });
+});
+
+test("terminal lifecycle preserves signed and unsigned wide platform exit statuses", () => {
+  assert.deepEqual(normalizeTerminalSessionEvent({
+    type: "disconnected",
+    session: { ...session, status: "disconnected" },
+    exitCode: 0xC0000005,
+  }).exitCode, 0xC0000005);
+  assert.deepEqual(normalizeTerminalSessionEvent({
+    type: "disconnected",
+    session: { ...session, status: "disconnected" },
+    exitCode: -1073741819,
+  }).exitCode, -1073741819);
+  for (const exitCode of [1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.throws(() => normalizeTerminalSessionEvent({
+      type: "disconnected",
+      session: { ...session, status: "disconnected" },
+      exitCode,
+    }), /exit code is invalid/);
+  }
 });
 
 test("one-use Provider grants never authorize later lifecycle delivery", async () => {

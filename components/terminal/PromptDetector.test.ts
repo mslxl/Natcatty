@@ -209,6 +209,24 @@ test("does not treat common interactive program prompts as shell prompts", () =>
   }
 });
 
+test("does not treat sensitive authentication challenges as shell prompts", () => {
+  for (const lineText of [
+    "OTP> 123456",
+    "Verification code> 123456",
+    "Duo passcode: 123456",
+    "验证码> 123456",
+  ]) {
+    const typedInput = lineText.slice(lineText.lastIndexOf(" ") + 1);
+    const result = getAlignedPrompt(
+      createFakeTerm(lineText, lineText.length) as never,
+      typedInput,
+      true,
+    );
+    assert.equal(result.prompt.isAtPrompt, false, lineText);
+    assert.equal(result.alignedTyped, null, lineText);
+  }
+});
+
 test("does not treat wrapped interactive program prompts as shell prompts", () => {
   const cases = [
     { rows: ["sftp> get very-long-", "remote-file"], typedInput: "get very-long-remote-file" },

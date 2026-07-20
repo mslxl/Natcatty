@@ -274,3 +274,43 @@ test("plugin terminal Provider bridge owns cancellation by renderer sender", asy
     }],
   ]);
 });
+
+test("plugin terminal Provider bridge preserves cancellation during host initialization", async () => {
+  const ipcMain = createIpcMain();
+  let releaseInitialization;
+  let initializationStarted;
+  const started = new Promise((resolve) => { initializationStarted = resolve; });
+  const initialization = new Promise((resolve) => { releaseInitialization = resolve; });
+  const observedSignals = [];
+  registerPluginBridge(ipcMain, {
+    manager: {
+      async initialize() {
+        initializationStarted();
+        await initialization;
+      },
+    },
+    terminalProviderService: {
+      async provide(_request, options) {
+        observedSignals.push(options.signal);
+        return [{ status: options.signal.aborted ? "cancelled" : "ok" }];
+      },
+    },
+    env: { NETCATTY_PLUGIN_DEV: "1" },
+    isTrustedSender: () => true,
+  });
+  const event = { sender: { id: 84, once() {} } };
+  const pending = ipcMain.handlers.get(CHANNELS.terminalProvide)(event, {
+    requestId: "cancel-during-initialize",
+    kind: "terminal.completion",
+    operation: "provideCompletions",
+    session: { sessionId: "session-1" },
+  });
+  await started;
+  assert.equal(await ipcMain.handlers.get(CHANNELS.terminalCancel)(event, {
+    requestId: "cancel-during-initialize",
+  }), true);
+  releaseInitialization();
+  assert.deepEqual(await pending, [{ status: "cancelled" }]);
+  assert.equal(observedSignals.length, 1);
+  assert.equal(observedSignals[0].aborted, true);
+});

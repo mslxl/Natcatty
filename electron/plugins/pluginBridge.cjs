@@ -219,7 +219,8 @@ function registerPluginBridge(ipcMain, options) {
     if (!terminalProviderService) throw new Error("Plugin Terminal Providers are unavailable");
     return terminalProviderService.listProviders(payload ?? {});
   });
-  handle(CHANNELS.terminalProvide, async (_activeManager, payload, event) => {
+  ipcMain.handle(CHANNELS.terminalProvide, async (event, payload) => {
+    if (!isTrustedSender(event)) throw new Error("Untrusted plugin management sender");
     if (!terminalProviderService) throw new Error("Plugin Terminal Providers are unavailable");
     const requestId = payload?.requestId;
     if (typeof requestId !== "string" || requestId.length < 1 || requestId.length > 128 || requestId.includes("\0")) {
@@ -233,6 +234,7 @@ function registerPluginBridge(ipcMain, options) {
     const controller = new AbortController();
     requests.set(requestId, controller);
     try {
+      await resolveManager();
       const { requestId: _requestId, ...providerRequest } = payload;
       return await terminalProviderService.provide(providerRequest, { signal: controller.signal });
     } finally {
