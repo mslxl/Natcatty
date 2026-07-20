@@ -17,6 +17,7 @@ import {
   readPluginTerminalBufferText,
   type PluginTerminalBufferText,
 } from './pluginTerminalBufferText';
+import { detectPrompt } from './autocomplete/promptDetector';
 
 const MATCHER_QUIET_MS = 220;
 const PROVIDER_DEADLINE_MS = 1_000;
@@ -111,11 +112,11 @@ function recentLogicalLines(term: XTerm): readonly MatcherLine[] {
 }
 
 function currentPromptLine(term: XTerm): { line: string; bufferLineNumber: number } | null {
+  const prompt = detectPrompt(term);
+  if (!prompt.isAtPrompt || prompt.userInput.length > 0) return null;
   const buffer = term.buffer.active;
   const absoluteY = buffer.baseY + buffer.cursorY;
-  const bufferLine = buffer.getLine(absoluteY);
-  if (!bufferLine) return null;
-  const line = readPluginTerminalBufferText(bufferLine, true).text;
+  const line = prompt.promptText.trimEnd();
   if (!line || line.length > 8_192) return null;
   return { line, bufferLineNumber: absoluteY + 1 };
 }
@@ -136,10 +137,9 @@ export class PluginTerminalVisualProviderHost implements IDisposable {
   #matcherGeneration = 0;
   #annotationGeneration = 0;
   #backgroundGeneration = 0;
-  #nextSemanticId = 0;
   readonly #pendingSemantics: Array<{
-    id: number;
     annotations: readonly PluginTerminalAnnotation[];
+    ready: Promise<void>;
   }> = [];
   #backgroundOverlay: HTMLDivElement | null = null;
   #backgroundTimer: ReturnType<typeof setTimeout> | undefined;
@@ -201,11 +201,14 @@ export class PluginTerminalVisualProviderHost implements IDisposable {
   async commandSubmitted(command: string): Promise<void> {
     if (this.#disposed || !this.#active || !this.#isProviderAvailable('terminal.semantic')
       || command.length < 1 || command.length > 4_096) return;
-    const id = ++this.#nextSemanticId;
+    if (this.#pendingSemantics.length >= 64) return;
     const providerGeneration = this.#providerAvailabilityGeneration;
-    const pending = { id, annotations: Object.freeze([]) as readonly PluginTerminalAnnotation[] };
+    let resolveReady: (() => void) | undefined;
+    const pending = {
+      annotations: Object.freeze([]) as readonly PluginTerminalAnnotation[],
+      ready: new Promise<void>((resolve) => { resolveReady = resolve; }),
+    };
     this.#pendingSemantics.push(pending);
-    if (this.#pendingSemantics.length > 64) this.#pendingSemantics.shift();
     try {
       const response = await waitForPluginTerminalProviderResponse(
         this.#request(
@@ -218,8 +221,6 @@ export class PluginTerminalVisualProviderHost implements IDisposable {
       );
       if (this.#disposed || !this.#active || response.stale
         || providerGeneration !== this.#providerAvailabilityGeneration) return;
-      const queueItem = this.#pendingSemantics.find((item) => item.id === id);
-      if (!queueItem) return;
       const annotations = response.results.flatMap((result) => {
         if (result.status !== 'ok') return [];
         const semantic = normalizePluginSemanticResult(result.providerId, result.result);
@@ -235,14 +236,18 @@ export class PluginTerminalVisualProviderHost implements IDisposable {
           : [];
         return [...summary, ...semantic.annotations];
       });
-      queueItem.annotations = Object.freeze(annotations.slice(0, MAX_VISIBLE_ANNOTATIONS));
+      pending.annotations = Object.freeze(annotations.slice(0, MAX_VISIBLE_ANNOTATIONS));
     } catch { /* a missing semantic result leaves this command unannotated */ }
+    finally { resolveReady?.(); }
   }
 
   async commandCompleted(): Promise<void> {
     if (this.#disposed || !this.#active) return;
     const generation = ++this.#annotationGeneration;
-    const semanticAnnotations = this.#pendingSemantics.shift()?.annotations ?? Object.freeze([]);
+    const pendingSemantic = this.#pendingSemantics.shift();
+    await pendingSemantic?.ready;
+    if (this.#disposed || !this.#active || generation !== this.#annotationGeneration) return;
+    const semanticAnnotations = pendingSemantic?.annotations ?? Object.freeze([]);
     if (!this.#isProviderAvailable('terminal.prompt')) {
       this.#renderAnnotations(semanticAnnotations);
       return;
@@ -347,6 +352,10 @@ export class PluginTerminalVisualProviderHost implements IDisposable {
         this.#providerResponseTimeoutMs,
       );
       if (this.#disposed || response.stale || generation !== this.#matcherGeneration) return;
+      if (this.#term.buffer.active.type === 'alternate') {
+        disposeAll(this.#matcherDecorations);
+        return;
+      }
       const matches = response.results.flatMap((result) => result.status === 'ok'
         ? normalizePluginMatcherResult(result.providerId, result.result, lineLengths)
         : []).slice(0, 64);

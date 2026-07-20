@@ -39,10 +39,11 @@ test('visual Provider host renders bounded matcher, semantic, prompt, and backgr
           type: 'normal',
           baseY: 0,
           cursorY: 2,
+          cursorX: 6,
           getLine(line: number) {
             if (line === 0) return { isWrapped: false, translateToString(trim: boolean) { return trim ? 'fail' : 'fail'; } };
             if (line === 1) return { isWrapped: true, translateToString() { return 'ed'; } };
-            if (line === 2) return { isWrapped: false, translateToString() { return 'prompt'; } };
+            if (line === 2) return { isWrapped: false, translateToString() { return 'host$  '; } };
             return undefined;
           },
         },
@@ -133,12 +134,12 @@ test('visual Provider host renders bounded matcher, semantic, prompt, and backgr
     assert.deepEqual(matcherPayloads, [{
       lines: [
         { lineId: '0:1', line: 'failed', bufferLineNumber: 1 },
-        { lineId: '2:2', line: 'prompt', bufferLineNumber: 3 },
+        { lineId: '2:2', line: 'host$  ', bufferLineNumber: 3 },
       ],
     }]);
     assert.deepEqual(promptPayloads, [{
       reason: 'commandCompleted',
-      promptLine: 'prompt',
+      promptLine: 'host$',
       bufferLineNumber: 3,
     }]);
     assert.equal(decorationOptions.length, 3);
@@ -155,6 +156,129 @@ test('visual Provider host renders bounded matcher, semantic, prompt, and backgr
     if (originalDocument) Object.defineProperty(globalThis, 'document', originalDocument);
     else Reflect.deleteProperty(globalThis, 'document');
   }
+});
+
+test('visual Provider host preserves semantics when command completion wins the Provider race', async () => {
+  let resolveSemantic: ((value: {
+    stale: boolean;
+    results: Array<{ providerId: string; status: string; result: unknown }>;
+  }) => void) | undefined;
+  const renderedText: string[] = [];
+  const term = {
+    element: null,
+    buffer: { active: { type: 'normal', baseY: 0, cursorY: 0, getLine() { return undefined; } } },
+    onWriteParsed() { return { dispose() {} }; },
+    registerMarker() { return { dispose() {} }; },
+    registerDecoration() {
+      return {
+        dispose() {},
+        onRender(listener: (element: Record<string, unknown>) => void) {
+          const element = {
+            className: '',
+            textContent: '',
+            title: '',
+            style: {},
+            setAttribute() {},
+          };
+          listener(element);
+          renderedText.push(String(element.textContent));
+          return { dispose() {} };
+        },
+      };
+    },
+  };
+  const host = new PluginTerminalVisualProviderHost({
+    term: term as never,
+    isProviderAvailable: (kind) => kind === 'terminal.semantic',
+    request() {
+      return new Promise((resolve) => { resolveSemantic = resolve; });
+    },
+  });
+  const submitted = host.commandSubmitted('true');
+  const completed = host.commandCompleted();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(renderedText, []);
+  resolveSemantic?.({
+    stale: false,
+    results: [{
+      providerId: 'semantic',
+      status: 'ok',
+      result: { classification: 'success', annotations: [{ text: 'fast command' }] },
+    }],
+  });
+  await Promise.all([submitted, completed]);
+  assert.deepEqual(renderedText, ['success | fast command']);
+  host.dispose();
+});
+
+test('visual Provider host preserves semantic queue order at its bounded capacity', async () => {
+  let requests = 0;
+  const renderedText: string[] = [];
+  const term = {
+    element: null,
+    buffer: { active: { type: 'normal', baseY: 0, cursorY: 0, cursorX: 0, getLine() { return undefined; } } },
+    onWriteParsed() { return { dispose() {} }; },
+    registerMarker() { return { dispose() {} }; },
+    registerDecoration() {
+      return {
+        dispose() {},
+        onRender(listener: (element: Record<string, unknown>) => void) {
+          const element = { className: '', textContent: '', title: '', style: {}, setAttribute() {} };
+          listener(element);
+          renderedText.push(String(element.textContent));
+          return { dispose() {} };
+        },
+      };
+    },
+  };
+  const host = new PluginTerminalVisualProviderHost({
+    term: term as never,
+    isProviderAvailable: (kind) => kind === 'terminal.semantic',
+    async request() {
+      const index = requests++;
+      return {
+        stale: false,
+        results: [{ providerId: 'semantic', status: 'ok', result: { classification: `command-${index}` } }],
+      };
+    },
+  });
+  await Promise.all(Array.from({ length: 65 }, (_, index) => host.commandSubmitted(`echo ${index}`)));
+  assert.equal(requests, 64);
+  await host.commandCompleted();
+  assert.deepEqual(renderedText, ['command-0']);
+  host.dispose();
+});
+
+test('visual Provider host never labels the last output line as a shell prompt', async () => {
+  const promptPayloads: unknown[] = [];
+  const term = {
+    element: null,
+    buffer: {
+      active: {
+        type: 'normal',
+        baseY: 0,
+        cursorY: 0,
+        cursorX: 14,
+        getLine() {
+          return { isWrapped: false, translateToString() { return 'command failed'; } };
+        },
+      },
+    },
+    onWriteParsed() { return { dispose() {} }; },
+    registerMarker() { return null; },
+    registerDecoration() { return undefined; },
+  };
+  const host = new PluginTerminalVisualProviderHost({
+    term: term as never,
+    isProviderAvailable: (kind) => kind === 'terminal.prompt',
+    async request(_kind, _operation, payload) {
+      promptPayloads.push(payload);
+      return { stale: false, results: [] };
+    },
+  });
+  await host.commandCompleted();
+  assert.deepEqual(promptPayloads, [{ reason: 'commandCompleted' }]);
+  host.dispose();
 });
 
 test('visual Provider host bounds activation and permission waits end to end', async () => {
@@ -259,6 +383,53 @@ test('visual Provider host keeps the terminal output hot path idle without decla
   await host.commandCompleted();
   await new Promise((resolve) => setTimeout(resolve, 10));
   assert.equal(requests, 0);
+  host.dispose();
+});
+
+test('visual Provider host discards normal-buffer matcher results after alternate-screen entry', async () => {
+  let onWriteParsed: (() => void) | undefined;
+  let resolveMatcher: ((value: {
+    stale: boolean;
+    results: Array<{ providerId: string; status: string; result: unknown }>;
+  }) => void) | undefined;
+  let decorations = 0;
+  const active = {
+    type: 'normal',
+    baseY: 0,
+    cursorY: 0,
+    getLine() {
+      return { isWrapped: false, translateToString() { return 'failed'; } };
+    },
+  };
+  const term = {
+    element: null,
+    buffer: { active },
+    onWriteParsed(listener: () => void) {
+      onWriteParsed = listener;
+      return { dispose() {} };
+    },
+    registerMarker() { return { dispose() {} }; },
+    registerDecoration() { decorations += 1; return { dispose() {}, onRender() {} }; },
+  };
+  const host = new PluginTerminalVisualProviderHost({
+    term: term as never,
+    matcherQuietMs: 1,
+    isProviderAvailable: (kind) => kind === 'terminal.matcher',
+    request() { return new Promise((resolve) => { resolveMatcher = resolve; }); },
+  });
+  onWriteParsed?.();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  active.type = 'alternate';
+  resolveMatcher?.({
+    stale: false,
+    results: [{
+      providerId: 'matcher',
+      status: 'ok',
+      result: { matches: [{ lineId: '0:0', start: 0, length: 6, label: 'Failure' }] },
+    }],
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(decorations, 0);
   host.dispose();
 });
 

@@ -58,7 +58,10 @@ import { readOptionalStoredStringValue, useStoredString } from "../application/s
 import { useSessionLogBackend } from "../application/state/useSessionLogBackend";
 import { useTerminalLayoutSuppressActive } from "../application/state/terminalLayoutSuppressStore";
 import { usePluginTerminalSessionLifecycle } from "../application/state/usePluginTerminalSessionLifecycle";
-import { getWindowPluginTerminalProviderRegistry } from "../application/state/pluginTerminalProviderRegistry";
+import {
+  getWindowPluginTerminalProviderRegistry,
+  PluginTerminalProviderAvailability,
+} from "../application/state/pluginTerminalProviderRegistry";
 import type { PluginTerminalDecorationRule } from "../domain/pluginTerminalProviders";
 import {
   ORDINARY_TERMINAL_PROVIDER_KINDS,
@@ -1562,30 +1565,22 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     initialCwd: knownCwdRef.current ?? lastCwd,
   });
   const pluginTerminalProviderRegistry = getWindowPluginTerminalProviderRegistry();
-  const pluginTerminalProviderKindsRef = useRef<ReadonlySet<NetcattyTerminalProviderKind> | null>(null);
-  const refreshPluginTerminalProviderAvailability = useCallback(async () => {
-    if (!pluginTerminalProviderRegistry) {
-      pluginTerminalProviderKindsRef.current = new Set();
-      return;
-    }
-    const enumerations = await Promise.all(ORDINARY_TERMINAL_PROVIDER_KINDS.map(async (kind) => ({
-      kind,
-      providers: await pluginTerminalProviderRegistry.listProviders({ kind }),
-    })));
-    pluginTerminalProviderKindsRef.current = new Set(enumerations
-      .filter((entry) => entry.providers.length > 0)
-      .map((entry) => entry.kind));
-  }, [pluginTerminalProviderRegistry]);
+  const pluginTerminalProviderAvailabilityRef = useRef(new PluginTerminalProviderAvailability());
+  const refreshPluginTerminalProviderAvailability = useCallback(() => (
+    pluginTerminalProviderAvailabilityRef.current.refresh(
+      pluginTerminalProviderRegistry,
+      ORDINARY_TERMINAL_PROVIDER_KINDS,
+    )
+  ), [pluginTerminalProviderRegistry]);
   const isPluginTerminalProviderAvailable = useCallback(
-    (kind: NetcattyTerminalProviderKind) => (
-      pluginTerminalProviderKindsRef.current?.has(kind) ?? true
-    ),
+    (kind: NetcattyTerminalProviderKind) => pluginTerminalProviderAvailabilityRef.current.has(kind),
     [],
   );
   useEffect(() => {
     void refreshPluginTerminalProviderAvailability();
     return pluginTerminalProviderRegistry?.onDidChangeProviders(() => {
-      void refreshPluginTerminalProviderAvailability().then(() => {
+      void refreshPluginTerminalProviderAvailability().then((current) => {
+        if (!current) return;
         xtermRuntimeRef.current?.pluginProviderHost?.providerAvailabilityChanged(
           effectiveTheme.colors.background,
         );
@@ -3095,7 +3090,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
   return (
     <>
-      <TerminalView ctx={{ Activity, ArrowDownToLine, ArrowUpFromLine, Button, Clock3, Copy, Cpu, HardDrive, HoverCard, HoverCardContent, HoverCardTrigger, Maximize2, MemoryStick, Radio, Sparkles, SquareArrowOutUpRight, TerminalAutocomplete, TerminalComposeBar, TerminalConnectionDialog, TerminalContextMenu, TerminalSearchBar, Tooltip, TooltipContent, TooltipTrigger, ZmodemOverwriteDialog, ZmodemProgressIndicator, auth, autocompleteAcceptTextRef, autocompleteCloseRef, autocompleteHostOs, autocompleteInputRef, autocompleteKeyEventRef, autocompleteRepositionRef, autocompleteSettings, chainProgress, cn, compactToolbar, lineTimestampsAvailable, containerRef, effectiveFontSize, effectiveFontWeight, effectiveTheme, error, executeSnippet, executeSnippetCommand, handleAddSelectionToAI, handleCancelConnect, handleCloseDisconnectedSession, handleCloseSearch, handleDismissDisconnectedDialog, handleDragEnter, handleDragLeave, handleDragOver, handleDrop, handleFindNext, handleFindPrevious, handleHostKeyAddAndContinue, handleHostKeyClose, handleHostKeyContinue, handleOsc52ReadResponse, handleOsc7SetupConfirm, handleOsc7SetupOpenChange, handleReceiveYmodem, handleRetry, handleSearch, handleSendYmodem, handleTopOverlayMouseDownCapture, hasMouseTracking, hasSelection, host, hotkeyScheme, inWorkspace, isBroadcastEnabled, isCancelling, isComposeBarOpen: effectiveComposeBarOpen, isConnectionAwaitingUserInput, isDraggingOver, isFocusMode, isLocalConnection, remoteDragDropUsesZmodem, isSerialConnection, isSearchOpen, isSupportedOs, isSystemSidebarEligible, isVisible, keyBindings, keys, knownCwdRef, needsHostKeyVerification, onAddSelectionToAI, onBroadcastInput, onCloseSession, onDetach, onDetachDragEnd, onDetachDragStart, onDetachPointerDown, onEndSessionDrag, onExpandToFocus, onOpenSystem, onRename, onSplitHorizontal, onSplitVertical, onStartSessionDrag, onToggleBroadcast, onUpdateHost: handleUpdateHostFromTerminal, osc52ReadPromptVisible, osc7SetupOpen, osc7SetupRunning, pendingHostKeyInfo, progressLogs, progressValue, renderControls, resolvedFontFamily, restoreState, scrollToBottomAfterProgrammaticInput, searchMatchCount, searchFocusToken, scriptExecutionOverlay: activeScriptRun ? (
+      <TerminalView ctx={{ Activity, ArrowDownToLine, ArrowUpFromLine, Button, Clock3, Copy, Cpu, HardDrive, HoverCard, HoverCardContent, HoverCardTrigger, Maximize2, MemoryStick, Radio, Sparkles, SquareArrowOutUpRight, TerminalAutocomplete, TerminalComposeBar, TerminalConnectionDialog, TerminalContextMenu, TerminalSearchBar, Tooltip, TooltipContent, TooltipTrigger, ZmodemOverwriteDialog, ZmodemProgressIndicator, auth, autocompleteAcceptTextRef, autocompleteCloseRef, autocompleteHostOs, autocompleteInputRef, autocompleteKeyEventRef, autocompleteRepositionRef, autocompleteSettings, chainProgress, cn, compactToolbar, lineTimestampsAvailable, containerRef, effectiveFontSize, effectiveFontWeight, effectiveTheme, error, executeSnippet, executeSnippetCommand, handleAddSelectionToAI, handleCancelConnect, handleCloseDisconnectedSession, handleCloseSearch, handleDismissDisconnectedDialog, handleDragEnter, handleDragLeave, handleDragOver, handleDrop, handleFindNext, handleFindPrevious, handleHostKeyAddAndContinue, handleHostKeyClose, handleHostKeyContinue, handleOsc52ReadResponse, handleOsc7SetupConfirm, handleOsc7SetupOpenChange, handleReceiveYmodem, handleRetry, handleSearch, handleSendYmodem, handleTopOverlayMouseDownCapture, hasMouseTracking, hasSelection, host, hotkeyScheme, inWorkspace, isBroadcastEnabled, isCancelling, isComposeBarOpen: effectiveComposeBarOpen, isConnectionAwaitingUserInput, isDraggingOver, isFocusMode, isLocalConnection, remoteDragDropUsesZmodem, isPluginTerminalProviderAvailable, isSerialConnection, isSearchOpen, isSupportedOs, isSystemSidebarEligible, isVisible, keyBindings, keys, knownCwdRef, needsHostKeyVerification, onAddSelectionToAI, onBroadcastInput, onCloseSession, onDetach, onDetachDragEnd, onDetachDragStart, onDetachPointerDown, onEndSessionDrag, onExpandToFocus, onOpenSystem, onRename, onSplitHorizontal, onSplitVertical, onStartSessionDrag, onToggleBroadcast, onUpdateHost: handleUpdateHostFromTerminal, osc52ReadPromptVisible, osc7SetupOpen, osc7SetupRunning, pendingHostKeyInfo, progressLogs, progressValue, renderControls, resolvedFontFamily, restoreState, scrollToBottomAfterProgrammaticInput, searchMatchCount, searchFocusToken, scriptExecutionOverlay: activeScriptRun ? (
         <ScriptExecutionOverlay
           run={activeScriptRun}
           onPause={() => { void pauseScriptRun(activeScriptRun.runId); }}

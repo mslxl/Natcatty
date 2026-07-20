@@ -102,6 +102,11 @@ export type PluginProviderHandler<
 > = (invocation: PluginProviderInvocation<TPayload>) => TResult | void | Promise<TResult | void>;
 
 export interface PluginProviders {
+  register<K extends OrdinaryTerminalProviderKind>(
+    providerId: string,
+    kind: K,
+    handler: OrdinaryTerminalProviderHandler<K>,
+  ): Disposable;
   register<TPayload extends JsonValue = JsonValue, TResult extends JsonValue = JsonValue>(
     providerId: string,
     kind: ProviderKind,
@@ -142,6 +147,46 @@ export interface TerminalSessionEvent {
   readonly exitCode?: number;
 }
 
+export interface TerminalProviderPayload {
+  /** Immutable host snapshot bound to this exact invocation. */
+  readonly session: TerminalSessionSnapshot;
+}
+
+export interface TerminalCompletionPayload extends TerminalProviderPayload {
+  readonly input: string;
+  readonly cursor: number;
+  readonly hostOs: "linux" | "windows" | "macos";
+  readonly cwdSource: "prompt" | "fallback" | "none" | null;
+  readonly maximum: number;
+}
+
+export interface TerminalCompletionItem {
+  readonly text: string;
+  /** When supplied, it must equal text; the host always displays the inserted command. */
+  readonly displayText?: string;
+  readonly description?: string;
+  readonly score?: number;
+}
+
+export interface TerminalCompletionResult {
+  readonly items: readonly TerminalCompletionItem[];
+}
+
+export interface TerminalDecorationPayload extends TerminalProviderPayload {
+  readonly reason: string;
+}
+
+export interface TerminalDecorationRule {
+  readonly id: string;
+  readonly label: string;
+  readonly patterns: readonly string[];
+  readonly color: string;
+}
+
+export interface TerminalDecorationResult {
+  readonly rules: readonly TerminalDecorationRule[];
+}
+
 export interface TerminalTextRange {
   readonly start: number;
   readonly length: number;
@@ -152,7 +197,7 @@ export interface TerminalLinkItem extends TerminalTextRange {
   readonly label?: string;
 }
 
-export interface TerminalLineProviderPayload {
+export interface TerminalLineProviderPayload extends TerminalProviderPayload {
   readonly line: string;
   readonly bufferLineNumber: number;
 }
@@ -175,7 +220,7 @@ export interface TerminalMatcherLine {
   readonly bufferLineNumber: number;
 }
 
-export interface TerminalMatcherPayload {
+export interface TerminalMatcherPayload extends TerminalProviderPayload {
   readonly lines: readonly TerminalMatcherLine[];
 }
 
@@ -204,11 +249,11 @@ export interface TerminalSemanticResult {
   readonly annotations?: readonly TerminalAnnotationItem[];
 }
 
-export interface TerminalSemanticPayload {
+export interface TerminalSemanticPayload extends TerminalProviderPayload {
   readonly command: string;
 }
 
-export interface TerminalPromptPayload {
+export interface TerminalPromptPayload extends TerminalProviderPayload {
   readonly reason: "commandCompleted";
   readonly promptLine?: string;
   readonly bufferLineNumber?: number;
@@ -221,6 +266,7 @@ export interface TerminalPromptResult {
 export interface TerminalBackgroundLayer {
   readonly id: string;
   readonly color: string;
+  /** Defaults to a host-owned safe opacity of 0.15. */
   readonly opacity?: number;
 }
 
@@ -230,10 +276,59 @@ export interface TerminalBackgroundResult {
   readonly refreshAfterMs?: number;
 }
 
-export interface TerminalBackgroundPayload {
+export interface TerminalBackgroundPayload extends TerminalProviderPayload {
   readonly reason: string;
   readonly terminalBackground?: string;
 }
+
+export interface OrdinaryTerminalProviderPayloadByKind {
+  readonly "terminal.completion": TerminalCompletionPayload;
+  readonly "terminal.decoration": TerminalDecorationPayload;
+  readonly "terminal.link": TerminalLineProviderPayload;
+  readonly "terminal.hover": TerminalLineProviderPayload;
+  readonly "terminal.matcher": TerminalMatcherPayload;
+  readonly "terminal.semantic": TerminalSemanticPayload;
+  readonly "terminal.prompt": TerminalPromptPayload;
+  readonly "terminal.background": TerminalBackgroundPayload;
+}
+
+export interface OrdinaryTerminalProviderResultByKind {
+  readonly "terminal.completion": TerminalCompletionResult;
+  readonly "terminal.decoration": TerminalDecorationResult;
+  readonly "terminal.link": TerminalLinkResult;
+  readonly "terminal.hover": TerminalHoverResult;
+  readonly "terminal.matcher": TerminalMatcherResult;
+  readonly "terminal.semantic": TerminalSemanticResult;
+  readonly "terminal.prompt": TerminalPromptResult;
+  readonly "terminal.background": TerminalBackgroundResult;
+}
+
+export interface OrdinaryTerminalProviderOperationByKind {
+  readonly "terminal.completion": "provideCompletions";
+  readonly "terminal.decoration": "provideDecorations";
+  readonly "terminal.link": "provideLinks";
+  readonly "terminal.hover": "provideHovers";
+  readonly "terminal.matcher": "provideMatches";
+  readonly "terminal.semantic": "provideSemantics";
+  readonly "terminal.prompt": "provideAnnotations";
+  readonly "terminal.background": "provideBackgrounds";
+}
+
+export type OrdinaryTerminalProviderKind = keyof OrdinaryTerminalProviderPayloadByKind;
+
+export interface OrdinaryTerminalProviderInvocation<K extends OrdinaryTerminalProviderKind> {
+  readonly providerId: string;
+  readonly kind: K;
+  readonly operation: OrdinaryTerminalProviderOperationByKind[K];
+  readonly requestId: string;
+  readonly payload: OrdinaryTerminalProviderPayloadByKind[K];
+  readonly deadlineMs: number | undefined;
+  readonly cancellationToken: CancellationToken;
+}
+
+export type OrdinaryTerminalProviderHandler<K extends OrdinaryTerminalProviderKind> = (
+  invocation: OrdinaryTerminalProviderInvocation<K>,
+) => OrdinaryTerminalProviderResultByKind[K] | Promise<OrdinaryTerminalProviderResultByKind[K]>;
 
 export interface PluginTerminalSessions {
   onDidChange(listener: (event: TerminalSessionEvent) => void): Disposable;

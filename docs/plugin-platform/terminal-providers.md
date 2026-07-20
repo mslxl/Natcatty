@@ -104,23 +104,34 @@ application Provider adapters as plugins:
   Alternate-screen output is excluded;
 - semantic Providers receive only the bounded submitted command and require
   `terminal.input`; prompt Providers receive no command or raw output. Their
-  bounded annotations are rendered at host-detected command completion;
+  bounded annotations are rendered at host-detected command completion. A
+  prompt line is included only when the shared host detector confirms an empty
+  shell prompt, so the last output line is never mislabeled as prompt context;
 - background Providers return at most four solid-color presentation layers.
   Per-layer opacity and the combined host overlay are capped at 0.35, plugin
   HTML/CSS/images are never accepted, and the request includes the current
-  terminal background color for contrast-aware results. Providers may request
+  terminal background color for contrast-aware results. An omitted layer
+  opacity uses the host-owned safe default of 0.15. Providers may request
   a 250-60000 ms host refresh cadence; refresh pauses while the terminal is
   hidden or disconnected and is disabled when reduced motion is requested;
 - every ordinary visual adapter applies a renderer-owned end-to-end wait bound
   around lazy activation, authorization, and runtime work. Stale generations,
   disconnects, contribution changes, runtime replacement, and terminal
   disposal cannot reapply old visual results. Provider availability is cached
-  from immutable enumeration without activation, so terminal output performs no
-  matcher/background RPC work when those contribution kinds are absent.
+  from immutable enumeration without activation, stale enumeration generations
+  cannot overwrite newer contribution state, and enumeration errors fail
+  closed. Autocomplete, decoration, link, hover, matcher, and background paths
+  therefore perform no plugin RPC work when those contribution kinds are
+  absent or the development-gated host is disabled.
 
 The operation payload/result shapes for the ordinary adapters are intentionally
-declarative:
+declarative. Every payload also contains the immutable `session` snapshot for
+the exact invocation:
 
+- `terminal.completion/provideCompletions`: bounded input, cursor, host OS,
+  CWD source, and result limit -> bounded completion items;
+- `terminal.decoration/provideDecorations`: a host refresh reason -> bounded
+  declarative highlight rules;
 - `terminal.link/provideLinks`: `{ line, bufferLineNumber }` ->
   `{ links: [{ start, length, uri, label? }] }`;
 - `terminal.hover/provideHovers`: `{ line, bufferLineNumber }` ->
@@ -135,8 +146,11 @@ declarative:
   terminal background -> bounded solid-color layers plus optional
   `refreshAfterMs`.
 
-The SDK exports the matching payload, item, and result interfaces for all six
-operations so plugins do not need application-internal renderer types.
+The SDK exports and infers the matching payload, item, operation, and result
+interfaces for all eight ordinary Provider kinds, including the immutable
+host session snapshot attached to every invocation. The generic registration
+overload remains available for later Provider kinds, so plugins do not need
+application-internal renderer types and PRs 6-9 can add their own typed maps.
 
 The control-plane JSON budget remains 1 MiB, while each terminal Provider
 payload and result is additionally limited to 128 KiB. Default terminal

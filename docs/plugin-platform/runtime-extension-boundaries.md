@@ -92,9 +92,11 @@ pending quota decisions.
 ## Bidirectional invocation and validation
 
 `RuntimeSupervisor.request()`, `notify()`, and `openStream()` are the only
-general host-to-plugin entrypoints. Browser and utility runtimes implement the
-same methods over their private router. Later registries do not reach into a
-runtime window, utility process, MessagePort, or router.
+general host-to-plugin entrypoints. All three can bind work to the exact
+authorized runtime identity; streams repeat that check before opening and
+again after the runtime returns the handle. Browser and utility runtimes
+implement the same methods over their private router. Later registries do not
+reach into a runtime window, utility process, MessagePort, or router.
 
 Outgoing requests accept a method-specific result validator. Command and
 Provider adapters must validate their exact public result schema before using

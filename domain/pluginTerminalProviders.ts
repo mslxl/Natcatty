@@ -5,6 +5,7 @@ export const MAX_PLUGIN_DECORATION_RULES = 64;
 export const MAX_PLUGIN_TERMINAL_RANGES = 64;
 export const MAX_PLUGIN_PROMPT_ANNOTATIONS = 8;
 export const MAX_PLUGIN_BACKGROUND_LAYERS = 4;
+export const DEFAULT_PLUGIN_BACKGROUND_OPACITY = 0.15;
 
 const pluginPatternParser = new RegExpParser({ ecmaVersion: 2025 });
 const MAX_PLUGIN_PATTERN_QUANTIFIERS = 32;
@@ -289,7 +290,7 @@ export function normalizePluginBackgroundResult(
     const item = candidate as Record<string, unknown>;
     const localId = boundedString(item.id, 128);
     const color = normalizeColor(item.color);
-    const opacity = item.opacity == null ? 1 : item.opacity;
+    const opacity = item.opacity == null ? DEFAULT_PLUGIN_BACKGROUND_OPACITY : item.opacity;
     if (!localId || !color || typeof opacity !== 'number' || !Number.isFinite(opacity)
       || opacity < 0 || opacity > 0.35) continue;
     const id = `${providerId}:${localId}`;

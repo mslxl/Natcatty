@@ -39,6 +39,7 @@ interface TerminalAutocompleteProps {
   closeRef: HandlerRef<() => void>;
   sudoHintRef: HandlerRef<(active: boolean) => boolean>;
   sudoHintText: string;
+  isPluginCompletionProviderAvailable?: () => boolean;
 }
 
 /**
@@ -75,13 +76,17 @@ export function TerminalAutocomplete({
   closeRef,
   sudoHintRef,
   sudoHintText,
+  isPluginCompletionProviderAvailable,
 }: TerminalAutocompleteProps) {
   // Self-subscribe to this pane's visibility so toggling it doesn't have to
   // flow through (and re-render) the TerminalView ctx.
   const visible = usePaneVisible(sessionId);
   const provideCompletions = useCallback(async (input: string, options: Parameters<typeof import("./autocomplete/completionEngine").getCompletions>[1]) => {
     const normalizedProtocol: NetcattyTerminalSessionSnapshot['protocol'] = protocol ?? "ssh";
-    return provideTerminalCompletions(getWindowPluginTerminalProviderRegistry(), {
+    const pluginRegistry = isPluginCompletionProviderAvailable?.() === false
+      ? null
+      : getWindowPluginTerminalProviderRegistry();
+    return provideTerminalCompletions(pluginRegistry, {
       input,
       session: {
         sessionId,
@@ -96,7 +101,7 @@ export function TerminalAutocomplete({
       snippets: options.snippets,
       maximum: options.maxResults ?? 15,
     });
-  }, [hostId, hostOs, protocol, sessionId, status, workspaceId]);
+  }, [hostId, hostOs, isPluginCompletionProviderAvailable, protocol, sessionId, status, workspaceId]);
   const autocomplete = useTerminalAutocomplete({
     termRef,
     containerRef,

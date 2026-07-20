@@ -110,14 +110,23 @@ test('semantic, prompt, and background results are bounded and presentation-only
   assert.deepEqual(normalizePluginBackgroundResult('background', {
     layers: [
       { id: 'tint', color: '#102030', opacity: 0.25 },
+      { id: 'default-opacity', color: '#203040' },
       { id: 'invalid', color: 'url(https://example.com)', opacity: 1 },
     ],
-  }), [{
-    id: 'background:tint',
-    color: '#102030',
-    opacity: 0.25,
-    providerId: 'background',
-  }]);
+  }), [
+    {
+      id: 'background:tint',
+      color: '#102030',
+      opacity: 0.25,
+      providerId: 'background',
+    },
+    {
+      id: 'background:default-opacity',
+      color: '#203040',
+      opacity: 0.15,
+      providerId: 'background',
+    },
+  ]);
   assert.equal(normalizePluginBackgroundRefreshAfterMs({ refreshAfterMs: 250 }), 250);
   assert.equal(normalizePluginBackgroundRefreshAfterMs({ refreshAfterMs: 249 }), undefined);
 });

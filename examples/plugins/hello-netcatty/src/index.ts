@@ -17,12 +17,9 @@ export default definePlugin({
       "com.netcatty.hello.completion",
       "terminal.completion",
       ({ payload }) => {
-        const input = typeof payload === "object" && payload !== null && !Array.isArray(payload)
-          && typeof payload.input === "string"
-          ? payload.input
-          : "";
+        const { input } = payload;
         return input && "netcatty-hello".startsWith(input)
-          ? { items: [{ text: "netcatty-hello", displayText: "netcatty-hello", score: 5_000 }] }
+          ? { items: [{ text: "netcatty-hello", score: 5_000 }] }
           : { items: [] };
       },
     ));

@@ -643,8 +643,9 @@ class RuntimeSupervisor {
     }
   }
 
-  async openStream(pluginId, streamId, windowBytes) {
+  async openStream(pluginId, streamId, windowBytes, options) {
     const { identity, runtime } = await this.#getRunningRuntime(pluginId);
+    this.#assertExpectedRuntimeIdentity(identity, options?.expectedIdentity);
     if (typeof runtime.openStream !== "function") {
       throw new PluginRpcError(RPC_ERRORS.unavailable, `Plugin runtime cannot receive streams: ${pluginId}`);
     }

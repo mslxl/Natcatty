@@ -31,6 +31,8 @@ export interface PluginTerminalProviderCallResponse {
 }
 
 export const ORDINARY_TERMINAL_PROVIDER_KINDS = Object.freeze([
+  'terminal.completion',
+  'terminal.decoration',
   'terminal.link',
   'terminal.hover',
   'terminal.matcher',

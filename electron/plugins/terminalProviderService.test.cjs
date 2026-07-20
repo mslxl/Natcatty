@@ -70,7 +70,11 @@ function setup(options = {}) {
     async request(pluginId, method, params, requestOptions) {
       calls.push(["request", pluginId, method, params, requestOptions]);
       if (options.request) return options.request(pluginId, method, params, requestOptions);
-      return { requestId: params.requestId, status: "ok", result: { items: [{ label: params.providerId }] } };
+      return {
+        requestId: params.requestId,
+        status: "ok",
+        result: { items: [{ text: params.providerId, displayText: params.providerId, score: 1 }] },
+      };
     },
     getRuntimeIdentity(pluginId) {
       if (options.getRuntimeIdentity) return options.getRuntimeIdentity(pluginId, active);
@@ -116,6 +120,10 @@ const session = {
   alternateScreen: false,
 };
 
+function completionPayload(input = "git") {
+  return { input, cursor: input.length, hostOs: "linux", cwdSource: null, maximum: 100 };
+}
+
 test("terminal Provider registry ranks declared providers deterministically and excludes raw interceptors", () => {
   const { service } = setup();
   assert.deepEqual(
@@ -149,7 +157,13 @@ test("terminal Provider invocation lazily activates, forwards deadlines, and fre
     kind: "terminal.completion",
     requestId: "request-1",
     status: "ok",
-    result: { items: [{ label: "com.example.alpha.completion" }] },
+    result: {
+      items: [{
+        text: "com.example.alpha.completion",
+        displayText: "com.example.alpha.completion",
+        score: 1,
+      }],
+    },
   });
   assert.equal(Object.isFrozen(result), true);
   assert.equal(Object.isFrozen(result.result.items), true);
@@ -187,7 +201,7 @@ test("terminal session snapshots preserve built-in and namespaced protocol ident
       kind: "terminal.completion",
       operation: "provideCompletions",
       session: { ...session, protocol },
-      payload: { input: "git" },
+      payload: completionPayload(),
     });
     assert.equal(result[0].status, "ok");
   }
@@ -252,6 +266,65 @@ test("terminal Provider invocation rejects kind drift and malformed or oversized
   );
 });
 
+test("terminal completion and decoration results use main-process operation validation", async () => {
+  for (const [kind, operation, payload, result] of [
+    ["terminal.completion", "provideCompletions", completionPayload(), {
+      items: [{ text: "git status", displayText: "git status", description: "Status", score: 10 }],
+    }],
+    ["terminal.decoration", "provideDecorations", { reason: "session-state" }, {
+      rules: [{ id: "error", label: "Error", patterns: ["\\berror\\b"], color: "#ff0000" }],
+    }],
+  ]) {
+    const fixture = setup({
+      request: async (_pluginId, _method, params) => ({
+        requestId: params.requestId,
+        status: "ok",
+        result,
+      }),
+      providers: [provider("com.example.alpha", `com.example.alpha.${kind}`, kind)],
+    });
+    const response = await fixture.service.provide({ kind, operation, session, payload });
+    assert.equal(response[0].status, "ok", kind);
+  }
+
+  for (const [kind, payload, result] of [
+    ["terminal.completion", completionPayload(), { items: [{ label: "hidden command" }] }],
+    ["terminal.completion", completionPayload(), {
+      items: [{ text: "rm -rf -- /", displayText: "Refresh index" }],
+    }],
+    ["terminal.decoration", { reason: "session-state" }, {
+      rules: [{ id: "invalid", label: "Invalid", patterns: [], color: "red" }],
+    }],
+  ]) {
+    const fixture = setup({
+      request: async (_pluginId, _method, params) => ({
+        requestId: params.requestId,
+        status: "ok",
+        result,
+      }),
+      providers: [provider("com.example.alpha", `com.example.alpha.${kind}`, kind)],
+    });
+    const response = await fixture.service.provide({
+      kind,
+      operation: kind === "terminal.completion" ? "provideCompletions" : "provideDecorations",
+      session,
+      payload,
+    });
+    assert.equal(response[0].status, "failed", kind);
+    assert.equal(response[0].error.code, RPC_ERRORS.dataLoss, kind);
+  }
+
+  await assert.rejects(
+    setup().service.provide({
+      kind: "terminal.completion",
+      operation: "provideLinks",
+      session,
+      payload: completionPayload(),
+    }),
+    (error) => error?.code === RPC_ERRORS.invalidArgument,
+  );
+});
+
 test("terminal link and hover results are validated against the host line", async () => {
   for (const [kind, result] of [
     ["terminal.link", { links: [{ start: 0, length: 4, uri: "https://example.com" }] }],
@@ -269,7 +342,7 @@ test("terminal link and hover results are validated against the host line", asyn
       kind,
       operation: kind === "terminal.link" ? "provideLinks" : "provideHovers",
       session,
-      payload: { line: "test" },
+      payload: { line: "test", bufferLineNumber: 1 },
     });
     assert.equal(response[0].status, "ok");
   }
@@ -286,7 +359,7 @@ test("terminal link and hover results are validated against the host line", asyn
     kind: "terminal.link",
     operation: "provideLinks",
     session,
-    payload: { line: "test" },
+    payload: { line: "test", bufferLineNumber: 1 },
   });
   assert.equal(response[0].status, "failed");
   assert.equal(response[0].error.code, RPC_ERRORS.dataLoss);
@@ -294,23 +367,23 @@ test("terminal link and hover results are validated against the host line", asyn
 
 test("terminal matcher, semantic, prompt, and background results use operation-specific validation", async () => {
   const cases = [
-    ["terminal.matcher", { lines: [{ lineId: "line-1", line: "failed", bufferLineNumber: 1 }] }, {
+    ["terminal.matcher", "provideMatches", { lines: [{ lineId: "line-1", line: "failed", bufferLineNumber: 1 }] }, {
       matches: [{ lineId: "line-1", start: 0, length: 6, label: "Failure", severity: "error", color: "#ff0000" }],
     }],
-    ["terminal.semantic", { command: "deploy" }, {
+    ["terminal.semantic", "provideSemantics", { command: "deploy" }, {
       classification: "deployment",
       destructive: true,
       annotations: [{ text: "production", color: "#ff0000" }],
     }],
-    ["terminal.prompt", { reason: "commandCompleted" }, {
+    ["terminal.prompt", "provideAnnotations", { reason: "commandCompleted" }, {
       annotations: [{ text: "venv", color: "#00ff00" }],
     }],
-    ["terminal.background", { reason: "runtime-created" }, {
+    ["terminal.background", "provideBackgrounds", { reason: "runtime-created" }, {
       layers: [{ id: "tint", color: "#102030", opacity: 0.25 }],
       refreshAfterMs: 250,
     }],
   ];
-  for (const [kind, payload, result] of cases) {
+  for (const [kind, operation, payload, result] of cases) {
     const fixture = setup({
       request: async (_pluginId, _method, params) => ({
         requestId: params.requestId,
@@ -321,7 +394,7 @@ test("terminal matcher, semantic, prompt, and background results use operation-s
     });
     const response = await fixture.service.provide({
       kind,
-      operation: "provide",
+      operation,
       session,
       payload,
     });
@@ -387,20 +460,21 @@ test("terminal matcher, semantic, prompt, and background results use operation-s
     }),
     providers: [provider("com.example.alpha", "com.example.alpha.matcher", "terminal.matcher")],
   });
-  const oversizedMatcherResponse = await oversizedMatcherBatch.service.provide({
-    kind: "terminal.matcher",
-    operation: "provideMatches",
-    session,
-    payload: {
-      lines: Array.from({ length: 13 }, (_, index) => ({
-        lineId: `line-${index}`,
-        line: "x".repeat(8_192),
-        bufferLineNumber: index + 1,
-      })),
-    },
-  });
-  assert.equal(oversizedMatcherResponse[0].status, "failed");
-  assert.equal(oversizedMatcherResponse[0].error.code, RPC_ERRORS.dataLoss);
+  await assert.rejects(
+    oversizedMatcherBatch.service.provide({
+      kind: "terminal.matcher",
+      operation: "provideMatches",
+      session,
+      payload: {
+        lines: Array.from({ length: 13 }, (_, index) => ({
+          lineId: `line-${index}`,
+          line: "x".repeat(8_192),
+          bufferLineNumber: index + 1,
+        })),
+      },
+    }),
+    (error) => error?.code === RPC_ERRORS.invalidArgument,
+  );
 
   const missingBackgroundColor = setup({
     request: async (_pluginId, _method, params) => ({
@@ -453,14 +527,14 @@ test("terminal Provider fan-out contains failures and preserves deterministic re
       if (pluginId === "com.example.alpha") {
         throw new PluginRpcError(RPC_ERRORS.unavailable, "alpha unavailable");
       }
-      return { requestId: params.requestId, status: "ok", result: { items: [{ label: "beta" }] } };
+      return { requestId: params.requestId, status: "ok", result: { items: [{ text: "beta", score: 1 }] } };
     },
   });
   const results = await service.provide({
     kind: "terminal.completion",
     operation: "provideCompletions",
     session,
-    payload: { input: "be", session: { sessionId: "spoofed" } },
+    payload: { ...completionPayload("be"), session: { sessionId: "spoofed" } },
     preferredProviderIds: ["com.example.beta.completion"],
     deadlineMs: 300,
   });
@@ -611,6 +685,7 @@ test("terminal Provider fan-out enforces the per-request Provider quota", async 
     kind: "terminal.completion",
     operation: "provideCompletions",
     session,
+    payload: completionPayload(),
   });
   assert.equal(results.length, MAX_TERMINAL_PROVIDERS_PER_REQUEST);
   assert.equal(calls.filter((call) => call[0] === "request").length, MAX_TERMINAL_PROVIDERS_PER_REQUEST);

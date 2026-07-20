@@ -1,13 +1,145 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { PluginTerminalProviderRegistry } from './pluginTerminalProviderRegistry.ts';
+import {
+  collectPluginTerminalProviderKinds,
+  isPluginTerminalProviderKindAvailable,
+  PluginTerminalProviderAvailability,
+  PluginTerminalProviderRegistry,
+} from './pluginTerminalProviderRegistry.ts';
 
 const session: NetcattyTerminalSessionSnapshot = {
   sessionId: 'session-1',
   protocol: 'ssh',
   status: 'connected',
 };
+
+test('terminal Provider availability fails closed before or after failed enumeration', async () => {
+  assert.equal(isPluginTerminalProviderKindAvailable(null, 'terminal.matcher'), false);
+  const registry = new PluginTerminalProviderRegistry({
+    async listPluginTerminalProviders() { throw new Error('bridge unavailable'); },
+    async providePluginTerminal() { return []; },
+    async cancelPluginTerminalRequest() { return false; },
+    async publishPluginTerminalSessionEvent() { return []; },
+  });
+  const kinds = await collectPluginTerminalProviderKinds(registry, [
+    'terminal.matcher',
+    'terminal.background',
+  ]);
+  assert.equal(isPluginTerminalProviderKindAvailable(kinds, 'terminal.matcher'), false);
+  assert.equal(isPluginTerminalProviderKindAvailable(kinds, 'terminal.background'), false);
+  registry.dispose();
+});
+
+test('terminal Provider availability ignores an older enumeration that finishes last', async () => {
+  let resolveOlder: ((providers: NetcattyTerminalProviderContribution[]) => void) | undefined;
+  const olderRegistry = new PluginTerminalProviderRegistry({
+    listPluginTerminalProviders() {
+      return new Promise((resolve) => { resolveOlder = resolve; });
+    },
+    async providePluginTerminal() { return []; },
+    async cancelPluginTerminalRequest() { return false; },
+    async publishPluginTerminalSessionEvent() { return []; },
+  });
+  const newerRegistry = new PluginTerminalProviderRegistry({
+    async listPluginTerminalProviders() {
+      return [{
+        pluginId: 'com.example.matcher',
+        pluginVersion: '1.0.0',
+        pluginDisplayName: 'Matcher',
+        provider: {
+          id: 'com.example.matcher.output',
+          label: 'Output matcher',
+          kind: 'terminal.matcher',
+        },
+      }];
+    },
+    async providePluginTerminal() { return []; },
+    async cancelPluginTerminalRequest() { return false; },
+    async publishPluginTerminalSessionEvent() { return []; },
+  });
+  const availability = new PluginTerminalProviderAvailability();
+  const older = availability.refresh(olderRegistry, ['terminal.matcher']);
+  const newer = availability.refresh(newerRegistry, ['terminal.matcher']);
+  assert.equal(await newer, true);
+  assert.equal(availability.has('terminal.matcher'), true);
+  resolveOlder?.([]);
+  assert.equal(await older, false);
+  assert.equal(availability.has('terminal.matcher'), true);
+  olderRegistry.dispose();
+  newerRegistry.dispose();
+});
+
+test('terminal Provider registry coalesces immutable enumeration until contributions change', async () => {
+  let changed: (() => void) | undefined;
+  let listCalls = 0;
+  const resolvers: Array<(providers: NetcattyTerminalProviderContribution[]) => void> = [];
+  const registry = new PluginTerminalProviderRegistry({
+    listPluginTerminalProviders() {
+      listCalls += 1;
+      return new Promise((resolve) => { resolvers.push(resolve); });
+    },
+    async providePluginTerminal() { return []; },
+    async cancelPluginTerminalRequest() { return false; },
+    async publishPluginTerminalSessionEvent() { return []; },
+    onPluginContributionsChanged(listener) {
+      changed = listener;
+      return () => {};
+    },
+  });
+  const first = registry.listProviders({ kind: 'terminal.matcher' });
+  const duplicate = registry.listProviders({ kind: 'terminal.matcher' });
+  assert.equal(listCalls, 1);
+  resolvers[0]?.([]);
+  assert.strictEqual(await first, await duplicate);
+  assert.strictEqual(await registry.listProviders({ kind: 'terminal.matcher' }), await first);
+  assert.equal(listCalls, 1);
+
+  changed?.();
+  const refreshed = registry.listProviders({ kind: 'terminal.matcher' });
+  assert.equal(listCalls, 2);
+  resolvers[1]?.([]);
+  await refreshed;
+  registry.dispose();
+});
+
+test('terminal Provider registry suppresses repeated lifecycle RPC after the bridge is unavailable', async () => {
+  let changed: (() => void) | undefined;
+  let listCalls = 0;
+  let lifecycleCalls = 0;
+  const registry = new PluginTerminalProviderRegistry({
+    async listPluginTerminalProviders() {
+      listCalls += 1;
+      throw new Error('PLUGIN_DEVELOPMENT_DISABLED');
+    },
+    async providePluginTerminal() { return []; },
+    async cancelPluginTerminalRequest() { return false; },
+    async publishPluginTerminalSessionEvent() {
+      lifecycleCalls += 1;
+      throw new Error('PLUGIN_DEVELOPMENT_DISABLED');
+    },
+    onPluginContributionsChanged(listener) {
+      changed = listener;
+      return () => {};
+    },
+  });
+
+  await assert.rejects(registry.listProviders({ kind: 'terminal.link' }), /PLUGIN_DEVELOPMENT_DISABLED/);
+  assert.deepEqual(await registry.listProviders({ kind: 'terminal.link' }), []);
+  assert.equal(listCalls, 1);
+  await registry.publishSessionEvent({ type: 'created', session });
+  await registry.publishSessionEvent({ type: 'titleChanged', session: { ...session, title: 'ready' } });
+  assert.equal(lifecycleCalls, 0);
+
+  changed?.();
+  await assert.rejects(
+    registry.publishSessionEvent({ type: 'cwdChanged', session: { ...session, cwd: '/work' } }),
+    /PLUGIN_DEVELOPMENT_DISABLED/,
+  );
+  await registry.publishSessionEvent({ type: 'resized', session: { ...session, cols: 80, rows: 24 } });
+  assert.equal(lifecycleCalls, 1);
+  registry.dispose();
+});
 
 test('terminal Provider registry cancels superseded requests and suppresses stale results', async () => {
   const cancellations: string[] = [];

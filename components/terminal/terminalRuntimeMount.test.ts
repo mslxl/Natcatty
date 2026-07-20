@@ -43,11 +43,30 @@ test('hibernate runtime keyword setup restores plugin decoration rules', () => {
 test('cwd-triggered plugin decoration refresh reads the live connection status', () => {
   assert.match(
     effectsSource,
-    /if \(!pluginTerminalRegistry \|\| statusRef\.current !== 'connected'\)/,
+    /if \(!pluginTerminalRegistry \|\| statusRef\.current !== 'connected'\s*\|\| !isPluginTerminalProviderAvailable\('terminal\.decoration'\)\)/,
   );
   assert.match(
     effectsSource,
     /void refreshPluginDecorationRules\('session-state'\);\s*\n\s*}, \[refreshPluginDecorationRules, status\]\);/,
+  );
+});
+
+test('disabled or absent plugin hosts do not receive terminal completion requests', () => {
+  const autocompleteSource = readFileSync(new URL('./TerminalAutocomplete.tsx', import.meta.url), 'utf8');
+  assert.match(
+    autocompleteSource,
+    /isPluginCompletionProviderAvailable\?\.\(\) === false\s*\n\s*\? null\s*\n\s*: getWindowPluginTerminalProviderRegistry\(\)/,
+  );
+  assert.match(
+    terminalSource,
+    /isPluginTerminalProviderAvailable,/,
+  );
+});
+
+test('plugin decoration requests retain the workspace identity', () => {
+  assert.match(
+    effectsSource,
+    /\.\.\.\(workspaceId \? \{ workspaceId \} : \{\}\),\s*\n\s*protocol,/,
   );
 });
 

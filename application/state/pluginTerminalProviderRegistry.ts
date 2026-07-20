@@ -51,12 +51,20 @@ export class PluginTerminalProviderRegistry {
   readonly #activeRequests = new Map<string, string>();
   readonly #sessionSnapshots = new Map<string, NetcattyTerminalSessionSnapshot>();
   readonly #providerListeners = new Set<() => void>();
+  readonly #providerListCache = new Map<string, ReadonlyArray<NetcattyTerminalProviderContribution>>();
+  readonly #pendingProviderLists = new Map<string, Promise<ReadonlyArray<NetcattyTerminalProviderContribution>>>();
   readonly #disposeContributionListener: (() => void) | undefined;
+  #providerListGeneration = 0;
+  #bridgeAvailability: 'unknown' | 'available' | 'unavailable' = 'unknown';
   #disposed = false;
 
   constructor(bridge: PluginTerminalProviderBridge) {
     this.#bridge = bridge;
     this.#disposeContributionListener = bridge.onPluginContributionsChanged?.(() => {
+      this.#providerListGeneration += 1;
+      this.#bridgeAvailability = 'unknown';
+      this.#providerListCache.clear();
+      this.#pendingProviderLists.clear();
       for (const requestId of this.#activeRequests.values()) {
         void this.#bridge.cancelPluginTerminalRequest(requestId).catch(() => false);
       }
@@ -75,7 +83,33 @@ export class PluginTerminalProviderRegistry {
 
   async listProviders(query: NetcattyTerminalProviderQuery): Promise<ReadonlyArray<NetcattyTerminalProviderContribution>> {
     if (this.#disposed) return Object.freeze([]);
-    return freezeValue(await this.#bridge.listPluginTerminalProviders(query));
+    if (this.#bridgeAvailability === 'unavailable') return Object.freeze([]);
+    const key = JSON.stringify(query);
+    const cached = this.#providerListCache.get(key);
+    if (cached) return cached;
+    const pending = this.#pendingProviderLists.get(key);
+    if (pending) return pending;
+    const generation = this.#providerListGeneration;
+    const request = (async () => {
+      try {
+        const providers = freezeValue(await this.#bridge.listPluginTerminalProviders(query));
+        if (generation === this.#providerListGeneration) {
+          if (this.#bridgeAvailability !== 'unavailable') this.#bridgeAvailability = 'available';
+          this.#providerListCache.set(key, providers);
+        }
+        return providers;
+      } catch (error) {
+        if (generation === this.#providerListGeneration) {
+          this.#bridgeAvailability = 'unavailable';
+          this.#providerListCache.clear();
+        }
+        throw error;
+      } finally {
+        if (this.#pendingProviderLists.get(key) === request) this.#pendingProviderLists.delete(key);
+      }
+    })();
+    this.#pendingProviderLists.set(key, request);
+    return request;
   }
 
   async request(
@@ -123,7 +157,14 @@ export class PluginTerminalProviderRegistry {
     const session = mergeLifecycleSessionSnapshot(previous, event);
     if (event.type === 'disposed') this.#sessionSnapshots.delete(session.sessionId);
     else this.#sessionSnapshots.set(session.sessionId, session);
-    await this.#bridge.publishPluginTerminalSessionEvent(freezeValue({ ...event, session }));
+    if (this.#bridgeAvailability === 'unavailable') return;
+    try {
+      await this.#bridge.publishPluginTerminalSessionEvent(freezeValue({ ...event, session }));
+      this.#bridgeAvailability = 'available';
+    } catch (error) {
+      this.#bridgeAvailability = 'unavailable';
+      throw error;
+    }
   }
 
   cancelSession(sessionId: string): void {
@@ -138,13 +179,61 @@ export class PluginTerminalProviderRegistry {
   dispose(): void {
     if (this.#disposed) return;
     this.#disposed = true;
+    this.#providerListGeneration += 1;
     for (const requestId of this.#activeRequests.values()) {
       void this.#bridge.cancelPluginTerminalRequest(requestId).catch(() => false);
     }
     this.#activeRequests.clear();
     this.#sessionSnapshots.clear();
     this.#providerListeners.clear();
+    this.#providerListCache.clear();
+    this.#pendingProviderLists.clear();
     this.#disposeContributionListener?.();
+  }
+}
+
+export async function collectPluginTerminalProviderKinds(
+  registry: PluginTerminalProviderRegistry | null,
+  kinds: readonly NetcattyTerminalProviderKind[],
+): Promise<ReadonlySet<NetcattyTerminalProviderKind>> {
+  if (!registry) return new Set();
+  try {
+    const enumerations = await Promise.all(kinds.map(async (kind) => ({
+      kind,
+      providers: await registry.listProviders({ kind }),
+    })));
+    return new Set(enumerations
+      .filter((entry) => entry.providers.length > 0)
+      .map((entry) => entry.kind));
+  } catch {
+    return new Set();
+  }
+}
+
+export function isPluginTerminalProviderKindAvailable(
+  kinds: ReadonlySet<NetcattyTerminalProviderKind> | null,
+  kind: NetcattyTerminalProviderKind,
+): boolean {
+  return kinds?.has(kind) ?? false;
+}
+
+export class PluginTerminalProviderAvailability {
+  #generation = 0;
+  #kinds: ReadonlySet<NetcattyTerminalProviderKind> | null = null;
+
+  async refresh(
+    registry: PluginTerminalProviderRegistry | null,
+    kinds: readonly NetcattyTerminalProviderKind[],
+  ): Promise<boolean> {
+    const generation = ++this.#generation;
+    const next = await collectPluginTerminalProviderKinds(registry, kinds);
+    if (generation !== this.#generation) return false;
+    this.#kinds = next;
+    return true;
+  }
+
+  has(kind: NetcattyTerminalProviderKind): boolean {
+    return isPluginTerminalProviderKindAvailable(this.#kinds, kind);
   }
 }
 

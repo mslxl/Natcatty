@@ -23,6 +23,16 @@ const TERMINAL_PROVIDER_KINDS = Object.freeze([
   "terminal.background",
 ]);
 const TERMINAL_PROVIDER_KIND_SET = new Set(TERMINAL_PROVIDER_KINDS);
+const TERMINAL_PROVIDER_OPERATIONS = new Map([
+  ["terminal.completion", "provideCompletions"],
+  ["terminal.decoration", "provideDecorations"],
+  ["terminal.link", "provideLinks"],
+  ["terminal.hover", "provideHovers"],
+  ["terminal.matcher", "provideMatches"],
+  ["terminal.semantic", "provideSemantics"],
+  ["terminal.prompt", "provideAnnotations"],
+  ["terminal.background", "provideBackgrounds"],
+]);
 const TERMINAL_PROVIDER_PERMISSIONS = new Map([
   ["terminal.completion", ["provider.terminal", "terminal.complete"]],
   ["terminal.decoration", ["provider.terminal", "terminal.output", "terminal.decorate"]],
@@ -260,7 +270,101 @@ function assertMatcherLines(payload) {
   return lines;
 }
 
+function assertCompletionResult(value) {
+  const result = assertPlainRecord(value, "Terminal completion result");
+  if (!Array.isArray(result.items) || result.items.length > 100) {
+    throw new TypeError("Terminal completion items are invalid");
+  }
+  for (const candidate of result.items) {
+    const item = assertPlainRecord(candidate, "Terminal completion item");
+    const text = assertVisibleString(item.text, "Terminal completion text", 4_096);
+    if (item.displayText != null
+      && assertVisibleString(item.displayText, "Terminal completion display text", 4_096) !== text) {
+      throw new TypeError("Terminal completion display text must match the inserted text");
+    }
+    if (item.description != null) {
+      assertVisibleString(item.description, "Terminal completion description", 2_048);
+    }
+    if (item.score != null && (typeof item.score !== "number" || !Number.isFinite(item.score))) {
+      throw new TypeError("Terminal completion score is invalid");
+    }
+  }
+}
+
+function assertDecorationResult(value) {
+  const result = assertPlainRecord(value, "Terminal decoration result");
+  if (!Array.isArray(result.rules) || result.rules.length > 64) {
+    throw new TypeError("Terminal decoration rules are invalid");
+  }
+  for (const candidate of result.rules) {
+    const rule = assertPlainRecord(candidate, "Terminal decoration rule");
+    assertVisibleString(rule.id, "Terminal decoration rule ID", 128);
+    assertVisibleString(rule.label, "Terminal decoration rule label", 256);
+    if (!Array.isArray(rule.patterns) || rule.patterns.length < 1 || rule.patterns.length > 16) {
+      throw new TypeError("Terminal decoration rule patterns are invalid");
+    }
+    for (const pattern of rule.patterns) {
+      assertVisibleString(pattern, "Terminal decoration pattern", 512);
+    }
+    if (typeof rule.color !== "string") {
+      throw new TypeError("Terminal decoration rule color is required");
+    }
+    assertOptionalColor(rule.color, "Terminal decoration rule color");
+  }
+}
+
+function assertTerminalProviderPayload(kind, operation, payload) {
+  if (TERMINAL_PROVIDER_OPERATIONS.get(kind) !== operation) {
+    throw new TypeError("Terminal Provider operation does not match its kind");
+  }
+  if (kind === "terminal.completion") {
+    const input = assertVisibleString(payload?.input, "Terminal completion input", 4_096);
+    if (!Number.isInteger(payload.cursor) || payload.cursor < 0 || payload.cursor > input.length) {
+      throw new TypeError("Terminal completion cursor is invalid");
+    }
+    if (!["linux", "windows", "macos"].includes(payload.hostOs)) {
+      throw new TypeError("Terminal completion host OS is invalid");
+    }
+    if (payload.cwdSource != null && !["prompt", "fallback", "none"].includes(payload.cwdSource)) {
+      throw new TypeError("Terminal completion CWD source is invalid");
+    }
+    if (!Number.isInteger(payload.maximum) || payload.maximum < 1 || payload.maximum > 100) {
+      throw new TypeError("Terminal completion maximum is invalid");
+    }
+  }
+  if (kind === "terminal.decoration") {
+    assertVisibleString(payload?.reason, "Terminal decoration reason", 128);
+  }
+  if (kind === "terminal.link" || kind === "terminal.hover") {
+    assertVisibleString(payload?.line, "Terminal Provider line", 8_192);
+    if (!Number.isInteger(payload.bufferLineNumber) || payload.bufferLineNumber < 1) {
+      throw new TypeError("Terminal Provider buffer line number is invalid");
+    }
+  }
+  if (kind === "terminal.matcher") assertMatcherLines(payload);
+  if (kind === "terminal.semantic") {
+    assertVisibleString(payload?.command, "Terminal semantic command", 4_096);
+  }
+  if (kind === "terminal.prompt") {
+    if (payload?.reason !== "commandCompleted") throw new TypeError("Terminal prompt reason is invalid");
+    if (payload.promptLine != null) {
+      assertVisibleString(payload.promptLine, "Terminal prompt line", 8_192);
+      if (!Number.isInteger(payload.bufferLineNumber) || payload.bufferLineNumber < 1) {
+        throw new TypeError("Terminal prompt buffer line number is invalid");
+      }
+    } else if (payload.bufferLineNumber != null) {
+      throw new TypeError("Terminal prompt line number requires a prompt line");
+    }
+  }
+  if (kind === "terminal.background") {
+    assertVisibleString(payload?.reason, "Terminal background reason", 128);
+    assertOptionalColor(payload.terminalBackground, "Terminal background color");
+  }
+}
+
 function assertTerminalProviderOkResult(kind, value, payload) {
+  if (kind === "terminal.completion") assertCompletionResult(value);
+  if (kind === "terminal.decoration") assertDecorationResult(value);
   if (kind === "terminal.link") {
     assertProviderTextRanges(value, {
       label: "Terminal link",
@@ -591,6 +695,8 @@ class PluginTerminalProviderService {
       ? { ...providedPayload, session }
       : { session, ...(providedPayload === undefined ? {} : { value: providedPayload }) });
     assertBoundedJson(payload, "Provider request payload");
+    try { assertTerminalProviderPayload(kind, operation, payload); }
+    catch (error) { throw invalidArgument(error?.message ?? "Terminal Provider payload is invalid"); }
     const providers = this.listProviders({
       kind,
       locale: params?.locale,

@@ -1,6 +1,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any, react-hooks/exhaustive-deps */
 import { useCallback, useRef, useState } from 'react';
-import { getWindowPluginTerminalProviderRegistry } from '../../application/state/pluginTerminalProviderRegistry';
+import {
+  getWindowPluginTerminalProviderRegistry,
+  PluginTerminalProviderAvailability,
+} from '../../application/state/pluginTerminalProviderRegistry';
 import { publishPluginTerminalRuntimeLifecycleEvent } from '../../application/state/pluginTerminalRuntimeLifecycle';
 import { markTerminalCommandCompletionPending } from './runtime/promptLineBreak';
 import { ORDINARY_TERMINAL_PROVIDER_KINDS } from './pluginTerminalLinkProvider';
@@ -174,24 +177,15 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
   const { CONNECTION_TIMEOUT, Error, XTERM_PERFORMANCE_CONFIG, applyUserCursorPreference, auth, autocompleteCloseRef, autocompleteInputRef, autocompleteKeyEventRef, captureTerminalLogData, chainHosts, chainProgress, clearTerminalCwd, commandBufferRef, connectionLogBufferRef, containerRef, createPromptLineBreakState, createReplaySafeTerminalLogSanitizer, createXTermRuntime, deferTerminalResizeRef, disableTerminalFontZoomRef, effectiveFontSize, effectiveFontWeight, effectiveTheme, error, executeSnippetCommand, finalizeTerminalLogData, fitAddonRef, fontFamilyId, fontSize, fontWeightFixupDoneRef, forceCloseHibernatedSession, forceSyncRenderAfterResize, handleOsc52ReadRequest, handleTerminalDataCaptureOnce, hasConnectedRef, hasRuntimeRef, host, hotkeySchemeRef, hibernatedRef, identities, inWorkspace, isBootActiveRef, isBroadcastEnabledRef, isComposeBarOpen, isConnectionAwaitingUserInput, isConnectionPastTcpDial, isFocusMode, isFocused, isLocalConnection, isNetworkDevice, isResizing, isRestoringSelectionRef, isSearchOpen, isSerialConnection, isVisible, isVisibleRef, keyBindingsRef, keys, knownCwdRef, lastFittedSizeRef, lastToastedErrorRef, logger, mouseTrackingRef, needsHostKeyVerification, onBroadcastInputRef, onBroadcastInterruptPriorityChange, onCommandExecuted, onCommandSubmitted, onHotkeyActionRef, onOutputTriggerUserInputRef, onPluginRuntimeCwdChange, onSnippetExecutorChange, onTerminalCwdChange, onTerminalTitleChange, onTerminalBell, onTerminalFontSizeChange, paneLayoutKey, passwordPromptActiveRef, pendingAuthRef, pendingOutputScrollRef, pluginDecorationRefreshRef, pluginTerminalLifecycle, prepareRestoredReconnect, prevIsResizingRef, promptLineBreakStateRef, resizeSession, resolveHostAuth, resolvedFontFamily, safeFit, scriptRecorderRef, searchAddonRef, serialConfig, serialLineBufferRef, serializeAddonRef, sessionId, sessionRef, sessionStarters, setError, setHasMouseTracking, setHasSelection, setIsCancelling, setIsDisconnectedDialogDismissed, requestSearchFocus, setNeedsHostKeyVerification, setPendingHostKeyInfo, setPendingHostKeyRequestId, setProgressLogs, setProgressValue, setSelectionOverlayPosition, setShowLogs, setStatus, setTimeLeft, shellType, shouldEnableNativeUserInputAutoScroll, shouldProbeSessionCwd, shouldStartTerminalBackend, onSnippetShortkeyRef, snippetsRef, splitResizeActive, status, statusRef, sudoAutofillRef, t, teardown, telnetLocalEchoRef, termRef, terminalAltKeyOptions, terminalBackend, terminalContextActionsRef, terminalCwdTracker, terminalDataCapturedRef, terminalLogSanitizerRef, terminalSettings, terminalSettingsRef, toHostKeyInfo, toast, updateStatus, useEffect, useLayoutEffect, workspaceId, xtermRuntimeRef, zmodem, zmodemToastedRef, restoreState } = ctx;
   const hibernateHiddenTabs = resolveTerminalHibernateEnabledForProtocol(terminalSettings, host.protocol);
   const pluginTerminalRegistry = getWindowPluginTerminalProviderRegistry();
-  const pluginTerminalProviderKindsRef = useRef<ReadonlySet<NetcattyTerminalProviderKind> | null>(null);
-  const refreshPluginTerminalProviderAvailability = useCallback(async () => {
-    if (!pluginTerminalRegistry) {
-      pluginTerminalProviderKindsRef.current = new Set();
-      return;
-    }
-    const enumerations = await Promise.all(ORDINARY_TERMINAL_PROVIDER_KINDS.map(async (kind) => ({
-      kind,
-      providers: await pluginTerminalRegistry.listProviders({ kind }),
-    })));
-    pluginTerminalProviderKindsRef.current = new Set(enumerations
-      .filter((entry) => entry.providers.length > 0)
-      .map((entry) => entry.kind));
-  }, [pluginTerminalRegistry]);
+  const pluginTerminalProviderAvailabilityRef = useRef(new PluginTerminalProviderAvailability());
+  const refreshPluginTerminalProviderAvailability = useCallback(() => (
+    pluginTerminalProviderAvailabilityRef.current.refresh(
+      pluginTerminalRegistry,
+      ORDINARY_TERMINAL_PROVIDER_KINDS,
+    )
+  ), [pluginTerminalRegistry]);
   const isPluginTerminalProviderAvailable = useCallback(
-    (kind: NetcattyTerminalProviderKind) => (
-      pluginTerminalProviderKindsRef.current?.has(kind) ?? true
-    ),
+    (kind: NetcattyTerminalProviderKind) => pluginTerminalProviderAvailabilityRef.current.has(kind),
     [],
   );
   const requestPluginTerminalProviders = useCallback(async (
@@ -244,7 +238,8 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
   };
   const refreshPluginDecorationRules = useCallback(async (reason: string) => {
     const refreshGeneration = ++pluginDecorationRefreshGenerationRef.current;
-    if (!pluginTerminalRegistry || statusRef.current !== 'connected') {
+    if (!pluginTerminalRegistry || statusRef.current !== 'connected'
+      || !isPluginTerminalProviderAvailable('terminal.decoration')) {
       setPluginDecorationRules(Object.freeze([]));
       return;
     }
@@ -256,6 +251,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
         session: {
           sessionId,
           ...(host.id ? { hostId: host.id } : {}),
+          ...(workspaceId ? { workspaceId } : {}),
           protocol,
           status: statusRef.current,
           ...(knownCwdRef.current ? { cwd: knownCwdRef.current } : {}),
@@ -278,7 +274,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       ) return;
       setPluginDecorationRules(Object.freeze([]));
     }
-  }, [host.id, host.protocol, pluginTerminalRegistry, sessionId]);
+  }, [host.id, host.protocol, isPluginTerminalProviderAvailable, pluginTerminalRegistry, sessionId, workspaceId]);
   const requestPluginDecorationRefresh = useCallback((reason: string) => {
     void refreshPluginDecorationRules(reason);
   }, [refreshPluginDecorationRules]);
@@ -346,7 +342,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
 
   useEffect(() => {
     const refresh = async (reason: string) => {
-      await refreshPluginTerminalProviderAvailability();
+      if (!await refreshPluginTerminalProviderAvailability()) return;
       await refreshPluginDecorationRules(reason);
       xtermRuntimeRef.current?.pluginProviderHost?.providerAvailabilityChanged(
         effectiveTheme.colors.background,
