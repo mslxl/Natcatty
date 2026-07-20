@@ -112,9 +112,11 @@ test("deleting a key cannot overwrite a concurrent key-list update", async (t) =
   const homeLookup = new Promise<void>((resolve) => {
     releaseHomeLookup = resolve;
   });
+  let homeLookupCount = 0;
   Object.defineProperty(globalThis, "window", {
     configurable: true,
     value: { netcatty: { getHomeDir: async () => {
+      homeLookupCount += 1;
       await homeLookup;
       return "/Users/alice";
     } } },
@@ -133,6 +135,7 @@ test("deleting a key cannot overwrite a concurrent key-list update", async (t) =
   await deletion;
 
   assert.deepEqual(keys, [concurrentReference]);
+  assert.equal(homeLookupCount, 1);
   assert.equal(
     await loadDefaultKeyPassphrase(key.filePath!),
     "remembered-passphrase",

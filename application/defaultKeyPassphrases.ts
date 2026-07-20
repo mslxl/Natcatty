@@ -200,18 +200,15 @@ export async function deleteVaultKey(args: {
   args.updateKeys(keys.filter((candidate) => candidate.id !== args.keyId));
   if (key.source !== "reference" || !key.filePath) return;
 
-  const deletedAliases = matchingPathKeys(
-    await resolveDefaultKeyPassphraseAliases(key.filePath),
-  );
-  const currentReferencePaths = args.getKeys()
+  const deletedAliases = await resolveDefaultKeyPassphraseAliases(key.filePath);
+  const deletedAliasKeys = matchingPathKeys(deletedAliases);
+  const currentReferencePathKeys = matchingPathKeys(args.getKeys()
     .filter((candidate) => candidate.source === "reference" && candidate.filePath)
-    .map((candidate) => candidate.filePath!);
-  const currentAliases = matchingPathKeys((await Promise.all(
-    currentReferencePaths.map(resolveDefaultKeyPassphraseAliases),
-  )).flat());
-  const pathStillReferenced = [...deletedAliases].some((path) => currentAliases.has(path));
+    .map((candidate) => candidate.filePath!));
+  const pathStillReferenced = [...currentReferencePathKeys]
+    .some((path) => deletedAliasKeys.has(path));
   if (!pathStillReferenced) {
-    await removeDefaultKeyPassphraseAliases([key.filePath]);
+    removeDefaultKeyPassphrases(deletedAliases);
   }
 }
 
