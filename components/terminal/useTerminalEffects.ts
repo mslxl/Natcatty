@@ -175,12 +175,17 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
   const [pluginDecorationRules, setPluginDecorationRules] = useState<
     ReturnType<typeof normalizePluginDecorationResult>
   >(Object.freeze([]));
+  const pluginDecorationRefreshGenerationRef = useRef(0);
+  useEffect(() => () => {
+    pluginDecorationRefreshGenerationRef.current += 1;
+  }, []);
   ctx.pluginDecorationRulesRef.current = pluginDecorationRules;
   const pluginAwareOnCommandSubmitted = (...args: Parameters<NonNullable<typeof onCommandSubmitted>>) => {
     publishPluginTerminalRuntimeLifecycleEvent(pluginTerminalLifecycle, 'commandSubmitted');
     onCommandSubmitted?.(...args);
   };
   const refreshPluginDecorationRules = useCallback(async (reason: string) => {
+    const refreshGeneration = ++pluginDecorationRefreshGenerationRef.current;
     if (!pluginTerminalRegistry || statusRef.current !== 'connected') {
       setPluginDecorationRules(Object.freeze([]));
       return;
@@ -203,11 +208,19 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
         payload: { reason },
         deadlineMs: 1_500,
       });
-      if (response.stale) return;
+      if (
+        response.stale
+        || refreshGeneration !== pluginDecorationRefreshGenerationRef.current
+        || statusRef.current !== 'connected'
+      ) return;
       setPluginDecorationRules(mergePluginDecorationRules(response.results.map((result) => result.status === 'ok'
         ? normalizePluginDecorationResult(result.providerId, result.result)
         : Object.freeze([]))));
     } catch {
+      if (
+        refreshGeneration !== pluginDecorationRefreshGenerationRef.current
+        || statusRef.current !== 'connected'
+      ) return;
       setPluginDecorationRules(Object.freeze([]));
     }
   }, [host.id, host.protocol, pluginTerminalRegistry, sessionId]);

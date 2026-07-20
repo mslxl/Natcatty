@@ -49,3 +49,26 @@ test('cwd-triggered plugin decoration refresh reads the live connection status',
     /void refreshPluginDecorationRules\('session-state'\);\s*\n\s*}, \[refreshPluginDecorationRules, status\]\);/,
   );
 });
+
+test('plugin decoration responses cannot apply after connection state invalidates the request', () => {
+  assert.match(
+    effectsSource,
+    /const pluginDecorationRefreshGenerationRef = useRef\(0\);/,
+  );
+  assert.match(
+    effectsSource,
+    /const refreshGeneration = \+\+pluginDecorationRefreshGenerationRef\.current;/,
+  );
+  assert.match(
+    effectsSource,
+    /useEffect\(\(\) => \(\) => \{\s*pluginDecorationRefreshGenerationRef\.current \+= 1;\s*}, \[\]\);/,
+  );
+  assert.match(
+    effectsSource,
+    /response\.stale\s*\|\|\s*refreshGeneration !== pluginDecorationRefreshGenerationRef\.current\s*\|\|\s*statusRef\.current !== 'connected'/,
+  );
+  assert.match(
+    effectsSource,
+    /catch \{\s*if \(\s*refreshGeneration !== pluginDecorationRefreshGenerationRef\.current\s*\|\|\s*statusRef\.current !== 'connected'/,
+  );
+});

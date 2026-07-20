@@ -87,6 +87,7 @@ import {
 } from "./terminalInterruptDiagnostics";
 import { clearTerminalInputStateForInterrupt } from "./terminalInterruptInputState";
 import { getFlowControllerForTerm } from "./terminalSessionAttachment";
+import { createTerminalResizeScheduler } from "./terminalResizeScheduler";
 import {
   prioritizeTerminalInput,
   shouldArmTerminalInterruptDisplayGateForProtocol,
@@ -1461,20 +1462,21 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     ctx.onBell?.();
   });
 
-  let resizeTimeout: NodeJS.Timeout | null = null;
   const resizeDebounceMs = XTERM_PERFORMANCE_CONFIG.resize.debounceMs;
+  const resizeScheduler = createTerminalResizeScheduler(
+    resizeDebounceMs,
+    ({ sessionId, cols, rows }) => {
+      ctx.terminalBackend.resizeSession(sessionId, cols, rows);
+      ctx.onResize?.(cols, rows);
+    },
+  );
   term.onResize(({ cols, rows }) => {
     // A reflow can leave stale glyphs in the WebGL atlas; clear it so the new
     // dimensions re-rasterize cleanly (issue #1049).
     clearWebglTextureAtlas();
     const id = ctx.sessionRef.current;
     if (!id) return;
-    if (resizeTimeout) clearTimeout(resizeTimeout);
-    resizeTimeout = setTimeout(() => {
-      ctx.terminalBackend.resizeSession(id, cols, rows);
-      ctx.onResize?.(cols, rows);
-      resizeTimeout = null;
-    }, resizeDebounceMs);
+    resizeScheduler.schedule({ sessionId: id, cols, rows });
   });
 
   const keywordHighlighter = new KeywordHighlighter(term);
@@ -1491,6 +1493,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     suspendWebglRenderer,
     dispose: () => {
       runtimeDisposed = true;
+      resizeScheduler.dispose();
       webglController.dispose();
       term.element?.removeEventListener("copy", handleNativeCopy, true);
       ctx.container.removeEventListener(
