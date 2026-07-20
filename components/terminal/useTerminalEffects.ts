@@ -6,7 +6,10 @@ import {
 } from '../../application/state/pluginTerminalProviderRegistry';
 import { publishPluginTerminalRuntimeLifecycleEvent } from '../../application/state/pluginTerminalRuntimeLifecycle';
 import { markTerminalCommandCompletionPending } from './runtime/promptLineBreak';
-import { ORDINARY_TERMINAL_PROVIDER_KINDS } from './pluginTerminalLinkProvider';
+import {
+  ORDINARY_TERMINAL_PROVIDER_KINDS,
+  waitForPluginTerminalProviderResponse,
+} from './pluginTerminalLinkProvider';
 import { mergePluginDecorationRules, normalizePluginDecorationResult } from '../../domain/pluginTerminalProviders';
 import { resolveFontWeightBold } from '../../lib/fontWeightAvailability';
 import { bundledFamiliesInStack } from '../../lib/fontAvailability';
@@ -62,8 +65,10 @@ import {
   shouldRunConnectionTimeout,
 } from './connectionTimeouts';
 import { resolveHostSshConnectionTimeouts } from '../../domain/sshConnectionTimeouts';
+import { resolveEffectiveTerminalProtocol } from '../../domain/terminalProtocol';
 
 type TerminalEffectsContext = Record<string, any>;
+const PLUGIN_DECORATION_RESPONSE_TIMEOUT_MS = 1_800;
 
 type SelectionOverlayPosition = {
   left: number;
@@ -175,7 +180,11 @@ export function resolveSelectionOverlayPosition(term: any, container: HTMLElemen
 
 export function useTerminalEffects(ctx: TerminalEffectsContext) {
   const { CONNECTION_TIMEOUT, Error, XTERM_PERFORMANCE_CONFIG, applyUserCursorPreference, auth, autocompleteCloseRef, autocompleteInputRef, autocompleteKeyEventRef, captureTerminalLogData, chainHosts, chainProgress, clearTerminalCwd, commandBufferRef, connectionLogBufferRef, containerRef, createPromptLineBreakState, createReplaySafeTerminalLogSanitizer, createXTermRuntime, deferTerminalResizeRef, disableTerminalFontZoomRef, effectiveFontSize, effectiveFontWeight, effectiveTheme, error, executeSnippetCommand, finalizeTerminalLogData, fitAddonRef, fontFamilyId, fontSize, fontWeightFixupDoneRef, forceCloseHibernatedSession, forceSyncRenderAfterResize, handleOsc52ReadRequest, handleTerminalDataCaptureOnce, hasConnectedRef, hasRuntimeRef, host, hotkeySchemeRef, hibernatedRef, identities, inWorkspace, isBootActiveRef, isBroadcastEnabledRef, isComposeBarOpen, isConnectionAwaitingUserInput, isConnectionPastTcpDial, isFocusMode, isFocused, isLocalConnection, isNetworkDevice, isResizing, isRestoringSelectionRef, isSearchOpen, isSerialConnection, isVisible, isVisibleRef, keyBindingsRef, keys, knownCwdRef, lastFittedSizeRef, lastToastedErrorRef, logger, mouseTrackingRef, needsHostKeyVerification, onBroadcastInputRef, onBroadcastInterruptPriorityChange, onCommandExecuted, onCommandSubmitted, onHotkeyActionRef, onOutputTriggerUserInputRef, onPluginRuntimeCwdChange, onSnippetExecutorChange, onTerminalCwdChange, onTerminalTitleChange, onTerminalBell, onTerminalFontSizeChange, paneLayoutKey, passwordPromptActiveRef, pendingAuthRef, pendingOutputScrollRef, pluginDecorationRefreshRef, pluginTerminalLifecycle, prepareRestoredReconnect, prevIsResizingRef, promptLineBreakStateRef, resizeSession, resolveHostAuth, resolvedFontFamily, safeFit, scriptRecorderRef, searchAddonRef, serialConfig, serialLineBufferRef, serializeAddonRef, sessionId, sessionRef, sessionStarters, setError, setHasMouseTracking, setHasSelection, setIsCancelling, setIsDisconnectedDialogDismissed, requestSearchFocus, setNeedsHostKeyVerification, setPendingHostKeyInfo, setPendingHostKeyRequestId, setProgressLogs, setProgressValue, setSelectionOverlayPosition, setShowLogs, setStatus, setTimeLeft, shellType, shouldEnableNativeUserInputAutoScroll, shouldProbeSessionCwd, shouldStartTerminalBackend, onSnippetShortkeyRef, snippetsRef, splitResizeActive, status, statusRef, sudoAutofillRef, t, teardown, telnetLocalEchoRef, termRef, terminalAltKeyOptions, terminalBackend, terminalContextActionsRef, terminalCwdTracker, terminalDataCapturedRef, terminalLogSanitizerRef, terminalSettings, terminalSettingsRef, toHostKeyInfo, toast, updateStatus, useEffect, useLayoutEffect, workspaceId, xtermRuntimeRef, zmodem, zmodemToastedRef, restoreState } = ctx;
-  const hibernateHiddenTabs = resolveTerminalHibernateEnabledForProtocol(terminalSettings, host.protocol);
+  const effectiveTerminalProtocol = resolveEffectiveTerminalProtocol(host);
+  const hibernateHiddenTabs = resolveTerminalHibernateEnabledForProtocol(
+    terminalSettings,
+    effectiveTerminalProtocol,
+  );
   const pluginTerminalRegistry = getWindowPluginTerminalProviderRegistry();
   const pluginTerminalProviderAvailabilityRef = useRef(new PluginTerminalProviderAvailability());
   const refreshPluginTerminalProviderAvailability = useCallback(() => (
@@ -194,6 +203,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     payload: Readonly<Record<string, unknown>>,
     deadlineMs: number,
     supersessionKey?: string,
+    signal?: AbortSignal,
   ) => {
     if (!pluginTerminalRegistry) {
       return Object.freeze({ stale: false, results: Object.freeze([]) });
@@ -206,7 +216,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
         sessionId,
         ...(host.id ? { hostId: host.id } : {}),
         ...(workspaceId ? { workspaceId } : {}),
-        protocol: host.protocol ?? 'ssh',
+        protocol: effectiveTerminalProtocol,
         status: statusRef.current,
         ...(knownCwdRef.current ? { cwd: knownCwdRef.current } : {}),
         ...(shellType ? { shellType } : {}),
@@ -216,14 +226,17 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       payload,
       deadlineMs,
       supersessionKey,
-    });
-  }, [host.id, host.protocol, knownCwdRef, pluginTerminalRegistry, sessionId, shellType, statusRef, termRef, workspaceId]);
+    }, { signal });
+  }, [effectiveTerminalProtocol, host.id, knownCwdRef, pluginTerminalRegistry, sessionId, shellType, statusRef, termRef, workspaceId]);
   const [pluginDecorationRules, setPluginDecorationRules] = useState<
     ReturnType<typeof normalizePluginDecorationResult>
   >(Object.freeze([]));
   const pluginDecorationRefreshGenerationRef = useRef(0);
+  const pluginDecorationAbortRef = useRef<AbortController | null>(null);
   useEffect(() => () => {
     pluginDecorationRefreshGenerationRef.current += 1;
+    pluginDecorationAbortRef.current?.abort();
+    pluginDecorationAbortRef.current = null;
   }, []);
   ctx.pluginDecorationRulesRef.current = pluginDecorationRules;
   const pluginAwareOnCommandSubmitted = (...args: Parameters<NonNullable<typeof onCommandSubmitted>>) => {
@@ -238,27 +251,35 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
   };
   const refreshPluginDecorationRules = useCallback(async (reason: string) => {
     const refreshGeneration = ++pluginDecorationRefreshGenerationRef.current;
+    pluginDecorationAbortRef.current?.abort();
+    pluginDecorationAbortRef.current = null;
     if (!pluginTerminalRegistry || statusRef.current !== 'connected'
       || !isPluginTerminalProviderAvailable('terminal.decoration')) {
       setPluginDecorationRules(Object.freeze([]));
       return;
     }
-    const protocol: NetcattyTerminalSessionSnapshot['protocol'] = host.protocol ?? 'ssh';
+    const protocol: NetcattyTerminalSessionSnapshot['protocol'] = effectiveTerminalProtocol;
+    const controller = new AbortController();
+    pluginDecorationAbortRef.current = controller;
     try {
-      const response = await pluginTerminalRegistry.request({
-        kind: 'terminal.decoration',
-        operation: 'provideDecorations',
-        session: {
-          sessionId,
-          ...(host.id ? { hostId: host.id } : {}),
-          ...(workspaceId ? { workspaceId } : {}),
-          protocol,
-          status: statusRef.current,
-          ...(knownCwdRef.current ? { cwd: knownCwdRef.current } : {}),
-        },
-        payload: { reason },
-        deadlineMs: 1_500,
-      });
+      const response = await waitForPluginTerminalProviderResponse(
+        pluginTerminalRegistry.request({
+          kind: 'terminal.decoration',
+          operation: 'provideDecorations',
+          session: {
+            sessionId,
+            ...(host.id ? { hostId: host.id } : {}),
+            ...(workspaceId ? { workspaceId } : {}),
+            protocol,
+            status: statusRef.current,
+            ...(knownCwdRef.current ? { cwd: knownCwdRef.current } : {}),
+          },
+          payload: { reason },
+          deadlineMs: 1_500,
+        }, { signal: controller.signal }),
+        PLUGIN_DECORATION_RESPONSE_TIMEOUT_MS,
+        () => controller.abort(),
+      );
       if (
         response.stale
         || refreshGeneration !== pluginDecorationRefreshGenerationRef.current
@@ -273,8 +294,12 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
         || statusRef.current !== 'connected'
       ) return;
       setPluginDecorationRules(Object.freeze([]));
+    } finally {
+      if (pluginDecorationAbortRef.current === controller) {
+        pluginDecorationAbortRef.current = null;
+      }
     }
-  }, [host.id, host.protocol, isPluginTerminalProviderAvailable, pluginTerminalRegistry, sessionId, workspaceId]);
+  }, [effectiveTerminalProtocol, host.id, isPluginTerminalProviderAvailable, pluginTerminalRegistry, sessionId, workspaceId]);
   const requestPluginDecorationRefresh = useCallback((reason: string) => {
     void refreshPluginDecorationRules(reason);
   }, [refreshPluginDecorationRules]);

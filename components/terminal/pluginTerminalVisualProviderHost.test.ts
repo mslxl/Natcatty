@@ -282,6 +282,7 @@ test('visual Provider host never labels the last output line as a shell prompt',
 });
 
 test('visual Provider host bounds activation and permission waits end to end', async () => {
+  const signals: AbortSignal[] = [];
   const term = {
     element: null,
     buffer: {
@@ -299,13 +300,18 @@ test('visual Provider host bounds activation and permission waits end to end', a
   const host = new PluginTerminalVisualProviderHost({
     term: term as never,
     providerResponseTimeoutMs: 5,
-    async request() { return new Promise(() => {}); },
+    async request(_kind, _operation, _payload, _deadlineMs, _supersessionKey, signal) {
+      if (signal) signals.push(signal);
+      return new Promise(() => {});
+    },
   });
   const result = await Promise.race([
     host.commandSubmitted('deploy').then(() => 'completed'),
     new Promise<'timed-out'>((resolve) => setTimeout(() => resolve('timed-out'), 100)),
   ]);
   assert.equal(result, 'completed');
+  assert.equal(signals.length, 2);
+  assert.equal(signals.every((signal) => signal.aborted), true);
   host.dispose();
 });
 

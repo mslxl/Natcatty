@@ -10,6 +10,7 @@ import {
 } from '../../domain/pluginTerminalProviders';
 import {
   waitForPluginTerminalProviderResponse,
+  type PluginTerminalProviderCallResponse,
   type RequestPluginTerminalProviders,
 } from './pluginTerminalLinkProvider';
 import {
@@ -198,6 +199,27 @@ export class PluginTerminalVisualProviderHost implements IDisposable {
     }
   }
 
+  #requestWithTimeout(
+    kind: NetcattyTerminalProviderKind,
+    operation: string,
+    payload: Readonly<Record<string, unknown>>,
+    supersessionKey?: string,
+  ): Promise<PluginTerminalProviderCallResponse> {
+    const controller = new AbortController();
+    return waitForPluginTerminalProviderResponse(
+      this.#request(
+        kind,
+        operation,
+        payload,
+        PROVIDER_DEADLINE_MS,
+        supersessionKey,
+        controller.signal,
+      ),
+      this.#providerResponseTimeoutMs,
+      () => controller.abort(),
+    );
+  }
+
   async commandSubmitted(command: string): Promise<void> {
     if (this.#disposed || !this.#active || !this.#isProviderAvailable('terminal.semantic')
       || command.length < 1 || command.length > 4_096) return;
@@ -210,14 +232,10 @@ export class PluginTerminalVisualProviderHost implements IDisposable {
     };
     this.#pendingSemantics.push(pending);
     try {
-      const response = await waitForPluginTerminalProviderResponse(
-        this.#request(
+      const response = await this.#requestWithTimeout(
           'terminal.semantic',
           'provideSemantics',
           { command },
-          PROVIDER_DEADLINE_MS,
-        ),
-        this.#providerResponseTimeoutMs,
       );
       if (this.#disposed || !this.#active || response.stale
         || providerGeneration !== this.#providerAvailabilityGeneration) return;
@@ -254,17 +272,13 @@ export class PluginTerminalVisualProviderHost implements IDisposable {
     }
     const prompt = currentPromptLine(this.#term);
     try {
-      const response = await waitForPluginTerminalProviderResponse(
-        this.#request(
+      const response = await this.#requestWithTimeout(
           'terminal.prompt',
           'provideAnnotations',
           {
             reason: 'commandCompleted',
             ...(prompt ? { promptLine: prompt.line, bufferLineNumber: prompt.bufferLineNumber } : {}),
           },
-          PROVIDER_DEADLINE_MS,
-        ),
-        this.#providerResponseTimeoutMs,
       );
       if (this.#disposed || !this.#active || response.stale || generation !== this.#annotationGeneration) return;
       const promptAnnotations = response.results.flatMap((result) => result.status === 'ok'
@@ -289,14 +303,10 @@ export class PluginTerminalVisualProviderHost implements IDisposable {
     }
     const generation = ++this.#backgroundGeneration;
     try {
-      const response = await waitForPluginTerminalProviderResponse(
-        this.#request(
+      const response = await this.#requestWithTimeout(
           'terminal.background',
           'provideBackgrounds',
           { reason, ...(terminalBackground ? { terminalBackground } : {}) },
-          PROVIDER_DEADLINE_MS,
-        ),
-        this.#providerResponseTimeoutMs,
       );
       if (this.#disposed || !this.#active || response.stale || generation !== this.#backgroundGeneration) return;
       const layers = response.results.flatMap((result) => result.status === 'ok'
@@ -342,14 +352,10 @@ export class PluginTerminalVisualProviderHost implements IDisposable {
     const matcherLines = new Map(lines.map((line) => [line.lineId, line]));
     const generation = ++this.#matcherGeneration;
     try {
-      const response = await waitForPluginTerminalProviderResponse(
-        this.#request(
+      const response = await this.#requestWithTimeout(
           'terminal.matcher',
           'provideMatches',
           { lines: lines.map(({ lineId, line, bufferLineNumber }) => ({ lineId, line, bufferLineNumber })) },
-          PROVIDER_DEADLINE_MS,
-        ),
-        this.#providerResponseTimeoutMs,
       );
       if (this.#disposed || response.stale || generation !== this.#matcherGeneration) return;
       if (this.#term.buffer.active.type === 'alternate') {

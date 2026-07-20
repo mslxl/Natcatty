@@ -6,6 +6,7 @@ import { applyTerminalKeywordHighlightRules } from './terminalKeywordHighlightRu
 
 const effectsSource = readFileSync(new URL('./useTerminalEffects.ts', import.meta.url), 'utf8');
 const terminalSource = readFileSync(new URL('../Terminal.tsx', import.meta.url), 'utf8');
+const xtermRuntimeSource = readFileSync(new URL('./runtime/createXTermRuntime.ts', import.meta.url), 'utf8');
 
 test('hibernate runtime keyword setup restores plugin decoration rules', () => {
   let applied: { rules: unknown[]; enabled: boolean } | undefined;
@@ -81,7 +82,11 @@ test('plugin decoration responses cannot apply after connection state invalidate
   );
   assert.match(
     effectsSource,
-    /useEffect\(\(\) => \(\) => \{\s*pluginDecorationRefreshGenerationRef\.current \+= 1;\s*}, \[\]\);/,
+    /useEffect\(\(\) => \(\) => \{\s*pluginDecorationRefreshGenerationRef\.current \+= 1;\s*pluginDecorationAbortRef\.current\?\.abort\(\);\s*pluginDecorationAbortRef\.current = null;\s*}, \[\]\);/,
+  );
+  assert.match(
+    effectsSource,
+    /pluginTerminalRegistry\.request\([\s\S]*?\{ signal: controller\.signal \}\),\s*PLUGIN_DECORATION_RESPONSE_TIMEOUT_MS,\s*\(\) => controller\.abort\(\)/,
   );
   assert.match(
     effectsSource,
@@ -91,6 +96,29 @@ test('plugin decoration responses cannot apply after connection state invalidate
     effectsSource,
     /catch \{\s*if \(\s*refreshGeneration !== pluginDecorationRefreshGenerationRef\.current\s*\|\|\s*statusRef\.current !== 'connected'/,
   );
+});
+
+test('terminal Provider snapshots use the selected ET or Mosh transport throughout renderer paths', () => {
+  assert.match(terminalSource, /protocol: effectiveTerminalProtocol,/);
+  assert.match(effectsSource, /protocol: effectiveTerminalProtocol,/);
+  assert.match(terminalSource, /protocol: effectiveTerminalProtocol,\s*terminalSettings,/);
+  assert.match(terminalSource, /protocol: effectiveTerminalProtocol,\s*status,/);
+});
+
+test('password-prompt input is consumed before every semantic command callback', () => {
+  assert.match(
+    xtermRuntimeSource,
+    /const sensitive = ctx\.passwordPromptActiveRef\?\.current === true;[\s\S]*?recordTerminalCommandExecution\([\s\S]*?\{ sensitive \},\s*\);/,
+  );
+  assert.match(
+    terminalSource,
+    /const sensitive = passwordPromptActiveRef\.current;[\s\S]*?recordTerminalCommandExecution\([\s\S]*?\{ sensitive \}\);/,
+  );
+});
+
+test('backend exits are forwarded to the Provider lifecycle with their exit code', () => {
+  assert.match(terminalSource, /pluginTerminalSessionExitRef\.current\(evt\.exitCode\);/);
+  assert.match(terminalSource, /pluginTerminalLifecycle\.onSessionExited\(evt\.exitCode\);/);
 });
 
 test('normal boot and hibernate wake share the refresh-capable runtime cwd handler', () => {

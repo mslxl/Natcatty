@@ -32,10 +32,14 @@ function emptyPluginCompletionResponse(): PluginCompletionResponse {
 async function waitForPluginCompletionResponse(
   response: Promise<PluginCompletionResponse>,
   timeoutMs: number,
+  onTimeout?: () => void,
 ): Promise<PluginCompletionResponse> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<PluginCompletionResponse>((resolve) => {
-    timer = setTimeout(() => resolve(emptyPluginCompletionResponse()), timeoutMs);
+    timer = setTimeout(() => {
+      onTimeout?.();
+      resolve(emptyPluginCompletionResponse());
+    }, timeoutMs);
   });
   try {
     return await Promise.race([response, timeout]);
@@ -58,6 +62,7 @@ export async function provideTerminalCompletions(
     cwdSource: request.cwdSource,
     snippets: request.snippets,
   });
+  const pluginRequestController = new AbortController();
   const pluginPromise = registry?.request({
     kind: 'terminal.completion',
     operation: 'provideCompletions',
@@ -70,14 +75,18 @@ export async function provideTerminalCompletions(
       maximum: request.maximum,
     },
     deadlineMs: 750,
-  }).catch(() => emptyPluginCompletionResponse())
+  }, { signal: pluginRequestController.signal }).catch(() => emptyPluginCompletionResponse())
     ?? Promise.resolve(emptyPluginCompletionResponse());
   const pluginResponseTimeoutMs = Number.isFinite(request.pluginResponseTimeoutMs)
     ? Math.max(1, Math.min(5_000, Math.trunc(request.pluginResponseTimeoutMs ?? 0)))
     : DEFAULT_PLUGIN_COMPLETION_RESPONSE_TIMEOUT_MS;
   const [builtIn, pluginResponse] = await Promise.all([
     builtInPromise,
-    waitForPluginCompletionResponse(pluginPromise, pluginResponseTimeoutMs),
+    waitForPluginCompletionResponse(
+      pluginPromise,
+      pluginResponseTimeoutMs,
+      () => pluginRequestController.abort(),
+    ),
   ]);
   if (pluginResponse.stale) return builtIn;
   const pluginGroups = pluginResponse.results.map((result) => result.status === 'ok'

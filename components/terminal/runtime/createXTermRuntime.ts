@@ -810,19 +810,23 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       hasBroadcastInputHandler: !!onBroadcastInput,
     });
     if (ctx.statusRef.current === "connected" && submittedInput) {
+      const sensitive = ctx.passwordPromptActiveRef?.current === true;
       if (submittedInput.text) {
         ctx.commandBufferRef.current += submittedInput.text;
         ctx.scriptRecorderRef?.current?.recordInput(submittedInput.text);
       }
       if (ctx.scriptRecorderRef?.current?.isRecording) {
         void ctx.scriptRecorderRef.current.recordEnter({
-          sensitive: ctx.passwordPromptActiveRef?.current,
+          sensitive,
         });
-        if (ctx.passwordPromptActiveRef) {
-          ctx.passwordPromptActiveRef.current = false;
-        }
       }
-      const recordedCommand = recordTerminalCommandExecution(ctx.commandBufferRef.current, ctx, term);
+      if (ctx.passwordPromptActiveRef) ctx.passwordPromptActiveRef.current = false;
+      const recordedCommand = recordTerminalCommandExecution(
+        ctx.commandBufferRef.current,
+        ctx,
+        term,
+        { sensitive },
+      );
       handledSubmittedInput = true;
       if (!willBroadcastInput) {
         prepareSudoAutofillInput(
@@ -838,10 +842,13 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     ) {
       const pastedCommand = getSinglePastedCommand(data);
       if (pastedCommand) {
+        const sensitive = ctx.passwordPromptActiveRef?.current === true;
+        if (ctx.passwordPromptActiveRef) ctx.passwordPromptActiveRef.current = false;
         const recordedCommand = recordTerminalCommandExecution(
           `${ctx.commandBufferRef.current}${pastedCommand.command}`,
           ctx,
           term,
+          { sensitive },
         );
         handledSubmittedInput = true;
         if (recordedCommand) {

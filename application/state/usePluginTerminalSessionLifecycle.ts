@@ -24,12 +24,14 @@ type PluginTerminalStatusTransition = Readonly<{
   snapshotState: PluginTerminalSnapshotState;
   everConnected: boolean;
   eventType?: 'connected' | 'reconnected' | 'disconnected';
+  eventDetails?: Readonly<{ exitCode: number }>;
 }>;
 
 export function transitionPluginTerminalConnectionState(
   snapshotState: PluginTerminalSnapshotState,
   status: PluginTerminalSessionLifecycleOptions['status'],
   everConnected: boolean,
+  exitCode?: number,
 ): PluginTerminalStatusTransition {
   const shouldClearConnectionFields = status === 'disconnected' || everConnected;
   const nextSnapshotState: PluginTerminalSnapshotState = shouldClearConnectionFields
@@ -50,6 +52,7 @@ export function transitionPluginTerminalConnectionState(
       snapshotState: nextSnapshotState,
       everConnected,
       eventType: 'disconnected',
+      ...(exitCode === undefined ? {} : { eventDetails: Object.freeze({ exitCode }) }),
     });
   }
   return Object.freeze({
@@ -78,6 +81,7 @@ export function usePluginTerminalSessionLifecycle(options: PluginTerminalSession
   metadataRef.current = options;
   const snapshotStateRef = useRef<PluginTerminalSnapshotState>({ cwd: options.initialCwd });
   const everConnectedRef = useRef(false);
+  const exitDisconnectPublishedRef = useRef(false);
 
   const snapshot = useCallback((): NetcattyTerminalSessionSnapshot => {
     const metadata = metadataRef.current;
@@ -98,9 +102,17 @@ export function usePluginTerminalSessionLifecycle(options: PluginTerminalSession
     };
   }, []);
 
-  const publish = useCallback((type: NetcattyTerminalSessionEvent['type'], details: { exitCode?: number } = {}) => {
+  const publish = useCallback((
+    type: NetcattyTerminalSessionEvent['type'],
+    details: { exitCode?: number } = {},
+    sessionOverrides: Partial<NetcattyTerminalSessionSnapshot> = {},
+  ) => {
     if (!registry) return;
-    void registry.publishSessionEvent({ type, session: snapshot(), ...details }).catch(() => {});
+    void registry.publishSessionEvent({
+      type,
+      session: { ...snapshot(), ...sessionOverrides },
+      ...details,
+    }).catch(() => {});
   }, [registry, snapshot]);
 
   useEffect(() => {
@@ -119,8 +131,26 @@ export function usePluginTerminalSessionLifecycle(options: PluginTerminalSession
     );
     snapshotStateRef.current = transition.snapshotState;
     everConnectedRef.current = transition.everConnected;
+    if (transition.eventType === 'disconnected' && exitDisconnectPublishedRef.current) {
+      exitDisconnectPublishedRef.current = false;
+      return;
+    }
+    if (options.status !== 'disconnected') exitDisconnectPublishedRef.current = false;
     if (transition.eventType) publish(transition.eventType);
   }, [options.status, publish]);
+
+  const onSessionExited = useCallback((exitCode?: number) => {
+    const transition = transitionPluginTerminalConnectionState(
+      snapshotStateRef.current,
+      'disconnected',
+      everConnectedRef.current,
+      exitCode,
+    );
+    snapshotStateRef.current = transition.snapshotState;
+    everConnectedRef.current = transition.everConnected;
+    exitDisconnectPublishedRef.current = true;
+    publish('disconnected', transition.eventDetails, { status: 'disconnected' });
+  }, [publish]);
 
   const onCwdChanged = useCallback((cwd: string | null) => {
     snapshotStateRef.current.cwd = cwd || undefined;
@@ -158,6 +188,7 @@ export function usePluginTerminalSessionLifecycle(options: PluginTerminalSession
     onCommandSubmitted,
     onCwdChanged,
     onResized,
+    onSessionExited,
     onTitleChanged,
-  }), [onAlternateScreenChanged, onCommandCompleted, onCommandSubmitted, onCwdChanged, onResized, onTitleChanged]);
+  }), [onAlternateScreenChanged, onCommandCompleted, onCommandSubmitted, onCwdChanged, onResized, onSessionExited, onTitleChanged]);
 }

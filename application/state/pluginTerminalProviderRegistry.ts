@@ -12,6 +12,10 @@ export interface PluginTerminalProviderResponse {
   readonly results: ReadonlyArray<NetcattyTerminalProviderResult>;
 }
 
+export interface PluginTerminalProviderRequestOptions {
+  readonly signal?: AbortSignal;
+}
+
 function freezeValue<T>(value: T): Readonly<T> {
   const clone = structuredClone(value);
   const freeze = (item: unknown): void => {
@@ -114,8 +118,11 @@ export class PluginTerminalProviderRegistry {
 
   async request(
     request: Omit<NetcattyTerminalProviderRequest, 'requestId'> & { supersessionKey?: string },
+    options: PluginTerminalProviderRequestOptions = {},
   ): Promise<PluginTerminalProviderResponse> {
-    if (this.#disposed) return Object.freeze({ requestId: '', stale: true, results: Object.freeze([]) });
+    if (this.#disposed || options.signal?.aborted) {
+      return Object.freeze({ requestId: '', stale: true, results: Object.freeze([]) });
+    }
     const { supersessionKey: rawSupersessionKey, ...providerRequest } = request;
     const supersessionKey = typeof rawSupersessionKey === 'string'
       && rawSupersessionKey.length > 0
@@ -130,12 +137,57 @@ export class PluginTerminalProviderRegistry {
     if (previousRequestId) void this.#bridge.cancelPluginTerminalRequest(previousRequestId).catch(() => false);
     const requestId = createRequestId();
     this.#activeRequests.set(key, requestId);
+    let bridgeRequestStarted = false;
+    let aborted = false;
+    let resolveAborted: (() => void) | undefined;
+    const abortedRequest = new Promise<{
+      readonly status: 'aborted';
+    }>((resolve) => {
+      resolveAborted = () => resolve({ status: 'aborted' });
+    });
+    const onAbort = () => {
+      if (aborted) return;
+      aborted = true;
+      if (this.#activeRequests.get(key) === requestId) this.#activeRequests.delete(key);
+      if (bridgeRequestStarted) {
+        void this.#bridge.cancelPluginTerminalRequest(requestId).catch(() => false);
+      }
+      resolveAborted?.();
+    };
+    options.signal?.addEventListener('abort', onAbort, { once: true });
     try {
-      const results = freezeValue(await this.#bridge.providePluginTerminal({
-        ...providerRequest,
-        session,
-        requestId,
-      }));
+      if (options.signal?.aborted) onAbort();
+      if (aborted) {
+        return Object.freeze({ requestId, stale: true, results: Object.freeze([]) });
+      }
+      bridgeRequestStarted = true;
+      let bridgeResponse: Promise<ReadonlyArray<NetcattyTerminalProviderResult>>;
+      try {
+        bridgeResponse = this.#bridge.providePluginTerminal({
+          ...providerRequest,
+          session,
+          requestId,
+        });
+      } catch (error) {
+        bridgeResponse = Promise.reject(error);
+      }
+      const bridgeRequest = bridgeResponse
+        .then(
+          (results) => ({ status: 'fulfilled' as const, results }),
+          (error: unknown) => ({ status: 'rejected' as const, error }),
+        );
+      const outcome = options.signal
+        ? await Promise.race([bridgeRequest, abortedRequest])
+        : await bridgeRequest;
+      if (outcome.status === 'aborted') {
+        return Object.freeze({ requestId, stale: true, results: Object.freeze([]) });
+      }
+      if (outcome.status === 'rejected') {
+        const stale = this.#disposed || this.#activeRequests.get(key) !== requestId;
+        if (stale) return Object.freeze({ requestId, stale: true, results: Object.freeze([]) });
+        throw outcome.error;
+      }
+      const results = freezeValue(outcome.results);
       const stale = this.#disposed || this.#activeRequests.get(key) !== requestId;
       return Object.freeze({
         requestId,
@@ -147,6 +199,7 @@ export class PluginTerminalProviderRegistry {
       if (stale) return Object.freeze({ requestId, stale: true, results: Object.freeze([]) });
       throw error;
     } finally {
+      options.signal?.removeEventListener('abort', onAbort);
       if (this.#activeRequests.get(key) === requestId) this.#activeRequests.delete(key);
     }
   }

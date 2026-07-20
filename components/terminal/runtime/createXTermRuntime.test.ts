@@ -125,6 +125,33 @@ test("command execution arms prompt line break even without command history call
   assert.equal(promptState.pendingCommand, true);
 });
 
+test("sensitive terminal input never reaches command or semantic callbacks", () => {
+  const promptState = createPromptLineBreakState();
+  const commandBufferRef = { current: "correct horse battery staple" };
+  const submitted: string[] = [];
+  const executed: string[] = [];
+
+  const recordedCommand = recordTerminalCommandExecution(
+    commandBufferRef.current,
+    {
+      host: { id: "host-1", label: "Host" },
+      sessionId: "session-1",
+      commandBufferRef,
+      promptLineBreakStateRef: { current: promptState },
+      onCommandSubmitted: (command) => submitted.push(command),
+      onCommandExecuted: (command) => executed.push(command),
+    },
+    createFakeTerm("Password: correct horse battery staple") as never,
+    { sensitive: true },
+  );
+
+  assert.equal(recordedCommand, null);
+  assert.equal(commandBufferRef.current, "");
+  assert.deepEqual(submitted, []);
+  assert.deepEqual(executed, []);
+  assert.equal(promptState.pendingCommand, false);
+});
+
 test("resolveSubmittedShellCommand recovers ↑ history when keystroke buffer is empty (#2191)", () => {
   // Shell history redraws the line remotely; commandBuffer never sees "su -".
   assert.equal(

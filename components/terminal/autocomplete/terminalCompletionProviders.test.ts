@@ -69,8 +69,12 @@ test('terminal completion adapter preserves built-in results when the plugin bri
 });
 
 test('terminal completion adapter bounds plugin activation and authorization before returning built-ins', async () => {
+  let signal: AbortSignal | undefined;
   const registry = {
-    async request() { return new Promise(() => {}); },
+    async request(_request: unknown, options?: { signal?: AbortSignal }) {
+      signal = options?.signal;
+      return new Promise(() => {});
+    },
   } as unknown as PluginTerminalProviderRegistry;
   const result = await Promise.race([
     provideTerminalCompletions(registry, {
@@ -84,6 +88,7 @@ test('terminal completion adapter bounds plugin activation and authorization bef
   ]);
   assert.notEqual(result, 'timed-out');
   assert.ok(Array.isArray(result));
+  assert.equal(signal?.aborted, true);
 });
 
 test('terminal completion adapter preserves built-in snippet metadata on duplicate plugin text', async () => {

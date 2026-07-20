@@ -45,6 +45,7 @@ import { classifyDistroId, shouldProbeSessionCwd } from "../domain/host";
 import { resolveHostSshConnectionTimeouts } from "../domain/sshConnectionTimeouts";
 import { supportsZmodemTerminalDragDrop } from "../lib/zmodemDragDrop";
 import { resolveHostAuth, resolveHostAutofillPassword } from "../domain/sshAuth";
+import { resolveEffectiveTerminalProtocol } from "../domain/terminalProtocol";
 import { listPasswordPromptFillCandidates } from "../domain/passwordPromptAssist";
 import { useTerminalBackend } from "../application/state/useTerminalBackend";
 import {
@@ -426,6 +427,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const mouseTrackingRef = useRef(false);
   const serialLineBufferRef = useRef<string>("");
   const telnetLocalEchoRef = useRef(false);
+  const pluginTerminalSessionExitRef = useRef<(exitCode?: number) => void>(() => {});
 
   useEffect(() => () => {
     reconnectWakeTokenRef.current = null;
@@ -441,7 +443,11 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   onTerminalDataCaptureRef.current = onTerminalDataCapture;
   const isVisibleRef = useRef(isVisible);
   isVisibleRef.current = isVisible;
-  const hibernateEnabled = resolveTerminalHibernateEnabledForProtocol(terminalSettings, host.protocol);
+  const effectiveTerminalProtocol = resolveEffectiveTerminalProtocol(host);
+  const hibernateEnabled = resolveTerminalHibernateEnabledForProtocol(
+    terminalSettings,
+    effectiveTerminalProtocol,
+  );
   const hibernateEnabledRef = useRef(hibernateEnabled);
   hibernateEnabledRef.current = hibernateEnabled;
   const isRendererActive = isVisible || !hibernateEnabled;
@@ -811,12 +817,13 @@ const TerminalComponent: React.FC<TerminalProps> = ({
           break;
         } else if (ch === "\r" || ch === "\n") {
           const rawCommand = commandBufferRef.current;
+          const sensitive = passwordPromptActiveRef.current;
           if (recorderRef.current.isRecording) {
             void recorderRef.current.recordEnter({
-              sensitive: passwordPromptActiveRef.current,
+              sensitive,
             });
-            passwordPromptActiveRef.current = false;
           }
+          passwordPromptActiveRef.current = false;
           recordTerminalCommandExecution(rawCommand, {
             host,
             sessionId,
@@ -824,7 +831,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
             onCommandSubmitted: pluginAwareOnCommandSubmitted,
             commandBufferRef,
             promptLineBreakStateRef,
-          }, termRef.current);
+          }, termRef.current, { sensitive });
         } else if (ch === "\x15") {
           // Ctrl+U: clear line — reset command buffer (fuzzy match sends this)
           commandBufferRef.current = "";
@@ -851,7 +858,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     ? detectLocalOs(navigator.userAgent || navigator.platform)
     : (host.os || "linux");
   const autocompleteSettings = resolveTerminalAutocompleteSettings({
-    protocol: host.protocol,
+    protocol: effectiveTerminalProtocol,
     terminalSettings,
   });
 
@@ -1349,6 +1356,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       disposeTelnetEchoModeRef.current = null;
       telnetLocalEchoRef.current = false;
       updateStatusRef.current("disconnected");
+      pluginTerminalSessionExitRef.current(evt.exitCode);
       if (evt.error) {
         setError(evt.error);
       }
@@ -1559,11 +1567,12 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     sessionId,
     hostId: host.id,
     workspaceId,
-    protocol: host.protocol,
+    protocol: effectiveTerminalProtocol,
     status,
     shellType,
     initialCwd: knownCwdRef.current ?? lastCwd,
   });
+  pluginTerminalSessionExitRef.current = pluginTerminalLifecycle.onSessionExited;
   const pluginTerminalProviderRegistry = getWindowPluginTerminalProviderRegistry();
   const pluginTerminalProviderAvailabilityRef = useRef(new PluginTerminalProviderAvailability());
   const refreshPluginTerminalProviderAvailability = useCallback(() => (
@@ -1597,6 +1606,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     payload,
     deadlineMs,
     supersessionKey,
+    signal,
   ) => {
     if (!pluginTerminalProviderRegistry) {
       return Object.freeze({ stale: false, results: Object.freeze([]) });
@@ -1609,7 +1619,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         sessionId,
         ...(host.id ? { hostId: host.id } : {}),
         ...(workspaceId ? { workspaceId } : {}),
-        protocol: host.protocol ?? 'ssh',
+        protocol: effectiveTerminalProtocol,
         status: statusRef.current,
         ...(knownCwdRef.current ? { cwd: knownCwdRef.current } : {}),
         ...(shellType ? { shellType } : {}),
@@ -1619,8 +1629,8 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       payload,
       deadlineMs,
       supersessionKey,
-    });
-  }, [host.id, host.protocol, pluginTerminalProviderRegistry, sessionId, shellType, workspaceId]);
+    }, { signal });
+  }, [effectiveTerminalProtocol, host.id, pluginTerminalProviderRegistry, sessionId, shellType, workspaceId]);
   const pluginAwareOnCommandSubmitted = useCallback((
     command: string,
     commandHostId: string,
@@ -1745,6 +1755,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     },
     onSessionExit: (closedSessionId, evt) => {
       clearTerminalCwd();
+      pluginTerminalLifecycle.onSessionExited(evt.exitCode);
       onSessionExit?.(closedSessionId, evt);
       scheduleAutoReconnect({ evt });
     },

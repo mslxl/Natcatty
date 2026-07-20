@@ -96,6 +96,7 @@ test('plugin terminal link host suppresses stale and oversized physical lines', 
 
 test('plugin terminal link host releases xterm when activation or permission work stalls', async () => {
   let provider: { provideLinks(line: number, callback: (links?: unknown[]) => void): void } | undefined;
+  const signals: AbortSignal[] = [];
   const term = {
     element: undefined,
     buffer: { active: { getLine() { return { translateToString() { return 'example'; } }; } } },
@@ -106,7 +107,10 @@ test('plugin terminal link host releases xterm when activation or permission wor
   };
   registerPluginTerminalLinkProvider({
     term: term as never,
-    request: () => new Promise(() => {}),
+    request: (_kind, _operation, _payload, _deadlineMs, _supersessionKey, signal) => {
+      if (signal) signals.push(signal);
+      return new Promise(() => {});
+    },
     canActivate: () => true,
     async openExternal() {},
     responseTimeoutMs: 5,
@@ -116,6 +120,8 @@ test('plugin terminal link host releases xterm when activation or permission wor
     provider?.provideLinks(1, (value) => resolve(value ?? []));
   });
   assert.deepEqual(links, []);
+  assert.equal(signals.length, 2);
+  assert.equal(signals.every((signal) => signal.aborted), true);
 });
 
 test('plugin terminal link host performs no request when neither Provider kind is declared', async () => {

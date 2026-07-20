@@ -176,6 +176,37 @@ test('terminal Provider registry cancels superseded requests and suppresses stal
   assert.deepEqual(firstResult.results, []);
 });
 
+test('terminal Provider registry aborts an in-flight bridge request and settles stale', async () => {
+  const cancellations: string[] = [];
+  const requests: NetcattyTerminalProviderRequest[] = [];
+  const controller = new AbortController();
+  const registry = new PluginTerminalProviderRegistry({
+    async listPluginTerminalProviders() { return []; },
+    providePluginTerminal(request) {
+      requests.push(request);
+      return new Promise(() => {});
+    },
+    async cancelPluginTerminalRequest(requestId) { cancellations.push(requestId); return true; },
+    async publishPluginTerminalSessionEvent() { return []; },
+  });
+
+  const pending = registry.request({
+    kind: 'terminal.completion',
+    operation: 'provideCompletions',
+    session,
+  }, { signal: controller.signal });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests.length, 1);
+
+  controller.abort();
+  const result = await pending;
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(result.stale, true);
+  assert.deepEqual(result.results, []);
+  assert.deepEqual(cancellations, [requests[0].requestId]);
+  registry.dispose();
+});
+
 test('terminal Provider registry scopes link supersession per buffer line', async () => {
   const cancellations: string[] = [];
   const resolvers: Array<(value: ReadonlyArray<NetcattyTerminalProviderResult>) => void> = [];

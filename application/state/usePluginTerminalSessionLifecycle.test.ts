@@ -16,6 +16,18 @@ const connectedState = {
 
 test('disconnect clears connection-scoped terminal Provider metadata before publishing', () => {
   assert.deepEqual(
+    transitionPluginTerminalConnectionState(connectedState, 'disconnected', true, 137),
+    {
+      snapshotState: { cols: 120, rows: 40 },
+      everConnected: true,
+      eventType: 'disconnected',
+      eventDetails: { exitCode: 137 },
+    },
+  );
+});
+
+test('disconnect omits an exit code when the backend did not provide one', () => {
+  assert.deepEqual(
     transitionPluginTerminalConnectionState(connectedState, 'disconnected', true),
     {
       snapshotState: { cols: 120, rows: 40 },

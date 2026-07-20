@@ -626,7 +626,12 @@ export const recordTerminalCommandExecution = (
   command: string,
   ctx: TerminalCommandExecutionContext,
   term?: XTerm | null,
+  options?: { sensitive?: boolean },
 ): string | null => {
+  if (options?.sensitive) {
+    ctx.commandBufferRef.current = "";
+    return null;
+  }
   const lastPromptText = ctx.promptLineBreakStateRef?.current?.lastPromptText;
   const cmd = resolveSubmittedShellCommand(command, term, lastPromptText);
   if (cmd) {

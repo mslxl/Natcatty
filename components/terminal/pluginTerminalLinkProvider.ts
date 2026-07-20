@@ -47,6 +47,7 @@ export type RequestPluginTerminalProviders = (
   payload: Readonly<Record<string, unknown>>,
   deadlineMs: number,
   supersessionKey?: string,
+  signal?: AbortSignal,
 ) => Promise<PluginTerminalProviderCallResponse>;
 
 function lineTextAt(term: XTerm, bufferLineNumber: number): PluginTerminalBufferText | null {
@@ -70,13 +71,17 @@ function matchingHover(
 export async function waitForPluginTerminalProviderResponse(
   request: Promise<PluginTerminalProviderCallResponse>,
   timeoutMs: number,
+  onTimeout?: () => void,
 ): Promise<PluginTerminalProviderCallResponse> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
       request,
       new Promise<PluginTerminalProviderCallResponse>((resolve) => {
-        timer = setTimeout(() => resolve({ stale: false, results: Object.freeze([]) }), timeoutMs);
+        timer = setTimeout(() => {
+          onTimeout?.();
+          resolve({ stale: false, results: Object.freeze([]) });
+        }, timeoutMs);
       }),
     ]);
   } finally {
@@ -123,6 +128,19 @@ export function registerPluginTerminalLinkProvider(options: {
 }): IDisposable {
   const tooltip = createTooltip(options.term);
   let disposed = false;
+  const requestWithTimeout = (
+    kind: NetcattyTerminalProviderKind,
+    operation: string,
+    payload: Readonly<Record<string, unknown>>,
+    supersessionKey: string,
+  ) => {
+    const controller = new AbortController();
+    return waitForPluginTerminalProviderResponse(
+      options.request(kind, operation, payload, 750, supersessionKey, controller.signal),
+      options.responseTimeoutMs ?? PROVIDER_RESPONSE_TIMEOUT_MS,
+      () => controller.abort(),
+    );
+  };
   const provider: ILinkProvider = {
     provideLinks(bufferLineNumber, callback) {
       const linkAvailable = options.isProviderAvailable?.('terminal.link') ?? true;
@@ -138,22 +156,20 @@ export function registerPluginTerminalLinkProvider(options: {
       }
       void Promise.all([
         linkAvailable
-          ? waitForPluginTerminalProviderResponse(options.request(
+          ? requestWithTimeout(
               'terminal.link',
               'provideLinks',
               { line: line.text, bufferLineNumber },
-              750,
               `line:${bufferLineNumber}`,
-            ), options.responseTimeoutMs ?? PROVIDER_RESPONSE_TIMEOUT_MS)
+            )
           : Promise.resolve({ stale: false, results: Object.freeze([]) }),
         hoverAvailable
-          ? waitForPluginTerminalProviderResponse(options.request(
+          ? requestWithTimeout(
               'terminal.hover',
               'provideHovers',
               { line: line.text, bufferLineNumber },
-              750,
               `line:${bufferLineNumber}`,
-            ), options.responseTimeoutMs ?? PROVIDER_RESPONSE_TIMEOUT_MS)
+            )
           : Promise.resolve({ stale: false, results: Object.freeze([]) }),
       ]).then(([linkResponse, hoverResponse]) => {
         if (disposed || linkResponse.stale || hoverResponse.stale) {
