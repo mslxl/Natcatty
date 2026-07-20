@@ -1288,6 +1288,7 @@ test("startPortForward forwards target and jump-host timeouts", async () => {
   const bridge = installBridgeStub();
   const jumpHost = host({
     id: "jump-1",
+    requiresMfa: true,
     sshTcpConnectTimeoutSeconds: 75,
     sshAuthReadyTimeoutSeconds: 360,
   });
@@ -1296,6 +1297,7 @@ test("startPortForward forwards target and jump-host timeouts", async () => {
     rule({ id: "rule-timeouts" }),
     host({
       hostChain: { hostIds: ["jump-1"] },
+      requiresMfa: true,
       sshTcpConnectTimeoutSeconds: 45,
       sshAuthReadyTimeoutSeconds: 300,
     }),
@@ -1308,7 +1310,9 @@ test("startPortForward forwards target and jump-host timeouts", async () => {
   assert.equal(result.success, true);
   assert.equal(bridge.getOptions()?.sshTcpConnectTimeoutMs, 45_000);
   assert.equal(bridge.getOptions()?.sshAuthReadyTimeoutMs, 300_000);
+  assert.equal(bridge.getOptions()?.requiresMfa, true);
   const jumpHosts = bridge.getOptions()?.jumpHosts as Array<Record<string, unknown>>;
+  assert.equal(jumpHosts[0]?.requiresMfa, true);
   assert.equal(jumpHosts[0]?.sshTcpConnectTimeoutMs, 75_000);
   assert.equal(jumpHosts[0]?.sshAuthReadyTimeoutMs, 360_000);
 });

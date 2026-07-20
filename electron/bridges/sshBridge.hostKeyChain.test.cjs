@@ -160,6 +160,7 @@ test("jump-host chain connections verify hop host keys against known hosts", asy
       port: 22,
       username: "alice",
       password: "secret",
+      requiresMfa: true,
       label: "Bastion",
       sshTcpConnectTimeoutMs: 45_000,
       sshAuthReadyTimeoutMs: 300_000,
@@ -175,6 +176,14 @@ test("jump-host chain connections verify hop host keys against known hosts", asy
   assert.equal(connectOpts.readyTimeout, 0);
   assert.equal(typeof connectOpts.hostVerifier, "function");
   assert.equal(MockSSHClient.instances[0].hostVerifierCalls, 1);
+  const offered = [];
+  connectOpts.authHandler(null, null, (method) => offered.push(method));
+  connectOpts.authHandler(
+    ["password", "keyboard-interactive"],
+    false,
+    (method) => offered.push(method && typeof method === "object" ? method.type : method),
+  );
+  assert.deepEqual(offered, ["none", "keyboard-interactive"]);
   assert.ok(sender.sent.some((message) => (
     message.channel === "netcatty:chain:progress"
     && message.payload.sessionId === "session-1"

@@ -191,6 +191,7 @@ function createExecCommandApi(ctx) {
     
           const authConfig = buildAuthHandler({
             authMethod: payload.authMethod,
+            requiresMfa: !!payload.requiresMfa,
             privateKey: connectOpts.privateKey,
             password: connectOpts.password,
             passphrase: connectOpts.passphrase,

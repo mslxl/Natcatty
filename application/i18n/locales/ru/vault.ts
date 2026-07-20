@@ -683,6 +683,8 @@ export const ruVaultMessages: Messages = {
   'hostDetails.auth.key.desc': 'Использовать выбранный ключ и сохранённый пароль как запасной вариант.',
   'hostDetails.auth.certificate': 'Сертификат',
   'hostDetails.auth.certificate.desc': 'Использовать выбранный SSH-сертификат и сохранённый пароль как запасной вариант.',
+  'hostDetails.auth.mfaFirst': 'Сначала интерактивная аутентификация',
+  'hostDetails.auth.mfaFirst.desc': 'Для серверов, которым нужны пароль и MFA через keyboard-interactive.',
   'hostDetails.auth.credentialRequired': 'Перед сохранением этого способа входа выберите ключ или сертификат.',
   'hostDetails.identity.suggestions': 'Идентификаторы',
   'hostDetails.identity.missing': 'Идентификатор не найден',

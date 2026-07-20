@@ -930,6 +930,9 @@ function createStartSessionApi(ctx) {
 
         if (authAgent) {
           const order = ["none", "agent"];
+          if (options.requiresMfa && !options._skipPasswordMethod) {
+            order.push("keyboard-interactive");
+          }
           if (connectOpts.password && !options._skipPasswordMethod) {
             order.push("password");
           }
@@ -950,6 +953,9 @@ function createStartSessionApi(ctx) {
           const authMethods = [];
 
           if (isAutomaticAuth) {
+            if (options.requiresMfa && !connectOpts.password && !options._skipPasswordMethod) {
+              authMethods.push({ type: "keyboard-interactive", id: "keyboard-interactive" });
+            }
             if (shouldOfferAgentForLogin(options, connectOpts)) {
               authMethods.push({ type: "agent", id: "agent" });
             }
@@ -983,7 +989,7 @@ function createStartSessionApi(ctx) {
 
             // MFA/PAM hosts can reject the SSH "password" method while accepting
             // the login password through keyboard-interactive.
-            if (options.requiresMfa && connectOpts.password && !options._skipPasswordMethod) {
+            if (options.requiresMfa && !options._skipPasswordMethod) {
               authMethods.push({ type: "keyboard-interactive", id: "keyboard-interactive" });
             }
 

@@ -741,18 +741,60 @@ test("buildAuthHandler prefers password over keyboard-interactive by default", (
   assert.deepEqual(offered, ["none", "password"]);
 });
 
-test("buildAuthHandler prefers password over keyboard-interactive by default", () => {
+test("buildAuthHandler requiresMfa prefers keyboard-interactive before password", () => {
   const auth = buildAuthHandler({
     authMethod: "password",
     username: "alice",
     password: "login-password",
+    requiresMfa: true,
   });
 
   const offered = [];
   auth.authHandler(null, null, (method) => offered.push(method));
   auth.authHandler(["password", "keyboard-interactive"], false, (method) => offered.push(method));
 
-  assert.deepEqual(offered, ["none", "password"]);
+  assert.deepEqual(offered, ["none", "keyboard-interactive"]);
+});
+
+test("buildAuthHandler requiresMfa keeps selected key before keyboard-interactive", () => {
+  const auth = buildAuthHandler({
+    authMethod: "key",
+    username: "alice",
+    privateKey: "selected-key",
+    password: "login-password",
+    requiresMfa: true,
+    allowAgentFallback: false,
+  });
+
+  const offered = [];
+  const record = (method) => offered.push(
+    method && typeof method === "object" ? method.type : method,
+  );
+  auth.authHandler(null, null, record);
+  auth.authHandler(["publickey", "password", "keyboard-interactive"], false, record);
+  auth.authHandler(["password", "keyboard-interactive"], false, record);
+
+  assert.deepEqual(offered, ["none", "publickey", "keyboard-interactive"]);
+});
+
+test("buildAuthHandler requiresMfa prefers keyboard-interactive before automatic discovery without a saved password", () => {
+  const auth = buildAuthHandler({
+    authMethod: "auto",
+    username: "alice",
+    requiresMfa: true,
+    allowAgentFallback: false,
+    defaultKeys: [{ keyName: "id_ed25519", privateKey: "default-key" }],
+  });
+
+  const offered = [];
+  auth.authHandler(null, null, (method) => offered.push(method));
+  auth.authHandler(
+    ["publickey", "keyboard-interactive"],
+    false,
+    (method) => offered.push(method && typeof method === "object" ? method.type : method),
+  );
+
+  assert.deepEqual(offered, ["none", "keyboard-interactive"]);
 });
 
 test("buildAuthHandler skipPasswordMethod retries keyboard-interactive before password", () => {
@@ -1233,4 +1275,3 @@ test("createKeyboardInteractiveHandler allows save on multi-prompt Password + OT
 
   drainPendingRequests(sent);
 });
-
