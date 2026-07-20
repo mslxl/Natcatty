@@ -46,13 +46,13 @@ export const TerminalSearchBar: React.FC<TerminalSearchBarProps> = ({
         }
     }, [isOpen, focusToken]);
 
-    // Trigger search when term changes
+    // Trigger search when term changes. When the term is cleared we still call
+    // onSearch('') so the underlying search addon clears its highlights —
+    // otherwise the last match decorations linger after emptying the input.
     useEffect(() => {
         if (searchTerm !== prevSearchTermRef.current) {
             prevSearchTermRef.current = searchTerm;
-            if (searchTerm.length > 0) {
-                onSearch(searchTerm);
-            }
+            onSearch(searchTerm);
         }
     }, [searchTerm, onSearch]);
 

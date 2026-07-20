@@ -72,6 +72,10 @@ export const useTerminalSearch = ({
     (term: string): boolean => {
       const searchAddon = searchAddonRef.current;
       if (!searchAddon || !term) {
+        // Empty term (e.g. the input was cleared) must still clear existing
+        // highlights, otherwise the previous match decorations linger.
+        searchTermRef.current = "";
+        searchAddon?.clearDecorations();
         setSearchMatchCount(null);
         return false;
       }
