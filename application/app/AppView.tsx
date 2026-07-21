@@ -25,6 +25,7 @@ import { AppHostEditorLayer } from './AppHostEditorLayer';
 import { getUiThemeById } from '../../infrastructure/config/uiThemes';
 import { buildAppThemeCssVars } from '../state/settingsStateDefaults';
 import { useMainWindowInputFocusRecovery } from '../state/useMainWindowInputFocusRecovery';
+import { useExternalMcpToggleState } from '../state/useExternalMcpToggleState';
 import { PluginContributionHost } from '../../components/plugins/PluginContributionHost';
 import { resolveActivePluginKeybindingContext } from '../state/pluginContributionContexts';
 import { selectPluginThemeTokens } from '../state/pluginContributionEnvironment';
@@ -141,6 +142,9 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
     () => selectPluginThemeTokens(appThemeStyle as Record<string, unknown>),
     [appThemeStyle],
   );
+  const isPeerSessionWindow = typeof window !== 'undefined'
+    && window.location.hash.startsWith('#/session-window');
+  const externalMcpToggle = useExternalMcpToggleState();
   const handleWorkSurfaceHostSaved = useCallback((mode: 'new' | 'edit') => {
     if (mode === 'edit') {
       toast.success(t('terminal.layer.hostTree.hostSavedNextConnection'));
@@ -255,6 +259,9 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
         onOpenQuickSwitcher={handleOpenQuickSwitcher}
         onToggleTheme={handleToggleTheme}
         onOpenSettings={handleOpenSettings}
+        externalMcpEnabled={externalMcpToggle.enabled}
+        onToggleExternalMcp={externalMcpToggle.setEnabled}
+        showExternalMcpToggle={!isPeerSessionWindow}
         windowOpacity={settings.windowOpacity}
         setWindowOpacity={settings.setWindowOpacity}
         onSyncNow={handleSyncNowManual}

@@ -40,6 +40,10 @@ const {
 const { activeTabStore } = await import("../application/state/activeTabStore.ts");
 const indexCss = readFileSync(new URL("../index.css", import.meta.url), "utf8");
 const topTabsSource = readFileSync(new URL("./TopTabs.tsx", import.meta.url), "utf8");
+const appViewSource = readFileSync(new URL("../application/app/AppView.tsx", import.meta.url), "utf8");
+const appSource = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
+const externalMcpToggleSource = readFileSync(new URL("../application/state/useExternalMcpToggleState.ts", import.meta.url), "utf8");
+const zhTwAiSource = readFileSync(new URL("../application/i18n/locales/zh-TW/ai.ts", import.meta.url), "utf8");
 const topTabItemsSource = readFileSync(new URL("./top-tabs/TopTabItems.tsx", import.meta.url), "utf8");
 const terminalViewSource = readFileSync(new URL("./terminal/TerminalView.tsx", import.meta.url), "utf8");
 
@@ -108,6 +112,42 @@ test("host tree toggle exposes a custom CSS hook", () => {
 
 test("quick switcher plus button exposes a custom CSS hook", () => {
   assert.match(topTabsSource, /data-section="top-tabs-quick-switcher-toggle"/);
+});
+
+test("top tabs expose the External MCP quick toggle", () => {
+  assert.match(topTabsSource, /externalMcpEnabled: boolean/);
+  assert.match(topTabsSource, /onToggleExternalMcp: \(enabled: boolean\) => void/);
+  assert.match(topTabsSource, /showExternalMcpToggle\?: boolean/);
+  assert.match(topTabsSource, /showExternalMcpToggle = true/);
+  assert.match(topTabsSource, /showExternalMcpToggle \? \(/);
+  assert.match(topTabsSource, /onToggleExternalMcp\(!externalMcpEnabled\)/);
+  assert.match(topTabsSource, /topTabs\.externalMcp\.(enable|disable)/);
+  assert.match(topTabsSource, /aria-label=\{t\(externalMcpEnabled \? 'topTabs\.externalMcp\.disable' : 'topTabs\.externalMcp\.enable'\)\}/);
+  assert.match(topTabsSource, /aria-pressed=\{externalMcpEnabled\}/);
+});
+
+test("External MCP top bar labels exist in Traditional Chinese", () => {
+  assert.match(zhTwAiSource, /'topTabs\.externalMcp\.enable':/);
+  assert.match(zhTwAiSource, /'topTabs\.externalMcp\.disable':/);
+});
+
+test("AppView hides External MCP toggle in peer session windows", () => {
+  assert.match(appViewSource, /hash\.startsWith\('#\/session-window'\)/);
+  assert.match(appViewSource, /showExternalMcpToggle=\{!isPeerSessionWindow\}/);
+});
+
+test("External MCP top-bar status sync waits for App startup reconcile", () => {
+  assert.match(appSource, /await syncExternalMcpStartupState\(netcattyBridge\.get\(\)\)/);
+  assert.match(appSource, /markExternalMcpStartupReady\(\)/);
+  assert.ok(
+    appSource.indexOf("await syncExternalMcpStartupState(netcattyBridge.get())")
+      < appSource.indexOf("markExternalMcpStartupReady()"),
+    "startup ready must be marked only after await syncExternalMcpStartupState",
+  );
+  assert.match(externalMcpToggleSource, /shouldWaitForExternalMcpStartupReady/);
+  assert.match(externalMcpToggleSource, /waitForExternalMcpStartupReady\(/);
+  assert.match(externalMcpToggleSource, /!status\.enabled && !status\.error/);
+  assert.match(externalMcpToggleSource, /if \(isPeerSessionWindow \|\| !enabled\) return;/);
 });
 
 test("SessionTabIcon checks custom host icon appearance before distro logos", () => {

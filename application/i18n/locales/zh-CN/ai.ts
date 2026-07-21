@@ -488,6 +488,8 @@ export const zhCNAiMessages: Messages = {
   'topTabs.openQuickSwitcher': '打开快速切换',
   'topTabs.moreTabs': '更多标签页',
   'topTabs.aiAssistant': 'AI 助手',
+  'topTabs.externalMcp.enable': '启用对外 MCP',
+  'topTabs.externalMcp.disable': '停用对外 MCP',
   'topTabs.windowOpacity': '窗口透明度',
   'topTabs.toggleTheme': '切换主题',
   'topTabs.openSettings': '打开设置',
