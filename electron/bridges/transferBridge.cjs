@@ -8,7 +8,11 @@ const path = require("node:path");
 const os = require("node:os");
 const { encodePathForSession, ensureRemoteDirForSession, requireSftpChannel, resolveEncodingForRequest } = require("./sftpBridge.cjs");
 const { isScpModeClient, getScpBackendForClient } = require("./sftpBridge/scpBackend.cjs");
-const { TRANSFER_CHUNK_SIZE, TRANSFER_CONCURRENCY } = require("./transferLimits.cjs");
+const {
+  DOWNLOAD_TRANSFER_CONCURRENCY,
+  TRANSFER_CHUNK_SIZE,
+  UPLOAD_TRANSFER_CONCURRENCY,
+} = require("./transferLimits.cjs");
 
 /**
  * Verify a completed remote upload matches the expected byte count.
@@ -389,7 +393,7 @@ async function uploadFile(localPath, remotePath, client, fileSize, transfer, sen
 
         fastSftp.fastPut(localPath, remotePath, {
           chunkSize: TRANSFER_CHUNK_SIZE,
-          concurrency: TRANSFER_CONCURRENCY,
+          concurrency: UPLOAD_TRANSFER_CONCURRENCY,
           step: (transferred, _chunk, total) => {
             if (transfer.cancelled) return;
             sendProgress(transferred, total || fileSize);
@@ -517,7 +521,7 @@ async function downloadFile(remotePath, localPath, client, fileSize, transfer, s
 
         fastSftp.fastGet(remotePath, localPath, {
           chunkSize: TRANSFER_CHUNK_SIZE,
-          concurrency: TRANSFER_CONCURRENCY,
+          concurrency: DOWNLOAD_TRANSFER_CONCURRENCY,
           step: (transferred, _chunk, total) => {
             if (transfer.cancelled) return;
             sendProgress(transferred, total || fileSize);

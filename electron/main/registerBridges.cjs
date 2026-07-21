@@ -3,7 +3,10 @@
 let bridgesRegistered = false;
 let cloudSyncSessionPassword = null;
 const { readClipboardFiles, readClipboardImage } = require("../bridges/clipboardFiles.cjs");
-const { TRANSFER_CHUNK_SIZE, TRANSFER_CONCURRENCY } = require("../bridges/transferLimits.cjs");
+const {
+  DOWNLOAD_TRANSFER_CONCURRENCY,
+  TRANSFER_CHUNK_SIZE,
+} = require("../bridges/transferLimits.cjs");
 
 const excludedFigSpecPrefixes = ["aws", "gcloud", "az"];
 
@@ -1003,7 +1006,7 @@ function createBridgeRegistrar(context) {
         : remotePath;
       await sftpClient.fastGet(encodedPath, localPath, {
         chunkSize: TRANSFER_CHUNK_SIZE,
-        concurrency: TRANSFER_CONCURRENCY,
+        concurrency: DOWNLOAD_TRANSFER_CONCURRENCY,
       });
       console.log(`[Main]   File downloaded successfully`);
       return localPath;

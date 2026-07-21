@@ -8,8 +8,8 @@ const EventEmitter = require("node:events");
 const { createBridgeRegistrar } = require("../main/registerBridges.cjs");
 const sftpBridge = require("./sftpBridge.cjs");
 const {
+  DOWNLOAD_TRANSFER_CONCURRENCY,
   TRANSFER_CHUNK_SIZE,
-  TRANSFER_CONCURRENCY,
 } = require("./transferLimits.cjs");
 
 function createNoopBridge() {
@@ -156,7 +156,7 @@ test("downloadToTemp applies shared SFTP transfer limits to direct fastGet downl
   assert.equal(localPath, path.join(tempDir, "report.bin"));
   assert.deepEqual(observed.options, {
     chunkSize: TRANSFER_CHUNK_SIZE,
-    concurrency: TRANSFER_CONCURRENCY,
+    concurrency: DOWNLOAD_TRANSFER_CONCURRENCY,
   });
 });
 

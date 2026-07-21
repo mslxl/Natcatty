@@ -339,16 +339,18 @@ test("SFTP stream-fallback uploads fail on premature close", async (t) => {
   assert.ok(sender.sent.some((entry) => entry.channel === "netcatty:transfer:error"));
 });
 
-test("SFTP downloads use conservative per-file request concurrency", async (t) => {
+test("SFTP downloads preserve a 2MB request window on high-latency paths", async (t) => {
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-test-"));
   t.after(async () => {
     await fs.promises.rm(tempDir, { recursive: true, force: true });
   });
 
   let observedConcurrency = 0;
+  let observedChunkSize = 0;
   const fastSftp = createFastSftp({
     fastGet(_remotePath, localPath, options, done) {
       observedConcurrency = options.concurrency;
+      observedChunkSize = options.chunkSize;
       options.step?.(1024 * 1024, 1024 * 1024, 1024 * 1024);
       fs.promises.writeFile(localPath, Buffer.alloc(1024 * 1024)).then(
         () => done(),
@@ -383,5 +385,6 @@ test("SFTP downloads use conservative per-file request concurrency", async (t) =
   );
 
   assert.equal(result.error, undefined);
-  assert.equal(observedConcurrency, 4);
+  assert.equal(observedChunkSize, 32 * 1024);
+  assert.equal(observedConcurrency * observedChunkSize, 2 * 1024 * 1024);
 });
