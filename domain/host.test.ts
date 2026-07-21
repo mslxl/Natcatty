@@ -457,9 +457,10 @@ test("normalizeDistroId maps FreeBSD uname output to freebsd", () => {
   );
 });
 
-test("classifyDistroId treats macos as a POSIX stats target", () => {
+test("classifyDistroId limits Linux-like runtime support to implemented POSIX platforms", () => {
   assert.equal(classifyDistroId("macos"), "linux-like");
   assert.equal(classifyDistroId("Darwin"), "linux-like");
+  assert.equal(classifyDistroId("freebsd"), "other");
 });
 
 test("shouldProbeSessionCwd allows the probe on a plain Linux host", () => {

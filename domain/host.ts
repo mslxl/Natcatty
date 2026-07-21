@@ -58,6 +58,12 @@ export const POSIX_PLATFORM_OPTIONS = [
   'freebsd',
 ] as const;
 
+// Only platforms backed by the current stats and system-management commands
+// belong here. Other POSIX platforms may still be valid icon choices.
+const LINUX_LIKE_RUNTIME_PLATFORM_OPTIONS = [
+  'macos',
+] as const;
+
 /**
  * Known network-device vendor IDs that Netcatty can detect from the SSH
  * server identification string. When a host is classified as one of these,
@@ -200,7 +206,7 @@ export const classifyDistroId = (distroId?: string): DeviceClass => {
   if (!v) return 'other';
   if ((NETWORK_DEVICE_OPTIONS as readonly string[]).includes(v)) return 'network-device';
   if ((LINUX_DISTRO_OPTIONS as readonly string[]).includes(v)) return 'linux-like';
-  if ((POSIX_PLATFORM_OPTIONS as readonly string[]).includes(v)) return 'linux-like';
+  if ((LINUX_LIKE_RUNTIME_PLATFORM_OPTIONS as readonly string[]).includes(v)) return 'linux-like';
   return 'other';
 };
 
