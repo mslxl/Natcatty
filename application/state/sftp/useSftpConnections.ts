@@ -45,6 +45,33 @@ export interface SftpConnectOptions {
   sourceSessionId?: string;
 }
 
+type SftpOpenBridge = Pick<NetcattyBridge, "openSftp"> &
+  Partial<Pick<NetcattyBridge, "openSftpForSession">>;
+
+interface OpenSftpWithSessionPreferenceParams {
+  bridge: SftpOpenBridge | null | undefined;
+  sourceSessionId?: string;
+  openOptions: NetcattySSHOptions;
+}
+
+/** Open SFTP through an already-authenticated terminal session before retrying normal auth. */
+export async function openSftpWithSessionPreference({
+  bridge,
+  sourceSessionId,
+  openOptions,
+}: OpenSftpWithSessionPreferenceParams): Promise<string> {
+  if (!bridge?.openSftp) throw new Error("SFTP bridge unavailable");
+  if (sourceSessionId && bridge.openSftpForSession) {
+    try {
+      return await bridge.openSftpForSession(sourceSessionId);
+    } catch {
+      // Fall through to the existing SFTP open path so users still get a usable
+      // file browser when the live SSH transport cannot provide an SFTP channel.
+    }
+  }
+  return bridge.openSftp(openOptions);
+}
+
 interface UseSftpConnectionsResult {
   connect: (side: "left" | "right", host: Host | "local", options?: SftpConnectOptions) => Promise<void>;
   disconnect: (side: "left" | "right") => Promise<void>;
@@ -481,9 +508,13 @@ export const useSftpConnections = ({
           if (options?.sourceSessionId && !host.sftpSudo) {
             const reuseCredentials = buildSftpReuseCredentials(host, options.sourceSessionId);
             try {
-              sftpId = await openSftp({
-                sessionId: sftpSessionId,
-                ...reuseCredentials,
+              sftpId = await openSftpWithSessionPreference({
+                bridge,
+                sourceSessionId: options.sourceSessionId,
+                openOptions: {
+                  sessionId: sftpSessionId,
+                  ...reuseCredentials,
+                },
               });
               credentials = reuseCredentials;
             } catch {
