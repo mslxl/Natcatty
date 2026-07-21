@@ -2258,7 +2258,7 @@ test("startup command suppression is consumed only when scheduling", () => {
   assert.equal(resolveStartupCommand(ctx as never), "echo host-startup");
 });
 
-test("restored local reconnect does not fall back to host startup command", async () => {
+test("restored local reconnect runs the current host startup command", async () => {
   const sessionWrites: Array<{ id: string; data: string; automated?: boolean }> = [];
 
   const terminalBackend = {
@@ -2295,14 +2295,16 @@ test("restored local reconnect does not fall back to host startup command", asyn
     terminalSettings: { startupCommandDelayMs: 0 },
     terminalBackend,
     startupCommand: undefined,
-    suppressHostStartupCommandRef: { current: true },
+    suppressHostStartupCommandRef: { current: false },
     promptLineBreakStateRef: undefined,
   });
 
   await createTerminalSessionStarters(ctx as never).startLocal(createTermStub() as never);
   await new Promise((resolve) => setTimeout(resolve, 0));
 
-  assert.deepEqual(sessionWrites, []);
+  assert.deepEqual(sessionWrites, [
+    { id: "local-session", data: "echo host-startup\r", automated: true },
+  ]);
 });
 
 test("local session start uses per-session directory before global default", async () => {

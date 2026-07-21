@@ -1183,13 +1183,12 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   }, [host, t, terminalSettings, updateStatus]);
 
   const prepareRestoredReconnect = useCallback(() => {
+    suppressHostStartupCommandRef.current = false;
     if (restoreState !== "restored-disconnected") {
-      suppressHostStartupCommandRef.current = false;
       restoreCwdIntentRef.current = null;
       return;
     }
 
-    suppressHostStartupCommandRef.current = true;
     restoreCwdIntentRef.current = resolveRestoreCwdIntent({
       enabled: restoreTerminalCwd,
       session: {
