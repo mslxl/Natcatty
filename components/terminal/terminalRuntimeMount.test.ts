@@ -8,6 +8,7 @@ const effectsSource = readFileSync(new URL('./useTerminalEffects.ts', import.met
 const terminalSource = readFileSync(new URL('../Terminal.tsx', import.meta.url), 'utf8');
 const terminalViewSource = readFileSync(new URL('./TerminalView.tsx', import.meta.url), 'utf8');
 const xtermRuntimeSource = readFileSync(new URL('./runtime/createXTermRuntime.ts', import.meta.url), 'utf8');
+const providerHookSource = readFileSync(new URL('../../application/state/usePluginTerminalProviders.ts', import.meta.url), 'utf8');
 
 test('hibernate runtime keyword setup restores plugin decoration rules', () => {
   let applied: { rules: unknown[]; enabled: boolean } | undefined;
@@ -44,12 +45,12 @@ test('hibernate runtime keyword setup restores plugin decoration rules', () => {
 
 test('cwd-triggered plugin decoration refresh reads the live connection status', () => {
   assert.match(
-    effectsSource,
-    /if \(!pluginTerminalRegistry \|\| statusRef\.current !== 'connected'\s*\|\| !isPluginTerminalProviderAvailable\('terminal\.decoration'\)\)/,
+    providerHookSource,
+    /if \(!registry \|\| metadata\.status !== 'connected'\)/,
   );
   assert.match(
-    effectsSource,
-    /void refreshPluginDecorationRules\('session-state'\);\s*\n\s*}, \[refreshPluginDecorationRules, status\]\);/,
+    providerHookSource,
+    /void refreshProviderOutputs\('session-state'\);/,
   );
 });
 
@@ -75,41 +76,41 @@ test('disabled or absent plugin hosts do not receive terminal completion request
 
 test('plugin decoration requests retain the workspace identity', () => {
   assert.match(
-    effectsSource,
-    /\.\.\.\(workspaceId \? \{ workspaceId \} : \{\}\),\s*\n\s*protocol,/,
+    providerHookSource,
+    /\.\.\.\(metadata\.workspaceId \? \{ workspaceId: metadata\.workspaceId \} : \{\}\),/,
   );
 });
 
 test('plugin decoration responses cannot apply after connection state invalidates the request', () => {
   assert.match(
-    effectsSource,
-    /const pluginDecorationRefreshGenerationRef = useRef\(0\);/,
+    providerHookSource,
+    /const refreshGenerationRef = useRef\(0\);/,
   );
   assert.match(
-    effectsSource,
-    /const refreshGeneration = \+\+pluginDecorationRefreshGenerationRef\.current;/,
+    providerHookSource,
+    /const generation = \+\+refreshGenerationRef\.current;/,
   );
   assert.match(
-    effectsSource,
-    /useEffect\(\(\) => \(\) => \{\s*pluginDecorationRefreshGenerationRef\.current \+= 1;\s*pluginDecorationAbortRef\.current\?\.abort\(\);\s*pluginDecorationAbortRef\.current = null;\s*}, \[\]\);/,
+    providerHookSource,
+    /refreshGenerationRef\.current \+= 1;\s*refreshAbortRef\.current\?\.abort\(\);/,
   );
   assert.match(
-    effectsSource,
-    /pluginTerminalRegistry\.request\([\s\S]*?\{ signal: controller\.signal \}\),\s*PLUGIN_DECORATION_RESPONSE_TIMEOUT_MS,\s*\(\) => controller\.abort\(\)/,
+    providerHookSource,
+    /request\('terminal\.decoration',[\s\S]*?controller\.signal\)/,
   );
   assert.match(
-    effectsSource,
-    /response\.stale\s*\|\|\s*refreshGeneration !== pluginDecorationRefreshGenerationRef\.current\s*\|\|\s*statusRef\.current !== 'connected'/,
+    providerHookSource,
+    /generation === refreshGenerationRef\.current[\s\S]*isPluginTerminalProviderRefreshCurrent\(metadata, current\)/,
   );
   assert.match(
-    effectsSource,
-    /catch \{\s*if \(\s*refreshGeneration !== pluginDecorationRefreshGenerationRef\.current\s*\|\|\s*statusRef\.current !== 'connected'/,
+    providerHookSource,
+    /applyCurrentProviderResponse\(waitForProviderResponse\(/,
   );
 });
 
 test('terminal Provider snapshots use the selected ET or Mosh transport throughout renderer paths', () => {
   assert.match(terminalSource, /protocol: effectiveTerminalProtocol,/);
-  assert.match(effectsSource, /protocol: effectiveTerminalProtocol,/);
+  assert.match(providerHookSource, /protocol: metadata\.protocol,/);
   assert.match(terminalSource, /protocol: effectiveTerminalProtocol,\s*terminalSettings,/);
   assert.match(terminalSource, /protocol: effectiveTerminalProtocol,\s*status,/);
 });
@@ -197,7 +198,7 @@ test('normal boot and hibernate wake share the refresh-capable runtime cwd handl
   );
   assert.match(
     terminalSource,
-    /pluginDecorationRefreshRef\.current\('cwd-changed'\);/,
+    /refreshProviderOutputs\('cwd-changed'\)/,
   );
   assert.match(
     terminalSource,

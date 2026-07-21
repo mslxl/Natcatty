@@ -82,13 +82,18 @@ application Provider adapters as plugins:
   friendly label cannot conceal a different command on previewless terminals;
 - decoration Providers return declarative rules only. Rule IDs are namespaced,
   counts and strings are bounded, colors must be explicit hex values, and
-  unsafe regular expressions are rejected under the same global,
-  case-insensitive semantics used by the renderer before reaching the
-  highlighter;
-- decoration results are capped again at 64 total host rules after Provider
-  fan-out, preventing many individually valid Providers from multiplying the
-  renderer's regex workload. Normal boot and hibernate wake share the same
-  CWD-triggered decoration refresh path;
+  unsupported expressions are rejected before reaching the highlighter, and
+  accepted plugin patterns are compiled and executed by the linear-time RE2JS
+  engine with global, case-insensitive matching;
+- decoration results are capped again after Provider fan-out at 16 active
+  rules and 32 total patterns. Plugin matching examines at most the first 4096
+  characters and retains at most 256 plugin matches for one logical line. A
+  wrapped logical line is matched only once per refresh before ranges are
+  projected onto its physical rows; plugin decoration is omitted for oversized
+  wrapped blocks that cannot be assembled safely. Patterns that can match an
+  empty string are rejected because they cannot produce a visible highlight.
+  Normal boot and hibernate wake share the same CWD-triggered decoration refresh
+  path;
 - link and hover Providers receive one bounded physical xterm line and return
   exact zero-based ranges. Links are restricted to credential-free HTTP(S)
   URLs, reuse the host link-modifier policy, and render hover text with host
@@ -119,6 +124,10 @@ application Provider adapters as plugins:
   opacity uses the host-owned safe default of 0.15. Providers may request
   a 250-60000 ms host refresh cadence; refresh pauses while the terminal is
   hidden or disconnected and is disabled when reduced motion is requested;
+- theme Providers receive the complete current host palette and may return a
+  bounded partial palette of explicit colors. Providers are merged in the same
+  deterministic preference order as enumeration, with the first value for each
+  color winning; host colors remain authoritative for omitted values;
 - every ordinary visual adapter applies a renderer-owned end-to-end wait bound
   around lazy activation, authorization, and runtime work. Stale generations,
   disconnects, contribution changes, runtime replacement, and terminal
@@ -150,9 +159,11 @@ the exact invocation:
 - `terminal.background/provideBackgrounds`: a host reason and optional current
   terminal background -> bounded solid-color layers plus optional
   `refreshAfterMs`.
+- `terminal.theme/provideTheme`: a host reason and complete current host palette
+  -> a validated partial terminal palette.
 
 The SDK exports and infers the matching payload, item, operation, and result
-interfaces for all eight ordinary Provider kinds, including the immutable
+interfaces for all nine ordinary Provider kinds, including the immutable
 host session snapshot attached to every invocation. The generic registration
 overload remains available for later Provider kinds, so plugins do not need
 application-internal renderer types and PRs 6-9 can add their own typed maps.

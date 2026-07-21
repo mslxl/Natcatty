@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  MAX_ACTIVE_PLUGIN_DECORATION_PATTERNS,
+  MAX_ACTIVE_PLUGIN_DECORATION_RULES,
   isSafePluginDecorationPattern,
   mergePluginDecorationRules,
   mergePluginCompletionItems,
@@ -14,6 +16,7 @@ import {
   normalizePluginMatcherResult,
   normalizePluginPromptResult,
   normalizePluginSemanticResult,
+  normalizePluginThemeResult,
 } from './pluginTerminalProviders.ts';
 
 test('plugin completion results are bounded, normalized, ranked, and deduplicated', () => {
@@ -131,11 +134,31 @@ test('semantic, prompt, and background results are bounded and presentation-only
   assert.equal(normalizePluginBackgroundRefreshAfterMs({ refreshAfterMs: 249 }), undefined);
 });
 
+test('terminal theme results expose only validated palette colors', () => {
+  assert.deepEqual(normalizePluginThemeResult('theme', {
+    colors: {
+      background: '#102030',
+      foreground: '#f0f0f0',
+      cursor: '#abcdef',
+      red: 'url(https://example.com)',
+      unknown: '#ffffff',
+    },
+  }), {
+    background: '#102030',
+    foreground: '#f0f0f0',
+    cursor: '#abcdef',
+  });
+  assert.deepEqual(normalizePluginThemeResult('theme', { colors: {} }), {});
+});
+
 test('plugin decoration results reject unsafe expressions and namespace rule identity', () => {
   assert.equal(isSafePluginDecorationPattern('\\berror\\b'), true);
   assert.equal(isSafePluginDecorationPattern('^(a+)+$'), false);
   assert.equal(isSafePluginDecorationPattern('a*a*a*a*a*a*a*a*a*a*b'), false);
   assert.equal(isSafePluginDecorationPattern('a*A*B'), false);
+  assert.equal(isSafePluginDecorationPattern('a*'), false);
+  assert.equal(isSafePluginDecorationPattern('a?'), false);
+  assert.equal(isSafePluginDecorationPattern('^$'), false);
   assert.equal(isSafePluginDecorationPattern('[a-z]*[A-Z]*missing'), false);
   assert.equal(isSafePluginDecorationPattern('[a-z]*[m-z]*missing'), false);
   assert.equal(isSafePluginDecorationPattern('[a-f]*[0-9]*value'), true);
@@ -163,5 +186,24 @@ test('plugin decoration results reject unsafe expressions and namespace rule ide
       color: '#ff0000',
     })) },
   ));
-  assert.equal(mergePluginDecorationRules(groups).length, 64);
+  const merged = mergePluginDecorationRules(groups);
+  assert.equal(merged.length, MAX_ACTIVE_PLUGIN_DECORATION_RULES);
+  assert.ok(merged.reduce((total, rule) => total + rule.patterns.length, 0)
+    <= MAX_ACTIVE_PLUGIN_DECORATION_PATTERNS);
+});
+
+test('plugin decoration fan-out is bounded by an aggregate pattern budget', () => {
+  const groups = Array.from({ length: 8 }, (_, group) => normalizePluginDecorationResult(
+    `provider-${group}`,
+    { rules: Array.from({ length: 16 }, (_, rule) => ({
+      id: `rule-${rule}`,
+      label: `Rule ${rule}`,
+      patterns: Array.from({ length: 16 }, (_, pattern) => `p-${group}-${rule}-${pattern}`),
+      color: '#ff0000',
+    })) },
+  ));
+  const merged = mergePluginDecorationRules(groups);
+  assert.ok(merged.length <= MAX_ACTIVE_PLUGIN_DECORATION_RULES);
+  assert.ok(merged.reduce((total, rule) => total + rule.patterns.length, 0)
+    <= MAX_ACTIVE_PLUGIN_DECORATION_PATTERNS);
 });

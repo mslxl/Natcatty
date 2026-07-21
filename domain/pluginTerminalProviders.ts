@@ -1,7 +1,10 @@
 import { RegExpParser, type AST } from '@eslint-community/regexpp';
+import { RE2JS } from 're2js';
 
 export const MAX_PLUGIN_COMPLETION_ITEMS = 100;
 export const MAX_PLUGIN_DECORATION_RULES = 64;
+export const MAX_ACTIVE_PLUGIN_DECORATION_RULES = 16;
+export const MAX_ACTIVE_PLUGIN_DECORATION_PATTERNS = 32;
 export const MAX_PLUGIN_TERMINAL_RANGES = 64;
 export const MAX_PLUGIN_PROMPT_ANNOTATIONS = 8;
 export const MAX_PLUGIN_BACKGROUND_LAYERS = 4;
@@ -71,6 +74,33 @@ export interface PluginTerminalBackgroundLayer {
   readonly color: string;
   readonly opacity: number;
   readonly providerId: string;
+}
+
+export const PLUGIN_TERMINAL_THEME_COLOR_KEYS = Object.freeze([
+  'background', 'foreground', 'cursor', 'selection',
+  'black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white',
+  'brightBlack', 'brightRed', 'brightGreen', 'brightYellow',
+  'brightBlue', 'brightMagenta', 'brightCyan', 'brightWhite',
+] as const);
+
+export type PluginTerminalThemeColor = typeof PLUGIN_TERMINAL_THEME_COLOR_KEYS[number];
+export type PluginTerminalThemeColors = Readonly<Partial<Record<PluginTerminalThemeColor, string>>>;
+
+export function normalizePluginThemeResult(
+  _providerId: string,
+  value: unknown,
+): PluginTerminalThemeColors {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return Object.freeze({});
+  const colors = (value as { colors?: unknown }).colors;
+  if (!colors || typeof colors !== 'object' || Array.isArray(colors)) return Object.freeze({});
+  const normalized: Partial<Record<PluginTerminalThemeColor, string>> = {};
+  for (const key of PLUGIN_TERMINAL_THEME_COLOR_KEYS) {
+    const color = (colors as Record<string, unknown>)[key];
+    if (typeof color === 'string' && /^#[0-9A-Fa-f]{6}(?:[0-9A-Fa-f]{2})?$/u.test(color)) {
+      normalized[key] = color;
+    }
+  }
+  return Object.freeze(normalized);
 }
 
 function hasUnsafeTextControl(value: string): boolean {
@@ -518,8 +548,11 @@ export function isSafePluginDecorationPattern(source: string): boolean {
       unicode: false,
       unicodeSets: false,
     });
+    if (pattern.alternatives.some((alternative) => alternative.elements.every(elementCanBeEmpty))) {
+      return false;
+    }
     if (hasAmbiguousQuantifiedAtoms(pattern)) return false;
-    void new RegExp(source, 'gi');
+    void RE2JS.compile(source, RE2JS.CASE_INSENSITIVE);
     return true;
   } catch {
     return false;
@@ -565,15 +598,18 @@ export function normalizePluginDecorationResult(
 
 export function mergePluginDecorationRules(
   groups: readonly (readonly PluginTerminalDecorationRule[])[],
-  maximum = MAX_PLUGIN_DECORATION_RULES,
+  maximum = MAX_ACTIVE_PLUGIN_DECORATION_RULES,
 ): readonly PluginTerminalDecorationRule[] {
   const result: PluginTerminalDecorationRule[] = [];
   const seen = new Set<string>();
+  let patternCount = 0;
   for (const group of groups) {
     for (const rule of group) {
       if (seen.has(rule.id)) continue;
+      if (patternCount + rule.patterns.length > MAX_ACTIVE_PLUGIN_DECORATION_PATTERNS) continue;
       seen.add(rule.id);
       result.push(rule);
+      patternCount += rule.patterns.length;
       if (result.length >= maximum) return freezeArray(result);
     }
   }

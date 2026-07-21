@@ -281,6 +281,24 @@ export interface TerminalBackgroundPayload extends TerminalProviderPayload {
   readonly terminalBackground?: string;
 }
 
+export type TerminalThemeColorName =
+  | "background" | "foreground" | "cursor" | "selection"
+  | "black" | "red" | "green" | "yellow" | "blue" | "magenta" | "cyan" | "white"
+  | "brightBlack" | "brightRed" | "brightGreen" | "brightYellow"
+  | "brightBlue" | "brightMagenta" | "brightCyan" | "brightWhite";
+
+export interface TerminalThemePayload extends TerminalProviderPayload {
+  readonly reason: string;
+  readonly currentTheme: {
+    readonly type: "dark" | "light";
+    readonly colors: Readonly<Record<TerminalThemeColorName, string>>;
+  };
+}
+
+export interface TerminalThemeResult {
+  readonly colors: Readonly<Partial<Record<TerminalThemeColorName, string>>>;
+}
+
 export interface OrdinaryTerminalProviderPayloadByKind {
   readonly "terminal.completion": TerminalCompletionPayload;
   readonly "terminal.decoration": TerminalDecorationPayload;
@@ -290,6 +308,7 @@ export interface OrdinaryTerminalProviderPayloadByKind {
   readonly "terminal.semantic": TerminalSemanticPayload;
   readonly "terminal.prompt": TerminalPromptPayload;
   readonly "terminal.background": TerminalBackgroundPayload;
+  readonly "terminal.theme": TerminalThemePayload;
 }
 
 export interface OrdinaryTerminalProviderResultByKind {
@@ -301,6 +320,7 @@ export interface OrdinaryTerminalProviderResultByKind {
   readonly "terminal.semantic": TerminalSemanticResult;
   readonly "terminal.prompt": TerminalPromptResult;
   readonly "terminal.background": TerminalBackgroundResult;
+  readonly "terminal.theme": TerminalThemeResult;
 }
 
 export interface OrdinaryTerminalProviderOperationByKind {
@@ -312,6 +332,7 @@ export interface OrdinaryTerminalProviderOperationByKind {
   readonly "terminal.semantic": "provideSemantics";
   readonly "terminal.prompt": "provideAnnotations";
   readonly "terminal.background": "provideBackgrounds";
+  readonly "terminal.theme": "provideTheme";
 }
 
 export type OrdinaryTerminalProviderKind = keyof OrdinaryTerminalProviderPayloadByKind;

@@ -28,6 +28,7 @@ const PROVIDER_KINDS = new Set([
   "terminal.semantic",
   "terminal.prompt",
   "terminal.background",
+  "terminal.theme",
   "terminal.interceptor.input",
   "terminal.interceptor.output",
   "connection",

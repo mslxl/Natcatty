@@ -380,7 +380,8 @@ declare global {
     | 'terminal.matcher'
     | 'terminal.semantic'
     | 'terminal.prompt'
-    | 'terminal.background';
+    | 'terminal.background'
+    | 'terminal.theme';
 
   interface NetcattyTerminalProviderContribution {
     pluginId: string;

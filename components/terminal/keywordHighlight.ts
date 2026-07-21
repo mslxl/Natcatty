@@ -4,20 +4,34 @@ import { KeywordHighlightRule } from "../../types";
 
 import { XTERM_PERFORMANCE_CONFIG } from "../../infrastructure/config/xtermPerformance";
 import { checkRegexSafetyPattern } from "../../lib/regexSafety";
+import { isSafePluginDecorationPattern } from "../../domain/pluginTerminalProviders";
 import { TERMINAL_AUX_LONG_LINE_SCAN_LIMIT_CHARS } from "./runtime/terminalFlowConstants";
 import { getTerminalOutputPressure } from "./runtime/terminalOutputPressure";
-import { forEachNonEmptyRegexMatch } from "./keywordHighlightRegex";
+import { compileRe2RangeMatcher, forEachNonEmptyRegexMatch, type NonEmptyRangeVisitor } from "./keywordHighlightRegex";
 
 /** Pre-compiled rule with regex ready for matching */
 interface CompiledRule {
-  regex: RegExp;
+  forEachMatch: (text: string, onMatch: NonEmptyRangeVisitor) => void;
   color: string;
   priority: number;
+  plugin: boolean;
 }
+
+type RuntimeKeywordHighlightRule = KeywordHighlightRule & { readonly providerId?: string };
+
+export const MAX_PLUGIN_DECORATION_SCAN_CHARS = 4_096;
+export const MAX_PLUGIN_DECORATION_MATCHES_PER_LOGICAL_LINE = 256;
 
 interface CachedDecorationRange {
   x: number;
   width: number;
+  color: string;
+  priority: number;
+}
+
+interface LogicalDecorationRange {
+  start: number;
+  length: number;
   color: string;
   priority: number;
 }
@@ -51,6 +65,7 @@ interface ViewportProbeSample {
 interface WrappedBlockContext {
   logicalLineText: string;
   segmentBounds: Map<number, { lineStart: number; lineEnd: number }>;
+  matchRanges?: readonly LogicalDecorationRange[];
 }
 
 type WrappedBlockCacheEntry = WrappedBlockContext | null;
@@ -189,7 +204,7 @@ export class KeywordHighlighter implements IDisposable {
     this.lastBufferSnapshot = this.readBufferSnapshot();
   }
 
-  public setRules(rules: KeywordHighlightRule[], enabled: boolean) {
+  public setRules(rules: readonly RuntimeKeywordHighlightRule[], enabled: boolean) {
     this.enabled = enabled;
     this.matchCache.clear();
 
@@ -198,6 +213,35 @@ export class KeywordHighlighter implements IDisposable {
     this.compiledRules = [];
     for (const [ruleIndex, rule] of rules.entries()) {
       if (!rule.enabled || rule.patterns.length === 0) continue;
+      if (rule.providerId) {
+        const patterns = rule.patterns.filter((pattern) => {
+          if (!pattern) return false;
+          const safetyCheck = checkRegexSafetyPattern(pattern);
+          if (safetyCheck.safe === false) {
+            console.warn("[KeywordHighlight] Skipping unsafe regex pattern:", pattern, "reason:", safetyCheck.reason);
+            return false;
+          }
+          if (!isSafePluginDecorationPattern(pattern)) {
+            console.warn("[KeywordHighlight] Skipping unsupported plugin regex pattern:", pattern);
+            return false;
+          }
+          return true;
+        });
+        for (const pattern of patterns) {
+          try {
+            const match = compileRe2RangeMatcher(pattern);
+            this.compiledRules.push({
+              forEachMatch: (text, onMatch) => match(text.slice(0, MAX_PLUGIN_DECORATION_SCAN_CHARS), onMatch),
+              color: rule.color,
+              priority: ruleIndex,
+              plugin: true,
+            });
+          } catch (err) {
+            console.error("Invalid plugin regex pattern:", pattern, err);
+          }
+        }
+        continue;
+      }
       for (const pattern of rule.patterns) {
         if (!pattern) continue;  // Skip empty patterns — RegExp("") is valid but matches nothing useful
         const safetyCheck = checkRegexSafetyPattern(pattern);
@@ -206,10 +250,17 @@ export class KeywordHighlighter implements IDisposable {
           continue;
         }
         try {
+          const regex = new RegExp(pattern, 'gi');
+          const forEachMatch = (text: string, onMatch: NonEmptyRangeVisitor) => {
+            forEachNonEmptyRegexMatch(regex, text, (match) => {
+              onMatch(match.index, match[0].length);
+            });
+          };
           this.compiledRules.push({
-            regex: new RegExp(pattern, "gi"),
+            forEachMatch,
             color: rule.color,
             priority: ruleIndex,
+            plugin: false,
           });
         } catch (err) {
           console.error("Invalid regex pattern:", pattern, err);
@@ -1147,8 +1198,10 @@ export class KeywordHighlighter implements IDisposable {
       }
 
       const hasWrappedContext = this.hasWrappedNeighbor(buffer, lineY, line);
-      const cachedRanges = hasWrappedContext && !pressure.longLine
-        ? this.scanWrappedLine(buffer, lineY, line, lineText, wrappedBlockCache)
+      const cachedRanges = hasWrappedContext
+        ? pressure.longLine
+          ? this.getCachedRanges(line, lineText, false)
+          : this.scanWrappedLine(buffer, lineY, line, lineText, wrappedBlockCache)
         : this.getCachedRanges(line, lineText);
       if (cachedRanges.length === 0) {
         this.disposeLineDecorations(lineY);
@@ -1236,17 +1289,22 @@ export class KeywordHighlighter implements IDisposable {
     }
   }
 
-  private getCachedRanges(line: IBufferLine, lineText: string): CachedDecorationRange[] {
-    const cached = this.matchCache.get(lineText);
+  private getCachedRanges(
+    line: IBufferLine,
+    lineText: string,
+    includePlugin = true,
+  ): CachedDecorationRange[] {
+    const cacheKey = `${includePlugin ? 'all' : 'host'}\0${lineText}`;
+    const cached = this.matchCache.get(cacheKey);
     if (cached) {
       // LRU: move to end
-      this.matchCache.delete(lineText);
-      this.matchCache.set(lineText, cached);
+      this.matchCache.delete(cacheKey);
+      this.matchCache.set(cacheKey, cached);
       return cached;
     }
 
-    const ranges = this.scanLine(line, lineText);
-    this.matchCache.set(lineText, ranges);
+    const ranges = this.scanLine(line, lineText, includePlugin);
+    this.matchCache.set(cacheKey, ranges);
 
     const maxEntries = XTERM_PERFORMANCE_CONFIG.highlighting.cacheEntries;
     if (this.matchCache.size > maxEntries) {
@@ -1323,7 +1381,7 @@ export class KeywordHighlighter implements IDisposable {
     lineY: number,
     line: IBufferLine,
     cache: WrappedBlockScanCache,
-  ): { logicalLineText: string; lineStart: number; lineEnd: number } | null {
+  ): { block: WrappedBlockContext; lineStart: number; lineEnd: number } | null {
     if (this.isInCappedWrappedMiss(lineY, line, cache)) {
       return null;
     }
@@ -1341,7 +1399,7 @@ export class KeywordHighlighter implements IDisposable {
     const bounds = block.segmentBounds.get(lineY);
     if (!bounds) return null;
     return {
-      logicalLineText: block.logicalLineText,
+      block,
       lineStart: bounds.lineStart,
       lineEnd: bounds.lineEnd,
     };
@@ -1373,7 +1431,10 @@ export class KeywordHighlighter implements IDisposable {
     wrappedBlockCache: WrappedBlockScanCache,
   ): CachedDecorationRange[] {
     const context = this.getWrappedContext(buffer, lineY, line, wrappedBlockCache);
-    if (!context || context.logicalLineText === lineText) {
+    if (!context) {
+      return this.scanLine(line, lineText, false);
+    }
+    if (context.block.logicalLineText === lineText) {
       return this.scanLine(line, lineText);
     }
 
@@ -1381,46 +1442,44 @@ export class KeywordHighlighter implements IDisposable {
     let cellMap: number[] | null = null;
     let ranges: CachedDecorationRange[] | null = null;
 
-    for (const { regex, color, priority } of this.compiledRules) {
-      forEachNonEmptyRegexMatch(regex, context.logicalLineText, (match) => {
-        const matchStart = match.index;
-        const matchEnd = matchStart + match[0].length;
-        if (matchEnd <= context.lineStart || matchStart >= context.lineEnd) {
-          return;
+    context.block.matchRanges ??= this.scanLogicalLineText(context.block.logicalLineText);
+    for (const { start: matchStart, length: matchLength, color, priority } of context.block.matchRanges) {
+      const matchEnd = matchStart + matchLength;
+      if (matchEnd <= context.lineStart || matchStart >= context.lineEnd) {
+        continue;
+      }
+
+      const localStart = Math.max(matchStart, context.lineStart) - context.lineStart;
+      const localEnd = Math.min(matchEnd, context.lineEnd) - context.lineStart;
+      if (localEnd <= localStart) continue;
+
+      let cellStartCol: number;
+      let cellEndCol: number;
+
+      if (asciiOnly) {
+        cellStartCol = localStart;
+        cellEndCol = localEnd;
+      } else {
+        if (cellMap === null) {
+          cellMap = this.buildStringToCellMap(line);
         }
+        cellStartCol = cellMap[localStart] ?? localStart;
+        cellEndCol = localEnd < cellMap.length
+          ? (cellMap[localEnd] ?? localEnd)
+          : (cellMap[cellMap.length - 1] ?? localEnd);
+      }
 
-        const localStart = Math.max(matchStart, context.lineStart) - context.lineStart;
-        const localEnd = Math.min(matchEnd, context.lineEnd) - context.lineStart;
-        if (localEnd <= localStart) return;
+      const cellWidth = cellEndCol - cellStartCol;
+      if (cellWidth <= 0) continue;
 
-        let cellStartCol: number;
-        let cellEndCol: number;
-
-        if (asciiOnly) {
-          cellStartCol = localStart;
-          cellEndCol = localEnd;
-        } else {
-          if (cellMap === null) {
-            cellMap = this.buildStringToCellMap(line);
-          }
-          cellStartCol = cellMap[localStart] ?? localStart;
-          cellEndCol = localEnd < cellMap.length
-            ? (cellMap[localEnd] ?? localEnd)
-            : (cellMap[cellMap.length - 1] ?? localEnd);
-        }
-
-        const cellWidth = cellEndCol - cellStartCol;
-        if (cellWidth <= 0) return;
-
-        if (ranges === null) {
-          ranges = [];
-        }
-        ranges.push({
-          x: cellStartCol,
-          width: cellWidth,
-          color,
-          priority,
-        });
+      if (ranges === null) {
+        ranges = [];
+      }
+      ranges.push({
+        x: cellStartCol,
+        width: cellWidth,
+        color,
+        priority,
       });
     }
 
@@ -1433,18 +1492,42 @@ export class KeywordHighlighter implements IDisposable {
     return this.mergeDecorationRanges(ranges);
   }
 
-  private scanLine(line: IBufferLine, lineText: string): CachedDecorationRange[] {
+  private scanLogicalLineText(lineText: string): readonly LogicalDecorationRange[] {
+    const ranges: LogicalDecorationRange[] = [];
+    let pluginMatchCount = 0;
+    for (const { forEachMatch, color, priority, plugin } of this.compiledRules) {
+      if (plugin && pluginMatchCount >= MAX_PLUGIN_DECORATION_MATCHES_PER_LOGICAL_LINE) continue;
+      forEachMatch(lineText, (start, length) => {
+        ranges.push({ start, length, color, priority });
+        if (plugin) {
+          pluginMatchCount += 1;
+          return pluginMatchCount < MAX_PLUGIN_DECORATION_MATCHES_PER_LOGICAL_LINE;
+        }
+      });
+    }
+    return ranges;
+  }
+
+  private scanLine(
+    line: IBufferLine,
+    lineText: string,
+    includePlugin = true,
+  ): CachedDecorationRange[] {
     // ASCII-only lines have a 1:1 string-index-to-cell-column mapping,
     // so we can skip the expensive buildStringToCellMap call entirely.
     const asciiOnly = RE_ASCII_ONLY.test(lineText);
     let cellMap: number[] | null = null;
     let ranges: CachedDecorationRange[] | null = null;
+    let pluginMatchCount = 0;
 
     // Process each pre-compiled rule
-    for (const { regex, color, priority } of this.compiledRules) {
-      forEachNonEmptyRegexMatch(regex, lineText, (match) => {
-        const strStart = match.index;
-        const strEnd = strStart + match[0].length;
+    for (const { forEachMatch, color, priority, plugin } of this.compiledRules) {
+      if (plugin && !includePlugin) continue;
+      if (plugin && pluginMatchCount >= MAX_PLUGIN_DECORATION_MATCHES_PER_LOGICAL_LINE) continue;
+      forEachMatch(lineText, (strStart, matchLength) => {
+        const shouldContinuePluginMatching = !plugin
+          || ++pluginMatchCount < MAX_PLUGIN_DECORATION_MATCHES_PER_LOGICAL_LINE;
+        const strEnd = strStart + matchLength;
 
         let cellStartCol: number;
         let cellEndCol: number;
@@ -1466,7 +1549,7 @@ export class KeywordHighlighter implements IDisposable {
         const cellWidth = cellEndCol - cellStartCol;
 
         // Skip if width is 0 or negative (shouldn't happen, but be safe)
-        if (cellWidth <= 0) return;
+        if (cellWidth <= 0) return shouldContinuePluginMatching;
 
         if (ranges === null) {
           ranges = [];
@@ -1477,6 +1560,7 @@ export class KeywordHighlighter implements IDisposable {
           color,
           priority,
         });
+        return shouldContinuePluginMatching;
       });
     }
 

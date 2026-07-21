@@ -21,7 +21,8 @@
   "activationEvents": [
     "onCommand:com.netcatty.hello.sayHello",
     "onProvider:com.netcatty.hello.completion",
-    "onProvider:com.netcatty.hello.decoration"
+    "onProvider:com.netcatty.hello.decoration",
+    "onProvider:com.netcatty.hello.theme"
   ],
   "permissions": {
     "required": [
@@ -73,6 +74,12 @@
         "label": "Hello decoration",
         "description": "Highlights the example greeting in terminal output.",
         "kind": "terminal.decoration"
+      },
+      {
+        "id": "com.netcatty.hello.theme",
+        "label": "Hello theme",
+        "description": "Adds a subtle cursor color to the example terminal theme.",
+        "kind": "terminal.theme"
       }
     ]
   }

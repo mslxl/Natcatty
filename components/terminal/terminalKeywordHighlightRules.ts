@@ -4,11 +4,11 @@ import type { Host, KeywordHighlightRule, TerminalSettings } from '../../types';
 
 export type AdditionalTerminalKeywordHighlightRule = Readonly<
   Pick<KeywordHighlightRule, 'id' | 'label' | 'patterns' | 'color' | 'enabled'>
-> & { readonly patterns: readonly string[] };
+> & { readonly patterns: readonly string[]; readonly providerId?: string };
 
 interface TerminalKeywordHighlightTarget {
   keywordHighlighter: {
-    setRules(rules: KeywordHighlightRule[], enabled: boolean): void;
+    setRules(rules: readonly (KeywordHighlightRule & { readonly providerId?: string })[], enabled: boolean): void;
   };
 }
 

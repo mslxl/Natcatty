@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { KeywordHighlighter } from "./keywordHighlight.ts";
+import {
+  KeywordHighlighter,
+  MAX_PLUGIN_DECORATION_MATCHES_PER_LOGICAL_LINE,
+} from "./keywordHighlight.ts";
 import type { KeywordHighlightRule } from "../../types.ts";
 import {
   noteTerminalOutputPressureData,
@@ -310,6 +313,180 @@ test("setRules immediately highlights a newly added rule against visible termina
   }
 });
 
+test("plugin rules use the RE2 matcher while saved user rules retain JavaScript regex behavior", () => {
+  const raf = installAnimationFrameQueue();
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    const userTerminal = createFakeTerminal("aa");
+    const userHighlighter = new KeywordHighlighter(userTerminal.term as never);
+    userHighlighter.setRules([{
+      id: "user",
+      label: "User",
+      patterns: ["(a)\\1"],
+      color: "#F87171",
+      enabled: true,
+    }], true);
+    raf.flush();
+    userHighlighter.dispose();
+    assert.equal(userTerminal.decorations.length, 1);
+
+    const pluginTerminal = createFakeTerminal("aa");
+    const pluginHighlighter = new KeywordHighlighter(pluginTerminal.term as never);
+    pluginHighlighter.setRules([{
+      id: "plugin:rule",
+      label: "Plugin",
+      patterns: ["(a)\\1"],
+      color: "#F87171",
+      enabled: true,
+      providerId: "plugin",
+    }], true);
+    raf.flush();
+    pluginHighlighter.dispose();
+    assert.equal(pluginTerminal.decorations.length, 0);
+  } finally {
+    console.error = originalError;
+    raf.restore();
+  }
+});
+
+test("plugin patterns retain independent overlapping match semantics", () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const { term, decorations } = createFakeTerminal("error code");
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "plugin:overlap",
+      label: "Overlap",
+      patterns: ["error", "error code"],
+      color: "#F87171",
+      enabled: true,
+      providerId: "plugin",
+    }], true);
+    raf.flush();
+    highlighter.dispose();
+    assert.deepEqual(decorations.map(({ x, width }) => ({ x, width })), [{ x: 0, width: 10 }]);
+
+    const shifted = createFakeTerminal("abab");
+    const shiftedHighlighter = new KeywordHighlighter(shifted.term as never);
+    shiftedHighlighter.setRules([{
+      id: "plugin:shifted-overlap",
+      label: "Shifted overlap",
+      patterns: ["aba", "bab"],
+      color: "#F87171",
+      enabled: true,
+      providerId: "plugin",
+    }], true);
+    raf.flush();
+    shiftedHighlighter.dispose();
+    assert.deepEqual(shifted.decorations.map(({ x, width }) => ({ x, width })), [{ x: 0, width: 4 }]);
+  } finally {
+    raf.restore();
+  }
+});
+
+test("plugin highlight work stays bounded at the maximum active rule budget", () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const { term } = createFakeTerminalFromLines(Array.from({ length: 51 }, (_, index) => ({
+      text: "x".repeat(80),
+      isWrapped: index > 0,
+    })));
+    const highlighter = new KeywordHighlighter(term as never);
+    const rules = Array.from({ length: 16 }, (_, rule) => ({
+      id: `plugin:${rule}`,
+      label: `Plugin ${rule}`,
+      patterns: [`missing-${rule}-a`, `missing-${rule}-b`],
+      color: "#F87171",
+      enabled: true,
+      providerId: "plugin",
+    }));
+    const startedAt = performance.now();
+    highlighter.setRules(rules, true);
+    const compiledRules = (highlighter as unknown as {
+      compiledRules: Array<{ forEachMatch: (text: string, onMatch: (start: number, length: number) => boolean | void) => void }>;
+    }).compiledRules;
+    let matcherCalls = 0;
+    for (const compiledRule of compiledRules) {
+      const match = compiledRule.forEachMatch;
+      compiledRule.forEachMatch = (text, onMatch) => {
+        matcherCalls += 1;
+        match(text, onMatch);
+      };
+    }
+    raf.flush();
+    const elapsedMs = performance.now() - startedAt;
+    assert.equal(compiledRules.length, 32);
+    assert.equal(matcherCalls, 32);
+    assert.ok(elapsedMs < 1_000, `maximum plugin highlight workload took ${elapsedMs.toFixed(1)}ms`);
+    highlighter.dispose();
+  } finally {
+    raf.restore();
+  }
+});
+
+test("plugin match output is capped for a high-frequency wrapped logical line", () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const { term } = createFakeTerminalFromLines(Array.from({ length: 51 }, (_, index) => ({
+      text: "x".repeat(80),
+      isWrapped: index > 0,
+    })));
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules(Array.from({ length: 16 }, (_, rule) => ({
+      id: `plugin:dense-${rule}`,
+      label: `Dense ${rule}`,
+      patterns: [".", "x"],
+      color: "#F87171",
+      enabled: true,
+      providerId: "plugin",
+    })), true);
+    const compiledRules = (highlighter as unknown as {
+      compiledRules: Array<{ forEachMatch: (text: string, onMatch: (start: number, length: number) => boolean | void) => void }>;
+    }).compiledRules;
+    let deliveredMatches = 0;
+    for (const compiledRule of compiledRules) {
+      const match = compiledRule.forEachMatch;
+      compiledRule.forEachMatch = (text, onMatch) => match(text, (start, length) => {
+        deliveredMatches += 1;
+        return onMatch(start, length);
+      });
+    }
+    const startedAt = performance.now();
+    raf.flush();
+    const elapsedMs = performance.now() - startedAt;
+    assert.equal(deliveredMatches, MAX_PLUGIN_DECORATION_MATCHES_PER_LOGICAL_LINE);
+    assert.ok(elapsedMs < 1_000, `dense plugin highlight workload took ${elapsedMs.toFixed(1)}ms`);
+    highlighter.dispose();
+  } finally {
+    raf.restore();
+  }
+});
+
+test("plugin rules reject empty-match patterns before viewport scanning", () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const { term } = createFakeTerminalFromLines(Array.from({ length: 51 }, (_, index) => ({
+      text: "x".repeat(80),
+      isWrapped: index > 0,
+    })));
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "plugin:empty",
+      label: "Empty",
+      patterns: ["a*", "a?", "^$"],
+      color: "#F87171",
+      enabled: true,
+      providerId: "plugin",
+    }], true);
+    assert.equal((highlighter as unknown as { compiledRules: unknown[] }).compiledRules.length, 0);
+    raf.flush();
+    highlighter.dispose();
+  } finally {
+    raf.restore();
+  }
+});
+
 test("output-driven viewport changes defer keyword highlight scans", async () => {
   const raf = installAnimationFrameQueue();
   try {
@@ -569,6 +746,30 @@ test("wrapped highlight scanning falls back when the logical line exceeds the sc
     highlighter.dispose();
     resetTerminalOutputPressure(term as never);
 
+    assert.deepEqual(decorations, []);
+  } finally {
+    raf.restore();
+  }
+});
+
+test("oversized wrapped blocks skip plugin rules instead of resetting their per-line budget", () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const { term, decorations } = createFakeTerminalFromLines([
+      { text: "a".repeat(TERMINAL_AUX_LONG_LINE_SCAN_LIMIT_CHARS), isWrapped: false },
+      { text: "PLUGIN", isWrapped: true },
+    ]);
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "plugin:oversized",
+      label: "Oversized",
+      patterns: ["PLUGIN"],
+      color: "#F87171",
+      enabled: true,
+      providerId: "plugin",
+    }], true);
+    raf.flush();
+    highlighter.dispose();
     assert.deepEqual(decorations, []);
   } finally {
     raf.restore();

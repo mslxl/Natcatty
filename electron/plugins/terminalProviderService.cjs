@@ -21,6 +21,7 @@ const TERMINAL_PROVIDER_KINDS = Object.freeze([
   "terminal.semantic",
   "terminal.prompt",
   "terminal.background",
+  "terminal.theme",
 ]);
 const TERMINAL_PROVIDER_KIND_SET = new Set(TERMINAL_PROVIDER_KINDS);
 const TERMINAL_PROVIDER_OPERATIONS = new Map([
@@ -32,6 +33,7 @@ const TERMINAL_PROVIDER_OPERATIONS = new Map([
   ["terminal.semantic", "provideSemantics"],
   ["terminal.prompt", "provideAnnotations"],
   ["terminal.background", "provideBackgrounds"],
+  ["terminal.theme", "provideTheme"],
 ]);
 const TERMINAL_PROVIDER_PERMISSIONS = new Map([
   ["terminal.completion", ["provider.terminal", "terminal.complete"]],
@@ -42,7 +44,15 @@ const TERMINAL_PROVIDER_PERMISSIONS = new Map([
   ["terminal.semantic", ["provider.terminal", "terminal.input", "terminal.decorate"]],
   ["terminal.prompt", ["provider.terminal", "terminal.output", "terminal.decorate"]],
   ["terminal.background", ["provider.terminal", "terminal.decorate"]],
+  ["terminal.theme", ["provider.terminal", "terminal.decorate"]],
 ]);
+const TERMINAL_THEME_COLOR_KEYS = Object.freeze([
+  "background", "foreground", "cursor", "selection",
+  "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
+  "brightBlack", "brightRed", "brightGreen", "brightYellow",
+  "brightBlue", "brightMagenta", "brightCyan", "brightWhite",
+]);
+const TERMINAL_THEME_COLOR_KEY_SET = new Set(TERMINAL_THEME_COLOR_KEYS);
 const TERMINAL_EVENT_TYPES = new Set([
   "snapshot",
   "created",
@@ -360,6 +370,21 @@ function assertTerminalProviderPayload(kind, operation, payload) {
     assertVisibleString(payload?.reason, "Terminal background reason", 128);
     assertOptionalColor(payload.terminalBackground, "Terminal background color");
   }
+  if (kind === "terminal.theme") {
+    assertVisibleString(payload?.reason, "Terminal theme reason", 128);
+    const currentTheme = assertPlainRecord(payload?.currentTheme, "Current terminal theme");
+    if (currentTheme.type !== "dark" && currentTheme.type !== "light") {
+      throw new TypeError("Current terminal theme type is invalid");
+    }
+    const colors = assertPlainRecord(currentTheme.colors, "Current terminal theme colors");
+    for (const key of TERMINAL_THEME_COLOR_KEYS) {
+      if (typeof colors[key] !== "string") throw new TypeError(`Current terminal theme ${key} is required`);
+      assertOptionalColor(colors[key], `Current terminal theme ${key}`);
+    }
+    if (Object.keys(colors).some((key) => !TERMINAL_THEME_COLOR_KEY_SET.has(key))) {
+      throw new TypeError("Current terminal theme contains an unknown color");
+    }
+  }
 }
 
 function assertTerminalProviderOkResult(kind, value, payload) {
@@ -470,6 +495,17 @@ function assertTerminalProviderOkResult(kind, value, payload) {
           || layer.opacity > 0.35)) {
         throw new TypeError("Terminal background layer opacity is invalid");
       }
+    }
+  }
+  if (kind === "terminal.theme") {
+    const result = assertPlainRecord(value, "Terminal theme result");
+    const colors = assertPlainRecord(result.colors, "Terminal theme colors");
+    if (Object.keys(result).some((key) => key !== "colors")
+      || Object.keys(colors).some((key) => !TERMINAL_THEME_COLOR_KEY_SET.has(key))) {
+      throw new TypeError("Terminal theme result contains an unknown property");
+    }
+    for (const [key, color] of Object.entries(colors)) {
+      assertOptionalColor(color, `Terminal theme ${key}`);
     }
   }
 }

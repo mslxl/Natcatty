@@ -39,6 +39,7 @@ export const ORDINARY_TERMINAL_PROVIDER_KINDS = Object.freeze([
   'terminal.semantic',
   'terminal.prompt',
   'terminal.background',
+  'terminal.theme',
 ] as const satisfies readonly NetcattyTerminalProviderKind[]);
 
 export type RequestPluginTerminalProviders = (

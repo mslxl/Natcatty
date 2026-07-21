@@ -454,6 +454,7 @@ function validateSemantics(manifest: PluginManifest): string[] {
     ["terminal.semantic", ["provider.terminal", "terminal.input", "terminal.decorate"]],
     ["terminal.prompt", ["provider.terminal", "terminal.output", "terminal.decorate"]],
     ["terminal.background", ["provider.terminal", "terminal.decorate"]],
+    ["terminal.theme", ["provider.terminal", "terminal.decorate"]],
     ["terminal.interceptor.input", ["provider.terminal", "terminal.intercept.input"]],
     ["terminal.interceptor.output", ["provider.terminal", "terminal.intercept.output"]],
     ["connection", ["provider.connection"]],

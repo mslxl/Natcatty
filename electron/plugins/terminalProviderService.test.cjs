@@ -411,7 +411,7 @@ test("terminal link and hover results are validated against the host line", asyn
   assert.equal(response[0].error.code, RPC_ERRORS.dataLoss);
 });
 
-test("terminal matcher, semantic, prompt, and background results use operation-specific validation", async () => {
+test("terminal matcher, semantic, prompt, background, and theme results use operation-specific validation", async () => {
   const cases = [
     ["terminal.matcher", "provideMatches", { lines: [{ lineId: "line-1", line: "failed", bufferLineNumber: 1 }] }, {
       matches: [{ lineId: "line-1", start: 0, length: 6, label: "Failure", severity: "error", color: "#ff0000" }],
@@ -427,6 +427,17 @@ test("terminal matcher, semantic, prompt, and background results use operation-s
     ["terminal.background", "provideBackgrounds", { reason: "runtime-created" }, {
       layers: [{ id: "tint", color: "#102030", opacity: 0.25 }],
       refreshAfterMs: 250,
+    }],
+    ["terminal.theme", "provideTheme", { reason: "theme-changed", currentTheme: {
+      type: "dark",
+      colors: Object.fromEntries([
+        "background", "foreground", "cursor", "selection",
+        "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
+        "brightBlack", "brightRed", "brightGreen", "brightYellow",
+        "brightBlue", "brightMagenta", "brightCyan", "brightWhite",
+      ].map((key) => [key, "#000000"])),
+    } }, {
+      colors: { background: "#102030", foreground: "#f0f0f0", cursor: "#abcdef" },
     }],
   ];
   for (const [kind, operation, payload, result] of cases) {

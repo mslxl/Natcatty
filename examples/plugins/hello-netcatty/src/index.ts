@@ -35,5 +35,10 @@ export default definePlugin({
         }],
       }),
     ));
+    context.subscriptions.add(context.providers.register(
+      "com.netcatty.hello.theme",
+      "terminal.theme",
+      () => ({ colors: { cursor: "#34D399" } }),
+    ));
   },
 });

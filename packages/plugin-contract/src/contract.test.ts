@@ -1037,6 +1037,11 @@ test("planned phase consumers are representable without private application type
             label: "Background",
             kind: "terminal.background",
           },
+          {
+            id: "com.example.contract-test.theme",
+            label: "Theme",
+            kind: "terminal.theme",
+          },
         ],
       },
     },
