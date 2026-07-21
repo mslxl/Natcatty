@@ -62,6 +62,16 @@ const SENSITIVE_HOST_KEYS = new Set([
   'passphrase',
 ]);
 
+/**
+ * Reserved chatSessionId the TCP bridge forces onto every authenticated
+ * external-MCP socket (see electron/bridges/mcpServerBridge.cjs and
+ * electron/cli/externalMcpDiscoveryPath.cjs). A missing chatSessionId is NOT
+ * a reliable "external MCP" signal — the stdio server always sends one, and
+ * the bridge overwrites it with this value for external-token sockets — so
+ * callers must compare against this exact constant instead.
+ */
+const EXTERNAL_MCP_CHAT_SESSION_ID = '__external_mcp__';
+
 const VAULT_HOST_UPDATE_FIELDS = [
   'label',
   'name',
@@ -490,7 +500,7 @@ async function registerOpenedSessionInMcpScope(
   // Always merge into the reserved external MCP scope when that surface is
   // active; External MCP agents can then terminal_execute without waiting for
   // the next React session-sync tick.
-  scopes.add('__external_mcp__');
+  scopes.add(EXTERNAL_MCP_CHAT_SESSION_ID);
 
   await Promise.all(
     [...scopes].map(async (scopeId) => {
@@ -543,8 +553,12 @@ export async function handleVaultAgentOp(
       const chatSessionId = typeof params.chatSessionId === 'string'
         ? params.chatSessionId
         : undefined;
+      // The TCP bridge forces every authenticated external-MCP socket's
+      // chatSessionId to this reserved value, so a missing chatSessionId is
+      // not a reliable signal — compare against the constant instead.
+      const isExternalMcpCall = chatSessionId === EXTERNAL_MCP_CHAT_SESSION_ID;
       const effectiveHost = deps.resolveEffectiveHost(host);
-      const opened = deps.openHost(effectiveHost, !chatSessionId);
+      const opened = deps.openHost(effectiveHost, isExternalMcpCall);
       if (!opened.ok) {
         return { ok: false, error: opened.error };
       }
