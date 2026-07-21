@@ -1638,6 +1638,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     resolvedChainHosts,
     sessionId,
     reuseConnectionFromSessionId,
+    isNetworkDevice,
     startupCommand,
     noAutoRun,
     multiLineRunMode,
