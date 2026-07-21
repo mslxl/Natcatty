@@ -235,6 +235,8 @@ export const zhTWAiMessages: Messages = {
   'ai.externalMcp.idleTimeout.minutes': '分鐘',
   'ai.externalMcp.focusOnHostOpen': 'host_open 時啟用視窗',
   'ai.externalMcp.focusOnHostOpen.description': '當 MCP 用戶端開啟主機連線時，將主視窗切換到前景。關閉後可不受打擾地繼續目前工作。',
+  'ai.externalMcp.silentSessions': 'AI 工作階段靜默執行',
+  'ai.externalMcp.silentSessions.description': 'AI 開啟的工作階段不會出現在分頁列，重新啟動後也不會還原。可隨時在系統匣面板中查看。',
   'ai.externalMcp.sessionIdleTimeout': '已開啟工作階段閒置逾時',
   'ai.externalMcp.sessionIdleTimeout.description': 'AI 開啟的工作階段若超過該分鐘數沒有終端或檔案操作，將自動關閉。',
   'ai.externalMcp.usage.title': '使用說明',

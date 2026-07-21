@@ -129,6 +129,7 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
           status: s.status,
           workspaceId: s.workspaceId,
           workspaceTitle: ws?.title,
+          aiHidden: s.hiddenFromTabs === true,
         };
       });
 

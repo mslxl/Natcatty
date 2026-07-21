@@ -236,6 +236,8 @@ export const enAiMessages: Messages = {
   'ai.externalMcp.idleTimeout.minutes': 'min',
   'ai.externalMcp.focusOnHostOpen': 'Focus window on host_open',
   'ai.externalMcp.focusOnHostOpen.description': 'When an MCP client opens a host, bring the main window to the foreground. Turn off to keep working without interruption.',
+  'ai.externalMcp.silentSessions': 'Silent MCP sessions',
+  'ai.externalMcp.silentSessions.description': 'Sessions opened by AI stay out of your tab bar and are not restored after restart. View them anytime from the tray panel.',
   'ai.externalMcp.sessionIdleTimeout': 'Opened session idle timeout',
   'ai.externalMcp.sessionIdleTimeout.description': 'Automatically close sessions opened by an AI after this many minutes without terminal or file activity.',
   'ai.externalMcp.usage.title': 'How to use',

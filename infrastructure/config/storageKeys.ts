@@ -191,6 +191,8 @@ export const STORAGE_KEY_AI_EXTERNAL_MCP_IDLE_TIMEOUT_MINUTES = 'netcatty_ai_ext
 export const STORAGE_KEY_AI_EXTERNAL_MCP_FOCUS_ON_HOST_OPEN = 'netcatty_ai_external_mcp_focus_on_host_open_v1';
 /** Idle timeout for terminal sessions opened by an AI through host_open. */
 export const STORAGE_KEY_AI_SESSION_IDLE_TIMEOUT_MINUTES = 'netcatty_ai_session_idle_timeout_minutes_v1';
+/** External MCP: whether host_open sessions stay hidden from the tab bar (default false). */
+export const STORAGE_KEY_AI_EXTERNAL_MCP_SILENT_SESSIONS = 'netcatty_ai_external_mcp_silent_sessions_v1';
 
 // SFTP Transfer Concurrency
 export const STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY = 'netcatty_sftp_transfer_concurrency_v1';

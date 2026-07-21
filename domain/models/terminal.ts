@@ -510,6 +510,15 @@ export interface TerminalSession {
    * the one-time credentials cannot survive a relaunch.
    */
   ephemeralHost?: boolean;
+  /**
+   * Runtime marker for sessions opened via MCP host_open while "silent
+   * sessions" is enabled. Hidden from the main window's tab bar (TopTabs,
+   * QuickSwitcher, orphan tab ordering) and excluded from session-restore
+   * persistence, but remains a fully live session reachable by terminal
+   * exec/sftp/session-close tools, and still visible in TrayPanel and the
+   * external MCP session list.
+   */
+  hiddenFromTabs?: boolean;
   /** Runtime hint to auto-open a side panel once the session connects. */
   autoOpenSidePanel?: 'sftp';
   /** Latest known working directory captured from terminal cwd tracking. */

@@ -179,6 +179,24 @@ test("closing the last workspace session does not invent a surviving terminal", 
   );
 });
 
+test("closing the last visible solo tab does not fall back to a hidden MCP session", () => {
+  const visibleSession: TerminalSession = { ...session("s1", undefined) };
+  const hiddenSession: TerminalSession = { ...session("s2", undefined), hiddenFromTabs: true };
+  const layoutResult = closeSessionWorkspaceLayoutState([], undefined, "s1");
+  const remainingSessions = [hiddenSession];
+
+  assert.equal(
+    resolveActiveTabAfterCloseSession({
+      currentActiveTabId: visibleSession.id,
+      closedSessionId: "s1",
+      workspaceId: undefined,
+      layoutResult,
+      remainingSessions,
+    }),
+    "vault",
+  );
+});
+
 test("closing several standalone sessions removes the whole batch", () => {
   const standaloneSession = (id: string): TerminalSession => ({
     ...session(id),

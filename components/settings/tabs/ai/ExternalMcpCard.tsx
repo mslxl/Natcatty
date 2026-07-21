@@ -8,8 +8,10 @@ import {
   readExternalMcpFocusOnHostOpen,
   readExternalMcpIdleTimeoutMinutes,
   readExternalMcpMode,
+  readExternalMcpSilentSessions,
   readSessionIdleTimeoutMinutes,
   writeExternalMcpFocusOnHostOpen,
+  writeExternalMcpSilentSessions,
   type ExternalMcpMode,
   useExternalMcpToggleState,
 } from "../../../../application/state/useExternalMcpToggleState";
@@ -303,6 +305,7 @@ export const ExternalMcpCard: React.FC = () => {
   const [idleTimeoutMinutes, setIdleTimeoutRaw] = useState<number>(() => readExternalMcpIdleTimeoutMinutes());
   const [focusOnHostOpen, setFocusOnHostOpenRaw] = useState<boolean>(() => readExternalMcpFocusOnHostOpen());
   const [sessionIdleTimeoutMinutes, setSessionIdleTimeoutRaw] = useState<number>(() => readSessionIdleTimeoutMinutes());
+  const [silentSessions, setSilentSessionsRaw] = useState<boolean>(() => readExternalMcpSilentSessions());
   const [status, setStatus] = useState<ExternalMcpStatus | null>(null);
   const [selectedClient, setSelectedClient] = useState<ExternalMcpClient>("codex");
   const [codexStatus, setCodexStatus] = useState<ClientSetupStatus | null>(null);
@@ -351,6 +354,11 @@ export const ExternalMcpCard: React.FC = () => {
   const setFocusOnHostOpen = useCallback((nextFocusOnHostOpen: boolean) => {
     setFocusOnHostOpenRaw(nextFocusOnHostOpen);
     writeExternalMcpFocusOnHostOpen(nextFocusOnHostOpen);
+  }, []);
+
+  const setSilentSessions = useCallback((nextSilentSessions: boolean) => {
+    setSilentSessionsRaw(nextSilentSessions);
+    writeExternalMcpSilentSessions(nextSilentSessions);
   }, []);
 
   const refreshStatus = useCallback(async (options?: { quiet?: boolean; clients?: boolean }) => {
@@ -733,6 +741,13 @@ export const ExternalMcpCard: React.FC = () => {
             <div className="text-xs text-muted-foreground">{t("ai.externalMcp.focusOnHostOpen.description")}</div>
           </div>
           <Toggle checked={focusOnHostOpen} onChange={setFocusOnHostOpen} />
+        </div>
+        <div className="flex items-center justify-between gap-4">
+          <div className="min-w-0">
+            <div className="text-sm font-medium">{t("ai.externalMcp.silentSessions")}</div>
+            <div className="text-xs text-muted-foreground">{t("ai.externalMcp.silentSessions.description")}</div>
+          </div>
+          <Toggle checked={silentSessions} onChange={setSilentSessions} />
         </div>
         <div className="flex items-center justify-between gap-4">
           <div className="min-w-0">

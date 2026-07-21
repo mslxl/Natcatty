@@ -234,7 +234,7 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
 
   // Memoize orphan sessions
   const orphanSessions = useMemo(
-    () => sessions.filter((s) => !s.workspaceId),
+    () => sessions.filter((s) => !s.workspaceId && !s.hiddenFromTabs),
     [sessions]
   );
   const trimmedQuery = query.trim();

@@ -285,7 +285,7 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
             shellHistory={shellHistory}
             connectionLogs={connectionLogs}
             managedSources={managedSources}
-            sessionCount={sessions.length}
+            sessionCount={sessions.filter((s) => !s.hiddenFromTabs).length}
             hotkeyScheme={hotkeyScheme}
             keyBindings={keyBindings}
             terminalThemeId={terminalThemeId}

@@ -62,6 +62,16 @@ const SENSITIVE_HOST_KEYS = new Set([
   'passphrase',
 ]);
 
+/**
+ * Reserved chatSessionId the TCP bridge forces onto every authenticated
+ * external-MCP socket (see electron/bridges/mcpServerBridge.cjs and
+ * electron/cli/externalMcpDiscoveryPath.cjs). A missing chatSessionId is NOT
+ * a reliable "external MCP" signal — the stdio server always sends one, and
+ * the bridge overwrites it with this value for external-token sockets — so
+ * callers must compare against this exact constant instead.
+ */
+const EXTERNAL_MCP_CHAT_SESSION_ID = '__external_mcp__';
+
 const VAULT_HOST_UPDATE_FIELDS = [
   'label',
   'name',
@@ -419,9 +429,12 @@ export interface VaultAgentApiDeps {
   stopRuleTunnels: (ruleId: string) => Promise<{ success: boolean; error?: string }>;
   /**
    * Open a vault host as a terminal tab (same path as tray / host list click).
-   * Must return the new sessionId so MCP can target terminal tools.
+   * Must return the new sessionId so MCP can target terminal tools. `isExternalMcpCall`
+   * is true only when the request has no chatSessionId — i.e. it came from an actual
+   * external MCP client rather than the in-app Catty AI chat — and gates the "silent
+   * sessions" setting so the in-app chat's host_open still opens a visible tab.
    */
-  openHost?: (host: Host) => {
+  openHost?: (host: Host, isExternalMcpCall: boolean) => {
     ok: true;
     sessionId: string;
     host: Host;
@@ -487,7 +500,7 @@ async function registerOpenedSessionInMcpScope(
   // Always merge into the reserved external MCP scope when that surface is
   // active; External MCP agents can then terminal_execute without waiting for
   // the next React session-sync tick.
-  scopes.add('__external_mcp__');
+  scopes.add(EXTERNAL_MCP_CHAT_SESSION_ID);
 
   await Promise.all(
     [...scopes].map(async (scopeId) => {
@@ -537,15 +550,19 @@ export async function handleVaultAgentOp(
         return { ok: false, error: 'Host open is not available in this window.' };
       }
 
+      const chatSessionId = typeof params.chatSessionId === 'string'
+        ? params.chatSessionId
+        : undefined;
+      // The TCP bridge forces every authenticated external-MCP socket's
+      // chatSessionId to this reserved value, so a missing chatSessionId is
+      // not a reliable signal — compare against the constant instead.
+      const isExternalMcpCall = chatSessionId === EXTERNAL_MCP_CHAT_SESSION_ID;
       const effectiveHost = deps.resolveEffectiveHost(host);
-      const opened = deps.openHost(effectiveHost);
+      const opened = deps.openHost(effectiveHost, isExternalMcpCall);
       if (!opened.ok) {
         return { ok: false, error: opened.error };
       }
 
-      const chatSessionId = typeof params.chatSessionId === 'string'
-        ? params.chatSessionId
-        : undefined;
       await registerOpenedSessionInMcpScope(opened.sessionId, effectiveHost, chatSessionId);
 
       const protocol = effectiveHost.etEnabled

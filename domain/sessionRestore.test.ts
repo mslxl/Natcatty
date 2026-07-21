@@ -56,6 +56,23 @@ test("buildSessionRestorePayload excludes ephemeral-host sessions and their tabs
   assert.notEqual(payload.activeTabId, "s2");
 });
 
+test("buildSessionRestorePayload excludes silent MCP sessions and their tabs", () => {
+  const payload = buildSessionRestorePayload({
+    sessions: [
+      session("s1"),
+      { ...session("s2"), hiddenFromTabs: true },
+    ],
+    workspaces: [],
+    tabOrder: ["s1", "s2"],
+    activeTabId: "s2",
+    now: 123,
+  });
+
+  assert.deepEqual(payload.sessions.map((entry) => entry.id), ["s1"]);
+  assert.deepEqual(payload.tabOrder, ["s1"]);
+  assert.notEqual(payload.activeTabId, "s2");
+});
+
 test("buildSessionRestorePayload only stores allowlisted session fields", () => {
   const payload = buildSessionRestorePayload({
     sessions: [{
