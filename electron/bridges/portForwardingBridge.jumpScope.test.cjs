@@ -6,16 +6,17 @@ const { EventEmitter } = require("node:events");
 const { readFileSync } = require("node:fs");
 const { Duplex } = require("node:stream");
 const Module = require("node:module");
+const keyboardInteractiveHandler = require("./keyboardInteractiveHandler.cjs");
 
-function createSender() {
+function createSender(onSend = () => {}) {
   return {
     id: 1,
     isDestroyed: () => false,
-    send() {},
+    send: onSend,
   };
 }
 
-function loadBridgeWithMocks(t, { systemAgent = false } = {}) {
+function loadBridgeWithMocks(t, { systemAgent = false, chainError = null } = {}) {
   const originalLoad = Module._load;
   let capturedChainOptions = null;
   let capturedConnectOptions = null;
@@ -67,8 +68,19 @@ function loadBridgeWithMocks(t, { systemAgent = false } = {}) {
     if (request === "./sshBridge.cjs") {
       return {
         buildAlgorithms: () => ({}),
-        connectThroughChain: async (_event, options) => {
+        connectThroughChain: async (_event, options, _jumpHosts, _hostname, _port, sessionId) => {
           capturedChainOptions = options;
+          if (chainError) {
+            const requestId = keyboardInteractiveHandler.generateRequestId("jump-host");
+            keyboardInteractiveHandler.storeRequest(
+              requestId,
+              () => {},
+              _event.sender.id,
+              sessionId,
+              _event.sender,
+            );
+            throw chainError;
+          }
           return {
             socket: new Duplex({
               read() {},
@@ -178,6 +190,40 @@ test("port forwarding forwards target hostId to keyboard-interactive prompts", (
   assert.match(
     source,
     /conn\.on\("keyboard-interactive", createKeyboardInteractiveHandler\(\{\s*sender,\s*sessionId: tunnelId,\s*hostId,/,
+  );
+});
+
+test("jump-host startup failures clear pending keyboard-interactive prompts", async (t) => {
+  const sent = [];
+  const { bridge } = loadBridgeWithMocks(t, { chainError: new Error("jump auth timeout") });
+  const event = { sender: createSender((channel, payload) => sent.push({ channel, payload })) };
+
+  await assert.rejects(
+    bridge.startPortForward(event, {
+      tunnelId: "pf-jump-failure",
+      type: "local",
+      localPort: 0,
+      bindAddress: "127.0.0.1",
+      remoteHost: "127.0.0.1",
+      remotePort: 3306,
+      hostname: "db.internal",
+      username: "dbuser",
+      jumpHosts: [{ hostname: "jump.internal", username: "jumpuser" }],
+    }),
+    /jump auth timeout/,
+  );
+
+  assert.equal(
+    Array.from(keyboardInteractiveHandler.getRequests().values())
+      .some((request) => request.sessionId === "pf-jump-failure"),
+    false,
+  );
+  assert.equal(
+    sent.some(({ channel, payload }) =>
+      channel === "netcatty:keyboard-interactive-cancelled" &&
+      payload.sessionId === "pf-jump-failure" &&
+      payload.reason === "connection-ended"),
+    true,
   );
 });
 

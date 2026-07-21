@@ -1793,7 +1793,7 @@ function createKeyboardInteractiveHandler(options) {
       console.log(`${logPrefix} Received user responses, finishing keyboard-interactive`);
       try { onUserResponded?.(); } catch (err) { console.warn(`${logPrefix} onUserResponded callback threw`, err); }
       finish(userResponses);
-    }, sender.id, sessionId);
+    }, sender.id, sessionId, sender);
 
     const promptsData = prompts.map((p) => ({
       prompt: p.prompt,

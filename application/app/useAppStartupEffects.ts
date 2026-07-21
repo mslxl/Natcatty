@@ -15,6 +15,7 @@ type KeyboardInteractiveRequestLike = {
   hostId?: string;
 };
 type SessionIdLike = { id: string; hostId?: string; hostname?: string };
+type KeyboardInteractiveQueueItem = { requestId: string };
 
 export function shouldQueueKeyboardInteractiveRequest(
   request: KeyboardInteractiveRequestLike,
@@ -23,6 +24,13 @@ export function shouldQueueKeyboardInteractiveRequest(
   if (request.scope !== "terminal") return true;
   if (!request.sessionId) return false;
   return sessions.some((session) => session.id === request.sessionId);
+}
+
+export function removeKeyboardInteractiveRequest<T extends KeyboardInteractiveQueueItem>(
+  queue: T[],
+  requestId: string,
+): T[] {
+  return queue.filter(request => request.requestId !== requestId);
 }
 
 export function useAppStartupEffects(ctx: StartupEffectsContext) {
@@ -212,9 +220,13 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
         allowSavePassword: request.allowSavePassword !== false,
       }]);
     });
+    const unsubscribeCancelled = bridge.onKeyboardInteractiveCancelled?.((event) => {
+      setKeyboardInteractiveQueue(prev => removeKeyboardInteractiveRequest(prev, event.requestId));
+    });
 
     return () => {
       unsubscribe?.();
+      unsubscribeCancelled?.();
     };
   }, [enabled, setKeyboardInteractiveQueue]);
 

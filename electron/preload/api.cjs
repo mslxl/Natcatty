@@ -441,6 +441,10 @@ function createPreloadApi(ctx) {
     keyboardInteractiveListeners.add(cb);
     return () => keyboardInteractiveListeners.delete(cb);
   },
+  onKeyboardInteractiveCancelled: (cb) => {
+    keyboardInteractiveCancelledListeners.add(cb);
+    return () => keyboardInteractiveCancelledListeners.delete(cb);
+  },
   respondKeyboardInteractive: async (requestId, responses, cancelled = false) => {
     return ipcRenderer.invoke("netcatty:keyboard-interactive:respond", {
       requestId,

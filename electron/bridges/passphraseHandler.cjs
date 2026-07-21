@@ -149,6 +149,11 @@ function handleResponse(_event, payload) {
     console.warn(`[Passphrase] No pending request for ${requestId}`);
     return { success: false, error: 'Request not found' };
   }
+
+  if (_event?.sender?.id !== pending.webContentsId) {
+    console.warn(`[Passphrase] Wrong sender for request ${requestId}`);
+    return { success: false, error: 'Wrong sender' };
+  }
   
   if (cancelled) {
     // User clicked Cancel - stop the entire passphrase flow

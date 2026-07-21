@@ -78,6 +78,7 @@ function cancelTunnel(tunnelId, tunnel, sendStatus, { deleteEntry = false } = {}
   };
   tunnel.cancelled = true;
   tunnel.cleanupInProgress = true;
+  keyboardInteractiveHandler.cancelRequestsForSession(tunnelId, "tunnel-stopped");
   if (tunnel.server) {
     if (cleanup('server', () => tunnel.server.close())) tunnel.server = null;
   }
@@ -464,6 +465,7 @@ async function startPortForward(event, payload) {
       try { connectionSocket.end?.(); } catch { /* ignore */ }
       try { connectionSocket.destroy?.(); } catch { /* ignore */ }
     }
+    keyboardInteractiveHandler.cancelRequestsForSession(tunnelId, "connection-ended");
     portForwardingTunnels.delete(tunnelId);
     sendStatus('error', err?.message || String(err));
     throw err;
@@ -716,6 +718,7 @@ async function startPortForward(event, payload) {
 
     conn.once('close', () => {
       clearAuthReadyTimer();
+      keyboardInteractiveHandler.cancelRequestsForSession(tunnelId, "connection-ended");
       console.log(`[PortForward] SSH connection closed for tunnel ${tunnelId}`);
       const tunnel = portForwardingTunnels.get(tunnelId) || tunnelState;
       // Capture the cancelled flag BEFORE cleanup deletes the entry.

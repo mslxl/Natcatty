@@ -347,7 +347,7 @@ test("createHostVerifier prompts for unknown host keys and waits for user respon
   assert.equal(sent[0].payload.hostname, "switch.local");
   assert.equal(sent[0].payload.status, "unknown");
 
-  handleResponse(null, {
+  handleResponse({ sender: { id: sender.id } }, {
     requestId: sent[0].payload.requestId,
     accept: true,
     addToKnownHosts: true,
@@ -391,7 +391,7 @@ test("createHostVerifier includes existing known host details when a key changes
   assert.equal(sent[0].payload.knownHostId, "kh-1");
   assert.equal(sent[0].payload.knownFingerprint, "old-key");
 
-  handleResponse(null, {
+  handleResponse({ sender: { id: sender.id } }, {
     requestId: sent[0].payload.requestId,
     accept: true,
     addToKnownHosts: true,

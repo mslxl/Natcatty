@@ -247,6 +247,11 @@ const createHostVerifier = ({
 
 const handleResponse = (_event, payload) => {
   const { requestId, accept, addToKnownHosts } = payload || {};
+  const pending = hostKeyRequests.get(requestId);
+  if (!pending) return { success: false, error: "Request not found" };
+  if (_event?.sender?.id !== pending.webContentsId) {
+    return { success: false, error: "Wrong sender" };
+  }
   return settleRequest(requestId, {
     accept: Boolean(accept),
     addToKnownHosts: Boolean(addToKnownHosts),

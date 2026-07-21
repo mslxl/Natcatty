@@ -43,6 +43,7 @@ const windowShownListeners = new Set();
 const windowFocusRequestedListeners = new Set();
 const windowWillHideListeners = new Set();
 const keyboardInteractiveListeners = new Set();
+const keyboardInteractiveCancelledListeners = new Set();
 const hostKeyVerificationListeners = new Set();
 const passphraseListeners = new Set();
 const passphraseTimeoutListeners = new Set();
@@ -473,6 +474,16 @@ ipcRenderer.on("netcatty:keyboard-interactive", (_event, payload) => {
   });
 });
 
+ipcRenderer.on("netcatty:keyboard-interactive-cancelled", (_event, payload) => {
+  keyboardInteractiveCancelledListeners.forEach((cb) => {
+    try {
+      cb(payload);
+    } catch (err) {
+      console.error("Keyboard-interactive cancellation callback failed", err);
+    }
+  });
+});
+
 ipcRenderer.on("netcatty:host-key:verify", (_event, payload) => {
   hostKeyVerificationListeners.forEach((cb) => {
     try {
@@ -813,6 +824,7 @@ const api = createPreloadApi({
   windowFocusRequestedListeners,
   windowWillHideListeners,
   keyboardInteractiveListeners,
+  keyboardInteractiveCancelledListeners,
   hostKeyVerificationListeners,
   passphraseListeners,
   passphraseTimeoutListeners,
