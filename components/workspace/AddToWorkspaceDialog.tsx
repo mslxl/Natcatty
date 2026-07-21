@@ -128,7 +128,7 @@ export const AddToWorkspaceDialog: React.FC<AddToWorkspaceDialogProps> = ({
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
       setSelectedIndex((i) => Math.max(i - 1, 0));
-    } else if (e.key === ' ' || (e.key === 'Enter' && !(e.metaKey || e.ctrlKey))) {
+    } else if (e.key === 'Enter' && !(e.metaKey || e.ctrlKey)) {
       if (items.length === 0) return;
       e.preventDefault();
       toggle(items[selectedIndex].id);
@@ -180,7 +180,7 @@ export const AddToWorkspaceDialog: React.FC<AddToWorkspaceDialogProps> = ({
             {/* Jump-to hint */}
             <div className="px-4 py-2 flex items-center gap-2">
               <span className="text-xs text-muted-foreground">Pick one or more</span>
-              <kbd className="text-[10px] text-muted-foreground bg-muted px-1 py-0.5 rounded">Space</kbd>
+              <kbd className="text-[10px] text-muted-foreground bg-muted px-1 py-0.5 rounded">Enter</kbd>
               <span className="text-[10px] text-muted-foreground">toggle</span>
               <kbd className="text-[10px] text-muted-foreground bg-muted px-1 py-0.5 rounded">
                 {typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl'}+Enter
