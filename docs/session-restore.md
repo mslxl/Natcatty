@@ -40,7 +40,7 @@ If the directory is missing, inaccessible, or rejected by the shell, the connect
 | Setting | Default | Effect |
 | --- | --- | --- |
 | Restore previous terminal tabs and workspace layout | On | Enables startup restore for tabs, workspaces, layout, and lightweight session metadata. |
-| Restore terminal working directory on reconnect | Off | Attempts a one-shot cwd restore after manually reconnecting an eligible restored terminal. |
+| Restore terminal working directory on reconnect | Off | Attempts a one-shot cwd restore when an eligible restored terminal reconnects. |
 
 The cwd setting is intentionally separate because it sends a command after reconnect. Keeping it off by default avoids surprising remote-side behavior.
 
@@ -71,9 +71,9 @@ Domain helpers do not read or write storage and do not start terminal runtime wo
 
 ### UI And Runtime Glue
 
-UI components display restored placeholders and reconnect actions. Terminal runtime helpers gate backend startup so restored placeholders remain disconnected until manual reconnect.
+UI components display reconnect progress and manual reconnect actions after failures. Terminal runtime helpers start restored sessions through the normal connection flow.
 
-Runtime code may consume a one-shot cwd restore intent after backend attach. It must not infer startup restore as permission to connect or run commands.
+Runtime code may consume a one-shot cwd restore intent after backend attach. A restored connection may run the startup command currently configured on its host, but it must never replay a per-session startup command from persisted restore data.
 
 ## Restore Payload Allowlist
 
