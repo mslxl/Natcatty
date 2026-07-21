@@ -12,6 +12,9 @@ const UPLOAD_TRANSFER_CONCURRENCY = 4;
 // ssh2's fastGet default and, with the safe 32KB request size, restores the 2MB
 // in-flight window Netcatty used before the shared chunk-size fix in #2030.
 const DOWNLOAD_TRANSFER_CONCURRENCY = 64;
+// Only one file per SFTP session gets the 64-request fast path. Concurrent
+// files keep moving through the compatible stream path instead of multiplying
+// fastGet pressure or overriding the user's file-transfer concurrency.
 const FAST_DOWNLOAD_CHANNELS_PER_SESSION = 1;
 
 module.exports = {

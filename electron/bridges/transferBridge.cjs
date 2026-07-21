@@ -156,49 +156,12 @@ function getIsolatedDownloadChannelPool(client) {
       idle: [],
       idleTimers: new Map(),
       busy: new Set(),
-      waiters: [],
       opening: 0,
       maxChannels: FAST_DOWNLOAD_CHANNELS_PER_SESSION,
-      warnedCapacity: false,
     };
     isolatedDownloadChannelPools.set(client, pool);
   }
   return pool;
-}
-
-function isIsolatedChannelOpenFailure(err) {
-  const message = err?.message || String(err || "");
-  return (
-    message.includes("Channel open failure") ||
-    message.includes("open failed")
-  );
-}
-
-function waitForIsolatedDownloadChannel(pool, transfer) {
-  return new Promise((resolve) => {
-    let settled = false;
-    const waiter = () => {
-      if (settled) return;
-      settled = true;
-      const index = pool.waiters.indexOf(waiter);
-      if (index !== -1) {
-        pool.waiters.splice(index, 1);
-      }
-      if (transfer?.wakeWaiter === waiter) {
-        transfer.wakeWaiter = null;
-      }
-      resolve();
-    };
-    if (transfer) {
-      transfer.wakeWaiter = waiter;
-    }
-    pool.waiters.push(waiter);
-  });
-}
-
-function notifyIsolatedDownloadWaiter(pool) {
-  const waiter = pool.waiters.shift();
-  if (waiter) waiter();
 }
 
 function removeIdleIsolatedDownloadChannel(pool, sftp) {
@@ -244,87 +207,47 @@ function releaseIsolatedDownloadChannel(client, sftp, options = {}) {
 
   if (dispose) {
     try { sftp?.end?.(); } catch { }
-    notifyIsolatedDownloadWaiter(pool);
     return;
   }
 
   pool.idle.push(sftp);
   scheduleIdleIsolatedDownloadChannel(client, sftp);
-  notifyIsolatedDownloadWaiter(pool);
 }
 
 async function acquireIsolatedDownloadChannel(client, transfer) {
   const pool = getIsolatedDownloadChannelPool(client);
+  if (transfer?.cancelled) return null;
 
-  while (true) {
-    if (transfer?.cancelled) return null;
+  const cached = pool.idle.pop();
+  if (cached) {
+    clearIdleIsolatedDownloadTimer(pool, cached);
+    pool.busy.add(cached);
+    return cached;
+  }
 
-    const cached = pool.idle.pop();
-    if (cached) {
-      clearIdleIsolatedDownloadTimer(pool, cached);
-      pool.busy.add(cached);
-      return cached;
-    }
+  const currentChannelCount = pool.idle.length + pool.busy.size + pool.opening;
+  if (currentChannelCount >= pool.maxChannels) {
+    return null;
+  }
 
-    const knownCapacity = pool.maxChannels;
-    const currentChannelCount = pool.idle.length + pool.busy.size + pool.opening;
-    if (knownCapacity !== null && currentChannelCount >= knownCapacity) {
-      if (pool.opening > 0) {
-        await waitForIsolatedDownloadChannel(pool, transfer);
-        if (transfer?.cancelled) return null;
-        continue;
-      }
-      if (pool.busy.size === 0) {
-        return null;
-      }
-      await waitForIsolatedDownloadChannel(pool, transfer);
-      if (transfer?.cancelled) return null;
-      continue;
-    }
-
-    pool.opening += 1;
-    try {
-      const opened = await openIsolatedSftpChannel(client);
-      pool.opening -= 1;
-      notifyIsolatedDownloadWaiter(pool);
-      if (!opened) return null;
-      pool.busy.add(opened);
-      const knownCapacity = pool.idle.length + pool.busy.size;
-      if (pool.maxChannels !== null) {
-        pool.maxChannels = Math.max(pool.maxChannels, knownCapacity);
-      }
-      return opened;
-    } catch (err) {
-      pool.opening -= 1;
-      notifyIsolatedDownloadWaiter(pool);
-      if (isIsolatedChannelOpenFailure(err)) {
-        if (pool.opening > 0) {
-          await waitForIsolatedDownloadChannel(pool, transfer);
-          if (transfer?.cancelled) return null;
-          continue;
-        }
-        const detectedCapacity = pool.idle.length + pool.busy.size;
-        pool.maxChannels = detectedCapacity;
-        if (!pool.warnedCapacity) {
-          pool.warnedCapacity = true;
-          console.warn(
-            `[transferBridge] Isolated fastGet channel capacity reached; reusing up to ${detectedCapacity} extra channel(s) for this SFTP session.`,
-          );
-        }
-        if (detectedCapacity > 0) {
-          await waitForIsolatedDownloadChannel(pool, transfer);
-          if (transfer?.cancelled) return null;
-          continue;
-        }
-        return null;
-      }
-
-      console.warn(
-        "[transferBridge] Failed to open isolated SFTP channel for fastGet, falling back to streams:",
-        err.message || String(err),
-      );
+  pool.opening += 1;
+  try {
+    const opened = await openIsolatedSftpChannel(client);
+    pool.opening -= 1;
+    if (!opened) return null;
+    if (transfer?.cancelled) {
+      try { opened.end?.(); } catch { }
       return null;
     }
+    pool.busy.add(opened);
+    return opened;
+  } catch (err) {
+    pool.opening -= 1;
+    console.warn(
+      "[transferBridge] Failed to open isolated SFTP channel for fastGet, falling back to streams:",
+      err.message || String(err),
+    );
+    return null;
   }
 }
 
@@ -603,7 +526,7 @@ async function startTransfer(event, payload, onProgress) {
   } = payload;
   const sender = event.sender;
 
-  const transfer = { cancelled: false, readStream: null, writeStream: null, abort: null, wakeWaiter: null };
+  const transfer = { cancelled: false, readStream: null, writeStream: null, abort: null };
   activeTransfers.set(transferId, transfer);
   const transferCreatedAt = Date.now();
 
@@ -941,10 +864,6 @@ async function cancelTransfer(event, payload) {
   const transfer = activeTransfers.get(transferId);
   if (transfer) {
     transfer.cancelled = true;
-    if (typeof transfer.wakeWaiter === "function") {
-      try { transfer.wakeWaiter(); } catch { }
-    }
-
     if (typeof transfer.abort === "function") {
       try { transfer.abort(); } catch { }
     }
