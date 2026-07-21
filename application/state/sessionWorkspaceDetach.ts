@@ -143,7 +143,7 @@ export function resolveActiveTabAfterCloseSession({
   remainingSessions: readonly TerminalSession[];
 }): string | null {
   const fallbackWorkspace = layoutResult.workspaces[layoutResult.workspaces.length - 1];
-  const fallbackSolo = remainingSessions.filter((session) => !session.workspaceId).slice(-1)[0];
+  const fallbackSolo = remainingSessions.filter((session) => !session.workspaceId && !session.hiddenFromTabs).slice(-1)[0];
   const fallback = layoutResult.lastRemainingSessionId
     ?? fallbackWorkspace?.id
     ?? fallbackSolo?.id
