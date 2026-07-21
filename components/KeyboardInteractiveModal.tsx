@@ -194,8 +194,13 @@ export const KeyboardInteractiveModal: React.FC<KeyboardInteractiveModalProps> =
       : t("keyboard.interactive.desc");
 
   return (
-    <Dialog open={!!request} onOpenChange={(open) => !open && handleCancel()}>
-      <DialogContent className="sm:max-w-[425px]" hideCloseButton>
+    <Dialog open={!!request} onOpenChange={() => {/* intentionally non-dismissable */}}>
+      <DialogContent
+        className="sm:max-w-[425px]"
+        hideCloseButton
+        onInteractOutside={(e) => e.preventDefault()}
+        onEscapeKeyDown={(e) => e.preventDefault()}
+      >
         <DialogHeader>
           <div className="flex items-center gap-3 mb-2">
             <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">

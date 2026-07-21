@@ -3,8 +3,11 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import { formatKeyboardInteractiveServerPrompt } from "./KeyboardInteractiveModal.tsx";
+
+const modalSource = readFileSync(new URL("./KeyboardInteractiveModal.tsx", import.meta.url), "utf8");
 
 test("formatKeyboardInteractiveServerPrompt preserves server instructions and prompt labels", () => {
   const text = formatKeyboardInteractiveServerPrompt({
@@ -43,4 +46,10 @@ test("formatKeyboardInteractiveServerPrompt omits hostname-only fallback prompts
   });
 
   assert.equal(text, "");
+});
+
+test("keyboard-interactive modal cannot be dismissed by outside click or Escape", () => {
+  assert.match(modalSource, /onOpenChange=\{\(\) => \{\/\* intentionally non-dismissable \*\/\}\}/);
+  assert.match(modalSource, /onInteractOutside=\{\(e\) => e\.preventDefault\(\)\}/);
+  assert.match(modalSource, /onEscapeKeyDown=\{\(e\) => e\.preventDefault\(\)\}/);
 });
