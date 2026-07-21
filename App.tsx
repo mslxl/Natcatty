@@ -61,6 +61,7 @@ import { netcattyBridge } from './infrastructure/services/netcattyBridge';
 import { localStorageAdapter } from './infrastructure/persistence/localStorageAdapter';
 import {
   readExternalMcpFocusOnHostOpen,
+  readExternalMcpSilentSessions,
   syncExternalMcpStartupState,
 } from './application/state/useExternalMcpToggleState';
 import { useExternalMcpSessionSync } from './application/state/useExternalMcpSessionSync';
@@ -1102,7 +1103,7 @@ function App({ settings }: { settings: SettingsState }) {
   ), [createWorkspaceFromTargets, resolveEffectiveHost]);
 
   // Wrapper to connect to host with logging
-  const handleConnectToHost = useCallback((host: Host, alreadyEffective = false) => {
+  const handleConnectToHost = useCallback((host: Host, alreadyEffective = false, hidden = false) => {
     if (host.ephemeral) {
       setEphemeralHosts((previous) => {
         const existingIndex = previous.findIndex((candidate) => candidate.id === host.id);
@@ -1122,11 +1123,11 @@ function App({ settings }: { settings: SettingsState }) {
       resolveEffectiveHost: effectiveHostResolver,
       resolveHostAuth,
       systemInfoRef,
-    }), host);
+    }), host, hidden);
   }, [addConnectionLog, connectToHost, resolveEffectiveHost, identities, keys]);
 
   const openHostForVaultAgent = useCallback((host: Host) => {
-    const sessionId = handleConnectToHost(host, true);
+    const sessionId = handleConnectToHost(host, true, readExternalMcpSilentSessions());
     if (!sessionId) {
       return { ok: false as const, error: `Failed to open host "${host.id}".` };
     }

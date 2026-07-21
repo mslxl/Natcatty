@@ -406,7 +406,9 @@ export function buildSessionRestorePayload(input: BuildSessionRestorePayloadInpu
     // Ephemeral-host sessions (password deep links) cannot be restored: their
     // in-memory credentials do not survive a relaunch, and persisting them
     // would leak the supposedly ephemeral host metadata into restore storage.
-    sessions: input.sessions.filter((session) => !session.ephemeralHost).map(restoreSession),
+    // Silent MCP sessions are likewise excluded — they exist for the duration
+    // of an AI task, not as a user-intended workspace to bring back on launch.
+    sessions: input.sessions.filter((session) => !session.ephemeralHost && !session.hiddenFromTabs).map(restoreSession),
     workspaces: input.workspaces,
   });
 }

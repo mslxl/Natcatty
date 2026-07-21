@@ -236,6 +236,8 @@ export const zhCNAiMessages: Messages = {
   'ai.externalMcp.idleTimeout.minutes': '分钟',
   'ai.externalMcp.focusOnHostOpen': 'host_open 时激活窗口',
   'ai.externalMcp.focusOnHostOpen.description': '当 MCP 客户端打开主机连接时，将主窗口切换到前台。关闭后可不受打扰地继续当前工作。',
+  'ai.externalMcp.silentSessions': 'AI 会话静默运行',
+  'ai.externalMcp.silentSessions.description': 'AI 打开的会话不会出现在标签栏，重启后也不会恢复。可随时在托盘面板中查看。',
   'ai.externalMcp.sessionIdleTimeout': '已打开会话空闲超时',
   'ai.externalMcp.sessionIdleTimeout.description': 'AI 打开的会话若超过该分钟数没有终端或文件操作，将自动关闭。',
   'ai.externalMcp.usage.title': '使用说明',

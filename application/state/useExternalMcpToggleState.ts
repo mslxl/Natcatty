@@ -4,6 +4,7 @@ import {
   STORAGE_KEY_AI_EXTERNAL_MCP_FOCUS_ON_HOST_OPEN,
   STORAGE_KEY_AI_EXTERNAL_MCP_IDLE_TIMEOUT_MINUTES,
   STORAGE_KEY_AI_EXTERNAL_MCP_MODE,
+  STORAGE_KEY_AI_EXTERNAL_MCP_SILENT_SESSIONS,
   STORAGE_KEY_AI_SESSION_IDLE_TIMEOUT_MINUTES,
 } from '../../infrastructure/config/storageKeys';
 import { localStorageAdapter } from '../../infrastructure/persistence/localStorageAdapter';
@@ -73,6 +74,16 @@ export function readExternalMcpFocusOnHostOpen(): boolean {
 export function writeExternalMcpFocusOnHostOpen(focusOnHostOpen: boolean): void {
   localStorageAdapter.writeBoolean(STORAGE_KEY_AI_EXTERNAL_MCP_FOCUS_ON_HOST_OPEN, focusOnHostOpen);
   emitAIStateChanged(STORAGE_KEY_AI_EXTERNAL_MCP_FOCUS_ON_HOST_OPEN);
+}
+
+/** Whether host_open sessions stay hidden from the tab bar. Defaults to false (existing behavior). */
+export function readExternalMcpSilentSessions(): boolean {
+  return localStorageAdapter.readBoolean(STORAGE_KEY_AI_EXTERNAL_MCP_SILENT_SESSIONS) ?? false;
+}
+
+export function writeExternalMcpSilentSessions(silentSessions: boolean): void {
+  localStorageAdapter.writeBoolean(STORAGE_KEY_AI_EXTERNAL_MCP_SILENT_SESSIONS, silentSessions);
+  emitAIStateChanged(STORAGE_KEY_AI_EXTERNAL_MCP_SILENT_SESSIONS);
 }
 
 export function normalizeSessionIdleTimeoutMinutes(value: number | null): number {

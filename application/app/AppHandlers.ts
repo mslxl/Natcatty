@@ -822,7 +822,7 @@ export function handleCreateLocalTerminalImpl(
   }
 }
 
-export function handleConnectToHostImpl(getCtx: AppContextGetter, host: Host) {
+export function handleConnectToHostImpl(getCtx: AppContextGetter, host: Host, hidden = false) {
   const { addConnectionLog, connectToHost, identities, keys, resolveEffectiveHost, resolveHostAuth, systemInfoRef } = getCtx();
 {
     const { username, hostname: localHost } = systemInfoRef.current;
@@ -832,7 +832,7 @@ export function handleConnectToHostImpl(getCtx: AppContextGetter, host: Host) {
     // Handle serial hosts separately
     if (effectiveHost.protocol === 'serial') {
       const portName = host.hostname.split('/').pop() || host.hostname;
-      const sessionId = connectToHost(effectiveHost);
+      const sessionId = connectToHost(effectiveHost, { hidden });
       addConnectionLog({
         sessionId,
         hostId: host.id,
@@ -851,7 +851,7 @@ export function handleConnectToHostImpl(getCtx: AppContextGetter, host: Host) {
 
     const protocol = effectiveHost.etEnabled ? 'et' : effectiveHost.moshEnabled ? 'mosh' : (effectiveHost.protocol || 'ssh');
     const resolvedAuth = resolveHostAuth({ host: effectiveHost, keys, identities });
-    const sessionId = connectToHost(effectiveHost);
+    const sessionId = connectToHost(effectiveHost, { hidden });
     addConnectionLog({
       sessionId,
       hostId: host.id,

@@ -6,8 +6,10 @@ import {
   normalizeExternalMcpMode,
   normalizeSessionIdleTimeoutMinutes,
   readExternalMcpFocusOnHostOpen,
+  readExternalMcpSilentSessions,
   shouldStartExternalMcpOnStartup,
   writeExternalMcpFocusOnHostOpen,
+  writeExternalMcpSilentSessions,
 } from './useExternalMcpToggleState.ts';
 
 function installMemoryLocalStorage() {
@@ -92,6 +94,19 @@ describe('useExternalMcpToggleState helpers', () => {
       assert.equal(readExternalMcpFocusOnHostOpen(), false);
       writeExternalMcpFocusOnHostOpen(true);
       assert.equal(readExternalMcpFocusOnHostOpen(), true);
+    } finally {
+      restore();
+    }
+  });
+
+  it('silent-sessions defaults to false and round-trips through storage', () => {
+    const restore = installMemoryLocalStorage();
+    try {
+      assert.equal(readExternalMcpSilentSessions(), false);
+      writeExternalMcpSilentSessions(true);
+      assert.equal(readExternalMcpSilentSessions(), true);
+      writeExternalMcpSilentSessions(false);
+      assert.equal(readExternalMcpSilentSessions(), false);
     } finally {
       restore();
     }

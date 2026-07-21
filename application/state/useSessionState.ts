@@ -350,10 +350,12 @@ export const useSessionState = ({
     return sessionId;
   }, [setActiveTabId]);
 
-  const connectToHost = useCallback((host: Host) => {
+  const connectToHost = useCallback((host: Host, options?: { hidden?: boolean }) => {
+    const hidden = options?.hidden === true;
     const newSession = createHostTerminalSession(crypto.randomUUID(), host);
-    setSessions(prev => [...prev, newSession]);
-    setActiveTabId(newSession.id);
+    const sessionToAdd = hidden ? { ...newSession, hiddenFromTabs: true } : newSession;
+    setSessions(prev => [...prev, sessionToAdd]);
+    if (!hidden) setActiveTabId(newSession.id);
     return newSession.id;
   }, [setActiveTabId]);
 
@@ -943,7 +945,7 @@ export const useSessionState = ({
 	    setActiveTabId(workspace.id);
 	  }, [setActiveTabId]);
 
-  const orphanSessions = useMemo(() => sessions.filter(s => !s.workspaceId), [sessions]);
+  const orphanSessions = useMemo(() => sessions.filter(s => !s.workspaceId && !s.hiddenFromTabs), [sessions]);
 
   const openLogView = useCallback((log: ConnectionLog) => {
     const tabId = getLogViewTabId(log);

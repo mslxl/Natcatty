@@ -52,6 +52,8 @@ type TraySession = {
   status: "connecting" | "connected" | "disconnected";
   workspaceId?: string;
   workspaceTitle?: string;
+  /** Mirrors TerminalSession.hiddenFromTabs; marks AI-opened silent sessions. */
+  aiHidden?: boolean;
 };
 
 // Collapsible workspace group component
@@ -101,6 +103,11 @@ const WorkspaceGroup: React.FC<{
                       spinning={s.status === "connecting"}
                     />
                     <span className="truncate">{s.hostLabel || s.label}</span>
+                    {s.aiHidden && (
+                      <span className="shrink-0 rounded px-1 py-0.5 text-[10px] font-medium leading-none bg-muted text-muted-foreground">
+                        AI
+                      </span>
+                    )}
                   </span>
                   <span className="ml-2 text-xs text-muted-foreground">{t(`tray.status.${s.status}`)}</span>
                 </button>
@@ -325,6 +332,11 @@ const TrayPanelContent: React.FC<TrayPanelContentProps> = ({ terminalSettings })
                             spinning={s.status === "connecting"}
                           />
                           <span className="truncate">{s.hostLabel || s.label}</span>
+                          {s.aiHidden && (
+                            <span className="shrink-0 rounded px-1 py-0.5 text-[10px] font-medium leading-none bg-muted text-muted-foreground">
+                              AI
+                            </span>
+                          )}
                         </span>
                         <span className="ml-2 text-xs text-muted-foreground">{t(`tray.status.${s.status}`)}</span>
                       </button>
