@@ -1,4 +1,4 @@
-import { Folder, FolderLock, Menu, Moon, MoreHorizontal, Plus, Radio, Settings, Sparkles, Sun } from 'lucide-react';
+import { Folder, FolderLock, Menu, MoreHorizontal, Plus, Settings, Sparkles } from 'lucide-react';
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { fromEditorTabId, isEditorTabId, useActiveTabId } from '../application/state/activeTabStore';
 import { isHostTreeWorkTabSurface } from '../application/app/workTabSurface';
@@ -23,7 +23,7 @@ import { Button } from './ui/button';
 import { ContextMenuItem, ContextMenuSeparator } from './ui/context-menu';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import { SyncStatusButton } from './SyncStatusButton';
-import { WindowOpacityButton } from './WindowOpacityButton';
+import { TopTabsQuickControls } from './TopTabsQuickControls';
 import {
   ActiveTabAutoScroller,
   EditorTopTab,
@@ -1103,56 +1103,22 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
             </TooltipTrigger>
             <TooltipContent>{t('topTabs.aiAssistant')}</TooltipContent>
           </Tooltip>
-          {showExternalMcpToggle ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7 shrink-0 app-no-drag top-tab-utility-btn"
-                  style={{
-                    color: externalMcpEnabled
-                      ? 'hsl(var(--primary))'
-                      : 'var(--top-tabs-muted, hsl(var(--muted-foreground)))',
-                  }}
-                  aria-label={t(externalMcpEnabled ? 'topTabs.externalMcp.disable' : 'topTabs.externalMcp.enable')}
-                  aria-pressed={externalMcpEnabled}
-                  onClick={() => onToggleExternalMcp(!externalMcpEnabled)}
-                >
-                  <Radio size={16} />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                {t(externalMcpEnabled ? 'topTabs.externalMcp.disable' : 'topTabs.externalMcp.enable')}
-              </TooltipContent>
-            </Tooltip>
-          ) : null}
-          <WindowOpacityButton
-            windowOpacity={windowOpacity}
-            setWindowOpacity={setWindowOpacity}
-            className="h-7 w-7 shrink-0 top-tab-utility-btn"
-            style={{ color: 'var(--top-tabs-muted, hsl(var(--muted-foreground)))' }}
-          />
           <SyncStatusButton
             onOpenSettings={onOpenSettings}
             onSyncNow={onSyncNow}
             className="h-7 w-7 shrink-0 top-tab-utility-btn"
             style={{ color: 'var(--top-tabs-muted, hsl(var(--muted-foreground)))' }}
           />
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7 shrink-0 app-no-drag top-tab-utility-btn"
-                style={{ color: 'var(--top-tabs-muted, hsl(var(--muted-foreground)))' }}
-                onClick={onToggleTheme}
-              >
-                {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>{t('topTabs.toggleTheme')}</TooltipContent>
-          </Tooltip>
+          <TopTabsQuickControls
+            theme={theme}
+            onToggleTheme={onToggleTheme}
+            externalMcpEnabled={externalMcpEnabled}
+            onToggleExternalMcp={onToggleExternalMcp}
+            showExternalMcpToggle={showExternalMcpToggle}
+            windowOpacity={windowOpacity}
+            setWindowOpacity={setWindowOpacity}
+            style={{ color: 'var(--top-tabs-muted, hsl(var(--muted-foreground)))' }}
+          />
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
