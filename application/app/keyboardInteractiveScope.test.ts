@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { shouldQueueKeyboardInteractiveRequest } from "./useAppStartupEffects.ts";
+import {
+  removeKeyboardInteractiveRequest,
+  shouldQueueKeyboardInteractiveRequest,
+} from "./useAppStartupEffects.ts";
 
 const sessions = [{ id: "terminal-1" }, { id: "terminal-2" }];
 
@@ -46,4 +49,9 @@ test("legacy unscoped keyboard-interactive requests remain visible", () => {
     shouldQueueKeyboardInteractiveRequest({ sessionId: "legacy-conn" }, sessions),
     true,
   );
+});
+
+test("cancelled keyboard-interactive requests are removed from the renderer queue", () => {
+  const queue = [{ requestId: "keep" }, { requestId: "cancel" }];
+  assert.deepEqual(removeKeyboardInteractiveRequest(queue, "cancel"), [{ requestId: "keep" }]);
 });

@@ -245,6 +245,8 @@ function App({ settings }: { settings: SettingsState }) {
     updateGroupConfigs,
   } = useVaultState();
 
+  const hostsRef = useRef(hosts);
+  hostsRef.current = hosts;
   const keysRef = useRef(keys);
   keysRef.current = keys;
   const knownHostsRef = useRef(knownHosts);
@@ -689,10 +691,10 @@ function App({ settings }: { settings: SettingsState }) {
   }, [isVaultInitialized, pendingTrayPanelConnectHostIds]);
 
   // Handle keyboard-interactive submit
-  const handleKeyboardInteractiveSubmit = useCallback((requestId: string, responses: string[], savePassword?: string) => { return handleKeyboardInteractiveSubmitImpl(() => ({ hosts, keyboardInteractiveQueue, netcattyBridge, requestId, responses, savePassword, sessions, setKeyboardInteractiveQueue, updateHosts }), requestId, responses, savePassword); }, [keyboardInteractiveQueue, sessions, hosts, updateHosts]);
+  const handleKeyboardInteractiveSubmit = useCallback((requestId: string, responses: string[], savePassword?: string) => { return handleKeyboardInteractiveSubmitImpl(() => ({ hosts, hostsRef, keyboardInteractiveQueue, netcattyBridge, requestId, responses, savePassword, sessions, setKeyboardInteractiveQueue, t, toast, updateHosts }), requestId, responses, savePassword); }, [keyboardInteractiveQueue, sessions, hosts, t, updateHosts]);
 
   // Handle keyboard-interactive cancel
-  const handleKeyboardInteractiveCancel = useCallback((requestId: string) => { return handleKeyboardInteractiveCancelImpl(() => ({ netcattyBridge, requestId, setKeyboardInteractiveQueue }), requestId); }, []);
+  const handleKeyboardInteractiveCancel = useCallback((requestId: string) => { return handleKeyboardInteractiveCancelImpl(() => ({ netcattyBridge, requestId, setKeyboardInteractiveQueue, t, toast }), requestId); }, [t]);
 
   // Passphrase request event listener for encrypted SSH keys
   useEffect(() => {
@@ -1037,9 +1039,6 @@ function App({ settings }: { settings: SettingsState }) {
   }, [updateKnownHosts]);
 
   // System info for connection logs
-  const hostsRef = useRef(hosts);
-  hostsRef.current = hosts;
-
   const systemInfoRef = useRef<{ username: string; hostname: string }>({
     username: 'user',
     hostname: 'localhost',

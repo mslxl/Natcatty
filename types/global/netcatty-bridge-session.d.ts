@@ -403,6 +403,13 @@ declare global {
         scope?: "terminal" | "external";
       }) => void
     ): () => void;
+    onKeyboardInteractiveCancelled?(
+      cb: (event: {
+        requestId: string;
+        sessionId?: string;
+        reason?: string;
+      }) => void
+    ): () => void;
     respondKeyboardInteractive?(
       requestId: string,
       responses: string[],

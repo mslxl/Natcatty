@@ -121,7 +121,7 @@ function makeSender({ rejectHostKeyPrompts = false } = {}) {
       if (rejectHostKeyPrompts && channel === "netcatty:host-key:verify") {
         const { handleResponse } = require("./hostKeyVerifier.cjs");
         queueMicrotask(() => {
-          handleResponse(null, {
+          handleResponse({ sender: { id: this.id } }, {
             requestId: payload.requestId,
             accept: false,
           });

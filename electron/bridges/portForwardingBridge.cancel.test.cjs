@@ -6,6 +6,7 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
 const passphraseHandler = require("./passphraseHandler.cjs");
+const keyboardInteractiveHandler = require("./keyboardInteractiveHandler.cjs");
 const {
   startPortForward,
   stopPortForward,
@@ -116,6 +117,23 @@ test("failed active tunnel cleanup publishes an error instead of a false inactiv
   assert.equal(shouldFinalizeTunnelClose(tunnel), false);
   assert.equal(tunnel.status, "error");
   assert.deepEqual(statuses, [{ status: "error", error: "server: server close failed" }]);
+});
+
+test("cancelling a tunnel clears its pending keyboard-interactive request", () => {
+  const tunnelId = "pf-keyboard-interactive-cancel";
+  const requestId = keyboardInteractiveHandler.generateRequestId("port-forward");
+  const finishCalls = [];
+  keyboardInteractiveHandler.storeRequest(
+    requestId,
+    (responses) => finishCalls.push(responses),
+    1,
+    tunnelId,
+  );
+
+  cancelTunnel(tunnelId, {}, () => {});
+
+  assert.deepEqual(finishCalls, [[]]);
+  assert.equal(keyboardInteractiveHandler.getRequests().has(requestId), false);
 });
 
 test("port forwarding can be stopped while waiting for a key passphrase", async (t) => {

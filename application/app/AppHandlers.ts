@@ -11,6 +11,31 @@ import { buildNumberShortcutTabTargets } from './tabShortcutTargets';
 type AppContextGetter = () => Record<string, any>;
 const TERMINAL_PASSTHROUGH_ACTIONS = getTerminalPassthroughActions();
 
+async function deliverKeyboardInteractiveResponse(
+  ctx: Record<string, any>,
+  requestId: string,
+  responses: string[],
+  cancelled: boolean,
+) {
+  const { netcattyBridge, t, toast } = ctx;
+  const bridge = netcattyBridge.get();
+  if (!bridge?.respondKeyboardInteractive) {
+    toast.error(t('common.unknownError'), t('common.error'));
+    return false;
+  }
+  try {
+    const result = await bridge.respondKeyboardInteractive(requestId, responses, cancelled);
+    if (!result?.success) {
+      toast.error(result?.error || t('common.unknownError'), t('common.error'));
+      return false;
+    }
+    return true;
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : t('common.unknownError'), t('common.error'));
+    return false;
+  }
+}
+
 export const getLogHostVisualSnapshot = (host: Host) => {
   const icon = sanitizeHostIconFields(host);
   return {
@@ -232,25 +257,23 @@ export function handleEscapeKeyDownImpl(getCtx: AppContextGetter, e: KeyboardEve
   }
 }
 
-export function handleKeyboardInteractiveSubmitImpl(
+export async function handleKeyboardInteractiveSubmitImpl(
   getCtx: AppContextGetter,
   requestId: string,
   responses: string[],
   savePassword?: string,
 ) {
+  const ctx = getCtx();
   const {
     hosts,
+    hostsRef,
     keyboardInteractiveQueue,
-    netcattyBridge,
     sessions,
     setKeyboardInteractiveQueue,
     updateHosts,
-  } = getCtx();
+  } = ctx;
 {
-    const bridge = netcattyBridge.get();
-    if (bridge?.respondKeyboardInteractive) {
-      void bridge.respondKeyboardInteractive(requestId, responses, false);
-    }
+    if (!await deliverKeyboardInteractiveResponse(ctx, requestId, responses, false)) return false;
     const request = keyboardInteractiveQueue.find(r => r.requestId === requestId);
     const session = request?.sessionId
       ? sessions.find(s => s.id === request.sessionId)
@@ -268,14 +291,15 @@ export function handleKeyboardInteractiveSubmitImpl(
       : canUpdateDestinationHost
         ? session.hostId
         : undefined;
+    const latestHosts = hostsRef?.current ?? hosts;
     const host = hostIdToUpdate
-      ? hosts.find(h => h.id === hostIdToUpdate)
+      ? latestHosts.find((h: Host) => h.id === hostIdToUpdate)
       : undefined;
     // Save password to host if requested - never for second-factor / EDR prompts
     // (allowSavePassword === false) so a secondary secret cannot overwrite the
     // host login password (#2150 / Codex review on #2151).
     if (savePassword && host && request?.allowSavePassword !== false) {
-      updateHosts(hosts.map(h => h.id === host.id ? {
+      updateHosts(latestHosts.map((h: Host) => h.id === host.id ? {
         ...h,
         password: savePassword,
         savePassword: true,
@@ -283,18 +307,18 @@ export function handleKeyboardInteractiveSubmitImpl(
     }
     // Remove from queue by requestId
     setKeyboardInteractiveQueue(prev => prev.filter(r => r.requestId !== requestId));
+    return true;
   }
 }
 
-export function handleKeyboardInteractiveCancelImpl(getCtx: AppContextGetter, requestId: string) {
-  const { netcattyBridge, setKeyboardInteractiveQueue } = getCtx();
+export async function handleKeyboardInteractiveCancelImpl(getCtx: AppContextGetter, requestId: string) {
+  const ctx = getCtx();
+  const { setKeyboardInteractiveQueue } = ctx;
 {
-    const bridge = netcattyBridge.get();
-    if (bridge?.respondKeyboardInteractive) {
-      void bridge.respondKeyboardInteractive(requestId, [], true);
-    }
+    if (!await deliverKeyboardInteractiveResponse(ctx, requestId, [], true)) return false;
     // Remove from queue by requestId
     setKeyboardInteractiveQueue(prev => prev.filter(r => r.requestId !== requestId));
+    return true;
   }
 }
 

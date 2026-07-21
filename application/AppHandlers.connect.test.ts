@@ -136,7 +136,7 @@ test('queued tray panel connects flush in order', () => {
   assert.deepEqual(pendingHostIds, []);
 });
 
-test('keyboard-interactive submit can save login password for the session host', () => {
+test('keyboard-interactive submit can save login password for the session host', async () => {
   let hosts: Host[] = [{
     ...baseHost,
     password: 'old-password',
@@ -151,7 +151,7 @@ test('keyboard-interactive submit can save login password for the session host',
   const bridgeResponses: unknown[] = [];
   const hostUpdates: Host[][] = [];
 
-  handleKeyboardInteractiveSubmitImpl(
+  await handleKeyboardInteractiveSubmitImpl(
     () => ({
       hosts,
       keyboardInteractiveQueue: queue,
@@ -159,6 +159,7 @@ test('keyboard-interactive submit can save login password for the session host',
         get: () => ({
           respondKeyboardInteractive: (...args: unknown[]) => {
             bridgeResponses.push(args);
+            return { success: true };
           },
         }),
       },
@@ -170,6 +171,8 @@ test('keyboard-interactive submit can save login password for the session host',
       setKeyboardInteractiveQueue: (updater: (items: typeof queue) => typeof queue) => {
         queue = updater(queue);
       },
+      t: (key: string) => key,
+      toast: { error: () => {} },
       updateHosts: (nextHosts: Host[]) => {
         hostUpdates.push(nextHosts);
         hosts = nextHosts;
@@ -190,7 +193,7 @@ test('keyboard-interactive submit can save login password for the session host',
   assert.equal(bridgeResponses.length, 1);
 });
 
-test('keyboard-interactive submit does not save secondary password when allowSavePassword is false', () => {
+test('keyboard-interactive submit does not save secondary password when allowSavePassword is false', async () => {
   let hosts: Host[] = [{
     ...baseHost,
     password: 'login-password',
@@ -205,19 +208,21 @@ test('keyboard-interactive submit does not save secondary password when allowSav
   }];
   let hostUpdates = 0;
 
-  handleKeyboardInteractiveSubmitImpl(
+  await handleKeyboardInteractiveSubmitImpl(
     () => ({
       hosts,
       keyboardInteractiveQueue: queue,
       netcattyBridge: {
         get: () => ({
-          respondKeyboardInteractive: () => {},
+          respondKeyboardInteractive: () => ({ success: true }),
         }),
       },
       sessions: [],
       setKeyboardInteractiveQueue: (updater: (items: typeof queue) => typeof queue) => {
         queue = updater(queue);
       },
+      t: (key: string) => key,
+      toast: { error: () => {} },
       updateHosts: (nextHosts: Host[]) => {
         hostUpdates += 1;
         hosts = nextHosts;
@@ -233,7 +238,7 @@ test('keyboard-interactive submit does not save secondary password when allowSav
   assert.deepEqual(queue, []);
 });
 
-test('keyboard-interactive submit uses explicit hostId when saving password', () => {
+test('keyboard-interactive submit uses explicit hostId when saving password', async () => {
   const jumpHost: Host = {
     ...baseHost,
     id: 'jump-1',
@@ -254,13 +259,13 @@ test('keyboard-interactive submit uses explicit hostId when saving password', ()
     allowSavePassword: true,
   }];
 
-  handleKeyboardInteractiveSubmitImpl(
+  await handleKeyboardInteractiveSubmitImpl(
     () => ({
       hosts,
       keyboardInteractiveQueue: queue,
       netcattyBridge: {
         get: () => ({
-          respondKeyboardInteractive: () => {},
+          respondKeyboardInteractive: () => ({ success: true }),
         }),
       },
       sessions: [{
@@ -271,6 +276,8 @@ test('keyboard-interactive submit uses explicit hostId when saving password', ()
       setKeyboardInteractiveQueue: (updater: (items: typeof queue) => typeof queue) => {
         queue = updater(queue);
       },
+      t: (key: string) => key,
+      toast: { error: () => {} },
       updateHosts: (nextHosts: Host[]) => {
         hosts = nextHosts;
       },
@@ -282,4 +289,112 @@ test('keyboard-interactive submit uses explicit hostId when saving password', ()
 
   assert.equal(hosts.find((host) => host.id === baseHost.id)?.password, 'target-password');
   assert.equal(hosts.find((host) => host.id === jumpHost.id)?.password, 'new-jump-password');
+});
+
+test('keyboard-interactive submit preserves host changes made while delivery is pending', async () => {
+  let hosts: Host[] = [{
+    ...baseHost,
+    label: 'Original label',
+    password: 'old-password',
+  }];
+  const hostsRef = { current: hosts };
+  let queue = [{
+    requestId: 'ki-delayed',
+    sessionId: 'session-delayed',
+    hostname: baseHost.hostname,
+    allowSavePassword: true,
+  }];
+  let resolveDelivery: (result: { success: boolean }) => void = () => {};
+  const delivery = new Promise<{ success: boolean }>((resolve) => {
+    resolveDelivery = resolve;
+  });
+
+  const submitPromise = handleKeyboardInteractiveSubmitImpl(
+    () => ({
+      hosts,
+      hostsRef,
+      keyboardInteractiveQueue: queue,
+      netcattyBridge: {
+        get: () => ({ respondKeyboardInteractive: () => delivery }),
+      },
+      sessions: [{
+        id: 'session-delayed',
+        hostId: baseHost.id,
+        hostname: baseHost.hostname,
+      }],
+      setKeyboardInteractiveQueue: (updater: (items: typeof queue) => typeof queue) => {
+        queue = updater(queue);
+      },
+      t: (key: string) => key,
+      toast: { error: () => {} },
+      updateHosts: (nextHosts: Host[]) => {
+        hosts = nextHosts;
+        hostsRef.current = nextHosts;
+      },
+    }),
+    'ki-delayed',
+    ['new-password'],
+    'new-password',
+  );
+
+  hosts = [{ ...hosts[0], label: 'Synced label', tags: ['synced'] }];
+  hostsRef.current = hosts;
+  resolveDelivery({ success: true });
+  await submitPromise;
+
+  assert.deepEqual(hosts[0], {
+    ...baseHost,
+    label: 'Synced label',
+    tags: ['synced'],
+    password: 'new-password',
+    savePassword: true,
+  });
+  assert.deepEqual(queue, []);
+});
+
+test('keyboard-interactive submit keeps the prompt and password unchanged when delivery fails', async () => {
+  let hosts: Host[] = [{
+    ...baseHost,
+    password: 'old-password',
+  }];
+  let queue = [{
+    requestId: 'ki-failed',
+    sessionId: 'session-1',
+    hostname: baseHost.hostname,
+    allowSavePassword: true,
+  }];
+  const errors: string[] = [];
+
+  const submitted = await handleKeyboardInteractiveSubmitImpl(
+    () => ({
+      hosts,
+      keyboardInteractiveQueue: queue,
+      netcattyBridge: {
+        get: () => ({
+          respondKeyboardInteractive: () => ({ success: false, error: 'Request not found' }),
+        }),
+      },
+      sessions: [{
+        id: 'session-1',
+        hostId: baseHost.id,
+        hostname: baseHost.hostname,
+      }],
+      setKeyboardInteractiveQueue: (updater: (items: typeof queue) => typeof queue) => {
+        queue = updater(queue);
+      },
+      t: (key: string) => key,
+      toast: { error: (message: string) => errors.push(message) },
+      updateHosts: (nextHosts: Host[]) => {
+        hosts = nextHosts;
+      },
+    }),
+    'ki-failed',
+    ['new-password'],
+    'new-password',
+  );
+
+  assert.equal(submitted, false);
+  assert.deepEqual(queue.map((request) => request.requestId), ['ki-failed']);
+  assert.equal(hosts[0].password, 'old-password');
+  assert.deepEqual(errors, ['Request not found']);
 });
