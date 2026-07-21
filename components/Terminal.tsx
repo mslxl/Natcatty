@@ -42,6 +42,7 @@ import {
   type TerminalContextReader,
 } from "../domain/terminalContextRead";
 import { classifyDistroId, shouldProbeSessionCwd } from "../domain/host";
+import { shouldCollectServerStats } from "../domain/systemManager/systemTarget";
 import { resolveHostSshConnectionTimeouts } from "../domain/sshConnectionTimeouts";
 import { supportsZmodemTerminalDragDrop } from "../lib/zmodemDragDrop";
 import { resolveHostAuth, resolveHostAutofillPassword } from "../domain/sshAuth";
@@ -906,9 +907,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   // network devices. See isNetworkDevice above for why the gating uses the
   // raw detected distro / explicit deviceType (not getEffectiveHostDistro);
   // #674 covers the AAA-log-flood motivation for stats specifically.
-  const isSupportedOs =
-    !isNetworkDevice &&
-    (host.os === 'linux' || host.os === 'macos' || detectedDeviceClass === 'linux-like');
+  const isSupportedOs = shouldCollectServerStats(host, undefined, null);
   const isSystemSidebarEligible =
     !!onOpenSystem &&
     isSupportedOs &&

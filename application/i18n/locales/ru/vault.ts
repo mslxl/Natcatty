@@ -656,6 +656,7 @@ export const ruVaultMessages: Messages = {
   'hostDetails.distro.option.almalinux': 'AlmaLinux',
   'hostDetails.distro.option.alinux': 'Alibaba Cloud Linux',
   'hostDetails.distro.option.openeuler': 'openEuler',
+  'hostDetails.distro.option.freebsd': 'FreeBSD',
   'hostDetails.distro.option.oracle': 'Oracle Linux',
   'hostDetails.distro.option.kali': 'Kali Linux',
   'hostDetails.distro.option.cisco': 'Cisco',
