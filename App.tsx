@@ -1126,8 +1126,11 @@ function App({ settings }: { settings: SettingsState }) {
     }), host, hidden);
   }, [addConnectionLog, connectToHost, resolveEffectiveHost, identities, keys]);
 
-  const openHostForVaultAgent = useCallback((host: Host) => {
-    const sessionId = handleConnectToHost(host, true, readExternalMcpSilentSessions());
+  const openHostForVaultAgent = useCallback((host: Host, isExternalMcpCall: boolean) => {
+    // Silent sessions only apply to actual external MCP clients (no chatSessionId).
+    // The in-app Catty AI chat's host_open always opens a visible tab, as documented.
+    const hidden = isExternalMcpCall && readExternalMcpSilentSessions();
+    const sessionId = handleConnectToHost(host, true, hidden);
     if (!sessionId) {
       return { ok: false as const, error: `Failed to open host "${host.id}".` };
     }

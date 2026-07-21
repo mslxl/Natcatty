@@ -419,9 +419,12 @@ export interface VaultAgentApiDeps {
   stopRuleTunnels: (ruleId: string) => Promise<{ success: boolean; error?: string }>;
   /**
    * Open a vault host as a terminal tab (same path as tray / host list click).
-   * Must return the new sessionId so MCP can target terminal tools.
+   * Must return the new sessionId so MCP can target terminal tools. `isExternalMcpCall`
+   * is true only when the request has no chatSessionId — i.e. it came from an actual
+   * external MCP client rather than the in-app Catty AI chat — and gates the "silent
+   * sessions" setting so the in-app chat's host_open still opens a visible tab.
    */
-  openHost?: (host: Host) => {
+  openHost?: (host: Host, isExternalMcpCall: boolean) => {
     ok: true;
     sessionId: string;
     host: Host;
@@ -537,15 +540,15 @@ export async function handleVaultAgentOp(
         return { ok: false, error: 'Host open is not available in this window.' };
       }
 
+      const chatSessionId = typeof params.chatSessionId === 'string'
+        ? params.chatSessionId
+        : undefined;
       const effectiveHost = deps.resolveEffectiveHost(host);
-      const opened = deps.openHost(effectiveHost);
+      const opened = deps.openHost(effectiveHost, !chatSessionId);
       if (!opened.ok) {
         return { ok: false, error: opened.error };
       }
 
-      const chatSessionId = typeof params.chatSessionId === 'string'
-        ? params.chatSessionId
-        : undefined;
       await registerOpenedSessionInMcpScope(opened.sessionId, effectiveHost, chatSessionId);
 
       const protocol = effectiveHost.etEnabled

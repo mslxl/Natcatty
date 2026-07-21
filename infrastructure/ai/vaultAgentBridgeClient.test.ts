@@ -286,6 +286,50 @@ describe('handleVaultAgentOp vault hosts', () => {
     assert.equal((result as { host?: { hostname?: string } }).host?.hostname, 'edge.example.com');
   });
 
+  it('host.open marks in-app chat opens (with chatSessionId) as not an external MCP call', async () => {
+    const host: Host = {
+      id: 'host-open-2',
+      label: 'edge',
+      hostname: 'edge.example.com',
+      username: 'ops',
+      port: 22,
+    };
+    let receivedIsExternalMcpCall: boolean | undefined;
+    const deps = createDeps({
+      hosts: [host],
+      openHost: (hostToOpen, isExternalMcpCall) => {
+        receivedIsExternalMcpCall = isExternalMcpCall;
+        return { ok: true, sessionId: `session-${hostToOpen.id}`, host: hostToOpen };
+      },
+    });
+
+    await handleVaultAgentOp('host.open', { hostId: 'host-open-2', chatSessionId: 'chat-1' }, deps);
+
+    assert.equal(receivedIsExternalMcpCall, false);
+  });
+
+  it('host.open marks calls without chatSessionId as an external MCP call', async () => {
+    const host: Host = {
+      id: 'host-open-3',
+      label: 'edge',
+      hostname: 'edge.example.com',
+      username: 'ops',
+      port: 22,
+    };
+    let receivedIsExternalMcpCall: boolean | undefined;
+    const deps = createDeps({
+      hosts: [host],
+      openHost: (hostToOpen, isExternalMcpCall) => {
+        receivedIsExternalMcpCall = isExternalMcpCall;
+        return { ok: true, sessionId: `session-${hostToOpen.id}`, host: hostToOpen };
+      },
+    });
+
+    await handleVaultAgentOp('host.open', { hostId: 'host-open-3' }, deps);
+
+    assert.equal(receivedIsExternalMcpCall, true);
+  });
+
   it('session.close closes the matching terminal session', async () => {
     const closed: string[] = [];
     const result = await handleVaultAgentOp(

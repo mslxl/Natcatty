@@ -177,7 +177,7 @@ export function useVaultAgentBridge(input: UseVaultAgentBridgeInput): void {
         stopTunnel: current.stopTunnel,
         stopRuleTunnels: current.stopRuleTunnels,
         openHost: current.openHost
-          ? (host) => current.openHost!(host)
+          ? (host, isExternalMcpCall) => current.openHost!(host, isExternalMcpCall)
           : undefined,
         closeSession: current.closeSession
           ? (sessionId) => current.closeSession!(sessionId)
