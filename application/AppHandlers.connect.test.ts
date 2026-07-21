@@ -43,6 +43,24 @@ test('connect host handler returns the created terminal tab id', () => {
   assert.equal(logs.length, 1);
 });
 
+test('connect logs use the same Mosh-before-ET protocol precedence as the launcher', () => {
+  const logs: Array<{ protocol?: string }> = [];
+  handleConnectToHostImpl(
+    () => ({
+      addConnectionLog: (entry: { protocol?: string }) => logs.push(entry),
+      connectToHost: () => 'session-both-transports',
+      identities: [],
+      keys: [],
+      resolveEffectiveHost: (host: Host) => host,
+      resolveHostAuth: () => ({ username: 'root' }),
+      systemInfoRef: { current: { username: 'local-user', hostname: 'local-host' } },
+    }),
+    { ...baseHost, moshEnabled: true, etEnabled: true },
+  );
+
+  assert.equal(logs[0]?.protocol, 'mosh');
+});
+
 test('connect serial host handler returns the created terminal tab id', () => {
   const serialHost: Host = {
     ...baseHost,

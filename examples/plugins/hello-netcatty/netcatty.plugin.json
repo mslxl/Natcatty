@@ -19,13 +19,20 @@
     "browser": "dist/index.js"
   },
   "activationEvents": [
-    "onCommand:com.netcatty.hello.sayHello"
+    "onCommand:com.netcatty.hello.sayHello",
+    "onProvider:com.netcatty.hello.completion",
+    "onProvider:com.netcatty.hello.decoration",
+    "onProvider:com.netcatty.hello.theme"
   ],
   "permissions": {
     "required": [
       "commands",
       "settings.read",
-      "menus"
+      "menus",
+      "provider.terminal",
+      "terminal.complete",
+      "terminal.output",
+      "terminal.decorate"
     ],
     "optional": []
   },
@@ -53,6 +60,26 @@
         "location": "commandPalette",
         "group": "examples",
         "order": 10
+      }
+    ],
+    "providers": [
+      {
+        "id": "com.netcatty.hello.completion",
+        "label": "Hello completion",
+        "description": "Suggests the example hello command.",
+        "kind": "terminal.completion"
+      },
+      {
+        "id": "com.netcatty.hello.decoration",
+        "label": "Hello decoration",
+        "description": "Highlights the example greeting in terminal output.",
+        "kind": "terminal.decoration"
+      },
+      {
+        "id": "com.netcatty.hello.theme",
+        "label": "Hello theme",
+        "description": "Adds a subtle cursor color to the example terminal theme.",
+        "kind": "terminal.theme"
       }
     ]
   }

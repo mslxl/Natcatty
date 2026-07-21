@@ -2,6 +2,10 @@ import type { RefObject } from "react";
 import type { Terminal as XTerm } from "@xterm/xterm";
 import type { Host } from "../../../types";
 import {
+  isConfirmedTerminalShellPrompt,
+  isSensitiveTerminalChallenge,
+} from "../../../domain/terminalPromptSecurity";
+import {
   markPromptLineBreakCommandPending,
   type PromptLineBreakState,
 } from "./promptLineBreak";
@@ -25,6 +29,12 @@ type TerminalCommandExecutionContext = {
     sessionId: string,
   ) => void;
   onCommandSubmitted?: (
+    command: string,
+    hostId: string,
+    hostLabel: string,
+    sessionId: string,
+  ) => void;
+  onTrustedCommandSubmitted?: (
     command: string,
     hostId: string,
     hostLabel: string,
@@ -79,6 +89,25 @@ const readFullLineAfterPrompt = (
     return combined.slice(promptText.length).replace(/\s+$/g, "");
   } catch {
     return null;
+  }
+};
+
+const readCurrentLogicalTerminalLine = (term?: XTerm | null): string => {
+  if (!term) return "";
+  try {
+    const buffer = term.buffer.active;
+    const cursorY = buffer.cursorY + buffer.baseY;
+    let firstRow = cursorY;
+    while (firstRow > 0 && buffer.getLine(firstRow)?.isWrapped) firstRow -= 1;
+    let line = "";
+    for (let row = firstRow; row <= cursorY; row += 1) {
+      const bufferLine = buffer.getLine(row);
+      if (!bufferLine) break;
+      line += bufferLine.translateToString(false);
+    }
+    return line.slice(-8_192);
+  } catch {
+    return "";
   }
 };
 
@@ -626,13 +655,28 @@ export const recordTerminalCommandExecution = (
   command: string,
   ctx: TerminalCommandExecutionContext,
   term?: XTerm | null,
+  options?: { sensitive?: boolean; allowHostStyleGreaterThanPrompt?: boolean },
 ): string | null => {
+  if (options?.sensitive || isSensitiveTerminalChallenge(readCurrentLogicalTerminalLine(term))) {
+    ctx.commandBufferRef.current = "";
+    return null;
+  }
   const lastPromptText = ctx.promptLineBreakStateRef?.current?.lastPromptText;
   const cmd = resolveSubmittedShellCommand(command, term, lastPromptText);
   if (cmd) {
     ctx.onCommandSubmitted?.(cmd, ctx.host.id, ctx.host.label, ctx.sessionId);
   }
+  const alignedPrompt = term ? getAlignedPrompt(term, command, true).prompt : null;
+  const trustedPrompt = Boolean(
+    term && alignedPrompt?.isAtPrompt
+    && isConfirmedTerminalShellPrompt(alignedPrompt.promptText, {
+      allowHostStyleGreaterThan: options?.allowHostStyleGreaterThanPrompt,
+    }),
+  );
   if (cmd && shouldRecordShellHistory(cmd, term)) {
+    if (trustedPrompt) {
+      ctx.onTrustedCommandSubmitted?.(cmd, ctx.host.id, ctx.host.label, ctx.sessionId);
+    }
     ctx.onCommandExecuted?.(cmd, ctx.host.id, ctx.host.label, ctx.sessionId);
     ctx.commandBufferRef.current = "";
     markPromptLineBreakCommandPending(ctx.promptLineBreakStateRef, term, cmd);

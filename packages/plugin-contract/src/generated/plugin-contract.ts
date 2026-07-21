@@ -237,7 +237,7 @@ export type ProviderContribution = {
   configurationSchema?: JsonValue;
 };
 
-export type ProviderKind = "terminal.completion" | "terminal.decoration" | "terminal.link" | "terminal.hover" | "terminal.matcher" | "terminal.semantic" | "terminal.prompt" | "terminal.background" | "terminal.interceptor.input" | "terminal.interceptor.output" | "connection" | "authentication" | "sync" | "importer";
+export type ProviderKind = "terminal.completion" | "terminal.decoration" | "terminal.link" | "terminal.hover" | "terminal.matcher" | "terminal.semantic" | "terminal.prompt" | "terminal.background" | "terminal.theme" | "terminal.interceptor.input" | "terminal.interceptor.output" | "connection" | "authentication" | "sync" | "importer";
 
 export type ProviderRequest = {
   providerId: ContributionId;

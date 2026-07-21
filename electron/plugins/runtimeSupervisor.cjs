@@ -576,6 +576,22 @@ class RuntimeSupervisor {
     });
   }
 
+  #assertExpectedRuntimeIdentity(identity, expectedIdentity) {
+    if (!expectedIdentity) return;
+    if (
+      identity.pluginId !== expectedIdentity.pluginId
+      || identity.pluginVersion !== expectedIdentity.pluginVersion
+      || identity.runtimeId !== expectedIdentity.runtimeId
+      || identity.runtimeKind !== expectedIdentity.runtimeKind
+      || identity.securityPrincipal !== expectedIdentity.securityPrincipal
+    ) {
+      throw new PluginRpcError(
+        RPC_ERRORS.unavailable,
+        `Plugin runtime no longer matches the authorized activation: ${identity.pluginId}`,
+      );
+    }
+  }
+
   async #getRunningRuntime(pluginId) {
     const starting = this.starting.get(pluginId);
     if (starting) await starting;
@@ -598,10 +614,14 @@ class RuntimeSupervisor {
   async request(pluginId, method, params, options) {
     assertHostMethod(method);
     const { identity, runtime } = await this.#getRunningRuntime(pluginId);
+    this.#assertExpectedRuntimeIdentity(identity, options?.expectedIdentity);
     if (typeof runtime.request !== "function") {
       throw new PluginRpcError(RPC_ERRORS.unavailable, `Plugin runtime cannot receive requests: ${pluginId}`);
     }
-    const result = await runtime.request(method, params, options);
+    const runtimeOptions = options == null
+      ? undefined
+      : Object.fromEntries(Object.entries(options).filter(([key]) => key !== "expectedIdentity"));
+    const result = await runtime.request(method, params, runtimeOptions);
     const current = await this.#getRunningRuntime(pluginId);
     if (current.runtime !== runtime || current.identity.runtimeId !== identity.runtimeId) {
       throw new PluginRpcError(RPC_ERRORS.unavailable, `Plugin runtime changed while handling request: ${pluginId}`);
@@ -609,9 +629,10 @@ class RuntimeSupervisor {
     return result;
   }
 
-  async notify(pluginId, method, params) {
+  async notify(pluginId, method, params, options) {
     assertHostMethod(method);
     const { identity, runtime } = await this.#getRunningRuntime(pluginId);
+    this.#assertExpectedRuntimeIdentity(identity, options?.expectedIdentity);
     if (typeof runtime.notify !== "function") {
       throw new PluginRpcError(RPC_ERRORS.unavailable, `Plugin runtime cannot receive notifications: ${pluginId}`);
     }
@@ -622,8 +643,9 @@ class RuntimeSupervisor {
     }
   }
 
-  async openStream(pluginId, streamId, windowBytes) {
+  async openStream(pluginId, streamId, windowBytes, options) {
     const { identity, runtime } = await this.#getRunningRuntime(pluginId);
+    this.#assertExpectedRuntimeIdentity(identity, options?.expectedIdentity);
     if (typeof runtime.openStream !== "function") {
       throw new PluginRpcError(RPC_ERRORS.unavailable, `Plugin runtime cannot receive streams: ${pluginId}`);
     }

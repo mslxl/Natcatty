@@ -11,6 +11,7 @@ export type PromptLineBreakState = {
   lastPromptText: string;
   pendingCommand: boolean;
   suppressNextPromptCache: boolean;
+  pendingCommandCompletions: number;
 };
 
 type VisibleTextMap = {
@@ -110,7 +111,45 @@ export function createPromptLineBreakState(): PromptLineBreakState {
     lastPromptText: "",
     pendingCommand: false,
     suppressNextPromptCache: false,
+    pendingCommandCompletions: 0,
   };
+}
+
+export function markTerminalCommandCompletionPending(
+  stateRef?: RefObject<PromptLineBreakState>,
+): void {
+  if (!stateRef?.current) return;
+  stateRef.current.pendingCommandCompletions = Math.min(
+    64,
+    stateRef.current.pendingCommandCompletions + 1,
+  );
+}
+
+export function consumeTerminalCommandCompletion(
+  state: PromptLineBreakState | undefined,
+): boolean {
+  if (!state || state.pendingCommandCompletions < 1) return false;
+  state.pendingCommandCompletions -= 1;
+  return true;
+}
+
+export function consumeOsc133CommandCompletion(
+  data: string,
+  state: PromptLineBreakState | undefined,
+): boolean {
+  return data.split(";", 1)[0] === "D" && consumeTerminalCommandCompletion(state);
+}
+
+export function detectTerminalCommandCompletions(
+  term: XTerm,
+  state: PromptLineBreakState | undefined,
+): number {
+  if (!state || state.pendingCommandCompletions < 1) return 0;
+  const prompt = detectPrompt(term);
+  if (!prompt.isAtPrompt || prompt.userInput.length > 0) return 0;
+  const completed = state.pendingCommandCompletions;
+  state.pendingCommandCompletions = 0;
+  return completed;
 }
 
 export function markPromptLineBreakCommandPending(

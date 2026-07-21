@@ -935,6 +935,33 @@ test("terminal provider kinds require their least-privilege data capabilities", 
   assert.equal(sufficient.valid, true, sufficient.errors.join("\n"));
 });
 
+test("terminal semantic providers require submitted-command input permission", async () => {
+  const { validateManifestValue } = await import("../../plugin-cli/src/manifest.ts");
+  const provider = {
+    id: "com.example.contract-test.semantic",
+    label: "Command semantics",
+    kind: "terminal.semantic",
+  };
+  const insufficient = validateManifestValue({
+    ...validManifest,
+    permissions: {
+      required: ["provider.terminal", "terminal.decorate"],
+    },
+    contributes: { providers: [provider] },
+  });
+  assert.equal(insufficient.valid, false);
+  assert.match(insufficient.errors.join("\n"), /terminal\.input/);
+
+  const sufficient = validateManifestValue({
+    ...validManifest,
+    permissions: {
+      required: ["provider.terminal", "terminal.input", "terminal.decorate"],
+    },
+    contributes: { providers: [provider] },
+  });
+  assert.equal(sufficient.valid, true, sufficient.errors.join("\n"));
+});
+
 test("planned phase consumers are representable without private application types", async () => {
   const { validateManifestValue } = await import("../../plugin-cli/src/manifest.ts");
   const manifests = [
@@ -988,6 +1015,7 @@ test("planned phase consumers are representable without private application type
           "runtime.advanced",
           "provider.terminal",
           "terminal.complete",
+          "terminal.input",
           "terminal.output",
           "terminal.decorate",
         ],
@@ -1008,6 +1036,11 @@ test("planned phase consumers are representable without private application type
             id: "com.example.contract-test.background",
             label: "Background",
             kind: "terminal.background",
+          },
+          {
+            id: "com.example.contract-test.theme",
+            label: "Theme",
+            kind: "terminal.theme",
           },
         ],
       },

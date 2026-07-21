@@ -285,6 +285,10 @@ declare global {
     updatePluginSetting?(pluginId: string, settingId: string, value: unknown, scopeId?: string): Promise<{ restartRequired: boolean }>;
     resetPluginSetting?(pluginId: string, settingId: string, scopeId?: string): Promise<{ restartRequired: boolean }>;
     setPluginEnvironment?(environment: NetcattyPluginEnvironment): Promise<void>;
+    listPluginTerminalProviders?(options: NetcattyTerminalProviderQuery): Promise<ReadonlyArray<NetcattyTerminalProviderContribution>>;
+    providePluginTerminal?(request: NetcattyTerminalProviderRequest): Promise<ReadonlyArray<NetcattyTerminalProviderResult>>;
+    cancelPluginTerminalRequest?(requestId: string): Promise<boolean>;
+    publishPluginTerminalSessionEvent?(event: NetcattyTerminalSessionEvent): Promise<ReadonlyArray<{ pluginId: string; delivered: boolean }>>;
     openPluginView?(payload: NetcattyPluginViewOpenRequest): Promise<{ instanceId: string }>;
     closePluginView?(instanceId: string): Promise<void>;
     setPluginViewBounds?(instanceId: string, bounds: { x: number; y: number; width: number; height: number }): Promise<void>;
@@ -367,6 +371,108 @@ declare global {
     highContrast: boolean;
     themeTokens?: Record<string, string>;
   }
+
+  type NetcattyTerminalProviderKind =
+    | 'terminal.completion'
+    | 'terminal.decoration'
+    | 'terminal.link'
+    | 'terminal.hover'
+    | 'terminal.matcher'
+    | 'terminal.semantic'
+    | 'terminal.prompt'
+    | 'terminal.background'
+    | 'terminal.theme';
+
+  interface NetcattyTerminalProviderContribution {
+    pluginId: string;
+    pluginVersion: string;
+    runtimeId?: string;
+    pluginDisplayName: string;
+    provider: {
+      id: string;
+      label: string;
+      description?: string;
+      kind: NetcattyTerminalProviderKind;
+      capabilities?: ReadonlyArray<string>;
+      configurationSchema?: unknown;
+    };
+  }
+
+  interface NetcattyTerminalProviderQuery {
+    kind: NetcattyTerminalProviderKind;
+    locale?: string;
+    preferredProviderIds?: ReadonlyArray<string>;
+  }
+
+  interface NetcattyTerminalSessionSnapshot {
+    sessionId: string;
+    hostId?: string;
+    workspaceId?: string;
+    protocol: string;
+    status: 'connecting' | 'connected' | 'disconnected';
+    cwd?: string;
+    title?: string;
+    shellType?: 'posix' | 'fish' | 'powershell' | 'cmd' | 'unknown';
+    cols?: number;
+    rows?: number;
+    alternateScreen?: boolean;
+  }
+
+  interface NetcattyTerminalSessionEvent {
+    type:
+      | 'snapshot'
+      | 'created'
+      | 'connected'
+      | 'reconnected'
+      | 'cwdChanged'
+      | 'titleChanged'
+      | 'resized'
+      | 'alternateScreenChanged'
+      | 'commandSubmitted'
+      | 'commandCompleted'
+      | 'disconnected'
+      | 'disposed';
+    session: NetcattyTerminalSessionSnapshot;
+    exitCode?: number;
+  }
+
+  interface NetcattyTerminalProviderRequest {
+    requestId: string;
+    kind: NetcattyTerminalProviderKind;
+    operation: string;
+    session: NetcattyTerminalSessionSnapshot;
+    payload?: unknown;
+    locale?: string;
+    preferredProviderIds?: ReadonlyArray<string>;
+    deadlineMs?: number;
+  }
+
+  type NetcattyTerminalProviderResult = {
+    pluginId: string;
+    pluginVersion: string;
+    runtimeId?: string;
+    providerId: string;
+    kind: NetcattyTerminalProviderKind;
+    requestId: string;
+    status: 'ok';
+    result: unknown;
+  } | {
+    pluginId: string;
+    pluginVersion: string;
+    runtimeId?: string;
+    providerId: string;
+    kind: NetcattyTerminalProviderKind;
+    requestId: string;
+    status: 'cancelled';
+  } | {
+    pluginId: string;
+    pluginVersion: string;
+    providerId: string;
+    kind: NetcattyTerminalProviderKind;
+    requestId: string;
+    status: 'failed';
+    error: { code: number; message: string; data?: unknown };
+  };
 
   interface NetcattyPluginViewOpenRequest {
     viewId: string;

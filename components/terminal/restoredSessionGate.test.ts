@@ -214,7 +214,7 @@ test("restored cwd intent marks known cwd before initial backend pwd probe can p
   const callbackIndex = terminalSource.indexOf("onRestoreCwdIntentConsumed:");
   const knownAssignIndex = terminalSource.indexOf("knownCwdRef.current = cwd", callbackIndex);
   const backendProbeGuardIndex = effectsSource.indexOf("knownCwdRef.current");
-  const backendPwdWriteIndex = effectsSource.indexOf("onTerminalCwdChange?.(sessionId, cwd ?? null)", backendProbeGuardIndex);
+  const backendPwdWriteIndex = effectsSource.indexOf("onPluginRuntimeCwdChange(result.cwd)", backendProbeGuardIndex);
 
   assert.notEqual(callbackIndex, -1);
   assert.notEqual(knownAssignIndex, -1);
@@ -226,6 +226,6 @@ test("restored cwd intent marks known cwd before initial backend pwd probe can p
   );
   assert.ok(
     backendProbeGuardIndex < backendPwdWriteIndex,
-    "initial backend pwd probe must remain guarded by knownCwdRef before it writes restore metadata",
+    "initial backend pwd probe must remain guarded by knownCwdRef before it publishes the probed cwd",
   );
 });

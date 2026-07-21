@@ -11,11 +11,14 @@ const layerViewSource = readFileSync(new URL("../terminalLayer/TerminalLayerView
 test("local terminals stay out of hibernate and hidden-renderer paths", () => {
   assert.match(
     terminalSource,
-    /const hibernateEnabled = resolveTerminalHibernateEnabledForProtocol\(terminalSettings, host\.protocol\)/,
+    /const effectiveTerminalProtocol = resolveEffectiveTerminalProtocol\(host\);[\s\S]*const hibernateEnabled = resolveTerminalHibernateEnabledForProtocol\([\s\S]*effectiveTerminalProtocol/,
   );
   assert.match(terminalSource, /hibernateEnabledRef\.current = hibernateEnabled/);
   assert.match(terminalSource, /hibernateEnabled: hibernateEnabled/);
-  assert.match(effectsSource, /resolveTerminalHibernateEnabledForProtocol\(terminalSettings, host\.protocol\)/);
+  assert.match(
+    effectsSource,
+    /const effectiveTerminalProtocol = resolveEffectiveTerminalProtocol\(host\);[\s\S]*resolveTerminalHibernateEnabledForProtocol\([\s\S]*effectiveTerminalProtocol/,
+  );
   assert.match(layerSupportSource, /resolveTerminalHibernateEnabledForProtocol\(terminalSettings, host\.protocol\)/);
   assert.match(layerBridgeSource, /const localWorkspaceIds = useMemo\(\(\) => new Set\(/);
   assert.match(layerBridgeSource, /!hibernateHiddenTabs \|\| localWorkspaceIds\.has\(workspace\.id\)/);

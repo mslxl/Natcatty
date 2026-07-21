@@ -64,6 +64,7 @@
     "test:ssh-mfa-models:live": "SSH_MFA_LIVE=1 node --test electron/bridges/sshMfaModels.live.test.cjs"
   },
   "dependencies": {
+    "@eslint-community/regexpp": "4.12.2",
     "@netcatty/plugin-cli": "0.1.0-internal",
     "@netcatty/plugin-contract": "0.1.0-internal",
     "@netcatty/plugin-sdk": "0.1.0-internal",
@@ -112,6 +113,7 @@
     "monaco-editor": "^0.55.1",
     "node-pty": "1.1.0",
     "pinyin-pro": "^3.28.1",
+    "re2js": "2.8.6",
     "react": "^19.2.1",
     "react-dom": "^19.2.1",
     "serialport": "^13.0.0",

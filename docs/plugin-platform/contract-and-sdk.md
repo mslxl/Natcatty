@@ -351,6 +351,10 @@ lifecycle primitives:
   application theme tokens/accessibility environment, logging, and
   subscriptions.
 
+The terminal Provider registry, bounded result shapes, lifecycle snapshots,
+host adapters, and the explicit PR-6 raw-interceptor boundary are documented in
+[`terminal-providers.md`](./terminal-providers.md).
+
 Phase-4 contribution methods stay on the same validated control plane. The
 runtime registers command handlers only after activation; the host routes
 `plugin.command.execute` back to the owning runtime. Setting reads and writes
@@ -358,6 +362,13 @@ are scoped by the declaration, view state is namespaced by plugin/view/window,
 and environment changes arrive as notifications. Custom-view preload APIs are
 separate from `PluginContext` and cannot acquire the runtime's capability
 objects.
+
+Phase-5 Provider handlers are activation-owned SDK registrations. The host
+performs immutable enumeration without activation, authorizes the exact
+Provider permission set at first use, invokes through `RuntimeSupervisor`, and
+validates the canonical Provider result plus the terminal operation's bounded
+result shape before application use. Raw terminal interceptors remain reserved
+for the separate phase-6 transport.
 
 `PluginSecretStore.get()` never returns plaintext. It returns a host-issued
 `SecretRef`. Its random ID stays opaque; its non-secret `key` binds later lease

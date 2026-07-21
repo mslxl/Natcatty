@@ -34,6 +34,10 @@ import {
 } from "./terminalWriteAckDeferral.ts";
 import { flushTerminalWriteQueueBypassingTimers } from "./terminalWriteQueue.ts";
 import { prioritizeTerminalInput } from "./terminalOutputPipeline";
+import {
+  createPromptLineBreakState,
+  markTerminalCommandCompletionPending,
+} from "./promptLineBreak";
 
 const createFakeTerm = (activeType = "normal") => {
   const writes: string[] = [];
@@ -89,6 +93,37 @@ const createContext = (showLineTimestamps: boolean, host: Record<string, unknown
   terminalBackend: {},
   sessionRef: { current: "session-1" },
   promptLineBreakStateRef: { current: undefined },
+});
+
+test("terminal output publishes one completion for each pending command at the next prompt", () => {
+  const { term } = createFakeTerm();
+  Object.assign(term.buffer.active, {
+    cursorX: 2,
+    cursorY: 0,
+    baseY: 0,
+    getLine(line: number) {
+      if (line !== 0) return undefined;
+      return {
+        isWrapped: false,
+        translateToString() { return "$ "; },
+      };
+    },
+  });
+  const state = createPromptLineBreakState();
+  const stateRef = { current: state };
+  markTerminalCommandCompletionPending(stateRef);
+  markTerminalCommandCompletionPending(stateRef);
+  let completions = 0;
+  const ctx = {
+    ...createContext(false),
+    promptLineBreakStateRef: stateRef,
+    onCommandCompleted() { completions += 1; },
+  };
+
+  writeSessionData(ctx as never, term, "$ ");
+
+  assert.equal(completions, 2);
+  assert.equal(state.pendingCommandCompletions, 0);
 });
 
 const withDocumentVisibility = (

@@ -1,0 +1,189 @@
+# Terminal Provider API
+
+PR 5 adds the host-owned terminal Provider registry on top of the isolated
+runtime and permission boundary. Provider declarations remain immutable
+manifest data. Listing Providers never starts a plugin; first invocation uses
+the existing idempotent `onProvider:<id>` activation seam and revalidates the
+active plugin version and runtime identity after the response.
+
+## Runtime registration
+
+An activated plugin registers only contributions owned by its exact plugin ID:
+
+```ts
+context.subscriptions.add(context.providers.register(
+  "com.example.shell.completion",
+  "terminal.completion",
+  async ({ payload, cancellationToken }) => {
+    if (cancellationToken.isCancellationRequested) return { items: [] };
+    return { items: [{ text: "git status", displayText: "git status", score: 100 }] };
+  },
+));
+```
+
+Registration is activation-owned and disposable. A stale disposable cannot
+remove a replacement registration. Invocation carries the declared Provider
+ID/kind, an operation, a host-generated request ID, a bounded JSON payload, the
+deadline, and a cooperative cancellation token. Results use the canonical
+`ok`/`cancelled`/`failed` Provider result union and are validated again by the
+main process before renderer use.
+
+Each invocation reauthorizes the Provider kind's least-privilege permission
+set against the current runtime identity before sending a session snapshot or
+request payload. Required grants are reused; optional declarations prompt at
+first use and denial/cancellation returns no terminal data to the runtime.
+
+## Terminal snapshots and lifecycle
+
+Providers receive immutable metadata snapshots containing only stable session
+identity and presentation context: session/host/workspace IDs, protocol,
+connection status, cwd, title, shell type, dimensions, and alternate-screen
+state. Active runtimes can subscribe with `context.terminals.onDidChange()`.
+Protocol values preserve the actual built-in transport (`ssh`, `mosh`, `et`,
+`telnet`, `local`, or `serial`) and accept bounded namespaced identifiers for
+future connection Providers instead of collapsing non-SSH transports to SSH.
+Immediately before an invocation, a lazily activated Provider receives a
+`snapshot` event for the current session so it does not depend on lifecycle
+events that occurred before activation.
+Lifecycle events cover creation, connection/reconnection, cwd/title/resize/
+alternate-screen changes, command submission, host-detected command completion,
+disconnect, and disposal. Completion events contain no command text or raw
+output and are emitted from OSC 133 completion markers when available, with a
+conservative next-prompt fallback for shells without integration markers.
+Connection-scoped cwd, title, and alternate-screen metadata is cleared before
+disconnect and reconnect publication; viewport dimensions remain available.
+Ongoing lifecycle delivery begins only after a successful invocation with a
+non-`once` `provider.terminal` grant. Each event rechecks that grant without
+opening a new prompt and remains bound to the exact plugin version, runtime ID,
+runtime kind, and security principal that received the authorized invocation.
+One-use grants receive only the invocation snapshot and payload.
+
+PR 5 intentionally omits command text, password/prompt content, raw terminal
+output, xterm objects, backend handles, and terminal-worker ports. The ordinary
+JSON-RPC Provider path is not suitable for hot interception. PR 6 owns the
+separate permission-gated MessagePort fast path for input/output interceptors,
+sensitive-input bypass, circuit breaking, and the 4 ms interceptor budget.
+
+## Host adapters
+
+Netcatty's built-in autocomplete engine and keyword highlighter use the same
+application Provider adapters as plugins:
+
+- completion requests run built-in and plugin Providers concurrently;
+- one active request exists per session and Provider kind; a newer request
+  cancels and suppresses the older result;
+- Provider ordering is deterministic and can honor a host-owned preference
+  list; completion items are score-ranked and text-deduplicated;
+- one Provider failure is contained and does not suppress other Providers;
+- plugin completion responses are capped and normalized before rendering;
+- completion insertion/display text rejects control and bidirectional override
+  characters before it can reach terminal input or suggestion UI. The host
+  always renders the exact insertion text for third-party completions, so a
+  friendly label cannot conceal a different command on previewless terminals;
+- decoration Providers return declarative rules only. Rule IDs are namespaced,
+  counts and strings are bounded, colors must be explicit hex values, and
+  unsupported expressions are rejected before reaching the highlighter, and
+  accepted plugin patterns are compiled and executed by the linear-time RE2JS
+  engine with global, case-insensitive matching;
+- decoration results are capped again after Provider fan-out at 16 active
+  rules and 32 total patterns. Plugin matching examines at most the first 4096
+  characters and retains at most 256 plugin matches for one logical line. A
+  wrapped logical line is matched only once per refresh before ranges are
+  projected onto its physical rows; plugin decoration is omitted for oversized
+  wrapped blocks that cannot be assembled safely. Patterns that can match an
+  empty string are rejected because they cannot produce a visible highlight.
+  Normal boot and hibernate wake share the same CWD-triggered decoration refresh
+  path;
+- link and hover Providers receive one bounded physical xterm line and return
+  exact zero-based ranges. Links are restricted to credential-free HTTP(S)
+  URLs, reuse the host link-modifier policy, and render hover text with host
+  DOM nodes rather than plugin HTML. UTF-16 result boundaries are mapped back
+  to xterm cells so wide and combining characters cannot shift activation or
+  decoration ranges. Requests pause while the terminal is hidden or
+  disconnected, and in-flight results are aborted and invalidated on either
+  transition;
+- matcher Providers receive at most the latest 32 parsed logical normal-buffer
+  lines in one batch. Wrapped physical rows are joined before invocation and
+  exact logical ranges are split back across host-owned xterm decorations.
+  Each result identifies a host-provided `lineId`; ranges are validated against
+  that exact line, the combined request text is capped below the 128 KiB
+  Provider envelope, and at most 64 logical matches remain visible.
+  Alternate-screen output is excluded;
+- semantic Providers receive only a bounded command submitted from a
+  positively confirmed shell prompt (or an explicitly identified network
+  device prompt) and require `terminal.input`. Authentication challenges,
+  REPL input, and other untrusted prompt-shaped input never reach ordinary
+  Providers. Prompt Providers receive no command or raw output. Their
+  bounded annotations are rendered at host-detected command completion. A
+  prompt line is included only when the shared host detector confirms an empty
+  shell prompt, so the last output line is never mislabeled as prompt context;
+- background Providers return at most four solid-color presentation layers.
+  Per-layer opacity and the combined host overlay are capped at 0.35, plugin
+  HTML/CSS/images are never accepted, and the request includes the current
+  terminal background color for contrast-aware results. An omitted layer
+  opacity uses the host-owned safe default of 0.15. Providers may request
+  a 250-60000 ms host refresh cadence; refresh pauses while the terminal is
+  hidden or disconnected and is disabled when reduced motion is requested;
+- theme Providers receive the complete current host palette and may return a
+  bounded partial palette of explicit colors. Providers are merged in the same
+  deterministic preference order as enumeration, with the first value for each
+  color winning; host colors remain authoritative for omitted values;
+- every ordinary visual adapter applies a renderer-owned end-to-end wait bound
+  around lazy activation, authorization, and runtime work. Stale generations,
+  disconnects, contribution changes, runtime replacement, and terminal
+  disposal cannot reapply old visual results. Provider availability is cached
+  from immutable enumeration without activation, stale enumeration generations
+  cannot overwrite newer contribution state, and enumeration errors fail
+  closed. Autocomplete, decoration, link, hover, matcher, and background paths
+  therefore perform no plugin RPC work when those contribution kinds are
+  absent or the development-gated host is disabled.
+
+The operation payload/result shapes for the ordinary adapters are intentionally
+declarative. Every payload also contains the immutable `session` snapshot for
+the exact invocation:
+
+- `terminal.completion/provideCompletions`: bounded input, cursor, host OS,
+  CWD source, and result limit -> bounded completion items;
+- `terminal.decoration/provideDecorations`: a host refresh reason -> bounded
+  declarative highlight rules;
+- `terminal.link/provideLinks`: `{ line, bufferLineNumber }` ->
+  `{ links: [{ start, length, uri, label? }] }`;
+- `terminal.hover/provideHovers`: `{ line, bufferLineNumber }` ->
+  `{ hovers: [{ start, length, contents }] }`;
+- `terminal.matcher/provideMatches`: `{ lines: [{ lineId, line,
+  bufferLineNumber }] }` -> `{ matches: [{ lineId, start, length, label,
+  severity?, color? }] }`;
+- `terminal.semantic/provideSemantics`: `{ command }` -> classification,
+  destructive/idempotent flags, and bounded annotations;
+- `terminal.prompt/provideAnnotations`: a host reason -> bounded annotations;
+- `terminal.background/provideBackgrounds`: a host reason and optional current
+  terminal background -> bounded solid-color layers plus optional
+  `refreshAfterMs`.
+- `terminal.theme/provideTheme`: a host reason and complete current host palette
+  -> a validated partial terminal palette.
+
+The SDK exports and infers the matching payload, item, operation, and result
+interfaces for all nine ordinary Provider kinds, including the immutable
+host session snapshot attached to every invocation. The generic registration
+overload remains available for later Provider kinds, so plugins do not need
+application-internal renderer types and PRs 6-9 can add their own typed maps.
+
+The control-plane JSON budget remains 1 MiB, while each terminal Provider
+payload and result is additionally limited to 128 KiB. Default terminal
+Provider requests have a 1.5 second deadline; autocomplete uses a shorter 750
+ms runtime deadline plus an 800 ms renderer-owned end-to-end wait bound that
+also covers lazy activation and first-use authorization. Built-in suggestions
+therefore remain available when a plugin prompt is unanswered. Renderer
+request cancellation is owned by the requesting
+WebContents and all outstanding work is aborted when that sender is destroyed.
+A single renderer may retain at most 64 active terminal requests, and one
+fan-out invokes at most the first 32 deterministically ranked Providers.
+
+## Downstream compatibility
+
+The registry uses the existing generic Provider request/result envelopes,
+runtime identity, cancellation, progress, permission names, and stream
+protocol. PR 6 can add its direct interceptor transport without changing the
+ordinary registry. PR 7 connection/auth/import, PR 8 sync, and PR 9 rollout can
+reuse the same registration and runtime lifecycle while defining their own
+operation-specific result validators and bounded stream consumers.

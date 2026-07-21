@@ -19,12 +19,40 @@ const PLUGIN_ERROR_NAMES_BY_WIRE_CODE = new Map(
   Object.entries(PLUGIN_ERROR_WIRE_CODES).map(([name, code]) => [code, name]),
 );
 
+const PROVIDER_KINDS = new Set([
+  "terminal.completion",
+  "terminal.decoration",
+  "terminal.link",
+  "terminal.hover",
+  "terminal.matcher",
+  "terminal.semantic",
+  "terminal.prompt",
+  "terminal.background",
+  "terminal.theme",
+  "terminal.interceptor.input",
+  "terminal.interceptor.output",
+  "connection",
+  "authentication",
+  "sync",
+  "importer",
+]);
+
 function pluginErrorNameFromRpcError(error) {
   if (typeof error?.data?.pluginCode === "string") return error.data.pluginCode;
   if (error?.code === RPC_ERRORS.methodNotFound) return "unsupported";
   if (error?.code === RPC_ERRORS.invalidParams) return "invalid_argument";
   if (error?.code === RPC_ERRORS.internal) return "internal";
   return PLUGIN_ERROR_NAMES_BY_WIRE_CODE.get(error?.code) ?? "unknown";
+}
+
+function freezeRuntimeJson(value) {
+  const clone = structuredClone(value);
+  const freeze = (item) => {
+    if (!item || typeof item !== "object" || Object.isFrozen(item)) return item;
+    for (const child of Array.isArray(item) ? item : Object.values(item)) freeze(child);
+    return Object.freeze(item);
+  };
+  return freeze(clone);
 }
 
 function messageData(value) {
@@ -181,6 +209,13 @@ function assertOwnedContributionId(pluginId, id, label) {
     throw new PluginError("invalid_argument", `${label} ID is invalid`);
   }
   return id;
+}
+
+function assertProviderKind(kind) {
+  if (!PROVIDER_KINDS.has(kind)) {
+    throw new PluginError("invalid_argument", "Plugin Provider kind is invalid");
+  }
+  return kind;
 }
 
 function assertOwnedContextKey(pluginId, key) {
@@ -371,6 +406,30 @@ function createPluginContext(config, client, runtimeApi) {
       state,
     }).then(() => undefined),
   };
+  const providers = {
+    register(providerId, kind, handler) {
+      const id = assertOwnedContributionId(config.pluginId, providerId, "Plugin Provider");
+      const normalizedKind = assertProviderKind(kind);
+      if (typeof handler !== "function") {
+        throw new PluginError("invalid_argument", "Plugin Provider handler must be a function");
+      }
+      if (runtimeApi.providerHandlers.has(id)) {
+        throw new PluginError("already_exists", `Plugin Provider is already registered: ${id}`);
+      }
+      const registration = Object.freeze({ kind: normalizedKind, handler });
+      runtimeApi.providerHandlers.set(id, registration);
+      return Object.freeze({
+        dispose() {
+          if (runtimeApi.providerHandlers.get(id) === registration) {
+            runtimeApi.providerHandlers.delete(id);
+          }
+        },
+      });
+    },
+  };
+  const terminals = {
+    onDidChange: runtimeApi.terminalEvents.event,
+  };
   const environment = {
     get locale() { return runtimeApi.environment.locale ?? "en"; },
     get theme() { return runtimeApi.environment.theme ?? "system"; },
@@ -398,6 +457,8 @@ function createPluginContext(config, client, runtimeApi) {
     commands,
     contextKeys,
     views,
+    providers,
+    terminals,
     environment,
     secrets,
     credentials,
@@ -418,8 +479,10 @@ export async function startPluginRuntime({ port, config, loadPlugin }) {
   let deactivated = false;
   const runtimeApi = {
     commandHandlers: new Map(),
+    providerHandlers: new Map(),
     settingsChanged: createEmitter(),
     environmentChanged: createEmitter(),
+    terminalEvents: createEmitter(),
     environment: normalizeRuntimeEnvironment(config.environment),
     viewMessages: new Map(),
   };
@@ -429,7 +492,7 @@ export async function startPluginRuntime({ port, config, loadPlugin }) {
     throw new Error("Plugin entrypoint must default-export a plugin with activate(context)");
   }
 
-  async function handleRequest(message) {
+  async function handleRequest(message, cancellationToken) {
     if (message.method === "plugin.initialize") {
       if (context) throw new PluginError("failed_precondition", "Plugin is already initialized");
       context = createPluginContext(config, client, runtimeApi);
@@ -468,6 +531,57 @@ export async function startPluginRuntime({ port, config, loadPlugin }) {
       if (!handler) throw new PluginError("failed_precondition", `Plugin command has no registered handler: ${command}`);
       return await handler(message.params?.args, message.params?.invocation);
     }
+    if (message.method === "provider.invoke") {
+      if (!activated || !context) throw new PluginError("failed_precondition", "Plugin is not activated");
+      const providerId = assertOwnedContributionId(config.pluginId, message.params?.providerId, "Plugin Provider");
+      const kind = assertProviderKind(message.params?.kind);
+      const registration = runtimeApi.providerHandlers.get(providerId);
+      if (!registration) {
+        throw new PluginError("failed_precondition", `Plugin Provider has no registered handler: ${providerId}`);
+      }
+      if (registration.kind !== kind) {
+        throw new PluginError("failed_precondition", `Plugin Provider kind changed: ${providerId}`);
+      }
+      const requestId = message.params?.requestId;
+      if (typeof requestId !== "string" || requestId.length < 1 || requestId.length > 128) {
+        throw new PluginError("invalid_argument", "Plugin Provider request ID is invalid");
+      }
+      const operation = message.params?.operation;
+      if (typeof operation !== "string" || operation.length < 1 || operation.length > 128) {
+        throw new PluginError("invalid_argument", "Plugin Provider operation is invalid");
+      }
+      const deadlineMs = message.params?.deadlineMs;
+      if (deadlineMs != null && (!Number.isInteger(deadlineMs) || deadlineMs < 1 || deadlineMs > 300_000)) {
+        throw new PluginError("invalid_argument", "Plugin Provider deadline is invalid");
+      }
+      try {
+        const result = await registration.handler(Object.freeze({
+          providerId,
+          kind,
+          operation,
+          requestId,
+          payload: message.params?.payload === undefined
+            ? undefined
+            : freezeRuntimeJson(message.params.payload),
+          deadlineMs,
+          cancellationToken,
+        }));
+        if (cancellationToken.isCancellationRequested) {
+          return { requestId, status: "cancelled" };
+        }
+        return { requestId, status: "ok", result: result === undefined ? null : result };
+      } catch (error) {
+        if (cancellationToken.isCancellationRequested) {
+          return { requestId, status: "cancelled" };
+        }
+        const rpcError = normalizeError(error);
+        return {
+          requestId,
+          status: "failed",
+          error: { code: rpcError.code, message: rpcError.message, ...(rpcError.data === undefined ? {} : { data: rpcError.data }) },
+        };
+      }
+    }
     throw new PluginError("unsupported", `Unsupported host method: ${message.method}`);
   }
 
@@ -484,6 +598,10 @@ export async function startPluginRuntime({ port, config, loadPlugin }) {
     if (message.method === "plugin.view.message") {
       const viewId = assertOwnedContributionId(config.pluginId, message.params?.viewId, "Plugin view");
       runtimeApi.viewMessages.get(viewId)?.fire(message.params?.message);
+      return true;
+    }
+    if (message.method === "plugin.terminal.event") {
+      runtimeApi.terminalEvents.fire(freezeRuntimeJson(message.params));
       return true;
     }
     return false;
@@ -508,7 +626,7 @@ export async function startPluginRuntime({ port, config, loadPlugin }) {
     const cancellationId = message.cancellationId;
     const source = new CancellationTokenSource();
     if (cancellationId) cancellation.set(cancellationId, source);
-    void handleRequest(message).then(
+    void handleRequest(message, source.token).then(
       (result) => transport.post({
         jsonrpc: "2.0",
         id: message.id,
@@ -530,8 +648,10 @@ export async function startPluginRuntime({ port, config, loadPlugin }) {
       client.close();
       for (const source of cancellation.values()) source.cancel();
       runtimeApi.commandHandlers.clear();
+      runtimeApi.providerHandlers.clear();
       runtimeApi.settingsChanged.clear();
       runtimeApi.environmentChanged.clear();
+      runtimeApi.terminalEvents.clear();
       for (const emitter of runtimeApi.viewMessages.values()) emitter.clear();
       cancellation.clear();
       if (!deactivated) {

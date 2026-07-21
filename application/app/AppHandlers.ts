@@ -4,6 +4,7 @@ import type { Host, HostProtocol } from '../../types';
 import type { PassphraseRequest } from '../../components/PassphraseModal';
 import { getEffectiveHostDistro } from '../../domain/host';
 import { sanitizeHostIconFields } from '../../domain/hostIcon';
+import { resolveEffectiveTerminalProtocol } from '../../domain/terminalProtocol';
 import { getTerminalPassthroughActions } from '../state/useGlobalHotkeys';
 import { buildNumberShortcutTabTargets } from './tabShortcutTargets';
 
@@ -94,7 +95,7 @@ export function handleTrayPanelConnectImpl(getCtx: AppContextGetter, hostId: str
       return sessionId;
     }
 
-    const protocol = effectiveHost.etEnabled ? 'et' : effectiveHost.moshEnabled ? 'mosh' : (effectiveHost.protocol || 'ssh');
+    const protocol = resolveEffectiveTerminalProtocol(effectiveHost);
     const resolvedAuth = resolveHostAuth({ host: effectiveHost, keys, identities });
     const sessionId = connectToHost(effectiveHost);
     addConnectionLog({
@@ -103,7 +104,7 @@ export function handleTrayPanelConnectImpl(getCtx: AppContextGetter, hostId: str
       hostLabel: host.label,
       hostname: host.hostname,
       username: resolvedAuth.username || 'root',
-      protocol: protocol as 'ssh' | 'telnet' | 'local' | 'mosh' | 'et',
+      protocol,
       ...getLogHostVisualSnapshot(effectiveHost),
       startTime: Date.now(),
       localUsername: username,
@@ -849,7 +850,7 @@ export function handleConnectToHostImpl(getCtx: AppContextGetter, host: Host) {
       return sessionId;
     }
 
-    const protocol = effectiveHost.etEnabled ? 'et' : effectiveHost.moshEnabled ? 'mosh' : (effectiveHost.protocol || 'ssh');
+    const protocol = resolveEffectiveTerminalProtocol(effectiveHost);
     const resolvedAuth = resolveHostAuth({ host: effectiveHost, keys, identities });
     const sessionId = connectToHost(effectiveHost);
     addConnectionLog({
@@ -858,7 +859,7 @@ export function handleConnectToHostImpl(getCtx: AppContextGetter, host: Host) {
       hostLabel: host.label,
       hostname: host.hostname,
       username: resolvedAuth.username || 'root',
-      protocol: protocol as 'ssh' | 'telnet' | 'local' | 'mosh' | 'et',
+      protocol,
       ...getLogHostVisualSnapshot(effectiveHost),
       startTime: Date.now(),
       localUsername: username,

@@ -1,6 +1,7 @@
 "use strict";
 
 const { isPluginDevelopmentEnabled } = require("./constants.cjs");
+const { raceWithAbort } = require("./rpcRouter.cjs");
 
 const CHANNELS = Object.freeze({
   status: "netcatty:plugins:status",
@@ -16,6 +17,10 @@ const CHANNELS = Object.freeze({
   updateSetting: "netcatty:plugins:update-setting",
   resetSetting: "netcatty:plugins:reset-setting",
   setEnvironment: "netcatty:plugins:set-environment",
+  terminalProviders: "netcatty:plugins:terminal-providers",
+  terminalProvide: "netcatty:plugins:terminal-provide",
+  terminalCancel: "netcatty:plugins:terminal-cancel",
+  terminalSessionEvent: "netcatty:plugins:terminal-session-event",
   openView: "netcatty:plugins:open-view",
   closeView: "netcatty:plugins:close-view",
   setViewBounds: "netcatty:plugins:set-view-bounds",
@@ -29,6 +34,7 @@ const CHANNELS = Object.freeze({
 });
 
 const SCOPE_KINDS = Object.freeze(["workspace", "host", "session", "device"]);
+const MAX_ACTIVE_TERMINAL_REQUESTS_PER_SENDER = 64;
 
 function normalizePluginScopeCatalog(value) {
   const source = value && typeof value === "object" ? value : {};
@@ -87,6 +93,7 @@ function createTrustedPluginBridgeSender(options = {}) {
 function registerPluginBridge(ipcMain, options) {
   const manager = options.manager;
   const contributionService = options.contributionService;
+  const terminalProviderService = options.terminalProviderService;
   const viewHost = options.viewHost;
   const env = options.env ?? process.env;
   const isTrustedSender = options.isTrustedSender;
@@ -94,6 +101,8 @@ function registerPluginBridge(ipcMain, options) {
   const scopeCatalogs = new Map();
   const scopeCatalogOwners = new Map();
   const observedScopeCatalogSenders = new WeakSet();
+  const terminalRequestsBySender = new WeakMap();
+  const observedTerminalRequestSenders = new WeakSet();
   const scopeCatalogSenderKey = (event) => {
     const id = event?.sender?.id;
     return Number.isSafeInteger(id) && id > 0 ? id : "default";
@@ -135,6 +144,22 @@ function registerPluginBridge(ipcMain, options) {
       const activeManager = await resolveManager();
       return callback(activeManager, payload, event);
     });
+  };
+  const terminalRequestMap = (sender) => {
+    if (!sender || typeof sender !== "object") throw new Error("Plugin terminal request sender is unavailable");
+    let requests = terminalRequestsBySender.get(sender);
+    if (!requests) {
+      requests = new Map();
+      terminalRequestsBySender.set(sender, requests);
+    }
+    if (!observedTerminalRequestSenders.has(sender)) {
+      observedTerminalRequestSenders.add(sender);
+      sender.once?.("destroyed", () => {
+        for (const controller of requests.values()) controller.abort();
+        requests.clear();
+      });
+    }
+    return requests;
   };
   ipcMain.handle(CHANNELS.status, async (event) => {
     if (!isTrustedSender(event)) throw new Error("Untrusted plugin management sender");
@@ -190,6 +215,47 @@ function registerPluginBridge(ipcMain, options) {
     await contributionService.setEnvironment(payload ?? {});
     viewHost?.setEnvironment?.(payload ?? {});
     return null;
+  });
+  handle(CHANNELS.terminalProviders, async (_activeManager, payload) => {
+    if (!terminalProviderService) throw new Error("Plugin Terminal Providers are unavailable");
+    return terminalProviderService.listProviders(payload ?? {});
+  });
+  ipcMain.handle(CHANNELS.terminalProvide, async (event, payload) => {
+    if (!isTrustedSender(event)) throw new Error("Untrusted plugin management sender");
+    if (!terminalProviderService) throw new Error("Plugin Terminal Providers are unavailable");
+    const requestId = payload?.requestId;
+    if (typeof requestId !== "string" || requestId.length < 1 || requestId.length > 128 || requestId.includes("\0")) {
+      throw new TypeError("Plugin terminal request ID is invalid");
+    }
+    const requests = terminalRequestMap(event.sender);
+    if (requests.has(requestId)) throw new Error("Plugin terminal request ID is already active");
+    if (requests.size >= MAX_ACTIVE_TERMINAL_REQUESTS_PER_SENDER) {
+      throw new Error("Too many active Plugin terminal requests");
+    }
+    const controller = new AbortController();
+    requests.set(requestId, controller);
+    try {
+      await raceWithAbort(resolveManager(), controller.signal);
+      const { requestId: _requestId, ...providerRequest } = payload;
+      return await terminalProviderService.provide(providerRequest, { signal: controller.signal });
+    } finally {
+      if (requests.get(requestId) === controller) requests.delete(requestId);
+    }
+  });
+  ipcMain.handle(CHANNELS.terminalCancel, async (event, payload) => {
+    if (!isTrustedSender(event)) throw new Error("Untrusted plugin management sender");
+    const requestId = payload?.requestId;
+    if (typeof requestId !== "string" || requestId.length < 1 || requestId.length > 128) {
+      throw new TypeError("Plugin terminal request ID is invalid");
+    }
+    const requests = terminalRequestMap(event.sender);
+    const controller = requests.get(requestId);
+    controller?.abort();
+    return controller != null;
+  });
+  handle(CHANNELS.terminalSessionEvent, async (_activeManager, payload) => {
+    if (!terminalProviderService) throw new Error("Plugin Terminal Providers are unavailable");
+    return terminalProviderService.publishSessionEvent(payload);
   });
   handle(CHANNELS.openView, async (_activeManager, payload, event) => {
     if (!viewHost) throw new Error("Plugin views are unavailable");

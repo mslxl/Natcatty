@@ -14,6 +14,12 @@ import {
 import { fontStore } from "../../../application/state/fontStore";
 import { KeywordHighlighter } from "../keywordHighlight";
 import {
+  registerPluginTerminalLinkProvider,
+  type PluginTerminalLinkProviderHost,
+  type RequestPluginTerminalProviders,
+} from "../pluginTerminalLinkProvider";
+import { PluginTerminalVisualProviderHost } from "../pluginTerminalVisualProviderHost";
+import {
   XTERM_PERFORMANCE_CONFIG,
   resolveXTermScrollback,
   type XTermPlatform,
@@ -87,6 +93,7 @@ import {
 } from "./terminalInterruptDiagnostics";
 import { clearTerminalInputStateForInterrupt } from "./terminalInterruptInputState";
 import { getFlowControllerForTerm } from "./terminalSessionAttachment";
+import { createTerminalResizeScheduler } from "./terminalResizeScheduler";
 import {
   prioritizeTerminalInput,
   shouldArmTerminalInterruptDisplayGateForProtocol,
@@ -98,6 +105,7 @@ import {
   shouldSuppressTerminalInputScrollForUserPaste,
 } from "./terminalUserPaste";
 import {
+  consumeOsc133CommandCompletion,
   type PromptLineBreakState,
 } from "./promptLineBreak";
 import { recordTerminalCommandExecution } from "./terminalCommandExecution";
@@ -138,6 +146,8 @@ export type XTermRuntime = {
   /** Current working directory detected via OSC 7 */
   currentCwd: string | undefined;
   keywordHighlighter: KeywordHighlighter;
+  pluginProviderHost: PluginTerminalVisualProviderHost | null;
+  pluginLinkProviderHost: PluginTerminalLinkProviderHost | null;
   /**
    * Clear the WebGL renderer's glyph texture atlas so glyphs re-rasterize on the
    * next frame. No-op when the DOM renderer is active. Used to recover from the
@@ -197,6 +207,18 @@ export type CreateXTermRuntimeContext = {
     hostLabel: string,
     sessionId: string,
   ) => void;
+  onTrustedCommandSubmitted?: (
+    command: string,
+    hostId: string,
+    hostLabel: string,
+    sessionId: string,
+  ) => void;
+  onCommandCompleted?: () => void;
+  requestPluginTerminalProviders?: RequestPluginTerminalProviders;
+  pluginProviderVisible?: boolean;
+  isPluginTerminalProviderAvailable?: (kind: NetcattyTerminalProviderKind) => boolean;
+  onResize?: (cols: number, rows: number) => void;
+  onAlternateScreenChange?: (active: boolean) => void;
   commandBufferRef: RefObject<string>;
   promptLineBreakStateRef?: RefObject<PromptLineBreakState>;
   scriptRecorderRef?: RefObject<{
@@ -207,6 +229,7 @@ export type CreateXTermRuntimeContext = {
     recordEnter: (options?: { sensitive?: boolean }) => Promise<void>;
   } | undefined>;
   passwordPromptActiveRef?: RefObject<boolean>;
+  allowHostStyleGreaterThanPrompt?: boolean;
   onOutputTriggerUserInputRef?: RefObject<((data: string) => void) | undefined>;
   sudoAutofillRef?: RefObject<SudoPasswordAutofill | null>;
   // Opens the search bar, or refocuses its input if already open. Used by the
@@ -580,37 +603,57 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     });
   }
 
-  const webLinksAddon = new WebLinksAddon((event, uri) => {
+  const canActivateTerminalLink = (event: MouseEvent): boolean => {
     const currentLinkModifier = ctx.terminalSettingsRef.current?.linkModifier ?? "none";
-    let shouldOpen = false;
     switch (currentLinkModifier) {
       case "none":
-        shouldOpen = true;
-        break;
+        return true;
       case "ctrl":
-        shouldOpen = event.ctrlKey;
-        break;
+        return event.ctrlKey;
       case "alt":
-        shouldOpen = event.altKey;
-        break;
+        return event.altKey;
       case "meta":
-        shouldOpen = event.metaKey;
-        break;
+        return event.metaKey;
     }
-    if (!shouldOpen) return;
+    return false;
+  };
+  const openTerminalLink = async (uri: string): Promise<void> => {
+    if (!/^https?:\/\//iu.test(String(uri || ""))) {
+      logger.warn("[XTerm] Refusing to open non-http(s) link:", uri);
+      return;
+    }
 
     if (ctx.terminalBackend.openExternalAvailable()) {
-      void ctx.terminalBackend.openExternal(uri);
+      await ctx.terminalBackend.openExternal(uri);
     } else {
-      const safeUri = String(uri || "");
-      if (/^https?:\/\//i.test(safeUri)) {
-        window.open(safeUri, "_blank", "noopener,noreferrer");
-      } else {
-        logger.warn("[XTerm] Refusing to open non-http(s) link:", safeUri);
-      }
+      window.open(uri, "_blank", "noopener,noreferrer");
     }
+  };
+  const webLinksAddon = new WebLinksAddon((event, uri) => {
+    if (canActivateTerminalLink(event)) void openTerminalLink(uri);
   });
   term.loadAddon(webLinksAddon);
+  const pluginLinkProviderHost = ctx.requestPluginTerminalProviders
+    ? registerPluginTerminalLinkProvider({
+        term,
+        request: ctx.requestPluginTerminalProviders,
+        canActivate: canActivateTerminalLink,
+        openExternal: openTerminalLink,
+        isProviderAvailable: ctx.isPluginTerminalProviderAvailable,
+        active: ctx.statusRef.current === 'connected',
+        visible: ctx.pluginProviderVisible ?? true,
+      })
+    : null;
+  const pluginProviderHost = ctx.requestPluginTerminalProviders
+    ? new PluginTerminalVisualProviderHost({
+        term,
+        request: ctx.requestPluginTerminalProviders,
+        terminalBackground: ctx.terminalTheme.colors.background,
+        active: ctx.statusRef.current === 'connected',
+        visible: ctx.pluginProviderVisible ?? true,
+        isProviderAvailable: ctx.isPluginTerminalProviderAvailable,
+      })
+    : null;
 
   // Enable Unicode graphemes for accurate CJK / emoji / Nerd Font character width handling
   const unicodeGraphemes = new UnicodeGraphemesAddon();
@@ -744,6 +787,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   );
   const historyPreviewBufferChangeDisposable = term.buffer.onBufferChange(() => {
     hideHistoryPreview();
+    ctx.onAlternateScreenChange?.(term.buffer.active.type === "alternate");
   });
 
   const writeLocalTerminalData = (nextData: string) => {
@@ -777,19 +821,23 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       hasBroadcastInputHandler: !!onBroadcastInput,
     });
     if (ctx.statusRef.current === "connected" && submittedInput) {
+      const sensitive = ctx.passwordPromptActiveRef?.current === true;
       if (submittedInput.text) {
         ctx.commandBufferRef.current += submittedInput.text;
         ctx.scriptRecorderRef?.current?.recordInput(submittedInput.text);
       }
       if (ctx.scriptRecorderRef?.current?.isRecording) {
         void ctx.scriptRecorderRef.current.recordEnter({
-          sensitive: ctx.passwordPromptActiveRef?.current,
+          sensitive,
         });
-        if (ctx.passwordPromptActiveRef) {
-          ctx.passwordPromptActiveRef.current = false;
-        }
       }
-      const recordedCommand = recordTerminalCommandExecution(ctx.commandBufferRef.current, ctx, term);
+      if (ctx.passwordPromptActiveRef) ctx.passwordPromptActiveRef.current = false;
+      const recordedCommand = recordTerminalCommandExecution(
+        ctx.commandBufferRef.current,
+        ctx,
+        term,
+        { sensitive, allowHostStyleGreaterThanPrompt: ctx.allowHostStyleGreaterThanPrompt },
+      );
       handledSubmittedInput = true;
       if (!willBroadcastInput) {
         prepareSudoAutofillInput(
@@ -805,10 +853,13 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     ) {
       const pastedCommand = getSinglePastedCommand(data);
       if (pastedCommand) {
+        const sensitive = ctx.passwordPromptActiveRef?.current === true;
+        if (ctx.passwordPromptActiveRef) ctx.passwordPromptActiveRef.current = false;
         const recordedCommand = recordTerminalCommandExecution(
           `${ctx.commandBufferRef.current}${pastedCommand.command}`,
           ctx,
           term,
+          { sensitive, allowHostStyleGreaterThanPrompt: ctx.allowHostStyleGreaterThanPrompt },
         );
         handledSubmittedInput = true;
         if (recordedCommand) {
@@ -1375,6 +1426,13 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     return true; // Indicate we handled the sequence
   });
 
+  const osc133Disposable = term.parser.registerOscHandler(133, (data) => {
+    if (consumeOsc133CommandCompletion(data, ctx.promptLineBreakStateRef?.current)) {
+      ctx.onCommandCompleted?.();
+    }
+    return true;
+  });
+
   // OSC 52 — clipboard integration
   // Format: 52;<target>;<base64-data>  (write)  or  52;<target>;?  (query/read)
   // <target> is typically "c" (clipboard) or "p" (primary selection)
@@ -1458,19 +1516,21 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     ctx.onBell?.();
   });
 
-  let resizeTimeout: NodeJS.Timeout | null = null;
   const resizeDebounceMs = XTERM_PERFORMANCE_CONFIG.resize.debounceMs;
+  const resizeScheduler = createTerminalResizeScheduler(
+    resizeDebounceMs,
+    ({ sessionId, cols, rows }) => {
+      ctx.terminalBackend.resizeSession(sessionId, cols, rows);
+      ctx.onResize?.(cols, rows);
+    },
+  );
   term.onResize(({ cols, rows }) => {
     // A reflow can leave stale glyphs in the WebGL atlas; clear it so the new
     // dimensions re-rasterize cleanly (issue #1049).
     clearWebglTextureAtlas();
     const id = ctx.sessionRef.current;
     if (!id) return;
-    if (resizeTimeout) clearTimeout(resizeTimeout);
-    resizeTimeout = setTimeout(() => {
-      ctx.terminalBackend.resizeSession(id, cols, rows);
-      resizeTimeout = null;
-    }, resizeDebounceMs);
+    resizeScheduler.schedule({ sessionId: id, cols, rows });
   });
 
   const keywordHighlighter = new KeywordHighlighter(term);
@@ -1482,11 +1542,14 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     serializeAddon,
     searchAddon,
     keywordHighlighter,
+    pluginProviderHost,
+    pluginLinkProviderHost,
     clearTextureAtlas: clearWebglTextureAtlas,
     ensureWebglRenderer: loadWebglRenderer,
     suspendWebglRenderer,
     dispose: () => {
       runtimeDisposed = true;
+      resizeScheduler.dispose();
       webglController.dispose();
       term.element?.removeEventListener("copy", handleNativeCopy, true);
       ctx.container.removeEventListener(
@@ -1507,6 +1570,8 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       historyPreviewBufferChangeDisposable.dispose();
       stopDprWatch();
       keywordHighlighter.dispose();
+      pluginLinkProviderHost?.dispose();
+      pluginProviderHost?.dispose();
       eraseScrollbackDisposable.dispose();
       dec2026SyncStartDisposable.dispose();
       dec2026SyncEndDisposable.dispose();
@@ -1515,6 +1580,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       }
       kittyKeyboardDisposable.dispose();
       osc7Disposable.dispose();
+      osc133Disposable.dispose();
       osc52Disposable.dispose();
       titleChangeDisposable.dispose();
       bellDisposable.dispose();
