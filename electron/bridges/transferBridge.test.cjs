@@ -339,16 +339,18 @@ test("SFTP stream-fallback uploads fail on premature close", async (t) => {
   assert.ok(sender.sent.some((entry) => entry.channel === "netcatty:transfer:error"));
 });
 
-test("SFTP downloads use conservative per-file request concurrency", async (t) => {
+test("SFTP downloads preserve a 2MB request window on high-latency paths", async (t) => {
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-test-"));
   t.after(async () => {
     await fs.promises.rm(tempDir, { recursive: true, force: true });
   });
 
   let observedConcurrency = 0;
+  let observedChunkSize = 0;
   const fastSftp = createFastSftp({
     fastGet(_remotePath, localPath, options, done) {
       observedConcurrency = options.concurrency;
+      observedChunkSize = options.chunkSize;
       options.step?.(1024 * 1024, 1024 * 1024, 1024 * 1024);
       fs.promises.writeFile(localPath, Buffer.alloc(1024 * 1024)).then(
         () => done(),
@@ -383,5 +385,207 @@ test("SFTP downloads use conservative per-file request concurrency", async (t) =
   );
 
   assert.equal(result.error, undefined);
-  assert.equal(observedConcurrency, 4);
+  assert.equal(observedChunkSize, 32 * 1024);
+  assert.equal(observedConcurrency * observedChunkSize, 2 * 1024 * 1024);
+});
+
+test("SFTP downloads fall back to a compatible stream after fastGet fails", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-fallback-test-"));
+  t.after(async () => {
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const expected = Buffer.from("complete fallback download");
+  let fastGetAttempts = 0;
+  const fastSftp = createFastSftp({
+    fastGet(_remotePath, localPath, _options, done) {
+      fastGetAttempts += 1;
+      fs.promises.writeFile(localPath, "partial").then(
+        () => done(new Error("server rejected concurrent reads")),
+        done,
+      );
+    },
+  });
+  const client = {
+    sftp: createFastSftp({
+      createReadStream() {
+        const { Readable } = require("node:stream");
+        return Readable.from(expected);
+      },
+    }),
+    stat() {
+      return Promise.resolve({ size: expected.length });
+    },
+    client: {
+      sftp(callback) {
+        callback(null, fastSftp);
+      },
+    },
+  };
+  transferBridge.init({ sftpClients: new Map([["source", client]]) });
+
+  const targetPath = path.join(tempDir, "fallback.bin");
+  const result = await transferBridge.startTransfer(
+    { sender: createSender() },
+    {
+      transferId: "download-fallback",
+      sourcePath: "/tmp/fallback.bin",
+      targetPath,
+      sourceType: "sftp",
+      targetType: "local",
+      sourceSftpId: "source",
+      totalBytes: expected.length,
+    },
+  );
+
+  assert.equal(result.error, undefined);
+  assert.equal(fastGetAttempts, 1);
+  assert.deepEqual(await fs.promises.readFile(targetPath), expected);
+});
+
+test("SFTP downloads keep concurrent files moving within the fast-channel budget", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-budget-test-"));
+  t.after(async () => {
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const completions = [];
+  let activeFastGets = 0;
+  let maxActiveFastGets = 0;
+  let openedChannels = 0;
+  let fallbackReads = 0;
+  const fastSftp = createFastSftp({
+    fastGet(_remotePath, localPath, _options, done) {
+      activeFastGets += 1;
+      maxActiveFastGets = Math.max(maxActiveFastGets, activeFastGets);
+      completions.push(async () => {
+        await fs.promises.writeFile(localPath, "downloaded");
+        activeFastGets -= 1;
+        done();
+      });
+    },
+  });
+  const client = {
+    sftp: createFastSftp({
+      createReadStream() {
+        fallbackReads += 1;
+        const { Readable } = require("node:stream");
+        return Readable.from("downloaded");
+      },
+    }),
+    stat() {
+      return Promise.resolve({ size: 10 });
+    },
+    client: {
+      sftp(callback) {
+        openedChannels += 1;
+        callback(null, fastSftp);
+      },
+    },
+  };
+  transferBridge.init({ sftpClients: new Map([["source", client]]) });
+
+  const start = (id) => transferBridge.startTransfer(
+    { sender: createSender() },
+    {
+      transferId: id,
+      sourcePath: `/tmp/${id}.bin`,
+      targetPath: path.join(tempDir, `${id}.bin`),
+      sourceType: "sftp",
+      targetType: "local",
+      sourceSftpId: "source",
+      totalBytes: 10,
+    },
+  );
+
+  const first = start("download-one");
+  const firstDeadline = Date.now() + 1000;
+  while (completions.length < 1 && Date.now() < firstDeadline) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(completions.length, 1);
+  assert.equal(openedChannels, 1);
+  const second = start("download-two");
+  const secondResult = await second;
+  assert.equal(secondResult.error, undefined);
+  assert.equal(fallbackReads, 1);
+
+  await completions[0]();
+  assert.equal((await first).error, undefined);
+  assert.equal(maxActiveFastGets, 1);
+  assert.equal(openedChannels, 1);
+});
+
+test("SFTP downloads cancelled while opening do not block the session", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-open-cancel-test-"));
+  t.after(async () => {
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+  });
+
+  let delayedOpen = null;
+  let abandonedChannelClosed = false;
+  let openCalls = 0;
+  const abandonedSftp = createFastSftp({
+    end() {
+      abandonedChannelClosed = true;
+    },
+  });
+  const workingSftp = createFastSftp({
+    fastGet(_remotePath, localPath, _options, done) {
+      fs.promises.writeFile(localPath, "downloaded").then(
+        () => done(),
+        done,
+      );
+    },
+  });
+  const client = {
+    sftp: createFastSftp({}),
+    stat() {
+      return Promise.resolve({ size: 10 });
+    },
+    client: {
+      sftp(callback) {
+        openCalls += 1;
+        if (openCalls === 1) {
+          delayedOpen = callback;
+        } else {
+          callback(null, workingSftp);
+        }
+      },
+    },
+  };
+  transferBridge.init({ sftpClients: new Map([["source", client]]) });
+
+  const start = (id) => transferBridge.startTransfer(
+    { sender: createSender() },
+    {
+      transferId: id,
+      sourcePath: `/tmp/${id}.bin`,
+      targetPath: path.join(tempDir, `${id}.bin`),
+      sourceType: "sftp",
+      targetType: "local",
+      sourceSftpId: "source",
+      totalBytes: 10,
+    },
+  );
+
+  const cancelledPromise = start("download-opening");
+  const deadline = Date.now() + 1000;
+  while (!delayedOpen && Date.now() < deadline) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(typeof delayedOpen, "function");
+  await transferBridge.cancelTransfer(null, { transferId: "download-opening" });
+  delayedOpen(null, abandonedSftp);
+
+  const cancelled = await cancelledPromise;
+  assert.equal(cancelled.error, "Transfer cancelled");
+  assert.equal(abandonedChannelClosed, true);
+
+  const next = await Promise.race([
+    start("download-after-cancel"),
+    new Promise((_, reject) => setTimeout(() => reject(new Error("next download remained blocked")), 1000)),
+  ]);
+  assert.equal(next.error, undefined);
+  assert.equal(openCalls, 2);
 });

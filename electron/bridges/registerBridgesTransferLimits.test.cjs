@@ -7,10 +7,6 @@ const EventEmitter = require("node:events");
 
 const { createBridgeRegistrar } = require("../main/registerBridges.cjs");
 const sftpBridge = require("./sftpBridge.cjs");
-const {
-  TRANSFER_CHUNK_SIZE,
-  TRANSFER_CONCURRENCY,
-} = require("./transferLimits.cjs");
 
 function createNoopBridge() {
   return {
@@ -113,7 +109,7 @@ function createBridgeRegistrarForTest({
   });
 }
 
-test("downloadToTemp applies shared SFTP transfer limits to direct fastGet downloads", async (t) => {
+test("downloadToTemp routes direct downloads through the shared transfer bridge", async (t) => {
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-download-temp-test-"));
   t.after(async () => {
     await fs.promises.rm(tempDir, { recursive: true, force: true });
@@ -121,21 +117,19 @@ test("downloadToTemp applies shared SFTP transfer limits to direct fastGet downl
 
   const ipcMain = createIpcMainStub();
   const observed = {};
-  const sftpClients = new Map([
-    [
-      "sftp-1",
-      {
-        fastGet(_remotePath, localPath, options) {
-          observed.options = options;
-          return fs.promises.writeFile(localPath, "downloaded");
-        },
-      },
-    ],
-  ]);
+  const transferBridge = {
+    ...createNoopBridge(),
+    async startTransfer(event, payload) {
+      observed.event = event;
+      observed.payload = payload;
+      await fs.promises.writeFile(payload.targetPath, "downloaded");
+      return {};
+    },
+  };
   const registerBridges = createBridgeRegistrarForTest({
     ipcMain,
     tempDir,
-    sftpClients,
+    transferBridge,
   });
 
   registerBridges({});
@@ -154,13 +148,21 @@ test("downloadToTemp applies shared SFTP transfer limits to direct fastGet downl
   );
 
   assert.equal(localPath, path.join(tempDir, "report.bin"));
-  assert.deepEqual(observed.options, {
-    chunkSize: TRANSFER_CHUNK_SIZE,
-    concurrency: TRANSFER_CONCURRENCY,
+  assert.equal(observed.event.sender.id, 1);
+  assert.equal(typeof observed.payload.transferId, "string");
+  const { transferId: _transferId, ...payload } = observed.payload;
+  assert.deepEqual(payload, {
+    sourcePath: "/remote/report.bin",
+    targetPath: path.join(tempDir, "report.bin"),
+    sourceType: "sftp",
+    targetType: "local",
+    sourceSftpId: "sftp-1",
+    sourceEncoding: "utf-8",
+    totalBytes: 0,
   });
 });
 
-test("downloadToTemp proxies to the terminal worker in worker mode", async (t) => {
+test("downloadToTemp proxies shared transfer work to the terminal worker", async (t) => {
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-download-worker-test-"));
   t.after(async () => {
     await fs.promises.rm(tempDir, { recursive: true, force: true });
@@ -194,13 +196,18 @@ test("downloadToTemp proxies to the terminal worker in worker mode", async (t) =
   );
   await new Promise((resolve) => setImmediate(resolve));
 
-  assert.equal(child.messages[0].channel, "netcatty:sftp:downloadToLocal");
+  assert.equal(child.messages[0].channel, "netcatty:transfer:start");
   assert.equal(child.messages[0].webContentsId, 12);
-  assert.deepEqual(child.messages[0].payload, {
-    sftpId: "worker-sftp-1",
-    remotePath: "/remote/report.bin",
-    localPath: path.join(tempDir, "report.bin"),
-    encoding: "utf-8",
+  assert.equal(typeof child.messages[0].payload.transferId, "string");
+  const { transferId: _transferId, ...workerPayload } = child.messages[0].payload;
+  assert.deepEqual(workerPayload, {
+    sourcePath: "/remote/report.bin",
+    targetPath: path.join(tempDir, "report.bin"),
+    sourceType: "sftp",
+    targetType: "local",
+    sourceSftpId: "worker-sftp-1",
+    sourceEncoding: "utf-8",
+    totalBytes: 0,
   });
   child.emit("message", {
     kind: "response",
