@@ -449,6 +449,14 @@ test("normalizeDistroId maps Darwin and macOS labels to macos", () => {
   assert.equal(normalizeDistroId("Mac OS X"), "macos");
 });
 
+test("normalizeDistroId maps FreeBSD uname output to freebsd", () => {
+  assert.equal(normalizeDistroId("FreeBSD"), "freebsd");
+  assert.equal(
+    normalizeDistroId("FreeBSD host.example.com 14.3-RELEASE-p1 GENERIC amd64"),
+    "freebsd",
+  );
+});
+
 test("classifyDistroId treats macos as a POSIX stats target", () => {
   assert.equal(classifyDistroId("macos"), "linux-like");
   assert.equal(classifyDistroId("Darwin"), "linux-like");

@@ -55,6 +55,7 @@ export const LINUX_DISTRO_OPTIONS = [
 
 export const POSIX_PLATFORM_OPTIONS = [
   'macos',
+  'freebsd',
 ] as const;
 
 /**
@@ -93,6 +94,7 @@ export const normalizeDistroId = (value?: string) => {
   ) {
     return 'macos';
   }
+  if (v.includes('freebsd')) return 'freebsd';
   if (v.includes('ubuntu')) return 'ubuntu';
   if (v.includes('debian')) return 'debian';
   if (v.includes('centos')) return 'centos';

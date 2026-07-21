@@ -178,6 +178,7 @@ export const zhTWVaultMessages: Messages = {
   'hostDetails.distro.option.almalinux': 'AlmaLinux',
   'hostDetails.distro.option.alinux': '阿里雲 Linux',
   'hostDetails.distro.option.openeuler': 'openEuler',
+  'hostDetails.distro.option.freebsd': 'FreeBSD',
   'hostDetails.distro.option.oracle': 'Oracle Linux',
   'hostDetails.distro.option.kali': 'Kali Linux',
   'hostDetails.distro.option.cisco': '思科',
