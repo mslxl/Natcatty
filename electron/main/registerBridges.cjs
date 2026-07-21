@@ -2,11 +2,8 @@
 
 let bridgesRegistered = false;
 let cloudSyncSessionPassword = null;
+const { randomUUID } = require("node:crypto");
 const { readClipboardFiles, readClipboardImage } = require("../bridges/clipboardFiles.cjs");
-const {
-  DOWNLOAD_TRANSFER_CONCURRENCY,
-  TRANSFER_CHUNK_SIZE,
-} = require("../bridges/transferLimits.cjs");
 
 const excludedFigSpecPrefixes = ["aws", "gcloud", "az"];
 
@@ -955,61 +952,35 @@ function createBridgeRegistrar(context) {
       console.log(`[Main]   Remote path: ${remotePath}`);
       console.log(`[Main]   File name: ${fileName}`);
       
-      const client = require("../bridges/sftpBridge.cjs");
       // Use tempDirBridge for dedicated Netcatty temp directory
       const localPath = await getTempDirBridge().getTempFilePath(fileName);
       
       console.log(`[Main]   Local temp path: ${localPath}`);
 
-      if (terminalWorkerManager) {
-        try {
-          const result = await terminalWorkerManager.request("netcatty:sftp:downloadToLocal", {
-            sftpId,
-            remotePath,
-            localPath,
-            encoding,
-          }, {
-            webContentsId: event?.sender?.id,
-          });
-          if (result?.error) throw new Error(result.error);
-          console.log(`[Main]   File downloaded successfully via terminal worker`);
-          return localPath;
-        } catch (err) {
-          try { await fs.promises.rm(localPath, { force: true }); } catch { /* ignore */ }
-          throw err;
-        }
-      }
-      
-      // Get the sftp client and download file
-      const sftpClients = client.getSftpClients ? client.getSftpClients() : null;
-      if (!sftpClients) {
-        console.log(`[Main]   Using fallback readSftp method`);
-        // Fallback: use readSftp and write to temp file
-        const content = await client.readSftp(null, { sftpId, path: remotePath, encoding });
-        if (typeof content === "string") {
-          await fs.promises.writeFile(localPath, content, "utf-8");
-        } else {
-          await fs.promises.writeFile(localPath, content);
-        }
-        console.log(`[Main]   File downloaded successfully (fallback)`);
+      const payload = {
+        transferId: `download-temp-${randomUUID()}`,
+        sourcePath: remotePath,
+        targetPath: localPath,
+        sourceType: "sftp",
+        targetType: "local",
+        sourceSftpId: sftpId,
+        sourceEncoding: encoding,
+        totalBytes: 0,
+      };
+
+      try {
+        const result = terminalWorkerManager
+          ? await terminalWorkerManager.request("netcatty:transfer:start", payload, {
+              webContentsId: event?.sender?.id,
+            })
+          : await transferBridge.startTransfer(event, payload);
+        if (result?.error) throw new Error(result.error);
+        console.log(`[Main]   File downloaded successfully`);
         return localPath;
+      } catch (err) {
+        try { await fs.promises.rm(localPath, { force: true }); } catch { /* ignore */ }
+        throw err;
       }
-      
-      const sftpClient = sftpClients.get(sftpId);
-      if (!sftpClient) {
-        console.error(`[Main]   SFTP session not found: ${sftpId}`);
-        throw new Error("SFTP session not found");
-      }
-      
-      const encodedPath = client.encodePathForSession
-        ? client.encodePathForSession(sftpId, remotePath, encoding)
-        : remotePath;
-      await sftpClient.fastGet(encodedPath, localPath, {
-        chunkSize: TRANSFER_CHUNK_SIZE,
-        concurrency: DOWNLOAD_TRANSFER_CONCURRENCY,
-      });
-      console.log(`[Main]   File downloaded successfully`);
-      return localPath;
     });
   
     // Download SFTP file to temp with progress reporting via transfer events.

@@ -388,3 +388,196 @@ test("SFTP downloads preserve a 2MB request window on high-latency paths", async
   assert.equal(observedChunkSize, 32 * 1024);
   assert.equal(observedConcurrency * observedChunkSize, 2 * 1024 * 1024);
 });
+
+test("SFTP downloads fall back to a compatible stream after fastGet fails", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-fallback-test-"));
+  t.after(async () => {
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const expected = Buffer.from("complete fallback download");
+  let fastGetAttempts = 0;
+  const fastSftp = createFastSftp({
+    fastGet(_remotePath, localPath, _options, done) {
+      fastGetAttempts += 1;
+      fs.promises.writeFile(localPath, "partial").then(
+        () => done(new Error("server rejected concurrent reads")),
+        done,
+      );
+    },
+  });
+  const client = {
+    sftp: createFastSftp({
+      createReadStream() {
+        const { Readable } = require("node:stream");
+        return Readable.from(expected);
+      },
+    }),
+    stat() {
+      return Promise.resolve({ size: expected.length });
+    },
+    client: {
+      sftp(callback) {
+        callback(null, fastSftp);
+      },
+    },
+  };
+  transferBridge.init({ sftpClients: new Map([["source", client]]) });
+
+  const targetPath = path.join(tempDir, "fallback.bin");
+  const result = await transferBridge.startTransfer(
+    { sender: createSender() },
+    {
+      transferId: "download-fallback",
+      sourcePath: "/tmp/fallback.bin",
+      targetPath,
+      sourceType: "sftp",
+      targetType: "local",
+      sourceSftpId: "source",
+      totalBytes: expected.length,
+    },
+  );
+
+  assert.equal(result.error, undefined);
+  assert.equal(fastGetAttempts, 1);
+  assert.deepEqual(await fs.promises.readFile(targetPath), expected);
+});
+
+test("SFTP downloads cap fastGet to one channel per session", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-budget-test-"));
+  t.after(async () => {
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const completions = [];
+  let activeFastGets = 0;
+  let maxActiveFastGets = 0;
+  let openedChannels = 0;
+  const fastSftp = createFastSftp({
+    fastGet(_remotePath, localPath, _options, done) {
+      activeFastGets += 1;
+      maxActiveFastGets = Math.max(maxActiveFastGets, activeFastGets);
+      completions.push(async () => {
+        await fs.promises.writeFile(localPath, "downloaded");
+        activeFastGets -= 1;
+        done();
+      });
+    },
+  });
+  const client = {
+    sftp: createFastSftp({}),
+    stat() {
+      return Promise.resolve({ size: 10 });
+    },
+    client: {
+      sftp(callback) {
+        openedChannels += 1;
+        callback(null, fastSftp);
+      },
+    },
+  };
+  transferBridge.init({ sftpClients: new Map([["source", client]]) });
+
+  const start = (id) => transferBridge.startTransfer(
+    { sender: createSender() },
+    {
+      transferId: id,
+      sourcePath: `/tmp/${id}.bin`,
+      targetPath: path.join(tempDir, `${id}.bin`),
+      sourceType: "sftp",
+      targetType: "local",
+      sourceSftpId: "source",
+      totalBytes: 10,
+    },
+  );
+
+  const first = start("download-one");
+  const second = start("download-two");
+  const firstDeadline = Date.now() + 1000;
+  while (completions.length < 1 && Date.now() < firstDeadline) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(completions.length, 1);
+  assert.equal(openedChannels, 1);
+
+  await completions[0]();
+  const secondDeadline = Date.now() + 1000;
+  while (completions.length < 2 && Date.now() < secondDeadline) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(completions.length, 2);
+  await completions[1]();
+
+  const results = await Promise.all([first, second]);
+  assert.equal(results.some((result) => result.error), false);
+  assert.equal(maxActiveFastGets, 1);
+  assert.equal(openedChannels, 1);
+});
+
+test("SFTP downloads cancelled while waiting do not start a fallback transfer", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-wait-cancel-test-"));
+  t.after(async () => {
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+  });
+
+  let finishFirst;
+  let fastGetCalls = 0;
+  let fallbackReads = 0;
+  const fastSftp = createFastSftp({
+    fastGet(_remotePath, localPath, _options, done) {
+      fastGetCalls += 1;
+      finishFirst = async () => {
+        await fs.promises.writeFile(localPath, "downloaded");
+        done();
+      };
+    },
+  });
+  const client = {
+    sftp: createFastSftp({
+      createReadStream() {
+        fallbackReads += 1;
+        const { Readable } = require("node:stream");
+        return Readable.from("fallback");
+      },
+    }),
+    stat() {
+      return Promise.resolve({ size: 10 });
+    },
+    client: {
+      sftp(callback) {
+        callback(null, fastSftp);
+      },
+    },
+  };
+  transferBridge.init({ sftpClients: new Map([["source", client]]) });
+
+  const start = (id) => transferBridge.startTransfer(
+    { sender: createSender() },
+    {
+      transferId: id,
+      sourcePath: `/tmp/${id}.bin`,
+      targetPath: path.join(tempDir, `${id}.bin`),
+      sourceType: "sftp",
+      targetType: "local",
+      sourceSftpId: "source",
+      totalBytes: 10,
+    },
+  );
+
+  const first = start("download-blocker");
+  const second = start("download-waiting");
+  const deadline = Date.now() + 1000;
+  while (!finishFirst && Date.now() < deadline) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(typeof finishFirst, "function");
+
+  await transferBridge.cancelTransfer(null, { transferId: "download-waiting" });
+  const cancelled = await second;
+  assert.equal(cancelled.error, "Transfer cancelled");
+  assert.equal(fastGetCalls, 1);
+  assert.equal(fallbackReads, 0);
+
+  await finishFirst();
+  assert.equal((await first).error, undefined);
+});

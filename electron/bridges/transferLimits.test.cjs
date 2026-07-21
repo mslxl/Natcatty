@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const {
+  FAST_DOWNLOAD_CHANNELS_PER_SESSION,
   DOWNLOAD_TRANSFER_CONCURRENCY,
   UPLOAD_TRANSFER_CONCURRENCY,
   TRANSFER_CHUNK_SIZE,
@@ -10,6 +11,7 @@ const {
 test("SFTP transfer limits preserve upload safety and the pre-regression download window", () => {
   assert.equal(UPLOAD_TRANSFER_CONCURRENCY, 4);
   assert.equal(DOWNLOAD_TRANSFER_CONCURRENCY, 64);
+  assert.equal(FAST_DOWNLOAD_CHANNELS_PER_SESSION, 1);
   // Keep ssh2's default chunk size — larger packets can corrupt uploads on
   // servers that do not honour non-default WRITE sizes (#2022).
   assert.equal(TRANSFER_CHUNK_SIZE, 32 * 1024);

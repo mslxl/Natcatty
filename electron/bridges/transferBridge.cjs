@@ -10,6 +10,7 @@ const { encodePathForSession, ensureRemoteDirForSession, requireSftpChannel, res
 const { isScpModeClient, getScpBackendForClient } = require("./sftpBridge/scpBackend.cjs");
 const {
   DOWNLOAD_TRANSFER_CONCURRENCY,
+  FAST_DOWNLOAD_CHANNELS_PER_SESSION,
   TRANSFER_CHUNK_SIZE,
   UPLOAD_TRANSFER_CONCURRENCY,
 } = require("./transferLimits.cjs");
@@ -157,7 +158,7 @@ function getIsolatedDownloadChannelPool(client) {
       busy: new Set(),
       waiters: [],
       opening: 0,
-      maxChannels: null,
+      maxChannels: FAST_DOWNLOAD_CHANNELS_PER_SESSION,
       warnedCapacity: false,
     };
     isolatedDownloadChannelPools.set(client, pool);
@@ -481,53 +482,63 @@ async function downloadFile(remotePath, localPath, client, fileSize, transfer, s
 
   // Prefer fastGet on an isolated SFTP channel so cancellation can abort just this transfer.
   if (!client.__netcattySudoMode) {
-      const fastSftp = await acquireIsolatedDownloadChannel(client, transfer);
+    const fastSftp = await acquireIsolatedDownloadChannel(client, transfer);
+    if (transfer.cancelled) throw new Error("Transfer cancelled");
 
     if (fastSftp && typeof fastSftp.fastGet === "function") {
-      return new Promise((resolve, reject) => {
-        let settled = false;
-        let onFastSftpError = null;
-        const finish = (err) => {
-          if (settled) return;
-          settled = true;
-          if (transfer.abort === abortFastTransfer) {
-            transfer.abort = null;
+      try {
+        await new Promise((resolve, reject) => {
+          let settled = false;
+          let onFastSftpError = null;
+          const finish = (err) => {
+            if (settled) return;
+            settled = true;
+            if (transfer.abort === abortFastTransfer) {
+              transfer.abort = null;
+            }
+            if (onFastSftpError) {
+              try { fastSftp.removeListener("error", onFastSftpError); } catch { }
+              onFastSftpError = null;
+            }
+            releaseIsolatedDownloadChannel(client, fastSftp, {
+              dispose: !!err || transfer.cancelled,
+            });
+
+            if (transfer.cancelled) reject(new Error("Transfer cancelled"));
+            else if (err) reject(err);
+            else resolve();
+          };
+          const abortFastTransfer = () => {
+            if (settled) return;
+            transfer.cancelled = true;
+            finish(new Error("Transfer cancelled"));
+          };
+          transfer.abort = abortFastTransfer;
+          onFastSftpError = (err) => finish(err);
+          fastSftp.once("error", onFastSftpError);
+
+          if (transfer.cancelled) {
+            finish(new Error("Transfer cancelled"));
+            return;
           }
-          if (onFastSftpError) {
-            try { fastSftp.removeListener("error", onFastSftpError); } catch { }
-            onFastSftpError = null;
-          }
-          releaseIsolatedDownloadChannel(client, fastSftp, {
-            dispose: !!err || transfer.cancelled,
-          });
 
-          if (transfer.cancelled) reject(new Error("Transfer cancelled"));
-          else if (err) reject(err);
-          else resolve();
-        };
-        const abortFastTransfer = () => {
-          if (settled) return;
-          transfer.cancelled = true;
-          finish(new Error("Transfer cancelled"));
-        };
-        transfer.abort = abortFastTransfer;
-        onFastSftpError = (err) => finish(err);
-        fastSftp.once("error", onFastSftpError);
-
-        if (transfer.cancelled) {
-          finish(new Error("Transfer cancelled"));
-          return;
-        }
-
-        fastSftp.fastGet(remotePath, localPath, {
-          chunkSize: TRANSFER_CHUNK_SIZE,
-          concurrency: DOWNLOAD_TRANSFER_CONCURRENCY,
-          step: (transferred, _chunk, total) => {
-            if (transfer.cancelled) return;
-            sendProgress(transferred, total || fileSize);
-          },
-        }, finish);
-      });
+          fastSftp.fastGet(remotePath, localPath, {
+            chunkSize: TRANSFER_CHUNK_SIZE,
+            concurrency: DOWNLOAD_TRANSFER_CONCURRENCY,
+            step: (transferred, _chunk, total) => {
+              if (transfer.cancelled) return;
+              sendProgress(transferred, total || fileSize);
+            },
+          }, finish);
+        });
+        return;
+      } catch (err) {
+        if (transfer.cancelled) throw err;
+        console.warn(
+          "[transferBridge] fastGet failed, falling back to a compatible stream:",
+          err?.message || String(err),
+        );
+      }
     }
   }
 
