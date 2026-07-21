@@ -66,6 +66,7 @@ test("FreeBSD icon detection does not enable unsupported system features", () =>
     hostname: "freebsd.local",
     username: "root",
     tags: [],
+    os: "linux" as const,
     distro: "freebsd",
   };
 
