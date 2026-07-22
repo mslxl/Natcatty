@@ -331,6 +331,7 @@ export async function runSdkAgentTurn(
     agentCommand,
     sdkBackend === 'codex' ? (config.codexRuntime ?? 'sdk') : undefined,
     permissionMode,
+    sdkBackend === 'codebuddy' ? config.codebuddyOptions : undefined,
   ).then((result) => {
     if (result?.ok === false) {
       settle(() => {

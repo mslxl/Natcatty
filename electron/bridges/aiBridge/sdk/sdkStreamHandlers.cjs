@@ -10,6 +10,8 @@ const tempDirBridge = require("../../tempDirBridge.cjs");
 const { realpathSync } = require("node:fs");
 const { CodexAppServerRuntime } = require("../codexAppServer/runtime.cjs");
 const { probeCodexAppServer } = require("../codexAppServer/probe.cjs");
+const { codebuddySessionManager } = require("./codebuddySessionManager.cjs");
+const codebuddyDriver = require("./codebuddyDriver.cjs");
 
 const VALID_BACKENDS = new Set(listBackends());
 
@@ -336,6 +338,10 @@ function registerSdkStreamHandlers(ctx) {
           model, existingSessionId, toolIntegrationMode,
           defaultTargetSession, userSkillsContext, agentEnv: requestedAgentEnv, agentCommand,
           codexRuntime: requestedCodexRuntime, permissionMode,
+          // SDK 0.3.222 advanced options (passed from renderer via sdkAgentAdapter)
+          effort, maxTurns, maxBudgetUsd, fallbackModel,
+          sandbox, agents, outputFormat, enableFileCheckpointing,
+          traceId, parentSpanId,
         } = payload;
 
         const backendKey = resolveBackendKey(sdkBackend);
@@ -473,7 +479,7 @@ function registerSdkStreamHandlers(ctx) {
             requestId,
             chatSessionId,
             prompt: backendKey === "opencode" ? turnPrompt : contextualPrompt,
-            systemPrompt: backendKey === "opencode" ? systemContext : undefined,
+            systemPrompt: (backendKey === "opencode" || backendKey === "codebuddy") ? systemContext : undefined,
             cwd: cwd || process.cwd(),
             model: model || undefined,
             permissionMode: permissionMode || "confirm",
@@ -490,6 +496,21 @@ function registerSdkStreamHandlers(ctx) {
             resumeThreadId: resumeSessionId,
             attachments: stagedAttachments,
             sender: event.sender,
+            // Approval channel for codebuddy canUseTool permission handler:
+            // when the CLI hits a security restriction, route the decision
+            // through the renderer approval UI instead of throwing an error.
+            requestApprovalFromRenderer: mcpServerBridge.requestApprovalFromRenderer,
+            // SDK 0.3.222 advanced options
+            effort: effort || undefined,
+            maxTurns: maxTurns || undefined,
+            maxBudgetUsd: maxBudgetUsd || undefined,
+            fallbackModel: fallbackModel || undefined,
+            sandbox: sandbox || undefined,
+            agents: agents || undefined,
+            outputFormat: outputFormat || undefined,
+            enableFileCheckpointing: enableFileCheckpointing != null ? enableFileCheckpointing : undefined,
+            traceId: traceId || undefined,
+            parentSpanId: parentSpanId || undefined,
           };
           const result = codexRuntime === "app-server"
             ? await codexAppServerRuntime.runTurn(commonTurnContext)
@@ -624,6 +645,31 @@ function registerSdkStreamHandlers(ctx) {
       }
       const runtime = sdkRequestRuntimes.get(requestId);
       if (!runtime) return { status: "busy" };
+
+      // CodeBuddy steer via V2 Session API.
+      if (runtime.backendKey === "codebuddy") {
+        const stagedAttachments = [];
+        const steerPrompt = buildSdkTurnPrompt({
+          prompt,
+          replayHistory: false,
+          attachments: payload?.images,
+          onStagedAttachment: (attachment) => stagedAttachments.push(attachment),
+        });
+        mcpServerBridge.updateAttachmentMetadata?.(stagedAttachments, chatSessionId);
+        const emitter = createStreamEmitter({ safeSend, sender: event.sender, requestId });
+        const driver = getDriver("codebuddy");
+        if (typeof driver.steerTurn === "function") {
+          return await driver.steerTurn({
+            chatSessionId,
+            prompt: steerPrompt,
+            attachments: stagedAttachments,
+            binPath: payload?.binPath || "",
+            emitter,
+          });
+        }
+        return { status: "unsupported" };
+      }
+
       if (runtime?.backendKey !== "codex" || runtime.codexRuntime !== "app-server") {
         return { status: "unsupported" };
       }
@@ -670,6 +716,7 @@ function registerSdkStreamHandlers(ctx) {
       mcpServerBridge.cancelPtyExecsForSession(chatSessionId);
       mcpServerBridge.cancelWorkerBackgroundJobsForSession?.(chatSessionId);
       deleteSdkSessionKeysForChat(sdkSessionIds, chatSessionId);
+      codebuddySessionManager.closeForChat(chatSessionId);
       await codexAppServerRuntime.cleanupChatSession(chatSessionId);
       await mcpServerBridge.cleanupScopedMetadata(chatSessionId);
       return { ok: true };
@@ -711,9 +758,131 @@ function registerSdkStreamHandlers(ctx) {
       }
     });
 
+    // --- CodeBuddy SDK 0.3.222 IPC handlers ---
+
+    ipcMain.handle("netcatty:ai:sdk-agent:mcp-status", async (event, payload) => {
+      if (!validateSender(event)) return { ok: false, error: "Unauthorized IPC sender" };
+      try {
+        const shellEnv = await getShellEnv();
+        const env = buildSdkAgentEnv({
+          shellEnv,
+          requestedAgentEnv: normalizeAgentEnv(payload?.agentEnv),
+          withCliDiscoveryEnv,
+          normalizeClaudeCodeExecutableEnv: normalizeClaudeCodeExecutableEnvForSdk,
+        });
+        const binPath = resolveSdkBackendBinPath({
+          backendKey: "codebuddy",
+          configuredCommand: payload?.agentCommand,
+          shellEnv, env,
+          resolveCliFromPath, normalizeCliPathForPlatform, resolveSdkBinPath,
+          resolveClaudeCodeExecutableForSdk, resolveCodexExecutableForSdk, resolveCodebuddyExecutableForSdk,
+        });
+        const status = await codebuddyDriver.getCodebuddyMcpStatus({ pathToCodebuddyCode: binPath, env });
+        return { ok: true, servers: status };
+      } catch (err) {
+        return { ok: false, error: err?.message || String(err) };
+      }
+    });
+
+    ipcMain.handle("netcatty:ai:sdk-agent:account-info", async (event, payload) => {
+      if (!validateSender(event)) return { ok: false, error: "Unauthorized IPC sender" };
+      try {
+        const shellEnv = await getShellEnv();
+        const env = buildSdkAgentEnv({
+          shellEnv,
+          requestedAgentEnv: normalizeAgentEnv(payload?.agentEnv),
+          withCliDiscoveryEnv,
+          normalizeClaudeCodeExecutableEnv: normalizeClaudeCodeExecutableEnvForSdk,
+        });
+        const binPath = resolveSdkBackendBinPath({
+          backendKey: "codebuddy",
+          configuredCommand: payload?.agentCommand,
+          shellEnv, env,
+          resolveCliFromPath, normalizeCliPathForPlatform, resolveSdkBinPath,
+          resolveClaudeCodeExecutableForSdk, resolveCodexExecutableForSdk, resolveCodebuddyExecutableForSdk,
+        });
+        const info = await codebuddyDriver.getCodebuddyAccountInfo({ pathToCodebuddyCode: binPath, env });
+        return { ok: true, account: info };
+      } catch (err) {
+        return { ok: false, error: err?.message || String(err) };
+      }
+    });
+
+    ipcMain.handle("netcatty:ai:sdk-agent:elicitation-response", async (event, payload) => {
+      if (!validateSender(event)) return { ok: false, error: "Unauthorized IPC sender" };
+      const { elicitationId, action, content } = payload || {};
+      if (!elicitationId) return { ok: false, error: "Missing elicitationId" };
+      const resolved = codebuddySessionManager.resolveElicitation(elicitationId, {
+        action: action || "cancel",
+        content: content || undefined,
+      });
+      return resolved ? { ok: true } : { ok: false, error: "Elicitation not found or already resolved" };
+    });
+
+    ipcMain.handle("netcatty:ai:sdk-agent:plugin-install", async (event, payload) => {
+      if (!validateSender(event)) return { ok: false, error: "Unauthorized IPC sender" };
+      try {
+        const result = await codebuddyDriver.codebuddyInstallPlugin(payload?.options || {});
+        return { ok: true, result };
+      } catch (err) {
+        return { ok: false, error: err?.message || String(err) };
+      }
+    });
+
+    ipcMain.handle("netcatty:ai:sdk-agent:plugin-remove", async (event, payload) => {
+      if (!validateSender(event)) return { ok: false, error: "Unauthorized IPC sender" };
+      try {
+        const result = await codebuddyDriver.codebuddyRemovePlugin(payload?.options || {});
+        return { ok: true, result };
+      } catch (err) {
+        return { ok: false, error: err?.message || String(err) };
+      }
+    });
+
+    ipcMain.handle("netcatty:ai:sdk-agent:plugin-enable", async (event, payload) => {
+      if (!validateSender(event)) return { ok: false, error: "Unauthorized IPC sender" };
+      try {
+        const result = await codebuddyDriver.codebuddyEnablePlugin(payload?.name, payload?.options);
+        return { ok: true, result };
+      } catch (err) {
+        return { ok: false, error: err?.message || String(err) };
+      }
+    });
+
+    ipcMain.handle("netcatty:ai:sdk-agent:plugin-disable", async (event, payload) => {
+      if (!validateSender(event)) return { ok: false, error: "Unauthorized IPC sender" };
+      try {
+        const result = await codebuddyDriver.codebuddyDisablePlugin(payload?.name, payload?.options);
+        return { ok: true, result };
+      } catch (err) {
+        return { ok: false, error: err?.message || String(err) };
+      }
+    });
+
+    ipcMain.handle("netcatty:ai:sdk-agent:marketplace-install", async (event, payload) => {
+      if (!validateSender(event)) return { ok: false, error: "Unauthorized IPC sender" };
+      try {
+        const result = await codebuddyDriver.codebuddyInstallMarketplace(payload?.options || {});
+        return { ok: true, result };
+      } catch (err) {
+        return { ok: false, error: err?.message || String(err) };
+      }
+    });
+
+    ipcMain.handle("netcatty:ai:sdk-agent:marketplace-remove", async (event, payload) => {
+      if (!validateSender(event)) return { ok: false, error: "Unauthorized IPC sender" };
+      try {
+        const result = await codebuddyDriver.codebuddyRemoveMarketplace(payload?.options || {});
+        return { ok: true, result };
+      } catch (err) {
+        return { ok: false, error: err?.message || String(err) };
+      }
+    });
+
     // Expose teardown so aiBridge.cleanup() can abort active SDK streams.
     ctx.sdkActiveStreams = sdkActiveStreams;
     ctx.codexAppServerRuntime = codexAppServerRuntime;
+    ctx.codebuddySessionManager = codebuddySessionManager;
   }
 }
 

@@ -1431,8 +1431,8 @@ function createPreloadApi(ctx) {
     return ipcRenderer.invoke("netcatty:ai:vault-agent:response", { requestId, result });
   },
   // SDK external agent streaming
-  aiSdkAgentStream: async (requestId, chatSessionId, sdkBackend, prompt, cwd, providerId, model, existingSessionId, historyMessages, images, toolIntegrationMode, defaultTargetSession, userSkillsContext, agentEnv, agentCommand, codexRuntime, permissionMode) => {
-    return ipcRenderer.invoke("netcatty:ai:sdk-agent:stream", { requestId, chatSessionId, sdkBackend, prompt, cwd, providerId, model, existingSessionId, historyMessages, images, toolIntegrationMode, defaultTargetSession, userSkillsContext, agentEnv, agentCommand, codexRuntime, permissionMode });
+  aiSdkAgentStream: async (requestId, chatSessionId, sdkBackend, prompt, cwd, providerId, model, existingSessionId, historyMessages, images, toolIntegrationMode, defaultTargetSession, userSkillsContext, agentEnv, agentCommand, codexRuntime, permissionMode, codebuddyOptions) => {
+    return ipcRenderer.invoke("netcatty:ai:sdk-agent:stream", { requestId, chatSessionId, sdkBackend, prompt, cwd, providerId, model, existingSessionId, historyMessages, images, toolIntegrationMode, defaultTargetSession, userSkillsContext, agentEnv, agentCommand, codexRuntime, permissionMode, ...(codebuddyOptions || {}) });
   },
   aiSdkAgentSteer: async (requestId, chatSessionId, prompt, images, clientUserMessageId) => {
     return ipcRenderer.invoke("netcatty:ai:sdk-agent:steer", {

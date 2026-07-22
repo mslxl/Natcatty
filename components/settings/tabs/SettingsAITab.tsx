@@ -280,9 +280,21 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
   const [opencodeCustomPath, setOpencodeCustomPath] = useState(() => initialManagedPathsRef.current?.opencode ?? "");
   const [isResolvingOpencode, setIsResolvingOpencode] = useState(false);
 
-  const codebuddyManagedEnv = useMemo(
-    () => externalAgents.find((a) => a.id === "discovered_codebuddy")?.env,
+  const codebuddyManagedAgent = useMemo(
+    () => externalAgents.find((a) => a.id === "discovered_codebuddy"),
     [externalAgents],
+  );
+  const codebuddyManagedEnv = codebuddyManagedAgent?.env;
+  const codebuddyAdvancedOptions = codebuddyManagedAgent?.codebuddyOptions;
+  const updateCodebuddyAdvancedOptions = useCallback(
+    (options: import("../../../infrastructure/ai/types").CodebuddyAdvancedOptions | undefined) => {
+      setExternalAgents((prev) =>
+        prev.map((a) =>
+          a.id === "discovered_codebuddy" ? { ...a, codebuddyOptions: options } : a,
+        ),
+      );
+    },
+    [setExternalAgents],
   );
   const {
     internetEnv: codebuddyInternetEnv,
@@ -1032,6 +1044,8 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
               onInternetEnvChange={(v) => updateCodebuddyEnv(v, codebuddyEnvText)}
               envText={codebuddyEnvText}
               onEnvTextChange={(v) => updateCodebuddyEnv(codebuddyInternetEnv, v)}
+              advancedOptions={codebuddyAdvancedOptions}
+              onAdvancedOptionsChange={updateCodebuddyAdvancedOptions}
             />
           </SettingsSection>
 

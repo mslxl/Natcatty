@@ -15,6 +15,7 @@ const copilot = require("./copilotDriver.cjs");
 const cursor = require("./cursorDriver.cjs");
 const codebuddy = require("./codebuddyDriver.cjs");
 const opencode = require("./opencodeDriver.cjs");
+const { codebuddySessionManager } = require("./codebuddySessionManager.cjs");
 
 const DRIVER_REGISTRY = {
   claude: {
@@ -108,6 +109,14 @@ const DRIVER_REGISTRY = {
   },
   codebuddy: {
     async runTurn(ctx) {
+      // Build the permission handler: when the CLI hits a security restriction,
+      // auto-confirm (auto mode) or prompt the user (confirm mode) instead of
+      // throwing an error.
+      const canUseTool = codebuddy.buildCodebuddyCanUseTool({
+        permissionMode: ctx.permissionMode,
+        chatSessionId: ctx.chatSessionId,
+        requestApproval: ctx.requestApprovalFromRenderer,
+      });
       const options = codebuddy.buildCodebuddyQueryOptions({
         cwd: ctx.cwd,
         model: ctx.model,
@@ -117,11 +126,81 @@ const DRIVER_REGISTRY = {
         resume: ctx.resumeSessionId,
         pathToCodebuddyCode: ctx.binPath,
         toolIntegrationMode: ctx.toolIntegrationMode,
+        // SDK 0.3.222 new options
+        systemPrompt: ctx.systemPrompt,
+        effort: ctx.effort,
+        maxTurns: ctx.maxTurns,
+        maxBudgetUsd: ctx.maxBudgetUsd,
+        fallbackModel: ctx.fallbackModel,
+        sandbox: ctx.sandbox,
+        agents: ctx.agents,
+        outputFormat: ctx.outputFormat,
+        enableFileCheckpointing: ctx.enableFileCheckpointing,
+        traceId: ctx.traceId,
+        parentSpanId: ctx.parentSpanId,
+        hooks: ctx.hooks || codebuddy.buildCodebuddyHooks(ctx.emitter),
+        elicitation: ctx.elicitation,
+        canUseTool,
       });
+
+      // Try V2 Session API first (persistent multi-turn), fall back to query().
+      const sessionKey = [
+        String(ctx.chatSessionId || ""),
+        "codebuddy",
+        String(ctx.binPath || ""),
+        "sdk",
+      ].join("\u0000");
+      const sessionOptions = {
+        cwd: options.cwd,
+        model: options.model,
+        env: options.env,
+        pathToCodebuddyCode: options.pathToCodebuddyCode,
+        mcpServers: options.mcpServers,
+        permissionMode: options.permissionMode,
+        systemPrompt: options.systemPrompt,
+        hooks: options.hooks,
+        elicitation: options.elicitation,
+        canUseTool: options.canUseTool,
+        includePartialMessages: true,
+        tools: options.tools,
+        disallowedTools: options.disallowedTools,
+        maxTurns: options.maxTurns,
+        maxBudgetUsd: options.maxBudgetUsd,
+        effort: options.effort,
+        thinking: options.thinking,
+        sandbox: options.sandbox,
+        agents: options.agents,
+      };
+      const v2Result = await codebuddySessionManager.runTurn({
+        sessionKey,
+        prompt: ctx.prompt,
+        attachments: ctx.attachments,
+        options,
+        emitter: ctx.emitter,
+        sessionOptions,
+        resumeSessionId: ctx.resumeSessionId,
+      });
+      if (v2Result) return v2Result;
+
+      // Fallback: legacy query() per-turn.
       return codebuddy.runCodebuddyTurn({
         prompt: ctx.prompt,
         attachments: ctx.attachments,
         options,
+        emitter: ctx.emitter,
+      });
+    },
+    async steerTurn(ctx) {
+      const sessionKey = [
+        String(ctx.chatSessionId || ""),
+        "codebuddy",
+        String(ctx.binPath || ""),
+        "sdk",
+      ].join("\u0000");
+      return codebuddySessionManager.steer({
+        sessionKey,
+        prompt: ctx.prompt,
+        attachments: ctx.attachments,
         emitter: ctx.emitter,
       });
     },

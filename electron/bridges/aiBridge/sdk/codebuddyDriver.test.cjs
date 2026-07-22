@@ -2,11 +2,15 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   buildCodebuddyQueryOptions,
+  buildCodebuddyCanUseTool,
   buildCodebuddyPromptInput,
   codebuddyBuiltinTools,
   mapCodebuddyModels,
   runCodebuddyTurn,
   translateCodebuddyMessage,
+  buildCodebuddyHooks,
+  buildCodebuddyElicitation,
+  toSdkMcpServers,
 } = require("./codebuddyDriver.cjs");
 
 function collector() {
@@ -225,4 +229,199 @@ test("mapCodebuddyModels maps model ids and drops invalid entries", () => {
     { id: "cb-2", name: "CodeBuddy 2", description: undefined },
   ]);
   assert.deepEqual(mapCodebuddyModels(null), []);
+});
+
+// ---------------------------------------------------------------------------
+// SDK 0.3.222 new options
+// ---------------------------------------------------------------------------
+
+test("buildCodebuddyQueryOptions passes new SDK 0.3.222 options", () => {
+  const opts = buildCodebuddyQueryOptions({
+    cwd: "/tmp",
+    env: {},
+    systemPrompt: "You are a server admin assistant.",
+    effort: "high",
+    maxTurns: 10,
+    maxBudgetUsd: 0.5,
+    fallbackModel: "glm-4",
+    sandbox: { enabled: true, autoAllowBashIfSandboxed: true },
+    agents: { auditor: { description: "Security auditor", prompt: "Audit", tools: ["Bash"] } },
+    outputFormat: { type: "json_schema", schema: { type: "object" } },
+    enableFileCheckpointing: true,
+    traceId: "trace-123",
+    parentSpanId: "span-456",
+    persistSession: false,
+    sessionId: "custom-sess",
+  });
+
+  assert.deepEqual(opts.systemPrompt, { append: "You are a server admin assistant." });
+  assert.equal(opts.effort, "high");
+  assert.equal(opts.maxTurns, 10);
+  assert.equal(opts.maxBudgetUsd, 0.5);
+  assert.equal(opts.fallbackModel, "glm-4");
+  assert.deepEqual(opts.sandbox, { enabled: true, autoAllowBashIfSandboxed: true });
+  assert.deepEqual(opts.agents, { auditor: { description: "Security auditor", prompt: "Audit", tools: ["Bash"] } });
+  assert.deepEqual(opts.outputFormat, { type: "json_schema", schema: { type: "object" } });
+  assert.equal(opts.enableFileCheckpointing, true);
+  assert.equal(opts.traceId, "trace-123");
+  assert.equal(opts.parentSpanId, "span-456");
+  assert.equal(opts.persistSession, false);
+  assert.equal(opts.sessionId, "custom-sess");
+});
+
+test("buildCodebuddyQueryOptions does not set maxThinkingTokens (deprecated removed)", () => {
+  const opts = buildCodebuddyQueryOptions({
+    cwd: "/tmp",
+    env: { NETCATTY_CODEBUDDY_THINKING: "enabled:8000" },
+  });
+  assert.deepEqual(opts.thinking, { type: "enabled", budgetTokens: 8000 });
+  assert.ok(!("maxThinkingTokens" in opts));
+});
+
+test("buildCodebuddyQueryOptions accepts object systemPrompt directly", () => {
+  const opts = buildCodebuddyQueryOptions({
+    cwd: "/tmp",
+    env: {},
+    systemPrompt: { append: "custom append" },
+  });
+  assert.deepEqual(opts.systemPrompt, { append: "custom append" });
+});
+
+// ---------------------------------------------------------------------------
+// Hooks
+// ---------------------------------------------------------------------------
+
+test("buildCodebuddyHooks returns hook matchers that emit events", async () => {
+  const { events, emitter } = collector();
+  emitter.emitEvent = (ev) => events.push({ k: "event", ev });
+  const hooks = buildCodebuddyHooks(emitter);
+
+  assert.ok(Array.isArray(hooks.PreToolUse));
+  assert.ok(Array.isArray(hooks.PostToolUse));
+  assert.ok(Array.isArray(hooks.PostToolUseFailure));
+  assert.ok(Array.isArray(hooks.SessionEnd));
+  assert.ok(Array.isArray(hooks.Notification));
+
+  // Invoke PreToolUse hook callback
+  const preHook = hooks.PreToolUse[0].hooks[0];
+  const result = await preHook(
+    { tool_name: "Bash", tool_input: { command: "ls" }, tool_use_id: "tu-1" },
+    "tu-1",
+    { signal: new AbortController().signal },
+  );
+  assert.deepEqual(result, { continue: true });
+  assert.equal(events.length, 1);
+  assert.equal(events[0].ev.hookEvent, "PreToolUse");
+  assert.equal(events[0].ev.toolName, "Bash");
+});
+
+// ---------------------------------------------------------------------------
+// Elicitation
+// ---------------------------------------------------------------------------
+
+test("buildCodebuddyElicitation forwards create and resolves on response", async () => {
+  const { events, emitter } = collector();
+  emitter.emitEvent = (ev) => events.push({ k: "event", ev });
+  const pendingMap = new Map();
+  const handler = buildCodebuddyElicitation(emitter, pendingMap);
+
+  const createPromise = handler.create(
+    { _meta: { "codebuddy.ai": { elicitationId: "el-1" } }, message: "Confirm?" },
+    { signal: new AbortController().signal },
+  );
+
+  // Should have emitted elicitation-create event
+  assert.equal(events.length, 1);
+  assert.equal(events[0].ev.type, "elicitation-create");
+  assert.equal(events[0].ev.elicitationId, "el-1");
+
+  // Resolve the pending elicitation
+  assert.ok(pendingMap.has("el-1"));
+  pendingMap.get("el-1").resolve({ action: "accept", content: { confirmed: true } });
+  const response = await createPromise;
+  assert.deepEqual(response, { action: "accept", content: { confirmed: true } });
+});
+
+// ---------------------------------------------------------------------------
+// MCP SSE/HTTP support
+// ---------------------------------------------------------------------------
+
+test("toSdkMcpServers supports sse, http, and sdk transport types", () => {
+  const fakeInstance = { __brand: "sdk-mcp" };
+  const map = toSdkMcpServers([
+    { name: "stdio-server", command: "/bin/server", args: ["--port", "0"], env: [] },
+    { name: "sse-server", type: "sse", url: "http://localhost:3000/sse", headers: { Authorization: "Bearer x" } },
+    { name: "http-server", type: "http", url: "http://localhost:4000/mcp" },
+    { name: "sdk-server", type: "sdk", instance: fakeInstance },
+  ]);
+  assert.equal(map["stdio-server"].type, "stdio");
+  assert.equal(map["stdio-server"].command, "/bin/server");
+  assert.equal(map["sse-server"].type, "sse");
+  assert.equal(map["sse-server"].url, "http://localhost:3000/sse");
+  assert.deepEqual(map["sse-server"].headers, { Authorization: "Bearer x" });
+  assert.equal(map["http-server"].type, "http");
+  assert.equal(map["http-server"].url, "http://localhost:4000/mcp");
+  assert.equal(map["sdk-server"].type, "sdk");
+  assert.equal(map["sdk-server"].name, "sdk-server");
+  assert.equal(map["sdk-server"].instance, fakeInstance);
+});
+
+// ---------------------------------------------------------------------------
+// Permission handler (canUseTool)
+// ---------------------------------------------------------------------------
+
+test("buildCodebuddyCanUseTool auto mode allows without prompting", async () => {
+  const handler = buildCodebuddyCanUseTool({ permissionMode: "auto" });
+  const result = await handler("Bash", { command: "rm -rf /tmp/x" }, {});
+  assert.deepEqual(result, { behavior: "allow" });
+});
+
+test("buildCodebuddyCanUseTool observer mode denies with message", async () => {
+  const handler = buildCodebuddyCanUseTool({ permissionMode: "observer" });
+  const result = await handler("Bash", { command: "ls" }, {});
+  assert.equal(result.behavior, "deny");
+  assert.ok(result.message.includes("Observer mode"));
+});
+
+test("buildCodebuddyCanUseTool confirm mode forwards to approval UI and allows on approve", async () => {
+  const calls = [];
+  const requestApproval = async (toolName, args, chatSessionId) => {
+    calls.push({ toolName, args, chatSessionId });
+    return true;
+  };
+  const handler = buildCodebuddyCanUseTool({
+    permissionMode: "confirm",
+    chatSessionId: "chat-1",
+    requestApproval,
+  });
+  const result = await handler("Bash", { command: "apt install nginx" }, {});
+  assert.deepEqual(result, { behavior: "allow" });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].toolName, "Bash");
+  assert.deepEqual(calls[0].args, { command: "apt install nginx" });
+  assert.equal(calls[0].chatSessionId, "chat-1");
+});
+
+test("buildCodebuddyCanUseTool confirm mode denies on user rejection", async () => {
+  const handler = buildCodebuddyCanUseTool({
+    permissionMode: "confirm",
+    chatSessionId: "chat-1",
+    requestApproval: async () => false,
+  });
+  const result = await handler("Bash", { command: "reboot" }, {});
+  assert.equal(result.behavior, "deny");
+  assert.ok(result.message.includes("User denied"));
+});
+
+test("buildCodebuddyCanUseTool confirm mode denies when no approval channel", async () => {
+  const handler = buildCodebuddyCanUseTool({ permissionMode: "confirm" });
+  const result = await handler("Bash", {}, {});
+  assert.equal(result.behavior, "deny");
+  assert.ok(result.message.includes("no approval channel"));
+});
+
+test("buildCodebuddyQueryOptions attaches canUseTool handler", () => {
+  const handler = async () => ({ behavior: "allow" });
+  const opts = buildCodebuddyQueryOptions({ cwd: "/tmp", env: {}, canUseTool: handler });
+  assert.equal(opts.canUseTool, handler);
 });

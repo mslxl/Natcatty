@@ -73,19 +73,109 @@ function buildCodebuddyThinkingEnv(thinking) {
 // MCP servers
 // ---------------------------------------------------------------------------
 
-/** Convert neutral injectMcp configs into the SDK's keyed mcpServers map. */
+/** Convert neutral injectMcp configs into the SDK's keyed mcpServers map.
+ *  Supports stdio (default), sse, http, and sdk (in-process) transport types (SDK 0.3.222). */
 function toSdkMcpServers(injectedMcpServers) {
   const map = {};
   for (const cfg of injectedMcpServers || []) {
     if (!cfg || !cfg.name) continue;
-    map[cfg.name] = {
-      type: "stdio",
-      command: cfg.command,
-      args: cfg.args || [],
-      env: mcpEnvPairsToObject(cfg.env),
-    };
+    const transport = cfg.type || "stdio";
+    if (transport === "sse" || transport === "http") {
+      map[cfg.name] = {
+        type: transport,
+        url: cfg.url,
+        headers: cfg.headers || undefined,
+      };
+    } else if (transport === "sdk") {
+      // In-process MCP server created via createSdkMcpServer() — pass instance through.
+      map[cfg.name] = {
+        type: "sdk",
+        name: cfg.name,
+        instance: cfg.instance,
+      };
+    } else {
+      map[cfg.name] = {
+        type: "stdio",
+        command: cfg.command,
+        args: cfg.args || [],
+        env: mcpEnvPairsToObject(cfg.env),
+      };
+    }
   }
   return map;
+}
+
+/**
+ * Create an in-process SDK MCP server with Netcatty tools.
+ * Uses createSdkMcpServer() + tool() from @tencent-ai/agent-sdk to avoid
+ * spawning a subprocess for lightweight built-in tools.
+ * @param {Array<{name: string, description: string, inputSchema: object, handler: Function}>} toolDefs
+ * @returns {Promise<object|null>} McpSdkServerResult instance or null if unavailable
+ */
+async function createCodebuddySdkMcpServer(toolDefs) {
+  let sdk;
+  try { sdk = await import("@tencent-ai/agent-sdk"); } catch { return null; }
+  if (!sdk.createSdkMcpServer || !sdk.tool) return null;
+  const tools = (toolDefs || []).map((def) =>
+    sdk.tool(def.name, def.description, def.inputSchema, def.handler),
+  );
+  return sdk.createSdkMcpServer({ name: "netcatty-builtin", tools });
+}
+
+// ---------------------------------------------------------------------------
+// Permission handler (canUseTool)
+// ---------------------------------------------------------------------------
+
+/**
+ * Build an SDK canUseTool permission handler based on Netcatty's permission mode.
+ *
+ * When the CodeBuddy CLI encounters a security restriction that requires a
+ * permission decision (instead of throwing an error), the SDK routes the
+ * request through this handler:
+ * - auto: automatically confirm execution (no user interruption)
+ * - confirm: forward to the Netcatty renderer approval UI and wait for the
+ *   user's decision (approve once / always allow / reject)
+ * - observer: deny all restricted tool executions
+ *
+ * @param {object} args
+ * @param {string} args.permissionMode  Netcatty permission mode ('auto'|'confirm'|'observer')
+ * @param {string} [args.chatSessionId]  chat session scope for the approval card
+ * @param {Function} [args.requestApproval]  (toolName, args, chatSessionId) => Promise<boolean>
+ * @returns {Function} SDK CanUseTool handler: (toolName, input, options) => Promise<PermissionResult>
+ */
+function buildCodebuddyCanUseTool({ permissionMode, chatSessionId, requestApproval }) {
+  return async (toolName, input, _options) => {
+    // Auto mode: confirm execution immediately without user interruption.
+    if (permissionMode === "auto") {
+      return { behavior: "allow" };
+    }
+    // Observer mode: deny all restricted tool executions.
+    if (permissionMode === "observer") {
+      return {
+        behavior: "deny",
+        message: `Observer mode: tool "${toolName}" execution denied.`,
+      };
+    }
+    // Confirm mode (default): forward to the Netcatty approval UI.
+    if (typeof requestApproval !== "function") {
+      // No approval channel available — deny to preserve confirm-mode safety guarantee.
+      return {
+        behavior: "deny",
+        message: `Tool "${toolName}" requires approval but no approval channel is available.`,
+      };
+    }
+    try {
+      const approved = await requestApproval(toolName, input || {}, chatSessionId);
+      return approved
+        ? { behavior: "allow" }
+        : { behavior: "deny", message: `User denied execution of tool "${toolName}".` };
+    } catch {
+      return {
+        behavior: "deny",
+        message: `Approval request for tool "${toolName}" failed.`,
+      };
+    }
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -104,6 +194,11 @@ function codebuddyBuiltinTools(toolIntegrationMode) {
 function buildCodebuddyQueryOptions({
   cwd, model, env, injectedMcpServers, abortController,
   resume, pathToCodebuddyCode, toolIntegrationMode, thinking,
+  // Phase 1: new SDK 0.3.222 options
+  systemPrompt, effort, maxTurns, maxBudgetUsd, fallbackModel,
+  sandbox, agents, outputFormat, enableFileCheckpointing,
+  traceId, parentSpanId, persistSession, sessionId, hooks,
+  elicitation, canUseTool,
 }) {
   const builtinTools = codebuddyBuiltinTools(toolIntegrationMode);
   const options = {
@@ -135,10 +230,44 @@ function buildCodebuddyQueryOptions({
   const thinkingConfig = thinking || parseCodebuddyThinking(env?.NETCATTY_CODEBUDDY_THINKING);
   if (thinkingConfig) {
     options.thinking = thinkingConfig;
-    if (thinkingConfig.type === "enabled" && thinkingConfig.budgetTokens) {
-      options.maxThinkingTokens = thinkingConfig.budgetTokens;
-    }
   }
+  // --- New SDK 0.3.222 options ---
+  // System prompt: string is treated as append to default.
+  if (systemPrompt) {
+    options.systemPrompt = typeof systemPrompt === "string"
+      ? { append: systemPrompt }
+      : systemPrompt;
+  }
+  // Effort level for model reasoning.
+  if (effort) options.effort = effort;
+  // Safety guardrails.
+  if (maxTurns != null && maxTurns > 0) options.maxTurns = maxTurns;
+  if (maxBudgetUsd != null && maxBudgetUsd > 0) options.maxBudgetUsd = maxBudgetUsd;
+  // Fallback model when primary is unavailable.
+  if (fallbackModel) options.fallbackModel = fallbackModel;
+  // Sandbox settings.
+  if (sandbox && typeof sandbox === "object") options.sandbox = sandbox;
+  // Custom subagent definitions.
+  if (agents && typeof agents === "object") options.agents = agents;
+  // Structured output format.
+  if (outputFormat && typeof outputFormat === "object") options.outputFormat = outputFormat;
+  // File checkpointing for rollback.
+  if (enableFileCheckpointing != null) options.enableFileCheckpointing = enableFileCheckpointing;
+  // Distributed tracing.
+  if (traceId) options.traceId = traceId;
+  if (parentSpanId) options.parentSpanId = parentSpanId;
+  // Session persistence control.
+  if (persistSession != null) options.persistSession = persistSession;
+  // Custom session ID.
+  if (sessionId) options.sessionId = sessionId;
+  // Lifecycle hooks.
+  if (hooks && typeof hooks === "object") options.hooks = hooks;
+  // Elicitation handler.
+  if (elicitation && typeof elicitation === "object") options.elicitation = elicitation;
+  // Permission handler: when the CLI hits a security restriction, route the
+  // decision through Netcatty (auto-confirm / user approval / deny) instead
+  // of throwing an error.
+  if (typeof canUseTool === "function") options.canUseTool = canUseTool;
   return options;
 }
 
@@ -431,18 +560,217 @@ async function listCodebuddyModels({ pathToCodebuddyCode, env, queryFn }) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Hooks (SDK 0.3.222 lifecycle callbacks)
+// ---------------------------------------------------------------------------
+
+/**
+ * Build SDK hooks option from an emitter. Registers PreToolUse / PostToolUse /
+ * PostToolUseFailure / SessionEnd / Notification hooks that forward events to
+ * the renderer via the existing emitter event channel.
+ * @param {object} emitter  createStreamEmitter(...)
+ * @returns {object} hooks map suitable for Options.hooks
+ */
+function buildCodebuddyHooks(emitter) {
+  const makeHook = (hookEventName, extract) => ([{
+    hooks: [async (input, _toolUseID, _opts) => {
+      try {
+        emitter.emitEvent({ type: "hook", hookEvent: hookEventName, ...extract(input) });
+      } catch { /* best effort — never block the turn */ }
+      return { continue: true };
+    }],
+  }]);
+
+  return {
+    PreToolUse: makeHook("PreToolUse", (input) => ({
+      toolName: input.tool_name,
+      toolInput: input.tool_input,
+      toolUseId: input.tool_use_id,
+    })),
+    PostToolUse: makeHook("PostToolUse", (input) => ({
+      toolName: input.tool_name,
+      toolInput: input.tool_input,
+      toolUseId: input.tool_use_id,
+    })),
+    PostToolUseFailure: makeHook("PostToolUseFailure", (input) => ({
+      toolName: input.tool_name,
+      toolInput: input.tool_input,
+      toolUseId: input.tool_use_id,
+      error: input.error,
+    })),
+    SessionEnd: makeHook("SessionEnd", (input) => ({
+      reason: input.reason,
+    })),
+    Notification: makeHook("Notification", (input) => ({
+      message: input.message,
+      title: input.title,
+      notificationType: input.notification_type,
+    })),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Elicitation handler (SDK 0.3.222 — interactive confirmations)
+// ---------------------------------------------------------------------------
+
+/**
+ * Build an elicitation handler that forwards create/complete events to the
+ * renderer and waits for the user's decision via a pending-response map.
+ * @param {object} emitter  createStreamEmitter(...)
+ * @param {Map} pendingMap  Map<elicitationId, { resolve, reject }> — shared
+ *   with the IPC response handler so it can resolve waiting promises.
+ * @returns {object} ElicitationHandler
+ */
+function buildCodebuddyElicitation(emitter, pendingMap) {
+  return {
+    async create(request, { signal }) {
+      const elicitationId = request?._meta?.["codebuddy.ai"]?.elicitationId
+        || `elicitation_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      emitter.emitEvent({ type: "elicitation-create", elicitationId, request });
+      return await new Promise((resolve, reject) => {
+        pendingMap.set(elicitationId, { resolve, reject });
+        if (signal) {
+          signal.addEventListener("abort", () => {
+            if (pendingMap.has(elicitationId)) {
+              pendingMap.delete(elicitationId);
+              resolve({ action: "cancel" });
+            }
+          }, { once: true });
+        }
+      });
+    },
+    complete(notification) {
+      emitter.emitEvent({ type: "elicitation-complete", notification });
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// MCP server status & account info (SDK 0.3.222)
+// ---------------------------------------------------------------------------
+
+/**
+ * Query MCP server connection status via the SDK control channel.
+ * Returns [] on failure.
+ */
+async function getCodebuddyMcpStatus({ pathToCodebuddyCode, env, queryFn }) {
+  let query = queryFn;
+  if (!query) {
+    let sdk;
+    try { sdk = await import("@tencent-ai/agent-sdk"); } catch { return []; }
+    query = sdk.query;
+  }
+  const abortController = new AbortController();
+  async function* idleInput() {
+    await new Promise((resolve) => {
+      if (abortController.signal.aborted) return resolve();
+      abortController.signal.addEventListener("abort", () => resolve(), { once: true });
+    });
+  }
+  const q = query({
+    prompt: idleInput(),
+    options: { pathToCodebuddyCode, env, abortController, includePartialMessages: false },
+  });
+  try {
+    return await q.mcpServerStatus();
+  } catch {
+    return [];
+  } finally {
+    abortController.abort();
+    try { await q.return?.(undefined); } catch { /* best effort */ }
+  }
+}
+
+/**
+ * Query CodeBuddy account info via the SDK control channel.
+ * Returns null on failure.
+ */
+async function getCodebuddyAccountInfo({ pathToCodebuddyCode, env, queryFn }) {
+  let query = queryFn;
+  if (!query) {
+    let sdk;
+    try { sdk = await import("@tencent-ai/agent-sdk"); } catch { return null; }
+    query = sdk.query;
+  }
+  const abortController = new AbortController();
+  async function* idleInput() {
+    await new Promise((resolve) => {
+      if (abortController.signal.aborted) return resolve();
+      abortController.signal.addEventListener("abort", () => resolve(), { once: true });
+    });
+  }
+  const q = query({
+    prompt: idleInput(),
+    options: { pathToCodebuddyCode, env, abortController, includePartialMessages: false },
+  });
+  try {
+    return await q.accountInfo();
+  } catch {
+    return null;
+  } finally {
+    abortController.abort();
+    try { await q.return?.(undefined); } catch { /* best effort */ }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Plugin management (SDK 0.3.222)
+// ---------------------------------------------------------------------------
+
+async function codebuddyInstallPlugin(options) {
+  const sdk = await import("@tencent-ai/agent-sdk");
+  return sdk.installPlugin(options);
+}
+
+async function codebuddyRemovePlugin(options) {
+  const sdk = await import("@tencent-ai/agent-sdk");
+  return sdk.removePlugin(options);
+}
+
+async function codebuddyEnablePlugin(name, options) {
+  const sdk = await import("@tencent-ai/agent-sdk");
+  return sdk.enablePlugin(name, options);
+}
+
+async function codebuddyDisablePlugin(name, options) {
+  const sdk = await import("@tencent-ai/agent-sdk");
+  return sdk.disablePlugin(name, options);
+}
+
+async function codebuddyInstallMarketplace(options) {
+  const sdk = await import("@tencent-ai/agent-sdk");
+  return sdk.installMarketplace(options);
+}
+
+async function codebuddyRemoveMarketplace(options) {
+  const sdk = await import("@tencent-ai/agent-sdk");
+  return sdk.removeMarketplace(options);
+}
+
 module.exports = {
   buildCodebuddyQueryOptions,
+  buildCodebuddyCanUseTool,
   translateCodebuddyMessage,
   classifyCodebuddySpawnError,
   buildCodebuddyPromptInput,
   buildCodebuddyThinkingEnv,
   parseCodebuddyThinking,
   toSdkMcpServers,
+  createCodebuddySdkMcpServer,
   runCodebuddyTurn,
   listCodebuddyModels,
   mapCodebuddyModels,
   codebuddyBuiltinTools,
+  buildCodebuddyHooks,
+  buildCodebuddyElicitation,
+  getCodebuddyMcpStatus,
+  getCodebuddyAccountInfo,
+  codebuddyInstallPlugin,
+  codebuddyRemovePlugin,
+  codebuddyEnablePlugin,
+  codebuddyDisablePlugin,
+  codebuddyInstallMarketplace,
+  codebuddyRemoveMarketplace,
   UI_DISALLOWED_TOOLS,
   MCP_MODE_TOOLS,
   SKILLS_MODE_TOOLS,
