@@ -406,7 +406,7 @@ function registerSdkStreamHandlers(ctx) {
           const codexRuntime = backendKey === "codex" && requestedCodexRuntime === "app-server"
             ? "app-server"
             : "sdk";
-          sdkRequestRuntimes.set(requestId, { backendKey, codexRuntime });
+          sdkRequestRuntimes.set(requestId, { backendKey, codexRuntime, binPath });
 
           const hasConfiguredCommand = isPathLikeCommand(agentCommand);
           const sdkSessionKey = buildSdkSessionKey(chatSessionId, backendKey, binPath, codexRuntime);
@@ -663,7 +663,7 @@ function registerSdkStreamHandlers(ctx) {
             chatSessionId,
             prompt: steerPrompt,
             attachments: stagedAttachments,
-            binPath: payload?.binPath || "",
+            binPath: runtime.binPath || "",
             emitter,
           });
         }

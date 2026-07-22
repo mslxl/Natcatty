@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { CodebuddySessionManager } = require("./codebuddySessionManager.cjs");
+const { CodebuddySessionManager, computeOptionsFingerprint } = require("./codebuddySessionManager.cjs");
 
 function collector() {
   const events = [];
@@ -35,16 +35,46 @@ function fakeSession(messages, opts = {}) {
   };
 }
 
-test("getOrCreateSession reuses existing session from map", async () => {
+test("getOrCreateSession reuses existing session when options match", async () => {
   const mgr = new CodebuddySessionManager();
   const session = fakeSession([], { sessionId: "existing-sess" });
-  mgr.sessions.set("reuse-key", session);
+  const opts = { cwd: "/tmp", model: "glm-5" };
+  mgr.sessions.set("reuse-key", { session, fingerprint: computeOptionsFingerprint(opts) });
 
   const result = await mgr.getOrCreateSession({
     sessionKey: "reuse-key",
-    sessionOptions: { cwd: "/tmp" },
+    sessionOptions: opts,
   });
   assert.equal(result, session);
+});
+
+test("getOrCreateSession closes stale session when options change", () => {
+  const mgr = new CodebuddySessionManager();
+  const oldSession = fakeSession([], { sessionId: "old-sess" });
+  const oldOpts = { cwd: "/tmp", model: "glm-4" };
+  const newOpts = { cwd: "/tmp", model: "glm-5" };
+  mgr.sessions.set("stale-key", { session: oldSession, fingerprint: computeOptionsFingerprint(oldOpts) });
+
+  // Verify fingerprints differ so the manager would detect the change.
+  assert.notEqual(computeOptionsFingerprint(oldOpts), computeOptionsFingerprint(newOpts));
+
+  // The stale-close logic runs synchronously before the first await in
+  // getOrCreateSession. Trigger it and swallow the dangling promise.
+  mgr.getOrCreateSession({ sessionKey: "stale-key", sessionOptions: newOpts }).catch(() => {});
+
+  // Verify the stale session was closed and removed.
+  assert.ok(oldSession.closed);
+  assert.ok(!mgr.sessions.has("stale-key") || mgr.sessions.get("stale-key").session !== oldSession);
+});
+
+test("computeOptionsFingerprint detects option changes", () => {
+  const base = { cwd: "/tmp", model: "glm-5", effort: "high" };
+  const same = { cwd: "/tmp", model: "glm-5", effort: "high" };
+  const diffModel = { cwd: "/tmp", model: "glm-4", effort: "high" };
+  const diffEffort = { cwd: "/tmp", model: "glm-5", effort: "low" };
+  assert.equal(computeOptionsFingerprint(base), computeOptionsFingerprint(same));
+  assert.notEqual(computeOptionsFingerprint(base), computeOptionsFingerprint(diffModel));
+  assert.notEqual(computeOptionsFingerprint(base), computeOptionsFingerprint(diffEffort));
 });
 
 test("runTurn streams messages via V2 session when available", async () => {
@@ -55,7 +85,7 @@ test("runTurn streams messages via V2 session when available", async () => {
   ];
   const session = fakeSession(messages, { sessionId: "sess-v2" });
   // Pre-populate the session map to bypass SDK import.
-  mgr.sessions.set("preloaded-key", session);
+  mgr.sessions.set("preloaded-key", { session, fingerprint: computeOptionsFingerprint({}) });
 
   const { events, emitter } = collector();
   const result = await mgr.runTurn({
@@ -91,7 +121,7 @@ test("steer sends follow-up message on existing session", async () => {
     { type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: "steered" } } },
   ];
   const session = fakeSession(messages);
-  mgr.sessions.set("steer-key", session);
+  mgr.sessions.set("steer-key", { session, fingerprint: null });
 
   const { events, emitter } = collector();
   const result = await mgr.steer({
@@ -110,7 +140,7 @@ test("steer sends follow-up message on existing session", async () => {
 test("closeSession removes and closes the session", () => {
   const mgr = new CodebuddySessionManager();
   const session = fakeSession([]);
-  mgr.sessions.set("close-key", session);
+  mgr.sessions.set("close-key", { session, fingerprint: null });
 
   mgr.closeSession("close-key");
   assert.ok(!mgr.sessions.has("close-key"));
@@ -122,9 +152,9 @@ test("closeForChat closes all sessions matching the chat prefix", () => {
   const s1 = fakeSession([]);
   const s2 = fakeSession([]);
   const s3 = fakeSession([]);
-  mgr.sessions.set("chat1\u0000codebuddy\u0000/bin/cb\u0000sdk", s1);
-  mgr.sessions.set("chat1\u0000codebuddy\u0000/other/cb\u0000sdk", s2);
-  mgr.sessions.set("chat2\u0000codebuddy\u0000/bin/cb\u0000sdk", s3);
+  mgr.sessions.set("chat1\u0000codebuddy\u0000/bin/cb\u0000sdk", { session: s1, fingerprint: null });
+  mgr.sessions.set("chat1\u0000codebuddy\u0000/other/cb\u0000sdk", { session: s2, fingerprint: null });
+  mgr.sessions.set("chat2\u0000codebuddy\u0000/bin/cb\u0000sdk", { session: s3, fingerprint: null });
 
   mgr.closeForChat("chat1");
   assert.ok(!mgr.sessions.has("chat1\u0000codebuddy\u0000/bin/cb\u0000sdk"));
@@ -139,8 +169,8 @@ test("closeAll closes every session", () => {
   const mgr = new CodebuddySessionManager();
   const s1 = fakeSession([]);
   const s2 = fakeSession([]);
-  mgr.sessions.set("a", s1);
-  mgr.sessions.set("b", s2);
+  mgr.sessions.set("a", { session: s1, fingerprint: null });
+  mgr.sessions.set("b", { session: s2, fingerprint: null });
 
   mgr.closeAll();
   assert.equal(mgr.sessions.size, 0);
@@ -157,7 +187,7 @@ test("setModel returns false when session does not exist", async () => {
 test("setModel delegates to the session", async () => {
   const mgr = new CodebuddySessionManager();
   const session = fakeSession([]);
-  mgr.sessions.set("model-key", session);
+  mgr.sessions.set("model-key", { session, fingerprint: null });
 
   const result = await mgr.setModel("model-key", "glm-5");
   assert.equal(result, true);
