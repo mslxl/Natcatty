@@ -14,10 +14,46 @@ const {
   logTerminalOutputDropSample,
 } = require("../terminalInterruptDiagnostics.cjs");
 const { runWhenProxyConnectionReady } = require("../proxyUtils.cjs");
+const { getAttachHomeWebContentsId } = require("../terminalAttachRestore.cjs");
 
 const SSH_TCP_CONNECT_TIMEOUT_MS = 20000;
 const SSH_AUTH_READY_TIMEOUT_MS = 120000;
 const MAX_SSH_CONNECTION_TIMEOUT_MS = 3600000;
+
+/**
+ * Fan out netcatty:exit to the primary contents plus any attach-home owner
+ * (AI observe popup rebind) so neither side is left stale.
+ */
+function safeSendSessionExit(ctx, primaryContents, sessionId, payload) {
+  const { safeSend, electronModule, sessions } = ctx;
+  const seen = new Set();
+  const sendTo = (contents) => {
+    if (!contents || typeof contents.id !== "number" || seen.has(contents.id)) return;
+    seen.add(contents.id);
+    try {
+      safeSend(contents, "netcatty:exit", payload);
+    } catch {
+      // ignore destroyed renderers
+    }
+  };
+  sendTo(primaryContents);
+  try {
+    const live = sessions?.get?.(sessionId);
+    if (typeof live?.webContentsId === "number") {
+      sendTo(electronModule?.webContents?.fromId?.(live.webContentsId));
+    }
+  } catch {
+    // ignore
+  }
+  try {
+    const homeId = getAttachHomeWebContentsId(sessionId);
+    if (typeof homeId === "number") {
+      sendTo(electronModule?.webContents?.fromId?.(homeId));
+    }
+  } catch {
+    // ignore
+  }
+}
 
 function normalizeSshConnectionTimeoutMs(value, fallback) {
   return Number.isFinite(value) && value >= 1000 && value <= MAX_SSH_CONNECTION_TIMEOUT_MS
@@ -318,6 +354,17 @@ printf '%s\n' '${scanCompleteMarker}'`;
       session.takePendingData = takePendingBuffer;
       session.discardPendingData = discardBuffer;
 
+      const getCurrentSessionWebContents = () => {
+        const currentId = sessions.get(sessionId)?.webContentsId;
+        if (typeof currentId === "number") {
+          const current = electronModule?.webContents?.fromId?.(currentId);
+          if (current) return current;
+        }
+        return event.sender;
+      };
+      const getCurrentSessionWebContentsId = () =>
+        getCurrentSessionWebContents()?.id ?? event.sender.id;
+
       const sshZmodemSentry = createZmodemSentry({
         sessionId,
         onData(buf) {
@@ -375,19 +422,19 @@ printf '%s\n' '${scanCompleteMarker}'`;
               clearTimeout(timer);
               resolve({ action: payload.action, applyToRest: !!payload.applyToRest });
             });
-            safeSend(event.sender, "netcatty:zmodem:overwrite-request", {
+            safeSend(getCurrentSessionWebContents(), "netcatty:zmodem:overwrite-request", {
               sessionId, requestId, filename,
             });
           });
         },
         getWebContents() {
-          return event.sender;
+          return getCurrentSessionWebContents();
         },
         selectUploadFiles: selectZmodemUploadFiles
-          ? () => selectZmodemUploadFiles(event.sender.id)
+          ? () => selectZmodemUploadFiles(getCurrentSessionWebContentsId())
           : undefined,
         selectDownloadDirectory: selectZmodemDownloadDirectory
-          ? () => selectZmodemDownloadDirectory(event.sender.id)
+          ? () => selectZmodemDownloadDirectory(getCurrentSessionWebContentsId())
           : undefined,
         label: "SSH",
       });
@@ -487,8 +534,10 @@ printf '%s\n' '${scanCompleteMarker}'`;
             const contents = event.sender;
             const liveSession = sessions.get(sessionId);
             const transportError = liveSession?._transportError;
-            if (transportError) {
-              safeSend(contents, "netcatty:exit", { sessionId, exitCode: 1, error: transportError, reason: "error" });
+            if (liveSession?.closed) {
+              // Explicit close already notified every attached renderer.
+            } else if (transportError) {
+              safeSendSessionExit({ safeSend, electronModule, sessions }, contents, sessionId, { sessionId, exitCode: 1, error: transportError, reason: "error" });
             } else {
               // A shell TMOUT auto-logout is a clean exit (numeric code, no
               // signal) — identical to a user-typed `exit` by code/signal —
@@ -497,7 +546,7 @@ printf '%s\n' '${scanCompleteMarker}'`;
               // for reconnect instead of auto-closing it (#1062 / #977).
               const idleTimedOut = streamExited && looksLikeIdleAutoLogout(liveSession?._promptTrackTail);
               const reason = idleTimedOut ? "timeout" : (streamExited ? "exited" : "closed");
-              safeSend(contents, "netcatty:exit", { sessionId, exitCode: streamExitCode, reason });
+              safeSendSessionExit({ safeSend, electronModule, sessions }, contents, sessionId, { sessionId, exitCode: streamExitCode, reason });
             }
             liveSession?.zmodemSentry?.cancel();
             // Release this channel's hold on the shared connection. The transport
@@ -1765,7 +1814,7 @@ printf '%s\n' '${scanCompleteMarker}'`;
                 hostname: options.hostname,
               });
             } else {
-              safeSend(contents, "netcatty:exit", { sessionId, exitCode: 1, error: err.message, reason: "error" });
+              safeSendSessionExit({ safeSend, electronModule, sessions }, contents, sessionId, { sessionId, exitCode: 1, error: err.message, reason: "error" });
             }
             sessionLogStreamManager.stopStream(sessionId, ownerLogStreamToken);
             if (detachX11Forwarding) {
@@ -1800,7 +1849,7 @@ printf '%s\n' '${scanCompleteMarker}'`;
             });
             const contents = event.sender;
             sendProgress(totalHops, totalHops, options.hostname, 'error', err.message);
-            safeSend(contents, "netcatty:exit", { sessionId, exitCode: 1, error: err.message, reason: "timeout" });
+            safeSendSessionExit({ safeSend, electronModule, sessions }, contents, sessionId, { sessionId, exitCode: 1, error: err.message, reason: "timeout" });
             sessionLogStreamManager.stopStream(sessionId, ownerLogStreamToken);
             sessions.get(sessionId)?.zmodemSentry?.cancel();
             closeTerminalOutputSession?.(sessionId);
@@ -1839,9 +1888,9 @@ printf '%s\n' '${scanCompleteMarker}'`;
               const transportError = session?._transportError;
               if (transportError) {
                 // A transport error was recorded — report it as an error exit
-                safeSend(contents, "netcatty:exit", { sessionId, exitCode: 1, error: transportError, reason: "error" });
+                safeSendSessionExit({ safeSend, electronModule, sessions }, contents, sessionId, { sessionId, exitCode: 1, error: transportError, reason: "error" });
               } else {
-                safeSend(contents, "netcatty:exit", { sessionId, exitCode: 0, reason: "closed" });
+                safeSendSessionExit({ safeSend, electronModule, sessions }, contents, sessionId, { sessionId, exitCode: 0, reason: "closed" });
               }
               // Use this connection's captured token so a late close from an
               // old transport can't stop a newer same-sessionId stream (#916).
@@ -1953,7 +2002,7 @@ printf '%s\n' '${scanCompleteMarker}'`;
         const suppressPreShellAuthExit = Boolean(options._suppressPreShellAuthExit && isAuthError);
         if (!suppressPreShellAuthExit) {
           const contents = event.sender;
-          safeSend(contents, "netcatty:exit", { sessionId, exitCode: 1, error: err.message });
+          safeSendSessionExit({ safeSend, electronModule, sessions }, contents, sessionId, { sessionId, exitCode: 1, error: err.message });
         }
         throw err;
       }
