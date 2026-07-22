@@ -13,6 +13,20 @@ test("normal backend exited events close the session tab", () => {
   );
 });
 
+test("non-zero backend exits keep the tab and mark it disconnected", () => {
+  assert.deepEqual(
+    resolveTerminalSessionExitIntent({ reason: "exited", exitCode: 1 }),
+    { kind: "markDisconnected" },
+  );
+});
+
+test("backend exits without a confirmed clean exit code keep the tab", () => {
+  assert.deepEqual(
+    resolveTerminalSessionExitIntent({ reason: "exited" }),
+    { kind: "markDisconnected" },
+  );
+});
+
 test("backend timeout events keep the tab and mark it disconnected", () => {
   assert.deepEqual(
     resolveTerminalSessionExitIntent({ reason: "timeout", error: "idle timeout" }),

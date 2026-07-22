@@ -9,18 +9,22 @@ export type TerminalSessionExitIntent =
   | { kind: "closeSession" }
   | { kind: "markDisconnected" };
 
+function isConfirmedCleanExit(evt: TerminalSessionExitEvent): boolean {
+  return evt.reason === "exited" && evt.exitCode === 0;
+}
+
 export function resolveTerminalSessionExitIntent(
   evt: TerminalSessionExitEvent,
 ): TerminalSessionExitIntent {
-  if (evt.reason === "exited") {
+  if (isConfirmedCleanExit(evt)) {
     return { kind: "closeSession" };
   }
 
-  // Timeouts, transport errors, and channel closes should keep the tab visible
-  // so the user can inspect output and reconnect.
+  // Non-zero or unknown exits, timeouts, transport errors, and channel closes
+  // should keep the tab visible so the user can inspect output and reconnect.
   return { kind: "markDisconnected" };
 }
 
 export function shouldCloseTerminalPopupOnExit(evt: TerminalSessionExitEvent): boolean {
-  return evt.reason === "exited" && evt.exitCode === 0;
+  return isConfirmedCleanExit(evt);
 }

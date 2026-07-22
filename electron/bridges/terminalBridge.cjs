@@ -997,8 +997,8 @@ function startLocalSession(event, payload) {
       sessions.delete(sessionId);
       if (session.closed) return;
       // Signal present = killed externally (show disconnected UI).
-      // No signal = process exited normally, even with non-zero code
-      // (e.g. user typed `exit` after a failed command), so auto-close.
+      // No signal = the process exited and the renderer decides whether to
+      // auto-close based on the reported exit code.
       const reason = evt.signal ? "error" : "exited";
       fanoutSessionLifecycleEvent(
         sessionId,
