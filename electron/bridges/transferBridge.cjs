@@ -1445,7 +1445,12 @@ function startTransfer(event, payload, onProgress) {
 async function cancelTransfer(event, payload) {
   const { transferId } = payload;
   if (transferId) pendingCancelTransferIds.add(String(transferId));
-  if (cancelQueuedTransfer(transferId)) return { success: true };
+  if (cancelQueuedTransfer(transferId)) {
+    // Queued cancel already settled the job; clear pending so a later retry
+    // with a new open can proceed if the UI reuses the id unexpectedly.
+    pendingCancelTransferIds.delete(String(transferId));
+    return { success: true };
+  }
   const transfer = activeTransfers.get(transferId);
   if (transfer) {
     transfer.cancelled = true;
@@ -1463,6 +1468,11 @@ async function cancelTransfer(event, payload) {
     }
   }
   return { success: true };
+}
+
+/** Clear a pre-start cancel latch (used when retrying the same transfer id). */
+function clearPendingCancel(transferId) {
+  if (transferId) pendingCancelTransferIds.delete(String(transferId));
 }
 
 async function pauseTransfer(_event, payload) {
@@ -1758,6 +1768,7 @@ module.exports = {
   startTransfer,
   runAdmittedTransfer,
   cancelTransfer,
+  clearPendingCancel,
   pauseTransfer,
   resumeTransfer,
   prioritizeTransfer,

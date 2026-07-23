@@ -1572,6 +1572,7 @@ export const useSftpTransfers = ({
     if (!panes?.sourcePane.connection || !panes.targetPane.connection) return;
     // Keep checkpoint / fingerprint fields so resume restarts from the saved byte offset.
     const hasConflict = !!task.conflict;
+    const isDirectoryResume = !!task.isDirectory && !hasConflict;
     const adoptedTask: TransferTask = {
       ...task,
       ownerId,
@@ -1581,10 +1582,14 @@ export const useSftpTransfers = ({
         : panes.targetPane.connection.id,
       // Conflict rows stay in attention until resolveConflict applies the action.
       // Other reconnects stay "pending" + reconnectRequired for the spinner.
+      // Directory resume: skip re-prompting conflict when the target already
+      // exists from the first attempt (merge/continue semantics).
       status: hasConflict ? "attention" : "pending",
       reconnectRequired: !hasConflict,
       error: hasConflict ? task.error : undefined,
       speed: 0,
+      skipConflictCheck: isDirectoryResume ? true : task.skipConflictCheck,
+      replaceExistingTarget: isDirectoryResume ? false : task.replaceExistingTarget,
     };
     // Re-home orphaned children under this parent so directory resume can skip
     // already-completed files using persisted checkpoints (same ownerId).

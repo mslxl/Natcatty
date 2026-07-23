@@ -352,8 +352,8 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
         return;
       }
       if (afterDedicated.status === "paused" || afterDedicated.status === "interrupted") {
-        // Failed dedicated resume after user stop — keep interrupted/paused.
-        try { await netcattyBridge.get()?.cancelTransfer?.(taskId); } catch { /* best-effort */ }
+        // Keep interrupted/paused without calling cancelTransfer — that would
+        // poison pendingCancelTransferIds and break a later same-id resume.
         return;
       }
       const cancelLike = /cancelled|canceled/i.test(result.error || "");
@@ -419,7 +419,13 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
       if (prepared?.cancelled || !currentTask || ["cancelled", "completed"].includes(currentTask.status)) return;
       if (task && adopter) {
         const [adopterId, adopterControls] = adopter;
-        tasks = tasks.map((candidate) => candidate.id === taskId ? { ...candidate, ownerId: adopterId } : candidate);
+        // Rehome parent + directory children together so completed child
+        // checkpoints survive publishOwner / foreign-owner stripping.
+        tasks = tasks.map((candidate) => (
+          candidate.id === taskId || candidate.parentTaskId === taskId
+            ? { ...candidate, ownerId: adopterId }
+            : candidate
+        ));
         emit();
         await adopterControls.adopt?.({ ...task, ownerId: adopterId, reconnectRequired: true });
         return;
