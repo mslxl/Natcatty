@@ -489,7 +489,7 @@ function decideCodexLoopAction({
   eligible,
   outcome,
   round = 0,
-  maxRounds = 3,
+  maxRounds = 40,
   hasAutomationRequest = false,
   hasCodexActivity = false,
 } = {}) {

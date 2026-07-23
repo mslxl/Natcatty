@@ -193,7 +193,7 @@ test('decideCodexLoopAction fixes only actionable dirty', () => {
     eligible: true,
     hasCodexActivity: true,
     round: 1,
-    maxRounds: 3,
+    maxRounds: 40,
     outcome: { clean: false, actionable: true, reason: 'codex_findings' },
   });
   assert.equal(d.action, 'fix');

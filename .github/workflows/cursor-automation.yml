@@ -597,7 +597,7 @@ jobs:
     timeout-minutes: 120
     env:
       PULL_NUMBER: ${{ needs.route.outputs.pull_number }}
-      MAX_ROUNDS: ${{ vars.CURSOR_CODEX_FIX_MAX_ROUNDS || '3' }}
+      MAX_ROUNDS: ${{ vars.CURSOR_CODEX_FIX_MAX_ROUNDS || '40' }}
       OWN_ACTORS: ${{ vars.AUTOMATION_OWN_ACTORS || 'binaricat' }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
@@ -680,7 +680,7 @@ jobs:
               eligible,
               outcome,
               round,
-              maxRounds: Number(process.env.MAX_ROUNDS || '3'),
+              maxRounds: Number(process.env.MAX_ROUNDS || '40'),
               hasAutomationRequest: auto.hasAutomationCodexRequest(issueComments),
               hasCodexActivity,
             });

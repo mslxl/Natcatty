@@ -23,7 +23,7 @@ status pings.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `CURSOR_CODEX_FIX_MAX_ROUNDS` | `3` | Max Cursor fix ↔ `@codex review` loops on own/bot PRs |
+| `CURSOR_CODEX_FIX_MAX_ROUNDS` | `40` | Max Cursor fix ↔ `@codex review` loops on own/bot PRs |
 | `CURSOR_TRIAGE_DAILY_LIMIT` | `10` | Daily auto triage for non-collaborators |
 | `AUTOMATION_OWN_ACTORS` | `binaricat` | Logins treated as first-party PR authors |
 
