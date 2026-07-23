@@ -1,6 +1,7 @@
 import type { MutableRefObject } from "react";
 import type { FileConflict, FileConflictAction, SftpFileEntry, SftpFilenameEncoding, TransferStatus, TransferTask } from "../../../domain/models";
 import type { SftpPane } from "./types";
+import type { AcquireTransferSessionFn } from "./transferDirectoryOps";
 
 export interface UseSftpTransfersParams {
   ownerId: string;
@@ -16,6 +17,8 @@ export interface UseSftpTransfersParams {
   listLocalFiles: (path: string) => Promise<SftpFileEntry[]>;
   listRemoteFiles: (sftpId: string, path: string, encoding?: SftpFilenameEncoding) => Promise<SftpFileEntry[]>;
   handleSessionError: (side: "left" | "right", error: Error) => void;
+  /** FileZilla-style dedicated transfer sessions (1–2 per host). */
+  acquireTransferSession?: AcquireTransferSessionFn;
 }
 
 export interface UseSftpTransfersResult {

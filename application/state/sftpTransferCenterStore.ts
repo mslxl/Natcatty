@@ -7,6 +7,7 @@ import {
   serializeSftpTransferCenter,
 } from "../../domain/sftpTransferCenter";
 import { STORAGE_KEY_SFTP_TRANSFER_CENTER } from "../../infrastructure/config/storageKeys";
+import { netcattyBridge } from "../../infrastructure/services/netcattyBridge";
 
 type Listener = () => void;
 
@@ -30,12 +31,16 @@ export interface SftpTransferCenterSnapshot {
   attentionCount: number;
 }
 
+export type DedicatedTransferResumeHandler = (task: TransferTask) => Promise<{ success: boolean; error?: string }>;
+
 export interface SftpTransferCenterStore {
   subscribe(listener: Listener): () => void;
   getSnapshot(): SftpTransferCenterSnapshot;
   getOwnerTasks(ownerId: string): TransferTask[];
   publishOwner(ownerId: string, tasks: readonly TransferTask[]): void;
   registerOwner(ownerId: string, controls: SftpTransferOwnerControls): () => void;
+  setDedicatedResumeHandler(handler: DedicatedTransferResumeHandler | null): void;
+  patchTask(taskId: string, updates: Partial<TransferTask>): void;
   canControl(taskId: string): boolean;
   pause(taskId: string): Promise<void>;
   resume(taskId: string): Promise<void>;
@@ -100,6 +105,7 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
   const controllers = new Map<string, SftpTransferOwnerControls>();
   const resumeInvocations = new Map<string, Promise<void>>();
   const resumePreparationFailures = new Map<string, string>();
+  let dedicatedResumeHandler: DedicatedTransferResumeHandler | null = null;
 
   const persist = () => {
     persistence?.write(serializeSftpTransferCenter(tasks));
@@ -125,7 +131,15 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
     let preparationError: string | undefined;
     let cancelled = false;
     if (!adopter && typeof globalThis.window !== "undefined") {
-      for (let attempt = 0; attempt < 600 && !adopter && !preparationError; attempt += 1) {
+      // Open the SFTP panel on the active terminal tab first so a preparer can
+      // register, then ask it to reconnect the required hosts.
+      globalThis.window.dispatchEvent(new CustomEvent("netcatty:open-sftp-transfer-target", {
+        detail: { task, forResume: true },
+      }));
+      // ~45s is enough for MFA/password prompts; longer felt like a hang.
+      const maxAttempts = 90;
+      let prepareDispatched = false;
+      for (let attempt = 0; attempt < maxAttempts && !adopter && !preparationError; attempt += 1) {
         const currentTask = tasks.find((candidate) => candidate.id === task.id);
         if (!currentTask || ["cancelled", "completed"].includes(currentTask.status)) {
           cancelled = true;
@@ -134,19 +148,31 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
         preparationError = resumePreparationFailures.get(task.id);
         if (preparationError) break;
         const preparer = [...controllers.entries()].find(([, controls]) => controls.canPrepareAdoption);
-        if (preparer) {
+        if (preparer && !prepareDispatched) {
+          prepareDispatched = true;
           globalThis.window.dispatchEvent(new CustomEvent("netcatty:prepare-sftp-transfer-resume", {
             detail: {
               task,
               targetOwnerId: preparer[0],
               reportFailure: (error: string) => {
                 preparationError = error;
+                resumePreparationFailures.set(task.id, error);
               },
             },
           }));
+        } else if (!preparer && attempt === 10) {
+          // Re-request panel open if nothing registered after a few seconds.
+          globalThis.window.dispatchEvent(new CustomEvent("netcatty:open-sftp-transfer-target", {
+            detail: { task, forResume: true },
+          }));
+          prepareDispatched = false;
         }
         await new Promise((resolve) => setTimeout(resolve, 500));
         adopter = findAdopter(task);
+      }
+      if (!adopter && !preparationError && !cancelled) {
+        preparationError = resumePreparationFailures.get(task.id)
+          ?? "Could not reconnect in time. Open an SFTP panel and try again.";
       }
     }
     resumePreparationFailures.delete(task.id);
@@ -156,16 +182,127 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
     const ownerId = findOwner(taskId);
     let controller = ownerId ? controllers.get(ownerId) : undefined;
     const task = tasks.find((candidate) => candidate.id === taskId);
-    if (
-      action === "resume"
-      && task
-      && controller?.canAdopt
-      && !controller.canAdopt(task)
-    ) {
+    // After app restart (or any reconnectRequired task), a retained panel owner
+    // often cannot resume (missing panes / dead sftpId). Prefer a dedicated
+    // transfer session instead of failing with "Reconnect the source and target".
+    const needsDedicatedReconnect = action === "resume" && !!task && (
+      task.reconnectRequired === true
+      || task.status === "interrupted"
+      || task.status === "attention"
+      || task.ownerId === "background-agent"
+    );
+    if (needsDedicatedReconnect && controller && !controller.canAdopt?.(task)) {
       controller = undefined;
     }
-    if (action === "resume" && task?.ownerId === "background-agent" && task.reconnectRequired) {
-      controller = undefined;
+    // Prefer the live owner controller for pause/resume of still-active work.
+    // Do NOT drop it just because canAdopt is false when the transfer is still
+    // live in the backend — downloads often have only a remote pane open.
+    if (action === "resume" && task && (needsDedicatedReconnect || !controller)) {
+      // Immediate UI feedback: spinner + "Reconnecting…" while we open a session.
+      tasks = tasks.map((candidate) => candidate.id === taskId ? {
+        ...candidate,
+        status: "pending",
+        error: undefined,
+        speed: 0,
+        phase: undefined,
+        reconnectRequired: true,
+      } : candidate);
+      emit();
+    }
+    if (!controller && (action === "resume" || action === "pause")) {
+      // Transfer-owned session leases keep the backend transfer alive after the
+      // SFTP panel disconnects/unmounts. Unpause/pause directly before forcing
+      // a UI re-connect.
+      try {
+        const bridge = netcattyBridge.get();
+        if (action === "resume" && bridge?.resumeTransfer) {
+          const live = await bridge.resumeTransfer(taskId);
+          if (live?.success) {
+            tasks = tasks.map((candidate) => candidate.id === taskId ? {
+              ...candidate,
+              status: "transferring",
+              error: undefined,
+              reconnectRequired: false,
+              pauseUnavailableReason: undefined,
+              phase: undefined,
+              speed: candidate.speed,
+            } : candidate);
+            emit();
+            return;
+          }
+        }
+        if (action === "pause" && bridge?.pauseTransfer) {
+          const live = await bridge.pauseTransfer(taskId);
+          if (live?.success) {
+            tasks = tasks.map((candidate) => candidate.id === taskId ? {
+              ...candidate,
+              status: "paused",
+              speed: 0,
+              checkpointBytes: live.checkpointBytes ?? candidate.checkpointBytes,
+              resumeStage: live.resumeStage ?? candidate.resumeStage,
+              downloadCheckpointBytes: live.downloadCheckpointBytes ?? candidate.downloadCheckpointBytes,
+              uploadCheckpointBytes: live.uploadCheckpointBytes ?? candidate.uploadCheckpointBytes,
+              sourceFingerprint: live.sourceFingerprint ?? candidate.sourceFingerprint,
+            } : candidate);
+            emit();
+            return;
+          }
+        }
+      } catch {
+        // Bridge unavailable (tests / non-Electron) — fall through.
+      }
+      // Dead "transferring" rows after restart have no backend handle. Demote
+      // them so pause-all / the UI stop claiming work is still active.
+      if (action === "pause" && task && ["transferring", "pausing", "pending", "queued"].includes(task.status)) {
+        tasks = tasks.map((candidate) => candidate.id === taskId ? {
+          ...candidate,
+          status: "interrupted",
+          speed: 0,
+          phase: undefined,
+          reconnectRequired: true,
+          error: candidate.error ?? "Transfer was interrupted. Resume to continue.",
+        } : candidate);
+        emit();
+        return;
+      }
+    }
+    // Preferred path after app restart / closed server: open a dedicated SFTP
+    // session from vault credentials and continue from the checkpoint. Does not
+    // require any UI panel to still be open.
+    if ((!controller || needsDedicatedReconnect) && action === "resume" && task && dedicatedResumeHandler) {
+      const latest = tasks.find((candidate) => candidate.id === taskId) ?? task;
+      const result = await dedicatedResumeHandler({
+        ...latest,
+        reconnectRequired: true,
+      });
+      if (result.success) {
+        tasks = tasks.map((candidate) => candidate.id === taskId ? {
+          ...candidate,
+          status: "completed",
+          transferredBytes: Math.max(candidate.transferredBytes, candidate.totalBytes || candidate.transferredBytes),
+          speed: 0,
+          endTime: Date.now(),
+          error: undefined,
+          reconnectRequired: false,
+          phase: undefined,
+        } : candidate);
+        emit();
+        return;
+      }
+      // Dedicated path may return a soft failure for server-to-server tasks so
+      // we can fall through to panel adoption. Hard failures stop here.
+      if (result.error && !/SFTP panel|both hosts/i.test(result.error)) {
+        tasks = tasks.map((candidate) => candidate.id === taskId ? {
+          ...candidate,
+          status: "attention",
+          error: result.error,
+          reconnectRequired: true,
+          speed: 0,
+          phase: undefined,
+        } : candidate);
+        emit();
+        return;
+      }
     }
     if (!controller && action === "resume") {
       const prepared = task ? await prepareAdopter(task) : undefined;
@@ -176,20 +313,25 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
         const [adopterId, adopterControls] = adopter;
         tasks = tasks.map((candidate) => candidate.id === taskId ? { ...candidate, ownerId: adopterId } : candidate);
         emit();
-        await adopterControls.adopt?.({ ...task, ownerId: adopterId });
+        await adopterControls.adopt?.({ ...task, ownerId: adopterId, reconnectRequired: true });
         return;
       }
       if (task) {
         tasks = tasks.map((candidate) => candidate.id === taskId ? {
           ...candidate,
           status: "attention",
-          error: prepared?.error ?? "Reconnect and authenticate to the source and target before resuming",
+          error: prepared?.error ?? "Could not reconnect. Check the host credentials and try again.",
           reconnectRequired: true,
         } : candidate);
         emit();
       }
     }
-    if (!controller && action === "cancel" && task && ["paused", "interrupted", "attention", "pending", "queued"].includes(task.status)) {
+    if (!controller && action === "cancel" && task && ["paused", "interrupted", "attention", "pending", "queued", "transferring", "pausing"].includes(task.status)) {
+      try {
+        await netcattyBridge.get()?.cancelTransfer?.(taskId);
+      } catch {
+        // Best-effort backend cancel when the owning panel is gone / no window.
+      }
       tasks = tasks.map((candidate) => candidate.id === taskId ? {
         ...candidate,
         status: "cancelled",
@@ -235,10 +377,30 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
         if (controllers.get(ownerId) === controls) controllers.delete(ownerId);
       };
     },
+    setDedicatedResumeHandler(handler) {
+      dedicatedResumeHandler = handler;
+    },
+    patchTask(taskId, updates) {
+      let changed = false;
+      tasks = tasks.map((task) => {
+        if (task.id !== taskId) return task;
+        changed = true;
+        return { ...task, ...updates, updatedAt: Date.now() };
+      });
+      if (changed) emit();
+    },
     canControl(taskId) {
       const ownerId = findOwner(taskId);
       const task = tasks.find((candidate) => candidate.id === taskId);
-      return (!!ownerId && controllers.has(ownerId)) || task?.status === "interrupted" || task?.status === "attention" || !!(task && [...controllers.values()].some((controls) => (
+      if (!task) return false;
+      const hasLiveOwner = !!ownerId && controllers.has(ownerId);
+      if (hasLiveOwner) return true;
+      // After restart (or panel unmount) unfinished tasks stay in the store with
+      // no owner controller. The global center must still be able to resume,
+      // cancel, or dismiss them — otherwise they become dead rows.
+      const terminal = task.status === "completed" || task.status === "failed" || task.status === "cancelled";
+      if (!terminal) return true;
+      return !!(task && [...controllers.values()].some((controls) => (
         controls.adopt && controls.canAdopt?.(task)
       )));
     },

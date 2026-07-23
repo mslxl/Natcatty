@@ -261,6 +261,7 @@ export const enVaultMessages: Messages = {
   'sftp.transferCenter.bucket.failed': 'Failed',
   'sftp.transferCenter.bucket.completed': 'Completed',
   'sftp.transferCenter.status.pending': 'Preparing',
+  'sftp.transferCenter.status.resuming': 'Reconnecting and resuming…',
   'sftp.transferCenter.status.queued': 'Queued',
   'sftp.transferCenter.status.transferring': 'Transferring',
   'sftp.transferCenter.status.pausing': 'Finishing the current step',

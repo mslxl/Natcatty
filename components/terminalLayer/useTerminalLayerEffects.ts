@@ -4,6 +4,10 @@ import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import { terminalLayoutSuppressStore } from '../../application/state/terminalLayoutSuppressStore';
 import { useSftpBackend } from '../../application/state/useSftpBackend';
 import { sftpTransferCenterStore } from '../../application/state/sftpTransferCenterStore';
+import {
+  resolveSftpTransferNavigationPath,
+  resolveSftpTransferNavigationTarget,
+} from '../../domain/sftpTransferNavigation';
 import { AI_PANEL_FORCE_HIDE_SHELL } from '../ai/aiPanelDiagnostics';
 import { getTerminalSidePanelShellWidth } from './TerminalLayerSidePanelSection';
 
@@ -267,16 +271,19 @@ export function useTerminalLayerEffects(ctx: TerminalLayerEffectsContext) {
       const task = detail?.task ?? detail;
       const forResume = detail?.forResume === true;
       if (!task) return;
-      if (task.targetConnectionId === 'local' && !forResume) {
-        void openPath(task.isDirectory ? task.targetPath : task.targetPath.replace(/[\\/][^\\/]+$/, ''));
+
+      const navigation = resolveSftpTransferNavigationTarget(task, forResume);
+      if (navigation.kind === 'local-path') {
+        void openPath(resolveSftpTransferNavigationPath(task, false));
         return;
       }
+
       const tabId = activeTabIdRef.current;
-      const useSource = forResume && task.targetConnectionId === 'local';
-      const isLocalCopy = task.direction === 'local-copy'
-        || (task.sourceConnectionId === 'local' && task.targetConnectionId === 'local');
-      if (forResume && isLocalCopy) {
+      if (navigation.kind === 'local-copy-panel') {
         if (!tabId) {
+          // Opening the panel is best-effort for resume UX; the store still
+          // resumes live backend transfers through the owner controller.
+          if (forResume) return;
           sftpTransferCenterStore.reportResumePreparationFailure(
             task.id,
             'Open a terminal window before resuming this transfer',
@@ -286,13 +293,17 @@ export function useTerminalLayerEffects(ctx: TerminalLayerEffectsContext) {
         setSidePanelOpenTabs((prev: Map<string, any>) => new Map(prev).set(tabId, 'sftp'));
         return;
       }
-      const hostId = useSource ? task.sourceHostId : task.targetHostId;
-      const host = effectiveHosts?.find?.((candidate: any) => candidate.id === hostId);
+
+      const host = effectiveHosts?.find?.((candidate: any) => candidate.id === navigation.hostId)
+        || effectiveHosts?.find?.((candidate: any) => {
+          const needle = String(task.sourceHostLabel || task.targetHostLabel || '').trim().toLowerCase();
+          if (!needle) return false;
+          return String(candidate.label || '').trim().toLowerCase() === needle
+            || String(candidate.hostname || '').trim().toLowerCase() === needle;
+        });
       if (!host) {
-        sftpTransferCenterStore.reportResumePreparationFailure(
-          task.id,
-          'The original server no longer exists',
-        );
+        // Do not fail hard here — dedicated resume opens its own SFTP session
+        // from vault credentials even when this panel helper cannot resolve a host.
         return;
       }
       if (!tabId) {
@@ -302,9 +313,7 @@ export function useTerminalLayerEffects(ctx: TerminalLayerEffectsContext) {
         );
         return;
       }
-      const targetDirectory = task.isDirectory
-        ? (useSource ? task.sourcePath : task.targetPath)
-        : (useSource ? task.sourcePath : task.targetPath).replace(/[\\/][^\\/]+$/, '') || '/';
+      const targetDirectory = resolveSftpTransferNavigationPath(task, navigation.useSourcePath);
       setSftpHostForTab((prev: Map<string, any>) => new Map(prev).set(tabId, host));
       setSftpInitialLocationForTab((prev: Map<string, any>) => new Map(prev).set(tabId, {
         hostId: host.id,

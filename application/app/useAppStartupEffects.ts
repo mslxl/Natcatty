@@ -6,6 +6,7 @@ import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
 import { localStorageAdapter } from '../../infrastructure/persistence/localStorageAdapter';
 import { toast } from '../../components/ui/toast';
 import { sftpTransferCenterStore } from '../state/sftpTransferCenterStore';
+import { resumeTransferWithDedicatedSession } from '../state/sftp/dedicatedTransferResume';
 import { STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY } from '../../infrastructure/config/storageKeys';
 
 type StartupEffectsContext = Record<string, any>;
@@ -49,6 +50,53 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
   useEffect(() => {
     sessionsRef.current = sessions;
   }, [sessions]);
+
+  // After app restart, unfinished transfers resume via a dedicated SFTP session
+  // built from vault credentials — no dependency on the original browse panel.
+  useEffect(() => {
+    if (!enabled || !isVaultInitialized) {
+      sftpTransferCenterStore.setDedicatedResumeHandler(null);
+      return;
+    }
+    sftpTransferCenterStore.setDedicatedResumeHandler(async (task) => {
+      // Keep reconnectRequired true until the first progress/completion so the
+      // play control stays a spinner during auth + session setup.
+      sftpTransferCenterStore.patchTask(task.id, {
+        status: "pending",
+        error: undefined,
+        reconnectRequired: true,
+        speed: 0,
+        phase: undefined,
+      });
+      return resumeTransferWithDedicatedSession(
+        task,
+        {
+          hosts,
+          keys,
+          identities,
+          knownHosts,
+          terminalSettings,
+        },
+        (progress) => {
+          sftpTransferCenterStore.patchTask(task.id, {
+            status: "transferring",
+            transferredBytes: progress.transferred,
+            ...(progress.total > 0 ? { totalBytes: progress.total } : {}),
+            speed: progress.speed,
+            checkpointBytes: progress.checkpointBytes,
+            resumeStage: progress.resumeStage,
+            downloadCheckpointBytes: progress.downloadCheckpointBytes,
+            uploadCheckpointBytes: progress.uploadCheckpointBytes,
+            sourceFingerprint: progress.sourceFingerprint,
+            reconnectRequired: false,
+            error: undefined,
+            phase: "transferring",
+          });
+        },
+      );
+    });
+    return () => sftpTransferCenterStore.setDedicatedResumeHandler(null);
+  }, [enabled, hosts, identities, isVaultInitialized, keys, knownHosts, terminalSettings]);
 
   // Show toast notification when update is available (only when auto-download is idle)
   useEffect(() => {

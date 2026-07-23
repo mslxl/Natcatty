@@ -263,11 +263,60 @@ const isolatedDownloadChannelPools = new WeakMap();
 // repeated failed exec attempts for each file in a multi-file transfer.
 const cpUnavailableSet = new Set();
 
+const {
+  sftpTransferSessionLeaseStore,
+} = require("./sftpTransferSessionLease.cjs");
+
 /**
  * Initialize the transfer bridge with dependencies
  */
 function init(deps) {
   sftpClients = deps.sftpClients;
+}
+
+function listTransferSftpIds(payload = {}) {
+  return [...new Set(
+    [payload.sourceSftpId, payload.targetSftpId].filter((id) => typeof id === "string" && id.length > 0),
+  )];
+}
+
+function acquireTransferSessionLeases(transferId, payload) {
+  const sftpIds = listTransferSftpIds(payload);
+  for (const sftpId of sftpIds) {
+    sftpTransferSessionLeaseStore.acquire(sftpId, transferId);
+  }
+  return sftpIds;
+}
+
+async function hardCloseSftpSession(sftpId) {
+  if (!sftpId) return;
+  try {
+    const sftpBridge = require("./sftpBridge.cjs");
+    if (typeof sftpBridge.closeSftp === "function") {
+      await sftpBridge.closeSftp(null, { sftpId, force: true });
+      return;
+    }
+  } catch (err) {
+    console.warn(`[Transfer] Failed to hard-close leased SFTP session ${sftpId}:`, err?.message || err);
+  }
+  // Fallback if bridge close is unavailable (unit tests with partial mocks).
+  const client = sftpClients?.get?.(sftpId);
+  if (!client) {
+    sftpTransferSessionLeaseStore.clear(sftpId);
+    return;
+  }
+  try { await client.end?.(); } catch { /* ignore */ }
+  sftpClients.delete(sftpId);
+  sftpTransferSessionLeaseStore.clear(sftpId);
+}
+
+function releaseTransferSessionLeases(transferId, sftpIds) {
+  for (const sftpId of sftpIds || []) {
+    const result = sftpTransferSessionLeaseStore.release(sftpId, transferId);
+    if (result.shouldHardClose) {
+      void hardCloseSftpSession(sftpId);
+    }
+  }
 }
 
 function setGlobalTransferConcurrency(limit) {
@@ -753,6 +802,10 @@ async function startTransferNow(event, payload, onProgress) {
     abort: null,
   };
   activeTransfers.set(transferId, transfer);
+  // Hold panel/agent SFTP sessions for the full transfer lifetime (including
+  // pause). Panel close becomes a soft-close until we release these leases.
+  const leasedSftpIds = acquireTransferSessionLeases(transferId, payload);
+  transfer.leasedSftpIds = leasedSftpIds;
   const transferCreatedAt = Date.now();
 
   // ── Progress/speed tracking ──────────────────────────────────────────────
@@ -827,8 +880,14 @@ async function startTransferNow(event, payload, onProgress) {
     }
   };
 
+  let leasesReleased = false;
   const cleanupTransfer = () => {
     activeTransfers.delete(transferId);
+    if (!leasesReleased) {
+      leasesReleased = true;
+      releaseTransferSessionLeases(transferId, transfer.leasedSftpIds || leasedSftpIds);
+      transfer.leasedSftpIds = [];
+    }
   };
 
   const sendProgress = (transferred, total) => {
@@ -1512,9 +1571,13 @@ async function sameHostCopyDirectory(event, payload) {
   const { sftpId, sourcePath, targetPath, encoding, transferId } = payload;
 
   // Register in activeTransfers so cancelTransfer can flag it
-  const transfer = { cancelled: false };
+  const transfer = { cancelled: false, leasedSftpIds: [] };
   if (transferId) {
     activeTransfers.set(transferId, transfer);
+    transfer.leasedSftpIds = acquireTransferSessionLeases(transferId, {
+      sourceSftpId: sftpId,
+      targetSftpId: sftpId,
+    });
   }
 
   try {
@@ -1560,6 +1623,8 @@ async function sameHostCopyDirectory(event, payload) {
   } finally {
     if (transferId) {
       activeTransfers.delete(transferId);
+      releaseTransferSessionLeases(transferId, transfer.leasedSftpIds || [sftpId]);
+      transfer.leasedSftpIds = [];
     }
   }
 }
@@ -1641,4 +1706,8 @@ module.exports = {
   getGlobalTransferConcurrency,
   cleanupTransferArtifacts,
   sameHostCopyDirectory,
+  // Test / integration helpers for session leases
+  acquireTransferSessionLeases,
+  releaseTransferSessionLeases,
+  listTransferSftpIds,
 };

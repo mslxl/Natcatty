@@ -76,7 +76,7 @@ test("SFTP uploads use conservative per-file request concurrency", async (t) => 
   );
 
   assert.equal(result.error, undefined);
-  assert.equal(observedConcurrency, 4);
+  assert.equal(observedConcurrency, 8);
   assert.equal(observedChunkSize, 32 * 1024);
 });
 
@@ -498,6 +498,8 @@ test("SFTP downloads keep concurrent files moving within the fast-channel budget
       targetType: "local",
       sourceSftpId: "source",
       totalBytes: 10,
+      // Isolate the fast-channel budget test from global file admission.
+      skipAdmission: true,
     },
   );
 
@@ -907,4 +909,65 @@ test("queued admission jobs can be paused, resumed, prioritized, and cancelled b
   firstSource.end(Buffer.from("a"));
   assert.equal((await first).error, undefined);
   assert.equal(secondSource.listenerCount("data"), 0);
+});
+
+test("transfer session leases hold SFTP ids across soft-close until release", async (t) => {
+  const {
+    sftpTransferSessionLeaseStore,
+  } = require("./sftpTransferSessionLease.cjs");
+  sftpTransferSessionLeaseStore.resetForTests();
+  t.after(() => sftpTransferSessionLeaseStore.resetForTests());
+
+  let hardCloseCalls = 0;
+  const sftpBridge = require("./sftpBridge.cjs");
+  const originalClose = sftpBridge.closeSftp;
+  sftpBridge.closeSftp = async (_event, payload) => {
+    if (payload?.force) {
+      hardCloseCalls += 1;
+      sftpTransferSessionLeaseStore.clear(payload.sftpId);
+      return { success: true, deferred: false };
+    }
+    if (sftpTransferSessionLeaseStore.markSoftClosed(payload.sftpId)) {
+      return {
+        success: true,
+        deferred: true,
+        leaseCount: sftpTransferSessionLeaseStore.getLeaseCount(payload.sftpId),
+      };
+    }
+    return { success: true, deferred: false };
+  };
+  t.after(() => {
+    sftpBridge.closeSftp = originalClose;
+  });
+
+  assert.deepEqual(
+    transferBridge.listTransferSftpIds({ sourceSftpId: "s1", targetSftpId: "s2", sourceHostId: "h" }),
+    ["s1", "s2"],
+  );
+
+  // Hold two transfers on s1 before soft-close (re-acquire after soft-close
+  // would clear the deferred flag by design).
+  transferBridge.acquireTransferSessionLeases("xfer-1", {
+    sourceSftpId: "s1",
+    targetSftpId: "s2",
+  });
+  transferBridge.acquireTransferSessionLeases("xfer-2", { sourceSftpId: "s1" });
+  assert.equal(sftpTransferSessionLeaseStore.getLeaseCount("s1"), 2);
+  assert.equal(sftpTransferSessionLeaseStore.getLeaseCount("s2"), 1);
+
+  const soft = await sftpBridge.closeSftp(null, { sftpId: "s1" });
+  assert.equal(soft.deferred, true);
+  assert.equal(sftpTransferSessionLeaseStore.isSoftClosed("s1"), true);
+  assert.equal(hardCloseCalls, 0);
+
+  transferBridge.releaseTransferSessionLeases("xfer-1", ["s1", "s2"]);
+  assert.equal(hardCloseCalls, 0);
+  assert.equal(sftpTransferSessionLeaseStore.isHeld("s1"), true);
+  assert.equal(sftpTransferSessionLeaseStore.isHeld("s2"), false);
+
+  // Last release on soft-closed session triggers hard close.
+  transferBridge.releaseTransferSessionLeases("xfer-2", ["s1"]);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(hardCloseCalls, 1);
+  assert.equal(sftpTransferSessionLeaseStore.isHeld("s1"), false);
 });

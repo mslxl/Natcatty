@@ -40,6 +40,7 @@ export const useSftpTransfers = ({
   listLocalFiles,
   listRemoteFiles,
   handleSessionError,
+  acquireTransferSession,
 }: UseSftpTransfersParams): UseSftpTransfersResult => {
   const [transfers, setTransfers] = useState<TransferTask[]>(() => sftpTransferCenterStore.getOwnerTasks(ownerId));
   const [conflicts, setConflicts] = useState<FileConflict[]>(() => sftpTransferCenterStore
@@ -82,18 +83,46 @@ export const useSftpTransfers = ({
 
   const resolveTaskEndpoints = useCallback((task: TransferTask) => {
     const sourceTab = getTabByConnectionId(task.sourceConnectionId);
-    const targetTab = getTabByConnectionId(task.targetConnectionId);
-    if (!sourceTab?.pane.connection || !targetTab?.pane.connection) {
+    const targetTab = task.targetConnectionId === "local"
+      ? null
+      : getTabByConnectionId(task.targetConnectionId);
+    const sourceByHost = !sourceTab && task.sourceHostId
+      ? (["left", "right"] as const).map((side) => {
+          const pane = getActivePane(side);
+          return pane?.connection?.hostId === task.sourceHostId ? { side, pane } : null;
+        }).find(Boolean)
+      : null;
+    const targetByHost = !targetTab && task.targetHostId
+      ? (["left", "right"] as const).map((side) => {
+          const pane = getActivePane(side);
+          return pane?.connection?.hostId === task.targetHostId ? { side, pane } : null;
+        }).find(Boolean)
+      : null;
+    const localTab = (["left", "right"] as const).map((side) => {
+      const pane = getActivePane(side);
+      return pane?.connection?.isLocal ? { side, pane } : null;
+    }).find(Boolean);
+
+    const source = sourceTab
+      ? { side: sourceTab.side, pane: sourceTab.pane }
+      : sourceByHost
+        ?? (!task.sourceHostId ? localTab : null);
+    const target = targetTab
+      ? { side: targetTab.side, pane: targetTab.pane }
+      : targetByHost
+        ?? (!task.targetHostId || task.targetConnectionId === "local" ? localTab : null);
+
+    if (!source?.pane.connection || !target?.pane.connection) {
       return null;
     }
 
     return {
-      sourceSide: sourceTab.side,
-      targetSide: targetTab.side,
-      sourcePane: sourceTab.pane,
-      targetPane: targetTab.pane,
+      sourceSide: source.side,
+      targetSide: target.side,
+      sourcePane: source.pane,
+      targetPane: target.pane,
     };
-  }, [getTabByConnectionId]);
+  }, [getActivePane, getTabByConnectionId]);
 
   const cleanupTaskArtifacts = useCallback(async (task: TransferTask) => {
     const endpoints = resolveTaskEndpoints(task);
@@ -150,6 +179,7 @@ export const useSftpTransfers = ({
     setTransfers,
     listLocalFiles,
     listRemoteFiles,
+    acquireTransferSession,
   });
 
   const processTransfer = async (
@@ -279,6 +309,8 @@ export const useSftpTransfers = ({
         startTime: Date.now(),
         phase: "transferring",
         resumable: task.resumable !== false,
+        reconnectRequired: false,
+        error: undefined,
       });
 
       // Run size discovery and conflict check in parallel
@@ -904,6 +936,8 @@ export const useSftpTransfers = ({
     if (!task || (
       task.status !== "paused"
       && task.status !== "interrupted"
+      && task.status !== "pending"
+      && task.status !== "attention"
       && !(task.status === "failed" && (task.checkpointBytes ?? 0) > 0)
     )) return;
     releasePausedTransfer(transferId);
@@ -939,11 +973,29 @@ export const useSftpTransfers = ({
       const endpoints = resolveTaskEndpoints(task);
       if (!endpoints) {
         setTransfers((prev) => prev.map((candidate) => candidate.id === transferId
-          ? { ...candidate, status: "attention" as TransferStatus, error: "Reconnect the source and target before resuming" }
+          ? {
+              ...candidate,
+              status: "interrupted" as TransferStatus,
+              error: undefined,
+              reconnectRequired: true,
+              speed: 0,
+            }
           : candidate));
+        if (!task.reconnectRequired) {
+          void sftpTransferCenterStore.resume(transferId);
+        } else {
+          setTransfers((prev) => prev.map((candidate) => candidate.id === transferId
+            ? {
+                ...candidate,
+                status: "attention" as TransferStatus,
+                error: "Could not open the remote host for resume. Check credentials and try again.",
+                reconnectRequired: true,
+              }
+            : candidate));
+        }
         return;
       }
-      const restartedTask = { ...task, status: "queued" as TransferStatus, error: undefined };
+      const restartedTask = { ...task, status: "queued" as TransferStatus, error: undefined, reconnectRequired: false };
       setTransfers((prev) => prev.map((candidate) => candidate.id === transferId ? restartedTask : candidate));
       void processTransfer(restartedTask, endpoints.sourcePane, endpoints.targetPane, endpoints.targetSide);
       return;
@@ -953,16 +1005,43 @@ export const useSftpTransfers = ({
     )));
     if (backendIds.length < activeIds.length || results.some((result) => result.success)) {
       setTransfers((prev) => prev.map((candidate) => candidate.id === transferId
-        ? { ...candidate, status: "transferring" as TransferStatus, pauseUnavailableReason: undefined }
+        ? {
+            ...candidate,
+            status: "transferring" as TransferStatus,
+            error: undefined,
+            pauseUnavailableReason: undefined,
+            reconnectRequired: false,
+          }
         : candidate));
       return;
     }
 
     const endpoints = resolveTaskEndpoints(task);
     if (!endpoints) {
+      // Hand back to the global center so it can open a dedicated SFTP session
+      // instead of leaving a dead "Reconnect the source and target" row.
       setTransfers((prev) => prev.map((candidate) => candidate.id === transferId
-        ? { ...candidate, status: "attention" as TransferStatus, error: "Reconnect the source and target before resuming" }
+        ? {
+            ...candidate,
+            status: "interrupted" as TransferStatus,
+            error: undefined,
+            reconnectRequired: true,
+            speed: 0,
+          }
         : candidate));
+      // Avoid re-entrancy loops: only bounce when we still have a live owner path.
+      if (!task.reconnectRequired) {
+        void sftpTransferCenterStore.resume(transferId);
+      } else {
+        setTransfers((prev) => prev.map((candidate) => candidate.id === transferId
+          ? {
+              ...candidate,
+              status: "attention" as TransferStatus,
+              error: "Could not open the remote host for resume. Check credentials and try again.",
+              reconnectRequired: true,
+            }
+          : candidate));
+      }
       return;
     }
     try {
@@ -1422,20 +1501,37 @@ export const useSftpTransfers = ({
     const targetPane = panes.find((pane) => task.targetHostId
       ? pane.connection?.hostId === task.targetHostId
       : pane.connection?.isLocal);
-    return sourcePane && targetPane ? { sourcePane, targetPane } : null;
+    // Downloads to local only need the remote source; local pane is optional for
+    // matching but preferred so processTransfer can run dual-endpoint checks.
+    if (sourcePane && targetPane) return { sourcePane, targetPane };
+    if (sourcePane && task.sourceHostId && !task.targetHostId) {
+      const localPane = panes.find((pane) => pane.connection?.isLocal);
+      if (localPane) return { sourcePane, targetPane: localPane };
+    }
+    if (targetPane && task.targetHostId && !task.sourceHostId) {
+      const localPane = panes.find((pane) => pane.connection?.isLocal);
+      if (localPane) return { sourcePane: localPane, targetPane };
+    }
+    return null;
   }, [getActivePane]);
 
   const adoptInterruptedTransfer = useCallback(async (task: TransferTask) => {
     const panes = resolveAdoptionPanes(task);
     if (!panes?.sourcePane.connection || !panes.targetPane.connection) return;
+    // Keep checkpoint / fingerprint fields so resume restarts from the saved byte offset.
     const adoptedTask: TransferTask = {
       ...task,
       ownerId,
       sourceConnectionId: panes.sourcePane.connection.id,
-      targetConnectionId: panes.targetPane.connection.id,
-      status: task.reconnectRequired ? "paused" : task.status,
-      reconnectRequired: false,
-      error: task.reconnectRequired ? undefined : task.error,
+      targetConnectionId: panes.targetPane.connection.isLocal
+        ? (task.targetConnectionId === "local" ? "local" : panes.targetPane.connection.id)
+        : panes.targetPane.connection.id,
+      // Stay "pending" + reconnectRequired so the global center keeps showing a spinner
+      // until processTransfer flips the task to transferring.
+      status: "pending",
+      reconnectRequired: true,
+      error: undefined,
+      speed: 0,
     };
     const nextTransfers = [
       ...transfersRef.current.filter((candidate) => candidate.id !== task.id),
@@ -1443,7 +1539,8 @@ export const useSftpTransfers = ({
     ];
     transfersRef.current = nextTransfers;
     setTransfers(nextTransfers);
-    if (adoptedTask.status !== "attention") await resumeTransfer(task.id);
+    // Force resumeTransfer to accept pending (reconnect path) statuses.
+    await resumeTransfer(task.id);
   }, [ownerId, resolveAdoptionPanes, resumeTransfer]);
 
   useEffect(() => sftpTransferCenterStore.registerOwner(ownerId, {

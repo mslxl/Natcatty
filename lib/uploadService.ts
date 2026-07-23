@@ -621,7 +621,7 @@ async function uploadEntries(
         speed: 0,
         fileCount,
         completedCount: 0,
-        sourcePath: getRootDropLocalPath(rootName, groupEntries),
+        sourcePath: getRootDropLocalPath(rootName, rootEntries),
       });
       pendingTaskIds.add(bundleTaskId);
     }

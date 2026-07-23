@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import {
   Host,
   Identity,
@@ -27,6 +27,14 @@ import { useSftpConnections } from "./sftp/useSftpConnections";
 import { useSftpFileWatch } from "./sftp/useSftpFileWatch";
 import { useSftpSessionCleanup } from "./sftp/useSftpSessionCleanup";
 import { useSftpSessionErrors } from "./sftp/useSftpSessionErrors";
+import { ensureRemoteSftpSession } from "./sftp/ensureRemoteSftpSession";
+import { openTransferSftpSession } from "./sftp/dedicatedTransferResume";
+import {
+  buildTransferPoolKey,
+  getSharedTransferConnectionPool,
+} from "./sftp/transferConnectionPool";
+import { netcattyBridge } from "../../infrastructure/services/netcattyBridge";
+import { logger } from "../../lib/logger";
 
 // types + utils now live in ./sftp/*
 
@@ -185,6 +193,63 @@ export const useSftpState = (
   useSftpSessionCleanup(sftpSessionsRef);
   useSftpFileWatch(options);
 
+  // FileZilla-style dedicated transfer connection pool (1–2 sessions per host).
+  // Shared across SFTP panels so we never open more than maxPerHost globally.
+  const transferPoolRef = useRef(
+    getSharedTransferConnectionPool({
+      closeSession: async (sftpId) => {
+        try {
+          await netcattyBridge.get()?.closeSftp?.(sftpId);
+        } catch {
+          // best-effort idle/session cleanup
+        }
+      },
+    }),
+  );
+
+  // Periodically reclaim idle transfer sessions (default TTL 30s).
+  useEffect(() => {
+    const pool = transferPoolRef.current;
+    const timer = window.setInterval(() => {
+      void pool.closeIdle().then((closed) => {
+        if (closed > 0) {
+          logger.debug(`[SFTP] Closed ${closed} idle transfer connection(s)`);
+        }
+      });
+    }, 15_000);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  const acquireTransferSession = useCallback(
+    async (hostId: string, transferId: string) => {
+      const host = hosts.find((candidate) => candidate.id === hostId);
+      if (!host) {
+        throw new Error(`Host not found for transfer session: ${hostId}`);
+      }
+      const poolKey = buildTransferPoolKey({
+        hostId: host.id,
+        hostname: host.hostname,
+        port: host.port,
+        username: host.username,
+        protocol: host.protocol,
+        sftpSudo: host.sftpSudo,
+      });
+      return transferPoolRef.current.acquire(poolKey, transferId, async () => {
+        logger.info(`[SFTP] Opening dedicated transfer connection for ${host.label || host.hostname}`);
+        return openTransferSftpSession(host, {
+          hosts,
+          keys,
+          identities,
+          knownHosts: options?.knownHosts,
+          terminalSettings: options?.terminalSettings,
+        });
+      });
+    },
+    [hosts, identities, keys, options?.knownHosts, options?.terminalSettings],
+  );
+
   const {
     connect,
     disconnect,
@@ -327,6 +392,7 @@ export const useSftpState = (
     listLocalFiles,
     listRemoteFiles,
     handleSessionError,
+    acquireTransferSession,
   });
 
   const {
@@ -352,6 +418,28 @@ export const useSftpState = (
     refresh,
     sftpSessionsRef,
     connectionCacheKeyMapRef,
+    ensureRemoteSftpId: async (side, ensureOptions) => {
+      const bridge = netcattyBridge.get();
+      return ensureRemoteSftpSession({
+        side,
+        getActivePane,
+        sftpSessionsRef,
+        lastConnectedHostRef,
+        connect,
+        forceReconnect: ensureOptions?.forceReconnect,
+        probeSession: async (sftpId) => {
+          // Lightweight liveness check; any session-error from the bridge
+          // triggers a reconnect in ensureRemoteSftpSession.
+          if (!bridge?.getSftpHomeDir) return true;
+          const result = await bridge.getSftpHomeDir(sftpId);
+          if (result && result.success === false) {
+            throw new Error(result.error || "SFTP session not found");
+          }
+          return true;
+        },
+      });
+    },
+    acquireTransferSession,
     clearDirCacheEntry,
     useCompressedUpload: options?.useCompressedUpload,
     addExternalUpload,

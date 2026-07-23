@@ -63,6 +63,73 @@ test("store routes controls to the task owner", async () => {
   ]);
 });
 
+test("resume without an owner uses a live backend transfer session when available", async (t) => {
+  const resumeCalls: string[] = [];
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  t.after(() => {
+    if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
+    else Reflect.deleteProperty(globalThis, "window");
+  });
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      netcatty: {
+        resumeTransfer: async (id: string) => {
+          resumeCalls.push(id);
+          return { success: true };
+        },
+      },
+    },
+  });
+
+  const store = createSftpTransferCenterStore();
+  store.publishOwner("closed-panel", [{
+    ...makeTask("orphaned-paused", "paused"),
+    direction: "download",
+    sourceHostId: "host-a",
+    sourceConnectionId: "remote-conn",
+    targetConnectionId: "local",
+  }]);
+
+  await store.resume("orphaned-paused");
+
+  assert.deepEqual(resumeCalls, ["orphaned-paused"]);
+  assert.equal(store.getSnapshot().tasks[0]?.status, "transferring");
+  assert.equal(store.getSnapshot().tasks[0]?.error, undefined);
+});
+
+test("resume still uses the live owner when canAdopt is false", async () => {
+  // Downloads often have only the remote pane open, so canAdopt (which wants
+  // both endpoints) returns false. Pause/resume must still unpause the live
+  // backend transfer through the owning panel instead of failing with
+  // "server no longer exists".
+  const calls: string[] = [];
+  const store = createSftpTransferCenterStore();
+  store.registerOwner("panel-a", {
+    pause: async (id) => { calls.push(`pause:${id}`); },
+    resume: async (id) => { calls.push(`resume:${id}`); },
+    cancel: async () => {},
+    retry: async () => {},
+    prioritize: async () => {},
+    dismiss: () => {},
+    canAdopt: () => false,
+    canPrepareAdoption: true,
+  });
+  store.publishOwner("panel-a", [{
+    ...makeTask("download-paused", "paused"),
+    direction: "download",
+    sourceHostId: "host-a",
+    sourceConnectionId: "remote-conn",
+    targetConnectionId: "local",
+  }]);
+
+  await store.resume("download-paused");
+
+  assert.deepEqual(calls, ["resume:download-paused"]);
+  assert.equal(store.getSnapshot().tasks[0]?.status, "paused");
+  assert.equal(store.getSnapshot().tasks[0]?.error, undefined);
+});
+
 test("persisted unfinished tasks restore as interrupted without controllers", () => {
   let persisted = "";
   const first = createSftpTransferCenterStore({
@@ -78,6 +145,27 @@ test("persisted unfinished tasks restore as interrupted without controllers", ()
   assert.equal(restored.getSnapshot().tasks[0]?.status, "interrupted");
   assert.equal(restored.getSnapshot().tasks[0]?.ownerId, "panel-a");
   assert.equal(restored.canControl("a"), true);
+});
+
+test("orphaned unfinished tasks stay controllable so dead rows can be cancelled", () => {
+  const store = createSftpTransferCenterStore();
+  store.publishOwner("gone-panel", [
+    makeTask("dead-transferring", "transferring"),
+    makeTask("dead-paused", "paused"),
+  ]);
+  // No owner controller registered — simulates app restart.
+  assert.equal(store.canControl("dead-transferring"), true);
+  assert.equal(store.canControl("dead-paused"), true);
+});
+
+test("pause on an orphaned transferring task demotes it to interrupted", async () => {
+  const store = createSftpTransferCenterStore();
+  store.publishOwner("gone-panel", [makeTask("stuck", "transferring")]);
+
+  await store.pause("stuck");
+
+  assert.equal(store.getSnapshot().tasks[0]?.status, "interrupted");
+  assert.equal(store.getSnapshot().tasks[0]?.reconnectRequired, true);
 });
 
 test("snapshot counts only parent tasks and clearing completed history preserves failures", () => {
@@ -145,14 +233,16 @@ test("failed reauthentication leaves a paused transfer requiring attention with 
   });
 
   const store = createSftpTransferCenterStore();
-  store.registerOwner("panel-a", {
+  // Original panel is gone — resume must open/authenticate a new one.
+  // A preparer is present but adoption never becomes ready because auth fails.
+  store.registerOwner("visible-preparer", {
     pause: async () => {}, resume: async () => {}, cancel: async () => {}, retry: async () => {}, prioritize: async () => {},
     dismiss: () => {},
     canAdopt: () => false,
     canPrepareAdoption: true,
     adopt: async () => {},
   });
-  store.publishOwner("panel-a", [{
+  store.publishOwner("closed-panel", [{
     ...makeTask("paused", "paused"),
     sourceConnectionId: "closed",
     sourceHostId: "host-a",
@@ -162,6 +252,106 @@ test("failed reauthentication leaves a paused transfer requiring attention with 
 
   assert.equal(store.getSnapshot().tasks[0]?.status, "attention");
   assert.equal(store.getSnapshot().tasks[0]?.error, "Authentication failed");
+});
+
+test("orphaned resume prefers a dedicated SFTP session without a panel owner", async () => {
+  const store = createSftpTransferCenterStore();
+  store.publishOwner("closed-panel", [{
+    ...makeTask("dedicated", "interrupted"),
+    direction: "download",
+    sourceHostId: "host-a",
+    sourceHostLabel: "CI-Build-01",
+    targetConnectionId: "local",
+    checkpointBytes: 100,
+    reconnectRequired: true,
+  }]);
+
+  let sawTaskId = "";
+  store.setDedicatedResumeHandler(async (task) => {
+    sawTaskId = task.id;
+    store.patchTask(task.id, {
+      status: "transferring",
+      transferredBytes: 100,
+      speed: 10,
+    });
+    return { success: true };
+  });
+
+  await store.resume("dedicated");
+
+  assert.equal(sawTaskId, "dedicated");
+  assert.equal(store.getSnapshot().tasks[0]?.status, "completed");
+  assert.equal(store.getSnapshot().tasks[0]?.reconnectRequired, false);
+});
+
+test("reconnectRequired resume skips a retained panel that cannot adopt", async () => {
+  const store = createSftpTransferCenterStore();
+  const ownerCalls: string[] = [];
+  store.registerOwner("stale-panel", {
+    pause: async () => {},
+    resume: async (id) => { ownerCalls.push(`resume:${id}`); },
+    cancel: async () => {},
+    retry: async () => {},
+    prioritize: async () => {},
+    dismiss: () => {},
+    canAdopt: () => false,
+  });
+  store.publishOwner("stale-panel", [{
+    ...makeTask("stuck", "attention"),
+    direction: "download",
+    sourceHostId: "host-a",
+    sourceHostLabel: "CI-Build-01",
+    targetConnectionId: "local",
+    reconnectRequired: true,
+    error: "Reconnect the source and target before resuming",
+  }]);
+
+  let dedicated = false;
+  store.setDedicatedResumeHandler(async () => {
+    dedicated = true;
+    return { success: true };
+  });
+
+  await store.resume("stuck");
+
+  assert.equal(dedicated, true);
+  assert.deepEqual(ownerCalls, []);
+  assert.equal(store.getSnapshot().tasks[0]?.status, "completed");
+});
+
+test("resume marks orphaned tasks pending while reconnecting", async (t) => {
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  t.after(() => {
+    if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
+    else Reflect.deleteProperty(globalThis, "window");
+  });
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      dispatchEvent: () => true,
+      netcatty: {
+        resumeTransfer: async () => ({ success: false }),
+      },
+    },
+  });
+
+  const store = createSftpTransferCenterStore();
+  store.publishOwner("closed-panel", [{
+    ...makeTask("reconnect-me", "interrupted"),
+    sourceHostId: "host-a",
+    reconnectRequired: true,
+  }]);
+
+  const resumePromise = store.resume("reconnect-me");
+  // Status flips to pending before the long prepare wait finishes.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(store.getSnapshot().tasks[0]?.status, "pending");
+  assert.equal(store.getSnapshot().tasks[0]?.reconnectRequired, true);
+
+  // Unblock prepare loop by cancelling.
+  await store.cancel("reconnect-me");
+  await resumePromise;
+  assert.equal(store.getSnapshot().tasks[0]?.status, "cancelled");
 });
 
 test("resume waits for a transfer panel that becomes visible after the click", async (t) => {

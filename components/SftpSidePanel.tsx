@@ -195,9 +195,25 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   sftpRef.current = sftp;
 
   useEffect(() => {
-    let connecting = false;
-    const handler = async (event: Event) => {
-      if (connecting) return;
+    /** Per-task locks so resume-all can prepare multiple transfers sequentially. */
+    const connectingTaskIds = new Set<string>();
+    const queue: Array<() => Promise<void>> = [];
+    let draining = false;
+
+    const drain = async () => {
+      if (draining) return;
+      draining = true;
+      try {
+        while (queue.length > 0) {
+          const job = queue.shift();
+          if (job) await job();
+        }
+      } finally {
+        draining = false;
+      }
+    };
+
+    const handler = (event: Event) => {
       const detail = (event as CustomEvent<{
         task: TransferTask;
         targetOwnerId: string;
@@ -206,42 +222,76 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
       if (detail?.targetOwnerId !== transferOwnerId) return;
       const task = detail.task;
       if (!task) return;
-      const source = task.sourceHostId
-        ? hosts.find((host) => host.id === task.sourceHostId)
-        : "local";
-      const target = task.targetHostId
-        ? hosts.find((host) => host.id === task.targetHostId)
-        : "local";
-      if (!source || !target) {
-        const missingEndpoint = !source ? "source" : "target";
-        detail.reportFailure?.(`The original ${missingEndpoint} server no longer exists`);
-        return;
-      }
-      connecting = true;
-      try {
-        const sourceDirectory = task.isDirectory ? task.sourcePath : getParentPath(task.sourcePath);
-        const targetDirectory = task.isDirectory ? task.targetPath : getParentPath(task.targetPath);
-        await sftpRef.current.connect("left", source, {
-          forceNewTab: true,
-          initialPath: sourceDirectory,
-        });
-        const sourcePane = sftpRef.current.leftPane;
-        if (sourcePane.connection?.status !== "connected") {
-          throw new Error(sourcePane.connection?.error || sourcePane.error || "Source server authentication failed");
+      if (connectingTaskIds.has(task.id)) return;
+
+      queue.push(async () => {
+        connectingTaskIds.add(task.id);
+        try {
+          const resolveHost = (hostId?: string, hostLabel?: string) => {
+            if (!hostId && !hostLabel) return "local" as const;
+            const byId = hostId ? hosts.find((host) => host.id === hostId) : undefined;
+            if (byId) return byId;
+            const needle = (hostLabel || "").trim().toLowerCase();
+            if (!needle) return undefined;
+            return hosts.find((host) => (
+              (host.label || "").trim().toLowerCase() === needle
+              || (host.hostname || "").trim().toLowerCase() === needle
+            ));
+          };
+          const source = resolveHost(task.sourceHostId, task.sourceHostLabel);
+          const target = resolveHost(task.targetHostId, task.targetHostLabel);
+          if (!source || !target) {
+            const missingEndpoint = !source ? "source" : "target";
+            detail.reportFailure?.(
+              `Cannot find the ${missingEndpoint} host in your vault. Resume will try a dedicated connection, or re-add the host.`,
+            );
+            return;
+          }
+          const sourceDirectory = task.isDirectory ? task.sourcePath : getParentPath(task.sourcePath);
+          const targetDirectory = task.isDirectory ? task.targetPath : getParentPath(task.targetPath);
+          // Downloads only need the remote source; still open local on the other
+          // pane so adoption can match both endpoints for stream restarts.
+          if (source !== "local") {
+            await sftpRef.current.connect("left", source, {
+              forceNewTab: true,
+              initialPath: sourceDirectory,
+            });
+            const sourcePane = sftpRef.current.leftPane;
+            if (sourcePane.connection?.status !== "connected") {
+              throw new Error(sourcePane.connection?.error || sourcePane.error || "Source server authentication failed");
+            }
+          } else {
+            await sftpRef.current.connect("left", "local", {
+              forceNewTab: true,
+              initialPath: sourceDirectory,
+            });
+          }
+          if (target !== "local") {
+            await sftpRef.current.connect("right", target, {
+              forceNewTab: true,
+              initialPath: targetDirectory,
+            });
+            const targetPane = sftpRef.current.rightPane;
+            if (targetPane.connection?.status !== "connected") {
+              throw new Error(targetPane.connection?.error || targetPane.error || "Target server authentication failed");
+            }
+          } else {
+            await sftpRef.current.connect("right", "local", {
+              forceNewTab: true,
+              initialPath: targetDirectory,
+            });
+            const targetPane = sftpRef.current.rightPane;
+            if (targetPane.connection?.status !== "connected") {
+              throw new Error(targetPane.connection?.error || targetPane.error || "Local folder is unavailable");
+            }
+          }
+        } catch (error) {
+          detail.reportFailure?.(error instanceof Error ? error.message : String(error));
+        } finally {
+          connectingTaskIds.delete(task.id);
         }
-        await sftpRef.current.connect("right", target, {
-          forceNewTab: true,
-          initialPath: targetDirectory,
-        });
-        const targetPane = sftpRef.current.rightPane;
-        if (targetPane.connection?.status !== "connected") {
-          throw new Error(targetPane.connection?.error || targetPane.error || "Target server authentication failed");
-        }
-      } catch (error) {
-        detail.reportFailure?.(error instanceof Error ? error.message : String(error));
-      } finally {
-        connecting = false;
-      }
+      });
+      void drain();
     };
     window.addEventListener("netcatty:prepare-sftp-transfer-resume", handler);
     return () => window.removeEventListener("netcatty:prepare-sftp-transfer-resume", handler);

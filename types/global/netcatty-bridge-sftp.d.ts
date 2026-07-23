@@ -10,7 +10,7 @@ declare global {
     readSftpBinary?(sftpId: string, path: string, encoding?: SftpFilenameEncoding): Promise<ArrayBuffer>;
     writeSftp(sftpId: string, path: string, content: string, encoding?: SftpFilenameEncoding): Promise<void>;
     writeSftpBinary?(sftpId: string, path: string, content: ArrayBuffer, encoding?: SftpFilenameEncoding): Promise<void>;
-    closeSftp(sftpId: string): Promise<void>;
+    closeSftp(sftpId: string): Promise<void | { success?: boolean; deferred?: boolean; leaseCount?: number }>;
     mkdirSftp(sftpId: string, path: string, encoding?: SftpFilenameEncoding): Promise<void>;
     deleteSftp?(sftpId: string, path: string, encoding?: SftpFilenameEncoding): Promise<void>;
     renameSftp?(sftpId: string, oldPath: string, newPath: string, encoding?: SftpFilenameEncoding): Promise<void>;
@@ -88,6 +88,8 @@ declare global {
         sourceFingerprint?: string;
         pauseUnavailableReason?: string;
         globalConcurrency?: number;
+        /** When true, skip main-process admission (renderer already scheduled). */
+        skipAdmission?: boolean;
       },
       onProgress?: (transferred: number, total: number, speed: number, checkpoint?: {
         resumeStage?: 'direct' | 'download' | 'upload';

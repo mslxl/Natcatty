@@ -831,6 +831,7 @@ export const zhCNCoreMessages: Messages = {
   'sftp.transferCenter.bucket.failed': '失败',
   'sftp.transferCenter.bucket.completed': '已完成',
   'sftp.transferCenter.status.pending': '准备中',
+  'sftp.transferCenter.status.resuming': '正在重新连接并续传…',
   'sftp.transferCenter.status.queued': '排队中',
   'sftp.transferCenter.status.transferring': '传输中',
   'sftp.transferCenter.status.pausing': '正在完成当前步骤',

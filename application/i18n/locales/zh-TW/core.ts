@@ -831,6 +831,7 @@ export const zhTWCoreMessages: Messages = {
   'sftp.transferCenter.bucket.failed': '失敗',
   'sftp.transferCenter.bucket.completed': '已完成',
   'sftp.transferCenter.status.pending': '準備中',
+  'sftp.transferCenter.status.resuming': '正在重新連線並續傳…',
   'sftp.transferCenter.status.queued': '排隊中',
   'sftp.transferCenter.status.transferring': '傳輸中',
   'sftp.transferCenter.status.pausing': '正在完成目前步驟',

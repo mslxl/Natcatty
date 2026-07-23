@@ -1,9 +1,11 @@
 import {
   AlertCircle,
   ArrowDownToLine,
+  ArrowDownUp,
   ArrowUpFromLine,
   ClipboardCopy,
   FolderOpen,
+  Loader2,
   Pause,
   Play,
   RefreshCw,
@@ -18,7 +20,7 @@ import {
   useSftpTransferCenter,
 } from "../application/state/sftpTransferCenterStore";
 import type { TransferTask } from "../domain/models";
-import { formatFileSize } from "../application/state/sftp/utils";
+import { estimateTransferEtaSeconds, formatFileSize, formatTransferEta } from "../application/state/sftp/utils";
 import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
@@ -26,7 +28,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 export type GlobalTransferBucket = "all" | "active" | "queued" | "paused" | "failed" | "completed";
 
-export function getGlobalTransferBucket(task: Pick<TransferTask, "status">): GlobalTransferBucket {
+export function getGlobalTransferBucket(task: Pick<TransferTask, "status" | "reconnectRequired">): GlobalTransferBucket {
+  // Reconnect/resume preparation should stay visible with the unfinished work.
+  if (task.status === "pending" && task.reconnectRequired) return "paused";
   if (task.status === "transferring" || task.status === "pausing") return "active";
   if (task.status === "pending" || task.status === "queued") return "queued";
   if (task.status === "paused" || task.status === "interrupted" || task.status === "attention") return "paused";
@@ -97,14 +101,36 @@ function TransferRow({ task }: { task: TransferTask }) {
     ? Math.max(0, Math.min(100, (task.transferredBytes / task.totalBytes) * 100))
     : 0;
   const canControl = sftpTransferCenterStore.canControl(task.id);
-  const canPause = task.resumable !== false && task.status === "transferring" && canControl;
-  const canResume = (
+  // Keep the play button as a spinner for the whole reconnect window, not only
+  // the brief "pending" status before a dedicated session opens.
+  const isResuming = task.reconnectRequired === true
+    && ["pending", "queued", "transferring"].includes(task.status)
+    && !task.error;
+  const canPause = task.resumable !== false && task.status === "transferring" && canControl && !isResuming;
+  // Orphaned tasks after app restart (interrupted / attention / paused without a
+  // live panel owner) must still expose resume/cancel from the global center.
+  const canResume = !isResuming && (
     ["paused", "interrupted", "attention"].includes(task.status)
     || (task.status === "failed" && task.resumable !== false && (task.checkpointBytes ?? 0) > 0)
-  ) && (canControl || task.status === "interrupted" || task.status === "attention");
+  ) && canControl;
   const canCancel = ["pending", "queued", "transferring", "pausing", "paused", "interrupted", "attention"].includes(task.status) && canControl;
   const canRetry = task.status === "failed" && task.retryable !== false && canControl;
   const isTerminal = ["completed", "failed", "cancelled"].includes(task.status);
+  // Only show phase while the transfer is actually running. After restart,
+  // stale phase:"transferring" must not override interrupted/paused status.
+  const statusText = task.error
+    || task.pauseUnavailableReason
+    || (isResuming
+      ? t("sftp.transferCenter.status.resuming")
+      : (
+        task.phase
+        && (task.status === "transferring" || task.status === "pausing")
+          ? t(`sftp.transferCenter.phase.${task.phase}`)
+          : t(statusLabelKey(task.status))
+      ));
+  const etaLabel = task.status === "transferring" && task.speed > 0 && task.totalBytes > 0
+    ? formatTransferEta(estimateTransferEtaSeconds(task.totalBytes - task.transferredBytes, task.speed))
+    : null;
   const directionIcon = task.direction === "download"
     ? <ArrowDownToLine size={15} />
     : <ArrowUpFromLine size={15} />;
@@ -115,7 +141,11 @@ function TransferRow({ task }: { task: TransferTask }) {
     }));
   };
   const resumeTask = () => {
-    openTarget(true);
+    // Dedicated resume opens its own SFTP session; panel open is only a
+    // fallback for server-to-server tasks and must not race the spinner state.
+    if (task.direction === "remote-to-remote") {
+      openTarget(true);
+    }
     void sftpTransferCenterStore.resume(task.id);
   };
 
@@ -143,6 +173,11 @@ function TransferRow({ task }: { task: TransferTask }) {
           </div>
         </button>
         <div className="flex shrink-0 items-center gap-0.5">
+          {isResuming && (
+            <TransferAction label={t("sftp.transferCenter.status.resuming")} onClick={() => {}}>
+              <Loader2 size={13} className="animate-spin text-primary" />
+            </TransferAction>
+          )}
           {canPause && (
             <TransferAction label={t("sftp.transferCenter.pause")} onClick={() => { void sftpTransferCenterStore.pause(task.id); }}>
               <Pause size={13} />
@@ -198,11 +233,12 @@ function TransferRow({ task }: { task: TransferTask }) {
       </div>
       <div className="mt-1 flex min-w-0 items-center justify-between gap-3 text-[10px] text-muted-foreground">
         <span className={cn("min-w-0 truncate", (task.status === "failed" || task.status === "attention") && "text-destructive")}>
-          {task.error || task.pauseUnavailableReason || (task.phase ? t(`sftp.transferCenter.phase.${task.phase}`) : t(statusLabelKey(task.status)))}
+          {statusText}
         </span>
         <span className="min-w-0 shrink truncate font-mono text-right">
           {formatFileSize(task.transferredBytes)} / {task.totalBytes > 0 ? formatFileSize(task.totalBytes) : "—"}
           {task.speed > 0 ? ` · ${formatFileSize(task.speed)}/s` : ""}
+          {etaLabel ? ` · ${etaLabel}` : ""}
         </span>
       </div>
       {task.status === "attention" && task.conflict && canControl && (
@@ -252,12 +288,16 @@ export function GlobalSftpTransferCenter() {
 
   const pauseAll = () => {
     for (const task of snapshot.tasks) {
-      if (["pending", "queued", "transferring"].includes(task.status) && task.resumable !== false) void sftpTransferCenterStore.pause(task.id);
+      if (["pending", "queued", "transferring", "pausing"].includes(task.status) && task.resumable !== false) {
+        void sftpTransferCenterStore.pause(task.id);
+      }
     }
   };
   const resumeAll = () => {
     for (const task of snapshot.tasks) {
-      if (task.status === "paused" || task.status === "interrupted") void sftpTransferCenterStore.resume(task.id);
+      if (task.status === "paused" || task.status === "interrupted" || task.status === "attention") {
+        void sftpTransferCenterStore.resume(task.id);
+      }
     }
   };
 
@@ -273,7 +313,7 @@ export function GlobalSftpTransferCenter() {
               aria-label={t("sftp.transferCenter.title")}
               data-section="global-sftp-transfer-toggle"
             >
-              <ArrowDownToLine size={15} />
+              <ArrowDownUp size={15} />
               {badge.count > 0 && (
                 <span className="absolute -right-0.5 -top-0.5 flex min-h-3 min-w-3 items-center justify-center rounded-full bg-primary px-0.5 text-[8px] leading-3 text-primary-foreground">
                   {badge.count > 99 ? "99+" : badge.count}
@@ -291,13 +331,12 @@ export function GlobalSftpTransferCenter() {
       <PopoverContent
         align="end"
         sideOffset={5}
-        className="w-[min(580px,calc(100vw-24px))] overflow-hidden p-0 app-no-drag"
+        className="w-[min(460px,calc(100vw-24px))] overflow-hidden p-0 app-no-drag"
         data-section="global-sftp-transfer-center"
       >
         <div className="flex items-center justify-between border-b border-border/60 px-4 py-3">
-          <div className="min-w-0 pr-2">
-            <div className="text-sm font-semibold">{t("sftp.transferCenter.title")}</div>
-            <div className="mt-0.5 truncate text-[10px] text-muted-foreground">{t("sftp.transferCenter.subtitle")}</div>
+          <div className="min-w-0 pr-2 text-sm font-semibold">
+            {t("sftp.transferCenter.title")}
           </div>
           <div className="flex items-center gap-1">
             <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={pauseAll}>
@@ -329,7 +368,7 @@ export function GlobalSftpTransferCenter() {
         <div className="max-h-[460px] overflow-auto">
           {displayed.length === 0 ? (
             <div className="flex h-40 flex-col items-center justify-center text-muted-foreground">
-              {badge.hasAttention && bucket !== "failed" && bucket !== "all" ? <AlertCircle size={22} /> : <ArrowDownToLine size={22} />}
+              {badge.hasAttention && bucket !== "failed" && bucket !== "all" ? <AlertCircle size={22} /> : <ArrowDownUp size={22} />}
               <span className="mt-2 text-xs">{t("sftp.transferCenter.empty")}</span>
             </div>
           ) : displayed.map((task) => <TransferRow key={task.id} task={task} />)}

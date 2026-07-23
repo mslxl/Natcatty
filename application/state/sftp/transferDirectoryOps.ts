@@ -6,7 +6,15 @@ import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge"
 import { logger } from "../../../lib/logger";
 import { runSftpTransferWorkers } from "./transferConcurrency";
 import { getSftpTransferResourceKeys, globalSftpTransferScheduler } from "./globalTransferScheduler";
+import { isSessionError } from "./errors";
+import { isTransferCancelledError, runWithTransferRetry } from "./transferRetry";
+import type { TransferConnectionLease } from "./transferConnectionPool";
 import { joinPath } from "./utils";
+
+export type AcquireTransferSessionFn = (
+  hostId: string,
+  transferId: string,
+) => Promise<TransferConnectionLease>;
 
 interface UseSftpDirectoryTransferOpsParams {
   ownerId: string;
@@ -18,6 +26,8 @@ interface UseSftpDirectoryTransferOpsParams {
   setTransfers: Dispatch<SetStateAction<TransferTask[]>>;
   listLocalFiles: (path: string) => Promise<SftpFileEntry[]>;
   listRemoteFiles: (sftpId: string, path: string, encoding?: SftpFilenameEncoding) => Promise<SftpFileEntry[]>;
+  /** FileZilla-style dedicated transfer connections (optional). */
+  acquireTransferSession?: AcquireTransferSessionFn;
 }
 
 export function useSftpDirectoryTransferOps({
@@ -30,6 +40,7 @@ export function useSftpDirectoryTransferOps({
   setTransfers,
   listLocalFiles,
   listRemoteFiles,
+  acquireTransferSession,
 }: UseSftpDirectoryTransferOpsParams) {
   const getEntrySize = useCallback((entry: SftpFileEntry): number => {
     if (typeof entry.size === "string") {
@@ -141,100 +152,168 @@ export function useSftpDirectoryTransferOps({
         targetSftpId: targetSftpId ?? undefined,
       }),
       () => localStorageAdapter.readNumber(STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY),
-      () => {
+      async () => {
         setTransfers((prev) => prev.map((candidate) => candidate.id === task.id
           ? { ...candidate, status: "transferring" as TransferStatus }
           : candidate));
-        return new Promise((resolve, reject) => {
-      const options = {
-        transferId: task.id,
-        sourcePath: task.sourcePath,
-        targetPath: task.targetPath,
-        sourceType: sourceIsLocal ? ("local" as const) : ("sftp" as const),
-        targetType: targetIsLocal ? ("local" as const) : ("sftp" as const),
-        sourceSftpId: sourceSftpId || undefined,
-        targetSftpId: targetSftpId || undefined,
-        sourceHostId: task.sourceHostId,
-        targetHostId: task.targetHostId,
-        totalBytes: task.totalBytes || undefined,
-        sourceEncoding: sourceIsLocal ? undefined : sourceEncoding,
-        targetEncoding: targetIsLocal ? undefined : targetEncoding,
-        sameHost: sameHost || undefined,
-        resumable: task.resumable !== false,
-        checkpointBytes: task.checkpointBytes,
-        resumeStage: task.resumeStage,
-        downloadCheckpointBytes: task.downloadCheckpointBytes,
-        uploadCheckpointBytes: task.uploadCheckpointBytes,
-        sourceFingerprint: task.sourceFingerprint,
-        globalConcurrency: localStorageAdapter.readNumber(STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY) ?? undefined,
-      };
 
-      let lastProgressUpdate = 0;
-      const onProgress = (
-        transferred: number,
-        total: number,
-        speed: number,
-        checkpoint?: {
-          resumeStage?: TransferTask["resumeStage"];
-          checkpointBytes?: number;
-          downloadCheckpointBytes?: number;
-          uploadCheckpointBytes?: number;
-          sourceFingerprint?: string;
-          resumable?: boolean;
-          pauseUnavailableReason?: string;
-        },
-      ) => {
-        // Bubble up streaming progress to parent (for directory transfers)
-        onStreamProgress?.(transferred, total, speed);
+        // FileZilla-style: prefer dedicated transfer sessions so the browse
+        // panel connection is not blocked by bulk file I/O.
+        let sourceLease: TransferConnectionLease | null = null;
+        let targetLease: TransferConnectionLease | null = null;
 
-        // Throttle state updates to at most once per 100ms
-        const now = Date.now();
-        if (now - lastProgressUpdate < 100 && transferred < total) return;
-        lastProgressUpdate = now;
+        const acquireLeases = async () => {
+          if (acquireTransferSession && !sourceIsLocal && task.sourceHostId) {
+            try {
+              sourceLease = await acquireTransferSession(task.sourceHostId, task.id);
+            } catch (err) {
+              logger.warn("[SFTP] Transfer pool source open failed; falling back to panel session", err);
+              sourceLease = null;
+            }
+          }
+          if (acquireTransferSession && !targetIsLocal && task.targetHostId) {
+            try {
+              targetLease = await acquireTransferSession(task.targetHostId, task.id);
+            } catch (err) {
+              logger.warn("[SFTP] Transfer pool target open failed; falling back to panel session", err);
+              targetLease = null;
+            }
+          }
+        };
 
-        setTransfers((prev) =>
-          prev.map((t) => {
-            if (t.id !== task.id) return t;
-            if (t.status === "cancelled") return t;
-            const normalizedTotal = total > 0 ? total : t.totalBytes;
-            // Clamp to [previous, total] — the backend normalizes progress
-            // but we guard against any non-monotonic edge cases.
-            const normalizedTransferred = Math.max(
-              t.transferredBytes,
-              Math.min(transferred, normalizedTotal > 0 ? normalizedTotal : transferred),
-            );
-            return {
-              ...t,
-              transferredBytes: normalizedTransferred,
-              checkpointBytes: normalizedTransferred,
-              resumeStage: checkpoint?.resumeStage ?? t.resumeStage,
-              downloadCheckpointBytes: checkpoint?.downloadCheckpointBytes ?? t.downloadCheckpointBytes,
-              uploadCheckpointBytes: checkpoint?.uploadCheckpointBytes ?? t.uploadCheckpointBytes,
-              sourceFingerprint: checkpoint?.sourceFingerprint ?? t.sourceFingerprint,
-              resumable: checkpoint?.resumable ?? t.resumable,
-              pauseUnavailableReason: checkpoint?.pauseUnavailableReason ?? t.pauseUnavailableReason,
-              totalBytes: normalizedTotal,
-              speed: Number.isFinite(speed) && speed > 0 ? speed : 0,
+        const releaseLeases = (mode: "release" | "discard" = "release") => {
+          if (mode === "discard") {
+            sourceLease?.discard();
+            targetLease?.discard();
+          } else {
+            sourceLease?.release();
+            targetLease?.release();
+          }
+          sourceLease = null;
+          targetLease = null;
+        };
+
+        try {
+          await acquireLeases();
+
+          // One automatic retry for transient session/network blips (WinSCP-style).
+          await runWithTransferRetry(async (attempt) => {
+            if (cancelledTasksRef.current.has(task.id) || cancelledTasksRef.current.has(rootTaskId)) {
+              throw new Error("Transfer cancelled");
+            }
+            // On retry after a dead pool session, open fresh dedicated connections.
+            if (attempt > 0) {
+              releaseLeases("discard");
+              await acquireLeases();
+            }
+
+            const effectiveSourceSftpId = sourceLease?.sftpId ?? sourceSftpId;
+            const effectiveTargetSftpId = targetLease?.sftpId ?? targetSftpId;
+
+            // On retry, prefer latest checkpoint so we do not restart from zero.
+            const latest = transfersRef.current.find((candidate) => candidate.id === task.id) ?? task;
+            const options = {
+              transferId: task.id,
+              sourcePath: task.sourcePath,
+              targetPath: task.targetPath,
+              sourceType: sourceIsLocal ? ("local" as const) : ("sftp" as const),
+              targetType: targetIsLocal ? ("local" as const) : ("sftp" as const),
+              sourceSftpId: effectiveSourceSftpId || undefined,
+              targetSftpId: effectiveTargetSftpId || undefined,
+              sourceHostId: task.sourceHostId,
+              targetHostId: task.targetHostId,
+              totalBytes: task.totalBytes || undefined,
+              sourceEncoding: sourceIsLocal ? undefined : sourceEncoding,
+              targetEncoding: targetIsLocal ? undefined : targetEncoding,
+              sameHost: sameHost || undefined,
+              resumable: task.resumable !== false,
+              checkpointBytes: latest.checkpointBytes ?? latest.transferredBytes ?? task.checkpointBytes,
+              resumeStage: latest.resumeStage ?? task.resumeStage,
+              downloadCheckpointBytes: latest.downloadCheckpointBytes ?? task.downloadCheckpointBytes,
+              uploadCheckpointBytes: latest.uploadCheckpointBytes ?? task.uploadCheckpointBytes,
+              sourceFingerprint: latest.sourceFingerprint ?? task.sourceFingerprint,
+              globalConcurrency: localStorageAdapter.readNumber(STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY) ?? undefined,
+              // Renderer already admitted this file via globalSftpTransferScheduler.
+              skipAdmission: true,
             };
-          }),
-        );
-      };
 
-      const onComplete = () => {
-        resolve();
-      };
+            let lastProgressUpdate = 0;
+            const onProgress = (
+              transferred: number,
+              total: number,
+              speed: number,
+              checkpoint?: {
+                resumeStage?: TransferTask["resumeStage"];
+                checkpointBytes?: number;
+                downloadCheckpointBytes?: number;
+                uploadCheckpointBytes?: number;
+                sourceFingerprint?: string;
+                resumable?: boolean;
+                pauseUnavailableReason?: string;
+              },
+            ) => {
+              onStreamProgress?.(transferred, total, speed);
+              const now = Date.now();
+              if (now - lastProgressUpdate < 100 && transferred < total) return;
+              lastProgressUpdate = now;
+              setTransfers((prev) =>
+                prev.map((t) => {
+                  if (t.id !== task.id) return t;
+                  if (t.status === "cancelled") return t;
+                  const normalizedTotal = total > 0 ? total : t.totalBytes;
+                  const normalizedTransferred = Math.max(
+                    t.transferredBytes,
+                    Math.min(transferred, normalizedTotal > 0 ? normalizedTotal : transferred),
+                  );
+                  return {
+                    ...t,
+                    transferredBytes: normalizedTransferred,
+                    checkpointBytes: normalizedTransferred,
+                    resumeStage: checkpoint?.resumeStage ?? t.resumeStage,
+                    downloadCheckpointBytes: checkpoint?.downloadCheckpointBytes ?? t.downloadCheckpointBytes,
+                    uploadCheckpointBytes: checkpoint?.uploadCheckpointBytes ?? t.uploadCheckpointBytes,
+                    sourceFingerprint: checkpoint?.sourceFingerprint ?? t.sourceFingerprint,
+                    resumable: checkpoint?.resumable ?? t.resumable,
+                    pauseUnavailableReason: checkpoint?.pauseUnavailableReason ?? t.pauseUnavailableReason,
+                    totalBytes: normalizedTotal,
+                    speed: Number.isFinite(speed) && speed > 0 ? speed : 0,
+                  };
+                }),
+              );
+            };
 
-      const onError = (error: string) => {
-        reject(new Error(error));
-      };
-
-      netcattyBridge.require().startStreamTransfer!(
-        options,
-        onProgress,
-        onComplete,
-        onError,
-      ).catch(reject);
-        });
+            await new Promise<void>((resolve, reject) => {
+              netcattyBridge.require().startStreamTransfer!(
+                options,
+                onProgress,
+                () => resolve(),
+                (error) => reject(new Error(error)),
+              ).catch(reject);
+            });
+            if (attempt > 0) {
+              logger.info(`[SFTP] Transfer ${task.fileName} succeeded after retry #${attempt}`);
+            }
+          }, {
+            retries: 1,
+            delayMs: 500,
+            onRetry: (err, attempt) => {
+              logger.warn(
+                `[SFTP] Transient failure for ${task.fileName}; retrying (${attempt})`,
+                err instanceof Error ? err.message : err,
+              );
+              setTransfers((prev) => prev.map((candidate) => candidate.id === task.id
+                ? {
+                    ...candidate,
+                    status: "queued" as TransferStatus,
+                    error: undefined,
+                    speed: 0,
+                  }
+                : candidate));
+            },
+          });
+        } finally {
+          releaseLeases("release");
+        }
       },
     );
   };
@@ -396,11 +475,15 @@ export function useSftpDirectoryTransferOps({
     // Transfer files in parallel with concurrency limit
     if (regularFiles.length > 0) {
       const errors: Error[] = [];
+      // If the SFTP session dies mid-directory, stop queueing more files
+      // (remaining workers will still finish their current item).
+      let sessionLostError: Error | null = null;
 
       await runSftpTransferWorkers(
         regularFiles,
         () => localStorageAdapter.readNumber(STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY),
         async (file) => {
+          if (sessionLostError) throw sessionLostError;
           if (pausedTasksRef.current.has(rootTaskId)) {
             await waitUntilTransferResumed(rootTaskId);
           }
@@ -488,22 +571,48 @@ export function useSftpDirectoryTransferOps({
             });
           } catch (err) {
             activeChildIdsRef.current.get(rootTaskId)?.delete(fileId);
+            const message = err instanceof Error ? err.message : String(err);
             // Mark child as failed
             setTransfers((prev) =>
               prev.map((t) =>
                 t.id === fileId
-                  ? { ...t, status: "failed" as TransferStatus, error: err instanceof Error ? err.message : String(err) }
+                  ? { ...t, status: "failed" as TransferStatus, error: message }
                   : t,
               ),
             );
-            if (err instanceof Error && err.message === "Transfer cancelled") throw err;
-            errors.push(err instanceof Error ? err : new Error(String(err)));
+            if (isTransferCancelledError(err)) throw err instanceof Error ? err : new Error(message);
+            if (isSessionError(err) && !sessionLostError) {
+              sessionLostError = err instanceof Error ? err : new Error(message);
+              // Fail remaining queued siblings quickly with a clear cause.
+              setTransfers((prev) => prev.map((t) => (
+                t.parentTaskId === rootTaskId
+                && (t.status === "queued" || t.status === "pending")
+                  ? {
+                      ...t,
+                      status: "failed" as TransferStatus,
+                      error: "SFTP session lost — reconnect and resume remaining files",
+                      speed: 0,
+                      endTime: Date.now(),
+                    }
+                  : t
+              )));
+            }
+            errors.push(err instanceof Error ? err : new Error(message));
+            if (sessionLostError) throw sessionLostError;
           }
         },
-      );
+      ).catch((err) => {
+        if (sessionLostError || isTransferCancelledError(err)) {
+          // Expected control-flow throws after cancel / session loss.
+          return;
+        }
+        throw err;
+      });
 
       totalErrors += errors.length;
-      if (errors.length > 0) {
+      if (sessionLostError) {
+        logger.warn("[SFTP] Directory transfer stopped early: session lost", sessionLostError.message);
+      } else if (errors.length > 0) {
         logger.debug?.("[SFTP] Some files in directory transfer failed", errors);
       }
     }

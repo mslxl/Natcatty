@@ -60,14 +60,33 @@ test("restoring persisted state interrupts unfinished work and ignores secrets",
     version: 1,
     tasks: [{
       ...task("a", "transferring", 1),
+      phase: "transferring",
       password: "must-not-survive",
       privateKey: "must-not-survive",
     }],
   }));
 
   assert.equal(restored.tasks[0]?.status, "interrupted");
+  assert.equal(restored.tasks[0]?.reconnectRequired, true);
+  assert.equal(restored.tasks[0]?.phase, undefined);
   assert.equal("password" in (restored.tasks[0] ?? {}), false);
   assert.equal("privateKey" in (restored.tasks[0] ?? {}), false);
+});
+
+test("restoring a paused task also marks it interrupted after restart", () => {
+  const restored = deserializeSftpTransferCenter(JSON.stringify({
+    version: 1,
+    tasks: [{
+      ...task("paused", "paused", 1),
+      phase: "transferring",
+      checkpointBytes: 40,
+    }],
+  }));
+
+  assert.equal(restored.tasks[0]?.status, "interrupted");
+  assert.equal(restored.tasks[0]?.reconnectRequired, true);
+  assert.equal(restored.tasks[0]?.phase, undefined);
+  assert.equal(restored.tasks[0]?.checkpointBytes, 40);
 });
 
 test("history keeps unfinished tasks and caps terminal tasks by age and count", () => {

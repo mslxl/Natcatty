@@ -39,13 +39,11 @@ test("side panel layout changes remeasure workspace before paint", () => {
   assert.ok(commentIndex < layoutEffectIndex);
 });
 
-test("local copy resume opens a transfer panel without looking up a remote host", () => {
-  const localCopyIndex = source.indexOf("if (forResume && isLocalCopy)");
-  const hostLookupIndex = source.indexOf("const hostId = useSource", localCopyIndex);
-  const panelOpenIndex = source.indexOf("setSidePanelOpenTabs", localCopyIndex);
-
-  assert.notEqual(localCopyIndex, -1);
-  assert.notEqual(panelOpenIndex, -1);
-  assert.notEqual(hostLookupIndex, -1);
-  assert.ok(panelOpenIndex < hostLookupIndex);
+test("transfer navigation helper is used for open-target and resume routing", () => {
+  assert.match(source, /resolveSftpTransferNavigationTarget/);
+  assert.match(source, /resolveSftpTransferNavigationPath/);
+  assert.match(source, /navigation\.kind === 'local-copy-panel'/);
+  assert.match(source, /navigation\.kind === 'local-path'/);
+  // Resume host lookup failures must not poison live owner resume.
+  assert.match(source, /if \(forResume\) return;/);
 });

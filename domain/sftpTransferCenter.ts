@@ -6,11 +6,15 @@ export const SFTP_TRANSFER_HISTORY_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
 const TERMINAL_STATUSES = new Set<TransferTask["status"]>(["completed", "failed", "cancelled"]);
 const RUNNING_STATUSES = new Set<TransferTask["status"]>(["transferring", "pausing"]);
+// After an app restart no backend streams/sessions remain. Any non-terminal
+// in-flight status must become a manual-resume "interrupted" task — including
+// paused work, which also loses its live transfer handle on quit.
 const RESTORED_INTERRUPTED_STATUSES = new Set<TransferTask["status"]>([
   "pending",
   "queued",
   "transferring",
   "pausing",
+  "paused",
 ]);
 
 export interface PersistedSftpTransferCenter {
@@ -46,6 +50,11 @@ function sanitizeTask(value: unknown): TransferTask | null {
   if (RESTORED_INTERRUPTED_STATUSES.has(task.status)) {
     task.status = "interrupted";
     task.speed = 0;
+    task.reconnectRequired = true;
+    // Phase labels like "transferring" would otherwise still render as "传输中"
+    // even though the task is dead after restart.
+    task.phase = undefined;
+    task.error = task.error || undefined;
   }
   return task;
 }

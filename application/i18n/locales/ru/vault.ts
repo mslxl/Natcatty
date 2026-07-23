@@ -297,6 +297,7 @@ export const ruVaultMessages: Messages = {
   'sftp.transferCenter.bucket.failed': 'Ошибки',
   'sftp.transferCenter.bucket.completed': 'Завершено',
   'sftp.transferCenter.status.pending': 'Подготовка',
+  'sftp.transferCenter.status.resuming': 'Переподключение и возобновление…',
   'sftp.transferCenter.status.queued': 'В очереди',
   'sftp.transferCenter.status.transferring': 'Передача',
   'sftp.transferCenter.status.pausing': 'Завершение текущего шага',
