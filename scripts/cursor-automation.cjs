@@ -269,17 +269,25 @@ function buildCodexReviewRequestComment(round = 1) {
   ].join('\n');
 }
 
-function buildExternalReviewComment(reviewText, headSha) {
-  const body = sanitizeUntrustedText(reviewText, 20_000);
+/**
+ * Third-party/fork PRs: only re-trigger the existing Codex connector after
+ * the author pushes fixes. No Cursor CLI review and no auto-fixes.
+ */
+function buildExternalCodexRerequestComment(headSha) {
   return [
     TRIAGE_MARKER,
-    `<!-- cursor-external-review:${sanitizeUntrustedText(headSha, 64)} -->`,
-    DISCLAIMER,
+    `<!-- cursor-external-codex:${sanitizeUntrustedText(headSha, 64)} -->`,
     '',
-    body,
-    '',
-    '_Automation will not push commits to contributor branches._',
+    '@codex review',
   ].join('\n');
+}
+
+function shouldSkipExternalCodexRerequest({
+  existingComments = [],
+  headSha,
+} = {}) {
+  const marker = `<!-- cursor-external-codex:${sanitizeUntrustedText(headSha, 64)} -->`;
+  return existingComments.some((c) => String(c.body || '').includes(marker));
 }
 
 function buildSlackPayload({
@@ -504,11 +512,6 @@ function getCodexRoundFromComments(comments = []) {
     }
   }
   return maxRound;
-}
-
-function shouldSkipExternalReview({ existingComments = [], headSha } = {}) {
-  const marker = `<!-- cursor-external-review:${headSha} -->`;
-  return existingComments.some((c) => String(c.body || '').includes(marker));
 }
 
 function setOutput(core, key, value) {
@@ -793,7 +796,8 @@ module.exports = {
   buildPullRequestBody,
   buildPullRequestComment,
   buildCodexReviewRequestComment,
-  buildExternalReviewComment,
+  buildExternalCodexRerequestComment,
+  shouldSkipExternalCodexRerequest,
   buildSlackPayload,
   sendSlackNotification,
   extractJsonObject,
@@ -804,7 +808,6 @@ module.exports = {
   listProtectedPathHits,
   hasProtectedChanges,
   getCodexRoundFromComments,
-  shouldSkipExternalReview,
   prepareIssueContext,
   applyClassification,
   markNeedsHuman,

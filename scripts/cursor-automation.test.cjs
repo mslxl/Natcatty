@@ -154,24 +154,31 @@ test('hasProtectedChanges flags workflow edits', () => {
   assert.deepEqual(hits, ['.github/workflows/cursor-automation.yml']);
 });
 
-test('shouldSkipExternalReview matches head sha marker', () => {
+test('shouldSkipExternalCodexRerequest matches head sha marker', () => {
   const sha = 'abc123';
   assert.equal(
-    auto.shouldSkipExternalReview({
+    auto.shouldSkipExternalCodexRerequest({
       headSha: sha,
       existingComments: [
-        { body: auto.buildExternalReviewComment('ok', sha) },
+        { body: auto.buildExternalCodexRerequestComment(sha) },
       ],
     }),
     true,
   );
   assert.equal(
-    auto.shouldSkipExternalReview({
+    auto.shouldSkipExternalCodexRerequest({
       headSha: sha,
       existingComments: [{ body: 'unrelated' }],
     }),
     false,
   );
+});
+
+test('buildExternalCodexRerequestComment only asks Codex', () => {
+  const body = auto.buildExternalCodexRerequestComment('deadbeef');
+  assert.match(body, /@codex review/);
+  assert.match(body, /cursor-external-codex:deadbeef/);
+  assert.doesNotMatch(body, /Cursor CLI/i);
 });
 
 test('getCodexRoundFromComments reads max round', () => {
