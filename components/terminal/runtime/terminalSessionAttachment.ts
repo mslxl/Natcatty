@@ -43,6 +43,7 @@ import {
 } from "./terminalSudoAutofill";
 import {
   filterTerminalSessionData,
+  isTerminalSyncBlockOpen,
   resetTerminalSyncBlockFilter,
 } from "./terminalSyncBlockFilter";
 import { appendEraseScrollbackAfterFullErases } from "../clearTerminalViewport";
@@ -534,10 +535,15 @@ const writeSessionDataImmediate = (
     // Always run filter + paste bookkeeping (stateful). Bulk-plain only skips
     // erase-scrollback / prompt cosmetics when the *post-paste* stream is still
     // plain and forcePromptNewLine is off (Codex: long paste cleanup must run).
+    // Capture open sync state before this chunk is filtered so a delayed
+    // full-redraw `\x1b[2J` (without a co-chunk `\x1b[?2026h`) still skips
+    // scrollback wipe — see #2291 / Codex review on bare 2J + 3J.
+    const startInDec2026SyncBlock = isTerminalSyncBlockOpen(term);
     const filteredData = filterTerminalSessionData(term, data);
     const afterErase = appendEraseScrollbackAfterFullErases(filteredData, {
       wipeScrollback: settings?.clearWipesScrollback ?? true,
       normalScreen: term.buffer?.active?.type !== "alternate",
+      startInDec2026SyncBlock,
     });
     const pasteDisplayData = prepareTerminalDataForUserPasteDisplay(term, afterErase);
     // Prompt indices must match the string passed to prepare… — source-chunk

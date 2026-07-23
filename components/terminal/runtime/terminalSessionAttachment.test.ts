@@ -1584,6 +1584,36 @@ test("writeSessionData does not add erase-scrollback inside synchronized output"
   assert.equal(writes.join(""), "\x1b[?2026h\x1b[H\x1b[2Jframe\x1b[?2026l");
 });
 
+test("writeSessionData does not wipe scrollback for delayed sync clears after returning to bottom", () => {
+  const writes: string[] = [];
+  const active = { type: "normal" as const, viewportY: 0, baseY: 5 };
+  const term = {
+    buffer: { active },
+    write(data: string, callback?: () => void) {
+      writes.push(data);
+      callback?.();
+    },
+    registerMarker() {
+      return { line: 0, isDisposed: false, dispose() {} };
+    },
+    scrollToBottom() {},
+  } as unknown as XTerm;
+  const ctx = createContext(false);
+  ctx.terminalSettingsRef.current.clearWipesScrollback = true;
+  ctx.terminalSettings.clearWipesScrollback = true;
+
+  // Prior chunk opens the sync block while the user is reading scrollback.
+  writeSessionData(ctx as never, term, "\x1b[?2026h\x1b[H");
+  // Delayed clear arrives after the user returns to the live bottom.
+  active.viewportY = 5;
+  active.baseY = 5;
+  writeSessionData(ctx as never, term, "\x1b[2Jframe\x1b[?2026l");
+
+  const output = writes.join("");
+  assert.equal(output.includes("\x1b[3J"), false, output);
+  assert.equal(output.includes("\x1b[H\x1b[2Jframe"), true, output);
+});
+
 test("writeSessionData always uses ledger recording regardless of gutter toggle", () => {
   const { term, writes, markerLines } = createFakeTerm();
   const ctx = createContext(false, { showLineTimestamps: false });
