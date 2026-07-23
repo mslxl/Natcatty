@@ -162,72 +162,75 @@ export async function resumeTransferWithDedicatedSession(
 
   let sftpId: string | undefined;
   try {
-    // Open session + stream with one automatic retry on transient failures.
-    await runWithTransferRetry(async (attempt) => {
-      if (attempt > 0 || !sftpId) {
-        await closeDedicatedSftpSession(sftpId);
-        sftpId = await openTransferSftpSession(remoteHost, deps);
-      }
+    // Admit first, then open the dedicated SSH session so Resume All cannot
+    // stampede vault opens past the global transfer concurrency.
+    const result = await globalSftpTransferScheduler.run(
+      "dedicated-resume",
+      task.id,
+      getSftpTransferResourceKeys({
+        sourceHostId: isDownload ? remoteHost.id : undefined,
+        targetHostId: isUpload ? remoteHost.id : undefined,
+      }),
+      () => localStorageAdapter.readNumber(STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY),
+      async () => {
+        await runWithTransferRetry(async (attempt) => {
+          if (attempt > 0 || !sftpId) {
+            await closeDedicatedSftpSession(sftpId);
+            sftpId = await openTransferSftpSession(remoteHost, deps);
+          }
 
-      if (isDownload) {
-        const sourceStat = await bridge.statSftp?.(sftpId, task.sourcePath, "auto");
-        if (!sourceStat) throw new Error("Source is unavailable");
-        const validationError = validateTransferResumeSource(task, {
-          size: sourceStat.size,
-          lastModified: sourceStat.lastModified,
-        });
-        if (validationError) throw new Error(validationError);
-      }
+          if (isDownload) {
+            const sourceStat = await bridge.statSftp?.(sftpId, task.sourcePath, "auto");
+            if (!sourceStat) throw new Error("Source is unavailable");
+            const validationError = validateTransferResumeSource(task, {
+              size: sourceStat.size,
+              lastModified: sourceStat.lastModified,
+            });
+            if (validationError) throw new Error(validationError);
+          }
 
-      // Share the renderer global admission pool with panel transfers so
-      // dedicated resume cannot stack a second full concurrency budget on main.
-      const result = await globalSftpTransferScheduler.run(
-        "dedicated-resume",
-        task.id,
-        getSftpTransferResourceKeys({
-          sourceHostId: isDownload ? remoteHost.id : undefined,
-          targetHostId: isUpload ? remoteHost.id : undefined,
-          sourceSftpId: isDownload ? sftpId : undefined,
-          targetSftpId: isUpload ? sftpId : undefined,
-        }),
-        () => localStorageAdapter.readNumber(STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY),
-        async () => bridge.startStreamTransfer!({
-          transferId: task.id,
-          sourcePath: task.sourcePath,
-          targetPath: task.targetPath,
-          sourceType: isDownload ? "sftp" : "local",
-          targetType: isDownload ? "local" : "sftp",
-          sourceSftpId: isDownload ? sftpId : undefined,
-          targetSftpId: isUpload ? sftpId : undefined,
-          sourceHostId: isDownload ? remoteHost.id : undefined,
-          targetHostId: isUpload ? remoteHost.id : undefined,
-          totalBytes: task.totalBytes || undefined,
-          resumable: task.resumable !== false,
-          checkpointBytes: task.checkpointBytes ?? task.transferredBytes ?? 0,
-          resumeStage: task.resumeStage,
-          downloadCheckpointBytes: task.downloadCheckpointBytes,
-          uploadCheckpointBytes: task.uploadCheckpointBytes,
-          sourceFingerprint: task.sourceFingerprint,
-          skipAdmission: true,
-        }, (transferred, total, speed, checkpoint) => {
-          onProgress?.({
-            transferred,
-            total,
-            speed,
-            checkpointBytes: checkpoint?.checkpointBytes ?? transferred,
-            resumeStage: checkpoint?.resumeStage,
-            downloadCheckpointBytes: checkpoint?.downloadCheckpointBytes,
-            uploadCheckpointBytes: checkpoint?.uploadCheckpointBytes,
-            sourceFingerprint: checkpoint?.sourceFingerprint,
+          const streamResult = await bridge.startStreamTransfer!({
+            transferId: task.id,
+            sourcePath: task.sourcePath,
+            targetPath: task.targetPath,
+            sourceType: isDownload ? "sftp" : "local",
+            targetType: isDownload ? "local" : "sftp",
+            sourceSftpId: isDownload ? sftpId : undefined,
+            targetSftpId: isUpload ? sftpId : undefined,
+            sourceHostId: isDownload ? remoteHost.id : undefined,
+            targetHostId: isUpload ? remoteHost.id : undefined,
+            totalBytes: task.totalBytes || undefined,
+            resumable: task.resumable !== false,
+            checkpointBytes: task.checkpointBytes ?? task.transferredBytes ?? 0,
+            resumeStage: task.resumeStage,
+            downloadCheckpointBytes: task.downloadCheckpointBytes,
+            uploadCheckpointBytes: task.uploadCheckpointBytes,
+            sourceFingerprint: task.sourceFingerprint,
+            skipAdmission: true,
+          }, (transferred, total, speed, checkpoint) => {
+            onProgress?.({
+              transferred,
+              total,
+              speed,
+              checkpointBytes: checkpoint?.checkpointBytes ?? transferred,
+              resumeStage: checkpoint?.resumeStage,
+              downloadCheckpointBytes: checkpoint?.downloadCheckpointBytes,
+              uploadCheckpointBytes: checkpoint?.uploadCheckpointBytes,
+              sourceFingerprint: checkpoint?.sourceFingerprint,
+            });
           });
-        }),
-      );
 
-      if (result?.error) {
-        throw new Error(result.error);
-      }
-    }, { retries: 1, delayMs: 600 });
+          if (streamResult?.error) {
+            throw new Error(streamResult.error);
+          }
+        }, { retries: 1, delayMs: 600 });
+        return { transferId: task.id };
+      },
+    );
 
+    if (result?.error) {
+      throw new Error(result.error);
+    }
     return { success: true };
   } catch (error) {
     return {

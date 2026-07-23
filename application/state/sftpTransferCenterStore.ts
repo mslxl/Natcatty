@@ -283,9 +283,23 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
       && dedicatedResumeHandler
       && !task.isDirectory
     ) {
+      // Detach from the panel owner immediately so publishOwner cannot clobber
+      // in-flight dedicated progress with a stale interrupted/paused snapshot.
+      tasks = tasks.map((candidate) => candidate.id === taskId ? {
+        ...candidate,
+        ownerId: "dedicated-resume",
+        status: "pending",
+        error: undefined,
+        reconnectRequired: true,
+        speed: 0,
+        phase: undefined,
+        updatedAt: Date.now(),
+      } : candidate);
+      emit();
       const latest = tasks.find((candidate) => candidate.id === taskId) ?? task;
       const result = await dedicatedResumeHandler({
         ...latest,
+        ownerId: "dedicated-resume",
         reconnectRequired: true,
       });
       // Cancel/pause may finish while dedicated resume was still reconnecting.
@@ -447,8 +461,11 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
         if (task.id !== taskId) return task;
         // Never resurrect a user-stopped row via dedicated-resume progress.
         if (task.status === "cancelled") return task;
+        // Dedicated-owned rows may move pending → transferring while a panel
+        // still holds a local interrupted copy that is no longer authoritative.
         if (
-          (task.status === "paused" || task.status === "interrupted")
+          task.ownerId !== "dedicated-resume"
+          && (task.status === "paused" || task.status === "interrupted")
           && (updates.status === "transferring" || updates.status === "pending" || updates.status === "completed")
         ) {
           return task;
