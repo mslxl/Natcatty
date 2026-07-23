@@ -85,14 +85,18 @@ export function useSftpTransferTaskOps({
   const markBatchStopped = useCallback(
     async (task: TransferTask) => {
       const batchId = task.batchId;
+      // Stop the whole unfinished batch, including siblings already waiting on
+      // conflict resolution (attention), not only pending/transferring rows.
+      const isUnfinished = (status: TransferTask["status"]) =>
+        !["completed", "cancelled", "failed"].includes(status);
       const affected = transfersRef.current.filter((candidate) =>
         candidate.id === task.id ||
-        (!!batchId && candidate.batchId === batchId && (candidate.status === "pending" || candidate.status === "transferring")),
+        (!!batchId && candidate.batchId === batchId && isUnfinished(candidate.status)),
       );
 
       affected.forEach((candidate) => cancelledTasksRef.current.add(candidate.id));
       const affectedIds = new Set(affected.map((candidate) => candidate.id));
-      setConflicts((prev) => prev.filter((conflict) => conflict.transferId !== task.id && (!batchId || conflict.batchId !== batchId)));
+      setConflicts((prev) => prev.filter((conflict) => !affectedIds.has(conflict.transferId) && (!batchId || conflict.batchId !== batchId)));
       setTransfers((prev) => {
         for (const candidate of prev) {
           if (candidate.parentTaskId && affectedIds.has(candidate.parentTaskId)) {
@@ -104,7 +108,7 @@ export function useSftpTransferTaskOps({
           .filter((candidate) => !(candidate.parentTaskId && affectedIds.has(candidate.parentTaskId)))
           .map((candidate) =>
             affectedIds.has(candidate.id)
-              ? { ...candidate, status: "cancelled" as TransferStatus, endTime: Date.now() }
+              ? { ...candidate, status: "cancelled" as TransferStatus, endTime: Date.now(), conflict: undefined }
               : candidate,
           );
       });
