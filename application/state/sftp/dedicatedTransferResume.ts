@@ -196,6 +196,17 @@ export type DirectoryResumeFilePlan = {
   lastModified?: number;
 };
 
+/**
+ * Destination root for directory resume. Replace-mode parents write under
+ * `stagedTargetPath` until the full tree is ready to promote.
+ */
+export function resolveDirectoryResumeTargetRoot(
+  parent: Pick<TransferTask, "targetPath" | "stagedTargetPath" | "replaceExistingTarget">,
+): string {
+  if (parent.stagedTargetPath) return parent.stagedTargetPath;
+  return parent.targetPath;
+}
+
 /** Match a planned file to a persisted child by exact source+target paths. */
 export function findPersistedChildForResumeFile(
   children: readonly Pick<TransferTask, "id" | "status" | "sourcePath" | "targetPath" | "checkpointBytes" | "transferredBytes" | "resumeStage" | "downloadCheckpointBytes" | "uploadCheckpointBytes" | "sourceFingerprint" | "totalBytes" | "sourceLastModified">[],
@@ -520,6 +531,7 @@ async function collectDirectoryResumeFiles(
   sourceSftpId: string | undefined,
 ): Promise<DirectoryResumeFilePlan[]> {
   const bridge = netcattyBridge.get();
+  const destRoot = resolveDirectoryResumeTargetRoot(parent);
 
   // Upload: local source tree.
   if (endpoints.isUpload) {
@@ -532,7 +544,7 @@ async function collectDirectoryResumeFiles(
       .map((entry) => ({
         relativePath: entry.relativePath.replace(/\\/g, "/"),
         sourcePath: entry.localPath,
-        targetPath: joinPath(parent.targetPath, entry.relativePath.replace(/\\/g, "/")),
+        targetPath: joinPath(destRoot, entry.relativePath.replace(/\\/g, "/")),
         size: entry.size,
         lastModified: entry.lastModified,
       }));
@@ -543,8 +555,59 @@ async function collectDirectoryResumeFiles(
   const remoteFiles = await listRemoteFilesRecursive(sourceSftpId, parent.sourcePath);
   return remoteFiles.map((file) => ({
     ...file,
-    targetPath: joinPath(parent.targetPath, file.relativePath),
+    targetPath: joinPath(destRoot, file.relativePath),
   }));
+}
+
+/** Atomically promote a replace-mode staged directory to the final target path. */
+async function promoteDirectoryReplaceStage(
+  parent: TransferTask,
+  endpoints: ResolvedEndpoints,
+  targetSftpId: string | undefined,
+): Promise<void> {
+  const staged = parent.stagedTargetPath;
+  if (!staged || staged === parent.targetPath) return;
+  const bridge = netcattyBridge.get();
+  if (!bridge) throw new Error("Transfer bridge unavailable");
+  const safeId = String(parent.id).replace(/[^A-Za-z0-9_-]/g, "_");
+  const backupPath = `${parent.targetPath}.netcatty-${safeId}.backup`;
+  let backedUp = false;
+  try {
+    if (endpoints.isDownload) {
+      if (!bridge.renameLocalFile || !bridge.deleteLocalFile) {
+        throw new Error("Local directory replacement is unavailable");
+      }
+      try {
+        await bridge.renameLocalFile(parent.targetPath, backupPath);
+        backedUp = true;
+      } catch { /* target may not exist */ }
+      await bridge.renameLocalFile(staged, parent.targetPath);
+      if (backedUp) await bridge.deleteLocalFile(backupPath);
+      return;
+    }
+    if (!targetSftpId) throw new Error("Target SFTP session missing for directory promote");
+    if (!bridge.renameSftp || !bridge.deleteSftp) {
+      throw new Error("Remote directory replacement is unavailable");
+    }
+    try {
+      await bridge.renameSftp(targetSftpId, parent.targetPath, backupPath, "auto");
+      backedUp = true;
+    } catch { /* target may not exist */ }
+    try {
+      await bridge.renameSftp(targetSftpId, staged, parent.targetPath, "auto");
+    } catch (error) {
+      if (backedUp) {
+        await bridge.renameSftp(targetSftpId, backupPath, parent.targetPath, "auto").catch(() => {});
+      }
+      throw error;
+    }
+    if (backedUp) await bridge.deleteSftp(targetSftpId, backupPath, "auto");
+  } catch (error) {
+    if (backedUp && endpoints.isDownload) {
+      await bridge.renameLocalFile?.(backupPath, parent.targetPath).catch(() => {});
+    }
+    throw error;
+  }
 }
 
 async function ensureLocalDir(dirPath: string): Promise<void> {
@@ -609,8 +672,9 @@ async function resumeDirectoryWithDedicatedSession(
         sourceSftpId = opened.sourceSftpId;
         targetSftpId = opened.targetSftpId;
 
-        if (endpoints.isDownload) await ensureLocalDir(parent.targetPath);
-        if (targetSftpId) await ensureRemoteDir(targetSftpId, parent.targetPath);
+        const destRoot = resolveDirectoryResumeTargetRoot(parent);
+        if (endpoints.isDownload) await ensureLocalDir(destRoot);
+        if (targetSftpId) await ensureRemoteDir(targetSftpId, destRoot);
 
         const planned = await collectDirectoryResumeFiles(parent, endpoints, sourceSftpId);
         totalFiles = planned.length;
@@ -817,6 +881,17 @@ async function resumeDirectoryWithDedicatedSession(
           attentionCount > 0 ? `${attentionCount} file(s) need attention (source changed)` : null,
         ].filter(Boolean).join("; "),
       };
+    }
+    // Full success — promote replace-mode stage onto the final target path.
+    if (parent.stagedTargetPath) {
+      await promoteDirectoryReplaceStage(parent, endpoints, targetSftpId);
+      // Partial upsert only — do not re-publish a stale full parent snapshot
+      // (would clobber live transferredBytes / totalBytes from patchTask).
+      options?.onChildUpdate?.({
+        id: parent.id,
+        stagedTargetPath: undefined,
+        replaceExistingTarget: undefined,
+      } as TransferTask);
     }
     return { success: true };
   } catch (error) {

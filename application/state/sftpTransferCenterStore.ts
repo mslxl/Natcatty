@@ -491,7 +491,26 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
       const cancelLike = /cancelled|canceled/i.test(result.error || "");
       if (cancelLike) {
         const liveAfter = tasks.find((candidate) => candidate.id === taskId);
-        if (liveAfter && ["transferring", "pending", "queued", "paused", "pausing"].includes(liveAfter.status)) {
+        // Soft-unpause may have painted transferring while the held dedicated
+        // walk was already dying. If no invocation remains, demote so Resume works.
+        if (
+          liveAfter
+          && ["transferring", "pending", "queued", "paused", "pausing"].includes(liveAfter.status)
+        ) {
+          if (!resumeInvocations.has(taskId) && liveAfter.status === "transferring") {
+            tasks = tasks.map((candidate) => candidate.id === taskId || candidate.parentTaskId === taskId
+              ? {
+                ...candidate,
+                status: candidate.status === "completed" || candidate.status === "cancelled"
+                  ? candidate.status
+                  : "interrupted" as const,
+                speed: 0,
+                reconnectRequired: true,
+                phase: undefined,
+              }
+              : candidate);
+            emit();
+          }
           return;
         }
         const cancelIds = new Set([
@@ -761,29 +780,41 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
         if (task?.status === "cancelled") return existing;
 
         // Soft-unpause live backend streams when still paused under a held run.
-        // Dedicated-resume (and directory trees) abort the held walk on pause —
-        // never rejoin that dying run as "transferring" (ghost progress). Always
-        // await wind-down then startFresh.
+        // Dedicated *directory* walks treat status===paused as shouldAbort between
+        // files, so soft-rejoin is unsafe (dying promise + false transferring).
+        // Wind down soft-paused children then startFresh from checkpoints.
+        // Single-file dedicated (and non-directory live streams) soft-unpause.
         if (task && (task.status === "paused" || task.status === "pausing")) {
-          if (task.ownerId === "dedicated-resume" || task.isDirectory) {
+          const childIds = tasks
+            .filter((candidate) => candidate.parentTaskId === taskId
+              && (candidate.status === "paused"
+                || candidate.status === "pausing"
+                || candidate.status === "transferring"))
+            .map((candidate) => candidate.id);
+
+          if (task.ownerId === "dedicated-resume" && task.isDirectory) {
+            const bridge = netcattyBridge.get();
+            for (const id of childIds) {
+              try { await bridge?.cancelTransfer?.(id); } catch { /* best-effort wind-down */ }
+            }
             try {
               await existing;
-            } catch { /* previous aborted */ }
+            } catch { /* previous aborted / cancelled */ }
             return resumeInvocations.get(taskId) ?? startFresh();
           }
+
           try {
-            const childIds = tasks
-              .filter((candidate) => candidate.parentTaskId === taskId
-                && candidate.status === "paused")
-              .map((candidate) => candidate.id);
-            const resumeIds = [taskId, ...childIds];
+            const resumeIds = [taskId, ...childIds.filter((id) => id !== taskId)];
             const results = await Promise.all(resumeIds.map(async (id) =>
               netcattyBridge.get()?.resumeTransfer?.(id) ?? { success: false },
             ));
             const after = tasks.find((candidate) => candidate.id === taskId);
             if (after?.status === "cancelled") return existing;
-            if (results.some((live) => live?.success)) {
-              const resumed = new Set(resumeIds);
+            // Only rejoin when at least one backend stream actually resumed.
+            // Empty/all-fail must not paint transferring over a dead held run.
+            const successIds = resumeIds.filter((_, index) => results[index]?.success);
+            if (successIds.length > 0) {
+              const resumed = new Set(successIds);
               tasks = tasks.map((candidate) => {
                 if (candidate.id === taskId || resumed.has(candidate.id)) {
                   return {

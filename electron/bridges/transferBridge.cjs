@@ -642,6 +642,10 @@ async function uploadFile(localPath, remotePath, client, fileSize, transfer, sen
 
     transfer.readStream = readStream;
     transfer.writeStream = writeStream;
+    // Honor a pause that raced stream open (fingerprint / dir ensure window).
+    if (transfer.paused) {
+      try { readStream.pause(); } catch { }
+    }
 
     const cleanup = (err) => {
       if (settled) return;
@@ -779,6 +783,9 @@ async function downloadFile(remotePath, localPath, client, fileSize, transfer, s
 
     transfer.readStream = readStream;
     transfer.writeStream = writeStream;
+    if (transfer.paused) {
+      try { readStream.pause(); } catch { }
+    }
 
     const cleanup = (err) => {
       if (finished) return;
@@ -1186,6 +1193,9 @@ async function startTransferNow(event, payload, onProgress) {
 
         transfer.readStream = readStream;
         transfer.writeStream = writeStream;
+        if (transfer.paused) {
+          try { readStream.pause(); } catch { }
+        }
 
         const cleanup = (err) => {
           if (finished) return;
@@ -1282,6 +1292,10 @@ async function startTransferNow(event, payload, onProgress) {
           );
           transfer.checkpointBytes = transfer.downloadCheckpointBytes;
           lastObservedTransferred = Math.floor(transfer.downloadCheckpointBytes / 2);
+          // sendProgress stores overall UI bytes on checkpointBytes — restore the
+          // stage offset afterward so downloadFile resumes at the durable point.
+          sendProgress(lastObservedTransferred, fileSize, { force: true });
+          transfer.checkpointBytes = transfer.downloadCheckpointBytes;
           const encodedSourcePath = isScpModeClient(sourceClient)
             ? sourcePath
             : encodePathForSession(sourceSftpId, sourcePath, sourceEncoding);
@@ -1332,6 +1346,10 @@ async function startTransferNow(event, payload, onProgress) {
         // Overall progress for R2R upload stage is ~50% + upload/2.
         lastObservedTransferred = Math.floor(fileSize / 2)
           + Math.floor(transfer.uploadCheckpointBytes / 2);
+        // sendProgress stores overall UI bytes on checkpointBytes — restore the
+        // stage offset afterward so uploadFile resumes at the durable point.
+        sendProgress(lastObservedTransferred, fileSize, { force: true });
+        transfer.checkpointBytes = transfer.uploadCheckpointBytes;
         transfer.stagedRemote = transfer.resumable
           ? { client: targetClient, sftpId: targetSftpId, path: uploadTargetPath, encoding: targetEncoding }
           : null;
@@ -1574,6 +1592,16 @@ async function pauseTransfer(_event, payload) {
       success: false,
       reason: transfer.pauseUnavailableReason || "This transfer cannot be paused safely",
     };
+  }
+  // Refuse until streams (or an abortable fast path) exist — otherwise the UI
+  // latches "paused" while content-verify/fingerprint still runs and then the
+  // stream starts under a paused row.
+  if (
+    !transfer.readStream
+    && !transfer.writeStream
+    && typeof transfer.abort !== "function"
+  ) {
+    return { success: false, reason: "This transfer cannot be paused yet" };
   }
   transfer.paused = true;
   try { transfer.readStream?.pause?.(); } catch { }

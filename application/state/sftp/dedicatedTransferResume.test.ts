@@ -8,6 +8,7 @@ import {
   findPersistedChildForResumeFile,
   MAX_CONCURRENT_DEDICATED_SESSION_OPENS,
   resetDedicatedSessionOpenGateForTests,
+  resolveDirectoryResumeTargetRoot,
   resolveHostForTransferEndpoint,
   shouldSkipCompletedResumeChild,
   withDedicatedSessionOpenSlot,
@@ -22,6 +23,43 @@ const host = (id: string, label: string, hostname = label): Host => ({
   authMethod: "password",
   protocol: "ssh",
 } as Host);
+
+test("resolveDirectoryResumeTargetRoot prefers staged replace path", () => {
+  assert.equal(
+    resolveDirectoryResumeTargetRoot({
+      targetPath: "/final/dir",
+      stagedTargetPath: "/final/dir.netcatty-abc.part",
+      replaceExistingTarget: true,
+    }),
+    "/final/dir.netcatty-abc.part",
+  );
+  assert.equal(
+    resolveDirectoryResumeTargetRoot({
+      targetPath: "/final/dir",
+    }),
+    "/final/dir",
+  );
+});
+
+test("findPersistedChildForResumeFile matches staged target paths", () => {
+  const staged = "/final/dir.netcatty-abc.part/a.txt";
+  const child = {
+    id: "c1",
+    status: "completed" as const,
+    sourcePath: "/src/a.txt",
+    targetPath: staged,
+    checkpointBytes: 10,
+    transferredBytes: 10,
+    totalBytes: 10,
+  };
+  const planRoot = resolveDirectoryResumeTargetRoot({
+    targetPath: "/final/dir",
+    stagedTargetPath: "/final/dir.netcatty-abc.part",
+  });
+  const planned = { sourcePath: "/src/a.txt", targetPath: `${planRoot}/a.txt` };
+  assert.equal(findPersistedChildForResumeFile([child], planned)?.id, "c1");
+  assert.equal(shouldSkipCompletedResumeChild(findPersistedChildForResumeFile([child], planned)), true);
+});
 
 test("resolveHostForTransferEndpoint prefers id then label", () => {
   const hosts = [host("id-1", "CI-Build-01", "ci-01.example")];

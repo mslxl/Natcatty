@@ -403,6 +403,90 @@ test("pause on dedicated directory parent freezes unfinished children", async ()
   assert.equal(snapshot.find((task) => task.id === "c1")?.status, "interrupted");
 });
 
+test("dedicated directory resume after soft-pause winds down then startFresh (no dead transferring)", async (t) => {
+  const store = createSftpTransferCenterStore();
+  let resumeCalls = 0;
+  const cancelCalls: string[] = [];
+  let firstRunStarted: (() => void) | null = null;
+  const firstRunBlocked = new Promise<void>((resolve) => { firstRunStarted = resolve; });
+  let releaseFirstRun: (() => void) | null = null;
+  const firstRunHold = new Promise<void>((resolve) => { releaseFirstRun = resolve; });
+
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  t.after(() => {
+    if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
+    else Reflect.deleteProperty(globalThis, "window");
+  });
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      netcatty: {
+        cancelTransfer: async (id: string) => {
+          cancelCalls.push(id);
+          return { success: true };
+        },
+        resumeTransfer: async () => ({ success: false, reason: "Transfer is no longer active" }),
+        pauseTransfer: async () => ({ success: true, checkpointBytes: 1 }),
+      },
+    },
+  });
+
+  store.publishOwner("dedicated-resume", [{
+    ...makeTask("dir", "interrupted"),
+    isDirectory: true,
+    ownerId: "dedicated-resume",
+    direction: "download",
+    sourceHostId: "host-a",
+    targetConnectionId: "local",
+    totalBytes: 2,
+    transferredBytes: 0,
+    reconnectRequired: true,
+  }, {
+    ...makeTask("c1", "interrupted"),
+    parentTaskId: "dir",
+    ownerId: "dedicated-resume",
+    reconnectRequired: true,
+  }]);
+
+  store.setDedicatedResumeHandler(async () => {
+    resumeCalls += 1;
+    if (resumeCalls === 1) {
+      // Leave reconnectRequired so pause is not skipped only after live transfer.
+      store.patchTask("dir", { status: "transferring", reconnectRequired: false });
+      store.upsertTasks([{
+        ...makeTask("c1", "transferring"),
+        parentTaskId: "dir",
+        ownerId: "dedicated-resume",
+        reconnectRequired: false,
+      }]);
+      firstRunStarted?.();
+      await firstRunHold;
+      return { success: false, error: "Transfer cancelled" };
+    }
+    return { success: true };
+  });
+
+  // Start first dedicated run (held in resumeInvocations).
+  const first = store.resume("dir");
+  await firstRunBlocked;
+  assert.equal(store.getSnapshot().tasks.find((task) => task.id === "dir")?.status, "transferring");
+
+  // Soft-pause paints paused under dedicated-resume.
+  await store.pause("dir");
+  assert.equal(store.getSnapshot().tasks.find((task) => task.id === "dir")?.status, "paused");
+
+  // Resume must cancel soft-paused children, await wind-down, then startFresh.
+  const second = store.resume("dir");
+  // Allow the held first run to settle after cancel wind-down begins.
+  releaseFirstRun?.();
+  await second;
+  await first.catch(() => {});
+
+  assert.ok(cancelCalls.includes("c1"), "must cancel soft-paused children before startFresh");
+  assert.equal(resumeCalls, 2, "must startFresh after wind-down");
+  assert.equal(store.getSnapshot().tasks.find((task) => task.id === "dir")?.status, "completed");
+});
+
 test("orphan directory pause rolls back successful child pauses on hard fail", async (t) => {
   const pauseCalls: string[] = [];
   const resumeCalls: string[] = [];
