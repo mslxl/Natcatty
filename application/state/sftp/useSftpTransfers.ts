@@ -780,8 +780,16 @@ export const useSftpTransfers = ({
       // Cancel parent + remove child tasks
       setTransfers((prev) => {
         // Find child task IDs to cancel at backend too
-        const childIds = prev.filter((t) => t.parentTaskId === transferId && (t.status === "transferring" || t.status === "pending")).map((t) => t.id);
+        // Cancel every non-terminal child — including queued workers already
+        // admitted on the renderer scheduler but not yet transferring.
+        const childIds = prev
+          .filter((t) => t.parentTaskId === transferId && !["completed", "cancelled", "failed"].includes(t.status))
+          .map((t) => t.id);
         for (const cid of childIds) {
+          cancelledTasksRef.current.add(cid);
+          globalSftpTransferScheduler.cancel(cid);
+        }
+        for (const cid of activeChildIdsRef.current.get(transferId) ?? []) {
           cancelledTasksRef.current.add(cid);
           globalSftpTransferScheduler.cancel(cid);
         }

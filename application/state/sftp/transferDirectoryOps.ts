@@ -153,6 +153,10 @@ export function useSftpDirectoryTransferOps({
       }),
       () => localStorageAdapter.readNumber(STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY),
       async () => {
+        // Cancel may have won while this job was only queued on the scheduler.
+        if (cancelledTasksRef.current.has(task.id) || cancelledTasksRef.current.has(rootTaskId)) {
+          throw new Error("Transfer cancelled");
+        }
         setTransfers((prev) => prev.map((candidate) => candidate.id === task.id
           ? { ...candidate, status: "transferring" as TransferStatus }
           : candidate));
@@ -163,6 +167,9 @@ export function useSftpDirectoryTransferOps({
         let targetLease: TransferConnectionLease | null = null;
 
         const acquireLeases = async () => {
+          if (cancelledTasksRef.current.has(task.id) || cancelledTasksRef.current.has(rootTaskId)) {
+            throw new Error("Transfer cancelled");
+          }
           if (acquireTransferSession && !sourceIsLocal && task.sourceHostId) {
             try {
               sourceLease = await acquireTransferSession(task.sourceHostId, task.id);
