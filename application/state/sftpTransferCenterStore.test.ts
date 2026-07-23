@@ -304,6 +304,197 @@ test("orphaned resume prefers a dedicated SFTP session without a panel owner", a
   assert.equal(store.getSnapshot().tasks[0]?.reconnectRequired, false);
 });
 
+test("directory resume uses dedicated handler and rehomes children", async () => {
+  const store = createSftpTransferCenterStore();
+  store.publishOwner("closed-panel", [
+    {
+      ...makeTask("dir-parent", "interrupted"),
+      isDirectory: true,
+      progressMode: "files",
+      direction: "download",
+      sourceHostId: "host-a",
+      sourceHostLabel: "CI-Build-01",
+      targetConnectionId: "local",
+      totalBytes: 2,
+      transferredBytes: 1,
+      reconnectRequired: true,
+    },
+    {
+      ...makeTask("dir-child-done", "completed"),
+      parentTaskId: "dir-parent",
+      sourcePath: "/r/a",
+      targetPath: "/l/a",
+    },
+    {
+      ...makeTask("dir-child-open", "interrupted"),
+      parentTaskId: "dir-parent",
+      sourcePath: "/r/b",
+      targetPath: "/l/b",
+      checkpointBytes: 50,
+      reconnectRequired: true,
+    },
+  ]);
+
+  let sawDirectory = false;
+  store.setDedicatedResumeHandler(async (task) => {
+    sawDirectory = !!task.isDirectory;
+    store.upsertTasks([{
+      ...makeTask("dir-child-open", "completed"),
+      parentTaskId: "dir-parent",
+      ownerId: "dedicated-resume",
+      sourcePath: "/r/b",
+      targetPath: "/l/b",
+    }]);
+    return { success: true };
+  });
+
+  await store.resume("dir-parent");
+
+  assert.equal(sawDirectory, true);
+  const snapshot = store.getSnapshot().tasks;
+  const parent = snapshot.find((task) => task.id === "dir-parent");
+  const children = snapshot.filter((task) => task.parentTaskId === "dir-parent");
+  assert.equal(parent?.status, "completed");
+  assert.equal(parent?.ownerId, "dedicated-resume");
+  assert.ok(children.every((child) => child.ownerId === "dedicated-resume"));
+  assert.equal(children.find((child) => child.id === "dir-child-done")?.status, "completed");
+});
+
+test("upsertTasks refuses new children under a cancelled directory parent", () => {
+  const store = createSftpTransferCenterStore();
+  store.publishOwner("dedicated-resume", [{
+    ...makeTask("dir", "cancelled"),
+    isDirectory: true,
+    ownerId: "dedicated-resume",
+  }]);
+  store.upsertTasks([{
+    ...makeTask("late-child", "transferring"),
+    parentTaskId: "dir",
+    ownerId: "dedicated-resume",
+  }]);
+  assert.equal(store.getSnapshot().tasks.some((task) => task.id === "late-child"), false);
+});
+
+test("pause on dedicated directory parent freezes unfinished children", async () => {
+  const store = createSftpTransferCenterStore();
+  store.publishOwner("dedicated-resume", [
+    {
+      ...makeTask("dir", "transferring"),
+      isDirectory: true,
+      ownerId: "dedicated-resume",
+      direction: "download",
+      sourceHostId: "host-a",
+      targetConnectionId: "local",
+      totalBytes: 2,
+      transferredBytes: 0,
+    },
+    {
+      ...makeTask("c1", "transferring"),
+      parentTaskId: "dir",
+      ownerId: "dedicated-resume",
+    },
+  ]);
+
+  // No live bridge pause — falls through to interrupted demotion for parent+children.
+  await store.pause("dir");
+
+  const snapshot = store.getSnapshot().tasks;
+  assert.equal(snapshot.find((task) => task.id === "dir")?.status, "interrupted");
+  assert.equal(snapshot.find((task) => task.id === "c1")?.status, "interrupted");
+});
+
+test("orphan directory pause rolls back successful child pauses on hard fail", async (t) => {
+  const pauseCalls: string[] = [];
+  const resumeCalls: string[] = [];
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  t.after(() => {
+    if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
+    else Reflect.deleteProperty(globalThis, "window");
+  });
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      netcatty: {
+        pauseTransfer: async (id: string) => {
+          pauseCalls.push(id);
+          if (id === "c-ok") return { success: true, checkpointBytes: 4 };
+          return { success: false, reason: "This transfer cannot be paused safely" };
+        },
+        resumeTransfer: async (id: string) => {
+          resumeCalls.push(id);
+          return { success: true };
+        },
+      },
+    },
+  });
+
+  const store = createSftpTransferCenterStore();
+  store.publishOwner("dedicated-resume", [
+    {
+      ...makeTask("dir", "transferring"),
+      isDirectory: true,
+      ownerId: "dedicated-resume",
+      direction: "download",
+      sourceHostId: "host-a",
+      targetConnectionId: "local",
+      totalBytes: 2,
+      transferredBytes: 0,
+    },
+    {
+      ...makeTask("c-ok", "transferring"),
+      parentTaskId: "dir",
+      ownerId: "dedicated-resume",
+    },
+    {
+      ...makeTask("c-fail", "transferring"),
+      parentTaskId: "dir",
+      ownerId: "dedicated-resume",
+    },
+  ]);
+
+  await store.pause("dir");
+
+  assert.deepEqual(pauseCalls.sort(), ["c-fail", "c-ok"]);
+  // Successfully paused child must be bridge-resumed so work can continue.
+  assert.deepEqual(resumeCalls, ["c-ok"]);
+  const dir = store.getSnapshot().tasks.find((task) => task.id === "dir");
+  assert.equal(dir?.status, "transferring");
+  assert.match(dir?.pauseUnavailableReason ?? "", /cannot be paused/i);
+  // Must not demote live children to interrupted when bridge was reachable.
+  assert.equal(store.getSnapshot().tasks.find((task) => task.id === "c-ok")?.status, "transferring");
+  assert.equal(store.getSnapshot().tasks.find((task) => task.id === "c-fail")?.status, "transferring");
+});
+
+test("dedicated resume source-changed marks attention and can reset checkpoint", async () => {
+  const store = createSftpTransferCenterStore();
+  store.publishOwner("closed-panel", [{
+    ...makeTask("src-changed", "interrupted"),
+    direction: "download",
+    sourceHostId: "host-a",
+    targetConnectionId: "local",
+    checkpointBytes: 40,
+    transferredBytes: 40,
+    totalBytes: 100,
+    reconnectRequired: true,
+  }]);
+
+  store.setDedicatedResumeHandler(async () => ({
+    success: false,
+    needsAttention: true,
+    resetCheckpoint: true,
+    error: "Source was modified while the transfer was paused",
+  }));
+
+  await store.resume("src-changed");
+
+  const task = store.getSnapshot().tasks[0];
+  assert.equal(task?.status, "attention");
+  assert.equal(task?.retryable, true);
+  assert.equal(task?.checkpointBytes, 0);
+  assert.equal(task?.transferredBytes, 0);
+  assert.match(task?.error ?? "", /modified/i);
+});
+
 test("reconnectRequired resume skips a retained panel that cannot adopt", async () => {
   const store = createSftpTransferCenterStore();
   const ownerCalls: string[] = [];

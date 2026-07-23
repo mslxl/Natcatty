@@ -30,6 +30,7 @@ import type { TransferTask } from "../types";
 import { toast } from "./ui/toast";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { DistroAvatar } from "./DistroAvatar";
+import { reportSftpUploadResults } from "./sftp/reportSftpUploadResults";
 
 import { SftpPaneView } from "./sftp/SftpPaneView";
 import { SftpOverlays } from "./sftp/SftpOverlays";
@@ -170,6 +171,8 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     ...fileWatchHandlers,
     transferOwnerId,
     canPrepareTransferAdoption: isVisible,
+    // Hidden side panel parks browse channels; transfer pool keeps running.
+    interactive: isVisible,
     useCompressedUpload: sftpUseCompressedUpload,
     defaultShowHiddenFiles: sftpShowHiddenFiles,
     autoConnectLocalOnMount: false,
@@ -297,13 +300,20 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     return () => window.removeEventListener("netcatty:prepare-sftp-transfer-resume", handler);
   }, [hosts, transferOwnerId]);
 
+  // Report via a ref so callback identity churn never re-runs a cleanup that
+  // spuriously zeros the parent's active-transfer count mid-transfer (that
+  // would unmount the retained owner and abort live work).
+  const onActiveTransfersChangeRef = useRef(onActiveTransfersChange);
+  onActiveTransfersChangeRef.current = onActiveTransfersChange;
+
   useLayoutEffect(() => {
-    onActiveTransfersChange?.(sftp.activeTransfersCount);
-  }, [onActiveTransfersChange, sftp.activeTransfersCount]);
+    onActiveTransfersChangeRef.current?.(sftp.activeTransfersCount);
+  }, [sftp.activeTransfersCount]);
 
   useEffect(() => () => {
-    onActiveTransfersChange?.(0);
-  }, [onActiveTransfersChange]);
+    // True unmount only — owner is going away; allow parent to release retain.
+    onActiveTransfersChangeRef.current?.(0);
+  }, []);
 
   // Register this instance's writeTextFileByConnection with the editor bridge
   // so editor tabs promoted from SFTP files opened in a terminal side panel
@@ -699,30 +709,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
         const results = await sftpRef.current.uploadExternalEntries("left", pendingUpload.entries, {
           targetPath: pendingUpload.targetPath,
         });
-        if (results.some((result) => result.cancelled)) {
-          toast.info(t("sftp.upload.cancelled"), "SFTP");
-          return;
-        }
-
-        const failCount = results.filter((result) => !result.success && !result.cancelled).length;
-        const successCount = results.filter((result) => result.success).length;
-
-        if (failCount === 0) {
-          const message =
-            successCount === 1
-              ? `${t("sftp.upload")}: ${results[0]?.fileName ?? ""}`
-              : `${t("sftp.uploadFiles")}: ${successCount}`;
-          toast.success(message, "SFTP");
-        } else {
-          const failedFiles = results.filter((result) => !result.success && !result.cancelled);
-          failedFiles.forEach((failed) => {
-            const errorMsg = failed.error ? ` - ${failed.error}` : "";
-            toast.error(
-              `${t("sftp.error.uploadFailed")}: ${failed.fileName}${errorMsg}`,
-              "SFTP",
-            );
-          });
-        }
+        reportSftpUploadResults({ results, t, toast });
       } catch (error) {
         logger.error("[SftpSidePanel] Failed to upload dropped files:", error);
         handledPendingUploadIdRef.current = null;

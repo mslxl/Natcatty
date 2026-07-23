@@ -77,29 +77,51 @@ function buildRemoteTransferStagePath(targetPath, transferId) {
   return path.posix.join(dir, `.${base}.netcatty-${safeId}.part`);
 }
 
-async function assertLocalResumeCheckpoint(filePath, checkpoint) {
-  if (!checkpoint) return;
+/**
+ * Reconcile a claimed resume offset with durable staged bytes.
+ *
+ * Progress events update checkpointBytes as soon as data is handed to the write
+ * stream — not when those bytes are fully flushed to disk/remote. After a hard
+ * app quit the UI-persisted checkpoint is almost always ahead of the .part file,
+ * so exact-size equality would reject resume ~100% of the time. Disk/remote size
+ * is the source of truth for how far we can safely continue.
+ *
+ * Returns the safe resume offset (0 when the staged file is missing/unusable).
+ */
+async function resolveLocalResumeCheckpoint(filePath, claimedCheckpoint) {
+  const claimed = Math.max(0, Number(claimedCheckpoint) || 0);
+  if (!claimed) return 0;
   try {
     const stat = await fs.promises.stat(filePath);
-    if (stat.size !== checkpoint) {
-      throw new Error(`saved file has ${stat.size} bytes, expected ${checkpoint}`);
-    }
+    if (!stat.isFile()) return 0;
+    // Never resume past durable bytes. If the file is larger than the claim,
+    // keep the claim — the write stream overwrites from that offset.
+    return Math.min(claimed, Math.max(0, Number(stat.size) || 0));
   } catch (error) {
+    if (error?.code === "ENOENT") return 0;
     throw new Error(`Resume safety check failed for local temporary file: ${error.message || String(error)}`);
   }
 }
 
-async function assertRemoteResumeCheckpoint(client, sftpId, filePath, encoding, checkpoint) {
-  if (!checkpoint) return;
+async function resolveRemoteResumeCheckpoint(client, sftpId, filePath, encoding, claimedCheckpoint) {
+  const claimed = Math.max(0, Number(claimedCheckpoint) || 0);
+  if (!claimed) return 0;
   try {
     const stat = isScpModeClient(client)
       ? await getScpBackendForClient(client).stat(filePath, { encoding })
       : await client.stat(encodePathForSession(sftpId, filePath, encoding));
-    if (stat.size !== checkpoint) {
-      throw new Error(`saved file has ${stat.size} bytes, expected ${checkpoint}`);
-    }
+    return Math.min(claimed, Math.max(0, Number(stat?.size) || 0));
   } catch (error) {
-    throw new Error(`Resume safety check failed for remote temporary file: ${error.message || String(error)}`);
+    const message = error?.message || String(error);
+    // Missing remote .part after kill/crash — start over instead of blocking forever.
+    if (
+      error?.code === "ENOENT"
+      || error?.code === 2
+      || /no such file|ENOENT|not found|does not exist/i.test(message)
+    ) {
+      return 0;
+    }
+    throw new Error(`Resume safety check failed for remote temporary file: ${message}`);
   }
 }
 
@@ -160,6 +182,20 @@ async function hashRemotePrefix(client, sftpId, filePath, encoding, bytes) {
   await requireSftpChannel(client);
   const encodedPath = encodePathForSession(sftpId, filePath, encoding);
   return hashReadable(client.sftp.createReadStream(encodedPath, { start: 0, end: bytes - 1 }));
+}
+
+/**
+ * Cap content re-hash on resume. Full-prefix hashing of multi-MB .part files
+ * over SFTP can take longer than the remaining transfer itself and freezes the
+ * UI at "transferring" with no byte movement (seen after Resume All post-quit).
+ * A leading sample still catches swapped / truncated garbage cheaply.
+ */
+const RESUME_CONTENT_VERIFY_MAX_BYTES = 256 * 1024;
+
+function resumeContentVerifyBytes(checkpoint) {
+  const claimed = Math.max(0, Number(checkpoint) || 0);
+  if (!claimed) return 0;
+  return Math.min(claimed, RESUME_CONTENT_VERIFY_MAX_BYTES);
 }
 
 async function assertMatchingResumeContent(sourceHashPromise, stagedHashPromise) {
@@ -902,7 +938,11 @@ async function startTransferNow(event, payload, onProgress) {
         uploadCheckpointBytes: transfer.uploadCheckpointBytes,
         sourceFingerprint: transfer.sourceFingerprint,
         resumable: transfer.resumable && transfer.pauseSupported,
-        pauseUnavailableReason: transfer.pauseUnavailableReason,
+        // Only surface a reason when pause is actually unavailable; never keep
+        // the startup default once pauseSupported is true.
+        pauseUnavailableReason: transfer.pauseSupported
+          ? undefined
+          : transfer.pauseUnavailableReason,
       });
     }
   };
@@ -917,10 +957,11 @@ async function startTransferNow(event, payload, onProgress) {
     }
   };
 
-  const sendProgress = (transferred, total) => {
+  const sendProgress = (transferred, total, options = {}) => {
     if (transfer.cancelled) return;
 
     const now = Date.now();
+    const force = options.force === true;
 
     let normalizedTotal = Number.isFinite(total) && total > 0 ? total : 0;
     if (normalizedTotal === 0) {
@@ -929,10 +970,15 @@ async function startTransferNow(event, payload, onProgress) {
     normalizedTotal = Math.max(normalizedTotal, lastObservedTotal, 0);
 
     let normalizedTransferred = Number.isFinite(transferred) && transferred > 0 ? transferred : 0;
-    if (normalizedTotal > 0) {
+    // Explicit force (resume clamp / restart) may lower the durable offset.
+    if (!force) {
+      if (normalizedTotal > 0) {
+        normalizedTransferred = Math.min(normalizedTransferred, normalizedTotal);
+      }
+      normalizedTransferred = Math.max(normalizedTransferred, lastObservedTransferred);
+    } else if (normalizedTotal > 0) {
       normalizedTransferred = Math.min(normalizedTransferred, normalizedTotal);
     }
-    normalizedTransferred = Math.max(normalizedTransferred, lastObservedTransferred);
 
     lastObservedTransferred = normalizedTransferred;
     lastObservedTotal = normalizedTotal;
@@ -949,7 +995,7 @@ async function startTransferNow(event, payload, onProgress) {
       onProgress(normalizedTransferred, normalizedTotal, speed);
     }
 
-    emitProgress(now, normalizedTransferred, normalizedTotal, speed);
+    emitProgress(now, normalizedTransferred, normalizedTotal, speed, force);
   };
 
   const sendComplete = () => {
@@ -994,6 +1040,10 @@ async function startTransferNow(event, payload, onProgress) {
       transfer.pauseUnavailableReason = "Pause is unavailable for SCP transfers; cancel and retry from the beginning instead";
     } else {
       transfer.pauseSupported = Boolean(transfer.resumable);
+      // Clear the default "cannot be paused safely" once we know pause works.
+      if (transfer.pauseSupported) {
+        transfer.pauseUnavailableReason = undefined;
+      }
     }
 
     if (transfer.resumable && transfer.sourceFingerprint) {
@@ -1012,7 +1062,7 @@ async function startTransferNow(event, payload, onProgress) {
       }
     }
 
-    sendProgress(transfer.checkpointBytes, fileSize);
+    sendProgress(transfer.checkpointBytes, fileSize, { force: true });
 
     if (sourceType === 'local' && targetType === 'sftp') {
       const client = sftpClients.get(targetSftpId);
@@ -1027,11 +1077,18 @@ async function startTransferNow(event, payload, onProgress) {
       transfer.stagedRemote = transfer.resumable
         ? { client, sftpId: targetSftpId, path: uploadTargetPath, encoding: targetEncoding }
         : null;
-      await assertRemoteResumeCheckpoint(client, targetSftpId, uploadTargetPath, targetEncoding, transfer.checkpointBytes);
-      await assertMatchingResumeContent(
-        hashLocalPrefix(sourcePath, transfer.checkpointBytes),
-        hashRemotePrefix(client, targetSftpId, uploadTargetPath, targetEncoding, transfer.checkpointBytes),
+      // Clamp UI/progress checkpoint to durable remote .part size (crash-safe).
+      transfer.checkpointBytes = await resolveRemoteResumeCheckpoint(
+        client, targetSftpId, uploadTargetPath, targetEncoding, transfer.checkpointBytes,
       );
+      sendProgress(transfer.checkpointBytes, fileSize, { force: true });
+      {
+        const verifyBytes = resumeContentVerifyBytes(transfer.checkpointBytes);
+        await assertMatchingResumeContent(
+          hashLocalPrefix(sourcePath, verifyBytes),
+          hashRemotePrefix(client, targetSftpId, uploadTargetPath, targetEncoding, verifyBytes),
+        );
+      }
       const encodedTargetPath = isScpModeClient(client)
         ? uploadTargetPath
         : encodePathForSession(targetSftpId, uploadTargetPath, targetEncoding);
@@ -1063,11 +1120,17 @@ async function startTransferNow(event, payload, onProgress) {
         ? tempDirBridge.getTransferTempFilePath(transferId, path.basename(targetPath))
         : targetPath;
       transfer.stagedLocalPath = transfer.resumable ? downloadTargetPath : null;
-      await assertLocalResumeCheckpoint(downloadTargetPath, transfer.checkpointBytes);
-      await assertMatchingResumeContent(
-        hashRemotePrefix(client, sourceSftpId, sourcePath, sourceEncoding, transfer.checkpointBytes),
-        hashLocalPrefix(downloadTargetPath, transfer.checkpointBytes),
+      transfer.checkpointBytes = await resolveLocalResumeCheckpoint(
+        downloadTargetPath, transfer.checkpointBytes,
       );
+      sendProgress(transfer.checkpointBytes, fileSize, { force: true });
+      {
+        const verifyBytes = resumeContentVerifyBytes(transfer.checkpointBytes);
+        await assertMatchingResumeContent(
+          hashRemotePrefix(client, sourceSftpId, sourcePath, sourceEncoding, verifyBytes),
+          hashLocalPrefix(downloadTargetPath, verifyBytes),
+        );
+      }
       await downloadFile(
         encodedSourcePath,
         downloadTargetPath,
@@ -1089,16 +1152,26 @@ async function startTransferNow(event, payload, onProgress) {
     } else if (sourceType === 'local' && targetType === 'local') {
       const dir = path.dirname(targetPath);
       await ensureLocalDir(dir);
-      const checkpoint = Math.max(0, Math.min(transfer.checkpointBytes || 0, fileSize));
       const localTargetPath = transfer.resumable
         ? tempDirBridge.getTransferTempFilePath(transferId, path.basename(targetPath))
         : targetPath;
       transfer.stagedLocalPath = transfer.resumable ? localTargetPath : null;
-      await assertLocalResumeCheckpoint(localTargetPath, checkpoint);
-      await assertMatchingResumeContent(
-        hashLocalPrefix(sourcePath, checkpoint),
-        hashLocalPrefix(localTargetPath, checkpoint),
+      const checkpoint = Math.max(
+        0,
+        Math.min(
+          await resolveLocalResumeCheckpoint(localTargetPath, transfer.checkpointBytes || 0),
+          fileSize,
+        ),
       );
+      transfer.checkpointBytes = checkpoint;
+      sendProgress(checkpoint, fileSize, { force: true });
+      {
+        const verifyBytes = resumeContentVerifyBytes(checkpoint);
+        await assertMatchingResumeContent(
+          hashLocalPrefix(sourcePath, verifyBytes),
+          hashLocalPrefix(localTargetPath, verifyBytes),
+        );
+      }
 
       await new Promise((resolve, reject) => {
         transfer.pauseSupported = Boolean(transfer.resumable);
@@ -1204,15 +1277,21 @@ async function startTransferNow(event, payload, onProgress) {
 
         if (transfer.resumeStage !== 'upload') {
           transfer.resumeStage = 'download';
+          transfer.downloadCheckpointBytes = await resolveLocalResumeCheckpoint(
+            tempPath, transfer.downloadCheckpointBytes,
+          );
           transfer.checkpointBytes = transfer.downloadCheckpointBytes;
+          lastObservedTransferred = Math.floor(transfer.downloadCheckpointBytes / 2);
           const encodedSourcePath = isScpModeClient(sourceClient)
             ? sourcePath
             : encodePathForSession(sourceSftpId, sourcePath, sourceEncoding);
-          await assertLocalResumeCheckpoint(tempPath, transfer.downloadCheckpointBytes);
-          await assertMatchingResumeContent(
-            hashRemotePrefix(sourceClient, sourceSftpId, sourcePath, sourceEncoding, transfer.downloadCheckpointBytes),
-            hashLocalPrefix(tempPath, transfer.downloadCheckpointBytes),
-          );
+          {
+            const verifyBytes = resumeContentVerifyBytes(transfer.downloadCheckpointBytes);
+            await assertMatchingResumeContent(
+              hashRemotePrefix(sourceClient, sourceSftpId, sourcePath, sourceEncoding, verifyBytes),
+              hashLocalPrefix(tempPath, verifyBytes),
+            );
+          }
           const downloadProgress = (transferred) => {
             transfer.downloadCheckpointBytes = transferred;
             sendProgress(Math.floor(transferred / 2), fileSize);
@@ -1243,18 +1322,26 @@ async function startTransferNow(event, payload, onProgress) {
         try { await ensureRemoteDirForSession(targetSftpId, dir, targetEncoding); } catch { }
 
         transfer.resumeStage = 'upload';
-        transfer.checkpointBytes = transfer.uploadCheckpointBytes;
         const uploadTargetPath = transfer.resumable
           ? buildRemoteTransferStagePath(targetPath, transferId)
           : targetPath;
+        transfer.uploadCheckpointBytes = await resolveRemoteResumeCheckpoint(
+          targetClient, targetSftpId, uploadTargetPath, targetEncoding, transfer.uploadCheckpointBytes,
+        );
+        transfer.checkpointBytes = transfer.uploadCheckpointBytes;
+        // Overall progress for R2R upload stage is ~50% + upload/2.
+        lastObservedTransferred = Math.floor(fileSize / 2)
+          + Math.floor(transfer.uploadCheckpointBytes / 2);
         transfer.stagedRemote = transfer.resumable
           ? { client: targetClient, sftpId: targetSftpId, path: uploadTargetPath, encoding: targetEncoding }
           : null;
-        await assertRemoteResumeCheckpoint(targetClient, targetSftpId, uploadTargetPath, targetEncoding, transfer.uploadCheckpointBytes);
-        await assertMatchingResumeContent(
-          hashLocalPrefix(tempPath, transfer.uploadCheckpointBytes),
-          hashRemotePrefix(targetClient, targetSftpId, uploadTargetPath, targetEncoding, transfer.uploadCheckpointBytes),
-        );
+        {
+          const verifyBytes = resumeContentVerifyBytes(transfer.uploadCheckpointBytes);
+          await assertMatchingResumeContent(
+            hashLocalPrefix(tempPath, verifyBytes),
+            hashRemotePrefix(targetClient, targetSftpId, uploadTargetPath, targetEncoding, verifyBytes),
+          );
+        }
         const encodedTargetPath = isScpModeClient(targetClient)
           ? uploadTargetPath
           : encodePathForSession(targetSftpId, uploadTargetPath, targetEncoding);

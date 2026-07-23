@@ -773,6 +773,106 @@ test("server-to-server upload resume uses its own checkpoint instead of overall 
   assert.equal(promoted, true);
 });
 
+test("upload resume after hard quit clamps checkpoint to durable remote .part size", async (t) => {
+  // Simulates force-quit mid-upload: UI progress saved a high checkpoint, but
+  // only a shorter prefix made it into the remote staged .part file.
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-crash-resume-"));
+  t.after(async () => {
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const transferId = `crash-resume-${crypto.randomUUID()}`;
+  const sourcePath = path.join(tempDir, "source.bin");
+  const payload = Buffer.from("abcdefghij"); // 10 bytes
+  await fs.promises.writeFile(sourcePath, payload);
+
+  // Durable remote has first 4 bytes; claimed checkpoint is 8 (progress ahead).
+  let remote = Buffer.from("abcd");
+  let promoted = false;
+  const streamSftp = createFastSftp({
+    createReadStream(_path, options = {}) {
+      const start = options.start || 0;
+      const end = options.end;
+      const slice = end === undefined ? remote.subarray(start) : remote.subarray(start, end + 1);
+      return Readable.from([slice]);
+    },
+    createWriteStream(_path, options = {}) {
+      let offset = options.start || 0;
+      return new Writable({
+        write(chunk, _encoding, callback) {
+          const buf = Buffer.from(chunk);
+          if (remote.length < offset) {
+            remote = Buffer.concat([remote, Buffer.alloc(offset - remote.length)]);
+          }
+          remote = Buffer.concat([
+            remote.subarray(0, offset),
+            buf,
+            remote.subarray(offset + buf.length),
+          ]);
+          offset += buf.length;
+          callback();
+        },
+        final(callback) {
+          callback();
+          queueMicrotask(() => this.emit("close"));
+        },
+      });
+    },
+  });
+  const client = {
+    __netcattySudoMode: true, // force sequential stream path (not fastPut)
+    sftp: streamSftp,
+    stat: async () => ({ size: remote.length }),
+    rename: async () => { promoted = true; },
+    delete: async () => {},
+  };
+  transferBridge.init({ sftpClients: new Map([["target", client]]) });
+
+  const result = await transferBridge.startTransfer({ sender: createSender() }, {
+    transferId,
+    sourcePath,
+    targetPath: "/root/source.bin",
+    sourceType: "local",
+    targetType: "sftp",
+    targetSftpId: "target",
+    totalBytes: payload.length,
+    resumable: true,
+    checkpointBytes: 8, // ahead of durable remote size 4
+  });
+
+  assert.equal(result.error, undefined, result.error);
+  assert.deepEqual(remote, payload);
+  assert.equal(promoted, true);
+});
+
+test("local resume after hard quit clamps checkpoint to durable staged file size", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-local-crash-"));
+  t.after(async () => { await fs.promises.rm(tempDir, { recursive: true, force: true }); });
+  const transferId = `local-crash-${crypto.randomUUID()}`;
+  const sourcePath = path.join(tempDir, "source.bin");
+  const targetPath = path.join(tempDir, "target.bin");
+  const stagedPath = tempDirBridge.getTransferTempFilePath(transferId, "target.bin");
+  await fs.promises.writeFile(sourcePath, Buffer.from("abcdef"));
+  // Durable staged file is shorter than claimed checkpoint (crash / unflushed write).
+  await fs.promises.writeFile(stagedPath, Buffer.from("ab"));
+  t.after(async () => { await fs.promises.unlink(stagedPath).catch(() => {}); });
+
+  transferBridge.init({ sftpClients: new Map() });
+  const result = await transferBridge.startTransfer({ sender: createSender() }, {
+    transferId,
+    sourcePath,
+    targetPath,
+    sourceType: "local",
+    targetType: "local",
+    totalBytes: 6,
+    resumable: true,
+    checkpointBytes: 5,
+  });
+
+  assert.equal(result.error, undefined, result.error);
+  assert.equal(await fs.promises.readFile(targetPath, "utf8"), "abcdef");
+});
+
 test("resume rejects a same-size temporary prefix that does not match the source", async (t) => {
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-prefix-test-"));
   t.after(async () => { await fs.promises.rm(tempDir, { recursive: true, force: true }); });

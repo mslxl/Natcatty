@@ -69,6 +69,9 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
         speed: 0,
         phase: undefined,
       });
+      const children = sftpTransferCenterStore.getSnapshot().tasks.filter(
+        (row) => row.parentTaskId === task.id,
+      );
       return resumeTransferWithDedicatedSession(
         task,
         {
@@ -84,20 +87,38 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
           if (!current || current.status === "cancelled" || current.status === "paused" || current.status === "interrupted") {
             return;
           }
+          // Directory parents use file-count progress; single files use bytes.
           sftpTransferCenterStore.patchTask(task.id, {
             status: "transferring",
             transferredBytes: progress.transferred,
             ...(progress.total > 0 ? { totalBytes: progress.total } : {}),
             speed: progress.speed,
-            checkpointBytes: progress.checkpointBytes,
-            resumeStage: progress.resumeStage,
-            downloadCheckpointBytes: progress.downloadCheckpointBytes,
-            uploadCheckpointBytes: progress.uploadCheckpointBytes,
-            sourceFingerprint: progress.sourceFingerprint,
+            ...(task.isDirectory
+              ? { checkpointBytes: progress.transferred, progressMode: "files" as const }
+              : {
+                  checkpointBytes: progress.checkpointBytes,
+                  resumeStage: progress.resumeStage,
+                  downloadCheckpointBytes: progress.downloadCheckpointBytes,
+                  uploadCheckpointBytes: progress.uploadCheckpointBytes,
+                  sourceFingerprint: progress.sourceFingerprint,
+                }),
             reconnectRequired: false,
             error: undefined,
             phase: "transferring",
           });
+        },
+        {
+          children,
+          onChildUpdate: (child) => {
+            sftpTransferCenterStore.upsertTasks([{ ...child, ownerId: "dedicated-resume" }]);
+          },
+          shouldAbort: () => {
+            const current = sftpTransferCenterStore.getSnapshot().tasks.find((row) => row.id === task.id);
+            return !current
+              || current.status === "cancelled"
+              || current.status === "paused"
+              || current.status === "interrupted";
+          },
         },
       );
     });

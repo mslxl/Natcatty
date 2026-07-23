@@ -152,6 +152,8 @@ export const zhCNTerminalMessages: Messages = {
   'sftp.upload.compressed': '压缩传输',
   'sftp.upload.currentFile': '当前: {fileName}',
   'sftp.upload.cancelled': '上传已取消',
+  'sftp.upload.noFiles': '没有可上传的文件',
+  'sftp.upload.partialSuccess': '已上传 {success} 个文件，{failed} 个失败',
   'sftp.upload.cancel': '取消',
   'sftp.upload.completedToPath': '已上传至 {path}',
 

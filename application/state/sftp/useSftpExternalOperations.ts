@@ -8,7 +8,6 @@ import { joinPath } from "./utils";
 import { createUploadTaskCallbacks } from "./uploadTaskCallbacks";
 import {
   UploadController,
-  uploadFromDataTransfer,
   uploadFromFileList,
   uploadEntriesDirect,
   UploadBridge,
@@ -16,7 +15,7 @@ import {
   UploadResult,
   startUploadScanningTask,
 } from "../../../lib/uploadService";
-import type { DropEntry } from "../../../lib/sftpFileUtils";
+import { extractDropEntries, type DropEntry } from "../../../lib/sftpFileUtils";
 
 // Re-export UploadResult for external usage
 export type { UploadResult };
@@ -490,10 +489,12 @@ export const useSftpExternalOperations = (
     targetPath: string,
     targetHostId?: string,
     targetConnectionKey?: string,
+    targetHostLabel?: string,
   ): UploadCallbacks => createUploadTaskCallbacks({
     connectionId,
     targetPath,
     targetHostId,
+    targetHostLabel,
     targetConnectionKey,
     addExternalUpload,
     updateExternalUpload,
@@ -695,6 +696,20 @@ export const useSftpExternalOperations = (
 
   const uploadExternalFiles = useCallback(
     async (side: "left" | "right", dataTransfer: DataTransfer, targetPath?: string): Promise<UploadResult[]> => {
+      // DataTransfer is only valid during the drop event. Capture entries BEFORE
+      // any await (session reconnect can take seconds while a transfer is busy).
+      // Otherwise extractDropEntries returns [] and the UI toasts "Uploaded files: 0".
+      let capturedEntries: DropEntry[];
+      try {
+        capturedEntries = await extractDropEntries(dataTransfer);
+      } catch (error) {
+        logger.error("[SFTP] Failed to read dropped files:", error);
+        throw error;
+      }
+      if (capturedEntries.length === 0) {
+        return [];
+      }
+
       const run = async (forceReconnect = false): Promise<UploadResult[]> => {
         const pane = getActivePane(side);
         if (!pane?.connection) {
@@ -720,11 +735,12 @@ export const useSftpExternalOperations = (
           uploadTargetPath,
           livePane.connection.isLocal ? undefined : livePane.connection.hostId,
           livePane.connection.isLocal ? undefined : connectionCacheKeyMapRef.current.get(livePane.connection.id),
+          livePane.connection.isLocal ? undefined : livePane.connection.hostLabel,
         );
 
         try {
-          const results = await uploadFromDataTransfer(
-            dataTransfer,
+          const results = await uploadEntriesDirect(
+            capturedEntries,
             {
               targetPath: uploadTargetPath,
               sftpId,
@@ -748,7 +764,10 @@ export const useSftpExternalOperations = (
           return results;
         } finally {
           release();
-          uploadControllerRef.current = null;
+          // Don't clear a newer concurrent upload's controller.
+          if (uploadControllerRef.current === controller) {
+            uploadControllerRef.current = null;
+          }
         }
       };
 
@@ -804,6 +823,7 @@ export const useSftpExternalOperations = (
           uploadTargetPath,
           livePane.connection.isLocal ? undefined : livePane.connection.hostId,
           livePane.connection.isLocal ? undefined : connectionCacheKeyMapRef.current.get(livePane.connection.id),
+          livePane.connection.isLocal ? undefined : livePane.connection.hostLabel,
         );
 
         try {
@@ -832,7 +852,9 @@ export const useSftpExternalOperations = (
           return results;
         } finally {
           release();
-          uploadControllerRef.current = null;
+          if (uploadControllerRef.current === controller) {
+            uploadControllerRef.current = null;
+          }
         }
       };
 
@@ -888,6 +910,7 @@ export const useSftpExternalOperations = (
           uploadTargetPath,
           livePane.connection.isLocal ? undefined : livePane.connection.hostId,
           livePane.connection.isLocal ? undefined : connectionCacheKeyMapRef.current.get(livePane.connection.id),
+          livePane.connection.isLocal ? undefined : livePane.connection.hostLabel,
         );
 
         const scanningTask = startUploadScanningTask(callbacks);
@@ -965,7 +988,9 @@ export const useSftpExternalOperations = (
           throw error;
         } finally {
           release();
-          uploadControllerRef.current = null;
+          if (uploadControllerRef.current === controller) {
+            uploadControllerRef.current = null;
+          }
         }
       };
 
@@ -1021,6 +1046,7 @@ export const useSftpExternalOperations = (
           uploadTargetPath,
           livePane.connection.isLocal ? undefined : livePane.connection.hostId,
           livePane.connection.isLocal ? undefined : connectionCacheKeyMapRef.current.get(livePane.connection.id),
+          livePane.connection.isLocal ? undefined : livePane.connection.hostLabel,
         );
         const directUploadBridge: UploadBridge = {
           ...createUploadBridge,
@@ -1056,7 +1082,9 @@ export const useSftpExternalOperations = (
           return results;
         } finally {
           release();
-          uploadControllerRef.current = null;
+          if (uploadControllerRef.current === controller) {
+            uploadControllerRef.current = null;
+          }
         }
       };
 

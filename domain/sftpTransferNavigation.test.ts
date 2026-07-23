@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  isTransferNavigationTerminalTabId,
+  pickHostForTransferNavigation,
+  resolveSftpTransferNavigationHostLabel,
   resolveSftpTransferNavigationPath,
   resolveSftpTransferNavigationTarget,
 } from "./sftpTransferNavigation";
@@ -98,4 +101,85 @@ test("resume of a local copy only opens the SFTP panel", () => {
     kind: "local-copy-panel",
     useSourcePath: false,
   });
+});
+
+test("opening an upload destination uses the remote target (never local openPath)", () => {
+  const withHostId = resolveSftpTransferNavigationTarget({
+    direction: "upload",
+    targetHostId: "host-2",
+    sourceConnectionId: "local",
+    targetConnectionId: "conn-remote",
+    sourcePath: "/Users/me/file.txt",
+    targetPath: "/root/file.txt",
+    isDirectory: false,
+  }, false);
+  assert.deepEqual(withHostId, {
+    kind: "remote-host",
+    hostId: "host-2",
+    useSourcePath: false,
+  });
+
+  // Older / drag-drop rows may lack targetHostId — still open remote, not /root via shell.
+  const withoutHostId = resolveSftpTransferNavigationTarget({
+    direction: "upload",
+    sourceConnectionId: "local",
+    targetConnectionId: "conn-remote",
+    sourcePath: "/Users/me/file.txt",
+    targetPath: "/root/file.txt",
+    isDirectory: false,
+  }, false);
+  assert.deepEqual(withoutHostId, {
+    kind: "remote-host",
+    hostId: undefined,
+    useSourcePath: false,
+  });
+});
+
+test("navigation host label prefers the endpoint being opened", () => {
+  assert.equal(
+    resolveSftpTransferNavigationHostLabel({
+      sourceHostLabel: "Local",
+      targetHostLabel: "CI-Build-01",
+    }, false),
+    "CI-Build-01",
+  );
+  assert.equal(
+    resolveSftpTransferNavigationHostLabel({
+      sourceHostLabel: "prod",
+      targetHostLabel: "Local",
+    }, true),
+    "prod",
+  );
+});
+
+test("pickHostForTransferNavigation falls back to live SFTP host for uploads", () => {
+  const live = { id: "host-live", label: "CI-Build-01", hostname: "10.0.0.1" };
+  assert.equal(
+    pickHostForTransferNavigation({
+      hostId: undefined,
+      hostLabel: undefined,
+      vaultHosts: [{ id: "other", label: "other" }],
+      liveHosts: [live],
+      allowLiveUploadFallback: true,
+    }),
+    live,
+  );
+  assert.equal(
+    pickHostForTransferNavigation({
+      hostId: "host-vault",
+      hostLabel: "CI-Build-01",
+      vaultHosts: [{ id: "host-vault", label: "CI-Build-01" }],
+      liveHosts: [live],
+    })?.id,
+    "host-vault",
+  );
+});
+
+test("isTransferNavigationTerminalTabId rejects vault/editor scopes", () => {
+  assert.equal(isTransferNavigationTerminalTabId(null), false);
+  assert.equal(isTransferNavigationTerminalTabId("vault"), false);
+  assert.equal(isTransferNavigationTerminalTabId("sftp"), false);
+  assert.equal(isTransferNavigationTerminalTabId("editor:abc"), false);
+  assert.equal(isTransferNavigationTerminalTabId("session-uuid"), true);
+  assert.equal(isTransferNavigationTerminalTabId("workspace-1"), true);
 });

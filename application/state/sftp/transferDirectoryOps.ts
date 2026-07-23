@@ -282,7 +282,11 @@ export function useSftpDirectoryTransferOps({
                     uploadCheckpointBytes: checkpoint?.uploadCheckpointBytes ?? t.uploadCheckpointBytes,
                     sourceFingerprint: checkpoint?.sourceFingerprint ?? t.sourceFingerprint,
                     resumable: checkpoint?.resumable ?? t.resumable,
-                    pauseUnavailableReason: checkpoint?.pauseUnavailableReason ?? t.pauseUnavailableReason,
+                    // Explicit undefined from backend clears the startup default
+                    // ("cannot be paused safely") once pause is known to work.
+                    pauseUnavailableReason: checkpoint && "pauseUnavailableReason" in checkpoint
+                      ? checkpoint.pauseUnavailableReason
+                      : t.pauseUnavailableReason,
                     totalBytes: normalizedTotal,
                     speed: Number.isFinite(speed) && speed > 0 ? speed : 0,
                   };
@@ -518,6 +522,8 @@ export function useSftpDirectoryTransferOps({
             && candidate.sourcePath === sourcePath
             && candidate.targetPath === targetPath
           ));
+          // Skip completed children without re-transferring, but ensure parent
+          // file-count already includes them (seeded at processTransfer start).
           if (persistedChild?.status === "completed") return;
           const fileId = persistedChild?.id ?? crypto.randomUUID();
 

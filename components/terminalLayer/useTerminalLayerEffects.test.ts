@@ -42,8 +42,12 @@ test("side panel layout changes remeasure workspace before paint", () => {
 test("transfer navigation helper is used for open-target and resume routing", () => {
   assert.match(source, /resolveSftpTransferNavigationTarget/);
   assert.match(source, /resolveSftpTransferNavigationPath/);
+  assert.match(source, /pickHostForTransferNavigation/);
+  assert.match(source, /isTransferNavigationTerminalTabId/);
   assert.match(source, /navigation\.kind === 'local-copy-panel'/);
   assert.match(source, /navigation\.kind === 'local-path'/);
-  // Resume host lookup failures must not poison live owner resume.
-  assert.match(source, /if \(forResume\) return;/);
+  // No terminal tab → connect host then open SFTP at target path.
+  assert.match(source, /onConnectToHost/);
+  assert.match(source, /openHostThenSftp/);
+  assert.match(source, /allowLiveUploadFallback/);
 });

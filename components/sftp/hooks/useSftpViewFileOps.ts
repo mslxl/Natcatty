@@ -5,6 +5,7 @@ import { logger } from "../../../lib/logger";
 import { toast } from "../../ui/toast";
 import { getFileExtension, getLanguageId, FileOpenerType, SystemAppInfo } from "../../../lib/sftpFileUtils";
 import { isNavigableDirectory } from "../utils";
+import { reportSftpUploadResults } from "../reportSftpUploadResults";
 import { editorTabStore } from "../../../application/state/editorTabStore";
 import { toEditorTabId, activeTabStore } from "../../../application/state/activeTabStore";
 import type { TextEditorModalSnapshot } from "../../TextEditorModal";
@@ -292,32 +293,7 @@ export const useSftpViewFileOps = ({
     async (side: "left" | "right", dataTransfer: DataTransfer, targetPath?: string) => {
       try {
         const results = await sftpRef.current.uploadExternalFiles(side, dataTransfer, targetPath);
-
-        // Check if upload was cancelled
-        if (results.some((r) => r.cancelled)) {
-          toast.info(t("sftp.upload.cancelled"), "SFTP");
-          return;
-        }
-
-        const failCount = results.filter((r) => !r.success && !r.cancelled).length;
-        const successCount = results.filter((r) => r.success).length;
-
-        if (failCount === 0) {
-          const message =
-            successCount === 1
-              ? `${t("sftp.upload")}: ${results[0].fileName}`
-              : `${t("sftp.uploadFiles")}: ${successCount}`;
-          toast.success(message, "SFTP");
-        } else {
-          const failedFiles = results.filter((r) => !r.success && !r.cancelled);
-          failedFiles.forEach((failed) => {
-            const errorMsg = failed.error ? ` - ${failed.error}` : "";
-            toast.error(
-              `${t("sftp.error.uploadFailed")}: ${failed.fileName}${errorMsg}`,
-              "SFTP",
-            );
-          });
-        }
+        reportSftpUploadResults({ results, t, toast });
       } catch (error) {
         logger.error("[SftpView] Failed to upload external files:", error);
         toast.error(
@@ -343,31 +319,7 @@ export const useSftpViewFileOps = ({
     async (side: "left" | "right", fileList: FileList, targetPath?: string) => {
       try {
         const results = await sftpRef.current.uploadExternalFileList(side, fileList, targetPath);
-
-        if (results.some((r) => r.cancelled)) {
-          toast.info(t("sftp.upload.cancelled"), "SFTP");
-          return;
-        }
-
-        const failCount = results.filter((r) => !r.success && !r.cancelled).length;
-        const successCount = results.filter((r) => r.success).length;
-
-        if (failCount === 0) {
-          const message =
-            successCount === 1
-              ? `${t("sftp.upload")}: ${results[0].fileName}`
-              : `${t("sftp.uploadFiles")}: ${successCount}`;
-          toast.success(message, "SFTP");
-        } else {
-          const failedFiles = results.filter((r) => !r.success && !r.cancelled);
-          failedFiles.forEach((failed) => {
-            const errorMsg = failed.error ? ` - ${failed.error}` : "";
-            toast.error(
-              `${t("sftp.error.uploadFailed")}: ${failed.fileName}${errorMsg}`,
-              "SFTP",
-            );
-          });
-        }
+        reportSftpUploadResults({ results, t, toast });
       } catch (error) {
         logger.error("[SftpView] Failed to upload picked files:", error);
         toast.error(
@@ -401,26 +353,12 @@ export const useSftpViewFileOps = ({
 
       try {
         const results = await sftpRef.current.uploadExternalFolderPath(side, selectedDirectory, targetPath);
-
-        if (results.some((r) => r.cancelled)) {
-          toast.info(t("sftp.upload.cancelled"), "SFTP");
-          return;
-        }
-
-        const failCount = results.filter((r) => !r.success && !r.cancelled).length;
-        if (failCount === 0) {
-          const folderName = selectedDirectory.split(/[/\\]/).filter(Boolean).pop() || selectedDirectory;
-          toast.success(`${t("sftp.uploadFolder")}: ${folderName}`, "SFTP");
-          return;
-        }
-
-        const failedFiles = results.filter((r) => !r.success && !r.cancelled);
-        failedFiles.forEach((failed) => {
-          const errorMsg = failed.error ? ` - ${failed.error}` : "";
-          toast.error(
-            `${t("sftp.error.uploadFailed")}: ${failed.fileName}${errorMsg}`,
-            "SFTP",
-          );
+        const folderName = selectedDirectory.split(/[/\\]/).filter(Boolean).pop() || selectedDirectory;
+        reportSftpUploadResults({
+          results,
+          t,
+          toast,
+          successMessage: `${t("sftp.uploadFolder")}: ${folderName}`,
         });
       } catch (error) {
         logger.error("[SftpView] Failed to upload picked folder:", error);

@@ -33,6 +33,11 @@ import {
   buildTransferPoolKey,
   getSharedTransferConnectionPool,
 } from "./sftp/transferConnectionPool";
+import {
+  shouldParkBrowseSessions,
+  shouldRestoreBrowseSessions,
+  takeBrowseSessionsForClose,
+} from "./sftp/browseSessionLifecycle";
 import { netcattyBridge } from "../../infrastructure/services/netcattyBridge";
 import { logger } from "../../lib/logger";
 
@@ -250,6 +255,10 @@ export const useSftpState = (
     [hosts, identities, keys, options?.knownHosts, options?.terminalSettings],
   );
 
+  /** True after browse channels were soft-closed while this owner stayed mounted. */
+  const browseParkedRef = useRef(false);
+  const browseLifecycleGenRef = useRef(0);
+
   const {
     connect,
     disconnect,
@@ -463,6 +472,95 @@ export const useSftpState = (
     },
     [resolveTransferConflict, resolveUploadConflict, uploadConflicts],
   );
+
+  // FileZilla-style: when the browser UI is hidden, soft-close browse SFTP
+  // channels. Defer park while this owner still has unfinished transfers so
+  // pre-lease prep (conflict/stat) cannot race a hard-close of the browse id.
+  // In-flight streams also soft-close via leases; pool handles bulk I/O.
+  const interactive = options?.interactive !== false;
+  useEffect(() => {
+    const gen = ++browseLifecycleGenRef.current;
+
+    const parkBrowse = async () => {
+      if (!shouldParkBrowseSessions({
+        interactive,
+        browseParked: browseParkedRef.current,
+        activeTransfersCount,
+      })) {
+        return;
+      }
+      const entries = takeBrowseSessionsForClose(sftpSessionsRef.current);
+      if (entries.length === 0) {
+        browseParkedRef.current = true;
+        return;
+      }
+      browseParkedRef.current = true;
+      logger.info(`[SFTP] Parking ${entries.length} browse session(s) (transfers keep pool leases)`);
+      await Promise.all(entries.map(async ({ connectionId, sftpId }) => {
+        clearCacheForConnection(connectionId);
+        try {
+          // closeSftp soft-closes when transfer leases still hold the id.
+          await netcattyBridge.get()?.closeSftp?.(sftpId);
+        } catch {
+          // best-effort — session may already be gone
+        }
+      }));
+    };
+
+    const restoreBrowse = async () => {
+      if (!shouldRestoreBrowseSessions({
+        interactive,
+        browseParked: browseParkedRef.current,
+      })) {
+        return;
+      }
+      browseParkedRef.current = false;
+      const sides: Array<"left" | "right"> = ["left", "right"];
+      for (const side of sides) {
+        if (gen !== browseLifecycleGenRef.current) return;
+        const pane = getActivePane(side);
+        if (!pane?.connection || pane.connection.isLocal) continue;
+        if (sftpSessionsRef.current.has(pane.connection.id)) continue;
+        try {
+          await ensureRemoteSftpSession({
+            side,
+            getActivePane,
+            sftpSessionsRef,
+            lastConnectedHostRef,
+            connect,
+            resolveHostById: (hostId) => hosts.find((host) => host.id === hostId) ?? null,
+            probeSession: async (sftpId) => {
+              const bridge = netcattyBridge.get();
+              if (!bridge?.getSftpHomeDir) return true;
+              const result = await bridge.getSftpHomeDir(sftpId);
+              if (result && result.success === false) {
+                throw new Error(result.error || "SFTP session not found");
+              }
+              return true;
+            },
+          });
+          logger.info(`[SFTP] Restored browse session on ${side}`);
+        } catch (err) {
+          logger.warn(`[SFTP] Failed to restore browse session on ${side}`, err);
+        }
+      }
+    };
+
+    if (!interactive) {
+      void parkBrowse();
+    } else {
+      void restoreBrowse();
+    }
+  }, [
+    interactive,
+    activeTransfersCount,
+    clearCacheForConnection,
+    connect,
+    getActivePane,
+    hosts,
+    lastConnectedHostRef,
+    sftpSessionsRef,
+  ]);
 
   // Store methods in a ref to create stable wrapper functions
   // This prevents callback reference changes from causing re-renders in consumers

@@ -476,6 +476,8 @@ export const enVaultMessages: Messages = {
   'sftp.upload.compressed': 'Compressed Transfer',
   'sftp.upload.currentFile': 'Current: {fileName}',
   'sftp.upload.cancelled': 'Upload cancelled',
+  'sftp.upload.noFiles': 'No files to upload',
+  'sftp.upload.partialSuccess': 'Uploaded {success} file(s); {failed} failed',
   'sftp.upload.cancel': 'Cancel',
   'sftp.upload.completedToPath': 'Uploaded to {path}',
 

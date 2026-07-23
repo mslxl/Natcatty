@@ -108,7 +108,10 @@ const SftpTransferItemInner: React.FC<SftpTransferItemProps> = ({
 }) => {
     const { t } = useI18n();
 
-    const progressMode = task.progressMode ?? 'bytes';
+    // Align with global transfer center: directory parents default to file-count
+    // progress unless explicitly compressed/byte mode.
+    const progressMode = task.progressMode
+      ?? (task.isDirectory && !task.parentTaskId ? 'files' : 'bytes');
     const isDirParent = task.isDirectory && !task.parentTaskId && progressMode === 'files';
     const hasKnownTotal = task.totalBytes > 0 || (!isDirParent && !!task.sourceLastModified);
     const progress = hasKnownTotal

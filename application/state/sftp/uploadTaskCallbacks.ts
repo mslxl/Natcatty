@@ -6,6 +6,7 @@ interface UploadTaskCallbacksParams {
   connectionId: string;
   targetPath: string;
   targetHostId?: string;
+  targetHostLabel?: string;
   targetConnectionKey?: string;
   addExternalUpload?: (task: TransferTask) => void;
   updateExternalUpload?: (taskId: string, updates: Partial<TransferTask>) => void;
@@ -16,6 +17,7 @@ export const createUploadTaskCallbacks = ({
   connectionId,
   targetPath,
   targetHostId,
+  targetHostLabel,
   targetConnectionKey,
   addExternalUpload,
   updateExternalUpload,
@@ -31,6 +33,8 @@ export const createUploadTaskCallbacks = ({
       sourceConnectionId: "external",
       targetConnectionId: connectionId,
       targetHostId,
+      targetHostLabel,
+      sourceHostLabel: "Local",
       targetConnectionKey,
       direction: "upload",
       status: "pending" as TransferStatus,
@@ -59,6 +63,8 @@ export const createUploadTaskCallbacks = ({
       sourceConnectionId: "external",
       targetConnectionId: connectionId,
       targetHostId,
+      targetHostLabel,
+      sourceHostLabel: "Local",
       targetConnectionKey,
       direction: "upload",
       status: "transferring" as TransferStatus,

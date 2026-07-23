@@ -3,8 +3,11 @@ import {
   ArrowDownToLine,
   ArrowDownUp,
   ArrowUpFromLine,
+  ChevronDown,
+  ChevronUp,
   ClipboardCopy,
   FolderOpen,
+  FolderUp,
   Loader2,
   Pause,
   Play,
@@ -73,6 +76,107 @@ export function getTasksForGlobalTransferBucket(
   return tasks.filter((task) => !task.parentTaskId && (bucket === "all" || getGlobalTransferBucket(task) === bucket));
 }
 
+/** Folder parent rows use file-count progress (same model as the SFTP side queue). */
+export function isDirectoryParentTask(
+  task: Pick<TransferTask, "isDirectory" | "parentTaskId" | "progressMode">,
+): boolean {
+  if (!task.isDirectory || task.parentTaskId) return false;
+  // Explicit bytes mode would be aggregate size; default folder uploads use files.
+  return task.progressMode !== "bytes";
+}
+
+export function listChildTasksForParent(
+  tasks: readonly TransferTask[],
+  parentId: string,
+): TransferTask[] {
+  return tasks
+    .filter((task) => task.parentTaskId === parentId && task.status !== "cancelled")
+    .sort((a, b) => a.startTime - b.startTime);
+}
+
+/** Prefer live children, then queued — for the collapsed "current file" summary. */
+export function pickActiveChildSummaries(
+  children: readonly TransferTask[],
+  limit = 2,
+): TransferTask[] {
+  const live = children.filter((task) => task.status === "transferring" || task.status === "pausing");
+  if (live.length > 0) return live.slice(0, limit);
+  const waiting = children.filter((task) => task.status === "pending" || task.status === "queued");
+  if (waiting.length > 0) return waiting.slice(0, limit);
+  return [];
+}
+
+export function getGlobalTransferProgressPercent(
+  task: Pick<TransferTask, "status" | "totalBytes" | "transferredBytes">,
+): number {
+  if (task.status === "completed") return 100;
+  if (task.totalBytes <= 0) return 0;
+  return Math.max(0, Math.min(100, (task.transferredBytes / task.totalBytes) * 100));
+}
+
+export type GlobalTransferProgressDisplay = {
+  percent: number;
+  /** Right-side progress label (file count or bytes). */
+  detail: string;
+  /** True when the bar should pulse (total still unknown). */
+  indeterminate: boolean;
+};
+
+/**
+ * Build progress labels for a top-level row. Directory parents use file counts
+ * so we never show "1 Bytes / 12 Bytes" for n/m files.
+ */
+export function buildGlobalTransferProgressDisplay(
+  task: Pick<TransferTask, "status" | "isDirectory" | "parentTaskId" | "progressMode" | "totalBytes" | "transferredBytes" | "speed">,
+  t: (key: string, params?: Record<string, string | number>) => string,
+): GlobalTransferProgressDisplay {
+  const isDirParent = isDirectoryParentTask(task);
+  const percent = getGlobalTransferProgressPercent(task);
+  const hasTotal = task.totalBytes > 0;
+
+  if (isDirParent) {
+    const indeterminate = task.status === "transferring" && !hasTotal;
+    let detail = "";
+    if (task.status === "transferring" || task.status === "pausing" || task.status === "queued" || task.status === "pending") {
+      detail = hasTotal
+        ? t("sftp.transfers.filesProgress", { current: task.transferredBytes, total: task.totalBytes })
+        : t("sftp.transfers.filesCount", { count: task.transferredBytes });
+    } else if (task.status === "completed" && hasTotal) {
+      detail = t("sftp.transfers.filesCount", { count: task.totalBytes });
+    } else if (hasTotal) {
+      detail = t("sftp.transfers.filesProgress", { current: task.transferredBytes, total: task.totalBytes });
+    }
+    return { percent, detail, indeterminate };
+  }
+
+  const detailParts: string[] = [];
+  if (hasTotal) {
+    detailParts.push(`${formatFileSize(task.transferredBytes)} / ${formatFileSize(task.totalBytes)}`);
+  } else if (task.transferredBytes > 0) {
+    detailParts.push(formatFileSize(task.transferredBytes));
+  }
+  if (task.status === "transferring" && task.speed > 0) {
+    detailParts.push(`${formatFileSize(task.speed)}/s`);
+  }
+  if (task.status === "transferring" && task.speed > 0 && hasTotal) {
+    const eta = formatTransferEta(estimateTransferEtaSeconds(task.totalBytes - task.transferredBytes, task.speed));
+    if (eta) detailParts.push(eta);
+  }
+  return {
+    percent,
+    detail: detailParts.join(" · "),
+    indeterminate: task.status === "transferring" && !hasTotal,
+  };
+}
+
+function formatChildByteProgress(task: Pick<TransferTask, "totalBytes" | "transferredBytes" | "status">): string {
+  if (task.totalBytes > 0) {
+    return `${formatFileSize(task.transferredBytes)} / ${formatFileSize(task.totalBytes)}`;
+  }
+  if (task.transferredBytes > 0) return formatFileSize(task.transferredBytes);
+  return "";
+}
+
 function statusLabelKey(status: TransferTask["status"]): string {
   return `sftp.transferCenter.status.${status}`;
 }
@@ -104,11 +208,55 @@ function TransferAction({ label, onClick, children, destructive = false }: {
   );
 }
 
-function TransferRow({ task }: { task: TransferTask }) {
+/** Truncated label with hover tooltip for the full text (paths, names, errors). */
+function TruncatedTextWithTooltip({
+  text,
+  tooltip,
+  className,
+  as: Tag = "span",
+}: {
+  text: string;
+  /** Defaults to `text`. Use when the visible label differs from the full string. */
+  tooltip?: string;
+  className?: string;
+  as?: "span" | "div";
+}) {
+  if (!text) return null;
+  const tip = tooltip || text;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Tag className={cn("min-w-0 truncate", className)}>{text}</Tag>
+      </TooltipTrigger>
+      <TooltipContent side="top" align="start" className="max-w-sm break-all">
+        {tip}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+function formatTransferPathLine(task: Pick<TransferTask, "sourcePath" | "targetPath" | "sourceHostLabel" | "targetHostLabel">): string {
+  const source = `${task.sourceHostLabel ? `${task.sourceHostLabel}: ` : ""}${task.sourcePath}`;
+  const target = `${task.targetHostLabel ? `${task.targetHostLabel}: ` : ""}${task.targetPath}`;
+  return `${source} → ${target}`;
+}
+
+function TransferRow({
+  task,
+  childTasks = [],
+}: {
+  task: TransferTask;
+  childTasks?: readonly TransferTask[];
+}) {
   const { t } = useI18n();
-  const percent = task.totalBytes > 0
-    ? Math.max(0, Math.min(100, (task.transferredBytes / task.totalBytes) * 100))
-    : 0;
+  const [expanded, setExpanded] = useState(false);
+  const isDirParent = isDirectoryParentTask(task);
+  const progress = buildGlobalTransferProgressDisplay(task, t);
+  const activeChildren = useMemo(
+    () => (isDirParent ? pickActiveChildSummaries(childTasks, 2) : []),
+    [childTasks, isDirParent],
+  );
+  const canToggleChildren = isDirParent && childTasks.length > 0;
   const canControl = sftpTransferCenterStore.canControl(task.id);
   // Keep the play button as a spinner for the whole reconnect window, not only
   // the brief "pending" status before a dedicated session opens.
@@ -126,24 +274,24 @@ function TransferRow({ task }: { task: TransferTask }) {
   const canCancel = ["pending", "queued", "transferring", "pausing", "paused", "interrupted", "attention"].includes(task.status) && canControl;
   const canRetry = task.status === "failed" && task.retryable !== false && canControl;
   const isTerminal = ["completed", "failed", "cancelled"].includes(task.status);
-  // Only show phase while the transfer is actually running. After restart,
-  // stale phase:"transferring" must not override interrupted/paused status.
-  const statusText = task.error
-    || task.pauseUnavailableReason
-    || (isResuming
-      ? t("sftp.transferCenter.status.resuming")
-      : (
-        task.phase
-        && (task.status === "transferring" || task.status === "pausing")
-          ? t(`sftp.transferCenter.phase.${task.phase}`)
-          : t(statusLabelKey(task.status))
-      ));
-  const etaLabel = task.status === "transferring" && task.speed > 0 && task.totalBytes > 0
-    ? formatTransferEta(estimateTransferEtaSeconds(task.totalBytes - task.transferredBytes, task.speed))
-    : null;
-  const directionIcon = task.direction === "download"
-    ? <ArrowDownToLine size={15} />
-    : <ArrowUpFromLine size={15} />;
+  // Status line is for lifecycle/error only — not pause capability notes.
+  // "cannot be paused safely" used to render here during healthy progress and
+  // looked like a failure even while bytes were flowing.
+  const statusText = (() => {
+    if (task.error && (task.status === "failed" || task.status === "attention" || task.status === "cancelled")) {
+      return task.error;
+    }
+    if (isResuming) return t("sftp.transferCenter.status.resuming");
+    if (task.phase && (task.status === "transferring" || task.status === "pausing")) {
+      return t(`sftp.transferCenter.phase.${task.phase}`);
+    }
+    return t(statusLabelKey(task.status));
+  })();
+  const directionIcon = isDirParent
+    ? <FolderUp size={15} />
+    : task.direction === "download"
+      ? <ArrowDownToLine size={15} />
+      : <ArrowUpFromLine size={15} />;
 
   const openTarget = (forResume = false) => {
     window.dispatchEvent(new CustomEvent("netcatty:open-sftp-transfer-target", {
@@ -151,38 +299,54 @@ function TransferRow({ task }: { task: TransferTask }) {
     }));
   };
   const resumeTask = () => {
-    // Dedicated resume opens its own SFTP session; panel open is only a
-    // fallback for server-to-server tasks and must not race the spinner state.
-    if (task.direction === "remote-to-remote") {
+    // Dedicated resume opens vault sessions for local↔remote and SFTP↔SFTP.
+    // Only force-open the panel when the row still needs a live owner/adoption
+    // (e.g. conflict) — not on every remote-to-remote resume click.
+    if (task.conflict || (task.status === "attention" && !task.reconnectRequired && task.direction === "remote-to-remote")) {
       openTarget(true);
     }
     void sftpTransferCenterStore.resume(task.id);
   };
+
+  const barWidth = progress.indeterminate
+    ? "100%"
+    : `${task.status === "completed" ? 100 : progress.percent}%`;
 
   return (
     <div
       className="border-b border-border/40 px-3 py-2.5 last:border-b-0 hover:bg-muted/30"
       data-section="global-sftp-transfer-row"
       data-transfer-status={task.status}
+      data-directory-parent={isDirParent ? "true" : undefined}
     >
       <div className="flex items-center gap-2">
         <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded bg-muted text-muted-foreground">
           {directionIcon}
         </div>
         <button type="button" className="min-w-0 flex-1 overflow-hidden text-left" onClick={() => openTarget()}>
-          <div className="flex items-center gap-1.5">
-            <span className="truncate text-xs font-medium">{task.fileName}</span>
+          <div className="flex min-w-0 items-center gap-1.5">
+            <TruncatedTextWithTooltip text={task.fileName} className="text-xs font-medium" />
             {task.background && (
               <span className="shrink-0 rounded bg-muted px-1 py-0.5 text-[9px] text-muted-foreground">
                 {t("sftp.transferCenter.background")}
               </span>
             )}
           </div>
-          <div className="mt-0.5 truncate text-[10px] text-muted-foreground">
-            {`${task.sourceHostLabel ? `${task.sourceHostLabel}: ` : ""}${task.sourcePath} → ${task.targetHostLabel ? `${task.targetHostLabel}: ` : ""}${task.targetPath}`}
-          </div>
+          <TruncatedTextWithTooltip
+            as="div"
+            text={formatTransferPathLine(task)}
+            className="mt-0.5 text-[10px] text-muted-foreground"
+          />
         </button>
         <div className="flex shrink-0 items-center gap-0.5">
+          {canToggleChildren && (
+            <TransferAction
+              label={expanded ? t("sftp.transfers.collapseChildren") : t("sftp.transfers.expandChildren")}
+              onClick={() => setExpanded((value) => !value)}
+            >
+              {expanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+            </TransferAction>
+          )}
           {isResuming && (
             <TransferAction label={t("sftp.transferCenter.status.resuming")} onClick={() => {}}>
               <Loader2 size={13} className="animate-spin text-primary" />
@@ -232,25 +396,98 @@ function TransferRow({ task }: { task: TransferTask }) {
           <div
             className={cn(
               "h-full rounded-full transition-[width] duration-150",
-              task.status === "failed" ? "bg-destructive" : task.status === "paused" || task.status === "interrupted" ? "bg-amber-500" : "bg-primary",
+              progress.indeterminate && "animate-pulse bg-primary/60",
+              !progress.indeterminate && (
+                task.status === "failed"
+                  ? "bg-destructive"
+                  : task.status === "paused" || task.status === "interrupted"
+                    ? "bg-amber-500"
+                    : "bg-primary"
+              ),
             )}
-            style={{ width: `${task.status === "completed" ? 100 : percent}%` }}
+            style={{ width: barWidth }}
           />
         </div>
         <span className="w-12 shrink-0 text-right font-mono text-[10px] text-muted-foreground">
-          {task.totalBytes > 0 ? `${percent.toFixed(1)}%` : "—"}
+          {progress.indeterminate ? "…" : task.totalBytes > 0 || task.status === "completed" ? `${progress.percent.toFixed(1)}%` : "—"}
         </span>
       </div>
       <div className="mt-1 flex min-w-0 items-center justify-between gap-3 text-[10px] text-muted-foreground">
-        <span className={cn("min-w-0 truncate", (task.status === "failed" || task.status === "attention") && "text-destructive")}>
-          {statusText}
-        </span>
-        <span className="min-w-0 shrink truncate font-mono text-right">
-          {formatFileSize(task.transferredBytes)} / {task.totalBytes > 0 ? formatFileSize(task.totalBytes) : "—"}
-          {task.speed > 0 ? ` · ${formatFileSize(task.speed)}/s` : ""}
-          {etaLabel ? ` · ${etaLabel}` : ""}
+        <TruncatedTextWithTooltip
+          text={statusText}
+          className={cn(
+            "min-w-0 flex-1",
+            (task.status === "failed" || task.status === "attention") && "text-destructive",
+          )}
+        />
+        <span className="min-w-0 shrink truncate text-right font-mono" title={progress.detail || undefined}>
+          {progress.detail}
         </span>
       </div>
+
+      {/* Collapsed: show currently transferring child file(s) without expanding the whole tree. */}
+      {isDirParent && !expanded && activeChildren.length > 0 && (
+        <div className="mt-1.5 space-y-1 border-l-2 border-primary/30 pl-2" data-section="global-sftp-transfer-active-children">
+          {activeChildren.map((child) => {
+            const childPercent = getGlobalTransferProgressPercent(child);
+            const childDetail = formatChildByteProgress(child);
+            return (
+              <div key={child.id} className="min-w-0">
+                <div className="flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
+                  <TruncatedTextWithTooltip text={child.fileName} className="flex-1 text-muted-foreground" />
+                  <span className="shrink-0 font-mono">
+                    {childDetail || (child.totalBytes > 0 ? `${childPercent.toFixed(0)}%` : t(statusLabelKey(child.status)))}
+                  </span>
+                </div>
+                {child.totalBytes > 0 && (
+                  <div className="mt-0.5 h-1 overflow-hidden rounded-full bg-secondary">
+                    <div
+                      className={cn(
+                        "h-full rounded-full",
+                        child.status === "completed" ? "bg-emerald-500/80" : "bg-primary/80",
+                      )}
+                      style={{ width: `${child.status === "completed" ? 100 : childPercent}%` }}
+                    />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {isDirParent && expanded && childTasks.length > 0 && (
+        <div
+          className="mt-2 max-h-48 space-y-1 overflow-y-auto border-t border-border/40 pt-2"
+          data-section="global-sftp-transfer-child-list"
+        >
+          {childTasks.map((child) => {
+            const childPercent = getGlobalTransferProgressPercent(child);
+            const childDetail = formatChildByteProgress(child);
+            return (
+              <div
+                key={child.id}
+                className="flex items-center gap-2 rounded px-1 py-1 text-[10px] hover:bg-muted/40"
+                data-transfer-status={child.status}
+              >
+                <TruncatedTextWithTooltip
+                  text={child.fileName}
+                  tooltip={child.targetPath || child.fileName}
+                  className="flex-1 text-muted-foreground"
+                />
+                <span className="shrink-0 font-mono text-muted-foreground">
+                  {childDetail
+                    || (child.totalBytes > 0 ? `${childPercent.toFixed(0)}%` : t(statusLabelKey(child.status)))}
+                </span>
+                {child.status === "transferring" && (
+                  <Loader2 size={10} className="shrink-0 animate-spin text-primary" />
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {task.status === "attention" && task.conflict && canControl && (() => {
         const conflict = task.conflict!;
         const canMerge = conflict.isDirectory && conflict.existingType === "directory";
@@ -305,6 +542,19 @@ export function GlobalSftpTransferCenter() {
   const [bucket, setBucket] = useState<GlobalTransferBucket>("all");
   const [showBackground, setShowBackground] = useState(false);
   const badge = getGlobalTransferBadge(snapshot.tasks);
+  const childrenByParent = useMemo(() => {
+    const map = new Map<string, TransferTask[]>();
+    for (const task of snapshot.tasks) {
+      if (!task.parentTaskId || task.status === "cancelled") continue;
+      const list = map.get(task.parentTaskId) ?? [];
+      list.push(task);
+      map.set(task.parentTaskId, list);
+    }
+    for (const list of map.values()) {
+      list.sort((a, b) => a.startTime - b.startTime);
+    }
+    return map;
+  }, [snapshot.tasks]);
   const counts = useMemo(() => Object.fromEntries(BUCKETS.map((item) => [
     item,
     getTasksForGlobalTransferBucket(snapshot.tasks, item).length,
@@ -385,19 +635,23 @@ export function GlobalSftpTransferCenter() {
           </div>
         </div>
 
-        <div className="flex gap-1 border-b border-border/50 bg-muted/30 px-3 pt-2">
+        <div className="flex gap-0 px-2 pt-1">
           {BUCKETS.map((item) => (
             <button
               key={item}
               type="button"
               className={cn(
-                "min-w-0 flex-1 truncate border-b-2 px-1.5 py-1.5 text-[11px] transition-colors",
-                bucket === item ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground",
+                // Selected: keep a clear accent underline (not just text color).
+                // Unselected: gray label only — no shared full-width hairline.
+                "relative min-w-0 flex-1 truncate px-1.5 py-2 text-[11px] transition-colors",
+                bucket === item
+                  ? "font-medium text-primary after:absolute after:inset-x-1 after:bottom-0 after:h-0.5 after:rounded-full after:bg-primary"
+                  : "text-muted-foreground hover:text-foreground/80",
               )}
               onClick={() => setBucket(item)}
             >
               {t(`sftp.transferCenter.bucket.${item}`)}
-              {counts[item] > 0 && <span className="ml-1 text-[10px]">{counts[item]}</span>}
+              {counts[item] > 0 && <span className="ml-1 text-[10px] opacity-80">{counts[item]}</span>}
             </button>
           ))}
         </div>
@@ -408,25 +662,38 @@ export function GlobalSftpTransferCenter() {
               {badge.hasAttention && bucket !== "failed" && bucket !== "all" ? <AlertCircle size={22} /> : <ArrowDownUp size={22} />}
               <span className="mt-2 text-xs">{t("sftp.transferCenter.empty")}</span>
             </div>
-          ) : displayed.map((task) => <TransferRow key={task.id} task={task} />)}
+          ) : displayed.map((task) => (
+            <TransferRow
+              key={task.id}
+              task={task}
+              childTasks={childrenByParent.get(task.id) ?? []}
+            />
+          ))}
         </div>
 
-        <div className="flex items-center justify-between border-t border-border/50 px-3 py-2">
-          <div>
-            {collapsed.length > 0 && (
-              <Button variant="ghost" size="sm" className="h-6 text-[10px]" onClick={() => setShowBackground((value) => !value)}>
-                {showBackground
-                  ? t("sftp.transferCenter.hideBackground")
-                  : t("sftp.transferCenter.showBackground", { count: collapsed.length })}
-              </Button>
-            )}
-          </div>
-          {(bucket === "failed" || bucket === "completed") && counts[bucket] > 0 && (
-            <Button variant="ghost" size="sm" className="h-6 text-[10px]" onClick={() => sftpTransferCenterStore.clearTerminal(bucket === "failed" ? "failed" : "completed")}>
-              <Trash2 size={11} className="mr-1" />{t("sftp.transferCenter.clear")}
-            </Button>
-          )}
-        </div>
+        {(() => {
+          const showBackgroundToggle = collapsed.length > 0;
+          const showClear = (bucket === "failed" || bucket === "completed") && counts[bucket] > 0;
+          if (!showBackgroundToggle && !showClear) return null;
+          return (
+            <div className="flex items-center justify-between px-3 py-2">
+              <div>
+                {showBackgroundToggle && (
+                  <Button variant="ghost" size="sm" className="h-6 text-[10px]" onClick={() => setShowBackground((value) => !value)}>
+                    {showBackground
+                      ? t("sftp.transferCenter.hideBackground")
+                      : t("sftp.transferCenter.showBackground", { count: collapsed.length })}
+                  </Button>
+                )}
+              </div>
+              {showClear && (
+                <Button variant="ghost" size="sm" className="h-6 text-[10px]" onClick={() => sftpTransferCenterStore.clearTerminal(bucket === "failed" ? "failed" : "completed")}>
+                  <Trash2 size={11} className="mr-1" />{t("sftp.transferCenter.clear")}
+                </Button>
+              )}
+            </div>
+          );
+        })()}
       </PopoverContent>
     </Popover>
   );

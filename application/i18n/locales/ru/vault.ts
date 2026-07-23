@@ -512,6 +512,8 @@ export const ruVaultMessages: Messages = {
   'sftp.upload.compressed': 'Сжатая передача',
   'sftp.upload.currentFile': 'Текущий: {fileName}',
   'sftp.upload.cancelled': 'Загрузка отменена',
+  'sftp.upload.noFiles': 'Нет файлов для загрузки',
+  'sftp.upload.partialSuccess': 'Загружено: {success}; ошибок: {failed}',
   'sftp.upload.cancel': 'Отмена',
   'sftp.upload.completedToPath': 'Загружено в {path}',
 

@@ -152,6 +152,8 @@ export const zhTWTerminalMessages: Messages = {
   'sftp.upload.compressed': '壓縮傳輸',
   'sftp.upload.currentFile': '目前: {fileName}',
   'sftp.upload.cancelled': '上傳已取消',
+  'sftp.upload.noFiles': '沒有可上傳的檔案',
+  'sftp.upload.partialSuccess': '已上傳 {success} 個檔案，{failed} 個失敗',
   'sftp.upload.cancel': '取消',
   'sftp.upload.completedToPath': '已上傳至 {path}',
 
