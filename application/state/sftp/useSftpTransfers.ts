@@ -165,6 +165,8 @@ export const useSftpTransfers = ({
     completionHandlersRef,
     setConflicts,
     setTransfers,
+    releasePausedTransfer,
+    cleanupTaskArtifacts,
   });
 
   const { statTargetPath, getDuplicateTarget } = useSftpTransferConflictOps();
@@ -381,6 +383,8 @@ export const useSftpTransfers = ({
 
       // Only await conflict check (fast single stat call)
       const conflict = await conflictCheckPromise;
+      // Cancel/Stop may have won while conflict stats were in flight.
+      if (cancelledTasksRef.current.has(task.id)) return "cancelled";
 
       if (conflict) {
         const defaultAction = conflictDefaultsRef.current.get(
@@ -412,6 +416,7 @@ export const useSftpTransfers = ({
           const duplicateTarget = defaultAction === "duplicate"
             ? await getDuplicateTarget(task, targetPane, targetSftpId, targetEncoding)
             : null;
+          if (cancelledTasksRef.current.has(task.id)) return "cancelled";
           const updatedTask: TransferTask = {
             ...task,
             ...(duplicateTarget
@@ -433,6 +438,7 @@ export const useSftpTransfers = ({
           return processTransfer(updatedTask, sourcePane, targetPane, targetSide);
         }
 
+        if (cancelledTasksRef.current.has(task.id)) return "cancelled";
         setConflicts((prev) => [...prev, conflict]);
         updateTask({
           status: "attention",

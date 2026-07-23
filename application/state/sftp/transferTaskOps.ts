@@ -2,6 +2,7 @@ import { useCallback, type Dispatch, type MutableRefObject, type SetStateAction 
 import type { FileConflict, TransferStatus, TransferTask } from "../../../domain/models";
 import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
 import { logger } from "../../../lib/logger";
+import { globalSftpTransferScheduler } from "./globalTransferScheduler";
 import type { TransferResult } from "./useSftpTransfers.types";
 
 interface UseSftpTransferTaskOpsParams {
@@ -11,6 +12,8 @@ interface UseSftpTransferTaskOpsParams {
   completionHandlersRef: MutableRefObject<Map<string, (result: TransferResult) => void | Promise<void>>>;
   setConflicts: Dispatch<SetStateAction<FileConflict[]>>;
   setTransfers: Dispatch<SetStateAction<TransferTask[]>>;
+  releasePausedTransfer?: (taskId: string) => void;
+  cleanupTaskArtifacts?: (task: TransferTask) => void | Promise<void>;
 }
 
 export function useSftpTransferTaskOps({
@@ -20,6 +23,8 @@ export function useSftpTransferTaskOps({
   completionHandlersRef,
   setConflicts,
   setTransfers,
+  releasePausedTransfer,
+  cleanupTaskArtifacts,
 }: UseSftpTransferTaskOpsParams) {
   const completeCancelledTask = useCallback(
     async (task: TransferTask) => {
@@ -94,31 +99,51 @@ export function useSftpTransferTaskOps({
         (!!batchId && candidate.batchId === batchId && isUnfinished(candidate.status)),
       );
 
-      affected.forEach((candidate) => cancelledTasksRef.current.add(candidate.id));
+      for (const candidate of affected) {
+        cancelledTasksRef.current.add(candidate.id);
+        globalSftpTransferScheduler.cancel(candidate.id);
+        releasePausedTransfer?.(candidate.id);
+      }
       const affectedIds = new Set(affected.map((candidate) => candidate.id));
-      setConflicts((prev) => prev.filter((conflict) => !affectedIds.has(conflict.transferId) && (!batchId || conflict.batchId !== batchId)));
-      setTransfers((prev) => {
-        for (const candidate of prev) {
-          if (candidate.parentTaskId && affectedIds.has(candidate.parentTaskId)) {
-            cancelledTasksRef.current.add(candidate.id);
-          }
+      for (const candidate of transfersRef.current) {
+        if (candidate.parentTaskId && affectedIds.has(candidate.parentTaskId)) {
+          cancelledTasksRef.current.add(candidate.id);
+          globalSftpTransferScheduler.cancel(candidate.id);
+          releasePausedTransfer?.(candidate.id);
+          affectedIds.add(candidate.id);
         }
-
-        return prev
-          .filter((candidate) => !(candidate.parentTaskId && affectedIds.has(candidate.parentTaskId)))
-          .map((candidate) =>
-            affectedIds.has(candidate.id)
-              ? { ...candidate, status: "cancelled" as TransferStatus, endTime: Date.now(), conflict: undefined }
-              : candidate,
-          );
-      });
-      await cancelBackendTransfers(affected.map((candidate) => candidate.id));
+      }
+      const nextTransfers = transfersRef.current
+        .filter((candidate) => !(candidate.parentTaskId && affectedIds.has(candidate.parentTaskId)))
+        .map((candidate) =>
+          affectedIds.has(candidate.id)
+            ? { ...candidate, status: "cancelled" as TransferStatus, endTime: Date.now(), conflict: undefined }
+            : candidate,
+        );
+      transfersRef.current = nextTransfers;
+      setTransfers(nextTransfers);
+      setConflicts((prev) => prev.filter((conflict) => !affectedIds.has(conflict.transferId) && (!batchId || conflict.batchId !== batchId)));
+      await cancelBackendTransfers([...affectedIds]);
 
       for (const candidate of affected) {
+        try {
+          await cleanupTaskArtifacts?.(candidate);
+        } catch {
+          // best-effort
+        }
         await completeCancelledTask(candidate);
       }
     },
-    [cancelBackendTransfers, cancelledTasksRef, completeCancelledTask, setConflicts, setTransfers, transfersRef],
+    [
+      cancelBackendTransfers,
+      cancelledTasksRef,
+      cleanupTaskArtifacts,
+      completeCancelledTask,
+      releasePausedTransfer,
+      setConflicts,
+      setTransfers,
+      transfersRef,
+    ],
   );
 
 
