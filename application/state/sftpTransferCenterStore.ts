@@ -179,7 +179,8 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
     resumePreparationFailures.delete(task.id);
     return { adopter, error: preparationError, cancelled };
   };
-  const invoke = async (taskId: string, action: "pause" | "resume" | "cancel" | "retry" | "prioritize") => {
+  const invoke = async (taskId: string, requestedAction: "pause" | "resume" | "cancel" | "retry" | "prioritize") => {
+    let action = requestedAction;
     const ownerId = findOwner(taskId);
     let controller = ownerId ? controllers.get(ownerId) : undefined;
     const task = tasks.find((candidate) => candidate.id === taskId);
@@ -235,6 +236,12 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
           }
         }
         if (action === "pause" && bridge?.pauseTransfer) {
+          // Dedicated reconnect cannot soft-pause before the stream exists —
+          // cancel the open so Pause actually stops network work.
+          if (task?.ownerId === "dedicated-resume" && task.reconnectRequired) {
+            // Fall through to the orphan cancel path below by switching action.
+            action = "cancel";
+          }
           const live = await bridge.pauseTransfer(taskId);
           const afterLivePause = tasks.find((candidate) => candidate.id === taskId);
           if (afterLivePause?.status === "cancelled") return;

@@ -1293,6 +1293,7 @@ export const useSftpTransfers = ({
       const blockedReplaceTasks: Array<{ task: TransferTask; conflict: FileConflict }> = [];
 
       for (const affectedTask of affectedTasks) {
+        if (cancelledTasksRef.current.has(affectedTask.id)) continue;
         let updatedTask = { ...affectedTask };
         const affectedConflict = affectedConflictById.get(affectedTask.id);
 
@@ -1306,6 +1307,7 @@ export const useSftpTransfers = ({
             ? "auto"
             : endpoints.targetPane.filenameEncoding || "auto";
           const duplicateTarget = await getDuplicateTarget(affectedTask, endpoints.targetPane, targetSftpId, targetEncoding);
+          if (cancelledTasksRef.current.has(affectedTask.id)) continue;
           updatedTask = {
             ...affectedTask,
             fileName: duplicateTarget.fileName,
@@ -1359,9 +1361,11 @@ export const useSftpTransfers = ({
         );
       }
 
-      const updatedTaskMap = new Map(updatedTasks.map((updatedTask) => [updatedTask.id, updatedTask]));
+      const liveUpdatedTasks = updatedTasks.filter((candidate) => !cancelledTasksRef.current.has(candidate.id));
+      const updatedTaskMap = new Map(liveUpdatedTasks.map((updatedTask) => [updatedTask.id, updatedTask]));
       setTransfers((prev) =>
         prev.map((t) => {
+          if (t.status === "cancelled" || cancelledTasksRef.current.has(t.id)) return t;
           const updatedTask = updatedTaskMap.get(t.id);
           return updatedTask
             ? { ...updatedTask, status: "pending" as TransferStatus, conflict: undefined }
@@ -1369,8 +1373,9 @@ export const useSftpTransfers = ({
         }),
       );
 
-      for (const updatedTask of updatedTasks) {
+      for (const updatedTask of liveUpdatedTasks) {
         setTimeout(async () => {
+          if (cancelledTasksRef.current.has(updatedTask.id)) return;
           const endpoints = resolveTaskEndpoints(updatedTask);
           if (!endpoints) return;
           await processTransfer(updatedTask, endpoints.sourcePane, endpoints.targetPane, endpoints.targetSide);

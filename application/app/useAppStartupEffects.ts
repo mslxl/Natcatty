@@ -7,6 +7,7 @@ import { localStorageAdapter } from '../../infrastructure/persistence/localStora
 import { toast } from '../../components/ui/toast';
 import { sftpTransferCenterStore } from '../state/sftpTransferCenterStore';
 import { resumeTransferWithDedicatedSession } from '../state/sftp/dedicatedTransferResume';
+import { getSftpTransferResourceKeys, globalSftpTransferScheduler } from '../state/sftp/globalTransferScheduler';
 import { STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY } from '../../infrastructure/config/storageKeys';
 
 type StartupEffectsContext = Record<string, any>;
@@ -288,34 +289,48 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
       }
       let sftpId: string | undefined;
       try {
-        sftpId = await bridge.openSftpForSession(sessionId);
         const checkpointBytes = fromBeginning ? 0 : (task.checkpointBytes ?? task.transferredBytes ?? 0);
         sftpTransferCenterStore.ingestBackgroundEvent({ type: "queued", transferId: taskId });
-        const result = await bridge.startStreamTransfer({
-          transferId: task.id,
-          sourcePath: task.sourcePath,
-          targetPath: task.targetPath,
-          sourceType: task.direction === "upload" ? "local" : "sftp",
-          targetType: task.direction === "download" ? "local" : "sftp",
-          sourceSftpId: task.direction === "download" ? sftpId : undefined,
-          targetSftpId: task.direction === "upload" ? sftpId : undefined,
-          totalBytes: task.totalBytes,
-          resumable: task.resumable !== false,
-          checkpointBytes,
-          resumeStage: fromBeginning ? undefined : task.resumeStage,
-          downloadCheckpointBytes: fromBeginning ? 0 : task.downloadCheckpointBytes,
-          uploadCheckpointBytes: fromBeginning ? 0 : task.uploadCheckpointBytes,
-          sourceFingerprint: fromBeginning ? undefined : task.sourceFingerprint,
-        }, (transferred, totalBytes, speed, checkpoint) => {
-          sftpTransferCenterStore.ingestBackgroundEvent({
-            type: "progress",
-            transferId: task.id,
-            transferred,
-            totalBytes,
-            speed,
-            ...checkpoint,
-          });
-        });
+        // Admit first so agent resume does not pin session-backed SFTP handles
+        // while waiting for main-process concurrency.
+        const result = await globalSftpTransferScheduler.run(
+          "background-agent",
+          task.id,
+          getSftpTransferResourceKeys({
+            sourceHostId: task.sourceHostId,
+            targetHostId: task.targetHostId,
+          }),
+          () => localStorageAdapter.readNumber(STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY),
+          async () => {
+            sftpId = await bridge.openSftpForSession!(sessionId);
+            return bridge.startStreamTransfer!({
+              transferId: task.id,
+              sourcePath: task.sourcePath,
+              targetPath: task.targetPath,
+              sourceType: task.direction === "upload" ? "local" : "sftp",
+              targetType: task.direction === "download" ? "local" : "sftp",
+              sourceSftpId: task.direction === "download" ? sftpId : undefined,
+              targetSftpId: task.direction === "upload" ? sftpId : undefined,
+              totalBytes: task.totalBytes,
+              resumable: task.resumable !== false,
+              checkpointBytes,
+              resumeStage: fromBeginning ? undefined : task.resumeStage,
+              downloadCheckpointBytes: fromBeginning ? 0 : task.downloadCheckpointBytes,
+              uploadCheckpointBytes: fromBeginning ? 0 : task.uploadCheckpointBytes,
+              sourceFingerprint: fromBeginning ? undefined : task.sourceFingerprint,
+              skipAdmission: true,
+            }, (transferred, totalBytes, speed, checkpoint) => {
+              sftpTransferCenterStore.ingestBackgroundEvent({
+                type: "progress",
+                transferId: task.id,
+                transferred,
+                totalBytes,
+                speed,
+                ...checkpoint,
+              });
+            });
+          },
+        );
         if (result?.cancelled || result?.error === "Transfer cancelled") {
           sftpTransferCenterStore.ingestBackgroundEvent({ type: "cancelled", transferId: task.id, endedAt: Date.now() });
         } else if (result?.error) {
