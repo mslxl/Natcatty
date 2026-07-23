@@ -779,31 +779,30 @@ export const useSftpTransfers = ({
 
       // Cancel parent + remove child tasks
       const childIdsToCancel = new Set<string>();
-      setTransfers((prev) => {
-        // Cancel every non-terminal child — including queued workers already
-        // admitted on the renderer scheduler but not yet transferring.
-        for (const t of prev) {
-          if (t.parentTaskId === transferId && !["completed", "cancelled", "failed"].includes(t.status)) {
-            childIdsToCancel.add(t.id);
-          }
+      for (const t of transfersRef.current) {
+        if (t.parentTaskId === transferId && !["completed", "cancelled", "failed"].includes(t.status)) {
+          childIdsToCancel.add(t.id);
         }
-        for (const cid of activeChildIdsRef.current.get(transferId) ?? []) {
-          childIdsToCancel.add(cid);
-        }
-        for (const cid of childIdsToCancel) {
-          cancelledTasksRef.current.add(cid);
-          globalSftpTransferScheduler.cancel(cid);
-        }
-        return prev
-          .filter((t) => t.parentTaskId !== transferId)
-          .map((t) =>
-            t.id === transferId
-              ? { ...t, status: "cancelled" as TransferStatus, endTime: Date.now(), conflict: undefined }
-              : t,
-          );
-      });
-
-      setConflicts((prev) => prev.filter((c) => c.transferId !== transferId));
+      }
+      for (const cid of activeChildIdsRef.current.get(transferId) ?? []) {
+        childIdsToCancel.add(cid);
+      }
+      for (const cid of childIdsToCancel) {
+        cancelledTasksRef.current.add(cid);
+        globalSftpTransferScheduler.cancel(cid);
+      }
+      // Keep refs in sync immediately so same-turn resolveConflict/resume sees cancel.
+      const nextTransfers = transfersRef.current
+        .filter((t) => t.parentTaskId !== transferId)
+        .map((t) =>
+          t.id === transferId
+            ? { ...t, status: "cancelled" as TransferStatus, endTime: Date.now(), conflict: undefined }
+            : t,
+        );
+      transfersRef.current = nextTransfers;
+      setTransfers(nextTransfers);
+      conflictsRef.current = conflictsRef.current.filter((c) => c.transferId !== transferId && !childIdsToCancel.has(c.transferId));
+      setConflicts(conflictsRef.current);
 
       await cancelBackendTransfers([transferId, ...childIdsToCancel]);
       if (taskToCancel) await cleanupTaskArtifacts(taskToCancel);
@@ -815,6 +814,9 @@ export const useSftpTransfers = ({
   const pauseTransfer = useCallback(async (transferId: string) => {
     const task = transfersRef.current.find((candidate) => candidate.id === transferId);
     if (!task || task.status === "completed" || task.status === "cancelled") return;
+    // Conflict attention rows are waiting for Replace/Skip/etc — pause would
+    // demote them away from the resolve UI without stopping useful work.
+    if (task.conflict || task.status === "attention") return;
     const commitPauseState = (update: (candidate: TransferTask) => TransferTask) => {
       const next = transfersRef.current.map((candidate) => candidate.id === transferId ? update(candidate) : candidate);
       transfersRef.current = next;
@@ -1223,12 +1225,14 @@ export const useSftpTransfers = ({
 
   const resolveConflict = useCallback(
     async (conflictId: string, action: FileConflictAction, applyToAll = false) => {
+      if (cancelledTasksRef.current.has(conflictId)) return;
       const conflict = conflictsRef.current.find((c) => c.transferId === conflictId);
       if (!conflict) return;
 
       const task = transfersRef.current.find((t) => t.id === conflictId);
       if (!task) {
-        setConflicts((prev) => prev.filter((c) => c.transferId !== conflictId));
+        conflictsRef.current = conflictsRef.current.filter((c) => c.transferId !== conflictId);
+        setConflicts(conflictsRef.current);
         return;
       }
 
@@ -1250,7 +1254,9 @@ export const useSftpTransfers = ({
         conflictDefaultsRef.current.set(selectedConflictKey, action);
       }
 
-      setConflicts((prev) => prev.filter((c) => !affectedConflictIds.has(c.transferId)));
+      // Eagerly clear refs so a double-click cannot schedule two processTransfer calls.
+      conflictsRef.current = conflictsRef.current.filter((c) => !affectedConflictIds.has(c.transferId));
+      setConflicts(conflictsRef.current);
 
       if (affectedTasks.length === 0) {
         return;
