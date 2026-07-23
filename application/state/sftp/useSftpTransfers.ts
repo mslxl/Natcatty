@@ -1158,9 +1158,17 @@ export const useSftpTransfers = ({
   );
 
   const clearCompletedTransfers = useCallback(() => {
-    setTransfers((prev) =>
-      prev.filter((t) => t.status !== "completed" && t.status !== "cancelled"),
-    );
+    setTransfers((prev) => {
+      const unfinishedParents = new Set(
+        prev.filter((t) => !["completed", "cancelled", "failed"].includes(t.status)).map((t) => t.id),
+      );
+      // Keep completed/cancelled children of unfinished directory parents —
+      // they are resume checkpoints, not disposable history.
+      return prev.filter((t) => {
+        if (t.parentTaskId && unfinishedParents.has(t.parentTaskId)) return true;
+        return t.status !== "completed" && t.status !== "cancelled";
+      });
+    });
   }, []);
 
   const dismissTransfer = useCallback((transferId: string) => {
