@@ -78,6 +78,11 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
           terminalSettings,
         },
         (progress) => {
+          // Do not resurrect a paused/cancelled row from late stream progress.
+          const current = sftpTransferCenterStore.getSnapshot().tasks.find((row) => row.id === task.id);
+          if (!current || current.status === "cancelled" || current.status === "paused" || current.status === "interrupted") {
+            return;
+          }
           sftpTransferCenterStore.patchTask(task.id, {
             status: "transferring",
             transferredBytes: progress.transferred,

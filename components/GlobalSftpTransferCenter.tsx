@@ -20,6 +20,7 @@ import {
   useSftpTransferCenter,
 } from "../application/state/sftpTransferCenterStore";
 import type { TransferTask } from "../domain/models";
+import { canReplaceSftpConflict } from "../domain/sftpConflict";
 import { estimateTransferEtaSeconds, formatFileSize, formatTransferEta } from "../application/state/sftp/utils";
 import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
@@ -242,16 +243,26 @@ function TransferRow({ task }: { task: TransferTask }) {
           {etaLabel ? ` · ${etaLabel}` : ""}
         </span>
       </div>
-      {task.status === "attention" && task.conflict && canControl && (
+      {task.status === "attention" && task.conflict && canControl && (() => {
+        const conflict = task.conflict!;
+        const canMerge = conflict.isDirectory && conflict.existingType === "directory";
+        const canReplace = canReplaceSftpConflict(conflict.isDirectory, conflict.existingType);
+        const actions = [
+          "stop",
+          "skip",
+          "duplicate",
+          ...(canMerge ? (["merge"] as const) : []),
+          ...(canReplace ? (["replace"] as const) : []),
+        ] as const;
+        const applyAllActions = [
+          "skip",
+          "duplicate",
+          ...(canMerge ? (["merge"] as const) : []),
+          ...(canReplace ? (["replace"] as const) : []),
+        ] as const;
+        return (
         <div className="mt-2 flex flex-wrap justify-end gap-1">
-          {([
-            "stop",
-            "skip",
-            "duplicate",
-            // Merge is only valid for directory↔directory (same as panel dialog).
-            ...(task.conflict.isDirectory && task.conflict.existingType === "directory" ? ["merge"] as const : []),
-            "replace",
-          ] as const).map((action) => (
+          {actions.map((action) => (
             <Button
               key={action}
               variant={action === "replace" ? "default" : "outline"}
@@ -262,7 +273,7 @@ function TransferRow({ task }: { task: TransferTask }) {
               {t(`sftp.conflict.action.${action}`)}
             </Button>
           ))}
-          {(task.conflict.applyToAllCount ?? 0) > 1 && (["skip", "duplicate", "merge", "replace"] as const).map((action) => (
+          {(conflict.applyToAllCount ?? 0) > 1 && applyAllActions.map((action) => (
             <Button
               key={`all-${action}`}
               variant="outline"
@@ -274,7 +285,8 @@ function TransferRow({ task }: { task: TransferTask }) {
             </Button>
           ))}
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 }

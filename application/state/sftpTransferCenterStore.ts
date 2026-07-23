@@ -589,14 +589,20 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
       let controller = controllers.get(ownerId ?? "");
       const task = tasks.find((candidate) => candidate.id === taskId);
       if (!controller && task) {
-        const adopter = (await prepareAdopter(task)).adopter;
+        const prepared = await prepareAdopter(task);
+        if (prepared.cancelled) return;
+        const adopter = prepared.adopter;
         if (adopter) {
           const [adopterId, adopterControls] = adopter;
+          const current = tasks.find((candidate) => candidate.id === taskId);
+          if (!current || current.status === "cancelled" || current.status === "completed") return;
           ownerId = adopterId;
           controller = adopterControls;
           tasks = tasks.map((candidate) => candidate.id === taskId ? { ...candidate, ownerId: adopterId } : candidate);
           emit();
-          await adopterControls.adopt?.({ ...task, ownerId: adopterId });
+          await adopterControls.adopt?.({ ...current, ownerId: adopterId });
+          const afterAdopt = tasks.find((candidate) => candidate.id === taskId);
+          if (!afterAdopt || afterAdopt.status === "cancelled") return;
         }
       }
       await controller?.resolveConflict?.(taskId, action, applyToAll);

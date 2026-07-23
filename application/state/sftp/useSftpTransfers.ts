@@ -1576,13 +1576,19 @@ export const useSftpTransfers = ({
     transfersRef.current = nextTransfers;
     setTransfers(nextTransfers);
     if (task.conflict) {
-      setConflicts((prev) => {
-        const without = prev.filter((item) => item.transferId !== task.id);
-        return [...without, task.conflict!];
-      });
+      // Keep conflictsRef in sync immediately — store.resolveConflict may call
+      // controller.resolveConflict in the same turn before React re-renders.
+      const nextConflicts = [
+        ...conflictsRef.current.filter((item) => item.transferId !== task.id),
+        task.conflict,
+      ];
+      conflictsRef.current = nextConflicts;
+      setConflicts(nextConflicts);
       // Do not auto-resume — caller will apply the chosen conflict action.
       return;
     }
+    // Cancel may have won while we were rehoming ownership.
+    if (cancelledTasksRef.current.has(task.id)) return;
     // Force resumeTransfer to accept pending (reconnect path) statuses.
     await resumeTransfer(task.id);
   }, [ownerId, resolveAdoptionPanes, resumeTransfer]);
