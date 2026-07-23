@@ -199,6 +199,7 @@ function createTerminalWorkerManager(options = {}) {
   const outputPortReady = new Set();
   const outputRoutePending = new Map();
   const sessionWebContentsIds = new Map();
+  const sessionHostIds = new Map();
   const sessionGenerations = new Map();
   const urgentInputPorts = new Map();
   const outputTaps = new Set();
@@ -663,6 +664,7 @@ function createTerminalWorkerManager(options = {}) {
     outputPortPending.delete(sessionId);
     outputPortReady.delete(sessionId);
     sessionWebContentsIds.delete(sessionId);
+    sessionHostIds.delete(sessionId);
     sessionGenerations.delete(sessionId);
     clearAttachHome(sessionId);
     try {
@@ -1008,6 +1010,7 @@ function createTerminalWorkerManager(options = {}) {
     outputPortReady.clear();
     outputRoutePending.clear();
     sessionWebContentsIds.clear();
+    sessionHostIds.clear();
     sessionGenerations.clear();
     attachHomeWebContentsIds.clear();
     closeAllUrgentInputPorts();
@@ -1045,6 +1048,9 @@ function createTerminalWorkerManager(options = {}) {
       closeOutputSession(payload.sessionId);
     } else if (payload?.sessionId && SESSION_START_CHANNELS.has(channel)) {
       closedSessions.delete(payload.sessionId);
+      if (typeof payload.hostId === "string" && payload.hostId) {
+        sessionHostIds.set(payload.sessionId, payload.hostId);
+      }
     }
     worker.postMessage({
       kind: "request",
@@ -1123,6 +1129,7 @@ function createTerminalWorkerManager(options = {}) {
       outputPortReady.clear();
       outputRoutePending.clear();
       sessionWebContentsIds.clear();
+      sessionHostIds.clear();
       sessionGenerations.clear();
       closeAllUrgentInputPorts();
       terminalInterceptorWarningListeners.clear();
@@ -1158,6 +1165,10 @@ function createTerminalWorkerManager(options = {}) {
     getSessionWebContentsId(sessionId) {
       if (!sessionId) return null;
       return sessionWebContentsIds.get(sessionId) ?? null;
+    },
+    getSessionHostId(sessionId) {
+      if (!sessionId) return null;
+      return sessionHostIds.get(sessionId) ?? null;
     },
     getSessionOwnerWebContentsId(sessionId) {
       if (!sessionId || closedSessions.has(sessionId)) return null;

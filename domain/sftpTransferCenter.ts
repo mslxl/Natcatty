@@ -30,6 +30,7 @@ const SAFE_TASK_KEYS: ReadonlySet<keyof TransferTask> = new Set([
   "conflict",
   "stagedTargetPath",
   "sourceFingerprint",
+  "reconnectRequired",
 ]);
 
 function sanitizeTask(value: unknown): TransferTask | null {

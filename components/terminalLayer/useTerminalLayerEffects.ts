@@ -3,6 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 
 import { terminalLayoutSuppressStore } from '../../application/state/terminalLayoutSuppressStore';
 import { useSftpBackend } from '../../application/state/useSftpBackend';
+import { sftpTransferCenterStore } from '../../application/state/sftpTransferCenterStore';
 import { AI_PANEL_FORCE_HIDE_SHELL } from '../ai/aiPanelDiagnostics';
 import { getTerminalSidePanelShellWidth } from './TerminalLayerSidePanelSection';
 
@@ -262,18 +263,48 @@ export function useTerminalLayerEffects(ctx: TerminalLayerEffectsContext) {
 
   useEffect(() => {
     const handler = (event: Event) => {
-      const task = (event as CustomEvent).detail;
+      const detail = (event as CustomEvent).detail;
+      const task = detail?.task ?? detail;
+      const forResume = detail?.forResume === true;
       if (!task) return;
-      if (task.targetConnectionId === 'local') {
+      if (task.targetConnectionId === 'local' && !forResume) {
         void openPath(task.isDirectory ? task.targetPath : task.targetPath.replace(/[\\/][^\\/]+$/, ''));
         return;
       }
       const tabId = activeTabIdRef.current;
-      const host = effectiveHosts?.find?.((candidate: any) => candidate.id === task.targetHostId);
-      if (!tabId || !host) return;
+      const useSource = forResume && task.targetConnectionId === 'local';
+      const isLocalCopy = task.direction === 'local-copy'
+        || (task.sourceConnectionId === 'local' && task.targetConnectionId === 'local');
+      if (forResume && isLocalCopy) {
+        if (!tabId) {
+          sftpTransferCenterStore.reportResumePreparationFailure(
+            task.id,
+            'Open a terminal window before resuming this transfer',
+          );
+          return;
+        }
+        setSidePanelOpenTabs((prev: Map<string, any>) => new Map(prev).set(tabId, 'sftp'));
+        return;
+      }
+      const hostId = useSource ? task.sourceHostId : task.targetHostId;
+      const host = effectiveHosts?.find?.((candidate: any) => candidate.id === hostId);
+      if (!host) {
+        sftpTransferCenterStore.reportResumePreparationFailure(
+          task.id,
+          'The original server no longer exists',
+        );
+        return;
+      }
+      if (!tabId) {
+        sftpTransferCenterStore.reportResumePreparationFailure(
+          task.id,
+          'Open a terminal window before resuming this transfer',
+        );
+        return;
+      }
       const targetDirectory = task.isDirectory
-        ? task.targetPath
-        : task.targetPath.replace(/[\\/][^\\/]+$/, '') || '/';
+        ? (useSource ? task.sourcePath : task.targetPath)
+        : (useSource ? task.sourcePath : task.targetPath).replace(/[\\/][^\\/]+$/, '') || '/';
       setSftpHostForTab((prev: Map<string, any>) => new Map(prev).set(tabId, host));
       setSftpInitialLocationForTab((prev: Map<string, any>) => new Map(prev).set(tabId, {
         hostId: host.id,

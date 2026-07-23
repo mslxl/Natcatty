@@ -256,7 +256,7 @@ let sftpClients = null;
 const activeTransfers = new Map();
 const admittedTransferQueue = [];
 const pausedAdmittedTransfers = new Map();
-let admittedTransferCount = 0;
+const admittedActiveByResource = new Map();
 let admittedTransferLimit = 2;
 const isolatedDownloadChannelPools = new WeakMap();
 // Cache sftpIds where remote cp is known to be unavailable, so we skip
@@ -1227,15 +1227,37 @@ async function startTransferNow(event, payload, onProgress) {
   }
 }
 
+function getAdmissionResourceKeys(payload) {
+  const keys = [
+    payload?.sourceHostId ? `host:${payload.sourceHostId}` : payload?.sourceSftpId ? `session:${payload.sourceSftpId}` : null,
+    payload?.targetHostId ? `host:${payload.targetHostId}` : payload?.targetSftpId ? `session:${payload.targetSftpId}` : null,
+  ].filter(Boolean);
+  return [...new Set(keys.length > 0 ? keys : ["local"])];
+}
+
+function canAdmitTransfer(job) {
+  return job.resourceKeys.every((key) => (admittedActiveByResource.get(key) || 0) < admittedTransferLimit);
+}
+
+function adjustAdmittedResources(job, delta) {
+  for (const key of job.resourceKeys) {
+    const next = (admittedActiveByResource.get(key) || 0) + delta;
+    if (next > 0) admittedActiveByResource.set(key, next);
+    else admittedActiveByResource.delete(key);
+  }
+}
+
 function pumpAdmittedTransfers() {
-  while (admittedTransferCount < admittedTransferLimit && admittedTransferQueue.length > 0) {
-    const job = admittedTransferQueue.shift();
+  while (admittedTransferQueue.length > 0) {
+    const runnableIndex = admittedTransferQueue.findIndex(canAdmitTransfer);
+    if (runnableIndex < 0) return;
+    const [job] = admittedTransferQueue.splice(runnableIndex, 1);
     if (!job) return;
-    admittedTransferCount += 1;
+    adjustAdmittedResources(job, 1);
     void job.run()
       .then(job.resolve, job.reject)
       .finally(() => {
-        admittedTransferCount -= 1;
+        adjustAdmittedResources(job, -1);
         pumpAdmittedTransfers();
       });
   }
@@ -1293,6 +1315,7 @@ function runAdmittedTransfer(event, payload, onProgress, runner) {
     admittedTransferQueue.push({
       event,
       payload,
+      resourceKeys: getAdmissionResourceKeys(payload),
       onProgress,
       resolve,
       reject,
@@ -1304,6 +1327,9 @@ function runAdmittedTransfer(event, payload, onProgress, runner) {
 }
 
 function startTransfer(event, payload, onProgress) {
+  if (payload?.skipAdmission === true) {
+    return startTransferNow(event, payload, onProgress);
+  }
   return runAdmittedTransfer(event, payload, onProgress);
 }
 

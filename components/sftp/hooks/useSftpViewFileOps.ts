@@ -9,6 +9,10 @@ import { editorTabStore } from "../../../application/state/editorTabStore";
 import { toEditorTabId, activeTabStore } from "../../../application/state/activeTabStore";
 import type { TextEditorModalSnapshot } from "../../TextEditorModal";
 import type { UseSftpViewFileOpsParams, UseSftpViewFileOpsResult } from "./useSftpViewFileOps.types";
+import { createDirectDownloadTransferTask } from "../../../application/state/sftp/downloadTransferTask";
+import { getSftpTransferResourceKeys, globalSftpTransferScheduler } from "../../../application/state/sftp/globalTransferScheduler";
+import { localStorageAdapter } from "../../../infrastructure/persistence/localStorageAdapter";
+import { STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY } from "../../../infrastructure/config/storageKeys";
 
 export const useSftpViewFileOps = ({
   sftpRef,
@@ -452,6 +456,7 @@ export const useSftpViewFileOps = ({
       const resolvedFullPath = fullPath ?? sftpRef.current.joinPath(pane.connection.currentPath, file.name);
       const isDirectory = isNavigableDirectory(file);
 
+      let activeTransferId: string | undefined;
       try {
         // For local files, use blob download.
         if (pane.connection.isLocal) {
@@ -505,6 +510,8 @@ export const useSftpViewFileOps = ({
               targetPath,
               sftpId,
               connectionId: pane.connection.id,
+              sourceHostId: pane.connection.hostId,
+              sourceHostLabel: pane.connection.hostLabel,
               sourceEncoding: pane.filenameEncoding,
               isDirectory: true,
             });
@@ -530,45 +537,54 @@ export const useSftpViewFileOps = ({
         }
 
         const transferId = `download-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        activeTransferId = transferId;
         const fileSize = typeof file.size === 'string' ? parseInt(file.size, 10) || 0 : (file.size || 0);
 
         // Add download task to transfer queue for progress display
-        sftpRef.current.addExternalUpload({
+        sftpRef.current.addExternalUpload(createDirectDownloadTransferTask({
           id: transferId,
           fileName: file.name,
           sourcePath: resolvedFullPath,
           targetPath,
           sourceConnectionId: pane.connection.id,
-          targetConnectionId: 'local',
-          direction: 'download',
-          status: 'transferring',
+          sourceHostId: pane.connection.hostId,
+          sourceHostLabel: pane.connection.hostLabel,
           totalBytes: fileSize,
-          transferredBytes: 0,
-          speed: 0,
-          startTime: Date.now(),
           isDirectory: false,
-        });
+        }));
 
         // Track if error was already handled by callback
         let errorHandled = false;
 
-        const result = await startStreamTransfer(
-          {
+        const result = await globalSftpTransferScheduler.run(
+          `direct-download:${pane.connection.hostId}`,
+          transferId,
+          getSftpTransferResourceKeys({ sourceHostId: pane.connection.hostId }),
+          () => localStorageAdapter.readNumber(STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY),
+          () => startStreamTransfer({
             transferId,
             sourcePath: resolvedFullPath,
             targetPath,
             sourceType: 'sftp',
             targetType: 'local',
             sourceSftpId: sftpId,
+            sourceHostId: pane.connection.hostId,
             totalBytes: fileSize,
             sourceEncoding: pane.filenameEncoding,
+            resumable: true,
           },
-          (transferred, total, speed) => {
+          (transferred, total, speed, checkpoint) => {
             // Update transfer progress in the queue
             sftpRef.current.updateExternalUpload(transferId, {
+              status: "transferring",
               transferredBytes: transferred,
               totalBytes: total,
               speed,
+              checkpointBytes: checkpoint?.checkpointBytes ?? transferred,
+              resumeStage: checkpoint?.resumeStage,
+              downloadCheckpointBytes: checkpoint?.downloadCheckpointBytes,
+              uploadCheckpointBytes: checkpoint?.uploadCheckpointBytes,
+              sourceFingerprint: checkpoint?.sourceFingerprint,
             });
           },
           () => {
@@ -592,7 +608,7 @@ export const useSftpViewFileOps = ({
             if (!isCancelError) {
               toast.error(error, "SFTP");
             }
-          }
+          }),
         );
 
         // Check if bridge doesn't support streaming (returns undefined)
@@ -620,10 +636,17 @@ export const useSftpViewFileOps = ({
         }
       } catch (e) {
         logger.error("[SftpView] Failed to download file:", e);
-        toast.error(
-          e instanceof Error ? e.message : t("sftp.error.downloadFailed"),
-          "SFTP",
-        );
+        const errorMessage = e instanceof Error ? e.message : String(e);
+        const isCancelError = errorMessage.includes("cancelled") || errorMessage.includes("canceled");
+        if (activeTransferId) {
+          sftpRef.current.updateExternalUpload(activeTransferId, {
+            status: isCancelError ? "cancelled" : "failed",
+            error: isCancelError ? undefined : errorMessage,
+            endTime: Date.now(),
+            speed: 0,
+          });
+        }
+        if (!isCancelError) toast.error(errorMessage || t("sftp.error.downloadFailed"), "SFTP");
       }
     },
     [
@@ -687,6 +710,7 @@ export const useSftpViewFileOps = ({
         const targetPath = joinFsPath(selectedDirectory, file.name);
         const isDirectory = isNavigableDirectory(file);
 
+        let transferId: string | undefined;
         try {
           if (isDirectory) {
             const status = await sftpRef.current.downloadToLocal({
@@ -695,6 +719,8 @@ export const useSftpViewFileOps = ({
               targetPath,
               sftpId,
               connectionId: pane.connection.id,
+              sourceHostId: pane.connection.hostId,
+              sourceHostLabel: pane.connection.hostLabel,
               sourceEncoding: pane.filenameEncoding,
               isDirectory: true,
             });
@@ -706,43 +732,51 @@ export const useSftpViewFileOps = ({
             continue;
           }
 
-          const transferId = `download-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+          transferId = `download-${Date.now()}-${Math.random().toString(36).slice(2)}`;
           const fileSize = typeof file.size === "string" ? parseInt(file.size, 10) || 0 : (file.size || 0);
 
-          sftpRef.current.addExternalUpload({
+          sftpRef.current.addExternalUpload(createDirectDownloadTransferTask({
             id: transferId,
             fileName: file.name,
             sourcePath,
             targetPath,
             sourceConnectionId: pane.connection.id,
-            targetConnectionId: "local",
-            direction: "download",
-            status: "transferring",
+            sourceHostId: pane.connection.hostId,
+            sourceHostLabel: pane.connection.hostLabel,
             totalBytes: fileSize,
-            transferredBytes: 0,
-            speed: 0,
-            startTime: Date.now(),
             isDirectory: false,
-          });
+          }));
 
           let errorHandled = false;
 
-          const result = await startStreamTransfer(
-            {
+          const result = await globalSftpTransferScheduler.run(
+            `direct-download:${pane.connection.hostId}`,
+            transferId,
+            getSftpTransferResourceKeys({ sourceHostId: pane.connection.hostId }),
+            () => localStorageAdapter.readNumber(STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY),
+            () => startStreamTransfer({
               transferId,
               sourcePath,
               targetPath,
               sourceType: "sftp",
               targetType: "local",
               sourceSftpId: sftpId,
+              sourceHostId: pane.connection.hostId,
               totalBytes: fileSize,
               sourceEncoding: pane.filenameEncoding,
+              resumable: true,
             },
-            (transferred, total, speed) => {
+            (transferred, total, speed, checkpoint) => {
               sftpRef.current.updateExternalUpload(transferId, {
+                status: "transferring",
                 transferredBytes: transferred,
                 totalBytes: total,
                 speed,
+                checkpointBytes: checkpoint?.checkpointBytes ?? transferred,
+                resumeStage: checkpoint?.resumeStage,
+                downloadCheckpointBytes: checkpoint?.downloadCheckpointBytes,
+                uploadCheckpointBytes: checkpoint?.uploadCheckpointBytes,
+                sourceFingerprint: checkpoint?.sourceFingerprint,
               });
             },
             () => {
@@ -764,7 +798,7 @@ export const useSftpViewFileOps = ({
               if (!isCancelError) {
                 toast.error(error, "SFTP");
               }
-            },
+            }),
           );
 
           if (result === undefined) {
@@ -790,10 +824,17 @@ export const useSftpViewFileOps = ({
           }
         } catch (e) {
           logger.error("[SftpView] Failed to download file:", e);
-          toast.error(
-            e instanceof Error ? e.message : t("sftp.error.downloadFailed"),
-            "SFTP",
-          );
+          const errorMessage = e instanceof Error ? e.message : String(e);
+          const isCancelError = errorMessage.includes("cancelled") || errorMessage.includes("canceled");
+          if (transferId) {
+            sftpRef.current.updateExternalUpload(transferId, {
+              status: isCancelError ? "cancelled" : "failed",
+              error: isCancelError ? undefined : errorMessage,
+              endTime: Date.now(),
+              speed: 0,
+            });
+          }
+          if (!isCancelError) toast.error(errorMessage || t("sftp.error.downloadFailed"), "SFTP");
         }
       }
     },

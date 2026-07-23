@@ -24,7 +24,7 @@ import { Button } from "./ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
-export type GlobalTransferBucket = "active" | "queued" | "paused" | "failed" | "completed";
+export type GlobalTransferBucket = "all" | "active" | "queued" | "paused" | "failed" | "completed";
 
 export function getGlobalTransferBucket(task: Pick<TransferTask, "status">): GlobalTransferBucket {
   if (task.status === "transferring" || task.status === "pausing") return "active";
@@ -51,7 +51,14 @@ export function splitBackgroundTransfers(tasks: readonly TransferTask[]) {
   };
 }
 
-const BUCKETS: readonly GlobalTransferBucket[] = ["active", "queued", "paused", "failed", "completed"];
+const BUCKETS: readonly GlobalTransferBucket[] = ["all", "active", "queued", "paused", "failed", "completed"];
+
+export function getTasksForGlobalTransferBucket(
+  tasks: readonly TransferTask[],
+  bucket: GlobalTransferBucket,
+): TransferTask[] {
+  return tasks.filter((task) => !task.parentTaskId && (bucket === "all" || getGlobalTransferBucket(task) === bucket));
+}
 
 function statusLabelKey(status: TransferTask["status"]): string {
   return `sftp.transferCenter.status.${status}`;
@@ -102,11 +109,13 @@ function TransferRow({ task }: { task: TransferTask }) {
     ? <ArrowDownToLine size={15} />
     : <ArrowUpFromLine size={15} />;
 
-  const openTarget = () => {
-    window.dispatchEvent(new CustomEvent("netcatty:open-sftp-transfer-target", { detail: task }));
+  const openTarget = (forResume = false) => {
+    window.dispatchEvent(new CustomEvent("netcatty:open-sftp-transfer-target", {
+      detail: { task, forResume },
+    }));
   };
   const resumeTask = () => {
-    openTarget();
+    openTarget(true);
     void sftpTransferCenterStore.resume(task.id);
   };
 
@@ -120,7 +129,7 @@ function TransferRow({ task }: { task: TransferTask }) {
         <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded bg-muted text-muted-foreground">
           {directionIcon}
         </div>
-        <button type="button" className="min-w-0 flex-1 text-left" onClick={openTarget}>
+        <button type="button" className="min-w-0 flex-1 overflow-hidden text-left" onClick={() => openTarget()}>
           <div className="flex items-center gap-1.5">
             <span className="truncate text-xs font-medium">{task.fileName}</span>
             {task.background && (
@@ -167,7 +176,7 @@ function TransferRow({ task }: { task: TransferTask }) {
           <TransferAction label={t("sftp.transfers.copyTargetPath")} onClick={() => { void navigator.clipboard.writeText(task.targetPath); }}>
             <ClipboardCopy size={13} />
           </TransferAction>
-          <TransferAction label={t("sftp.transfers.openTargetFolder")} onClick={openTarget}>
+          <TransferAction label={t("sftp.transfers.openTargetFolder")} onClick={() => openTarget()}>
             <FolderOpen size={13} />
           </TransferAction>
         </div>
@@ -187,11 +196,11 @@ function TransferRow({ task }: { task: TransferTask }) {
           {task.totalBytes > 0 ? `${percent.toFixed(1)}%` : "—"}
         </span>
       </div>
-      <div className="mt-1 flex items-center justify-between text-[10px] text-muted-foreground">
-        <span className={cn((task.status === "failed" || task.status === "attention") && "text-destructive")}>
+      <div className="mt-1 flex min-w-0 items-center justify-between gap-3 text-[10px] text-muted-foreground">
+        <span className={cn("min-w-0 truncate", (task.status === "failed" || task.status === "attention") && "text-destructive")}>
           {task.error || task.pauseUnavailableReason || (task.phase ? t(`sftp.transferCenter.phase.${task.phase}`) : t(statusLabelKey(task.status)))}
         </span>
-        <span className="font-mono">
+        <span className="min-w-0 shrink truncate font-mono text-right">
           {formatFileSize(task.transferredBytes)} / {task.totalBytes > 0 ? formatFileSize(task.totalBytes) : "—"}
           {task.speed > 0 ? ` · ${formatFileSize(task.speed)}/s` : ""}
         </span>
@@ -229,15 +238,14 @@ function TransferRow({ task }: { task: TransferTask }) {
 export function GlobalSftpTransferCenter() {
   const { t } = useI18n();
   const snapshot = useSftpTransferCenter();
-  const [bucket, setBucket] = useState<GlobalTransferBucket>("active");
+  const [bucket, setBucket] = useState<GlobalTransferBucket>("all");
   const [showBackground, setShowBackground] = useState(false);
   const badge = getGlobalTransferBadge(snapshot.tasks);
   const counts = useMemo(() => Object.fromEntries(BUCKETS.map((item) => [
     item,
-    snapshot.tasks.filter((task) => !task.parentTaskId && getGlobalTransferBucket(task) === item).length,
+    getTasksForGlobalTransferBucket(snapshot.tasks, item).length,
   ])) as Record<GlobalTransferBucket, number>, [snapshot.tasks]);
-  const bucketTasks = useMemo(() => snapshot.tasks
-    .filter((task) => !task.parentTaskId && getGlobalTransferBucket(task) === bucket)
+  const bucketTasks = useMemo(() => getTasksForGlobalTransferBucket(snapshot.tasks, bucket)
     .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0) || b.startTime - a.startTime), [bucket, snapshot.tasks]);
   const { visible, collapsed } = splitBackgroundTransfers(bucketTasks);
   const displayed = showBackground ? [...visible, ...collapsed] : visible;
@@ -283,13 +291,13 @@ export function GlobalSftpTransferCenter() {
       <PopoverContent
         align="end"
         sideOffset={5}
-        className="w-[min(760px,calc(100vw-24px))] overflow-hidden p-0 app-no-drag"
+        className="w-[min(580px,calc(100vw-24px))] overflow-hidden p-0 app-no-drag"
         data-section="global-sftp-transfer-center"
       >
         <div className="flex items-center justify-between border-b border-border/60 px-4 py-3">
-          <div>
+          <div className="min-w-0 pr-2">
             <div className="text-sm font-semibold">{t("sftp.transferCenter.title")}</div>
-            <div className="mt-0.5 text-[10px] text-muted-foreground">{t("sftp.transferCenter.subtitle")}</div>
+            <div className="mt-0.5 truncate text-[10px] text-muted-foreground">{t("sftp.transferCenter.subtitle")}</div>
           </div>
           <div className="flex items-center gap-1">
             <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={pauseAll}>
@@ -307,7 +315,7 @@ export function GlobalSftpTransferCenter() {
               key={item}
               type="button"
               className={cn(
-                "border-b-2 px-3 py-1.5 text-[11px] transition-colors",
+                "min-w-0 flex-1 truncate border-b-2 px-1.5 py-1.5 text-[11px] transition-colors",
                 bucket === item ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground",
               )}
               onClick={() => setBucket(item)}
@@ -321,7 +329,7 @@ export function GlobalSftpTransferCenter() {
         <div className="max-h-[460px] overflow-auto">
           {displayed.length === 0 ? (
             <div className="flex h-40 flex-col items-center justify-center text-muted-foreground">
-              {badge.hasAttention && bucket !== "failed" ? <AlertCircle size={22} /> : <ArrowDownToLine size={22} />}
+              {badge.hasAttention && bucket !== "failed" && bucket !== "all" ? <AlertCircle size={22} /> : <ArrowDownToLine size={22} />}
               <span className="mt-2 text-xs">{t("sftp.transferCenter.empty")}</span>
             </div>
           ) : displayed.map((task) => <TransferRow key={task.id} task={task} />)}

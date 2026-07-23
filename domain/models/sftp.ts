@@ -91,6 +91,7 @@ export interface TransferTask {
   conflict?: FileConflict;
   stagedTargetPath?: string;
   sourceFingerprint?: string;
+  reconnectRequired?: boolean;
 }
 
 export type FileConflictAction = 'stop' | 'skip' | 'replace' | 'duplicate' | 'merge';

@@ -834,6 +834,44 @@ test("bridge admission applies one global concurrency limit across callers", asy
   assert.equal((await second).error, undefined);
 });
 
+test("bridge admission gives different remote sessions independent concurrency", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-per-session-test-"));
+  t.after(async () => { await fs.promises.rm(tempDir, { recursive: true, force: true }); });
+  const sourceA = new PassThrough();
+  const sourceB = new PassThrough();
+  const makeClient = (source) => ({
+    sftp: createFastSftp({ createReadStream() { return source; } }),
+    stat: async () => ({ size: 1 }),
+  });
+  transferBridge.init({ sftpClients: new Map([
+    ["source-a", makeClient(sourceA)],
+    ["source-b", makeClient(sourceB)],
+  ]) });
+
+  const start = (id, sourceSftpId, source) => transferBridge.startTransfer({ sender: createSender() }, {
+    transferId: id,
+    sourcePath: `/${id}`,
+    targetPath: path.join(tempDir, `${id}.bin`),
+    sourceType: "sftp",
+    targetType: "local",
+    sourceSftpId,
+    totalBytes: 1,
+    resumable: true,
+    globalConcurrency: 1,
+  }).finally(() => source.destroy());
+  const first = start("per-session-a", "source-a", sourceA);
+  const second = start("per-session-b", "source-b", sourceB);
+  const deadline = Date.now() + 500;
+  while ((sourceA.listenerCount("data") === 0 || sourceB.listenerCount("data") === 0) && Date.now() < deadline) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  const bothStarted = sourceA.listenerCount("data") > 0 && sourceB.listenerCount("data") > 0;
+  sourceA.end(Buffer.from("a"));
+  sourceB.end(Buffer.from("b"));
+  await Promise.all([first, second]);
+  assert.equal(bothStarted, true);
+});
+
 test("queued admission jobs can be paused, resumed, prioritized, and cancelled before opening a stream", async (t) => {
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-queued-controls-"));
   t.after(async () => { await fs.promises.rm(tempDir, { recursive: true, force: true }); });

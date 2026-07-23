@@ -825,6 +825,7 @@ export const zhCNCoreMessages: Messages = {
   'sftp.transferCenter.phase.extracting': '正在解压',
   'sftp.transferCenter.phase.verifying': '正在校验',
   'sftp.transferCenter.bucket.active': '进行中',
+  'sftp.transferCenter.bucket.all': '全部',
   'sftp.transferCenter.bucket.queued': '排队中',
   'sftp.transferCenter.bucket.paused': '已暂停',
   'sftp.transferCenter.bucket.failed': '失败',

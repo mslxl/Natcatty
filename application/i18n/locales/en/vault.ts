@@ -255,6 +255,7 @@ export const enVaultMessages: Messages = {
   'sftp.transferCenter.phase.extracting': 'Extracting',
   'sftp.transferCenter.phase.verifying': 'Verifying',
   'sftp.transferCenter.bucket.active': 'In Progress',
+  'sftp.transferCenter.bucket.all': 'All',
   'sftp.transferCenter.bucket.queued': 'Queued',
   'sftp.transferCenter.bucket.paused': 'Paused',
   'sftp.transferCenter.bucket.failed': 'Failed',
@@ -408,7 +409,7 @@ export const enVaultMessages: Messages = {
   // Settings > SFTP File Associations
   'settings.tab.sftpFileAssociations': 'SFTP',
   'settings.sftp.transferConcurrency': 'Transfer Concurrency',
-  'settings.sftp.transferConcurrency.desc': 'Number of files to transfer in parallel when uploading or downloading folders. Higher values may improve speed but can overwhelm some servers.',
+  'settings.sftp.transferConcurrency.desc': 'Maximum files transferred in parallel per server. Transfers to different servers do not share this limit.',
   'settings.sftp.defaultOpener': 'Default File Opener',
   'settings.sftp.defaultOpener.desc': 'Choose the default application for opening files without a specific file association',
   'settings.sftp.defaultOpener.ask': 'Always ask',

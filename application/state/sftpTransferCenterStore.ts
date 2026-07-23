@@ -44,6 +44,8 @@ export interface SftpTransferCenterStore {
   prioritize(taskId: string): Promise<void>;
   dismiss(taskId: string): void;
   clearTerminal(status?: TransferTask["status"]): void;
+  markReconnectRequired(taskId: string, error?: string): void;
+  reportResumePreparationFailure(taskId: string, error: string): void;
   ingestBackgroundEvent(event: {
     type: "queued" | "started" | "progress" | "paused" | "resumed" | "cancelled" | "completed" | "failed";
     transferId: string;
@@ -62,6 +64,8 @@ export interface SftpTransferCenterStore {
     uploadCheckpointBytes?: number;
     sourceFingerprint?: string;
     sessionId?: string;
+    sourceHostId?: string;
+    targetHostId?: string;
   }): void;
   resolveConflict(taskId: string, action: FileConflictAction, applyToAll?: boolean): Promise<void>;
 }
@@ -94,6 +98,8 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
   let snapshot = tasks.length > 0 ? buildSnapshot(tasks) : EMPTY_SNAPSHOT;
   const listeners = new Set<Listener>();
   const controllers = new Map<string, SftpTransferOwnerControls>();
+  const resumeInvocations = new Map<string, Promise<void>>();
+  const resumePreparationFailures = new Map<string, string>();
 
   const persist = () => {
     persistence?.write(serializeSftpTransferCenter(tasks));
@@ -116,18 +122,35 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
   ));
   const prepareAdopter = async (task: TransferTask) => {
     let adopter = findAdopter(task);
-    const preparer = [...controllers.entries()].find(([, controls]) => controls.canPrepareAdoption);
-    if (!adopter && preparer && typeof globalThis.window !== "undefined") {
-      const targetOwnerId = preparer[0];
-      for (let attempt = 0; attempt < 60 && !adopter; attempt += 1) {
-        globalThis.window.dispatchEvent(new CustomEvent("netcatty:prepare-sftp-transfer-resume", {
-          detail: { task, targetOwnerId },
-        }));
+    let preparationError: string | undefined;
+    let cancelled = false;
+    if (!adopter && typeof globalThis.window !== "undefined") {
+      for (let attempt = 0; attempt < 600 && !adopter && !preparationError; attempt += 1) {
+        const currentTask = tasks.find((candidate) => candidate.id === task.id);
+        if (!currentTask || ["cancelled", "completed"].includes(currentTask.status)) {
+          cancelled = true;
+          break;
+        }
+        preparationError = resumePreparationFailures.get(task.id);
+        if (preparationError) break;
+        const preparer = [...controllers.entries()].find(([, controls]) => controls.canPrepareAdoption);
+        if (preparer) {
+          globalThis.window.dispatchEvent(new CustomEvent("netcatty:prepare-sftp-transfer-resume", {
+            detail: {
+              task,
+              targetOwnerId: preparer[0],
+              reportFailure: (error: string) => {
+                preparationError = error;
+              },
+            },
+          }));
+        }
         await new Promise((resolve) => setTimeout(resolve, 500));
         adopter = findAdopter(task);
       }
     }
-    return adopter;
+    resumePreparationFailures.delete(task.id);
+    return { adopter, error: preparationError, cancelled };
   };
   const invoke = async (taskId: string, action: "pause" | "resume" | "cancel" | "retry" | "prioritize") => {
     const ownerId = findOwner(taskId);
@@ -141,8 +164,14 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
     ) {
       controller = undefined;
     }
+    if (action === "resume" && task?.ownerId === "background-agent" && task.reconnectRequired) {
+      controller = undefined;
+    }
     if (!controller && action === "resume") {
-      const adopter = task ? await prepareAdopter(task) : undefined;
+      const prepared = task ? await prepareAdopter(task) : undefined;
+      const adopter = prepared?.adopter;
+      const currentTask = tasks.find((candidate) => candidate.id === taskId);
+      if (prepared?.cancelled || !currentTask || ["cancelled", "completed"].includes(currentTask.status)) return;
       if (task && adopter) {
         const [adopterId, adopterControls] = adopter;
         tasks = tasks.map((candidate) => candidate.id === taskId ? { ...candidate, ownerId: adopterId } : candidate);
@@ -154,10 +183,22 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
         tasks = tasks.map((candidate) => candidate.id === taskId ? {
           ...candidate,
           status: "attention",
-          error: undefined,
+          error: prepared?.error ?? "Reconnect and authenticate to the source and target before resuming",
+          reconnectRequired: true,
         } : candidate);
         emit();
       }
+    }
+    if (!controller && action === "cancel" && task && ["paused", "interrupted", "attention", "pending", "queued"].includes(task.status)) {
+      tasks = tasks.map((candidate) => candidate.id === taskId ? {
+        ...candidate,
+        status: "cancelled",
+        error: undefined,
+        endTime: Date.now(),
+        speed: 0,
+      } : candidate);
+      emit();
+      return;
     }
     if (!controller) return;
     await controller[action](taskId);
@@ -202,7 +243,15 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
       )));
     },
     pause: (taskId) => invoke(taskId, "pause"),
-    resume: (taskId) => invoke(taskId, "resume"),
+    resume(taskId) {
+      const existing = resumeInvocations.get(taskId);
+      if (existing) return existing;
+      const running = invoke(taskId, "resume").finally(() => {
+        if (resumeInvocations.get(taskId) === running) resumeInvocations.delete(taskId);
+      });
+      resumeInvocations.set(taskId, running);
+      return running;
+    },
     cancel: (taskId) => invoke(taskId, "cancel"),
     retry: (taskId) => invoke(taskId, "retry"),
     prioritize: (taskId) => invoke(taskId, "prioritize"),
@@ -211,7 +260,7 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
       let controller = controllers.get(ownerId ?? "");
       const task = tasks.find((candidate) => candidate.id === taskId);
       if (!controller && task) {
-        const adopter = await prepareAdopter(task);
+        const adopter = (await prepareAdopter(task)).adopter;
         if (adopter) {
           const [adopterId, adopterControls] = adopter;
           ownerId = adopterId;
@@ -242,6 +291,19 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
       tasks = tasks.filter((task) => !removingIds.has(task.id) && !removingIds.has(task.parentTaskId ?? ""));
       emit();
     },
+    markReconnectRequired(taskId, error) {
+      tasks = tasks.map((task) => task.id === taskId ? {
+        ...task,
+        status: "attention",
+        error: error ?? "The original server connection is unavailable",
+        reconnectRequired: true,
+        speed: 0,
+      } : task);
+      emit();
+    },
+    reportResumePreparationFailure(taskId, error) {
+      resumePreparationFailures.set(taskId, error);
+    },
     ingestBackgroundEvent(event) {
       const existing = tasks.find((task) => task.id === event.transferId);
       if ((event.type === "queued" || event.type === "started") && !existing) {
@@ -255,6 +317,8 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
           targetPath,
           sourceConnectionId: event.direction === "upload" ? "local" : (event.sessionId ?? "agent"),
           targetConnectionId: event.direction === "download" ? "local" : (event.sessionId ?? "agent"),
+          sourceHostId: event.sourceHostId,
+          targetHostId: event.targetHostId,
           direction: event.direction ?? "upload",
           status: event.type === "queued" ? "queued" : "transferring",
           totalBytes: 0,

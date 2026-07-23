@@ -169,14 +169,14 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   const sftpOptions = useMemo(() => ({
     ...fileWatchHandlers,
     transferOwnerId,
-    canPrepareTransferAdoption: true,
+    canPrepareTransferAdoption: isVisible,
     useCompressedUpload: sftpUseCompressedUpload,
     defaultShowHiddenFiles: sftpShowHiddenFiles,
     autoConnectLocalOnMount: false,
     terminalSettings,
     knownHosts,
     onAddKnownHost,
-  }), [fileWatchHandlers, transferOwnerId, sftpUseCompressedUpload, sftpShowHiddenFiles, terminalSettings, knownHosts, onAddKnownHost]);
+  }), [fileWatchHandlers, isVisible, transferOwnerId, sftpUseCompressedUpload, sftpShowHiddenFiles, terminalSettings, knownHosts, onAddKnownHost]);
 
   const sftp = useSftpState(hosts, keys, identities, sftpOptions);
   const {
@@ -198,7 +198,11 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     let connecting = false;
     const handler = async (event: Event) => {
       if (connecting) return;
-      const detail = (event as CustomEvent<{ task: TransferTask; targetOwnerId: string }>).detail;
+      const detail = (event as CustomEvent<{
+        task: TransferTask;
+        targetOwnerId: string;
+        reportFailure?: (error: string) => void;
+      }>).detail;
       if (detail?.targetOwnerId !== transferOwnerId) return;
       const task = detail.task;
       if (!task) return;
@@ -208,7 +212,11 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
       const target = task.targetHostId
         ? hosts.find((host) => host.id === task.targetHostId)
         : "local";
-      if (!source || !target) return;
+      if (!source || !target) {
+        const missingEndpoint = !source ? "source" : "target";
+        detail.reportFailure?.(`The original ${missingEndpoint} server no longer exists`);
+        return;
+      }
       connecting = true;
       try {
         const sourceDirectory = task.isDirectory ? task.sourcePath : getParentPath(task.sourcePath);
@@ -217,10 +225,20 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
           forceNewTab: true,
           initialPath: sourceDirectory,
         });
+        const sourcePane = sftpRef.current.leftPane;
+        if (sourcePane.connection?.status !== "connected") {
+          throw new Error(sourcePane.connection?.error || sourcePane.error || "Source server authentication failed");
+        }
         await sftpRef.current.connect("right", target, {
           forceNewTab: true,
           initialPath: targetDirectory,
         });
+        const targetPane = sftpRef.current.rightPane;
+        if (targetPane.connection?.status !== "connected") {
+          throw new Error(targetPane.connection?.error || targetPane.error || "Target server authentication failed");
+        }
+      } catch (error) {
+        detail.reportFailure?.(error instanceof Error ? error.message : String(error));
       } finally {
         connecting = false;
       }

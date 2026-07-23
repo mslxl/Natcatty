@@ -291,6 +291,7 @@ export const ruVaultMessages: Messages = {
   'sftp.transferCenter.phase.extracting': 'Распаковка',
   'sftp.transferCenter.phase.verifying': 'Проверка',
   'sftp.transferCenter.bucket.active': 'В процессе',
+  'sftp.transferCenter.bucket.all': 'Все',
   'sftp.transferCenter.bucket.queued': 'В очереди',
   'sftp.transferCenter.bucket.paused': 'Приостановлено',
   'sftp.transferCenter.bucket.failed': 'Ошибки',
@@ -444,7 +445,7 @@ export const ruVaultMessages: Messages = {
   // Settings > SFTP File Associations
   'settings.tab.sftpFileAssociations': 'SFTP',
   'settings.sftp.transferConcurrency': 'Параллелизм передачи',
-  'settings.sftp.transferConcurrency.desc': 'Количество файлов, передаваемых параллельно при загрузке или скачивании папок. Более высокие значения могут ускорить работу, но способны перегрузить некоторые серверы.',
+  'settings.sftp.transferConcurrency.desc': 'Максимальное количество параллельных передач для каждого сервера. Разные серверы не делят этот лимит.',
   'settings.sftp.defaultOpener': 'Приложение для открытия по умолчанию',
   'settings.sftp.defaultOpener.desc': 'Выберите приложение по умолчанию для открытия файлов без конкретной ассоциации',
   'settings.sftp.defaultOpener.ask': 'Всегда спрашивать',

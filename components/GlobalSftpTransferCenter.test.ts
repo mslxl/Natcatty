@@ -5,6 +5,7 @@ import type { TransferTask } from "../domain/models";
 import {
   getGlobalTransferBadge,
   getGlobalTransferBucket,
+  getTasksForGlobalTransferBucket,
   splitBackgroundTransfers,
 } from "./GlobalSftpTransferCenter";
 
@@ -35,6 +36,16 @@ test("global transfer statuses map to the five user-facing buckets", () => {
   assert.equal(getGlobalTransferBucket(task("a", "failed")), "failed");
   assert.equal(getGlobalTransferBucket(task("a", "completed")), "completed");
   assert.equal(getGlobalTransferBucket(task("a", "cancelled")), "completed");
+});
+
+test("the all bucket includes every top-level task regardless of status", () => {
+  const tasks = [
+    task("a", "transferring"),
+    task("b", "queued"),
+    task("c", "failed"),
+    { ...task("child", "transferring"), parentTaskId: "a" },
+  ];
+  assert.deepEqual(getTasksForGlobalTransferBucket(tasks, "all").map((item) => item.id), ["a", "b", "c"]);
 });
 
 test("badge counts active and queued work while surfacing attention", () => {

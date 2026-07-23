@@ -5,7 +5,7 @@ import { localStorageAdapter } from "../../../infrastructure/persistence/localSt
 import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
 import { logger } from "../../../lib/logger";
 import { runSftpTransferWorkers } from "./transferConcurrency";
-import { globalSftpTransferScheduler } from "./globalTransferScheduler";
+import { getSftpTransferResourceKeys, globalSftpTransferScheduler } from "./globalTransferScheduler";
 import { joinPath } from "./utils";
 
 interface UseSftpDirectoryTransferOpsParams {
@@ -134,6 +134,12 @@ export function useSftpDirectoryTransferOps({
     return globalSftpTransferScheduler.run(
       ownerId,
       task.id,
+      getSftpTransferResourceKeys({
+        sourceHostId: task.sourceHostId,
+        targetHostId: task.targetHostId,
+        sourceSftpId: sourceSftpId ?? undefined,
+        targetSftpId: targetSftpId ?? undefined,
+      }),
       () => localStorageAdapter.readNumber(STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY),
       () => {
         setTransfers((prev) => prev.map((candidate) => candidate.id === task.id
@@ -148,6 +154,8 @@ export function useSftpDirectoryTransferOps({
         targetType: targetIsLocal ? ("local" as const) : ("sftp" as const),
         sourceSftpId: sourceSftpId || undefined,
         targetSftpId: targetSftpId || undefined,
+        sourceHostId: task.sourceHostId,
+        targetHostId: task.targetHostId,
         totalBytes: task.totalBytes || undefined,
         sourceEncoding: sourceIsLocal ? undefined : sourceEncoding,
         targetEncoding: targetIsLocal ? undefined : targetEncoding,

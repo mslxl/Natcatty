@@ -38,3 +38,14 @@ test("side panel layout changes remeasure workspace before paint", () => {
   assert.notEqual(shellWidthDependencyIndex, -1);
   assert.ok(commentIndex < layoutEffectIndex);
 });
+
+test("local copy resume opens a transfer panel without looking up a remote host", () => {
+  const localCopyIndex = source.indexOf("if (forResume && isLocalCopy)");
+  const hostLookupIndex = source.indexOf("const hostId = useSource", localCopyIndex);
+  const panelOpenIndex = source.indexOf("setSidePanelOpenTabs", localCopyIndex);
+
+  assert.notEqual(localCopyIndex, -1);
+  assert.notEqual(panelOpenIndex, -1);
+  assert.notEqual(hostLookupIndex, -1);
+  assert.ok(panelOpenIndex < hostLookupIndex);
+});

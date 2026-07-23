@@ -40,6 +40,8 @@ export interface UseSftpTransfersResult {
     targetPath: string;
     sftpId: string;
     connectionId: string;
+    sourceHostId: string;
+    sourceHostLabel: string;
     sourceEncoding?: SftpFilenameEncoding;
     isDirectory: boolean;
     totalBytes?: number;

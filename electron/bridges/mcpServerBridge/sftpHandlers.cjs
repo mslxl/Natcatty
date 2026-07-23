@@ -14,6 +14,15 @@ function createSftpHandlerApi(ctx) {
       return typeof sessions !== "undefined" ? sessions : null;
     }
 
+    function getStableTransferHostId(params) {
+      if (typeof params?.hostId === "string" && params.hostId) return params.hostId;
+      const mainHostId = getMainSessions()?.get?.(params?.sessionId)?.hostId;
+      if (typeof mainHostId === "string" && mainHostId) return mainHostId;
+      const workerHostId = getWorkerManager()?.getSessionHostId?.(params?.sessionId);
+      if (typeof workerHostId === "string" && workerHostId) return workerHostId;
+      return typeof params?.sessionId === "string" && params.sessionId ? params.sessionId : undefined;
+    }
+
     function shouldProxySessionBackedSftpToWorker(params) {
       if (!params?.sessionId) return false;
       const manager = getWorkerManager();
@@ -280,10 +289,12 @@ function createSftpHandlerApi(ctx) {
         throw new Error("remotePath and localPath are required");
       }
       const transferId = createTransferId();
+      const sourceHostId = getStableTransferHostId(params);
       reportTransferEvent({
         type: "queued", transferId, origin: "agent", background: true,
         direction: "download", sourcePath: params.remotePath, targetPath: params.localPath,
         sessionId: params.sessionId, startedAt: Date.now(),
+        sourceHostId,
       });
       try {
         const sender = {
@@ -311,6 +322,7 @@ function createSftpHandlerApi(ctx) {
                 sourceType: "sftp",
                 targetType: "local",
                 sourceSftpId: payload.sftpId,
+                sourceHostId,
                 resumable: true,
                 globalConcurrency: transferBridge.getGlobalTransferConcurrency?.(),
               })
@@ -326,8 +338,9 @@ function createSftpHandlerApi(ctx) {
               sourceType: "sftp",
               targetType: "local",
               sourceSftpId: sftpId,
+              sourceHostId,
               resumable: true,
-              globalConcurrency: transferBridge.getGlobalTransferConcurrency?.(),
+              skipAdmission: true,
             }) : undefined,
           },
         );
@@ -335,7 +348,7 @@ function createSftpHandlerApi(ctx) {
           shouldProxySessionBackedSftpToWorker(params) && transferBridge?.runAdmittedTransfer
             ? transferBridge.runAdmittedTransfer(
                 { sender },
-                { transferId, globalConcurrency: transferBridge.getGlobalTransferConcurrency?.() },
+                { transferId, sourceHostId, globalConcurrency: transferBridge.getGlobalTransferConcurrency?.() },
                 undefined,
                 runDownload,
               )
@@ -359,10 +372,12 @@ function createSftpHandlerApi(ctx) {
         throw new Error("remotePath and localPath are required");
       }
       const transferId = createTransferId();
+      const targetHostId = getStableTransferHostId(params);
       reportTransferEvent({
         type: "queued", transferId, origin: "agent", background: true,
         direction: "upload", sourcePath: params.localPath, targetPath: params.remotePath,
         sessionId: params.sessionId, startedAt: Date.now(),
+        targetHostId,
       });
       try {
         const sender = {
@@ -390,6 +405,7 @@ function createSftpHandlerApi(ctx) {
                 sourceType: "local",
                 targetType: "sftp",
                 targetSftpId: payload.sftpId,
+                targetHostId,
                 resumable: true,
                 globalConcurrency: transferBridge.getGlobalTransferConcurrency?.(),
               })
@@ -405,8 +421,9 @@ function createSftpHandlerApi(ctx) {
               sourceType: "local",
               targetType: "sftp",
               targetSftpId: sftpId,
+              targetHostId,
               resumable: true,
-              globalConcurrency: transferBridge.getGlobalTransferConcurrency?.(),
+              skipAdmission: true,
             }) : undefined,
           },
         );
@@ -414,7 +431,7 @@ function createSftpHandlerApi(ctx) {
           shouldProxySessionBackedSftpToWorker(params) && transferBridge?.runAdmittedTransfer
             ? transferBridge.runAdmittedTransfer(
                 { sender },
-                { transferId, globalConcurrency: transferBridge.getGlobalTransferConcurrency?.() },
+                { transferId, targetHostId, globalConcurrency: transferBridge.getGlobalTransferConcurrency?.() },
                 undefined,
                 runUpload,
               )

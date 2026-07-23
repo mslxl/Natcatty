@@ -82,6 +82,8 @@ export interface UploadBridge {
       targetType: 'local' | 'sftp';
       sourceSftpId?: string;
       targetSftpId?: string;
+      sourceHostId?: string;
+      targetHostId?: string;
       totalBytes?: number;
     },
     onProgress?: (transferred: number, total: number, speed: number, capability?: {
@@ -99,6 +101,8 @@ export interface UploadConfig {
   targetPath: string;
   /** SFTP session ID (null for local) */
   sftpId: string | null;
+  /** Stable target host ID, used to apply the concurrency limit per server. */
+  targetHostId?: string;
   /** Is this a local file system upload? */
   isLocal: boolean;
   /** The bridge for file operations */

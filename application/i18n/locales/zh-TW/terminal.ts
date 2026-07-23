@@ -85,7 +85,7 @@ export const zhTWTerminalMessages: Messages = {
   // Settings > SFTP File Associations
   'settings.tab.sftpFileAssociations': 'SFTP',
   'settings.sftp.transferConcurrency': '傳輸併發數',
-  'settings.sftp.transferConcurrency.desc': '上傳或下載資料夾時並行傳輸的檔案數量。較高的值可能提高速度，但可能導致某些伺服器過載。',
+  'settings.sftp.transferConcurrency.desc': '每台伺服器最多同時傳輸的檔案數量，不同伺服器之間互不占用名額。',
   'settings.sftp.defaultOpener': '預設檔案開啟方式',
   'settings.sftp.defaultOpener.desc': '選擇沒有特定檔案關聯時的預設開啟方式',
   'settings.sftp.defaultOpener.ask': '每次詢問',

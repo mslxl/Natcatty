@@ -22,6 +22,7 @@ import { useSftpDirectoryTransferOps } from "./transferDirectoryOps";
 import { useSftpTransferConflictOps } from "./transferConflictOps";
 import { useSftpTransferTaskOps } from "./transferTaskOps";
 import { globalSftpTransferScheduler } from "./globalTransferScheduler";
+import { createDirectDownloadTransferTask } from "./downloadTransferTask";
 import type { TransferResult, UseSftpTransfersParams, UseSftpTransfersResult } from "./useSftpTransfers.types";
 import { getParentPath, joinPath } from "./utils";
 
@@ -788,7 +789,25 @@ export const useSftpTransfers = ({
       return;
     }
     if (task.status === "pending" || task.status === "queued" || task.status === "interrupted") {
-      globalSftpTransferScheduler.pause(transferId);
+      const pausedLocally = globalSftpTransferScheduler.pause(transferId);
+      if (!pausedLocally && task.status === "queued") {
+        const result = await (netcattyBridge.get()?.pauseTransfer?.(transferId)
+          ?? { success: false, reason: "Pause unavailable" });
+        commitPauseState((candidate) => result.success
+          ? {
+              ...candidate,
+              status: "paused" as TransferStatus,
+              speed: 0,
+              checkpointBytes: result.checkpointBytes ?? candidate.checkpointBytes ?? 0,
+              resumeStage: result.resumeStage ?? candidate.resumeStage,
+            }
+          : {
+              ...candidate,
+              status: "queued" as TransferStatus,
+              pauseUnavailableReason: result.reason,
+            });
+        return;
+      }
       commitPauseState((candidate) => ({ ...candidate, status: "paused" as TransferStatus, speed: 0 }));
       return;
     }
@@ -984,6 +1003,7 @@ export const useSftpTransfers = ({
 
   const prioritizeTransfer = useCallback((transferId: string) => {
     globalSftpTransferScheduler.prioritize(transferId);
+    void netcattyBridge.get()?.prioritizeTransfer?.(transferId);
     setTransfers((prev) => {
       const nextPriority = prev.reduce((max, task) => Math.max(max, task.priority ?? 0), 0) + 1;
       return prev.map((task) => task.id === transferId ? { ...task, priority: nextPriority } : task);
@@ -1272,31 +1292,23 @@ export const useSftpTransfers = ({
       targetPath: string;
       sftpId: string;
       connectionId: string;
+      sourceHostId: string;
+      sourceHostLabel: string;
       sourceEncoding?: SftpFilenameEncoding;
       isDirectory: boolean;
       totalBytes?: number;
     }): Promise<TransferStatus> => {
-      const task: TransferTask = {
+      const task = createDirectDownloadTransferTask({
         id: crypto.randomUUID(),
         fileName: params.fileName,
-        originalFileName: params.fileName,
         sourcePath: params.sourcePath,
         targetPath: params.targetPath,
         sourceConnectionId: params.connectionId,
-        targetConnectionId: "local",
-        direction: "download",
-        status: "transferring",
+        sourceHostId: params.sourceHostId,
+        sourceHostLabel: params.sourceHostLabel,
         totalBytes: params.totalBytes ?? 0,
-        transferredBytes: 0,
-        speed: 0,
-        startTime: Date.now(),
         isDirectory: params.isDirectory,
-        progressMode: params.isDirectory ? "files" : "bytes",
-        retryable: false,
-        origin: "manual",
-        resumable: true,
-        phase: "transferring",
-      };
+      });
 
       setTransfers((prev) => [...prev, task]);
 
@@ -1421,6 +1433,9 @@ export const useSftpTransfers = ({
       ownerId,
       sourceConnectionId: panes.sourcePane.connection.id,
       targetConnectionId: panes.targetPane.connection.id,
+      status: task.reconnectRequired ? "paused" : task.status,
+      reconnectRequired: false,
+      error: task.reconnectRequired ? undefined : task.error,
     };
     const nextTransfers = [
       ...transfersRef.current.filter((candidate) => candidate.id !== task.id),
@@ -1428,7 +1443,7 @@ export const useSftpTransfers = ({
     ];
     transfersRef.current = nextTransfers;
     setTransfers(nextTransfers);
-    if (task.status !== "attention") await resumeTransfer(task.id);
+    if (adoptedTask.status !== "attention") await resumeTransfer(task.id);
   }, [ownerId, resolveAdoptionPanes, resumeTransfer]);
 
   useEffect(() => sftpTransferCenterStore.registerOwner(ownerId, {

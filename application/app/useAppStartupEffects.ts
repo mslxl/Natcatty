@@ -299,7 +299,11 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
         if (result?.success) {
           sftpTransferCenterStore.ingestBackgroundEvent({ type: "resumed", transferId: taskId });
         } else {
-          await restartBackgroundTransfer(taskId, false);
+          sftpTransferCenterStore.markReconnectRequired(
+            taskId,
+            result?.reason ?? "The original server connection is unavailable",
+          );
+          setTimeout(() => { void sftpTransferCenterStore.resume(taskId); }, 0);
         }
       },
       cancel: async (taskId) => {

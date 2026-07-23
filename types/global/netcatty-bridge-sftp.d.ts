@@ -74,6 +74,8 @@ declare global {
         targetType: 'local' | 'sftp';
         sourceSftpId?: string;
         targetSftpId?: string;
+        sourceHostId?: string;
+        targetHostId?: string;
         totalBytes?: number;
         sourceEncoding?: SftpFilenameEncoding;
         targetEncoding?: SftpFilenameEncoding;
@@ -84,7 +86,6 @@ declare global {
         downloadCheckpointBytes?: number;
         uploadCheckpointBytes?: number;
         sourceFingerprint?: string;
-        resumable?: boolean;
         pauseUnavailableReason?: string;
         globalConcurrency?: number;
       },
@@ -105,7 +106,6 @@ declare global {
       downloadCheckpointBytes?: number;
       uploadCheckpointBytes?: number;
       sourceFingerprint?: string;
-      sessionId?: string;
       reason?: string;
     }>;
     resumeTransfer?(transferId: string): Promise<{ success: boolean; reason?: string }>;
@@ -136,6 +136,9 @@ declare global {
       downloadCheckpointBytes?: number;
       uploadCheckpointBytes?: number;
       sourceFingerprint?: string;
+      sessionId?: string;
+      sourceHostId?: string;
+      targetHostId?: string;
     }) => void): () => void;
 
     // Local filesystem operations

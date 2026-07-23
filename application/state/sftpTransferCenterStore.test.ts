@@ -127,3 +127,137 @@ test("clearing terminal history asks each owner to clean transfer artifacts", ()
   assert.deepEqual(dismissed, ["done"]);
   assert.deepEqual(store.getSnapshot().tasks.map((task) => task.id), ["failed"]);
 });
+
+test("failed reauthentication leaves a paused transfer requiring attention with the failure reason", async (t) => {
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  t.after(() => {
+    if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
+    else Reflect.deleteProperty(globalThis, "window");
+  });
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      dispatchEvent(event: CustomEvent<{ reportFailure?: (error: string) => void }>) {
+        event.detail.reportFailure?.("Authentication failed");
+        return true;
+      },
+    },
+  });
+
+  const store = createSftpTransferCenterStore();
+  store.registerOwner("panel-a", {
+    pause: async () => {}, resume: async () => {}, cancel: async () => {}, retry: async () => {}, prioritize: async () => {},
+    dismiss: () => {},
+    canAdopt: () => false,
+    canPrepareAdoption: true,
+    adopt: async () => {},
+  });
+  store.publishOwner("panel-a", [{
+    ...makeTask("paused", "paused"),
+    sourceConnectionId: "closed",
+    sourceHostId: "host-a",
+  }]);
+
+  await store.resume("paused");
+
+  assert.equal(store.getSnapshot().tasks[0]?.status, "attention");
+  assert.equal(store.getSnapshot().tasks[0]?.error, "Authentication failed");
+});
+
+test("resume waits for a transfer panel that becomes visible after the click", async (t) => {
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  t.after(() => {
+    if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
+    else Reflect.deleteProperty(globalThis, "window");
+  });
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: { dispatchEvent: () => true },
+  });
+
+  const calls: string[] = [];
+  const store = createSftpTransferCenterStore();
+  store.publishOwner("closed-panel", [{
+    ...makeTask("waiting", "paused"),
+    sourceHostId: "host-a",
+  }]);
+
+  const resumePromise = store.resume("waiting");
+  setTimeout(() => {
+    store.registerOwner("visible-panel", {
+      pause: async () => {},
+      resume: async (id) => { calls.push(`resume:${id}`); },
+      cancel: async () => {}, retry: async () => {}, prioritize: async () => {}, dismiss: () => {},
+      canAdopt: () => true,
+      canPrepareAdoption: true,
+      adopt: async (task) => { calls.push(`adopt:${task.id}`); },
+    });
+  }, 10);
+
+  await resumePromise;
+
+  assert.deepEqual(calls, ["adopt:waiting"]);
+  assert.equal(store.getSnapshot().tasks[0]?.ownerId, "visible-panel");
+});
+
+test("an interrupted task without its old controller can still be cancelled", async () => {
+  const store = createSftpTransferCenterStore();
+  store.publishOwner("closed-panel", [makeTask("interrupted", "interrupted")]);
+
+  await store.cancel("interrupted");
+
+  assert.equal(store.getSnapshot().tasks[0]?.status, "cancelled");
+});
+
+test("concurrent resume clicks adopt a task only once", async () => {
+  let adoptCount = 0;
+  const store = createSftpTransferCenterStore();
+  store.publishOwner("closed-panel", [{
+    ...makeTask("resume-once", "interrupted"),
+    sourceHostId: "host-a",
+  }]);
+  store.registerOwner("visible-panel", {
+    pause: async () => {}, resume: async () => {}, cancel: async () => {}, retry: async () => {}, prioritize: async () => {}, dismiss: () => {},
+    canAdopt: () => true,
+    adopt: async () => { adoptCount += 1; },
+  });
+
+  await Promise.all([store.resume("resume-once"), store.resume("resume-once")]);
+
+  assert.equal(adoptCount, 1);
+});
+
+test("cancelling while resume waits prevents later adoption", async (t) => {
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  t.after(() => {
+    if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
+    else Reflect.deleteProperty(globalThis, "window");
+  });
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: { dispatchEvent: () => true },
+  });
+
+  let adoptCount = 0;
+  const store = createSftpTransferCenterStore();
+  store.publishOwner("closed-panel", [{
+    ...makeTask("cancel-waiting", "paused"),
+    sourceHostId: "host-a",
+  }]);
+
+  const resumePromise = store.resume("cancel-waiting");
+  setTimeout(() => { void store.cancel("cancel-waiting"); }, 10);
+  setTimeout(() => {
+    store.registerOwner("visible-panel", {
+      pause: async () => {}, resume: async () => {}, cancel: async () => {}, retry: async () => {}, prioritize: async () => {}, dismiss: () => {},
+      canAdopt: () => true,
+      canPrepareAdoption: true,
+      adopt: async () => { adoptCount += 1; },
+    });
+  }, 20);
+
+  await resumePromise;
+
+  assert.equal(adoptCount, 0);
+  assert.equal(store.getSnapshot().tasks[0]?.status, "cancelled");
+});

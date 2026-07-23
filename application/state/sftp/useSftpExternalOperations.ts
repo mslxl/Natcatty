@@ -22,7 +22,7 @@ import type { DropEntry } from "../../../lib/sftpFileUtils";
 export type { UploadResult };
 
 import type { UseSftpExternalOperationsParams, SftpExternalOperationsResult } from "./useSftpExternalOperations.types";
-import { globalSftpTransferScheduler } from "./globalTransferScheduler";
+import { getSftpTransferResourceKeys, globalSftpTransferScheduler } from "./globalTransferScheduler";
 import { localStorageAdapter } from "../../../infrastructure/persistence/localStorageAdapter";
 import { STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY } from "../../../infrastructure/config/storageKeys";
 
@@ -600,6 +600,7 @@ export const useSftpExternalOperations = (
               const result = await globalSftpTransferScheduler.run(
                 ownerId,
                 options.transferId,
+                getSftpTransferResourceKeys(options),
                 () => localStorageAdapter.readNumber(STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY),
                 () => b.startStreamTransfer!({
                   ...options,
@@ -658,6 +659,7 @@ export const useSftpExternalOperations = (
           {
             targetPath: uploadTargetPath,
             sftpId,
+            targetHostId: pane.connection.isLocal ? undefined : pane.connection.hostId,
             isLocal: pane.connection.isLocal,
             bridge: createUploadBridge,
             joinPath,
@@ -741,6 +743,7 @@ export const useSftpExternalOperations = (
           {
             targetPath: uploadTargetPath,
             sftpId,
+            targetHostId: pane.connection.isLocal ? undefined : pane.connection.hostId,
             isLocal: pane.connection.isLocal,
             bridge: createUploadBridge,
             joinPath,

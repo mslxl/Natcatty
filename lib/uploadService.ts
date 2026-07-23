@@ -202,7 +202,7 @@ export async function uploadFromDataTransfer(
           });
 
           if (failedFolderEntries.length > 0) {
-            fallbackResults = await uploadEntries(failedFolderEntries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller, resolveConflict);
+            fallbackResults = await uploadEntries(failedFolderEntries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller, resolveConflict, config.targetHostId);
           }
         }
 
@@ -210,19 +210,19 @@ export async function uploadFromDataTransfer(
         let standaloneResults: UploadResult[] = [];
         if (standaloneFileEntries.length > 0) {
           const standaloneEntries = standaloneFileEntries.flatMap(([, entries]) => entries);
-          standaloneResults = await uploadEntries(standaloneEntries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller, resolveConflict);
+          standaloneResults = await uploadEntries(standaloneEntries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller, resolveConflict, config.targetHostId);
         }
 
         // Combine results: successful compressed + fallback results + standalone files
         return [...successfulFolders, ...fallbackResults, ...standaloneResults];
       } catch {
         // Fall back to regular upload
-        return uploadEntries(entries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller, resolveConflict);
+        return uploadEntries(entries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller, resolveConflict, config.targetHostId);
       }
     }
   }
 
-  return uploadEntries(entries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller, resolveConflict);
+  return uploadEntries(entries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller, resolveConflict, config.targetHostId);
 }
 
 /**
@@ -289,7 +289,7 @@ export async function uploadFromFileList(
           });
 
           if (failedFolderEntries.length > 0) {
-            fallbackResults = await uploadEntries(failedFolderEntries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller, resolveConflict);
+            fallbackResults = await uploadEntries(failedFolderEntries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller, resolveConflict, config.targetHostId);
           }
         }
 
@@ -297,19 +297,19 @@ export async function uploadFromFileList(
         let standaloneResults: UploadResult[] = [];
         if (standaloneFileEntries.length > 0) {
           const standaloneEntries = standaloneFileEntries.flatMap(([, entries]) => entries);
-          standaloneResults = await uploadEntries(standaloneEntries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller, resolveConflict);
+          standaloneResults = await uploadEntries(standaloneEntries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller, resolveConflict, config.targetHostId);
         }
 
         // Combine results: successful compressed + fallback results + standalone files
         return [...successfulFolders, ...fallbackResults, ...standaloneResults];
       } catch {
         // Fall back to regular upload
-        return uploadEntries(entries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller, resolveConflict);
+        return uploadEntries(entries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller, resolveConflict, config.targetHostId);
       }
     }
   }
 
-  return uploadEntries(entries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller, resolveConflict);
+  return uploadEntries(entries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller, resolveConflict, config.targetHostId);
 }
 
 /**
@@ -324,7 +324,8 @@ async function uploadEntries(
   joinPath: (base: string, name: string) => string,
   callbacks?: UploadCallbacks,
   controller?: UploadController,
-  resolveConflict?: UploadConfig["resolveConflict"]
+  resolveConflict?: UploadConfig["resolveConflict"],
+  targetHostId?: string,
 ): Promise<UploadResult[]> {
   const results: UploadResult[] = [];
   const createdDirs = new Set<string>();
@@ -701,6 +702,7 @@ async function uploadEntries(
               sourceType: 'local',
               targetType: isLocal ? 'local' : 'sftp',
               targetSftpId: isLocal ? undefined : sftpId,
+              targetHostId: isLocal ? undefined : targetHostId,
               totalBytes: fileTotalBytes,
               resumable: true,
               checkpointBytes: 0,
@@ -1014,22 +1016,22 @@ export async function uploadEntriesDirect(
             return failedFolderNames.has(topFolder);
           });
           if (failedFolderEntries.length > 0) {
-            fallbackResults = await uploadEntries(failedFolderEntries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller, resolveConflict);
+            fallbackResults = await uploadEntries(failedFolderEntries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller, resolveConflict, config.targetHostId);
           }
         }
 
         let standaloneResults: UploadResult[] = [];
         if (standaloneFileEntries.length > 0) {
           const standaloneEntries = standaloneFileEntries.flatMap(([, e]) => e);
-          standaloneResults = await uploadEntries(standaloneEntries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller, resolveConflict);
+          standaloneResults = await uploadEntries(standaloneEntries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller, resolveConflict, config.targetHostId);
         }
 
         return [...successfulFolders, ...fallbackResults, ...standaloneResults];
       } catch {
-        return uploadEntries(entries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller, resolveConflict);
+        return uploadEntries(entries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller, resolveConflict, config.targetHostId);
       }
     }
   }
 
-  return uploadEntries(entries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller, resolveConflict);
+  return uploadEntries(entries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller, resolveConflict, config.targetHostId);
 }
