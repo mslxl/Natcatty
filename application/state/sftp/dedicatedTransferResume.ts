@@ -1,7 +1,10 @@
 import type { Host, Identity, KnownHost, SSHKey, TerminalSettings, TransferTask } from "../../../domain/models";
 import { validateTransferResumeSource } from "../../../domain/sftpTransferCenter";
+import { STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY } from "../../../infrastructure/config/storageKeys";
+import { localStorageAdapter } from "../../../infrastructure/persistence/localStorageAdapter";
 import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
 import { buildSftpHostCredentials } from "./useSftpHostCredentials";
+import { getSftpTransferResourceKeys, globalSftpTransferScheduler } from "./globalTransferScheduler";
 import { runWithTransferRetry } from "./transferRetry";
 
 export interface DedicatedResumeDeps {
@@ -176,8 +179,19 @@ export async function resumeTransferWithDedicatedSession(
         if (validationError) throw new Error(validationError);
       }
 
-      const result = await bridge.startStreamTransfer!(
-        {
+      // Share the renderer global admission pool with panel transfers so
+      // dedicated resume cannot stack a second full concurrency budget on main.
+      const result = await globalSftpTransferScheduler.run(
+        "dedicated-resume",
+        task.id,
+        getSftpTransferResourceKeys({
+          sourceHostId: isDownload ? remoteHost.id : undefined,
+          targetHostId: isUpload ? remoteHost.id : undefined,
+          sourceSftpId: isDownload ? sftpId : undefined,
+          targetSftpId: isUpload ? sftpId : undefined,
+        }),
+        () => localStorageAdapter.readNumber(STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY),
+        async () => bridge.startStreamTransfer!({
           transferId: task.id,
           sourcePath: task.sourcePath,
           targetPath: task.targetPath,
@@ -194,8 +208,8 @@ export async function resumeTransferWithDedicatedSession(
           downloadCheckpointBytes: task.downloadCheckpointBytes,
           uploadCheckpointBytes: task.uploadCheckpointBytes,
           sourceFingerprint: task.sourceFingerprint,
-        },
-        (transferred, total, speed, checkpoint) => {
+          skipAdmission: true,
+        }, (transferred, total, speed, checkpoint) => {
           onProgress?.({
             transferred,
             total,
@@ -206,7 +220,7 @@ export async function resumeTransferWithDedicatedSession(
             uploadCheckpointBytes: checkpoint?.uploadCheckpointBytes,
             sourceFingerprint: checkpoint?.sourceFingerprint,
           });
-        },
+        }),
       );
 
       if (result?.error) {

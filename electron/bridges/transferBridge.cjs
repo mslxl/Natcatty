@@ -1349,8 +1349,28 @@ function pauseQueuedTransfer(transferId) {
   if (!queued) return null;
   admittedTransferQueue.splice(queued.index, 1);
   pausedAdmittedTransfers.set(transferId, queued.job);
-  queued.job.event?.sender?.send?.("netcatty:transfer:paused", { transferId, checkpointBytes: 0 });
-  return { success: true, checkpointBytes: 0, resumeStage: queued.job.payload?.resumeStage || "direct" };
+  // Preserve the resume checkpoint from the payload — never report 0, or the
+  // UI/store will wipe a real checkpoint and restart from byte 0 after restart.
+  const checkpointBytes = Math.max(
+    0,
+    Number(queued.job.payload?.checkpointBytes) || 0,
+    Number(queued.job.payload?.downloadCheckpointBytes) || 0,
+    Number(queued.job.payload?.uploadCheckpointBytes) || 0,
+  );
+  const resumeStage = queued.job.payload?.resumeStage || "direct";
+  queued.job.event?.sender?.send?.("netcatty:transfer:paused", {
+    transferId,
+    checkpointBytes,
+    resumeStage,
+  });
+  return {
+    success: true,
+    checkpointBytes,
+    resumeStage,
+    downloadCheckpointBytes: queued.job.payload?.downloadCheckpointBytes,
+    uploadCheckpointBytes: queued.job.payload?.uploadCheckpointBytes,
+    sourceFingerprint: queued.job.payload?.sourceFingerprint,
+  };
 }
 
 function cancelQueuedTransfer(transferId) {

@@ -874,6 +874,42 @@ test("bridge admission gives different remote sessions independent concurrency",
   assert.equal(bothStarted, true);
 });
 
+test("pausing a queued admission job preserves the payload checkpoint", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-queued-checkpoint-"));
+  t.after(async () => { await fs.promises.rm(tempDir, { recursive: true, force: true }); });
+  const firstSource = new PassThrough();
+  const secondSource = new PassThrough();
+  const sftp = createFastSftp({
+    createReadStream(remotePath) {
+      return remotePath === "/first" ? firstSource : secondSource;
+    },
+  });
+  transferBridge.init({ sftpClients: new Map([["source", { sftp, stat: async () => ({ size: 1 }) }]]) });
+  const start = (id, remotePath, checkpointBytes) => transferBridge.startTransfer({ sender: createSender() }, {
+    transferId: id,
+    sourcePath: remotePath,
+    targetPath: path.join(tempDir, `${id}.bin`),
+    sourceType: "sftp",
+    targetType: "local",
+    sourceSftpId: "source",
+    totalBytes: 1,
+    resumable: true,
+    checkpointBytes,
+    globalConcurrency: 1,
+  });
+
+  const first = start("queued-ckpt-first", "/first", 0);
+  while (firstSource.listenerCount("data") === 0) await new Promise((resolve) => setImmediate(resolve));
+  const second = start("queued-ckpt-second", "/second", 42);
+  const paused = await transferBridge.pauseTransfer(null, { transferId: "queued-ckpt-second" });
+  assert.equal(paused.success, true);
+  assert.equal(paused.checkpointBytes, 42);
+  assert.equal((await transferBridge.cancelTransfer(null, { transferId: "queued-ckpt-second" })).success, true);
+  assert.equal((await second).cancelled, true);
+  firstSource.end(Buffer.from("a"));
+  assert.equal((await first).error, undefined);
+});
+
 test("queued admission jobs can be paused, resumed, prioritized, and cancelled before opening a stream", async (t) => {
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-queued-controls-"));
   t.after(async () => { await fs.promises.rm(tempDir, { recursive: true, force: true }); });

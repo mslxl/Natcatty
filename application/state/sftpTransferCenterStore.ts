@@ -289,14 +289,10 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
         try { await netcattyBridge.get()?.cancelTransfer?.(taskId); } catch { /* best-effort */ }
         return;
       }
-      if (afterDedicated.status === "paused" || afterDedicated.status === "interrupted") {
-        // User stopped during reconnect; do not promote to completed.
-        try { await netcattyBridge.get()?.cancelTransfer?.(taskId); } catch { /* best-effort */ }
-        return;
-      }
       if (result.success) {
-        // Detach from panel owner so publishOwner cannot clobber completion
-        // with a stale local interrupted/paused snapshot.
+        // Stream finished successfully. Even if the user hit pause during the
+        // reconnect spinner (status demoted to interrupted), the file is done —
+        // promote to completed rather than leaving a false interrupted row.
         tasks = tasks.map((candidate) => candidate.id === taskId ? {
           ...candidate,
           ownerId: "dedicated-resume",
@@ -309,6 +305,11 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
           phase: undefined,
         } : candidate);
         emit();
+        return;
+      }
+      if (afterDedicated.status === "paused" || afterDedicated.status === "interrupted") {
+        // Failed dedicated resume after user stop — keep interrupted/paused.
+        try { await netcattyBridge.get()?.cancelTransfer?.(taskId); } catch { /* best-effort */ }
         return;
       }
       const cancelLike = /cancelled|canceled/i.test(result.error || "");
@@ -571,6 +572,19 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
     },
     ingestBackgroundEvent(event) {
       const existing = tasks.find((task) => task.id === event.transferId);
+      const terminal = existing
+        && (existing.status === "cancelled" || existing.status === "completed" || existing.status === "failed");
+      // Never resurrect a finished/cancelled agent row with late queued/progress.
+      if (terminal && event.type !== "cancelled") {
+        // Allow a late explicit cancel to stick; ignore everything else.
+        if (event.type === "completed" || event.type === "failed") {
+          // Keep existing terminal state (prefer cancelled over late completed).
+          return;
+        }
+        if (event.type === "queued" || event.type === "started" || event.type === "progress" || event.type === "resumed" || event.type === "paused") {
+          return;
+        }
+      }
       if ((event.type === "queued" || event.type === "started") && !existing) {
         const sourcePath = event.sourcePath ?? "";
         const targetPath = event.targetPath ?? "";

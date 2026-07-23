@@ -254,6 +254,26 @@ test("failed reauthentication leaves a paused transfer requiring attention with 
   assert.equal(store.getSnapshot().tasks[0]?.error, "Authentication failed");
 });
 
+test("background events do not resurrect a cancelled agent transfer", () => {
+  const store = createSftpTransferCenterStore();
+  store.ingestBackgroundEvent({
+    type: "queued",
+    transferId: "agent-1",
+    direction: "download",
+    sourcePath: "/r/a",
+    targetPath: "/l/a",
+    startedAt: Date.now(),
+  });
+  store.ingestBackgroundEvent({ type: "cancelled", transferId: "agent-1", endedAt: Date.now() });
+  assert.equal(store.getSnapshot().tasks[0]?.status, "cancelled");
+
+  store.ingestBackgroundEvent({ type: "started", transferId: "agent-1" });
+  store.ingestBackgroundEvent({ type: "progress", transferId: "agent-1", transferred: 50, totalBytes: 100, speed: 1 });
+  store.ingestBackgroundEvent({ type: "completed", transferId: "agent-1", endedAt: Date.now() });
+
+  assert.equal(store.getSnapshot().tasks[0]?.status, "cancelled");
+});
+
 test("orphaned resume prefers a dedicated SFTP session without a panel owner", async () => {
   const store = createSftpTransferCenterStore();
   store.publishOwner("closed-panel", [{
