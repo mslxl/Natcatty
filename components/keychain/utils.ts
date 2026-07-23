@@ -66,3 +66,55 @@ export type PanelMode =
 
 // Filter tab types
 export type FilterTab = 'key' | 'certificate';
+
+interface IdentitySectionVisibilityOptions {
+    activeFilter: FilterTab;
+    identityCount: number;
+    filteredIdentityCount: number;
+    filteredKeyCount: number;
+    preferredSection?: 'key' | 'identity' | null;
+    search: string;
+}
+
+export const resolvePreferredKeySection = (
+    preferredSection: 'key' | 'identity' | null,
+    identityCount: number,
+): 'key' | 'identity' => identityCount === 0
+    ? 'key'
+    : (preferredSection ?? 'identity');
+
+export const shouldShowIdentitySection = ({
+    activeFilter,
+    identityCount,
+    filteredIdentityCount,
+    filteredKeyCount,
+    preferredSection = null,
+    search,
+}: IdentitySectionVisibilityOptions): boolean => {
+    if (activeFilter !== 'key' || identityCount === 0) return false;
+    if (!search.trim()) return resolvePreferredKeySection(preferredSection, identityCount) === 'identity';
+
+    return filteredIdentityCount > 0 || filteredKeyCount === 0;
+};
+
+export const shouldShowKeySection = ({
+    activeFilter,
+    identityCount,
+    filteredKeyCount,
+    preferredSection = null,
+    search,
+}: Pick<
+    IdentitySectionVisibilityOptions,
+    'activeFilter' | 'identityCount' | 'filteredKeyCount' | 'preferredSection' | 'search'
+>): boolean => {
+    if (activeFilter !== 'key' || identityCount === 0) return true;
+    if (!search.trim()) return resolvePreferredKeySection(preferredSection, identityCount) === 'key';
+
+    return filteredKeyCount > 0;
+};
+
+export const shouldShowSearchNoResults = (
+    search: string,
+    filteredItemCount: number,
+    totalItemCount: number,
+): boolean => Boolean(search.trim()) && totalItemCount > 0 && filteredItemCount === 0;
