@@ -436,7 +436,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
         setResolving(false);
       }
     }
-  }, [applyResolvedAgentPath, cursorApiKeyEncrypted, cursorAuthMode]);
+  }, [applyResolvedAgentPath, cursorApiKeyEncrypted]);
 
   useEffect(() => {
     if (activeSubTab !== "agents") return;
@@ -731,7 +731,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
         codexPath: result?.path || undefined,
       });
     }
-  }, [cursorApiKeyEncrypted, cursorAuthMode, resolveAgentPath, refreshCodexIntegration]);
+  }, [cursorApiKeyEncrypted, resolveAgentPath, refreshCodexIntegration]);
 
   useEffect(() => {
     if (activeSubTab !== "agents") return;

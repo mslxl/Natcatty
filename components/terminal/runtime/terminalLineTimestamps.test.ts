@@ -1,7 +1,5 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createRequire } from "node:module";
-import type { Terminal as XTerm } from "@xterm/xterm";
 
 import {
   MAX_TERMINAL_LINE_TIMESTAMP_ENTRIES,
@@ -31,8 +29,7 @@ const createFakeTerm = (options: {
   const disposedMarkerLines: number[] = [];
   const liveMarkers: Array<{ line: number; isDisposed: boolean; dispose: () => void }> = [];
   let cursorLine = 0;
-  let cursorColumn = 0;
-  const cols = options.cols ?? Number.POSITIVE_INFINITY;
+  const cols = options.cols ?? Number.POSITIVE_INFINITY
   let wraparoundMode = options.wraparoundMode ?? true;
   const scrollback = options.scrollback;
   const rows = options.rows ?? 24;
@@ -214,7 +211,6 @@ const createFakeTerm = (options: {
     },
     set cursorX(value: number) {
       currentState().column = Math.max(0, value);
-      cursorColumn = currentState().column;
     },
     get length() {
       return resolveLength(currentState());
@@ -239,14 +235,12 @@ const createFakeTerm = (options: {
     altState.lineText.clear();
     screen = "alternate";
     cursorLine = 0;
-    cursorColumn = 0;
   };
 
   const leaveAlternate = () => {
     if (screen !== "alternate") return;
     screen = "normal";
     cursorLine = normalState.absoluteCursorLine;
-    cursorColumn = normalState.column;
   };
 
   const term = {
@@ -299,19 +293,15 @@ const createFakeTerm = (options: {
           state.column = Number.isFinite(cols) && state.column >= cols
             ? cols - 1
             : 0;
-          cursorColumn = state.column;
           trimScrollbackIfNeeded(state);
         } else if (char === "\r") {
           state.column = 0;
-          cursorColumn = 0;
         } else if (char === "\b") {
           state.column = Math.max(0, state.column - 1);
-          cursorColumn = state.column;
         } else if (char === "\t") {
           if (state.column < cols) {
             const nextTabStop = state.column + (8 - (state.column % 8));
             state.column = Math.min(nextTabStop, cols - 1);
-            cursorColumn = state.column;
           }
         } else if (isCombiningMark(char)) {
           continue;
@@ -328,7 +318,6 @@ const createFakeTerm = (options: {
             state.absoluteCursorLine += 1;
             cursorLine = state.absoluteCursorLine;
             state.column = 0;
-            cursorColumn = 0;
             trimScrollbackIfNeeded(state);
           }
           const existing = state.lineText.get(state.absoluteCursorLine) ?? "";
@@ -339,11 +328,9 @@ const createFakeTerm = (options: {
           state.column = Number.isFinite(cols)
             ? Math.min(cols, state.column + width)
             : state.column + width;
-          cursorColumn = state.column;
         }
       }
       cursorLine = currentState().absoluteCursorLine;
-      cursorColumn = currentState().column;
       trimScrollbackIfNeeded(currentState());
       callback?.();
     },
@@ -392,7 +379,6 @@ const createFakeTerm = (options: {
       altState.absoluteCursorLine = 40;
       altState.column = 0;
       cursorLine = 40;
-      cursorColumn = 0;
     },
     getNormalAbsoluteLine: () => normalState.absoluteCursorLine,
   };
