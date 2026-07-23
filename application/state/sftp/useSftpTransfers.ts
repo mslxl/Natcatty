@@ -1509,6 +1509,25 @@ export const useSftpTransfers = ({
     sftpTransferCenterStore.publishOwner(ownerId, transfers);
   }, [ownerId, transfers]);
 
+  // Drop local rows the global store reassigned to dedicated-resume (or another
+  // owner) so the panel cannot start a second stream with the same transferId.
+  useEffect(() => {
+    return sftpTransferCenterStore.subscribe(() => {
+      const foreignIds = new Set(
+        sftpTransferCenterStore.getSnapshot().tasks
+          .filter((task) => task.ownerId !== ownerId)
+          .map((task) => task.id),
+      );
+      if (foreignIds.size === 0) return;
+      setTransfers((prev) => {
+        const next = prev.filter((task) => !foreignIds.has(task.id));
+        if (next.length === prev.length) return prev;
+        transfersRef.current = next;
+        return next;
+      });
+    });
+  }, [ownerId]);
+
   const resolveAdoptionPanes = useCallback((task: TransferTask) => {
     const panes = [getActivePane("left"), getActivePane("right")].filter((pane): pane is SftpPane => !!pane?.connection);
     const sourcePane = panes.find((pane) => task.sourceHostId
@@ -1535,6 +1554,7 @@ export const useSftpTransfers = ({
     const panes = resolveAdoptionPanes(task);
     if (!panes?.sourcePane.connection || !panes.targetPane.connection) return;
     // Keep checkpoint / fingerprint fields so resume restarts from the saved byte offset.
+    const hasConflict = !!task.conflict;
     const adoptedTask: TransferTask = {
       ...task,
       ownerId,
@@ -1542,11 +1562,11 @@ export const useSftpTransfers = ({
       targetConnectionId: panes.targetPane.connection.isLocal
         ? (task.targetConnectionId === "local" ? "local" : panes.targetPane.connection.id)
         : panes.targetPane.connection.id,
-      // Stay "pending" + reconnectRequired so the global center keeps showing a spinner
-      // until processTransfer flips the task to transferring.
-      status: "pending",
-      reconnectRequired: true,
-      error: undefined,
+      // Conflict rows stay in attention until resolveConflict applies the action.
+      // Other reconnects stay "pending" + reconnectRequired for the spinner.
+      status: hasConflict ? "attention" : "pending",
+      reconnectRequired: !hasConflict,
+      error: hasConflict ? task.error : undefined,
       speed: 0,
     };
     const nextTransfers = [
@@ -1555,6 +1575,14 @@ export const useSftpTransfers = ({
     ];
     transfersRef.current = nextTransfers;
     setTransfers(nextTransfers);
+    if (task.conflict) {
+      setConflicts((prev) => {
+        const without = prev.filter((item) => item.transferId !== task.id);
+        return [...without, task.conflict!];
+      });
+      // Do not auto-resume — caller will apply the chosen conflict action.
+      return;
+    }
     // Force resumeTransfer to accept pending (reconnect path) statuses.
     await resumeTransfer(task.id);
   }, [ownerId, resolveAdoptionPanes, resumeTransfer]);

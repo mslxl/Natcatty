@@ -252,6 +252,20 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
             emit();
             return;
           }
+          // Live transfer that cannot pause safely — keep transferring, do not
+          // demote to interrupted (that falsely claims work stopped).
+          if (live && /cannot be paused|unavailable|no longer active/i.test(live.reason || "")
+            && !/not found|session/i.test(live.reason || "")) {
+            if (live.reason && !/no longer active/i.test(live.reason)) {
+              tasks = tasks.map((candidate) => candidate.id === taskId ? {
+                ...candidate,
+                pauseUnavailableReason: live.reason,
+              } : candidate);
+              emit();
+            }
+            // "no longer active" falls through to interrupted demotion below.
+            if (!/no longer active/i.test(live.reason || "")) return;
+          }
         }
       } catch {
         // Bridge unavailable (tests / non-Electron) — fall through.
@@ -282,6 +296,7 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
       (!controller || needsDedicatedReconnect)
       && action === "resume"
       && task
+      && !task.conflict
       && dedicatedResumeHandler
       && !task.isDirectory
     ) {
@@ -385,13 +400,20 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
       }
     }
     if (!controller && action === "cancel" && task && ["paused", "interrupted", "attention", "pending", "queued", "transferring", "pausing"].includes(task.status)) {
+      const childIds = tasks
+        .filter((candidate) => candidate.parentTaskId === taskId)
+        .map((candidate) => candidate.id);
       try {
         globalSftpTransferScheduler.cancel(taskId);
+        for (const childId of childIds) globalSftpTransferScheduler.cancel(childId);
       } catch {
         // best-effort
       }
       try {
         await netcattyBridge.get()?.cancelTransfer?.(taskId);
+        for (const childId of childIds) {
+          try { await netcattyBridge.get()?.cancelTransfer?.(childId); } catch { /* best-effort */ }
+        }
       } catch {
         // Best-effort backend cancel when the owning panel is gone / no window.
       }
@@ -405,12 +427,14 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
       } catch {
         // best-effort temp/.part cleanup
       }
-      tasks = tasks.map((candidate) => candidate.id === taskId ? {
+      const cancelIds = new Set([taskId, ...childIds]);
+      tasks = tasks.map((candidate) => cancelIds.has(candidate.id) ? {
         ...candidate,
         status: "cancelled",
         error: undefined,
         endTime: Date.now(),
         speed: 0,
+        conflict: undefined,
       } : candidate);
       emit();
       return;

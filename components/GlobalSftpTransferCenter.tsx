@@ -244,7 +244,14 @@ function TransferRow({ task }: { task: TransferTask }) {
       </div>
       {task.status === "attention" && task.conflict && canControl && (
         <div className="mt-2 flex flex-wrap justify-end gap-1">
-          {(["stop", "skip", "duplicate", "merge", "replace"] as const).map((action) => (
+          {([
+            "stop",
+            "skip",
+            "duplicate",
+            // Merge is only valid for directory↔directory (same as panel dialog).
+            ...(task.conflict.isDirectory && task.conflict.existingType === "directory" ? ["merge"] as const : []),
+            "replace",
+          ] as const).map((action) => (
             <Button
               key={action}
               variant={action === "replace" ? "default" : "outline"}
