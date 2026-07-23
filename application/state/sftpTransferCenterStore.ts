@@ -186,10 +186,12 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
     // After app restart (or any reconnectRequired task), a retained panel owner
     // often cannot resume (missing panes / dead sftpId). Prefer a dedicated
     // transfer session instead of failing with "Reconnect the source and target".
-    const needsDedicatedReconnect = action === "resume" && !!task && (
+    // Never dedicated-resume rows waiting on conflict resolution — that would
+    // stream with replace semantics and skip Replace/Skip/Duplicate UI.
+    const needsDedicatedReconnect = action === "resume" && !!task && !task.conflict && (
       task.reconnectRequired === true
       || task.status === "interrupted"
-      || task.status === "attention"
+      || (task.status === "attention" && !task.conflict)
       || task.ownerId === "background-agent"
     );
     if (needsDedicatedReconnect && controller && !controller.canAdopt?.(task)) {

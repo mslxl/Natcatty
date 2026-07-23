@@ -109,7 +109,8 @@ function TransferRow({ task }: { task: TransferTask }) {
   const canPause = task.resumable !== false && task.status === "transferring" && canControl && !isResuming;
   // Orphaned tasks after app restart (interrupted / attention / paused without a
   // live panel owner) must still expose resume/cancel from the global center.
-  const canResume = !isResuming && (
+  // Conflict rows must use resolveConflict — Resume would overwrite blindly.
+  const canResume = !isResuming && !task.conflict && (
     ["paused", "interrupted", "attention"].includes(task.status)
     || (task.status === "failed" && task.resumable !== false && (task.checkpointBytes ?? 0) > 0)
   ) && canControl;
@@ -288,6 +289,9 @@ export function GlobalSftpTransferCenter() {
 
   const pauseAll = () => {
     for (const task of snapshot.tasks) {
+      // Skip dedicated reconnect spinner rows — pause cannot stop open/auth yet
+      // and would only demote the UI while the stream continues.
+      if (task.ownerId === "dedicated-resume" && task.reconnectRequired) continue;
       if (["pending", "queued", "transferring", "pausing"].includes(task.status) && task.resumable !== false) {
         void sftpTransferCenterStore.pause(task.id);
       }
@@ -295,6 +299,7 @@ export function GlobalSftpTransferCenter() {
   };
   const resumeAll = () => {
     for (const task of snapshot.tasks) {
+      if (task.conflict) continue;
       if (task.status === "paused" || task.status === "interrupted" || task.status === "attention") {
         void sftpTransferCenterStore.resume(task.id);
       }
