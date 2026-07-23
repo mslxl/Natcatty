@@ -1,0 +1,945 @@
+name: Cursor automation
+
+on:
+  issues:
+    types: [opened, reopened]
+  issue_comment:
+    types: [created]
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  pull_request_review:
+    types: [submitted]
+  pull_request_review_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: Issue number to classify/implement
+        required: false
+        type: number
+      pull_number:
+        description: PR number for Codex loop or external review
+        required: false
+        type: number
+      force_implement:
+        description: Force implement path after classify when eligible
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: >-
+    cursor-auto-${{
+      github.event.issue && !github.event.issue.pull_request && github.event.issue.number ||
+      github.event.pull_request && github.event.pull_request.number ||
+      github.event.issue && github.event.issue.pull_request && github.event.issue.number ||
+      inputs.issue_number ||
+      inputs.pull_number ||
+      github.run_id
+    }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  actions: read
+
+jobs:
+  route:
+    name: Route event
+    runs-on: ubuntu-latest
+    outputs:
+      kind: ${{ steps.decide.outputs.kind }}
+      issue_number: ${{ steps.decide.outputs.issue_number }}
+      pull_number: ${{ steps.decide.outputs.pull_number }}
+      reason: ${{ steps.decide.outputs.reason }}
+    steps:
+      - name: Checkout helpers
+        uses: actions/checkout@v5
+
+      - name: Decide route
+        id: decide
+        uses: actions/github-script@v7
+        env:
+          OWN_ACTORS: ${{ vars.AUTOMATION_OWN_ACTORS || 'binaricat' }}
+          DISPATCH_ISSUE: ${{ inputs.issue_number || '' }}
+          DISPATCH_PULL: ${{ inputs.pull_number || '' }}
+        with:
+          script: |
+            const auto = require(`${process.env.GITHUB_WORKSPACE}/scripts/cursor-automation.cjs`);
+            const event = context.eventName;
+            const ownActors = process.env.OWN_ACTORS;
+            const set = (kind, extra = {}) => {
+              core.setOutput('kind', kind);
+              core.setOutput('issue_number', extra.issue_number || '');
+              core.setOutput('pull_number', extra.pull_number || '');
+              core.setOutput('reason', extra.reason || kind);
+            };
+
+            if (event === 'workflow_dispatch') {
+              if (process.env.DISPATCH_ISSUE) {
+                return set('issue_classify', {
+                  issue_number: process.env.DISPATCH_ISSUE,
+                  reason: 'manual issue',
+                });
+              }
+              if (process.env.DISPATCH_PULL) {
+                const { data: pr } = await github.rest.pulls.get({
+                  ...context.repo,
+                  pull_number: Number(process.env.DISPATCH_PULL),
+                });
+                const eligible = auto.isFixEligiblePr(pr, {
+                  ownActors,
+                  repository: `${context.repo.owner}/${context.repo.repo}`,
+                });
+                return set(eligible ? 'codex_loop' : 'external_review', {
+                  pull_number: String(pr.number),
+                  reason: eligible ? 'manual own pr' : 'manual external pr',
+                });
+              }
+              return set('skip', { reason: 'workflow_dispatch missing inputs' });
+            }
+
+            if (event === 'issues') {
+              return set('issue_classify', {
+                issue_number: String(context.payload.issue.number),
+                reason: `issues:${context.payload.action}`,
+              });
+            }
+
+            if (event === 'issue_comment') {
+              const issue = context.payload.issue;
+              const comment = context.payload.comment;
+              const login = comment.user?.login || '';
+              if (issue.pull_request) {
+                if (auto.isCodexBotLogin(login)) {
+                  return set('codex_loop', {
+                    pull_number: String(issue.number),
+                    reason: 'codex issue_comment on pr',
+                  });
+                }
+                return set('skip', { reason: 'non-codex pr issue_comment' });
+              }
+              // Issue comment: re-triage when author replies on needs-info
+              if (comment.user?.type === 'Bot') {
+                return set('skip', { reason: 'bot issue comment' });
+              }
+              const labels = (issue.labels || []).map((l) =>
+                typeof l === 'string' ? l : l.name,
+              );
+              if (
+                labels.includes('needs-info') ||
+                labels.includes('triage:bug-needs-info') ||
+                comment.user.login === issue.user.login
+              ) {
+                return set('issue_classify', {
+                  issue_number: String(issue.number),
+                  reason: 'issue author/comment re-triage',
+                });
+              }
+              return set('skip', { reason: 'issue comment no re-triage signal' });
+            }
+
+            if (event === 'pull_request_review' || event === 'pull_request_review_comment') {
+              const login =
+                context.payload.review?.user?.login ||
+                context.payload.comment?.user?.login ||
+                '';
+              const pr =
+                context.payload.pull_request ||
+                (await github.rest.pulls.get({
+                  ...context.repo,
+                  pull_number: context.payload.pull_request?.number,
+                })).data;
+              const number = context.payload.pull_request?.number;
+              if (auto.isCodexBotLogin(login)) {
+                return set('codex_loop', {
+                  pull_number: String(number),
+                  reason: 'codex review event',
+                });
+              }
+              return set('skip', { reason: 'non-codex review event' });
+            }
+
+            if (event === 'pull_request') {
+              const pr = context.payload.pull_request;
+              const eligible = auto.isFixEligiblePr(pr, {
+                ownActors,
+                repository: `${context.repo.owner}/${context.repo.repo}`,
+              });
+              // Own/bot PRs: only start Codex request on opened/ready; fixes come from codex events.
+              if (eligible) {
+                if (['opened', 'ready_for_review', 'reopened'].includes(context.payload.action)) {
+                  return set('codex_loop', {
+                    pull_number: String(pr.number),
+                    reason: 'own pr opened — ensure codex review',
+                  });
+                }
+                return set('skip', {
+                  reason: 'own pr synchronize handled after fix job',
+                });
+              }
+              if (['opened', 'synchronize', 'reopened', 'ready_for_review'].includes(context.payload.action)) {
+                return set('external_review', {
+                  pull_number: String(pr.number),
+                  reason: 'external pr review-only',
+                });
+              }
+            }
+
+            return set('skip', { reason: `unhandled ${event}` });
+
+  classify:
+    name: Classify issue
+    needs: route
+    if: needs.route.outputs.kind == 'issue_classify'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      category: ${{ steps.apply.outputs.category }}
+      should_implement: ${{ steps.apply.outputs.should_implement }}
+      issue_number: ${{ steps.prepare.outputs.issue_number }}
+      issue_url: ${{ steps.prepare.outputs.issue_url }}
+      issue_title: ${{ steps.prepare.outputs.issue_title }}
+      should_run: ${{ steps.prepare.outputs.should_run }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Prepare issue context
+        id: prepare
+        uses: actions/github-script@v7
+        env:
+          ISSUE_NUMBER: ${{ needs.route.outputs.issue_number }}
+          MANUAL_RUN: ${{ github.event_name == 'workflow_dispatch' }}
+          DAILY_LIMIT: ${{ vars.CURSOR_TRIAGE_DAILY_LIMIT || '10' }}
+        with:
+          script: |
+            const auto = require(`${process.env.GITHUB_WORKSPACE}/scripts/cursor-automation.cjs`);
+            await auto.prepareIssueContext({
+              github,
+              context,
+              core,
+              issueNumber: process.env.ISSUE_NUMBER,
+              outputPath: `${process.env.GITHUB_WORKSPACE}/.cursor-runtime/issue.json`,
+              dailyLimit: Number(process.env.DAILY_LIMIT),
+              manual: process.env.MANUAL_RUN === 'true',
+            });
+
+      - name: Ensure Cursor API key
+        if: steps.prepare.outputs.should_run == 'true'
+        env:
+          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+        run: |
+          if [[ -z "$CURSOR_API_KEY" ]]; then
+            echo "CURSOR_API_KEY is not configured." >&2
+            exit 1
+          fi
+
+      - name: Install Cursor CLI
+        if: steps.prepare.outputs.should_run == 'true'
+        run: |
+          curl https://cursor.com/install -fsS | bash
+          echo "$HOME/.cursor/bin" >> "$GITHUB_PATH"
+
+      - name: Classify with Cursor CLI
+        if: steps.prepare.outputs.should_run == 'true'
+        env:
+          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p .cursor-runtime
+          PROMPT="$(cat .github/cursor/prompts/classify.md)
+          ----
+          Issue payload path: .cursor-runtime/issue.json
+          Write the JSON result to .cursor-runtime/classification.json as well as printing it.
+          "
+          agent -p --mode=ask --trust --model auto --output-format text \
+            --workspace "$GITHUB_WORKSPACE" \
+            "$PROMPT" | tee .cursor-runtime/classify-raw.txt
+
+          if [[ ! -s .cursor-runtime/classification.json ]]; then
+            node - <<'NODE'
+            const fs = require('node:fs');
+            const auto = require('./scripts/cursor-automation.cjs');
+            const text = fs.readFileSync('.cursor-runtime/classify-raw.txt', 'utf8');
+            const parsed = auto.parseClassificationText(text);
+            auto.writeJson('.cursor-runtime/classification.json', parsed);
+            NODE
+          fi
+
+      - name: Apply classification
+        id: apply
+        if: steps.prepare.outputs.should_run == 'true'
+        uses: actions/github-script@v7
+        env:
+          ISSUE_NUMBER: ${{ steps.prepare.outputs.issue_number }}
+        with:
+          script: |
+            const auto = require(`${process.env.GITHUB_WORKSPACE}/scripts/cursor-automation.cjs`);
+            await auto.applyClassification({
+              github,
+              context,
+              core,
+              issueNumber: process.env.ISSUE_NUMBER,
+              classificationPath: `${process.env.GITHUB_WORKSPACE}/.cursor-runtime/classification.json`,
+            });
+
+      - name: Notify Slack
+        if: steps.apply.outcome == 'success'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          STATUS: "Classified as ${{ steps.apply.outputs.category }}"
+          ISSUE_URL: ${{ steps.prepare.outputs.issue_url }}
+          ISSUE_TITLE: ${{ steps.prepare.outputs.issue_title }}
+          DETAIL: ${{ steps.apply.outputs.summary }}
+          WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          node - <<'NODE'
+          const auto = require('./scripts/cursor-automation.cjs');
+          const payload = auto.buildSlackPayload({
+            status: process.env.STATUS,
+            issueUrl: process.env.ISSUE_URL,
+            issueTitle: process.env.ISSUE_TITLE,
+            detail: process.env.DETAIL,
+            workflowUrl: process.env.WORKFLOW_URL,
+          });
+          auto.sendSlackNotification(process.env.SLACK_WEBHOOK_URL, payload)
+            .then(({ skipped }) => skipped && console.log('Slack skipped'));
+          NODE
+
+  implement:
+    name: Implement with Cursor CLI
+    needs: [route, classify]
+    if: >-
+      always() &&
+      needs.route.outputs.kind == 'issue_classify' &&
+      needs.classify.outputs.should_run == 'true' &&
+      needs.classify.outputs.should_implement == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      ISSUE_NUMBER: ${{ needs.classify.outputs.issue_number }}
+      ISSUE_URL: ${{ needs.classify.outputs.issue_url }}
+      ISSUE_TITLE: ${{ needs.classify.outputs.issue_title }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Skip if bot PR already open
+        id: existing
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const auto = require(`${process.env.GITHUB_WORKSPACE}/scripts/cursor-automation.cjs`);
+            const existing = await auto.findOpenBotPrForIssue({
+              github,
+              context,
+              issueNumber: process.env.ISSUE_NUMBER,
+            });
+            core.setOutput('exists', existing ? 'true' : 'false');
+            core.setOutput('url', existing ? existing.html_url : '');
+            if (existing) {
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: Number(process.env.ISSUE_NUMBER),
+                body: [
+                  auto.TRIAGE_MARKER,
+                  auto.DISCLAIMER,
+                  '',
+                  `An automation pull request is already open: ${existing.html_url}`,
+                ].join('\n'),
+              });
+            }
+
+      - name: Ensure Cursor API key
+        if: steps.existing.outputs.exists != 'true'
+        env:
+          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+        run: |
+          if [[ -z "$CURSOR_API_KEY" ]]; then
+            echo "CURSOR_API_KEY is not configured." >&2
+            exit 1
+          fi
+
+      - name: Create working branch
+        if: steps.existing.outputs.exists != 'true'
+        id: branch
+        run: |
+          branch="cursor/issue-${ISSUE_NUMBER}-${GITHUB_RUN_ID}"
+          git checkout -b "$branch"
+          echo "name=$branch" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare issue JSON
+        if: steps.existing.outputs.exists != 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const auto = require(`${process.env.GITHUB_WORKSPACE}/scripts/cursor-automation.cjs`);
+            await auto.prepareIssueContext({
+              github,
+              context,
+              core,
+              issueNumber: process.env.ISSUE_NUMBER,
+              outputPath: `${process.env.GITHUB_WORKSPACE}/.cursor-runtime/issue.json`,
+              manual: true,
+            });
+
+      - name: Setup Node
+        if: steps.existing.outputs.exists != 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        if: steps.existing.outputs.exists != 'true'
+        run: npm ci
+
+      - name: Install Cursor CLI
+        if: steps.existing.outputs.exists != 'true'
+        run: |
+          curl https://cursor.com/install -fsS | bash
+          echo "$HOME/.cursor/bin" >> "$GITHUB_PATH"
+
+      - name: Implement with Cursor CLI
+        if: steps.existing.outputs.exists != 'true'
+        env:
+          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p .cursor-runtime
+          PROMPT="$(cat .github/cursor/prompts/implement.md)"
+          agent -p --force --trust --model auto --output-format text \
+            --workspace "$GITHUB_WORKSPACE" \
+            "$PROMPT" | tee .cursor-runtime/implement-raw.txt
+
+      - name: Detect changes
+        if: steps.existing.outputs.exists != 'true'
+        id: changes
+        run: |
+          if [[ -n "$(git status --porcelain --untracked-files=all -- . ':(exclude).cursor-runtime' ':(exclude).cursor-runtime/**')" ]]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check protected paths from git status
+        if: steps.existing.outputs.exists != 'true' && steps.changes.outputs.present == 'true'
+        run: |
+          status="$(git status --porcelain --untracked-files=all -- . ':(exclude).cursor-runtime' ':(exclude).cursor-runtime/**')"
+          node -e '
+            const { hasProtectedChanges } = require("./scripts/cursor-automation.cjs");
+            const hits = hasProtectedChanges(process.argv[1]);
+            if (hits.length) {
+              console.error("Protected paths modified:", hits.join(", "));
+              process.exit(1);
+            }
+          ' "$status"
+
+      - name: Report no changes
+        if: steps.existing.outputs.exists != 'true' && steps.changes.outputs.present != 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const auto = require(`${process.env.GITHUB_WORKSPACE}/scripts/cursor-automation.cjs`);
+            await auto.markNeedsHuman({
+              github,
+              context,
+              issueNumber: process.env.ISSUE_NUMBER,
+              message: 'The automatic implementation pass did not produce a safe focused change. A maintainer needs to take a look.',
+            });
+
+      - name: Verify
+        if: steps.existing.outputs.exists != 'true' && steps.changes.outputs.present == 'true'
+        id: verify
+        run: |
+          set +e
+          npm run lint
+          lint=$?
+          npm test
+          tests=$?
+          npm run build
+          build=$?
+          set -e
+          if [[ "$lint" != "0" || "$tests" != "0" || "$build" != "0" ]]; then
+            echo "passed=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "passed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Commit and push
+        if: steps.existing.outputs.exists != 'true' && steps.changes.outputs.present == 'true' && steps.verify.outputs.passed == 'true'
+        run: |
+          set -euo pipefail
+          git config user.name "netcatty-cursor-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git reset -- .cursor-runtime >/dev/null 2>&1 || true
+          git commit -m "fix(#${ISSUE_NUMBER}): automated Cursor CLI fix"
+          git push origin "HEAD:${{ steps.branch.outputs.name }}"
+
+      - name: Open draft PR and request Codex review
+        if: steps.existing.outputs.exists != 'true' && steps.changes.outputs.present == 'true' && steps.verify.outputs.passed == 'true'
+        uses: actions/github-script@v7
+        env:
+          BRANCH: ${{ steps.branch.outputs.name }}
+        with:
+          script: |
+            const auto = require(`${process.env.GITHUB_WORKSPACE}/scripts/cursor-automation.cjs`);
+            const fs = require('node:fs');
+            let summary = '';
+            try {
+              summary = fs.readFileSync('.cursor-runtime/implement-status.txt', 'utf8');
+            } catch {}
+            const title = `fix(#${process.env.ISSUE_NUMBER}): ${process.env.ISSUE_TITLE}`.slice(0, 110);
+            const body = auto.buildPullRequestBody({
+              issueNumber: process.env.ISSUE_NUMBER,
+              issueTitle: process.env.ISSUE_TITLE,
+              summary,
+            });
+            const { data: pr } = await github.rest.pulls.create({
+              ...context.repo,
+              title,
+              head: process.env.BRANCH,
+              base: 'main',
+              body,
+              draft: true,
+            });
+            await github.rest.issues.addLabels({
+              ...context.repo,
+              issue_number: pr.number,
+              labels: ['automation:bot-pr', 'automation:codex-loop', 'triage'],
+            });
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: Number(process.env.ISSUE_NUMBER),
+              body: auto.buildPullRequestComment({
+                pullRequestUrl: pr.html_url,
+                clean: false,
+              }),
+            });
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: pr.number,
+              body: auto.buildCodexReviewRequestComment(1),
+            });
+            core.info(`Opened draft PR ${pr.html_url}`);
+
+  codex_loop:
+    name: Codex review loop
+    needs: route
+    if: needs.route.outputs.kind == 'codex_loop'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      PULL_NUMBER: ${{ needs.route.outputs.pull_number }}
+      MAX_ROUNDS: ${{ vars.CURSOR_CODEX_FIX_MAX_ROUNDS || '3' }}
+      OWN_ACTORS: ${{ vars.AUTOMATION_OWN_ACTORS || 'binaricat' }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout helpers
+        uses: actions/checkout@v5
+
+      - name: Inspect Codex outcome
+        id: codex
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const auto = require(`${process.env.GITHUB_WORKSPACE}/scripts/cursor-automation.cjs`);
+            const pull_number = Number(process.env.PULL_NUMBER);
+            const { data: pr } = await github.rest.pulls.get({
+              ...context.repo,
+              pull_number,
+            });
+            const eligible = auto.isFixEligiblePr(pr, {
+              ownActors: process.env.OWN_ACTORS,
+              repository: `${context.repo.owner}/${context.repo.repo}`,
+            });
+            core.setOutput('eligible', eligible ? 'true' : 'false');
+            core.setOutput('head_sha', pr.head.sha);
+            core.setOutput('head_ref', pr.head.ref);
+            core.setOutput('draft', pr.draft ? 'true' : 'false');
+            if (!eligible) {
+              core.setOutput('clean', 'false');
+              core.setOutput('action', 'skip');
+              core.setOutput('reason', 'not fix-eligible');
+              return;
+            }
+
+            const { data: issueComments } = await github.rest.issues.listComments({
+              ...context.repo,
+              issue_number: pull_number,
+              per_page: 100,
+            });
+            const { data: reviewComments } = await github.rest.pulls.listReviewComments({
+              ...context.repo,
+              pull_number,
+              per_page: 100,
+            });
+            const codexIssue = issueComments
+              .filter((c) => auto.isCodexBotLogin(c.user?.login))
+              .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+            const codexReviews = reviewComments.filter((c) =>
+              auto.isCodexBotLogin(c.user?.login),
+            );
+            const summaryText = codexIssue[0]?.body || '';
+            const outcome = auto.parseCodexReviewOutcome({
+              summaryText,
+              reviewComments: codexReviews,
+              issueComments: codexIssue,
+            });
+            const round = auto.getCodexRoundFromComments(issueComments);
+            core.setOutput('round', String(round));
+            core.setOutput('clean', outcome.clean ? 'true' : 'false');
+            core.setOutput('reason', outcome.reason);
+
+            // On own PR open with no Codex activity yet → request review.
+            if (!summaryText && codexReviews.length === 0) {
+              core.setOutput('action', 'request_review');
+              return;
+            }
+
+            if (outcome.clean) {
+              core.setOutput('action', 'mark_ready');
+              return;
+            }
+
+            const maxRounds = Number(process.env.MAX_ROUNDS || '3');
+            if (round >= maxRounds) {
+              core.setOutput('action', 'give_up');
+              return;
+            }
+
+            const findings = auto.formatCodexFindingsMarkdown({
+              summaryText,
+              reviewComments: codexReviews,
+              issueComments: codexIssue,
+              pullNumber: pull_number,
+              headSha: pr.head.sha,
+            });
+            const fs = require('node:fs');
+            fs.mkdirSync('.cursor-runtime', { recursive: true });
+            fs.writeFileSync('.cursor-runtime/codex-findings.md', findings);
+            core.setOutput('action', 'fix');
+
+      - name: Request Codex review
+        if: steps.codex.outputs.action == 'request_review'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const auto = require(`${process.env.GITHUB_WORKSPACE}/scripts/cursor-automation.cjs`);
+            const pull_number = Number(process.env.PULL_NUMBER);
+            await github.rest.issues.addLabels({
+              ...context.repo,
+              issue_number: pull_number,
+              labels: ['automation:codex-loop'],
+            });
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: pull_number,
+              body: auto.buildCodexReviewRequestComment(1),
+            });
+
+      - name: Mark PR ready after clean Codex
+        if: steps.codex.outputs.action == 'mark_ready'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh pr ready "$PULL_NUMBER" --repo "$GITHUB_REPOSITORY" || true
+          gh pr edit "$PULL_NUMBER" --repo "$GITHUB_REPOSITORY" \
+            --add-label "automation:codex-clean" \
+            --add-label "automation:bot-pr" \
+            --remove-label "automation:codex-loop" || true
+          gh pr comment "$PULL_NUMBER" --repo "$GITHUB_REPOSITORY" --body "$(cat <<'EOF'
+          <!-- cursor-automation -->
+          > *This was generated by Cursor automation.*
+
+          Codex reported no major issues. This PR is marked ready for human review/merge.
+          EOF
+          )"
+
+      - name: Give up after max rounds
+        if: steps.codex.outputs.action == 'give_up'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const auto = require(`${process.env.GITHUB_WORKSPACE}/scripts/cursor-automation.cjs`);
+            const pull_number = Number(process.env.PULL_NUMBER);
+            await github.rest.issues.addLabels({
+              ...context.repo,
+              issue_number: pull_number,
+              labels: ['ready-for-human'],
+            });
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: pull_number,
+              body: [
+                auto.TRIAGE_MARKER,
+                auto.DISCLAIMER,
+                '',
+                `Stopped after ${process.env.MAX_ROUNDS} Codex fix rounds. A maintainer needs to finish this PR.`,
+              ].join('\n'),
+            });
+
+      - name: Checkout PR head for fix
+        if: steps.codex.outputs.action == 'fix'
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.codex.outputs.head_ref }}
+          fetch-depth: 0
+
+      - name: Restore findings file
+        if: steps.codex.outputs.action == 'fix'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const auto = require(`${process.env.GITHUB_WORKSPACE}/scripts/cursor-automation.cjs`);
+            const pull_number = Number(process.env.PULL_NUMBER);
+            const { data: pr } = await github.rest.pulls.get({
+              ...context.repo,
+              pull_number,
+            });
+            const { data: issueComments } = await github.rest.issues.listComments({
+              ...context.repo,
+              issue_number: pull_number,
+              per_page: 100,
+            });
+            const { data: reviewComments } = await github.rest.pulls.listReviewComments({
+              ...context.repo,
+              pull_number,
+              per_page: 100,
+            });
+            const codexIssue = issueComments.filter((c) =>
+              auto.isCodexBotLogin(c.user?.login),
+            );
+            const codexReviews = reviewComments.filter((c) =>
+              auto.isCodexBotLogin(c.user?.login),
+            );
+            const findings = auto.formatCodexFindingsMarkdown({
+              summaryText: codexIssue.sort((a,b)=>new Date(b.created_at)-new Date(a.created_at))[0]?.body || '',
+              reviewComments: codexReviews,
+              issueComments: codexIssue,
+              pullNumber: pull_number,
+              headSha: pr.head.sha,
+            });
+            auto.writeText('.cursor-runtime/codex-findings.md', findings);
+
+      - name: Setup Node
+        if: steps.codex.outputs.action == 'fix'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        if: steps.codex.outputs.action == 'fix'
+        run: npm ci
+
+      - name: Install Cursor CLI
+        if: steps.codex.outputs.action == 'fix'
+        run: |
+          curl https://cursor.com/install -fsS | bash
+          echo "$HOME/.cursor/bin" >> "$GITHUB_PATH"
+
+      - name: Fix with Cursor CLI
+        if: steps.codex.outputs.action == 'fix'
+        env:
+          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+        run: |
+          set -euo pipefail
+          PROMPT="$(cat .github/cursor/prompts/fix-from-codex.md)"
+          agent -p --force --trust --model auto --output-format text \
+            --workspace "$GITHUB_WORKSPACE" \
+            "$PROMPT" | tee .cursor-runtime/fix-raw.txt
+
+      - name: Guard protected paths
+        if: steps.codex.outputs.action == 'fix'
+        run: |
+          status="$(git status --porcelain --untracked-files=all -- . ':(exclude).cursor-runtime' ':(exclude).cursor-runtime/**')"
+          node -e '
+            const { hasProtectedChanges } = require("./scripts/cursor-automation.cjs");
+            const hits = hasProtectedChanges(process.argv[1]);
+            if (hits.length) {
+              console.error("Protected paths modified:", hits.join(", "));
+              process.exit(1);
+            }
+          ' "$status"
+
+      - name: Verify fix
+        if: steps.codex.outputs.action == 'fix'
+        run: |
+          set +e
+          npm run lint || exit 1
+          npm test || exit 1
+          npm run build || exit 1
+
+      - name: Commit push and re-request Codex
+        if: steps.codex.outputs.action == 'fix'
+        uses: actions/github-script@v7
+        env:
+          HEAD_REF: ${{ steps.codex.outputs.head_ref }}
+          PREV_ROUND: ${{ steps.codex.outputs.round }}
+        with:
+          script: |
+            const { execSync } = require('node:child_process');
+            const auto = require(`${process.env.GITHUB_WORKSPACE}/scripts/cursor-automation.cjs`);
+            const status = execSync(
+              "git status --porcelain --untracked-files=all -- . ':(exclude).cursor-runtime' ':(exclude).cursor-runtime/**'",
+              { encoding: 'utf8' },
+            ).trim();
+            const pull_number = Number(process.env.PULL_NUMBER);
+            if (!status) {
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: pull_number,
+                body: [
+                  auto.TRIAGE_MARKER,
+                  auto.DISCLAIMER,
+                  '',
+                  'Cursor CLI did not produce additional code changes for the latest Codex findings. Marking for human review.',
+                ].join('\n'),
+              });
+              await github.rest.issues.addLabels({
+                ...context.repo,
+                issue_number: pull_number,
+                labels: ['ready-for-human'],
+              });
+              return;
+            }
+            execSync('git config user.name "netcatty-cursor-bot"');
+            execSync('git config user.email "41898282+github-actions[bot]@users.noreply.github.com"');
+            execSync('git add -A');
+            try { execSync('git reset -- .cursor-runtime'); } catch {}
+            execSync(`git commit -m "fix: address Codex review on PR #${pull_number}"`);
+            execSync(`git push origin HEAD:${process.env.HEAD_REF}`);
+            const nextRound = (Number(process.env.PREV_ROUND) || 0) + 1;
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: pull_number,
+              body: auto.buildCodexReviewRequestComment(nextRound),
+            });
+
+  external_review:
+    name: External PR review (read-only)
+    needs: route
+    if: needs.route.outputs.kind == 'external_review'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      PULL_NUMBER: ${{ needs.route.outputs.pull_number }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout PR merge ref
+        uses: actions/checkout@v5
+        with:
+          ref: refs/pull/${{ needs.route.outputs.pull_number }}/merge
+          fetch-depth: 0
+
+      - name: Skip if already reviewed this head
+        id: skip
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const auto = require(`${process.env.GITHUB_WORKSPACE}/scripts/cursor-automation.cjs`);
+            const pull_number = Number(process.env.PULL_NUMBER);
+            const { data: pr } = await github.rest.pulls.get({
+              ...context.repo,
+              pull_number,
+            });
+            const { data: comments } = await github.rest.issues.listComments({
+              ...context.repo,
+              issue_number: pull_number,
+              per_page: 100,
+            });
+            const skip = auto.shouldSkipExternalReview({
+              existingComments: comments,
+              headSha: pr.head.sha,
+            });
+            core.setOutput('skip', skip ? 'true' : 'false');
+            core.setOutput('head_sha', pr.head.sha);
+            const fs = require('node:fs');
+            fs.mkdirSync('.cursor-runtime', { recursive: true });
+            fs.writeFileSync(
+              '.cursor-runtime/pr.json',
+              JSON.stringify(
+                {
+                  warning: 'Untrusted PR metadata',
+                  number: pr.number,
+                  title: auto.sanitizeUntrustedText(pr.title, 500),
+                  body: auto.sanitizeUntrustedText(pr.body, 8000),
+                  author: pr.user?.login,
+                  base: pr.base.ref,
+                  head: pr.head.ref,
+                  sha: pr.head.sha,
+                  fork: pr.head.repo?.full_name !== pr.base.repo?.full_name,
+                },
+                null,
+                2,
+              ),
+            );
+
+      - name: Install Cursor CLI
+        if: steps.skip.outputs.skip != 'true'
+        run: |
+          curl https://cursor.com/install -fsS | bash
+          echo "$HOME/.cursor/bin" >> "$GITHUB_PATH"
+
+      - name: Ensure API key
+        if: steps.skip.outputs.skip != 'true'
+        env:
+          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+        run: |
+          test -n "$CURSOR_API_KEY"
+
+      - name: Review with Cursor CLI
+        if: steps.skip.outputs.skip != 'true'
+        env:
+          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ steps.skip.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "${BASE_SHA:-}" 2>/dev/null || true
+          {
+            echo "Base...head diffstat:"
+            git diff --stat "${BASE_SHA:-HEAD^}...${HEAD_SHA:-HEAD}" || git diff --stat HEAD~1..HEAD || true
+            echo
+            echo "Names only:"
+            git diff --name-only "${BASE_SHA:-HEAD^}...${HEAD_SHA:-HEAD}" || true
+          } > .cursor-runtime/diff-summary.txt
+
+          PROMPT="$(cat .github/cursor/prompts/review-external.md)
+
+          Also read .cursor-runtime/diff-summary.txt and inspect changed files.
+          Write the final markdown review to .cursor-runtime/external-review.md
+          "
+          agent -p --mode=ask --trust --model auto --output-format text \
+            --workspace "$GITHUB_WORKSPACE" \
+            "$PROMPT" | tee .cursor-runtime/external-raw.txt
+
+          if [[ ! -s .cursor-runtime/external-review.md ]]; then
+            cp .cursor-runtime/external-raw.txt .cursor-runtime/external-review.md
+          fi
+
+      - name: Post review comment
+        if: steps.skip.outputs.skip != 'true'
+        uses: actions/github-script@v7
+        env:
+          HEAD_SHA: ${{ steps.skip.outputs.head_sha }}
+        with:
+          script: |
+            const fs = require('node:fs');
+            const auto = require(`${process.env.GITHUB_WORKSPACE}/scripts/cursor-automation.cjs`);
+            const text = fs.readFileSync('.cursor-runtime/external-review.md', 'utf8');
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: Number(process.env.PULL_NUMBER),
+              body: auto.buildExternalReviewComment(text, process.env.HEAD_SHA),
+            });
