@@ -22,7 +22,10 @@ import { useSftpDirectoryTransferOps } from "./transferDirectoryOps";
 import { useSftpTransferConflictOps } from "./transferConflictOps";
 import { useSftpTransferTaskOps } from "./transferTaskOps";
 import { globalSftpTransferScheduler } from "./globalTransferScheduler";
-import { createDirectDownloadTransferTask } from "./downloadTransferTask";
+import {
+  createDirectDownloadTransferTask,
+  resolveDirectDirectoryDownloadFinalStatus,
+} from "./downloadTransferTask";
 import type { TransferResult, UseSftpTransfersParams, UseSftpTransfersResult } from "./useSftpTransfers.types";
 import { getParentPath, joinPath } from "./utils";
 
@@ -1488,8 +1491,16 @@ export const useSftpTransfers = ({
 
         // Use childFailureCount (tracked outside React state) to determine
         // final status reliably, regardless of render timing.
-        const hasFailures = childFailureCount > 0;
-        const finalStatus: TransferStatus = hasFailures ? "failed" : "completed";
+        // Cancel must win: transferDirectory counts cancelled children as errors,
+        // but cancelTransfer already marked the parent cancelled — do not demote
+        // it to failed with "Some files failed to transfer".
+        const resolved = resolveDirectDirectoryDownloadFinalStatus({
+          parentCancelled: cancelledTasksRef.current.has(task.id),
+          childFailureCount,
+        });
+        if (resolved.status === "cancelled") {
+          cancelledTasksRef.current.delete(task.id);
+        }
         setTransfers((prev) => {
           const completedCount = prev.filter(
             (t) => t.parentTaskId === task.id && t.status === "completed",
@@ -1497,10 +1508,11 @@ export const useSftpTransfers = ({
           return prev.map((t) => {
             if (t.id !== task.id) return t;
             const finalTotal = t.totalBytes > 0 ? t.totalBytes : completedCount;
+            const hasFailures = resolved.status === "failed";
             return {
               ...t,
-              status: finalStatus,
-              error: hasFailures ? "Some files failed to transfer" : undefined,
+              status: resolved.status,
+              error: resolved.error,
               endTime: Date.now(),
               totalBytes: finalTotal,
               transferredBytes: hasFailures ? completedCount : finalTotal,
@@ -1508,7 +1520,7 @@ export const useSftpTransfers = ({
           });
         });
         activeChildIdsRef.current.delete(task.id);
-        return finalStatus;
+        return resolved.status;
       } catch (err) {
         activeChildIdsRef.current.delete(task.id);
         const isCancelled = cancelledTasksRef.current.has(task.id);

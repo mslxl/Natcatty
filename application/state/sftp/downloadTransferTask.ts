@@ -1,4 +1,4 @@
-import type { TransferTask } from "../../../domain/models";
+import type { TransferStatus, TransferTask } from "../../../domain/models";
 
 export interface DirectDownloadTransferTaskInput {
   id: string;
@@ -38,4 +38,22 @@ export function createDirectDownloadTransferTask(
     origin: "manual",
     resumable: true,
   };
+}
+
+/**
+ * Final parent status after downloadToLocal finishes a directory tree.
+ * Cancel must win over child error counts — cancelled children are counted as
+ * errors by transferDirectory, but the parent was cancelled by the user.
+ */
+export function resolveDirectDirectoryDownloadFinalStatus(input: {
+  parentCancelled: boolean;
+  childFailureCount: number;
+}): { status: TransferStatus; error?: string } {
+  if (input.parentCancelled) {
+    return { status: "cancelled" };
+  }
+  if (input.childFailureCount > 0) {
+    return { status: "failed", error: "Some files failed to transfer" };
+  }
+  return { status: "completed" };
 }
