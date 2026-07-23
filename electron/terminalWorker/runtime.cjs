@@ -33,7 +33,7 @@ function normalizeMessageEvent(eventOrMessage) {
   };
 }
 
-function createOutputPortRegistry(parentPort) {
+function createOutputPortRegistry() {
   const outputPorts = new Map();
 
   function closeSession(sessionId) {
@@ -71,7 +71,7 @@ function createOutputPortRegistry(parentPort) {
     }
   }
 
-  function open(sessionId, port, bufferedOutput = []) {
+  function open(sessionId, port) {
     if (!sessionId || !port) return;
     closeSession(sessionId);
     outputPorts.set(sessionId, port);
@@ -80,29 +80,12 @@ function createOutputPortRegistry(parentPort) {
     } catch {
       // Some Electron MessagePort implementations do not require start().
     }
-    for (const chunk of bufferedOutput || []) {
-      const data = chunk && typeof chunk === "object" && "data" in chunk ? chunk.data : chunk;
-      const meta = chunk && typeof chunk === "object" ? chunk.meta : undefined;
-      post(sessionId, data, meta);
-    }
-    parentPort.postMessage({ kind: "output-port-ready", sessionId });
-  }
-
-  function flush(sessionId, chunks = []) {
-    for (const chunk of chunks || []) {
-      const data = chunk && typeof chunk === "object" && "data" in chunk ? chunk.data : chunk;
-      const meta = chunk && typeof chunk === "object" ? chunk.meta : undefined;
-      if (!post(sessionId, data, meta)) {
-        parentPort.postMessage(meta ? { kind: "output", sessionId, data, meta } : { kind: "output", sessionId, data });
-      }
-    }
   }
 
   return {
     open,
     post,
     postControl,
-    flush,
     closeSession,
   };
 }
@@ -159,47 +142,172 @@ function createUrgentInputPortRegistry(dispatch) {
   };
 }
 
-function createSender(parentPort, webContentsId, outputPorts) {
+function createSender(
+  parentPort,
+  webContentsId,
+  outputPorts,
+  terminalDataPipeline,
+  pendingOutputBySession = new Map(),
+  sessionOutputGenerations = new Map(),
+) {
+  const ownedSessionGenerations = new Map();
+  const getOwnedSessionGeneration = (sessionId) => {
+    if (!ownedSessionGenerations.has(sessionId)) {
+      ownedSessionGenerations.set(sessionId, sessionOutputGenerations.get(sessionId) ?? 0);
+    }
+    return ownedSessionGenerations.get(sessionId);
+  };
+  const trackPendingOutput = (sessionId, pending) => {
+    pendingOutputBySession.set(sessionId, pending);
+    const clearPending = () => {
+      if (pendingOutputBySession.get(sessionId) === pending) {
+        pendingOutputBySession.delete(sessionId);
+      }
+    };
+    void pending.then(clearPending, clearPending);
+  };
+  const postRendererEvent = (channel, payload) => {
+    const explicitGeneration = payload?._terminalSessionGeneration;
+    const sessionGeneration = Number.isSafeInteger(explicitGeneration)
+      ? explicitGeneration
+      : payload?.sessionId
+        ? getOwnedSessionGeneration(payload.sessionId)
+        : undefined;
+    const rendererPayload = explicitGeneration === undefined
+      ? payload
+      : Object.freeze(Object.fromEntries(
+        Object.entries(payload).filter(([key]) => key !== "_terminalSessionGeneration"),
+      ));
+    if (channel === "netcatty:exit" && payload?.sessionId) {
+      if ((sessionOutputGenerations.get(payload.sessionId) ?? 0) === sessionGeneration) {
+        sessionOutputGenerations.set(payload.sessionId, sessionGeneration + 1);
+        pendingOutputBySession.delete(payload.sessionId);
+        outputPorts?.closeSession?.(payload.sessionId);
+        terminalDataPipeline?.detach?.(payload.sessionId, undefined, "session-closed");
+      }
+    }
+    parentPort.postMessage({
+      kind: "renderer-event",
+      webContentsId,
+      channel,
+      payload: rendererPayload,
+      ...(sessionGeneration === undefined ? {} : { sessionGeneration }),
+    });
+  };
+  const deliverTerminalData = (payload) => {
+    const sessionId = payload?.sessionId;
+    const explicitGeneration = payload?._terminalSessionGeneration;
+    const outputGeneration = Number.isSafeInteger(explicitGeneration)
+      ? explicitGeneration
+      : getOwnedSessionGeneration(sessionId);
+    if ((sessionOutputGenerations.get(sessionId) ?? 0) !== outputGeneration) return;
+    const tapMessage = {
+      kind: "output-tap",
+      sessionId: payload?.sessionId,
+      data: payload?.data,
+    };
+    if (payload?.meta) tapMessage.meta = payload.meta;
+    if (payload?.tapped !== true) parentPort.postMessage(tapMessage);
+    const pipelineProcessed = payload?.pipelineProcessed === true;
+    const pipelineMode = terminalDataPipeline?.getOutputMode?.(payload?.sessionId) ?? 0;
+    let sensitiveInputState;
+    if (!pipelineProcessed && pipelineMode !== 0) {
+      sensitiveInputState = terminalDataPipeline.observeOutput?.(
+        payload?.sessionId,
+        payload?.data,
+      ) === true;
+    }
+    const deliver = (data, transformed = false) => {
+      if ((sessionOutputGenerations.get(sessionId) ?? 0) !== outputGeneration) return;
+      const inheritedIngressBytes = payload?.meta?.pluginPipelineIngressBytes;
+      const replayedRawIngressBytes = !transformed
+        && !pipelineProcessed
+        && Number.isFinite(inheritedIngressBytes)
+        ? Math.max(0, Number(inheritedIngressBytes)) + String(payload?.data ?? "").length
+        : null;
+      const pipelineMeta = {
+        ...(payload?.meta ?? {}),
+        ...(replayedRawIngressBytes == null
+          ? {}
+          : { pluginPipelineIngressBytes: replayedRawIngressBytes }),
+        ...(transformed
+          ? {
+            pluginPipelineIngressBytes:
+              Number(payload?.meta?.pluginPipelineIngressBytes ?? 0)
+              + String(payload?.data ?? "").length,
+            pluginPipelineProcessed: true,
+          }
+          : {}),
+        ...(sensitiveInputState === undefined
+          ? {}
+          : { pluginPipelineSensitiveInput: sensitiveInputState }),
+      };
+      const meta = Object.keys(pipelineMeta).length > 0 ? pipelineMeta : undefined;
+      if (outputPorts?.post?.(payload?.sessionId, data, meta)) return;
+      const outputMessage = {
+        kind: "output",
+        sessionId: payload?.sessionId,
+        data,
+        tapped: true,
+      };
+      if (meta) outputMessage.meta = meta;
+      parentPort.postMessage(outputMessage);
+    };
+    const previous = pendingOutputBySession.get(sessionId);
+    if (pipelineProcessed || !terminalDataPipeline?.interceptOutput || (pipelineMode & 2) === 0) {
+      if (!previous) {
+        deliver(payload?.data, false);
+        return;
+      }
+      const pending = previous.then(
+        () => deliver(payload?.data, false),
+        () => deliver(payload?.data, false),
+      );
+      trackPendingOutput(sessionId, pending);
+      return;
+    }
+    const interceptAndDeliver = () => {
+      try {
+        return Promise.resolve(terminalDataPipeline.interceptOutput(sessionId, payload?.data)).then(
+          (data) => deliver(data, true),
+          () => deliver(payload?.data, false),
+        );
+      } catch {
+        deliver(payload?.data, false);
+        return undefined;
+      }
+    };
+    // Invoke the pipeline immediately so its bounded byte window and monotonic
+    // deadline cover time spent waiting behind earlier transforms. The
+    // pipeline owns per-session transform ordering; this outer registry only
+    // retains the latest barrier for direct fail-open output and session exit.
+    const pending = Promise.resolve(interceptAndDeliver());
+    trackPendingOutput(sessionId, pending);
+  };
   return {
     id: webContentsId,
+    claimSessionGeneration(sessionId) {
+      return getOwnedSessionGeneration(sessionId);
+    },
     isDestroyed() {
       return false;
     },
     send(channel, payload) {
       if (channel === "netcatty:data") {
-        const tapMessage = {
-          kind: "output-tap",
-          sessionId: payload?.sessionId,
-          data: payload?.data,
-        };
-        if (payload?.meta) tapMessage.meta = payload.meta;
-        parentPort.postMessage(tapMessage);
-        if (outputPorts?.post?.(payload?.sessionId, payload?.data, payload?.meta)) {
-          return;
-        }
-        const outputMessage = {
-          kind: "output",
-          sessionId: payload?.sessionId,
-          data: payload?.data,
-          // The output-tap message above already notified main-process taps
-          // for this chunk; flag the fallback delivery so the worker manager
-          // does not notify them a second time (would double-write session
-          // logs and script output buffers).
-          tapped: true,
-        };
-        if (payload?.meta) outputMessage.meta = payload.meta;
-        parentPort.postMessage(outputMessage);
+        deliverTerminalData(payload);
         return;
       }
       if (channel === "netcatty:exit" && payload?.sessionId) {
-        outputPorts?.closeSession?.(payload.sessionId);
+        const pending = pendingOutputBySession.get(payload.sessionId);
+        if (pending) {
+          void pending.then(
+            () => postRendererEvent(channel, payload),
+            () => postRendererEvent(channel, payload),
+          );
+          return;
+        }
       }
-      parentPort.postMessage({
-        kind: "renderer-event",
-        webContentsId,
-        channel,
-        payload,
-      });
+      postRendererEvent(channel, payload);
     },
   };
 }
@@ -208,11 +316,50 @@ function createTerminalWorkerRuntime(options = {}) {
   const {
     parentPort,
     registerBridges,
+    terminalDataPipeline,
   } = options;
   const ipcMain = createIpcMainHarness();
   let started = false;
-  const outputPorts = createOutputPortRegistry(parentPort);
+  const outputPorts = createOutputPortRegistry();
+  const pendingOutputBySession = new Map();
+  const sessionOutputGenerations = new Map();
   let urgentInputPorts = null;
+
+  const createWorkerOutputSender = () => createSender(
+    parentPort,
+    0,
+    outputPorts,
+    terminalDataPipeline,
+    pendingOutputBySession,
+    sessionOutputGenerations,
+  );
+
+  function replayWorkerOutput(sessionId, chunks) {
+    const sender = createWorkerOutputSender();
+    for (const chunk of chunks || []) {
+      const data = chunk && typeof chunk === "object" && "data" in chunk ? chunk.data : chunk;
+      const meta = chunk && typeof chunk === "object" ? chunk.meta : undefined;
+      const pipelineProcessed = meta?.pluginPipelineProcessed === true;
+      sender.send("netcatty:data", {
+        sessionId,
+        data,
+        meta,
+        tapped: true,
+        pipelineProcessed,
+      });
+    }
+  }
+
+  function invalidateSessionOutput(sessionId) {
+    if (!sessionId) return;
+    sessionOutputGenerations.set(
+      sessionId,
+      (sessionOutputGenerations.get(sessionId) ?? 0) + 1,
+    );
+    pendingOutputBySession.delete(sessionId);
+    outputPorts.closeSession(sessionId);
+    terminalDataPipeline?.detach?.(sessionId, undefined, "session-closed");
+  }
 
   async function handleRequest(message) {
     const handler = ipcMain.handlers.get(message.channel);
@@ -226,12 +373,23 @@ function createTerminalWorkerRuntime(options = {}) {
     }
     try {
       const result = await handler({
-        sender: createSender(parentPort, message.webContentsId, outputPorts),
+        sender: createSender(
+          parentPort,
+          message.webContentsId,
+          outputPorts,
+          terminalDataPipeline,
+          pendingOutputBySession,
+          sessionOutputGenerations,
+        ),
       }, message.payload);
+      const sessionId = result?.sessionId;
       parentPort.postMessage({
         kind: "response",
         requestId: message.requestId,
         result,
+        ...(typeof sessionId === "string"
+          ? { sessionGeneration: sessionOutputGenerations.get(sessionId) ?? 0 }
+          : {}),
       });
     } catch (err) {
       parentPort.postMessage({
@@ -246,6 +404,7 @@ function createTerminalWorkerRuntime(options = {}) {
     const listener = ipcMain.listeners.get(message.channel);
     if (!listener) return;
     if (message.channel === "netcatty:interrupt") {
+      terminalDataPipeline?.clearSensitiveInput?.(message.payload?.sessionId);
       const trace = normalizeTrace(message.payload);
       logTerminalInterruptDebug("worker-received-send", {
         channel: message.channel,
@@ -253,10 +412,17 @@ function createTerminalWorkerRuntime(options = {}) {
       }, trace);
     }
     if (message.channel === "netcatty:close" && message.payload?.sessionId) {
-      outputPorts.closeSession(message.payload.sessionId);
+      invalidateSessionOutput(message.payload.sessionId);
     }
     listener({
-      sender: createSender(parentPort, message.webContentsId, outputPorts),
+      sender: createSender(
+        parentPort,
+        message.webContentsId,
+        outputPorts,
+        terminalDataPipeline,
+        pendingOutputBySession,
+        sessionOutputGenerations,
+      ),
     }, message.payload);
   }
 
@@ -284,15 +450,33 @@ function createTerminalWorkerRuntime(options = {}) {
       return;
     }
     if (message?.kind === "output-port") {
-      outputPorts.open(message.sessionId, ports?.[0], message.bufferedOutput);
+      outputPorts.open(message.sessionId, ports?.[0]);
+      replayWorkerOutput(message.sessionId, message.bufferedOutput);
+      const pending = pendingOutputBySession.get(message.sessionId);
+      if (pending) {
+        void pending.then(
+          () => parentPort.postMessage({ kind: "output-port-ready", sessionId: message.sessionId }),
+          () => parentPort.postMessage({ kind: "output-port-ready", sessionId: message.sessionId }),
+        );
+      } else {
+        parentPort.postMessage({ kind: "output-port-ready", sessionId: message.sessionId });
+      }
+      return;
+    }
+    if (message?.kind === "terminal-interceptor-port") {
+      terminalDataPipeline?.attach?.(message, ports?.[0]);
+      return;
+    }
+    if (message?.kind === "terminal-interceptor-detach") {
+      terminalDataPipeline?.detach?.(message.sessionId, message.direction, "detached");
       return;
     }
     if (message?.kind === "output-flush") {
-      outputPorts.flush(message.sessionId, message.chunks);
+      replayWorkerOutput(message.sessionId, message.chunks);
       return;
     }
     if (message?.kind === "close-output-port") {
-      outputPorts.closeSession(message.sessionId);
+      invalidateSessionOutput(message.sessionId);
       return;
     }
     if (message?.kind === "output-drain") {
@@ -323,7 +507,14 @@ function createTerminalWorkerRuntime(options = {}) {
     start,
     ipcMain,
     createSender(webContentsId) {
-      return createSender(parentPort, webContentsId, outputPorts);
+      return createSender(
+        parentPort,
+        webContentsId,
+        outputPorts,
+        terminalDataPipeline,
+        pendingOutputBySession,
+        sessionOutputGenerations,
+      );
     },
     closeUrgentInputPortsForTest() {
       urgentInputPorts?.closeAll();

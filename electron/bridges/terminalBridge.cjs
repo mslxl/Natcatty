@@ -63,6 +63,7 @@ const { createPtyOutputBuffer } = require("./ptyOutputBuffer.cjs");
 const { enableTcpNoDelay } = require("./tcpNoDelay.cjs");
 const { releaseConnectionRef } = require("./sshConnectionPool.cjs");
 const { normalizeTerminalEncoding, encodeTerminalInput } = require("./terminalEncoding.cjs");
+const { isTerminalReportSequence } = require("./terminalReportSequence.cjs");
 const { receiveYmodemFiles, sendYmodemCancel, sendYmodemFile } = require("./ymodemTransfer.cjs");
 const {
   getNativeOpenSshAgentSocket,
@@ -78,6 +79,8 @@ let terminalOutputChannel = null;
 let selectZmodemUploadFiles = null;
 let selectZmodemDownloadDirectory = null;
 let reportOpenedSessionActivity = null;
+let terminalDataPipeline = null;
+const terminalInputPipelineBarriers = new Map();
 
 const DEFAULT_UTF8_LOCALE = "en_US.UTF-8";
 const LOGIN_SHELLS = new Set(["bash", "zsh", "fish", "ksh"]);
@@ -117,6 +120,8 @@ function init(deps) {
   reportOpenedSessionActivity = typeof deps.reportOpenedSessionActivity === "function"
     ? deps.reportOpenedSessionActivity
     : null;
+  terminalDataPipeline = deps.terminalDataPipeline || null;
+  terminalInputPipelineBarriers.clear();
   configureTerminalSessionDataEmitter({
     getSession: (sessionId) => sessions?.get(sessionId),
     outputChannel: terminalOutputChannel,
@@ -126,6 +131,11 @@ function init(deps) {
 }
 
 function openTerminalOutputSession(sessionId, webContents) {
+  const generation = webContents?.claimSessionGeneration?.(sessionId);
+  const session = sessions?.get?.(sessionId);
+  if (session && Number.isSafeInteger(generation)) {
+    session._terminalSessionGeneration = generation;
+  }
   terminalOutputChannel?.openSession?.(sessionId, webContents);
 }
 
@@ -239,6 +249,11 @@ function handleTerminalSessionSnapshotResponse(event, payload) {
     kittyKeyboardProtocolEnabled: typeof payload?.kittyKeyboardProtocolEnabled === "boolean"
       ? payload.kittyKeyboardProtocolEnabled
       : undefined,
+    passwordPromptActive: typeof payload?.passwordPromptActive === "boolean"
+      ? payload.passwordPromptActive
+      : undefined,
+    cwd: payload?.cwd === null ? null : typeof payload?.cwd === "string" ? payload.cwd : undefined,
+    title: payload?.title === null ? null : typeof payload?.title === "string" ? payload.title : undefined,
   });
 }
 
@@ -293,6 +308,11 @@ function applyTerminalSessionSnapshot(event, payload, terminalWorkerManager = nu
   const kittyKeyboardProtocolEnabled = typeof payload?.kittyKeyboardProtocolEnabled === "boolean"
     ? payload.kittyKeyboardProtocolEnabled
     : undefined;
+  const passwordPromptActive = typeof payload?.passwordPromptActive === "boolean"
+    ? payload.passwordPromptActive
+    : undefined;
+  const cwd = payload?.cwd === null ? null : typeof payload?.cwd === "string" ? payload.cwd : undefined;
+  const title = payload?.title === null ? null : typeof payload?.title === "string" ? payload.title : undefined;
   if (
     !sessionId
     || !hasSnapshot
@@ -338,6 +358,9 @@ function applyTerminalSessionSnapshot(event, payload, terminalWorkerManager = nu
           alternateScreen,
           kittyKeyboardModeState,
           kittyKeyboardProtocolEnabled,
+          passwordPromptActive,
+          cwd,
+          title,
           requestId,
         });
       } catch (err) {
@@ -370,7 +393,7 @@ function handleTerminalSessionApplySnapshotResponse(event, payload) {
  * by terminalWorkerManager (sessionWebContentsIds + output ports).
  * In-process mode: sessions Map in this bridge owns webContentsId.
  */
-function rebindTerminalSessionOutput(event, payload, terminalWorkerManager = null) {
+async function rebindTerminalSessionOutput(event, payload, terminalWorkerManager = null) {
   const sessionId = typeof payload?.sessionId === "string" ? payload.sessionId : "";
   if (!sessionId) {
     return { success: false, error: "Missing sessionId" };
@@ -385,9 +408,9 @@ function rebindTerminalSessionOutput(event, payload, terminalWorkerManager = nul
 
   if (terminalWorkerManager) {
     try {
-      const result = terminalWorkerManager.rebindOutputSession(sessionId, sender.id);
+      const result = await terminalWorkerManager.rebindOutputSession(sessionId, sender.id);
       if (result?.success && sender.isDestroyed?.()) {
-        restoreAttachedSessionOutput(sessionId, terminalWorkerManager);
+        await restoreAttachedSessionOutput(sessionId, terminalWorkerManager);
         return { success: false, error: "Attach window closed during rebind" };
       }
       return result;
@@ -413,7 +436,7 @@ function rebindTerminalSessionOutput(event, payload, terminalWorkerManager = nul
     openTerminalOutputSession(sessionId, sender);
     session.webContentsId = sender.id;
     if (sender.isDestroyed?.()) {
-      restoreAttachedSessionOutput(sessionId, terminalWorkerManager);
+      await restoreAttachedSessionOutput(sessionId, terminalWorkerManager);
       return { success: false, error: "Attach window closed during rebind" };
     }
     return {
@@ -457,7 +480,13 @@ function pauseSessionOutputFlow(sessionId, terminalWorkerManager = null) {
   try { setRendererFlowPaused(session, true); } catch {}
 }
 
-function fanoutSessionLifecycleEvent(sessionId, primaryWebContentsId, channel, payload) {
+function fanoutSessionLifecycleEvent(
+  sessionId,
+  primaryWebContentsId,
+  channel,
+  payload,
+  terminalSessionGeneration,
+) {
   const targets = new Set();
   if (typeof primaryWebContentsId === "number") targets.add(primaryWebContentsId);
   const homeId = attachHomeWebContentsIds.get(sessionId);
@@ -465,7 +494,9 @@ function fanoutSessionLifecycleEvent(sessionId, primaryWebContentsId, channel, p
   for (const id of targets) {
     try {
       const contents = electronModule?.webContents?.fromId?.(id);
-      contents?.send?.(channel, payload);
+      contents?.send?.(channel, Number.isSafeInteger(terminalSessionGeneration)
+        ? { ...payload, _terminalSessionGeneration: terminalSessionGeneration }
+        : payload);
     } catch {
       // ignore destroyed renderers
     }
@@ -495,7 +526,7 @@ function findRegisteredMainWebContents(preferredId) {
   return null;
 }
 
-function restoreAttachedSessionOutput(
+async function restoreAttachedSessionOutput(
   sessionId,
   terminalWorkerManager = null,
   preferredHomeWebContentsId = null,
@@ -504,7 +535,7 @@ function restoreAttachedSessionOutput(
   pauseSessionOutputFlow(sessionId, terminalWorkerManager);
   let result;
   if (terminalWorkerManager?.restoreAttachHome) {
-    result = terminalWorkerManager.restoreAttachHome(sessionId, preferredHomeWebContentsId);
+    result = await terminalWorkerManager.restoreAttachHome(sessionId, preferredHomeWebContentsId);
   } else {
     const homeId = attachHomeWebContentsIds.get(sessionId);
     if (homeId == null) {
@@ -545,7 +576,7 @@ function restoreAttachedSessionOutput(
  * Restore output to a previous renderer after an attach popup closes.
  * Falls back to the first live main-ish window if the home webContents is gone.
  */
-function restoreTerminalSessionOutput(event, payload, terminalWorkerManager = null) {
+async function restoreTerminalSessionOutput(event, payload, terminalWorkerManager = null) {
   const sessionId = typeof payload?.sessionId === "string" ? payload.sessionId : "";
   if (!sessionId) {
     return { success: false, error: "Missing sessionId" };
@@ -566,7 +597,7 @@ function restoreTerminalSessionOutput(event, payload, terminalWorkerManager = nu
       return { success: true, restored: false };
     }
     try {
-      const result = terminalWorkerManager.rebindOutputSession(sessionId, target.id);
+      const result = await terminalWorkerManager.rebindOutputSession(sessionId, target.id);
       if (!result?.success) {
         return { success: false, error: result?.error || "Failed to restore session output" };
       }
@@ -932,6 +963,7 @@ function startLocalSession(event, payload) {
   } = createPtyOutputBuffer((data, meta) => {
     const contents = electronModule.webContents.fromId(session.webContentsId);
     emitTerminalSessionData(contents, sessionId, data, {
+      session,
       cols: session.cols,
       rows: session.rows,
       meta,
@@ -965,21 +997,23 @@ function startLocalSession(event, payload) {
         return electronModule.webContents.fromId(session.webContentsId);
       },
       selectUploadFiles: selectZmodemUploadFiles
-        ? () => selectZmodemUploadFiles(session.webContentsId)
+        ? () => selectZmodemUploadFiles(session.webContentsId, sessionId)
         : undefined,
       selectDownloadDirectory: selectZmodemDownloadDirectory
-        ? () => selectZmodemDownloadDirectory(session.webContentsId)
+        ? () => selectZmodemDownloadDirectory(session.webContentsId, sessionId)
         : undefined,
       label: "Local",
     });
     session.zmodemSentry = zmodemSentry;
 
     proc.onData((data) => {
+      if (sessions.get(sessionId) !== session) return;
       if (!shouldProcessSessionOutput(session, zmodemSentry)) return;
       zmodemSentry.consume(data);
     });
   } else {
     proc.onData((data) => {
+      if (sessions.get(sessionId) !== session) return;
       if (!shouldProcessSessionOutput(session)) return;
       trackSessionIdlePrompt(session, data);
       bufferLocalData(data);
@@ -993,6 +1027,7 @@ function startLocalSession(event, payload) {
       if (localExitFinalized) return;
       localExitFinalized = true;
       sessionLogStreamManager.stopStream(sessionId, logStreamToken);
+      if (sessions.get(sessionId) !== session) return;
       ptyProcessTree.unregisterPid(sessionId);
       sessions.delete(sessionId);
       if (session.closed) return;
@@ -1005,6 +1040,7 @@ function startLocalSession(event, payload) {
         session.webContentsId,
         "netcatty:exit",
         { sessionId, ...evt, reason },
+        session._terminalSessionGeneration,
       );
     };
     flushLocalPaced(finalizeExit);
@@ -1195,6 +1231,7 @@ async function startSerialSession(event, options) {
             if (!decoded) return;
             const contents = electronModule.webContents.fromId(session.webContentsId);
             emitTerminalSessionData(contents, sessionId, decoded, {
+              session,
               cols: session.cols,
               rows: session.rows,
             });
@@ -1207,24 +1244,27 @@ async function startSerialSession(event, options) {
             return electronModule.webContents.fromId(session.webContentsId);
           },
           selectUploadFiles: selectZmodemUploadFiles
-            ? () => selectZmodemUploadFiles(session.webContentsId)
+            ? () => selectZmodemUploadFiles(session.webContentsId, sessionId)
             : undefined,
           selectDownloadDirectory: selectZmodemDownloadDirectory
-            ? () => selectZmodemDownloadDirectory(session.webContentsId)
+            ? () => selectZmodemDownloadDirectory(session.webContentsId, sessionId)
             : undefined,
           label: "Serial",
         });
         session.zmodemSentry = serialZmodemSentry;
 
         serialPort.on('data', (data) => {
+          if (sessions.get(sessionId) !== session) return;
           if (session.ymodemActive) return;
           if (!shouldProcessSessionOutput(session, serialZmodemSentry)) return;
           // data is already Buffer from serialport — feed to sentry
           serialZmodemSentry.consume(data);
         });
 
-        serialPort.on('error', (err) => {
-          console.error(`[Serial] Port error: ${err.message}`);
+        let serialExitFinalized = false;
+        const finalizeSerialExit = ({ exitCode, error, reason }) => {
+          if (serialExitFinalized || sessions.get(sessionId) !== session) return;
+          serialExitFinalized = true;
           session.zmodemSentry?.cancel();
           session.ymodemAbortController?.abort();
           sessionLogStreamManager.stopStream(sessionId, logStreamToken);
@@ -1236,25 +1276,19 @@ async function startSerialSession(event, options) {
             sessionId,
             primaryId,
             "netcatty:exit",
-            { sessionId, exitCode: 1, error: err.message, reason: "error" },
+            { sessionId, exitCode, ...(error ? { error } : {}), reason },
+            session._terminalSessionGeneration,
           );
+        };
+
+        serialPort.on('error', (err) => {
+          console.error(`[Serial] Port error: ${err.message}`);
+          finalizeSerialExit({ exitCode: 1, error: err.message, reason: "error" });
         });
 
         serialPort.on('close', () => {
           console.log(`[Serial] Port closed`);
-          session.zmodemSentry?.cancel();
-          session.ymodemAbortController?.abort();
-          sessionLogStreamManager.stopStream(sessionId, logStreamToken);
-          const primaryId = session.webContentsId;
-          ptyProcessTree.unregisterPid(sessionId);
-          sessions.delete(sessionId);
-          if (session.closed) return;
-          fanoutSessionLifecycleEvent(
-            sessionId,
-            primaryId,
-            "netcatty:exit",
-            { sessionId, exitCode: 0, reason: "closed" },
-          );
+          finalizeSerialExit({ exitCode: 0, reason: "closed" });
         });
 
         resolve({ sessionId });
@@ -1312,25 +1346,6 @@ function clearPendingAutomatedWrites(session) {
   if (!Array.isArray(timers) || timers.length === 0) return;
   for (const timer of timers) clearTimeout(timer);
   session.pendingAutomatedWriteTimers = [];
-}
-
-// Terminal-originated automatic replies (cursor position reports, device
-// attributes, focus in/out, etc.) travel through the same write path as user
-// keystrokes but must NOT be treated as "the user started typing". A terminal
-// routinely emits such a reply right after the first line runs; counting it as
-// manual input would clear the pending automated line-by-line writes and only
-// the first line would ever be sent (multi-line compose-bar input bug).
-function isTerminalReportSequence(data) {
-  if (typeof data !== "string" || data.length === 0) return false;
-  // Focus in/out reports: ESC [ I  /  ESC [ O
-  if (data === "\x1b[I" || data === "\x1b[O") return true;
-  // CPR / DECXCPR / DA1 / DA2 / DSR: ESC [ (?|>)? digits/semicolons (R|c|n)
-  if (/^\x1b\[[?>]?[0-9;]*[Rcn]$/.test(data)) return true;
-  // Kitty keyboard mode query reply: ESC [ ? digits u
-  if (/^\x1b\[\?[0-9]+u$/.test(data)) return true;
-  // DCS replies (XTGETTCAP / DECRQSS, etc.): ESC P ... ESC \
-  if (/^\x1bP[\s\S]*\x1b\\$/.test(data)) return true;
-  return false;
 }
 
 function splitTerminalInputIntoLineWrites(data) {
@@ -1467,6 +1482,51 @@ function writeToSessionNow(payload, data, logRewrite = payload.logRewrite) {
   }
 }
 
+function writeToSessionWithInterception(
+  payload,
+  data,
+  logRewrite = payload.logRewrite,
+  expectedSession = sessions.get(payload.sessionId),
+) {
+  const bypass = payload?.sensitive === true || isTerminalReportSequence(data);
+  const hasInterceptor = Boolean(
+    terminalDataPipeline?.interceptInput
+    && terminalDataPipeline.has?.(payload.sessionId, "input"),
+  );
+  const previous = terminalInputPipelineBarriers.get(payload.sessionId);
+  if (!hasInterceptor && !previous) {
+    writeToSessionNow(payload, data, logRewrite);
+    return;
+  }
+  const writeIfCurrent = (nextData) => {
+    const current = sessions.get(payload.sessionId);
+    if (!current || current !== expectedSession || current.closed) return;
+    writeToSessionNow(payload, nextData, logRewrite);
+  };
+  const write = async () => {
+    if (!hasInterceptor) {
+      writeIfCurrent(data);
+      return;
+    }
+    try {
+      const transformed = await terminalDataPipeline.interceptInput(payload.sessionId, data, {
+        sensitive: payload?.sensitive === true,
+        bypass,
+      });
+      writeIfCurrent(transformed);
+    } catch {
+      writeIfCurrent(data);
+    }
+  };
+  const operation = previous ? previous.then(write, write) : Promise.resolve().then(write);
+  terminalInputPipelineBarriers.set(payload.sessionId, operation);
+  void operation.finally(() => {
+    if (terminalInputPipelineBarriers.get(payload.sessionId) === operation) {
+      terminalInputPipelineBarriers.delete(payload.sessionId);
+    }
+  });
+}
+
 function writeToSession(event, payload) {
   const session = sessions.get(payload.sessionId);
   if (!session) return;
@@ -1493,10 +1553,11 @@ function writeToSession(event, payload) {
       const sendChunk = () => {
         const current = sessions.get(payload.sessionId);
         if (!current) return;
-        writeToSessionNow(
+        writeToSessionWithInterception(
           { ...payload, lineDelayMs: undefined },
           chunk,
           index === 0 ? payload.logRewrite : undefined,
+          current,
         );
       };
       if (index === 0) {
@@ -1509,7 +1570,7 @@ function writeToSession(event, payload) {
     return;
   }
 
-  writeToSessionNow(payload, payload.data);
+  writeToSessionWithInterception(payload, payload.data, payload.logRewrite, session);
 }
 
 function drainPendingOutputForInterrupt(sessionId, session, trace) {
@@ -1534,6 +1595,7 @@ function drainPendingOutputForInterrupt(sessionId, session, trace) {
   const outputMeta = takePendingInterruptOutputMeta(session, pendingMeta);
   const contents = electronModule.webContents.fromId(session.webContentsId);
   emitTerminalSessionData(contents, sessionId, output.data, {
+    session,
     cols: session.cols,
     rows: session.rows,
     meta: outputMeta,
@@ -1761,7 +1823,9 @@ function closeSession(event, payload) {
     session.webContentsId,
     "netcatty:exit",
     { sessionId: payload.sessionId, exitCode: 0, reason: "closed" },
+    session._terminalSessionGeneration,
   );
+  terminalInputPipelineBarriers.delete(payload.sessionId);
   closeTerminalOutputSession(payload.sessionId);
 
   try {

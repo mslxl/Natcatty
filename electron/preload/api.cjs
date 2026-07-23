@@ -199,6 +199,7 @@ function createPreloadApi(ctx) {
       sessionId,
       data,
       automated: Boolean(options?.automated),
+      sensitive: options?.sensitive === true,
       lineDelayMs: Number.isFinite(lineDelayMs) && lineDelayMs > 0 ? lineDelayMs : undefined,
       logRewrite: options?.logRewrite && typeof options.logRewrite === "object"
         ? {
@@ -382,6 +383,9 @@ function createPreloadApi(ctx) {
     snapshot,
     kittyKeyboardModeState,
     kittyKeyboardProtocolEnabled,
+    passwordPromptActive,
+    cwd,
+    title,
   ) => {
     ipcRenderer.send("netcatty:terminal:snapshot-response", {
       requestId,
@@ -390,6 +394,11 @@ function createPreloadApi(ctx) {
       kittyKeyboardProtocolEnabled: typeof kittyKeyboardProtocolEnabled === "boolean"
         ? kittyKeyboardProtocolEnabled
         : undefined,
+      passwordPromptActive: typeof passwordPromptActive === "boolean"
+        ? passwordPromptActive
+        : undefined,
+      cwd: cwd === null ? null : typeof cwd === "string" ? cwd : undefined,
+      title: title === null ? null : typeof title === "string" ? title : undefined,
     });
   },
   applyTerminalSessionSnapshot: (sessionId, snapshot, context, authorization) =>
@@ -408,6 +417,11 @@ function createPreloadApi(ctx) {
       kittyKeyboardProtocolEnabled: typeof context?.kittyKeyboardProtocolEnabled === "boolean"
         ? context.kittyKeyboardProtocolEnabled
         : undefined,
+      passwordPromptActive: typeof context?.passwordPromptActive === "boolean"
+        ? context.passwordPromptActive
+        : undefined,
+      cwd: context?.cwd === null ? null : typeof context?.cwd === "string" ? context.cwd : undefined,
+      title: context?.title === null ? null : typeof context?.title === "string" ? context.title : undefined,
       authorization,
     }),
   markAttachPopupClosePrepared: (sessionId, authorization) =>
@@ -487,7 +501,7 @@ function createPreloadApi(ctx) {
       displayDataListeners.get(sessionId).add(cb);
       const pendingEntry = terminalDataBacklog?.takeEntry?.(sessionId)
         ?? { data: terminalDataBacklog?.take?.(sessionId) || "", meta: undefined };
-      if (pendingEntry.data) {
+      if (pendingEntry.data || Number(pendingEntry.meta?.pluginPipelineIngressBytes) > 0) {
         try {
           cb(pendingEntry.data, pendingEntry.meta);
         } catch (err) {

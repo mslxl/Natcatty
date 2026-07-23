@@ -778,7 +778,11 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   const appLevelActions = getAppLevelActions();
   const terminalActions = getTerminalPassthroughActions();
   const broadcastUserPasteData = (data: string) => {
-    if (ctx.isBroadcastEnabledRef.current && ctx.onBroadcastInputRef.current) {
+    if (
+      ctx.passwordPromptActiveRef?.current !== true
+      && ctx.isBroadcastEnabledRef.current
+      && ctx.onBroadcastInputRef.current
+    ) {
       ctx.onBroadcastInputRef.current(data, ctx.sessionId);
       return true;
     }
@@ -920,6 +924,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     const inputSource = options?.source ?? "terminal";
     const id = ctx.sessionRef.current;
     const dataToWrite = data;
+    const sensitive = ctx.passwordPromptActiveRef?.current === true;
     let handledSubmittedInput = false;
     const submittedInput: { text: string; lineEnding: "\r\n" | "\r" | "\n" } | null =
       inputSource === "shift-enter"
@@ -931,7 +936,8 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     const broadcastDataBeforeSudo = mapTerminalBackspaceInput(data, ctx.host.backspaceBehavior);
     const suppressTerminalBroadcast = inputSource === "terminal" && suppressNextTerminalDataBroadcast;
     if (suppressTerminalBroadcast) suppressNextTerminalDataBroadcast = false;
-    const willBroadcastInput = inputSource !== "kitty" &&
+    const willBroadcastInput = !sensitive &&
+      inputSource !== "kitty" &&
       !handlingKittyBroadcast &&
       !suppressTerminalBroadcast &&
       !!id && shouldBroadcastTerminalUserInput(term, broadcastDataBeforeSudo, {
@@ -939,7 +945,6 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       hasBroadcastInputHandler: !!onBroadcastInput,
     });
     if (ctx.statusRef.current === "connected" && submittedInput) {
-      const sensitive = ctx.passwordPromptActiveRef?.current === true;
       if (submittedInput.text) {
         ctx.commandBufferRef.current += submittedInput.text;
         ctx.scriptRecorderRef?.current?.recordInput(submittedInput.text);
@@ -971,7 +976,6 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     ) {
       const pastedCommand = getSinglePastedCommand(data);
       if (pastedCommand) {
-        const sensitive = ctx.passwordPromptActiveRef?.current === true;
         if (ctx.passwordPromptActiveRef) ctx.passwordPromptActiveRef.current = false;
         const recordedCommand = recordTerminalCommandExecution(
           `${ctx.commandBufferRef.current}${pastedCommand.command}`,
@@ -1010,7 +1014,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
           localEcho: ctx.serialLocalEcho,
           writeToSession: (nextData) => {
             ctx.onOutputTriggerUserInputRef?.current?.(nextData);
-            ctx.terminalBackend.writeToSession(id, nextData);
+            ctx.terminalBackend.writeToSession(id, nextData, { sensitive });
           },
           writeToTerminal: writeLocalTerminalData,
         });
@@ -1019,7 +1023,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         // When backspaceBehavior is configured, remap the Backspace key output
         const outData = mapTerminalBackspaceInput(dataToWrite, ctx.host.backspaceBehavior);
         ctx.onOutputTriggerUserInputRef?.current?.(outData);
-        ctx.terminalBackend.writeToSession(id, outData);
+        ctx.terminalBackend.writeToSession(id, outData, { sensitive });
 
         // Local echo for serial connections only when explicitly enabled
         if (inputSource !== "kitty" && ctx.host.protocol === "serial" && ctx.serialLocalEcho) {
@@ -1111,6 +1115,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     sourceSessionId: ctx.sessionId,
     isHandlingBroadcast: () => handlingKittyBroadcast,
     isBroadcastEnabled: () => ctx.isBroadcastEnabledRef.current,
+    isSensitiveInput: () => ctx.passwordPromptActiveRef?.current === true,
     getDispatcher: () => ctx.onBroadcastInputRef.current,
   });
 
@@ -1327,6 +1332,9 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
           serialLineBufferRef: ctx.serialLineBufferRef,
           onAutocompleteInput: ctx.onAutocompleteInput,
         });
+        if (ctx.passwordPromptActiveRef) {
+          ctx.passwordPromptActiveRef.current = false;
+        }
         if (ctx.terminalBackend.interruptSession) {
           ctx.terminalBackend.interruptSession(id, interruptTrace);
         } else {
@@ -1543,11 +1551,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       if (id) {
         e.preventDefault();
         e.stopPropagation();
-        ctx.onAutocompleteInput?.(wordJumpSequence);
-        ctx.terminalBackend.writeToSession(id, wordJumpSequence);
-        if (ctx.isBroadcastEnabledRef.current && ctx.onBroadcastInputRef.current) {
-          ctx.onBroadcastInputRef.current(wordJumpSequence, ctx.sessionId);
-        }
+        handleTerminalInputData(wordJumpSequence);
         scrollToBottomAfterInput(wordJumpSequence);
         return false;
       }
@@ -1737,6 +1741,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       legacySuppressedKeys: broadcastLegacySuppressedKeys,
     }),
     getSessionId: () => ctx.sessionRef.current,
+    isSensitiveInput: () => ctx.passwordPromptActiveRef?.current === true,
     isConnected: () => ctx.statusRef.current === "connected",
     isRuntimeDisposed: () => runtimeDisposed,
     interruptSession: ctx.terminalBackend.interruptSession
@@ -1745,6 +1750,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     writeDisposed: (id, data) => ctx.terminalBackend.writeToSession(
       id,
       mapTerminalBackspaceInput(data, ctx.host.backspaceBehavior),
+      { sensitive: ctx.passwordPromptActiveRef?.current === true },
     ),
     writeActive: (data) => handleTerminalInputData(data, { source: "kitty" }),
   });
@@ -1909,7 +1915,15 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
             binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
           }
           const b64 = btoa(binary);
-          ctx.terminalBackend.writeToSession(sessionId, `\x1b]52;${target};${b64}\x07`);
+          // This host-generated protocol reply contains clipboard contents. It
+          // must bypass plugin input interceptors just like password/OTP data;
+          // otherwise terminal interception would become an undeclared
+          // clipboard-read capability.
+          ctx.terminalBackend.writeToSession(
+            sessionId,
+            `\x1b]52;${target};${b64}\x07`,
+            { sensitive: true },
+          );
         };
         doRead().catch((err) => {
           logger.warn('[XTerm] OSC 52 clipboard read failed:', err);

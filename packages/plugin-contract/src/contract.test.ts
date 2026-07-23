@@ -59,6 +59,55 @@ test("plugin manifest schema accepts the internal contract", () => {
   assert.equal(validate({ ...validManifest, version: "1.0.0-01" }), false);
 });
 
+test("terminal interceptor fast-path frames are owned by the canonical schema", () => {
+  const validate = validator("TerminalInterceptorFrame");
+  assert.equal(validate({
+    type: "netcatty:terminal-interceptor:ready",
+    sessionId: "session-1",
+    direction: "input",
+    windowBytes: 65_536,
+  }), true, JSON.stringify(validate.errors));
+  assert.equal(validate({
+    type: "netcatty:terminal-interceptor:chunk",
+    sequence: 1,
+    direction: "output",
+    creditBytes: 262_144,
+    byteLength: 65_536,
+  }), true, JSON.stringify(validate.errors));
+  assert.equal(validate({
+    type: "netcatty:terminal-interceptor:result",
+    sequence: 1,
+    status: "ok",
+    creditBytes: 65_536,
+    byteLength: 0,
+  }), true, JSON.stringify(validate.errors));
+  assert.equal(validate({
+    type: "netcatty:terminal-interceptor:result",
+    sequence: 1,
+    status: "failed",
+  }), true, JSON.stringify(validate.errors));
+  assert.equal(validate({
+    type: "netcatty:terminal-interceptor:chunk",
+    sequence: 0,
+    direction: "input",
+    creditBytes: 1,
+    byteLength: 1,
+  }), false);
+  assert.equal(validate({
+    type: "netcatty:terminal-interceptor:chunk",
+    sequence: 1,
+    direction: "input",
+    creditBytes: 1,
+    byteLength: 65_537,
+  }), false);
+  assert.equal(validate({
+    type: "netcatty:terminal-interceptor:result",
+    sequence: 1,
+    status: "failed",
+    byteLength: 0,
+  }), false);
+});
+
 test("required resource-scoped permissions declare activation-time bounds", () => {
   const validate = validator("PluginManifest");
   const resourceScoped = [
@@ -167,6 +216,10 @@ test("RPC, stream, permission, and provider schemas validate independently", () 
   const initialize = validator("RuntimeInitializeParams");
   const initializeRequest = validator("RuntimeInitializeRequest");
   const initializeSuccess = validator("RuntimeInitializeSuccess");
+  const interceptorAttachmentParams = validator("TerminalInterceptorAttachmentParams");
+  const interceptorAttachmentResult = validator("TerminalInterceptorAttachmentResult");
+  const interceptorAttachmentRequest = validator("TerminalInterceptorAttachmentRequest");
+  const interceptorAttachmentSuccess = validator("TerminalInterceptorAttachmentSuccess");
   const permission = validator("PermissionRequest");
   const permissionDecision = validator("PermissionDecision");
   const secretRef = validator("SecretRef");
@@ -241,6 +294,57 @@ test("RPC, stream, permission, and provider schemas validate independently", () 
     jsonrpc: "2.0",
     id: "init-1",
     result: { unsupportedShape: true },
+  }), false);
+  const attachmentParams = {
+    descriptor: {
+      providerId: "com.example.contract-test.interceptor",
+      direction: "input",
+      session: {
+        sessionId: "terminal-session-1",
+        protocol: "ssh",
+        status: "connected",
+        cols: 120,
+        rows: 40,
+      },
+    },
+  };
+  assert.equal(interceptorAttachmentParams(attachmentParams), true, JSON.stringify(interceptorAttachmentParams.errors));
+  assert.equal(interceptorAttachmentParams({
+    descriptor: { ...attachmentParams.descriptor, session: { sessionId: "terminal-session-1" } },
+  }), false);
+  assert.equal(interceptorAttachmentParams({
+    descriptor: { ...attachmentParams.descriptor, unexpected: true },
+  }), false);
+  assert.equal(interceptorAttachmentResult({ accepted: true }), true, JSON.stringify(interceptorAttachmentResult.errors));
+  assert.equal(interceptorAttachmentResult({ accepted: false }), false);
+  assert.equal(interceptorAttachmentResult({ accepted: true, unexpected: true }), false);
+  assert.equal(interceptorAttachmentRequest({
+    jsonrpc: "2.0",
+    id: "attach-1",
+    method: "plugin.terminal.interceptor.attach",
+    params: attachmentParams,
+  }), true, JSON.stringify(interceptorAttachmentRequest.errors));
+  assert.equal(rpcMessage({
+    jsonrpc: "2.0",
+    id: "attach-1",
+    method: "plugin.terminal.interceptor.attach",
+    params: attachmentParams,
+  }), true, JSON.stringify(rpcMessage.errors));
+  assert.equal(rpcMessage({
+    jsonrpc: "2.0",
+    id: "attach-1",
+    method: "plugin.terminal.interceptor.attach",
+    params: { descriptor: { providerId: "com.example.contract-test.interceptor" } },
+  }), false);
+  assert.equal(interceptorAttachmentSuccess({
+    jsonrpc: "2.0",
+    id: "attach-1",
+    result: { accepted: true },
+  }), true, JSON.stringify(interceptorAttachmentSuccess.errors));
+  assert.equal(interceptorAttachmentSuccess({
+    jsonrpc: "2.0",
+    id: "attach-1",
+    result: { accepted: false },
   }), false);
   assert.equal(failure({
     jsonrpc: "2.0",
@@ -924,11 +1028,14 @@ test("terminal provider kinds require their least-privilege data capabilities", 
   });
   assert.equal(insufficient.valid, false);
   assert.match(insufficient.errors.join("\n"), /terminal\.intercept\.input/);
+  assert.match(insufficient.errors.join("\n"), /runtime\.advanced/);
+  assert.match(insufficient.errors.join("\n"), /Node utility entrypoint/);
 
   const sufficient = validateManifestValue({
     ...validManifest,
+    main: { ...validManifest.main, node: "dist/node.js" },
     permissions: {
-      required: ["provider.terminal", "terminal.intercept.input"],
+      required: ["runtime.advanced", "provider.terminal", "terminal.intercept.input"],
     },
     contributes: { providers: [provider] },
   });
@@ -1047,8 +1154,10 @@ test("planned phase consumers are representable without private application type
     },
     {
       ...validManifest,
+      main: { ...validManifest.main, node: "dist/node.js" },
       permissions: {
         required: [
+          "runtime.advanced",
           "provider.terminal",
           "terminal.intercept.input",
           "terminal.intercept.output",

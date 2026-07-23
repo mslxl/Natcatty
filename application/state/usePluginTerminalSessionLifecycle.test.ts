@@ -2,9 +2,23 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  beginPluginTerminalSessionMountLifecycle,
   normalizePluginTerminalProtocol,
+  ownsPluginTerminalBackendLifecycle,
+  shouldPublishPluginTerminalSessionMountLifecycle,
+  shouldPublishPluginTerminalEvent,
   transitionPluginTerminalConnectionState,
 } from './usePluginTerminalSessionLifecycle.ts';
+
+test('an attached renderer does not claim creation or disposal of the reused backend session', () => {
+  assert.equal(ownsPluginTerminalBackendLifecycle(undefined), true);
+  assert.equal(ownsPluginTerminalBackendLifecycle(true), true);
+  assert.equal(ownsPluginTerminalBackendLifecycle(false), false);
+  for (const type of ['created', 'connected', 'reconnected', 'disconnected', 'disposed'] as const) {
+    assert.equal(shouldPublishPluginTerminalEvent(type, false), false);
+  }
+  assert.equal(shouldPublishPluginTerminalEvent('resized', false), true);
+});
 
 const connectedState = {
   cwd: '/srv/old',
@@ -89,4 +103,26 @@ test('terminal lifecycle snapshots preserve dynamic protocol identifiers', () =>
   );
   assert.equal(normalizePluginTerminalProtocol('mosh'), 'mosh');
   assert.equal(normalizePluginTerminalProtocol(undefined), 'ssh');
+});
+
+test('an attach popup does not publish backend session mount or disposal lifecycle', () => {
+  assert.equal(shouldPublishPluginTerminalSessionMountLifecycle(true), false);
+  assert.equal(shouldPublishPluginTerminalSessionMountLifecycle(false), true);
+
+  const events: string[] = [];
+  const cleanup = beginPluginTerminalSessionMountLifecycle(
+    shouldPublishPluginTerminalSessionMountLifecycle(true),
+    () => events.push('created'),
+    () => events.push('disposed'),
+  );
+  cleanup?.();
+  assert.deepEqual(events, []);
+
+  const ownerCleanup = beginPluginTerminalSessionMountLifecycle(
+    shouldPublishPluginTerminalSessionMountLifecycle(false),
+    () => events.push('created'),
+    () => events.push('disposed'),
+  );
+  ownerCleanup?.();
+  assert.deepEqual(events, ['created', 'disposed']);
 });

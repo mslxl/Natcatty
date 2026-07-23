@@ -310,6 +310,8 @@ declare global {
       data: string,
       options?: {
         automated?: boolean;
+        /** Host-classified secret/no-echo input; always bypasses plugin observers and interceptors. */
+        sensitive?: boolean;
         lineDelayMs?: number;
         logRewrite?: { sentCommand: string; displayCommand: string };
       },
@@ -345,6 +347,9 @@ declare global {
       snapshot?: string;
       kittyKeyboardModeState?: NetcattyKittyKeyboardModeState;
       kittyKeyboardProtocolEnabled?: boolean;
+      passwordPromptActive?: boolean;
+      cwd?: string | null;
+      title?: string | null;
       error?: string;
     }>;
     /** Home renderer: listen for snapshot requests. */
@@ -357,6 +362,9 @@ declare global {
       snapshot: string,
       kittyKeyboardModeState?: NetcattyKittyKeyboardModeState,
       kittyKeyboardProtocolEnabled?: boolean,
+      passwordPromptActive?: boolean,
+      cwd?: string | null,
+      title?: string | null,
     ): void;
     /** Observe popup: push current state back to the home renderer before restore. */
     applyTerminalSessionSnapshot?(
@@ -369,6 +377,9 @@ declare global {
         alternateScreen: boolean;
         kittyKeyboardModeState?: NetcattyKittyKeyboardModeState;
         kittyKeyboardProtocolEnabled?: boolean;
+        passwordPromptActive?: boolean;
+        cwd?: string | null;
+        title?: string | null;
       },
       authorization: string,
     ): Promise<{
@@ -388,6 +399,9 @@ declare global {
         alternateScreen: boolean;
         kittyKeyboardModeState?: NetcattyKittyKeyboardModeState;
         kittyKeyboardProtocolEnabled?: boolean;
+        passwordPromptActive?: boolean;
+        cwd?: string | null;
+        title?: string | null;
         requestId: string;
       }) => boolean | Promise<boolean>,
     ): () => void;
@@ -437,6 +451,12 @@ declare global {
           /** True while Mosh is still on the ephemeral SSH handshake PTY. */
           moshHandshake?: boolean;
           terminalPerf?: NetcattyTerminalOutputPerfMeta;
+          /** Original host output units acknowledged even when an interceptor changes display length. */
+          pluginPipelineIngressBytes?: number;
+          /** Host-owned provenance marker for output already processed by an interceptor. */
+          pluginPipelineProcessed?: boolean;
+          /** Host-classified authentication prompt state for protecting subsequent input. */
+          pluginPipelineSensitiveInput?: boolean;
         },
       ) => void,
       options?: { replayBacklog?: boolean },

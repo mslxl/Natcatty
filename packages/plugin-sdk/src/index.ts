@@ -11,6 +11,7 @@ import type {
   SecretLeaseRef,
   SecretRef,
   SemanticVersion,
+  TerminalSessionSnapshot,
 } from "@netcatty/plugin-contract";
 
 export type * from "@netcatty/plugin-contract";
@@ -101,33 +102,58 @@ export type PluginProviderHandler<
   TResult extends JsonValue = JsonValue,
 > = (invocation: PluginProviderInvocation<TPayload>) => TResult | void | Promise<TResult | void>;
 
+type ProviderHandlerForKind<
+  K extends ProviderKind,
+  TPayload extends JsonValue,
+  TResult extends JsonValue,
+> = K extends TerminalInterceptorKind
+  ? TerminalInterceptorHandler
+  : K extends OrdinaryTerminalProviderKind
+    ? OrdinaryTerminalProviderHandler<K>
+    : PluginProviderHandler<TPayload, TResult>;
+
 export interface PluginProviders {
   register<K extends OrdinaryTerminalProviderKind>(
     providerId: string,
     kind: K,
     handler: OrdinaryTerminalProviderHandler<K>,
   ): Disposable;
+  register(
+    providerId: string,
+    kind: TerminalInterceptorKind,
+    handler: TerminalInterceptorHandler,
+  ): Disposable;
   register<TPayload extends JsonValue = JsonValue, TResult extends JsonValue = JsonValue>(
     providerId: string,
-    kind: ProviderKind,
+    kind: Exclude<ProviderKind, TerminalInterceptorKind>,
     handler: PluginProviderHandler<TPayload, TResult>,
+  ): Disposable;
+  register<
+    K extends ProviderKind,
+    TPayload extends JsonValue = JsonValue,
+    TResult extends JsonValue = JsonValue,
+  >(
+    providerId: string,
+    kind: K,
+    handler: ProviderHandlerForKind<NoInfer<K>, TPayload, TResult>,
   ): Disposable;
 }
 
-export interface TerminalSessionSnapshot {
-  readonly sessionId: string;
-  readonly hostId?: string;
-  readonly workspaceId?: string;
-  /** Built-in or namespaced plugin connection protocol identifier. */
-  readonly protocol: string;
-  readonly status: "connecting" | "connected" | "disconnected";
-  readonly cwd?: string;
-  readonly title?: string;
-  readonly shellType?: "posix" | "fish" | "powershell" | "cmd" | "unknown";
-  readonly cols?: number;
-  readonly rows?: number;
-  readonly alternateScreen?: boolean;
+export type TerminalInterceptorKind = "terminal.interceptor.input" | "terminal.interceptor.output";
+
+export interface TerminalInterceptorInvocation {
+  readonly providerId: string;
+  readonly kind: TerminalInterceptorKind;
+  readonly direction: "input" | "output";
+  readonly sequence: number;
+  readonly session: TerminalSessionSnapshot;
+  /** UTF-8 terminal data. The buffer is owned by this invocation. */
+  readonly data: Uint8Array;
 }
+
+export type TerminalInterceptorHandler = (
+  invocation: TerminalInterceptorInvocation,
+) => Uint8Array | ArrayBuffer | Promise<Uint8Array | ArrayBuffer>;
 
 export interface TerminalSessionEvent {
   readonly type:

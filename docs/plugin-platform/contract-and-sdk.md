@@ -367,8 +367,14 @@ Phase-5 Provider handlers are activation-owned SDK registrations. The host
 performs immutable enumeration without activation, authorizes the exact
 Provider permission set at first use, invokes through `RuntimeSupervisor`, and
 validates the canonical Provider result plus the terminal operation's bounded
-result shape before application use. Raw terminal interceptors remain reserved
-for the separate phase-6 transport.
+result shape before application use. Phase 6 reuses the same declarations and
+registration ownership but moves raw terminal bytes onto a dedicated
+worker-to-utility MessagePort; they never traverse the JSON-RPC control plane.
+The ready, chunk, successful-result, and failed-result frame metadata is owned
+by `TerminalInterceptorFrame` in the canonical Schema. Both peers validate the
+generated Schema shape and the shared transfer envelope verifies that only
+chunk and successful-result frames carry a real attached `ArrayBuffer` whose
+length exactly matches the declared bounded `byteLength`.
 
 `PluginSecretStore.get()` never returns plaintext. It returns a host-issued
 `SecretRef`. Its random ID stays opaque; its non-secret `key` binds later lease
@@ -531,7 +537,7 @@ The cross-phase contract was checked against every planned consumer:
 | PR 3 security | principal-bound grants, canonical resources, permission requests/decisions, `SecretRef`/`CredentialRef`/`SecretLeaseRef`, mediated SDK capabilities, stable failures and cancellation |
 | PR 4 contributions | namespaced settings, commands, menus, views and strict semantic references |
 | PR 5 terminal providers | namespaced provider IDs, provider request/result envelopes and bounded streams |
-| PR 6 data pipeline | MessagePort transfer envelopes, base64 stdio fallback, sequence and receive-window fields |
+| PR 6 data pipeline | direct MessagePort transfer envelopes, sequence, per-chunk credit, and bounded receive-window fields |
 | PR 7 connection/auth/import | provider kinds and configuration schemas, platform-specific companion variants, framing, stable failures and progress |
 | PR 8 sync | namespaced sync providers and JSON/binary bounded transport |
 | PR 9 rollout | schema/API selection, compatibility reporting and the final API 1.0 freeze |

@@ -347,7 +347,7 @@ export const getFlowController = (
 
 export const resetTerminalLineTimestampState = resetTerminalLineTimestamps;
 
-const acknowledgeDroppedTerminalDisplayBytes = (
+export const acknowledgeDroppedTerminalDisplayBytes = (
   ctx: TerminalSessionStartersContext,
   bytes: number,
 ): void => {
@@ -443,9 +443,10 @@ const writeSessionDataImmediate = (
   // Tabby-like: under bulk pressure, force a yield after sizable shards so the
   // event loop can paint/input between xterm parses (serial queue otherwise
   // chains the next write the moment the callback fires).
+  const displayBytes = data.length;
   const bulkYieldAfter = shouldDegradeTerminalSideWork(term)
-    && ingressBytes >= XTERM_WRITE_CALLBACK_FAST_PATH_MAX_BYTES;
-  enqueueTerminalWrite(term, ingressBytes, (done) => {
+    && displayBytes >= XTERM_WRITE_CALLBACK_FAST_PATH_MAX_BYTES;
+  enqueueTerminalWrite(term, displayBytes, (done) => {
     const shouldMeasurePerf = Boolean(writeOptions.perfTrace);
     const queueItemStartedAt = shouldMeasurePerf ? performance.now() : 0;
     const prepareStartedAt = shouldMeasurePerf ? performance.now() : 0;
@@ -620,6 +621,7 @@ const writeSessionDataImmediate = (
       }
     });
   }, {
+    dropBytes: ingressBytes,
     deferStart: writeOptions.deferStart,
     // Intermediate plain shards set yieldAfter via writeLargeTerminalBatch;
     // bulk pressure also yields after sizable items (Tabby FlowControl intent).
@@ -743,7 +745,7 @@ export const attachSessionToTerminal = (
     mode: assistMode,
     password,
     candidates,
-    write: (data) => ctx.terminalBackend.writeToSession(id, data, { automated: true }),
+    write: (data) => ctx.terminalBackend.writeToSession(id, data, { automated: true, sensitive: true }),
     onHint: (active) => ctx.onSudoHint?.(active) ?? false,
     onPicker: (active, state) => ctx.onPasswordPromptPicker?.(active, state) ?? false,
   });
@@ -751,14 +753,58 @@ export const attachSessionToTerminal = (
     ctx.sudoAutofillRef.current = sudoAutofill;
   }
 
+  const markConnectedOnFirstOutput = () => {
+    if (ctx.hasConnectedRef.current) return;
+    ctx.updateStatus("connected");
+    opts?.onConnected?.();
+    setTimeout(() => {
+      if (ctx.isVisibleRef?.current === false) {
+        notePendingOutputScrollIfEnabled(ctx);
+        return;
+      }
+      if (!ctx.fitAddonRef.current) return;
+      try {
+        ctx.fitAddonRef.current.fit();
+        if (ctx.sessionRef.current) {
+          ctx.terminalBackend.resizeSession(ctx.sessionRef.current, term.cols, term.rows);
+        }
+      } catch (err) {
+        logger.warn("Post-connect fit failed", err);
+      }
+    }, 100);
+  };
+
   ctx.disposeDataRef.current = ctx.terminalBackend.onSessionData(
     id,
     (chunk, meta) => {
+      if (typeof meta?.pluginPipelineSensitiveInput === "boolean" && ctx.passwordPromptActiveRef) {
+        ctx.passwordPromptActiveRef.current = meta.pluginPipelineSensitiveInput;
+      }
       const filtered = filterTerminalInterruptDisplayOutput(term, chunk);
-      acknowledgeDroppedTerminalDisplayBytes(ctx, filtered.droppedBytes);
+      const pluginPipelineIngressBytes = Number.isFinite(meta?.pluginPipelineIngressBytes)
+        ? Math.max(0, Number(meta?.pluginPipelineIngressBytes))
+        : null;
+      if (filtered.accepted && !filtered.data && pluginPipelineIngressBytes != null) {
+        markConnectedOnFirstOutput();
+        if (typeof meta?.pluginPipelineSensitiveInput === "boolean") {
+          ctx.onTerminalOutput?.("", meta);
+        }
+        acknowledgeDroppedTerminalDisplayBytes(ctx, pluginPipelineIngressBytes);
+        return;
+      }
+      acknowledgeDroppedTerminalDisplayBytes(
+        ctx,
+        !filtered.accepted && pluginPipelineIngressBytes != null
+          ? pluginPipelineIngressBytes
+          : pluginPipelineIngressBytes != null
+            ? 0
+            : filtered.droppedBytes,
+      );
       if (!filtered.accepted) return;
 
-      const ingressBytes = filtered.acceptedBytes ?? filtered.data.length;
+      const ingressBytes = pluginPipelineIngressBytes
+        ?? filtered.acceptedBytes
+        ?? filtered.data.length;
       let data = filtered.data;
       if (opts?.convertLfToCrlf) {
         data = data.replace(/(?<!\r)\n/g, "\r\n");
@@ -771,25 +817,7 @@ export const attachSessionToTerminal = (
       // remain reachable. Startup commands / pending scripts are gated
       // separately on netcatty:mosh:ready so they do not hit the handshake
       // PTY (#2199).
-      if (!ctx.hasConnectedRef.current) {
-        ctx.updateStatus("connected");
-        opts?.onConnected?.();
-        setTimeout(() => {
-          if (ctx.isVisibleRef?.current === false) {
-            notePendingOutputScrollIfEnabled(ctx);
-            return;
-          }
-          if (!ctx.fitAddonRef.current) return;
-          try {
-            ctx.fitAddonRef.current.fit();
-            if (ctx.sessionRef.current) {
-              ctx.terminalBackend.resizeSession(ctx.sessionRef.current, term.cols, term.rows);
-            }
-          } catch (err) {
-            logger.warn("Post-connect fit failed", err);
-          }
-        }, 100);
-      }
+      markConnectedOnFirstOutput();
     },
     { replayBacklog: true },
   );

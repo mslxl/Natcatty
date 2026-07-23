@@ -67,6 +67,7 @@ test("request sends a worker command and resolves matching response", async () =
         return child;
       },
     },
+    electronModule: { webContents: { fromId(id) { return { id }; } } },
     workerScriptPath: "/worker.cjs",
   });
 
@@ -84,6 +85,224 @@ test("request sends a worker command and resolves matching response", async () =
   });
 
   assert.deepEqual(await promise, { sessionId: "local-1" });
+});
+
+test("session ownership listeners finish before buffered output is released", async () => {
+  const child = new FakeChild();
+  const routed = [];
+  let releaseOwnership;
+  let outputOpen = false;
+  const manager = createTerminalWorkerManager({
+    utilityProcess: { fork: () => child },
+    terminalOutputChannel: {
+      openSession() { outputOpen = true; },
+      send(sessionId, data) {
+        if (!outputOpen) return false;
+        routed.push({ sessionId, data });
+        return true;
+      },
+    },
+    electronModule: { webContents: { fromId(id) { return { id }; } } },
+    workerScriptPath: "/worker.cjs",
+  });
+  manager.onSessionOwned(() => new Promise((resolve) => { releaseOwnership = resolve; }));
+
+  const promise = manager.request("netcatty:local:start", {}, { webContentsId: 7 });
+  child.emit("message", {
+    kind: "response",
+    requestId: child.messages[0].requestId,
+    result: { sessionId: "local-1" },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  child.emit("message", { kind: "output", sessionId: "local-1", data: "banner" });
+  assert.deepEqual(routed, []);
+
+  releaseOwnership();
+  assert.deepEqual(await promise, { sessionId: "local-1" });
+  assert.deepEqual(routed, [{ sessionId: "local-1", data: "banner" }]);
+});
+
+test("destroying a renderer immediately cancels its pending session ownership", async () => {
+  const child = new FakeChild();
+  const contents = new EventEmitter();
+  contents.id = 7;
+  contents.destroyed = false;
+  contents.isDestroyed = () => contents.destroyed;
+  let releaseOwnership;
+  let outputOpened = false;
+  const manager = createTerminalWorkerManager({
+    utilityProcess: { fork: () => child },
+    terminalOutputChannel: {
+      openSession() { outputOpened = true; },
+    },
+    electronModule: { webContents: { fromId: () => contents } },
+    workerScriptPath: "/worker.cjs",
+  });
+  manager.onSessionOwned(() => new Promise((resolve) => { releaseOwnership = resolve; }));
+
+  const start = manager.request("netcatty:local:start", {}, { webContentsId: 7 });
+  child.emit("message", {
+    kind: "response",
+    requestId: child.messages[0].requestId,
+    result: { sessionId: "local-1" },
+  });
+  while (!releaseOwnership) await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(manager.ownsSession("local-1", 7), true);
+
+  contents.destroyed = true;
+  contents.emit("destroyed");
+  assert.equal(manager.ownsSession("local-1", 7), false);
+  assert.equal(manager.getSessionOwnerWebContentsId("local-1"), null);
+  releaseOwnership();
+
+  await assert.rejects(start, /output route opened/u);
+  assert.equal(outputOpened, false);
+});
+
+test("a start closed while ownership is pending rejects instead of creating a ghost session", async () => {
+  const child = new FakeChild();
+  let releaseOwnership;
+  let outputOpened = false;
+  const manager = createTerminalWorkerManager({
+    utilityProcess: { fork: () => child },
+    terminalOutputChannel: {
+      openSession() {
+        outputOpened = true;
+      },
+    },
+    electronModule: { webContents: { fromId(id) { return { id }; } } },
+    workerScriptPath: "/worker.cjs",
+  });
+  manager.onSessionOwned(() => new Promise((resolve) => { releaseOwnership = resolve; }));
+
+  const start = manager.request("netcatty:local:start", {}, { webContentsId: 7 });
+  child.emit("message", {
+    kind: "response",
+    requestId: child.messages[0].requestId,
+    result: { sessionId: "local-1" },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  manager.send("netcatty:close", { sessionId: "local-1" }, { webContentsId: 7 });
+  releaseOwnership();
+
+  await assert.rejects(start, /closed before its output route opened/u);
+  assert.equal(outputOpened, false);
+  assert.equal(manager.hasOpenSession("local-1"), false);
+});
+
+test("a worker exit while ownership is pending rejects instead of creating a ghost session", async () => {
+  const child = new FakeChild();
+  let releaseOwnership;
+  let outputOpened = false;
+  const manager = createTerminalWorkerManager({
+    utilityProcess: { fork: () => child },
+    terminalOutputChannel: {
+      openSession() {
+        outputOpened = true;
+      },
+    },
+    electronModule: { webContents: { fromId(id) { return { id }; } } },
+    workerScriptPath: "/worker.cjs",
+  });
+  manager.onSessionOwned(() => new Promise((resolve) => { releaseOwnership = resolve; }));
+
+  const start = manager.request("netcatty:local:start", {}, { webContentsId: 7 });
+  child.emit("message", {
+    kind: "response",
+    requestId: child.messages[0].requestId,
+    result: { sessionId: "local-1" },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  child.emit("exit", 1);
+  await assert.rejects(start, /Terminal worker exited with code 1/u);
+  releaseOwnership();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(outputOpened, false);
+  assert.equal(manager.hasOpenSession("local-1"), false);
+});
+
+test("an older ownership waiter cannot release a newer output route", async () => {
+  const child = new FakeChild();
+  const routed = [];
+  const releaseOwnership = [];
+  let outputOpen = false;
+  const manager = createTerminalWorkerManager({
+    utilityProcess: { fork: () => child },
+    terminalOutputChannel: {
+      openSession() { outputOpen = true; },
+      send(sessionId, data) {
+        if (!outputOpen) return false;
+        routed.push({ sessionId, data });
+        return true;
+      },
+    },
+    electronModule: { webContents: { fromId(id) { return { id }; } } },
+    workerScriptPath: "/worker.cjs",
+  });
+  manager.onSessionOwned(() => new Promise((resolve) => { releaseOwnership.push(resolve); }));
+
+  const first = manager.request("netcatty:local:start", {}, { webContentsId: 7 });
+  child.emit("message", {
+    kind: "response",
+    requestId: child.messages[0].requestId,
+    result: { sessionId: "local-1" },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const second = manager.request("netcatty:local:reconnect", { sessionId: "local-1" }, {
+    webContentsId: 7,
+  });
+  child.emit("message", {
+    kind: "response",
+    requestId: child.messages[1].requestId,
+    result: { sessionId: "local-1" },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(releaseOwnership.length, 2);
+
+  child.emit("message", { kind: "output", sessionId: "local-1", data: "new-banner" });
+  releaseOwnership[0]();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(outputOpen, false);
+  assert.deepEqual(routed, []);
+
+  releaseOwnership[1]();
+  assert.deepEqual(await first, { sessionId: "local-1" });
+  assert.deepEqual(await second, { sessionId: "local-1" });
+  assert.deepEqual(routed, [{ sessionId: "local-1", data: "new-banner" }]);
+});
+
+test("terminal interceptor ports transfer directly to the worker and warnings stay host-owned", () => {
+  const child = new FakeChild();
+  const manager = createTerminalWorkerManager({
+    utilityProcess: { fork: () => child },
+    workerScriptPath: "/worker.cjs",
+  });
+  const port = new FakePort("interceptor");
+  const warnings = [];
+  manager.onTerminalInterceptorWarning((warning) => warnings.push(warning));
+  manager.attachTerminalInterceptor({
+    sessionId: "session-1",
+    direction: "input",
+    providerId: "com.example.input",
+  }, port);
+  assert.equal(child.messages[0].kind, "terminal-interceptor-port");
+  assert.deepEqual(child.transferLists[0], [port]);
+  child.emit("message", {
+    kind: "terminal-interceptor-warning",
+    warning: { sessionId: "session-1", direction: "input", code: "timeout" },
+  });
+  assert.equal(warnings[0].code, "timeout");
+  manager.detachTerminalInterceptor("session-1", "input");
+  assert.equal(child.messages[1].kind, "terminal-interceptor-detach");
+  child.emit("exit", 9);
+  assert.deepEqual(warnings[1], {
+    code: "worker-exit",
+    message: "Terminal worker exited with code 9",
+  });
 });
 
 test("request opens a terminal output port when a session starts", async () => {
@@ -536,6 +755,121 @@ test("worker buffered output chunk cap carries dropped metadata to retained outp
   });
 });
 
+test("metadata-only interceptor output obeys the pending chunk cap", async () => {
+  const child = new FakeChild();
+  const outputPort = { label: "worker-output-port" };
+  const manager = createTerminalWorkerManager({
+    utilityProcess: { fork() { return child; } },
+    terminalOutputChannel: { openSession() { return outputPort; } },
+    electronModule: { webContents: { fromId(id) { return { id }; } } },
+    maxPendingOutputChunks: 1,
+    workerScriptPath: "/worker.cjs",
+  });
+
+  const promise = manager.request("netcatty:local:start", {}, { webContentsId: 7 });
+  child.emit("message", {
+    kind: "response",
+    requestId: child.messages[0].requestId,
+    result: { sessionId: "local-1" },
+  });
+  await promise;
+  for (let index = 0; index < 3; index += 1) {
+    child.emit("message", {
+      kind: "output",
+      sessionId: "local-1",
+      data: "",
+      meta: { pluginPipelineIngressBytes: 1 },
+    });
+  }
+  child.emit("message", { kind: "output-port-ready", sessionId: "local-1" });
+
+  assert.deepEqual(child.messages[2], {
+    kind: "output-flush",
+    sessionId: "local-1",
+    chunks: [{ data: "", meta: { pluginPipelineIngressBytes: 3 } }],
+  });
+});
+
+test("pending output merge keeps state and provenance from only the latest raw chunk", async () => {
+  const child = new FakeChild();
+  const outputPort = { label: "worker-output-port" };
+  const manager = createTerminalWorkerManager({
+    utilityProcess: { fork() { return child; } },
+    terminalOutputChannel: { openSession() { return outputPort; } },
+    electronModule: { webContents: { fromId(id) { return { id }; } } },
+    maxPendingOutputChunks: 1,
+    workerScriptPath: "/worker.cjs",
+  });
+
+  const promise = manager.request("netcatty:local:start", {}, { webContentsId: 7 });
+  child.emit("message", {
+    kind: "response",
+    requestId: child.messages[0].requestId,
+    result: { sessionId: "local-1" },
+  });
+  await promise;
+  child.emit("message", {
+    kind: "output",
+    sessionId: "local-1",
+    data: "Password: ",
+    meta: {
+      pluginPipelineIngressBytes: 10,
+      pluginPipelineProcessed: true,
+      pluginPipelineSensitiveInput: true,
+    },
+  });
+  child.emit("message", {
+    kind: "output",
+    sessionId: "local-1",
+    data: "READY",
+  });
+  child.emit("message", { kind: "output-port-ready", sessionId: "local-1" });
+
+  assert.deepEqual(child.messages[2], {
+    kind: "output-flush",
+    sessionId: "local-1",
+    chunks: [{ data: "READY", meta: { pluginPipelineIngressBytes: 10 } }],
+  });
+});
+
+test("partial trimming carries sliced raw ingress into inherited flow accounting", async () => {
+  const child = new FakeChild();
+  const outputPort = { label: "worker-output-port" };
+  const manager = createTerminalWorkerManager({
+    utilityProcess: { fork() { return child; } },
+    terminalOutputChannel: { openSession() { return outputPort; } },
+    electronModule: { webContents: { fromId(id) { return { id }; } } },
+    maxPendingOutputBytes: 5,
+    workerScriptPath: "/worker.cjs",
+  });
+
+  const promise = manager.request("netcatty:local:start", {}, { webContentsId: 7 });
+  child.emit("message", {
+    kind: "response",
+    requestId: child.messages[0].requestId,
+    result: { sessionId: "local-1" },
+  });
+  await promise;
+  child.emit("message", {
+    kind: "output",
+    sessionId: "local-1",
+    data: "",
+    meta: { pluginPipelineIngressBytes: 10, pluginPipelineProcessed: true },
+  });
+  child.emit("message", { kind: "output", sessionId: "local-1", data: "abcde" });
+  child.emit("message", { kind: "output", sessionId: "local-1", data: "Z" });
+  child.emit("message", { kind: "output-port-ready", sessionId: "local-1" });
+
+  assert.deepEqual(child.messages[2], {
+    kind: "output-flush",
+    sessionId: "local-1",
+    chunks: [
+      { data: "bcde", meta: { pluginPipelineIngressBytes: 11 } },
+      "Z",
+    ],
+  });
+});
+
 test("worker fallback output after a ready output port is delivered over legacy IPC", async () => {
   const child = new FakeChild();
   const sent = [];
@@ -904,7 +1238,7 @@ test("close immediately clears the output route and drops pending output", async
     requestId: child.messages[0].requestId,
     result: { sessionId: "session-1" },
   });
-  await promise;
+  await assert.rejects(promise, /closed before its output route opened/u);
   child.emit("message", {
     kind: "output",
     sessionId: "session-1",
@@ -1069,6 +1403,114 @@ test("worker renderer events wrapped in MessageEvent data are forwarded", () => 
   ]);
 });
 
+test("worker terminal exit notifies host session lifecycle listeners", async () => {
+  const child = new FakeChild();
+  const closed = [];
+  const manager = createTerminalWorkerManager({
+    utilityProcess: { fork: () => child },
+    terminalOutputChannel: { openSession: () => true, closeSession() {} },
+    electronModule: { webContents: { fromId: (id) => ({ id, isDestroyed: () => false, send() {} }) } },
+    workerScriptPath: "/worker.cjs",
+  });
+  manager.onSessionClosed((event) => closed.push(event));
+  const start = manager.request("netcatty:local:start", {}, { webContentsId: 7 });
+  child.emit("message", {
+    kind: "response",
+    requestId: child.messages[0].requestId,
+    result: { sessionId: "session-1" },
+  });
+  await start;
+
+  child.emit("message", {
+    kind: "renderer-event",
+    webContentsId: 7,
+    channel: "netcatty:exit",
+    payload: { sessionId: "session-1", reason: "exited" },
+  });
+
+  assert.deepEqual(closed, [{ sessionId: "session-1", reason: "exited" }]);
+});
+
+test("explicit close notifies host session lifecycle exactly once before the worker exit", async () => {
+  const child = new FakeChild();
+  const closed = [];
+  const manager = createTerminalWorkerManager({
+    utilityProcess: { fork: () => child },
+    terminalOutputChannel: { openSession: () => true, closeSession() {} },
+    electronModule: { webContents: { fromId: (id) => ({ id, isDestroyed: () => false, send() {} }) } },
+    workerScriptPath: "/worker.cjs",
+  });
+  manager.onSessionClosed((event) => closed.push(event));
+  const start = manager.request("netcatty:local:start", {}, { webContentsId: 7 });
+  child.emit("message", {
+    kind: "response",
+    requestId: child.messages[0].requestId,
+    result: { sessionId: "session-1" },
+  });
+  await start;
+
+  manager.send("netcatty:close", { sessionId: "session-1" }, { webContentsId: 7 });
+  assert.deepEqual(closed, [{ sessionId: "session-1", reason: "closed" }]);
+  child.emit("message", {
+    kind: "renderer-event",
+    webContentsId: 7,
+    channel: "netcatty:exit",
+    payload: { sessionId: "session-1", reason: "exited" },
+  });
+  assert.deepEqual(closed, [{ sessionId: "session-1", reason: "closed" }]);
+});
+
+test("a duplicate exit from an old session generation cannot close a reconnected session", async () => {
+  const child = new FakeChild();
+  const closed = [];
+  const manager = createTerminalWorkerManager({
+    utilityProcess: { fork: () => child },
+    terminalOutputChannel: { openSession: () => true, closeSession() {} },
+    electronModule: { webContents: { fromId: (id) => ({ id, isDestroyed: () => false, send() {} }) } },
+    workerScriptPath: "/worker.cjs",
+  });
+  manager.onSessionClosed((event) => closed.push(event));
+
+  const first = manager.request("netcatty:local:start", {}, { webContentsId: 7 });
+  child.emit("message", {
+    kind: "response",
+    requestId: child.messages[0].requestId,
+    result: { sessionId: "session-1" },
+    sessionGeneration: 0,
+  });
+  await first;
+  child.emit("message", {
+    kind: "renderer-event",
+    webContentsId: 7,
+    channel: "netcatty:exit",
+    payload: { sessionId: "session-1", reason: "error" },
+    sessionGeneration: 0,
+  });
+
+  const reconnect = manager.request("netcatty:local:reconnect", { sessionId: "session-1" }, {
+    webContentsId: 7,
+  });
+  child.emit("message", {
+    kind: "response",
+    requestId: child.messages.at(-1).requestId,
+    result: { sessionId: "session-1" },
+    sessionGeneration: 1,
+  });
+  await reconnect;
+  assert.equal(manager.hasOpenSession("session-1"), true);
+
+  child.emit("message", {
+    kind: "renderer-event",
+    webContentsId: 7,
+    channel: "netcatty:exit",
+    payload: { sessionId: "session-1", reason: "close" },
+    sessionGeneration: 0,
+  });
+
+  assert.equal(manager.hasOpenSession("session-1"), true);
+  assert.deepEqual(closed, [{ sessionId: "session-1", reason: "error" }]);
+});
+
 test("rebound interactive events target only the popup while exit also reaches home", async () => {
   const child = new FakeChild();
   const forwarded = [];
@@ -1099,7 +1541,7 @@ test("rebound interactive events target only the popup while exit also reaches h
     result: { sessionId: "session-1" },
   });
   await started;
-  assert.equal(manager.rebindOutputSession("session-1", 9).success, true);
+  assert.equal((await manager.rebindOutputSession("session-1", 9)).success, true);
 
   child.emit("message", {
     kind: "renderer-event",
@@ -1124,6 +1566,162 @@ test("rebound interactive events target only the popup while exit also reaches h
     { id: 9, channel: "netcatty:exit", payload: { sessionId: "session-1", reason: "exited" } },
     { id: 7, channel: "netcatty:exit", payload: { sessionId: "session-1", reason: "exited" } },
   ]);
+});
+
+test("rebind waits for ownership and routes interactive events to the pending renderer", async () => {
+  const child = new FakeChild();
+  const forwarded = [];
+  const dialogOwners = [];
+  let releaseRebind;
+  const manager = createTerminalWorkerManager({
+    utilityProcess: { fork() { return child; } },
+    terminalOutputChannel: { openSession() { return true; }, closeSession() {} },
+    electronModule: {
+      webContents: {
+        fromId(id) {
+          return {
+            id,
+            isDestroyed() { return false; },
+            send(channel, payload) { forwarded.push({ id, channel, payload }); },
+          };
+        },
+      },
+      BrowserWindow: {
+        fromWebContents(contents) { return { webContentsId: contents.id }; },
+      },
+      dialog: {
+        async showOpenDialog(owner) {
+          dialogOwners.push(owner?.webContentsId ?? null);
+          return { canceled: true, filePaths: [] };
+        },
+      },
+    },
+    workerScriptPath: "/worker.cjs",
+  });
+  manager.onSessionOwned(({ webContentsId }) => (
+    webContentsId === 9
+      ? new Promise((resolve) => { releaseRebind = resolve; })
+      : undefined
+  ));
+
+  const started = manager.request("netcatty:local:start", {}, { webContentsId: 7 });
+  child.emit("message", {
+    kind: "response",
+    requestId: child.messages[0].requestId,
+    result: { sessionId: "session-1" },
+  });
+  await started;
+
+  let settled = false;
+  const rebound = manager.rebindOutputSession("session-1", 9).then((result) => {
+    settled = true;
+    return result;
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(settled, false);
+  assert.equal(manager.getSessionWebContentsId("session-1"), 7);
+  assert.equal(manager.getSessionOwnerWebContentsId("session-1"), 9);
+
+  child.emit("message", {
+    kind: "renderer-event",
+    webContentsId: 7,
+    channel: "netcatty:zmodem:overwrite-request",
+    payload: { sessionId: "session-1", requestId: "request-1" },
+  });
+  assert.deepEqual(forwarded, [{
+    id: 9,
+    channel: "netcatty:zmodem:overwrite-request",
+    payload: { sessionId: "session-1", requestId: "request-1" },
+  }]);
+
+  child.emit("message", {
+    kind: "zmodem-upload-dialog",
+    requestId: "upload-dialog-1",
+    sessionId: "session-1",
+    webContentsId: 7,
+  });
+  child.emit("message", {
+    kind: "zmodem-download-dialog",
+    requestId: "download-dialog-1",
+    sessionId: "session-1",
+    webContentsId: 7,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(dialogOwners, [9, 9]);
+
+  releaseRebind();
+  assert.equal((await rebound).success, true);
+  assert.equal(manager.getSessionWebContentsId("session-1"), 9);
+  assert.equal(manager.getSessionOwnerWebContentsId("session-1"), 9);
+});
+
+test("failed output-port transfer clears pending state and restores the previous route", async () => {
+  const child = new FakeChild();
+  const postMessage = child.postMessage.bind(child);
+  child.postMessage = (message, transferList) => {
+    if (message?.kind === "output-port") {
+      throw new Error("worker transfer failed");
+    }
+    postMessage(message, transferList);
+  };
+  const forwarded = [];
+  let openCount = 0;
+  const manager = createTerminalWorkerManager({
+    utilityProcess: { fork() { return child; } },
+    terminalOutputChannel: {
+      openSession() {
+        openCount += 1;
+        return openCount === 1 ? true : { label: "worker-output-port" };
+      },
+      send() { return false; },
+      closeSession() {},
+    },
+    electronModule: {
+      webContents: {
+        fromId(id) {
+          return {
+            id,
+            isDestroyed() { return false; },
+            send(channel, payload) { forwarded.push({ id, channel, payload }); },
+          };
+        },
+      },
+    },
+    workerScriptPath: "/worker.cjs",
+  });
+
+  const started = manager.request("netcatty:local:start", {}, { webContentsId: 7 });
+  child.emit("message", {
+    kind: "response",
+    requestId: child.messages[0].requestId,
+    result: { sessionId: "session-1" },
+  });
+  await started;
+
+  const rebound = manager.rebindOutputSession("session-1", 9);
+  child.emit("message", { kind: "output", sessionId: "session-1", data: "buffered" });
+  assert.deepEqual(await rebound, {
+    success: false,
+    error: "Failed to rebind session output",
+  });
+  assert.equal(manager.getSessionWebContentsId("session-1"), 7);
+  assert.equal(manager.getAttachHomeWebContentsId("session-1"), null);
+
+  child.emit("message", {
+    kind: "renderer-event",
+    webContentsId: 7,
+    channel: "netcatty:zmodem:overwrite-request",
+    payload: { sessionId: "session-1", requestId: "request-1" },
+  });
+  assert.deepEqual(forwarded, [{
+    id: 7,
+    channel: "netcatty:zmodem:overwrite-request",
+    payload: { sessionId: "session-1", requestId: "request-1" },
+  }]);
+  assert.equal(
+    child.messages.some((message) => message.kind === "output-flush" && message.sessionId === "session-1"),
+    true,
+  );
 });
 
 test("explicit close notifies both a rebound popup and its home renderer", async () => {
@@ -1151,7 +1749,7 @@ test("explicit close notifies both a rebound popup and its home renderer", async
     result: { sessionId: "session-1" },
   });
   await started;
-  assert.equal(manager.rebindOutputSession("session-1", 9).success, true);
+  assert.equal((await manager.rebindOutputSession("session-1", 9)).success, true);
 
   const closing = manager.request(
     "netcatty:close:await",

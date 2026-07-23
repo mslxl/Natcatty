@@ -82,6 +82,124 @@ test("runtime invokes registered request handlers and posts responses", async ()
   ]);
 });
 
+test("runtime routes interceptor ports to the worker-owned data pipeline", () => {
+  const parentPort = createParentPort();
+  const attached = [];
+  const detached = [];
+  const runtime = createTerminalWorkerRuntime({
+    parentPort,
+    terminalDataPipeline: {
+      attach(message, port) { attached.push({ message, port }); },
+      detach(sessionId, direction) { detached.push({ sessionId, direction }); },
+    },
+    registerBridges() {},
+  });
+  runtime.start();
+  const port = new FakePort();
+  parentPort.emitMessage({
+    data: { kind: "terminal-interceptor-port", sessionId: "session-1", direction: "output" },
+    ports: [port],
+  });
+  assert.equal(attached[0].port, port);
+  parentPort.emitMessage({ kind: "terminal-interceptor-detach", sessionId: "session-1", direction: "output" });
+  assert.deepEqual(detached, [{ sessionId: "session-1", direction: "output" }]);
+});
+
+test("fresh sender lookups preserve an explicitly bound backend session generation", () => {
+  const parentPort = createParentPort();
+  const detached = [];
+  const runtime = createTerminalWorkerRuntime({
+    parentPort,
+    terminalDataPipeline: {
+      detach(sessionId, direction, reason) { detached.push({ sessionId, direction, reason }); },
+    },
+    registerBridges() {},
+  });
+  runtime.start();
+
+  const oldGeneration = runtime.createSender(7).claimSessionGeneration("session-1");
+  runtime.createSender(7).send("netcatty:exit", {
+    sessionId: "session-1",
+    reason: "error",
+    _terminalSessionGeneration: oldGeneration,
+  });
+  const newGeneration = runtime.createSender(8).claimSessionGeneration("session-1");
+  runtime.createSender(7).send("netcatty:exit", {
+    sessionId: "session-1",
+    reason: "close",
+    _terminalSessionGeneration: oldGeneration,
+  });
+  runtime.createSender(8).send("netcatty:exit", {
+    sessionId: "session-1",
+    reason: "exited",
+    _terminalSessionGeneration: newGeneration,
+  });
+
+  assert.deepEqual(
+    parentPort.messages.map((message) => message.sessionGeneration),
+    [0, 0, 1],
+  );
+  assert.equal(parentPort.messages.some((message) => (
+    Object.hasOwn(message.payload, "_terminalSessionGeneration")
+  )), false);
+  assert.deepEqual(detached, [
+    { sessionId: "session-1", direction: undefined, reason: "session-closed" },
+    { sessionId: "session-1", direction: undefined, reason: "session-closed" },
+  ]);
+});
+
+test("stale backend output is rejected before taps, observation, or interception", async () => {
+  const parentPort = createParentPort();
+  const observed = [];
+  const intercepted = [];
+  const runtime = createTerminalWorkerRuntime({
+    parentPort,
+    terminalDataPipeline: {
+      getOutputMode() { return 3; },
+      observeOutput(sessionId, data) { observed.push({ sessionId, data }); return false; },
+      async interceptOutput(sessionId, data) {
+        intercepted.push({ sessionId, data });
+        return data;
+      },
+      detach() {},
+    },
+    registerBridges() {},
+  });
+  runtime.start();
+
+  const oldSender = runtime.createSender(7);
+  const oldGeneration = oldSender.claimSessionGeneration("session-1");
+  oldSender.send("netcatty:exit", {
+    sessionId: "session-1",
+    reason: "error",
+    _terminalSessionGeneration: oldGeneration,
+  });
+  const newSender = runtime.createSender(8);
+  const newGeneration = newSender.claimSessionGeneration("session-1");
+  parentPort.messages.length = 0;
+
+  runtime.createSender(7).send("netcatty:data", {
+    sessionId: "session-1",
+    data: "old-secret",
+    _terminalSessionGeneration: oldGeneration,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(parentPort.messages, []);
+  assert.deepEqual(observed, []);
+  assert.deepEqual(intercepted, []);
+
+  runtime.createSender(8).send("netcatty:data", {
+    sessionId: "session-1",
+    data: "new-output",
+    _terminalSessionGeneration: newGeneration,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(observed, [{ sessionId: "session-1", data: "new-output" }]);
+  assert.deepEqual(intercepted, [{ sessionId: "session-1", data: "new-output" }]);
+  assert.deepEqual(parentPort.messages.map((message) => message.kind), ["output-tap", "output"]);
+});
+
 test("runtime invokes fire-and-forget listeners", () => {
   const parentPort = createParentPort();
   const calls = [];
@@ -175,6 +293,30 @@ test("runtime routes urgent input port interrupts to the interrupt listener", ()
   ]);
 });
 
+test("runtime clears host-sensitive input state before dispatching an interrupt", () => {
+  const parentPort = createParentPort();
+  const order = [];
+  const runtime = createTerminalWorkerRuntime({
+    parentPort,
+    terminalDataPipeline: {
+      clearSensitiveInput(sessionId) { order.push(`clear:${sessionId}`); },
+    },
+    registerBridges(ipcMain) {
+      ipcMain.on("netcatty:interrupt", (_event, payload) => order.push(`write:${payload.sessionId}`));
+    },
+  });
+  runtime.start();
+
+  parentPort.emitMessage({
+    kind: "send",
+    channel: "netcatty:interrupt",
+    payload: { sessionId: "s1" },
+    webContentsId: 7,
+  });
+
+  assert.deepEqual(order, ["clear:s1", "write:s1"]);
+});
+
 test("runtime routes terminal data over output messages", async () => {
   const parentPort = createParentPort();
   const runtime = createTerminalWorkerRuntime({
@@ -208,6 +350,276 @@ test("runtime routes terminal data over output messages", async () => {
     data: "hello",
     tapped: true,
   });
+});
+
+test("runtime keeps the no-interceptor output path synchronous and allocation-free", async () => {
+  const parentPort = createParentPort();
+  let interceptCalls = 0;
+  const runtime = createTerminalWorkerRuntime({
+    parentPort,
+    terminalDataPipeline: {
+      getOutputMode() { return 0; },
+      async interceptOutput() { interceptCalls += 1; return "changed"; },
+    },
+    registerBridges(ipcMain) {
+      ipcMain.handle("netcatty:test", (event) => {
+        event.sender.send("netcatty:data", { sessionId: "s1", data: "hello" });
+        assert.equal(parentPort.messages[1]?.data, "hello");
+        return null;
+      });
+    },
+  });
+  runtime.start();
+  parentPort.emitMessage({
+    kind: "request",
+    requestId: "req-no-plugin",
+    channel: "netcatty:test",
+    payload: {},
+    webContentsId: 7,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(interceptCalls, 0);
+});
+
+test("runtime sends transformed output to the renderer while host taps retain original data", async () => {
+  const parentPort = createParentPort();
+  const observed = [];
+  const runtime = createTerminalWorkerRuntime({
+    parentPort,
+    terminalDataPipeline: {
+      getOutputMode() { return 3; },
+      observeOutput(sessionId, data) { observed.push({ sessionId, data }); return true; },
+      async interceptOutput(_sessionId, data) { return String(data).toUpperCase(); },
+    },
+    registerBridges(ipcMain) {
+      ipcMain.handle("netcatty:test", (event) => {
+        event.sender.send("netcatty:data", { sessionId: "s1", data: "hello" });
+        return null;
+      });
+    },
+  });
+  runtime.start();
+  parentPort.emitMessage({
+    kind: "request",
+    requestId: "req-plugin",
+    channel: "netcatty:test",
+    payload: {},
+    webContentsId: 7,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(parentPort.messages[0], {
+    kind: "output-tap",
+    sessionId: "s1",
+    data: "hello",
+  });
+  assert.deepEqual(parentPort.messages[1], {
+    kind: "output",
+    sessionId: "s1",
+    data: "HELLO",
+    tapped: true,
+    meta: {
+      pluginPipelineIngressBytes: 5,
+      pluginPipelineProcessed: true,
+      pluginPipelineSensitiveInput: true,
+    },
+  });
+  assert.deepEqual(observed, [{ sessionId: "s1", data: "hello" }]);
+});
+
+test("runtime classifies original prompts when only an output interceptor is active", async () => {
+  const parentPort = createParentPort();
+  const observed = [];
+  const runtime = createTerminalWorkerRuntime({
+    parentPort,
+    terminalDataPipeline: {
+      getOutputMode() { return 2; },
+      observeOutput(sessionId, data) { observed.push({ sessionId, data }); return true; },
+      async interceptOutput() { return "masked> "; },
+    },
+    registerBridges() {},
+  });
+  runtime.start();
+
+  runtime.createSender(7).send("netcatty:data", { sessionId: "s1", data: "Password: " });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(observed, [{ sessionId: "s1", data: "Password: " }]);
+  assert.deepEqual(parentPort.messages.at(-1), {
+    kind: "output",
+    sessionId: "s1",
+    data: "masked> ",
+    tapped: true,
+    meta: {
+      pluginPipelineIngressBytes: 10,
+      pluginPipelineProcessed: true,
+      pluginPipelineSensitiveInput: true,
+    },
+  });
+});
+
+test("runtime publishes an explicit sensitive-state clear from original output", async () => {
+  const parentPort = createParentPort();
+  const runtime = createTerminalWorkerRuntime({
+    parentPort,
+    terminalDataPipeline: {
+      getOutputMode() { return 3; },
+      observeOutput() { return false; },
+      async interceptOutput() { return "renamed prompt> "; },
+    },
+    registerBridges() {},
+  });
+  runtime.start();
+
+  runtime.createSender(7).send("netcatty:data", {
+    sessionId: "s1",
+    data: "\r\nAccess denied\r\n$ ",
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(
+    parentPort.messages.at(-1).meta.pluginPipelineSensitiveInput,
+    false,
+  );
+});
+
+test("runtime delivers pending intercepted output before closing the session", async () => {
+  const parentPort = createParentPort();
+  let releaseOutput;
+  const detached = [];
+  const runtime = createTerminalWorkerRuntime({
+    parentPort,
+    terminalDataPipeline: {
+      getOutputMode() { return 2; },
+      observeOutput() { return false; },
+      interceptOutput() {
+        return new Promise((resolve) => { releaseOutput = resolve; });
+      },
+      detach(sessionId, direction, reason) { detached.push({ sessionId, direction, reason }); },
+    },
+    registerBridges() {},
+  });
+  runtime.start();
+  runtime.createSender(7).send("netcatty:data", { sessionId: "s1", data: "final" });
+  runtime.createSender(7).send("netcatty:exit", { sessionId: "s1", reason: "closed" });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(parentPort.messages.map((message) => message.kind), ["output-tap"]);
+
+  releaseOutput("FINAL");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(parentPort.messages.map((message) => message.kind), [
+    "output-tap",
+    "output",
+    "renderer-event",
+  ]);
+  assert.equal(parentPort.messages[1].data, "FINAL");
+  assert.equal(parentPort.messages[2].channel, "netcatty:exit");
+  assert.deepEqual(detached, [{ sessionId: "s1", direction: undefined, reason: "session-closed" }]);
+});
+
+test("runtime keeps direct output ordered behind a pending chunk after interceptor disable", async () => {
+  const parentPort = createParentPort();
+  let mode = 2;
+  let releaseOutput;
+  const runtime = createTerminalWorkerRuntime({
+    parentPort,
+    terminalDataPipeline: {
+      getOutputMode() { return mode; },
+      observeOutput() { return false; },
+      interceptOutput() {
+        mode = 0;
+        return new Promise((resolve) => { releaseOutput = resolve; });
+      },
+    },
+    registerBridges() {},
+  });
+  runtime.start();
+
+  runtime.createSender(7).send("netcatty:data", { sessionId: "s1", data: "first" });
+  runtime.createSender(7).send("netcatty:data", { sessionId: "s1", data: "second" });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(parentPort.messages.map((message) => message.kind), ["output-tap", "output-tap"]);
+
+  releaseOutput("FIRST");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(
+    parentPort.messages.filter((message) => message.kind === "output").map((message) => message.data),
+    ["FIRST", "second"],
+  );
+});
+
+test("runtime drops a pending intercepted chunk after the session output route is reused", async () => {
+  const parentPort = createParentPort();
+  const oldPort = new FakePort();
+  const newPort = new FakePort();
+  const detached = [];
+  let releaseOutput;
+  const runtime = createTerminalWorkerRuntime({
+    parentPort,
+    terminalDataPipeline: {
+      getOutputMode() { return 2; },
+      observeOutput() { return false; },
+      interceptOutput() {
+        return new Promise((resolve) => { releaseOutput = resolve; });
+      },
+      detach(sessionId, direction, reason) { detached.push({ sessionId, direction, reason }); },
+    },
+    registerBridges() {},
+  });
+  runtime.start();
+  parentPort.emitMessage({
+    data: { kind: "output-port", sessionId: "s1", bufferedOutput: [] },
+    ports: [oldPort],
+  });
+  runtime.createSender(7).send("netcatty:data", { sessionId: "s1", data: "old" });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  parentPort.emitMessage({ kind: "close-output-port", sessionId: "s1" });
+  parentPort.emitMessage({
+    data: { kind: "output-port", sessionId: "s1", bufferedOutput: [] },
+    ports: [newPort],
+  });
+  releaseOutput("STALE");
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(oldPort.closed, true);
+  assert.deepEqual(newPort.messages, []);
+  assert.deepEqual(detached, [{
+    sessionId: "s1",
+    direction: undefined,
+    reason: "session-closed",
+  }]);
+});
+
+test("runtime submits queued output to the bounded pipeline before earlier transforms finish", async () => {
+  const parentPort = createParentPort();
+  const releases = [];
+  const calls = [];
+  const runtime = createTerminalWorkerRuntime({
+    parentPort,
+    terminalDataPipeline: {
+      getOutputMode() { return 2; },
+      observeOutput() { return false; },
+      interceptOutput(_sessionId, data) {
+        calls.push(data);
+        return new Promise((resolve) => releases.push(() => resolve(data.toUpperCase())));
+      },
+    },
+    registerBridges() {},
+  });
+  runtime.start();
+
+  runtime.createSender(7).send("netcatty:data", { sessionId: "s1", data: "first" });
+  runtime.createSender(7).send("netcatty:data", { sessionId: "s1", data: "second" });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls, ["first", "second"]);
+
+  releases[0]();
+  releases[1]();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(
+    parentPort.messages.filter((message) => message.kind === "output").map((message) => message.data),
+    ["FIRST", "SECOND"],
+  );
 });
 
 test("runtime routes terminal data over a transferred output port", async () => {
@@ -253,6 +665,216 @@ test("runtime routes terminal data over a transferred output port", async () => 
     data: "hello",
   });
   assert.equal(parentPort.messages.some((message) => message.kind === "output"), false);
+});
+
+test("runtime routes buffered startup output through the selected interceptor", async () => {
+  const parentPort = createParentPort();
+  const outputPort = new FakePort();
+  const intercepted = [];
+  const runtime = createTerminalWorkerRuntime({
+    parentPort,
+    terminalDataPipeline: {
+      getOutputMode: () => 2,
+      observeOutput: () => false,
+      interceptOutput(sessionId, data) {
+        intercepted.push({ sessionId, data });
+        return Promise.resolve(data.toUpperCase());
+      },
+    },
+    registerBridges() {},
+  });
+  runtime.start();
+
+  parentPort.emitMessage({
+    data: {
+      kind: "output-port",
+      sessionId: "s1",
+      bufferedOutput: [{ data: "early", meta: { source: "startup" } }],
+    },
+    ports: [outputPort],
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(intercepted, [{ sessionId: "s1", data: "early" }]);
+  assert.deepEqual(outputPort.messages, [{
+    sessionId: "s1",
+    data: "EARLY",
+    meta: {
+      source: "startup",
+      pluginPipelineIngressBytes: 5,
+      pluginPipelineProcessed: true,
+      pluginPipelineSensitiveInput: false,
+    },
+  }]);
+  assert.deepEqual(parentPort.messages, [{ kind: "output-port-ready", sessionId: "s1" }]);
+});
+
+test("runtime does not re-intercept already transformed buffered output", async () => {
+  const parentPort = createParentPort();
+  const outputPort = new FakePort();
+  const intercepted = [];
+  const runtime = createTerminalWorkerRuntime({
+    parentPort,
+    terminalDataPipeline: {
+      getOutputMode: () => 2,
+      observeOutput: () => false,
+      interceptOutput(sessionId, data) {
+        intercepted.push({ sessionId, data });
+        return Promise.resolve(`again:${data}`);
+      },
+    },
+    registerBridges() {},
+  });
+  runtime.start();
+
+  parentPort.emitMessage({
+    data: {
+      kind: "output-port",
+      sessionId: "s1",
+      bufferedOutput: [{
+        data: "EARLY",
+        meta: {
+          pluginPipelineIngressBytes: 5,
+          pluginPipelineProcessed: true,
+          pluginPipelineSensitiveInput: true,
+        },
+      }],
+    },
+    ports: [outputPort],
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(intercepted, []);
+  assert.deepEqual(outputPort.messages, [{
+    sessionId: "s1",
+    data: "EARLY",
+    meta: {
+      pluginPipelineIngressBytes: 5,
+      pluginPipelineProcessed: true,
+      pluginPipelineSensitiveInput: true,
+    },
+  }]);
+  assert.deepEqual(parentPort.messages, [{ kind: "output-port-ready", sessionId: "s1" }]);
+});
+
+test("runtime re-intercepts raw buffered output that only inherited ingress accounting", async () => {
+  const parentPort = createParentPort();
+  const outputPort = new FakePort();
+  const intercepted = [];
+  const runtime = createTerminalWorkerRuntime({
+    parentPort,
+    terminalDataPipeline: {
+      getOutputMode: () => 2,
+      observeOutput: () => false,
+      interceptOutput(sessionId, data) {
+        intercepted.push({ sessionId, data });
+        return Promise.resolve(`processed:${data}`);
+      },
+    },
+    registerBridges() {},
+  });
+  runtime.start();
+
+  parentPort.emitMessage({
+    data: {
+      kind: "output-port",
+      sessionId: "s1",
+      bufferedOutput: [{
+        data: "raw",
+        meta: { pluginPipelineIngressBytes: 9 },
+      }],
+    },
+    ports: [outputPort],
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(intercepted, [{ sessionId: "s1", data: "raw" }]);
+  assert.deepEqual(outputPort.messages, [{
+    sessionId: "s1",
+    data: "processed:raw",
+    meta: {
+      pluginPipelineIngressBytes: 12,
+      pluginPipelineProcessed: true,
+      pluginPipelineSensitiveInput: false,
+    },
+  }]);
+  assert.deepEqual(parentPort.messages, [{ kind: "output-port-ready", sessionId: "s1" }]);
+});
+
+test("runtime adds retained raw bytes after manager partial-trim accounting", async () => {
+  const parentPort = createParentPort();
+  const outputPort = new FakePort();
+  const intercepted = [];
+  const runtime = createTerminalWorkerRuntime({
+    parentPort,
+    terminalDataPipeline: {
+      getOutputMode: () => 2,
+      observeOutput: () => false,
+      interceptOutput(sessionId, data) {
+        intercepted.push({ sessionId, data });
+        return Promise.resolve(`processed:${data}`);
+      },
+    },
+    registerBridges() {},
+  });
+  runtime.start();
+
+  parentPort.emitMessage({
+    data: {
+      kind: "output-port",
+      sessionId: "s1",
+      bufferedOutput: [{
+        data: "bcde",
+        meta: { pluginPipelineIngressBytes: 11 },
+      }],
+    },
+    ports: [outputPort],
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(intercepted, [{ sessionId: "s1", data: "bcde" }]);
+  assert.deepEqual(outputPort.messages, [{
+    sessionId: "s1",
+    data: "processed:bcde",
+    meta: {
+      pluginPipelineIngressBytes: 15,
+      pluginPipelineProcessed: true,
+      pluginPipelineSensitiveInput: false,
+    },
+  }]);
+});
+
+test("runtime counts retained raw bytes when replay continues without an interceptor", async () => {
+  const parentPort = createParentPort();
+  const outputPort = new FakePort();
+  const runtime = createTerminalWorkerRuntime({
+    parentPort,
+    terminalDataPipeline: {
+      getOutputMode: () => 0,
+      observeOutput: () => false,
+    },
+    registerBridges() {},
+  });
+  runtime.start();
+
+  parentPort.emitMessage({
+    data: {
+      kind: "output-port",
+      sessionId: "s1",
+      bufferedOutput: [{
+        data: "raw",
+        meta: { pluginPipelineIngressBytes: 9 },
+      }],
+    },
+    ports: [outputPort],
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(outputPort.messages, [{
+    sessionId: "s1",
+    data: "raw",
+    meta: { pluginPipelineIngressBytes: 12 },
+  }]);
 });
 
 test("runtime.createSender uses the transferred output port", () => {
@@ -305,5 +927,6 @@ test("runtime forwards non-output renderer events to the parent", async () => {
     webContentsId: 7,
     channel: "netcatty:exit",
     payload: { sessionId: "s1", reason: "closed" },
+    sessionGeneration: 0,
   });
 });

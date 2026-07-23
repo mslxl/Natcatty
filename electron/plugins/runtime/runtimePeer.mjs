@@ -7,6 +7,14 @@ import {
 } from "@netcatty/plugin-sdk";
 import { createMessagePortStreamEnvelope } from "@netcatty/plugin-contract";
 
+let terminalInterceptorTransportPromise;
+
+function loadTerminalInterceptorTransport() {
+  terminalInterceptorTransportPromise ??= import("../terminalInterceptorTransport.cjs")
+    .then((module) => module.default);
+  return terminalInterceptorTransportPromise;
+}
+
 const RPC_ERRORS = {
   methodNotFound: -32601,
   invalidParams: -32602,
@@ -59,11 +67,15 @@ function messageData(value) {
   return value && typeof value === "object" && "data" in value ? value.data : value;
 }
 
+function closeTransferredPorts(ports) {
+  for (const port of ports ?? []) port?.close?.();
+}
+
 function createTransportAdapter(port) {
   const listeners = new Set();
   const handle = (event) => {
     const value = messageData(event);
-    for (const listener of listeners) listener(value);
+    for (const listener of listeners) listener(value, event?.ports ?? []);
   };
   if (typeof port.addEventListener === "function") port.addEventListener("message", handle);
   else port.on("message", handle);
@@ -469,7 +481,12 @@ function createPluginContext(config, client, runtimeApi) {
   };
 }
 
-export async function startPluginRuntime({ port, config, loadPlugin }) {
+export async function startPluginRuntime({
+  port,
+  config,
+  loadPlugin,
+  loadTerminalInterceptorTransport: loadTerminalInterceptorTransportForRuntime = loadTerminalInterceptorTransport,
+}) {
   const transport = createTransportAdapter(port);
   const client = createHostClient(transport);
   const cancellation = new Map();
@@ -485,6 +502,7 @@ export async function startPluginRuntime({ port, config, loadPlugin }) {
     terminalEvents: createEmitter(),
     environment: normalizeRuntimeEnvironment(config.environment),
     viewMessages: new Map(),
+    terminalInterceptorPorts: new Set(),
   };
   const pluginModule = await loadPlugin(config.entryUrl);
   plugin = pluginModule?.default;
@@ -492,7 +510,9 @@ export async function startPluginRuntime({ port, config, loadPlugin }) {
     throw new Error("Plugin entrypoint must default-export a plugin with activate(context)");
   }
 
-  async function handleRequest(message, cancellationToken) {
+  async function handleRequest(message, cancellationToken, ports = []) {
+    const isTerminalAttachment = message.method === "plugin.terminal.interceptor.attach";
+    if (!isTerminalAttachment) closeTransferredPorts(ports);
     if (message.method === "plugin.initialize") {
       if (context) throw new PluginError("failed_precondition", "Plugin is already initialized");
       context = createPluginContext(config, client, runtimeApi);
@@ -523,6 +543,19 @@ export async function startPluginRuntime({ port, config, loadPlugin }) {
         context?.subscriptions.dispose();
       }
       return null;
+    }
+    if (message.method === "plugin.terminal.interceptor.attach") {
+      if (ports.length !== 1) {
+        closeTransferredPorts(ports);
+        throw new PluginError("invalid_argument", "Terminal interceptor attachment requires exactly one port");
+      }
+      try {
+        await attachTerminalInterceptor(message.params, ports, cancellationToken);
+        return { accepted: true };
+      } catch (error) {
+        closeTransferredPorts(ports);
+        throw error;
+      }
     }
     if (message.method === "plugin.command.execute") {
       if (!activated || !context) throw new PluginError("failed_precondition", "Plugin is not activated");
@@ -607,26 +640,142 @@ export async function startPluginRuntime({ port, config, loadPlugin }) {
     return false;
   }
 
-  const dispose = transport.onMessage((message) => {
+  const attachTerminalInterceptor = async (message, ports, cancellationToken) => {
+    const descriptor = message?.descriptor;
+    const providerId = assertOwnedContributionId(config.pluginId, descriptor?.providerId, "Terminal interceptor");
+    const direction = descriptor?.direction;
+    const kind = direction === "input" ? "terminal.interceptor.input"
+      : direction === "output" ? "terminal.interceptor.output" : null;
+    const sessionId = descriptor?.session?.sessionId;
+    if (!kind || typeof sessionId !== "string" || sessionId.length < 1 || sessionId.length > 256) {
+      throw new PluginError("invalid_argument", "Terminal interceptor descriptor is invalid");
+    }
+    const registration = runtimeApi.providerHandlers.get(providerId);
+    const interceptorPort = ports?.[0];
+    if (!activated || registration?.kind !== kind || !interceptorPort?.postMessage) {
+      interceptorPort?.close?.();
+      throw new PluginError("failed_precondition", "Terminal interceptor provider is not registered");
+    }
+    runtimeApi.terminalInterceptorPorts.add(interceptorPort);
+    let attached = false;
+    try {
+      const {
+        TERMINAL_INTERCEPTOR_MAX_CHUNK_BYTES,
+        createTerminalInterceptorEnvelope,
+      } = await loadTerminalInterceptorTransportForRuntime();
+      if (cancellationToken?.isCancellationRequested
+        || deactivated
+        || !activated
+        || !runtimeApi.terminalInterceptorPorts.has(interceptorPort)
+        || runtimeApi.providerHandlers.get(providerId) !== registration) {
+        throw new PluginError("failed_precondition", "Terminal interceptor attachment was cancelled or became stale");
+      }
+      const handleChunk = (event) => {
+        let envelope;
+        try {
+          const message = messageData(event);
+          envelope = createTerminalInterceptorEnvelope(message?.frame, message?.transfer);
+        } catch {
+          interceptorPort.close?.();
+          return;
+        }
+        const chunk = envelope.frame;
+        if (chunk?.type === "netcatty:terminal-interceptor:ready") return;
+        if (chunk.type !== "netcatty:terminal-interceptor:chunk"
+          || chunk.direction !== direction) {
+          interceptorPort.close?.();
+          return;
+        }
+        const invocation = Object.freeze({
+          providerId,
+          kind,
+          direction,
+          sequence: chunk.sequence,
+          session: freezeRuntimeJson(descriptor.session),
+          data: new Uint8Array(envelope.transfer),
+        });
+        // Resolve the registration for every chunk so disposal/re-registration
+        // cannot keep a captured stale handler alive. Starting from a resolved
+        // promise also converts synchronous handler throws into the ordinary
+        // failed response path instead of tearing down the utility runtime.
+        void Promise.resolve().then(() => {
+          const currentRegistration = runtimeApi.providerHandlers.get(providerId);
+          if (currentRegistration?.kind !== kind) {
+            throw new PluginError("failed_precondition", "Terminal interceptor provider is no longer registered");
+          }
+          return currentRegistration.handler(invocation);
+        }).then(
+          (result) => {
+            let bytes;
+            if (result instanceof Uint8Array) bytes = result;
+            else if (result instanceof ArrayBuffer) bytes = new Uint8Array(result);
+            else throw new PluginError("data_loss", "Terminal interceptor must return Uint8Array or ArrayBuffer");
+            if (bytes.byteLength > TERMINAL_INTERCEPTOR_MAX_CHUNK_BYTES) {
+              throw new PluginError("resource_exhausted", "Terminal interceptor result is too large");
+            }
+            const copy = new Uint8Array(bytes.byteLength);
+            copy.set(bytes);
+            const resultEnvelope = createTerminalInterceptorEnvelope({
+              type: "netcatty:terminal-interceptor:result",
+              sequence: chunk.sequence,
+              status: "ok",
+              creditBytes: chunk.byteLength,
+              byteLength: copy.byteLength,
+            }, copy.buffer);
+            interceptorPort.postMessage(resultEnvelope, [copy.buffer]);
+          },
+          () => interceptorPort.postMessage(createTerminalInterceptorEnvelope({
+            type: "netcatty:terminal-interceptor:result",
+            sequence: chunk.sequence,
+            status: "failed",
+          })),
+        ).catch(() => interceptorPort.close?.());
+      };
+      if (typeof interceptorPort.addEventListener === "function") {
+        interceptorPort.addEventListener("message", handleChunk);
+      } else {
+        interceptorPort.on("message", handleChunk);
+      }
+      interceptorPort.start?.();
+      interceptorPort.on?.("close", () => runtimeApi.terminalInterceptorPorts.delete(interceptorPort));
+      attached = true;
+    } finally {
+      if (!attached) {
+        runtimeApi.terminalInterceptorPorts.delete(interceptorPort);
+        interceptorPort.close?.();
+      }
+    }
+  };
+
+  const dispose = transport.onMessage((message, ports) => {
     if (message && typeof message === "object" && Object.hasOwn(message, "frame")) {
+      for (const port of ports) port?.close?.();
       try { cancelUnhandledStream(transport, message); }
       catch { transport.close(); }
       return;
     }
-    if (client.accept(message)) return;
-    if (!message || message.jsonrpc !== "2.0") return;
+    if (client.accept(message)) {
+      for (const port of ports) port?.close?.();
+      return;
+    }
+    if (!message || message.jsonrpc !== "2.0") {
+      for (const port of ports) port?.close?.();
+      return;
+    }
     if (message.method === "$/cancelRequest") {
+      for (const port of ports) port?.close?.();
       cancellation.get(message.params?.cancellationId)?.cancel();
       return;
     }
     if (!Object.hasOwn(message, "id")) {
+      for (const port of ports) port?.close?.();
       try { handleNotification(message); } catch { transport.close(); }
       return;
     }
     const cancellationId = message.cancellationId;
     const source = new CancellationTokenSource();
     if (cancellationId) cancellation.set(cancellationId, source);
-    void handleRequest(message, source.token).then(
+    void handleRequest(message, source.token, ports).then(
       (result) => transport.post({
         jsonrpc: "2.0",
         id: message.id,
@@ -652,6 +801,8 @@ export async function startPluginRuntime({ port, config, loadPlugin }) {
       runtimeApi.settingsChanged.clear();
       runtimeApi.environmentChanged.clear();
       runtimeApi.terminalEvents.clear();
+      for (const interceptorPort of runtimeApi.terminalInterceptorPorts) interceptorPort.close?.();
+      runtimeApi.terminalInterceptorPorts.clear();
       for (const emitter of runtimeApi.viewMessages.values()) emitter.clear();
       cancellation.clear();
       if (!deactivated) {

@@ -7,6 +7,7 @@ const {
   clearTerminalDataSession,
   createTerminalDataBacklog,
   createTerminalDataDispatcher,
+  hasPluginPipelineIngress,
 } = require("./preload/terminalDataBacklog.cjs");
 const {
   createTerminalOutputPortRegistry,
@@ -100,6 +101,7 @@ function filterMcpChunk(sessionId, chunk, meta) {
   // Prepend any buffered fragment from the previous chunk
   const held = _mcpLineBufs.get(sessionId) || "";
   const heldMeta = _mcpLineMetas.get(sessionId);
+  const heldIngressAlreadyAcknowledged = heldMeta?.pluginPipelineIngressBytes === 0;
   const pendingMeta = _mcpPendingMetas.get(sessionId);
   const stateMeta = mergeTerminalDataMeta(mergeTerminalDataMeta(pendingMeta, heldMeta), meta);
   const sameChunkMeta = mergeTerminalDataMeta(mergeTerminalDataMeta(pendingMeta, heldMeta), meta, {
@@ -112,7 +114,18 @@ function filterMcpChunk(sessionId, chunk, meta) {
 
   // Fast path: nothing suspicious in the combined data
   if (!_mcpDroppingWrappedLine.has(sessionId) && !data.includes("__NCMCP_") && !_endsWithMarkerPrefix(data)) {
-    return { data, meta: held ? stateMeta : sameChunkMeta };
+    const deliveryMeta = held ? stateMeta : sameChunkMeta;
+    return {
+      data,
+      meta: heldIngressAlreadyAcknowledged
+        ? {
+            ...(deliveryMeta || {}),
+            pluginPipelineIngressBytes: Number.isFinite(meta?.pluginPipelineIngressBytes)
+              ? Math.max(0, Number(meta.pluginPipelineIngressBytes))
+              : chunk.length,
+          }
+        : deliveryMeta,
+    };
   }
 
   // Slow path: scan line by line
@@ -130,7 +143,10 @@ function filterMcpChunk(sessionId, chunk, meta) {
       const tail = data.slice(pos);
       if (droppedAny || tail.includes("__NCMCP_") || _endsWithMarkerPrefix(tail)) {
         _mcpLineBufs.set(sessionId, tail);
-        const tailMeta = !held && tail === chunk ? sameChunkMeta : stateMeta;
+        let tailMeta = !held && tail === chunk ? sameChunkMeta : stateMeta;
+        if (heldIngressAlreadyAcknowledged && !hasPluginPipelineIngress(tailMeta)) {
+          tailMeta = { ...(tailMeta || {}), pluginPipelineIngressBytes: 0 };
+        }
         if (tailMeta) _mcpLineMetas.set(sessionId, tailMeta);
         if (droppedAny) _mcpDroppingWrappedLine.add(sessionId);
       } else {
@@ -148,7 +164,26 @@ function filterMcpChunk(sessionId, chunk, meta) {
     pos = nlIdx + 1;
   }
 
-  return { data: result, meta: !held && result === chunk ? sameChunkMeta : stateMeta };
+  const deliveryMeta = !held && result === chunk ? sameChunkMeta : stateMeta;
+  return {
+    data: result,
+    meta: heldIngressAlreadyAcknowledged
+      ? {
+          ...(deliveryMeta || {}),
+          pluginPipelineIngressBytes: Number.isFinite(meta?.pluginPipelineIngressBytes)
+            ? Math.max(0, Number(meta.pluginPipelineIngressBytes))
+            : chunk.length,
+        }
+      : deliveryMeta,
+  };
+}
+
+function consumeBufferedMcpIngress(sessionId) {
+  const heldMeta = _mcpLineMetas.get(sessionId);
+  if (!hasPluginPipelineIngress(heldMeta)) return;
+  // Retain an explicit zero so a later safe flush does not fall back to the
+  // visible chunk length and acknowledge the already-credited prefix twice.
+  _mcpLineMetas.set(sessionId, { ...heldMeta, pluginPipelineIngressBytes: 0 });
 }
 
 /**
@@ -176,9 +211,13 @@ function flushMcpBufferedOutput(sessionId) {
       return;
     }
     if (held) {
-      _deliverToListeners(sessionId, held, mergeTerminalDataMeta(_mcpPendingMetas.get(sessionId), heldMeta, {
+      let deliveryMeta = mergeTerminalDataMeta(_mcpPendingMetas.get(sessionId), heldMeta, {
         preserveTerminalPerf: true,
-      }));
+      });
+      if (heldMeta?.pluginPipelineIngressBytes === 0 && !hasPluginPipelineIngress(deliveryMeta)) {
+        deliveryMeta = { ...(deliveryMeta || {}), pluginPipelineIngressBytes: 0 };
+      }
+      _deliverToListeners(sessionId, held, deliveryMeta);
       _mcpPendingMetas.delete(sessionId);
     }
 }
@@ -189,8 +228,12 @@ function scheduleMcpBufferedFlush(sessionId) {
 }
 
 function deliverTerminalData(sessionId, data, options = {}) {
-  if (!sessionId || !data) return;
+  if (!sessionId || (!data && !hasPluginPipelineIngress(options.meta))) return;
   if (closedTerminalDataSessions.has(sessionId)) return;
+  if (!data) {
+    _deliverToListeners(sessionId, "", options.meta);
+    return;
+  }
   if (options.syntheticEcho) {
     _deliverToListeners(sessionId, data, options.meta);
     return;
@@ -198,8 +241,17 @@ function deliverTerminalData(sessionId, data, options = {}) {
   const filtered = filterMcpChunk(sessionId, data, options.meta);
   if (filtered?.data) {
     _deliverToListeners(sessionId, filtered.data, filtered.meta);
+    if (hasPluginPipelineIngress(filtered.meta)) consumeBufferedMcpIngress(sessionId);
   } else if (filtered?.meta) {
-    _mcpPendingMetas.set(sessionId, mergeTerminalDataMeta(_mcpPendingMetas.get(sessionId), filtered.meta));
+    if (hasPluginPipelineIngress(filtered.meta)) {
+      // The legacy path must return flow credit even when MCP marker filtering
+      // removes every display byte. Waiting for unrelated visible output can
+      // otherwise leave a fully suppressed stream paused indefinitely.
+      _deliverToListeners(sessionId, "", filtered.meta);
+      consumeBufferedMcpIngress(sessionId);
+    } else {
+      _mcpPendingMetas.set(sessionId, mergeTerminalDataMeta(_mcpPendingMetas.get(sessionId), filtered.meta));
+    }
   }
   // If there is buffered content waiting for more data (e.g. a prompt
   // right after a dropped marker line), schedule a delayed flush so it
@@ -214,7 +266,13 @@ const terminalOutputPorts = createTerminalOutputPortRegistry({
   filterData(sessionId, data, message) {
     if (message?.syntheticEcho) return data;
     const filtered = filterMcpChunk(sessionId, data, message.meta);
-    if (!filtered?.data && filtered?.meta) {
+    // Metadata-only plugin output is delivered immediately by the output-port
+    // registry so renderer flow credit can be returned. Do not retain the same
+    // ingress metadata for the next visible chunk or it would be acknowledged
+    // twice. Non-ingress terminal-state metadata still follows the next output.
+    if (hasPluginPipelineIngress(filtered?.meta)) {
+      consumeBufferedMcpIngress(sessionId);
+    } else if (!filtered?.data && filtered?.meta) {
       _mcpPendingMetas.set(sessionId, mergeTerminalDataMeta(_mcpPendingMetas.get(sessionId), filtered.meta));
     }
     scheduleMcpBufferedFlush(sessionId);

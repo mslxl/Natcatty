@@ -163,6 +163,78 @@ test("drops terminal perf metadata after backlog data is merged or trimmed", () 
   });
 });
 
+test("sums original plugin-pipeline ingress counts when display chunks are merged", () => {
+  const backlog = createTerminalDataBacklog({ maxBytesPerSession: 8 });
+  backlog.append("session-1", "expanded", { pluginPipelineIngressBytes: 3 });
+  backlog.append("session-1", "!", { pluginPipelineIngressBytes: 2 });
+  assert.deepEqual(backlog.takeEntry("session-1"), {
+    data: "xpanded!",
+    meta: { pluginPipelineIngressBytes: 5 },
+  });
+});
+
+test("mixed processed and raw backlog uses the renderer flow-control unit", () => {
+  const processedThenRaw = createTerminalDataBacklog({ maxBytesPerSession: 64 });
+  processedThenRaw.append("session-1", "expanded", { pluginPipelineIngressBytes: 3 });
+  processedThenRaw.append("session-1", "普通");
+  assert.deepEqual(processedThenRaw.takeEntry("session-1"), {
+    data: "expanded普通",
+    meta: { pluginPipelineIngressBytes: 5 },
+  });
+
+  const rawThenProcessed = createTerminalDataBacklog({ maxBytesPerSession: 64 });
+  rawThenProcessed.append("session-1", "普通");
+  rawThenProcessed.append("session-1", "expanded", { pluginPipelineIngressBytes: 3 });
+  assert.deepEqual(rawThenProcessed.takeEntry("session-1"), {
+    data: "普通expanded",
+    meta: { pluginPipelineIngressBytes: 5 },
+  });
+});
+
+test("backlog preserves already-acknowledged replay state and charges only later raw data", () => {
+  const backlog = createTerminalDataBacklog({ maxBytesPerSession: 64 });
+  backlog.append("session-1", "prompt __NCM", { pluginPipelineIngressBytes: 0 });
+  assert.deepEqual(backlog.takeEntry("session-1"), {
+    data: "prompt __NCM",
+    meta: { pluginPipelineIngressBytes: 0 },
+  });
+
+  backlog.append("session-1", "prompt __NCM", { pluginPipelineIngressBytes: 0 });
+  backlog.append("session-1", "普通");
+  assert.deepEqual(backlog.takeEntry("session-1"), {
+    data: "prompt __NCM普通",
+    meta: { pluginPipelineIngressBytes: 2 },
+  });
+});
+
+test("sensitive prompt metadata follows the latest merged output chunk", () => {
+  const backlog = createTerminalDataBacklog({ maxBytesPerSession: 64 });
+  backlog.append("session-1", "Password: ", {
+    pluginPipelineIngressBytes: 10,
+    pluginPipelineSensitiveInput: true,
+  });
+  backlog.append("session-1", "user@host$ ", {
+    pluginPipelineIngressBytes: 11,
+    pluginPipelineSensitiveInput: false,
+  });
+  assert.deepEqual(backlog.takeEntry("session-1"), {
+    data: "Password: user@host$ ",
+    meta: {
+      pluginPipelineIngressBytes: 21,
+      pluginPipelineSensitiveInput: false,
+    },
+  });
+});
+
+test("retains metadata-only plugin output so suppressed data can still be acknowledged", () => {
+  const backlog = createTerminalDataBacklog();
+  backlog.append("session-1", "", { pluginPipelineIngressBytes: 9 });
+  assert.deepEqual(backlog.takeEntry("session-1"), {
+    data: "",
+    meta: { pluginPipelineIngressBytes: 9 },
+  });
+});
+
 test("keeps latest alternate-screen metadata while trimming backlog data", () => {
   const backlog = createTerminalDataBacklog({ maxBytesPerSession: 5 });
 
@@ -300,6 +372,28 @@ test("onSessionData replays pending terminal data metadata on subscribe", () => 
   }]);
 });
 
+test("onSessionData replays metadata-only plugin output on subscribe", () => {
+  const dataListeners = new Map();
+  const displayDataListeners = new Map();
+  const terminalDataBacklog = createTerminalDataBacklog();
+  terminalDataBacklog.append("session-1", "", { pluginPipelineIngressBytes: 7 });
+  const api = createPreloadApi({
+    ipcRenderer: { invoke() {}, send() {}, on() {}, removeListener() {} },
+    os: { release: () => "10.0.19045" },
+    dataListeners,
+    displayDataListeners,
+    terminalDataBacklog,
+  });
+  const received = [];
+  api.onSessionData("session-1", (chunk, meta) => received.push({ chunk, meta }), {
+    replayBacklog: true,
+  });
+  assert.deepEqual(received, [{
+    chunk: "",
+    meta: { pluginPipelineIngressBytes: 7 },
+  }]);
+});
+
 test("legacy terminal data delivery preserves terminal perf metadata", () => {
   const preload = loadPreloadWithFakeElectron();
   try {
@@ -319,6 +413,50 @@ test("legacy terminal data delivery preserves terminal perf metadata", () => {
       chunk: "hello",
       meta: { terminalPerf },
     }]);
+  } finally {
+    preload.cleanup();
+  }
+});
+
+test("legacy terminal data delivery preserves metadata-only plugin output", () => {
+  const preload = loadPreloadWithFakeElectron();
+  try {
+    const received = [];
+    preload.api.onSessionData("session-1", (chunk, meta) => received.push({ chunk, meta }));
+
+    preload.handlers.get("netcatty:data")?.({}, {
+      sessionId: "session-1",
+      data: "",
+      meta: { pluginPipelineIngressBytes: 11 },
+    });
+
+    assert.deepEqual(received, [{
+      chunk: "",
+      meta: { pluginPipelineIngressBytes: 11 },
+    }]);
+  } finally {
+    preload.cleanup();
+  }
+});
+
+test("legacy MCP-filtered plugin output returns ingress credit immediately", () => {
+  const preload = loadPreloadWithFakeElectron();
+  try {
+    const received = [];
+    preload.api.onSessionData("session-1", (chunk, meta) => received.push({ chunk, meta }));
+    preload.handlers.get("netcatty:data")?.({}, {
+      sessionId: "session-1",
+      data: "__NCMCP_TEST",
+      meta: { pluginPipelineIngressBytes: 13 },
+    });
+    preload.handlers.get("netcatty:data")?.({}, {
+      sessionId: "session-1",
+      data: "\nREADY\n",
+    });
+    assert.deepEqual(received, [
+      { chunk: "", meta: { pluginPipelineIngressBytes: 13 } },
+      { chunk: "READY\n", meta: { pluginPipelineIngressBytes: 7 } },
+    ]);
   } finally {
     preload.cleanup();
   }
@@ -345,6 +483,58 @@ test("terminal output port delivery preserves terminal perf metadata", () => {
       chunk: "hello",
       meta: { terminalPerf },
     }]);
+  } finally {
+    preload.cleanup();
+  }
+});
+
+test("terminal output port delivers metadata-only plugin output for flow acknowledgement", () => {
+  const preload = loadPreloadWithFakeElectron();
+  try {
+    const received = [];
+    const port = createFakePort();
+    preload.api.onSessionData("session-1", (chunk, meta) => received.push({ chunk, meta }));
+    preload.handlers.get("netcatty:terminal-output-port")?.(
+      { ports: [port] },
+      { sessionId: "session-1" },
+    );
+    port.emit({
+      sessionId: "session-1",
+      data: "",
+      meta: { pluginPipelineIngressBytes: 11 },
+    });
+    assert.deepEqual(received, [{
+      chunk: "",
+      meta: { pluginPipelineIngressBytes: 11 },
+    }]);
+  } finally {
+    preload.cleanup();
+  }
+});
+
+test("MCP-filtered metadata-only plugin output is not applied to the next visible chunk", () => {
+  const preload = loadPreloadWithFakeElectron();
+  try {
+    const received = [];
+    const port = createFakePort();
+    preload.api.onSessionData("session-1", (chunk, meta) => received.push({ chunk, meta }));
+    preload.handlers.get("netcatty:terminal-output-port")?.(
+      { ports: [port] },
+      { sessionId: "session-1" },
+    );
+    port.emit({
+      sessionId: "session-1",
+      data: "__NCMCP_TEST",
+      meta: { pluginPipelineIngressBytes: 13 },
+    });
+    port.emit({
+      sessionId: "session-1",
+      data: "\nREADY\n",
+    });
+    assert.deepEqual(received, [
+      { chunk: "", meta: { pluginPipelineIngressBytes: 13 } },
+      { chunk: "READY\n", meta: { pluginPipelineIngressBytes: 7 } },
+    ]);
   } finally {
     preload.cleanup();
   }
@@ -398,6 +588,59 @@ test("delayed MCP terminal data flush preserves metadata", async () => {
       chunk: "prompt __NCM",
       meta: { droppedOutputMayAffectTerminalState: true },
     }]);
+  } finally {
+    preload.cleanup();
+  }
+});
+
+test("already-acknowledged MCP prefix flushes visible text with explicit zero credit", async () => {
+  const preload = loadPreloadWithFakeElectron();
+  try {
+    const received = [];
+    preload.api.onSessionData("session-1", (chunk, meta) => {
+      received.push({ chunk, meta });
+    });
+
+    preload.handlers.get("netcatty:data")?.({}, {
+      sessionId: "session-1",
+      data: "prompt __NCM",
+      meta: { pluginPipelineIngressBytes: 13 },
+    });
+
+    assert.deepEqual(received, [{
+      chunk: "",
+      meta: { pluginPipelineIngressBytes: 13 },
+    }]);
+    await sleep(100);
+
+    assert.deepEqual(received, [
+      { chunk: "", meta: { pluginPipelineIngressBytes: 13 } },
+      { chunk: "prompt __NCM", meta: { pluginPipelineIngressBytes: 0 } },
+    ]);
+  } finally {
+    preload.cleanup();
+  }
+});
+
+test("already-acknowledged MCP prefix charges only a later safe continuation", () => {
+  const preload = loadPreloadWithFakeElectron();
+  try {
+    const received = [];
+    preload.api.onSessionData("session-1", (chunk, meta) => received.push({ chunk, meta }));
+    preload.handlers.get("netcatty:data")?.({}, {
+      sessionId: "session-1",
+      data: "prompt __NCM",
+      meta: { pluginPipelineIngressBytes: 13 },
+    });
+    preload.handlers.get("netcatty:data")?.({}, {
+      sessionId: "session-1",
+      data: "X\n",
+    });
+
+    assert.deepEqual(received, [
+      { chunk: "", meta: { pluginPipelineIngressBytes: 13 } },
+      { chunk: "prompt __NCMX\n", meta: { pluginPipelineIngressBytes: 2 } },
+    ]);
   } finally {
     preload.cleanup();
   }
