@@ -77,7 +77,21 @@ test('labelsForCategory swaps bug/enhancement correctly', () => {
   assert.ok(!labels.includes('needs-triage'));
 });
 
-test('isFixEligiblePr allows bot marker on same-repo branch', () => {
+test('isFixEligiblePr allows automation bot author with bot marker', () => {
+  const pr = {
+    user: { login: 'github-actions[bot]' },
+    body: `${auto.BOT_PR_MARKER}\nFixes #1`,
+    head: {
+      ref: 'cursor/issue-1-99',
+      repo: { full_name: 'binaricat/Netcatty' },
+    },
+    base: { repo: { full_name: 'binaricat/Netcatty' } },
+    labels: ['automation:bot-pr'],
+  };
+  assert.equal(auto.isFixEligiblePr(pr, { repository: 'binaricat/Netcatty' }), true);
+});
+
+test('isFixEligiblePr rejects contributor spoofing bot marker', () => {
   const pr = {
     user: { login: 'random-contributor' },
     body: `${auto.BOT_PR_MARKER}\nFixes #1`,
@@ -86,9 +100,9 @@ test('isFixEligiblePr allows bot marker on same-repo branch', () => {
       repo: { full_name: 'binaricat/Netcatty' },
     },
     base: { repo: { full_name: 'binaricat/Netcatty' } },
-    labels: [],
+    labels: ['automation:bot-pr'],
   };
-  assert.equal(auto.isFixEligiblePr(pr, { repository: 'binaricat/Netcatty' }), true);
+  assert.equal(auto.isFixEligiblePr(pr, { repository: 'binaricat/Netcatty' }), false);
 });
 
 test('isFixEligiblePr rejects forks', () => {
@@ -158,6 +172,64 @@ test('parseCodexReviewOutcome ignores stale head inlines when summary clean', ()
   assert.equal(outcome.clean, true);
 });
 
+test('parseCodexReviewOutcome prefers current-head inline over unpinned clean', () => {
+  const outcome = auto.parseCodexReviewOutcome({
+    summaryText: "Codex Review: Didn't find any major issues. Swish!",
+    headSha: 'abc1234deadbeef',
+    reviewComments: [
+      {
+        body: '![P2 Badge](x) current head bug',
+        commit_id: 'abc1234deadbeef',
+      },
+    ],
+  });
+  assert.equal(outcome.clean, false);
+  assert.equal(outcome.actionable, true);
+});
+
+test('parseCodexReviewOutcome rejects dirty summary for other head', () => {
+  const outcome = auto.parseCodexReviewOutcome({
+    summaryText:
+      'Codex Review: found issues\n**Reviewed commit:** `aaaaaaaaaaaaaaaa`\n![P2 Badge](x) old',
+    headSha: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    reviewComments: [],
+  });
+  assert.equal(outcome.clean, false);
+  assert.equal(outcome.actionable, false);
+  assert.equal(outcome.reason, 'stale_dirty_summary');
+});
+
+test('labelsForCategory preserves triage:admitted', () => {
+  const labels = auto.labelsForCategory('unclear', [
+    'triage:admitted',
+    'needs-triage',
+  ]);
+  assert.ok(labels.includes('triage:admitted'));
+  assert.ok(labels.includes('triage:unclear'));
+});
+
+test('labelsForCategory drops standalone unclear label', () => {
+  const labels = auto.labelsForCategory('bug_ready', ['unclear', 'triage:unclear', 'user-tag']);
+  assert.ok(labels.includes('bug'));
+  assert.ok(labels.includes('user-tag'));
+  assert.ok(!labels.includes('unclear'));
+  assert.ok(!labels.includes('triage:unclear'));
+});
+
+test('decideCodexLoopAction forceRetry does not mark ready on stale clean', () => {
+  const d = auto.decideCodexLoopAction({
+    eligible: true,
+    hasCodexActivity: true,
+    forceRetry: true,
+    lastAutomationRequestAt: 5000,
+    lastCodexSummaryAt: 1000,
+    summaryText: "Didn't find any major issues. Swish!",
+    outcome: { clean: true, actionable: false, reason: 'codex_clean_summary' },
+  });
+  assert.equal(d.action, 'request_review');
+  assert.equal(d.reason, 'retry_request');
+});
+
 test('parseCodexReviewOutcome unknown is not actionable', () => {
   const outcome = auto.parseCodexReviewOutcome({
     summaryText: 'Codex is still thinking',
@@ -168,15 +240,64 @@ test('parseCodexReviewOutcome unknown is not actionable', () => {
   assert.equal(outcome.reason, 'codex_unknown');
 });
 
+test('parseCodexReviewOutcome treats P3-only as non-actionable handoff', () => {
+  const outcome = auto.parseCodexReviewOutcome({
+    summaryText: 'Codex Review: only nitpicks left\n![P3 Badge](x)\n**P3** style',
+    reviewComments: [],
+    headSha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    summaryCommitId: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+  });
+  assert.equal(outcome.clean, false);
+  assert.equal(outcome.actionable, false);
+  assert.equal(outcome.reason, 'codex_p3_only');
+  const d = auto.decideCodexLoopAction({
+    eligible: true,
+    hasCodexActivity: true,
+    outcome,
+  });
+  assert.equal(d.action, 'give_up');
+  assert.equal(d.reason, 'codex_p3_only');
+});
+
 test('decideCodexLoopAction skips when awaiting existing @codex request', () => {
+  const now = 10_000_000;
   const d = auto.decideCodexLoopAction({
     eligible: true,
     hasAutomationRequest: true,
     hasCodexActivity: false,
+    lastAutomationRequestAt: now - 1000,
+    nowMs: now,
     outcome: { clean: false, actionable: false, reason: 'codex_unknown' },
   });
   assert.equal(d.action, 'skip');
-  assert.equal(d.reason, 'awaiting_codex');
+  // With a request timestamp newer than any summary, this is the new-head wait path.
+  assert.equal(d.reason, 'awaiting_codex_for_new_head');
+});
+
+test('decideCodexLoopAction retries after expired unanswered request', () => {
+  const now = 10_000_000;
+  const d = auto.decideCodexLoopAction({
+    eligible: true,
+    hasAutomationRequest: true,
+    hasCodexActivity: false,
+    lastAutomationRequestAt: now - auto.CODEX_REQUEST_RETRY_MS - 1,
+    nowMs: now,
+    outcome: { clean: false, actionable: false, reason: 'codex_unknown' },
+  });
+  assert.equal(d.action, 'request_review');
+  assert.equal(d.reason, 'retry_request');
+});
+
+test('decideCodexLoopAction forceRetry re-requests immediately', () => {
+  const d = auto.decideCodexLoopAction({
+    eligible: true,
+    hasAutomationRequest: true,
+    hasCodexActivity: false,
+    lastAutomationRequestAt: Date.now(),
+    forceRetry: true,
+  });
+  assert.equal(d.action, 'request_review');
+  assert.equal(d.reason, 'retry_request');
 });
 
 test('decideCodexLoopAction ignores stale clean summary for other head', () => {
@@ -192,12 +313,25 @@ test('decideCodexLoopAction ignores stale clean summary for other head', () => {
   assert.equal(d.reason, 'stale_clean_summary');
 });
 
+test('decideCodexLoopAction marks ready only when clean is pinned to head', () => {
+  const d = auto.decideCodexLoopAction({
+    eligible: true,
+    hasCodexActivity: true,
+    headSha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    summaryText:
+      "Codex Review: Didn't find any major issues. Swish!\n**Reviewed commit:** `aaaaaaaa`",
+    outcome: { clean: true, actionable: false, reason: 'codex_clean_summary' },
+  });
+  assert.equal(d.action, 'mark_ready');
+});
+
 test('decideCodexLoopAction awaits when request is newer than summary', () => {
   const d = auto.decideCodexLoopAction({
     eligible: true,
     hasCodexActivity: true,
     lastAutomationRequestAt: 2000,
     lastCodexSummaryAt: 1000,
+    nowMs: 2500,
     outcome: { clean: true, actionable: false, reason: 'codex_clean_summary' },
     summaryText: "Didn't find any major issues. Swish!",
   });
@@ -298,16 +432,66 @@ test('normalizeClassification replaces closing-language unclear replies', () => 
   assert.doesNotMatch(result.reply, /will be closed/i);
 });
 
-test('normalizeClassification keeps localized low-confidence bug reply', () => {
-  const result = auto.normalizeClassification({
+test('normalizeClassification always rewrites low-confidence bug_ready reply', () => {
+  const en = auto.normalizeClassification({
     category: 'bug_ready',
     confidence: 0.5,
     summary: 'maybe',
     reasoning: 'unclear',
-    reply: '请补充复现步骤和日志。',
+    reply: 'A focused change is being prepared.',
   });
-  assert.equal(result.category, 'bug_needs_info');
-  assert.equal(result.reply, '请补充复现步骤和日志。');
+  assert.equal(en.category, 'bug_needs_info');
+  assert.match(en.reply, /steps to reproduce|Expected vs actual/i);
+  assert.doesNotMatch(en.reply, /focused change is being prepared/i);
+
+  const zh = auto.normalizeClassification({
+    category: 'bug_ready',
+    confidence: 0.5,
+    summary: 'maybe',
+    reasoning: 'unclear',
+    reply: '我们正在准备修复这个问题。',
+  });
+  assert.equal(zh.category, 'bug_needs_info');
+  assert.match(zh.reply, /复现步骤|期望行为/);
+  assert.doesNotMatch(zh.reply, /正在准备修复/);
+});
+
+test('normalizeClassification rewrites implementation promise on downgrade', () => {
+  const bug = auto.normalizeClassification({
+    category: 'bug_ready',
+    confidence: 0.5,
+    summary: 'maybe',
+    reasoning: 'low conf',
+    reply: 'A focused change is being prepared for this report.',
+  });
+  assert.equal(bug.category, 'bug_needs_info');
+  assert.doesNotMatch(bug.reply, /focused change is being prepared/i);
+  assert.match(bug.reply, /steps to reproduce|logs/i);
+
+  const feature = auto.normalizeClassification({
+    category: 'feature_quick_win',
+    confidence: 0.4,
+    summary: 'maybe',
+    reasoning: 'low conf',
+    reply: 'A focused change is being prepared.',
+  });
+  assert.equal(feature.category, 'feature_defer');
+  assert.doesNotMatch(feature.reply, /focused change is being prepared/i);
+  assert.match(feature.reply, /maintainer/i);
+});
+
+test('parseCodexReviewOutcome uses summaryCommitId when body has no pin', () => {
+  const outcome = auto.parseCodexReviewOutcome({
+    summaryText: "Didn't find any major issues. Swish!",
+    reviewComments: [],
+    headSha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    summaryCommitId: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+  });
+  assert.equal(outcome.clean, true);
+  assert.equal(
+    outcome.reviewedCommitSha,
+    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+  );
 });
 test('isBotPrForIssue matches marker + Fixes', () => {
   assert.equal(
@@ -332,12 +516,43 @@ test('hasProtectedChangesInSources checks commit names', () => {
   assert.deepEqual(hits, ['.github/workflows/x.yml']);
 });
 
+test('hasProtectedChangesInSources blocks electron-builder configs', () => {
+  const hits = auto.hasProtectedChangesInSources({
+    changedFiles: ['electron-builder.config.cjs', 'components/App.tsx', 'nix/release.nix'],
+  });
+  assert.ok(hits.includes('electron-builder.config.cjs'));
+  assert.ok(hits.includes('nix/release.nix'));
+  assert.ok(!hits.includes('components/App.tsx'));
+});
+
 test('pathsFromGitStatusPorcelain keeps both rename sides', () => {
   const paths = auto.pathsFromGitStatusPorcelain(
     'R  scripts/cursor-automation.cjs -> scripts/evil.cjs\n',
   );
   assert.ok(paths.includes('scripts/cursor-automation.cjs'));
   assert.ok(paths.includes('scripts/evil.cjs'));
+});
+
+test('pathsFromGitStatusPorcelain unquotes C-style paths', () => {
+  const paths = auto.pathsFromGitStatusPorcelain(
+    'A  ".github/workflows/evil\\tname.yml"\n',
+  );
+  assert.deepEqual(paths, ['.github/workflows/evil\tname.yml']);
+  const hits = auto.hasProtectedChangesInSources({
+    gitStatusPorcelain: 'A  ".github/workflows/evil\\tname.yml"\n',
+  });
+  assert.ok(hits.some((p) => p.startsWith('.github/')));
+});
+
+test('isBotPrForIssue requires complete issue number boundary', () => {
+  const prFor10 = {
+    body: `${auto.BOT_PR_MARKER}\nFixes #10`,
+    head: { ref: 'cursor/issue-10-1', repo: { full_name: 'o/r' } },
+    base: { repo: { full_name: 'o/r' } },
+    labels: [],
+  };
+  assert.equal(auto.isBotPrForIssue(prFor10, 10), true);
+  assert.equal(auto.isBotPrForIssue(prFor10, 1), false);
 });
 
 test('pathsFromGitDiffNameStatus keeps rename source and dest', () => {
@@ -366,13 +581,16 @@ test('hasProtectedChanges flags workflow edits', () => {
   assert.deepEqual(hits, ['.github/workflows/cursor-automation.yml']);
 });
 
-test('shouldSkipExternalCodexRerequest matches head sha marker', () => {
+test('shouldSkipExternalCodexRerequest matches trusted head sha marker only', () => {
   const sha = 'abc123';
   assert.equal(
     auto.shouldSkipExternalCodexRerequest({
       headSha: sha,
       existingComments: [
-        { body: auto.buildExternalCodexRerequestComment(sha) },
+        {
+          user: { login: 'github-actions[bot]' },
+          body: auto.buildExternalCodexRerequestComment(sha),
+        },
       ],
     }),
     true,
@@ -380,10 +598,76 @@ test('shouldSkipExternalCodexRerequest matches head sha marker', () => {
   assert.equal(
     auto.shouldSkipExternalCodexRerequest({
       headSha: sha,
-      existingComments: [{ body: 'unrelated' }],
+      existingComments: [
+        {
+          user: { login: 'attacker' },
+          body: auto.buildExternalCodexRerequestComment(sha),
+        },
+      ],
     }),
     false,
   );
+  assert.equal(
+    auto.shouldSkipExternalCodexRerequest({
+      headSha: sha,
+      existingComments: [{ user: { login: 'github-actions[bot]' }, body: 'unrelated' }],
+    }),
+    false,
+  );
+});
+
+test('parseCodexReviewOutcome accepts clean reaction without summary text', () => {
+  const outcome = auto.parseCodexReviewOutcome({
+    summaryText: '',
+    reviewComments: [],
+    headSha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    cleanReaction: true,
+    reactionRequestHeadSha: 'aaaaaaaa',
+  });
+  assert.equal(outcome.clean, true);
+  assert.equal(outcome.reason, 'codex_clean_reaction');
+});
+
+test('decideCodexLoopAction marks ready on pinned clean reaction', () => {
+  const d = auto.decideCodexLoopAction({
+    eligible: true,
+    hasCodexActivity: true,
+    headSha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    requestedHeadSha: 'aaaaaaaa',
+    outcome: {
+      clean: true,
+      actionable: false,
+      reason: 'codex_clean_reaction',
+      reviewedCommitSha: 'aaaaaaaa',
+    },
+  });
+  assert.equal(d.action, 'mark_ready');
+});
+
+test('decideCodexLoopAction rejects unpinned clean reaction', () => {
+  const d = auto.decideCodexLoopAction({
+    eligible: true,
+    hasCodexActivity: true,
+    headSha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    requestedHeadSha: '',
+    outcome: {
+      clean: true,
+      actionable: false,
+      reason: 'codex_clean_reaction',
+      reviewedCommitSha: '',
+    },
+  });
+  assert.equal(d.action, 'skip');
+  assert.equal(d.reason, 'clean_summary_unpinned');
+});
+
+test('buildCodexReviewRequestComment pins head sha', () => {
+  const body = auto.buildCodexReviewRequestComment(
+    2,
+    'deadbeefcafebabe000000000000000000000001',
+  );
+  assert.match(body, /cursor-codex-round:2/);
+  assert.match(body, /cursor-codex-head:deadbeefcafebabe000000000000000000000001/);
 });
 
 test('buildExternalCodexRerequestComment only asks Codex', () => {
@@ -393,14 +677,82 @@ test('buildExternalCodexRerequestComment only asks Codex', () => {
   assert.doesNotMatch(body, /Cursor CLI/i);
 });
 
-test('getCodexRoundFromComments reads max round', () => {
+test('getCodexRoundFromComments reads max round from trusted authors only', () => {
   assert.equal(
     auto.getCodexRoundFromComments([
-      { body: '<!-- cursor-codex-round:1 -->' },
-      { body: '<!-- cursor-codex-round:3 -->' },
+      { user: { login: 'github-actions[bot]' }, body: '<!-- cursor-codex-round:1 -->' },
+      { user: { login: 'github-actions[bot]' }, body: '<!-- cursor-codex-round:3 -->' },
+      { user: { login: 'random-user' }, body: '<!-- cursor-codex-round:999 -->' },
+      { user: { login: 'other-app[bot]' }, body: '<!-- cursor-codex-round:50 -->' },
     ]),
     3,
   );
+  assert.equal(
+    auto.getCodexRoundFromComments(
+      [{ user: { login: 'binaricat' }, body: '<!-- cursor-codex-round:5 -->' }],
+      { ownActors: 'binaricat' },
+    ),
+    5,
+  );
+  assert.equal(
+    auto.getCodexRoundFromComments([
+      { user: { login: 'attacker' }, body: '<!-- cursor-codex-round:99 -->' },
+    ]),
+    0,
+  );
+});
+
+test('hasAutomationCodexRequest ignores untrusted markers', () => {
+  assert.equal(
+    auto.hasAutomationCodexRequest([
+      { user: { login: 'attacker' }, body: '<!-- cursor-codex-round:1 -->' },
+    ]),
+    false,
+  );
+  assert.equal(
+    auto.hasAutomationCodexRequest([
+      {
+        user: { login: 'github-actions[bot]' },
+        body: '<!-- cursor-codex-round:1 -->',
+      },
+    ]),
+    true,
+  );
+});
+
+test('decideCodexLoopAction forceRetry re-requests on stale dirty', () => {
+  const d = auto.decideCodexLoopAction({
+    eligible: true,
+    hasCodexActivity: true,
+    forceRetry: true,
+    outcome: {
+      clean: false,
+      actionable: false,
+      reason: 'stale_dirty_summary',
+    },
+  });
+  assert.equal(d.action, 'request_review');
+  assert.equal(d.reason, 'retry_request');
+});
+
+test('decideCodexLoopAction allows fix on round equal to maxRounds', () => {
+  const d = auto.decideCodexLoopAction({
+    eligible: true,
+    hasCodexActivity: true,
+    round: 1,
+    maxRounds: 1,
+    outcome: { clean: false, actionable: true, reason: 'codex_findings' },
+  });
+  assert.equal(d.action, 'fix');
+  const giveUp = auto.decideCodexLoopAction({
+    eligible: true,
+    hasCodexActivity: true,
+    round: 2,
+    maxRounds: 1,
+    outcome: { clean: false, actionable: true, reason: 'codex_findings' },
+  });
+  assert.equal(giveUp.action, 'give_up');
+  assert.equal(giveUp.reason, 'max_rounds');
 });
 
 test('parseClassificationFile accepts pure JSON file', () => {
@@ -424,4 +776,5 @@ test('buildCodexReviewRequestComment includes mention', () => {
   const body = auto.buildCodexReviewRequestComment(2);
   assert.match(body, /@codex review/);
   assert.match(body, /cursor-codex-round:2/);
+  assert.doesNotMatch(body, /cursor-codex-head:/);
 });

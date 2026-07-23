@@ -14,6 +14,10 @@ on:
   # Codex often finishes as a submitted PR review (plus optional issue summary).
   pull_request_review:
     types: [submitted]
+  # Reaction-only clean (👍 on @codex request) does not emit review events;
+  # poll open automation PRs so the loop can observe and mark ready.
+  schedule:
+    - cron: '*/20 * * * *'
   workflow_dispatch:
     inputs:
       issue_number:
@@ -36,16 +40,23 @@ concurrency:
     }}
   cancel-in-progress: false
 
+# Default least privilege: route/bootstrap only need read. Jobs that mutate
+# issues/PRs/contents declare their own write permissions.
 permissions:
-  contents: write
-  issues: write
-  pull-requests: write
+  contents: read
+  issues: read
+  pull-requests: read
   actions: read
 
 jobs:
   route:
     name: Route event
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+      actions: read
     outputs:
       kind: ${{ steps.decide.outputs.kind }}
       issue_number: ${{ steps.decide.outputs.issue_number }}
@@ -100,6 +111,12 @@ jobs:
               core.setOutput('pull_number', extra.pull_number || '');
               core.setOutput('reason', extra.reason || kind);
             };
+
+            if (event === 'schedule') {
+              return set('codex_poll', {
+                reason: 'scheduled poll for reaction-only clean / expired requests',
+              });
+            }
 
             if (event === 'workflow_dispatch') {
               if (process.env.DISPATCH_ISSUE) {
@@ -230,18 +247,16 @@ jobs:
                 }
                 if (context.payload.action === 'synchronize') {
                   const sender = String(context.payload.sender?.login || '');
-                  // Bot fix jobs already post @codex after push; skip their synchronize.
-                  if (
-                    sender === 'github-actions[bot]' ||
-                    sender.endsWith('[bot]')
-                  ) {
+                  // Only this workflow's publish jobs re-@codex after push.
+                  // Other bots (dependabot, pre-commit, etc.) still need a request.
+                  if (sender === 'github-actions[bot]') {
                     return set('skip', {
-                      reason: 'own pr bot push already requested codex',
+                      reason: 'own pr github-actions push already requested codex',
                     });
                   }
                   return set('own_rerequest_codex', {
                     pull_number: String(pr.number),
-                    reason: 'own pr human push — re-@codex',
+                    reason: 'own pr non-automation push — re-@codex',
                   });
                 }
                 return set('skip', {
@@ -274,6 +289,12 @@ jobs:
     if: needs.route.outputs.kind == 'issue_classify'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # Per-issue only: a global group drops pending issues (GitHub keeps one
+    # pending job). Same-issue retriages still serialize; daily limit is
+    # best-effort via triage:admitted markers.
+    concurrency:
+      group: cursor-triage-${{ needs.route.outputs.issue_number || github.run_id }}
+      cancel-in-progress: false
     permissions:
       contents: read
       issues: write
@@ -292,6 +313,15 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Freeze trusted helper before agent
+        run: |
+          set -euo pipefail
+          test -f scripts/cursor-automation.cjs
+          cp scripts/cursor-automation.cjs "$RUNNER_TEMP/cursor-automation.cjs"
+          # Prompt copy for classify (agent must not rewrite the policy helper).
+          mkdir -p "$RUNNER_TEMP/cursor-prompts"
+          cp .github/cursor/prompts/classify.md "$RUNNER_TEMP/cursor-prompts/classify.md"
+
       - name: Prepare issue context
         id: prepare
         uses: actions/github-script@v7
@@ -301,7 +331,7 @@ jobs:
           DAILY_LIMIT: ${{ vars.CURSOR_TRIAGE_DAILY_LIMIT || '10' }}
         with:
           script: |
-            const auto = require(`${process.env.GITHUB_WORKSPACE}/scripts/cursor-automation.cjs`);
+            const auto = require(`${process.env.RUNNER_TEMP}/cursor-automation.cjs`);
             await auto.prepareIssueContext({
               github,
               context,
@@ -326,7 +356,10 @@ jobs:
         if: steps.prepare.outputs.should_run == 'true'
         run: |
           curl https://cursor.com/install -fsS | bash
+          # Official installer places `agent` under ~/.local/bin (and sometimes ~/.cursor/bin).
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           echo "$HOME/.cursor/bin" >> "$GITHUB_PATH"
+          command -v agent || ls -la "$HOME/.local/bin" "$HOME/.cursor/bin" 2>/dev/null || true
 
       - name: Classify with Cursor CLI
         if: steps.prepare.outputs.should_run == 'true'
@@ -338,24 +371,39 @@ jobs:
           set -euo pipefail
           mkdir -p .cursor-runtime
           git config --local --unset-all http.https://github.com/.extraheader || true
-          PROMPT="$(cat .github/cursor/prompts/classify.md)
+          # Restore frozen helper in case agent rewrote workspace copy mid-run (post-step).
+          PROMPT="$(cat "$RUNNER_TEMP/cursor-prompts/classify.md")
           ----
           Issue payload path: .cursor-runtime/issue.json
           Write the JSON result to .cursor-runtime/classification.json as well as printing it.
           "
-          agent -p --mode=ask --trust --model auto --output-format text \
+          # Sandbox limits shell/network exfil of CURSOR_API_KEY from untrusted prompts.
+          agent -p --mode=ask --trust --sandbox enabled --model auto --output-format text \
             --workspace "$GITHUB_WORKSPACE" \
             "$PROMPT" | tee .cursor-runtime/classify-raw.txt
 
+          # Always parse with the frozen helper, never workspace scripts.
           if [[ ! -s .cursor-runtime/classification.json ]]; then
-            node - <<'NODE'
-            const fs = require('node:fs');
-            const auto = require('./scripts/cursor-automation.cjs');
-            const text = fs.readFileSync('.cursor-runtime/classify-raw.txt', 'utf8');
-            const parsed = auto.parseClassificationText(text);
-            auto.writeJson('.cursor-runtime/classification.json', parsed);
-            NODE
+            node -e '
+              const fs = require("node:fs");
+              const auto = require(process.env.RUNNER_TEMP + "/cursor-automation.cjs");
+              const text = fs.readFileSync(".cursor-runtime/classify-raw.txt", "utf8");
+              const parsed = auto.parseClassificationText(text);
+              auto.writeJson(".cursor-runtime/classification.json", parsed);
+            '
           fi
+          # Fail closed if the untrusted prompt caused the agent to echo the key.
+          node -e '
+            const auto = require(process.env.RUNNER_TEMP + "/cursor-automation.cjs");
+            auto.assertFilesDoNotContainSecret(
+              [
+                ".cursor-runtime/classify-raw.txt",
+                ".cursor-runtime/classification.json",
+              ],
+              process.env.CURSOR_API_KEY,
+              "classify-output",
+            );
+          '
 
       - name: Apply classification
         id: apply
@@ -365,7 +413,7 @@ jobs:
           ISSUE_NUMBER: ${{ steps.prepare.outputs.issue_number }}
         with:
           script: |
-            const auto = require(`${process.env.GITHUB_WORKSPACE}/scripts/cursor-automation.cjs`);
+            const auto = require(`${process.env.RUNNER_TEMP}/cursor-automation.cjs`);
             await auto.applyClassification({
               github,
               context,
@@ -386,7 +434,7 @@ jobs:
           WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           node - <<'NODE'
-          const auto = require('./scripts/cursor-automation.cjs');
+          const auto = require(process.env.RUNNER_TEMP + '/cursor-automation.cjs');
           const payload = auto.buildSlackPayload({
             status: process.env.STATUS,
             issueUrl: process.env.ISSUE_URL,
@@ -536,12 +584,16 @@ jobs:
         if: steps.existing.outputs.exists != 'true'
         run: |
           curl https://cursor.com/install -fsS | bash
+          # Official installer places `agent` under ~/.local/bin (and sometimes ~/.cursor/bin).
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           echo "$HOME/.cursor/bin" >> "$GITHUB_PATH"
+          command -v agent || ls -la "$HOME/.local/bin" "$HOME/.cursor/bin" 2>/dev/null || true
 
       - name: Implement with Cursor CLI
         if: steps.existing.outputs.exists != 'true'
         env:
           CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+          BASE_SHA: ${{ steps.branch.outputs.base_sha }}
           # Explicitly strip GitHub credentials from the agent environment.
           GITHUB_TOKEN: ''
           GH_TOKEN: ''
@@ -551,9 +603,33 @@ jobs:
           # Drop any accidental git auth helpers for the agent process.
           git config --local --unset-all http.https://github.com/.extraheader || true
           PROMPT="$(cat .github/cursor/prompts/implement.md)"
-          agent -p --force --trust --model auto --output-format text \
+          # Sandbox restricts shell/network while still allowing workspace edits.
+          agent -p --force --trust --sandbox enabled --model auto --output-format text \
             --workspace "$GITHUB_WORKSPACE" \
             "$PROMPT" | tee .cursor-runtime/implement-raw.txt
+          # Do not run `git diff` here with CURSOR_API_KEY present — agent may have
+          # configured textconv/hooks. Committed range is scanned later via format-patch.
+          node -e '
+            const { execSync } = require("node:child_process");
+            const auto = require(process.env.RUNNER_TEMP + "/cursor-automation.cjs");
+            auto.assertFilesDoNotContainSecret(
+              [".cursor-runtime/implement-raw.txt"],
+              process.env.CURSOR_API_KEY,
+              "implement-output",
+            );
+            const untracked = execSync(
+              "git -c core.hooksPath=/dev/null ls-files --others --exclude-standard",
+              { encoding: "utf8" },
+            )
+              .split("\n")
+              .filter(Boolean)
+              .filter((p) => !p.startsWith(".cursor-runtime/"));
+            auto.assertFilesDoNotContainSecret(
+              untracked,
+              process.env.CURSOR_API_KEY,
+              "implement-untracked",
+            );
+          '
 
       - name: Detect changes
         if: steps.existing.outputs.exists != 'true'
@@ -598,6 +674,13 @@ jobs:
               message: 'The automatic implementation pass did not produce a safe focused change. A maintainer needs to take a look.',
             });
 
+      - name: Install test shell dependencies
+        if: steps.existing.outputs.exists != 'true' && steps.changes.outputs.present == 'true'
+        run: |
+          # Match .github/workflows/test.yml — osc7Setup.test.ts requires fish in CI.
+          sudo apt-get update
+          sudo apt-get install -y fish
+
       - name: Verify
         if: steps.existing.outputs.exists != 'true' && steps.changes.outputs.present == 'true'
         id: verify
@@ -619,16 +702,23 @@ jobs:
       - name: Prepare patch for isolated publish
         if: steps.existing.outputs.exists != 'true' && steps.changes.outputs.present == 'true' && steps.verify.outputs.passed == 'true'
         id: patch
+        # No CURSOR_API_KEY here: agent may have installed hooks. Git runs with hooks disabled.
+        env:
+          ISSUE_NUMBER: ${{ needs.route.outputs.issue_number }}
         run: |
           set -euo pipefail
-          status="$(git status --porcelain --untracked-files=all -- . ':(exclude).cursor-runtime' ':(exclude).cursor-runtime/**')"
+          # Neutralize agent-controlled hooks/config for all subsequent git ops.
+          GITH='git -c core.hooksPath=/dev/null'
+          $GITH config --local --unset-all core.hooksPath 2>/dev/null || true
+          $GITH config --local --unset-all core.fsmonitor 2>/dev/null || true
+          status="$($GITH status --porcelain --untracked-files=all -- . ':(exclude).cursor-runtime' ':(exclude).cursor-runtime/**')"
           if [[ -n "$status" ]]; then
-            git add -A
-            git reset -- .cursor-runtime >/dev/null 2>&1 || true
-            git -c user.name="netcatty-cursor-bot" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            $GITH add -A
+            $GITH reset -- .cursor-runtime >/dev/null 2>&1 || true
+            $GITH -c user.name="netcatty-cursor-bot" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
               commit -m "fix(#${ISSUE_NUMBER}): automated Cursor CLI fix" || true
           fi
-          name_status="$(git diff --name-status -M "${{ steps.branch.outputs.base_sha }}" HEAD)"
+          name_status="$($GITH diff --name-status -M "${{ steps.branch.outputs.base_sha }}" HEAD)"
           node -e '
             const auto = require(process.env.RUNNER_TEMP + "/cursor-automation.cjs");
             const hits = auto.hasProtectedChangesInSources({ nameStatusText: process.argv[1] });
@@ -637,8 +727,15 @@ jobs:
               process.exit(1);
             }
           ' "$name_status"
+          # Reject commits that still contain runtime artifacts (agent may have committed them).
+          runtime_hits="$($GITH diff --name-only "${{ steps.branch.outputs.base_sha }}" HEAD | grep -E '^\.cursor-runtime(/|$)' || true)"
+          if [[ -n "$runtime_hits" ]]; then
+            echo "Refusing to publish commits that include .cursor-runtime paths:" >&2
+            echo "$runtime_hits" >&2
+            exit 1
+          fi
           mkdir -p .cursor-runtime
-          git format-patch --stdout "${{ steps.branch.outputs.base_sha }}" > .cursor-runtime/implement.patch
+          $GITH format-patch --stdout "${{ steps.branch.outputs.base_sha }}" > .cursor-runtime/implement.patch
           test -s .cursor-runtime/implement.patch
           if [[ -f .cursor-runtime/implement-status.txt ]]; then
             cp .cursor-runtime/implement-status.txt .cursor-runtime/implement-status.out.txt
@@ -646,6 +743,26 @@ jobs:
             echo "OK: automated fix" > .cursor-runtime/implement-status.out.txt
           fi
           echo "should_publish=true" >> "$GITHUB_OUTPUT"
+
+      - name: Scan implement patch for secret leaks
+        if: steps.patch.outputs.should_publish == 'true'
+        env:
+          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+        run: |
+          set -euo pipefail
+          # Pure Node scan only — no git with the secret in the environment.
+          node -e '
+            const auto = require(process.env.RUNNER_TEMP + "/cursor-automation.cjs");
+            auto.assertFilesDoNotContainSecret(
+              [
+                ".cursor-runtime/implement.patch",
+                ".cursor-runtime/implement-status.out.txt",
+                ".cursor-runtime/implement-status.txt",
+              ],
+              process.env.CURSOR_API_KEY,
+              "implement-publish",
+            );
+          '
 
       - name: Upload implement patch
         if: steps.patch.outputs.should_publish == 'true'
@@ -690,7 +807,8 @@ jobs:
       ISSUE_TITLE: ${{ needs.implement.outputs.issue_title }}
       BRANCH: ${{ needs.implement.outputs.branch }}
       BASE_SHA: ${{ needs.implement.outputs.base_sha }}
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Prefer a PAT so push/PR events trigger normal CI (GITHUB_TOKEN does not).
+      GH_TOKEN: ${{ secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
       DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
     steps:
       - name: Download implement patch
@@ -706,6 +824,8 @@ jobs:
           rm -rf "$PUBLISH"
           git clone --no-checkout "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$PUBLISH"
           cd "$PUBLISH"
+          git -c core.hooksPath=/dev/null config user.name "netcatty-cursor-bot"
+          git -c core.hooksPath=/dev/null config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git -c core.hooksPath=/dev/null fetch --depth=50 origin "${BASE_SHA}"
           git -c core.hooksPath=/dev/null checkout -B "$BRANCH" "$BASE_SHA"
           git -c core.hooksPath=/dev/null am --3way "$GITHUB_WORKSPACE/patch-in/implement.patch"
@@ -780,7 +900,7 @@ jobs:
             await github.rest.issues.createComment({
               ...context.repo,
               issue_number: pr.number,
-              body: auto.buildCodexReviewRequestComment(1),
+              body: auto.buildCodexReviewRequestComment(1, pr.head.sha),
             });
             core.info(`Opened draft PR ${pr.html_url}`);
 
@@ -900,54 +1020,112 @@ jobs:
               .map((r) => ({
                 body: r.body,
                 created_at: r.submitted_at || r.created_at,
+                // Authoritative commit for this submitted review (may lack body pin).
+                commit_id: r.commit_id || '',
               }));
             const summaryCandidates = [
               ...codexIssue.map((c) => ({
                 body: c.body,
                 created_at: c.created_at,
+                commit_id: '',
               })),
               ...codexSubmitted,
-            ].sort(
-              (a, b) =>
-                new Date(b.created_at || 0) - new Date(a.created_at || 0),
+            ]
+              .map((c) => ({
+                ...c,
+                pin:
+                  auto.extractReviewedCommitSha(c.body) ||
+                  String(c.commit_id || '').toLowerCase(),
+              }))
+              .sort(
+                (a, b) =>
+                  new Date(b.created_at || 0) - new Date(a.created_at || 0),
+              );
+            // Only summaries pinned to the current head may drive clean/dirty.
+            // An older clean comment must not win the sort over a new-head review.
+            const headSummaries = summaryCandidates.filter(
+              (c) =>
+                c.pin && auto.commitShasMatch(pr.head.sha, c.pin),
             );
-            const summaryText = summaryCandidates[0]?.body || '';
+            const summaryText = headSummaries[0]?.body || '';
+            const summaryCommitId = headSummaries[0]?.pin || '';
+            // Only trust control markers from automation bots / own actors.
+            const controlOpts = { ownActors: process.env.OWN_ACTORS };
+            const requestComments = issueComments.filter((c) =>
+              auto.isAutomationControlComment(c, controlOpts),
+            );
+            // Codex often 👍s the @codex request instead of posting clean prose.
+            const reactionsByCommentId = {};
+            for (const comment of requestComments.slice(-5)) {
+              try {
+                const { data: reactions } = await github.rest.reactions.listForIssueComment({
+                  ...context.repo,
+                  comment_id: comment.id,
+                  per_page: 100,
+                });
+                reactionsByCommentId[comment.id] = reactions;
+              } catch (err) {
+                core.warning(`Failed to list reactions for comment ${comment.id}: ${err.message}`);
+              }
+            }
+            const reactionResult = auto.hasCodexCleanReactionOnRequest({
+              requestComments,
+              reactionsByCommentId,
+              headSha: pr.head.sha,
+              ownActors: process.env.OWN_ACTORS,
+            });
             const outcome = auto.parseCodexReviewOutcome({
               summaryText,
               reviewComments: codexReviews,
               issueComments: codexIssue,
               headSha: pr.head.sha,
+              cleanReaction: reactionResult.clean,
+              reactionRequestHeadSha: reactionResult.requestHeadSha || '',
+              summaryCommitId,
             });
-            const round = auto.getCodexRoundFromComments(issueComments);
+            const round = auto.getCodexRoundFromComments(
+              issueComments,
+              controlOpts,
+            );
             const hasCodexActivity =
               Boolean(summaryText) ||
               auto.filterCodexReviewCommentsForHead(codexReviews, pr.head.sha)
-                .length > 0;
+                .length > 0 ||
+              reactionResult.clean;
             const lastAutomationRequestAt = auto.getLatestCommentTime(
               issueComments,
-              (c) =>
-                /<!--\s*cursor-codex-round:\d+\s*-->/.test(String(c.body || '')) ||
-                /<!--\s*cursor-external-codex:/.test(String(c.body || '')),
+              (c) => auto.isAutomationControlComment(c, controlOpts),
             );
             const latestInlineAt = auto.getLatestCommentTime(
               auto.filterCodexReviewCommentsForHead(codexReviews, pr.head.sha),
               () => true,
             );
             const lastCodexSummaryAt = Math.max(
-              auto.getLatestCommentTime(summaryCandidates, () => true),
+              auto.getLatestCommentTime(headSummaries, () => true),
               latestInlineAt,
             );
+            const latestRequest = [...requestComments].sort(
+              (a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0),
+            )[0];
+            const requestedHeadSha =
+              reactionResult.requestHeadSha ||
+              auto.extractRequestedHeadSha(latestRequest?.body || '');
             const decision = auto.decideCodexLoopAction({
               eligible,
               outcome,
               round,
               maxRounds: Number(process.env.MAX_ROUNDS || '40'),
-              hasAutomationRequest: auto.hasAutomationCodexRequest(issueComments),
+              hasAutomationRequest: auto.hasAutomationCodexRequest(
+                issueComments,
+                controlOpts,
+              ),
               hasCodexActivity,
               headSha: pr.head.sha,
               summaryText,
               lastAutomationRequestAt,
               lastCodexSummaryAt,
+              requestedHeadSha,
+              forceRetry: process.env.GITHUB_EVENT_NAME === 'workflow_dispatch',
             });
             core.setOutput('round', String(round));
             core.setOutput('clean', outcome.clean ? 'true' : 'false');
@@ -979,18 +1157,84 @@ jobs:
               issue_number: pull_number,
               labels: ['automation:codex-loop'],
             });
+            const { data: pr } = await github.rest.pulls.get({
+              ...context.repo,
+              pull_number,
+            });
+            // Draft-until-clean: convert ready maintainer PRs back to draft.
+            if (!pr.draft) {
+              const prInfo = await github.graphql(
+                `query($owner:String!, $name:String!, $number:Int!) {
+                  repository(owner:$owner, name:$name) {
+                    pullRequest(number:$number) { id isDraft }
+                  }
+                }`,
+                {
+                  owner: context.repo.owner,
+                  name: context.repo.repo,
+                  number: pull_number,
+                },
+              );
+              const node = prInfo.repository.pullRequest;
+              if (!node.isDraft) {
+                const converted = await github.graphql(
+                  `mutation($id:ID!) {
+                    convertPullRequestToDraft(input:{pullRequestId:$id}) {
+                      pullRequest { isDraft }
+                    }
+                  }`,
+                  { id: node.id },
+                );
+                if (!converted.convertPullRequestToDraft.pullRequest.isDraft) {
+                  throw new Error(
+                    `Failed to convert PR #${pull_number} to draft before Codex request`,
+                  );
+                }
+              }
+            }
+            try {
+              await github.rest.issues.removeLabel({
+                ...context.repo,
+                issue_number: pull_number,
+                name: 'automation:codex-clean',
+              });
+            } catch {
+              // optional
+            }
             await github.rest.issues.createComment({
               ...context.repo,
               issue_number: pull_number,
-              body: auto.buildCodexReviewRequestComment(1),
+              body: auto.buildCodexReviewRequestComment(1, pr.head.sha),
             });
 
       - name: Mark PR ready after clean Codex
         if: steps.codex.outputs.action == 'mark_ready'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EXPECTED_HEAD: ${{ steps.codex.outputs.head_sha }}
         run: |
           set -euo pipefail
+          # Refuse to approve if the head moved after the clean decision.
+          live_head="$(gh pr view "$PULL_NUMBER" --repo "$GITHUB_REPOSITORY" --json headRefOid -q .headRefOid)"
+          if [[ -z "$EXPECTED_HEAD" || -z "$live_head" ]]; then
+            echo "Missing expected/live head SHA; refusing to mark ready." >&2
+            exit 1
+          fi
+          if [[ "$live_head" != "$EXPECTED_HEAD" && "${live_head:0:7}" != "${EXPECTED_HEAD:0:7}" && "${EXPECTED_HEAD:0:7}" != "${live_head:0:7}" ]]; then
+            # Allow prefix match either way for short SHAs.
+            case "$live_head" in
+              "$EXPECTED_HEAD"*) ;;
+              *)
+                case "$EXPECTED_HEAD" in
+                  "$live_head"*) ;;
+                  *)
+                    echo "Head moved after clean decision (expected $EXPECTED_HEAD, live $live_head). Skipping mark ready." >&2
+                    exit 0
+                    ;;
+                esac
+                ;;
+            esac
+          fi
           # Tolerate already-ready; fail on other errors.
           ready_out="$(gh pr ready "$PULL_NUMBER" --repo "$GITHUB_REPOSITORY" 2>&1)" || {
             if ! echo "$ready_out" | grep -qiE 'already ready|not a draft|is not a draft'; then
@@ -999,6 +1243,13 @@ jobs:
             fi
             echo "PR already ready (ok)."
           }
+          # Re-check head after gh pr ready (another push could race).
+          live_head2="$(gh pr view "$PULL_NUMBER" --repo "$GITHUB_REPOSITORY" --json headRefOid -q .headRefOid)"
+          if [[ "$live_head2" != "$live_head" ]]; then
+            echo "Head changed during mark-ready; restoring draft." >&2
+            gh pr ready "$PULL_NUMBER" --repo "$GITHUB_REPOSITORY" --undo 2>/dev/null || true
+            exit 0
+          fi
           gh pr edit "$PULL_NUMBER" --repo "$GITHUB_REPOSITORY" \
             --add-label "automation:codex-clean" \
             --add-label "automation:bot-pr" || true
@@ -1018,9 +1269,13 @@ jobs:
           EOF
           )"
 
-      - name: Give up after max rounds
+      - name: Give up after max rounds / P3 handoff
         if: steps.codex.outputs.action == 'give_up'
         uses: actions/github-script@v7
+        env:
+          REASON: ${{ steps.codex.outputs.reason }}
+          MAX_ROUNDS: ${{ env.MAX_ROUNDS }}
+          PULL_NUMBER: ${{ needs.route.outputs.pull_number }}
         with:
           script: |
             const auto = require(`${process.env.RUNNER_TEMP}/cursor-automation.cjs`);
@@ -1030,6 +1285,11 @@ jobs:
               issue_number: pull_number,
               labels: ['ready-for-human'],
             });
+            const reason = process.env.REASON || 'max_rounds';
+            const message =
+              reason === 'codex_p3_only'
+                ? 'Codex only reported P3 nitpicks (no P0–P2). Automatic fix stopped; a maintainer can decide whether to polish further.'
+                : `Stopped after ${process.env.MAX_ROUNDS} Codex fix rounds. A maintainer needs to finish this PR.`;
             await github.rest.issues.createComment({
               ...context.repo,
               issue_number: pull_number,
@@ -1037,7 +1297,7 @@ jobs:
                 auto.TRIAGE_MARKER,
                 auto.DISCLAIMER,
                 '',
-                `Stopped after ${process.env.MAX_ROUNDS} Codex fix rounds. A maintainer needs to finish this PR.`,
+                message,
               ].join('\n'),
             });
 
@@ -1101,18 +1361,30 @@ jobs:
               ...codexIssue.map((c) => ({
                 body: c.body,
                 created_at: c.created_at,
+                pin: auto.extractReviewedCommitSha(c.body),
               })),
               ...codexSubmitted.map((r) => ({
                 body: r.body,
                 created_at: r.submitted_at || r.created_at,
+                pin:
+                  auto.extractReviewedCommitSha(r.body) ||
+                  String(r.commit_id || '').toLowerCase(),
               })),
-            ].sort(
-              (a, b) =>
-                new Date(b.created_at || 0) - new Date(a.created_at || 0),
-            );
+            ]
+              .filter(
+                (c) =>
+                  c.pin && auto.commitShasMatch(pr.head.sha, c.pin),
+              )
+              .sort(
+                (a, b) =>
+                  new Date(b.created_at || 0) - new Date(a.created_at || 0),
+              );
             const findings = auto.formatCodexFindingsMarkdown({
               summaryText: summaryCandidates[0]?.body || '',
-              reviewComments: codexReviews,
+              reviewComments: auto.filterCodexReviewCommentsForHead(
+                codexReviews,
+                pr.head.sha,
+              ),
               issueComments: codexIssue,
               pullNumber: pull_number,
               headSha: pr.head.sha,
@@ -1134,7 +1406,10 @@ jobs:
         if: steps.codex.outputs.action == 'fix'
         run: |
           curl https://cursor.com/install -fsS | bash
+          # Official installer places `agent` under ~/.local/bin (and sometimes ~/.cursor/bin).
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           echo "$HOME/.cursor/bin" >> "$GITHUB_PATH"
+          command -v agent || ls -la "$HOME/.local/bin" "$HOME/.cursor/bin" 2>/dev/null || true
 
       - name: Ensure Cursor API key
         if: steps.codex.outputs.action == 'fix'
@@ -1155,19 +1430,49 @@ jobs:
         if: steps.codex.outputs.action == 'fix'
         env:
           CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+          BASE_SHA: ${{ steps.base.outputs.sha }}
           GITHUB_TOKEN: ''
           GH_TOKEN: ''
         run: |
           set -euo pipefail
           git config --local --unset-all http.https://github.com/.extraheader || true
-          PROMPT="$(cat .github/cursor/prompts/fix-from-codex.md)"
-          # Prefer prompt from default branch if PR tree overwrote it.
-          if git cat-file -e "origin/${{ github.event.repository.default_branch }}:.github/cursor/prompts/fix-from-codex.md" 2>/dev/null; then
-            PROMPT="$(git show "origin/${{ github.event.repository.default_branch }}:.github/cursor/prompts/fix-from-codex.md")"
+          # Prefer trusted prompt from default branch. PR trees created before this
+          # automation landed may not have the fix prompt at all.
+          DEFAULT_BRANCH="${{ github.event.repository.default_branch }}"
+          PROMPT=""
+          if git cat-file -e "origin/${DEFAULT_BRANCH}:.github/cursor/prompts/fix-from-codex.md" 2>/dev/null; then
+            PROMPT="$(git show "origin/${DEFAULT_BRANCH}:.github/cursor/prompts/fix-from-codex.md")"
+          elif [[ -f .github/cursor/prompts/fix-from-codex.md ]]; then
+            PROMPT="$(cat .github/cursor/prompts/fix-from-codex.md)"
+          else
+            echo "Missing fix-from-codex.md on default branch and PR tree." >&2
+            exit 1
           fi
-          agent -p --force --trust --model auto --output-format text \
+          agent -p --force --trust --sandbox enabled --model auto --output-format text \
             --workspace "$GITHUB_WORKSPACE" \
             "$PROMPT" | tee .cursor-runtime/fix-raw.txt
+          # Avoid git diff under CURSOR_API_KEY (textconv/hooks). Patch scan is later.
+          node -e '
+            const { execSync } = require("node:child_process");
+            const auto = require(process.env.RUNNER_TEMP + "/cursor-automation.cjs");
+            auto.assertFilesDoNotContainSecret(
+              [".cursor-runtime/fix-raw.txt"],
+              process.env.CURSOR_API_KEY,
+              "fix-output",
+            );
+            const untracked = execSync(
+              "git -c core.hooksPath=/dev/null ls-files --others --exclude-standard",
+              { encoding: "utf8" },
+            )
+              .split("\n")
+              .filter(Boolean)
+              .filter((p) => !p.startsWith(".cursor-runtime/"));
+            auto.assertFilesDoNotContainSecret(
+              untracked,
+              process.env.CURSOR_API_KEY,
+              "fix-untracked",
+            );
+          '
 
       - name: Guard protected paths (tree + commits)
         if: steps.codex.outputs.action == 'fix'
@@ -1189,6 +1494,13 @@ jobs:
             }
           ' "$status" "$names" "$name_status"
 
+      - name: Install test shell dependencies
+        if: steps.codex.outputs.action == 'fix'
+        run: |
+          # Match .github/workflows/test.yml — osc7Setup.test.ts requires fish in CI.
+          sudo apt-get update
+          sudo apt-get install -y fish
+
       - name: Verify fix
         if: steps.codex.outputs.action == 'fix'
         run: |
@@ -1200,19 +1512,23 @@ jobs:
       - name: Prepare fix patch for isolated publish
         if: steps.codex.outputs.action == 'fix'
         id: fixpatch
+        # No CURSOR_API_KEY: git ops must not share an env with secrets after agent.
         env:
           BASE_SHA: ${{ steps.base.outputs.sha }}
           PULL_NUMBER: ${{ needs.route.outputs.pull_number }}
         run: |
           set -euo pipefail
-          status="$(git status --porcelain --untracked-files=all -- . ':(exclude).cursor-runtime' ':(exclude).cursor-runtime/**' || true)"
+          GITH='git -c core.hooksPath=/dev/null'
+          $GITH config --local --unset-all core.hooksPath 2>/dev/null || true
+          $GITH config --local --unset-all core.fsmonitor 2>/dev/null || true
+          status="$($GITH status --porcelain --untracked-files=all -- . ':(exclude).cursor-runtime' ':(exclude).cursor-runtime/**' || true)"
           if [[ -n "$status" ]]; then
-            git add -A
-            git reset -- .cursor-runtime >/dev/null 2>&1 || true
-            git -c user.name="netcatty-cursor-bot" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            $GITH add -A
+            $GITH reset -- .cursor-runtime >/dev/null 2>&1 || true
+            $GITH -c user.name="netcatty-cursor-bot" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
               commit -m "fix: address Codex review on PR #${PULL_NUMBER}" || true
           fi
-          name_status="$(git diff --name-status -M "${BASE_SHA}" HEAD 2>/dev/null || true)"
+          name_status="$($GITH diff --name-status -M "${BASE_SHA}" HEAD 2>/dev/null || true)"
           node -e '
             const auto = require(process.env.RUNNER_TEMP + "/cursor-automation.cjs");
             const hits = auto.hasProtectedChangesInSources({ nameStatusText: process.argv[1] });
@@ -1221,16 +1537,37 @@ jobs:
               process.exit(1);
             }
           ' "$name_status"
-          if [[ "$(git rev-list --count "${BASE_SHA}..HEAD")" == "0" ]]; then
+          if [[ "$($GITH rev-list --count "${BASE_SHA}..HEAD")" == "0" ]]; then
             echo "empty=true" >> "$GITHUB_OUTPUT"
             echo "should_publish=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          runtime_hits="$($GITH diff --name-only "${BASE_SHA}" HEAD | grep -E '^\.cursor-runtime(/|$)' || true)"
+          if [[ -n "$runtime_hits" ]]; then
+            echo "Refusing to publish commits that include .cursor-runtime paths:" >&2
+            echo "$runtime_hits" >&2
+            exit 1
+          fi
           mkdir -p .cursor-runtime
-          git format-patch --stdout "${BASE_SHA}" > .cursor-runtime/fix.patch
+          $GITH format-patch --stdout "${BASE_SHA}" > .cursor-runtime/fix.patch
           test -s .cursor-runtime/fix.patch
           echo "empty=false" >> "$GITHUB_OUTPUT"
           echo "should_publish=true" >> "$GITHUB_OUTPUT"
+
+      - name: Scan fix patch for secret leaks
+        if: steps.codex.outputs.action == 'fix' && steps.fixpatch.outputs.should_publish == 'true'
+        env:
+          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+        run: |
+          set -euo pipefail
+          node -e '
+            const auto = require(process.env.RUNNER_TEMP + "/cursor-automation.cjs");
+            auto.assertFilesDoNotContainSecret(
+              [".cursor-runtime/fix.patch"],
+              process.env.CURSOR_API_KEY,
+              "fix-publish",
+            );
+          '
 
       - name: Upload fix patch
         if: steps.codex.outputs.action == 'fix' && steps.fixpatch.outputs.should_publish == 'true'
@@ -1265,6 +1602,35 @@ jobs:
         env:
           PULL_NUMBER: ${{ needs.route.outputs.pull_number }}
 
+      - name: Mark needs human on fix failure
+        if: failure() && steps.codex.outputs.action == 'fix'
+        uses: actions/github-script@v7
+        env:
+          PULL_NUMBER: ${{ needs.route.outputs.pull_number }}
+        with:
+          script: |
+            const fs = require('node:fs');
+            const helper = fs.existsSync(`${process.env.RUNNER_TEMP}/cursor-automation.cjs`)
+              ? `${process.env.RUNNER_TEMP}/cursor-automation.cjs`
+              : `${process.env.GITHUB_WORKSPACE}/scripts/cursor-automation.cjs`;
+            const auto = require(helper);
+            const pull_number = Number(process.env.PULL_NUMBER);
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: pull_number,
+              body: [
+                auto.TRIAGE_MARKER,
+                auto.DISCLAIMER,
+                '',
+                'Automatic Codex fix did not finish cleanly (agent, protected paths, or verification failed). Marking for human review.',
+              ].join('\n'),
+            });
+            await github.rest.issues.addLabels({
+              ...context.repo,
+              issue_number: pull_number,
+              labels: ['ready-for-human'],
+            });
+
   publish_codex_fix:
     name: Publish Codex fix
     needs: [codex_loop]
@@ -1276,7 +1642,8 @@ jobs:
       issues: write
       pull-requests: write
     env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Prefer PAT so push events trigger normal CI workflows.
+      GH_TOKEN: ${{ secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
       HEAD_REF: ${{ needs.codex_loop.outputs.head_ref }}
       BASE_SHA: ${{ needs.codex_loop.outputs.base_sha }}
       PULL_NUMBER: ${{ needs.codex_loop.outputs.pull_number }}
@@ -1295,6 +1662,8 @@ jobs:
           rm -rf "$PUBLISH"
           git clone --no-checkout "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$PUBLISH"
           cd "$PUBLISH"
+          git -c core.hooksPath=/dev/null config user.name "netcatty-cursor-bot"
+          git -c core.hooksPath=/dev/null config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git -c core.hooksPath=/dev/null fetch --depth=50 origin "$BASE_SHA"
           git -c core.hooksPath=/dev/null checkout -B "$HEAD_REF" "$BASE_SHA"
           git -c core.hooksPath=/dev/null am --3way "$GITHUB_WORKSPACE/patch-in/fix.patch"
@@ -1325,10 +1694,14 @@ jobs:
             const auto = require(`${process.env.RUNNER_TEMP}/cursor-automation.cjs`);
             const pull_number = Number(process.env.PULL_NUMBER);
             const nextRound = (Number(process.env.PREV_ROUND) || 0) + 1;
+            const { data: pr } = await github.rest.pulls.get({
+              ...context.repo,
+              pull_number,
+            });
             await github.rest.issues.createComment({
               ...context.repo,
               issue_number: pull_number,
-              body: auto.buildCodexReviewRequestComment(nextRound),
+              body: auto.buildCodexReviewRequestComment(nextRound, pr.head.sha),
             });
 
   own_rerequest_codex:
@@ -1337,6 +1710,12 @@ jobs:
     if: needs.route.outputs.kind == 'own_rerequest_codex'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # Must write the @codex review comment after maintainer pushes.
+    # Without this, the workflow default read-only GITHUB_TOKEN gets 403.
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
     env:
       PULL_NUMBER: ${{ needs.route.outputs.pull_number }}
       OWN_ACTORS: ${{ vars.AUTOMATION_OWN_ACTORS || 'binaricat' }}
@@ -1401,17 +1780,73 @@ jobs:
               auto.shouldSkipExternalCodexRerequest({
                 existingComments: comments,
                 headSha: pr.head.sha,
+                ownActors: process.env.OWN_ACTORS,
               })
             ) {
               core.info(`Already re-requested Codex for ${pr.head.sha}`);
               return;
             }
-            const round = auto.getCodexRoundFromComments(comments);
+            // Human/maintainer pushes must not burn Cursor fix-round budget.
+            // Reuse the current round marker; only automated fix publishes increment it.
+            const round = Math.max(
+              auto.getCodexRoundFromComments(comments, {
+                ownActors: process.env.OWN_ACTORS,
+              }),
+              1,
+            );
+            // New head invalidates a previous clean gate — restore draft review loop.
+            try {
+              await github.rest.issues.removeLabel({
+                ...context.repo,
+                issue_number: pull_number,
+                name: 'automation:codex-clean',
+              });
+            } catch {
+              // label may already be absent
+            }
+            await github.rest.issues.addLabels({
+              ...context.repo,
+              issue_number: pull_number,
+              labels: ['automation:codex-loop'],
+            });
+            if (!pr.draft) {
+              // Must restore draft-until-clean; do not leave a new head ready.
+              const prInfo = await github.graphql(
+                `query($owner:String!, $name:String!, $number:Int!) {
+                  repository(owner:$owner, name:$name) {
+                    pullRequest(number:$number) { id isDraft }
+                  }
+                }`,
+                {
+                  owner: context.repo.owner,
+                  name: context.repo.repo,
+                  number: pull_number,
+                },
+              );
+              const node = prInfo.repository.pullRequest;
+              if (!node.isDraft) {
+                const converted = await github.graphql(
+                  `mutation($id:ID!) {
+                    convertPullRequestToDraft(input:{pullRequestId:$id}) {
+                      pullRequest { isDraft }
+                    }
+                  }`,
+                  { id: node.id },
+                );
+                if (
+                  !converted.convertPullRequestToDraft.pullRequest.isDraft
+                ) {
+                  throw new Error(
+                    `Failed to convert PR #${pull_number} back to draft after human push`,
+                  );
+                }
+              }
+            }
             await github.rest.issues.createComment({
               ...context.repo,
               issue_number: pull_number,
               body: [
-                auto.buildCodexReviewRequestComment(round + 1),
+                auto.buildCodexReviewRequestComment(round, pr.head.sha),
                 auto.buildExternalCodexRerequestComment(pr.head.sha),
               ].join('\n'),
             });
@@ -1490,10 +1925,14 @@ jobs:
                 per_page: 100,
               },
             );
+            const forceRetry =
+              process.env.GITHUB_EVENT_NAME === 'workflow_dispatch';
             if (
+              !forceRetry &&
               auto.shouldSkipExternalCodexRerequest({
                 existingComments: comments,
                 headSha: pr.head.sha,
+                ownActors: process.env.OWN_ACTORS,
               })
             ) {
               core.info(`Already re-requested Codex for ${pr.head.sha}`);
@@ -1505,3 +1944,357 @@ jobs:
               body: auto.buildExternalCodexRerequestComment(pr.head.sha),
             });
             core.info(`Posted @codex review for external PR #${pull_number}`);
+
+  # Poll open automation PRs for reaction-only clean Codex results and expired
+  # unanswered @codex requests. Needed because 👍 reactions do not fire workflows.
+  codex_poll:
+    name: Poll Codex reaction / retry
+    needs: route
+    if: needs.route.outputs.kind == 'codex_poll'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    env:
+      OWN_ACTORS: ${{ vars.AUTOMATION_OWN_ACTORS || 'binaricat' }}
+      MAX_ROUNDS: ${{ vars.CURSOR_CODEX_FIX_MAX_ROUNDS || '40' }}
+    steps:
+      - name: Checkout helpers
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Ensure automation helper present
+        env:
+          BOOTSTRAP_SHA: ${{ github.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [[ -f scripts/cursor-automation.cjs ]]; then
+            echo "Helper present on default branch."
+            exit 0
+          fi
+          echo "Helper missing on default branch; bootstrapping from ${BOOTSTRAP_SHA}"
+          git fetch --depth=1 origin "${BOOTSTRAP_SHA}"
+          mkdir -p scripts
+          git show "FETCH_HEAD:scripts/cursor-automation.cjs" > scripts/cursor-automation.cjs
+          test -s scripts/cursor-automation.cjs
+
+      - name: Poll open automation PRs
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const auto = require(`${process.env.GITHUB_WORKSPACE}/scripts/cursor-automation.cjs`);
+            const ownActors = process.env.OWN_ACTORS;
+            const controlOpts = { ownActors };
+            const pulls = await github.paginate(github.rest.pulls.list, {
+              ...context.repo,
+              state: 'open',
+              per_page: 50,
+            });
+            let handled = 0;
+            for (const pr of pulls) {
+              if (handled >= 10) break;
+              if (
+                !auto.isFixEligiblePr(pr, {
+                  ownActors,
+                  repository: `${context.repo.owner}/${context.repo.repo}`,
+                })
+              ) {
+                continue;
+              }
+              const labels = (pr.labels || []).map((l) =>
+                typeof l === 'string' ? l : l.name,
+              );
+              if (
+                !labels.includes('automation:codex-loop') &&
+                !labels.includes('automation:bot-pr')
+              ) {
+                continue;
+              }
+              if (labels.includes('automation:codex-clean')) continue;
+
+              const issueComments = await github.paginate(
+                github.rest.issues.listComments,
+                {
+                  ...context.repo,
+                  issue_number: pr.number,
+                  per_page: 100,
+                },
+              );
+              const requestComments = issueComments.filter((c) =>
+                auto.isAutomationControlComment(c, controlOpts),
+              );
+              if (!requestComments.length) continue;
+
+              const reactionsByCommentId = {};
+              for (const comment of requestComments.slice(-3)) {
+                try {
+                  const { data: reactions } =
+                    await github.rest.reactions.listForIssueComment({
+                      ...context.repo,
+                      comment_id: comment.id,
+                      per_page: 100,
+                    });
+                  reactionsByCommentId[comment.id] = reactions;
+                } catch (err) {
+                  core.warning(
+                    `PR #${pr.number} reactions ${comment.id}: ${err.message}`,
+                  );
+                }
+              }
+              const reactionResult = auto.hasCodexCleanReactionOnRequest({
+                requestComments,
+                reactionsByCommentId,
+                headSha: pr.head.sha,
+                ownActors,
+              });
+              const lastAutomationRequestAt = auto.getLatestCommentTime(
+                issueComments,
+                (c) => auto.isAutomationControlComment(c, controlOpts),
+              );
+              // Only current-head Codex signals count as "answered". Delayed
+              // reviews for older commits must not block expiry re-requests.
+              const headMatches = (commitId, body) => {
+                const reviewed =
+                  auto.extractReviewedCommitSha(body) ||
+                  String(commitId || '').toLowerCase();
+                if (!reviewed) return false;
+                return auto.commitShasMatch(pr.head.sha, reviewed);
+              };
+              let lastCodexActivityAt = 0;
+              for (const c of issueComments) {
+                if (!auto.isCodexBotLogin(c.user?.login)) continue;
+                if (!auto.isCodexTerminalReviewText(c.body)) continue;
+                if (!headMatches('', c.body)) continue;
+                const ts = Date.parse(c.created_at || '') || 0;
+                if (ts > lastCodexActivityAt) lastCodexActivityAt = ts;
+              }
+              let reviewComments = [];
+              try {
+                reviewComments = await github.paginate(
+                  github.rest.pulls.listReviewComments,
+                  {
+                    ...context.repo,
+                    pull_number: pr.number,
+                    per_page: 100,
+                  },
+                );
+                for (const c of reviewComments) {
+                  if (!auto.isCodexBotLogin(c.user?.login)) continue;
+                  if (
+                    !headMatches(
+                      c.commit_id || c.original_commit_id,
+                      c.body,
+                    )
+                  ) {
+                    continue;
+                  }
+                  const ts = Date.parse(c.created_at || '') || 0;
+                  if (ts > lastCodexActivityAt) lastCodexActivityAt = ts;
+                }
+              } catch (err) {
+                core.warning(
+                  `PR #${pr.number}: list review comments failed: ${err.message}`,
+                );
+              }
+              try {
+                const submitted = await github.paginate(
+                  github.rest.pulls.listReviews,
+                  {
+                    ...context.repo,
+                    pull_number: pr.number,
+                    per_page: 100,
+                  },
+                );
+                for (const r of submitted) {
+                  if (!auto.isCodexBotLogin(r.user?.login)) continue;
+                  if (!headMatches(r.commit_id, r.body)) continue;
+                  const ts =
+                    Date.parse(r.submitted_at || r.created_at || '') || 0;
+                  if (ts > lastCodexActivityAt) lastCodexActivityAt = ts;
+                }
+              } catch (err) {
+                core.warning(
+                  `PR #${pr.number}: list reviews failed: ${err.message}`,
+                );
+              }
+              if (
+                reactionResult.clean &&
+                reactionResult.requestHeadSha &&
+                auto.commitShasMatch(pr.head.sha, reactionResult.requestHeadSha)
+              ) {
+                // Clean reaction on a request pinned to this head answers it.
+                lastCodexActivityAt = Math.max(
+                  lastCodexActivityAt,
+                  lastAutomationRequestAt,
+                );
+              }
+              const requestUnanswered =
+                lastAutomationRequestAt > 0 &&
+                lastAutomationRequestAt > lastCodexActivityAt;
+              const requestExpired =
+                requestUnanswered &&
+                Date.now() - lastAutomationRequestAt >= auto.CODEX_REQUEST_RETRY_MS;
+
+              if (reactionResult.clean) {
+                const codexReviews = reviewComments.filter((c) =>
+                  auto.isCodexBotLogin(c.user?.login),
+                );
+                const outcome = auto.parseCodexReviewOutcome({
+                  summaryText: '',
+                  reviewComments: codexReviews,
+                  headSha: pr.head.sha,
+                  cleanReaction: true,
+                  reactionRequestHeadSha: reactionResult.requestHeadSha || '',
+                });
+                const decision = auto.decideCodexLoopAction({
+                  eligible: true,
+                  outcome,
+                  hasCodexActivity: true,
+                  hasAutomationRequest: true,
+                  headSha: pr.head.sha,
+                  requestedHeadSha: reactionResult.requestHeadSha || '',
+                  lastAutomationRequestAt,
+                  lastCodexSummaryAt: lastAutomationRequestAt,
+                });
+                if (decision.action === 'mark_ready') {
+                  // REST pulls.update cannot leave draft; use GraphQL, then label.
+                  try {
+                    // Re-fetch head immediately before changing draft state.
+                    const { data: livePr } = await github.rest.pulls.get({
+                      ...context.repo,
+                      pull_number: pr.number,
+                    });
+                    if (
+                      !auto.commitShasMatch(livePr.head.sha, pr.head.sha)
+                    ) {
+                      core.info(
+                        `PR #${pr.number}: head moved before mark ready (${pr.head.sha} -> ${livePr.head.sha}); skip`,
+                      );
+                      continue;
+                    }
+                    const prInfo = await github.graphql(
+                      `query($owner:String!, $name:String!, $number:Int!) {
+                        repository(owner:$owner, name:$name) {
+                          pullRequest(number:$number) { id isDraft }
+                        }
+                      }`,
+                      {
+                        owner: context.repo.owner,
+                        name: context.repo.repo,
+                        number: pr.number,
+                      },
+                    );
+                    const node = prInfo.repository.pullRequest;
+                    if (node.isDraft) {
+                      const converted = await github.graphql(
+                        `mutation($id:ID!) {
+                          markPullRequestReadyForReview(input:{pullRequestId:$id}) {
+                            pullRequest { isDraft }
+                          }
+                        }`,
+                        { id: node.id },
+                      );
+                      if (
+                        converted.markPullRequestReadyForReview.pullRequest
+                          .isDraft
+                      ) {
+                        throw new Error('PR still draft after ready mutation');
+                      }
+                    }
+                    const { data: afterPr } = await github.rest.pulls.get({
+                      ...context.repo,
+                      pull_number: pr.number,
+                    });
+                    if (!auto.commitShasMatch(afterPr.head.sha, pr.head.sha)) {
+                      // Head raced during conversion — restore draft.
+                      await github.graphql(
+                        `mutation($id:ID!) {
+                          convertPullRequestToDraft(input:{pullRequestId:$id}) {
+                            pullRequest { isDraft }
+                          }
+                        }`,
+                        { id: node.id },
+                      );
+                      core.info(
+                        `PR #${pr.number}: head moved during mark ready; restored draft`,
+                      );
+                      continue;
+                    }
+                    await github.rest.issues.addLabels({
+                      ...context.repo,
+                      issue_number: pr.number,
+                      labels: ['automation:codex-clean'],
+                    });
+                    try {
+                      await github.rest.issues.removeLabel({
+                        ...context.repo,
+                        issue_number: pr.number,
+                        name: 'automation:codex-loop',
+                      });
+                    } catch {
+                      // label may already be absent
+                    }
+                    core.info(`PR #${pr.number}: marked ready via clean reaction`);
+                    handled += 1;
+                  } catch (err) {
+                    core.warning(
+                      `PR #${pr.number}: failed to mark ready (${err.message}); will retry next poll`,
+                    );
+                  }
+                  continue;
+                }
+                // Clean reaction without a head pin cannot approve this revision;
+                // re-request once with an explicit head marker.
+                if (
+                  decision.action === 'skip' &&
+                  decision.reason === 'clean_summary_unpinned'
+                ) {
+                  const alreadyPinned = requestComments.some(
+                    (c) =>
+                      auto.extractRequestedHeadSha(c.body) &&
+                      auto.commitShasMatch(
+                        pr.head.sha,
+                        auto.extractRequestedHeadSha(c.body),
+                      ),
+                  );
+                  if (!alreadyPinned) {
+                    const round =
+                      auto.getCodexRoundFromComments(
+                        issueComments,
+                        controlOpts,
+                      ) || 1;
+                    await github.rest.issues.createComment({
+                      ...context.repo,
+                      issue_number: pr.number,
+                      body: auto.buildCodexReviewRequestComment(
+                        round,
+                        pr.head.sha,
+                      ),
+                    });
+                    core.info(
+                      `PR #${pr.number}: re-requested Codex with head pin after unpinned clean reaction`,
+                    );
+                    handled += 1;
+                  }
+                  continue;
+                }
+              }
+
+              if (requestExpired) {
+                const round =
+                  auto.getCodexRoundFromComments(issueComments, controlOpts) || 1;
+                await github.rest.issues.createComment({
+                  ...context.repo,
+                  issue_number: pr.number,
+                  body: auto.buildCodexReviewRequestComment(round, pr.head.sha),
+                });
+                core.info(`PR #${pr.number}: re-requested Codex after timeout`);
+                handled += 1;
+              }
+            }
+            core.info(`codex_poll handled ${handled} PR(s)`);

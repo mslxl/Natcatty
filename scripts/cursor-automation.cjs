@@ -56,6 +56,7 @@ const MANAGED_LABELS = new Set([
   'triage:feature-defer',
   'triage:other',
   'triage:unclear',
+  'unclear',
   'triage:admitted',
   'automation:bot-pr',
   'automation:codex-loop',
@@ -66,6 +67,25 @@ const PROTECTED_PATH_PREFIXES = Object.freeze([
   '.github/',
   'scripts/cursor-automation',
   'scripts/issue-triage',
+  'scripts/release',
+  'nix/',
+  'signing/',
+  'packaging/',
+]);
+
+/** Exact / basename-sensitive packaging and signing config files. */
+const PROTECTED_PATH_BASENAMES = Object.freeze([
+  'electron-builder.config.cjs',
+  'electron-builder.config.js',
+  'electron-builder.config.ts',
+  'electron-builder.yml',
+  'electron-builder.yaml',
+  'electron-builder.json',
+  'forge.config.js',
+  'forge.config.cjs',
+  'forge.config.ts',
+  'entitlements.mac.plist',
+  'entitlements.mac.inherit.plist',
 ]);
 
 const IMPLEMENT_CATEGORIES = new Set(['bug_ready', 'feature_quick_win']);
@@ -124,6 +144,59 @@ function isCodexBotLogin(login) {
   );
 }
 
+/**
+ * Authors allowed to set automation control markers (round / external head).
+ * Random issue commenters must not be able to forge `cursor-codex-round`.
+ */
+function isTrustedAutomationControlAuthor(login, { ownActors } = {}) {
+  const name = String(login || '').toLowerCase();
+  if (!name) return false;
+  // Only the GITHUB_TOKEN actor (and explicit maintainers / triage PAT users).
+  // Do not trust every installed app ending in [bot].
+  if (name === 'github-actions[bot]' || name === 'github-actions') return true;
+  if (ownActors != null) {
+    return parseOwnActors(ownActors).has(name);
+  }
+  return false;
+}
+
+/** Fail closed if agent/output text embeds a configured secret value. */
+function assertTextDoesNotContainSecret(text, secret, label = 'output') {
+  const s = String(secret || '');
+  if (!s || s.length < 8) return;
+  if (String(text || '').includes(s)) {
+    throw new Error(
+      `Refusing to continue: ${label} contains a configured secret value`,
+    );
+  }
+}
+
+function assertFilesDoNotContainSecret(filePaths = [], secret, label = 'files') {
+  const s = String(secret || '');
+  if (!s || s.length < 8) return;
+  for (const filePath of filePaths) {
+    if (!filePath || !fs.existsSync(filePath)) continue;
+    const text = fs.readFileSync(filePath, 'utf8');
+    assertTextDoesNotContainSecret(text, s, `${label}:${filePath}`);
+  }
+}
+
+function isAutomationControlComment(comment, options = {}) {
+  if (
+    !isTrustedAutomationControlAuthor(
+      comment?.user?.login || comment?.login,
+      options,
+    )
+  ) {
+    return false;
+  }
+  const body = String(comment?.body || '');
+  return (
+    /<!--\s*cursor-codex-round:\d+\s*-->/.test(body) ||
+    /<!--\s*cursor-external-codex:/.test(body)
+  );
+}
+
 function isBotPrMarker(body) {
   return String(body || '').includes(BOT_PR_MARKER);
 }
@@ -158,11 +231,17 @@ function isFixEligiblePr(pr, options = {}) {
   const labels = (pr.labels || []).map((label) =>
     typeof label === 'string' ? label : label.name,
   );
-  if (labels.includes('automation:bot-pr')) return true;
-  if (isBotPrMarker(pr.body)) return true;
-  if (isAutomationBranch(pr.head?.ref)) return true;
+  // Maintainers/own actors may use the fix loop on same-repo PRs.
   if (ownActors.has(author)) return true;
-  return false;
+  // Automation-authored bot PRs only — do not trust self-labeled contributor PRs.
+  const isGithubActionsBot =
+    author === 'github-actions[bot]' || author === 'github-actions';
+  if (!isGithubActionsBot) return false;
+  return (
+    labels.includes('automation:bot-pr') ||
+    isBotPrMarker(pr.body) ||
+    isAutomationBranch(pr.head?.ref)
+  );
 }
 
 function normalizeClassification(raw) {
@@ -179,20 +258,41 @@ function normalizeClassification(raw) {
   let reply = sanitizeUntrustedText(raw.reply, 3_000);
   if (!reply) throw new Error('Triage reply must not be empty.');
 
+  const prefersCjk = (text) => {
+    const s = String(text || '');
+    const cjk = (s.match(/[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff]/g) || [])
+      .length;
+    const latin = (s.match(/[A-Za-z]/g) || []).length;
+    return cjk > 0 && cjk >= Math.max(3, Math.floor(latin * 0.25));
+  };
+
   if (confidence < 0.8 && category === 'bug_ready') {
     category = 'bug_needs_info';
-    // Keep the model's localized reply when present; only fall back to English.
-    if (!String(raw.reply || '').trim()) {
-      reply =
-        'Thanks for the report. We still need a bit more evidence before changing the code. Please share the missing details below so we can reproduce it.';
-    }
+    // Always rewrite (prompt may have promised a fix), but keep reporter language.
+    // Include a concrete checklist so "missing details" is actionable.
+    reply = prefersCjk(raw.reply)
+      ? [
+          '感谢反馈。在改代码前我们还需要更多可复现信息，请尽量补充：',
+          '',
+          '1. 完整复现步骤（从启动到出错）',
+          '2. 期望行为 vs 实际行为',
+          '3. 操作系统 / 应用版本',
+          '4. 相关日志、截图或终端输出',
+        ].join('\n')
+      : [
+          'Thanks for the report. We still need a bit more evidence before changing the code. Please include:',
+          '',
+          '1. Exact steps to reproduce (from launch to failure)',
+          '2. Expected vs actual behavior',
+          '3. OS / app version',
+          '4. Relevant logs, screenshots, or terminal output',
+        ].join('\n');
   }
   if (confidence < 0.8 && category === 'feature_quick_win') {
     category = 'feature_defer';
-    if (!String(raw.reply || '').trim()) {
-      reply =
-        'Thanks for the suggestion. The scope or tradeoffs are not clear enough for an automatic change yet, so a maintainer will take a look first.';
-    }
+    reply = prefersCjk(raw.reply)
+      ? '感谢建议。当前范围或取舍还不够清晰，暂不自动改动，会由维护者先看一眼。'
+      : 'Thanks for the suggestion. The scope or tradeoffs are not clear enough for an automatic change yet, so a maintainer will take a look first.';
   }
   // Never auto-close low-confidence "unclear" issues.
   if (confidence < 0.8 && category === 'unclear') {
@@ -224,18 +324,36 @@ function normalizeClassification(raw) {
 }
 
 function labelsForCategory(category, existingLabels = []) {
-  const kept = existingLabels.filter((label) => !MANAGED_LABELS.has(label));
+  const existing = existingLabels || [];
+  const kept = existing.filter((label) => !MANAGED_LABELS.has(label));
   const extras = CATEGORY_LABELS[category] || ['triage'];
+  // Preserve admission marker so reopened issues do not re-consume the daily quota.
+  const preserved = existing.includes('triage:admitted')
+    ? ['triage:admitted']
+    : [];
   if (category.startsWith('bug_')) {
-    return [...new Set([...kept.filter((l) => l !== 'enhancement'), ...extras])];
+    return [
+      ...new Set([
+        ...kept.filter((l) => l !== 'enhancement'),
+        ...extras,
+        ...preserved,
+      ]),
+    ];
   }
   if (category.startsWith('feature_')) {
-    return [...new Set([...kept.filter((l) => l !== 'bug'), ...extras])];
+    return [
+      ...new Set([
+        ...kept.filter((l) => l !== 'bug'),
+        ...extras,
+        ...preserved,
+      ]),
+    ];
   }
   return [
     ...new Set([
       ...kept.filter((l) => l !== 'bug' && l !== 'enhancement'),
       ...extras,
+      ...preserved,
     ]),
   ];
 }
@@ -274,14 +392,93 @@ function buildPullRequestComment({ pullRequestUrl, clean }) {
   ].join('\n');
 }
 
-function buildCodexReviewRequestComment(round = 1) {
-  return [
+function buildCodexReviewRequestComment(round = 1, headSha = '') {
+  const lines = [
     TRIAGE_MARKER,
     '',
     `@codex review`,
     '',
     `<!-- cursor-codex-round:${Number(round) || 1} -->`,
-  ].join('\n');
+  ];
+  const sha = String(headSha || '')
+    .trim()
+    .toLowerCase();
+  if (/^[0-9a-f]{7,40}$/.test(sha)) {
+    lines.push(`<!-- cursor-codex-head:${sha} -->`);
+  }
+  return lines.join('\n');
+}
+
+function extractRequestedHeadSha(body) {
+  const match = String(body || '').match(
+    /<!--\s*cursor-codex-head:([0-9a-f]{7,40})\s*-->/i,
+  );
+  return match ? match[1].toLowerCase() : '';
+}
+
+/** GitHub reaction content that Codex uses for a clean / no-findings signal. */
+const CODEX_CLEAN_REACTION_CONTENTS = new Set(['+1', 'hooray', 'heart', 'rocket']);
+
+function isCodexCleanReaction(reaction) {
+  const content = String(reaction?.content || reaction || '').toLowerCase();
+  if (!CODEX_CLEAN_REACTION_CONTENTS.has(content)) return false;
+  const login = reaction?.user?.login || reaction?.login || '';
+  // When only the content string is provided, still treat +1-like as clean candidate.
+  if (!login && typeof reaction === 'string') return true;
+  if (!login) return true;
+  return isCodexBotLogin(login);
+}
+
+/**
+ * True when the latest trusted automation @codex request has a Codex clean reaction.
+ * Used when the connector only 👍s without posting clean summary text.
+ */
+function hasCodexCleanReactionOnRequest({
+  requestComments = [],
+  reactionsByCommentId = {},
+  headSha = '',
+  ownActors,
+} = {}) {
+  const trusted = (requestComments || []).filter((c) =>
+    isTrustedAutomationControlAuthor(c?.user?.login || c?.login, { ownActors }),
+  );
+  if (!trusted.length) return { clean: false, requestHeadSha: '', commentId: null };
+
+  const sorted = [...trusted].sort(
+    (a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0),
+  );
+
+  // Prefer the newest request that both (a) has a clean reaction and
+  // (b) pins the current head. A later unanswered retry must not hide a
+  // valid clean reaction on an earlier same-head request.
+  for (const comment of sorted) {
+    const requestHead = extractRequestedHeadSha(comment.body);
+    if (headSha) {
+      if (!requestHead || !commitShasMatch(headSha, requestHead)) continue;
+    }
+    const reactions =
+      reactionsByCommentId[comment.id] ||
+      reactionsByCommentId[String(comment.id)] ||
+      comment.reactions_list ||
+      [];
+    const clean = (Array.isArray(reactions) ? reactions : []).some((r) =>
+      isCodexCleanReaction(r),
+    );
+    if (!clean) continue;
+    return {
+      clean: true,
+      requestHeadSha: requestHead,
+      commentId: comment.id,
+      reason: 'codex_clean_reaction',
+    };
+  }
+
+  const latest = sorted[0];
+  return {
+    clean: false,
+    requestHeadSha: extractRequestedHeadSha(latest.body),
+    commentId: latest.id,
+  };
 }
 
 /**
@@ -300,9 +497,15 @@ function buildExternalCodexRerequestComment(headSha) {
 function shouldSkipExternalCodexRerequest({
   existingComments = [],
   headSha,
+  ownActors,
 } = {}) {
   const marker = `<!-- cursor-external-codex:${sanitizeUntrustedText(headSha, 64)} -->`;
-  return existingComments.some((c) => String(c.body || '').includes(marker));
+  return existingComments.some(
+    (c) =>
+      isTrustedAutomationControlAuthor(c?.user?.login || c?.login, {
+        ownActors,
+      }) && String(c.body || '').includes(marker),
+  );
 }
 
 function buildSlackPayload({
@@ -393,21 +596,35 @@ const CODEX_DIRTY_PATTERNS = [
   /\bP2\b/,
 ];
 
+// P3 is terminal-but-not-auto-fixed: do not leave the loop waiting forever.
+const CODEX_P3_PATTERNS = [
+  /!\[P3 Badge\]/i,
+  /\bP3\b/,
+];
+
 function isCodexTerminalReviewText(body) {
   const text = String(body || '');
   if (!text.trim()) return false;
   return (
     /Codex Review:/i.test(text) ||
     CODEX_CLEAN_PATTERNS.some((re) => re.test(text)) ||
-    CODEX_DIRTY_PATTERNS.some((re) => re.test(text))
+    CODEX_DIRTY_PATTERNS.some((re) => re.test(text)) ||
+    CODEX_P3_PATTERNS.some((re) => re.test(text))
   );
+}
+
+function commentLooksP3Only(body) {
+  const text = String(body || '');
+  if (!CODEX_P3_PATTERNS.some((re) => re.test(text))) return false;
+  // If any P0–P2 is also present, this is not P3-only.
+  return !CODEX_DIRTY_PATTERNS.some((re) => re.test(text));
 }
 
 /** Parse "Reviewed commit: `abc1234`" style markers from Codex summaries. */
 function extractReviewedCommitSha(summaryText) {
   const text = String(summaryText || '');
   const match =
-    text.match(/Reviewed commit:\**\s*`([0-9a-f]{7,40})`/i) ||
+    text.match(/Reviewed commit:[\s*]*`([0-9a-f]{7,40})`/i) ||
     text.match(/Reviewed commit:[^\n0-9a-f]*([0-9a-f]{7,40})/i);
   return match ? match[1].toLowerCase() : '';
 }
@@ -464,6 +681,15 @@ function parseCodexReviewOutcome({
   reviewComments = [],
   issueComments = [],
   headSha = '',
+  /** When true, latest trusted @codex request has a Codex 👍 clean reaction. */
+  cleanReaction = false,
+  /** Head SHA pinned on that request comment, if any. */
+  reactionRequestHeadSha = '',
+  /**
+   * Authoritative commit from the GitHub review object (`commit_id`), used when
+   * the review body has no textual "Reviewed commit" marker.
+   */
+  summaryCommitId = '',
 } = {}) {
   const scopedReviews = filterCodexReviewCommentsForHead(
     reviewComments,
@@ -475,27 +701,65 @@ function parseCodexReviewOutcome({
   const inlineDirty = scopedReviews.some((c) =>
     commentLooksDirty(c.body || c),
   );
+  const resolveReviewed = (text) =>
+    extractReviewedCommitSha(text) ||
+    String(summaryCommitId || '').toLowerCase();
 
-  if (summaryClean && !summaryDirty) {
-    return {
-      clean: true,
-      reason: 'codex_clean_summary',
-      actionable: false,
-    };
-  }
-  if (summaryDirty || (inlineDirty && !summaryClean)) {
+  // Current-head inline P0–P2 findings always win over an older clean summary.
+  if (inlineDirty && !(summaryClean && !summaryDirty)) {
     return {
       clean: false,
       reason: summaryDirty ? 'codex_findings' : 'codex_inline_findings',
       actionable: true,
     };
   }
-  if (summaryClean && inlineDirty) {
-    // Stale inlines after a clean summary → trust summary.
+  if (summaryDirty) {
+    const reviewed = resolveReviewed(summary);
+    // Dirty summary for an older commit must not drive fixes on a new head.
+    if (reviewed && headSha && !commitShasMatch(headSha, reviewed)) {
+      if (inlineDirty) {
+        return {
+          clean: false,
+          reason: 'codex_inline_findings',
+          actionable: true,
+        };
+      }
+      return {
+        clean: false,
+        reason: 'stale_dirty_summary',
+        actionable: false,
+      };
+    }
+    return {
+      clean: false,
+      reason: 'codex_findings',
+      actionable: true,
+      reviewedCommitSha: reviewed || '',
+    };
+  }
+  if (summaryClean) {
+    const reviewed = resolveReviewed(summary);
+    if (inlineDirty) {
+      // Clean summary only overrides current-head inlines when pinned to this head.
+      if (reviewed && headSha && commitShasMatch(headSha, reviewed)) {
+        return {
+          clean: true,
+          reason: 'codex_clean_summary',
+          actionable: false,
+          reviewedCommitSha: reviewed,
+        };
+      }
+      return {
+        clean: false,
+        reason: 'codex_inline_findings',
+        actionable: true,
+      };
+    }
     return {
       clean: true,
-      reason: 'codex_clean_summary_ignore_stale_inline',
+      reason: 'codex_clean_summary',
       actionable: false,
+      reviewedCommitSha: reviewed || '',
     };
   }
   if (scopedReviews.length > 0 && inlineDirty) {
@@ -506,19 +770,59 @@ function parseCodexReviewOutcome({
     };
   }
 
+  // Connector often 👍 the request comment instead of posting clean prose.
+  if (cleanReaction && !inlineDirty && !summaryDirty) {
+    if (
+      reactionRequestHeadSha &&
+      headSha &&
+      !commitShasMatch(headSha, reactionRequestHeadSha)
+    ) {
+      return {
+        clean: false,
+        reason: 'stale_clean_reaction',
+        actionable: false,
+      };
+    }
+    return {
+      clean: true,
+      reason: 'codex_clean_reaction',
+      actionable: false,
+      reviewedCommitSha: reactionRequestHeadSha || '',
+    };
+  }
+
+  // P3-only reviews are terminal: not clean, not auto-fixed — hand to human.
+  const summaryP3 = commentLooksP3Only(summary);
+  const inlineP3 = scopedReviews.some((c) => commentLooksP3Only(c.body || c));
+  if ((summaryP3 || inlineP3) && !summaryDirty && !inlineDirty) {
+    return {
+      clean: false,
+      reason: 'codex_p3_only',
+      actionable: false,
+    };
+  }
+
   // No clear signal — do not start a fix loop.
   return { clean: false, reason: 'codex_unknown', actionable: false };
 }
 
-function hasAutomationCodexRequest(comments = []) {
-  return comments.some((comment) =>
-    /<!--\s*cursor-codex-round:\d+\s*-->/.test(String(comment.body || '')),
+function hasAutomationCodexRequest(comments = [], options = {}) {
+  return comments.some(
+    (comment) =>
+      isTrustedAutomationControlAuthor(
+        comment?.user?.login || comment?.login,
+        options,
+      ) &&
+      /<!--\s*cursor-codex-round:\d+\s*-->/.test(String(comment.body || '')),
   );
 }
 
 /**
  * Decide codex_loop action from pure inputs (testable).
  */
+/** Default age after which a still-unanswered @codex request may be retried. */
+const CODEX_REQUEST_RETRY_MS = 30 * 60 * 1000;
+
 function decideCodexLoopAction({
   eligible,
   outcome,
@@ -530,6 +834,14 @@ function decideCodexLoopAction({
   summaryText = '',
   lastAutomationRequestAt = 0,
   lastCodexSummaryAt = 0,
+  /** Head SHA pinned on the latest automation @codex request comment. */
+  requestedHeadSha = '',
+  /** Manual workflow_dispatch should always be able to re-request. */
+  forceRetry = false,
+  /** Current time (ms); injectable for tests. */
+  nowMs = Date.now(),
+  /** How long to wait for Codex before re-requesting. */
+  requestRetryMs = CODEX_REQUEST_RETRY_MS,
 } = {}) {
   if (!eligible) {
     return { action: 'skip', reason: 'not_fix_eligible' };
@@ -538,37 +850,65 @@ function decideCodexLoopAction({
   // Exception: actionable inline-only findings already present for this head.
   const hasActionableFindings =
     Boolean(outcome) && outcome.clean === false && outcome.actionable === true;
-  if (
+  const requestIsPending =
     lastAutomationRequestAt > 0 &&
-    lastAutomationRequestAt > (lastCodexSummaryAt || 0) &&
-    !hasActionableFindings
-  ) {
+    lastAutomationRequestAt > (lastCodexSummaryAt || 0);
+  const requestExpired =
+    lastAutomationRequestAt > 0 &&
+    Number(nowMs) - Number(lastAutomationRequestAt) >= Number(requestRetryMs);
+
+  if (requestIsPending && !hasActionableFindings && !forceRetry && !requestExpired) {
     return { action: 'skip', reason: 'awaiting_codex_for_new_head' };
   }
   if (!hasCodexActivity) {
-    if (hasAutomationRequest) {
+    if (hasAutomationRequest && !forceRetry && !requestExpired) {
       return { action: 'skip', reason: 'awaiting_codex' };
     }
-    return { action: 'request_review', reason: 'no_codex_yet' };
+    return {
+      action: 'request_review',
+      reason: hasAutomationRequest ? 'retry_request' : 'no_codex_yet',
+    };
   }
   if (outcome?.clean) {
-    const reviewed = extractReviewedCommitSha(summaryText);
-    if (reviewed && headSha && !commitShasMatch(headSha, reviewed)) {
-      return { action: 'skip', reason: 'stale_clean_summary' };
-    }
-    // Fresh request still pending and no commit pin → don't mark ready early.
-    if (
-      lastAutomationRequestAt > 0 &&
-      lastAutomationRequestAt > (lastCodexSummaryAt || 0)
-    ) {
-      return { action: 'skip', reason: 'awaiting_codex_for_new_head' };
+    const reviewed =
+      extractReviewedCommitSha(summaryText) ||
+      String(outcome.reviewedCommitSha || requestedHeadSha || '');
+    const pinnedToHead =
+      Boolean(reviewed) &&
+      Boolean(headSha) &&
+      commitShasMatch(headSha, reviewed);
+    // Only mark ready when the clean result is explicitly pinned to this head
+    // (summary Reviewed commit, or reaction on a request with cursor-codex-head).
+    // Unpinned reactions must not approve a later push.
+    if (!pinnedToHead) {
+      if (forceRetry || requestExpired) {
+        return { action: 'request_review', reason: 'retry_request' };
+      }
+      if (requestIsPending) {
+        return { action: 'skip', reason: 'awaiting_codex_for_new_head' };
+      }
+      return {
+        action: 'skip',
+        reason: reviewed ? 'stale_clean_summary' : 'clean_summary_unpinned',
+      };
     }
     return { action: 'mark_ready', reason: outcome.reason || 'codex_clean' };
   }
   if (outcome && outcome.actionable === false) {
+    // P3-only: stop the auto-fix loop and hand off to a human.
+    if (outcome.reason === 'codex_p3_only') {
+      return { action: 'give_up', reason: 'codex_p3_only' };
+    }
+    // Stale/unknown outcomes still allow a manual or timed re-request.
+    if (forceRetry || requestExpired) {
+      return { action: 'request_review', reason: 'retry_request' };
+    }
     return { action: 'skip', reason: outcome.reason || 'codex_unknown' };
   }
-  if (Number(round) >= Number(maxRounds)) {
+  // `round` is the last request marker (1 on the first dirty review, before any
+  // fix). Allow `maxRounds` completed fix attempts: give up only after that many
+  // requests have already been answered dirty (i.e. round > maxRounds).
+  if (Number(round) > Number(maxRounds)) {
     return { action: 'give_up', reason: 'max_rounds' };
   }
   return { action: 'fix', reason: outcome?.reason || 'codex_findings' };
@@ -587,19 +927,49 @@ function shouldReTriageIssueComment({ labels = [], commenterLogin, issueAuthorLo
   return commenter === author;
 }
 
+/**
+ * Decode a path as printed by Git when it contains special characters
+ * (leading quote + C-style escapes). Unquoted paths are returned as-is.
+ */
+function unquoteGitPath(raw) {
+  let p = String(raw || '');
+  if (p.length >= 2 && p.startsWith('"') && p.endsWith('"')) {
+    p = p
+      .slice(1, -1)
+      .replace(/\\([abtnvfr"\\])/g, (_, ch) => {
+        const map = {
+          a: '\x07',
+          b: '\b',
+          t: '\t',
+          n: '\n',
+          v: '\v',
+          f: '\f',
+          r: '\r',
+          '"': '"',
+          '\\': '\\',
+        };
+        return map[ch] ?? ch;
+      })
+      .replace(/\\([0-7]{1,3})/g, (_, oct) =>
+        String.fromCharCode(parseInt(oct, 8)),
+      );
+  }
+  return p;
+}
+
 function pathsFromGitStatusPorcelain(gitStatusPorcelain) {
   const paths = [];
   for (const line of String(gitStatusPorcelain || '').split('\n')) {
     const trimmed = line.trim();
     if (!trimmed) continue;
-    // porcelain: XY path  OR  XY old -> new
+    // porcelain: XY path  OR  XY old -> new (paths may be C-quoted)
     const rest = trimmed.replace(/^[ MADRCU?!]{1,2}\s+/, '');
     if (rest.includes(' -> ')) {
-      const [from, to] = rest.split(' -> ').map((p) => p.trim());
+      const [from, to] = rest.split(' -> ').map((p) => unquoteGitPath(p.trim()));
       if (from) paths.push(from);
       if (to) paths.push(to);
     } else if (rest) {
-      paths.push(rest);
+      paths.push(unquoteGitPath(rest));
     }
   }
   return paths;
@@ -616,11 +986,11 @@ function pathsFromGitDiffNameStatus(nameStatusText) {
     if (!trimmed) continue;
     const parts = trimmed.split(/\t/);
     if (parts.length >= 3 && /^R\d*/.test(parts[0])) {
-      paths.push(parts[1], parts[2]);
+      paths.push(unquoteGitPath(parts[1]), unquoteGitPath(parts[2]));
     } else if (parts.length >= 2) {
-      paths.push(parts[1]);
+      paths.push(unquoteGitPath(parts[1]));
     } else {
-      paths.push(trimmed.replace(/^[A-Z]\d*\s+/, ''));
+      paths.push(unquoteGitPath(trimmed.replace(/^[A-Z]\d*\s+/, '')));
     }
   }
   return paths.filter(Boolean);
@@ -658,9 +1028,19 @@ function formatCodexFindingsMarkdown({
       );
     }
   }
-  const botIssue = issueComments.filter((c) =>
-    isCodexBotLogin(c.user?.login || c.login),
-  );
+  const botIssue = issueComments
+    .filter((c) => isCodexBotLogin(c.user?.login || c.login))
+    .filter((c) => {
+      // When head is known, only keep comments explicitly pinned to it.
+      // Unpinned multi-round summaries are often stale and regress fixes.
+      if (!headSha) return true;
+      const reviewed = extractReviewedCommitSha(c.body);
+      if (!reviewed) return false;
+      return commitShasMatch(headSha, reviewed);
+    })
+    .sort(
+      (a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0),
+    );
   if (botIssue.length) {
     lines.push('## Issue comments from Codex', '');
     for (const comment of botIssue.slice(0, 10)) {
@@ -674,13 +1054,15 @@ function listProtectedPathHits(filePaths) {
   const hits = [];
   for (const filePath of filePaths || []) {
     const normalized = String(filePath || '').replace(/\\/g, '/');
-    if (
-      PROTECTED_PATH_PREFIXES.some(
-        (prefix) =>
-          normalized === prefix.replace(/\/$/, '') ||
-          normalized.startsWith(prefix),
-      )
-    ) {
+    const base = normalized.split('/').pop() || normalized;
+    const prefixHit = PROTECTED_PATH_PREFIXES.some(
+      (prefix) =>
+        normalized === prefix.replace(/\/$/, '') ||
+        normalized.startsWith(prefix),
+    );
+    const baseHit = PROTECTED_PATH_BASENAMES.includes(base);
+    const builderHit = /electron-builder/i.test(normalized);
+    if (prefixHit || baseHit || builderHit) {
       hits.push(normalized);
     }
   }
@@ -707,9 +1089,17 @@ function hasProtectedChangesInSources({
   ]);
 }
 
-function getCodexRoundFromComments(comments = []) {
+function getCodexRoundFromComments(comments = [], options = {}) {
   let maxRound = 0;
   for (const comment of comments) {
+    if (
+      !isTrustedAutomationControlAuthor(
+        comment?.user?.login || comment?.login,
+        options,
+      )
+    ) {
+      continue;
+    }
     const body = String(comment.body || '');
     const match = body.match(/<!--\s*cursor-codex-round:(\d+)\s*-->/);
     if (match) {
@@ -780,11 +1170,13 @@ async function prepareIssueContext({
 
   // Daily limit only gates first admission. Follow-ups on already-admitted or
   // needs-info issues must still re-classify when the author replies.
+  // Do NOT treat generic `triage` / `bug` / `enhancement` as admission — those
+  // are applied by templates and would disable the daily limit entirely.
   const alreadyAdmitted =
     labelNames.includes('triage:admitted') ||
     labelNames.includes('needs-info') ||
     labelNames.includes('triage:bug-needs-info') ||
-    labelNames.includes('triage') ||
+    labelNames.includes('triage:unclear') ||
     labelNames.includes('ready-for-agent') ||
     labelNames.includes('ready-for-human');
 
@@ -982,10 +1374,9 @@ function isBotPrForIssue(pull, issueNumber) {
     !pull.base?.repo?.full_name ||
     pull.head.repo.full_name === pull.base.repo.full_name;
   if (!sameRepo) return false;
-  const mentionsIssue =
-    body.includes(`Fixes #${n}`) ||
-    body.includes(`fixes #${n}`) ||
-    headRef.startsWith(prefix);
+  // Boundary after the issue number so Fixes #1 does not match Fixes #10.
+  const fixesRe = new RegExp(`(?:^|\\W)(?:Fixes|fixes) #${n}(?!\\d)`);
+  const mentionsIssue = fixesRe.test(body) || headRef.startsWith(prefix);
   if (!mentionsIssue) return false;
   return (
     isBotPrMarker(body) ||
@@ -999,9 +1390,9 @@ function isBotPrForIssue(pull, issueNumber) {
 
 async function findOpenBotPrForIssue({ github, context, issueNumber }) {
   const n = String(issueNumber);
-  // Targeted search is far more reliable than scanning the latest 100 PRs.
+  // Only open PRs count — a closed/unmerged automation PR must not block retries.
   try {
-    const q = `repo:${context.repo.owner}/${context.repo.repo} is:pr ("Fixes #${n}" OR "fixes #${n}" OR head:cursor/issue-${n}-)`;
+    const q = `repo:${context.repo.owner}/${context.repo.repo} is:pr is:open ("Fixes #${n}" OR "fixes #${n}" OR head:cursor/issue-${n}-)`;
     const items = await github.paginate(
       github.rest.search.issuesAndPullRequests,
       { q, per_page: 20 },
@@ -1009,29 +1400,27 @@ async function findOpenBotPrForIssue({ github, context, issueNumber }) {
     );
     for (const item of items) {
       if (!item.pull_request || !item.number) continue;
+      // Search may still return closed briefly; re-check state.
+      if (item.state && item.state !== 'open') continue;
       const { data: pull } = await github.rest.pulls.get({
         ...context.repo,
         pull_number: item.number,
       });
+      if (pull.state && pull.state !== 'open') continue;
       if (isBotPrForIssue(pull, issueNumber)) return pull;
     }
   } catch {
     // fall through to list scan
   }
 
-  const states = ['open', 'closed'];
-  for (const state of states) {
-    const pulls = await github.paginate(github.rest.pulls.list, {
-      ...context.repo,
-      state,
-      per_page: 100,
-      sort: 'updated',
-      direction: 'desc',
-    });
-    const match = pulls.find((pull) => isBotPrForIssue(pull, issueNumber));
-    if (match) return match;
-  }
-  return null;
+  const pulls = await github.paginate(github.rest.pulls.list, {
+    ...context.repo,
+    state: 'open',
+    per_page: 100,
+    sort: 'updated',
+    direction: 'desc',
+  });
+  return pulls.find((pull) => isBotPrForIssue(pull, issueNumber)) || null;
 }
 
 module.exports = {
@@ -1042,11 +1431,16 @@ module.exports = {
   CATEGORY_LABELS,
   MANAGED_LABELS,
   PROTECTED_PATH_PREFIXES,
+  PROTECTED_PATH_BASENAMES,
   IMPLEMENT_CATEGORIES,
   sanitizeUntrustedText,
   isValidIssueFormat,
   parseOwnActors,
   isCodexBotLogin,
+  isTrustedAutomationControlAuthor,
+  isAutomationControlComment,
+  assertTextDoesNotContainSecret,
+  assertFilesDoNotContainSecret,
   isBotPrMarker,
   isAutomationBranch,
   isFixEligiblePr,
@@ -1056,6 +1450,10 @@ module.exports = {
   buildPullRequestBody,
   buildPullRequestComment,
   buildCodexReviewRequestComment,
+  extractRequestedHeadSha,
+  CODEX_CLEAN_REACTION_CONTENTS,
+  isCodexCleanReaction,
+  hasCodexCleanReactionOnRequest,
   buildExternalCodexRerequestComment,
   shouldSkipExternalCodexRerequest,
   buildSlackPayload,
@@ -1070,10 +1468,12 @@ module.exports = {
   filterCodexReviewCommentsForHead,
   parseCodexReviewOutcome,
   hasAutomationCodexRequest,
+  CODEX_REQUEST_RETRY_MS,
   decideCodexLoopAction,
   shouldReTriageIssueComment,
   formatCodexFindingsMarkdown,
   listProtectedPathHits,
+  unquoteGitPath,
   pathsFromGitStatusPorcelain,
   pathsFromGitDiffNameStatus,
   hasProtectedChanges,
