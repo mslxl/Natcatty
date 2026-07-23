@@ -268,21 +268,48 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
     }
     // Preferred path after app restart / closed server: open a dedicated SFTP
     // session from vault credentials and continue from the checkpoint. Does not
-    // require any UI panel to still be open.
-    if ((!controller || needsDedicatedReconnect) && action === "resume" && task && dedicatedResumeHandler) {
+    // require any UI panel to still be open. Directory trees need panel/process
+    // recursion — skip dedicated single-file resume for those.
+    if (
+      (!controller || needsDedicatedReconnect)
+      && action === "resume"
+      && task
+      && dedicatedResumeHandler
+      && !task.isDirectory
+    ) {
       const latest = tasks.find((candidate) => candidate.id === taskId) ?? task;
       const result = await dedicatedResumeHandler({
         ...latest,
         reconnectRequired: true,
       });
+      // Cancel may finish while dedicated resume was still awaiting the stream.
+      const afterDedicated = tasks.find((candidate) => candidate.id === taskId);
+      if (!afterDedicated || afterDedicated.status === "cancelled") return;
       if (result.success) {
+        // Detach from panel owner so publishOwner cannot clobber completion
+        // with a stale local interrupted/paused snapshot.
         tasks = tasks.map((candidate) => candidate.id === taskId ? {
           ...candidate,
+          ownerId: "dedicated-resume",
           status: "completed",
           transferredBytes: Math.max(candidate.transferredBytes, candidate.totalBytes || candidate.transferredBytes),
           speed: 0,
           endTime: Date.now(),
           error: undefined,
+          reconnectRequired: false,
+          phase: undefined,
+        } : candidate);
+        emit();
+        return;
+      }
+      const cancelLike = /cancelled|canceled/i.test(result.error || "");
+      if (cancelLike) {
+        tasks = tasks.map((candidate) => candidate.id === taskId ? {
+          ...candidate,
+          status: "cancelled",
+          error: undefined,
+          endTime: Date.now(),
+          speed: 0,
           reconnectRequired: false,
           phase: undefined,
         } : candidate);
@@ -359,12 +386,16 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
       const incoming = new Map(ownerTasks.map((task) => [task.id, task]));
       const existingIds = new Set(tasks.map((task) => task.id));
       tasks = tasks.flatMap((task) => {
+        // Tasks reassigned to dedicated-resume (or other owners) are not
+        // clobbered by this panel's local snapshot.
         if (task.ownerId !== ownerId) return [task];
         const replacement = incoming.get(task.id);
         if (!replacement) return [];
         return [{ ...replacement, ownerId, updatedAt: replacement.updatedAt ?? Date.now() }];
       });
       for (const task of ownerTasks) {
+        // Never re-introduce a panel row that already exists under another owner
+        // (e.g. completed via dedicated resume while the panel still holds interrupted).
         if (!existingIds.has(task.id)) {
           tasks.push({ ...task, ownerId, updatedAt: task.updatedAt ?? Date.now() });
         }
@@ -405,9 +436,33 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
       )));
     },
     pause: (taskId) => invoke(taskId, "pause"),
-    resume(taskId) {
+    async resume(taskId) {
       const existing = resumeInvocations.get(taskId);
-      if (existing) return existing;
+      if (existing) {
+        // Dedicated resume holds the invocation for the full stream lifetime.
+        // If the user paused mid-transfer, unpause the backend instead of
+        // returning a promise that never re-issues resumeTransfer.
+        const task = tasks.find((candidate) => candidate.id === taskId);
+        if (task && (task.status === "paused" || task.status === "pausing")) {
+          try {
+            const live = await netcattyBridge.get()?.resumeTransfer?.(taskId);
+            if (live?.success) {
+              tasks = tasks.map((candidate) => candidate.id === taskId ? {
+                ...candidate,
+                status: "transferring",
+                error: undefined,
+                reconnectRequired: false,
+                pauseUnavailableReason: undefined,
+                phase: undefined,
+              } : candidate);
+              emit();
+            }
+          } catch {
+            // Fall through to returning the in-flight resume promise.
+          }
+        }
+        return existing;
+      }
       const running = invoke(taskId, "resume").finally(() => {
         if (resumeInvocations.get(taskId) === running) resumeInvocations.delete(taskId);
       });
@@ -415,8 +470,29 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
       return running;
     },
     cancel: (taskId) => invoke(taskId, "cancel"),
-    retry: (taskId) => invoke(taskId, "retry"),
-    prioritize: (taskId) => invoke(taskId, "prioritize"),
+    async retry(taskId) {
+      const ownerId = findOwner(taskId);
+      const controller = controllers.get(ownerId ?? "");
+      if (controller) {
+        await controller.retry(taskId);
+        return;
+      }
+      // Orphaned after restart: retry behaves like resume (checkpoint + dedicated).
+      await this.resume(taskId);
+    },
+    prioritize(taskId) {
+      const ownerId = findOwner(taskId);
+      const controller = controllers.get(ownerId ?? "");
+      if (controller) {
+        void controller.prioritize(taskId);
+        return;
+      }
+      // No owner: bump local priority so the global scheduler can prefer it.
+      tasks = tasks.map((candidate) => candidate.id === taskId
+        ? { ...candidate, priority: Date.now(), updatedAt: Date.now() }
+        : candidate);
+      emit();
+    },
     async resolveConflict(taskId, action, applyToAll) {
       let ownerId = findOwner(taskId);
       let controller = controllers.get(ownerId ?? "");

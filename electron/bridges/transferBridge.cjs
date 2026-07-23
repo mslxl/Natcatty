@@ -290,6 +290,12 @@ function acquireTransferSessionLeases(transferId, payload) {
 
 async function hardCloseSftpSession(sftpId) {
   if (!sftpId) return;
+  // TOCTOU: another transfer may have acquired between shouldHardClose and here.
+  // Re-arm soft-close and abort the force close so we don't kill live work.
+  if (sftpTransferSessionLeaseStore.isHeld(sftpId)) {
+    sftpTransferSessionLeaseStore.markSoftClosed(sftpId);
+    return;
+  }
   try {
     const sftpBridge = require("./sftpBridge.cjs");
     if (typeof sftpBridge.closeSftp === "function") {
@@ -300,6 +306,11 @@ async function hardCloseSftpSession(sftpId) {
     console.warn(`[Transfer] Failed to hard-close leased SFTP session ${sftpId}:`, err?.message || err);
   }
   // Fallback if bridge close is unavailable (unit tests with partial mocks).
+  // Re-check again before wiping the client map.
+  if (sftpTransferSessionLeaseStore.isHeld(sftpId)) {
+    sftpTransferSessionLeaseStore.markSoftClosed(sftpId);
+    return;
+  }
   const client = sftpClients?.get?.(sftpId);
   if (!client) {
     sftpTransferSessionLeaseStore.clear(sftpId);

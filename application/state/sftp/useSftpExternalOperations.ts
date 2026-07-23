@@ -624,60 +624,68 @@ export const useSftpExternalOperations = (
               return { transferId: options.transferId, error: 'Stream transfer not available' };
             }
 
-            let lease: { sftpId: string; release: () => void; discard: () => void } | null = null;
             const wantPool =
               !!acquireTransferSession
               && options.targetType === "sftp"
               && !!options.targetHostId;
 
+            // Acquire pool lease *inside* admission so queued uploads do not
+            // pin dedicated connections while waiting for a scheduler slot.
             try {
-              if (wantPool && acquireTransferSession && options.targetHostId) {
-                try {
-                  lease = await acquireTransferSession(options.targetHostId, options.transferId);
-                } catch (err) {
-                  logger.warn("[SFTP] Transfer pool open failed for upload; using prep session", err);
-                }
-              }
-
-              const transferOptions = {
-                ...options,
-                targetSftpId: lease?.sftpId ?? options.targetSftpId,
-                globalConcurrency: localStorageAdapter.readNumber(STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY) ?? undefined,
-                // Already admitted by globalSftpTransferScheduler above.
-                skipAdmission: true as const,
-              };
-
-              const result = await globalSftpTransferScheduler.run(
+              return await globalSftpTransferScheduler.run(
                 ownerId,
                 options.transferId,
-                getSftpTransferResourceKeys(transferOptions),
+                getSftpTransferResourceKeys(options),
                 () => localStorageAdapter.readNumber(STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY),
-                () => b.startStreamTransfer!(
-                  transferOptions,
-                  // UploadBridge onProgress is a subset of the bridge checkpoint callback.
-                  onProgress as Parameters<NonNullable<typeof b.startStreamTransfer>>[1],
-                  onComplete,
-                  onError,
-                ),
-              );
+                async () => {
+                  let lease: { sftpId: string; release: () => void; discard: () => void } | null = null;
+                  try {
+                    if (wantPool && acquireTransferSession && options.targetHostId) {
+                      try {
+                        lease = await acquireTransferSession(options.targetHostId, options.transferId);
+                      } catch (err) {
+                        logger.warn("[SFTP] Transfer pool open failed for upload; using prep session", err);
+                      }
+                    }
 
-              // Dead session → drop from pool so the next file opens fresh.
-              if (result?.error && isSessionError(new Error(result.error))) {
-                lease?.discard();
-                lease = null;
-              }
-              return result;
+                    const transferOptions = {
+                      ...options,
+                      targetSftpId: lease?.sftpId ?? options.targetSftpId,
+                      globalConcurrency: localStorageAdapter.readNumber(STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY) ?? undefined,
+                      // Already admitted by globalSftpTransferScheduler above.
+                      skipAdmission: true as const,
+                    };
+
+                    const result = await b.startStreamTransfer!(
+                      transferOptions,
+                      // UploadBridge onProgress is a subset of the bridge checkpoint callback.
+                      onProgress as Parameters<NonNullable<typeof b.startStreamTransfer>>[1],
+                      onComplete,
+                      onError,
+                    );
+
+                    // Dead session → drop from pool so the next file opens fresh.
+                    if (result?.error && isSessionError(new Error(result.error))) {
+                      lease?.discard();
+                      lease = null;
+                    }
+                    return result;
+                  } catch (error) {
+                    if (isSessionError(error)) {
+                      lease?.discard();
+                      lease = null;
+                    }
+                    throw error;
+                  } finally {
+                    lease?.release();
+                  }
+                },
+              );
             } catch (error) {
-              if (isSessionError(error)) {
-                lease?.discard();
-                lease = null;
-              }
               return {
                 transferId: options.transferId,
                 error: error instanceof Error ? error.message : String(error),
               };
-            } finally {
-              lease?.release();
             }
           }
         : undefined,

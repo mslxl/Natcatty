@@ -13,6 +13,8 @@ export interface EnsureRemoteSftpSessionParams {
     host: Host | "local",
     options?: { initialPath?: string; ignoreSharedCache?: boolean },
   ) => Promise<void>;
+  /** Resolve vault host by id when lastConnectedHostRef is missing (tab race). */
+  resolveHostById?: (hostId: string) => Host | null | undefined;
   probeSession?: (sftpId: string) => Promise<boolean>;
   forceReconnect?: boolean;
 }
@@ -30,6 +32,7 @@ export async function ensureRemoteSftpSession(
     sftpSessionsRef,
     lastConnectedHostRef,
     connect,
+    resolveHostById,
     probeSession,
     forceReconnect = false,
   } = params;
@@ -38,17 +41,18 @@ export async function ensureRemoteSftpSession(
     const pane = getActivePane(side);
     const lastHost = lastConnectedHostRef.current[side];
     if (lastHost && lastHost !== "local") return lastHost;
+    const hostId = pane?.connection && !pane.connection.isLocal ? pane.connection.hostId : undefined;
+    if (hostId && resolveHostById) {
+      const fromVault = resolveHostById(hostId);
+      if (fromVault) return fromVault;
+    }
+    // Pane connection only stores hostId/label — inventing root@label:22 would
+    // open the wrong endpoint. Fail clearly so the caller can reconnect via
+    // vault host metadata instead of a synthetic identity.
     if (pane?.connection && !pane.connection.isLocal) {
-      // Fall back to a minimal host identity from the connection when the
-      // original Host object is not in lastConnectedHostRef (tab switch race).
-      return {
-        id: pane.connection.hostId,
-        label: pane.connection.hostLabel,
-        hostname: pane.connection.hostLabel,
-        port: 22,
-        username: "root",
-        protocol: "ssh",
-      } as Host;
+      throw new Error(
+        `Cannot reconnect SFTP for "${pane.connection.hostLabel}": host credentials are unavailable. Reopen the host from the vault.`,
+      );
     }
     throw new Error("No remote host available to reconnect");
   };

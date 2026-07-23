@@ -193,6 +193,7 @@ export function useSftpDirectoryTransferOps({
           targetLease = null;
         };
 
+        let lastError: unknown = null;
         try {
           await acquireLeases();
 
@@ -282,14 +283,20 @@ export function useSftpDirectoryTransferOps({
               );
             };
 
-            await new Promise<void>((resolve, reject) => {
-              netcattyBridge.require().startStreamTransfer!(
-                options,
-                onProgress,
-                () => resolve(),
-                (error) => reject(new Error(error)),
-              ).catch(reject);
-            });
+            try {
+              await new Promise<void>((resolve, reject) => {
+                netcattyBridge.require().startStreamTransfer!(
+                  options,
+                  onProgress,
+                  () => resolve(),
+                  (error) => reject(new Error(error)),
+                ).catch(reject);
+              });
+            } catch (error) {
+              lastError = error;
+              throw error;
+            }
+            lastError = null;
             if (attempt > 0) {
               logger.info(`[SFTP] Transfer ${task.fileName} succeeded after retry #${attempt}`);
             }
@@ -312,7 +319,9 @@ export function useSftpDirectoryTransferOps({
             },
           });
         } finally {
-          releaseLeases("release");
+          // Final session death must discard, not release, or the next file
+          // reuses a corpse pool connection for up to the idle TTL.
+          releaseLeases(isSessionError(lastError) ? "discard" : "release");
         }
       },
     );

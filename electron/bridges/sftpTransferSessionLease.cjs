@@ -55,8 +55,10 @@ function createSftpTransferSessionLeaseStore() {
       const set = getSet(sftpId);
       const before = set.size;
       set.add(String(transferId));
-      // Re-acquiring after a soft-close keeps the session alive for new work.
-      softClosed.delete(sftpId);
+      // Keep soft-close sticky. Panel already asked to tear down this session;
+      // new transfers may still borrow it, but the last release must hard-close.
+      // Clearing softClosed here previously leaked sockets forever after
+      // panel close + re-acquire + all transfers finishing.
       return set.size > before;
     },
 

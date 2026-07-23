@@ -152,3 +152,36 @@ test("discard removes a dead session so next acquire reopens", async () => {
   assert.notEqual(a.sftpId, b.sftpId);
   b.release();
 });
+
+test("discard does not close multiplexed connections while peers hold them", async () => {
+  let opens = 0;
+  const closed: string[] = [];
+  const pool = createTransferConnectionPool({
+    maxPerHost: 1,
+    closeSession: async (id) => { closed.push(id); },
+  });
+  const open = async () => {
+    opens += 1;
+    return `sftp-${opens}`;
+  };
+
+  const a = await pool.acquire("host:a", "t1", open);
+  const b = await pool.acquire("host:a", "t2", open);
+  assert.equal(opens, 1);
+  assert.equal(a.sftpId, b.sftpId);
+
+  a.discard();
+  // Peer still holds the session — do not close yet.
+  assert.equal(closed.length, 0);
+  assert.equal(pool.getStats("host:a").connections, 1);
+
+  // New acquires must not reuse the unhealthy session.
+  const c = await pool.acquire("host:a", "t3", open);
+  assert.equal(opens, 2);
+  assert.notEqual(c.sftpId, a.sftpId);
+
+  b.release();
+  // Last peer of unhealthy slot releases → close original.
+  assert.ok(closed.includes(a.sftpId));
+  c.release();
+});

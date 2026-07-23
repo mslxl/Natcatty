@@ -48,17 +48,25 @@ describe("sftpTransferSessionLease", () => {
     assert.equal(store.isSoftClosed("sftp-a"), false);
   });
 
-  it("re-acquire after soft-close cancels deferred teardown", () => {
+  it("keeps soft-close sticky across re-acquire so last release hard-closes", () => {
     const store = createSftpTransferSessionLeaseStore();
     store.acquire("sftp-a", "t1");
     store.markSoftClosed("sftp-a");
+    // New transfer joins after panel soft-close — must not cancel teardown.
     store.acquire("sftp-a", "t2");
-    assert.equal(store.isSoftClosed("sftp-a"), false);
+    assert.equal(store.isSoftClosed("sftp-a"), true);
     assert.deepEqual(store.release("sftp-a", "t1"), {
       released: true,
       shouldHardClose: false,
       remaining: 1,
     });
+    assert.equal(store.isSoftClosed("sftp-a"), true);
+    assert.deepEqual(store.release("sftp-a", "t2"), {
+      released: true,
+      shouldHardClose: true,
+      remaining: 0,
+    });
+    assert.equal(store.isSoftClosed("sftp-a"), false);
   });
 
   it("tracks multiple sessions independently", () => {

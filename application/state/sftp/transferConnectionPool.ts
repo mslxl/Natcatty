@@ -27,6 +27,8 @@ interface PoolSlot {
   sftpId: string;
   holders: Set<string>;
   lastUsedAt: number;
+  /** Session is dead; do not hand out to new transfers. Close when idle. */
+  unhealthy?: boolean;
   opening?: Promise<string>;
 }
 
@@ -97,10 +99,21 @@ export function createTransferConnectionPool(
     }
   };
 
+  const removeAndCloseSlot = (poolKey: string, list: PoolSlot[], idx: number) => {
+    const [slot] = list.splice(idx, 1);
+    if (list.length === 0) pools.delete(poolKey);
+    else pools.set(poolKey, list);
+    if (slot) {
+      void Promise.resolve(closeSession?.(slot.sftpId)).catch(() => {});
+    }
+  };
+
   const pickSlot = (list: PoolSlot[]): PoolSlot | null => {
-    if (list.length === 0) return null;
+    // Never hand out sessions marked dead by a prior discard.
+    const healthy = list.filter((slot) => !slot.unhealthy);
+    if (healthy.length === 0) return null;
     // Prefer idle connections, else least-loaded (FileZilla-style multiplexing).
-    const sorted = [...list].sort((a, b) => {
+    const sorted = [...healthy].sort((a, b) => {
       if (a.holders.size !== b.holders.size) return a.holders.size - b.holders.size;
       return a.lastUsedAt - b.lastUsedAt;
     });
@@ -110,21 +123,35 @@ export function createTransferConnectionPool(
   const release = (poolKey: string, sftpId: string, transferId: string) => {
     const list = pools.get(poolKey);
     if (!list) return;
-    const slot = list.find((candidate) => candidate.sftpId === sftpId);
-    if (!slot) return;
+    const idx = list.findIndex((candidate) => candidate.sftpId === sftpId);
+    if (idx < 0) return;
+    const slot = list[idx]!;
     slot.holders.delete(transferId);
     slot.lastUsedAt = now();
+    // Last holder of an unhealthy session → close now.
+    if (slot.unhealthy && slot.holders.size === 0) {
+      removeAndCloseSlot(poolKey, list, idx);
+    }
   };
 
-  const discard = (sftpId: string) => {
+  /**
+   * Mark a session unusable for new work. Only closes the underlying session
+   * when no other holders remain — multiplexed siblings must not be killed.
+   */
+  const discard = (sftpId: string, options?: { transferId?: string }) => {
     if (!sftpId) return;
     for (const [poolKey, list] of pools.entries()) {
       const idx = list.findIndex((slot) => slot.sftpId === sftpId);
       if (idx < 0) continue;
-      list.splice(idx, 1);
-      if (list.length === 0) pools.delete(poolKey);
-      else pools.set(poolKey, list);
-      void Promise.resolve(closeSession?.(sftpId)).catch(() => {});
+      const slot = list[idx]!;
+      if (options?.transferId) slot.holders.delete(options.transferId);
+      slot.unhealthy = true;
+      slot.lastUsedAt = now();
+      if (slot.holders.size > 0) {
+        // Peers still using this socket; close when the last one releases.
+        return;
+      }
+      removeAndCloseSlot(poolKey, list, idx);
       return;
     }
   };
@@ -133,10 +160,7 @@ export function createTransferConnectionPool(
     sftpId,
     poolKey,
     release: () => release(poolKey, sftpId, transferId),
-    discard: () => {
-      release(poolKey, sftpId, transferId);
-      discard(sftpId);
-    },
+    discard: () => discard(sftpId, { transferId }),
   });
 
   const acquire = async (
@@ -149,16 +173,19 @@ export function createTransferConnectionPool(
 
     return withOpenLock(poolKey, async () => {
       const list = getList(poolKey);
+      // Count only healthy slots toward the open budget; unhealthy ones drain
+      // as holders leave and should not block opening a replacement connection.
+      const healthyCount = list.filter((slot) => !slot.unhealthy).length;
       const existing = pickSlot(list);
-      // Reuse when we already have max connections, or when an idle one exists.
+      // Reuse when we already have max healthy connections, or when an idle one exists.
       // FileZilla-style: open a second connection only when the first is busy.
-      if (existing && (existing.holders.size === 0 || list.length >= maxPerHost)) {
+      if (existing && (existing.holders.size === 0 || healthyCount >= maxPerHost)) {
         existing.holders.add(transferId);
         existing.lastUsedAt = now();
         return makeLease(poolKey, existing.sftpId, transferId);
       }
 
-      if (list.length < maxPerHost) {
+      if (healthyCount < maxPerHost) {
         const sftpId = await open(poolKey);
         const slot: PoolSlot = {
           sftpId,

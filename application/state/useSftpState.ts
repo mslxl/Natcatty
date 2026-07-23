@@ -426,6 +426,7 @@ export const useSftpState = (
         sftpSessionsRef,
         lastConnectedHostRef,
         connect,
+        resolveHostById: (hostId) => hosts.find((host) => host.id === hostId) ?? null,
         forceReconnect: ensureOptions?.forceReconnect,
         probeSession: async (sftpId) => {
           // Lightweight liveness check; any session-error from the bridge

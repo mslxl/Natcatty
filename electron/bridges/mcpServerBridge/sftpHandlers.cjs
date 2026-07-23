@@ -325,6 +325,8 @@ function createSftpHandlerApi(ctx) {
                 sourceHostId,
                 resumable: true,
                 globalConcurrency: transferBridge.getGlobalTransferConcurrency?.(),
+                // Outer runAdmittedTransfer (or sole admission) already owns the slot.
+                skipAdmission: true,
               })
             : sftpBridge.downloadSftpToLocal(null, payload),
           {
@@ -408,6 +410,8 @@ function createSftpHandlerApi(ctx) {
                 targetHostId,
                 resumable: true,
                 globalConcurrency: transferBridge.getGlobalTransferConcurrency?.(),
+                // Outer runAdmittedTransfer (or sole admission) already owns the slot.
+                skipAdmission: true,
               })
             : sftpBridge.uploadLocalToSftp(null, payload),
           {

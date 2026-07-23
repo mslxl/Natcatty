@@ -105,3 +105,37 @@ test("probe failure triggers reconnect", async () => {
   assert.equal(connectCalls, 1);
   assert.equal(sftpId, "sftp-fresh");
 });
+
+test("uses resolveHostById when lastConnectedHostRef is empty", async () => {
+  let connectedHost: Host | "local" | null = null;
+  const sessions = { current: new Map<string, string>() };
+  const sftpId = await ensureRemoteSftpSession({
+    side: "left",
+    getActivePane: () => remotePane("conn-1"),
+    sftpSessionsRef: sessions,
+    lastConnectedHostRef: { current: { left: null, right: null } },
+    resolveHostById: (id) => (id === "host-1" ? host : null),
+    connect: async (_side, resolved) => {
+      connectedHost = resolved;
+      sessions.current.set("conn-1", "sftp-vault");
+    },
+  });
+  assert.equal(sftpId, "sftp-vault");
+  assert.equal((connectedHost as Host).hostname, "ci.example");
+  assert.equal((connectedHost as Host).username, "root");
+});
+
+test("refuses synthetic root@label:22 when host metadata is missing", async () => {
+  await assert.rejects(
+    () => ensureRemoteSftpSession({
+      side: "left",
+      getActivePane: () => remotePane("conn-1"),
+      sftpSessionsRef: { current: new Map() },
+      lastConnectedHostRef: { current: { left: null, right: null } },
+      connect: async () => {
+        throw new Error("should not connect");
+      },
+    }),
+    /credentials are unavailable/,
+  );
+});
