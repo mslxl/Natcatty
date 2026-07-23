@@ -1081,15 +1081,19 @@ export const useSftpTransfers = ({
               : undefined;
           })();
       if (!sourceStat) throw new Error("Source is unavailable");
-      const validationError = validateTransferResumeSource(task, {
-        size: sourceStat.size,
-        lastModified: sourceStat.lastModified,
-      });
-      if (validationError) {
-        setTransfers((prev) => prev.map((candidate) => candidate.id === transferId
-          ? { ...candidate, status: "attention" as TransferStatus, error: validationError }
-          : candidate));
-        return;
+      // Directory totalBytes is a file count, not a byte size — skip byte
+      // fingerprint validation so soft-resume can rebuild from children.
+      if (!task.isDirectory) {
+        const validationError = validateTransferResumeSource(task, {
+          size: sourceStat.size,
+          lastModified: sourceStat.lastModified,
+        });
+        if (validationError) {
+          setTransfers((prev) => prev.map((candidate) => candidate.id === transferId
+            ? { ...candidate, status: "attention" as TransferStatus, error: validationError }
+            : candidate));
+          return;
+        }
       }
     } catch (error) {
       setTransfers((prev) => prev.map((candidate) => candidate.id === transferId
@@ -1596,8 +1600,13 @@ export const useSftpTransfers = ({
       reconnectRequired: !hasConflict,
       error: hasConflict ? task.error : undefined,
       speed: 0,
+      // Preserve replace/staging flags so resume keeps the original conflict
+      // choice; only force skipConflict when continuing a directory resume.
       skipConflictCheck: isDirectoryResume ? true : task.skipConflictCheck,
-      replaceExistingTarget: isDirectoryResume ? false : task.replaceExistingTarget,
+      replaceExistingTarget: isDirectoryResume
+        ? !!task.replaceExistingTarget
+        : task.replaceExistingTarget,
+      stagedTargetPath: task.stagedTargetPath,
     };
     // Re-home orphaned children under this parent so directory resume can skip
     // already-completed files using persisted checkpoints (same ownerId).

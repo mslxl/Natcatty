@@ -591,6 +591,19 @@ export function useSftpDirectoryTransferOps({
           } catch (err) {
             activeChildIdsRef.current.get(rootTaskId)?.delete(fileId);
             const message = err instanceof Error ? err.message : String(err);
+            if (isTransferCancelledError(err)) {
+              // Keep cancelled status; do not rethrow — other workers must finish
+              // and the parent should not become a clean completed tree.
+              setTransfers((prev) =>
+                prev.map((t) =>
+                  t.id === fileId
+                    ? { ...t, status: "cancelled" as TransferStatus, error: undefined, endTime: Date.now() }
+                    : t,
+                ),
+              );
+              errors.push(err instanceof Error ? err : new Error(message));
+              return;
+            }
             // Mark child as failed
             setTransfers((prev) =>
               prev.map((t) =>
@@ -599,7 +612,6 @@ export function useSftpDirectoryTransferOps({
                   : t,
               ),
             );
-            if (isTransferCancelledError(err)) throw err instanceof Error ? err : new Error(message);
             if (isSessionError(err) && !sessionLostError) {
               sessionLostError = err instanceof Error ? err : new Error(message);
               // Fail remaining queued siblings quickly with a clear cause.
