@@ -42,8 +42,16 @@ export function getGlobalTransferBucket(task: Pick<TransferTask, "status" | "rec
 export function getGlobalTransferBadge(tasks: readonly TransferTask[]) {
   const topLevelTasks = tasks.filter((task) => !task.parentTaskId);
   return {
-    count: topLevelTasks.filter((task) => ["pending", "queued", "transferring", "pausing"].includes(task.status)).length,
-    hasAttention: topLevelTasks.some((task) => task.status === "attention" || task.status === "failed"),
+    count: topLevelTasks.filter((task) =>
+      ["pending", "queued", "transferring", "pausing", "paused", "interrupted"].includes(task.status)
+    ).length,
+    // Interrupted after restart and conflict attention both need the user.
+    hasAttention: topLevelTasks.some((task) =>
+      task.status === "attention"
+      || task.status === "failed"
+      || task.status === "interrupted"
+      || task.reconnectRequired === true
+    ),
   };
 }
 

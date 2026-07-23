@@ -1586,12 +1586,31 @@ export const useSftpTransfers = ({
       error: hasConflict ? task.error : undefined,
       speed: 0,
     };
+    // Re-home orphaned children under this parent so directory resume can skip
+    // already-completed files using persisted checkpoints (same ownerId).
+    const storeChildren = sftpTransferCenterStore.getSnapshot().tasks.filter(
+      (candidate) => candidate.parentTaskId === task.id,
+    );
+    const rehomedChildren = storeChildren.map((child) => ({
+      ...child,
+      ownerId,
+      status: (child.status === "completed" || child.status === "cancelled" || child.status === "failed")
+        ? child.status
+        : "interrupted" as TransferStatus,
+      reconnectRequired: child.status !== "completed" && child.status !== "cancelled" && child.status !== "failed",
+    }));
     const nextTransfers = [
-      ...transfersRef.current.filter((candidate) => candidate.id !== task.id),
+      ...transfersRef.current.filter(
+        (candidate) => candidate.id !== task.id && candidate.parentTaskId !== task.id,
+      ),
       adoptedTask,
+      ...rehomedChildren,
     ];
     transfersRef.current = nextTransfers;
     setTransfers(nextTransfers);
+    // Keep the global store owner in sync for children so they are not treated
+    // as orphan foreign rows on the next publish cycle.
+    sftpTransferCenterStore.publishOwner(ownerId, nextTransfers);
     if (task.conflict) {
       // Keep conflictsRef in sync immediately — store.resolveConflict may call
       // controller.resolveConflict in the same turn before React re-renders.
