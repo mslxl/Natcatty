@@ -117,3 +117,30 @@ test("resume rejects changed or shortened source files", () => {
   assert.match(validateTransferResumeSource(resumable, { size: 100, lastModified: 51 }) ?? "", /modified/);
   assert.match(validateTransferResumeSource(resumable, { size: 40, lastModified: 50 }) ?? "", /checkpoint/);
 });
+
+test("prune keeps completed children of unfinished directory parents", () => {
+  const now = Date.now();
+  const parent: TransferTask = {
+    ...task("dir", "interrupted", now - 1000),
+    isDirectory: true,
+    fileName: "folder",
+  };
+  const children = Array.from({ length: 5 }, (_, i) => ({
+    ...task(`child-${i}`, "completed", now - 500 + i),
+    parentTaskId: "dir",
+    endTime: now - 400,
+  }));
+  // Add many other terminal tasks that would push children out of the cap.
+  const noise = Array.from({ length: 220 }, (_, i) => ({
+    ...task(`old-${i}`, "completed", now - 10_000 + i),
+    endTime: now - 1000 + i,
+  }));
+  const pruned = pruneSftpTransferHistory([parent, ...children, ...noise], now);
+  assert.ok(pruned.some((item) => item.id === "dir"));
+  for (const child of children) {
+    assert.ok(
+      pruned.some((item) => item.id === child.id),
+      `expected checkpoint child ${child.id} to survive prune`,
+    );
+  }
+});
