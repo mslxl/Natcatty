@@ -299,7 +299,9 @@ async function hardCloseSftpSession(sftpId) {
   try {
     const sftpBridge = require("./sftpBridge.cjs");
     if (typeof sftpBridge.closeSftp === "function") {
-      await sftpBridge.closeSftp(null, { sftpId, force: true });
+      const result = await sftpBridge.closeSftp(null, { sftpId, force: true });
+      // fileOps may defer if a new lease appeared mid-close.
+      if (result?.deferred) return;
       return;
     }
   } catch (err) {
@@ -317,6 +319,10 @@ async function hardCloseSftpSession(sftpId) {
     return;
   }
   try { await client.end?.(); } catch { /* ignore */ }
+  if (sftpTransferSessionLeaseStore.isHeld(sftpId)) {
+    sftpTransferSessionLeaseStore.markSoftClosed(sftpId);
+    return;
+  }
   sftpClients.delete(sftpId);
   sftpTransferSessionLeaseStore.clear(sftpId);
 }
@@ -1655,12 +1661,22 @@ function registerHandlers(ipcMain, options = {}) {
     const workerRequest = (event, channel, payload) => terminalWorkerManager.request(channel, payload, {
       webContentsId: event?.sender?.id,
     });
-    ipcMain.handle("netcatty:transfer:start", (event, payload) => runAdmittedTransfer(
-      event,
-      payload,
-      undefined,
-      () => workerRequest(event, "netcatty:transfer:start", payload),
-    ));
+    ipcMain.handle("netcatty:transfer:start", (event, payload) => {
+      // Renderer (or outer main) already admitted — skip a second queue so
+      // dedicated pool leases are not pinned while waiting on main admission.
+      if (payload?.skipAdmission === true) {
+        return workerRequest(event, "netcatty:transfer:start", payload);
+      }
+      return runAdmittedTransfer(
+        event,
+        payload,
+        undefined,
+        () => workerRequest(event, "netcatty:transfer:start", {
+          ...payload,
+          skipAdmission: true,
+        }),
+      );
+    });
     ipcMain.handle("netcatty:transfer:cancel", (event, payload) => (
       cancelQueuedTransfer(payload?.transferId)
         ? { success: true }

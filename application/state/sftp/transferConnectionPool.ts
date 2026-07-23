@@ -215,24 +215,32 @@ export function createTransferConnectionPool(
   };
 
   const closeIdle = async (at = now()): Promise<number> => {
-    let closed = 0;
+    // Detach idle slots from the pool *before* awaiting close so concurrent
+    // acquires cannot re-lease a session that is about to be torn down.
+    const toClose: string[] = [];
     for (const [poolKey, list] of pools.entries()) {
       const kept: PoolSlot[] = [];
       for (const slot of list) {
-        const idle = slot.holders.size === 0 && at - slot.lastUsedAt >= idleTtlMs;
+        const idle = !slot.unhealthy
+          && slot.holders.size === 0
+          && at - slot.lastUsedAt >= idleTtlMs;
         if (!idle) {
           kept.push(slot);
           continue;
         }
-        closed += 1;
-        try {
-          await closeSession?.(slot.sftpId);
-        } catch {
-          // best-effort
-        }
+        toClose.push(slot.sftpId);
       }
       if (kept.length === 0) pools.delete(poolKey);
       else pools.set(poolKey, kept);
+    }
+    let closed = 0;
+    for (const sftpId of toClose) {
+      closed += 1;
+      try {
+        await closeSession?.(sftpId);
+      } catch {
+        // best-effort
+      }
     }
     return closed;
   };

@@ -153,6 +153,44 @@ test("discard removes a dead session so next acquire reopens", async () => {
   b.release();
 });
 
+test("closeIdle detaches slots before closing so acquire cannot re-lease them", async () => {
+  let opens = 0;
+  let closeStarted = 0;
+  let releaseClose!: () => void;
+  const closeGate = new Promise<void>((resolve) => { releaseClose = resolve; });
+  const pool = createTransferConnectionPool({
+    maxPerHost: 1,
+    idleTtlMs: 1,
+    closeSession: async () => {
+      closeStarted += 1;
+      await closeGate;
+    },
+  });
+  const open = async () => {
+    opens += 1;
+    return `sftp-${opens}`;
+  };
+
+  const a = await pool.acquire("host:a", "t1", open);
+  a.release();
+  assert.equal(opens, 1);
+
+  // Start idle close (holds while closeSession awaits).
+  const closing = pool.closeIdle(Date.now() + 1000);
+  // Allow the async closeIdle to detach the slot.
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(closeStarted, 1);
+  assert.equal(pool.getStats("host:a").connections, 0);
+
+  // Concurrent acquire must open a fresh connection, not reuse the closing one.
+  const b = await pool.acquire("host:a", "t2", open);
+  assert.equal(opens, 2);
+  assert.notEqual(b.sftpId, a.sftpId);
+  releaseClose();
+  await closing;
+  b.release();
+});
+
 test("discard does not close multiplexed connections while peers hold them", async () => {
   let opens = 0;
   const closed: string[] = [];

@@ -284,14 +284,17 @@ export function useSftpDirectoryTransferOps({
             };
 
             try {
-              await new Promise<void>((resolve, reject) => {
-                netcattyBridge.require().startStreamTransfer!(
-                  options,
-                  onProgress,
-                  () => resolve(),
-                  (error) => reject(new Error(error)),
-                ).catch(reject);
-              });
+              // Await the invoke result — cancel resolves with { error } and may
+              // not fire onComplete/onError after preload clears listeners.
+              const result = await netcattyBridge.require().startStreamTransfer!(
+                options,
+                onProgress,
+                undefined,
+                undefined,
+              );
+              if (result?.error || result?.cancelled) {
+                throw new Error(result.error || "Transfer cancelled");
+              }
             } catch (error) {
               lastError = error;
               throw error;

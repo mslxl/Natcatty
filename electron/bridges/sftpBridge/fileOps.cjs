@@ -656,6 +656,22 @@ function createFileOpsApi(ctx) {
         } catch {
           // Lease module unavailable — fall through to hard close.
         }
+      } else {
+        // Force close is for lease finalizers. If a new transfer re-acquired
+        // between shouldHardClose and now, defer instead of killing live work.
+        try {
+          const { sftpTransferSessionLeaseStore } = require("../sftpTransferSessionLease.cjs");
+          if (sftpTransferSessionLeaseStore.isHeld(sftpId)) {
+            sftpTransferSessionLeaseStore.markSoftClosed(sftpId);
+            return {
+              success: true,
+              deferred: true,
+              leaseCount: sftpTransferSessionLeaseStore.getLeaseCount(sftpId),
+            };
+          }
+        } catch {
+          // Lease module unavailable — fall through to hard close.
+        }
       }
     
       // Stop file watchers and clean up temp files for this SFTP session
@@ -679,10 +695,35 @@ function createFileOpsApi(ctx) {
             try { client.client?.destroy?.(); } catch { /* ignore */ }
           }
         }
+        // Re-check after any async yield before destroying the map entry.
+        try {
+          const { sftpTransferSessionLeaseStore } = require("../sftpTransferSessionLease.cjs");
+          if (payload?.force && sftpTransferSessionLeaseStore.isHeld(sftpId)) {
+            sftpTransferSessionLeaseStore.markSoftClosed(sftpId);
+            return {
+              success: true,
+              deferred: true,
+              leaseCount: sftpTransferSessionLeaseStore.getLeaseCount(sftpId),
+            };
+          }
+        } catch { /* optional */ }
         await client.end();
       } catch (err) {
         console.warn("SFTP close failed", err);
       }
+      // Final TOCTOU guard: do not clear leases/map if someone re-acquired
+      // during client.end().
+      try {
+        const { sftpTransferSessionLeaseStore } = require("../sftpTransferSessionLease.cjs");
+        if (payload?.force && sftpTransferSessionLeaseStore.isHeld(sftpId)) {
+          sftpTransferSessionLeaseStore.markSoftClosed(sftpId);
+          return {
+            success: true,
+            deferred: true,
+            leaseCount: sftpTransferSessionLeaseStore.getLeaseCount(sftpId),
+          };
+        }
+      } catch { /* optional */ }
       copySftpEncodingState(sftpId, payload?.encodingStateKey);
       sftpClients.delete(sftpId);
       clearSftpEncodingState(sftpId);

@@ -8,6 +8,7 @@ import {
 } from "../../domain/sftpTransferCenter";
 import { STORAGE_KEY_SFTP_TRANSFER_CENTER } from "../../infrastructure/config/storageKeys";
 import { netcattyBridge } from "../../infrastructure/services/netcattyBridge";
+import { globalSftpTransferScheduler } from "./sftp/globalTransferScheduler";
 
 type Listener = () => void;
 
@@ -282,9 +283,17 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
         ...latest,
         reconnectRequired: true,
       });
-      // Cancel may finish while dedicated resume was still awaiting the stream.
+      // Cancel/pause may finish while dedicated resume was still reconnecting.
       const afterDedicated = tasks.find((candidate) => candidate.id === taskId);
-      if (!afterDedicated || afterDedicated.status === "cancelled") return;
+      if (!afterDedicated || afterDedicated.status === "cancelled") {
+        try { await netcattyBridge.get()?.cancelTransfer?.(taskId); } catch { /* best-effort */ }
+        return;
+      }
+      if (afterDedicated.status === "paused" || afterDedicated.status === "interrupted") {
+        // User stopped during reconnect; do not promote to completed.
+        try { await netcattyBridge.get()?.cancelTransfer?.(taskId); } catch { /* best-effort */ }
+        return;
+      }
       if (result.success) {
         // Detach from panel owner so publishOwner cannot clobber completion
         // with a stale local interrupted/paused snapshot.
@@ -415,6 +424,14 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
       let changed = false;
       tasks = tasks.map((task) => {
         if (task.id !== taskId) return task;
+        // Never resurrect a user-stopped row via dedicated-resume progress.
+        if (task.status === "cancelled") return task;
+        if (
+          (task.status === "paused" || task.status === "interrupted")
+          && (updates.status === "transferring" || updates.status === "pending" || updates.status === "completed")
+        ) {
+          return task;
+        }
         changed = true;
         return { ...task, ...updates, updatedAt: Date.now() };
       });
@@ -487,11 +504,21 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
         void controller.prioritize(taskId);
         return;
       }
-      // No owner: bump local priority so the global scheduler can prefer it.
+      // Orphan: still bump store priority and ask backend / renderer scheduler.
       tasks = tasks.map((candidate) => candidate.id === taskId
         ? { ...candidate, priority: Date.now(), updatedAt: Date.now() }
         : candidate);
       emit();
+      try {
+        void netcattyBridge.get()?.prioritizeTransfer?.(taskId);
+      } catch {
+        // best-effort
+      }
+      try {
+        globalSftpTransferScheduler.prioritize(taskId);
+      } catch {
+        // Scheduler may be empty in pure node tests.
+      }
     },
     async resolveConflict(taskId, action, applyToAll) {
       let ownerId = findOwner(taskId);

@@ -312,7 +312,10 @@ function createSftpHandlerApi(ctx) {
             }
           },
         };
-        const runDownload = () => withSessionBackedSftp(
+        const useOuterAdmission = !!(
+          shouldProxySessionBackedSftpToWorker(params) && transferBridge?.runAdmittedTransfer
+        );
+        const runDownload = (skipAdmission) => withSessionBackedSftp(
           params,
           (payload) => transferBridge
             ? transferBridge.startTransfer({ sender }, {
@@ -325,8 +328,8 @@ function createSftpHandlerApi(ctx) {
                 sourceHostId,
                 resumable: true,
                 globalConcurrency: transferBridge.getGlobalTransferConcurrency?.(),
-                // Outer runAdmittedTransfer (or sole admission) already owns the slot.
-                skipAdmission: true,
+                // Only skip when outer runAdmittedTransfer already owns the slot.
+                skipAdmission: skipAdmission === true,
               })
             : sftpBridge.downloadSftpToLocal(null, payload),
           {
@@ -347,14 +350,14 @@ function createSftpHandlerApi(ctx) {
           },
         );
         const result = await (
-          shouldProxySessionBackedSftpToWorker(params) && transferBridge?.runAdmittedTransfer
+          useOuterAdmission
             ? transferBridge.runAdmittedTransfer(
                 { sender },
                 { transferId, sourceHostId, globalConcurrency: transferBridge.getGlobalTransferConcurrency?.() },
                 undefined,
-                runDownload,
+                () => runDownload(true),
               )
-            : runDownload()
+            : runDownload(false)
         );
         if (result?.cancelled || result?.error === "Transfer cancelled") {
           reportTransferEvent({ type: "cancelled", transferId, endedAt: Date.now() });
@@ -397,7 +400,10 @@ function createSftpHandlerApi(ctx) {
             }
           },
         };
-        const runUpload = () => withSessionBackedSftp(
+        const useOuterAdmissionUpload = !!(
+          shouldProxySessionBackedSftpToWorker(params) && transferBridge?.runAdmittedTransfer
+        );
+        const runUpload = (skipAdmission) => withSessionBackedSftp(
           params,
           (payload) => transferBridge
             ? transferBridge.startTransfer({ sender }, {
@@ -410,8 +416,8 @@ function createSftpHandlerApi(ctx) {
                 targetHostId,
                 resumable: true,
                 globalConcurrency: transferBridge.getGlobalTransferConcurrency?.(),
-                // Outer runAdmittedTransfer (or sole admission) already owns the slot.
-                skipAdmission: true,
+                // Only skip when outer runAdmittedTransfer already owns the slot.
+                skipAdmission: skipAdmission === true,
               })
             : sftpBridge.uploadLocalToSftp(null, payload),
           {
@@ -432,14 +438,14 @@ function createSftpHandlerApi(ctx) {
           },
         );
         const result = await (
-          shouldProxySessionBackedSftpToWorker(params) && transferBridge?.runAdmittedTransfer
+          useOuterAdmissionUpload
             ? transferBridge.runAdmittedTransfer(
                 { sender },
                 { transferId, targetHostId, globalConcurrency: transferBridge.getGlobalTransferConcurrency?.() },
                 undefined,
-                runUpload,
+                () => runUpload(true),
               )
-            : runUpload()
+            : runUpload(false)
         );
         if (result?.cancelled || result?.error === "Transfer cancelled") {
           reportTransferEvent({ type: "cancelled", transferId, endedAt: Date.now() });
