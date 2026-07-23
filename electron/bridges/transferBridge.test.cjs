@@ -874,6 +874,32 @@ test("bridge admission gives different remote sessions independent concurrency",
   assert.equal(bothStarted, true);
 });
 
+test("cancel before skipAdmission start rejects the transfer without writing", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-pending-cancel-"));
+  t.after(async () => { await fs.promises.rm(tempDir, { recursive: true, force: true }); });
+  const source = new PassThrough();
+  const sftp = createFastSftp({
+    createReadStream() {
+      return source;
+    },
+  });
+  transferBridge.init({ sftpClients: new Map([["source", { sftp, stat: async () => ({ size: 1 }) }]]) });
+
+  await transferBridge.cancelTransfer(null, { transferId: "pending-cancel-1" });
+  const result = await transferBridge.startTransfer({ sender: createSender() }, {
+    transferId: "pending-cancel-1",
+    sourcePath: "/remote",
+    targetPath: path.join(tempDir, "out.bin"),
+    sourceType: "sftp",
+    targetType: "local",
+    sourceSftpId: "source",
+    totalBytes: 1,
+    skipAdmission: true,
+  });
+  assert.equal(result.cancelled, true);
+  assert.equal(source.listenerCount("data"), 0);
+});
+
 test("pausing a queued admission job preserves the payload checkpoint", async (t) => {
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-queued-checkpoint-"));
   t.after(async () => { await fs.promises.rm(tempDir, { recursive: true, force: true }); });

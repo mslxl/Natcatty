@@ -234,6 +234,8 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
         }
         if (action === "pause" && bridge?.pauseTransfer) {
           const live = await bridge.pauseTransfer(taskId);
+          const afterLivePause = tasks.find((candidate) => candidate.id === taskId);
+          if (afterLivePause?.status === "cancelled") return;
           if (live?.success) {
             tasks = tasks.map((candidate) => candidate.id === taskId ? {
               ...candidate,
@@ -254,7 +256,10 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
       }
       // Dead "transferring" rows after restart have no backend handle. Demote
       // them so pause-all / the UI stop claiming work is still active.
-      if (action === "pause" && task && ["transferring", "pausing", "pending", "queued"].includes(task.status)) {
+      // Do not demote a row that was cancelled while pause was in flight.
+      const afterPause = tasks.find((candidate) => candidate.id === taskId);
+      if (afterPause?.status === "cancelled") return;
+      if (action === "pause" && task && ["transferring", "pausing", "pending", "queued"].includes(afterPause?.status ?? task.status)) {
         tasks = tasks.map((candidate) => candidate.id === taskId ? {
           ...candidate,
           status: "interrupted",
@@ -365,9 +370,24 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
     }
     if (!controller && action === "cancel" && task && ["paused", "interrupted", "attention", "pending", "queued", "transferring", "pausing"].includes(task.status)) {
       try {
+        globalSftpTransferScheduler.cancel(taskId);
+      } catch {
+        // best-effort
+      }
+      try {
         await netcattyBridge.get()?.cancelTransfer?.(taskId);
       } catch {
         // Best-effort backend cancel when the owning panel is gone / no window.
+      }
+      try {
+        await netcattyBridge.get()?.cleanupTransferArtifacts?.({
+          transferId: taskId,
+          sourcePath: task.sourcePath,
+          targetPath: task.targetPath,
+          stagedTargetPath: task.stagedTargetPath,
+        });
+      } catch {
+        // best-effort temp/.part cleanup
       }
       tasks = tasks.map((candidate) => candidate.id === taskId ? {
         ...candidate,
@@ -622,6 +642,11 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
           transferredBytes: event.transferred ?? task.transferredBytes,
           totalBytes: event.totalBytes ?? task.totalBytes,
           speed: event.speed ?? task.speed,
+          checkpointBytes: event.checkpointBytes ?? task.checkpointBytes,
+          resumeStage: event.resumeStage ?? task.resumeStage,
+          downloadCheckpointBytes: event.downloadCheckpointBytes ?? task.downloadCheckpointBytes,
+          uploadCheckpointBytes: event.uploadCheckpointBytes ?? task.uploadCheckpointBytes,
+          sourceFingerprint: event.sourceFingerprint ?? task.sourceFingerprint,
         } : task);
       } else if (existing && (event.type === "paused" || event.type === "resumed")) {
         tasks = tasks.map((task) => task.id === event.transferId ? {

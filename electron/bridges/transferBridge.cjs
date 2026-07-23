@@ -256,6 +256,8 @@ let sftpClients = null;
 const activeTransfers = new Map();
 const admittedTransferQueue = [];
 const pausedAdmittedTransfers = new Map();
+/** Transfer ids cancelled before startTransferNow registered them (skipAdmission open window). */
+const pendingCancelTransferIds = new Set();
 const admittedActiveByResource = new Map();
 let admittedTransferLimit = 2;
 const isolatedDownloadChannelPools = new WeakMap();
@@ -797,6 +799,14 @@ async function startTransferNow(event, payload, onProgress) {
     sameHost,
   } = payload;
   const sender = event.sender;
+
+  // Cancel may have won the race during open/reconnect before we register.
+  if (transferId && pendingCancelTransferIds.has(transferId)) {
+    pendingCancelTransferIds.delete(transferId);
+    sender.send?.("netcatty:transfer:cancelled", { transferId });
+    return { transferId, error: "Transfer cancelled", cancelled: true };
+  }
+
   sender.send?.("netcatty:transfer:started", { transferId });
 
   const transfer = {
@@ -1434,10 +1444,12 @@ function startTransfer(event, payload, onProgress) {
  */
 async function cancelTransfer(event, payload) {
   const { transferId } = payload;
+  if (transferId) pendingCancelTransferIds.add(String(transferId));
   if (cancelQueuedTransfer(transferId)) return { success: true };
   const transfer = activeTransfers.get(transferId);
   if (transfer) {
     transfer.cancelled = true;
+    pendingCancelTransferIds.delete(String(transferId));
     if (typeof transfer.abort === "function") {
       try { transfer.abort(); } catch { }
     }

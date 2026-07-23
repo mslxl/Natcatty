@@ -1024,7 +1024,10 @@ function createBridgeRegistrar(context) {
               event,
               payload,
               undefined,
-              () => terminalWorkerManager.request("netcatty:transfer:start", payload, {
+              () => terminalWorkerManager.request("netcatty:transfer:start", {
+                ...payload,
+                skipAdmission: true,
+              }, {
                 webContentsId: event?.sender?.id,
               }),
             ) : terminalWorkerManager.request("netcatty:transfer:start", payload, {
@@ -1072,7 +1075,10 @@ function createBridgeRegistrar(context) {
               event,
               payload,
               undefined,
-              () => terminalWorkerManager.request("netcatty:transfer:start", payload, {
+              () => terminalWorkerManager.request("netcatty:transfer:start", {
+                ...payload,
+                skipAdmission: true,
+              }, {
                 webContentsId: event?.sender?.id,
               }),
             ) : terminalWorkerManager.request("netcatty:transfer:start", payload, {

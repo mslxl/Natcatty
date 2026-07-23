@@ -870,6 +870,13 @@ export const useSftpTransfers = ({
     const results = await Promise.all(backendIds.map(async (id) => (
       netcattyBridge.get()?.pauseTransfer?.(id) ?? { success: false, reason: "Pause unavailable" }
     )));
+    // Cancel may have finished while pause was awaiting fingerprint/IO.
+    if (
+      cancelledTasksRef.current.has(transferId)
+      || transfersRef.current.find((candidate) => candidate.id === transferId)?.status === "cancelled"
+    ) {
+      return;
+    }
     const failed = results.find((result) => !result.success);
     const checkpoint = results.find((result) => result.checkpointBytes !== undefined)?.checkpointBytes;
     if (task.isDirectory) {
