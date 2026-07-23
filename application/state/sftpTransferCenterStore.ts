@@ -230,6 +230,8 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
         const bridge = netcattyBridge.get();
         if (action === "resume" && bridge?.resumeTransfer) {
           const live = await bridge.resumeTransfer(taskId);
+          const afterLiveResume = tasks.find((candidate) => candidate.id === taskId);
+          if (afterLiveResume?.status === "cancelled") return;
           if (live?.success) {
             tasks = tasks.map((candidate) => candidate.id === taskId ? {
               ...candidate,
@@ -576,9 +578,12 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
         // If the user paused mid-transfer, unpause the backend instead of
         // returning a promise that never re-issues resumeTransfer.
         const task = tasks.find((candidate) => candidate.id === taskId);
+        if (task?.status === "cancelled") return existing;
         if (task && (task.status === "paused" || task.status === "pausing")) {
           try {
             const live = await netcattyBridge.get()?.resumeTransfer?.(taskId);
+            const after = tasks.find((candidate) => candidate.id === taskId);
+            if (after?.status === "cancelled") return existing;
             if (live?.success) {
               tasks = tasks.map((candidate) => candidate.id === taskId ? {
                 ...candidate,

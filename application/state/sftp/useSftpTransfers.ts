@@ -798,13 +798,24 @@ export const useSftpTransfers = ({
 
       // Cancel parent + remove child tasks
       const childIdsToCancel = new Set<string>();
+      const childrenToCleanup: TransferTask[] = [];
       for (const t of transfersRef.current) {
         if (t.parentTaskId === transferId && !["completed", "cancelled", "failed"].includes(t.status)) {
           childIdsToCancel.add(t.id);
+          childrenToCleanup.push(t);
         }
       }
       for (const cid of activeChildIdsRef.current.get(transferId) ?? []) {
-        childIdsToCancel.add(cid);
+        if (!childIdsToCancel.has(cid)) {
+          childIdsToCancel.add(cid);
+          if (taskToCancel) {
+            childrenToCleanup.push({
+              ...taskToCancel,
+              id: cid,
+              parentTaskId: transferId,
+            });
+          }
+        }
       }
       for (const cid of childIdsToCancel) {
         cancelledTasksRef.current.add(cid);
@@ -825,6 +836,14 @@ export const useSftpTransfers = ({
 
       await cancelBackendTransfers([transferId, ...childIdsToCancel]);
       if (taskToCancel) await cleanupTaskArtifacts(taskToCancel);
+      // Child stages are keyed by per-file transferId — clean each known child.
+      for (const child of childrenToCleanup) {
+        try {
+          await cleanupTaskArtifacts(child);
+        } catch {
+          // best-effort
+        }
+      }
 
     },
     [cancelBackendTransfers, cleanupTaskArtifacts, releasePausedTransfer],
@@ -977,6 +996,15 @@ export const useSftpTransfers = ({
       && task.status !== "attention"
       && !(task.status === "failed" && (task.checkpointBytes ?? 0) > 0)
     )) return;
+    // Parent resume must clear sticky child cancel latches so re-walk can
+    // re-attempt previously cancelled children (they keep the same ids).
+    clearCancelledTask(transferId);
+    for (const child of transfersRef.current) {
+      if (child.parentTaskId === transferId) clearCancelledTask(child.id);
+    }
+    for (const childId of activeChildIdsRef.current.get(transferId) ?? []) {
+      clearCancelledTask(childId);
+    }
     releasePausedTransfer(transferId);
     if (globalSftpTransferScheduler.resume(transferId)) {
       setTransfers((prev) => prev.map((candidate) => candidate.id === transferId

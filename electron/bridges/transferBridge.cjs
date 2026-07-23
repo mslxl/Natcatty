@@ -1747,11 +1747,15 @@ function registerHandlers(ipcMain, options = {}) {
       await terminalWorkerManager.request("netcatty:transfer:set-concurrency", { limit }).catch(() => {});
       return { success: true, limit };
     });
-    // pendingCancel lives in the main process (even with worker transfers).
-    ipcMain.handle("netcatty:transfer:clear-pending-cancel", (_event, payload) => {
-      clearPendingCancel(payload?.transferId);
-      return { success: true };
-    });
+    // With skipAdmission, cancel latches pendingCancel inside the worker process.
+    // Clear must reach the same process that owns startTransferNow.
+    ipcMain.handle("netcatty:transfer:clear-pending-cancel", (event, payload) => (
+      workerRequest(event, "netcatty:transfer:clear-pending-cancel", payload)
+        .catch(() => {
+          clearPendingCancel(payload?.transferId);
+          return { success: true };
+        })
+    ));
     return;
   }
   ipcMain.handle("netcatty:transfer:start", startTransfer);
