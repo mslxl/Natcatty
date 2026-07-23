@@ -125,19 +125,148 @@ test('parseCodexReviewOutcome detects clean summary', () => {
     reviewComments: [],
   });
   assert.equal(outcome.clean, true);
+  assert.equal(outcome.actionable, false);
 });
 
-test('parseCodexReviewOutcome detects P2 findings', () => {
+test('parseCodexReviewOutcome detects P2 findings on current head', () => {
   const outcome = auto.parseCodexReviewOutcome({
-    summaryText: 'Codex Review finished',
+    summaryText: 'Codex Review finished with findings',
+    headSha: 'abc123',
     reviewComments: [
       {
         body: '**![P2 Badge](https://img.shields.io/badge/P2-yellow)** Null deref',
         path: 'src/a.ts',
+        commit_id: 'abc123',
       },
     ],
   });
   assert.equal(outcome.clean, false);
+  assert.equal(outcome.actionable, true);
+});
+
+test('parseCodexReviewOutcome ignores stale head inlines when summary clean', () => {
+  const outcome = auto.parseCodexReviewOutcome({
+    summaryText: "Codex Review: Didn't find any major issues. Swish!",
+    headSha: 'newsha',
+    reviewComments: [
+      {
+        body: '![P2 Badge](x) old bug',
+        commit_id: 'oldsha',
+      },
+    ],
+  });
+  assert.equal(outcome.clean, true);
+});
+
+test('parseCodexReviewOutcome unknown is not actionable', () => {
+  const outcome = auto.parseCodexReviewOutcome({
+    summaryText: 'Codex is still thinking',
+    reviewComments: [],
+  });
+  assert.equal(outcome.clean, false);
+  assert.equal(outcome.actionable, false);
+  assert.equal(outcome.reason, 'codex_unknown');
+});
+
+test('decideCodexLoopAction skips when awaiting existing @codex request', () => {
+  const d = auto.decideCodexLoopAction({
+    eligible: true,
+    hasAutomationRequest: true,
+    hasCodexActivity: false,
+    outcome: { clean: false, actionable: false, reason: 'codex_unknown' },
+  });
+  assert.equal(d.action, 'skip');
+  assert.equal(d.reason, 'awaiting_codex');
+});
+
+test('decideCodexLoopAction requests review when no activity', () => {
+  const d = auto.decideCodexLoopAction({
+    eligible: true,
+    hasAutomationRequest: false,
+    hasCodexActivity: false,
+  });
+  assert.equal(d.action, 'request_review');
+});
+
+test('decideCodexLoopAction fixes only actionable dirty', () => {
+  const d = auto.decideCodexLoopAction({
+    eligible: true,
+    hasCodexActivity: true,
+    round: 1,
+    maxRounds: 3,
+    outcome: { clean: false, actionable: true, reason: 'codex_findings' },
+  });
+  assert.equal(d.action, 'fix');
+});
+
+test('shouldReTriageIssueComment only for author on needs-info', () => {
+  assert.equal(
+    auto.shouldReTriageIssueComment({
+      labels: ['needs-info'],
+      commenterLogin: 'alice',
+      issueAuthorLogin: 'alice',
+    }),
+    true,
+  );
+  assert.equal(
+    auto.shouldReTriageIssueComment({
+      labels: ['needs-info'],
+      commenterLogin: 'bob',
+      issueAuthorLogin: 'alice',
+    }),
+    false,
+  );
+  assert.equal(
+    auto.shouldReTriageIssueComment({
+      labels: ['bug'],
+      commenterLogin: 'alice',
+      issueAuthorLogin: 'alice',
+    }),
+    false,
+  );
+});
+
+test('normalizeClassification does not auto-close low-confidence unclear', () => {
+  const result = auto.normalizeClassification({
+    category: 'unclear',
+    confidence: 0.3,
+    summary: 'vague',
+    reasoning: 'no detail',
+    reply: 'Please clarify',
+  });
+  assert.equal(result.category, 'bug_needs_info');
+  assert.equal(result.should_implement, false);
+});
+
+test('isBotPrForIssue matches marker + Fixes', () => {
+  assert.equal(
+    auto.isBotPrForIssue(
+      {
+        body: `${auto.BOT_PR_MARKER}\nFixes #42`,
+        head: { ref: 'cursor/issue-42-1', repo: { full_name: 'o/r' } },
+        base: { repo: { full_name: 'o/r' } },
+        labels: [],
+      },
+      42,
+    ),
+    true,
+  );
+});
+
+test('hasProtectedChangesInSources checks commit names', () => {
+  const hits = auto.hasProtectedChangesInSources({
+    gitStatusPorcelain: '',
+    changedFiles: ['.github/workflows/x.yml', 'src/a.ts'],
+  });
+  assert.deepEqual(hits, ['.github/workflows/x.yml']);
+});
+
+test('pathsFromGitStatusPorcelain keeps both rename sides', () => {
+  const paths = auto.pathsFromGitStatusPorcelain(
+    'R  scripts/cursor-automation.cjs -> scripts/evil.cjs\n',
+  );
+  assert.ok(paths.includes('scripts/cursor-automation.cjs'));
+  assert.ok(paths.includes('scripts/evil.cjs'));
 });
 
 test('extractJsonObject reads fenced blocks', () => {

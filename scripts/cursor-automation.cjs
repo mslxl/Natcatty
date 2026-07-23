@@ -189,6 +189,13 @@ function normalizeClassification(raw) {
     reply =
       'Thanks for the suggestion. The scope or tradeoffs are not clear enough for an automatic change yet, so a maintainer will take a look first.';
   }
+  // Never auto-close low-confidence "unclear" issues.
+  if (confidence < 0.8 && category === 'unclear') {
+    category = 'bug_needs_info';
+    reply =
+      reply ||
+      'Thanks for writing in. We need a bit more detail before we can act on this. Please add the missing context below.';
+  }
 
   const label_corrections = Array.isArray(raw.label_corrections)
     ? raw.label_corrections
@@ -365,71 +372,177 @@ function parseClassificationFile(filePath) {
   }
 }
 
+const CODEX_CLEAN_PATTERNS = [
+  /Didn't find any major issues/i,
+  /\bSwish!/i,
+  /No major issues found/i,
+];
+
+const CODEX_DIRTY_PATTERNS = [
+  /!\[P[0-2] Badge\]/i,
+  /\bP0\b/,
+  /\bP1\b/,
+  /\bP2\b/,
+];
+
+function isCodexTerminalReviewText(body) {
+  const text = String(body || '');
+  if (!text.trim()) return false;
+  return (
+    /Codex Review:/i.test(text) ||
+    CODEX_CLEAN_PATTERNS.some((re) => re.test(text)) ||
+    CODEX_DIRTY_PATTERNS.some((re) => re.test(text))
+  );
+}
+
+/**
+ * Keep review comments that belong to the current head (or lack commit_id).
+ * Drops clearly stale comments pinned to older commits when headSha is known.
+ */
+function filterCodexReviewCommentsForHead(reviewComments = [], headSha = '') {
+  const head = String(headSha || '').toLowerCase();
+  if (!head) return [...reviewComments];
+  return reviewComments.filter((comment) => {
+    const commitId = String(
+      comment.commit_id || comment.original_commit_id || '',
+    ).toLowerCase();
+    if (!commitId) return true;
+    return commitId === head || commitId.startsWith(head.slice(0, 7));
+  });
+}
+
+function commentLooksDirty(body) {
+  const text = String(body || '');
+  return CODEX_DIRTY_PATTERNS.some((re) => re.test(text));
+}
+
+function commentLooksClean(body) {
+  const text = String(body || '');
+  return CODEX_CLEAN_PATTERNS.some((re) => re.test(text));
+}
+
 /**
  * Heuristics for Codex connector outcome on this repository.
+ * Prefer the latest summary; only use inlines for the current head SHA.
  */
 function parseCodexReviewOutcome({
   summaryText = '',
   reviewComments = [],
   issueComments = [],
+  headSha = '',
 } = {}) {
-  const texts = [
-    summaryText,
-    ...reviewComments.map((c) => c.body || c),
-    ...issueComments.map((c) => c.body || c),
-  ]
-    .map((t) => String(t || ''))
-    .filter(Boolean);
+  const scopedReviews = filterCodexReviewCommentsForHead(
+    reviewComments,
+    headSha,
+  );
+  const summary = String(summaryText || '');
+  const summaryClean = commentLooksClean(summary);
+  const summaryDirty = commentLooksDirty(summary);
+  const inlineDirty = scopedReviews.some((c) =>
+    commentLooksDirty(c.body || c),
+  );
 
-  const joined = texts.join('\n');
-  const cleanPatterns = [
-    /Didn't find any major issues/i,
-    /\bSwish!/i,
-    /No major issues found/i,
-    /looks good to me/i,
-  ];
-  const dirtyPatterns = [
-    /!\[P[0-2] Badge\]/i,
-    /\bP0\b/,
-    /\bP1\b/,
-    /\bP2\b/,
-    /must fix/i,
-    /critical/i,
-    /security issue/i,
-  ];
-
-  const hasClean = cleanPatterns.some((re) => re.test(joined));
-  const hasDirty =
-    dirtyPatterns.some((re) => re.test(joined)) ||
-    reviewComments.some((c) => {
-      const body = String(c.body || c || '');
-      return (
-        /!\[P[0-3] Badge\]/i.test(body) ||
-        /\bP[0-2]\b/.test(body)
-      );
-    });
-
-  // Prefer explicit dirty signals over clean slogans if both appear.
-  if (hasDirty && !hasClean) {
-    return { clean: false, reason: 'codex_findings' };
+  if (summaryClean && !summaryDirty) {
+    return {
+      clean: true,
+      reason: 'codex_clean_summary',
+      actionable: false,
+    };
   }
-  if (hasClean && !hasDirty) {
-    return { clean: true, reason: 'codex_clean' };
+  if (summaryDirty || (inlineDirty && !summaryClean)) {
+    return {
+      clean: false,
+      reason: summaryDirty ? 'codex_findings' : 'codex_inline_findings',
+      actionable: true,
+    };
   }
-  if (hasClean && hasDirty) {
-    // Clean summary sometimes coexists with leftover old comments — trust summary if latest summary is clean-only.
-    if (cleanPatterns.some((re) => re.test(summaryText)) && !dirtyPatterns.some((re) => re.test(summaryText))) {
-      return { clean: true, reason: 'codex_clean_summary' };
+  if (summaryClean && inlineDirty) {
+    // Stale inlines after a clean summary → trust summary.
+    return {
+      clean: true,
+      reason: 'codex_clean_summary_ignore_stale_inline',
+      actionable: false,
+    };
+  }
+  if (scopedReviews.length > 0 && inlineDirty) {
+    return {
+      clean: false,
+      reason: 'codex_inline_findings',
+      actionable: true,
+    };
+  }
+
+  // No clear signal — do not start a fix loop.
+  return { clean: false, reason: 'codex_unknown', actionable: false };
+}
+
+function hasAutomationCodexRequest(comments = []) {
+  return comments.some((comment) =>
+    /<!--\s*cursor-codex-round:\d+\s*-->/.test(String(comment.body || '')),
+  );
+}
+
+/**
+ * Decide codex_loop action from pure inputs (testable).
+ */
+function decideCodexLoopAction({
+  eligible,
+  outcome,
+  round = 0,
+  maxRounds = 3,
+  hasAutomationRequest = false,
+  hasCodexActivity = false,
+} = {}) {
+  if (!eligible) {
+    return { action: 'skip', reason: 'not_fix_eligible' };
+  }
+  if (!hasCodexActivity) {
+    if (hasAutomationRequest) {
+      return { action: 'skip', reason: 'awaiting_codex' };
     }
-    return { clean: false, reason: 'codex_mixed_prefer_fix' };
+    return { action: 'request_review', reason: 'no_codex_yet' };
   }
-
-  // If only inline findings without summary, dirty when any non-empty review comment.
-  if (reviewComments.length > 0) {
-    return { clean: false, reason: 'codex_inline_findings' };
+  if (outcome?.clean) {
+    return { action: 'mark_ready', reason: outcome.reason || 'codex_clean' };
   }
+  if (outcome && outcome.actionable === false) {
+    return { action: 'skip', reason: outcome.reason || 'codex_unknown' };
+  }
+  if (Number(round) >= Number(maxRounds)) {
+    return { action: 'give_up', reason: 'max_rounds' };
+  }
+  return { action: 'fix', reason: outcome?.reason || 'codex_findings' };
+}
 
-  return { clean: false, reason: 'codex_unknown' };
+function shouldReTriageIssueComment({ labels = [], commenterLogin, issueAuthorLogin }) {
+  const names = labels.map((label) =>
+    typeof label === 'string' ? label : label?.name,
+  );
+  const needsInfo =
+    names.includes('needs-info') || names.includes('triage:bug-needs-info');
+  if (!needsInfo) return false;
+  const commenter = String(commenterLogin || '').toLowerCase();
+  const author = String(issueAuthorLogin || '').toLowerCase();
+  if (!commenter || !author) return false;
+  return commenter === author;
+}
+
+function pathsFromGitStatusPorcelain(gitStatusPorcelain) {
+  const paths = [];
+  for (const line of String(gitStatusPorcelain || '').split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    // porcelain: XY path  OR  XY old -> new
+    const rest = trimmed.replace(/^[ MADRCU?!]{1,2}\s+/, '');
+    if (rest.includes(' -> ')) {
+      const [from, to] = rest.split(' -> ').map((p) => p.trim());
+      if (from) paths.push(from);
+      if (to) paths.push(to);
+    } else if (rest) {
+      paths.push(rest);
+    }
+  }
+  return paths;
 }
 
 function formatCodexFindingsMarkdown({
@@ -450,7 +563,7 @@ function formatCodexFindingsMarkdown({
   if (summaryText) {
     lines.push('## Summary', '', sanitizeUntrustedText(summaryText, 8_000), '');
   }
-  const reviews = reviewComments.length ? reviewComments : [];
+  const reviews = filterCodexReviewCommentsForHead(reviewComments, headSha);
   if (reviews.length) {
     lines.push('## Inline / review comments', '');
     for (const comment of reviews.slice(0, 40)) {
@@ -494,12 +607,17 @@ function listProtectedPathHits(filePaths) {
 }
 
 function hasProtectedChanges(gitStatusPorcelain) {
-  const paths = String(gitStatusPorcelain || '')
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => line.replace(/^[ MADRCU?!]{1,2}\s+/, '').replace(/^.* -> /, ''));
-  return listProtectedPathHits(paths);
+  return listProtectedPathHits(pathsFromGitStatusPorcelain(gitStatusPorcelain));
+}
+
+/** Check both dirty working tree and commit range name lists. */
+function hasProtectedChangesInSources({
+  gitStatusPorcelain = '',
+  changedFiles = [],
+} = {}) {
+  const fromStatus = pathsFromGitStatusPorcelain(gitStatusPorcelain);
+  const fromCommits = (changedFiles || []).map(String);
+  return listProtectedPathHits([...fromStatus, ...fromCommits]);
 }
 
 function getCodexRoundFromComments(comments = []) {
@@ -755,23 +873,46 @@ async function markNeedsHuman({ github, context, issueNumber, message }) {
   });
 }
 
-async function findOpenBotPrForIssue({ github, context, issueNumber }) {
-  const { data: pulls } = await github.rest.pulls.list({
-    ...context.repo,
-    state: 'open',
-    per_page: 100,
-  });
-  const prefix = `cursor/issue-${issueNumber}-`;
+function isBotPrForIssue(pull, issueNumber) {
+  if (!pull) return false;
+  const n = String(issueNumber);
+  const prefix = `cursor/issue-${n}-`;
+  const body = String(pull.body || '');
+  const headRef = pull.head?.ref || '';
+  const sameRepo =
+    !pull.head?.repo?.full_name ||
+    !pull.base?.repo?.full_name ||
+    pull.head.repo.full_name === pull.base.repo.full_name;
+  if (!sameRepo) return false;
+  const mentionsIssue =
+    body.includes(`Fixes #${n}`) ||
+    body.includes(`fixes #${n}`) ||
+    headRef.startsWith(prefix);
+  if (!mentionsIssue) return false;
   return (
-    pulls.find(
-      (pull) =>
-        (pull.head.ref.startsWith(prefix) || isBotPrMarker(pull.body)) &&
-        pull.head.repo?.full_name ===
-          `${context.repo.owner}/${context.repo.repo}` &&
-        (String(pull.body || '').includes(`Fixes #${issueNumber}`) ||
-          pull.head.ref.startsWith(prefix)),
-    ) || null
+    isBotPrMarker(body) ||
+    headRef.startsWith(prefix) ||
+    (pull.labels || []).some((label) => {
+      const name = typeof label === 'string' ? label : label.name;
+      return name === 'automation:bot-pr';
+    })
   );
+}
+
+async function findOpenBotPrForIssue({ github, context, issueNumber }) {
+  const states = ['open', 'closed'];
+  for (const state of states) {
+    const { data: pulls } = await github.rest.pulls.list({
+      ...context.repo,
+      state,
+      per_page: 100,
+      sort: 'updated',
+      direction: 'desc',
+    });
+    const match = pulls.find((pull) => isBotPrForIssue(pull, issueNumber));
+    if (match) return match;
+  }
+  return null;
 }
 
 module.exports = {
@@ -803,14 +944,22 @@ module.exports = {
   extractJsonObject,
   parseClassificationText,
   parseClassificationFile,
+  isCodexTerminalReviewText,
+  filterCodexReviewCommentsForHead,
   parseCodexReviewOutcome,
+  hasAutomationCodexRequest,
+  decideCodexLoopAction,
+  shouldReTriageIssueComment,
   formatCodexFindingsMarkdown,
   listProtectedPathHits,
+  pathsFromGitStatusPorcelain,
   hasProtectedChanges,
+  hasProtectedChangesInSources,
   getCodexRoundFromComments,
   prepareIssueContext,
   applyClassification,
   markNeedsHuman,
+  isBotPrForIssue,
   findOpenBotPrForIssue,
   writeJson,
   writeText,
