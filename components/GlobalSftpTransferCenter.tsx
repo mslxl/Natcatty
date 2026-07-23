@@ -597,6 +597,7 @@ export function GlobalSftpTransferCenter() {
               variant="ghost"
               size="icon"
               className="relative h-7 w-7 shrink-0 app-no-drag top-tab-utility-btn"
+              style={{ color: "var(--top-tabs-muted, hsl(var(--muted-foreground)))" }}
               aria-label={t("sftp.transferCenter.title")}
               data-section="global-sftp-transfer-toggle"
             >
