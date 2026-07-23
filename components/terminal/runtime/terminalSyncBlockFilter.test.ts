@@ -5,6 +5,7 @@ import type { Terminal as XTerm } from "@xterm/xterm";
 
 import {
   filterTerminalSessionData,
+  isTerminalSyncBlockOpen,
   resetTerminalSyncBlockFilter,
   SYNC_BLOCK_TIMEOUT_MS,
 } from "./terminalSyncBlockFilter.ts";
@@ -105,4 +106,15 @@ test("does not strip full redraw through session filter for a one-row lag (#2291
   resetTerminalSyncBlockFilter(term);
   const input = `${SYNC_START}${CURSOR_HOME}${CLEAR}frame${SYNC_END}`;
   assert.equal(filterTerminalSessionData(term, input), input);
+});
+
+test("isTerminalSyncBlockOpen tracks open state across chunks for erase-scrollback", () => {
+  const term = createMockTerm();
+  resetTerminalSyncBlockFilter(term);
+
+  assert.equal(isTerminalSyncBlockOpen(term), false);
+  assert.equal(filterTerminalSessionData(term, SYNC_START), SYNC_START);
+  assert.equal(isTerminalSyncBlockOpen(term), true);
+  assert.equal(filterTerminalSessionData(term, `${CURSOR_HOME}${CLEAR}frame${SYNC_END}`), `${CURSOR_HOME}frame${SYNC_END}`);
+  assert.equal(isTerminalSyncBlockOpen(term), false);
 });

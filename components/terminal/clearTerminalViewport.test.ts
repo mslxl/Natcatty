@@ -3,6 +3,7 @@ import test from "node:test";
 import xterm from "@xterm/xterm";
 
 import {
+  appendEraseScrollbackAfterFullErases,
   clearTerminalViewport,
   installEraseInDisplayHandlers,
   isEraseBelowSequence,
@@ -421,4 +422,47 @@ test("local clear preserves scrollback when erase-scrollback is not requested", 
 
   assert.equal(writes.length, 1);
   assert.equal(writes[0].includes("\x1b[3J"), false);
+});
+
+test("appendEraseScrollback adds 3J after a normal full clear", () => {
+  assert.equal(
+    appendEraseScrollbackAfterFullErases("\x1b[H\x1b[2Jframe", {
+      wipeScrollback: true,
+      normalScreen: true,
+    }),
+    "\x1b[H\x1b[2J\x1b[3Jframe",
+  );
+});
+
+test("appendEraseScrollback skips 3J inside an in-chunk DEC 2026 block", () => {
+  assert.equal(
+    appendEraseScrollbackAfterFullErases("\x1b[?2026h\x1b[H\x1b[2Jframe\x1b[?2026l", {
+      wipeScrollback: true,
+      normalScreen: true,
+    }),
+    "\x1b[?2026h\x1b[H\x1b[2Jframe\x1b[?2026l",
+  );
+});
+
+test("appendEraseScrollback skips 3J for a delayed clear when sync was already open", () => {
+  // Prior chunk carried `?2026h`; this chunk is only home+clear+frame.
+  assert.equal(
+    appendEraseScrollbackAfterFullErases("\x1b[H\x1b[2Jframe\x1b[?2026l", {
+      wipeScrollback: true,
+      normalScreen: true,
+      startInDec2026SyncBlock: true,
+    }),
+    "\x1b[H\x1b[2Jframe\x1b[?2026l",
+  );
+});
+
+test("appendEraseScrollback still wipes when delayed clear is outside a sync block", () => {
+  assert.equal(
+    appendEraseScrollbackAfterFullErases("\x1b[H\x1b[2Jframe", {
+      wipeScrollback: true,
+      normalScreen: true,
+      startInDec2026SyncBlock: false,
+    }),
+    "\x1b[H\x1b[2J\x1b[3Jframe",
+  );
 });
