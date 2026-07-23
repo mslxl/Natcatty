@@ -236,11 +236,11 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
           }
         }
         if (action === "pause" && bridge?.pauseTransfer) {
-          // Dedicated reconnect cannot soft-pause before the stream exists —
-          // cancel the open so Pause actually stops network work.
+          // Dedicated reconnect cannot soft-pause before the stream exists.
+          // Do not cancel here (quit confirmation also calls pause) — user must
+          // Cancel explicitly; skip demotion so the reconnect spinner remains.
           if (task?.ownerId === "dedicated-resume" && task.reconnectRequired) {
-            // Fall through to the orphan cancel path below by switching action.
-            action = "cancel";
+            return;
           }
           const live = await bridge.pauseTransfer(taskId);
           const afterLivePause = tasks.find((candidate) => candidate.id === taskId);
@@ -307,6 +307,7 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
       && dedicatedResumeHandler
       && !task.isDirectory
     ) {
+      const previousOwnerId = task.ownerId;
       // Detach from the panel owner immediately so publishOwner cannot clobber
       // in-flight dedicated progress with a stale interrupted/paused snapshot.
       tasks = tasks.map((candidate) => candidate.id === taskId ? {
@@ -369,9 +370,37 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
         emit();
         return;
       }
-      // Dedicated path may return a soft failure for server-to-server tasks so
-      // we can fall through to panel adoption. Hard failures stop here.
-      if (result.error && !/SFTP panel|both hosts/i.test(result.error)) {
+      // Soft failure for server-to-server (needs panel) — restore prior owner
+      // so a live controller can still resume, or fall through to adoption.
+      if (result.error && /SFTP panel|both hosts/i.test(result.error)) {
+        const restoreOwner = previousOwnerId && previousOwnerId !== "dedicated-resume"
+          ? previousOwnerId
+          : ownerId;
+        if (restoreOwner) {
+          tasks = tasks.map((candidate) => candidate.id === taskId ? {
+            ...candidate,
+            ownerId: restoreOwner,
+            status: "attention",
+            error: result.error,
+            reconnectRequired: true,
+            speed: 0,
+            phase: undefined,
+          } : candidate);
+          emit();
+          controller = controllers.get(restoreOwner);
+          if (controller?.canAdopt?.(tasks.find((c) => c.id === taskId) ?? task)) {
+            await controller.resume(taskId);
+            return;
+          }
+          // No usable controller — leave attention + error for the user.
+          if (!controller) {
+            // fall through to prepareAdopter below
+          } else {
+            return;
+          }
+        }
+      } else if (result.error) {
+        // Hard dedicated failure.
         tasks = tasks.map((candidate) => candidate.id === taskId ? {
           ...candidate,
           status: "attention",
