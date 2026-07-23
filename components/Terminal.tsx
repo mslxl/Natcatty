@@ -1415,7 +1415,14 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     return () => {
       for (const unsub of unsubs) unsub();
     };
-  }, [attachExistingSession, kittyKeyboardProtocolEnabledForSession, sessionId]);
+  }, [
+    attachExistingSession,
+    kittyKeyboardProtocolEnabledForSession,
+    onTerminalCwdChange,
+    onTerminalTitleChange,
+    sessionId,
+    terminalCwdTracker,
+  ]);
 
   const cleanupSession = async () => {
     const closingSessionId = sessionRef.current;
