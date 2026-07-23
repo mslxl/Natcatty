@@ -794,12 +794,23 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
 
           if (task.ownerId === "dedicated-resume" && task.isDirectory) {
             const bridge = netcattyBridge.get();
+            // Cancel soft-paused child streams so the held walk settles. When a
+            // child is not in activeTransfers, cancelTransfer leaves a sticky
+            // pendingCancel latch — clear it before startFresh reuses the same
+            // child transferIds (otherwise startStreamTransfer aborts immediately).
             for (const id of childIds) {
               try { await bridge?.cancelTransfer?.(id); } catch { /* best-effort wind-down */ }
+              try { await bridge?.clearPendingTransferCancel?.(id); } catch { /* best-effort */ }
             }
+            try { await bridge?.clearPendingTransferCancel?.(taskId); } catch { /* best-effort */ }
             try {
               await existing;
             } catch { /* previous aborted / cancelled */ }
+            // Clear again after wind-down in case cancel raced during await.
+            for (const id of childIds) {
+              try { await bridge?.clearPendingTransferCancel?.(id); } catch { /* best-effort */ }
+            }
+            try { await bridge?.clearPendingTransferCancel?.(taskId); } catch { /* best-effort */ }
             return resumeInvocations.get(taskId) ?? startFresh();
           }
 

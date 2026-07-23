@@ -407,6 +407,10 @@ test("dedicated directory resume after soft-pause winds down then startFresh (no
   const store = createSftpTransferCenterStore();
   let resumeCalls = 0;
   const cancelCalls: string[] = [];
+  // Models bridge cancel when the child is no longer in activeTransfers: the
+  // pendingCancel latch sticks until clearPendingTransferCancel runs.
+  const pendingCancel = new Set<string>();
+  const clearPendingCalls: string[] = [];
   let firstRunStarted: (() => void) | null = null;
   const firstRunBlocked = new Promise<void>((resolve) => { firstRunStarted = resolve; });
   let releaseFirstRun: (() => void) | null = null;
@@ -423,6 +427,13 @@ test("dedicated directory resume after soft-pause winds down then startFresh (no
       netcatty: {
         cancelTransfer: async (id: string) => {
           cancelCalls.push(id);
+          // Sticky latch when not active (real bridge behavior for missing handle).
+          pendingCancel.add(id);
+          return { success: true };
+        },
+        clearPendingTransferCancel: async (id: string) => {
+          clearPendingCalls.push(id);
+          pendingCancel.delete(id);
           return { success: true };
         },
         resumeTransfer: async () => ({ success: false, reason: "Transfer is no longer active" }),
@@ -463,6 +474,14 @@ test("dedicated directory resume after soft-pause winds down then startFresh (no
       await firstRunHold;
       return { success: false, error: "Transfer cancelled" };
     }
+    // startFresh reuses the same child transfer id — latch must be clear or
+    // startStreamTransfer would immediately cancel (production failure mode).
+    assert.equal(
+      pendingCancel.has("c1"),
+      false,
+      "child pendingCancel latch must be cleared before startFresh reuses c1",
+    );
+    assert.ok(clearPendingCalls.includes("c1"), "must call clearPendingTransferCancel for c1");
     return { success: true };
   });
 
@@ -475,7 +494,7 @@ test("dedicated directory resume after soft-pause winds down then startFresh (no
   await store.pause("dir");
   assert.equal(store.getSnapshot().tasks.find((task) => task.id === "dir")?.status, "paused");
 
-  // Resume must cancel soft-paused children, await wind-down, then startFresh.
+  // Resume must cancel soft-paused children, clear sticky latches, await wind-down, then startFresh.
   const second = store.resume("dir");
   // Allow the held first run to settle after cancel wind-down begins.
   releaseFirstRun?.();
@@ -484,6 +503,7 @@ test("dedicated directory resume after soft-pause winds down then startFresh (no
 
   assert.ok(cancelCalls.includes("c1"), "must cancel soft-paused children before startFresh");
   assert.equal(resumeCalls, 2, "must startFresh after wind-down");
+  assert.equal(pendingCancel.has("c1"), false, "child latch must stay clear after startFresh");
   assert.equal(store.getSnapshot().tasks.find((task) => task.id === "dir")?.status, "completed");
 });
 
