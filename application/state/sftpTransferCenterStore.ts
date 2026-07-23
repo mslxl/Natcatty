@@ -698,7 +698,16 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
     },
     clearTerminal(status) {
       const terminal = new Set<TransferTask["status"]>(["completed", "failed", "cancelled"]);
-      const removing = tasks.filter((task) => terminal.has(task.status) && (status === undefined || task.status === status));
+      const unfinishedParents = new Set(
+        tasks.filter((task) => !terminal.has(task.status)).map((task) => task.id),
+      );
+      // Do not wipe completed children of an unfinished directory parent —
+      // those rows are resume checkpoints, not disposable history.
+      const removing = tasks.filter((task) =>
+        terminal.has(task.status)
+        && (status === undefined || task.status === status)
+        && !(task.parentTaskId && unfinishedParents.has(task.parentTaskId)),
+      );
       for (const task of removing) {
         controllers.get(task.ownerId ?? "")?.dismiss(task.id);
       }

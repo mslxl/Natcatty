@@ -87,12 +87,21 @@ export function pruneSftpTransferHistory(
   now = Date.now(),
 ): TransferTask[] {
   const unfinished = tasks.filter((task) => !TERMINAL_STATUSES.has(task.status));
+  const unfinishedIds = new Set(unfinished.map((task) => task.id));
+  // Keep terminal children of unfinished parents forever (until the parent
+  // finishes) so directory resume can skip already-completed files.
+  const checkpointChildren = tasks.filter((task) =>
+    TERMINAL_STATUSES.has(task.status)
+    && !!task.parentTaskId
+    && unfinishedIds.has(task.parentTaskId),
+  );
+  const checkpointIds = new Set(checkpointChildren.map((task) => task.id));
   const terminal = tasks
-    .filter((task) => TERMINAL_STATUSES.has(task.status))
+    .filter((task) => TERMINAL_STATUSES.has(task.status) && !checkpointIds.has(task.id))
     .filter((task) => now - (task.endTime ?? task.updatedAt ?? task.startTime) <= SFTP_TRANSFER_HISTORY_MAX_AGE_MS)
     .sort((a, b) => (b.endTime ?? b.updatedAt ?? b.startTime) - (a.endTime ?? a.updatedAt ?? a.startTime))
     .slice(0, SFTP_TRANSFER_HISTORY_MAX);
-  return [...unfinished, ...terminal].sort((a, b) => a.startTime - b.startTime);
+  return [...unfinished, ...checkpointChildren, ...terminal].sort((a, b) => a.startTime - b.startTime);
 }
 
 export function validateTransferResumeSource(
