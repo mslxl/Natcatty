@@ -4,7 +4,7 @@ import type { RefObject } from "react";
 import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
 import { logger } from "../../../lib/logger";
 import { pasteTextIntoTerminal } from "../runtime/terminalUserPaste";
-import { clearTerminalViewport } from "../clearTerminalViewport";
+import { clearTerminalViewportAndSyncPty } from "../clearTerminalViewport";
 import {
   handleRemoteClipboardImageUpload,
   type RemoteClipboardImageUploadResult,
@@ -75,6 +75,7 @@ export const useTerminalContextActions = ({
   normalizeTextOnCopyRef?: RefObject<boolean | undefined>;
   terminalBackend: {
     writeToSession: (sessionId: string, data: string, options?: { automated?: boolean }) => void;
+    clearSessionPtyBuffer?: (sessionId: string) => void;
   };
   getRemoteCwd?: () => Promise<string | null | undefined>;
   scrollToBottomAfterProgrammaticInput?: (data: string) => void;
@@ -185,8 +186,16 @@ export const useTerminalContextActions = ({
   const onClear = useCallback(() => {
     const term = termRef.current;
     if (!term) return;
-    clearTerminalViewport(term, { wipeScrollback: clearWipesScrollbackRef?.current ?? true });
-  }, [clearWipesScrollbackRef, termRef]);
+    clearTerminalViewportAndSyncPty(term, {
+      wipeScrollback: clearWipesScrollbackRef?.current ?? true,
+      syncPty: () => {
+        const id = sessionRef.current;
+        if (id) {
+          terminalBackend.clearSessionPtyBuffer?.(id);
+        }
+      },
+    });
+  }, [clearWipesScrollbackRef, sessionRef, termRef, terminalBackend]);
 
   const onSelectWord = useCallback(() => {
     const term = termRef.current;

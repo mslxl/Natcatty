@@ -5,6 +5,7 @@ import xterm from "@xterm/xterm";
 import {
   appendEraseScrollbackAfterFullErases,
   clearTerminalViewport,
+  clearTerminalViewportAndSyncPty,
   installEraseInDisplayHandlers,
   isEraseBelowSequence,
   preserveTerminalViewportInScrollback,
@@ -387,8 +388,9 @@ test("local clear writes erase-scrollback when requested", () => {
     scrollToBottom: () => {},
   };
 
-  clearTerminalViewport(term as never, { wipeScrollback: true });
+  const didClear = clearTerminalViewport(term as never, { wipeScrollback: true });
 
+  assert.equal(didClear, true);
   assert.equal(writes.length, 1);
   assert.equal(writes[0].includes("\x1b[3J"), true);
 });
@@ -418,10 +420,66 @@ test("local clear preserves scrollback when erase-scrollback is not requested", 
     scrollToBottom: () => {},
   };
 
-  clearTerminalViewport(term as never, { wipeScrollback: false });
+  const didClear = clearTerminalViewport(term as never, { wipeScrollback: false });
 
+  assert.equal(didClear, true);
   assert.equal(writes.length, 1);
   assert.equal(writes[0].includes("\x1b[3J"), false);
+});
+
+test("local clear reports that alternate-screen content was left unchanged", () => {
+  const writes: string[] = [];
+  const term = {
+    buffer: {
+      active: {
+        type: "alternate",
+        baseY: 0,
+        cursorY: 2,
+        cursorX: 4,
+      },
+    },
+    write: (payload: string) => writes.push(payload),
+  };
+
+  const didClear = clearTerminalViewport(term as never, { wipeScrollback: true });
+
+  assert.equal(didClear, false);
+  assert.deepEqual(writes, []);
+});
+
+test("PTY sync runs only when the local viewport was actually cleared", () => {
+  const syncCalls: string[] = [];
+  const makeTerm = (type: "normal" | "alternate", cursorY: number) => ({
+    rows: 5,
+    buffer: {
+      active: {
+        type,
+        baseY: 0,
+        cursorY,
+        cursorX: 4,
+      },
+    },
+    _core: {
+      scroll: () => {},
+      _inputHandler: {
+        _eraseAttrData: () => ({}),
+      },
+    },
+    write: (_payload: string, callback?: () => void) => callback?.(),
+    scrollToBottom: () => {},
+  });
+
+  assert.equal(clearTerminalViewportAndSyncPty(makeTerm("normal", 2) as never, {
+    syncPty: () => syncCalls.push("normal"),
+  }), true);
+  assert.equal(clearTerminalViewportAndSyncPty(makeTerm("alternate", 2) as never, {
+    syncPty: () => syncCalls.push("alternate"),
+  }), false);
+  assert.equal(clearTerminalViewportAndSyncPty(makeTerm("normal", 0) as never, {
+    syncPty: () => syncCalls.push("empty"),
+  }), false);
+
+  assert.deepEqual(syncCalls, ["normal"]);
 });
 
 test("appendEraseScrollback adds 3J after a normal full clear", () => {

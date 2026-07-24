@@ -30,6 +30,10 @@ type ClearTerminalViewportOptions = {
   wipeScrollback?: boolean;
 };
 
+type ClearTerminalViewportAndSyncPtyOptions = ClearTerminalViewportOptions & {
+  syncPty: () => void;
+};
+
 type AppendEraseScrollbackOptions = {
   wipeScrollback: boolean;
   normalScreen: boolean;
@@ -128,20 +132,20 @@ export const preserveTerminalViewportInScrollback = (term: XTerm): void => {
 export const clearTerminalViewport = (
   term: XTerm,
   options: ClearTerminalViewportOptions = {},
-): void => {
+): boolean => {
   const buffer = term.buffer.active;
-  if (buffer.type !== "normal") return;
+  if (buffer.type !== "normal") return false;
 
   const cursorY = buffer.cursorY;
   const cursorX = buffer.cursorX;
 
-  if (cursorY === 0 && buffer.baseY === 0) return;
+  if (cursorY === 0 && buffer.baseY === 0) return false;
 
   const internal = term as InternalTerminal;
   const scroll = internal._core?.scroll;
   const eraseAttr = internal._core?._inputHandler?._eraseAttrData?.();
 
-  if (typeof scroll !== "function" || eraseAttr === undefined) return;
+  if (typeof scroll !== "function" || eraseAttr === undefined) return false;
 
   // Push lines above cursor into scrollback so they are preserved.
   // After cursorY scrolls the prompt line shifts to active-screen row 0.
@@ -156,6 +160,18 @@ export const clearTerminalViewport = (
   term.write(`\x1b[2;1H\x1b[J${eraseScrollback}\x1b[1;${col}H`, () => {
     term.scrollToBottom();
   });
+  return true;
+};
+
+export const clearTerminalViewportAndSyncPty = (
+  term: XTerm,
+  { syncPty, ...options }: ClearTerminalViewportAndSyncPtyOptions,
+): boolean => {
+  const didClearViewport = clearTerminalViewport(term, options);
+  if (didClearViewport) {
+    syncPty();
+  }
+  return didClearViewport;
 };
 
 export const isEraseScrollbackSequence = (params: CsiParam[]): boolean =>
