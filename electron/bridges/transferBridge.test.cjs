@@ -434,7 +434,7 @@ test("failed resumable upload opens close their isolated channel", async (t) => 
   assert.ok(endedChannels >= 1, `expected isolated channels to end, got ${endedChannels}`);
 });
 
-test("failed snapshot opens do not acquire an isolated channel", async (t) => {
+test("failed digest baseline opens do not acquire an isolated channel", async (t) => {
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-local-open-fail-"));
   t.after(async () => {
     await fs.promises.rm(tempDir, { recursive: true, force: true });
@@ -463,8 +463,8 @@ test("failed snapshot opens do not acquire an isolated channel", async (t) => {
 
   const originalOpen = fs.promises.open;
   fs.promises.open = async (filePath, ...args) => {
-    if (String(filePath).includes(".snapshot.part")) {
-      throw new Error("local source snapshot unavailable");
+    if (String(filePath).includes("ranges.sha256.part")) {
+      throw new Error("upload digest baseline unavailable");
     }
     return originalOpen(filePath, ...args);
   };
@@ -487,7 +487,7 @@ test("failed snapshot opens do not acquire an isolated channel", async (t) => {
     fs.promises.open = originalOpen;
   }
 
-  assert.match(result.error || "", /local source snapshot unavailable/);
+  assert.match(result.error || "", /upload digest baseline unavailable/);
   assert.equal(endedChannels, 0);
 });
 
@@ -558,7 +558,7 @@ test("failed local open for resumable upload still ends the isolated channel", a
   assert.ok(result.error, "expected transfer to fail when local source disappears");
   // Critical: isolated channel must not leak when local open fails first.
   assert.ok(endedChannels >= 1, `expected isolated channel end, got ${endedChannels}`);
-  assert.equal(remoteOpenAttempts, 1);
+  assert.equal(remoteOpenAttempts, 0);
 });
 
 test("cancel during stalled resumable upload OPEN ends the isolated channel", async (t) => {
@@ -981,7 +981,7 @@ test("resumable fast uploads reject a source that grows during transfer", async 
   assert.equal(promoted, false);
 });
 
-test("resumable uploads use an immutable snapshot when the source changes", async (t) => {
+test("resumable uploads reject changed ranges before writing them", async (t) => {
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-upload-metadata-change-"));
   t.after(async () => {
     await fs.promises.rm(tempDir, { recursive: true, force: true });
@@ -1013,8 +1013,8 @@ test("resumable uploads use an immutable snapshot when the source changes", asyn
         return;
       }
       changeStarted = true;
-      // Rewrite the original after the upload snapshot has been created. The
-      // remote must still receive the immutable snapshot's old bytes.
+      // Rewrite a later range after the digest baseline has been created. That
+      // changed range must be rejected before its remote WRITE.
       const fd = fs.openSync(localPath, "r+");
       try {
         fs.writeSync(
@@ -1074,8 +1074,16 @@ test("resumable uploads use an immutable snapshot when the source changes", asyn
   assert.match(result.error || "", /source.*changed/i);
   assert.equal(promoted, false);
   assert.equal(stagedDeleted, true);
-  assert.ok(uploadedChangedChunk);
-  assert.ok(uploadedChangedChunk.equals(Buffer.alloc(TRANSFER_CHUNK_SIZE, 73)));
+  assert.equal(uploadedChangedChunk, null);
+  const digestId = crypto.createHash("sha256")
+    .update("upload-metadata-change")
+    .digest("hex")
+    .slice(0, 16);
+  const digestPath = tempDirBridge.getTransferTempFilePath(
+    `upload-digest-${digestId}`,
+    "ranges.sha256",
+  );
+  assert.equal(fs.existsSync(digestPath), false);
 });
 
 test("resumable fast downloads clear staged data after a same-second source change", async (t) => {

@@ -791,29 +791,32 @@ async function uploadFile(localPath, remotePath, client, fileSize, transfer, sen
   const initialSource = transfer.resumable
     ? await fs.promises.stat(originalLocalPath)
     : null;
-  if (transfer.resumable) {
-    const snapshotPath = tempDirBridge.getTransferTempFilePath(
-      `${transfer.transferId || "upload"}-source`,
-      `${path.basename(originalLocalPath)}.snapshot`,
+  if (transfer.resumable && !transfer.sourceIsOwnedTemp) {
+    const digestId = crypto.createHash("sha256")
+      .update(String(transfer.transferId || "upload"))
+      .digest("hex")
+      .slice(0, 16);
+    const digestPath = tempDirBridge.getTransferTempFilePath(
+      `upload-digest-${digestId}`,
+      "ranges.sha256",
     );
-    transfer.sourceSnapshotPath = snapshotPath;
-    await createCancelableUploadSnapshot(
+    transfer.sourceDigestPath = digestPath;
+    await createUploadDigestBaseline(
       originalLocalPath,
-      snapshotPath,
+      digestPath,
       fileSize,
       transfer,
     );
     if (transfer.cancelled) throw new Error("Transfer cancelled");
-    const sourceAfterSnapshot = await fs.promises.stat(originalLocalPath);
-    assertSourceMetadataUnchanged(initialSource, sourceAfterSnapshot, fileSize);
-    localPath = snapshotPath;
+    const sourceAfterBaseline = await fs.promises.stat(originalLocalPath);
+    assertSourceMetadataUnchanged(initialSource, sourceAfterBaseline, fileSize);
   }
 
-  const cleanupSourceSnapshot = async () => {
-    if (!transfer.sourceSnapshotPath) return;
-    const snapshotPath = transfer.sourceSnapshotPath;
-    transfer.sourceSnapshotPath = null;
-    await fs.promises.rm(snapshotPath, { force: true }).catch(() => {});
+  const cleanupSourceDigest = async () => {
+    if (!transfer.sourceDigestPath) return;
+    const digestPath = transfer.sourceDigestPath;
+    transfer.sourceDigestPath = null;
+    await fs.promises.rm(digestPath, { force: true }).catch(() => {});
   };
 
   const finishSuccessfulUpload = async () => {
@@ -824,7 +827,7 @@ async function uploadFile(localPath, remotePath, client, fileSize, transfer, sen
       }
       await assertRemoteUploadSize(client, remotePath, fileSize);
     } finally {
-      await cleanupSourceSnapshot();
+      await cleanupSourceDigest();
     }
   };
 
@@ -999,7 +1002,7 @@ async function uploadFile(localPath, remotePath, client, fileSize, transfer, sen
     : "SFTP pipelined upload failed (no serial stream fallback)";
   const error = new Error(message, cause ? { cause } : undefined);
   if (cause?.noTransferFallback) error.noTransferFallback = true;
-  await cleanupSourceSnapshot();
+  await cleanupSourceDigest();
   throw error;
 }
 
@@ -1115,48 +1118,90 @@ function createSourceContentChangedError() {
   return error;
 }
 
-async function createCancelableUploadSnapshot(sourcePath, snapshotPath, fileSize, transfer) {
-  try {
-    await fs.promises.copyFile(
-      sourcePath,
-      snapshotPath,
-      fs.constants.COPYFILE_FICLONE_FORCE,
-    );
-    return;
-  } catch (error) {
-    const fallbackCodes = new Set(["ENOSYS", "ENOTSUP", "EOPNOTSUPP", "EXDEV", "EINVAL"]);
-    if (!fallbackCodes.has(error?.code)) throw error;
-  }
-
-  const sourceHandle = await fs.promises.open(sourcePath, "r");
-  let snapshotHandle = null;
-  try {
-    snapshotHandle = await fs.promises.open(snapshotPath, "w");
-    const buffer = Buffer.allocUnsafe(Math.min(1024 * 1024, Math.max(1, fileSize)));
-    let position = 0;
-    while (position < fileSize) {
-      if (transfer.cancelled) throw new Error("Transfer cancelled");
-      const length = Math.min(buffer.length, fileSize - position);
-      await readLocalRange(sourceHandle, buffer, position, length);
-      let written = 0;
-      while (written < length) {
-        const result = await snapshotHandle.write(
-          buffer,
-          written,
-          length - written,
-          position + written,
-        );
-        if (!result || result.bytesWritten <= 0) {
-          throw new Error("Upload snapshot stopped accepting data");
+async function createUploadDigestBaseline(sourcePath, digestPath, fileSize, transfer) {
+  const writeBaseline = async () => {
+    const sourceHandle = await fs.promises.open(sourcePath, "r");
+    let digestHandle = null;
+    try {
+      digestHandle = await fs.promises.open(digestPath, "w");
+      const buffer = Buffer.allocUnsafe(Math.min(TRANSFER_CHUNK_SIZE, Math.max(1, fileSize)));
+      let position = 0;
+      let digestPosition = 0;
+      while (position < fileSize) {
+        if (transfer.cancelled) throw new Error("Transfer cancelled");
+        const length = Math.min(buffer.length, fileSize - position);
+        await readLocalRange(sourceHandle, buffer, position, length);
+        const digest = crypto.createHash("sha256").update(buffer.subarray(0, length)).digest();
+        let written = 0;
+        while (written < digest.length) {
+          const result = await digestHandle.write(
+            digest,
+            written,
+            digest.length - written,
+            digestPosition + written,
+          );
+          if (!result || result.bytesWritten <= 0) {
+            throw new Error("Upload digest baseline stopped accepting data");
+          }
+          written += result.bytesWritten;
         }
-        written += result.bytesWritten;
+        position += length;
+        digestPosition += digest.length;
       }
-      position += length;
+    } finally {
+      await sourceHandle.close().catch(() => {});
+      await digestHandle?.close().catch(() => {});
     }
-  } finally {
-    await sourceHandle.close().catch(() => {});
-    await snapshotHandle?.close().catch(() => {});
-  }
+  };
+
+  const verifyBaseline = async () => {
+    const sourceHandle = await fs.promises.open(sourcePath, "r");
+    const digestHandle = await fs.promises.open(digestPath, "r");
+    try {
+      const buffer = Buffer.allocUnsafe(Math.min(TRANSFER_CHUNK_SIZE, Math.max(1, fileSize)));
+      let position = 0;
+      let chunkIndex = 0;
+      while (position < fileSize) {
+        if (transfer.cancelled) throw new Error("Transfer cancelled");
+        const length = Math.min(buffer.length, fileSize - position);
+        await readLocalRange(sourceHandle, buffer, position, length);
+        const expected = Buffer.allocUnsafe(32);
+        const result = await digestHandle.read(expected, 0, 32, chunkIndex * 32);
+        if (result.bytesRead !== 32) throw createSourceContentChangedError();
+        const actual = crypto.createHash("sha256").update(buffer.subarray(0, length)).digest();
+        if (!expected.equals(actual)) throw createSourceContentChangedError();
+        position += length;
+        chunkIndex += 1;
+      }
+    } finally {
+      await sourceHandle.close().catch(() => {});
+      await digestHandle.close().catch(() => {});
+    }
+  };
+
+  await writeBaseline();
+  await verifyBaseline();
+}
+
+async function readVerifiedUploadRange(
+  localHandle,
+  digestHandle,
+  position,
+  length,
+  fileSize,
+) {
+  const chunkStart = Math.floor(position / TRANSFER_CHUNK_SIZE) * TRANSFER_CHUNK_SIZE;
+  const chunkLength = Math.min(TRANSFER_CHUNK_SIZE, fileSize - chunkStart);
+  const chunk = Buffer.allocUnsafe(chunkLength);
+  await readLocalRange(localHandle, chunk, chunkStart, chunkLength);
+  const expected = Buffer.allocUnsafe(32);
+  const chunkIndex = Math.floor(chunkStart / TRANSFER_CHUNK_SIZE);
+  const digestResult = await digestHandle.read(expected, 0, 32, chunkIndex * 32);
+  if (digestResult.bytesRead !== 32) throw createSourceContentChangedError();
+  const actual = crypto.createHash("sha256").update(chunk).digest();
+  if (!expected.equals(actual)) throw createSourceContentChangedError();
+  const offset = position - chunkStart;
+  return chunk.subarray(offset, offset + length);
 }
 
 function assertSourceMetadataUnchanged(initialSource, latestSource, expectedSize) {
@@ -1291,7 +1336,10 @@ async function runPausableConcurrentRanges({
           && !transfer.cancelled
         ) {
           const position = nextOffset;
-          const length = Math.min(TRANSFER_CHUNK_SIZE, fileSize - position);
+          const length = Math.min(
+            TRANSFER_CHUNK_SIZE - (position % TRANSFER_CHUNK_SIZE),
+            fileSize - position,
+          );
           nextOffset += length;
           active += 1;
 
@@ -1387,6 +1435,7 @@ async function uploadFileConcurrent(
   transfer.abort = abortEarly;
 
   let localHandle = null;
+  let digestHandle = null;
   let remoteHandle = null;
   let failed = false;
   let noTransferFallback = false;
@@ -1402,6 +1451,9 @@ async function uploadFileConcurrent(
       throw localOpenError;
     }
     if (transfer.cancelled) throw new Error("Transfer cancelled");
+    if (transfer.sourceDigestPath) {
+      digestHandle = await fs.promises.open(transfer.sourceDigestPath, "r");
+    }
     if (transfer.cancelled) throw new Error("Transfer cancelled");
     remoteHandle = await openSftpHandle(sftp, remotePath, checkpoint > 0 ? "r+" : "w");
     if (channelError) throw channelError;
@@ -1414,8 +1466,19 @@ async function uploadFileConcurrent(
         checkpoint,
         concurrency: UPLOAD_TRANSFER_CONCURRENCY,
         copyRange: async (position, length) => {
-          const buffer = Buffer.allocUnsafe(length);
-          await readLocalRange(localHandle, buffer, position, length);
+          const buffer = digestHandle
+            ? await readVerifiedUploadRange(
+              localHandle,
+              digestHandle,
+              position,
+              length,
+              fileSize,
+            )
+            : await (async () => {
+              const directBuffer = Buffer.allocUnsafe(length);
+              await readLocalRange(localHandle, directBuffer, position, length);
+              return directBuffer;
+            })();
           if (transfer.cancelled) throw new Error("Transfer cancelled");
           await writeSftpRange(sftp, remoteHandle, buffer, position, length);
         },
@@ -1442,6 +1505,9 @@ async function uploadFileConcurrent(
     transfer.abort = null;
     if (localHandle) {
       await localHandle.close().catch(() => {});
+    }
+    if (digestHandle) {
+      await digestHandle.close().catch(() => {});
     }
     let remoteCloseError = null;
     // Close remote handles while the channel is still live. On disposeChannel
@@ -1822,7 +1888,8 @@ async function startTransferNow(event, payload, onProgress) {
     // resumeStreamPair against duplicate pipe() which doubles writes.
     streamsUnpiped: false,
     abort: null,
-    sourceSnapshotPath: null,
+    sourceDigestPath: null,
+    sourceIsOwnedTemp: false,
   };
   activeTransfers.set(transferId, transfer);
   // Hold panel/agent SFTP sessions for the full transfer lifetime (including
@@ -2339,6 +2406,7 @@ async function startTransferNow(event, payload, onProgress) {
           });
           transfer.checkpointBytes = durableCheckpoint;
         };
+        transfer.sourceIsOwnedTemp = true;
         await uploadFile(
           tempPath,
           encodedTargetPath,
@@ -2366,9 +2434,9 @@ async function startTransferNow(event, payload, onProgress) {
 
     return { transferId, totalBytes: fileSize };
   } catch (err) {
-    if (transfer.sourceSnapshotPath) {
-      try { await fs.promises.rm(transfer.sourceSnapshotPath, { force: true }); } catch { }
-      transfer.sourceSnapshotPath = null;
+    if (transfer.sourceDigestPath) {
+      try { await fs.promises.rm(transfer.sourceDigestPath, { force: true }); } catch { }
+      transfer.sourceDigestPath = null;
     }
     if (err?.sourceChanged) {
       if (transfer.stagedLocalPath) {

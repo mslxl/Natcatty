@@ -704,7 +704,7 @@ test("lstat unsupported falls back to stat and preserves an existing destination
   assert.deepEqual(remoteFiles.get("/etc/app/config.json"), payload);
 });
 
-test("new files still promote when lstat is unavailable or unsupported", async (t) => {
+test("new files write directly when lstat is unavailable or unsupported", async (t) => {
   for (const variant of ["missing-method", "runtime-unsupported"]) {
     const tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), `netcatty-new-no-lstat-${variant}-`));
     t.after(async () => {
@@ -744,9 +744,44 @@ test("new files still promote when lstat is unavailable or unsupported", async (
       encoding: "utf-8",
     });
     assert.equal(fastPutCalls.length, 1);
-    assert.match(fastPutCalls[0].remotePath, /\.netcatty-upload-/);
+    assert.equal(fastPutCalls[0].remotePath, `/tmp/${variant}.bin`);
     assert.deepEqual(remoteFiles.get(`/tmp/${variant}.bin`), payload);
   }
+});
+
+test("no-lstat fallback writes through a broken symlink instead of replacing it", async (t) => {
+  const tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-broken-link-no-lstat-"));
+  t.after(async () => {
+    await fs.promises.rm(tempRoot, { recursive: true, force: true });
+  });
+  tempDirBridge.init?.({ getPath: () => tempRoot });
+  const localPath = path.join(tempRoot, "payload.bin");
+  await fs.promises.writeFile(localPath, Buffer.from("new-target"));
+
+  const created = createSessionChannel();
+  const remotePath = "/tmp/broken-link";
+  created.remoteMeta.set(remotePath, { isSymlink: true, mode: 0o120777 });
+  created.channel.lstat = undefined;
+  const sftpClients = new Map();
+  sftpBridge.init({
+    electronModule: { webContents: { fromId: () => null } },
+    sessions: new Map([["session-broken-link", { conn: { sftp: (cb) => cb(null, created.channel) } }]]),
+    sftpClients,
+  });
+  const opened = await sftpBridge.openSftpForSession(null, {
+    sessionId: "session-broken-link",
+    fileProtocol: "sftp",
+  });
+
+  await sftpBridge.uploadLocalToSftp(null, {
+    sftpId: opened.sftpId,
+    localPath,
+    remotePath,
+    encoding: "utf-8",
+  });
+  assert.equal(created.fastPutCalls.length, 1);
+  assert.equal(created.fastPutCalls[0].remotePath, remotePath);
+  assert.equal(created.remoteMeta.get(remotePath)?.isSymlink, true);
 });
 
 test("permission failure during final target recheck never falls back to direct write", async (t) => {

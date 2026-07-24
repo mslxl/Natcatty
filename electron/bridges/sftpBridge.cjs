@@ -644,7 +644,9 @@ async function planRemoteUploadReplace(client, encodedPath) {
           if (attrs) return { writeInPlace: true, existingMode: null, destinationExisted: true };
         } catch (statError) {
           if (isRemoteMissingError(statError)) {
-            return { writeInPlace: false, existingMode: null, destinationExisted: false };
+            // stat cannot distinguish a missing path from a broken symlink.
+            // Write through the path instead of rename-replacing a possible link.
+            return { writeInPlace: true, existingMode: null, destinationExisted: null };
           }
           // Unknown inspection failure: do not risk rename-replacing a link.
           return { writeInPlace: true, existingMode: null, destinationExisted: null };
@@ -677,7 +679,9 @@ async function planRemoteUploadReplace(client, encodedPath) {
         // Unknown existing-path state: preserve a possible symlink.
         return { writeInPlace: true, existingMode: null, destinationExisted: null };
       }
-      // Confirmed missing destination — stage a new file.
+      // Without lstat, ENOENT may be a broken symlink. Direct write preserves
+      // the link node while still allowing genuinely new files to be created.
+      return { writeInPlace: true, existingMode: null, destinationExisted: null };
     }
   } catch {
     // Unknown target state: preserve a possible symlink instead of replacing it.
