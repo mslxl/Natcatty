@@ -427,6 +427,7 @@ function createMoshSessionApi(ctx) {
           env: sshEnv,
           cwd: os.homedir(),
           encoding: null,
+          useConptyDll: process.platform === "win32",
         });
       } catch (err) {
         cleanupMoshAuthTempFiles(moshAuth.tempFiles);
@@ -674,6 +675,7 @@ function createMoshSessionApi(ctx) {
         env,
         cwd: os.homedir(),
         encoding: null,
+        useConptyDll: process.platform === "win32",
       });
     
       // Atomic swap — writeToSession / resizeSession both read
@@ -843,7 +845,7 @@ function createMoshSessionApi(ctx) {
       const sshExe = moshHandshake.resolveSshExecutable({
         findExecutable: (name) => (
           process.platform === "win32"
-            ? findExecutable(name, { pathOverride: mergedPathForResolution })
+            ? (opts.findExecutable || findExecutable)(name, { pathOverride: mergedPathForResolution })
             : resolvePosixExecutable(name, { pathOverride: mergedPathForResolution })
         ),
         fileExists: (p) => isExecutableFile(p) || fs.existsSync(p),

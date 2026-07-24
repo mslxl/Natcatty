@@ -110,6 +110,43 @@ test("startEtSession preserves discovered automatic identities for host informat
   assert.equal(sessions.get("sess-auto-stats").etStatsAuth.authMethod, "auto");
 });
 
+test("ET PTY explicitly enables bundled ConPTY clear support only on Windows", async (t) => {
+  const spawnForPlatform = async (platform) => {
+    let spawnOptions = null;
+    const processMock = Object.create(process);
+    Object.defineProperty(processMock, "platform", { value: platform });
+    const proc = {
+      onData() {},
+      onExit() {},
+      write() {},
+    };
+    const { api } = makeApi(t, {
+      process: processMock,
+      bundledEtClient: () => "/fake/et",
+      pty: {
+        spawn: (_command, _args, options) => {
+          spawnOptions = options;
+          return proc;
+        },
+      },
+      electronModule: { webContents: { fromId: () => null } },
+      openTerminalOutputSession: () => {},
+      selectZmodemUploadFiles: null,
+      selectZmodemDownloadDirectory: null,
+    });
+
+    await api.startEtSession({ sender: { id: 7 } }, {
+      sessionId: `sess-conpty-clear-${platform}`,
+      hostname: "host.example",
+      username: "alice",
+    });
+    return spawnOptions;
+  };
+
+  assert.equal((await spawnForPlatform("win32")).useConptyDll, true);
+  assert.equal((await spawnForPlatform("linux")).useConptyDll, false);
+});
+
 test("explicitly closed ET sessions do not emit a second exit event", async (t) => {
   let onExit = null;
   const sent = [];
