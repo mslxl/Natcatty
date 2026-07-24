@@ -1194,7 +1194,21 @@ test("non-resumable shared range cancellation drains writes and removes the temp
     await new Promise((resolve) => setImmediate(resolve));
   }
   assert.ok(pendingWrites.length > 0);
+  let transferSettled = false;
+  void running.finally(() => {
+    transferSettled = true;
+  });
   await transferBridge.cancelTransfer(null, { transferId });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(transferSettled, false);
+  assert.equal(fs.existsSync(digestPath), true);
+
+  const firstWrite = pendingWrites.shift();
+  firstWrite(new Error("write cancelled"));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(transferSettled, false);
+  assert.equal(fs.existsSync(digestPath), true);
+
   for (const callback of pendingWrites.splice(0)) callback(new Error("write cancelled"));
   const result = await running;
 
