@@ -890,6 +890,14 @@ test("non-resumable shared range uploads reject a same-size source rewrite", asy
     51,
   );
   const localPath = path.join(tempDir, "upload.bin");
+  const digestId = crypto.createHash("sha256")
+    .update("upload-nonresume-source-change")
+    .digest("hex")
+    .slice(0, 16);
+  const digestPath = tempDirBridge.getTransferTempFilePath(
+    `upload-digest-${digestId}`,
+    "ranges.sha256",
+  );
   await fs.promises.writeFile(localPath, payload);
   let rewritten = false;
   let remoteBytes = 0;
@@ -948,6 +956,253 @@ test("non-resumable shared range uploads reject a same-size source rewrite", asy
   assert.equal(rewritten, true);
   assert.match(result.error || "", /source content changed/i);
   assert.equal(uploadedChangedChunk, null);
+  assert.equal(fs.existsSync(digestPath), false);
+});
+
+test("non-resumable shared range uploads remove their temporary digest after success", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-nonresume-cleanup-"));
+  t.after(async () => fs.promises.rm(tempDir, { recursive: true, force: true }));
+  const transferId = "upload-nonresume-cleanup";
+  const payload = Buffer.alloc(TRANSFER_CHUNK_SIZE * 2, 61);
+  const localPath = path.join(tempDir, "upload.bin");
+  await fs.promises.writeFile(localPath, payload);
+  const digestId = crypto.createHash("sha256").update(transferId).digest("hex").slice(0, 16);
+  const digestPath = tempDirBridge.getTransferTempFilePath(
+    `upload-digest-${digestId}`,
+    "ranges.sha256",
+  );
+  let remoteBytes = 0;
+  const sharedSftp = createFastSftp({
+    open(_remotePath, _flags, callback) {
+      callback(null, Buffer.from("remote-handle"));
+    },
+    write(_handle, _buffer, _offset, length, position, callback) {
+      remoteBytes = Math.max(remoteBytes, position + length);
+      callback(null);
+    },
+    close(_handle, callback) {
+      callback(null);
+    },
+  });
+  transferBridge.init({
+    sftpClients: new Map([["target", {
+      __netcattySudoMode: true,
+      sftp: sharedSftp,
+      stat: async () => ({ size: remoteBytes }),
+    }]]),
+  });
+
+  const sender = createSender();
+  const result = await transferBridge.startTransfer(
+    { sender },
+    {
+      transferId,
+      sourcePath: localPath,
+      targetPath: "/tmp/upload.bin",
+      sourceType: "local",
+      targetType: "sftp",
+      targetSftpId: "target",
+      totalBytes: payload.length,
+      resumable: false,
+    },
+  );
+
+  assert.equal(result.error, undefined);
+  assert.equal(fs.existsSync(digestPath), false);
+  assert.equal(sender.sent.some((entry) => entry.channel === "netcatty:transfer:complete"), true);
+});
+
+test("non-resumable shared range uploads reject a source that grows and remove their digest", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-nonresume-growth-"));
+  t.after(async () => fs.promises.rm(tempDir, { recursive: true, force: true }));
+  const transferId = "upload-nonresume-growth";
+  const payload = Buffer.alloc(TRANSFER_CHUNK_SIZE * 2, 62);
+  const localPath = path.join(tempDir, "upload.bin");
+  await fs.promises.writeFile(localPath, payload);
+  const digestId = crypto.createHash("sha256").update(transferId).digest("hex").slice(0, 16);
+  const digestPath = tempDirBridge.getTransferTempFilePath(
+    `upload-digest-${digestId}`,
+    "ranges.sha256",
+  );
+  let sourceGrew = false;
+  let remoteBytes = 0;
+  const sharedSftp = createFastSftp({
+    open(_remotePath, _flags, callback) {
+      callback(null, Buffer.from("remote-handle"));
+    },
+    write(_handle, _buffer, _offset, length, position, callback) {
+      remoteBytes = Math.max(remoteBytes, position + length);
+      if (!sourceGrew) {
+        sourceGrew = true;
+        fs.appendFileSync(localPath, Buffer.from([1]));
+      }
+      callback(null);
+    },
+    close(_handle, callback) {
+      callback(null);
+    },
+  });
+  transferBridge.init({
+    sftpClients: new Map([["target", {
+      __netcattySudoMode: true,
+      sftp: sharedSftp,
+      stat: async () => ({ size: remoteBytes }),
+    }]]),
+  });
+
+  const sender = createSender();
+  const result = await transferBridge.startTransfer(
+    { sender },
+    {
+      transferId,
+      sourcePath: localPath,
+      targetPath: "/tmp/upload.bin",
+      sourceType: "local",
+      targetType: "sftp",
+      targetSftpId: "target",
+      totalBytes: payload.length,
+      resumable: false,
+    },
+  );
+
+  assert.equal(sourceGrew, true);
+  assert.match(result.error || "", /source size changed/i);
+  assert.equal(fs.existsSync(digestPath), false);
+  assert.equal(sender.sent.some((entry) => entry.channel === "netcatty:transfer:complete"), false);
+});
+
+test("non-resumable digest creation cancellation removes the temporary digest", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-nonresume-digest-cancel-"));
+  t.after(async () => fs.promises.rm(tempDir, { recursive: true, force: true }));
+  const transferId = "upload-nonresume-digest-cancel";
+  const localPath = path.join(tempDir, "upload.bin");
+  await fs.promises.writeFile(
+    localPath,
+    Buffer.alloc(UPLOAD_TRANSFER_CONCURRENCY * TRANSFER_CHUNK_SIZE * 2, 63),
+  );
+  const digestId = crypto.createHash("sha256").update(transferId).digest("hex").slice(0, 16);
+  const digestPath = tempDirBridge.getTransferTempFilePath(
+    `upload-digest-${digestId}`,
+    "ranges.sha256",
+  );
+  let remoteOpenAttempts = 0;
+  const sharedSftp = createFastSftp({
+    open(_remotePath, _flags, callback) {
+      remoteOpenAttempts += 1;
+      callback(new Error("remote must not open"));
+    },
+    write(_handle, _buffer, _offset, _length, _position, callback) {
+      callback(new Error("remote must not write"));
+    },
+  });
+  transferBridge.init({
+    sftpClients: new Map([["target", {
+      __netcattySudoMode: true,
+      sftp: sharedSftp,
+      stat: async () => ({ size: 0 }),
+    }]]),
+  });
+
+  const originalOpen = fs.promises.open;
+  let cancellationTriggered = false;
+  let result;
+  try {
+    fs.promises.open = async (filePath, flags, ...args) => {
+      const handle = await originalOpen(filePath, flags, ...args);
+      if (String(filePath) !== localPath || flags !== "r" || cancellationTriggered) return handle;
+      return {
+        async read(...readArgs) {
+          cancellationTriggered = true;
+          await transferBridge.cancelTransfer(null, { transferId });
+          return handle.read(...readArgs);
+        },
+        stat: () => handle.stat(),
+        close: () => handle.close(),
+      };
+    };
+    result = await transferBridge.startTransfer(
+      { sender: createSender() },
+      {
+        transferId,
+        sourcePath: localPath,
+        targetPath: "/tmp/upload.bin",
+        sourceType: "local",
+        targetType: "sftp",
+        targetSftpId: "target",
+        totalBytes: UPLOAD_TRANSFER_CONCURRENCY * TRANSFER_CHUNK_SIZE * 2,
+        resumable: false,
+      },
+    );
+  } finally {
+    fs.promises.open = originalOpen;
+  }
+
+  assert.equal(cancellationTriggered, true);
+  assert.match(result.error || "", /cancel/i);
+  assert.equal(remoteOpenAttempts, 0);
+  assert.equal(fs.existsSync(digestPath), false);
+});
+
+test("non-resumable shared range cancellation drains writes and removes the temporary digest", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-nonresume-write-cancel-"));
+  t.after(async () => fs.promises.rm(tempDir, { recursive: true, force: true }));
+  const transferId = "upload-nonresume-write-cancel";
+  const payload = Buffer.alloc(UPLOAD_TRANSFER_CONCURRENCY * TRANSFER_CHUNK_SIZE * 2, 64);
+  const localPath = path.join(tempDir, "upload.bin");
+  await fs.promises.writeFile(localPath, payload);
+  const digestId = crypto.createHash("sha256").update(transferId).digest("hex").slice(0, 16);
+  const digestPath = tempDirBridge.getTransferTempFilePath(
+    `upload-digest-${digestId}`,
+    "ranges.sha256",
+  );
+  const pendingWrites = [];
+  const sharedSftp = createFastSftp({
+    open(_remotePath, _flags, callback) {
+      callback(null, Buffer.from("remote-handle"));
+    },
+    write(_handle, _buffer, _offset, _length, _position, callback) {
+      pendingWrites.push(callback);
+    },
+    close(_handle, callback) {
+      callback(null);
+    },
+  });
+  transferBridge.init({
+    sftpClients: new Map([["target", {
+      __netcattySudoMode: true,
+      sftp: sharedSftp,
+      stat: async () => ({ size: 0 }),
+    }]]),
+  });
+
+  const sender = createSender();
+  const running = transferBridge.startTransfer(
+    { sender },
+    {
+      transferId,
+      sourcePath: localPath,
+      targetPath: "/tmp/upload.bin",
+      sourceType: "local",
+      targetType: "sftp",
+      targetSftpId: "target",
+      totalBytes: payload.length,
+      resumable: false,
+    },
+  );
+  const readyDeadline = Date.now() + 2000;
+  while (pendingWrites.length === 0 && Date.now() < readyDeadline) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.ok(pendingWrites.length > 0);
+  await transferBridge.cancelTransfer(null, { transferId });
+  for (const callback of pendingWrites.splice(0)) callback(new Error("write cancelled"));
+  const result = await running;
+
+  assert.match(result.error || "", /cancel|write cancelled/i);
+  assert.equal(fs.existsSync(digestPath), false);
+  assert.equal(sender.sent.some((entry) => entry.channel === "netcatty:transfer:cancelled"), true);
+  assert.equal(sender.sent.some((entry) => entry.channel === "netcatty:transfer:complete"), false);
+  assert.equal(sender.sent.some((entry) => entry.channel === "netcatty:transfer:error"), false);
 });
 
 test("resumable fast uploads fail closed when isolated channel errors (no serial stream)", async (t) => {
