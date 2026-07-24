@@ -551,12 +551,27 @@ function ensureRemoteSftpSupport(sessionId) {
   return { session, sshClient };
 }
 
+// Common remote NAME_MAX; keep stage/backup basenames within this budget.
+const REMOTE_BASENAME_MAX = 255;
+
+function clipRemoteBaseName(baseName, overhead) {
+  const raw = baseName || "upload";
+  const maxBase = Math.max(8, REMOTE_BASENAME_MAX - overhead);
+  if (Buffer.byteLength(raw, "utf8") <= maxBase) return raw;
+  // Prefer character-safe clip: shrink until utf8 bytes fit.
+  let clipped = raw;
+  while (clipped.length > 1 && Buffer.byteLength(clipped, "utf8") > maxBase) {
+    clipped = clipped.slice(0, -1);
+  }
+  return clipped || "upload";
+}
+
 function buildStagedRemotePath(remotePath) {
-  const isWindowsPath = isWindowsRemotePath(remotePath);
   const lastSeparatorIndex = Math.max(remotePath.lastIndexOf("/"), remotePath.lastIndexOf("\\"));
   const dir = lastSeparatorIndex >= 0 ? remotePath.slice(0, lastSeparatorIndex + 1) : "";
   const baseName = lastSeparatorIndex >= 0 ? remotePath.slice(lastSeparatorIndex + 1) : remotePath;
-  const safeBaseName = baseName || "upload";
+  // ".netcatty-upload-" (17) + 8 hex + "-" (1) + ".part" (5) = 31
+  const safeBaseName = clipRemoteBaseName(baseName, 31);
   const stagedName = `.netcatty-upload-${randomUUID().slice(0, 8)}-${safeBaseName}.part`;
   return dir ? `${dir}${stagedName}` : stagedName;
 }
@@ -565,9 +580,240 @@ function buildBackupRemotePath(remotePath) {
   const lastSeparatorIndex = Math.max(remotePath.lastIndexOf("/"), remotePath.lastIndexOf("\\"));
   const dir = lastSeparatorIndex >= 0 ? remotePath.slice(0, lastSeparatorIndex + 1) : "";
   const baseName = lastSeparatorIndex >= 0 ? remotePath.slice(lastSeparatorIndex + 1) : remotePath;
-  const safeBaseName = baseName || "upload";
+  // ".netcatty-backup-" (17) + 8 hex + "-" (1) + ".bak" (4) = 30
+  const safeBaseName = clipRemoteBaseName(baseName, 30);
   const backupName = `.netcatty-backup-${randomUUID().slice(0, 8)}-${safeBaseName}.bak`;
   return dir ? `${dir}${backupName}` : backupName;
+}
+
+function isRemotePermissionError(err) {
+  // Codes only — do not match message substrings (filenames may contain
+  // "permission"/"access"/"denied" and must not trigger in-place fallback).
+  const code = err?.code;
+  return code === 3
+    || code === "EACCES"
+    || code === "EPERM"
+    || code === "ERR_PERMISSION"
+    || code === "SSH_FX_PERMISSION_DENIED";
+}
+
+function isRemoteMissingError(err) {
+  const code = err?.code;
+  return code === 2
+    || code === "ENOENT"
+    || code === "NO_SUCH_FILE"
+    || code === "SSH_FX_NO_SUCH_FILE"
+    || String(err?.message || "").trim() === "ENOENT";
+}
+
+function attrsIndicateSymlink(attrs) {
+  if (!attrs) return false;
+  if (typeof attrs.isSymbolicLink === "function") return !!attrs.isSymbolicLink();
+  if (typeof attrs.isSymbolicLink === "boolean") return attrs.isSymbolicLink;
+  const mode = Number(attrs.mode);
+  return Number.isFinite(mode) && (mode & 0o170000) === 0o120000;
+}
+
+/**
+ * Plan overwrite strategy for a remote upload target.
+ * - Confirmed symlinks: write in-place so the server follows the link.
+ * - When lstat is unavailable but the path exists: write in-place so we never
+ *   replace an unknown link node via stage+rename.
+ * - Confirmed regular files (new or existing): stage + rename so cancel cannot
+ *   keep mutating the final destination. Restore mode bits after promotion
+ *   (SFTP v3 cannot portably preserve owner/ACL/xattr/hard-links).
+ */
+async function planRemoteUploadReplace(client, encodedPath) {
+  try {
+    const sftp = await requireSftpChannel(client);
+    const hasNativeLstat = typeof sftp?.lstat === "function";
+
+    if (hasNativeLstat) {
+      let attrs = null;
+      try {
+        attrs = await lstatAsync(sftp, encodedPath);
+      } catch (lstatError) {
+        if (isRemoteMissingError(lstatError)) {
+          return { writeInPlace: false, existingMode: null };
+        }
+        // Some SFTP servers expose lstat client-side but reject it at runtime.
+        // A successful stat proves the destination exists, but cannot tell us
+        // whether it is a symlink, so preserve it with an in-place write.
+        try {
+          attrs = await statAsync(sftp, encodedPath);
+          if (attrs) return { writeInPlace: true, existingMode: null };
+        } catch (statError) {
+          if (isRemoteMissingError(statError)) {
+            return { writeInPlace: false, existingMode: null };
+          }
+          // Unknown inspection failure: do not risk rename-replacing a link.
+          return { writeInPlace: true, existingMode: null };
+        }
+      }
+      if (!attrs) return { writeInPlace: false, existingMode: null };
+      if (attrsIndicateSymlink(attrs)) {
+        return { writeInPlace: true, existingMode: null };
+      }
+      const mode = Number(attrs.mode);
+      const existingMode = Number.isFinite(mode) && mode > 0
+        ? (mode & 0o7777)
+        : null;
+      return { writeInPlace: false, existingMode };
+    }
+
+    // No lstat: if the path exists via stat, write in-place so a symlink is not
+    // replaced by rename when we cannot inspect the link node.
+    try {
+      const attrs = await statAsync(sftp, encodedPath);
+      if (attrs) {
+        const mode = Number(attrs.mode);
+        const existingMode = Number.isFinite(mode) && mode > 0
+          ? (mode & 0o7777)
+          : null;
+        return { writeInPlace: true, existingMode };
+      }
+    } catch (statError) {
+      if (!isRemoteMissingError(statError)) {
+        // Unknown existing-path state: preserve a possible symlink.
+        return { writeInPlace: true, existingMode: null };
+      }
+      // Confirmed missing destination — stage a new file.
+    }
+  } catch {
+    // Unknown target state: preserve a possible symlink instead of replacing it.
+    return { writeInPlace: true, existingMode: null };
+  }
+  return { writeInPlace: false, existingMode: null };
+}
+
+async function restoreRemoteMode(client, encodedPath, mode, options = {}) {
+  if (mode == null || !Number.isFinite(mode)) return;
+  const bestEffort = options?.bestEffort !== false;
+  try {
+    if (typeof client.chmod === "function") {
+      await client.chmod(encodedPath, mode);
+      return;
+    }
+    const sftp = await requireSftpChannel(client);
+    await new Promise((resolve, reject) => {
+      if (typeof sftp.chmod === "function") {
+        sftp.chmod(encodedPath, mode, (err) => (err ? reject(err) : resolve()));
+        return;
+      }
+      if (typeof sftp.setstat === "function") {
+        sftp.setstat(encodedPath, { mode }, (err) => (err ? reject(err) : resolve()));
+        return;
+      }
+      reject(new Error("Remote server does not support restoring file mode"));
+    });
+  } catch (err) {
+    if (!bestEffort) throw err;
+  }
+}
+
+function createRemoteRecoveryError(promotionError, restoreError, paths = {}) {
+  const recoveryLocations = [
+    paths.backupPath ? `backup=${String(paths.backupPath)}` : null,
+    paths.stagePath ? `staged=${String(paths.stagePath)}` : null,
+  ].filter(Boolean).join(", ");
+  const error = new Error(
+    `Remote upload promotion failed and the original destination could not be restored (${recoveryLocations}): ${restoreError?.message || String(restoreError)}`,
+    { cause: promotionError },
+  );
+  error.preserveStagedUpload = true;
+  error.remoteStagePath = paths.stagePath || null;
+  error.remoteBackupPath = paths.backupPath || null;
+  error.remoteFinalPath = paths.finalPath || null;
+  return error;
+}
+
+/**
+ * Pipelined upload with optional stage+rename.
+ * - Confirmed regular files: stage then rename (cancel-safe finals) + mode restore.
+ * - Symlinks / unknown-existing (no lstat): write in-place.
+ * - Parent-dir permission on stage: fall back to in-place (code-based only).
+ *
+ * `remotePath` must be the logical (pre-encode) path string. Encoding is applied
+ * here so staged/backup names are not built from Buffer path bytes.
+ */
+async function pipelinedUploadWithOptionalStaging(client, localPath, remotePath, options = {}) {
+  const signal = options?.signal || null;
+  const expectedSize = options?.expectedSize;
+  const encoding = options?.encoding || "utf-8";
+  const encodedPath = encodePath(remotePath, encoding);
+  const plan = await planRemoteUploadReplace(client, encodedPath);
+  const fastPutOptions = { ...options };
+  delete fastPutOptions.expectedSize;
+  delete fastPutOptions.encoding;
+
+  const uploadDirect = async () => {
+    await pipelinedUploadLocalFile(client, localPath, encodedPath, fastPutOptions);
+    throwIfAborted(signal);
+    if (Number.isFinite(expectedSize) && expectedSize >= 0 && typeof client.stat === "function") {
+      const st = await client.stat(encodedPath);
+      const size = Number(st?.size);
+      if (Number.isFinite(size) && size !== expectedSize) {
+        throw new Error(
+          `Upload size mismatch for ${remotePath}: expected ${expectedSize} bytes, got ${size}`,
+        );
+      }
+    }
+    return { staged: false };
+  };
+
+  if (plan.writeInPlace) {
+    return uploadDirect();
+  }
+
+  // Build stage/backup names from the logical string, then encode each path.
+  const stagedLogical = buildStagedRemotePath(remotePath);
+  const backupLogical = buildBackupRemotePath(remotePath);
+  const encodedStagedPath = encodePath(stagedLogical, encoding);
+  const encodedBackupPath = encodePath(backupLogical, encoding);
+  try {
+    await pipelinedUploadLocalFile(client, localPath, encodedStagedPath, {
+      ...fastPutOptions,
+      generatedStagePath: true,
+    });
+    throwIfAborted(signal);
+    if (Number.isFinite(expectedSize) && expectedSize >= 0 && typeof client.stat === "function") {
+      const stagedStat = await client.stat(encodedStagedPath);
+      const stagedSize = Number(stagedStat?.size);
+      if (Number.isFinite(stagedSize) && stagedSize !== expectedSize) {
+        throw new Error(
+          `Upload size mismatch for ${remotePath}: expected ${expectedSize} bytes, got ${stagedSize}`,
+        );
+      }
+    }
+    // Cancel may arrive during the awaited size verify; recheck before promote.
+    throwIfAborted(signal);
+    // Apply the old mode to the stage before promotion. A failed chmod must not
+    // replace an executable final with a non-executable file and report success.
+    await restoreRemoteMode(client, encodedStagedPath, plan.existingMode, {
+      bestEffort: false,
+    });
+    await renameRemotePath(client, encodedStagedPath, encodedPath, encodedBackupPath);
+    return { staged: true };
+  } catch (err) {
+    if (!err?.preserveStagedUpload) {
+      try {
+        if (typeof client.delete === "function") {
+          await client.delete(encodedStagedPath);
+        }
+      } catch {
+        // Best-effort cleanup of a partial stage.
+      }
+    }
+    // Parent dir not writable but existing file may still be: fall back to in-place.
+    if (isRemotePermissionError(err)) {
+      console.warn(
+        "[SFTP] Staged upload unavailable (permission); falling back to in-place overwrite:",
+        err?.message || String(err),
+      );
+      return uploadDirect();
+    }
+    throw err;
+  }
 }
 
 const posixRenameAsync = (sftp, fromPath, toPath) =>
@@ -611,8 +857,12 @@ async function renameRemotePath(client, fromPath, toPath, backupPath = null) {
       if (movedExistingTarget) {
         try {
           await client.rename(backupPath, toPath);
-        } catch {
-          // Ignore restore failures and surface the original fallback error.
+        } catch (restoreErr) {
+          throw createRemoteRecoveryError(fallbackErr, restoreErr, {
+            stagePath: fromPath,
+            backupPath,
+            finalPath: toPath,
+          });
         }
       }
       throw fallbackErr;
@@ -737,6 +987,18 @@ function createSessionBackedSftpClient(sessionId, sshClient, options = {}) {
         await closeFileAsync(sftp, handle);
       }
       return true;
+    },
+    /**
+     * Pipelined local→remote upload via the raw ssh2 SFTP channel.
+     * Session-backed clients are not ssh2-sftp-client instances and do not
+     * inherit client.fastPut — expose the channel method so uploadLocal /
+     * writeSftpBinaryWithProgress keep the high-throughput path (#2449).
+     *
+     * When `options.signal` is provided, open a disposable SFTP channel so
+     * abort can end the transfer without killing the browse session.
+     */
+    async fastPut(localPath, remotePath, options = {}) {
+      return runAbortableFastPut(client, localPath, remotePath, options);
     },
     async stat(remotePath) {
       const sftp = await requireSftpChannel(client);
@@ -993,6 +1255,178 @@ async function downloadSftpToLocal(_event, payload) {
   return { success: true, localPath: payload.localPath };
 }
 
+/**
+ * Open a disposable SFTP channel for cancelable pipelined uploads when possible.
+ * Falls back to the shared browse channel (not disposable) for sudo / missing SSH client.
+ */
+async function acquireUploadSftpChannel(client, options = {}) {
+  if (client?.__netcattySudoMode) {
+    const sftp = await requireSftpChannel(client, options);
+    return { sftp, dispose: false };
+  }
+  const sshClient = client?.client;
+  if (sshClient && typeof sshClient.sftp === "function") {
+    // Prefer a disposable channel for cancel, but never fail the whole upload
+    // when MaxSessions / server policy refuses another subsystem — fall back to
+    // the existing browse channel (Codex PR review).
+    try {
+      throwIfAborted(options?.signal);
+      const sftp = await tryOpenSftpChannel(client, options);
+      if (sftp && typeof sftp.fastPut === "function") {
+        return { sftp, dispose: true };
+      }
+      try { sftp?.end?.(); } catch { /* ignore */ }
+    } catch (err) {
+      if (options?.signal?.aborted) throw err;
+      console.warn(
+        "[SFTP] Disposable upload channel unavailable, using shared SFTP channel:",
+        err?.message || String(err),
+      );
+    }
+  }
+  const shared = await requireSftpChannel(client, options);
+  return { sftp: shared, dispose: false };
+}
+
+/**
+ * Run ssh2 SFTP fastPut with optional AbortSignal.
+ * Always waits for the fastPut callback (or a short dispose grace period) before
+ * settling so local temp files are not unlinked while ssh2 still holds them.
+ * Disposable channels are ended on abort; shared channels only mark cancelled.
+ */
+function runFastPutOnChannel(sftp, localPath, remotePath, options = {}, channelControl = {}) {
+  const { dispose = false, signal = null, generatedStagePath = false } = channelControl;
+  throwIfAborted(signal);
+  if (typeof sftp?.fastPut !== "function") {
+    throw new Error(
+      "SFTP pipelined upload (fastPut) is not available on this session",
+    );
+  }
+  const { signal: _ignoredSignal, onChannel, ...fastPutOptions } = options || {};
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let abortRequested = false;
+    let pendingError = null;
+    let forceFinishTimer = null;
+    const clearForceFinish = () => {
+      if (forceFinishTimer) {
+        clearTimeout(forceFinishTimer);
+        forceFinishTimer = null;
+      }
+    };
+    const scheduleForceFinish = (err) => {
+      clearForceFinish();
+      forceFinishTimer = setTimeout(() => {
+        // Shared channel: best-effort unlink only paths explicitly created by
+        // our staging planner. A caller's final name may resemble a stage path.
+        if (
+          !dispose
+          && (abortRequested || signal?.aborted || pendingError)
+          && generatedStagePath
+        ) {
+          try { sftp.unlink?.(remotePath, () => {}); } catch { /* ignore */ }
+        }
+        finish(err || new Error("SFTP channel closed"));
+      }, 2000);
+    };
+    const finish = (err) => {
+      if (settled) return;
+      settled = true;
+      clearForceFinish();
+      if (signal && onAbort) {
+        try { signal.removeEventListener("abort", onAbort); } catch { /* ignore */ }
+      }
+      try { sftp.removeListener?.("error", onChannelError); } catch { /* ignore */ }
+      if (dispose) {
+        try { sftp.end?.(); } catch { /* ignore */ }
+      }
+      if (err) reject(err);
+      else resolve();
+    };
+    // Channel errors must not finish immediately: wait for fastPut callback (or
+    // force timeout) so local temp files are not unlinked while still open.
+    // Shared channels also get force-settle (without sftp.end) so a stalled
+    // callback after error cannot hang the upload forever.
+    const onChannelError = (err) => {
+      pendingError = err || new Error("SFTP channel error");
+      if (dispose) {
+        try { sftp.end?.(); } catch { /* ignore */ }
+      }
+      scheduleForceFinish(pendingError);
+    };
+    const onAbort = () => {
+      abortRequested = true;
+      if (dispose) {
+        try { sftp.end?.(); } catch { /* ignore */ }
+        scheduleForceFinish(createAbortError(signal, "Upload cancelled"));
+        return;
+      }
+      // Shared browse/sudo channel: do not sftp.end() (would kill the session).
+      // Still bound cancellation so a stalled fastPut cannot hang forever.
+      scheduleForceFinish(createAbortError(signal, "Upload cancelled"));
+    };
+    try { sftp.on?.("error", onChannelError); } catch { /* ignore */ }
+    if (typeof onChannel === "function") {
+      try { onChannel(sftp, { dispose, abort: onAbort }); } catch { /* ignore */ }
+    }
+    if (signal) {
+      if (signal.aborted) {
+        finish(createAbortError(signal, "Upload cancelled"));
+        return;
+      }
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+    try {
+      sftp.fastPut(localPath, remotePath, fastPutOptions, (err) => {
+        if (abortRequested || signal?.aborted) {
+          finish(createAbortError(signal, "Upload cancelled"));
+          return;
+        }
+        if (pendingError) {
+          finish(pendingError);
+          return;
+        }
+        finish(err || null);
+      });
+    } catch (err) {
+      finish(err);
+    }
+  });
+}
+
+async function runAbortableFastPut(client, localPath, remotePath, options = {}) {
+  const signal = options?.signal || null;
+  const generatedStagePath = options?.generatedStagePath === true;
+  const fastPutOptions = { ...options };
+  delete fastPutOptions.generatedStagePath;
+  throwIfAborted(signal);
+  const { sftp, dispose } = await acquireUploadSftpChannel(client, { signal });
+  return runFastPutOnChannel(sftp, localPath, remotePath, fastPutOptions, {
+    dispose,
+    signal,
+    generatedStagePath,
+  });
+}
+
+/**
+ * Pipelined local→remote upload.
+ * - Prefer disposable-channel fastPut when abortable / session-backed
+ * - ssh2-sftp-client.fastPut when no signal and method exists
+ * Never falls back to serial createWriteStream/put (#2449).
+ */
+async function pipelinedUploadLocalFile(client, localPath, remotePath, options = {}) {
+  const signal = options?.signal || null;
+  // Always use abortable channel path when a signal is present, or when the
+  // client is session-backed (wrapper fastPut → disposable channel).
+  if (signal || client?.__netcattySessionBacked || typeof client?.fastPut !== "function") {
+    return runAbortableFastPut(client, localPath, remotePath, options);
+  }
+  // ssh2-sftp-client without abort: native fastPut on the shared connection.
+  const fastPutOptions = { ...options };
+  delete fastPutOptions.generatedStagePath;
+  return client.fastPut(localPath, remotePath, fastPutOptions);
+}
+
 async function uploadLocalToSftp(_event, payload) {
   const client = sftpClients.get(payload.sftpId);
   if (!client) throw new Error("SFTP session not found");
@@ -1008,6 +1442,41 @@ async function uploadLocalToSftp(_event, payload) {
     const backend = getScpBackendForClient(client);
     const encodingRaw = resolveEncodingForRequest(payload.sftpId, payload.encoding);
     const encoding = encodingRaw === "auto" ? "utf-8" : encodingRaw;
+
+    // Symlinks must be written in-place so scp follows the link target. Staging
+    // + rename would replace the link node itself (Codex PR review).
+    let existing = null;
+    try {
+      existing = await backend.stat(payload.remotePath, { encoding });
+    } catch (statErr) {
+      if (!isRemoteMissingError(statErr)) throw statErr;
+    }
+    if (existing?.isDirectory) {
+      throw new Error(`Remote path is a directory: ${payload.remotePath}`);
+    }
+    const existingIsSymlink = !!(
+      existing?.isSymbolicLink
+      || existing?.isSymlink
+      || existing?.type === "symlink"
+    );
+
+    if (existingIsSymlink) {
+      try {
+        await backend.uploadFile(payload.localPath, payload.remotePath, {
+          transfer,
+          encoding,
+          signal: payload.abortSignal || null,
+        });
+        throwIfAborted(payload.abortSignal);
+        if (transfer?.cancelled) {
+          throw createAbortError(payload.abortSignal, "Transfer cancelled");
+        }
+        return { success: true, remotePath: payload.remotePath };
+      } finally {
+        try { transfer?.detachAbortSignal?.(); } catch { /* ignore */ }
+      }
+    }
+
     // Upload to a staged remote name, then rename into place so a cancelled or
     // failed transfer cannot leave a truncated original (matches SFTP path).
     const stagedRemotePath = buildStagedRemotePath(payload.remotePath);
@@ -1027,21 +1496,42 @@ async function uploadLocalToSftp(_event, payload) {
       // otherwise end up recursively deleting the whole tree via backup cleanup.
       let movedExisting = false;
       try {
-        const existing = await backend.stat(payload.remotePath, { encoding });
-        if (existing?.isDirectory) {
+        let latestExisting = null;
+        try {
+          latestExisting = await backend.stat(payload.remotePath, { encoding });
+        } catch (statErr) {
+          if (!isRemoteMissingError(statErr)) throw statErr;
+        }
+        if (latestExisting?.isDirectory) {
           throw new Error(`Remote path is a directory: ${payload.remotePath}`);
         }
-        await backend.rename(payload.remotePath, backupRemotePath, { encoding });
-        movedExisting = true;
+        if (
+          latestExisting?.isSymbolicLink
+          || latestExisting?.isSymlink
+          || latestExisting?.type === "symlink"
+        ) {
+          throw new Error(`Remote destination changed to a symlink during upload: ${payload.remotePath}`);
+        }
+        if (latestExisting) {
+          await backend.rename(payload.remotePath, backupRemotePath, { encoding });
+          movedExisting = true;
+        }
       } catch (statOrRenameErr) {
-        if (/directory/i.test(statOrRenameErr?.message || "")) throw statOrRenameErr;
-        // Destination may not exist yet (ENOENT) — continue with staged promote.
+        throw statOrRenameErr;
       }
       try {
         await backend.rename(stagedRemotePath, payload.remotePath, { encoding });
       } catch (renameErr) {
         if (movedExisting) {
-          try { await backend.rename(backupRemotePath, payload.remotePath, { encoding }); } catch { /* ignore */ }
+          try {
+            await backend.rename(backupRemotePath, payload.remotePath, { encoding });
+          } catch (restoreErr) {
+            throw createRemoteRecoveryError(renameErr, restoreErr, {
+              stagePath: stagedRemotePath,
+              backupPath: backupRemotePath,
+              finalPath: payload.remotePath,
+            });
+          }
         }
         throw renameErr;
       }
@@ -1050,7 +1540,9 @@ async function uploadLocalToSftp(_event, payload) {
       }
       return { success: true, remotePath: payload.remotePath };
     } catch (err) {
-      try { await backend.remove(stagedRemotePath, { recursive: false, encoding }); } catch { /* ignore */ }
+      if (!err?.preserveStagedUpload) {
+        try { await backend.remove(stagedRemotePath, { recursive: false, encoding }); } catch { /* ignore */ }
+      }
       throw err;
     } finally {
       try { transfer?.detachAbortSignal?.(); } catch { /* ignore */ }
@@ -1059,25 +1551,23 @@ async function uploadLocalToSftp(_event, payload) {
 
   await requireSftpChannel(client);
   const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
-  const stagedRemotePath = buildStagedRemotePath(payload.remotePath);
-  const backupRemotePath = buildBackupRemotePath(payload.remotePath);
-  const encodedPath = encodePath(payload.remotePath, encoding);
-  const encodedStagedPath = encodePath(stagedRemotePath, encoding);
-  const encodedBackupPath = encodePath(backupRemotePath, encoding);
   throwIfAborted(payload.abortSignal);
-  const content = fs.createReadStream(payload.localPath);
+  const {
+    TRANSFER_CHUNK_SIZE,
+    UPLOAD_TRANSFER_CONCURRENCY,
+  } = require("./transferLimits.cjs");
+  let expectedSize = null;
   try {
-    await client.put(content, encodedStagedPath, { signal: payload.abortSignal });
-    throwIfAborted(payload.abortSignal);
-    await renameRemotePath(client, encodedStagedPath, encodedPath, encodedBackupPath);
-  } catch (err) {
-    try {
-      await client.delete(encodedStagedPath);
-    } catch {
-      // Ignore best-effort cleanup failures for partially uploaded temp files.
-    }
-    throw err;
-  }
+    expectedSize = Number((await fs.promises.stat(payload.localPath))?.size);
+  } catch { /* ignore — fall through without size check if local vanished */ }
+  // Logical path in; helper encodes stage/final so non-UTF-8 dirs stay intact.
+  await pipelinedUploadWithOptionalStaging(client, payload.localPath, payload.remotePath, {
+    chunkSize: TRANSFER_CHUNK_SIZE,
+    concurrency: UPLOAD_TRANSFER_CONCURRENCY,
+    signal: payload.abortSignal,
+    encoding,
+    expectedSize: Number.isFinite(expectedSize) ? expectedSize : undefined,
+  });
   return { success: true, remotePath: payload.remotePath };
 }
 
@@ -1128,9 +1618,12 @@ const fileOpsApi = createFileOpsApi({
   requireSftpChannel, resolveEncodingForRequest, updateResolvedEncoding, encodePath, decodeName,
   detectEncodingFromList, statResultFromAttrs, normalizeRemotePathString, collectReadable, writeToWritable,
   throwIfAborted, pipeStreams, ensureRemoteDirForSession, removeRemotePathInternal, renameRemotePath,
+  buildStagedRemotePath, buildBackupRemotePath,
   realpathAsync, statAsync, lstatAsync, readdirAsync, mkdirAsync, rmdirAsync, unlinkAsync, openFileAsync,
   writeFileChunkAsync, closeFileAsync, createAbortError, copySftpEncodingState, clearSftpEncodingState,
   safeSend, tempDirBridge, randomUUID,
+  pipelinedUploadLocalFile,
+  pipelinedUploadWithOptionalStaging,
 });
 const {
   listSftp,
@@ -1276,6 +1769,8 @@ module.exports = {
   cancelSftpUpload,
   downloadSftpToLocal,
   uploadLocalToSftp,
+  pipelinedUploadLocalFile,
+  _renameRemotePathForTests: renameRemotePath,
   closeSftp,
   mkdirSftp,
   deleteSftp,

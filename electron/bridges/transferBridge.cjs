@@ -645,13 +645,134 @@ async function acquireIsolatedDownloadChannel(client, transfer) {
 }
 
 /**
- * Upload a local file to SFTP using ssh2's fastPut (parallel SFTP requests).
- * Falls back to sequential stream piping if fastPut is unavailable.
+ * After a concurrent-range attempt fails, staged remote bytes may extend past
+ * the contiguous checkpoint. Truncate / reset so the next strategy resumes
+ * safely instead of leaving sparse tails.
+ */
+async function prepareUploadFallbackCheckpoint(transfer, client, fileSize, sendProgress) {
+  await prepareStreamFallbackAfterRangeFailure(transfer, client);
+  const fallbackCheckpoint = Math.max(0, Number(transfer.checkpointBytes) || 0);
+  if (fallbackCheckpoint > 0 && transfer.stagedRemote) {
+    let stagedSize = Number.POSITIVE_INFINITY;
+    try {
+      const staged = transfer.stagedRemote;
+      const encoded = encodePathForSession(staged.sftpId, staged.path, staged.encoding);
+      stagedSize = Number((await (staged.client || client).stat(encoded))?.size);
+    } catch { /* missing staged file — restart */ }
+    if (!Number.isFinite(stagedSize) || stagedSize !== fallbackCheckpoint) {
+      transfer.checkpointBytes = 0;
+      sendProgress(0, fileSize, { force: true, checkpointBytes: 0 });
+    }
+  }
+}
+
+async function uploadViaFastPut(localPath, remotePath, sftp, fileSize, transfer, sendProgress, { disposeChannel }) {
+  await new Promise((resolve, reject) => {
+    let settled = false;
+    let pendingError = null;
+    let forceFinishTimer = null;
+    let onFastSftpError = null;
+    const clearForceFinish = () => {
+      if (forceFinishTimer) {
+        clearTimeout(forceFinishTimer);
+        forceFinishTimer = null;
+      }
+    };
+    const finish = (err) => {
+      if (settled) return;
+      settled = true;
+      clearForceFinish();
+      if (transfer.abort === abortFastTransfer) {
+        transfer.abort = null;
+      }
+      if (onFastSftpError) {
+        try { sftp.removeListener("error", onFastSftpError); } catch { /* ignore */ }
+        onFastSftpError = null;
+      }
+      if (disposeChannel) {
+        try { sftp.end(); } catch { /* ignore */ }
+      }
+
+      if (transfer.cancelled) reject(new Error("Transfer cancelled"));
+      else if (err) reject(err);
+      else resolve();
+    };
+    const scheduleForceFinish = (err) => {
+      clearForceFinish();
+      forceFinishTimer = setTimeout(() => finish(err), 2000);
+    };
+    const abortFastTransfer = () => {
+      if (settled) return;
+      transfer.cancelled = true;
+      if (disposeChannel) {
+        try { sftp.end(); } catch { /* ignore */ }
+        // Wait for fastPut callback when possible; force after grace period.
+        scheduleForceFinish(new Error("Transfer cancelled"));
+        return;
+      }
+      // Shared channel: wait for callback.
+    };
+    transfer.abort = abortFastTransfer;
+    onFastSftpError = (err) => {
+      pendingError = err || new Error("SFTP channel error");
+      if (disposeChannel) {
+        try { sftp.end(); } catch { /* ignore */ }
+        scheduleForceFinish(pendingError);
+      }
+    };
+    sftp.on?.("error", onFastSftpError);
+
+    if (transfer.cancelled) {
+      finish(new Error("Transfer cancelled"));
+      return;
+    }
+
+    sftp.fastPut(localPath, remotePath, {
+      chunkSize: TRANSFER_CHUNK_SIZE,
+      concurrency: UPLOAD_TRANSFER_CONCURRENCY,
+      step: (transferred, _chunk, total) => {
+        if (transfer.cancelled) return;
+        // UI progress only. fastPut byte totals are not a durable contiguous
+        // resume offset — keep checkpoint at 0 so a crash mid-fastPut cannot
+        // resume past sparse holes on the next run.
+        // Do not force every chunk: ssh2 steps per 32KB and would flood IPC.
+        sendProgress(transferred, total || fileSize, {
+          checkpointBytes: 0,
+        });
+      },
+    }, (err) => {
+      if (transfer.cancelled) {
+        finish(new Error("Transfer cancelled"));
+        return;
+      }
+      if (pendingError) {
+        finish(pendingError);
+        return;
+      }
+      finish(err || null);
+    });
+  });
+}
+
+/**
+ * Upload a local file with pipelined SFTP WRITEs only.
+ *
+ * Aligns with OpenSSH sftp / Electerm / WinSCP: default is outstanding-request
+ * fanout, not serial WriteStream. Strategy order:
+ *   1. concurrent ranges on an isolated channel (resumable + cancel-safe)
+ *   2. ssh2 fastPut on an isolated channel
+ *   3. concurrent ranges on the shared browse channel
+ *
+ * There is no silent serial createWriteStream/put fallback — that path is
+ * RTT-bound (~1 WRITE × 32KB) and was the usual cause of sub-MB/s uploads
+ * (#2449). When every pipelined strategy fails, the transfer fails with the
+ * last underlying error (Electerm-style: fail closed, do not crawl).
  */
 async function uploadFile(localPath, remotePath, client, fileSize, transfer, sendProgress, encoding = "utf-8") {
   if (isScpModeClient(client)) {
     transfer.pauseSupported = false;
     transfer.pauseUnavailableReason = "Pause is unavailable for SCP transfers";
+    transfer.uploadStrategy = "scp";
     const backend = getScpBackendForClient(client);
     await backend.uploadFile(localPath, remotePath, {
       fileSize,
@@ -670,187 +791,192 @@ async function uploadFile(localPath, remotePath, client, fileSize, transfer, sen
     ? await fs.promises.stat(localPath)
     : null;
 
+  const finishSuccessfulUpload = async () => {
+    if (initialSource) {
+      const latestSource = await fs.promises.stat(localPath);
+      assertSourceMetadataUnchanged(initialSource, latestSource, fileSize);
+    }
+    await assertRemoteUploadSize(client, remotePath, fileSize);
+  };
+
+  /** @type {Error | null} */
+  let lastPipelineError = null;
+  const rememberPipelineError = (err) => {
+    if (err && typeof err === "object") lastPipelineError = err;
+    else lastPipelineError = new Error(String(err || "SFTP upload failed"));
+  };
+
   // Prefer an isolated SFTP channel so cancellation cannot kill the browse session.
   if (!client.__netcattySudoMode) {
-    let fastSftp = null;
+    let isolated = null;
     try {
-      fastSftp = await openIsolatedSftpChannel(client);
+      isolated = await openIsolatedSftpChannel(client);
     } catch (err) {
-      console.warn("[transferBridge] Failed to open isolated SFTP channel for fastPut, falling back to streams:", err.message || String(err));
+      rememberPipelineError(err);
+      console.warn(
+        "[transferBridge] Failed to open isolated SFTP channel for upload:",
+        err.message || String(err),
+      );
     }
 
-    if (fastSftp && transfer.resumable) {
+    if (isolated && transfer.resumable) {
+      let concurrentIsolatedOk = false;
       try {
-        await uploadFileResumableFast(
+        transfer.uploadStrategy = "concurrent-isolated";
+        await uploadFileConcurrent(
           localPath,
           remotePath,
-          fastSftp,
+          isolated,
           fileSize,
           transfer,
           sendProgress,
+          { disposeChannel: true },
         );
-        const latestSource = await fs.promises.stat(localPath);
-        assertSourceMetadataUnchanged(initialSource, latestSource, fileSize);
-        // Content samples already verified inside uploadFileResumableFast.
-        await assertRemoteUploadSize(client, remotePath, fileSize);
-        return;
+        concurrentIsolatedOk = true;
       } catch (err) {
-        // uploadFileResumableFast ends the isolated channel itself. Clear the
-        // handle so we do not reuse a closed channel for fastPut below.
-        fastSftp = null;
+        // uploadFileConcurrent ends the isolated channel itself.
+        isolated = null;
         if (transfer.cancelled) throw err;
         if (err?.noTransferFallback) throw err;
-        // Ranges may have written past the contiguous checkpoint; truncate
-        // the staged remote .part before sequential stream resume.
-        await prepareStreamFallbackAfterRangeFailure(transfer, client);
-        const fallbackCheckpoint = Math.max(0, Number(transfer.checkpointBytes) || 0);
-        if (fallbackCheckpoint > 0 && transfer.stagedRemote) {
-          let stagedSize = Number.POSITIVE_INFINITY;
-          try {
-            const staged = transfer.stagedRemote;
-            const encoded = encodePathForSession(staged.sftpId, staged.path, staged.encoding);
-            stagedSize = Number((await (staged.client || client).stat(encoded))?.size);
-          } catch { }
-          if (!Number.isFinite(stagedSize) || stagedSize !== fallbackCheckpoint) {
-            transfer.checkpointBytes = 0;
-            sendProgress(0, fileSize, { force: true, checkpointBytes: 0 });
-          }
-        }
+        rememberPipelineError(err);
+        await prepareUploadFallbackCheckpoint(transfer, client, fileSize, sendProgress);
         console.warn(
-          "[transferBridge] resumable fast upload failed, falling back to a compatible stream:",
+          "[transferBridge] concurrent isolated upload failed, trying next pipelined strategy:",
           err?.message || String(err),
         );
       }
+      // Verification errors must not fall through into other strategies.
+      if (concurrentIsolatedOk) {
+        await finishSuccessfulUpload();
+        return;
+      }
     }
 
-    if (fastSftp && typeof fastSftp.fastPut === "function") {
-      await new Promise((resolve, reject) => {
-        let settled = false;
-        let onFastSftpError = null;
-        const finish = (err) => {
-          if (settled) return;
-          settled = true;
-          if (transfer.abort === abortFastTransfer) {
-            transfer.abort = null;
-          }
-          if (onFastSftpError) {
-            try { fastSftp.removeListener("error", onFastSftpError); } catch { }
-            onFastSftpError = null;
-          }
-          try { fastSftp.end(); } catch { }
+    if (!isolated) {
+      try {
+        isolated = await openIsolatedSftpChannel(client);
+      } catch (err) {
+        rememberPipelineError(err);
+        console.warn(
+          "[transferBridge] Failed to reopen isolated SFTP channel for fastPut:",
+          err.message || String(err),
+        );
+      }
+    }
 
-          if (transfer.cancelled) reject(new Error("Transfer cancelled"));
-          else if (err) reject(err);
-          else resolve();
-        };
-        const abortFastTransfer = () => {
-          if (settled) return;
-          transfer.cancelled = true;
-          try { fastSftp.end(); } catch { }
-          finish(new Error("Transfer cancelled"));
-        };
-        transfer.abort = abortFastTransfer;
-        onFastSftpError = (err) => finish(err);
-        fastSftp.once("error", onFastSftpError);
-
-        if (transfer.cancelled) {
-          finish(new Error("Transfer cancelled"));
-          return;
+    // fastPut always truncates and rewrites from offset 0 — skip when we
+    // already have a durable resume checkpoint from a prior concurrent attempt.
+    // fastPut is not pause-aware; do not advertise pause while it runs.
+    const hasResumeCheckpoint = Math.max(0, Number(transfer.checkpointBytes) || 0) > 0;
+    if (isolated && typeof isolated.fastPut === "function" && !hasResumeCheckpoint) {
+      let fastPutOk = false;
+      let fastPutFingerprint = null;
+      try {
+        transfer.uploadStrategy = "fastPut-isolated";
+        transfer.pauseSupported = false;
+        transfer.pauseUnavailableReason = "Pause is unavailable during fastPut upload";
+        sendProgress(Math.max(0, Number(transfer.checkpointBytes) || 0), fileSize, {
+          force: true,
+        });
+        if (transfer.resumable) {
+          fastPutFingerprint = await captureLocalContentFingerprint(localPath, fileSize);
         }
+        await uploadViaFastPut(
+          localPath,
+          remotePath,
+          isolated,
+          fileSize,
+          transfer,
+          sendProgress,
+          { disposeChannel: true },
+        );
+        if (fastPutFingerprint) {
+          await assertLocalContentFingerprintUnchanged(
+            localPath,
+            fastPutFingerprint,
+            fileSize,
+          );
+        }
+        fastPutOk = true;
+      } catch (err) {
+        isolated = null;
+        // Restore pause capability for subsequent pause-aware strategies.
+        transfer.pauseSupported = Boolean(transfer.resumable);
+        transfer.pauseUnavailableReason = transfer.resumable
+          ? undefined
+          : transfer.pauseUnavailableReason;
+        if (transfer.cancelled) throw err;
+        // Source-change / hard safety errors must not be retried on another path.
+        if (err?.noTransferFallback || err?.sourceChanged) throw err;
+        rememberPipelineError(err);
+        // fastPut progress is not a durable contiguous checkpoint — reset so
+        // concurrent-shared does not resume past holes left by the failed put.
+        transfer.checkpointBytes = 0;
+        sendProgress(0, fileSize, { force: true, checkpointBytes: 0 });
+        console.warn(
+          "[transferBridge] isolated fastPut failed, trying next pipelined strategy:",
+          err?.message || String(err),
+        );
+      }
+      if (fastPutOk) {
+        await finishSuccessfulUpload();
+        return;
+      }
+    } else if (isolated && typeof isolated.end === "function") {
+      try { isolated.end(); } catch { /* ignore */ }
+    }
+  }
 
-        fastSftp.fastPut(localPath, remotePath, {
-          chunkSize: TRANSFER_CHUNK_SIZE,
-          concurrency: UPLOAD_TRANSFER_CONCURRENCY,
-          step: (transferred, _chunk, total) => {
-            if (transfer.cancelled) return;
-            sendProgress(transferred, total || fileSize);
-          },
-        }, finish);
-      });
-      await assertRemoteUploadSize(client, remotePath, fileSize);
+  // Concurrent WRITEs on the shared browse channel — still pipelined, does not
+  // end the session on cancel/dispose (sudo mode and isolated-open failures).
+  if (typeof sftp.open === "function" && typeof sftp.write === "function") {
+    let sharedOk = false;
+    try {
+      transfer.uploadStrategy = "concurrent-shared";
+      transfer.pauseSupported = Boolean(transfer.resumable);
+      if (transfer.resumable) transfer.pauseUnavailableReason = undefined;
+      await uploadFileConcurrent(
+        localPath,
+        remotePath,
+        sftp,
+        fileSize,
+        transfer,
+        sendProgress,
+        { disposeChannel: false },
+      );
+      sharedOk = true;
+    } catch (err) {
+      if (transfer.cancelled) throw err;
+      if (err?.noTransferFallback) throw err;
+      rememberPipelineError(err);
+      await prepareUploadFallbackCheckpoint(transfer, client, fileSize, sendProgress);
+      console.warn(
+        "[transferBridge] concurrent shared upload failed (no serial stream fallback):",
+        err?.message || String(err),
+      );
+    }
+    if (sharedOk) {
+      await finishSuccessfulUpload();
       return;
     }
-
-    if (fastSftp && typeof fastSftp.end === "function") {
-      try { fastSftp.end(); } catch { }
-    }
-  }
-
-  // Fallback: sequential stream piping.
-  // ssh2 closes the remote handle from _final and may suppress Node's normal
-  // 'finish' event. Treat a successful close after the complete local read as
-  // completion, then verify the persisted remote size below.
-  const streamContentFingerprint = transfer.resumable
-    ? await captureLocalContentFingerprint(localPath, fileSize)
-    : null;
-  await new Promise((resolve, reject) => {
-    const checkpoint = Math.max(0, Math.min(transfer.checkpointBytes || 0, fileSize));
-    const readStream = fs.createReadStream(localPath, { highWaterMark: TRANSFER_CHUNK_SIZE, start: checkpoint });
-    const writeStream = sftp.createWriteStream(remotePath, {
-      highWaterMark: TRANSFER_CHUNK_SIZE,
-      flags: checkpoint > 0 ? "r+" : "w",
-      start: checkpoint,
-    });
-    let transferred = checkpoint;
-    let settled = false;
-
-    transfer.readStream = readStream;
-    transfer.writeStream = writeStream;
-    // Honor a pause that raced stream open (fingerprint / dir ensure window).
-    // Do not pipe while paused — Node pipe auto-resumes on drain.
-    if (transfer.paused) {
-      try { readStream.pause(); } catch { }
-      transfer.streamsUnpiped = true;
-    } else {
-      readStream.pipe(writeStream);
-      transfer.streamsUnpiped = false;
-    }
-
-    const cleanup = (err) => {
-      if (settled) return;
-      settled = true;
-      readStream.removeAllListeners();
-      writeStream.removeAllListeners();
-      if (err) {
-        try { readStream.destroy(); } catch { }
-        try { writeStream.destroy(); } catch { }
-        reject(err);
-      } else {
-        resolve();
-      }
-    };
-
-    readStream.on('data', (chunk) => {
-      if (transfer.cancelled) { cleanup(new Error('Transfer cancelled')); return; }
-      transferred += chunk.length;
-      sendProgress(transferred, fileSize);
-    });
-    readStream.on('error', cleanup);
-    writeStream.on('error', cleanup);
-    writeStream.on('close', () => {
-      if (transfer.cancelled) {
-        cleanup(new Error('Transfer cancelled'));
-        return;
-      }
-      if (!readStream.readableEnded || transferred !== fileSize) {
-        cleanup(new Error('Upload stream closed before finish'));
-        return;
-      }
-      cleanup(null);
-    });
-  });
-  await assertRemoteUploadSize(client, remotePath, fileSize);
-  if (initialSource) {
-    const latestSource = await fs.promises.stat(localPath);
-    assertSourceMetadataUnchanged(initialSource, latestSource, fileSize);
-  }
-  if (streamContentFingerprint) {
-    await assertLocalContentFingerprintUnchanged(
-      localPath,
-      streamContentFingerprint,
-      fileSize,
+  } else if (!lastPipelineError) {
+    lastPipelineError = new Error(
+      "SFTP session does not support pipelined WRITE (open/write missing)",
     );
   }
+
+  // Fail closed — do not crawl via serial WriteStream (industry practice:
+  // OpenSSH/Electerm/WinSCP keep outstanding-request fanout; they do not
+  // silently degrade to 1-in-flight put on failure).
+  // Main's #2458 pause/unpipe fix still applies to download/local stream paths.
+  transfer.uploadStrategy = "failed";
+  const cause = lastPipelineError;
+  const message = cause?.message
+    ? `SFTP pipelined upload failed: ${cause.message}`
+    : "SFTP pipelined upload failed (no serial stream fallback)";
+  const error = new Error(message, cause ? { cause } : undefined);
+  if (cause?.noTransferFallback) error.noTransferFallback = true;
+  throw error;
 }
 
 function openSftpHandle(sftp, filePath, flags) {
@@ -965,37 +1091,22 @@ function createSourceContentChangedError() {
   return error;
 }
 
-function sampleOffsetsForFingerprint(fileSize) {
-  if (fileSize <= 0) return [];
-  const sampleSize = Math.min(TRANSFER_CHUNK_SIZE, fileSize);
-  return [...new Set([
-    0,
-    Math.max(0, Math.floor((fileSize - sampleSize) / 2)),
-    Math.max(0, fileSize - sampleSize),
-  ])].map((position) => ({
-    position,
-    length: Math.min(sampleSize, fileSize - position),
-  }));
-}
-
 /**
- * Content fingerprint for same-size rewrite detection. Metadata (mtime/ctime)
- * alone is not enough: some filesystems keep the same timestamp within a tick.
+ * Full content fingerprint for same-size rewrite detection. Uploads can read
+ * ranges out of order, so metadata or sparse sampling cannot prove that a
+ * large source stayed unchanged throughout the transfer.
  */
 async function captureLocalContentFingerprintFromHandle(fileHandle, fileSize) {
-  const samples = sampleOffsetsForFingerprint(fileSize);
-  if (samples.length === 0) return { size: fileSize, digests: [] };
-  const digests = [];
-  for (const { position, length } of samples) {
-    const buffer = Buffer.allocUnsafe(length);
+  const hash = crypto.createHash("sha256");
+  const buffer = Buffer.allocUnsafe(Math.min(1024 * 1024, Math.max(1, fileSize)));
+  let position = 0;
+  while (position < fileSize) {
+    const length = Math.min(buffer.length, fileSize - position);
     await readLocalRange(fileHandle, buffer, position, length);
-    digests.push({
-      position,
-      length,
-      digest: crypto.createHash("sha256").update(buffer).digest("hex"),
-    });
+    hash.update(buffer.subarray(0, length));
+    position += length;
   }
-  return { size: fileSize, digests };
+  return { size: fileSize, digest: hash.digest("hex") };
 }
 
 async function captureLocalContentFingerprint(filePath, fileSize) {
@@ -1025,38 +1136,16 @@ async function assertLocalContentFingerprintUnchanged(filePath, fingerprint, exp
     throw createSourceSizeChangedError(expectedSize, latestSize);
   }
   const latest = await captureLocalContentFingerprint(filePath, expectedSize);
-  if (latest.digests.length !== fingerprint.digests.length) {
+  if (latest.digest !== fingerprint.digest) {
     throw createSourceContentChangedError();
-  }
-  for (let i = 0; i < fingerprint.digests.length; i += 1) {
-    const before = fingerprint.digests[i];
-    const after = latest.digests[i];
-    if (
-      before.position !== after.position
-      || before.length !== after.length
-      || before.digest !== after.digest
-    ) {
-      throw createSourceContentChangedError();
-    }
   }
 }
 
 async function assertLocalContentFingerprintUnchangedFromHandle(fileHandle, fingerprint, expectedSize) {
   if (!fingerprint) return;
   const latest = await captureLocalContentFingerprintFromHandle(fileHandle, expectedSize);
-  if (latest.size !== expectedSize || latest.digests.length !== fingerprint.digests.length) {
+  if (latest.size !== expectedSize || latest.digest !== fingerprint.digest) {
     throw createSourceContentChangedError();
-  }
-  for (let i = 0; i < fingerprint.digests.length; i += 1) {
-    const before = fingerprint.digests[i];
-    const after = latest.digests[i];
-    if (
-      before.position !== after.position
-      || before.length !== after.length
-      || before.digest !== after.digest
-    ) {
-      throw createSourceContentChangedError();
-    }
   }
 }
 
@@ -1087,6 +1176,7 @@ async function runPausableConcurrentRanges({
   sendProgress,
   abortChannel,
   sftp = null,
+  forceSettleOnError = false,
 }) {
   let nextOffset = checkpoint;
   // Progress may complete out of order, but the resume checkpoint must never
@@ -1127,10 +1217,33 @@ async function runPausableConcurrentRanges({
 
   try {
     await new Promise((resolve, reject) => {
+      let forceFinishTimer = null;
+      const clearForceFinish = () => {
+        if (forceFinishTimer) {
+          clearTimeout(forceFinishTimer);
+          forceFinishTimer = null;
+        }
+      };
       const finish = (error) => {
         if (settled) return;
         if (error) terminalError = terminalError || error;
-        if (active > 0) return;
+        if (active > 0) {
+          // Cancel must remain bounded even on a shared channel. Ordinary
+          // shared-channel errors, however, must drain their in-flight WRITEs
+          // before the caller can clean up or retry the same remote path.
+          if (transfer.cancelled || (terminalError && forceSettleOnError)) {
+            clearForceFinish();
+            forceFinishTimer = setTimeout(() => {
+              if (settled) return;
+              active = 0;
+              settled = true;
+              reject(terminalError || new Error("Transfer cancelled"));
+            }, 2000);
+            forceFinishTimer.unref?.();
+          }
+          return;
+        }
+        clearForceFinish();
         settled = true;
         if (terminalError) reject(terminalError);
         else resolve();
@@ -1138,7 +1251,7 @@ async function runPausableConcurrentRanges({
 
       const abort = (error = new Error("Transfer cancelled")) => {
         terminalError = terminalError || error;
-        try { abortChannel?.(); } catch { }
+        try { abortChannel?.(); } catch { /* ignore */ }
         finish(terminalError);
       };
 
@@ -1227,25 +1340,39 @@ async function runPausableConcurrentRanges({
   }
 }
 
-async function uploadFileResumableFast(
+/**
+ * Pipelined SFTP WRITE upload (same fanout as ssh2 fastPut).
+ *
+ * @param {{ disposeChannel?: boolean }} [options]
+ *   disposeChannel — when true (isolated channel), end the SFTP subsystem on
+ *   cancel/finish. When false (shared browse session), never call sftp.end().
+ */
+async function uploadFileConcurrent(
   localPath,
   remotePath,
   sftp,
   fileSize,
   transfer,
   sendProgress,
+  options = {},
 ) {
+  const disposeChannel = options.disposeChannel !== false;
   const checkpoint = Math.max(0, Math.min(transfer.checkpointBytes || 0, fileSize));
   let channelError = null;
   const onChannelError = (error) => {
     channelError = channelError || error;
   };
   sftp.on?.("error", onChannelError);
-  // Install cancel before OPEN so a stalled remote open can still end the
+  // Install cancel before OPEN so a stalled remote open can still end an
   // isolated channel (runPausableConcurrentRanges would install this later).
+  const abortChannel = () => {
+    if (disposeChannel) {
+      try { sftp.end?.(); } catch { /* ignore */ }
+    }
+  };
   const abortEarly = () => {
     transfer.cancelled = true;
-    try { sftp.end?.(); } catch { }
+    abortChannel();
   };
   transfer.abort = abortEarly;
 
@@ -1287,8 +1414,9 @@ async function uploadFileResumableFast(
           await writeSftpRange(sftp, remoteHandle, buffer, position, length);
         },
         sendProgress,
-        abortChannel: () => sftp.end?.(),
+        abortChannel,
         sftp,
+        forceSettleOnError: disposeChannel,
       });
       if (channelError) throw channelError;
       await assertLocalContentFingerprintUnchangedFromHandle(
@@ -1315,22 +1443,39 @@ async function uploadFileResumableFast(
       await localHandle.close().catch(() => {});
     }
     let remoteCloseError = null;
-    if (remoteHandle && !failed && !transfer.cancelled) {
-      try {
-        await closeSftpHandle(sftp, remoteHandle);
-      } catch (error) {
-        remoteCloseError = error;
+    // Close remote handles while the channel is still live. On disposeChannel
+    // cancel/failure the channel is about to be ended (or already dead); a
+    // CLOSE request would hang forever with no callback from ssh2.
+    if (remoteHandle) {
+      const skipClose = disposeChannel && (failed || transfer.cancelled);
+      if (!skipClose) {
+        try {
+          await Promise.race([
+            closeSftpHandle(sftp, remoteHandle),
+            new Promise((_, reject) => {
+              setTimeout(() => reject(new Error("SFTP close timed out")), 2000);
+            }),
+          ]);
+        } catch (error) {
+          if (!failed && !transfer.cancelled && !/timed out/i.test(error?.message || "")) {
+            remoteCloseError = error;
+          }
+        }
       }
     }
     if (!failed && !transfer.cancelled && !remoteCloseError && channelError) {
       remoteCloseError = channelError;
     }
-    // Single dispose path for the isolated channel.
-    try { sftp.end?.(); } catch { }
-    try { sftp.removeListener?.("error", onChannelError); } catch { }
+    if (disposeChannel) {
+      try { sftp.end?.(); } catch { /* ignore */ }
+    }
+    try { sftp.removeListener?.("error", onChannelError); } catch { /* ignore */ }
     if (remoteCloseError) throw remoteCloseError;
   }
 }
+
+// Back-compat alias for older call sites / tests that still name the isolated path.
+const uploadFileResumableFast = uploadFileConcurrent;
 
 /**
  * Preserve fastGet's high-latency request window without giving up a safe
@@ -2238,7 +2383,7 @@ async function startTransferNow(event, payload, onProgress) {
         transfer.stagedRemote = null;
       }
     }
-    if (err.message === 'Transfer cancelled') {
+    if (transfer.cancelled || err.message === 'Transfer cancelled') {
       if (transfer.stagedLocalPath) {
         try { await fs.promises.unlink(transfer.stagedLocalPath); } catch { }
       }
