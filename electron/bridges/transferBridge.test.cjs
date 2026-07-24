@@ -1190,10 +1190,13 @@ test("non-resumable shared range cancellation drains writes and removes the temp
     },
   );
   const readyDeadline = Date.now() + 2000;
-  while (pendingWrites.length === 0 && Date.now() < readyDeadline) {
+  while (
+    pendingWrites.length < UPLOAD_TRANSFER_CONCURRENCY
+    && Date.now() < readyDeadline
+  ) {
     await new Promise((resolve) => setImmediate(resolve));
   }
-  assert.ok(pendingWrites.length > 0);
+  assert.equal(pendingWrites.length, UPLOAD_TRANSFER_CONCURRENCY);
   let transferSettled = false;
   void running.finally(() => {
     transferSettled = true;
@@ -1204,6 +1207,7 @@ test("non-resumable shared range cancellation drains writes and removes the temp
   assert.equal(fs.existsSync(digestPath), true);
 
   const firstWrite = pendingWrites.shift();
+  assert.ok(pendingWrites.length > 0);
   firstWrite(new Error("write cancelled"));
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(transferSettled, false);
