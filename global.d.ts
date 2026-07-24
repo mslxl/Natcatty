@@ -294,12 +294,15 @@ declare global {
     requestId?: string;
     sessionId: string;
     protocol?: string;
+    hostLabel?: string;
+    hostname?: string;
     providerId: string;
     configuration: import("@netcatty/plugin-contract").JsonValue;
     columns: number;
     rows: number;
     credential?: import("@netcatty/plugin-contract").CredentialRef | import("@netcatty/plugin-contract").SecretRef;
     authenticationProviderId?: string;
+    sessionLog?: { enabled: boolean; directory: string; format: string; timestampsEnabled?: boolean };
     deadlineMs?: number;
   }
 

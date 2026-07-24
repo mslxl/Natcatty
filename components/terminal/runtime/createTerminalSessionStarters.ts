@@ -1437,10 +1437,13 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       const opened = await ctx.terminalBackend.startPluginConnection({
         sessionId: ctx.sessionId,
         protocol: ctx.host.protocol,
+        hostLabel: ctx.host.label,
+        hostname: ctx.host.hostname,
         providerId: connection.providerId,
         configuration: connection.configuration,
         columns: term.cols,
         rows: term.rows,
+        sessionLog: ctx.sessionLog?.enabled ? ctx.sessionLog : undefined,
         ...(connection.authenticationProviderId
           ? { authenticationProviderId: connection.authenticationProviderId }
           : {}),

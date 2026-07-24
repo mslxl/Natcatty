@@ -119,6 +119,12 @@ test("startPluginConnection preserves the namespaced provider configuration and 
       },
     },
     terminalBackend,
+    sessionLog: {
+      enabled: true,
+      directory: "/logs",
+      format: "html",
+      timestampsEnabled: true,
+    },
     onSessionAttached: (id: string) => attached.push(id),
     updateStatus: (status: string) => statuses.push(status),
     setProgressLogs: (update: string[] | ((previous: string[]) => string[])) => {
@@ -131,10 +137,18 @@ test("startPluginConnection preserves the namespaced provider configuration and 
   assert.deepEqual(captured, {
     sessionId: "session-1",
     protocol: "plugin:com.example.transport.connection",
+    hostLabel: "Custom protocol",
+    hostname: "opaque.example",
     providerId: "com.example.transport.connection",
     configuration: { endpoint: "opaque.example", secure: true },
     columns: 120,
     rows: 32,
+    sessionLog: {
+      enabled: true,
+      directory: "/logs",
+      format: "html",
+      timestampsEnabled: true,
+    },
     authenticationProviderId: "com.example.transport.auth",
     credential: { kind: "credential", id: "credential-reference-1234" },
   });

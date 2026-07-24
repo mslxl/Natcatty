@@ -1476,6 +1476,9 @@ function createTerminalWorkerManager(options = {}) {
         columns: optionsForSession.columns,
         rows: optionsForSession.rows,
         protocol: optionsForSession.protocol,
+        hostLabel: optionsForSession.hostLabel,
+        hostname: optionsForSession.hostname,
+        sessionLog: optionsForSession.sessionLog,
       }, { webContentsId });
     } catch (error) {
       externalSessions.delete(sessionId);

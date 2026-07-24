@@ -569,6 +569,9 @@ function registerPluginBridge(ipcMain, options) {
         columns: payload?.columns,
         rows: payload?.rows,
         protocol: payload?.protocol,
+        hostLabel: payload?.hostLabel,
+        hostname: payload?.hostname,
+        sessionLog: payload?.sessionLog,
         onInput: (data) => extensionProviderService.write(sessionId, data),
         onResize: ({ columns, rows }) => extensionProviderService.control(
           sessionId,

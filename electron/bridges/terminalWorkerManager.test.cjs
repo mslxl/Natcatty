@@ -159,12 +159,34 @@ test("external sessions reuse worker output routing and propagate input, resize,
     columns: 80,
     rows: 24,
     protocol: "plugin:example.transport",
+    hostLabel: "Example transport",
+    hostname: "example.test",
+    sessionLog: {
+      enabled: true,
+      directory: "/logs",
+      format: "txt",
+      timestampsEnabled: true,
+    },
     onInput: (data) => observed.push(["input", data]),
     onResize: (size) => observed.push(["resize", size]),
     onClose: (reason) => observed.push(["close", reason]),
   });
   const startRequest = child.messages.at(-1);
   assert.equal(startRequest.channel, "netcatty:external:start");
+  assert.deepEqual(startRequest.payload, {
+    sessionId: "plugin-1",
+    columns: 80,
+    rows: 24,
+    protocol: "plugin:example.transport",
+    hostLabel: "Example transport",
+    hostname: "example.test",
+    sessionLog: {
+      enabled: true,
+      directory: "/logs",
+      format: "txt",
+      timestampsEnabled: true,
+    },
+  });
   child.emit("message", {
     kind: "response",
     requestId: startRequest.requestId,

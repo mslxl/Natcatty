@@ -542,8 +542,16 @@ test("plugin connection authentication uses host-rendered sender-owned challenge
     providerId: "com.example.transport.connection",
     authenticationProviderId: "com.example.transport.authentication",
     configuration: { host: "example.test" },
+    hostLabel: "Example transport",
+    hostname: "example.test",
     columns: 80,
     rows: 24,
+    sessionLog: {
+      enabled: true,
+      directory: "/logs",
+      format: "html",
+      timestampsEnabled: true,
+    },
   });
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(sent.length, 1);
@@ -581,7 +589,22 @@ test("plugin connection authentication uses host-rendered sender-owned challenge
     id: "credential-after-auth",
   });
   assert.equal(external[0][0], "start");
-  assert.equal(external[0][1].sessionId, "session-auth-1");
+  assert.deepEqual({
+    sessionId: external[0][1].sessionId,
+    hostLabel: external[0][1].hostLabel,
+    hostname: external[0][1].hostname,
+    sessionLog: external[0][1].sessionLog,
+  }, {
+    sessionId: "session-auth-1",
+    hostLabel: "Example transport",
+    hostname: "example.test",
+    sessionLog: {
+      enabled: true,
+      directory: "/logs",
+      format: "html",
+      timestampsEnabled: true,
+    },
+  });
   assert.deepEqual(external[1], ["output", "session-auth-1", "€"]);
 });
 
