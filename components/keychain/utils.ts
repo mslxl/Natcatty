@@ -86,7 +86,7 @@ export const shouldShowIdentitySection = ({
 
 /**
  * Show keys when any match (or exist while browsing). Hide the empty-key CTA when
- * identities alone already fill the page — including identity-only vaults.
+ * identities alone already fill the page - including identity-only vaults.
  */
 export const shouldShowKeySection = ({
     identityCount,

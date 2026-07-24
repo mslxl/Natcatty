@@ -588,7 +588,7 @@ echo $3 >> "$FILE"`);
         <VaultPageHeader>
           {/* Action buttons: New Key (split) | Import Certificate | New Identity */}
           <div className="flex items-center gap-1">
-            {/* New Key split button — primary add, secondary generate (host-style) */}
+            {/* New Key split button - primary add, secondary generate (host-style) */}
             <Dropdown>
               <div className="flex items-center rounded-md bg-primary text-primary-foreground">
                 <Button
@@ -619,7 +619,7 @@ echo $3 >> "$FILE"`);
               </DropdownContent>
             </Dropdown>
 
-            {/* Import Certificate — single action button */}
+            {/* Import Certificate - single action button */}
             <Button
               size="sm"
               variant="secondary"
