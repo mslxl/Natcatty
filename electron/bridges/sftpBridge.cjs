@@ -837,7 +837,11 @@ async function planScpRemoteUploadReplace(client, remotePath, encoding, signal =
   }
   return {
     writeInPlace: false,
-    existingMode: attrs.permissions && Number.isFinite(attrs.mode) ? attrs.mode : null,
+    // `permissions` distinguishes a real mode 000 from an unparseable mode,
+    // both of which otherwise appear as numeric zero.
+    existingMode: attrs.permissions && Number.isFinite(attrs.mode)
+      ? (attrs.mode & 0o7777)
+      : null,
     destinationExisted: true,
   };
 }

@@ -798,8 +798,11 @@ async function uploadFile(localPath, remotePath, client, fileSize, transfer, sen
         const latestSource = await fs.promises.stat(originalLocalPath);
         assertSourceMetadataUnchanged(initialSource, latestSource, fileSize);
       }
+      // Metadata alone cannot catch same-size rewrites with unchanged/coarse
+      // timestamps (e.g. all ranges already verified before the rewrite).
+      // Re-scan the source against the digest baseline before promotion.
       if (transfer.sourceDigestPath) {
-        await verifyUploadDigestAgainstSource(
+        await verifyUploadDigestBaseline(
           originalLocalPath,
           transfer.sourceDigestPath,
           fileSize,
@@ -1121,90 +1124,7 @@ async function assertUploadDigestCapacity(digestPath, fileSize) {
   }
 }
 
-async function createUploadDigestBaseline(sourcePath, digestPath, fileSize, transfer) {
-  // A crashed attempt may have left this transfer's old baseline behind. It is
-  // fully replaceable and its blocks must be reclaimable before capacity is
-  // evaluated for the new baseline.
-  await fs.promises.rm(digestPath, { force: true });
-  await assertUploadDigestCapacity(digestPath, fileSize);
-  const writeBaseline = async () => {
-    const sourceHandle = await fs.promises.open(sourcePath, "r");
-    let digestHandle = null;
-    try {
-      digestHandle = await fs.promises.open(digestPath, "w");
-      const buffer = Buffer.allocUnsafe(Math.min(UPLOAD_DIGEST_SCAN_SIZE, Math.max(1, fileSize)));
-      let position = 0;
-      let digestPosition = 0;
-      while (position < fileSize) {
-        if (transfer.cancelled) throw new Error("Transfer cancelled");
-        const length = Math.min(buffer.length, fileSize - position);
-        await readLocalRange(sourceHandle, buffer, position, length);
-        const digestCount = Math.ceil(length / TRANSFER_CHUNK_SIZE);
-        const digests = Buffer.allocUnsafe(digestCount * 32);
-        for (let offset = 0, index = 0; offset < length; offset += TRANSFER_CHUNK_SIZE, index += 1) {
-          crypto.createHash("sha256")
-            .update(buffer.subarray(offset, Math.min(offset + TRANSFER_CHUNK_SIZE, length)))
-            .digest()
-            .copy(digests, index * 32);
-        }
-        let written = 0;
-        while (written < digests.length) {
-          const result = await digestHandle.write(
-            digests,
-            written,
-            digests.length - written,
-            digestPosition + written,
-          );
-          if (!result || result.bytesWritten <= 0) {
-            throw new Error("Upload digest baseline stopped accepting data");
-          }
-          written += result.bytesWritten;
-        }
-        position += length;
-        digestPosition += digests.length;
-      }
-    } finally {
-      await sourceHandle.close().catch(() => {});
-      await digestHandle?.close().catch(() => {});
-    }
-  };
-
-  const verifyBaseline = async () => {
-    const sourceHandle = await fs.promises.open(sourcePath, "r");
-    const digestHandle = await fs.promises.open(digestPath, "r");
-    try {
-      const buffer = Buffer.allocUnsafe(Math.min(UPLOAD_DIGEST_SCAN_SIZE, Math.max(1, fileSize)));
-      let position = 0;
-      let chunkIndex = 0;
-      while (position < fileSize) {
-        if (transfer.cancelled) throw new Error("Transfer cancelled");
-        const length = Math.min(buffer.length, fileSize - position);
-        await readLocalRange(sourceHandle, buffer, position, length);
-        const digestCount = Math.ceil(length / TRANSFER_CHUNK_SIZE);
-        const expected = Buffer.allocUnsafe(digestCount * 32);
-        await readLocalRange(digestHandle, expected, chunkIndex * 32, expected.length);
-        for (let offset = 0, index = 0; offset < length; offset += TRANSFER_CHUNK_SIZE, index += 1) {
-          const actual = crypto.createHash("sha256")
-            .update(buffer.subarray(offset, Math.min(offset + TRANSFER_CHUNK_SIZE, length)))
-            .digest();
-          if (!expected.subarray(index * 32, (index + 1) * 32).equals(actual)) {
-            throw createSourceContentChangedError();
-          }
-        }
-        position += length;
-        chunkIndex += digestCount;
-      }
-    } finally {
-      await sourceHandle.close().catch(() => {});
-      await digestHandle.close().catch(() => {});
-    }
-  };
-
-  await writeBaseline();
-  await verifyBaseline();
-}
-
-async function verifyUploadDigestAgainstSource(sourcePath, digestPath, fileSize, transfer) {
+async function verifyUploadDigestBaseline(sourcePath, digestPath, fileSize, transfer) {
   const sourceHandle = await fs.promises.open(sourcePath, "r");
   const digestHandle = await fs.promises.open(digestPath, "r");
   try {
@@ -1233,6 +1153,55 @@ async function verifyUploadDigestAgainstSource(sourcePath, digestPath, fileSize,
     await sourceHandle.close().catch(() => {});
     await digestHandle.close().catch(() => {});
   }
+}
+
+async function createUploadDigestBaseline(sourcePath, digestPath, fileSize, transfer) {
+  // A crashed attempt may have left this transfer's old baseline behind. It is
+  // fully replaceable and its blocks must be reclaimable before capacity is
+  // evaluated for the new baseline.
+  await fs.promises.rm(digestPath, { force: true });
+  await assertUploadDigestCapacity(digestPath, fileSize);
+  const sourceHandle = await fs.promises.open(sourcePath, "r");
+  let digestHandle = null;
+  try {
+    digestHandle = await fs.promises.open(digestPath, "w");
+    const buffer = Buffer.allocUnsafe(Math.min(UPLOAD_DIGEST_SCAN_SIZE, Math.max(1, fileSize)));
+    let position = 0;
+    let digestPosition = 0;
+    while (position < fileSize) {
+      if (transfer.cancelled) throw new Error("Transfer cancelled");
+      const length = Math.min(buffer.length, fileSize - position);
+      await readLocalRange(sourceHandle, buffer, position, length);
+      const digestCount = Math.ceil(length / TRANSFER_CHUNK_SIZE);
+      const digests = Buffer.allocUnsafe(digestCount * 32);
+      for (let offset = 0, index = 0; offset < length; offset += TRANSFER_CHUNK_SIZE, index += 1) {
+        crypto.createHash("sha256")
+          .update(buffer.subarray(offset, Math.min(offset + TRANSFER_CHUNK_SIZE, length)))
+          .digest()
+          .copy(digests, index * 32);
+      }
+      let written = 0;
+      while (written < digests.length) {
+        const result = await digestHandle.write(
+          digests,
+          written,
+          digests.length - written,
+          digestPosition + written,
+        );
+        if (!result || result.bytesWritten <= 0) {
+          throw new Error("Upload digest baseline stopped accepting data");
+        }
+        written += result.bytesWritten;
+      }
+      position += length;
+      digestPosition += digests.length;
+    }
+  } finally {
+    await sourceHandle.close().catch(() => {});
+    await digestHandle?.close().catch(() => {});
+  }
+
+  await verifyUploadDigestBaseline(sourcePath, digestPath, fileSize, transfer);
 }
 
 async function readVerifiedUploadRange(
@@ -1576,7 +1545,7 @@ async function uploadFileConcurrent(
         assertSourceMetadataUnchanged(initialSource, latestSource, fileSize);
       }
       if (ephemeralDigestPath) {
-        await verifyUploadDigestAgainstSource(localPath, ephemeralDigestPath, fileSize, transfer);
+        await verifyUploadDigestBaseline(localPath, ephemeralDigestPath, fileSize, transfer);
       }
     } catch (error) {
       failed = true;

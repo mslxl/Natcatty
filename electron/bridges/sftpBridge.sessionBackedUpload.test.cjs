@@ -335,6 +335,84 @@ test("SCP writeSftpBinaryWithProgress uses the shared staged transaction", async
   assert.deepEqual(chmodCalls, [{ remotePath: uploadPaths[0], mode: 0o755 }]);
 });
 
+test("SCP staged uploads preserve an existing mode 000", async (t) => {
+  const tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-scp-mode-zero-"));
+  t.after(async () => fs.promises.rm(tempRoot, { recursive: true, force: true }));
+  tempDirBridge.init?.({ getPath: () => tempRoot });
+
+  const payload = Buffer.from("replacement over mode-zero file");
+  const finalPath = "/tmp/locked.bin";
+  const remoteFiles = new Map([[finalPath, Buffer.from("old")]]);
+  const remoteModes = new Map([[finalPath, 0]]);
+  const uploadPaths = [];
+  const chmodCalls = [];
+  const backend = {
+    async stat(remotePath) {
+      if (!remoteFiles.has(remotePath)) {
+        const error = new Error("No such file");
+        error.code = "ENOENT";
+        throw error;
+      }
+      return {
+        type: "file",
+        isDirectory: false,
+        size: remoteFiles.get(remotePath).length,
+        mode: remoteModes.get(remotePath) ?? 0o644,
+        permissions: remoteModes.get(remotePath) === 0 ? "---------" : "rw-r--r--",
+      };
+    },
+    async uploadFile(localPath, remotePath, options = {}) {
+      uploadPaths.push(remotePath);
+      const contents = await fs.promises.readFile(localPath);
+      remoteFiles.set(remotePath, contents);
+      remoteModes.set(remotePath, 0o644);
+      options.onProgress?.(contents.length, contents.length);
+    },
+    async chmod(remotePath, mode) {
+      chmodCalls.push({ remotePath, mode });
+      remoteModes.set(remotePath, mode);
+    },
+    async rename(fromPath, toPath) {
+      remoteFiles.set(toPath, remoteFiles.get(fromPath));
+      remoteFiles.delete(fromPath);
+      remoteModes.set(toPath, remoteModes.get(fromPath));
+      remoteModes.delete(fromPath);
+    },
+    async remove(remotePath) {
+      remoteFiles.delete(remotePath);
+      remoteModes.delete(remotePath);
+    },
+  };
+  const sftpClients = new Map([["scp-mode-zero", {
+    __netcattyFileProtocol: "scp",
+    __netcattyScpBackend: backend,
+  }]]);
+  sftpBridge.init({
+    electronModule: { webContents: { fromId: () => ({ send() {} }) } },
+    sessions: new Map(),
+    sftpClients,
+  });
+
+  const result = await sftpBridge.writeSftpBinaryWithProgress(
+    { sender: { id: 1 } },
+    {
+      sftpId: "scp-mode-zero",
+      path: finalPath,
+      content: payload,
+      transferId: "scp-mode-zero-upload",
+      onProgress() {},
+      onComplete() {},
+    },
+  );
+
+  assert.equal(result.success, true, result.error || "upload failed");
+  assert.equal(uploadPaths.length, 1);
+  assert.match(uploadPaths[0], /\.netcatty-upload-.*\.part$/);
+  assert.deepEqual(remoteFiles.get(finalPath), payload);
+  assert.deepEqual(chmodCalls, [{ remotePath: uploadPaths[0], mode: 0 }]);
+  assert.equal(remoteModes.get(finalPath), 0);
+});
+
 test("SCP symlink uploads do not compare content size with the link node", async () => {
   let uploadCalls = 0;
   const backend = {

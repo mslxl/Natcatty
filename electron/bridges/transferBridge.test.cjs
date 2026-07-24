@@ -827,7 +827,26 @@ test("resumable concurrent uploads reject a source rewritten mid-transfer", asyn
   const payload = Buffer.alloc(16 * 1024, 41);
   const localPath = path.join(tempDir, "upload.bin");
   await fs.promises.writeFile(localPath, payload);
-  const stableSourceStat = await fs.promises.stat(localPath);
+  // Freeze metadata views so a same-size rewrite is invisible to mtime/ctime
+  // checks; promotion must still fail via the digest revalidation.
+  const frozenSource = await fs.promises.stat(localPath);
+  const realStat = fs.promises.stat.bind(fs.promises);
+  const realOpen = fs.promises.open.bind(fs.promises);
+  fs.promises.stat = async (p, ...args) => {
+    if (path.resolve(String(p)) === path.resolve(localPath)) return frozenSource;
+    return realStat(p, ...args);
+  };
+  fs.promises.open = async (p, flags, ...args) => {
+    const handle = await realOpen(p, flags, ...args);
+    if (path.resolve(String(p)) === path.resolve(localPath) && String(flags).includes("r")) {
+      handle.stat = async () => frozenSource;
+    }
+    return handle;
+  };
+  t.after(() => {
+    fs.promises.stat = realStat;
+    fs.promises.open = realOpen;
+  });
   let rewritten = false;
   let promoted = false;
   let stagedDeleted = false;
@@ -869,30 +888,19 @@ test("resumable concurrent uploads reject a source rewritten mid-transfer", asyn
   };
   transferBridge.init({ sftpClients: new Map([["target", client]]) });
 
-  const originalStat = fs.promises.stat;
-  fs.promises.stat = async (targetPath, ...args) => (
-    path.resolve(String(targetPath)) === path.resolve(localPath)
-      ? stableSourceStat
-      : originalStat(targetPath, ...args)
+  const result = await transferBridge.startTransfer(
+    { sender: createSender() },
+    {
+      transferId: "upload-source-change",
+      sourcePath: localPath,
+      targetPath: "/tmp/upload.bin",
+      sourceType: "local",
+      targetType: "sftp",
+      targetSftpId: "target",
+      totalBytes: payload.length,
+      resumable: true,
+    },
   );
-  let result;
-  try {
-    result = await transferBridge.startTransfer(
-      { sender: createSender() },
-      {
-        transferId: "upload-source-change",
-        sourcePath: localPath,
-        targetPath: "/tmp/upload.bin",
-        sourceType: "local",
-        targetType: "sftp",
-        targetSftpId: "target",
-        totalBytes: payload.length,
-        resumable: true,
-      },
-    );
-  } finally {
-    fs.promises.stat = originalStat;
-  }
 
   assert.equal(rewritten, true);
   assert.match(result.error || "", /source|content|changed|fingerprint|mismatch/i);
