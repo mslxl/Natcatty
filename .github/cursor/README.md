@@ -17,7 +17,10 @@ re-comments `@codex review` after the author pushes more commits
 
 Optional:
 
-- `TRIAGE_GITHUB_TOKEN` — optional PAT for PR comments / fork re-`@codex`.
+- `TRIAGE_GITHUB_TOKEN` — bot PAT (netcatty-bot) for opening PRs, labels, triage replies.
+- `CODEX_REQUEST_GITHUB_TOKEN` — **maintainer PAT (binaricat)** used only for
+  `@codex review` comments so the Codex GitHub connector sees a human identity.
+  Falls back to `TRIAGE_GITHUB_TOKEN` / `GITHUB_TOKEN` if unset.
 - `SLACK_WEBHOOK_URL` — status pings.
 
 Fork re-`@codex` uses `pull_request_target` (default-branch checkout only) so
@@ -37,9 +40,40 @@ clone.
 
 Actions → **Cursor automation** → Run workflow → provide an issue or PR number.
 
+## Format recovery → triage
+
+`issue-format` and triage share the same title/body rules in
+`scripts/cursor-automation.cjs` (CJK-friendly `[Bug]`/`[Feature]` summaries).
+
+When a closed `invalid-format` issue is fixed, `issue-format` reopens it and
+**dispatches** `cursor-automation` via `workflow_dispatch` (GITHUB_TOKEN cannot
+silently chain `issues.reopened`, but `workflow_dispatch` is allowed).
+
+## Bot PR titles and bodies
+
+Implement agents write:
+
+- `TITLE:` in `.cursor-runtime/implement-status.txt` → draft PR title
+  (`selectBotPrTitle`, with short `fix(#N): …` fallback)
+- `.cursor-runtime/implement-pr-body.md` → full maintainer-style PR body
+  (`buildPullRequestBody` prefers this; short template only if missing/thin)
+
+Bodies always get bot markers + `Fixes #N` + an Automation footer when needed.
+
+## Codex label handoffs
+
+Terminal codex_loop outcomes always drop `automation:codex-loop`:
+
+| Outcome | Labels |
+|---|---|
+| clean / mark_ready | `automation:codex-clean` (+ bot-pr), no loop/human |
+| give_up / verify fail / empty fix | `ready-for-human`, no loop/clean |
+
 ## Safety
 
 - External / fork PRs: only re-trigger Codex; **no** Cursor CLI review and **no** commits.
 - Own / bot PR Codex findings: Cursor CLI may push fixes (max rounds).
 - Automation never publishes changes under `.github/` or automation scripts.
 - Issue text is sanitized before prompts.
+- Classify must research unknown product names and issue URLs before needs-info.
+- Author replies on `needs-info` / `triage:bug-needs-info` re-run classify (same research bar).

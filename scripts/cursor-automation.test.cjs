@@ -723,6 +723,18 @@ test('buildCodexReviewRequestComment pins head sha', () => {
   );
   assert.match(body, /cursor-codex-round:2/);
   assert.match(body, /cursor-codex-head:deadbeefcafebabe000000000000000000000001/);
+  assert.equal((body.match(/@codex review/g) || []).length, 1);
+  assert.doesNotMatch(body, /cursor-external-codex:/);
+});
+
+test('buildCodexReviewRequestComment can plant external dedupe marker once', () => {
+  const sha = 'deadbeefcafebabe000000000000000000000001';
+  const body = auto.buildCodexReviewRequestComment(1, sha, {
+    includeExternalMarker: true,
+  });
+  assert.equal((body.match(/@codex review/g) || []).length, 1);
+  assert.match(body, new RegExp(`cursor-codex-head:${sha}`));
+  assert.match(body, new RegExp(`cursor-external-codex:${sha}`));
 });
 
 test('buildExternalCodexRerequestComment only asks Codex', () => {
@@ -730,6 +742,7 @@ test('buildExternalCodexRerequestComment only asks Codex', () => {
   assert.match(body, /@codex review/);
   assert.match(body, /cursor-external-codex:deadbeef/);
   assert.doesNotMatch(body, /Cursor CLI/i);
+  assert.equal((body.match(/@codex review/g) || []).length, 1);
 });
 
 test('getCodexRoundFromComments reads max round from trusted authors only', () => {
@@ -1159,4 +1172,342 @@ test('prepareIssueContext does not throw when search map previously returned und
   });
   assert.equal(result.shouldRun, true);
   assert.equal(outputs.should_run, 'true');
+});
+
+const SAMPLE_BUG_BODY = [
+  '## Describe the problem',
+  'Upload is much slower than WindTerm on the same LAN path.',
+  '## Steps to reproduce',
+  '1. open sftp',
+  '2. upload a large file',
+  '## Expected behavior',
+  'speed close to WindTerm',
+  '## Actual behavior',
+  'stuck near 400KB/s',
+  '## Operating system',
+  'Windows 11',
+].join('\n');
+
+test('isValidIssueTitle accepts short CJK bug titles (issue #2449 shape)', () => {
+  assert.equal(auto.isValidIssueTitle('[Bug] 上传速度太慢了'), true);
+  assert.equal(auto.isValidIssueTitle('[Bug]上传速度太慢了'), true);
+  assert.equal(auto.isValidIssueTitle('[Bug] 文件上传速度太慢了'), true);
+  assert.equal(auto.isValidIssueTitle('[Feature] 按IP排序'), true);
+  assert.equal(auto.isValidIssueTitle('[Other] 讨论一下'), true);
+  assert.equal(auto.isValidIssueTitle('Bug: 上传太慢了'), true);
+});
+
+test('isValidIssueTitle rejects missing prefix or empty summary', () => {
+  assert.equal(auto.isValidIssueTitle('上传速度太慢了'), false);
+  assert.equal(auto.isValidIssueTitle('[Bug]'), false);
+  assert.equal(auto.isValidIssueTitle('[Bug] 慢'), false);
+  assert.equal(auto.isValidIssueTitle('[Bug] ab'), false);
+  assert.equal(auto.isValidIssueTitle(''), false);
+});
+
+test('isValidIssueFormat accepts short CJK title with full template body', () => {
+  assert.equal(
+    auto.isValidIssueFormat({
+      title: '[Bug] 上传速度太慢了',
+      body: SAMPLE_BUG_BODY,
+    }),
+    true,
+  );
+});
+
+test('getIssueFormatErrors returns empty for valid issues and lists title errors', () => {
+  assert.deepEqual(
+    auto.getIssueFormatErrors({
+      title: '[Bug] 上传速度太慢了',
+      body: SAMPLE_BUG_BODY,
+    }),
+    [],
+  );
+  const errors = auto.getIssueFormatErrors({
+    title: 'no prefix here',
+    body: SAMPLE_BUG_BODY,
+  });
+  assert.ok(errors.some((e) => /Title must start/i.test(e)));
+});
+
+test('shouldRecoverIssueFormat recovers closed and open invalid-format when format ok', () => {
+  assert.deepEqual(
+    auto.shouldRecoverIssueFormat({
+      state: 'closed',
+      labels: ['invalid-format', 'bug'],
+      formatOk: true,
+    }),
+    { recover: true, reopen: true },
+  );
+  assert.deepEqual(
+    auto.shouldRecoverIssueFormat({
+      state: 'open',
+      labels: ['invalid-format'],
+      formatOk: true,
+    }),
+    { recover: true, reopen: false },
+  );
+  assert.deepEqual(
+    auto.shouldRecoverIssueFormat({
+      state: 'open',
+      labels: [{ name: 'invalid-format' }],
+      formatOk: true,
+    }),
+    { recover: true, reopen: false },
+  );
+  assert.deepEqual(
+    auto.shouldRecoverIssueFormat({
+      state: 'closed',
+      labels: ['invalid-format'],
+      formatOk: false,
+    }),
+    { recover: false, reopen: false },
+  );
+  assert.deepEqual(
+    auto.shouldRecoverIssueFormat({
+      state: 'closed',
+      labels: ['bug'],
+      formatOk: true,
+    }),
+    { recover: false, reopen: false },
+  );
+});
+
+test('nextCodexTerminalLabels mark_ready drops loop and human, adds clean', () => {
+  const next = auto.nextCodexTerminalLabels(
+    [
+      'automation:bot-pr',
+      'automation:codex-loop',
+      'ready-for-human',
+      'triage',
+    ],
+    'mark_ready',
+  );
+  assert.ok(next.includes('automation:codex-clean'));
+  assert.ok(next.includes('automation:bot-pr'));
+  assert.ok(next.includes('triage'));
+  assert.ok(!next.includes('automation:codex-loop'));
+  assert.ok(!next.includes('ready-for-human'));
+});
+
+test('nextCodexTerminalLabels give_up/verify_fail/empty_fix hand off to human without loop', () => {
+  for (const terminal of ['give_up', 'verify_fail', 'empty_fix']) {
+    const next = auto.nextCodexTerminalLabels(
+      ['automation:bot-pr', 'automation:codex-loop', 'automation:codex-clean', 'triage'],
+      terminal,
+    );
+    assert.ok(next.includes('ready-for-human'), terminal);
+    assert.ok(!next.includes('automation:codex-loop'), terminal);
+    assert.ok(!next.includes('automation:codex-clean'), terminal);
+    assert.ok(next.includes('automation:bot-pr'), terminal);
+  }
+});
+
+test('nextCodexTerminalLabels rejects unknown terminal', () => {
+  assert.throws(() => auto.nextCodexTerminalLabels([], 'nope'), /Unknown codex terminal/);
+});
+
+test('parseImplementStatus reads OK summary and TITLE line', () => {
+  const parsed = auto.parseImplementStatus(
+    ['OK: Raise SFTP WRITE fanout to 32', 'TITLE: fix(sftp): raise upload WRITE fanout', ''].join(
+      '\n',
+    ),
+  );
+  assert.equal(parsed.status, 'ok');
+  assert.match(parsed.summary, /Raise SFTP WRITE fanout/);
+  assert.equal(parsed.title, 'fix(sftp): raise upload WRITE fanout');
+});
+
+test('parseImplementStatus reads BLOCKED', () => {
+  const parsed = auto.parseImplementStatus('BLOCKED: needs product decision');
+  assert.equal(parsed.status, 'blocked');
+  assert.match(parsed.summary, /product decision/);
+});
+
+test('selectBotPrTitle prefers valid agent title over raw issue title template', () => {
+  const title = auto.selectBotPrTitle({
+    agentTitle: 'fix(sftp): raise upload WRITE fanout for higher throughput',
+    issueNumber: 2449,
+    issueTitle: '[Bug] 文件上传速度太慢了',
+  });
+  assert.equal(
+    title,
+    'fix(sftp): raise upload WRITE fanout for higher throughput',
+  );
+  assert.doesNotMatch(title, /^fix\(#2449\): \[Bug\]/);
+});
+
+test('selectBotPrTitle accepts short conventional and CJK agent titles', () => {
+  assert.equal(
+    auto.selectBotPrTitle({
+      agentTitle: 'feat: ui',
+      issueNumber: 1,
+      issueTitle: '[Feature] something',
+    }),
+    'feat: ui',
+  );
+  assert.equal(
+    auto.selectBotPrTitle({
+      agentTitle: '修复上传过慢',
+      issueNumber: 9,
+      issueTitle: '[Bug] 上传',
+    }),
+    '修复上传过慢',
+  );
+});
+
+test('selectBotPrTitle falls back when agent title missing or too short', () => {
+  const fallback = auto.selectBotPrTitle({
+    agentTitle: '',
+    issueNumber: 2449,
+    issueTitle: '[Bug] 文件上传速度太慢了',
+  });
+  assert.equal(fallback, 'fix(#2449): [Bug] 文件上传速度太慢了');
+
+  const short = auto.selectBotPrTitle({
+    agentTitle: 'ab',
+    issueNumber: 12,
+    issueTitle: '[Bug] something long enough here',
+  });
+  assert.match(short, /^fix\(#12\):/);
+});
+
+test('selectBotPrTitle bounds length and never returns empty', () => {
+  const long = 'x'.repeat(200);
+  const title = auto.selectBotPrTitle({
+    agentTitle: long,
+    issueNumber: 1,
+    issueTitle: 'issue',
+    maxLength: 40,
+  });
+  assert.ok(title.length <= 40);
+  assert.ok(title.endsWith('…'));
+
+  const emptyish = auto.selectBotPrTitle({
+    agentTitle: 'TODO',
+    issueNumber: 7,
+    issueTitle: '',
+  });
+  assert.ok(emptyish.length > 0);
+  assert.match(emptyish, /fix\(#7\)/);
+});
+
+test('parseImplementStatus prefers BLOCKED over OK', () => {
+  const parsed = auto.parseImplementStatus(
+    ['OK: did something', 'BLOCKED: needs decision'].join('\n'),
+  );
+  assert.equal(parsed.status, 'blocked');
+  assert.match(parsed.summary, /needs decision/);
+});
+
+test('isValidIssueTitle accepts case variants and no-space legacy', () => {
+  assert.equal(auto.isValidIssueTitle('[bug] upload too slow now'), true);
+  assert.equal(auto.isValidIssueTitle('[FEATURE] sort by ip addr'), true);
+  assert.equal(auto.isValidIssueTitle('Bug:上传太慢了啊'), true);
+});
+
+test('buildPullRequestBody prefers substantial agent body over one-line template', () => {
+  const agentBody = [
+    '## Summary',
+    '',
+    '- Raise SFTP WRITE fanout from 8 to 32 for higher throughput on multi-ms RTT paths.',
+    '- Keep chunk size at 32KB for server compatibility after #2022.',
+    '',
+    '## Why',
+    '',
+    'In-flight window was only 256KB; WindTerm keeps more data on the wire.',
+    '',
+    '## Testing',
+    '',
+    '- node --test electron/bridges/transferLimits.test.cjs',
+    '',
+    'Fixes #2449',
+  ].join('\n');
+  const body = auto.buildPullRequestBody({
+    issueNumber: 2449,
+    issueTitle: '[Bug] 文件上传速度太慢了',
+    summary: 'OK: raise fanout',
+    agentBody,
+  });
+  assert.match(body, /<!-- cursor-bot-pr -->/);
+  assert.match(body, /Raise SFTP WRITE fanout/);
+  assert.match(body, /## Why/);
+  assert.match(body, /Fixes #2449/);
+  assert.match(body, /## Automation/);
+  assert.doesNotMatch(body, /OK: raise fanout/);
+});
+
+test('buildPullRequestBody falls back when agent body is thin', () => {
+  const body = auto.buildPullRequestBody({
+    issueNumber: 12,
+    issueTitle: '[Bug] something',
+    summary: 'Fixed the null check',
+    agentBody: 'short',
+  });
+  assert.match(body, /## Summary/);
+  assert.match(body, /Fixed the null check/);
+  assert.match(body, /Fixes #12/);
+  assert.match(body, /## Automation/);
+});
+
+test('buildPullRequestBody strips agent markers and appends Fixes when missing', () => {
+  const body = auto.buildPullRequestBody({
+    issueNumber: 99,
+    issueTitle: 'x',
+    summary: 'y',
+    agentBody: [
+      '<!-- cursor-bot-pr -->',
+      '## Summary',
+      '',
+      '- One concrete change that is long enough to count as a real body for reviewers.',
+      '- Second bullet explaining the behavior impact on the sidebar streaming path.',
+      '',
+      '## Testing',
+      '',
+      '- unit tests for the helper',
+    ].join('\n'),
+  });
+  assert.equal((body.match(/<!-- cursor-bot-pr -->/g) || []).length, 1);
+  assert.match(body, /Fixes #99/);
+});
+
+test('buildPullRequestBody still appends Fixes when body only has Related to', () => {
+  const body = auto.buildPullRequestBody({
+    issueNumber: 2449,
+    issueTitle: '[Bug] slow upload',
+    summary: 'raise fanout',
+    agentBody: [
+      '## Summary',
+      '',
+      '- Raise SFTP WRITE fanout for multi-ms RTT paths on LAN and public hosts.',
+      '- Keep chunk size at 32KB for compatibility with picky servers.',
+      '',
+      '## Testing',
+      '',
+      '- node --test electron/bridges/transferLimits.test.cjs',
+      '',
+      'Related to #2449',
+    ].join('\n'),
+  });
+  assert.match(body, /Related to #2449/);
+  assert.match(body, /Fixes #2449/);
+});
+
+test('buildPullRequestBody does not duplicate Fixes when Closes already present', () => {
+  const body = auto.buildPullRequestBody({
+    issueNumber: 10,
+    issueTitle: 'x',
+    summary: 'y',
+    agentBody: [
+      '## Summary',
+      '',
+      '- Concrete change one with enough text for a substantial agent body check.',
+      '- Concrete change two covering the secondary behavior path as well.',
+      '',
+      'Closes #10',
+    ].join('\n'),
+  });
+  assert.equal((body.match(/Closes #10|Fixes #10/gi) || []).length, 1);
+  assert.match(body, /Closes #10/);
+  assert.doesNotMatch(body, /Fixes #10/);
 });
