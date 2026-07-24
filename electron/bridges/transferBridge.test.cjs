@@ -2339,18 +2339,25 @@ test("cancelled fast resumable downloads release their isolated channel", async 
     await fs.promises.rm(tempDir, { recursive: true, force: true });
   });
 
-  const payload = Buffer.alloc(32 * 1024, 19);
+  const payload = Buffer.alloc(TRANSFER_CHUNK_SIZE * 2, 19);
   let openedChannels = 0;
   let fallbackReads = 0;
-  let cancelRead = null;
+  const pendingReads = [];
+  let lateReadScheduled = false;
   const firstChannel = createFastSftp({
     open(_remotePath, _flags, callback) {
       callback(null, Buffer.from("first-handle"));
     },
     read(_handle, _buffer, _offset, _length, _position, callback) {
-      cancelRead = () => callback(new Error("channel cancelled"));
+      pendingReads.push(callback);
     },
-    end() {},
+    end() {
+      if (lateReadScheduled) return;
+      lateReadScheduled = true;
+      setTimeout(() => {
+        pendingReads.shift()?.(new Error("late channel cancellation"));
+      }, 1500);
+    },
   });
   const secondChannel = createFastSftp({
     open(_remotePath, _flags, callback) {
@@ -2397,14 +2404,16 @@ test("cancelled fast resumable downloads release their isolated channel", async 
     },
   );
   const readyDeadline = Date.now() + 1000;
-  while (!cancelRead && Date.now() < readyDeadline) {
+  while (pendingReads.length < 2 && Date.now() < readyDeadline) {
     await new Promise((resolve) => setImmediate(resolve));
   }
-  assert.equal(typeof cancelRead, "function");
+  assert.equal(pendingReads.length, 2);
   const cancelledAt = Date.now();
   await transferBridge.cancelTransfer(null, { transferId: "download-cancel-release-first" });
   assert.equal((await first).error, "Transfer cancelled");
-  assert.ok(Date.now() - cancelledAt >= 1900);
+  const cancelDuration = Date.now() - cancelledAt;
+  assert.ok(cancelDuration >= 1900);
+  assert.ok(cancelDuration < 3000);
 
   const second = await transferBridge.startTransfer(
     { sender: createSender() },

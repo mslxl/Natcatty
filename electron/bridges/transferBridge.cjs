@@ -1335,14 +1335,15 @@ async function runPausableConcurrentRanges({
           // callbacks safely because the caller may clean up or reuse the
           // same remote path while those requests are still in flight.
           if (terminalError && forceSettleOnError) {
-            clearForceFinish();
-            forceFinishTimer = setTimeout(() => {
-              if (settled) return;
-              active = 0;
-              settled = true;
-              reject(terminalError || new Error("Transfer cancelled"));
-            }, 2000);
-            forceFinishTimer.unref?.();
+            if (!forceFinishTimer) {
+              forceFinishTimer = setTimeout(() => {
+                if (settled) return;
+                active = 0;
+                settled = true;
+                reject(terminalError || new Error("Transfer cancelled"));
+              }, 2000);
+              forceFinishTimer.unref?.();
+            }
           }
           return;
         }
