@@ -697,13 +697,40 @@ function attrsIndicateDirectory(attrs) {
 async function assertStagedPromotionTargetSafe(client, encodedPath, remotePath, expectedExisted) {
   const sftp = await requireSftpChannel(client);
   if (typeof sftp?.lstat !== "function") {
-    throw new Error(`Cannot safely recheck remote destination before replace: ${remotePath}`);
+    if (expectedExisted !== false) {
+      throw new Error(`Cannot safely recheck remote destination before replace: ${remotePath}`);
+    }
+    try {
+      const attrs = await statAsync(sftp, encodedPath);
+      if (attrs) throw new Error(`Remote destination appeared during upload: ${remotePath}`);
+    } catch (err) {
+      if (isRemoteMissingError(err)) return;
+      throw err;
+    }
+    return;
   }
   let attrs = null;
   try {
     attrs = await lstatAsync(sftp, encodedPath);
   } catch (err) {
-    if (!isRemoteMissingError(err)) throw err;
+    if (isRemoteMissingError(err)) {
+      attrs = null;
+    } else if (expectedExisted === false) {
+      // Runtime lstat may be unsupported despite the method existing. A plain
+      // stat may only authorize promotion when it still proves true absence.
+      try {
+        const fallbackAttrs = await statAsync(sftp, encodedPath);
+        if (fallbackAttrs) {
+          throw new Error(`Remote destination appeared during upload: ${remotePath}`);
+        }
+      } catch (statErr) {
+        if (isRemoteMissingError(statErr)) return;
+        throw statErr;
+      }
+      return;
+    } else {
+      throw err;
+    }
   }
   const existsNow = !!attrs;
   if (expectedExisted === false && existsNow) {
@@ -801,11 +828,35 @@ async function pipelinedUploadWithOptionalStaging(client, localPath, remotePath,
   const backupLogical = buildBackupRemotePath(remotePath);
   const encodedStagedPath = encodePath(stagedLogical, encoding);
   const encodedBackupPath = encodePath(backupLogical, encoding);
+  const cleanupStage = async () => {
+    try {
+      if (typeof client.delete === "function") {
+        await client.delete(encodedStagedPath);
+      }
+    } catch {
+      // Best-effort cleanup of a partial stage.
+    }
+  };
+
   try {
     await pipelinedUploadLocalFile(client, localPath, encodedStagedPath, {
       ...fastPutOptions,
       generatedStagePath: true,
     });
+  } catch (err) {
+    await cleanupStage();
+    // Only stage creation/write permission errors may fall back to in-place.
+    if (isRemotePermissionError(err)) {
+      console.warn(
+        "[SFTP] Staged upload unavailable (permission); falling back to in-place overwrite:",
+        err?.message || String(err),
+      );
+      return uploadDirect();
+    }
+    throw err;
+  }
+
+  try {
     throwIfAborted(signal);
     if (Number.isFinite(expectedSize) && expectedSize >= 0 && typeof client.stat === "function") {
       const stagedStat = await client.stat(encodedStagedPath);
@@ -839,21 +890,7 @@ async function pipelinedUploadWithOptionalStaging(client, localPath, remotePath,
     return { staged: true };
   } catch (err) {
     if (!err?.preserveStagedUpload) {
-      try {
-        if (typeof client.delete === "function") {
-          await client.delete(encodedStagedPath);
-        }
-      } catch {
-        // Best-effort cleanup of a partial stage.
-      }
-    }
-    // Parent dir not writable but existing file may still be: fall back to in-place.
-    if (isRemotePermissionError(err)) {
-      console.warn(
-        "[SFTP] Staged upload unavailable (permission); falling back to in-place overwrite:",
-        err?.message || String(err),
-      );
-      return uploadDirect();
+      await cleanupStage();
     }
     throw err;
   }

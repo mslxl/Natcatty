@@ -434,7 +434,7 @@ test("failed resumable upload opens close their isolated channel", async (t) => 
   assert.ok(endedChannels >= 1, `expected isolated channels to end, got ${endedChannels}`);
 });
 
-test("failed local upload opens close their isolated channel", async (t) => {
+test("failed snapshot opens do not acquire an isolated channel", async (t) => {
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-local-open-fail-"));
   t.after(async () => {
     await fs.promises.rm(tempDir, { recursive: true, force: true });
@@ -463,7 +463,9 @@ test("failed local upload opens close their isolated channel", async (t) => {
 
   const originalOpen = fs.promises.open;
   fs.promises.open = async (filePath, ...args) => {
-    if (filePath === localPath) throw new Error("local source unavailable");
+    if (String(filePath).includes(".snapshot.part")) {
+      throw new Error("local source snapshot unavailable");
+    }
     return originalOpen(filePath, ...args);
   };
   let result;
@@ -485,8 +487,8 @@ test("failed local upload opens close their isolated channel", async (t) => {
     fs.promises.open = originalOpen;
   }
 
-  assert.match(result.error || "", /local source unavailable/);
-  assert.equal(endedChannels, 1);
+  assert.match(result.error || "", /local source snapshot unavailable/);
+  assert.equal(endedChannels, 0);
 });
 
 test("failed local open for resumable upload still ends the isolated channel", async (t) => {
@@ -506,6 +508,12 @@ test("failed local open for resumable upload still ends the isolated channel", a
       remoteOpenAttempts += 1;
       callback(null, Buffer.from("remote-handle"));
     },
+    write(_handle, _buffer, _offset, _length, _position, callback) {
+      callback(null);
+    },
+    close(_handle, callback) {
+      callback(null);
+    },
     end() {
       endedChannels += 1;
     },
@@ -524,7 +532,7 @@ test("failed local open for resumable upload still ends the isolated channel", a
     }),
     client: {
       sftp(callback) {
-        fs.promises.unlink(localPath).finally(() => {
+        fs.promises.rm(localPath, { force: true }).finally(() => {
           callback(null, fastSftp);
         });
       },
@@ -550,7 +558,7 @@ test("failed local open for resumable upload still ends the isolated channel", a
   assert.ok(result.error, "expected transfer to fail when local source disappears");
   // Critical: isolated channel must not leak when local open fails first.
   assert.ok(endedChannels >= 1, `expected isolated channel end, got ${endedChannels}`);
-  assert.equal(remoteOpenAttempts, 0);
+  assert.equal(remoteOpenAttempts, 1);
 });
 
 test("cancel during stalled resumable upload OPEN ends the isolated channel", async (t) => {
@@ -973,7 +981,7 @@ test("resumable fast uploads reject a source that grows during transfer", async 
   assert.equal(promoted, false);
 });
 
-test("resumable fast uploads reject same-size changes outside old sample regions", async (t) => {
+test("resumable uploads use an immutable snapshot when the source changes", async (t) => {
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-upload-metadata-change-"));
   t.after(async () => {
     await fs.promises.rm(tempDir, { recursive: true, force: true });
@@ -989,21 +997,24 @@ test("resumable fast uploads reject same-size changes outside old sample regions
   const frozenStat = await fs.promises.stat(localPath);
   let changeStarted = false;
   let changed = false;
+  let uploadedChangedChunk = null;
   let promoted = false;
   let stagedDeleted = false;
   const fastSftp = createFastSftp({
     open(_remotePath, _flags, callback) {
       callback(null, Buffer.from("remote-handle"));
     },
-    write(_handle, _buffer, _offset, _length, _position, callback) {
+    write(_handle, buffer, offset, length, position, callback) {
+      if (position === changedChunkIndex * TRANSFER_CHUNK_SIZE) {
+        uploadedChangedChunk = Buffer.from(buffer.subarray(offset, offset + length));
+      }
       if (changeStarted) {
         callback(null);
         return;
       }
       changeStarted = true;
-      // Rewrite a chunk in the second concurrency wave before allowing the
-      // first WRITE to complete. Per-range verification must catch it before
-      // that changed chunk is sent, even though start/middle/end samples would not.
+      // Rewrite the original after the upload snapshot has been created. The
+      // remote must still receive the immutable snapshot's old bytes.
       const fd = fs.openSync(localPath, "r+");
       try {
         fs.writeSync(
@@ -1063,6 +1074,8 @@ test("resumable fast uploads reject same-size changes outside old sample regions
   assert.match(result.error || "", /source.*changed/i);
   assert.equal(promoted, false);
   assert.equal(stagedDeleted, true);
+  assert.ok(uploadedChangedChunk);
+  assert.ok(uploadedChangedChunk.equals(Buffer.alloc(TRANSFER_CHUNK_SIZE, 73)));
 });
 
 test("resumable fast downloads clear staged data after a same-second source change", async (t) => {

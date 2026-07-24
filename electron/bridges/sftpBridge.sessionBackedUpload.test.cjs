@@ -704,6 +704,101 @@ test("lstat unsupported falls back to stat and preserves an existing destination
   assert.deepEqual(remoteFiles.get("/etc/app/config.json"), payload);
 });
 
+test("new files still promote when lstat is unavailable or unsupported", async (t) => {
+  for (const variant of ["missing-method", "runtime-unsupported"]) {
+    const tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), `netcatty-new-no-lstat-${variant}-`));
+    t.after(async () => {
+      await fs.promises.rm(tempRoot, { recursive: true, force: true });
+    });
+    tempDirBridge.init?.({ getPath: () => tempRoot });
+
+    const localPath = path.join(tempRoot, "new.bin");
+    const payload = Buffer.from(`new-${variant}`);
+    await fs.promises.writeFile(localPath, payload);
+    const { channel, fastPutCalls, remoteFiles } = createSessionChannel();
+    if (variant === "missing-method") {
+      channel.lstat = undefined;
+    } else {
+      channel.lstat = (_targetPath, callback) => {
+        const err = new Error("SSH_FX_OP_UNSUPPORTED");
+        err.code = 8;
+        callback(err);
+      };
+    }
+
+    const sftpClients = new Map();
+    sftpBridge.init({
+      electronModule: { webContents: { fromId: () => null } },
+      sessions: new Map([[`session-${variant}`, { conn: { sftp: (cb) => cb(null, channel) } }]]),
+      sftpClients,
+    });
+    const opened = await sftpBridge.openSftpForSession(null, {
+      sessionId: `session-${variant}`,
+      fileProtocol: "sftp",
+    });
+
+    await sftpBridge.uploadLocalToSftp(null, {
+      sftpId: opened.sftpId,
+      localPath,
+      remotePath: `/tmp/${variant}.bin`,
+      encoding: "utf-8",
+    });
+    assert.equal(fastPutCalls.length, 1);
+    assert.match(fastPutCalls[0].remotePath, /\.netcatty-upload-/);
+    assert.deepEqual(remoteFiles.get(`/tmp/${variant}.bin`), payload);
+  }
+});
+
+test("permission failure during final target recheck never falls back to direct write", async (t) => {
+  const tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-recheck-permission-"));
+  t.after(async () => {
+    await fs.promises.rm(tempRoot, { recursive: true, force: true });
+  });
+  tempDirBridge.init?.({ getPath: () => tempRoot });
+
+  const localPath = path.join(tempRoot, "data.bin");
+  await fs.promises.writeFile(localPath, Buffer.from("new-data"));
+  const created = createSessionChannel();
+  created.remoteFiles.set("/tmp/data.bin", Buffer.from("old-data"));
+  created.remoteMeta.set("/tmp/data.bin", { mode: 0o100644 });
+  const originalLstat = created.channel.lstat.bind(created.channel);
+  let lstatCalls = 0;
+  created.channel.lstat = (targetPath, callback) => {
+    lstatCalls += 1;
+    if (lstatCalls >= 2 && String(targetPath) === "/tmp/data.bin") {
+      const err = new Error("Permission denied");
+      err.code = "EACCES";
+      callback(err);
+      return;
+    }
+    originalLstat(targetPath, callback);
+  };
+
+  const sftpClients = new Map();
+  sftpBridge.init({
+    electronModule: { webContents: { fromId: () => null } },
+    sessions: new Map([["session-recheck-permission", { conn: { sftp: (cb) => cb(null, created.channel) } }]]),
+    sftpClients,
+  });
+  const opened = await sftpBridge.openSftpForSession(null, {
+    sessionId: "session-recheck-permission",
+    fileProtocol: "sftp",
+  });
+
+  await assert.rejects(
+    () => sftpBridge.uploadLocalToSftp(null, {
+      sftpId: opened.sftpId,
+      localPath,
+      remotePath: "/tmp/data.bin",
+      encoding: "utf-8",
+    }),
+    /Permission denied/,
+  );
+  assert.equal(created.fastPutCalls.length, 1);
+  assert.match(created.fastPutCalls[0].remotePath, /\.netcatty-upload-/);
+  assert.deepEqual(created.remoteFiles.get("/tmp/data.bin"), Buffer.from("old-data"));
+});
+
 test("staged SFTP upload stops if the destination becomes a symlink", async (t) => {
   const tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-sftp-symlink-race-"));
   t.after(async () => {
