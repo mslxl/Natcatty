@@ -2701,11 +2701,13 @@ test("upload resume after hard quit clamps checkpoint to durable remote .part si
 
   const transferId = `crash-resume-${crypto.randomUUID()}`;
   const sourcePath = path.join(tempDir, "source.bin");
-  const payload = Buffer.from("abcdefghij"); // 10 bytes
+  const payload = Buffer.alloc(TRANSFER_CHUNK_SIZE * 2 + 19);
+  for (let index = 0; index < payload.length; index += 1) payload[index] = index % 251;
   await fs.promises.writeFile(sourcePath, payload);
 
-  // Durable remote has first 4 bytes; claimed checkpoint is 8 (progress ahead).
-  let remote = Buffer.from("abcd");
+  // The durable prefix is deliberately not chunk-aligned. The first resumed
+  // request must stop at the digest boundary, and the final bytes must match.
+  let remote = Buffer.from(payload.subarray(0, 4));
   let promoted = false;
   let minWritePosition = Infinity;
   const concurrentSftp = createFastSftp({

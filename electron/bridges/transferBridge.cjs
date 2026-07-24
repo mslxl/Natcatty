@@ -1118,26 +1118,55 @@ function createSourceContentChangedError() {
   return error;
 }
 
+const UPLOAD_DIGEST_SCAN_SIZE = TRANSFER_CHUNK_SIZE * 128;
+
+async function assertUploadDigestCapacity(digestPath, fileSize) {
+  if (typeof fs.promises.statfs !== "function") return;
+  const requiredBytes = BigInt(Math.ceil(fileSize / TRANSFER_CHUNK_SIZE)) * 32n;
+  let stats;
+  try {
+    stats = await fs.promises.statfs(path.dirname(digestPath), { bigint: true });
+  } catch {
+    return;
+  }
+  const availableBytes = BigInt(stats.bavail) * BigInt(stats.bsize);
+  if (availableBytes < requiredBytes) {
+    const error = new Error(
+      `Not enough Netcatty temporary storage for resumable upload verification: requires ${requiredBytes} bytes, ${availableBytes} bytes available`,
+    );
+    error.noTransferFallback = true;
+    throw error;
+  }
+}
+
 async function createUploadDigestBaseline(sourcePath, digestPath, fileSize, transfer) {
+  await assertUploadDigestCapacity(digestPath, fileSize);
   const writeBaseline = async () => {
     const sourceHandle = await fs.promises.open(sourcePath, "r");
     let digestHandle = null;
     try {
       digestHandle = await fs.promises.open(digestPath, "w");
-      const buffer = Buffer.allocUnsafe(Math.min(TRANSFER_CHUNK_SIZE, Math.max(1, fileSize)));
+      const buffer = Buffer.allocUnsafe(Math.min(UPLOAD_DIGEST_SCAN_SIZE, Math.max(1, fileSize)));
       let position = 0;
       let digestPosition = 0;
       while (position < fileSize) {
         if (transfer.cancelled) throw new Error("Transfer cancelled");
         const length = Math.min(buffer.length, fileSize - position);
         await readLocalRange(sourceHandle, buffer, position, length);
-        const digest = crypto.createHash("sha256").update(buffer.subarray(0, length)).digest();
+        const digestCount = Math.ceil(length / TRANSFER_CHUNK_SIZE);
+        const digests = Buffer.allocUnsafe(digestCount * 32);
+        for (let offset = 0, index = 0; offset < length; offset += TRANSFER_CHUNK_SIZE, index += 1) {
+          crypto.createHash("sha256")
+            .update(buffer.subarray(offset, Math.min(offset + TRANSFER_CHUNK_SIZE, length)))
+            .digest()
+            .copy(digests, index * 32);
+        }
         let written = 0;
-        while (written < digest.length) {
+        while (written < digests.length) {
           const result = await digestHandle.write(
-            digest,
+            digests,
             written,
-            digest.length - written,
+            digests.length - written,
             digestPosition + written,
           );
           if (!result || result.bytesWritten <= 0) {
@@ -1146,7 +1175,7 @@ async function createUploadDigestBaseline(sourcePath, digestPath, fileSize, tran
           written += result.bytesWritten;
         }
         position += length;
-        digestPosition += digest.length;
+        digestPosition += digests.length;
       }
     } finally {
       await sourceHandle.close().catch(() => {});
@@ -1158,20 +1187,26 @@ async function createUploadDigestBaseline(sourcePath, digestPath, fileSize, tran
     const sourceHandle = await fs.promises.open(sourcePath, "r");
     const digestHandle = await fs.promises.open(digestPath, "r");
     try {
-      const buffer = Buffer.allocUnsafe(Math.min(TRANSFER_CHUNK_SIZE, Math.max(1, fileSize)));
+      const buffer = Buffer.allocUnsafe(Math.min(UPLOAD_DIGEST_SCAN_SIZE, Math.max(1, fileSize)));
       let position = 0;
       let chunkIndex = 0;
       while (position < fileSize) {
         if (transfer.cancelled) throw new Error("Transfer cancelled");
         const length = Math.min(buffer.length, fileSize - position);
         await readLocalRange(sourceHandle, buffer, position, length);
-        const expected = Buffer.allocUnsafe(32);
-        const result = await digestHandle.read(expected, 0, 32, chunkIndex * 32);
-        if (result.bytesRead !== 32) throw createSourceContentChangedError();
-        const actual = crypto.createHash("sha256").update(buffer.subarray(0, length)).digest();
-        if (!expected.equals(actual)) throw createSourceContentChangedError();
+        const digestCount = Math.ceil(length / TRANSFER_CHUNK_SIZE);
+        const expected = Buffer.allocUnsafe(digestCount * 32);
+        await readLocalRange(digestHandle, expected, chunkIndex * 32, expected.length);
+        for (let offset = 0, index = 0; offset < length; offset += TRANSFER_CHUNK_SIZE, index += 1) {
+          const actual = crypto.createHash("sha256")
+            .update(buffer.subarray(offset, Math.min(offset + TRANSFER_CHUNK_SIZE, length)))
+            .digest();
+          if (!expected.subarray(index * 32, (index + 1) * 32).equals(actual)) {
+            throw createSourceContentChangedError();
+          }
+        }
         position += length;
-        chunkIndex += 1;
+        chunkIndex += digestCount;
       }
     } finally {
       await sourceHandle.close().catch(() => {});
@@ -1190,18 +1225,26 @@ async function readVerifiedUploadRange(
   length,
   fileSize,
 ) {
-  const chunkStart = Math.floor(position / TRANSFER_CHUNK_SIZE) * TRANSFER_CHUNK_SIZE;
-  const chunkLength = Math.min(TRANSFER_CHUNK_SIZE, fileSize - chunkStart);
-  const chunk = Buffer.allocUnsafe(chunkLength);
-  await readLocalRange(localHandle, chunk, chunkStart, chunkLength);
-  const expected = Buffer.allocUnsafe(32);
-  const chunkIndex = Math.floor(chunkStart / TRANSFER_CHUNK_SIZE);
-  const digestResult = await digestHandle.read(expected, 0, 32, chunkIndex * 32);
-  if (digestResult.bytesRead !== 32) throw createSourceContentChangedError();
-  const actual = crypto.createHash("sha256").update(chunk).digest();
-  if (!expected.equals(actual)) throw createSourceContentChangedError();
-  const offset = position - chunkStart;
-  return chunk.subarray(offset, offset + length);
+  const output = Buffer.allocUnsafe(length);
+  let outputOffset = 0;
+  while (outputOffset < length) {
+    const rangePosition = position + outputOffset;
+    const chunkStart = Math.floor(rangePosition / TRANSFER_CHUNK_SIZE) * TRANSFER_CHUNK_SIZE;
+    const chunkLength = Math.min(TRANSFER_CHUNK_SIZE, fileSize - chunkStart);
+    const chunk = Buffer.allocUnsafe(chunkLength);
+    await readLocalRange(localHandle, chunk, chunkStart, chunkLength);
+    const expected = Buffer.allocUnsafe(32);
+    const chunkIndex = Math.floor(chunkStart / TRANSFER_CHUNK_SIZE);
+    const digestResult = await digestHandle.read(expected, 0, 32, chunkIndex * 32);
+    if (digestResult.bytesRead !== 32) throw createSourceContentChangedError();
+    const actual = crypto.createHash("sha256").update(chunk).digest();
+    if (!expected.equals(actual)) throw createSourceContentChangedError();
+    const chunkOffset = rangePosition - chunkStart;
+    const copyLength = Math.min(length - outputOffset, chunkLength - chunkOffset);
+    chunk.copy(output, outputOffset, chunkOffset, chunkOffset + copyLength);
+    outputOffset += copyLength;
+  }
+  return output;
 }
 
 function assertSourceMetadataUnchanged(initialSource, latestSource, expectedSize) {

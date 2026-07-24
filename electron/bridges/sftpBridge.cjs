@@ -343,6 +343,17 @@ const lstatAsync = (sftp, targetPath) =>
     inspect(targetPath, (err, stats) => (err ? reject(err) : resolve(stats)));
   });
 
+const readlinkAsync = (sftp, targetPath) =>
+  new Promise((resolve, reject) => {
+    if (typeof sftp.readlink !== "function") {
+      const error = new Error("SFTP readlink is not available");
+      error.code = "ENOTSUP";
+      reject(error);
+      return;
+    }
+    sftp.readlink(targetPath, (err, linkPath) => (err ? reject(err) : resolve(linkPath)));
+  });
+
 const readdirAsync = (sftp, targetPath) =>
   new Promise((resolve, reject) => {
     sftp.readdir(targetPath, (err, items) => (err ? reject(err) : resolve(items || [])));
@@ -614,6 +625,23 @@ function attrsIndicateSymlink(attrs) {
   return Number.isFinite(mode) && (mode & 0o170000) === 0o120000;
 }
 
+async function distinguishMissingTargetFromBrokenSymlink(sftp, encodedPath) {
+  try {
+    await readlinkAsync(sftp, encodedPath);
+    return { writeInPlace: true, existingMode: null, destinationExisted: true };
+  } catch (error) {
+    if (isRemoteMissingError(error)) {
+      return { writeInPlace: false, existingMode: null, destinationExisted: false };
+    }
+    const unsafeError = new Error(
+      "Cannot safely distinguish a missing upload target from a broken symbolic link",
+      { cause: error },
+    );
+    unsafeError.unsafeUploadTarget = true;
+    throw unsafeError;
+  }
+}
+
 /**
  * Plan overwrite strategy for a remote upload target.
  * - Confirmed symlinks: write in-place so the server follows the link.
@@ -644,9 +672,7 @@ async function planRemoteUploadReplace(client, encodedPath) {
           if (attrs) return { writeInPlace: true, existingMode: null, destinationExisted: true };
         } catch (statError) {
           if (isRemoteMissingError(statError)) {
-            // stat cannot distinguish a missing path from a broken symlink.
-            // Write through the path instead of rename-replacing a possible link.
-            return { writeInPlace: true, existingMode: null, destinationExisted: null };
+            return distinguishMissingTargetFromBrokenSymlink(sftp, encodedPath);
           }
           // Unknown inspection failure: do not risk rename-replacing a link.
           return { writeInPlace: true, existingMode: null, destinationExisted: null };
@@ -679,11 +705,10 @@ async function planRemoteUploadReplace(client, encodedPath) {
         // Unknown existing-path state: preserve a possible symlink.
         return { writeInPlace: true, existingMode: null, destinationExisted: null };
       }
-      // Without lstat, ENOENT may be a broken symlink. Direct write preserves
-      // the link node while still allowing genuinely new files to be created.
-      return { writeInPlace: true, existingMode: null, destinationExisted: null };
+      return distinguishMissingTargetFromBrokenSymlink(sftp, encodedPath);
     }
-  } catch {
+  } catch (error) {
+    if (error?.unsafeUploadTarget) throw error;
     // Unknown target state: preserve a possible symlink instead of replacing it.
     return { writeInPlace: true, existingMode: null, destinationExisted: null };
   }

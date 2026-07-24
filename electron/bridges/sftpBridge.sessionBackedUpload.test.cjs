@@ -73,6 +73,16 @@ function createSessionChannel(options = {}) {
         isSymbolicLink: () => !!meta?.isSymlink,
       });
     },
+    readlink(targetPath, callback) {
+      const meta = remoteMeta.get(targetPath);
+      if (!meta?.isSymlink) {
+        const err = new Error(`ENOENT ${targetPath}`);
+        err.code = 2;
+        callback(err);
+        return;
+      }
+      callback(null, meta.linkPath || "/missing-target");
+    },
     fastPut(localPath, remotePath, opts, callback) {
       fastPutCalls.push({
         localPath,
@@ -704,7 +714,7 @@ test("lstat unsupported falls back to stat and preserves an existing destination
   assert.deepEqual(remoteFiles.get("/etc/app/config.json"), payload);
 });
 
-test("new files write directly when lstat is unavailable or unsupported", async (t) => {
+test("new files stage safely when readlink distinguishes them without lstat", async (t) => {
   for (const variant of ["missing-method", "runtime-unsupported"]) {
     const tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), `netcatty-new-no-lstat-${variant}-`));
     t.after(async () => {
@@ -744,7 +754,7 @@ test("new files write directly when lstat is unavailable or unsupported", async 
       encoding: "utf-8",
     });
     assert.equal(fastPutCalls.length, 1);
-    assert.equal(fastPutCalls[0].remotePath, `/tmp/${variant}.bin`);
+    assert.match(fastPutCalls[0].remotePath, /\.netcatty-upload-.*\.part$/);
     assert.deepEqual(remoteFiles.get(`/tmp/${variant}.bin`), payload);
   }
 });
@@ -782,6 +792,44 @@ test("no-lstat fallback writes through a broken symlink instead of replacing it"
   assert.equal(created.fastPutCalls.length, 1);
   assert.equal(created.fastPutCalls[0].remotePath, remotePath);
   assert.equal(created.remoteMeta.get(remotePath)?.isSymlink, true);
+});
+
+test("upload stops when neither lstat nor readlink can classify a missing target", async (t) => {
+  const tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-no-link-inspection-"));
+  t.after(async () => {
+    await fs.promises.rm(tempRoot, { recursive: true, force: true });
+  });
+  tempDirBridge.init?.({ getPath: () => tempRoot });
+  const localPath = path.join(tempRoot, "payload.bin");
+  await fs.promises.writeFile(localPath, Buffer.from("payload"));
+
+  const created = createSessionChannel();
+  created.channel.lstat = undefined;
+  created.channel.readlink = undefined;
+  const sftpClients = new Map();
+  sftpBridge.init({
+    electronModule: { webContents: { fromId: () => null } },
+    sessions: new Map([["session-no-link-inspection", {
+      conn: { sftp: (callback) => callback(null, created.channel) },
+    }]]),
+    sftpClients,
+  });
+  const opened = await sftpBridge.openSftpForSession(null, {
+    sessionId: "session-no-link-inspection",
+    fileProtocol: "sftp",
+  });
+
+  await assert.rejects(
+    () => sftpBridge.uploadLocalToSftp(null, {
+      sftpId: opened.sftpId,
+      localPath,
+      remotePath: "/tmp/new.bin",
+      encoding: "utf-8",
+    }),
+    /cannot safely distinguish/i,
+  );
+  assert.equal(created.fastPutCalls.length, 0);
+  assert.equal(created.remoteFiles.has("/tmp/new.bin"), false);
 });
 
 test("permission failure during final target recheck never falls back to direct write", async (t) => {
@@ -976,7 +1024,7 @@ test("parent-dir permission on staged path falls back to in-place for new files"
   assert.deepEqual(remoteFiles.get("/ro-dir/file.bin"), payload);
 });
 
-test("late abort during staged size verify does not promote .part", async (t) => {
+test("no-lstat new upload aborted during staged size verify leaves no final", async (t) => {
   const tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-late-abort-promote-"));
   t.after(async () => {
     await fs.promises.rm(tempRoot, { recursive: true, force: true });
@@ -988,6 +1036,7 @@ test("late abort during staged size verify does not promote .part", async (t) =>
   await fs.promises.writeFile(localPath, payload);
 
   const { channel, fastPutCalls, remoteFiles } = createSessionChannel();
+  channel.lstat = undefined;
   const controller = new AbortController();
   let renameCalled = false;
   const origStat = channel.stat.bind(channel);
