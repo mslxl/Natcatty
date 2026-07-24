@@ -834,9 +834,16 @@ async function planScpRemoteUploadReplace(client, remotePath, encoding) {
   if (attrs.isSymbolicLink || attrs.isSymlink || attrs.type === "symlink") {
     return { writeInPlace: true, existingMode: null, destinationExisted: true };
   }
+  // Match planRemoteUploadReplace: skip unknown/zero modes. SCP chmod rejects
+  // unpadded "0", and raw mode bits (e.g. 0o100644) are not a valid 3–4 digit
+  // chmod argument until masked to permission bits.
+  const mode = Number(attrs.mode);
+  const existingMode = Number.isFinite(mode) && mode > 0
+    ? (mode & 0o7777)
+    : null;
   return {
     writeInPlace: false,
-    existingMode: Number.isFinite(attrs.mode) ? attrs.mode : null,
+    existingMode,
     destinationExisted: true,
   };
 }

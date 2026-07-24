@@ -825,6 +825,27 @@ test("resumable concurrent uploads reject a source rewritten mid-transfer", asyn
   const payload = Buffer.alloc(64 * 1024, 41);
   const localPath = path.join(tempDir, "upload.bin");
   await fs.promises.writeFile(localPath, payload);
+  // Freeze metadata views so a same-size rewrite is invisible to mtime/ctime
+  // checks; promotion must still fail via the digest revalidation.
+  const frozenSource = await fs.promises.stat(localPath);
+  const realStat = fs.promises.stat.bind(fs.promises);
+  const realOpen = fs.promises.open.bind(fs.promises);
+  fs.promises.stat = async (p, ...args) => {
+    if (path.resolve(String(p)) === path.resolve(localPath)) return frozenSource;
+    return realStat(p, ...args);
+  };
+  fs.promises.open = async (p, flags, ...args) => {
+    const handle = await realOpen(p, flags, ...args);
+    if (path.resolve(String(p)) === path.resolve(localPath) && String(flags).includes("r")) {
+      handle.stat = async () => frozenSource;
+    }
+    return handle;
+  };
+  t.after(() => {
+    fs.promises.stat = realStat;
+    fs.promises.open = realOpen;
+  });
+
   let rewritten = false;
   let promoted = false;
   let stagedDeleted = false;
