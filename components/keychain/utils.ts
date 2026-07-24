@@ -64,51 +64,35 @@ export type PanelMode =
     | { type: 'identity'; identity?: import('../../types').Identity }
     | { type: 'export'; key: SSHKey };
 
-// Filter tab types
-export type FilterTab = 'key' | 'certificate';
-
 interface IdentitySectionVisibilityOptions {
-    activeFilter: FilterTab;
     identityCount: number;
     filteredIdentityCount: number;
     filteredKeyCount: number;
-    preferredSection?: 'key' | 'identity' | null;
     search: string;
 }
 
-export const resolvePreferredKeySection = (
-    preferredSection: 'key' | 'identity' | null,
-    identityCount: number,
-): 'key' | 'identity' => identityCount === 0
-    ? 'key'
-    : (preferredSection ?? 'identity');
-
+/** Show identities whenever any exist; while searching, keep the section if it matches or nothing matches. */
 export const shouldShowIdentitySection = ({
-    activeFilter,
     identityCount,
     filteredIdentityCount,
     filteredKeyCount,
-    preferredSection = null,
     search,
 }: IdentitySectionVisibilityOptions): boolean => {
-    if (activeFilter !== 'key' || identityCount === 0) return false;
-    if (!search.trim()) return resolvePreferredKeySection(preferredSection, identityCount) === 'identity';
+    if (identityCount === 0) return false;
+    if (!search.trim()) return true;
 
     return filteredIdentityCount > 0 || filteredKeyCount === 0;
 };
 
+/** Always show the keys section when browsing; while searching, hide it if only identities match. */
 export const shouldShowKeySection = ({
-    activeFilter,
-    identityCount,
     filteredKeyCount,
-    preferredSection = null,
     search,
 }: Pick<
     IdentitySectionVisibilityOptions,
-    'activeFilter' | 'identityCount' | 'filteredKeyCount' | 'preferredSection' | 'search'
+    'filteredKeyCount' | 'search'
 >): boolean => {
-    if (activeFilter !== 'key' || identityCount === 0) return true;
-    if (!search.trim()) return resolvePreferredKeySection(preferredSection, identityCount) === 'key';
+    if (!search.trim()) return true;
 
     return filteredKeyCount > 0;
 };
