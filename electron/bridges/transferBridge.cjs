@@ -1674,6 +1674,7 @@ async function downloadFileResumableFast(
         sendProgress,
         abortChannel: () => sftp.end?.(),
         sftp,
+        forceSettleOnError: true,
       });
       if (channelError) throw channelError;
       await verifyFastDownloadSamples(sftp, remoteHandle, localHandle, fileSize, transfer);

@@ -2350,9 +2350,7 @@ test("cancelled fast resumable downloads release their isolated channel", async 
     read(_handle, _buffer, _offset, _length, _position, callback) {
       cancelRead = () => callback(new Error("channel cancelled"));
     },
-    end() {
-      cancelRead?.();
-    },
+    end() {},
   });
   const secondChannel = createFastSftp({
     open(_remotePath, _flags, callback) {
@@ -2403,8 +2401,10 @@ test("cancelled fast resumable downloads release their isolated channel", async 
     await new Promise((resolve) => setImmediate(resolve));
   }
   assert.equal(typeof cancelRead, "function");
+  const cancelledAt = Date.now();
   await transferBridge.cancelTransfer(null, { transferId: "download-cancel-release-first" });
   assert.equal((await first).error, "Transfer cancelled");
+  assert.ok(Date.now() - cancelledAt >= 1900);
 
   const second = await transferBridge.startTransfer(
     { sender: createSender() },
