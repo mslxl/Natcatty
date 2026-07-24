@@ -800,8 +800,10 @@ async function uploadFile(localPath, remotePath, client, fileSize, transfer, sen
     // Do not pipe while paused — Node pipe auto-resumes on drain.
     if (transfer.paused) {
       try { readStream.pause(); } catch { }
+      transfer.streamsUnpiped = true;
     } else {
       readStream.pipe(writeStream);
+      transfer.streamsUnpiped = false;
     }
 
     const cleanup = (err) => {
@@ -1574,8 +1576,10 @@ async function downloadFile(remotePath, localPath, client, fileSize, transfer, s
     transfer.writeStream = writeStream;
     if (transfer.paused) {
       try { readStream.pause(); } catch { }
+      transfer.streamsUnpiped = true;
     } else {
       readStream.pipe(writeStream);
+      transfer.streamsUnpiped = false;
     }
 
     const cleanup = (err) => {
@@ -1667,6 +1671,9 @@ async function startTransferNow(event, payload, onProgress) {
     targetEncoding,
     readStream: null,
     writeStream: null,
+    // True after unpipe (or when open skipped pipe while paused). Guards
+    // resumeStreamPair against duplicate pipe() which doubles writes.
+    streamsUnpiped: false,
     abort: null,
   };
   activeTransfers.set(transferId, transfer);
@@ -1996,8 +2003,10 @@ async function startTransferNow(event, payload, onProgress) {
         transfer.writeStream = writeStream;
         if (transfer.paused) {
           try { readStream.pause(); } catch { }
+          transfer.streamsUnpiped = true;
         } else {
           readStream.pipe(writeStream);
+          transfer.streamsUnpiped = false;
         }
 
         const cleanup = (err) => {
@@ -2417,10 +2426,12 @@ function clearPendingCancel(transferId) {
 /**
  * Re-attach a paused stream pair and continue reading.
  * pauseTransfer unpipes so destination drain cannot auto-resume the source.
+ * Idempotent: Node does not dedupe pipe(), so only re-pipe while unpiped.
  */
 function resumeStreamPair(transfer) {
-  if (transfer.readStream && transfer.writeStream) {
+  if (transfer.readStream && transfer.writeStream && transfer.streamsUnpiped) {
     try { transfer.readStream.pipe(transfer.writeStream); } catch { }
+    transfer.streamsUnpiped = false;
   }
   try { transfer.readStream?.resume?.(); } catch { }
 }
@@ -2458,6 +2469,7 @@ async function pauseTransfer(_event, payload) {
   // the UI shows paused. Unpipe first; resumeTransfer re-pipes.
   if (transfer.readStream && transfer.writeStream) {
     try { transfer.readStream.unpipe?.(transfer.writeStream); } catch { }
+    transfer.streamsUnpiped = true;
   }
   try { transfer.readStream?.pause?.(); } catch { }
   const usesContiguousRangeCheckpoint = typeof transfer.waitForPause === "function";
@@ -2578,6 +2590,10 @@ async function resumeTransfer(_event, payload) {
   const currentTransfer = activeTransfers.get(payload?.transferId);
   if (currentTransfer !== transfer || transfer.cancelled) {
     return { success: false, reason: "Transfer is no longer active" };
+  }
+  // Already flowing (e.g. double-click resume): do not pipe() again.
+  if (!transfer.paused) {
+    return { success: true };
   }
   transfer.paused = false;
   transfer.pauseSuperseded = false;
