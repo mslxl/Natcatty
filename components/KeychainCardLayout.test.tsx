@@ -231,8 +231,11 @@ test("KeychainManager exposes new-key, import-certificate, and new-identity head
     }),
   );
 
-  assert.match(markup, /bg-primary text-primary-foreground/);
-  assert.match(markup, />New Key<\/button>/);
+  // Header split "New Key" uses the same secondary chrome as sibling actions
+  assert.match(
+    markup,
+    /rounded-md shrink-0 bg-foreground\/5 text-foreground[\s\S]*?>New Key<\/button>/,
+  );
   assert.match(markup, />Import Certificate<\/button>/);
   assert.match(markup, />New Identity<\/button>/);
   assert.doesNotMatch(markup, />KEY<\/button>/);

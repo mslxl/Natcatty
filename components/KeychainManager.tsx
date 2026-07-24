@@ -588,21 +588,23 @@ echo $3 >> "$FILE"`);
         <VaultPageHeader>
           {/* Action buttons: New Key (split) | Import Certificate | New Identity */}
           <div className="flex items-center gap-1">
-            {/* New Key split button - primary add, secondary generate (host-style) */}
+            {/* New Key split button — same secondary style as sibling header actions */}
             <Dropdown>
-              <div className="flex items-center rounded-md bg-primary text-primary-foreground">
+              <div className="flex items-center rounded-md shrink-0 bg-foreground/5 text-foreground">
                 <Button
                   size="sm"
-                  className="h-10 px-3 rounded-r-none bg-transparent hover:bg-white/10 shadow-none"
+                  variant="secondary"
+                  className="h-10 px-3 gap-2 rounded-r-none bg-transparent hover:bg-foreground/10 shadow-none border-0"
                   onClick={openImport}
                 >
-                  <Plus size={14} className="mr-2" />
+                  <Plus size={14} />
                   {t("keychain.panel.newKey")}
                 </Button>
                 <DropdownTrigger asChild>
                   <Button
                     size="sm"
-                    className="h-10 px-2 rounded-l-none bg-transparent hover:bg-white/10 border-l border-primary-foreground/20 shadow-none"
+                    variant="secondary"
+                    className="h-10 px-2 rounded-l-none bg-transparent hover:bg-foreground/10 shadow-none border-0"
                   >
                     <ChevronDown size={14} />
                   </Button>
