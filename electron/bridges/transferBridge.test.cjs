@@ -1213,7 +1213,13 @@ test("non-resumable shared range cancellation drains writes and removes the temp
   assert.equal(transferSettled, false);
   assert.equal(fs.existsSync(digestPath), true);
 
+  const finalWrite = pendingWrites.pop();
   for (const callback of pendingWrites.splice(0)) callback(new Error("write cancelled"));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(transferSettled, false);
+  assert.equal(fs.existsSync(digestPath), true);
+
+  finalWrite(new Error("write cancelled"));
   const result = await running;
 
   assert.match(result.error || "", /cancel|write cancelled/i);
