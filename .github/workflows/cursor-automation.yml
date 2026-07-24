@@ -377,8 +377,9 @@ jobs:
           Issue payload path: .cursor-runtime/issue.json
           Write the JSON result to .cursor-runtime/classification.json as well as printing it.
           "
-          # Sandbox limits shell/network exfil of CURSOR_API_KEY from untrusted prompts.
-          agent -p --mode=ask --trust --sandbox enabled --model auto --output-format text \
+          # GHA Ubuntu runners cannot start Cursor's sandbox (AppArmor). Rely on
+          # stripped GH tokens, frozen helpers, and post-run secret scans instead.
+          agent -p --mode=ask --trust --sandbox disabled --model auto --output-format text \
             --workspace "$GITHUB_WORKSPACE" \
             "$PROMPT" | tee .cursor-runtime/classify-raw.txt
 
@@ -603,8 +604,8 @@ jobs:
           # Drop any accidental git auth helpers for the agent process.
           git config --local --unset-all http.https://github.com/.extraheader || true
           PROMPT="$(cat .github/cursor/prompts/implement.md)"
-          # Sandbox restricts shell/network while still allowing workspace edits.
-          agent -p --force --trust --sandbox enabled --model auto --output-format text \
+          # GHA cannot use Cursor sandbox; secret isolation is handled outside agent.
+          agent -p --force --trust --sandbox disabled --model auto --output-format text \
             --workspace "$GITHUB_WORKSPACE" \
             "$PROMPT" | tee .cursor-runtime/implement-raw.txt
           # Do not run `git diff` here with CURSOR_API_KEY present — agent may have
@@ -1448,7 +1449,7 @@ jobs:
             echo "Missing fix-from-codex.md on default branch and PR tree." >&2
             exit 1
           fi
-          agent -p --force --trust --sandbox enabled --model auto --output-format text \
+          agent -p --force --trust --sandbox disabled --model auto --output-format text \
             --workspace "$GITHUB_WORKSPACE" \
             "$PROMPT" | tee .cursor-runtime/fix-raw.txt
           # Avoid git diff under CURSOR_API_KEY (textconv/hooks). Patch scan is later.
