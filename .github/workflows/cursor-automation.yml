@@ -375,10 +375,14 @@ jobs:
           PROMPT="$(cat "$RUNNER_TEMP/cursor-prompts/classify.md")
           ----
           Issue payload path: .cursor-runtime/issue.json
+          Hard requirement: search and open real source files in this workspace
+          BEFORE writing the classification JSON. Do not answer from the issue
+          text alone. Include code_paths + code_findings in the JSON.
           Write the JSON result to .cursor-runtime/classification.json as well as printing it.
           "
           # GHA Ubuntu runners cannot start Cursor's sandbox (AppArmor). Rely on
           # stripped GH tokens, frozen helpers, and post-run secret scans instead.
+          # ask mode is read-only but still allows repo search/read tools.
           agent -p --mode=ask --trust --sandbox disabled --model auto --output-format text \
             --workspace "$GITHUB_WORKSPACE" \
             "$PROMPT" | tee .cursor-runtime/classify-raw.txt

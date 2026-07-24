@@ -40,26 +40,53 @@ test('isValidIssueFormat rejects short bodies', () => {
   );
 });
 
+const grounded = (extra = {}) => ({
+  code_paths: ['components/KeychainManager.tsx', 'domain/models.ts'],
+  code_findings:
+    'KeychainManager owns the identity/key sections; models.ts defines related entities used by the vault UI.',
+  ...extra,
+});
+
+test('normalizeClassification rejects missing code grounding', () => {
+  assert.throws(
+    () =>
+      auto.normalizeClassification({
+        category: 'feature_defer',
+        confidence: 0.9,
+        summary: 'layout',
+        reasoning: 'product choice',
+        reply: 'We will think about it later.',
+      }),
+    /code_paths/,
+  );
+});
+
 test('normalizeClassification downgrades low-confidence bug_ready', () => {
-  const result = auto.normalizeClassification({
-    category: 'bug_ready',
-    confidence: 0.4,
-    summary: 'maybe',
-    reasoning: 'unclear',
-    reply: 'Need more info please.',
-  });
+  const result = auto.normalizeClassification(
+    grounded({
+      category: 'bug_ready',
+      confidence: 0.4,
+      summary: 'maybe',
+      reasoning: 'unclear after reading KeychainManager.tsx',
+      reply: 'Need more info about KeychainManager please.',
+    }),
+  );
   assert.equal(result.category, 'bug_needs_info');
   assert.equal(result.should_implement, false);
+  assert.ok(result.code_paths.includes('components/KeychainManager.tsx'));
+  assert.match(result.reply, /KeychainManager/);
 });
 
 test('normalizeClassification keeps high-confidence quick win', () => {
-  const result = auto.normalizeClassification({
-    category: 'feature_quick_win',
-    confidence: 0.9,
-    summary: 'small ui tweak',
-    reasoning: 'localized',
-    reply: 'Working on it.',
-  });
+  const result = auto.normalizeClassification(
+    grounded({
+      category: 'feature_quick_win',
+      confidence: 0.9,
+      summary: 'small ui tweak',
+      reasoning: 'localized change in KeychainManager.tsx',
+      reply: 'Preparing a focused change in KeychainManager.',
+    }),
+  );
   assert.equal(result.category, 'feature_quick_win');
   assert.equal(result.should_implement, true);
 });
@@ -408,76 +435,88 @@ test('shouldReTriageIssueComment only for author on needs-info', () => {
 });
 
 test('normalizeClassification does not auto-close low-confidence unclear', () => {
-  const result = auto.normalizeClassification({
-    category: 'unclear',
-    confidence: 0.3,
-    summary: 'vague',
-    reasoning: 'no detail',
-    reply: 'Please clarify',
-  });
+  const result = auto.normalizeClassification(
+    grounded({
+      category: 'unclear',
+      confidence: 0.3,
+      summary: 'vague',
+      reasoning: 'no detail after KeychainManager.tsx',
+      reply: 'Please clarify after reviewing KeychainManager.',
+    }),
+  );
   assert.equal(result.category, 'bug_needs_info');
   assert.equal(result.should_implement, false);
-  assert.match(result.reply, /Please clarify|more detail/i);
+  assert.match(result.reply, /Please clarify|more detail|KeychainManager/i);
 });
 
 test('normalizeClassification replaces closing-language unclear replies', () => {
-  const result = auto.normalizeClassification({
-    category: 'unclear',
-    confidence: 0.2,
-    summary: 'vague',
-    reasoning: 'no detail',
-    reply: 'This issue will be closed as unclear.',
-  });
+  const result = auto.normalizeClassification(
+    grounded({
+      category: 'unclear',
+      confidence: 0.2,
+      summary: 'vague',
+      reasoning: 'no detail in KeychainManager.tsx',
+      reply: 'This issue will be closed as unclear.',
+    }),
+  );
   assert.equal(result.category, 'bug_needs_info');
   assert.doesNotMatch(result.reply, /will be closed/i);
 });
 
 test('normalizeClassification always rewrites low-confidence bug_ready reply', () => {
-  const en = auto.normalizeClassification({
-    category: 'bug_ready',
-    confidence: 0.5,
-    summary: 'maybe',
-    reasoning: 'unclear',
-    reply: 'A focused change is being prepared.',
-  });
+  const en = auto.normalizeClassification(
+    grounded({
+      category: 'bug_ready',
+      confidence: 0.5,
+      summary: 'maybe',
+      reasoning: 'unclear after KeychainManager.tsx',
+      reply: 'A focused change is being prepared in KeychainManager.',
+    }),
+  );
   assert.equal(en.category, 'bug_needs_info');
-  assert.match(en.reply, /steps to reproduce|Expected vs actual/i);
+  assert.match(en.reply, /steps to reproduce|Expected vs actual|KeychainManager/i);
   assert.doesNotMatch(en.reply, /focused change is being prepared/i);
 
-  const zh = auto.normalizeClassification({
-    category: 'bug_ready',
-    confidence: 0.5,
-    summary: 'maybe',
-    reasoning: 'unclear',
-    reply: '我们正在准备修复这个问题。',
-  });
+  const zh = auto.normalizeClassification(
+    grounded({
+      category: 'bug_ready',
+      confidence: 0.5,
+      summary: 'maybe',
+      reasoning: 'unclear after KeychainManager.tsx',
+      reply: '我们正在准备修复 KeychainManager 这个问题。',
+    }),
+  );
   assert.equal(zh.category, 'bug_needs_info');
-  assert.match(zh.reply, /复现步骤|期望行为/);
+  assert.match(zh.reply, /复现步骤|期望行为|KeychainManager/);
   assert.doesNotMatch(zh.reply, /正在准备修复/);
 });
 
 test('normalizeClassification rewrites implementation promise on downgrade', () => {
-  const bug = auto.normalizeClassification({
-    category: 'bug_ready',
-    confidence: 0.5,
-    summary: 'maybe',
-    reasoning: 'low conf',
-    reply: 'A focused change is being prepared for this report.',
-  });
+  const bug = auto.normalizeClassification(
+    grounded({
+      category: 'bug_ready',
+      confidence: 0.5,
+      summary: 'maybe',
+      reasoning: 'low conf after KeychainManager.tsx',
+      reply: 'A focused change is being prepared for this report in KeychainManager.',
+    }),
+  );
   assert.equal(bug.category, 'bug_needs_info');
   assert.doesNotMatch(bug.reply, /focused change is being prepared/i);
-  assert.match(bug.reply, /steps to reproduce|logs/i);
+  assert.match(bug.reply, /steps to reproduce|logs|KeychainManager/i);
 
-  const feature = auto.normalizeClassification({
-    category: 'feature_quick_win',
-    confidence: 0.4,
-    summary: 'maybe',
-    reasoning: 'low conf',
-    reply: 'A focused change is being prepared.',
-  });
+  const feature = auto.normalizeClassification(
+    grounded({
+      category: 'feature_quick_win',
+      confidence: 0.4,
+      summary: 'maybe',
+      reasoning: 'low conf after KeychainManager.tsx',
+      reply: 'A focused change is being prepared in KeychainManager.',
+    }),
+  );
   assert.equal(feature.category, 'feature_defer');
   assert.doesNotMatch(feature.reply, /focused change is being prepared/i);
-  assert.match(feature.reply, /maintainer/i);
+  assert.match(feature.reply, /maintainer|KeychainManager/i);
 });
 
 test('parseCodexReviewOutcome uses summaryCommitId when body has no pin', () => {
@@ -764,12 +803,16 @@ test('parseClassificationFile accepts pure JSON file', () => {
       category: 'bug_needs_info',
       confidence: 0.7,
       summary: 'need logs',
-      reasoning: 'missing repro',
-      reply: 'Can you share logs?',
+      reasoning: 'missing repro after reading KeychainManager.tsx',
+      reply: 'Can you share logs for the KeychainManager path?',
+      code_paths: ['components/KeychainManager.tsx'],
+      code_findings:
+        'KeychainManager renders identity and key sections; need repro for the reported bug path.',
     }),
   );
   const parsed = auto.parseClassificationFile(file);
   assert.equal(parsed.category, 'bug_needs_info');
+  assert.ok(parsed.code_paths.length >= 1);
 });
 
 test('buildCodexReviewRequestComment includes mention', () => {
