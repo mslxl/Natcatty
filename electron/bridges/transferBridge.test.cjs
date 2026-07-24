@@ -884,20 +884,39 @@ test("non-resumable shared range uploads reject a same-size source rewrite", asy
     await fs.promises.rm(tempDir, { recursive: true, force: true });
   });
 
-  const payload = Buffer.alloc(64 * 1024, 51);
+  const changedChunkIndex = UPLOAD_TRANSFER_CONCURRENCY + 1;
+  const payload = Buffer.alloc(
+    (UPLOAD_TRANSFER_CONCURRENCY + 8) * TRANSFER_CHUNK_SIZE,
+    51,
+  );
   const localPath = path.join(tempDir, "upload.bin");
   await fs.promises.writeFile(localPath, payload);
   let rewritten = false;
   let remoteBytes = 0;
+  let uploadedChangedChunk = null;
   const sharedSftp = createFastSftp({
     open(_remotePath, _flags, callback) {
       callback(null, Buffer.from("remote-handle"));
     },
-    write(_handle, _buffer, _offset, length, position, callback) {
+    write(_handle, buffer, offset, length, position, callback) {
       remoteBytes = Math.max(remoteBytes, position + length);
+      if (position === changedChunkIndex * TRANSFER_CHUNK_SIZE) {
+        uploadedChangedChunk = Buffer.from(buffer.subarray(offset, offset + length));
+      }
       if (!rewritten) {
         rewritten = true;
-        fs.writeFileSync(localPath, Buffer.alloc(payload.length, 52));
+        const fd = fs.openSync(localPath, "r+");
+        try {
+          fs.writeSync(
+            fd,
+            Buffer.alloc(TRANSFER_CHUNK_SIZE, 52),
+            0,
+            TRANSFER_CHUNK_SIZE,
+            changedChunkIndex * TRANSFER_CHUNK_SIZE,
+          );
+        } finally {
+          fs.closeSync(fd);
+        }
       }
       callback(null);
     },
@@ -928,6 +947,7 @@ test("non-resumable shared range uploads reject a same-size source rewrite", asy
 
   assert.equal(rewritten, true);
   assert.match(result.error || "", /source content changed/i);
+  assert.equal(uploadedChangedChunk, null);
 });
 
 test("resumable fast uploads fail closed when isolated channel errors (no serial stream)", async (t) => {

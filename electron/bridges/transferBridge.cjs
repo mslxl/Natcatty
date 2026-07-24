@@ -1118,31 +1118,6 @@ function createSourceContentChangedError() {
   return error;
 }
 
-async function captureLocalContentFingerprintFromHandle(fileHandle, fileSize) {
-  const hash = crypto.createHash("sha256");
-  const buffer = Buffer.allocUnsafe(Math.min(1024 * 1024, Math.max(1, fileSize)));
-  let position = 0;
-  while (position < fileSize) {
-    const length = Math.min(buffer.length, fileSize - position);
-    await readLocalRange(fileHandle, buffer, position, length);
-    hash.update(buffer.subarray(0, length));
-    position += length;
-  }
-  return { size: fileSize, digest: hash.digest("hex") };
-}
-
-async function assertLocalContentFingerprintUnchangedFromHandle(
-  fileHandle,
-  fingerprint,
-  expectedSize,
-) {
-  if (!fingerprint) return;
-  const latest = await captureLocalContentFingerprintFromHandle(fileHandle, expectedSize);
-  if (latest.size !== expectedSize || latest.digest !== fingerprint.digest) {
-    throw createSourceContentChangedError();
-  }
-}
-
 const UPLOAD_DIGEST_SCAN_SIZE = TRANSFER_CHUNK_SIZE * 128;
 
 async function assertUploadDigestCapacity(digestPath, fileSize) {
@@ -1508,7 +1483,8 @@ async function uploadFileConcurrent(
 
   let localHandle = null;
   let digestHandle = null;
-  let contentFingerprint = null;
+  let ephemeralDigestPath = null;
+  let initialSource = null;
   let remoteHandle = null;
   let failed = false;
   let noTransferFallback = false;
@@ -1526,14 +1502,25 @@ async function uploadFileConcurrent(
     if (transfer.cancelled) throw new Error("Transfer cancelled");
     if (transfer.sourceDigestPath) {
       digestHandle = await fs.promises.open(transfer.sourceDigestPath, "r");
-    } else {
-      // Non-resumable range uploads do not have the persisted digest sidecar.
-      // Retain the pre-existing full-file verification contract so a same-size
-      // rewrite cannot be reported as a successful upload.
-      contentFingerprint = await captureLocalContentFingerprintFromHandle(
-        localHandle,
-        fileSize,
+    } else if (!transfer.sourceIsOwnedTemp) {
+      // Non-resumable range uploads do not receive uploadFile's persistent
+      // digest sidecar. Build the same stable baseline here so every range is
+      // verified immediately before its remote WRITE instead of relying on a
+      // before/after whole-file fingerprint that temporary rewrites can evade.
+      initialSource = await localHandle.stat();
+      const digestId = crypto.createHash("sha256")
+        .update(String(transfer.transferId || localPath))
+        .digest("hex")
+        .slice(0, 16);
+      ephemeralDigestPath = tempDirBridge.getTransferTempFilePath(
+        `upload-digest-${digestId}`,
+        "ranges.sha256",
       );
+      await createUploadDigestBaseline(localPath, ephemeralDigestPath, fileSize, transfer);
+      if (transfer.cancelled) throw new Error("Transfer cancelled");
+      const sourceAfterBaseline = await localHandle.stat();
+      assertSourceMetadataUnchanged(initialSource, sourceAfterBaseline, fileSize);
+      digestHandle = await fs.promises.open(ephemeralDigestPath, "r");
     }
     if (transfer.cancelled) throw new Error("Transfer cancelled");
     remoteHandle = await openSftpHandle(sftp, remotePath, checkpoint > 0 ? "r+" : "w");
@@ -1569,12 +1556,9 @@ async function uploadFileConcurrent(
         forceSettleOnError: disposeChannel,
       });
       if (channelError) throw channelError;
-      if (!digestHandle) {
-        await assertLocalContentFingerprintUnchangedFromHandle(
-          localHandle,
-          contentFingerprint,
-          fileSize,
-        );
+      if (initialSource) {
+        const latestSource = await localHandle.stat();
+        assertSourceMetadataUnchanged(initialSource, latestSource, fileSize);
       }
     } catch (error) {
       failed = true;
@@ -1596,6 +1580,9 @@ async function uploadFileConcurrent(
     }
     if (digestHandle) {
       await digestHandle.close().catch(() => {});
+    }
+    if (ephemeralDigestPath) {
+      await fs.promises.rm(ephemeralDigestPath, { force: true }).catch(() => {});
     }
     let remoteCloseError = null;
     // Close remote handles while the channel is still live. On disposeChannel
