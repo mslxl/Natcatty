@@ -551,6 +551,7 @@ test("digest baseline cancellation removes the sidecar before opening remote upl
     `upload-digest-${digestId}`,
     "ranges.sha256",
   );
+  t.after(async () => fs.promises.rm(digestPath, { force: true }));
   let remoteChannelOpens = 0;
   const client = {
     sftp: createFastSftp({}),
@@ -595,7 +596,6 @@ test("digest baseline cancellation removes the sidecar before opening remote upl
     );
   } finally {
     fs.promises.open = originalOpen;
-    await fs.promises.rm(digestPath, { force: true });
   }
   assert.equal(cancellationTriggered, true);
   assert.match(result.error || "", /cancel/i);
