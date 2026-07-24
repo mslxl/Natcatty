@@ -11,7 +11,6 @@ import {
   Shield,
   Trash2,
   Upload,
-  User,
   UserPlus,
 } from "lucide-react";
 import React, { useCallback, useMemo, useRef, useState } from "react";
@@ -58,7 +57,6 @@ import { useVaultItemReorder } from "./vault/vaultReorderDrag";
 
 // Import utilities and components from keychain module
 import {
-  type FilterTab,
   GenerateStandardPanel,
   IdentityCard,
   IdentityPanel,
@@ -66,7 +64,6 @@ import {
   isMacOS,
   KeyCard,
   type PanelMode,
-  resolvePreferredKeySection,
   shouldShowIdentitySection,
   shouldShowKeySection,
   shouldShowSearchNoResults,
@@ -120,12 +117,6 @@ const KeychainManager: React.FC<KeychainManagerProps> = ({
 }) => {
   const { t } = useI18n();
   const { generateKeyPair, execCommand } = useKeychainBackend();
-  const [activeFilter, setActiveFilter] = useState<FilterTab>("key");
-  const [preferredKeySection, setPreferredKeySection] = useState<"key" | "identity" | null>(null);
-  const effectiveKeySection = resolvePreferredKeySection(
-    preferredKeySection,
-    identities.length,
-  );
   const [search, setSearch] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<{
     type: "key" | "identity";
@@ -220,42 +211,20 @@ echo $3 >> "$FILE"`);
     toast.error(message, title);
   }, [t]);
 
-  // Filter keys based on active tab
-  const keysForActiveFilter = useMemo(() => {
-    let result = keys;
+  // Ordered key collection (keys and certificates on one page)
+  const orderedKeys = useMemo(() => sortByVaultOrder(keys), [keys]);
 
-    switch (activeFilter) {
-      case "key":
-        result = result.filter(
-          (k) => k.source === "generated" || k.source === "imported" || k.source === "reference",
-        );
-        break;
-      case "certificate":
-        result = result.filter(
-          (k) => k.category === "certificate" || k.certificate,
-        );
-        break;
-    }
-
-    return sortByVaultOrder(result);
-  }, [keys, activeFilter]);
-
-  // Filter the active key collection by search
+  // Filter keys by search
   const filteredKeys = useMemo(() => {
-    let result = keysForActiveFilter;
-
-    if (search.trim()) {
-      const s = search.toLowerCase();
-      result = result.filter(
-        (k) =>
-          k.label.toLowerCase().includes(s) ||
-          k.type.toLowerCase().includes(s) ||
-          k.publicKey?.toLowerCase().includes(s),
-      );
-    }
-
-    return result;
-  }, [keysForActiveFilter, search]);
+    if (!search.trim()) return orderedKeys;
+    const s = search.toLowerCase();
+    return orderedKeys.filter(
+      (k) =>
+        k.label.toLowerCase().includes(s) ||
+        k.type.toLowerCase().includes(s) ||
+        k.publicKey?.toLowerCase().includes(s),
+    );
+  }, [orderedKeys, search]);
 
   // Filter identities based on search
   const filteredIdentities = useMemo(() => {
@@ -269,27 +238,16 @@ echo $3 >> "$FILE"`);
   }, [identities, search]);
 
   const showIdentitySection = shouldShowIdentitySection({
-    activeFilter,
     identityCount: identities.length,
     filteredIdentityCount: filteredIdentities.length,
     filteredKeyCount: filteredKeys.length,
-    preferredSection: preferredKeySection,
     search,
   });
   const showKeySection = shouldShowKeySection({
-    activeFilter,
     identityCount: identities.length,
     filteredKeyCount: filteredKeys.length,
-    preferredSection: preferredKeySection,
     search,
   });
-  const hasSearch = Boolean(search.trim());
-  const keyButtonActive = activeFilter === "key" && (
-    hasSearch ? showKeySection : effectiveKeySection === "key"
-  );
-  const identityButtonActive = activeFilter === "key" && (
-    hasSearch ? showIdentitySection : effectiveKeySection === "identity"
-  );
 
   // Push a new panel onto the stack
   const pushPanel = useCallback((newPanel: PanelMode) => {
@@ -359,8 +317,6 @@ echo $3 >> "$FILE"`);
 
   // Open panel for new identity
   const openNewIdentity = useCallback(() => {
-    setActiveFilter("key");
-    setPreferredKeySection("identity");
     setPanelStack([{ type: "identity" }]);
     setDraftIdentity({
       id: "",
@@ -630,38 +586,25 @@ echo $3 >> "$FILE"`);
         )}
       >
         <VaultPageHeader>
-          {/* Filter Tabs */}
+          {/* Action buttons: New Key (split) | Import Certificate | New Identity */}
           <div className="flex items-center gap-1">
-            {/* KEY button with split interaction: left=switch view, right=dropdown */}
+            {/* New Key split button - primary add, secondary generate (host-style) */}
             <Dropdown>
-              <div
-                className={cn(
-                  "flex items-center rounded-md transition-colors",
-                  keyButtonActive
-                    ? "bg-foreground/10 text-foreground hover:bg-foreground/15"
-                    : "bg-foreground/5 text-foreground hover:bg-foreground/10",
-                )}
-              >
+              <div className="flex items-center rounded-md bg-primary text-primary-foreground">
                 <Button
                   size="sm"
-                  variant="ghost"
-                  className="h-10 px-3 gap-2 rounded-r-none hover:bg-transparent text-inherit"
-                  onClick={() => {
-                    setActiveFilter("key");
-                    setPreferredKeySection("key");
-                    setSearch("");
-                  }}
+                  className="h-10 px-3 rounded-r-none bg-transparent hover:bg-white/10 shadow-none"
+                  onClick={openImport}
                 >
-                  <Key size={14} />
-                  {t("keychain.filter.key")}
+                  <Plus size={14} className="mr-2" />
+                  {t("keychain.panel.newKey")}
                 </Button>
                 <DropdownTrigger asChild>
                   <Button
                     size="sm"
-                    variant="ghost"
-                    className="h-10 px-1.5 rounded-l-none hover:bg-transparent text-inherit"
+                    className="h-10 px-2 rounded-l-none bg-transparent hover:bg-white/10 border-l border-primary-foreground/20 shadow-none"
                   >
-                    <ChevronDown size={12} />
+                    <ChevronDown size={14} />
                   </Button>
                 </DropdownTrigger>
               </div>
@@ -671,78 +614,21 @@ echo $3 >> "$FILE"`);
                   className="w-full justify-start gap-2"
                   onClick={openGenerate}
                 >
-                  <Plus size={14} /> {t("keychain.action.generateKey")}
-                </Button>
-                <Button
-                  variant="ghost"
-                  className="w-full justify-start gap-2"
-                  onClick={openImport}
-                >
-                  <Upload size={14} /> {t("keychain.action.importKey")}
+                  <Key size={14} /> {t("keychain.action.generateKey")}
                 </Button>
               </DropdownContent>
             </Dropdown>
 
-            {/* CERTIFICATE button with split interaction */}
-            <Dropdown>
-              <div
-                className={cn(
-                  "flex items-center rounded-md transition-colors",
-                  activeFilter === "certificate"
-                    ? "bg-foreground/10 text-foreground hover:bg-foreground/15"
-                    : "bg-foreground/5 text-foreground hover:bg-foreground/10",
-                )}
-              >
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-10 px-3 gap-2 rounded-r-none hover:bg-transparent text-inherit"
-                  onClick={() => setActiveFilter("certificate")}
-                >
-                  <BadgeCheck size={14} />
-                  {t("keychain.filter.certificate")}
-                </Button>
-                <DropdownTrigger asChild>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="h-10 px-1.5 rounded-l-none hover:bg-transparent text-inherit"
-                  >
-                    <ChevronDown size={12} />
-                  </Button>
-                </DropdownTrigger>
-              </div>
-              <DropdownContent className="w-48" align="start" alignToParent>
-                <Button
-                  variant="ghost"
-                  className="w-full justify-start gap-2"
-                  onClick={openImport}
-                >
-                  <Upload size={14} /> {t("keychain.action.importCertificate")}
-                </Button>
-              </DropdownContent>
-            </Dropdown>
-
-            {identities.length > 0 && (
-              <Button
-                size="sm"
-                variant="ghost"
-                className={cn(
-                  "h-10 px-3 gap-2 shrink-0",
-                  identityButtonActive
-                    ? "bg-foreground/10 text-foreground hover:bg-foreground/15"
-                    : "bg-foreground/5 text-foreground hover:bg-foreground/10",
-                )}
-                onClick={() => {
-                  setActiveFilter("key");
-                  setPreferredKeySection("identity");
-                  setSearch("");
-                }}
-              >
-                <User size={14} />
-                {t("keychain.section.identities")}
-              </Button>
-            )}
+            {/* Import Certificate - single action button */}
+            <Button
+              size="sm"
+              variant="secondary"
+              className={cn(vaultHeaderSecondaryButtonClass, "shrink-0")}
+              onClick={openImport}
+            >
+              <BadgeCheck size={14} />
+              {t("keychain.action.importCertificate")}
+            </Button>
 
             {onSaveIdentity && (
               <Button
@@ -838,7 +724,7 @@ echo $3 >> "$FILE"`);
                 </span>
               </div>
 
-              {keysForActiveFilter.length === 0 ? (
+              {orderedKeys.length === 0 ? (
                 <div
                   className="flex flex-col items-center justify-center h-64 text-muted-foreground"
                   data-section="keychain-empty"
@@ -852,23 +738,21 @@ echo $3 >> "$FILE"`);
                   <p className="text-sm text-center max-w-sm mb-4">
                     {t("keychain.empty.desc")}
                   </p>
-                  {(activeFilter === "key" || activeFilter === "certificate") && (
-                    <div className="flex gap-2">
-                      <Button variant="secondary" onClick={openImport}>
-                        <Upload size={14} className="mr-2" />
-                        {t("common.import")}
-                      </Button>
-                      <Button onClick={openGenerate}>
-                        <Plus size={14} className="mr-2" />
-                        {t("common.generate")}
-                      </Button>
-                    </div>
-                  )}
+                  <div className="flex gap-2">
+                    <Button variant="secondary" onClick={openImport}>
+                      <Upload size={14} className="mr-2" />
+                      {t("common.import")}
+                    </Button>
+                    <Button onClick={openGenerate}>
+                      <Plus size={14} className="mr-2" />
+                      {t("common.generate")}
+                    </Button>
+                  </div>
                 </div>
               ) : shouldShowSearchNoResults(
                 search,
                 filteredKeys.length,
-                keysForActiveFilter.length,
+                orderedKeys.length,
               ) ? (
                 <div
                   className="flex h-40 items-center justify-center text-sm text-muted-foreground"
