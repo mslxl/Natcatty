@@ -77,6 +77,8 @@ describe("AI/MCP SCP transfer abort on shipped download/upload entry points", ()
     registerScpClient("scp-dl");
     const controller = new AbortController();
     const localPath = path.join(tmpDir, "out.bin");
+    const original = Buffer.from("existing-local-content");
+    fs.writeFileSync(localPath, original);
     const promise = sftpBridge.downloadSftpToLocal(null, {
       sftpId: "scp-dl",
       remotePath: "/remote/file.bin",
@@ -86,6 +88,230 @@ describe("AI/MCP SCP transfer abort on shipped download/upload entry points", ()
     await new Promise((r) => setTimeout(r, 40));
     controller.abort();
     await assert.rejects(() => promise, /cancel|abort/i);
+    assert.deepEqual(fs.readFileSync(localPath), original);
+  });
+
+  it("downloadSftpToLocal preserves the destination when cancellation arrives after SCP download", async () => {
+    const controller = new AbortController();
+    const downloaded = Buffer.from("new-downloaded-content");
+    const backend = {
+      async stat() {
+        return { type: "file", isDirectory: false, size: downloaded.length };
+      },
+      async downloadFile(_remotePath, localPath) {
+        await fs.promises.writeFile(localPath, downloaded);
+        controller.abort();
+      },
+    };
+    sftpClients.set("scp-late-abort", {
+      __netcattyFileProtocol: "scp",
+      __netcattyScpBackend: backend,
+    });
+    const localPath = path.join(tmpDir, "late-abort.bin");
+    const original = Buffer.from("existing-local-content");
+    fs.writeFileSync(localPath, original);
+
+    await assert.rejects(
+      () => sftpBridge.downloadSftpToLocal(null, {
+        sftpId: "scp-late-abort",
+        remotePath: "/remote/file.bin",
+        localPath,
+        abortSignal: controller.signal,
+      }),
+      /cancel|abort/i,
+    );
+    assert.deepEqual(fs.readFileSync(localPath), original);
+  });
+
+  it("downloadSftpToLocal restores the destination when cancellation arrives during promotion", async (t) => {
+    const controller = new AbortController();
+    const downloaded = Buffer.from("new-downloaded-content");
+    const backend = {
+      async stat() {
+        return { type: "file", isDirectory: false, size: downloaded.length };
+      },
+      async downloadFile(_remotePath, localPath) {
+        await fs.promises.writeFile(localPath, downloaded);
+      },
+    };
+    sftpClients.set("scp-promotion-abort", {
+      __netcattyFileProtocol: "scp",
+      __netcattyScpBackend: backend,
+    });
+    const localPath = path.join(tmpDir, "promotion-abort.bin");
+    const original = Buffer.from("existing-local-content");
+    fs.writeFileSync(localPath, original);
+
+    const originalRename = fs.promises.rename;
+    let renameCalls = 0;
+    fs.promises.rename = async (...args) => {
+      await originalRename(...args);
+      renameCalls += 1;
+      if (renameCalls === 2) controller.abort();
+    };
+    t.after(() => { fs.promises.rename = originalRename; });
+
+    await assert.rejects(
+      () => sftpBridge.downloadSftpToLocal(null, {
+        sftpId: "scp-promotion-abort",
+        remotePath: "/remote/file.bin",
+        localPath,
+        abortSignal: controller.signal,
+      }),
+      /cancel|abort/i,
+    );
+    assert.equal(renameCalls >= 3, true, "the backup should be restored after cancellation");
+    assert.deepEqual(fs.readFileSync(localPath), original);
+  });
+
+  it("downloadSftpToLocal rolls back a published file when cancellation wins the final rename", async (t) => {
+    const controller = new AbortController();
+    const downloaded = Buffer.from("new-downloaded-content");
+    const backend = {
+      async stat() {
+        return { type: "file", isDirectory: false, size: downloaded.length };
+      },
+      async downloadFile(_remotePath, localPath) {
+        await fs.promises.writeFile(localPath, downloaded);
+      },
+    };
+    sftpClients.set("scp-final-rename-abort", {
+      __netcattyFileProtocol: "scp",
+      __netcattyScpBackend: backend,
+    });
+    const localPath = path.join(tmpDir, "final-rename-abort.bin");
+    const original = Buffer.from("existing-local-content");
+    fs.writeFileSync(localPath, original);
+
+    const originalRename = fs.promises.rename;
+    let renameCalls = 0;
+    fs.promises.rename = async (...args) => {
+      await originalRename(...args);
+      renameCalls += 1;
+      if (renameCalls === 3) controller.abort();
+    };
+    t.after(() => { fs.promises.rename = originalRename; });
+
+    await assert.rejects(
+      () => sftpBridge.downloadSftpToLocal(null, {
+        sftpId: "scp-final-rename-abort",
+        remotePath: "/remote/file.bin",
+        localPath,
+        abortSignal: controller.signal,
+      }),
+      /cancel|abort/i,
+    );
+    assert.equal(renameCalls >= 4, true, "the published file should be rolled back to the backup");
+    assert.deepEqual(fs.readFileSync(localPath), original);
+  });
+
+  it("downloadSftpToLocal reports and preserves the backup when cancellation rollback fails", async (t) => {
+    const controller = new AbortController();
+    const downloaded = Buffer.from("new-downloaded-content");
+    const backend = {
+      async stat() {
+        return { type: "file", isDirectory: false, size: downloaded.length };
+      },
+      async downloadFile(_remotePath, localPath) {
+        await fs.promises.writeFile(localPath, downloaded);
+      },
+    };
+    sftpClients.set("scp-rollback-failure", {
+      __netcattyFileProtocol: "scp",
+      __netcattyScpBackend: backend,
+    });
+    const localPath = path.join(tmpDir, "rollback-failure.bin");
+    const original = Buffer.from("existing-local-content");
+    fs.writeFileSync(localPath, original);
+
+    const originalRename = fs.promises.rename;
+    let renameCalls = 0;
+    let backupPath = null;
+    fs.promises.rename = async (...args) => {
+      renameCalls += 1;
+      if (renameCalls === 4) {
+        const error = new Error("injected backup restore failure");
+        error.code = "EIO";
+        throw error;
+      }
+      await originalRename(...args);
+      if (renameCalls === 2) backupPath = args[1];
+      if (renameCalls === 3) controller.abort();
+    };
+    t.after(() => { fs.promises.rename = originalRename; });
+
+    await assert.rejects(
+      () => sftpBridge.downloadSftpToLocal(null, {
+        sftpId: "scp-rollback-failure",
+        remotePath: "/remote/file.bin",
+        localPath,
+        abortSignal: controller.signal,
+      }),
+      (error) => {
+        assert.match(error.message, /Could not restore the original file/);
+        assert.match(error.message, /Backup:/);
+        assert.doesNotMatch(error.message, /^Transfer cancelled$/);
+        return true;
+      },
+    );
+    assert.ok(backupPath);
+    assert.deepEqual(fs.readFileSync(backupPath), original);
+  });
+
+  it("downloadSftpToLocal reports both recovery files when pre-publish restoration fails", async (t) => {
+    const controller = new AbortController();
+    const downloaded = Buffer.from("new-downloaded-content");
+    const backend = {
+      async stat() {
+        return { type: "file", isDirectory: false, size: downloaded.length };
+      },
+      async downloadFile(_remotePath, localPath) {
+        await fs.promises.writeFile(localPath, downloaded);
+      },
+    };
+    sftpClients.set("scp-pre-publish-rollback-failure", {
+      __netcattyFileProtocol: "scp",
+      __netcattyScpBackend: backend,
+    });
+    const localPath = path.join(tmpDir, "pre-publish-rollback-failure.bin");
+    fs.writeFileSync(localPath, Buffer.from("existing-local-content"));
+
+    const originalRename = fs.promises.rename;
+    let renameCalls = 0;
+    let readyPath = null;
+    let backupPath = null;
+    fs.promises.rename = async (...args) => {
+      renameCalls += 1;
+      if (renameCalls === 3) {
+        const error = new Error("injected backup restore failure");
+        error.code = "EIO";
+        throw error;
+      }
+      await originalRename(...args);
+      if (renameCalls === 1) readyPath = args[1];
+      if (renameCalls === 2) {
+        backupPath = args[1];
+        controller.abort();
+      }
+    };
+    t.after(() => { fs.promises.rename = originalRename; });
+
+    await assert.rejects(
+      () => sftpBridge.downloadSftpToLocal(null, {
+        sftpId: "scp-pre-publish-rollback-failure",
+        remotePath: "/remote/file.bin",
+        localPath,
+        abortSignal: controller.signal,
+      }),
+      (error) => {
+        assert.match(error.message, /Could not restore the original file/);
+        assert.match(error.message, new RegExp(readyPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+        assert.match(error.message, new RegExp(backupPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+        return true;
+      },
+    );
+    assert.equal(fs.existsSync(readyPath), true);
+    assert.equal(fs.existsSync(backupPath), true);
   });
 
   it("uploadLocalToSftp rejects when AbortSignal fires mid-SCP upload", async () => {

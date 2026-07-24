@@ -211,7 +211,10 @@ async function assertMatchingResumeContent(sourceHashPromise, stagedHashPromise)
   }
 }
 
-async function promoteLocalTransfer(stagedPath, targetPath) {
+async function promoteLocalTransfer(stagedPath, targetPath, options = {}) {
+  const assertNotCancelled = typeof options.assertNotCancelled === "function"
+    ? options.assertNotCancelled
+    : () => {};
   const token = crypto.randomUUID().replace(/-/g, "");
   const targetDir = path.dirname(targetPath);
   const targetBase = path.basename(targetPath);
@@ -219,7 +222,9 @@ async function promoteLocalTransfer(stagedPath, targetPath) {
   const backupPath = path.join(targetDir, `.${targetBase}.netcatty-${token}.backup`);
   let preparedPath = stagedPath;
   let backedUp = false;
+  let published = false;
   try {
+    assertNotCancelled();
     try {
       await fs.promises.rename(stagedPath, readyPath);
     } catch (err) {
@@ -228,18 +233,45 @@ async function promoteLocalTransfer(stagedPath, targetPath) {
       preparedPath = readyPath;
     }
     if (preparedPath !== readyPath) preparedPath = readyPath;
+    assertNotCancelled();
     try {
       await fs.promises.rename(targetPath, backupPath);
       backedUp = true;
     } catch (err) {
       if (err?.code !== "ENOENT") throw err;
     }
+    assertNotCancelled();
     await fs.promises.rename(readyPath, targetPath);
+    published = true;
+    assertNotCancelled();
+    options.onCommit?.();
     if (backedUp) await fs.promises.unlink(backupPath).catch(() => {});
     if (stagedPath !== readyPath) await fs.promises.unlink(stagedPath).catch(() => {});
   } catch (err) {
+    let restoreError = null;
     if (backedUp) {
-      await fs.promises.rename(backupPath, targetPath).catch(() => {});
+      if (published) await fs.promises.unlink(targetPath).catch(() => {});
+      try {
+        await fs.promises.rename(backupPath, targetPath);
+      } catch (recoveryErr) {
+        restoreError = recoveryErr;
+      }
+    } else if (published) {
+      try {
+        await fs.promises.unlink(targetPath);
+      } catch (recoveryErr) {
+        restoreError = recoveryErr;
+      }
+    }
+    if (restoreError) {
+      const recoveryFailure = new Error(
+        `Could not restore the original file after replacement failed. `
+        + `Backup: ${backupPath}; prepared replacement: ${readyPath}; `
+        + `original staged path: ${stagedPath}; target: ${targetPath}`,
+        { cause: restoreError },
+      );
+      recoveryFailure.recoveryFailed = true;
+      throw recoveryFailure;
     }
     await fs.promises.unlink(readyPath).catch(() => {});
     throw err;
@@ -2229,10 +2261,13 @@ async function startTransferNow(event, payload, onProgress) {
       const encodedSourcePath = isScpModeClient(client)
         ? sourcePath
         : encodePathForSession(sourceSftpId, sourcePath, sourceEncoding);
-      const downloadTargetPath = transfer.resumable
+      // SCP cannot resume, but it must still stage locally so a failed/cancelled
+      // overwrite never truncates or removes the existing destination.
+      const stageLocalDownload = transfer.resumable || isScpModeClient(client);
+      const downloadTargetPath = stageLocalDownload
         ? tempDirBridge.getTransferTempFilePath(transferId, path.basename(targetPath))
         : targetPath;
-      transfer.stagedLocalPath = transfer.resumable ? downloadTargetPath : null;
+      transfer.stagedLocalPath = stageLocalDownload ? downloadTargetPath : null;
       transfer.checkpointBytes = await resolveLocalResumeCheckpoint(
         downloadTargetPath, transfer.checkpointBytes,
       );
@@ -2253,12 +2288,22 @@ async function startTransferNow(event, payload, onProgress) {
         sendProgress,
         resolveEncodingForRequest(sourceSftpId, sourceEncoding),
       );
-      if (transfer.resumable) {
+      if (stageLocalDownload) {
+        if (transfer.cancelled) throw new Error("Transfer cancelled");
         const stagedStat = await fs.promises.stat(downloadTargetPath);
+        if (transfer.cancelled) throw new Error("Transfer cancelled");
         if (stagedStat.size !== fileSize) {
           throw new Error(`Downloaded file size mismatch: expected ${fileSize}, got ${stagedStat.size}`);
         }
-        await promoteLocalTransfer(downloadTargetPath, targetPath);
+        if (transfer.cancelled) throw new Error("Transfer cancelled");
+        await promoteLocalTransfer(downloadTargetPath, targetPath, {
+          assertNotCancelled() {
+            if (transfer.cancelled) throw new Error("Transfer cancelled");
+          },
+          onCommit() {
+            transfer.completionCommitted = true;
+          },
+        });
         transfer.stagedLocalPath = null;
       }
 
@@ -2342,7 +2387,14 @@ async function startTransferNow(event, payload, onProgress) {
         });
       });
       if (transfer.resumable && transfer.stagedLocalPath) {
-        await promoteLocalTransfer(transfer.stagedLocalPath, targetPath);
+        await promoteLocalTransfer(transfer.stagedLocalPath, targetPath, {
+          assertNotCancelled() {
+            if (transfer.cancelled) throw new Error("Transfer cancelled");
+          },
+          onCommit() {
+            transfer.completionCommitted = true;
+          },
+        });
         transfer.stagedLocalPath = null;
       }
 
@@ -2569,7 +2621,7 @@ async function startTransferNow(event, payload, onProgress) {
         transfer.stagedRemote = null;
       }
     }
-    if (transfer.cancelled || err.message === 'Transfer cancelled') {
+    if (!err?.recoveryFailed && (transfer.cancelled || err.message === 'Transfer cancelled')) {
       if (transfer.stagedLocalPath) {
         try { await fs.promises.unlink(transfer.stagedLocalPath); } catch { }
       }
@@ -2586,6 +2638,10 @@ async function startTransferNow(event, payload, onProgress) {
       cleanupTransfer();
       sender.send("netcatty:transfer:cancelled", { transferId });
     } else {
+      if (transfer.stagedLocalPath && !transfer.resumable) {
+        try { await fs.promises.rm(transfer.stagedLocalPath, { force: true }); } catch { }
+        transfer.stagedLocalPath = null;
+      }
       sendError(err);
     }
     return { transferId, error: err.message };
@@ -2732,6 +2788,10 @@ async function cancelTransfer(event, payload) {
   }
   const transfer = activeTransfers.get(transferId);
   if (transfer) {
+    if (transfer.completionCommitted) {
+      pendingCancelTransferIds.delete(String(transferId));
+      return { success: true };
+    }
     transfer.cancelled = true;
     pendingCancelTransferIds.delete(String(transferId));
     if (typeof transfer.abort === "function") {
