@@ -1118,6 +1118,31 @@ function createSourceContentChangedError() {
   return error;
 }
 
+async function captureLocalContentFingerprintFromHandle(fileHandle, fileSize) {
+  const hash = crypto.createHash("sha256");
+  const buffer = Buffer.allocUnsafe(Math.min(1024 * 1024, Math.max(1, fileSize)));
+  let position = 0;
+  while (position < fileSize) {
+    const length = Math.min(buffer.length, fileSize - position);
+    await readLocalRange(fileHandle, buffer, position, length);
+    hash.update(buffer.subarray(0, length));
+    position += length;
+  }
+  return { size: fileSize, digest: hash.digest("hex") };
+}
+
+async function assertLocalContentFingerprintUnchangedFromHandle(
+  fileHandle,
+  fingerprint,
+  expectedSize,
+) {
+  if (!fingerprint) return;
+  const latest = await captureLocalContentFingerprintFromHandle(fileHandle, expectedSize);
+  if (latest.size !== expectedSize || latest.digest !== fingerprint.digest) {
+    throw createSourceContentChangedError();
+  }
+}
+
 const UPLOAD_DIGEST_SCAN_SIZE = TRANSFER_CHUNK_SIZE * 128;
 
 async function assertUploadDigestCapacity(digestPath, fileSize) {
@@ -1483,6 +1508,7 @@ async function uploadFileConcurrent(
 
   let localHandle = null;
   let digestHandle = null;
+  let contentFingerprint = null;
   let remoteHandle = null;
   let failed = false;
   let noTransferFallback = false;
@@ -1500,6 +1526,14 @@ async function uploadFileConcurrent(
     if (transfer.cancelled) throw new Error("Transfer cancelled");
     if (transfer.sourceDigestPath) {
       digestHandle = await fs.promises.open(transfer.sourceDigestPath, "r");
+    } else {
+      // Non-resumable range uploads do not have the persisted digest sidecar.
+      // Retain the pre-existing full-file verification contract so a same-size
+      // rewrite cannot be reported as a successful upload.
+      contentFingerprint = await captureLocalContentFingerprintFromHandle(
+        localHandle,
+        fileSize,
+      );
     }
     if (transfer.cancelled) throw new Error("Transfer cancelled");
     remoteHandle = await openSftpHandle(sftp, remotePath, checkpoint > 0 ? "r+" : "w");
@@ -1535,6 +1569,13 @@ async function uploadFileConcurrent(
         forceSettleOnError: disposeChannel,
       });
       if (channelError) throw channelError;
+      if (!digestHandle) {
+        await assertLocalContentFingerprintUnchangedFromHandle(
+          localHandle,
+          contentFingerprint,
+          fileSize,
+        );
+      }
     } catch (error) {
       failed = true;
       throw error;

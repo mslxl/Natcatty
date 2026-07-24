@@ -878,6 +878,58 @@ test("resumable concurrent uploads reject a source rewritten mid-transfer", asyn
   assert.equal(stagedDeleted, true);
 });
 
+test("non-resumable shared range uploads reject a same-size source rewrite", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-nonresume-source-change-"));
+  t.after(async () => {
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const payload = Buffer.alloc(64 * 1024, 51);
+  const localPath = path.join(tempDir, "upload.bin");
+  await fs.promises.writeFile(localPath, payload);
+  let rewritten = false;
+  let remoteBytes = 0;
+  const sharedSftp = createFastSftp({
+    open(_remotePath, _flags, callback) {
+      callback(null, Buffer.from("remote-handle"));
+    },
+    write(_handle, _buffer, _offset, length, position, callback) {
+      remoteBytes = Math.max(remoteBytes, position + length);
+      if (!rewritten) {
+        rewritten = true;
+        fs.writeFileSync(localPath, Buffer.alloc(payload.length, 52));
+      }
+      callback(null);
+    },
+    close(_handle, callback) {
+      callback(null);
+    },
+  });
+  const client = {
+    __netcattySudoMode: true,
+    sftp: sharedSftp,
+    stat: async () => ({ size: remoteBytes }),
+  };
+  transferBridge.init({ sftpClients: new Map([["target", client]]) });
+
+  const result = await transferBridge.startTransfer(
+    { sender: createSender() },
+    {
+      transferId: "upload-nonresume-source-change",
+      sourcePath: localPath,
+      targetPath: "/tmp/upload.bin",
+      sourceType: "local",
+      targetType: "sftp",
+      targetSftpId: "target",
+      totalBytes: payload.length,
+      resumable: false,
+    },
+  );
+
+  assert.equal(rewritten, true);
+  assert.match(result.error || "", /source content changed/i);
+});
+
 test("resumable fast uploads fail closed when isolated channel errors (no serial stream)", async (t) => {
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-upload-channel-error-"));
   t.after(async () => {
