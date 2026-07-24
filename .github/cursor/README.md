@@ -79,7 +79,17 @@ Terminal codex_loop outcomes always drop `automation:codex-loop`:
 - Issue text is sanitized before prompts.
 - Cursor credentials are exchanged before agent execution; agent tools receive
   no API key or GitHub token and must run inside Cursor's command sandbox.
-- Classify must research unknown product names and issue URLs before needs-info.
+- External facts are gathered in a separate read-only WebSearch pass running in
+  an empty temporary workspace. It has no repository, GitHub token, or raw
+  Cursor API key; shell network access remains blocked. Only its bounded,
+  source-linked notes are passed to classify, implement, or follow-up agents.
+  The workflow also verifies the CLI stream contains a real WebSearch/WebFetch
+  tool event; an answer that merely prints a URL is rejected.
+- WebSearch and WebFetch are explicitly denied again for classify, implement,
+  follow-up, and fix agents. Those stages cannot silently perform another web
+  request outside the isolated research pass.
+- If needed WebSearch/WebFetch is unavailable or returns no source, automation
+  stops and hands the issue to a maintainer instead of inventing research.
 - Author replies on `needs-info` / `triage:bug-needs-info` re-run classify with
   the same dedupe, daily limit, and maintainer handoff rules.
 

@@ -122,6 +122,137 @@ function sanitizeUntrustedText(value, maxLength = 12_000) {
   return `${text.slice(0, maxLength)}\n\n[truncated]`;
 }
 
+/**
+ * Validate the bounded handoff emitted by the isolated WebSearch pass.
+ * Research output remains untrusted input for every later agent.
+ */
+function normalizeExternalResearchText(value, { input, webToolUsed = false } = {}) {
+  const text = sanitizeUntrustedText(value, 16_000);
+  const firstLine = text.split('\n').find((line) => line.trim())?.trim() || '';
+  const match = firstLine.match(
+    /^(RESEARCH_COMPLETE|RESEARCH_NOT_NEEDED|RESEARCH_BLOCKED):\s+(.+)$/,
+  );
+  if (!match) {
+    throw new Error('External research output is missing a valid research status.');
+  }
+  if (match[1] === 'RESEARCH_BLOCKED') {
+    throw new Error(`External research blocked: ${match[2]}`);
+  }
+  const inputText = JSON.stringify(input || {});
+  if (match[1] === 'RESEARCH_NOT_NEEDED' && /https?:\/\/[^\s<>()]+/i.test(inputText)) {
+    throw new Error('This input contains a URL and requires external research.');
+  }
+  if (match[1] === 'RESEARCH_COMPLETE') {
+    if (!webToolUsed) {
+      throw new Error('Completed external research requires a recorded WebSearch/WebFetch tool call.');
+    }
+    const sourceLines = text.match(
+      /^-\s+https:\/\/[^\s<>()]+\s+(?:—|–|-)\s+\S.*$/gim,
+    ) || [];
+    if (!sourceLines.length) {
+      throw new Error('Completed external research must include at least one structured HTTPS source URL.');
+    }
+  }
+  return text;
+}
+
+function normalizeResearchSourceUrl(value) {
+  try {
+    const parsed = new URL(String(value || ''));
+    if (parsed.protocol !== 'https:') return '';
+    parsed.hash = '';
+    if (parsed.pathname.length > 1) parsed.pathname = parsed.pathname.replace(/\/$/, '');
+    return parsed.toString();
+  } catch {
+    return '';
+  }
+}
+
+function extractResearchSourceUrls(text) {
+  const urls = [];
+  const pattern = /^-\s+(https:\/\/[^\s<>()]+)\s+(?:—|–|-)\s+\S.*$/gim;
+  for (const match of String(text || '').matchAll(pattern)) {
+    const normalized = normalizeResearchSourceUrl(match[1]);
+    if (normalized) urls.push(normalized);
+  }
+  return urls;
+}
+
+function extractHttpsUrls(value) {
+  const urls = new Set();
+  for (const match of String(value || '').matchAll(/https:\/\/[^\s"'<>()[\]]+/gi)) {
+    const normalized = normalizeResearchSourceUrl(match[0].replace(/[.,;:!?]+$/, ''));
+    if (normalized) urls.add(normalized);
+  }
+  return urls;
+}
+
+/** Parse Cursor stream-json and prove that completed research used a web tool. */
+function parseExternalResearchStream(value, input) {
+  let assistantText = '';
+  let terminalResult = '';
+  let webToolUsed = false;
+  const webEvidenceUrls = new Set();
+
+  for (const rawLine of String(value || '').split('\n')) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    let event;
+    try {
+      event = JSON.parse(line);
+    } catch {
+      throw new Error('External research stream contains malformed JSON.');
+    }
+    if (event?.type === 'tool_call' && event.subtype === 'completed') {
+      const toolCall = event.tool_call || event.toolCall || {};
+      const webCall = toolCall.webSearchToolCall || toolCall.webFetchToolCall;
+      if (webCall?.result?.success) {
+        webToolUsed = true;
+        // A search query is model-authored and proves nothing about its URL.
+        // A successful fetch may use its explicit target plus returned content.
+        const trustedEvidence = JSON.stringify(
+          toolCall.webFetchToolCall
+            ? { args: webCall.args || {}, result: webCall.result.success }
+            : { result: webCall.result.success },
+        );
+        for (const url of extractHttpsUrls(trustedEvidence)) {
+          webEvidenceUrls.add(url);
+        }
+      }
+    }
+    if (event?.type === 'result') {
+      if (event.subtype === 'success' && event.is_error !== true && typeof event.result === 'string') {
+        terminalResult = event.result;
+      } else if (event.is_error || event.subtype === 'error') {
+        throw new Error(`External research failed: ${event.result || event.error || 'unknown error'}`);
+      }
+    }
+    if (event?.type !== 'assistant' || !Array.isArray(event.message?.content)) {
+      continue;
+    }
+    const eventText = event.message.content
+      .filter((block) => block?.type === 'text' && block.text)
+      .map((block) => String(block.text))
+      .join('');
+    if (eventText) assistantText += eventText;
+  }
+
+  const normalized = normalizeExternalResearchText(terminalResult || assistantText, {
+    input,
+    webToolUsed,
+  });
+  if (normalized.startsWith('RESEARCH_COMPLETE:')) {
+    const sourceUrls = extractResearchSourceUrls(normalized);
+    const unverified = sourceUrls.filter((url) => !webEvidenceUrls.has(url));
+    if (unverified.length) {
+      throw new Error(
+        `Research source URL was not present in completed web tool results: ${unverified.join(', ')}`,
+      );
+    }
+  }
+  return normalized;
+}
+
 function escapeSlackText(value) {
   return String(value || '')
     .replace(/&/g, '&amp;')
@@ -2670,6 +2801,8 @@ module.exports = {
   BOT_PR_LABEL,
   CODEX_TERMINALS,
   sanitizeUntrustedText,
+  normalizeExternalResearchText,
+  parseExternalResearchStream,
   countSummaryUnits,
   isValidIssueTitle,
   getIssueFormatErrors,
