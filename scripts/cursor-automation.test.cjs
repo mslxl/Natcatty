@@ -519,6 +519,21 @@ test('normalizeClassification rewrites implementation promise on downgrade', () 
   assert.match(feature.reply, /maintainer|KeychainManager/i);
 });
 
+test('normalizeClassification keeps mid-confidence feature_quick_win (UI polish)', () => {
+  const result = auto.normalizeClassification(
+    grounded({
+      category: 'feature_quick_win',
+      confidence: 0.75,
+      summary: 'keychain header buttons',
+      reasoning:
+        'Local UI in KeychainManager.tsx only; tests update with the same PR',
+      reply: 'Preparing a focused layout tweak in KeychainManager.',
+    }),
+  );
+  assert.equal(result.category, 'feature_quick_win');
+  assert.equal(result.should_implement, true);
+});
+
 test('parseCodexReviewOutcome uses summaryCommitId when body has no pin', () => {
   const outcome = auto.parseCodexReviewOutcome({
     summaryText: "Didn't find any major issues. Swish!",

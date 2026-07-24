@@ -28,13 +28,7 @@ From the title/body, list concrete tokens to search:
 ### 2. Search the repository (required)
 
 Run **at least two** searches in the workspace (shell/`rg`/`grep`/`find` tools
-are fine). Examples:
-
-- `rg -n "Keychain|Identity|凭证|密钥" components domain application`
-- `rg -n "shouldShowIdentitySection|KeychainManager" components`
-- search for reporter-quoted strings
-
-Record the **real file paths** you hit (not guessed).
+are fine). Record **real file paths** you hit (not guessed).
 
 ### 3. Open and read code (required)
 
@@ -43,30 +37,77 @@ Open **at least two** source files that search returned (prefer
 
 Read enough of each file to answer:
 
-- What does the current implementation actually do for this request/bug?
-- Which symbols/components/hooks own that behavior?
-- Is a small focused change feasible, or is this a product/layout tradeoff?
+- What does the current implementation actually do?
+- Which symbols/components own that behavior?
+- **How large is the change surface?** Count roughly: files, subsystems,
+  protocol/data-model impact, cross-cutting settings.
 
-If search finds nothing relevant, say so explicitly in `code_findings` and
-prefer `bug_needs_info` / `feature_defer` / `unclear` rather than inventing
-paths.
+If search finds nothing relevant, say so in `code_findings` and prefer
+`bug_needs_info` / `unclear` rather than inventing paths.
 
 ### 4. Only then classify and write the reply
 
-Choose exactly one category:
+## Category definitions (read carefully)
 
-- `bug_ready`: well-described bug, clearly attributable to Netcatty after
-  reading code, focused fix verifiable in one PR. Confidence ≥ 0.8.
-- `bug_needs_info`: ambiguous, environmental/upstream, or lacks repro evidence
-  even after reading nearby code.
-- `feature_quick_win`: valuable, small, low-risk, non-breaking after reading
-  the current implementation. Confidence ≥ 0.8.
-- `feature_defer`: substantial scope, product tradeoffs, weak value/effort, or
-  risky after seeing the real code paths.
+### Prefer `feature_quick_win` when ALL of these hold after reading code
+
+- Value is clear to users (layout polish, control placement, labels, empty
+  states, simple filters, copy, local UX friction).
+- Touch surface is **small and local**: typically **1–4 files** in the same UI
+  area (e.g. one manager + its tests/helpers), not a cross-app redesign.
+- No protocol, crypto, sync, packaging, auth model, or vault schema redesign.
+- No multi-week product decision required — the reporter already proposed a
+  concrete UI outcome (even if several small controls move).
+- A maintainer could ship a focused PR in about **one session**.
+
+**UI-only rearrangements are usually quick wins**, including:
+
+- moving/merging header buttons
+- changing dropdown vs single button for an existing action
+- showing two sections on the same page instead of tab-like switching
+- tightening spacing / grouping in one panel
+
+That the **current tests lock today's layout is not a reason to defer** —
+tests should be updated with the UI change.
+
+### Use `feature_defer` only when at least one is true
+
+- Spans **many modules** (renderer + main + CLI/MCP + sync) or unclear ownership.
+- Needs **open product strategy** (new business model, competing priorities with
+  no clear winner from the report).
+- Large rewrite, new subsystem, or high breakage risk for existing users beyond
+  the local panel.
+- Effort is clearly multi-PR / multi-day even for a familiar maintainer.
+
+Do **not** defer just because:
+
+- there are existing unit tests for the old UI
+- the change “undoes a recent layout choice” (that can still be a focused PR)
+- the issue lists several related button tweaks in the **same** screen
+
+### Bugs
+
+- `bug_ready`: clear Netcatty bug after reading code; focused fix in one PR;
+  confidence ≥ 0.8.
+- `bug_needs_info`: still cannot reproduce / attribute after reading code, or
+  missing evidence (logs, steps, versions).
+
+### Other
+
 - `unclear`: cannot interpret as a concrete bug or feature.
-- `other`: support/planning/discussion — no automatic code change.
+- `other`: support / planning / discussion — no automatic code change.
 
-Be conservative. Prefer `bug_needs_info` / `feature_defer` / `unclear` when unsure.
+### Confidence
+
+- Use **≥ 0.8** for `bug_ready` and `feature_quick_win` when the code path is
+  clear and the change is local — **do not under-confidence UI polish** just to
+  “be safe”. Under-confidence auto-downgrades quick wins away from implement.
+- Be cautious on security, data loss, and cross-process surfaces — not on
+  ordinary vault/keychain layout polish.
+
+When truly unsure between quick_win and defer: **if the touch surface is
+clearly local UI after reading code, choose `feature_quick_win`**. Reserve
+defer for genuinely large or strategic work.
 
 ## Public `reply` rules
 
@@ -76,17 +117,16 @@ maintainer.
 **Must** ground the reply in what you read:
 
 - Name at least one real file path **or** symbol from `code_paths` /
-  `code_findings` (e.g. `KeychainManager`, `shouldShowIdentitySection`).
+  `code_findings`.
 - Briefly state how the **current code** behaves vs what the reporter wants.
-- Do **not** write a generic tradeoff paragraph that could apply to any feature
-  without code specifics.
+- Do **not** write a generic “needs product discussion” paragraph when the
+  work is a local UI tweak you already located in code.
 
 Category-specific:
 
-- `bug_needs_info`: ask only for concrete missing evidence, after noting what
-  the code path expects.
-- `feature_defer`: explain the tradeoff **in terms of the current structure**
-  (which sections/components would move, what recent behavior it would undo).
+- `bug_needs_info`: ask only for concrete missing evidence.
+- `feature_defer`: explain **why the surface is large** (modules/risk), not
+  vague “tradeoffs”.
 - `bug_ready` / `feature_quick_win`: say a focused change is being prepared and
   name the likely touchpoint.
 - `unclear` / `other`: say what is missing or that a maintainer will follow up.
@@ -99,15 +139,15 @@ Return **only** one JSON object (plain or fenced json). **All fields required.**
 
 ```json
 {
-  "category": "feature_defer",
-  "confidence": 0.0,
+  "category": "feature_quick_win",
+  "confidence": 0.85,
   "summary": "one-line summary",
-  "reasoning": "why this category, citing files/symbols you opened",
+  "reasoning": "why this category, citing files/symbols and estimated touch surface",
   "code_paths": [
     "components/KeychainManager.tsx",
     "components/KeychainCardLayout.test.tsx"
   ],
-  "code_findings": "2-5 sentences: what those files currently do that is relevant; quote symbol names.",
+  "code_findings": "2-5 sentences: what those files currently do; quote symbol names.",
   "reply": "user-facing message grounded in the findings above",
   "label_corrections": []
 }
@@ -115,15 +155,12 @@ Return **only** one JSON object (plain or fenced json). **All fields required.**
 
 Hard requirements:
 
-- `code_paths`: array of **≥ 2** repository-relative paths you actually opened
-  (or ≥ 1 if the whole feature truly lives in a single file — then say so in
-  `code_findings`). Paths must look real (`components/…`, `domain/…`, …), not
-  placeholders.
-- `code_findings`: non-empty, concrete, no filler like "looks fine".
-- `reasoning` must reference at least one entry from `code_paths` or a symbol
-  from `code_findings`.
+- `code_paths`: ≥ 1 real repository-relative source path you opened (prefer ≥ 2).
+- `code_findings`: non-empty, concrete.
+- `reasoning` must reference at least one path or symbol from the above.
 - `reply` must reference at least one path basename or symbol from the above.
+- `reasoning` for `feature_defer` must state **which multi-module / strategic
+  barrier** applies; “tests exist” is not enough.
 
-If you cannot complete steps 2–3, set category to `bug_needs_info` or
-`feature_defer` (or `unclear`) and put the failed search terms in
-`code_findings` — still do not invent file paths.
+If you cannot complete steps 2–3, set category to `bug_needs_info` or `unclear`
+and put the failed search terms in `code_findings` — still do not invent paths.
