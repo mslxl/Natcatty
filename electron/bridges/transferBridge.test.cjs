@@ -914,11 +914,9 @@ test("non-resumable shared range uploads reject a same-size source rewrite", asy
     await fs.promises.rm(tempDir, { recursive: true, force: true });
   });
 
-  const changedChunkIndex = UPLOAD_TRANSFER_CONCURRENCY + 1;
-  const payload = Buffer.alloc(
-    (UPLOAD_TRANSFER_CONCURRENCY + 8) * TRANSFER_CHUNK_SIZE,
-    51,
-  );
+  // One request ensures the rewrite happens after every range has already
+  // passed its pre-WRITE digest check. Only the final digest scan can catch it.
+  const payload = Buffer.alloc(16 * 1024, 51);
   const localPath = path.join(tempDir, "upload.bin");
   const digestId = crypto.createHash("sha256")
     .update("upload-nonresume-source-change")
@@ -929,32 +927,35 @@ test("non-resumable shared range uploads reject a same-size source rewrite", asy
     "ranges.sha256",
   );
   await fs.promises.writeFile(localPath, payload);
+  const frozenSource = await fs.promises.stat(localPath);
+  const realStat = fs.promises.stat.bind(fs.promises);
+  const realOpen = fs.promises.open.bind(fs.promises);
+  fs.promises.stat = async (p, ...args) => {
+    if (path.resolve(String(p)) === path.resolve(localPath)) return frozenSource;
+    return realStat(p, ...args);
+  };
+  fs.promises.open = async (p, flags, ...args) => {
+    const handle = await realOpen(p, flags, ...args);
+    if (path.resolve(String(p)) === path.resolve(localPath) && String(flags).includes("r")) {
+      handle.stat = async () => frozenSource;
+    }
+    return handle;
+  };
+  t.after(() => {
+    fs.promises.stat = realStat;
+    fs.promises.open = realOpen;
+  });
   let rewritten = false;
   let remoteBytes = 0;
-  let uploadedChangedChunk = null;
   const sharedSftp = createFastSftp({
     open(_remotePath, _flags, callback) {
       callback(null, Buffer.from("remote-handle"));
     },
     write(_handle, buffer, offset, length, position, callback) {
       remoteBytes = Math.max(remoteBytes, position + length);
-      if (position === changedChunkIndex * TRANSFER_CHUNK_SIZE) {
-        uploadedChangedChunk = Buffer.from(buffer.subarray(offset, offset + length));
-      }
       if (!rewritten) {
         rewritten = true;
-        const fd = fs.openSync(localPath, "r+");
-        try {
-          fs.writeSync(
-            fd,
-            Buffer.alloc(TRANSFER_CHUNK_SIZE, 52),
-            0,
-            TRANSFER_CHUNK_SIZE,
-            changedChunkIndex * TRANSFER_CHUNK_SIZE,
-          );
-        } finally {
-          fs.closeSync(fd);
-        }
+        fs.writeFileSync(localPath, Buffer.alloc(payload.length, 52));
       }
       callback(null);
     },
@@ -985,7 +986,6 @@ test("non-resumable shared range uploads reject a same-size source rewrite", asy
 
   assert.equal(rewritten, true);
   assert.match(result.error || "", /source content changed/i);
-  assert.equal(uploadedChangedChunk, null);
   assert.equal(fs.existsSync(digestPath), false);
 });
 
