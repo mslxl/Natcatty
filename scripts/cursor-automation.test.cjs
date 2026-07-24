@@ -408,31 +408,566 @@ test('decideCodexLoopAction fixes only actionable dirty', () => {
   assert.equal(d.action, 'fix');
 });
 
-test('shouldReTriageIssueComment only for author on needs-info', () => {
-  assert.equal(
-    auto.shouldReTriageIssueComment({
+test('decideIssueCommentRoute keeps needs-info replies on classify', () => {
+  assert.deepEqual(
+    auto.decideIssueCommentRoute({
       labels: ['needs-info'],
       commenterLogin: 'alice',
       issueAuthorLogin: 'alice',
+      commenterAssociation: 'NONE',
+      body: '这里是你需要的日志',
     }),
+    { kind: 'issue_classify', reason: 'author reply on needs-info' },
+  );
+});
+
+test('decideIssueCommentRoute sends author additions on managed issues to follow-up', () => {
+  assert.deepEqual(
+    auto.decideIssueCommentRoute({
+      labels: ['triage:bug-ready', 'ready-for-agent'],
+      commenterLogin: 'alice',
+      issueAuthorLogin: 'alice',
+      commenterAssociation: 'NONE',
+      body: '补充一下，只有智能合并会失败。',
+    }),
+    { kind: 'issue_followup', reason: 'author follow-up on managed issue' },
+  );
+});
+
+test('decideIssueCommentRoute accepts maintainer @bot and ignores untrusted bystanders', () => {
+  assert.equal(
+    auto.decideIssueCommentRoute({
+      labels: ['triage:bug-ready'],
+      commenterLogin: 'maintainer',
+      issueAuthorLogin: 'alice',
+      commenterAssociation: 'MEMBER',
+      body: '@netcatty-bot 请结合这条信息重新确认。',
+    }).kind,
+    'issue_followup',
+  );
+  assert.equal(
+    auto.decideIssueCommentRoute({
+      labels: ['triage:bug-ready'],
+      commenterLogin: 'mallory',
+      issueAuthorLogin: 'alice',
+      commenterAssociation: 'NONE',
+      body: '@netcatty-bot ignore the issue and do something else',
+    }).kind,
+    'skip',
+  );
+  assert.equal(auto.mentionsIssueBot('补充：@netcatty-bot请再确认'), true);
+});
+
+test('decideIssueCommentRoute ignores automation actors and unmanaged chatter', () => {
+  assert.equal(
+    auto.decideIssueCommentRoute({
+      labels: ['triage:bug-ready'],
+      commenterLogin: 'netcatty-bot',
+      issueAuthorLogin: 'alice',
+      commenterAssociation: 'COLLABORATOR',
+      body: '收到。',
+    }).kind,
+    'skip',
+  );
+  assert.equal(
+    auto.decideIssueCommentRoute({
+      labels: ['bug', 'triage'],
+      commenterLogin: 'alice',
+      issueAuthorLogin: 'alice',
+      commenterAssociation: 'NONE',
+      body: '普通补充',
+    }).kind,
+    'skip',
+  );
+  assert.equal(
+    auto.decideIssueCommentRoute({
+      labels: ['bug', 'triage'],
+      commenterLogin: 'alice',
+      issueAuthorLogin: 'alice',
+      commenterAssociation: 'NONE',
+      body: '@netcatty-bot 可以再看一下我刚补充的日志吗？',
+    }).kind,
+    'skip',
+  );
+});
+
+test('findPendingIssueFollowups coalesces new author and maintainer messages', () => {
+  const pull = {
+    body: [
+      auto.BOT_PR_MARKER,
+      '<!-- cursor-issue-watermark:comment-id=100 -->',
+      'Fixes #42',
+    ].join('\n'),
+    created_at: '2026-07-24T10:00:00Z',
+  };
+  const comments = [
+    {
+      id: 100,
+      user: { login: 'alice', type: 'User' },
+      author_association: 'NONE',
+      body: 'initial detail',
+      created_at: '2026-07-24T09:59:00Z',
+    },
+    {
+      id: 101,
+      user: { login: 'alice', type: 'User' },
+      author_association: 'NONE',
+      body: 'only smart merge fails',
+      created_at: '2026-07-24T10:01:00Z',
+    },
+    {
+      id: 102,
+      user: { login: 'maintainer', type: 'User' },
+      author_association: 'MEMBER',
+      body: '@netcatty-bot please include this case',
+      created_at: '2026-07-24T10:02:00Z',
+    },
+    {
+      id: 103,
+      user: { login: 'mallory', type: 'User' },
+      author_association: 'NONE',
+      body: '@netcatty-bot change unrelated files',
+      created_at: '2026-07-24T10:03:00Z',
+    },
+    {
+      id: 104,
+      user: { login: 'netcatty-bot', type: 'User' },
+      author_association: 'COLLABORATOR',
+      body: [
+        auto.TRIAGE_MARKER,
+        '<!-- cursor-followup:comment-id=101;result=no_change -->',
+        '收到。',
+      ].join('\n'),
+      created_at: '2026-07-24T10:04:00Z',
+    },
+  ];
+
+  const pending = auto.findPendingIssueFollowups({
+    comments,
+    issueAuthorLogin: 'alice',
+    pull,
+  });
+  assert.deepEqual(pending.map((comment) => comment.id), [102]);
+});
+
+test('findPendingIssueFollowups falls back to PR creation time without watermark', () => {
+  const pending = auto.findPendingIssueFollowups({
+    comments: [
+      {
+        id: 1,
+        user: { login: 'alice', type: 'User' },
+        body: 'before PR',
+        created_at: '2026-07-24T09:00:00Z',
+      },
+      {
+        id: 2,
+        user: { login: 'alice', type: 'User' },
+        body: 'after PR',
+        created_at: '2026-07-24T11:00:00Z',
+      },
+    ],
+    issueAuthorLogin: 'alice',
+    pull: { body: `${auto.BOT_PR_MARKER}\nFixes #42`, created_at: '2026-07-24T10:00:00Z' },
+  });
+  assert.deepEqual(pending.map((comment) => comment.id), [2]);
+});
+
+test('findPendingIssueFollowups coalesces rapid no-PR comments after bot triage', () => {
+  const pending = auto.findPendingIssueFollowups({
+    comments: [
+      {
+        id: 8,
+        user: { login: 'netcatty-bot', type: 'User' },
+        body: [
+          auto.TRIAGE_MARKER,
+          '<!-- cursor-triage-watermark:comment-id=7 -->',
+          'Thanks for the report.',
+        ].join('\n'),
+        created_at: '2026-07-24T09:00:00Z',
+      },
+      {
+        id: 9,
+        user: { login: 'alice', type: 'User' },
+        body: 'first rapid addition',
+        created_at: '2026-07-24T10:00:00Z',
+      },
+      {
+        id: 10,
+        user: { login: 'alice', type: 'User' },
+        body: 'second rapid addition',
+        created_at: '2026-07-24T10:00:01Z',
+      },
+    ],
+    issueAuthorLogin: 'alice',
+    triggerCommentId: 10,
+  });
+  assert.deepEqual(pending.map((comment) => comment.id), [9, 10]);
+});
+
+test('countIssueFollowupRepliesSince counts only trusted bot result markers', () => {
+  const comments = [
+    {
+      user: { login: 'netcatty-bot' },
+      body: '<!-- cursor-followup:comment-id=1;result=no_change -->',
+      created_at: '2026-07-24T10:00:00Z',
+    },
+    {
+      user: { login: 'netcatty-bot' },
+      body: '<!-- cursor-followup:comment-id=2;result=updated -->',
+      created_at: '2026-07-23T10:00:00Z',
+    },
+    {
+      user: { login: 'mallory' },
+      body: '<!-- cursor-followup:comment-id=3;result=no_change -->',
+      created_at: '2026-07-24T11:00:00Z',
+    },
+  ];
+  assert.equal(
+    auto.countIssueFollowupRepliesSince(
+      comments,
+      Date.parse('2026-07-24T00:00:00Z'),
+    ),
+    1,
+  );
+});
+
+test('needs-info follow-up accounting counts trusted triage replies and watermarks', () => {
+  const comments = [
+    {
+      user: { login: 'netcatty-bot' },
+      body: '<!-- cursor-automation -->\n<!-- cursor-triage-watermark:comment-id=9 -->',
+      created_at: '2026-07-24T10:00:00Z',
+    },
+    {
+      user: { login: 'mallory' },
+      body: '<!-- cursor-triage-watermark:comment-id=10 -->',
+      created_at: '2026-07-24T11:00:00Z',
+    },
+  ];
+  assert.equal(
+    auto.countIssueAutomationRepliesSince(
+      comments,
+      Date.parse('2026-07-24T00:00:00Z'),
+    ),
+    1,
+  );
+  assert.equal(auto.commentIdAtOrBefore('9', '10'), true);
+  assert.equal(auto.commentIdAtOrBefore('11', '10'), false);
+});
+
+test('buildPullRequestBody records the issue comment snapshot', () => {
+  const body = auto.buildPullRequestBody({
+    issueNumber: 42,
+    issueTitle: '[Bug] sync conflict',
+    summary: 'keep local should upload',
+    issueCommentWatermark: 987,
+  });
+  assert.match(body, /<!-- cursor-source-issue:42 -->/);
+  assert.match(body, /<!-- cursor-issue-watermark:comment-id=987 -->/);
+  assert.equal(auto.extractIssueCommentWatermark(body), '987');
+  assert.equal(auto.extractSourceIssueNumber({ body }), 42);
+});
+
+test('parseIssueFollowupStatus is fail-closed and builds durable reply markers', () => {
+  assert.deepEqual(auto.parseIssueFollowupStatus('NO_CHANGE: already covered'), {
+    status: 'no_change',
+    summary: 'already covered',
+  });
+  assert.deepEqual(auto.parseIssueFollowupStatus('UPDATED: added the missing test'), {
+    status: 'updated',
+    summary: 'added the missing test',
+  });
+  assert.equal(
+    auto.parseIssueFollowupStatus('UPDATED: changed it\nBLOCKED: scope is unsafe').status,
+    'blocked',
+  );
+
+  const reply = auto.buildIssueFollowupReply({
+    commentIds: [101, 102],
+    result: 'updated',
+    reply: '收到，这些补充已经加入现有修复。',
+    pullNumber: 77,
+    headSha: 'abcdef1234567890',
+  });
+  assert.match(reply, /cursor-followup:comment-id=101;result=updated/);
+  assert.match(reply, /cursor-followup:comment-id=102;result=updated/);
+  assert.match(reply, /cursor-followup-pr:77/);
+  assert.match(reply, /cursor-followup-head:abcdef1234567890/);
+  assert.match(reply, /这些补充已经加入现有修复/);
+});
+
+test('buildIssueFollowupFallbackReply follows the reporter language', () => {
+  assert.match(
+    auto.buildIssueFollowupFallbackReply(
+      { title: '[Bug] 同步仍然失败', body: '补充日志' },
+      'rate_limited',
+    ),
+    /维护者/,
+  );
+  assert.match(
+    auto.buildIssueFollowupFallbackReply(
+      { title: '[Bug] Sync still fails', body: 'More logs' },
+      'publish_failed',
+    ),
+    /maintainer/i,
+  );
+});
+
+test('getPendingIssueFollowupsForPull protects ready state with live issue comments', async () => {
+  const pull = {
+    number: 77,
+    body: `${auto.BOT_PR_MARKER}\n<!-- cursor-issue-watermark:comment-id=1 -->\nFixes #42`,
+    created_at: '2026-07-24T10:00:00Z',
+  };
+  const github = {
+    rest: {
+      issues: {
+        get: async ({ issue_number }) => {
+          assert.equal(issue_number, 42);
+          return { data: { number: 42, user: { login: 'alice' } } };
+        },
+        listComments: Symbol('listComments'),
+      },
+    },
+    paginate: async (method) => {
+      assert.equal(method, github.rest.issues.listComments);
+      return [
+        {
+          id: 1,
+          user: { login: 'alice', type: 'User' },
+          body: 'old',
+          created_at: '2026-07-24T09:00:00Z',
+        },
+        {
+          id: 2,
+          user: { login: 'alice', type: 'User' },
+          body: 'new detail',
+          created_at: '2026-07-24T11:00:00Z',
+        },
+      ];
+    },
+  };
+  const result = await auto.getPendingIssueFollowupsForPull({
+    github,
+    context: { repo: { owner: 'binaricat', repo: 'Netcatty' } },
+    pull,
+  });
+  assert.equal(result.issue.number, 42);
+  assert.deepEqual(result.pending.map((comment) => comment.id), [2]);
+});
+
+test('prepareIssueFollowupContext uses the triggering comment when no PR exists', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cursor-followup-'));
+  const outputPath = path.join(dir, 'followup.json');
+  const outputs = {};
+  const comments = [
+    {
+      id: 8,
+      user: { login: 'alice', type: 'User' },
+      author_association: 'NONE',
+      body: 'older context',
+      created_at: '2026-07-24T09:00:00Z',
+    },
+    {
+      id: 9,
+      user: { login: 'alice', type: 'User' },
+      author_association: 'NONE',
+      body: '@netcatty-bot 新版本仍然可以复现',
+      created_at: '2026-07-24T10:00:00Z',
+    },
+  ];
+  const github = {
+    rest: {
+      issues: {
+        get: async () => ({
+          data: {
+            number: 42,
+            title: '[Bug] still broken',
+            body: 'full report',
+            state: 'closed',
+            html_url: 'https://example.test/issues/42',
+            user: { login: 'alice' },
+            labels: [{ name: 'triage:bug-ready' }],
+          },
+        }),
+        listComments: Symbol('listComments'),
+      },
+    },
+    paginate: async () => comments,
+  };
+  const result = await auto.prepareIssueFollowupContext({
+    github,
+    context: { repo: { owner: 'binaricat', repo: 'Netcatty' } },
+    core: { setOutput: (key, value) => { outputs[key] = value; } },
+    issueNumber: 42,
+    triggerCommentId: 9,
+    outputPath,
+  });
+  assert.equal(result.shouldRun, true);
+  assert.deepEqual(result.pending.map((comment) => comment.id), [9]);
+  assert.equal(outputs.should_run, 'true');
+  assert.equal(outputs.has_pull, 'false');
+  const payload = JSON.parse(fs.readFileSync(outputPath, 'utf8'));
+  assert.equal(payload.pending_comments[0].id, '9');
+  assert.equal(payload.pull, null);
+});
+
+test('prepareIssueFollowupContext hands off after the daily follow-up limit', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cursor-followup-limit-'));
+  const outputPath = path.join(dir, 'followup.json');
+  const outputs = {};
+  const comments = [
+    {
+      id: 8,
+      user: { login: 'netcatty-bot', type: 'User' },
+      body: '<!-- cursor-followup:comment-id=7;result=no_change -->',
+      created_at: '2026-07-24T09:00:00Z',
+    },
+    {
+      id: 9,
+      user: { login: 'alice', type: 'User' },
+      author_association: 'NONE',
+      body: '新版本仍然可以复现',
+      created_at: '2026-07-24T10:00:00Z',
+    },
+  ];
+  const github = {
+    rest: {
+      issues: {
+        get: async () => ({
+          data: {
+            number: 42,
+            title: '[Bug] 仍然失败',
+            body: '完整报告',
+            state: 'open',
+            html_url: 'https://example.test/issues/42',
+            user: { login: 'alice' },
+            labels: [{ name: 'triage:bug-ready' }],
+          },
+        }),
+        listComments: Symbol('listComments'),
+      },
+    },
+    paginate: async () => comments,
+  };
+  const result = await auto.prepareIssueFollowupContext({
+    github,
+    context: { repo: { owner: 'binaricat', repo: 'Netcatty' } },
+    core: { setOutput: (key, value) => { outputs[key] = value; } },
+    issueNumber: 42,
+    triggerCommentId: 9,
+    outputPath,
+    dailyLimit: 1,
+    nowMs: Date.parse('2026-07-24T12:00:00Z'),
+  });
+  assert.equal(result.shouldRun, false);
+  assert.equal(result.rateLimited, true);
+  assert.deepEqual(result.pending.map((comment) => comment.id), [9]);
+  assert.equal(outputs.should_run, 'false');
+  assert.equal(outputs.rate_limited, 'true');
+  assert.equal(outputs.pending_ids, '9');
+});
+
+test('ensurePullRequestDraft pauses a ready open PR and ignores closed PRs', async () => {
+  const calls = [];
+  const github = {
+    rest: {
+      pulls: {
+        get: async ({ pull_number }) => ({
+          data: { number: pull_number, state: pull_number === 77 ? 'open' : 'closed', draft: false },
+        }),
+      },
+    },
+    graphql: async (query, variables) => {
+      calls.push({ query, variables });
+      if (query.includes('query(')) {
+        return { repository: { pullRequest: { id: 'PR_node', isDraft: false } } };
+      }
+      return { convertPullRequestToDraft: { pullRequest: { isDraft: true } } };
+    },
+  };
+  const context = { repo: { owner: 'binaricat', repo: 'Netcatty' } };
+  assert.equal(
+    await auto.ensurePullRequestDraft({ github, context, pullNumber: 77 }),
     true,
   );
+  assert.equal(calls.length, 2);
   assert.equal(
-    auto.shouldReTriageIssueComment({
-      labels: ['needs-info'],
-      commenterLogin: 'bob',
-      issueAuthorLogin: 'alice',
-    }),
+    await auto.ensurePullRequestDraft({ github, context, pullNumber: 78 }),
     false,
   );
-  assert.equal(
-    auto.shouldReTriageIssueComment({
-      labels: ['bug'],
-      commenterLogin: 'alice',
-      issueAuthorLogin: 'alice',
-    }),
-    false,
-  );
+  assert.equal(calls.length, 2);
+});
+
+test('restoreCleanPullRequestAfterNoChange undoes ready when a comment races', async () => {
+  let draft = true;
+  let commentRead = 0;
+  const pull = () => ({
+    number: 77,
+    state: 'open',
+    draft,
+    body: `${auto.BOT_PR_MARKER}\n<!-- cursor-source-issue:42 -->\n<!-- cursor-issue-watermark:comment-id=1 -->\nFixes #42`,
+    head: {
+      sha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      ref: 'cursor/issue-42-1',
+      repo: { full_name: 'binaricat/Netcatty' },
+    },
+    base: { repo: { full_name: 'binaricat/Netcatty' } },
+  });
+  const github = {
+    rest: {
+      pulls: { get: async () => ({ data: pull() }) },
+      issues: {
+        get: async ({ issue_number }) => ({
+          data:
+            issue_number === 42
+              ? { number: 42, user: { login: 'alice' } }
+              : { number: 77, labels: [] },
+        }),
+        listComments: Symbol('listComments'),
+        update: async () => ({ data: {} }),
+      },
+    },
+    paginate: async () => {
+      commentRead += 1;
+      const comments = [
+        {
+          id: 1,
+          user: { login: 'alice', type: 'User' },
+          body: 'old',
+          created_at: '2026-07-24T09:00:00Z',
+        },
+      ];
+      if (commentRead >= 2) {
+        comments.push({
+          id: 2,
+          user: { login: 'alice', type: 'User' },
+          body: 'raced follow-up',
+          created_at: '2026-07-24T10:00:00Z',
+        });
+      }
+      return comments;
+    },
+    graphql: async (query) => {
+      if (query.includes('query(')) {
+        return { repository: { pullRequest: { id: 'PR_node', isDraft: draft } } };
+      }
+      if (query.includes('markPullRequestReadyForReview')) {
+        draft = false;
+        return { markPullRequestReadyForReview: { pullRequest: { isDraft: false } } };
+      }
+      draft = true;
+      return { convertPullRequestToDraft: { pullRequest: { isDraft: true } } };
+    },
+  };
+  const restored = await auto.restoreCleanPullRequestAfterNoChange({
+    github,
+    context: { repo: { owner: 'binaricat', repo: 'Netcatty' } },
+    pullNumber: 77,
+    expectedHeadSha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+  });
+  assert.equal(restored, false);
+  assert.equal(draft, true);
 });
 
 test('normalizeClassification does not auto-close low-confidence unclear', () => {
@@ -553,6 +1088,7 @@ test('isBotPrForIssue matches marker + Fixes', () => {
     auto.isBotPrForIssue(
       {
         body: `${auto.BOT_PR_MARKER}\nFixes #42`,
+        user: { login: 'netcatty-bot' },
         head: { ref: 'cursor/issue-42-1', repo: { full_name: 'o/r' } },
         base: { repo: { full_name: 'o/r' } },
         labels: [],
@@ -602,12 +1138,42 @@ test('pathsFromGitStatusPorcelain unquotes C-style paths', () => {
 test('isBotPrForIssue requires complete issue number boundary', () => {
   const prFor10 = {
     body: `${auto.BOT_PR_MARKER}\nFixes #10`,
+    user: { login: 'netcatty-bot' },
     head: { ref: 'cursor/issue-10-1', repo: { full_name: 'o/r' } },
     base: { repo: { full_name: 'o/r' } },
     labels: [],
   };
   assert.equal(auto.isBotPrForIssue(prFor10, 10), true);
   assert.equal(auto.isBotPrForIssue(prFor10, 1), false);
+});
+
+test('isBotPrForIssue rejects missing repo identity and branch-only spoofing', () => {
+  assert.equal(
+    auto.isBotPrForIssue(
+      {
+        body: `${auto.BOT_PR_MARKER}\nFixes #42`,
+        user: { login: 'netcatty-bot' },
+        head: { ref: 'cursor/issue-42-1', repo: null },
+        base: { repo: { full_name: 'o/r' } },
+        labels: [{ name: 'automation:bot-pr' }],
+      },
+      42,
+    ),
+    false,
+  );
+  assert.equal(
+    auto.isBotPrForIssue(
+      {
+        body: 'ordinary contributor PR',
+        user: { login: 'mallory' },
+        head: { ref: 'cursor/issue-42-spoof', repo: { full_name: 'o/r' } },
+        base: { repo: { full_name: 'o/r' } },
+        labels: [],
+      },
+      42,
+    ),
+    false,
+  );
 });
 
 test('pathsFromGitDiffNameStatus keeps rename source and dest', () => {
@@ -631,9 +1197,24 @@ test('extractJsonObject reads fenced blocks', () => {
 
 test('hasProtectedChanges flags workflow edits', () => {
   const hits = auto.hasProtectedChanges(
-    ' M .github/workflows/cursor-automation.yml\n M components/App.tsx\n',
+    ' M .github/workflows/cursor-automation.yml\n?? .cursor/sandbox.json\n M components/App.tsx\n',
   );
-  assert.deepEqual(hits, ['.github/workflows/cursor-automation.yml']);
+  assert.deepEqual(hits, [
+    '.github/workflows/cursor-automation.yml',
+    '.cursor/sandbox.json',
+  ]);
+});
+
+test('classification failure handoff receives its issue number', () => {
+  const workflow = fs.readFileSync(
+    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    'utf8',
+  );
+  const handoff = workflow.match(
+    /- name: Hand off when issue classification fails[\s\S]*?(?=\n\s{6}- name:)/,
+  )?.[0] || '';
+  assert.match(handoff, /ISSUE_NUMBER: \$\{\{ needs\.route\.outputs\.issue_number \}\}/);
+  assert.match(handoff, /const issueNumber = Number\(process\.env\.ISSUE_NUMBER\)/);
 });
 
 test('shouldSkipExternalCodexRerequest matches trusted head sha marker only', () => {
@@ -852,10 +1433,12 @@ test('buildCodexReviewRequestComment includes mention', () => {
 });
 
 test('buildTriageComment has no public generated-by disclaimer', () => {
-  const body = auto.buildTriageComment({
-    reply: '感谢反馈。侧栏已经支持多个会话了。',
-  });
+  const body = auto.buildTriageComment(
+    { reply: '感谢反馈。侧栏已经支持多个会话了。' },
+    { issueCommentWatermark: 123 },
+  );
   assert.match(body, /cursor-automation/); // internal HTML marker only
+  assert.match(body, /cursor-triage-watermark:comment-id=123/);
   assert.match(body, /侧栏已经支持/);
   assert.doesNotMatch(body, /generated by|This was generated/i);
   assert.doesNotMatch(body, /^\s*>\s*\*/m);
@@ -907,7 +1490,7 @@ test('labelsForCategory for already_available drops ready-for-agent', () => {
   assert.ok(!labels.includes('enhancement'));
 });
 
-test('applyClassification comments then closes already_available as completed', async () => {
+test('applyClassification updates state before posting the final reply', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cursor-auto-'));
   const classificationPath = path.join(dir, 'classification.json');
   fs.writeFileSync(
@@ -967,12 +1550,64 @@ test('applyClassification comments then closes already_available as completed', 
   assert.equal(classification.category, 'already_available');
   assert.equal(outputs.should_implement, 'false');
   assert.equal(outputs.should_close, 'true');
-  assert.equal(calls[0][0], 'createComment');
-  assert.match(calls[0][1].body, /AsidePanel/);
-  assert.equal(calls[1][0], 'update');
-  assert.equal(calls[1][1].state, 'closed');
-  assert.equal(calls[1][1].state_reason, 'completed');
-  assert.ok(calls[1][1].labels.includes('triage:already-available'));
+  assert.equal(calls[0][0], 'update');
+  assert.equal(calls[0][1].state, 'closed');
+  assert.equal(calls[0][1].state_reason, 'completed');
+  assert.ok(calls[0][1].labels.includes('triage:already-available'));
+  assert.equal(calls[1][0], 'createComment');
+  assert.match(calls[1][1].body, /AsidePanel/);
+});
+
+test('applyClassification restores the original issue when its reply fails', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cursor-auto-rollback-'));
+  const classificationPath = path.join(dir, 'classification.json');
+  fs.writeFileSync(
+    classificationPath,
+    JSON.stringify(
+      grounded({
+        category: 'already_available',
+        confidence: 0.92,
+        summary: 'already supported',
+        reasoning: 'The current UI already exposes this behavior.',
+        reply: '这个功能已经支持。',
+      }),
+    ),
+  );
+  const updates = [];
+  const github = {
+    rest: {
+      issues: {
+        get: async () => ({
+          data: {
+            number: 42,
+            state: 'open',
+            labels: [{ name: 'enhancement' }, { name: 'triage' }],
+          },
+        }),
+        update: async (args) => {
+          updates.push(args);
+          return { data: {} };
+        },
+        createComment: async () => {
+          throw new Error('comment unavailable');
+        },
+      },
+    },
+  };
+  await assert.rejects(
+    auto.applyClassification({
+      github,
+      context: { repo: { owner: 'o', repo: 'r' } },
+      core: { setOutput() {} },
+      issueNumber: 42,
+      classificationPath,
+    }),
+    /comment unavailable/,
+  );
+  assert.equal(updates.length, 2);
+  assert.equal(updates[0].state, 'closed');
+  assert.equal(updates[1].state, 'open');
+  assert.deepEqual(updates[1].labels, ['enhancement', 'triage']);
 });
 
 test('extractPaginatedItems accepts normalized Search arrays and raw items', () => {
@@ -1187,6 +1822,73 @@ const SAMPLE_BUG_BODY = [
   '## Operating system',
   'Windows 11',
 ].join('\n');
+
+test('prepareIssueContext dedupes and limits needs-info author replies', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cursor-needs-info-'));
+  const issue = {
+    number: 99,
+    html_url: 'https://example.test/issues/99',
+    title: '[Bug] 上传速度太慢了',
+    body: SAMPLE_BUG_BODY,
+    state: 'open',
+    user: { login: 'alice', type: 'User' },
+    author_association: 'NONE',
+    labels: [{ name: 'needs-info' }],
+  };
+  const run = async (comments, triggerCommentId, followupDailyLimit = 20) => {
+    const outputs = {};
+    const github = {
+      rest: {
+        issues: {
+          get: async () => ({ data: issue }),
+          listComments: Symbol('listComments'),
+        },
+      },
+      paginate: async () => comments,
+    };
+    const result = await auto.prepareIssueContext({
+      github,
+      context: { repo: { owner: 'o', repo: 'r' } },
+      core: { setOutput: (key, value) => { outputs[key] = value; } },
+      issueNumber: 99,
+      outputPath: path.join(dir, `${triggerCommentId}.json`),
+      triggerCommentId,
+      followupDailyLimit,
+      nowMs: Date.parse('2026-07-24T12:00:00Z'),
+    });
+    return { result, outputs };
+  };
+
+  const alreadyProcessed = await run([
+    {
+      id: 10,
+      user: { login: 'netcatty-bot', type: 'User' },
+      body: '<!-- cursor-triage-watermark:comment-id=9 -->',
+      created_at: '2026-07-24T10:00:00Z',
+    },
+  ], 9);
+  assert.equal(alreadyProcessed.result.shouldRun, false);
+  assert.match(alreadyProcessed.outputs.reason, /already processed/i);
+
+  const rateLimited = await run([
+    {
+      id: 10,
+      user: { login: 'netcatty-bot', type: 'User' },
+      body: '<!-- cursor-triage-watermark:comment-id=8 -->',
+      created_at: '2026-07-24T10:00:00Z',
+    },
+    {
+      id: 11,
+      user: { login: 'alice', type: 'User' },
+      body: '这是新的补充',
+      created_at: '2026-07-24T11:00:00Z',
+    },
+  ], 11, 1);
+  assert.equal(rateLimited.result.shouldRun, false);
+  assert.equal(rateLimited.result.rateLimited, true);
+  assert.equal(rateLimited.outputs.rate_limited, 'true');
+  assert.equal(rateLimited.outputs.pending_ids, '11');
+});
 
 test('isValidIssueTitle accepts short CJK bug titles (issue #2449 shape)', () => {
   assert.equal(auto.isValidIssueTitle('[Bug] 上传速度太慢了'), true);

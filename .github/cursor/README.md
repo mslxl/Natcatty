@@ -34,7 +34,9 @@ clone.
 |---|---|---|
 | `CURSOR_CODEX_FIX_MAX_ROUNDS` | `40` | Max Cursor fix ↔ `@codex review` loops on own/bot PRs |
 | `CURSOR_TRIAGE_DAILY_LIMIT` | `10` | Daily auto triage for non-collaborators |
+| `CURSOR_FOLLOWUP_DAILY_LIMIT` | `20` | Daily automatic follow-up runs per admitted issue before maintainer handoff |
 | `AUTOMATION_OWN_ACTORS` | `binaricat` | Logins treated as first-party PR authors |
+| `AUTOMATION_ISSUE_BOT_LOGINS` | `netcatty-bot,github-actions[bot]` | Bot logins ignored as issue follow-up authors and recognized in `@bot` mentions |
 
 ## Manual retry
 
@@ -75,5 +77,33 @@ Terminal codex_loop outcomes always drop `automation:codex-loop`:
 - Own / bot PR Codex findings: Cursor CLI may push fixes (max rounds).
 - Automation never publishes changes under `.github/` or automation scripts.
 - Issue text is sanitized before prompts.
+- Cursor credentials are exchanged before agent execution; agent tools receive
+  no API key or GitHub token and must run inside Cursor's command sandbox.
 - Classify must research unknown product names and issue URLs before needs-info.
-- Author replies on `needs-info` / `triage:bug-needs-info` re-run classify (same research bar).
+- Author replies on `needs-info` / `triage:bug-needs-info` re-run classify with
+  the same dedupe, daily limit, and maintainer handoff rules.
+
+## Continuous issue follow-up
+
+Issue automation is not limited to the opening report. After an issue has been
+admitted, new comments from the issue author are reviewed as additions to the
+same work. The issue author can also explicitly mention `@netcatty-bot`; trusted
+repository members may do the same. Untrusted bystanders cannot trigger code
+changes by mentioning the bot, and an unadmitted issue cannot use a bot mention
+to bypass normal triage. A per-issue daily limit hands unusually busy threads to
+a maintainer instead of allowing unbounded agent runs.
+
+Follow-ups are coalesced and recorded by comment ID so queued runs do not reply
+or edit twice. When an automation PR is open, it is kept draft while Cursor
+compares the new information with the current diff:
+
+- already covered: acknowledge the reporter and keep the existing PR unchanged;
+- focused correction: update the same PR, run the full verification gate, then
+  restart Codex review on the new head;
+- contradiction, larger scope, unsafe update, or no active PR needing work:
+  acknowledge the reporter and hand the issue/PR to a maintainer.
+
+Every clean-to-ready transition re-checks the source issue. A PR cannot become
+ready while an eligible author/maintainer follow-up is still unprocessed. Patch
+publication also verifies the PR head has not moved, so a follow-up update never
+overwrites a concurrent maintainer or automation push.
