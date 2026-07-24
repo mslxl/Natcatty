@@ -1330,10 +1330,11 @@ async function runPausableConcurrentRanges({
         if (settled) return;
         if (error) terminalError = terminalError || error;
         if (active > 0) {
-          // Cancel must remain bounded even on a shared channel. Ordinary
-          // shared-channel errors, however, must drain their in-flight WRITEs
-          // before the caller can clean up or retry the same remote path.
-          if (transfer.cancelled || (terminalError && forceSettleOnError)) {
+          // Only an isolated channel may force-settle after aborting the
+          // subsystem. A shared channel cannot discard outstanding WRITE
+          // callbacks safely because the caller may clean up or reuse the
+          // same remote path while those requests are still in flight.
+          if (terminalError && forceSettleOnError) {
             clearForceFinish();
             forceFinishTimer = setTimeout(() => {
               if (settled) return;

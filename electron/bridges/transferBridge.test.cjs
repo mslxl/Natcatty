@@ -1215,7 +1215,7 @@ test("non-resumable shared range cancellation drains writes and removes the temp
 
   const finalWrite = pendingWrites.pop();
   for (const callback of pendingWrites.splice(0)) callback(new Error("write cancelled"));
-  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setTimeout(resolve, 2200));
   assert.equal(transferSettled, false);
   assert.equal(fs.existsSync(digestPath), true);
 
