@@ -508,7 +508,7 @@ const removeRemotePathInternal = async (sftp, targetPath, encoding, signal = nul
   throwIfAborted(signal);
 };
 
-const ensureRemoteDirForSession = async (sftpId, dirPath, requestedEncoding) => {
+const ensureRemoteDirForSession = async (sftpId, dirPath, requestedEncoding, options = {}) => {
   const client = sftpClients.get(sftpId);
   if (!client) throw new Error("SFTP session not found");
 
@@ -520,6 +520,7 @@ const ensureRemoteDirForSession = async (sftpId, dirPath, requestedEncoding) => 
     await getScpBackendForClient(client).mkdir(dirPath, {
       recursive: true,
       encoding: encoding === "auto" ? "utf-8" : encoding,
+      signal: options.signal || null,
     });
     return true;
   }
@@ -816,12 +817,12 @@ function createRemoteRecoveryError(promotionError, restoreError, paths = {}) {
   return error;
 }
 
-async function planScpRemoteUploadReplace(client, remotePath, encoding) {
+async function planScpRemoteUploadReplace(client, remotePath, encoding, signal = null) {
   const { getScpBackendForClient } = require("./sftpBridge/scpBackend.cjs");
   const backend = getScpBackendForClient(client);
   let attrs = null;
   try {
-    attrs = await backend.stat(remotePath, { encoding });
+    attrs = await backend.stat(remotePath, { encoding, signal });
   } catch (error) {
     if (!isRemoteMissingError(error)) throw error;
   }
@@ -836,7 +837,7 @@ async function planScpRemoteUploadReplace(client, remotePath, encoding) {
   }
   return {
     writeInPlace: false,
-    existingMode: Number.isFinite(attrs.mode) ? attrs.mode : null,
+    existingMode: attrs.permissions && Number.isFinite(attrs.mode) ? attrs.mode : null,
     destinationExisted: true,
   };
 }
@@ -850,12 +851,13 @@ async function promoteScpStagedUpload(
   expectedExisted,
   existingMode,
   assertCanPromote,
+  signal,
 ) {
   const { getScpBackendForClient } = require("./sftpBridge/scpBackend.cjs");
   const backend = getScpBackendForClient(client);
   let latest = null;
   try {
-    latest = await backend.stat(targetPath, { encoding });
+    latest = await backend.stat(targetPath, { encoding, signal });
   } catch (error) {
     if (!isRemoteMissingError(error)) throw error;
   }
@@ -870,7 +872,7 @@ async function promoteScpStagedUpload(
   }
   assertCanPromote();
   if (Number.isFinite(existingMode)) {
-    await backend.chmod(stagedPath, existingMode, { encoding });
+    await backend.chmod(stagedPath, existingMode, { encoding, signal });
     assertCanPromote();
   }
 
@@ -924,7 +926,7 @@ async function runRemoteUploadTransaction(client, localPath, remotePath, options
   const scpMode = isScpModeClient(client);
   const encodedPath = encodePath(remotePath, encoding);
   const plan = scpMode
-    ? await planScpRemoteUploadReplace(client, remotePath, encoding)
+    ? await planScpRemoteUploadReplace(client, remotePath, encoding, signal)
     : await planRemoteUploadReplace(client, encodedPath);
   const fastPutOptions = { ...options };
   delete fastPutOptions.expectedSize;
@@ -1039,6 +1041,7 @@ async function runRemoteUploadTransaction(client, localPath, remotePath, options
         plan.destinationExisted,
         plan.existingMode,
         assertCanPromote,
+        signal,
       );
     } else {
       await assertStagedPromotionTargetSafe(
@@ -1458,6 +1461,7 @@ async function runUnifiedSftpTransfer(payload, direction) {
         targetSftpId: payload.sftpId,
         targetEncoding: payload.encoding,
         resumable: payload.resumable === true,
+        abortSignal: payload.abortSignal || null,
       }
     : {
         transferId,
@@ -1468,6 +1472,7 @@ async function runUnifiedSftpTransfer(payload, direction) {
         sourceSftpId: payload.sftpId,
         sourceEncoding: payload.encoding,
         resumable: payload.resumable !== false,
+        abortSignal: payload.abortSignal || null,
       };
   const cancel = () => {
     void transferBridge.cancelTransfer(null, { transferId });

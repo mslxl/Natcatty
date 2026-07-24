@@ -228,7 +228,7 @@ function createScpBackend(deps = {}) {
     const encoding = options.encoding || "utf-8";
     let modeStr;
     if (typeof mode === "number") {
-      modeStr = (mode & 0o7777).toString(8);
+      modeStr = (mode & 0o7777).toString(8).padStart(3, "0");
     } else {
       modeStr = String(mode);
     }

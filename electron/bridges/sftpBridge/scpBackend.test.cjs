@@ -145,10 +145,12 @@ describe("scpBackend browse/manage with fake exec", () => {
     await backend.rename("/tmp/a b/c", "/tmp/a b/d");
     await backend.remove("/tmp/a b/d", { recursive: true });
     await backend.chmod("/tmp/file", "644");
+    await backend.chmod("/tmp/zero-mode", 0);
     assert.ok(commands.some((c) => c.command.includes("mkdir -p -- '/tmp/a b/c'")));
     assert.ok(commands.some((c) => c.command.includes("mv -- '/tmp/a b/c' '/tmp/a b/d'")));
     assert.ok(commands.some((c) => c.command.includes("rm -rf -- '/tmp/a b/d'")));
     assert.ok(commands.some((c) => c.command.includes("chmod 644 -- '/tmp/file'")));
+    assert.ok(commands.some((c) => c.command.includes("chmod 000 -- '/tmp/zero-mode'")));
   });
 
   it("stats a remote path", async () => {

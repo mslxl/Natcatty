@@ -104,6 +104,47 @@ describe("AI/MCP SCP transfer abort on shipped download/upload entry points", ()
     await assert.rejects(() => promise, /cancel|abort/i);
   });
 
+  it("uploadLocalToSftp aborts while SCP target inspection is still pending", async () => {
+    let uploadCalls = 0;
+    const backend = {
+      async stat(_remotePath, options = {}) {
+        await new Promise((resolve, reject) => {
+          if (options.signal?.aborted) {
+            reject(new Error("Transfer cancelled"));
+            return;
+          }
+          options.signal?.addEventListener(
+            "abort",
+            () => reject(new Error("Transfer cancelled")),
+            { once: true },
+          );
+        });
+      },
+      async uploadFile() {
+        uploadCalls += 1;
+      },
+    };
+    sftpClients.set("scp-setup-abort", {
+      __netcattyFileProtocol: "scp",
+      __netcattyScpBackend: backend,
+    });
+    const localPath = path.join(tmpDir, "setup.bin");
+    fs.writeFileSync(localPath, Buffer.alloc(16, 1));
+    const controller = new AbortController();
+    const startedAt = Date.now();
+    const promise = sftpBridge.uploadLocalToSftp(null, {
+      sftpId: "scp-setup-abort",
+      localPath,
+      remotePath: "/remote/setup.bin",
+      abortSignal: controller.signal,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    controller.abort();
+    await assert.rejects(() => promise, /cancel|abort/i);
+    assert.equal(uploadCalls, 0);
+    assert.ok(Date.now() - startedAt < 1000);
+  });
+
   it("legacy entry points delegate cancellation to the unified transfer engine", () => {
     const src = fs.readFileSync(path.join(__dirname, "../sftpBridge.cjs"), "utf8");
     assert.doesNotMatch(src, /cancelledFlag/);

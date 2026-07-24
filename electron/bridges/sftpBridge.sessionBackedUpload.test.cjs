@@ -275,6 +275,9 @@ test("SCP writeSftpBinaryWithProgress uses the shared staged transaction", async
         isDirectory: false,
         size: remoteFiles.get(remotePath).length,
         mode: remoteModes.get(remotePath) ?? 0o644,
+        permissions: (remoteModes.get(remotePath) ?? 0o644) === 0o755
+          ? "rwxr-xr-x"
+          : "rw-r--r--",
       };
     },
     async uploadFile(localPath, remotePath, options = {}) {

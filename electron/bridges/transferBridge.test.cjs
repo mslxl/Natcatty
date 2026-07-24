@@ -822,9 +822,12 @@ test("resumable concurrent uploads reject a source rewritten mid-transfer", asyn
     await fs.promises.rm(tempDir, { recursive: true, force: true });
   });
 
-  const payload = Buffer.alloc(64 * 1024, 41);
+  // Keep the source within one request so every range check has completed
+  // before the rewrite; only the final whole-source verification can catch it.
+  const payload = Buffer.alloc(16 * 1024, 41);
   const localPath = path.join(tempDir, "upload.bin");
   await fs.promises.writeFile(localPath, payload);
+  const stableSourceStat = await fs.promises.stat(localPath);
   let rewritten = false;
   let promoted = false;
   let stagedDeleted = false;
@@ -866,19 +869,30 @@ test("resumable concurrent uploads reject a source rewritten mid-transfer", asyn
   };
   transferBridge.init({ sftpClients: new Map([["target", client]]) });
 
-  const result = await transferBridge.startTransfer(
-    { sender: createSender() },
-    {
-      transferId: "upload-source-change",
-      sourcePath: localPath,
-      targetPath: "/tmp/upload.bin",
-      sourceType: "local",
-      targetType: "sftp",
-      targetSftpId: "target",
-      totalBytes: payload.length,
-      resumable: true,
-    },
+  const originalStat = fs.promises.stat;
+  fs.promises.stat = async (targetPath, ...args) => (
+    path.resolve(String(targetPath)) === path.resolve(localPath)
+      ? stableSourceStat
+      : originalStat(targetPath, ...args)
   );
+  let result;
+  try {
+    result = await transferBridge.startTransfer(
+      { sender: createSender() },
+      {
+        transferId: "upload-source-change",
+        sourcePath: localPath,
+        targetPath: "/tmp/upload.bin",
+        sourceType: "local",
+        targetType: "sftp",
+        targetSftpId: "target",
+        totalBytes: payload.length,
+        resumable: true,
+      },
+    );
+  } finally {
+    fs.promises.stat = originalStat;
+  }
 
   assert.equal(rewritten, true);
   assert.match(result.error || "", /source|content|changed|fingerprint|mismatch/i);
