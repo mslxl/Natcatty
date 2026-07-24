@@ -3113,6 +3113,103 @@ test("server-to-server upload resume uses its own checkpoint instead of overall 
   assert.equal(promoted, true);
 });
 
+test("server-to-server SCP fallback uses the followed symlink content size", async (t) => {
+  const transferId = `scp-symlink-s2s-${crypto.randomUUID()}`;
+  const sourcePath = "/source/link";
+  const targetPath = "/target/copied.bin";
+  const payload = Buffer.from("followed-symlink-target-content");
+  const localStage = tempDirBridge.getTransferTempFilePath(transferId, path.basename(sourcePath));
+  t.after(async () => { await fs.promises.unlink(localStage).catch(() => {}); });
+
+  const sourceBackend = {
+    async stat() {
+      return { type: "symlink", isSymbolicLink: true, size: 4 };
+    },
+    async downloadFile(_remotePath, localPath, options = {}) {
+      await fs.promises.writeFile(localPath, payload);
+      const halfway = Math.floor(payload.length / 2);
+      options.onProgress?.(halfway, payload.length);
+      options.onProgress?.(payload.length, payload.length);
+      return { fileSize: payload.length, transferred: payload.length };
+    },
+  };
+  const remoteFiles = new Map();
+  const missing = () => {
+    const error = new Error("No such file");
+    error.code = "ENOENT";
+    return error;
+  };
+  const targetBackend = {
+    async stat(remotePath) {
+      if (!remoteFiles.has(remotePath)) throw missing();
+      return { type: "file", isDirectory: false, size: remoteFiles.get(remotePath).length };
+    },
+    async mkdir() {},
+    async uploadFile(localPath, remotePath) {
+      remoteFiles.set(remotePath, await fs.promises.readFile(localPath));
+      return true;
+    },
+    async rename(from, to) {
+      if (!remoteFiles.has(from)) throw missing();
+      remoteFiles.set(to, remoteFiles.get(from));
+      remoteFiles.delete(from);
+    },
+    async remove(remotePath) {
+      remoteFiles.delete(remotePath);
+    },
+    async chmod() {},
+  };
+  const sourceClient = {
+    __netcattyFileProtocol: "scp",
+    __netcattyScpBackend: sourceBackend,
+  };
+  const targetClient = {
+    __netcattyFileProtocol: "scp",
+    __netcattyScpBackend: targetBackend,
+  };
+  transferBridge.init({
+    sftpClients: new Map([["source-scp", sourceClient], ["target-scp", targetClient]]),
+  });
+
+  const sender = createSender();
+  const result = await transferBridge.startTransfer({ sender }, {
+    transferId,
+    sourcePath,
+    targetPath,
+    sourceType: "sftp",
+    targetType: "sftp",
+    sourceSftpId: "source-scp",
+    targetSftpId: "target-scp",
+    resumable: false,
+    sameHost: false,
+  });
+
+  assert.equal(result.error, undefined, result.error);
+  assert.deepEqual(remoteFiles.get(targetPath), payload);
+  const progress = sender.sent
+    .filter((entry) => entry.channel === "netcatty:transfer:progress")
+    .map((entry) => entry.payload);
+  for (let index = 1; index < progress.length; index += 1) {
+    assert.ok(
+      progress[index].transferred >= progress[index - 1].transferred,
+      `progress moved backwards: ${JSON.stringify(progress)}`,
+    );
+  }
+  for (const entry of progress.slice(0, -1)) {
+    assert.ok(
+      entry.totalBytes === 0 || entry.transferred < entry.totalBytes,
+      `progress completed before the transfer: ${JSON.stringify(progress)}`,
+    );
+  }
+  assert.ok(
+    progress.some((entry) => (
+      entry.totalBytes === payload.length
+      && entry.transferred === Math.floor(payload.length / 2)
+    )),
+    `missing completed-download midpoint: ${JSON.stringify(progress)}`,
+  );
+});
+
 test("server-to-server concurrent failure does not complete via serial stream", async (t) => {
   const transferId = `server-copy-fail-closed-${crypto.randomUUID()}`;
   const sourcePath = "/source/payload.bin";

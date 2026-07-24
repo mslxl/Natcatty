@@ -45,13 +45,6 @@ async function assertRemoteUploadSize(client, remotePath, expectedSize) {
     throw new Error(`Upload completed but remote file size is unavailable (${remotePath})`);
   }
   if (remoteSize !== expectedSize) {
-    try {
-      if (typeof client.delete === "function") {
-        await client.delete(remotePath);
-      }
-    } catch {
-      // Best-effort cleanup of the corrupt remote file.
-    }
     throw new Error(
       `Upload size mismatch for ${remotePath}: expected ${expectedSize} bytes, got ${remoteSize}`,
     );
@@ -1746,14 +1739,13 @@ async function downloadFile(remotePath, localPath, client, fileSize, transfer, s
     transfer.pauseSupported = false;
     transfer.pauseUnavailableReason = "Pause is unavailable for SCP transfers";
     const backend = getScpBackendForClient(client);
-    await backend.downloadFile(remotePath, localPath, {
+    return backend.downloadFile(remotePath, localPath, {
       fileSize,
       transfer,
       encoding,
       signal: transfer.signal,
       onProgress: (transferred, total) => sendProgress(transferred, total || fileSize),
     });
-    return;
   }
 
   await requireSftpChannel(client);
@@ -2279,7 +2271,7 @@ async function startTransferNow(event, payload, onProgress) {
           hashLocalPrefix(downloadTargetPath, verifyBytes),
         );
       }
-      await downloadFile(
+      const downloadResult = await downloadFile(
         encodedSourcePath,
         downloadTargetPath,
         client,
@@ -2288,6 +2280,17 @@ async function startTransferNow(event, payload, onProgress) {
         sendProgress,
         resolveEncodingForRequest(sourceSftpId, sourceEncoding),
       );
+      if (
+        isScpModeClient(client)
+        && Number.isFinite(downloadResult?.fileSize)
+        && downloadResult.fileSize >= 0
+      ) {
+        // SCP follows symlinks. Its wire header is authoritative for the bytes
+        // received, while the preflight shell stat describes the link node.
+        fileSize = downloadResult.fileSize;
+        lastObservedTotal = fileSize;
+        lastObservedTransferred = Math.min(lastObservedTransferred, fileSize);
+      }
       if (stageLocalDownload) {
         if (transfer.cancelled) throw new Error("Transfer cancelled");
         const stagedStat = await fs.promises.stat(downloadTargetPath);
@@ -2473,7 +2476,21 @@ async function startTransferNow(event, payload, onProgress) {
               hashLocalPrefix(tempPath, verifyBytes),
             );
           }
-          const downloadProgress = (transferred, _total, options = {}) => {
+          const downloadProgress = (transferred, reportedTotal, options = {}) => {
+            if (
+              isScpModeClient(sourceClient)
+              && Number.isFinite(reportedTotal)
+              && reportedTotal >= 0
+              && reportedTotal !== fileSize
+            ) {
+              // SCP's first data event carries the followed file's wire size.
+              // Adopt it before mapping download progress onto the first half
+              // of an S2S transfer, otherwise a short link node shows 100% and
+              // then appears to move backwards when the real size arrives.
+              fileSize = reportedTotal;
+              lastObservedTotal = fileSize;
+              lastObservedTransferred = Math.min(lastObservedTransferred, Math.floor(transferred / 2));
+            }
             const durableCheckpoint = Number.isFinite(options.checkpointBytes)
               ? options.checkpointBytes
               : transferred;
@@ -2484,7 +2501,7 @@ async function startTransferNow(event, payload, onProgress) {
             });
             transfer.checkpointBytes = durableCheckpoint;
           };
-          await downloadFile(
+          const downloadResult = await downloadFile(
             encodedSourcePath,
             tempPath,
             sourceClient,
@@ -2493,6 +2510,15 @@ async function startTransferNow(event, payload, onProgress) {
             downloadProgress,
             resolveEncodingForRequest(sourceSftpId, sourceEncoding),
           );
+          if (
+            isScpModeClient(sourceClient)
+            && Number.isFinite(downloadResult?.fileSize)
+            && downloadResult.fileSize >= 0
+          ) {
+            fileSize = downloadResult.fileSize;
+            lastObservedTotal = fileSize;
+            lastObservedTransferred = Math.min(lastObservedTransferred, fileSize);
+          }
         }
 
         const localStageStat = await fs.promises.stat(tempPath);

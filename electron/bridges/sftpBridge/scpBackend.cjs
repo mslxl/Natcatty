@@ -562,7 +562,7 @@ function createScpBackend(deps = {}) {
 
     try {
       if (earlyWriteError) throw earlyWriteError;
-      await downloadToWritable(remotePath, writeStream, {
+      const downloadResult = await downloadToWritable(remotePath, writeStream, {
         fileSize,
         transfer,
         onProgress,
@@ -573,7 +573,7 @@ function createScpBackend(deps = {}) {
       await new Promise((resolve, reject) => {
         writeStream.end((err) => (err ? reject(err) : resolve()));
       });
-      return true;
+      return downloadResult;
     } catch (err) {
       try { writeStream.destroy(); } catch { /* ignore */ }
       try { await fsModule.promises.unlink(localPath); } catch { /* ignore */ }
@@ -751,6 +751,7 @@ function createScpBackend(deps = {}) {
     });
 
     if (transfer?.cancelled) throw new Error("Transfer cancelled");
+    return { fileSize: expectedSize, transferred };
   }
 
   /**

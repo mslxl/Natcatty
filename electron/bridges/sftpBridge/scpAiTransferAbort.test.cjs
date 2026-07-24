@@ -123,6 +123,33 @@ describe("AI/MCP SCP transfer abort on shipped download/upload entry points", ()
     assert.deepEqual(fs.readFileSync(localPath), original);
   });
 
+  it("downloadSftpToLocal uses the SCP header size when downloading through a symlink", async () => {
+    const downloaded = Buffer.from("target-content-is-longer-than-link");
+    const backend = {
+      async stat() {
+        return { type: "symlink", isSymbolicLink: true, size: 4 };
+      },
+      async downloadFile(_remotePath, localPath) {
+        await fs.promises.writeFile(localPath, downloaded);
+        return { fileSize: downloaded.length, transferred: downloaded.length };
+      },
+    };
+    sftpClients.set("scp-symlink-download", {
+      __netcattyFileProtocol: "scp",
+      __netcattyScpBackend: backend,
+    });
+    const localPath = path.join(tmpDir, "symlink-download.bin");
+
+    const result = await sftpBridge.downloadSftpToLocal(null, {
+      sftpId: "scp-symlink-download",
+      remotePath: "/remote/link",
+      localPath,
+    });
+
+    assert.equal(result.success, true);
+    assert.deepEqual(fs.readFileSync(localPath), downloaded);
+  });
+
   it("downloadSftpToLocal restores the destination when cancellation arrives during promotion", async (t) => {
     const controller = new AbortController();
     const downloaded = Buffer.from("new-downloaded-content");

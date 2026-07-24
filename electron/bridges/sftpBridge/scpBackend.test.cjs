@@ -282,12 +282,13 @@ describe("scpBackend upload/download with fake scp streams", () => {
     });
 
     const progress = [];
-    await backend.downloadFile("/remote/x.bin", localOut, {
+    const result = await backend.downloadFile("/remote/x.bin", localOut, {
       fileSize: 4,
       onProgress: (t, total) => progress.push([t, total]),
     });
     assert.equal(fs.readFileSync(localOut).toString(), "ABCD");
     assert.ok(progress.length > 0);
+    assert.deepEqual(result, { fileSize: 4, transferred: 4 });
   });
 
   it("cancel aborts an in-flight upload", async () => {

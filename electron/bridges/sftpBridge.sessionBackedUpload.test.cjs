@@ -1044,6 +1044,54 @@ test("symlink destinations are written in-place (not replaced by rename)", async
   assert.deepEqual(remoteFiles.get("/etc/app/config.json"), payload);
 });
 
+test("truncated write-in-place uploads never delete the symlink destination", async (t) => {
+  const tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-symlink-size-failure-"));
+  t.after(async () => {
+    await fs.promises.rm(tempRoot, { recursive: true, force: true });
+  });
+  tempDirBridge.init?.({ getPath: () => tempRoot });
+
+  const localPath = path.join(tempRoot, "cfg.json");
+  const payload = Buffer.from('{"expected":"full-content"}');
+  await fs.promises.writeFile(localPath, payload);
+
+  const { channel, fastPutCalls, remoteFiles, remoteMeta } = createSessionChannel();
+  const remotePath = "/etc/app/config.json";
+  remoteMeta.set(remotePath, { isSymlink: true, mode: 0o120777 });
+  remoteFiles.set(remotePath, Buffer.from("old-target"));
+  channel.fastPut = (_localPath, uploadedPath, opts, callback) => {
+    fastPutCalls.push({ localPath: _localPath, remotePath: uploadedPath });
+    const truncated = payload.subarray(0, 3);
+    remoteFiles.set(uploadedPath, truncated);
+    opts?.step?.(truncated.length, truncated.length, payload.length);
+    queueMicrotask(() => callback(null));
+  };
+
+  const sftpClients = new Map();
+  sftpBridge.init({
+    electronModule: { webContents: { fromId: () => null } },
+    sessions: new Map([["session-link-size", { conn: { sftp: (callback) => callback(null, channel) } }]]),
+    sftpClients,
+  });
+  const opened = await sftpBridge.openSftpForSession(null, {
+    sessionId: "session-link-size",
+    fileProtocol: "sftp",
+  });
+
+  await assert.rejects(
+    () => sftpBridge.uploadLocalToSftp(null, {
+      sftpId: opened.sftpId,
+      localPath,
+      remotePath,
+      encoding: "utf-8",
+    }),
+    /size mismatch/i,
+  );
+  assert.equal(fastPutCalls.length, 1);
+  assert.equal(remoteMeta.get(remotePath)?.isSymlink, true);
+  assert.equal(remoteFiles.has(remotePath), true);
+});
+
 test("lstat unsupported falls back to stat and preserves an existing destination", async (t) => {
   const tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-lstat-fallback-"));
   t.after(async () => {
