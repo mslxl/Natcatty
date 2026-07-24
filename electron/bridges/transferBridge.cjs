@@ -1140,6 +1140,10 @@ async function assertUploadDigestCapacity(digestPath, fileSize) {
 }
 
 async function createUploadDigestBaseline(sourcePath, digestPath, fileSize, transfer) {
+  // A crashed attempt may have left this transfer's old baseline behind. It is
+  // fully replaceable and its blocks must be reclaimable before capacity is
+  // evaluated for the new baseline.
+  await fs.promises.rm(digestPath, { force: true });
   await assertUploadDigestCapacity(digestPath, fileSize);
   const writeBaseline = async () => {
     const sourceHandle = await fs.promises.open(sourcePath, "r");

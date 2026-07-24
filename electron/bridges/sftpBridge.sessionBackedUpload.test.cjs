@@ -931,6 +931,64 @@ test("staged SFTP upload stops if the destination becomes a symlink", async (t) 
   );
 });
 
+test("no-lstat staged upload stops if a broken symlink appears before promotion", async (t) => {
+  for (const variant of ["missing-method", "runtime-unsupported"]) {
+    const tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), `netcatty-late-broken-link-${variant}-`));
+    t.after(async () => {
+      await fs.promises.rm(tempRoot, { recursive: true, force: true });
+    });
+    tempDirBridge.init?.({ getPath: () => tempRoot });
+    const localPath = path.join(tempRoot, "payload.bin");
+    await fs.promises.writeFile(localPath, Buffer.from("new-content"));
+    const remotePath = `/tmp/${variant}.bin`;
+    const created = createSessionChannel({
+      onFastPut(_local, fastPutPath) {
+        if (String(fastPutPath).includes(".netcatty-upload-")) {
+          created.remoteMeta.set(remotePath, { isSymlink: true, mode: 0o120777 });
+        }
+        return null;
+      },
+    });
+    if (variant === "missing-method") {
+      created.channel.lstat = undefined;
+    } else {
+      created.channel.lstat = (_targetPath, callback) => {
+        const error = new Error("SSH_FX_OP_UNSUPPORTED");
+        error.code = 8;
+        callback(error);
+      };
+    }
+    const sftpClients = new Map();
+    sftpBridge.init({
+      electronModule: { webContents: { fromId: () => null } },
+      sessions: new Map([[`session-${variant}`, {
+        conn: { sftp: (callback) => callback(null, created.channel) },
+      }]]),
+      sftpClients,
+    });
+    const opened = await sftpBridge.openSftpForSession(null, {
+      sessionId: `session-${variant}`,
+      fileProtocol: "sftp",
+    });
+
+    await assert.rejects(
+      () => sftpBridge.uploadLocalToSftp(null, {
+        sftpId: opened.sftpId,
+        localPath,
+        remotePath,
+        encoding: "utf-8",
+      }),
+      /changed to a symlink/,
+    );
+    assert.equal(created.remoteMeta.get(remotePath)?.isSymlink, true);
+    assert.equal(created.remoteFiles.has(remotePath), false);
+    assert.equal(
+      [...created.remoteFiles.keys()].some((key) => String(key).includes(".netcatty-upload-")),
+      false,
+    );
+  }
+});
+
 test("abort during staged mode setup prevents promotion", async (t) => {
   const tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-sftp-mode-abort-"));
   t.after(async () => {

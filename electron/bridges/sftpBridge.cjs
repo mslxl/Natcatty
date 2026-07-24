@@ -723,19 +723,29 @@ function attrsIndicateDirectory(attrs) {
   return Number.isFinite(mode) && (mode & 0o170000) === 0o040000;
 }
 
+async function assertTargetStillMissingWithoutLstat(sftp, encodedPath, remotePath) {
+  try {
+    const attrs = await statAsync(sftp, encodedPath);
+    if (attrs) throw new Error(`Remote destination appeared during upload: ${remotePath}`);
+  } catch (error) {
+    if (!isRemoteMissingError(error)) throw error;
+    try {
+      await readlinkAsync(sftp, encodedPath);
+      throw new Error(`Remote destination changed to a symlink during upload: ${remotePath}`);
+    } catch (readlinkError) {
+      if (isRemoteMissingError(readlinkError)) return;
+      throw readlinkError;
+    }
+  }
+}
+
 async function assertStagedPromotionTargetSafe(client, encodedPath, remotePath, expectedExisted) {
   const sftp = await requireSftpChannel(client);
   if (typeof sftp?.lstat !== "function") {
     if (expectedExisted !== false) {
       throw new Error(`Cannot safely recheck remote destination before replace: ${remotePath}`);
     }
-    try {
-      const attrs = await statAsync(sftp, encodedPath);
-      if (attrs) throw new Error(`Remote destination appeared during upload: ${remotePath}`);
-    } catch (err) {
-      if (isRemoteMissingError(err)) return;
-      throw err;
-    }
+    await assertTargetStillMissingWithoutLstat(sftp, encodedPath, remotePath);
     return;
   }
   let attrs = null;
@@ -747,15 +757,7 @@ async function assertStagedPromotionTargetSafe(client, encodedPath, remotePath, 
     } else if (expectedExisted === false) {
       // Runtime lstat may be unsupported despite the method existing. A plain
       // stat may only authorize promotion when it still proves true absence.
-      try {
-        const fallbackAttrs = await statAsync(sftp, encodedPath);
-        if (fallbackAttrs) {
-          throw new Error(`Remote destination appeared during upload: ${remotePath}`);
-        }
-      } catch (statErr) {
-        if (isRemoteMissingError(statErr)) return;
-        throw statErr;
-      }
+      await assertTargetStillMissingWithoutLstat(sftp, encodedPath, remotePath);
       return;
     } else {
       throw err;
