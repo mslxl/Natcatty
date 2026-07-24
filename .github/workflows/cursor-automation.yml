@@ -868,6 +868,10 @@ jobs:
           ISSUE_NUMBER: ${{ needs.implement.outputs.issue_number }}
           ISSUE_TITLE: ${{ needs.implement.outputs.issue_title }}
         with:
+          # GITHUB_TOKEN cannot create PRs unless the repo enables
+          # "Allow GitHub Actions to create and approve pull requests".
+          # Prefer TRIAGE_GITHUB_TOKEN (PAT) so implement can open draft PRs.
+          github-token: ${{ secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
           script: |
             const auto = require(`${process.env.RUNNER_TEMP}/cursor-automation.cjs`);
             const fs = require('node:fs');
