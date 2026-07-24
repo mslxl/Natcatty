@@ -1024,7 +1024,7 @@ async function runRemoteUploadTransaction(client, localPath, remotePath, options
     assertCanPromote();
     if (Number.isFinite(expectedSize) && expectedSize >= 0) {
       const stagedStat = scpMode
-        ? await getScpBackendForClient(client).stat(stagedLogical, { encoding })
+        ? await getScpBackendForClient(client).stat(stagedLogical, { encoding, signal })
         : typeof client.stat === "function" ? await client.stat(encodedStagedPath) : null;
       const stagedSize = Number(stagedStat?.size);
       if (Number.isFinite(stagedSize) && stagedSize !== expectedSize) {

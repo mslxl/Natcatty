@@ -413,6 +413,42 @@ test("SCP staged uploads preserve an existing mode 000", async (t) => {
   assert.equal(remoteModes.get(finalPath), 0);
 });
 
+test("SCP staged uploads do not treat an unparseable zero mode as mode 000", async () => {
+  let chmodCalls = 0;
+  const backend = {
+    async stat(remotePath) {
+      return {
+        type: "file",
+        isDirectory: false,
+        size: String(remotePath).includes(".netcatty-upload-") ? 7 : 3,
+        mode: 0,
+        // No permissions field: the shell mode could not be parsed.
+      };
+    },
+    async chmod() {
+      chmodCalls += 1;
+    },
+    async rename() {},
+    async remove() {},
+  };
+  const client = {
+    __netcattyFileProtocol: "scp",
+    __netcattyScpBackend: backend,
+  };
+
+  const result = await sftpBridge.runRemoteUploadTransaction(
+    client,
+    "/tmp/local.bin",
+    "/tmp/final.bin",
+    {
+      expectedSize: 7,
+      async uploadFile() {},
+    },
+  );
+  assert.deepEqual(result, { staged: true });
+  assert.equal(chmodCalls, 0);
+});
+
 test("SCP symlink uploads do not compare content size with the link node", async () => {
   let uploadCalls = 0;
   const backend = {
@@ -878,6 +914,52 @@ test("SCP upload cancelled during the final target check does not promote", asyn
     /abort/i,
   );
   assert.equal(renameCalls, 0);
+  assert.equal(removedStage, true);
+});
+
+test("SCP upload aborts while staged size verification is pending", async () => {
+  const controller = new AbortController();
+  let removedStage = false;
+  const backend = {
+    async stat(remotePath, options = {}) {
+      if (!String(remotePath).includes(".netcatty-upload-")) {
+        const error = new Error("No such file");
+        error.code = "ENOENT";
+        throw error;
+      }
+      await new Promise((resolve, reject) => {
+        if (options.signal?.aborted) {
+          reject(new Error("Transfer cancelled"));
+          return;
+        }
+        options.signal?.addEventListener(
+          "abort",
+          () => reject(new Error("Transfer cancelled")),
+          { once: true },
+        );
+      });
+    },
+    async remove(remotePath) {
+      if (String(remotePath).includes(".netcatty-upload-")) removedStage = true;
+    },
+  };
+  const client = {
+    __netcattyFileProtocol: "scp",
+    __netcattyScpBackend: backend,
+  };
+  const upload = sftpBridge.runRemoteUploadTransaction(
+    client,
+    "/tmp/local.bin",
+    "/tmp/remote.bin",
+    {
+      signal: controller.signal,
+      expectedSize: 7,
+      async uploadFile() {},
+    },
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  controller.abort();
+  await assert.rejects(() => upload, /cancel|abort/i);
   assert.equal(removedStage, true);
 });
 
