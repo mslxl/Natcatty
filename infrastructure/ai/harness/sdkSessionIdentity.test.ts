@@ -26,6 +26,7 @@ test('SDK session identities preserve Cursor auth mode', () => {
     '/usr/bin/agent',
     'sdk',
     'cli-login',
+    'agent',
   );
   assert.deepEqual(parseSdkSessionIdentity(encoded), {
     v: 1,
@@ -34,5 +35,6 @@ test('SDK session identities preserve Cursor auth mode', () => {
     binPath: '/usr/bin/agent',
     runtime: 'sdk',
     authMode: 'cli-login',
+    cliMode: 'agent',
   });
 });

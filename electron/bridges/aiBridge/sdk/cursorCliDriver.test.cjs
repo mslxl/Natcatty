@@ -7,6 +7,7 @@ const {
   listCursorCliModels,
   mergeWorkspaceMcpJson,
   resetMcpMergeRefcountsForTests,
+  resolveCursorCliExecMode,
   resolveCursorCliModel,
   runCursorCliTurn,
   stripCursorApiKeyFromEnv,
@@ -113,6 +114,12 @@ test("translateCursorCliEvent streams thinking, text, and tools", () => {
   }, emitter, state);
   translateCursorCliEvent({
     type: "assistant",
+    timestamp_ms: 2,
+    model_call_id: "call-dup",
+    message: { content: [{ type: "text", text: "Hi" }] },
+  }, emitter, state);
+  translateCursorCliEvent({
+    type: "assistant",
     message: { content: [{ type: "text", text: "Hi" }] },
   }, emitter, state);
   translateCursorCliEvent({
@@ -137,6 +144,12 @@ test("translateCursorCliEvent streams thinking, text, and tools", () => {
     ["toolResult", "c1", "ok", "getMcpTools"],
   ]);
   assert.equal(state.sessionId, "s1");
+});
+
+test("resolveCursorCliExecMode maps observer to ask and others to agent", () => {
+  assert.equal(resolveCursorCliExecMode("observer"), "ask");
+  assert.equal(resolveCursorCliExecMode("confirm"), "agent");
+  assert.equal(resolveCursorCliExecMode("auto"), "agent");
 });
 
 test("mergeWorkspaceMcpJson upserts netcatty without dropping others", () => {

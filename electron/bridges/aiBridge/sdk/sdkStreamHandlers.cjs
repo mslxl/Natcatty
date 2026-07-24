@@ -35,21 +35,27 @@ function parseSdkSessionIdentity(value) {
     binPath: parsed.binPath || "",
     runtime: parsed.runtime === "app-server" ? "app-server" : "sdk",
     authMode: parsed.authMode === "cli-login" ? "cli-login" : parsed.authMode === "api-key" ? "api-key" : "",
+    cliMode: parsed.cliMode === "ask" ? "ask" : parsed.cliMode === "agent" ? "agent" : "",
   };
 }
 
-function buildSdkSessionKey(chatSessionId, backendKey, binPath, runtime = "sdk", authMode = "") {
+function buildSdkSessionKey(chatSessionId, backendKey, binPath, runtime = "sdk", authMode = "", cliMode = "") {
   return [
     String(chatSessionId || ""),
     String(backendKey || ""),
     String(binPath || ""),
     String(runtime || "sdk"),
     String(authMode || ""),
+    String(cliMode || ""),
   ].join("\u0000");
 }
 
 function normalizeResumeAuthMode(authMode) {
   return authMode === "cli-login" ? "cli-login" : authMode === "api-key" ? "api-key" : "";
+}
+
+function normalizeResumeCliMode(cliMode) {
+  return cliMode === "ask" ? "ask" : cliMode === "agent" ? "agent" : "";
 }
 
 // Environment that can change an SDK agent's model catalog without changing the
@@ -102,18 +108,26 @@ function resolveSdkResumeSessionId({
   binPath,
   runtime = "sdk",
   authMode = "",
+  cliMode = "",
   hasConfiguredCommand,
 }) {
   const inMemorySessionId = sdkSessionIds.get(sdkSessionKey);
   if (inMemorySessionId) return inMemorySessionId;
 
   const requestedAuthMode = normalizeResumeAuthMode(authMode);
+  const requestedCliMode = normalizeResumeCliMode(cliMode);
   const persisted = parseSdkSessionIdentity(existingSessionId);
   if (persisted) {
     // Legacy identities omit authMode; treat them as api-key so CLI session
     // UUIDs never resume onto the Cursor SDK path after a mode switch.
     const persistedAuthMode = normalizeResumeAuthMode(persisted.authMode) || "api-key";
     const effectiveRequestedAuthMode = requestedAuthMode || "api-key";
+    // Cursor CLI ask vs agent sessions must not resume across each other —
+    // --resume keeps the original Cursor execution mode sticky.
+    if (requestedCliMode) {
+      const persistedCliMode = normalizeResumeCliMode(persisted.cliMode);
+      if (!persistedCliMode || persistedCliMode !== requestedCliMode) return undefined;
+    }
     return persisted.backendKey === backendKey
       && persisted.binPath === String(binPath || "")
       && persisted.runtime === runtime
@@ -454,12 +468,18 @@ function registerSdkStreamHandlers(ctx) {
             ? (cursorCliBinPath || binPath)
             : binPath;
           const cursorSessionAuthMode = backendKey === "cursor" ? cursorAuthMode : "";
+          // Cursor CLI --resume keeps ask vs agent sticky; isolate session keys
+          // so switching Observer ↔ Confirm/Auto starts a fresh CLI thread.
+          const cursorCliMode = backendKey === "cursor" && cursorAuthMode === "cli-login"
+            ? (String(permissionMode || "confirm").toLowerCase() === "observer" ? "ask" : "agent")
+            : "";
           const sdkSessionKey = buildSdkSessionKey(
             chatSessionId,
             backendKey,
             sessionBinPath,
             codexRuntime,
             cursorSessionAuthMode,
+            cursorCliMode,
           );
           const hasInMemorySession = sdkSessionIds.has(sdkSessionKey);
           const resumeSessionId = resolveSdkResumeSessionId({
@@ -470,6 +490,7 @@ function registerSdkStreamHandlers(ctx) {
             binPath: sessionBinPath,
             runtime: codexRuntime,
             authMode: cursorSessionAuthMode,
+            cliMode: cursorCliMode,
             hasConfiguredCommand,
           });
           const stagedAttachments = [];
@@ -508,6 +529,7 @@ function registerSdkStreamHandlers(ctx) {
                   binPath: sessionBinPath || "",
                   runtime: codexRuntime,
                   ...(cursorSessionAuthMode ? { authMode: cursorSessionAuthMode } : {}),
+                  ...(cursorCliMode ? { cliMode: cursorCliMode } : {}),
                 });
               }
             },

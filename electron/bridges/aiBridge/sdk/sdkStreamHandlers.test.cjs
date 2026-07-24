@@ -205,6 +205,7 @@ test("Cursor CLI login sessions do not resume on the API key SDK path", () => {
     binPath: "/usr/bin/agent",
     runtime: "sdk",
     authMode: "cli-login",
+    cliMode: "agent",
   }))}`;
 
   assert.equal(
@@ -223,15 +224,30 @@ test("Cursor CLI login sessions do not resume on the API key SDK path", () => {
   assert.equal(
     resolveSdkResumeSessionId({
       sdkSessionIds: new Map(),
-      sdkSessionKey: buildSdkSessionKey("chat-1", "cursor", "/usr/bin/agent", "sdk", "cli-login"),
+      sdkSessionKey: buildSdkSessionKey("chat-1", "cursor", "/usr/bin/agent", "sdk", "cli-login", "agent"),
       existingSessionId: cliIdentity,
       backendKey: "cursor",
       binPath: "/usr/bin/agent",
       runtime: "sdk",
       authMode: "cli-login",
+      cliMode: "agent",
       hasConfiguredCommand: false,
     }),
     "61668441-bfcb-4795-a575-c46d70ad01fe",
+  );
+  assert.equal(
+    resolveSdkResumeSessionId({
+      sdkSessionIds: new Map(),
+      sdkSessionKey: buildSdkSessionKey("chat-1", "cursor", "/usr/bin/agent", "sdk", "cli-login", "ask"),
+      existingSessionId: cliIdentity,
+      backendKey: "cursor",
+      binPath: "/usr/bin/agent",
+      runtime: "sdk",
+      authMode: "cli-login",
+      cliMode: "ask",
+      hasConfiguredCommand: false,
+    }),
+    undefined,
   );
   assert.equal(
     resolveSdkResumeSessionId({

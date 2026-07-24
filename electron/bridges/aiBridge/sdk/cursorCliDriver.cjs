@@ -25,6 +25,11 @@ function resolveCursorCliModel(model) {
   return raw || DEFAULT_CURSOR_CLI_MODEL;
 }
 
+/** Map Netcatty permission mode → Cursor CLI execution class. */
+function resolveCursorCliExecMode(permissionMode) {
+  return String(permissionMode || "confirm").toLowerCase() === "observer" ? "ask" : "agent";
+}
+
 function buildCursorCliArgs({
   model,
   resumeSessionId,
@@ -51,8 +56,7 @@ function buildCursorCliArgs({
     args.push("--resume", String(resumeSessionId));
   }
 
-  const mode = String(permissionMode || "confirm").toLowerCase();
-  if (mode === "observer") {
+  if (resolveCursorCliExecMode(permissionMode) === "ask") {
     // Read-only ask mode; no shell write approvals expected.
     args.push("--mode", "ask");
   } else {
@@ -238,8 +242,12 @@ function translateCursorCliEvent(event, emitter, state = {}) {
 
     case "assistant": {
       closeReasoning(state, emitter);
-      // Prefer partial deltas; the final non-timestamped assistant often repeats
-      // the full message — skip duplicates when we already streamed partials.
+      // With --stream-partial-output, Cursor emits three assistant shapes:
+      //   timestamp_ms only          → streaming delta (use)
+      //   timestamp_ms + model_call_id → buffered flush before tool (skip)
+      //   neither                    → final flush (skip if already streamed)
+      // See https://cursor.com/docs/cli/reference/output-format.md#stream-json-format
+      if (event.model_call_id) return false;
       const isPartial = Boolean(event.timestamp_ms);
       const content = event.message?.content;
       if (!Array.isArray(content)) return false;
@@ -553,6 +561,7 @@ module.exports = {
   listCursorCliModels,
   mergeWorkspaceMcpJson,
   resetMcpMergeRefcountsForTests,
+  resolveCursorCliExecMode,
   resolveCursorCliModel,
   runCursorCliTurn,
   stripCursorApiKeyFromEnv,
