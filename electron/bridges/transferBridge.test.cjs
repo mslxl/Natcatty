@@ -27,6 +27,11 @@ function createFastSftp(overrides) {
   const sftp = new EventEmitter();
   sftp.readdir = (_path, callback) => callback(null, []);
   sftp.stat = (_path, callback) => callback(null, { size: 1024 * 1024 });
+  sftp.lstat = (_path, callback) => {
+    const error = new Error("ENOENT");
+    error.code = 2;
+    callback(error);
+  };
   sftp.mkdir = (_path, callback) => callback(null);
   sftp.unlink = (_path, callback) => callback(null);
   sftp.end = () => {};
@@ -754,6 +759,7 @@ test("resumable SFTP uploads fail closed when pipelined strategies fail (no seri
   await fs.promises.writeFile(localPath, payload);
   let endedChannels = 0;
   let createWriteStreamCalls = 0;
+  let deleteCalls = 0;
   const fastSftp = createFastSftp({
     open(_remotePath, _flags, callback) {
       callback(new Error("server rejected random-access writes"));
@@ -779,6 +785,7 @@ test("resumable SFTP uploads fail closed when pipelined strategies fail (no seri
       return Promise.resolve();
     },
     delete() {
+      deleteCalls += 1;
       return Promise.resolve();
     },
     client: {
@@ -806,6 +813,7 @@ test("resumable SFTP uploads fail closed when pipelined strategies fail (no seri
   assert.match(result.error || "", /pipelined upload failed|rejected random-access/i);
   assert.equal(createWriteStreamCalls, 0);
   assert.ok(endedChannels >= 1, `expected isolated channels to end, got ${endedChannels}`);
+  assert.equal(deleteCalls, 0, "a resumable upload error must preserve its staged prefix");
 });
 
 test("resumable concurrent uploads reject a source rewritten mid-transfer", async (t) => {
@@ -989,6 +997,8 @@ test("non-resumable shared range uploads remove their temporary digest after suc
       __netcattySudoMode: true,
       sftp: sharedSftp,
       stat: async () => ({ size: remoteBytes }),
+      rename: async () => {},
+      delete: async () => {},
     }]]),
   });
 
@@ -1656,7 +1666,7 @@ test("SFTP uploads fail when remote size does not match local size", async (t) =
   );
 
   assert.match(result.error || "", /Upload size mismatch/);
-  assert.equal(deletedRemotePath, "/tmp/archive.zip");
+  assert.match(String(deletedRemotePath), /\.netcatty-upload-.*archive\.zip\.part$/);
   assert.ok(sender.sent.some((entry) => entry.channel === "netcatty:transfer:error"));
 });
 

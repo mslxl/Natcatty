@@ -7,7 +7,13 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const tempDirBridge = require("./tempDirBridge.cjs");
-const { encodePathForSession, ensureRemoteDirForSession, requireSftpChannel, resolveEncodingForRequest } = require("./sftpBridge.cjs");
+const {
+  encodePathForSession,
+  ensureRemoteDirForSession,
+  runRemoteUploadTransaction,
+  requireSftpChannel,
+  resolveEncodingForRequest,
+} = require("./sftpBridge.cjs");
 const { isScpModeClient, getScpBackendForClient } = require("./sftpBridge/scpBackend.cjs");
 const {
   DOWNLOAD_TRANSFER_CONCURRENCY,
@@ -238,40 +244,6 @@ async function promoteLocalTransfer(stagedPath, targetPath) {
     await fs.promises.unlink(readyPath).catch(() => {});
     throw err;
   }
-}
-
-async function promoteRemoteTransfer(client, sftpId, stagedPath, targetPath, encoding) {
-  const backupPath = `${targetPath}.netcatty-${crypto.randomUUID().replace(/-/g, "")}.backup`;
-  let backedUp = false;
-  if (isScpModeClient(client)) {
-    const backend = getScpBackendForClient(client);
-    try {
-      await backend.rename(targetPath, backupPath, { encoding });
-      backedUp = true;
-    } catch { /* target may not exist */ }
-    try {
-      await backend.rename(stagedPath, targetPath, { encoding });
-    } catch (err) {
-      if (backedUp) await backend.rename(backupPath, targetPath, { encoding }).catch(() => {});
-      throw err;
-    }
-    if (backedUp) await backend.remove(backupPath, { recursive: false, encoding }).catch(() => {});
-    return;
-  }
-  const encodedStage = encodePathForSession(sftpId, stagedPath, encoding);
-  const encodedTarget = encodePathForSession(sftpId, targetPath, encoding);
-  const encodedBackup = encodePathForSession(sftpId, backupPath, encoding);
-  try {
-    await client.rename(encodedTarget, encodedBackup);
-    backedUp = true;
-  } catch { /* target may not exist */ }
-  try {
-    await client.rename(encodedStage, encodedTarget);
-  } catch (err) {
-    if (backedUp) await client.rename(encodedBackup, encodedTarget).catch(() => {});
-    throw err;
-  }
-  if (backedUp) await client.delete(encodedBackup).catch(() => {});
 }
 
 // ── Transfer performance tuning ──────────────────────────────────────────────
@@ -1001,6 +973,7 @@ async function uploadFile(localPath, remotePath, client, fileSize, transfer, sen
     ? `SFTP pipelined upload failed: ${cause.message}`
     : "SFTP pipelined upload failed (no serial stream fallback)";
   const error = new Error(message, cause ? { cause } : undefined);
+  if (cause?.code !== undefined) error.code = cause.code;
   if (cause?.noTransferFallback) error.noTransferFallback = true;
   await cleanupSourceDigest();
   throw error;
@@ -2179,40 +2152,52 @@ async function startTransferNow(event, payload, onProgress) {
       const dir = path.dirname(targetPath).replace(/\\/g, '/');
       try { await ensureRemoteDirForSession(targetSftpId, dir, targetEncoding); } catch { }
 
-      const uploadTargetPath = transfer.resumable
-        ? buildRemoteTransferStagePath(targetPath, transferId)
-        : targetPath;
-      transfer.stagedRemote = transfer.resumable
-        ? { client, sftpId: targetSftpId, path: uploadTargetPath, encoding: targetEncoding }
-        : null;
-      // Clamp UI/progress checkpoint to durable remote .part size (crash-safe).
-      transfer.checkpointBytes = await resolveRemoteResumeCheckpoint(
-        client, targetSftpId, uploadTargetPath, targetEncoding, transfer.checkpointBytes,
-      );
-      sendProgress(transfer.checkpointBytes, fileSize, { force: true });
-      {
-        const verifyBytes = resumeContentVerifyBytes(transfer.checkpointBytes);
-        await assertMatchingResumeContent(
-          hashLocalPrefix(sourcePath, verifyBytes),
-          hashRemotePrefix(client, targetSftpId, uploadTargetPath, targetEncoding, verifyBytes),
-        );
-      }
-      const encodedTargetPath = isScpModeClient(client)
-        ? uploadTargetPath
-        : encodePathForSession(targetSftpId, uploadTargetPath, targetEncoding);
-      await uploadFile(
-        sourcePath,
-        encodedTargetPath,
-        client,
-        fileSize,
-        transfer,
-        sendProgress,
-        resolveEncodingForRequest(targetSftpId, targetEncoding),
-      );
-      if (transfer.resumable) {
-        await promoteRemoteTransfer(client, targetSftpId, uploadTargetPath, targetPath, targetEncoding);
-        transfer.stagedRemote = null;
-      }
+      const resolvedTargetEncoding = resolveEncodingForRequest(targetSftpId, targetEncoding);
+      const deterministicStagePath = buildRemoteTransferStagePath(targetPath, transferId);
+      await runRemoteUploadTransaction(client, sourcePath, targetPath, {
+        encoding: resolvedTargetEncoding,
+        expectedSize: fileSize,
+        stagedPath: transfer.resumable ? deterministicStagePath : undefined,
+        allowInPlaceFallback: !transfer.resumable,
+        preserveStageOnUploadError: transfer.resumable,
+        assertCanPromote() {
+          if (transfer.cancelled) throw new Error("Transfer cancelled");
+        },
+        async uploadFile(encodedUploadPath, uploadTarget) {
+          const uploadTargetPath = uploadTarget.logicalPath;
+          const usesStage = uploadTarget.generatedStagePath === true;
+          transfer.stagedRemote = usesStage
+            ? { client, sftpId: targetSftpId, path: uploadTargetPath, encoding: targetEncoding }
+            : null;
+          transfer.checkpointBytes = usesStage && transfer.resumable
+            ? await resolveRemoteResumeCheckpoint(
+                client,
+                targetSftpId,
+                uploadTargetPath,
+                targetEncoding,
+                transfer.checkpointBytes,
+              )
+            : 0;
+          sendProgress(transfer.checkpointBytes, fileSize, { force: true });
+          if (usesStage && transfer.checkpointBytes > 0) {
+            const verifyBytes = resumeContentVerifyBytes(transfer.checkpointBytes);
+            await assertMatchingResumeContent(
+              hashLocalPrefix(sourcePath, verifyBytes),
+              hashRemotePrefix(client, targetSftpId, uploadTargetPath, targetEncoding, verifyBytes),
+            );
+          }
+          await uploadFile(
+            sourcePath,
+            encodedUploadPath,
+            client,
+            fileSize,
+            transfer,
+            sendProgress,
+            resolvedTargetEncoding,
+          );
+        },
+      });
+      transfer.stagedRemote = null;
 
     } else if (sourceType === 'sftp' && targetType === 'local') {
       const client = sftpClients.get(sourceSftpId);
@@ -2446,33 +2431,6 @@ async function startTransferNow(event, payload, onProgress) {
         try { await ensureRemoteDirForSession(targetSftpId, dir, targetEncoding); } catch { }
 
         transfer.resumeStage = 'upload';
-        const uploadTargetPath = transfer.resumable
-          ? buildRemoteTransferStagePath(targetPath, transferId)
-          : targetPath;
-        transfer.uploadCheckpointBytes = await resolveRemoteResumeCheckpoint(
-          targetClient, targetSftpId, uploadTargetPath, targetEncoding, transfer.uploadCheckpointBytes,
-        );
-        transfer.checkpointBytes = transfer.uploadCheckpointBytes;
-        // Overall progress for R2R upload stage is ~50% + upload/2.
-        lastObservedTransferred = Math.floor(fileSize / 2)
-          + Math.floor(transfer.uploadCheckpointBytes / 2);
-        // sendProgress stores overall UI bytes on checkpointBytes — restore the
-        // stage offset afterward so uploadFile resumes at the durable point.
-        sendProgress(lastObservedTransferred, fileSize, { force: true });
-        transfer.checkpointBytes = transfer.uploadCheckpointBytes;
-        transfer.stagedRemote = transfer.resumable
-          ? { client: targetClient, sftpId: targetSftpId, path: uploadTargetPath, encoding: targetEncoding }
-          : null;
-        {
-          const verifyBytes = resumeContentVerifyBytes(transfer.uploadCheckpointBytes);
-          await assertMatchingResumeContent(
-            hashLocalPrefix(tempPath, verifyBytes),
-            hashRemotePrefix(targetClient, targetSftpId, uploadTargetPath, targetEncoding, verifyBytes),
-          );
-        }
-        const encodedTargetPath = isScpModeClient(targetClient)
-          ? uploadTargetPath
-          : encodePathForSession(targetSftpId, uploadTargetPath, targetEncoding);
         const uploadProgress = (transferred, _total, options = {}) => {
           const durableCheckpoint = Number.isFinite(options.checkpointBytes)
             ? options.checkpointBytes
@@ -2485,19 +2443,63 @@ async function startTransferNow(event, payload, onProgress) {
           transfer.checkpointBytes = durableCheckpoint;
         };
         transfer.sourceIsOwnedTemp = true;
-        await uploadFile(
-          tempPath,
-          encodedTargetPath,
-          targetClient,
-          fileSize,
-          transfer,
-          uploadProgress,
-          resolveEncodingForRequest(targetSftpId, targetEncoding),
-        );
-        if (transfer.resumable) {
-          await promoteRemoteTransfer(targetClient, targetSftpId, uploadTargetPath, targetPath, targetEncoding);
-          transfer.stagedRemote = null;
-        }
+        const resolvedTargetEncoding = resolveEncodingForRequest(targetSftpId, targetEncoding);
+        const deterministicStagePath = buildRemoteTransferStagePath(targetPath, transferId);
+        await runRemoteUploadTransaction(targetClient, tempPath, targetPath, {
+          encoding: resolvedTargetEncoding,
+          expectedSize: fileSize,
+          stagedPath: transfer.resumable ? deterministicStagePath : undefined,
+          allowInPlaceFallback: !transfer.resumable,
+          preserveStageOnUploadError: transfer.resumable,
+          assertCanPromote() {
+            if (transfer.cancelled) throw new Error("Transfer cancelled");
+          },
+          async uploadFile(encodedUploadPath, uploadTarget) {
+            const uploadTargetPath = uploadTarget.logicalPath;
+            const usesStage = uploadTarget.generatedStagePath === true;
+            transfer.stagedRemote = usesStage
+              ? { client: targetClient, sftpId: targetSftpId, path: uploadTargetPath, encoding: targetEncoding }
+              : null;
+            transfer.uploadCheckpointBytes = usesStage && transfer.resumable
+              ? await resolveRemoteResumeCheckpoint(
+                  targetClient,
+                  targetSftpId,
+                  uploadTargetPath,
+                  targetEncoding,
+                  transfer.uploadCheckpointBytes,
+                )
+              : 0;
+            transfer.checkpointBytes = transfer.uploadCheckpointBytes;
+            // Overall progress for R2R upload stage is ~50% + upload/2.
+            lastObservedTransferred = Math.floor(fileSize / 2)
+              + Math.floor(transfer.uploadCheckpointBytes / 2);
+            sendProgress(lastObservedTransferred, fileSize, { force: true });
+            transfer.checkpointBytes = transfer.uploadCheckpointBytes;
+            if (usesStage && transfer.uploadCheckpointBytes > 0) {
+              const verifyBytes = resumeContentVerifyBytes(transfer.uploadCheckpointBytes);
+              await assertMatchingResumeContent(
+                hashLocalPrefix(tempPath, verifyBytes),
+                hashRemotePrefix(
+                  targetClient,
+                  targetSftpId,
+                  uploadTargetPath,
+                  targetEncoding,
+                  verifyBytes,
+                ),
+              );
+            }
+            await uploadFile(
+              tempPath,
+              encodedUploadPath,
+              targetClient,
+              fileSize,
+              transfer,
+              uploadProgress,
+              resolvedTargetEncoding,
+            );
+          },
+        });
+        transfer.stagedRemote = null;
 
         try { await fs.promises.unlink(tempPath); } catch { }
         transfer.stagedLocalPath = null;

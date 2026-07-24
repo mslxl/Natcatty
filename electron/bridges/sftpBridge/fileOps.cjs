@@ -379,66 +379,9 @@ function createFileOpsApi(ctx) {
     
       const { sftpId, path: remotePath, content, transferId } = payload;
 
-      if (isScpModeClient(client)) {
-        const onProgress = payload.onProgress;
-        const onComplete = payload.onComplete;
-        const onError = payload.onError;
-        const buffer = Buffer.isBuffer(content) ? content : Buffer.from(content);
-        const totalBytes = buffer.length;
-        const transfer = { cancelled: false, abort: null };
-        activeSftpUploads.set(transferId, {
-          cancelled: false,
-          stream: null,
-          transfer,
-        });
-        try {
-          const encoding = resolveEncodingForRequest(sftpId, payload.encoding);
-          await getScpBackendForClient(client).uploadBuffer(buffer, remotePath, {
-            transfer,
-            encoding: encoding === "auto" ? "utf-8" : encoding,
-            onProgress: (transferred, total) => {
-              if (typeof onProgress === "function") {
-                onProgress(transferred, total || totalBytes, 0);
-              } else {
-                const contents = electronModule.webContents.fromId(event.sender.id);
-                contents?.send("netcatty:upload:progress", {
-                  transferId,
-                  transferred,
-                  totalBytes: total || totalBytes,
-                  speed: 0,
-                });
-              }
-            },
-          });
-          if (activeSftpUploads.get(transferId)?.cancelled || transfer.cancelled) {
-            const contents = electronModule.webContents.fromId(event.sender.id);
-            contents?.send("netcatty:upload:cancelled", { transferId });
-            return { success: false, transferId, cancelled: true };
-          }
-          if (typeof onComplete === "function") onComplete();
-          else {
-            const contents = electronModule.webContents.fromId(event.sender.id);
-            contents?.send("netcatty:upload:complete", { transferId });
-          }
-          return { success: true, transferId };
-        } catch (err) {
-          if (activeSftpUploads.get(transferId)?.cancelled || transfer.cancelled || /cancel/i.test(err.message || "")) {
-            const contents = electronModule.webContents.fromId(event.sender.id);
-            contents?.send("netcatty:upload:cancelled", { transferId });
-            return { success: false, transferId, cancelled: true };
-          }
-          if (typeof onError === "function") onError(err.message);
-          else {
-            const contents = electronModule.webContents.fromId(event.sender.id);
-            contents?.send("netcatty:upload:error", { transferId, error: err.message });
-          }
-          throw err;
-        } finally {
-          activeSftpUploads.delete(transferId);
-        }
+      if (!isScpModeClient(client)) {
+        await requireSftpChannel(client);
       }
-
-      await requireSftpChannel(client);
       const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
     
       // Extract callback functions from payload
@@ -450,11 +393,6 @@ function createFileOpsApi(ctx) {
       // For ArrayBuffer from renderer, we still need to convert but use a more efficient method
       const buffer = Buffer.isBuffer(content) ? content : Buffer.from(content);
       const totalBytes = buffer.length;
-      const {
-        TRANSFER_CHUNK_SIZE,
-        UPLOAD_TRANSFER_CONCURRENCY,
-      } = require("../transferLimits.cjs");
-
       const emitProgress = (transferred, speed = 0) => {
         if (typeof onProgress === "function") {
           try {
@@ -565,50 +503,20 @@ function createFileOpsApi(ctx) {
           }
         };
 
-        if (typeof pipelinedUploadWithOptionalStaging === "function") {
-          // Pass the logical remote path; helper encodes stage/final paths.
-          await pipelinedUploadWithOptionalStaging(client, tempPath, remotePath, {
-            chunkSize: TRANSFER_CHUNK_SIZE,
-            concurrency: UPLOAD_TRANSFER_CONCURRENCY,
-            step,
-            signal: abortController?.signal || null,
-            encoding,
-            expectedSize: totalBytes,
-            onChannel(sftp, control) {
-              if (control?.dispose) {
-                transferControl.abort = () => {
-                  transferControl.cancelled = true;
-                  // Keep AbortSignal aborted so post-upload throwIfAborted
-                  // blocks staged rename/promotion after a late cancel.
-                  try { abortController?.abort(); } catch { /* ignore */ }
-                  try { control.abort?.(); } catch { /* ignore */ }
-                  try { sftp.end?.(); } catch { /* ignore */ }
-                };
-              }
-            },
-          });
-        } else if (typeof pipelinedUploadLocalFile === "function") {
-          // Fallback if staging helper is unavailable (older injection).
-          const encodedPath = encodePath(remotePath, encoding);
-          await pipelinedUploadLocalFile(client, tempPath, encodedPath, {
-            chunkSize: TRANSFER_CHUNK_SIZE,
-            concurrency: UPLOAD_TRANSFER_CONCURRENCY,
-            step,
-            signal: abortController?.signal || null,
-            onChannel(sftp, control) {
-              if (control?.dispose) {
-                transferControl.abort = () => {
-                  transferControl.cancelled = true;
-                  try { abortController?.abort(); } catch { /* ignore */ }
-                  try { control.abort?.(); } catch { /* ignore */ }
-                  try { sftp.end?.(); } catch { /* ignore */ }
-                };
-              }
-            },
-          });
-        } else {
-          throw new Error("SFTP pipelined upload helper is not available");
-        }
+        await runUnifiedSftpTransfer({
+          sftpId,
+          localPath: tempPath,
+          remotePath,
+          transferId,
+          encoding,
+          abortSignal: abortController?.signal || null,
+          resumable: false,
+          onTransferEvent(channel, eventPayload) {
+            if (channel === "netcatty:transfer:progress") {
+              step(eventPayload.transferred, 0, eventPayload.totalBytes);
+            }
+          },
+        }, "upload");
         emitComplete();
         return { success: true, transferId };
       } catch (err) {

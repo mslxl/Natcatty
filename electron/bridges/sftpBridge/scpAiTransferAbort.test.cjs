@@ -61,6 +61,7 @@ describe("AI/MCP SCP transfer abort on shipped download/upload entry points", ()
         return stream;
       },
     });
+    backend.stat = async () => ({ type: "file", isDirectory: false, size: 256 });
     const client = {
       client: { exec: () => {} },
       sftp: null,
@@ -103,20 +104,20 @@ describe("AI/MCP SCP transfer abort on shipped download/upload entry points", ()
     await assert.rejects(() => promise, /cancel|abort/i);
   });
 
-  it("source wires createTransferFromAbortSignal (not a dead cancelledFlag getter)", () => {
+  it("legacy entry points delegate cancellation to the unified transfer engine", () => {
     const src = fs.readFileSync(path.join(__dirname, "../sftpBridge.cjs"), "utf8");
-    assert.match(src, /createTransferFromAbortSignal/);
     assert.doesNotMatch(src, /cancelledFlag/);
-    // Both AI transfer entry points must pass transfer into the backend
-    const dlIdx = src.indexOf("async function downloadSftpToLocal");
-    const upIdx = src.indexOf("async function uploadLocalToSftp");
-    const dlBlock = src.slice(dlIdx, upIdx);
-    const upBlock = src.slice(upIdx, src.indexOf("function sendSftpProgress", upIdx));
-    assert.match(dlBlock, /createTransferFromAbortSignal\(payload\.abortSignal\)/);
-    assert.match(upBlock, /createTransferFromAbortSignal\(payload\.abortSignal\)/);
-    // SCP branch must pass the live transfer object into backend ops (not null).
-    assert.match(dlBlock, /downloadFile\([\s\S]*transfer/);
-    assert.match(upBlock, /uploadFile\([\s\S]*transfer/);
-    assert.doesNotMatch(upBlock, /transfer:\s*null/);
+    assert.match(
+      src,
+      /async function downloadSftpToLocal\(_event, payload\) \{\s*return runUnifiedSftpTransfer\(payload, "download"\);\s*\}/,
+    );
+    assert.match(
+      src,
+      /async function uploadLocalToSftp\(_event, payload\) \{\s*return runUnifiedSftpTransfer\(payload, "upload"\);\s*\}/,
+    );
+    const unifiedIdx = src.indexOf("async function runUnifiedSftpTransfer");
+    const unifiedBlock = src.slice(unifiedIdx, src.indexOf("async function downloadSftpToLocal", unifiedIdx));
+    assert.match(unifiedBlock, /transferBridge\.startTransfer/);
+    assert.match(unifiedBlock, /transferBridge\.cancelTransfer/);
   });
 });

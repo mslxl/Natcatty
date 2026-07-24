@@ -252,6 +252,173 @@ test("session-backed writeSftpBinaryWithProgress uses pipelined fastPut", async 
   assert.deepEqual(remoteFiles.get("/home/alice/mem.bin"), payload);
 });
 
+test("SCP writeSftpBinaryWithProgress uses the shared staged transaction", async (t) => {
+  const tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-scp-write-progress-"));
+  t.after(async () => fs.promises.rm(tempRoot, { recursive: true, force: true }));
+  tempDirBridge.init?.({ getPath: () => tempRoot });
+
+  const payload = Buffer.from("new executable payload");
+  const finalPath = "/目录/工具";
+  const remoteFiles = new Map([[finalPath, Buffer.from("old")]]);
+  const remoteModes = new Map([[finalPath, 0o755]]);
+  const uploadPaths = [];
+  const chmodCalls = [];
+  const backend = {
+    async stat(remotePath) {
+      if (!remoteFiles.has(remotePath)) {
+        const error = new Error("No such file");
+        error.code = "ENOENT";
+        throw error;
+      }
+      return {
+        type: "file",
+        isDirectory: false,
+        size: remoteFiles.get(remotePath).length,
+        mode: remoteModes.get(remotePath) ?? 0o644,
+      };
+    },
+    async uploadFile(localPath, remotePath, options = {}) {
+      uploadPaths.push(remotePath);
+      const contents = await fs.promises.readFile(localPath);
+      remoteFiles.set(remotePath, contents);
+      remoteModes.set(remotePath, 0o644);
+      options.onProgress?.(contents.length, contents.length);
+    },
+    async chmod(remotePath, mode) {
+      chmodCalls.push({ remotePath, mode });
+      remoteModes.set(remotePath, mode);
+    },
+    async rename(fromPath, toPath) {
+      remoteFiles.set(toPath, remoteFiles.get(fromPath));
+      remoteFiles.delete(fromPath);
+      remoteModes.set(toPath, remoteModes.get(fromPath));
+      remoteModes.delete(fromPath);
+    },
+    async remove(remotePath) {
+      remoteFiles.delete(remotePath);
+      remoteModes.delete(remotePath);
+    },
+  };
+  const sftpClients = new Map([["scp-memory", {
+    __netcattyFileProtocol: "scp",
+    __netcattyScpBackend: backend,
+  }]]);
+  sftpBridge.init({
+    electronModule: { webContents: { fromId: () => ({ send() {} }) } },
+    sessions: new Map(),
+    sftpClients,
+  });
+
+  const result = await sftpBridge.writeSftpBinaryWithProgress(
+    { sender: { id: 1 } },
+    {
+      sftpId: "scp-memory",
+      path: finalPath,
+      content: payload,
+      transferId: "scp-memory-upload",
+      onProgress() {},
+      onComplete() {},
+    },
+  );
+
+  assert.equal(result.success, true);
+  assert.equal(uploadPaths.length, 1);
+  assert.match(uploadPaths[0], /\.netcatty-upload-.*\.part$/);
+  assert.equal(typeof uploadPaths[0], "string");
+  assert.match(uploadPaths[0], /^\/目录\/\.netcatty-upload-/);
+  assert.notEqual(uploadPaths[0], finalPath);
+  assert.deepEqual(remoteFiles.get(finalPath), payload);
+  assert.equal(remoteModes.get(finalPath), 0o755);
+  assert.deepEqual(chmodCalls, [{ remotePath: uploadPaths[0], mode: 0o755 }]);
+});
+
+test("SCP symlink uploads do not compare content size with the link node", async () => {
+  let uploadCalls = 0;
+  const backend = {
+    async stat() {
+      return { type: "symlink", isSymbolicLink: true, size: 99 };
+    },
+    async uploadFile() {
+      uploadCalls += 1;
+    },
+  };
+  const client = {
+    __netcattyFileProtocol: "scp",
+    __netcattyScpBackend: backend,
+  };
+
+  const result = await sftpBridge.runRemoteUploadTransaction(
+    client,
+    "/tmp/local.bin",
+    "/目录/链接.bin",
+    {
+      expectedSize: 7,
+      async uploadFile(remotePath) {
+        assert.equal(remotePath, "/目录/链接.bin");
+        uploadCalls += 1;
+      },
+    },
+  );
+  assert.deepEqual(result, { staged: false });
+  assert.equal(uploadCalls, 1);
+});
+
+test("cancelling an SCP memory upload leaves the final destination untouched", async (t) => {
+  const tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-scp-memory-cancel-"));
+  t.after(async () => fs.promises.rm(tempRoot, { recursive: true, force: true }));
+  tempDirBridge.init?.({ getPath: () => tempRoot });
+
+  let uploadStarted;
+  const started = new Promise((resolve) => { uploadStarted = resolve; });
+  let renameCalls = 0;
+  let removedStage = false;
+  const backend = {
+    async stat() {
+      const error = new Error("No such file");
+      error.code = "ENOENT";
+      throw error;
+    },
+    async uploadFile(_localPath, _remotePath, options = {}) {
+      uploadStarted();
+      await new Promise((resolve, reject) => {
+        options.transfer.abort = () => reject(new Error("Transfer cancelled"));
+      });
+    },
+    async rename() {
+      renameCalls += 1;
+    },
+    async remove(remotePath) {
+      if (String(remotePath).includes(".netcatty-upload-")) removedStage = true;
+    },
+  };
+  sftpBridge.init({
+    electronModule: { webContents: { fromId: () => ({ send() {} }) } },
+    sessions: new Map(),
+    sftpClients: new Map([["scp-memory-cancel", {
+      __netcattyFileProtocol: "scp",
+      __netcattyScpBackend: backend,
+    }]]),
+  });
+
+  const upload = sftpBridge.writeSftpBinaryWithProgress(
+    { sender: { id: 1 } },
+    {
+      sftpId: "scp-memory-cancel",
+      path: "/tmp/final.bin",
+      content: Buffer.alloc(1024, 1),
+      transferId: "scp-memory-cancel-transfer",
+      onProgress() {},
+    },
+  );
+  await started;
+  await sftpBridge.cancelSftpUpload(null, { transferId: "scp-memory-cancel-transfer" });
+  const result = await upload;
+
+  assert.equal(result.cancelled, true);
+  assert.equal(renameCalls, 0);
+  assert.equal(removedStage, true);
+});
+
 test("existing destinations stage then restore mode after rename", async (t) => {
   const tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-stage-meta-"));
   t.after(async () => {
@@ -514,7 +681,11 @@ test("rename fallback replaces safely and restores the old target on promotion f
   );
 });
 
-test("SCP upload stops when the destination type cannot be inspected", async () => {
+test("SCP upload stops when the destination type cannot be inspected", async (t) => {
+  const tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-scp-stat-fail-"));
+  t.after(async () => fs.promises.rm(tempRoot, { recursive: true, force: true }));
+  const localPath = path.join(tempRoot, "local.bin");
+  await fs.promises.writeFile(localPath, Buffer.from("payload"));
   let uploadCalls = 0;
   const backend = {
     async stat() {
@@ -537,7 +708,7 @@ test("SCP upload stops when the destination type cannot be inspected", async () 
   await assert.rejects(
     () => sftpBridge.uploadLocalToSftp(null, {
       sftpId: "scp-stat-fail",
-      localPath: "/tmp/local.bin",
+      localPath,
       remotePath: "/tmp/remote.bin",
       encoding: "utf-8",
     }),
@@ -546,7 +717,11 @@ test("SCP upload stops when the destination type cannot be inspected", async () 
   assert.equal(uploadCalls, 0);
 });
 
-test("SCP upload does not replace a symlink that appears before promotion", async () => {
+test("SCP upload does not replace a symlink that appears before promotion", async (t) => {
+  const tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-scp-symlink-race-"));
+  t.after(async () => fs.promises.rm(tempRoot, { recursive: true, force: true }));
+  const localPath = path.join(tempRoot, "local.bin");
+  await fs.promises.writeFile(localPath, Buffer.from("payload"));
   let statCalls = 0;
   let renameCalls = 0;
   let removedStage = false;
@@ -577,11 +752,49 @@ test("SCP upload does not replace a symlink that appears before promotion", asyn
   await assert.rejects(
     () => sftpBridge.uploadLocalToSftp(null, {
       sftpId: "scp-symlink-race",
-      localPath: "/tmp/local.bin",
+      localPath,
       remotePath: "/tmp/remote.bin",
       encoding: "utf-8",
     }),
     /changed to a symlink/,
+  );
+  assert.equal(renameCalls, 0);
+  assert.equal(removedStage, true);
+});
+
+test("SCP upload cancelled during the final target check does not promote", async () => {
+  const controller = new AbortController();
+  let statCalls = 0;
+  let renameCalls = 0;
+  let removedStage = false;
+  const backend = {
+    async stat(remotePath) {
+      statCalls += 1;
+      if (String(remotePath).includes(".netcatty-upload-")) {
+        return { type: "file", isDirectory: false, size: 7 };
+      }
+      if (statCalls > 2) controller.abort();
+      return { type: "file", isDirectory: false, size: 3 };
+    },
+    async rename() {
+      renameCalls += 1;
+    },
+    async remove(remotePath) {
+      if (String(remotePath).includes(".netcatty-upload-")) removedStage = true;
+    },
+  };
+  const client = {
+    __netcattyFileProtocol: "scp",
+    __netcattyScpBackend: backend,
+  };
+
+  await assert.rejects(
+    () => sftpBridge.runRemoteUploadTransaction(client, "/tmp/local.bin", "/tmp/remote.bin", {
+      signal: controller.signal,
+      expectedSize: 7,
+      async uploadFile() {},
+    }),
+    /abort/i,
   );
   assert.equal(renameCalls, 0);
   assert.equal(removedStage, true);

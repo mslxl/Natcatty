@@ -816,6 +816,91 @@ function createRemoteRecoveryError(promotionError, restoreError, paths = {}) {
   return error;
 }
 
+async function planScpRemoteUploadReplace(client, remotePath, encoding) {
+  const { getScpBackendForClient } = require("./sftpBridge/scpBackend.cjs");
+  const backend = getScpBackendForClient(client);
+  let attrs = null;
+  try {
+    attrs = await backend.stat(remotePath, { encoding });
+  } catch (error) {
+    if (!isRemoteMissingError(error)) throw error;
+  }
+  if (!attrs) {
+    return { writeInPlace: false, existingMode: null, destinationExisted: false };
+  }
+  if (attrs.isDirectory || attrs.type === "directory") {
+    throw new Error(`Remote path is a directory: ${remotePath}`);
+  }
+  if (attrs.isSymbolicLink || attrs.isSymlink || attrs.type === "symlink") {
+    return { writeInPlace: true, existingMode: null, destinationExisted: true };
+  }
+  return {
+    writeInPlace: false,
+    existingMode: Number.isFinite(attrs.mode) ? attrs.mode : null,
+    destinationExisted: true,
+  };
+}
+
+async function promoteScpStagedUpload(
+  client,
+  stagedPath,
+  targetPath,
+  backupPath,
+  encoding,
+  expectedExisted,
+  existingMode,
+  assertCanPromote,
+) {
+  const { getScpBackendForClient } = require("./sftpBridge/scpBackend.cjs");
+  const backend = getScpBackendForClient(client);
+  let latest = null;
+  try {
+    latest = await backend.stat(targetPath, { encoding });
+  } catch (error) {
+    if (!isRemoteMissingError(error)) throw error;
+  }
+  if (latest?.isDirectory || latest?.type === "directory") {
+    throw new Error(`Remote path is a directory: ${targetPath}`);
+  }
+  if (latest?.isSymbolicLink || latest?.isSymlink || latest?.type === "symlink") {
+    throw new Error(`Remote destination changed to a symlink during upload: ${targetPath}`);
+  }
+  if (expectedExisted === false && latest) {
+    throw new Error(`Remote destination appeared during upload: ${targetPath}`);
+  }
+  assertCanPromote();
+  if (Number.isFinite(existingMode)) {
+    await backend.chmod(stagedPath, existingMode, { encoding });
+    assertCanPromote();
+  }
+
+  let movedExisting = false;
+  if (latest) {
+    await backend.rename(targetPath, backupPath, { encoding });
+    movedExisting = true;
+  }
+  try {
+    assertCanPromote();
+    await backend.rename(stagedPath, targetPath, { encoding });
+  } catch (promotionError) {
+    if (movedExisting) {
+      try {
+        await backend.rename(backupPath, targetPath, { encoding });
+      } catch (restoreError) {
+        throw createRemoteRecoveryError(promotionError, restoreError, {
+          stagePath: stagedPath,
+          backupPath,
+          finalPath: targetPath,
+        });
+      }
+    }
+    throw promotionError;
+  }
+  if (movedExisting) {
+    try { await backend.remove(backupPath, { recursive: false, encoding }); } catch { /* ignore */ }
+  }
+}
+
 /**
  * Pipelined upload with optional stage+rename.
  * - Confirmed regular files: stage then rename (cancel-safe finals) + mode restore.
@@ -825,21 +910,58 @@ function createRemoteRecoveryError(promotionError, restoreError, paths = {}) {
  * `remotePath` must be the logical (pre-encode) path string. Encoding is applied
  * here so staged/backup names are not built from Buffer path bytes.
  */
-async function pipelinedUploadWithOptionalStaging(client, localPath, remotePath, options = {}) {
+async function runRemoteUploadTransaction(client, localPath, remotePath, options = {}) {
   const signal = options?.signal || null;
   const expectedSize = options?.expectedSize;
   const encoding = options?.encoding || "utf-8";
+  const customUpload = typeof options?.uploadFile === "function" ? options.uploadFile : null;
+  const assertCanPromote = typeof options?.assertCanPromote === "function"
+    ? options.assertCanPromote
+    : () => throwIfAborted(signal);
+  const allowInPlaceFallback = options?.allowInPlaceFallback !== false;
+  const preserveStageOnUploadError = options?.preserveStageOnUploadError === true;
+  const { isScpModeClient, getScpBackendForClient } = require("./sftpBridge/scpBackend.cjs");
+  const scpMode = isScpModeClient(client);
   const encodedPath = encodePath(remotePath, encoding);
-  const plan = await planRemoteUploadReplace(client, encodedPath);
+  const plan = scpMode
+    ? await planScpRemoteUploadReplace(client, remotePath, encoding)
+    : await planRemoteUploadReplace(client, encodedPath);
   const fastPutOptions = { ...options };
   delete fastPutOptions.expectedSize;
   delete fastPutOptions.encoding;
+  delete fastPutOptions.uploadFile;
+  delete fastPutOptions.assertCanPromote;
+  delete fastPutOptions.allowInPlaceFallback;
+  delete fastPutOptions.stagedPath;
+  delete fastPutOptions.backupPath;
+  delete fastPutOptions.preserveStageOnUploadError;
+
+  const uploadTo = async (logicalPath, encodedUploadPath, generatedStagePath) => {
+    if (customUpload) {
+      // SCP shell commands encode logical string paths themselves. Passing an
+      // SFTP-style Buffer here loses non-UTF-8 path information.
+      await customUpload(scpMode ? logicalPath : encodedUploadPath, {
+        logicalPath,
+        generatedStagePath,
+        plan,
+      });
+      return;
+    }
+    await pipelinedUploadLocalFile(client, localPath, encodedUploadPath, {
+      ...fastPutOptions,
+      generatedStagePath,
+    });
+  };
 
   const uploadDirect = async () => {
-    await pipelinedUploadLocalFile(client, localPath, encodedPath, fastPutOptions);
-    throwIfAborted(signal);
-    if (Number.isFinite(expectedSize) && expectedSize >= 0 && typeof client.stat === "function") {
-      const st = await client.stat(encodedPath);
+    await uploadTo(remotePath, encodedPath, false);
+    assertCanPromote();
+    // SCP stat reports the link node itself. After an in-place symlink upload,
+    // it cannot reliably verify the followed target's byte count.
+    if (Number.isFinite(expectedSize) && expectedSize >= 0 && !(scpMode && plan.writeInPlace)) {
+      const st = scpMode
+        ? await getScpBackendForClient(client).stat(remotePath, { encoding })
+        : typeof client.stat === "function" ? await client.stat(encodedPath) : null;
       const size = Number(st?.size);
       if (Number.isFinite(size) && size !== expectedSize) {
         throw new Error(
@@ -855,13 +977,18 @@ async function pipelinedUploadWithOptionalStaging(client, localPath, remotePath,
   }
 
   // Build stage/backup names from the logical string, then encode each path.
-  const stagedLogical = buildStagedRemotePath(remotePath);
-  const backupLogical = buildBackupRemotePath(remotePath);
+  const stagedLogical = options?.stagedPath || buildStagedRemotePath(remotePath);
+  const backupLogical = options?.backupPath || buildBackupRemotePath(remotePath);
   const encodedStagedPath = encodePath(stagedLogical, encoding);
   const encodedBackupPath = encodePath(backupLogical, encoding);
   const cleanupStage = async () => {
     try {
-      if (typeof client.delete === "function") {
+      if (scpMode) {
+        await getScpBackendForClient(client).remove(stagedLogical, {
+          recursive: false,
+          encoding,
+        });
+      } else if (typeof client.delete === "function") {
         await client.delete(encodedStagedPath);
       }
     } catch {
@@ -870,27 +997,29 @@ async function pipelinedUploadWithOptionalStaging(client, localPath, remotePath,
   };
 
   try {
-    await pipelinedUploadLocalFile(client, localPath, encodedStagedPath, {
-      ...fastPutOptions,
-      generatedStagePath: true,
-    });
+    await uploadTo(stagedLogical, encodedStagedPath, true);
   } catch (err) {
-    await cleanupStage();
     // Only stage creation/write permission errors may fall back to in-place.
-    if (isRemotePermissionError(err)) {
+    if (allowInPlaceFallback && isRemotePermissionError(err)) {
+      await cleanupStage();
       console.warn(
         "[SFTP] Staged upload unavailable (permission); falling back to in-place overwrite:",
         err?.message || String(err),
       );
       return uploadDirect();
     }
+    if (!preserveStageOnUploadError) {
+      await cleanupStage();
+    }
     throw err;
   }
 
   try {
-    throwIfAborted(signal);
-    if (Number.isFinite(expectedSize) && expectedSize >= 0 && typeof client.stat === "function") {
-      const stagedStat = await client.stat(encodedStagedPath);
+    assertCanPromote();
+    if (Number.isFinite(expectedSize) && expectedSize >= 0) {
+      const stagedStat = scpMode
+        ? await getScpBackendForClient(client).stat(stagedLogical, { encoding })
+        : typeof client.stat === "function" ? await client.stat(encodedStagedPath) : null;
       const stagedSize = Number(stagedStat?.size);
       if (Number.isFinite(stagedSize) && stagedSize !== expectedSize) {
         throw new Error(
@@ -899,25 +1028,38 @@ async function pipelinedUploadWithOptionalStaging(client, localPath, remotePath,
       }
     }
     // Cancel may arrive during the awaited size verify; recheck before promote.
-    throwIfAborted(signal);
-    await assertStagedPromotionTargetSafe(
-      client,
-      encodedPath,
-      remotePath,
-      plan.destinationExisted,
-    );
-    throwIfAborted(signal);
-    // Apply the old mode to the stage before promotion. A failed chmod must not
-    // replace an executable final with a non-executable file and report success.
-    await restoreRemoteMode(client, encodedStagedPath, plan.existingMode, {
-      bestEffort: false,
-    });
-    throwIfAborted(signal);
-    await renameRemotePath(client, encodedStagedPath, encodedPath, encodedBackupPath, {
-      stagePath: stagedLogical,
-      backupPath: backupLogical,
-      finalPath: remotePath,
-    });
+    assertCanPromote();
+    if (scpMode) {
+      await promoteScpStagedUpload(
+        client,
+        stagedLogical,
+        remotePath,
+        backupLogical,
+        encoding,
+        plan.destinationExisted,
+        plan.existingMode,
+        assertCanPromote,
+      );
+    } else {
+      await assertStagedPromotionTargetSafe(
+        client,
+        encodedPath,
+        remotePath,
+        plan.destinationExisted,
+      );
+      assertCanPromote();
+      // Apply the old mode to the stage before promotion. A failed chmod must not
+      // replace an executable final with a non-executable file and report success.
+      await restoreRemoteMode(client, encodedStagedPath, plan.existingMode, {
+        bestEffort: false,
+      });
+      assertCanPromote();
+      await renameRemotePath(client, encodedStagedPath, encodedPath, encodedBackupPath, {
+        stagePath: stagedLogical,
+        backupPath: backupLogical,
+        finalPath: remotePath,
+      });
+    }
     return { staged: true };
   } catch (err) {
     if (!err?.preserveStagedUpload) {
@@ -1290,80 +1432,65 @@ async function openSftpForSession(_event, payload) {
   }
 }
 
-async function downloadSftpToLocal(_event, payload) {
+async function runUnifiedSftpTransfer(payload, direction) {
   const client = sftpClients.get(payload.sftpId);
   if (!client) throw new Error("SFTP session not found");
+  throwIfAborted(payload.abortSignal);
 
-  const {
-    isScpModeClient,
-    getScpBackendForClient,
-    createTransferFromAbortSignal,
-  } = require("./sftpBridge/scpBackend.cjs");
-  if (isScpModeClient(client)) {
-    throwIfAborted(payload.abortSignal);
-    const transfer = createTransferFromAbortSignal(payload.abortSignal);
-    // Stage to a temp path first so a failed/cancelled transfer never truncates
-    // an existing local destination (matches SFTP branch behavior).
-    const stagedFilePath = tempDirBridge.getTempFilePath(
-      path.basename(payload.localPath || payload.remotePath || "download"),
-    );
-    try {
-      const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
-      await getScpBackendForClient(client).downloadFile(payload.remotePath, stagedFilePath, {
-        transfer,
-        encoding: encoding === "auto" ? "utf-8" : encoding,
-        signal: payload.abortSignal || null,
-      });
-      throwIfAborted(payload.abortSignal);
-      if (transfer?.cancelled) {
+  // High-level file transfers have one implementation. sftpBridge remains the
+  // session/filesystem adapter; transferBridge owns scheduling, integrity,
+  // staging, promotion, recovery, progress and cancellation.
+  const transferBridge = require("./transferBridge.cjs");
+  transferBridge.init({ sftpClients });
+  const transferId = payload.transferId || `sftp-${direction}-${randomUUID()}`;
+  const sender = {
+    send(channel, eventPayload) {
+      payload.onTransferEvent?.(channel, eventPayload);
+    },
+  };
+  const transferPayload = direction === "upload"
+    ? {
+        transferId,
+        sourcePath: payload.localPath,
+        targetPath: payload.remotePath,
+        sourceType: "local",
+        targetType: "sftp",
+        targetSftpId: payload.sftpId,
+        targetEncoding: payload.encoding,
+        resumable: payload.resumable === true,
+      }
+    : {
+        transferId,
+        sourcePath: payload.remotePath,
+        targetPath: payload.localPath,
+        sourceType: "sftp",
+        targetType: "local",
+        sourceSftpId: payload.sftpId,
+        sourceEncoding: payload.encoding,
+        resumable: payload.resumable !== false,
+      };
+  const cancel = () => {
+    void transferBridge.cancelTransfer(null, { transferId });
+  };
+  payload.abortSignal?.addEventListener?.("abort", cancel, { once: true });
+  try {
+    const result = await transferBridge.startTransfer({ sender }, transferPayload);
+    if (result?.error) {
+      if (result.cancelled || result.error === "Transfer cancelled") {
         throw createAbortError(payload.abortSignal, "Transfer cancelled");
       }
-      try {
-        await fs.promises.rename(stagedFilePath, payload.localPath);
-      } catch (err) {
-        if (err?.code !== "EXDEV" && err?.code !== "EEXIST" && err?.code !== "EPERM") {
-          throw err;
-        }
-        await fs.promises.copyFile(stagedFilePath, payload.localPath);
-        await fs.promises.unlink(stagedFilePath);
-      }
-      return { success: true, localPath: payload.localPath };
-    } catch (err) {
-      try { await fs.promises.unlink(stagedFilePath); } catch { /* ignore */ }
-      throw err;
-    } finally {
-      try { transfer?.detachAbortSignal?.(); } catch { /* ignore */ }
+      throw new Error(result.error);
     }
+    return direction === "upload"
+      ? { success: true, transferId, remotePath: payload.remotePath }
+      : { success: true, transferId, localPath: payload.localPath };
+  } finally {
+    payload.abortSignal?.removeEventListener?.("abort", cancel);
   }
+}
 
-  const sftp = await requireSftpChannel(client);
-  const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
-  const encodedPath = encodePath(payload.remotePath, encoding);
-  const stagedFilePath = tempDirBridge.getTempFilePath(path.basename(payload.localPath || payload.remotePath || "download"));
-  throwIfAborted(payload.abortSignal);
-  const readStream = sftp.createReadStream(encodedPath);
-  const writeStream = fs.createWriteStream(stagedFilePath);
-  try {
-    await pipeStreams(readStream, writeStream, payload.abortSignal);
-    throwIfAborted(payload.abortSignal);
-    try {
-      await fs.promises.rename(stagedFilePath, payload.localPath);
-    } catch (err) {
-      if (err?.code !== "EXDEV" && err?.code !== "EEXIST" && err?.code !== "EPERM") {
-        throw err;
-      }
-      await fs.promises.copyFile(stagedFilePath, payload.localPath);
-      await fs.promises.unlink(stagedFilePath);
-    }
-  } catch (err) {
-    try {
-      await fs.promises.unlink(stagedFilePath);
-    } catch {
-      // Ignore temp-file cleanup failures after a cancelled or failed download.
-    }
-    throw err;
-  }
-  return { success: true, localPath: payload.localPath };
+async function downloadSftpToLocal(_event, payload) {
+  return runUnifiedSftpTransfer(payload, "download");
 }
 
 /**
@@ -1539,147 +1666,7 @@ async function pipelinedUploadLocalFile(client, localPath, remotePath, options =
 }
 
 async function uploadLocalToSftp(_event, payload) {
-  const client = sftpClients.get(payload.sftpId);
-  if (!client) throw new Error("SFTP session not found");
-
-  const {
-    isScpModeClient,
-    getScpBackendForClient,
-    createTransferFromAbortSignal,
-  } = require("./sftpBridge/scpBackend.cjs");
-  if (isScpModeClient(client)) {
-    throwIfAborted(payload.abortSignal);
-    const transfer = createTransferFromAbortSignal(payload.abortSignal);
-    const backend = getScpBackendForClient(client);
-    const encodingRaw = resolveEncodingForRequest(payload.sftpId, payload.encoding);
-    const encoding = encodingRaw === "auto" ? "utf-8" : encodingRaw;
-
-    // Symlinks must be written in-place so scp follows the link target. Staging
-    // + rename would replace the link node itself (Codex PR review).
-    let existing = null;
-    try {
-      existing = await backend.stat(payload.remotePath, { encoding });
-    } catch (statErr) {
-      if (!isRemoteMissingError(statErr)) throw statErr;
-    }
-    if (existing?.isDirectory) {
-      throw new Error(`Remote path is a directory: ${payload.remotePath}`);
-    }
-    const existingIsSymlink = !!(
-      existing?.isSymbolicLink
-      || existing?.isSymlink
-      || existing?.type === "symlink"
-    );
-
-    if (existingIsSymlink) {
-      try {
-        await backend.uploadFile(payload.localPath, payload.remotePath, {
-          transfer,
-          encoding,
-          signal: payload.abortSignal || null,
-        });
-        throwIfAborted(payload.abortSignal);
-        if (transfer?.cancelled) {
-          throw createAbortError(payload.abortSignal, "Transfer cancelled");
-        }
-        return { success: true, remotePath: payload.remotePath };
-      } finally {
-        try { transfer?.detachAbortSignal?.(); } catch { /* ignore */ }
-      }
-    }
-
-    // Upload to a staged remote name, then rename into place so a cancelled or
-    // failed transfer cannot leave a truncated original (matches SFTP path).
-    const stagedRemotePath = buildStagedRemotePath(payload.remotePath);
-    const backupRemotePath = buildBackupRemotePath(payload.remotePath);
-    try {
-      await backend.uploadFile(payload.localPath, stagedRemotePath, {
-        transfer,
-        encoding,
-        signal: payload.abortSignal || null,
-      });
-      throwIfAborted(payload.abortSignal);
-      if (transfer?.cancelled) {
-        throw createAbortError(payload.abortSignal, "Transfer cancelled");
-      }
-      // Best-effort atomic replace: move existing target aside, then promote staged.
-      // Never move a directory aside — uploading a file onto a directory path would
-      // otherwise end up recursively deleting the whole tree via backup cleanup.
-      let movedExisting = false;
-      try {
-        let latestExisting = null;
-        try {
-          latestExisting = await backend.stat(payload.remotePath, { encoding });
-        } catch (statErr) {
-          if (!isRemoteMissingError(statErr)) throw statErr;
-        }
-        if (latestExisting?.isDirectory) {
-          throw new Error(`Remote path is a directory: ${payload.remotePath}`);
-        }
-        if (
-          latestExisting?.isSymbolicLink
-          || latestExisting?.isSymlink
-          || latestExisting?.type === "symlink"
-        ) {
-          throw new Error(`Remote destination changed to a symlink during upload: ${payload.remotePath}`);
-        }
-        if (latestExisting) {
-          await backend.rename(payload.remotePath, backupRemotePath, { encoding });
-          movedExisting = true;
-        }
-      } catch (statOrRenameErr) {
-        throw statOrRenameErr;
-      }
-      try {
-        await backend.rename(stagedRemotePath, payload.remotePath, { encoding });
-      } catch (renameErr) {
-        if (movedExisting) {
-          try {
-            await backend.rename(backupRemotePath, payload.remotePath, { encoding });
-          } catch (restoreErr) {
-            throw createRemoteRecoveryError(renameErr, restoreErr, {
-              stagePath: stagedRemotePath,
-              backupPath: backupRemotePath,
-              finalPath: payload.remotePath,
-            });
-          }
-        }
-        throw renameErr;
-      }
-      if (movedExisting) {
-        try { await backend.remove(backupRemotePath, { recursive: false, encoding }); } catch { /* ignore */ }
-      }
-      return { success: true, remotePath: payload.remotePath };
-    } catch (err) {
-      if (!err?.preserveStagedUpload) {
-        try { await backend.remove(stagedRemotePath, { recursive: false, encoding }); } catch { /* ignore */ }
-      }
-      throw err;
-    } finally {
-      try { transfer?.detachAbortSignal?.(); } catch { /* ignore */ }
-    }
-  }
-
-  await requireSftpChannel(client);
-  const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
-  throwIfAborted(payload.abortSignal);
-  const {
-    TRANSFER_CHUNK_SIZE,
-    UPLOAD_TRANSFER_CONCURRENCY,
-  } = require("./transferLimits.cjs");
-  let expectedSize = null;
-  try {
-    expectedSize = Number((await fs.promises.stat(payload.localPath))?.size);
-  } catch { /* ignore — fall through without size check if local vanished */ }
-  // Logical path in; helper encodes stage/final so non-UTF-8 dirs stay intact.
-  await pipelinedUploadWithOptionalStaging(client, payload.localPath, payload.remotePath, {
-    chunkSize: TRANSFER_CHUNK_SIZE,
-    concurrency: UPLOAD_TRANSFER_CONCURRENCY,
-    signal: payload.abortSignal,
-    encoding,
-    expectedSize: Number.isFinite(expectedSize) ? expectedSize : undefined,
-  });
-  return { success: true, remotePath: payload.remotePath };
+  return runUnifiedSftpTransfer(payload, "upload");
 }
 
 /**
@@ -1733,8 +1720,7 @@ const fileOpsApi = createFileOpsApi({
   realpathAsync, statAsync, lstatAsync, readdirAsync, mkdirAsync, rmdirAsync, unlinkAsync, openFileAsync,
   writeFileChunkAsync, closeFileAsync, createAbortError, copySftpEncodingState, clearSftpEncodingState,
   safeSend, tempDirBridge, randomUUID,
-  pipelinedUploadLocalFile,
-  pipelinedUploadWithOptionalStaging,
+  runUnifiedSftpTransfer,
 });
 const {
   listSftp,
@@ -1881,6 +1867,7 @@ module.exports = {
   downloadSftpToLocal,
   uploadLocalToSftp,
   pipelinedUploadLocalFile,
+  runRemoteUploadTransaction,
   _renameRemotePathForTests: renameRemotePath,
   closeSftp,
   mkdirSftp,
