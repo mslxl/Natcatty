@@ -84,18 +84,17 @@ export const shouldShowIdentitySection = ({
     return filteredIdentityCount > 0 || filteredKeyCount === 0;
 };
 
-/** Always show the keys section when browsing; while searching, hide it if only identities match. */
+/**
+ * Show keys when any match (or exist while browsing). Hide the empty-key CTA when
+ * identities alone already fill the page — including identity-only vaults.
+ */
 export const shouldShowKeySection = ({
     identityCount,
     filteredKeyCount,
-    search,
 }: Pick<
     IdentitySectionVisibilityOptions,
     'identityCount' | 'filteredKeyCount' | 'search'
 >): boolean => {
-    if (!search.trim()) return true;
-
-    // Keep keys visible when nothing matches and identities cannot cover the empty state.
     return filteredKeyCount > 0 || identityCount === 0;
 };
 

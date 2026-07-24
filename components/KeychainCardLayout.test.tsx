@@ -196,6 +196,26 @@ test("KeychainManager shows the empty prompt only when keys and identities are a
   assert.doesNotMatch(markup, /data-section="keychain-identities"/);
 });
 
+test("KeychainManager hides the empty key CTA when identities exist without keys", () => {
+  installNavigatorStub();
+  installStorageStub();
+
+  const markup = renderWithI18n(
+    React.createElement(KeychainManager, {
+      keys: [],
+      identities: [identity],
+      onSave: () => {},
+      onUpdate: () => {},
+      onDelete: () => {},
+      onSaveIdentity: () => {},
+    }),
+  );
+
+  assert.match(markup, /data-section="keychain-identities"/);
+  assert.doesNotMatch(markup, /data-section="keychain-keys"/);
+  assert.doesNotMatch(markup, /data-section="keychain-empty"/);
+});
+
 test("KeychainManager exposes new-key, import-certificate, and new-identity header actions", () => {
   installNavigatorStub();
   installStorageStub();
@@ -272,6 +292,14 @@ test("keychain browsing shows keys and identities together", () => {
     identityCount: 0,
     filteredIdentityCount: 0,
     filteredKeyCount: 1,
+    search: "",
+  }), false);
+});
+
+test("keychain browsing hides keys when only identities exist", () => {
+  assert.equal(shouldShowKeySection({
+    identityCount: 1,
+    filteredKeyCount: 0,
     search: "",
   }), false);
 });
