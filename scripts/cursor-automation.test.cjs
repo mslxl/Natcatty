@@ -836,3 +836,315 @@ test('buildCodexReviewRequestComment includes mention', () => {
   assert.match(body, /cursor-codex-round:2/);
   assert.doesNotMatch(body, /cursor-codex-head:/);
 });
+
+test('normalizeClassification accepts already_available and does not implement', () => {
+  const result = auto.normalizeClassification(
+    grounded({
+      category: 'already_available',
+      confidence: 0.9,
+      summary: 'multi-session already exists',
+      reasoning:
+        'AIChatPanel already exposes session list and createSession; no new surface needed.',
+      reply:
+        '这个能力已经有了：打开侧边 AI 面板后，用会话列表 / 新建会话即可切换多会话（见 AIChatPanel）。若入口对你不可见，请补充截图。',
+    }),
+  );
+  assert.equal(result.category, 'already_available');
+  assert.equal(result.should_implement, false);
+  assert.equal(auto.CLOSE_REASONS.already_available, 'completed');
+});
+
+test('normalizeClassification downgrades low-confidence already_available', () => {
+  const result = auto.normalizeClassification(
+    grounded({
+      category: 'already_available',
+      confidence: 0.5,
+      summary: 'maybe already there',
+      reasoning: 'Saw AIChatPanel but entry path uncertain.',
+      reply: '可能已经支持多会话。',
+    }),
+  );
+  assert.equal(result.category, 'other');
+  assert.equal(result.should_implement, false);
+  assert.match(result.reply, /维护者|maintainer/i);
+});
+
+test('labelsForCategory for already_available drops ready-for-agent', () => {
+  const labels = auto.labelsForCategory('already_available', [
+    'enhancement',
+    'triage',
+    'ready-for-agent',
+    'user-tag',
+  ]);
+  assert.ok(labels.includes('triage:already-available'));
+  assert.ok(labels.includes('user-tag'));
+  assert.ok(!labels.includes('ready-for-agent'));
+  assert.ok(!labels.includes('enhancement'));
+});
+
+test('applyClassification comments then closes already_available as completed', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cursor-auto-'));
+  const classificationPath = path.join(dir, 'classification.json');
+  fs.writeFileSync(
+    classificationPath,
+    JSON.stringify(
+      grounded({
+        category: 'already_available',
+        confidence: 0.92,
+        summary: 'right sidebar already present',
+        reasoning:
+          'AsidePanel hosts right-side panels; VaultView already uses absolute right panels.',
+        reply:
+          '右侧栏已存在：在主机/密钥等 Vault 页面打开详情时会从右侧滑出 AsidePanel。若不满足你的场景请说明期望入口。',
+      }),
+    ),
+  );
+
+  const calls = [];
+  const github = {
+    rest: {
+      issues: {
+        async get() {
+          return {
+            data: {
+              number: 2428,
+              state: 'open',
+              labels: [{ name: 'enhancement' }, { name: 'triage' }],
+            },
+          };
+        },
+        async createComment(args) {
+          calls.push(['createComment', args]);
+          return { data: { id: 1 } };
+        },
+        async update(args) {
+          calls.push(['update', args]);
+          return { data: {} };
+        },
+      },
+    },
+  };
+  const outputs = {};
+  const core = {
+    setOutput(key, value) {
+      outputs[key] = value;
+    },
+  };
+
+  const classification = await auto.applyClassification({
+    github,
+    context: { repo: { owner: 'binaricat', repo: 'Netcatty' } },
+    core,
+    issueNumber: 2428,
+    classificationPath,
+  });
+
+  assert.equal(classification.category, 'already_available');
+  assert.equal(outputs.should_implement, 'false');
+  assert.equal(outputs.should_close, 'true');
+  assert.equal(calls[0][0], 'createComment');
+  assert.match(calls[0][1].body, /AsidePanel/);
+  assert.equal(calls[1][0], 'update');
+  assert.equal(calls[1][1].state, 'closed');
+  assert.equal(calls[1][1].state_reason, 'completed');
+  assert.ok(calls[1][1].labels.includes('triage:already-available'));
+});
+
+test('extractPaginatedItems accepts normalized Search arrays and raw items', () => {
+  const normalized = [{ number: 1, user: { type: 'User' } }, null, { number: 2 }];
+  assert.deepEqual(
+    auto.extractPaginatedItems({ data: normalized }).map((i) => i.number),
+    [1, 2],
+  );
+  assert.deepEqual(
+    auto
+      .extractPaginatedItems({
+        data: { total_count: 2, incomplete_results: false, items: normalized },
+      })
+      .map((i) => i.number),
+    [1, 2],
+  );
+  assert.deepEqual(auto.extractPaginatedItems({ data: { total_count: 0 } }), []);
+  assert.deepEqual(auto.extractPaginatedItems(undefined), []);
+});
+
+test('prepareIssueContext survives Octokit-normalized search pages (no .items)', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cursor-auto-'));
+  const outputPath = path.join(dir, 'issue.json');
+  const outputs = {};
+  const core = {
+    setOutput(key, value) {
+      outputs[key] = value;
+    },
+  };
+  const issueBody = [
+    '## Describe the problem',
+    'AI multi-session support request with enough detail for format checks.',
+    '## Steps to reproduce',
+    '1. open AI panel',
+    '2. start second session',
+    '## Expected behavior',
+    'multiple sessions',
+    '## Actual behavior',
+    'only one session',
+    '## Operating system',
+    'macOS',
+  ].join('\n');
+
+  // Simulate @octokit/plugin-paginate-rest Search normalization: data is the
+  // items array (not { items: [...] }). The previous map used response.data.items
+  // and crashed on candidate.user when iterating undefined holes.
+  const github = {
+    rest: {
+      issues: {
+        async get() {
+          return {
+            data: {
+              number: 2438,
+              html_url: 'https://github.com/binaricat/Netcatty/issues/2438',
+              title: '[Feature] AI multi session',
+              body: issueBody,
+              pull_request: undefined,
+              labels: [{ name: 'enhancement' }, { name: 'triage' }],
+              user: { login: 'reporter', type: 'User' },
+              author_association: 'NONE',
+            },
+          };
+        },
+        async addLabels() {
+          return { data: [] };
+        },
+      },
+      search: {
+        issuesAndPullRequests: async () => ({ data: [] }),
+      },
+    },
+    async paginate(fn, _params, mapFn) {
+      if (fn === github.rest.search.issuesAndPullRequests) {
+        // Normalized shape (data is already the items array).
+        const page = {
+          data: [
+            {
+              number: 2436,
+              user: { type: 'User', login: 'u1' },
+              author_association: 'NONE',
+            },
+            {
+              number: 2438,
+              user: { type: 'User', login: 'u2' },
+              author_association: 'NONE',
+            },
+          ],
+        };
+        if (typeof mapFn === 'function') {
+          const mapped = mapFn(page);
+          return Array.isArray(mapped) ? mapped : [];
+        }
+        return page.data;
+      }
+      // timeline / comments
+      return [];
+    },
+  };
+
+  const result = await auto.prepareIssueContext({
+    github,
+    context: { repo: { owner: 'binaricat', repo: 'Netcatty' } },
+    core,
+    issueNumber: 2438,
+    outputPath,
+    dailyLimit: 10,
+    manual: false,
+  });
+
+  assert.equal(result.shouldRun, true);
+  assert.equal(outputs.should_run, 'true');
+  assert.equal(outputs.reason, 'ok');
+  assert.ok(fs.existsSync(outputPath));
+  const written = JSON.parse(fs.readFileSync(outputPath, 'utf8'));
+  assert.equal(written.issue.number, 2438);
+  assert.equal(written.issue.author, 'reporter');
+});
+
+test('prepareIssueContext does not throw when search map previously returned undefined', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cursor-auto-'));
+  const outputPath = path.join(dir, 'issue.json');
+  const outputs = {};
+  const core = {
+    setOutput(key, value) {
+      outputs[key] = value;
+    },
+  };
+  const issueBody = [
+    '## Describe the problem',
+    'Regression path for daily limit search pagination.',
+    '## Steps to reproduce',
+    '1. open issue',
+    '## Expected behavior',
+    'classified',
+    '## Actual behavior',
+    'workflow crash',
+    '## Operating system',
+    'Linux',
+  ].join('\n');
+
+  const github = {
+    rest: {
+      issues: {
+        async get() {
+          return {
+            data: {
+              number: 99,
+              html_url: 'https://example.test/99',
+              title: '[Bug] pagination',
+              body: issueBody,
+              labels: [{ name: 'bug' }],
+              user: { login: 'r', type: 'User' },
+              author_association: 'NONE',
+            },
+          };
+        },
+        async addLabels() {
+          return { data: [] };
+        },
+      },
+      search: {
+        issuesAndPullRequests: async () => ({ data: [] }),
+      },
+    },
+    async paginate(fn, _params, mapFn) {
+      if (fn === github.rest.search.issuesAndPullRequests) {
+        // Raw Search shape still supported.
+        const page = {
+          data: {
+            total_count: 1,
+            incomplete_results: false,
+            items: [
+              {
+                number: 1,
+                user: { type: 'User' },
+                author_association: 'NONE',
+              },
+            ],
+          },
+        };
+        const mapped = typeof mapFn === 'function' ? mapFn(page) : page.data.items;
+        // Guard: never yield sparse/undefined candidates to callers.
+        return Array.isArray(mapped) ? mapped.filter(Boolean) : [];
+      }
+      return [];
+    },
+  };
+
+  const result = await auto.prepareIssueContext({
+    github,
+    context: { repo: { owner: 'o', repo: 'r' } },
+    core,
+    issueNumber: 99,
+    outputPath,
+    dailyLimit: 10,
+    manual: false,
+  });
+  assert.equal(result.shouldRun, true);
+  assert.equal(outputs.should_run, 'true');
+});
