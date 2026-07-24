@@ -519,6 +519,8 @@ export const enVaultMessages: Messages = {
   'selectHost.newHost': 'New Host',
   'selectHost.continue': 'Continue',
   'selectHost.continueWithCount': 'Continue ({count} selected)',
+  'selectHost.toggleGroup': 'Toggle all hosts in {name}',
+  'selectHost.toggleHost': 'Toggle {name}',
 
   // Quick Connect
   'quickConnect.knownHost.title': 'Are you sure you want to connect?',

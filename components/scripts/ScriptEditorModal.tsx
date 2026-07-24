@@ -25,6 +25,7 @@ export interface ScriptEditorModalProps {
   customGroups?: string[];
   selectedHostIds: string[];
   onSelectHost: (host: Host) => void;
+  onSelectionChange?: (selectedHostIds: string[]) => void;
   targetsAllHosts?: boolean;
   onTargetsAllHostsChange?: (checked: boolean) => void;
 }
@@ -51,6 +52,7 @@ export const ScriptEditorModal: React.FC<ScriptEditorModalProps> = ({
   customGroups = [],
   selectedHostIds,
   onSelectHost,
+  onSelectionChange,
   targetsAllHosts = false,
   onTargetsAllHostsChange,
 }) => {
@@ -187,6 +189,7 @@ export const ScriptEditorModal: React.FC<ScriptEditorModalProps> = ({
         selectedHostIds={selectedHostIds}
         multiSelect
         onSelect={onSelectHost}
+        onSelectionChange={onSelectionChange}
         onConfirm={handleTargetsConfirm}
       />
     </>
