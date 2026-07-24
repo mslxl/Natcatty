@@ -634,31 +634,31 @@ async function planRemoteUploadReplace(client, encodedPath) {
         attrs = await lstatAsync(sftp, encodedPath);
       } catch (lstatError) {
         if (isRemoteMissingError(lstatError)) {
-          return { writeInPlace: false, existingMode: null };
+          return { writeInPlace: false, existingMode: null, destinationExisted: false };
         }
         // Some SFTP servers expose lstat client-side but reject it at runtime.
         // A successful stat proves the destination exists, but cannot tell us
         // whether it is a symlink, so preserve it with an in-place write.
         try {
           attrs = await statAsync(sftp, encodedPath);
-          if (attrs) return { writeInPlace: true, existingMode: null };
+          if (attrs) return { writeInPlace: true, existingMode: null, destinationExisted: true };
         } catch (statError) {
           if (isRemoteMissingError(statError)) {
-            return { writeInPlace: false, existingMode: null };
+            return { writeInPlace: false, existingMode: null, destinationExisted: false };
           }
           // Unknown inspection failure: do not risk rename-replacing a link.
-          return { writeInPlace: true, existingMode: null };
+          return { writeInPlace: true, existingMode: null, destinationExisted: null };
         }
       }
-      if (!attrs) return { writeInPlace: false, existingMode: null };
+      if (!attrs) return { writeInPlace: false, existingMode: null, destinationExisted: false };
       if (attrsIndicateSymlink(attrs)) {
-        return { writeInPlace: true, existingMode: null };
+        return { writeInPlace: true, existingMode: null, destinationExisted: true };
       }
       const mode = Number(attrs.mode);
       const existingMode = Number.isFinite(mode) && mode > 0
         ? (mode & 0o7777)
         : null;
-      return { writeInPlace: false, existingMode };
+      return { writeInPlace: false, existingMode, destinationExisted: true };
     }
 
     // No lstat: if the path exists via stat, write in-place so a symlink is not
@@ -670,20 +670,51 @@ async function planRemoteUploadReplace(client, encodedPath) {
         const existingMode = Number.isFinite(mode) && mode > 0
           ? (mode & 0o7777)
           : null;
-        return { writeInPlace: true, existingMode };
+        return { writeInPlace: true, existingMode, destinationExisted: true };
       }
     } catch (statError) {
       if (!isRemoteMissingError(statError)) {
         // Unknown existing-path state: preserve a possible symlink.
-        return { writeInPlace: true, existingMode: null };
+        return { writeInPlace: true, existingMode: null, destinationExisted: null };
       }
       // Confirmed missing destination — stage a new file.
     }
   } catch {
     // Unknown target state: preserve a possible symlink instead of replacing it.
-    return { writeInPlace: true, existingMode: null };
+    return { writeInPlace: true, existingMode: null, destinationExisted: null };
   }
-  return { writeInPlace: false, existingMode: null };
+  return { writeInPlace: false, existingMode: null, destinationExisted: false };
+}
+
+function attrsIndicateDirectory(attrs) {
+  if (!attrs) return false;
+  if (typeof attrs.isDirectory === "function") return !!attrs.isDirectory();
+  if (typeof attrs.isDirectory === "boolean") return attrs.isDirectory;
+  const mode = Number(attrs.mode);
+  return Number.isFinite(mode) && (mode & 0o170000) === 0o040000;
+}
+
+async function assertStagedPromotionTargetSafe(client, encodedPath, remotePath, expectedExisted) {
+  const sftp = await requireSftpChannel(client);
+  if (typeof sftp?.lstat !== "function") {
+    throw new Error(`Cannot safely recheck remote destination before replace: ${remotePath}`);
+  }
+  let attrs = null;
+  try {
+    attrs = await lstatAsync(sftp, encodedPath);
+  } catch (err) {
+    if (!isRemoteMissingError(err)) throw err;
+  }
+  const existsNow = !!attrs;
+  if (expectedExisted === false && existsNow) {
+    throw new Error(`Remote destination appeared during upload: ${remotePath}`);
+  }
+  if (attrsIndicateSymlink(attrs)) {
+    throw new Error(`Remote destination changed to a symlink during upload: ${remotePath}`);
+  }
+  if (attrsIndicateDirectory(attrs)) {
+    throw new Error(`Remote path is a directory: ${remotePath}`);
+  }
 }
 
 async function restoreRemoteMode(client, encodedPath, mode, options = {}) {
@@ -787,12 +818,24 @@ async function pipelinedUploadWithOptionalStaging(client, localPath, remotePath,
     }
     // Cancel may arrive during the awaited size verify; recheck before promote.
     throwIfAborted(signal);
+    await assertStagedPromotionTargetSafe(
+      client,
+      encodedPath,
+      remotePath,
+      plan.destinationExisted,
+    );
+    throwIfAborted(signal);
     // Apply the old mode to the stage before promotion. A failed chmod must not
     // replace an executable final with a non-executable file and report success.
     await restoreRemoteMode(client, encodedStagedPath, plan.existingMode, {
       bestEffort: false,
     });
-    await renameRemotePath(client, encodedStagedPath, encodedPath, encodedBackupPath);
+    throwIfAborted(signal);
+    await renameRemotePath(client, encodedStagedPath, encodedPath, encodedBackupPath, {
+      stagePath: stagedLogical,
+      backupPath: backupLogical,
+      finalPath: remotePath,
+    });
     return { staged: true };
   } catch (err) {
     if (!err?.preserveStagedUpload) {
@@ -825,7 +868,7 @@ const posixRenameAsync = (sftp, fromPath, toPath) =>
     sftp.ext_openssh_rename(fromPath, toPath, (err) => (err ? reject(err) : resolve()));
   });
 
-async function renameRemotePath(client, fromPath, toPath, backupPath = null) {
+async function renameRemotePath(client, fromPath, toPath, backupPath = null, recoveryPaths = {}) {
   const sftp = await requireSftpChannel(client);
   if (typeof sftp?.ext_openssh_rename === "function") {
     try {
@@ -859,9 +902,9 @@ async function renameRemotePath(client, fromPath, toPath, backupPath = null) {
           await client.rename(backupPath, toPath);
         } catch (restoreErr) {
           throw createRemoteRecoveryError(fallbackErr, restoreErr, {
-            stagePath: fromPath,
-            backupPath,
-            finalPath: toPath,
+            stagePath: recoveryPaths.stagePath || fromPath,
+            backupPath: recoveryPaths.backupPath || backupPath,
+            finalPath: recoveryPaths.finalPath || toPath,
           });
         }
       }

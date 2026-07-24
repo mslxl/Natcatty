@@ -609,10 +609,6 @@ function createFileOpsApi(ctx) {
         } else {
           throw new Error("SFTP pipelined upload helper is not available");
         }
-        if (activeSftpUploads.get(transferId)?.cancelled || transferControl.cancelled) {
-          throw new Error("Upload cancelled");
-        }
-
         emitComplete();
         return { success: true, transferId };
       } catch (err) {

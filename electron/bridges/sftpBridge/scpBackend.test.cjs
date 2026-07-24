@@ -155,6 +155,8 @@ describe("scpBackend browse/manage with fake exec", () => {
     const st = await backend.stat("/home/test/readme.txt");
     assert.equal(st.size, 5);
     assert.equal(st.isDirectory, false);
+    const statCommand = commands.find((entry) => entry.command.includes("if [ ! -e"))?.command || "";
+    assert.match(statCommand, /\[ ! -L "\$p" \]/, "broken symlinks must not be reported as missing");
   });
 
   it("resolves home directory", async () => {

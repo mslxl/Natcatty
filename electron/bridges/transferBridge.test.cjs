@@ -979,7 +979,11 @@ test("resumable fast uploads reject same-size changes outside old sample regions
     await fs.promises.rm(tempDir, { recursive: true, force: true });
   });
 
-  const payload = Buffer.alloc(8 * TRANSFER_CHUNK_SIZE, 73);
+  const changedChunkIndex = UPLOAD_TRANSFER_CONCURRENCY;
+  const payload = Buffer.alloc(
+    (UPLOAD_TRANSFER_CONCURRENCY + 8) * TRANSFER_CHUNK_SIZE,
+    73,
+  );
   const localPath = path.join(tempDir, "upload.bin");
   await fs.promises.writeFile(localPath, payload);
   const frozenStat = await fs.promises.stat(localPath);
@@ -997,26 +1001,24 @@ test("resumable fast uploads reject same-size changes outside old sample regions
         return;
       }
       changeStarted = true;
-      // Rewrite only the second chunk. The old start/middle/end sampling did
-      // not cover this range, and restoring mtime models a coarse filesystem.
-      fs.promises.open(localPath, "r+")
-        .then(async (handle) => {
-          try {
-            await handle.write(
-              Buffer.alloc(TRANSFER_CHUNK_SIZE, 74),
-              0,
-              TRANSFER_CHUNK_SIZE,
-              TRANSFER_CHUNK_SIZE,
-            );
-          } finally {
-            await handle.close();
-          }
-        })
-        .then(() => fs.promises.utimes(localPath, frozenStat.atime, frozenStat.mtime))
-        .then(() => {
-          changed = true;
-          callback(null);
-        }, callback);
+      // Rewrite a chunk in the second concurrency wave before allowing the
+      // first WRITE to complete. Per-range verification must catch it before
+      // that changed chunk is sent, even though start/middle/end samples would not.
+      const fd = fs.openSync(localPath, "r+");
+      try {
+        fs.writeSync(
+          fd,
+          Buffer.alloc(TRANSFER_CHUNK_SIZE, 74),
+          0,
+          TRANSFER_CHUNK_SIZE,
+          changedChunkIndex * TRANSFER_CHUNK_SIZE,
+        );
+      } finally {
+        fs.closeSync(fd);
+      }
+      fs.utimesSync(localPath, frozenStat.atime, frozenStat.mtime);
+      changed = true;
+      callback(null);
     },
     close(_handle, callback) {
       callback(null);

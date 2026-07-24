@@ -118,7 +118,7 @@ function buildStatCommand(remotePath, encoding = "utf-8") {
   // Emit: T|MODE_OCT|SIZE|MTIME|ABS
   return [
     `p=${q}`,
-    'if [ ! -e "$p" ]; then echo "ENOENT" >&2; exit 2; fi',
+    'if [ ! -e "$p" ] && [ ! -L "$p" ]; then echo "ENOENT" >&2; exit 2; fi',
     'if [ -L "$p" ]; then t=l',
     'elif [ -d "$p" ]; then t=d',
     'else t=f; fi',

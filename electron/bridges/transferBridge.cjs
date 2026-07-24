@@ -868,9 +868,13 @@ async function uploadFile(localPath, remotePath, client, fileSize, transfer, sen
     // already have a durable resume checkpoint from a prior concurrent attempt.
     // fastPut is not pause-aware; do not advertise pause while it runs.
     const hasResumeCheckpoint = Math.max(0, Number(transfer.checkpointBytes) || 0) > 0;
-    if (isolated && typeof isolated.fastPut === "function" && !hasResumeCheckpoint) {
+    if (
+      isolated
+      && typeof isolated.fastPut === "function"
+      && !hasResumeCheckpoint
+      && !transfer.resumable
+    ) {
       let fastPutOk = false;
-      let fastPutFingerprint = null;
       try {
         transfer.uploadStrategy = "fastPut-isolated";
         transfer.pauseSupported = false;
@@ -878,9 +882,6 @@ async function uploadFile(localPath, remotePath, client, fileSize, transfer, sen
         sendProgress(Math.max(0, Number(transfer.checkpointBytes) || 0), fileSize, {
           force: true,
         });
-        if (transfer.resumable) {
-          fastPutFingerprint = await captureLocalContentFingerprint(localPath, fileSize);
-        }
         await uploadViaFastPut(
           localPath,
           remotePath,
@@ -890,13 +891,6 @@ async function uploadFile(localPath, remotePath, client, fileSize, transfer, sen
           sendProgress,
           { disposeChannel: true },
         );
-        if (fastPutFingerprint) {
-          await assertLocalContentFingerprintUnchanged(
-            localPath,
-            fastPutFingerprint,
-            fileSize,
-          );
-        }
         fastPutOk = true;
       } catch (err) {
         isolated = null;
@@ -1092,59 +1086,50 @@ function createSourceContentChangedError() {
 }
 
 /**
- * Full content fingerprint for same-size rewrite detection. Uploads can read
- * ranges out of order, so metadata or sparse sampling cannot prove that a
- * large source stayed unchanged throughout the transfer.
+ * Capture one digest per upload range. Each range is verified immediately
+ * before its remote WRITE, so a temporary source rewrite cannot leak into the
+ * upload even if the file is restored before the transfer finishes.
  */
-async function captureLocalContentFingerprintFromHandle(fileHandle, fileSize) {
-  const hash = crypto.createHash("sha256");
-  const buffer = Buffer.allocUnsafe(Math.min(1024 * 1024, Math.max(1, fileSize)));
-  let position = 0;
+async function captureLocalContentFingerprintFromHandle(
+  fileHandle,
+  fileSize,
+  transfer = null,
+  startOffset = 0,
+) {
+  const chunkSize = TRANSFER_CHUNK_SIZE;
+  const chunkCount = Math.ceil(Math.max(0, fileSize - startOffset) / chunkSize);
+  const digests = Buffer.alloc(chunkCount * 32);
+  const buffer = Buffer.allocUnsafe(Math.min(chunkSize, Math.max(1, fileSize)));
+  let position = startOffset;
+  let chunkIndex = 0;
   while (position < fileSize) {
+    if (transfer?.cancelled) throw new Error("Transfer cancelled");
     const length = Math.min(buffer.length, fileSize - position);
     await readLocalRange(fileHandle, buffer, position, length);
-    hash.update(buffer.subarray(0, length));
+    crypto.createHash("sha256")
+      .update(buffer.subarray(0, length))
+      .digest()
+      .copy(digests, chunkIndex * 32);
     position += length;
+    chunkIndex += 1;
   }
-  return { size: fileSize, digest: hash.digest("hex") };
+  return { size: fileSize, startOffset, chunkSize, digests };
 }
 
-async function captureLocalContentFingerprint(filePath, fileSize) {
-  const handle = await fs.promises.open(filePath, "r");
-  try {
-    return await captureLocalContentFingerprintFromHandle(handle, fileSize);
-  } finally {
-    await handle.close().catch(() => {});
-  }
-}
-
-async function assertLocalContentFingerprintUnchanged(filePath, fingerprint, expectedSize) {
+function assertLocalRangeMatchesFingerprint(buffer, position, length, fingerprint) {
   if (!fingerprint) return;
-  let latestStat;
-  try {
-    latestStat = await fs.promises.stat(filePath);
-  } catch (error) {
-    const err = new Error(
-      `Transfer source disappeared during transfer: ${error?.message || String(error)}`,
-    );
-    err.noTransferFallback = true;
-    err.sourceChanged = true;
-    throw err;
-  }
-  const latestSize = Number(latestStat?.size);
-  if (latestSize !== expectedSize) {
-    throw createSourceSizeChangedError(expectedSize, latestSize);
-  }
-  const latest = await captureLocalContentFingerprint(filePath, expectedSize);
-  if (latest.digest !== fingerprint.digest) {
+  const relativePosition = position - fingerprint.startOffset;
+  if (
+    relativePosition < 0
+    || relativePosition % fingerprint.chunkSize !== 0
+    || length > fingerprint.chunkSize
+  ) {
     throw createSourceContentChangedError();
   }
-}
-
-async function assertLocalContentFingerprintUnchangedFromHandle(fileHandle, fingerprint, expectedSize) {
-  if (!fingerprint) return;
-  const latest = await captureLocalContentFingerprintFromHandle(fileHandle, expectedSize);
-  if (latest.size !== expectedSize || latest.digest !== fingerprint.digest) {
+  const chunkIndex = Math.floor(relativePosition / fingerprint.chunkSize);
+  const expected = fingerprint.digests.subarray(chunkIndex * 32, (chunkIndex + 1) * 32);
+  const actual = crypto.createHash("sha256").update(buffer.subarray(0, length)).digest();
+  if (expected.length !== actual.length || !expected.equals(actual)) {
     throw createSourceContentChangedError();
   }
 }
@@ -1397,7 +1382,10 @@ async function uploadFileConcurrent(
     const contentFingerprint = await captureLocalContentFingerprintFromHandle(
       localHandle,
       fileSize,
+      transfer,
+      checkpoint,
     );
+    if (transfer.cancelled) throw new Error("Transfer cancelled");
     remoteHandle = await openSftpHandle(sftp, remotePath, checkpoint > 0 ? "r+" : "w");
     if (channelError) throw channelError;
     if (transfer.cancelled) throw new Error("Transfer cancelled");
@@ -1411,6 +1399,8 @@ async function uploadFileConcurrent(
         copyRange: async (position, length) => {
           const buffer = Buffer.allocUnsafe(length);
           await readLocalRange(localHandle, buffer, position, length);
+          if (transfer.cancelled) throw new Error("Transfer cancelled");
+          assertLocalRangeMatchesFingerprint(buffer, position, length, contentFingerprint);
           await writeSftpRange(sftp, remoteHandle, buffer, position, length);
         },
         sendProgress,
@@ -1419,11 +1409,6 @@ async function uploadFileConcurrent(
         forceSettleOnError: disposeChannel,
       });
       if (channelError) throw channelError;
-      await assertLocalContentFingerprintUnchangedFromHandle(
-        localHandle,
-        contentFingerprint,
-        fileSize,
-      );
     } catch (error) {
       failed = true;
       throw error;

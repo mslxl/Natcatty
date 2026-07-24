@@ -464,6 +464,44 @@ test("rename fallback replaces safely and restores the old target on promotion f
   assert.deepEqual(restored.files.get("/tmp/final"), Buffer.from("old"));
   assert.deepEqual(restored.files.get("/tmp/stage"), Buffer.from("new"));
   assert.equal(restored.files.has("/tmp/backup"), false);
+
+  const encodedStage = Buffer.from([0x81, 0x40]);
+  const encodedFinal = Buffer.from([0x81, 0x41]);
+  const encodedBackup = Buffer.from([0x81, 0x42]);
+  const channel = {
+    readdir(_path, cb) { cb(null, []); },
+    mkdir(_path, cb) { cb(null); },
+    unlink(_path, cb) { cb(null); },
+    stat(_path, cb) { cb(null, { size: 1, isDirectory: false }); },
+  };
+  const encodedClient = {
+    sftp: channel,
+    async stat() { return { size: 1, isDirectory: false }; },
+    async rename(from, to) {
+      if (from === encodedFinal && to === encodedBackup) return;
+      if (from === encodedStage && to === encodedFinal) throw new Error("promote failed");
+      if (from === encodedBackup && to === encodedFinal) throw new Error("restore failed");
+    },
+    async delete() {},
+  };
+  await assert.rejects(
+    () => sftpBridge._renameRemotePathForTests(
+      encodedClient,
+      encodedStage,
+      encodedFinal,
+      encodedBackup,
+      {
+        stagePath: "/目录/.netcatty-upload-stage.part",
+        backupPath: "/目录/.netcatty-backup-file.bak",
+        finalPath: "/目录/文件.txt",
+      },
+    ),
+    (error) => {
+      assert.match(error.message, /\/目录\/\.netcatty-upload-stage\.part/);
+      assert.match(error.message, /\/目录\/\.netcatty-backup-file\.bak/);
+      return true;
+    },
+  );
 });
 
 test("SCP upload stops when the destination type cannot be inspected", async () => {
@@ -664,6 +702,98 @@ test("lstat unsupported falls back to stat and preserves an existing destination
   assert.equal(fastPutCalls.length, 1);
   assert.equal(fastPutCalls[0].remotePath, "/etc/app/config.json");
   assert.deepEqual(remoteFiles.get("/etc/app/config.json"), payload);
+});
+
+test("staged SFTP upload stops if the destination becomes a symlink", async (t) => {
+  const tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-sftp-symlink-race-"));
+  t.after(async () => {
+    await fs.promises.rm(tempRoot, { recursive: true, force: true });
+  });
+  tempDirBridge.init?.({ getPath: () => tempRoot });
+
+  const localPath = path.join(tempRoot, "cfg.json");
+  await fs.promises.writeFile(localPath, Buffer.from("new-content"));
+  let channelRef = null;
+  const created = createSessionChannel({
+    onFastPut(_local, remotePath) {
+      if (String(remotePath).includes(".netcatty-upload-")) {
+        created.remoteMeta.set("/etc/app/config.json", { isSymlink: true, mode: 0o120777 });
+      }
+      return null;
+    },
+  });
+  channelRef = created.channel;
+  created.remoteFiles.set("/etc/app/config.json", Buffer.from("old-content"));
+  created.remoteMeta.set("/etc/app/config.json", { mode: 0o100644 });
+
+  const sftpClients = new Map();
+  sftpBridge.init({
+    electronModule: { webContents: { fromId: () => null } },
+    sessions: new Map([["session-symlink-race", { conn: { sftp: (cb) => cb(null, channelRef) } }]]),
+    sftpClients,
+  });
+  const opened = await sftpBridge.openSftpForSession(null, {
+    sessionId: "session-symlink-race",
+    fileProtocol: "sftp",
+  });
+
+  await assert.rejects(
+    () => sftpBridge.uploadLocalToSftp(null, {
+      sftpId: opened.sftpId,
+      localPath,
+      remotePath: "/etc/app/config.json",
+      encoding: "utf-8",
+    }),
+    /changed to a symlink/,
+  );
+  assert.deepEqual(created.remoteFiles.get("/etc/app/config.json"), Buffer.from("old-content"));
+  assert.equal(
+    [...created.remoteFiles.keys()].some((key) => String(key).includes(".netcatty-upload-")),
+    false,
+  );
+});
+
+test("abort during staged mode setup prevents promotion", async (t) => {
+  const tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-sftp-mode-abort-"));
+  t.after(async () => {
+    await fs.promises.rm(tempRoot, { recursive: true, force: true });
+  });
+  tempDirBridge.init?.({ getPath: () => tempRoot });
+
+  const localPath = path.join(tempRoot, "tool");
+  await fs.promises.writeFile(localPath, Buffer.from("new-tool"));
+  const controller = new AbortController();
+  const { channel, remoteFiles, remoteMeta } = createSessionChannel();
+  remoteFiles.set("/usr/local/bin/tool", Buffer.from("old-tool"));
+  remoteMeta.set("/usr/local/bin/tool", { mode: 0o100755 });
+  const originalChmod = channel.chmod.bind(channel);
+  channel.chmod = (targetPath, mode, callback) => {
+    controller.abort();
+    originalChmod(targetPath, mode, callback);
+  };
+
+  const sftpClients = new Map();
+  sftpBridge.init({
+    electronModule: { webContents: { fromId: () => null } },
+    sessions: new Map([["session-mode-abort", { conn: { sftp: (cb) => cb(null, channel) } }]]),
+    sftpClients,
+  });
+  const opened = await sftpBridge.openSftpForSession(null, {
+    sessionId: "session-mode-abort",
+    fileProtocol: "sftp",
+  });
+
+  await assert.rejects(
+    () => sftpBridge.uploadLocalToSftp(null, {
+      sftpId: opened.sftpId,
+      localPath,
+      remotePath: "/usr/local/bin/tool",
+      encoding: "utf-8",
+      abortSignal: controller.signal,
+    }),
+    /abort|cancel/i,
+  );
+  assert.deepEqual(remoteFiles.get("/usr/local/bin/tool"), Buffer.from("old-tool"));
 });
 
 test("parent-dir permission on staged path falls back to in-place for new files", async (t) => {
