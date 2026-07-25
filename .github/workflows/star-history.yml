@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # Same PAT used for releases — needs stargazers read (admin/collaborator)
           # plus contents write to push SVG updates.
