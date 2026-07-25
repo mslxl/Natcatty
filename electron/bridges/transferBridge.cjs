@@ -294,6 +294,26 @@ async function promoteLocalTransfer(stagedPath, targetPath, options = {}) {
         throw new Error("Local download target changed during replacement");
       }
     }
+    // After the backup move, a concurrent writer may recreate targetPath. Never
+    // clobber that file: leave it in place, keep the original in backupPath for
+    // recovery, and fail closed before publishing the download.
+    if (backedUp) {
+      let recreated = false;
+      try {
+        await fs.promises.lstat(targetPath);
+        recreated = true;
+      } catch (err) {
+        if (err?.code !== "ENOENT") throw err;
+      }
+      if (recreated) {
+        const conflict = new Error("Local download target changed during replacement");
+        conflict.leaveConcurrentTarget = true;
+        conflict.remoteBackupPath = backupPath;
+        // Prevent the catch path from renaming backup over the concurrent file.
+        backedUp = false;
+        throw conflict;
+      }
+    }
     assertNotCancelled();
     await fs.promises.rename(readyPath, targetPath);
     published = true;

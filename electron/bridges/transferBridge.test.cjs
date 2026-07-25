@@ -5102,6 +5102,61 @@ test("local promotion restores concurrent replacement moved into the backup", as
   );
 });
 
+test("local promotion does not clobber a target recreated after backup", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-local-promo-recreate-"));
+  t.after(async () => {
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const stagedPath = path.join(tempDir, "download.staged");
+  const targetPath = path.join(tempDir, "target.bin");
+  const original = Buffer.from("original-target-content");
+  const concurrent = Buffer.from("recreated-after-backup");
+  const downloaded = Buffer.from("downloaded-replacement");
+  await fs.promises.writeFile(targetPath, original);
+  await fs.promises.writeFile(stagedPath, downloaded);
+  const originalStat = await fs.promises.lstat(targetPath);
+
+  const originalRename = fs.promises.rename.bind(fs.promises);
+  let injected = false;
+  fs.promises.rename = async (from, to) => {
+    const result = await originalRename(from, to);
+    if (!injected && path.resolve(from) === path.resolve(targetPath) && String(to).includes(".backup")) {
+      injected = true;
+      await fs.promises.writeFile(targetPath, concurrent);
+    }
+    return result;
+  };
+  t.after(() => {
+    fs.promises.rename = originalRename;
+  });
+
+  await assert.rejects(
+    () => transferBridge._promoteLocalTransferForTests(stagedPath, targetPath, {
+      async validateTarget() {
+        return {
+          existingMode: null,
+          stableIdentity: transferBridge._stableLocalFileIdentityForTests(originalStat),
+          targetIdentity: [
+            originalStat.dev,
+            originalStat.ino,
+            originalStat.size,
+            originalStat.mtimeMs,
+            originalStat.ctimeMs,
+          ].join(":"),
+        };
+      },
+    }),
+    /changed during replacement/i,
+  );
+
+  assert.deepEqual(await fs.promises.readFile(targetPath), concurrent);
+  // Original preserved in a backup artifact for recovery.
+  const backupName = (await fs.promises.readdir(tempDir)).find((name) => name.includes(".backup"));
+  assert.ok(backupName);
+  assert.deepEqual(await fs.promises.readFile(path.join(tempDir, backupName)), original);
+});
+
 test("local promotion succeeds when backup still matches validated identity", async (t) => {
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-local-promo-ok-"));
   t.after(async () => {
