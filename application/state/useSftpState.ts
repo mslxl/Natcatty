@@ -177,6 +177,10 @@ export const useSftpState = (
   // share the same hostId with different session-time overrides.
   const connectionCacheKeyMapRef = useRef<Map<string, string>>(new Map());
 
+  // Full Host used when each tab connected (includes session-time overrides).
+  // Tab ids are stable across reconnect; connection ids are not.
+  const connectedHostByTabIdRef = useRef<Map<string, Host | "local">>(new Map());
+
   // Full endpoint key captured at connect time (hostId:hostname:port:…).
   const getConnectionCacheKey = useCallback((connectionId: string) => {
     return connectionCacheKeyMapRef.current.get(connectionId) ?? null;
@@ -198,7 +202,19 @@ export const useSftpState = (
     host: Host | "local" | null,
   ) => {
     lastConnectedHostRef.current[side] = host;
-  }, []);
+    const tabId = (side === "left" ? leftTabsRef : rightTabsRef).current.activeTabId;
+    if (!tabId) return;
+    if (host) {
+      connectedHostByTabIdRef.current.set(tabId, host);
+    } else {
+      connectedHostByTabIdRef.current.delete(tabId);
+    }
+  }, [leftTabsRef, rightTabsRef]);
+
+  const closeTabAndClearHost = useCallback((side: "left" | "right", tabId: string) => {
+    connectedHostByTabIdRef.current.delete(tabId);
+    closeTab(side, tabId);
+  }, [closeTab]);
 
   const handleSessionError = useSftpSessionErrors({
     getActivePane,
@@ -358,6 +374,7 @@ export const useSftpState = (
     sftpSessionsRef,
     lastConnectedHostRef,
     connectionCacheKeyMapRef,
+    connectedHostByTabIdRef,
     reconnectingRef,
     makeCacheKey,
     clearCacheForConnection,
@@ -521,6 +538,7 @@ export const useSftpState = (
         sftpSessionsRef,
         lastConnectedHostRef,
         connect,
+        resolveConnectedHost: (id) => connectedHostByTabIdRef.current.get(id) ?? null,
         resolveHostById: (hostId) => hosts.find((host) => host.id === hostId) ?? null,
         forceReconnect: ensureOptions?.forceReconnect,
         tabId,
@@ -625,6 +643,7 @@ export const useSftpState = (
             sftpSessionsRef,
             lastConnectedHostRef,
             connect,
+            resolveConnectedHost: (id) => connectedHostByTabIdRef.current.get(id) ?? null,
             resolveHostById: (hostId) => hosts.find((host) => host.id === hostId) ?? null,
             probeSession: async (sftpId) => {
               const bridge = netcattyBridge.get();
@@ -664,7 +683,7 @@ export const useSftpState = (
   const methodsRef = useRef({
     getFilteredFiles,
     addTab,
-    closeTab,
+    closeTab: closeTabAndClearHost,
     selectTab,
     reorderTabs,
     moveTabToOtherSide,
@@ -731,7 +750,7 @@ export const useSftpState = (
   methodsRef.current = {
     getFilteredFiles,
     addTab,
-    closeTab,
+    closeTab: closeTabAndClearHost,
     selectTab,
     reorderTabs,
     moveTabToOtherSide,
@@ -798,7 +817,7 @@ export const useSftpState = (
   const stableMethods = useMemo(() => ({
     getFilteredFiles: (...args: Parameters<typeof getFilteredFiles>) => methodsRef.current.getFilteredFiles(...args),
     addTab: (...args: Parameters<typeof addTab>) => methodsRef.current.addTab(...args),
-    closeTab: (...args: Parameters<typeof closeTab>) => methodsRef.current.closeTab(...args),
+    closeTab: (...args: Parameters<typeof closeTabAndClearHost>) => methodsRef.current.closeTab(...args),
     selectTab: (...args: Parameters<typeof selectTab>) => methodsRef.current.selectTab(...args),
     reorderTabs: (...args: Parameters<typeof reorderTabs>) => methodsRef.current.reorderTabs(...args),
     moveTabToOtherSide: (...args: Parameters<typeof moveTabToOtherSide>) => methodsRef.current.moveTabToOtherSide(...args),

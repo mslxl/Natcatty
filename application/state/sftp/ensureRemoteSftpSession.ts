@@ -13,7 +13,12 @@ export interface EnsureRemoteSftpSessionParams {
     host: Host | "local",
     options?: { initialPath?: string; ignoreSharedCache?: boolean; tabId?: string },
   ) => Promise<void>;
-  /** Resolve vault host by id when lastConnectedHostRef is missing (tab race). */
+  /**
+   * Per-tab connect-time host (includes session hostname/port/user overrides).
+   * Prefer this over the vault entry so upload reconnects keep the same endpoint.
+   */
+  resolveConnectedHost?: (tabId: string) => Host | "local" | null | undefined;
+  /** Resolve vault host by id when per-tab connect-time host is unavailable. */
   resolveHostById?: (hostId: string) => Host | null | undefined;
   probeSession?: (sftpId: string) => Promise<boolean>;
   forceReconnect?: boolean;
@@ -34,6 +39,7 @@ export async function ensureRemoteSftpSession(
     sftpSessionsRef,
     lastConnectedHostRef,
     connect,
+    resolveConnectedHost,
     resolveHostById,
     probeSession,
     forceReconnect = false,
@@ -43,8 +49,17 @@ export async function ensureRemoteSftpSession(
   const resolveHost = (): Host => {
     const pane = getActivePane(side);
     const hostId = pane?.connection && !pane.connection.isLocal ? pane.connection.hostId : undefined;
-    // Prefer the pinned pane's host over side-wide lastConnectedHost so a
-    // background upload reconnect cannot retarget to another tab's host.
+    const resolvedTabId = tabId ?? pane?.id;
+    // Prefer the full Host captured when this tab connected (session-time
+    // hostname/port/username overrides). Vault lookup by hostId alone would
+    // reconnect the base endpoint and can open the wrong server before the
+    // upload endpoint assertion aborts.
+    if (resolvedTabId && resolveConnectedHost) {
+      const fromTab = resolveConnectedHost(resolvedTabId);
+      if (fromTab && fromTab !== "local") return fromTab;
+    }
+    // Vault next — never prefer side-wide lastConnectedHost over vault when
+    // another tab on this side may hold different overrides for the same hostId.
     if (hostId && resolveHostById) {
       const fromVault = resolveHostById(hostId);
       if (fromVault) return fromVault;

@@ -30,6 +30,7 @@ interface UseSftpConnectionsParams {
   sftpSessionsRef: MutableRefObject<Map<string, string>>;
   lastConnectedHostRef: MutableRefObject<{ left: Host | "local" | null; right: Host | "local" | null }>;
   connectionCacheKeyMapRef: MutableRefObject<Map<string, string>>;
+  connectedHostByTabIdRef: MutableRefObject<Map<string, Host | "local">>;
   reconnectingRef: MutableRefObject<{ left: boolean; right: boolean }>;
   makeCacheKey: (connectionId: string, path: string, encoding?: SftpFilenameEncoding) => string;
   clearCacheForConnection: (connectionId: string) => void;
@@ -153,6 +154,7 @@ export const useSftpConnections = ({
   sftpSessionsRef,
   lastConnectedHostRef,
   connectionCacheKeyMapRef,
+  connectedHostByTabIdRef,
   reconnectingRef,
   makeCacheKey,
   clearCacheForConnection,
@@ -351,6 +353,9 @@ export const useSftpConnections = ({
       if (!isPinnedBackgroundReconnect) {
         lastConnectedHostRef.current[side] = host;
       }
+      // Always remember the full connect-time Host for this tab so background
+      // upload reconnects can restore session-time overrides (not just vault hostId).
+      connectedHostByTabIdRef.current.set(activeTabId, host);
       // Store the cache key for this connection so pane actions can look it up
       // by connectionId instead of relying on the per-side lastConnectedHostRef.
       if (host !== "local") {
@@ -893,6 +898,7 @@ export const useSftpConnections = ({
 
       reconnectingRef.current[side] = false;
       lastConnectedHostRef.current[side] = null;
+      connectedHostByTabIdRef.current.delete(activeTabId);
 
       if (pane.connection && !pane.connection.isLocal) {
         const sftpId = sftpSessionsRef.current.get(pane.connection.id);

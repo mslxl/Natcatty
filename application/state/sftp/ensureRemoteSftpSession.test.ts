@@ -125,6 +125,68 @@ test("uses resolveHostById when lastConnectedHostRef is empty", async () => {
   assert.equal((connectedHost as Host).username, "root");
 });
 
+test("prefers per-tab connect-time host over vault base endpoint", async () => {
+  const vaultHost = {
+    ...host,
+    hostname: "vault.example",
+    port: 22,
+    username: "root",
+  } as Host;
+  const sessionHost = {
+    ...host,
+    hostname: "session.example",
+    port: 2222,
+    username: "override",
+  } as Host;
+  let connectedHost: Host | "local" | null = null;
+  const sessions = { current: new Map<string, string>() };
+  await ensureRemoteSftpSession({
+    side: "left",
+    getActivePane: () => remotePane("conn-1"),
+    sftpSessionsRef: sessions,
+    lastConnectedHostRef: { current: { left: null, right: null } },
+    resolveConnectedHost: (id) => (id === "pane-1" ? sessionHost : null),
+    resolveHostById: () => vaultHost,
+    connect: async (_side, resolved) => {
+      connectedHost = resolved;
+      sessions.current.set("conn-1", "sftp-session");
+    },
+  });
+  assert.equal((connectedHost as Host).hostname, "session.example");
+  assert.equal((connectedHost as Host).port, 2222);
+  assert.equal((connectedHost as Host).username, "override");
+});
+
+test("does not retarget background reconnect via side-wide lastConnectedHost overrides", async () => {
+  const vaultHost = {
+    ...host,
+    hostname: "vault.example",
+    port: 22,
+    username: "root",
+  } as Host;
+  const activeTabOverrides = {
+    ...host,
+    hostname: "other-tab.example",
+    port: 2222,
+    username: "other",
+  } as Host;
+  let connectedHost: Host | "local" | null = null;
+  const sessions = { current: new Map<string, string>() };
+  await ensureRemoteSftpSession({
+    side: "left",
+    getActivePane: () => remotePane("conn-1"),
+    sftpSessionsRef: sessions,
+    lastConnectedHostRef: { current: { left: activeTabOverrides, right: null } },
+    resolveHostById: () => vaultHost,
+    connect: async (_side, resolved) => {
+      connectedHost = resolved;
+      sessions.current.set("conn-1", "sftp-vault");
+    },
+  });
+  assert.equal((connectedHost as Host).hostname, "vault.example");
+  assert.equal((connectedHost as Host).port, 22);
+});
+
 test("refuses synthetic root@label:22 when host metadata is missing", async () => {
   await assert.rejects(
     () => ensureRemoteSftpSession({
