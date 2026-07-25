@@ -5,6 +5,7 @@ import {
   connectionKeyMatchesHost,
   findReusableSftpSidePanelTab,
   isRemoteSftpTabHealthy,
+  shouldAcceptPendingSftpUpload,
   shouldResetSftpSidePanelSourceSession,
   shouldSkipSftpSidePanelAutoConnect,
 } from "./sftpSidePanelAutoConnect";
@@ -80,6 +81,44 @@ test("connectionKeyMatchesHost accepts host-id prefix keys", () => {
   assert.equal(connectionKeyMatchesHost("host-1:server:22:ssh::root", "host-1"), true);
   assert.equal(connectionKeyMatchesHost("host-2:server:22:ssh::root", "host-1"), false);
   assert.equal(connectionKeyMatchesHost(null, "host-1"), false);
+});
+
+test("shouldAcceptPendingSftpUpload waits until the pane endpoint matches the drop", () => {
+  const connected = {
+    hostId: "host-1",
+    isLocal: false,
+    status: "connected",
+  };
+  assert.equal(
+    shouldAcceptPendingSftpUpload({
+      pendingHostId: "host-1",
+      pendingConnectionKey: "host-1:b.example:22:ssh::root",
+      activeHostId: "host-1",
+      connection: connected,
+      paneConnectionKey: "host-1:a.example:22:ssh::root",
+    }),
+    false,
+  );
+  assert.equal(
+    shouldAcceptPendingSftpUpload({
+      pendingHostId: "host-1",
+      pendingConnectionKey: "host-1:b.example:22:ssh::root",
+      activeHostId: "host-1",
+      connection: connected,
+      paneConnectionKey: null,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldAcceptPendingSftpUpload({
+      pendingHostId: "host-1",
+      pendingConnectionKey: "host-1:b.example:22:ssh::root",
+      activeHostId: "host-1",
+      connection: connected,
+      paneConnectionKey: "host-1:b.example:22:ssh::root",
+    }),
+    true,
+  );
 });
 
 test("findReusableSftpSidePanelTab ignores tabs stuck in loading after SSH disconnect", () => {

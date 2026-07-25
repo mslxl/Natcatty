@@ -42,6 +42,38 @@ export function connectionKeyMatchesHost(
   return connectionKey === hostId || connectionKey.startsWith(`${hostId}:`);
 }
 
+/**
+ * Accept a terminal-drop pending upload only when the active pane is already
+ * connected to the exact endpoint the drop requested. Matching hostId alone is
+ * unsafe: session overrides can share hostId while hostname/port/user differ,
+ * and auto-connect may still be deferred via rAF while the previous endpoint
+ * looks connected.
+ */
+export function shouldAcceptPendingSftpUpload(params: {
+  pendingHostId: string;
+  pendingConnectionKey: string;
+  activeHostId: string | null | undefined;
+  connection: {
+    hostId?: string | null;
+    isLocal?: boolean;
+    status?: string;
+  } | null | undefined;
+  paneConnectionKey: string | null | undefined;
+}): boolean {
+  const {
+    pendingHostId,
+    pendingConnectionKey,
+    activeHostId,
+    connection,
+    paneConnectionKey,
+  } = params;
+  if (!activeHostId || pendingHostId !== activeHostId) return false;
+  if (!connection || connection.isLocal || connection.hostId !== activeHostId) return false;
+  if (connection.status !== "connected") return false;
+  if (!paneConnectionKey || paneConnectionKey !== pendingConnectionKey) return false;
+  return true;
+}
+
 export function findReusableSftpSidePanelTab(
   tabs: SftpPane[],
   hostId: string,
