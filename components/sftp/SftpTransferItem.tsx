@@ -82,6 +82,23 @@ const IconButtonWithTooltip: React.FC<{
     </Tooltip>
 );
 
+/** Pointer activates on pointerdown (Tooltip/parent may eat click); keyboard uses click detail 0. */
+const oncePerActivationHandlers = (activate: () => void) => ({
+    onPointerDown: (event: React.PointerEvent) => {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        event.stopPropagation();
+        activate();
+    },
+    onClick: (event: React.MouseEvent) => {
+        event.preventDefault();
+        event.stopPropagation();
+        // Mouse/touch already ran on pointerdown; only keyboard click (detail 0) remains.
+        if (event.detail > 0) return;
+        activate();
+    },
+});
+
 const SftpTransferItemInner: React.FC<SftpTransferItemProps> = ({
     task,
     isChild = false,
@@ -302,17 +319,7 @@ const SftpTransferItemInner: React.FC<SftpTransferItemProps> = ({
                         size="icon"
                         className={actionButtonClass}
                         data-action="pause-transfer"
-                        onPointerDown={(event) => {
-                            // Prefer pointerdown so Tooltip / parent row handlers cannot eat the click.
-                            event.preventDefault();
-                            event.stopPropagation();
-                            onPause();
-                        }}
-                        onClick={(event) => {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            onPause();
-                        }}
+                        {...oncePerActivationHandlers(onPause)}
                         aria-label={actionAriaLabel(pauseActionLabel)}
                     >
                         <Pause size={12} />
@@ -342,16 +349,7 @@ const SftpTransferItemInner: React.FC<SftpTransferItemProps> = ({
                         size="icon"
                         className={actionButtonClass}
                         data-action="resume-transfer"
-                        onPointerDown={(event) => {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            onResume();
-                        }}
-                        onClick={(event) => {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            onResume();
-                        }}
+                        {...oncePerActivationHandlers(onResume)}
                         aria-label={actionAriaLabel(resumeActionLabel)}
                     >
                         <Play size={12} />
