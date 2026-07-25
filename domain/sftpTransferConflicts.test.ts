@@ -186,6 +186,34 @@ test("findActivePathConflict includes active directory child transfers", () => {
   );
 });
 
+test("findActivePathConflict reserves descendants of active directory transfers", () => {
+  const tasks = [
+    base({
+      id: "dir-parent",
+      fileName: "bundle",
+      targetPath: "/Users/me/Desktop/bundle",
+      isDirectory: true,
+      status: "pending",
+    }),
+  ];
+  assert.equal(
+    findActivePathConflict(tasks, {
+      id: "standalone",
+      targetPath: "/Users/me/Desktop/bundle/out.bin",
+      targetConnectionId: "local",
+    })?.id,
+    "dir-parent",
+  );
+  assert.equal(
+    findActivePathConflict(tasks, {
+      id: "sibling-prefix",
+      targetPath: "/Users/me/Desktop/bundle-old/out.bin",
+      targetConnectionId: "local",
+    }),
+    undefined,
+  );
+});
+
 test("findActivePathConflict compares Windows local paths canonically", () => {
   const tasks = [
     base({

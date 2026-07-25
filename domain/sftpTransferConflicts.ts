@@ -75,24 +75,41 @@ function sameTransferTargetPath(a: string, b: string): boolean {
   return normalizeTransferTargetPathForCompare(a) === normalizeTransferTargetPathForCompare(b);
 }
 
+function isTransferTargetPathDescendant(existingPath: string, candidatePath: string): boolean {
+  const existing = normalizeTransferTargetPathForCompare(existingPath);
+  const candidate = normalizeTransferTargetPathForCompare(candidatePath);
+  if (!existing || existing === candidate) return false;
+
+  const separator = /^[a-z]:/.test(existing) ? "\\" : "/";
+  const descendantPrefix = existing.endsWith(separator) ? existing : `${existing}${separator}`;
+  return candidate.startsWith(descendantPrefix);
+}
+
 /**
- * Find another active transfer (including directory child rows) that writes the
- * same destination path. Concurrent writers (especially local .part + rename)
- * race and corrupt output; FileZilla-style clients refuse or queue the second
- * job. Source path is ignored so different sources targeting one file still
- * conflict; endpoint identity avoids treating identical path strings on
- * different hosts as the same destination. Child rows must be included because
- * directory transfers write via children whose `targetPath` is the real file.
+ * Find another active transfer that reserves the candidate destination. File
+ * tasks reserve their exact path; directory tasks reserve their path and all
+ * descendants because recursive transfer children may not exist in the task
+ * list yet. Concurrent writers (especially local .part + rename) race and
+ * corrupt output; endpoint identity avoids treating identical path strings on
+ * different hosts as the same destination.
  */
 export function findActivePathConflict(
   tasks: readonly TransferTask[],
   candidate: Pick<TransferTask, "id"> & DestinationRef,
 ): TransferTask | undefined {
-  return tasks.find((task) => (
+  const conflictsAtEndpoint = (task: TransferTask) => (
     task.id !== candidate.id
-    && sameTransferTargetPath(task.targetPath, candidate.targetPath)
     && sameTransferDestinationEndpoint(task, candidate)
     && SFTP_PATH_CONFLICT_ACTIVE_STATUSES.has(task.status)
+  );
+
+  return tasks.find((task) => (
+    conflictsAtEndpoint(task)
+    && sameTransferTargetPath(task.targetPath, candidate.targetPath)
+  )) ?? tasks.find((task) => (
+    conflictsAtEndpoint(task)
+    && task.isDirectory
+    && isTransferTargetPathDescendant(task.targetPath, candidate.targetPath)
   ));
 }
 
