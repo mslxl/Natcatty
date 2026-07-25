@@ -1096,6 +1096,14 @@ export const useSftpExternalOperations = (
             livePane.connection.isLocal ? undefined : livePane.connection.hostLabel,
           ),
         );
+        // Pin connect-time Host before listLocalTree: a slow folder scan can
+        // outlive a same-hostId tab rebind, and resolveUploadConnectHost would
+        // otherwise open the pooled stream bridge on the newly selected endpoint.
+        const uploadConnectHost = resolveUploadConnectHost(
+          uploadPaneId,
+          livePane.connection.isLocal,
+        );
+        const uploadBridge = createUploadBridge(uploadConnectHost);
 
         const scanningTask = startUploadScanningTask(callbacks);
 
@@ -1138,7 +1146,6 @@ export const useSftpExternalOperations = (
             };
           });
 
-          const connectHost = resolveUploadConnectHost(uploadPaneId, livePane.connection.isLocal);
           const results = await runWithCompressedUploadSession({
             enabled: useCompressedUpload,
             hasDirectory: true,
@@ -1147,7 +1154,7 @@ export const useSftpExternalOperations = (
             jobId: `compressed-upload-${crypto.randomUUID()}`,
             prepSftpId: sftpId,
             acquire: acquireTransferSession
-              ? (hostId, jobId) => acquireTransferSession(hostId, jobId, connectHost)
+              ? (hostId, jobId) => acquireTransferSession(hostId, jobId, uploadConnectHost)
               : undefined,
             shouldDiscard: isSessionError,
             run: async (uploadSftpId) => uploadEntriesDirect(
@@ -1157,7 +1164,7 @@ export const useSftpExternalOperations = (
                 sftpId: uploadSftpId,
                 targetHostId: livePane.connection!.isLocal ? undefined : livePane.connection!.hostId,
                 isLocal: livePane.connection!.isLocal,
-                bridge: createUploadBridge(connectHost),
+                bridge: uploadBridge,
                 joinPath,
                 callbacks,
                 useCompressedUpload,
