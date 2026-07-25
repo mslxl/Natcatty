@@ -197,17 +197,23 @@ export const useSftpState = (
 
   // Keep reconnect metadata in sync when auto-connect reuses an existing tab
   // without calling connect() (selectTab alone does not update this ref).
+  // Callers that selectTab then setLastConnectedHost must pass tabId explicitly:
+  // selectTab only schedules a state update, so activeTabId on the ref is still
+  // the previous tab until the next render.
   const setLastConnectedHost = useCallback((
     side: "left" | "right",
     host: Host | "local" | null,
+    tabId?: string | null,
   ) => {
     lastConnectedHostRef.current[side] = host;
-    const tabId = (side === "left" ? leftTabsRef : rightTabsRef).current.activeTabId;
-    if (!tabId) return;
+    const resolvedTabId =
+      tabId
+      ?? (side === "left" ? leftTabsRef : rightTabsRef).current.activeTabId;
+    if (!resolvedTabId) return;
     if (host) {
-      connectedHostByTabIdRef.current.set(tabId, host);
+      connectedHostByTabIdRef.current.set(resolvedTabId, host);
     } else {
-      connectedHostByTabIdRef.current.delete(tabId);
+      connectedHostByTabIdRef.current.delete(resolvedTabId);
     }
   }, [leftTabsRef, rightTabsRef]);
 

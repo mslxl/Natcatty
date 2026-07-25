@@ -509,7 +509,8 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
       s.selectTab("left", existingTab.id);
       // selectTab does not update reconnect metadata; keep lastConnectedHost
       // aligned with the tab we just activated so channel drops rebind correctly.
-      s.setLastConnectedHost?.("left", activeHost);
+      // Pass tab id explicitly — selectTab has not flushed activeTabId yet.
+      s.setLastConnectedHost?.("left", activeHost, existingTab.id);
       connectedKeyRef.current = connectionKey;
       connectedHostObjRef.current = activeHost;
       // Session memory keys are per terminal session; republish the visible
