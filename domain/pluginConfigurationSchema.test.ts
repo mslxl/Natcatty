@@ -33,3 +33,11 @@ test('unsafe or malformed plugin configuration schemas fail closed', () => {
     type: 'array', items: { type: 'string' }, minItems: 2, maxItems: 1,
   }, []), false);
 });
+
+test('plugin configuration string lengths are counted as Unicode characters', () => {
+  const stringSchema = { type: 'string', minLength: 2, maxLength: 2 };
+  assert.equal(pluginConfigurationMatchesSchema(stringSchema, 'ab'), true);
+  assert.equal(pluginConfigurationMatchesSchema(stringSchema, '😀'), false);
+  assert.equal(pluginConfigurationMatchesSchema(stringSchema, '😀a'), true);
+  assert.equal(pluginConfigurationMatchesSchema({ type: 'string', maxLength: 1 }, '😀'), true);
+});

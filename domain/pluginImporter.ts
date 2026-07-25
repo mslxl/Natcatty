@@ -91,10 +91,55 @@ const asObject = (value: JsonValue): Record<string, JsonValue> | null => (
     : null
 );
 
+const INVALID_FIELD = Symbol('invalid-plugin-importer-field');
+type InvalidField = typeof INVALID_FIELD;
+
 const stringValue = (value: JsonValue | undefined, maximum: number): string | undefined => {
   if (typeof value !== 'string') return undefined;
   const result = value.trim();
   return result && result.length <= maximum && !result.includes('\0') ? result : undefined;
+};
+
+const optionalStringValue = (
+  object: Record<string, JsonValue>,
+  key: string,
+  maximum: number,
+): string | undefined | InvalidField => {
+  if (!Object.prototype.hasOwnProperty.call(object, key)) return undefined;
+  if (typeof object[key] !== 'string') return INVALID_FIELD;
+  const result = stringValue(object[key], maximum);
+  return result ?? undefined;
+};
+
+const optionalBooleanValue = (
+  object: Record<string, JsonValue>,
+  key: string,
+): boolean | undefined | InvalidField => {
+  if (!Object.prototype.hasOwnProperty.call(object, key)) return undefined;
+  return typeof object[key] === 'boolean' ? object[key] : INVALID_FIELD;
+};
+
+const optionalIntegerValue = (
+  object: Record<string, JsonValue>,
+  key: string,
+  minimum: number,
+  maximum: number,
+): number | undefined | InvalidField => {
+  if (!Object.prototype.hasOwnProperty.call(object, key)) return undefined;
+  const value = object[key];
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= minimum && value <= maximum
+    ? value
+    : INVALID_FIELD;
+};
+
+const optionalEnumValue = <T extends string>(
+  object: Record<string, JsonValue>,
+  key: string,
+  allowed: readonly T[],
+): T | undefined | InvalidField => {
+  if (!Object.prototype.hasOwnProperty.call(object, key)) return undefined;
+  const value = object[key];
+  return typeof value === 'string' && (allowed as readonly string[]).includes(value) ? value as T : INVALID_FIELD;
 };
 
 const stringArray = (value: JsonValue | undefined, maximumItems = 128): string[] => (
@@ -121,19 +166,74 @@ const normalizeHost = (value: JsonValue): Host | null => {
   const hostname = stringValue(object.hostname, 1024) ?? (pluginProtocol ? providerId : undefined);
   const label = stringValue(object.label, 512) ?? hostname;
   if (!hostname || !label) return null;
-  const { protocol: _unsafeProtocol, ...hostFields } = structuredClone(object);
+  const pluginConnection = Object.prototype.hasOwnProperty.call(object, 'pluginConnection')
+    ? asObject(object.pluginConnection)
+    : undefined;
+  if (pluginConnection === null) return null;
+  const tags = Object.prototype.hasOwnProperty.call(object, 'tags') && !Array.isArray(object.tags)
+    ? null
+    : stringArray(object.tags);
+  if (!tags) return null;
+  const optionalStrings = {
+    group: optionalStringValue(object, 'group', 512),
+    identityId: optionalStringValue(object, 'identityId', 256),
+    identityFileId: optionalStringValue(object, 'identityFileId', 256),
+    telnetIdentityId: optionalStringValue(object, 'telnetIdentityId', 256),
+    notes: optionalStringValue(object, 'notes', 65_536),
+    startupCommand: optionalStringValue(object, 'startupCommand', 65_536),
+    telnetUsername: optionalStringValue(object, 'telnetUsername', 512),
+    telnetPassword: optionalStringValue(object, 'telnetPassword', 65_536),
+    theme: optionalStringValue(object, 'theme', 256),
+    sftpEncoding: optionalStringValue(object, 'sftpEncoding', 64),
+  };
+  if (Object.values(optionalStrings).some((item) => item === INVALID_FIELD)) return null;
+  const optionalBooleans = {
+    moshEnabled: optionalBooleanValue(object, 'moshEnabled'),
+    etEnabled: optionalBooleanValue(object, 'etEnabled'),
+    telnetEnabled: optionalBooleanValue(object, 'telnetEnabled'),
+    sftpSudo: optionalBooleanValue(object, 'sftpSudo'),
+    savePassword: optionalBooleanValue(object, 'savePassword'),
+    requiresMfa: optionalBooleanValue(object, 'requiresMfa'),
+    useSshAgent: optionalBooleanValue(object, 'useSshAgent'),
+    identitiesOnly: optionalBooleanValue(object, 'identitiesOnly'),
+    agentForwarding: optionalBooleanValue(object, 'agentForwarding'),
+    x11Forwarding: optionalBooleanValue(object, 'x11Forwarding'),
+    showLineTimestamps: optionalBooleanValue(object, 'showLineTimestamps'),
+    disableDynamicTabTitle: optionalBooleanValue(object, 'disableDynamicTabTitle'),
+    pinned: optionalBooleanValue(object, 'pinned'),
+    autoOpenSftpPanel: optionalBooleanValue(object, 'autoOpenSftpPanel'),
+    sftpFollowTerminalCwd: optionalBooleanValue(object, 'sftpFollowTerminalCwd'),
+  };
+  if (Object.values(optionalBooleans).some((item) => item === INVALID_FIELD)) return null;
+  const optionalIntegers = {
+    port: optionalIntegerValue(object, 'port', 1, 65535),
+    telnetPort: optionalIntegerValue(object, 'telnetPort', 1, 65535),
+    etPort: optionalIntegerValue(object, 'etPort', 1, 65535),
+    keepaliveInterval: optionalIntegerValue(object, 'keepaliveInterval', 0, 3600),
+    keepaliveCountMax: optionalIntegerValue(object, 'keepaliveCountMax', 1, 100),
+  };
+  if (Object.values(optionalIntegers).some((item) => item === INVALID_FIELD)) return null;
+  const deviceType = optionalEnumValue(object, 'deviceType', ['general', 'network'] as const);
+  if (deviceType === INVALID_FIELD) return null;
+  const sftpFileProtocol = optionalEnumValue(object, 'sftpFileProtocol', ['auto', 'sftp', 'scp'] as const);
+  if (sftpFileProtocol === INVALID_FIELD) return null;
   const draft = {
-    ...hostFields,
     id: crypto.randomUUID(),
     label,
     hostname,
     username: stringValue(object.username, 512) ?? '',
-    tags: stringArray(object.tags),
+    tags,
     os: ['linux', 'windows', 'macos'].includes(String(object.os)) ? object.os : 'linux',
     createdAt: Date.now(),
     ephemeral: false,
     managedSourceId: undefined,
     ...(protocol ? { protocol } : {}),
+    ...(pluginConnection ? { pluginConnection: structuredClone(pluginConnection) } : {}),
+    ...(deviceType ? { deviceType } : {}),
+    ...(sftpFileProtocol ? { sftpFileProtocol } : {}),
+    ...Object.fromEntries(Object.entries(optionalStrings).filter(([, item]) => item !== undefined)),
+    ...Object.fromEntries(Object.entries(optionalBooleans).filter(([, item]) => item !== undefined)),
+    ...Object.fromEntries(Object.entries(optionalIntegers).filter(([, item]) => item !== undefined)),
   } as unknown as Host;
   const sanitized = sanitizeHost(draft);
   return sanitized.hostname && (!pluginProtocol || sanitized.pluginConnection) ? sanitized : null;

@@ -234,4 +234,6 @@ export type TerminalSessionDataMeta = {
   pluginPipelineProcessed?: boolean;
   /** Host-owned classification from original output; plugins cannot mask it. */
   pluginPipelineSensitiveInput?: boolean;
+  /** Host-owned marker that a Plugin connection Provider has explicitly reached connected status. */
+  pluginConnectionReady?: boolean;
 };

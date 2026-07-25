@@ -5,7 +5,11 @@ import type { Host } from "../../domain/models";
 import { applyGroupDefaults } from "../../domain/groupConfig";
 import { prepareSerialConfigForSavedHost } from "../../domain/serialBackspace";
 import { buildTelnetDeepLinkConnectionHost } from "../../domain/telnetDeepLink";
-import { createHostTerminalSession, createSerialTerminalSession } from "./sessionFactories";
+import {
+  createHostTerminalSession,
+  createSerialTerminalSession,
+  createWorkspaceHostTerminalSession,
+} from "./sessionFactories";
 
 const host = (overrides: Partial<Host>): Host => ({
   id: "host-1",
@@ -90,4 +94,28 @@ test("saved quick-connect hosts can inherit Ctrl-H after moving into a group", (
   const session = createHostTerminalSession("session-1", effectiveHost);
 
   assert.equal(session.serialConfig?.backspaceBehavior, "ctrl-h");
+});
+
+test("host session factories snapshot plugin connection configuration", () => {
+  const providerId = "com.example.transport.connection";
+  const pluginConnection = {
+    providerId,
+    authenticationProviderId: "com.example.transport.auth",
+    configuration: { endpoint: "gateway.example", tags: ["prod"] },
+    credentialId: "credential-reference-1234",
+  };
+  const pluginHost = host({
+    protocol: `plugin:${providerId}`,
+    pluginConnection,
+  });
+
+  const regular = createHostTerminalSession("session-plugin", pluginHost);
+  const workspace = createWorkspaceHostTerminalSession("session-workspace-plugin", pluginHost, "workspace-1");
+
+  assert.equal(regular.protocol, `plugin:${providerId}`);
+  assert.deepEqual(regular.pluginConnection, pluginConnection);
+  assert.notEqual(regular.pluginConnection, pluginConnection);
+  assert.equal(workspace.workspaceId, "workspace-1");
+  assert.deepEqual(workspace.pluginConnection, pluginConnection);
+  assert.notEqual(workspace.pluginConnection, pluginConnection);
 });

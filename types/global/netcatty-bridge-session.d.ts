@@ -476,6 +476,8 @@ declare global {
           pluginPipelineProcessed?: boolean;
           /** Host-classified authentication prompt state for protecting subsequent input. */
           pluginPipelineSensitiveInput?: boolean;
+          /** Host-owned marker that a Plugin connection Provider has explicitly reached connected status. */
+          pluginConnectionReady?: boolean;
         },
       ) => void,
       options?: { replayBacklog?: boolean },

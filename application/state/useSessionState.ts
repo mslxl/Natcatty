@@ -5,6 +5,7 @@ import {
   createHostTerminalSession,
   createLocalTerminalSession,
   createSerialTerminalSession,
+  createWorkspaceHostTerminalSession,
   type LocalTerminalOptions,
 } from './sessionFactories';
 import { isScriptSnippet } from '../../domain/snippetScript.ts';
@@ -504,29 +505,12 @@ export const useSessionState = ({
   const createWorkspaceWithHosts = useCallback((name: string, hosts: Host[]) => {
     if (hosts.length === 0) return;
 
-    // Create sessions for each host
-    const newSessions: TerminalSession[] = hosts.map(host => {
-      // Handle serial hosts specially
-      if (host.protocol === 'serial') {
-        return createHostTerminalSession(crypto.randomUUID(), host);
-      }
+    const sessionSeeds = hosts.map(host => ({
+      id: crypto.randomUUID(),
+      host,
+    }));
 
-      return {
-        id: crypto.randomUUID(),
-        hostId: host.id,
-        hostLabel: host.label,
-        hostname: host.hostname,
-        username: host.username,
-        status: 'connecting',
-        protocol: host.protocol,
-        port: host.port,
-        moshEnabled: host.moshEnabled,
-        etEnabled: host.etEnabled,
-        charset: host.charset,
-      };
-    });
-
-    const sessionIds = newSessions.map(s => s.id);
+    const sessionIds = sessionSeeds.map(s => s.id);
 
     // Create workspace
     const workspace = createWorkspaceFromSessionIds(sessionIds, {
@@ -535,10 +519,9 @@ export const useSessionState = ({
     });
 
     // Assign workspaceId to sessions
-    const sessionsWithWorkspace = newSessions.map(s => ({
-      ...s,
-      workspaceId: workspace.id
-    }));
+    const sessionsWithWorkspace = sessionSeeds.map(({ id, host }) => (
+      createWorkspaceHostTerminalSession(id, host, workspace.id)
+    ));
 
     setSessions(prev => [...prev, ...sessionsWithWorkspace]);
     setWorkspaces(prev => [...prev, workspace]);
@@ -567,22 +550,7 @@ export const useSessionState = ({
         });
       }
       const host = target.host;
-      if (host.protocol === 'serial') {
-        return createHostTerminalSession(crypto.randomUUID(), host);
-      }
-      return {
-        id: crypto.randomUUID(),
-        hostId: host.id,
-        hostLabel: host.label,
-        hostname: host.hostname,
-        username: host.username,
-        status: 'connecting',
-        protocol: host.protocol,
-        port: host.port,
-        moshEnabled: host.moshEnabled,
-        etEnabled: host.etEnabled,
-        charset: host.charset,
-      };
+      return createHostTerminalSession(crypto.randomUUID(), host);
     });
 
     const sessionIds = newSessions.map((s) => s.id);
@@ -686,20 +654,7 @@ export const useSessionState = ({
     if (!workspacesRef.current.some(w => w.id === workspaceId)) return null;
 
     const newSessionId = crypto.randomUUID();
-    const newSession: TerminalSession = {
-      id: newSessionId,
-      hostId: host.id,
-      hostLabel: host.label,
-      hostname: host.hostname,
-      username: host.username,
-      status: 'connecting',
-      protocol: host.protocol,
-      port: host.port,
-      moshEnabled: host.moshEnabled,
-      etEnabled: host.etEnabled,
-      charset: host.charset,
-      workspaceId,
-    };
+    const newSession = createWorkspaceHostTerminalSession(newSessionId, host, workspaceId);
 
     // Nest setSessions + setActiveTabId inside the setWorkspaces updater
     // so we only commit the session when the workspace update actually

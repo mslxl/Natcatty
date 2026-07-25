@@ -62,6 +62,31 @@ test('resolveTerminalPopupHost still falls back to source session details when t
   assert.equal(host.moshEnabled, false);
 });
 
+test('resolveTerminalPopupHost preserves plugin transport and configuration for copied windows', () => {
+  const providerId = 'com.example.transport.connection';
+  const protocol = `plugin:${providerId}` as const;
+  const pluginConnection = {
+    providerId,
+    authenticationProviderId: 'com.example.transport.auth',
+    configuration: { endpoint: 'gateway.example', features: ['importers'] },
+    credentialId: 'credential-reference-1234',
+  };
+
+  const host = resolveTerminalPopupHost(
+    popupPayload(sourceSession({
+      protocol,
+      pluginConnection,
+      hostId: 'missing-plugin-host',
+      hostname: 'provider-placeholder.example',
+    })),
+    [],
+  );
+
+  assert.equal(host.protocol, protocol);
+  assert.deepEqual(host.pluginConnection, pluginConnection);
+  assert.notEqual(host.pluginConnection, pluginConnection);
+});
+
 test('resolveTerminalPopupHost does not turn command popups into serial sessions without serial config', () => {
   const host = resolveTerminalPopupHost(
     popupPayload(sourceSession({ protocol: 'serial' })),

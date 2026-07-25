@@ -762,7 +762,7 @@ export const tryAttachSessionToTerminal = (
   id: string,
   opts?: {
     onExitMessage?: (evt: { exitCode?: number; signal?: number; error?: string; reason?: string }) => string;
-    onConnected?: () => void;
+    onConnected?: (meta?: TerminalSessionDataMeta) => void;
     onExit?: (evt: { exitCode?: number; signal?: number; error?: string; reason?: string }) => void;
     convertLfToCrlf?: boolean;
     sudoAutofillPassword?: string;
@@ -866,25 +866,28 @@ export const attachSessionToTerminal = (
     ctx.sudoAutofillRef.current = sudoAutofill;
   }
 
-  const markConnectedOnFirstOutput = () => {
-    if (ctx.hasConnectedRef.current) return;
-    ctx.updateStatus("connected");
-    opts?.onConnected?.();
-    setTimeout(() => {
-      if (ctx.isVisibleRef?.current === false) {
-        notePendingOutputScrollIfEnabled(ctx);
-        return;
-      }
-      if (!ctx.fitAddonRef.current) return;
-      try {
-        ctx.fitAddonRef.current.fit();
-        if (ctx.sessionRef.current) {
-          ctx.terminalBackend.resizeSession(ctx.sessionRef.current, term.cols, term.rows);
+  const markConnectedOnFirstOutput = (meta?: TerminalSessionDataMeta) => {
+    const pluginConnectionReady = meta?.pluginConnectionReady === true;
+    if (ctx.hasConnectedRef.current && !pluginConnectionReady) return;
+    if (!ctx.hasConnectedRef.current) {
+      ctx.updateStatus("connected");
+      setTimeout(() => {
+        if (ctx.isVisibleRef?.current === false) {
+          notePendingOutputScrollIfEnabled(ctx);
+          return;
         }
-      } catch (err) {
-        logger.warn("Post-connect fit failed", err);
-      }
-    }, 100);
+        if (!ctx.fitAddonRef.current) return;
+        try {
+          ctx.fitAddonRef.current.fit();
+          if (ctx.sessionRef.current) {
+            ctx.terminalBackend.resizeSession(ctx.sessionRef.current, term.cols, term.rows);
+          }
+        } catch (err) {
+          logger.warn("Post-connect fit failed", err);
+        }
+      }, 100);
+    }
+    opts?.onConnected?.(meta);
   };
 
   ctx.disposeDataRef.current = ctx.terminalBackend.onSessionData(
@@ -898,7 +901,7 @@ export const attachSessionToTerminal = (
         ? Math.max(0, Number(meta?.pluginPipelineIngressBytes))
         : null;
       if (filtered.accepted && !filtered.data && pluginPipelineIngressBytes != null) {
-        markConnectedOnFirstOutput();
+        markConnectedOnFirstOutput(meta);
         if (typeof meta?.pluginPipelineSensitiveInput === "boolean") {
           ctx.onTerminalOutput?.("", meta);
         }
@@ -930,7 +933,7 @@ export const attachSessionToTerminal = (
       // remain reachable. Startup commands / pending scripts are gated
       // separately on netcatty:mosh:ready so they do not hit the handshake
       // PTY (#2199).
-      markConnectedOnFirstOutput();
+      markConnectedOnFirstOutput(meta);
     },
     { replayBacklog: true },
   );

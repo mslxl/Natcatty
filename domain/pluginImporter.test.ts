@@ -86,6 +86,71 @@ test('plugin importer rejects overlong host protocols before draft spreading', (
   assert.deepEqual(result.errors, ['Importer returned an invalid host draft.']);
 });
 
+test('plugin importer validates supported host fields before sanitizing drafts', () => {
+  assert.doesNotThrow(() => normalizePluginImporterRecords([{ type: 'draft', draft: {
+    kind: 'host',
+    value: {
+      label: 'Malformed host',
+      hostname: 'host.test',
+      notes: 5,
+    },
+  } }]));
+  const result = normalizePluginImporterRecords([{ type: 'draft', draft: {
+    kind: 'host',
+    value: {
+      label: 'Malformed host',
+      hostname: 'host.test',
+      notes: 5,
+    },
+  } }]);
+  assert.deepEqual(result.hosts, []);
+  assert.deepEqual(result.errors, ['Importer returned an invalid host draft.']);
+});
+
+test('plugin importer preserves validated host fields without retaining arbitrary draft properties', () => {
+  const result = normalizePluginImporterRecords([{ type: 'draft', draft: {
+    kind: 'host',
+    value: {
+      label: 'Imported host',
+      hostname: 'host.test',
+      username: 'alice',
+      group: 'Imported',
+      notes: '  visible notes  ',
+      port: 2222,
+      deviceType: 'network',
+      sftpFileProtocol: 'scp',
+      pinned: true,
+      unsafeExtra: 'discarded',
+    },
+  } }]);
+  assert.equal(result.hosts.length, 1);
+  assert.equal(result.hosts[0].group, 'Imported');
+  assert.equal(result.hosts[0].notes, 'visible notes');
+  assert.equal(result.hosts[0].port, 2222);
+  assert.equal(result.hosts[0].deviceType, 'network');
+  assert.equal(result.hosts[0].sftpFileProtocol, 'scp');
+  assert.equal(result.hosts[0].pinned, true);
+  assert.equal(Object.hasOwn(result.hosts[0] as unknown as Record<string, unknown>, 'unsafeExtra'), false);
+});
+
+test('plugin importer rejects malformed supported host enum fields', () => {
+  for (const [key, value] of [
+    ['deviceType', 'router'],
+    ['sftpFileProtocol', 'ftp'],
+  ] as const) {
+    const result = normalizePluginImporterRecords([{ type: 'draft', draft: {
+      kind: 'host',
+      value: {
+        label: 'Malformed host',
+        hostname: 'host.test',
+        [key]: value,
+      },
+    } }]);
+    assert.deepEqual(result.hosts, []);
+    assert.deepEqual(result.errors, ['Importer returned an invalid host draft.']);
+  }
+});
+
 test('plugin importer remaps provider-local key and identity references into host-owned IDs', () => {
   const result = normalizePluginImporterRecords([
     { type: 'draft', draft: { kind: 'key', value: {

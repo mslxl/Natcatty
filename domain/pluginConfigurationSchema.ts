@@ -44,6 +44,7 @@ const jsonEqual = (left: unknown, right: unknown): boolean => {
 
 const validNonNegativeInteger = (value: unknown): value is number => Number.isSafeInteger(value) && Number(value) >= 0;
 const validFiniteNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
+const unicodeCharacterLength = (value: string): number => Array.from(value).length;
 
 function assertRestrictedSchema(root: unknown): asserts root is Schema {
   const stack: Array<{ schema: unknown; depth: number }> = [{ schema: root, depth: 0 }];
@@ -120,8 +121,8 @@ function valueMatches(schema: Schema, value: unknown): boolean {
     case 'boolean': return typeof value === 'boolean';
     case 'string':
       return typeof value === 'string'
-        && (!validNonNegativeInteger(schema.minLength) || value.length >= schema.minLength)
-        && (!validNonNegativeInteger(schema.maxLength) || value.length <= schema.maxLength);
+        && (!validNonNegativeInteger(schema.minLength) || unicodeCharacterLength(value) >= schema.minLength)
+        && (!validNonNegativeInteger(schema.maxLength) || unicodeCharacterLength(value) <= schema.maxLength);
     case 'integer':
     case 'number':
       return validFiniteNumber(value)

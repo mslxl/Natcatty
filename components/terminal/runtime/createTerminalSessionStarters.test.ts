@@ -157,6 +157,63 @@ test("startPluginConnection preserves the namespaced provider configuration and 
   assert.deepEqual(progressLogs, ["[Plugin warning] Provider warning"]);
 });
 
+test("startPluginConnection waits for explicit Provider connected readiness before startup commands", async () => {
+  let onData: ((data: string, meta?: { pluginPipelineIngressBytes?: number; pluginConnectionReady?: boolean }) => void) | null = null;
+  const writes: Array<{ id: string; data: string; options?: Record<string, unknown> }> = [];
+  const hasConnectedRef = { current: false };
+  const terminalBackend = {
+    pluginConnectionAvailable: () => true,
+    startPluginConnection: async (options: NetcattyPluginConnectionStartRequest) => ({
+      sessionId: options.sessionId,
+      providerId: options.providerId,
+      status: "connecting" as const,
+      diagnostics: [],
+    }),
+    onSessionData: (
+      _id: string,
+      cb: (data: string, meta?: { pluginPipelineIngressBytes?: number; pluginConnectionReady?: boolean }) => void,
+    ) => { onData = cb; return noop; },
+    onSessionExit: () => noop,
+    onChainProgress: () => noop,
+    writeToSession: (id: string, data: string, options?: Record<string, unknown>) => {
+      writes.push({ id, data, options });
+    },
+    resizeSession: noop,
+  };
+  const ctx = createStarterContext({
+    host: {
+      id: "host-plugin",
+      label: "Custom protocol",
+      hostname: "opaque.example",
+      username: "",
+      protocol: "plugin:com.example.transport.connection",
+      pluginConnection: {
+        providerId: "com.example.transport.connection",
+        configuration: { endpoint: "opaque.example" },
+      },
+      startupCommand: "echo ready",
+    },
+    terminalBackend,
+    terminalSettings: { startupCommandDelayMs: 0 },
+    noAutoRun: true,
+    hasConnectedRef,
+    updateStatus: (status: string) => {
+      if (status === "connected") hasConnectedRef.current = true;
+    },
+  });
+
+  await createTerminalSessionStarters(ctx as never).startPluginConnection(createTermStub() as never);
+  assert.equal(ctx.hasRunStartupCommandRef.current, false);
+  onData?.("Provider banner before authentication completes\r\n", { pluginPipelineIngressBytes: 48 });
+  assert.equal(ctx.hasRunStartupCommandRef.current, false);
+  onData?.("", { pluginPipelineIngressBytes: 0, pluginConnectionReady: true });
+  assert.equal(ctx.hasRunStartupCommandRef.current, true);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(writes, [
+    { id: "session-1", data: "echo ready", options: { automated: true } },
+  ]);
+});
+
 test("startSSH forwards imported system agent authentication settings", async () => {
   let capturedOptions: Record<string, unknown> | null = null;
   const terminalBackend = {

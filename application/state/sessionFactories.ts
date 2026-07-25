@@ -117,3 +117,12 @@ export const createHostTerminalSession = (
     ...(host.autoOpenSftpPanel ? { autoOpenSidePanel: "sftp" as const } : {}),
   };
 };
+
+export const createWorkspaceHostTerminalSession = (
+  sessionId: string,
+  host: Host,
+  workspaceId: string,
+): TerminalSession => ({
+  ...createHostTerminalSession(sessionId, host),
+  workspaceId,
+});

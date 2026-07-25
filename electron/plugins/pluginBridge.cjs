@@ -59,6 +59,26 @@ const MAX_IMPORT_SELECTIONS_PER_SENDER = 8;
 const IMPORT_SELECTION_TTL_MS = 5 * 60_000;
 const DEFAULT_CONNECTION_STATUS_POLL_MS = 500;
 
+function boundedErrorMessage(value, fallback = "Plugin connection failed") {
+  const message = typeof value === "string" && value
+    ? value
+    : value && typeof value === "object" && typeof value.message === "string" && value.message
+      ? value.message
+      : fallback;
+  return String(message).slice(0, 2048);
+}
+
+function connectionOutputCloseDetails(reason) {
+  if (typeof reason === "string") return { reason };
+  if (reason && typeof reason === "object") {
+    return {
+      reason: "error",
+      error: boundedErrorMessage(reason, "Plugin connection output stream failed"),
+    };
+  }
+  return { reason: "closed" };
+}
+
 function normalizePluginScopeCatalog(value) {
   const source = value && typeof value === "object" ? value : {};
   const result = {};
@@ -328,8 +348,16 @@ function registerPluginBridge(ipcMain, options) {
     if (connectionStatusPollMs > 0) timer.unref?.();
     signal.addEventListener("abort", onAbort, { once: true });
   });
-  const pluginConnectionReadyMeta = Object.freeze({ pluginPipelineIngressBytes: 0 });
-  const monitorPluginConnection = async ({ sessionId, sessions, controller, terminalWorkerManager }) => {
+  const pluginConnectionReadyMeta = Object.freeze({ pluginPipelineIngressBytes: 0, pluginConnectionReady: true });
+  const monitorPluginConnection = async ({
+    sessionId,
+    sessions,
+    controller,
+    terminalWorkerManager,
+    readyPublished = false,
+  }) => {
+    if (typeof extensionProviderService?.control !== "function") return;
+    let hasPublishedReady = readyPublished;
     try {
       while (!controller.signal.aborted && sessions.has(sessionId)) {
         await waitForConnectionStatusPoll(controller.signal);
@@ -343,8 +371,11 @@ function registerPluginBridge(ipcMain, options) {
         if (status.status === "connected") {
           // A zero-byte terminal delivery transitions silent protocols out of
           // the connecting UI without inventing visible terminal output.
-          await terminalWorkerManager.pushExternalOutput(sessionId, "", pluginConnectionReadyMeta);
-          return;
+          if (!hasPublishedReady) {
+            await terminalWorkerManager.pushExternalOutput(sessionId, "", pluginConnectionReadyMeta);
+            hasPublishedReady = true;
+          }
+          continue;
         }
         if (status.status === "closed" || status.status === "error") {
           sessions.delete(sessionId);
@@ -362,7 +393,7 @@ function registerPluginBridge(ipcMain, options) {
       extensionProviderService.closeSessionLocal(sessionId);
       await terminalWorkerManager.finishExternalSession(sessionId, {
         reason: "error",
-        error: error?.message || String(error),
+        error: boundedErrorMessage(error),
       });
     }
   };
@@ -533,26 +564,9 @@ function registerPluginBridge(ipcMain, options) {
       throw new Error("Host terminal pipeline is unavailable for plugin connections");
     }
     const sessions = connectionSessionSet(event.sender);
-    let credential = payload?.credential;
-    if (payload?.authenticationProviderId) {
-      const authentication = await extensionProviderService.authenticate({
-        providerId: payload.authenticationProviderId,
-        connectionProviderId: payload?.providerId,
-        configuration: payload?.configuration,
-        ...(credential === undefined ? {} : { credential }),
-      }, (challenge) => requestAuthenticationChallenge(
-        event,
-        payload.requestId,
-        challenge,
-        signal,
-      ), { signal });
-      if (authentication.status !== "authenticated") {
-        throw new Error(authentication.message || "Plugin authentication did not complete");
-      }
-      credential = authentication.credential;
-    }
     const sessionId = payload?.sessionId;
     const outputDecoder = new TextDecoder("utf-8");
+    let credential = payload?.credential;
     let closedDuringStart = false;
     let providerOpened = false;
     let providerCloseStarted = false;
@@ -563,6 +577,7 @@ function registerPluginBridge(ipcMain, options) {
     if (signal.aborted) abortConnection();
     else signal.addEventListener("abort", abortConnection, { once: true });
     try {
+      if (connectionController.signal.aborted) throw connectionController.signal.reason;
       await terminalWorkerManager.startExternalSession({
         sessionId,
         webContentsId: event.sender.id,
@@ -572,7 +587,7 @@ function registerPluginBridge(ipcMain, options) {
         hostLabel: payload?.hostLabel,
         hostname: payload?.hostname,
         sessionLog: payload?.sessionLog,
-        onInput: (data) => extensionProviderService.write(sessionId, data),
+        onInput: (data) => (providerOpened ? extensionProviderService.write(sessionId, data) : undefined),
         onResize: ({ columns, rows }) => extensionProviderService.control(
           sessionId,
           "resize",
@@ -590,6 +605,23 @@ function registerPluginBridge(ipcMain, options) {
           }
         },
       });
+      if (payload?.authenticationProviderId) {
+        const authentication = await extensionProviderService.authenticate({
+          providerId: payload.authenticationProviderId,
+          connectionProviderId: payload?.providerId,
+          configuration: payload?.configuration,
+          ...(credential === undefined ? {} : { credential }),
+        }, (challenge) => requestAuthenticationChallenge(
+          event,
+          payload.requestId,
+          challenge,
+          connectionController.signal,
+        ), { signal: connectionController.signal });
+        if (authentication.status !== "authenticated") {
+          throw new Error(authentication.message || "Plugin authentication did not complete");
+        }
+        credential = authentication.credential;
+      }
       const opened = await extensionProviderService.openConnection({
         ...payload,
         ...(credential === undefined ? {} : { credential }),
@@ -604,27 +636,25 @@ function registerPluginBridge(ipcMain, options) {
           sessions.delete(sessionId);
           const finalData = outputDecoder.decode();
           if (finalData) await terminalWorkerManager.pushExternalOutput(sessionId, finalData);
-          await terminalWorkerManager.finishExternalSession(sessionId, {
-            reason: typeof reason === "string" ? reason : "closed",
-          });
+          await terminalWorkerManager.finishExternalSession(sessionId, connectionOutputCloseDetails(reason));
         },
       });
       providerOpened = true;
       if (!closedDuringStart) {
         sessions.add(opened.sessionId);
-        if (opened.status === "connecting") {
-          void monitorPluginConnection({
-            sessionId: opened.sessionId,
-            sessions,
-            controller: connectionController,
-            terminalWorkerManager,
-          });
-        } else if (opened.status === "connected") {
+        if (opened.status === "connected") {
           // The terminal renderer treats the first delivery as the connection
           // readiness boundary. Preserve that boundary for silent protocols
           // whose Provider completes open before producing terminal bytes.
           await terminalWorkerManager.pushExternalOutput(opened.sessionId, "", pluginConnectionReadyMeta);
         }
+        void monitorPluginConnection({
+          sessionId: opened.sessionId,
+          sessions,
+          controller: connectionController,
+          terminalWorkerManager,
+          readyPublished: opened.status === "connected",
+        });
       }
       return opened;
     } catch (error) {
@@ -638,7 +668,7 @@ function registerPluginBridge(ipcMain, options) {
       }
       await terminalWorkerManager.finishExternalSession(sessionId, {
         reason: "error",
-        error: error?.message || String(error),
+        error: boundedErrorMessage(error),
       });
       throw error;
     } finally {
