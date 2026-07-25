@@ -310,11 +310,11 @@ This project is licensed under the **GPL-3.0 License** - see the [LICENSE](LICEN
 <a name="star-history"></a>
 # Star History
 
-<a href="https://star-history.com/#binaricat/Netcatty&Date">
+<a href="https://www.star-history.com/#binaricat/Netcatty&Date">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=binaricat/Netcatty&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=binaricat/Netcatty&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=binaricat/Netcatty&type=Date" />
+   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/star-history/star-history-dark.svg" />
+   <source media="(prefers-color-scheme: light)" srcset="docs/assets/star-history/star-history-light.svg" />
+   <img alt="Star History Chart" src="docs/assets/star-history/star-history-light.svg" />
  </picture>
 </a>
 
