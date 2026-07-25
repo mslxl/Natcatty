@@ -946,15 +946,50 @@ async function uploadFile(
     transfer.pauseUnavailableReason = "Pause is unavailable for SCP transfers";
     transfer.uploadStrategy = "scp";
     const backend = getScpBackendForClient(client);
-    await backend.uploadFile(localPath, remotePath, {
-      fileSize,
-      transfer,
-      encoding,
-      signal: transfer.signal,
-      onProgress: (transferred, total) => sendProgress(transferred, total || fileSize),
-    });
-    onBytesCommitted?.();
-    return;
+    let scpSourcePath = localPath;
+    let digestPath = null;
+    let snapshotPath = null;
+    try {
+      if (!transfer.sourceIsOwnedTemp) {
+        const initialSource = await fs.promises.stat(localPath);
+        const snapshotId = crypto.createHash("sha256")
+          .update(String(transfer.transferId || localPath))
+          .digest("hex")
+          .slice(0, 16);
+        digestPath = tempDirBridge.getTransferTempFilePath(
+          `upload-digest-${snapshotId}`,
+          "ranges.sha256",
+        );
+        snapshotPath = tempDirBridge.getTransferTempFilePath(
+          `upload-source-${snapshotId}`,
+          "snapshot.bin",
+        );
+        await createUploadDigestBaseline(localPath, digestPath, fileSize, transfer);
+        if (transfer.cancelled) throw new Error("Transfer cancelled");
+        const sourceAfterBaseline = await fs.promises.stat(localPath);
+        assertSourceMetadataUnchanged(initialSource, sourceAfterBaseline, fileSize);
+        await createVerifiedUploadSnapshot(
+          localPath,
+          snapshotPath,
+          digestPath,
+          fileSize,
+          transfer,
+        );
+        scpSourcePath = snapshotPath;
+      }
+      await backend.uploadFile(scpSourcePath, remotePath, {
+        fileSize,
+        transfer,
+        encoding,
+        signal: transfer.signal,
+        onProgress: (transferred, total) => sendProgress(transferred, total || fileSize),
+      });
+      onBytesCommitted?.();
+      return;
+    } finally {
+      if (snapshotPath) await fs.promises.rm(snapshotPath, { force: true }).catch(() => {});
+      if (digestPath) await fs.promises.rm(digestPath, { force: true }).catch(() => {});
+    }
   }
 
   await requireSftpChannel(client);
@@ -962,10 +997,10 @@ async function uploadFile(
   if (!sftp) throw new Error("SFTP client not ready");
   transfer.pauseSupported = Boolean(transfer.resumable);
   const originalLocalPath = localPath;
-  const initialSource = transfer.resumable
+  const initialSource = (transfer.resumable || !transfer.sourceIsOwnedTemp)
     ? await fs.promises.stat(originalLocalPath)
     : null;
-  if (transfer.resumable && !transfer.sourceIsOwnedTemp) {
+  if (!transfer.sourceIsOwnedTemp) {
     const digestId = crypto.createHash("sha256")
       .update(String(transfer.transferId || "upload"))
       .digest("hex")
@@ -1036,7 +1071,7 @@ async function uploadFile(
       );
     }
 
-    if (isolated && transfer.resumable) {
+    if (isolated) {
       let concurrentIsolatedOk = false;
       try {
         transfer.uploadStrategy = "concurrent-isolated";
@@ -1056,7 +1091,11 @@ async function uploadFile(
         if (transfer.cancelled) throw err;
         if (err?.noTransferFallback) throw err;
         rememberPipelineError(err);
-        await prepareUploadFallbackCheckpoint(transfer, client, fileSize, sendProgress);
+        if (transfer.resumable) {
+          await prepareUploadFallbackCheckpoint(transfer, client, fileSize, sendProgress);
+        } else {
+          transfer.checkpointBytes = 0;
+        }
         console.warn(
           "[transferBridge] concurrent isolated upload failed, trying next pipelined strategy:",
           err?.message || String(err),
@@ -1092,15 +1131,35 @@ async function uploadFile(
       && !transfer.resumable
     ) {
       let fastPutOk = false;
+      let fastPutSourcePath = localPath;
+      let fastPutSnapshotPath = null;
       try {
         transfer.uploadStrategy = "fastPut-isolated";
         transfer.pauseSupported = false;
         transfer.pauseUnavailableReason = "Pause is unavailable during fastPut upload";
+        if (!transfer.sourceIsOwnedTemp) {
+          const snapshotId = crypto.createHash("sha256")
+            .update(String(transfer.transferId || localPath))
+            .digest("hex")
+            .slice(0, 16);
+          fastPutSnapshotPath = tempDirBridge.getTransferTempFilePath(
+            `upload-source-${snapshotId}`,
+            "snapshot.bin",
+          );
+          await createVerifiedUploadSnapshot(
+            originalLocalPath,
+            fastPutSnapshotPath,
+            transfer.sourceDigestPath,
+            fileSize,
+            transfer,
+          );
+          fastPutSourcePath = fastPutSnapshotPath;
+        }
         sendProgress(Math.max(0, Number(transfer.checkpointBytes) || 0), fileSize, {
           force: true,
         });
         await uploadViaFastPut(
-          localPath,
+          fastPutSourcePath,
           remotePath,
           isolated,
           fileSize,
@@ -1128,6 +1187,10 @@ async function uploadFile(
           "[transferBridge] isolated fastPut failed, trying next pipelined strategy:",
           err?.message || String(err),
         );
+      } finally {
+        if (fastPutSnapshotPath) {
+          await fs.promises.rm(fastPutSnapshotPath, { force: true }).catch(() => {});
+        }
       }
       if (fastPutOk) {
         onBytesCommitted?.();
@@ -1319,7 +1382,7 @@ async function assertUploadDigestCapacity(digestPath, fileSize) {
   const availableBytes = BigInt(stats.bavail) * BigInt(stats.bsize);
   if (availableBytes < requiredBytes) {
     const error = new Error(
-      `Not enough Netcatty temporary storage for resumable upload verification: requires ${requiredBytes} bytes, ${availableBytes} bytes available`,
+      `Not enough Netcatty temporary storage for upload verification: requires ${requiredBytes} bytes, ${availableBytes} bytes available`,
     );
     error.noTransferFallback = true;
     throw error;
@@ -1327,9 +1390,11 @@ async function assertUploadDigestCapacity(digestPath, fileSize) {
 }
 
 async function verifyUploadDigestBaseline(sourcePath, digestPath, fileSize, transfer) {
-  const sourceHandle = await fs.promises.open(sourcePath, "r");
-  const digestHandle = await fs.promises.open(digestPath, "r");
+  let sourceHandle = null;
+  let digestHandle = null;
   try {
+    sourceHandle = await fs.promises.open(sourcePath, "r");
+    digestHandle = await fs.promises.open(digestPath, "r");
     const buffer = Buffer.allocUnsafe(Math.min(UPLOAD_DIGEST_SCAN_SIZE, Math.max(1, fileSize)));
     let position = 0;
     let chunkIndex = 0;
@@ -1352,8 +1417,8 @@ async function verifyUploadDigestBaseline(sourcePath, digestPath, fileSize, tran
       chunkIndex += digestCount;
     }
   } finally {
-    await sourceHandle.close().catch(() => {});
-    await digestHandle.close().catch(() => {});
+    await sourceHandle?.close().catch(() => {});
+    await digestHandle?.close().catch(() => {});
   }
 }
 
@@ -1363,9 +1428,11 @@ async function createUploadDigestBaseline(sourcePath, digestPath, fileSize, tran
   // evaluated for the new baseline.
   await fs.promises.rm(digestPath, { force: true });
   await assertUploadDigestCapacity(digestPath, fileSize);
-  const sourceHandle = await fs.promises.open(sourcePath, "r");
+  let sourceHandle = null;
   let digestHandle = null;
+  let completed = false;
   try {
+    sourceHandle = await fs.promises.open(sourcePath, "r");
     digestHandle = await fs.promises.open(digestPath, "w");
     const buffer = Buffer.allocUnsafe(Math.min(UPLOAD_DIGEST_SCAN_SIZE, Math.max(1, fileSize)));
     let position = 0;
@@ -1398,12 +1465,67 @@ async function createUploadDigestBaseline(sourcePath, digestPath, fileSize, tran
       position += length;
       digestPosition += digests.length;
     }
+    completed = true;
   } finally {
-    await sourceHandle.close().catch(() => {});
+    await sourceHandle?.close().catch(() => {});
     await digestHandle?.close().catch(() => {});
+    if (!completed) await fs.promises.rm(digestPath, { force: true }).catch(() => {});
   }
 
   await verifyUploadDigestBaseline(sourcePath, digestPath, fileSize, transfer);
+}
+
+async function createVerifiedUploadSnapshot(
+  sourcePath,
+  snapshotPath,
+  digestPath,
+  fileSize,
+  transfer,
+) {
+  await fs.promises.rm(snapshotPath, { force: true });
+  let sourceHandle = null;
+  let digestHandle = null;
+  let snapshotHandle = null;
+  let completed = false;
+  try {
+    sourceHandle = await fs.promises.open(sourcePath, "r");
+    digestHandle = await fs.promises.open(digestPath, "r");
+    snapshotHandle = await fs.promises.open(snapshotPath, "w");
+    const sourceStats = await sourceHandle.stat();
+    let position = 0;
+    while (position < fileSize) {
+      if (transfer.cancelled) throw new Error("Transfer cancelled");
+      const length = Math.min(UPLOAD_DIGEST_SCAN_SIZE, fileSize - position);
+      const buffer = await readVerifiedUploadRange(
+        sourceHandle,
+        digestHandle,
+        position,
+        length,
+        fileSize,
+      );
+      let written = 0;
+      while (written < buffer.length) {
+        const result = await snapshotHandle.write(
+          buffer,
+          written,
+          buffer.length - written,
+          position + written,
+        );
+        if (!result || result.bytesWritten <= 0) {
+          throw new Error("Upload snapshot stopped accepting data");
+        }
+        written += result.bytesWritten;
+      }
+      position += length;
+    }
+    await snapshotHandle.chmod(sourceStats.mode & 0o7777);
+    completed = true;
+  } finally {
+    await sourceHandle?.close().catch(() => {});
+    await digestHandle?.close().catch(() => {});
+    await snapshotHandle?.close().catch(() => {});
+    if (!completed) await fs.promises.rm(snapshotPath, { force: true }).catch(() => {});
+  }
 }
 
 async function readVerifiedUploadRange(

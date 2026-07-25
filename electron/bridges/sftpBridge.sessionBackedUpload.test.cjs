@@ -219,10 +219,12 @@ test("session-backed uploadLocalToSftp uses pipelined fastPut on the raw SFTP ch
   assert.equal(fastPutCalls.length, 1);
   assert.equal(fastPutCalls[0].concurrency, UPLOAD_TRANSFER_CONCURRENCY);
   assert.equal(fastPutCalls[0].chunkSize, TRANSFER_CHUNK_SIZE);
-  assert.equal(fastPutCalls[0].localPath, localPath);
+  assert.notEqual(fastPutCalls[0].localPath, localPath);
+  assert.match(path.basename(fastPutCalls[0].localPath), /upload-source-.*snapshot/);
+  await assert.rejects(fs.promises.stat(fastPutCalls[0].localPath), { code: "ENOENT" });
   // Final path after staged rename
   assert.ok(remoteFiles.has("/home/alice/payload.bin"));
-  assert.equal(remoteFiles.get("/home/alice/payload.bin").length, payload.length);
+  assert.deepEqual(remoteFiles.get("/home/alice/payload.bin"), payload);
 });
 
 test("session-backed writeSftpBinaryWithProgress uses pipelined fastPut", async (t) => {
