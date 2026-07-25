@@ -1417,7 +1417,8 @@ test("resuming while a fast pause is pending settles the pause request", async (
 
 test("pause stores a lightweight source identity without full-file hashing", async (t) => {
   // Pause must not await full-file SHA-256 (or start a post-pause background
-  // full read). A size+mtime meta fingerprint is durable for resume and cheap.
+  // full read). A size+mtime+sample meta fingerprint is durable for resume and
+  // cheap (head/mid/tail reads only).
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-late-pause-race-"));
   t.after(async () => {
     await fs.promises.rm(tempDir, { recursive: true, force: true });
@@ -1501,7 +1502,7 @@ test("pause stores a lightweight source identity without full-file hashing", asy
     assert.equal(paused.success, true);
     assert.ok(pauseElapsed < 1500, `pause blocked too long: ${pauseElapsed}ms`);
     assert.equal(fullHashStreamOpened, false, "pause must not open a full-file hash stream");
-    assert.match(paused.sourceFingerprint || "", /^meta:\d+:\d+$/);
+    assert.match(paused.sourceFingerprint || "", /^meta:\d+:\d+:[a-f0-9]{64}$/);
     assert.ok(
       sender.sent.some((entry) => (
         entry.channel === "netcatty:transfer:progress"
@@ -1575,7 +1576,7 @@ test("remote pause identity reads modifyTime from session-backed stat", async (t
 
   const paused = await transferBridge.pauseTransfer(null, { transferId: "download-modifytime-id" });
   assert.equal(paused.success, true);
-  assert.equal(paused.sourceFingerprint, `meta:${payload.length}:${modifyTimeMs}`);
+  assert.match(paused.sourceFingerprint || "", new RegExp(`^meta:${payload.length}:${modifyTimeMs}:[a-f0-9]{64}$`));
 
   await transferBridge.cancelTransfer(null, { transferId: "download-modifytime-id" });
   assert.match((await running).error || "", /cancel/i);
@@ -1597,6 +1598,65 @@ test("remote pause identity reads modifyTime from session-backed stat", async (t
     },
   );
   assert.match(restarted.error || "", /source file has changed/i);
+});
+
+test("meta resume rejects same-size rewrite past the 256 KiB content window", async (t) => {
+  // Codex P1: size+mtime alone (and a 256 KiB leading content window) miss a
+  // same-size rewrite between identity sample points. meta: resumes must hash
+  // the full checkpoint against the staged .part before appending.
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-meta-rewrite-"));
+  t.after(async () => {
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const fileSize = 512 * 1024;
+  const checkpoint = 400 * 1024;
+  // Between mid sample (~240–272 KiB) and tail sample (~480–512 KiB).
+  const rewriteAt = 300 * 1024;
+  const modifyTimeMs = 1_700_000_000_000;
+  const original = Buffer.alloc(fileSize, 17);
+  const rewritten = Buffer.from(original);
+  rewritten.fill(99, rewriteAt, rewriteAt + TRANSFER_CHUNK_SIZE);
+
+  const transferId = "meta-rewrite-resume";
+  const targetPath = path.join(tempDir, "target.bin");
+  const stagePath = tempDirBridge.getTransferTempFilePath(transferId, path.basename(targetPath));
+  await fs.promises.mkdir(path.dirname(stagePath), { recursive: true });
+  await fs.promises.writeFile(stagePath, original.subarray(0, checkpoint));
+
+  const client = {
+    sftp: createFastSftp({
+      createReadStream(_remotePath, options = {}) {
+        const start = Number.isFinite(options.start) ? options.start : 0;
+        const end = Number.isFinite(options.end) ? options.end : rewritten.length - 1;
+        return Readable.from(Buffer.from(rewritten.subarray(start, end + 1)));
+      },
+    }),
+    stat() {
+      return Promise.resolve({ size: fileSize, modifyTime: modifyTimeMs });
+    },
+    client: { sftp(callback) { callback(new Error("isolated channel unavailable")); } },
+  };
+  transferBridge.init({ sftpClients: new Map([["source", client]]) });
+
+  // Legacy meta:size:mtime (no samples) still passes the identity gate when
+  // size+mtime agree; the full-checkpoint content compare must catch the gap.
+  const result = await transferBridge.startTransfer(
+    { sender: createSender() },
+    {
+      transferId,
+      sourcePath: "/tmp/source.bin",
+      targetPath,
+      sourceType: "sftp",
+      targetType: "local",
+      sourceSftpId: "source",
+      totalBytes: fileSize,
+      resumable: true,
+      checkpointBytes: checkpoint,
+      sourceFingerprint: `meta:${fileSize}:${modifyTimeMs}`,
+    },
+  );
+  assert.match(result.error || "", /content does not match|Resume safety/i);
 });
 
 test("failed resumable upload opens close their isolated channel", async (t) => {

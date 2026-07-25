@@ -187,15 +187,76 @@ async function computeSourceFingerprint({ sourceType, sourcePath, sourceSftpId, 
 }
 
 /**
- * Fast pause/resume identity: size + mtime only. Full-file SHA-256 is too slow
- * for the pause critical path and must not run as a post-pause background
- * network read (would keep remote I/O after the UI shows paused).
+ * Fast pause/resume identity: size + mtime + head/mid/tail content samples.
+ * Full-file SHA-256 is too slow for the pause critical path and must not run
+ * as a post-pause background network read (would keep remote I/O after the UI
+ * shows paused). Size+mtime alone is unsafe for restart resumes — SFTP mtimes
+ * are often whole seconds, so same-size rewrites can keep the meta stamp and
+ * corrupt a checkpointed resume past the 256 KiB staged-content sample.
  */
+const IDENTITY_SAMPLE_BYTES = TRANSFER_CHUNK_SIZE;
+
+function sampleOffsetsForIdentity(fileSize) {
+  if (fileSize <= 0) return [];
+  const sampleSize = Math.min(IDENTITY_SAMPLE_BYTES, fileSize);
+  return [...new Set([
+    0,
+    Math.max(0, Math.floor((fileSize - sampleSize) / 2)),
+    Math.max(0, fileSize - sampleSize),
+  ])].map((position) => ({
+    position,
+    length: Math.min(sampleSize, fileSize - position),
+  }));
+}
+
+async function hashLocalIdentitySamples(filePath, fileSize) {
+  const samples = sampleOffsetsForIdentity(fileSize);
+  if (samples.length === 0) return null;
+  const hash = crypto.createHash("sha256");
+  const handle = await fs.promises.open(filePath, "r");
+  try {
+    for (const { position, length } of samples) {
+      const buffer = Buffer.allocUnsafe(length);
+      const { bytesRead } = await handle.read(buffer, 0, length, position);
+      if (bytesRead !== length) {
+        throw new Error("Could not sample source content for resume identity");
+      }
+      hash.update(buffer);
+      hash.update(`@${position}:${length};`);
+    }
+  } finally {
+    await handle.close().catch(() => {});
+  }
+  return hash.digest("hex");
+}
+
+async function hashRemoteIdentitySamples(client, sftpId, filePath, encoding, fileSize) {
+  if (isScpModeClient(client)) return null;
+  const samples = sampleOffsetsForIdentity(fileSize);
+  if (samples.length === 0) return null;
+  await requireSftpChannel(client);
+  const encodedPath = encodePathForSession(sftpId, filePath, encoding);
+  if (typeof client.sftp?.createReadStream !== "function") return null;
+  const hash = crypto.createHash("sha256");
+  for (const { position, length } of samples) {
+    const digest = await hashReadable(
+      client.sftp.createReadStream(encodedPath, {
+        start: position,
+        end: position + length - 1,
+      }),
+    );
+    hash.update(digest);
+    hash.update(`@${position}:${length};`);
+  }
+  return hash.digest("hex");
+}
+
 async function computeSourceIdentityLite({ sourceType, sourcePath, sourceSftpId, sourceEncoding }) {
   if (sourceType === "local") {
     const st = await fs.promises.stat(sourcePath);
     const mtime = Number.isFinite(st.mtimeMs) ? Math.trunc(st.mtimeMs) : 0;
-    return `meta:${st.size}:${mtime}`;
+    const sample = await hashLocalIdentitySamples(sourcePath, st.size);
+    return sample ? `meta:${st.size}:${mtime}:${sample}` : `meta:${st.size}:${mtime}`;
   }
   const client = sftpClients.get(sourceSftpId);
   if (!client) throw new Error("Source SFTP session not found");
@@ -211,7 +272,8 @@ async function computeSourceIdentityLite({ sourceType, sourcePath, sourceSftpId,
   const mtime = Number.isFinite(Number(mtimeRaw))
     ? Math.trunc(Number(mtimeRaw) > 1e12 ? Number(mtimeRaw) : Number(mtimeRaw) * 1000)
     : 0;
-  return `meta:${size}:${mtime}`;
+  const sample = await hashRemoteIdentitySamples(client, sourceSftpId, sourcePath, sourceEncoding, size);
+  return sample ? `meta:${size}:${mtime}:${sample}` : `meta:${size}:${mtime}`;
 }
 
 async function computeMatchingSourceFingerprint(storedFingerprint, params) {
@@ -219,6 +281,30 @@ async function computeMatchingSourceFingerprint(storedFingerprint, params) {
     return computeSourceIdentityLite(params);
   }
   return computeSourceFingerprint(params);
+}
+
+/**
+ * meta: fingerprints gained an optional content-sample suffix. Legacy
+ * meta:size:mtime values still match when size+mtime agree; full checkpoint
+ * content verify (see resumeContentVerifyBytes) covers same-size rewrites.
+ */
+function sourceFingerprintsMatch(storedFingerprint, currentFingerprint) {
+  if (!storedFingerprint || !currentFingerprint) return false;
+  if (storedFingerprint === currentFingerprint) return true;
+  if (
+    typeof storedFingerprint !== "string"
+    || typeof currentFingerprint !== "string"
+    || !storedFingerprint.startsWith("meta:")
+    || !currentFingerprint.startsWith("meta:")
+  ) {
+    return false;
+  }
+  const storedParts = storedFingerprint.split(":");
+  const currentParts = currentFingerprint.split(":");
+  if (storedParts.length === 3 && currentParts.length >= 3) {
+    return storedParts[1] === currentParts[1] && storedParts[2] === currentParts[2];
+  }
+  return false;
 }
 
 async function hashRemotePrefix(client, sftpId, filePath, encoding, bytes) {
@@ -230,16 +316,22 @@ async function hashRemotePrefix(client, sftpId, filePath, encoding, bytes) {
 }
 
 /**
- * Cap content re-hash on resume. Full-prefix hashing of multi-MB .part files
- * over SFTP can take longer than the remaining transfer itself and freezes the
- * UI at "transferring" with no byte movement (seen after Resume All post-quit).
- * A leading sample still catches swapped / truncated garbage cheaply.
+ * Cap content re-hash on resume for strong (sha256:) fingerprints. Full-prefix
+ * hashing of multi-MB .part files over SFTP can take longer than the remaining
+ * transfer and freezes the UI at "transferring" with no byte movement.
+ *
+ * meta: identities are only size+mtime(+samples). Same-size rewrites past the
+ * sample points / 256 KiB leading window still need a full checkpoint compare
+ * before appending, or the staged file mixes two source versions.
  */
 const RESUME_CONTENT_VERIFY_MAX_BYTES = 256 * 1024;
 
-function resumeContentVerifyBytes(checkpoint) {
+function resumeContentVerifyBytes(checkpoint, fingerprint) {
   const claimed = Math.max(0, Number(checkpoint) || 0);
   if (!claimed) return 0;
+  if (typeof fingerprint === "string" && fingerprint.startsWith("meta:")) {
+    return claimed;
+  }
   return Math.min(claimed, RESUME_CONTENT_VERIFY_MAX_BYTES);
 }
 
@@ -2797,7 +2889,7 @@ async function startTransferNow(event, payload, onProgress) {
       if (
         transfer.sourceFingerprint
         && currentSourceFingerprint
-        && transfer.sourceFingerprint !== currentSourceFingerprint
+        && !sourceFingerprintsMatch(transfer.sourceFingerprint, currentSourceFingerprint)
       ) {
         throw new Error("Resume safety check failed: the source file has changed");
       }
@@ -2854,7 +2946,10 @@ async function startTransferNow(event, payload, onProgress) {
             : 0;
           sendProgress(transfer.checkpointBytes, fileSize, { force: true });
           if (usesStage && transfer.checkpointBytes > 0) {
-            const verifyBytes = resumeContentVerifyBytes(transfer.checkpointBytes);
+            const verifyBytes = resumeContentVerifyBytes(
+              transfer.checkpointBytes,
+              transfer.sourceFingerprint,
+            );
             await runCancelablePreflight(() => assertMatchingResumeContent(
                 hashLocalPrefix(sourcePath, verifyBytes),
                 hashRemotePrefix(client, targetSftpId, uploadTargetPath, targetEncoding, verifyBytes),
@@ -2896,7 +2991,10 @@ async function startTransferNow(event, payload, onProgress) {
       );
       sendProgress(transfer.checkpointBytes, fileSize, { force: true });
       await runCancelablePreflight(async () => {
-        const verifyBytes = resumeContentVerifyBytes(transfer.checkpointBytes);
+        const verifyBytes = resumeContentVerifyBytes(
+          transfer.checkpointBytes,
+          transfer.sourceFingerprint,
+        );
         await assertMatchingResumeContent(
           hashRemotePrefix(client, sourceSftpId, sourcePath, sourceEncoding, verifyBytes),
           hashLocalPrefix(downloadTargetPath, verifyBytes),
@@ -2976,7 +3074,7 @@ async function startTransferNow(event, payload, onProgress) {
       transfer.checkpointBytes = checkpoint;
       sendProgress(checkpoint, fileSize, { force: true });
       {
-        const verifyBytes = resumeContentVerifyBytes(checkpoint);
+        const verifyBytes = resumeContentVerifyBytes(checkpoint, transfer.sourceFingerprint);
         await assertMatchingResumeContent(
           hashLocalPrefix(sourcePath, verifyBytes),
           hashLocalPrefix(localTargetPath, verifyBytes),
@@ -3122,7 +3220,10 @@ async function startTransferNow(event, payload, onProgress) {
             ? sourcePath
             : encodePathForSession(sourceSftpId, sourcePath, sourceEncoding);
           await runCancelablePreflight(async () => {
-            const verifyBytes = resumeContentVerifyBytes(transfer.downloadCheckpointBytes);
+            const verifyBytes = resumeContentVerifyBytes(
+              transfer.downloadCheckpointBytes,
+              transfer.sourceFingerprint,
+            );
             await assertMatchingResumeContent(
               hashRemotePrefix(sourceClient, sourceSftpId, sourcePath, sourceEncoding, verifyBytes),
               hashLocalPrefix(tempPath, verifyBytes),
@@ -3247,7 +3348,10 @@ async function startTransferNow(event, payload, onProgress) {
             sendProgress(lastObservedTransferred, fileSize, { force: true });
             transfer.checkpointBytes = transfer.uploadCheckpointBytes;
             if (usesStage && transfer.uploadCheckpointBytes > 0) {
-              const verifyBytes = resumeContentVerifyBytes(transfer.uploadCheckpointBytes);
+              const verifyBytes = resumeContentVerifyBytes(
+                transfer.uploadCheckpointBytes,
+                transfer.sourceFingerprint,
+              );
               await runCancelablePreflight(() => assertMatchingResumeContent(
                   hashLocalPrefix(tempPath, verifyBytes),
                   hashRemotePrefix(
