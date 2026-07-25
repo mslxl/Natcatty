@@ -6,10 +6,10 @@ import type { Terminal as XTerm } from "@xterm/xterm";
 import {
   cancelScheduledUnfocusedRepaint,
   flushPendingTerminalWritesBeforeHibernate,
-  flushTerminalWriteBufferBypassingTimers,
   forceTerminalRepaintBypassingAnimationFrame,
   hasPendingTerminalWrites,
   repaintTerminalAfterReveal,
+  runWithTerminalOutputPausedAfterWritesSettle,
   scheduleTerminalRepaintWhenUnfocused,
   shouldFlushTerminalWritesForBackgroundOutput,
   writeLocalTerminalDataInOrder,
@@ -95,6 +95,14 @@ const createBufferedFakeTerm = () => {
       writeBuffer._writeBuffer.push(data);
       writeBuffer._callbacks.push(callback);
       writeBuffer._pendingData += data.length;
+      setTimeout(() => {
+        const chunk = writeBuffer._writeBuffer.shift();
+        const done = writeBuffer._callbacks.shift();
+        if (chunk === undefined) return;
+        writeBuffer._pendingData = Math.max(0, writeBuffer._pendingData - chunk.length);
+        writes.push(chunk);
+        done?.();
+      }, 0);
     },
     scrollToBottom() {},
   } as unknown as XTerm;
@@ -187,70 +195,17 @@ test("shouldFlushTerminalWritesForBackgroundOutput flushes hidden panes and page
   }, { hasFocus: true });
 });
 
-test("flushTerminalWriteBufferBypassingTimers drains xterm's internal write buffer", () => {
-  let flushed = false;
-  const writeBuffer = {
-    flushSync() {
-      flushed = this === writeBuffer;
-    },
-  };
-  const term = {
-    _core: {
-      _writeBuffer: writeBuffer,
-    },
-  };
-
-  flushTerminalWriteBufferBypassingTimers(term as never);
-
-  assert.equal(flushed, true);
-});
-
-test("flushTerminalWriteBufferBypassingTimers skips already parsed xterm chunks", () => {
-  const processed: string[] = [];
-  let oldCallbackCalled = false;
-  let pendingCallbackCalled = false;
-  const writeBuffer = {
-    _bufferOffset: 1,
-    _callbacks: [
-      () => { oldCallbackCalled = true; },
-      () => { pendingCallbackCalled = true; },
-    ] as Array<() => void>,
-    _pendingData: "pending".length,
-    _writeBuffer: ["already-parsed", "pending"],
-    flushSync() {
-      while (this._writeBuffer.length > 0) {
-        processed.push(this._writeBuffer.shift()!);
-        this._callbacks.shift()?.();
-      }
-      this._pendingData = 0;
-      this._bufferOffset = 0;
-    },
-  };
-  const term = {
-    _core: {
-      _writeBuffer: writeBuffer,
-    },
-  };
-
-  flushTerminalWriteBufferBypassingTimers(term as never);
-
-  assert.deepEqual(processed, ["pending"]);
-  assert.equal(oldCallbackCalled, false);
-  assert.equal(pendingCallbackCalled, true);
-  assert.equal(writeBuffer._pendingData, 0);
-});
-
-test("flushPendingTerminalWritesOnResume drains coalescer, queue, and xterm write buffer", () => {
+test("flushPendingTerminalWritesOnResume starts queued output without forcing xterm parsing", () => {
   const source = readFileSync(
     new URL("./terminalUnfocusedRepaint.ts", import.meta.url),
     "utf8",
   );
   assert.match(source, /flushTerminalWriteCoalescer\(term\)/);
   assert.match(source, /flushTerminalWriteQueueBypassingTimers\(term\)/);
-  assert.match(source, /flushTerminalWriteBufferBypassingTimers\(term\)/);
+  assert.doesNotMatch(source, /flushSync/);
 });
 
-test("direct local writes stay ordered after pending hidden output", () => {
+test("direct local writes stay ordered after pending hidden output", async () => {
   const { term, writes } = createBufferedFakeTerm();
   const captured: string[] = [];
 
@@ -259,8 +214,9 @@ test("direct local writes stay ordered after pending hidden output", () => {
     term.write(data);
   });
   writeLocalTerminalDataInOrder(term, "local-after", (data) => captured.push(data));
-  flushTerminalWriteBufferBypassingTimers(term);
+  const flushed = await flushPendingTerminalWritesBeforeHibernate(term);
 
+  assert.equal(flushed, true);
   assert.deepEqual(writes, ["remote-before", "local-after"]);
   assert.deepEqual(captured, ["remote-before", "local-after"]);
 });
@@ -315,6 +271,110 @@ test("flushPendingTerminalWritesBeforeHibernate drains pending xterm output comp
   assert.equal(flushed, true);
   assert.equal(writes.join(""), payload);
   assert.equal(hasPendingTerminalWrites(term), false);
+});
+
+test("flushPendingTerminalWritesBeforeHibernate returns before the renderer drain timeout", async () => {
+  const term = {
+    _core: {
+      _writeBuffer: {
+        _bufferOffset: 0,
+        _pendingData: 1,
+        _writeBuffer: ["stuck"],
+      },
+    },
+  } as unknown as XTerm;
+  const startedAt = Date.now();
+
+  const flushed = await flushPendingTerminalWritesBeforeHibernate(term);
+  const elapsedMs = Date.now() - startedAt;
+
+  assert.equal(flushed, false);
+  assert.ok(elapsedMs < 1_800, `settle deadline took ${elapsedMs}ms`);
+});
+
+test("paused terminal operations reassert pause after write callbacks resume the source", async () => {
+  const { term } = createBufferedFakeTerm();
+  const events: string[] = [];
+  term.write("pending", () => {
+    // Simulate OutputFlowController.written crossing its low watermark.
+    events.push("flow-resume");
+    events.push("lease-kept-paused");
+  });
+  const backend = {
+    async acquireSessionFlowPauseLease(_sessionId: string) {
+      let released = false;
+      events.push("pause");
+      return {
+        release: () => {
+          if (released) return;
+          released = true;
+          events.push("resume");
+        },
+        async waitForPause() {
+          events.push("pause-wait");
+        },
+      };
+    },
+  };
+
+  const settled = await runWithTerminalOutputPausedAfterWritesSettle(
+    term,
+    "session-1",
+    backend,
+    () => events.push("resize"),
+  );
+
+  assert.equal(settled, true);
+  assert.deepEqual(events, [
+    "pause",
+    "pause-wait",
+    "flow-resume",
+    "lease-kept-paused",
+    "resize",
+    "resume",
+  ]);
+});
+
+test("a replaced backend session cancels the old operation without resuming its source", async () => {
+  const { term } = createBufferedFakeTerm();
+  const events: string[] = [];
+  let currentSessionId = "session-1";
+  term.write("old-session-output", () => {
+    currentSessionId = "session-2";
+    events.push("session-replaced");
+  });
+  const backend = {
+    async acquireSessionFlowPauseLease(_sessionId: string) {
+      events.push("pause-old");
+      return {
+        release: (options?: { keepPaused?: boolean }) => {
+          events.push(options?.keepPaused ? "keep-pause-old" : "resume-old");
+        },
+        async waitForPause() {
+          events.push("pause-wait-old");
+        },
+      };
+    },
+  };
+
+  await runWithTerminalOutputPausedAfterWritesSettle(
+    term,
+    "session-1",
+    backend,
+    () => {
+      if (currentSessionId !== "session-1") return;
+      events.push("resize");
+    },
+    () => currentSessionId === "session-1",
+  );
+
+  assert.deepEqual(events, [
+    "pause-old",
+    "pause-wait-old",
+    "session-replaced",
+    "keep-pause-old",
+  ]);
+  assert.equal(events.includes("resize"), false);
 });
 
 test("maybeFlushTerminalWriteCoalescerWhenUnfocused throttles coalescer flushes", () => {
@@ -386,7 +446,8 @@ test("writeSessionData bypasses animation-frame coalescing for background output
     /enqueueCoalescedTerminalWrite\(\s*term,\s*data,\s*writeBackgroundOutputData,\s*ingressBytes,/,
   );
   assert.match(source, /flushTerminalWriteQueueBypassingTimers\(term\)/);
-  assert.match(source, /const deferFlowAck = !writeOptions\.flushXtermWriteBuffer/);
+  assert.match(source, /const deferFlowAck = !forcePromptNewLine/);
+  assert.doesNotMatch(source, /flushXtermWriteBuffer/);
 });
 
 test("writeSessionDataImmediate schedules unfocused repaint for visible panes on every path", () => {

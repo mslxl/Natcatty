@@ -6,8 +6,15 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
+const { Readable } = require("node:stream");
 const tempDirBridge = require("./tempDirBridge.cjs");
-const { encodePathForSession, ensureRemoteDirForSession, requireSftpChannel, resolveEncodingForRequest } = require("./sftpBridge.cjs");
+const {
+  encodePathForSession,
+  ensureRemoteDirForSession,
+  runRemoteUploadTransaction,
+  requireSftpChannel,
+  resolveEncodingForRequest,
+} = require("./sftpBridge.cjs");
 const { isScpModeClient, getScpBackendForClient } = require("./sftpBridge/scpBackend.cjs");
 const {
   DOWNLOAD_TRANSFER_CONCURRENCY,
@@ -39,13 +46,6 @@ async function assertRemoteUploadSize(client, remotePath, expectedSize) {
     throw new Error(`Upload completed but remote file size is unavailable (${remotePath})`);
   }
   if (remoteSize !== expectedSize) {
-    try {
-      if (typeof client.delete === "function") {
-        await client.delete(remotePath);
-      }
-    } catch {
-      // Best-effort cleanup of the corrupt remote file.
-    }
     throw new Error(
       `Upload size mismatch for ${remotePath}: expected ${expectedSize} bytes, got ${remoteSize}`,
     );
@@ -205,7 +205,15 @@ async function assertMatchingResumeContent(sourceHashPromise, stagedHashPromise)
   }
 }
 
-async function promoteLocalTransfer(stagedPath, targetPath) {
+function stableLocalFileIdentity(statLike) {
+  if (!statLike) return null;
+  return [statLike.dev, statLike.ino, statLike.size].join(":");
+}
+
+async function promoteLocalTransfer(stagedPath, targetPath, options = {}) {
+  const assertNotCancelled = typeof options.assertNotCancelled === "function"
+    ? options.assertNotCancelled
+    : () => {};
   const token = crypto.randomUUID().replace(/-/g, "");
   const targetDir = path.dirname(targetPath);
   const targetBase = path.basename(targetPath);
@@ -213,7 +221,10 @@ async function promoteLocalTransfer(stagedPath, targetPath) {
   const backupPath = path.join(targetDir, `.${targetBase}.netcatty-${token}.backup`);
   let preparedPath = stagedPath;
   let backedUp = false;
+  let published = false;
+  let publishedIdentity = null;
   try {
+    assertNotCancelled();
     try {
       await fs.promises.rename(stagedPath, readyPath);
     } catch (err) {
@@ -222,56 +233,294 @@ async function promoteLocalTransfer(stagedPath, targetPath) {
       preparedPath = readyPath;
     }
     if (preparedPath !== readyPath) preparedPath = readyPath;
+    let appliedMode = null;
+    let targetStable = false;
+    let expectedStableIdentity = null;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const validatedTarget = typeof options.validateTarget === "function"
+        ? await options.validateTarget()
+        : null;
+      const existingMode = Number.isInteger(validatedTarget?.existingMode)
+        ? validatedTarget.existingMode & 0o7777
+        : Number.isInteger(options.existingMode)
+          ? options.existingMode & 0o7777
+          : null;
+      if (existingMode !== null && existingMode !== appliedMode) {
+        await fs.promises.chmod(readyPath, existingMode);
+        appliedMode = existingMode;
+        continue;
+      }
+      expectedStableIdentity = validatedTarget?.stableIdentity
+        || (validatedTarget?.targetIdentity
+          ? String(validatedTarget.targetIdentity).split(":").slice(0, 3).join(":")
+          : null);
+      targetStable = true;
+      break;
+    }
+    if (!targetStable) {
+      throw new Error("Local download target kept changing before replacement");
+    }
+    assertNotCancelled();
     try {
       await fs.promises.rename(targetPath, backupPath);
       backedUp = true;
     } catch (err) {
       if (err?.code !== "ENOENT") throw err;
     }
+    // Another process may have replaced the destination between validateTarget
+    // and rename. Re-check the moved backup before publishing the download.
+    if (backedUp && expectedStableIdentity) {
+      let backupStat;
+      try {
+        backupStat = await fs.promises.lstat(backupPath);
+      } catch (err) {
+        throw new Error(
+          `Local download target disappeared during replacement: ${targetPath}`,
+          { cause: err },
+        );
+      }
+      if (!backupStat.isFile() || stableLocalFileIdentity(backupStat) !== expectedStableIdentity) {
+        // If another writer already recreated targetPath, do not restore the
+        // mismatched backup over it — leave both intact and fail closed.
+        let targetOccupied = false;
+        try {
+          await fs.promises.lstat(targetPath);
+          targetOccupied = true;
+        } catch (err) {
+          if (err?.code !== "ENOENT") throw err;
+        }
+        if (targetOccupied) {
+          const conflict = new Error("Local download target changed during replacement");
+          conflict.leaveConcurrentTarget = true;
+          conflict.remoteBackupPath = backupPath;
+          backedUp = false;
+          throw conflict;
+        }
+        try {
+          await fs.promises.rename(backupPath, targetPath);
+          backedUp = false;
+        } catch (restoreErr) {
+          const recoveryFailure = new Error(
+            `Could not restore the original file after a concurrent replacement was detected. `
+            + `Backup: ${backupPath}; target: ${targetPath}`,
+            { cause: restoreErr },
+          );
+          recoveryFailure.recoveryFailed = true;
+          throw recoveryFailure;
+        }
+        throw new Error("Local download target changed during replacement");
+      }
+    }
+    // After the backup move, a concurrent writer may recreate targetPath. Never
+    // clobber that file: leave it in place, keep the original in backupPath for
+    // recovery, and fail closed before publishing the download.
+    if (backedUp) {
+      let recreated = false;
+      try {
+        await fs.promises.lstat(targetPath);
+        recreated = true;
+      } catch (err) {
+        if (err?.code !== "ENOENT") throw err;
+      }
+      if (recreated) {
+        const conflict = new Error("Local download target changed during replacement");
+        conflict.leaveConcurrentTarget = true;
+        conflict.remoteBackupPath = backupPath;
+        // Prevent the catch path from renaming backup over the concurrent file.
+        backedUp = false;
+        throw conflict;
+      }
+    }
+    assertNotCancelled();
+    // Capture identity of the ready file before publish so rollback can refuse
+    // to clobber a concurrent replacement of the published target.
+    try {
+      publishedIdentity = stableLocalFileIdentity(await fs.promises.lstat(readyPath));
+    } catch {
+      publishedIdentity = null;
+    }
     await fs.promises.rename(readyPath, targetPath);
+    published = true;
+    assertNotCancelled();
+    options.onCommit?.();
     if (backedUp) await fs.promises.unlink(backupPath).catch(() => {});
     if (stagedPath !== readyPath) await fs.promises.unlink(stagedPath).catch(() => {});
   } catch (err) {
-    if (backedUp) {
-      await fs.promises.rename(backupPath, targetPath).catch(() => {});
+    let restoreError = null;
+    if (err?.leaveConcurrentTarget) {
+      // Caller already decided not to touch a concurrent target/backup pair.
+    } else if (backedUp) {
+      let targetMatchesPublished = false;
+      let targetMissing = false;
+      try {
+        const targetStat = await fs.promises.lstat(targetPath);
+        targetMatchesPublished = !!(
+          published
+          && publishedIdentity
+          && stableLocalFileIdentity(targetStat) === publishedIdentity
+        );
+      } catch (statErr) {
+        if (statErr?.code === "ENOENT") targetMissing = true;
+        else restoreError = statErr;
+      }
+      if (!restoreError) {
+        if (published && !targetMissing && !targetMatchesPublished) {
+          // Concurrent writer replaced our published file — keep both.
+          err.leaveConcurrentTarget = true;
+          err.remoteBackupPath = backupPath;
+          backedUp = false;
+        } else {
+          if (published && targetMatchesPublished) {
+            await fs.promises.unlink(targetPath).catch(() => {});
+          }
+          if (targetMissing || targetMatchesPublished || !published) {
+            try {
+              // Only restore when the path is free or still holds our publish.
+              if (!published) {
+                let occupied = false;
+                try {
+                  await fs.promises.lstat(targetPath);
+                  occupied = true;
+                } catch (occErr) {
+                  if (occErr?.code !== "ENOENT") throw occErr;
+                }
+                if (occupied) {
+                  err.leaveConcurrentTarget = true;
+                  err.remoteBackupPath = backupPath;
+                  backedUp = false;
+                } else {
+                  await fs.promises.rename(backupPath, targetPath);
+                  backedUp = false;
+                }
+              } else {
+                await fs.promises.rename(backupPath, targetPath);
+                backedUp = false;
+              }
+            } catch (recoveryErr) {
+              restoreError = recoveryErr;
+            }
+          }
+        }
+      }
+    } else if (published) {
+      try {
+        const targetStat = await fs.promises.lstat(targetPath);
+        if (publishedIdentity && stableLocalFileIdentity(targetStat) === publishedIdentity) {
+          await fs.promises.unlink(targetPath);
+        }
+      } catch (recoveryErr) {
+        if (recoveryErr?.code !== "ENOENT") restoreError = recoveryErr;
+      }
+    }
+    if (restoreError) {
+      const recoveryFailure = new Error(
+        `Could not restore the original file after replacement failed. `
+        + `Backup: ${backupPath}; prepared replacement: ${readyPath}; `
+        + `original staged path: ${stagedPath}; target: ${targetPath}`,
+        { cause: restoreError },
+      );
+      recoveryFailure.recoveryFailed = true;
+      throw recoveryFailure;
     }
     await fs.promises.unlink(readyPath).catch(() => {});
     throw err;
   }
 }
 
-async function promoteRemoteTransfer(client, sftpId, stagedPath, targetPath, encoding) {
-  const backupPath = `${targetPath}.netcatty-${crypto.randomUUID().replace(/-/g, "")}.backup`;
-  let backedUp = false;
-  if (isScpModeClient(client)) {
-    const backend = getScpBackendForClient(client);
+async function inspectLocalPromotionTarget(targetPath) {
+  const absoluteTargetPath = path.resolve(targetPath);
+  const visitedLinkStates = new Set();
+  let linkDepth = 0;
+  let currentRoot = path.parse(absoluteTargetPath).root;
+  let currentPath = currentRoot;
+  let pendingParts = absoluteTargetPath
+    .slice(currentRoot.length)
+    .split(path.sep)
+    .filter(Boolean);
+
+  while (pendingParts.length > 0) {
+    const nextPart = pendingParts.shift();
+    const candidatePath = path.join(currentPath, nextPart);
+    let targetLstat;
     try {
-      await backend.rename(targetPath, backupPath, { encoding });
-      backedUp = true;
-    } catch { /* target may not exist */ }
-    try {
-      await backend.rename(stagedPath, targetPath, { encoding });
-    } catch (err) {
-      if (backedUp) await backend.rename(backupPath, targetPath, { encoding }).catch(() => {});
-      throw err;
+      targetLstat = await fs.promises.lstat(candidatePath);
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+      return {
+        promotionTargetPath: path.join(candidatePath, ...pendingParts),
+        existingMode: null,
+        targetIdentity: "missing",
+      };
     }
-    if (backedUp) await backend.remove(backupPath, { recursive: false, encoding }).catch(() => {});
-    return;
+
+    if (targetLstat.isSymbolicLink()) {
+      linkDepth += 1;
+      const linkState = `${candidatePath}\0${pendingParts.join("\0")}`;
+      if (linkDepth > 40 || visitedLinkStates.has(linkState)) {
+        const error = new Error(`Local download target contains a symbolic-link loop: ${targetPath}`);
+        error.code = "ELOOP";
+        throw error;
+      }
+      visitedLinkStates.add(linkState);
+      const linkTarget = await fs.promises.readlink(candidatePath);
+      const resolvedLinkTarget = path.resolve(path.dirname(candidatePath), linkTarget);
+      currentRoot = path.parse(resolvedLinkTarget).root;
+      currentPath = currentRoot;
+      pendingParts = resolvedLinkTarget
+        .slice(currentRoot.length)
+        .split(path.sep)
+        .filter(Boolean)
+        .concat(pendingParts);
+      continue;
+    }
+
+    if (pendingParts.length > 0) {
+      if (!targetLstat.isDirectory()) {
+        const error = new Error(`Local download target parent is not a directory: ${candidatePath}`);
+        error.code = "ENOTDIR";
+        throw error;
+      }
+      currentPath = candidatePath;
+      continue;
+    }
+
+    if (!targetLstat.isFile()) {
+      const error = new Error(`Local download target is not a regular file: ${candidatePath}`);
+      error.code = targetLstat.isDirectory() ? "EISDIR" : "EINVAL";
+      throw error;
+    }
+    return {
+      promotionTargetPath: candidatePath,
+      existingMode: targetLstat.mode & 0o7777,
+      stableIdentity: stableLocalFileIdentity(targetLstat),
+      targetIdentity: [
+        targetLstat.dev,
+        targetLstat.ino,
+        targetLstat.size,
+        targetLstat.mtimeMs,
+        targetLstat.ctimeMs,
+      ].join(":"),
+    };
   }
-  const encodedStage = encodePathForSession(sftpId, stagedPath, encoding);
-  const encodedTarget = encodePathForSession(sftpId, targetPath, encoding);
-  const encodedBackup = encodePathForSession(sftpId, backupPath, encoding);
-  try {
-    await client.rename(encodedTarget, encodedBackup);
-    backedUp = true;
-  } catch { /* target may not exist */ }
-  try {
-    await client.rename(encodedStage, encodedTarget);
-  } catch (err) {
-    if (backedUp) await client.rename(encodedBackup, encodedTarget).catch(() => {});
-    throw err;
+
+  const rootStat = await fs.promises.lstat(currentPath);
+  if (!rootStat.isFile()) {
+    const error = new Error(`Local download target is not a regular file: ${currentPath}`);
+    error.code = rootStat.isDirectory() ? "EISDIR" : "EINVAL";
+    throw error;
   }
-  if (backedUp) await client.delete(encodedBackup).catch(() => {});
+  return {
+    promotionTargetPath: currentPath,
+    existingMode: rootStat.mode & 0o7777,
+    stableIdentity: stableLocalFileIdentity(rootStat),
+    targetIdentity: [
+      rootStat.dev,
+      rootStat.ino,
+      rootStat.size,
+      rootStat.mtimeMs,
+      rootStat.ctimeMs,
+    ].join(":"),
+  };
 }
 
 // ── Transfer performance tuning ──────────────────────────────────────────────
@@ -310,6 +559,56 @@ const {
  */
 function init(deps) {
   sftpClients = deps.sftpClients;
+}
+
+async function runTransferCancelablePreflight(transfer, operation) {
+  if (transfer.cancelled || transfer.signal?.aborted) {
+    throw new Error("Transfer cancelled");
+  }
+  let rejectCancellation;
+  const cancelled = new Promise((_, reject) => {
+    rejectCancellation = reject;
+  });
+  const previousAbort = transfer.abort;
+  const abortPreflight = () => {
+    try { previousAbort?.(); } finally {
+      rejectCancellation(new Error("Transfer cancelled"));
+    }
+  };
+  const signal = transfer.signal;
+  transfer.abort = abortPreflight;
+  signal?.addEventListener?.("abort", abortPreflight, { once: true });
+  try {
+    return await Promise.race([
+      Promise.resolve().then(operation),
+      cancelled,
+    ]);
+  } finally {
+    signal?.removeEventListener?.("abort", abortPreflight);
+    if (transfer.abort === abortPreflight) transfer.abort = previousAbort;
+  }
+}
+
+async function runTransferAbortableOperation(transfer, operation) {
+  if (transfer.cancelled || transfer.signal?.aborted) {
+    throw new Error("Transfer cancelled");
+  }
+  const controller = new AbortController();
+  const previousAbort = transfer.abort;
+  const abortOperation = () => {
+    try { previousAbort?.(); } finally {
+      controller.abort(new Error("Transfer cancelled"));
+    }
+  };
+  const signal = transfer.signal;
+  transfer.abort = abortOperation;
+  signal?.addEventListener?.("abort", abortOperation, { once: true });
+  try {
+    return await operation(controller.signal);
+  } finally {
+    signal?.removeEventListener?.("abort", abortOperation);
+    if (transfer.abort === abortOperation) transfer.abort = previousAbort;
+  }
 }
 
 function listTransferSftpIds(payload = {}) {
@@ -768,35 +1067,146 @@ async function uploadViaFastPut(localPath, remotePath, sftp, fileSize, transfer,
  * (#2449). When every pipelined strategy fails, the transfer fails with the
  * last underlying error (Electerm-style: fail closed, do not crawl).
  */
-async function uploadFile(localPath, remotePath, client, fileSize, transfer, sendProgress, encoding = "utf-8") {
+async function uploadFile(
+  localPath,
+  remotePath,
+  client,
+  fileSize,
+  transfer,
+  sendProgress,
+  encoding = "utf-8",
+  onBytesCommitted = null,
+) {
   if (isScpModeClient(client)) {
     transfer.pauseSupported = false;
     transfer.pauseUnavailableReason = "Pause is unavailable for SCP transfers";
     transfer.uploadStrategy = "scp";
     const backend = getScpBackendForClient(client);
-    await backend.uploadFile(localPath, remotePath, {
-      fileSize,
-      transfer,
-      encoding,
-      onProgress: (transferred, total) => sendProgress(transferred, total || fileSize),
-    });
-    return;
+    let scpSourcePath = localPath;
+    let digestPath = null;
+    let snapshotPath = null;
+    let openReadStream = null;
+    let initialSource = null;
+    try {
+      if (!transfer.sourceIsOwnedTemp) {
+        initialSource = await fs.promises.stat(localPath);
+        const snapshotId = crypto.createHash("sha256")
+          .update(String(transfer.transferId || localPath))
+          .digest("hex")
+          .slice(0, 16);
+        digestPath = tempDirBridge.getTransferTempFilePath(
+          `upload-digest-${snapshotId}`,
+          "ranges.sha256",
+        );
+        snapshotPath = tempDirBridge.getTransferTempFilePath(
+          `upload-source-${snapshotId}`,
+          "snapshot.bin",
+        );
+        await createUploadDigestBaseline(localPath, digestPath, fileSize, transfer);
+        if (isTransferCancelled(transfer)) throw new Error("Transfer cancelled");
+        const sourceAfterBaseline = await fs.promises.stat(localPath);
+        assertSourceMetadataUnchanged(initialSource, sourceAfterBaseline, fileSize);
+        if (typeof onBytesCommitted === "function") {
+          await createVerifiedUploadSnapshot(
+            localPath,
+            snapshotPath,
+            digestPath,
+            fileSize,
+            transfer,
+          );
+          scpSourcePath = snapshotPath;
+        } else {
+          // Remote staging can safely discard a failed upload. Verify every
+          // source chunk as SCP reads it, then rescan before promotion, without
+          // requiring another full local copy of large files.
+          snapshotPath = null;
+          openReadStream = () => createVerifiedUploadReadStream(
+            localPath,
+            digestPath,
+            fileSize,
+            transfer,
+          );
+        }
+      }
+      await backend.uploadFile(scpSourcePath, remotePath, {
+        fileSize,
+        transfer,
+        encoding,
+        signal: transfer.signal,
+        openReadStream,
+        onProgress: (transferred, total) => sendProgress(transferred, total || fileSize),
+      });
+      if (isTransferCancelled(transfer)) throw new Error("Transfer cancelled");
+      if (digestPath && !snapshotPath) {
+        const latestSource = await fs.promises.stat(localPath);
+        assertSourceMetadataUnchanged(initialSource, latestSource, fileSize);
+        await verifyUploadDigestBaseline(localPath, digestPath, fileSize, transfer);
+      }
+      onBytesCommitted?.();
+      return;
+    } finally {
+      if (snapshotPath) await fs.promises.rm(snapshotPath, { force: true }).catch(() => {});
+      if (digestPath) await fs.promises.rm(digestPath, { force: true }).catch(() => {});
+    }
   }
 
   await requireSftpChannel(client);
   const sftp = client.sftp;
   if (!sftp) throw new Error("SFTP client not ready");
   transfer.pauseSupported = Boolean(transfer.resumable);
-  const initialSource = transfer.resumable
-    ? await fs.promises.stat(localPath)
+  const originalLocalPath = localPath;
+  const initialSource = (transfer.resumable || !transfer.sourceIsOwnedTemp)
+    ? await fs.promises.stat(originalLocalPath)
     : null;
+  if (!transfer.sourceIsOwnedTemp) {
+    const digestId = crypto.createHash("sha256")
+      .update(String(transfer.transferId || "upload"))
+      .digest("hex")
+      .slice(0, 16);
+    const digestPath = tempDirBridge.getTransferTempFilePath(
+      `upload-digest-${digestId}`,
+      "ranges.sha256",
+    );
+    transfer.sourceDigestPath = digestPath;
+    await createUploadDigestBaseline(
+      originalLocalPath,
+      digestPath,
+      fileSize,
+      transfer,
+    );
+    if (isTransferCancelled(transfer)) throw new Error("Transfer cancelled");
+    const sourceAfterBaseline = await fs.promises.stat(originalLocalPath);
+    assertSourceMetadataUnchanged(initialSource, sourceAfterBaseline, fileSize);
+  }
+
+  const cleanupSourceDigest = async () => {
+    if (!transfer.sourceDigestPath) return;
+    const digestPath = transfer.sourceDigestPath;
+    transfer.sourceDigestPath = null;
+    await fs.promises.rm(digestPath, { force: true }).catch(() => {});
+  };
 
   const finishSuccessfulUpload = async () => {
-    if (initialSource) {
-      const latestSource = await fs.promises.stat(localPath);
-      assertSourceMetadataUnchanged(initialSource, latestSource, fileSize);
+    try {
+      if (initialSource) {
+        const latestSource = await fs.promises.stat(originalLocalPath);
+        assertSourceMetadataUnchanged(initialSource, latestSource, fileSize);
+      }
+      // Metadata alone cannot catch same-size rewrites with unchanged/coarse
+      // timestamps (e.g. all ranges already verified before the rewrite).
+      // Re-scan the source against the digest baseline before promotion.
+      if (transfer.sourceDigestPath) {
+        await verifyUploadDigestBaseline(
+          originalLocalPath,
+          transfer.sourceDigestPath,
+          fileSize,
+          transfer,
+        );
+      }
+      await assertRemoteUploadSize(client, remotePath, fileSize);
+    } finally {
+      await cleanupSourceDigest();
     }
-    await assertRemoteUploadSize(client, remotePath, fileSize);
   };
 
   /** @type {Error | null} */
@@ -819,7 +1229,7 @@ async function uploadFile(localPath, remotePath, client, fileSize, transfer, sen
       );
     }
 
-    if (isolated && transfer.resumable) {
+    if (isolated) {
       let concurrentIsolatedOk = false;
       try {
         transfer.uploadStrategy = "concurrent-isolated";
@@ -830,7 +1240,7 @@ async function uploadFile(localPath, remotePath, client, fileSize, transfer, sen
           fileSize,
           transfer,
           sendProgress,
-          { disposeChannel: true },
+          { disposeChannel: true, onBytesCommitted },
         );
         concurrentIsolatedOk = true;
       } catch (err) {
@@ -839,7 +1249,11 @@ async function uploadFile(localPath, remotePath, client, fileSize, transfer, sen
         if (transfer.cancelled) throw err;
         if (err?.noTransferFallback) throw err;
         rememberPipelineError(err);
-        await prepareUploadFallbackCheckpoint(transfer, client, fileSize, sendProgress);
+        if (transfer.resumable) {
+          await prepareUploadFallbackCheckpoint(transfer, client, fileSize, sendProgress);
+        } else {
+          transfer.checkpointBytes = 0;
+        }
         console.warn(
           "[transferBridge] concurrent isolated upload failed, trying next pipelined strategy:",
           err?.message || String(err),
@@ -868,21 +1282,42 @@ async function uploadFile(localPath, remotePath, client, fileSize, transfer, sen
     // already have a durable resume checkpoint from a prior concurrent attempt.
     // fastPut is not pause-aware; do not advertise pause while it runs.
     const hasResumeCheckpoint = Math.max(0, Number(transfer.checkpointBytes) || 0) > 0;
-    if (isolated && typeof isolated.fastPut === "function" && !hasResumeCheckpoint) {
+    if (
+      isolated
+      && typeof isolated.fastPut === "function"
+      && !hasResumeCheckpoint
+      && !transfer.resumable
+    ) {
       let fastPutOk = false;
-      let fastPutFingerprint = null;
+      let fastPutSourcePath = localPath;
+      let fastPutSnapshotPath = null;
       try {
         transfer.uploadStrategy = "fastPut-isolated";
         transfer.pauseSupported = false;
         transfer.pauseUnavailableReason = "Pause is unavailable during fastPut upload";
+        if (!transfer.sourceIsOwnedTemp) {
+          const snapshotId = crypto.createHash("sha256")
+            .update(String(transfer.transferId || localPath))
+            .digest("hex")
+            .slice(0, 16);
+          fastPutSnapshotPath = tempDirBridge.getTransferTempFilePath(
+            `upload-source-${snapshotId}`,
+            "snapshot.bin",
+          );
+          await createVerifiedUploadSnapshot(
+            originalLocalPath,
+            fastPutSnapshotPath,
+            transfer.sourceDigestPath,
+            fileSize,
+            transfer,
+          );
+          fastPutSourcePath = fastPutSnapshotPath;
+        }
         sendProgress(Math.max(0, Number(transfer.checkpointBytes) || 0), fileSize, {
           force: true,
         });
-        if (transfer.resumable) {
-          fastPutFingerprint = await captureLocalContentFingerprint(localPath, fileSize);
-        }
         await uploadViaFastPut(
-          localPath,
+          fastPutSourcePath,
           remotePath,
           isolated,
           fileSize,
@@ -890,13 +1325,6 @@ async function uploadFile(localPath, remotePath, client, fileSize, transfer, sen
           sendProgress,
           { disposeChannel: true },
         );
-        if (fastPutFingerprint) {
-          await assertLocalContentFingerprintUnchanged(
-            localPath,
-            fastPutFingerprint,
-            fileSize,
-          );
-        }
         fastPutOk = true;
       } catch (err) {
         isolated = null;
@@ -917,8 +1345,13 @@ async function uploadFile(localPath, remotePath, client, fileSize, transfer, sen
           "[transferBridge] isolated fastPut failed, trying next pipelined strategy:",
           err?.message || String(err),
         );
+      } finally {
+        if (fastPutSnapshotPath) {
+          await fs.promises.rm(fastPutSnapshotPath, { force: true }).catch(() => {});
+        }
       }
       if (fastPutOk) {
+        onBytesCommitted?.();
         await finishSuccessfulUpload();
         return;
       }
@@ -942,7 +1375,7 @@ async function uploadFile(localPath, remotePath, client, fileSize, transfer, sen
         fileSize,
         transfer,
         sendProgress,
-        { disposeChannel: false },
+        { disposeChannel: false, onBytesCommitted },
       );
       sharedOk = true;
     } catch (err) {
@@ -975,7 +1408,9 @@ async function uploadFile(localPath, remotePath, client, fileSize, transfer, sen
     ? `SFTP pipelined upload failed: ${cause.message}`
     : "SFTP pipelined upload failed (no serial stream fallback)";
   const error = new Error(message, cause ? { cause } : undefined);
+  if (cause?.code !== undefined) error.code = cause.code;
   if (cause?.noTransferFallback) error.noTransferFallback = true;
+  await cleanupSourceDigest();
   throw error;
 }
 
@@ -1091,62 +1526,237 @@ function createSourceContentChangedError() {
   return error;
 }
 
-/**
- * Full content fingerprint for same-size rewrite detection. Uploads can read
- * ranges out of order, so metadata or sparse sampling cannot prove that a
- * large source stayed unchanged throughout the transfer.
- */
-async function captureLocalContentFingerprintFromHandle(fileHandle, fileSize) {
-  const hash = crypto.createHash("sha256");
-  const buffer = Buffer.allocUnsafe(Math.min(1024 * 1024, Math.max(1, fileSize)));
-  let position = 0;
-  while (position < fileSize) {
-    const length = Math.min(buffer.length, fileSize - position);
-    await readLocalRange(fileHandle, buffer, position, length);
-    hash.update(buffer.subarray(0, length));
-    position += length;
-  }
-  return { size: fileSize, digest: hash.digest("hex") };
+function isTransferCancelled(transfer) {
+  return Boolean(transfer?.cancelled || transfer?.signal?.aborted);
 }
 
-async function captureLocalContentFingerprint(filePath, fileSize) {
-  const handle = await fs.promises.open(filePath, "r");
-  try {
-    return await captureLocalContentFingerprintFromHandle(handle, fileSize);
-  } finally {
-    await handle.close().catch(() => {});
-  }
-}
+const UPLOAD_DIGEST_SCAN_SIZE = TRANSFER_CHUNK_SIZE * 128;
 
-async function assertLocalContentFingerprintUnchanged(filePath, fingerprint, expectedSize) {
-  if (!fingerprint) return;
-  let latestStat;
+async function assertUploadDigestCapacity(digestPath, fileSize) {
+  if (typeof fs.promises.statfs !== "function") return;
+  const requiredBytes = BigInt(Math.ceil(fileSize / TRANSFER_CHUNK_SIZE)) * 32n;
+  let stats;
   try {
-    latestStat = await fs.promises.stat(filePath);
-  } catch (error) {
-    const err = new Error(
-      `Transfer source disappeared during transfer: ${error?.message || String(error)}`,
+    stats = await fs.promises.statfs(path.dirname(digestPath), { bigint: true });
+  } catch {
+    return;
+  }
+  const availableBytes = BigInt(stats.bavail) * BigInt(stats.bsize);
+  if (availableBytes < requiredBytes) {
+    const error = new Error(
+      `Not enough Netcatty temporary storage for upload verification: requires ${requiredBytes} bytes, ${availableBytes} bytes available`,
     );
-    err.noTransferFallback = true;
-    err.sourceChanged = true;
-    throw err;
-  }
-  const latestSize = Number(latestStat?.size);
-  if (latestSize !== expectedSize) {
-    throw createSourceSizeChangedError(expectedSize, latestSize);
-  }
-  const latest = await captureLocalContentFingerprint(filePath, expectedSize);
-  if (latest.digest !== fingerprint.digest) {
-    throw createSourceContentChangedError();
+    error.noTransferFallback = true;
+    throw error;
   }
 }
 
-async function assertLocalContentFingerprintUnchangedFromHandle(fileHandle, fingerprint, expectedSize) {
-  if (!fingerprint) return;
-  const latest = await captureLocalContentFingerprintFromHandle(fileHandle, expectedSize);
-  if (latest.size !== expectedSize || latest.digest !== fingerprint.digest) {
-    throw createSourceContentChangedError();
+async function verifyUploadDigestBaseline(sourcePath, digestPath, fileSize, transfer) {
+  let sourceHandle = null;
+  let digestHandle = null;
+  try {
+    sourceHandle = await fs.promises.open(sourcePath, "r");
+    digestHandle = await fs.promises.open(digestPath, "r");
+    const buffer = Buffer.allocUnsafe(Math.min(UPLOAD_DIGEST_SCAN_SIZE, Math.max(1, fileSize)));
+    let position = 0;
+    let chunkIndex = 0;
+    while (position < fileSize) {
+      if (isTransferCancelled(transfer)) throw new Error("Transfer cancelled");
+      const length = Math.min(buffer.length, fileSize - position);
+      await readLocalRange(sourceHandle, buffer, position, length);
+      if (isTransferCancelled(transfer)) throw new Error("Transfer cancelled");
+      const digestCount = Math.ceil(length / TRANSFER_CHUNK_SIZE);
+      const expected = Buffer.allocUnsafe(digestCount * 32);
+      await readLocalRange(digestHandle, expected, chunkIndex * 32, expected.length);
+      for (let offset = 0, index = 0; offset < length; offset += TRANSFER_CHUNK_SIZE, index += 1) {
+        const actual = crypto.createHash("sha256")
+          .update(buffer.subarray(offset, Math.min(offset + TRANSFER_CHUNK_SIZE, length)))
+          .digest();
+        if (!expected.subarray(index * 32, (index + 1) * 32).equals(actual)) {
+          throw createSourceContentChangedError();
+        }
+      }
+      position += length;
+      chunkIndex += digestCount;
+    }
+  } finally {
+    await sourceHandle?.close().catch(() => {});
+    await digestHandle?.close().catch(() => {});
   }
+}
+
+async function createUploadDigestBaseline(sourcePath, digestPath, fileSize, transfer) {
+  // A crashed attempt may have left this transfer's old baseline behind. It is
+  // fully replaceable and its blocks must be reclaimable before capacity is
+  // evaluated for the new baseline.
+  await fs.promises.rm(digestPath, { force: true });
+  await assertUploadDigestCapacity(digestPath, fileSize);
+  let sourceHandle = null;
+  let digestHandle = null;
+  let completed = false;
+  try {
+    sourceHandle = await fs.promises.open(sourcePath, "r");
+    digestHandle = await fs.promises.open(digestPath, "w");
+    const buffer = Buffer.allocUnsafe(Math.min(UPLOAD_DIGEST_SCAN_SIZE, Math.max(1, fileSize)));
+    let position = 0;
+    let digestPosition = 0;
+    while (position < fileSize) {
+      if (isTransferCancelled(transfer)) throw new Error("Transfer cancelled");
+      const length = Math.min(buffer.length, fileSize - position);
+      await readLocalRange(sourceHandle, buffer, position, length);
+      if (isTransferCancelled(transfer)) throw new Error("Transfer cancelled");
+      const digestCount = Math.ceil(length / TRANSFER_CHUNK_SIZE);
+      const digests = Buffer.allocUnsafe(digestCount * 32);
+      for (let offset = 0, index = 0; offset < length; offset += TRANSFER_CHUNK_SIZE, index += 1) {
+        crypto.createHash("sha256")
+          .update(buffer.subarray(offset, Math.min(offset + TRANSFER_CHUNK_SIZE, length)))
+          .digest()
+          .copy(digests, index * 32);
+      }
+      let written = 0;
+      while (written < digests.length) {
+        const result = await digestHandle.write(
+          digests,
+          written,
+          digests.length - written,
+          digestPosition + written,
+        );
+        if (!result || result.bytesWritten <= 0) {
+          throw new Error("Upload digest baseline stopped accepting data");
+        }
+        written += result.bytesWritten;
+      }
+      position += length;
+      digestPosition += digests.length;
+    }
+    completed = true;
+  } finally {
+    await sourceHandle?.close().catch(() => {});
+    await digestHandle?.close().catch(() => {});
+    if (!completed) await fs.promises.rm(digestPath, { force: true }).catch(() => {});
+  }
+
+  await verifyUploadDigestBaseline(sourcePath, digestPath, fileSize, transfer);
+}
+
+async function createVerifiedUploadSnapshot(
+  sourcePath,
+  snapshotPath,
+  digestPath,
+  fileSize,
+  transfer,
+) {
+  await fs.promises.rm(snapshotPath, { force: true });
+  let sourceHandle = null;
+  let digestHandle = null;
+  let snapshotHandle = null;
+  let completed = false;
+  try {
+    sourceHandle = await fs.promises.open(sourcePath, "r");
+    digestHandle = await fs.promises.open(digestPath, "r");
+    snapshotHandle = await fs.promises.open(snapshotPath, "w");
+    const sourceStats = await sourceHandle.stat();
+    let position = 0;
+    while (position < fileSize) {
+      if (isTransferCancelled(transfer)) throw new Error("Transfer cancelled");
+      const length = Math.min(UPLOAD_DIGEST_SCAN_SIZE, fileSize - position);
+      const buffer = await readVerifiedUploadRange(
+        sourceHandle,
+        digestHandle,
+        position,
+        length,
+        fileSize,
+      );
+      let written = 0;
+      while (written < buffer.length) {
+        const result = await snapshotHandle.write(
+          buffer,
+          written,
+          buffer.length - written,
+          position + written,
+        );
+        if (!result || result.bytesWritten <= 0) {
+          throw new Error("Upload snapshot stopped accepting data");
+        }
+        written += result.bytesWritten;
+      }
+      position += length;
+    }
+    await snapshotHandle.chmod(sourceStats.mode & 0o7777);
+    completed = true;
+  } finally {
+    await sourceHandle?.close().catch(() => {});
+    await digestHandle?.close().catch(() => {});
+    await snapshotHandle?.close().catch(() => {});
+    if (!completed) await fs.promises.rm(snapshotPath, { force: true }).catch(() => {});
+  }
+}
+
+function createVerifiedUploadReadStream(
+  sourcePath,
+  digestPath,
+  fileSize,
+  transfer,
+) {
+  let resolveCompleted;
+  const completed = new Promise((resolve) => { resolveCompleted = resolve; });
+  const stream = Readable.from((async function* verifiedUploadChunks() {
+    let sourceHandle = null;
+    let digestHandle = null;
+    try {
+      sourceHandle = await fs.promises.open(sourcePath, "r");
+      digestHandle = await fs.promises.open(digestPath, "r");
+      let position = 0;
+      while (position < fileSize) {
+        if (isTransferCancelled(transfer)) throw new Error("Transfer cancelled");
+        const length = Math.min(UPLOAD_DIGEST_SCAN_SIZE, fileSize - position);
+        const chunk = await readVerifiedUploadRange(
+          sourceHandle,
+          digestHandle,
+          position,
+          length,
+          fileSize,
+        );
+        if (isTransferCancelled(transfer)) throw new Error("Transfer cancelled");
+        yield chunk;
+        position += length;
+      }
+    } finally {
+      await sourceHandle?.close().catch(() => {});
+      await digestHandle?.close().catch(() => {});
+      resolveCompleted();
+    }
+  })());
+  return { stream, completed };
+}
+
+async function readVerifiedUploadRange(
+  localHandle,
+  digestHandle,
+  position,
+  length,
+  fileSize,
+) {
+  const output = Buffer.allocUnsafe(length);
+  let outputOffset = 0;
+  while (outputOffset < length) {
+    const rangePosition = position + outputOffset;
+    const chunkStart = Math.floor(rangePosition / TRANSFER_CHUNK_SIZE) * TRANSFER_CHUNK_SIZE;
+    const chunkLength = Math.min(TRANSFER_CHUNK_SIZE, fileSize - chunkStart);
+    const chunk = Buffer.allocUnsafe(chunkLength);
+    await readLocalRange(localHandle, chunk, chunkStart, chunkLength);
+    const expected = Buffer.allocUnsafe(32);
+    const chunkIndex = Math.floor(chunkStart / TRANSFER_CHUNK_SIZE);
+    const digestResult = await digestHandle.read(expected, 0, 32, chunkIndex * 32);
+    if (digestResult.bytesRead !== 32) throw createSourceContentChangedError();
+    const actual = crypto.createHash("sha256").update(chunk).digest();
+    if (!expected.equals(actual)) throw createSourceContentChangedError();
+    const chunkOffset = rangePosition - chunkStart;
+    const copyLength = Math.min(length - outputOffset, chunkLength - chunkOffset);
+    chunk.copy(output, outputOffset, chunkOffset, chunkOffset + copyLength);
+    outputOffset += copyLength;
+  }
+  return output;
 }
 
 function assertSourceMetadataUnchanged(initialSource, latestSource, expectedSize) {
@@ -1228,18 +1838,20 @@ async function runPausableConcurrentRanges({
         if (settled) return;
         if (error) terminalError = terminalError || error;
         if (active > 0) {
-          // Cancel must remain bounded even on a shared channel. Ordinary
-          // shared-channel errors, however, must drain their in-flight WRITEs
-          // before the caller can clean up or retry the same remote path.
-          if (transfer.cancelled || (terminalError && forceSettleOnError)) {
-            clearForceFinish();
-            forceFinishTimer = setTimeout(() => {
-              if (settled) return;
-              active = 0;
-              settled = true;
-              reject(terminalError || new Error("Transfer cancelled"));
-            }, 2000);
-            forceFinishTimer.unref?.();
+          // Only an isolated channel may force-settle after aborting the
+          // subsystem. A shared channel cannot discard outstanding WRITE
+          // callbacks safely because the caller may clean up or reuse the
+          // same remote path while those requests are still in flight.
+          if (terminalError && forceSettleOnError) {
+            if (!forceFinishTimer) {
+              forceFinishTimer = setTimeout(() => {
+                if (settled) return;
+                active = 0;
+                settled = true;
+                reject(terminalError || new Error("Transfer cancelled"));
+              }, 2000);
+              forceFinishTimer.unref?.();
+            }
           }
           return;
         }
@@ -1281,7 +1893,10 @@ async function runPausableConcurrentRanges({
           && !transfer.cancelled
         ) {
           const position = nextOffset;
-          const length = Math.min(TRANSFER_CHUNK_SIZE, fileSize - position);
+          const length = Math.min(
+            TRANSFER_CHUNK_SIZE - (position % TRANSFER_CHUNK_SIZE),
+            fileSize - position,
+          );
           nextOffset += length;
           active += 1;
 
@@ -1343,7 +1958,7 @@ async function runPausableConcurrentRanges({
 /**
  * Pipelined SFTP WRITE upload (same fanout as ssh2 fastPut).
  *
- * @param {{ disposeChannel?: boolean }} [options]
+ * @param {{ disposeChannel?: boolean, onBytesCommitted?: (() => void) | null }} [options]
  *   disposeChannel — when true (isolated channel), end the SFTP subsystem on
  *   cancel/finish. When false (shared browse session), never call sftp.end().
  */
@@ -1377,6 +1992,9 @@ async function uploadFileConcurrent(
   transfer.abort = abortEarly;
 
   let localHandle = null;
+  let digestHandle = null;
+  let ephemeralDigestPath = null;
+  let initialSource = null;
   let remoteHandle = null;
   let failed = false;
   let noTransferFallback = false;
@@ -1392,12 +2010,29 @@ async function uploadFileConcurrent(
       throw localOpenError;
     }
     if (transfer.cancelled) throw new Error("Transfer cancelled");
-    // Sample content after local OPEN so same-size rewrites are caught even when
-    // mtime/ctime stay put. Uses the open handle (channel already acquired).
-    const contentFingerprint = await captureLocalContentFingerprintFromHandle(
-      localHandle,
-      fileSize,
-    );
+    if (transfer.sourceDigestPath) {
+      digestHandle = await fs.promises.open(transfer.sourceDigestPath, "r");
+    } else if (!transfer.sourceIsOwnedTemp) {
+      // Non-resumable range uploads do not receive uploadFile's persistent
+      // digest sidecar. Build the same stable baseline here so every range is
+      // verified immediately before its remote WRITE instead of relying on a
+      // before/after whole-file fingerprint that temporary rewrites can evade.
+      initialSource = await localHandle.stat();
+      const digestId = crypto.createHash("sha256")
+        .update(String(transfer.transferId || localPath))
+        .digest("hex")
+        .slice(0, 16);
+      ephemeralDigestPath = tempDirBridge.getTransferTempFilePath(
+        `upload-digest-${digestId}`,
+        "ranges.sha256",
+      );
+      await createUploadDigestBaseline(localPath, ephemeralDigestPath, fileSize, transfer);
+      if (transfer.cancelled) throw new Error("Transfer cancelled");
+      const sourceAfterBaseline = await localHandle.stat();
+      assertSourceMetadataUnchanged(initialSource, sourceAfterBaseline, fileSize);
+      digestHandle = await fs.promises.open(ephemeralDigestPath, "r");
+    }
+    if (transfer.cancelled) throw new Error("Transfer cancelled");
     remoteHandle = await openSftpHandle(sftp, remotePath, checkpoint > 0 ? "r+" : "w");
     if (channelError) throw channelError;
     if (transfer.cancelled) throw new Error("Transfer cancelled");
@@ -1409,8 +2044,20 @@ async function uploadFileConcurrent(
         checkpoint,
         concurrency: UPLOAD_TRANSFER_CONCURRENCY,
         copyRange: async (position, length) => {
-          const buffer = Buffer.allocUnsafe(length);
-          await readLocalRange(localHandle, buffer, position, length);
+          const buffer = digestHandle
+            ? await readVerifiedUploadRange(
+              localHandle,
+              digestHandle,
+              position,
+              length,
+              fileSize,
+            )
+            : await (async () => {
+              const directBuffer = Buffer.allocUnsafe(length);
+              await readLocalRange(localHandle, directBuffer, position, length);
+              return directBuffer;
+            })();
+          if (transfer.cancelled) throw new Error("Transfer cancelled");
           await writeSftpRange(sftp, remoteHandle, buffer, position, length);
         },
         sendProgress,
@@ -1419,11 +2066,17 @@ async function uploadFileConcurrent(
         forceSettleOnError: disposeChannel,
       });
       if (channelError) throw channelError;
-      await assertLocalContentFingerprintUnchangedFromHandle(
-        localHandle,
-        contentFingerprint,
-        fileSize,
-      );
+      // Every remote WRITE has completed. In-place destinations are already
+      // published at this point, so stop accepting cancellation before source
+      // revalidation and handle cleanup; staged uploads pass no callback.
+      options.onBytesCommitted?.();
+      if (initialSource) {
+        const latestSource = await localHandle.stat();
+        assertSourceMetadataUnchanged(initialSource, latestSource, fileSize);
+      }
+      if (ephemeralDigestPath) {
+        await verifyUploadDigestBaseline(localPath, ephemeralDigestPath, fileSize, transfer);
+      }
     } catch (error) {
       failed = true;
       throw error;
@@ -1441,6 +2094,12 @@ async function uploadFileConcurrent(
     transfer.abort = null;
     if (localHandle) {
       await localHandle.close().catch(() => {});
+    }
+    if (digestHandle) {
+      await digestHandle.close().catch(() => {});
+    }
+    if (ephemeralDigestPath) {
+      await fs.promises.rm(ephemeralDigestPath, { force: true }).catch(() => {});
     }
     let remoteCloseError = null;
     // Close remote handles while the channel is still live. On disposeChannel
@@ -1473,9 +2132,6 @@ async function uploadFileConcurrent(
     if (remoteCloseError) throw remoteCloseError;
   }
 }
-
-// Back-compat alias for older call sites / tests that still name the isolated path.
-const uploadFileResumableFast = uploadFileConcurrent;
 
 /**
  * Preserve fastGet's high-latency request window without giving up a safe
@@ -1531,6 +2187,7 @@ async function downloadFileResumableFast(
         sendProgress,
         abortChannel: () => sftp.end?.(),
         sftp,
+        forceSettleOnError: true,
       });
       if (channelError) throw channelError;
       await verifyFastDownloadSamples(sftp, remoteHandle, localHandle, fileSize, transfer);
@@ -1579,18 +2236,27 @@ async function downloadFileResumableFast(
   }
 }
 
-async function downloadFile(remotePath, localPath, client, fileSize, transfer, sendProgress, encoding = "utf-8") {
+async function downloadFile(
+  remotePath,
+  localPath,
+  client,
+  fileSize,
+  transfer,
+  sendProgress,
+  encoding = "utf-8",
+  runCancelablePreflight = async (operation) => operation(),
+) {
   if (isScpModeClient(client)) {
     transfer.pauseSupported = false;
     transfer.pauseUnavailableReason = "Pause is unavailable for SCP transfers";
     const backend = getScpBackendForClient(client);
-    await backend.downloadFile(remotePath, localPath, {
+    return backend.downloadFile(remotePath, localPath, {
       fileSize,
       transfer,
       encoding,
+      signal: transfer.signal,
       onProgress: (transferred, total) => sendProgress(transferred, total || fileSize),
     });
-    return;
   }
 
   await requireSftpChannel(client);
@@ -1598,7 +2264,7 @@ async function downloadFile(remotePath, localPath, client, fileSize, transfer, s
   if (!sftp) throw new Error("SFTP client not ready");
   transfer.pauseSupported = Boolean(transfer.resumable);
   const initialSource = transfer.resumable
-    ? await client.stat(remotePath)
+    ? await runCancelablePreflight(() => client.stat(remotePath))
     : null;
 
   // Prefer an isolated SFTP channel so cancellation cannot kill the browse session.
@@ -1622,7 +2288,7 @@ async function downloadFile(remotePath, localPath, client, fileSize, transfer, s
             transfer,
             sendProgress,
           );
-          const latestSource = await client.stat(remotePath);
+          const latestSource = await runCancelablePreflight(() => client.stat(remotePath));
           assertSourceMetadataUnchanged(initialSource, latestSource, fileSize);
           releaseIsolatedDownloadChannel(client, fastSftp);
           return;
@@ -1679,7 +2345,7 @@ async function downloadFile(remotePath, localPath, client, fileSize, transfer, s
         if (transfer.cancelled) throw err;
         if (err?.noTransferFallback) throw err;
         if (err?.completedWithUnhealthyChannel) {
-          const latestSource = await client.stat(remotePath);
+          const latestSource = await runCancelablePreflight(() => client.stat(remotePath));
           assertSourceMetadataUnchanged(initialSource, latestSource, fileSize);
           return;
         }
@@ -1762,7 +2428,7 @@ async function downloadFile(remotePath, localPath, client, fileSize, transfer, s
     });
   });
   if (initialSource) {
-    const latestSource = await client.stat(remotePath);
+    const latestSource = await runCancelablePreflight(() => client.stat(remotePath));
     assertSourceMetadataUnchanged(initialSource, latestSource, fileSize);
   }
 }
@@ -1796,6 +2462,7 @@ async function startTransferNow(event, payload, onProgress) {
   sender.send?.("netcatty:transfer:started", { transferId });
 
   const transfer = {
+    transferId,
     cancelled: false,
     paused: false,
     pauseSupported: false,
@@ -1820,6 +2487,29 @@ async function startTransferNow(event, payload, onProgress) {
     // resumeStreamPair against duplicate pipe() which doubles writes.
     streamsUnpiped: false,
     abort: null,
+    sourceDigestPath: null,
+    sourceIsOwnedTemp: payload.sourceIsOwnedTemp === true,
+    signal: null,
+  };
+  // Own an AbortController so cancelTransfer always stops cancelable preflight
+  // work (destination hashing, probes) even when callers pass no abortSignal.
+  const ownedAbort = new AbortController();
+  if (payload.abortSignal) {
+    if (payload.abortSignal.aborted) {
+      ownedAbort.abort(payload.abortSignal.reason);
+    } else {
+      payload.abortSignal.addEventListener(
+        "abort",
+        () => {
+          try { ownedAbort.abort(payload.abortSignal.reason); } catch { /* ignore */ }
+        },
+        { once: true },
+      );
+    }
+  }
+  transfer.signal = ownedAbort.signal;
+  transfer.abortOwnedSignal = () => {
+    try { ownedAbort.abort(); } catch { /* ignore */ }
   };
   activeTransfers.set(transferId, transfer);
   // Hold panel/agent SFTP sessions for the full transfer lifetime (including
@@ -1827,6 +2517,8 @@ async function startTransferNow(event, payload, onProgress) {
   const leasedSftpIds = acquireTransferSessionLeases(transferId, payload);
   transfer.leasedSftpIds = leasedSftpIds;
   const transferCreatedAt = Date.now();
+
+  const runCancelablePreflight = (operation) => runTransferCancelablePreflight(transfer, operation);
 
   // ── Progress/speed tracking ──────────────────────────────────────────────
   // Keep progress monotonic and compute speed from a strict sliding window.
@@ -1981,12 +2673,15 @@ async function startTransferNow(event, payload, onProgress) {
         if (isScpModeClient(client)) {
           const st = await getScpBackendForClient(client).stat(sourcePath, {
             encoding: resolveEncodingForRequest(sourceSftpId, sourceEncoding),
+            signal: transfer.signal,
           });
           fileSize = st.size;
         } else {
-          await requireSftpChannel(client);
-          const encodedSourcePath = encodePathForSession(sourceSftpId, sourcePath, sourceEncoding);
-          const stat = await client.stat(encodedSourcePath);
+          const stat = await runCancelablePreflight(async () => {
+            await requireSftpChannel(client);
+            const encodedSourcePath = encodePathForSession(sourceSftpId, sourcePath, sourceEncoding);
+            return client.stat(encodedSourcePath);
+          });
           fileSize = stat.size;
         }
       }
@@ -2007,12 +2702,12 @@ async function startTransferNow(event, payload, onProgress) {
     }
 
     if (transfer.resumable && transfer.sourceFingerprint) {
-      const currentSourceFingerprint = await computeSourceFingerprint({
-        sourceType,
-        sourcePath,
-        sourceSftpId,
-        sourceEncoding,
-      });
+      const currentSourceFingerprint = await runCancelablePreflight(() => computeSourceFingerprint({
+          sourceType,
+          sourcePath,
+          sourceSftpId,
+          sourceEncoding,
+        }));
       if (
         transfer.sourceFingerprint
         && currentSourceFingerprint
@@ -2029,42 +2724,69 @@ async function startTransferNow(event, payload, onProgress) {
       if (!client) throw new Error("Target SFTP session not found");
 
       const dir = path.dirname(targetPath).replace(/\\/g, '/');
-      try { await ensureRemoteDirForSession(targetSftpId, dir, targetEncoding); } catch { }
+      try {
+        await runTransferAbortableOperation(transfer, (signal) => ensureRemoteDirForSession(
+          targetSftpId,
+          dir,
+          targetEncoding,
+          { signal },
+        ));
+      } catch (error) {
+        if (transfer.cancelled || transfer.signal?.aborted) throw new Error("Transfer cancelled");
+      }
 
-      const uploadTargetPath = transfer.resumable
-        ? buildRemoteTransferStagePath(targetPath, transferId)
-        : targetPath;
-      transfer.stagedRemote = transfer.resumable
-        ? { client, sftpId: targetSftpId, path: uploadTargetPath, encoding: targetEncoding }
-        : null;
-      // Clamp UI/progress checkpoint to durable remote .part size (crash-safe).
-      transfer.checkpointBytes = await resolveRemoteResumeCheckpoint(
-        client, targetSftpId, uploadTargetPath, targetEncoding, transfer.checkpointBytes,
-      );
-      sendProgress(transfer.checkpointBytes, fileSize, { force: true });
-      {
-        const verifyBytes = resumeContentVerifyBytes(transfer.checkpointBytes);
-        await assertMatchingResumeContent(
-          hashLocalPrefix(sourcePath, verifyBytes),
-          hashRemotePrefix(client, targetSftpId, uploadTargetPath, targetEncoding, verifyBytes),
-        );
-      }
-      const encodedTargetPath = isScpModeClient(client)
-        ? uploadTargetPath
-        : encodePathForSession(targetSftpId, uploadTargetPath, targetEncoding);
-      await uploadFile(
-        sourcePath,
-        encodedTargetPath,
-        client,
-        fileSize,
-        transfer,
-        sendProgress,
-        resolveEncodingForRequest(targetSftpId, targetEncoding),
-      );
-      if (transfer.resumable) {
-        await promoteRemoteTransfer(client, targetSftpId, uploadTargetPath, targetPath, targetEncoding);
-        transfer.stagedRemote = null;
-      }
+      const resolvedTargetEncoding = resolveEncodingForRequest(targetSftpId, targetEncoding);
+      const deterministicStagePath = buildRemoteTransferStagePath(targetPath, transferId);
+      await runRemoteUploadTransaction(client, sourcePath, targetPath, {
+        encoding: resolvedTargetEncoding,
+        expectedSize: fileSize,
+        stagedPath: transfer.resumable ? deterministicStagePath : undefined,
+        allowInPlaceFallback: !transfer.resumable,
+        preserveStageOnUploadError: transfer.resumable,
+        signal: transfer.signal,
+        assertCanPromote() {
+          if (isTransferCancelled(transfer)) throw new Error("Transfer cancelled");
+        },
+        commitPromotion() {
+          transfer.completionCommitted = true;
+        },
+        runCancelablePreflight,
+        async uploadFile(encodedUploadPath, uploadTarget) {
+          const uploadTargetPath = uploadTarget.logicalPath;
+          const usesStage = uploadTarget.generatedStagePath === true;
+          transfer.stagedRemote = usesStage
+            ? { client, sftpId: targetSftpId, path: uploadTargetPath, encoding: targetEncoding }
+            : null;
+          transfer.checkpointBytes = usesStage && transfer.resumable
+            ? await runCancelablePreflight(() => resolveRemoteResumeCheckpoint(
+                  client,
+                  targetSftpId,
+                  uploadTargetPath,
+                  targetEncoding,
+                  transfer.checkpointBytes,
+                ))
+            : 0;
+          sendProgress(transfer.checkpointBytes, fileSize, { force: true });
+          if (usesStage && transfer.checkpointBytes > 0) {
+            const verifyBytes = resumeContentVerifyBytes(transfer.checkpointBytes);
+            await runCancelablePreflight(() => assertMatchingResumeContent(
+                hashLocalPrefix(sourcePath, verifyBytes),
+                hashRemotePrefix(client, targetSftpId, uploadTargetPath, targetEncoding, verifyBytes),
+              ));
+          }
+          await uploadFile(
+            sourcePath,
+            encodedUploadPath,
+            client,
+            fileSize,
+            transfer,
+            sendProgress,
+            resolvedTargetEncoding,
+            usesStage ? null : () => { transfer.completionCommitted = true; },
+          );
+        },
+      });
+      transfer.stagedRemote = null;
 
     } else if (sourceType === 'sftp' && targetType === 'local') {
       const client = sftpClients.get(sourceSftpId);
@@ -2076,22 +2798,25 @@ async function startTransferNow(event, payload, onProgress) {
       const encodedSourcePath = isScpModeClient(client)
         ? sourcePath
         : encodePathForSession(sourceSftpId, sourcePath, sourceEncoding);
-      const downloadTargetPath = transfer.resumable
+      // SCP cannot resume, but it must still stage locally so a failed/cancelled
+      // overwrite never truncates or removes the existing destination.
+      const stageLocalDownload = transfer.resumable || isScpModeClient(client);
+      const downloadTargetPath = stageLocalDownload
         ? tempDirBridge.getTransferTempFilePath(transferId, path.basename(targetPath))
         : targetPath;
-      transfer.stagedLocalPath = transfer.resumable ? downloadTargetPath : null;
+      transfer.stagedLocalPath = stageLocalDownload ? downloadTargetPath : null;
       transfer.checkpointBytes = await resolveLocalResumeCheckpoint(
         downloadTargetPath, transfer.checkpointBytes,
       );
       sendProgress(transfer.checkpointBytes, fileSize, { force: true });
-      {
+      await runCancelablePreflight(async () => {
         const verifyBytes = resumeContentVerifyBytes(transfer.checkpointBytes);
         await assertMatchingResumeContent(
           hashRemotePrefix(client, sourceSftpId, sourcePath, sourceEncoding, verifyBytes),
           hashLocalPrefix(downloadTargetPath, verifyBytes),
         );
-      }
-      await downloadFile(
+      });
+      const downloadResult = await downloadFile(
         encodedSourcePath,
         downloadTargetPath,
         client,
@@ -2099,13 +2824,52 @@ async function startTransferNow(event, payload, onProgress) {
         transfer,
         sendProgress,
         resolveEncodingForRequest(sourceSftpId, sourceEncoding),
+        runCancelablePreflight,
       );
-      if (transfer.resumable) {
+      if (
+        isScpModeClient(client)
+        && Number.isFinite(downloadResult?.fileSize)
+        && downloadResult.fileSize >= 0
+      ) {
+        // SCP follows symlinks. Its wire header is authoritative for the bytes
+        // received, while the preflight shell stat describes the link node.
+        fileSize = downloadResult.fileSize;
+        lastObservedTotal = fileSize;
+        lastObservedTransferred = Math.min(lastObservedTransferred, fileSize);
+      }
+      if (stageLocalDownload) {
+        if (transfer.cancelled) throw new Error("Transfer cancelled");
         const stagedStat = await fs.promises.stat(downloadTargetPath);
+        if (transfer.cancelled) throw new Error("Transfer cancelled");
         if (stagedStat.size !== fileSize) {
           throw new Error(`Downloaded file size mismatch: expected ${fileSize}, got ${stagedStat.size}`);
         }
-        await promoteLocalTransfer(downloadTargetPath, targetPath);
+        if (transfer.cancelled) throw new Error("Transfer cancelled");
+        const {
+          promotionTargetPath,
+          existingMode,
+          targetIdentity,
+        } = await inspectLocalPromotionTarget(targetPath);
+        if (transfer.cancelled) throw new Error("Transfer cancelled");
+        await promoteLocalTransfer(downloadTargetPath, promotionTargetPath, {
+          existingMode,
+          async validateTarget() {
+            const latestTarget = await inspectLocalPromotionTarget(targetPath);
+            if (latestTarget.promotionTargetPath !== promotionTargetPath) {
+              throw new Error("Local download target changed before replacement");
+            }
+            if (latestTarget.targetIdentity !== targetIdentity) {
+              throw new Error("Local download target changed before replacement");
+            }
+            return latestTarget;
+          },
+          assertNotCancelled() {
+            if (transfer.cancelled) throw new Error("Transfer cancelled");
+          },
+          onCommit() {
+            transfer.completionCommitted = true;
+          },
+        });
         transfer.stagedLocalPath = null;
       }
 
@@ -2189,7 +2953,14 @@ async function startTransferNow(event, payload, onProgress) {
         });
       });
       if (transfer.resumable && transfer.stagedLocalPath) {
-        await promoteLocalTransfer(transfer.stagedLocalPath, targetPath);
+        await promoteLocalTransfer(transfer.stagedLocalPath, targetPath, {
+          assertNotCancelled() {
+            if (transfer.cancelled) throw new Error("Transfer cancelled");
+          },
+          onCommit() {
+            transfer.completionCommitted = true;
+          },
+        });
         transfer.stagedLocalPath = null;
       }
 
@@ -2209,7 +2980,16 @@ async function startTransferNow(event, payload, onProgress) {
         if (sshClient && typeof sshClient.exec === 'function') {
           try {
             const dir = path.dirname(targetPath).replace(/\\/g, '/');
-            try { await ensureRemoteDirForSession(sourceSftpId, dir, targetEncoding || sourceEncoding); } catch { }
+            try {
+              await runTransferAbortableOperation(transfer, (signal) => ensureRemoteDirForSession(
+                sourceSftpId,
+                dir,
+                targetEncoding || sourceEncoding,
+                { signal },
+              ));
+            } catch (error) {
+              if (transfer.cancelled || transfer.signal?.aborted) throw new Error("Transfer cancelled");
+            }
 
             const escapedSource = sourcePath.replace(/'/g, "'\\''");
             const escapedTarget = targetPath.replace(/'/g, "'\\''");
@@ -2255,14 +3035,28 @@ async function startTransferNow(event, payload, onProgress) {
           const encodedSourcePath = isScpModeClient(sourceClient)
             ? sourcePath
             : encodePathForSession(sourceSftpId, sourcePath, sourceEncoding);
-          {
+          await runCancelablePreflight(async () => {
             const verifyBytes = resumeContentVerifyBytes(transfer.downloadCheckpointBytes);
             await assertMatchingResumeContent(
               hashRemotePrefix(sourceClient, sourceSftpId, sourcePath, sourceEncoding, verifyBytes),
               hashLocalPrefix(tempPath, verifyBytes),
             );
-          }
-          const downloadProgress = (transferred, _total, options = {}) => {
+          });
+          const downloadProgress = (transferred, reportedTotal, options = {}) => {
+            if (
+              isScpModeClient(sourceClient)
+              && Number.isFinite(reportedTotal)
+              && reportedTotal >= 0
+              && reportedTotal !== fileSize
+            ) {
+              // SCP's first data event carries the followed file's wire size.
+              // Adopt it before mapping download progress onto the first half
+              // of an S2S transfer, otherwise a short link node shows 100% and
+              // then appears to move backwards when the real size arrives.
+              fileSize = reportedTotal;
+              lastObservedTotal = fileSize;
+              lastObservedTransferred = Math.min(lastObservedTransferred, Math.floor(transferred / 2));
+            }
             const durableCheckpoint = Number.isFinite(options.checkpointBytes)
               ? options.checkpointBytes
               : transferred;
@@ -2273,7 +3067,7 @@ async function startTransferNow(event, payload, onProgress) {
             });
             transfer.checkpointBytes = durableCheckpoint;
           };
-          await downloadFile(
+          const downloadResult = await downloadFile(
             encodedSourcePath,
             tempPath,
             sourceClient,
@@ -2281,7 +3075,17 @@ async function startTransferNow(event, payload, onProgress) {
             transfer,
             downloadProgress,
             resolveEncodingForRequest(sourceSftpId, sourceEncoding),
+            runCancelablePreflight,
           );
+          if (
+            isScpModeClient(sourceClient)
+            && Number.isFinite(downloadResult?.fileSize)
+            && downloadResult.fileSize >= 0
+          ) {
+            fileSize = downloadResult.fileSize;
+            lastObservedTotal = fileSize;
+            lastObservedTransferred = Math.min(lastObservedTransferred, fileSize);
+          }
         }
 
         const localStageStat = await fs.promises.stat(tempPath);
@@ -2295,36 +3099,18 @@ async function startTransferNow(event, payload, onProgress) {
         }
 
         const dir = path.dirname(targetPath).replace(/\\/g, '/');
-        try { await ensureRemoteDirForSession(targetSftpId, dir, targetEncoding); } catch { }
+        try {
+          await runTransferAbortableOperation(transfer, (signal) => ensureRemoteDirForSession(
+            targetSftpId,
+            dir,
+            targetEncoding,
+            { signal },
+          ));
+        } catch (error) {
+          if (transfer.cancelled || transfer.signal?.aborted) throw new Error("Transfer cancelled");
+        }
 
         transfer.resumeStage = 'upload';
-        const uploadTargetPath = transfer.resumable
-          ? buildRemoteTransferStagePath(targetPath, transferId)
-          : targetPath;
-        transfer.uploadCheckpointBytes = await resolveRemoteResumeCheckpoint(
-          targetClient, targetSftpId, uploadTargetPath, targetEncoding, transfer.uploadCheckpointBytes,
-        );
-        transfer.checkpointBytes = transfer.uploadCheckpointBytes;
-        // Overall progress for R2R upload stage is ~50% + upload/2.
-        lastObservedTransferred = Math.floor(fileSize / 2)
-          + Math.floor(transfer.uploadCheckpointBytes / 2);
-        // sendProgress stores overall UI bytes on checkpointBytes — restore the
-        // stage offset afterward so uploadFile resumes at the durable point.
-        sendProgress(lastObservedTransferred, fileSize, { force: true });
-        transfer.checkpointBytes = transfer.uploadCheckpointBytes;
-        transfer.stagedRemote = transfer.resumable
-          ? { client: targetClient, sftpId: targetSftpId, path: uploadTargetPath, encoding: targetEncoding }
-          : null;
-        {
-          const verifyBytes = resumeContentVerifyBytes(transfer.uploadCheckpointBytes);
-          await assertMatchingResumeContent(
-            hashLocalPrefix(tempPath, verifyBytes),
-            hashRemotePrefix(targetClient, targetSftpId, uploadTargetPath, targetEncoding, verifyBytes),
-          );
-        }
-        const encodedTargetPath = isScpModeClient(targetClient)
-          ? uploadTargetPath
-          : encodePathForSession(targetSftpId, uploadTargetPath, targetEncoding);
         const uploadProgress = (transferred, _total, options = {}) => {
           const durableCheckpoint = Number.isFinite(options.checkpointBytes)
             ? options.checkpointBytes
@@ -2336,19 +3122,70 @@ async function startTransferNow(event, payload, onProgress) {
           });
           transfer.checkpointBytes = durableCheckpoint;
         };
-        await uploadFile(
-          tempPath,
-          encodedTargetPath,
-          targetClient,
-          fileSize,
-          transfer,
-          uploadProgress,
-          resolveEncodingForRequest(targetSftpId, targetEncoding),
-        );
-        if (transfer.resumable) {
-          await promoteRemoteTransfer(targetClient, targetSftpId, uploadTargetPath, targetPath, targetEncoding);
-          transfer.stagedRemote = null;
-        }
+        transfer.sourceIsOwnedTemp = true;
+        const resolvedTargetEncoding = resolveEncodingForRequest(targetSftpId, targetEncoding);
+        const deterministicStagePath = buildRemoteTransferStagePath(targetPath, transferId);
+        await runRemoteUploadTransaction(targetClient, tempPath, targetPath, {
+          encoding: resolvedTargetEncoding,
+          expectedSize: fileSize,
+          stagedPath: transfer.resumable ? deterministicStagePath : undefined,
+          allowInPlaceFallback: !transfer.resumable,
+          preserveStageOnUploadError: transfer.resumable,
+          signal: transfer.signal,
+          assertCanPromote() {
+            if (isTransferCancelled(transfer)) throw new Error("Transfer cancelled");
+          },
+          commitPromotion() {
+            transfer.completionCommitted = true;
+          },
+          runCancelablePreflight,
+          async uploadFile(encodedUploadPath, uploadTarget) {
+            const uploadTargetPath = uploadTarget.logicalPath;
+            const usesStage = uploadTarget.generatedStagePath === true;
+            transfer.stagedRemote = usesStage
+              ? { client: targetClient, sftpId: targetSftpId, path: uploadTargetPath, encoding: targetEncoding }
+              : null;
+            transfer.uploadCheckpointBytes = usesStage && transfer.resumable
+              ? await runCancelablePreflight(() => resolveRemoteResumeCheckpoint(
+                    targetClient,
+                    targetSftpId,
+                    uploadTargetPath,
+                    targetEncoding,
+                    transfer.uploadCheckpointBytes,
+                  ))
+              : 0;
+            transfer.checkpointBytes = transfer.uploadCheckpointBytes;
+            // Overall progress for R2R upload stage is ~50% + upload/2.
+            lastObservedTransferred = Math.floor(fileSize / 2)
+              + Math.floor(transfer.uploadCheckpointBytes / 2);
+            sendProgress(lastObservedTransferred, fileSize, { force: true });
+            transfer.checkpointBytes = transfer.uploadCheckpointBytes;
+            if (usesStage && transfer.uploadCheckpointBytes > 0) {
+              const verifyBytes = resumeContentVerifyBytes(transfer.uploadCheckpointBytes);
+              await runCancelablePreflight(() => assertMatchingResumeContent(
+                  hashLocalPrefix(tempPath, verifyBytes),
+                  hashRemotePrefix(
+                    targetClient,
+                    targetSftpId,
+                    uploadTargetPath,
+                    targetEncoding,
+                    verifyBytes,
+                  ),
+                ));
+            }
+            await uploadFile(
+              tempPath,
+              encodedUploadPath,
+              targetClient,
+              fileSize,
+              transfer,
+              uploadProgress,
+              resolvedTargetEncoding,
+              usesStage ? null : () => { transfer.completionCommitted = true; },
+            );
+          },
+        });
+        transfer.stagedRemote = null;
 
         try { await fs.promises.unlink(tempPath); } catch { }
         transfer.stagedLocalPath = null;
@@ -2363,6 +3200,10 @@ async function startTransferNow(event, payload, onProgress) {
 
     return { transferId, totalBytes: fileSize };
   } catch (err) {
+    if (transfer.sourceDigestPath) {
+      try { await fs.promises.rm(transfer.sourceDigestPath, { force: true }); } catch { }
+      transfer.sourceDigestPath = null;
+    }
     if (err?.sourceChanged) {
       if (transfer.stagedLocalPath) {
         try { await fs.promises.rm(transfer.stagedLocalPath, { force: true }); } catch { }
@@ -2383,7 +3224,7 @@ async function startTransferNow(event, payload, onProgress) {
         transfer.stagedRemote = null;
       }
     }
-    if (transfer.cancelled || err.message === 'Transfer cancelled') {
+    if (!err?.recoveryFailed && (transfer.cancelled || err.message === 'Transfer cancelled')) {
       if (transfer.stagedLocalPath) {
         try { await fs.promises.unlink(transfer.stagedLocalPath); } catch { }
       }
@@ -2400,6 +3241,10 @@ async function startTransferNow(event, payload, onProgress) {
       cleanupTransfer();
       sender.send("netcatty:transfer:cancelled", { transferId });
     } else {
+      if (transfer.stagedLocalPath && !transfer.resumable) {
+        try { await fs.promises.rm(transfer.stagedLocalPath, { force: true }); } catch { }
+        transfer.stagedLocalPath = null;
+      }
       sendError(err);
     }
     return { transferId, error: err.message };
@@ -2546,8 +3391,15 @@ async function cancelTransfer(event, payload) {
   }
   const transfer = activeTransfers.get(transferId);
   if (transfer) {
+    if (transfer.completionCommitted) {
+      pendingCancelTransferIds.delete(String(transferId));
+      return { success: true };
+    }
     transfer.cancelled = true;
     pendingCancelTransferIds.delete(String(transferId));
+    if (typeof transfer.abortOwnedSignal === "function") {
+      try { transfer.abortOwnedSignal(); } catch { /* ignore */ }
+    }
     if (typeof transfer.abort === "function") {
       try { transfer.abort(); } catch { }
     }
@@ -2822,7 +3674,14 @@ async function sameHostCopyDirectory(event, payload) {
     // Ensure target directory itself exists (not just its parent),
     // so cp copies contents into it rather than creating a nested subdirectory.
     const targetDir = targetPath.replace(/\\/g, '/');
-    try { await ensureRemoteDirForSession(sftpId, targetDir, encoding); } catch { }
+    try {
+      await runTransferAbortableOperation(
+        transfer,
+        (signal) => ensureRemoteDirForSession(sftpId, targetDir, encoding, { signal }),
+      );
+    } catch (error) {
+      if (transfer.cancelled) throw new Error("Transfer cancelled");
+    }
 
     // Use "source/." to copy directory *contents* into target, preserving merge
     // semantics consistent with the recursive per-file transfer path.
@@ -2960,4 +3819,6 @@ module.exports = {
   acquireTransferSessionLeases,
   releaseTransferSessionLeases,
   listTransferSftpIds,
+  _promoteLocalTransferForTests: promoteLocalTransfer,
+  _stableLocalFileIdentityForTests: stableLocalFileIdentity,
 };

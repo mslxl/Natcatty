@@ -4,13 +4,12 @@
 // requests and can silently produce truncated/corrupt files (GitHub #2022).
 const TRANSFER_CHUNK_SIZE = 32 * 1024;
 
-// Upload fanout: 32 parallel 32KB WRITE requests (~1MB in flight). Measured
-// against real hosts (public ~38ms RTT and LAN ~13ms RTT): concurrency 8 left
-// multi-MB/s on the table; 32 matched Electerm/ssh2-class throughput without
-// the occasional stalls seen at a full 64 on higher-latency paths. Uploads still
-// use an isolated SFTP channel / dedicated transfer session so interactive
-// terminal traffic is not starved (GitHub #1507, #2449).
-const UPLOAD_TRANSFER_CONCURRENCY = 32;
+// Upload fanout: 64 parallel 32KB WRITE requests (~2MB in flight). Matches
+// Electerm transfer.js / ssh2-style defaults (concurrency 64, chunk 32KB) for
+// high-RTT body feel after #2449. Chunk size stays 32KB for server compatibility
+// (#2022 / #2030). Uploads still prefer an isolated SFTP channel / dedicated
+// transfer session so interactive terminal traffic is not starved (#1507).
+const UPLOAD_TRANSFER_CONCURRENCY = 64;
 
 // Downloads need a larger request window on high-latency proxy paths. 64 is
 // ssh2's fastGet default and, with the safe 32KB request size, restores the 2MB

@@ -200,6 +200,20 @@ test('parseCodexReviewOutcome ignores stale head inlines when summary clean', ()
   assert.equal(outcome.clean, true);
 });
 
+test('filterCodexReviewCommentsForHead keeps remapped old comments stale', () => {
+  const scoped = auto.filterCodexReviewCommentsForHead(
+    [
+      {
+        body: '![P2 Badge](x) already-fixed bug',
+        original_commit_id: 'oldsha',
+        commit_id: 'newsha',
+      },
+    ],
+    'newsha',
+  );
+  assert.deepEqual(scoped, []);
+});
+
 test('parseCodexReviewOutcome prefers current-head inline over unpinned clean', () => {
   const outcome = auto.parseCodexReviewOutcome({
     summaryText: "Codex Review: Didn't find any major issues. Swish!",
@@ -2761,6 +2775,37 @@ test('nextCodexTerminalLabels give_up/verify_fail/empty_fix hand off to human wi
 
 test('nextCodexTerminalLabels rejects unknown terminal', () => {
   assert.throws(() => auto.nextCodexTerminalLabels([], 'nope'), /Unknown codex terminal/);
+});
+
+test('hasAutomationPullRequestBacklink deduplicates only the same marked PR link', () => {
+  const pullRequestUrl = 'https://github.com/binaricat/Netcatty/pull/2474';
+  assert.equal(
+    auto.hasAutomationPullRequestBacklink(
+      [
+        { body: `ordinary maintainer note with ${pullRequestUrl}` },
+        {
+          body: `${auto.TRIAGE_MARKER}\n\nA draft fix is available at https://github.com/binaricat/Netcatty/pull/2400.`,
+        },
+        {
+          body: `${auto.TRIAGE_MARKER}\n\nA draft fix is available at ${pullRequestUrl}.`,
+        },
+      ],
+      pullRequestUrl,
+    ),
+    true,
+  );
+  assert.equal(
+    auto.hasAutomationPullRequestBacklink([{ body: `${auto.TRIAGE_MARKER}\n\nDifferent PR` }], pullRequestUrl),
+    false,
+  );
+  assert.equal(
+    auto.hasAutomationPullRequestBacklink(
+      [{ body: `${auto.TRIAGE_MARKER}\n\nA draft fix is available at ${pullRequestUrl}4.` }],
+      pullRequestUrl,
+    ),
+    false,
+  );
+  assert.equal(auto.hasAutomationPullRequestBacklink([], ''), false);
 });
 
 test('parseImplementStatus reads OK summary and TITLE line', () => {

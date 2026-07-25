@@ -555,6 +555,8 @@ export const ruVaultMessages: Messages = {
   'selectHost.newHost': 'Новый хост',
   'selectHost.continue': 'Продолжить',
   'selectHost.continueWithCount': 'Продолжить (выбрано: {count})',
+  'selectHost.toggleGroup': 'Переключить все хосты в группе {name}',
+  'selectHost.toggleHost': 'Переключить {name}',
 
   // Quick Connect
   'quickConnect.knownHost.title': 'Вы уверены, что хотите подключиться?',

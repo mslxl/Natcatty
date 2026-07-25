@@ -76,12 +76,13 @@ jobs:
       issue_number: ${{ steps.decide.outputs.issue_number }}
       pull_number: ${{ steps.decide.outputs.pull_number }}
       trigger_comment_id: ${{ steps.decide.outputs.trigger_comment_id }}
+      head_ref: ${{ steps.decide.outputs.head_ref }}
       reason: ${{ steps.decide.outputs.reason }}
     steps:
       # Prefer control-plane helpers from the default branch. While this workflow
       # is still landing, the helper may only exist on the PR head — bootstrap then.
       - name: Checkout helpers
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.repository.default_branch }}
 
@@ -110,7 +111,7 @@ jobs:
 
       - name: Decide route
         id: decide
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           OWN_ACTORS: ${{ vars.AUTOMATION_OWN_ACTORS || 'binaricat,netcatty-bot,github-actions[bot]' }}
           ISSUE_BOT_LOGINS: ${{ vars.AUTOMATION_ISSUE_BOT_LOGINS || 'netcatty-bot,github-actions[bot]' }}
@@ -127,6 +128,10 @@ jobs:
               core.setOutput('issue_number', extra.issue_number || '');
               core.setOutput('pull_number', extra.pull_number || '');
               core.setOutput('trigger_comment_id', extra.trigger_comment_id || '');
+              core.setOutput(
+                'head_ref',
+                extra.head_ref || context.payload.pull_request?.head?.ref || '',
+              );
               core.setOutput('reason', extra.reason || kind);
             };
 
@@ -165,6 +170,7 @@ jobs:
                 });
                 return set(eligible ? 'codex_loop' : 'external_rerequest_codex', {
                   pull_number: String(pr.number),
+                  head_ref: pr.head?.ref || '',
                   reason: eligible ? 'manual own pr' : 'manual external re-@codex',
                 });
               }
@@ -187,8 +193,13 @@ jobs:
                   auto.isCodexBotLogin(login) &&
                   auto.isCodexTerminalReviewText(comment.body)
                 ) {
+                  const { data: pr } = await github.rest.pulls.get({
+                    ...context.repo,
+                    pull_number: Number(issue.number),
+                  });
                   return set('codex_loop', {
                     pull_number: String(issue.number),
+                    head_ref: pr.head?.ref || '',
                     reason: 'codex terminal issue_comment on pr',
                   });
                 }
@@ -360,7 +371,7 @@ jobs:
       has_backlog: ${{ steps.prepare.outputs.has_backlog }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -376,7 +387,7 @@ jobs:
 
       - name: Prepare issue context
         id: prepare
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           ISSUE_NUMBER: ${{ needs.route.outputs.issue_number }}
           TRIGGER_COMMENT_ID: ${{ needs.route.outputs.trigger_comment_id }}
@@ -673,7 +684,7 @@ jobs:
       - name: Apply classification
         id: apply
         if: steps.prepare.outputs.should_run == 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           ISSUE_NUMBER: ${{ steps.prepare.outputs.issue_number }}
           ISSUE_COMMENT_WATERMARK: ${{ steps.prepare.outputs.latest_comment_id }}
@@ -2199,7 +2210,7 @@ jobs:
       ISSUE_TITLE: ${{ needs.classify.outputs.issue_title }}
     steps:
       - name: Checkout main
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.repository.default_branch }}
           fetch-depth: 0
@@ -2238,7 +2249,7 @@ jobs:
 
       - name: Skip if bot PR already open
         id: existing
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const auto = require(`${process.env.RUNNER_TEMP}/cursor-automation.cjs`);
@@ -2283,7 +2294,7 @@ jobs:
 
       - name: Setup Node
         if: steps.existing.outputs.exists != 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -2418,7 +2429,7 @@ jobs:
 
       - name: Report no changes
         if: steps.existing.outputs.exists != 'true' && steps.changes.outputs.present != 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           github-token: ${{ secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
           script: |
@@ -2529,7 +2540,7 @@ jobs:
 
       - name: Upload implement patch
         if: steps.patch.outputs.should_publish == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: implement-patch-${{ github.run_id }}
           path: |
@@ -2540,7 +2551,7 @@ jobs:
 
       - name: Mark needs human on implement failure
         if: failure() && steps.existing.outputs.exists != 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           github-token: ${{ secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
           script: |
@@ -2565,6 +2576,9 @@ jobs:
     timeout-minutes: 20
     outputs:
       pull_number: ${{ steps.openpr.outputs.pull_number }}
+    concurrency:
+      group: cursor-codex-head-${{ needs.implement.outputs.branch || github.run_id }}
+      cancel-in-progress: false
     permissions:
       contents: write
       issues: write
@@ -2580,12 +2594,13 @@ jobs:
       DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
     steps:
       - name: Download implement patch
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: implement-patch-${{ github.run_id }}
           path: patch-in
 
       - name: Publish branch from fresh runner
+        id: publish
         run: |
           set -euo pipefail
           PUBLISH="$RUNNER_TEMP/publish-tree"
@@ -2597,16 +2612,74 @@ jobs:
           git -c core.hooksPath=/dev/null fetch --depth=50 origin "${BASE_SHA}"
           git -c core.hooksPath=/dev/null checkout -B "$BRANCH" "$BASE_SHA"
           git -c core.hooksPath=/dev/null am --3way "$GITHUB_WORKSPACE/patch-in/implement.patch"
-          git -c core.hooksPath=/dev/null push origin "HEAD:$BRANCH"
+          candidate_tree="$(git rev-parse 'HEAD^{tree}')"
+          if git -c core.hooksPath=/dev/null push \
+            --force-with-lease="refs/heads/${BRANCH}:" \
+            origin "HEAD:$BRANCH"; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! git -c core.hooksPath=/dev/null fetch --depth=1 origin \
+            "+refs/heads/${BRANCH}:refs/remotes/origin/${BRANCH}"; then
+            echo "::error::The create-only push failed and the remote branch could not be fetched."
+            exit 1
+          fi
+          remote_after="$(git rev-parse "refs/remotes/origin/${BRANCH}")"
+          remote_tree="$(git rev-parse "refs/remotes/origin/${BRANCH}^{tree}")"
+          live_after="$(git ls-remote --heads origin "refs/heads/${BRANCH}" | awk '{print $1}')"
+          if [[ -z "$live_after" || "$live_after" != "$remote_after" ]]; then
+            echo "::error::Remote branch $BRANCH changed while it was being checked; preserve it and hand off this publish."
+            echo "handoff=true" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          if [[ "$remote_tree" == "$candidate_tree" ]]; then
+            echo "::notice::Remote branch $BRANCH already has the same implementation; reuse it without rewriting history."
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "::error::Remote branch $BRANCH already has different content; preserve it and hand off this publish."
+          echo "handoff=true" >> "$GITHUB_OUTPUT"
+          exit 1
+
+      - name: Mark needs human on publish failure
+        if: failure() && steps.publish.outputs.handoff == 'true'
+        uses: actions/github-script@v9
+        env:
+          ISSUE_NUMBER: ${{ needs.implement.outputs.issue_number }}
+          BRANCH: ${{ needs.implement.outputs.branch }}
+        with:
+          github-token: ${{ secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+          script: |
+            const issueNumber = Number(process.env.ISSUE_NUMBER);
+            const marker = `<!-- cursor-publish-handoff:${process.env.BRANCH} -->`;
+            await github.rest.issues.addLabels({
+              ...context.repo,
+              issue_number: issueNumber,
+              labels: ['ready-for-human'],
+            });
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              ...context.repo,
+              issue_number: issueNumber,
+              per_page: 100,
+            });
+            if (!comments.some((comment) => String(comment.body || '').includes(marker))) {
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: issueNumber,
+                body: `${marker}\n\nThe automation could not safely publish the implementation branch \`${process.env.BRANCH}\` because that branch already contains different or changing work. A maintainer needs to review the preserved branch before retrying.`,
+              });
+            }
 
       - name: Checkout helper for PR body helpers
-        uses: actions/checkout@v5
+        if: steps.publish.outputs.published == 'true'
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
           path: helpers
 
       - name: Ensure automation helper present
+        if: steps.publish.outputs.published == 'true'
         working-directory: helpers
         env:
           BOOTSTRAP_SHA: ${{ github.sha }}
@@ -2624,8 +2697,9 @@ jobs:
           test -s "$RUNNER_TEMP/cursor-automation.cjs"
 
       - name: Open draft PR
+        if: steps.publish.outputs.published == 'true'
         id: openpr
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           BRANCH: ${{ needs.implement.outputs.branch }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
@@ -2669,27 +2743,75 @@ jobs:
               agentBody,
               issueCommentWatermark: process.env.ISSUE_COMMENT_WATERMARK,
             });
-            const { data: pr } = await github.rest.pulls.create({
-              ...context.repo,
-              title,
-              head: process.env.BRANCH,
-              base: process.env.DEFAULT_BRANCH || 'main',
-              body,
-              draft: true,
-            });
+            let pr;
+            try {
+              ({ data: pr } = await github.rest.pulls.create({
+                ...context.repo,
+                title,
+                head: process.env.BRANCH,
+                base: process.env.DEFAULT_BRANCH || 'main',
+                body,
+                draft: true,
+              }));
+            } catch (error) {
+              const status = Number(error.status || error.response?.status || 0);
+              const errorText = String(
+                error.response?.data?.message || error.message || '',
+              ).toLowerCase();
+              const createPermissionDenied =
+                errorText.includes('resource not accessible by integration') ||
+                errorText.includes('resource not accessible by personal access token') ||
+                errorText.includes('not permitted to create') ||
+                errorText.includes('must have pull request write permission');
+              if (status === 422) {
+                const { data: existing } = await github.rest.pulls.list({
+                  ...context.repo,
+                  state: 'open',
+                  head: `${context.repo.owner}:${process.env.BRANCH}`,
+                  base: process.env.DEFAULT_BRANCH || 'main',
+                  per_page: 1,
+                });
+                pr = existing[0];
+                if (!pr) throw error;
+                core.notice(`Another run already opened ${pr.html_url}; reuse it.`);
+              } else if (status === 403 && createPermissionDenied) {
+                core.warning('The automation token cannot create pull requests; handing off to a maintainer.');
+                await github.rest.issues.addLabels({
+                  ...context.repo,
+                  issue_number: Number(process.env.ISSUE_NUMBER),
+                  labels: ['ready-for-human'],
+                }).catch(() => {});
+                await github.rest.issues.createComment({
+                  ...context.repo,
+                  issue_number: Number(process.env.ISSUE_NUMBER),
+                  body: `The implementation is available on branch \`${process.env.BRANCH}\`, but the automation token cannot open a pull request. A maintainer can open it manually.`,
+                }).catch(() => {});
+                return;
+              } else {
+                throw error;
+              }
+            }
             await github.rest.issues.addLabels({
               ...context.repo,
               issue_number: pr.number,
               labels: ['automation:bot-pr', 'automation:codex-loop', 'triage'],
             });
-            await github.rest.issues.createComment({
+            const sourceIssueNumber = Number(process.env.ISSUE_NUMBER);
+            const sourceComments = await github.paginate(github.rest.issues.listComments, {
               ...context.repo,
-              issue_number: Number(process.env.ISSUE_NUMBER),
-              body: auto.buildPullRequestComment({
-                pullRequestUrl: pr.html_url,
-                clean: false,
-              }),
+              issue_number: sourceIssueNumber,
+              per_page: 100,
             });
+            if (!auto.hasAutomationPullRequestBacklink(sourceComments, pr.html_url)) {
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: sourceIssueNumber,
+                body: auto.buildPullRequestComment({
+                  pullRequestUrl: pr.html_url,
+                  clean: false,
+                }),
+              });
+            }
             // Expose PR number for a separate @codex step that may use a
             // human PAT (CODEX_REQUEST_GITHUB_TOKEN) without changing PR author.
             core.setOutput('pull_number', String(pr.number));
@@ -2698,17 +2820,35 @@ jobs:
 
       - name: Request Codex review on implement PR
         if: steps.openpr.outputs.pull_number != ''
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           PULL_NUMBER: ${{ steps.openpr.outputs.pull_number }}
-          HEAD_SHA: ${{ steps.openpr.outputs.head_sha }}
+          OWN_ACTORS: ${{ vars.AUTOMATION_OWN_ACTORS || 'binaricat,netcatty-bot,github-actions[bot]' }}
         with:
           # Prefer maintainer PAT so Codex connector sees a human identity.
           github-token: ${{ secrets.CODEX_REQUEST_GITHUB_TOKEN || secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
           script: |
             const auto = require(`${process.env.RUNNER_TEMP}/cursor-automation.cjs`);
             const pull_number = Number(process.env.PULL_NUMBER);
-            const headSha = process.env.HEAD_SHA || '';
+            const { data: pr } = await github.rest.pulls.get({
+              ...context.repo,
+              pull_number,
+            });
+            const headSha = pr.head?.sha || '';
+            if (!headSha) throw new Error('Missing implementation PR head SHA.');
+            const existingComments = await github.paginate(github.rest.issues.listComments, {
+              ...context.repo,
+              issue_number: pull_number,
+              per_page: 100,
+            });
+            if (auto.shouldSkipExternalCodexRerequest({
+              existingComments,
+              headSha,
+              ownActors: process.env.OWN_ACTORS,
+            })) {
+              core.notice(`@codex review was already requested for ${headSha}; skip duplicate.`);
+              return;
+            }
             await github.rest.issues.createComment({
               ...context.repo,
               issue_number: pull_number,
@@ -2819,6 +2959,9 @@ jobs:
     if: needs.route.outputs.kind == 'codex_loop'
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    concurrency:
+      group: cursor-codex-head-${{ needs.route.outputs.head_ref || needs.route.outputs.pull_number || github.run_id }}
+      cancel-in-progress: false
     permissions:
       contents: read
       issues: write
@@ -2838,7 +2981,7 @@ jobs:
       GH_TOKEN: ${{ secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout helpers
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
@@ -2892,7 +3035,7 @@ jobs:
 
       - name: Inspect Codex outcome
         id: codex
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           github-token: ${{ secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
           script: |
@@ -3090,7 +3233,7 @@ jobs:
 
       - name: Request Codex review
         if: steps.codex.outputs.action == 'request_review'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           # @codex must come from a human identity connected to Codex (binaricat PAT).
           github-token: ${{ secrets.CODEX_REQUEST_GITHUB_TOKEN || secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
@@ -3229,7 +3372,7 @@ jobs:
 
       - name: Give up after max rounds / P3 handoff
         if: steps.codex.outputs.action == 'give_up'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           REASON: ${{ steps.codex.outputs.reason }}
           MAX_ROUNDS: ${{ env.MAX_ROUNDS }}
@@ -3263,7 +3406,7 @@ jobs:
 
       - name: Checkout PR head for fix
         if: steps.codex.outputs.action == 'fix'
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ steps.codex.outputs.head_sha }}
           fetch-depth: 0
@@ -3271,7 +3414,7 @@ jobs:
 
       - name: Restore findings file
         if: steps.codex.outputs.action == 'fix'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const auto = require(`${process.env.RUNNER_TEMP}/cursor-automation.cjs`);
@@ -3353,7 +3496,7 @@ jobs:
 
       - name: Setup Node
         if: steps.codex.outputs.action == 'fix'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -3593,7 +3736,7 @@ jobs:
 
       - name: Upload fix patch
         if: steps.codex.outputs.action == 'fix' && steps.fixpatch.outputs.should_publish == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: codex-fix-patch-${{ github.run_id }}
           path: .cursor-runtime/fix.patch
@@ -3601,7 +3744,7 @@ jobs:
 
       - name: Mark needs human when no fix produced
         if: steps.codex.outputs.action == 'fix' && steps.fixpatch.outputs.empty == 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           PULL_NUMBER: ${{ needs.route.outputs.pull_number }}
         with:
@@ -3628,7 +3771,7 @@ jobs:
 
       - name: Mark needs human on fix failure
         if: failure() && steps.codex.outputs.action == 'fix'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           PULL_NUMBER: ${{ needs.route.outputs.pull_number }}
         with:
@@ -3663,6 +3806,9 @@ jobs:
     if: needs.codex_loop.outputs.should_publish == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    concurrency:
+      group: cursor-codex-head-${{ needs.codex_loop.outputs.head_ref || github.run_id }}
+      cancel-in-progress: false
     permissions:
       contents: write
       issues: write
@@ -3676,12 +3822,13 @@ jobs:
       PREV_ROUND: ${{ needs.codex_loop.outputs.prev_round }}
     steps:
       - name: Download fix patch
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: codex-fix-patch-${{ github.run_id }}
           path: patch-in
 
       - name: Publish fix from fresh runner
+        id: publish
         run: |
           set -euo pipefail
           PUBLISH="$RUNNER_TEMP/publish-fix-tree"
@@ -3690,19 +3837,43 @@ jobs:
           cd "$PUBLISH"
           git -c core.hooksPath=/dev/null config user.name "netcatty-bot"
           git -c core.hooksPath=/dev/null config user.email "308658023+netcatty-bot@users.noreply.github.com"
+          git -c core.hooksPath=/dev/null fetch --depth=50 origin "$HEAD_REF"
+          live_head="$(git rev-parse FETCH_HEAD)"
+          if [[ "$live_head" != "$BASE_SHA" ]]; then
+            echo "::notice::PR head moved from $BASE_SHA to $live_head; discard this stale fix."
+            echo "published=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           git -c core.hooksPath=/dev/null fetch --depth=50 origin "$BASE_SHA"
           git -c core.hooksPath=/dev/null checkout -B "$HEAD_REF" "$BASE_SHA"
           git -c core.hooksPath=/dev/null am --3way "$GITHUB_WORKSPACE/patch-in/fix.patch"
-          git -c core.hooksPath=/dev/null push origin "HEAD:$HEAD_REF"
+          if ! git -c core.hooksPath=/dev/null push \
+            --force-with-lease="refs/heads/${HEAD_REF}:${BASE_SHA}" \
+            origin "HEAD:$HEAD_REF"; then
+            if ! remote_after="$(git ls-remote --heads origin "refs/heads/${HEAD_REF}" | awk '{print $1}')"; then
+              echo "::error::Push failed and the PR head could not be checked."
+              exit 1
+            fi
+            if [[ "$remote_after" != "$BASE_SHA" ]]; then
+              echo "::notice::PR head changed while publishing; discard this stale fix."
+              echo "published=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "::error::Push failed even though the PR head did not move."
+            exit 1
+          fi
+          echo "published=true" >> "$GITHUB_OUTPUT"
 
       - name: Checkout helper
-        uses: actions/checkout@v5
+        if: steps.publish.outputs.published == 'true'
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
           path: helpers
 
       - name: Load helper
+        if: steps.publish.outputs.published == 'true'
         run: |
           set -euo pipefail
           if [[ -f helpers/scripts/cursor-automation.cjs ]]; then
@@ -3714,7 +3885,8 @@ jobs:
           test -s "$RUNNER_TEMP/cursor-automation.cjs"
 
       - name: Re-request Codex after fix push
-        uses: actions/github-script@v7
+        if: steps.publish.outputs.published == 'true'
+        uses: actions/github-script@v9
         with:
           github-token: ${{ secrets.CODEX_REQUEST_GITHUB_TOKEN || secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
           script: |
@@ -3739,6 +3911,9 @@ jobs:
     if: needs.route.outputs.kind == 'own_rerequest_codex'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    concurrency:
+      group: cursor-codex-head-${{ needs.route.outputs.head_ref || needs.route.outputs.pull_number || github.run_id }}
+      cancel-in-progress: false
     # Must write the @codex review comment after maintainer pushes.
     # Without this, the workflow default read-only GITHUB_TOKEN gets 403.
     permissions:
@@ -3750,7 +3925,7 @@ jobs:
       OWN_ACTORS: ${{ vars.AUTOMATION_OWN_ACTORS || 'binaricat,netcatty-bot,github-actions[bot]' }}
     steps:
       - name: Checkout helpers
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
@@ -3778,7 +3953,7 @@ jobs:
           test -s scripts/cursor-automation.cjs
 
       - name: Comment @codex review after human push
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           # Human-connected Codex identity (binaricat PAT); not netcatty-bot.
           github-token: ${{ secrets.CODEX_REQUEST_GITHUB_TOKEN || secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
@@ -3896,7 +4071,7 @@ jobs:
       OWN_ACTORS: ${{ vars.AUTOMATION_OWN_ACTORS || 'binaricat,netcatty-bot,github-actions[bot]' }}
     steps:
       - name: Checkout helpers
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
@@ -3924,7 +4099,7 @@ jobs:
           test -s scripts/cursor-automation.cjs
 
       - name: Comment @codex review after contributor push
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           # Prefer human Codex-connected PAT; fall back for forks/write token.
           github-token: ${{ secrets.CODEX_REQUEST_GITHUB_TOKEN || secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
@@ -3993,7 +4168,7 @@ jobs:
       GH_TOKEN: ${{ secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout helpers
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
@@ -4015,7 +4190,7 @@ jobs:
           test -s scripts/cursor-automation.cjs
 
       - name: Poll open automation PRs
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           # Poll may re-@codex; use human-connected token for those comments.
           github-token: ${{ secrets.CODEX_REQUEST_GITHUB_TOKEN || secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
@@ -4116,11 +4291,16 @@ jobs:
                     per_page: 100,
                   },
                 );
-                for (const c of reviewComments) {
+                const currentReviewComments =
+                  auto.filterCodexReviewCommentsForHead(
+                    reviewComments,
+                    pr.head.sha,
+                  );
+                for (const c of currentReviewComments) {
                   if (!auto.isCodexBotLogin(c.user?.login)) continue;
                   if (
                     !headMatches(
-                      c.commit_id || c.original_commit_id,
+                      c.original_commit_id || c.commit_id,
                       c.body,
                     )
                   ) {
