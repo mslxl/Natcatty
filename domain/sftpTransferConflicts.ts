@@ -9,20 +9,45 @@ export const SFTP_PATH_CONFLICT_ACTIVE_STATUSES: ReadonlySet<TransferTask["statu
   "paused",
 ]);
 
+type DestinationRef = Pick<
+  TransferTask,
+  "targetPath" | "targetConnectionId" | "targetHostId" | "targetConnectionKey"
+>;
+
 /**
- * Find another top-level transfer that uses the same source and target paths.
- * Concurrent writers to one destination (especially local .part + rename) race
- * and corrupt output; FileZilla-style clients refuse or queue the second job.
+ * Stable destination endpoint identity. Prefer connection key / host id so two
+ * sessions to the same host still collide; fall back to connection id (covers
+ * the local sentinel and single-session remotes).
+ */
+export function sameTransferDestinationEndpoint(
+  a: DestinationRef,
+  b: DestinationRef,
+): boolean {
+  if (a.targetConnectionKey && b.targetConnectionKey) {
+    return a.targetConnectionKey === b.targetConnectionKey;
+  }
+  if (a.targetHostId && b.targetHostId) {
+    return a.targetHostId === b.targetHostId;
+  }
+  return a.targetConnectionId === b.targetConnectionId;
+}
+
+/**
+ * Find another top-level transfer that writes the same destination path.
+ * Concurrent writers (especially local .part + rename) race and corrupt output;
+ * FileZilla-style clients refuse or queue the second job. Source path is ignored
+ * so different sources targeting one file still conflict; endpoint identity avoids
+ * treating identical path strings on different hosts as the same destination.
  */
 export function findActivePathConflict(
   tasks: readonly TransferTask[],
-  candidate: Pick<TransferTask, "id" | "sourcePath" | "targetPath">,
+  candidate: Pick<TransferTask, "id"> & DestinationRef,
 ): TransferTask | undefined {
   return tasks.find((task) => (
     !task.parentTaskId
     && task.id !== candidate.id
-    && task.sourcePath === candidate.sourcePath
     && task.targetPath === candidate.targetPath
+    && sameTransferDestinationEndpoint(task, candidate)
     && SFTP_PATH_CONFLICT_ACTIVE_STATUSES.has(task.status)
   ));
 }

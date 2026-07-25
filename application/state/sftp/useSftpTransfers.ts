@@ -812,7 +812,12 @@ export const useSftpTransfers = ({
         const nextTargetPath = joinPath(targetPath, file.name);
         const pathTaken = findActivePathConflict(
           [...sftpTransferCenterStore.getSnapshot().tasks, ...transfersRef.current, ...newTasks],
-          { id: "", sourcePath: nextSourcePath, targetPath: nextTargetPath },
+          {
+            id: "",
+            targetPath: nextTargetPath,
+            targetConnectionId: targetPane.connection!.id,
+            targetHostId: targetPane.connection!.isLocal ? undefined : targetPane.connection!.hostId,
+          },
         );
         if (pathTaken) {
           logger.warn("[SFTP] skipping duplicate transfer path", pathConflictMessage(pathTaken));
@@ -988,13 +993,14 @@ export const useSftpTransfers = ({
       commitPauseState((candidate) => ({ ...candidate, status: "paused" as TransferStatus, speed: 0 }));
       return;
     }
-    // Optimistic pause: flip UI immediately so the panel button does not look
-    // dead while the bridge soft-drains. Latch early so directory workers stop
-    // starting new files; roll back on hard bridge failure.
+    // Keep UI in "pausing" until the bridge soft-drain / identity check settles
+    // so Resume is not offered while writes may still be in flight. Latch early
+    // so directory workers stop starting new files; roll back on hard failure.
+    const statusBeforePause = task.status;
     latchPause();
     commitPauseState((candidate) => ({
       ...candidate,
-      status: "paused" as TransferStatus,
+      status: "pausing" as TransferStatus,
       speed: 0,
     }));
     const isCompressedUpload = task.isDirectory && (
@@ -1015,7 +1021,7 @@ export const useSftpTransfers = ({
           checkpointBytes: candidate.transferredBytes,
         }));
       } else {
-        failPause(result.reason, "transferring");
+        failPause(result.reason, statusBeforePause);
       }
       return;
     }
@@ -1101,7 +1107,7 @@ export const useSftpTransfers = ({
       const parentOutcome = resolveDirectoryPauseParentOutcome(results);
       if (parentOutcome.kind !== "paused") {
         await rollbackPartialPause();
-        failPause(parentOutcome.reason, "transferring");
+        failPause(parentOutcome.reason, statusBeforePause);
         return;
       }
       const backendResults = new Map(backendIds.map((id, index) => [id, results[index]]));
@@ -1158,7 +1164,7 @@ export const useSftpTransfers = ({
     } else {
       const hard = results.find((result) => isHardPauseFailure(result));
       await rollbackPartialPause();
-      failPause(hard?.reason, "transferring");
+      failPause(hard?.reason, statusBeforePause);
     }
   }, [activeChildIdsRef, ownerId, releasePausedTransfer]);
 
@@ -1688,14 +1694,19 @@ export const useSftpTransfers = ({
       isDirectory: boolean;
       totalBytes?: number;
     }): Promise<TransferStatus> => {
-      // Same source+target concurrent writers corrupt .part / final files.
+      // Same destination concurrent writers corrupt .part / final files.
+      const downloadDestination = {
+        id: "",
+        targetPath: params.targetPath,
+        targetConnectionId: "local" as const,
+      };
       const centerConflict = findActivePathConflict(
         sftpTransferCenterStore.getSnapshot().tasks,
-        { id: "", sourcePath: params.sourcePath, targetPath: params.targetPath },
+        downloadDestination,
       );
       const localConflict = findActivePathConflict(
         transfersRef.current,
-        { id: "", sourcePath: params.sourcePath, targetPath: params.targetPath },
+        downloadDestination,
       );
       const conflict = centerConflict ?? localConflict;
       if (conflict) {

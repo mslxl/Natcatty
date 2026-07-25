@@ -267,7 +267,7 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
           if (task?.ownerId === "dedicated-resume" && task.reconnectRequired) {
             return;
           }
-          // Optimistic pause — UI must flip immediately; soft-drain finishes in bg.
+          // Show pausing until soft-drain settles — do not offer Resume early.
           if (task && ["transferring", "pending", "queued", "pausing"].includes(task.status)) {
             tasks = tasks.map((candidate) => (
               candidate.id === taskId || candidate.parentTaskId === taskId
@@ -275,7 +275,7 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
                   ...candidate,
                   status: (["completed", "cancelled", "failed"].includes(candidate.status)
                     ? candidate.status
-                    : "paused") as TransferTask["status"],
+                    : "pausing") as TransferTask["status"],
                   speed: 0,
                 }
                 : candidate
@@ -357,7 +357,7 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
           const revertIds = new Set([taskId, ...pauseIds]);
           tasks = tasks.map((candidate) => {
             if (!revertIds.has(candidate.id)) return candidate;
-            // Optimistic pause paints "paused" immediately — roll that back too.
+            // Intermediate "pausing" (and any premature "paused") must roll back.
             if (
               candidate.status !== "pausing"
               && candidate.status !== "paused"

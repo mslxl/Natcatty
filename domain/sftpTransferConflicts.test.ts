@@ -24,7 +24,7 @@ const base = (overrides: Partial<TransferTask> = {}): TransferTask => ({
   ...overrides,
 });
 
-test("findActivePathConflict matches same source and target among active rows", () => {
+test("findActivePathConflict matches same destination among active rows", () => {
   const tasks = [
     base({ id: "live", status: "transferring" }),
     base({ id: "done", status: "completed", transferredBytes: 100 }),
@@ -33,18 +33,59 @@ test("findActivePathConflict matches same source and target among active rows", 
   assert.equal(
     findActivePathConflict(tasks, {
       id: "new",
-      sourcePath: "/root/sing-box",
       targetPath: "/Users/me/Desktop/sing-box",
+      targetConnectionId: "local",
     })?.id,
     "live",
   );
   assert.equal(
     findActivePathConflict(tasks, {
       id: "live",
-      sourcePath: "/root/sing-box",
       targetPath: "/Users/me/Desktop/sing-box",
+      targetConnectionId: "local",
     }),
     undefined,
+  );
+});
+
+test("findActivePathConflict ignores identical paths on different endpoints", () => {
+  const tasks = [
+    base({
+      id: "host-a",
+      direction: "upload",
+      sourcePath: "/local/file",
+      targetPath: "/remote/file",
+      sourceConnectionId: "local",
+      targetConnectionId: "conn-a",
+      targetHostId: "host-a",
+    }),
+  ];
+  assert.equal(
+    findActivePathConflict(tasks, {
+      id: "host-b",
+      targetPath: "/remote/file",
+      targetConnectionId: "conn-b",
+      targetHostId: "host-b",
+    }),
+    undefined,
+  );
+});
+
+test("findActivePathConflict collides different sources writing one destination", () => {
+  const tasks = [
+    base({
+      id: "from-a",
+      sourcePath: "/root/a",
+      targetPath: "/Users/me/Desktop/out.bin",
+    }),
+  ];
+  assert.equal(
+    findActivePathConflict(tasks, {
+      id: "from-b",
+      targetPath: "/Users/me/Desktop/out.bin",
+      targetConnectionId: "local",
+    })?.id,
+    "from-a",
   );
 });
 
@@ -53,8 +94,8 @@ test("interrupted is not an active path conflict (resume may claim the path)", (
   assert.equal(
     findActivePathConflict(tasks, {
       id: "resume",
-      sourcePath: "/root/sing-box",
       targetPath: "/Users/me/Desktop/sing-box",
+      targetConnectionId: "local",
     }),
     undefined,
   );
