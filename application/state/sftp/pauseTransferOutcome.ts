@@ -36,12 +36,18 @@ export function allPauseResultsBenignOrSuccess(
 }
 
 export type DirectoryPauseParentOutcome =
-  | { kind: "paused" }
+  | { kind: "paused"; reason?: string }
   | { kind: "still_transferring"; reason?: string };
 
 /**
- * Parent directory pause UI outcome after per-child bridge pause results.
- * Matches store semantics: never paint paused over hard child pause failures.
+ * Parent directory pause outcome after per-child bridge results.
+ *
+ * Folder pause is latch-first: stop admitting new files even when some child
+ * streams refuse pause ("cannot be paused yet", checkpoint verify races).
+ * Rolling the parent back to transferring was worse — soft-drained children
+ * finished and the queue claimed the next file under a "failed" pause.
+ *
+ * `reason` may still surface a soft warning on the parent row.
  */
 export function resolveDirectoryPauseParentOutcome(
   results: readonly PauseBridgeResult[],
@@ -50,7 +56,13 @@ export function resolveDirectoryPauseParentOutcome(
     return { kind: "paused" };
   }
   const hard = results.find((result) => isHardPauseFailure(result));
-  return { kind: "still_transferring", reason: hard?.reason };
+  return { kind: "paused", reason: hard?.reason };
+}
+
+/** Soft/transient pause misses — keep retrying or tolerate for folder latch. */
+export function isTransientPauseFailure(reason?: string): boolean {
+  return /cannot be paused yet|Could not verify the saved transfer checkpoint|Could not verify that the source is safe to resume/i
+    .test(reason || "");
 }
 
 /**

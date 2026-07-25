@@ -32,3 +32,30 @@ test("limits default multi-file transfer scheduling to two concurrent workers", 
 
   assert.equal(maxActive, 2);
 });
+
+test("beforeClaim runs before claiming the next queue index", async () => {
+  const events: string[] = [];
+  let paused = true;
+
+  const run = runSftpTransferWorkers(
+    ["a", "b"],
+    () => 1,
+    async (item) => {
+      events.push(`work:${item}`);
+    },
+    {
+      beforeClaim: async () => {
+        events.push("claim-gate");
+        while (paused) {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        }
+      },
+    },
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(events, ["claim-gate"]);
+  paused = false;
+  await run;
+  assert.deepEqual(events, ["claim-gate", "work:a", "claim-gate", "work:b"]);
+});

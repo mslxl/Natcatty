@@ -12,6 +12,7 @@ import {
 } from "../../domain/sftpTransferConflicts";
 import { STORAGE_KEY_SFTP_TRANSFER_CENTER } from "../../infrastructure/config/storageKeys";
 import { netcattyBridge } from "../../infrastructure/services/netcattyBridge";
+import { notify } from "../notification";
 import { globalSftpTransferScheduler } from "./sftp/globalTransferScheduler";
 import { isBenignPauseMiss, planPartialPauseRollback } from "./sftp/pauseTransferOutcome";
 
@@ -299,9 +300,11 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
           const allBenignOrSuccess = pauseIds.length === 0 || pauseResults.every(
             ({ result }) => result.success || isBenignPauseMiss(result.reason),
           );
-          // Only claim paused when EVERY targeted stream paused or is already gone.
-          // Mixed success + hard failure must not paint a paused parent over live children.
-          if (allBenignOrSuccess) {
+          // Folder pause is latch-first: keep parent paused even when some child
+          // streams miss (arming / checkpoint races). Rolling back re-opened the
+          // queue and looked like pause did nothing.
+          // Single-file: still require full success, else unpause partials.
+          if (allBenignOrSuccess || task?.isDirectory) {
             const byId = new Map(pauseResults.map((row) => [row.id, row.result]));
             tasks = tasks.map((candidate) => {
               if (candidate.id === taskId) {
@@ -317,12 +320,18 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
                   downloadCheckpointBytes: byId.get(taskId)?.downloadCheckpointBytes ?? candidate.downloadCheckpointBytes,
                   uploadCheckpointBytes: byId.get(taskId)?.uploadCheckpointBytes ?? candidate.uploadCheckpointBytes,
                   sourceFingerprint: byId.get(taskId)?.sourceFingerprint ?? candidate.sourceFingerprint,
+                  pauseUnavailableReason: undefined,
                 };
               }
               if (!pauseIds.includes(candidate.id)) return candidate;
               const result = byId.get(candidate.id);
               if (result && !result.success && !isBenignPauseMiss(result.reason)) {
-                return { ...candidate, pauseUnavailableReason: result.reason };
+                return {
+                  ...candidate,
+                  status: "paused" as const,
+                  speed: 0,
+                  pauseUnavailableReason: undefined,
+                };
               }
               return {
                 ...candidate,
@@ -338,9 +347,8 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
             emit();
             return;
           }
-          // Partial / hard fail: unpause any streams we successfully paused so
-          // the parent can stay transferring without soft-deadlocking children
-          // (match panel planPartialPauseRollback path).
+          // Single-file partial / hard fail: unpause streams we paused so work
+          // continues (match panel planPartialPauseRollback path).
           const rollback = planPartialPauseRollback({
             activeIds: pauseIds,
             backendIds: pauseIds,
@@ -352,8 +360,6 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
           const hard = pauseResults.find(({ result }) =>
             result && !result.success && !isBenignPauseMiss(result.reason),
           )?.result;
-          // Revert optimistic "pausing" on parent + children so a hard miss does
-          // not leave the UI stuck finishing a step that will never complete.
           const revertIds = new Set([taskId, ...pauseIds]);
           tasks = tasks.map((candidate) => {
             if (!revertIds.has(candidate.id)) return candidate;
@@ -428,15 +434,19 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
       // stream into the same destination (.part / rename race).
       const pathConflict = findActivePathConflict(tasks, task);
       if (pathConflict) {
+        const conflictError = pathConflictMessage(pathConflict);
         tasks = tasks.map((candidate) => candidate.id === taskId ? {
           ...candidate,
           status: "attention" as const,
-          error: pathConflictMessage(pathConflict),
+          error: conflictError,
           reconnectRequired: true,
           speed: 0,
           phase: undefined,
         } : candidate);
         emit();
+        // Surface exclusivity failures immediately — silent attention rows look
+        // like a dead Resume click after path races.
+        notify.warning(conflictError, "SFTP");
         return;
       }
       const previousOwnerId = task.ownerId;

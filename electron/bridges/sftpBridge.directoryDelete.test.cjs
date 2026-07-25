@@ -87,7 +87,17 @@ test("directory delete does not trust an unrelated shell success", async () => {
       queueMicrotask(() => stream.emit("close", 0));
     },
   };
-  const client = { client: sshClient, sftp: tree.channel };
+  // Prefer a live SFTP channel for requireSftpChannel / lstat verify.
+  const client = {
+    client: sshClient,
+    sftp: tree.channel,
+    async sftp(cb) {
+      if (typeof cb === "function") cb(null, tree.channel);
+      return tree.channel;
+    },
+  };
+  // ssh2-sftp-client style: some paths use client.sftp as channel object.
+  Object.assign(client, { sftp: tree.channel });
   sftpBridge.init({
     electronModule: {},
     sessions: new Map(),
@@ -101,9 +111,53 @@ test("directory delete does not trust an unrelated shell success", async () => {
   });
 
   assert.equal(tree.entries.has("/home/user/parent"), false);
+  // Fast path may attempt shell rm -rf, but must fall back to protocol walk
+  // when SFTP still sees the path after a fake shell success.
+  assert.ok(
+    tree.calls.exec.length === 0
+    || tree.calls.exec.some((command) => String(command).includes("rm -rf")),
+  );
   assert.deepEqual(tree.calls.unlink, ["/home/user/parent/child/file.txt"]);
   assert.deepEqual(tree.calls.rmdir, ["/home/user/parent/child", "/home/user/parent"]);
-  assert.deepEqual(tree.calls.exec, []);
+});
+
+test("directory delete uses verified shell rm -rf when SFTP path is gone", async () => {
+  const tree = createNestedDirectoryChannel();
+  const sshClient = {
+    exec(command, callback) {
+      tree.calls.exec.push(command);
+      // Actually remove the SFTP-visible tree so verify succeeds.
+      if (String(command).includes("rm -rf")) {
+        for (const key of [...tree.entries.keys()]) {
+          if (key === "/home/user/parent" || key.startsWith("/home/user/parent/")) {
+            tree.entries.delete(key);
+          }
+        }
+      }
+      const stream = new EventEmitter();
+      stream.stderr = new EventEmitter();
+      callback(null, stream);
+      queueMicrotask(() => stream.emit("close", 0));
+    },
+  };
+  const client = { client: sshClient, sftp: tree.channel };
+  sftpBridge.init({
+    electronModule: {},
+    sessions: new Map(),
+    sftpClients: new Map([["delete-fast-test", client]]),
+  });
+
+  await sftpBridge.deleteSftp(null, {
+    sftpId: "delete-fast-test",
+    path: "/home/user/parent",
+    encoding: "utf-8",
+  });
+
+  assert.equal(tree.entries.has("/home/user/parent"), false);
+  assert.ok(tree.calls.exec.some((command) => String(command).includes("rm -rf")));
+  // Protocol walk should not be needed when shell verify succeeds.
+  assert.deepEqual(tree.calls.unlink, []);
+  assert.deepEqual(tree.calls.rmdir, []);
 });
 
 test("directory delete preserves leading-dot directory names", async () => {

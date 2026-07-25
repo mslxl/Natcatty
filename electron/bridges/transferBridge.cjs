@@ -3711,26 +3711,55 @@ async function pauseTransfer(_event, payload) {
       // contiguous checkpoint. Truncating now races those writes — defer until
       // the pump is idle (or resume), and trust contiguousCheckpointBytes.
       if (activeRanges === 0) {
-        await prepareStreamFallbackAfterRangeFailure(transfer, transfer.stagedRemote?.client);
-        transfer.deferredSparseTruncate = false;
+        try {
+          await prepareStreamFallbackAfterRangeFailure(transfer, transfer.stagedRemote?.client);
+          transfer.deferredSparseTruncate = false;
+        } catch (truncateError) {
+          // Truncate can race with the last soft-drain write. Contiguous
+          // checkpoint is still valid for resume — do not abort the pause.
+          console.warn(
+            "[transferBridge] sparse truncate on pause failed; keeping contiguous checkpoint:",
+            truncateError?.message || String(truncateError),
+          );
+          transfer.deferredSparseTruncate = false;
+        }
       } else {
         transfer.deferredSparseTruncate = true;
       }
     } else if (transfer.stagedLocalPath) {
-      const stat = await fs.promises.stat(transfer.stagedLocalPath);
-      transfer.checkpointBytes = stat.size;
+      try {
+        const stat = await fs.promises.stat(transfer.stagedLocalPath);
+        transfer.checkpointBytes = stat.size;
+      } catch (statError) {
+        // Fall through to outer catch only when we have no usable checkpoint.
+        if (!(Number.isFinite(transfer.checkpointBytes) && transfer.checkpointBytes >= 0)) {
+          throw statError;
+        }
+      }
     } else if (transfer.stagedRemote) {
-      const staged = transfer.stagedRemote;
-      const stat = isScpModeClient(staged.client)
-        ? await getScpBackendForClient(staged.client).stat(staged.path, { encoding: staged.encoding })
-        : await staged.client.stat(encodePathForSession(staged.sftpId, staged.path, staged.encoding));
-      transfer.checkpointBytes = stat.size;
+      try {
+        const staged = transfer.stagedRemote;
+        const stat = isScpModeClient(staged.client)
+          ? await getScpBackendForClient(staged.client).stat(staged.path, { encoding: staged.encoding })
+          : await staged.client.stat(encodePathForSession(staged.sftpId, staged.path, staged.encoding));
+        transfer.checkpointBytes = stat.size;
+      } catch (statError) {
+        if (!(Number.isFinite(transfer.checkpointBytes) && transfer.checkpointBytes >= 0)) {
+          throw statError;
+        }
+      }
     }
   } catch {
-    transfer.deferredSparseTruncate = false;
-    transfer.paused = false;
-    resumeStreamPair(transfer);
-    return { success: false, reason: "Could not verify the saved transfer checkpoint" };
+    // Last resort: keep pause if we already have a contiguous/progress checkpoint.
+    // Unpausing here made folder pause look broken (amber error + children keep going).
+    if (Number.isFinite(transfer.checkpointBytes) && transfer.checkpointBytes >= 0) {
+      transfer.deferredSparseTruncate = true;
+    } else {
+      transfer.deferredSparseTruncate = false;
+      transfer.paused = false;
+      resumeStreamPair(transfer);
+      return { success: false, reason: "Could not verify the saved transfer checkpoint" };
+    }
   }
   if (transfer.resumeStage === 'download') transfer.downloadCheckpointBytes = transfer.checkpointBytes;
   if (transfer.resumeStage === 'upload') transfer.uploadCheckpointBytes = transfer.checkpointBytes;
@@ -3808,7 +3837,10 @@ async function resumeTransfer(_event, payload) {
   // still truncate only when active===0, otherwise skip truncate and resume
   // from the contiguous checkpoint (range retries will overwrite holes).
   if (transfer.deferredSparseTruncate) {
-    const settleDeadline = Date.now() + Math.max(PAUSE_RANGE_DRAIN_MS * 20, 6000);
+    // Soft-drain already returned after PAUSE_RANGE_DRAIN_MS; leftover ranges
+    // almost always settle quickly. A multi-second wait made folder resume
+    // feel stuck (each child could block the resume path for up to 6s).
+    const settleDeadline = Date.now() + Math.max(PAUSE_RANGE_DRAIN_MS * 8, 400);
     while (
       typeof transfer.getActiveRangeCount === "function"
       && transfer.getActiveRangeCount() > 0
@@ -3817,7 +3849,7 @@ async function resumeTransfer(_event, payload) {
       if (transfer.cancelled || activeTransfers.get(payload?.transferId) !== transfer) {
         return { success: false, reason: "Transfer is no longer active" };
       }
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await new Promise((resolve) => setTimeout(resolve, 10));
     }
     if (transfer.cancelled || activeTransfers.get(payload?.transferId) !== transfer) {
       return { success: false, reason: "Transfer is no longer active" };

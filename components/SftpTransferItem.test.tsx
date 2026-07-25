@@ -73,6 +73,24 @@ test("renders paused transfer resume action", () => {
   });
 
   assert.match(markup, /aria-label="Resume: archive\.tar\.gz"/);
+  // Paused rows keep the checkpoint progress bar (amber, no shimmer).
+  assert.match(markup, /bg-amber-500\/80/);
+  assert.doesNotMatch(markup, /progress-shimmer/);
+});
+
+test("renders resume spinner while reconnecting", () => {
+  const markup = renderTransferItem({
+    ...baseTask,
+    status: "pending",
+    error: undefined,
+    reconnectRequired: true,
+    resumable: true,
+  });
+
+  assert.match(markup, /aria-label="Reconnecting and resuming…: archive\.tar\.gz"/);
+  assert.match(markup, /aria-busy="true"/);
+  assert.doesNotMatch(markup, /aria-label="Resume: archive\.tar\.gz"/);
+  assert.match(markup, /animate-spin/);
 });
 
 test("renders pausing state feedback instead of a dead pause button", () => {

@@ -20,7 +20,7 @@ import {
     X,
     XCircle,
 } from 'lucide-react';
-import React, { memo } from 'react';
+import React, { memo, useEffect, useState } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { getParentPath } from '../../application/state/sftp/utils';
 import { cn } from '../../lib/utils';
@@ -124,6 +124,8 @@ const SftpTransferItemInner: React.FC<SftpTransferItemProps> = ({
     resizeHandleTabIndex = 0,
 }) => {
     const { t } = useI18n();
+    // Optimistic spinner from click until store status moves off paused/interrupted.
+    const [resumeClicked, setResumeClicked] = useState(false);
 
     // Align with global transfer center: directory parents default to file-count
     // progress unless explicitly compressed/byte mode.
@@ -136,21 +138,42 @@ const SftpTransferItemInner: React.FC<SftpTransferItemProps> = ({
         : 0;
     const isIndeterminate = task.status === 'transferring' && !hasKnownTotal;
     const isActiveTransfer = task.status === 'transferring' || task.status === 'pausing';
+    // Reconnect / dedicated resume window — keep the action slot as a spinner
+    // until the first real progress clears reconnectRequired.
+    const storeResuming = task.reconnectRequired === true
+        && ['pending', 'queued', 'transferring'].includes(task.status)
+        && !task.error;
+    const isResuming = storeResuming
+        || (resumeClicked && ['paused', 'interrupted', 'attention', 'pending', 'queued'].includes(task.status) && !task.error);
+    useEffect(() => {
+        if (!resumeClicked) return;
+        if (
+            storeResuming
+            || task.status === 'transferring'
+            || task.status === 'completed'
+            || task.status === 'failed'
+            || task.status === 'cancelled'
+            || !!task.error
+        ) {
+            setResumeClicked(false);
+        }
+    }, [resumeClicked, storeResuming, task.status, task.error]);
     const effectiveSpeed = task.status === 'transferring'
         ? (Number.isFinite(task.speed) && task.speed > 0 ? task.speed : 0)
         : 0;
 
+    const isPausedLike = task.status === 'paused' || task.status === 'interrupted';
     const bytesDisplay = isDirParent
         ? ''
-        : isActiveTransfer && hasKnownTotal
+        : (isActiveTransfer || isPausedLike) && hasKnownTotal
             ? `${formatTransferBytes(task.transferredBytes)} / ${formatTransferBytes(task.totalBytes)}`
-            : isActiveTransfer
+            : isActiveTransfer || isPausedLike
                 ? formatTransferBytes(task.transferredBytes)
                 : task.status === 'completed' && hasKnownTotal
                     ? formatTransferBytes(task.totalBytes)
                     : '';
 
-    const fileCountDisplay = isDirParent && isActiveTransfer
+    const fileCountDisplay = isDirParent && (isActiveTransfer || isPausedLike)
         ? (task.totalBytes > 0
             ? t('sftp.transfers.filesProgress', { current: task.transferredBytes, total: task.totalBytes })
             : t('sftp.transfers.filesCount', { count: task.transferredBytes }))
@@ -164,7 +187,10 @@ const SftpTransferItemInner: React.FC<SftpTransferItemProps> = ({
     // Pausing must show explicit copy — spinner-only looked like a no-op while
     // the backend drained in-flight chunks ("finish current step").
     const pausingLabel = t('sftp.transferCenter.status.pausing');
-    const progressOverlayText = task.status === 'pending'
+    const resumingLabel = t('sftp.transferCenter.status.resuming');
+    const progressOverlayText = isResuming
+        ? resumingLabel
+        : task.status === 'pending'
         ? t('sftp.task.waiting')
         : task.status === 'pausing'
             ? pausingLabel
@@ -186,7 +212,9 @@ const SftpTransferItemInner: React.FC<SftpTransferItemProps> = ({
         ? (task.status === 'pending' || !hasKnownTotal ? '100%' : `${progress}%`)
         : `${progress}%`;
 
-    const statusIcon = task.status === 'pausing'
+    const statusIcon = isResuming
+        ? <Loader2 size={12} className="animate-spin text-primary" />
+        : task.status === 'pausing'
         ? <Loader2 size={12} className="animate-spin text-amber-500" />
         : task.status === 'transferring'
         ? <Loader2 size={12} className="animate-spin text-primary" />
@@ -217,14 +245,16 @@ const SftpTransferItemInner: React.FC<SftpTransferItemProps> = ({
                                     ? "bg-destructive/70"
                                     : task.status === 'cancelled'
                                         ? "bg-muted-foreground/45"
-                                        : "bg-gradient-to-r from-primary via-primary/90 to-primary"
+                                        : task.status === 'paused' || task.status === 'interrupted'
+                                            ? "bg-amber-500/80"
+                                            : "bg-gradient-to-r from-primary via-primary/90 to-primary"
                 )}
                 style={{
                     width: progressBarWidth,
                     transition: 'width 150ms ease-out',
                 }}
             >
-                {(task.status === 'transferring' || task.status === 'pausing') && (
+                {(task.status === 'transferring' || task.status === 'pausing' || isResuming) && (
                     <div
                         className="absolute inset-0 w-1/2 h-full"
                         style={{
@@ -242,7 +272,7 @@ const SftpTransferItemInner: React.FC<SftpTransferItemProps> = ({
         </div>
     );
 
-    const progressSummaryText = isActiveTransfer || task.status === 'pending'
+    const progressSummaryText = isResuming || isActiveTransfer || isPausedLike || task.status === 'pending'
         ? [speedFormatted, progressOverlayText].filter(Boolean).join(' • ')
         : '';
     const showTransferSizeCalculation = task.status === 'transferring' && !hasKnownTotal && !isDirParent;
@@ -311,7 +341,7 @@ const SftpTransferItemInner: React.FC<SftpTransferItemProps> = ({
                     </Button>
                 </IconButtonWithTooltip>
             )}
-            {task.status === 'transferring' && task.resumable !== false && onPause && (
+            {task.status === 'transferring' && task.resumable !== false && onPause && !isResuming && (
                 <IconButtonWithTooltip label={pauseActionLabel}>
                     <Button
                         type="button"
@@ -341,7 +371,22 @@ const SftpTransferItemInner: React.FC<SftpTransferItemProps> = ({
                     </Button>
                 </IconButtonWithTooltip>
             )}
-            {(task.status === 'paused' || task.status === 'interrupted') && onResume && (
+            {isResuming && (
+                <IconButtonWithTooltip label={resumingLabel}>
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className={actionButtonClass}
+                        disabled
+                        aria-label={actionAriaLabel(resumingLabel)}
+                        aria-busy="true"
+                    >
+                        <Loader2 size={12} className="animate-spin text-primary" />
+                    </Button>
+                </IconButtonWithTooltip>
+            )}
+            {(task.status === 'paused' || task.status === 'interrupted') && onResume && !isResuming && (
                 <IconButtonWithTooltip label={resumeActionLabel}>
                     <Button
                         type="button"
@@ -349,7 +394,10 @@ const SftpTransferItemInner: React.FC<SftpTransferItemProps> = ({
                         size="icon"
                         className={actionButtonClass}
                         data-action="resume-transfer"
-                        {...oncePerActivationHandlers(onResume)}
+                        {...oncePerActivationHandlers(() => {
+                            setResumeClicked(true);
+                            onResume();
+                        })}
                         aria-label={actionAriaLabel(resumeActionLabel)}
                     >
                         <Play size={12} />
@@ -431,7 +479,14 @@ const SftpTransferItemInner: React.FC<SftpTransferItemProps> = ({
                 </div>
             </div>
     ) : (() => {
-        const showBelowParentProgress = task.status === 'transferring' || task.status === 'pausing' || task.status === 'pending';
+        // Keep the bar visible while paused/interrupted so checkpoint progress
+        // stays readable; shimmer only runs on active/resuming states.
+        const showBelowParentProgress = isResuming
+            || task.status === 'transferring'
+            || task.status === 'pausing'
+            || task.status === 'pending'
+            || task.status === 'paused'
+            || task.status === 'interrupted';
 
         const titleBlock = (
         <div className="flex min-w-0 flex-1 items-center gap-1.5">
@@ -517,14 +572,16 @@ const SftpTransferItemInner: React.FC<SftpTransferItemProps> = ({
                                     ? "bg-muted-foreground/50 animate-pulse"
                                     : isIndeterminate
                                         ? "bg-primary/60 animate-pulse"
-                                        : "bg-gradient-to-r from-primary via-primary/90 to-primary",
+                                        : isPausedLike
+                                            ? "bg-amber-500/80"
+                                            : "bg-gradient-to-r from-primary via-primary/90 to-primary",
                             )}
                             style={{
                                 width: progressBarWidth,
                                 transition: 'width 150ms ease-out',
                             }}
                         >
-                            {(task.status === 'transferring' || task.status === 'pausing') && (
+                            {(task.status === 'transferring' || task.status === 'pausing' || isResuming) && (
                                 <div
                                     className="absolute inset-0 w-1/2 h-full"
                                     style={{
@@ -572,6 +629,7 @@ const arePropsEqual = (
     if (prev.status !== next.status) return false;
     if (prev.error !== next.error) return false;
     if (prev.pauseUnavailableReason !== next.pauseUnavailableReason) return false;
+    if (prev.reconnectRequired !== next.reconnectRequired) return false;
     if (prev.resumable !== next.resumable) return false;
     if (prev.fileName !== next.fileName) return false;
     if (prev.targetPath !== next.targetPath) return false;

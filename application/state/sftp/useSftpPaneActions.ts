@@ -460,15 +460,22 @@ export const useSftpPaneActions = ({
         const hasRemoteSession = pane.connection.isLocal || sftpSessionsRef.current.has(pane.connection.id);
         if (!hasRemoteSession) {
           if (options?.tabId) return;
+          // Same policy as session-error handling: reconnect when we still know
+          // the host (lastHost or connection identity), never collapse to host picker.
           const lastHost = lastConnectedHostRef.current[side];
-          if (lastHost && !reconnectingRef.current[side]) {
+          const canReconnect = !!(
+            lastHost
+            || pane.connection.isLocal
+            || (!pane.connection.isLocal && pane.connection.hostId)
+          );
+          if (canReconnect && !reconnectingRef.current[side]) {
             reconnectingRef.current[side] = true;
             updateActiveTab(side, (prev) => ({
               ...prev,
               reconnecting: true,
               error: "sftp.reconnecting.title",
             }));
-          } else if (!lastHost) {
+          } else if (!canReconnect) {
             updateActiveTab(side, (prev) => ({
               ...prev,
               error: "sftp.error.connectionLostManual",
@@ -713,19 +720,23 @@ export const useSftpPaneActions = ({
       if (!pane?.connection) return;
 
       try {
-        for (const name of fileNames) {
-          const fullPath = joinPath(pane.connection.currentPath, name);
-
-          if (pane.connection.isLocal) {
+        // Parallel deletes — sequential await made multi-select feel like a
+        // recursive crawl even for flat files.
+        if (pane.connection.isLocal) {
+          await Promise.all(fileNames.map(async (name) => {
+            const fullPath = joinPath(pane.connection!.currentPath, name);
             await netcattyBridge.get()?.deleteLocalFile?.(fullPath);
-          } else {
-            const sftpId = sftpSessionsRef.current.get(pane.connection.id);
-            if (!sftpId) {
-              handleSessionError(side, new Error("SFTP session not found"));
-              return;
-            }
-            await netcattyBridge.get()?.deleteSftp?.(sftpId, fullPath, pane.filenameEncoding);
+          }));
+        } else {
+          const sftpId = sftpSessionsRef.current.get(pane.connection.id);
+          if (!sftpId) {
+            handleSessionError(side, new Error("SFTP session not found"));
+            return;
           }
+          await Promise.all(fileNames.map(async (name) => {
+            const fullPath = joinPath(pane.connection!.currentPath, name);
+            await netcattyBridge.get()?.deleteSftp?.(sftpId, fullPath, pane.filenameEncoding);
+          }));
         }
         await refresh(side);
       } catch (err) {
@@ -757,26 +768,28 @@ export const useSftpPaneActions = ({
       }
 
       try {
-        for (const name of fileNames) {
-          const fullPath = joinPath(path, name);
-
-          if (pane.connection.isLocal) {
-            if (!bridge.deleteLocalFile) {
-              throw new Error("Local delete unavailable");
-            }
-            await bridge.deleteLocalFile(fullPath);
-          } else {
-            const sftpId = sftpSessionsRef.current.get(pane.connection.id);
-            if (!sftpId) {
-              const error = new Error("SFTP session not found");
-              handleSessionError(side, error);
-              throw error;
-            }
-            if (!bridge.deleteSftp) {
-              throw new Error("SFTP delete unavailable");
-            }
-            await bridge.deleteSftp(sftpId, fullPath, pane.filenameEncoding);
+        // Fire deletes in parallel. Each directory is still one server-side
+        // recursive remove (rm -rf / rmdir -r), not a renderer-side walk.
+        if (pane.connection.isLocal) {
+          if (!bridge.deleteLocalFile) {
+            throw new Error("Local delete unavailable");
           }
+          await Promise.all(fileNames.map(async (name) => {
+            await bridge.deleteLocalFile!(joinPath(path, name));
+          }));
+        } else {
+          const sftpId = sftpSessionsRef.current.get(pane.connection.id);
+          if (!sftpId) {
+            const error = new Error("SFTP session not found");
+            handleSessionError(side, error);
+            throw error;
+          }
+          if (!bridge.deleteSftp) {
+            throw new Error("SFTP delete unavailable");
+          }
+          await Promise.all(fileNames.map(async (name) => {
+            await bridge.deleteSftp!(sftpId, joinPath(path, name), pane.filenameEncoding);
+          }));
         }
 
         clearCacheForConnection(pane.connection.id);
