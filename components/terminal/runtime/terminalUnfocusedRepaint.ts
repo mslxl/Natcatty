@@ -17,27 +17,20 @@ import {
 
 const UNFOCUSED_REPAINT_DEBOUNCE_MS = 16;
 const UNFOCUSED_FLUSH_DEBOUNCE_MS = 67;
-const RESUME_FLUSH_MAX_PASSES = 64;
-const HIBERNATE_FLUSH_MAX_PASSES = 4096;
-const HIBERNATE_FLUSH_YIELD_EVERY_PASSES = 64;
+export const TERMINAL_WRITE_SETTLE_TIMEOUT_MS = 750;
+const TERMINAL_WRITE_SETTLE_POLL_MS = 8;
 const unfocusedRepaintTimers = new WeakMap<XTerm, ReturnType<typeof setTimeout>>();
 const unfocusedFlushTimers = new WeakMap<XTerm, ReturnType<typeof setTimeout>>();
 
 type XTermWithPrivateWriteBuffer = XTerm & {
   _core?: {
     _writeBuffer?: {
-      flushSync?: () => void;
       _bufferOffset?: number;
-      _callbacks?: Array<(() => void) | undefined>;
       _pendingData?: number;
       _writeBuffer?: Array<string | Uint8Array>;
     };
   };
 };
-
-type XTermPrivateWriteBuffer = NonNullable<
-  NonNullable<XTermWithPrivateWriteBuffer["_core"]>["_writeBuffer"]
->;
 
 export function isTerminalWindowUnfocusedButVisible(): boolean {
   if (typeof document === "undefined") return false;
@@ -59,37 +52,6 @@ export function shouldFlushTerminalWritesForBackgroundOutput(isPaneVisible: bool
   // coalescing + maybeFlush… throttling so alt-screen frames and log batching
   // are not destroyed by a per-chunk force flush.
   return isTerminalPageHidden();
-}
-
-function normalizeXtermWriteBufferOffset(writeBuffer: XTermPrivateWriteBuffer): void {
-  const buffer = writeBuffer._writeBuffer;
-  const callbacks = writeBuffer._callbacks;
-  const offset = writeBuffer._bufferOffset;
-  if (!Array.isArray(buffer) || !Array.isArray(callbacks) || typeof offset !== "number") {
-    return;
-  }
-  if (offset <= 0) return;
-  if (offset >= buffer.length) {
-    buffer.length = 0;
-    callbacks.length = 0;
-    writeBuffer._pendingData = 0;
-    writeBuffer._bufferOffset = 0;
-    return;
-  }
-  writeBuffer._writeBuffer = buffer.slice(offset);
-  writeBuffer._callbacks = callbacks.slice(offset);
-  writeBuffer._bufferOffset = 0;
-}
-
-export function flushTerminalWriteBufferBypassingTimers(term: XTerm): void {
-  const writeBuffer = (term as XTermWithPrivateWriteBuffer)._core?._writeBuffer;
-  if (typeof writeBuffer?.flushSync !== "function") return;
-  try {
-    normalizeXtermWriteBufferOffset(writeBuffer);
-    writeBuffer.flushSync();
-  } catch {
-    // Best-effort private xterm recovery; normal async writes will continue.
-  }
 }
 
 function getPendingTerminalWriteBufferBytes(term: XTerm): number {
@@ -189,13 +151,7 @@ export function cancelScheduledUnfocusedRepaint(term: XTerm): void {
 
 export function flushPendingTerminalWritesOnResume(term: XTerm): void {
   flushTerminalWriteCoalescer(term);
-  flushTerminalWriteBufferBypassingTimers(term);
-  for (let pass = 0; pass < RESUME_FLUSH_MAX_PASSES; pass += 1) {
-    if (!flushTerminalWriteQueueBypassingTimers(term)) {
-      return;
-    }
-    flushTerminalWriteBufferBypassingTimers(term);
-  }
+  flushTerminalWriteQueueBypassingTimers(term);
 }
 
 export function writeLocalTerminalDataInOrder(
@@ -214,30 +170,77 @@ export function writeLocalTerminalDataInOrder(
   });
 }
 
-const waitForTerminalWriteCallbacks = (): Promise<void> =>
+const waitForTerminalWriteCallbacks = (delayMs: number): Promise<void> =>
   new Promise((resolve) => {
-    setTimeout(resolve, 0);
+    setTimeout(resolve, delayMs);
   });
 
-export async function flushPendingTerminalWritesBeforeHibernate(term: XTerm): Promise<boolean> {
-  for (let pass = 0; pass < HIBERNATE_FLUSH_MAX_PASSES; pass += 1) {
+export async function flushPendingTerminalWritesBeforeHibernate(
+  term: XTerm,
+  timeoutMs: number = TERMINAL_WRITE_SETTLE_TIMEOUT_MS,
+): Promise<boolean> {
+  const deadline = Date.now() + Math.max(0, timeoutMs);
+  while (true) {
     flushTerminalWriteCoalescer(term);
     flushTerminalWriteQueueBypassingTimers(term);
-    flushTerminalWriteBufferBypassingTimers(term);
 
     if (!hasPendingTerminalWrites(term)) {
       return true;
     }
 
-    if ((pass + 1) % HIBERNATE_FLUSH_YIELD_EVERY_PASSES === 0) {
-      await waitForTerminalWriteCallbacks();
-    }
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) break;
+    await waitForTerminalWriteCallbacks(Math.min(TERMINAL_WRITE_SETTLE_POLL_MS, remainingMs));
   }
 
   flushTerminalWriteCoalescer(term);
   flushTerminalWriteQueueBypassingTimers(term);
-  flushTerminalWriteBufferBypassingTimers(term);
   return !hasPendingTerminalWrites(term);
+}
+
+type TerminalOutputPauseBackend = {
+  acquireSessionFlowPauseLease: (sessionId: string) => Promise<{
+    release(options?: { keepPaused?: boolean }): void;
+    waitForPause(): Promise<unknown>;
+  }>;
+};
+
+/**
+ * Run a synchronous terminal operation only after pending writes have settled,
+ * while keeping the backend source paused across the operation.
+ *
+ * Draining xterm can cross the renderer flow controller's low watermark. The
+ * main-process lease keeps that automatic resume from overriding another
+ * window's resize, snapshot, or handoff operation.
+ */
+export async function runWithTerminalOutputPausedAfterWritesSettle(
+  term: XTerm,
+  sessionId: string | null,
+  backend: TerminalOutputPauseBackend,
+  operation: () => void,
+  shouldResumeBackend: () => boolean = () => true,
+): Promise<boolean> {
+  const lease = sessionId
+    ? await backend.acquireSessionFlowPauseLease(sessionId)
+    : null;
+  try {
+    if (lease) {
+      try {
+        await lease.waitForPause();
+      } catch {
+        // Acquiring the main-process lease already paused the source. Continue
+        // with the local drain if the renderer acknowledgement path is absent.
+      }
+    }
+
+    const settled = await flushPendingTerminalWritesBeforeHibernate(term);
+    if (!settled) return false;
+
+    operation();
+    return true;
+  } finally {
+    lease?.release({ keepPaused: !shouldResumeBackend() });
+  }
 }
 
 export function maybeFlushTerminalWriteCoalescerWhenUnfocused(

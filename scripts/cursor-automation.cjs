@@ -793,6 +793,17 @@ function buildPullRequestComment({ pullRequestUrl, clean }) {
   ].join('\n');
 }
 
+function hasAutomationPullRequestBacklink(comments = [], pullRequestUrl = '') {
+  const url = String(pullRequestUrl || '').trim();
+  if (!url) return false;
+  const escapedUrl = url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const exactUrl = new RegExp(`(?:^|[\\s(<])${escapedUrl}(?=$|[\\s)>.,;!?\"'#?])`);
+  return (comments || []).some((comment) => {
+    const body = String(comment?.body || '');
+    return body.includes(TRIAGE_MARKER) && exactUrl.test(body);
+  });
+}
+
 /**
  * Single @codex review request comment for the GitHub Codex connector.
  * At most one `@codex review` line — never join with buildExternalCodexRerequestComment.
@@ -1062,15 +1073,16 @@ function getLatestCommentTime(comments = [], predicate) {
 }
 
 /**
- * Keep review comments that belong to the current head (or lack commit_id).
- * Drops clearly stale comments pinned to older commits when headSha is known.
+ * Keep review comments that were originally created on the current head.
+ * GitHub can remap `commit_id` as a diff line survives later commits, so prefer
+ * the immutable `original_commit_id` when deciding whether a finding is stale.
  */
 function filterCodexReviewCommentsForHead(reviewComments = [], headSha = '') {
   const head = String(headSha || '').toLowerCase();
   if (!head) return [...reviewComments];
   return reviewComments.filter((comment) => {
     const commitId = String(
-      comment.commit_id || comment.original_commit_id || '',
+      comment.original_commit_id || comment.commit_id || '',
     ).toLowerCase();
     if (!commitId) return true;
     return commitId === head || commitId.startsWith(head.slice(0, 7));
@@ -1919,6 +1931,7 @@ module.exports = {
   buildTriageComment,
   buildPullRequestBody,
   buildPullRequestComment,
+  hasAutomationPullRequestBacklink,
   buildCodexReviewRequestComment,
   extractRequestedHeadSha,
   CODEX_CLEAN_REACTION_CONTENTS,

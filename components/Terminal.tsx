@@ -186,6 +186,8 @@ import {
 } from "./terminal/runtime/terminalSessionAttachment";
 import {
   flushPendingTerminalWritesBeforeHibernate,
+  hasPendingTerminalWrites,
+  runWithTerminalOutputPausedAfterWritesSettle,
   writeLocalTerminalDataInOrder,
 } from "./terminal/runtime/terminalUnfocusedRepaint";
 import {
@@ -1306,7 +1308,13 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     if (!bridge?.onTerminalOutputDrainRequest || !bridge?.respondTerminalOutputDrain) return undefined;
     return bridge.onTerminalOutputDrainRequest(sessionId, async (payload) => {
       const term = termRef.current;
-      if (term) await flushPendingTerminalWritesBeforeHibernate(term);
+      if (term) {
+        const flushed = await flushPendingTerminalWritesBeforeHibernate(term);
+        if (!flushed) {
+          logger.warn("Terminal output drain did not settle before the deadline", { sessionId });
+          return;
+        }
+      }
       flushTerminalSessionFlowAck(sessionId);
       bridge.respondTerminalOutputDrain?.(payload.requestId);
     });
@@ -1324,7 +1332,13 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         let snapshot = "";
         try {
           if (serializeAddonRef.current) {
-            if (termRef.current) await flushPendingTerminalWritesBeforeHibernate(termRef.current);
+            if (termRef.current) {
+              const flushed = await flushPendingTerminalWritesBeforeHibernate(termRef.current);
+              if (!flushed) {
+                logger.warn("Terminal snapshot drain did not settle before the deadline", { sessionId });
+                return;
+              }
+            }
             snapshot = serializeAddonRef.current.serialize() || "";
           } else if (hibernatedRef.current || softHiddenRef.current) {
             // Hibernate path: live xterm is torn down; use retained snapshot.
@@ -1359,6 +1373,13 @@ const TerminalComponent: React.FC<TerminalProps> = ({
           || typeof payload.contextScrollbackSnapshot !== "string"
           || typeof payload.alternateScreen !== "boolean"
         ) return false;
+        const term = termRef.current;
+        if (term) {
+          const flushed = await flushPendingTerminalWritesBeforeHibernate(term);
+          if (!flushed || termRef.current !== term) {
+            throw new Error("Terminal output did not settle before applying the snapshot");
+          }
+        }
         if (typeof payload.kittyKeyboardProtocolEnabled === "boolean") {
           xtermRuntimeRef.current?.setKittyKeyboardProtocolEnabled(
             payload.kittyKeyboardProtocolEnabled,
@@ -1384,9 +1405,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
             payload.kittyKeyboardModeState,
           );
         }
-        if (termRef.current) {
-          const term = termRef.current;
-          await flushPendingTerminalWritesBeforeHibernate(term);
+        if (term) {
           term.reset();
           if (payload.snapshot) {
             await new Promise<void>((resolve) => term.write(payload.snapshot, resolve));
@@ -1457,23 +1476,23 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     if (attachExistingSession) {
       const homeId = attachHomeWebContentsIdRef.current;
       attachHomeWebContentsIdRef.current = undefined;
+      const outputPauseLease = await terminalBackend.acquireSessionFlowPauseLease(closingSessionId);
       try {
         // Stop the source before detaching the popup listener. This lets any
         // already-delivered writes settle into xterm before its final snapshot.
-        if (terminalBackend.setSessionFlowPausedAndWait) {
-          const paused = await terminalBackend.setSessionFlowPausedAndWait(closingSessionId, true);
-          if (!paused?.success && paused?.error === "Output drain unavailable") {
-            terminalBackend.setSessionFlowPaused?.(closingSessionId, true);
-            await new Promise((resolve) => setTimeout(resolve, 40));
-          } else if (!paused?.success) {
-            throw new Error(paused?.error || "Failed to drain terminal output");
-          }
-        } else {
-          terminalBackend.setSessionFlowPaused?.(closingSessionId, true);
+        const paused = await outputPauseLease.waitForPause();
+        if (!paused?.success && paused?.error === "Output drain unavailable") {
           await new Promise((resolve) => setTimeout(resolve, 40));
+        } else if (!paused?.success) {
+          throw new Error(paused?.error || "Failed to drain terminal output");
         }
         const snapshotTerm = termRef.current;
-        if (snapshotTerm) await flushPendingTerminalWritesBeforeHibernate(snapshotTerm);
+        if (snapshotTerm) {
+          const flushed = await flushPendingTerminalWritesBeforeHibernate(snapshotTerm);
+          if (!flushed) {
+            throw new Error("Terminal output did not settle before closing the attached display");
+          }
+        }
         // Push popup display state home first so reopen is not stale.
         let finalContext = {
           contextSnapshot: "",
@@ -1529,7 +1548,9 @@ const TerminalComponent: React.FC<TerminalProps> = ({
           clearTerminalSessionFlowAck(closingSessionId);
           terminalBackend.setSessionFlowPaused?.(closingSessionId, false);
         }
+        outputPauseLease.release();
       } catch (err) {
+        outputPauseLease.release({ keepPaused: true });
         logger.warn("Failed to restore terminal output after attach popup close", err);
         disposeSessionListeners();
         throw err;
@@ -2391,7 +2412,13 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     });
   }, [reuseConnectionFromSessionId, sessionId, terminalBackend]);
 
-  const safeFit = (options?: { force?: boolean; requireVisible?: boolean; immediate?: boolean; allowHidden?: boolean }) => {
+  type SafeFitOptions = { force?: boolean; requireVisible?: boolean; immediate?: boolean; allowHidden?: boolean };
+  const pendingWriteSafeFitRef = useRef<{
+    term: XTerm;
+    options: SafeFitOptions;
+  } | null>(null);
+
+  const safeFit = (options?: SafeFitOptions) => {
     const fitAddon = fitAddonRef.current;
     if (!fitAddon) return;
     if (!isRendererActiveRef.current && !options?.allowHidden) {
@@ -2424,6 +2451,63 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       try {
         const term = termRef.current;
         if (!term) return;
+
+        if (hasPendingTerminalWrites(term)) {
+          let pending = pendingWriteSafeFitRef.current;
+          if (pending?.term === term) {
+            pending.options = {
+              force: pending.options.force || options?.force,
+              requireVisible: pending.options.requireVisible || options?.requireVisible,
+              immediate: pending.options.immediate || options?.immediate,
+              allowHidden: pending.options.allowHidden || options?.allowHidden,
+            };
+            return;
+          }
+
+          pending = { term, options: { ...options } };
+          pendingWriteSafeFitRef.current = pending;
+          const fitRequest = pending;
+          const fitSessionId = sessionRef.current;
+          void (async () => {
+            let ranFit = false;
+            const settled = await runWithTerminalOutputPausedAfterWritesSettle(
+              term,
+              fitSessionId,
+              terminalBackend,
+              () => {
+                if (
+                  pendingWriteSafeFitRef.current !== fitRequest ||
+                  termRef.current !== term ||
+                  sessionRef.current !== fitSessionId
+                ) return;
+                pendingWriteSafeFitRef.current = null;
+                ranFit = true;
+                safeFit({ ...fitRequest.options, immediate: true });
+              },
+              () => sessionRef.current === fitSessionId && termRef.current === term,
+            );
+            if (ranFit) return;
+            if (pendingWriteSafeFitRef.current !== fitRequest || termRef.current !== term) return;
+
+            // A reconnect can reuse the same xterm while replacing the backend
+            // session. Retry against the new source instead of resizing it
+            // under the old session's pause.
+            if (sessionRef.current !== fitSessionId) {
+              pendingWriteSafeFitRef.current = null;
+              setTimeout(() => safeFit(fitRequest.options), 0);
+              return;
+            }
+
+            if (!settled) {
+              setTimeout(() => {
+                if (pendingWriteSafeFitRef.current !== fitRequest || termRef.current !== term) return;
+                pendingWriteSafeFitRef.current = null;
+                safeFit(fitRequest.options);
+              }, 50);
+            }
+          })();
+          return;
+        }
 
         const buffer = term.buffer.active;
         const wasPinnedToBottom = buffer.viewportY >= buffer.baseY;
