@@ -74,6 +74,22 @@ export async function openSftpWithSessionPreference({
   return bridge.openSftp(openOptions);
 }
 
+/**
+ * Pinned reconnects must follow a tab across left/right moves. Callers may still
+ * pass the side captured at upload start; resolve the tab's live side instead.
+ */
+export function resolvePinnedReconnectSide(
+  requestedSide: "left" | "right",
+  tabId: string | undefined,
+  leftTabs: ReadonlyArray<{ id: string }>,
+  rightTabs: ReadonlyArray<{ id: string }>,
+): "left" | "right" {
+  if (!tabId) return requestedSide;
+  if (leftTabs.some((tab) => tab.id === tabId)) return "left";
+  if (rightTabs.some((tab) => tab.id === tabId)) return "right";
+  throw new Error("SFTP tab is no longer available");
+}
+
 interface UseSftpConnectionsResult {
   connect: (side: "left" | "right", host: Host | "local", options?: SftpConnectOptions) => Promise<void>;
   disconnect: (side: "left" | "right") => Promise<void>;
@@ -215,7 +231,14 @@ export const useSftpConnections = ({
   }, [respondToHostKeyVerification]);
 
   const connect = useCallback(
-    async (side: "left" | "right", host: Host | "local", options?: SftpConnectOptions) => {
+    async (requestedSide: "left" | "right", host: Host | "local", options?: SftpConnectOptions) => {
+      // Follow pinned tabs that were dragged to the other side mid-reconnect.
+      const side = resolvePinnedReconnectSide(
+        requestedSide,
+        options?.tabId,
+        leftTabsRef.current.tabs,
+        rightTabsRef.current.tabs,
+      );
       const setTabs = side === "left" ? setLeftTabs : setRightTabs;
 
       let activeTabId: string | null = null;
@@ -223,10 +246,6 @@ export const useSftpConnections = ({
 
       if (options?.tabId) {
         // Background reconnect for a pinned upload must not retarget the focused tab.
-        const pinnedOnThisSide = sideTabs.tabs.some((tab) => tab.id === options.tabId);
-        if (!pinnedOnThisSide) {
-          throw new Error("SFTP tab is no longer available");
-        }
         activeTabId = options.tabId;
       } else if (!sideTabs.activeTabId || options?.forceNewTab) {
         const newPane = createEmptyPane();

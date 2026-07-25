@@ -4,7 +4,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { openSftpWithSessionPreference } from "./useSftpConnections.ts";
+import {
+  openSftpWithSessionPreference,
+  resolvePinnedReconnectSide,
+} from "./useSftpConnections.ts";
 
 const openOptions = {
   sessionId: "sftp-request-1",
@@ -74,4 +77,27 @@ test("openSftpWithSessionPreference opens normal SFTP without a source session",
 
   assert.equal(sftpId, "fresh-sftp");
   assert.deepEqual(calls, ["openSftp:sftp-request-1"]);
+});
+
+test("resolvePinnedReconnectSide follows a tab moved to the other side", () => {
+  assert.equal(
+    resolvePinnedReconnectSide("left", "tab-1", [], [{ id: "tab-1" }]),
+    "right",
+  );
+  assert.equal(
+    resolvePinnedReconnectSide("right", "tab-1", [{ id: "tab-1" }], []),
+    "left",
+  );
+  assert.equal(
+    resolvePinnedReconnectSide("left", "tab-1", [{ id: "tab-1" }], []),
+    "left",
+  );
+  assert.equal(
+    resolvePinnedReconnectSide("left", undefined, [], [{ id: "tab-1" }]),
+    "left",
+  );
+  assert.throws(
+    () => resolvePinnedReconnectSide("left", "gone", [], []),
+    /SFTP tab is no longer available/,
+  );
 });

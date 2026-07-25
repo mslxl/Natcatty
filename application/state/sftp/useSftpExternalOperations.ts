@@ -77,18 +77,21 @@ export const useSftpExternalOperations = (
     if (pane.connection.isLocal) return { sftpId: null, release: () => {} };
 
     const connectionId = pane.connection.id;
+    const pinTabId = options?.tabId ?? pane.id;
+    // Tab may have moved sides while probing/reconnecting — follow live side.
+    const reconnectSide = getSideByTabId?.(pinTabId) ?? side;
     if (ensureRemoteSftpId) {
-      const sftpId = await ensureRemoteSftpId(side, {
+      const sftpId = await ensureRemoteSftpId(reconnectSide, {
         forceReconnect: options?.forceReconnect,
         connectionId,
-        tabId: options?.tabId ?? pane.id,
+        tabId: pinTabId,
       });
       return { sftpId, release: () => {} };
     }
     const sftpId = sftpSessionsRef.current.get(connectionId);
     if (!sftpId) throw new Error("SFTP session not found");
     return { sftpId, release: () => {} };
-  }, [ensureRemoteSftpId, getActivePane, getPaneByConnectionId, getPaneByTabId, sftpSessionsRef]);
+  }, [ensureRemoteSftpId, getActivePane, getPaneByConnectionId, getPaneByTabId, getSideByTabId, sftpSessionsRef]);
 
   // Per-upload controllers so canceling upload A does not touch upload B.
   const uploadControllersByTaskRef = useRef<Map<string, UploadController>>(new Map());

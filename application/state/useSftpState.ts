@@ -504,6 +504,8 @@ export const useSftpState = (
       const tabId =
         ensureOptions?.tabId
         ?? (connectionId ? getTabByConnectionId(connectionId)?.tabId : undefined);
+      // Prefer live side when the pinned tab was dragged left↔right mid-upload.
+      const reconnectSide = tabId ? (getSideByTabId(tabId) ?? side) : side;
       const pinnedGetActivePane = tabId
         ? (_side: "left" | "right") => {
             const pane = getPaneByTabId(tabId);
@@ -514,7 +516,7 @@ export const useSftpState = (
           }
         : getActivePane;
       return ensureRemoteSftpSession({
-        side,
+        side: reconnectSide,
         getActivePane: pinnedGetActivePane,
         sftpSessionsRef,
         lastConnectedHostRef,
