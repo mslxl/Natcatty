@@ -87,6 +87,7 @@ export const enVaultMessages: Messages = {
   'knownHosts.toast.scanImported': 'Imported {count} new hosts.',
   'knownHosts.toast.scanNoNew': 'No new hosts found.',
   'knownHosts.toast.scanFailed': 'Failed to scan system known_hosts.',
+  'knownHosts.toast.scanFiltered': 'Skipped {count} public service hosts.',
 
   // Port Forwarding
   'pf.empty.title': 'Set up port forwarding',

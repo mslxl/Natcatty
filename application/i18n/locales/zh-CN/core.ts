@@ -680,6 +680,7 @@ export const zhCNCoreMessages: Messages = {
   'knownHosts.toast.scanImported': '已导入 {count} 个新主机。',
   'knownHosts.toast.scanNoNew': '没有发现新的主机。',
   'knownHosts.toast.scanFailed': '扫描系统 known_hosts 失败。',
+  'knownHosts.toast.scanFiltered': '已跳过 {count} 个公共服务主机。',
 
   // Port Forwarding
   'pf.empty.title': '配置端口转发规则',

@@ -680,6 +680,7 @@ export const zhTWCoreMessages: Messages = {
   'knownHosts.toast.scanImported': '已匯入 {count} 個新主機。',
   'knownHosts.toast.scanNoNew': '沒有發現新的主機。',
   'knownHosts.toast.scanFailed': '掃描系統 known_hosts 失敗。',
+  'knownHosts.toast.scanFiltered': '已跳過 {count} 個公共服務主機。',
 
   // Port Forwarding
   'pf.empty.title': '設定埠轉發規則',
