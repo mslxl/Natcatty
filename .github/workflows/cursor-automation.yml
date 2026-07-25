@@ -28,6 +28,16 @@ on:
         description: PR number for own Codex fix loop or external re-@codex
         required: false
         type: number
+      drain_backlog:
+        description: Continue a queued issue-comment batch
+        required: false
+        type: boolean
+        default: false
+      sandbox_smoke:
+        description: Verify the Cursor sandbox without repository credentials
+        required: false
+        type: boolean
+        default: false
 concurrency:
   group: >-
     cursor-auto-${{
@@ -47,6 +57,10 @@ permissions:
   issues: read
   pull-requests: read
   actions: read
+
+env:
+  CURSOR_SANDBOX_APPARMOR_URL: https://downloads.cursor.com/lab/enterprise/cursor-sandbox-apparmor_0.6.0_all.deb
+  CURSOR_SANDBOX_APPARMOR_SHA256: d982e1f17d8eed0a6277b51576ee74ed0259c06922f16ea5a93ac8e4877844ce
 
 jobs:
   route:
@@ -102,6 +116,7 @@ jobs:
           ISSUE_BOT_LOGINS: ${{ vars.AUTOMATION_ISSUE_BOT_LOGINS || 'netcatty-bot,github-actions[bot]' }}
           DISPATCH_ISSUE: ${{ inputs.issue_number || '' }}
           DISPATCH_PULL: ${{ inputs.pull_number || '' }}
+          DRAIN_BACKLOG: ${{ inputs.drain_backlog || false }}
         with:
           script: |
             const auto = require(`${process.env.GITHUB_WORKSPACE}/scripts/cursor-automation.cjs`);
@@ -122,6 +137,17 @@ jobs:
             }
 
             if (event === 'workflow_dispatch') {
+              if (
+                process.env.DRAIN_BACKLOG === 'true' &&
+                process.env.DISPATCH_ISSUE &&
+                process.env.DISPATCH_PULL
+              ) {
+                return set('issue_followup', {
+                  issue_number: process.env.DISPATCH_ISSUE,
+                  pull_number: process.env.DISPATCH_PULL,
+                  reason: 'continue queued issue follow-ups',
+                });
+              }
               if (process.env.DISPATCH_ISSUE) {
                 return set('issue_classify', {
                   issue_number: process.env.DISPATCH_ISSUE,
@@ -330,6 +356,8 @@ jobs:
       issue_url: ${{ steps.prepare.outputs.issue_url }}
       issue_title: ${{ steps.prepare.outputs.issue_title }}
       should_run: ${{ steps.prepare.outputs.should_run }}
+      issue_comment_watermark: ${{ steps.prepare.outputs.latest_comment_id }}
+      has_backlog: ${{ steps.prepare.outputs.has_backlog }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -352,7 +380,8 @@ jobs:
         env:
           ISSUE_NUMBER: ${{ needs.route.outputs.issue_number }}
           TRIGGER_COMMENT_ID: ${{ needs.route.outputs.trigger_comment_id }}
-          MANUAL_RUN: ${{ github.event_name == 'workflow_dispatch' }}
+          MANUAL_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.drain_backlog != true }}
+          AUTO_BACKLOG_DRAIN: ${{ inputs.drain_backlog || false }}
           DAILY_LIMIT: ${{ vars.CURSOR_TRIAGE_DAILY_LIMIT || '10' }}
           FOLLOWUP_DAILY_LIMIT: ${{ vars.CURSOR_FOLLOWUP_DAILY_LIMIT || '20' }}
           ISSUE_BOT_LOGINS: ${{ vars.AUTOMATION_ISSUE_BOT_LOGINS || 'netcatty-bot,github-actions[bot]' }}
@@ -372,12 +401,14 @@ jobs:
               triggerCommentId: process.env.TRIGGER_COMMENT_ID,
               botLogins: process.env.ISSUE_BOT_LOGINS,
               manual: process.env.MANUAL_RUN === 'true',
+              automaticBacklogDrain: process.env.AUTO_BACKLOG_DRAIN === 'true',
             });
 
       - name: Hand off needs-info replies after daily limit
         if: steps.prepare.outputs.rate_limited == 'true'
         uses: actions/github-script@v7
         env:
+          ISSUE_NUMBER: ${{ steps.prepare.outputs.issue_number }}
           PENDING_IDS: ${{ steps.prepare.outputs.pending_ids }}
         with:
           github-token: ${{ secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
@@ -432,6 +463,38 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           echo "$HOME/.cursor/bin" >> "$GITHUB_PATH"
           command -v agent || ls -la "$HOME/.local/bin" "$HOME/.cursor/bin" 2>/dev/null || true
+
+      - name: Prepare Cursor sandbox host
+        if: steps.prepare.outputs.should_run == 'true'
+        run: &prepare_cursor_sandbox_host |
+          set -euo pipefail
+          sandbox_package="$RUNNER_TEMP/cursor-sandbox-apparmor.deb"
+          curl --proto '=https' --tlsv1.2 --retry 3 -fsSL \
+            "$CURSOR_SANDBOX_APPARMOR_URL" -o "$sandbox_package"
+          printf '%s  %s\n' "$CURSOR_SANDBOX_APPARMOR_SHA256" "$sandbox_package" | sha256sum -c -
+          echo 'cursor-sandbox-apparmor cursor-sandbox-apparmor/add-cursor-repo boolean false' | \
+            sudo debconf-set-selections
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends apparmor bubblewrap gpg
+          sudo dpkg -i "$sandbox_package"
+          sandbox_profile=/etc/apparmor.d/cursor-sandbox-remote
+          sandbox_profile_with_abi="$RUNNER_TEMP/cursor-sandbox-remote.profile"
+          {
+            printf '%s\n' 'abi <abi/4.0>,' 'include <tunables/global>' ''
+            sudo cat "$sandbox_profile"
+          } > "$sandbox_profile_with_abi"
+          sudo install -m 0644 "$sandbox_profile_with_abi" "$sandbox_profile"
+          # The official profile ships AppArmor 4's scoped user-namespace rule
+          # commented for compatibility. ubuntu-latest uses AppArmor 4, so enable
+          # it only for Cursor's sandbox helper instead of relaxing the host sysctl.
+          sudo sed -i 's/^  #userns,$/  userns,/' "$sandbox_profile"
+          test "$(grep -c '^  userns,$' "$sandbox_profile")" -eq 2
+          # newuidmap needs this capability while creating the sandbox's private
+          # user namespace. Grant it only to Cursor's two helper profiles.
+          sudo sed -i '/^  capability chown,$/a\  capability dac_override,' "$sandbox_profile"
+          test "$(grep -c '^  capability dac_override,$' "$sandbox_profile")" -eq 2
+          sudo apparmor_parser -r "$sandbox_profile"
+          sudo aa-status | grep -q cursor_sandbox_agent_cli
 
       - name: Authenticate Cursor CLI outside the agent environment
         if: steps.prepare.outputs.should_run == 'true'
@@ -546,7 +609,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: issue-research-${{ github.run_id }}
-          path: .cursor-runtime/external-research.md
+          path: |
+            .cursor-runtime/external-research.md
+            .cursor-runtime/issue.json
           if-no-files-found: error
           overwrite: true
 
@@ -612,6 +677,7 @@ jobs:
         env:
           ISSUE_NUMBER: ${{ steps.prepare.outputs.issue_number }}
           ISSUE_COMMENT_WATERMARK: ${{ steps.prepare.outputs.latest_comment_id }}
+          PROCESSED_COMMENT_IDS: ${{ steps.prepare.outputs.processed_comment_ids }}
         with:
           # Comments/labels/close as netcatty-bot (not github-actions).
           github-token: ${{ secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
@@ -624,6 +690,7 @@ jobs:
               issueNumber: process.env.ISSUE_NUMBER,
               classificationPath: `${process.env.GITHUB_WORKSPACE}/.cursor-runtime/classification.json`,
               issueCommentWatermark: process.env.ISSUE_COMMENT_WATERMARK,
+              processedCommentIds: process.env.PROCESSED_COMMENT_IDS.split(',').filter(Boolean),
             });
 
       - name: Hand off when issue classification fails
@@ -726,6 +793,70 @@ jobs:
               process.exit(0);
             });
           NODE
+
+  sandbox_smoke:
+    name: Cursor sandbox smoke
+    if: github.event_name == 'workflow_dispatch' && inputs.sandbox_smoke == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions: {}
+    steps:
+      - name: Install Cursor CLI
+        run: |
+          curl https://cursor.com/install -fsS | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.cursor/bin" >> "$GITHUB_PATH"
+
+      - name: Prepare Cursor sandbox host
+        run: *prepare_cursor_sandbox_host
+
+      - name: Verify Cursor sandbox
+        run: |
+          set -euo pipefail
+          mkdir -p .cursor-runtime
+          sandbox_helper=$(find "$HOME/.local/share/cursor-agent/versions" \
+            -type f -name cursorsandbox -print -quit)
+          test -x "$sandbox_helper"
+          sandbox_policy_file="$RUNNER_TEMP/cursor-sandbox-smoke-policy.json"
+          write_sandbox_policy() {
+            node -e '
+              const fs = require("node:fs");
+              fs.writeFileSync(process.argv[1], JSON.stringify({
+                sandbox: {
+                  type: "workspace_readwrite",
+                  cwd: process.cwd(),
+                  additionalReadwritePaths: [],
+                  networkAccess: false,
+                  disableTmpWrite: false,
+                },
+              }), { mode: 0o600 });
+            ' "$sandbox_policy_file"
+          }
+          agent sandbox reset
+          if ! agent sandbox enable; then
+            echo 'Cursor sandbox preflight diagnostics:' >&2
+            agent --version >&2 || true
+            uname -a >&2 || true
+            sudo apparmor_parser --version >&2 || true
+            sysctl kernel.unprivileged_userns_clone >&2 || true
+            sysctl kernel.apparmor_restrict_unprivileged_userns >&2 || true
+            sudo aa-status >&2 || true
+            write_sandbox_policy
+            "$sandbox_helper" --policy "$sandbox_policy_file" \
+              --preflight-only -- /bin/true >&2 || true
+            sudo journalctl -k --no-pager -n 100 >&2 || true
+            exit 1
+          fi
+          write_sandbox_policy
+          "$sandbox_helper" --policy "$sandbox_policy_file" -- \
+            bash -c 'touch .cursor-runtime/sandbox-smoke'
+          test -f .cursor-runtime/sandbox-smoke
+          write_sandbox_policy
+          if "$sandbox_helper" --policy "$sandbox_policy_file" -- \
+            bash -c 'curl -fsS --max-time 3 https://example.com >/dev/null'; then
+            echo "Cursor sandbox unexpectedly allowed network access." >&2
+            exit 1
+          fi
 
   issue_followup:
     name: Review issue follow-up
@@ -919,6 +1050,10 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           echo "$HOME/.cursor/bin" >> "$GITHUB_PATH"
           command -v agent || ls -la "$HOME/.local/bin" "$HOME/.cursor/bin" 2>/dev/null || true
+
+      - name: Prepare Cursor sandbox host
+        if: steps.prepare.outputs.should_run == 'true'
+        run: *prepare_cursor_sandbox_host
 
       - name: Quarantine pull request Cursor controls
         if: steps.prepare.outputs.should_run == 'true'
@@ -1213,6 +1348,7 @@ jobs:
           $GITH format-patch --stdout "$BASE_SHA" > .cursor-runtime/followup.patch
           test -s .cursor-runtime/followup.patch
           printf '%s' "${{ steps.prepare.outputs.pending_ids }}" > .cursor-runtime/followup-pending-ids.txt
+          printf '%s' '${{ steps.prepare.outputs.pending_snapshots }}' > .cursor-runtime/followup-pending-snapshots.json
           echo "should_publish=true" >> "$GITHUB_OUTPUT"
 
       - name: Scan follow-up patch for secret leaks
@@ -1227,6 +1363,7 @@ jobs:
                 ".cursor-runtime/followup.patch",
                 ".cursor-runtime/followup-reply.out.md",
                 ".cursor-runtime/followup-pending-ids.txt",
+                ".cursor-runtime/followup-pending-snapshots.json",
               ],
               process.env.CURSOR_API_KEY,
               "issue-followup-publish",
@@ -1242,6 +1379,7 @@ jobs:
             .cursor-runtime/followup.patch
             .cursor-runtime/followup-reply.out.md
             .cursor-runtime/followup-pending-ids.txt
+            .cursor-runtime/followup-pending-snapshots.json
           if-no-files-found: error
 
       - name: Finish follow-up without code changes
@@ -1250,6 +1388,7 @@ jobs:
         env:
           ACTION: ${{ steps.decision.outputs.action }}
           PENDING_IDS: ${{ steps.prepare.outputs.pending_ids }}
+          PENDING_SNAPSHOTS: ${{ steps.prepare.outputs.pending_snapshots }}
           HEAD_SHA: ${{ steps.prepare.outputs.head_sha }}
           PULL_WAS_DRAFT: ${{ steps.prepare.outputs.pull_was_draft }}
           PULL_WAS_CLEAN: ${{ steps.prepare.outputs.pull_was_clean }}
@@ -1275,6 +1414,9 @@ jobs:
               }),
             };
             if (action === 'no_change') {
+              const pendingSnapshots = JSON.parse(
+                process.env.PENDING_SNAPSHOTS || '[]',
+              );
               if (
                 pullNumber &&
                 process.env.PULL_WAS_DRAFT !== 'true' &&
@@ -1286,12 +1428,68 @@ jobs:
                   pullNumber,
                   expectedHeadSha: process.env.HEAD_SHA,
                   botLogins: process.env.ISSUE_BOT_LOGINS,
+                  ignoredCommentSnapshots: pendingSnapshots,
                 });
                 if (!restored) {
                   core.info(
                     `PR #${pullNumber} stays draft because its head or source issue changed during follow-up review.`,
                   );
                 }
+              }
+              const liveComments = await github.paginate(
+                github.rest.issues.listComments,
+                { ...context.repo, issue_number: issueNumber, per_page: 100 },
+              );
+              const changedIds = auto.getChangedIssueCommentSnapshotIds(
+                liveComments,
+                pendingSnapshots,
+              );
+              if (changedIds.length) {
+                const { data: issue } = await github.rest.issues.get({
+                  ...context.repo,
+                  issue_number: issueNumber,
+                });
+                const labels = (issue.labels || []).map((label) =>
+                  typeof label === 'string' ? label : label.name,
+                );
+                await github.rest.issues.update({
+                  ...context.repo,
+                  issue_number: issueNumber,
+                  labels: [...new Set([
+                    ...labels.filter((label) => label !== 'ready-for-agent'),
+                    'triage',
+                    'ready-for-human',
+                  ])],
+                  ...(issue.state === 'closed' ? { state: 'open' } : {}),
+                });
+                if (pullNumber) {
+                  const paused = await auto.ensurePullRequestDraft({
+                    github,
+                    context,
+                    pullNumber,
+                  });
+                  if (!paused) {
+                    throw new Error(
+                      `Could not pause PR #${pullNumber} after its source comment changed.`,
+                    );
+                  }
+                  await auto.applyCodexTerminalLabels({
+                    github,
+                    context,
+                    pullNumber,
+                    terminal: 'give_up',
+                  });
+                }
+                await github.rest.issues.createComment({
+                  ...context.repo,
+                  issue_number: issueNumber,
+                  body: [
+                    auto.TRIAGE_MARKER,
+                    '',
+                    auto.buildIssueFollowupFallbackReply(issue, 'comment_changed'),
+                  ].join('\n'),
+                });
+                return;
               }
               await github.rest.issues.createComment(response);
               return;
@@ -1539,8 +1737,7 @@ jobs:
           name: issue-followup-${{ github.run_id }}
           path: patch-in
 
-      - name: Apply patch to the existing pull request
-        id: publish
+      - name: Prepare patch for the existing pull request
         run: |
           set -euo pipefail
           state="$(gh pr view "$PULL_NUMBER" --repo "$GITHUB_REPOSITORY" --json state -q .state)"
@@ -1563,6 +1760,89 @@ jobs:
           fi
           git -c core.hooksPath=/dev/null checkout -B "$HEAD_REF" "$live_sha"
           git -c core.hooksPath=/dev/null am --3way "$GITHUB_WORKSPACE/patch-in/followup.patch"
+
+      - name: Checkout trusted helper
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          path: helpers
+
+      - name: Recheck pending comments before publish
+        id: revisions
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('node:fs');
+            const auto = require(`${process.env.GITHUB_WORKSPACE}/helpers/scripts/cursor-automation.cjs`);
+            const snapshots = JSON.parse(fs.readFileSync(
+              `${process.env.GITHUB_WORKSPACE}/patch-in/followup-pending-snapshots.json`,
+              'utf8',
+            ));
+            const issueNumber = Number(process.env.ISSUE_NUMBER);
+            const pullNumber = Number(process.env.PULL_NUMBER);
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              { ...context.repo, issue_number: issueNumber, per_page: 100 },
+            );
+            const changedIds = auto.getChangedIssueCommentSnapshotIds(
+              comments,
+              snapshots,
+            );
+            if (!changedIds.length) {
+              core.setOutput('safe', 'true');
+              return;
+            }
+            core.setOutput('safe', 'false');
+            const { data: issue } = await github.rest.issues.get({
+              ...context.repo,
+              issue_number: issueNumber,
+            });
+            const labels = (issue.labels || []).map((label) =>
+              typeof label === 'string' ? label : label.name,
+            );
+            await github.rest.issues.update({
+              ...context.repo,
+              issue_number: issueNumber,
+              labels: [...new Set([
+                ...labels.filter((label) => label !== 'ready-for-agent'),
+                'triage',
+                'ready-for-human',
+              ])],
+              ...(issue.state === 'closed' ? { state: 'open' } : {}),
+            });
+            const paused = await auto.ensurePullRequestDraft({
+              github,
+              context,
+              pullNumber,
+            });
+            if (!paused) {
+              throw new Error(`Could not pause PR #${pullNumber} after its source comment changed.`);
+            }
+            await auto.applyCodexTerminalLabels({
+              github,
+              context,
+              pullNumber,
+              terminal: 'give_up',
+            });
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: issueNumber,
+              body: [
+                auto.TRIAGE_MARKER,
+                '',
+                auto.buildIssueFollowupFallbackReply(issue, 'comment_changed'),
+              ].join('\n'),
+            });
+
+      - name: Push the revalidated follow-up patch
+        id: publish
+        if: steps.revisions.outputs.safe == 'true'
+        run: |
+          set -euo pipefail
+          PUBLISH="$RUNNER_TEMP/followup-publish-tree"
+          cd "$PUBLISH"
           state="$(gh pr view "$PULL_NUMBER" --repo "$GITHUB_REPOSITORY" --json state -q .state)"
           draft="$(gh pr view "$PULL_NUMBER" --repo "$GITHUB_REPOSITORY" --json isDraft -q .isDraft)"
           api_head="$(gh pr view "$PULL_NUMBER" --repo "$GITHUB_REPOSITORY" --json headRefOid -q .headRefOid)"
@@ -1575,15 +1855,9 @@ jobs:
             origin "HEAD:refs/heads/$HEAD_REF"
           echo "head_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Checkout trusted helper
-        if: always()
-        uses: actions/checkout@v5
-        with:
-          ref: ${{ github.event.repository.default_branch }}
-          persist-credentials: false
-          path: helpers
-
       - name: Finish issue conversation and restore review gate
+        id: finish
+        if: steps.revisions.outputs.safe == 'true'
         uses: actions/github-script@v7
         env:
           HEAD_SHA: ${{ steps.publish.outputs.head_sha }}
@@ -1598,6 +1872,18 @@ jobs:
               `${process.env.GITHUB_WORKSPACE}/patch-in/followup-reply.out.md`,
               'utf8',
             );
+            const snapshots = JSON.parse(fs.readFileSync(
+              `${process.env.GITHUB_WORKSPACE}/patch-in/followup-pending-snapshots.json`,
+              'utf8',
+            ));
+            const liveComments = await github.paginate(
+              github.rest.issues.listComments,
+              { ...context.repo, issue_number: issueNumber, per_page: 100 },
+            );
+            const changedIds = auto.getChangedIssueCommentSnapshotIds(
+              liveComments,
+              snapshots,
+            );
             const { data: sourceIssue } = await github.rest.issues.get({
               ...context.repo,
               issue_number: issueNumber,
@@ -1605,6 +1891,48 @@ jobs:
             const sourceLabels = (sourceIssue.labels || []).map((label) =>
               typeof label === 'string' ? label : label.name,
             );
+            if (changedIds.length) {
+              core.setOutput('safe', 'false');
+              await github.rest.issues.update({
+                ...context.repo,
+                issue_number: issueNumber,
+                labels: [...new Set([
+                  ...sourceLabels.filter((label) => label !== 'ready-for-agent'),
+                  'triage',
+                  'ready-for-human',
+                ])],
+                ...(sourceIssue.state === 'closed' ? { state: 'open' } : {}),
+              });
+              const paused = await auto.ensurePullRequestDraft({
+                github,
+                context,
+                pullNumber,
+              });
+              if (!paused) {
+                throw new Error(
+                  `Could not pause PR #${pullNumber} after its source comment changed.`,
+                );
+              }
+              await auto.applyCodexTerminalLabels({
+                github,
+                context,
+                pullNumber,
+                terminal: 'give_up',
+              });
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: issueNumber,
+                body: [
+                  auto.TRIAGE_MARKER,
+                  '',
+                  auto.buildIssueFollowupFallbackReply(
+                    sourceIssue,
+                    'comment_changed',
+                  ),
+                ].join('\n'),
+              });
+              return;
+            }
             await github.rest.issues.update({
               ...context.repo,
               issue_number: issueNumber,
@@ -1674,8 +2002,10 @@ jobs:
                 headSha: process.env.HEAD_SHA,
               }),
             });
+            core.setOutput('safe', 'true');
 
       - name: Dispatch the fresh-head Codex gate
+        if: steps.finish.outputs.safe == 'true'
         continue-on-error: true
         uses: actions/github-script@v7
         with:
@@ -1862,7 +2192,7 @@ jobs:
       base_sha: ${{ steps.branch.outputs.base_sha }}
       issue_number: ${{ needs.classify.outputs.issue_number }}
       issue_title: ${{ needs.classify.outputs.issue_title }}
-      issue_comment_watermark: ${{ steps.issue_context.outputs.latest_comment_id }}
+      issue_comment_watermark: ${{ needs.classify.outputs.issue_comment_watermark }}
     env:
       ISSUE_NUMBER: ${{ needs.classify.outputs.issue_number }}
       ISSUE_URL: ${{ needs.classify.outputs.issue_url }}
@@ -1951,22 +2281,6 @@ jobs:
           echo "name=$branch" >> "$GITHUB_OUTPUT"
           echo "base_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Prepare issue JSON
-        if: steps.existing.outputs.exists != 'true'
-        id: issue_context
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const auto = require(`${process.env.RUNNER_TEMP}/cursor-automation.cjs`);
-            await auto.prepareIssueContext({
-              github,
-              context,
-              core,
-              issueNumber: process.env.ISSUE_NUMBER,
-              outputPath: `${process.env.GITHUB_WORKSPACE}/.cursor-runtime/issue.json`,
-              manual: true,
-            });
-
       - name: Setup Node
         if: steps.existing.outputs.exists != 'true'
         uses: actions/setup-node@v4
@@ -1986,6 +2300,10 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           echo "$HOME/.cursor/bin" >> "$GITHUB_PATH"
           command -v agent || ls -la "$HOME/.local/bin" "$HOME/.cursor/bin" 2>/dev/null || true
+
+      - name: Prepare Cursor sandbox host
+        if: steps.existing.outputs.exists != 'true'
+        run: *prepare_cursor_sandbox_host
 
       - name: Authenticate Cursor CLI outside the implementation agent environment
         if: steps.existing.outputs.exists != 'true'
@@ -2245,6 +2563,8 @@ jobs:
     if: needs.implement.outputs.should_publish == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    outputs:
+      pull_number: ${{ steps.openpr.outputs.pull_number }}
     permissions:
       contents: write
       issues: write
@@ -2398,6 +2718,101 @@ jobs:
             });
             core.info(`Requested @codex review on PR #${pull_number}`);
 
+  drain_issue_classification_backlog:
+    name: Continue queued issue comments
+    needs: [route, classify, implement, publish_implement]
+    if: >-
+      always() &&
+      needs.route.outputs.kind == 'issue_classify' &&
+      needs.classify.result == 'success' &&
+      needs.classify.outputs.has_backlog == 'true' &&
+      (needs.implement.result == 'success' || needs.implement.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: write
+      contents: read
+      issues: write
+      pull-requests: read
+    env:
+      ISSUE_NUMBER: ${{ needs.classify.outputs.issue_number }}
+      PULL_NUMBER: ${{ needs.publish_implement.outputs.pull_number || '' }}
+      WORKFLOW_REF: ${{ github.ref_name || github.event.repository.default_branch }}
+    steps:
+      - name: Checkout automation helper
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Dispatch next queued issue batch
+        if: >-
+          needs.publish_implement.result == 'success' ||
+          needs.publish_implement.result == 'skipped'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const auto = require(`${process.env.GITHUB_WORKSPACE}/scripts/cursor-automation.cjs`);
+            let pullNumber = process.env.PULL_NUMBER;
+            if (!pullNumber) {
+              const existing = await auto.findOpenBotPrForIssue({
+                github,
+                context,
+                issueNumber: process.env.ISSUE_NUMBER,
+              });
+              pullNumber = existing ? String(existing.number) : '';
+            }
+            const inputs = {
+              issue_number: String(process.env.ISSUE_NUMBER),
+              drain_backlog: 'true',
+            };
+            if (pullNumber) {
+              inputs.pull_number = String(pullNumber);
+            }
+            await github.rest.actions.createWorkflowDispatch({
+              ...context.repo,
+              workflow_id: 'cursor-automation.yml',
+              ref: process.env.WORKFLOW_REF,
+              inputs,
+            });
+
+      - name: Hand off when queued comments cannot be scheduled
+        if: >-
+          (needs.publish_implement.result != 'success' &&
+          needs.publish_implement.result != 'skipped') ||
+          failure()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const issueNumber = Number(process.env.ISSUE_NUMBER);
+            const { data: issue } = await github.rest.issues.get({
+              ...context.repo,
+              issue_number: issueNumber,
+            });
+            const labels = (issue.labels || []).map((label) =>
+              typeof label === 'string' ? label : label.name,
+            );
+            await github.rest.issues.update({
+              ...context.repo,
+              issue_number: issueNumber,
+              labels: [...new Set([
+                ...labels.filter((label) => label !== 'ready-for-agent'),
+                'triage',
+                'ready-for-human',
+              ])],
+              ...(issue.state === 'closed' ? { state: 'open' } : {}),
+            });
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: issueNumber,
+              body: [
+                '<!-- cursor-automation -->',
+                '',
+                'I could not schedule the remaining comments automatically. A maintainer needs to continue from here.',
+              ].join('\n'),
+            });
+
   codex_loop:
     name: Codex review loop
     needs: route
@@ -2436,19 +2851,41 @@ jobs:
           BASE_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          if [[ -f scripts/cursor-automation.cjs ]]; then
-            echo "Helper present on default branch."
+          helper_supports_followups() {
+            node -e '
+              const auto = require("./scripts/cursor-automation.cjs");
+              process.exit(
+                typeof auto.getPendingIssueFollowupsForPull === "function" &&
+                typeof auto.restoreCleanPullRequestAfterNoChange === "function"
+                  ? 0
+                  : 1,
+              );
+            ' 2>/dev/null
+          }
+          if [[ -f scripts/cursor-automation.cjs ]] && helper_supports_followups; then
+            echo "Compatible helper present on default branch."
             exit 0
           fi
           if [[ "$EVENT_NAME" == "pull_request_target" ]] || { [[ -n "$HEAD_REPO" ]] && [[ "$HEAD_REPO" != "$BASE_REPO" ]]; }; then
-            echo "Helper missing on default branch; refusing untrusted bootstrap for ${EVENT_NAME}." >&2
+            echo "Compatible helper missing on default branch; refusing untrusted bootstrap for ${EVENT_NAME}." >&2
             exit 1
           fi
-          echo "Helper missing on default branch; bootstrapping from ${BOOTSTRAP_SHA}"
+          if [[ -n "${PULL_NUMBER:-}" ]]; then
+            pr_json=$(gh api "repos/${BASE_REPO}/pulls/${PULL_NUMBER}")
+            pr_head_repo=$(jq -r '.head.repo.full_name // ""' <<<"$pr_json")
+            pr_head_sha=$(jq -r '.head.sha // ""' <<<"$pr_json")
+            if [[ -z "$pr_head_sha" ]] || [[ "$pr_head_repo" != "$BASE_REPO" ]]; then
+              echo "Refusing helper bootstrap from non-local PR #${PULL_NUMBER}." >&2
+              exit 1
+            fi
+            BOOTSTRAP_SHA="$pr_head_sha"
+          fi
+          echo "Compatible helper missing on default branch; bootstrapping from ${BOOTSTRAP_SHA}"
           git fetch --depth=1 origin "${BOOTSTRAP_SHA}"
           mkdir -p scripts
           git show "FETCH_HEAD:scripts/cursor-automation.cjs" > scripts/cursor-automation.cjs
           test -s scripts/cursor-automation.cjs
+          helper_supports_followups
 
       - name: Freeze trusted helper
         run: cp scripts/cursor-automation.cjs "$RUNNER_TEMP/cursor-automation.cjs"
@@ -2933,6 +3370,10 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           echo "$HOME/.cursor/bin" >> "$GITHUB_PATH"
           command -v agent || ls -la "$HOME/.local/bin" "$HOME/.cursor/bin" 2>/dev/null || true
+
+      - name: Prepare Cursor sandbox host
+        if: steps.codex.outputs.action == 'fix'
+        run: *prepare_cursor_sandbox_host
 
       - name: Quarantine pull request Cursor controls before fixes
         if: steps.codex.outputs.action == 'fix'

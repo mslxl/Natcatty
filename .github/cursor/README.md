@@ -79,6 +79,9 @@ Terminal codex_loop outcomes always drop `automation:codex-loop`:
 - Issue text is sanitized before prompts.
 - Cursor credentials are exchanged before agent execution; agent tools receive
   no API key or GitHub token and must run inside Cursor's command sandbox.
+- Linux jobs install Cursor's versioned AppArmor profile after verifying its
+  pinned SHA-256. If the profile cannot be loaded or the sandbox preflight
+  fails, the job stops; it never falls back to an unsandboxed agent run.
 - External facts are gathered in a separate read-only WebSearch pass running in
   an empty temporary workspace. It has no repository, GitHub token, or raw
   Cursor API key; shell network access remains blocked. Only its bounded,

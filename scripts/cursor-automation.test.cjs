@@ -489,6 +489,16 @@ test('decideIssueCommentRoute ignores automation actors and unmanaged chatter', 
     }).kind,
     'skip',
   );
+  assert.equal(
+    auto.decideIssueCommentRoute({
+      labels: ['bug', 'triage'],
+      commenterLogin: 'maintainer',
+      issueAuthorLogin: 'alice',
+      commenterAssociation: 'MEMBER',
+      body: '@netcatty-bot 请直接处理这个尚未进入自动流程的问题',
+    }).kind,
+    'skip',
+  );
 });
 
 test('findPendingIssueFollowups coalesces new author and maintainer messages', () => {
@@ -792,6 +802,20 @@ test('prepareIssueFollowupContext uses the triggering comment when no PR exists'
         }),
         listComments: Symbol('listComments'),
       },
+      pulls: {
+        get: async () => ({
+          data: {
+            number: 77,
+            state: 'open',
+            draft: true,
+            title: 'fix issue 42',
+            body: `${auto.BOT_PR_MARKER}\nFixes #42`,
+            created_at: '2026-07-24T11:00:00Z',
+            head: { sha: 'abc', ref: 'cursor/issue-42-1' },
+            base: { ref: 'main' },
+          },
+        }),
+      },
     },
     paginate: async () => comments,
   };
@@ -810,6 +834,17 @@ test('prepareIssueFollowupContext uses the triggering comment when no PR exists'
   const payload = JSON.parse(fs.readFileSync(outputPath, 'utf8'));
   assert.equal(payload.pending_comments[0].id, '9');
   assert.equal(payload.pull, null);
+
+  const withPull = await auto.prepareIssueFollowupContext({
+    github,
+    context: { repo: { owner: 'binaricat', repo: 'Netcatty' } },
+    core: { setOutput() {} },
+    issueNumber: 42,
+    pullNumber: 77,
+    triggerCommentId: 9,
+    outputPath: path.join(dir, 'followup-with-pull.json'),
+  });
+  assert.deepEqual(withPull.pending.map((comment) => comment.id), [9]);
 });
 
 test('prepareIssueFollowupContext hands off after the daily follow-up limit', async () => {
@@ -937,10 +972,16 @@ test('restoreCleanPullRequestAfterNoChange undoes ready when a comment races', a
           body: 'old',
           created_at: '2026-07-24T09:00:00Z',
         },
+        {
+          id: 2,
+          user: { login: 'alice', type: 'User' },
+          body: 'follow-up under review',
+          created_at: '2026-07-24T09:30:00Z',
+        },
       ];
       if (commentRead >= 2) {
         comments.push({
-          id: 2,
+          id: 3,
           user: { login: 'alice', type: 'User' },
           body: 'raced follow-up',
           created_at: '2026-07-24T10:00:00Z',
@@ -965,9 +1006,123 @@ test('restoreCleanPullRequestAfterNoChange undoes ready when a comment races', a
     context: { repo: { owner: 'binaricat', repo: 'Netcatty' } },
     pullNumber: 77,
     expectedHeadSha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    ignoredCommentIds: [2],
   });
   assert.equal(restored, false);
   assert.equal(draft, true);
+});
+
+test('restoreCleanPullRequestAfterNoChange ignores only the current batch', async () => {
+  let draft = true;
+  const pull = () => ({
+    number: 77,
+    state: 'open',
+    draft,
+    body: `${auto.BOT_PR_MARKER}\n<!-- cursor-source-issue:42 -->\n<!-- cursor-issue-watermark:comment-id=1 -->\nFixes #42`,
+    head: { sha: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' },
+  });
+  const github = {
+    rest: {
+      pulls: { get: async () => ({ data: pull() }) },
+      issues: {
+        get: async ({ issue_number }) => ({
+          data: issue_number === 42
+            ? { number: 42, user: { login: 'alice' } }
+            : { number: 77, labels: [] },
+        }),
+        listComments: Symbol('listComments'),
+        update: async () => ({ data: {} }),
+      },
+    },
+    paginate: async () => [
+      {
+        id: 1,
+        user: { login: 'alice', type: 'User' },
+        body: 'old',
+        created_at: '2026-07-24T09:00:00Z',
+      },
+      {
+        id: 2,
+        user: { login: 'alice', type: 'User' },
+        body: 'follow-up under review',
+        created_at: '2026-07-24T09:30:00Z',
+      },
+    ],
+    graphql: async (query) => {
+      if (query.includes('query(')) {
+        return { repository: { pullRequest: { id: 'PR_node', isDraft: draft } } };
+      }
+      draft = false;
+      return { markPullRequestReadyForReview: { pullRequest: { isDraft: false } } };
+    },
+  };
+
+  const restored = await auto.restoreCleanPullRequestAfterNoChange({
+    github,
+    context: { repo: { owner: 'binaricat', repo: 'Netcatty' } },
+    pullNumber: 77,
+    expectedHeadSha: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    ignoredCommentIds: [2],
+  });
+
+  assert.equal(restored, true);
+  assert.equal(draft, false);
+});
+
+test('restoreCleanPullRequestAfterNoChange rejects an edited current-batch comment', async () => {
+  let draft = true;
+  const original = {
+    id: 2,
+    user: { login: 'alice', type: 'User' },
+    body: 'follow-up under review',
+    updated_at: '2026-07-24T09:30:00Z',
+  };
+  const pull = {
+    number: 77,
+    state: 'open',
+    draft: true,
+    body: `${auto.BOT_PR_MARKER}\n<!-- cursor-source-issue:42 -->\n<!-- cursor-issue-watermark:comment-id=1 -->\nFixes #42`,
+    head: { sha: 'cccccccccccccccccccccccccccccccccccccccc' },
+  };
+  const github = {
+    rest: {
+      pulls: { get: async () => ({ data: { ...pull, draft } }) },
+      issues: {
+        get: async ({ issue_number }) => ({
+          data: issue_number === 42
+            ? { number: 42, user: { login: 'alice' } }
+            : { number: 77, labels: [] },
+        }),
+        listComments: Symbol('listComments'),
+      },
+    },
+    paginate: async () => [{
+      ...original,
+      body: 'edited after the agent snapshot',
+      updated_at: '2026-07-24T09:45:00Z',
+    }],
+  };
+
+  const restored = await auto.restoreCleanPullRequestAfterNoChange({
+    github,
+    context: { repo: { owner: 'binaricat', repo: 'Netcatty' } },
+    pullNumber: 77,
+    expectedHeadSha: pull.head.sha,
+    ignoredCommentSnapshots: [{
+      id: '2',
+      revision: auto.getIssueCommentRevision(original),
+    }],
+  });
+
+  assert.equal(restored, false);
+  assert.equal(draft, true);
+  assert.deepEqual(
+    auto.getChangedIssueCommentSnapshotIds(
+      await github.paginate(),
+      [{ id: '2', revision: auto.getIssueCommentRevision(original) }],
+    ),
+    ['2'],
+  );
 });
 
 test('normalizeClassification does not auto-close low-confidence unclear', () => {
@@ -1217,6 +1372,261 @@ test('classification failure handoff receives its issue number', () => {
   assert.match(handoff, /const issueNumber = Number\(process\.env\.ISSUE_NUMBER\)/);
 });
 
+test('classification follow-up rate-limit handoff receives its issue number', () => {
+  const workflow = fs.readFileSync(
+    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    'utf8',
+  );
+  const handoff = workflow.match(
+    /- name: Hand off needs-info replies after daily limit[\s\S]*?(?=\n\s{6}- name:)/,
+  )?.[0] || '';
+  assert.match(
+    handoff,
+    /ISSUE_NUMBER: \$\{\{ steps\.prepare\.outputs\.issue_number \}\}/,
+  );
+  assert.match(handoff, /const issueNumber = Number\(process\.env\.ISSUE_NUMBER\)/);
+});
+
+test('no-change follow-up ignores this batch while restoring before recording it', () => {
+  const workflow = fs.readFileSync(
+    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    'utf8',
+  );
+  const finishStep = workflow.match(
+    /- name: Finish follow-up without code changes[\s\S]*?(?=\n\s{6}- name:)/,
+  )?.[0] || '';
+  const noChange = finishStep.match(
+    /if \(action === 'no_change'\) \{[\s\S]*?\n\s{14}return;/,
+  )?.[0] || '';
+  const recordHandled = noChange.indexOf(
+    'await github.rest.issues.createComment(response)',
+  );
+  const restoreReady = noChange.indexOf(
+    'await auto.restoreCleanPullRequestAfterNoChange',
+  );
+
+  assert.ok(recordHandled >= 0);
+  assert.ok(restoreReady >= 0);
+  assert.match(
+    noChange,
+    /ignoredCommentSnapshots: pendingSnapshots/,
+  );
+  assert.match(finishStep, /PENDING_SNAPSHOTS: \$\{\{ steps\.prepare\.outputs\.pending_snapshots \}\}/);
+  assert.match(noChange, /getChangedIssueCommentSnapshotIds/);
+  assert.match(noChange, /buildIssueFollowupFallbackReply\(issue, 'comment_changed'\)/);
+  assert.match(noChange, /if \(!paused\)/);
+  assert.match(noChange, /applyCodexTerminalLabels/);
+  assert.match(noChange, /terminal: 'give_up'/);
+  assert.ok(restoreReady < recordHandled);
+});
+
+test('follow-up publish revalidates comment snapshots before pushing', () => {
+  const workflow = fs.readFileSync(
+    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    'utf8',
+  );
+  const publish = workflow.match(
+    /\n  publish_issue_followup:\n[\s\S]*?(?=\n  implement:\n)/,
+  )?.[0] || '';
+  const revisionCheck = publish.match(
+    /      - name: Recheck pending comments before publish\n[\s\S]*?(?=\n      - name: Push the revalidated follow-up patch)/,
+  )?.[0] || '';
+  const finish = publish.match(
+    /      - name: Finish issue conversation and restore review gate\n[\s\S]*?(?=\n      - name: Dispatch the fresh-head Codex gate)/,
+  )?.[0] || '';
+
+  assert.match(publish, /followup-pending-snapshots\.json/);
+  assert.match(revisionCheck, /getChangedIssueCommentSnapshotIds/);
+  assert.match(revisionCheck, /buildIssueFollowupFallbackReply\(issue, 'comment_changed'\)/);
+  assert.doesNotMatch(revisionCheck, /buildIssueFollowupReply/);
+  assert.match(finish, /getChangedIssueCommentSnapshotIds/);
+  assert.match(finish, /terminal: 'give_up'/);
+  assert.match(finish, /core\.setOutput\('safe', 'false'\)/);
+  assert.match(finish, /core\.setOutput\('safe', 'true'\)/);
+  assert.match(publish, /if: steps\.finish\.outputs\.safe == 'true'/);
+  assert.ok(
+    finish.indexOf('getChangedIssueCommentSnapshotIds') <
+      finish.indexOf('buildIssueFollowupReply'),
+  );
+  assert.match(publish, /if: steps\.revisions\.outputs\.safe == 'true'/);
+  assert.ok(
+    publish.indexOf('Recheck pending comments before publish') <
+      publish.indexOf('Push the revalidated follow-up patch'),
+  );
+});
+
+test('Codex loop bootstraps the current same-repo helper API when default is stale', () => {
+  const workflow = fs.readFileSync(
+    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    'utf8',
+  );
+  const codexLoop = workflow.match(
+    /\n  codex_loop:\n[\s\S]*?(?=\n  publish_codex_fix:\n)/,
+  )?.[0] || '';
+  const ensureHelper = codexLoop.match(
+    /- name: Ensure automation helper present[\s\S]*?(?=\n\s{6}- name:)/,
+  )?.[0] || '';
+
+  assert.match(ensureHelper, /typeof auto\.getPendingIssueFollowupsForPull/);
+  assert.match(ensureHelper, /typeof auto\.restoreCleanPullRequestAfterNoChange/);
+  assert.match(ensureHelper, /gh api "repos\/\$\{BASE_REPO\}\/pulls\/\$\{PULL_NUMBER\}"/);
+  assert.match(ensureHelper, /pr_head_repo.*BASE_REPO/s);
+  assert.match(ensureHelper, /helper_supports_followups\n/);
+});
+
+test('implementation keeps the classification-time issue watermark', () => {
+  const workflow = fs.readFileSync(
+    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    'utf8',
+  );
+  const classify = workflow.match(
+    /\n  classify:\n[\s\S]*?(?=\n  sandbox_smoke:\n)/,
+  )?.[0] || '';
+  const implement = workflow.match(
+    /\n  implement:\n[\s\S]*?(?=\n  publish_implement:\n)/,
+  )?.[0] || '';
+
+  assert.match(
+    classify,
+    /issue_comment_watermark: \$\{\{ steps\.prepare\.outputs\.latest_comment_id \}\}/,
+  );
+  assert.match(
+    implement,
+    /issue_comment_watermark: \$\{\{ needs\.classify\.outputs\.issue_comment_watermark \}\}/,
+  );
+  assert.doesNotMatch(
+    implement,
+    /issue_comment_watermark: \$\{\{ steps\.issue_context\.outputs\.latest_comment_id \}\}/,
+  );
+  assert.match(
+    classify,
+    /name: issue-research-\$\{\{ github\.run_id \}\}[\s\S]*?\.cursor-runtime\/issue\.json/,
+  );
+  assert.doesNotMatch(implement, /name: Prepare issue JSON/);
+  assert.doesNotMatch(implement, /prepareIssueContext\(/);
+});
+
+test('classification backlog is re-dispatched only after implementation finishes', () => {
+  const workflow = fs.readFileSync(
+    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    'utf8',
+  );
+  const drain = workflow.match(
+    /\n  drain_issue_classification_backlog:\n[\s\S]*?(?=\n  codex_loop:\n)/,
+  )?.[0] || '';
+
+  assert.match(drain, /needs: \[route, classify, implement, publish_implement\]/);
+  assert.match(drain, /needs\.classify\.outputs\.has_backlog == 'true'/);
+  assert.match(drain, /needs\.implement\.result == 'success'/);
+  assert.match(drain, /needs\.publish_implement\.result == 'success'/);
+  assert.match(drain, /findOpenBotPrForIssue/);
+  assert.match(drain, /createWorkflowDispatch/);
+  assert.match(drain, /issue_number: String\(process\.env\.ISSUE_NUMBER\)/);
+  assert.match(drain, /drain_backlog: 'true'/);
+  assert.match(drain, /inputs\.pull_number = String\(pullNumber\)/);
+  assert.match(drain, /github-token: \$\{\{ secrets\.GITHUB_TOKEN \}\}/);
+  assert.match(drain, /failure\(\)/);
+  assert.match(drain, /needs\.publish_implement\.result != 'success'/);
+  assert.match(drain, /needs\.publish_implement\.result != 'skipped'/);
+  assert.match(drain, /ready-for-human/);
+
+  const apply = workflow.match(
+    /      - name: Apply classification\n[\s\S]*?(?=\n      - name: Hand off when issue classification fails)/,
+  )?.[0] || '';
+  assert.match(apply, /PROCESSED_COMMENT_IDS: \$\{\{ steps\.prepare\.outputs\.processed_comment_ids \}\}/);
+  assert.match(apply, /processedCommentIds:/);
+});
+
+test('every Cursor job prepares and verifies the Linux sandbox host', () => {
+  const workflow = fs.readFileSync(
+    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    'utf8',
+  );
+  const sandboxPreparations = workflow.match(
+    /- name: Prepare Cursor sandbox host/g,
+  ) || [];
+  const sandboxEnables = workflow.match(/agent sandbox enable/g) || [];
+  const profileDownloads = workflow.match(
+    /https:\/\/downloads\.cursor\.com\/lab\/enterprise\/cursor-sandbox-apparmor_0\.6\.0_all\.deb/g,
+  ) || [];
+  const checksumVerifications = workflow.match(
+    /d982e1f17d8eed0a6277b51576ee74ed0259c06922f16ea5a93ac8e4877844ce/g,
+  ) || [];
+
+  assert.equal(sandboxEnables.length, 5);
+  assert.equal(sandboxPreparations.length, sandboxEnables.length);
+  assert.equal(profileDownloads.length, 1);
+  assert.equal(checksumVerifications.length, 1);
+  assert.equal(
+    (workflow.match(/sudo dpkg -i "\$sandbox_package"/g) || []).length,
+    1,
+  );
+  assert.equal(
+    (workflow.match(/cursor_sandbox_agent_cli/g) || []).length,
+    1,
+  );
+  assert.ok(
+    workflow.includes("sudo sed -i 's/^  #userns,$/  userns,/' \"$sandbox_profile\""),
+  );
+  assert.match(workflow, /abi <abi\/4\.0>,/);
+  assert.match(workflow, /include <tunables\/global>/);
+  assert.ok(
+    workflow.includes(
+      "sudo sed -i '/^  capability chown,$/a\\  capability dac_override,' \"$sandbox_profile\"",
+    ),
+  );
+  assert.ok(
+    workflow.includes(
+      "test \"$(grep -c '^  capability dac_override,$' \"$sandbox_profile\")\" -eq 2",
+    ),
+  );
+  assert.equal(
+    (workflow.match(/run: &prepare_cursor_sandbox_host \|/g) || []).length,
+    1,
+  );
+  assert.equal(
+    (workflow.match(/run: \*prepare_cursor_sandbox_host/g) || []).length,
+    sandboxEnables.length - 1,
+  );
+  assert.doesNotMatch(
+    workflow,
+    /apparmor_restrict_unprivileged_(?:unconfined|userns)\s*=\s*0/,
+  );
+
+  let cursor = 0;
+  for (let index = 0; index < sandboxEnables.length; index += 1) {
+    const preparation = workflow.indexOf('- name: Prepare Cursor sandbox host', cursor);
+    const enable = workflow.indexOf('agent sandbox enable', cursor);
+    assert.ok(preparation >= cursor && preparation < enable);
+    cursor = enable + 1;
+  }
+});
+
+test('workflow exposes a credential-free Cursor sandbox smoke check', () => {
+  const workflow = fs.readFileSync(
+    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    'utf8',
+  );
+  assert.match(
+    workflow,
+    /sandbox_smoke:\n\s+description: Verify the Cursor sandbox without repository credentials\n\s+required: false\n\s+type: boolean\n\s+default: false/,
+  );
+  const smokeJob = workflow.match(
+    /\n  sandbox_smoke:\n[\s\S]*?(?=\n  [a-zA-Z0-9_]+:\n)/,
+  )?.[0] || '';
+  assert.match(smokeJob, /permissions: \{\}/);
+  assert.match(smokeJob, /run: \*prepare_cursor_sandbox_host/);
+  assert.match(smokeJob, /agent sandbox enable/);
+  assert.match(smokeJob, /--policy "\$sandbox_policy_file"/);
+  assert.match(smokeJob, /sandbox: \{/);
+  assert.match(smokeJob, /networkAccess: false/);
+  assert.match(smokeJob, /touch \.cursor-runtime\/sandbox-smoke/);
+  assert.match(smokeJob, /Cursor sandbox unexpectedly allowed network access/);
+  assert.doesNotMatch(smokeJob, /agent sandbox run/);
+  assert.doesNotMatch(smokeJob, /--sandbox-policy/);
+  assert.doesNotMatch(smokeJob, /CURSOR_API_KEY|GITHUB_TOKEN|GH_TOKEN/);
+});
+
 test('normalizeExternalResearchText accepts sourced research and explicit no-op', () => {
   const complete = auto.normalizeExternalResearchText([
     'RESEARCH_COMPLETE: Cursor CLI supports a built-in web search tool.',
@@ -1231,6 +1641,26 @@ test('normalizeExternalResearchText accepts sourced research and explicit no-op'
       'RESEARCH_NOT_NEEDED: the report only concerns local Netcatty behavior',
     ),
     'RESEARCH_NOT_NEEDED: the report only concerns local Netcatty behavior',
+  );
+  assert.equal(
+    auto.normalizeExternalResearchText(
+      'RESEARCH_NOT_NEEDED: only local Netcatty behavior is involved',
+      {
+        input: {
+          issue: {
+            url: 'https://github.com/binaricat/Netcatty/issues/42',
+            title: '[Bug] Local terminal issue',
+            body: 'The terminal is blank after reconnecting.',
+          },
+          pull: {
+            url: 'https://github.com/binaricat/Netcatty/pull/77',
+            body: 'Fixes https://github.com/binaricat/Netcatty/issues/42',
+          },
+          comments: [{ is_bot: true, body: 'See https://github.com/actions/runs/1' }],
+        },
+      },
+    ),
+    'RESEARCH_NOT_NEEDED: only local Netcatty behavior is involved',
   );
 });
 
@@ -1962,8 +2392,12 @@ test('prepareIssueContext survives Octokit-normalized search pages (no .items)',
         }
         return page.data;
       }
-      // timeline / comments
-      return [];
+      // timeline / comments. GitHub Apps can report a bot account as type User.
+      return [{
+        id: 2440,
+        user: { type: 'User', login: 'netcatty-bot' },
+        body: 'Automation details: https://github.com/actions/runs/1',
+      }];
     },
   };
 
@@ -1984,6 +2418,8 @@ test('prepareIssueContext survives Octokit-normalized search pages (no .items)',
   const written = JSON.parse(fs.readFileSync(outputPath, 'utf8'));
   assert.equal(written.issue.number, 2438);
   assert.equal(written.issue.author, 'reporter');
+  assert.equal(written.comments[0].is_bot, true);
+  assert.equal(outputs.has_backlog, 'false');
 });
 
 test('prepareIssueContext does not throw when search map previously returned undefined', async () => {
@@ -2148,6 +2584,64 @@ test('prepareIssueContext dedupes and limits needs-info author replies', async (
   assert.equal(rateLimited.result.rateLimited, true);
   assert.equal(rateLimited.outputs.rate_limited, 'true');
   assert.equal(rateLimited.outputs.pending_ids, '11');
+
+  const burstComments = [
+    {
+      id: 1,
+      user: { login: 'netcatty-bot', type: 'User' },
+      body: '<!-- cursor-triage-watermark:comment-id=1 -->',
+      created_at: '2026-07-24T09:00:00Z',
+    },
+    ...Array.from({ length: 25 }, (_, index) => ({
+      id: index + 2,
+      user: { login: 'alice', type: 'User' },
+      body: `reply ${index + 2}`,
+      created_at: `2026-07-24T10:${String(index).padStart(2, '0')}:00Z`,
+    })),
+  ];
+  const burst = await run(burstComments, 26, 100);
+  const classifiedBodies = burst.result.input.comments.map((comment) => comment.body);
+  assert.equal(burst.result.shouldRun, true);
+  assert.equal(burst.outputs.latest_comment_id, '21');
+  assert.equal(burst.outputs.has_backlog, 'true');
+  assert.equal(burst.outputs.processed_comment_ids, '26');
+  assert.ok(classifiedBodies.includes('reply 26'));
+  assert.ok(classifiedBodies.includes('reply 21'));
+  assert.ok(!classifiedBodies.includes('reply 22'));
+
+  const triageReply = auto.buildTriageComment(
+    { reply: '这一轮已处理。' },
+    { issueCommentWatermark: 21, processedCommentIds: [26] },
+  );
+  assert.match(triageReply, /cursor-triage-processed:comment-id=26/);
+  const next = await run([
+    ...burstComments,
+    {
+      id: 27,
+      user: { login: 'netcatty-bot', type: 'User' },
+      body: triageReply,
+      created_at: '2026-07-24T11:00:00Z',
+    },
+  ], '', 100);
+  assert.equal(next.result.shouldRun, true);
+  assert.equal(next.outputs.latest_comment_id, '27');
+  assert.equal(next.outputs.has_backlog, 'false');
+  assert.ok(!next.result.input.comments.some((comment) => comment.body === 'reply 26'));
+
+  const deletedWatermarkTarget = await run([
+    ...burstComments.filter((comment) => comment.id !== 21),
+    {
+      id: 27,
+      user: { login: 'netcatty-bot', type: 'User' },
+      body: '<!-- cursor-triage-watermark:comment-id=21 -->',
+      created_at: '2026-07-24T11:00:00Z',
+    },
+  ], '', 100);
+  const deletedBodies = deletedWatermarkTarget.result.input.comments.map(
+    (comment) => comment.body,
+  );
+  assert.ok(deletedBodies.includes('reply 22'));
+  assert.ok(!deletedBodies.includes('reply 2'));
 });
 
 test('isValidIssueTitle accepts short CJK bug titles (issue #2449 shape)', () => {
