@@ -186,6 +186,38 @@ async function computeSourceFingerprint({ sourceType, sourcePath, sourceSftpId, 
   return digest ? `sha256:${digest}` : null;
 }
 
+/**
+ * Fast pause/resume identity: size + mtime only. Full-file SHA-256 is too slow
+ * for the pause critical path and must not run as a post-pause background
+ * network read (would keep remote I/O after the UI shows paused).
+ */
+async function computeSourceIdentityLite({ sourceType, sourcePath, sourceSftpId, sourceEncoding }) {
+  if (sourceType === "local") {
+    const st = await fs.promises.stat(sourcePath);
+    const mtime = Number.isFinite(st.mtimeMs) ? Math.trunc(st.mtimeMs) : 0;
+    return `meta:${st.size}:${mtime}`;
+  }
+  const client = sftpClients.get(sourceSftpId);
+  if (!client) throw new Error("Source SFTP session not found");
+  const attrs = isScpModeClient(client)
+    ? await getScpBackendForClient(client).stat(sourcePath, { encoding: sourceEncoding })
+    : await client.stat(encodePathForSession(sourceSftpId, sourcePath, sourceEncoding));
+  const size = Math.max(0, Number(attrs?.size) || 0);
+  const mtimeRaw = attrs?.mtimeMs ?? attrs?.mtime;
+  // ssh2 often reports mtime in whole seconds.
+  const mtime = Number.isFinite(Number(mtimeRaw))
+    ? Math.trunc(Number(mtimeRaw) > 1e12 ? Number(mtimeRaw) : Number(mtimeRaw) * 1000)
+    : 0;
+  return `meta:${size}:${mtime}`;
+}
+
+async function computeMatchingSourceFingerprint(storedFingerprint, params) {
+  if (typeof storedFingerprint === "string" && storedFingerprint.startsWith("meta:")) {
+    return computeSourceIdentityLite(params);
+  }
+  return computeSourceFingerprint(params);
+}
+
 async function hashRemotePrefix(client, sftpId, filePath, encoding, bytes) {
   if (!bytes) return null;
   if (isScpModeClient(client)) return null;
@@ -2641,7 +2673,6 @@ async function startTransferNow(event, payload, onProgress) {
   let leasesReleased = false;
   const cleanupTransfer = () => {
     activeTransfers.delete(transferId);
-    transfer.publishProgress = null;
     if (!leasesReleased) {
       leasesReleased = true;
       releaseTransferSessionLeases(transferId, transfer.leasedSftpIds || leasedSftpIds);
@@ -2693,14 +2724,11 @@ async function startTransferNow(event, payload, onProgress) {
     emitProgress(now, normalizedTransferred, normalizedTotal, speed, force);
   };
 
-  // Let pause/fingerprint paths force a progress fan-out (e.g. late source
-  // fingerprint) without reaching into the sendProgress closure.
-  transfer.publishProgress = (force = true) => {
-    sendProgress(lastObservedTransferred, lastObservedTotal, {
-      force: force !== false,
-      checkpointBytes: transfer.checkpointBytes,
-    });
-  };
+  transfer.publishCurrentProgress = () => sendProgress(
+    lastObservedTransferred,
+    lastObservedTotal,
+    { force: true, checkpointBytes: transfer.checkpointBytes },
+  );
 
   const sendComplete = () => {
     sender.send("netcatty:transfer:complete", { transferId });
@@ -2754,12 +2782,15 @@ async function startTransferNow(event, payload, onProgress) {
     }
 
     if (transfer.resumable && transfer.sourceFingerprint) {
-      const currentSourceFingerprint = await runCancelablePreflight(() => computeSourceFingerprint({
+      const currentSourceFingerprint = await runCancelablePreflight(() => computeMatchingSourceFingerprint(
+        transfer.sourceFingerprint,
+        {
           sourceType,
           sourcePath,
           sourceSftpId,
           sourceEncoding,
-        }));
+        },
+      ));
       if (
         transfer.sourceFingerprint
         && currentSourceFingerprint
@@ -3591,32 +3622,23 @@ async function pauseTransfer(_event, payload) {
   }
   if (transfer.resumeStage === 'download') transfer.downloadCheckpointBytes = transfer.checkpointBytes;
   if (transfer.resumeStage === 'upload') transfer.uploadCheckpointBytes = transfer.checkpointBytes;
-  // Do NOT full-hash the source on the pause critical path. Hashing a multi-MB
-  // local file (or remote sha256sum of the whole object) made Pause feel like
-  // "finishing current work" for large transfers. Resume already re-checks
-  // source identity when a fingerprint is present, and size/mtime guards cover
-  // the common case. Best-effort background capture keeps stronger safety when
-  // cheap (already hashed at start) or when it finishes before resume.
+  // Durable identity before confirming pause — size+mtime only. Full-file
+  // SHA-256 is too slow for pause UX and must not continue as a background
+  // remote read after the UI shows paused (Codex P1/P2 on #2486).
   if (transfer.resumable && !transfer.sourceFingerprint) {
-    void computeSourceFingerprint({
-      sourceType: transfer.sourceType,
-      sourcePath: transfer.sourcePath,
-      sourceSftpId: transfer.sourceSftpId,
-      sourceEncoding: transfer.sourceEncoding,
-    }).then((fingerprint) => {
-      if (
-        fingerprint
-        && activeTransfers.get(payload?.transferId) === transfer
-        && !transfer.sourceFingerprint
-      ) {
-        transfer.sourceFingerprint = fingerprint;
-        // Pause already returned without this value. Fan out so the renderer
-        // persists it before a paused restore can restart without a fingerprint.
-        try { transfer.publishProgress?.(true); } catch { /* ignore */ }
-      }
-    }).catch(() => {
-      // Optional — resume still works without a stored fingerprint.
-    });
+    try {
+      transfer.sourceFingerprint = await computeSourceIdentityLite({
+        sourceType: transfer.sourceType,
+        sourcePath: transfer.sourcePath,
+        sourceSftpId: transfer.sourceSftpId,
+        sourceEncoding: transfer.sourceEncoding,
+      });
+      if (transfer.paused) transfer.publishCurrentProgress?.();
+    } catch {
+      transfer.paused = false;
+      resumeStreamPair(transfer);
+      return { success: false, reason: "Could not verify that the source is safe to resume" };
+    }
   }
   if (transfer.cancelled || activeTransfers.get(payload?.transferId) !== transfer) {
     return { success: false, reason: "Transfer is no longer active" };
@@ -3667,9 +3689,8 @@ async function resumeTransfer(_event, payload) {
     return { success: true };
   }
   // Soft-drained concurrent pause may leave a sparse tail past the contiguous
-  // checkpoint. Wait for ALL leftover ranges to settle before truncating —
-  // truncating while range writes are still in flight can erase bytes whose
-  // callbacks arrive later, leaving a size-correct but corrupted stage.
+  // checkpoint. Stay paused until leftover ranges settle, then truncate before
+  // unpausing. No new ranges are scheduled while paused.
   if (transfer.deferredSparseTruncate) {
     while (
       typeof transfer.getActiveRangeCount === "function"
@@ -3677,10 +3698,16 @@ async function resumeTransfer(_event, payload) {
     ) {
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
+    if (transfer.cancelled || activeTransfers.get(payload?.transferId) !== transfer) {
+      return { success: false, reason: "Transfer is no longer active" };
+    }
     try {
       await prepareStreamFallbackAfterRangeFailure(transfer, transfer.stagedRemote?.client);
     } catch {
       // Best-effort; resume from contiguous checkpoint still overwrites holes.
+    }
+    if (transfer.cancelled || activeTransfers.get(payload?.transferId) !== transfer) {
+      return { success: false, reason: "Transfer is no longer active" };
     }
     transfer.deferredSparseTruncate = false;
   }

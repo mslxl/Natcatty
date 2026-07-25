@@ -9,6 +9,7 @@ import { getSftpTransferResourceKeys, globalSftpTransferScheduler } from "./glob
 import { isSessionError } from "./errors";
 import { isTransferCancelledError, runWithTransferRetry } from "./transferRetry";
 import type { TransferConnectionLease } from "./transferConnectionPool";
+import { hasNewSourceFingerprint, shouldApplyTransferProgress } from "./transferProgressMetadata";
 import { joinPath } from "./utils";
 
 export type AcquireTransferSessionFn = (
@@ -246,6 +247,7 @@ export function useSftpDirectoryTransferOps({
             };
 
             let lastProgressUpdate = 0;
+            let lastSourceFingerprint = options.sourceFingerprint;
             const onProgress = (
               transferred: number,
               total: number,
@@ -262,8 +264,19 @@ export function useSftpDirectoryTransferOps({
             ) => {
               onStreamProgress?.(transferred, total, speed);
               const now = Date.now();
-              if (now - lastProgressUpdate < 100 && transferred < total) return;
+              const sourceFingerprintChanged = hasNewSourceFingerprint(
+                lastSourceFingerprint,
+                checkpoint?.sourceFingerprint,
+              );
+              if (!shouldApplyTransferProgress({
+                elapsedMs: now - lastProgressUpdate,
+                transferred,
+                total,
+                currentSourceFingerprint: lastSourceFingerprint,
+                incomingSourceFingerprint: checkpoint?.sourceFingerprint,
+              })) return;
               lastProgressUpdate = now;
+              if (sourceFingerprintChanged) lastSourceFingerprint = checkpoint?.sourceFingerprint;
               setTransfers((prev) =>
                 prev.map((t) => {
                   if (t.id !== task.id) return t;

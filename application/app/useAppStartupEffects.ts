@@ -8,6 +8,7 @@ import { toast } from '../../components/ui/toast';
 import { sftpTransferCenterStore } from '../state/sftpTransferCenterStore';
 import { resumeTransferWithDedicatedSession } from '../state/sftp/dedicatedTransferResume';
 import { getSftpTransferResourceKeys, globalSftpTransferScheduler } from '../state/sftp/globalTransferScheduler';
+import { hasNewSourceFingerprint } from '../state/sftp/transferProgressMetadata';
 import { STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY } from '../../infrastructure/config/storageKeys';
 
 type StartupEffectsContext = Record<string, any>;
@@ -84,7 +85,13 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
         (progress) => {
           // Do not resurrect a paused/cancelled row from late stream progress.
           const current = sftpTransferCenterStore.getSnapshot().tasks.find((row) => row.id === task.id);
-          if (!current || current.status === "cancelled" || current.status === "paused" || current.status === "interrupted") {
+          if (!current || current.status === "cancelled" || current.status === "interrupted") {
+            return;
+          }
+          if (current.status === "pausing" || current.status === "paused") {
+            if (hasNewSourceFingerprint(current.sourceFingerprint, progress.sourceFingerprint)) {
+              sftpTransferCenterStore.patchTask(task.id, { sourceFingerprint: progress.sourceFingerprint });
+            }
             return;
           }
           // Directory parents use file-count progress; single files use bytes.

@@ -147,6 +147,23 @@ test("persisted unfinished tasks restore as interrupted without controllers", ()
   assert.equal(restored.canControl("a"), true);
 });
 
+test("paused source fingerprint patches are persisted for restart", () => {
+  let persisted = "";
+  const first = createSftpTransferCenterStore({
+    read: () => null,
+    write: (value) => { persisted = value; },
+  });
+  first.publishOwner("panel-a", [makeTask("paused-fingerprint", "paused")]);
+  first.patchTask("paused-fingerprint", { sourceFingerprint: "sha256:durable" });
+
+  const restored = createSftpTransferCenterStore({
+    read: () => persisted,
+    write: () => {},
+  });
+  assert.equal(restored.getSnapshot().tasks[0]?.status, "interrupted");
+  assert.equal(restored.getSnapshot().tasks[0]?.sourceFingerprint, "sha256:durable");
+});
+
 test("orphaned unfinished tasks stay controllable so dead rows can be cancelled", () => {
   const store = createSftpTransferCenterStore();
   store.publishOwner("gone-panel", [
