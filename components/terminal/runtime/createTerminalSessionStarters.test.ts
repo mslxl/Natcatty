@@ -295,6 +295,68 @@ test("startPluginConnection waits for explicit Provider connected readiness befo
   ]);
 });
 
+test("startPluginConnection displays status diagnostics when a Provider exits without an error message", async () => {
+  let onExit: ((evt: {
+    reason?: "error";
+    diagnostics?: Array<{ severity: "error" | "warning"; message: string }>;
+  }) => void) | null = null;
+  const terminalWrites: string[] = [];
+  const terminalBackend = {
+    pluginConnectionAvailable: () => true,
+    startPluginConnection: async (options: NetcattyPluginConnectionStartRequest) => ({
+      sessionId: options.sessionId,
+      providerId: options.providerId,
+      status: "connected" as const,
+      diagnostics: [],
+    }),
+    onSessionData: () => noop,
+    onSessionExit: (
+      _id: string,
+      cb: (evt: {
+        reason?: "error";
+        diagnostics?: Array<{ severity: "error" | "warning"; message: string }>;
+      }) => void,
+    ) => { onExit = cb; return noop; },
+    onChainProgress: () => noop,
+    writeToSession: noop,
+    resizeSession: noop,
+  };
+  const ctx = createStarterContext({
+    host: {
+      id: "host-plugin",
+      label: "Custom protocol",
+      hostname: "opaque.example",
+      username: "",
+      protocol: "plugin:com.example.transport.connection",
+      pluginConnection: {
+        providerId: "com.example.transport.connection",
+        configuration: { endpoint: "opaque.example" },
+      },
+    },
+    terminalBackend,
+  });
+  const term = createTermStub({
+    write: (data: string, callback?: () => void) => {
+      terminalWrites.push(data);
+      callback?.();
+    },
+  });
+
+  await createTerminalSessionStarters(ctx as never).startPluginConnection(term as never);
+  assert.ok(onExit);
+  onExit?.({
+    reason: "error",
+    diagnostics: [
+      { severity: "error", message: "Host key mismatch" },
+      { severity: "warning", message: "Retry with a different credential" },
+    ],
+  });
+
+  assert.deepEqual(terminalWrites, [
+    "\r\n[Plugin connection closed]\r\n[Plugin error] Host key mismatch\r\n[Plugin warning] Retry with a different credential\r\n",
+  ]);
+});
+
 test("startSSH forwards imported system agent authentication settings", async () => {
   let capturedOptions: Record<string, unknown> | null = null;
   const terminalBackend = {

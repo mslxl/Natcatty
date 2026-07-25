@@ -1,6 +1,8 @@
 import type { Terminal as XTerm } from "@xterm/xterm";
+import type { ProviderValidationIssue } from "@netcatty/plugin-contract";
 import { logger } from "../../../lib/logger";
 import type { Host, SSHKey } from "../../../types";
+import type { TerminalSessionExitEvent } from "../../../application/state/resolveTerminalSessionExitIntent";
 import type { TerminalSessionStartersContext } from "./createTerminalSessionStarters.types";
 export type {
   PendingAuth,
@@ -59,6 +61,21 @@ const createPluginConnectionRequestId = (): string => {
   const randomId = globalThis.crypto?.randomUUID?.()
     ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 18)}`;
   return `plugin-connection-${randomId}`.slice(0, 128);
+};
+
+const formatPluginDiagnosticLines = (
+  diagnostics: ReadonlyArray<ProviderValidationIssue> | undefined,
+): string[] => (diagnostics ?? [])
+  .map((issue) => `[Plugin ${issue.severity}] ${issue.message}`);
+
+const formatPluginConnectionExitMessage = (event: TerminalSessionExitEvent): string => {
+  const lines = [
+    event.error
+      ? `[Plugin connection closed: ${event.error}]`
+      : "[Plugin connection closed]",
+    ...formatPluginDiagnosticLines(event.diagnostics),
+  ];
+  return `\r\n${lines.join("\r\n")}`;
 };
 
 const isAuthFailureMessage = (message: string): boolean => {
@@ -1516,7 +1533,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       if (opened.diagnostics.length > 0) {
         ctx.setProgressLogs((previous) => [
           ...previous,
-          ...opened.diagnostics.map((issue) => `[Plugin ${issue.severity}] ${issue.message}`),
+          ...formatPluginDiagnosticLines(opened.diagnostics),
         ]);
       }
       let startupScheduled = false;
@@ -1526,9 +1543,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         scheduleStartupCommand(ctx, term, id);
       };
       if (!tryAttachSessionToTerminal(ctx, term, id, {
-        onExitMessage: (event) => event?.error
-          ? `\r\n[Plugin connection closed: ${event.error}]`
-          : "\r\n[Plugin connection closed]",
+        onExitMessage: formatPluginConnectionExitMessage,
         requireExplicitConnectionReady: true,
         onConnected: (meta) => {
           if (meta?.pluginConnectionReady === true) schedulePluginStartup();

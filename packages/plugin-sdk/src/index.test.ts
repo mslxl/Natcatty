@@ -122,7 +122,7 @@ test("terminal interceptor typing stays specialized while broad ProviderKind hel
   const source = await readFile(new URL("./index.ts", import.meta.url), "utf8");
   assert.match(
     source,
-    /kind: Exclude<ProviderKind, TerminalInterceptorKind>,\s*handler: PluginProviderHandler/u,
+    /kind: Exclude<\s*ProviderKind,\s*TerminalInterceptorKind \| OrdinaryTerminalProviderKind \| "connection" \| "authentication" \| "importer"\s*>,\s*handler: PluginProviderHandler/u,
   );
   assert.match(
     source,
@@ -137,7 +137,7 @@ test("terminal interceptor typing stays specialized while broad ProviderKind hel
 test("provider registrations infer typed connection and importer stream invocations", () => {
   assertSdkTypeChecks(`
     import { definePlugin } from "./index.ts";
-    import type { ConnectionProviderResultByOperation } from "./index.ts";
+    import type { ConnectionProviderHandler, ConnectionProviderResultByOperation } from "./index.ts";
 
     const resizeAck: ConnectionProviderResultByOperation["resize"] = null;
     void resizeAck;
@@ -145,10 +145,23 @@ test("provider registrations infer typed connection and importer stream invocati
     const invalidResizeAck: ConnectionProviderResultByOperation["resize"] = { ok: true };
     void invalidResizeAck;
 
+    const invalidConnectionProvider: ConnectionProviderHandler = {
+      validateConfiguration: () => ({ valid: true, issues: [] }),
+      probe: () => ({ available: true }),
+      open: () => ({ connectionId: "connection-1", status: "connected" }),
+      // @ts-expect-error resize must return the resize control acknowledgement, not a probe result.
+      resize: () => ({ available: true }),
+      signal: () => null,
+      reconnect: () => null,
+      close: () => null,
+      getStatus: () => ({ status: "connected" }),
+    };
+    void invalidConnectionProvider;
+
     definePlugin({
       activate(context) {
-        context.providers.register("com.example.connection", "connection", async (invocation) => {
-          if (invocation.operation === "open") {
+        context.providers.register("com.example.connection", "connection", {
+          async open(invocation) {
             const input = await invocation.input;
             const chunk: Uint8Array | null = await input.read();
             if (chunk) {
@@ -156,23 +169,37 @@ test("provider registrations infer typed connection and importer stream invocati
             }
             await invocation.output.end();
             return { connectionId: "connection-1", status: "connected" };
-          }
-          if (invocation.operation === "validateConfiguration") {
+          },
+          validateConfiguration(invocation) {
             const configuration = invocation.payload.configuration;
             void configuration;
             return { valid: true, issues: [] };
-          }
-          if (invocation.operation === "probe") {
+          },
+          probe() {
             return { available: true };
-          }
-          if (invocation.operation === "getStatus") {
+          },
+          resize() {
+            return null;
+          },
+          signal() {
+            return null;
+          },
+          reconnect() {
+            return null;
+          },
+          close() {
+            return null;
+          },
+          getStatus() {
             return {
               status: "connected",
               diagnostics: [{ severity: "warning", message: "using fallback host key algorithm" }],
             };
-          }
-          return null;
+          },
         });
+
+        // @ts-expect-error connection Providers use operation-keyed handlers so each operation has its exact result.
+        context.providers.register("com.example.connection.invalid", "connection", async () => ({ available: true }));
 
         context.providers.register("com.example.importer", "importer", async (invocation) => {
           if (invocation.operation === "parse") {

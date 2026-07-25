@@ -380,10 +380,12 @@ length exactly matches the declared bounded `byteLength`.
 
 PR 7 adds connection, authentication, and importer Providers without changing
 the Provider ownership model. Connection Provider result types are operation
-specific: `validateConfiguration`, `probe`, `open`, and `getStatus` each return
-their named result object, while `resize`, `signal`, `reconnect`, and `close`
-acknowledge completion with JSON `null`. Objects on those control operations
-are rejected by the generated schema, SDK type map, and runtime validator.
+specific. The SDK registers connection Providers as an operation-keyed handler
+map so TypeScript binds each invocation to its exact result: `validateConfiguration`,
+`probe`, `open`, and `getStatus` each return their named result object, while
+`resize`, `signal`, `reconnect`, and `close` acknowledge completion with JSON
+`null`. Objects on those control operations are rejected by the generated
+schema, SDK type map, runtime dispatch shape, and runtime validator.
 `ConnectionStatusResult` may carry bounded `ProviderValidationIssue`
 diagnostics; when a later status poll reports `closed` or `error`, those
 diagnostics are forwarded with the terminal-session exit event rather than

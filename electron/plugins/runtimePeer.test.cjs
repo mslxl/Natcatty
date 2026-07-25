@@ -460,3 +460,113 @@ test("runtime peer registers provider handlers and routes immutable terminal lif
   await peer.dispose();
   host.close();
 });
+
+test("runtime peer routes connection Provider operation maps", async () => {
+  const { startPluginRuntime } = await import("./runtime/runtimePeer.mjs");
+  const { port1, port2 } = new MessageChannel();
+  const host = new PluginRpcRouter({
+    pluginId: "com.example.connection",
+    send(message) { port1.postMessage(message); },
+  });
+  port1.on("message", (message) => host.accept(message));
+  const invocations = [];
+  let legacyError;
+  const peer = await startPluginRuntime({
+    port: port2,
+    config: {
+      pluginId: "com.example.connection",
+      pluginVersion: "1.0.0",
+      netcattyVersion: "1.0.0",
+      apiVersion: "0.1.0-internal",
+      enabledFeatures: [],
+    },
+    async loadPlugin() {
+      return {
+        default: {
+          async activate(context) {
+            try {
+              context.providers.register("com.example.connection.legacy", "connection", async () => null);
+            } catch (error) {
+              legacyError = { code: error?.code, message: error?.message };
+            }
+            context.providers.register("com.example.connection.transport", "connection", {
+              validateConfiguration(invocation) {
+                invocations.push([invocation.operation, invocation.payload.configuration]);
+                return { valid: true, issues: [] };
+              },
+              probe(invocation) {
+                invocations.push([invocation.operation, invocation.payload.configuration]);
+                return { available: true };
+              },
+              open() {
+                throw new Error("open is not invoked by this test");
+              },
+              resize(invocation) {
+                invocations.push([invocation.operation, invocation.payload.columns, invocation.payload.rows]);
+                return null;
+              },
+              signal(invocation) {
+                invocations.push([invocation.operation, invocation.payload.signal]);
+                return null;
+              },
+              reconnect(invocation) {
+                invocations.push([invocation.operation, invocation.payload.connectionId]);
+                return null;
+              },
+              close(invocation) {
+                invocations.push([invocation.operation, invocation.payload.connectionId]);
+                return null;
+              },
+              getStatus(invocation) {
+                invocations.push([invocation.operation, invocation.payload.connectionId]);
+                return { status: "connected" };
+              },
+            });
+          },
+        },
+      };
+    },
+  });
+  await host.request("plugin.initialize", {
+    netcattyVersion: "1.0.0",
+    apiVersion: "0.1.0-internal",
+    supportedFeatures: [],
+  });
+  await host.request("plugin.activate", {});
+
+  assert.deepEqual(legacyError, {
+    code: "invalid_argument",
+    message: "Connection Provider handler must be an operation map",
+  });
+  assert.deepEqual(await host.request("provider.invoke", {
+    providerId: "com.example.connection.transport",
+    kind: "connection",
+    operation: "resize",
+    requestId: "connection-resize-1",
+    payload: { connectionId: "connection-1", operationId: "operation-1", columns: 132, rows: 44 },
+    deadlineMs: 1_000,
+  }), {
+    requestId: "connection-resize-1",
+    status: "ok",
+    result: null,
+  });
+  assert.deepEqual(await host.request("provider.invoke", {
+    providerId: "com.example.connection.transport",
+    kind: "connection",
+    operation: "getStatus",
+    requestId: "connection-status-1",
+    payload: { connectionId: "connection-1", operationId: "operation-2" },
+    deadlineMs: 1_000,
+  }), {
+    requestId: "connection-status-1",
+    status: "ok",
+    result: { status: "connected" },
+  });
+  assert.deepEqual(invocations, [
+    ["resize", 132, 44],
+    ["getStatus", "connection-1"],
+  ]);
+
+  await peer.dispose();
+  host.close();
+});

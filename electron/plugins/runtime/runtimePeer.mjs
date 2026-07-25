@@ -46,6 +46,17 @@ const PROVIDER_KINDS = new Set([
   "importer",
 ]);
 
+const CONNECTION_PROVIDER_OPERATIONS = Object.freeze([
+  "validateConfiguration",
+  "probe",
+  "open",
+  "resize",
+  "signal",
+  "reconnect",
+  "close",
+  "getStatus",
+]);
+
 function pluginErrorNameFromRpcError(error) {
   if (typeof error?.data?.pluginCode === "string") return error.data.pluginCode;
   if (error?.code === RPC_ERRORS.methodNotFound) return "unsupported";
@@ -229,6 +240,26 @@ function assertProviderKind(kind) {
     throw new PluginError("invalid_argument", "Plugin Provider kind is invalid");
   }
   return kind;
+}
+
+function normalizeProviderHandler(kind, handler) {
+  if (kind !== "connection") {
+    if (typeof handler !== "function") {
+      throw new PluginError("invalid_argument", "Plugin Provider handler must be a function");
+    }
+    return handler;
+  }
+  if (!handler || typeof handler !== "object" || Array.isArray(handler)) {
+    throw new PluginError("invalid_argument", "Connection Provider handler must be an operation map");
+  }
+  const normalized = {};
+  for (const operation of CONNECTION_PROVIDER_OPERATIONS) {
+    if (typeof handler[operation] !== "function") {
+      throw new PluginError("invalid_argument", `Connection Provider handler is missing operation: ${operation}`);
+    }
+    normalized[operation] = handler[operation].bind(handler);
+  }
+  return Object.freeze(normalized);
 }
 
 function assertOwnedContextKey(pluginId, key) {
@@ -434,13 +465,11 @@ function createPluginContext(config, client, runtimeApi) {
     register(providerId, kind, handler) {
       const id = assertOwnedContributionId(config.pluginId, providerId, "Plugin Provider");
       const normalizedKind = assertProviderKind(kind);
-      if (typeof handler !== "function") {
-        throw new PluginError("invalid_argument", "Plugin Provider handler must be a function");
-      }
+      const normalizedHandler = normalizeProviderHandler(normalizedKind, handler);
       if (runtimeApi.providerHandlers.has(id)) {
         throw new PluginError("already_exists", `Plugin Provider is already registered: ${id}`);
       }
-      const registration = Object.freeze({ kind: normalizedKind, handler });
+      const registration = Object.freeze({ kind: normalizedKind, handler: normalizedHandler });
       runtimeApi.providerHandlers.set(id, registration);
       return Object.freeze({
         dispose() {
@@ -637,17 +666,24 @@ export async function startPluginRuntime({
       const cancellationDisposable = cancelStreams
         ? cancellationToken.onCancellationRequested(cancelStreams)
         : null;
+      const invocation = Object.freeze({
+        providerId,
+        kind,
+        operation,
+        requestId,
+        payload,
+        deadlineMs,
+        cancellationToken,
+        ...(streamed ? { input, output } : {}),
+      });
       try {
-        const result = await registration.handler(Object.freeze({
-          providerId,
-          kind,
-          operation,
-          requestId,
-          payload,
-          deadlineMs,
-          cancellationToken,
-          ...(streamed ? { input, output } : {}),
-        }));
+        const handler = registration.kind === "connection"
+          ? registration.handler[operation]
+          : registration.handler;
+        if (typeof handler !== "function") {
+          throw new PluginError("invalid_argument", `Connection Provider operation is not implemented: ${operation}`);
+        }
+        const result = await handler(invocation);
         if (cancellationToken.isCancellationRequested) {
           return { requestId, status: "cancelled" };
         }

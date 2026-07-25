@@ -167,7 +167,10 @@ export interface PluginProviders {
   ): Disposable;
   register<TPayload extends JsonValue = JsonValue, TResult extends JsonValue = JsonValue>(
     providerId: string,
-    kind: Exclude<ProviderKind, TerminalInterceptorKind>,
+    kind: Exclude<
+      ProviderKind,
+      TerminalInterceptorKind | OrdinaryTerminalProviderKind | "connection" | "authentication" | "importer"
+    >,
     handler: PluginProviderHandler<TPayload, TResult>,
   ): Disposable;
   register<
@@ -475,9 +478,13 @@ export type ConnectionProviderInvocation =
 export type ConnectionProviderResult =
   ConnectionProviderResultByOperation[ConnectionProviderOperation];
 
-export type ConnectionProviderHandler = (
-  invocation: ConnectionProviderInvocation,
-) => ConnectionProviderResult | Promise<ConnectionProviderResult>;
+export type ConnectionProviderOperationHandler<TOperation extends ConnectionProviderOperation> = (
+  invocation: ConnectionProviderInvocationByOperation[TOperation],
+) => ConnectionProviderResultByOperation[TOperation] | Promise<ConnectionProviderResultByOperation[TOperation]>;
+
+export type ConnectionProviderHandler = Readonly<{
+  [TOperation in ConnectionProviderOperation]: ConnectionProviderOperationHandler<TOperation>;
+}>;
 
 export type AuthenticationProviderInvocation =
   | (TypedPluginProviderInvocation<AuthenticationBeginPayload> & {

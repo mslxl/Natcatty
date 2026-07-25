@@ -5,6 +5,7 @@ import {
 } from "../../../domain/terminalScroll";
 import { logger } from "../../../lib/logger";
 import type { Host, TerminalSettings } from "../../../types";
+import type { TerminalSessionExitEvent } from "../../../application/state/resolveTerminalSessionExitIntent";
 import {
   clearPasteResidualAfterTerminalWrite,
   prepareTerminalDataForUserPasteDisplay,
@@ -761,9 +762,9 @@ export const tryAttachSessionToTerminal = (
   term: XTerm,
   id: string,
   opts?: {
-    onExitMessage?: (evt: { exitCode?: number; signal?: number; error?: string; reason?: string }) => string;
+    onExitMessage?: (evt: TerminalSessionExitEvent) => string;
     onConnected?: (meta?: TerminalSessionDataMeta) => void;
-    onExit?: (evt: { exitCode?: number; signal?: number; error?: string; reason?: string }) => void;
+    onExit?: (evt: TerminalSessionExitEvent) => void;
     requireExplicitConnectionReady?: boolean;
     convertLfToCrlf?: boolean;
     sudoAutofillPassword?: string;
@@ -819,9 +820,9 @@ export const attachSessionToTerminal = (
   term: XTerm,
   id: string,
   opts?: {
-    onExitMessage?: (evt: { exitCode?: number; signal?: number; error?: string; reason?: string }) => string;
+    onExitMessage?: (evt: TerminalSessionExitEvent) => string;
     onConnected?: (meta?: TerminalSessionDataMeta) => void;
-    onExit?: (evt: { exitCode?: number; signal?: number; error?: string; reason?: string }) => void;
+    onExit?: (evt: TerminalSessionExitEvent) => void;
     requireExplicitConnectionReady?: boolean;
     convertLfToCrlf?: boolean;
     sudoAutofillPassword?: string;
