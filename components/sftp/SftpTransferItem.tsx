@@ -78,7 +78,7 @@ const IconButtonWithTooltip: React.FC<{
         <TooltipTrigger asChild>
             {children}
         </TooltipTrigger>
-        <TooltipContent side="top">{label}</TooltipContent>
+        <TooltipContent side="top" className="pointer-events-none">{label}</TooltipContent>
     </Tooltip>
 );
 
@@ -296,7 +296,25 @@ const SftpTransferItemInner: React.FC<SftpTransferItemProps> = ({
             )}
             {task.status === 'transferring' && task.resumable !== false && onPause && (
                 <IconButtonWithTooltip label={pauseActionLabel}>
-                    <Button variant="ghost" size="icon" className={actionButtonClass} onClick={onPause} aria-label={actionAriaLabel(pauseActionLabel)}>
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className={actionButtonClass}
+                        data-action="pause-transfer"
+                        onPointerDown={(event) => {
+                            // Prefer pointerdown so Tooltip / parent row handlers cannot eat the click.
+                            event.preventDefault();
+                            event.stopPropagation();
+                            onPause();
+                        }}
+                        onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            onPause();
+                        }}
+                        aria-label={actionAriaLabel(pauseActionLabel)}
+                    >
                         <Pause size={12} />
                     </Button>
                 </IconButtonWithTooltip>
@@ -304,6 +322,7 @@ const SftpTransferItemInner: React.FC<SftpTransferItemProps> = ({
             {task.status === 'pausing' && (
                 <IconButtonWithTooltip label={pausingLabel}>
                     <Button
+                        type="button"
                         variant="ghost"
                         size="icon"
                         className={actionButtonClass}
@@ -317,14 +336,43 @@ const SftpTransferItemInner: React.FC<SftpTransferItemProps> = ({
             )}
             {(task.status === 'paused' || task.status === 'interrupted') && onResume && (
                 <IconButtonWithTooltip label={resumeActionLabel}>
-                    <Button variant="ghost" size="icon" className={actionButtonClass} onClick={onResume} aria-label={actionAriaLabel(resumeActionLabel)}>
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className={actionButtonClass}
+                        data-action="resume-transfer"
+                        onPointerDown={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            onResume();
+                        }}
+                        onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            onResume();
+                        }}
+                        aria-label={actionAriaLabel(resumeActionLabel)}
+                    >
                         <Play size={12} />
                     </Button>
                 </IconButtonWithTooltip>
             )}
             {(['pending', 'queued', 'transferring', 'pausing', 'paused', 'interrupted', 'attention'] as const).includes(task.status as never) && (
                 <IconButtonWithTooltip label={cancelActionLabel}>
-                    <Button variant="ghost" size="icon" className={cn(actionButtonClass, "text-destructive hover:text-destructive")} onClick={onCancel} aria-label={actionAriaLabel(cancelActionLabel)}>
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className={cn(actionButtonClass, "text-destructive hover:text-destructive")}
+                        data-action="cancel-transfer"
+                        onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            onCancel();
+                        }}
+                        aria-label={actionAriaLabel(cancelActionLabel)}
+                    >
                         <X size={12} />
                     </Button>
                 </IconButtonWithTooltip>
@@ -526,6 +574,7 @@ const arePropsEqual = (
     if (prev.status !== next.status) return false;
     if (prev.error !== next.error) return false;
     if (prev.pauseUnavailableReason !== next.pauseUnavailableReason) return false;
+    if (prev.resumable !== next.resumable) return false;
     if (prev.fileName !== next.fileName) return false;
     if (prev.targetPath !== next.targetPath) return false;
     if (prev.totalBytes !== next.totalBytes) return false;

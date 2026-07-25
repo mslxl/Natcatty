@@ -162,9 +162,12 @@ export function useSftpDirectoryTransferOps({
         if (cancelledTasksRef.current.has(task.id) || cancelledTasksRef.current.has(rootTaskId)) {
           throw new Error("Transfer cancelled");
         }
-        setTransfers((prev) => prev.map((candidate) => candidate.id === task.id
-          ? { ...candidate, status: "transferring" as TransferStatus }
-          : candidate));
+        setTransfers((prev) => prev.map((candidate) => {
+          if (candidate.id !== task.id) return candidate;
+          // Do not clobber an in-flight user pause if the scheduler re-enters.
+          if (candidate.status === "paused" || candidate.status === "pausing") return candidate;
+          return { ...candidate, status: "transferring" as TransferStatus };
+        }));
 
         // FileZilla-style: prefer dedicated transfer sessions so the browse
         // panel connection is not blocked by bulk file I/O.
@@ -309,12 +312,16 @@ export function useSftpDirectoryTransferOps({
                     downloadCheckpointBytes: checkpoint?.downloadCheckpointBytes ?? t.downloadCheckpointBytes,
                     uploadCheckpointBytes: checkpoint?.uploadCheckpointBytes ?? t.uploadCheckpointBytes,
                     sourceFingerprint: checkpoint?.sourceFingerprint ?? t.sourceFingerprint,
-                    resumable: checkpoint?.resumable ?? t.resumable,
+                    // Keep pause affordance while paused even if a progress event
+                    // briefly reports pauseSupported=false mid soft-drain.
+                    resumable: isPausedUi ? true : (checkpoint?.resumable ?? t.resumable),
                     // Explicit undefined from backend clears the startup default
                     // ("cannot be paused safely") once pause is known to work.
-                    pauseUnavailableReason: checkpoint && "pauseUnavailableReason" in checkpoint
-                      ? checkpoint.pauseUnavailableReason
-                      : t.pauseUnavailableReason,
+                    pauseUnavailableReason: isPausedUi
+                      ? undefined
+                      : (checkpoint && "pauseUnavailableReason" in checkpoint
+                        ? checkpoint.pauseUnavailableReason
+                        : t.pauseUnavailableReason),
                     totalBytes: normalizedTotal,
                     speed: isPausedUi ? 0 : (Number.isFinite(speed) && speed > 0 ? speed : 0),
                   };

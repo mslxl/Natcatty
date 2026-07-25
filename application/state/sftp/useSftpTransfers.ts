@@ -1025,9 +1025,21 @@ export const useSftpTransfers = ({
       commitPauseState((candidate) => ({ ...candidate, status: "paused" as TransferStatus, speed: 0 }));
       return;
     }
-    const results = await Promise.all(backendIds.map(async (id) => (
-      netcattyBridge.get()?.pauseTransfer?.(id) ?? { success: false, reason: "Pause unavailable" }
-    )));
+    // Retry briefly when the stream is still arming — a single "cannot be
+    // paused yet" used to immediately fail the optimistic panel pause and look
+    // like the button did nothing.
+    const pauseOne = async (id: string) => {
+      const bridge = netcattyBridge.get();
+      let last = await (bridge?.pauseTransfer?.(id) ?? { success: false, reason: "Pause unavailable" });
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        if (last.success || isBenignPauseMiss(last.reason)) return last;
+        if (!/cannot be paused yet/i.test(last.reason || "")) return last;
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        last = await (bridge?.pauseTransfer?.(id) ?? { success: false, reason: "Pause unavailable" });
+      }
+      return last;
+    };
+    const results = await Promise.all(backendIds.map((id) => pauseOne(id)));
     // Cancel may have finished while pause was awaiting fingerprint/IO.
     if (
       cancelledTasksRef.current.has(transferId)
