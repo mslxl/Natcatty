@@ -87,7 +87,6 @@ import {
   teardownTerminalOutputPipeline,
 } from "./terminalOutputPipeline";
 import {
-  flushTerminalWriteBufferBypassingTimers,
   hasPendingTerminalWrites,
   maybeFlushTerminalWriteCoalescerWhenUnfocused,
   scheduleTerminalRepaintWhenUnfocused,
@@ -144,16 +143,15 @@ export const notePendingOutputScrollIfEnabled = (
 const terminalFlowControllers = new WeakMap<XTerm, OutputFlowController>();
 
 type TerminalSessionWriteOptions = CoalescedTerminalWriteOptions & {
-  flushXtermWriteBuffer?: boolean;
   perfTrace?: TerminalOutputPerfTrace | null;
   timestampDate?: Date;
 };
 
 const BACKGROUND_OUTPUT_FLUSH_MAX_PASSES = 64;
-const LARGE_WRITE_FLUSH_WATCHDOG_BYTES = 64 * 1024;
-const LARGE_WRITE_FLUSH_WATCHDOG_MS = 250;
-// With microtask coalescing, idle flush is only a safety net for rAF TUI path
-// and any leftover queue work — keep it short so the last batch does not lag.
+// With microtask coalescing, idle drain is only a safety net for rAF TUI path
+// and any leftover queue work. Keep xterm on its public async write path here:
+// its private flushSync removes a chunk before parsing and can strand the
+// matching callback when parsing/rendering throws (notably on Herdr frames).
 const VISIBLE_WRITE_IDLE_FLUSH_MS = 24;
 const HIDDEN_PANE_DRAIN_MS = 160;
 const visibleWriteIdleFlushTimers = new WeakMap<XTerm, ReturnType<typeof setTimeout>>();
@@ -248,12 +246,10 @@ const summarizeLineTimestampPerf = (totals: LineTimestampPerfTotals) => ({
 });
 
 const flushTerminalWritesForBackgroundOutput = (term: XTerm): void => {
-  flushTerminalWriteBufferBypassingTimers(term);
   for (let pass = 0; pass < BACKGROUND_OUTPUT_FLUSH_MAX_PASSES; pass += 1) {
     if (!flushTerminalWriteQueueBypassingTimers(term)) {
       return;
     }
-    flushTerminalWriteBufferBypassingTimers(term);
   }
 };
 
@@ -293,10 +289,8 @@ const flushBeforeTimestampBoundary = (
 function flushHiddenPaneWritesNow(term: XTerm, isPaneVisible: () => boolean): void {
   if (isPaneVisible()) return;
   flushTerminalWriteCoalescer(term);
-  // Each background queue item flushes xterm's parser buffer itself. Leave the
-  // queue's zero-delay yield timers intact so a large hidden burst cannot turn
-  // the whole backlog into one long renderer task.
-  flushTerminalWriteBufferBypassingTimers(term);
+  // Leave both the queue's cooperative yield timer and xterm's parser timer
+  // intact so a large hidden burst cannot turn the backlog into one long task.
   if (!isPaneVisible() && hasPendingTerminalWrites(term)) {
     scheduleHiddenPaneDrain(term, isPaneVisible);
   }
@@ -330,9 +324,7 @@ const scheduleVisibleTerminalWriteIdleFlush = (term: XTerm, isPaneVisible: () =>
       return;
     }
     flushTerminalWriteCoalescer(term);
-    flushTerminalWriteBufferBypassingTimers(term);
     flushTerminalWriteQueueBypassingTimers(term);
-    flushTerminalWriteBufferBypassingTimers(term);
   }, VISIBLE_WRITE_IDLE_FLUSH_MS);
   if (typeof timer === "object" && "unref" in timer && typeof timer.unref === "function") {
     timer.unref();
@@ -463,14 +455,11 @@ export const writeSessionData = (
       writeSessionDataImmediate(ctx, term, batch, batchIngress, {
         ...writeOptions,
         deferStart: writeOptions?.deferStart ?? !isPaneCurrentlyVisible(),
-        flushXtermWriteBuffer: true,
         perfTrace: writeOptions?.preservePerfTrace === false ? null : perfTrace,
         timestampDate,
       });
       if (isPaneCurrentlyVisible()) {
         flushTerminalWritesForBackgroundOutput(term);
-      } else {
-        flushTerminalWriteBufferBypassingTimers(term);
       }
     };
     if (isPaneVisible) {
@@ -631,8 +620,7 @@ const writeSessionDataImmediate = (
       flushIpcAck(clearDeferredTerminalWriteAck(term));
     };
     const deferredBeforeWrite = getDeferredTerminalWriteAckBytes(term);
-    const deferFlowAck = !writeOptions.flushXtermWriteBuffer
-      && !forcePromptNewLine
+    const deferFlowAck = !forcePromptNewLine
       && shouldDeferTerminalWriteCallback(
         preparedDisplayData.length,
         deferredBeforeWrite,
@@ -645,14 +633,9 @@ const writeSessionDataImmediate = (
       const lineTimestampPerf = shouldMeasurePerf ? createLineTimestampPerfTotals() : null;
       const writeStartedAt = shouldMeasurePerf ? performance.now() : 0;
       let completed = false;
-      let watchdog: ReturnType<typeof setTimeout> | undefined;
       const finishWrite = () => {
         if (completed) return;
         completed = true;
-        if (watchdog !== undefined) {
-          clearTimeout(watchdog);
-          watchdog = undefined;
-        }
         if (shouldMeasurePerf && lineTimestampPerf) {
           const now = performance.now();
           logTerminalOutputPerf("renderer-write-done", writeOptions.perfTrace, {
@@ -685,21 +668,6 @@ const writeSessionDataImmediate = (
           enabled: resolveLiveHostShowLineTimestamps(ctx),
         },
       );
-      if (
-        !writeOptions.flushXtermWriteBuffer
-        && !completed
-        && preparedDisplayData.length >= LARGE_WRITE_FLUSH_WATCHDOG_BYTES
-      ) {
-        watchdog = setTimeout(() => {
-          watchdog = undefined;
-          if (!completed) {
-            flushTerminalWriteBufferBypassingTimers(term);
-          }
-        }, LARGE_WRITE_FLUSH_WATCHDOG_MS);
-      }
-      if (writeOptions.flushXtermWriteBuffer) {
-        flushTerminalWriteBufferBypassingTimers(term);
-      }
     };
 
     if (deferFlowAck) {
