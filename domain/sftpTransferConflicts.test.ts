@@ -150,6 +150,68 @@ test("interrupted is not an active path conflict (resume may claim the path)", (
   );
 });
 
+test("findActivePathConflict includes active directory child transfers", () => {
+  const tasks = [
+    base({
+      id: "dir-parent",
+      fileName: "bundle",
+      targetPath: "/Users/me/Desktop/bundle",
+      isDirectory: true,
+      status: "transferring",
+    }),
+    base({
+      id: "dir-child",
+      fileName: "out.bin",
+      targetPath: "/Users/me/Desktop/bundle/out.bin",
+      parentTaskId: "dir-parent",
+      status: "transferring",
+    }),
+  ];
+  assert.equal(
+    findActivePathConflict(tasks, {
+      id: "standalone",
+      targetPath: "/Users/me/Desktop/bundle/out.bin",
+      targetConnectionId: "local",
+    })?.id,
+    "dir-child",
+  );
+  // Parent directory path alone is not the same destination as a nested file.
+  assert.equal(
+    findActivePathConflict(tasks, {
+      id: "standalone-dir",
+      targetPath: "/Users/me/Desktop/bundle",
+      targetConnectionId: "local",
+    })?.id,
+    "dir-parent",
+  );
+});
+
+test("findActivePathConflict compares Windows local paths canonically", () => {
+  const tasks = [
+    base({
+      id: "live",
+      targetPath: "C:\\Downloads\\out.bin",
+      status: "transferring",
+    }),
+  ];
+  assert.equal(
+    findActivePathConflict(tasks, {
+      id: "save-as",
+      targetPath: "c:/downloads/out.bin",
+      targetConnectionId: "local",
+    })?.id,
+    "live",
+  );
+  assert.equal(
+    findActivePathConflict(tasks, {
+      id: "other",
+      targetPath: "C:\\Downloads\\other.bin",
+      targetConnectionId: "local",
+    }),
+    undefined,
+  );
+});
+
 test("pathConflictMessage distinguishes paused vs running", () => {
   assert.match(pathConflictMessage({ fileName: "x", status: "paused" }), /paused/i);
   assert.match(pathConflictMessage({ fileName: "x", status: "transferring" }), /in progress/i);

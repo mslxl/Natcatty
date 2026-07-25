@@ -54,20 +54,43 @@ export function sameTransferDestinationEndpoint(
 }
 
 /**
- * Find another top-level transfer that writes the same destination path.
- * Concurrent writers (especially local .part + rename) race and corrupt output;
- * FileZilla-style clients refuse or queue the second job. Source path is ignored
- * so different sources targeting one file still conflict; endpoint identity avoids
- * treating identical path strings on different hosts as the same destination.
+ * Canonical destination path for conflict checks. Mirrors
+ * `normalizeSftpPathForCompare` so Windows local paths with different casing or
+ * separators still collide; POSIX paths stay case-sensitive aside from trailing
+ * slash stripping.
+ */
+export function normalizeTransferTargetPathForCompare(path: string): string {
+  if (/^[A-Za-z]:/.test(path)) {
+    const withBackslashes = path.replace(/\//g, "\\");
+    if (/^[A-Za-z]:\\?$/.test(withBackslashes)) {
+      return withBackslashes.toLowerCase();
+    }
+    return withBackslashes.replace(/[\\]+$/, "").toLowerCase();
+  }
+  if (path === "/") return "/";
+  return path.replace(/\/+$/, "");
+}
+
+function sameTransferTargetPath(a: string, b: string): boolean {
+  return normalizeTransferTargetPathForCompare(a) === normalizeTransferTargetPathForCompare(b);
+}
+
+/**
+ * Find another active transfer (including directory child rows) that writes the
+ * same destination path. Concurrent writers (especially local .part + rename)
+ * race and corrupt output; FileZilla-style clients refuse or queue the second
+ * job. Source path is ignored so different sources targeting one file still
+ * conflict; endpoint identity avoids treating identical path strings on
+ * different hosts as the same destination. Child rows must be included because
+ * directory transfers write via children whose `targetPath` is the real file.
  */
 export function findActivePathConflict(
   tasks: readonly TransferTask[],
   candidate: Pick<TransferTask, "id"> & DestinationRef,
 ): TransferTask | undefined {
   return tasks.find((task) => (
-    !task.parentTaskId
-    && task.id !== candidate.id
-    && task.targetPath === candidate.targetPath
+    task.id !== candidate.id
+    && sameTransferTargetPath(task.targetPath, candidate.targetPath)
     && sameTransferDestinationEndpoint(task, candidate)
     && SFTP_PATH_CONFLICT_ACTIVE_STATUSES.has(task.status)
   ));
