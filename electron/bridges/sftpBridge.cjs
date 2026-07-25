@@ -421,7 +421,7 @@ const normalizeRemoteDirPath = (dirPath) => {
   return path.posix.normalize(dirPath);
 };
 
-const ensureRemoteDirInternal = async (sftp, dirPath, encoding) => {
+const ensureRemoteDirInternal = async (sftp, dirPath, encoding, signal = null) => {
   if (!dirPath || dirPath === ".") return;
   const normalized = normalizeRemoteDirPath(dirPath);
   if (!normalized || normalized === ".") return;
@@ -429,12 +429,15 @@ const ensureRemoteDirInternal = async (sftp, dirPath, encoding) => {
   // Optimization: Check if the full path already exists to avoid O(N) round trips
   // This is the common case (e.g. uploading multiple files to the same directory)
   const encodedFull = encodePath(normalized, encoding);
+  throwIfAborted(signal);
   try {
     const stats = await statAsync(sftp, encodedFull);
+    throwIfAborted(signal);
     if (stats.isDirectory()) {
       return;
     }
   } catch (err) {
+    throwIfAborted(signal);
     // If path doesn't exist or other error, proceed to recursive check
   }
 
@@ -448,6 +451,7 @@ const ensureRemoteDirInternal = async (sftp, dirPath, encoding) => {
     : (isAbsolute ? "/" : "");
 
   for (const part of parts) {
+    throwIfAborted(signal);
     if (isWindowsPath) {
       const base = current.replace(/[\\]+$/, "");
       current = `${base}\\${part}`;
@@ -457,10 +461,12 @@ const ensureRemoteDirInternal = async (sftp, dirPath, encoding) => {
     const encodedCurrent = encodePath(current, encoding);
     try {
       const stats = await statAsync(sftp, encodedCurrent);
+      throwIfAborted(signal);
       if (!stats.isDirectory()) {
         throw new Error(`Remote path is not a directory: ${current}`);
       }
     } catch (err) {
+      throwIfAborted(signal);
       if (err && (err.code === 2 || err.code === 4)) {
         await mkdirAsync(sftp, encodedCurrent);
         continue;
@@ -526,13 +532,17 @@ const ensureRemoteDirForSession = async (sftpId, dirPath, requestedEncoding, opt
   }
 
   const encoding = resolveEncodingForRequest(sftpId, requestedEncoding);
-  const sftp = await requireSftpChannel(client);
+  const signal = options.signal || null;
+  throwIfAborted(signal);
+  const sftp = await requireSftpChannel(client, { signal });
 
   // Always walk the path segment-by-segment. This lets sftp.stat() follow
   // symlinked directory segments before deciding whether the next mkdir is
   // valid, which avoids recursive mkdir failures on paths like /link/subdir.
+  throwIfAborted(signal);
   const normalizedPath = await normalizeRemotePathString(client, dirPath);
-  await ensureRemoteDirInternal(sftp, normalizedPath, encoding);
+  throwIfAborted(signal);
+  await ensureRemoteDirInternal(sftp, normalizedPath, encoding, signal);
   return true;
 };
 

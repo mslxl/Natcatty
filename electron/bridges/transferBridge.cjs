@@ -2360,7 +2360,12 @@ async function startTransferNow(event, payload, onProgress) {
 
       const dir = path.dirname(targetPath).replace(/\\/g, '/');
       try {
-        await ensureRemoteDirForSession(targetSftpId, dir, targetEncoding, { signal: transfer.signal });
+        await runCancelablePreflight(() => ensureRemoteDirForSession(
+          targetSftpId,
+          dir,
+          targetEncoding,
+          { signal: transfer.signal },
+        ));
       } catch (error) {
         if (transfer.cancelled || transfer.signal?.aborted) throw new Error("Transfer cancelled");
       }
@@ -2611,9 +2616,12 @@ async function startTransferNow(event, payload, onProgress) {
           try {
             const dir = path.dirname(targetPath).replace(/\\/g, '/');
             try {
-              await ensureRemoteDirForSession(sourceSftpId, dir, targetEncoding || sourceEncoding, {
-                signal: transfer.signal,
-              });
+              await runCancelablePreflight(() => ensureRemoteDirForSession(
+                sourceSftpId,
+                dir,
+                targetEncoding || sourceEncoding,
+                { signal: transfer.signal },
+              ));
             } catch (error) {
               if (transfer.cancelled || transfer.signal?.aborted) throw new Error("Transfer cancelled");
             }
@@ -2727,7 +2735,12 @@ async function startTransferNow(event, payload, onProgress) {
 
         const dir = path.dirname(targetPath).replace(/\\/g, '/');
         try {
-          await ensureRemoteDirForSession(targetSftpId, dir, targetEncoding, { signal: transfer.signal });
+          await runCancelablePreflight(() => ensureRemoteDirForSession(
+            targetSftpId,
+            dir,
+            targetEncoding,
+            { signal: transfer.signal },
+          ));
         } catch (error) {
           if (transfer.cancelled || transfer.signal?.aborted) throw new Error("Transfer cancelled");
         }

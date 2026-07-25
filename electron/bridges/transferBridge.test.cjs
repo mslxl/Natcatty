@@ -8,6 +8,7 @@ const { EventEmitter } = require("node:events");
 const { PassThrough, Readable, Writable } = require("node:stream");
 
 const transferBridge = require("./transferBridge.cjs");
+const sftpBridge = require("./sftpBridge.cjs");
 const tempDirBridge = require("./tempDirBridge.cjs");
 const {
   TRANSFER_CHUNK_SIZE,
@@ -468,6 +469,75 @@ test("server-to-server resume cancellation settles while source prefix verificat
   assert.match(result.error || "", /cancel/i);
   assert.equal(sender.sent.some((entry) => entry.channel === "netcatty:transfer:cancelled"), true);
   assert.equal(sender.sent.some((entry) => entry.channel === "netcatty:transfer:complete"), false);
+});
+
+test("SFTP upload cancellation settles while remote directory preflight is stalled", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-upload-dir-preflight-cancel-"));
+  const sftpClients = new Map();
+  t.after(async () => {
+    // Reset the shared bridge map so a stalled preflight cannot leak into later tests.
+    sftpBridge.init({
+      sftpClients: new Map(),
+      electronModule: { webContents: { fromId: () => null } },
+      sessions: new Map(),
+    });
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const localPath = path.join(tempDir, "upload.bin");
+  await fs.promises.writeFile(localPath, Buffer.from("dir-preflight"));
+  let markDirStatStarted;
+  const dirStatStarted = new Promise((resolve) => { markDirStatStarted = resolve; });
+  const client = {
+    sftp: createFastSftp({
+      stat(remotePath, callback) {
+        // Parent-dir existence check inside ensureRemoteDirForSession.
+        if (String(remotePath) === "/tmp" || String(remotePath).endsWith("/tmp")) {
+          markDirStatStarted();
+          return;
+        }
+        callback(null, {
+          size: 0,
+          isDirectory: () => true,
+          isSymbolicLink: () => false,
+        });
+      },
+    }),
+    client: null,
+  };
+  sftpClients.set("target", client);
+  // ensureRemoteDirForSession reads the shared sftpBridge client map.
+  sftpBridge.init({
+    sftpClients,
+    electronModule: { webContents: { fromId: () => null } },
+    sessions: new Map(),
+  });
+  transferBridge.init({ sftpClients });
+  const sender = createSender();
+  const transferId = "upload-dir-preflight-cancel";
+  const running = transferBridge.startTransfer({ sender }, {
+    transferId,
+    sourcePath: localPath,
+    targetPath: "/tmp/upload.bin",
+    sourceType: "local",
+    targetType: "sftp",
+    targetSftpId: "target",
+    totalBytes: 13,
+    resumable: false,
+    skipAdmission: true,
+  });
+
+  await dirStatStarted;
+  await transferBridge.cancelTransfer(null, { transferId });
+  const result = await Promise.race([
+    running,
+    new Promise((_, reject) => setTimeout(() => reject(new Error("cancel timed out")), 500)),
+  ]);
+
+  assert.match(result.error || "", /cancel/i);
+  assert.equal(sender.sent.some((entry) => entry.channel === "netcatty:transfer:cancelled"), true);
+  assert.equal(sender.sent.some((entry) => entry.channel === "netcatty:transfer:complete"), false);
+  sftpClients.clear();
 });
 
 test("resumable SFTP uploads use the configured per-file request concurrency", async (t) => {
