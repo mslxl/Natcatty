@@ -6,7 +6,11 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { EventEmitter } = require("node:events");
-const { createScpBackend, createTransferFromAbortSignal } = require("./scpBackend.cjs");
+const {
+  createScpBackend,
+  createSshExecAdapters,
+  createTransferFromAbortSignal,
+} = require("./scpBackend.cjs");
 const {
   buildFileControlLine,
   buildAck,
@@ -289,6 +293,149 @@ describe("scpBackend upload/download with fake scp streams", () => {
     assert.equal(fs.readFileSync(localOut).toString(), "ABCD");
     assert.ok(progress.length > 0);
     assert.deepEqual(result, { fileSize: 4, transferred: 4 });
+  });
+
+  it("cleans AbortSignal listeners after successful, failed, and early-closed downloads", async () => {
+    const runCase = async (outcome) => {
+      const listeners = new Set();
+      let addCalls = 0;
+      let removeCalls = 0;
+      const signal = {
+        aborted: false,
+        addEventListener(type, listener) {
+          if (type !== "abort") return;
+          addCalls += 1;
+          listeners.add(listener);
+        },
+        removeEventListener(type, listener) {
+          if (type !== "abort") return;
+          removeCalls += 1;
+          listeners.delete(listener);
+        },
+      };
+      const sshClient = {
+        exec(_command, callback) {
+          if (outcome === "sync-throw") throw new Error("session already closed");
+          const stream = createMockStream();
+          if (outcome === "success") {
+            let ackCount = 0;
+            stream.on("_write", (buf) => {
+              if (!(buf.length === 1 && buf[0] === SCP_OK)) return;
+              ackCount += 1;
+              if (ackCount === 1) {
+                setImmediate(() => stream.pushFromRemote(
+                  buildFileControlLine({ mode: 0o644, size: 4, name: "x.bin" }),
+                ));
+              } else if (ackCount === 2) {
+                setImmediate(() => stream.pushFromRemote(
+                  Buffer.concat([Buffer.from("ABCD"), Buffer.from([0x00])]),
+                ));
+              }
+            });
+          } else if (outcome === "failure") {
+            stream.on("_write", () => setImmediate(() => stream.emit("error", new Error("remote failed"))));
+          }
+          callback(null, stream);
+          if (outcome === "early-close") stream.close();
+        },
+      };
+      const backend = createScpBackend(createSshExecAdapters(sshClient));
+      if (outcome === "success") {
+        assert.deepEqual(await backend.readFile("/remote/x.bin", { signal }), Buffer.from("ABCD"));
+      } else {
+        await assert.rejects(
+          () => backend.readFile("/remote/x.bin", { signal }),
+          outcome === "failure"
+            ? /remote failed/
+            : outcome === "sync-throw"
+              ? /session already closed/
+              : /closed before protocol setup/,
+        );
+      }
+      assert.equal(addCalls, 1, `${outcome}: expected one abort listener`);
+      assert.equal(removeCalls, 1, `${outcome}: expected one abort listener cleanup`);
+      assert.equal(listeners.size, 0, `${outcome}: abort listener leaked`);
+    };
+
+    await runCase("success");
+    await runCase("failure");
+    await runCase("early-close");
+    await runCase("sync-throw");
+  });
+
+  it("rejects signal-only upload cancellation during the exec handoff", async () => {
+    const controller = new AbortController();
+    const stream = createMockStream();
+    let deliverStream = null;
+    const sshClient = {
+      exec(_command, callback) {
+        deliverStream = () => callback(null, stream);
+      },
+    };
+    const backend = createScpBackend(createSshExecAdapters(sshClient));
+    const upload = backend.uploadBuffer(Buffer.from("payload"), "file.bin", {
+      signal: controller.signal,
+    });
+    assert.equal(typeof deliverStream, "function");
+
+    controller.abort();
+    deliverStream();
+
+    await assert.rejects(
+      () => Promise.race([
+        upload,
+        new Promise((_, reject) => setTimeout(() => reject(new Error("cancel timed out")), 500)),
+      ]),
+      /cancel|abort/i,
+    );
+    assert.equal(stream._chunks.length, 0);
+  });
+
+  it("rejects signal-only upload cancellation when exec never calls back", async () => {
+    const controller = new AbortController();
+    const sshClient = {
+      exec() {
+        // Deliberately never calls back: cancellation must settle the pending
+        // execStream promise without waiting for an SSH channel.
+      },
+    };
+    const backend = createScpBackend(createSshExecAdapters(sshClient));
+    const upload = backend.uploadBuffer(Buffer.from("payload"), "file.bin", {
+      signal: controller.signal,
+    });
+    controller.abort();
+
+    await assert.rejects(
+      () => Promise.race([
+        upload,
+        new Promise((_, reject) => setTimeout(() => reject(new Error("cancel timed out")), 500)),
+      ]),
+      /cancel|abort/i,
+    );
+  });
+
+  it("rejects upload streams that close or error before ACK listeners attach", async () => {
+    const runCase = async (outcome) => {
+      const sshClient = {
+        exec(_command, callback) {
+          const stream = createMockStream();
+          callback(null, stream);
+          if (outcome === "close") stream.close();
+          else stream.emit("error", new Error("remote failed during handoff"));
+        },
+      };
+      const backend = createScpBackend(createSshExecAdapters(sshClient));
+      await assert.rejects(
+        () => Promise.race([
+          backend.uploadBuffer(Buffer.from("payload"), "file.bin"),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("handoff timed out")), 500)),
+        ]),
+        outcome === "close" ? /closed before waiting for ACK/ : /remote failed during handoff/,
+      );
+    };
+
+    await runCase("close");
+    await runCase("error");
   });
 
   it("cancel aborts an in-flight upload", async () => {

@@ -641,6 +641,64 @@ test("SFTP upload cancellation settles while remote directory setup is stalled",
   assert.deepEqual(createdDirectories, []);
 });
 
+test("SFTP upload cancellation waits for an in-flight remote mkdir to settle", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-upload-mkdir-cancel-"));
+  t.after(async () => fs.promises.rm(tempDir, { recursive: true, force: true }));
+  const localPath = path.join(tempDir, "source.bin");
+  await fs.promises.writeFile(localPath, Buffer.from("payload"));
+  let releaseMkdir;
+  let markMkdirStarted;
+  const mkdirStarted = new Promise((resolve) => { markMkdirStarted = resolve; });
+  const createdDirectories = [];
+  const stalledSftp = createFastSftp({
+    stat(_remotePath, callback) {
+      const error = new Error("ENOENT");
+      error.code = 2;
+      callback(error);
+    },
+    mkdir(remotePath, callback) {
+      const directory = String(remotePath);
+      markMkdirStarted();
+      releaseMkdir = () => {
+        createdDirectories.push(directory);
+        callback(null);
+      };
+    },
+  });
+  const client = { sftp: stalledSftp };
+  const clients = new Map([["target", client]]);
+  sftpBridge.init({ sftpClients: clients, sessions: new Map(), electronModule: {} });
+  t.after(() => {
+    sftpBridge.init({ sftpClients: new Map(), sessions: new Map(), electronModule: {} });
+  });
+  transferBridge.init({ sftpClients: clients });
+  const sender = createSender();
+  const transferId = "upload-mkdir-cancel";
+  let settled = false;
+  const running = transferBridge.startTransfer({ sender }, {
+    transferId,
+    sourcePath: localPath,
+    targetPath: "/stalled/directory/target.bin",
+    sourceType: "local",
+    targetType: "sftp",
+    targetSftpId: "target",
+    resumable: false,
+  }).finally(() => { settled = true; });
+
+  await mkdirStarted;
+  await transferBridge.cancelTransfer(null, { transferId });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(settled, false);
+  assert.deepEqual(createdDirectories, []);
+
+  releaseMkdir();
+  const result = await running;
+  assert.match(result.error || "", /cancel/i);
+  assert.deepEqual(createdDirectories, ["/stalled"]);
+  assert.equal(sender.sent.some((entry) => entry.channel === "netcatty:transfer:cancelled"), true);
+  assert.equal(sender.sent.some((entry) => entry.channel === "netcatty:transfer:complete"), false);
+});
+
 test("cancelling one SFTP channel waiter does not cancel the shared reopen", async () => {
   let openCalls = 0;
   let releaseChannel;

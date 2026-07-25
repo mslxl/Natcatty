@@ -494,7 +494,7 @@ const ensureRemoteDirInternal = async (sftp, dirPath, encoding, options = {}) =>
       throwIfAborted(signal);
       if (err && (err.code === 2 || err.code === 4)) {
         throwIfAborted(signal);
-        await raceReadAgainstAbort(mkdirAsync(sftp, encodedCurrent), signal);
+        await mkdirAsync(sftp, encodedCurrent);
         throwIfAborted(signal);
         continue;
       }
