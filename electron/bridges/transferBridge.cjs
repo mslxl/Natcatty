@@ -2002,6 +2002,34 @@ async function startTransferNow(event, payload, onProgress) {
   transfer.leasedSftpIds = leasedSftpIds;
   const transferCreatedAt = Date.now();
 
+  const runCancelablePreflight = async (operation) => {
+    if (transfer.cancelled || transfer.signal?.aborted) {
+      throw new Error("Transfer cancelled");
+    }
+    let rejectCancellation;
+    const cancelled = new Promise((_, reject) => {
+      rejectCancellation = reject;
+    });
+    const previousAbort = transfer.abort;
+    const abortPreflight = () => {
+      try { previousAbort?.(); } finally {
+        rejectCancellation(new Error("Transfer cancelled"));
+      }
+    };
+    const signal = transfer.signal;
+    transfer.abort = abortPreflight;
+    signal?.addEventListener?.("abort", abortPreflight, { once: true });
+    try {
+      return await Promise.race([
+        Promise.resolve().then(operation),
+        cancelled,
+      ]);
+    } finally {
+      signal?.removeEventListener?.("abort", abortPreflight);
+      if (transfer.abort === abortPreflight) transfer.abort = previousAbort;
+    }
+  };
+
   // ── Progress/speed tracking ──────────────────────────────────────────────
   // Keep progress monotonic and compute speed from a strict sliding window.
   const speedSamples = [{ time: transferCreatedAt, bytes: transfer.checkpointBytes }]; // [{ time, bytes }]
@@ -2159,9 +2187,11 @@ async function startTransferNow(event, payload, onProgress) {
           });
           fileSize = st.size;
         } else {
-          await requireSftpChannel(client);
-          const encodedSourcePath = encodePathForSession(sourceSftpId, sourcePath, sourceEncoding);
-          const stat = await client.stat(encodedSourcePath);
+          const stat = await runCancelablePreflight(async () => {
+            await requireSftpChannel(client);
+            const encodedSourcePath = encodePathForSession(sourceSftpId, sourcePath, sourceEncoding);
+            return client.stat(encodedSourcePath);
+          });
           fileSize = stat.size;
         }
       }
@@ -2182,12 +2212,12 @@ async function startTransferNow(event, payload, onProgress) {
     }
 
     if (transfer.resumable && transfer.sourceFingerprint) {
-      const currentSourceFingerprint = await computeSourceFingerprint({
-        sourceType,
-        sourcePath,
-        sourceSftpId,
-        sourceEncoding,
-      });
+      const currentSourceFingerprint = await runCancelablePreflight(() => computeSourceFingerprint({
+          sourceType,
+          sourcePath,
+          sourceSftpId,
+          sourceEncoding,
+        }));
       if (
         transfer.sourceFingerprint
         && currentSourceFingerprint
@@ -2225,6 +2255,7 @@ async function startTransferNow(event, payload, onProgress) {
         commitPromotion() {
           transfer.completionCommitted = true;
         },
+        runCancelablePreflight,
         async uploadFile(encodedUploadPath, uploadTarget) {
           const uploadTargetPath = uploadTarget.logicalPath;
           const usesStage = uploadTarget.generatedStagePath === true;
@@ -2232,21 +2263,21 @@ async function startTransferNow(event, payload, onProgress) {
             ? { client, sftpId: targetSftpId, path: uploadTargetPath, encoding: targetEncoding }
             : null;
           transfer.checkpointBytes = usesStage && transfer.resumable
-            ? await resolveRemoteResumeCheckpoint(
-                client,
-                targetSftpId,
-                uploadTargetPath,
-                targetEncoding,
-                transfer.checkpointBytes,
-              )
+            ? await runCancelablePreflight(() => resolveRemoteResumeCheckpoint(
+                  client,
+                  targetSftpId,
+                  uploadTargetPath,
+                  targetEncoding,
+                  transfer.checkpointBytes,
+                ))
             : 0;
           sendProgress(transfer.checkpointBytes, fileSize, { force: true });
           if (usesStage && transfer.checkpointBytes > 0) {
             const verifyBytes = resumeContentVerifyBytes(transfer.checkpointBytes);
-            await assertMatchingResumeContent(
-              hashLocalPrefix(sourcePath, verifyBytes),
-              hashRemotePrefix(client, targetSftpId, uploadTargetPath, targetEncoding, verifyBytes),
-            );
+            await runCancelablePreflight(() => assertMatchingResumeContent(
+                hashLocalPrefix(sourcePath, verifyBytes),
+                hashRemotePrefix(client, targetSftpId, uploadTargetPath, targetEncoding, verifyBytes),
+              ));
           }
           await uploadFile(
             sourcePath,
@@ -2283,13 +2314,13 @@ async function startTransferNow(event, payload, onProgress) {
         downloadTargetPath, transfer.checkpointBytes,
       );
       sendProgress(transfer.checkpointBytes, fileSize, { force: true });
-      {
+      await runCancelablePreflight(async () => {
         const verifyBytes = resumeContentVerifyBytes(transfer.checkpointBytes);
         await assertMatchingResumeContent(
           hashRemotePrefix(client, sourceSftpId, sourcePath, sourceEncoding, verifyBytes),
           hashLocalPrefix(downloadTargetPath, verifyBytes),
         );
-      }
+      });
       const downloadResult = await downloadFile(
         encodedSourcePath,
         downloadTargetPath,
@@ -2488,13 +2519,13 @@ async function startTransferNow(event, payload, onProgress) {
           const encodedSourcePath = isScpModeClient(sourceClient)
             ? sourcePath
             : encodePathForSession(sourceSftpId, sourcePath, sourceEncoding);
-          {
+          await runCancelablePreflight(async () => {
             const verifyBytes = resumeContentVerifyBytes(transfer.downloadCheckpointBytes);
             await assertMatchingResumeContent(
               hashRemotePrefix(sourceClient, sourceSftpId, sourcePath, sourceEncoding, verifyBytes),
               hashLocalPrefix(tempPath, verifyBytes),
             );
-          }
+          });
           const downloadProgress = (transferred, reportedTotal, options = {}) => {
             if (
               isScpModeClient(sourceClient)
@@ -2585,6 +2616,7 @@ async function startTransferNow(event, payload, onProgress) {
           commitPromotion() {
             transfer.completionCommitted = true;
           },
+          runCancelablePreflight,
           async uploadFile(encodedUploadPath, uploadTarget) {
             const uploadTargetPath = uploadTarget.logicalPath;
             const usesStage = uploadTarget.generatedStagePath === true;
@@ -2592,13 +2624,13 @@ async function startTransferNow(event, payload, onProgress) {
               ? { client: targetClient, sftpId: targetSftpId, path: uploadTargetPath, encoding: targetEncoding }
               : null;
             transfer.uploadCheckpointBytes = usesStage && transfer.resumable
-              ? await resolveRemoteResumeCheckpoint(
-                  targetClient,
-                  targetSftpId,
-                  uploadTargetPath,
-                  targetEncoding,
-                  transfer.uploadCheckpointBytes,
-                )
+              ? await runCancelablePreflight(() => resolveRemoteResumeCheckpoint(
+                    targetClient,
+                    targetSftpId,
+                    uploadTargetPath,
+                    targetEncoding,
+                    transfer.uploadCheckpointBytes,
+                  ))
               : 0;
             transfer.checkpointBytes = transfer.uploadCheckpointBytes;
             // Overall progress for R2R upload stage is ~50% + upload/2.
@@ -2608,16 +2640,16 @@ async function startTransferNow(event, payload, onProgress) {
             transfer.checkpointBytes = transfer.uploadCheckpointBytes;
             if (usesStage && transfer.uploadCheckpointBytes > 0) {
               const verifyBytes = resumeContentVerifyBytes(transfer.uploadCheckpointBytes);
-              await assertMatchingResumeContent(
-                hashLocalPrefix(tempPath, verifyBytes),
-                hashRemotePrefix(
-                  targetClient,
-                  targetSftpId,
-                  uploadTargetPath,
-                  targetEncoding,
-                  verifyBytes,
-                ),
-              );
+              await runCancelablePreflight(() => assertMatchingResumeContent(
+                  hashLocalPrefix(tempPath, verifyBytes),
+                  hashRemotePrefix(
+                    targetClient,
+                    targetSftpId,
+                    uploadTargetPath,
+                    targetEncoding,
+                    verifyBytes,
+                  ),
+                ));
             }
             await uploadFile(
               tempPath,

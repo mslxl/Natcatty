@@ -343,6 +343,92 @@ test("in-place concurrent upload ignores cancellation while the remote handle cl
   assert.equal(sender.sent.some((entry) => entry.channel === "netcatty:transfer:complete"), true);
 });
 
+test("SFTP download cancellation settles while initial metadata is stalled", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-download-stat-cancel-"));
+  t.after(async () => fs.promises.rm(tempDir, { recursive: true, force: true }));
+  let markStatStarted;
+  const statStarted = new Promise((resolve) => { markStatStarted = resolve; });
+  const client = {
+    sftp: createFastSftp({}),
+    stat() {
+      markStatStarted();
+      return new Promise(() => {});
+    },
+  };
+  transferBridge.init({ sftpClients: new Map([["source", client]]) });
+  const sender = createSender();
+  const transferId = "download-stat-cancel";
+  const running = transferBridge.startTransfer({ sender }, {
+    transferId,
+    sourcePath: "/tmp/source.bin",
+    targetPath: path.join(tempDir, "target.bin"),
+    sourceType: "sftp",
+    targetType: "local",
+    sourceSftpId: "source",
+    resumable: true,
+  });
+
+  await statStarted;
+  await transferBridge.cancelTransfer(null, { transferId });
+  const result = await Promise.race([
+    running,
+    new Promise((_, reject) => setTimeout(() => reject(new Error("cancel timed out")), 500)),
+  ]);
+
+  assert.match(result.error || "", /cancel/i);
+  assert.equal(sender.sent.some((entry) => entry.channel === "netcatty:transfer:cancelled"), true);
+  assert.equal(sender.sent.some((entry) => entry.channel === "netcatty:transfer:complete"), false);
+});
+
+test("server-to-server resume cancellation settles while source prefix verification is stalled", async (t) => {
+  const transferId = `server-prefix-cancel-${crypto.randomUUID()}`;
+  const sourcePath = "/source/payload.bin";
+  const tempPath = tempDirBridge.getTransferTempFilePath(transferId, path.basename(sourcePath));
+  await fs.promises.writeFile(tempPath, Buffer.from("abcd"));
+  t.after(async () => fs.promises.rm(tempPath, { force: true }));
+  let markPrefixStarted;
+  const prefixStarted = new Promise((resolve) => { markPrefixStarted = resolve; });
+  const sourceClient = {
+    sftp: createFastSftp({
+      createReadStream() {
+        markPrefixStarted();
+        return new PassThrough();
+      },
+    }),
+  };
+  const targetClient = { sftp: createFastSftp({}) };
+  transferBridge.init({
+    sftpClients: new Map([["source", sourceClient], ["target", targetClient]]),
+  });
+  const sender = createSender();
+  const running = transferBridge.startTransfer({ sender }, {
+    transferId,
+    sourcePath,
+    targetPath: "/target/payload.bin",
+    sourceType: "sftp",
+    targetType: "sftp",
+    sourceSftpId: "source",
+    targetSftpId: "target",
+    totalBytes: 8,
+    resumable: true,
+    sameHost: false,
+    resumeStage: "download",
+    checkpointBytes: 4,
+    downloadCheckpointBytes: 4,
+  });
+
+  await prefixStarted;
+  await transferBridge.cancelTransfer(null, { transferId });
+  const result = await Promise.race([
+    running,
+    new Promise((_, reject) => setTimeout(() => reject(new Error("cancel timed out")), 500)),
+  ]);
+
+  assert.match(result.error || "", /cancel/i);
+  assert.equal(sender.sent.some((entry) => entry.channel === "netcatty:transfer:cancelled"), true);
+  assert.equal(sender.sent.some((entry) => entry.channel === "netcatty:transfer:complete"), false);
+});
+
 test("resumable SFTP uploads use the configured per-file request concurrency", async (t) => {
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-test-"));
   t.after(async () => {

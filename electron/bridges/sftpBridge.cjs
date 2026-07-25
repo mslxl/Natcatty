@@ -856,13 +856,16 @@ async function promoteScpStagedUpload(
   existingMode,
   assertCanPromote,
   commitPromotion,
+  runCancelablePreflight,
   signal,
 ) {
   const { getScpBackendForClient } = require("./sftpBridge/scpBackend.cjs");
   const backend = getScpBackendForClient(client);
   let latest = null;
   try {
-    latest = await backend.stat(targetPath, { encoding, signal });
+    latest = await runCancelablePreflight(
+      () => backend.stat(targetPath, { encoding, signal }),
+    );
   } catch (error) {
     if (!isRemoteMissingError(error)) throw error;
   }
@@ -932,20 +935,26 @@ async function runRemoteUploadTransaction(client, localPath, remotePath, options
   const commitPromotion = typeof options?.commitPromotion === "function"
     ? options.commitPromotion
     : () => {};
+  const runCancelablePreflight = typeof options?.runCancelablePreflight === "function"
+    ? options.runCancelablePreflight
+    : (operation) => operation();
   const allowInPlaceFallback = options?.allowInPlaceFallback !== false;
   const preserveStageOnUploadError = options?.preserveStageOnUploadError === true;
   const { isScpModeClient, getScpBackendForClient } = require("./sftpBridge/scpBackend.cjs");
   const scpMode = isScpModeClient(client);
   const encodedPath = encodePath(remotePath, encoding);
-  const plan = scpMode
-    ? await planScpRemoteUploadReplace(client, remotePath, encoding, signal)
-    : await planRemoteUploadReplace(client, encodedPath);
+  const plan = await runCancelablePreflight(() => (
+    scpMode
+      ? planScpRemoteUploadReplace(client, remotePath, encoding, signal)
+      : planRemoteUploadReplace(client, encodedPath)
+  ));
   const fastPutOptions = { ...options };
   delete fastPutOptions.expectedSize;
   delete fastPutOptions.encoding;
   delete fastPutOptions.uploadFile;
   delete fastPutOptions.assertCanPromote;
   delete fastPutOptions.commitPromotion;
+  delete fastPutOptions.runCancelablePreflight;
   delete fastPutOptions.allowInPlaceFallback;
   delete fastPutOptions.stagedPath;
   delete fastPutOptions.backupPath;
@@ -1036,9 +1045,11 @@ async function runRemoteUploadTransaction(client, localPath, remotePath, options
   try {
     assertCanPromote();
     if (Number.isFinite(expectedSize) && expectedSize >= 0) {
-      const stagedStat = scpMode
-        ? await getScpBackendForClient(client).stat(stagedLogical, { encoding, signal })
-        : typeof client.stat === "function" ? await client.stat(encodedStagedPath) : null;
+      const stagedStat = await runCancelablePreflight(() => (
+        scpMode
+          ? getScpBackendForClient(client).stat(stagedLogical, { encoding, signal })
+          : typeof client.stat === "function" ? client.stat(encodedStagedPath) : null
+      ));
       const stagedSize = Number(stagedStat?.size);
       if (Number.isFinite(stagedSize) && stagedSize !== expectedSize) {
         throw new Error(
@@ -1059,15 +1070,16 @@ async function runRemoteUploadTransaction(client, localPath, remotePath, options
         plan.existingMode,
         assertCanPromote,
         commitPromotion,
+        runCancelablePreflight,
         signal,
       );
     } else {
-      await assertStagedPromotionTargetSafe(
-        client,
-        encodedPath,
-        remotePath,
-        plan.destinationExisted,
-      );
+      await runCancelablePreflight(() => assertStagedPromotionTargetSafe(
+          client,
+          encodedPath,
+          remotePath,
+          plan.destinationExisted,
+        ));
       assertCanPromote();
       // Apply the old mode to the stage before promotion. A failed chmod must not
       // replace an executable final with a non-executable file and report success.

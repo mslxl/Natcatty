@@ -136,6 +136,42 @@ function createSessionChannel(options = {}) {
   return { channel, fastPutCalls, remoteFiles, remoteMeta, chmodCalls };
 }
 
+test("downloadSftpToLocal aborts while initial SFTP metadata is stalled", async (t) => {
+  const tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-sftp-stat-abort-"));
+  t.after(async () => fs.promises.rm(tempRoot, { recursive: true, force: true }));
+  let markStatStarted;
+  const statStarted = new Promise((resolve) => { markStatStarted = resolve; });
+  const client = {
+    sftp: createSessionChannel().channel,
+    stat() {
+      markStatStarted();
+      return new Promise(() => {});
+    },
+  };
+  sftpBridge.init({
+    electronModule: {},
+    sessions: new Map(),
+    sftpClients: new Map([["stalled-stat", client]]),
+  });
+  const controller = new AbortController();
+  const download = sftpBridge.downloadSftpToLocal(null, {
+    sftpId: "stalled-stat",
+    remotePath: "/tmp/source.bin",
+    localPath: path.join(tempRoot, "target.bin"),
+    abortSignal: controller.signal,
+  });
+
+  await statStarted;
+  controller.abort();
+  await assert.rejects(
+    () => Promise.race([
+      download,
+      new Promise((_, reject) => setTimeout(() => reject(new Error("cancel timed out")), 500)),
+    ]),
+    /cancel|abort/i,
+  );
+});
+
 test("session-backed uploadLocalToSftp uses pipelined fastPut on the raw SFTP channel", async (t) => {
   const tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-session-upload-"));
   t.after(async () => {
