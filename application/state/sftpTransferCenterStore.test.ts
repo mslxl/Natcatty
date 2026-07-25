@@ -524,6 +524,34 @@ test("dedicated directory resume after soft-pause winds down then startFresh (no
   assert.equal(store.getSnapshot().tasks.find((task) => task.id === "dir")?.status, "completed");
 });
 
+test("resume refuses when another active transfer already owns the same path", async () => {
+  const store = createSftpTransferCenterStore();
+  store.publishOwner("panel-a", [
+    {
+      ...makeTask("live", "transferring"),
+      sourcePath: "/root/sing-box",
+      targetPath: "/Users/me/Desktop/sing-box",
+      fileName: "sing-box",
+    },
+    {
+      ...makeTask("stale", "interrupted"),
+      sourcePath: "/root/sing-box",
+      targetPath: "/Users/me/Desktop/sing-box",
+      fileName: "sing-box",
+      reconnectRequired: true,
+    },
+  ]);
+  store.setDedicatedResumeHandler(async () => {
+    throw new Error("dedicated resume must not run when path is busy");
+  });
+
+  await store.resume("stale");
+
+  const stale = store.getSnapshot().tasks.find((task) => task.id === "stale");
+  assert.equal(stale?.status, "attention");
+  assert.match(stale?.error ?? "", /already in progress/i);
+});
+
 test("orphan directory pause rolls back successful child pauses on hard fail", async (t) => {
   const pauseCalls: string[] = [];
   const resumeCalls: string[] = [];
