@@ -1,129 +1,129 @@
-# PR #2452：SFTP 传输架构对比研究
+# PR #2452: SFTP Transfer Architecture Comparison
 
-研究日期：2026-07-25
+Research date: 2026-07-25
 
-源码版本：
+Source revisions:
 
-- Netcatty 当前工作分支：PR #2468 最新提交
-- Netcatty PR #2452 合并时的提交：`ad2730113c7a2c20a37bef4369d7a2b40bd2f060`
-- Tabby：`14e2d60b9b6dee84a53c37f05eefeb803787de04`
-- Electerm：`e68e61e3d0a8b2f66840282a4fc3dc7c40798699`
-- OpenSSH portable：`7e446d3f5917c2f2770981a89d0e54d5d064bf0c`
-- WinSCP：`b9307ef5f866a14dded9a330d8a2b8848d16dc7f`
-- ssh2：`318d447ce3aca26e1ac73b63767b82a29b02467b`
-- ssh2-sftp-client：`c690045a5d05e40f86db6b7321c6e627071b6c4a`
+- Netcatty current working branch: latest PR #2468 head
+- Netcatty PR #2452 merge revision: `ad2730113c7a2c20a37bef4369d7a2b40bd2f060`
+- Tabby: `14e2d60b9b6dee84a53c37f05eefeb803787de04`
+- Electerm: `e68e61e3d0a8b2f66840282a4fc3dc7c40798699`
+- OpenSSH portable: `7e446d3f5917c2f2770981a89d0e54d5d064bf0c`
+- WinSCP: `b9307ef5f866a14dded9a330d8a2b8848d16dc7f`
+- ssh2: `318d447ce3aca26e1ac73b63767b82a29b02467b`
+- ssh2-sftp-client: `c690045a5d05e40f86db6b7321c6e627071b6c4a`
 
-## 结论
+## Conclusion
 
-[PR #2452](https://github.com/binaricat/Netcatty/pull/2452) 对症解决了已经测出的上传速度瓶颈。原来的 8 × 32 KiB 窗口最多只有约 256 KiB 数据在途；改成 32 × 32 KiB 后约为 1 MiB，同时保留了 Netcatty 已经验证过的安全分块大小。这个方向与 ssh2、OpenSSH 默认的 64 × 32 KiB，以及 WinSCP 默认 64 个上传请求一致，但取值更保守。
+[PR #2452](https://github.com/binaricat/Netcatty/pull/2452) directly addressed the measured upload throughput bottleneck. The old 8 x 32 KiB window allowed only about 256 KiB in flight. Raising it to 32 x 32 KiB allows about 1 MiB in flight while retaining Netcatty's proven safe chunk size. This follows the same direction as the 64 x 32 KiB defaults in ssh2 and OpenSSH and WinSCP's default queue of 64 upload requests, but remains more conservative.
 
-这次改动最终远大于一次参数调整，是因为旧代码没有一套统一、可靠的上传规则。提高并发后，取消、降级、源文件变化、临时文件清理、目标替换、符号链接和权限恢复中的竞态都被暴露出来。
+The eventual change became much larger than a parameter adjustment because the old code did not have one reliable set of upload rules. Higher concurrency exposed races in cancellation, fallback, source-file changes, temporary-file cleanup, destination replacement, symlink handling, and permission restoration.
 
-本后续 PR 已经合并这两套高层流程：旧上传、旧下载和内存上传入口只负责转换参数，全部交给传输中心执行；普通上传、可续传上传和服务器间上传也共用同一个远端上传事务。目标检查、暂存、替换、备份恢复、权限恢复、取消前复查和恢复证据只保留一套规则。
+This follow-up PR has now merged the two high-level flows. Legacy upload, legacy download, and in-memory upload entry points only translate arguments and delegate to the transfer engine. Normal uploads, resumable uploads, and server-to-server uploads also use one remote upload transaction. Destination inspection, staging, replacement, backup restoration, permission restoration, pre-commit cancellation checks, and recovery evidence now have one implementation.
 
-底层仍保留不同的数据搬运方式，例如本地快速上传、可续传分块上传和 SCP；这是协议能力不同所需的适配，不再各自决定如何替换最终文件。当前最大的剩余缺口变为异常退出后的续传身份校验，以及模块文件仍然过大。
+Different data-moving mechanisms remain at the lower layer, including local fast upload, resumable range upload, and SCP. These are required protocol adapters; they no longer define separate rules for publishing the final file. The largest remaining gaps are resume identity after an abnormal process exit and the still oversized transfer module.
 
-## 本后续 PR 的边界
+## Scope of this follow-up PR
 
-本后续 PR 承接原 PR 合并时漏掉的 6 个提交，并加入本研究文档：上传替换前竞态检查、源文件逐段校验、取消和失败清理、无 `lstat` 场景、临时空间预检及相应测试。根据后续审查，它也完成了两套高层传输流程的合并，避免继续在两处分别修复同一类失败。
+This follow-up PR includes the six commits omitted when the original PR was merged and this research document. Those changes cover the final pre-replacement race check, range-by-range source validation, cancellation and failure cleanup, servers without `lstat`, temporary-space preflight, and their tests. Later review also led to merging the two high-level transfer flows so the same failures no longer need separate fixes in two places.
 
-下面这些问题仍应分成后续工作：异常退出后的续传身份校验、自适应窗口、服务器能力矩阵、更完整的元数据约定，以及继续按职责拆小传输模块。
+The following work should remain separate: resume identity after an abnormal exit, adaptive request windows, a server-capability matrix, a more complete metadata contract, and further splitting the transfer module by responsibility.
 
-## 对比表
+## Comparison table
 
-| 实现 | 单文件传输路径 | 默认请求窗口 / 分块 | 续传与取消 | 最终路径安全 | 完整性与元数据 |
+| Implementation | Single-file transfer path | Default request window / chunk | Resume and cancel | Final-path safety | Integrity and metadata |
 |---|---|---:|---|---|---|
-| Netcatty 当前分支 | 固定偏移并发读写；优先独立通道，失败时尝试共享通道 | 上传 32 × 32 KiB；下载 64 × 32 KiB（[配置](https://github.com/binaricat/Netcatty/blob/e1793e382bf022f792a74cfca4d7de95c92bd5bf/electron/bridges/transferLimits.cjs#L3-L23)） | 只把连续完成区间记作断点；暂停等待在途请求；取消时关闭临时通道 | 所有上传入口共用目标检查、暂存、替换、备份恢复和符号链接规则；下载入口共用传输中心的本地暂存发布流程 | 本地上传统一经过源变化检查和远端大小校验；可续传上传另有逐块 SHA-256 校验；替换前恢复原权限 |
-| Tabby | 逐块串行读写；应用层看不到单文件内部并发（[上传循环](https://github.com/Eugeny/tabby/blob/14e2d60b9b6dee84a53c37f05eefeb803787de04/tabby-ssh/src/session/sftp.ts#L113-L153)） | 应用层 1 × 256 KiB | 取消会关闭文件；没有暂停和按偏移续传（[传输接口](https://github.com/Eugeny/tabby/blob/14e2d60b9b6dee84a53c37f05eefeb803787de04/tabby-core/src/api/platform.ts#L23-L55)） | 上传使用 `.tabby-upload`，但先删旧文件再重命名；下载直接写最终路径 | 只在开始时检查一次源文件；结束时无摘要和源变化复查；上传协调层不恢复权限 |
-| Electerm | 自定义固定偏移并发传输，上传和下载共用同一套逻辑 | 64 × 32 KiB（[默认值](https://github.com/electerm/electerm/blob/e68e61e3d0a8b2f66840282a4fc3dc7c40798699/src/app/server/transfer.js#L12-L40)） | 暂停只停止派发新任务；取消后等待短暂时间再关句柄；没有持久化断点 | 主路径直接覆盖最终文件，没有暂存替换 | 只检查一次源文件，结束只对比字节数；权限修改失败不会向上传递 |
-| OpenSSH sftp | 流水线式读写请求队列 | 默认 64 × 32 KiB；服务器限制可能缩小分块（[默认值](https://github.com/openssh/openssh-portable/blob/7e446d3f5917c2f2770981a89d0e54d5d064bf0c/sftp-client.c#L59-L63)，[协商](https://github.com/openssh/openssh-portable/blob/7e446d3f5917c2f2770981a89d0e54d5d064bf0c/sftp-client.c#L552-L578)） | 支持 `reget`/`reput`；中断后停止新请求并收完在途请求 | 通常原位操作，不承诺事务式替换 | 续传假设已有前缀相同；手册明确警告不同时会损坏文件（[手册](https://github.com/openssh/openssh-portable/blob/7e446d3f5917c2f2770981a89d0e54d5d064bf0c/sftp.1#L657-L672)）；可选保留权限、时间并同步落盘 |
-| WinSCP | 异步上传、下载队列，分块大小可调整 | 上传队列 64，下载 32（[默认值](https://github.com/winscp/winscp/blob/b9307ef5f866a14dded9a330d8a2b8848d16dc7f/source/core/SessionData.cpp#L296-L305)）；最小 32 KiB，受协商结果和服务器包大小限制（[计算逻辑](https://github.com/winscp/winscp/blob/b9307ef5f866a14dded9a330d8a2b8848d16dc7f/source/core/SftpFileSystem.cpp#L2243-L2321)） | 默认 100 KiB 以上启用智能续传；使用 `.filepart`；按偏移恢复 | 已知或疑似符号链接、非当前用户所有的文件不会走可续传替换；完成后才替换 | 保留已有或指定权限与时间；权限失败有明确处理规则 |
-| ssh2 | `fastGet`、`fastPut` 共用 `fastXfer` | 64 × 32 KiB，可配置（[实现](https://github.com/mscdex/ssh2/blob/318d447ce3aca26e1ac73b63767b82a29b02467b/lib/protocol/SFTP.js#L2185-L2226)） | 回调或错误时关闭源和目标句柄；不自带可续传事务 | 以覆盖模式打开目标；暂存和重命名由调用者负责 | 不记录源文件快照或摘要；校验由调用者负责 |
+| Netcatty current branch | Concurrent fixed-offset reads and writes; prefers an isolated channel and then tries a shared channel | Upload 32 x 32 KiB; download 64 x 32 KiB ([configuration](https://github.com/binaricat/Netcatty/blob/e1793e382bf022f792a74cfca4d7de95c92bd5bf/electron/bridges/transferLimits.cjs#L3-L23)) | Only the highest contiguous completed range becomes a checkpoint; pause drains in-flight requests; cancel closes temporary channels | All upload entry points share destination inspection, staging, replacement, backup recovery, and symlink rules; download entry points share the transfer engine's local staging and publication flow | Local uploads share source-change and remote-size checks; resumable upload adds per-chunk SHA-256 validation; replacements restore the prior mode |
+| Tabby | Serial application-level chunk reads and writes; no visible per-file request concurrency ([upload loop](https://github.com/Eugeny/tabby/blob/14e2d60b9b6dee84a53c37f05eefeb803787de04/tabby-ssh/src/session/sftp.ts#L113-L153)) | Application layer: 1 x 256 KiB | Cancel closes the file; no pause or fixed-offset resume ([transfer interface](https://github.com/Eugeny/tabby/blob/14e2d60b9b6dee84a53c37f05eefeb803787de04/tabby-core/src/api/platform.ts#L23-L55)) | Upload uses `.tabby-upload`, but removes the old file before rename; download writes directly to the final path | Checks the source only at start; no final digest or source recheck; the upload coordinator does not restore permissions |
+| Electerm | Custom concurrent fixed-offset transfer shared by upload and download | 64 x 32 KiB ([defaults](https://github.com/electerm/electerm/blob/e68e61e3d0a8b2f66840282a4fc3dc7c40798699/src/app/server/transfer.js#L12-L40)) | Pause only stops dispatching new work; cancel waits briefly before closing the handle; no durable checkpoint | Main path overwrites the final file directly | Checks the source once and compares only byte count at the end; permission errors are not propagated |
+| OpenSSH sftp | Pipelined read and write request queues | 64 x 32 KiB by default; server limits may reduce the chunk ([defaults](https://github.com/openssh/openssh-portable/blob/7e446d3f5917c2f2770981a89d0e54d5d064bf0c/sftp-client.c#L59-L63), [negotiation](https://github.com/openssh/openssh-portable/blob/7e446d3f5917c2f2770981a89d0e54d5d064bf0c/sftp-client.c#L552-L578)) | Supports `reget` and `reput`; interruption stops new requests and drains in-flight requests | Usually operates in place and does not promise transactional replacement | Resume assumes the existing prefix matches; the manual warns that a mismatch can corrupt the file ([manual](https://github.com/openssh/openssh-portable/blob/7e446d3f5917c2f2770981a89d0e54d5d064bf0c/sftp.1#L657-L672)); can preserve mode/time and request durable sync |
+| WinSCP | Asynchronous upload and download queues with adjustable chunks | Upload queue 64, download queue 32 ([defaults](https://github.com/winscp/winscp/blob/b9307ef5f866a14dded9a330d8a2b8848d16dc7f/source/core/SessionData.cpp#L296-L305)); minimum 32 KiB, constrained by transport and server packet limits ([calculation](https://github.com/winscp/winscp/blob/b9307ef5f866a14dded9a330d8a2b8848d16dc7f/source/core/SftpFileSystem.cpp#L2243-L2321)) | Smart resume is enabled by default above 100 KiB, uses `.filepart`, and resumes by offset | Known or suspected symlinks and files owned by another user do not use resumable replacement; final replacement happens only after completion | Preserves existing or requested modes and times; permission failures have explicit handling |
+| ssh2 | `fastGet` and `fastPut` share `fastXfer` | Configurable, default 64 x 32 KiB ([implementation](https://github.com/mscdex/ssh2/blob/318d447ce3aca26e1ac73b63767b82a29b02467b/lib/protocol/SFTP.js#L2185-L2226)) | Closes source and destination handles on callback or error; no resumable transaction | Opens the destination for overwrite; callers own staging and rename | Does not record a source snapshot or digest; callers own validation |
 
-## 1. 并发窗口、分块大小和传输路径
+## 1. Request windows, chunk sizes, and transfer paths
 
 ### Netcatty
 
-Netcatty 有意把分块固定为 32 KiB，并分别设置上传和下载并发：上传 32 个请求，约 1 MiB 数据在途；下载 64 个请求，约 2 MiB 数据在途。这是产品兼容性选择，不是协议固定值（[源码](https://github.com/binaricat/Netcatty/blob/e1793e382bf022f792a74cfca4d7de95c92bd5bf/electron/bridges/transferLimits.cjs#L3-L23)）。可续传上传优先在独立 SFTP 通道上做固定偏移并发写入，再尝试兼容的流水线方案；不会悄悄退回到串行流式上传（[策略](https://github.com/binaricat/Netcatty/blob/e1793e382bf022f792a74cfca4d7de95c92bd5bf/electron/bridges/transferBridge.cjs#L757-L1007)）。
+Netcatty deliberately fixes chunks at 32 KiB and configures separate upload and download concurrency: 32 upload requests, about 1 MiB in flight, and 64 download requests, about 2 MiB in flight. This is a product compatibility choice, not a protocol constant ([source](https://github.com/binaricat/Netcatty/blob/e1793e382bf022f792a74cfca4d7de95c92bd5bf/electron/bridges/transferLimits.cjs#L3-L23)). Resumable upload first tries fixed-offset concurrent writes on an isolated SFTP channel, then tries a compatible pipelined strategy. It does not silently fall back to serial streaming ([strategy](https://github.com/binaricat/Netcatty/blob/e1793e382bf022f792a74cfca4d7de95c92bd5bf/electron/bridges/transferBridge.cjs#L757-L1007)).
 
-这个设计抓住了成熟客户端最重要的做法：同时保留多个未完成请求。但它还没有采用成熟客户端的自适应能力。OpenSSH 会读取服务器的 `limits@openssh.com` 结果再决定读写长度，WinSCP 也会按传输层和服务器限制缩小分块。Netcatty 因为历史上放大分块曾造成真实损坏，所以对所有主机都使用 32 KiB。这个保守选择合理；以后若要自适应，应基于明确允许、实测和协商，而不是全局放大分块。
+This design captures the most important practice used by mature clients: keeping several requests outstanding. It does not yet have their adaptive behavior. OpenSSH reads `limits@openssh.com` before choosing lengths, and WinSCP also reduces chunks according to transport and server limits. Netcatty once caused real corruption by increasing chunks, so it uses 32 KiB for every host. That conservative choice is reasonable. Future adaptation should rely on explicit allowance, measured behavior, and negotiation rather than a global chunk increase.
 
-### Tabby 和 Electerm
+### Tabby and Electerm
 
-Tabby 自己的 SFTP 协调层并不是高吞吐参考。它每次读写 256 KiB 并等待完成；多选上传使用不设上限的 `Promise.all`，递归目录上传却是串行的（[单文件循环](https://github.com/Eugeny/tabby/blob/14e2d60b9b6dee84a53c37f05eefeb803787de04/tabby-ssh/src/session/sftp.ts#L113-L153)，[多文件调度](https://github.com/Eugeny/tabby/blob/14e2d60b9b6dee84a53c37f05eefeb803787de04/tabby-ssh/src/components/sftpPanel.component.ts#L210-L233)）。底层 russh 依赖可能继续缓冲协议包，但 Tabby 没有配置或暴露这个窗口，因此不能据此推断它有某个固定的协议层并发数。
+Tabby's own SFTP coordinator is not a high-throughput reference. It waits for each 256 KiB read or write. Multi-selection upload uses an unbounded `Promise.all`, while recursive directory upload is serial ([single-file loop](https://github.com/Eugeny/tabby/blob/14e2d60b9b6dee84a53c37f05eefeb803787de04/tabby-ssh/src/session/sftp.ts#L113-L153), [multi-file scheduling](https://github.com/Eugeny/tabby/blob/14e2d60b9b6dee84a53c37f05eefeb803787de04/tabby-ssh/src/components/sftpPanel.component.ts#L210-L233)). The russh dependency may buffer protocol packets internally, but Tabby neither configures nor exposes that window, so its application code cannot establish a fixed protocol-level concurrency value.
 
-Electerm 是 PR #2452 最直接的对比对象。它的 `fastXfer` 默认同时执行 64 个 32 KiB 操作，上传和下载都按固定偏移调度（[初始化](https://github.com/electerm/electerm/blob/e68e61e3d0a8b2f66840282a4fc3dc7c40798699/src/app/server/transfer.js#L12-L40)，[调度器](https://github.com/electerm/electerm/blob/e68e61e3d0a8b2f66840282a4fc3dc7c40798699/src/app/server/transfer.js#L289-L370)）。因此 Netcatty 的 32 请求上传窗口较保守，但已经属于同一吞吐级别。
+Electerm is the closest comparison for PR #2452. Its `fastXfer` schedules 64 concurrent 32 KiB operations by default and uses fixed offsets for upload and download ([initialization](https://github.com/electerm/electerm/blob/e68e61e3d0a8b2f66840282a4fc3dc7c40798699/src/app/server/transfer.js#L12-L40), [scheduler](https://github.com/electerm/electerm/blob/e68e61e3d0a8b2f66840282a4fc3dc7c40798699/src/app/server/transfer.js#L289-L370)). Netcatty's 32-request upload window is more conservative but belongs to the same throughput class.
 
-### OpenSSH、WinSCP 和 Node 生态
+### OpenSSH, WinSCP, and the Node ecosystem
 
-OpenSSH 和 ssh2 都默认使用 64 × 32 KiB。OpenSSH 会逐步扩大实际下载窗口到配置上限，并跟踪乱序响应（[下载循环](https://github.com/openssh/openssh-portable/blob/7e446d3f5917c2f2770981a89d0e54d5d064bf0c/sftp-client.c#L1677-L1802)）；上传则根据确认响应把未完成请求控制在上限以内（[上传循环](https://github.com/openssh/openssh-portable/blob/7e446d3f5917c2f2770981a89d0e54d5d064bf0c/sftp-client.c#L2111-L2198)）。ssh2 的 `fastXfer` 分配 `分块 × 并发数` 的缓冲区，并直接以覆盖方式打开目标，因此它只是快速传输原语，不是安全替换事务（[源码](https://github.com/mscdex/ssh2/blob/318d447ce3aca26e1ac73b63767b82a29b02467b/lib/protocol/SFTP.js#L2185-L2285)）。
+OpenSSH and ssh2 both default to 64 x 32 KiB. OpenSSH gradually grows the effective download window to its configured limit and tracks out-of-order responses ([download loop](https://github.com/openssh/openssh-portable/blob/7e446d3f5917c2f2770981a89d0e54d5d064bf0c/sftp-client.c#L1677-L1802)). Upload keeps outstanding requests below the limit as acknowledgements arrive ([upload loop](https://github.com/openssh/openssh-portable/blob/7e446d3f5917c2f2770981a89d0e54d5d064bf0c/sftp-client.c#L2111-L2198)). ssh2's `fastXfer` allocates `chunk size x concurrency` buffering and opens the destination for overwrite, so it is a fast-transfer primitive rather than a safe replacement transaction ([source](https://github.com/mscdex/ssh2/blob/318d447ce3aca26e1ac73b63767b82a29b02467b/lib/protocol/SFTP.js#L2185-L2285)).
 
-`ssh2-sftp-client` 只是把 ssh2 的快速路径包装出来。其官方文档明确提醒：快速并发传输是否可用取决于服务器；追求广泛兼容时应优先普通 `get`/`put`（[说明](https://github.com/theophilusx/ssh2-sftp-client/blob/c690045a5d05e40f86db6b7321c6e627071b6c4a/README.md#L1160-L1163)）。这支持 Netcatty 记录失败原因、建立服务器兼容矩阵，但不支持悄悄退回串行并让性能功能变成完全不同的体验。
+`ssh2-sftp-client` only wraps ssh2's fast path. Its official documentation warns that concurrent fast transfer depends on server support and recommends ordinary `get` and `put` for broad compatibility ([documentation](https://github.com/theophilusx/ssh2-sftp-client/blob/c690045a5d05e40f86db6b7321c6e627071b6c4a/README.md#L1160-L1163)). This supports recording failure reasons and building a server compatibility matrix. It does not support silently switching to serial transfer and turning a performance feature into a completely different experience.
 
-## 2. 续传、取消、临时文件和原子替换
+## 2. Resume, cancellation, temporary files, and atomic replacement
 
-OpenSSH 的续传很简单：从目标当前大小继续，并假定已有前缀与源文件一致。收到中断后，它不再派发新请求，收完未完成响应，并尽量把文件截到最高连续确认位置（[上传恢复](https://github.com/openssh/openssh-portable/blob/7e446d3f5917c2f2770981a89d0e54d5d064bf0c/sftp-client.c#L2116-L2239)，[下载恢复](https://github.com/openssh/openssh-portable/blob/7e446d3f5917c2f2770981a89d0e54d5d064bf0c/sftp-client.c#L1812-L1845)）。作为原位传输的命令行工具，它的中断处理可靠，但不承诺原子替换。
+OpenSSH resume is simple: continue at the destination's current size and assume the existing prefix matches the source. On interruption it stops dispatching, drains outstanding responses, and tries to truncate to the highest contiguous confirmed position ([upload resume](https://github.com/openssh/openssh-portable/blob/7e446d3f5917c2f2770981a89d0e54d5d064bf0c/sftp-client.c#L2116-L2239), [download resume](https://github.com/openssh/openssh-portable/blob/7e446d3f5917c2f2770981a89d0e54d5d064bf0c/sftp-client.c#L1812-L1845)). Its interruption handling is reliable for an in-place command-line tool, but it does not promise atomic replacement.
 
-WinSCP 是更强的产品级参考。符合条件的文件先上传到 `最终文件.filepart`，按临时文件大小续传，完成后才替换最终文件。如果目标是符号链接，或者删除重建会改变文件所有者，它会禁用这种可续传替换（[上传判断](https://github.com/winscp/winscp/blob/b9307ef5f866a14dded9a330d8a2b8848d16dc7f/source/core/SftpFileSystem.cpp#L4630-L4771)）。下载同样使用本地临时文件和续传偏移（[下载暂存](https://github.com/winscp/winscp/blob/b9307ef5f866a14dded9a330d8a2b8848d16dc7f/source/core/SftpFileSystem.cpp#L5420-L5489)）。
+WinSCP is the stronger product-level reference. Eligible uploads first use `final.filepart`, resume from that temporary file's size, and replace the final path only after completion. It disables resumable replacement when the target is a symlink or when delete-and-recreate would change ownership ([upload decision](https://github.com/winscp/winscp/blob/b9307ef5f866a14dded9a330d8a2b8848d16dc7f/source/core/SftpFileSystem.cpp#L4630-L4771)). Downloads also use local temporary files and resume offsets ([download staging](https://github.com/winscp/winscp/blob/b9307ef5f866a14dded9a330d8a2b8848d16dc7f/source/core/SftpFileSystem.cpp#L5420-L5489)).
 
-Tabby 上传会写入 `.tabby-upload`，但重命名前先删除旧目标；如果重命名失败，没有备份可恢复。下载则直接打开本地最终路径（[上传](https://github.com/Eugeny/tabby/blob/14e2d60b9b6dee84a53c37f05eefeb803787de04/tabby-ssh/src/session/sftp.ts#L113-L153)，[本地下载句柄](https://github.com/Eugeny/tabby/blob/14e2d60b9b6dee84a53c37f05eefeb803787de04/tabby-electron/src/services/platform.service.ts#L425-L467)）。Electerm 也直接打开最终目标；取消只停止后续调度，并在短暂等待后关闭句柄（[传输生命周期](https://github.com/electerm/electerm/blob/e68e61e3d0a8b2f66840282a4fc3dc7c40798699/src/app/server/transfer.js#L340-L431)）。它们可以作为速度和界面参考，但不适合作为可靠性基准。
+Tabby uploads to `.tabby-upload`, but deletes the old destination before rename. A failed rename has no backup to restore. Downloads open the final local path directly ([upload](https://github.com/Eugeny/tabby/blob/14e2d60b9b6dee84a53c37f05eefeb803787de04/tabby-ssh/src/session/sftp.ts#L113-L153), [local download handle](https://github.com/Eugeny/tabby/blob/14e2d60b9b6dee84a53c37f05eefeb803787de04/tabby-electron/src/services/platform.service.ts#L425-L467)). Electerm also opens the final path directly. Cancellation stops new scheduling and closes the handle after a short wait ([transfer lifecycle](https://github.com/electerm/electerm/blob/e68e61e3d0a8b2f66840282a4fc3dc7c40798699/src/app/server/transfer.js#L340-L431)). They are useful speed and UI references, but not reliability baselines.
 
-Netcatty 当前面板上传的替换流程已经强于 Tabby 和 Electerm：普通文件先暂存，符号链接原位写入，替换前再次检查取消；如果替换和恢复都失败，会保留可恢复文件并返回用户可理解的路径（[替换流程](https://github.com/binaricat/Netcatty/blob/e1793e382bf022f792a74cfca4d7de95c92bd5bf/electron/bridges/sftpBridge.cjs#L625-L875)）。可续传引擎也只把最高连续完成区间当作断点，不会把累计进度误当成可恢复位置（[并发区间调度](https://github.com/binaricat/Netcatty/blob/e1793e382bf022f792a74cfca4d7de95c92bd5bf/electron/bridges/transferBridge.cjs#L1225-L1445)）。
+Netcatty's current replacement flow is stronger than Tabby and Electerm. Normal files are staged, symlinks are written in place, and cancellation is checked again before replacement. If both replacement and restoration fail, recovery files remain and the error reports usable paths ([replacement flow](https://github.com/binaricat/Netcatty/blob/e1793e382bf022f792a74cfca4d7de95c92bd5bf/electron/bridges/sftpBridge.cjs#L625-L875)). The resumable engine also records only the highest contiguous completed range, rather than mistaking aggregate progress for a resumable offset ([concurrent range scheduler](https://github.com/binaricat/Netcatty/blob/e1793e382bf022f792a74cfca4d7de95c92bd5bf/electron/bridges/transferBridge.cjs#L1225-L1445)).
 
-## 3. 源文件变化和完整性
+## 3. Source changes and integrity
 
-Tabby、Electerm 都只在传输开始时检查一次源文件，ssh2 的 `fastXfer` 也是如此。OpenSSH 也明确警告续传不会验证已有前缀。这说明静默忽略源变化很常见，但不代表这种做法安全。
+Tabby and Electerm inspect the source only once at transfer start, as does ssh2 `fastXfer`. OpenSSH explicitly warns that resume does not validate the existing prefix. Silently accepting source changes is common, but it is not safe.
 
-Netcatty 的本地可续传上传明显更强：它在 Netcatty 自己的临时目录生成紧凑的 SHA-256 分块摘要，再读一遍确认基线，并在每个区间发送前与摘要对比（[摘要基线](https://github.com/binaricat/Netcatty/blob/e1793e382bf022f792a74cfca4d7de95c92bd5bf/electron/bridges/transferBridge.cjs#L1121-L1220)，[写入前校验](https://github.com/binaricat/Netcatty/blob/e1793e382bf022f792a74cfca4d7de95c92bd5bf/electron/bridges/transferBridge.cjs#L1455-L1540)）。即使文件系统时间精度很粗，也能避免一次上传把两个版本的本地文件拼到一起。
+Netcatty's local resumable upload is substantially stronger. It creates a compact SHA-256 chunk digest in Netcatty's temporary directory, rereads the source to confirm the baseline, and compares every range against the digest before sending it ([digest baseline](https://github.com/binaricat/Netcatty/blob/e1793e382bf022f792a74cfca4d7de95c92bd5bf/electron/bridges/transferBridge.cjs#L1121-L1220), [pre-write validation](https://github.com/binaricat/Netcatty/blob/e1793e382bf022f792a74cfca4d7de95c92bd5bf/electron/bridges/transferBridge.cjs#L1455-L1540)). Even on a file system with coarse timestamps, one upload cannot silently combine chunks from two local versions.
 
-本后续 PR 已把旧本地上传和带进度的内存上传交给传输中心，因此它们不再绕过源变化检查和统一的远端发布规则。远端下载也由同一套传输调度负责。本地可续传上传仍有更强的逐块摘要，而远端下载主要依赖大小、元数据和部分区间检查；这是不同来源可获得证据的差异，不再是两套入口各自实现造成的差异。统一的端到端摘要仍可继续研究。
+This follow-up PR routes legacy local uploads and progress-reporting memory uploads through the transfer engine, so they no longer bypass source-change checks and shared publication rules. Remote downloads also use the same scheduler. Local resumable upload still has stronger per-chunk evidence, while remote download mainly uses size, metadata, and selected-range checks. That difference reflects the evidence available from each source, not two independent entry-point implementations. A unified end-to-end digest remains a research topic.
 
-现有代码还存在一个**程序异常退出后续传的缺口**。恢复时只对比暂存文件和当前源文件的前 256 KiB（[续传抽样上限](https://github.com/binaricat/Netcatty/blob/e1793e382bf022f792a74cfca4d7de95c92bd5bf/electron/bridges/transferBridge.cjs#L187-L205)）；完整的源文件指纹则是在用户明确暂停时才首次记录（[暂停时记录指纹](https://github.com/binaricat/Netcatty/blob/e1793e382bf022f792a74cfca4d7de95c92bd5bf/electron/bridges/transferBridge.cjs#L2801-L2815)）。如果程序在来得及暂停和保存指纹之前退出，而源文件只在前 256 KiB 之后发生变化，再次续传可能保留旧的远端前缀，再接上新源文件的后半段。当前工作分支新增的逐块摘要能阻止**同一次运行中的源文件变化**，却不能证明上一次进程留下的暂存文件属于当前源文件。正确方向是在传输开始时就持久化源身份和已确认前缀摘要；缺少这份证据时应保守地重新上传。
+One gap remains for **resume after an abnormal process exit**. Resume compares only the first 256 KiB of the staged file and current source ([resume sample limit](https://github.com/binaricat/Netcatty/blob/e1793e382bf022f792a74cfca4d7de95c92bd5bf/electron/bridges/transferBridge.cjs#L187-L205)). A complete source fingerprint is first recorded only when the user explicitly pauses ([pause fingerprint](https://github.com/binaricat/Netcatty/blob/e1793e382bf022f792a74cfca4d7de95c92bd5bf/electron/bridges/transferBridge.cjs#L2801-L2815)). If the process exits before a pause can persist that fingerprint and the source changes only after the first 256 KiB, resuming can preserve an old remote prefix and append bytes from the new source. This crash-recovery identity gap is distinct from per-chunk validation **during one process run**. The current branch's chunk digest prevents source changes during that run, but cannot prove that a stage from an earlier process belongs to the current source. The correct direction is to persist source identity and confirmed-prefix digests when transfer starts, then restart conservatively when that evidence is absent.
 
-## 4. 符号链接、权限和失败恢复
+## 4. Symlinks, permissions, and failure recovery
 
-成熟客户端会把“替换一个目标”与原始 SFTP 读写分开处理：
+Mature clients separate destination replacement from raw SFTP I/O:
 
-- WinSCP 遇到已知或疑似符号链接，以及非当前用户所有的目标时，会避免使用临时文件替换，因为重命名替换会改变节点或所有者（[源码](https://github.com/winscp/winscp/blob/b9307ef5f866a14dded9a330d8a2b8848d16dc7f/source/core/SftpFileSystem.cpp#L4661-L4700)）。
-- WinSCP 替换后恢复指定或原有的权限和时间；权限恢复失败有明确策略，不会无条件忽略（[属性处理](https://github.com/winscp/winscp/blob/b9307ef5f866a14dded9a330d8a2b8848d16dc7f/source/core/SftpFileSystem.cpp#L4800-L4839)，[错误处理](https://github.com/winscp/winscp/blob/b9307ef5f866a14dded9a330d8a2b8848d16dc7f/source/core/SftpFileSystem.cpp#L4972-L5033)）。
-- OpenSSH 默认只传普通文件，递归传输时不跟随符号链接，并可选择保留权限和时间（[手册](https://github.com/openssh/openssh-portable/blob/7e446d3f5917c2f2770981a89d0e54d5d064bf0c/sftp.1#L637-L690)）。
+- WinSCP avoids temporary-file replacement for known or suspected symlinks and for targets not owned by the current user, because rename replacement can change the node or owner ([source](https://github.com/winscp/winscp/blob/b9307ef5f866a14dded9a330d8a2b8848d16dc7f/source/core/SftpFileSystem.cpp#L4661-L4700)).
+- WinSCP restores requested or existing modes and times after replacement, with explicit behavior for permission failures ([attribute handling](https://github.com/winscp/winscp/blob/b9307ef5f866a14dded9a330d8a2b8848d16dc7f/source/core/SftpFileSystem.cpp#L4800-L4839), [error handling](https://github.com/winscp/winscp/blob/b9307ef5f866a14dded9a330d8a2b8848d16dc7f/source/core/SftpFileSystem.cpp#L4972-L5033)).
+- OpenSSH transfers regular files by default, does not follow symlinks during recursive transfer, and can preserve modes and times ([manual](https://github.com/openssh/openssh-portable/blob/7e446d3f5917c2f2770981a89d0e54d5d064bf0c/sftp.1#L637-L690)).
 
-Netcatty 面板上传目前优先使用 `lstat`，并对缺少该能力的服务器保守地回退到 `stat`/`readlink`；符号链接原位写入，普通文件先暂存，并在替换前把旧权限应用到暂存文件。边界也应明确：SFTP v3 无法在所有服务器上可靠保留所有者、访问控制列表、扩展属性和硬链接身份，因此“路径和权限相同”不等于“文件节点的全部属性都相同”。
+Netcatty prefers `lstat` and conservatively falls back to `stat` and `readlink` on servers without it. Symlinks are written in place; regular files are staged; and the previous mode is applied to the stage before replacement. The boundary must remain explicit: SFTP v3 cannot preserve ownership, access-control lists, extended attributes, or hard-link identity on every server. Keeping the same path and mode does not mean preserving every property of the old file node.
 
-本后续 PR 删除了传输中心原先单独的发布流程。SFTP 和 SCP 的普通上传、可续传上传、服务器间上传，现在都通过共享上传事务处理符号链接、目标变化、暂存、备份恢复、权限恢复、取消和失败证据。各入口只保留数据如何读取和写入的差别。
+This follow-up PR removed the transfer engine's separate publication path. Normal, resumable, and server-to-server SFTP and SCP uploads now share one upload transaction for symlink handling, target changes, staging, backup restoration, permission restoration, cancellation, and recovery evidence. Entry points retain only the differences in how data is read and written.
 
-## 5. Netcatty 当前缺口和模块设计问题
+## 5. Current Netcatty gaps and module-design issues
 
-### 高优先级
+### High priority
 
-1. **补上异常退出续传的身份检查。** 只比较前 256 KiB 无法确认大文件仍与暂存文件对应；只在正常暂停时计算的指纹也无法覆盖此前的崩溃。这与运行中逐块校验是两个不同问题。
-2. **继续统一完整性说明。** 本地可续传上传有分块摘要，远端下载依赖大小、元数据和部分区间检查。应清楚说明每种来源检查了什么、没有检查什么，并研究是否需要统一的端到端摘要。
-3. **按职责拆开过大的状态模块。** 当前模块仍混合任务准入、界面通信、会话、上传下载调度、暂停取消、速度统计和完整性。共享替换事务已经消除了最危险的规则重复，下一步可再拆分上传、下载调度，让界面适配层保持轻薄。
+1. **Add identity checks for resume after abnormal exit.** Comparing only the first 256 KiB cannot prove that a large source still matches a staged file. A fingerprint computed only during orderly pause cannot cover an earlier crash.
+2. **Clarify integrity guarantees.** Local resumable upload has chunk digests, while remote download relies on size, metadata, and selected-range checks. Each source type should state what it proves and what it does not. A common end-to-end digest deserves further study.
+3. **Split the oversized state module by responsibility.** It still combines admission, UI messages, session ownership, upload/download scheduling, pause/cancel, speed calculation, and integrity. The shared publication transaction removed the most dangerous duplicated rules; upload and download schedulers can next be separated while UI adapters remain thin.
 
-### 中优先级
+### Medium priority
 
-4. **协商能力，但保留安全下限。** 继续把 32 KiB 作为兼容基线，同时记录服务器 `limits@openssh.com`、拒绝大包和各主机结果。以后按主机选择并发窗口，比修改全局分块更安全。
-5. **区分文件并发和单文件请求并发。** WinSCP 的请求队列在单个文件内部，Netcatty 另有全局文件准入队列。这两类限制应使用不同名称、统计和提示。
-6. **明确元数据损失边界。** 恢复权限有价值，但所有者、访问控制列表、扩展属性、稀疏布局、硬链接和文件节点身份都不在当前保证内。测试和界面不应暗示替换后完全等同。
-7. **建立服务器兼容矩阵。** ssh2-sftp-client 的官方提醒是可靠的：不同服务器的并发传输行为差异很大（[文档](https://github.com/theophilusx/ssh2-sftp-client/blob/c690045a5d05e40f86db6b7321c6e627071b6c4a/README.md#L1563-L1574)）。Netcatty 应重复验证 OpenSSH、Dropbear、Windows SFTP、NAS、提权 SFTP、不支持 `lstat`、不支持 `readlink` 和低 `MaxSessions` 等环境。
+4. **Negotiate capability while preserving a safe floor.** Keep 32 KiB as the compatibility baseline and record `limits@openssh.com`, large-packet rejection, and per-host outcomes. Per-host request windows are safer than another global chunk change.
+5. **Distinguish file concurrency from per-file request concurrency.** WinSCP's request queue operates within one file. Netcatty also has a global file-admission queue. They need distinct names, metrics, and messages.
+6. **State metadata-loss boundaries.** Restoring modes is useful, but ownership, ACLs, extended attributes, sparse layout, hard links, and node identity are outside the current guarantee. Tests and UI should not imply full equivalence after replacement.
+7. **Build a server compatibility matrix.** The ssh2-sftp-client warning is well founded: servers differ substantially in concurrent-transfer behavior ([documentation](https://github.com/theophilusx/ssh2-sftp-client/blob/c690045a5d05e40f86db6b7321c6e627071b6c4a/README.md#L1563-L1574)). Netcatty should repeatedly cover OpenSSH, Dropbear, Windows SFTP, NAS devices, elevated SFTP, missing `lstat`, missing `readlink`, and low `MaxSessions` environments.
 
-## 6. PR #2452 是否对症
+## 6. Did PR #2452 address the right problem?
 
-**对报告中的速度问题是对症的；对整体架构只解决了一部分。**
+**Yes for the reported throughput problem; only partially for the wider architecture.**
 
-- 原来的 8 请求上传窗口对已测延迟确实太小。保留 32 KiB 分块并提高到 32 个请求，有 Netcatty 自身测试以及 Electerm、OpenSSH、ssh2、WinSCP 的实现形态支持。
-- 不悄悄退回串行是正确的。这个功能的目的就是高吞吐；明确报告兼容失败，比静默地把几分钟变成几小时更诚实。
-- 审查中补上的问题不是无关润色。请求并发后，必须等在途操作结束或彻底隔离才算取消完成；累计进度不是可续传断点，只有连续完成位置才是；清理也不能与未完成写入同时发生。
-- 该 PR 不能证明 32 对所有服务器都最优。OpenSSH 和 WinSCP 会协商或调整，ssh2-sftp-client 也明确记录了不兼容服务器。Netcatty 应保留内部可调整能力，先收集实际诊断数据，再决定是否改变。
-- PR 合并时的提交是 `ad2730113...`，本研究还检查了之后工作分支 `e1793e382...` 上的进一步加固。讨论“合并时实际交付了什么”时，不能混淆这两个状态。
-- 合并后的版本随后仍出现 3 条有效远程意见，分别涉及 SCP 断裂链接和无 `lstat` 时的断裂链接判断；对应修复在后续分支中，不在原合并结果中。
+- The old eight-request upload window was too small for the measured latency. Keeping 32 KiB chunks and raising the window to 32 is supported by Netcatty's tests and the shapes used by Electerm, OpenSSH, ssh2, and WinSCP.
+- Refusing a silent serial fallback is correct. This feature exists for high throughput. Reporting incompatibility is more honest than silently turning minutes into hours.
+- The review fixes were not unrelated polish. Concurrent requests require cancellation to drain or fully isolate outstanding operations. Aggregate progress is not a resumable checkpoint; only the contiguous completed position is. Cleanup must not race unfinished writes.
+- The PR does not prove that 32 is optimal for every server. OpenSSH and WinSCP negotiate or adjust, and ssh2-sftp-client documents incompatible servers. Netcatty should retain internal configurability, collect diagnostic evidence, and only then consider changing the value.
+- The merged PR revision is `ad2730113...`; this research also examines later hardening on working revision `e1793e382...`. Discussions of what was delivered at merge must not confuse those states.
+- Three additional valid remote findings appeared after merge, covering SCP broken symlinks and broken-link detection without `lstat`. Their fixes are on the follow-up branch, not in the original merged result.
 
-最简洁的判断是：**#2452 修复了速度瓶颈，也显著提高了安全性；本后续 PR 又把此前分裂的高层传输入口和文件替换规则合成了一套。**
+The shortest accurate conclusion is: **PR #2452 fixed the throughput bottleneck and materially improved safety; this follow-up PR then merged the previously split high-level entry points and file-publication rules into one path.**
 
-## 证据质量与限制
+## Evidence quality and limits
 
-- 上述行为判断只使用官方仓库、源码、第一方手册和 PR 本身；没有用二手文章支撑性能或架构结论。
-- PR #2452 中两组实机速度数据来自该 PR 的维护者记录；本次研究没有重新连接那两台主机复测。本次独立确认的是实现路径、窗口大小、自动化测试和对照项目源码。
-- OpenSSH、WinSCP、ssh2、Tabby、Electerm 的链接都固定到具体提交；Netcatty 链接明确区分合并时提交和后续工作分支。
-- “没有发现”只表示所引用的应用协调路径中没有该机制，不证明更底层的 SSH 库或服务器不会额外缓冲或处理。
-- Tabby 的 russh 内部行为和 Electerm 的 SCP 目录路径没有被用来推断单文件 SFTP 并发，因为应用没有配置对应窗口。
+- Behavioral claims use official repositories, source code, first-party manuals, and the PR itself. No secondary article supports the performance or architecture conclusions.
+- The two real-host throughput measurements in PR #2452 come from the maintainer's PR record. This research did not reconnect to those hosts. It independently verified the implementation path, request-window values, automated tests, and comparison-project source.
+- Links for OpenSSH, WinSCP, ssh2, Tabby, and Electerm are pinned to revisions. Netcatty links distinguish the merge revision from the follow-up working branch.
+- "Not found" means the cited application coordination path lacks a mechanism. It does not prove that a lower SSH library or server cannot buffer or add behavior.
+- Tabby's russh internals and Electerm's SCP directory path were not used to infer single-file SFTP concurrency because their application code does not configure that window.
