@@ -2641,6 +2641,7 @@ async function startTransferNow(event, payload, onProgress) {
   let leasesReleased = false;
   const cleanupTransfer = () => {
     activeTransfers.delete(transferId);
+    transfer.publishProgress = null;
     if (!leasesReleased) {
       leasesReleased = true;
       releaseTransferSessionLeases(transferId, transfer.leasedSftpIds || leasedSftpIds);
@@ -2690,6 +2691,15 @@ async function startTransferNow(event, payload, onProgress) {
     }
 
     emitProgress(now, normalizedTransferred, normalizedTotal, speed, force);
+  };
+
+  // Let pause/fingerprint paths force a progress fan-out (e.g. late source
+  // fingerprint) without reaching into the sendProgress closure.
+  transfer.publishProgress = (force = true) => {
+    sendProgress(lastObservedTransferred, lastObservedTotal, {
+      force: force !== false,
+      checkpointBytes: transfer.checkpointBytes,
+    });
   };
 
   const sendComplete = () => {
@@ -3600,6 +3610,9 @@ async function pauseTransfer(_event, payload) {
         && !transfer.sourceFingerprint
       ) {
         transfer.sourceFingerprint = fingerprint;
+        // Pause already returned without this value. Fan out so the renderer
+        // persists it before a paused restore can restart without a fingerprint.
+        try { transfer.publishProgress?.(true); } catch { /* ignore */ }
       }
     }).catch(() => {
       // Optional — resume still works without a stored fingerprint.
@@ -3654,13 +3667,13 @@ async function resumeTransfer(_event, payload) {
     return { success: true };
   }
   // Soft-drained concurrent pause may leave a sparse tail past the contiguous
-  // checkpoint. Wait briefly for leftover ranges, then truncate before unpausing.
+  // checkpoint. Wait for ALL leftover ranges to settle before truncating —
+  // truncating while range writes are still in flight can erase bytes whose
+  // callbacks arrive later, leaving a size-correct but corrupted stage.
   if (transfer.deferredSparseTruncate) {
-    const deadline = Date.now() + PAUSE_RANGE_DRAIN_MS;
     while (
       typeof transfer.getActiveRangeCount === "function"
       && transfer.getActiveRangeCount() > 0
-      && Date.now() < deadline
     ) {
       await new Promise((resolve) => setTimeout(resolve, 20));
     }

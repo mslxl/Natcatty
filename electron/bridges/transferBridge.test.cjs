@@ -1404,6 +1404,219 @@ test("pause does not block on full source fingerprint hashing", async (t) => {
   assert.equal((await running).error, undefined);
 });
 
+test("late pause fingerprint is published for paused restore", async (t) => {
+  // Background fingerprint must fan out via progress so a paused transfer can
+  // persist sourceFingerprint before app restart / resume without it.
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-late-fp-publish-"));
+  t.after(async () => {
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const payload = Buffer.alloc(UPLOAD_TRANSFER_CONCURRENCY * TRANSFER_CHUNK_SIZE * 2, 73);
+  const localPath = path.join(tempDir, "upload.bin");
+  await fs.promises.writeFile(localPath, payload);
+  const pendingWrites = [];
+  let holdWrites = true;
+  const fastSftp = createFastSftp({
+    open(_remotePath, _flags, callback) {
+      callback(null, Buffer.from("remote-handle"));
+    },
+    write(_handle, _buffer, _offset, _length, _position, callback) {
+      if (holdWrites) pendingWrites.push(callback);
+      else setImmediate(() => callback(null));
+    },
+    close(_handle, callback) {
+      callback(null);
+    },
+  });
+  const client = {
+    sftp: createFastSftp({}),
+    stat() {
+      return Promise.resolve({ size: payload.length });
+    },
+    rename() {
+      return Promise.resolve();
+    },
+    delete() {
+      return Promise.resolve();
+    },
+    client: {
+      sftp(callback) {
+        callback(null, fastSftp);
+      },
+    },
+  };
+  transferBridge.init({ sftpClients: new Map([["target", client]]) });
+
+  const originalCreateReadStream = fs.createReadStream;
+  let fingerprintStream = null;
+  fs.createReadStream = (filePath, options) => {
+    if (filePath !== localPath || options) return originalCreateReadStream(filePath, options);
+    fingerprintStream = new Readable({ read() {} });
+    return fingerprintStream;
+  };
+
+  const sender = createSender();
+  let running;
+  try {
+    running = transferBridge.startTransfer(
+      { sender },
+      {
+        transferId: "late-fp-publish",
+        sourcePath: localPath,
+        targetPath: "/tmp/upload.bin",
+        sourceType: "local",
+        targetType: "sftp",
+        targetSftpId: "target",
+        totalBytes: payload.length,
+        resumable: true,
+      },
+    );
+    const writeDeadline = Date.now() + 1000;
+    while (pendingWrites.length < UPLOAD_TRANSFER_CONCURRENCY && Date.now() < writeDeadline) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    assert.ok(pendingWrites.length >= 1);
+
+    const paused = await transferBridge.pauseTransfer(null, { transferId: "late-fp-publish" });
+    assert.equal(paused.success, true);
+    assert.equal(paused.sourceFingerprint, undefined);
+
+    assert.ok(fingerprintStream, "expected background fingerprint stream");
+    const expectedFingerprint = `sha256:${crypto.createHash("sha256").update(payload).digest("hex")}`;
+    fingerprintStream.push(payload);
+    fingerprintStream.push(null);
+
+    const publishDeadline = Date.now() + 2000;
+    let published = null;
+    while (Date.now() < publishDeadline) {
+      published = [...sender.sent]
+        .reverse()
+        .find((entry) => (
+          entry.channel === "netcatty:transfer:progress"
+          && entry.payload?.transferId === "late-fp-publish"
+          && entry.payload?.sourceFingerprint
+        ));
+      if (published) break;
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    assert.ok(published, "expected progress event with sourceFingerprint while paused");
+    assert.equal(published.payload.sourceFingerprint, expectedFingerprint);
+
+    holdWrites = false;
+    for (const callback of pendingWrites.splice(0)) callback(null);
+    assert.deepEqual(
+      await transferBridge.resumeTransfer(null, { transferId: "late-fp-publish" }),
+      { success: true },
+    );
+  } finally {
+    fs.createReadStream = originalCreateReadStream;
+  }
+
+  assert.equal((await running).error, undefined);
+});
+
+test("resume waits for soft-drained ranges before sparse truncate", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-resume-truncate-wait-"));
+  t.after(async () => {
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const payload = Buffer.alloc(UPLOAD_TRANSFER_CONCURRENCY * TRANSFER_CHUNK_SIZE * 4, 75);
+  const localPath = path.join(tempDir, "upload.bin");
+  await fs.promises.writeFile(localPath, payload);
+  let holdWrites = true;
+  const pendingWrites = [];
+  let durableBytes = 0;
+  let truncateWhileActive = 0;
+  let activeInFlight = 0;
+  const fastSftp = createFastSftp({
+    open(_remotePath, _flags, callback) {
+      callback(null, Buffer.from("remote-handle"));
+    },
+    write(_handle, _buffer, _offset, length, position, callback) {
+      activeInFlight += 1;
+      const complete = () => {
+        durableBytes = Math.max(durableBytes, position + length);
+        activeInFlight -= 1;
+        callback(null);
+      };
+      if (holdWrites) pendingWrites.push(complete);
+      else setImmediate(complete);
+    },
+    close(_handle, callback) {
+      callback(null);
+    },
+  });
+  const client = {
+    sftp: createFastSftp({}),
+    stat() {
+      return Promise.resolve({ size: Math.max(durableBytes, payload.length) });
+    },
+    truncate() {
+      if (activeInFlight > 0 || pendingWrites.length > 0) {
+        truncateWhileActive += 1;
+      }
+      return Promise.resolve();
+    },
+    rename() {
+      return Promise.resolve();
+    },
+    delete() {
+      return Promise.resolve();
+    },
+    client: {
+      sftp(callback) {
+        callback(null, fastSftp);
+      },
+    },
+  };
+  transferBridge.init({ sftpClients: new Map([["target", client]]) });
+
+  const running = transferBridge.startTransfer(
+    { sender: createSender() },
+    {
+      transferId: "resume-truncate-wait",
+      sourcePath: localPath,
+      targetPath: "/tmp/upload-truncate-wait.bin",
+      sourceType: "local",
+      targetType: "sftp",
+      targetSftpId: "target",
+      totalBytes: payload.length,
+      resumable: true,
+    },
+  );
+
+  const readyDeadline = Date.now() + 1000;
+  while (pendingWrites.length < UPLOAD_TRANSFER_CONCURRENCY && Date.now() < readyDeadline) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.ok(pendingWrites.length >= 1, "expected in-flight concurrent writes");
+
+  const paused = await transferBridge.pauseTransfer(null, { transferId: "resume-truncate-wait" });
+  assert.equal(paused.success, true);
+  assert.ok(pendingWrites.length >= 1, "soft-drain should leave leftover writes");
+
+  const resuming = transferBridge.resumeTransfer(null, { transferId: "resume-truncate-wait" });
+  // Resume must not finish while leftovers are still held — that would race truncate.
+  await new Promise((resolve) => setTimeout(resolve, 450));
+  assert.equal(
+    await Promise.race([
+      resuming.then(() => "done"),
+      Promise.resolve("waiting"),
+    ]),
+    "waiting",
+    "resume should wait for leftover ranges before truncating",
+  );
+
+  holdWrites = false;
+  for (const complete of pendingWrites.splice(0)) complete();
+  assert.deepEqual(await resuming, { success: true });
+  assert.equal(truncateWhileActive, 0, "truncate must not run while range writes remain in flight");
+  assert.equal((await running).error, undefined);
+  assert.equal(durableBytes, payload.length);
+});
+
 test("failed resumable upload opens close their isolated channel", async (t) => {
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-upload-open-fail-"));
   t.after(async () => {
