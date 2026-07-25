@@ -82,9 +82,13 @@ export const createUploadTaskCallbacks = ({
     });
   },
   onTaskProgress: (taskId: string, progress) => {
+    const durableCheckpoint = Number.isFinite(Number(progress.checkpointBytes))
+      ? Math.max(0, Math.trunc(Number(progress.checkpointBytes)))
+      : progress.transferred;
     updateExternalUpload?.(taskId, {
       transferredBytes: progress.transferred,
-      checkpointBytes: progress.transferred,
+      // Soft-drain high-water transferred must not become the resume offset.
+      checkpointBytes: durableCheckpoint,
       speed: progress.speed,
       resumable: progress.resumable,
       pauseUnavailableReason: progress.pauseUnavailableReason,

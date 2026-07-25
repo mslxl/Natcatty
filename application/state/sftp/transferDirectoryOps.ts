@@ -9,7 +9,11 @@ import { getSftpTransferResourceKeys, globalSftpTransferScheduler } from "./glob
 import { isSessionError } from "./errors";
 import { isTransferCancelledError, runWithTransferRetry } from "./transferRetry";
 import type { TransferConnectionLease } from "./transferConnectionPool";
-import { hasNewSourceFingerprint, shouldApplyTransferProgress } from "./transferProgressMetadata";
+import {
+  hasNewSourceFingerprint,
+  resolveDurableCheckpointBytes,
+  shouldApplyTransferProgress,
+} from "./transferProgressMetadata";
 import { joinPath } from "./utils";
 
 export type AcquireTransferSessionFn = (
@@ -286,10 +290,18 @@ export function useSftpDirectoryTransferOps({
                     t.transferredBytes,
                     Math.min(transferred, normalizedTotal > 0 ? normalizedTotal : transferred),
                   );
+                  // Prefer bridge contiguous checkpoint — soft-drain can report
+                  // high-water transferred past sparse holes.
+                  const durableCheckpoint = resolveDurableCheckpointBytes({
+                    transferred: normalizedTransferred,
+                    previousCheckpoint: t.checkpointBytes,
+                    incomingCheckpoint: checkpoint?.checkpointBytes,
+                    status: t.status,
+                  });
                   return {
                     ...t,
                     transferredBytes: normalizedTransferred,
-                    checkpointBytes: normalizedTransferred,
+                    checkpointBytes: durableCheckpoint,
                     resumeStage: checkpoint?.resumeStage ?? t.resumeStage,
                     downloadCheckpointBytes: checkpoint?.downloadCheckpointBytes ?? t.downloadCheckpointBytes,
                     uploadCheckpointBytes: checkpoint?.uploadCheckpointBytes ?? t.uploadCheckpointBytes,

@@ -203,10 +203,11 @@ async function computeSourceIdentityLite({ sourceType, sourcePath, sourceSftpId,
     ? await getScpBackendForClient(client).stat(sourcePath, { encoding: sourceEncoding })
     : await client.stat(encodePathForSession(sourceSftpId, sourcePath, sourceEncoding));
   const size = Math.max(0, Number(attrs?.size) || 0);
-  // Session-backed SFTP and SCP adapters expose modifyTime (ms). Raw ssh2
-  // attrs use mtime (seconds). Prefer mtimeMs when present.
-  const mtimeRaw = attrs?.mtimeMs ?? attrs?.modifyTime ?? attrs?.mtime;
-  // ssh2 often reports mtime in whole seconds; modifyTime is already ms.
+  // ssh2-sftp-client / SCP backends expose modifyTime (ms). Raw ssh2 attrs use
+  // mtime in whole seconds (or mtimeMs). Prefer modifyTime first or remote
+  // identity collapses to meta:size:0 and same-size rewrites false-pass.
+  const mtimeRaw = attrs?.modifyTime ?? attrs?.mtimeMs ?? attrs?.mtime;
+  // modifyTime is already ms; raw mtime is often seconds.
   const mtime = Number.isFinite(Number(mtimeRaw))
     ? Math.trunc(Number(mtimeRaw) > 1e12 ? Number(mtimeRaw) : Number(mtimeRaw) * 1000)
     : 0;
@@ -3618,6 +3619,7 @@ async function pauseTransfer(_event, payload) {
       transfer.checkpointBytes = stat.size;
     }
   } catch {
+    transfer.deferredSparseTruncate = false;
     transfer.paused = false;
     resumeStreamPair(transfer);
     return { success: false, reason: "Could not verify the saved transfer checkpoint" };
@@ -3637,6 +3639,7 @@ async function pauseTransfer(_event, payload) {
       });
       if (transfer.paused) transfer.publishCurrentProgress?.();
     } catch {
+      transfer.deferredSparseTruncate = false;
       transfer.paused = false;
       resumeStreamPair(transfer);
       return { success: false, reason: "Could not verify that the source is safe to resume" };
