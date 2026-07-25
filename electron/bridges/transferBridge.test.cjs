@@ -380,6 +380,47 @@ test("SFTP download cancellation settles while initial metadata is stalled", asy
   assert.equal(sender.sent.some((entry) => entry.channel === "netcatty:transfer:complete"), false);
 });
 
+test("SFTP download cancellation settles while source snapshot metadata is stalled", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-download-snapshot-cancel-"));
+  t.after(async () => fs.promises.rm(tempDir, { recursive: true, force: true }));
+  let statCalls = 0;
+  let markSnapshotStarted;
+  const snapshotStarted = new Promise((resolve) => { markSnapshotStarted = resolve; });
+  const client = {
+    sftp: createFastSftp({}),
+    stat() {
+      statCalls += 1;
+      if (statCalls === 1) return Promise.resolve({ size: 1024 });
+      markSnapshotStarted();
+      return new Promise(() => {});
+    },
+  };
+  transferBridge.init({ sftpClients: new Map([["source", client]]) });
+  const sender = createSender();
+  const transferId = "download-snapshot-cancel";
+  const running = transferBridge.startTransfer({ sender }, {
+    transferId,
+    sourcePath: "/tmp/source.bin",
+    targetPath: path.join(tempDir, "target.bin"),
+    sourceType: "sftp",
+    targetType: "local",
+    sourceSftpId: "source",
+    resumable: true,
+  });
+
+  await snapshotStarted;
+  await transferBridge.cancelTransfer(null, { transferId });
+  const result = await Promise.race([
+    running,
+    new Promise((_, reject) => setTimeout(() => reject(new Error("cancel timed out")), 500)),
+  ]);
+
+  assert.equal(statCalls, 2);
+  assert.match(result.error || "", /cancel/i);
+  assert.equal(sender.sent.some((entry) => entry.channel === "netcatty:transfer:cancelled"), true);
+  assert.equal(sender.sent.some((entry) => entry.channel === "netcatty:transfer:complete"), false);
+});
+
 test("server-to-server resume cancellation settles while source prefix verification is stalled", async (t) => {
   const transferId = `server-prefix-cancel-${crypto.randomUUID()}`;
   const sourcePath = "/source/payload.bin";

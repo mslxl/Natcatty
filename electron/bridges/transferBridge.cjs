@@ -226,6 +226,28 @@ async function promoteLocalTransfer(stagedPath, targetPath, options = {}) {
       preparedPath = readyPath;
     }
     if (preparedPath !== readyPath) preparedPath = readyPath;
+    let appliedMode = null;
+    let targetStable = false;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const validatedTarget = typeof options.validateTarget === "function"
+        ? await options.validateTarget()
+        : null;
+      const existingMode = Number.isInteger(validatedTarget?.existingMode)
+        ? validatedTarget.existingMode & 0o7777
+        : Number.isInteger(options.existingMode)
+          ? options.existingMode & 0o7777
+          : null;
+      if (existingMode !== null && existingMode !== appliedMode) {
+        await fs.promises.chmod(readyPath, existingMode);
+        appliedMode = existingMode;
+        continue;
+      }
+      targetStable = true;
+      break;
+    }
+    if (!targetStable) {
+      throw new Error("Local download target kept changing before replacement");
+    }
     assertNotCancelled();
     try {
       await fs.promises.rename(targetPath, backupPath);
@@ -269,6 +291,100 @@ async function promoteLocalTransfer(stagedPath, targetPath, options = {}) {
     await fs.promises.unlink(readyPath).catch(() => {});
     throw err;
   }
+}
+
+async function inspectLocalPromotionTarget(targetPath) {
+  const absoluteTargetPath = path.resolve(targetPath);
+  const visitedLinkStates = new Set();
+  let linkDepth = 0;
+  let currentRoot = path.parse(absoluteTargetPath).root;
+  let currentPath = currentRoot;
+  let pendingParts = absoluteTargetPath
+    .slice(currentRoot.length)
+    .split(path.sep)
+    .filter(Boolean);
+
+  while (pendingParts.length > 0) {
+    const nextPart = pendingParts.shift();
+    const candidatePath = path.join(currentPath, nextPart);
+    let targetLstat;
+    try {
+      targetLstat = await fs.promises.lstat(candidatePath);
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+      return {
+        promotionTargetPath: path.join(candidatePath, ...pendingParts),
+        existingMode: null,
+        targetIdentity: "missing",
+      };
+    }
+
+    if (targetLstat.isSymbolicLink()) {
+      linkDepth += 1;
+      const linkState = `${candidatePath}\0${pendingParts.join("\0")}`;
+      if (linkDepth > 40 || visitedLinkStates.has(linkState)) {
+        const error = new Error(`Local download target contains a symbolic-link loop: ${targetPath}`);
+        error.code = "ELOOP";
+        throw error;
+      }
+      visitedLinkStates.add(linkState);
+      const linkTarget = await fs.promises.readlink(candidatePath);
+      const resolvedLinkTarget = path.resolve(path.dirname(candidatePath), linkTarget);
+      currentRoot = path.parse(resolvedLinkTarget).root;
+      currentPath = currentRoot;
+      pendingParts = resolvedLinkTarget
+        .slice(currentRoot.length)
+        .split(path.sep)
+        .filter(Boolean)
+        .concat(pendingParts);
+      continue;
+    }
+
+    if (pendingParts.length > 0) {
+      if (!targetLstat.isDirectory()) {
+        const error = new Error(`Local download target parent is not a directory: ${candidatePath}`);
+        error.code = "ENOTDIR";
+        throw error;
+      }
+      currentPath = candidatePath;
+      continue;
+    }
+
+    if (!targetLstat.isFile()) {
+      const error = new Error(`Local download target is not a regular file: ${candidatePath}`);
+      error.code = targetLstat.isDirectory() ? "EISDIR" : "EINVAL";
+      throw error;
+    }
+    return {
+      promotionTargetPath: candidatePath,
+      existingMode: targetLstat.mode & 0o7777,
+      targetIdentity: [
+        targetLstat.dev,
+        targetLstat.ino,
+        targetLstat.size,
+        targetLstat.mtimeMs,
+        targetLstat.ctimeMs,
+      ].join(":"),
+    };
+  }
+
+  const rootStat = await fs.promises.lstat(currentPath);
+  if (!rootStat.isFile()) {
+    const error = new Error(`Local download target is not a regular file: ${currentPath}`);
+    error.code = rootStat.isDirectory() ? "EISDIR" : "EINVAL";
+    throw error;
+  }
+  return {
+    promotionTargetPath: currentPath,
+    existingMode: rootStat.mode & 0o7777,
+    targetIdentity: [
+      rootStat.dev,
+      rootStat.ino,
+      rootStat.size,
+      rootStat.mtimeMs,
+      rootStat.ctimeMs,
+    ].join(":"),
+  };
 }
 
 // ── Transfer performance tuning ──────────────────────────────────────────────
@@ -1749,7 +1865,16 @@ async function downloadFileResumableFast(
   }
 }
 
-async function downloadFile(remotePath, localPath, client, fileSize, transfer, sendProgress, encoding = "utf-8") {
+async function downloadFile(
+  remotePath,
+  localPath,
+  client,
+  fileSize,
+  transfer,
+  sendProgress,
+  encoding = "utf-8",
+  runCancelablePreflight = async (operation) => operation(),
+) {
   if (isScpModeClient(client)) {
     transfer.pauseSupported = false;
     transfer.pauseUnavailableReason = "Pause is unavailable for SCP transfers";
@@ -1768,7 +1893,7 @@ async function downloadFile(remotePath, localPath, client, fileSize, transfer, s
   if (!sftp) throw new Error("SFTP client not ready");
   transfer.pauseSupported = Boolean(transfer.resumable);
   const initialSource = transfer.resumable
-    ? await client.stat(remotePath)
+    ? await runCancelablePreflight(() => client.stat(remotePath))
     : null;
 
   // Prefer an isolated SFTP channel so cancellation cannot kill the browse session.
@@ -1792,7 +1917,7 @@ async function downloadFile(remotePath, localPath, client, fileSize, transfer, s
             transfer,
             sendProgress,
           );
-          const latestSource = await client.stat(remotePath);
+          const latestSource = await runCancelablePreflight(() => client.stat(remotePath));
           assertSourceMetadataUnchanged(initialSource, latestSource, fileSize);
           releaseIsolatedDownloadChannel(client, fastSftp);
           return;
@@ -1849,7 +1974,7 @@ async function downloadFile(remotePath, localPath, client, fileSize, transfer, s
         if (transfer.cancelled) throw err;
         if (err?.noTransferFallback) throw err;
         if (err?.completedWithUnhealthyChannel) {
-          const latestSource = await client.stat(remotePath);
+          const latestSource = await runCancelablePreflight(() => client.stat(remotePath));
           assertSourceMetadataUnchanged(initialSource, latestSource, fileSize);
           return;
         }
@@ -1932,7 +2057,7 @@ async function downloadFile(remotePath, localPath, client, fileSize, transfer, s
     });
   });
   if (initialSource) {
-    const latestSource = await client.stat(remotePath);
+    const latestSource = await runCancelablePreflight(() => client.stat(remotePath));
     assertSourceMetadataUnchanged(initialSource, latestSource, fileSize);
   }
 }
@@ -2329,6 +2454,7 @@ async function startTransferNow(event, payload, onProgress) {
         transfer,
         sendProgress,
         resolveEncodingForRequest(sourceSftpId, sourceEncoding),
+        runCancelablePreflight,
       );
       if (
         isScpModeClient(client)
@@ -2349,7 +2475,24 @@ async function startTransferNow(event, payload, onProgress) {
           throw new Error(`Downloaded file size mismatch: expected ${fileSize}, got ${stagedStat.size}`);
         }
         if (transfer.cancelled) throw new Error("Transfer cancelled");
-        await promoteLocalTransfer(downloadTargetPath, targetPath, {
+        const {
+          promotionTargetPath,
+          existingMode,
+          targetIdentity,
+        } = await inspectLocalPromotionTarget(targetPath);
+        if (transfer.cancelled) throw new Error("Transfer cancelled");
+        await promoteLocalTransfer(downloadTargetPath, promotionTargetPath, {
+          existingMode,
+          async validateTarget() {
+            const latestTarget = await inspectLocalPromotionTarget(targetPath);
+            if (latestTarget.promotionTargetPath !== promotionTargetPath) {
+              throw new Error("Local download target changed before replacement");
+            }
+            if (latestTarget.targetIdentity !== targetIdentity) {
+              throw new Error("Local download target changed before replacement");
+            }
+            return latestTarget;
+          },
           assertNotCancelled() {
             if (transfer.cancelled) throw new Error("Transfer cancelled");
           },
@@ -2559,6 +2702,7 @@ async function startTransferNow(event, payload, onProgress) {
             transfer,
             downloadProgress,
             resolveEncodingForRequest(sourceSftpId, sourceEncoding),
+            runCancelablePreflight,
           );
           if (
             isScpModeClient(sourceClient)
