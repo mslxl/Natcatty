@@ -342,11 +342,16 @@ export function buildTransferPoolKey(input: {
   protocol?: string;
   sftpSudo?: boolean;
 }): string {
+  // Include endpoint identity whenever hostname is known so session-time
+  // hostname/port/username overrides do not share a pool with the vault host.
+  if (input.hostname) {
+    const port = input.port || 22;
+    const user = input.username || "root";
+    const protocol = input.protocol || "ssh";
+    const sudo = input.sftpSudo ? "sudo" : "nosudo";
+    const ep = `${input.hostname}:${port}:${user}:${protocol}:${sudo}`;
+    return input.hostId ? `host:${input.hostId}|ep:${ep}` : `ep:${ep}`;
+  }
   if (input.hostId) return `host:${input.hostId}`;
-  const host = input.hostname || "unknown";
-  const port = input.port || 22;
-  const user = input.username || "root";
-  const protocol = input.protocol || "ssh";
-  const sudo = input.sftpSudo ? "sudo" : "nosudo";
-  return `ep:${host}:${port}:${user}:${protocol}:${sudo}`;
+  return "ep:unknown:22:root:ssh:nosudo";
 }

@@ -1,5 +1,5 @@
 import type React from "react";
-import type { FileConflict, FileConflictAction, TransferTask, SftpFilenameEncoding } from "../../../domain/models";
+import type { FileConflict, FileConflictAction, Host, TransferTask, SftpFilenameEncoding } from "../../../domain/models";
 import type { UploadResult } from "../../../lib/uploadService";
 import type { DropEntry } from "../../../lib/sftpFileUtils";
 import type { SftpPane } from "./types";
@@ -23,6 +23,11 @@ export interface UseSftpExternalOperationsParams {
     options?: { forceReconnect?: boolean; connectionId?: string; tabId?: string },
   ) => Promise<string>;
   /**
+   * Per-tab connect-time host (includes session hostname/port/user overrides).
+   * Used so pooled stream uploads open the pinned browse endpoint.
+   */
+  resolveConnectedHost?: (tabId: string) => Host | "local" | null | undefined;
+  /**
    * FileZilla-style dedicated transfer sessions for bulk uploads.
    * When set, remote stream uploads prefer pool connections (1–2/host)
    * over the browse session so interactive listing stays responsive.
@@ -30,6 +35,7 @@ export interface UseSftpExternalOperationsParams {
   acquireTransferSession?: (
     hostId: string,
     transferId: string,
+    connectHost?: Host,
   ) => Promise<{ sftpId: string; release: () => void; discard: () => void }>;
   clearDirCacheEntry?: (connectionId: string, path: string) => void;
   useCompressedUpload?: boolean;

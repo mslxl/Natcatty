@@ -294,10 +294,19 @@ export const useSftpState = (
   );
 
   const acquireTransferSession = useCallback(
-    async (hostId: string, transferId: string) => {
-      const host = hosts.find((candidate) => candidate.id === hostId);
+    async (hostId: string, transferId: string, connectHost?: Host) => {
+      // Prefer the connect-time Host (terminal session overrides) so pooled
+      // uploads open the same endpoint as the browse tab, not the vault entry.
+      const host = connectHost && connectHost.id === hostId
+        ? connectHost
+        : hosts.find((candidate) => candidate.id === hostId);
       if (!host) {
         throw new Error(`Host not found for transfer session: ${hostId}`);
+      }
+      if (connectHost && connectHost.id !== hostId) {
+        throw new Error(
+          `Transfer connect host id mismatch: expected ${hostId}, got ${connectHost.id}`,
+        );
       }
       const poolKey = buildTransferPoolKey({
         hostId: host.id,
@@ -560,6 +569,7 @@ export const useSftpState = (
         },
       });
     },
+    resolveConnectedHost: (tabId) => connectedHostByTabIdRef.current.get(tabId) ?? null,
     acquireTransferSession,
     clearDirCacheEntry,
     useCompressedUpload: options?.useCompressedUpload,
