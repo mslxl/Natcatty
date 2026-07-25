@@ -24,14 +24,13 @@ const {
 } = require("./transferLimits.cjs");
 
 /**
- * Soft cap for concurrent-range pause drain. With 64×32KB (~2MB) in flight,
- * waiting for every outstanding range makes Pause feel stuck ("finishing current
- * step"). After this grace we acknowledge pause with the contiguous checkpoint;
- * leftover ranges keep settling under paused=true and never schedule new work.
+ * Soft cap for concurrent-range pause drain. Short grace lets already-finished
+ * range callbacks land so checkpointBytes is not always 0, without waiting for
+ * the full in-flight window (was multi-second "finish current step").
  */
-const PAUSE_RANGE_DRAIN_MS = 300;
-/** Cap stream drain / pending-open waits during pause (was 2000ms). */
-const PAUSE_STREAM_DRAIN_MS = 400;
+const PAUSE_RANGE_DRAIN_MS = 50;
+/** Cap stream drain / pending-open waits for non-concurrent (pipe) pauses. */
+const PAUSE_STREAM_DRAIN_MS = 80;
 
 /**
  * Verify a completed remote upload matches the expected byte count.
@@ -2091,10 +2090,12 @@ async function runPausableConcurrentRanges({
         if (active === 0) {
           return Promise.resolve();
         }
-        // Soft-drain: resolve after PAUSE_RANGE_DRAIN_MS even if some ranges are
-        // still in flight. Contiguous checkpoint never advances past holes, so
-        // resume stays safe; leftover ranges finish under paused=true without
-        // scheduling new work.
+        // Soft-drain: resolve after a short grace even if some ranges are still
+        // in flight. Contiguous checkpoint never advances past holes; leftover
+        // ranges finish under paused=true without scheduling new work.
+        if (PAUSE_RANGE_DRAIN_MS <= 0) {
+          return Promise.resolve();
+        }
         return new Promise((resolvePause) => {
           const entry = {
             resolve: resolvePause,
@@ -3665,35 +3666,38 @@ async function pauseTransfer(_event, payload) {
     if (!transfer.paused || transfer.pauseSuperseded) {
       return { success: false, reason: "Pause was superseded by resume" };
     }
-  }
-  if (transfer.writeStream?.pending) {
-    await new Promise((resolve) => {
-      const timer = setTimeout(resolve, PAUSE_STREAM_DRAIN_MS);
-      timer.unref?.();
-      transfer.writeStream.once?.('open', () => {
-        clearTimeout(timer);
-        resolve();
+    // Concurrent path already tracks contiguous durable bytes — do not spend
+    // hundreds of ms waiting for writeStream drain before acknowledging pause.
+  } else {
+    if (transfer.writeStream?.pending) {
+      await new Promise((resolve) => {
+        const timer = setTimeout(resolve, PAUSE_STREAM_DRAIN_MS);
+        timer.unref?.();
+        transfer.writeStream.once?.('open', () => {
+          clearTimeout(timer);
+          resolve();
+        });
       });
-    });
-  }
-  if (transfer.writeStream?.writableNeedDrain) {
-    await new Promise((resolve) => {
-      const timer = setTimeout(resolve, PAUSE_STREAM_DRAIN_MS);
-      timer.unref?.();
-      transfer.writeStream.once?.('drain', () => {
-        clearTimeout(timer);
-        resolve();
+    }
+    if (transfer.writeStream?.writableNeedDrain) {
+      await new Promise((resolve) => {
+        const timer = setTimeout(resolve, PAUSE_STREAM_DRAIN_MS);
+        timer.unref?.();
+        transfer.writeStream.once?.('drain', () => {
+          clearTimeout(timer);
+          resolve();
+        });
       });
-    });
-  }
-  if (
-    transfer.writeStream
-    && Number.isFinite(transfer.writeStream.bytesWritten)
-    && transfer.writeStream.bytesWritten < transfer.checkpointBytes
-  ) {
-    const deadline = Date.now() + PAUSE_STREAM_DRAIN_MS;
-    while (transfer.writeStream.bytesWritten < transfer.checkpointBytes && Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    if (
+      transfer.writeStream
+      && Number.isFinite(transfer.writeStream.bytesWritten)
+      && transfer.writeStream.bytesWritten < transfer.checkpointBytes
+    ) {
+      const deadline = Date.now() + PAUSE_STREAM_DRAIN_MS;
+      while (transfer.writeStream.bytesWritten < transfer.checkpointBytes && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
     }
   }
   try {

@@ -85,6 +85,8 @@ export const createUploadTaskCallbacks = ({
     const durableCheckpoint = Number.isFinite(Number(progress.checkpointBytes))
       ? Math.max(0, Math.trunc(Number(progress.checkpointBytes)))
       : progress.transferred;
+    // Only patch fingerprint/checkpoint while paused — do not keep animating
+    // high-water transferred after the user hit Pause.
     updateExternalUpload?.(taskId, {
       transferredBytes: progress.transferred,
       // Soft-drain high-water transferred must not become the resume offset.

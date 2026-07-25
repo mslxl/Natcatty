@@ -974,7 +974,15 @@ export const useSftpTransfers = ({
       commitPauseState((candidate) => ({ ...candidate, status: "paused" as TransferStatus, speed: 0 }));
       return;
     }
-    commitPauseState((candidate) => ({ ...candidate, status: "pausing" as TransferStatus }));
+    // Optimistic pause: flip UI immediately so the panel button does not look
+    // dead while the bridge soft-drains. Latch early so directory workers stop
+    // starting new files; roll back on hard bridge failure.
+    latchPause();
+    commitPauseState((candidate) => ({
+      ...candidate,
+      status: "paused" as TransferStatus,
+      speed: 0,
+    }));
     const isCompressedUpload = task.isDirectory && (
       task.fileName.endsWith(" (compressed)")
       || task.phase === "compressing"
@@ -1432,9 +1440,22 @@ export const useSftpTransfers = ({
         if (t.id !== taskId) return t;
 
         const merged: TransferTask = { ...t, ...updates };
+        const effectiveStatus = merged.status ?? t.status;
+        const isPausedUi = effectiveStatus === "paused" || effectiveStatus === "pausing";
 
         // Keep progress monotonic and bounded for stable progress UI.
-        if (typeof merged.totalBytes === "number" && merged.totalBytes > 0) {
+        // While paused, freeze visible transferred/speed so soft-drain tail
+        // progress does not make Pause look ignored.
+        if (isPausedUi) {
+          merged.transferredBytes = t.transferredBytes;
+          merged.speed = 0;
+          if (Number.isFinite(Number(updates.checkpointBytes))) {
+            merged.checkpointBytes = Math.max(
+              t.checkpointBytes ?? 0,
+              Math.trunc(Number(updates.checkpointBytes)),
+            );
+          }
+        } else if (typeof merged.totalBytes === "number" && merged.totalBytes > 0) {
           merged.transferredBytes = Math.max(
             t.transferredBytes,
             Math.min(merged.transferredBytes, merged.totalBytes),
@@ -1616,8 +1637,11 @@ export const useSftpTransfers = ({
     ],
   );
 
+  // Only work that is still moving or queued — paused rows must not keep the
+  // header "N active" lit or pause feels like it did nothing.
   const activeTransfersCount = useMemo(() => transfers.filter(
-    (t) => !(["completed", "cancelled"] as TransferStatus[]).includes(t.status) && !t.parentTaskId,
+    (t) => !t.parentTaskId
+      && ["pending", "queued", "transferring", "pausing"].includes(t.status),
   ).length, [transfers]);
 
   const downloadToLocal = useCallback(

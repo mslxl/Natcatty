@@ -261,15 +261,15 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
           if (task?.ownerId === "dedicated-resume" && task.reconnectRequired) {
             return;
           }
-          // Immediate UI feedback while the backend drains in-flight ranges.
-          if (task && ["transferring", "pending", "queued"].includes(task.status)) {
+          // Optimistic pause — UI must flip immediately; soft-drain finishes in bg.
+          if (task && ["transferring", "pending", "queued", "pausing"].includes(task.status)) {
             tasks = tasks.map((candidate) => (
               candidate.id === taskId || candidate.parentTaskId === taskId
                 ? {
                   ...candidate,
-                  status: (["completed", "cancelled", "failed", "paused"].includes(candidate.status)
+                  status: (["completed", "cancelled", "failed"].includes(candidate.status)
                     ? candidate.status
-                    : "pausing") as TransferTask["status"],
+                    : "paused") as TransferTask["status"],
                   speed: 0,
                 }
                 : candidate
@@ -351,7 +351,14 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
           const revertIds = new Set([taskId, ...pauseIds]);
           tasks = tasks.map((candidate) => {
             if (!revertIds.has(candidate.id)) return candidate;
-            if (candidate.status !== "pausing" && candidate.id !== taskId) return candidate;
+            // Optimistic pause paints "paused" immediately — roll that back too.
+            if (
+              candidate.status !== "pausing"
+              && candidate.status !== "paused"
+              && candidate.id !== taskId
+            ) {
+              return candidate;
+            }
             return {
               ...candidate,
               status: "transferring" as const,

@@ -298,9 +298,12 @@ export function useSftpDirectoryTransferOps({
                     incomingCheckpoint: checkpoint?.checkpointBytes,
                     status: t.status,
                   });
+                  const isPausedUi = t.status === "paused" || t.status === "pausing";
                   return {
                     ...t,
-                    transferredBytes: normalizedTransferred,
+                    // Freeze visible progress while paused so soft-drain tail
+                    // writes do not look like "pause did nothing".
+                    transferredBytes: isPausedUi ? t.transferredBytes : normalizedTransferred,
                     checkpointBytes: durableCheckpoint,
                     resumeStage: checkpoint?.resumeStage ?? t.resumeStage,
                     downloadCheckpointBytes: checkpoint?.downloadCheckpointBytes ?? t.downloadCheckpointBytes,
@@ -313,7 +316,7 @@ export function useSftpDirectoryTransferOps({
                       ? checkpoint.pauseUnavailableReason
                       : t.pauseUnavailableReason,
                     totalBytes: normalizedTotal,
-                    speed: Number.isFinite(speed) && speed > 0 ? speed : 0,
+                    speed: isPausedUi ? 0 : (Number.isFinite(speed) && speed > 0 ? speed : 0),
                   };
                 }),
               );
