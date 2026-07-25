@@ -5,6 +5,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  createPinnedReconnectSideResolver,
   openSftpWithSessionPreference,
   resolvePinnedReconnectSide,
 } from "./useSftpConnections.ts";
@@ -100,4 +101,26 @@ test("resolvePinnedReconnectSide follows a tab moved to the other side", () => {
     () => resolvePinnedReconnectSide("left", "gone", [], []),
     /SFTP tab is no longer available/,
   );
+});
+
+test("pinned reconnect side resolver follows moves across async boundaries", async () => {
+  let leftTabs: ReadonlyArray<{ id: string }> = [{ id: "tab-1" }];
+  let rightTabs: ReadonlyArray<{ id: string }> = [];
+  const resolveSide = createPinnedReconnectSideResolver(
+    "left",
+    "tab-1",
+    () => leftTabs,
+    () => rightTabs,
+  );
+
+  assert.equal(resolveSide(), "left");
+
+  await Promise.resolve();
+  leftTabs = [];
+  rightTabs = [{ id: "tab-1" }];
+
+  assert.equal(resolveSide(), "right");
+
+  rightTabs = [];
+  assert.equal(resolveSide(), "right");
 });
