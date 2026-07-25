@@ -43,3 +43,27 @@ test("protocol select dialog restores host label and shared protocol visuals", (
   assert.match(markup, /lucide-link-2/);
   assert.match(markup, /lucide-terminal/);
 });
+
+test("plugin protocol hosts default to the plugin provider when optional built-in protocols exist", () => {
+  const providerId = "com.example.transport.connection";
+  const markup = renderToStaticMarkup(
+    <I18nProvider locale="en">
+      <ProtocolSelectDialog
+        host={host({
+          protocol: `plugin:${providerId}`,
+          pluginConnection: {
+            providerId,
+            configuration: { endpoint: "opaque-target" },
+          },
+          protocols: [{ protocol: "telnet", port: 2323, enabled: true }],
+          telnetEnabled: true,
+        })}
+        onSelect={() => undefined}
+        onCancel={() => undefined}
+      />
+    </I18nProvider>,
+  );
+
+  assert.ok(markup.indexOf(providerId) < markup.indexOf(">Telnet<"));
+  assert.match(markup, new RegExp(`border-primary bg-primary/5[^>]*>[\\s\\S]*${providerId}`));
+});

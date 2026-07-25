@@ -73,6 +73,19 @@ test('plugin importer rejects unknown host protocols instead of persisting an un
   assert.deepEqual(result.errors, ['Importer returned an invalid host draft.']);
 });
 
+test('plugin importer rejects overlong host protocols before draft spreading', () => {
+  const result = normalizePluginImporterRecords([{ type: 'draft', draft: {
+    kind: 'host',
+    value: {
+      label: 'Overlong transport',
+      hostname: 'host.test',
+      protocol: 'plugin:'.concat('a'.repeat(193)),
+    },
+  } }]);
+  assert.deepEqual(result.hosts, []);
+  assert.deepEqual(result.errors, ['Importer returned an invalid host draft.']);
+});
+
 test('plugin importer remaps provider-local key and identity references into host-owned IDs', () => {
   const result = normalizePluginImporterRecords([
     { type: 'draft', draft: { kind: 'key', value: {

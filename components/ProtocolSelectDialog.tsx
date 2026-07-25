@@ -32,6 +32,17 @@ const ProtocolSelectDialog: React.FC<ProtocolSelectDialogProps> = ({
 
   const protocolOptions = useMemo<ProtocolOption[]>(() => {
     const options: ProtocolOption[] = [];
+    const pluginOption = isPluginHostProtocol(host.protocol) && host.pluginConnection
+      ? {
+        protocol: host.protocol,
+        port: host.port || 22,
+        label: host.pluginConnection.providerId,
+        description: host.pluginConnection.providerId,
+        enabled: true,
+      } satisfies ProtocolOption
+      : null;
+
+    if (pluginOption) options.push(pluginOption);
 
     const sshEnabled =
       host.protocol === "ssh" ||
@@ -80,16 +91,6 @@ const ProtocolSelectDialog: React.FC<ProtocolSelectDialogProps> = ({
         port: telnetConfig?.port || host.telnetPort || 23,
         label: "Telnet",
         description: `telnet ${host.hostname}`,
-        enabled: true,
-      });
-    }
-
-    if (isPluginHostProtocol(host.protocol) && host.pluginConnection) {
-      options.push({
-        protocol: host.protocol,
-        port: host.port || 22,
-        label: host.pluginConnection.providerId,
-        description: host.pluginConnection.providerId,
         enabled: true,
       });
     }

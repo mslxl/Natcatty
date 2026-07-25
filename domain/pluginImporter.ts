@@ -109,7 +109,9 @@ const stringArray = (value: JsonValue | undefined, maximumItems = 128): string[]
 const normalizeHost = (value: JsonValue): Host | null => {
   const object = asObject(value);
   if (!object) return null;
-  const protocolValue = stringValue(object.protocol, 192);
+  const hasProtocol = Object.prototype.hasOwnProperty.call(object, 'protocol');
+  const protocolValue = hasProtocol ? stringValue(object.protocol, 192) : undefined;
+  if (hasProtocol && !protocolValue) return null;
   if (protocolValue && !isBuiltInHostProtocol(protocolValue) && !isPluginHostProtocol(protocolValue)) return null;
   const protocol = protocolValue as Host['protocol'] | undefined;
   const pluginProtocol = isPluginHostProtocol(protocol);
@@ -119,8 +121,9 @@ const normalizeHost = (value: JsonValue): Host | null => {
   const hostname = stringValue(object.hostname, 1024) ?? (pluginProtocol ? providerId : undefined);
   const label = stringValue(object.label, 512) ?? hostname;
   if (!hostname || !label) return null;
+  const { protocol: _unsafeProtocol, ...hostFields } = structuredClone(object);
   const draft = {
-    ...structuredClone(object),
+    ...hostFields,
     id: crypto.randomUUID(),
     label,
     hostname,
