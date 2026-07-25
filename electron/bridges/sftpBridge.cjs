@@ -56,8 +56,9 @@ const rendererSftpSourceSessions = new Map();
 // Storage for jump host connections that need to be cleaned up
 const jumpConnectionsMap = new Map(); // connId -> { connections: SSHClient[], socket: stream }
 
-// Storage for active SFTP uploads that can be cancelled
-const activeSftpUploads = new Map(); // transferId -> { cancelled: boolean, stream: Readable }
+// Storage for active buffer uploads that can be cancelled (writeBinaryWithProgress).
+// Bulk panel transfers cancel via transferBridge; this map is only the buffer path.
+const activeSftpUploads = new Map(); // transferId -> { cancelled: boolean, transfer?: { cancelled, abort } }
 
 // Track requested/resolved filename encoding per SFTP session
 const sftpEncodingState = new Map(); // stateKey -> { requested: 'auto'|'utf-8'|'gb18030', resolved: 'utf-8'|'gb18030' }

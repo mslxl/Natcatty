@@ -3,8 +3,8 @@
 /**
  * Session-backed SFTP clients (openForSession / terminal reuse) are not
  * ssh2-sftp-client instances. They must still expose pipelined fastPut so
- * uploadLocal / writeSftpBinaryWithProgress do not throw after serial put
- * was removed (#2449 fail-closed alignment).
+ * uploadLocal / writeSftpBinaryWithProgress stay on the high-throughput path
+ * (#2449 fail-closed alignment; no serial WriteStream crawl).
  */
 
 const test = require("node:test");
