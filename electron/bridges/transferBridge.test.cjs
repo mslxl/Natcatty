@@ -3625,6 +3625,15 @@ test("server-to-server concurrent failure does not complete via serial stream", 
   t.after(async () => { await fs.promises.unlink(localStage).catch(() => {}); });
 
   let secondWriteCallback = null;
+  let thirdWriteCompleted = false;
+  let secondWriteFailureScheduled = false;
+  const scheduleSecondWriteFailure = () => {
+    if (secondWriteFailureScheduled || !thirdWriteCompleted || !secondWriteCallback) return;
+    secondWriteFailureScheduled = true;
+    const callback = secondWriteCallback;
+    secondWriteCallback = null;
+    queueMicrotask(() => callback(new Error("second range failed")));
+  };
   let remoteBytes = 0;
   let createWriteStreamCalls = 0;
   const fastSftp = createFastSftp({
@@ -3634,12 +3643,14 @@ test("server-to-server concurrent failure does not complete via serial stream", 
     write(_handle, _buffer, _offset, length, position, callback) {
       if (position === 32 * 1024) {
         secondWriteCallback = callback;
+        scheduleSecondWriteFailure();
         return;
       }
       remoteBytes = Math.max(remoteBytes, position + length);
       callback(null);
       if (position === 2 * 32 * 1024) {
-        queueMicrotask(() => secondWriteCallback(new Error("second range failed")));
+        thirdWriteCompleted = true;
+        scheduleSecondWriteFailure();
       }
     },
     close(_handle, callback) {
