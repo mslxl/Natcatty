@@ -222,6 +222,7 @@ async function promoteLocalTransfer(stagedPath, targetPath, options = {}) {
   let preparedPath = stagedPath;
   let backedUp = false;
   let published = false;
+  let publishedIdentity = null;
   try {
     assertNotCancelled();
     try {
@@ -331,6 +332,13 @@ async function promoteLocalTransfer(stagedPath, targetPath, options = {}) {
       }
     }
     assertNotCancelled();
+    // Capture identity of the ready file before publish so rollback can refuse
+    // to clobber a concurrent replacement of the published target.
+    try {
+      publishedIdentity = stableLocalFileIdentity(await fs.promises.lstat(readyPath));
+    } catch {
+      publishedIdentity = null;
+    }
     await fs.promises.rename(readyPath, targetPath);
     published = true;
     assertNotCancelled();
@@ -339,18 +347,69 @@ async function promoteLocalTransfer(stagedPath, targetPath, options = {}) {
     if (stagedPath !== readyPath) await fs.promises.unlink(stagedPath).catch(() => {});
   } catch (err) {
     let restoreError = null;
-    if (backedUp) {
-      if (published) await fs.promises.unlink(targetPath).catch(() => {});
+    if (err?.leaveConcurrentTarget) {
+      // Caller already decided not to touch a concurrent target/backup pair.
+    } else if (backedUp) {
+      let targetMatchesPublished = false;
+      let targetMissing = false;
       try {
-        await fs.promises.rename(backupPath, targetPath);
-      } catch (recoveryErr) {
-        restoreError = recoveryErr;
+        const targetStat = await fs.promises.lstat(targetPath);
+        targetMatchesPublished = !!(
+          published
+          && publishedIdentity
+          && stableLocalFileIdentity(targetStat) === publishedIdentity
+        );
+      } catch (statErr) {
+        if (statErr?.code === "ENOENT") targetMissing = true;
+        else restoreError = statErr;
+      }
+      if (!restoreError) {
+        if (published && !targetMissing && !targetMatchesPublished) {
+          // Concurrent writer replaced our published file — keep both.
+          err.leaveConcurrentTarget = true;
+          err.remoteBackupPath = backupPath;
+          backedUp = false;
+        } else {
+          if (published && targetMatchesPublished) {
+            await fs.promises.unlink(targetPath).catch(() => {});
+          }
+          if (targetMissing || targetMatchesPublished || !published) {
+            try {
+              // Only restore when the path is free or still holds our publish.
+              if (!published) {
+                let occupied = false;
+                try {
+                  await fs.promises.lstat(targetPath);
+                  occupied = true;
+                } catch (occErr) {
+                  if (occErr?.code !== "ENOENT") throw occErr;
+                }
+                if (occupied) {
+                  err.leaveConcurrentTarget = true;
+                  err.remoteBackupPath = backupPath;
+                  backedUp = false;
+                } else {
+                  await fs.promises.rename(backupPath, targetPath);
+                  backedUp = false;
+                }
+              } else {
+                await fs.promises.rename(backupPath, targetPath);
+                backedUp = false;
+              }
+            } catch (recoveryErr) {
+              restoreError = recoveryErr;
+            }
+          }
+        }
       }
     } else if (published) {
       try {
-        await fs.promises.unlink(targetPath);
+        const targetStat = await fs.promises.lstat(targetPath);
+        if (publishedIdentity && stableLocalFileIdentity(targetStat) === publishedIdentity) {
+          await fs.promises.unlink(targetPath);
+        }
       } catch (recoveryErr) {
-        restoreError = recoveryErr;
+        if (recoveryErr?.code !== "ENOENT") restoreError = recoveryErr;
       }
     }
     if (restoreError) {

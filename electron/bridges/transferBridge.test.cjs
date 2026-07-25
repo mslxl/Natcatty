@@ -5207,6 +5207,57 @@ test("local promotion does not clobber a target recreated after backup", async (
   assert.deepEqual(await fs.promises.readFile(path.join(tempDir, backupName)), original);
 });
 
+test("local promotion rollback does not clobber a concurrent post-publish target", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-local-promo-postpub-"));
+  t.after(async () => {
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const stagedPath = path.join(tempDir, "download.staged");
+  const targetPath = path.join(tempDir, "target.bin");
+  const original = Buffer.from("original-target-content");
+  const concurrent = Buffer.from("post-publish-concurrent");
+  const downloaded = Buffer.from("downloaded-replacement");
+  await fs.promises.writeFile(targetPath, original);
+  await fs.promises.writeFile(stagedPath, downloaded);
+  const originalStat = await fs.promises.lstat(targetPath);
+
+  await assert.rejects(
+    () => transferBridge._promoteLocalTransferForTests(stagedPath, targetPath, {
+      async validateTarget() {
+        return {
+          existingMode: null,
+          stableIdentity: transferBridge._stableLocalFileIdentityForTests(originalStat),
+          targetIdentity: [
+            originalStat.dev,
+            originalStat.ino,
+            originalStat.size,
+            originalStat.mtimeMs,
+            originalStat.ctimeMs,
+          ].join(":"),
+        };
+      },
+      assertNotCancelled() {
+        // After ready is published onto targetPath, simulate concurrent replace + cancel.
+        try {
+          if (fs.readFileSync(targetPath).equals(downloaded)) {
+            fs.writeFileSync(targetPath, concurrent);
+            throw new Error("Transfer cancelled");
+          }
+        } catch (err) {
+          if (String(err.message || err).includes("cancelled")) throw err;
+        }
+      },
+    }),
+    /cancelled/i,
+  );
+
+  assert.deepEqual(await fs.promises.readFile(targetPath), concurrent);
+  const backupName = (await fs.promises.readdir(tempDir)).find((name) => name.includes(".backup"));
+  assert.ok(backupName, "original should remain in backup");
+  assert.deepEqual(await fs.promises.readFile(path.join(tempDir, backupName)), original);
+});
+
 test("local promotion succeeds when backup still matches validated identity", async (t) => {
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-local-promo-ok-"));
   t.after(async () => {
