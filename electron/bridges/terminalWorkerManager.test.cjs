@@ -230,6 +230,7 @@ test("external sessions reuse worker output routing and propagate input, resize,
 test("external input failures close both the worker route and its provider lifecycle", async () => {
   const child = new FakeChild();
   const observed = [];
+  const inputs = [];
   const manager = createTerminalWorkerManager({
     utilityProcess: { fork: () => child },
     electronModule: {
@@ -247,7 +248,10 @@ test("external input failures close both the worker route and its provider lifec
     columns: 80,
     rows: 24,
     protocol: "plugin:example.transport",
-    async onInput() { throw new Error("provider input failed"); },
+    async onInput(data) {
+      inputs.push(data);
+      throw new Error("provider input failed");
+    },
     onClose: (reason) => observed.push(reason),
   });
   const startRequest = child.messages.at(-1);
@@ -264,14 +268,80 @@ test("external input failures close both the worker route and its provider lifec
     event: "input",
     data: "hello",
   });
+  child.emit("message", {
+    kind: "external-session-event",
+    sessionId: "plugin-input-error",
+    event: "input",
+    data: "late",
+  });
   await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(inputs, ["hello"]);
   const finishRequest = child.messages.at(-1);
   assert.equal(finishRequest.channel, "netcatty:external:finish");
   assert.equal(finishRequest.payload.reason, "error");
   child.emit("message", { kind: "response", requestId: finishRequest.requestId, result: null });
   await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(inputs, ["hello"]);
   assert.deepEqual(observed, ["input-error"]);
   await assert.rejects(manager.pushExternalOutput("plugin-input-error", "late"), /not registered/i);
+});
+
+test("external session input waits for prior plugin writes before accepting more input", async () => {
+  const child = new FakeChild();
+  const observed = [];
+  let releaseFirst;
+  const firstWrite = new Promise((resolve) => { releaseFirst = resolve; });
+  const manager = createTerminalWorkerManager({
+    utilityProcess: { fork: () => child },
+    electronModule: {
+      webContents: {
+        fromId(id) {
+          return { id, isDestroyed: () => false, once() {}, removeListener() {}, send() {} };
+        },
+      },
+    },
+    workerScriptPath: "/worker.cjs",
+  });
+  const started = manager.startExternalSession({
+    sessionId: "plugin-input-chain",
+    webContentsId: 7,
+    columns: 80,
+    rows: 24,
+    protocol: "plugin:example.transport",
+    async onInput(data) {
+      observed.push(data);
+      if (data === "first") await firstWrite;
+    },
+  });
+  const startRequest = child.messages.at(-1);
+  child.emit("message", {
+    kind: "response",
+    requestId: startRequest.requestId,
+    result: { sessionId: "plugin-input-chain" },
+    sessionGeneration: 0,
+  });
+  await started;
+
+  child.emit("message", {
+    kind: "external-session-event",
+    sessionId: "plugin-input-chain",
+    event: "input",
+    data: "first",
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  child.emit("message", {
+    kind: "external-session-event",
+    sessionId: "plugin-input-chain",
+    event: "input",
+    data: "second",
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(observed, ["first"]);
+
+  releaseFirst();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(observed, ["first", "second"]);
+  assert.equal(child.messages.some((message) => message.channel === "netcatty:external:finish"), false);
 });
 
 test("session ownership listeners finish before buffered output is released", async () => {

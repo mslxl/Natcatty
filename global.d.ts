@@ -318,11 +318,22 @@ declare global {
     progress: Extract<import("@netcatty/plugin-contract").ImporterRecord, { type: "progress" }>;
   }
 
-  interface NetcattyPluginAuthenticationChallengeEvent {
+  interface NetcattyPluginAuthenticationChallengeOpenEvent {
     requestId: string;
     challengeRequestId: string;
     challenge: import("@netcatty/plugin-contract").AuthenticationChallenge;
   }
+
+  interface NetcattyPluginAuthenticationChallengeCancelEvent {
+    requestId: string;
+    challengeRequestId: string;
+    challengeId?: string;
+    cancelled: true;
+  }
+
+  type NetcattyPluginAuthenticationChallengeEvent =
+    | NetcattyPluginAuthenticationChallengeOpenEvent
+    | NetcattyPluginAuthenticationChallengeCancelEvent;
 
   interface NetcattyBridge {
     getPluginRuntimeStatus?(): Promise<NetcattyPluginRuntimeStatus>;

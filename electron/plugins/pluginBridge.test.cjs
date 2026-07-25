@@ -608,6 +608,71 @@ test("plugin connection authentication uses host-rendered sender-owned challenge
   assert.deepEqual(external[1], ["output", "session-auth-1", "€"]);
 });
 
+test("plugin authentication cancellation removes the queued renderer challenge", async () => {
+  const ipcMain = createIpcMain();
+  const sent = [];
+  const external = [];
+  registerPluginBridge(ipcMain, {
+    manager: { initialize: async () => {} },
+    extensionProviderService: {
+      async authenticate(_params, requestChallenge) {
+        await requestChallenge({
+          id: "password-cancel",
+          kind: "password",
+          title: "Password",
+        });
+        throw new Error("authentication should not continue after cancellation");
+      },
+      async openConnection() {
+        throw new Error("connection should not open after cancellation");
+      },
+      closeSessionLocal(sessionId) { external.push(["close-local", sessionId]); },
+    },
+    getTerminalWorkerManager: () => ({
+      async startExternalSession(options) { external.push(["start", options.sessionId]); return { sessionId: options.sessionId }; },
+      async finishExternalSession(sessionId, details) { external.push(["finish", sessionId, details.reason]); },
+    }),
+    env: { NETCATTY_PLUGIN_DEV: "1" },
+    isTrustedSender: () => true,
+  });
+  const event = {
+    sender: {
+      id: 76,
+      once() {},
+      isDestroyed: () => false,
+      send(channel, payload) { sent.push([channel, payload]); },
+    },
+  };
+  const pending = ipcMain.handlers.get(CHANNELS.connectionStart)(event, {
+    requestId: "connection-auth-cancel-1",
+    sessionId: "session-auth-cancel-1",
+    providerId: "com.example.transport.connection",
+    authenticationProviderId: "com.example.transport.authentication",
+    configuration: { host: "example.test" },
+    hostLabel: "Example transport",
+    hostname: "example.test",
+    columns: 80,
+    rows: 24,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0][0], CHANNELS.authenticationChallenge);
+  const challengeEvent = sent[0][1];
+
+  assert.equal(await ipcMain.handlers.get(CHANNELS.extensionCancel)(event, {
+    requestId: "connection-auth-cancel-1",
+  }), true);
+  await assert.rejects(pending, /abort|cancel/i);
+
+  assert.deepEqual(sent[1], [CHANNELS.authenticationChallenge, {
+    requestId: "connection-auth-cancel-1",
+    challengeRequestId: challengeEvent.challengeRequestId,
+    challengeId: "password-cancel",
+    cancelled: true,
+  }]);
+  assert.deepEqual(external.at(-1), ["finish", "session-auth-cancel-1", "error"]);
+});
+
 test("plugin connection status monitoring releases readiness then keeps polling later failures", async () => {
   const ipcMain = createIpcMain();
   const statusCalls = [];

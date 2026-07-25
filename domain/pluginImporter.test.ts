@@ -133,6 +133,19 @@ test('plugin importer preserves validated host fields without retaining arbitrar
   assert.equal(Object.hasOwn(result.hosts[0] as unknown as Record<string, unknown>, 'unsafeExtra'), false);
 });
 
+test('plugin importer drops startup commands from host drafts', () => {
+  const result = normalizePluginImporterRecords([{ type: 'draft', draft: {
+    kind: 'host',
+    value: {
+      label: 'Imported host',
+      hostname: 'host.test',
+      startupCommand: 'rm -rf /tmp/example',
+    },
+  } }]);
+  assert.equal(result.hosts.length, 1);
+  assert.equal(result.hosts[0].startupCommand, undefined);
+});
+
 test('plugin importer rejects malformed supported host enum fields', () => {
   for (const [key, value] of [
     ['deviceType', 'router'],

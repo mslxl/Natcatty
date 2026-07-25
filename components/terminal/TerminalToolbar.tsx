@@ -202,7 +202,7 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
   const encodingSwitchSupported = !isLocalTerminal && !isMoshSession && !isEtSession && !isPluginConnection;
   const hidesSftp = isLocalTerminal || isSerialTerminal || isPluginConnection;
   const historySupported =
-    !!onOpenHistory && !isLocalTerminal && !isSerialTerminal && host?.protocol !== 'telnet';
+    !!onOpenHistory && !isLocalTerminal && !isSerialTerminal && !isPluginConnection && host?.protocol !== 'telnet';
   const unavailableYmodemSendLabel = `${t('terminal.toolbar.sendYmodem')} - ${t('terminal.toolbar.availableAfterConnect')}`;
   const unavailableYmodemReceiveLabel = `${t('terminal.toolbar.receiveYmodem')} - ${t('terminal.toolbar.availableAfterConnect')}`;
 

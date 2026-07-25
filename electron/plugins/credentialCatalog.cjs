@@ -51,6 +51,12 @@ class PluginCredentialCatalog {
     if (!Array.isArray(entries) || entries.length > MAX_CREDENTIAL_CATALOG_ENTRIES) {
       throw new PluginRpcError(RPC_ERRORS.invalidArgument, "Vault credential catalog is invalid or too large");
     }
+    try {
+      this.#assertAvailable();
+    } catch (error) {
+      this.records.clear();
+      throw error;
+    }
     const next = new Map();
     for (const entry of entries) {
       if (!entry || typeof entry !== "object" || Array.isArray(entry)

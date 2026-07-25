@@ -294,8 +294,21 @@ function registerPluginBridge(ipcMain, options) {
     const challenges = authenticationChallengeMap(event.sender);
     const challengeRequestId = randomUUID();
     return new Promise((resolve, reject) => {
+      const sendCancellation = () => {
+        try {
+          event.sender.send(CHANNELS.authenticationChallenge, {
+            requestId,
+            challengeRequestId,
+            challengeId: challenge.id,
+            cancelled: true,
+          });
+        } catch {}
+      };
       const onAbort = () => {
-        if (challenges.delete(challengeRequestId)) reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+        if (!challenges.delete(challengeRequestId)) return;
+        signal?.removeEventListener?.("abort", onAbort);
+        sendCancellation();
+        reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
       };
       const finish = (callback, value) => {
         signal?.removeEventListener?.("abort", onAbort);

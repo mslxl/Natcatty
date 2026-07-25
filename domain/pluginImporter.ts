@@ -180,7 +180,6 @@ const normalizeHost = (value: JsonValue): Host | null => {
     identityFileId: optionalStringValue(object, 'identityFileId', 256),
     telnetIdentityId: optionalStringValue(object, 'telnetIdentityId', 256),
     notes: optionalStringValue(object, 'notes', 65_536),
-    startupCommand: optionalStringValue(object, 'startupCommand', 65_536),
     telnetUsername: optionalStringValue(object, 'telnetUsername', 512),
     telnetPassword: optionalStringValue(object, 'telnetPassword', 65_536),
     theme: optionalStringValue(object, 'theme', 256),

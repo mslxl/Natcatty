@@ -37,18 +37,32 @@ test("Vault credential catalog keeps only encrypted opaque references and decryp
 });
 
 test("Vault credential catalog fails closed when secure storage is unavailable", async () => {
+  let encryptionAvailable = true;
+  let backend = "keychain";
   const catalog = new PluginCredentialCatalog({
     safeStorage: {
-      isEncryptionAvailable: () => false,
-      getSelectedStorageBackend: () => "basic_text",
+      isEncryptionAvailable: () => encryptionAvailable,
+      getSelectedStorageBackend: () => backend,
+      decryptString: (value) => value.toString().replace(/^cipher:/u, ""),
     },
   });
-  catalog.update([{
+  const entry = {
     id: "credential-reference-0001",
     ciphertext: encrypted("secret"),
-  }]);
+  };
+  assert.equal(catalog.update([entry]), 1);
+  backend = "basic_text";
+  assert.throws(() => catalog.update([entry]), /unavailable/i);
+  await assert.rejects(
+    catalog.assertReference({ kind: "credential", id: "credential-reference-0001" }),
+    /not found/i,
+  );
+
+  backend = "keychain";
+  encryptionAvailable = false;
+  assert.throws(() => catalog.update([entry]), /unavailable/i);
   await assert.rejects(
     catalog.resolve({ kind: "credential", id: "credential-reference-0001" }),
-    /unavailable/i,
+    /unavailable|not found/i,
   );
 });

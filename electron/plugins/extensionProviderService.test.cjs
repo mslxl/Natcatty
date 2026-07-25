@@ -181,6 +181,37 @@ test("connection terminal input is chunked within the negotiated stream window",
   assert.equal(h.writes[2][1].byteLength, 3);
 });
 
+test("importer detection trims raw samples to the bounded JSON payload budget", async () => {
+  const maxProviderJsonBytes = 128 * 1024;
+  let seenPayload;
+  const h = fixture({
+    async request({ params }) {
+      seenPayload = params.payload;
+      return {
+        requestId: params.requestId,
+        status: "ok",
+        result: { confidence: 0.75, format: "json" },
+      };
+    },
+  });
+  const sample = Buffer.alloc(maxProviderJsonBytes, 0x61);
+
+  assert.deepEqual(await h.service.detectImporter({
+    providerId: "com.example.transport.importer",
+    fileName: "vault-export.json",
+    mediaType: "application/json",
+    sample,
+  }), { confidence: 0.75, format: "json" });
+
+  assert.ok(seenPayload);
+  assert.equal(seenPayload.fileName, "vault-export.json");
+  assert.equal(seenPayload.mediaType, "application/json");
+  assert.ok(Buffer.byteLength(JSON.stringify(seenPayload), "utf8") <= maxProviderJsonBytes);
+  const decoded = Buffer.from(seenPayload.sample.data, "base64");
+  assert.ok(decoded.byteLength > 0);
+  assert.ok(decoded.byteLength < sample.byteLength);
+});
+
 test("connection controls preserve host-owned connection and operation identities", async () => {
   let h;
   const controls = [];

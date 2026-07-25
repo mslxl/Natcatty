@@ -18,6 +18,7 @@ import { Label } from '../ui/label';
 
 type ChallengeEvent = NetcattyPluginAuthenticationChallengeEvent;
 type ChallengeResponse = string | boolean | ReadonlyArray<string>;
+type ActiveChallengeEvent = Extract<ChallengeEvent, { challenge: AuthenticationChallenge }>;
 
 const challengeMessage = (challenge: AuthenticationChallenge): string | undefined => (
   'message' in challenge && typeof challenge.message === 'string' ? challenge.message : undefined
@@ -25,7 +26,7 @@ const challengeMessage = (challenge: AuthenticationChallenge): string | undefine
 
 export const PluginAuthenticationHost: React.FC = () => {
   const { t } = useI18n();
-  const [queue, setQueue] = useState<ChallengeEvent[]>([]);
+  const [queue, setQueue] = useState<ActiveChallengeEvent[]>([]);
   const [textValue, setTextValue] = useState('');
   const [selectedChoices, setSelectedChoices] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
@@ -35,6 +36,9 @@ export const PluginAuthenticationHost: React.FC = () => {
   useEffect(() => {
     return pluginExtensionBridge.onAuthenticationChallenge((event) => {
       setQueue((existing) => {
+        if ('cancelled' in event && event.cancelled === true) {
+          return existing.filter((item) => item.challengeRequestId !== event.challengeRequestId);
+        }
         if (existing.some((item) => item.challengeRequestId === event.challengeRequestId)) return existing;
         if (existing.length >= 32) {
           void pluginExtensionBridge.respondAuthenticationChallenge({

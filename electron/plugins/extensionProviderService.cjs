@@ -70,6 +70,27 @@ function assertString(value, label, maximum = 256) {
   return value;
 }
 
+function buildImporterDetectPayload({ bytes, fileName, mediaType }) {
+  const metadata = {
+    ...(fileName ? { fileName: assertString(fileName, "Import file name", 1_024) } : {}),
+    ...(mediaType ? { mediaType: assertString(mediaType, "Import media type", 256) } : {}),
+    sample: { encoding: "base64", data: "" },
+  };
+  const metadataBytes = Buffer.byteLength(JSON.stringify(metadata), "utf8");
+  const encodedBudget = MAX_PROVIDER_JSON_BYTES - metadataBytes;
+  if (encodedBudget < 4) throw invalidArgument("Importer sample metadata is too large");
+  const rawBudget = Math.floor(encodedBudget / 4) * 3;
+  if (rawBudget < 1) throw invalidArgument("Importer sample metadata is too large");
+  const sampleBytes = bytes.byteLength > rawBudget ? bytes.subarray(0, rawBudget) : bytes;
+  return {
+    ...metadata,
+    sample: {
+      encoding: "base64",
+      data: Buffer.from(sampleBytes).toString("base64"),
+    },
+  };
+}
+
 function assertDefinition(name, value, label = name) {
   const validator = definitionValidators[name];
   if (!validator(value)) {
@@ -630,16 +651,16 @@ class PluginExtensionProviderService {
 
   async detectImporter(params, options = {}) {
     const bytes = params?.sample instanceof Uint8Array ? params.sample : new Uint8Array(params?.sample ?? []);
-    if (bytes.byteLength < 1 || bytes.byteLength > MAX_PROVIDER_JSON_BYTES) throw invalidArgument("Importer sample size is invalid");
+    if (bytes.byteLength < 1 || bytes.byteLength > MAX_IMPORT_BYTES) throw invalidArgument("Importer sample size is invalid");
     return this.invoke({
       providerId: params.providerId,
       kind: "importer",
       operation: "detect",
-      payload: {
-        ...(params.fileName ? { fileName: assertString(params.fileName, "Import file name", 1_024) } : {}),
-        ...(params.mediaType ? { mediaType: assertString(params.mediaType, "Import media type", 256) } : {}),
-        sample: { encoding: "base64", data: Buffer.from(bytes).toString("base64") },
-      },
+      payload: buildImporterDetectPayload({
+        bytes,
+        fileName: params.fileName,
+        mediaType: params.mediaType,
+      }),
       deadlineMs: params.deadlineMs,
     }, options);
   }

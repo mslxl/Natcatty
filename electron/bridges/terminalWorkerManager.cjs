@@ -921,12 +921,23 @@ function createTerminalWorkerManager(options = {}) {
       const external = externalSessions.get(message.sessionId);
       if (!external) return;
       if (message.event === "input") {
-        void Promise.resolve(external.onInput?.(message.data)).catch((error) => {
+        const runInput = async () => {
+          if (!externalSessions.has(message.sessionId)) return;
+          await external.onInput?.(message.data);
+        };
+        const inputPromise = external.inputChain
+          ? external.inputChain.then(runInput, runInput)
+          : Promise.resolve(runInput());
+        const settledInput = inputPromise.catch(async (error) => {
           const notifyClose = external.onClose;
-          void finishExternalSession(message.sessionId, {
+          await finishExternalSession(message.sessionId, {
             reason: "error",
             error: error?.message || String(error),
           }).finally(() => Promise.resolve(notifyClose?.("input-error")).catch(() => {}));
+        });
+        external.inputChain = settledInput;
+        void settledInput.finally(() => {
+          if (external.inputChain === settledInput) external.inputChain = null;
         });
         return;
       }
@@ -1466,6 +1477,7 @@ function createTerminalWorkerManager(options = {}) {
       onInput: optionsForSession.onInput,
       onResize: optionsForSession.onResize,
       onClose: optionsForSession.onClose,
+      inputChain: null,
       paused: false,
       resumeWaiters: [],
     };
