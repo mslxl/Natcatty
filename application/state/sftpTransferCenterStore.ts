@@ -6,6 +6,10 @@ import {
   pruneSftpTransferHistory,
   serializeSftpTransferCenter,
 } from "../../domain/sftpTransferCenter";
+import {
+  findActivePathConflict,
+  pathConflictMessage,
+} from "../../domain/sftpTransferConflicts";
 import { STORAGE_KEY_SFTP_TRANSFER_CENTER } from "../../infrastructure/config/storageKeys";
 import { netcattyBridge } from "../../infrastructure/services/netcattyBridge";
 import { globalSftpTransferScheduler } from "./sftp/globalTransferScheduler";
@@ -240,6 +244,8 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
           const live = await bridge.resumeTransfer(taskId);
           const afterLiveResume = tasks.find((candidate) => candidate.id === taskId);
           if (afterLiveResume?.status === "cancelled") return;
+          // After quit/restart there is no live stream — success must mean a
+          // real handle rejoined. Never paint "transferring" on a soft miss.
           if (live?.success) {
             tasks = tasks.map((candidate) => candidate.id === taskId ? {
               ...candidate,
@@ -418,6 +424,21 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
       && !task.conflict
       && dedicatedResumeHandler
     ) {
+      // Same source+target already writing elsewhere — do not open a second
+      // stream into the same destination (.part / rename race).
+      const pathConflict = findActivePathConflict(tasks, task);
+      if (pathConflict) {
+        tasks = tasks.map((candidate) => candidate.id === taskId ? {
+          ...candidate,
+          status: "attention" as const,
+          error: pathConflictMessage(pathConflict),
+          reconnectRequired: true,
+          speed: 0,
+          phase: undefined,
+        } : candidate);
+        emit();
+        return;
+      }
       const previousOwnerId = task.ownerId;
       // Detach parent + directory children so publishOwner cannot clobber
       // in-flight dedicated progress with a stale interrupted/paused snapshot.

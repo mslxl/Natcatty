@@ -95,6 +95,10 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
             return;
           }
           // Directory parents use file-count progress; single files use bytes.
+          // Prefer durable contiguous checkpoint when the bridge supplies it.
+          const durableCheckpoint = task.isDirectory
+            ? progress.transferred
+            : (progress.checkpointBytes ?? progress.transferred);
           sftpTransferCenterStore.patchTask(task.id, {
             status: "transferring",
             transferredBytes: progress.transferred,
@@ -103,7 +107,7 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
             ...(task.isDirectory
               ? { checkpointBytes: progress.transferred, progressMode: "files" as const }
               : {
-                  checkpointBytes: progress.checkpointBytes,
+                  checkpointBytes: durableCheckpoint,
                   resumeStage: progress.resumeStage,
                   downloadCheckpointBytes: progress.downloadCheckpointBytes,
                   uploadCheckpointBytes: progress.uploadCheckpointBytes,

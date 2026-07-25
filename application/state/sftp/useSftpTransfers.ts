@@ -34,6 +34,10 @@ import {
   createDirectDownloadTransferTask,
   resolveDirectDirectoryDownloadFinalStatus,
 } from "./downloadTransferTask";
+import {
+  findActivePathConflict,
+  pathConflictMessage,
+} from "../../../domain/sftpTransferConflicts";
 import type { TransferResult, UseSftpTransfersParams, UseSftpTransfersResult } from "./useSftpTransfers.types";
 import type { TransferConnectionLease } from "./transferConnectionPool";
 import { getParentPath, joinPath } from "./utils";
@@ -804,13 +808,23 @@ export const useSftpTransfers = ({
         const fileSize = file.isDirectory ? 0 : (fileEntry?.size ?? 0);
         const sourceLastModified = fileEntry?.lastModified ?? 0;
 
+        const nextSourcePath = joinPath(sourcePath, file.name);
+        const nextTargetPath = joinPath(targetPath, file.name);
+        const pathTaken = findActivePathConflict(
+          [...sftpTransferCenterStore.getSnapshot().tasks, ...transfersRef.current, ...newTasks],
+          { id: "", sourcePath: nextSourcePath, targetPath: nextTargetPath },
+        );
+        if (pathTaken) {
+          logger.warn("[SFTP] skipping duplicate transfer path", pathConflictMessage(pathTaken));
+          continue;
+        }
         newTasks.push({
           id: crypto.randomUUID(),
           batchId,
           fileName: file.name,
           originalFileName: file.name,
-          sourcePath: joinPath(sourcePath, file.name),
-          targetPath: joinPath(targetPath, file.name),
+          sourcePath: nextSourcePath,
+          targetPath: nextTargetPath,
           sourceConnectionId,
           targetConnectionId: targetPane.connection!.id,
           sourceHostId: sourcePane.connection!.isLocal ? undefined : sourcePane.connection!.hostId,
@@ -1238,7 +1252,12 @@ export const useSftpTransfers = ({
     const results = await Promise.all(backendIds.map(async (id) => (
       netcattyBridge.get()?.resumeTransfer?.(id) ?? { success: false, reason: "Resume unavailable" }
     )));
-    if (backendIds.length < activeIds.length || results.some((result) => result.success)) {
+    // Only rejoin when a backend stream (or parked scheduler job) actually resumed.
+    // After app restart every resumeTransfer is a miss — painting "transferring"
+    // here left a dead row that never moved bytes.
+    const anyBackendResumed = results.some((result) => result.success);
+    const anySchedulerResumed = backendIds.length < activeIds.length;
+    if (anyBackendResumed || anySchedulerResumed) {
       setTransfers((prev) => prev.map((candidate) => candidate.id === transferId
         ? {
             ...candidate,
@@ -1669,6 +1688,21 @@ export const useSftpTransfers = ({
       isDirectory: boolean;
       totalBytes?: number;
     }): Promise<TransferStatus> => {
+      // Same source+target concurrent writers corrupt .part / final files.
+      const centerConflict = findActivePathConflict(
+        sftpTransferCenterStore.getSnapshot().tasks,
+        { id: "", sourcePath: params.sourcePath, targetPath: params.targetPath },
+      );
+      const localConflict = findActivePathConflict(
+        transfersRef.current,
+        { id: "", sourcePath: params.sourcePath, targetPath: params.targetPath },
+      );
+      const conflict = centerConflict ?? localConflict;
+      if (conflict) {
+        logger.warn("[SFTP] refusing duplicate download path", pathConflictMessage(conflict));
+        return conflict.status === "completed" ? "completed" : "attention";
+      }
+
       const task = createDirectDownloadTransferTask({
         id: crypto.randomUUID(),
         fileName: params.fileName,
