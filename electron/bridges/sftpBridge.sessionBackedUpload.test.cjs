@@ -1634,6 +1634,148 @@ test("staged SFTP upload detects same-metadata destination content replacement",
   );
 });
 
+test("staged SFTP upload detects same-size rewrite when remote inode is stable", async (t) => {
+  const tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-stable-ino-race-"));
+  t.after(async () => {
+    await fs.promises.rm(tempRoot, { recursive: true, force: true });
+  });
+  tempDirBridge.init?.({ getPath: () => tempRoot });
+  const localPath = path.join(tempRoot, "payload.bin");
+  await fs.promises.writeFile(localPath, Buffer.from("uploaded-data"));
+  const remotePath = "/etc/app/config.json";
+  const replacement = Buffer.from("new-state");
+  const created = createSessionChannel({
+    onFastPut(_local, uploadPath) {
+      if (String(uploadPath).includes(".netcatty-upload-")) {
+        // Same inode/fileId/size/mode/mtime — only content changes.
+        created.remoteFiles.set(remotePath, replacement);
+        created.remoteMeta.set(remotePath, {
+          mode: 0o100644,
+          mtime: 1,
+          uid: 1000,
+          gid: 1000,
+          ino: 4242,
+          fileId: "stable-file-id",
+        });
+      }
+      return null;
+    },
+  });
+  created.remoteFiles.set(remotePath, Buffer.from("old-state"));
+  created.remoteMeta.set(remotePath, {
+    mode: 0o100644,
+    mtime: 1,
+    uid: 1000,
+    gid: 1000,
+    ino: 4242,
+    fileId: "stable-file-id",
+  });
+  const baseStat = created.channel.stat.bind(created.channel);
+  const baseLstat = created.channel.lstat.bind(created.channel);
+  const withStableIds = (targetPath, callback, base) => {
+    base(targetPath, (error, attrs) => {
+      if (error) {
+        callback(error);
+        return;
+      }
+      const meta = created.remoteMeta.get(targetPath) || {};
+      callback(null, {
+        ...attrs,
+        ino: meta.ino,
+        fileId: meta.fileId,
+      });
+    });
+  };
+  created.channel.stat = (targetPath, callback) => withStableIds(targetPath, callback, baseStat);
+  created.channel.lstat = (targetPath, callback) => withStableIds(targetPath, callback, baseLstat);
+
+  const sftpClients = new Map();
+  sftpBridge.init({
+    electronModule: { webContents: { fromId: () => null } },
+    sessions: new Map([["session-stable-ino-race", { conn: { sftp: (cb) => cb(null, created.channel) } }]]),
+    sftpClients,
+  });
+  const opened = await sftpBridge.openSftpForSession(null, {
+    sessionId: "session-stable-ino-race",
+    fileProtocol: "sftp",
+  });
+
+  await assert.rejects(
+    () => sftpBridge.uploadLocalToSftp(null, {
+      sftpId: opened.sftpId,
+      localPath,
+      remotePath,
+      encoding: "utf-8",
+    }),
+    /destination changed during upload/i,
+  );
+  assert.deepEqual(created.remoteFiles.get(remotePath), replacement);
+  assert.equal(
+    [...created.remoteFiles.keys()].some((key) => String(key).includes(".netcatty-upload-")),
+    false,
+  );
+});
+
+test("destination content hashing aborts when the upload signal is cancelled", async (t) => {
+  const tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-dest-hash-abort-"));
+  t.after(async () => {
+    await fs.promises.rm(tempRoot, { recursive: true, force: true });
+  });
+  tempDirBridge.init?.({ getPath: () => tempRoot });
+  const localPath = path.join(tempRoot, "payload.bin");
+  await fs.promises.writeFile(localPath, Buffer.from("uploaded-data"));
+  const remotePath = "/etc/app/config.json";
+  const { Readable } = require("node:stream");
+  let markHashStarted;
+  const hashStarted = new Promise((resolve) => { markHashStarted = resolve; });
+  let streamDestroyed = false;
+  const created = createSessionChannel();
+  created.remoteFiles.set(remotePath, Buffer.alloc(64 * 1024, 7));
+  created.remoteMeta.set(remotePath, { mode: 0o100644, mtime: 1, uid: 1000, gid: 1000 });
+  created.channel.createReadStream = () => {
+    const stream = new Readable({
+      read() {
+        // Never push — simulate a stalled destination hash read.
+      },
+    });
+    stream.destroy = ((originalDestroy) => function destroyPatched(err) {
+      streamDestroyed = true;
+      return originalDestroy.call(this, err);
+    })(stream.destroy.bind(stream));
+    markHashStarted();
+    return stream;
+  };
+
+  const sftpClients = new Map();
+  sftpBridge.init({
+    electronModule: { webContents: { fromId: () => null } },
+    sessions: new Map([["session-dest-hash-abort", { conn: { sftp: (cb) => cb(null, created.channel) } }]]),
+    sftpClients,
+  });
+  const opened = await sftpBridge.openSftpForSession(null, {
+    sessionId: "session-dest-hash-abort",
+    fileProtocol: "sftp",
+  });
+  const controller = new AbortController();
+  const upload = sftpBridge.uploadLocalToSftp(null, {
+    sftpId: opened.sftpId,
+    localPath,
+    remotePath,
+    encoding: "utf-8",
+    abortSignal: controller.signal,
+  });
+  await hashStarted;
+  controller.abort();
+  await assert.rejects(
+    () => Promise.race([
+      upload,
+      new Promise((_, reject) => setTimeout(() => reject(new Error("cancel timed out")), 1000)),
+    ]),
+    /abort|cancel/i,
+  );
+  assert.equal(streamDestroyed, true);
+});
+
 test("staged SFTP upload does not recreate a destination deleted during upload", async (t) => {
   const tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-deleted-target-race-"));
   t.after(async () => {

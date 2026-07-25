@@ -201,6 +201,13 @@ function createAbortError(signal, fallbackMessage = "The operation was aborted."
   return new Error(fallbackMessage);
 }
 
+function isAbortError(error) {
+  if (!error) return false;
+  if (error.name === "AbortError") return true;
+  const message = String(error.message || error);
+  return /abort|cancel/i.test(message);
+}
+
 const tryOpenSftpChannel = (client, options = {}) =>
   new Promise((resolve, reject) => {
     const sshClient = client?.client;
@@ -697,7 +704,7 @@ async function distinguishMissingTargetFromBrokenSymlink(sftp, encodedPath) {
  *   keep mutating the final destination. Restore mode bits after promotion
  *   (SFTP v3 cannot portably preserve owner/ACL/xattr/hard-links).
  */
-async function planRemoteUploadReplace(client, encodedPath, remotePath) {
+async function planRemoteUploadReplace(client, encodedPath, remotePath, signal = null) {
   try {
     const sftp = await requireSftpChannel(client);
     const hasNativeLstat = typeof sftp?.lstat === "function";
@@ -741,7 +748,7 @@ async function planRemoteUploadReplace(client, encodedPath, remotePath) {
           encodedPath,
           remotePath,
           snapshotRemoteTarget(attrs),
-          { scpMode: false },
+          { scpMode: false, signal },
         ),
       };
     }
@@ -792,10 +799,6 @@ function snapshotRemoteTarget(attrs) {
   return snapshot;
 }
 
-function snapshotHasStableIdentity(snapshot) {
-  return !!(snapshot && (snapshot.ino || snapshot.fileId));
-}
-
 function remoteTargetMatchesSnapshot(attrs, snapshot) {
   if (!snapshot) return true;
   return Object.entries(snapshot).every(([field, expected]) => {
@@ -805,12 +808,34 @@ function remoteTargetMatchesSnapshot(attrs, snapshot) {
   });
 }
 
-async function hashReadableForDigest(readable) {
+async function hashReadableForDigest(readable, signal = null) {
+  throwIfAborted(signal);
   const hash = createHash("sha256");
-  for await (const chunk of readable) {
-    hash.update(chunk);
+  const onAbort = () => {
+    try {
+      readable.destroy?.(createAbortError(signal, "Remote target verification was aborted"));
+    } catch {
+      /* ignore */
+    }
+  };
+  if (signal) {
+    signal.addEventListener("abort", onAbort, { once: true });
   }
-  return hash.digest("hex");
+  try {
+    for await (const chunk of readable) {
+      throwIfAborted(signal);
+      hash.update(chunk);
+    }
+    throwIfAborted(signal);
+    return hash.digest("hex");
+  } finally {
+    if (signal) {
+      try { signal.removeEventListener("abort", onAbort); } catch { /* ignore */ }
+    }
+    if (signal?.aborted) {
+      try { readable.destroy?.(); } catch { /* ignore */ }
+    }
+  }
 }
 
 async function tryRemoteSha256Sum(sshClient, remotePath, signal = null) {
@@ -870,27 +895,38 @@ async function tryRemoteSha256Sum(sshClient, remotePath, signal = null) {
  */
 async function computeRemoteContentDigest(client, encodedPath, remotePath, options = {}) {
   const signal = options.signal || null;
+  throwIfAborted(signal);
   const digest = await tryRemoteSha256Sum(client?.client, remotePath, signal);
-  if (digest) return digest;
+  if (digest) {
+    throwIfAborted(signal);
+    return digest;
+  }
   try {
+    throwIfAborted(signal);
     const sftp = client?.sftp || await requireSftpChannel(client);
     if (typeof sftp?.createReadStream === "function") {
-      return await hashReadableForDigest(sftp.createReadStream(encodedPath));
+      return await hashReadableForDigest(sftp.createReadStream(encodedPath), signal);
     }
     if (typeof client?.get === "function") {
       const buffer = await client.get(encodedPath);
+      throwIfAborted(signal);
       return createHash("sha256")
         .update(Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer))
         .digest("hex");
     }
-  } catch {
+  } catch (error) {
+    if (isAbortError(error) || signal?.aborted) throw createAbortError(signal, "Remote target verification was aborted");
     return null;
   }
   return null;
 }
 
+/**
+ * Always prefer a content digest when possible. Metadata (including ino/fileId)
+ * alone cannot detect same-size in-place rewrites on SFTP v3 or coarse SCP mtime.
+ */
 async function finalizeDestinationSnapshot(client, encodedPath, remotePath, snapshot, options = {}) {
-  if (!snapshot || snapshotHasStableIdentity(snapshot)) return snapshot;
+  if (!snapshot) return snapshot;
   const digest = await computeRemoteContentDigest(client, encodedPath, remotePath, options);
   if (!digest) return snapshot;
   return { ...snapshot, contentDigest: digest };
@@ -926,7 +962,9 @@ async function assertStagedPromotionTargetSafe(
   remotePath,
   expectedExisted,
   expectedSnapshot,
+  signal = null,
 ) {
+  throwIfAborted(signal);
   const sftp = await requireSftpChannel(client);
   if (typeof sftp?.lstat !== "function") {
     if (expectedExisted !== false) {
@@ -967,7 +1005,13 @@ async function assertStagedPromotionTargetSafe(
     throw new Error(`Remote destination changed during upload: ${remotePath}`);
   }
   if (existsNow) {
-    await assertDestinationContentUnchanged(client, encodedPath, remotePath, expectedSnapshot);
+    await assertDestinationContentUnchanged(
+      client,
+      encodedPath,
+      remotePath,
+      expectedSnapshot,
+      { signal },
+    );
   }
 }
 
@@ -1172,7 +1216,7 @@ async function runRemoteUploadTransaction(client, localPath, remotePath, options
   const plan = await runCancelablePreflight(() => (
     scpMode
       ? planScpRemoteUploadReplace(client, remotePath, encoding, signal)
-      : planRemoteUploadReplace(client, encodedPath, remotePath)
+      : planRemoteUploadReplace(client, encodedPath, remotePath, signal)
   ));
   const fastPutOptions = { ...options };
   delete fastPutOptions.expectedSize;
@@ -1307,6 +1351,7 @@ async function runRemoteUploadTransaction(client, localPath, remotePath, options
           remotePath,
           plan.destinationExisted,
           plan.destinationSnapshot,
+          signal,
         ));
       assertCanPromote();
       // Apply the old mode to the stage before promotion. A failed chmod must not
@@ -1321,6 +1366,7 @@ async function runRemoteUploadTransaction(client, localPath, remotePath, options
           remotePath,
           plan.destinationExisted,
           plan.destinationSnapshot,
+          signal,
         ));
       assertCanPromote();
       commitPromotion();

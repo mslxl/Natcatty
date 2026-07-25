@@ -5052,3 +5052,88 @@ test("transfer session leases hold SFTP ids across soft-close until release", as
   assert.equal(hardCloseCalls, 1);
   assert.equal(sftpTransferSessionLeaseStore.isHeld("s1"), false);
 });
+
+test("local promotion restores concurrent replacement moved into the backup", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-local-promo-backup-"));
+  t.after(async () => {
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const stagedPath = path.join(tempDir, "download.staged");
+  const targetPath = path.join(tempDir, "target.bin");
+  const original = Buffer.from("original-target-content");
+  const replacement = Buffer.from("concurrent-replacement");
+  const downloaded = Buffer.from("downloaded-replacement");
+  await fs.promises.writeFile(targetPath, original);
+  await fs.promises.writeFile(stagedPath, downloaded);
+
+  const originalStat = await fs.promises.lstat(targetPath);
+  const expectedStable = transferBridge._stableLocalFileIdentityForTests(originalStat);
+
+  // validateTarget claims the original identity, but a concurrent process has
+  // already replaced the live path. rename then moves the wrong file to backup.
+  await assert.rejects(
+    () => transferBridge._promoteLocalTransferForTests(stagedPath, targetPath, {
+      async validateTarget() {
+        await fs.promises.unlink(targetPath);
+        await fs.promises.writeFile(targetPath, replacement);
+        return {
+          // Keep existingMode null so promotion does not re-validate after chmod.
+          existingMode: null,
+          stableIdentity: expectedStable,
+          targetIdentity: [
+            originalStat.dev,
+            originalStat.ino,
+            originalStat.size,
+            originalStat.mtimeMs,
+            originalStat.ctimeMs,
+          ].join(":"),
+        };
+      },
+    }),
+    /changed during replacement/i,
+  );
+
+  // Replacement must still be at the target (restored from backup), download not published.
+  assert.deepEqual(await fs.promises.readFile(targetPath), replacement);
+  assert.equal(
+    (await fs.promises.readdir(tempDir)).some((name) => name.includes(".backup")),
+    false,
+  );
+});
+
+test("local promotion succeeds when backup still matches validated identity", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-local-promo-ok-"));
+  t.after(async () => {
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const stagedPath = path.join(tempDir, "download.staged");
+  const targetPath = path.join(tempDir, "target.bin");
+  await fs.promises.writeFile(targetPath, Buffer.from("old"));
+  await fs.promises.writeFile(stagedPath, Buffer.from("new"));
+  const originalStat = await fs.promises.lstat(targetPath);
+
+  await transferBridge._promoteLocalTransferForTests(stagedPath, targetPath, {
+    async validateTarget() {
+      const latest = await fs.promises.lstat(targetPath);
+      return {
+        existingMode: latest.mode & 0o7777,
+        stableIdentity: transferBridge._stableLocalFileIdentityForTests(latest),
+        targetIdentity: [
+          latest.dev,
+          latest.ino,
+          latest.size,
+          latest.mtimeMs,
+          latest.ctimeMs,
+        ].join(":"),
+      };
+    },
+  });
+
+  assert.deepEqual(await fs.promises.readFile(targetPath), Buffer.from("new"));
+  assert.notEqual(
+    transferBridge._stableLocalFileIdentityForTests(await fs.promises.lstat(targetPath)),
+    transferBridge._stableLocalFileIdentityForTests(originalStat),
+  );
+});

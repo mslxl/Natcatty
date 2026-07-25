@@ -205,6 +205,11 @@ async function assertMatchingResumeContent(sourceHashPromise, stagedHashPromise)
   }
 }
 
+function stableLocalFileIdentity(statLike) {
+  if (!statLike) return null;
+  return [statLike.dev, statLike.ino, statLike.size].join(":");
+}
+
 async function promoteLocalTransfer(stagedPath, targetPath, options = {}) {
   const assertNotCancelled = typeof options.assertNotCancelled === "function"
     ? options.assertNotCancelled
@@ -229,6 +234,7 @@ async function promoteLocalTransfer(stagedPath, targetPath, options = {}) {
     if (preparedPath !== readyPath) preparedPath = readyPath;
     let appliedMode = null;
     let targetStable = false;
+    let expectedStableIdentity = null;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const validatedTarget = typeof options.validateTarget === "function"
         ? await options.validateTarget()
@@ -243,6 +249,10 @@ async function promoteLocalTransfer(stagedPath, targetPath, options = {}) {
         appliedMode = existingMode;
         continue;
       }
+      expectedStableIdentity = validatedTarget?.stableIdentity
+        || (validatedTarget?.targetIdentity
+          ? String(validatedTarget.targetIdentity).split(":").slice(0, 3).join(":")
+          : null);
       targetStable = true;
       break;
     }
@@ -255,6 +265,34 @@ async function promoteLocalTransfer(stagedPath, targetPath, options = {}) {
       backedUp = true;
     } catch (err) {
       if (err?.code !== "ENOENT") throw err;
+    }
+    // Another process may have replaced the destination between validateTarget
+    // and rename. Re-check the moved backup before publishing the download.
+    if (backedUp && expectedStableIdentity) {
+      let backupStat;
+      try {
+        backupStat = await fs.promises.lstat(backupPath);
+      } catch (err) {
+        throw new Error(
+          `Local download target disappeared during replacement: ${targetPath}`,
+          { cause: err },
+        );
+      }
+      if (!backupStat.isFile() || stableLocalFileIdentity(backupStat) !== expectedStableIdentity) {
+        try {
+          await fs.promises.rename(backupPath, targetPath);
+          backedUp = false;
+        } catch (restoreErr) {
+          const recoveryFailure = new Error(
+            `Could not restore the original file after a concurrent replacement was detected. `
+            + `Backup: ${backupPath}; target: ${targetPath}`,
+            { cause: restoreErr },
+          );
+          recoveryFailure.recoveryFailed = true;
+          throw recoveryFailure;
+        }
+        throw new Error("Local download target changed during replacement");
+      }
     }
     assertNotCancelled();
     await fs.promises.rename(readyPath, targetPath);
@@ -359,6 +397,7 @@ async function inspectLocalPromotionTarget(targetPath) {
     return {
       promotionTargetPath: candidatePath,
       existingMode: targetLstat.mode & 0o7777,
+      stableIdentity: stableLocalFileIdentity(targetLstat),
       targetIdentity: [
         targetLstat.dev,
         targetLstat.ino,
@@ -378,6 +417,7 @@ async function inspectLocalPromotionTarget(targetPath) {
   return {
     promotionTargetPath: currentPath,
     existingMode: rootStat.mode & 0o7777,
+    stableIdentity: stableLocalFileIdentity(rootStat),
     targetIdentity: [
       rootStat.dev,
       rootStat.ino,
@@ -2357,7 +2397,27 @@ async function startTransferNow(event, payload, onProgress) {
     abort: null,
     sourceDigestPath: null,
     sourceIsOwnedTemp: payload.sourceIsOwnedTemp === true,
-    signal: payload.abortSignal || null,
+    signal: null,
+  };
+  // Own an AbortController so cancelTransfer always stops cancelable preflight
+  // work (destination hashing, probes) even when callers pass no abortSignal.
+  const ownedAbort = new AbortController();
+  if (payload.abortSignal) {
+    if (payload.abortSignal.aborted) {
+      ownedAbort.abort(payload.abortSignal.reason);
+    } else {
+      payload.abortSignal.addEventListener(
+        "abort",
+        () => {
+          try { ownedAbort.abort(payload.abortSignal.reason); } catch { /* ignore */ }
+        },
+        { once: true },
+      );
+    }
+  }
+  transfer.signal = ownedAbort.signal;
+  transfer.abortOwnedSignal = () => {
+    try { ownedAbort.abort(); } catch { /* ignore */ }
   };
   activeTransfers.set(transferId, transfer);
   // Hold panel/agent SFTP sessions for the full transfer lifetime (including
@@ -3245,6 +3305,9 @@ async function cancelTransfer(event, payload) {
     }
     transfer.cancelled = true;
     pendingCancelTransferIds.delete(String(transferId));
+    if (typeof transfer.abortOwnedSignal === "function") {
+      try { transfer.abortOwnedSignal(); } catch { /* ignore */ }
+    }
     if (typeof transfer.abort === "function") {
       try { transfer.abort(); } catch { }
     }
@@ -3664,4 +3727,6 @@ module.exports = {
   acquireTransferSessionLeases,
   releaseTransferSessionLeases,
   listTransferSftpIds,
+  _promoteLocalTransferForTests: promoteLocalTransfer,
+  _stableLocalFileIdentityForTests: stableLocalFileIdentity,
 };
