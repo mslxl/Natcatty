@@ -743,7 +743,12 @@ function createFileOpsApi(ctx) {
         if (stat.isSymbolicLink) {
           await unlinkAsync(sftp, encodedPath);
         } else if (stat.isDirectory) {
-          if (client.__netcattySessionBacked) {
+          // Prefer verified shell `rm -rf` (session + dedicated SSH clients),
+          // then fall back to protocol recursive walk when shell is missing or
+          // when SFTP still sees the path after a shell "success".
+          if (typeof removeRemoteDirectory === "function") {
+            await removeRemoteDirectory(client, payload.path, encoding, signal);
+          } else if (client.__netcattySessionBacked) {
             await client.rmdir(encodedPath, true, { signal });
           } else {
             const normalizedPath = await normalizeRemotePathString(client, payload.path);
@@ -764,6 +769,7 @@ function createFileOpsApi(ctx) {
       }
     
       throwIfAborted(signal);
+      // Non-UTF-8: keep protocol walk (shell path encoding is unsafe).
       const sftp = await requireSftpChannel(client, { signal, timeoutMs: payload?.timeoutMs });
       const normalizedPath = await normalizeRemotePathString(client, payload.path);
       throwIfAborted(signal);

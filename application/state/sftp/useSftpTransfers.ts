@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from "react";
 import {
   FileConflict,
   FileConflictAction,
@@ -14,14 +14,12 @@ import {
   getSftpConflictTypeKey,
 } from "../../../domain/sftpConflict";
 import { validateTransferResumeSource } from "../../../domain/sftpTransferCenter";
-import { classifyResumeSourceValidationError } from "./dedicatedTransferResume";
 import {
-  allPauseResultsBenignOrSuccess,
-  isBenignPauseMiss,
-  isHardPauseFailure,
-  planPartialPauseRollback,
-  resolveDirectoryPauseParentOutcome,
-} from "./pauseTransferOutcome";
+  findActivePathConflict,
+  pathConflictMessage,
+} from "../../../domain/sftpTransferConflicts";
+import { useI18n } from "../../i18n/I18nProvider";
+import { notify } from "../../notification";
 import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
 import { logger } from "../../../lib/logger";
 import { sftpTransferCenterStore } from "../sftpTransferCenterStore";
@@ -34,9 +32,30 @@ import {
   createDirectDownloadTransferTask,
   resolveDirectDirectoryDownloadFinalStatus,
 } from "./downloadTransferTask";
+import { classifyResumeSourceValidationError } from "./dedicatedTransferResume";
+import {
+  allPauseResultsBenignOrSuccess,
+  isBenignPauseMiss,
+  isHardPauseFailure,
+  planPartialPauseRollback,
+  resolveDirectoryPauseParentOutcome,
+} from "./pauseTransferOutcome";
 import type { TransferResult, UseSftpTransfersParams, UseSftpTransfersResult } from "./useSftpTransfers.types";
 import type { TransferConnectionLease } from "./transferConnectionPool";
 import { getParentPath, joinPath } from "./utils";
+
+/** User-facing path exclusivity notice (toast + logs). */
+function notifyPathConflict(
+  existing: Pick<TransferTask, "fileName" | "status">,
+  t: (key: string, values?: Record<string, string | number>) => string,
+): void {
+  const name = existing.fileName || "file";
+  const message = existing.status === "paused"
+    ? t("sftp.transfers.pathConflict.paused", { name })
+    : t("sftp.transfers.pathConflict.inProgress", { name });
+  logger.warn("[SFTP] path conflict", pathConflictMessage(existing));
+  notify.warning(message, t("sftp.transfers.pathConflict.title"));
+}
 
 export const useSftpTransfers = ({
   ownerId,
@@ -54,7 +73,10 @@ export const useSftpTransfers = ({
   handleSessionError,
   acquireTransferSession,
 }: UseSftpTransfersParams): UseSftpTransfersResult => {
-  const [transfers, setTransfers] = useState<TransferTask[]>(() => sftpTransferCenterStore.getOwnerTasks(ownerId));
+  const { t } = useI18n();
+  const tRef = useRef(t);
+  tRef.current = t;
+  const [transfers, setTransfersState] = useState<TransferTask[]>(() => sftpTransferCenterStore.getOwnerTasks(ownerId));
   const [conflicts, setConflicts] = useState<FileConflict[]>(() => sftpTransferCenterStore
     .getOwnerTasks(ownerId)
     .map((task) => task.conflict)
@@ -64,12 +86,37 @@ export const useSftpTransfers = ({
   const cancelledTasksRef = useRef<Set<string>>(new Set());
   const pausedTasksRef = useRef<Set<string>>(new Set());
   const pauseWaitersRef = useRef<Map<string, Set<() => void>>>(new Map());
+  /**
+   * Stable per-id barrier: created on latch, resolved only on release.
+   * Avoids the classic race where waitUntilTransferResumed sees "not paused"
+   * for one tick and lets a worker claim the next file after soft-drain completes.
+   */
+  const pauseBarriersRef = useRef<Map<string, { promise: Promise<void>; resolve: () => void }>>(new Map());
+  // Coalesce overlapping pause calls (Pause All re-targets already-pausing rows).
+  const pauseInFlightRef = useRef<Map<string, Promise<void>>>(new Map());
   // Track active child transfer IDs per parent (outside React state for immediate visibility)
   const activeChildIdsRef = useRef<Map<string, Set<string>>>(new Map());
+  // Live processTransfer walks (esp. directory parents). Resume must unlatch
+  // these instead of starting a second full re-walk of the tree.
+  const inFlightTransferIdsRef = useRef<Set<string>>(new Set());
+  /** While folder is latched, keep hammering pauseTransfer on live children. */
+  const folderPauseWatchdogsRef = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
   const transfersRef = useRef(transfers);
   transfersRef.current = transfers;
   const conflictsRef = useRef(conflicts);
   conflictsRef.current = conflicts;
+
+  // Keep transfersRef in lockstep with every setState so pause can collect
+  // children that were added via setTransfers before the next render.
+  const setTransfers = useCallback((update: SetStateAction<TransferTask[]>) => {
+    setTransfersState((prev) => {
+      const next = typeof update === "function"
+        ? (update as (value: TransferTask[]) => TransferTask[])(prev)
+        : update;
+      transfersRef.current = next;
+      return next;
+    });
+  }, []);
   const completionHandlersRef = useRef<Map<string, (result: TransferResult) => void | Promise<void>>>(new Map());
   const conflictDefaultsRef = useRef<Map<string, FileConflictAction>>(new Map());
 
@@ -77,21 +124,87 @@ export const useSftpTransfers = ({
     cancelledTasksRef.current.delete(taskId);
   }, []);
 
+  const ensurePauseBarrier = useCallback((taskId: string) => {
+    if (pauseBarriersRef.current.has(taskId)) return;
+    let resolve!: () => void;
+    const promise = new Promise<void>((r) => { resolve = r; });
+    pauseBarriersRef.current.set(taskId, { promise, resolve });
+  }, []);
+
   const waitUntilTransferResumed = useCallback(async (taskId: string) => {
-    if (!pausedTasksRef.current.has(taskId)) return;
-    await new Promise<void>((resolve) => {
-      const waiters = pauseWaitersRef.current.get(taskId) ?? new Set<() => void>();
-      waiters.add(resolve);
-      pauseWaitersRef.current.set(taskId, waiters);
-    });
+    // Loop until unlatched. Barrier is created with the latch so waiters never
+    // miss a release that raced the "not paused" early-return check.
+    while (pausedTasksRef.current.has(taskId)) {
+      ensurePauseBarrier(taskId);
+      const barrier = pauseBarriersRef.current.get(taskId);
+      if (!barrier) {
+        await new Promise((r) => setTimeout(r, 0));
+        continue;
+      }
+      await barrier.promise;
+    }
+  }, [ensurePauseBarrier]);
+
+  const stopFolderPauseWatchdog = useCallback((taskId: string) => {
+    const timer = folderPauseWatchdogsRef.current.get(taskId);
+    if (timer) {
+      clearInterval(timer);
+      folderPauseWatchdogsRef.current.delete(taskId);
+    }
   }, []);
 
   const releasePausedTransfer = useCallback((taskId: string) => {
     pausedTasksRef.current.delete(taskId);
+    stopFolderPauseWatchdog(taskId);
+    const barrier = pauseBarriersRef.current.get(taskId);
+    if (barrier) {
+      pauseBarriersRef.current.delete(taskId);
+      barrier.resolve();
+    }
     const waiters = pauseWaitersRef.current.get(taskId);
     pauseWaitersRef.current.delete(taskId);
     for (const resolve of waiters ?? []) resolve();
-  }, []);
+  }, [stopFolderPauseWatchdog]);
+
+  const startFolderPauseWatchdog = useCallback((parentId: string) => {
+    stopFolderPauseWatchdog(parentId);
+    // Streams that arm AFTER the initial pause round (or refuse "cannot be
+    // paused yet") keep running unless we keep trying. Also freezes UI rows.
+    const timer = setInterval(() => {
+      if (!pausedTasksRef.current.has(parentId)) {
+        stopFolderPauseWatchdog(parentId);
+        return;
+      }
+      const liveIds = [
+        ...(activeChildIdsRef.current.get(parentId) ?? []),
+        ...transfersRef.current
+          .filter((row) => (
+            row.parentTaskId === parentId
+            && ["transferring", "queued", "pending", "pausing"].includes(row.status)
+          ))
+          .map((row) => row.id),
+      ];
+      const unique = [...new Set(liveIds)];
+      if (unique.length === 0) return;
+      // Paint any still-live children paused so the queue never shows ‖.
+      setTransfers((prev) => {
+        let changed = false;
+        const next = prev.map((row) => {
+          if (!unique.includes(row.id)) return row;
+          if (row.status === "paused" || row.status === "completed" || row.status === "cancelled" || row.status === "failed") {
+            return row;
+          }
+          changed = true;
+          return { ...row, status: "paused" as TransferStatus, speed: 0 };
+        });
+        return changed ? next : prev;
+      });
+      for (const id of unique) {
+        void netcattyBridge.get()?.pauseTransfer?.(id).catch(() => {});
+      }
+    }, 120);
+    folderPauseWatchdogsRef.current.set(parentId, timer);
+  }, [setTransfers, stopFolderPauseWatchdog]);
 
   const resolveTaskEndpoints = useCallback((task: TransferTask) => {
     const sourceTab = getTabByConnectionId(task.sourceConnectionId);
@@ -205,6 +318,14 @@ export const useSftpTransfers = ({
     if (cancelledTasksRef.current.has(task.id)) {
       return "cancelled";
     }
+    // Guard against concurrent processTransfer on the same id (resume used to
+    // re-enter while a paused directory walk was still alive).
+    if (inFlightTransferIdsRef.current.has(task.id)) {
+      logger.warn("[SFTP] processTransfer already in flight; skipping re-entry", task.id);
+      return transfersRef.current.find((candidate) => candidate.id === task.id)?.status
+        ?? "transferring";
+    }
+    inFlightTransferIdsRef.current.add(task.id);
 
     const updateTask = (updates: Partial<TransferTask>) => {
       setTransfers((prev) =>
@@ -750,6 +871,7 @@ export const useSftpTransfers = ({
       return "failed";
     }
     } finally {
+      inFlightTransferIdsRef.current.delete(task.id);
       // Drop ephemeral pool holds opened when browse was soft-closed.
       // Per-file transferDirectory leases are released inside transferDirectory.
       releaseWorkLeases();
@@ -783,6 +905,7 @@ export const useSftpTransfers = ({
       const usesLegacyScp = sourcePane.connection.fileProtocol === "scp" || targetPane.connection.fileProtocol === "scp";
 
       const newTasks: TransferTask[] = [];
+      const skippedResults: TransferResult[] = [];
 
       const canReusePaneMetadata = sourcePath === sourcePane.connection.currentPath;
       const fileEntryMap = canReusePaneMetadata
@@ -804,13 +927,71 @@ export const useSftpTransfers = ({
         const fileSize = file.isDirectory ? 0 : (fileEntry?.size ?? 0);
         const sourceLastModified = fileEntry?.lastModified ?? 0;
 
+        const nextSourcePath = joinPath(sourcePath, file.name);
+        const nextTargetPath = joinPath(targetPath, file.name);
+        const targetIsLocal = targetPane.connection!.isLocal;
+        const pathTaken = findActivePathConflict(
+          [...sftpTransferCenterStore.getSnapshot().tasks, ...transfersRef.current, ...newTasks],
+          {
+            id: "",
+            targetPath: nextTargetPath,
+            // Normalize local pane ids to the same sentinel downloadToLocal uses.
+            targetConnectionId: targetIsLocal ? "local" : targetPane.connection!.id,
+            targetHostId: targetIsLocal ? undefined : targetPane.connection!.hostId,
+            targetHostLabel: targetIsLocal ? "Local" : targetPane.connection!.hostLabel,
+            isDirectory: file.isDirectory,
+          },
+        );
+        if (pathTaken) {
+          notifyPathConflict(pathTaken, tRef.current);
+          const message = pathConflictMessage(pathTaken);
+          const attentionTask: TransferTask = {
+            id: crypto.randomUUID(),
+            batchId,
+            fileName: file.name,
+            originalFileName: file.name,
+            sourcePath: nextSourcePath,
+            targetPath: nextTargetPath,
+            sourceConnectionId,
+            targetConnectionId: targetPane.connection!.id,
+            sourceHostId: sourcePane.connection!.isLocal ? undefined : sourcePane.connection!.hostId,
+            sourceHostLabel: sourcePane.connection!.isLocal ? "Local" : sourcePane.connection!.hostLabel,
+            targetHostId: targetIsLocal ? undefined : targetPane.connection!.hostId,
+            targetHostLabel: targetIsLocal ? "Local" : targetPane.connection!.hostLabel,
+            direction,
+            status: "attention",
+            totalBytes: fileSize,
+            transferredBytes: 0,
+            speed: 0,
+            startTime: Date.now(),
+            endTime: Date.now(),
+            isDirectory: file.isDirectory,
+            progressMode: file.isDirectory ? "files" : "bytes",
+            sourceLastModified,
+            origin: "manual",
+            error: message,
+            resumable: false,
+          };
+          newTasks.push(attentionTask);
+          const skipped: TransferResult = {
+            id: attentionTask.id,
+            fileName: attentionTask.fileName,
+            originalFileName: attentionTask.originalFileName ?? attentionTask.fileName,
+            status: "attention",
+          };
+          skippedResults.push(skipped);
+          if (options?.onTransferComplete) {
+            await options.onTransferComplete(skipped);
+          }
+          continue;
+        }
         newTasks.push({
           id: crypto.randomUUID(),
           batchId,
           fileName: file.name,
           originalFileName: file.name,
-          sourcePath: joinPath(sourcePath, file.name),
-          targetPath: joinPath(targetPath, file.name),
+          sourcePath: nextSourcePath,
+          targetPath: nextTargetPath,
           sourceConnectionId,
           targetConnectionId: targetPane.connection!.id,
           sourceHostId: sourcePane.connection!.isLocal ? undefined : sourcePane.connection!.hostId,
@@ -835,13 +1016,17 @@ export const useSftpTransfers = ({
 
       setTransfers((prev) => [...prev, ...newTasks]);
 
+      // Only enqueue runnable tasks — attention path-conflict rows stay visible
+      // and must not re-enter processTransfer.
+      const runnableTasks = newTasks.filter((task) => task.status !== "attention");
+
       if (options?.onTransferComplete) {
-        for (const task of newTasks) {
+        for (const task of runnableTasks) {
           completionHandlersRef.current.set(task.id, options.onTransferComplete);
         }
       }
 
-      const results = await Promise.all(newTasks.map(async (task): Promise<TransferResult> => {
+      const results = await Promise.all(runnableTasks.map(async (task): Promise<TransferResult> => {
         const status = await processTransfer(task, sourcePane, targetPane, targetSide);
         return {
           id: task.id,
@@ -851,7 +1036,7 @@ export const useSftpTransfers = ({
         };
       }));
 
-      return results;
+      return [...skippedResults, ...results];
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [getActivePane, getPaneByConnectionId, getTabByConnectionId, sftpSessionsRef, updateTab],
@@ -919,32 +1104,73 @@ export const useSftpTransfers = ({
   );
 
   const pauseTransfer = useCallback(async (transferId: string) => {
+    const inFlight = pauseInFlightRef.current.get(transferId);
+    if (inFlight) {
+      await inFlight;
+      return;
+    }
+
+    const run = (async () => {
     const task = transfersRef.current.find((candidate) => candidate.id === transferId);
     if (!task || task.status === "completed" || task.status === "cancelled") return;
     // Conflict attention rows are waiting for Replace/Skip/etc — pause would
     // demote them away from the resolve UI without stopping useful work.
     if (task.conflict || task.status === "attention") return;
-    const commitPauseState = (update: (candidate: TransferTask) => TransferTask) => {
-      const next = transfersRef.current.map((candidate) => candidate.id === transferId ? update(candidate) : candidate);
+
+    /** Collect every unfinished child under a folder parent (state + live workers). */
+    const collectUnfinishedChildIds = (): string[] => {
+      const childIdSet = new Set(activeChildIdsRef.current.get(transferId) ?? []);
+      for (const candidate of transfersRef.current) {
+        if (
+          candidate.parentTaskId === transferId
+          && !["completed", "cancelled", "failed"].includes(candidate.status)
+        ) {
+          childIdSet.add(candidate.id);
+        }
+      }
+      return [...childIdSet];
+    };
+
+    const publishTransfers = (next: TransferTask[]) => {
       transfersRef.current = next;
       setTransfers(next);
       sftpTransferCenterStore.publishOwner(ownerId, next);
     };
-    // Latch workers only after a real pause succeeds. Adding early + never
-    // releasing on failure soft-deadlocks waitUntilTransferResumed.
+
+    const commitTasks = (mutate: (candidate: TransferTask) => TransferTask) => {
+      publishTransfers(transfersRef.current.map(mutate));
+    };
+
     const latchPause = () => {
       pausedTasksRef.current.add(transferId);
+      ensurePauseBarrier(transferId);
+      if (task.isDirectory) {
+        startFolderPauseWatchdog(transferId);
+      }
     };
-    const failPause = (reason?: string, status: TransferStatus = "transferring") => {
+    const failPause = (reason?: string, status: TransferStatus = "transferring", childIds: readonly string[] = []) => {
       releasePausedTransfer(transferId);
-      commitPauseState((candidate) => ({
-        ...candidate,
-        status,
-        pauseUnavailableReason: reason
-          ?? candidate.pauseUnavailableReason
-          ?? "Pause is unavailable for this transfer",
-        // Do not flip resumable false on benign/hard pause misses — user can retry.
-      }));
+      const childSet = new Set(childIds);
+      commitTasks((candidate) => {
+        if (candidate.id === transferId) {
+          return {
+            ...candidate,
+            status,
+            pauseUnavailableReason: reason
+              ?? candidate.pauseUnavailableReason
+              ?? "Pause is unavailable for this transfer",
+          };
+        }
+        // Roll optimistic child pauses back so live streams match the UI.
+        if (childSet.has(candidate.id) && candidate.status === "paused") {
+          return {
+            ...candidate,
+            status: "transferring" as TransferStatus,
+            pauseUnavailableReason: undefined,
+          };
+        }
+        return candidate;
+      });
     };
 
     if (task.resumable === false) {
@@ -958,23 +1184,47 @@ export const useSftpTransfers = ({
           ?? { success: false, reason: "Pause unavailable" });
         if (result.success || isBenignPauseMiss(result.reason)) {
           latchPause();
-          commitPauseState((candidate) => ({
-            ...candidate,
-            status: "paused" as TransferStatus,
-            speed: 0,
-            checkpointBytes: result.checkpointBytes ?? candidate.checkpointBytes ?? 0,
-            resumeStage: result.resumeStage ?? candidate.resumeStage,
-          }));
+          commitTasks((candidate) => candidate.id === transferId
+            ? {
+                ...candidate,
+                status: "paused" as TransferStatus,
+                speed: 0,
+                checkpointBytes: result.checkpointBytes ?? candidate.checkpointBytes ?? 0,
+                resumeStage: result.resumeStage ?? candidate.resumeStage,
+              }
+            : candidate);
         } else {
           failPause(result.reason, "queued");
         }
         return;
       }
       latchPause();
-      commitPauseState((candidate) => ({ ...candidate, status: "paused" as TransferStatus, speed: 0 }));
+      commitTasks((candidate) => candidate.id === transferId
+        ? { ...candidate, status: "paused" as TransferStatus, speed: 0 }
+        : candidate);
       return;
     }
-    commitPauseState((candidate) => ({ ...candidate, status: "pausing" as TransferStatus }));
+
+    // Prefer live worker ids; also include unfinished children from state so
+    // external folder uploads (and races that miss activeChildIds) still pause.
+    const childIds = collectUnfinishedChildIds();
+    const activeIds = task.isDirectory ? childIds : [transferId, ...childIds];
+    const activeIdSet = new Set(activeIds);
+
+    // Optimistic pause: parent + children immediately. Previously only the
+    // parent flipped to paused while children kept streaming/updating progress,
+    // so folder pause looked broken.
+    latchPause();
+    commitTasks((candidate) => {
+      if (candidate.id !== transferId && !activeIdSet.has(candidate.id)) return candidate;
+      if (["completed", "cancelled", "failed"].includes(candidate.status)) return candidate;
+      return {
+        ...candidate,
+        status: "paused" as TransferStatus,
+        speed: 0,
+      };
+    });
+
     const isCompressedUpload = task.isDirectory && (
       task.fileName.endsWith(" (compressed)")
       || task.phase === "compressing"
@@ -986,40 +1236,116 @@ export const useSftpTransfers = ({
         ?? { success: false, reason: "Pause unavailable" });
       if (result.success) {
         latchPause();
-        commitPauseState((candidate) => ({
-          ...candidate,
-          status: "paused" as TransferStatus,
-          speed: 0,
-          checkpointBytes: candidate.transferredBytes,
-        }));
+        commitTasks((candidate) => candidate.id === transferId
+          ? {
+              ...candidate,
+              status: "paused" as TransferStatus,
+              speed: 0,
+              checkpointBytes: candidate.transferredBytes,
+            }
+          : candidate);
       } else {
-        failPause(result.reason, "transferring");
+        failPause(result.reason, "transferring", childIds);
       }
       return;
     }
-    // Prefer live worker ids; also include unfinished children from state so
-    // external folder uploads (and races that miss activeChildIds) still pause.
-    const childIdSet = new Set(activeChildIdsRef.current.get(transferId) ?? []);
-    for (const candidate of transfersRef.current) {
-      if (
-        candidate.parentTaskId === transferId
-        && ["pending", "queued", "transferring", "pausing"].includes(candidate.status)
-      ) {
-        childIdSet.add(candidate.id);
-      }
-    }
-    const childIds = [...childIdSet];
-    const activeIds = task.isDirectory ? childIds : [transferId, ...childIds];
+
     // scheduler.pause parks queued jobs; those ids are NOT sent to the bridge.
-    const backendIds = activeIds.filter((id) => !globalSftpTransferScheduler.pause(id));
+    const backendIds: string[] = activeIds.filter((id) => !globalSftpTransferScheduler.pause(id));
     if (activeIds.length === 0) {
-      latchPause();
-      commitPauseState((candidate) => ({ ...candidate, status: "paused" as TransferStatus, speed: 0 }));
+      // Between files: latch alone is enough (walk waits on pausedTasksRef).
       return;
     }
-    const results = await Promise.all(backendIds.map(async (id) => (
-      netcattyBridge.get()?.pauseTransfer?.(id) ?? { success: false, reason: "Pause unavailable" }
-    )));
+    // Retry briefly when the stream is still arming — a single "cannot be
+    // paused yet" used to immediately fail the optimistic panel pause and look
+    // like the button did nothing.
+    const pauseOne = async (id: string) => {
+      const bridge = netcattyBridge.get();
+      let last = await (bridge?.pauseTransfer?.(id) ?? { success: false, reason: "Pause unavailable" });
+      // Retry arming + checkpoint races longer for folder children — a single
+      // hard miss used to roll back the whole parent latch.
+      for (let attempt = 0; attempt < 16; attempt += 1) {
+        if (last.success || isBenignPauseMiss(last.reason)) return last;
+        if (
+          !/cannot be paused yet|Could not verify the saved transfer checkpoint/i
+            .test(last.reason || "")
+        ) {
+          return last;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        last = await (bridge?.pauseTransfer?.(id) ?? { success: false, reason: "Pause unavailable" });
+      }
+      return last;
+    };
+    // Re-collect after a tick of arming races: a child may have entered
+    // activeTransfers after the first snapshot.
+    const lateChildIds = collectUnfinishedChildIds().filter((id) => !activeIdSet.has(id));
+    for (const id of lateChildIds) {
+      activeIds.push(id);
+      activeIdSet.add(id);
+      if (!globalSftpTransferScheduler.pause(id)) backendIds.push(id);
+    }
+    if (lateChildIds.length > 0) {
+      commitTasks((candidate) => {
+        if (!lateChildIds.includes(candidate.id)) return candidate;
+        if (["completed", "cancelled", "failed"].includes(candidate.status)) return candidate;
+        return { ...candidate, status: "paused" as TransferStatus, speed: 0 };
+      });
+    }
+
+    let results = await Promise.all(backendIds.map((id) => pauseOne(id)));
+
+    // Second pass: workers may have armed a new child between collect and bridge
+    // pause (the "next file fills in after pause" race). Pause any stragglers.
+    if (task.isDirectory && pausedTasksRef.current.has(transferId)) {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      const stragglers = collectUnfinishedChildIds().filter((id) => !activeIdSet.has(id));
+      if (stragglers.length > 0) {
+        for (const id of stragglers) {
+          activeIds.push(id);
+          activeIdSet.add(id);
+        }
+        commitTasks((candidate) => {
+          if (!stragglers.includes(candidate.id)) return candidate;
+          if (["completed", "cancelled", "failed"].includes(candidate.status)) return candidate;
+          return { ...candidate, status: "paused" as TransferStatus, speed: 0 };
+        });
+        const lateBackend = stragglers.filter((id) => !globalSftpTransferScheduler.pause(id));
+        if (lateBackend.length > 0) {
+          const lateResults = await Promise.all(lateBackend.map((id) => pauseOne(id)));
+          for (let i = 0; i < lateBackend.length; i += 1) {
+            backendIds.push(lateBackend[i]!);
+            results.push(lateResults[i]!);
+          }
+        }
+      }
+      // Also re-pause any child still painted transferring under the latch —
+      // covers progress races that flipped status back before freeze landed.
+      const stillLive = transfersRef.current
+        .filter((candidate) => (
+          candidate.parentTaskId === transferId
+          && candidate.status === "transferring"
+        ))
+        .map((candidate) => candidate.id);
+      if (stillLive.length > 0) {
+        commitTasks((candidate) => (
+          stillLive.includes(candidate.id)
+            ? { ...candidate, status: "paused" as TransferStatus, speed: 0 }
+            : candidate
+        ));
+        const liveBackend = stillLive.filter((id) => !globalSftpTransferScheduler.pause(id));
+        if (liveBackend.length > 0) {
+          const liveResults = await Promise.all(liveBackend.map((id) => pauseOne(id)));
+          for (let i = 0; i < liveBackend.length; i += 1) {
+            if (!backendIds.includes(liveBackend[i]!)) {
+              backendIds.push(liveBackend[i]!);
+              results.push(liveResults[i]!);
+            }
+          }
+        }
+      }
+    }
+
     // Cancel may have finished while pause was awaiting fingerprint/IO.
     if (
       cancelledTasksRef.current.has(transferId)
@@ -1045,40 +1371,48 @@ export const useSftpTransfers = ({
       for (const id of rollback.bridgeIdsToResume) {
         try { await netcattyBridge.get()?.resumeTransfer?.(id); } catch { /* best-effort */ }
       }
-      // Revert any children we painted paused under a still-transferring parent.
-      const unpauseIds = new Set(rollback.bridgeIdsToResume);
-      if (unpauseIds.size > 0) {
-        const next = transfersRef.current.map((candidate) => {
-          if (!unpauseIds.has(candidate.id) || candidate.status !== "paused") return candidate;
-          return {
-            ...candidate,
-            status: "transferring" as TransferStatus,
-            pauseUnavailableReason: undefined,
-          };
-        });
-        transfersRef.current = next;
-        setTransfers(next);
-        sftpTransferCenterStore.publishOwner(ownerId, next);
-      }
     };
 
     const checkpoint = results.find((result) => result.checkpointBytes !== undefined)?.checkpointBytes;
     if (task.isDirectory) {
-      const parentOutcome = resolveDirectoryPauseParentOutcome(results);
-      if (parentOutcome.kind !== "paused") {
-        await rollbackPartialPause();
-        failPause(parentOutcome.reason, "transferring");
-        return;
-      }
+      // Folder pause is latch-first: never roll back to transferring just because
+      // one child is still arming or failed checkpoint truncate. That rollback
+      // re-opened the queue and made pause look broken.
+      resolveDirectoryPauseParentOutcome(results); // latch-first; always "paused"
       const backendResults = new Map(backendIds.map((id, index) => [id, results[index]]));
-      const next = transfersRef.current.map((candidate) => {
-        if (!activeIds.includes(candidate.id)) return candidate;
+      const anyChildPausedClean = results.some((result) =>
+        result.success || isBenignPauseMiss(result.reason),
+      );
+      latchPause();
+      commitTasks((candidate) => {
+        if (candidate.id === transferId) {
+          return {
+            ...candidate,
+            status: "paused" as TransferStatus,
+            speed: 0,
+            // Directory parents keep file-count progress as checkpoint.
+            checkpointBytes: candidate.transferredBytes,
+            resumeStage: undefined,
+            downloadCheckpointBytes: undefined,
+            uploadCheckpointBytes: undefined,
+            sourceFingerprint: undefined,
+            // Do not show scary amber "cannot be paused yet" on a successful
+            // folder latch — new files are stopped even if one child soft-drains.
+            pauseUnavailableReason: undefined,
+          };
+        }
+        if (!activeIdSet.has(candidate.id)) return candidate;
         const result = backendResults.get(candidate.id);
         // Scheduler-parked ids have no bridge result — still pause them in UI.
         if (result && isHardPauseFailure(result)) {
           return {
             ...candidate,
-            pauseUnavailableReason: result.reason,
+            // Keep paused UI even when bridge miss — latch blocks restarts;
+            // soft-drain / completion will settle the stream.
+            status: "paused" as TransferStatus,
+            speed: 0,
+            // Only annotate the child that actually failed stream pause.
+            pauseUnavailableReason: anyChildPausedClean ? undefined : result.reason,
           };
         }
         return {
@@ -1090,43 +1424,58 @@ export const useSftpTransfers = ({
           downloadCheckpointBytes: result?.downloadCheckpointBytes ?? candidate.downloadCheckpointBytes,
           uploadCheckpointBytes: result?.uploadCheckpointBytes ?? candidate.uploadCheckpointBytes,
           sourceFingerprint: result?.sourceFingerprint ?? candidate.sourceFingerprint,
+          pauseUnavailableReason: undefined,
         };
       });
-      transfersRef.current = next;
-      setTransfers(next);
-      sftpTransferCenterStore.publishOwner(ownerId, next);
-      latchPause();
-      commitPauseState((candidate) => ({
-        ...candidate,
-        status: "paused" as TransferStatus,
-        speed: 0,
-        checkpointBytes: candidate.transferredBytes,
-        resumeStage: undefined,
-        downloadCheckpointBytes: undefined,
-        uploadCheckpointBytes: undefined,
-        sourceFingerprint: undefined,
-      }));
       return;
     }
     const singleOutcome = allPauseResultsBenignOrSuccess(results);
     if (singleOutcome) {
       latchPause();
-      commitPauseState((candidate) => ({
-        ...candidate,
-        status: "paused" as TransferStatus,
-        speed: 0,
-        checkpointBytes: checkpoint ?? candidate.transferredBytes,
-        resumeStage: results[0]?.resumeStage ?? candidate.resumeStage,
-        downloadCheckpointBytes: results[0]?.downloadCheckpointBytes ?? candidate.downloadCheckpointBytes,
-        uploadCheckpointBytes: results[0]?.uploadCheckpointBytes ?? candidate.uploadCheckpointBytes,
-        sourceFingerprint: results[0]?.sourceFingerprint ?? candidate.sourceFingerprint,
-      }));
+      commitTasks((candidate) => {
+        if (candidate.id === transferId) {
+          return {
+            ...candidate,
+            status: "paused" as TransferStatus,
+            speed: 0,
+            checkpointBytes: checkpoint ?? candidate.transferredBytes,
+            resumeStage: results[0]?.resumeStage ?? candidate.resumeStage,
+            downloadCheckpointBytes: results[0]?.downloadCheckpointBytes ?? candidate.downloadCheckpointBytes,
+            uploadCheckpointBytes: results[0]?.uploadCheckpointBytes ?? candidate.uploadCheckpointBytes,
+            sourceFingerprint: results[0]?.sourceFingerprint ?? candidate.sourceFingerprint,
+            pauseUnavailableReason: undefined,
+          };
+        }
+        if (!activeIdSet.has(candidate.id)) return candidate;
+        return {
+          ...candidate,
+          status: "paused" as TransferStatus,
+          speed: 0,
+        };
+      });
     } else {
       const hard = results.find((result) => isHardPauseFailure(result));
       await rollbackPartialPause();
-      failPause(hard?.reason, "transferring");
+      failPause(hard?.reason, "transferring", activeIds);
     }
-  }, [activeChildIdsRef, ownerId, releasePausedTransfer]);
+    })();
+
+    pauseInFlightRef.current.set(transferId, run);
+    try {
+      await run;
+    } finally {
+      if (pauseInFlightRef.current.get(transferId) === run) {
+        pauseInFlightRef.current.delete(transferId);
+      }
+    }
+  }, [
+    activeChildIdsRef,
+    ensurePauseBarrier,
+    ownerId,
+    releasePausedTransfer,
+    setTransfers,
+    startFolderPauseWatchdog,
+  ]);
 
   const resumeTransfer = useCallback(async (transferId: string) => {
     const task = transfersRef.current.find((candidate) => candidate.id === transferId);
@@ -1146,11 +1495,75 @@ export const useSftpTransfers = ({
     for (const childId of activeChildIdsRef.current.get(transferId) ?? []) {
       clearCancelledTask(childId);
     }
+
+    /** Mirror pause: every unfinished child under this parent. */
+    const collectResumeChildIds = (): string[] => {
+      const childIdSet = new Set(activeChildIdsRef.current.get(transferId) ?? []);
+      for (const candidate of transfersRef.current) {
+        if (
+          candidate.parentTaskId === transferId
+          && !["completed", "cancelled"].includes(candidate.status)
+        ) {
+          childIdSet.add(candidate.id);
+        }
+      }
+      return [...childIdSet];
+    };
+
+    const paintResuming = (ids: ReadonlySet<string>) => {
+      const painted = transfersRef.current.map((candidate) => {
+        if (candidate.id === transferId) {
+          return {
+            ...candidate,
+            status: "transferring" as TransferStatus,
+            error: undefined,
+            pauseUnavailableReason: undefined,
+            reconnectRequired: false,
+            speed: 0,
+          };
+        }
+        if (!ids.has(candidate.id)) return candidate;
+        if (["completed", "cancelled", "failed"].includes(candidate.status)) return candidate;
+        // Queued children stay queued (scheduler will promote); soft-paused
+        // streams go back to transferring so progress is not frozen.
+        const nextStatus = candidate.status === "queued" || candidate.status === "pending"
+          ? candidate.status
+          : "transferring";
+        return {
+          ...candidate,
+          status: nextStatus as TransferStatus,
+          pauseUnavailableReason: undefined,
+          reconnectRequired: false,
+          speed: 0,
+        };
+      });
+      transfersRef.current = painted;
+      setTransfers(painted);
+      sftpTransferCenterStore.publishOwner(ownerId, painted);
+    };
+
+    // Capture before release: directory workers sit in waitUntilTransferResumed
+    // between files. Unlatching them is enough — a second processTransfer would
+    // re-list the whole tree and race the live walk (very slow resume UX).
+    const walkAlive = inFlightTransferIdsRef.current.has(transferId)
+      || pauseWaitersRef.current.has(transferId);
+
+    const childIds = collectResumeChildIds();
+    const activeIds = task.isDirectory ? childIds : [transferId, ...childIds];
+    const activeIdSet = new Set(activeIds);
+
+    // Optimistic UI: parent + children leave paused before bridge round-trips,
+    // matching optimistic pause. Sticky "paused" rows were blocking scheduler
+    // re-entry after unlatch (folder resume looked dead).
+    paintResuming(activeIdSet);
     releasePausedTransfer(transferId);
+
     if (globalSftpTransferScheduler.resume(transferId)) {
-      setTransfers((prev) => prev.map((candidate) => candidate.id === transferId
-        ? { ...candidate, status: "queued" as TransferStatus, error: undefined }
-        : candidate));
+      const next = transfersRef.current.map((candidate) => candidate.id === transferId
+        ? { ...candidate, status: "queued" as TransferStatus, error: undefined, reconnectRequired: false }
+        : candidate);
+      transfersRef.current = next;
+      setTransfers(next);
       return;
     }
     const isCompressedUpload = task.isDirectory && (
@@ -1163,28 +1576,22 @@ export const useSftpTransfers = ({
       const result = await (netcattyBridge.get()?.resumeCompressedUpload?.(transferId)
         ?? { success: false, reason: "Resume unavailable" });
       if (result.success) {
-        setTransfers((prev) => prev.map((candidate) => candidate.id === transferId
-          ? { ...candidate, status: "transferring" as TransferStatus, pauseUnavailableReason: undefined }
-          : candidate));
+        paintResuming(activeIdSet);
         return;
       }
       // After an app restart there is no in-memory compression worker. Rebuild
       // the directory transfer from its persisted source, target, and child
       // checkpoints instead of leaving it permanently stuck.
     }
-    const childIdSet = new Set(activeChildIdsRef.current.get(transferId) ?? []);
-    for (const candidate of transfersRef.current) {
-      if (
-        candidate.parentTaskId === transferId
-        && ["paused", "interrupted", "failed", "pending", "queued"].includes(candidate.status)
-      ) {
-        childIdSet.add(candidate.id);
-      }
-    }
-    const childIds = [...childIdSet];
-    const activeIds = task.isDirectory ? childIds : [transferId, ...childIds];
+
     const backendIds = activeIds.filter((id) => !globalSftpTransferScheduler.resume(id));
+
+    // Soft-pause between files (no live child streams): unlatch the walk only.
     if (activeIds.length === 0) {
+      if (walkAlive || inFlightTransferIdsRef.current.has(transferId)) {
+        paintResuming(new Set());
+        return;
+      }
       const endpoints = resolveTaskEndpoints(task);
       if (!endpoints) {
         setTransfers((prev) => prev.map((candidate) => candidate.id === transferId
@@ -1218,16 +1625,27 @@ export const useSftpTransfers = ({
     const results = await Promise.all(backendIds.map(async (id) => (
       netcattyBridge.get()?.resumeTransfer?.(id) ?? { success: false, reason: "Resume unavailable" }
     )));
-    if (backendIds.length < activeIds.length || results.some((result) => result.success)) {
-      setTransfers((prev) => prev.map((candidate) => candidate.id === transferId
-        ? {
-            ...candidate,
-            status: "transferring" as TransferStatus,
-            error: undefined,
-            pauseUnavailableReason: undefined,
-            reconnectRequired: false,
-          }
-        : candidate));
+    // Only rejoin when a backend stream (or parked scheduler job) actually resumed.
+    // After app restart every resumeTransfer is a miss — painting "transferring"
+    // here left a dead row that never moved bytes.
+    const resumedBackendIds = new Set(
+      backendIds.filter((_, index) => results[index]?.success),
+    );
+    const anyBackendResumed = resumedBackendIds.size > 0;
+    const anySchedulerResumed = backendIds.length < activeIds.length;
+    if (anyBackendResumed || anySchedulerResumed) {
+      // Keep all soft-resume targets transferring (not only bridge successes) so
+      // scheduler-parked children and late-unpaused streams match the parent.
+      paintResuming(activeIdSet);
+      return;
+    }
+
+    // Live directory walk is still blocked/unlatched above — do not re-scan the
+    // tree. Workers will pick up remaining files with persisted checkpoints.
+    // Soft-miss streams are gone; walk continues from the next file / checkpoint
+    // on the next transferFile entry.
+    if (walkAlive || inFlightTransferIdsRef.current.has(transferId)) {
+      paintResuming(activeIdSet);
       return;
     }
 
@@ -1432,9 +1850,22 @@ export const useSftpTransfers = ({
         if (t.id !== taskId) return t;
 
         const merged: TransferTask = { ...t, ...updates };
+        const effectiveStatus = merged.status ?? t.status;
+        const isPausedUi = effectiveStatus === "paused" || effectiveStatus === "pausing";
 
         // Keep progress monotonic and bounded for stable progress UI.
-        if (typeof merged.totalBytes === "number" && merged.totalBytes > 0) {
+        // While paused, freeze visible transferred/speed so soft-drain tail
+        // progress does not make Pause look ignored.
+        if (isPausedUi) {
+          merged.transferredBytes = t.transferredBytes;
+          merged.speed = 0;
+          if (Number.isFinite(Number(updates.checkpointBytes))) {
+            merged.checkpointBytes = Math.max(
+              t.checkpointBytes ?? 0,
+              Math.trunc(Number(updates.checkpointBytes)),
+            );
+          }
+        } else if (typeof merged.totalBytes === "number" && merged.totalBytes > 0) {
           merged.transferredBytes = Math.max(
             t.transferredBytes,
             Math.min(merged.transferredBytes, merged.totalBytes),
@@ -1616,8 +2047,11 @@ export const useSftpTransfers = ({
     ],
   );
 
+  // Only work that is still moving or queued — paused rows must not keep the
+  // header "N active" lit or pause feels like it did nothing.
   const activeTransfersCount = useMemo(() => transfers.filter(
-    (t) => !(["completed", "cancelled"] as TransferStatus[]).includes(t.status) && !t.parentTaskId,
+    (t) => !t.parentTaskId
+      && ["pending", "queued", "transferring", "pausing"].includes(t.status),
   ).length, [transfers]);
 
   const downloadToLocal = useCallback(
@@ -1633,6 +2067,21 @@ export const useSftpTransfers = ({
       isDirectory: boolean;
       totalBytes?: number;
     }): Promise<TransferStatus> => {
+      // Same source+target concurrent writers corrupt .part / final files.
+      const centerConflict = findActivePathConflict(
+        sftpTransferCenterStore.getSnapshot().tasks,
+        { id: "", sourcePath: params.sourcePath, targetPath: params.targetPath },
+      );
+      const localConflict = findActivePathConflict(
+        transfersRef.current,
+        { id: "", sourcePath: params.sourcePath, targetPath: params.targetPath },
+      );
+      const conflict = centerConflict ?? localConflict;
+      if (conflict) {
+        notifyPathConflict(conflict, tRef.current);
+        return conflict.status === "completed" ? "completed" : "attention";
+      }
+
       const task = createDirectDownloadTransferTask({
         id: crypto.randomUUID(),
         fileName: params.fileName,

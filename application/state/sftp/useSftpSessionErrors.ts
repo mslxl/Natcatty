@@ -18,6 +18,24 @@ interface UseSftpSessionErrorsParams {
   reconnectingRef: MutableRefObject<{ left: boolean; right: boolean }>;
 }
 
+/**
+ * Whether we still know enough to reconnect after a session drop.
+ * Prefer reconnect over wiping the pane to the empty "select host" screen —
+ * that wipe was especially easy to hit when listing "/" failed/timed out on
+ * some hosts while the file list was empty or lastHost had raced away.
+ */
+export function canReconnectSftpPane(params: {
+  lastHost: Host | "local" | null;
+  connection: SftpPane["connection"];
+}): boolean {
+  const { lastHost, connection } = params;
+  if (lastHost && lastHost !== "local") return true;
+  if (lastHost === "local") return true;
+  if (connection && !connection.isLocal && !!connection.hostId) return true;
+  if (connection?.isLocal) return true;
+  return false;
+}
+
 export const useSftpSessionErrors = ({
   getActivePane,
   leftTabsRef,
@@ -44,25 +62,47 @@ export const useSftpSessionErrors = ({
       navSeqRef.current[side] += 1;
 
       const lastHost = lastConnectedHostRef.current[side];
-      if (lastHost && pane.files.length > 0 && !reconnectingRef.current[side]) {
+      const canReconnect = canReconnectSftpPane({
+        lastHost,
+        connection: pane.connection,
+      });
+
+      if (canReconnect && !reconnectingRef.current[side]) {
+        // Keep the connection object (host identity + path) so the UI does not
+        // collapse into the empty host picker when listing root (or any path)
+        // fails with a transient session error on some servers.
         reconnectingRef.current[side] = true;
         updateActiveTab(side, (prev) => ({
           ...prev,
           reconnecting: true,
+          loading: false,
           error: "sftp.error.connectionLostReconnecting",
         }));
-      } else {
+        return;
+      }
+
+      if (canReconnect && reconnectingRef.current[side]) {
+        // Already reconnecting — keep connection, avoid blank host picker.
         updateActiveTab(side, (prev) => ({
           ...prev,
-          connection: null,
-          files: [],
+          reconnecting: true,
           loading: false,
-          reconnecting: false,
-          error: "sftp.error.sessionLost",
-          selectedFiles: new Set(),
-          filter: "",
+          error: "sftp.error.connectionLostReconnecting",
         }));
+        return;
       }
+
+      // No host identity left — fall back to empty picker.
+      updateActiveTab(side, (prev) => ({
+        ...prev,
+        connection: null,
+        files: [],
+        loading: false,
+        reconnecting: false,
+        error: "sftp.error.sessionLost",
+        selectedFiles: new Set(),
+        filter: "",
+      }));
     },
     [
       getActivePane,

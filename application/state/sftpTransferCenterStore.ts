@@ -6,8 +6,13 @@ import {
   pruneSftpTransferHistory,
   serializeSftpTransferCenter,
 } from "../../domain/sftpTransferCenter";
+import {
+  findActivePathConflict,
+  pathConflictMessage,
+} from "../../domain/sftpTransferConflicts";
 import { STORAGE_KEY_SFTP_TRANSFER_CENTER } from "../../infrastructure/config/storageKeys";
 import { netcattyBridge } from "../../infrastructure/services/netcattyBridge";
+import { notify } from "../notification";
 import { globalSftpTransferScheduler } from "./sftp/globalTransferScheduler";
 import { isBenignPauseMiss, planPartialPauseRollback } from "./sftp/pauseTransferOutcome";
 
@@ -240,6 +245,8 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
           const live = await bridge.resumeTransfer(taskId);
           const afterLiveResume = tasks.find((candidate) => candidate.id === taskId);
           if (afterLiveResume?.status === "cancelled") return;
+          // After quit/restart there is no live stream — success must mean a
+          // real handle rejoined. Never paint "transferring" on a soft miss.
           if (live?.success) {
             tasks = tasks.map((candidate) => candidate.id === taskId ? {
               ...candidate,
@@ -261,6 +268,21 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
           if (task?.ownerId === "dedicated-resume" && task.reconnectRequired) {
             return;
           }
+          // Show pausing until soft-drain settles — do not offer Resume early.
+          if (task && ["transferring", "pending", "queued", "pausing"].includes(task.status)) {
+            tasks = tasks.map((candidate) => (
+              candidate.id === taskId || candidate.parentTaskId === taskId
+                ? {
+                  ...candidate,
+                  status: (["completed", "cancelled", "failed"].includes(candidate.status)
+                    ? candidate.status
+                    : "pausing") as TransferTask["status"],
+                  speed: 0,
+                }
+                : candidate
+            ));
+            emit();
+          }
           // Directory dedicated resume streams use child transferIds — pause them all.
           const childIds = task?.isDirectory
             ? tasks
@@ -278,9 +300,11 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
           const allBenignOrSuccess = pauseIds.length === 0 || pauseResults.every(
             ({ result }) => result.success || isBenignPauseMiss(result.reason),
           );
-          // Only claim paused when EVERY targeted stream paused or is already gone.
-          // Mixed success + hard failure must not paint a paused parent over live children.
-          if (allBenignOrSuccess) {
+          // Folder pause is latch-first: keep parent paused even when some child
+          // streams miss (arming / checkpoint races). Rolling back re-opened the
+          // queue and looked like pause did nothing.
+          // Single-file: still require full success, else unpause partials.
+          if (allBenignOrSuccess || task?.isDirectory) {
             const byId = new Map(pauseResults.map((row) => [row.id, row.result]));
             tasks = tasks.map((candidate) => {
               if (candidate.id === taskId) {
@@ -296,12 +320,18 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
                   downloadCheckpointBytes: byId.get(taskId)?.downloadCheckpointBytes ?? candidate.downloadCheckpointBytes,
                   uploadCheckpointBytes: byId.get(taskId)?.uploadCheckpointBytes ?? candidate.uploadCheckpointBytes,
                   sourceFingerprint: byId.get(taskId)?.sourceFingerprint ?? candidate.sourceFingerprint,
+                  pauseUnavailableReason: undefined,
                 };
               }
               if (!pauseIds.includes(candidate.id)) return candidate;
               const result = byId.get(candidate.id);
               if (result && !result.success && !isBenignPauseMiss(result.reason)) {
-                return { ...candidate, pauseUnavailableReason: result.reason };
+                return {
+                  ...candidate,
+                  status: "paused" as const,
+                  speed: 0,
+                  pauseUnavailableReason: undefined,
+                };
               }
               return {
                 ...candidate,
@@ -317,9 +347,8 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
             emit();
             return;
           }
-          // Partial / hard fail: unpause any streams we successfully paused so
-          // the parent can stay transferring without soft-deadlocking children
-          // (match panel planPartialPauseRollback path).
+          // Single-file partial / hard fail: unpause streams we paused so work
+          // continues (match panel planPartialPauseRollback path).
           const rollback = planPartialPauseRollback({
             activeIds: pauseIds,
             backendIds: pauseIds,
@@ -331,14 +360,26 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
           const hard = pauseResults.find(({ result }) =>
             result && !result.success && !isBenignPauseMiss(result.reason),
           )?.result;
-          if (hard?.reason) {
-            tasks = tasks.map((candidate) => candidate.id === taskId ? {
+          const revertIds = new Set([taskId, ...pauseIds]);
+          tasks = tasks.map((candidate) => {
+            if (!revertIds.has(candidate.id)) return candidate;
+            // Intermediate "pausing" (and any premature "paused") must roll back.
+            if (
+              candidate.status !== "pausing"
+              && candidate.status !== "paused"
+              && candidate.id !== taskId
+            ) {
+              return candidate;
+            }
+            return {
               ...candidate,
               status: "transferring" as const,
-              pauseUnavailableReason: hard.reason,
-            } : candidate);
-            emit();
-          }
+              pauseUnavailableReason: candidate.id === taskId
+                ? (hard?.reason ?? candidate.pauseUnavailableReason)
+                : candidate.pauseUnavailableReason,
+            };
+          });
+          emit();
           // Bridge was reachable — do not demote to interrupted (ghost restart path
           // only applies when pauseTransfer is unavailable).
           return;
@@ -389,6 +430,25 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
       && !task.conflict
       && dedicatedResumeHandler
     ) {
+      // Same source+target already writing elsewhere — do not open a second
+      // stream into the same destination (.part / rename race).
+      const pathConflict = findActivePathConflict(tasks, task);
+      if (pathConflict) {
+        const conflictError = pathConflictMessage(pathConflict);
+        tasks = tasks.map((candidate) => candidate.id === taskId ? {
+          ...candidate,
+          status: "attention" as const,
+          error: conflictError,
+          reconnectRequired: true,
+          speed: 0,
+          phase: undefined,
+        } : candidate);
+        emit();
+        // Surface exclusivity failures immediately — silent attention rows look
+        // like a dead Resume click after path races.
+        notify.warning(conflictError, "SFTP");
+        return;
+      }
       const previousOwnerId = task.ownerId;
       // Detach parent + directory children so publishOwner cannot clobber
       // in-flight dedicated progress with a stale interrupted/paused snapshot.

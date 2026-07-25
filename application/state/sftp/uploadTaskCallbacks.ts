@@ -82,12 +82,23 @@ export const createUploadTaskCallbacks = ({
     });
   },
   onTaskProgress: (taskId: string, progress) => {
+    const durableCheckpoint = Number.isFinite(Number(progress.checkpointBytes))
+      ? Math.max(0, Math.trunc(Number(progress.checkpointBytes)))
+      : progress.transferred;
+    // Only patch fingerprint/checkpoint while paused — do not keep animating
+    // high-water transferred after the user hit Pause.
     updateExternalUpload?.(taskId, {
       transferredBytes: progress.transferred,
-      checkpointBytes: progress.transferred,
+      // Soft-drain high-water transferred must not become the resume offset.
+      checkpointBytes: durableCheckpoint,
       speed: progress.speed,
       resumable: progress.resumable,
       pauseUnavailableReason: progress.pauseUnavailableReason,
+      // Durable pause identity may arrive on a forced progress event while
+      // status is already paused — keep it for restart/resume safety.
+      ...("sourceFingerprint" in progress && progress.sourceFingerprint
+        ? { sourceFingerprint: progress.sourceFingerprint as string }
+        : null),
     });
   },
   onTaskNameUpdate: (taskId: string, value: string) => {

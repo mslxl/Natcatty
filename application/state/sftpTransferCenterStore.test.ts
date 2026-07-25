@@ -147,6 +147,23 @@ test("persisted unfinished tasks restore as interrupted without controllers", ()
   assert.equal(restored.canControl("a"), true);
 });
 
+test("paused source fingerprint patches are persisted for restart", () => {
+  let persisted = "";
+  const first = createSftpTransferCenterStore({
+    read: () => null,
+    write: (value) => { persisted = value; },
+  });
+  first.publishOwner("panel-a", [makeTask("paused-fingerprint", "paused")]);
+  first.patchTask("paused-fingerprint", { sourceFingerprint: "sha256:durable" });
+
+  const restored = createSftpTransferCenterStore({
+    read: () => persisted,
+    write: () => {},
+  });
+  assert.equal(restored.getSnapshot().tasks[0]?.status, "interrupted");
+  assert.equal(restored.getSnapshot().tasks[0]?.sourceFingerprint, "sha256:durable");
+});
+
 test("orphaned unfinished tasks stay controllable so dead rows can be cancelled", () => {
   const store = createSftpTransferCenterStore();
   store.publishOwner("gone-panel", [
@@ -505,6 +522,40 @@ test("dedicated directory resume after soft-pause winds down then startFresh (no
   assert.equal(resumeCalls, 2, "must startFresh after wind-down");
   assert.equal(pendingCancel.has("c1"), false, "child latch must stay clear after startFresh");
   assert.equal(store.getSnapshot().tasks.find((task) => task.id === "dir")?.status, "completed");
+});
+
+test("resume refuses when another active transfer already owns the same path", async () => {
+  const store = createSftpTransferCenterStore();
+  store.publishOwner("panel-a", [
+    {
+      ...makeTask("live", "transferring"),
+      sourcePath: "/root/sing-box",
+      targetPath: "/Users/me/Desktop/sing-box",
+      fileName: "sing-box",
+      direction: "download",
+      sourceConnectionId: "remote-live",
+      targetConnectionId: "local",
+    },
+    {
+      ...makeTask("stale", "interrupted"),
+      sourcePath: "/root/other",
+      targetPath: "/Users/me/Desktop/sing-box",
+      fileName: "sing-box",
+      direction: "download",
+      sourceConnectionId: "remote-stale",
+      targetConnectionId: "local",
+      reconnectRequired: true,
+    },
+  ]);
+  store.setDedicatedResumeHandler(async () => {
+    throw new Error("dedicated resume must not run when path is busy");
+  });
+
+  await store.resume("stale");
+
+  const stale = store.getSnapshot().tasks.find((task) => task.id === "stale");
+  assert.equal(stale?.status, "attention");
+  assert.match(stale?.error ?? "", /already in progress/i);
 });
 
 test("orphan directory pause rolls back successful child pauses on hard fail", async (t) => {

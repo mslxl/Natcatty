@@ -1,6 +1,7 @@
 import { GripHorizontal } from "lucide-react";
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "../../application/i18n/I18nProvider";
+import { sftpTransferCenterStore } from "../../application/state/sftpTransferCenterStore";
 import { useStoredNumber } from "../../application/state/useStoredNumber";
 import type { useSftpState } from "../../application/state/useSftpState";
 import {
@@ -11,6 +12,14 @@ import type { TransferTask } from "../../types";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { SftpTransferItem } from "./SftpTransferItem";
+
+/** Same control path as the global transfer center — never a second pause implementation. */
+const pauseViaCenter = (taskId: string) => {
+  void sftpTransferCenterStore.pause(taskId);
+};
+const resumeViaCenter = (taskId: string) => {
+  void sftpTransferCenterStore.resume(taskId);
+};
 
 type SftpState = ReturnType<typeof useSftpState>;
 
@@ -420,12 +429,12 @@ export const SftpTransferQueue: React.FC<SftpTransferQueueProps> = ({
                   if (task.sourceConnectionId === "external") {
                     void sftp.cancelExternalUpload(task.id);
                   }
-                  sftp.cancelTransfer(task.id);
+                  void sftpTransferCenterStore.cancel(task.id);
                 }}
-                onPause={() => sftp.pauseTransfer(task.id)}
-                onResume={() => sftp.resumeTransfer(task.id)}
-                onRetry={() => sftp.retryTransfer(task.id)}
-                onDismiss={() => sftp.dismissTransfer(task.id)}
+                onPause={() => pauseViaCenter(task.id)}
+                onResume={() => resumeViaCenter(task.id)}
+                onRetry={() => { void sftpTransferCenterStore.retry(task.id); }}
+                onDismiss={() => sftpTransferCenterStore.dismiss(task.id)}
                 canRevealTarget={canRevealTransferTarget?.(task) ?? false}
                 onRevealTarget={
                   onRevealTransferTarget
@@ -454,11 +463,11 @@ export const SftpTransferQueue: React.FC<SftpTransferQueueProps> = ({
                   scrollContainerRef={scrollContainerRef}
                   scrollTop={scrollTop}
                   viewportHeight={viewportHeight}
-                  onCancel={(taskId) => sftp.cancelTransfer(taskId)}
-                  onPause={(taskId) => sftp.pauseTransfer(taskId)}
-                  onResume={(taskId) => sftp.resumeTransfer(taskId)}
-                  onRetry={(taskId) => sftp.retryTransfer(taskId)}
-                  onDismiss={(taskId) => sftp.dismissTransfer(taskId)}
+                  onCancel={(taskId) => { void sftpTransferCenterStore.cancel(taskId); }}
+                  onPause={(taskId) => pauseViaCenter(taskId)}
+                  onResume={(taskId) => resumeViaCenter(taskId)}
+                  onRetry={(taskId) => { void sftpTransferCenterStore.retry(taskId); }}
+                  onDismiss={(taskId) => sftpTransferCenterStore.dismiss(taskId)}
                 />
               )}
             </React.Fragment>

@@ -15,7 +15,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 
 import { useI18n } from "../application/i18n/I18nProvider";
 import {
@@ -250,6 +250,8 @@ function TransferRow({
 }) {
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
+  // Optimistic spinner from click until store status moves off paused/interrupted.
+  const [resumeClicked, setResumeClicked] = useState(false);
   const isDirParent = isDirectoryParentTask(task);
   const progress = buildGlobalTransferProgressDisplay(task, t);
   const activeChildren = useMemo(
@@ -260,15 +262,34 @@ function TransferRow({
   const canControl = sftpTransferCenterStore.canControl(task.id);
   // Keep the play button as a spinner for the whole reconnect window, not only
   // the brief "pending" status before a dedicated session opens.
-  const isResuming = task.reconnectRequired === true
+  const storeResuming = task.reconnectRequired === true
     && ["pending", "queued", "transferring"].includes(task.status)
     && !task.error;
+  const isResuming = storeResuming
+    || (resumeClicked && ["paused", "interrupted", "attention", "pending", "queued"].includes(task.status) && !task.error);
+  // Clear optimistic click once the store has left the idle-resume surface or failed.
+  useEffect(() => {
+    if (!resumeClicked) return;
+    if (
+      storeResuming
+      || task.status === "transferring"
+      || task.status === "completed"
+      || task.status === "failed"
+      || task.status === "cancelled"
+      || !!task.error
+    ) {
+      setResumeClicked(false);
+    }
+  }, [resumeClicked, storeResuming, task.status, task.error]);
   const canPause = task.resumable !== false && task.status === "transferring" && canControl && !isResuming;
   // Orphaned tasks after app restart (interrupted / attention / paused without a
   // live panel owner) must still expose resume/cancel from the global center.
   // Conflict rows must use resolveConflict — Resume would overwrite blindly.
+  // Non-resumable attention rows (e.g. duplicate-destination refusals) are
+  // terminal: resuming them would start a second writer on the same path.
   const canResume = !isResuming && !task.conflict && (
-    ["paused", "interrupted", "attention"].includes(task.status)
+    ["paused", "interrupted"].includes(task.status)
+    || (task.status === "attention" && task.resumable !== false)
     || (task.status === "failed" && task.resumable !== false && (task.checkpointBytes ?? 0) > 0)
   ) && canControl;
   const canCancel = ["pending", "queued", "transferring", "pausing", "paused", "interrupted", "attention"].includes(task.status) && canControl;
@@ -299,6 +320,7 @@ function TransferRow({
     }));
   };
   const resumeTask = () => {
+    setResumeClicked(true);
     // Dedicated resume opens vault sessions for local↔remote and SFTP↔SFTP.
     // Only force-open the panel when the row still needs a live owner/adoption
     // (e.g. conflict) — not on every remote-to-remote resume click.
@@ -355,6 +377,11 @@ function TransferRow({
           {canPause && (
             <TransferAction label={t("sftp.transferCenter.pause")} onClick={() => { void sftpTransferCenterStore.pause(task.id); }}>
               <Pause size={13} />
+            </TransferAction>
+          )}
+          {task.status === "pausing" && (
+            <TransferAction label={t("sftp.transferCenter.status.pausing")} onClick={() => {}}>
+              <Loader2 size={13} className="animate-spin text-amber-500" />
             </TransferAction>
           )}
           {canResume && (
@@ -582,6 +609,9 @@ export function GlobalSftpTransferCenter() {
       // when the parent directory is re-adopted (avoids dual writers).
       if (task.parentTaskId) continue;
       if (task.conflict) continue;
+      // Non-resumable attention rows are duplicate-destination refusals — never
+      // restart them into a path another transfer still owns.
+      if (task.status === "attention" && task.resumable === false) continue;
       if (task.status === "paused" || task.status === "interrupted" || task.status === "attention") {
         void sftpTransferCenterStore.resume(task.id);
       }
