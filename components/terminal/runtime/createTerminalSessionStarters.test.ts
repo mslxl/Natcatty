@@ -235,6 +235,7 @@ test("startPluginConnection cancels a pending Provider request when the terminal
 test("startPluginConnection waits for explicit Provider connected readiness before startup commands", async () => {
   let onData: ((data: string, meta?: { pluginPipelineIngressBytes?: number; pluginConnectionReady?: boolean }) => void) | null = null;
   const writes: Array<{ id: string; data: string; options?: Record<string, unknown> }> = [];
+  const statuses: string[] = [];
   const hasConnectedRef = { current: false };
   const terminalBackend = {
     pluginConnectionAvailable: () => true,
@@ -273,6 +274,7 @@ test("startPluginConnection waits for explicit Provider connected readiness befo
     noAutoRun: true,
     hasConnectedRef,
     updateStatus: (status: string) => {
+      statuses.push(status);
       if (status === "connected") hasConnectedRef.current = true;
     },
   });
@@ -280,8 +282,12 @@ test("startPluginConnection waits for explicit Provider connected readiness befo
   await createTerminalSessionStarters(ctx as never).startPluginConnection(createTermStub() as never);
   assert.equal(ctx.hasRunStartupCommandRef.current, false);
   onData?.("Provider banner before authentication completes\r\n", { pluginPipelineIngressBytes: 48 });
+  assert.deepEqual(statuses, []);
+  assert.equal(ctx.hasConnectedRef.current, false);
   assert.equal(ctx.hasRunStartupCommandRef.current, false);
   onData?.("", { pluginPipelineIngressBytes: 0, pluginConnectionReady: true });
+  assert.deepEqual(statuses, ["connected"]);
+  assert.equal(ctx.hasConnectedRef.current, true);
   assert.equal(ctx.hasRunStartupCommandRef.current, true);
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.deepEqual(writes, [

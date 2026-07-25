@@ -764,6 +764,7 @@ export const tryAttachSessionToTerminal = (
     onExitMessage?: (evt: { exitCode?: number; signal?: number; error?: string; reason?: string }) => string;
     onConnected?: (meta?: TerminalSessionDataMeta) => void;
     onExit?: (evt: { exitCode?: number; signal?: number; error?: string; reason?: string }) => void;
+    requireExplicitConnectionReady?: boolean;
     convertLfToCrlf?: boolean;
     sudoAutofillPassword?: string;
     sudoAutofillCandidates?: SudoPasswordAutofillCandidate[];
@@ -819,8 +820,9 @@ export const attachSessionToTerminal = (
   id: string,
   opts?: {
     onExitMessage?: (evt: { exitCode?: number; signal?: number; error?: string; reason?: string }) => string;
-    onConnected?: () => void;
+    onConnected?: (meta?: TerminalSessionDataMeta) => void;
     onExit?: (evt: { exitCode?: number; signal?: number; error?: string; reason?: string }) => void;
+    requireExplicitConnectionReady?: boolean;
     convertLfToCrlf?: boolean;
     sudoAutofillPassword?: string;
     sudoAutofillCandidates?: SudoPasswordAutofillCandidate[];
@@ -868,6 +870,7 @@ export const attachSessionToTerminal = (
 
   const markConnectedOnFirstOutput = (meta?: TerminalSessionDataMeta) => {
     const pluginConnectionReady = meta?.pluginConnectionReady === true;
+    if (opts?.requireExplicitConnectionReady === true && !pluginConnectionReady) return;
     if (ctx.hasConnectedRef.current && !pluginConnectionReady) return;
     if (!ctx.hasConnectedRef.current) {
       ctx.updateStatus("connected");

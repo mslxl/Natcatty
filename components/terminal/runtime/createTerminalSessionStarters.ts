@@ -1529,6 +1529,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         onExitMessage: (event) => event?.error
           ? `\r\n[Plugin connection closed: ${event.error}]`
           : "\r\n[Plugin connection closed]",
+        requireExplicitConnectionReady: true,
         onConnected: (meta) => {
           if (meta?.pluginConnectionReady === true) schedulePluginStartup();
         },
