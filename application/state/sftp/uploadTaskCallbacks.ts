@@ -88,6 +88,11 @@ export const createUploadTaskCallbacks = ({
       speed: progress.speed,
       resumable: progress.resumable,
       pauseUnavailableReason: progress.pauseUnavailableReason,
+      // Durable pause identity may arrive on a forced progress event while
+      // status is already paused — keep it for restart/resume safety.
+      ...("sourceFingerprint" in progress && progress.sourceFingerprint
+        ? { sourceFingerprint: progress.sourceFingerprint as string }
+        : null),
     });
   },
   onTaskNameUpdate: (taskId: string, value: string) => {

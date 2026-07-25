@@ -3690,21 +3690,34 @@ async function resumeTransfer(_event, payload) {
   }
   // Soft-drained concurrent pause may leave a sparse tail past the contiguous
   // checkpoint. Stay paused until leftover ranges settle, then truncate before
-  // unpausing. No new ranges are scheduled while paused.
+  // unpausing. No new ranges are scheduled while paused. Bound the wait so a
+  // stalled SFTP WRITE/READ cannot hang Resume forever; after the deadline we
+  // still truncate only when active===0, otherwise skip truncate and resume
+  // from the contiguous checkpoint (range retries will overwrite holes).
   if (transfer.deferredSparseTruncate) {
+    const settleDeadline = Date.now() + Math.max(PAUSE_RANGE_DRAIN_MS * 20, 6000);
     while (
       typeof transfer.getActiveRangeCount === "function"
       && transfer.getActiveRangeCount() > 0
+      && Date.now() < settleDeadline
     ) {
+      if (transfer.cancelled || activeTransfers.get(payload?.transferId) !== transfer) {
+        return { success: false, reason: "Transfer is no longer active" };
+      }
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
     if (transfer.cancelled || activeTransfers.get(payload?.transferId) !== transfer) {
       return { success: false, reason: "Transfer is no longer active" };
     }
-    try {
-      await prepareStreamFallbackAfterRangeFailure(transfer, transfer.stagedRemote?.client);
-    } catch {
-      // Best-effort; resume from contiguous checkpoint still overwrites holes.
+    const activeLeft = typeof transfer.getActiveRangeCount === "function"
+      ? transfer.getActiveRangeCount()
+      : 0;
+    if (activeLeft === 0) {
+      try {
+        await prepareStreamFallbackAfterRangeFailure(transfer, transfer.stagedRemote?.client);
+      } catch {
+        // Best-effort; resume from contiguous checkpoint still overwrites holes.
+      }
     }
     if (transfer.cancelled || activeTransfers.get(payload?.transferId) !== transfer) {
       return { success: false, reason: "Transfer is no longer active" };
