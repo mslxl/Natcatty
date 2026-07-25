@@ -2289,7 +2289,7 @@ async function startTransferNow(event, payload, onProgress) {
     streamsUnpiped: false,
     abort: null,
     sourceDigestPath: null,
-    sourceIsOwnedTemp: false,
+    sourceIsOwnedTemp: payload.sourceIsOwnedTemp === true,
     signal: payload.abortSignal || null,
   };
   activeTransfers.set(transferId, transfer);

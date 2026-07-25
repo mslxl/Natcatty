@@ -1531,6 +1531,7 @@ async function runUnifiedSftpTransfer(payload, direction) {
         targetSftpId: payload.sftpId,
         targetEncoding: payload.encoding,
         resumable: payload.resumable === true,
+        sourceIsOwnedTemp: payload.sourceIsOwnedTemp === true,
         abortSignal: payload.abortSignal || null,
       }
     : {

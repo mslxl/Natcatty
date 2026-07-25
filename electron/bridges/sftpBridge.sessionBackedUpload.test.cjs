@@ -283,6 +283,9 @@ test("session-backed writeSftpBinaryWithProgress uses pipelined fastPut", async 
   assert.equal(fastPutCalls.length, 1);
   assert.equal(fastPutCalls[0].concurrency, UPLOAD_TRANSFER_CONCURRENCY);
   assert.equal(fastPutCalls[0].chunkSize, TRANSFER_CHUNK_SIZE);
+  assert.match(path.basename(fastPutCalls[0].localPath), /sftp-upload-/);
+  assert.doesNotMatch(fastPutCalls[0].localPath, /upload-source-/);
+  await assert.rejects(fs.promises.stat(fastPutCalls[0].localPath), { code: "ENOENT" });
   // New destinations stage to a remote .part path, then rename into place.
   assert.match(fastPutCalls[0].remotePath, /\.netcatty-upload-.*\.part$/);
   assert.notEqual(fastPutCalls[0].remotePath, "/home/alice/mem.bin");
@@ -371,6 +374,87 @@ test("SCP writeSftpBinaryWithProgress uses the shared staged transaction", async
   assert.deepEqual(remoteFiles.get(finalPath), payload);
   assert.equal(remoteModes.get(finalPath), 0o755);
   assert.deepEqual(chmodCalls, [{ remotePath: uploadPaths[0], mode: 0o755 }]);
+});
+
+test("SCP buffer upload creates a new remote file with mode 0644 under restrictive umask", async (t) => {
+  const tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-scp-buffer-mode-"));
+  t.after(async () => fs.promises.rm(tempRoot, { recursive: true, force: true }));
+  tempDirBridge.init?.({ getPath: () => tempRoot });
+
+  const payload = Buffer.from("ordinary buffer payload");
+  const finalPath = "/tmp/new-buffer.bin";
+  const remoteFiles = new Map();
+  const remoteModes = new Map();
+  let uploadedSourcePath = null;
+  const backend = {
+    async stat(remotePath) {
+      if (!remoteFiles.has(remotePath)) {
+        const error = new Error("No such file");
+        error.code = "ENOENT";
+        throw error;
+      }
+      return {
+        type: "file",
+        isDirectory: false,
+        size: remoteFiles.get(remotePath).length,
+        mode: remoteModes.get(remotePath),
+      };
+    },
+    async uploadFile(localPath, remotePath, options = {}) {
+      uploadedSourcePath = localPath;
+      const contents = await fs.promises.readFile(localPath);
+      remoteFiles.set(remotePath, contents);
+      remoteModes.set(remotePath, (await fs.promises.stat(localPath)).mode & 0o777);
+      options.onProgress?.(contents.length, contents.length);
+    },
+    async rename(fromPath, toPath) {
+      remoteFiles.set(toPath, remoteFiles.get(fromPath));
+      remoteFiles.delete(fromPath);
+      remoteModes.set(toPath, remoteModes.get(fromPath));
+      remoteModes.delete(fromPath);
+    },
+    async remove(remotePath) {
+      remoteFiles.delete(remotePath);
+      remoteModes.delete(remotePath);
+    },
+    async chmod(remotePath, mode) {
+      remoteModes.set(remotePath, mode);
+    },
+  };
+  const sftpClients = new Map([["scp-buffer-mode", {
+    __netcattyFileProtocol: "scp",
+    __netcattyScpBackend: backend,
+  }]]);
+  sftpBridge.init({
+    electronModule: { webContents: { fromId: () => ({ send() {} }) } },
+    sessions: new Map(),
+    sftpClients,
+  });
+
+  const previousUmask = process.umask(0o077);
+  let result;
+  try {
+    result = await sftpBridge.writeSftpBinaryWithProgress(
+      { sender: { id: 1 } },
+      {
+        sftpId: "scp-buffer-mode",
+        path: finalPath,
+        content: payload,
+        transferId: "scp-buffer-mode-upload",
+        onProgress() {},
+        onComplete() {},
+      },
+    );
+  } finally {
+    process.umask(previousUmask);
+  }
+
+  assert.equal(result.success, true);
+  assert.match(path.basename(uploadedSourcePath), /sftp-upload-/);
+  assert.doesNotMatch(uploadedSourcePath, /upload-source-/);
+  assert.deepEqual(remoteFiles.get(finalPath), payload);
+  assert.equal(remoteModes.get(finalPath), 0o644);
+  await assert.rejects(fs.promises.stat(uploadedSourcePath), { code: "ENOENT" });
 });
 
 test("SCP staged uploads preserve an existing mode 000", async (t) => {

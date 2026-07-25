@@ -474,6 +474,9 @@ function createFileOpsApi(ctx) {
           ? { signal: abortController.signal }
           : undefined;
         await fs.promises.writeFile(tempPath, buffer, writeOpts);
+        // Buffer uploads have always created ordinary data files. Do not let a
+        // restrictive process umask leak scratch-file permissions to SCP.
+        await fs.promises.chmod(tempPath, 0o644);
         if (activeSftpUploads.get(transferId)?.cancelled || transferControl.cancelled) {
           throw new Error("Upload cancelled");
         }
@@ -511,6 +514,7 @@ function createFileOpsApi(ctx) {
           encoding,
           abortSignal: abortController?.signal || null,
           resumable: false,
+          sourceIsOwnedTemp: true,
           onTransferEvent(channel, eventPayload) {
             if (channel === "netcatty:transfer:progress") {
               step(eventPayload.transferred, 0, eventPayload.totalBytes);
