@@ -261,6 +261,21 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
           if (task?.ownerId === "dedicated-resume" && task.reconnectRequired) {
             return;
           }
+          // Immediate UI feedback while the backend drains in-flight ranges.
+          if (task && ["transferring", "pending", "queued"].includes(task.status)) {
+            tasks = tasks.map((candidate) => (
+              candidate.id === taskId || candidate.parentTaskId === taskId
+                ? {
+                  ...candidate,
+                  status: (["completed", "cancelled", "failed", "paused"].includes(candidate.status)
+                    ? candidate.status
+                    : "pausing") as TransferTask["status"],
+                  speed: 0,
+                }
+                : candidate
+            ));
+            emit();
+          }
           // Directory dedicated resume streams use child transferIds — pause them all.
           const childIds = task?.isDirectory
             ? tasks
@@ -331,14 +346,21 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
           const hard = pauseResults.find(({ result }) =>
             result && !result.success && !isBenignPauseMiss(result.reason),
           )?.result;
-          if (hard?.reason) {
-            tasks = tasks.map((candidate) => candidate.id === taskId ? {
+          // Revert optimistic "pausing" on parent + children so a hard miss does
+          // not leave the UI stuck finishing a step that will never complete.
+          const revertIds = new Set([taskId, ...pauseIds]);
+          tasks = tasks.map((candidate) => {
+            if (!revertIds.has(candidate.id)) return candidate;
+            if (candidate.status !== "pausing" && candidate.id !== taskId) return candidate;
+            return {
               ...candidate,
               status: "transferring" as const,
-              pauseUnavailableReason: hard.reason,
-            } : candidate);
-            emit();
-          }
+              pauseUnavailableReason: candidate.id === taskId
+                ? (hard?.reason ?? candidate.pauseUnavailableReason)
+                : candidate.pauseUnavailableReason,
+            };
+          });
+          emit();
           // Bridge was reachable — do not demote to interrupted (ghost restart path
           // only applies when pauseTransfer is unavailable).
           return;

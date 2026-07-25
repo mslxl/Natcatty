@@ -1142,6 +1142,92 @@ test("fast resumable uploads pause only after in-flight ranges are durable", asy
   assert.equal(durableBytes, payload.length);
 });
 
+test("pause soft-drains concurrent ranges without waiting for every in-flight write", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-pause-soft-"));
+  t.after(async () => {
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+  });
+
+  // Several MB so concurrent fanout stays saturated while we hold writes.
+  const payload = Buffer.alloc(UPLOAD_TRANSFER_CONCURRENCY * TRANSFER_CHUNK_SIZE * 4, 65);
+  const localPath = path.join(tempDir, "upload.bin");
+  await fs.promises.writeFile(localPath, payload);
+  let holdWrites = true;
+  const pendingWrites = [];
+  let durableBytes = 0;
+  const fastSftp = createFastSftp({
+    open(_remotePath, _flags, callback) {
+      callback(null, Buffer.from("remote-handle"));
+    },
+    write(_handle, _buffer, _offset, length, position, callback) {
+      const complete = () => {
+        durableBytes = Math.max(durableBytes, position + length);
+        callback(null);
+      };
+      if (holdWrites) pendingWrites.push(complete);
+      else setImmediate(complete);
+    },
+    close(_handle, callback) {
+      callback(null);
+    },
+  });
+  const client = {
+    sftp: createFastSftp({}),
+    stat() {
+      return Promise.resolve({ size: durableBytes });
+    },
+    rename() {
+      return Promise.resolve();
+    },
+    delete() {
+      return Promise.resolve();
+    },
+    client: {
+      sftp(callback) {
+        callback(null, fastSftp);
+      },
+    },
+  };
+  transferBridge.init({ sftpClients: new Map([["target", client]]) });
+
+  const running = transferBridge.startTransfer(
+    { sender: createSender() },
+    {
+      transferId: "upload-soft-pause",
+      sourcePath: localPath,
+      targetPath: "/tmp/upload-soft.bin",
+      sourceType: "local",
+      targetType: "sftp",
+      targetSftpId: "target",
+      totalBytes: payload.length,
+      resumable: true,
+    },
+  );
+
+  const readyDeadline = Date.now() + 1000;
+  while (pendingWrites.length < UPLOAD_TRANSFER_CONCURRENCY && Date.now() < readyDeadline) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.ok(pendingWrites.length >= 1, "expected in-flight concurrent writes");
+
+  const started = Date.now();
+  // Hold writes so active ranges never drain — soft-drain must still resolve.
+  const paused = await transferBridge.pauseTransfer(null, { transferId: "upload-soft-pause" });
+  const elapsed = Date.now() - started;
+  assert.equal(paused.success, true);
+  // Soft drain is ~300ms; allow headroom without waiting multi-second full drain.
+  assert.ok(elapsed < 1500, `soft pause took too long: ${elapsed}ms`);
+
+  holdWrites = false;
+  for (const complete of pendingWrites.splice(0)) complete();
+  assert.deepEqual(
+    await transferBridge.resumeTransfer(null, { transferId: "upload-soft-pause" }),
+    { success: true },
+  );
+  assert.equal((await running).error, undefined);
+  assert.equal(durableBytes, payload.length);
+});
+
 test("resuming while a fast pause is pending settles the pause request", async (t) => {
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-pause-resume-race-"));
   t.after(async () => {
@@ -1216,7 +1302,10 @@ test("resuming while a fast pause is pending settles the pause request", async (
   assert.equal((await running).error, undefined);
 });
 
-test("resuming during pause fingerprinting prevents a stale pause success", async (t) => {
+test("pause does not block on full source fingerprint hashing", async (t) => {
+  // Pause used to await a full-file SHA-256 of the source, which made large
+  // downloads/uploads feel stuck on "Finishing the current step". Fingerprint
+  // capture is now best-effort background work after pause returns.
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-late-pause-race-"));
   t.after(async () => {
     await fs.promises.rm(tempDir, { recursive: true, force: true });
@@ -1287,23 +1376,27 @@ test("resuming during pause fingerprinting prevents a stale pause success", asyn
     }
     assert.equal(pendingWrites.length, UPLOAD_TRANSFER_CONCURRENCY);
 
+    const pauseStarted = Date.now();
     const pausing = transferBridge.pauseTransfer(null, { transferId: "late-pause-race" });
     holdWrites = false;
     for (const callback of pendingWrites.splice(0)) callback(null);
-    const fingerprintDeadline = Date.now() + 1000;
-    while (!fingerprintStream && Date.now() < fingerprintDeadline) {
-      await new Promise((resolve) => setImmediate(resolve));
-    }
-    assert.ok(fingerprintStream);
+    const paused = await pausing;
+    const pauseElapsed = Date.now() - pauseStarted;
+    assert.equal(paused.success, true);
+    // Must not wait on the hanging full-file fingerprint stream.
+    assert.ok(pauseElapsed < 1500, `pause blocked too long: ${pauseElapsed}ms`);
+    // Fingerprint is optional on the pause result; background capture may hang.
+    assert.equal(paused.sourceFingerprint, undefined);
 
-    const resuming = transferBridge.resumeTransfer(null, { transferId: "late-pause-race" });
-    fingerprintStream.push(payload);
-    fingerprintStream.push(null);
-    assert.deepEqual(await resuming, { success: true });
-    assert.deepEqual(await pausing, {
-      success: false,
-      reason: "Pause was superseded by resume",
-    });
+    // Resume while background fingerprint is still open must still succeed.
+    assert.deepEqual(
+      await transferBridge.resumeTransfer(null, { transferId: "late-pause-race" }),
+      { success: true },
+    );
+    if (fingerprintStream) {
+      fingerprintStream.push(payload);
+      fingerprintStream.push(null);
+    }
   } finally {
     fs.createReadStream = originalCreateReadStream;
   }
@@ -4045,28 +4138,19 @@ test("resumable stream transfers pause without losing their checkpoint and conti
   source.write(Buffer.from("abc"));
   await new Promise((resolve) => setImmediate(resolve));
   const paused = await transferBridge.pauseTransfer(null, { transferId: "download-paused" });
-  assert.deepEqual(paused, {
-    success: true,
-    checkpointBytes: 3,
-    resumeStage: "direct",
-    downloadCheckpointBytes: 0,
-    uploadCheckpointBytes: 0,
-    sourceFingerprint: `sha256:${crypto.createHash("sha256").update("abcdef").digest("hex")}`,
-  });
+  // Full-file source fingerprint is no longer on the pause critical path.
+  assert.equal(paused.success, true);
+  assert.equal(paused.checkpointBytes, 3);
+  assert.equal(paused.resumeStage, "direct");
+  assert.equal(paused.downloadCheckpointBytes, 0);
+  assert.equal(paused.uploadCheckpointBytes, 0);
 
   source.write(Buffer.from("def"));
   await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(
-    await transferBridge.pauseTransfer(null, { transferId: "download-paused" }),
-    {
-      success: true,
-      checkpointBytes: 3,
-      resumeStage: "direct",
-      downloadCheckpointBytes: 0,
-      uploadCheckpointBytes: 0,
-      sourceFingerprint: `sha256:${crypto.createHash("sha256").update("abcdef").digest("hex")}`,
-    },
-  );
+  const pausedAgain = await transferBridge.pauseTransfer(null, { transferId: "download-paused" });
+  assert.equal(pausedAgain.success, true);
+  assert.equal(pausedAgain.checkpointBytes, 3);
+  assert.equal(pausedAgain.resumeStage, "direct");
 
   assert.deepEqual(await transferBridge.resumeTransfer(null, { transferId: "download-paused" }), { success: true });
   source.end();

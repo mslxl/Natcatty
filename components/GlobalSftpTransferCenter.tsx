@@ -357,6 +357,11 @@ function TransferRow({
               <Pause size={13} />
             </TransferAction>
           )}
+          {task.status === "pausing" && (
+            <TransferAction label={t("sftp.transferCenter.status.pausing")} onClick={() => {}}>
+              <Loader2 size={13} className="animate-spin text-amber-500" />
+            </TransferAction>
+          )}
           {canResume && (
             <TransferAction label={t("sftp.transferCenter.resume")} onClick={resumeTask}>
               <Play size={13} />

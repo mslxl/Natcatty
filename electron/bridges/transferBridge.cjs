@@ -24,6 +24,16 @@ const {
 } = require("./transferLimits.cjs");
 
 /**
+ * Soft cap for concurrent-range pause drain. With 64×32KB (~2MB) in flight,
+ * waiting for every outstanding range makes Pause feel stuck ("finishing current
+ * step"). After this grace we acknowledge pause with the contiguous checkpoint;
+ * leftover ranges keep settling under paused=true and never schedule new work.
+ */
+const PAUSE_RANGE_DRAIN_MS = 300;
+/** Cap stream drain / pending-open waits during pause (was 2000ms). */
+const PAUSE_STREAM_DRAIN_MS = 400;
+
+/**
  * Verify a completed remote upload matches the expected byte count.
  * Without this check, fastPut/stream uploads can report success while leaving
  * a truncated file on servers that mishandle large WRITE packets (#2022).
@@ -1797,16 +1807,23 @@ async function runPausableConcurrentRanges({
   let active = 0;
   let settled = false;
   let terminalError = null;
+  // Each entry: { resolve, timer? } — timer is the soft-drain force-resolve.
   let pauseResolvers = [];
 
   const cancelPauseWait = () => {
     const resolvers = pauseResolvers;
     pauseResolvers = [];
-    for (const resolve of resolvers) resolve();
+    for (const entry of resolvers) {
+      if (entry.timer) clearTimeout(entry.timer);
+      entry.resolve();
+    }
   };
 
   const publishContiguousCheckpoint = (force = false) => {
     if (transfer.cancelled) return;
+    // Keep transfer.checkpointBytes in lockstep so a soft-drained pause that
+    // returns early still exposes the highest contiguous durable offset.
+    transfer.checkpointBytes = contiguousCheckpoint;
     sendProgress(transferred, fileSize, {
       checkpointBytes: contiguousCheckpoint,
       ...(force ? { force: true } : {}),
@@ -1820,8 +1837,13 @@ async function runPausableConcurrentRanges({
     publishContiguousCheckpoint(true);
     const resolvers = pauseResolvers;
     pauseResolvers = [];
-    for (const resolve of resolvers) resolve();
+    for (const entry of resolvers) {
+      if (entry.timer) clearTimeout(entry.timer);
+      entry.resolve();
+    }
   };
+
+  transfer.getActiveRangeCount = () => active;
 
   let onSftpError = null;
 
@@ -1938,17 +1960,37 @@ async function runPausableConcurrentRanges({
         },
       };
       transfer.waitForPause = () => {
+        publishContiguousCheckpoint(true);
         if (active === 0) {
-          publishContiguousCheckpoint(true);
           return Promise.resolve();
         }
-        return new Promise((resolvePause) => pauseResolvers.push(resolvePause));
+        // Soft-drain: resolve after PAUSE_RANGE_DRAIN_MS even if some ranges are
+        // still in flight. Contiguous checkpoint never advances past holes, so
+        // resume stays safe; leftover ranges finish under paused=true without
+        // scheduling new work.
+        return new Promise((resolvePause) => {
+          const entry = {
+            resolve: resolvePause,
+            timer: null,
+          };
+          entry.timer = setTimeout(() => {
+            entry.timer = null;
+            const index = pauseResolvers.indexOf(entry);
+            if (index === -1) return;
+            pauseResolvers.splice(index, 1);
+            publishContiguousCheckpoint(true);
+            resolvePause();
+          }, PAUSE_RANGE_DRAIN_MS);
+          entry.timer.unref?.();
+          pauseResolvers.push(entry);
+        });
       };
       transfer.cancelPauseWait = cancelPauseWait;
       transfer.abort = abort;
       pump();
     });
   } finally {
+    transfer.getActiveRangeCount = null;
     if (sftp && onSftpError && typeof sftp.removeListener === "function") {
       try { sftp.removeListener("error", onSftpError); } catch { }
     }
@@ -3478,7 +3520,7 @@ async function pauseTransfer(_event, payload) {
   }
   if (transfer.writeStream?.pending) {
     await new Promise((resolve) => {
-      const timer = setTimeout(resolve, 2000);
+      const timer = setTimeout(resolve, PAUSE_STREAM_DRAIN_MS);
       timer.unref?.();
       transfer.writeStream.once?.('open', () => {
         clearTimeout(timer);
@@ -3488,7 +3530,7 @@ async function pauseTransfer(_event, payload) {
   }
   if (transfer.writeStream?.writableNeedDrain) {
     await new Promise((resolve) => {
-      const timer = setTimeout(resolve, 2000);
+      const timer = setTimeout(resolve, PAUSE_STREAM_DRAIN_MS);
       timer.unref?.();
       transfer.writeStream.once?.('drain', () => {
         clearTimeout(timer);
@@ -3501,7 +3543,7 @@ async function pauseTransfer(_event, payload) {
     && Number.isFinite(transfer.writeStream.bytesWritten)
     && transfer.writeStream.bytesWritten < transfer.checkpointBytes
   ) {
-    const deadline = Date.now() + 2000;
+    const deadline = Date.now() + PAUSE_STREAM_DRAIN_MS;
     while (transfer.writeStream.bytesWritten < transfer.checkpointBytes && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
@@ -3510,9 +3552,18 @@ async function pauseTransfer(_event, payload) {
     // Concurrent range transfers already track the highest contiguous durable
     // byte. File size may extend past a hole when ranges finish out of order.
     if (usesContiguousRangeCheckpoint) {
-      // Keep the checkpoint supplied by runPausableConcurrentRanges, and
-      // shrink any sparse *target* tail so a later pause/stat cannot overshoot.
-      await prepareStreamFallbackAfterRangeFailure(transfer, transfer.stagedRemote?.client);
+      const activeRanges = typeof transfer.getActiveRangeCount === "function"
+        ? transfer.getActiveRangeCount()
+        : 0;
+      // Soft-drained pause may still have in-flight ranges writing past the
+      // contiguous checkpoint. Truncating now races those writes — defer until
+      // the pump is idle (or resume), and trust contiguousCheckpointBytes.
+      if (activeRanges === 0) {
+        await prepareStreamFallbackAfterRangeFailure(transfer, transfer.stagedRemote?.client);
+        transfer.deferredSparseTruncate = false;
+      } else {
+        transfer.deferredSparseTruncate = true;
+      }
     } else if (transfer.stagedLocalPath) {
       const stat = await fs.promises.stat(transfer.stagedLocalPath);
       transfer.checkpointBytes = stat.size;
@@ -3530,19 +3581,29 @@ async function pauseTransfer(_event, payload) {
   }
   if (transfer.resumeStage === 'download') transfer.downloadCheckpointBytes = transfer.checkpointBytes;
   if (transfer.resumeStage === 'upload') transfer.uploadCheckpointBytes = transfer.checkpointBytes;
+  // Do NOT full-hash the source on the pause critical path. Hashing a multi-MB
+  // local file (or remote sha256sum of the whole object) made Pause feel like
+  // "finishing current work" for large transfers. Resume already re-checks
+  // source identity when a fingerprint is present, and size/mtime guards cover
+  // the common case. Best-effort background capture keeps stronger safety when
+  // cheap (already hashed at start) or when it finishes before resume.
   if (transfer.resumable && !transfer.sourceFingerprint) {
-    try {
-      transfer.sourceFingerprint = await computeSourceFingerprint({
-        sourceType: transfer.sourceType,
-        sourcePath: transfer.sourcePath,
-        sourceSftpId: transfer.sourceSftpId,
-        sourceEncoding: transfer.sourceEncoding,
-      });
-    } catch {
-      transfer.paused = false;
-      resumeStreamPair(transfer);
-      return { success: false, reason: "Could not verify that the source is safe to resume" };
-    }
+    void computeSourceFingerprint({
+      sourceType: transfer.sourceType,
+      sourcePath: transfer.sourcePath,
+      sourceSftpId: transfer.sourceSftpId,
+      sourceEncoding: transfer.sourceEncoding,
+    }).then((fingerprint) => {
+      if (
+        fingerprint
+        && activeTransfers.get(payload?.transferId) === transfer
+        && !transfer.sourceFingerprint
+      ) {
+        transfer.sourceFingerprint = fingerprint;
+      }
+    }).catch(() => {
+      // Optional — resume still works without a stored fingerprint.
+    });
   }
   if (transfer.cancelled || activeTransfers.get(payload?.transferId) !== transfer) {
     return { success: false, reason: "Transfer is no longer active" };
@@ -3591,6 +3652,24 @@ async function resumeTransfer(_event, payload) {
   // Already flowing (e.g. double-click resume): do not pipe() again.
   if (!transfer.paused) {
     return { success: true };
+  }
+  // Soft-drained concurrent pause may leave a sparse tail past the contiguous
+  // checkpoint. Wait briefly for leftover ranges, then truncate before unpausing.
+  if (transfer.deferredSparseTruncate) {
+    const deadline = Date.now() + PAUSE_RANGE_DRAIN_MS;
+    while (
+      typeof transfer.getActiveRangeCount === "function"
+      && transfer.getActiveRangeCount() > 0
+      && Date.now() < deadline
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    try {
+      await prepareStreamFallbackAfterRangeFailure(transfer, transfer.stagedRemote?.client);
+    } catch {
+      // Best-effort; resume from contiguous checkpoint still overwrites holes.
+    }
+    transfer.deferredSparseTruncate = false;
   }
   transfer.paused = false;
   transfer.pauseSuperseded = false;
