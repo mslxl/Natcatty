@@ -279,6 +279,22 @@ async function promoteLocalTransfer(stagedPath, targetPath, options = {}) {
         );
       }
       if (!backupStat.isFile() || stableLocalFileIdentity(backupStat) !== expectedStableIdentity) {
+        // If another writer already recreated targetPath, do not restore the
+        // mismatched backup over it — leave both intact and fail closed.
+        let targetOccupied = false;
+        try {
+          await fs.promises.lstat(targetPath);
+          targetOccupied = true;
+        } catch (err) {
+          if (err?.code !== "ENOENT") throw err;
+        }
+        if (targetOccupied) {
+          const conflict = new Error("Local download target changed during replacement");
+          conflict.leaveConcurrentTarget = true;
+          conflict.remoteBackupPath = backupPath;
+          backedUp = false;
+          throw conflict;
+        }
         try {
           await fs.promises.rename(backupPath, targetPath);
           backedUp = false;

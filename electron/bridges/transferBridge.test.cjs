@@ -5102,6 +5102,56 @@ test("local promotion restores concurrent replacement moved into the backup", as
   );
 });
 
+test("local promotion does not restore mismatched backup over a recreated target", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-local-promo-mismatch-recreate-"));
+  t.after(async () => {
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const stagedPath = path.join(tempDir, "download.staged");
+  const targetPath = path.join(tempDir, "target.bin");
+  const original = Buffer.from("original-target-content");
+  const concurrent = Buffer.from("recreated-during-mismatch");
+  const downloaded = Buffer.from("downloaded-replacement");
+  await fs.promises.writeFile(targetPath, original);
+  await fs.promises.writeFile(stagedPath, downloaded);
+  // Claim a stable identity that will not match whatever lands in backup.
+  const fakeStable = "999:999:999";
+
+  const originalRename = fs.promises.rename.bind(fs.promises);
+  let injected = false;
+  fs.promises.rename = async (from, to) => {
+    const result = await originalRename(from, to);
+    if (!injected && path.resolve(from) === path.resolve(targetPath) && String(to).includes(".backup")) {
+      injected = true;
+      // Recreate target after backup move; mismatch branch must not restore over it.
+      await fs.promises.writeFile(targetPath, concurrent);
+    }
+    return result;
+  };
+  t.after(() => {
+    fs.promises.rename = originalRename;
+  });
+
+  await assert.rejects(
+    () => transferBridge._promoteLocalTransferForTests(stagedPath, targetPath, {
+      async validateTarget() {
+        return {
+          existingMode: null,
+          stableIdentity: fakeStable,
+          targetIdentity: `${fakeStable}:0:0`,
+        };
+      },
+    }),
+    /changed during replacement/i,
+  );
+
+  assert.deepEqual(await fs.promises.readFile(targetPath), concurrent);
+  const backupName = (await fs.promises.readdir(tempDir)).find((name) => name.includes(".backup"));
+  assert.ok(backupName);
+  assert.deepEqual(await fs.promises.readFile(path.join(tempDir, backupName)), original);
+});
+
 test("local promotion does not clobber a target recreated after backup", async (t) => {
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-local-promo-recreate-"));
   t.after(async () => {
