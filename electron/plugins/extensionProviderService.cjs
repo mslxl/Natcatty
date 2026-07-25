@@ -514,7 +514,13 @@ class PluginExtensionProviderService {
       : data instanceof Uint8Array
         ? data
         : new Uint8Array(data);
-    await session.input.write(bytes);
+    if (bytes.byteLength === 0) {
+      await session.input.write(bytes);
+      return;
+    }
+    for (let offset = 0; offset < bytes.byteLength; offset += STREAM_WINDOW_BYTES) {
+      await session.input.write(bytes.subarray(offset, Math.min(bytes.byteLength, offset + STREAM_WINDOW_BYTES)));
+    }
   }
 
   async control(sessionId, operation, payload = {}, options = {}) {

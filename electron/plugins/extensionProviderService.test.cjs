@@ -3,7 +3,10 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
-const { PluginExtensionProviderService } = require("./extensionProviderService.cjs");
+const {
+  PluginExtensionProviderService,
+  STREAM_WINDOW_BYTES,
+} = require("./extensionProviderService.cjs");
 
 function fixture(options = {}) {
   const identity = Object.freeze({
@@ -145,6 +148,37 @@ test("connection providers bind bidirectional streams to an exact runtime and cl
   assert.match(h.revokedOperations[0].operationId, /^connection:/u);
   h.runtimeListeners[0]({ pluginId: h.identity.pluginId, runtimeId: h.identity.runtimeId, status: "stopped" });
   assert.throws(() => h.service.getSession("session-1"), /not found/i);
+});
+
+test("connection terminal input is chunked within the negotiated stream window", async () => {
+  let h;
+  h = fixture({
+    async request({ params, identity, accept }) {
+      const stream = incoming(params.payload.outputStreamId, async () => {});
+      assert.equal(await accept(stream, identity), true);
+      return {
+        requestId: params.requestId,
+        status: "ok",
+        result: { connectionId: "connection-large-input", status: "connected" },
+      };
+    },
+  });
+  await h.service.openConnection({
+    providerId: "com.example.transport.connection",
+    sessionId: "session-large-input",
+    configuration: {},
+    columns: 80,
+    rows: 24,
+  });
+  const input = Buffer.alloc((STREAM_WINDOW_BYTES * 2) + 3, 0x61);
+  await h.service.write("session-large-input", input);
+
+  assert.equal(h.writes.length, 3);
+  assert.equal(h.writes[0][0], h.writes[1][0]);
+  assert.equal(h.writes[1][0], h.writes[2][0]);
+  assert.equal(h.writes[0][1].byteLength, STREAM_WINDOW_BYTES);
+  assert.equal(h.writes[1][1].byteLength, STREAM_WINDOW_BYTES);
+  assert.equal(h.writes[2][1].byteLength, 3);
 });
 
 test("connection controls preserve host-owned connection and operation identities", async () => {

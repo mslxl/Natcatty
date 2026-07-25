@@ -55,6 +55,12 @@ import { isPluginHostProtocol, sanitizePluginConnection } from "../../../domain/
 const TELNET_SESSION_REPLACED_ERROR = "Telnet session start was replaced";
 const JUMP_HOST_AUTH_FAILED_PREFIX = "Jump host authentication failed";
 
+const createPluginConnectionRequestId = (): string => {
+  const randomId = globalThis.crypto?.randomUUID?.()
+    ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 18)}`;
+  return `plugin-connection-${randomId}`.slice(0, 128);
+};
+
 const isAuthFailureMessage = (message: string): boolean => {
   const normalized = message.toLowerCase();
   return normalized.includes("all configured authentication methods failed") ||
@@ -1433,8 +1439,56 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       ctx.updateStatus("disconnected");
       return;
     }
+    const requestId = createPluginConnectionRequestId();
+    const startController = new AbortController();
+    let pendingCancelReleased = false;
+    let bootMonitorTimer: ReturnType<typeof setTimeout> | null = null;
+    const previousDisposeExit = ctx.disposeExitRef.current;
+    const clearBootMonitor = () => {
+      if (bootMonitorTimer === null) return;
+      clearTimeout(bootMonitorTimer);
+      bootMonitorTimer = null;
+    };
+    const cancelPendingStart = () => {
+      previousDisposeExit?.();
+      if (pendingCancelReleased) return;
+      pendingCancelReleased = true;
+      clearBootMonitor();
+      startController.abort(new DOMException("Plugin connection request was cancelled", "AbortError"));
+      if (ctx.terminalBackend.cancelPluginExtensionRequest) {
+        try {
+          void Promise.resolve(ctx.terminalBackend.cancelPluginExtensionRequest(requestId)).catch((err) => {
+            logger.warn("Failed to cancel pending plugin connection request", err);
+          });
+        } catch (err) {
+          logger.warn("Failed to cancel pending plugin connection request", err);
+        }
+      }
+    };
+    const scheduleBootMonitor = () => {
+      if (pendingCancelReleased) return;
+      bootMonitorTimer = setTimeout(() => {
+        bootMonitorTimer = null;
+        if (pendingCancelReleased) return;
+        if (!isTerminalBootActive(ctx)) {
+          cancelPendingStart();
+          return;
+        }
+        scheduleBootMonitor();
+      }, 50);
+    };
+    const releasePendingStartCancellation = () => {
+      if (ctx.disposeExitRef.current === cancelPendingStart) {
+        ctx.disposeExitRef.current = previousDisposeExit;
+      }
+      pendingCancelReleased = true;
+      clearBootMonitor();
+    };
+    ctx.disposeExitRef.current = cancelPendingStart;
+    scheduleBootMonitor();
     try {
       const opened = await ctx.terminalBackend.startPluginConnection({
+        requestId,
         sessionId: ctx.sessionId,
         protocol: ctx.host.protocol,
         hostLabel: ctx.host.label,
@@ -1450,7 +1504,14 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         ...(connection.credentialId
           ? { credential: { kind: "credential" as const, id: connection.credentialId } }
           : {}),
+        signal: startController.signal,
       });
+      releasePendingStartCancellation();
+      if (startController.signal.aborted || !isTerminalBootActive(ctx)) {
+        closeOrphanBackendSession(ctx, opened.sessionId);
+        abortSessionStartAfterUnmount();
+        return;
+      }
       const id = opened.sessionId;
       if (opened.diagnostics.length > 0) {
         ctx.setProgressLogs((previous) => [
@@ -1480,6 +1541,11 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         schedulePluginStartup();
       }
     } catch (error) {
+      releasePendingStartCancellation();
+      if (!isTerminalBootActive(ctx)) {
+        abortSessionStartAfterUnmount();
+        return;
+      }
       const message = error instanceof Error ? error.message : String(error);
       ctx.setError(message);
       writeTerminalLine(ctx, term, "\r\n[Failed to start plugin connection. See connection details.]");

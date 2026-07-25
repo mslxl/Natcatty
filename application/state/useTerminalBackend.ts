@@ -1,6 +1,73 @@
 import { useCallback, useMemo } from "react";
 import { netcattyBridge } from "../../infrastructure/services/netcattyBridge";
 
+type PluginConnectionStartOptions = NetcattyPluginConnectionStartRequest & {
+  signal?: AbortSignal;
+};
+
+const throwIfPluginConnectionStartAborted = (signal?: AbortSignal): void => {
+  if (!signal?.aborted) return;
+  const reason = signal.reason;
+  if (reason instanceof Error) throw reason;
+  throw new DOMException("Plugin connection request was cancelled", "AbortError");
+};
+
+const raceWithPluginConnectionStartAbort = async <T,>(
+  operation: Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> => {
+  if (!signal) return operation;
+  throwIfPluginConnectionStartAborted(signal);
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      reject(signal.reason instanceof Error
+        ? signal.reason
+        : new DOMException("Plugin connection request was cancelled", "AbortError"));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    operation.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        if (signal.aborted) {
+          onAbort();
+          return;
+        }
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
+};
+
+export async function startPluginConnectionWithBridge(
+  bridge: Pick<NetcattyBridge, "invokePluginExtensionProvider" | "startPluginConnection">,
+  options: PluginConnectionStartOptions,
+) {
+  if (!bridge?.startPluginConnection) throw new Error("startPluginConnection unavailable");
+  if (!bridge.invokePluginExtensionProvider) throw new Error("Plugin connection validation unavailable");
+  const { signal, ...bridgeOptions } = options;
+  throwIfPluginConnectionStartAborted(signal);
+  const validation = await raceWithPluginConnectionStartAbort(bridge.invokePluginExtensionProvider({
+    requestId: bridgeOptions.requestId,
+    providerId: bridgeOptions.providerId,
+    kind: "connection",
+    operation: "validateConfiguration",
+    payload: { configuration: bridgeOptions.configuration },
+    deadlineMs: bridgeOptions.deadlineMs,
+  }), signal);
+  throwIfPluginConnectionStartAborted(signal);
+  if (!validation || typeof validation !== "object" || Array.isArray(validation)
+    || (validation as { valid?: unknown }).valid !== true) {
+    const issues = (validation as { issues?: Array<{ message?: string }> } | null)?.issues;
+    throw new Error(issues?.[0]?.message || "Plugin connection configuration is invalid");
+  }
+  throwIfPluginConnectionStartAborted(signal);
+  return bridge.startPluginConnection(bridgeOptions);
+}
+
 export const useTerminalBackend = () => {
   const telnetAvailable = useCallback(() => {
     const bridge = netcattyBridge.get();
@@ -73,24 +140,15 @@ export const useTerminalBackend = () => {
     return bridge.startSerialSession(options);
   }, []);
 
-  const startPluginConnection = useCallback(async (options: NetcattyPluginConnectionStartRequest) => {
+  const startPluginConnection = useCallback(async (options: PluginConnectionStartOptions) => {
     const bridge = netcattyBridge.get();
-    if (!bridge?.startPluginConnection) throw new Error("startPluginConnection unavailable");
-    if (!bridge.invokePluginExtensionProvider) throw new Error("Plugin connection validation unavailable");
-    const validation = await bridge.invokePluginExtensionProvider({
-      providerId: options.providerId,
-      kind: "connection",
-      operation: "validateConfiguration",
-      payload: { configuration: options.configuration },
-      deadlineMs: options.deadlineMs,
-    });
-    if (!validation || typeof validation !== "object" || Array.isArray(validation)
-      || (validation as { valid?: unknown }).valid !== true) {
-      const issues = (validation as { issues?: Array<{ message?: string }> } | null)?.issues;
-      throw new Error(issues?.[0]?.message || "Plugin connection configuration is invalid");
-    }
-    const opened = await bridge.startPluginConnection(options);
-    return opened;
+    if (!bridge) throw new Error("startPluginConnection unavailable");
+    return startPluginConnectionWithBridge(bridge, options);
+  }, []);
+
+  const cancelPluginExtensionRequest = useCallback(async (requestId: string) => {
+    const bridge = netcattyBridge.get();
+    return bridge?.cancelPluginExtensionRequest?.(requestId) ?? false;
   }, []);
 
   const execCommand = useCallback(async (options: Parameters<NetcattyBridge["execCommand"]>[0]) => {
@@ -479,6 +537,7 @@ export const useTerminalBackend = () => {
         startLocalSession,
         startSerialSession,
         startPluginConnection,
+        cancelPluginExtensionRequest,
         listSerialPorts,
         serialYmodemAvailable,
         serialYmodemReceiveAvailable,
@@ -559,6 +618,7 @@ export const useTerminalBackend = () => {
       startLocalSession,
       startSerialSession,
       startPluginConnection,
+      cancelPluginExtensionRequest,
       listSerialPorts,
       serialYmodemAvailable,
       serialYmodemReceiveAvailable,

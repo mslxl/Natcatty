@@ -35,12 +35,13 @@ export type TerminalBackendApi = {
   startSerialSession: (
     options: Parameters<NonNullable<NetcattyBridge["startSerialSession"]>>[0],
   ) => Promise<string>;
-  startPluginConnection: (options: NetcattyPluginConnectionStartRequest) => Promise<{
+  startPluginConnection: (options: NetcattyPluginConnectionStartRequest & { signal?: AbortSignal }) => Promise<{
     sessionId: string;
     providerId: string;
     status: "connecting" | "connected";
     diagnostics: ReadonlyArray<import("@netcatty/plugin-contract").ProviderValidationIssue>;
   }>;
+  cancelPluginExtensionRequest?: (requestId: string) => Promise<boolean> | boolean;
   execCommand: (options: Parameters<NetcattyBridge["execCommand"]>[0]) => Promise<{
     stdout?: string;
     stderr?: string;

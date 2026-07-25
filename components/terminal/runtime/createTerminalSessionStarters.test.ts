@@ -134,7 +134,12 @@ test("startPluginConnection preserves the namespaced provider configuration and 
 
   await createTerminalSessionStarters(ctx as never).startPluginConnection(createTermStub() as never);
 
-  assert.deepEqual(captured, {
+  assert.ok(captured?.requestId?.startsWith("plugin-connection-"));
+  assert.equal(captured?.signal instanceof AbortSignal, true);
+  const { requestId: _requestId, signal: _signal, ...capturedRequest } = captured as NetcattyPluginConnectionStartRequest & {
+    signal?: AbortSignal;
+  };
+  assert.deepEqual(capturedRequest, {
     sessionId: "session-1",
     protocol: "plugin:com.example.transport.connection",
     hostLabel: "Custom protocol",
@@ -155,6 +160,76 @@ test("startPluginConnection preserves the namespaced provider configuration and 
   assert.deepEqual(attached, ["session-1"]);
   assert.deepEqual(statuses, ["connected"]);
   assert.deepEqual(progressLogs, ["[Plugin warning] Provider warning"]);
+});
+
+test("startPluginConnection cancels a pending Provider request when the terminal unmounts before cleanup runs", async () => {
+  let captured: (NetcattyPluginConnectionStartRequest & { signal?: AbortSignal }) | null = null;
+  let resolveStartEntered: (() => void) | null = null;
+  const startEntered = new Promise<void>((resolve) => { resolveStartEntered = resolve; });
+  const cancelledRequests: string[] = [];
+  const attached: string[] = [];
+  const terminalWrites: string[] = [];
+  const isBootActiveRef = { current: true };
+  const terminalBackend = {
+    pluginConnectionAvailable: () => true,
+    startPluginConnection: async (options: NetcattyPluginConnectionStartRequest & { signal?: AbortSignal }) => {
+      captured = options;
+      resolveStartEntered?.();
+      await new Promise((_resolve, reject) => {
+        options.signal?.addEventListener("abort", () => {
+          reject(options.signal?.reason ?? new DOMException("Aborted", "AbortError"));
+        }, { once: true });
+      });
+      throw new Error("pending start should have been aborted");
+    },
+    cancelPluginExtensionRequest: async (requestId: string) => {
+      cancelledRequests.push(requestId);
+      return true;
+    },
+    onSessionData: () => noop,
+    onSessionExit: () => noop,
+    onChainProgress: () => noop,
+    writeToSession: noop,
+    resizeSession: noop,
+  };
+  const ctx = createStarterContext({
+    host: {
+      id: "host-plugin",
+      label: "Custom protocol",
+      hostname: "opaque.example",
+      username: "",
+      protocol: "plugin:com.example.transport.connection",
+      pluginConnection: {
+        providerId: "com.example.transport.connection",
+        configuration: { endpoint: "opaque.example" },
+        authenticationProviderId: "com.example.transport.auth",
+      },
+    },
+    terminalBackend,
+    isBootActiveRef,
+    onSessionAttached: (id: string) => attached.push(id),
+  });
+  const term = createTermStub({
+    write: (data: string, callback?: () => void) => {
+      terminalWrites.push(data);
+      callback?.();
+    },
+  });
+
+  const start = createTerminalSessionStarters(ctx as never).startPluginConnection(term as never);
+  await startEntered;
+  const capturedRequest = captured;
+  assert.ok(capturedRequest);
+  assert.ok(capturedRequest.requestId);
+  assert.equal(typeof ctx.disposeExitRef.current, "function");
+
+  isBootActiveRef.current = false;
+  await start;
+
+  assert.equal(capturedRequest.signal?.aborted, true);
+  assert.deepEqual(cancelledRequests, [capturedRequest.requestId]);
+  assert.deepEqual(attached, []);
+  assert.deepEqual(terminalWrites, []);
 });
 
 test("startPluginConnection waits for explicit Provider connected readiness before startup commands", async () => {
