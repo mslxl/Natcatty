@@ -1,8 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import React from "react";
 import { deleteVaultKey } from "../../application/defaultKeyPassphrases";
+import { usePluginImporterCommit } from "../../application/state/usePluginImporterCommit";
 import { preserveConcurrentHostLineTimestampUpdate } from "../../domain/host";
-import { buildPluginImporterSafePreview, mergePluginImporterDrafts, normalizePluginImporterRecords } from "../../domain/pluginImporter";
 import { STORAGE_KEY_VAULT_HOST_PANEL_WIDTH } from "@/infrastructure/config/storageKeys.ts";
 import { VaultHostListSection } from "./VaultHostListSection";
 import {
@@ -35,35 +35,24 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
   keyListRef.current = keys;
   const newHostActionsRef = React.useRef<HTMLDivElement>(null);
   const sessionActionsRef = React.useRef<HTMLDivElement>(null);
-  const buildPluginImportMerge = React.useCallback((preview: NetcattyPluginImporterPreview) => {
-    const drafts = normalizePluginImporterRecords(preview.records);
-    return {
-      drafts,
-      merged: mergePluginImporterDrafts({ hosts, identities, keys, snippets, customGroups }, drafts),
-    };
-  }, [customGroups, hosts, identities, keys, snippets]);
-  const handlePluginPreviewCommit = React.useCallback(async (preview: NetcattyPluginImporterPreview) => {
-    const { drafts, merged } = buildPluginImportMerge(preview);
-    if (preview.result.errors > 0 || drafts.errors.length > 0) {
-      throw new Error(drafts.errors[0] || t("vault.import.plugins.containsErrors"));
-    }
-    await onCommitPluginImporterData({
-      keys: merged.keys,
-      identities: merged.identities,
-      hosts: merged.hosts.map(sanitizeHost),
-      snippets: merged.snippets,
-      customGroups: merged.customGroups,
-    });
-    toast.success(
-      t("vault.import.plugins.committed", { count: merged.addedCount }),
-      t("vault.import.toast.completedTitle"),
-    );
-  }, [
-    buildPluginImportMerge,
+  const {
+    handlePluginPreviewCommit,
+    getPluginPreviewAnalysis,
+  } = usePluginImporterCommit({
+    hosts,
+    identities,
+    keys,
+    snippets,
+    customGroups,
     onCommitPluginImporterData,
-    sanitizeHost,
     t,
-  ]);
+    onCommitSuccess: (addedCount) => {
+      toast.success(
+        t("vault.import.plugins.committed", { count: addedCount }),
+        t("vault.import.toast.completedTitle"),
+      );
+    },
+  });
   const sidebarMinWidth = 56;
   const sidebarMaxWidth = 320;
   const effectiveSidebarWidth = Math.max(
@@ -1058,14 +1047,7 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
         onOpenChange={setIsImportOpen}
         onFileSelected={handleImportFileSelected}
         onPluginPreviewCommit={handlePluginPreviewCommit}
-        getPluginPreviewAnalysis={(preview) => {
-          const { drafts, merged } = buildPluginImportMerge(preview);
-          return {
-            duplicateCount: merged.duplicateCount,
-            validationErrorCount: drafts.errors.length,
-            safePreview: buildPluginImporterSafePreview(drafts),
-          };
-        }}
+        getPluginPreviewAnalysis={getPluginPreviewAnalysis}
       />
 
       {/* Quick Connect Wizard */}

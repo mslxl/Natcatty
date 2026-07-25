@@ -79,6 +79,39 @@ function connectionOutputCloseDetails(reason) {
   return { reason: "closed" };
 }
 
+function boundedConnectionDiagnostics(value) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 256).flatMap((issue) => {
+    if (!issue || typeof issue !== "object" || Array.isArray(issue)) return [];
+    const severity = issue.severity === "error" ? "error" : "warning";
+    const message = typeof issue.message === "string" && issue.message
+      ? issue.message.slice(0, 2048)
+      : "";
+    if (!message) return [];
+    const code = typeof issue.code === "string" && issue.code
+      ? issue.code.slice(0, 128)
+      : undefined;
+    const path = typeof issue.path === "string" && issue.path
+      ? issue.path.slice(0, 1024)
+      : undefined;
+    return [Object.freeze({
+      severity,
+      message,
+      ...(code ? { code } : {}),
+      ...(path ? { path } : {}),
+    })];
+  });
+}
+
+function connectionStatusCloseDetails(status) {
+  const diagnostics = boundedConnectionDiagnostics(status?.diagnostics);
+  return {
+    reason: status?.status === "error" ? "error" : "closed",
+    ...(status?.message ? { error: boundedErrorMessage(status.message) } : {}),
+    ...(diagnostics.length > 0 ? { diagnostics } : {}),
+  };
+}
+
 function normalizePluginScopeCatalog(value) {
   const source = value && typeof value === "object" ? value : {};
   const result = {};
@@ -393,10 +426,7 @@ function registerPluginBridge(ipcMain, options) {
         if (status.status === "closed" || status.status === "error") {
           sessions.delete(sessionId);
           extensionProviderService.closeSessionLocal(sessionId);
-          await terminalWorkerManager.finishExternalSession(sessionId, {
-            reason: status.status,
-            ...(status.message ? { error: status.message } : {}),
-          });
+          await terminalWorkerManager.finishExternalSession(sessionId, connectionStatusCloseDetails(status));
           return;
         }
       }

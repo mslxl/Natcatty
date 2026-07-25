@@ -690,7 +690,11 @@ test("plugin connection status monitoring releases readiness then keeps polling 
         statusCalls.push([sessionId, operation, payload, options.signal.aborted]);
         if (statusCalls.length === 1) return { status: "connecting" };
         if (statusCalls.length === 2) return { status: "connected" };
-        return { status: "error", message: "Link lost after connect" };
+        return {
+          status: "error",
+          message: "Link lost after connect",
+          diagnostics: [{ severity: "warning", message: "Provider reported reconnect exhaustion" }],
+        };
       },
       closeSessionLocal() {},
     },
@@ -720,7 +724,11 @@ test("plugin connection status monitoring releases readiness then keeps polling 
   ]);
   assert.deepEqual(await finished, [
     "session-silent-start",
-    { reason: "error", error: "Link lost after connect" },
+    {
+      reason: "error",
+      error: "Link lost after connect",
+      diagnostics: [{ severity: "warning", message: "Provider reported reconnect exhaustion" }],
+    },
   ]);
   assert.equal(statusCalls.length, 3);
   assert.equal(statusCalls.every((call) => call[1] === "getStatus" && call[3] === false), true);
@@ -858,7 +866,13 @@ test("plugin connection status monitoring closes asynchronous provider errors", 
       async openConnection(params) {
         return { sessionId: params.sessionId, providerId: params.providerId, status: "connecting", diagnostics: [] };
       },
-      async control() { return { status: "error", message: "Handshake rejected" }; },
+      async control() {
+        return {
+          status: "error",
+          message: "Handshake rejected",
+          diagnostics: [{ severity: "error", message: "Host key mismatch", path: "configuration.hostKey" }],
+        };
+      },
       closeSessionLocal(sessionId) { closed.push(sessionId); },
     },
     getTerminalWorkerManager: () => ({
@@ -881,7 +895,11 @@ test("plugin connection status monitoring closes asynchronous provider errors", 
   });
   assert.deepEqual(await finished, [
     "session-late-error",
-    { reason: "error", error: "Handshake rejected" },
+    {
+      reason: "error",
+      error: "Handshake rejected",
+      diagnostics: [{ severity: "error", message: "Host key mismatch", path: "configuration.hostKey" }],
+    },
   ]);
   assert.deepEqual(closed, ["session-late-error"]);
 });

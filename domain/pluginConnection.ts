@@ -8,6 +8,8 @@ import type {
 import { isEncryptedCredentialPlaceholder } from './credentials';
 
 const CONTRIBUTION_ID = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+\.[A-Za-z][A-Za-z0-9_-]*(?:\.[A-Za-z][A-Za-z0-9_-])*$/u;
+const MAX_CONTRIBUTION_ID_LENGTH = 192;
+const PLUGIN_PROTOCOL_PREFIX = 'plugin:';
 const MAX_CONFIGURATION_BYTES = 128 * 1024;
 const MAX_CONFIGURATION_DEPTH = 32;
 const MAX_CONFIGURATION_ENTRIES = 4096;
@@ -23,7 +25,10 @@ const BUILT_IN_HOST_PROTOCOLS = new Set<BuiltInHostProtocol>([
 export const pluginProtocolForProvider = (providerId: string): HostProtocol => `plugin:${providerId}`;
 
 export const isPluginHostProtocol = (protocol?: string): protocol is `plugin:${string}` => (
-  typeof protocol === 'string' && protocol.startsWith('plugin:') && CONTRIBUTION_ID.test(protocol.slice(7))
+  typeof protocol === 'string'
+  && protocol.startsWith(PLUGIN_PROTOCOL_PREFIX)
+  && protocol.length <= PLUGIN_PROTOCOL_PREFIX.length + MAX_CONTRIBUTION_ID_LENGTH
+  && CONTRIBUTION_ID.test(protocol.slice(PLUGIN_PROTOCOL_PREFIX.length))
 );
 
 export const isBuiltInHostProtocol = (protocol?: string): protocol is BuiltInHostProtocol => (
@@ -80,7 +85,7 @@ export function sanitizePluginConnection(
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const candidate = value as Partial<PluginConnectionConfig>;
   if (typeof candidate.providerId !== 'string' || !CONTRIBUTION_ID.test(candidate.providerId)
-    || candidate.providerId.length > 192
+    || candidate.providerId.length > MAX_CONTRIBUTION_ID_LENGTH
     || protocol !== pluginProtocolForProvider(candidate.providerId)
     || !validateConfiguration(candidate.configuration, 0, { entries: 0 })) {
     return undefined;

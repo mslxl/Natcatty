@@ -126,6 +126,13 @@
       "description": "A globally unique contribution id. Semantic validation requires the exact '<pluginId>.' prefix.",
       "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+\\.[A-Za-z][A-Za-z0-9_-]*(?:\\.[A-Za-z][A-Za-z0-9_-]*)*$"
     },
+    "PluginHostProtocol": {
+      "type": "string",
+      "minLength": 12,
+      "maxLength": 199,
+      "description": "A host protocol owned by a connection Provider contribution: plugin:<providerId>.",
+      "pattern": "^plugin:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+\\.[A-Za-z][A-Za-z0-9_-]*(?:\\.[A-Za-z][A-Za-z0-9_-]*)*$"
+    },
     "FeatureId": {
       "type": "string",
       "minLength": 3,
@@ -1178,6 +1185,10 @@
       },
       "additionalProperties": false
     },
+    "ConnectionControlResult": {
+      "description": "resize, signal, reconnect, and close are acknowledged by returning JSON null. Any object result is rejected.",
+      "const": null
+    },
     "ConnectionStatusResult": {
       "type": "object",
       "required": [
@@ -1200,6 +1211,13 @@
         },
         "retryable": {
           "type": "boolean"
+        },
+        "diagnostics": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "$ref": "#/$defs/ProviderValidationIssue"
+          }
         }
       },
       "additionalProperties": false
@@ -1663,6 +1681,497 @@
       },
       "additionalProperties": false
     },
+    "ImporterPluginConnectionDraft": {
+      "type": "object",
+      "required": [
+        "providerId",
+        "configuration"
+      ],
+      "properties": {
+        "providerId": {
+          "$ref": "#/$defs/ContributionId"
+        },
+        "configuration": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "authenticationProviderId": {
+          "$ref": "#/$defs/ContributionId"
+        },
+        "credentialId": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 256
+        }
+      },
+      "additionalProperties": false
+    },
+    "ImporterHostDraft": {
+      "description": "A host draft normalized by Netcatty before Vault persistence. Executable startup commands and plaintext built-in credentials are intentionally not part of this public importer shape.",
+      "type": "object",
+      "anyOf": [
+        {
+          "required": [
+            "hostname"
+          ],
+          "properties": {
+            "hostname": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            }
+          }
+        },
+        {
+          "required": [
+            "protocol",
+            "pluginConnection"
+          ],
+          "properties": {
+            "protocol": {
+              "$ref": "#/$defs/PluginHostProtocol"
+            },
+            "pluginConnection": {
+              "$ref": "#/$defs/ImporterPluginConnectionDraft"
+            }
+          }
+        }
+      ],
+      "if": {
+        "type": "object",
+        "required": [
+          "protocol"
+        ],
+        "properties": {
+          "protocol": {
+            "$ref": "#/$defs/PluginHostProtocol"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "pluginConnection"
+        ]
+      },
+      "dependentRequired": {
+        "pluginConnection": [
+          "protocol"
+        ]
+      },
+      "dependentSchemas": {
+        "pluginConnection": {
+          "type": "object",
+          "required": [
+            "protocol"
+          ],
+          "properties": {
+            "protocol": {
+              "$ref": "#/$defs/PluginHostProtocol"
+            }
+          }
+        }
+      },
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "hostname": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "username": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "group": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "tags": {
+          "type": "array",
+          "maxItems": 128,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "os": {
+          "type": "string",
+          "enum": [
+            "linux",
+            "windows",
+            "macos"
+          ]
+        },
+        "deviceType": {
+          "type": "string",
+          "enum": [
+            "general",
+            "network"
+          ]
+        },
+        "identityId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "identityFileId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "telnetIdentityId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "protocol": {
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "ssh",
+                "telnet",
+                "mosh",
+                "et",
+                "local",
+                "serial"
+              ]
+            },
+            {
+              "$ref": "#/$defs/PluginHostProtocol"
+            }
+          ]
+        },
+        "pluginConnection": {
+          "$ref": "#/$defs/ImporterPluginConnectionDraft"
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 65536
+        },
+        "theme": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "sftpEncoding": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "sftpFileProtocol": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "sftp",
+            "scp"
+          ]
+        },
+        "moshEnabled": {
+          "type": "boolean"
+        },
+        "etEnabled": {
+          "type": "boolean"
+        },
+        "telnetEnabled": {
+          "type": "boolean"
+        },
+        "sftpSudo": {
+          "type": "boolean"
+        },
+        "requiresMfa": {
+          "type": "boolean"
+        },
+        "useSshAgent": {
+          "type": "boolean"
+        },
+        "identitiesOnly": {
+          "type": "boolean"
+        },
+        "agentForwarding": {
+          "type": "boolean"
+        },
+        "x11Forwarding": {
+          "type": "boolean"
+        },
+        "showLineTimestamps": {
+          "type": "boolean"
+        },
+        "disableDynamicTabTitle": {
+          "type": "boolean"
+        },
+        "pinned": {
+          "type": "boolean"
+        },
+        "autoOpenSftpPanel": {
+          "type": "boolean"
+        },
+        "sftpFollowTerminalCwd": {
+          "type": "boolean"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "telnetPort": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "etPort": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "keepaliveInterval": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3600
+        },
+        "keepaliveCountMax": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
+      },
+      "additionalProperties": false
+    },
+    "ImporterIdentityDraft": {
+      "type": "object",
+      "required": [
+        "label",
+        "username",
+        "authMethod"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "username": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "authMethod": {
+          "type": "string",
+          "enum": [
+            "password",
+            "key",
+            "certificate"
+          ]
+        },
+        "password": {
+          "type": "string",
+          "maxLength": 65536
+        },
+        "keyId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "additionalProperties": false
+    },
+    "ImporterKeyDraft": {
+      "type": "object",
+      "required": [
+        "label",
+        "type"
+      ],
+      "oneOf": [
+        {
+          "required": [
+            "privateKey"
+          ],
+          "properties": {
+            "privateKey": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2097152
+            }
+          }
+        },
+        {
+          "required": [
+            "filePath"
+          ],
+          "properties": {
+            "filePath": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            }
+          }
+        }
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "RSA",
+            "ECDSA",
+            "ED25519"
+          ]
+        },
+        "privateKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2097152
+        },
+        "publicKey": {
+          "type": "string",
+          "maxLength": 1048576
+        },
+        "certificate": {
+          "type": "string",
+          "maxLength": 1048576
+        },
+        "passphrase": {
+          "type": "string",
+          "maxLength": 65536
+        },
+        "filePath": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "key",
+            "certificate",
+            "identity"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "ImporterSnippetDraft": {
+      "type": "object",
+      "required": [
+        "label",
+        "command"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "command": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1048576
+        },
+        "tags": {
+          "type": "array",
+          "maxItems": 128,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "snippet",
+            "script"
+          ]
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 4096
+        }
+      },
+      "additionalProperties": false
+    },
+    "ImporterGroupDraft": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            }
+          },
+          "anyOf": [
+            {
+              "required": [
+                "path"
+              ],
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                }
+              }
+            },
+            {
+              "required": [
+                "label"
+              ],
+              "properties": {
+                "label": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                }
+              }
+            }
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
     "ImporterRecord": {
       "oneOf": [
         {
@@ -1676,27 +2185,88 @@
               "const": "draft"
             },
             "draft": {
-              "type": "object",
-              "required": [
-                "kind",
-                "value"
-              ],
-              "properties": {
-                "kind": {
-                  "type": "string",
-                  "enum": [
-                    "host",
-                    "identity",
-                    "key",
-                    "snippet",
-                    "group"
-                  ]
+              "oneOf": [
+                {
+                  "type": "object",
+                  "required": [
+                    "kind",
+                    "value"
+                  ],
+                  "properties": {
+                    "kind": {
+                      "const": "host"
+                    },
+                    "value": {
+                      "$ref": "#/$defs/ImporterHostDraft"
+                    }
+                  },
+                  "additionalProperties": false
                 },
-                "value": {
-                  "$ref": "#/$defs/JsonValue"
+                {
+                  "type": "object",
+                  "required": [
+                    "kind",
+                    "value"
+                  ],
+                  "properties": {
+                    "kind": {
+                      "const": "identity"
+                    },
+                    "value": {
+                      "$ref": "#/$defs/ImporterIdentityDraft"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "kind",
+                    "value"
+                  ],
+                  "properties": {
+                    "kind": {
+                      "const": "key"
+                    },
+                    "value": {
+                      "$ref": "#/$defs/ImporterKeyDraft"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "kind",
+                    "value"
+                  ],
+                  "properties": {
+                    "kind": {
+                      "const": "snippet"
+                    },
+                    "value": {
+                      "$ref": "#/$defs/ImporterSnippetDraft"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "kind",
+                    "value"
+                  ],
+                  "properties": {
+                    "kind": {
+                      "const": "group"
+                    },
+                    "value": {
+                      "$ref": "#/$defs/ImporterGroupDraft"
+                    }
+                  },
+                  "additionalProperties": false
                 }
-              },
-              "additionalProperties": false
+              ]
             }
           },
           "additionalProperties": false

@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from "react";
 import { netcattyBridge } from "../../infrastructure/services/netcattyBridge";
+import type { TerminalSessionExitEvent } from "./resolveTerminalSessionExitIntent";
 
 type PluginConnectionStartOptions = NetcattyPluginConnectionStartRequest & {
   signal?: AbortSignal;
@@ -313,7 +314,7 @@ export const useTerminalBackend = () => {
     return bridge.onSessionData(sessionId, cb, options);
   }, []);
 
-  const onSessionExit = useCallback((sessionId: string, cb: (evt: { exitCode?: number; signal?: number; error?: string; reason?: "exited" | "error" | "timeout" | "closed" }) => void) => {
+  const onSessionExit = useCallback((sessionId: string, cb: (evt: TerminalSessionExitEvent) => void) => {
     const bridge = netcattyBridge.get();
     if (!bridge?.onSessionExit) throw new Error("onSessionExit unavailable");
     return bridge.onSessionExit(sessionId, cb);

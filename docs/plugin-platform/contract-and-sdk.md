@@ -12,8 +12,10 @@ credentials and host-mediated capabilities.
 
 This document describes the canonical contract first delivered by phase 1 and
 extended before public release. Runtime loading and capability enforcement live
-in the host rather than the schema package. UI contributions, terminal and
-connection Providers, synchronization, and distribution remain later phases.
+in the host rather than the schema package. UI contributions, terminal
+Providers, terminal interceptors, and connection/authentication/importer
+Providers have now extended the same internal contract before public release.
+Synchronization Providers and signed distribution remain later phases.
 
 ## Contract ownership
 
@@ -376,6 +378,28 @@ generated Schema shape and the shared transfer envelope verifies that only
 chunk and successful-result frames carry a real attached `ArrayBuffer` whose
 length exactly matches the declared bounded `byteLength`.
 
+PR 7 adds connection, authentication, and importer Providers without changing
+the Provider ownership model. Connection Provider result types are operation
+specific: `validateConfiguration`, `probe`, `open`, and `getStatus` each return
+their named result object, while `resize`, `signal`, `reconnect`, and `close`
+acknowledge completion with JSON `null`. Objects on those control operations
+are rejected by the generated schema, SDK type map, and runtime validator.
+`ConnectionStatusResult` may carry bounded `ProviderValidationIssue`
+diagnostics; when a later status poll reports `closed` or `error`, those
+diagnostics are forwarded with the terminal-session exit event rather than
+being available only during the initial `open`.
+
+Importer draft records are also exact public shapes, not arbitrary JSON bags.
+Host, identity, key, snippet, and group drafts each declare required fields,
+allowed enums, byte/array limits, and closed object properties. Host drafts may
+either name a built-in host with a hostname or a plugin protocol plus an opaque
+`pluginConnection` object whose provider ID must match the `plugin:<id>`
+protocol during host-owned semantic normalization. Executable startup commands,
+hidden built-in plaintext credentials, and unknown host properties are not part
+of the importer contract; plugin-owned credentials must flow through identity
+or key drafts and then through the existing host-owned encrypted persistence
+path. Safe preview output is redacted and bounded before UI display.
+
 `PluginSecretStore.get()` never returns plaintext. It returns a host-issued
 `SecretRef`. Its random ID stays opaque; its non-secret `key` binds later lease
 authorization to the same manifest resource used by `get()`/`set()`. `set()`
@@ -496,8 +520,7 @@ must not trust a package merely because the publisher previously ran the CLI.
 
 ## Compatibility rules for later phases
 
-The following rules are already fixed even though their implementations arrive
-later:
+The following rules are fixed for this internal pre-release contract:
 
 1. JSON Schema is the wire authority. TypeScript types alone never justify
    accepting an unvalidated message.

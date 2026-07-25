@@ -1,11 +1,11 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useMemo, useRef, useState } from "react";
 import { FileSymlink, Import, Plug } from "lucide-react";
 import { useI18n } from "../../application/i18n/I18nProvider";
 import type { VaultImportFileEncoding } from "../../application/state/vaultImportFile";
+import { usePluginVaultImporter } from "../../application/state/usePluginVaultImporter";
 import { getVaultCsvTemplate } from "../../domain/vaultImport";
 import type { VaultImportFormat } from "../../domain/vaultImport";
 import { cn } from "../../lib/utils";
-import { pluginExtensionBridge } from "../../application/state/pluginExtensionBridge";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -84,36 +84,14 @@ export const ImportVaultDialog: React.FC<ImportVaultDialogProps> = ({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const pendingFormatRef = useRef<VaultImportFormat | null>(null);
   const pendingOptionsRef = useRef<ImportOptions | undefined>(undefined);
-  const activePluginImportRequestRef = useRef<string | null>(null);
-  const pluginImportGenerationRef = useRef(0);
   const [showManagedChoice, setShowManagedChoice] = useState(false);
   const [showMobaEncodingChoice, setShowMobaEncodingChoice] = useState(false);
-  const [pluginProviders, setPluginProviders] = useState<ReadonlyArray<NetcattyExtensionProviderContribution>>([]);
-  const [pluginPreview, setPluginPreview] = useState<NetcattyPluginImporterPreview | null>(null);
-  const [pluginBusy, setPluginBusy] = useState(false);
-  const [pluginError, setPluginError] = useState<string | null>(null);
-  const [pluginProgress, setPluginProgress] = useState<NetcattyPluginImporterProgressEvent['progress'] | null>(null);
-
-  useEffect(() => pluginExtensionBridge.onImporterProgress((event) => {
-    if (event.requestId === activePluginImportRequestRef.current) setPluginProgress(event.progress);
-  }), []);
-
-  useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
-    void pluginExtensionBridge.listProviders('importer').then((providers) => {
-      if (!cancelled) setPluginProviders(providers);
-    }).catch(() => {
-      if (!cancelled) setPluginProviders([]);
-    });
-    return () => { cancelled = true; };
-  }, [open]);
-
-  const localizeProviderLabel = useCallback((provider: NetcattyExtensionProviderContribution) => {
-    const label = provider.provider.label;
-    if (typeof label === 'string') return label;
-    return label[navigator.language] ?? label[navigator.language.split('-')[0]] ?? label.en ?? provider.provider.id;
-  }, []);
+  const pluginImporter = usePluginVaultImporter({
+    open,
+    onOpenChange,
+    onPluginPreviewCommit,
+    t,
+  });
 
   const downloadCsvTemplate = useCallback(() => {
     const csv = getVaultCsvTemplate();
@@ -138,54 +116,6 @@ export const ImportVaultDialog: React.FC<ImportVaultDialogProps> = ({
     },
     [],
   );
-
-  const pickPluginFile = useCallback((provider: NetcattyExtensionProviderContribution) => {
-    if (pluginBusy) return;
-    const generation = ++pluginImportGenerationRef.current;
-    const isCurrent = () => pluginImportGenerationRef.current === generation;
-    setPluginBusy(true);
-    setPluginError(null);
-    setPluginProgress(null);
-    void (async () => {
-      let selection: Awaited<ReturnType<typeof pluginExtensionBridge.selectImporterFile>> = null;
-      let consumed = false;
-      let requestId: string | null = null;
-      try {
-        selection = await pluginExtensionBridge.selectImporterFile();
-        if (!selection || !isCurrent()) return;
-        requestId = crypto.randomUUID();
-        activePluginImportRequestRef.current = requestId;
-        const detection = await pluginExtensionBridge.detectImporter({
-          requestId,
-          providerId: provider.provider.id,
-          sample: selection.sample,
-          fileName: selection.fileName,
-        });
-        if (!isCurrent()) return;
-        if (detection && detection.confidence <= 0) {
-          throw new Error(detection.reason || t('vault.import.plugins.notRecognized'));
-        }
-        const preview = await pluginExtensionBridge.parseImporterFile({
-          requestId,
-          providerId: provider.provider.id,
-          selectionToken: selection.selectionToken,
-        });
-        consumed = true;
-        if (isCurrent()) setPluginPreview(preview);
-      } catch (error) {
-        if (isCurrent()) setPluginError(error instanceof Error ? error.message : t('common.unknownError'));
-      } finally {
-        if (activePluginImportRequestRef.current === requestId) activePluginImportRequestRef.current = null;
-        if (selection && !consumed) {
-          await pluginExtensionBridge.releaseImporterFile(selection.selectionToken).catch(() => false);
-        }
-        if (isCurrent()) {
-          setPluginBusy(false);
-          setPluginProgress(null);
-        }
-      }
-    })();
-  }, [pluginBusy, t]);
 
   const handleFormatClick = useCallback(
     (opt: ImportOption) => {
@@ -234,55 +164,24 @@ export const ImportVaultDialog: React.FC<ImportVaultDialogProps> = ({
   const handleOpenChange = useCallback(
     (newOpen: boolean) => {
       if (!newOpen) {
-        pluginImportGenerationRef.current += 1;
-        const requestId = activePluginImportRequestRef.current;
-        activePluginImportRequestRef.current = null;
-        if (requestId) void pluginExtensionBridge.cancelRequest(requestId).catch(() => false);
         setShowManagedChoice(false);
         setShowMobaEncodingChoice(false);
-        setPluginPreview(null);
-        setPluginError(null);
-        setPluginProgress(null);
-        setPluginBusy(false);
       }
-      onOpenChange(newOpen);
+      pluginImporter.handleOpenChange(newOpen);
     },
-    [onOpenChange],
+    [pluginImporter],
   );
 
-  const previewSummary = useMemo(() => {
-    if (!pluginPreview) return null;
-    const drafts = pluginPreview.records.filter((record) => record.type === 'draft');
-    const byKind = drafts.reduce<Record<string, number>>((counts, record) => {
-      if (record.type === 'draft') counts[record.draft.kind] = (counts[record.draft.kind] ?? 0) + 1;
-      return counts;
-    }, {});
-    return Object.entries(byKind).map(([kind, count]) => `${kind}: ${count}`).join(' · ');
-  }, [pluginPreview]);
   const previewAnalysis = useMemo(
-    () => pluginPreview
-      ? getPluginPreviewAnalysis(pluginPreview)
+    () => pluginImporter.pluginPreview
+      ? getPluginPreviewAnalysis(pluginImporter.pluginPreview)
       : {
         duplicateCount: 0,
         validationErrorCount: 0,
         safePreview: { items: [], warnings: [], errors: [], omittedItemCount: 0, omittedDiagnosticCount: 0 },
       },
-    [getPluginPreviewAnalysis, pluginPreview],
+    [getPluginPreviewAnalysis, pluginImporter.pluginPreview],
   );
-
-  const commitPluginPreview = useCallback(async () => {
-    if (!pluginPreview || pluginBusy) return;
-    setPluginBusy(true);
-    setPluginError(null);
-    try {
-      await onPluginPreviewCommit(pluginPreview);
-      handleOpenChange(false);
-    } catch (error) {
-      setPluginError(error instanceof Error ? error.message : t('common.unknownError'));
-    } finally {
-      setPluginBusy(false);
-    }
-  }, [handleOpenChange, onPluginPreviewCommit, pluginBusy, pluginPreview, t]);
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -313,16 +212,16 @@ export const ImportVaultDialog: React.FC<ImportVaultDialogProps> = ({
         />
 
         <div className="flex flex-col gap-4">
-          {pluginPreview ? (
+          {pluginImporter.pluginPreview ? (
             <div className="space-y-4">
               <div className="rounded-xl border border-border/60 bg-muted/20 p-4">
                 <div className="text-sm font-medium">{t('vault.import.plugins.preview')}</div>
-                <div className="mt-1 text-sm text-muted-foreground">{previewSummary || t('vault.import.plugins.empty')}</div>
+                <div className="mt-1 text-sm text-muted-foreground">{pluginImporter.previewSummary || t('vault.import.plugins.empty')}</div>
                 <div className="mt-2 text-xs text-muted-foreground">
                   {t('vault.import.plugins.summary', {
-                    parsed: pluginPreview.result.parsed,
-                    warnings: pluginPreview.result.warnings,
-                    errors: pluginPreview.result.errors,
+                    parsed: pluginImporter.pluginPreview.result.parsed,
+                    warnings: pluginImporter.pluginPreview.result.warnings,
+                    errors: pluginImporter.pluginPreview.result.errors,
                   })}
                 </div>
                 {previewAnalysis.duplicateCount > 0 ? (
@@ -372,10 +271,10 @@ export const ImportVaultDialog: React.FC<ImportVaultDialogProps> = ({
                 ) : null}
               </div>
               <div className="flex justify-end gap-2">
-                <Button variant="outline" onClick={() => setPluginPreview(null)}>{t('common.back')}</Button>
+                <Button variant="outline" onClick={pluginImporter.clearPluginPreview}>{t('common.back')}</Button>
                 <Button
-                  disabled={pluginPreview.result.errors > 0 || previewAnalysis.validationErrorCount > 0 || pluginBusy}
-                  onClick={() => void commitPluginPreview()}
+                  disabled={pluginImporter.pluginPreview.result.errors > 0 || previewAnalysis.validationErrorCount > 0 || pluginImporter.pluginBusy}
+                  onClick={() => void pluginImporter.commitPluginPreview()}
                 >
                   {t('vault.import.plugins.commit')}
                 </Button>
@@ -518,23 +417,23 @@ export const ImportVaultDialog: React.FC<ImportVaultDialogProps> = ({
                 ))}
               </div>
 
-              {pluginProviders.length > 0 && (
+              {pluginImporter.pluginProviders.length > 0 && (
                 <>
                   <div className="pt-2 text-sm font-medium text-center text-muted-foreground">
                     {t('vault.import.plugins.title')}
                   </div>
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                    {pluginProviders.map((provider) => (
+                    {pluginImporter.pluginProviders.map((provider) => (
                       <button
                         key={provider.provider.id}
                         type="button"
-                        disabled={pluginBusy}
+                        disabled={pluginImporter.pluginBusy}
                         className="flex items-center gap-3 rounded-xl border border-border/60 p-3 text-left transition-colors hover:bg-muted/30 disabled:opacity-50"
-                        onClick={() => pickPluginFile(provider)}
+                        onClick={() => pluginImporter.pickPluginFile(provider)}
                       >
                         <span className="rounded-lg bg-primary/10 p-2 text-primary"><Plug className="h-5 w-5" /></span>
                         <span className="min-w-0">
-                          <span className="block truncate text-sm font-medium">{localizeProviderLabel(provider)}</span>
+                          <span className="block truncate text-sm font-medium">{pluginImporter.localizeProviderLabel(provider)}</span>
                           <span className="block truncate text-xs text-muted-foreground">{provider.pluginDisplayName || provider.provider.id}</span>
                         </span>
                       </button>
@@ -542,18 +441,18 @@ export const ImportVaultDialog: React.FC<ImportVaultDialogProps> = ({
                   </div>
                 </>
               )}
-              {pluginBusy && (
+              {pluginImporter.pluginBusy && (
                 <div className="text-center text-sm text-muted-foreground" role="status">
-                  {pluginProgress
+                  {pluginImporter.pluginProgress
                     ? t('vault.import.plugins.progress', {
-                      completed: pluginProgress.completed,
-                      total: pluginProgress.total ?? '?',
-                      message: pluginProgress.message ?? '',
+                      completed: pluginImporter.pluginProgress.completed,
+                      total: pluginImporter.pluginProgress.total ?? '?',
+                      message: pluginImporter.pluginProgress.message ?? '',
                     })
                     : t('vault.import.plugins.loading')}
                 </div>
               )}
-              {pluginError && <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">{pluginError}</div>}
+              {pluginImporter.pluginError && <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">{pluginImporter.pluginError}</div>}
 
               <div className="flex items-center justify-between gap-3 pt-2 border-t border-border/60">
                 <div className="text-xs text-muted-foreground">

@@ -212,6 +212,7 @@ function registerExternalSessionHandlers(ipcMain, options) {
       exitCode: payload?.reason === "error" ? 1 : 0,
       reason: payload?.reason || "closed",
       ...(payload?.error ? { error: payload.error } : {}),
+      ...(Array.isArray(payload?.diagnostics) ? { diagnostics: payload.diagnostics } : {}),
     });
     return null;
   });

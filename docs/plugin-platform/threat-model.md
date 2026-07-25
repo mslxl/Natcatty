@@ -151,6 +151,11 @@ main-process resolver validates availability without materializing plaintext,
 then resolves only while consuming an operation-bound lease. Neither reference
 is treated as a bearer capability: every privileged use must revalidate the
 calling plugin, resource ownership, permission, runtime, and operation.
+Importer Providers receive an exact draft contract rather than arbitrary Vault
+objects. Host drafts reject executable startup commands and hidden built-in
+plaintext credential fields; imported sensitive material must appear only in
+identity/key drafts and is redacted from the bounded safe preview before
+persistence.
 
 ### Denial of service
 

@@ -137,6 +137,13 @@ test("terminal interceptor typing stays specialized while broad ProviderKind hel
 test("provider registrations infer typed connection and importer stream invocations", () => {
   assertSdkTypeChecks(`
     import { definePlugin } from "./index.ts";
+    import type { ConnectionProviderResultByOperation } from "./index.ts";
+
+    const resizeAck: ConnectionProviderResultByOperation["resize"] = null;
+    void resizeAck;
+    // @ts-expect-error connection control operations acknowledge with JSON null, never object payloads.
+    const invalidResizeAck: ConnectionProviderResultByOperation["resize"] = { ok: true };
+    void invalidResizeAck;
 
     definePlugin({
       activate(context) {
@@ -159,7 +166,10 @@ test("provider registrations infer typed connection and importer stream invocati
             return { available: true };
           }
           if (invocation.operation === "getStatus") {
-            return { status: "connected" };
+            return {
+              status: "connected",
+              diagnostics: [{ severity: "warning", message: "using fallback host key algorithm" }],
+            };
           }
           return null;
         });

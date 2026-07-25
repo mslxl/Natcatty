@@ -182,6 +182,7 @@ test("external plugin sessions stream auto-save logs through output and lifecycl
   await handlers.get("netcatty:external:finish")({ sender }, {
     sessionId: "plugin-log-1",
     reason: "closed",
+    diagnostics: [{ severity: "warning", message: "Provider closed after idle timeout" }],
   });
   assert.deepEqual(observed.slice(3), [
     ["stop-log", "plugin-log-1", token],
@@ -189,6 +190,7 @@ test("external plugin sessions stream auto-save logs through output and lifecycl
       sessionId: "plugin-log-1",
       exitCode: 0,
       reason: "closed",
+      diagnostics: [{ severity: "warning", message: "Provider closed after idle timeout" }],
     }],
   ]);
   assert.equal(sessions.has("plugin-log-1"), false);

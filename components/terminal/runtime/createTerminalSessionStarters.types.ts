@@ -9,6 +9,7 @@ import type {
   SudoPasswordAutofillCandidate,
 } from "./terminalSudoAutofill";
 import type { ProgrammaticCommandLogRewrite } from "../programmaticCommandLog";
+import type { TerminalSessionExitEvent } from "../../../application/state/resolveTerminalSessionExitIntent";
 
 export type TerminalBackendApi = {
   backendAvailable: () => boolean;
@@ -64,7 +65,7 @@ export type TerminalBackendApi = {
   ) => () => void;
   onSessionExit: (
     sessionId: string,
-    cb: (evt: { exitCode?: number; signal?: number; error?: string; reason?: "exited" | "error" | "timeout" | "closed" }) => void,
+    cb: (evt: TerminalSessionExitEvent) => void,
   ) => () => void;
   onTelnetAutoLoginComplete?: (
     sessionId: string,
@@ -202,7 +203,7 @@ export type TerminalSessionStartersContext = {
 
   onSessionAttached?: (sessionId: string) => void;
   onRestoreCwdIntentConsumed?: (cwd: string) => void;
-  onSessionExit?: (sessionId: string, evt: { exitCode?: number; signal?: number; error?: string; reason?: "exited" | "error" | "timeout" | "closed" }) => void;
+  onSessionExit?: (sessionId: string, evt: TerminalSessionExitEvent) => void;
   onTerminalDataCapture?: (sessionId: string, data: string) => void;
   onTerminalLogData?: (data: string) => void;
   onProgrammaticCommandLogRewrite?: (rewrite: ProgrammaticCommandLogRewrite) => void;

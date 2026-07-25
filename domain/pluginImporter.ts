@@ -155,7 +155,7 @@ const normalizeHost = (value: JsonValue): Host | null => {
   const object = asObject(value);
   if (!object) return null;
   const hasProtocol = Object.prototype.hasOwnProperty.call(object, 'protocol');
-  const protocolValue = hasProtocol ? stringValue(object.protocol, 192) : undefined;
+  const protocolValue = hasProtocol ? stringValue(object.protocol, 199) : undefined;
   if (hasProtocol && !protocolValue) return null;
   if (protocolValue && !isBuiltInHostProtocol(protocolValue) && !isPluginHostProtocol(protocolValue)) return null;
   const protocol = protocolValue as Host['protocol'] | undefined;
@@ -180,8 +180,6 @@ const normalizeHost = (value: JsonValue): Host | null => {
     identityFileId: optionalStringValue(object, 'identityFileId', 256),
     telnetIdentityId: optionalStringValue(object, 'telnetIdentityId', 256),
     notes: optionalStringValue(object, 'notes', 65_536),
-    telnetUsername: optionalStringValue(object, 'telnetUsername', 512),
-    telnetPassword: optionalStringValue(object, 'telnetPassword', 65_536),
     theme: optionalStringValue(object, 'theme', 256),
     sftpEncoding: optionalStringValue(object, 'sftpEncoding', 64),
   };
@@ -191,7 +189,6 @@ const normalizeHost = (value: JsonValue): Host | null => {
     etEnabled: optionalBooleanValue(object, 'etEnabled'),
     telnetEnabled: optionalBooleanValue(object, 'telnetEnabled'),
     sftpSudo: optionalBooleanValue(object, 'sftpSudo'),
-    savePassword: optionalBooleanValue(object, 'savePassword'),
     requiresMfa: optionalBooleanValue(object, 'requiresMfa'),
     useSshAgent: optionalBooleanValue(object, 'useSshAgent'),
     identitiesOnly: optionalBooleanValue(object, 'identitiesOnly'),

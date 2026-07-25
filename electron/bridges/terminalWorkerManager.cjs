@@ -1523,6 +1523,7 @@ function createTerminalWorkerManager(options = {}) {
         sessionId,
         reason: details.reason || "closed",
         ...(details.error ? { error: details.error } : {}),
+        ...(Array.isArray(details.diagnostics) ? { diagnostics: details.diagnostics } : {}),
       });
     } catch {
       closeOutputSession(sessionId);

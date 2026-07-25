@@ -60,6 +60,22 @@ test('plugin importer host drafts can use opaque provider configuration without 
   assert.deepEqual(result.hosts[0].pluginConnection?.configuration, { account: 'production' });
 });
 
+test('plugin importer rejects plugin host drafts whose protocol does not match the provider ID', () => {
+  const result = normalizePluginImporterRecords([{ type: 'draft', draft: {
+    kind: 'host',
+    value: {
+      label: 'Mismatched service',
+      protocol: 'plugin:com.example.other.connection',
+      pluginConnection: {
+        providerId: 'com.example.transport.connection',
+        configuration: { account: 'production' },
+      },
+    },
+  } }]);
+  assert.deepEqual(result.hosts, []);
+  assert.deepEqual(result.errors, ['Importer returned an invalid host draft.']);
+});
+
 test('plugin importer rejects unknown host protocols instead of persisting an unsafe cast', () => {
   const result = normalizePluginImporterRecords([{ type: 'draft', draft: {
     kind: 'host',
@@ -144,6 +160,23 @@ test('plugin importer drops startup commands from host drafts', () => {
   } }]);
   assert.equal(result.hosts.length, 1);
   assert.equal(result.hosts[0].startupCommand, undefined);
+});
+
+test('plugin importer drops hidden plaintext built-in credential fields from host drafts', () => {
+  const result = normalizePluginImporterRecords([{ type: 'draft', draft: {
+    kind: 'host',
+    value: {
+      label: 'Imported host',
+      hostname: 'host.test',
+      telnetUsername: 'admin',
+      telnetPassword: 'plaintext',
+      savePassword: true,
+    },
+  } }]);
+  assert.equal(result.hosts.length, 1);
+  assert.equal(result.hosts[0].telnetUsername, undefined);
+  assert.equal(result.hosts[0].telnetPassword, undefined);
+  assert.equal(result.hosts[0].savePassword, undefined);
 });
 
 test('plugin importer rejects malformed supported host enum fields', () => {

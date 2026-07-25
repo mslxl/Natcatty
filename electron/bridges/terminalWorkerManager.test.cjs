@@ -227,6 +227,53 @@ test("external sessions reuse worker output routing and propagate input, resize,
   assert.deepEqual(observed.at(-1), ["close", "closed"]);
 });
 
+test("external session finish forwards plugin diagnostics to the worker", async () => {
+  const child = new FakeChild();
+  const manager = createTerminalWorkerManager({
+    utilityProcess: { fork: () => child },
+    electronModule: {
+      webContents: {
+        fromId(id) {
+          return { id, isDestroyed: () => false, once() {}, removeListener() {}, send() {} };
+        },
+      },
+    },
+    workerScriptPath: "/worker.cjs",
+  });
+
+  const started = manager.startExternalSession({
+    sessionId: "plugin-diagnostics",
+    webContentsId: 7,
+    columns: 80,
+    rows: 24,
+    protocol: "plugin:example.transport",
+  });
+  const startRequest = child.messages.at(-1);
+  child.emit("message", {
+    kind: "response",
+    requestId: startRequest.requestId,
+    result: { sessionId: "plugin-diagnostics" },
+    sessionGeneration: 0,
+  });
+  await started;
+
+  const finished = manager.finishExternalSession("plugin-diagnostics", {
+    reason: "error",
+    error: "Connection failed",
+    diagnostics: [{ severity: "error", message: "Host key mismatch", path: "configuration.hostKey" }],
+  });
+  const finishRequest = child.messages.at(-1);
+  assert.equal(finishRequest.channel, "netcatty:external:finish");
+  assert.deepEqual(finishRequest.payload, {
+    sessionId: "plugin-diagnostics",
+    reason: "error",
+    error: "Connection failed",
+    diagnostics: [{ severity: "error", message: "Host key mismatch", path: "configuration.hostKey" }],
+  });
+  child.emit("message", { kind: "response", requestId: finishRequest.requestId, result: null });
+  assert.equal(await finished, true);
+});
+
 test("external input failures close both the worker route and its provider lifecycle", async () => {
   const child = new FakeChild();
   const observed = [];

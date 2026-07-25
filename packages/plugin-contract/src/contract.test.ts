@@ -96,9 +96,68 @@ test("connection authentication and importer provider payloads are canonical and
   }), false);
   assert.equal(importerRecord({
     type: "draft",
-    draft: { kind: "host", value: { label: "Imported" } },
+    draft: { kind: "host", value: { hostname: "imported.example", label: "Imported" } },
   }), true, JSON.stringify(importerRecord.errors));
+  assert.equal(importerRecord({
+    type: "draft",
+    draft: {
+      kind: "host",
+      value: {
+        label: "Plugin endpoint",
+        protocol: "plugin:com.example.contract-test.connection",
+        pluginConnection: {
+          providerId: "com.example.contract-test.connection",
+          configuration: { endpoint: "opaque" },
+        },
+      },
+    },
+  }), true, JSON.stringify(importerRecord.errors));
+  assert.equal(importerRecord({
+    type: "draft",
+    draft: {
+      kind: "host",
+      value: {
+        hostname: "imported.example",
+        protocol: "ssh",
+        pluginConnection: {
+          providerId: "com.example.contract-test.connection",
+          configuration: {},
+        },
+      },
+    },
+  }), false, "pluginConnection drafts must use a plugin host protocol");
   assert.equal(importerRecord({ type: "draft", draft: { kind: "unknown", value: {} } }), false);
+  assert.equal(importerRecord({
+    type: "draft",
+    draft: { kind: "host", value: { hostname: "imported.example", startupCommand: "rm -rf /tmp/example" } },
+  }), false, "importer host drafts must reject hidden executable startup commands");
+  assert.equal(importerRecord({
+    type: "draft",
+    draft: { kind: "host", value: { hostname: "imported.example", telnetPassword: "plaintext", savePassword: true } },
+  }), false, "importer host drafts must reject hidden plaintext built-in credentials");
+  assert.equal(importerRecord({
+    type: "draft",
+    draft: { kind: "identity", value: { label: "Deploy", username: "deploy", authMethod: "password", password: "secret" } },
+  }), true, JSON.stringify(importerRecord.errors));
+  assert.equal(importerRecord({
+    type: "draft",
+    draft: { kind: "key", value: { label: "Key", type: "ED25519", privateKey: "private" } },
+  }), true, JSON.stringify(importerRecord.errors));
+  assert.equal(importerRecord({
+    type: "draft",
+    draft: { kind: "snippet", value: { label: "Check", command: "uptime" } },
+  }), true, JSON.stringify(importerRecord.errors));
+  assert.equal(importerRecord({
+    type: "draft",
+    draft: { kind: "group", value: { path: "Imported/Prod" } },
+  }), true, JSON.stringify(importerRecord.errors));
+  assert.equal(validator("ConnectionControlResult")(null), true);
+  assert.equal(validator("ConnectionControlResult")({ unexpected: true }), false);
+  assert.equal(validator("ConnectionStatusResult")({
+    status: "error",
+    message: "Handshake failed",
+    diagnostics: [{ severity: "error", message: "Invalid host key" }],
+  }), true);
 });
 
 test("Provider configuration schemas use only the host restricted JSON subset", async () => {

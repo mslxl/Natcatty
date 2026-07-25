@@ -37,6 +37,7 @@ const definitionValidators = Object.freeze({
   ConnectionOpenResult: createDefinitionValidator("ConnectionOpenResult"),
   ConnectionProbeResult: createDefinitionValidator("ConnectionProbeResult"),
   ConnectionStatusResult: createDefinitionValidator("ConnectionStatusResult"),
+  ConnectionControlResult: createDefinitionValidator("ConnectionControlResult"),
   ConnectionValidateResult: createDefinitionValidator("ConnectionValidateResult"),
   ImporterDetectResult: createDefinitionValidator("ImporterDetectResult"),
   ImporterParseResult: createDefinitionValidator("ImporterParseResult"),
@@ -195,8 +196,13 @@ function validateProviderResult(rawResult, requestId) {
 }
 
 function assertConnectionResult(operation, value) {
+  if (["resize", "signal", "reconnect", "close"].includes(operation)) {
+    assertDefinition("ConnectionControlResult", value, `Connection ${operation} result`);
+    if (value !== null) throw new TypeError(`Connection ${operation} result must be null`);
+    assertBoundedJson(value, `Connection ${operation} result`);
+    return value;
+  }
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    if (["resize", "signal", "reconnect", "close"].includes(operation) && value === null) return value;
     throw new TypeError(`Connection ${operation} result must be an object`);
   }
   if (operation === "validateConfiguration") {

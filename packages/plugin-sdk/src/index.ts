@@ -3,6 +3,7 @@ import type {
   AuthenticationResponsePayload,
   AuthenticationResult,
   ConnectionConfigurationPayload,
+  ConnectionControlResult,
   ConnectionControlPayload,
   ConnectionOpenPayload,
   ConnectionOpenResult,
@@ -418,36 +419,61 @@ export type OrdinaryTerminalProviderHandler<K extends OrdinaryTerminalProviderKi
   invocation: OrdinaryTerminalProviderInvocation<K>,
 ) => OrdinaryTerminalProviderResultByKind[K] | Promise<OrdinaryTerminalProviderResultByKind[K]>;
 
+export interface ConnectionProviderInvocationByOperation {
+  readonly validateConfiguration: TypedPluginProviderInvocation<ConnectionConfigurationPayload> & {
+    readonly kind: "connection";
+    readonly operation: "validateConfiguration";
+  };
+  readonly probe: TypedPluginProviderInvocation<ConnectionConfigurationPayload> & {
+    readonly kind: "connection";
+    readonly operation: "probe";
+  };
+  readonly open: TypedPluginProviderInvocation<ConnectionOpenPayload> & {
+    readonly kind: "connection";
+    readonly operation: "open";
+    readonly input: Promise<PluginReadableByteStream>;
+    readonly output: PluginWritableByteStream;
+  };
+  readonly resize: TypedPluginProviderInvocation<ConnectionResizePayload> & {
+    readonly kind: "connection";
+    readonly operation: "resize";
+  };
+  readonly signal: TypedPluginProviderInvocation<ConnectionSignalPayload> & {
+    readonly kind: "connection";
+    readonly operation: "signal";
+  };
+  readonly reconnect: TypedPluginProviderInvocation<ConnectionControlPayload> & {
+    readonly kind: "connection";
+    readonly operation: "reconnect";
+  };
+  readonly close: TypedPluginProviderInvocation<ConnectionControlPayload> & {
+    readonly kind: "connection";
+    readonly operation: "close";
+  };
+  readonly getStatus: TypedPluginProviderInvocation<ConnectionControlPayload> & {
+    readonly kind: "connection";
+    readonly operation: "getStatus";
+  };
+}
+
+export interface ConnectionProviderResultByOperation {
+  readonly validateConfiguration: ConnectionValidateResult;
+  readonly probe: ConnectionProbeResult;
+  readonly open: ConnectionOpenResult;
+  readonly resize: ConnectionControlResult;
+  readonly signal: ConnectionControlResult;
+  readonly reconnect: ConnectionControlResult;
+  readonly close: ConnectionControlResult;
+  readonly getStatus: ConnectionStatusResult;
+}
+
+export type ConnectionProviderOperation = keyof ConnectionProviderInvocationByOperation;
+
 export type ConnectionProviderInvocation =
-  | (TypedPluginProviderInvocation<ConnectionConfigurationPayload> & {
-      readonly kind: "connection";
-      readonly operation: "validateConfiguration" | "probe";
-    })
-  | (TypedPluginProviderInvocation<ConnectionOpenPayload> & {
-      readonly kind: "connection";
-      readonly operation: "open";
-      readonly input: Promise<PluginReadableByteStream>;
-      readonly output: PluginWritableByteStream;
-    })
-  | (TypedPluginProviderInvocation<ConnectionResizePayload> & {
-      readonly kind: "connection";
-      readonly operation: "resize";
-    })
-  | (TypedPluginProviderInvocation<ConnectionSignalPayload> & {
-      readonly kind: "connection";
-      readonly operation: "signal";
-    })
-  | (TypedPluginProviderInvocation<ConnectionControlPayload> & {
-      readonly kind: "connection";
-      readonly operation: "reconnect" | "close" | "getStatus";
-    });
+  ConnectionProviderInvocationByOperation[ConnectionProviderOperation];
 
 export type ConnectionProviderResult =
-  | ConnectionValidateResult
-  | ConnectionProbeResult
-  | ConnectionOpenResult
-  | ConnectionStatusResult
-  | null;
+  ConnectionProviderResultByOperation[ConnectionProviderOperation];
 
 export type ConnectionProviderHandler = (
   invocation: ConnectionProviderInvocation,

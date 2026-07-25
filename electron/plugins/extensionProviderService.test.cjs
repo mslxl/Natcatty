@@ -253,6 +253,84 @@ test("connection controls preserve host-owned connection and operation identitie
   });
 });
 
+test("connection control operations must acknowledge with null", async () => {
+  for (const operation of ["resize", "signal", "reconnect", "close"]) {
+    let h;
+    h = fixture({
+      async request({ params, identity, accept }) {
+        if (params.operation === "open") {
+          const stream = incoming(params.payload.outputStreamId, async () => {});
+          assert.equal(await accept(stream, identity), true);
+          return {
+            requestId: params.requestId,
+            status: "ok",
+            result: { connectionId: `provider-${operation}`, status: "connected" },
+          };
+        }
+        return {
+          requestId: params.requestId,
+          status: "ok",
+          result: { unexpected: true },
+        };
+      },
+    });
+    await h.service.openConnection({
+      providerId: "com.example.transport.connection",
+      sessionId: `session-${operation}`,
+      configuration: {},
+      columns: 80,
+      rows: 24,
+    });
+    await assert.rejects(
+      h.service.control(`session-${operation}`, operation, operation === "resize"
+        ? { columns: 100, rows: 30 }
+        : operation === "signal"
+          ? { signal: "interrupt" }
+          : {}),
+      /must be null|failed validation/i,
+    );
+    assert.ok(h.service.getSession(`session-${operation}`));
+  }
+});
+
+test("connection status results preserve structured diagnostics", async () => {
+  let h;
+  h = fixture({
+    async request({ params, identity, accept }) {
+      if (params.operation === "open") {
+        const stream = incoming(params.payload.outputStreamId, async () => {});
+        assert.equal(await accept(stream, identity), true);
+        return {
+          requestId: params.requestId,
+          status: "ok",
+          result: { connectionId: "provider-status-diagnostics", status: "connected" },
+        };
+      }
+      return {
+        requestId: params.requestId,
+        status: "ok",
+        result: {
+          status: "error",
+          message: "Handshake rejected",
+          diagnostics: [{ severity: "error", message: "Remote rejected host key" }],
+        },
+      };
+    },
+  });
+  await h.service.openConnection({
+    providerId: "com.example.transport.connection",
+    sessionId: "session-status-diagnostics",
+    configuration: {},
+    columns: 80,
+    rows: 24,
+  });
+  assert.deepEqual(await h.service.control("session-status-diagnostics", "getStatus"), {
+    status: "error",
+    message: "Handshake rejected",
+    diagnostics: [{ severity: "error", message: "Remote rejected host key" }],
+  });
+});
+
 test("connection configuration is host-validated before invoking plugin code", async () => {
   let requests = 0;
   const h = fixture({
@@ -454,7 +532,10 @@ test("importer providers produce a validated preview without mutating Vault stat
   let h;
   const jsonl = [
     JSON.stringify({ type: "progress", completed: 1, total: 2, message: "Reading source" }),
-    JSON.stringify({ type: "draft", draft: { kind: "host", value: { label: "Imported" } } }),
+    JSON.stringify({
+      type: "draft",
+      draft: { kind: "host", value: { label: "Imported", hostname: "imported.example.com" } },
+    }),
     JSON.stringify({ type: "warning", message: "Missing optional color" }),
     "",
   ].join("\n");

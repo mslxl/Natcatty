@@ -26,6 +26,78 @@ const typescriptTypeOverrides = new Map([
     "ActivationEvent",
     '"onStartupFinished" | `onCommand:${ContributionId}` | `onView:${ContributionId}` | `onProvider:${ContributionId}`',
   ],
+  [
+    "PluginHostProtocol",
+    "`plugin:${ContributionId}`",
+  ],
+  [
+    "ImporterGroupDraft",
+    "string | { path: string; label?: string } | { path?: string; label: string }",
+  ],
+  [
+    "ImporterHostDraft",
+    `({
+  id?: string;
+  label?: string;
+  username?: string;
+  group?: string;
+  tags?: Array<string>;
+  os?: "linux" | "windows" | "macos";
+  deviceType?: "general" | "network";
+  identityId?: string;
+  identityFileId?: string;
+  telnetIdentityId?: string;
+  notes?: string;
+  theme?: string;
+  sftpEncoding?: string;
+  sftpFileProtocol?: "auto" | "sftp" | "scp";
+  moshEnabled?: boolean;
+  etEnabled?: boolean;
+  telnetEnabled?: boolean;
+  sftpSudo?: boolean;
+  requiresMfa?: boolean;
+  useSshAgent?: boolean;
+  identitiesOnly?: boolean;
+  agentForwarding?: boolean;
+  x11Forwarding?: boolean;
+  showLineTimestamps?: boolean;
+  disableDynamicTabTitle?: boolean;
+  pinned?: boolean;
+  autoOpenSftpPanel?: boolean;
+  sftpFollowTerminalCwd?: boolean;
+  port?: number;
+  telnetPort?: number;
+  etPort?: number;
+  keepaliveInterval?: number;
+  keepaliveCountMax?: number;
+} & ({
+  hostname: string;
+  protocol?: "ssh" | "telnet" | "mosh" | "et" | "local" | "serial";
+  pluginConnection?: never;
+} | {
+  hostname?: string;
+  protocol: PluginHostProtocol;
+  pluginConnection: ImporterPluginConnectionDraft;
+}))`,
+  ],
+  [
+    "ImporterKeyDraft",
+    `({
+  id?: string;
+  label: string;
+  type: "RSA" | "ECDSA" | "ED25519";
+  publicKey?: string;
+  certificate?: string;
+  passphrase?: string;
+  category?: "key" | "certificate" | "identity";
+} & ({
+  privateKey: string;
+  filePath?: string;
+} | {
+  privateKey?: string;
+  filePath: string;
+}))`,
+  ],
 ]);
 
 const schemaText = await readFile(schemaPath, "utf8");

@@ -98,6 +98,8 @@ export type ConnectionControlPayload = {
   operationId: string;
 };
 
+export type ConnectionControlResult = null;
+
 export type ConnectionOpenPayload = {
   configuration: JsonValue;
   operationId: string;
@@ -139,6 +141,7 @@ export type ConnectionStatusResult = {
   status: "connecting" | "connected" | "reconnecting" | "closed" | "error";
   message?: string;
   retryable?: boolean;
+  diagnostics?: Array<ProviderValidationIssue>;
 };
 
 export type ConnectionValidateResult = {
@@ -174,6 +177,77 @@ export type ImporterDetectResult = {
   reason?: string;
 };
 
+export type ImporterGroupDraft = string | { path: string; label?: string } | { path?: string; label: string };
+
+export type ImporterHostDraft = ({
+  id?: string;
+  label?: string;
+  username?: string;
+  group?: string;
+  tags?: Array<string>;
+  os?: "linux" | "windows" | "macos";
+  deviceType?: "general" | "network";
+  identityId?: string;
+  identityFileId?: string;
+  telnetIdentityId?: string;
+  notes?: string;
+  theme?: string;
+  sftpEncoding?: string;
+  sftpFileProtocol?: "auto" | "sftp" | "scp";
+  moshEnabled?: boolean;
+  etEnabled?: boolean;
+  telnetEnabled?: boolean;
+  sftpSudo?: boolean;
+  requiresMfa?: boolean;
+  useSshAgent?: boolean;
+  identitiesOnly?: boolean;
+  agentForwarding?: boolean;
+  x11Forwarding?: boolean;
+  showLineTimestamps?: boolean;
+  disableDynamicTabTitle?: boolean;
+  pinned?: boolean;
+  autoOpenSftpPanel?: boolean;
+  sftpFollowTerminalCwd?: boolean;
+  port?: number;
+  telnetPort?: number;
+  etPort?: number;
+  keepaliveInterval?: number;
+  keepaliveCountMax?: number;
+} & ({
+  hostname: string;
+  protocol?: "ssh" | "telnet" | "mosh" | "et" | "local" | "serial";
+  pluginConnection?: never;
+} | {
+  hostname?: string;
+  protocol: PluginHostProtocol;
+  pluginConnection: ImporterPluginConnectionDraft;
+}));
+
+export type ImporterIdentityDraft = {
+  id?: string;
+  label: string;
+  username: string;
+  authMethod: "password" | "key" | "certificate";
+  password?: string;
+  keyId?: string;
+};
+
+export type ImporterKeyDraft = ({
+  id?: string;
+  label: string;
+  type: "RSA" | "ECDSA" | "ED25519";
+  publicKey?: string;
+  certificate?: string;
+  passphrase?: string;
+  category?: "key" | "certificate" | "identity";
+} & ({
+  privateKey: string;
+  filePath?: string;
+} | {
+  privateKey?: string;
+  filePath: string;
+}));
+
 export type ImporterParsePayload = {
   operationId: string;
   fileName?: string;
@@ -190,12 +264,31 @@ export type ImporterParseResult = {
   errors: number;
 };
 
+export type ImporterPluginConnectionDraft = {
+  providerId: ContributionId;
+  configuration: JsonValue;
+  authenticationProviderId?: ContributionId;
+  credentialId?: string;
+};
+
 export type ImporterRecord = ({
   type: "draft";
-  draft: {
-    kind: "host" | "identity" | "key" | "snippet" | "group";
-    value: JsonValue;
-  };
+  draft: ({
+    kind: "host";
+    value: ImporterHostDraft;
+  }) | ({
+    kind: "identity";
+    value: ImporterIdentityDraft;
+  }) | ({
+    kind: "key";
+    value: ImporterKeyDraft;
+  }) | ({
+    kind: "snippet";
+    value: ImporterSnippetDraft;
+  }) | ({
+    kind: "group";
+    value: ImporterGroupDraft;
+  });
 }) | ({
   type: "warning" | "error";
   code?: string;
@@ -207,6 +300,15 @@ export type ImporterRecord = ({
   total?: number;
   message?: string;
 });
+
+export type ImporterSnippetDraft = {
+  id?: string;
+  label: string;
+  command: string;
+  tags?: Array<string>;
+  kind?: "snippet" | "script";
+  description?: string;
+};
 
 export type JsonPrimitive = (string) | (number) | (boolean) | (null);
 
@@ -335,6 +437,8 @@ export type PluginFeatures = {
   required?: Array<FeatureId>;
   optional?: Array<FeatureId>;
 };
+
+export type PluginHostProtocol = `plugin:${ContributionId}`;
 
 export type PluginId = string;
 

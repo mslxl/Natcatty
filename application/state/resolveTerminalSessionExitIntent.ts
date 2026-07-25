@@ -1,8 +1,11 @@
+import type { ProviderValidationIssue } from "@netcatty/plugin-contract";
+
 export type TerminalSessionExitEvent = {
   exitCode?: number;
   signal?: number;
   error?: string;
   reason?: "exited" | "error" | "timeout" | "closed";
+  diagnostics?: ReadonlyArray<ProviderValidationIssue>;
 };
 
 export type TerminalSessionExitIntent =
