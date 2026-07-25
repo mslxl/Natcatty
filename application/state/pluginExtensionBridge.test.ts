@@ -13,10 +13,31 @@ test("plugin event subscriptions are inert when the desktop bridge is absent", (
   setBridge(undefined);
   const stopImporter = pluginExtensionBridge.onImporterProgress(() => {});
   const stopAuthentication = pluginExtensionBridge.onAuthenticationChallenge(() => {});
+  const stopContributions = pluginExtensionBridge.onContributionsChanged(() => {});
   assert.equal(typeof stopImporter, "function");
   assert.equal(typeof stopAuthentication, "function");
+  assert.equal(typeof stopContributions, "function");
   stopImporter();
   stopAuthentication();
+  stopContributions();
+});
+
+test("plugin contribution change subscriptions forward desktop bridge events", () => {
+  let subscribed: (() => void) | null = null;
+  let disposed = false;
+  setBridge({
+    onPluginContributionsChanged: (listener) => {
+      subscribed = listener;
+      return () => { disposed = true; };
+    },
+  });
+
+  let observed = 0;
+  const unsubscribe = pluginExtensionBridge.onContributionsChanged(() => { observed += 1; });
+  subscribed?.();
+  assert.equal(observed, 1);
+  unsubscribe();
+  assert.equal(disposed, true);
 });
 
 test("plugin credential options follow only a successfully accepted secure catalog", async () => {

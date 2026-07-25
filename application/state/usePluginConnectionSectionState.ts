@@ -71,21 +71,31 @@ export function usePluginConnectionSectionState({
   const installed = providers.some((entry) => entry.provider.id === providerId);
 
   useEffect(() => {
-    let cancelled = false;
-    void Promise.all([
-      pluginExtensionBridge.listProviders("connection"),
-      pluginExtensionBridge.listProviders("authentication"),
-    ]).then(([connections, authentications]) => {
-      if (cancelled) return;
-      setProviders(connections);
-      setAuthenticationProviders(authentications);
-    }).catch(() => {
-      if (!cancelled) {
-        setProviders([]);
-        setAuthenticationProviders([]);
-      }
-    });
-    return () => { cancelled = true; };
+    let disposed = false;
+    let requestId = 0;
+    const refreshProviders = () => {
+      const currentRequestId = ++requestId;
+      void Promise.all([
+        pluginExtensionBridge.listProviders("connection"),
+        pluginExtensionBridge.listProviders("authentication"),
+      ]).then(([connections, authentications]) => {
+        if (disposed || currentRequestId !== requestId) return;
+        setProviders(connections);
+        setAuthenticationProviders(authentications);
+      }).catch(() => {
+        if (!disposed && currentRequestId === requestId) {
+          setProviders([]);
+          setAuthenticationProviders([]);
+        }
+      });
+    };
+    refreshProviders();
+    const unsubscribe = pluginExtensionBridge.onContributionsChanged(() => { refreshProviders(); });
+    return () => {
+      disposed = true;
+      requestId += 1;
+      unsubscribe();
+    };
   }, []);
 
   useEffect(() => {

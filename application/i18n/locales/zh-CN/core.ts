@@ -947,6 +947,8 @@ export const zhCNCoreMessages: Messages = {
   'plugins.authentication.deviceCode': '设备代码',
   'plugins.authentication.openBrowser': '打开浏览器',
   'plugins.authentication.invalidUrl': '认证提供程序返回了不安全或无效的网址。',
+  'plugins.authentication.responseFailed': '无法发送认证响应。请重试或取消此请求。',
+  'plugins.authentication.responseFailedWithMessage': '无法发送认证响应：{message}。请重试或取消此请求。',
   'plugins.authentication.continue': '继续',
 
 };

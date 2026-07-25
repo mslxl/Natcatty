@@ -936,5 +936,7 @@ export const ruCoreMessages: Messages = {
   'plugins.authentication.deviceCode': 'Код устройства',
   'plugins.authentication.openBrowser': 'Открыть браузер',
   'plugins.authentication.invalidUrl': 'Поставщик аутентификации вернул небезопасный или некорректный URL.',
+  'plugins.authentication.responseFailed': 'Не удалось отправить ответ аутентификации. Повторите попытку или отмените запрос.',
+  'plugins.authentication.responseFailedWithMessage': 'Не удалось отправить ответ аутентификации: {message}. Повторите попытку или отмените запрос.',
   'plugins.authentication.continue': 'Продолжить',
 };

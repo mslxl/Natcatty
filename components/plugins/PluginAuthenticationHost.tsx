@@ -101,6 +101,14 @@ export const PluginAuthenticationHost: React.FC = () => {
           </div>
         )}
 
+        {state.responseError !== null && (
+          <p role="alert" className="text-sm text-destructive">
+            {state.responseError
+              ? t('plugins.authentication.responseFailedWithMessage', { message: state.responseError })
+              : t('plugins.authentication.responseFailed')}
+          </p>
+        )}
+
         <DialogFooter>
           <Button
             type="button"

@@ -578,6 +578,36 @@ test("importer providers produce a validated preview without mutating Vault stat
   assert.match(h.revokedOperations[0].operationId, /^importer:/u);
 });
 
+test("import parsing rejects an unterminated JSONL record as soon as it exceeds the line cap", async () => {
+  let h;
+  h = fixture({
+    async request({ params, identity, accept }) {
+      const stream = incoming(params.payload.outputStreamId, async (handlers) => {
+        const first = new Uint8Array(192 * 1024).fill(0x61);
+        const second = new Uint8Array(65 * 1024).fill(0x62);
+        await handlers.onChunk({ encoding: "binary", bytes: first }, () => {});
+        assert.throws(
+          () => handlers.onChunk({ encoding: "binary", bytes: second }, () => {}),
+          /record limits/i,
+        );
+      });
+      assert.equal(await accept(stream, identity), true);
+      return {
+        requestId: params.requestId,
+        status: "ok",
+        result: { parsed: 0, warnings: 0, errors: 0 },
+      };
+    },
+  });
+  await assert.rejects(h.service.parseImporter({
+    providerId: "com.example.transport.importer",
+    fileName: "hosts.json",
+    data: new TextEncoder().encode("source"),
+  }), /record limits/i);
+  assert.equal(h.revokedOperations.length, 1);
+  assert.match(h.revokedOperations[0].operationId, /^importer:/u);
+});
+
 test("importer input streams fail closed if the selected file changes size", async () => {
   let h;
   h = fixture({

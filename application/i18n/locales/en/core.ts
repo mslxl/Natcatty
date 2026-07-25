@@ -971,6 +971,8 @@ Highlight the focused split pane:
   'plugins.authentication.deviceCode': 'Device code',
   'plugins.authentication.openBrowser': 'Open browser',
   'plugins.authentication.invalidUrl': 'The authentication provider returned an unsafe or invalid URL.',
+  'plugins.authentication.responseFailed': 'Could not send the authentication response. Try again or cancel the request.',
+  'plugins.authentication.responseFailedWithMessage': 'Could not send the authentication response: {message}. Try again or cancel the request.',
   'plugins.authentication.continue': 'Continue',
 
 };

@@ -66,6 +66,9 @@ export const pluginExtensionBridge = Object.freeze({
   onAuthenticationChallenge(listener: Parameters<NonNullable<NetcattyBridge["onPluginAuthenticationChallenge"]>>[0]) {
     return netcattyBridge.get()?.onPluginAuthenticationChallenge?.(listener) ?? (() => {});
   },
+  onContributionsChanged(listener: Parameters<NonNullable<NetcattyBridge["onPluginContributionsChanged"]>>[0]) {
+    return netcattyBridge.get()?.onPluginContributionsChanged?.(listener) ?? (() => {});
+  },
   async respondAuthenticationChallenge(
     response: Parameters<NonNullable<NetcattyBridge["respondPluginAuthenticationChallenge"]>>[0],
   ) {

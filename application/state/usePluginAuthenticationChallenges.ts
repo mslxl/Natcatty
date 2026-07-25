@@ -11,10 +11,18 @@ export const pluginAuthenticationChallengeMessage = (challenge: AuthenticationCh
   "message" in challenge && typeof challenge.message === "string" ? challenge.message : undefined
 );
 
+export const pluginAuthenticationResponseErrorMessage = (error: unknown): string => {
+  const message = error instanceof Error
+    ? error.message
+    : typeof error === "string" ? error : "";
+  return message.trim().slice(0, 512);
+};
+
 export function usePluginAuthenticationChallenges() {
   const [queue, setQueue] = useState<ActiveChallengeEvent[]>([]);
   const [textValue, setTextValue] = useState("");
   const [selectedChoices, setSelectedChoices] = useState<string[]>([]);
+  const [responseError, setResponseError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const current = queue[0];
   const challenge = current?.challenge;
@@ -43,6 +51,7 @@ export function usePluginAuthenticationChallenges() {
   useEffect(() => {
     setTextValue("");
     setSelectedChoices([]);
+    setResponseError(null);
     setBusy(false);
   }, [current?.challengeRequestId]);
 
@@ -60,8 +69,9 @@ export function usePluginAuthenticationChallenges() {
         ...(cancelled ? { cancelled: true } : { response }),
       });
       setQueue((existing) => existing.filter((item) => item.challengeRequestId !== current.challengeRequestId));
-    } catch {
-      setQueue((existing) => existing.filter((item) => item.challengeRequestId !== current.challengeRequestId));
+      setResponseError(null);
+    } catch (error) {
+      setResponseError(pluginAuthenticationResponseErrorMessage(error));
     } finally {
       setBusy(false);
     }
@@ -117,6 +127,7 @@ export function usePluginAuthenticationChallenges() {
     selectedChoices,
     setChoiceSelected,
     externalUrl,
+    responseError,
     openExternal,
     complete,
     isText,

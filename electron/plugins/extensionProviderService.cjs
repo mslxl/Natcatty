@@ -702,6 +702,12 @@ class PluginExtensionProviderService {
       rejectOutputDone = reject;
     });
     void outputDone.catch(() => {});
+    const assertPendingLineWithinLimit = () => {
+      const line = pending.endsWith("\r") ? pending.slice(0, -1) : pending;
+      if (Buffer.byteLength(line, "utf8") > MAX_IMPORT_LINE_BYTES) {
+        throw new PluginRpcError(RPC_ERRORS.resourceExhausted, "Importer output exceeds its record limits");
+      }
+    };
     const consumeLines = (final = false) => {
       const lines = pending.split("\n");
       pending = final ? "" : lines.pop();
@@ -719,12 +725,18 @@ class PluginExtensionProviderService {
     const expected = this.expectIncoming(activation.identity, outputStreamId, async (stream) => {
       stream.bind({
         onChunk: (chunk, release) => {
-          if (chunk.encoding !== "binary") throw new Error("Importer output must be UTF-8 JSONL bytes");
-          outputBytes += chunk.bytes.byteLength;
-          if (outputBytes > MAX_IMPORT_BYTES) throw new PluginRpcError(RPC_ERRORS.resourceExhausted, "Importer output is too large");
-          pending += decoder.decode(chunk.bytes, { stream: true });
-          consumeLines(false);
-          release();
+          try {
+            if (chunk.encoding !== "binary") throw new Error("Importer output must be UTF-8 JSONL bytes");
+            outputBytes += chunk.bytes.byteLength;
+            if (outputBytes > MAX_IMPORT_BYTES) throw new PluginRpcError(RPC_ERRORS.resourceExhausted, "Importer output is too large");
+            pending += decoder.decode(chunk.bytes, { stream: true });
+            consumeLines(false);
+            assertPendingLineWithinLimit();
+            release();
+          } catch (error) {
+            rejectOutputDone(error);
+            throw error;
+          }
         },
         onClose: (reason) => {
           try {
