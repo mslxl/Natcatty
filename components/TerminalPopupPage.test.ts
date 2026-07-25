@@ -138,6 +138,14 @@ test('popup terminals resolve complete host config and pass jump hosts into Term
   assert.match(source, /chainHosts=\{chainHosts\}/);
 });
 
+test('popup provider tree mounts the plugin authentication host', () => {
+  assert.match(source, /import \{ PluginAuthenticationHost \} from '\.\/plugins\/PluginAuthenticationHost';/);
+  assert.match(
+    source,
+    /<I18nProvider locale=\{settings\.uiLanguage\}>\s+<TerminalPopupPageInner \/>\s+<PluginAuthenticationHost \/>\s+<\/I18nProvider>/,
+  );
+});
+
 test('attach popup close preparation has a bounded timeout', () => {
   assert.match(source, /Promise\.race\(\[/);
   assert.match(source, /Attach close preparation timed out/);

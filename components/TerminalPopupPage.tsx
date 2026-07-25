@@ -18,6 +18,7 @@ import type { KnownHost } from '../types';
 import { getEffectiveKnownHosts } from '../infrastructure/syncHelpers';
 import { detectLocalOs } from '../lib/localShell';
 import { cn } from '../lib/utils';
+import { PluginAuthenticationHost } from './plugins/PluginAuthenticationHost';
 
 const Terminal = lazy(() => import('./Terminal'));
 
@@ -517,6 +518,7 @@ export default function TerminalPopupPage() {
   return (
     <I18nProvider locale={settings.uiLanguage}>
       <TerminalPopupPageInner />
+      <PluginAuthenticationHost />
     </I18nProvider>
   );
 }
