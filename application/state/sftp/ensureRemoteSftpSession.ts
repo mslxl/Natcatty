@@ -11,12 +11,14 @@ export interface EnsureRemoteSftpSessionParams {
   connect: (
     side: "left" | "right",
     host: Host | "local",
-    options?: { initialPath?: string; ignoreSharedCache?: boolean },
+    options?: { initialPath?: string; ignoreSharedCache?: boolean; tabId?: string },
   ) => Promise<void>;
   /** Resolve vault host by id when lastConnectedHostRef is missing (tab race). */
   resolveHostById?: (hostId: string) => Host | null | undefined;
   probeSession?: (sftpId: string) => Promise<boolean>;
   forceReconnect?: boolean;
+  /** Stable tab identity — reconnect replaces connection ids, not tab ids. */
+  tabId?: string;
 }
 
 /**
@@ -35,16 +37,21 @@ export async function ensureRemoteSftpSession(
     resolveHostById,
     probeSession,
     forceReconnect = false,
+    tabId,
   } = params;
 
   const resolveHost = (): Host => {
     const pane = getActivePane(side);
-    const lastHost = lastConnectedHostRef.current[side];
-    if (lastHost && lastHost !== "local") return lastHost;
     const hostId = pane?.connection && !pane.connection.isLocal ? pane.connection.hostId : undefined;
+    // Prefer the pinned pane's host over side-wide lastConnectedHost so a
+    // background upload reconnect cannot retarget to another tab's host.
     if (hostId && resolveHostById) {
       const fromVault = resolveHostById(hostId);
       if (fromVault) return fromVault;
+    }
+    const lastHost = lastConnectedHostRef.current[side];
+    if (lastHost && lastHost !== "local" && (!hostId || lastHost.id === hostId)) {
+      return lastHost;
     }
     // Pane connection only stores hostId/label — inventing root@label:22 would
     // open the wrong endpoint. Fail clearly so the caller can reconnect via
@@ -89,6 +96,7 @@ export async function ensureRemoteSftpSession(
   await connect(side, host, {
     initialPath: resumePath,
     ignoreSharedCache: true,
+    ...(tabId ? { tabId } : {}),
   });
 
   const sftpId = readMappedId();

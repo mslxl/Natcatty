@@ -41,6 +41,8 @@ export interface SftpConnectOptions {
   forceNewTab?: boolean;
   ignoreSharedCache?: boolean;
   initialPath?: string;
+  /** Reconnect this tab instead of whichever tab is currently active on the side. */
+  tabId?: string;
   onTabCreated?: (tabId: string) => void;
   sourceSessionId?: string;
 }
@@ -219,7 +221,14 @@ export const useSftpConnections = ({
       let activeTabId: string | null = null;
       const sideTabs = side === "left" ? leftTabsRef.current : rightTabsRef.current;
 
-      if (!sideTabs.activeTabId || options?.forceNewTab) {
+      if (options?.tabId) {
+        // Background reconnect for a pinned upload must not retarget the focused tab.
+        const pinnedOnThisSide = sideTabs.tabs.some((tab) => tab.id === options.tabId);
+        if (!pinnedOnThisSide) {
+          throw new Error("SFTP tab is no longer available");
+        }
+        activeTabId = options.tabId;
+      } else if (!sideTabs.activeTabId || options?.forceNewTab) {
         const newPane = createEmptyPane();
         activeTabId = newPane.id;
         setTabs((prev) => ({
@@ -232,11 +241,23 @@ export const useSftpConnections = ({
 
       if (!activeTabId) return;
 
+      // Pinned reconnect of a non-active tab must not clobber the active tab's
+      // lastConnectedHost recovery state on this side.
+      const isPinnedBackgroundReconnect =
+        !!options?.tabId
+        && !!sideTabs.activeTabId
+        && options.tabId !== sideTabs.activeTabId;
+
+      const getTargetPaneEarly = () => {
+        const tabs = side === "left" ? leftTabsRef.current.tabs : rightTabsRef.current.tabs;
+        return tabs.find((tab) => tab.id === activeTabId) ?? null;
+      };
+
       // Capture path/endpoint before we replace the connection so same-endpoint
       // auto-reconnect can land back where the user was browsing instead of home.
       // Do not inherit path across endpoints (including same hostId with different
       // hostname/port/user) if a reconnect flag is still set while switching.
-      const previousConnection = getActivePane(side)?.connection;
+      const previousConnection = getTargetPaneEarly()?.connection;
       const previousPath = previousConnection?.currentPath;
       const previousConnectionKey = !previousConnection
         ? null
@@ -307,7 +328,10 @@ export const useSftpConnections = ({
         }
       };
 
-      lastConnectedHostRef.current[side] = host;
+      // Keep side-wide recovery host pointed at the active tab only.
+      if (!isPinnedBackgroundReconnect) {
+        lastConnectedHostRef.current[side] = host;
+      }
       // Store the cache key for this connection so pane actions can look it up
       // by connectionId instead of relying on the per-side lastConnectedHostRef.
       if (host !== "local") {
@@ -317,7 +341,7 @@ export const useSftpConnections = ({
         );
       }
 
-      const currentPane = getActivePane(side);
+      const currentPane = getTargetPaneEarly();
       // Reset encoding to host's configured encoding or "auto" when connecting to a new host
       // This ensures proper auto-detection works and respects host-level encoding settings
       const filenameEncoding: SftpFilenameEncoding =

@@ -728,6 +728,8 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
       try {
         const results = await sftpRef.current.uploadExternalEntries("left", pendingUpload.entries, {
           targetPath: pendingUpload.targetPath,
+          connectionId: connection.id,
+          tabId: activePane.id,
         });
         reportSftpUploadResults({ results, t, toast });
       } catch (error) {

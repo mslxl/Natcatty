@@ -29,6 +29,11 @@ import {
 } from "../../../domain/sftpDedicatedStreamPolicy";
 import { isSessionError } from "./errors";
 import { runWithCompressedUploadSession } from "./compressedUploadSession";
+import {
+  assertUploadEndpointUnchanged,
+  captureUploadEndpoint,
+  resolveUploadTargetPane,
+} from "./uploadTargetPin";
 
 export const useSftpExternalOperations = (
   params: UseSftpExternalOperationsParams
@@ -37,6 +42,8 @@ export const useSftpExternalOperations = (
     ownerId,
     getActivePane,
     getPaneByConnectionId,
+    getPaneByTabId,
+    getSideByTabId,
     refresh,
     sftpSessionsRef,
     connectionCacheKeyMapRef,
@@ -57,20 +64,31 @@ export const useSftpExternalOperations = (
    */
   const resolveRemoteSftpId = useCallback(async (
     side: "left" | "right",
-    options?: { forceReconnect?: boolean },
+    options?: { forceReconnect?: boolean; connectionId?: string; tabId?: string },
   ): Promise<{ sftpId: string | null; release: () => void }> => {
-    const pane = getActivePane(side);
-    if (!pane?.connection) throw new Error("No active connection");
+    const pane = resolveUploadTargetPane({
+      side,
+      tabId: options?.tabId,
+      connectionId: options?.connectionId,
+      getActivePane,
+      getPaneByTabId,
+      getPaneByConnectionId,
+    });
     if (pane.connection.isLocal) return { sftpId: null, release: () => {} };
 
+    const connectionId = pane.connection.id;
     if (ensureRemoteSftpId) {
-      const sftpId = await ensureRemoteSftpId(side, { forceReconnect: options?.forceReconnect });
+      const sftpId = await ensureRemoteSftpId(side, {
+        forceReconnect: options?.forceReconnect,
+        connectionId,
+        tabId: options?.tabId ?? pane.id,
+      });
       return { sftpId, release: () => {} };
     }
-    const sftpId = sftpSessionsRef.current.get(pane.connection.id);
+    const sftpId = sftpSessionsRef.current.get(connectionId);
     if (!sftpId) throw new Error("SFTP session not found");
     return { sftpId, release: () => {} };
-  }, [ensureRemoteSftpId, getActivePane, sftpSessionsRef]);
+  }, [ensureRemoteSftpId, getActivePane, getPaneByConnectionId, getPaneByTabId, sftpSessionsRef]);
 
   // Per-upload controllers so canceling upload A does not touch upload B.
   const uploadControllersByTaskRef = useRef<Map<string, UploadController>>(new Map());
@@ -969,17 +987,58 @@ export const useSftpExternalOperations = (
       side: "left" | "right",
       folderPath: string,
       targetPath?: string,
+      options?: { connectionId?: string; tabId?: string },
     ): Promise<UploadResult[]> => {
+      // Pin before any await so tab switches cannot retarget multi-folder pastes.
+      const originatingPane = resolveUploadTargetPane({
+        side,
+        tabId: options?.tabId,
+        connectionId: options?.connectionId,
+        getActivePane,
+        getPaneByTabId,
+        getPaneByConnectionId,
+      });
+      const originatingTabId = originatingPane.id;
+      const originatingEndpoint = captureUploadEndpoint(
+        originatingPane.connection,
+        connectionCacheKeyMapRef.current,
+      );
+
       const run = async (forceReconnect = false): Promise<UploadResult[]> => {
-        const pane = getActivePane(side);
-        if (!pane?.connection) throw new Error("No active connection");
+        const pane = resolveUploadTargetPane({
+          side,
+          tabId: originatingTabId,
+          getActivePane,
+          getPaneByTabId,
+          getPaneByConnectionId,
+        });
+        assertUploadEndpointUnchanged(
+          pane.connection,
+          originatingEndpoint,
+          connectionCacheKeyMapRef.current,
+        );
         const bridge = netcattyBridge.get();
         if (!bridge) throw new Error("Bridge not available");
         if (!bridge.listLocalTree) throw new Error("Folder upload not supported");
 
-        const { sftpId, release } = await resolveRemoteSftpId(side, { forceReconnect });
-        const livePane = getActivePane(side) ?? pane;
-        if (!livePane.connection) throw new Error("No active connection");
+        const { sftpId, release } = await resolveRemoteSftpId(side, {
+          forceReconnect,
+          connectionId: pane.connection.id,
+          tabId: originatingTabId,
+        });
+        // Never re-resolve via getActivePane after awaits — focus may have moved.
+        const livePane = resolveUploadTargetPane({
+          side,
+          tabId: originatingTabId,
+          getActivePane,
+          getPaneByTabId,
+          getPaneByConnectionId,
+        });
+        assertUploadEndpointUnchanged(
+          livePane.connection,
+          originatingEndpoint,
+          connectionCacheKeyMapRef.current,
+        );
 
         const uploadPaneId = livePane.id;
         const uploadTargetPath = targetPath || livePane.connection.currentPath;
@@ -1067,7 +1126,8 @@ export const useSftpExternalOperations = (
             clearDirCacheEntry(livePane.connection.id, uploadTargetPath);
           }
           if (uploadTargetPath === livePane.connection.currentPath) {
-            await refresh(side, { tabId: uploadPaneId });
+            const refreshSide = getSideByTabId?.(uploadPaneId) ?? side;
+            await refresh(refreshSide, { tabId: uploadPaneId });
           }
           return results;
         } catch (error) {
@@ -1107,6 +1167,9 @@ export const useSftpExternalOperations = (
       createUploadConflictResolver,
       ensureRemoteSftpId,
       getActivePane,
+      getPaneByConnectionId,
+      getPaneByTabId,
+      getSideByTabId,
       refresh,
       resolveRemoteSftpId,
       useCompressedUpload,
@@ -1117,16 +1180,56 @@ export const useSftpExternalOperations = (
     async (
       side: "left" | "right",
       entries: DropEntry[],
-      options?: { targetPath?: string },
+      options?: { targetPath?: string; connectionId?: string; tabId?: string },
     ): Promise<UploadResult[]> => {
+      // Pin before any await so tab switches cannot retarget the upload.
+      const originatingPane = resolveUploadTargetPane({
+        side,
+        tabId: options?.tabId,
+        connectionId: options?.connectionId,
+        getActivePane,
+        getPaneByTabId,
+        getPaneByConnectionId,
+      });
+      const originatingTabId = originatingPane.id;
+      const originatingEndpoint = captureUploadEndpoint(
+        originatingPane.connection,
+        connectionCacheKeyMapRef.current,
+      );
+
       const run = async (forceReconnect = false): Promise<UploadResult[]> => {
-        const pane = getActivePane(side);
-        if (!pane?.connection) throw new Error("No active connection");
+        const pane = resolveUploadTargetPane({
+          side,
+          tabId: originatingTabId,
+          getActivePane,
+          getPaneByTabId,
+          getPaneByConnectionId,
+        });
+        assertUploadEndpointUnchanged(
+          pane.connection,
+          originatingEndpoint,
+          connectionCacheKeyMapRef.current,
+        );
         if (!netcattyBridge.get()) throw new Error("Bridge not available");
 
-        const { sftpId, release } = await resolveRemoteSftpId(side, { forceReconnect });
-        const livePane = getActivePane(side) ?? pane;
-        if (!livePane.connection) throw new Error("No active connection");
+        const { sftpId, release } = await resolveRemoteSftpId(side, {
+          forceReconnect,
+          connectionId: pane.connection.id,
+          tabId: originatingTabId,
+        });
+        // Never re-resolve via getActivePane after awaits — focus may have moved.
+        const livePane = resolveUploadTargetPane({
+          side,
+          tabId: originatingTabId,
+          getActivePane,
+          getPaneByTabId,
+          getPaneByConnectionId,
+        });
+        assertUploadEndpointUnchanged(
+          livePane.connection,
+          originatingEndpoint,
+          connectionCacheKeyMapRef.current,
+        );
 
         // Capture the pane ID now so we can refresh the correct tab after
         // upload, even if focus switches during the transfer.
@@ -1186,7 +1289,8 @@ export const useSftpExternalOperations = (
             clearDirCacheEntry(livePane.connection.id, uploadTargetPath);
           }
           if (uploadTargetPath === livePane.connection.currentPath) {
-            await refresh(side, { tabId: uploadPaneId });
+            const refreshSide = getSideByTabId?.(uploadPaneId) ?? side;
+            await refresh(refreshSide, { tabId: uploadPaneId });
           }
           return results;
         } finally {
@@ -1217,6 +1321,9 @@ export const useSftpExternalOperations = (
       createUploadConflictResolver,
       ensureRemoteSftpId,
       getActivePane,
+      getPaneByConnectionId,
+      getPaneByTabId,
+      getSideByTabId,
       refresh,
       resolveRemoteSftpId,
       useCompressedUpload,

@@ -8,6 +8,8 @@ export interface UseSftpExternalOperationsParams {
   ownerId: string;
   getActivePane: (side: "left" | "right") => SftpPane | null;
   getPaneByConnectionId: (connectionId: string) => SftpPane | null;
+  getPaneByTabId: (tabId: string) => SftpPane | null;
+  getSideByTabId?: (tabId: string) => "left" | "right" | null;
   refresh: (side: "left" | "right", options?: { tabId?: string }) => Promise<void>;
   sftpSessionsRef: React.MutableRefObject<Map<string, string>>;
   connectionCacheKeyMapRef: React.MutableRefObject<Map<string, string>>;
@@ -15,7 +17,10 @@ export interface UseSftpExternalOperationsParams {
    * Ensure a live remote SFTP session for the pane (reconnect when missing/dead).
    * Required for uploads/downloads that must not fail with "SFTP session not found".
    */
-  ensureRemoteSftpId?: (side: "left" | "right", options?: { forceReconnect?: boolean }) => Promise<string>;
+  ensureRemoteSftpId?: (
+    side: "left" | "right",
+    options?: { forceReconnect?: boolean; connectionId?: string; tabId?: string },
+  ) => Promise<string>;
   /**
    * FileZilla-style dedicated transfer sessions for bulk uploads.
    * When set, remote stream uploads prefer pool connections (1–2/host)
@@ -66,12 +71,13 @@ export interface SftpExternalOperationsResult {
   uploadExternalFolderPath: (
     side: "left" | "right",
     folderPath: string,
-    targetPath?: string
+    targetPath?: string,
+    options?: { connectionId?: string; tabId?: string },
   ) => Promise<UploadResult[]>;
   uploadExternalEntries: (
     side: "left" | "right",
     entries: DropEntry[],
-    options?: { targetPath?: string }
+    options?: { targetPath?: string; connectionId?: string; tabId?: string },
   ) => Promise<UploadResult[]>;
   cancelExternalUpload: (taskId?: string) => Promise<void>;
   selectApplication: () => Promise<{ path: string; name: string } | null>;
