@@ -214,6 +214,45 @@ test("findActivePathConflict reserves descendants of active directory transfers"
   );
 });
 
+test("findActivePathConflict refuses directory that would cover an active descendant", () => {
+  const tasks = [
+    base({
+      id: "live-file",
+      fileName: "out.bin",
+      targetPath: "/Users/me/Desktop/bundle/out.bin",
+      status: "transferring",
+    }),
+  ];
+  assert.equal(
+    findActivePathConflict(tasks, {
+      id: "incoming-dir",
+      targetPath: "/Users/me/Desktop/bundle",
+      targetConnectionId: "local",
+      isDirectory: true,
+    })?.id,
+    "live-file",
+  );
+  // Without isDirectory, a file-named path does not reserve descendants.
+  assert.equal(
+    findActivePathConflict(tasks, {
+      id: "incoming-file",
+      targetPath: "/Users/me/Desktop/bundle",
+      targetConnectionId: "local",
+      isDirectory: false,
+    }),
+    undefined,
+  );
+  assert.equal(
+    findActivePathConflict(tasks, {
+      id: "sibling-dir",
+      targetPath: "/Users/me/Desktop/bundle-old",
+      targetConnectionId: "local",
+      isDirectory: true,
+    }),
+    undefined,
+  );
+});
+
 test("findActivePathConflict compares Windows local paths canonically", () => {
   const tasks = [
     base({

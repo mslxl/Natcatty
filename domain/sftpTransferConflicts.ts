@@ -89,13 +89,15 @@ function isTransferTargetPathDescendant(existingPath: string, candidatePath: str
  * Find another active transfer that reserves the candidate destination. File
  * tasks reserve their exact path; directory tasks reserve their path and all
  * descendants because recursive transfer children may not exist in the task
- * list yet. Concurrent writers (especially local .part + rename) race and
+ * list yet. Incoming directories also conflict with any active descendant already
+ * writing under that tree (the reverse of an existing directory reserving
+ * children). Concurrent writers (especially local .part + rename) race and
  * corrupt output; endpoint identity avoids treating identical path strings on
  * different hosts as the same destination.
  */
 export function findActivePathConflict(
   tasks: readonly TransferTask[],
-  candidate: Pick<TransferTask, "id"> & DestinationRef,
+  candidate: Pick<TransferTask, "id"> & DestinationRef & Pick<Partial<TransferTask>, "isDirectory">,
 ): TransferTask | undefined {
   const conflictsAtEndpoint = (task: TransferTask) => (
     task.id !== candidate.id
@@ -110,7 +112,12 @@ export function findActivePathConflict(
     conflictsAtEndpoint(task)
     && task.isDirectory
     && isTransferTargetPathDescendant(task.targetPath, candidate.targetPath)
-  ));
+  )) ?? (candidate.isDirectory
+    ? tasks.find((task) => (
+      conflictsAtEndpoint(task)
+      && isTransferTargetPathDescendant(candidate.targetPath, task.targetPath)
+    ))
+    : undefined);
 }
 
 export function pathConflictMessage(existing: Pick<TransferTask, "fileName" | "status">): string {
