@@ -1570,7 +1570,7 @@ test("failed local open for resumable upload still ends the isolated channel", a
   });
 
   // Create the source so preflight can proceed, then delete it as soon as the
-  // isolated channel opens so uploadFileResumableFast fails on local open.
+  // isolated channel opens so concurrent isolated upload fails on local open.
   const localPath = path.join(tempDir, "source.bin");
   await fs.promises.writeFile(localPath, Buffer.alloc(32 * 1024, 7));
   let endedChannels = 0;

@@ -461,7 +461,6 @@ function createFileOpsApi(ctx) {
       };
       activeSftpUploads.set(transferId, {
         cancelled: false,
-        stream: null,
         transfer: transferControl,
       });
 
@@ -548,10 +547,10 @@ function createFileOpsApi(ctx) {
     }
     
     /**
-     * Cancel an in-progress SFTP upload
-     * Note: We only set the cancelled flag and destroy the stream here.
-     * The cleanup (deleting from activeSftpUploads) is handled by writeSftpBinaryWithProgress's finally block
-     * to avoid race conditions.
+     * Cancel an in-progress buffer upload (writeBinaryWithProgress).
+     * Only sets cancelled / aborts the owned signal here; cleanup of
+     * activeSftpUploads stays in writeSftpBinaryWithProgress's finally block.
+     * Panel bulk transfers cancel via transferBridge.cancelTransfer instead.
      */
     async function cancelSftpUpload(event, payload) {
       const { transferId } = payload;
@@ -562,14 +561,6 @@ function createFileOpsApi(ctx) {
           uploadState.transfer.cancelled = true;
           try { uploadState.transfer.abort?.(); } catch { /* ignore */ }
         }
-        try {
-          uploadState.stream?.destroy();
-        } catch (err) {
-          // Log but continue - stream may already be destroyed
-          console.warn("[SFTP] Error destroying upload stream:", err.message);
-        }
-        // Don't delete here - let the finally block in writeSftpBinaryWithProgress handle cleanup
-        // This avoids race conditions where the upload might still be in progress
       }
       return { success: true };
     }

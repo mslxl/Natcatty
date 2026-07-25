@@ -2133,9 +2133,6 @@ async function uploadFileConcurrent(
   }
 }
 
-// Back-compat alias for older call sites / tests that still name the isolated path.
-const uploadFileResumableFast = uploadFileConcurrent;
-
 /**
  * Preserve fastGet's high-latency request window without giving up a safe
  * pause checkpoint. Progress and resume offsets track the highest contiguous
