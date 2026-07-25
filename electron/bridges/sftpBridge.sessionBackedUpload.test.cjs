@@ -51,6 +51,9 @@ function createSessionChannel(options = {}) {
       callback(null, {
         size: data.length,
         mode: meta.mode ?? 0o100644,
+        mtime: meta.mtime ?? 0,
+        uid: meta.uid ?? 0,
+        gid: meta.gid ?? 0,
         isDirectory: () => false,
         isFile: () => true,
         isSymbolicLink: () => !!meta.isSymlink,
@@ -68,6 +71,9 @@ function createSessionChannel(options = {}) {
       callback(null, {
         size: data ? data.length : 0,
         mode: meta?.isSymlink ? 0o120777 : (meta?.mode ?? 0o100644),
+        mtime: meta?.mtime ?? 0,
+        uid: meta?.uid ?? 0,
+        gid: meta?.gid ?? 0,
         isDirectory: () => false,
         isFile: () => !meta?.isSymlink,
         isSymbolicLink: () => !!meta?.isSymlink,
@@ -170,6 +176,44 @@ test("downloadSftpToLocal aborts while initial SFTP metadata is stalled", async 
     ]),
     /cancel|abort/i,
   );
+});
+
+test("aborted session open closes a channel that arrives after the client is discarded", async () => {
+  let releaseOpen;
+  let markOpenStarted;
+  const openStarted = new Promise((resolve) => { markOpenStarted = resolve; });
+  const connection = {
+    sftp(callback) {
+      releaseOpen = callback;
+      markOpenStarted();
+    },
+  };
+  const sftpClients = new Map();
+  sftpBridge.init({
+    electronModule: { webContents: { fromId: () => null } },
+    sessions: new Map([["session-late-open", { conn: connection }]]),
+    sftpClients,
+  });
+  const controller = new AbortController();
+  const opening = sftpBridge.openSftpForSession(null, {
+    sessionId: "session-late-open",
+    fileProtocol: "sftp",
+    abortSignal: controller.signal,
+  });
+
+  await openStarted;
+  controller.abort(new Error("stop opening"));
+  await assert.rejects(opening, /stop opening/);
+
+  const created = createSessionChannel();
+  let endCalls = 0;
+  created.channel.end = () => { endCalls += 1; };
+  releaseOpen(null, created.channel);
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(endCalls, 1);
+  assert.equal(sftpClients.size, 0);
 });
 
 test("session-backed uploadLocalToSftp uses pipelined fastPut on the raw SFTP channel", async (t) => {
@@ -1471,6 +1515,154 @@ test("staged SFTP upload stops if the destination becomes a symlink", async (t) 
     /changed to a symlink/,
   );
   assert.deepEqual(created.remoteFiles.get("/etc/app/config.json"), Buffer.from("old-content"));
+  assert.equal(
+    [...created.remoteFiles.keys()].some((key) => String(key).includes(".netcatty-upload-")),
+    false,
+  );
+});
+
+test("staged SFTP upload preserves a regular destination replaced during upload", async (t) => {
+  const tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-regular-target-race-"));
+  t.after(async () => {
+    await fs.promises.rm(tempRoot, { recursive: true, force: true });
+  });
+  tempDirBridge.init?.({ getPath: () => tempRoot });
+  const localPath = path.join(tempRoot, "payload.bin");
+  await fs.promises.writeFile(localPath, Buffer.from("uploaded-data"));
+  const remotePath = "/etc/app/config.json";
+  const replacement = Buffer.from("new-state");
+  const created = createSessionChannel({
+    onFastPut(_local, uploadPath) {
+      if (String(uploadPath).includes(".netcatty-upload-")) {
+        created.remoteFiles.set(remotePath, replacement);
+        created.remoteMeta.set(remotePath, { mode: 0o100644, mtime: 2, uid: 1000, gid: 1000 });
+      }
+      return null;
+    },
+  });
+  created.remoteFiles.set(remotePath, Buffer.from("old-state"));
+  created.remoteMeta.set(remotePath, { mode: 0o100644, mtime: 1, uid: 1000, gid: 1000 });
+
+  const sftpClients = new Map();
+  sftpBridge.init({
+    electronModule: { webContents: { fromId: () => null } },
+    sessions: new Map([["session-regular-race", { conn: { sftp: (cb) => cb(null, created.channel) } }]]),
+    sftpClients,
+  });
+  const opened = await sftpBridge.openSftpForSession(null, {
+    sessionId: "session-regular-race",
+    fileProtocol: "sftp",
+  });
+
+  await assert.rejects(
+    () => sftpBridge.uploadLocalToSftp(null, {
+      sftpId: opened.sftpId,
+      localPath,
+      remotePath,
+      encoding: "utf-8",
+    }),
+    /destination changed during upload/i,
+  );
+  assert.deepEqual(created.remoteFiles.get(remotePath), replacement);
+  assert.equal(
+    [...created.remoteFiles.keys()].some((key) => String(key).includes(".netcatty-upload-")),
+    false,
+  );
+});
+
+test("staged SFTP upload does not recreate a destination deleted during upload", async (t) => {
+  const tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-deleted-target-race-"));
+  t.after(async () => {
+    await fs.promises.rm(tempRoot, { recursive: true, force: true });
+  });
+  tempDirBridge.init?.({ getPath: () => tempRoot });
+  const localPath = path.join(tempRoot, "payload.bin");
+  await fs.promises.writeFile(localPath, Buffer.from("uploaded-data"));
+  const remotePath = "/etc/app/config.json";
+  const created = createSessionChannel({
+    onFastPut(_local, uploadPath) {
+      if (String(uploadPath).includes(".netcatty-upload-")) {
+        created.remoteFiles.delete(remotePath);
+        created.remoteMeta.delete(remotePath);
+      }
+      return null;
+    },
+  });
+  created.remoteFiles.set(remotePath, Buffer.from("old-state"));
+  created.remoteMeta.set(remotePath, { mode: 0o100644, mtime: 1, uid: 1000, gid: 1000 });
+
+  const sftpClients = new Map();
+  sftpBridge.init({
+    electronModule: { webContents: { fromId: () => null } },
+    sessions: new Map([["session-deleted-race", { conn: { sftp: (cb) => cb(null, created.channel) } }]]),
+    sftpClients,
+  });
+  const opened = await sftpBridge.openSftpForSession(null, {
+    sessionId: "session-deleted-race",
+    fileProtocol: "sftp",
+  });
+
+  await assert.rejects(
+    () => sftpBridge.uploadLocalToSftp(null, {
+      sftpId: opened.sftpId,
+      localPath,
+      remotePath,
+      encoding: "utf-8",
+    }),
+    /destination disappeared during upload/i,
+  );
+  assert.equal(created.remoteFiles.has(remotePath), false);
+  assert.equal(
+    [...created.remoteFiles.keys()].some((key) => String(key).includes(".netcatty-upload-")),
+    false,
+  );
+});
+
+test("staged SFTP upload rechecks a replaced destination after mode setup", async (t) => {
+  const tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-mode-target-race-"));
+  t.after(async () => {
+    await fs.promises.rm(tempRoot, { recursive: true, force: true });
+  });
+  tempDirBridge.init?.({ getPath: () => tempRoot });
+  const localPath = path.join(tempRoot, "payload.bin");
+  await fs.promises.writeFile(localPath, Buffer.from("uploaded-data"));
+  const remotePath = "/etc/app/config.json";
+  const replacement = Buffer.from("new-state");
+  const created = createSessionChannel();
+  created.remoteFiles.set(remotePath, Buffer.from("old-state"));
+  created.remoteMeta.set(remotePath, { mode: 0o100755, mtime: 1, uid: 1000, gid: 1000 });
+  const baseChmod = created.channel.chmod.bind(created.channel);
+  created.channel.chmod = (chmodPath, mode, callback) => {
+    baseChmod(chmodPath, mode, (error) => {
+      if (String(chmodPath).includes(".netcatty-upload-")) {
+        created.remoteFiles.set(remotePath, replacement);
+        created.remoteMeta.set(remotePath, { mode: 0o100755, mtime: 2, uid: 1000, gid: 1000 });
+      }
+      callback(error);
+    });
+  };
+
+  const sftpClients = new Map();
+  sftpBridge.init({
+    electronModule: { webContents: { fromId: () => null } },
+    sessions: new Map([["session-mode-race", { conn: { sftp: (cb) => cb(null, created.channel) } }]]),
+    sftpClients,
+  });
+  const opened = await sftpBridge.openSftpForSession(null, {
+    sessionId: "session-mode-race",
+    fileProtocol: "sftp",
+  });
+
+  await assert.rejects(
+    () => sftpBridge.uploadLocalToSftp(null, {
+      sftpId: opened.sftpId,
+      localPath,
+      remotePath,
+      encoding: "utf-8",
+    }),
+    /destination changed during upload/i,
+  );
+  assert.deepEqual(created.remoteFiles.get(remotePath), replacement);
   assert.equal(
     [...created.remoteFiles.keys()].some((key) => String(key).includes(".netcatty-upload-")),
     false,

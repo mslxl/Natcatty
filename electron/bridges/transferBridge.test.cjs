@@ -375,6 +375,79 @@ test("SCP staged streaming preserves executable mode without a local snapshot", 
   assert.equal(fs.existsSync(snapshotPath), false);
 });
 
+test("SCP staged upload rechecks a deleted destination after mode setup", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-scp-mode-target-race-"));
+  t.after(async () => fs.promises.rm(tempDir, { recursive: true, force: true }));
+  const localPath = path.join(tempDir, "payload.bin");
+  const payload = Buffer.from("uploaded-data");
+  await fs.promises.writeFile(localPath, payload);
+  const targetPath = "/tmp/payload.bin";
+  const remoteFiles = new Map([[targetPath, Buffer.from("old-state")]]);
+  const remoteMeta = new Map([[targetPath, { mode: 0o100755, modifyTime: 1 }]]);
+  let renameCalls = 0;
+  const backend = {
+    async stat(remotePath) {
+      if (!remoteFiles.has(remotePath)) {
+        const error = new Error("No such file");
+        error.code = "ENOENT";
+        throw error;
+      }
+      const meta = remoteMeta.get(remotePath) || { mode: 0o100644, modifyTime: 0 };
+      return {
+        type: "file",
+        isDirectory: false,
+        size: remoteFiles.get(remotePath).length,
+        mode: meta.mode,
+        permissions: "rwxr-xr-x",
+        modifyTime: meta.modifyTime,
+      };
+    },
+    async uploadFile(_sourcePath, remotePath, options) {
+      const opened = options.openReadStream();
+      const chunks = [];
+      for await (const chunk of opened.stream) chunks.push(chunk);
+      remoteFiles.set(remotePath, Buffer.concat(chunks));
+      remoteMeta.set(remotePath, { mode: 0o100644, modifyTime: 0 });
+    },
+    async chmod(remotePath) {
+      if (remotePath.includes(".netcatty-upload-")) {
+        remoteFiles.delete(targetPath);
+        remoteMeta.delete(targetPath);
+      }
+    },
+    async rename(fromPath, toPath) {
+      renameCalls += 1;
+      remoteFiles.set(toPath, remoteFiles.get(fromPath));
+      remoteFiles.delete(fromPath);
+    },
+    async remove(remotePath) {
+      remoteFiles.delete(remotePath);
+      remoteMeta.delete(remotePath);
+    },
+  };
+  const client = {
+    __netcattyFileProtocol: "scp",
+    __netcattyScpBackend: backend,
+  };
+  transferBridge.init({ sftpClients: new Map([["target", client]]) });
+
+  const result = await transferBridge.startTransfer({ sender: createSender() }, {
+    transferId: "scp-mode-target-race",
+    sourcePath: localPath,
+    targetPath,
+    sourceType: "local",
+    targetType: "sftp",
+    targetSftpId: "target",
+    totalBytes: payload.length,
+    resumable: false,
+  });
+
+  assert.match(result.error || "", /destination disappeared during upload/i);
+  assert.equal(renameCalls, 0);
+  assert.equal(remoteFiles.has(targetPath), false);
+  assert.equal([...remoteFiles.keys()].some((key) => key.includes(".netcatty-upload-")), false);
+});
+
 test("SCP staged upload does not promote when only AbortSignal cancels final verification", async (t) => {
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-scp-final-verify-cancel-"));
   t.after(async () => fs.promises.rm(tempDir, { recursive: true, force: true }));

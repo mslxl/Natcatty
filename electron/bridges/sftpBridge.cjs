@@ -272,6 +272,7 @@ const tryOpenSftpChannel = (client, options = {}) =>
 
 const getSftpChannel = async (client, options = {}) => {
   if (!client) return null;
+  if (client.__netcattyDisposed) return null;
 
   if (hasSftpChannelApi(client.sftp)) {
     return client.sftp;
@@ -301,6 +302,11 @@ const getSftpChannel = async (client, options = {}) => {
       // it first. Each waiter cancels only its own wait below.
       const reopened = await tryOpenSftpChannel(client, { timeoutMs: options.timeoutMs });
       if (hasSftpChannelApi(reopened)) {
+        if (client.__netcattyDisposed) {
+          try { reopened.end?.(); } catch {}
+          try { reopened.close?.(); } catch {}
+          return null;
+        }
         client.sftp = reopened;
         return reopened;
       }
@@ -702,7 +708,7 @@ async function planRemoteUploadReplace(client, encodedPath) {
         attrs = await lstatAsync(sftp, encodedPath);
       } catch (lstatError) {
         if (isRemoteMissingError(lstatError)) {
-          return { writeInPlace: false, existingMode: null, destinationExisted: false };
+          return { writeInPlace: false, existingMode: null, destinationExisted: false, destinationSnapshot: null };
         }
         // Some SFTP servers expose lstat client-side but reject it at runtime.
         // A successful stat proves the destination exists, but cannot tell us
@@ -718,7 +724,7 @@ async function planRemoteUploadReplace(client, encodedPath) {
           return { writeInPlace: true, existingMode: null, destinationExisted: null };
         }
       }
-      if (!attrs) return { writeInPlace: false, existingMode: null, destinationExisted: false };
+      if (!attrs) return { writeInPlace: false, existingMode: null, destinationExisted: false, destinationSnapshot: null };
       if (attrsIndicateSymlink(attrs)) {
         return { writeInPlace: true, existingMode: null, destinationExisted: true };
       }
@@ -726,7 +732,12 @@ async function planRemoteUploadReplace(client, encodedPath) {
       const existingMode = Number.isFinite(mode) && mode > 0
         ? (mode & 0o7777)
         : null;
-      return { writeInPlace: false, existingMode, destinationExisted: true };
+      return {
+        writeInPlace: false,
+        existingMode,
+        destinationExisted: true,
+        destinationSnapshot: snapshotRemoteTarget(attrs),
+      };
     }
 
     // No lstat: if the path exists via stat, write in-place so a symlink is not
@@ -752,7 +763,7 @@ async function planRemoteUploadReplace(client, encodedPath) {
     // Unknown target state: preserve a possible symlink instead of replacing it.
     return { writeInPlace: true, existingMode: null, destinationExisted: null };
   }
-  return { writeInPlace: false, existingMode: null, destinationExisted: false };
+  return { writeInPlace: false, existingMode: null, destinationExisted: false, destinationSnapshot: null };
 }
 
 function attrsIndicateDirectory(attrs) {
@@ -761,6 +772,25 @@ function attrsIndicateDirectory(attrs) {
   if (typeof attrs.isDirectory === "boolean") return attrs.isDirectory;
   const mode = Number(attrs.mode);
   return Number.isFinite(mode) && (mode & 0o170000) === 0o040000;
+}
+
+function snapshotRemoteTarget(attrs) {
+  if (!attrs) return null;
+  const snapshot = {};
+  for (const field of ["size", "mode", "uid", "gid", "mtime", "modifyTime", "ino", "dev", "fileId", "permissions", "type"]) {
+    const value = attrs[field];
+    if (["number", "string", "bigint", "boolean"].includes(typeof value)) {
+      snapshot[field] = String(value);
+    }
+  }
+  return snapshot;
+}
+
+function remoteTargetMatchesSnapshot(attrs, snapshot) {
+  if (!snapshot) return true;
+  return Object.entries(snapshot).every(([field, expected]) => (
+    attrs[field] != null && String(attrs[field]) === expected
+  ));
 }
 
 async function assertTargetStillMissingWithoutLstat(sftp, encodedPath, remotePath) {
@@ -779,7 +809,13 @@ async function assertTargetStillMissingWithoutLstat(sftp, encodedPath, remotePat
   }
 }
 
-async function assertStagedPromotionTargetSafe(client, encodedPath, remotePath, expectedExisted) {
+async function assertStagedPromotionTargetSafe(
+  client,
+  encodedPath,
+  remotePath,
+  expectedExisted,
+  expectedSnapshot,
+) {
   const sftp = await requireSftpChannel(client);
   if (typeof sftp?.lstat !== "function") {
     if (expectedExisted !== false) {
@@ -807,11 +843,17 @@ async function assertStagedPromotionTargetSafe(client, encodedPath, remotePath, 
   if (expectedExisted === false && existsNow) {
     throw new Error(`Remote destination appeared during upload: ${remotePath}`);
   }
+  if (expectedExisted === true && !existsNow) {
+    throw new Error(`Remote destination disappeared during upload: ${remotePath}`);
+  }
   if (attrsIndicateSymlink(attrs)) {
     throw new Error(`Remote destination changed to a symlink during upload: ${remotePath}`);
   }
   if (attrsIndicateDirectory(attrs)) {
     throw new Error(`Remote path is a directory: ${remotePath}`);
+  }
+  if (existsNow && !remoteTargetMatchesSnapshot(attrs, expectedSnapshot)) {
+    throw new Error(`Remote destination changed during upload: ${remotePath}`);
   }
 }
 
@@ -866,7 +908,7 @@ async function planScpRemoteUploadReplace(client, remotePath, encoding, signal =
     if (!isRemoteMissingError(error)) throw error;
   }
   if (!attrs) {
-    return { writeInPlace: false, existingMode: null, destinationExisted: false };
+    return { writeInPlace: false, existingMode: null, destinationExisted: false, destinationSnapshot: null };
   }
   if (attrs.isDirectory || attrs.type === "directory") {
     throw new Error(`Remote path is a directory: ${remotePath}`);
@@ -882,6 +924,7 @@ async function planScpRemoteUploadReplace(client, remotePath, encoding, signal =
       ? (attrs.mode & 0o7777)
       : null,
     destinationExisted: true,
+    destinationSnapshot: snapshotRemoteTarget(attrs),
   };
 }
 
@@ -892,6 +935,7 @@ async function promoteScpStagedUpload(
   backupPath,
   encoding,
   expectedExisted,
+  expectedSnapshot,
   existingMode,
   assertCanPromote,
   commitPromotion,
@@ -900,26 +944,38 @@ async function promoteScpStagedUpload(
 ) {
   const { getScpBackendForClient } = require("./sftpBridge/scpBackend.cjs");
   const backend = getScpBackendForClient(client);
-  let latest = null;
-  try {
-    latest = await runCancelablePreflight(
-      () => backend.stat(targetPath, { encoding, signal }),
-    );
-  } catch (error) {
-    if (!isRemoteMissingError(error)) throw error;
-  }
-  if (latest?.isDirectory || latest?.type === "directory") {
-    throw new Error(`Remote path is a directory: ${targetPath}`);
-  }
-  if (latest?.isSymbolicLink || latest?.isSymlink || latest?.type === "symlink") {
-    throw new Error(`Remote destination changed to a symlink during upload: ${targetPath}`);
-  }
-  if (expectedExisted === false && latest) {
-    throw new Error(`Remote destination appeared during upload: ${targetPath}`);
-  }
+  const assertTargetSafe = async () => {
+    let latestTarget = null;
+    try {
+      latestTarget = await runCancelablePreflight(
+        () => backend.stat(targetPath, { encoding, signal }),
+      );
+    } catch (error) {
+      if (!isRemoteMissingError(error)) throw error;
+    }
+    if (latestTarget?.isDirectory || latestTarget?.type === "directory") {
+      throw new Error(`Remote path is a directory: ${targetPath}`);
+    }
+    if (latestTarget?.isSymbolicLink || latestTarget?.isSymlink || latestTarget?.type === "symlink") {
+      throw new Error(`Remote destination changed to a symlink during upload: ${targetPath}`);
+    }
+    if (expectedExisted === false && latestTarget) {
+      throw new Error(`Remote destination appeared during upload: ${targetPath}`);
+    }
+    if (expectedExisted === true && !latestTarget) {
+      throw new Error(`Remote destination disappeared during upload: ${targetPath}`);
+    }
+    if (latestTarget && !remoteTargetMatchesSnapshot(latestTarget, expectedSnapshot)) {
+      throw new Error(`Remote destination changed during upload: ${targetPath}`);
+    }
+    return latestTarget;
+  };
+  let latest = await assertTargetSafe();
   assertCanPromote();
   if (Number.isFinite(existingMode)) {
     await backend.chmod(stagedPath, existingMode, { encoding, signal });
+    assertCanPromote();
+    latest = await assertTargetSafe();
     assertCanPromote();
   }
 
@@ -1106,6 +1162,7 @@ async function runRemoteUploadTransaction(client, localPath, remotePath, options
         backupLogical,
         encoding,
         plan.destinationExisted,
+        plan.destinationSnapshot,
         plan.existingMode,
         assertCanPromote,
         commitPromotion,
@@ -1118,6 +1175,7 @@ async function runRemoteUploadTransaction(client, localPath, remotePath, options
           encodedPath,
           remotePath,
           plan.destinationExisted,
+          plan.destinationSnapshot,
         ));
       assertCanPromote();
       // Apply the old mode to the stage before promotion. A failed chmod must not
@@ -1125,6 +1183,14 @@ async function runRemoteUploadTransaction(client, localPath, remotePath, options
       await restoreRemoteMode(client, encodedStagedPath, plan.existingMode, {
         bestEffort: false,
       });
+      assertCanPromote();
+      await runCancelablePreflight(() => assertStagedPromotionTargetSafe(
+          client,
+          encodedPath,
+          remotePath,
+          plan.destinationExisted,
+          plan.destinationSnapshot,
+        ));
       assertCanPromote();
       commitPromotion();
       await renameRemotePath(client, encodedStagedPath, encodedPath, encodedBackupPath, {
@@ -1284,6 +1350,7 @@ function createSessionBackedSftpClient(sessionId, sshClient, options = {}) {
     __netcattySessionBacked: true,
     __netcattySourceSessionId: options?.sourceSessionId,
     __netcattyRefHolder: refHolder,
+    __netcattyDisposed: false,
     _reopeningPromise: null,
     async get(remotePath) {
       const sftp = await requireSftpChannel(client);
@@ -1376,6 +1443,7 @@ function createSessionBackedSftpClient(sessionId, sshClient, options = {}) {
     async end() {
       if (ended) return;
       ended = true;
+      client.__netcattyDisposed = true;
       try {
         if (client.sftp && typeof client.sftp.end === "function") {
           client.sftp.end();
