@@ -267,8 +267,11 @@ function TransferRow({
   // Orphaned tasks after app restart (interrupted / attention / paused without a
   // live panel owner) must still expose resume/cancel from the global center.
   // Conflict rows must use resolveConflict — Resume would overwrite blindly.
+  // Non-resumable attention rows (e.g. duplicate-destination refusals) are
+  // terminal: resuming them would start a second writer on the same path.
   const canResume = !isResuming && !task.conflict && (
-    ["paused", "interrupted", "attention"].includes(task.status)
+    ["paused", "interrupted"].includes(task.status)
+    || (task.status === "attention" && task.resumable !== false)
     || (task.status === "failed" && task.resumable !== false && (task.checkpointBytes ?? 0) > 0)
   ) && canControl;
   const canCancel = ["pending", "queued", "transferring", "pausing", "paused", "interrupted", "attention"].includes(task.status) && canControl;
@@ -587,6 +590,9 @@ export function GlobalSftpTransferCenter() {
       // when the parent directory is re-adopted (avoids dual writers).
       if (task.parentTaskId) continue;
       if (task.conflict) continue;
+      // Non-resumable attention rows are duplicate-destination refusals — never
+      // restart them into a path another transfer still owns.
+      if (task.status === "attention" && task.resumable === false) continue;
       if (task.status === "paused" || task.status === "interrupted" || task.status === "attention") {
         void sftpTransferCenterStore.resume(task.id);
       }

@@ -895,6 +895,11 @@ export const useSftpTransfers = ({
         });
       }
 
+      // Reserve destinations synchronously (same reasoning as downloadToLocal):
+      // an overlapping enqueue in the same tick must see these tasks in
+      // transfersRef / the center snapshot before React re-renders.
+      transfersRef.current = [...transfersRef.current, ...newTasks];
+      sftpTransferCenterStore.publishOwner(ownerId, transfersRef.current);
       setTransfers((prev) => [...prev, ...newTasks]);
 
       const runnableTasks = newTasks.filter((task) => task.status !== "attention");
@@ -1221,6 +1226,28 @@ export const useSftpTransfers = ({
       && task.status !== "attention"
       && !(task.status === "failed" && (task.checkpointBytes ?? 0) > 0)
     )) return;
+    // Attention rows restart from scratch via processTransfer below, which does
+    // not repeat the enqueue-time path-conflict check. Refuse when another
+    // active transfer (e.g. the original a duplicate-refusal row points at)
+    // still owns the destination — a second writer would corrupt it.
+    if (task.status === "attention") {
+      const destinationConflict = findActivePathConflict(
+        [...sftpTransferCenterStore.getSnapshot().tasks, ...transfersRef.current],
+        task,
+      );
+      if (destinationConflict) {
+        // Keep the row's own resumable flag — once the conflicting transfer
+        // finishes, a later Resume attempt passes this check and may proceed.
+        setTransfers((prev) => prev.map((candidate) => candidate.id === transferId
+          ? {
+              ...candidate,
+              status: "attention" as TransferStatus,
+              error: pathConflictMessage(destinationConflict),
+            }
+          : candidate));
+        return;
+      }
+    }
     // Parent resume must clear sticky child cancel latches so re-walk can
     // re-attempt previously cancelled children (they keep the same ids).
     clearCancelledTask(transferId);
@@ -1793,6 +1820,12 @@ export const useSftpTransfers = ({
         isDirectory: params.isDirectory,
       });
 
+      // Reserve the destination synchronously — transfersRef and the center
+      // snapshot only refresh on render/effect, so a second overlapping call in
+      // the same tick would otherwise pass the conflict check above and start a
+      // second writer on the same .part/target file.
+      transfersRef.current = [...transfersRef.current, task];
+      sftpTransferCenterStore.publishOwner(ownerId, transfersRef.current);
       setTransfers((prev) => [...prev, task]);
 
       const sourceEncoding = params.sourceEncoding ?? "auto";
