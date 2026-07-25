@@ -115,7 +115,8 @@ function buildListCommandLs(remotePath, encoding = "utf-8") {
 function buildStatCommand(remotePath, encoding = "utf-8") {
   const p = assertSafeRemotePath(remotePath);
   const q = shellQuotePath(p, encoding);
-  // Emit: T|MODE_OCT|SIZE|MTIME|ABS
+  // Emit: T|MODE_OCT|SIZE|MTIME|ABS|INO
+  // INO is optional identity for staged-upload race checks (SFTP v3 has none).
   return [
     `p=${q}`,
     'if [ ! -e "$p" ] && [ ! -L "$p" ]; then echo "ENOENT" >&2; exit 2; fi',
@@ -126,7 +127,8 @@ function buildStatCommand(remotePath, encoding = "utf-8") {
     'size=$(stat -c %s -- "$p" 2>/dev/null || stat -f %z -- "$p" 2>/dev/null || echo 0)',
     'mtime=$(date -r "$p" +%s 2>/dev/null || stat -c %Y -- "$p" 2>/dev/null || stat -f %m -- "$p" 2>/dev/null || echo 0)',
     'abs=$(cd "$(dirname -- "$p")" 2>/dev/null && printf "%s/%s\\n" "$(pwd -P 2>/dev/null || pwd)" "$(basename -- "$p")" || printf "%s\\n" "$p")',
-    'printf "%s|%s|%s|%s|%s\\n" "$t" "${mode:-?}" "${size:-0}" "${mtime:-0}" "$abs"',
+    'ino=$(stat -c %i -- "$p" 2>/dev/null || stat -f %i -- "$p" 2>/dev/null || echo)',
+    'printf "%s|%s|%s|%s|%s|%s\\n" "$t" "${mode:-?}" "${size:-0}" "${mtime:-0}" "$abs" "${ino}"',
   ].join("; ");
 }
 
@@ -296,7 +298,10 @@ function parseStatRecord(stdout) {
   if (parts.length < 5) {
     throw new ScpShellError(`Malformed stat record: ${line.slice(0, 80)}`);
   }
-  const [t, modeStr, sizeStr, mtimeStr, abs] = parts;
+  const [t, modeStr, sizeStr, mtimeStr, abs, inoStr] = parts;
+  const ino = inoStr && /^\d+$/.test(String(inoStr).trim())
+    ? String(inoStr).trim()
+    : undefined;
   return {
     type: t === "d" ? "directory" : t === "l" ? "symlink" : "file",
     isDirectory: t === "d",
@@ -306,6 +311,7 @@ function parseStatRecord(stdout) {
     mode: lsModeToNumber(modeStr),
     permissions: parseLsModeToPermissions(modeStr),
     path: abs,
+    ...(ino ? { ino } : {}),
   };
 }
 

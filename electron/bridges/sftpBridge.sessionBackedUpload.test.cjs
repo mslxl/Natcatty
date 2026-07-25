@@ -26,6 +26,7 @@ function createSessionChannel(options = {}) {
   const remoteFiles = new Map();
   const remoteMeta = new Map(); // path -> { mode, isSymlink }
   const chmodCalls = [];
+  const { Readable } = require("node:stream");
   const channel = {
     // hasSftpChannelApi requires these four methods.
     readdir(_targetPath, callback) {
@@ -38,6 +39,19 @@ function createSessionChannel(options = {}) {
       remoteFiles.delete(targetPath);
       remoteMeta.delete(targetPath);
       callback(null);
+    },
+    createReadStream(targetPath) {
+      const data = remoteFiles.get(targetPath);
+      if (!data) {
+        const stream = new Readable({ read() {} });
+        queueMicrotask(() => {
+          const err = new Error(`ENOENT ${targetPath}`);
+          err.code = 2;
+          stream.destroy(err);
+        });
+        return stream;
+      }
+      return Readable.from([Buffer.from(data)]);
     },
     stat(targetPath, callback) {
       const data = remoteFiles.get(targetPath);
@@ -1551,6 +1565,56 @@ test("staged SFTP upload preserves a regular destination replaced during upload"
   });
   const opened = await sftpBridge.openSftpForSession(null, {
     sessionId: "session-regular-race",
+    fileProtocol: "sftp",
+  });
+
+  await assert.rejects(
+    () => sftpBridge.uploadLocalToSftp(null, {
+      sftpId: opened.sftpId,
+      localPath,
+      remotePath,
+      encoding: "utf-8",
+    }),
+    /destination changed during upload/i,
+  );
+  assert.deepEqual(created.remoteFiles.get(remotePath), replacement);
+  assert.equal(
+    [...created.remoteFiles.keys()].some((key) => String(key).includes(".netcatty-upload-")),
+    false,
+  );
+});
+
+test("staged SFTP upload detects same-metadata destination content replacement", async (t) => {
+  const tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-same-meta-race-"));
+  t.after(async () => {
+    await fs.promises.rm(tempRoot, { recursive: true, force: true });
+  });
+  tempDirBridge.init?.({ getPath: () => tempRoot });
+  const localPath = path.join(tempRoot, "payload.bin");
+  await fs.promises.writeFile(localPath, Buffer.from("uploaded-data"));
+  const remotePath = "/etc/app/config.json";
+  // Same length/mode/owner/mtime as the original — metadata-only snapshots miss this.
+  const replacement = Buffer.from("new-state");
+  const created = createSessionChannel({
+    onFastPut(_local, uploadPath) {
+      if (String(uploadPath).includes(".netcatty-upload-")) {
+        created.remoteFiles.set(remotePath, replacement);
+        created.remoteMeta.set(remotePath, { mode: 0o100644, mtime: 1, uid: 1000, gid: 1000 });
+      }
+      return null;
+    },
+  });
+  created.remoteFiles.set(remotePath, Buffer.from("old-state"));
+  created.remoteMeta.set(remotePath, { mode: 0o100644, mtime: 1, uid: 1000, gid: 1000 });
+
+  const sftpClients = new Map();
+  sftpBridge.init({
+    electronModule: { webContents: { fromId: () => null } },
+    sessions: new Map([["session-same-meta-race", { conn: { sftp: (cb) => cb(null, created.channel) } }]]),
+    sftpClients,
+  });
+  const opened = await sftpBridge.openSftpForSession(null, {
+    sessionId: "session-same-meta-race",
     fileProtocol: "sftp",
   });
 

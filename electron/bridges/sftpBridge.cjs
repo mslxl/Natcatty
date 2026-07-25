@@ -6,7 +6,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const net = require("node:net");
-const { randomUUID } = require("node:crypto");
+const { createHash, randomUUID } = require("node:crypto");
 const { pipeline } = require("node:stream/promises");
 const { TextDecoder } = require("node:util");
 require("./boringSslDhCompat.cjs").installBoringSslDhCompat();
@@ -697,7 +697,7 @@ async function distinguishMissingTargetFromBrokenSymlink(sftp, encodedPath) {
  *   keep mutating the final destination. Restore mode bits after promotion
  *   (SFTP v3 cannot portably preserve owner/ACL/xattr/hard-links).
  */
-async function planRemoteUploadReplace(client, encodedPath) {
+async function planRemoteUploadReplace(client, encodedPath, remotePath) {
   try {
     const sftp = await requireSftpChannel(client);
     const hasNativeLstat = typeof sftp?.lstat === "function";
@@ -736,7 +736,13 @@ async function planRemoteUploadReplace(client, encodedPath) {
         writeInPlace: false,
         existingMode,
         destinationExisted: true,
-        destinationSnapshot: snapshotRemoteTarget(attrs),
+        destinationSnapshot: await finalizeDestinationSnapshot(
+          client,
+          encodedPath,
+          remotePath,
+          snapshotRemoteTarget(attrs),
+          { scpMode: false },
+        ),
       };
     }
 
@@ -786,11 +792,116 @@ function snapshotRemoteTarget(attrs) {
   return snapshot;
 }
 
+function snapshotHasStableIdentity(snapshot) {
+  return !!(snapshot && (snapshot.ino || snapshot.fileId));
+}
+
 function remoteTargetMatchesSnapshot(attrs, snapshot) {
   if (!snapshot) return true;
-  return Object.entries(snapshot).every(([field, expected]) => (
-    attrs[field] != null && String(attrs[field]) === expected
-  ));
+  return Object.entries(snapshot).every(([field, expected]) => {
+    // contentDigest is verified separately via a re-hash of the destination.
+    if (field === "contentDigest") return true;
+    return attrs[field] != null && String(attrs[field]) === expected;
+  });
+}
+
+async function hashReadableForDigest(readable) {
+  const hash = createHash("sha256");
+  for await (const chunk of readable) {
+    hash.update(chunk);
+  }
+  return hash.digest("hex");
+}
+
+async function tryRemoteSha256Sum(sshClient, remotePath, signal = null) {
+  if (!sshClient || typeof sshClient.exec !== "function") return null;
+  const escapedPath = String(remotePath).replace(/'/g, "'\\''");
+  return await new Promise((resolve) => {
+    let settled = false;
+    let streamRef = null;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      if (signal) {
+        try { signal.removeEventListener("abort", onAbort); } catch { /* ignore */ }
+      }
+      resolve(value);
+    };
+    const onAbort = () => {
+      try { streamRef?.close?.(); } catch { /* ignore */ }
+      try { streamRef?.destroy?.(); } catch { /* ignore */ }
+      finish(null);
+    };
+    if (signal) {
+      if (signal.aborted) {
+        finish(null);
+        return;
+      }
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+    try {
+      sshClient.exec(`sha256sum -- '${escapedPath}'`, (error, stream) => {
+        if (error) {
+          finish(null);
+          return;
+        }
+        streamRef = stream;
+        if (settled) {
+          try { stream.close?.(); } catch { /* ignore */ }
+          return;
+        }
+        let stdout = "";
+        stream.on("data", (chunk) => { stdout += chunk.toString(); });
+        stream.on("close", (code) => {
+          const match = stdout.match(/^([a-fA-F0-9]{64})\s/);
+          finish(code === 0 && match ? match[1].toLowerCase() : null);
+        });
+        stream.on("error", () => finish(null));
+      });
+    } catch {
+      finish(null);
+    }
+  });
+}
+
+/**
+ * Prefer server-side sha256sum; fall back to streaming the destination over SFTP.
+ * Returns null when neither path is available (metadata-only residual risk).
+ */
+async function computeRemoteContentDigest(client, encodedPath, remotePath, options = {}) {
+  const signal = options.signal || null;
+  const digest = await tryRemoteSha256Sum(client?.client, remotePath, signal);
+  if (digest) return digest;
+  try {
+    const sftp = client?.sftp || await requireSftpChannel(client);
+    if (typeof sftp?.createReadStream === "function") {
+      return await hashReadableForDigest(sftp.createReadStream(encodedPath));
+    }
+    if (typeof client?.get === "function") {
+      const buffer = await client.get(encodedPath);
+      return createHash("sha256")
+        .update(Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer))
+        .digest("hex");
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+async function finalizeDestinationSnapshot(client, encodedPath, remotePath, snapshot, options = {}) {
+  if (!snapshot || snapshotHasStableIdentity(snapshot)) return snapshot;
+  const digest = await computeRemoteContentDigest(client, encodedPath, remotePath, options);
+  if (!digest) return snapshot;
+  return { ...snapshot, contentDigest: digest };
+}
+
+async function assertDestinationContentUnchanged(client, encodedPath, remotePath, snapshot, options = {}) {
+  if (!snapshot?.contentDigest) return;
+  const digest = await computeRemoteContentDigest(client, encodedPath, remotePath, options);
+  if (!digest || digest !== snapshot.contentDigest) {
+    throw new Error(`Remote destination changed during upload: ${remotePath}`);
+  }
 }
 
 async function assertTargetStillMissingWithoutLstat(sftp, encodedPath, remotePath) {
@@ -855,6 +966,9 @@ async function assertStagedPromotionTargetSafe(
   if (existsNow && !remoteTargetMatchesSnapshot(attrs, expectedSnapshot)) {
     throw new Error(`Remote destination changed during upload: ${remotePath}`);
   }
+  if (existsNow) {
+    await assertDestinationContentUnchanged(client, encodedPath, remotePath, expectedSnapshot);
+  }
 }
 
 async function restoreRemoteMode(client, encodedPath, mode, options = {}) {
@@ -916,6 +1030,7 @@ async function planScpRemoteUploadReplace(client, remotePath, encoding, signal =
   if (attrs.isSymbolicLink || attrs.isSymlink || attrs.type === "symlink") {
     return { writeInPlace: true, existingMode: null, destinationExisted: true };
   }
+  const encodedPath = encodePath(remotePath, encoding);
   return {
     writeInPlace: false,
     // `permissions` distinguishes a real mode 000 from an unparseable mode,
@@ -924,7 +1039,13 @@ async function planScpRemoteUploadReplace(client, remotePath, encoding, signal =
       ? (attrs.mode & 0o7777)
       : null,
     destinationExisted: true,
-    destinationSnapshot: snapshotRemoteTarget(attrs),
+    destinationSnapshot: await finalizeDestinationSnapshot(
+      client,
+      encodedPath,
+      remotePath,
+      snapshotRemoteTarget(attrs),
+      { scpMode: true, encoding, signal },
+    ),
   };
 }
 
@@ -944,6 +1065,7 @@ async function promoteScpStagedUpload(
 ) {
   const { getScpBackendForClient } = require("./sftpBridge/scpBackend.cjs");
   const backend = getScpBackendForClient(client);
+  const encodedTargetPath = encodePath(targetPath, encoding);
   const assertTargetSafe = async () => {
     let latestTarget = null;
     try {
@@ -967,6 +1089,15 @@ async function promoteScpStagedUpload(
     }
     if (latestTarget && !remoteTargetMatchesSnapshot(latestTarget, expectedSnapshot)) {
       throw new Error(`Remote destination changed during upload: ${targetPath}`);
+    }
+    if (latestTarget) {
+      await assertDestinationContentUnchanged(
+        client,
+        encodedTargetPath,
+        targetPath,
+        expectedSnapshot,
+        { scpMode: true, encoding, signal },
+      );
     }
     return latestTarget;
   };
@@ -1041,7 +1172,7 @@ async function runRemoteUploadTransaction(client, localPath, remotePath, options
   const plan = await runCancelablePreflight(() => (
     scpMode
       ? planScpRemoteUploadReplace(client, remotePath, encoding, signal)
-      : planRemoteUploadReplace(client, encodedPath)
+      : planRemoteUploadReplace(client, encodedPath, remotePath)
   ));
   const fastPutOptions = { ...options };
   delete fastPutOptions.expectedSize;
