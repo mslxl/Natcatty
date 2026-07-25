@@ -18,6 +18,7 @@ import { sftpListOrderStore } from "./useSftpListOrderStore";
 import { sftpPaneViewModeStore } from "../../../application/state/sftp/sftpPaneViewModeStore";
 import { keepOnlyPaneSelections } from "./selectionScope";
 import type { SftpStateApi } from "../../../application/state/useSftpState";
+import type { UploadEndpointPin } from "../../../application/state/sftp/uploadTargetPin";
 import { filterHiddenFiles, isNavigableDirectory } from "../utils";
 import type { SftpFileEntry } from "../../../types";
 import { extractDropEntries, type DropEntry } from "../../../lib/sftpFileUtils";
@@ -229,12 +230,14 @@ export const useSftpKeyboardShortcuts = ({
     targetPath: string,
     connectionId: string,
     tabId: string,
+    endpointPin: UploadEndpointPin,
   ) => {
     const sftp = sftpRef.current;
     const uploadFiles = getSupportedClipboardUploadFiles(files);
     if (uploadFiles.length === 0) return;
 
     const entries = createDropEntriesFromClipboardFiles(uploadFiles);
+    const pin = { connectionId, tabId, endpointPin };
 
     sftpClipboardUploadStore.trigger({
       scopeId: dialogActionScopeId,
@@ -245,7 +248,6 @@ export const useSftpKeyboardShortcuts = ({
         try {
           const results: Awaited<ReturnType<SftpStateApi["uploadExternalEntries"]>> = [];
           const fileEntries: DropEntry[] = [];
-          const pin = { connectionId, tabId };
 
           for (const file of uploadFiles) {
             if (file.isDirectory) {
@@ -299,6 +301,7 @@ export const useSftpKeyboardShortcuts = ({
     targetPath: string,
     connectionId: string,
     tabId: string,
+    endpointPin: UploadEndpointPin,
   ) => {
     const sftp = sftpRef.current;
     if (entries.length === 0) return;
@@ -317,6 +320,8 @@ export const useSftpKeyboardShortcuts = ({
       });
     }
 
+    const pin = { connectionId, tabId, endpointPin };
+
     sftpClipboardUploadStore.trigger({
       scopeId: dialogActionScopeId,
       side: focusedSide,
@@ -326,8 +331,7 @@ export const useSftpKeyboardShortcuts = ({
         try {
           const results = await sftp.uploadExternalEntries(focusedSide, entries, {
             targetPath,
-            connectionId,
-            tabId,
+            ...pin,
           });
           showUploadResults(results);
         } catch (error) {
@@ -446,6 +450,13 @@ export const useSftpKeyboardShortcuts = ({
       const targetPath = getClipboardUploadTarget(pane);
       const connectionId = pane.connection.id;
       const tabId = pane.id;
+      const endpointPin: UploadEndpointPin = {
+        isLocal: pane.connection.isLocal,
+        hostId: pane.connection.isLocal ? null : (pane.connection.hostId ?? null),
+        cacheKey: pane.connection.isLocal
+          ? "local"
+          : (sftpRef.current.getConnectionCacheKey?.(connectionId) ?? null),
+      };
       const pendingClipboardWrite = pendingSftpSystemClipboardWrite;
       const bridge = netcattyBridge.get();
       const dataTransfer = e.clipboardData;
@@ -472,7 +483,9 @@ export const useSftpKeyboardShortcuts = ({
         if (bridge?.readClipboardFiles) {
           const clipboardFiles = await bridge.readClipboardFiles();
           if (clipboardFiles.length > 0) {
-            triggerPathBackedClipboardUpload(clipboardFiles, focusedSide, targetPath, connectionId, tabId);
+            triggerPathBackedClipboardUpload(
+              clipboardFiles, focusedSide, targetPath, connectionId, tabId, endpointPin,
+            );
             return;
           }
         }
@@ -480,7 +493,9 @@ export const useSftpKeyboardShortcuts = ({
         if (dropEntriesPromise) {
           const entries = await dropEntriesPromise;
           if (entries.length > 0) {
-            triggerDropEntriesClipboardUpload(entries, focusedSide, targetPath, connectionId, tabId);
+            triggerDropEntriesClipboardUpload(
+              entries, focusedSide, targetPath, connectionId, tabId, endpointPin,
+            );
             return;
           }
         }
@@ -495,7 +510,9 @@ export const useSftpKeyboardShortcuts = ({
             }))
             .filter((file) => file.path.includes("/") || file.path.includes("\\"));
           if (pathBackedFiles.length > 0) {
-            triggerPathBackedClipboardUpload(pathBackedFiles, focusedSide, targetPath, connectionId, tabId);
+            triggerPathBackedClipboardUpload(
+              pathBackedFiles, focusedSide, targetPath, connectionId, tabId, endpointPin,
+            );
             return;
           }
         }

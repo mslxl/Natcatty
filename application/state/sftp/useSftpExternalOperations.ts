@@ -33,6 +33,7 @@ import {
   assertUploadEndpointUnchanged,
   captureUploadEndpoint,
   resolveUploadTargetPane,
+  type UploadEndpointPin,
 } from "./uploadTargetPin";
 
 export const useSftpExternalOperations = (
@@ -990,7 +991,7 @@ export const useSftpExternalOperations = (
       side: "left" | "right",
       folderPath: string,
       targetPath?: string,
-      options?: { connectionId?: string; tabId?: string },
+      options?: { connectionId?: string; tabId?: string; endpointPin?: UploadEndpointPin },
     ): Promise<UploadResult[]> => {
       // Pin before any await so tab switches cannot retarget multi-folder pastes.
       const originatingPane = resolveUploadTargetPane({
@@ -1002,8 +1003,16 @@ export const useSftpExternalOperations = (
         getPaneByConnectionId,
       });
       const originatingTabId = originatingPane.id;
-      const originatingEndpoint = captureUploadEndpoint(
+      // Prefer the pin captured when the paste dialog opened so multi-folder
+      // uploads keep the original endpoint even if later calls re-resolve a
+      // retargeted tab.
+      const originatingEndpoint = options?.endpointPin ?? captureUploadEndpoint(
         originatingPane.connection,
+        connectionCacheKeyMapRef.current,
+      );
+      assertUploadEndpointUnchanged(
+        originatingPane.connection,
+        originatingEndpoint,
         connectionCacheKeyMapRef.current,
       );
 
@@ -1183,7 +1192,12 @@ export const useSftpExternalOperations = (
     async (
       side: "left" | "right",
       entries: DropEntry[],
-      options?: { targetPath?: string; connectionId?: string; tabId?: string },
+      options?: {
+        targetPath?: string;
+        connectionId?: string;
+        tabId?: string;
+        endpointPin?: UploadEndpointPin;
+      },
     ): Promise<UploadResult[]> => {
       // Pin before any await so tab switches cannot retarget the upload.
       const originatingPane = resolveUploadTargetPane({
@@ -1195,8 +1209,13 @@ export const useSftpExternalOperations = (
         getPaneByConnectionId,
       });
       const originatingTabId = originatingPane.id;
-      const originatingEndpoint = captureUploadEndpoint(
+      const originatingEndpoint = options?.endpointPin ?? captureUploadEndpoint(
         originatingPane.connection,
+        connectionCacheKeyMapRef.current,
+      );
+      assertUploadEndpointUnchanged(
+        originatingPane.connection,
+        originatingEndpoint,
         connectionCacheKeyMapRef.current,
       );
 

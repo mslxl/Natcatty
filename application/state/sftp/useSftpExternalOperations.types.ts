@@ -3,6 +3,7 @@ import type { FileConflict, FileConflictAction, TransferTask, SftpFilenameEncodi
 import type { UploadResult } from "../../../lib/uploadService";
 import type { DropEntry } from "../../../lib/sftpFileUtils";
 import type { SftpPane } from "./types";
+import type { UploadEndpointPin } from "./uploadTargetPin";
 
 export interface UseSftpExternalOperationsParams {
   ownerId: string;
@@ -72,12 +73,12 @@ export interface SftpExternalOperationsResult {
     side: "left" | "right",
     folderPath: string,
     targetPath?: string,
-    options?: { connectionId?: string; tabId?: string },
+    options?: { connectionId?: string; tabId?: string; endpointPin?: UploadEndpointPin },
   ) => Promise<UploadResult[]>;
   uploadExternalEntries: (
     side: "left" | "right",
     entries: DropEntry[],
-    options?: { targetPath?: string; connectionId?: string; tabId?: string },
+    options?: { targetPath?: string; connectionId?: string; tabId?: string; endpointPin?: UploadEndpointPin },
   ) => Promise<UploadResult[]>;
   cancelExternalUpload: (taskId?: string) => Promise<void>;
   selectApplication: () => Promise<{ path: string; name: string } | null>;

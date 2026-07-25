@@ -101,3 +101,21 @@ test("assertUploadEndpointUnchanged allows same-host reconnect with new connecti
     map,
   ));
 });
+
+test("carried endpoint pin rejects a retargeted tab mid multi-folder upload", () => {
+  // Simulate paste-time pin for host-a; later folder call resolves tab on host-b.
+  const mapAtPaste = new Map<string, string>([["conn-1", "key-a"]]);
+  const pastePin = captureUploadEndpoint(
+    pane({ id: "tab-1", connectionId: "conn-1", hostId: "host-a" }).connection!,
+    mapAtPaste,
+  );
+  const mapAfterRetarget = new Map<string, string>([["conn-2", "key-b"]]);
+  assert.throws(
+    () => assertUploadEndpointUnchanged(
+      pane({ id: "tab-1", connectionId: "conn-2", hostId: "host-b" }).connection!,
+      pastePin,
+      mapAfterRetarget,
+    ),
+    /Upload target changed/,
+  );
+});
