@@ -292,16 +292,14 @@ const getSftpChannel = async (client, options = {}) => {
 
   // Deduplicate per-client: avoid concurrent channel re-open attempts
   if (client._reopeningPromise) {
-    try {
-      return await client._reopeningPromise;
-    } catch {
-      return null;
-    }
+    return waitForSharedSftpReopen(client._reopeningPromise, options.signal || null);
   }
 
-  client._reopeningPromise = (async () => {
+  const reopeningPromise = (async () => {
     try {
-      const reopened = await tryOpenSftpChannel(client, options);
+      // Reopening belongs to the connection, not to whichever transfer reached
+      // it first. Each waiter cancels only its own wait below.
+      const reopened = await tryOpenSftpChannel(client, { timeoutMs: options.timeoutMs });
       if (hasSftpChannelApi(reopened)) {
         client.sftp = reopened;
         return reopened;
@@ -311,12 +309,13 @@ const getSftpChannel = async (client, options = {}) => {
     }
     return null;
   })();
-
-  try {
-    return await client._reopeningPromise;
-  } finally {
-    client._reopeningPromise = null;
-  }
+  client._reopeningPromise = reopeningPromise;
+  void reopeningPromise.finally(() => {
+    if (client._reopeningPromise === reopeningPromise) {
+      client._reopeningPromise = null;
+    }
+  });
+  return waitForSharedSftpReopen(reopeningPromise, options.signal || null);
 };
 
 const requireSftpChannel = async (client, options = {}) => {
@@ -363,6 +362,30 @@ const mkdirAsync = (sftp, targetPath) =>
   new Promise((resolve, reject) => {
     sftp.mkdir(targetPath, (err) => (err ? reject(err) : resolve()));
   });
+
+const raceReadAgainstAbort = async (operation, signal) => {
+  throwIfAborted(signal);
+  if (!signal) return operation;
+  let onAbort;
+  const aborted = new Promise((_, reject) => {
+    onAbort = () => reject(createAbortError(signal, "SFTP directory setup was aborted"));
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([operation, aborted]);
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
+};
+
+const waitForSharedSftpReopen = async (reopeningPromise, signal) => {
+  try {
+    return await raceReadAgainstAbort(reopeningPromise, signal);
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    return null;
+  }
+};
 
 const rmdirAsync = (sftp, targetPath) =>
   new Promise((resolve, reject) => {
@@ -421,7 +444,9 @@ const normalizeRemoteDirPath = (dirPath) => {
   return path.posix.normalize(dirPath);
 };
 
-const ensureRemoteDirInternal = async (sftp, dirPath, encoding, signal = null) => {
+const ensureRemoteDirInternal = async (sftp, dirPath, encoding, options = {}) => {
+  const signal = options.signal || null;
+  throwIfAborted(signal);
   if (!dirPath || dirPath === ".") return;
   const normalized = normalizeRemoteDirPath(dirPath);
   if (!normalized || normalized === ".") return;
@@ -431,7 +456,7 @@ const ensureRemoteDirInternal = async (sftp, dirPath, encoding, signal = null) =
   const encodedFull = encodePath(normalized, encoding);
   throwIfAborted(signal);
   try {
-    const stats = await statAsync(sftp, encodedFull);
+    const stats = await raceReadAgainstAbort(statAsync(sftp, encodedFull), signal);
     throwIfAborted(signal);
     if (stats.isDirectory()) {
       return;
@@ -460,7 +485,7 @@ const ensureRemoteDirInternal = async (sftp, dirPath, encoding, signal = null) =
     }
     const encodedCurrent = encodePath(current, encoding);
     try {
-      const stats = await statAsync(sftp, encodedCurrent);
+      const stats = await raceReadAgainstAbort(statAsync(sftp, encodedCurrent), signal);
       throwIfAborted(signal);
       if (!stats.isDirectory()) {
         throw new Error(`Remote path is not a directory: ${current}`);
@@ -468,7 +493,9 @@ const ensureRemoteDirInternal = async (sftp, dirPath, encoding, signal = null) =
     } catch (err) {
       throwIfAborted(signal);
       if (err && (err.code === 2 || err.code === 4)) {
+        throwIfAborted(signal);
         await mkdirAsync(sftp, encodedCurrent);
+        throwIfAborted(signal);
         continue;
       }
       throw err;
@@ -533,16 +560,18 @@ const ensureRemoteDirForSession = async (sftpId, dirPath, requestedEncoding, opt
 
   const encoding = resolveEncodingForRequest(sftpId, requestedEncoding);
   const signal = options.signal || null;
-  throwIfAborted(signal);
   const sftp = await requireSftpChannel(client, { signal });
+  throwIfAborted(signal);
 
   // Always walk the path segment-by-segment. This lets sftp.stat() follow
   // symlinked directory segments before deciding whether the next mkdir is
   // valid, which avoids recursive mkdir failures on paths like /link/subdir.
+  const normalizedPath = await raceReadAgainstAbort(
+    normalizeRemotePathString(client, dirPath),
+    signal,
+  );
   throwIfAborted(signal);
-  const normalizedPath = await normalizeRemotePathString(client, dirPath);
-  throwIfAborted(signal);
-  await ensureRemoteDirInternal(sftp, normalizedPath, encoding, signal);
+  await ensureRemoteDirInternal(sftp, normalizedPath, encoding, { signal });
   return true;
 };
 

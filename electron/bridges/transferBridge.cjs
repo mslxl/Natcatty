@@ -425,6 +425,56 @@ function init(deps) {
   sftpClients = deps.sftpClients;
 }
 
+async function runTransferCancelablePreflight(transfer, operation) {
+  if (transfer.cancelled || transfer.signal?.aborted) {
+    throw new Error("Transfer cancelled");
+  }
+  let rejectCancellation;
+  const cancelled = new Promise((_, reject) => {
+    rejectCancellation = reject;
+  });
+  const previousAbort = transfer.abort;
+  const abortPreflight = () => {
+    try { previousAbort?.(); } finally {
+      rejectCancellation(new Error("Transfer cancelled"));
+    }
+  };
+  const signal = transfer.signal;
+  transfer.abort = abortPreflight;
+  signal?.addEventListener?.("abort", abortPreflight, { once: true });
+  try {
+    return await Promise.race([
+      Promise.resolve().then(operation),
+      cancelled,
+    ]);
+  } finally {
+    signal?.removeEventListener?.("abort", abortPreflight);
+    if (transfer.abort === abortPreflight) transfer.abort = previousAbort;
+  }
+}
+
+async function runTransferAbortableOperation(transfer, operation) {
+  if (transfer.cancelled || transfer.signal?.aborted) {
+    throw new Error("Transfer cancelled");
+  }
+  const controller = new AbortController();
+  const previousAbort = transfer.abort;
+  const abortOperation = () => {
+    try { previousAbort?.(); } finally {
+      controller.abort(new Error("Transfer cancelled"));
+    }
+  };
+  const signal = transfer.signal;
+  transfer.abort = abortOperation;
+  signal?.addEventListener?.("abort", abortOperation, { once: true });
+  try {
+    return await operation(controller.signal);
+  } finally {
+    signal?.removeEventListener?.("abort", abortOperation);
+    if (transfer.abort === abortOperation) transfer.abort = previousAbort;
+  }
+}
+
 function listTransferSftpIds(payload = {}) {
   return [...new Set(
     [payload.sourceSftpId, payload.targetSftpId].filter((id) => typeof id === "string" && id.length > 0),
@@ -2127,33 +2177,7 @@ async function startTransferNow(event, payload, onProgress) {
   transfer.leasedSftpIds = leasedSftpIds;
   const transferCreatedAt = Date.now();
 
-  const runCancelablePreflight = async (operation) => {
-    if (transfer.cancelled || transfer.signal?.aborted) {
-      throw new Error("Transfer cancelled");
-    }
-    let rejectCancellation;
-    const cancelled = new Promise((_, reject) => {
-      rejectCancellation = reject;
-    });
-    const previousAbort = transfer.abort;
-    const abortPreflight = () => {
-      try { previousAbort?.(); } finally {
-        rejectCancellation(new Error("Transfer cancelled"));
-      }
-    };
-    const signal = transfer.signal;
-    transfer.abort = abortPreflight;
-    signal?.addEventListener?.("abort", abortPreflight, { once: true });
-    try {
-      return await Promise.race([
-        Promise.resolve().then(operation),
-        cancelled,
-      ]);
-    } finally {
-      signal?.removeEventListener?.("abort", abortPreflight);
-      if (transfer.abort === abortPreflight) transfer.abort = previousAbort;
-    }
-  };
+  const runCancelablePreflight = (operation) => runTransferCancelablePreflight(transfer, operation);
 
   // ── Progress/speed tracking ──────────────────────────────────────────────
   // Keep progress monotonic and compute speed from a strict sliding window.
@@ -2360,11 +2384,11 @@ async function startTransferNow(event, payload, onProgress) {
 
       const dir = path.dirname(targetPath).replace(/\\/g, '/');
       try {
-        await runCancelablePreflight(() => ensureRemoteDirForSession(
+        await runTransferAbortableOperation(transfer, (signal) => ensureRemoteDirForSession(
           targetSftpId,
           dir,
           targetEncoding,
-          { signal: transfer.signal },
+          { signal },
         ));
       } catch (error) {
         if (transfer.cancelled || transfer.signal?.aborted) throw new Error("Transfer cancelled");
@@ -2616,11 +2640,11 @@ async function startTransferNow(event, payload, onProgress) {
           try {
             const dir = path.dirname(targetPath).replace(/\\/g, '/');
             try {
-              await runCancelablePreflight(() => ensureRemoteDirForSession(
+              await runTransferAbortableOperation(transfer, (signal) => ensureRemoteDirForSession(
                 sourceSftpId,
                 dir,
                 targetEncoding || sourceEncoding,
-                { signal: transfer.signal },
+                { signal },
               ));
             } catch (error) {
               if (transfer.cancelled || transfer.signal?.aborted) throw new Error("Transfer cancelled");
@@ -2735,11 +2759,11 @@ async function startTransferNow(event, payload, onProgress) {
 
         const dir = path.dirname(targetPath).replace(/\\/g, '/');
         try {
-          await runCancelablePreflight(() => ensureRemoteDirForSession(
+          await runTransferAbortableOperation(transfer, (signal) => ensureRemoteDirForSession(
             targetSftpId,
             dir,
             targetEncoding,
-            { signal: transfer.signal },
+            { signal },
           ));
         } catch (error) {
           if (transfer.cancelled || transfer.signal?.aborted) throw new Error("Transfer cancelled");
@@ -3306,7 +3330,14 @@ async function sameHostCopyDirectory(event, payload) {
     // Ensure target directory itself exists (not just its parent),
     // so cp copies contents into it rather than creating a nested subdirectory.
     const targetDir = targetPath.replace(/\\/g, '/');
-    try { await ensureRemoteDirForSession(sftpId, targetDir, encoding); } catch { }
+    try {
+      await runTransferAbortableOperation(
+        transfer,
+        (signal) => ensureRemoteDirForSession(sftpId, targetDir, encoding, { signal }),
+      );
+    } catch (error) {
+      if (transfer.cancelled) throw new Error("Transfer cancelled");
+    }
 
     // Use "source/." to copy directory *contents* into target, preserving merge
     // semantics consistent with the recursive per-file transfer path.
