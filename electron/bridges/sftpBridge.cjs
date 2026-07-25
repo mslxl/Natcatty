@@ -855,6 +855,7 @@ async function promoteScpStagedUpload(
   expectedExisted,
   existingMode,
   assertCanPromote,
+  commitPromotion,
   signal,
 ) {
   const { getScpBackendForClient } = require("./sftpBridge/scpBackend.cjs");
@@ -880,6 +881,10 @@ async function promoteScpStagedUpload(
     assertCanPromote();
   }
 
+  // Promotion starts mutating the destination at the first rename. Mark the
+  // commit boundary before that point so a cancel arriving during either
+  // rename cannot be accepted and then reported after publication.
+  commitPromotion();
   let movedExisting = false;
   if (latest) {
     await backend.rename(targetPath, backupPath, { encoding });
@@ -924,6 +929,9 @@ async function runRemoteUploadTransaction(client, localPath, remotePath, options
   const assertCanPromote = typeof options?.assertCanPromote === "function"
     ? options.assertCanPromote
     : () => throwIfAborted(signal);
+  const commitPromotion = typeof options?.commitPromotion === "function"
+    ? options.commitPromotion
+    : () => {};
   const allowInPlaceFallback = options?.allowInPlaceFallback !== false;
   const preserveStageOnUploadError = options?.preserveStageOnUploadError === true;
   const { isScpModeClient, getScpBackendForClient } = require("./sftpBridge/scpBackend.cjs");
@@ -937,6 +945,7 @@ async function runRemoteUploadTransaction(client, localPath, remotePath, options
   delete fastPutOptions.encoding;
   delete fastPutOptions.uploadFile;
   delete fastPutOptions.assertCanPromote;
+  delete fastPutOptions.commitPromotion;
   delete fastPutOptions.allowInPlaceFallback;
   delete fastPutOptions.stagedPath;
   delete fastPutOptions.backupPath;
@@ -962,6 +971,10 @@ async function runRemoteUploadTransaction(client, localPath, remotePath, options
   const uploadDirect = async () => {
     await uploadTo(remotePath, encodedPath, false);
     assertCanPromote();
+    // An in-place upload has already published its bytes and cannot be rolled
+    // back. Stop accepting cancellation before the final size verification so
+    // a late request cannot report the completed overwrite as cancelled.
+    commitPromotion();
     // SCP stat reports the link node itself. After an in-place symlink upload,
     // it cannot reliably verify the followed target's byte count.
     if (Number.isFinite(expectedSize) && expectedSize >= 0 && !(scpMode && plan.writeInPlace)) {
@@ -1045,6 +1058,7 @@ async function runRemoteUploadTransaction(client, localPath, remotePath, options
         plan.destinationExisted,
         plan.existingMode,
         assertCanPromote,
+        commitPromotion,
         signal,
       );
     } else {
@@ -1061,6 +1075,7 @@ async function runRemoteUploadTransaction(client, localPath, remotePath, options
         bestEffort: false,
       });
       assertCanPromote();
+      commitPromotion();
       await renameRemotePath(client, encodedStagedPath, encodedPath, encodedBackupPath, {
         stagePath: stagedLogical,
         backupPath: backupLogical,

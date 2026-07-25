@@ -39,6 +39,310 @@ function createFastSftp(overrides) {
   return sftp;
 }
 
+test("SFTP upload ignores cancellation after remote promotion is committed", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-sftp-commit-cancel-"));
+  t.after(async () => fs.promises.rm(tempDir, { recursive: true, force: true }));
+  const localPath = path.join(tempDir, "payload.bin");
+  const payload = Buffer.from("payload");
+  await fs.promises.writeFile(localPath, payload);
+  const targetPath = "/tmp/payload.bin";
+  const remoteFiles = new Map([[targetPath, Buffer.from("old payload")]]);
+
+  let releaseRename;
+  let markRenameStarted;
+  const renameStarted = new Promise((resolve) => { markRenameStarted = resolve; });
+  let directRenameAttempted = false;
+  const fastSftp = createFastSftp({
+    lstat(remotePath, callback) {
+      const key = String(remotePath);
+      if (!remoteFiles.has(key)) {
+        const error = new Error("ENOENT");
+        error.code = 2;
+        callback(error);
+        return;
+      }
+      callback(null, {
+        size: remoteFiles.get(key).length,
+        mode: 0o100644,
+        isDirectory: () => false,
+        isSymbolicLink: () => false,
+      });
+    },
+    open(remotePath, _flags, callback) {
+      const key = String(remotePath);
+      remoteFiles.set(key, Buffer.alloc(payload.length));
+      callback(null, Buffer.from(key));
+    },
+    write(handle, buffer, offset, length, position, callback) {
+      const key = handle.toString();
+      buffer.copy(remoteFiles.get(key), position, offset, offset + length);
+      setImmediate(() => callback(null));
+    },
+    close(_handle, callback) {
+      callback(null);
+    },
+  });
+  const client = {
+    __netcattySudoMode: true,
+    sftp: fastSftp,
+    stat: async (remotePath) => {
+      const key = String(remotePath);
+      if (!remoteFiles.has(key)) {
+        const error = new Error("ENOENT");
+        error.code = 2;
+        throw error;
+      }
+      return { size: remoteFiles.get(key).length, isDirectory: false };
+    },
+    chmod: async () => {},
+    delete: async (remotePath) => { remoteFiles.delete(String(remotePath)); },
+    async rename(fromPath, toPath) {
+      const from = String(fromPath);
+      const to = String(toPath);
+      if (from.includes(".netcatty-upload-") && to === targetPath && !directRenameAttempted) {
+        directRenameAttempted = true;
+        throw new Error("atomic replace unavailable");
+      }
+      if (from.includes(".netcatty-upload-") && to === targetPath) {
+        markRenameStarted();
+        await new Promise((resolve) => { releaseRename = resolve; });
+      }
+      remoteFiles.set(to, remoteFiles.get(from));
+      remoteFiles.delete(from);
+    },
+  };
+  transferBridge.init({ sftpClients: new Map([["target", client]]) });
+  const sender = createSender();
+  const transferId = "sftp-commit-cancel";
+  const running = transferBridge.startTransfer({ sender }, {
+    transferId,
+    sourcePath: localPath,
+    targetPath,
+    sourceType: "local",
+    targetType: "sftp",
+    targetSftpId: "target",
+    totalBytes: payload.length,
+    resumable: false,
+  });
+
+  await renameStarted;
+  await transferBridge.cancelTransfer(null, { transferId });
+  releaseRename();
+  const result = await running;
+
+  assert.equal(result.error, undefined);
+  assert.deepEqual(remoteFiles.get(targetPath), payload);
+  assert.equal([...remoteFiles.keys()].some((key) => key.includes(".netcatty-upload-")), false);
+  assert.equal([...remoteFiles.keys()].some((key) => key.includes(".netcatty-backup-")), false);
+  assert.equal(sender.sent.some((entry) => entry.channel === "netcatty:transfer:complete"), true);
+  assert.equal(sender.sent.some((entry) => entry.channel === "netcatty:transfer:cancelled"), false);
+});
+
+test("SCP upload ignores cancellation after remote promotion is committed", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-scp-commit-cancel-"));
+  t.after(async () => fs.promises.rm(tempDir, { recursive: true, force: true }));
+  const localPath = path.join(tempDir, "payload.bin");
+  const payload = Buffer.from("payload");
+  await fs.promises.writeFile(localPath, payload);
+  const targetPath = "/tmp/payload.bin";
+  const remoteFiles = new Map([[targetPath, Buffer.from("old payload")]]);
+
+  let releaseRename;
+  let markRenameStarted;
+  const renameStarted = new Promise((resolve) => { markRenameStarted = resolve; });
+  const backend = {
+    async mkdir() {},
+    async stat(remotePath) {
+      if (!remoteFiles.has(remotePath)) {
+        const error = new Error("No such file");
+        error.code = "ENOENT";
+        throw error;
+      }
+      return { type: "file", isDirectory: false, size: remoteFiles.get(remotePath).length };
+    },
+    async uploadFile(localSourcePath, remotePath, options = {}) {
+      remoteFiles.set(remotePath, await fs.promises.readFile(localSourcePath));
+      options.onProgress?.(payload.length, payload.length);
+    },
+    async rename(fromPath, toPath) {
+      if (fromPath === targetPath) {
+        markRenameStarted();
+        await new Promise((resolve) => { releaseRename = resolve; });
+      }
+      remoteFiles.set(toPath, remoteFiles.get(fromPath));
+      remoteFiles.delete(fromPath);
+    },
+    async remove(remotePath) { remoteFiles.delete(remotePath); },
+    async chmod() {},
+  };
+  const client = {
+    __netcattyFileProtocol: "scp",
+    __netcattyScpBackend: backend,
+  };
+  transferBridge.init({ sftpClients: new Map([["target", client]]) });
+  const sender = createSender();
+  const transferId = "scp-commit-cancel";
+  const running = transferBridge.startTransfer({ sender }, {
+    transferId,
+    sourcePath: localPath,
+    targetPath,
+    sourceType: "local",
+    targetType: "sftp",
+    targetSftpId: "target",
+    totalBytes: payload.length,
+    resumable: false,
+  });
+
+  await renameStarted;
+  await transferBridge.cancelTransfer(null, { transferId });
+  releaseRename();
+  const result = await running;
+
+  assert.equal(result.error, undefined);
+  assert.deepEqual(remoteFiles.get(targetPath), payload);
+  assert.equal([...remoteFiles.keys()].some((key) => key.includes(".netcatty-upload-")), false);
+  assert.equal([...remoteFiles.keys()].some((key) => key.includes(".netcatty-backup-")), false);
+  assert.equal(sender.sent.some((entry) => entry.channel === "netcatty:transfer:complete"), true);
+  assert.equal(sender.sent.some((entry) => entry.channel === "netcatty:transfer:cancelled"), false);
+});
+
+test("in-place upload ignores cancellation during final size verification", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-in-place-commit-cancel-"));
+  t.after(async () => fs.promises.rm(tempDir, { recursive: true, force: true }));
+  const localPath = path.join(tempDir, "payload.bin");
+  const payload = Buffer.from("payload");
+  await fs.promises.writeFile(localPath, payload);
+  const targetPath = "/tmp/link.bin";
+  let remote = Buffer.from("old payload");
+  let statCalls = 0;
+  let releaseFinalStat;
+  let markFinalStatStarted;
+  const finalStatStarted = new Promise((resolve) => { markFinalStatStarted = resolve; });
+  const fastSftp = createFastSftp({
+    lstat(_remotePath, callback) {
+      callback(null, {
+        size: remote.length,
+        mode: 0o120777,
+        isDirectory: () => false,
+        isSymbolicLink: () => true,
+      });
+    },
+    open(_remotePath, _flags, callback) {
+      remote = Buffer.alloc(payload.length);
+      callback(null, Buffer.from("remote-handle"));
+    },
+    write(_handle, buffer, offset, length, position, callback) {
+      buffer.copy(remote, position, offset, offset + length);
+      setImmediate(() => callback(null));
+    },
+    close(_handle, callback) {
+      callback(null);
+    },
+  });
+  const client = {
+    __netcattySudoMode: true,
+    sftp: fastSftp,
+    async stat() {
+      statCalls += 1;
+      if (statCalls === 1) {
+        markFinalStatStarted();
+        await new Promise((resolve) => { releaseFinalStat = resolve; });
+      }
+      return { size: remote.length };
+    },
+  };
+  transferBridge.init({ sftpClients: new Map([["target", client]]) });
+  const sender = createSender();
+  const transferId = "in-place-commit-cancel";
+  const running = transferBridge.startTransfer({ sender }, {
+    transferId,
+    sourcePath: localPath,
+    targetPath,
+    sourceType: "local",
+    targetType: "sftp",
+    targetSftpId: "target",
+    totalBytes: payload.length,
+    resumable: false,
+  });
+
+  await finalStatStarted;
+  await transferBridge.cancelTransfer(null, { transferId });
+  releaseFinalStat();
+  const result = await running;
+
+  assert.equal(result.error, undefined);
+  assert.deepEqual(remote, payload);
+  assert.equal(sender.sent.some((entry) => entry.channel === "netcatty:transfer:cancelled"), false);
+  assert.equal(sender.sent.some((entry) => (
+    entry.channel === "netcatty:transfer:progress"
+    && entry.payload.transferred === payload.length
+    && entry.payload.totalBytes === payload.length
+  )), true);
+  assert.equal(sender.sent.some((entry) => entry.channel === "netcatty:transfer:complete"), true);
+});
+
+test("in-place concurrent upload ignores cancellation while the remote handle closes", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-in-place-close-cancel-"));
+  t.after(async () => fs.promises.rm(tempDir, { recursive: true, force: true }));
+  const localPath = path.join(tempDir, "payload.bin");
+  const payload = Buffer.from("payload");
+  await fs.promises.writeFile(localPath, payload);
+  let remote = Buffer.from("old payload");
+  let releaseClose;
+  let markCloseStarted;
+  const closeStarted = new Promise((resolve) => { markCloseStarted = resolve; });
+  const fastSftp = createFastSftp({
+    lstat(_remotePath, callback) {
+      callback(null, {
+        size: remote.length,
+        mode: 0o120777,
+        isDirectory: () => false,
+        isSymbolicLink: () => true,
+      });
+    },
+    open(_remotePath, _flags, callback) {
+      remote = Buffer.alloc(payload.length);
+      callback(null, Buffer.from("remote-handle"));
+    },
+    write(_handle, buffer, offset, length, position, callback) {
+      buffer.copy(remote, position, offset, offset + length);
+      setImmediate(() => callback(null));
+    },
+    close(_handle, callback) {
+      markCloseStarted();
+      releaseClose = () => callback(null);
+    },
+  });
+  const client = {
+    __netcattySudoMode: true,
+    sftp: fastSftp,
+    stat: async () => ({ size: remote.length }),
+  };
+  transferBridge.init({ sftpClients: new Map([["target", client]]) });
+  const sender = createSender();
+  const transferId = "in-place-close-cancel";
+  const running = transferBridge.startTransfer({ sender }, {
+    transferId,
+    sourcePath: localPath,
+    targetPath: "/tmp/link.bin",
+    sourceType: "local",
+    targetType: "sftp",
+    targetSftpId: "target",
+    totalBytes: payload.length,
+    resumable: false,
+  });
+
+  await closeStarted;
+  await transferBridge.cancelTransfer(null, { transferId });
+  releaseClose();
+  const result = await running;
+
+  assert.equal(result.error, undefined);
+  assert.deepEqual(remote, payload);
+  assert.equal(sender.sent.some((entry) => entry.channel === "netcatty:transfer:cancelled"), false);
+  assert.equal(sender.sent.some((entry) => entry.channel === "netcatty:transfer:complete"), true);
+});
+
 test("resumable SFTP uploads use the configured per-file request concurrency", async (t) => {
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-test-"));
   t.after(async () => {
@@ -3133,7 +3437,10 @@ test("server-to-server SCP fallback uses the followed symlink content size", asy
       return { fileSize: payload.length, transferred: payload.length };
     },
   };
-  const remoteFiles = new Map();
+  const remoteFiles = new Map([[targetPath, Buffer.from("old target")]]);
+  let releaseFinalRename;
+  let markFinalRenameStarted;
+  const finalRenameStarted = new Promise((resolve) => { markFinalRenameStarted = resolve; });
   const missing = () => {
     const error = new Error("No such file");
     error.code = "ENOENT";
@@ -3151,6 +3458,10 @@ test("server-to-server SCP fallback uses the followed symlink content size", asy
     },
     async rename(from, to) {
       if (!remoteFiles.has(from)) throw missing();
+      if (from.includes(".netcatty-upload-") && to === targetPath) {
+        markFinalRenameStarted();
+        await new Promise((resolve) => { releaseFinalRename = resolve; });
+      }
       remoteFiles.set(to, remoteFiles.get(from));
       remoteFiles.delete(from);
     },
@@ -3172,7 +3483,7 @@ test("server-to-server SCP fallback uses the followed symlink content size", asy
   });
 
   const sender = createSender();
-  const result = await transferBridge.startTransfer({ sender }, {
+  const running = transferBridge.startTransfer({ sender }, {
     transferId,
     sourcePath,
     targetPath,
@@ -3183,9 +3494,17 @@ test("server-to-server SCP fallback uses the followed symlink content size", asy
     resumable: false,
     sameHost: false,
   });
+  await finalRenameStarted;
+  await transferBridge.cancelTransfer(null, { transferId });
+  releaseFinalRename();
+  const result = await running;
 
   assert.equal(result.error, undefined, result.error);
   assert.deepEqual(remoteFiles.get(targetPath), payload);
+  assert.equal([...remoteFiles.keys()].some((key) => key.includes(".netcatty-upload-")), false);
+  assert.equal([...remoteFiles.keys()].some((key) => key.includes(".netcatty-backup-")), false);
+  assert.equal(sender.sent.some((entry) => entry.channel === "netcatty:transfer:cancelled"), false);
+  assert.equal(sender.sent.some((entry) => entry.channel === "netcatty:transfer:complete"), true);
   const progress = sender.sent
     .filter((entry) => entry.channel === "netcatty:transfer:progress")
     .map((entry) => entry.payload);

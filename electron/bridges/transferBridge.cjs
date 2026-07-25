@@ -765,7 +765,16 @@ async function uploadViaFastPut(localPath, remotePath, sftp, fileSize, transfer,
  * (#2449). When every pipelined strategy fails, the transfer fails with the
  * last underlying error (Electerm-style: fail closed, do not crawl).
  */
-async function uploadFile(localPath, remotePath, client, fileSize, transfer, sendProgress, encoding = "utf-8") {
+async function uploadFile(
+  localPath,
+  remotePath,
+  client,
+  fileSize,
+  transfer,
+  sendProgress,
+  encoding = "utf-8",
+  onBytesCommitted = null,
+) {
   if (isScpModeClient(client)) {
     transfer.pauseSupported = false;
     transfer.pauseUnavailableReason = "Pause is unavailable for SCP transfers";
@@ -778,6 +787,7 @@ async function uploadFile(localPath, remotePath, client, fileSize, transfer, sen
       signal: transfer.signal,
       onProgress: (transferred, total) => sendProgress(transferred, total || fileSize),
     });
+    onBytesCommitted?.();
     return;
   }
 
@@ -871,7 +881,7 @@ async function uploadFile(localPath, remotePath, client, fileSize, transfer, sen
           fileSize,
           transfer,
           sendProgress,
-          { disposeChannel: true },
+          { disposeChannel: true, onBytesCommitted },
         );
         concurrentIsolatedOk = true;
       } catch (err) {
@@ -954,6 +964,7 @@ async function uploadFile(localPath, remotePath, client, fileSize, transfer, sen
         );
       }
       if (fastPutOk) {
+        onBytesCommitted?.();
         await finishSuccessfulUpload();
         return;
       }
@@ -977,7 +988,7 @@ async function uploadFile(localPath, remotePath, client, fileSize, transfer, sen
         fileSize,
         transfer,
         sendProgress,
-        { disposeChannel: false },
+        { disposeChannel: false, onBytesCommitted },
       );
       sharedOk = true;
     } catch (err) {
@@ -1457,7 +1468,7 @@ async function runPausableConcurrentRanges({
 /**
  * Pipelined SFTP WRITE upload (same fanout as ssh2 fastPut).
  *
- * @param {{ disposeChannel?: boolean }} [options]
+ * @param {{ disposeChannel?: boolean, onBytesCommitted?: (() => void) | null }} [options]
  *   disposeChannel — when true (isolated channel), end the SFTP subsystem on
  *   cancel/finish. When false (shared browse session), never call sftp.end().
  */
@@ -1565,6 +1576,10 @@ async function uploadFileConcurrent(
         forceSettleOnError: disposeChannel,
       });
       if (channelError) throw channelError;
+      // Every remote WRITE has completed. In-place destinations are already
+      // published at this point, so stop accepting cancellation before source
+      // revalidation and handle cleanup; staged uploads pass no callback.
+      options.onBytesCommitted?.();
       if (initialSource) {
         const latestSource = await localHandle.stat();
         assertSourceMetadataUnchanged(initialSource, latestSource, fileSize);
@@ -2207,6 +2222,9 @@ async function startTransferNow(event, payload, onProgress) {
         assertCanPromote() {
           if (transfer.cancelled) throw new Error("Transfer cancelled");
         },
+        commitPromotion() {
+          transfer.completionCommitted = true;
+        },
         async uploadFile(encodedUploadPath, uploadTarget) {
           const uploadTargetPath = uploadTarget.logicalPath;
           const usesStage = uploadTarget.generatedStagePath === true;
@@ -2238,6 +2256,7 @@ async function startTransferNow(event, payload, onProgress) {
             transfer,
             sendProgress,
             resolvedTargetEncoding,
+            usesStage ? null : () => { transfer.completionCommitted = true; },
           );
         },
       });
@@ -2563,6 +2582,9 @@ async function startTransferNow(event, payload, onProgress) {
           assertCanPromote() {
             if (transfer.cancelled) throw new Error("Transfer cancelled");
           },
+          commitPromotion() {
+            transfer.completionCommitted = true;
+          },
           async uploadFile(encodedUploadPath, uploadTarget) {
             const uploadTargetPath = uploadTarget.logicalPath;
             const usesStage = uploadTarget.generatedStagePath === true;
@@ -2605,6 +2627,7 @@ async function startTransferNow(event, payload, onProgress) {
               transfer,
               uploadProgress,
               resolvedTargetEncoding,
+              usesStage ? null : () => { transfer.completionCommitted = true; },
             );
           },
         });
