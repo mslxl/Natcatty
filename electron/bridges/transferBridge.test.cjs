@@ -1521,6 +1521,84 @@ test("pause stores a lightweight source identity without full-file hashing", asy
   assert.equal((await running).error, undefined);
 });
 
+test("remote pause identity reads modifyTime from session-backed stat", async (t) => {
+  // Session-backed client.stat() returns modifyTime (ms), not mtime/mtimeMs.
+  // Ignoring it collapses every remote identity to meta:<size>:0 and lets a
+  // same-size rewrite with an unchanged 256 KiB prefix resume unsafely.
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-modifytime-id-"));
+  t.after(async () => {
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const payload = Buffer.from("abcdef");
+  const modifyTimeMs = 1_700_000_000_000;
+  let currentModifyTime = modifyTimeMs;
+  const source = new PassThrough();
+  let readStreamCalls = 0;
+  const client = {
+    sftp: createFastSftp({
+      createReadStream() {
+        readStreamCalls += 1;
+        return readStreamCalls === 1 ? source : Readable.from(payload);
+      },
+    }),
+    stat() {
+      return Promise.resolve({ size: payload.length, modifyTime: currentModifyTime });
+    },
+    client: { sftp(callback) { callback(new Error("isolated channel unavailable")); } },
+  };
+  transferBridge.init({ sftpClients: new Map([["source", client]]) });
+
+  const sender = createSender();
+  const targetPath = path.join(tempDir, "target.bin");
+  const running = transferBridge.startTransfer(
+    { sender },
+    {
+      transferId: "download-modifytime-id",
+      sourcePath: "/tmp/source.bin",
+      targetPath,
+      sourceType: "sftp",
+      targetType: "local",
+      sourceSftpId: "source",
+      totalBytes: payload.length,
+      resumable: true,
+    },
+  );
+
+  const readyDeadline = Date.now() + 1000;
+  while (source.listenerCount("data") === 0 && Date.now() < readyDeadline) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.ok(source.listenerCount("data") > 0);
+  source.write(payload.subarray(0, 3));
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const paused = await transferBridge.pauseTransfer(null, { transferId: "download-modifytime-id" });
+  assert.equal(paused.success, true);
+  assert.equal(paused.sourceFingerprint, `meta:${payload.length}:${modifyTimeMs}`);
+
+  await transferBridge.cancelTransfer(null, { transferId: "download-modifytime-id" });
+  assert.match((await running).error || "", /cancel/i);
+
+  currentModifyTime = modifyTimeMs + 1000;
+  const restarted = await transferBridge.startTransfer(
+    { sender: createSender() },
+    {
+      transferId: "download-modifytime-id-resume",
+      sourcePath: "/tmp/source.bin",
+      targetPath,
+      sourceType: "sftp",
+      targetType: "local",
+      sourceSftpId: "source",
+      totalBytes: payload.length,
+      resumable: true,
+      checkpointBytes: 3,
+      sourceFingerprint: paused.sourceFingerprint,
+    },
+  );
+  assert.match(restarted.error || "", /source file has changed/i);
+});
+
 test("failed resumable upload opens close their isolated channel", async (t) => {
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-upload-open-fail-"));
   t.after(async () => {

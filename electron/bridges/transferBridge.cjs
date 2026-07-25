@@ -203,8 +203,10 @@ async function computeSourceIdentityLite({ sourceType, sourcePath, sourceSftpId,
     ? await getScpBackendForClient(client).stat(sourcePath, { encoding: sourceEncoding })
     : await client.stat(encodePathForSession(sourceSftpId, sourcePath, sourceEncoding));
   const size = Math.max(0, Number(attrs?.size) || 0);
-  const mtimeRaw = attrs?.mtimeMs ?? attrs?.mtime;
-  // ssh2 often reports mtime in whole seconds.
+  // Session-backed SFTP and SCP adapters expose modifyTime (ms). Raw ssh2
+  // attrs use mtime (seconds). Prefer mtimeMs when present.
+  const mtimeRaw = attrs?.mtimeMs ?? attrs?.modifyTime ?? attrs?.mtime;
+  // ssh2 often reports mtime in whole seconds; modifyTime is already ms.
   const mtime = Number.isFinite(Number(mtimeRaw))
     ? Math.trunc(Number(mtimeRaw) > 1e12 ? Number(mtimeRaw) : Number(mtimeRaw) * 1000)
     : 0;
