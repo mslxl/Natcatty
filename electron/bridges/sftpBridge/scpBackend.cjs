@@ -365,7 +365,11 @@ function createScpBackend(deps = {}) {
     // Always use a fresh size for the SCP wire header so a shrinking/growing
     // file between enqueue and open cannot desync the remote scp -t peer.
     const st = await fsModule.promises.stat(localPath);
-    const fileSize = st.size;
+    const hasProvidedReadStream = typeof options.openReadStream === "function";
+    const fileSize = hasProvidedReadStream ? Number(options.fileSize) : st.size;
+    if (!Number.isSafeInteger(fileSize) || fileSize < 0) {
+      throw new Error("Verified SCP uploads require a valid file size");
+    }
     const mode = options.mode != null ? options.mode : (st.mode & 0o777);
     const transfer = options.transfer || null;
     const onProgress = options.onProgress || null;
@@ -416,8 +420,13 @@ function createScpBackend(deps = {}) {
       // mid-stream remote error/cancel does not leave an unhandled rejection.
       const finalAck = waitForAck(stream, transfer, signal);
       let activeReadStream = null;
+      let activeReadCompletion = Promise.resolve();
       const streamDone = new Promise((resolve, reject) => {
-        const readStream = fsModule.createReadStream(localPath, { highWaterMark: 256 * 1024 });
+        const openedReadStream = hasProvidedReadStream
+          ? options.openReadStream()
+          : fsModule.createReadStream(localPath, { highWaterMark: 256 * 1024 });
+        const readStream = openedReadStream?.stream || openedReadStream;
+        activeReadCompletion = Promise.resolve(openedReadStream?.completed);
         activeReadStream = readStream;
         if (transfer) transfer.readStream = readStream;
 
@@ -439,6 +448,10 @@ function createScpBackend(deps = {}) {
             finish(new Error("Transfer cancelled"));
             return;
           }
+          if (transferred + chunk.length > fileSize) {
+            finish(new Error("Verified SCP upload stream exceeded its declared size"));
+            return;
+          }
           const ok = stream.write(chunk);
           transferred += chunk.length;
           if (typeof onProgress === "function") {
@@ -451,6 +464,12 @@ function createScpBackend(deps = {}) {
         });
         readStream.on("error", finish);
         readStream.on("end", () => {
+          if (transferred !== fileSize) {
+            finish(new Error(
+              `Verified SCP upload stream ended early: expected ${fileSize} bytes, got ${transferred}`,
+            ));
+            return;
+          }
           stream.write(Buffer.from([0x00]));
           finish(null);
         });
@@ -465,8 +484,10 @@ function createScpBackend(deps = {}) {
         void streamDone.catch(() => {});
         void finalAck.catch(() => {});
         try { activeReadStream?.destroy(); } catch { /* ignore */ }
+        await activeReadCompletion.catch(() => {});
         throw err;
       }
+      await activeReadCompletion;
       await closeStream(stream);
       if (transfer?.cancelled || signal?.aborted) throw new Error("Transfer cancelled");
       if (typeof onProgress === "function") onProgress(fileSize, fileSize);

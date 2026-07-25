@@ -6,6 +6,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { EventEmitter } = require("node:events");
+const { Readable } = require("node:stream");
 const {
   createScpBackend,
   createSshExecAdapters,
@@ -250,6 +251,119 @@ describe("scpBackend upload/download with fake scp streams", () => {
     assert.ok(joined.includes("hello-scp"));
     assert.ok(progressCalls.length > 0);
     assert.equal(progressCalls[progressCalls.length - 1][0], 9);
+  });
+
+  it("uploads from a caller-provided verified read stream", async () => {
+    const localFile = path.join(tmpDir, "local.txt");
+    fs.writeFileSync(localFile, "local-data");
+    const verifiedPayload = Buffer.from("safe-stream");
+    const written = [];
+    let opened = 0;
+    const backend = createScpBackend({
+      exec: async () => ({ stdout: "", stderr: "", code: 0 }),
+      execStream: async () => {
+        const stream = createMockStream();
+        setImmediate(() => stream.pushFromRemote(Buffer.from([SCP_OK])));
+        stream.on("_write", (buf) => {
+          written.push(Buffer.from(buf));
+          const text = buf.toString("utf8");
+          if (text.startsWith("C") || (buf.length === 1 && buf[0] === 0x00)) {
+            setImmediate(() => stream.pushFromRemote(Buffer.from([SCP_OK])));
+          }
+        });
+        return stream;
+      },
+    });
+
+    await backend.uploadFile(localFile, "/remote/local.txt", {
+      fileSize: verifiedPayload.length,
+      openReadStream() {
+        opened += 1;
+        return Readable.from([verifiedPayload]);
+      },
+    });
+
+    const joined = Buffer.concat(written);
+    assert.equal(opened, 1);
+    assert.equal(joined.includes(verifiedPayload), true);
+    assert.equal(joined.includes(Buffer.from("local-data")), false);
+  });
+
+  it("rejects verified read streams whose bytes do not match the declared size", async () => {
+    const localFile = path.join(tmpDir, "local.txt");
+    fs.writeFileSync(localFile, "local-data");
+
+    async function runCase(payload, expectedSize, message) {
+      const backend = createScpBackend({
+        exec: async () => ({ stdout: "", stderr: "", code: 0 }),
+        execStream: async () => {
+          const stream = createMockStream();
+          setImmediate(() => stream.pushFromRemote(Buffer.from([SCP_OK])));
+          stream.on("_write", (buf) => {
+            const text = buf.toString("utf8");
+            if (text.startsWith("C")) {
+              setImmediate(() => stream.pushFromRemote(Buffer.from([SCP_OK])));
+            }
+          });
+          return stream;
+        },
+      });
+      await assert.rejects(
+        backend.uploadFile(localFile, "/remote/local.txt", {
+          fileSize: expectedSize,
+          openReadStream: () => Readable.from([Buffer.from(payload)]),
+        }),
+        message,
+      );
+    }
+
+    await runCase("short", 10, /ended early/);
+    await runCase("too-many-bytes", 5, /exceeded its declared size/);
+  });
+
+  it("waits for verified read cleanup before returning a stream error", async () => {
+    const localFile = path.join(tmpDir, "local.txt");
+    fs.writeFileSync(localFile, "local-data");
+    let resolveCleanup;
+    const cleanup = new Promise((resolve) => { resolveCleanup = resolve; });
+    let uploadSettled = false;
+    const backend = createScpBackend({
+      exec: async () => ({ stdout: "", stderr: "", code: 0 }),
+      execStream: async () => {
+        const stream = createMockStream();
+        setImmediate(() => stream.pushFromRemote(Buffer.from([SCP_OK])));
+        stream.on("_write", (buf) => {
+          if (buf.toString("utf8").startsWith("C")) {
+            setImmediate(() => stream.pushFromRemote(Buffer.from([SCP_OK])));
+          } else if (buf.toString("utf8") === "local-data") {
+            setImmediate(() => {
+              stream.emit("error", new Error("remote write failed"));
+            });
+          }
+        });
+        return stream;
+      },
+    });
+    let uploadError = null;
+    const running = backend.uploadFile(localFile, "/remote/local.txt", {
+      fileSize: 10,
+      openReadStream: () => ({
+        stream: Readable.from([Buffer.from("local-data")]),
+        completed: cleanup,
+      }),
+    }).then(
+      () => { uploadSettled = true; },
+      (err) => {
+        uploadSettled = true;
+        uploadError = err;
+      },
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(uploadSettled, false);
+    resolveCleanup();
+    await running;
+    assert.match(uploadError?.message || "", /remote write failed/);
   });
 
   it("downloads via scp -f parser into a local file", async () => {

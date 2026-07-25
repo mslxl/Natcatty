@@ -6,6 +6,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
+const { Readable } = require("node:stream");
 const tempDirBridge = require("./tempDirBridge.cjs");
 const {
   encodePathForSession,
@@ -949,9 +950,11 @@ async function uploadFile(
     let scpSourcePath = localPath;
     let digestPath = null;
     let snapshotPath = null;
+    let openReadStream = null;
+    let initialSource = null;
     try {
       if (!transfer.sourceIsOwnedTemp) {
-        const initialSource = await fs.promises.stat(localPath);
+        initialSource = await fs.promises.stat(localPath);
         const snapshotId = crypto.createHash("sha256")
           .update(String(transfer.transferId || localPath))
           .digest("hex")
@@ -965,25 +968,45 @@ async function uploadFile(
           "snapshot.bin",
         );
         await createUploadDigestBaseline(localPath, digestPath, fileSize, transfer);
-        if (transfer.cancelled) throw new Error("Transfer cancelled");
+        if (isTransferCancelled(transfer)) throw new Error("Transfer cancelled");
         const sourceAfterBaseline = await fs.promises.stat(localPath);
         assertSourceMetadataUnchanged(initialSource, sourceAfterBaseline, fileSize);
-        await createVerifiedUploadSnapshot(
-          localPath,
-          snapshotPath,
-          digestPath,
-          fileSize,
-          transfer,
-        );
-        scpSourcePath = snapshotPath;
+        if (typeof onBytesCommitted === "function") {
+          await createVerifiedUploadSnapshot(
+            localPath,
+            snapshotPath,
+            digestPath,
+            fileSize,
+            transfer,
+          );
+          scpSourcePath = snapshotPath;
+        } else {
+          // Remote staging can safely discard a failed upload. Verify every
+          // source chunk as SCP reads it, then rescan before promotion, without
+          // requiring another full local copy of large files.
+          snapshotPath = null;
+          openReadStream = () => createVerifiedUploadReadStream(
+            localPath,
+            digestPath,
+            fileSize,
+            transfer,
+          );
+        }
       }
       await backend.uploadFile(scpSourcePath, remotePath, {
         fileSize,
         transfer,
         encoding,
         signal: transfer.signal,
+        openReadStream,
         onProgress: (transferred, total) => sendProgress(transferred, total || fileSize),
       });
+      if (isTransferCancelled(transfer)) throw new Error("Transfer cancelled");
+      if (digestPath && !snapshotPath) {
+        const latestSource = await fs.promises.stat(localPath);
+        assertSourceMetadataUnchanged(initialSource, latestSource, fileSize);
+        await verifyUploadDigestBaseline(localPath, digestPath, fileSize, transfer);
+      }
       onBytesCommitted?.();
       return;
     } finally {
@@ -1016,7 +1039,7 @@ async function uploadFile(
       fileSize,
       transfer,
     );
-    if (transfer.cancelled) throw new Error("Transfer cancelled");
+    if (isTransferCancelled(transfer)) throw new Error("Transfer cancelled");
     const sourceAfterBaseline = await fs.promises.stat(originalLocalPath);
     assertSourceMetadataUnchanged(initialSource, sourceAfterBaseline, fileSize);
   }
@@ -1368,6 +1391,10 @@ function createSourceContentChangedError() {
   return error;
 }
 
+function isTransferCancelled(transfer) {
+  return Boolean(transfer?.cancelled || transfer?.signal?.aborted);
+}
+
 const UPLOAD_DIGEST_SCAN_SIZE = TRANSFER_CHUNK_SIZE * 128;
 
 async function assertUploadDigestCapacity(digestPath, fileSize) {
@@ -1399,9 +1426,10 @@ async function verifyUploadDigestBaseline(sourcePath, digestPath, fileSize, tran
     let position = 0;
     let chunkIndex = 0;
     while (position < fileSize) {
-      if (transfer.cancelled) throw new Error("Transfer cancelled");
+      if (isTransferCancelled(transfer)) throw new Error("Transfer cancelled");
       const length = Math.min(buffer.length, fileSize - position);
       await readLocalRange(sourceHandle, buffer, position, length);
+      if (isTransferCancelled(transfer)) throw new Error("Transfer cancelled");
       const digestCount = Math.ceil(length / TRANSFER_CHUNK_SIZE);
       const expected = Buffer.allocUnsafe(digestCount * 32);
       await readLocalRange(digestHandle, expected, chunkIndex * 32, expected.length);
@@ -1438,9 +1466,10 @@ async function createUploadDigestBaseline(sourcePath, digestPath, fileSize, tran
     let position = 0;
     let digestPosition = 0;
     while (position < fileSize) {
-      if (transfer.cancelled) throw new Error("Transfer cancelled");
+      if (isTransferCancelled(transfer)) throw new Error("Transfer cancelled");
       const length = Math.min(buffer.length, fileSize - position);
       await readLocalRange(sourceHandle, buffer, position, length);
+      if (isTransferCancelled(transfer)) throw new Error("Transfer cancelled");
       const digestCount = Math.ceil(length / TRANSFER_CHUNK_SIZE);
       const digests = Buffer.allocUnsafe(digestCount * 32);
       for (let offset = 0, index = 0; offset < length; offset += TRANSFER_CHUNK_SIZE, index += 1) {
@@ -1494,7 +1523,7 @@ async function createVerifiedUploadSnapshot(
     const sourceStats = await sourceHandle.stat();
     let position = 0;
     while (position < fileSize) {
-      if (transfer.cancelled) throw new Error("Transfer cancelled");
+      if (isTransferCancelled(transfer)) throw new Error("Transfer cancelled");
       const length = Math.min(UPLOAD_DIGEST_SCAN_SIZE, fileSize - position);
       const buffer = await readVerifiedUploadRange(
         sourceHandle,
@@ -1526,6 +1555,44 @@ async function createVerifiedUploadSnapshot(
     await snapshotHandle?.close().catch(() => {});
     if (!completed) await fs.promises.rm(snapshotPath, { force: true }).catch(() => {});
   }
+}
+
+function createVerifiedUploadReadStream(
+  sourcePath,
+  digestPath,
+  fileSize,
+  transfer,
+) {
+  let resolveCompleted;
+  const completed = new Promise((resolve) => { resolveCompleted = resolve; });
+  const stream = Readable.from((async function* verifiedUploadChunks() {
+    let sourceHandle = null;
+    let digestHandle = null;
+    try {
+      sourceHandle = await fs.promises.open(sourcePath, "r");
+      digestHandle = await fs.promises.open(digestPath, "r");
+      let position = 0;
+      while (position < fileSize) {
+        if (isTransferCancelled(transfer)) throw new Error("Transfer cancelled");
+        const length = Math.min(UPLOAD_DIGEST_SCAN_SIZE, fileSize - position);
+        const chunk = await readVerifiedUploadRange(
+          sourceHandle,
+          digestHandle,
+          position,
+          length,
+          fileSize,
+        );
+        if (isTransferCancelled(transfer)) throw new Error("Transfer cancelled");
+        yield chunk;
+        position += length;
+      }
+    } finally {
+      await sourceHandle?.close().catch(() => {});
+      await digestHandle?.close().catch(() => {});
+      resolveCompleted();
+    }
+  })());
+  return { stream, completed };
 }
 
 async function readVerifiedUploadRange(
@@ -2526,7 +2593,7 @@ async function startTransferNow(event, payload, onProgress) {
         preserveStageOnUploadError: transfer.resumable,
         signal: transfer.signal,
         assertCanPromote() {
-          if (transfer.cancelled) throw new Error("Transfer cancelled");
+          if (isTransferCancelled(transfer)) throw new Error("Transfer cancelled");
         },
         commitPromotion() {
           transfer.completionCommitted = true;
@@ -2914,7 +2981,7 @@ async function startTransferNow(event, payload, onProgress) {
           preserveStageOnUploadError: transfer.resumable,
           signal: transfer.signal,
           assertCanPromote() {
-            if (transfer.cancelled) throw new Error("Transfer cancelled");
+            if (isTransferCancelled(transfer)) throw new Error("Transfer cancelled");
           },
           commitPromotion() {
             transfer.completionCommitted = true;

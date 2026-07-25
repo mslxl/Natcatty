@@ -227,8 +227,13 @@ test("SCP upload rejects transient source bytes before touching the old target",
       }
       return { type: "file", isDirectory: false, size: remoteFiles.get(remotePath).length };
     },
-    async uploadFile() {
+    async uploadFile(_sourcePath, _remotePath, options) {
       uploadCalls += 1;
+      const opened = options.openReadStream();
+      for await (const _chunk of opened.stream) {
+        // Consume the verified stream. The injected transient bytes must fail
+        // before the staged upload can be promoted.
+      }
     },
     async remove(remotePath) {
       removed.push(remotePath);
@@ -293,14 +298,14 @@ test("SCP upload rejects transient source bytes before touching the old target",
   );
   assert.equal(transientReadInjected, true);
   assert.match(result.error || "", /source content changed/i);
-  assert.equal(uploadCalls, 0);
+  assert.equal(uploadCalls, 1);
   assert.deepEqual(remoteFiles.get(targetPath), oldTarget);
   assert.ok(removed.some((remotePath) => remotePath.includes(".netcatty-upload-")));
   assert.equal(fs.existsSync(digestPath), false);
   assert.equal(fs.existsSync(snapshotPath), false);
 });
 
-test("SCP snapshot preserves executable mode for a new remote file", async (t) => {
+test("SCP staged streaming preserves executable mode without a local snapshot", async (t) => {
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-scp-executable-mode-"));
   t.after(async () => fs.promises.rm(tempDir, { recursive: true, force: true }));
   const localPath = path.join(tempDir, "tool.sh");
@@ -320,10 +325,14 @@ test("SCP snapshot preserves executable mode for a new remote file", async (t) =
       }
       return { type: "file", isDirectory: false, size: remoteFiles.get(remotePath).length };
     },
-    async uploadFile(sourcePath, remotePath) {
+    async uploadFile(sourcePath, remotePath, options) {
       uploadedSourcePath = sourcePath;
       uploadedMode = (await fs.promises.stat(sourcePath)).mode & 0o777;
-      remoteFiles.set(remotePath, await fs.promises.readFile(sourcePath));
+      assert.equal(options.fileSize, payload.length);
+      const opened = options.openReadStream();
+      const chunks = [];
+      for await (const chunk of opened.stream) chunks.push(chunk);
+      remoteFiles.set(remotePath, Buffer.concat(chunks));
     },
     async rename(fromPath, toPath) {
       remoteFiles.set(toPath, remoteFiles.get(fromPath));
@@ -352,10 +361,107 @@ test("SCP snapshot preserves executable mode for a new remote file", async (t) =
   });
 
   assert.equal(result.error, undefined);
-  assert.notEqual(uploadedSourcePath, localPath);
+  assert.equal(uploadedSourcePath, localPath);
   assert.equal(uploadedMode, 0o755);
   assert.deepEqual(remoteFiles.get(targetPath), payload);
-  await assert.rejects(fs.promises.stat(uploadedSourcePath), { code: "ENOENT" });
+  const digestId = crypto.createHash("sha256")
+    .update("scp-executable-mode")
+    .digest("hex")
+    .slice(0, 16);
+  const snapshotPath = tempDirBridge.getTransferTempFilePath(
+    `upload-source-${digestId}`,
+    "snapshot.bin",
+  );
+  assert.equal(fs.existsSync(snapshotPath), false);
+});
+
+test("SCP staged upload does not promote when only AbortSignal cancels final verification", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-scp-final-verify-cancel-"));
+  t.after(async () => fs.promises.rm(tempDir, { recursive: true, force: true }));
+  const localPath = path.join(tempDir, "payload.bin");
+  const payload = Buffer.alloc(16 * 1024, 91);
+  await fs.promises.writeFile(localPath, payload);
+  const targetPath = "/tmp/payload.bin";
+  const remoteFiles = new Map();
+  let renameCalls = 0;
+  const backend = {
+    async stat(remotePath) {
+      if (!remoteFiles.has(remotePath)) {
+        const error = new Error("No such file");
+        error.code = "ENOENT";
+        throw error;
+      }
+      return { type: "file", isDirectory: false, size: remoteFiles.get(remotePath).length };
+    },
+    async uploadFile(_sourcePath, remotePath, options) {
+      const opened = options.openReadStream();
+      const chunks = [];
+      for await (const chunk of opened.stream) chunks.push(chunk);
+      remoteFiles.set(remotePath, Buffer.concat(chunks));
+    },
+    async rename(fromPath, toPath) {
+      renameCalls += 1;
+      remoteFiles.set(toPath, remoteFiles.get(fromPath));
+      remoteFiles.delete(fromPath);
+    },
+    async remove(remotePath) {
+      remoteFiles.delete(remotePath);
+    },
+    async chmod() {},
+  };
+  const client = {
+    __netcattyFileProtocol: "scp",
+    __netcattyScpBackend: backend,
+  };
+  transferBridge.init({ sftpClients: new Map([["target", client]]) });
+
+  const realOpen = fs.promises.open.bind(fs.promises);
+  let sourceReadOpens = 0;
+  let releaseFinalVerify;
+  let markFinalVerifyStarted;
+  const finalVerifyStarted = new Promise((resolve) => { markFinalVerifyStarted = resolve; });
+  fs.promises.open = async (p, flags, ...args) => {
+    const handle = await realOpen(p, flags, ...args);
+    if (path.resolve(String(p)) !== path.resolve(localPath) || !String(flags).includes("r")) {
+      return handle;
+    }
+    sourceReadOpens += 1;
+    if (sourceReadOpens !== 4) return handle;
+    const realRead = handle.read.bind(handle);
+    handle.read = async (...readArgs) => {
+      markFinalVerifyStarted();
+      await new Promise((resolve) => { releaseFinalVerify = resolve; });
+      return realRead(...readArgs);
+    };
+    return handle;
+  };
+  t.after(() => {
+    fs.promises.open = realOpen;
+  });
+
+  const controller = new AbortController();
+  const transferId = "scp-final-verify-cancel";
+  const running = transferBridge.startTransfer({ sender: createSender() }, {
+    transferId,
+    sourcePath: localPath,
+    targetPath,
+    sourceType: "local",
+    targetType: "sftp",
+    targetSftpId: "target",
+    totalBytes: payload.length,
+    resumable: false,
+    abortSignal: controller.signal,
+  });
+
+  await finalVerifyStarted;
+  controller.abort();
+  releaseFinalVerify();
+  const result = await running;
+
+  assert.match(result.error || "", /cancel/i);
+  assert.equal(renameCalls, 0);
+  assert.equal(remoteFiles.has(targetPath), false);
+  assert.equal([...remoteFiles.keys()].some((key) => key.includes(".netcatty-upload-")), false);
 });
 
 test("in-place upload ignores cancellation during final size verification", async (t) => {
@@ -4207,6 +4313,68 @@ test("server-to-server upload resume uses its own checkpoint instead of overall 
   assert.equal(result.error, undefined, result.error);
   assert.deepEqual(remote, payload);
   assert.equal(promoted, true);
+});
+
+test("server-to-server staged upload does not promote after AbortSignal-only cancellation", async (t) => {
+  const transferId = `server-copy-signal-cancel-${crypto.randomUUID()}`;
+  const sourcePath = "/source/payload.bin";
+  const targetPath = "/target/payload.bin";
+  const payload = Buffer.from("abcdef");
+  const localStage = tempDirBridge.getTransferTempFilePath(transferId, "payload.bin");
+  await fs.promises.writeFile(localStage, payload);
+  t.after(async () => { await fs.promises.unlink(localStage).catch(() => {}); });
+
+  const controller = new AbortController();
+  let remote = Buffer.alloc(0);
+  let promoted = false;
+  const removed = [];
+  const targetSftp = createFastSftp({
+    open(_path, _flags, callback) {
+      callback(null, Buffer.from("target-handle"));
+    },
+    write(_handle, buffer, offset, length, position, callback) {
+      const chunk = buffer.subarray(offset, offset + length);
+      remote = Buffer.concat([
+        remote.subarray(0, position),
+        chunk,
+        remote.subarray(position + chunk.length),
+      ]);
+      callback(null);
+    },
+    close(_handle, callback) {
+      callback(null);
+      controller.abort();
+    },
+  });
+  const sourceClient = { sftp: createFastSftp({}), stat: async () => ({ size: payload.length }) };
+  const targetClient = {
+    __netcattySudoMode: true,
+    sftp: targetSftp,
+    stat: async () => ({ size: remote.length }),
+    rename: async () => { promoted = true; },
+    delete: async (remotePath) => { removed.push(String(remotePath)); },
+  };
+  transferBridge.init({ sftpClients: new Map([["source", sourceClient], ["target", targetClient]]) });
+
+  const result = await transferBridge.startTransfer({ sender: createSender() }, {
+    transferId,
+    sourcePath,
+    targetPath,
+    sourceType: "sftp",
+    targetType: "sftp",
+    sourceSftpId: "source",
+    targetSftpId: "target",
+    totalBytes: payload.length,
+    resumable: true,
+    resumeStage: "upload",
+    downloadCheckpointBytes: payload.length,
+    uploadCheckpointBytes: 0,
+    abortSignal: controller.signal,
+  });
+
+  assert.match(result.error || "", /cancel/i);
+  assert.equal(promoted, false);
+  assert.ok(removed.some((remotePath) => remotePath.includes(".netcatty-")));
 });
 
 test("server-to-server SCP fallback uses the followed symlink content size", async (t) => {
