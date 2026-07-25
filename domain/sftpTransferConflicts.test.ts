@@ -89,6 +89,55 @@ test("findActivePathConflict collides different sources writing one destination"
   );
 });
 
+test("findActivePathConflict treats local pane id and local sentinel as one endpoint", () => {
+  const tasks = [
+    base({
+      id: "dual-pane",
+      targetConnectionId: "right-1710000000000",
+      targetHostLabel: "Local",
+    }),
+  ];
+  assert.equal(
+    findActivePathConflict(tasks, {
+      id: "save-as",
+      targetPath: "/Users/me/Desktop/sing-box",
+      targetConnectionId: "local",
+    })?.id,
+    "dual-pane",
+  );
+  // Dual-pane enqueue normalizes local candidates to the "local" sentinel + label.
+  assert.equal(
+    findActivePathConflict(tasks, {
+      id: "other-pane",
+      targetPath: "/Users/me/Desktop/sing-box",
+      targetConnectionId: "local",
+      targetHostLabel: "Local",
+    })?.id,
+    "dual-pane",
+  );
+  // Two stored dual-pane local rows (ephemeral pane ids) still collide.
+  assert.equal(
+    findActivePathConflict(
+      [
+        ...tasks,
+        base({
+          id: "left-pane",
+          targetConnectionId: "left-1710000000001",
+          targetHostLabel: "Local",
+          status: "pending",
+        }),
+      ],
+      {
+        id: "left-pane",
+        targetPath: "/Users/me/Desktop/sing-box",
+        targetConnectionId: "left-1710000000001",
+        targetHostLabel: "Local",
+      },
+    )?.id,
+    "dual-pane",
+  );
+});
+
 test("interrupted is not an active path conflict (resume may claim the path)", () => {
   const tasks = [base({ id: "dead", status: "interrupted" })];
   assert.equal(

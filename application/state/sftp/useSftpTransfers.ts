@@ -787,6 +787,7 @@ export const useSftpTransfers = ({
       const usesLegacyScp = sourcePane.connection.fileProtocol === "scp" || targetPane.connection.fileProtocol === "scp";
 
       const newTasks: TransferTask[] = [];
+      const skippedResults: TransferResult[] = [];
 
       const canReusePaneMetadata = sourcePath === sourcePane.connection.currentPath;
       const fileEntryMap = canReusePaneMetadata
@@ -810,17 +811,59 @@ export const useSftpTransfers = ({
 
         const nextSourcePath = joinPath(sourcePath, file.name);
         const nextTargetPath = joinPath(targetPath, file.name);
+        const targetIsLocal = targetPane.connection!.isLocal;
         const pathTaken = findActivePathConflict(
           [...sftpTransferCenterStore.getSnapshot().tasks, ...transfersRef.current, ...newTasks],
           {
             id: "",
             targetPath: nextTargetPath,
-            targetConnectionId: targetPane.connection!.id,
-            targetHostId: targetPane.connection!.isLocal ? undefined : targetPane.connection!.hostId,
+            // Normalize local pane ids to the same sentinel downloadToLocal uses.
+            targetConnectionId: targetIsLocal ? "local" : targetPane.connection!.id,
+            targetHostId: targetIsLocal ? undefined : targetPane.connection!.hostId,
+            targetHostLabel: targetIsLocal ? "Local" : targetPane.connection!.hostLabel,
           },
         );
         if (pathTaken) {
-          logger.warn("[SFTP] skipping duplicate transfer path", pathConflictMessage(pathTaken));
+          const message = pathConflictMessage(pathTaken);
+          logger.warn("[SFTP] skipping duplicate transfer path", message);
+          const attentionTask: TransferTask = {
+            id: crypto.randomUUID(),
+            batchId,
+            fileName: file.name,
+            originalFileName: file.name,
+            sourcePath: nextSourcePath,
+            targetPath: nextTargetPath,
+            sourceConnectionId,
+            targetConnectionId: targetPane.connection!.id,
+            sourceHostId: sourcePane.connection!.isLocal ? undefined : sourcePane.connection!.hostId,
+            sourceHostLabel: sourcePane.connection!.isLocal ? "Local" : sourcePane.connection!.hostLabel,
+            targetHostId: targetIsLocal ? undefined : targetPane.connection!.hostId,
+            targetHostLabel: targetIsLocal ? "Local" : targetPane.connection!.hostLabel,
+            direction,
+            status: "attention",
+            totalBytes: fileSize,
+            transferredBytes: 0,
+            speed: 0,
+            startTime: Date.now(),
+            endTime: Date.now(),
+            isDirectory: file.isDirectory,
+            progressMode: file.isDirectory ? "files" : "bytes",
+            sourceLastModified,
+            origin: "manual",
+            error: message,
+            resumable: false,
+          };
+          newTasks.push(attentionTask);
+          const skipped: TransferResult = {
+            id: attentionTask.id,
+            fileName: attentionTask.fileName,
+            originalFileName: attentionTask.originalFileName ?? attentionTask.fileName,
+            status: "attention",
+          };
+          skippedResults.push(skipped);
+          if (options?.onTransferComplete) {
+            await options.onTransferComplete(skipped);
+          }
           continue;
         }
         newTasks.push({
@@ -854,13 +897,14 @@ export const useSftpTransfers = ({
 
       setTransfers((prev) => [...prev, ...newTasks]);
 
+      const runnableTasks = newTasks.filter((task) => task.status !== "attention");
       if (options?.onTransferComplete) {
-        for (const task of newTasks) {
+        for (const task of runnableTasks) {
           completionHandlersRef.current.set(task.id, options.onTransferComplete);
         }
       }
 
-      const results = await Promise.all(newTasks.map(async (task): Promise<TransferResult> => {
+      const results = await Promise.all(runnableTasks.map(async (task): Promise<TransferResult> => {
         const status = await processTransfer(task, sourcePane, targetPane, targetSide);
         return {
           id: task.id,
@@ -870,7 +914,7 @@ export const useSftpTransfers = ({
         };
       }));
 
-      return results;
+      return [...skippedResults, ...results];
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [getActivePane, getPaneByConnectionId, getTabByConnectionId, sftpSessionsRef, updateTab],
@@ -1699,6 +1743,7 @@ export const useSftpTransfers = ({
         id: "",
         targetPath: params.targetPath,
         targetConnectionId: "local" as const,
+        targetHostLabel: "Local" as const,
       };
       const centerConflict = findActivePathConflict(
         sftpTransferCenterStore.getSnapshot().tasks,
@@ -1710,8 +1755,30 @@ export const useSftpTransfers = ({
       );
       const conflict = centerConflict ?? localConflict;
       if (conflict) {
-        logger.warn("[SFTP] refusing duplicate download path", pathConflictMessage(conflict));
-        return conflict.status === "completed" ? "completed" : "attention";
+        const message = pathConflictMessage(conflict);
+        logger.warn("[SFTP] refusing duplicate download path", message);
+        // Visible row so the refusal is not only a console warning; callers that
+        // only toast on completed/failed still need an attention return value.
+        const attentionTask: TransferTask = {
+          ...createDirectDownloadTransferTask({
+            id: crypto.randomUUID(),
+            fileName: params.fileName,
+            sourcePath: params.sourcePath,
+            targetPath: params.targetPath,
+            sourceConnectionId: params.connectionId,
+            sourceHostId: params.sourceHostId,
+            sourceHostLabel: params.sourceHostLabel,
+            totalBytes: params.totalBytes ?? 0,
+            isDirectory: params.isDirectory,
+          }),
+          status: "attention",
+          error: message,
+          endTime: Date.now(),
+          speed: 0,
+          resumable: false,
+        };
+        setTransfers((prev) => [...prev, attentionTask]);
+        return "attention";
       }
 
       const task = createDirectDownloadTransferTask({

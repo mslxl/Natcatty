@@ -11,18 +11,39 @@ export const SFTP_PATH_CONFLICT_ACTIVE_STATUSES: ReadonlySet<TransferTask["statu
 
 type DestinationRef = Pick<
   TransferTask,
-  "targetPath" | "targetConnectionId" | "targetHostId" | "targetConnectionKey"
+  "targetPath" | "targetConnectionId" | "targetHostId" | "targetConnectionKey" | "targetHostLabel"
 >;
+
+/**
+ * Local filesystem destinations share one identity: Save As / downloadToLocal
+ * use the `"local"` sentinel, while dual-pane transfers store an ephemeral pane
+ * connection id with targetHostLabel "Local". Treat both as the same endpoint so
+ * concurrent writers to one absolute path still conflict.
+ */
+export function isLocalTransferDestination(ref: DestinationRef): boolean {
+  if (ref.targetConnectionId === "local" || ref.targetConnectionKey === "local") {
+    return true;
+  }
+  // Dual-pane local rows: labeled Local, no remote host/key, pane connection id.
+  return ref.targetHostLabel === "Local" && !ref.targetHostId && !ref.targetConnectionKey;
+}
 
 /**
  * Stable destination endpoint identity. Prefer connection key / host id so two
  * sessions to the same host still collide; fall back to connection id (covers
- * the local sentinel and single-session remotes).
+ * the local sentinel and single-session remotes). Local FS destinations are
+ * normalized so pane id and `"local"` compare equal.
  */
 export function sameTransferDestinationEndpoint(
   a: DestinationRef,
   b: DestinationRef,
 ): boolean {
+  if (isLocalTransferDestination(a) && isLocalTransferDestination(b)) {
+    return true;
+  }
+  if (isLocalTransferDestination(a) || isLocalTransferDestination(b)) {
+    return false;
+  }
   if (a.targetConnectionKey && b.targetConnectionKey) {
     return a.targetConnectionKey === b.targetConnectionKey;
   }

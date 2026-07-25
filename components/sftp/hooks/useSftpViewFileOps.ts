@@ -452,6 +452,8 @@ export const useSftpViewFileOps = ({
               toast.success(`${t("sftp.context.download")}: ${file.name}`, "SFTP");
             } else if (status === "failed") {
               toast.error(`${t("sftp.error.downloadFailed")}: ${file.name}`, "SFTP");
+            } else if (status === "attention") {
+              toast.error(`${file.name}: another transfer for this path is already in progress`, "SFTP");
             }
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : t("sftp.error.downloadFailed");
@@ -488,6 +490,8 @@ export const useSftpViewFileOps = ({
           toast.success(`${t("sftp.context.download")}: ${file.name}`, "SFTP");
         } else if (status === "failed") {
           toast.error(`${t("sftp.error.downloadFailed")}: ${file.name}`, "SFTP");
+        } else if (status === "attention") {
+          toast.error(`${file.name}: another transfer for this path is already in progress`, "SFTP");
         }
       } catch (e) {
         logger.error("[SftpView] Failed to download file:", e);
@@ -576,6 +580,8 @@ export const useSftpViewFileOps = ({
             toast.success(`${t("sftp.context.download")}: ${file.name}`, "SFTP");
           } else if (status === "failed") {
             toast.error(`${t("sftp.error.downloadFailed")}: ${file.name}`, "SFTP");
+          } else if (status === "attention") {
+            toast.error(`${file.name}: another transfer for this path is already in progress`, "SFTP");
           }
         } catch (e) {
           logger.error("[SftpView] Failed to download file:", e);
