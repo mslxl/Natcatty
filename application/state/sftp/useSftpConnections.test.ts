@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import {
   createPinnedReconnectSideResolver,
   openSftpWithSessionPreference,
+  rejectHostKeyVerificationRequest,
   resolvePinnedReconnectSide,
 } from "./useSftpConnections.ts";
 
@@ -101,6 +102,19 @@ test("resolvePinnedReconnectSide follows a tab moved to the other side", () => {
     () => resolvePinnedReconnectSide("left", "gone", [], []),
     /SFTP tab is no longer available/,
   );
+});
+
+test("rejectHostKeyVerificationRequest rejects an orphaned verification", () => {
+  const responses: Array<[string, boolean, boolean]> = [];
+
+  rejectHostKeyVerificationRequest({
+    respondHostKeyVerification: async (requestId, accept, addToKnownHosts) => {
+      responses.push([requestId, accept, addToKnownHosts]);
+      return { success: true };
+    },
+  }, "hostkey-1");
+
+  assert.deepEqual(responses, [["hostkey-1", false, false]]);
 });
 
 test("pinned reconnect side resolver follows moves across async boundaries", async () => {

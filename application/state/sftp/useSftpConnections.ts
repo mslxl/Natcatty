@@ -75,6 +75,13 @@ export async function openSftpWithSessionPreference({
   return bridge.openSftp(openOptions);
 }
 
+export function rejectHostKeyVerificationRequest(
+  bridge: Partial<Pick<NetcattyBridge, "respondHostKeyVerification">> | null | undefined,
+  requestId: string,
+): void {
+  void bridge?.respondHostKeyVerification?.(requestId, false, false);
+}
+
 /**
  * Pinned reconnects must follow a tab across left/right moves. Callers may still
  * pass the side captured at upload start; resolve the tab's live side instead.
@@ -226,6 +233,7 @@ export const useSftpConnections = ({
           rightTabsRef.current.tabs,
         );
       } catch {
+        rejectHostKeyVerificationRequest(netcattyBridge.get(), request.requestId);
         return;
       }
       updateTab(activeSide, activeSession.tabId, (prev) => ({
