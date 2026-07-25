@@ -417,7 +417,7 @@ jobs:
 
       - name: Hand off needs-info replies after daily limit
         if: steps.prepare.outputs.rate_limited == 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           ISSUE_NUMBER: ${{ steps.prepare.outputs.issue_number }}
           PENDING_IDS: ${{ steps.prepare.outputs.pending_ids }}
@@ -617,7 +617,7 @@ jobs:
 
       - name: Upload classification research
         if: steps.prepare.outputs.should_run == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: issue-research-${{ github.run_id }}
           path: |
@@ -706,7 +706,7 @@ jobs:
 
       - name: Hand off when issue classification fails
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           ISSUE_NUMBER: ${{ needs.route.outputs.issue_number }}
           TRIGGER_COMMENT_ID: ${{ needs.route.outputs.trigger_comment_id }}
@@ -897,7 +897,7 @@ jobs:
       FOLLOWUP_DAILY_LIMIT: ${{ vars.CURSOR_FOLLOWUP_DAILY_LIMIT || '20' }}
     steps:
       - name: Checkout current work
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.route.outputs.pull_number != '' && format('refs/pull/{0}/head', needs.route.outputs.pull_number) || github.event.repository.default_branch }}
           fetch-depth: 0
@@ -918,7 +918,7 @@ jobs:
 
       - name: Prepare follow-up context
         id: prepare
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           github-token: ${{ secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
           script: |
@@ -948,7 +948,7 @@ jobs:
 
       - name: Hand off after daily follow-up limit
         if: steps.prepare.outputs.rate_limited == 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           PENDING_IDS: ${{ steps.prepare.outputs.pending_ids }}
         with:
@@ -1004,7 +1004,7 @@ jobs:
 
       - name: Pause linked pull request during follow-up review
         if: steps.prepare.outputs.should_run == 'true' && steps.prepare.outputs.has_pull == 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           github-token: ${{ secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
           script: |
@@ -1035,7 +1035,7 @@ jobs:
 
       - name: Setup Node
         if: steps.prepare.outputs.should_run == 'true' && steps.prepare.outputs.has_pull == 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -1252,7 +1252,7 @@ jobs:
       - name: Parse follow-up decision
         if: steps.prepare.outputs.should_run == 'true'
         id: decision
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           HAS_PULL: ${{ steps.prepare.outputs.has_pull }}
           HAS_CHANGES: ${{ steps.changes.outputs.present }}
@@ -1383,7 +1383,7 @@ jobs:
 
       - name: Upload follow-up patch
         if: steps.patch.outputs.should_publish == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: issue-followup-${{ github.run_id }}
           path: |
@@ -1395,7 +1395,7 @@ jobs:
 
       - name: Finish follow-up without code changes
         if: steps.decision.outputs.action == 'no_change' || steps.decision.outputs.action == 'blocked'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           ACTION: ${{ steps.decision.outputs.action }}
           PENDING_IDS: ${{ steps.prepare.outputs.pending_ids }}
@@ -1541,7 +1541,7 @@ jobs:
       - name: Mark needs human when follow-up processing fails
         id: followup_handoff
         if: failure() && steps.prepare.outputs.should_run == 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           PENDING_IDS: ${{ steps.prepare.outputs.pending_ids }}
           HEAD_SHA: ${{ steps.prepare.outputs.head_sha }}
@@ -1613,7 +1613,7 @@ jobs:
 
       - name: Emergency handoff when normal follow-up handoff fails
         if: failure() && steps.prepare.outcome == 'success' && steps.followup_handoff.outcome != 'success'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           github-token: ${{ secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
           script: |
@@ -1653,7 +1653,7 @@ jobs:
 
       - name: Emergency handoff when context preparation fails
         if: failure() && steps.prepare.outcome != 'success'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           github-token: ${{ secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
           script: |
@@ -1743,7 +1743,7 @@ jobs:
       DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
     steps:
       - name: Download follow-up patch
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: issue-followup-${{ github.run_id }}
           path: patch-in
@@ -1773,7 +1773,7 @@ jobs:
           git -c core.hooksPath=/dev/null am --3way "$GITHUB_WORKSPACE/patch-in/followup.patch"
 
       - name: Checkout trusted helper
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
@@ -1781,7 +1781,7 @@ jobs:
 
       - name: Recheck pending comments before publish
         id: revisions
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           github-token: ${{ secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
           script: |
@@ -1869,7 +1869,7 @@ jobs:
       - name: Finish issue conversation and restore review gate
         id: finish
         if: steps.revisions.outputs.safe == 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           HEAD_SHA: ${{ steps.publish.outputs.head_sha }}
         with:
@@ -2018,7 +2018,7 @@ jobs:
       - name: Dispatch the fresh-head Codex gate
         if: steps.finish.outputs.safe == 'true'
         continue-on-error: true
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           github-token: ${{ secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
           script: |
@@ -2032,7 +2032,7 @@ jobs:
       - name: Mark needs human when follow-up publish fails
         id: publish_handoff
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           ISSUE_BOT_LOGINS: ${{ vars.AUTOMATION_ISSUE_BOT_LOGINS || 'netcatty-bot,github-actions[bot]' }}
         with:
@@ -2099,7 +2099,7 @@ jobs:
 
       - name: Emergency handoff when trusted publish helper is unavailable
         if: failure() && steps.publish_handoff.outcome != 'success'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           github-token: ${{ secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
           script: |
@@ -2217,7 +2217,7 @@ jobs:
           persist-credentials: false
 
       - name: Download classification research
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: issue-research-${{ github.run_id }}
           path: .cursor-runtime
@@ -2880,7 +2880,7 @@ jobs:
       WORKFLOW_REF: ${{ github.ref_name || github.event.repository.default_branch }}
     steps:
       - name: Checkout automation helper
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -2888,7 +2888,7 @@ jobs:
         if: >-
           needs.publish_implement.result == 'success' ||
           needs.publish_implement.result == 'skipped'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -2921,7 +2921,7 @@ jobs:
           (needs.publish_implement.result != 'success' &&
           needs.publish_implement.result != 'skipped') ||
           failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -3311,7 +3311,7 @@ jobs:
       - name: Check source issue for unprocessed follow-ups
         if: steps.codex.outputs.action == 'mark_ready'
         id: issue_fresh
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           PULL_NUMBER: ${{ needs.route.outputs.pull_number }}
           ISSUE_BOT_LOGINS: ${{ vars.AUTOMATION_ISSUE_BOT_LOGINS || 'netcatty-bot,github-actions[bot]' }}
@@ -3338,37 +3338,102 @@ jobs:
 
       - name: Mark PR ready after clean Codex
         if: steps.codex.outputs.action == 'mark_ready' && steps.issue_fresh.outputs.pending != 'true'
-        uses: actions/github-script@v7
         env:
+          GH_TOKEN: ${{ secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
           EXPECTED_HEAD: ${{ steps.codex.outputs.head_sha }}
-          ISSUE_BOT_LOGINS: ${{ vars.AUTOMATION_ISSUE_BOT_LOGINS || 'netcatty-bot,github-actions[bot]' }}
-        with:
-          github-token: ${{ secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
-          script: |
-            const auto = require(`${process.env.RUNNER_TEMP}/cursor-automation.cjs`);
-            const pullNumber = Number(process.env.PULL_NUMBER);
-            const ready = await auto.restoreCleanPullRequestAfterNoChange({
-              github,
-              context,
-              pullNumber,
-              expectedHeadSha: process.env.EXPECTED_HEAD,
-              botLogins: process.env.ISSUE_BOT_LOGINS,
-            });
-            if (!ready) {
-              core.info(
-                `PR #${pullNumber} stays draft because its head or source issue changed during ready transition.`,
-              );
-              return;
-            }
-            await github.rest.issues.createComment({
-              ...context.repo,
-              issue_number: pullNumber,
-              body: [
-                auto.TRIAGE_MARKER,
-                '',
-                'Codex reported no major issues. This PR is marked ready for human review/merge.',
-              ].join('\n'),
-            });
+          PULL_NUMBER: ${{ needs.route.outputs.pull_number }}
+        run: |
+          set -euo pipefail
+          # Closed / missing PRs are not an automation failure.
+          state="$(gh pr view "$PULL_NUMBER" --repo "$GITHUB_REPOSITORY" --json state -q .state 2>/dev/null || echo MISSING)"
+          if [[ "$state" != "OPEN" ]]; then
+            echo "PR #$PULL_NUMBER is $state; skip mark ready."
+            exit 0
+          fi
+          # Refuse to approve if the head moved after the clean decision.
+          live_head="$(gh pr view "$PULL_NUMBER" --repo "$GITHUB_REPOSITORY" --json headRefOid -q .headRefOid)"
+          if [[ -z "$EXPECTED_HEAD" || -z "$live_head" ]]; then
+            echo "Missing expected/live head SHA; refusing to mark ready." >&2
+            exit 1
+          fi
+          if [[ "$live_head" != "$EXPECTED_HEAD" && "${live_head:0:7}" != "${EXPECTED_HEAD:0:7}" && "${EXPECTED_HEAD:0:7}" != "${live_head:0:7}" ]]; then
+            # Allow prefix match either way for short SHAs.
+            case "$live_head" in
+              "$EXPECTED_HEAD"*) ;;
+              *)
+                case "$EXPECTED_HEAD" in
+                  "$live_head"*) ;;
+                  *)
+                    echo "Head moved after clean decision (expected $EXPECTED_HEAD, live $live_head). Skipping mark ready." >&2
+                    exit 0
+                    ;;
+                esac
+                ;;
+            esac
+          fi
+          # A restricted token may be able to comment and label but not change
+          # draft state. Hand that case to a maintainer without failing the run.
+          ready_blocked=false
+          ready_out="$(gh pr ready "$PULL_NUMBER" --repo "$GITHUB_REPOSITORY" 2>&1)" || {
+            if echo "$ready_out" | grep -qiE 'already ready|not a draft|is not a draft|is closed|closed\.|only draft'; then
+              echo "PR not convertible to ready (ok to continue labeling): $ready_out"
+            elif echo "$ready_out" | grep -qiE 'resource not accessible|forbidden|permission|not authorized'; then
+              echo "::warning::Token cannot change PR draft state; handing off to a maintainer."
+              ready_blocked=true
+            else
+              echo "$ready_out" >&2
+              exit 1
+            fi
+          }
+          if [[ "$ready_blocked" == "true" ]]; then
+            gh api --method DELETE \
+              "repos/${GITHUB_REPOSITORY}/issues/${PULL_NUMBER}/labels/automation%3Acodex-loop" \
+              >/dev/null 2>&1 || true
+            gh api --method POST \
+              "repos/${GITHUB_REPOSITORY}/issues/${PULL_NUMBER}/labels" \
+              -f 'labels[]=ready-for-human' >/dev/null 2>&1 || true
+            gh pr comment "$PULL_NUMBER" --repo "$GITHUB_REPOSITORY" --body \
+              "Codex reported no major issues, but the automation token cannot change draft state. A maintainer can mark this PR ready." 2>/dev/null || true
+            exit 0
+          fi
+          # Re-check head after gh pr ready (another push could race).
+          live_head2="$(gh pr view "$PULL_NUMBER" --repo "$GITHUB_REPOSITORY" --json headRefOid -q .headRefOid)"
+          if [[ "$live_head2" != "$live_head" ]]; then
+            echo "Head changed during mark-ready; restoring draft." >&2
+            gh pr ready "$PULL_NUMBER" --repo "$GITHUB_REPOSITORY" --undo 2>/dev/null || true
+            exit 0
+          fi
+          # Change only the automation labels so concurrent maintainer labels survive.
+          delete_label() {
+            local encoded_label="$1"
+            local output
+            if ! output="$(gh api --method DELETE \
+              "repos/${GITHUB_REPOSITORY}/issues/${PULL_NUMBER}/labels/${encoded_label}" 2>&1)"; then
+              if grep -qiE 'HTTP 404|Label does not exist|Not Found' <<<"$output"; then
+                return 0
+              fi
+              echo "$output" >&2
+              return 1
+            fi
+          }
+          delete_label "automation%3Acodex-loop"
+          delete_label "ready-for-human"
+          gh api --method POST \
+            "repos/${GITHUB_REPOSITORY}/issues/${PULL_NUMBER}/labels" \
+            -f 'labels[]=automation:codex-clean' \
+            -f 'labels[]=automation:bot-pr' >/dev/null
+          # Confirm draft=false before claiming success.
+          draft="$(gh pr view "$PULL_NUMBER" --repo "$GITHUB_REPOSITORY" --json isDraft -q .isDraft)"
+          if [[ "$draft" == "true" ]]; then
+            echo "Failed to convert PR out of draft (token may lack draft permission); labels still applied." >&2
+            exit 0
+          fi
+          gh pr comment "$PULL_NUMBER" --repo "$GITHUB_REPOSITORY" --body "$(cat <<'EOF'
+          <!-- cursor-automation -->
+
+          Codex reported no major issues. This PR is marked ready for human review/merge.
+          EOF
+          )"
 
       - name: Give up after max rounds / P3 handoff
         if: steps.codex.outputs.action == 'give_up'
