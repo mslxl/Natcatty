@@ -41,6 +41,8 @@ export const zhTWVaultMessages: Messages = {
   'selectHost.newHost': '新建主機',
   'selectHost.continue': '繼續',
   'selectHost.continueWithCount': '繼續（已選 {count} 個）',
+  'selectHost.toggleGroup': '切換分組 {name} 下的全部主機',
+  'selectHost.toggleHost': '切換 {name}',
 
   // Quick Connect
   'quickConnect.knownHost.title': '確認要連線嗎？',

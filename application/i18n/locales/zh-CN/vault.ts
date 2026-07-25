@@ -41,6 +41,8 @@ export const zhCNVaultMessages: Messages = {
   'selectHost.newHost': '新建主机',
   'selectHost.continue': '继续',
   'selectHost.continueWithCount': '继续（已选 {count} 个）',
+  'selectHost.toggleGroup': '切换分组 {name} 下的全部主机',
+  'selectHost.toggleHost': '切换 {name}',
 
   // Quick Connect
   'quickConnect.knownHost.title': '确认要连接吗？',

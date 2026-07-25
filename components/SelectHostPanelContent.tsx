@@ -1,14 +1,22 @@
 import {
   Check,
+  CheckSquare,
   ChevronRight,
   LayoutGrid,
+  MinusSquare,
   Plus,
   Search,
+  Square,
 } from 'lucide-react';
 import React, { useEffect, useMemo, useState } from 'react';
 import { cn } from '../lib/utils';
 import { matchesHostSearchQuery, matchesSearchQuery } from '../lib/searchMatcher';
 import { useI18n } from '../application/i18n/I18nProvider';
+import {
+  collectSelectableHostIdsInGroup,
+  getGroupSelectionState,
+  toggleIdsInSelection,
+} from '../domain/selectHostSelection';
 import { Host, ProxyProfile, SSHKey } from '../types';
 import { ManagedSource } from '../domain/models';
 import { DistroAvatar } from './DistroAvatar';
@@ -31,6 +39,8 @@ export interface SelectHostPanelContentProps {
   selectedHostIds: string[];
   multiSelect?: boolean;
   onSelect: (host: Host) => void;
+  /** Preferred multi-select path for host/group toggles (selection resolves to host ids). */
+  onSelectionChange?: (selectedHostIds: string[]) => void;
   onConfirm: () => void;
   onNewHost?: () => void;
   availableKeys?: SSHKey[];
@@ -50,6 +60,7 @@ export const SelectHostPanelContent: React.FC<SelectHostPanelContentProps> = ({
   selectedHostIds,
   multiSelect = false,
   onSelect,
+  onSelectionChange,
   onConfirm,
   onNewHost,
   availableKeys = [],
@@ -192,6 +203,51 @@ export const SelectHostPanelContent: React.FC<SelectHostPanelContentProps> = ({
     }));
   }, [currentPath]);
 
+  const groupHostIdsByPath = useMemo(() => {
+    if (!multiSelect) return new Map<string, string[]>();
+    const map = new Map<string, string[]>();
+    for (const group of groupsWithCounts) {
+      map.set(group.path, collectSelectableHostIdsInGroup(selectableHosts, group.path));
+    }
+    return map;
+  }, [multiSelect, groupsWithCounts, selectableHosts]);
+
+  const applySelectionChange = (nextSelectedHostIds: string[]) => {
+    if (onSelectionChange) {
+      onSelectionChange(nextSelectedHostIds);
+      return;
+    }
+    // Fallback for callers that only implement per-host toggle: sync by flipping diffs.
+    const prev = new Set(selectedHostIds);
+    const next = new Set(nextSelectedHostIds);
+    for (const host of selectableHosts) {
+      const wasSelected = prev.has(host.id);
+      const isSelected = next.has(host.id);
+      if (wasSelected !== isSelected) onSelect(host);
+    }
+  };
+
+  const handleHostClick = (host: Host) => {
+    if (multiSelect && onSelectionChange) {
+      onSelectionChange(toggleIdsInSelection(selectedHostIds, [host.id]));
+      return;
+    }
+    onSelect(host);
+  };
+
+  const handleGroupToggle = (groupPath: string) => {
+    const groupHostIds = groupHostIdsByPath.get(groupPath)
+      ?? collectSelectableHostIdsInGroup(selectableHosts, groupPath);
+    if (groupHostIds.length === 0) return;
+    applySelectionChange(toggleIdsInSelection(selectedHostIds, groupHostIds));
+  };
+
+  const renderSelectionIcon = (state: 'none' | 'partial' | 'all') => {
+    if (state === 'all') return <CheckSquare size={16} className="text-primary shrink-0" />;
+    if (state === 'partial') return <MinusSquare size={16} className="text-primary shrink-0" />;
+    return <Square size={16} className="text-muted-foreground shrink-0" />;
+  };
+
   return (
     <TooltipProvider delayDuration={300}>
       <div className={cn('flex flex-col flex-1 min-h-0 min-w-0', className)}>
@@ -270,23 +326,57 @@ export const SelectHostPanelContent: React.FC<SelectHostPanelContentProps> = ({
               <div>
                 <h4 className="text-xs font-semibold mb-2 text-muted-foreground">{t('vault.groups.title')}</h4>
                 <div className="space-y-1">
-                  {groupsWithCounts.map((group) => (
-                    <div
-                      key={group.path}
-                      className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg hover:bg-muted/70 cursor-pointer transition-colors"
-                      onClick={() => setCurrentPath(group.path)}
-                    >
-                      <div className="h-8 w-8 rounded-lg bg-primary/15 text-primary flex items-center justify-center shrink-0">
-                        <LayoutGrid size={15} />
+                  {groupsWithCounts.map((group) => {
+                    const groupHostIds = groupHostIdsByPath.get(group.path) ?? [];
+                    const groupState = multiSelect
+                      ? getGroupSelectionState(selectedHostIdSet, groupHostIds)
+                      : 'none';
+                    const canToggleGroup = multiSelect && groupHostIds.length > 0;
+
+                    return (
+                      <div
+                        key={group.path}
+                        className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg hover:bg-muted/70 transition-colors"
+                      >
+                        {multiSelect ? (
+                          <button
+                            type="button"
+                            className={cn(
+                              'shrink-0 rounded-sm p-0.5 -m-0.5',
+                              canToggleGroup
+                                ? 'hover:bg-muted cursor-pointer'
+                                : 'opacity-40 cursor-not-allowed',
+                            )}
+                            disabled={!canToggleGroup}
+                            aria-label={t('selectHost.toggleGroup', { name: group.name })}
+                            aria-pressed={groupState === 'all'}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              handleGroupToggle(group.path);
+                            }}
+                          >
+                            {renderSelectionIcon(groupState)}
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          className="flex flex-1 min-w-0 items-center gap-2.5 text-left cursor-pointer"
+                          onClick={() => setCurrentPath(group.path)}
+                        >
+                          <div className="h-8 w-8 rounded-lg bg-primary/15 text-primary flex items-center justify-center shrink-0">
+                            <LayoutGrid size={15} />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-[13px] font-medium truncate">{group.name}</div>
+                            <div className="text-[11px] text-muted-foreground">
+                              {t('vault.groups.hostsCount', { count: group.count })}
+                            </div>
+                          </div>
+                          <ChevronRight size={14} className="text-muted-foreground shrink-0 opacity-60" />
+                        </button>
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-[13px] font-medium truncate">{group.name}</div>
-                        <div className="text-[11px] text-muted-foreground">
-                          {t('vault.groups.hostsCount', { count: group.count })}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             ) : null}
@@ -302,12 +392,30 @@ export const SelectHostPanelContent: React.FC<SelectHostPanelContentProps> = ({
                     return (
                       <div
                         key={host.id}
+                        role="button"
+                        tabIndex={0}
+                        aria-label={t('selectHost.toggleHost', { name: host.label })}
+                        aria-pressed={isSelected}
                         className={cn(
                           'flex items-center gap-2.5 px-2.5 py-2 rounded-lg cursor-pointer transition-colors',
                           isSelected ? 'bg-muted' : 'hover:bg-muted/70',
                         )}
-                        onClick={() => onSelect(host)}
+                        onClick={() => handleHostClick(host)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault();
+                            handleHostClick(host);
+                          }
+                        }}
                       >
+                        {multiSelect ? (
+                          <span
+                            className="shrink-0"
+                            aria-hidden
+                          >
+                            {renderSelectionIcon(isSelected ? 'all' : 'none')}
+                          </span>
+                        ) : null}
                         <DistroAvatar
                           host={host}
                           fallback={host.os[0].toUpperCase()}
@@ -331,7 +439,9 @@ export const SelectHostPanelContent: React.FC<SelectHostPanelContentProps> = ({
                             </TooltipContent>
                           </Tooltip>
                         </div>
-                        {isSelected ? <Check size={14} className="text-primary shrink-0" /> : null}
+                        {!multiSelect && isSelected ? (
+                          <Check size={14} className="text-primary shrink-0" />
+                        ) : null}
                       </div>
                     );
                   })}

@@ -12,6 +12,7 @@ interface SelectHostPanelProps {
   selectedHostIds?: string[];
   multiSelect?: boolean;
   onSelect: (host: Host) => void;
+  onSelectionChange?: (selectedHostIds: string[]) => void;
   onBack: () => void;
   onContinue?: () => void;
   onNewHost?: () => void;
@@ -36,6 +37,7 @@ const SelectHostPanel: React.FC<SelectHostPanelProps> = ({
   selectedHostIds = [],
   multiSelect = false,
   onSelect,
+  onSelectionChange,
   onBack,
   onContinue,
   onNewHost,
@@ -88,6 +90,7 @@ const SelectHostPanel: React.FC<SelectHostPanelProps> = ({
         selectedHostIds={selectedHostIds}
         multiSelect={multiSelect}
         onSelect={onSelect}
+        onSelectionChange={onSelectionChange}
         onConfirm={handleConfirm}
         onNewHost={onNewHost}
         availableKeys={availableKeys}

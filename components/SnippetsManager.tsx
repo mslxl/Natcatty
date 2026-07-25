@@ -874,6 +874,15 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
     });
   };
 
+  const handleTargetSelectionChange = (nextSelectedHostIds: string[]) => {
+    setTargetSelection(nextSelectedHostIds);
+    setEditingSnippet((snippet) => ({
+      ...snippet,
+      targetsAllHosts: undefined,
+      targets: nextSelectedHostIds,
+    }));
+  };
+
   const handleTargetPickerBack = () => {
     setRightPanelMode('edit-snippet');
   };
@@ -1616,6 +1625,7 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
       targetSelection={targetSelection}
       setTargetSelection={setTargetSelection}
       handleTargetSelect={handleTargetSelect}
+      handleTargetSelectionChange={handleTargetSelectionChange}
       handleTargetPickerBack={handleTargetPickerBack}
       availableKeys={availableKeys}
       proxyProfiles={proxyProfiles}
