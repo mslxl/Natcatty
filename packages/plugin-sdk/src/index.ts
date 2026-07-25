@@ -149,6 +149,21 @@ export interface PluginProviders {
     kind: TerminalInterceptorKind,
     handler: TerminalInterceptorHandler,
   ): Disposable;
+  register(
+    providerId: string,
+    kind: "connection",
+    handler: ConnectionProviderHandler,
+  ): Disposable;
+  register(
+    providerId: string,
+    kind: "authentication",
+    handler: AuthenticationProviderHandler,
+  ): Disposable;
+  register(
+    providerId: string,
+    kind: "importer",
+    handler: ImporterProviderHandler,
+  ): Disposable;
   register<TPayload extends JsonValue = JsonValue, TResult extends JsonValue = JsonValue>(
     providerId: string,
     kind: Exclude<ProviderKind, TerminalInterceptorKind>,
