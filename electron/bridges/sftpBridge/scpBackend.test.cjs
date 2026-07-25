@@ -312,6 +312,43 @@ describe("scpBackend upload/download with fake scp streams", () => {
     await assert.rejects(() => uploadPromise, /cancel/i);
   });
 
+  it("download settles when abort closes the stream before parser listeners attach", async () => {
+    const localOut = path.join(tmpDir, "race-closed.bin");
+    const transfer = { cancelled: false, abort: null };
+    let sawAbortInstall = false;
+    Object.defineProperty(transfer, "abort", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        return this._abort;
+      },
+      set(fn) {
+        this._abort = fn;
+        if (sawAbortInstall || typeof fn !== "function") return;
+        sawAbortInstall = true;
+        // Simulate cancelTransfer winning immediately after abort is wired and
+        // closing the stream before downloadToWritable attaches parser listeners.
+        this.cancelled = true;
+        queueMicrotask(() => {
+          try { fn(); } catch { /* ignore */ }
+        });
+      },
+    });
+
+    const backend = createScpBackend({
+      exec: async () => ({ stdout: "", stderr: "", code: 0 }),
+      execStream: async () => createMockStream(),
+    });
+
+    await assert.rejects(
+      () => backend.downloadFile("/remote/x.bin", localOut, {
+        fileSize: 4,
+        transfer,
+      }),
+      /cancel/i,
+    );
+  });
+
   it("AbortSignal via createTransferFromAbortSignal cancels in-flight upload (AI path)", async () => {
     const localFile = path.join(tmpDir, "sig.bin");
     fs.writeFileSync(localFile, Buffer.alloc(512, 1));

@@ -91,6 +91,49 @@ describe("AI/MCP SCP transfer abort on shipped download/upload entry points", ()
     assert.deepEqual(fs.readFileSync(localPath), original);
   });
 
+  it("downloadSftpToLocal settles when abort closes the SCP stream before parser listeners attach", async () => {
+    let resolveStream;
+    const streamReady = new Promise((resolve) => {
+      resolveStream = resolve;
+    });
+    const backend = createScpBackend({
+      exec: async () => ({ stdout: "", stderr: "", code: 0 }),
+      execStream: async () => {
+        const stream = createMockStream();
+        resolveStream(stream);
+        return stream;
+      },
+    });
+    backend.stat = async () => ({ type: "file", isDirectory: false, size: 256 });
+    sftpClients.set("scp-dl-race", {
+      client: { exec: () => {} },
+      sftp: null,
+      __netcattyFileProtocol: "scp",
+      __netcattyScpBackend: backend,
+      async end() {},
+    });
+
+    const controller = new AbortController();
+    const localPath = path.join(tmpDir, "race-out.bin");
+    const original = Buffer.from("existing-local-content");
+    fs.writeFileSync(localPath, original);
+    const promise = sftpBridge.downloadSftpToLocal(null, {
+      sftpId: "scp-dl-race",
+      remotePath: "/remote/file.bin",
+      localPath,
+      abortSignal: controller.signal,
+    });
+
+    const stream = await streamReady;
+    // Abort as soon as the stream exists. cancelTransfer may close it before
+    // downloadToWritable attaches its parser close/error handlers.
+    controller.abort();
+    try { stream.close(); } catch { /* ignore */ }
+
+    await assert.rejects(() => promise, /cancel|abort/i);
+    assert.deepEqual(fs.readFileSync(localPath), original);
+  });
+
   it("downloadSftpToLocal preserves the destination when cancellation arrives after SCP download", async () => {
     const controller = new AbortController();
     const downloaded = Buffer.from("new-downloaded-content");

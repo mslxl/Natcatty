@@ -395,6 +395,10 @@ function createScpBackend(deps = {}) {
         if (typeof prev === "function") prev();
       };
     }
+    if (transfer?.cancelled || options.signal?.aborted || transfer?.signal?.aborted) {
+      abort();
+      throw new Error("Transfer cancelled");
+    }
 
     try {
       // Register for ACK before the remote can reply (and before we write).
@@ -592,8 +596,9 @@ function createScpBackend(deps = {}) {
   } = {}) {
     assertSafeRemotePath(remotePath);
     const command = buildScpSourceCommand(remotePath, encoding);
+    const effectiveSignal = signal || transfer?.signal || null;
     const stream = await execStream(command, {
-      signal: signal || transfer?.signal || null,
+      signal: effectiveSignal,
     });
     const abort = () => {
       try { stream.close?.(); } catch { /* ignore */ }
@@ -606,24 +611,40 @@ function createScpBackend(deps = {}) {
         if (typeof prev === "function") prev();
       };
     }
+    // Cancel may win between execStream() resolving and listener install; settle
+    // from the cancel flag/poll rather than depending on a later close event.
+    if (transfer?.cancelled || effectiveSignal?.aborted) {
+      abort();
+      throw new Error("Transfer cancelled");
+    }
 
     const parser = createSourceStreamParser({ encoding });
     let transferred = 0;
     let expectedSize = fileSize;
     let gotFile = false;
 
-    await writeAll(stream, buildAck());
-
     await new Promise((resolve, reject) => {
       let settled = false;
+      let poll = null;
       const finish = (err) => {
         if (settled) return;
         settled = true;
+        if (poll) {
+          clearInterval(poll);
+          poll = null;
+        }
         // Explicit untrack before removeAllListeners (which would drop once handlers).
         try { stream.__netcattyUntrack?.(); } catch { /* ignore */ }
         stream.removeAllListeners();
         if (err) reject(err);
         else resolve();
+      };
+      const finishIfCancelled = () => {
+        if (transfer?.cancelled || effectiveSignal?.aborted) {
+          finish(new Error("Transfer cancelled"));
+          return true;
+        }
+        return false;
       };
 
       let processing = false;
@@ -633,10 +654,7 @@ function createScpBackend(deps = {}) {
         processing = true;
         try {
           while (queue.length > 0 && !settled) {
-            if (transfer?.cancelled) {
-              finish(new Error("Transfer cancelled"));
-              return;
-            }
+            if (finishIfCancelled()) return;
             const chunk = queue.shift();
             try {
               const events = parser.feed(chunk);
@@ -702,22 +720,18 @@ function createScpBackend(deps = {}) {
         }
       };
 
+      // Attach close/error/data before the initial ACK write so cancelTransfer's
+      // synchronous stream.close() cannot lose the terminal event.
       stream.on("data", (chunk) => {
         if (settled) return;
-        if (transfer?.cancelled) {
-          finish(new Error("Transfer cancelled"));
-          return;
-        }
+        if (finishIfCancelled()) return;
         queue.push(Buffer.from(chunk));
         // Pause the remote stream while we apply local backpressure.
         try { stream.pause?.(); } catch { /* ignore */ }
         void processQueue();
       });
       stream.on("error", (err) => {
-        if (transfer?.cancelled) {
-          finish(new Error("Transfer cancelled"));
-          return;
-        }
+        if (finishIfCancelled()) return;
         finish(err);
       });
       if (typeof writable?.on === "function") {
@@ -729,10 +743,7 @@ function createScpBackend(deps = {}) {
       stream.on("close", () => {
         if (settled) return;
         // Abort closes the stream; surface cancel rather than protocol incompleteness.
-        if (transfer?.cancelled) {
-          finish(new Error("Transfer cancelled"));
-          return;
-        }
+        if (finishIfCancelled()) return;
         try {
           parser.finish();
         } catch (err) {
@@ -748,9 +759,32 @@ function createScpBackend(deps = {}) {
       stream.stderr?.on?.("data", () => {
         // ignore stderr chatter unless we fail
       });
+      // Poll cancel so settlement does not require observing a later stream event
+      // when abort closed the stream before these listeners were attached.
+      if (transfer || effectiveSignal) {
+        poll = setInterval(() => {
+          finishIfCancelled();
+        }, 25);
+        if (typeof poll.unref === "function") poll.unref();
+      }
+
+      if (stream.destroyed || stream.closed || stream.readableEnded) {
+        if (finishIfCancelled()) return;
+      }
+
+      void writeAll(stream, buildAck()).then(() => {
+        if (settled) return;
+        finishIfCancelled();
+      }).catch((err) => {
+        if (settled) return;
+        if (finishIfCancelled()) return;
+        finish(err);
+      });
     });
 
-    if (transfer?.cancelled) throw new Error("Transfer cancelled");
+    if (transfer?.cancelled || effectiveSignal?.aborted) {
+      throw new Error("Transfer cancelled");
+    }
     return { fileSize: expectedSize, transferred };
   }
 
@@ -818,7 +852,8 @@ function createScpBackend(deps = {}) {
       stream.on("data", onData);
       stream.on("error", onError);
       stream.on("close", onClose);
-      // Poll cancel flag so aborts work even when the remote sends no bytes.
+      // Poll cancel flag so aborts work even when the remote sends no bytes,
+      // including when close fired before these listeners were attached.
       if (transfer) {
         poll = setInterval(() => {
           if (transfer.cancelled) {
@@ -827,6 +862,13 @@ function createScpBackend(deps = {}) {
           }
         }, 25);
         if (typeof poll.unref === "function") poll.unref();
+      }
+      if (
+        (stream.destroyed || stream.closed || stream.readableEnded)
+        && transfer?.cancelled
+      ) {
+        cleanup();
+        reject(new Error("Transfer cancelled"));
       }
     });
   }
