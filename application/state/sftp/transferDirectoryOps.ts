@@ -1,5 +1,5 @@
 import { useCallback, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
-import type { SftpFileEntry, SftpFilenameEncoding, TransferStatus, TransferTask } from "../../../domain/models";
+import type { Host, SftpFileEntry, SftpFilenameEncoding, TransferStatus, TransferTask } from "../../../domain/models";
 import { STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY } from "../../../infrastructure/config/storageKeys";
 import { localStorageAdapter } from "../../../infrastructure/persistence/localStorageAdapter";
 import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
@@ -44,6 +44,8 @@ function isCancelledLocalOrGlobal(
 export type AcquireTransferSessionFn = (
   hostId: string,
   transferId: string,
+  /** Connect-time host (session hostname/port/user overrides). Prefer over vault. */
+  connectHost?: Host,
 ) => Promise<TransferConnectionLease>;
 
 interface UseSftpDirectoryTransferOpsParams {

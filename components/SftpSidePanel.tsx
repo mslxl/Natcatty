@@ -59,6 +59,7 @@ import {
 import {
   connectionKeyMatchesHost,
   findReusableSftpSidePanelTab,
+  shouldAcceptPendingSftpUpload,
   shouldResetSftpSidePanelSourceSession,
   shouldSkipSftpSidePanelAutoConnect,
 } from "./sftp/sftpSidePanelAutoConnect";
@@ -509,7 +510,8 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
       s.selectTab("left", existingTab.id);
       // selectTab does not update reconnect metadata; keep lastConnectedHost
       // aligned with the tab we just activated so channel drops rebind correctly.
-      s.setLastConnectedHost?.("left", activeHost);
+      // Pass tab id explicitly — selectTab has not flushed activeTabId yet.
+      s.setLastConnectedHost?.("left", activeHost, existingTab.id);
       connectedKeyRef.current = connectionKey;
       connectedHostObjRef.current = activeHost;
       // Session memory keys are per terminal session; republish the visible
@@ -715,19 +717,38 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   useEffect(() => {
     if (!pendingUpload || !activeHost) return;
     if (handledPendingUploadIdRef.current === pendingUpload.requestId) return;
-    if (pendingUpload.hostId !== activeHost.id) return;
 
     const activePane = sftp.leftPane;
     const connection = activePane.connection;
-    if (!connection || connection.isLocal || connection.hostId !== activeHost.id) return;
-    if (connection.status !== "connected") return;
+    // Prefer the live connection cache key (includes session overrides). Fall
+    // back to the tab map only when the connect-time stamp is not yet readable.
+    const paneConnectionKey = connection && !connection.isLocal
+      ? (
+        sftp.getConnectionCacheKey?.(connection.id)
+        ?? tabConnectionKeyMapRef.current.get(activePane.id)
+        ?? null
+      )
+      : null;
+    if (!shouldAcceptPendingSftpUpload({
+      pendingHostId: pendingUpload.hostId,
+      pendingConnectionKey: pendingUpload.connectionKey,
+      activeHostId: activeHost.id,
+      connection,
+      paneConnectionKey,
+    }) || !connection) {
+      return;
+    }
 
     handledPendingUploadIdRef.current = pendingUpload.requestId;
 
+    const pinnedConnectionId = connection.id;
+    const pinnedTabId = activePane.id;
     const runUpload = async () => {
       try {
         const results = await sftpRef.current.uploadExternalEntries("left", pendingUpload.entries, {
           targetPath: pendingUpload.targetPath,
+          connectionId: pinnedConnectionId,
+          tabId: pinnedTabId,
         });
         reportSftpUploadResults({ results, t, toast });
       } catch (error) {
@@ -748,6 +769,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     activeHost,
     onPendingUploadHandled,
     pendingUpload,
+    sftp.getConnectionCacheKey,
     sftp.leftPane,
     t,
   ]);
