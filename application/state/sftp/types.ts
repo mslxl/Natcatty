@@ -95,4 +95,11 @@ export interface SftpStateOptions {
   terminalSettings?: { verifyHostKeys: boolean; keepaliveInterval: number; keepaliveCountMax: number };
   knownHosts?: KnownHost[];
   onAddKnownHost?: (knownHost: KnownHost) => void;
+  /**
+   * Resolve a live terminal session id for a vault host so transfer-pool opens
+   * can reuse that SSH transport (openSftpForSession) instead of a cold connect.
+   */
+  resolveTransferSourceSessionId?: (hostId: string) => string | undefined;
+  /** Idle TTL for dedicated transfer-pool sessions (0 = never reclaim idle). */
+  transferPoolIdleTtlMs?: number;
 }

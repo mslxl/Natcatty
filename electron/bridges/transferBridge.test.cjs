@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const crypto = require("node:crypto");
+const Module = require("node:module");
 const { EventEmitter } = require("node:events");
 const { PassThrough, Readable, Writable } = require("node:stream");
 
@@ -4370,6 +4371,28 @@ test("resumable stream transfers pause without losing their checkpoint and conti
   };
   transferBridge.init({ sftpClients: new Map([["source", client]]) });
 
+  const lifecycleEvents = [];
+  const originalLoad = Module._load;
+  Module._load = function load(request, parent, isMain) {
+    if (request === "electron") {
+      return {
+        BrowserWindow: {
+          getAllWindows: () => [{
+            isDestroyed: () => false,
+            webContents: {
+              isDestroyed: () => false,
+              send(channel, payload) {
+                if (channel === "netcatty:sftp:global-transfer") lifecycleEvents.push(payload);
+              },
+            },
+          }],
+        },
+      };
+    }
+    return originalLoad(request, parent, isMain);
+  };
+  t.after(() => { Module._load = originalLoad; });
+
   const sender = createSender();
   const running = transferBridge.startTransfer(
     { sender },
@@ -4399,6 +4422,13 @@ test("resumable stream transfers pause without losing their checkpoint and conti
   assert.equal(paused.resumeStage, "direct");
   assert.equal(paused.downloadCheckpointBytes, 0);
   assert.equal(paused.uploadCheckpointBytes, 0);
+  const pausedEvent = lifecycleEvents.findLast((event) => event.type === "paused");
+  assert.equal(pausedEvent?.transferId, "download-paused");
+  assert.equal(pausedEvent?.checkpointBytes, 3);
+  assert.equal(pausedEvent?.resumeStage, "direct");
+  assert.equal(pausedEvent?.downloadCheckpointBytes, 0);
+  assert.equal(pausedEvent?.uploadCheckpointBytes, 0);
+  assert.equal(pausedEvent?.lifecycleEpoch, 1);
 
   source.write(Buffer.from("def"));
   await new Promise((resolve) => setImmediate(resolve));
@@ -4408,6 +4438,10 @@ test("resumable stream transfers pause without losing their checkpoint and conti
   assert.equal(pausedAgain.resumeStage, "direct");
 
   assert.deepEqual(await transferBridge.resumeTransfer(null, { transferId: "download-paused" }), { success: true });
+  assert.deepEqual(
+    lifecycleEvents.findLast((event) => event.type === "resumed"),
+    { type: "resumed", transferId: "download-paused", lifecycleEpoch: 2 },
+  );
   source.end();
   assert.equal((await running).error, undefined);
 });

@@ -75,11 +75,12 @@ export function useSftpTransferTaskOps({
 
     await Promise.all(
       Array.from(idsToCancel).map(async (id) => {
-        const operations = [
-          cancelTransferAtBackend?.(id),
-          cancelCompressedUpload?.(id),
-        ].filter((operation): operation is Promise<unknown> => operation !== undefined);
-        const results = await Promise.allSettled(operations);
+        const candidate = currentTransfers.find((task) => task.id === id);
+        const compressed = candidate?.controlKind === "compressed-upload";
+        const operation = compressed
+          ? cancelCompressedUpload?.(id)
+          : cancelTransferAtBackend?.(id);
+        const results = operation ? await Promise.allSettled([operation]) : [];
         if (results.some((result) => result.status === "rejected")) {
           logger.warn("Failed to cancel one or more transfer backends");
         }

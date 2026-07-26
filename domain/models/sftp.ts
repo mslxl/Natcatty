@@ -43,6 +43,7 @@ export type TransferStatus =
 export type TransferDirection = 'upload' | 'download' | 'remote-to-remote' | 'local-copy';
 export type TransferOrigin = 'manual' | 'drag-drop' | 'editor-sync' | 'agent' | 'internal';
 export type TransferPhase = 'scanning' | 'compressing' | 'uploading' | 'transferring' | 'extracting' | 'verifying';
+export type TransferControlKind = 'stream' | 'compressed-upload';
 
 export interface TransferTask {
   id: string;
@@ -80,6 +81,10 @@ export interface TransferTask {
   origin?: TransferOrigin;
   background?: boolean;
   phase?: TransferPhase;
+  /** Selects the background job API used by the global transfer center. */
+  controlKind?: TransferControlKind;
+  /** Monotonic backend lifecycle version. Newer pause/resume truth wins over stale progress or panel snapshots. */
+  lifecycleEpoch?: number;
   resumable?: boolean;
   checkpointBytes?: number;
   resumeStage?: 'direct' | 'download' | 'upload';

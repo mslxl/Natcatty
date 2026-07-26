@@ -124,3 +124,6 @@ export function createGlobalSftpTransferScheduler(): GlobalSftpTransferScheduler
 }
 
 export const globalSftpTransferScheduler = createGlobalSftpTransferScheduler();
+
+/** Host admission unlimited — folder fan-out is capped separately by workers. */
+export const unlimitedSftpSchedulerAdmission = (): number => Number.POSITIVE_INFINITY;

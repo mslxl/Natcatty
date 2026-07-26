@@ -25,6 +25,8 @@ export interface UploadTaskInfo {
   fileCount: number;
   completedCount: number;
   sourcePath?: string;
+  /** Background job API used to control this task after its page closes. */
+  controlKind?: 'stream' | 'compressed-upload';
 }
 
 export interface UploadResult {

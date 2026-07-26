@@ -1,0 +1,126 @@
+"use strict";
+
+const assert = require("node:assert/strict");
+const test = require("node:test");
+
+const {
+  mapWorkerTransferChannelToGlobalEvent,
+  fanoutGlobalTransferFromWorkerEvent,
+} = require("./terminalWorkerManager.cjs");
+
+test("mapWorkerTransferChannelToGlobalEvent maps progress for store ingest", () => {
+  const event = mapWorkerTransferChannelToGlobalEvent("netcatty:transfer:progress", {
+    transferId: "t1",
+    transferred: 42,
+    totalBytes: 100,
+    speed: 7,
+    checkpointBytes: 40,
+    lifecycleEpoch: 2,
+    lifecycleState: "transferring",
+  });
+  assert.equal(event.type, "progress");
+  assert.equal(event.transferId, "t1");
+  assert.equal(event.transferred, 42);
+  assert.equal(event.totalBytes, 100);
+  assert.equal(event.checkpointBytes, 40);
+  assert.equal(event.lifecycleEpoch, 2);
+  assert.equal(event.lifecycleState, "transferring");
+});
+
+test("mapWorkerTransferChannelToGlobalEvent maps complete/error/cancel", () => {
+  assert.equal(
+    mapWorkerTransferChannelToGlobalEvent("netcatty:transfer:complete", { transferId: "t1" }).type,
+    "completed",
+  );
+  assert.equal(
+    mapWorkerTransferChannelToGlobalEvent("netcatty:transfer:cancelled", { transferId: "t1" }).type,
+    "cancelled",
+  );
+  assert.equal(
+    mapWorkerTransferChannelToGlobalEvent("netcatty:transfer:error", {
+      transferId: "t1",
+      error: "boom",
+    }).type,
+    "failed",
+  );
+  assert.equal(
+    mapWorkerTransferChannelToGlobalEvent("netcatty:transfer:error", {
+      transferId: "t1",
+      error: "Transfer cancelled",
+    }).type,
+    "cancelled",
+  );
+});
+
+test("mapWorkerTransferChannelToGlobalEvent maps compressed parent lifecycle", () => {
+  const progress = mapWorkerTransferChannelToGlobalEvent("netcatty:compress:progress", {
+    compressionId: "compressed-1",
+    phase: "uploading",
+    transferredBytes: 600,
+    totalBytes: 1000,
+    fileName: "photos (compressed)",
+    sourcePath: "/local/photos",
+    targetPath: "/remote/photos",
+    lifecycleEpoch: 4,
+    lifecycleState: "paused",
+  });
+  assert.deepEqual(progress, {
+    type: "progress",
+    transferId: "compressed-1",
+    phase: "uploading",
+    transferred: 600,
+    totalBytes: 1000,
+    fileName: "photos (compressed)",
+    sourcePath: "/local/photos",
+    targetPath: "/remote/photos",
+    direction: "upload",
+    isDirectory: true,
+    controlKind: "compressed-upload",
+    lifecycleEpoch: 4,
+    lifecycleState: "paused",
+  });
+  assert.equal(
+    mapWorkerTransferChannelToGlobalEvent("netcatty:compress:complete", { compressionId: "compressed-1" }).type,
+    "completed",
+  );
+  assert.equal(
+    mapWorkerTransferChannelToGlobalEvent("netcatty:compress:cancelled", { compressionId: "compressed-1" }).type,
+    "cancelled",
+  );
+  assert.equal(
+    mapWorkerTransferChannelToGlobalEvent("netcatty:compress:error", { compressionId: "compressed-1", error: "boom" }).type,
+    "failed",
+  );
+});
+
+test("fanoutGlobalTransferFromWorkerEvent sends global-transfer to all windows", () => {
+  const sent = [];
+  const electronModule = {
+    BrowserWindow: {
+      getAllWindows() {
+        return [
+          {
+            isDestroyed: () => false,
+            webContents: {
+              isDestroyed: () => false,
+              send(channel, payload) {
+                sent.push({ channel, payload });
+              },
+            },
+          },
+        ];
+      },
+    },
+  };
+
+  const n = fanoutGlobalTransferFromWorkerEvent(
+    electronModule,
+    "netcatty:transfer:progress",
+    { transferId: "worker-t", transferred: 9, totalBytes: 10, speed: 1 },
+  );
+  assert.equal(n, 1);
+  assert.equal(sent[0].channel, "netcatty:sftp:global-transfer");
+  assert.equal(sent[0].payload.transferId, "worker-t");
+  assert.equal(sent[0].payload.type, "progress");
+  assert.equal(sent[0].payload.transferred, 9);
+});

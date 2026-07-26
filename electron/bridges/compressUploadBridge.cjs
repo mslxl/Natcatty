@@ -24,9 +24,26 @@ let transferBridge = null;
 
 // Active compress operations
 const activeCompressions = new Map();
+const workerCompressionLifecycleEpochs = new Map();
+
+function broadcastCompressionEvent(payload) {
+  if (!payload?.transferId) return;
+  try {
+    transferBridge?.broadcastGlobalTransferEvent?.(payload);
+  } catch {
+    // Global UI fanout is best-effort; the job itself must keep running.
+  }
+}
 
 function waitWhilePaused(compression) {
   if (!compression.paused || compression.cancelled) return Promise.resolve();
+  broadcastCompressionEvent({
+    type: 'paused',
+    transferId: compression.compressionId,
+    phase: compression.phase,
+    lifecycleEpoch: compression.lifecycleEpoch,
+    lifecycleState: 'paused',
+  });
   return new Promise((resolve) => compression.resumeWaiters.push(resolve));
 }
 
@@ -278,27 +295,66 @@ async function startCompressedUpload(event, payload) {
     folderPath,
     targetPath,
     sftpId,
-    folderName
+    folderName,
+    totalBytes = 0,
   } = payload;
   const sender = event.sender;
 
   // Register compression for cancellation
   const compression = {
+    compressionId,
     cancelled: false,
     process: null,
     phase: 'preparing',
     paused: false,
+    lifecycleEpoch: Math.max(0, Number(payload.lifecycleEpoch) || 0),
+    lifecycleState: 'transferring',
     resumeWaiters: [],
   };
   activeCompressions.set(compressionId, compression);
 
+  broadcastCompressionEvent({
+    type: 'started',
+    transferId: compressionId,
+    direction: 'upload',
+    fileName: `${folderName} (compressed)`,
+    sourcePath: folderPath,
+    targetPath: `${targetPath}/${folderName}`,
+    totalBytes,
+    isDirectory: true,
+    controlKind: 'compressed-upload',
+    phase: 'compressing',
+    startedAt: Date.now(),
+    lifecycleEpoch: compression.lifecycleEpoch,
+    lifecycleState: compression.lifecycleState,
+  });
+
   const sendProgress = (phase, transferred, total) => {
     if (compression.cancelled) return;
+    const ratio = total > 0 ? Math.max(0, Math.min(1, transferred / total)) : 0;
+    const transferredBytes = Math.floor(ratio * totalBytes);
     sender.send("netcatty:compress:progress", { 
       compressionId, 
       phase, 
       transferred, 
-      total 
+      total,
+      transferredBytes,
+      totalBytes,
+      fileName: `${folderName} (compressed)`,
+      sourcePath: folderPath,
+      targetPath: `${targetPath}/${folderName}`,
+      lifecycleEpoch: compression.lifecycleEpoch,
+      lifecycleState: compression.lifecycleState,
+    });
+    broadcastCompressionEvent({
+      type: 'progress',
+      transferId: compressionId,
+      transferred: transferredBytes,
+      totalBytes,
+      speed: 0,
+      phase,
+      lifecycleEpoch: compression.lifecycleEpoch,
+      lifecycleState: compression.lifecycleState,
     });
   };
 
@@ -314,6 +370,13 @@ async function startCompressedUpload(event, payload) {
     }
     activeCompressions.delete(compressionId);
     sender.send("netcatty:compress:complete", { compressionId });
+    broadcastCompressionEvent({
+      type: 'completed',
+      transferId: compressionId,
+      transferred: totalBytes,
+      totalBytes,
+      endedAt: Date.now(),
+    });
   };
 
   const sendError = (error) => {
@@ -321,6 +384,12 @@ async function startCompressedUpload(event, payload) {
     sender.send("netcatty:compress:error", { 
       compressionId, 
       error: error.message || String(error) 
+    });
+    broadcastCompressionEvent({
+      type: 'failed',
+      transferId: compressionId,
+      error: error.message || String(error),
+      endedAt: Date.now(),
     });
   };
 
@@ -482,6 +551,7 @@ async function startCompressedUpload(event, payload) {
     // Check if cancelled during extraction before reporting completion
     if (compression.cancelled) {
       sender.send("netcatty:compress:cancelled", { compressionId });
+      broadcastCompressionEvent({ type: 'cancelled', transferId: compressionId, endedAt: Date.now() });
       return { compressionId, cancelled: true };
     }
 
@@ -501,6 +571,7 @@ async function startCompressedUpload(event, payload) {
     if (err.message === 'Upload cancelled' || err.message === 'Compression cancelled' || err.message === 'Transfer cancelled') {
       activeCompressions.delete(compressionId);
       sender.send("netcatty:compress:cancelled", { compressionId });
+      broadcastCompressionEvent({ type: 'cancelled', transferId: compressionId, endedAt: Date.now() });
     } else {
       sendError(err.message || 'Unknown error occurred');
     }
@@ -542,6 +613,8 @@ async function cancelCompression(event, payload) {
     }
   }
 
+  broadcastCompressionEvent({ type: 'cancelled', transferId: compressionId, endedAt: Date.now() });
+
   return { success: true };
 }
 
@@ -554,6 +627,8 @@ async function pauseCompression(event, payload) {
 
   if (compression.paused) return { success: true, deferred: compression.phase === 'extracting' };
   compression.paused = true;
+  compression.lifecycleEpoch += 1;
+  compression.lifecycleState = 'pausing';
 
   if (compression.phase === 'compressing' && compression.process && process.platform !== 'win32') {
     try {
@@ -566,11 +641,29 @@ async function pauseCompression(event, payload) {
     const result = await transferBridge.pauseTransfer(event, { transferId: `compress-${compressionId}` });
     if (!result?.success) {
       compression.paused = false;
+      compression.lifecycleEpoch += 1;
+      compression.lifecycleState = 'transferring';
+      broadcastCompressionEvent({
+        type: 'resumed',
+        transferId: compressionId,
+        phase: compression.phase,
+        lifecycleEpoch: compression.lifecycleEpoch,
+        lifecycleState: compression.lifecycleState,
+      });
       return result || { success: false, reason: 'Upload pause is unavailable' };
     }
   }
 
-  return { success: true, deferred: compression.phase === 'extracting' || (compression.phase === 'compressing' && process.platform === 'win32') };
+  const deferred = compression.phase === 'extracting' || (compression.phase === 'compressing' && process.platform === 'win32');
+  compression.lifecycleState = deferred ? 'pausing' : 'paused';
+  broadcastCompressionEvent({
+    type: deferred ? 'pausing' : 'paused',
+    transferId: compressionId,
+    phase: compression.phase,
+    lifecycleEpoch: compression.lifecycleEpoch,
+    lifecycleState: compression.lifecycleState,
+  });
+  return { success: true, deferred, lifecycleEpoch: compression.lifecycleEpoch };
 }
 
 async function resumeCompression(event, payload) {
@@ -591,8 +684,17 @@ async function resumeCompression(event, payload) {
     const result = await transferBridge.resumeTransfer(event, { transferId: `compress-${compressionId}` });
     if (!result?.success) return result || { success: false, reason: 'Upload resume is unavailable' };
   }
+  compression.lifecycleEpoch += 1;
+  compression.lifecycleState = 'transferring';
   releasePausedCompression(compression);
-  return { success: true };
+  broadcastCompressionEvent({
+    type: 'resumed',
+    transferId: compressionId,
+    phase: compression.phase,
+    lifecycleEpoch: compression.lifecycleEpoch,
+    lifecycleState: compression.lifecycleState,
+  });
+  return { success: true, lifecycleEpoch: compression.lifecycleEpoch };
 }
 
 /**
@@ -632,11 +734,79 @@ function registerWorkerHandle(ipcMain, terminalWorkerManager, channel) {
 function registerHandlers(ipcMain, options = {}) {
   const terminalWorkerManager = options.terminalWorkerManager || null;
   if (terminalWorkerManager) {
+    const workerRequest = (event, channel, payload) => terminalWorkerManager.request(channel, payload, {
+      webContentsId: event?.sender?.id,
+    });
+    const nextEpoch = (compressionId, suggestedEpoch) => {
+      const current = Math.max(0, Number(workerCompressionLifecycleEpochs.get(compressionId)) || 0);
+      const suggested = Number(suggestedEpoch);
+      const next = Number.isFinite(suggested) && suggested > current ? suggested : current + 1;
+      workerCompressionLifecycleEpochs.set(compressionId, next);
+      return next;
+    };
+    ipcMain.handle("netcatty:compress:start", (event, payload) => {
+      if (payload?.compressionId) {
+        workerCompressionLifecycleEpochs.set(
+          payload.compressionId,
+          Math.max(0, Number(payload.lifecycleEpoch) || 0),
+        );
+      }
+      return workerRequest(event, "netcatty:compress:start", payload);
+    });
+    ipcMain.handle("netcatty:compress:pause", async (event, payload) => {
+      const lifecycleEpoch = nextEpoch(payload?.compressionId);
+      broadcastCompressionEvent({
+        type: 'pausing',
+        transferId: payload?.compressionId,
+        lifecycleEpoch,
+        lifecycleState: 'pausing',
+      });
+      try {
+        const result = await workerRequest(event, "netcatty:compress:pause", payload);
+        if (!result?.success) {
+          const rollbackEpoch = nextEpoch(payload?.compressionId);
+          broadcastCompressionEvent({
+            type: 'resumed',
+            transferId: payload?.compressionId,
+            lifecycleEpoch: rollbackEpoch,
+            lifecycleState: 'transferring',
+          });
+          return result;
+        }
+        const lifecycleState = result.deferred ? 'pausing' : 'paused';
+        broadcastCompressionEvent({
+          type: lifecycleState,
+          transferId: payload?.compressionId,
+          lifecycleEpoch,
+          lifecycleState,
+        });
+        return result;
+      } catch (error) {
+        const rollbackEpoch = nextEpoch(payload?.compressionId);
+        broadcastCompressionEvent({
+          type: 'resumed',
+          transferId: payload?.compressionId,
+          lifecycleEpoch: rollbackEpoch,
+          lifecycleState: 'transferring',
+        });
+        throw error;
+      }
+    });
+    ipcMain.handle("netcatty:compress:resume", async (event, payload) => {
+      const result = await workerRequest(event, "netcatty:compress:resume", payload);
+      if (result?.success) {
+        const lifecycleEpoch = nextEpoch(payload?.compressionId, result.lifecycleEpoch);
+        broadcastCompressionEvent({
+          type: 'resumed',
+          transferId: payload?.compressionId,
+          lifecycleEpoch,
+          lifecycleState: 'transferring',
+        });
+      }
+      return result;
+    });
     [
-      "netcatty:compress:start",
       "netcatty:compress:cancel",
-      "netcatty:compress:pause",
-      "netcatty:compress:resume",
       "netcatty:compress:checkSupport",
     ].forEach((channel) => registerWorkerHandle(ipcMain, terminalWorkerManager, channel));
     return;
