@@ -453,7 +453,10 @@ const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   hibernateKeepRendererCount: 2,
   hibernateReplayChunkBytes: 16 * 1024,
   hibernatePreferWasmSerialize: false,
-  inlineImagesEnabled: true, // Render Kitty/SIXEL/iTerm inline images out of the box
+  // Opt-in: loading the image addon has bundle/parser cost, and sessions that
+  // have drawn images cannot full-hibernate. Protocols stay enabled so turning
+  // the master switch on is a single click.
+  inlineImagesEnabled: false,
   inlineImageKittyEnabled: true,
   inlineImageSixelEnabled: true,
   inlineImageIipEnabled: true,

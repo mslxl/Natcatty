@@ -162,10 +162,10 @@ test("each protocol switch maps to its own addon support flag", () => {
   assert.equal(kittyOnly.iipSupport, false);
 });
 
-test("terminal settings default to inline images on with clamped limits", () => {
+test("terminal settings default to inline images off with clamped limits", () => {
   const defaults = normalizeTerminalSettings();
 
-  assert.equal(defaults.inlineImagesEnabled, true);
+  assert.equal(defaults.inlineImagesEnabled, false);
   assert.equal(defaults.inlineImageKittyEnabled, true);
   assert.equal(defaults.inlineImageSixelEnabled, true);
   assert.equal(defaults.inlineImageIipEnabled, true);
