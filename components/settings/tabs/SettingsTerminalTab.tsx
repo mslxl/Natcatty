@@ -32,6 +32,14 @@ import {
   TERMINAL_SIDE_PANEL_AUTO_OPEN_TABS,
   type TerminalSidePanelAutoOpenTab,
 } from "../../../domain/terminalSidePanelAutoOpen";
+import {
+  TERMINAL_INLINE_IMAGE_MAX_MEGAPIXELS_MAX,
+  TERMINAL_INLINE_IMAGE_MAX_MEGAPIXELS_MIN,
+  TERMINAL_INLINE_IMAGE_SEQUENCE_LIMIT_MB_MAX,
+  TERMINAL_INLINE_IMAGE_SEQUENCE_LIMIT_MB_MIN,
+  TERMINAL_INLINE_IMAGE_STORAGE_LIMIT_MB_MAX,
+  TERMINAL_INLINE_IMAGE_STORAGE_LIMIT_MB_MIN,
+} from "../../../domain/terminalInlineImages";
 
 const FONT_WEIGHT_OPTIONS = [
   { value: "100", labelKey: "settings.terminal.font.weight.thin" },
@@ -1136,6 +1144,130 @@ function SettingsTerminalTab(props: {
               onChange={(v) => updateTerminalSetting("hibernatePreferWasmSerialize", v)}
             />
           </SettingRow>
+          </>
+        )}
+      </div>
+
+      <SectionHeader title={t("settings.terminal.section.inlineImages")} />
+      <div className="space-y-0 divide-y divide-border rounded-lg border bg-card px-4">
+        <SettingRow
+          label={t("settings.terminal.inlineImages.enabled")}
+          description={t("settings.terminal.inlineImages.enabled.desc")}
+        >
+          <Toggle
+            checked={terminalSettings.inlineImagesEnabled}
+            onChange={(v) => updateTerminalSetting("inlineImagesEnabled", v)}
+          />
+        </SettingRow>
+        {terminalSettings.inlineImagesEnabled && (
+          <>
+          <SettingRow
+            label={t("settings.terminal.inlineImages.kitty")}
+            description={t("settings.terminal.inlineImages.kitty.desc")}
+          >
+            <Toggle
+              checked={terminalSettings.inlineImageKittyEnabled}
+              onChange={(v) => updateTerminalSetting("inlineImageKittyEnabled", v)}
+            />
+          </SettingRow>
+          <SettingRow
+            label={t("settings.terminal.inlineImages.sixel")}
+            description={t("settings.terminal.inlineImages.sixel.desc")}
+          >
+            <Toggle
+              checked={terminalSettings.inlineImageSixelEnabled}
+              onChange={(v) => updateTerminalSetting("inlineImageSixelEnabled", v)}
+            />
+          </SettingRow>
+          <SettingRow
+            label={t("settings.terminal.inlineImages.iip")}
+            description={t("settings.terminal.inlineImages.iip.desc")}
+          >
+            <Toggle
+              checked={terminalSettings.inlineImageIipEnabled}
+              onChange={(v) => updateTerminalSetting("inlineImageIipEnabled", v)}
+            />
+          </SettingRow>
+          <SettingRow
+            label={t("settings.terminal.inlineImages.storageLimit")}
+            description={t("settings.terminal.inlineImages.storageLimit.desc")}
+          >
+            <div className="flex items-center gap-2">
+              <Input
+                type="number"
+                min={TERMINAL_INLINE_IMAGE_STORAGE_LIMIT_MB_MIN}
+                max={TERMINAL_INLINE_IMAGE_STORAGE_LIMIT_MB_MAX}
+                value={terminalSettings.inlineImageStorageLimitMb}
+                onChange={(e) => {
+                  const val = parseInt(e.target.value, 10);
+                  if (
+                    !Number.isNaN(val)
+                    && val >= TERMINAL_INLINE_IMAGE_STORAGE_LIMIT_MB_MIN
+                    && val <= TERMINAL_INLINE_IMAGE_STORAGE_LIMIT_MB_MAX
+                  ) {
+                    updateTerminalSetting("inlineImageStorageLimitMb", val);
+                  }
+                }}
+                className="w-20"
+              />
+              <span className="text-sm text-muted-foreground">{t("settings.terminal.inlineImages.unit.mb")}</span>
+            </div>
+          </SettingRow>
+          <SettingRow
+            label={t("settings.terminal.inlineImages.maxMegapixels")}
+            description={t("settings.terminal.inlineImages.maxMegapixels.desc")}
+          >
+            <div className="flex items-center gap-2">
+              <Input
+                type="number"
+                min={TERMINAL_INLINE_IMAGE_MAX_MEGAPIXELS_MIN}
+                max={TERMINAL_INLINE_IMAGE_MAX_MEGAPIXELS_MAX}
+                value={terminalSettings.inlineImageMaxMegapixels}
+                onChange={(e) => {
+                  const val = parseInt(e.target.value, 10);
+                  if (
+                    !Number.isNaN(val)
+                    && val >= TERMINAL_INLINE_IMAGE_MAX_MEGAPIXELS_MIN
+                    && val <= TERMINAL_INLINE_IMAGE_MAX_MEGAPIXELS_MAX
+                  ) {
+                    updateTerminalSetting("inlineImageMaxMegapixels", val);
+                  }
+                }}
+                className="w-20"
+              />
+              <span className="text-sm text-muted-foreground">{t("settings.terminal.inlineImages.unit.megapixels")}</span>
+            </div>
+          </SettingRow>
+          <SettingRow
+            label={t("settings.terminal.inlineImages.sequenceLimit")}
+            description={t("settings.terminal.inlineImages.sequenceLimit.desc")}
+          >
+            <div className="flex items-center gap-2">
+              <Input
+                type="number"
+                min={TERMINAL_INLINE_IMAGE_SEQUENCE_LIMIT_MB_MIN}
+                max={TERMINAL_INLINE_IMAGE_SEQUENCE_LIMIT_MB_MAX}
+                value={terminalSettings.inlineImageSequenceLimitMb}
+                onChange={(e) => {
+                  const val = parseInt(e.target.value, 10);
+                  if (
+                    !Number.isNaN(val)
+                    && val >= TERMINAL_INLINE_IMAGE_SEQUENCE_LIMIT_MB_MIN
+                    && val <= TERMINAL_INLINE_IMAGE_SEQUENCE_LIMIT_MB_MAX
+                  ) {
+                    updateTerminalSetting("inlineImageSequenceLimitMb", val);
+                  }
+                }}
+                className="w-20"
+              />
+              <span className="text-sm text-muted-foreground">{t("settings.terminal.inlineImages.unit.mb")}</span>
+            </div>
+          </SettingRow>
+          {terminalSettings.hibernateHiddenTabs && (
+            <div className="py-3 text-xs text-muted-foreground">
+              {t("settings.terminal.inlineImages.hibernateNote")}
+            </div>
+          )}
           </>
         )}
       </div>

@@ -216,6 +216,9 @@ const SYNCABLE_TERMINAL_KEYS = [
   'systemManagerProcessRefreshInterval', 'systemManagerTmuxRefreshInterval',
   'systemManagerDockerListRefreshInterval', 'systemManagerDockerStatsRefreshInterval',
   'rendererType',
+  // Inline image protocol switches are a preference and sync; the per-terminal
+  // memory limits stay local because they are tuned per device (like hibernate*).
+  'inlineImagesEnabled', 'inlineImageKittyEnabled', 'inlineImageSixelEnabled', 'inlineImageIipEnabled',
   'autocompleteEnabled', 'autocompleteGhostText', 'autocompletePopupMenu',
   'autocompleteDebounceMs', 'autocompleteMinChars', 'autocompleteMaxSuggestions',
 ] as const;

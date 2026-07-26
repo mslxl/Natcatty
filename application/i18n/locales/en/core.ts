@@ -690,6 +690,26 @@ Highlight the focused split pane:
   'settings.terminal.rendering.hibernatePreferWasmSerialize': 'Prefer WASM serialize',
   'settings.terminal.rendering.hibernatePreferWasmSerialize.desc': 'Use WASM terminal serialization when available; falls back to the JS serializer.',
 
+  // Settings > Terminal > Inline Images
+  'settings.terminal.section.inlineImages': 'Inline Images',
+  'settings.terminal.inlineImages.enabled': 'Render inline images',
+  'settings.terminal.inlineImages.enabled.desc': 'Draw real images sent by remote programs (kitten icat, chafa, image previews in file managers and TUIs). Changes take effect on new terminal sessions.',
+  'settings.terminal.inlineImages.kitty': 'Kitty graphics protocol',
+  'settings.terminal.inlineImages.kitty.desc': 'Accept Kitty graphics sequences, including direct/stream transmission over SSH.',
+  'settings.terminal.inlineImages.sixel': 'SIXEL',
+  'settings.terminal.inlineImages.sixel.desc': 'Accept SIXEL graphics, used by img2sixel, mpv, gnuplot and older DEC-style tools.',
+  'settings.terminal.inlineImages.iip': 'iTerm inline image protocol',
+  'settings.terminal.inlineImages.iip.desc': "Accept iTerm2's OSC 1337 inline image sequences (PNG, JPEG, first frame of GIF).",
+  'settings.terminal.inlineImages.storageLimit': 'Image cache per terminal',
+  'settings.terminal.inlineImages.storageLimit.desc': 'Memory each terminal may keep for decoded images before the oldest ones are evicted (8–512 MB).',
+  'settings.terminal.inlineImages.maxMegapixels': 'Maximum image size',
+  'settings.terminal.inlineImages.maxMegapixels.desc': 'Largest single image that will be decoded; bigger images are discarded without touching the terminal buffer (1–64 MP, 16 MP is 4096 × 4096).',
+  'settings.terminal.inlineImages.sequenceLimit': 'Maximum sequence size',
+  'settings.terminal.inlineImages.sequenceLimit.desc': 'Largest single image escape sequence accepted before decoding starts (1–64 MB).',
+  'settings.terminal.inlineImages.unit.mb': 'MB',
+  'settings.terminal.inlineImages.unit.megapixels': 'MP',
+  'settings.terminal.inlineImages.hibernateNote': 'Tabs that have drawn an inline image keep their renderer instead of hibernating, because hibernation restores text only.',
+
   // Settings > Terminal > Workspace Focus Indicator
   'settings.terminal.section.workspaceFocus': 'Workspace Focus Indicator',
   'settings.terminal.workspaceFocus.style': 'Focus indicator style',
