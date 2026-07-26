@@ -245,7 +245,7 @@ export interface ExternalAgentConfig {
   available?: boolean;
   /** SDK backend key for managed agents (claude|codex|copilot|cursor|codebuddy|opencode). */
   sdkBackend?: string;
-  /** Cursor only: mutually exclusive auth — API key vs local `agent` CLI login. */
+  /** Cursor only: mutually exclusive auth — API key vs local `cursor-agent` CLI login. */
   cursorAuthMode?: CursorAuthMode;
   /** Experimental Codex transport. Missing values keep the existing SDK behavior. */
   codexRuntime?: CodexRuntime;
@@ -676,8 +676,8 @@ export function getAgentModelPresets(
   agentCommand?: string,
   sdkBackend?: string,
 ): AgentModelPreset[] {
-  // Prefer sdkBackend: CLI login stores the real `agent` binary path, which
-  // does not start with "cursor" and would otherwise yield an empty preset list.
+  // Prefer sdkBackend: CLI login stores the real `cursor-agent` binary path,
+  // which would otherwise yield an empty preset list without this hint.
   const backend = String(sdkBackend || '').trim().toLowerCase();
   if (backend === 'claude') return CLAUDE_MODEL_PRESETS;
   if (backend === 'codex') return CODEX_MODEL_PRESETS;
@@ -693,11 +693,9 @@ export function getAgentModelPresets(
   const basename = agentCommand.split(/[\\/]/).pop()?.toLowerCase() ?? '';
   if (basename.startsWith('claude')) return CLAUDE_MODEL_PRESETS;
   if (basename.startsWith('codex')) return CODEX_MODEL_PRESETS;
-  // Cursor CLI login may resolve to `agent` / `cursor-agent` on PATH.
+  // Cursor CLI login resolves to `cursor-agent` on PATH.
   if (
     basename.startsWith('cursor')
-    || basename === 'agent'
-    || basename.startsWith('agent.')
     || basename.startsWith('cursor-agent')
   ) {
     return CURSOR_MODEL_PRESETS;

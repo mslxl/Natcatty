@@ -514,6 +514,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
     setExternalAgents((prev) => {
       const existing = prev.find((agent) => agent.id === "discovered_cursor");
       const others = prev.filter((agent) => agent.id !== "discovered_cursor");
+      const preservedApiKey = existing?.apiKey || cursorApiKeyEncrypted;
       const nextAgent: ExternalAgentConfig = {
         ...(existing ?? {
           id: "discovered_cursor",
@@ -525,13 +526,14 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
           enabled: false,
         }),
         cursorAuthMode: mode,
-        // Keep stored API key when switching modes; turn wiring omits
-        // CURSOR_API_KEY for cli-login without destroying credentials.
+        // Explicitly keep stored API key when switching CLI ↔ API Key modes.
+        // CLI turns omit CURSOR_API_KEY via env wiring without destroying credentials.
+        ...(preservedApiKey ? { apiKey: preservedApiKey } : {}),
         command: mode === "cli-login"
           ? (cursorPathInfo?.cliBinPath || cursorPathInfo?.path || existing?.command || "cursor")
           : (existing?.command || cursorPathInfo?.path || "cursor"),
         available: isCursorAvailableForMode(cursorPathInfo, mode, {
-          hasStoredApiKey: Boolean(existing?.apiKey || cursorApiKeyEncrypted),
+          hasStoredApiKey: Boolean(preservedApiKey),
         }),
         // Preserve user enable preference across mode peeks; `available` alone
         // gates send eligibility when the mode cannot run.

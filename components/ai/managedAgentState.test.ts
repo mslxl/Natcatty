@@ -256,6 +256,41 @@ test('buildManagedAgentState preserves enabled when CLI login probe is temporari
   assert.equal(recovered.agents[0].command, '/bin/cursor-agent');
 });
 
+test('buildManagedAgentState keeps API key when Cursor stays on CLI login mode', () => {
+  const agents: ExternalAgentConfig[] = [
+    {
+      id: 'discovered_cursor',
+      name: 'Cursor',
+      command: '/bin/cursor-agent',
+      enabled: true,
+      available: true,
+      sdkBackend: 'cursor',
+      cursorAuthMode: 'cli-login',
+      apiKey: 'enc:v1:keep-me',
+    },
+  ];
+
+  const state = buildManagedAgentState(
+    agents,
+    'discovered_cursor',
+    'cursor',
+    {
+      path: '/bin/cursor-agent',
+      cliBinPath: '/bin/cursor-agent',
+      version: 'Cursor Agent CLI',
+      available: true,
+      installed: true,
+      cliLoginOk: true,
+      apiKeyOk: true,
+      sdkInstalled: true,
+      authSource: 'cli-login',
+    },
+  );
+
+  assert.equal(state.agents[0].apiKey, 'enc:v1:keep-me');
+  assert.equal(state.agents[0].cursorAuthMode, 'cli-login');
+});
+
 test('buildManagedAgentState stores CODEBUDDY_CODE_PATH for codebuddy', () => {
   const state = buildManagedAgentState(
     [],
