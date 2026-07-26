@@ -32,13 +32,26 @@ test("allPauseResultsBenignOrSuccess rejects mixed hard failures", () => {
   assert.equal(allPauseResultsBenignOrSuccess([]), true);
 });
 
-test("directory parent stays transferring when any child hard-fails pause", () => {
+test("directory parent stays paused even when some children hard-fail pause", () => {
+  // Latch-first: partial child failures must not unpause the folder parent.
   assert.deepEqual(
     resolveDirectoryPauseParentOutcome([
       { success: true },
       { success: false, reason: "cannot be paused safely" },
     ]),
-    { kind: "still_transferring", reason: "cannot be paused safely" },
+    { kind: "paused", reason: "cannot be paused safely" },
+  );
+  assert.deepEqual(
+    resolveDirectoryPauseParentOutcome([
+      { success: false, reason: "This transfer cannot be paused yet" },
+    ]),
+    { kind: "paused", reason: "This transfer cannot be paused yet" },
+  );
+  assert.deepEqual(
+    resolveDirectoryPauseParentOutcome([
+      { success: false, reason: "Could not verify the saved transfer checkpoint" },
+    ]),
+    { kind: "paused", reason: "Could not verify the saved transfer checkpoint" },
   );
   assert.deepEqual(
     resolveDirectoryPauseParentOutcome([
@@ -126,14 +139,18 @@ test("mixed hard-fail rollback resumes real scheduler-parked jobs so work contin
   assert.equal(childAFinished, true, "parked child-a must run after rollback resume");
 });
 
-test("useSftpTransfers pauseTransfer rolls back partial pause via planPartialPauseRollback", () => {
-  const source = readFileSync(new URL("./useSftpTransfers.ts", import.meta.url), "utf8");
-  assert.match(source, /planPartialPauseRollback/);
-  assert.match(source, /rollbackPartialPause/);
-  assert.match(source, /schedulerIdsToResume/);
-  assert.match(source, /bridgeIdsToResume/);
-  // Must not latch before knowing success.
-  assert.match(source, /Latch workers only after a real pause succeeds/);
-  // On hard fail must resume scheduler + bridge before failPause.
-  assert.match(source, /await rollbackPartialPause\(\)/);
+test("panel pause delegates to TransferRuntime; soft-control + rollback live in process-global control", () => {
+  // Dual soft-control path was removed: panel only calls transferRuntime.
+  const panelSource = readFileSync(new URL("./useSftpTransfers.ts", import.meta.url), "utf8");
+  assert.match(panelSource, /transferRuntime\.pause/);
+  assert.match(panelSource, /transferRuntime\.resume/);
+  assert.doesNotMatch(panelSource, /rollbackPartialPause/);
+  assert.doesNotMatch(panelSource, /resolveDirectoryPauseParentOutcome/);
+
+  // planPartialPauseRollback remains on the single soft-control plane.
+  const controlSource = readFileSync(new URL("./globalSftpTransferControl.ts", import.meta.url), "utf8");
+  assert.match(controlSource, /planPartialPauseRollback/);
+  assert.match(controlSource, /bridgeIdsToResume/);
+  assert.match(controlSource, /softPauseTransfer/);
+  assert.match(controlSource, /softResumeTransfer/);
 });

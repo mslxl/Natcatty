@@ -10,11 +10,16 @@
  * Used in TerminalLayer to provide SFTP alongside terminal sessions.
  */
 
-import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import { SftpSidePanelDeferredMount } from "./SftpSidePanelDeferredMount";
 import { formatHostPort } from "../domain/host";
 import { useI18n } from "../application/i18n/I18nProvider";
 import { useSftpState } from "../application/state/useSftpState";
+import { useSettingsState } from "../application/state/useSettingsState";
+import {
+  useReportSftpTransferOwnerActivity,
+  useWarmSftpTransferPool,
+} from "../application/state/sftp/useSftpTransferLifecycle";
 import { registerEditorSftpWriterScoped } from "../application/state/editorSftpBridge";
 import { editorTabStore } from "../application/state/editorTabStore";
 import { releaseEditorTabSaveCoordinator } from "../application/state/editorTabSave";
@@ -147,6 +152,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   terminalSettings,
 }) => {
   const { t } = useI18n();
+  const { sftpTransferPoolIdleTtlMs } = useSettingsState();
   const hostWriteSource = writableHosts ?? hosts;
   const connectedHosts = useMemo(() => {
     const hostsById = new Map<string, Host>(
@@ -154,6 +160,10 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     );
     return listSftpConnectedHosts(sessions, hostsById);
   }, [hosts, sessions]);
+
+  const resolveTransferSourceSessionId = useCallback((hostId: string) => {
+    return connectedHosts.find((entry) => entry.host.id === hostId)?.sessionId;
+  }, [connectedHosts]);
 
   const fileWatchHandlers = useMemo(() => ({
     onFileWatchSynced: (payload: { remotePath: string }) => {
@@ -179,7 +189,20 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     terminalSettings,
     knownHosts,
     onAddKnownHost,
-  }), [fileWatchHandlers, isVisible, transferOwnerId, sftpUseCompressedUpload, sftpShowHiddenFiles, terminalSettings, knownHosts, onAddKnownHost]);
+    resolveTransferSourceSessionId,
+    transferPoolIdleTtlMs: sftpTransferPoolIdleTtlMs,
+  }), [
+    fileWatchHandlers,
+    isVisible,
+    transferOwnerId,
+    sftpUseCompressedUpload,
+    sftpShowHiddenFiles,
+    terminalSettings,
+    knownHosts,
+    onAddKnownHost,
+    resolveTransferSourceSessionId,
+    sftpTransferPoolIdleTtlMs,
+  ]);
 
   const sftp = useSftpState(hosts, keys, identities, sftpOptions);
   const {
@@ -196,6 +219,12 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
 
   const sftpRef = useRef(sftp);
   sftpRef.current = sftp;
+
+  useWarmSftpTransferPool({
+    hostIds: connectedHosts.map((entry) => entry.host.id),
+    activeHostId: activeHost?.protocol === "serial" ? undefined : activeHost?.id,
+    warmTransferPoolForHost: sftp.warmTransferPoolForHost,
+  });
 
   useEffect(() => {
     /** Per-task locks so resume-all can prepare multiple transfers sequentially. */
@@ -300,20 +329,11 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     return () => window.removeEventListener("netcatty:prepare-sftp-transfer-resume", handler);
   }, [hosts, transferOwnerId]);
 
-  // Report via a ref so callback identity churn never re-runs a cleanup that
-  // spuriously zeros the parent's active-transfer count mid-transfer (that
-  // would unmount the retained owner and abort live work).
-  const onActiveTransfersChangeRef = useRef(onActiveTransfersChange);
-  onActiveTransfersChangeRef.current = onActiveTransfersChange;
-
-  useLayoutEffect(() => {
-    onActiveTransfersChangeRef.current?.(sftp.activeTransfersCount);
-  }, [sftp.activeTransfersCount]);
-
-  useEffect(() => () => {
-    // True unmount only — owner is going away; allow parent to release retain.
-    onActiveTransfersChangeRef.current?.(0);
-  }, []);
+  useReportSftpTransferOwnerActivity({
+    ownerId: transferOwnerId,
+    activeTransfersCount: sftp.activeTransfersCount,
+    onActiveTransfersChange,
+  });
 
   // Register this instance's writeTextFileByConnection with the editor bridge
   // so editor tabs promoted from SFTP files opened in a terminal side panel

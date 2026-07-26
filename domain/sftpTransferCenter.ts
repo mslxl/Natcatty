@@ -29,12 +29,13 @@ const SAFE_TASK_KEYS: ReadonlySet<keyof TransferTask> = new Set([
   "startTime", "endTime", "isDirectory", "progressMode", "childTasks", "parentTaskId",
   "sourceLastModified", "skipConflictCheck", "replaceExistingTarget", "retryable",
   "ownerId", "sourceHostId", "sourceHostLabel", "targetHostLabel", "origin", "background",
-  "phase", "resumable", "checkpointBytes", "priority", "updatedAt", "pauseUnavailableReason",
+  "phase", "controlKind", "resumable", "checkpointBytes", "priority", "updatedAt", "pauseUnavailableReason",
   "resumeStage", "downloadCheckpointBytes", "uploadCheckpointBytes",
   "conflict",
   "stagedTargetPath",
   "sourceFingerprint",
   "reconnectRequired",
+  "lifecycleEpoch",
 ]);
 
 function sanitizeTask(value: unknown): TransferTask | null {
@@ -47,7 +48,10 @@ function sanitizeTask(value: unknown): TransferTask | null {
     if (source[key] !== undefined) sanitized[key] = source[key];
   }
   const task = sanitized as unknown as TransferTask;
-  if (RESTORED_INTERRUPTED_STATUSES.has(task.status)) {
+  // After force-quit / restart no backend stream remains. Every unfinished row
+  // (including a previously interrupted row that was already persisted) needs a
+  // dedicated reconnect — do not leave reconnectRequired false.
+  if (RESTORED_INTERRUPTED_STATUSES.has(task.status) || task.status === "interrupted") {
     task.status = "interrupted";
     task.speed = 0;
     task.reconnectRequired = true;
@@ -55,6 +59,9 @@ function sanitizeTask(value: unknown): TransferTask | null {
     // even though the task is dead after restart.
     task.phase = undefined;
     task.error = task.error || undefined;
+    // Stale lifecycle epochs from a previous process must not block first
+    // progress after dedicated reconnect.
+    task.lifecycleEpoch = undefined;
   }
   return task;
 }

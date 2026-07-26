@@ -4,6 +4,9 @@ export interface UploadProgress {
   speed: number;
   /** Percentage (0-100) */
   percent: number;
+  /** Contiguous durable offset from the transfer bridge (may lag transferred). */
+  checkpointBytes?: number;
+  sourceFingerprint?: string;
   resumable?: boolean;
   pauseUnavailableReason?: string;
 }
@@ -22,6 +25,8 @@ export interface UploadTaskInfo {
   fileCount: number;
   completedCount: number;
   sourcePath?: string;
+  /** Background job API used to control this task after its page closes. */
+  controlKind?: 'stream' | 'compressed-upload';
 }
 
 export interface UploadResult {

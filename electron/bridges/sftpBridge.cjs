@@ -555,6 +555,135 @@ const removeRemotePathInternal = async (sftp, targetPath, encoding, signal = nul
   throwIfAborted(signal);
 };
 
+/**
+ * Run a one-shot remote shell command on the SSH connection underlying an SFTP client.
+ * Used for fast directory delete (`rm -rf`) when SFTP-protocol recursion would be slow.
+ */
+async function execRemoteShellCommand(sshClient, command, signal = null) {
+  if (!sshClient || typeof sshClient.exec !== "function") {
+    throw new Error("SSH exec unavailable");
+  }
+  return await new Promise((resolve, reject) => {
+    let settled = false;
+    let streamRef = null;
+    let stdout = "";
+    let stderr = "";
+    const finish = (error, code = 0) => {
+      if (settled) return;
+      settled = true;
+      if (signal) {
+        try { signal.removeEventListener("abort", onAbort); } catch { /* ignore */ }
+      }
+      if (error) {
+        reject(error);
+        return;
+      }
+      if (code === 0) {
+        resolve({ stdout, stderr, code });
+        return;
+      }
+      reject(new Error(
+        `Remote command failed (code ${code})${stderr ? `: ${String(stderr).trim()}` : ""}`,
+      ));
+    };
+    const onAbort = () => {
+      try { streamRef?.close?.(); } catch { /* ignore */ }
+      try { streamRef?.destroy?.(); } catch { /* ignore */ }
+      finish(createAbortError(signal, "Remote command was aborted"));
+    };
+    if (signal) {
+      if (signal.aborted) {
+        finish(createAbortError(signal, "Remote command was aborted"));
+        return;
+      }
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+    try {
+      sshClient.exec(command, (error, stream) => {
+        if (error) {
+          finish(error);
+          return;
+        }
+        streamRef = stream;
+        if (settled) {
+          try { stream.close?.(); } catch { /* ignore */ }
+          return;
+        }
+        stream.on("data", (chunk) => { stdout += chunk.toString(); });
+        if (stream.stderr && typeof stream.stderr.on === "function") {
+          stream.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+        }
+        stream.on("close", (code) => finish(null, code ?? 0));
+        stream.on("error", (streamError) => finish(streamError));
+      });
+    } catch (error) {
+      finish(error);
+    }
+  });
+}
+
+/**
+ * Fast directory delete via shell `rm -rf`, verified through the SFTP channel.
+ * Returns true only when SFTP confirms the path is gone. Never trust shell exit
+ * alone — shell cwd/root can diverge from the SFTP view of the same path.
+ *
+ * Non-UTF-8 encodings skip this path (shell quoting of legacy encodings is unsafe).
+ */
+async function tryFastShellDirectoryDelete(client, remotePath, encoding = "utf-8", signal = null) {
+  const sshClient = client?.client;
+  if (!sshClient || typeof sshClient.exec !== "function") return false;
+  const enc = !encoding || encoding === "auto" ? "utf-8" : encoding;
+  if (enc !== "utf-8") return false;
+  if (typeof remotePath !== "string" || !remotePath || remotePath === "/" || remotePath === ".") {
+    return false;
+  }
+
+  let command;
+  try {
+    const { buildDeleteCommand } = require("./sftpBridge/scpShell.cjs");
+    command = buildDeleteCommand(remotePath, { recursive: true, encoding: "utf-8" });
+  } catch {
+    return false;
+  }
+
+  try {
+    await execRemoteShellCommand(sshClient, command, signal);
+  } catch {
+    return false;
+  }
+
+  throwIfAborted(signal);
+  // Confirm via the same SFTP channel the browser uses.
+  try {
+    const sftp = await requireSftpChannel(client, { signal });
+    const encoded = encodePath(remotePath, "utf-8");
+    await lstatAsync(sftp, encoded);
+    // Still present — shell did not remove the SFTP-visible path.
+    return false;
+  } catch (err) {
+    if (err && (err.code === 2 || err.code === "ENOENT")) return true;
+    if (err && /no such file/i.test(String(err.message || ""))) return true;
+    return false;
+  }
+}
+
+/**
+ * Remove a remote directory: prefer verified shell `rm -rf`, fall back to
+ * protocol-level recursive walk when shell is unavailable or unverified.
+ */
+async function removeRemoteDirectory(client, remotePath, encoding = "utf-8", signal = null) {
+  throwIfAborted(signal);
+  const enc = !encoding || encoding === "auto" ? "utf-8" : encoding;
+  if (await tryFastShellDirectoryDelete(client, remotePath, enc, signal)) {
+    return;
+  }
+  throwIfAborted(signal);
+  const sftp = await requireSftpChannel(client, { signal });
+  const normalized = await normalizeRemotePathString(client, remotePath);
+  throwIfAborted(signal);
+  await removeRemotePathInternal(sftp, normalized, enc, signal);
+}
+
 const ensureRemoteDirForSession = async (sftpId, dirPath, requestedEncoding, options = {}) => {
   const client = sftpClients.get(sftpId);
   if (!client) throw new Error("SFTP session not found");
@@ -1597,13 +1726,12 @@ function createSessionBackedSftpClient(sessionId, sshClient, options = {}) {
     async rmdir(remotePath, recursive = false, options = {}) {
       const signal = options?.signal || null;
       throwIfAborted(signal);
-      const sftp = await requireSftpChannel(client, { signal });
       if (recursive) {
-        const normalized = await normalizeRemotePathString(client, remotePath);
-        throwIfAborted(signal);
-        await removeRemotePathInternal(sftp, normalized, "utf-8", signal);
+        // Prefer verified shell `rm -rf` (fast); fall back to SFTP walk.
+        await removeRemoteDirectory(client, remotePath, "utf-8", signal);
         return;
       }
+      const sftp = await requireSftpChannel(client, { signal });
       throwIfAborted(signal);
       await rmdirAsync(sftp, remotePath);
       throwIfAborted(signal);
@@ -2037,7 +2165,8 @@ const fileOpsApi = createFileOpsApi({
   jumpConnectionsMap, sftpEncodingState, normalizeEncoding, isAsciiString,
   requireSftpChannel, resolveEncodingForRequest, updateResolvedEncoding, encodePath, decodeName,
   detectEncodingFromList, statResultFromAttrs, normalizeRemotePathString, collectReadable, writeToWritable,
-  throwIfAborted, pipeStreams, ensureRemoteDirForSession, removeRemotePathInternal, renameRemotePath,
+  throwIfAborted, pipeStreams, ensureRemoteDirForSession, removeRemotePathInternal, removeRemoteDirectory,
+  tryFastShellDirectoryDelete, renameRemotePath,
   buildStagedRemotePath, buildBackupRemotePath,
   realpathAsync, statAsync, lstatAsync, readdirAsync, mkdirAsync, rmdirAsync, unlinkAsync, openFileAsync,
   writeFileChunkAsync, closeFileAsync, createAbortError, copySftpEncodingState, clearSftpEncodingState,

@@ -38,6 +38,7 @@ import {
   shouldRestoreBrowseSessions,
   takeBrowseSessionsForClose,
 } from "./sftp/browseSessionLifecycle";
+import { sftpTransferCenterStore } from "./sftpTransferCenterStore";
 import { netcattyBridge } from "../../infrastructure/services/netcattyBridge";
 import { logger } from "../../lib/logger";
 
@@ -209,10 +210,17 @@ export const useSftpState = (
           // best-effort idle/session cleanup
         }
       },
+      idleTtlMs: options?.transferPoolIdleTtlMs,
     }),
   );
 
-  // Periodically reclaim idle transfer sessions (default TTL 30s).
+  // Keep shared pool TTL in sync with settings (singleton may already exist).
+  useEffect(() => {
+    if (options?.transferPoolIdleTtlMs === undefined) return;
+    transferPoolRef.current.setIdleTtlMs(options.transferPoolIdleTtlMs);
+  }, [options?.transferPoolIdleTtlMs]);
+
+  // Periodically reclaim idle transfer sessions (busy holders are never closed).
   useEffect(() => {
     const pool = transferPoolRef.current;
     const timer = window.setInterval(() => {
@@ -226,6 +234,26 @@ export const useSftpState = (
       window.clearInterval(timer);
     };
   }, []);
+
+  const openPoolSftpSession = useCallback(
+    async (host: Host) => {
+      // Always dedicated vault SSH: bulk transfers must survive SFTP/terminal
+      // tab close. Warm this in the background so the user does not feel the handshake.
+      logger.info(`[SFTP] Opening dedicated transfer connection for ${host.label || host.hostname}`);
+      return openTransferSftpSession(
+        host,
+        {
+          hosts,
+          keys,
+          identities,
+          knownHosts: options?.knownHosts,
+          terminalSettings: options?.terminalSettings,
+        },
+        { dedicated: true },
+      );
+    },
+    [hosts, identities, keys, options?.knownHosts, options?.terminalSettings],
+  );
 
   const acquireTransferSession = useCallback(
     async (hostId: string, transferId: string) => {
@@ -241,18 +269,42 @@ export const useSftpState = (
         protocol: host.protocol,
         sftpSudo: host.sftpSudo,
       });
-      return transferPoolRef.current.acquire(poolKey, transferId, async () => {
-        logger.info(`[SFTP] Opening dedicated transfer connection for ${host.label || host.hostname}`);
-        return openTransferSftpSession(host, {
-          hosts,
-          keys,
-          identities,
-          knownHosts: options?.knownHosts,
-          terminalSettings: options?.terminalSettings,
-        });
-      });
+      return transferPoolRef.current.acquire(poolKey, transferId, () => openPoolSftpSession(host));
     },
-    [hosts, identities, keys, options?.knownHosts, options?.terminalSettings],
+    [hosts, openPoolSftpSession],
+  );
+
+  /**
+   * Warm one idle transfer-pool slot for a host (background). Prefer terminal
+   * session reuse so the first real transfer skips a cold SSH handshake.
+   */
+  const warmTransferPoolForHost = useCallback(
+    async (hostId: string) => {
+      const host = hosts.find((candidate) => candidate.id === hostId);
+      if (!host || host.protocol === "serial") return;
+      const poolKey = buildTransferPoolKey({
+        hostId: host.id,
+        hostname: host.hostname,
+        port: host.port,
+        username: host.username,
+        protocol: host.protocol,
+        sftpSudo: host.sftpSudo,
+      });
+      const stats = transferPoolRef.current.getStats(poolKey);
+      if (stats.connections > 0) return;
+      try {
+        const lease = await transferPoolRef.current.acquire(
+          poolKey,
+          `warm:${hostId}`,
+          () => openPoolSftpSession(host),
+        );
+        lease.release();
+        logger.debug(`[SFTP] Warmed transfer pool for ${host.label || host.hostname}`);
+      } catch (err) {
+        logger.debug("[SFTP] Transfer pool warm failed (will open on first transfer)", err);
+      }
+    },
+    [hosts, openPoolSftpSession],
   );
 
   /** True after browse channels were soft-closed while this owner stayed mounted. */
@@ -482,10 +534,20 @@ export const useSftpState = (
     const gen = ++browseLifecycleGenRef.current;
 
     const parkBrowse = async () => {
+      // Include global-center rows owned by this panel so we never soft-close
+      // browse sessions while bulk work is still arming/running.
+      // Match retain semantics: paused/interrupted folder walks still need the
+      // browse (or work) session until resume finishes — do not hard-park them.
+      const centerActive = sftpTransferCenterStore.getSnapshot().tasks.some((task) => (
+        task.ownerId === transferOwnerIdRef.current
+        && !task.parentTaskId
+        && task.status !== "completed"
+        && task.status !== "cancelled"
+      ));
       if (!shouldParkBrowseSessions({
         interactive,
         browseParked: browseParkedRef.current,
-        activeTransfersCount,
+        activeTransfersCount: Math.max(activeTransfersCount, centerActive ? 1 : 0),
       })) {
         return;
       }
@@ -629,6 +691,7 @@ export const useSftpState = (
     rejectHostKeyVerification,
     acceptHostKeyVerification,
     acceptAndSaveHostKeyVerification,
+    warmTransferPoolForHost,
   });
   methodsRef.current = {
     getFilteredFiles,
@@ -692,6 +755,7 @@ export const useSftpState = (
     rejectHostKeyVerification,
     acceptHostKeyVerification,
     acceptAndSaveHostKeyVerification,
+    warmTransferPoolForHost,
   };
 
   // Create stable method wrappers that call through methodsRef
@@ -772,6 +836,8 @@ export const useSftpState = (
     rejectHostKeyVerification: () => methodsRef.current.rejectHostKeyVerification(),
     acceptHostKeyVerification: () => methodsRef.current.acceptHostKeyVerification(),
     acceptAndSaveHostKeyVerification: () => methodsRef.current.acceptAndSaveHostKeyVerification(),
+    warmTransferPoolForHost: (...args: Parameters<typeof warmTransferPoolForHost>) =>
+      methodsRef.current.warmTransferPoolForHost(...args),
     activeFileWatchCountRef,
   }), [activeFileWatchCountRef]); // activeFileWatchCountRef is a stable ref
 

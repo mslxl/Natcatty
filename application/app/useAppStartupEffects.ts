@@ -8,6 +8,7 @@ import { toast } from '../../components/ui/toast';
 import { sftpTransferCenterStore } from '../state/sftpTransferCenterStore';
 import { resumeTransferWithDedicatedSession } from '../state/sftp/dedicatedTransferResume';
 import { getSftpTransferResourceKeys, globalSftpTransferScheduler } from '../state/sftp/globalTransferScheduler';
+import { hasNewSourceFingerprint } from '../state/sftp/transferProgressMetadata';
 import { STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY } from '../../infrastructure/config/storageKeys';
 
 type StartupEffectsContext = Record<string, any>;
@@ -45,10 +46,6 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
   const sessionsRef = useRef(sessions);
 
   useEffect(() => {
-    const limit = localStorageAdapter.readNumber(STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY);
-    void netcattyBridge.get()?.setGlobalTransferConcurrency?.(limit ?? 2);
-  }, []);
-  useEffect(() => {
     sessionsRef.current = sessions;
   }, [sessions]);
 
@@ -83,20 +80,38 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
         },
         (progress) => {
           // Do not resurrect a paused/cancelled row from late stream progress.
+          // After force-quit continue, status may still briefly be interrupted/
+          // pending while the dedicated stream arms — those must accept progress.
           const current = sftpTransferCenterStore.getSnapshot().tasks.find((row) => row.id === task.id);
-          if (!current || current.status === "cancelled" || current.status === "paused" || current.status === "interrupted") {
+          if (!current || current.status === "cancelled") {
+            return;
+          }
+          if (current.status === "pausing" || current.status === "paused") {
+            if (hasNewSourceFingerprint(current.sourceFingerprint, progress.sourceFingerprint)) {
+              sftpTransferCenterStore.patchTask(task.id, { sourceFingerprint: progress.sourceFingerprint });
+            }
             return;
           }
           // Directory parents use file-count progress; single files use bytes.
+          // Prefer durable contiguous checkpoint when the bridge supplies it.
+          const durableCheckpoint = task.isDirectory
+            ? progress.transferred
+            : (progress.checkpointBytes ?? progress.transferred);
+          // Keep progress monotonic so a late force-checkpoint paint cannot hide
+          // later bytes, and the bar never freezes at the pre-quit offset.
+          const nextTransferred = Math.max(current.transferredBytes ?? 0, progress.transferred);
+          const nextCheckpoint = task.isDirectory
+            ? Math.max(current.checkpointBytes ?? 0, progress.transferred)
+            : Math.max(current.checkpointBytes ?? 0, durableCheckpoint);
           sftpTransferCenterStore.patchTask(task.id, {
             status: "transferring",
-            transferredBytes: progress.transferred,
+            transferredBytes: nextTransferred,
             ...(progress.total > 0 ? { totalBytes: progress.total } : {}),
             speed: progress.speed,
             ...(task.isDirectory
-              ? { checkpointBytes: progress.transferred, progressMode: "files" as const }
+              ? { checkpointBytes: nextCheckpoint, progressMode: "files" as const }
               : {
-                  checkpointBytes: progress.checkpointBytes,
+                  checkpointBytes: nextCheckpoint,
                   resumeStage: progress.resumeStage,
                   downloadCheckpointBytes: progress.downloadCheckpointBytes,
                   uploadCheckpointBytes: progress.uploadCheckpointBytes,
@@ -105,6 +120,7 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
             reconnectRequired: false,
             error: undefined,
             phase: "transferring",
+            ownerId: "dedicated-resume",
           });
         },
         {
@@ -114,10 +130,11 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
           },
           shouldAbort: () => {
             const current = sftpTransferCenterStore.getSnapshot().tasks.find((row) => row.id === task.id);
+            // interrupted is the pre-reconnect persisted state — do not abort a
+            // live dedicated walk just because children/parent still show it.
             return !current
               || current.status === "cancelled"
-              || current.status === "paused"
-              || current.status === "interrupted";
+              || current.status === "paused";
           },
         },
       );

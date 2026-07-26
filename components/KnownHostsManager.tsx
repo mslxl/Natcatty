@@ -114,7 +114,20 @@ const parseKnownHostsFile = (content: string): KnownHost[] => {
   return parsed;
 };
 
+
+ // Well-known public service hostnames that should not be imported as managed hosts.
+ const PUBLIC_SERVICE_HOSTNAMES = new Set([
+   'github.com',
+   'gitlab.com',
+   'bitbucket.org',
+   'ssh.dev.azure.com',
+   'vs-ssh.visualstudio.com',
+ ]);
+
+ const isPublicServiceHost = (hostname: string): boolean =>
+   PUBLIC_SERVICE_HOSTNAMES.has(hostname);
 // Memoized Grid Item Component
+
 interface HostItemProps {
   knownHost: KnownHost;
   converted: boolean;
@@ -336,8 +349,9 @@ const KnownHostsManager: React.FC<KnownHostsManagerProps> = ({
         knownHosts.map((h) => `${h.hostname}:${h.port}`),
       );
       const newHosts = parsed.filter(
-        (h) => !existingHostnames.has(`${h.hostname}:${h.port}`),
+        (h) => !existingHostnames.has(`${h.hostname}:${h.port}`) && !isPublicServiceHost(h.hostname),
       );
+      const publicFiltered = parsed.filter((h) => isPublicServiceHost(h.hostname)).length;
 
       if (newHosts.length > 0) {
         onImportFromFile(newHosts);
@@ -347,6 +361,13 @@ const KnownHostsManager: React.FC<KnownHostsManagerProps> = ({
         );
       } else {
         if (!silent) toast.info(t("knownHosts.toast.scanNoNew"), t("vault.nav.knownHosts"));
+      }
+
+      if (!silent && publicFiltered > 0) {
+        toast.info(
+          t("knownHosts.toast.scanFiltered", { count: publicFiltered }),
+          t("vault.nav.knownHosts"),
+        );
       }
     } catch (err) {
       logger.error("Failed to scan system known_hosts:", err);
@@ -437,7 +458,7 @@ const KnownHostsManager: React.FC<KnownHostsManagerProps> = ({
           knownHosts.map((h) => `${h.hostname}:${h.port}`),
         );
         const newHosts = parsed.filter(
-          (h) => !existingHostnames.has(`${h.hostname}:${h.port}`),
+          (h) => !existingHostnames.has(`${h.hostname}:${h.port}`) && !isPublicServiceHost(h.hostname),
         );
 
         if (newHosts.length > 0) {

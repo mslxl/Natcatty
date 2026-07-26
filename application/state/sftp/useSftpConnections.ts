@@ -782,13 +782,34 @@ export const useSftpConnections = ({
   useEffect(() => {
     const reconnectTimers: number[] = [];
 
-    const scheduleReconnect = (side: "left" | "right") => {
+    /** Prefer lastConnectedHostRef; fall back to vault host via connection.hostId. */
+    const resolveReconnectHost = (side: "left" | "right"): Host | "local" | null => {
       const lastHost = lastConnectedHostRef.current[side];
-      if (!lastHost || !reconnectingRef.current[side]) return;
+      if (lastHost) return lastHost;
+
+      const connection = getActivePane(side)?.connection;
+      if (!connection) return null;
+      if (connection.isLocal) {
+        lastConnectedHostRef.current[side] = "local";
+        return "local";
+      }
+      if (!connection.hostId) return null;
+      const host = hosts.find((candidate) => candidate.id === connection.hostId) ?? null;
+      if (host) {
+        // Seed the ref so later refresh/session-error paths do not depend on tab races.
+        lastConnectedHostRef.current[side] = host;
+      }
+      return host;
+    };
+
+    const scheduleReconnect = (side: "left" | "right") => {
+      if (!reconnectingRef.current[side]) return;
+      const host = resolveReconnectHost(side);
+      if (!host) return;
 
       const timer = window.setTimeout(() => {
         if (!reconnectingRef.current[side]) return;
-        void connect(side, lastHost);
+        void connect(side, host);
       }, 1000);
       reconnectTimers.push(timer);
     };
@@ -803,7 +824,15 @@ export const useSftpConnections = ({
     return () => {
       reconnectTimers.forEach((timer) => window.clearTimeout(timer));
     };
-  }, [leftPane.reconnecting, rightPane.reconnecting, connect, lastConnectedHostRef, reconnectingRef]);
+  }, [
+    leftPane.reconnecting,
+    rightPane.reconnecting,
+    connect,
+    getActivePane,
+    hosts,
+    lastConnectedHostRef,
+    reconnectingRef,
+  ]);
 
   const disconnect = useCallback(
     async (side: "left" | "right") => {

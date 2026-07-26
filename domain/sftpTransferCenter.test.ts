@@ -55,6 +55,36 @@ test("pause and resume preserve the transfer checkpoint", () => {
   assert.equal(center.getTask("a")?.checkpointBytes, 48);
 });
 
+test("restoring already-interrupted rows still requires reconnect after force-quit", () => {
+  const raw = JSON.stringify({
+    version: 1,
+    tasks: [{
+      id: "was-interrupted",
+      fileName: "a.txt",
+      sourcePath: "/s/a.txt",
+      targetPath: "/t/a.txt",
+      sourceConnectionId: "local",
+      targetConnectionId: "remote",
+      direction: "upload",
+      status: "interrupted",
+      totalBytes: 10,
+      transferredBytes: 3,
+      speed: 1,
+      startTime: Date.now() - 1000,
+      isDirectory: false,
+      // Stale process left reconnectRequired false / lifecycle epoch set.
+      reconnectRequired: false,
+      lifecycleEpoch: 9,
+      targetHostId: "host-1",
+    }],
+  });
+  const restored = deserializeSftpTransferCenter(raw);
+  assert.equal(restored.tasks[0]?.status, "interrupted");
+  assert.equal(restored.tasks[0]?.reconnectRequired, true);
+  assert.equal(restored.tasks[0]?.lifecycleEpoch, undefined);
+  assert.equal(restored.tasks[0]?.speed, 0);
+});
+
 test("restoring persisted state interrupts unfinished work and ignores secrets", () => {
   const restored = deserializeSftpTransferCenter(JSON.stringify({
     version: 1,
@@ -80,6 +110,7 @@ test("restoring a paused task also marks it interrupted after restart", () => {
       ...task("paused", "paused", 1),
       phase: "transferring",
       checkpointBytes: 40,
+      lifecycleEpoch: 7,
     }],
   }));
 
@@ -87,6 +118,7 @@ test("restoring a paused task also marks it interrupted after restart", () => {
   assert.equal(restored.tasks[0]?.reconnectRequired, true);
   assert.equal(restored.tasks[0]?.phase, undefined);
   assert.equal(restored.tasks[0]?.checkpointBytes, 40);
+  assert.equal(restored.tasks[0]?.lifecycleEpoch, undefined);
 });
 
 test("history keeps unfinished tasks and caps terminal tasks by age and count", () => {

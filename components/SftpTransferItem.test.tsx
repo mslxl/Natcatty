@@ -73,6 +73,51 @@ test("renders paused transfer resume action", () => {
   });
 
   assert.match(markup, /aria-label="Resume: archive\.tar\.gz"/);
+  // Paused rows keep the checkpoint progress bar (amber, no shimmer).
+  assert.match(markup, /bg-amber-500\/80/);
+  assert.doesNotMatch(markup, /progress-shimmer/);
+});
+
+test("renders resume spinner while reconnecting", () => {
+  const markup = renderTransferItem({
+    ...baseTask,
+    status: "pending",
+    error: undefined,
+    reconnectRequired: true,
+    resumable: true,
+  });
+
+  assert.match(markup, /aria-label="Reconnecting and resuming…: archive\.tar\.gz"/);
+  assert.match(markup, /aria-busy="true"/);
+  assert.doesNotMatch(markup, /aria-label="Resume: archive\.tar\.gz"/);
+  assert.match(markup, /animate-spin/);
+});
+
+test("renders pausing state feedback instead of a dead pause button", () => {
+  const markup = renderTransferItem({
+    ...baseTask,
+    status: "pausing",
+    error: undefined,
+    speed: 0,
+    resumable: true,
+  });
+
+  assert.match(markup, /aria-label="Finishing the current step: archive\.tar\.gz"/);
+  assert.match(markup, /aria-busy="true"/);
+  assert.doesNotMatch(markup, /aria-label="Pause: archive\.tar\.gz"/);
+  assert.match(markup, /Finishing the current step/);
+});
+
+test("surfaces pause unavailable reason on a transferring row", () => {
+  const markup = renderTransferItem({
+    ...baseTask,
+    status: "transferring",
+    error: undefined,
+    speed: 128,
+    pauseUnavailableReason: "This transfer cannot be paused yet",
+  });
+
+  assert.match(markup, /This transfer cannot be paused yet/);
 });
 
 test("renders child resize handle as a keyboard-reachable separator", () => {

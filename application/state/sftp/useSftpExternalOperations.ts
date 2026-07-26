@@ -24,7 +24,11 @@ import type { UseSftpExternalOperationsParams, SftpExternalOperationsResult } fr
 import { getSftpTransferResourceKeys, globalSftpTransferScheduler } from "./globalTransferScheduler";
 import { localStorageAdapter } from "../../../infrastructure/persistence/localStorageAdapter";
 import { STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY } from "../../../infrastructure/config/storageKeys";
+import {
+  resolveUploadStreamTargetSftpId,
+} from "../../../domain/sftpDedicatedStreamPolicy";
 import { isSessionError } from "./errors";
+import { runWithCompressedUploadSession } from "./compressedUploadSession";
 
 export const useSftpExternalOperations = (
   params: UseSftpExternalOperationsParams
@@ -642,18 +646,24 @@ export const useSftpExternalOperations = (
                   let lease: { sftpId: string; release: () => void; discard: () => void } | null = null;
                   try {
                     if (wantPool && acquireTransferSession && options.targetHostId) {
-                      try {
-                        lease = await acquireTransferSession(options.targetHostId, options.transferId);
-                      } catch (err) {
-                        logger.warn("[SFTP] Transfer pool open failed for upload; using prep session", err);
-                      }
+                      // Never fall back to the browse/prep session for bulk
+                      // streams — that path dies when the SFTP/terminal tab closes.
+                      lease = await acquireTransferSession(options.targetHostId, options.transferId);
+                    }
+
+                    const resolvedTarget = resolveUploadStreamTargetSftpId({
+                      requirePool: wantPool,
+                      poolSftpId: lease?.sftpId,
+                      prepSftpId: options.targetSftpId,
+                    });
+                    if (resolvedTarget.error) {
+                      throw new Error(resolvedTarget.error);
                     }
 
                     const transferOptions = {
                       ...options,
-                      targetSftpId: lease?.sftpId ?? options.targetSftpId,
-                      globalConcurrency: localStorageAdapter.readNumber(STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY) ?? undefined,
-                      // Already admitted by globalSftpTransferScheduler above.
+                      targetSftpId: resolvedTarget.sftpId,
+                      // Already admitted by globalSftpTransferScheduler.
                       skipAdmission: true as const,
                     };
 
@@ -729,7 +739,6 @@ export const useSftpExternalOperations = (
         const uploadTargetPath = targetPath || livePane.connection.currentPath;
         const controller = new UploadController();
         uploadControllerRef.current = controller;
-
         const callbacks = createUploadCallbacks(
           livePane.connection.id,
           uploadTargetPath,
@@ -739,21 +748,34 @@ export const useSftpExternalOperations = (
         );
 
         try {
-          const results = await uploadEntriesDirect(
-            capturedEntries,
-            {
-              targetPath: uploadTargetPath,
-              sftpId,
-              targetHostId: livePane.connection.isLocal ? undefined : livePane.connection.hostId,
-              isLocal: livePane.connection.isLocal,
-              bridge: createUploadBridge,
-              joinPath,
-              callbacks,
-              useCompressedUpload,
-              resolveConflict: createUploadConflictResolver(),
-            },
-            controller,
-          );
+          const hasDirectory = capturedEntries.some((entry) => (
+            entry.isDirectory || entry.relativePath.replace(/\\/g, "/").includes("/")
+          ));
+          const results = await runWithCompressedUploadSession({
+            enabled: useCompressedUpload,
+            hasDirectory,
+            isLocal: livePane.connection.isLocal,
+            hostId: livePane.connection.isLocal ? undefined : livePane.connection.hostId,
+            jobId: `compressed-upload-${crypto.randomUUID()}`,
+            prepSftpId: sftpId,
+            acquire: acquireTransferSession,
+            shouldDiscard: isSessionError,
+            run: async (uploadSftpId) => uploadEntriesDirect(
+              capturedEntries,
+              {
+                targetPath: uploadTargetPath,
+                sftpId: uploadSftpId,
+                targetHostId: livePane.connection!.isLocal ? undefined : livePane.connection!.hostId,
+                isLocal: livePane.connection!.isLocal,
+                bridge: createUploadBridge,
+                joinPath,
+                callbacks,
+                useCompressedUpload,
+                resolveConflict: createUploadConflictResolver(),
+              },
+              controller,
+            ),
+          });
 
           if (clearDirCacheEntry && targetPath) {
             clearDirCacheEntry(livePane.connection.id, uploadTargetPath);
@@ -783,6 +805,7 @@ export const useSftpExternalOperations = (
       }
     },
     [
+      acquireTransferSession,
       clearDirCacheEntry,
       connectionCacheKeyMapRef,
       createUploadBridge,
@@ -827,21 +850,35 @@ export const useSftpExternalOperations = (
         );
 
         try {
-          const results = await uploadFromFileList(
-            fileList,
-            {
-              targetPath: uploadTargetPath,
-              sftpId,
-              targetHostId: livePane.connection.isLocal ? undefined : livePane.connection.hostId,
-              isLocal: livePane.connection.isLocal,
-              bridge: createUploadBridge,
-              joinPath,
-              callbacks,
-              useCompressedUpload,
-              resolveConflict: createUploadConflictResolver(),
-            },
-            controller,
-          );
+          const files = Array.from(fileList);
+          const hasDirectory = files.some((file) => (
+            !!file.webkitRelativePath && file.webkitRelativePath.replace(/\\/g, "/").includes("/")
+          ));
+          const results = await runWithCompressedUploadSession({
+            enabled: useCompressedUpload,
+            hasDirectory,
+            isLocal: livePane.connection.isLocal,
+            hostId: livePane.connection.isLocal ? undefined : livePane.connection.hostId,
+            jobId: `compressed-upload-${crypto.randomUUID()}`,
+            prepSftpId: sftpId,
+            acquire: acquireTransferSession,
+            shouldDiscard: isSessionError,
+            run: async (uploadSftpId) => uploadFromFileList(
+              fileList,
+              {
+                targetPath: uploadTargetPath,
+                sftpId: uploadSftpId,
+                targetHostId: livePane.connection!.isLocal ? undefined : livePane.connection!.hostId,
+                isLocal: livePane.connection!.isLocal,
+                bridge: createUploadBridge,
+                joinPath,
+                callbacks,
+                useCompressedUpload,
+                resolveConflict: createUploadConflictResolver(),
+              },
+              controller,
+            ),
+          });
 
           if (clearDirCacheEntry && targetPath) {
             clearDirCacheEntry(livePane.connection.id, uploadTargetPath);
@@ -870,6 +907,7 @@ export const useSftpExternalOperations = (
       }
     },
     [
+      acquireTransferSession,
       clearDirCacheEntry,
       connectionCacheKeyMapRef,
       createUploadBridge,
@@ -954,21 +992,31 @@ export const useSftpExternalOperations = (
             };
           });
 
-          const results = await uploadEntriesDirect(
-            entries,
-            {
-              targetPath: uploadTargetPath,
-              sftpId,
-              targetHostId: livePane.connection.isLocal ? undefined : livePane.connection.hostId,
-              isLocal: livePane.connection.isLocal,
-              bridge: createUploadBridge,
-              joinPath,
-              callbacks,
-              useCompressedUpload,
-              resolveConflict: createUploadConflictResolver(),
-            },
-            controller,
-          );
+          const results = await runWithCompressedUploadSession({
+            enabled: useCompressedUpload,
+            hasDirectory: true,
+            isLocal: livePane.connection.isLocal,
+            hostId: livePane.connection.isLocal ? undefined : livePane.connection.hostId,
+            jobId: `compressed-upload-${crypto.randomUUID()}`,
+            prepSftpId: sftpId,
+            acquire: acquireTransferSession,
+            shouldDiscard: isSessionError,
+            run: async (uploadSftpId) => uploadEntriesDirect(
+              entries,
+              {
+                targetPath: uploadTargetPath,
+                sftpId: uploadSftpId,
+                targetHostId: livePane.connection!.isLocal ? undefined : livePane.connection!.hostId,
+                isLocal: livePane.connection!.isLocal,
+                bridge: createUploadBridge,
+                joinPath,
+                callbacks,
+                useCompressedUpload,
+                resolveConflict: createUploadConflictResolver(),
+              },
+              controller,
+            ),
+          });
 
           if (clearDirCacheEntry) {
             clearDirCacheEntry(livePane.connection.id, uploadTargetPath);
@@ -1006,6 +1054,7 @@ export const useSftpExternalOperations = (
       }
     },
     [
+      acquireTransferSession,
       clearDirCacheEntry,
       connectionCacheKeyMapRef,
       createUploadBridge,
@@ -1053,21 +1102,34 @@ export const useSftpExternalOperations = (
         };
 
         try {
-          const results = await uploadEntriesDirect(
-            entries,
-            {
-              targetPath: uploadTargetPath,
-              sftpId,
-              targetHostId: livePane.connection.isLocal ? undefined : livePane.connection.hostId,
-              isLocal: livePane.connection.isLocal,
-              bridge: directUploadBridge,
-              joinPath,
-              callbacks,
-              useCompressedUpload,
-              resolveConflict: createUploadConflictResolver(),
-            },
-            controller,
-          );
+          const hasDirectory = entries.some((entry) => (
+            entry.isDirectory || entry.relativePath.replace(/\\/g, "/").includes("/")
+          ));
+          const results = await runWithCompressedUploadSession({
+            enabled: useCompressedUpload,
+            hasDirectory,
+            isLocal: livePane.connection.isLocal,
+            hostId: livePane.connection.isLocal ? undefined : livePane.connection.hostId,
+            jobId: `compressed-upload-${crypto.randomUUID()}`,
+            prepSftpId: sftpId,
+            acquire: acquireTransferSession,
+            shouldDiscard: isSessionError,
+            run: async (uploadSftpId) => uploadEntriesDirect(
+              entries,
+              {
+                targetPath: uploadTargetPath,
+                sftpId: uploadSftpId,
+                targetHostId: livePane.connection!.isLocal ? undefined : livePane.connection!.hostId,
+                isLocal: livePane.connection!.isLocal,
+                bridge: directUploadBridge,
+                joinPath,
+                callbacks,
+                useCompressedUpload,
+                resolveConflict: createUploadConflictResolver(),
+              },
+              controller,
+            ),
+          });
 
           // Refresh the specific tab that initiated the upload (not whichever
           // tab is active now — focus may have switched during the transfer).
@@ -1100,6 +1162,7 @@ export const useSftpExternalOperations = (
       }
     },
     [
+      acquireTransferSession,
       clearDirCacheEntry,
       connectionCacheKeyMapRef,
       createUploadBridge,

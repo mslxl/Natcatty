@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const crypto = require("node:crypto");
+const Module = require("node:module");
 const { EventEmitter } = require("node:events");
 const { PassThrough, Readable, Writable } = require("node:stream");
 
@@ -1142,6 +1143,205 @@ test("fast resumable uploads pause only after in-flight ranges are durable", asy
   assert.equal(durableBytes, payload.length);
 });
 
+test("pause soft-drains concurrent ranges but resume waits before truncating", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-pause-soft-"));
+  t.after(async () => {
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+  });
+
+  // Several MB so concurrent fanout stays saturated while we hold writes.
+  const payload = Buffer.alloc(UPLOAD_TRANSFER_CONCURRENCY * TRANSFER_CHUNK_SIZE * 4, 65);
+  const localPath = path.join(tempDir, "upload.bin");
+  await fs.promises.writeFile(localPath, payload);
+  let holdWrites = true;
+  const pendingWrites = [];
+  let durableBytes = 0;
+  const truncateCalls = [];
+  const fastSftp = createFastSftp({
+    open(_remotePath, _flags, callback) {
+      callback(null, Buffer.from("remote-handle"));
+    },
+    write(_handle, _buffer, _offset, length, position, callback) {
+      const complete = () => {
+        durableBytes = Math.max(durableBytes, position + length);
+        callback(null);
+      };
+      if (holdWrites) pendingWrites.push({ position, complete });
+      else setImmediate(complete);
+    },
+    close(_handle, callback) {
+      callback(null);
+    },
+  });
+  const client = {
+    sftp: createFastSftp({}),
+    stat() {
+      return Promise.resolve({ size: durableBytes });
+    },
+    truncate(_remotePath, size) {
+      truncateCalls.push(size);
+      durableBytes = size;
+      return Promise.resolve();
+    },
+    rename() {
+      return Promise.resolve();
+    },
+    delete() {
+      return Promise.resolve();
+    },
+    client: {
+      sftp(callback) {
+        callback(null, fastSftp);
+      },
+    },
+  };
+  transferBridge.init({ sftpClients: new Map([["target", client]]) });
+
+  const running = transferBridge.startTransfer(
+    { sender: createSender() },
+    {
+      transferId: "upload-soft-pause",
+      sourcePath: localPath,
+      targetPath: "/tmp/upload-soft.bin",
+      sourceType: "local",
+      targetType: "sftp",
+      targetSftpId: "target",
+      totalBytes: payload.length,
+      resumable: true,
+    },
+  );
+
+  const readyDeadline = Date.now() + 1000;
+  while (pendingWrites.length < UPLOAD_TRANSFER_CONCURRENCY && Date.now() < readyDeadline) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.ok(pendingWrites.length >= 1, "expected in-flight concurrent writes");
+
+  const started = Date.now();
+  // Hold writes so active ranges never drain — soft-drain must still resolve.
+  const paused = await transferBridge.pauseTransfer(null, { transferId: "upload-soft-pause" });
+  const elapsed = Date.now() - started;
+  assert.equal(paused.success, true);
+  // Soft drain is ~300ms; allow headroom without waiting multi-second full drain.
+  assert.ok(elapsed < 1500, `soft pause took too long: ${elapsed}ms`);
+
+  const outOfOrderWrite = pendingWrites.pop();
+  assert.ok(outOfOrderWrite?.position > 0, "expected a range beyond the contiguous checkpoint");
+  outOfOrderWrite.complete();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  let resumeSettled = false;
+  const resuming = transferBridge.resumeTransfer(null, { transferId: "upload-soft-pause" })
+    .then((result) => {
+      resumeSettled = true;
+      return result;
+    });
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  const truncatedBeforeDrain = truncateCalls.length > 0;
+  const resumedBeforeDrain = resumeSettled;
+
+  holdWrites = false;
+  for (const { complete } of pendingWrites.splice(0)) complete();
+  assert.deepEqual(
+    await resuming,
+    { success: true },
+  );
+  assert.equal((await running).error, undefined);
+  assert.equal(truncatedBeforeDrain, false, "must not truncate while range writes are active");
+  assert.equal(resumedBeforeDrain, false, "resume must wait for active range writes to settle");
+  assert.equal(durableBytes, payload.length);
+});
+
+test("cancelling resume during soft-drain does not truncate the staged file", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-resume-cancel-"));
+  t.after(async () => {
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const payload = Buffer.alloc(UPLOAD_TRANSFER_CONCURRENCY * TRANSFER_CHUNK_SIZE * 2, 66);
+  const localPath = path.join(tempDir, "upload.bin");
+  await fs.promises.writeFile(localPath, payload);
+  let holdWrites = true;
+  const pendingWrites = [];
+  const truncateCalls = [];
+  let durableBytes = 0;
+  const fastSftp = createFastSftp({
+    open(_remotePath, _flags, callback) {
+      callback(null, Buffer.from("remote-handle"));
+    },
+    write(_handle, _buffer, _offset, length, position, callback) {
+      const complete = () => {
+        durableBytes = Math.max(durableBytes, position + length);
+        callback(null);
+      };
+      if (holdWrites) pendingWrites.push(complete);
+      else setImmediate(complete);
+    },
+    close(_handle, callback) {
+      callback(null);
+    },
+  });
+  const client = {
+    sftp: createFastSftp({}),
+    stat() {
+      return Promise.resolve({ size: durableBytes });
+    },
+    truncate(_remotePath, size) {
+      truncateCalls.push(size);
+      durableBytes = size;
+      return Promise.resolve();
+    },
+    rename() {
+      return Promise.resolve();
+    },
+    delete() {
+      return Promise.resolve();
+    },
+    client: {
+      sftp(callback) {
+        callback(null, fastSftp);
+      },
+    },
+  };
+  transferBridge.init({ sftpClients: new Map([["target", client]]) });
+
+  const transferId = "upload-resume-cancel";
+  const running = transferBridge.startTransfer(
+    { sender: createSender() },
+    {
+      transferId,
+      sourcePath: localPath,
+      targetPath: "/tmp/upload-resume-cancel.bin",
+      sourceType: "local",
+      targetType: "sftp",
+      targetSftpId: "target",
+      totalBytes: payload.length,
+      resumable: true,
+    },
+  );
+
+  const readyDeadline = Date.now() + 1000;
+  while (pendingWrites.length < UPLOAD_TRANSFER_CONCURRENCY && Date.now() < readyDeadline) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(pendingWrites.length, UPLOAD_TRANSFER_CONCURRENCY);
+  assert.equal((await transferBridge.pauseTransfer(null, { transferId })).success, true);
+
+  const resuming = transferBridge.resumeTransfer(null, { transferId });
+  await transferBridge.cancelTransfer(null, { transferId });
+  holdWrites = false;
+  for (const complete of pendingWrites.splice(0)) complete();
+
+  const transferResult = await running;
+  const resumeResult = await resuming;
+  assert.match(transferResult.error || "", /cancelled/i);
+  assert.deepEqual(resumeResult, {
+    success: false,
+    reason: "Transfer is no longer active",
+  });
+  assert.deepEqual(truncateCalls, []);
+});
+
 test("resuming while a fast pause is pending settles the pause request", async (t) => {
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-pause-resume-race-"));
   t.after(async () => {
@@ -1216,7 +1416,10 @@ test("resuming while a fast pause is pending settles the pause request", async (
   assert.equal((await running).error, undefined);
 });
 
-test("resuming during pause fingerprinting prevents a stale pause success", async (t) => {
+test("pause stores a lightweight source identity without full-file hashing", async (t) => {
+  // Pause must not await full-file SHA-256 (or start a post-pause background
+  // full read). A size+mtime+sample meta fingerprint is durable for resume and
+  // cheap (head/mid/tail reads only).
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-late-pause-race-"));
   t.after(async () => {
     await fs.promises.rm(tempDir, { recursive: true, force: true });
@@ -1259,17 +1462,21 @@ test("resuming during pause fingerprinting prevents a stale pause success", asyn
   transferBridge.init({ sftpClients: new Map([["target", client]]) });
 
   const originalCreateReadStream = fs.createReadStream;
-  let fingerprintStream = null;
+  let fullHashStreamOpened = false;
   fs.createReadStream = (filePath, options) => {
-    if (filePath !== localPath || options) return originalCreateReadStream(filePath, options);
-    fingerprintStream = new Readable({ read() {} });
-    return fingerprintStream;
+    // Full-file fingerprint uses createReadStream(path) with no options.
+    if (filePath === localPath && !options) {
+      fullHashStreamOpened = true;
+      return new Readable({ read() {} });
+    }
+    return originalCreateReadStream(filePath, options);
   };
 
   let running;
   try {
+    const sender = createSender();
     running = transferBridge.startTransfer(
-      { sender: createSender() },
+      { sender },
       {
         transferId: "late-pause-race",
         sourcePath: localPath,
@@ -1287,28 +1494,170 @@ test("resuming during pause fingerprinting prevents a stale pause success", asyn
     }
     assert.equal(pendingWrites.length, UPLOAD_TRANSFER_CONCURRENCY);
 
+    const pauseStarted = Date.now();
     const pausing = transferBridge.pauseTransfer(null, { transferId: "late-pause-race" });
     holdWrites = false;
     for (const callback of pendingWrites.splice(0)) callback(null);
-    const fingerprintDeadline = Date.now() + 1000;
-    while (!fingerprintStream && Date.now() < fingerprintDeadline) {
-      await new Promise((resolve) => setImmediate(resolve));
-    }
-    assert.ok(fingerprintStream);
+    const paused = await pausing;
+    const pauseElapsed = Date.now() - pauseStarted;
+    assert.equal(paused.success, true);
+    assert.ok(pauseElapsed < 1500, `pause blocked too long: ${pauseElapsed}ms`);
+    assert.equal(fullHashStreamOpened, false, "pause must not open a full-file hash stream");
+    assert.match(paused.sourceFingerprint || "", /^meta:\d+:\d+:[a-f0-9]{64}$/);
+    assert.ok(
+      sender.sent.some((entry) => (
+        entry.channel === "netcatty:transfer:progress"
+        && entry.payload.sourceFingerprint === paused.sourceFingerprint
+      )),
+      "pause identity must be published for transfer-center persistence",
+    );
 
-    const resuming = transferBridge.resumeTransfer(null, { transferId: "late-pause-race" });
-    fingerprintStream.push(payload);
-    fingerprintStream.push(null);
-    assert.deepEqual(await resuming, { success: true });
-    assert.deepEqual(await pausing, {
-      success: false,
-      reason: "Pause was superseded by resume",
-    });
+    assert.deepEqual(
+      await transferBridge.resumeTransfer(null, { transferId: "late-pause-race" }),
+      { success: true },
+    );
   } finally {
     fs.createReadStream = originalCreateReadStream;
   }
 
   assert.equal((await running).error, undefined);
+});
+
+test("remote pause identity reads modifyTime from session-backed stat", async (t) => {
+  // Session-backed client.stat() returns modifyTime (ms), not mtime/mtimeMs.
+  // Ignoring it collapses every remote identity to meta:<size>:0 and lets a
+  // same-size rewrite with an unchanged 256 KiB prefix resume unsafely.
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-modifytime-id-"));
+  t.after(async () => {
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const payload = Buffer.from("abcdef");
+  const modifyTimeMs = 1_700_000_000_000;
+  let currentModifyTime = modifyTimeMs;
+  const source = new PassThrough();
+  let readStreamCalls = 0;
+  const client = {
+    sftp: createFastSftp({
+      createReadStream() {
+        readStreamCalls += 1;
+        return readStreamCalls === 1 ? source : Readable.from(payload);
+      },
+    }),
+    stat() {
+      return Promise.resolve({ size: payload.length, modifyTime: currentModifyTime });
+    },
+    client: { sftp(callback) { callback(new Error("isolated channel unavailable")); } },
+  };
+  transferBridge.init({ sftpClients: new Map([["source", client]]) });
+
+  const sender = createSender();
+  const targetPath = path.join(tempDir, "target.bin");
+  const running = transferBridge.startTransfer(
+    { sender },
+    {
+      transferId: "download-modifytime-id",
+      sourcePath: "/tmp/source.bin",
+      targetPath,
+      sourceType: "sftp",
+      targetType: "local",
+      sourceSftpId: "source",
+      totalBytes: payload.length,
+      resumable: true,
+    },
+  );
+
+  const readyDeadline = Date.now() + 1000;
+  while (source.listenerCount("data") === 0 && Date.now() < readyDeadline) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.ok(source.listenerCount("data") > 0);
+  source.write(payload.subarray(0, 3));
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const paused = await transferBridge.pauseTransfer(null, { transferId: "download-modifytime-id" });
+  assert.equal(paused.success, true);
+  assert.match(paused.sourceFingerprint || "", new RegExp(`^meta:${payload.length}:${modifyTimeMs}:[a-f0-9]{64}$`));
+
+  await transferBridge.cancelTransfer(null, { transferId: "download-modifytime-id" });
+  assert.match((await running).error || "", /cancel/i);
+
+  currentModifyTime = modifyTimeMs + 1000;
+  const restarted = await transferBridge.startTransfer(
+    { sender: createSender() },
+    {
+      transferId: "download-modifytime-id-resume",
+      sourcePath: "/tmp/source.bin",
+      targetPath,
+      sourceType: "sftp",
+      targetType: "local",
+      sourceSftpId: "source",
+      totalBytes: payload.length,
+      resumable: true,
+      checkpointBytes: 3,
+      sourceFingerprint: paused.sourceFingerprint,
+    },
+  );
+  assert.match(restarted.error || "", /source file has changed/i);
+});
+
+test("meta resume rejects same-size rewrite past the 256 KiB content window", async (t) => {
+  // Codex P1: size+mtime alone (and a 256 KiB leading content window) miss a
+  // same-size rewrite between identity sample points. meta: resumes must hash
+  // the full checkpoint against the staged .part before appending.
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-meta-rewrite-"));
+  t.after(async () => {
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const fileSize = 512 * 1024;
+  const checkpoint = 400 * 1024;
+  // Between mid sample (~240–272 KiB) and tail sample (~480–512 KiB).
+  const rewriteAt = 300 * 1024;
+  const modifyTimeMs = 1_700_000_000_000;
+  const original = Buffer.alloc(fileSize, 17);
+  const rewritten = Buffer.from(original);
+  rewritten.fill(99, rewriteAt, rewriteAt + TRANSFER_CHUNK_SIZE);
+
+  const transferId = "meta-rewrite-resume";
+  const targetPath = path.join(tempDir, "target.bin");
+  const stagePath = tempDirBridge.getTransferTempFilePath(transferId, path.basename(targetPath));
+  await fs.promises.mkdir(path.dirname(stagePath), { recursive: true });
+  await fs.promises.writeFile(stagePath, original.subarray(0, checkpoint));
+
+  const client = {
+    sftp: createFastSftp({
+      createReadStream(_remotePath, options = {}) {
+        const start = Number.isFinite(options.start) ? options.start : 0;
+        const end = Number.isFinite(options.end) ? options.end : rewritten.length - 1;
+        return Readable.from(Buffer.from(rewritten.subarray(start, end + 1)));
+      },
+    }),
+    stat() {
+      return Promise.resolve({ size: fileSize, modifyTime: modifyTimeMs });
+    },
+    client: { sftp(callback) { callback(new Error("isolated channel unavailable")); } },
+  };
+  transferBridge.init({ sftpClients: new Map([["source", client]]) });
+
+  // Legacy meta:size:mtime (no samples) still passes the identity gate when
+  // size+mtime agree; the full-checkpoint content compare must catch the gap.
+  const result = await transferBridge.startTransfer(
+    { sender: createSender() },
+    {
+      transferId,
+      sourcePath: "/tmp/source.bin",
+      targetPath,
+      sourceType: "sftp",
+      targetType: "local",
+      sourceSftpId: "source",
+      totalBytes: fileSize,
+      resumable: true,
+      checkpointBytes: checkpoint,
+      sourceFingerprint: `meta:${fileSize}:${modifyTimeMs}`,
+    },
+  );
+  assert.match(result.error || "", /content does not match|Resume safety/i);
 });
 
 test("failed resumable upload opens close their isolated channel", async (t) => {
@@ -4022,6 +4371,28 @@ test("resumable stream transfers pause without losing their checkpoint and conti
   };
   transferBridge.init({ sftpClients: new Map([["source", client]]) });
 
+  const lifecycleEvents = [];
+  const originalLoad = Module._load;
+  Module._load = function load(request, parent, isMain) {
+    if (request === "electron") {
+      return {
+        BrowserWindow: {
+          getAllWindows: () => [{
+            isDestroyed: () => false,
+            webContents: {
+              isDestroyed: () => false,
+              send(channel, payload) {
+                if (channel === "netcatty:sftp:global-transfer") lifecycleEvents.push(payload);
+              },
+            },
+          }],
+        },
+      };
+    }
+    return originalLoad(request, parent, isMain);
+  };
+  t.after(() => { Module._load = originalLoad; });
+
   const sender = createSender();
   const running = transferBridge.startTransfer(
     { sender },
@@ -4045,30 +4416,32 @@ test("resumable stream transfers pause without losing their checkpoint and conti
   source.write(Buffer.from("abc"));
   await new Promise((resolve) => setImmediate(resolve));
   const paused = await transferBridge.pauseTransfer(null, { transferId: "download-paused" });
-  assert.deepEqual(paused, {
-    success: true,
-    checkpointBytes: 3,
-    resumeStage: "direct",
-    downloadCheckpointBytes: 0,
-    uploadCheckpointBytes: 0,
-    sourceFingerprint: `sha256:${crypto.createHash("sha256").update("abcdef").digest("hex")}`,
-  });
+  // Full-file source fingerprint is no longer on the pause critical path.
+  assert.equal(paused.success, true);
+  assert.equal(paused.checkpointBytes, 3);
+  assert.equal(paused.resumeStage, "direct");
+  assert.equal(paused.downloadCheckpointBytes, 0);
+  assert.equal(paused.uploadCheckpointBytes, 0);
+  const pausedEvent = lifecycleEvents.findLast((event) => event.type === "paused");
+  assert.equal(pausedEvent?.transferId, "download-paused");
+  assert.equal(pausedEvent?.checkpointBytes, 3);
+  assert.equal(pausedEvent?.resumeStage, "direct");
+  assert.equal(pausedEvent?.downloadCheckpointBytes, 0);
+  assert.equal(pausedEvent?.uploadCheckpointBytes, 0);
+  assert.equal(pausedEvent?.lifecycleEpoch, 1);
 
   source.write(Buffer.from("def"));
   await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(
-    await transferBridge.pauseTransfer(null, { transferId: "download-paused" }),
-    {
-      success: true,
-      checkpointBytes: 3,
-      resumeStage: "direct",
-      downloadCheckpointBytes: 0,
-      uploadCheckpointBytes: 0,
-      sourceFingerprint: `sha256:${crypto.createHash("sha256").update("abcdef").digest("hex")}`,
-    },
-  );
+  const pausedAgain = await transferBridge.pauseTransfer(null, { transferId: "download-paused" });
+  assert.equal(pausedAgain.success, true);
+  assert.equal(pausedAgain.checkpointBytes, 3);
+  assert.equal(pausedAgain.resumeStage, "direct");
 
   assert.deepEqual(await transferBridge.resumeTransfer(null, { transferId: "download-paused" }), { success: true });
+  assert.deepEqual(
+    lifecycleEvents.findLast((event) => event.type === "resumed"),
+    { type: "resumed", transferId: "download-paused", lifecycleEpoch: 2 },
+  );
   source.end();
   assert.equal((await running).error, undefined);
 });

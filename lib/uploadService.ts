@@ -652,12 +652,16 @@ async function uploadEntries(
         transferred: number;
         total: number;
         speed: number;
+        checkpointBytes?: number;
+        sourceFingerprint?: string;
         resumable?: boolean;
         pauseUnavailableReason?: string;
       } | null = null;
       let rafScheduled = false;
 
       return (transferred: number, total: number, speed: number, capability?: {
+        checkpointBytes?: number;
+        sourceFingerprint?: string;
         resumable?: boolean;
         pauseUnavailableReason?: string;
       }) => {
@@ -678,6 +682,9 @@ async function uploadEntries(
                 total: update.total,
                 speed: update.speed,
                 percent: update.total > 0 ? (update.transferred / update.total) * 100 : 0,
+                // Forward contiguous offset + fingerprint for soft-drain pause safety.
+                checkpointBytes: update.checkpointBytes,
+                sourceFingerprint: update.sourceFingerprint,
                 resumable: update.resumable,
                 pauseUnavailableReason: update.pauseUnavailableReason,
               });
