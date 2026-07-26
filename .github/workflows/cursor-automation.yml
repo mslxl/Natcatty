@@ -521,19 +521,13 @@ jobs:
           mkdir -p .cursor-runtime
           agent sandbox reset
           agent sandbox enable
+          # Enable sandbox + block shell network only. Do NOT deny built-in
+          # web tools yet — the isolated research pass must still call them.
           node -e '
             const fs = require("node:fs");
             const p = process.env.HOME + "/.cursor/cli-config.json";
             const c = JSON.parse(fs.readFileSync(p, "utf8"));
             c.sandbox = { ...(c.sandbox || {}), mode: "enabled", networkAccess: "user_config" };
-            c.permissions = {
-              ...(c.permissions || {}),
-              deny: [...new Set([
-                ...(c.permissions?.deny || []),
-                "WebSearch(*)",
-                "WebFetch(*)",
-              ])],
-            };
             fs.writeFileSync(p, JSON.stringify(c, null, 2) + "\n");
           '
           agent sandbox run --sandbox bash -c 'touch .cursor-runtime/sandbox-check'
@@ -625,6 +619,26 @@ jobs:
             .cursor-runtime/issue.json
           if-no-files-found: error
           overwrite: true
+
+      - name: Deny WebSearch and WebFetch after classification research
+        if: steps.prepare.outputs.should_run == 'true'
+        run: |
+          # Research has finished. Block web tools for classify and later agents
+          # that share this HOME / user-level cli-config.
+          node -e '
+            const fs = require("node:fs");
+            const p = process.env.HOME + "/.cursor/cli-config.json";
+            const c = JSON.parse(fs.readFileSync(p, "utf8"));
+            c.permissions = {
+              ...(c.permissions || {}),
+              deny: [...new Set([
+                ...(c.permissions?.deny || []),
+                "WebSearch(*)",
+                "WebFetch(*)",
+              ])],
+            };
+            fs.writeFileSync(p, JSON.stringify(c, null, 2) + "\n");
+          '
 
       - name: Classify with Cursor CLI
         if: steps.prepare.outputs.should_run == 'true'
@@ -1087,19 +1101,13 @@ jobs:
           mkdir -p .cursor-runtime
           agent sandbox reset
           agent sandbox enable
+          # Enable sandbox + block shell network only. Do NOT deny built-in
+          # web tools yet — the isolated research pass must still call them.
           node -e '
             const fs = require("node:fs");
             const p = process.env.HOME + "/.cursor/cli-config.json";
             const c = JSON.parse(fs.readFileSync(p, "utf8"));
             c.sandbox = { ...(c.sandbox || {}), mode: "enabled", networkAccess: "user_config" };
-            c.permissions = {
-              ...(c.permissions || {}),
-              deny: [...new Set([
-                ...(c.permissions?.deny || []),
-                "WebSearch(*)",
-                "WebFetch(*)",
-              ])],
-            };
             fs.writeFileSync(p, JSON.stringify(c, null, 2) + "\n");
           '
           agent sandbox run --sandbox bash -c 'touch .cursor-runtime/followup-sandbox-check'
@@ -1179,6 +1187,26 @@ jobs:
               process.env.CURSOR_API_KEY,
               "follow-up-research-output",
             );
+          '
+
+      - name: Deny WebSearch and WebFetch after follow-up research
+        if: steps.prepare.outputs.should_run == 'true'
+        run: |
+          # Research has finished. Block web tools for the follow-up agent and
+          # any later steps that share this HOME / user-level cli-config.
+          node -e '
+            const fs = require("node:fs");
+            const p = process.env.HOME + "/.cursor/cli-config.json";
+            const c = JSON.parse(fs.readFileSync(p, "utf8"));
+            c.permissions = {
+              ...(c.permissions || {}),
+              deny: [...new Set([
+                ...(c.permissions?.deny || []),
+                "WebSearch(*)",
+                "WebFetch(*)",
+              ])],
+            };
+            fs.writeFileSync(p, JSON.stringify(c, null, 2) + "\n");
           '
 
       - name: Review follow-up with Cursor CLI

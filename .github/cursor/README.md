@@ -88,6 +88,10 @@ Terminal codex_loop outcomes always drop `automation:codex-loop`:
   source-linked notes are passed to classify, implement, or follow-up agents.
   The workflow also verifies the CLI stream contains a real WebSearch/WebFetch
   tool event; an answer that merely prints a URL is rejected.
+- User-level WebSearch/WebFetch denials are written only after that research
+  pass (or in implement/fix jobs that never research). Pre-research sandbox
+  setup enables the command sandbox without denying web tools, so research is
+  not blocked by the later classify/follow-up denylist.
 - WebSearch and WebFetch are explicitly denied again for classify, implement,
   follow-up, and fix agents. Those stages cannot silently perform another web
   request outside the isolated research pass.
@@ -116,7 +120,9 @@ compares the new information with the current diff:
 - contradiction, larger scope, unsafe update, or no active PR needing work:
   acknowledge the reporter and hand the issue/PR to a maintainer.
 
-Every clean-to-ready transition re-checks the source issue. A PR cannot become
-ready while an eligible author/maintainer follow-up is still unprocessed. Patch
-publication also verifies the PR head has not moved, so a follow-up update never
-overwrites a concurrent maintainer or automation push.
+Every clean-to-ready transition re-checks the source issue for automation bot
+PRs only (`automation:bot-pr` / bot PR marker). A maintainer PR that merely
+says `Fixes #N` is not kept draft solely because issue comments lack automation
+processed markers. Patch publication also verifies the PR head has not moved,
+so a follow-up update never overwrites a concurrent maintainer or automation
+push.

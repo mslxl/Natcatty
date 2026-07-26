@@ -742,6 +742,8 @@ test('getPendingIssueFollowupsForPull protects ready state with live issue comme
     number: 77,
     body: `${auto.BOT_PR_MARKER}\n<!-- cursor-issue-watermark:comment-id=1 -->\nFixes #42`,
     created_at: '2026-07-24T10:00:00Z',
+    labels: [{ name: 'automation:bot-pr' }],
+    user: { login: 'netcatty-bot' },
   };
   const github = {
     rest: {
@@ -776,8 +778,80 @@ test('getPendingIssueFollowupsForPull protects ready state with live issue comme
     context: { repo: { owner: 'binaricat', repo: 'Netcatty' } },
     pull,
   });
+  assert.equal(result.gated, true);
   assert.equal(result.issue.number, 42);
   assert.deepEqual(result.pending.map((comment) => comment.id), [2]);
+});
+
+test('shouldGatePullOnSourceIssueFollowups is limited to automation bot PRs', () => {
+  assert.equal(
+    auto.shouldGatePullOnSourceIssueFollowups({
+      body: `${auto.BOT_PR_MARKER}\n<!-- cursor-source-issue:42 -->\nFixes #42`,
+      labels: [{ name: 'automation:bot-pr' }],
+      user: { login: 'netcatty-bot' },
+    }),
+    true,
+  );
+  assert.equal(
+    auto.shouldGatePullOnSourceIssueFollowups({
+      body: 'Maintainer fix\n\nFixes #42',
+      labels: [{ name: 'bug' }],
+      user: { login: 'binaricat' },
+    }),
+    false,
+  );
+  assert.equal(
+    auto.shouldGatePullOnSourceIssueFollowups({
+      body: 'No closing keyword or automation marker',
+      labels: [{ name: 'automation:bot-pr' }],
+      user: { login: 'netcatty-bot' },
+    }),
+    false,
+  );
+});
+
+test('getPendingIssueFollowupsForPull does not block maintainer Fixes-only PRs', async () => {
+  let issuesFetched = 0;
+  const pull = {
+    number: 88,
+    body: 'Hand-written fix for the reporter.\n\nFixes #42',
+    created_at: '2026-07-24T10:00:00Z',
+    labels: [{ name: 'bug' }],
+    user: { login: 'binaricat' },
+    head: { ref: 'fix/issue-42-manual', repo: { full_name: 'binaricat/Netcatty' } },
+    base: { repo: { full_name: 'binaricat/Netcatty' } },
+  };
+  const github = {
+    rest: {
+      issues: {
+        get: async () => {
+          issuesFetched += 1;
+          return { data: { number: 42, user: { login: 'alice' } } };
+        },
+        listComments: Symbol('listComments'),
+      },
+    },
+    paginate: async () => {
+      issuesFetched += 1;
+      return [
+        {
+          id: 99,
+          user: { login: 'alice', type: 'User' },
+          body: 'still broken after your PR',
+          created_at: '2026-07-24T12:00:00Z',
+        },
+      ];
+    },
+  };
+  const result = await auto.getPendingIssueFollowupsForPull({
+    github,
+    context: { repo: { owner: 'binaricat', repo: 'Netcatty' } },
+    pull,
+  });
+  assert.equal(result.gated, false);
+  assert.equal(result.issue, null);
+  assert.deepEqual(result.pending, []);
+  assert.equal(issuesFetched, 0);
 });
 
 test('prepareIssueFollowupContext uses the triggering comment when no PR exists', async () => {
@@ -1891,6 +1965,9 @@ test('workflow confines forced WebSearch to isolated read-only research passes',
     assert.match(run, /Read\(input\.json\)/);
     assert.match(run, /process\.env\.HOME/);
     assert.match(run, /process\.env\.GITHUB_WORKSPACE/);
+    // Research itself must not write the non-research web-tool denylist.
+    assert.doesNotMatch(run, /"WebSearch\(\*\)"/);
+    assert.doesNotMatch(run, /"WebFetch\(\*\)"/);
   }
 
   const nonResearchAgentLines = workflow
@@ -1905,6 +1982,61 @@ test('workflow confines forced WebSearch to isolated read-only research passes',
   assert.equal((workflow.match(/"WebFetch\(\*\)"/g) || []).length, 4);
   assert.doesNotMatch(workflow, /issue-research-\$\{\{ github\.run_id \}\}-\$\{\{ github\.run_attempt \}\}/);
   assert.match(workflow, /name: issue-research-\$\{\{ github\.run_id \}\}[\s\S]*?overwrite: true/);
+});
+
+test('workflow denies WebSearch only after isolated research, not before it', () => {
+  const workflow = fs.readFileSync(
+    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    'utf8',
+  );
+
+  const classifyJob = workflow.match(
+    /\n  classify:\n[\s\S]*?(?=\n  [a-zA-Z0-9_]+:\n)/,
+  )?.[0] || '';
+  const followupJob = workflow.match(
+    /\n  issue_followup:\n[\s\S]*?(?=\n  [a-zA-Z0-9_]+:\n)/,
+  )?.[0] || '';
+  assert.ok(classifyJob.includes('Research external context for classification'));
+  assert.ok(followupJob.includes('Research external context for follow-up'));
+
+  for (const [label, job] of [
+    ['classify', classifyJob],
+    ['issue_followup', followupJob],
+  ]) {
+    const researchIdx = job.indexOf('- name: Research external context');
+    assert.ok(researchIdx > 0, `${label} research step missing`);
+    const preResearch = job.slice(0, researchIdx);
+    assert.doesNotMatch(
+      preResearch,
+      /"WebSearch\(\*\)"/,
+      `${label} must not deny WebSearch before research`,
+    );
+    assert.doesNotMatch(
+      preResearch,
+      /"WebFetch\(\*\)"/,
+      `${label} must not deny WebFetch before research`,
+    );
+
+    const postResearch = job.slice(researchIdx);
+    const denyStep = postResearch.match(
+      /- name: Deny WebSearch and WebFetch after[\s\S]*?(?=\n\s{6}- name:)/,
+    )?.[0] || '';
+    assert.match(denyStep, /"WebSearch\(\*\)"/, `${label} post-research deny missing WebSearch`);
+    assert.match(denyStep, /"WebFetch\(\*\)"/, `${label} post-research deny missing WebFetch`);
+
+    const denyIdx = postResearch.indexOf('- name: Deny WebSearch and WebFetch after');
+    const agentIdx = postResearch.search(
+      /- name: (Classify with Cursor CLI|Review follow-up with Cursor CLI)/,
+    );
+    assert.ok(denyIdx >= 0 && agentIdx > denyIdx, `${label} deny must precede agent`);
+  }
+
+  // Jobs without a research pass still deny web tools in their sandbox step.
+  const implementJob = workflow.match(
+    /\n  implement:\n[\s\S]*?(?=\n  [a-zA-Z0-9_]+:\n)/,
+  )?.[0] || '';
+  assert.match(implementJob, /Require the Cursor command sandbox for implementation[\s\S]*?"WebSearch\(\*\)"/);
+  assert.doesNotMatch(implementJob, /Research external context/);
 });
 
 test('initial issue failures still label and notify without a trigger comment id', () => {
