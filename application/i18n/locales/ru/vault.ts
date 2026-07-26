@@ -123,6 +123,7 @@ export const ruVaultMessages: Messages = {
   'knownHosts.toast.scanImported': 'Импортировано новых хостов: {count}.',
   'knownHosts.toast.scanNoNew': 'Новых хостов не найдено.',
   'knownHosts.toast.scanFailed': 'Не удалось просканировать системный known_hosts.',
+  'knownHosts.toast.scanFiltered': 'Пропущено {count} публичных серверов.',
 
   // Port Forwarding
   'pf.empty.title': 'Настройте проброс портов',
