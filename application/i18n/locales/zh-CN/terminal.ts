@@ -415,6 +415,26 @@ export const zhCNTerminalMessages: Messages = {
   'settings.terminal.rendering.hibernatePreferWasmSerialize': '优先 WASM 序列化',
   'settings.terminal.rendering.hibernatePreferWasmSerialize.desc': '在可用时使用 WASM 终端序列化，否则回退到 JS SerializeAddon。',
 
+  // Settings > Terminal > Inline Images
+  'settings.terminal.section.inlineImages': '内联图片',
+  'settings.terminal.inlineImages.enabled': '渲染内联图片',
+  'settings.terminal.inlineImages.enabled.desc': '直接显示远端程序输出的真实图片（kitten icat、chafa、文件管理器与 TUI 的图片预览）。更改将在新终端会话中生效。',
+  'settings.terminal.inlineImages.kitty': 'Kitty 图形协议',
+  'settings.terminal.inlineImages.kitty.desc': '接受 Kitty 图形序列，包括 SSH 上的 direct/stream 传输模式。',
+  'settings.terminal.inlineImages.sixel': 'SIXEL',
+  'settings.terminal.inlineImages.sixel.desc': '接受 SIXEL 图形，img2sixel、mpv、gnuplot 等 DEC 风格工具会使用。',
+  'settings.terminal.inlineImages.iip': 'iTerm 内联图片协议',
+  'settings.terminal.inlineImages.iip.desc': '接受 iTerm2 的 OSC 1337 内联图片序列（PNG、JPEG、GIF 首帧）。',
+  'settings.terminal.inlineImages.storageLimit': '每终端图片缓存',
+  'settings.terminal.inlineImages.storageLimit.desc': '单个终端可为已解码图片保留的内存，超出后按先进先出淘汰（8–512 MB）。',
+  'settings.terminal.inlineImages.maxMegapixels': '单张图片上限',
+  'settings.terminal.inlineImages.maxMegapixels.desc': '允许解码的单张图片最大像素数，超出的图片会被丢弃且不影响终端缓冲区（1–64 MP，16 MP 即 4096 × 4096）。',
+  'settings.terminal.inlineImages.sequenceLimit': '单条序列上限',
+  'settings.terminal.inlineImages.sequenceLimit.desc': '开始解码前允许接受的单条图片转义序列大小上限（1–64 MB）。',
+  'settings.terminal.inlineImages.unit.mb': 'MB',
+  'settings.terminal.inlineImages.unit.megapixels': 'MP',
+  'settings.terminal.inlineImages.hibernateNote': '已绘制内联图片的标签页会保留渲染器而不进入完整休眠，因为休眠快照只能恢复文本。',
+
   // Settings > Terminal > Workspace Focus Indicator
   'settings.terminal.section.workspaceFocus': '工作区焦点提示',
   'settings.terminal.workspaceFocus.style': '焦点提示样式',

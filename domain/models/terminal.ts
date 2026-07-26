@@ -5,6 +5,14 @@ import {
   normalizeHibernateKeepRendererCount,
   normalizeHibernateReplayChunkBytes,
 } from '../terminalHibernate';
+import {
+  normalizeInlineImageMaxMegapixels,
+  normalizeInlineImageSequenceLimitMb,
+  normalizeInlineImageStorageLimitMb,
+  TERMINAL_INLINE_IMAGE_MAX_MEGAPIXELS_DEFAULT,
+  TERMINAL_INLINE_IMAGE_SEQUENCE_LIMIT_MB_DEFAULT,
+  TERMINAL_INLINE_IMAGE_STORAGE_LIMIT_MB_DEFAULT,
+} from '../terminalInlineImages';
 
 // Terminal appearance settings
 export type CursorShape = 'block' | 'bar' | 'underline';
@@ -160,6 +168,20 @@ export interface TerminalSettings {
   hibernateReplayChunkBytes: number;
   /** Prefer WASM terminal serialize when available (falls back to JS). */
   hibernatePreferWasmSerialize: boolean;
+  /** Render inline raster images (Kitty graphics / SIXEL / iTerm IIP) emitted by remote programs. */
+  inlineImagesEnabled: boolean;
+  /** Kitty graphics protocol (APC G) support; requires inlineImagesEnabled. */
+  inlineImageKittyEnabled: boolean;
+  /** SIXEL (DCS q) support; requires inlineImagesEnabled. */
+  inlineImageSixelEnabled: boolean;
+  /** iTerm inline image protocol (OSC 1337 File=) support; requires inlineImagesEnabled. */
+  inlineImageIipEnabled: boolean;
+  /** Per-terminal inline image cache size in MB (FIFO eviction). */
+  inlineImageStorageLimitMb: number;
+  /** Largest single decoded inline image, in megapixels. */
+  inlineImageMaxMegapixels: number;
+  /** Largest single inline image escape sequence, in MB, before decoding. */
+  inlineImageSequenceLimitMb: number;
   showLineTimestamps: boolean; // Show output timestamps in a side gutter
 
   // Autocomplete
@@ -345,6 +367,15 @@ export const normalizeTerminalSettings = (
     hibernateReplayChunkBytes: normalizeHibernateReplayChunkBytes(
       mergedSettings.hibernateReplayChunkBytes,
     ),
+    inlineImageStorageLimitMb: normalizeInlineImageStorageLimitMb(
+      mergedSettings.inlineImageStorageLimitMb,
+    ),
+    inlineImageMaxMegapixels: normalizeInlineImageMaxMegapixels(
+      mergedSettings.inlineImageMaxMegapixels,
+    ),
+    inlineImageSequenceLimitMb: normalizeInlineImageSequenceLimitMb(
+      mergedSettings.inlineImageSequenceLimitMb,
+    ),
     autocompleteGhostText: mergedSettings.autocompletePopupMenu
       ? false
       : mergedSettings.autocompleteGhostText,
@@ -422,6 +453,13 @@ const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   hibernateKeepRendererCount: 2,
   hibernateReplayChunkBytes: 16 * 1024,
   hibernatePreferWasmSerialize: false,
+  inlineImagesEnabled: true, // Render Kitty/SIXEL/iTerm inline images out of the box
+  inlineImageKittyEnabled: true,
+  inlineImageSixelEnabled: true,
+  inlineImageIipEnabled: true,
+  inlineImageStorageLimitMb: TERMINAL_INLINE_IMAGE_STORAGE_LIMIT_MB_DEFAULT,
+  inlineImageMaxMegapixels: TERMINAL_INLINE_IMAGE_MAX_MEGAPIXELS_DEFAULT,
+  inlineImageSequenceLimitMb: TERMINAL_INLINE_IMAGE_SEQUENCE_LIMIT_MB_DEFAULT,
   showLineTimestamps: false, // Opt-in: shows output timestamps beside terminal lines
   autocompleteEnabled: true, // Autocomplete enabled by default
   autocompleteGhostText: false, // Mutually exclusive with popup menu
