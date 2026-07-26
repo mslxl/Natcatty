@@ -3,8 +3,8 @@
 /**
  * Cursor Agent CLI turn runner — subscription / login session path.
  *
- * Spawns `agent` (or `cursor-agent`) in print/stream-json mode so Catty can use
- * the local CLI login quota without CURSOR_API_KEY.
+ * Spawns `cursor-agent` in print/stream-json mode so Catty can use the local
+ * CLI login quota without CURSOR_API_KEY.
  */
 const { spawn } = require("node:child_process");
 const fs = require("node:fs");
@@ -325,10 +325,10 @@ function formatCursorCliErrorForUser(message) {
     /not authenticated|not logged in|please run .*login|unauthenticated|unauthorized/i.test(text)
     || /(?:^|\b)(?:agent|cursor-agent)\s+login\b/i.test(text)
   ) {
-    return "Cursor CLI is not logged in. Run `agent login` in a terminal, then retry.";
+    return "Cursor CLI is not logged in. Run `cursor-agent login` in a terminal, then retry.";
   }
   if (/\bapi[_\s-]?key\b/i.test(text) && /invalid|missing|required|auth/i.test(text)) {
-    return "Cursor CLI authentication failed. Run `agent login` or switch Cursor to API Key mode in Settings → AI.";
+    return "Cursor CLI authentication failed. Run `cursor-agent login` or switch Cursor to API Key mode in Settings → AI.";
   }
   return text || "Cursor CLI turn failed";
 }
@@ -369,7 +369,7 @@ async function runCursorCliTurn({
 }) {
   const cliPath = String(binPath || "").trim();
   if (!cliPath) {
-    emitter.emitError("Cursor Agent CLI not found. Install the Cursor CLI (`agent`) and ensure it is on PATH.");
+    emitter.emitError("Cursor Agent CLI not found. Install the Cursor CLI (`cursor-agent`) and ensure it is on PATH.");
     return { sessionId: resumeSessionId || null };
   }
 
