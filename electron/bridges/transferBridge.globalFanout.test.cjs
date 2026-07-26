@@ -6,11 +6,36 @@ const Module = require("node:module");
 const path = require("node:path");
 
 /**
+ * broadcastGlobalTransferEvent only loads electron when process.versions.electron
+ * is set (avoids install.js downloads in bare Node unit tests).
+ */
+function withElectronVersionStub() {
+  const previous = process.versions.electron;
+  Object.defineProperty(process.versions, "electron", {
+    configurable: true,
+    enumerable: true,
+    value: previous || "test",
+  });
+  return () => {
+    if (previous === undefined) {
+      delete process.versions.electron;
+    } else {
+      Object.defineProperty(process.versions, "electron", {
+        configurable: true,
+        enumerable: true,
+        value: previous,
+      });
+    }
+  };
+}
+
+/**
  * Drive the shipped broadcastGlobalTransferEvent entry point with a stubbed
  * electron BrowserWindow — proves fan-out does not require a panel sender.
  */
 test("broadcastGlobalTransferEvent fans progress to all live BrowserWindows", () => {
   const sent = [];
+  const restoreElectronVersion = withElectronVersionStub();
   const originalLoad = Module._load;
   Module._load = function load(request, parent, isMain) {
     if (request === "electron") {
@@ -61,6 +86,7 @@ test("broadcastGlobalTransferEvent fans progress to all live BrowserWindows", ()
     assert.equal(sent[0].payload.transferred, 50);
   } finally {
     Module._load = originalLoad;
+    restoreElectronVersion();
     try {
       delete require.cache[require.resolve(path.join(__dirname, "transferBridge.cjs"))];
     } catch { /* ignore */ }
@@ -75,6 +101,7 @@ test("broadcastGlobalTransferEvent no-ops without transferId", () => {
 
 test("worker-backed pause and resume fan authoritative lifecycle to every window", async () => {
   const sent = [];
+  const restoreElectronVersion = withElectronVersionStub();
   const originalLoad = Module._load;
   Module._load = function load(request, parent, isMain) {
     if (request === "electron") {
@@ -150,6 +177,7 @@ test("worker-backed pause and resume fan authoritative lifecycle to every window
     ]);
   } finally {
     Module._load = originalLoad;
+    restoreElectronVersion();
     delete require.cache[require.resolve(bridgePath)];
   }
 });

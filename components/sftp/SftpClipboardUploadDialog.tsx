@@ -1,5 +1,4 @@
-import React, { useState } from "react";
-import { Loader2 } from "lucide-react";
+import React, { useRef } from "react";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -10,7 +9,11 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 import type { SftpClipboardUploadRequest } from "./clipboardUpload";
-import { sftpClipboardUploadStore } from "./clipboardUpload";
+import {
+  confirmSftpClipboardUpload,
+  shouldStartClipboardUploadConfirm,
+  sftpClipboardUploadStore,
+} from "./clipboardUpload";
 
 interface SftpClipboardUploadDialogProps {
   request: SftpClipboardUploadRequest | null;
@@ -18,31 +21,44 @@ interface SftpClipboardUploadDialogProps {
   onUploaded?: (targetPath: string) => void;
 }
 
+/**
+ * Confirmation dialog for OS-clipboard / path-backed paste uploads.
+ *
+ * Important: clear the store request *before* awaiting the transfer so the
+ * modal overlay does not block the app for the entire upload (issue #2478).
+ * Progress and cancellation live in the transfer queue after handoff.
+ */
 export const SftpClipboardUploadDialog: React.FC<SftpClipboardUploadDialogProps> = ({
   request,
   currentPath,
   onUploaded,
 }) => {
-  const [uploading, setUploading] = useState(false);
+  // Double-click guard is scoped to the request identity so a later paste can
+  // confirm while an earlier background transfer is still running.
+  const confirmStartedForRef = useRef<SftpClipboardUploadRequest | null>(null);
   const open = !!request;
   const fileCount = request?.files.length ?? 0;
   const previewFiles = request?.files.slice(0, 5) ?? [];
   const remainingCount = Math.max(0, fileCount - previewFiles.length);
 
   const handleClose = (nextOpen: boolean) => {
-    if (nextOpen || uploading) return;
+    if (nextOpen) return;
     sftpClipboardUploadStore.clear(request);
   };
 
   const handleConfirm = async () => {
-    if (!request) return;
-    setUploading(true);
+    if (!request || !shouldStartClipboardUploadConfirm(request, confirmStartedForRef.current)) {
+      return;
+    }
+    const confirmedRequest = request;
+    confirmStartedForRef.current = confirmedRequest;
     try {
-      await request.onConfirm();
-      onUploaded?.(request.targetPath);
-      sftpClipboardUploadStore.clear(request);
-    } finally {
-      setUploading(false);
+      // Close immediately so side-panel / standalone SFTP stay interactive while
+      // the existing background transfer path runs.
+      await confirmSftpClipboardUpload({ request: confirmedRequest, onUploaded });
+    } catch {
+      // Transfer handlers toast failures; keep this path free of unhandled
+      // rejections after the dialog has already closed.
     }
   };
 
@@ -80,12 +96,10 @@ export const SftpClipboardUploadDialog: React.FC<SftpClipboardUploadDialogProps>
           <Button
             variant="outline"
             onClick={() => sftpClipboardUploadStore.clear(request)}
-            disabled={uploading}
           >
             Cancel
           </Button>
-          <Button onClick={handleConfirm} disabled={uploading || !request}>
-            {uploading && <Loader2 size={14} className="mr-2 animate-spin" />}
+          <Button onClick={handleConfirm} disabled={!request}>
             Upload
           </Button>
         </DialogFooter>

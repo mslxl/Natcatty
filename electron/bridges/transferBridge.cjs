@@ -41,9 +41,15 @@ const RESUME_RANGE_SETTLE_MS = 1500;
  */
 function broadcastGlobalTransferEvent(payload) {
   if (!payload || !payload.transferId) return;
+  // Bare Node unit tests must never require("electron"): that package's entry
+  // downloads the binary when dist/ is missing, hanging transferBridge tests
+  // for tens of seconds per progress/pause event. process.versions.electron is
+  // only set inside a real Electron main/renderer process.
+  if (typeof process.versions?.electron !== "string") return;
   try {
-    // Lazy require so unit tests without full electron still load this module.
     const electron = require("electron");
+    // Outside Electron, require("electron") is a path string — not the API.
+    if (!electron || typeof electron !== "object") return;
     const BrowserWindow = electron.BrowserWindow;
     if (!BrowserWindow?.getAllWindows) return;
     for (const win of BrowserWindow.getAllWindows()) {
@@ -57,7 +63,7 @@ function broadcastGlobalTransferEvent(payload) {
       }
     }
   } catch {
-    // electron unavailable (unit tests)
+    // electron unavailable
   }
 }
 

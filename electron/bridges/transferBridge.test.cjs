@@ -1222,7 +1222,7 @@ test("pause soft-drains concurrent ranges but resume waits before truncating", a
   const paused = await transferBridge.pauseTransfer(null, { transferId: "upload-soft-pause" });
   const elapsed = Date.now() - started;
   assert.equal(paused.success, true);
-  // Soft drain is ~300ms; allow headroom without waiting multi-second full drain.
+  // Soft drain is PAUSE_RANGE_DRAIN_MS (~50ms); allow headroom without full drain.
   assert.ok(elapsed < 1500, `soft pause took too long: ${elapsed}ms`);
 
   const outOfOrderWrite = pendingWrites.pop();
@@ -4373,6 +4373,14 @@ test("resumable stream transfers pause without losing their checkpoint and conti
 
   const lifecycleEvents = [];
   const originalLoad = Module._load;
+  // broadcastGlobalTransferEvent only loads electron when process.versions.electron
+  // is set (avoids install.js downloads in bare Node unit tests).
+  const previousElectronVersion = process.versions.electron;
+  Object.defineProperty(process.versions, "electron", {
+    configurable: true,
+    enumerable: true,
+    value: previousElectronVersion || "test",
+  });
   Module._load = function load(request, parent, isMain) {
     if (request === "electron") {
       return {
@@ -4391,7 +4399,18 @@ test("resumable stream transfers pause without losing their checkpoint and conti
     }
     return originalLoad(request, parent, isMain);
   };
-  t.after(() => { Module._load = originalLoad; });
+  t.after(() => {
+    Module._load = originalLoad;
+    if (previousElectronVersion === undefined) {
+      delete process.versions.electron;
+    } else {
+      Object.defineProperty(process.versions, "electron", {
+        configurable: true,
+        enumerable: true,
+        value: previousElectronVersion,
+      });
+    }
+  });
 
   const sender = createSender();
   const running = transferBridge.startTransfer(
