@@ -12,6 +12,7 @@ export interface CompressUploadOptions {
   targetPath: string;
   sftpId: string;
   folderName: string;
+  totalBytes: number;
 }
 
 export interface CompressUploadProgress {

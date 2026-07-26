@@ -130,6 +130,7 @@ export async function uploadFoldersCompressed(
           fileCount: entries.length,
           completedCount: 0,
           sourcePath: folderPath,
+          controlKind: 'compressed-upload',
         });
       }
       
@@ -141,6 +142,7 @@ export async function uploadFoldersCompressed(
           targetPath,
           sftpId,
           folderName,
+          totalBytes,
         },
         (phase, transferred, total) => {
           // Check for cancellation during progress updates

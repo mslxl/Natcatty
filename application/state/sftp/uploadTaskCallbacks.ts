@@ -79,6 +79,7 @@ export const createUploadTaskCallbacks = ({
       background: false,
       resumable: true,
       phase: "transferring",
+      controlKind: task.controlKind,
     });
   },
   onTaskProgress: (taskId: string, progress) => {

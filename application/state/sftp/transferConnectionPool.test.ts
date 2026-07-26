@@ -77,6 +77,28 @@ test("different hosts get independent connection pools", async () => {
   b.release();
 });
 
+test("idle reclaim skips busy holders and can be disabled", async () => {
+  const closed: string[] = [];
+  const pool = createTransferConnectionPool({
+    maxPerHost: 2,
+    idleTtlMs: 1,
+    closeSession: async (id) => { closed.push(id); },
+  });
+  const open = async () => "sftp-busy";
+  const lease = await pool.acquire("host:x", "t1", open);
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(await pool.closeIdle(Date.now() + 1000), 0, "busy slot must not idle-close");
+  lease.release();
+  assert.equal(await pool.closeIdle(Date.now() + 1000), 1);
+
+  const open2 = async () => "sftp-keep";
+  const warm = await pool.acquire("host:x", "t2", open2);
+  warm.release();
+  pool.setIdleTtlMs(0);
+  assert.equal(await pool.closeIdle(Date.now() + 999_999), 0, "ttl 0 keeps warm connections");
+  assert.equal(pool.getStats("host:x").connections, 1);
+});
+
 test("default max per host is FileZilla-like (2)", () => {
   assert.equal(DEFAULT_TRANSFER_CONNECTIONS_PER_HOST, 2);
 });

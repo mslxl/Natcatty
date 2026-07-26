@@ -49,14 +49,15 @@ declare global {
         targetPath: string;
         sftpId: string;
         folderName: string;
+        totalBytes: number;
       },
       onProgress?: (phase: string, transferred: number, total: number) => void,
       onComplete?: () => void,
       onError?: (error: string) => void
     ): Promise<{ compressionId: string; success?: boolean; error?: string }>;
     cancelCompressedUpload?(compressionId: string): Promise<{ success: boolean }>;
-    pauseCompressedUpload?(compressionId: string): Promise<{ success: boolean; deferred?: boolean; reason?: string }>;
-    resumeCompressedUpload?(compressionId: string): Promise<{ success: boolean; reason?: string }>;
+    pauseCompressedUpload?(compressionId: string): Promise<{ success: boolean; deferred?: boolean; lifecycleEpoch?: number; reason?: string }>;
+    resumeCompressedUpload?(compressionId: string): Promise<{ success: boolean; lifecycleEpoch?: number; reason?: string }>;
     checkCompressedUploadSupport?(sftpId: string): Promise<{
       supported: boolean;
       localTar: boolean;
@@ -88,6 +89,8 @@ declare global {
         downloadCheckpointBytes?: number;
         uploadCheckpointBytes?: number;
         sourceFingerprint?: string;
+        lifecycleEpoch?: number;
+        lifecycleState?: 'queued' | 'pausing' | 'paused' | 'transferring';
         pauseUnavailableReason?: string;
         globalConcurrency?: number;
         /** When true, skip main-process admission (renderer already scheduled). */
@@ -102,7 +105,7 @@ declare global {
       }) => void,
       onComplete?: () => void,
       onError?: (error: string) => void
-    ): Promise<{ transferId: string; totalBytes?: number; error?: string }>;
+    ): Promise<{ transferId: string; totalBytes?: number; error?: string; cancelled?: boolean }>;
     pauseTransfer?(transferId: string): Promise<{
       success: boolean;
       checkpointBytes?: number;
@@ -110,9 +113,10 @@ declare global {
       downloadCheckpointBytes?: number;
       uploadCheckpointBytes?: number;
       sourceFingerprint?: string;
+      lifecycleEpoch?: number;
       reason?: string;
     }>;
-    resumeTransfer?(transferId: string): Promise<{ success: boolean; reason?: string }>;
+    resumeTransfer?(transferId: string): Promise<{ success: boolean; reason?: string; lifecycleEpoch?: number }>;
     prioritizeTransfer?(transferId: string): Promise<{ success: boolean }>;
     setGlobalTransferConcurrency?(limit: number): Promise<{ success: boolean; limit: number }>;
     cleanupTransferArtifacts?(payload: {
@@ -124,9 +128,10 @@ declare global {
       stagedTargetPath?: string;
     }): Promise<{ success: boolean }>;
     onGlobalSftpTransferEvent?(callback: (event: {
-      type: 'queued' | 'started' | 'progress' | 'paused' | 'resumed' | 'cancelled' | 'completed' | 'failed';
+      type: 'queued' | 'started' | 'progress' | 'pausing' | 'paused' | 'resumed' | 'cancelled' | 'completed' | 'failed';
       transferId: string;
       direction?: TransferDirection;
+      fileName?: string;
       sourcePath?: string;
       targetPath?: string;
       startedAt?: number;
@@ -140,9 +145,14 @@ declare global {
       downloadCheckpointBytes?: number;
       uploadCheckpointBytes?: number;
       sourceFingerprint?: string;
+      isDirectory?: boolean;
+      controlKind?: 'stream' | 'compressed-upload';
+      phase?: 'scanning' | 'compressing' | 'uploading' | 'transferring' | 'extracting' | 'verifying';
       sessionId?: string;
       sourceHostId?: string;
       targetHostId?: string;
+      lifecycleEpoch?: number;
+      lifecycleState?: 'queued' | 'pausing' | 'paused' | 'transferring';
     }) => void): () => void;
 
     // Local filesystem operations

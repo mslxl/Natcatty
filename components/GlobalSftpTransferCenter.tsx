@@ -15,13 +15,16 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
 import { useI18n } from "../application/i18n/I18nProvider";
 import {
   sftpTransferCenterStore,
   useSftpTransferCenter,
 } from "../application/state/sftpTransferCenterStore";
+import { transferRuntime } from "../application/state/sftp/transferRuntime";
+import { useGlobalSftpTransferActions } from "../application/state/useGlobalSftpTransferActions";
+export { getGlobalTransferBatchEligibility } from "../domain/sftpTransferActions";
 import type { TransferTask } from "../domain/models";
 import { canReplaceSftpConflict } from "../domain/sftpConflict";
 import { estimateTransferEtaSeconds, formatFileSize, formatTransferEta } from "../application/state/sftp/utils";
@@ -30,15 +33,15 @@ import { Button } from "./ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
-export type GlobalTransferBucket = "all" | "active" | "queued" | "paused" | "failed" | "completed";
+export type GlobalTransferBucket = "all" | "active" | "queued" | "paused" | "attention" | "completed";
 
 export function getGlobalTransferBucket(task: Pick<TransferTask, "status" | "reconnectRequired">): GlobalTransferBucket {
   // Reconnect/resume preparation should stay visible with the unfinished work.
-  if (task.status === "pending" && task.reconnectRequired) return "paused";
+  if (task.status === "pending" && task.reconnectRequired) return "attention";
   if (task.status === "transferring" || task.status === "pausing") return "active";
   if (task.status === "pending" || task.status === "queued") return "queued";
-  if (task.status === "paused" || task.status === "interrupted" || task.status === "attention") return "paused";
-  if (task.status === "failed") return "failed";
+  if (task.status === "paused") return "paused";
+  if (task.status === "interrupted" || task.status === "attention" || task.status === "failed") return "attention";
   return "completed";
 }
 
@@ -67,7 +70,11 @@ export function splitBackgroundTransfers(tasks: readonly TransferTask[]) {
   };
 }
 
-const BUCKETS: readonly GlobalTransferBucket[] = ["all", "active", "queued", "paused", "failed", "completed"];
+export function getGlobalTransferStatusOverride(task: Pick<TransferTask, "error" | "pauseUnavailableReason">) {
+  return task.error || task.pauseUnavailableReason;
+}
+
+const BUCKETS: readonly GlobalTransferBucket[] = ["all", "active", "queued", "paused", "attention", "completed"];
 
 export function getTasksForGlobalTransferBucket(
   tasks: readonly TransferTask[],
@@ -94,7 +101,10 @@ export function listChildTasksForParent(
     .sort((a, b) => a.startTime - b.startTime);
 }
 
-/** Prefer live children, then queued — for the collapsed "current file" summary. */
+/**
+ * Prefer live children, then queued — for the collapsed "current file" summary.
+ * Callers must not use this for paused/interrupted parents (those hide the row).
+ */
 export function pickActiveChildSummaries(
   children: readonly TransferTask[],
   limit = 2,
@@ -104,6 +114,13 @@ export function pickActiveChildSummaries(
   const waiting = children.filter((task) => task.status === "pending" || task.status === "queued");
   if (waiting.length > 0) return waiting.slice(0, limit);
   return [];
+}
+
+/** Collapsed mini-rows only while the folder is actively moving or soft-draining. */
+export function shouldShowCollapsedActiveChildren(
+  parentStatus: TransferTask["status"],
+): boolean {
+  return parentStatus === "transferring" || parentStatus === "pausing";
 }
 
 export function getGlobalTransferProgressPercent(
@@ -193,7 +210,7 @@ function TransferAction({ label, onClick, children, destructive = false }: {
         <Button
           variant="ghost"
           size="icon"
-          className={cn("h-7 w-7", destructive && "text-destructive hover:text-destructive")}
+          className={cn("h-8 w-8", destructive && "text-destructive hover:text-destructive")}
           aria-label={label}
           onClick={(event) => {
             event.stopPropagation();
@@ -253,11 +270,39 @@ function TransferRow({
   // Optimistic spinner from click until store status moves off paused/interrupted.
   const [resumeClicked, setResumeClicked] = useState(false);
   const isDirParent = isDirectoryParentTask(task);
-  const progress = buildGlobalTransferProgressDisplay(task, t);
+  const showCollapsedChildren = isDirParent && shouldShowCollapsedActiveChildren(task.status);
   const activeChildren = useMemo(
-    () => (isDirParent ? pickActiveChildSummaries(childTasks, 2) : []),
-    [childTasks, isDirParent],
+    () => (showCollapsedChildren ? pickActiveChildSummaries(childTasks, 2) : []),
+    [childTasks, showCollapsedChildren],
   );
+  // Soft-drain still completes ranges / children after Pause. Snapshot the
+  // visible parent bar + child mini-rows on first "pausing" paint so the row
+  // does not twitch (file-count bumps, child list swaps, width animation).
+  // When the parent reaches "paused", hide the mini-rows entirely — partial
+  // children flipping paused↔transferring used to blink the report line.
+  const pausingSnapshotRef = useRef<{
+    task: TransferTask;
+    children: TransferTask[];
+  } | null>(null);
+  if (task.status === "pausing") {
+    if (!pausingSnapshotRef.current) {
+      pausingSnapshotRef.current = {
+        task: { ...task },
+        children: activeChildren.map((child) => ({ ...child })),
+      };
+    }
+  } else if (pausingSnapshotRef.current) {
+    pausingSnapshotRef.current = null;
+  }
+  const displayTask = task.status === "pausing" && pausingSnapshotRef.current
+    ? { ...pausingSnapshotRef.current.task, status: "pausing" as const, speed: 0, phase: undefined }
+    : task;
+  const displayChildren = !showCollapsedChildren
+    ? []
+    : (task.status === "pausing" && pausingSnapshotRef.current
+      ? pausingSnapshotRef.current.children
+      : activeChildren);
+  const progress = buildGlobalTransferProgressDisplay(displayTask, t);
   const canToggleChildren = isDirParent && childTasks.length > 0;
   const canControl = sftpTransferCenterStore.canControl(task.id);
   // Keep the play button as a spinner for the whole reconnect window, not only
@@ -287,11 +332,14 @@ function TransferRow({
   // Conflict rows must use resolveConflict — Resume would overwrite blindly.
   // Non-resumable attention rows (e.g. duplicate-destination refusals) are
   // terminal: resuming them would start a second writer on the same path.
+  // Do not show Resume during soft-drain "pausing" — play + spinner together
+  // makes the row twitch as buttons appear/disappear mid-drain.
   const canResume = !isResuming && !task.conflict && (
     ["paused", "interrupted"].includes(task.status)
     || (task.status === "attention" && task.resumable !== false)
     || (task.status === "failed" && task.resumable !== false && (task.checkpointBytes ?? 0) > 0)
   ) && canControl;
+  const isPausing = task.status === "pausing";
   const canCancel = ["pending", "queued", "transferring", "pausing", "paused", "interrupted", "attention"].includes(task.status) && canControl;
   const canRetry = task.status === "failed" && task.retryable !== false && canControl;
   const isTerminal = ["completed", "failed", "cancelled"].includes(task.status);
@@ -299,11 +347,15 @@ function TransferRow({
   // "cannot be paused safely" used to render here during healthy progress and
   // looked like a failure even while bytes were flowing.
   const statusText = (() => {
-    if (task.error && (task.status === "failed" || task.status === "attention" || task.status === "cancelled")) {
-      return task.error;
-    }
+    const override = getGlobalTransferStatusOverride(task);
+    if (override) return override;
     if (isResuming) return t("sftp.transferCenter.status.resuming");
-    if (task.phase && (task.status === "transferring" || task.status === "pausing")) {
+    // Lifecycle pause labels beat phase ("transferring") so pausing never reads
+    // as 传输中 while soft-drain finishes the current range.
+    if (task.status === "pausing" || task.status === "paused" || task.status === "interrupted") {
+      return t(statusLabelKey(task.status));
+    }
+    if (task.phase && task.status === "transferring") {
       return t(`sftp.transferCenter.phase.${task.phase}`);
     }
     return t(statusLabelKey(task.status));
@@ -327,12 +379,13 @@ function TransferRow({
     if (task.conflict || (task.status === "attention" && !task.reconnectRequired && task.direction === "remote-to-remote")) {
       openTarget(true);
     }
-    void sftpTransferCenterStore.resume(task.id);
+    // Single process-level resume (soft live walk / hard reconnect internal).
+    void transferRuntime.resume(task.id);
   };
 
   const barWidth = progress.indeterminate
     ? "100%"
-    : `${task.status === "completed" ? 100 : progress.percent}%`;
+    : `${displayTask.status === "completed" ? 100 : progress.percent}%`;
 
   return (
     <div
@@ -370,19 +423,19 @@ function TransferRow({
             </TransferAction>
           )}
           {isResuming && (
-            <TransferAction label={t("sftp.transferCenter.status.resuming")} onClick={() => {}}>
+            <div className="flex h-8 w-8 items-center justify-center" role="status" aria-label={t("sftp.transferCenter.status.resuming")}>
               <Loader2 size={13} className="animate-spin text-primary" />
-            </TransferAction>
+            </div>
           )}
           {canPause && (
-            <TransferAction label={t("sftp.transferCenter.pause")} onClick={() => { void sftpTransferCenterStore.pause(task.id); }}>
+            <TransferAction label={t("sftp.transferCenter.pause")} onClick={() => { void transferRuntime.pause(task.id); }}>
               <Pause size={13} />
             </TransferAction>
           )}
           {task.status === "pausing" && (
-            <TransferAction label={t("sftp.transferCenter.status.pausing")} onClick={() => {}}>
+            <div className="flex h-8 w-8 items-center justify-center" role="status" aria-label={t("sftp.transferCenter.status.pausing")}>
               <Loader2 size={13} className="animate-spin text-amber-500" />
-            </TransferAction>
+            </div>
           )}
           {canResume && (
             <TransferAction label={t("sftp.transferCenter.resume")} onClick={resumeTask}>
@@ -405,7 +458,7 @@ function TransferRow({
             </TransferAction>
           )}
           {canCancel && (
-            <TransferAction destructive label={t("common.cancel")} onClick={() => { void sftpTransferCenterStore.cancel(task.id); }}>
+            <TransferAction destructive label={t("common.cancel")} onClick={() => { void transferRuntime.cancel(task.id); }}>
               <X size={13} />
             </TransferAction>
           )}
@@ -419,15 +472,26 @@ function TransferRow({
       </div>
 
       <div className="mt-2 flex items-center gap-2">
-        <div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-secondary">
+        <div
+          className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-secondary"
+          role="progressbar"
+          aria-label={task.fileName}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={progress.indeterminate ? undefined : Math.round(progress.percent)}
+        >
           <div
             className={cn(
-              "h-full rounded-full transition-[width] duration-150",
+              "h-full rounded-full",
+              // Animate only while actively transferring — soft-drain width
+              // freezes still looked like a twitch with transition.
+              !isPausing && task.status !== "paused" && task.status !== "interrupted"
+                && "transition-[width] duration-150",
               progress.indeterminate && "animate-pulse bg-primary/60",
               !progress.indeterminate && (
                 task.status === "failed"
                   ? "bg-destructive"
-                  : task.status === "paused" || task.status === "interrupted"
+                  : task.status === "paused" || task.status === "interrupted" || isPausing
                     ? "bg-amber-500"
                     : "bg-primary"
               ),
@@ -436,7 +500,7 @@ function TransferRow({
           />
         </div>
         <span className="w-12 shrink-0 text-right font-mono text-[10px] text-muted-foreground">
-          {progress.indeterminate ? "…" : task.totalBytes > 0 || task.status === "completed" ? `${progress.percent.toFixed(1)}%` : "—"}
+          {progress.indeterminate ? "…" : displayTask.totalBytes > 0 || displayTask.status === "completed" ? `${progress.percent.toFixed(1)}%` : "—"}
         </span>
       </div>
       <div className="mt-1 flex min-w-0 items-center justify-between gap-3 text-[10px] text-muted-foreground">
@@ -453,11 +517,21 @@ function TransferRow({
       </div>
 
       {/* Collapsed: show currently transferring child file(s) without expanding the whole tree. */}
-      {isDirParent && !expanded && activeChildren.length > 0 && (
-        <div className="mt-1.5 space-y-1 border-l-2 border-primary/30 pl-2" data-section="global-sftp-transfer-active-children">
-          {activeChildren.map((child) => {
+      {isDirParent && !expanded && displayChildren.length > 0 && (
+        <div
+          className={cn(
+            "mt-1.5 space-y-1 border-l-2 pl-2",
+            isPausing || task.status === "paused" ? "border-amber-500/40" : "border-primary/30",
+          )}
+          data-section="global-sftp-transfer-active-children"
+        >
+          {displayChildren.map((child) => {
             const childPercent = getGlobalTransferProgressPercent(child);
             const childDetail = formatChildByteProgress(child);
+            const childFrozen = isPausing
+              || task.status === "paused"
+              || child.status === "pausing"
+              || child.status === "paused";
             return (
               <div key={child.id} className="min-w-0">
                 <div className="flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
@@ -471,7 +545,11 @@ function TransferRow({
                     <div
                       className={cn(
                         "h-full rounded-full",
-                        child.status === "completed" ? "bg-emerald-500/80" : "bg-primary/80",
+                        child.status === "completed"
+                          ? "bg-emerald-500/80"
+                          : childFrozen
+                            ? "bg-amber-500/80"
+                            : "bg-primary/80",
                       )}
                       style={{ width: `${child.status === "completed" ? 100 : childPercent}%` }}
                     />
@@ -590,33 +668,7 @@ export function GlobalSftpTransferCenter() {
     .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0) || b.startTime - a.startTime), [bucket, snapshot.tasks]);
   const { visible, collapsed } = splitBackgroundTransfers(bucketTasks);
   const displayed = showBackground ? [...visible, ...collapsed] : visible;
-
-  const pauseAll = () => {
-    for (const task of snapshot.tasks) {
-      // Only top-level rows — children are driven by their parent directory job.
-      if (task.parentTaskId) continue;
-      // Skip dedicated reconnect spinner rows — pause cannot stop open/auth yet
-      // and would only demote the UI while the stream continues.
-      if (task.ownerId === "dedicated-resume" && task.reconnectRequired) continue;
-      if (["pending", "queued", "transferring", "pausing"].includes(task.status) && task.resumable !== false) {
-        void sftpTransferCenterStore.pause(task.id);
-      }
-    }
-  };
-  const resumeAll = () => {
-    for (const task of snapshot.tasks) {
-      // Resume parents only; child interrupted rows after restart are rebuilt
-      // when the parent directory is re-adopted (avoids dual writers).
-      if (task.parentTaskId) continue;
-      if (task.conflict) continue;
-      // Non-resumable attention rows are duplicate-destination refusals — never
-      // restart them into a path another transfer still owns.
-      if (task.status === "attention" && task.resumable === false) continue;
-      if (task.status === "paused" || task.status === "interrupted" || task.status === "attention") {
-        void sftpTransferCenterStore.resume(task.id);
-      }
-    }
-  };
+  const { batchEligibility, pauseAll, resumeAll } = useGlobalSftpTransferActions(snapshot.tasks);
 
   return (
     <Popover>
@@ -637,7 +689,7 @@ export function GlobalSftpTransferCenter() {
                   {badge.count > 99 ? "99+" : badge.count}
                 </span>
               )}
-              {badge.count === 0 && badge.hasAttention && (
+              {badge.hasAttention && (
                 <span className="absolute right-0 top-0 h-2 w-2 rounded-full bg-destructive" />
               )}
             </Button>
@@ -657,16 +709,16 @@ export function GlobalSftpTransferCenter() {
             {t("sftp.transferCenter.title")}
           </div>
           <div className="flex items-center gap-1">
-            <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={pauseAll}>
+            <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={pauseAll} disabled={batchEligibility.pausableCount === 0}>
               <Pause size={12} className="mr-1" />{t("sftp.transferCenter.pauseAll")}
             </Button>
-            <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={resumeAll}>
+            <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={resumeAll} disabled={batchEligibility.resumableCount === 0}>
               <Play size={12} className="mr-1" />{t("sftp.transferCenter.resumeAll")}
             </Button>
           </div>
         </div>
 
-        <div className="flex gap-0 px-2 pt-1">
+        <div className="flex gap-0 px-2 pt-1" role="tablist" aria-label={t("sftp.transferCenter.title")}>
           {BUCKETS.map((item) => (
             <button
               key={item}
@@ -680,6 +732,8 @@ export function GlobalSftpTransferCenter() {
                   : "text-muted-foreground hover:text-foreground/80",
               )}
               onClick={() => setBucket(item)}
+              role="tab"
+              aria-selected={bucket === item}
             >
               {t(`sftp.transferCenter.bucket.${item}`)}
               {counts[item] > 0 && <span className="ml-1 text-[10px] opacity-80">{counts[item]}</span>}
@@ -690,7 +744,7 @@ export function GlobalSftpTransferCenter() {
         <div className="max-h-[460px] overflow-auto">
           {displayed.length === 0 ? (
             <div className="flex h-40 flex-col items-center justify-center text-muted-foreground">
-              {badge.hasAttention && bucket !== "failed" && bucket !== "all" ? <AlertCircle size={22} /> : <ArrowDownUp size={22} />}
+              {badge.hasAttention && bucket !== "attention" && bucket !== "all" ? <AlertCircle size={22} /> : <ArrowDownUp size={22} />}
               <span className="mt-2 text-xs">{t("sftp.transferCenter.empty")}</span>
             </div>
           ) : displayed.map((task) => (
@@ -704,7 +758,7 @@ export function GlobalSftpTransferCenter() {
 
         {(() => {
           const showBackgroundToggle = collapsed.length > 0;
-          const showClear = (bucket === "failed" || bucket === "completed") && counts[bucket] > 0;
+          const showClear = bucket === "completed" && counts.completed > 0;
           if (!showBackgroundToggle && !showClear) return null;
           return (
             <div className="flex items-center justify-between px-3 py-2">
@@ -718,7 +772,10 @@ export function GlobalSftpTransferCenter() {
                 )}
               </div>
               {showClear && (
-                <Button variant="ghost" size="sm" className="h-6 text-[10px]" onClick={() => sftpTransferCenterStore.clearTerminal(bucket === "failed" ? "failed" : "completed")}>
+                <Button variant="ghost" size="sm" className="h-6 text-[10px]" onClick={() => {
+                  sftpTransferCenterStore.clearTerminal("completed");
+                  sftpTransferCenterStore.clearTerminal("cancelled");
+                }}>
                   <Trash2 size={11} className="mr-1" />{t("sftp.transferCenter.clear")}
                 </Button>
               )}

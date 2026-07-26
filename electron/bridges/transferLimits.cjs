@@ -17,9 +17,9 @@ const UPLOAD_TRANSFER_CONCURRENCY = 64;
 const DOWNLOAD_TRANSFER_CONCURRENCY = 64;
 // Only one file per SFTP session gets the 64-request fast path. Concurrent
 // files keep moving through the compatible stream path instead of multiplying
-// fastGet pressure or overriding the user's file-transfer concurrency.
-// (FileZilla/WinSCP-style multi-file parallelism is handled by the per-host
-// file admission queue above this layer.)
+// fastGet pressure. Folder fan-out is capped in the renderer by
+// runSftpTransferWorkers (settings transfer concurrency); multi-select
+// top-level files are not throttled by that setting.
 const FAST_DOWNLOAD_CHANNELS_PER_SESSION = 1;
 
 module.exports = {

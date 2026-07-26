@@ -26,6 +26,7 @@ import {
   STORAGE_KEY_SFTP_FOLLOW_TERMINAL_CWD,
   STORAGE_KEY_SFTP_DEFAULT_VIEW_MODE,
   STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY,
+  STORAGE_KEY_SFTP_TRANSFER_POOL_IDLE_TTL_MS,
   STORAGE_KEY_TERM_FOLLOW_APP_THEME,
   STORAGE_KEY_TERM_FONT_FAMILY,
   STORAGE_KEY_TERM_FONT_SIZE,
@@ -100,6 +101,7 @@ interface UseSettingsIpcSyncParams {
   setRestorePreviousSessionState: Dispatch<SetStateAction<boolean>>;
   setRestoreTerminalCwdState: Dispatch<SetStateAction<boolean>>;
   setSftpTransferConcurrencyState: Dispatch<SetStateAction<number>>;
+  setSftpTransferPoolIdleTtlMsState: Dispatch<SetStateAction<number>>;
 }
 
 export function useSettingsIpcSync({
@@ -142,6 +144,7 @@ export function useSettingsIpcSync({
   setRestorePreviousSessionState,
   setRestoreTerminalCwdState,
   setSftpTransferConcurrencyState,
+  setSftpTransferPoolIdleTtlMsState,
 }: UseSettingsIpcSyncParams) {
   // Listen for settings changes from other windows via IPC
   useEffect(() => {
@@ -298,6 +301,9 @@ export function useSettingsIpcSync({
       if (key === STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY && typeof value === 'number') {
         setSftpTransferConcurrencyState((prev) => (prev === value ? prev : value));
       }
+      if (key === STORAGE_KEY_SFTP_TRANSFER_POOL_IDLE_TTL_MS && typeof value === 'number') {
+        setSftpTransferPoolIdleTtlMsState((prev) => (prev === value ? prev : value));
+      }
     });
     return () => {
       try {
@@ -336,6 +342,7 @@ export function useSettingsIpcSync({
     setRestorePreviousSessionState,
     setRestoreTerminalCwdState,
     setSftpTransferConcurrencyState,
+    setSftpTransferPoolIdleTtlMsState,
     setTerminalFontFamilyId,
     setTerminalFontSize,
     setTerminalThemeDarkId,

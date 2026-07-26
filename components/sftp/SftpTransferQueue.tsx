@@ -427,7 +427,7 @@ export const SftpTransferQueue: React.FC<SftpTransferQueueProps> = ({
                 onToggleChildren={() => toggleExpanded(task.id)}
                 onCancel={() => {
                   if (task.sourceConnectionId === "external") {
-                    void sftp.cancelExternalUpload(task.id);
+                    sftp.cancelExternalUpload();
                   }
                   void sftpTransferCenterStore.cancel(task.id);
                 }}

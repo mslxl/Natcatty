@@ -6,6 +6,7 @@ import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge"
 import { logger } from "../../../lib/logger";
 import { runSftpTransferWorkers } from "./transferConcurrency";
 import { getSftpTransferResourceKeys, globalSftpTransferScheduler } from "./globalTransferScheduler";
+import { resolveDedicatedStreamEndpointIds } from "../../../domain/sftpDedicatedStreamPolicy";
 import { isSessionError } from "./errors";
 import { isTransferCancelledError, runWithTransferRetry } from "./transferRetry";
 import type { TransferConnectionLease } from "./transferConnectionPool";
@@ -14,7 +15,31 @@ import {
   resolveDurableCheckpointBytes,
   shouldApplyTransferProgress,
 } from "./transferProgressMetadata";
+import {
+  isTransferOrRootPauseLatched,
+  isTransferPauseLatched,
+  waitWhileTransferOrRootPaused,
+} from "./transferPauseLatch";
+import {
+  getTransferControlEpoch,
+  isTransferControlEpochCurrent,
+} from "./transferControlEpoch";
+import { isTransferOrRootCancelled } from "./transferCancelLatch";
 import { joinPath } from "./utils";
+
+function isCancelledLocalOrGlobal(
+  cancelledTasksRef: { current: Set<string> },
+  rootTaskId: string,
+  taskId?: string,
+): boolean {
+  if (cancelledTasksRef.current.has(rootTaskId) || isTransferOrRootCancelled(rootTaskId, taskId)) {
+    return true;
+  }
+  if (taskId && (cancelledTasksRef.current.has(taskId) || isTransferOrRootCancelled(taskId))) {
+    return true;
+  }
+  return false;
+}
 
 export type AcquireTransferSessionFn = (
   hostId: string,
@@ -55,8 +80,11 @@ export function useSftpDirectoryTransferOps({
     return typeof entry.size === "number" && entry.size > 0 ? entry.size : 0;
   }, []);
 
+  // Prefer process-global latches so the transfer center can pause/resume after
+  // the React owner unmounts (tab close). Mirror the panel ref for same-owner races.
   const isPauseLatched = useCallback((rootTaskId: string, taskId?: string) => (
-    pausedTasksRef.current.has(rootTaskId)
+    isTransferOrRootPauseLatched(rootTaskId, taskId)
+    || pausedTasksRef.current.has(rootTaskId)
     || (!!taskId && pausedTasksRef.current.has(taskId))
   ), [pausedTasksRef]);
 
@@ -66,25 +94,24 @@ export function useSftpDirectoryTransferOps({
    * already passed a pre-check can start the next file after the user pauses.
    */
   const waitWhileTransferPaused = useCallback(async (rootTaskId: string, taskId?: string) => {
-    // Keep looping until NEITHER root nor task is latched. Barrier-based wait
-    // inside waitUntilTransferResumed closes the "not paused for one tick →
-    // claim next file after soft-drain completes" race.
-    while (
-      pausedTasksRef.current.has(rootTaskId)
-      || (!!taskId && pausedTasksRef.current.has(taskId))
-    ) {
-      const latchId = pausedTasksRef.current.has(rootTaskId)
-        ? rootTaskId
-        : (taskId as string);
-      await waitUntilTransferResumed(latchId);
+    // Global wait first (tab-close / center pause), then cancel checks.
+    while (isPauseLatched(rootTaskId, taskId)) {
+      await waitWhileTransferOrRootPaused(rootTaskId, taskId);
+      // Also drain legacy local-ref-only latches if any remain out of sync.
       if (
-        cancelledTasksRef.current.has(rootTaskId)
-        || (taskId ? cancelledTasksRef.current.has(taskId) : false)
+        pausedTasksRef.current.has(rootTaskId)
+        || (!!taskId && pausedTasksRef.current.has(taskId))
       ) {
+        const latchId = pausedTasksRef.current.has(rootTaskId)
+          ? rootTaskId
+          : (taskId as string);
+        await waitUntilTransferResumed(latchId);
+      }
+      if (isCancelledLocalOrGlobal(cancelledTasksRef, rootTaskId, taskId)) {
         throw new Error("Transfer cancelled");
       }
     }
-  }, [cancelledTasksRef, pausedTasksRef, waitUntilTransferResumed]);
+  }, [cancelledTasksRef, isPauseLatched, pausedTasksRef, waitUntilTransferResumed]);
 
   /** Wait out the latch, then mark transferring only if still unlatched (no race). */
   const markTransferringIfNotPaused = useCallback(async (
@@ -260,21 +287,13 @@ export function useSftpDirectoryTransferOps({
           if (isPauseLatched(rootTaskId, task.id)) {
             await markTransferringIfNotPaused(rootTaskId, task.id);
           }
+          // Dedicated pool only for remote ends — panel/browse sessions die when
+          // the SFTP tab is closed, which freezes global transfer center rows.
           if (acquireTransferSession && !sourceIsLocal && task.sourceHostId) {
-            try {
-              sourceLease = await acquireTransferSession(task.sourceHostId, task.id);
-            } catch (err) {
-              logger.warn("[SFTP] Transfer pool source open failed; falling back to panel session", err);
-              sourceLease = null;
-            }
+            sourceLease = await acquireTransferSession(task.sourceHostId, task.id);
           }
           if (acquireTransferSession && !targetIsLocal && task.targetHostId) {
-            try {
-              targetLease = await acquireTransferSession(task.targetHostId, task.id);
-            } catch (err) {
-              logger.warn("[SFTP] Transfer pool target open failed; falling back to panel session", err);
-              targetLease = null;
-            }
+            targetLease = await acquireTransferSession(task.targetHostId, task.id);
           }
         };
 
@@ -313,8 +332,22 @@ export function useSftpDirectoryTransferOps({
               await markTransferringIfNotPaused(rootTaskId, task.id);
             }
 
-            const effectiveSourceSftpId = sourceLease?.sftpId ?? sourceSftpId;
-            const effectiveTargetSftpId = targetLease?.sftpId ?? targetSftpId;
+            const resolved = resolveDedicatedStreamEndpointIds({
+              sourceIsLocal,
+              targetIsLocal,
+              sourceHostId: task.sourceHostId,
+              targetHostId: task.targetHostId,
+              sourcePoolSftpId: sourceLease?.sftpId,
+              targetPoolSftpId: targetLease?.sftpId,
+              panelSourceSftpId: sourceSftpId,
+              panelTargetSftpId: targetSftpId,
+              poolAvailable: !!acquireTransferSession,
+            });
+            if (resolved.error) {
+              throw new Error(resolved.error);
+            }
+            const effectiveSourceSftpId = resolved.sourceSftpId;
+            const effectiveTargetSftpId = resolved.targetSftpId;
 
             // On retry, prefer latest checkpoint so we do not restart from zero.
             const latest = transfersRef.current.find((candidate) => candidate.id === task.id) ?? task;
@@ -338,8 +371,8 @@ export function useSftpDirectoryTransferOps({
               downloadCheckpointBytes: latest.downloadCheckpointBytes ?? task.downloadCheckpointBytes,
               uploadCheckpointBytes: latest.uploadCheckpointBytes ?? task.uploadCheckpointBytes,
               sourceFingerprint: latest.sourceFingerprint ?? task.sourceFingerprint,
-              globalConcurrency: localStorageAdapter.readNumber(STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY) ?? undefined,
-              // Renderer already admitted this file via globalSftpTransferScheduler.
+              // Renderer already admitted this file via globalSftpTransferScheduler
+              // (unlimited host slots). Folder concurrency is only in runSftpTransferWorkers.
               skipAdmission: true,
             };
 
@@ -368,8 +401,9 @@ export function useSftpDirectoryTransferOps({
               // Always apply progress while the folder is latched so we can
               // force status back to paused even when the throttle would skip.
               const parentLatched = !!task.parentTaskId
-                && pausedTasksRef.current.has(task.parentTaskId);
-              const selfLatched = pausedTasksRef.current.has(task.id)
+                && (isTransferPauseLatched(task.parentTaskId) || pausedTasksRef.current.has(task.parentTaskId));
+              const selfLatched = isTransferOrRootPauseLatched(rootTaskId, task.id)
+                || pausedTasksRef.current.has(task.id)
                 || pausedTasksRef.current.has(rootTaskId);
               const forcePaused = parentLatched || selfLatched;
               if (!forcePaused && !shouldApplyTransferProgress({
@@ -386,36 +420,40 @@ export function useSftpDirectoryTransferOps({
                   if (t.id !== task.id) return t;
                   if (t.status === "cancelled") return t;
                   // Re-read latch inside updater — pause may have just won.
-                  const latchedNow = pausedTasksRef.current.has(rootTaskId)
-                    || (!!t.parentTaskId && pausedTasksRef.current.has(t.parentTaskId))
+                  const latchedNow = isTransferOrRootPauseLatched(rootTaskId, t.id)
+                    || pausedTasksRef.current.has(rootTaskId)
+                    || (!!t.parentTaskId && (
+                      isTransferPauseLatched(t.parentTaskId)
+                      || pausedTasksRef.current.has(t.parentTaskId)
+                    ))
                     || pausedTasksRef.current.has(t.id);
-                  const isPausedUi = latchedNow
-                    || t.status === "paused"
-                    || t.status === "pausing";
+                  // Latch-primary only. Sticky local status "paused"/"pausing" after
+                  // intentional Resume must not re-freeze the bar (soft-drain race).
+                  const pauseRequested = latchedNow;
                   const normalizedTotal = total > 0 ? total : t.totalBytes;
                   const normalizedTransferred = Math.max(
                     t.transferredBytes,
                     Math.min(transferred, normalizedTotal > 0 ? normalizedTotal : transferred),
                   );
                   // Prefer bridge contiguous checkpoint — soft-drain can report
-                  // high-water transferred past sparse holes.
+                  // high-water transferred past sparse holes. Keep updating the
+                  // durable checkpoint under the hood, but freeze the visible
+                  // bar as soon as pause is requested (soft-drain still writes).
                   const durableCheckpoint = resolveDurableCheckpointBytes({
                     transferred: normalizedTransferred,
                     previousCheckpoint: t.checkpointBytes,
                     incomingCheckpoint: checkpoint?.checkpointBytes,
-                    status: isPausedUi ? "paused" : t.status,
+                    status: pauseRequested ? "paused" : t.status,
                   });
                   return {
                     ...t,
                     // Latched folder pause always wins over mid-flight "transferring"
                     // paints from scheduler re-entry races.
-                    status: isPausedUi
+                    status: pauseRequested
                       && !["completed", "cancelled", "failed"].includes(t.status)
-                      ? ("paused" as TransferStatus)
+                      ? (t.status === "pausing" ? "pausing" as TransferStatus : "paused" as TransferStatus)
                       : t.status,
-                    // Freeze visible progress while paused so soft-drain tail
-                    // writes do not look like "pause did nothing".
-                    transferredBytes: isPausedUi ? t.transferredBytes : normalizedTransferred,
+                    transferredBytes: pauseRequested ? t.transferredBytes : normalizedTransferred,
                     checkpointBytes: durableCheckpoint,
                     resumeStage: checkpoint?.resumeStage ?? t.resumeStage,
                     downloadCheckpointBytes: checkpoint?.downloadCheckpointBytes ?? t.downloadCheckpointBytes,
@@ -423,16 +461,14 @@ export function useSftpDirectoryTransferOps({
                     sourceFingerprint: checkpoint?.sourceFingerprint ?? t.sourceFingerprint,
                     // Keep pause affordance while paused even if a progress event
                     // briefly reports pauseSupported=false mid soft-drain.
-                    resumable: isPausedUi ? true : (checkpoint?.resumable ?? t.resumable),
-                    // Explicit undefined from backend clears the startup default
-                    // ("cannot be paused safely") once pause is known to work.
-                    pauseUnavailableReason: isPausedUi
+                    resumable: pauseRequested ? true : (checkpoint?.resumable ?? t.resumable),
+                    pauseUnavailableReason: pauseRequested
                       ? undefined
                       : (checkpoint && "pauseUnavailableReason" in checkpoint
                         ? checkpoint.pauseUnavailableReason
                         : t.pauseUnavailableReason),
                     totalBytes: normalizedTotal,
-                    speed: isPausedUi ? 0 : (Number.isFinite(speed) && speed > 0 ? speed : 0),
+                    speed: pauseRequested ? 0 : (Number.isFinite(speed) && speed > 0 ? speed : 0),
                   };
                 }),
               );
@@ -458,17 +494,30 @@ export function useSftpDirectoryTransferOps({
                 );
                 // Streams that arm after the parent pause round never receive the
                 // initial pauseTransfer. Keep pausing while the folder is latched.
+                // Capture epoch per attempt so Resume (epoch bump) undoes a late pause.
                 let watchPaused = true;
                 const pauseWatch = (async () => {
                   while (
                     watchPaused
                     && (
-                      pausedTasksRef.current.has(rootTaskId)
+                      isTransferOrRootPauseLatched(rootTaskId, task.id)
+                      || pausedTasksRef.current.has(rootTaskId)
                       || pausedTasksRef.current.has(task.id)
                     )
                   ) {
+                    const epochAtAttempt = getTransferControlEpoch(rootTaskId);
                     try {
-                      await netcattyBridge.get()?.pauseTransfer?.(task.id);
+                      const result = await netcattyBridge.get()?.pauseTransfer?.(task.id);
+                      // Resume won while we were awaiting pause — undo.
+                      if (
+                        result?.success
+                        && !isTransferControlEpochCurrent(rootTaskId, epochAtAttempt)
+                      ) {
+                        try {
+                          await netcattyBridge.get()?.resumeTransfer?.(task.id);
+                        } catch { /* best-effort */ }
+                        break;
+                      }
                     } catch { /* best-effort */ }
                     await new Promise((resolve) => setTimeout(resolve, 80));
                   }
@@ -743,6 +792,11 @@ export function useSftpDirectoryTransferOps({
             // Inherit retryable from parent — downloadToLocal sets retryable: false
             // because "local" targetConnectionId can't be resolved by retryTransfer
             retryable: task.retryable,
+            // New/restarted child streams arm at bridge lifecycleEpoch 0. Never
+            // inherit the parent's soft-resume epoch or progress is stale-dropped.
+            lifecycleEpoch: undefined,
+            phase: undefined,
+            pauseUnavailableReason: undefined,
           };
 
           // Register child in transfers array so UI can render it
@@ -753,6 +807,7 @@ export function useSftpDirectoryTransferOps({
                 speed: 0,
                 error: undefined,
                 endTime: undefined,
+                lifecycleEpoch: undefined,
               } : candidate)
             : [...prev, {
                 ...childTask,
@@ -760,6 +815,7 @@ export function useSftpDirectoryTransferOps({
                 transferredBytes: 0,
                 speed: 0,
                 startTime: Date.now(),
+                lifecycleEpoch: undefined,
               }]);
 
           try {
@@ -778,17 +834,27 @@ export function useSftpDirectoryTransferOps({
             activeChildIdsRef.current.get(rootTaskId)?.delete(fileId);
             // Mark child as completed & update parent file count.
             // Soft-drain may finish a child after the parent was paused — still
-            // count it, but never resurrect a paused parent to "transferring".
+            // mark the child completed (resume skips it), but freeze the parent
+            // file-count bar while pausing/paused so the UI does not twitch.
             setTransfers((prev) => {
+              const parentRow = prev.find((row) => row.id === rootTaskId);
+              const parentFrozen = !!parentRow && (
+                parentRow.status === "paused"
+                || parentRow.status === "pausing"
+                || isPauseLatched(rootTaskId)
+              );
               const updated = prev.map((t) => {
                 if (t.id === fileId) {
                   return { ...t, status: "completed" as TransferStatus, endTime: Date.now(), transferredBytes: t.totalBytes };
                 }
                 if (t.id === rootTaskId) {
+                  if (parentFrozen) {
+                    return { ...t, speed: 0 };
+                  }
                   return {
                     ...t,
                     transferredBytes: t.transferredBytes + 1,
-                    speed: (t.status === "paused" || t.status === "pausing") ? 0 : t.speed,
+                    speed: t.speed,
                   };
                 }
                 return t;

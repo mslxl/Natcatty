@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createGlobalSftpTransferScheduler } from "./globalTransferScheduler";
+import {
+  createGlobalSftpTransferScheduler,
+} from "./globalTransferScheduler";
 
 test("scheduler limits each remote host independently", async () => {
   const scheduler = createGlobalSftpTransferScheduler();

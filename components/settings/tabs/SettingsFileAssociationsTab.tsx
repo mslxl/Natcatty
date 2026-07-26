@@ -35,7 +35,17 @@ const getOpenerLabel = (
 export default function SettingsFileAssociationsTab() {
   const { t } = useI18n();
   const { getAllAssociations, removeAssociation, setOpenerForExtension, getDefaultOpener, setDefaultOpener, removeDefaultOpener } = useSftpFileAssociations();
-  const { sftpDoubleClickBehavior, setSftpDoubleClickBehavior, sftpAutoSync, setSftpAutoSync, sftpShowHiddenFiles, setSftpShowHiddenFiles, sftpUseCompressedUpload, setSftpUseCompressedUpload, sftpAutoOpenSidebar, setSftpAutoOpenSidebar, sftpFollowTerminalCwd, setSftpFollowTerminalCwd, sftpDefaultViewMode, setSftpDefaultViewMode, sftpTransferConcurrency, setSftpTransferConcurrency } = useSettingsState();
+  const {
+    sftpDoubleClickBehavior, setSftpDoubleClickBehavior,
+    sftpAutoSync, setSftpAutoSync,
+    sftpShowHiddenFiles, setSftpShowHiddenFiles,
+    sftpUseCompressedUpload, setSftpUseCompressedUpload,
+    sftpAutoOpenSidebar, setSftpAutoOpenSidebar,
+    sftpFollowTerminalCwd, setSftpFollowTerminalCwd,
+    sftpDefaultViewMode, setSftpDefaultViewMode,
+    sftpTransferConcurrency, setSftpTransferConcurrency,
+    sftpTransferPoolIdleTtlMs, setSftpTransferPoolIdleTtlMs,
+  } = useSettingsState();
   const associations = getAllAssociations();
   const defaultOpener = getDefaultOpener();
   const [editingExtension, setEditingExtension] = useState<string | null>(null);
@@ -198,6 +208,22 @@ export default function SettingsFileAssociationsTab() {
               {sftpTransferConcurrency}
             </span>
           </div>
+        </SettingRow>
+        <SettingRow
+          label={t('settings.sftp.transferPoolIdleTtl')}
+          description={t('settings.sftp.transferPoolIdleTtl.desc')}
+        >
+          <Select
+            value={String(sftpTransferPoolIdleTtlMs)}
+            onChange={(value) => setSftpTransferPoolIdleTtlMs(Number(value))}
+            options={[
+              { value: '60000', label: t('settings.sftp.transferPoolIdleTtl.1m') },
+              { value: '300000', label: t('settings.sftp.transferPoolIdleTtl.5m') },
+              { value: '900000', label: t('settings.sftp.transferPoolIdleTtl.15m') },
+              { value: '1800000', label: t('settings.sftp.transferPoolIdleTtl.30m') },
+              { value: '0', label: t('settings.sftp.transferPoolIdleTtl.never') },
+            ]}
+          />
         </SettingRow>
       </SettingCard>
 
