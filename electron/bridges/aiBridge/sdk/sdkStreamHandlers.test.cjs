@@ -6,6 +6,7 @@ const {
   buildSdkSessionKey,
   normalizeSdkListModelsResult,
   resolveSdkResumeSessionId,
+  expireSiblingCursorCliModeSessions,
   resolveBackendKey,
   resolveSdkBackendBinPath,
   shouldCacheSdkRuntimeModels,
@@ -258,6 +259,70 @@ test("Cursor CLI login sessions do not resume on the API key SDK path", () => {
       binPath: "cursor",
       runtime: "sdk",
       authMode: "cli-login",
+      hasConfiguredCommand: false,
+    }),
+    undefined,
+  );
+});
+
+test("expireSiblingCursorCliModeSessions drops the inactive Cursor CLI mode", () => {
+  const askKey = buildSdkSessionKey("chat-1", "cursor", "/bin/cursor-agent", "sdk", "cli-login", "ask");
+  const agentKey = buildSdkSessionKey("chat-1", "cursor", "/bin/cursor-agent", "sdk", "cli-login", "agent");
+  const otherChatAskKey = buildSdkSessionKey("chat-2", "cursor", "/bin/cursor-agent", "sdk", "cli-login", "ask");
+  const sessions = new Map([
+    [askKey, "ask-session"],
+    [agentKey, "agent-session"],
+    [otherChatAskKey, "other-ask"],
+  ]);
+
+  // Observer → Confirm: expire Ask so a later switch-back cannot revive it.
+  assert.equal(
+    expireSiblingCursorCliModeSessions(sessions, {
+      chatSessionId: "chat-1",
+      backendKey: "cursor",
+      binPath: "/bin/cursor-agent",
+      runtime: "sdk",
+      authMode: "cli-login",
+      cliMode: "agent",
+    }),
+    true,
+  );
+  assert.equal(sessions.has(askKey), false);
+  assert.equal(sessions.get(agentKey), "agent-session");
+  assert.equal(sessions.get(otherChatAskKey), "other-ask");
+
+  // Confirm → Observer: expire agent; Ask was already gone, so resume is fresh.
+  sessions.set(agentKey, "agent-session-2");
+  assert.equal(
+    expireSiblingCursorCliModeSessions(sessions, {
+      chatSessionId: "chat-1",
+      backendKey: "cursor",
+      binPath: "/bin/cursor-agent",
+      runtime: "sdk",
+      authMode: "cli-login",
+      cliMode: "ask",
+    }),
+    true,
+  );
+  assert.equal(sessions.has(agentKey), false);
+  assert.equal(
+    resolveSdkResumeSessionId({
+      sdkSessionIds: sessions,
+      sdkSessionKey: askKey,
+      existingSessionId: `netcatty-sdk-session:${encodeURIComponent(JSON.stringify({
+        v: 1,
+        id: "agent-session-2",
+        backend: "cursor",
+        binPath: "/bin/cursor-agent",
+        runtime: "sdk",
+        authMode: "cli-login",
+        cliMode: "agent",
+      }))}`,
+      backendKey: "cursor",
+      binPath: "/bin/cursor-agent",
+      runtime: "sdk",
+      authMode: "cli-login",
+      cliMode: "ask",
       hasConfiguredCommand: false,
     }),
     undefined,

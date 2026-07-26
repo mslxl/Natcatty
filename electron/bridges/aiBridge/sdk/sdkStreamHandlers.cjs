@@ -100,6 +100,36 @@ function deleteSdkSessionKeysForChat(sdkSessionIds, chatSessionId) {
   }
 }
 
+/**
+ * Cursor CLI --resume is sticky for ask vs agent. When permission mode flips
+ * (Observer ↔ Confirm/Auto), drop the inactive mode's in-memory session so a
+ * later switch-back cannot revive a stale thread without the intervening turns.
+ * Returns true when a sibling key was removed.
+ */
+function expireSiblingCursorCliModeSessions(sdkSessionIds, {
+  chatSessionId,
+  backendKey,
+  binPath,
+  runtime = "sdk",
+  authMode = "",
+  cliMode = "",
+} = {}) {
+  const activeCliMode = normalizeResumeCliMode(cliMode);
+  if (!activeCliMode || !sdkSessionIds) return false;
+  const siblingCliMode = activeCliMode === "ask" ? "agent" : "ask";
+  const siblingKey = buildSdkSessionKey(
+    chatSessionId,
+    backendKey,
+    binPath,
+    runtime,
+    authMode,
+    siblingCliMode,
+  );
+  if (!sdkSessionIds.has(siblingKey)) return false;
+  sdkSessionIds.delete(siblingKey);
+  return true;
+}
+
 function resolveSdkResumeSessionId({
   sdkSessionIds,
   sdkSessionKey,
@@ -472,6 +502,18 @@ function registerSdkStreamHandlers(ctx) {
           const cursorCliMode = backendKey === "cursor" && cursorAuthMode === "cli-login"
             ? (String(permissionMode || "confirm").toLowerCase() === "observer" ? "ask" : "agent")
             : "";
+          // Expire the inactive mode first so Obs → Conf → Obs cannot resume the
+          // original Ask thread (which would also skip history of Confirm turns).
+          if (cursorCliMode) {
+            expireSiblingCursorCliModeSessions(sdkSessionIds, {
+              chatSessionId,
+              backendKey,
+              binPath: sessionBinPath,
+              runtime: codexRuntime,
+              authMode: cursorSessionAuthMode,
+              cliMode: cursorCliMode,
+            });
+          }
           const sdkSessionKey = buildSdkSessionKey(
             chatSessionId,
             backendKey,
@@ -847,6 +889,7 @@ module.exports = {
   buildSdkModelCacheKey,
   normalizeSdkListModelsResult,
   resolveSdkResumeSessionId,
+  expireSiblingCursorCliModeSessions,
   shouldCacheSdkRuntimeModels,
   normalizeHistoryMessages,
   buildSdkTurnPrompt,
