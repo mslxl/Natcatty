@@ -102,10 +102,11 @@ test("renders pausing state feedback instead of a dead pause button", () => {
     resumable: true,
   });
 
-  assert.match(markup, /aria-label="Finishing the current step: archive\.tar\.gz"/);
+  // Soft-drain is short; status copy is "Pausing" (not "finishing current step").
+  assert.match(markup, /aria-label="Pausing: archive\.tar\.gz"/);
   assert.match(markup, /aria-busy="true"/);
   assert.doesNotMatch(markup, /aria-label="Pause: archive\.tar\.gz"/);
-  assert.match(markup, /Finishing the current step/);
+  assert.match(markup, />Pausing</);
 });
 
 test("surfaces pause unavailable reason on a transferring row", () => {

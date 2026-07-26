@@ -73,7 +73,7 @@ export interface SftpExternalOperationsResult {
     entries: DropEntry[],
     options?: { targetPath?: string }
   ) => Promise<UploadResult[]>;
-  cancelExternalUpload: () => Promise<void>;
+  cancelExternalUpload: (taskId?: string) => Promise<void>;
   selectApplication: () => Promise<{ path: string; name: string } | null>;
   uploadConflicts: FileConflict[];
   resolveUploadConflict: (conflictId: string, action: FileConflictAction, applyToAll?: boolean) => void;
