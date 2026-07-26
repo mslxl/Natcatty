@@ -533,6 +533,7 @@ export const useSftpKeyboardShortcuts = ({
       isActive,
       keyBindings,
       pasteInternalSftpClipboard,
+      sftpRef,
       triggerDropEntriesClipboardUpload,
       triggerPathBackedClipboardUpload,
     ],

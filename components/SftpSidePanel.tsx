@@ -227,6 +227,8 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     warmTransferPoolForHost: sftp.warmTransferPoolForHost,
   });
 
+  const { getConnectionCacheKey, leftPane } = sftp;
+
   useEffect(() => {
     /** Per-task locks so resume-all can prepare multiple transfers sequentially. */
     const connectingTaskIds = new Set<string>();
@@ -718,13 +720,13 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     if (!pendingUpload || !activeHost) return;
     if (handledPendingUploadIdRef.current === pendingUpload.requestId) return;
 
-    const activePane = sftp.leftPane;
+    const activePane = leftPane;
     const connection = activePane.connection;
     // Prefer the live connection cache key (includes session overrides). Fall
     // back to the tab map only when the connect-time stamp is not yet readable.
     const paneConnectionKey = connection && !connection.isLocal
       ? (
-        sftp.getConnectionCacheKey?.(connection.id)
+        getConnectionCacheKey?.(connection.id)
         ?? tabConnectionKeyMapRef.current.get(activePane.id)
         ?? null
       )
@@ -767,10 +769,10 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     void runUpload();
   }, [
     activeHost,
+    getConnectionCacheKey,
+    leftPane,
     onPendingUploadHandled,
     pendingUpload,
-    sftp.getConnectionCacheKey,
-    sftp.leftPane,
     t,
   ]);
 
