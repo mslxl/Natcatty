@@ -18,6 +18,9 @@ on:
   # poll open automation PRs so the loop can observe and mark ready.
   schedule:
     - cron: '*/20 * * * *'
+    # Exercise the real Cursor sandbox/config path once per day so a provider
+    # behavior change cannot hide behind green Codex polling runs.
+    - cron: '17 3 * * *'
   workflow_dispatch:
     inputs:
       issue_number:
@@ -136,6 +139,9 @@ jobs:
             };
 
             if (event === 'schedule') {
+              if (context.payload.schedule === '17 3 * * *') {
+                return set('skip', { reason: 'scheduled Cursor sandbox smoke' });
+              }
               return set('codex_poll', {
                 reason: 'scheduled poll for reaction-only clean / expired requests',
               });
@@ -524,11 +530,10 @@ jobs:
           # Enable sandbox + block shell network only. Do NOT deny built-in
           # web tools yet — the isolated research pass must still call them.
           node -e '
-            const fs = require("node:fs");
-            const p = process.env.HOME + "/.cursor/cli-config.json";
-            const c = JSON.parse(fs.readFileSync(p, "utf8"));
-            c.sandbox = { ...(c.sandbox || {}), mode: "enabled", networkAccess: "user_config" };
-            fs.writeFileSync(p, JSON.stringify(c, null, 2) + "\n");
+            const auto = require(process.env.RUNNER_TEMP + "/cursor-automation.cjs");
+            auto.prepareCursorCliConfig({
+              configPath: process.env.HOME + "/.cursor/cli-config.json",
+            });
           '
           agent sandbox run --sandbox bash -c 'touch .cursor-runtime/sandbox-check'
           test -f .cursor-runtime/sandbox-check
@@ -626,18 +631,11 @@ jobs:
           # Research has finished. Block web tools for classify and later agents
           # that share this HOME / user-level cli-config.
           node -e '
-            const fs = require("node:fs");
-            const p = process.env.HOME + "/.cursor/cli-config.json";
-            const c = JSON.parse(fs.readFileSync(p, "utf8"));
-            c.permissions = {
-              ...(c.permissions || {}),
-              deny: [...new Set([
-                ...(c.permissions?.deny || []),
-                "WebSearch(*)",
-                "WebFetch(*)",
-              ])],
-            };
-            fs.writeFileSync(p, JSON.stringify(c, null, 2) + "\n");
+            const auto = require(process.env.RUNNER_TEMP + "/cursor-automation.cjs");
+            auto.prepareCursorCliConfig({
+              configPath: process.env.HOME + "/.cursor/cli-config.json",
+              denyWeb: true,
+            });
           '
 
       - name: Classify with Cursor CLI
@@ -821,11 +819,23 @@ jobs:
 
   sandbox_smoke:
     name: Cursor sandbox smoke
-    if: github.event_name == 'workflow_dispatch' && inputs.sandbox_smoke == true
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.sandbox_smoke == true) ||
+      (github.event_name == 'schedule' && github.event.schedule == '17 3 * * *')
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    permissions: {}
+    permissions:
+      contents: read
     steps:
+      - name: Checkout trusted helper
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'schedule' && github.event.repository.default_branch || github.sha }}
+          persist-credentials: false
+
+      - name: Freeze trusted helper
+        run: cp scripts/cursor-automation.cjs "$RUNNER_TEMP/cursor-automation.cjs"
+
       - name: Install Cursor CLI
         run: |
           curl https://cursor.com/install -fsS | bash
@@ -872,10 +882,23 @@ jobs:
             sudo journalctl -k --no-pager -n 100 >&2 || true
             exit 1
           fi
+          node -e '
+            const auto = require(process.env.RUNNER_TEMP + "/cursor-automation.cjs");
+            auto.prepareCursorCliConfig({
+              configPath: process.env.HOME + "/.cursor/cli-config.json",
+              denyWeb: true,
+            });
+          '
+          agent sandbox run --sandbox bash -c 'touch .cursor-runtime/sandbox-smoke'
+          test -f .cursor-runtime/sandbox-smoke
+          if agent sandbox run --sandbox bash -c 'curl -fsS --max-time 3 https://example.com >/dev/null'; then
+            echo "Cursor sandbox unexpectedly allowed network access." >&2
+            exit 1
+          fi
           write_sandbox_policy
           "$sandbox_helper" --policy "$sandbox_policy_file" -- \
-            bash -c 'touch .cursor-runtime/sandbox-smoke'
-          test -f .cursor-runtime/sandbox-smoke
+            bash -c 'touch .cursor-runtime/sandbox-helper-smoke'
+          test -f .cursor-runtime/sandbox-helper-smoke
           write_sandbox_policy
           if "$sandbox_helper" --policy "$sandbox_policy_file" -- \
             bash -c 'curl -fsS --max-time 3 https://example.com >/dev/null'; then
@@ -1104,11 +1127,10 @@ jobs:
           # Enable sandbox + block shell network only. Do NOT deny built-in
           # web tools yet — the isolated research pass must still call them.
           node -e '
-            const fs = require("node:fs");
-            const p = process.env.HOME + "/.cursor/cli-config.json";
-            const c = JSON.parse(fs.readFileSync(p, "utf8"));
-            c.sandbox = { ...(c.sandbox || {}), mode: "enabled", networkAccess: "user_config" };
-            fs.writeFileSync(p, JSON.stringify(c, null, 2) + "\n");
+            const auto = require(process.env.RUNNER_TEMP + "/cursor-automation.cjs");
+            auto.prepareCursorCliConfig({
+              configPath: process.env.HOME + "/.cursor/cli-config.json",
+            });
           '
           agent sandbox run --sandbox bash -c 'touch .cursor-runtime/followup-sandbox-check'
           test -f .cursor-runtime/followup-sandbox-check
@@ -1195,18 +1217,11 @@ jobs:
           # Research has finished. Block web tools for the follow-up agent and
           # any later steps that share this HOME / user-level cli-config.
           node -e '
-            const fs = require("node:fs");
-            const p = process.env.HOME + "/.cursor/cli-config.json";
-            const c = JSON.parse(fs.readFileSync(p, "utf8"));
-            c.permissions = {
-              ...(c.permissions || {}),
-              deny: [...new Set([
-                ...(c.permissions?.deny || []),
-                "WebSearch(*)",
-                "WebFetch(*)",
-              ])],
-            };
-            fs.writeFileSync(p, JSON.stringify(c, null, 2) + "\n");
+            const auto = require(process.env.RUNNER_TEMP + "/cursor-automation.cjs");
+            auto.prepareCursorCliConfig({
+              configPath: process.env.HOME + "/.cursor/cli-config.json",
+              denyWeb: true,
+            });
           '
 
       - name: Review follow-up with Cursor CLI
@@ -2359,19 +2374,11 @@ jobs:
           agent sandbox reset
           agent sandbox enable
           node -e '
-            const fs = require("node:fs");
-            const p = process.env.HOME + "/.cursor/cli-config.json";
-            const c = JSON.parse(fs.readFileSync(p, "utf8"));
-            c.sandbox = { ...(c.sandbox || {}), mode: "enabled", networkAccess: "user_config" };
-            c.permissions = {
-              ...(c.permissions || {}),
-              deny: [...new Set([
-                ...(c.permissions?.deny || []),
-                "WebSearch(*)",
-                "WebFetch(*)",
-              ])],
-            };
-            fs.writeFileSync(p, JSON.stringify(c, null, 2) + "\n");
+            const auto = require(process.env.RUNNER_TEMP + "/cursor-automation.cjs");
+            auto.prepareCursorCliConfig({
+              configPath: process.env.HOME + "/.cursor/cli-config.json",
+              denyWeb: true,
+            });
           '
           agent sandbox run --sandbox bash -c 'touch .cursor-runtime/implement-sandbox-check'
           test -f .cursor-runtime/implement-sandbox-check
@@ -3643,19 +3650,11 @@ jobs:
           agent sandbox reset
           agent sandbox enable
           node -e '
-            const fs = require("node:fs");
-            const p = process.env.HOME + "/.cursor/cli-config.json";
-            const c = JSON.parse(fs.readFileSync(p, "utf8"));
-            c.sandbox = { ...(c.sandbox || {}), mode: "enabled", networkAccess: "user_config" };
-            c.permissions = {
-              ...(c.permissions || {}),
-              deny: [...new Set([
-                ...(c.permissions?.deny || []),
-                "WebSearch(*)",
-                "WebFetch(*)",
-              ])],
-            };
-            fs.writeFileSync(p, JSON.stringify(c, null, 2) + "\n");
+            const auto = require(process.env.RUNNER_TEMP + "/cursor-automation.cjs");
+            auto.prepareCursorCliConfig({
+              configPath: process.env.HOME + "/.cursor/cli-config.json",
+              denyWeb: true,
+            });
           '
           agent sandbox run --sandbox bash -c 'touch .cursor-runtime/fix-sandbox-check'
           test -f .cursor-runtime/fix-sandbox-check

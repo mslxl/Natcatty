@@ -8,6 +8,53 @@ const os = require('node:os');
 
 const auto = require('./cursor-automation.cjs');
 
+test('prepareCursorCliConfig creates a secure config when Cursor leaves it absent', (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cursor-cli-config-'));
+  t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
+  const configPath = path.join(tempDir, '.cursor', 'cli-config.json');
+
+  const config = auto.prepareCursorCliConfig({ configPath });
+
+  assert.deepEqual(config.sandbox, {
+    mode: 'enabled',
+    networkAccess: 'user_config',
+  });
+  assert.equal(config.version, 1);
+  assert.deepEqual(
+    JSON.parse(fs.readFileSync(configPath, 'utf8')),
+    config,
+  );
+  assert.equal(fs.statSync(configPath).mode & 0o777, 0o600);
+});
+
+test('prepareCursorCliConfig preserves preferences and adds web denials once', (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cursor-cli-config-'));
+  t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
+  const configPath = path.join(tempDir, 'cli-config.json');
+  fs.writeFileSync(configPath, JSON.stringify({
+    version: 7,
+    editor: { vimMode: true },
+    permissions: {
+      allow: ['Read(**)'],
+      deny: ['WebSearch(*)'],
+    },
+    sandbox: { mode: 'disabled', networkAccess: 'enabled', git: true },
+  }));
+
+  auto.prepareCursorCliConfig({ configPath, denyWeb: true });
+  const config = auto.prepareCursorCliConfig({ configPath, denyWeb: true });
+
+  assert.equal(config.version, 7);
+  assert.deepEqual(config.editor, { vimMode: true });
+  assert.deepEqual(config.permissions.allow, ['Read(**)']);
+  assert.deepEqual(config.permissions.deny, ['WebSearch(*)', 'WebFetch(*)']);
+  assert.deepEqual(config.sandbox, {
+    mode: 'enabled',
+    networkAccess: 'user_config',
+    git: true,
+  });
+});
+
 test('isValidIssueFormat accepts modern bug template', () => {
   assert.equal(
     auto.isValidIssueFormat({
@@ -1690,7 +1737,7 @@ test('every Cursor job prepares and verifies the Linux sandbox host', () => {
   }
 });
 
-test('workflow exposes a credential-free Cursor sandbox smoke check', () => {
+test('workflow exposes a write-credential-free Cursor sandbox smoke check', () => {
   const workflow = fs.readFileSync(
     path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
     'utf8',
@@ -1702,17 +1749,56 @@ test('workflow exposes a credential-free Cursor sandbox smoke check', () => {
   const smokeJob = workflow.match(
     /\n  sandbox_smoke:\n[\s\S]*?(?=\n  [a-zA-Z0-9_]+:\n)/,
   )?.[0] || '';
-  assert.match(smokeJob, /permissions: \{\}/);
+  assert.match(smokeJob, /permissions:\n\s+contents: read/);
+  assert.match(
+    smokeJob,
+    /Checkout trusted helper[\s\S]*?persist-credentials: false/,
+  );
+  assert.match(
+    smokeJob,
+    /ref: \$\{\{ github\.event_name == 'schedule' && github\.event\.repository\.default_branch \|\| github\.sha \}\}/,
+  );
   assert.match(smokeJob, /run: \*prepare_cursor_sandbox_host/);
   assert.match(smokeJob, /agent sandbox enable/);
+  assert.match(
+    smokeJob,
+    /prepareCursorCliConfig[\s\S]*?agent sandbox run --sandbox bash -c 'touch \.cursor-runtime\/sandbox-smoke'/,
+  );
+  assert.match(
+    smokeJob,
+    /agent sandbox run --sandbox bash -c 'curl -fsS --max-time 3 https:\/\/example\.com >\/dev\/null'/,
+  );
   assert.match(smokeJob, /--policy "\$sandbox_policy_file"/);
   assert.match(smokeJob, /sandbox: \{/);
   assert.match(smokeJob, /networkAccess: false/);
   assert.match(smokeJob, /touch \.cursor-runtime\/sandbox-smoke/);
   assert.match(smokeJob, /Cursor sandbox unexpectedly allowed network access/);
-  assert.doesNotMatch(smokeJob, /agent sandbox run/);
   assert.doesNotMatch(smokeJob, /--sandbox-policy/);
   assert.doesNotMatch(smokeJob, /CURSOR_API_KEY|GITHUB_TOKEN|GH_TOKEN/);
+});
+
+test('workflow prepares missing Cursor config on every agent path and checks it daily', () => {
+  const workflow = fs.readFileSync(
+    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    'utf8',
+  );
+  const prepareCalls = workflow.match(/prepareCursorCliConfig/g) || [];
+
+  assert.equal(prepareCalls.length, 7);
+  assert.doesNotMatch(
+    workflow,
+    /JSON\.parse\(fs\.readFileSync\(p, "utf8"\)\)/,
+  );
+  assert.match(workflow, /- cron: '17 3 \* \* \*'/);
+  assert.match(
+    workflow,
+    /context\.payload\.schedule === '17 3 \* \* \*'[\s\S]*?return set\('skip'/,
+  );
+  const smokeJob = workflow.match(
+    /\n  sandbox_smoke:\n[\s\S]*?(?=\n  [a-zA-Z0-9_]+:\n)/,
+  )?.[0] || '';
+  assert.match(smokeJob, /github\.event\.schedule == '17 3 \* \* \*'/);
+  assert.match(smokeJob, /prepareCursorCliConfig/);
 });
 
 test('normalizeExternalResearchText accepts sourced research and explicit no-op', () => {
@@ -1966,8 +2052,7 @@ test('workflow confines forced WebSearch to isolated read-only research passes',
     assert.match(run, /process\.env\.HOME/);
     assert.match(run, /process\.env\.GITHUB_WORKSPACE/);
     // Research itself must not write the non-research web-tool denylist.
-    assert.doesNotMatch(run, /"WebSearch\(\*\)"/);
-    assert.doesNotMatch(run, /"WebFetch\(\*\)"/);
+    assert.doesNotMatch(run, /denyWeb: true/);
   }
 
   const nonResearchAgentLines = workflow
@@ -1978,8 +2063,7 @@ test('workflow confines forced WebSearch to isolated read-only research passes',
     workflow.split('\n').filter((line) => line.includes('agent -p') && line.includes('--force')).length,
     2,
   );
-  assert.equal((workflow.match(/"WebSearch\(\*\)"/g) || []).length, 4);
-  assert.equal((workflow.match(/"WebFetch\(\*\)"/g) || []).length, 4);
+  assert.equal((workflow.match(/denyWeb: true/g) || []).length, 5);
   assert.doesNotMatch(workflow, /issue-research-\$\{\{ github\.run_id \}\}-\$\{\{ github\.run_attempt \}\}/);
   assert.match(workflow, /name: issue-research-\$\{\{ github\.run_id \}\}[\s\S]*?overwrite: true/);
 });
@@ -2008,21 +2092,15 @@ test('workflow denies WebSearch only after isolated research, not before it', ()
     const preResearch = job.slice(0, researchIdx);
     assert.doesNotMatch(
       preResearch,
-      /"WebSearch\(\*\)"/,
+      /denyWeb: true/,
       `${label} must not deny WebSearch before research`,
-    );
-    assert.doesNotMatch(
-      preResearch,
-      /"WebFetch\(\*\)"/,
-      `${label} must not deny WebFetch before research`,
     );
 
     const postResearch = job.slice(researchIdx);
     const denyStep = postResearch.match(
       /- name: Deny WebSearch and WebFetch after[\s\S]*?(?=\n\s{6}- name:)/,
     )?.[0] || '';
-    assert.match(denyStep, /"WebSearch\(\*\)"/, `${label} post-research deny missing WebSearch`);
-    assert.match(denyStep, /"WebFetch\(\*\)"/, `${label} post-research deny missing WebFetch`);
+    assert.match(denyStep, /denyWeb: true/, `${label} post-research deny missing web block`);
 
     const denyIdx = postResearch.indexOf('- name: Deny WebSearch and WebFetch after');
     const agentIdx = postResearch.search(
@@ -2035,7 +2113,7 @@ test('workflow denies WebSearch only after isolated research, not before it', ()
   const implementJob = workflow.match(
     /\n  implement:\n[\s\S]*?(?=\n  [a-zA-Z0-9_]+:\n)/,
   )?.[0] || '';
-  assert.match(implementJob, /Require the Cursor command sandbox for implementation[\s\S]*?"WebSearch\(\*\)"/);
+  assert.match(implementJob, /Require the Cursor command sandbox for implementation[\s\S]*?denyWeb: true/);
   assert.doesNotMatch(implementJob, /Research external context/);
 });
 

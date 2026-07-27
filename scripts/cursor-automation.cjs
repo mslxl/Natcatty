@@ -2162,6 +2162,57 @@ function writeText(filePath, value) {
 }
 
 /**
+ * Cursor may persist authentication without creating its documented CLI config.
+ * Prepare the file deterministically so sandbox and permission policy setup does
+ * not depend on an earlier Cursor command having written unrelated preferences.
+ */
+function prepareCursorCliConfig({ configPath, denyWeb = false }) {
+  const target = String(configPath || '').trim();
+  if (!target) throw new Error('Cursor CLI config path is required.');
+
+  let existing = {};
+  try {
+    existing = JSON.parse(fs.readFileSync(target, 'utf8'));
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+  }
+  if (!existing || typeof existing !== 'object' || Array.isArray(existing)) {
+    throw new Error('Cursor CLI config must contain a JSON object.');
+  }
+
+  const config = {
+    ...existing,
+    version: existing.version ?? 1,
+    sandbox: {
+      ...(existing.sandbox || {}),
+      mode: 'enabled',
+      networkAccess: 'user_config',
+    },
+  };
+  if (denyWeb) {
+    config.permissions = {
+      ...(existing.permissions || {}),
+      deny: [...new Set([
+        ...(existing.permissions?.deny || []),
+        'WebSearch(*)',
+        'WebFetch(*)',
+      ])],
+    };
+  }
+
+  fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
+  const temporary = `${target}.${process.pid}.tmp`;
+  fs.writeFileSync(temporary, `${JSON.stringify(config, null, 2)}\n`, {
+    encoding: 'utf8',
+    mode: 0o600,
+  });
+  fs.chmodSync(temporary, 0o600);
+  fs.renameSync(temporary, target);
+  fs.chmodSync(target, 0o600);
+  return config;
+}
+
+/**
  * Octokit's paginate plugin normalizes Search API responses so that
  * `response.data` is already the items array (with total_count attached).
  * Older code expected `response.data.items`. Accept both shapes, and never
@@ -3083,6 +3134,7 @@ module.exports = {
   ensurePullRequestReady,
   restoreCleanPullRequestAfterNoChange,
   prepareIssueFollowupContext,
+  prepareCursorCliConfig,
   writeJson,
   writeText,
 };
