@@ -2111,14 +2111,14 @@ test('parseExternalResearchStream prefers the final isolated status over stale e
       'RESEARCH_NOT_NEEDED: initially appeared local-only',
       'RESEARCH_BLOCKED: WebSearch became unavailable',
     ].join('\n')),
-    /External research blocked: WebSearch became unavailable/,
+    /conflicting research statuses/,
   );
   assert.throws(
     () => parse([
       'RESEARCH_NOT_NEEDED: initially appeared local-only',
       'RESEARCH_BLOCKED: WebSearch became unavailable',
     ].join('\n')),
-    /External research blocked: WebSearch became unavailable/,
+    /conflicting research statuses/,
   );
 });
 
@@ -2290,6 +2290,76 @@ test('parseExternalResearchStream rejects a fenced status example that conflicts
   );
 });
 
+test('parseExternalResearchStream rejects conflicts across every valid candidate', () => {
+  const noOp = 'RESEARCH_NOT_NEEDED: initially appeared local-only';
+  const blocked = 'RESEARCH_BLOCKED: WebSearch became unavailable';
+  const fencedNoOp = `\`\`\`text\n${noOp}\n\`\`\``;
+  const threeWayConflict = [
+    {
+      type: 'assistant',
+      timestamp_ms: 1,
+      message: { content: [{ type: 'text', text: '```text\n' }] },
+    },
+    {
+      type: 'assistant',
+      timestamp_ms: 2,
+      message: { content: [{ type: 'text', text: `${noOp}\n\`\`\`` }] },
+    },
+    {
+      type: 'assistant',
+      message: { content: [{ type: 'text', text: fencedNoOp }] },
+    },
+    {
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      result: blocked,
+    },
+  ].map(JSON.stringify).join('\n');
+
+  assert.throws(
+    () => auto.parseExternalResearchStream(threeWayConflict, {}),
+    /conflicting research statuses/,
+  );
+
+  const fencedExample = '```text\nRESEARCH_BLOCKED: example only\n```';
+  const partialAggregate = `${noOp}\n${fencedExample}`;
+  const prefixedAggregateConflict = [
+    {
+      type: 'assistant',
+      timestamp_ms: 1,
+      message: { content: [{ type: 'text', text: `${noOp}\n` }] },
+    },
+    {
+      type: 'assistant',
+      timestamp_ms: 2,
+      message: { content: [{ type: 'text', text: '```text\n' }] },
+    },
+    {
+      type: 'assistant',
+      timestamp_ms: 3,
+      message: { content: [{ type: 'text', text: 'RESEARCH_BLOCKED: example only\n```' }] },
+    },
+    {
+      type: 'assistant',
+      message: {
+        content: [{ type: 'text', text: `Conversation preamble\n${partialAggregate}` }],
+      },
+    },
+    {
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      result: `Conversation preamble\n${partialAggregate}`,
+    },
+  ].map(JSON.stringify).join('\n');
+
+  assert.throws(
+    () => auto.parseExternalResearchStream(prefixedAggregateConflict, {}),
+    /conflicting research statuses/,
+  );
+});
+
 test('parseExternalResearchStream keeps a valid terminal status over assistant fragments', () => {
   const terminalStatus = 'RESEARCH_BLOCKED: WebSearch became unavailable';
   const staleAssistantEvents = [
@@ -2315,7 +2385,7 @@ test('parseExternalResearchStream keeps a valid terminal status over assistant f
 
   assert.throws(
     () => auto.parseExternalResearchStream(staleAssistantEvents, {}),
-    /External research blocked: WebSearch became unavailable/,
+    /conflicting research statuses/,
   );
 
   const terminalNoOp = 'RESEARCH_NOT_NEEDED: only local Netcatty behavior is involved';

@@ -305,23 +305,18 @@ function parseExternalResearchStream(value, input) {
   const finalAssistantText = assistantMessages.findLast(
     (message) => message.isFinalFlush,
   )?.text;
-  const fencedEnvelope = fencedAssistantSuffixes
-    .map((candidate) => parseExternalResearchEnvelope(candidate))
-    .find(Boolean);
-  const aggregateEnvelope = [finalAssistantText, terminalResult]
-    .filter(Boolean)
-    .map((candidate) => parseExternalResearchEnvelope(candidate))
-    .find(Boolean);
-  if (fencedEnvelope && aggregateEnvelope
-    && fencedEnvelope.match[1] !== aggregateEnvelope.match[1]) {
-    throw new Error('External research output contains conflicting research statuses.');
-  }
   const candidates = [
     ...fencedAssistantSuffixes,
     finalAssistantText,
     terminalResult,
     partialAssistantText || assistantText,
   ].filter(Boolean);
+  const candidateStatuses = new Set(candidates
+    .map((candidate) => parseExternalResearchEnvelope(candidate)?.match[1])
+    .filter(Boolean));
+  if (candidateStatuses.size > 1) {
+    throw new Error('External research output contains conflicting research statuses.');
+  }
   const selected = candidates.find((candidate) => parseExternalResearchEnvelope(candidate));
   const normalized = normalizeExternalResearchText(selected || candidates[0] || '', {
     input,
