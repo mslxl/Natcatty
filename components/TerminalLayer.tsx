@@ -1629,6 +1629,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     sessionId: string,
     command: string,
     snippet: Snippet,
+    options?: { focus?: boolean },
   ): boolean => {
     // Never inject into a peer tab sitting on a password/sensitive prompt.
     if (isTerminalSensitiveInputActive(sessionId)) return false;
@@ -1638,6 +1639,8 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       executor(command, snippet.noAutoRun, {
         multiLineRunMode: snippet.multiLineRunMode,
         broadcast: false,
+        // Multi-tab fan-out must not call term.focus() on every peer.
+        focus: options?.focus !== false,
       });
       return true;
     }
@@ -1716,6 +1719,9 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     if (!isScriptSnippet(snippet)) {
       const command = await resolveSnippetCommand(snippet);
       if (command === null) return;
+      const focusedBefore = workspace.focusedSessionId
+        ?? getActiveTerminalSessionId()
+        ?? null;
       let sent = 0;
       let skippedSensitive = 0;
       for (const sid of sessionIds) {
@@ -1723,13 +1729,16 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
           skippedSensitive += 1;
           continue;
         }
-        if (sendCommandSnippetToSession(sid, command, snippet)) sent += 1;
+        // Never steal focus from peer panes during fan-out; restore below.
+        if (sendCommandSnippetToSession(sid, command, snippet, { focus: false })) sent += 1;
       }
       if (skippedSensitive > 0) {
         toast.info(t('scripts.actions.skippedSensitiveSessions', { count: skippedSensitive }));
       }
       if (sent === 0 && skippedSensitive === 0) {
         toast.error(t('scripts.recording.noSession'));
+      } else if (focusedBefore) {
+        focusTerminalSessionInput(focusedBefore);
       }
       return;
     }

@@ -2651,7 +2651,12 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const executeSnippetCommand = useCallback((
     command: string,
     noAutoRun?: boolean,
-    options?: { broadcast?: boolean; multiLineRunMode?: Snippet["multiLineRunMode"] },
+    options?: {
+      broadcast?: boolean;
+      multiLineRunMode?: Snippet["multiLineRunMode"];
+      /** When false, skip term.focus() so multi-tab fan-out does not steal focus. */
+      focus?: boolean;
+    },
   ) => {
     const term = termRef.current;
     const id = sessionRef.current;
@@ -2695,7 +2700,9 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       ...(lineDelayMs ? { lineDelayMs } : {}),
     });
     scrollToBottomAfterProgrammaticInput(data);
-    term.focus();
+    if (options?.focus !== false) {
+      term.focus();
+    }
   }, [prepareProgrammaticSudoInput, scrollToBottomAfterProgrammaticInput, terminalBackend, sessionId]);
 
   const executeSnippet = useCallback(async (snippet: Snippet) => {

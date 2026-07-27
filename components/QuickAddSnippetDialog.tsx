@@ -67,6 +67,8 @@ export const QuickAddSnippetDialog: React.FC<QuickAddSnippetDialogProps> = ({
   const [shortkeyError, setShortkeyError] = useState<string | null>(null);
   const [editing, setEditing] = useState<Snippet | null>(null);
   const labelInputRef = useRef<HTMLInputElement>(null);
+  const dialogRootRef = useRef<HTMLDivElement>(null);
+  const previouslyFocusedRef = useRef<HTMLElement | null>(null);
 
   // Listen for the global "add snippet" request dispatched by the
   // terminal-side ScriptsSidePanel + button. We reset form state on
@@ -110,13 +112,85 @@ export const QuickAddSnippetDialog: React.FC<QuickAddSnippetDialogProps> = ({
     return () => window.removeEventListener('netcatty:snippets:edit', handler);
   }, []);
 
-  // Auto-focus the label input once the panel renders, so the user can
-  // start typing immediately after clicking the + button.
+  // Capture opener focus on open; restore it when the drawer closes.
+  // Also trap Tab within the drawer so focus cannot fall into the covered terminal.
   useEffect(() => {
     if (!open) return;
-    const id = window.setTimeout(() => labelInputRef.current?.focus(), 50);
-    return () => window.clearTimeout(id);
-  }, [open]);
+    previouslyFocusedRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+
+    const root = () => dialogRootRef.current;
+
+    const isInsideOpenOverlay = (node: Node | null): boolean => {
+      if (!(node instanceof Element)) return false;
+      // Portaled Select/Combobox content is still part of the modal interaction.
+      if (node.closest('[data-radix-popper-content-wrapper], [role="listbox"]')) return true;
+      return Boolean(root()?.contains(node));
+    };
+
+    const listFocusable = (): HTMLElement[] => {
+      const container = root();
+      if (!container) return [];
+      const nodes = container.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      );
+      return Array.from(nodes).filter((el) => {
+        if (el.getAttribute('aria-hidden') === 'true') return false;
+        if (el.tabIndex < 0) return false;
+        // Skip the invisible full-screen backdrop and sr-only dialog-close control.
+        if (el.classList.contains('sr-only')) return false;
+        if (el.getAttribute('aria-label') === t('common.cancel') && el.classList.contains('absolute')) {
+          return false;
+        }
+        return el.offsetParent !== null || el === document.activeElement;
+      });
+    };
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab' || e.defaultPrevented) return;
+      const focusable = listFocusable();
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+      if (e.shiftKey) {
+        if (!active || active === first || !isInsideOpenOverlay(active)) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else if (!active || active === last || !isInsideOpenOverlay(active)) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+
+    const onFocusIn = (e: FocusEvent) => {
+      const target = e.target as Node | null;
+      if (isInsideOpenOverlay(target)) return;
+      // Keep focus inside the drawer when something outside tries to steal it.
+      const focusable = listFocusable();
+      (focusable[0] ?? labelInputRef.current)?.focus();
+    };
+
+    // Defer initial focus so AsidePanel / inputs mount first.
+    const focusTimer = window.setTimeout(() => labelInputRef.current?.focus(), 50);
+    document.addEventListener('keydown', onKeyDown, true);
+    document.addEventListener('focusin', onFocusIn);
+
+    return () => {
+      window.clearTimeout(focusTimer);
+      document.removeEventListener('keydown', onKeyDown, true);
+      document.removeEventListener('focusin', onFocusIn);
+      const previous = previouslyFocusedRef.current;
+      previouslyFocusedRef.current = null;
+      window.setTimeout(() => {
+        if (previous && document.contains(previous)) {
+          previous.focus();
+        }
+      }, 0);
+    };
+  }, [open, t]);
 
   const isMac = useMemo(() => (
     hotkeyScheme === 'mac' || (hotkeyScheme === 'disabled' && isMacPlatform())
@@ -396,6 +470,7 @@ export const QuickAddSnippetDialog: React.FC<QuickAddSnippetDialogProps> = ({
 
   return (
     <div
+      ref={dialogRootRef}
       className="fixed inset-0 z-50"
       onKeyDown={handleKeyDown}
       role="dialog"
@@ -407,6 +482,7 @@ export const QuickAddSnippetDialog: React.FC<QuickAddSnippetDialogProps> = ({
         type="button"
         className="absolute inset-0 bg-black/40 cursor-default"
         aria-label={t('common.cancel')}
+        tabIndex={-1}
         onClick={handleClose}
       />
       {/* Hidden control so Cmd/Ctrl+W / hasOpenAppDialog() treat this drawer as an open dialog. */}

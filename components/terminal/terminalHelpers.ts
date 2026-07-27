@@ -208,7 +208,11 @@ export interface TerminalProps {
     executor: ((
       command: string,
       noAutoRun?: boolean,
-      options?: { broadcast?: boolean; multiLineRunMode?: Snippet["multiLineRunMode"] },
+      options?: {
+        broadcast?: boolean;
+        multiLineRunMode?: Snippet["multiLineRunMode"];
+        focus?: boolean;
+      },
     ) => void) | null,
   ) => void;
   onBroadcastInterruptPriorityChange?: (

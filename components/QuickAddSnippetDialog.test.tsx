@@ -34,4 +34,8 @@ test("quick add snippet form binds shortkeys and uses a side panel drawer", () =
   assert.match(source, /role="dialog"/);
   assert.match(source, /data-state="open"/);
   assert.match(source, /data-dialog-close="true"/);
+  // Focus trap + restore opener focus
+  assert.match(source, /previouslyFocusedRef/);
+  assert.match(source, /listFocusable/);
+  assert.match(source, /focusin/);
 });

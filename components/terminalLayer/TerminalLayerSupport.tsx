@@ -77,7 +77,12 @@ export type PendingSftpUpload = {
 export type SnippetExecutor = (
   command: string,
   noAutoRun?: boolean,
-  options?: { broadcast?: boolean; multiLineRunMode?: Snippet["multiLineRunMode"] },
+  options?: {
+    broadcast?: boolean;
+    multiLineRunMode?: Snippet["multiLineRunMode"];
+    /** When false, do not steal keyboard focus (multi-tab fan-out). Default true. */
+    focus?: boolean;
+  },
 ) => void;
 
 export type PendingTerminalSelectionForAI = {
