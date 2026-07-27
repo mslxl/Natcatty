@@ -272,13 +272,13 @@ function parseExternalResearchStream(value, input) {
   }
 
   // Cursor's terminal result may prepend earlier conversational text to the
-  // final answer. Prefer it when it is already a valid envelope, otherwise
-  // accept the complete assistant stream or one isolated final message. Never
-  // search arbitrary prose for a status marker.
+  // final answer. Prefer an isolated final message, then a valid terminal
+  // result, and retain the complete stream only for statuses split across
+  // events. Never search arbitrary prose for a status marker.
   const candidates = [
+    assistantMessages[assistantMessages.length - 1],
     terminalResult,
     assistantText,
-    assistantMessages[assistantMessages.length - 1],
   ].filter(Boolean);
   const selected = candidates.find((candidate) => parseExternalResearchEnvelope(candidate));
   const normalized = normalizeExternalResearchText(selected || candidates[0] || '', {

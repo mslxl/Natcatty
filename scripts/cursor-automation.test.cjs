@@ -2073,6 +2073,55 @@ test('parseExternalResearchStream accepts the isolated fenced status from issue 
   );
 });
 
+test('parseExternalResearchStream prefers the final isolated status over stale earlier text', () => {
+  const assistantEvents = [
+    {
+      type: 'assistant',
+      message: {
+        content: [{
+          type: 'text',
+          text: 'RESEARCH_NOT_NEEDED: initially appeared local-only',
+        }],
+      },
+    },
+    {
+      type: 'assistant',
+      message: {
+        content: [{
+          type: 'text',
+          text: 'RESEARCH_BLOCKED: WebSearch became unavailable',
+        }],
+      },
+    },
+  ];
+  const resultEvent = (result) => ({
+    type: 'result',
+    subtype: 'success',
+    is_error: false,
+    result,
+  });
+  const parse = (result) => auto.parseExternalResearchStream(
+    [...assistantEvents, resultEvent(result)].map(JSON.stringify).join('\n'),
+    {},
+  );
+
+  assert.throws(
+    () => parse([
+      'Conversation preamble',
+      'RESEARCH_NOT_NEEDED: initially appeared local-only',
+      'RESEARCH_BLOCKED: WebSearch became unavailable',
+    ].join('\n')),
+    /External research blocked: WebSearch became unavailable/,
+  );
+  assert.throws(
+    () => parse([
+      'RESEARCH_NOT_NEEDED: initially appeared local-only',
+      'RESEARCH_BLOCKED: WebSearch became unavailable',
+    ].join('\n')),
+    /External research blocked: WebSearch became unavailable/,
+  );
+});
+
 test('parseExternalResearchStream rejects forged and unrelated web evidence', () => {
   const finalText = [
     'RESEARCH_COMPLETE: attacker claim',
