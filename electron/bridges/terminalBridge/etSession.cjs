@@ -761,6 +761,38 @@ main();
       const writesConfigFile = configFileLines.length > 0;
       let configPath = null;
       if (writesConfigFile) {
+        // -F replaces the per-user config and also skips the system-wide
+        // config. Append Include directives AFTER our Host blocks so:
+        //   1) first-obtained-value keeps session overrides (ProxyJump,
+        //      vault known_hosts, IdentityFile, …) for matched hosts, and
+        //   2) HostName aliases / ProxyCommand / algorithms from the user's
+        //      normal ~/.ssh/config still apply (Codex P1 on PR #2529).
+        const includeLines = [];
+        try {
+          const realUserConfig = path.join(os.homedir(), ".ssh", "config");
+          if (fs.existsSync(realUserConfig)) {
+            includeLines.push(`Include ${quoteSshConfigValue(realUserConfig)}`);
+          }
+        } catch {
+          // ignore
+        }
+        try {
+          const systemConfigs = process.platform === "win32"
+            ? [path.join(process.env.ProgramData || "C:\\ProgramData", "ssh", "ssh_config")]
+            : ["/etc/ssh/ssh_config"];
+          for (const systemConfig of systemConfigs) {
+            if (fs.existsSync(systemConfig)) {
+              includeLines.push(`Include ${quoteSshConfigValue(systemConfig)}`);
+            }
+          }
+        } catch {
+          // ignore
+        }
+        if (includeLines.length > 0) {
+          configFileLines.push("");
+          configFileLines.push("# Preserve normal OpenSSH user/system configuration under -F.");
+          configFileLines.push(...includeLines);
+        }
         configPath = path.join(sshDir, "config");
         writeSecureFile(configPath, configFileLines.join("\n") + "\n", 0o600);
       }
