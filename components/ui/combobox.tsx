@@ -163,6 +163,7 @@ export function Combobox({
     }, [activeIndex])
 
     const handleSelect = (optValue: string) => {
+        if (disabled) return
         onValueChange?.(optValue)
         onInputValueChange?.(optValue)
         setOpen(false)
@@ -171,6 +172,7 @@ export function Combobox({
     }
 
     const handleCreate = () => {
+        if (disabled) return
         const newValue = inputValue.trim()
         if (newValue) {
             onCreateNew?.(newValue)
@@ -201,6 +203,7 @@ export function Combobox({
     }
 
     const handleOpenChange = (nextOpen: boolean) => {
+        if (disabled && nextOpen) return
         setOpen(nextOpen)
         setActiveIndex(-1)
         if (nextOpen) {
@@ -248,9 +251,10 @@ export function Combobox({
     }
 
     return (
-        <Popover open={open} onOpenChange={handleOpenChange}>
+        <Popover open={open && !disabled} onOpenChange={handleOpenChange}>
             <PopoverTrigger asChild disabled={disabled}>
                 <div
+                    aria-disabled={disabled}
                     className={cn(
                         "flex h-10 w-full items-center rounded-md border border-input bg-background text-sm min-w-0 overflow-hidden",
                         "hover:bg-secondary/50 transition-colors",

@@ -98,3 +98,10 @@ test("combobox selects the current label on focus so typing replaces instead of 
     /if \(nextOpen\) \{\s*\/\/ Focus \+ select so opening via the chevron still replaces on first keystroke\.\s*focusAndSelectInput\(\)/,
   );
 });
+
+test("disabled comboboxes cannot open or commit a selection", () => {
+  assert.match(source, /if \(disabled && nextOpen\) return/);
+  assert.match(source, /<Popover open=\{open && !disabled\}/);
+  assert.match(source, /const handleSelect = \(optValue: string\) => \{\s*if \(disabled\) return/);
+  assert.match(source, /const handleCreate = \(\) => \{\s*if \(disabled\) return/);
+});
