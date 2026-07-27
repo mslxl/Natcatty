@@ -197,6 +197,8 @@ test("Mosh injects vault known_hosts into the SSH bootstrap for key-change check
 
   const auth = await api.buildMoshSshAuthArgs({
     useSshAgent: false,
+    hostname: "host.example",
+    port: 22,
     knownHosts: [{
       hostname: "host.example",
       port: 22,

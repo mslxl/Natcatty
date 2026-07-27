@@ -101,6 +101,53 @@ test("filterKnownHostsContentExcludingVaultHosts drops conflicting system pins",
   assert.match(filtered, /# comment kept/);
 });
 
+test("filterKnownHostsContentExcludingVaultHosts drops wildcards covering vault hosts", () => {
+  const {
+    filterKnownHostsContentExcludingVaultHosts: filter,
+  } = require("./externalSshHostKeyPolicy.cjs");
+  const content = [
+    "*.example.com ssh-ed25519 AAAWILD",
+    "db.example.com ssh-rsa AAADB",
+    "unrelated.example.org ssh-ed25519 AAAOK",
+  ].join("\n");
+  const filtered = filter(content, [{ hostname: "host.example.com", port: 22 }]);
+  assert.doesNotMatch(filtered, /AAAWILD/);
+  assert.match(filtered, /db\.example\.com/);
+  assert.match(filtered, /AAAOK/);
+});
+
+test("filterKnownHostsContentExcludingVaultHosts keeps @revoked for vault hosts", () => {
+  const {
+    filterKnownHostsContentExcludingVaultHosts: filter,
+  } = require("./externalSshHostKeyPolicy.cjs");
+  const content = [
+    "@revoked host.example ssh-ed25519 AAAREVOKED",
+    "host.example ssh-ed25519 AAASYSTEM",
+    "other.example ssh-rsa AAAOTHER",
+  ].join("\n");
+  const filtered = filter(content, [{ hostname: "host.example", port: 22 }]);
+  assert.match(filtered, /@revoked host\.example ssh-ed25519 AAAREVOKED/);
+  assert.doesNotMatch(filtered, /AAASYSTEM/);
+  assert.match(filtered, /other\.example/);
+});
+
+test("vaultPinsConnectionHosts only matches the active connection", () => {
+  const { vaultPinsConnectionHosts } = require("./externalSshHostKeyPolicy.cjs");
+  const knownHosts = [{
+    hostname: "other.example",
+    keyType: "ssh-ed25519",
+    publicKey: "ssh-ed25519 AAAA",
+  }];
+  assert.equal(
+    vaultPinsConnectionHosts(knownHosts, [{ hostname: "target.example", port: 22 }]),
+    false,
+  );
+  assert.equal(
+    vaultPinsConnectionHosts(knownHosts, [{ hostname: "other.example", port: 22 }]),
+    true,
+  );
+});
+
 test("filterKnownHostsContentExcludingVaultHosts matches hashed host entries", () => {
   const hostname = "hashed.example";
   const salt = crypto.randomBytes(20);

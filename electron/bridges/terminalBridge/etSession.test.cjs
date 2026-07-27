@@ -899,6 +899,31 @@ test("prepareEtSshEnvironment injects vault known_hosts for key-change checks", 
   assert.ok(trustPath.startsWith(path.join(base, "et-ssh-home-sess1")));
 });
 
+test("prepareEtSshEnvironment keeps persistent known_hosts when vault does not pin target", (t) => {
+  const { api, base } = makeApi(t);
+  const env = api.prepareEtSshEnvironment("sess1", {
+    hostname: "target.example",
+    username: "alice",
+    knownHosts: [{
+      hostname: "unrelated.example",
+      keyType: "ssh-ed25519",
+      publicKey: "ssh-ed25519 AAAOTHER",
+    }],
+  });
+
+  const userOption = env.sshOptions.find((option) => option.startsWith("UserKnownHostsFile="));
+  assert.ok(userOption);
+  assert.equal(
+    userOption,
+    `UserKnownHostsFile=${path.join(base, "home", ".ssh", "known_hosts").replace(/\\/g, "/")}`,
+  );
+  // Must not force a session-local UserKnownHostsFile for unrelated vault pins.
+  assert.equal(
+    env.sshOptions.some((option) => option.startsWith("GlobalKnownHostsFile=")),
+    false,
+  );
+});
+
 test("prepareEtSshEnvironment disables host-key checks when verifyHostKeys is false", (t) => {
   const { api } = makeApi(t);
   const env = api.prepareEtSshEnvironment("sess1", {

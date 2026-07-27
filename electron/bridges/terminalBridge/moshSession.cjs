@@ -13,6 +13,7 @@ const { fanoutSessionExit } = require("../terminalAttachRestore.cjs");
 const {
   buildAuthoritativeKnownHostsContent,
   buildExternalHostKeySshOptions,
+  vaultPinsConnectionHosts,
 } = require("../externalSshHostKeyPolicy.cjs");
 
 const execFileAsync = promisify(execFile);
@@ -371,18 +372,32 @@ function createMoshSessionApi(ctx) {
         let authoritativeKnownHostsPath = null;
         let emptyKnownHostsPath = null;
         if (verifyHostKeys) {
-          const authoritativeContent = buildAuthoritativeKnownHostsContent({
-            knownHosts: options.knownHosts,
-            fs,
-            pathModule: path,
-            homedir: os.homedir(),
-          });
-          if (authoritativeContent) {
-            authoritativeKnownHostsPath = await writeMoshAuthTempFile(
-              safeMoshAuthFileName(sessionId, "authoritative-known-hosts", ".txt"),
-              authoritativeContent,
-            );
-            tempFiles.push(authoritativeKnownHostsPath);
+          // Only override system known_hosts when the vault pins this target
+          // (or a jump host). Unrelated vault entries must not force a temp
+          // UserKnownHostsFile for every Mosh session.
+          const connectionHosts = [
+            { hostname: options.hostname, port: options.port || 22 },
+            ...(Array.isArray(options.jumpHosts)
+              ? options.jumpHosts.map((jump) => ({
+                hostname: jump.hostname,
+                port: jump.port || 22,
+              }))
+              : []),
+          ];
+          if (vaultPinsConnectionHosts(options.knownHosts, connectionHosts)) {
+            const authoritativeContent = buildAuthoritativeKnownHostsContent({
+              knownHosts: options.knownHosts,
+              fs,
+              pathModule: path,
+              homedir: os.homedir(),
+            });
+            if (authoritativeContent) {
+              authoritativeKnownHostsPath = await writeMoshAuthTempFile(
+                safeMoshAuthFileName(sessionId, "authoritative-known-hosts", ".txt"),
+                authoritativeContent,
+              );
+              tempFiles.push(authoritativeKnownHostsPath);
+            }
           }
         } else {
           emptyKnownHostsPath = await writeMoshAuthTempFile(

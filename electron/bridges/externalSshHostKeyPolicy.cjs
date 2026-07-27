@@ -96,16 +96,45 @@ const buildHashLookupTokens = (hostname, port) => {
   return [...tokens];
 };
 
-const plainHostPatternMatchesSelector = (token, selector) => {
-  if (!token || token.startsWith("!") || token.includes("*") || token.includes("?")) {
+/**
+ * OpenSSH host-pattern matching for `*` / `?` (case-insensitive hostnames).
+ * Used when filtering system known_hosts so a wildcard pin cannot override a
+ * vault pin for a matching host.
+ */
+const openSshHostGlobMatches = (pattern, hostname) => {
+  const rawPattern = String(pattern || "");
+  const host = normalizeHostname(hostname);
+  if (!rawPattern || !host) return false;
+  // Escape regex metacharacters except the OpenSSH wildcards we translate.
+  let regexSource = "";
+  for (const ch of rawPattern.toLowerCase()) {
+    if (ch === "*") regexSource += ".*";
+    else if (ch === "?") regexSource += ".";
+    else if (/[.+^${}()|[\]\\]/.test(ch)) regexSource += `\\${ch}`;
+    else regexSource += ch;
+  }
+  try {
+    return new RegExp(`^${regexSource}$`).test(host);
+  } catch {
     return false;
   }
+};
+
+const plainHostPatternMatchesSelector = (token, selector) => {
+  if (!token || token.startsWith("!")) return false;
   const bracket = token.match(/^\[([^\]]+)\]:(\d+)$/);
   if (bracket) {
-    return (
-      normalizeHostname(bracket[1]) === selector.hostname
-      && Number.parseInt(bracket[2], 10) === selector.port
-    );
+    const patternHost = bracket[1];
+    const patternPort = Number.parseInt(bracket[2], 10);
+    if (patternPort !== selector.port) return false;
+    if (patternHost.includes("*") || patternHost.includes("?")) {
+      return openSshHostGlobMatches(patternHost, selector.hostname);
+    }
+    return normalizeHostname(patternHost) === selector.hostname;
+  }
+  if (token.includes("*") || token.includes("?")) {
+    // Bare wildcard patterns imply the default SSH port.
+    return selector.port === 22 && openSshHostGlobMatches(token, selector.hostname);
   }
   return normalizeHostname(token) === selector.hostname && selector.port === 22;
 };
@@ -164,6 +193,9 @@ const hostFieldMatchesAnyVaultSelector = (hostField, selectors) => {
  * Drop known_hosts lines that pin any vault-covered host so vault keys are
  * the only trust source for those hosts. OpenSSH accepts a match from ANY
  * configured file; leaving a system K2 next to vault K1 would let K2 win.
+ *
+ * `@revoked` lines for vault-covered hosts are KEPT — admin revocations must
+ * remain authoritative and cannot be replaced by a vault pin alone.
  */
 const filterKnownHostsContentExcludingVaultHosts = (content, vaultSelectors) => {
   if (!content || !vaultSelectors?.length) {
@@ -177,12 +209,15 @@ const filterKnownHostsContentExcludingVaultHosts = (content, vaultSelectors) => 
       continue;
     }
     let rest = line;
+    let revoked = false;
     while (rest.startsWith("@")) {
       const spaceIdx = rest.search(/\s/);
       if (spaceIdx < 0) {
         rest = "";
         break;
       }
+      const marker = rest.slice(0, spaceIdx);
+      if (marker === "@revoked") revoked = true;
       rest = rest.slice(spaceIdx).trim();
     }
     if (!rest) {
@@ -191,11 +226,36 @@ const filterKnownHostsContentExcludingVaultHosts = (content, vaultSelectors) => 
     }
     const hostField = rest.split(/\s+/)[0];
     if (hostFieldMatchesAnyVaultSelector(hostField, vaultSelectors)) {
+      // Keep revocations; drop alternate trust pins for vault-covered hosts.
+      if (revoked) kept.push(rawLine.trimEnd());
       continue;
     }
     kept.push(rawLine.trimEnd());
   }
   return kept.filter(Boolean).join("\n");
+};
+
+/**
+ * True when the vault contains a usable pin for at least one of the hosts
+ * involved in this connection (target and jump hosts). Used so ET only
+ * switches UserKnownHostsFile to a session snapshot when vault authority is
+ * actually needed — otherwise accept-new keeps writing to the persistent
+ * ~/.ssh/known_hosts.
+ */
+const vaultPinsConnectionHosts = (knownHosts, connectionHosts = []) => {
+  const vaultSelectors = extractVaultHostSelectors(knownHosts);
+  if (!vaultSelectors.length || !Array.isArray(connectionHosts) || connectionHosts.length === 0) {
+    return false;
+  }
+  for (const host of connectionHosts) {
+    const hostname = normalizeHostname(host?.hostname);
+    if (!hostname) continue;
+    const port = Number.isFinite(host?.port) ? Number(host.port) : 22;
+    if (vaultSelectors.some((selector) => selector.hostname === hostname && selector.port === port)) {
+      return true;
+    }
+  }
+  return false;
 };
 
 /**
@@ -453,6 +513,8 @@ module.exports = {
   formatVaultKnownHostLine,
   getDefaultGlobalKnownHostsPaths,
   getDefaultUserKnownHostsPaths,
+  openSshHostGlobMatches,
   quoteOpenSshOptionValue,
   resolveExternalStrictHostKeyChecking,
+  vaultPinsConnectionHosts,
 };

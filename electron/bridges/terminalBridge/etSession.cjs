@@ -6,6 +6,7 @@ const {
   buildExternalHostKeyConfigLines,
   buildExternalHostKeySshOptions,
   buildVaultKnownHostsContent,
+  vaultPinsConnectionHosts,
 } = require("../externalSshHostKeyPolicy.cjs");
 const { emitTerminalSessionData } = require("../emitTerminalSessionData.cjs");
 const {
@@ -372,26 +373,39 @@ main();
       // ssh banners so the first real PTY bytes are the remote shell. Mirrors
       // the options already used by execOnEtSession.
       //
-      // Vault known_hosts (issue #2501): when the vault pins a host, build an
-      // authoritative known_hosts snapshot (vault pins + system entries for
-      // non-vault hosts) and point BOTH User/Global known_hosts at it. OpenSSH
-      // accepts a match from any trust source, so a rotated system K2 next to
-      // vault K1 would otherwise win.
+      // Vault known_hosts (issue #2501): only when the vault pins the target
+      // (or a jump host) do we switch to an authoritative session snapshot.
+      // OpenSSH accepts a match from any trust source, so a rotated system K2
+      // next to vault K1 would otherwise win. When the vault does not pin this
+      // connection, keep the persistent ~/.ssh/known_hosts so accept-new still
+      // records first-seen keys across sessions.
       let authoritativeKnownHostsPath = null;
       let emptyKnownHostsPath = null;
+      const connectionHosts = [
+        { hostname: options.hostname, port: options.port || 22 },
+        ...jumpHosts.map((jump) => ({
+          hostname: jump.hostname,
+          port: jump.port || 22,
+        })),
+      ];
+      const vaultCoversConnection = vaultPinsConnectionHosts(options.knownHosts, connectionHosts);
       if (verifyHostKeys) {
-        const authoritativeContent = buildAuthoritativeKnownHostsContent({
-          knownHosts: options.knownHosts,
-          fs,
-          pathModule: path,
-          homedir: os.homedir(),
-        });
-        if (authoritativeContent) {
-          authoritativeKnownHostsPath = path.join(sshDir, `${safeId}-authoritative-known_hosts`);
-          writeSecureFile(authoritativeKnownHostsPath, authoritativeContent, 0o600);
-        } else {
-          // No vault pins: keep the persistent user known_hosts so accept-new
-          // records first-seen keys for later mismatch detection.
+        if (vaultCoversConnection) {
+          const authoritativeContent = buildAuthoritativeKnownHostsContent({
+            knownHosts: options.knownHosts,
+            fs,
+            pathModule: path,
+            homedir: os.homedir(),
+          });
+          if (authoritativeContent) {
+            authoritativeKnownHostsPath = path.join(sshDir, `${safeId}-authoritative-known_hosts`);
+            writeSecureFile(authoritativeKnownHostsPath, authoritativeContent, 0o600);
+          }
+        }
+        if (!authoritativeKnownHostsPath) {
+          // No vault pin for this connection: keep the persistent user
+          // known_hosts so accept-new records first-seen keys for later
+          // mismatch detection.
           sshOptions.push(`UserKnownHostsFile=${normalizeSshConfigPath(knownHostsPath)}`);
         }
       } else {
