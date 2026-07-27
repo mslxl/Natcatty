@@ -379,7 +379,8 @@ main();
       // sessions. With a jump host, host-key options are applied per-hop via
       // Host blocks (not global --ssh-option) so one hop's snapshot cannot
       // force the other hop off the persistent trust file.
-      let authoritativeKnownHostsPath = null;
+      let targetAuthoritativeKnownHostsPath = null;
+      let jumpAuthoritativeKnownHostsPath = null;
       let emptyKnownHostsPath = null;
       const targetConnectionHost = {
         hostname: options.hostname,
@@ -392,17 +393,39 @@ main();
       const vaultPinsTarget = vaultPinsConnectionHosts(options.knownHosts, [targetConnectionHost]);
       const vaultPinsJump = vaultPinsConnectionHosts(options.knownHosts, jumpConnectionHosts);
       if (verifyHostKeys) {
-        if (vaultPinsTarget || vaultPinsJump) {
-          const authoritativeContent = buildAuthoritativeKnownHostsContent({
+        // Build per-hop snapshots with ssh -G discovery for THAT hop's
+        // hostname so Host-scoped GlobalKnownHostsFile / UserKnownHostsFile
+        // (and @revoked entries there) are not lost.
+        if (vaultPinsTarget) {
+          const targetContent = buildAuthoritativeKnownHostsContent({
             knownHosts: options.knownHosts,
             fs,
             hostname: options.hostname,
             pathModule: path,
             homedir: os.homedir(),
           });
-          if (authoritativeContent) {
-            authoritativeKnownHostsPath = path.join(sshDir, `${safeId}-authoritative-known_hosts`);
-            writeSecureFile(authoritativeKnownHostsPath, authoritativeContent, 0o600);
+          if (targetContent) {
+            targetAuthoritativeKnownHostsPath = path.join(
+              sshDir,
+              `${safeId}-authoritative-target-known_hosts`,
+            );
+            writeSecureFile(targetAuthoritativeKnownHostsPath, targetContent, 0o600);
+          }
+        }
+        if (vaultPinsJump && jumpHosts[0]) {
+          const jumpContent = buildAuthoritativeKnownHostsContent({
+            knownHosts: options.knownHosts,
+            fs,
+            hostname: jumpHosts[0].hostname,
+            pathModule: path,
+            homedir: os.homedir(),
+          });
+          if (jumpContent) {
+            jumpAuthoritativeKnownHostsPath = path.join(
+              sshDir,
+              `${safeId}-authoritative-jump-known_hosts`,
+            );
+            writeSecureFile(jumpAuthoritativeKnownHostsPath, jumpContent, 0o600);
           }
         }
       } else {
@@ -414,10 +437,10 @@ main();
       }
 
       const targetUsesAuthoritative = Boolean(
-        verifyHostKeys && vaultPinsTarget && authoritativeKnownHostsPath,
+        verifyHostKeys && vaultPinsTarget && targetAuthoritativeKnownHostsPath,
       );
       const jumpUsesAuthoritative = Boolean(
-        verifyHostKeys && vaultPinsJump && authoritativeKnownHostsPath,
+        verifyHostKeys && vaultPinsJump && jumpAuthoritativeKnownHostsPath,
       );
       const hasJumpHost = jumpHosts.length > 0;
 
@@ -429,7 +452,9 @@ main();
           sshOptions.push(`UserKnownHostsFile=${normalizeSshConfigPath(knownHostsPath)}`);
         }
         sshOptions.push(...buildExternalHostKeySshOptions({
-          authoritativeKnownHostsPath: targetUsesAuthoritative ? authoritativeKnownHostsPath : null,
+          authoritativeKnownHostsPath: targetUsesAuthoritative
+            ? targetAuthoritativeKnownHostsPath
+            : null,
           emptyKnownHostsPath,
           verifyHostKeys,
           protocol: "et",
@@ -439,12 +464,6 @@ main();
         if (!sshOptions.some((opt) => opt.startsWith("StrictHostKeyChecking="))) {
           sshOptions.push("StrictHostKeyChecking=accept-new");
         }
-      } else if (targetUsesAuthoritative) {
-        // Single-hop-style target policy is deferred into the Host <dest>
-        // block so it does not override the jump hop via --ssh-option.
-      } else {
-        // Target not vault-pinned: still need accept-new default for the
-        // destination hop; applied in the Host <dest> block below.
       }
       sshOptions.push("LogLevel=ERROR");
 
@@ -701,7 +720,7 @@ main();
         if (verifyHostKeys) {
           if (jumpUsesAuthoritative) {
             jumpConfigLines.push(...buildExternalHostKeyConfigLines({
-              authoritativeKnownHostsPath,
+              authoritativeKnownHostsPath: jumpAuthoritativeKnownHostsPath,
               verifyHostKeys: true,
               protocol: "et",
               normalizePath: normalizeSshConfigPath,
@@ -750,7 +769,7 @@ main();
         if (verifyHostKeys) {
           if (targetUsesAuthoritative) {
             for (const line of buildExternalHostKeyConfigLines({
-              authoritativeKnownHostsPath,
+              authoritativeKnownHostsPath: targetAuthoritativeKnownHostsPath,
               verifyHostKeys: true,
               protocol: "et",
               normalizePath: normalizeSshConfigPath,
@@ -862,43 +881,55 @@ main();
 
     /**
      * Build a known_hosts file for background ET exec (stats / distro probes).
-     * Merges the user's system known_hosts with any Netcatty-vault entries that
-     * carry a full public key blob, then pins StrictHostKeyChecking=yes on exec
-     * so accept-new cannot auto-trust a host in a non-interactive flow.
+     * Reuses the vault-authoritative snapshot builder so system pins for
+     * vault-covered hosts cannot override the vault key (same policy as the
+     * interactive ET bootstrap). Falls back to system+vault merge without
+     * filtering when the vault has no usable pins.
      */
     function ensureStrictExecKnownHostsFile(session, knownHosts) {
       if (session.etStrictExecKnownHostsPath) {
         return session.etStrictExecKnownHostsPath;
       }
 
-      const { readSystemKnownHostsContent } = createSystemKnownHostsApi({
-        fs, path, os, crypto, log: console,
+      const hostname = session.etStatsAuth?.hostname
+        || session.sshUserHost?.split("@").pop()
+        || "localhost";
+      let content = buildAuthoritativeKnownHostsContent({
+        knownHosts,
+        fs,
+        hostname,
+        pathModule: path,
+        homedir: os.homedir(),
       });
-      const chunks = [];
 
-      try {
-        const systemContent = readSystemKnownHostsContent();
-        if (systemContent) chunks.push(systemContent);
-      } catch {
-        // ignore read failures — strict checking fails closed below
-      }
-
-      const configuredKnownHosts = (session.sshOptions || []).find(
-        (opt) => opt.startsWith("UserKnownHostsFile="),
-      );
-      if (configuredKnownHosts) {
-        const configuredPath = configuredKnownHosts.slice("UserKnownHostsFile=".length);
+      // No vault pins: keep the previous fail-closed merge of system + any
+      // configured user known_hosts so probes still have a trust source.
+      if (!content) {
+        const { readSystemKnownHostsContent } = createSystemKnownHostsApi({
+          fs, path, os, crypto, log: console,
+        });
+        const chunks = [];
         try {
-          const configuredContent = fs.readFileSync(configuredPath, "utf8");
-          if (configuredContent) chunks.push(configuredContent);
+          const systemContent = readSystemKnownHostsContent();
+          if (systemContent) chunks.push(systemContent);
         } catch {
-          // ignore missing configured file
+          // ignore read failures — strict checking fails closed below
         }
-      }
-
-      const vaultContent = buildVaultKnownHostsContent(knownHosts);
-      if (vaultContent) {
-        chunks.push(vaultContent.trimEnd());
+        const configuredKnownHosts = (session.sshOptions || []).find(
+          (opt) => opt.startsWith("UserKnownHostsFile="),
+        );
+        if (configuredKnownHosts) {
+          const configuredPath = configuredKnownHosts.slice("UserKnownHostsFile=".length)
+            .replace(/^"|"$/g, "");
+          try {
+            const configuredContent = fs.readFileSync(configuredPath, "utf8");
+            if (configuredContent) chunks.push(configuredContent);
+          } catch {
+            // ignore missing configured file
+          }
+        }
+        content = chunks.filter(Boolean).join("\n");
+        if (content && !content.endsWith("\n")) content += "\n";
       }
 
       const artifact = Array.isArray(session.externalAuthArtifacts)
@@ -906,7 +937,7 @@ main();
         : null;
       const sshDir = artifact ? path.dirname(artifact) : tempDirBridge.getTempDir();
       const strictKhPath = path.join(sshDir, "netcatty-et-strict-known_hosts");
-      writeSecureFile(strictKhPath, chunks.filter(Boolean).join("\n") + (chunks.length ? "\n" : ""), 0o600);
+      writeSecureFile(strictKhPath, content || "", 0o600);
       session.etStrictExecKnownHostsPath = strictKhPath;
       if (Array.isArray(session.externalAuthArtifacts)) {
         session.externalAuthArtifacts.push(strictKhPath);
