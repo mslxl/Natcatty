@@ -213,7 +213,7 @@ export interface TerminalProps {
         multiLineRunMode?: Snippet["multiLineRunMode"];
         focus?: boolean;
       },
-    ) => boolean) | null,
+    ) => boolean | Promise<boolean>) | null,
   ) => void;
   onBroadcastInterruptPriorityChange?: (
     sessionId: string,

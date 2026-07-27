@@ -19,7 +19,7 @@ import { sessionCapabilitiesStore } from '../application/state/sessionCapabiliti
 import { useTerminalBackend } from '../application/state/useTerminalBackend';
 import { collectSessionIds } from '../domain/workspace';
 
-import { cn, normalizeLineEndings, wrapBracketedPaste } from '../lib/utils';
+import { cn, normalizeLineEndings } from '../lib/utils';
 import { detectLocalOs } from '../lib/localShell';
 import { useStoredString } from '../application/state/useStoredString';
 import { useStoredNumber } from '../application/state/useStoredNumber';
@@ -1625,34 +1625,34 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     }
   }, [getActiveTerminalSessionId, hosts, t]);
 
-  const sendCommandSnippetToSession = useCallback((
+  const sendCommandSnippetToSession = useCallback(async (
     sessionId: string,
     command: string,
     snippet: Snippet,
     options?: { focus?: boolean },
-  ): boolean => {
+  ): Promise<boolean> => {
     // Never inject into a peer tab sitting on a password/sensitive prompt.
     if (isTerminalSensitiveInputActive(sessionId)) return false;
 
     const executor = snippetExecutorsRef.current.get(sessionId);
     if (executor) {
-      const wrote = executor(command, snippet.noAutoRun, {
+      // Executor may wake a hibernated pane first so bracketed-paste mode and
+      // encoding match the normal single-pane path.
+      const wrote = await executor(command, snippet.noAutoRun, {
         multiLineRunMode: snippet.multiLineRunMode,
         broadcast: false,
         // Multi-tab fan-out must not call term.focus() on every peer.
         focus: options?.focus !== false,
       });
-      // Hibernated panes keep a registered executor but cannot write without
-      // termRef — fall through to the direct backend path in that case.
       if (wrote) return true;
     }
 
     const session = sessionsRef.current.find((candidate) => candidate.id === sessionId);
     if (!session || !canUseDirectSessionWriteFallback(session)) return false;
 
-    // Mirror executeSnippetCommand encoding without a live termRef (hibernated
-    // panes). Multi-line paste / noAutoRun must use bracketed-paste wrapping so
-    // newlines are not treated as Enter by the remote shell.
+    // Last-resort fallback when the executor could not write (rare). Prefer the
+    // executor path so terminal modes (bracketed paste) stay authoritative.
+    // Do not invent bracketed-paste markers without live term.modes.
     let data = normalizeLineEndings(command);
     const lineDelayMs = shouldDelayAutoRunSnippetInput(data, {
       noAutoRun: snippet.noAutoRun,
@@ -1660,10 +1660,6 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     })
       ? AUTO_RUN_SNIPPET_LINE_DELAY_MS
       : undefined;
-    const isMultiLine = data.includes('\n');
-    if (!lineDelayMs && isMultiLine) {
-      data = wrapBracketedPaste(data);
-    }
     if (!snippet.noAutoRun) data = `${data}\r`;
     terminalBackend.writeToSession(sessionId, data, {
       automated: true,
@@ -1743,7 +1739,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
           continue;
         }
         // Never steal focus from peer panes during fan-out; restore below.
-        if (sendCommandSnippetToSession(sid, command, snippet, { focus: false })) sent += 1;
+        if (await sendCommandSnippetToSession(sid, command, snippet, { focus: false })) sent += 1;
       }
       if (skippedSensitive > 0) {
         toast.info(t('scripts.actions.skippedSensitiveSessions', { count: skippedSensitive }));

@@ -2648,7 +2648,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     return false;
   }, [sessionId]);
 
-  const executeSnippetCommand = useCallback((
+  const executeSnippetCommand = useCallback(async (
     command: string,
     noAutoRun?: boolean,
     options?: {
@@ -2657,11 +2657,22 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       /** When false, skip term.focus() so multi-tab fan-out does not steal focus. */
       focus?: boolean;
     },
-  ): boolean => {
+  ): Promise<boolean> => {
+    // Hidden-tab hibernation clears termRef. Wake first so bracketed-paste mode
+    // and the normal write path stay available for multi-tab fan-out.
+    if ((!termRef.current || !sessionRef.current) && hibernatedRef.current) {
+      const wake = wakeHibernatedRuntimeForReconnectRef.current;
+      if (wake) {
+        try {
+          await wake();
+        } catch {
+          // Fall through; we still report failure if term is unavailable.
+        }
+      }
+    }
+
     const term = termRef.current;
     const id = sessionRef.current;
-    // Hibernated / unmounted panes clear termRef while the session stays connected.
-    // Return false so multi-tab callers can fall back to a direct backend write.
     if (!term || !id) return false;
 
     let data = normalizeLineEndings(command);

@@ -85,10 +85,10 @@ export type SnippetExecutor = (
   },
   /**
    * Returns true when the command was written to the session. False means the
-   * executor could not write (e.g. hibernated terminal without termRef) and the
-   * caller should fall back to a direct backend write.
+   * executor could not write and the caller may fall back to a direct backend
+   * write. May be async when the pane needs to wake from hibernation first.
    */
-) => boolean;
+) => boolean | Promise<boolean>;
 
 export type PendingTerminalSelectionForAI = {
   requestId: string;
