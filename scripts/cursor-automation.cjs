@@ -223,7 +223,9 @@ function extractHttpsUrls(value) {
 /** Parse Cursor stream-json and prove that completed research used a web tool. */
 function parseExternalResearchStream(value, input) {
   let assistantText = '';
+  let partialAssistantText = '';
   const assistantMessages = [];
+  const partialAssistantMessages = [];
   let terminalResult = '';
   let webToolUsed = false;
   const webEvidenceUrls = new Set();
@@ -269,25 +271,32 @@ function parseExternalResearchStream(value, input) {
       .map((block) => String(block.text))
       .join('');
     if (eventText) {
+      const hasModelCallId = event.model_call_id != null || event.modelCallId != null;
+      const isPartialDelta = event.timestamp_ms != null && !hasModelCallId;
       assistantMessages.push({
         text: eventText,
         isFinalFlush: event.timestamp_ms == null
-          && event.model_call_id == null
-          && event.modelCallId == null,
+          && !hasModelCallId,
       });
+      if (isPartialDelta) {
+        partialAssistantMessages.push(eventText);
+        partialAssistantText += eventText;
+      }
       assistantText += eventText;
     }
   }
 
-  // Cursor can split a fenced final envelope across assistant events. A valid
-  // terminal result remains authoritative; otherwise prefer the shortest
-  // complete fenced suffix, then an isolated final event, and retain the full
-  // stream only as the last delta fallback. Never search arbitrary prose for
-  // a status marker.
+  // Cursor can prepend earlier text to its terminal result or split a fenced
+  // final envelope across assistant events. Prefer the explicit final flush,
+  // then the shortest complete fenced suffix, before the aggregate terminal
+  // and full delta stream. Never search arbitrary prose for a status marker.
   const assistantSuffixes = [];
   let assistantSuffix = '';
-  for (let index = assistantMessages.length - 1; index >= 0; index -= 1) {
-    assistantSuffix = assistantMessages[index].text + assistantSuffix;
+  const suffixMessages = partialAssistantMessages.length
+    ? partialAssistantMessages
+    : assistantMessages.map((message) => message.text);
+  for (let index = suffixMessages.length - 1; index >= 0; index -= 1) {
+    assistantSuffix = suffixMessages[index] + assistantSuffix;
     assistantSuffixes.push(assistantSuffix);
   }
   const fencedAssistantSuffixes = assistantSuffixes.filter(
@@ -297,10 +306,10 @@ function parseExternalResearchStream(value, input) {
     (message) => message.isFinalFlush,
   )?.text;
   const candidates = [
-    terminalResult,
-    ...fencedAssistantSuffixes,
     finalAssistantText,
-    assistantText,
+    ...fencedAssistantSuffixes,
+    terminalResult,
+    partialAssistantText || assistantText,
   ].filter(Boolean);
   const selected = candidates.find((candidate) => parseExternalResearchEnvelope(candidate));
   const normalized = normalizeExternalResearchText(selected || candidates[0] || '', {

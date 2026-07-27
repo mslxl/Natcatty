@@ -2113,6 +2113,13 @@ test('parseExternalResearchStream prefers the final isolated status over stale e
     ].join('\n')),
     /External research blocked: WebSearch became unavailable/,
   );
+  assert.throws(
+    () => parse([
+      'RESEARCH_NOT_NEEDED: initially appeared local-only',
+      'RESEARCH_BLOCKED: WebSearch became unavailable',
+    ].join('\n')),
+    /External research blocked: WebSearch became unavailable/,
+  );
 });
 
 test('parseExternalResearchStream falls back to a complete fenced status split across events', () => {
@@ -2167,7 +2174,7 @@ test('parseExternalResearchStream prefers a split final status over an earlier v
       type: 'result',
       subtype: 'success',
       is_error: false,
-      result: `Conversation preamble\n${staleStatus}\n\`\`\`text\n${finalStatus}\n\`\`\``,
+      result: `${staleStatus}\n\`\`\`text\n${finalStatus}\n\`\`\``,
     },
   ].map(JSON.stringify).join('\n');
 
@@ -2209,12 +2216,14 @@ test('parseExternalResearchStream keeps a valid terminal status over assistant f
   const statusLikeBodyFragment = [
     {
       type: 'assistant',
+      timestamp_ms: 1,
       message: {
         content: [{ type: 'text', text: 'Research notes continued in another event.' }],
       },
     },
     {
       type: 'assistant',
+      timestamp_ms: 2,
       message: {
         content: [{ type: 'text', text: 'RESEARCH_BLOCKED: quoted source wording, not the result' }],
       },
@@ -2256,6 +2265,32 @@ test('parseExternalResearchStream keeps a valid terminal status over assistant f
     auto.parseExternalResearchStream(prefixedTerminalWithStatusLikeDelta, {}),
     /^RESEARCH_NOT_NEEDED: only local Netcatty behavior is involved/,
   );
+
+  const bufferedDuplicate = [
+    {
+      type: 'assistant',
+      timestamp_ms: 1,
+      message: {
+        content: [{ type: 'text', text: terminalNoOp }],
+      },
+    },
+    {
+      type: 'assistant',
+      timestamp_ms: 2,
+      model_call_id: 'model-call-1',
+      message: {
+        content: [{ type: 'text', text: 'RESEARCH_BLOCKED: buffered duplicate text' }],
+      },
+    },
+    {
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      result: `Conversation preamble\n${terminalNoOp}`,
+    },
+  ].map(JSON.stringify).join('\n');
+
+  assert.equal(auto.parseExternalResearchStream(bufferedDuplicate, {}), terminalNoOp);
 });
 
 test('parseExternalResearchStream rejects forged and unrelated web evidence', () => {
@@ -2335,6 +2370,7 @@ test('workflow confines forced WebSearch to isolated read-only research passes',
       /"\$RUNNER_TEMP\/cursor-agent-authenticated" \\\n\s+-p --mode=ask --force --trust --sandbox enabled/,
     );
     assert.match(run, /--output-format stream-json/);
+    assert.match(run, /--stream-partial-output/);
     assert.match(run, /GITHUB_TOKEN: ''/);
     assert.match(run, /GH_TOKEN: ''/);
     assert.match(run, /Shell\(\*\)/);
