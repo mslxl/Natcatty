@@ -15,6 +15,7 @@ interface TerminalFontSelectProps {
   onChange: (value: string) => void;
   className?: string;
   disabled?: boolean;
+  ariaLabel: string;
 }
 
 export const TerminalFontSelect: React.FC<TerminalFontSelectProps> = ({
@@ -23,6 +24,7 @@ export const TerminalFontSelect: React.FC<TerminalFontSelectProps> = ({
   onChange,
   className,
   disabled,
+  ariaLabel,
 }) => {
   // Subscribe to font availability so the filter re-evaluates after the
   // Local Font Access API populates the authoritative install set
@@ -62,6 +64,7 @@ export const TerminalFontSelect: React.FC<TerminalFontSelectProps> = ({
       onChange={onChange}
       className={className}
       disabled={disabled}
+      ariaLabel={ariaLabel}
     />
   );
 };

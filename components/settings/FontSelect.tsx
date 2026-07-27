@@ -14,6 +14,7 @@ interface FontSelectProps {
   onChange: (value: string) => void;
   className?: string;
   disabled?: boolean;
+  ariaLabel: string;
 }
 
 export const FontSelect: React.FC<FontSelectProps> = ({
@@ -22,6 +23,7 @@ export const FontSelect: React.FC<FontSelectProps> = ({
   onChange,
   className,
   disabled,
+  ariaLabel,
 }) => {
   const { t } = useI18n();
   const selectedFont = fonts.find((font) => font.id === value);
@@ -42,6 +44,8 @@ export const FontSelect: React.FC<FontSelectProps> = ({
       inputStyle={{ fontFamily: selectedFont?.family }}
       disabled={disabled}
       clearable={false}
+      selectValueOnFocus
+      ariaLabel={ariaLabel}
     />
   );
 };

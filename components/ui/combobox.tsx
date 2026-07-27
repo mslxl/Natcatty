@@ -27,6 +27,8 @@ interface ComboboxProps {
     onInputValueChange?: (value: string) => void;
     disabled?: boolean;
     clearable?: boolean;
+    selectValueOnFocus?: boolean;
+    ariaLabel?: string;
 }
 
 export const comboboxWheelDeltaToPixels = (deltaY: number, deltaMode: number): number => {
@@ -47,7 +49,7 @@ export const filterComboboxOptions = (
     isSearching: boolean,
 ): ComboboxOption[] => {
     if (!isSearching || !inputValue.trim()) return options
-    const lower = inputValue.toLowerCase()
+    const lower = inputValue.trim().toLowerCase()
     return options.filter(
         (option) =>
             option.label.toLowerCase().includes(lower) ||
@@ -78,6 +80,19 @@ export const getNextComboboxActiveIndex = (
     }
     return (currentIndex + direction + optionCount) % optionCount
 }
+
+export type ComboboxFocusableInput = Pick<HTMLInputElement, "focus" | "select">;
+
+export const focusComboboxInput = (
+    input: ComboboxFocusableInput | null,
+    selectValue: boolean,
+): void => {
+    input?.focus()
+    if (selectValue) input?.select()
+}
+
+export const canComboboxOpen = (disabled: boolean, nextOpen: boolean): boolean =>
+    !disabled || !nextOpen
 
 function ComboboxOptionsList({
     children,
@@ -125,6 +140,8 @@ export function Combobox({
     onInputValueChange,
     disabled = false,
     clearable = true,
+    selectValueOnFocus = false,
+    ariaLabel,
 }: ComboboxProps) {
     const [open, setOpen] = React.useState(false)
     const [inputValue, setInputValue] = React.useState("")
@@ -162,11 +179,20 @@ export function Combobox({
         activeOptionRef.current?.scrollIntoView({ block: 'nearest' })
     }, [activeIndex])
 
+    React.useEffect(() => {
+        if (!disabled || !open) return
+        setOpen(false)
+        setActiveIndex(-1)
+        setIsSearching(false)
+        onInputValueChange?.(value ?? "")
+    }, [disabled, open, onInputValueChange, value])
+
     const handleSelect = (optValue: string) => {
         if (disabled) return
         onValueChange?.(optValue)
         onInputValueChange?.(optValue)
         setOpen(false)
+        setActiveIndex(-1)
         const selected = options.find((opt) => opt.value === optValue)
         setInputValue(selected?.label || optValue)
     }
@@ -179,14 +205,14 @@ export function Combobox({
             onValueChange?.(newValue)
             onInputValueChange?.(newValue)
             setOpen(false)
+            setActiveIndex(-1)
         }
     }
 
     const focusAndSelectInput = () => {
         // Defer so selection wins over click-to-place-caret on focus.
         requestAnimationFrame(() => {
-            inputRef.current?.focus()
-            inputRef.current?.select()
+            focusComboboxInput(inputRef.current, true)
         })
     }
 
@@ -199,16 +225,18 @@ export function Combobox({
     }
 
     const handleInputFocus = () => {
-        focusAndSelectInput()
+        if (selectValueOnFocus) focusAndSelectInput()
     }
 
     const handleOpenChange = (nextOpen: boolean) => {
-        if (disabled && nextOpen) return
+        if (!canComboboxOpen(disabled, nextOpen)) return
         setOpen(nextOpen)
         setActiveIndex(-1)
         if (nextOpen) {
-            // Focus + select so opening via the chevron still replaces on first keystroke.
-            focusAndSelectInput()
+            if (selectValueOnFocus) {
+                // Opening a closed picker from its chevron should also replace on first keystroke.
+                focusAndSelectInput()
+            }
         } else {
             onInputValueChange?.(value ?? "")
         }
@@ -243,6 +271,7 @@ export function Combobox({
     }
 
     const handleClear = (e: React.MouseEvent) => {
+        if (disabled) return
         e.stopPropagation()
         setInputValue("")
         onInputValueChange?.("")
@@ -259,7 +288,7 @@ export function Combobox({
                         "flex h-10 w-full items-center rounded-md border border-input bg-background text-sm min-w-0 overflow-hidden",
                         "hover:bg-secondary/50 transition-colors",
                         "focus-within:outline-none focus-within:ring-1 focus-within:ring-ring",
-                        "disabled:cursor-not-allowed disabled:opacity-50",
+                        disabled && "cursor-not-allowed opacity-50 hover:bg-background",
                         triggerClassName
                     )}
                 >
@@ -272,18 +301,21 @@ export function Combobox({
                         onFocus={handleInputFocus}
                         onKeyDown={handleInputKeyDown}
                         role="combobox"
+                        aria-label={ariaLabel}
                         aria-autocomplete="list"
-                        aria-expanded={open}
+                        aria-expanded={open && !disabled}
                         aria-controls={listboxId}
                         aria-activedescendant={
-                            hasActiveOption ? `${listboxId}-option-${activeIndex}` : undefined
+                            open && !disabled && hasActiveOption
+                                ? `${listboxId}-option-${activeIndex}`
+                                : undefined
                         }
                         placeholder={placeholder}
                         style={inputStyle}
                         className="flex-1 min-w-0 h-full px-3 bg-transparent outline-none placeholder:text-muted-foreground"
                         disabled={disabled}
                     />
-                    {clearable && inputValue && (
+                    {clearable && !disabled && inputValue && (
                         <button
                             type="button"
                             onClick={handleClear}

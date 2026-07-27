@@ -11,6 +11,8 @@ test('font picker uses the searchable combobox and preserves font previews', () 
   assert.match(source, /labelStyle: \{ fontFamily: font\.family \}/);
   assert.match(source, /inputStyle=\{\{ fontFamily: selectedFont\?\.family \}\}/);
   assert.match(source, /clearable=\{false\}/);
+  assert.match(source, /selectValueOnFocus/);
+  assert.match(source, /ariaLabel=\{ariaLabel\}/);
 });
 
 test('terminal font picker reuses the shared searchable font picker', () => {

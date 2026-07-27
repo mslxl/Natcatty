@@ -6,6 +6,8 @@ import {
   applyComboboxWheelScroll,
   comboboxWheelDeltaToPixels,
   filterComboboxOptions,
+  focusComboboxInput,
+  canComboboxOpen,
   getNextComboboxActiveIndex,
   type ComboboxScrollableTarget,
 } from "./ui/combobox.tsx";
@@ -48,6 +50,7 @@ test("combobox search filters font-like options by name and value without case s
   ];
 
   assert.deepEqual(filterComboboxOptions(options, "JETBRAINS", true), [options[0]]);
+  assert.deepEqual(filterComboboxOptions(options, "  JETBRAINS  ", true), [options[0]]);
   assert.deepEqual(filterComboboxOptions(options, "local-maple", true), [options[1]]);
   assert.deepEqual(filterComboboxOptions(options, "installed", true), [options[1]]);
   assert.deepEqual(filterComboboxOptions(options, "missing", true), []);
@@ -84,24 +87,48 @@ test("combobox exposes active-option semantics for keyboard navigation", () => {
   assert.match(source, /<ComboboxOptionsList id=\{listboxId\} listbox>/);
   assert.match(source, /<ComboboxOptionsList>\s*\{/);
   assert.match(source, /role="option"/);
+  assert.match(source, /open && !disabled && hasActiveOption/);
+  assert.match(source, /const handleSelect = \(optValue: string\) => \{[\s\S]*?setOpen\(false\)\s*setActiveIndex\(-1\)/);
+  assert.match(source, /const handleCreate = \(\) => \{[\s\S]*?setOpen\(false\)\s*setActiveIndex\(-1\)/);
 });
 
 test("combobox trigger shows a focus-within ring for keyboard users", () => {
   assert.match(source, /focus-within:outline-none focus-within:ring-1 focus-within:ring-ring/);
 });
 
-test("combobox selects the current label on focus so typing replaces instead of appending", () => {
+test("combobox makes select-on-focus opt-in so editable controls keep normal caret behavior", () => {
+  assert.match(source, /selectValueOnFocus\?: boolean/);
+  assert.match(source, /selectValueOnFocus = false/);
   assert.match(source, /onFocus=\{handleInputFocus\}/);
-  assert.match(source, /inputRef\.current\?\.select\(\)/);
-  assert.match(
-    source,
-    /if \(nextOpen\) \{\s*\/\/ Focus \+ select so opening via the chevron still replaces on first keystroke\.\s*focusAndSelectInput\(\)/,
-  );
+  assert.match(source, /if \(selectValueOnFocus\) focusAndSelectInput\(\)/);
+});
+
+test("combobox focus helper selects only when the caller opts in", () => {
+  let focusCount = 0;
+  let selectCount = 0;
+  const input = {
+    focus: () => { focusCount += 1; },
+    select: () => { selectCount += 1; },
+  };
+
+  focusComboboxInput(input, false);
+  assert.equal(focusCount, 1);
+  assert.equal(selectCount, 0);
+
+  focusComboboxInput(input, true);
+  assert.equal(focusCount, 2);
+  assert.equal(selectCount, 1);
 });
 
 test("disabled comboboxes cannot open or commit a selection", () => {
-  assert.match(source, /if \(disabled && nextOpen\) return/);
+  assert.equal(canComboboxOpen(false, true), true);
+  assert.equal(canComboboxOpen(true, true), false);
+  assert.equal(canComboboxOpen(true, false), true);
   assert.match(source, /<Popover open=\{open && !disabled\}/);
   assert.match(source, /const handleSelect = \(optValue: string\) => \{\s*if \(disabled\) return/);
   assert.match(source, /const handleCreate = \(\) => \{\s*if \(disabled\) return/);
+  assert.match(source, /const handleClear = \(e: React\.MouseEvent\) => \{\s*if \(disabled\) return/);
+  assert.match(source, /clearable && !disabled && inputValue/);
+  assert.match(source, /aria-expanded=\{open && !disabled\}/);
+  assert.match(source, /disabled && "cursor-not-allowed opacity-50 hover:bg-background"/);
 });
