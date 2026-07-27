@@ -176,6 +176,52 @@ test("dismissing the disconnected dialog returns focus to the terminal for enter
   );
 });
 
+test("disconnected connection dialog keeps an Enter-reconnect focus sink", () => {
+  const source = readFileSync(new URL("./TerminalConnectionDialog.tsx", import.meta.url), "utf8");
+  assert.match(source, /canEnterReconnectFromDialog/);
+  assert.match(source, /data-terminal-disconnected-dialog/);
+  assert.match(source, /shouldReconnectDisconnectedDialogOnEnterKey/);
+  assert.match(source, /shouldClaimDisconnectedDialogFocus/);
+  assert.match(source, /shouldRestoreDisconnectedDialogTerminalFocus/);
+  assert.match(source, /restoreTerminalFocusFromDisconnectedDialog/);
+  assert.match(source, /dialogFocusRef\.current\?\.focus/);
+  // Focus claim must key only on enter-reconnect mode, not showLogs/error,
+  // or toggling "Show logs" steals keyboard focus off the button.
+  const claimEffectIdx = source.indexOf("Claim focus only when Enter-reconnect mode turns on");
+  // Restore must run on overlay unmount — not when Enter-reconnect ends into
+  // auth/host-key while the dialog stays mounted.
+  const restoreEffectIdx = source.indexOf("Restore xterm focus only when this overlay unmounts");
+  assert.notEqual(claimEffectIdx, -1);
+  assert.notEqual(restoreEffectIdx, -1);
+  const claimDeps = source.indexOf("}, [canEnterReconnectFromDialog, isFocusedPane]);", claimEffectIdx);
+  const restoreDeps = source.indexOf("}, []);", restoreEffectIdx);
+  assert.notEqual(claimDeps, -1);
+  assert.notEqual(restoreDeps, -1);
+  assert.ok(claimDeps < restoreEffectIdx);
+  // Claim deps must not re-run on showLogs/error/status; restore is unmount-only.
+  assert.match(source.slice(claimDeps, claimDeps + 60), /^\}, \[canEnterReconnectFromDialog, isFocusedPane\]\);/);
+  assert.match(source.slice(restoreDeps, restoreDeps + 10), /^\}, \[\]\);/);
+  assert.equal(source.includes("}, [canEnterReconnectFromDialog, status, error, showLogs]"), false);
+  // Split unfocused panes pass isFocusedPane so document blur cannot steal focus.
+  assert.match(source, /isFocusedPane/);
+  assert.match(source, /shouldClaimDisconnectedDialogFocus\(\{[\s\S]*isFocusedPane/);
+  // Unmount restore must also honor isFocusedPane when focus lands on body/html.
+  assert.match(source, /restoreTerminalFocusFromDisconnectedDialog\(\{[\s\S]*isFocusedPane/);
+});
+
+test("open terminal search does not globally gate enter reconnect", () => {
+  const viewSource = readFileSync(new URL("./TerminalView.tsx", import.meta.url), "utf8");
+  const gateIndex = viewSource.indexOf("export function shouldReconnectTerminalOnEnterKey");
+  const bodyEnd = viewSource.indexOf("export function shouldBlockTerminalReconnectForTarget", gateIndex);
+  const gateBody = viewSource.slice(gateIndex, bodyEnd);
+  assert.equal(gateBody.includes("!isSearchOpen"), false);
+  assert.match(viewSource, /isTerminalSearchInput/);
+  assert.match(
+    readFileSync(new URL("./TerminalSearchBar.tsx", import.meta.url), "utf8"),
+    /data-terminal-search-input/,
+  );
+});
+
 test("terminal view receives the effective compose bar state for enter reconnect gating", () => {
   const source = readFileSync(new URL("../Terminal.tsx", import.meta.url), "utf8");
   const effectiveDefinitionIndex = source.indexOf("const effectiveComposeBarOpen =");

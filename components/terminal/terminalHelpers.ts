@@ -120,6 +120,12 @@ export interface TerminalProps {
   isResizing?: boolean;
   isFocusMode?: boolean;
   isFocused?: boolean;
+  /**
+   * Split-pane keyboard ownership for disconnected-dialog focus claims.
+   * `false` = visible unfocused split sibling (must not claim body/document focus).
+   * Omit outside split mode (solo / focus / popup).
+   */
+  isFocusedPane?: boolean;
   fontFamilyId: string;
   fontSize: number;
   terminalTheme: TerminalTheme;
@@ -273,6 +279,163 @@ export function shouldShowTerminalConnectionDialog({
     && !(!!hideConnectingDialogForConnectionReuse && status === "connecting")
     && !((isLocalConnection || isSerialConnection) && status === "connecting")
     && !(status === "disconnected" && isDisconnectedDialogDismissed);
+}
+
+/**
+ * Dialog-local Enter reconnect while the disconnected overlay owns focus.
+ * Leave native activation to focused buttons/links (Retry / Close / logs).
+ */
+export function shouldReconnectDisconnectedDialogOnEnterKey({
+  key,
+  enabled,
+  altKey,
+  ctrlKey,
+  metaKey,
+  shiftKey,
+  isComposing,
+  target,
+}: {
+  key: string;
+  enabled: boolean;
+  altKey?: boolean;
+  ctrlKey?: boolean;
+  metaKey?: boolean;
+  shiftKey?: boolean;
+  isComposing?: boolean;
+  target?: EventTarget | null;
+}): boolean {
+  if (!enabled || key !== "Enter") return false;
+  if (altKey || ctrlKey || metaKey || shiftKey || isComposing) return false;
+  if (typeof HTMLElement === "undefined" || !(target instanceof HTMLElement)) return true;
+  return !target.closest("button, a, input, textarea, select, [contenteditable='true'], [role='button'], [role='menuitem'], [role='textbox']");
+}
+
+const DIALOG_INTERACTIVE_FOCUS_SELECTOR =
+  "button, a, input, textarea, select, [contenteditable='true'], [role='button'], [role='menuitem'], [role='textbox']";
+
+/**
+ * Resolve the local terminal tree for focus claim/restore.
+ * Main panes expose `data-session-id`; popup terminals (TerminalPopupPage) do not,
+ * so walk up from the dialog until we find the sibling xterm textarea.
+ */
+export function resolveDisconnectedDialogTerminalRoot(
+  dialogNode: Element | null,
+  sessionRoot?: Element | null,
+): Element | null {
+  if (sessionRoot) return sessionRoot;
+  if (!dialogNode) return null;
+  let node: Element | null = dialogNode.parentElement;
+  while (node) {
+    if (node.querySelector("textarea.xterm-helper-textarea")) return node;
+    node = node.parentElement;
+  }
+  return null;
+}
+
+/**
+ * Only park focus on the disconnected overlay when it is safe:
+ * - focus is already lost (body / null) AND this pane may own keyboard focus, or
+ * - focus still belongs to this terminal/session tree.
+ * Never steal from another pane, side panel, or app chrome.
+ *
+ * `isFocusedPane === false` means an unfocused split sibling: document-level
+ * focus loss must not let that pane claim Enter-reconnect focus.
+ * Omit / true outside split contention (solo, focus mode, popup).
+ */
+export function shouldClaimDisconnectedDialogFocus({
+  activeElement,
+  dialogNode,
+  sessionRoot,
+  documentBody,
+  documentElement,
+  isFocusedPane,
+}: {
+  activeElement: Element | null;
+  dialogNode: HTMLElement;
+  sessionRoot: Element | null;
+  documentBody?: Element | null;
+  documentElement?: Element | null;
+  isFocusedPane?: boolean;
+}): boolean {
+  if (!activeElement || activeElement === documentBody || activeElement === documentElement) {
+    return isFocusedPane !== false;
+  }
+  if (typeof HTMLElement !== "undefined" && !(activeElement instanceof HTMLElement)) {
+    return isFocusedPane !== false;
+  }
+  const active = activeElement as HTMLElement;
+  if (dialogNode.contains(active)) {
+    // Already on the sink or a dialog control — do not yank off buttons.
+    if (active !== dialogNode && active.closest(DIALOG_INTERACTIVE_FOCUS_SELECTOR)) {
+      return false;
+    }
+    // Sink already focused.
+    return active !== dialogNode;
+  }
+  const terminalRoot = resolveDisconnectedDialogTerminalRoot(dialogNode, sessionRoot);
+  if (terminalRoot?.contains(active)) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Whether cleanup should hand focus back to xterm.
+ * Skip while the overlay node is still in the document — Enter-reconnect may
+ * have ended into connecting / auth / host-key without unmounting the dialog.
+ */
+export function shouldRestoreDisconnectedDialogTerminalFocus(
+  dialogNode: HTMLElement | null,
+): boolean {
+  if (!dialogNode) return false;
+  return !dialogNode.isConnected;
+}
+
+/**
+ * After the overlay unmounts, return focus to this session's xterm if we still own it.
+ *
+ * Body/html focus after unmount is treated as ownership only when this pane may
+ * own keyboard focus (`isFocusedPane !== false`). Unfocused split siblings must
+ * not redirect input after a background reconnect completes.
+ * If the dialog node still holds focus, restore regardless of the pane flag.
+ */
+export function restoreTerminalFocusFromDisconnectedDialog({
+  activeElement,
+  dialogNode,
+  sessionRoot,
+  documentBody,
+  documentElement,
+  isFocusedPane,
+}: {
+  activeElement: Element | null;
+  dialogNode: HTMLElement | null;
+  sessionRoot: Element | null;
+  documentBody?: Element | null;
+  documentElement?: Element | null;
+  isFocusedPane?: boolean;
+}): boolean {
+  if (!dialogNode) return false;
+  // When React removes the focused overlay, the browser parks focus on body/html
+  // before passive-effect cleanup runs — treat that as still owning focus only
+  // for the focused pane (or solo / popup where isFocusedPane is omitted).
+  const focusLostToDocument =
+    !activeElement
+    || activeElement === documentBody
+    || activeElement === documentElement;
+  if (focusLostToDocument) {
+    if (isFocusedPane === false) return false;
+  } else if (
+    activeElement !== dialogNode
+    && !dialogNode.contains(activeElement)
+  ) {
+    return false;
+  }
+  const terminalRoot = resolveDisconnectedDialogTerminalRoot(dialogNode, sessionRoot);
+  if (!terminalRoot) return false;
+  const textarea = terminalRoot.querySelector("textarea.xterm-helper-textarea");
+  if (!(textarea instanceof HTMLElement)) return false;
+  textarea.focus({ preventScroll: true });
+  return true;
 }
 
 export function shouldDelayAutoRunSnippetInput(
