@@ -1119,6 +1119,7 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
             return [task];
           }
           changed = true;
+          persistImmediately = true;
           return [];
         }
         // setTransfers keeps unchanged rows by reference. If this exact owner
@@ -1581,7 +1582,7 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
         controller.dismiss(taskId, task);
       }
       tasks = tasks.filter((task) => task.id !== taskId && task.parentTaskId !== taskId);
-      emit();
+      emit(true);
     },
     clearTerminal(status) {
       const terminal = new Set<TransferTask["status"]>(["completed", "failed", "cancelled"]);
@@ -1597,7 +1598,7 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
       );
       const removingIds = new Set(removing.map((task) => task.id));
       tasks = tasks.filter((task) => !removingIds.has(task.id) && !removingIds.has(task.parentTaskId ?? ""));
-      emit();
+      emit(true);
       notifyOwnersOfPrunedTasks(removing);
     },
     markReconnectRequired(taskId, error) {

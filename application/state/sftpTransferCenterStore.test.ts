@@ -253,6 +253,49 @@ test("top-level completion is persisted immediately while child completions stay
   assert.equal(restored.getSnapshot().tasks.find((task) => task.id === parent.id)?.status, "completed");
 });
 
+test("explicit history deletions are persisted before returning", () => {
+  const cases = [
+    {
+      name: "dismiss",
+      task: makeTask("dismissed-history", "failed"),
+      remove: (store: ReturnType<typeof createSftpTransferCenterStore>) => store.dismiss("dismissed-history"),
+    },
+    {
+      name: "clear terminal",
+      task: makeTask("cleared-history", "completed"),
+      remove: (store: ReturnType<typeof createSftpTransferCenterStore>) => store.clearTerminal("completed"),
+    },
+    {
+      name: "owner publish",
+      task: makeTask("owner-removed-history", "failed"),
+      remove: (store: ReturnType<typeof createSftpTransferCenterStore>) => store.publishOwner("panel-a", []),
+    },
+  ];
+
+  for (const scenario of cases) {
+    let writes = 0;
+    let persisted = "";
+    const store = createSftpTransferCenterStore({
+      read: () => null,
+      write: (value) => {
+        writes += 1;
+        persisted = value;
+      },
+    });
+    store.publishOwner("panel-a", [scenario.task]);
+    assert.equal(writes, 1, `${scenario.name}: setup should write once`);
+
+    scenario.remove(store);
+
+    assert.equal(writes, 2, `${scenario.name}: deletion should flush immediately`);
+    const restored = createSftpTransferCenterStore({
+      read: () => persisted,
+      write: () => {},
+    });
+    assert.equal(restored.getSnapshot().tasks.length, 0, `${scenario.name}: deleted history must not return`);
+  }
+});
+
 test("orphaned unfinished tasks stay controllable so dead rows can be cancelled", () => {
   const store = createSftpTransferCenterStore();
   store.publishOwner("gone-panel", [
