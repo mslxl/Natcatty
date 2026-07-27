@@ -389,6 +389,8 @@ function createMoshSessionApi(ctx) {
               knownHosts: options.knownHosts,
               fs,
               hostname: options.hostname,
+              port: options.port || 22,
+              username: options.username,
               pathModule: path,
               homedir: os.homedir(),
             });

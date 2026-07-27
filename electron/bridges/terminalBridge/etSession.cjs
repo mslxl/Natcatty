@@ -400,6 +400,8 @@ main();
             knownHosts: options.knownHosts,
             fs,
             hostname: options.hostname,
+            port: options.port || 22,
+            username: options.username,
             pathModule: path,
             homedir: os.homedir(),
           });
@@ -416,6 +418,8 @@ main();
             knownHosts: options.knownHosts,
             fs,
             hostname: jumpHosts[0].hostname,
+            port: jumpHosts[0].port || 22,
+            username: jumpHosts[0].username,
             pathModule: path,
             homedir: os.homedir(),
           });
@@ -897,6 +901,8 @@ main();
         knownHosts,
         fs,
         hostname,
+        port: session.etStatsAuth?.port || 22,
+        username: session.etStatsAuth?.username,
         pathModule: path,
         homedir: os.homedir(),
       });

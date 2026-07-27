@@ -232,6 +232,51 @@ test("buildAuthoritativeKnownHostsContent merges ssh -G global known_hosts paths
   }
 });
 
+test("buildAuthoritativeKnownHostsContent honors HostKeyAlias for vault pins", () => {
+  const {
+    buildAuthoritativeKnownHostsContent: build,
+  } = require("./externalSshHostKeyPolicy.cjs");
+  const content = build({
+    knownHosts: [{
+      hostname: "host.example",
+      keyType: "ssh-ed25519",
+      publicKey: "ssh-ed25519 AAAVAULT",
+    }],
+    fs,
+    hostname: "host.example",
+    port: 22,
+    globalPaths: [],
+    userPaths: [],
+    execFileSyncFn: () => "hostkeyalias shared-key\n",
+  });
+  assert.match(content, /^shared-key ssh-ed25519 AAAVAULT$/m);
+  assert.doesNotMatch(content, /^host\.example ssh-ed25519 AAAVAULT$/m);
+});
+
+test("runSshG discovery receives port and username", () => {
+  const { buildAuthoritativeKnownHostsContent: build } = require("./externalSshHostKeyPolicy.cjs");
+  let capturedArgs = null;
+  build({
+    knownHosts: [{
+      hostname: "host.example",
+      port: 2222,
+      keyType: "ssh-ed25519",
+      publicKey: "ssh-ed25519 AAAVAULT",
+    }],
+    fs,
+    hostname: "host.example",
+    port: 2222,
+    username: "bob",
+    globalPaths: [],
+    userPaths: [],
+    execFileSyncFn: (_cmd, args) => {
+      capturedArgs = args;
+      return "hostkeyalias none\n";
+    },
+  });
+  assert.deepEqual(capturedArgs, ["-G", "-p", "2222", "-l", "bob", "host.example"]);
+});
+
 test("parseSshGKnownHostsPaths reads multi-path directives", () => {
   const { parseSshGKnownHostsPaths } = require("./externalSshHostKeyPolicy.cjs");
   assert.deepEqual(

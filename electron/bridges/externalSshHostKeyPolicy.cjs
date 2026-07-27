@@ -35,10 +35,14 @@ const path = require("node:path");
 const os = require("node:os");
 const { execFileSync } = require("node:child_process");
 
-const formatVaultKnownHostLine = (knownHost) => {
-  if (!knownHost?.hostname) return null;
+const formatVaultKnownHostLine = (knownHost, { hostnameOverride } = {}) => {
+  const hostname = String(hostnameOverride || knownHost?.hostname || "").trim();
+  if (!hostname) return null;
   const port = Number.isFinite(knownHost.port) ? Number(knownHost.port) : 22;
-  const hostField = port !== 22 ? `[${knownHost.hostname}]:${port}` : knownHost.hostname;
+  // HostKeyAlias pins are looked up by alias name only (default port form).
+  const hostField = hostnameOverride
+    ? hostname
+    : (port !== 22 ? `[${hostname}]:${port}` : hostname);
   const pubKey = String(knownHost.publicKey || "").trim();
   const parts = pubKey.split(/\s+/);
   let keyType = typeof knownHost.keyType === "string" ? knownHost.keyType.trim() : "";
@@ -55,11 +59,30 @@ const formatVaultKnownHostLine = (knownHost) => {
   return `${hostField} ${keyType} ${keyBlob}`;
 };
 
-const buildVaultKnownHostsContent = (knownHosts) => {
+/**
+ * @param {object[]} knownHosts
+ * @param {object} [opts]
+ * @param {string} [opts.connectionHostname] Netcatty connection hostname
+ * @param {number} [opts.connectionPort]
+ * @param {string} [opts.hostKeyAlias] Effective OpenSSH HostKeyAlias for the hop
+ */
+const buildVaultKnownHostsContent = (knownHosts, opts = {}) => {
   if (!Array.isArray(knownHosts) || knownHosts.length === 0) return "";
+  const connectionHostname = normalizeHostname(opts.connectionHostname);
+  const connectionPort = Number.isFinite(opts.connectionPort) ? Number(opts.connectionPort) : 22;
+  const hostKeyAlias = String(opts.hostKeyAlias || "").trim();
   const lines = [];
   for (const knownHost of knownHosts) {
-    const line = formatVaultKnownHostLine(knownHost);
+    const host = normalizeHostname(knownHost?.hostname);
+    const port = Number.isFinite(knownHost?.port) ? Number(knownHost.port) : 22;
+    const isConnectionHost = connectionHostname
+      && host === connectionHostname
+      && port === connectionPort;
+    // When OpenSSH uses HostKeyAlias, vault pins for this hop must be written
+    // under the alias name so lookup succeeds.
+    const line = formatVaultKnownHostLine(knownHost, {
+      hostnameOverride: isConnectionHost && hostKeyAlias ? hostKeyAlias : undefined,
+    });
     if (line) lines.push(line);
   }
   if (lines.length === 0) return "";
@@ -84,6 +107,20 @@ const extractVaultHostSelectors = (knownHosts) => {
 };
 
 const normalizeHostname = (value) => String(value || "").trim().toLowerCase();
+
+const parseSshGScalar = (sshGOutput, directive) => {
+  const want = String(directive || "").toLowerCase();
+  if (!want) return "";
+  for (const rawLine of String(sshGOutput || "").split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const space = line.search(/\s/);
+    if (space <= 0) continue;
+    if (line.slice(0, space).toLowerCase() !== want) continue;
+    return line.slice(space).trim();
+  }
+  return "";
+};
 
 const buildHashLookupTokens = (hostname, port) => {
   const raw = String(hostname || "").trim();
@@ -388,6 +425,8 @@ const parseSshGKnownHostsPaths = (sshGOutput, directive, opts = {}) => {
 
 const runSshG = ({
   hostname,
+  port,
+  username,
   platform = process.platform,
   execFileSyncFn = execFileSync,
   sshCommand,
@@ -395,7 +434,15 @@ const runSshG = ({
   const target = String(hostname || "").trim() || "localhost";
   if (typeof execFileSyncFn !== "function") return "";
   const cmd = sshCommand || "ssh";
-  return execFileSyncFn(cmd, ["-G", target], {
+  const args = ["-G"];
+  // Pass port/user so %p / %r tokens in configured known_hosts paths expand
+  // the same way the real connection will.
+  if (Number.isFinite(port) && Number(port) > 0 && Number(port) !== 22) {
+    args.push("-p", String(Number(port)));
+  }
+  if (username) args.push("-l", String(username));
+  args.push(target);
+  return execFileSyncFn(cmd, args, {
     encoding: "utf8",
     timeout: 4000,
     windowsHide: true,
@@ -412,6 +459,8 @@ const runSshG = ({
  */
 const resolveEffectiveGlobalKnownHostsPaths = ({
   hostname,
+  port,
+  username,
   platform = process.platform,
   programData = process.env.ProgramData,
   homedir = os.homedir(),
@@ -425,7 +474,7 @@ const resolveEffectiveGlobalKnownHostsPaths = ({
   try {
     const output = sshGOutput != null
       ? sshGOutput
-      : runSshG({ hostname, platform, execFileSyncFn, sshCommand });
+      : runSshG({ hostname, port, username, platform, execFileSyncFn, sshCommand });
     const parsed = parseSshGKnownHostsPaths(output, "globalknownhostsfile", {
       fs: fsApi,
       homedir,
@@ -444,6 +493,8 @@ const resolveEffectiveGlobalKnownHostsPaths = ({
  */
 const resolveEffectiveUserKnownHostsPaths = ({
   hostname,
+  port,
+  username,
   platform = process.platform,
   homedir = os.homedir(),
   pathModule = path,
@@ -456,7 +507,7 @@ const resolveEffectiveUserKnownHostsPaths = ({
   try {
     const output = sshGOutput != null
       ? sshGOutput
-      : runSshG({ hostname, platform, execFileSyncFn, sshCommand });
+      : runSshG({ hostname, port, username, platform, execFileSyncFn, sshCommand });
     const parsed = parseSshGKnownHostsPaths(output, "userknownhostsfile", {
       fs: fsApi,
       homedir,
@@ -491,6 +542,8 @@ const buildAuthoritativeKnownHostsContent = ({
   knownHosts,
   fs: fsApi,
   hostname,
+  port,
+  username,
   platform = process.platform,
   programData = process.env.ProgramData,
   homedir = os.homedir(),
@@ -500,26 +553,47 @@ const buildAuthoritativeKnownHostsContent = ({
   execFileSyncFn = execFileSync,
   sshCommand,
 } = {}) => {
-  const vaultContent = buildVaultKnownHostsContent(knownHosts).trimEnd();
+  // One ssh -G probe for path discovery and HostKeyAlias resolution.
+  let sshGOutput = "";
+  try {
+    sshGOutput = runSshG({
+      hostname,
+      port,
+      username,
+      platform,
+      execFileSyncFn,
+      sshCommand,
+    });
+  } catch {
+    sshGOutput = "";
+  }
+  const hostKeyAlias = parseSshGScalar(sshGOutput, "hostkeyalias");
+  const connectionPort = Number.isFinite(port) ? Number(port) : 22;
+
+  const vaultContent = buildVaultKnownHostsContent(knownHosts, {
+    connectionHostname: hostname,
+    connectionPort,
+    hostKeyAlias,
+  }).trimEnd();
   if (!vaultContent) return "";
 
+  // Filter system pins for both the real hostname and HostKeyAlias so neither
+  // trust name can override the vault pin.
   const vaultSelectors = extractVaultHostSelectors(knownHosts);
-  const chunks = [vaultContent];
-
-  // One ssh -G probe for both global and user path discovery.
-  let sshGOutput;
-  if (!Array.isArray(globalPaths) || !Array.isArray(userPaths)) {
-    try {
-      sshGOutput = runSshG({ hostname, platform, execFileSyncFn, sshCommand });
-    } catch {
-      sshGOutput = "";
-    }
+  if (hostKeyAlias) {
+    vaultSelectors.push({
+      hostname: normalizeHostname(hostKeyAlias),
+      port: 22,
+    });
   }
+  const chunks = [vaultContent];
 
   const globals = Array.isArray(globalPaths)
     ? globalPaths
     : resolveEffectiveGlobalKnownHostsPaths({
       hostname,
+      port,
+      username,
       platform,
       programData,
       homedir,
@@ -541,6 +615,8 @@ const buildAuthoritativeKnownHostsContent = ({
     ? userPaths
     : resolveEffectiveUserKnownHostsPaths({
       hostname,
+      port,
+      username,
       platform,
       homedir,
       pathModule,
@@ -728,6 +804,7 @@ module.exports = {
   getDefaultUserKnownHostsPaths,
   openSshHostGlobMatches,
   parseSshGKnownHostsPaths,
+  parseSshGScalar,
   quoteOpenSshOptionValue,
   resolveEffectiveGlobalKnownHostsPaths,
   resolveEffectiveUserKnownHostsPaths,
