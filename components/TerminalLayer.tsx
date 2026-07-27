@@ -1636,13 +1636,15 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
 
     const executor = snippetExecutorsRef.current.get(sessionId);
     if (executor) {
-      executor(command, snippet.noAutoRun, {
+      const wrote = executor(command, snippet.noAutoRun, {
         multiLineRunMode: snippet.multiLineRunMode,
         broadcast: false,
         // Multi-tab fan-out must not call term.focus() on every peer.
         focus: options?.focus !== false,
       });
-      return true;
+      // Hibernated panes keep a registered executor but cannot write without
+      // termRef — fall through to the direct backend path in that case.
+      if (wrote) return true;
     }
 
     const session = sessionsRef.current.find((candidate) => candidate.id === sessionId);

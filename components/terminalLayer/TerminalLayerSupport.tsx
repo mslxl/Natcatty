@@ -83,7 +83,12 @@ export type SnippetExecutor = (
     /** When false, do not steal keyboard focus (multi-tab fan-out). Default true. */
     focus?: boolean;
   },
-) => void;
+  /**
+   * Returns true when the command was written to the session. False means the
+   * executor could not write (e.g. hibernated terminal without termRef) and the
+   * caller should fall back to a direct backend write.
+   */
+) => boolean;
 
 export type PendingTerminalSelectionForAI = {
   requestId: string;

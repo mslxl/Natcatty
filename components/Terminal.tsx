@@ -2657,10 +2657,12 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       /** When false, skip term.focus() so multi-tab fan-out does not steal focus. */
       focus?: boolean;
     },
-  ) => {
+  ): boolean => {
     const term = termRef.current;
     const id = sessionRef.current;
-    if (!term || !id) return;
+    // Hibernated / unmounted panes clear termRef while the session stays connected.
+    // Return false so multi-tab callers can fall back to a direct backend write.
+    if (!term || !id) return false;
 
     let data = normalizeLineEndings(command);
     const lineDelayMs = shouldDelayAutoRunSnippetInput(data, {
@@ -2703,6 +2705,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     if (options?.focus !== false) {
       term.focus();
     }
+    return true;
   }, [prepareProgrammaticSudoInput, scrollToBottomAfterProgrammaticInput, terminalBackend, sessionId]);
 
   const executeSnippet = useCallback(async (snippet: Snippet) => {
