@@ -1762,11 +1762,11 @@ test('workflow exposes a write-credential-free Cursor sandbox smoke check', () =
   assert.match(smokeJob, /agent sandbox enable/);
   assert.match(
     smokeJob,
-    /prepareCursorCliConfig[\s\S]*?agent sandbox run --sandbox bash -c 'touch \.cursor-runtime\/sandbox-smoke'/,
+    /prepareCursorCliConfig[\s\S]*?agent sandbox run -- bash -c 'touch \.cursor-runtime\/sandbox-smoke'/,
   );
   assert.match(
     smokeJob,
-    /agent sandbox run --sandbox bash -c 'curl -fsS --max-time 3 https:\/\/example\.com >\/dev\/null'/,
+    /agent sandbox run -- bash -c 'curl -fsS --max-time 3 https:\/\/example\.com >\/dev\/null'/,
   );
   assert.match(smokeJob, /--policy "\$sandbox_policy_file"/);
   assert.match(smokeJob, /sandbox: \{/);
@@ -1799,6 +1799,21 @@ test('workflow prepares missing Cursor config on every agent path and checks it 
   )?.[0] || '';
   assert.match(smokeJob, /github\.event\.schedule == '17 3 \* \* \*'/);
   assert.match(smokeJob, /prepareCursorCliConfig/);
+});
+
+test('workflow passes sandbox commands after the Cursor option boundary', () => {
+  const workflow = fs.readFileSync(
+    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    'utf8',
+  );
+  const sandboxRunLines = workflow
+    .split('\n')
+    .filter((line) => line.includes('agent sandbox run'));
+
+  assert.equal(sandboxRunLines.length, 10);
+  for (const line of sandboxRunLines) {
+    assert.match(line, /agent sandbox run -- bash -c/);
+  }
 });
 
 test('normalizeExternalResearchText accepts sourced research and explicit no-op', () => {
