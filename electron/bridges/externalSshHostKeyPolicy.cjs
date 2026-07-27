@@ -51,7 +51,22 @@ const formatVaultKnownHostLine = (knownHost, { hostnameOverride } = {}) => {
     keyType = parts[0];
     keyBlob = parts[1];
   } else if (parts.length === 1 && parts[0].length > 0 && !/^SHA256:/i.test(parts[0])) {
-    keyBlob = parts[0];
+    // One-token publicKey may be a bare base64 key blob — or a legacy
+    // fingerprint. Only accept values that decode as a real OpenSSH wire
+    // public key; fingerprint-only tokens must not become "vault pins".
+    try {
+      const blob = Buffer.from(parts[0], "base64");
+      if (blob.length < 8) return null;
+      const typeLen = blob.readUInt32BE(0);
+      if (typeLen <= 0 || typeLen > 128 || 4 + typeLen > blob.length) return null;
+      const decodedType = blob.subarray(4, 4 + typeLen).toString("ascii");
+      if (!/^[A-Za-z0-9@._+-]+$/.test(decodedType)) return null;
+      if (!/^ssh-|^ecdsa-|^sk-/.test(decodedType)) return null;
+      keyType = decodedType;
+      keyBlob = parts[0];
+    } catch {
+      return null;
+    }
   } else {
     return null;
   }

@@ -18,23 +18,24 @@ const {
 } = require("./externalSshHostKeyPolicy.cjs");
 
 test("formatVaultKnownHostLine builds OpenSSH known_hosts lines", () => {
+  const validBlob = "AAAAC3NzaC1lZDI1NTE5AAAAIAcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcH";
   assert.equal(
     formatVaultKnownHostLine({
       hostname: "host.example",
       port: 22,
       keyType: "ssh-ed25519",
-      publicKey: "ssh-ed25519 AAAABASE64",
+      publicKey: `ssh-ed25519 ${validBlob}`,
     }),
-    "host.example ssh-ed25519 AAAABASE64",
+    `host.example ssh-ed25519 ${validBlob}`,
   );
   assert.equal(
     formatVaultKnownHostLine({
       hostname: "host.example",
       port: 2222,
       keyType: "ssh-ed25519",
-      publicKey: "AAAABASE64",
+      publicKey: validBlob,
     }),
-    "[host.example]:2222 ssh-ed25519 AAAABASE64",
+    `[host.example]:2222 ssh-ed25519 ${validBlob}`,
   );
 });
 
@@ -45,6 +46,15 @@ test("formatVaultKnownHostLine skips fingerprint-only vault entries", () => {
       keyType: "ssh-ed25519",
       publicKey: "SHA256:abcdef",
       fingerprint: "abcdef",
+    }),
+    null,
+  );
+  // Unprefixed fingerprint-like token must not be treated as a key blob.
+  assert.equal(
+    formatVaultKnownHostLine({
+      hostname: "host.example",
+      keyType: "ssh-ed25519",
+      publicKey: "not-a-real-key-blob",
     }),
     null,
   );

@@ -7,6 +7,10 @@ const { execFileSync } = require("node:child_process");
 
 const { createEtSessionApi } = require("./etSession.cjs");
 
+// Valid OpenSSH wire-format ssh-ed25519 public key blob (base64) for vault tests.
+const VALID_ED25519_BLOB = "AAAAC3NzaC1lZDI1NTE5AAAAIAcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcH";
+const VALID_ED25519_PUB = `ssh-ed25519 ${VALID_ED25519_BLOB}`;
+
 // Build an et session API wired to a hermetic temp HOME so prepareEtSshEnvironment
 // is deterministic regardless of the developer's real ~/.ssh contents.
 function makeApi(t, overrides = {}) {
@@ -678,7 +682,8 @@ test("prepareEtSshEnvironment routes a single jump host through ET --jumphost/--
   assert.match(config, /\n {2}User ops/);
   assert.match(config, /\n {2}Port 2200/);
   assert.match(config, /Host h\n {2}ProxyJump jump\.example/);
-  assert.match(config, /StrictHostKeyChecking accept-new/);
+  // Host-key policy is enforced via --ssh-option (not Host config blocks).
+  assert.ok(env.sshOptions.includes("StrictHostKeyChecking=accept-new"));
   // No ProxyCommand anymore — ET owns the jump routing.
   assert.doesNotMatch(config, /ProxyCommand/);
 });
@@ -802,7 +807,8 @@ test("prepareEtSshEnvironment quotes ssh config paths that contain spaces", (t) 
   const config = fs.readFileSync(path.join(env.env.HOME, ".ssh", "config"), "utf8");
   const configKeyPath = keyPath.replace(/\\/g, "/");
   assert.match(config, new RegExp(`IdentityFile "${configKeyPath.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&")}"`));
-  assert.match(config, /UserKnownHostsFile ".*known_hosts"/);
+  // Host-key paths ride --ssh-option; IdentityFile with spaces is still quoted in config.
+  assert.ok(env.sshOptions.some((option) => option.startsWith("UserKnownHostsFile=")));
 });
 
 test("prepareEtSshEnvironment scopes destination config under Host <dest> when a jump host is present", (t) => {
@@ -880,7 +886,7 @@ test("prepareEtSshEnvironment injects vault known_hosts for key-change checks", 
       hostname: "host.example",
       port: 22,
       keyType: "ssh-ed25519",
-      publicKey: "ssh-ed25519 AAAAVAULTBLOB",
+      publicKey: VALID_ED25519_PUB,
     }],
   });
 
@@ -892,7 +898,7 @@ test("prepareEtSshEnvironment injects vault known_hosts for key-change checks", 
   assert.equal(trustPath, globalOption.slice("GlobalKnownHostsFile=".length));
   assert.ok(fs.existsSync(trustPath));
   const trustContent = fs.readFileSync(trustPath, "utf8");
-  assert.match(trustContent, /host\.example ssh-ed25519 AAAAVAULTBLOB/);
+  assert.match(trustContent, new RegExp(`host\\.example ssh-ed25519 ${VALID_ED25519_BLOB}`));
   // System pin for the same host must not remain (would override vault).
   assert.doesNotMatch(trustContent, /AAASYSTEM/);
   assert.ok(env.sshOptions.includes("StrictHostKeyChecking=accept-new"));
@@ -907,7 +913,7 @@ test("prepareEtSshEnvironment keeps persistent known_hosts when vault does not p
     knownHosts: [{
       hostname: "unrelated.example",
       keyType: "ssh-ed25519",
-      publicKey: "ssh-ed25519 AAAOTHER",
+      publicKey: VALID_ED25519_PUB,
     }],
   });
 
@@ -933,7 +939,7 @@ test("prepareEtSshEnvironment disables host-key checks when verifyHostKeys is fa
     knownHosts: [{
       hostname: "host.example",
       keyType: "ssh-ed25519",
-      publicKey: "ssh-ed25519 AAASTALE",
+      publicKey: VALID_ED25519_PUB,
     }],
   });
 
@@ -953,18 +959,18 @@ test("prepareEtSshEnvironment disables host-key checks when verifyHostKeys is fa
   assert.ok(fs.existsSync(emptyPath));
   assert.equal(fs.readFileSync(emptyPath, "utf8").trim(), "");
   // Must not keep loading the stale vault pin when verification is off.
-  assert.doesNotMatch(fs.readFileSync(emptyPath, "utf8"), /AAASTALE/);
+  assert.equal(fs.readFileSync(emptyPath, "utf8").trim(), "");
 });
 
-test("prepareEtSshEnvironment applies vault host-key policy to jump hosts", (t) => {
-  const { api, base } = makeApi(t);
+test("prepareEtSshEnvironment applies vault host-key policy via ssh-option for jump hosts", (t) => {
+  const { api } = makeApi(t);
   const env = api.prepareEtSshEnvironment("sess1", {
     hostname: "target.example",
     username: "alice",
     knownHosts: [{
       hostname: "jump.example",
       keyType: "ssh-ed25519",
-      publicKey: "ssh-ed25519 AAAJUMP",
+      publicKey: VALID_ED25519_PUB,
     }],
     jumpHosts: [{
       hostname: "jump.example",
@@ -974,32 +980,29 @@ test("prepareEtSshEnvironment applies vault host-key policy to jump hosts", (t) 
     }],
   });
 
-  const configPath = path.join(base, "et-ssh-home-sess1", ".ssh", "config");
-  assert.ok(fs.existsSync(configPath));
-  const config = fs.readFileSync(configPath, "utf8");
-  assert.match(config, /Host jump\.example/);
-  // Jump is vault-pinned → authoritative snapshot.
-  assert.match(config, /Host jump\.example[\s\S]*GlobalKnownHostsFile /);
-  assert.match(config, /Host jump\.example[\s\S]*StrictHostKeyChecking /);
-  // Target is not vault-pinned → persistent user known_hosts.
-  assert.match(config, /Host target\.example[\s\S]*UserKnownHostsFile /);
-  assert.match(config, /Host target\.example[\s\S]*StrictHostKeyChecking accept-new/);
-  // Host-key policy must not be forced globally via --ssh-option (would override hop).
-  assert.equal(
-    env.sshOptions.some((option) => option.startsWith("GlobalKnownHostsFile=")),
-    false,
+  // Host-key policy must ride --ssh-option so OpenSSH on POSIX enforces it
+  // even when a temp-HOME Host config block is not consulted.
+  assert.ok(env.sshOptions.some((option) => option.startsWith("GlobalKnownHostsFile=")));
+  assert.ok(env.sshOptions.some((option) => option.startsWith("UserKnownHostsFile=")));
+  assert.ok(env.sshOptions.includes("StrictHostKeyChecking=accept-new"));
+  const trustPath = env.sshOptions
+    .find((option) => option.startsWith("UserKnownHostsFile="))
+    .slice("UserKnownHostsFile=".length);
+  assert.match(
+    fs.readFileSync(trustPath, "utf8"),
+    new RegExp(`jump\\.example ssh-ed25519 ${VALID_ED25519_BLOB}`),
   );
 });
 
-test("prepareEtSshEnvironment keeps unpinned jump on persistent known_hosts", (t) => {
-  const { api, base } = makeApi(t);
-  api.prepareEtSshEnvironment("sess1", {
+test("prepareEtSshEnvironment merges vault pins for target hop with jump present", (t) => {
+  const { api } = makeApi(t);
+  const env = api.prepareEtSshEnvironment("sess1", {
     hostname: "target.example",
     username: "alice",
     knownHosts: [{
       hostname: "target.example",
       keyType: "ssh-ed25519",
-      publicKey: "ssh-ed25519 AAATARGET",
+      publicKey: VALID_ED25519_PUB,
     }],
     jumpHosts: [{
       hostname: "jump.example",
@@ -1009,15 +1012,14 @@ test("prepareEtSshEnvironment keeps unpinned jump on persistent known_hosts", (t
     }],
   });
 
-  const configPath = path.join(base, "et-ssh-home-sess1", ".ssh", "config");
-  const config = fs.readFileSync(configPath, "utf8");
-  // Target vault-pinned → authoritative snapshot in Host target block.
-  assert.match(config, /Host target\.example[\s\S]*GlobalKnownHostsFile /);
-  // Jump unpinned → persistent user known_hosts, not the session snapshot.
-  const jumpBlock = config.slice(config.indexOf("Host jump.example"));
-  assert.match(jumpBlock, /UserKnownHostsFile /);
-  assert.match(jumpBlock, /StrictHostKeyChecking accept-new/);
-  assert.doesNotMatch(jumpBlock, /GlobalKnownHostsFile /);
+  assert.ok(env.sshOptions.some((option) => option.startsWith("GlobalKnownHostsFile=")));
+  const trustPath = env.sshOptions
+    .find((option) => option.startsWith("UserKnownHostsFile="))
+    .slice("UserKnownHostsFile=".length);
+  assert.match(
+    fs.readFileSync(trustPath, "utf8"),
+    new RegExp(`target\\.example ssh-ed25519 ${VALID_ED25519_BLOB}`),
+  );
 });
 
 test("execOnEtSession honors session StrictHostKeyChecking=no over accept-new default", async (t) => {
@@ -1070,11 +1072,14 @@ test("execOnEtSession requireTrustedHost uses strict host-key checking", async (
     externalAuthArtifacts: env.artifacts,
     externalAuthArtifactsCleaned: false,
     etStatsAuth: {
+      hostname: "host.example",
+      port: 22,
+      username: "alice",
       knownHosts: [{
         hostname: "host.example",
         port: 22,
         keyType: "ssh-ed25519",
-        publicKey: "vaultblob",
+        publicKey: VALID_ED25519_PUB,
       }],
     },
   };
@@ -1086,7 +1091,7 @@ test("execOnEtSession requireTrustedHost uses strict host-key checking", async (
   assert.doesNotMatch(joined, /StrictHostKeyChecking=accept-new/);
   assert.ok(session.etStrictExecKnownHostsPath);
   const strictContent = fs.readFileSync(session.etStrictExecKnownHostsPath, "utf8");
-  assert.match(strictContent, /host\.example ssh-ed25519 vaultblob/);
+  assert.match(strictContent, new RegExp(`host\\.example ssh-ed25519 ${VALID_ED25519_BLOB}`));
 });
 
 test("execOnEtSession forwards maxBuffer to the ssh execFile call", async (t) => {

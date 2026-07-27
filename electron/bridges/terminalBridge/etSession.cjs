@@ -3,7 +3,6 @@ const crypto = require("node:crypto");
 const { createSystemKnownHostsApi } = require("../sshBridge/systemKnownHosts.cjs");
 const {
   buildAuthoritativeKnownHostsContent,
-  buildExternalHostKeyConfigLines,
   buildExternalHostKeySshOptions,
   vaultPinsConnectionHosts,
 } = require("../externalSshHostKeyPolicy.cjs");
@@ -372,14 +371,13 @@ main();
       // ssh banners so the first real PTY bytes are the remote shell. Mirrors
       // the options already used by execOnEtSession.
       //
-      // Vault known_hosts (issue #2501): only hops the vault actually pins use
-      // an authoritative session snapshot. Unpinned hops keep the persistent
-      // ~/.ssh/known_hosts so accept-new still records first-seen keys across
-      // sessions. With a jump host, host-key options are applied per-hop via
-      // Host blocks (not global --ssh-option) so one hop's snapshot cannot
-      // force the other hop off the persistent trust file.
-      let targetAuthoritativeKnownHostsPath = null;
-      let jumpAuthoritativeKnownHostsPath = null;
+      // Vault known_hosts (issue #2501): when the vault pins the target and/or
+      // jump hop, build authoritative session snapshot(s) and apply them via
+      // --ssh-option. ET only passes --ssh-option to OpenSSH reliably; Host
+      // blocks under a temp HOME are not always read on POSIX (OpenSSH uses
+      // the account home for config resolution), so command-line policy is
+      // the enforceable path.
+      let authoritativeKnownHostsPath = null;
       let emptyKnownHostsPath = null;
       const targetConnectionHost = {
         hostname: options.hostname,
@@ -392,9 +390,7 @@ main();
       const vaultPinsTarget = vaultPinsConnectionHosts(options.knownHosts, [targetConnectionHost]);
       const vaultPinsJump = vaultPinsConnectionHosts(options.knownHosts, jumpConnectionHosts);
       if (verifyHostKeys) {
-        // Build per-hop snapshots with ssh -G discovery for THAT hop's
-        // hostname so Host-scoped GlobalKnownHostsFile / UserKnownHostsFile
-        // (and @revoked entries there) are not lost.
+        const contentChunks = [];
         if (vaultPinsTarget) {
           const targetContent = buildAuthoritativeKnownHostsContent({
             knownHosts: options.knownHosts,
@@ -405,13 +401,7 @@ main();
             pathModule: path,
             homedir: os.homedir(),
           });
-          if (targetContent) {
-            targetAuthoritativeKnownHostsPath = path.join(
-              sshDir,
-              `${safeId}-authoritative-target-known_hosts`,
-            );
-            writeSecureFile(targetAuthoritativeKnownHostsPath, targetContent, 0o600);
-          }
+          if (targetContent) contentChunks.push(targetContent.trimEnd());
         }
         if (vaultPinsJump && jumpHosts[0]) {
           const jumpContent = buildAuthoritativeKnownHostsContent({
@@ -423,13 +413,24 @@ main();
             pathModule: path,
             homedir: os.homedir(),
           });
-          if (jumpContent) {
-            jumpAuthoritativeKnownHostsPath = path.join(
-              sshDir,
-              `${safeId}-authoritative-jump-known_hosts`,
-            );
-            writeSecureFile(jumpAuthoritativeKnownHostsPath, jumpContent, 0o600);
+          if (jumpContent) contentChunks.push(jumpContent.trimEnd());
+        }
+        if (contentChunks.length > 0) {
+          // De-dupe lines across hop snapshots while preserving order.
+          const seen = new Set();
+          const merged = [];
+          for (const chunk of contentChunks) {
+            for (const line of chunk.split("\n")) {
+              if (!line || seen.has(line)) continue;
+              seen.add(line);
+              merged.push(line);
+            }
           }
+          authoritativeKnownHostsPath = path.join(
+            sshDir,
+            `${safeId}-authoritative-known_hosts`,
+          );
+          writeSecureFile(authoritativeKnownHostsPath, `${merged.join("\n")}\n`, 0o600);
         }
       } else {
         // StrictHostKeyChecking=no still consults known_hosts for password-auth
@@ -439,34 +440,20 @@ main();
         writeSecureFile(emptyKnownHostsPath, "", 0o600);
       }
 
-      const targetUsesAuthoritative = Boolean(
-        verifyHostKeys && vaultPinsTarget && targetAuthoritativeKnownHostsPath,
-      );
-      const jumpUsesAuthoritative = Boolean(
-        verifyHostKeys && vaultPinsJump && jumpAuthoritativeKnownHostsPath,
-      );
-      const hasJumpHost = jumpHosts.length > 0;
-
-      // Global --ssh-option host-key policy is only safe when there is no jump
-      // host (single hop). With a jump host, put per-hop policy in Host blocks
-      // below so unpinned hops keep persistent UserKnownHostsFile.
-      if (!hasJumpHost || !verifyHostKeys) {
-        if (verifyHostKeys && !targetUsesAuthoritative) {
-          sshOptions.push(`UserKnownHostsFile=${normalizeSshConfigPath(knownHostsPath)}`);
-        }
-        sshOptions.push(...buildExternalHostKeySshOptions({
-          authoritativeKnownHostsPath: targetUsesAuthoritative
-            ? targetAuthoritativeKnownHostsPath
-            : null,
-          emptyKnownHostsPath,
-          verifyHostKeys,
-          protocol: "et",
-          style: "values",
-          normalizePath: normalizeSshConfigPath,
-        }));
-        if (!sshOptions.some((opt) => opt.startsWith("StrictHostKeyChecking="))) {
-          sshOptions.push("StrictHostKeyChecking=accept-new");
-        }
+      // Always apply host-key policy through --ssh-option (see comment above).
+      if (verifyHostKeys && !authoritativeKnownHostsPath) {
+        sshOptions.push(`UserKnownHostsFile=${normalizeSshConfigPath(knownHostsPath)}`);
+      }
+      sshOptions.push(...buildExternalHostKeySshOptions({
+        authoritativeKnownHostsPath,
+        emptyKnownHostsPath,
+        verifyHostKeys,
+        protocol: "et",
+        style: "values",
+        normalizePath: normalizeSshConfigPath,
+      }));
+      if (!sshOptions.some((opt) => opt.startsWith("StrictHostKeyChecking="))) {
+        sshOptions.push("StrictHostKeyChecking=accept-new");
       }
       sshOptions.push("LogLevel=ERROR");
 
@@ -717,31 +704,9 @@ main();
           }), jumpPwPath);
         }
 
-        // Per-hop host-key policy for the jump. Vault-pinned jumps use the
-        // authoritative snapshot; unpinned jumps keep the persistent user
-        // known_hosts so accept-new records first-seen jump keys.
-        if (verifyHostKeys) {
-          if (jumpUsesAuthoritative) {
-            jumpConfigLines.push(...buildExternalHostKeyConfigLines({
-              authoritativeKnownHostsPath: jumpAuthoritativeKnownHostsPath,
-              verifyHostKeys: true,
-              protocol: "et",
-              normalizePath: normalizeSshConfigPath,
-              quotePath: quoteSshConfigValue,
-            }));
-          } else {
-            jumpConfigLines.push(`  UserKnownHostsFile ${quoteSshConfigValue(knownHostsPath)}`);
-            jumpConfigLines.push("  StrictHostKeyChecking accept-new");
-          }
-        } else if (emptyKnownHostsPath) {
-          jumpConfigLines.push(...buildExternalHostKeyConfigLines({
-            emptyKnownHostsPath,
-            verifyHostKeys: false,
-            protocol: "et",
-            normalizePath: normalizeSshConfigPath,
-            quotePath: quoteSshConfigValue,
-          }));
-        }
+        // Jump host identity/auth options only. Host-key policy is applied via
+        // --ssh-option (command line) so it is enforceable on POSIX where a
+        // temp-HOME config Host block may not be consulted by OpenSSH.
         jumpConfigLines.push("  LogLevel ERROR");
         jumpConfigLines.push("  KbdInteractiveAuthentication yes");
         jumpConfigLines.push("  NumberOfPasswordPrompts 1");
@@ -767,33 +732,6 @@ main();
         configFileLines.push(`  ProxyJump ${jump.hostname}`);
         for (const line of configLines) {
           configFileLines.push(`  ${line}`);
-        }
-        // Per-hop host-key policy for the destination target.
-        if (verifyHostKeys) {
-          if (targetUsesAuthoritative) {
-            for (const line of buildExternalHostKeyConfigLines({
-              authoritativeKnownHostsPath: targetAuthoritativeKnownHostsPath,
-              verifyHostKeys: true,
-              protocol: "et",
-              normalizePath: normalizeSshConfigPath,
-              quotePath: quoteSshConfigValue,
-            })) {
-              configFileLines.push(line);
-            }
-          } else {
-            configFileLines.push(`  UserKnownHostsFile ${quoteSshConfigValue(knownHostsPath)}`);
-            configFileLines.push("  StrictHostKeyChecking accept-new");
-          }
-        } else if (emptyKnownHostsPath) {
-          for (const line of buildExternalHostKeyConfigLines({
-            emptyKnownHostsPath,
-            verifyHostKeys: false,
-            protocol: "et",
-            normalizePath: normalizeSshConfigPath,
-            quotePath: quoteSshConfigValue,
-          })) {
-            configFileLines.push(line);
-          }
         }
         configFileLines.push(...jumpConfigLines);
       } else {
