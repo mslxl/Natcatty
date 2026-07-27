@@ -182,6 +182,70 @@ test("Mosh prepares the configured system agent before building native ssh optio
   api.cleanupMoshAuthTempFiles(selected.tempFiles);
 });
 
+test("Mosh injects vault known_hosts into the SSH bootstrap for key-change checks", async (t) => {
+  const tempBase = makeTmp();
+  t.after(() => fs.rmSync(tempBase, { recursive: true, force: true }));
+  const api = createMoshSessionApi({
+    os,
+    path,
+    fs,
+    process,
+    randomUUID: () => "fixed",
+    tempDirBridge: { getTempFilePath: (fileName) => path.join(tempBase, fileName) },
+  });
+
+  const auth = await api.buildMoshSshAuthArgs({
+    useSshAgent: false,
+    knownHosts: [{
+      hostname: "host.example",
+      port: 22,
+      keyType: "ssh-ed25519",
+      publicKey: "ssh-ed25519 AAAAMOSHVAULT",
+    }],
+  }, "session-vault-kh");
+
+  let vaultPath = null;
+  for (let i = 0; i < auth.sshArgs.length - 1; i += 1) {
+    if (auth.sshArgs[i] === "-o" && String(auth.sshArgs[i + 1]).startsWith("GlobalKnownHostsFile=")) {
+      vaultPath = auth.sshArgs[i + 1].slice("GlobalKnownHostsFile=".length);
+      break;
+    }
+  }
+  assert.ok(vaultPath, "expected GlobalKnownHostsFile ssh option");
+  assert.ok(fs.existsSync(vaultPath));
+  assert.match(fs.readFileSync(vaultPath, "utf8"), /host\.example ssh-ed25519 AAAAMOSHVAULT/);
+  // Interactive Mosh leaves StrictHostKeyChecking alone so OpenSSH can ask
+  // for first-seen hosts in the PTY while still rejecting vault mismatches.
+  assert.equal(
+    auth.sshArgs.some((arg) => String(arg).startsWith("StrictHostKeyChecking=")),
+    false,
+  );
+  api.cleanupMoshAuthTempFiles(auth.tempFiles);
+});
+
+test("Mosh disables host-key checks when verifyHostKeys is false", async (t) => {
+  const tempBase = makeTmp();
+  t.after(() => fs.rmSync(tempBase, { recursive: true, force: true }));
+  const api = createMoshSessionApi({
+    os,
+    path,
+    fs,
+    process,
+    randomUUID: () => "fixed",
+    tempDirBridge: { getTempFilePath: (fileName) => path.join(tempBase, fileName) },
+  });
+
+  const auth = await api.buildMoshSshAuthArgs({
+    useSshAgent: false,
+    verifyHostKeys: false,
+  }, "session-no-verify");
+
+  assert.deepEqual(auth.sshArgs, [
+    "-o", "IdentityAgent=none",
+    "-o", "StrictHostKeyChecking=no",
+  ]);
+});
+
 test("Mosh explicitly disables native agent login after an opt-out", async () => {
   const api = createMoshSessionApi({
     os,

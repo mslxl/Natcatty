@@ -1,6 +1,11 @@
 /* eslint-disable no-undef */
 const crypto = require("node:crypto");
 const { createSystemKnownHostsApi } = require("../sshBridge/systemKnownHosts.cjs");
+const {
+  buildExternalHostKeyConfigLines,
+  buildExternalHostKeySshOptions,
+  buildVaultKnownHostsContent,
+} = require("../externalSshHostKeyPolicy.cjs");
 const { emitTerminalSessionData } = require("../emitTerminalSessionData.cjs");
 const {
   setBufferedOutputBytes,
@@ -365,7 +370,30 @@ main();
       // LogLevel=ERROR silences the "Permanently added..." notice and other
       // ssh banners so the first real PTY bytes are the remote shell. Mirrors
       // the options already used by execOnEtSession.
-      sshOptions.push("StrictHostKeyChecking=accept-new");
+      //
+      // Vault known_hosts (issue #2501): keys the user already trusted via
+      // Netcatty SSH live in the in-app vault, not necessarily in
+      // ~/.ssh/known_hosts. Inject them as GlobalKnownHostsFile so a rotated
+      // server key is rejected the same way OpenSSH rejects system mismatches.
+      let vaultKnownHostsPath = null;
+      const vaultContent = buildVaultKnownHostsContent(options.knownHosts);
+      if (vaultContent) {
+        vaultKnownHostsPath = path.join(sshDir, `${safeId}-vault-known_hosts`);
+        writeSecureFile(vaultKnownHostsPath, vaultContent, 0o600);
+      }
+      sshOptions.push(...buildExternalHostKeySshOptions({
+        vaultKnownHostsPath,
+        verifyHostKeys: options.verifyHostKeys,
+        protocol: "et",
+        style: "values",
+        normalizePath: normalizeSshConfigPath,
+      }));
+      // When verification is on, buildExternalHostKeySshOptions already emits
+      // StrictHostKeyChecking=accept-new; when off it emits =no. Avoid a
+      // duplicate default so verifyHostKeys=false can disable checks.
+      if (!sshOptions.some((opt) => opt.startsWith("StrictHostKeyChecking="))) {
+        sshOptions.push("StrictHostKeyChecking=accept-new");
+      }
       sshOptions.push("LogLevel=ERROR");
 
       // Port
@@ -618,8 +646,20 @@ main();
         // Share known_hosts with the jump connection and apply the same
         // non-interactive host-key handling as the target hop — the jump's
         // ssh is just as unable to answer a yes/no prompt via SSH_ASKPASS.
+        // Vault keys (issue #2501) must also protect the jump hop.
         jumpConfigLines.push(`  UserKnownHostsFile ${quoteSshConfigValue(knownHostsPath)}`);
-        jumpConfigLines.push("  StrictHostKeyChecking accept-new");
+        const jumpHostKeyLines = buildExternalHostKeyConfigLines({
+          vaultKnownHostsPath,
+          verifyHostKeys: options.verifyHostKeys,
+          protocol: "et",
+          normalizePath: normalizeSshConfigPath,
+          quotePath: quoteSshConfigValue,
+        });
+        if (jumpHostKeyLines.length > 0) {
+          jumpConfigLines.push(...jumpHostKeyLines);
+        } else {
+          jumpConfigLines.push("  StrictHostKeyChecking accept-new");
+        }
         jumpConfigLines.push("  LogLevel ERROR");
         jumpConfigLines.push("  KbdInteractiveAuthentication yes");
         jumpConfigLines.push("  NumberOfPasswordPrompts 1");
@@ -733,26 +773,6 @@ main();
       return env;
     }
 
-    function formatVaultKnownHostLine(knownHost) {
-      if (!knownHost?.hostname || !knownHost?.keyType) return null;
-      const port = Number.isFinite(knownHost.port) ? Number(knownHost.port) : 22;
-      const hostField = port !== 22 ? `[${knownHost.hostname}]:${port}` : knownHost.hostname;
-      const pubKey = String(knownHost.publicKey || "").trim();
-      const parts = pubKey.split(/\s+/);
-      let keyType = knownHost.keyType;
-      let keyBlob = "";
-      if (parts.length >= 2 && /^ssh-|^ecdsa-|^sk-/.test(parts[0])) {
-        keyType = parts[0];
-        keyBlob = parts[1];
-      } else if (parts.length === 1 && parts[0].length > 0 && !/^SHA256:/i.test(parts[0])) {
-        keyBlob = parts[0];
-      } else {
-        return null;
-      }
-      if (!keyBlob) return null;
-      return `${hostField} ${keyType} ${keyBlob}`;
-    }
-
     /**
      * Build a known_hosts file for background ET exec (stats / distro probes).
      * Merges the user's system known_hosts with any Netcatty-vault entries that
@@ -789,15 +809,9 @@ main();
         }
       }
 
-      const vaultLines = [];
-      if (Array.isArray(knownHosts)) {
-        for (const knownHost of knownHosts) {
-          const line = formatVaultKnownHostLine(knownHost);
-          if (line) vaultLines.push(line);
-        }
-      }
-      if (vaultLines.length > 0) {
-        chunks.push(vaultLines.join("\n"));
+      const vaultContent = buildVaultKnownHostsContent(knownHosts);
+      if (vaultContent) {
+        chunks.push(vaultContent.trimEnd());
       }
 
       const artifact = Array.isArray(session.externalAuthArtifacts)

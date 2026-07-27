@@ -866,6 +866,73 @@ test("prepareEtSshEnvironment uses a persistent user known_hosts file", (t) => {
   assert.equal(fs.existsSync(path.join(base, "et-ssh-home-sess1", ".ssh", "known_hosts")), false);
 });
 
+test("prepareEtSshEnvironment injects vault known_hosts for key-change checks", (t) => {
+  const { api, base } = makeApi(t);
+  const env = api.prepareEtSshEnvironment("sess1", {
+    hostname: "host.example",
+    username: "alice",
+    knownHosts: [{
+      hostname: "host.example",
+      port: 22,
+      keyType: "ssh-ed25519",
+      publicKey: "ssh-ed25519 AAAAVAULTBLOB",
+    }],
+  });
+
+  const globalOption = env.sshOptions.find((option) => option.startsWith("GlobalKnownHostsFile="));
+  assert.ok(globalOption, "expected GlobalKnownHostsFile for vault keys");
+  const vaultPath = globalOption.slice("GlobalKnownHostsFile=".length);
+  assert.ok(fs.existsSync(vaultPath));
+  assert.match(fs.readFileSync(vaultPath, "utf8"), /host\.example ssh-ed25519 AAAAVAULTBLOB/);
+  assert.ok(env.sshOptions.includes("StrictHostKeyChecking=accept-new"));
+  // Still pin the persistent user known_hosts for first-seen accept-new writes.
+  assert.ok(env.sshOptions.some((option) => option.startsWith("UserKnownHostsFile=")));
+  assert.ok(vaultPath.startsWith(path.join(base, "et-ssh-home-sess1")));
+});
+
+test("prepareEtSshEnvironment disables host-key checks when verifyHostKeys is false", (t) => {
+  const { api } = makeApi(t);
+  const env = api.prepareEtSshEnvironment("sess1", {
+    hostname: "host.example",
+    username: "alice",
+    verifyHostKeys: false,
+  });
+
+  assert.ok(env.sshOptions.includes("StrictHostKeyChecking=no"));
+  assert.equal(
+    env.sshOptions.filter((option) => option.startsWith("StrictHostKeyChecking=")).length,
+    1,
+  );
+  assert.doesNotMatch(env.sshOptions.join("\n"), /StrictHostKeyChecking=accept-new/);
+});
+
+test("prepareEtSshEnvironment applies vault host-key policy to jump hosts", (t) => {
+  const { api, base } = makeApi(t);
+  const env = api.prepareEtSshEnvironment("sess1", {
+    hostname: "target.example",
+    username: "alice",
+    knownHosts: [{
+      hostname: "jump.example",
+      keyType: "ssh-ed25519",
+      publicKey: "ssh-ed25519 AAAJUMP",
+    }],
+    jumpHosts: [{
+      hostname: "jump.example",
+      username: "jumpuser",
+      authMethod: "password",
+      password: "secret",
+    }],
+  });
+
+  const configPath = path.join(base, "et-ssh-home-sess1", ".ssh", "config");
+  assert.ok(fs.existsSync(configPath));
+  const config = fs.readFileSync(configPath, "utf8");
+  assert.match(config, /Host jump\.example/);
+  assert.match(config, /GlobalKnownHostsFile /);
+  assert.match(config, /StrictHostKeyChecking /);
+  assert.match(config, /accept-new/);
+});
+
 test("execOnEtSession requireTrustedHost uses strict host-key checking", async (t) => {
   let capturedArgs = null;
   const { api } = makeApi(t, {

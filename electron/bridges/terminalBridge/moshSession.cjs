@@ -10,6 +10,10 @@ const {
 const { createSshConnExecProbe } = require("../ai/sessionShellKind.cjs");
 const { orderSshIdentityNames, SSH_KEY_PATTERN } = require("../sshAuthHelper.cjs");
 const { fanoutSessionExit } = require("../terminalAttachRestore.cjs");
+const {
+  buildExternalHostKeySshOptions,
+  buildVaultKnownHostsContent,
+} = require("../externalSshHostKeyPolicy.cjs");
 
 const execFileAsync = promisify(execFile);
 
@@ -356,6 +360,28 @@ function createMoshSessionApi(ctx) {
         if (preferredAuthentications) {
           sshArgs.push("-o", `PreferredAuthentications=${preferredAuthentications}`);
         }
+
+        // Vault known_hosts (issue #2501): Mosh bootstraps via system OpenSSH,
+        // which only sees ~/.ssh/known_hosts by default. Keys the user already
+        // trusted through Netcatty SSH live in the in-app vault — inject them
+        // as GlobalKnownHostsFile so a changed host key is rejected. The
+        // handshake runs in an interactive PTY, so first-seen hosts keep
+        // OpenSSH's default ask prompt unless verification is disabled.
+        const vaultContent = buildVaultKnownHostsContent(options.knownHosts);
+        let vaultKnownHostsPath = null;
+        if (vaultContent) {
+          vaultKnownHostsPath = await writeMoshAuthTempFile(
+            safeMoshAuthFileName(sessionId, "vault-known-hosts", ".txt"),
+            vaultContent,
+          );
+          tempFiles.push(vaultKnownHostsPath);
+        }
+        sshArgs.push(...buildExternalHostKeySshOptions({
+          vaultKnownHostsPath,
+          verifyHostKeys: options.verifyHostKeys,
+          protocol: "mosh",
+          style: "args",
+        }));
       } catch (err) {
         cleanupMoshAuthTempFiles(tempFiles);
         throw err;
