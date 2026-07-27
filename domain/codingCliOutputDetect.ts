@@ -31,7 +31,9 @@ const OUTPUT_SIGNATURES: readonly OutputSignature[] = [
   },
   {
     id: 'claude',
-    test: (text) => /Claude Code/i.test(text) || text.includes('✳'),
+    // Match Claude's actual welcome banner, not installer messages such as
+    // "Setting up Claude Code..." which are ordinary shell output.
+    test: (text) => /\bWelcome to Claude Code\b/i.test(text) || text.includes('✳'),
   },
   {
     id: 'copilot',
@@ -47,7 +49,12 @@ const OUTPUT_SIGNATURES: readonly OutputSignature[] = [
   },
   {
     id: 'opencode',
-    test: (text) => /\bOpenCode\b/i.test(text),
+    // The installer prints the brand and a shaded ASCII wordmark. The TUI's
+    // startup logo uses a distinct space-filled third row, so require both
+    // TUI rows instead of matching ordinary OpenCode text.
+    test: (text) => (
+      /█▀▀█\s+█▀▀█\s+█▀▀█\s+█▀▀▄[\s\S]{0,512}█ {2}█\s+█ {2}█\s+█▀▀▀\s+█ {2}█/.test(text)
+    ),
   },
   {
     id: 'kimi',

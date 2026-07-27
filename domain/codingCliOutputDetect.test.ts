@@ -21,6 +21,77 @@ test('inferCodingCliProviderFromOutput detects other CLI banners', () => {
   assert.equal(inferCodingCliProviderFromOutput('Welcome to Claude Code'), 'claude');
   assert.equal(inferCodingCliProviderFromOutput('GitHub Copilot CLI'), 'copilot');
   assert.equal(inferCodingCliProviderFromOutput('Factory Droid ready'), 'droid');
+  assert.equal(
+    inferCodingCliProviderFromOutput(
+      '█▀▀█ █▀▀█ █▀▀█ █▀▀▄ █▀▀▀ █▀▀█ █▀▀█ █▀▀█\n'
+      + '█  █ █  █ █▀▀▀ █  █ █    █  █ █  █ █▀▀▀\n'
+      + '▀▀▀▀ █▀▀▀ ▀▀▀▀ ▀  ▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀',
+    ),
+    'opencode',
+  );
+});
+
+test('inferCodingCliProviderFromOutput ignores coding CLI installer and package output', () => {
+  assert.equal(
+    inferCodingCliProviderFromOutput('Setting up Claude Code...\n✅ Installation complete!'),
+    undefined,
+  );
+  assert.equal(
+    inferCodingCliProviderFromOutput(
+      'npm update codex\nchanged 3 packages in 2s\nopencode@1.2.3\n├── opencode@1.2.3',
+    ),
+    undefined,
+  );
+  assert.equal(
+    inferCodingCliProviderFromOutput(
+      '\x1b[90mOpenCode includes free models, to start:\x1b[0m\n'
+      + 'cd <project>  # Open directory\n'
+      + 'opencode      # Run command\n'
+      + 'For more information visit https://opencode.ai/docs',
+    ),
+    undefined,
+  );
+  assert.equal(
+    inferCodingCliProviderFromOutput('updated opencode-ai@1.2.3'),
+    undefined,
+  );
+});
+
+test('createCodingCliOutputScanner ignores split installer output', () => {
+  const scanner = createCodingCliOutputScanner();
+  assert.equal(scanner.feed('\x1b[90mSetting up Claude '), undefined);
+  assert.equal(scanner.feed('Code...\x1b[0m\n✅ Installation complete!'), undefined);
+  assert.equal(
+    scanner.feed(
+      '\n\x1b[90m█▀▀█ █▀▀█ █▀▀█ █▀▀▄ \x1b[0m█▀▀▀ █▀▀█ █▀▀█ █▀▀█\n'
+      + '\x1b[90m█░░█ █░░█ █▀▀▀ █░░█ \x1b[0m█░░░ █░░█ █░░█ █▀▀▀\n',
+    ),
+    undefined,
+  );
+  assert.equal(
+    scanner.feed(
+      '\x1b[90m▀▀▀▀ █▀▀▀ ▀▀▀▀ ▀  ▀ \x1b[0m▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀\n'
+      + '\x1b[90mOpenCode includes free models, ',
+    ),
+    undefined,
+  );
+  assert.equal(scanner.feed('to start:\nopencode # Run command'), undefined);
+});
+
+test('createCodingCliOutputScanner detects the ANSI-colored OpenCode TUI logo across chunks', () => {
+  const scanner = createCodingCliOutputScanner();
+  assert.equal(
+    scanner.feed('\x1b[36m█▀▀█ █▀▀█ █▀▀█ █▀▀▄\x1b[0m █▀▀▀ █▀▀█ █▀▀█ █▀▀█\n'),
+    undefined,
+  );
+  assert.equal(
+    scanner.feed('\x1b[36m█  █ █  █ █▀▀▀ █  █\x1b[0m █    █  █ █  █ █▀▀▀\n'),
+    'opencode',
+  );
+  assert.equal(
+    scanner.feed('\x1b[36m▀▀▀▀ █▀▀▀ ▀▀▀▀ ▀  ▀\x1b[0m ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀'),
+    'opencode',
+  );
 });
 
 test('createCodingCliOutputScanner finds providers across chunked output', () => {
