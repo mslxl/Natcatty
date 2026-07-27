@@ -46,9 +46,14 @@ export function createCodingCliSessionSignalController(
 
   const handleDynamicTabTitleModeChange = (mode: DynamicTabTitleMode) => {
     if (mode === observedDynamicTabTitleMode) return;
+    const previousMode = observedDynamicTabTitleMode;
     observedDynamicTabTitleMode = mode;
-    outputScanners.clear();
-    outputScanDisabled.clear();
+    // agent <-> all both keep live detection on; clearing would re-arm
+    // exhausted startup scans and mis-tag ordinary mid-session output.
+    if (previousMode === 'off' || mode === 'off') {
+      outputScanners.clear();
+      outputScanDisabled.clear();
+    }
   };
 
   const getCurrentDynamicTabTitleMode = () => {

@@ -89,3 +89,23 @@ test('mode changes discard partial and exhausted output scanner state', () => {
   controller.handleTerminalOutput(session.id, 'Welcome to Claude Code');
   assert.deepEqual(providerUpdates, ['claude']);
 });
+
+test('switching between enabled modes preserves exhausted output scans', () => {
+  let mode: DynamicTabTitleMode = 'agent';
+  const session: { id: string; codingCliProviderId?: CodingCliProviderId } = { id: 'session-1' };
+  const providerUpdates: Array<CodingCliProviderId | null> = [];
+  const controller = createCodingCliSessionSignalController({
+    getDynamicTabTitleMode: () => mode,
+    getSession: () => session,
+    onUpdateSessionCodingCliProvider: (_sessionId, providerId) => {
+      providerUpdates.push(providerId);
+      session.codingCliProviderId = providerId ?? undefined;
+    },
+  });
+
+  controller.handleTerminalOutput(session.id, 'x'.repeat(16384));
+  mode = 'all';
+  controller.handleDynamicTabTitleModeChange(mode);
+  controller.handleTerminalOutput(session.id, 'Welcome to Claude Code');
+  assert.deepEqual(providerUpdates, []);
+});
