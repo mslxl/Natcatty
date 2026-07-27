@@ -69,7 +69,8 @@ function boundedErrorMessage(value, fallback = "Plugin connection failed") {
 }
 
 function connectionOutputCloseDetails(reason) {
-  if (typeof reason === "string") return { reason };
+  if (reason === "end") return { reason: "exited", exitCode: 0 };
+  if (typeof reason === "string") return { reason: "closed" };
   if (reason && typeof reason === "object") {
     return {
       reason: "error",

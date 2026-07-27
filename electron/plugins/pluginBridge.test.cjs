@@ -1112,6 +1112,53 @@ test("plugin connection output stream failures finish the terminal as errors", a
   ]);
 });
 
+test("plugin connection output stream endings use supported terminal exit reasons", async () => {
+  const ipcMain = createIpcMain();
+  let closeOutput;
+  const finished = [];
+  registerPluginBridge(ipcMain, {
+    manager: { initialize: async () => {} },
+    extensionProviderService: {
+      async openConnection(params, options) {
+        closeOutput = options.onOutputClose;
+        return { sessionId: params.sessionId, providerId: params.providerId, status: "connected", diagnostics: [] };
+      },
+      async control() { return { status: "connected" }; },
+      closeSessionLocal() {},
+    },
+    getTerminalWorkerManager: () => ({
+      async startExternalSession(options) { return { sessionId: options.sessionId }; },
+      async pushExternalOutput() { return true; },
+      async finishExternalSession(sessionId, details) { finished.push([sessionId, details]); return true; },
+    }),
+    env: { NETCATTY_PLUGIN_DEV: "1" },
+    isTrustedSender: () => true,
+  });
+  const event = { sender: { id: 90, once() {}, isDestroyed: () => false } };
+  const start = (requestId, sessionId) => ipcMain.handlers.get(CHANNELS.connectionStart)(event, {
+    requestId,
+    sessionId,
+    providerId: "com.example.transport.connection",
+    configuration: {},
+    columns: 80,
+    rows: 24,
+  });
+
+  await start("connection-output-end", "session-output-end");
+  await closeOutput("end");
+  assert.deepEqual(finished.at(-1), [
+    "session-output-end",
+    { reason: "exited", exitCode: 0 },
+  ]);
+
+  await start("connection-output-cancel", "session-output-cancel");
+  await closeOutput("cancel");
+  assert.deepEqual(finished.at(-1), [
+    "session-output-cancel",
+    { reason: "closed" },
+  ]);
+});
+
 test("plugin connection ignores output that races with renderer session close", async () => {
   const ipcMain = createIpcMain();
   let externalOptions;
