@@ -19,7 +19,7 @@ import { sessionCapabilitiesStore } from '../application/state/sessionCapabiliti
 import { useTerminalBackend } from '../application/state/useTerminalBackend';
 import { collectSessionIds } from '../domain/workspace';
 
-import { cn, normalizeLineEndings } from '../lib/utils';
+import { cn, normalizeLineEndings, wrapBracketedPaste } from '../lib/utils';
 import { detectLocalOs } from '../lib/localShell';
 import { useStoredString } from '../application/state/useStoredString';
 import { useStoredNumber } from '../application/state/useStoredNumber';
@@ -1650,14 +1650,21 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     const session = sessionsRef.current.find((candidate) => candidate.id === sessionId);
     if (!session || !canUseDirectSessionWriteFallback(session)) return false;
 
+    // Mirror executeSnippetCommand encoding without a live termRef (hibernated
+    // panes). Multi-line paste / noAutoRun must use bracketed-paste wrapping so
+    // newlines are not treated as Enter by the remote shell.
     let data = normalizeLineEndings(command);
-    if (!snippet.noAutoRun) data = `${data}\r`;
     const lineDelayMs = shouldDelayAutoRunSnippetInput(data, {
       noAutoRun: snippet.noAutoRun,
       multiLineRunMode: snippet.multiLineRunMode,
     })
       ? AUTO_RUN_SNIPPET_LINE_DELAY_MS
       : undefined;
+    const isMultiLine = data.includes('\n');
+    if (!lineDelayMs && isMultiLine) {
+      data = wrapBracketedPaste(data);
+    }
+    if (!snippet.noAutoRun) data = `${data}\r`;
     terminalBackend.writeToSession(sessionId, data, {
       automated: true,
       sensitive: false,
