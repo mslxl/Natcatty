@@ -43,6 +43,7 @@ type UseCodingCliSessionSignalsOptions = Omit<
   'getDynamicTabTitleMode'
 > & {
   dynamicTabTitleMode: DynamicTabTitleMode;
+  sessionIds: readonly string[];
 };
 
 export function createCodingCliSessionSignalController(
@@ -195,9 +196,22 @@ export function useCodingCliSessionSignals(
   }
 
   const controller = controllerRef.current;
+  const liveSessionIdsRef = useRef(new Set(options.sessionIds));
   useEffect(() => {
     controller.handleDynamicTabTitleModeChange(options.dynamicTabTitleMode);
   }, [controller, options.dynamicTabTitleMode]);
+  useEffect(() => {
+    const nextSessionIds = new Set(options.sessionIds);
+    for (const sessionId of liveSessionIdsRef.current) {
+      if (!nextSessionIds.has(sessionId)) controller.forgetSession(sessionId);
+    }
+    liveSessionIdsRef.current = nextSessionIds;
+  }, [controller, options.sessionIds]);
+  useEffect(() => () => {
+    for (const sessionId of liveSessionIdsRef.current) {
+      controller.forgetSession(sessionId);
+    }
+  }, [controller]);
 
   return controller;
 }

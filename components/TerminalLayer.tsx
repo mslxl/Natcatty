@@ -302,6 +302,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
 
   const codingCliSignalController = useCodingCliSessionSignals({
     dynamicTabTitleMode: terminalSettings?.dynamicTabTitleMode ?? 'agent',
+    sessionIds: sessions.map((session) => session.id),
     getSession: (sessionId) => sessionsRef.current.find((candidate) => candidate.id === sessionId),
     onUpdateSessionCodingCliProvider,
     onUpdateSessionDynamicTitle,
@@ -405,11 +406,11 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       terminalSettings?.autoCloseOnExit ?? true,
     );
     if (intent.kind === "closeSession") {
-      onCloseSession(sessionId);
+      handleCloseSession(sessionId);
     } else {
       onUpdateSessionStatus(sessionId, 'disconnected');
     }
-  }, [onCloseSession, onUpdateSessionStatus, terminalSettings?.autoCloseOnExit]);
+  }, [handleCloseSession, onUpdateSessionStatus, terminalSettings?.autoCloseOnExit]);
 
   const handleOsDetected = useCallback((hostId: string, distro: string) => {
     onUpdateHostDistro(hostId, distro);
