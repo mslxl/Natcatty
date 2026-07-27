@@ -66,4 +66,9 @@ test("plugin protocol hosts default to the plugin provider when optional built-i
 
   assert.ok(markup.indexOf(providerId) < markup.indexOf(">Telnet<"));
   assert.match(markup, new RegExp(`border-primary bg-primary/5[^>]*>[\\s\\S]*${providerId}`));
+  const providerStart = markup.lastIndexOf("<button", markup.indexOf(providerId));
+  const providerEnd = markup.indexOf("</button>", markup.indexOf(providerId));
+  assert.doesNotMatch(markup.slice(providerStart, providerEnd), /type="number"/);
+  assert.equal((markup.match(/type="number"/g) ?? []).length, 3);
+  assert.doesNotMatch(markup, /10\.2\.0\.31:22/);
 });
