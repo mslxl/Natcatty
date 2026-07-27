@@ -602,21 +602,36 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
   }, []);
 
   const handleCreatePackage = useCallback(() => {
-    const trimmed = newPackageName.trim().replace(/^\/+|\/+$/g, '');
-    if (!trimmed) {
-      setPackageError(t('snippets.packageDialog.placeholder'));
+    if (!onPackagesChange) {
+      setPackageError(t('snippets.renameDialog.error.empty'));
       return;
     }
-    if (packages.includes(trimmed) || packages.includes(`/${trimmed}`)) {
+    const name = newPackageName.trim();
+    if (!name) {
+      setPackageError(t('snippets.renameDialog.error.empty'));
+      return;
+    }
+    // Match SnippetsManager.createPackage path rules so tree rows stay stable.
+    if (!/^\/?([\w\p{L}\p{N}-]+(\/[\w\p{L}\p{N}-]+)*)\/?$/u.test(name)) {
+      setPackageError(t('snippets.renameDialog.error.invalidChars'));
+      return;
+    }
+    let full = name.endsWith('/') ? name.slice(0, -1) : name;
+    if (full !== '/' && full.endsWith('/')) full = full.slice(0, -1);
+    const existingPackage = packages.find((p) => p.toLowerCase() === full.toLowerCase());
+    if (existingPackage) {
       setPackageError(t('snippets.renameDialog.error.duplicate'));
       return;
     }
-    onPackagesChange?.([...packages, trimmed]);
+    onPackagesChange([...packages, full]);
     setExpandedPaths((prev) => {
       const next = new Set(prev);
-      let path = trimmed;
+      let path = full.startsWith('/') ? full.slice(1) : full;
+      // Expand both absolute and relative forms used by the tree walker.
+      next.add(full);
       while (path) {
         next.add(path);
+        if (full.startsWith('/')) next.add(`/${path}`);
         const slash = path.lastIndexOf('/');
         if (slash < 0) break;
         path = path.slice(0, slash);
@@ -715,7 +730,9 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
             <DropdownTrigger asChild>
               <button
                 type="button"
-                aria-label={t('snippets.action.newSnippet')}
+                aria-label={t('snippets.action.newPackage')}
+                aria-haspopup="menu"
+                aria-expanded={addMenuOpen}
                 className="h-7 w-5 flex items-center justify-center rounded-r-md border-l border-border/40 text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
               >
                 <ChevronDown size={12} />
@@ -733,17 +750,19 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
                 <Zap size={12} className="text-muted-foreground" />
                 {t('snippets.action.newSnippet')}
               </button>
-              <button
-                type="button"
-                className="w-full flex items-center gap-2 px-2 py-1.5 text-xs rounded-md hover:bg-muted transition-colors"
-                onClick={() => {
-                  setAddMenuOpen(false);
-                  openPackageDialog();
-                }}
-              >
-                <FolderPlus size={12} className="text-muted-foreground" />
-                {t('snippets.action.newPackage')}
-              </button>
+              {onPackagesChange ? (
+                <button
+                  type="button"
+                  className="w-full flex items-center gap-2 px-2 py-1.5 text-xs rounded-md hover:bg-muted transition-colors"
+                  onClick={() => {
+                    setAddMenuOpen(false);
+                    openPackageDialog();
+                  }}
+                >
+                  <FolderPlus size={12} className="text-muted-foreground" />
+                  {t('snippets.action.newPackage')}
+                </button>
+              ) : null}
               <button
                 type="button"
                 className="w-full flex items-center gap-2 px-2 py-1.5 text-xs rounded-md hover:bg-muted transition-colors"
@@ -780,6 +799,7 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
             getItemKey={(item) => item.key}
             renderItem={(item) => {
               if (item.kind === 'search') {
+                const isScript = isScriptSnippet(item.snippet);
                 return (
                   <SnippetRow
                     snippet={item.snippet}
@@ -796,10 +816,12 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
                     onRunParallel={onRunScriptOnWorkspace
                       ? () => onRunScriptOnWorkspace(item.snippet, 'parallel')
                       : undefined}
-                    onRunSequential={onRunScriptOnWorkspace
+                    onRunSequential={isScript && onRunScriptOnWorkspace
                       ? () => onRunScriptOnWorkspace(item.snippet, 'sequential')
                       : undefined}
-                    runParallelLabel={t('scripts.actions.runParallel')}
+                    runParallelLabel={isScript
+                      ? t('scripts.actions.runParallel')
+                      : t('scripts.actions.runOnAllTabs')}
                     runSequentialLabel={t('scripts.actions.runSequential')}
                     editLabel={t('action.edit')}
                     deleteLabel={t('action.delete')}
@@ -819,30 +841,35 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
                   />
                 );
               }
-              return (
-                <SnippetRow
-                  snippet={item.row.snippet}
-                  depth={item.row.depth}
-                  draggable={Boolean(onSnippetsChange)}
-                  sortableTarget={true}
-                  onDragOver={handleRowDragOver}
-                  onDrop={handleRowDrop}
-                  onDragEnd={clearScriptsDropIndicator}
-                  onClick={() => handleSnippetClick(item.row.snippet)}
-                  onEdit={() => handleEditSnippet(item.row.snippet)}
-                  onDelete={() => handleDeleteSnippet(item.row.snippet.id)}
-                  onRunParallel={onRunScriptOnWorkspace
-                    ? () => onRunScriptOnWorkspace(item.row.snippet, 'parallel')
-                    : undefined}
-                  onRunSequential={onRunScriptOnWorkspace
-                    ? () => onRunScriptOnWorkspace(item.row.snippet, 'sequential')
-                    : undefined}
-                  runParallelLabel={t('scripts.actions.runParallel')}
-                  runSequentialLabel={t('scripts.actions.runSequential')}
-                  editLabel={t('action.edit')}
-                  deleteLabel={t('action.delete')}
-                />
-              );
+              {
+                const isScript = isScriptSnippet(item.row.snippet);
+                return (
+                  <SnippetRow
+                    snippet={item.row.snippet}
+                    depth={item.row.depth}
+                    draggable={Boolean(onSnippetsChange)}
+                    sortableTarget={true}
+                    onDragOver={handleRowDragOver}
+                    onDrop={handleRowDrop}
+                    onDragEnd={clearScriptsDropIndicator}
+                    onClick={() => handleSnippetClick(item.row.snippet)}
+                    onEdit={() => handleEditSnippet(item.row.snippet)}
+                    onDelete={() => handleDeleteSnippet(item.row.snippet.id)}
+                    onRunParallel={onRunScriptOnWorkspace
+                      ? () => onRunScriptOnWorkspace(item.row.snippet, 'parallel')
+                      : undefined}
+                    onRunSequential={isScript && onRunScriptOnWorkspace
+                      ? () => onRunScriptOnWorkspace(item.row.snippet, 'sequential')
+                      : undefined}
+                    runParallelLabel={isScript
+                      ? t('scripts.actions.runParallel')
+                      : t('scripts.actions.runOnAllTabs')}
+                    runSequentialLabel={t('scripts.actions.runSequential')}
+                    editLabel={t('action.edit')}
+                    deleteLabel={t('action.delete')}
+                  />
+                );
+              }
             }}
           />
         )}
@@ -892,8 +919,25 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
       )}
 
       {isPackageDialogOpen ? (
-        <div className="absolute inset-0 z-40 flex items-center justify-center bg-background/80 p-3">
-          <div className="w-full max-w-[280px] rounded-lg border border-border/60 bg-background p-3 space-y-3 shadow-lg">
+        <div
+          className="absolute inset-0 z-40 flex items-center justify-center bg-background/80 p-3"
+          role="dialog"
+          aria-modal="true"
+          data-state="open"
+          aria-label={t('snippets.packageDialog.title')}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') {
+              e.preventDefault();
+              e.stopPropagation();
+              setIsPackageDialogOpen(false);
+            }
+          }}
+          onClick={() => setIsPackageDialogOpen(false)}
+        >
+          <div
+            className="w-full max-w-[280px] rounded-lg border border-border/60 bg-background p-3 space-y-3 shadow-lg"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div>
               <p className="text-sm font-semibold">{t('snippets.packageDialog.title')}</p>
               <p className="text-[11px] text-muted-foreground mt-0.5">
@@ -913,8 +957,6 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
                   if (e.key === 'Enter') {
                     e.preventDefault();
                     handleCreatePackage();
-                  } else if (e.key === 'Escape') {
-                    setIsPackageDialogOpen(false);
                   }
                 }}
                 placeholder={t('snippets.packageDialog.placeholder')}

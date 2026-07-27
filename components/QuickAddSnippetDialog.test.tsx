@@ -30,4 +30,8 @@ test("quick add snippet form binds shortkeys and uses a side panel drawer", () =
   assert.match(source, /keyEventToString/);
   assert.match(source, /shortkey: shortkey \|\| undefined/);
   assert.match(source, /if \(e\.defaultPrevented\) return/);
+  // Modal contract for hasOpenAppDialog / Cmd+W interception
+  assert.match(source, /role="dialog"/);
+  assert.match(source, /data-state="open"/);
+  assert.match(source, /data-dialog-close="true"/);
 });

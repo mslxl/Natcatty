@@ -43,6 +43,9 @@ test("scripts side panel offers run-on-all-tabs for every snippet, not only auto
     /onRunParallel=\{isScriptSnippet\(item\.row\.snippet\) && onRunScriptOnWorkspace/,
   );
   assert.match(source, /onRunParallel=\{onRunScriptOnWorkspace/);
+  // Sequential remains script-only (mode is meaningful only for automation runs).
+  assert.match(source, /onRunSequential=\{isScript && onRunScriptOnWorkspace/);
+  assert.match(source, /scripts\.actions\.runOnAllTabs/);
   assert.match(source, /snippets\.action\.newPackage/);
   assert.match(source, /openPackageDialog/);
 });

@@ -241,6 +241,7 @@ export const QuickAddSnippetDialog: React.FC<QuickAddSnippetDialogProps> = ({
     t,
   ]);
 
+  // Shortkey recording capture. Escape cancels recording only (does not close the panel).
   useEffect(() => {
     if (!isRecordingShortkey) return;
 
@@ -306,6 +307,19 @@ export const QuickAddSnippetDialog: React.FC<QuickAddSnippetDialogProps> = ({
     setIsRecordingShortkey(false);
     setShortkeyError(null);
   }, []);
+
+  // Escape dismisses the drawer when not recording a shortkey (matches previous Dialog).
+  useEffect(() => {
+    if (!open || isRecordingShortkey) return;
+    const onEscape = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      e.stopPropagation();
+      handleClose();
+    };
+    window.addEventListener('keydown', onEscape, true);
+    return () => window.removeEventListener('keydown', onEscape, true);
+  }, [open, isRecordingShortkey, handleClose]);
 
   const handleSave = useCallback(() => {
     if (!canSave) return;
@@ -375,13 +389,31 @@ export const QuickAddSnippetDialog: React.FC<QuickAddSnippetDialogProps> = ({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50" onKeyDown={handleKeyDown}>
+    <div
+      className="fixed inset-0 z-50"
+      onKeyDown={handleKeyDown}
+      role="dialog"
+      aria-modal="true"
+      data-state="open"
+      aria-label={t(editing ? 'snippets.panel.editTitle' : 'snippets.panel.newTitle')}
+    >
       <button
         type="button"
         className="absolute inset-0 bg-black/40 cursor-default"
         aria-label={t('common.cancel')}
         onClick={handleClose}
       />
+      {/* Hidden control so Cmd/Ctrl+W / hasOpenAppDialog() treat this drawer as an open dialog. */}
+      <button
+        type="button"
+        data-dialog-close="true"
+        tabIndex={-1}
+        aria-hidden="true"
+        className="sr-only"
+        onClick={handleClose}
+      >
+        {t('common.close')}
+      </button>
       <AsidePanel
         open={open}
         onClose={handleClose}
@@ -482,6 +514,7 @@ export const QuickAddSnippetDialog: React.FC<QuickAddSnippetDialogProps> = ({
             </div>
             <button
               type="button"
+              aria-pressed={isRecordingShortkey}
               onClick={(e) => {
                 e.stopPropagation();
                 setIsRecordingShortkey(true);
