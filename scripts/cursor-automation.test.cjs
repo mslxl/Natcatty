@@ -2113,13 +2113,6 @@ test('parseExternalResearchStream prefers the final isolated status over stale e
     ].join('\n')),
     /External research blocked: WebSearch became unavailable/,
   );
-  assert.throws(
-    () => parse([
-      'RESEARCH_NOT_NEEDED: initially appeared local-only',
-      'RESEARCH_BLOCKED: WebSearch became unavailable',
-    ].join('\n')),
-    /External research blocked: WebSearch became unavailable/,
-  );
 });
 
 test('parseExternalResearchStream falls back to a complete fenced status split across events', () => {
@@ -2174,7 +2167,7 @@ test('parseExternalResearchStream prefers a split final status over an earlier v
       type: 'result',
       subtype: 'success',
       is_error: false,
-      result: `${staleStatus}\n\`\`\`text\n${finalStatus}\n\`\`\``,
+      result: `Conversation preamble\n${staleStatus}\n\`\`\`text\n${finalStatus}\n\`\`\``,
     },
   ].map(JSON.stringify).join('\n');
 
@@ -2182,6 +2175,59 @@ test('parseExternalResearchStream prefers a split final status over an earlier v
     () => auto.parseExternalResearchStream(events, {}),
     /External research blocked: WebSearch became unavailable/,
   );
+});
+
+test('parseExternalResearchStream keeps a valid terminal status over assistant fragments', () => {
+  const terminalStatus = 'RESEARCH_BLOCKED: WebSearch became unavailable';
+  const staleAssistantEvents = [
+    {
+      type: 'assistant',
+      message: {
+        content: [{ type: 'text', text: 'RESEARCH_NOT_NEEDED: initially appeared local-only' }],
+      },
+    },
+    {
+      type: 'assistant',
+      message: {
+        content: [{ type: 'text', text: 'Reconsidering after reading the request.' }],
+      },
+    },
+    {
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      result: terminalStatus,
+    },
+  ].map(JSON.stringify).join('\n');
+
+  assert.throws(
+    () => auto.parseExternalResearchStream(staleAssistantEvents, {}),
+    /External research blocked: WebSearch became unavailable/,
+  );
+
+  const terminalNoOp = 'RESEARCH_NOT_NEEDED: only local Netcatty behavior is involved';
+  const statusLikeBodyFragment = [
+    {
+      type: 'assistant',
+      message: {
+        content: [{ type: 'text', text: 'Research notes continued in another event.' }],
+      },
+    },
+    {
+      type: 'assistant',
+      message: {
+        content: [{ type: 'text', text: 'RESEARCH_BLOCKED: quoted source wording, not the result' }],
+      },
+    },
+    {
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      result: terminalNoOp,
+    },
+  ].map(JSON.stringify).join('\n');
+
+  assert.equal(auto.parseExternalResearchStream(statusLikeBodyFragment, {}), terminalNoOp);
 });
 
 test('parseExternalResearchStream rejects forged and unrelated web evidence', () => {

@@ -159,7 +159,7 @@ function parseExternalResearchEnvelope(value) {
   const match = firstLine.match(
     /^(RESEARCH_COMPLETE|RESEARCH_NOT_NEEDED|RESEARCH_BLOCKED):\s+(.+)$/,
   );
-  return match ? { text: normalized, match } : null;
+  return match ? { text: normalized, match, fenced: Boolean(fenced) } : null;
 }
 
 function normalizeExternalResearchText(value, { input, webToolUsed = false } = {}) {
@@ -274,19 +274,24 @@ function parseExternalResearchStream(value, input) {
     }
   }
 
-  // Cursor can split the final envelope across assistant events. Try the
-  // shortest suffix ending at the final event first, so an earlier status can
-  // never override a later revision. Use the terminal/complete streams only
-  // as fallbacks. Never search arbitrary prose for a status marker.
+  // Cursor can split a fenced final envelope across assistant events. A valid
+  // terminal result remains authoritative; otherwise prefer the shortest
+  // complete fenced suffix, then an isolated final event, and retain the full
+  // stream only as the last delta fallback. Never search arbitrary prose for
+  // a status marker.
   const assistantSuffixes = [];
   let assistantSuffix = '';
   for (let index = assistantMessages.length - 1; index >= 0; index -= 1) {
     assistantSuffix = assistantMessages[index] + assistantSuffix;
     assistantSuffixes.push(assistantSuffix);
   }
+  const fencedAssistantSuffixes = assistantSuffixes.filter(
+    (candidate) => parseExternalResearchEnvelope(candidate)?.fenced,
+  );
   const candidates = [
-    ...assistantSuffixes,
     terminalResult,
+    ...fencedAssistantSuffixes,
+    assistantMessages[assistantMessages.length - 1],
     assistantText,
   ].filter(Boolean);
   const selected = candidates.find((candidate) => parseExternalResearchEnvelope(candidate));
