@@ -237,6 +237,7 @@ export function Combobox({
                     className={cn(
                         "flex h-10 w-full items-center rounded-md border border-input bg-background text-sm min-w-0 overflow-hidden",
                         "hover:bg-secondary/50 transition-colors",
+                        "focus-within:outline-none focus-within:ring-1 focus-within:ring-ring",
                         "disabled:cursor-not-allowed disabled:opacity-50",
                         triggerClassName
                     )}

@@ -85,3 +85,7 @@ test("combobox exposes active-option semantics for keyboard navigation", () => {
   assert.match(source, /<ComboboxOptionsList>\s*\{/);
   assert.match(source, /role="option"/);
 });
+
+test("combobox trigger shows a focus-within ring for keyboard users", () => {
+  assert.match(source, /focus-within:outline-none focus-within:ring-1 focus-within:ring-ring/);
+});
