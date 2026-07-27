@@ -1222,13 +1222,10 @@ export const useSftpTransfers = ({
     setTransfers((prev) => prev.filter((t) => t.id !== transferId && t.parentTaskId !== transferId));
   }, [cleanupTaskArtifacts, setTransfers]);
 
-  const dismissTransfers = useCallback((transferIds: readonly string[]) => {
-    if (transferIds.length === 0) return;
-    const removing = new Set(transferIds);
-    const artifactTasks = transfersRef.current.filter((task) => (
-      task.status !== "completed"
-      && (removing.has(task.id) || removing.has(task.parentTaskId ?? ""))
-    ));
+  const dismissTransfers = useCallback((prunedTasks: readonly TransferTask[]) => {
+    if (prunedTasks.length === 0) return;
+    const removing = new Set(prunedTasks.map((task) => task.id));
+    const artifactTasks = prunedTasks.filter((task) => task.status !== "completed");
     // This callback is used only for automatic history eviction. Completed
     // streams already cleaned their staging files; sending one cleanup IPC per
     // pruned child recreates a main-process event storm at folder completion.

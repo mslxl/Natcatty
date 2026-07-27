@@ -418,8 +418,9 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
       },
       retry: async (taskId) => { await restartBackgroundTransfer(taskId, true); },
       prioritize: async (taskId) => { await bridge?.prioritizeTransfer?.(taskId); },
-      dismiss: (taskId) => {
-        const task = sftpTransferCenterStore.getSnapshot().tasks.find((candidate) => candidate.id === taskId);
+      dismiss: (taskId, prunedTask) => {
+        const task = prunedTask
+          ?? sftpTransferCenterStore.getSnapshot().tasks.find((candidate) => candidate.id === taskId);
         if (!task) return;
         void bridge?.cleanupTransferArtifacts?.({
           transferId: task.id,

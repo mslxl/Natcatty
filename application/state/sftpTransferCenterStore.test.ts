@@ -1385,6 +1385,33 @@ test("clearing terminal history asks each owner to clean transfer artifacts", ()
   assert.deepEqual(store.getSnapshot().tasks.map((task) => task.id), ["failed"]);
 });
 
+test("history pruning passes removed task data to background cleanup after snapshot eviction", () => {
+  let removedTask: TransferTask | undefined;
+  const store = createSftpTransferCenterStore();
+  store.registerOwner("background-agent", {
+    pause: async () => {},
+    resume: async () => {},
+    cancel: async () => {},
+    retry: async () => {},
+    prioritize: async () => {},
+    dismiss: (_taskId: string, task?: TransferTask) => {
+      removedTask = task;
+    },
+  });
+  const now = Date.now();
+  store.publishOwner("background-agent", Array.from({ length: 201 }, (_, index) => ({
+    ...makeTask(`background-history-${index}`, "failed"),
+    startTime: now - index,
+    endTime: now - index,
+    stagedTargetPath: `/target/.background-history-${index}.part`,
+  })));
+
+  assert.equal(store.getSnapshot().tasks.length, 200);
+  assert.equal(removedTask?.id, "background-history-200");
+  assert.equal(removedTask?.stagedTargetPath, "/target/.background-history-200.part");
+  assert.equal(store.getSnapshot().tasks.some((task) => task.id === removedTask?.id), false);
+});
+
 test("failed reauthentication leaves a paused transfer requiring attention with the failure reason", async (t) => {
   const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
   t.after(() => {
@@ -2731,9 +2758,9 @@ test("completed directory history is pruned with one owner update and no reentra
       ownerTasks = ownerTasks.filter((task) => task.id !== id && task.parentTaskId !== id);
       republish();
     },
-    dismissMany(ids: readonly string[]) {
+    dismissMany(prunedTasks: readonly TransferTask[]) {
       batchDismisses += 1;
-      const removing = new Set(ids);
+      const removing = new Set(prunedTasks.map((task) => task.id));
       ownerTasks = ownerTasks.filter((task) => !removing.has(task.id) && !removing.has(task.parentTaskId ?? ""));
       republish();
     },

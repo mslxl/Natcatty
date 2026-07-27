@@ -44,9 +44,9 @@ export interface SftpTransferOwnerControls {
   cancel: (taskId: string) => void | Promise<void>;
   retry: (taskId: string) => void | Promise<void>;
   prioritize: (taskId: string) => void | Promise<void>;
-  dismiss: (taskId: string) => void;
+  dismiss: (taskId: string, task?: TransferTask) => void;
   /** Remove a pruned group in one owner update to avoid publish/dismiss feedback loops. */
-  dismissMany?: (taskIds: readonly string[]) => void;
+  dismissMany?: (tasks: readonly TransferTask[]) => void;
   /**
    * True when the panel still lists this task locally.
    * Used only for adopt/retry UX after hard reconnect — never for soft
@@ -407,20 +407,20 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
   };
   const notifyOwnersOfPrunedTasks = (removed: readonly TransferTask[]) => {
     if (removed.length === 0) return;
-    const byOwner = new Map<string, string[]>();
+    const byOwner = new Map<string, TransferTask[]>();
     for (const task of removed) {
       if (!task.ownerId) continue;
-      const ids = byOwner.get(task.ownerId) ?? [];
-      ids.push(task.id);
-      byOwner.set(task.ownerId, ids);
+      const ownerTasks = byOwner.get(task.ownerId) ?? [];
+      ownerTasks.push(task);
+      byOwner.set(task.ownerId, ownerTasks);
     }
-    for (const [ownerId, ids] of byOwner) {
+    for (const [ownerId, ownerTasks] of byOwner) {
       const controller = controllers.get(ownerId);
       if (!controller) continue;
       if (controller.dismissMany) {
-        controller.dismissMany(ids);
+        controller.dismissMany(ownerTasks);
       } else {
-        for (const id of ids) controller.dismiss(id);
+        for (const task of ownerTasks) controller.dismiss(task.id, task);
       }
     }
   };
@@ -1574,10 +1574,11 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
       await controller?.resolveConflict?.(taskId, action, applyToAll);
     },
     dismiss(taskId) {
-      const ownerId = findOwner(taskId);
+      const task = tasks.find((candidate) => candidate.id === taskId);
+      const ownerId = task?.ownerId;
       const controller = ownerId ? controllers.get(ownerId) : undefined;
       if (controller) {
-        controller.dismiss(taskId);
+        controller.dismiss(taskId, task);
       }
       tasks = tasks.filter((task) => task.id !== taskId && task.parentTaskId !== taskId);
       emit();
