@@ -25,6 +25,7 @@ import {
   STORAGE_KEY_SFTP_DOUBLE_CLICK_BEHAVIOR,
   STORAGE_KEY_SFTP_SHOW_HIDDEN_FILES,
   STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY,
+  STORAGE_KEY_SFTP_TRANSFER_POOL_IDLE_TTL_MS,
   STORAGE_KEY_SFTP_USE_COMPRESSED_UPLOAD,
   STORAGE_KEY_SHOW_ONLY_UNGROUPED_HOSTS_IN_ROOT,
   STORAGE_KEY_SHOW_RECENT_HOSTS,
@@ -149,6 +150,7 @@ interface UseSettingsStorageSyncParams {
   setAutoUpdateEnabled: Dispatch<SetStateAction<boolean>>;
   setWorkspaceFocusStyleState: Dispatch<SetStateAction<'dim' | 'border'>>;
   setSftpTransferConcurrencyState: Dispatch<SetStateAction<number>>;
+  setSftpTransferPoolIdleTtlMsState: Dispatch<SetStateAction<number>>;
   applyIncomingCustomKeyBindings: (incoming: { bindings: CustomKeyBindings; version: number; origin: string }) => void;
   mergeIncomingTerminalSettings: (incoming: Partial<TerminalSettings>) => void;
 }
@@ -172,7 +174,8 @@ export function useSettingsStorageSync({
   setShowRecentHostsState, setHostClickBehaviorState, setShowOnlyUngroupedHostsInRootState, setShowSftpTabState, setShowHostTreeSidebarState, setTerminalSidePanelAutoOpenState, setTerminalSidePanelAutoOpenTabState, setShellOnlyTabNumberShortcutsState, setDisableTerminalFontZoomState, setRestorePreviousSessionState, setRestoreTerminalCwdState,
   setEditorWordWrapState, setSessionLogsEnabled, setSessionLogsDir, setSessionLogsFormat, setSessionLogsTimestampsEnabled, setSshDebugLogsEnabled, setSshDeepLinkEnabledState, setJmsDeepLinkEnabledState,
   setGlobalHotkeyEnabled, setWindowOpacity, setAppIconVariant, setAutoUpdateEnabled, setWorkspaceFocusStyleState,
-  setSftpTransferConcurrencyState, applyIncomingCustomKeyBindings, mergeIncomingTerminalSettings,
+  setSftpTransferConcurrencyState, setSftpTransferPoolIdleTtlMsState,
+  applyIncomingCustomKeyBindings, mergeIncomingTerminalSettings,
 }: UseSettingsStorageSyncParams) {
   // Fix 4: Keep a ref snapshot of current settings so the storage event handler
   // can compare without capturing 25+ state variables in its closure / dep array.
@@ -480,6 +483,12 @@ export function useSettingsStorageSync({
           setSftpTransferConcurrencyState(num);
         }
       }
+      if (e.key === STORAGE_KEY_SFTP_TRANSFER_POOL_IDLE_TTL_MS && e.newValue !== null) {
+        const num = Number(e.newValue);
+        if (num === 0 || num === 60_000 || num === 300_000 || num === 900_000 || num === 1_800_000) {
+          setSftpTransferPoolIdleTtlMsState((prev) => (prev === num ? prev : num));
+        }
+      }
     };
 
     window.addEventListener('storage', handleStorageChange);
@@ -515,6 +524,7 @@ export function useSettingsStorageSync({
     setSftpDoubleClickBehavior,
     setSftpShowHiddenFiles,
     setSftpTransferConcurrencyState,
+    setSftpTransferPoolIdleTtlMsState,
     setSftpUseCompressedUpload,
     setShowOnlyUngroupedHostsInRootState,
     setShowHostTreeSidebarState,

@@ -82,6 +82,281 @@ test("getMissingChainHostIds reports unresolved jump hosts", () => {
   );
 });
 
+test("startPluginConnection preserves the namespaced provider configuration and attaches the host session", async () => {
+  let captured: NetcattyPluginConnectionStartRequest | null = null;
+  const attached: string[] = [];
+  const statuses: string[] = [];
+  let progressLogs: string[] = [];
+  const terminalBackend = {
+    pluginConnectionAvailable: () => true,
+    startPluginConnection: async (options: NetcattyPluginConnectionStartRequest) => {
+      captured = options;
+      return {
+        sessionId: options.sessionId,
+        providerId: options.providerId,
+        status: "connected" as const,
+        diagnostics: [{ severity: "warning" as const, message: "Provider warning" }],
+      };
+    },
+    onSessionData: () => noop,
+    onSessionExit: () => noop,
+    onChainProgress: () => noop,
+    writeToSession: noop,
+    resizeSession: noop,
+  };
+  const ctx = createStarterContext({
+    host: {
+      id: "host-plugin",
+      label: "Custom protocol",
+      hostname: "opaque.example",
+      username: "",
+      protocol: "plugin:com.example.transport.connection",
+      pluginConnection: {
+        providerId: "com.example.transport.connection",
+        configuration: { endpoint: "opaque.example", secure: true },
+        authenticationProviderId: "com.example.transport.auth",
+        credentialId: "credential-reference-1234",
+      },
+    },
+    terminalBackend,
+    sessionLog: {
+      enabled: true,
+      directory: "/logs",
+      format: "html",
+      timestampsEnabled: true,
+    },
+    onSessionAttached: (id: string) => attached.push(id),
+    updateStatus: (status: string) => statuses.push(status),
+    setProgressLogs: (update: string[] | ((previous: string[]) => string[])) => {
+      progressLogs = typeof update === "function" ? update(progressLogs) : update;
+    },
+  });
+
+  await createTerminalSessionStarters(ctx as never).startPluginConnection(createTermStub() as never);
+
+  assert.ok(captured?.requestId?.startsWith("plugin-connection-"));
+  assert.equal(captured?.signal instanceof AbortSignal, true);
+  const { requestId: _requestId, signal: _signal, ...capturedRequest } = captured as NetcattyPluginConnectionStartRequest & {
+    signal?: AbortSignal;
+  };
+  assert.deepEqual(capturedRequest, {
+    sessionId: "session-1",
+    protocol: "plugin:com.example.transport.connection",
+    hostLabel: "Custom protocol",
+    hostname: "opaque.example",
+    providerId: "com.example.transport.connection",
+    configuration: { endpoint: "opaque.example", secure: true },
+    columns: 120,
+    rows: 32,
+    sessionLog: {
+      enabled: true,
+      directory: "/logs",
+      format: "html",
+      timestampsEnabled: true,
+    },
+    authenticationProviderId: "com.example.transport.auth",
+    credential: { kind: "credential", id: "credential-reference-1234" },
+  });
+  assert.deepEqual(attached, ["session-1"]);
+  assert.deepEqual(statuses, ["connected"]);
+  assert.deepEqual(progressLogs, ["[Plugin warning] Provider warning"]);
+});
+
+test("startPluginConnection cancels a pending Provider request when the terminal unmounts before cleanup runs", async () => {
+  let captured: (NetcattyPluginConnectionStartRequest & { signal?: AbortSignal }) | null = null;
+  let resolveStartEntered: (() => void) | null = null;
+  const startEntered = new Promise<void>((resolve) => { resolveStartEntered = resolve; });
+  const cancelledRequests: string[] = [];
+  const attached: string[] = [];
+  const terminalWrites: string[] = [];
+  const isBootActiveRef = { current: true };
+  const terminalBackend = {
+    pluginConnectionAvailable: () => true,
+    startPluginConnection: async (options: NetcattyPluginConnectionStartRequest & { signal?: AbortSignal }) => {
+      captured = options;
+      resolveStartEntered?.();
+      await new Promise((_resolve, reject) => {
+        options.signal?.addEventListener("abort", () => {
+          reject(options.signal?.reason ?? new DOMException("Aborted", "AbortError"));
+        }, { once: true });
+      });
+      throw new Error("pending start should have been aborted");
+    },
+    cancelPluginExtensionRequest: async (requestId: string) => {
+      cancelledRequests.push(requestId);
+      return true;
+    },
+    onSessionData: () => noop,
+    onSessionExit: () => noop,
+    onChainProgress: () => noop,
+    writeToSession: noop,
+    resizeSession: noop,
+  };
+  const ctx = createStarterContext({
+    host: {
+      id: "host-plugin",
+      label: "Custom protocol",
+      hostname: "opaque.example",
+      username: "",
+      protocol: "plugin:com.example.transport.connection",
+      pluginConnection: {
+        providerId: "com.example.transport.connection",
+        configuration: { endpoint: "opaque.example" },
+        authenticationProviderId: "com.example.transport.auth",
+      },
+    },
+    terminalBackend,
+    isBootActiveRef,
+    onSessionAttached: (id: string) => attached.push(id),
+  });
+  const term = createTermStub({
+    write: (data: string, callback?: () => void) => {
+      terminalWrites.push(data);
+      callback?.();
+    },
+  });
+
+  const start = createTerminalSessionStarters(ctx as never).startPluginConnection(term as never);
+  await startEntered;
+  const capturedRequest = captured;
+  assert.ok(capturedRequest);
+  assert.ok(capturedRequest.requestId);
+  assert.equal(typeof ctx.disposeExitRef.current, "function");
+
+  isBootActiveRef.current = false;
+  await start;
+
+  assert.equal(capturedRequest.signal?.aborted, true);
+  assert.deepEqual(cancelledRequests, [capturedRequest.requestId]);
+  assert.deepEqual(attached, []);
+  assert.deepEqual(terminalWrites, []);
+});
+
+test("startPluginConnection waits for explicit Provider connected readiness before startup commands", async () => {
+  let onData: ((data: string, meta?: { pluginPipelineIngressBytes?: number; pluginConnectionReady?: boolean }) => void) | null = null;
+  const writes: Array<{ id: string; data: string; options?: Record<string, unknown> }> = [];
+  const statuses: string[] = [];
+  const hasConnectedRef = { current: false };
+  const terminalBackend = {
+    pluginConnectionAvailable: () => true,
+    startPluginConnection: async (options: NetcattyPluginConnectionStartRequest) => ({
+      sessionId: options.sessionId,
+      providerId: options.providerId,
+      status: "connecting" as const,
+      diagnostics: [],
+    }),
+    onSessionData: (
+      _id: string,
+      cb: (data: string, meta?: { pluginPipelineIngressBytes?: number; pluginConnectionReady?: boolean }) => void,
+    ) => { onData = cb; return noop; },
+    onSessionExit: () => noop,
+    onChainProgress: () => noop,
+    writeToSession: (id: string, data: string, options?: Record<string, unknown>) => {
+      writes.push({ id, data, options });
+    },
+    resizeSession: noop,
+  };
+  const ctx = createStarterContext({
+    host: {
+      id: "host-plugin",
+      label: "Custom protocol",
+      hostname: "opaque.example",
+      username: "",
+      protocol: "plugin:com.example.transport.connection",
+      pluginConnection: {
+        providerId: "com.example.transport.connection",
+        configuration: { endpoint: "opaque.example" },
+      },
+      startupCommand: "echo ready",
+    },
+    terminalBackend,
+    terminalSettings: { startupCommandDelayMs: 0 },
+    noAutoRun: true,
+    hasConnectedRef,
+    updateStatus: (status: string) => {
+      statuses.push(status);
+      if (status === "connected") hasConnectedRef.current = true;
+    },
+  });
+
+  await createTerminalSessionStarters(ctx as never).startPluginConnection(createTermStub() as never);
+  assert.equal(ctx.hasRunStartupCommandRef.current, false);
+  onData?.("Provider banner before authentication completes\r\n", { pluginPipelineIngressBytes: 48 });
+  assert.deepEqual(statuses, []);
+  assert.equal(ctx.hasConnectedRef.current, false);
+  assert.equal(ctx.hasRunStartupCommandRef.current, false);
+  onData?.("", { pluginPipelineIngressBytes: 0, pluginConnectionReady: true });
+  assert.deepEqual(statuses, ["connected"]);
+  assert.equal(ctx.hasConnectedRef.current, true);
+  assert.equal(ctx.hasRunStartupCommandRef.current, true);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(writes, [
+    { id: "session-1", data: "echo ready", options: { automated: true } },
+  ]);
+});
+
+test("startPluginConnection displays status diagnostics when a Provider exits without an error message", async () => {
+  let onExit: ((evt: {
+    reason?: "error";
+    diagnostics?: Array<{ severity: "error" | "warning"; message: string }>;
+  }) => void) | null = null;
+  const terminalWrites: string[] = [];
+  const terminalBackend = {
+    pluginConnectionAvailable: () => true,
+    startPluginConnection: async (options: NetcattyPluginConnectionStartRequest) => ({
+      sessionId: options.sessionId,
+      providerId: options.providerId,
+      status: "connected" as const,
+      diagnostics: [],
+    }),
+    onSessionData: () => noop,
+    onSessionExit: (
+      _id: string,
+      cb: (evt: {
+        reason?: "error";
+        diagnostics?: Array<{ severity: "error" | "warning"; message: string }>;
+      }) => void,
+    ) => { onExit = cb; return noop; },
+    onChainProgress: () => noop,
+    writeToSession: noop,
+    resizeSession: noop,
+  };
+  const ctx = createStarterContext({
+    host: {
+      id: "host-plugin",
+      label: "Custom protocol",
+      hostname: "opaque.example",
+      username: "",
+      protocol: "plugin:com.example.transport.connection",
+      pluginConnection: {
+        providerId: "com.example.transport.connection",
+        configuration: { endpoint: "opaque.example" },
+      },
+    },
+    terminalBackend,
+  });
+  const term = createTermStub({
+    write: (data: string, callback?: () => void) => {
+      terminalWrites.push(data);
+      callback?.();
+    },
+  });
+
+  await createTerminalSessionStarters(ctx as never).startPluginConnection(term as never);
+  assert.ok(onExit);
+  onExit?.({
+    reason: "error",
+    diagnostics: [
+      { severity: "error", message: "Host key mismatch" },
+      { severity: "warning", message: "Retry with a different credential" },
+    ],
+  });
+
+  assert.deepEqual(terminalWrites, [
+    "\r\n[Plugin connection closed]\r\n[Plugin error] Host key mismatch\r\n[Plugin warning] Retry with a different credential\r\n",
+  ]);
+});
+
 test("startSSH forwards imported system agent authentication settings", async () => {
   let capturedOptions: Record<string, unknown> | null = null;
   const terminalBackend = {
@@ -1965,6 +2240,49 @@ test("local session captures paste cleanup writes in terminal log data", async (
 
   assert.deepEqual(writes, ["line 3 with enough content", "\x1b[K"]);
   assert.deepEqual(capturedLogData, ["line 3 with enough content", "\x1b[K"]);
+});
+
+test("local session acknowledges metadata-only plugin output immediately", async () => {
+  let onData: ((data: string, meta?: { pluginPipelineIngressBytes?: number }) => void) | null = null;
+  const acknowledgements: Array<{ sessionId: string; bytes: number }> = [];
+  const paused: Array<{ sessionId: string; paused: boolean }> = [];
+  const terminalBackend = {
+    localAvailable: () => true,
+    startLocalSession: async () => "local-session",
+    onSessionData: (
+      _id: string,
+      cb: (data: string, meta?: { pluginPipelineIngressBytes?: number }) => void,
+    ) => {
+      onData = cb;
+      return noop;
+    },
+    onSessionExit: () => noop,
+    onChainProgress: () => noop,
+    writeToSession: noop,
+    resizeSession: noop,
+    ackSessionFlow: (sessionId: string, bytes: number) => {
+      acknowledgements.push({ sessionId, bytes });
+    },
+    setSessionFlowPaused: (sessionId: string, isPaused: boolean) => {
+      paused.push({ sessionId, paused: isPaused });
+    },
+  };
+  const ctx = createStarterContext({
+    host: {
+      id: "local-host",
+      label: "Local",
+      hostname: "local",
+      username: "",
+      protocol: "local",
+    },
+    terminalBackend,
+  });
+
+  await createTerminalSessionStarters(ctx as never).startLocal(createTermStub() as never);
+  onData?.("", { pluginPipelineIngressBytes: 12 });
+
+  assert.deepEqual(acknowledgements, [{ sessionId: "local-session", bytes: 12 }]);
+  assert.deepEqual(paused.at(-1), { sessionId: "local-session", paused: false });
 });
 
 test("local session runs startup command after attaching", async () => {

@@ -4,6 +4,12 @@ export interface UploadProgress {
   speed: number;
   /** Percentage (0-100) */
   percent: number;
+  phase?: import('../domain/models/sftp').TransferPhase;
+  /** Contiguous durable offset from the transfer bridge (may lag transferred). */
+  checkpointBytes?: number;
+  sourceFingerprint?: string;
+  resumable?: boolean;
+  pauseUnavailableReason?: string;
 }
 
 export interface UploadTaskInfo {
@@ -19,6 +25,9 @@ export interface UploadTaskInfo {
   speed: number;
   fileCount: number;
   completedCount: number;
+  sourcePath?: string;
+  /** Background job API used to control this task after its page closes. */
+  controlKind?: 'stream' | 'compressed-upload';
 }
 
 export interface UploadResult {
@@ -61,7 +70,10 @@ export interface UploadBridge {
     path: string,
     data: ArrayBuffer,
     taskId: string,
-    onProgress: (transferred: number, total: number, speed: number) => void,
+    onProgress: (transferred: number, total: number, speed: number, capability?: {
+      resumable?: boolean;
+      pauseUnavailableReason?: string;
+    }) => void,
     onComplete?: () => void,
     onError?: (error: string) => void
   ) => Promise<{ success: boolean; cancelled?: boolean } | undefined>;
@@ -76,9 +88,15 @@ export interface UploadBridge {
       targetType: 'local' | 'sftp';
       sourceSftpId?: string;
       targetSftpId?: string;
+      sourceHostId?: string;
+      targetHostId?: string;
       totalBytes?: number;
     },
-    onProgress?: (transferred: number, total: number, speed: number) => void,
+    onProgress?: (transferred: number, total: number, speed: number, capability?: {
+      phase?: import('../domain/models/sftp').TransferPhase;
+      resumable?: boolean;
+      pauseUnavailableReason?: string;
+    }) => void,
     onComplete?: () => void,
     onError?: (error: string) => void
   ) => Promise<{ transferId: string; totalBytes?: number; error?: string; cancelled?: boolean }>;
@@ -90,6 +108,8 @@ export interface UploadConfig {
   targetPath: string;
   /** SFTP session ID (null for local) */
   sftpId: string | null;
+  /** Stable target host ID, used to apply the concurrency limit per server. */
+  targetHostId?: string;
   /** Is this a local file system upload? */
   isLocal: boolean;
   /** The bridge for file operations */

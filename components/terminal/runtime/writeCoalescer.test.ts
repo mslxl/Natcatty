@@ -10,11 +10,12 @@ import {
 type FrameCallback = (time: number) => void;
 
 let frameCallbacks: Map<number, FrameCallback>;
+let timeoutCallbacks: Map<number, () => void>;
 let nextFrameId: number;
 
 const createTestCoalescer = (
   write: (data: string) => void,
-  options: Omit<WriteCoalescerOptions, "scheduleFrame"> = {},
+  options: Omit<WriteCoalescerOptions, "scheduleFrame" | "scheduleTimeout"> = {},
 ) =>
   createWriteCoalescer(write, {
     ...options,
@@ -24,6 +25,14 @@ const createTestCoalescer = (
       frameCallbacks.set(id, callback);
       return () => {
         frameCallbacks.delete(id);
+      };
+    },
+    scheduleTimeout(callback) {
+      const id = nextFrameId;
+      nextFrameId += 1;
+      timeoutCallbacks.set(id, callback);
+      return () => {
+        timeoutCallbacks.delete(id);
       };
     },
   });
@@ -36,8 +45,17 @@ const fireFrame = (): void => {
   }
 };
 
+const fireTimeout = (): void => {
+  const callbacks = [...timeoutCallbacks.values()];
+  timeoutCallbacks.clear();
+  for (const callback of callbacks) {
+    callback();
+  }
+};
+
 beforeEach(() => {
   frameCallbacks = new Map();
+  timeoutCallbacks = new Map();
   nextFrameId = 1;
 });
 
@@ -192,7 +210,7 @@ test("uses a tighter pending-byte cap when getMaxPendingBytes is set", () => {
   assert.equal(writes[0]?.length, cap + 1);
 });
 
-test("does not flush cap-sized pending bytes while automatic flushing is gated", () => {
+test("byte-cap flushes even while scheduled frames are gated", () => {
   const writes: string[] = [];
   let canFlush = false;
   const cap = 8;
@@ -201,19 +219,17 @@ test("does not flush cap-sized pending bytes while automatic flushing is gated",
     shouldFlushScheduledFrame: () => canFlush,
   });
 
+  // Under the cap: gated frame holds.
   coalescer.push("x".repeat(cap));
-  coalescer.push("y");
   fireFrame();
-
   assert.deepEqual(writes, []);
 
-  canFlush = true;
-  coalescer.flushSync();
-
+  // Past the cap: drain immediately so hidden log floods stay bounded.
+  coalescer.push("y");
   assert.deepEqual(writes, ["x".repeat(cap) + "y"]);
 });
 
-test("still resolves schedule mode for gated oversize pushes (alt-screen probe)", () => {
+test("still resolves schedule mode before gated under-cap frames and cap drains", () => {
   const writes: string[] = [];
   let canFlush = false;
   const probed: string[] = [];
@@ -227,18 +243,14 @@ test("still resolves schedule mode for gated oversize pushes (alt-screen probe)"
     },
   });
 
-  // First chunk arms microtask schedule under the cap; second exceeds cap while
-  // gated — resolveScheduleMode must still run so enter-alt latches fire.
+  // First chunk arms a gated under-cap frame; second exceeds cap and drains.
+  // resolveScheduleMode must still run so enter-alt latches fire.
   coalescer.push("shell");
   coalescer.push(`\x1b[?1049h${"x".repeat(cap)}`);
-  fireFrame();
 
-  assert.deepEqual(writes, []);
   assert.deepEqual(probed, ["shell", `\x1b[?1049h${"x".repeat(cap)}`]);
-
-  canFlush = true;
-  coalescer.flushSync();
   assert.equal(writes.join("").includes("\x1b[?1049h"), true);
+  assert.equal(writes.join("").startsWith("shell"), true);
 });
 
 test("dispose flushes remaining bytes and stops accepting new chunks", () => {
@@ -252,4 +264,70 @@ test("dispose flushes remaining bytes and stops accepting new chunks", () => {
   coalescer.push("ignored");
   fireFrame();
   assert.deepEqual(writes, ["tail"]);
+});
+
+test("raf output drains when the animation frame callback never arrives", () => {
+  const writes: string[] = [];
+  const coalescer = createWriteCoalescer((data) => writes.push(data), {
+    scheduleFrame() {
+      // Chromium can suppress an already-requested frame while a window is
+      // occluded. Keep the callback pending forever to reproduce that edge.
+      return () => {};
+    },
+    scheduleTimeout(callback) {
+      timeoutCallbacks.set(1, callback);
+      return () => timeoutCallbacks.delete(1);
+    },
+  });
+
+  coalescer.push("stranded");
+  assert.deepEqual(writes, []);
+
+  fireTimeout();
+  assert.deepEqual(writes, ["stranded"]);
+  coalescer.dispose();
+});
+
+test("a gated frame keeps retrying until the terminal becomes visible", () => {
+  const writes: string[] = [];
+  let canFlush = false;
+  const coalescer = createTestCoalescer((data) => writes.push(data), {
+    shouldFlushScheduledFrame: () => canFlush,
+  });
+
+  coalescer.push("held");
+  fireFrame();
+  assert.deepEqual(writes, []);
+  assert.equal(coalescer.pendingBytes(), 4);
+
+  canFlush = true;
+  fireTimeout();
+  assert.deepEqual(writes, ["held"]);
+  assert.equal(coalescer.pendingBytes(), 0);
+  coalescer.dispose();
+});
+
+test("continuous sub-deadline chunks cannot postpone the wall-clock drain", () => {
+  const writes: string[] = [];
+  const coalescer = createWriteCoalescer((data) => writes.push(data), {
+    scheduleFrame() {
+      return () => {};
+    },
+    scheduleTimeout(callback) {
+      timeoutCallbacks.set(1, callback);
+      return () => timeoutCallbacks.delete(1);
+    },
+  });
+
+  try {
+    coalescer.push("a");
+    for (let index = 0; index < 8; index += 1) {
+      coalescer.push("x");
+    }
+    assert.equal(timeoutCallbacks.size, 1);
+    fireTimeout();
+    assert.ok(writes.length > 0, "continuous ingress must drain before it becomes idle");
+  } finally {
+    coalescer.dispose();
+  }
 });

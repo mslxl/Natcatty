@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const vaultViewLayoutSource = readFileSync(new URL("./vault/VaultViewLayout.tsx", import.meta.url), "utf8");
+const pluginImporterCommitHookSource = readFileSync(new URL("../application/state/usePluginImporterCommit.ts", import.meta.url), "utf8");
 
 test("vault stage aligns its content to the top tab bar", () => {
   assert.match(vaultViewLayoutSource, /className="flex min-w-0 flex-1 py-0 pr-2 pb-2 pl-0"/);
@@ -34,4 +35,12 @@ test("keychain deletion clears the remembered passphrase through the vault handl
   assert.match(vaultViewLayoutSource, /const handleDeleteVaultKey = React\.useCallback/);
   assert.match(vaultViewLayoutSource, /void deleteVaultKey\(\{/);
   assert.match(vaultViewLayoutSource, /onDelete=\{handleDeleteVaultKey\}/);
+});
+
+test("plugin importer merge and commit workflow is owned by application state", () => {
+  assert.match(vaultViewLayoutSource, /usePluginImporterCommit\(\{/);
+  assert.doesNotMatch(vaultViewLayoutSource, /normalizePluginImporterRecords|mergePluginImporterDrafts|buildPluginImporterSafePreview/);
+  assert.match(pluginImporterCommitHookSource, /normalizePluginImporterRecords/);
+  assert.match(pluginImporterCommitHookSource, /mergePluginImporterDrafts/);
+  assert.match(pluginImporterCommitHookSource, /buildPluginImporterSafePreview/);
 });

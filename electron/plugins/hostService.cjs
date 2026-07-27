@@ -6,6 +6,7 @@ const { PLUGIN_API_VERSION } = require("./constants.cjs");
 const { PluginDatabase } = require("./database.cjs");
 const { PluginCompanionSupervisor } = require("./companionSupervisor.cjs");
 const { PluginCredentialBroker, assertLeaseParams } = require("./credentialBroker.cjs");
+const { PluginCredentialCatalog } = require("./credentialCatalog.cjs");
 const { PluginContributionService } = require("./contributionService.cjs");
 const { PluginContributionIconService } = require("./contributionIconService.cjs");
 const { PluginFilesystemBroker } = require("./filesystemBroker.cjs");
@@ -32,6 +33,8 @@ const { registerSecurePluginCapabilities } = require("./secureCapabilities.cjs")
 const { PluginSecretStore } = require("./secretStore.cjs");
 const { SecretLeaseStore } = require("./secretLease.cjs");
 const { PluginTerminalProviderService } = require("./terminalProviderService.cjs");
+const { PluginTerminalDataPipelineService } = require("./terminalDataPipelineService.cjs");
+const { PluginExtensionProviderService } = require("./extensionProviderService.cjs");
 
 function getElectronProcessMetrics(app, pid) {
   const metric = app.getAppMetrics?.().find((candidate) => candidate.pid === pid);
@@ -82,10 +85,13 @@ function createPluginHostService(options) {
       safeStorage: options.safeStorage ?? options.electron.safeStorage,
     });
     const leaseStore = new SecretLeaseStore({ secretStore });
+    const credentialResolver = options.credentialResolver ?? new PluginCredentialCatalog({
+      safeStorage: options.safeStorage ?? options.electron.safeStorage,
+    });
     const credentialBroker = new PluginCredentialBroker({
       secretStore,
       leaseStore,
-      credentialResolver: options.credentialResolver,
+      credentialResolver,
     });
     const filesystemBroker = new PluginFilesystemBroker({
       quotaManager,
@@ -200,6 +206,23 @@ function createPluginHostService(options) {
       permissionEngine,
       runtimeSupervisor,
     });
+    const extensionProviderService = new PluginExtensionProviderService({
+      contributionService,
+      leaseStore,
+      permissionEngine,
+      rpcRegistry,
+      runtimeSupervisor,
+    });
+    const terminalDataPipelineService = options.electron.MessageChannelMain
+      ? new PluginTerminalDataPipelineService({
+          contributionService,
+          permissionEngine,
+          runtimeSupervisor,
+          MessageChannelMain: options.electron.MessageChannelMain,
+          requestSelection: options.requestTerminalInterceptorSelection,
+          showWarning: options.showTerminalInterceptorWarning,
+        })
+      : null;
     quotaManager.setViolationHandler((identity, error) => (
       runtimeSupervisor.enforcePolicyViolation(identity, error)
     ));
@@ -218,6 +241,9 @@ function createPluginHostService(options) {
       runtimeSupervisor,
       contributionService,
       beforeClose: async () => {
+        terminalDataPipelineService?.shutdown();
+        extensionProviderService.shutdown();
+        credentialResolver.shutdown?.();
         await viewHost?.shutdown();
         await companionSupervisor.shutdown();
         leaseStore.shutdown();
@@ -230,8 +256,10 @@ function createPluginHostService(options) {
       contributionIconService,
       contributionService,
       credentialBroker,
+      credentialResolver,
       database,
       filesystemBroker,
+      extensionProviderService,
       leaseStore,
       manager,
       moduleResources,
@@ -245,6 +273,7 @@ function createPluginHostService(options) {
       runtimeSupervisor,
       secretStore,
       terminalProviderService,
+      terminalDataPipelineService,
       viewHost,
     };
   } catch (error) {

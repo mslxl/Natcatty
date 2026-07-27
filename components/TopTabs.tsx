@@ -23,6 +23,7 @@ import { Button } from './ui/button';
 import { ContextMenuItem, ContextMenuSeparator } from './ui/context-menu';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import { SyncStatusButton } from './SyncStatusButton';
+import { GlobalSftpTransferCenter } from './GlobalSftpTransferCenter';
 import { TopTabsQuickControls } from './TopTabsQuickControls';
 import {
   ActiveTabAutoScroller,
@@ -118,6 +119,7 @@ export function resolveWorkspaceSessionTabDropTarget({
 
 interface TopTabsProps {
   theme: 'dark' | 'light';
+  themePreference: 'dark' | 'light' | 'system';
   hosts: Host[];
   sessions: TerminalSession[];
   orphanSessions: TerminalSession[];
@@ -135,7 +137,7 @@ interface TopTabsProps {
   onCloseLogView: (logViewId: string) => void;
   onCloseTabsBatch: (targetIds: string[]) => void;
   onOpenQuickSwitcher: () => void;
-  onToggleTheme: () => void;
+  onThemeChange: (theme: 'dark' | 'light' | 'system') => void;
   onOpenSettings: () => void;
   externalMcpEnabled: boolean;
   onToggleExternalMcp: (enabled: boolean) => void;
@@ -162,6 +164,7 @@ interface TopTabsProps {
 
 const TopTabsInner: React.FC<TopTabsProps> = ({
   theme,
+  themePreference,
   hosts,
   sessions,
   orphanSessions,
@@ -179,7 +182,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
   onCloseLogView,
   onCloseTabsBatch,
   onOpenQuickSwitcher,
-  onToggleTheme,
+  onThemeChange,
   onOpenSettings,
   externalMcpEnabled,
   onToggleExternalMcp,
@@ -1089,6 +1092,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
           className="flex-shrink-0 flex items-center gap-0.5 app-drag self-end h-7 overflow-visible"
           style={dragRegionStyle}
         >
+          <GlobalSftpTransferCenter />
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -1111,7 +1115,8 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
           />
           <TopTabsQuickControls
             theme={theme}
-            onToggleTheme={onToggleTheme}
+            themePreference={themePreference}
+            onThemeChange={onThemeChange}
             externalMcpEnabled={externalMcpEnabled}
             onToggleExternalMcp={onToggleExternalMcp}
             showExternalMcpToggle={showExternalMcpToggle}
@@ -1167,7 +1172,8 @@ const topTabsAreEqual = (prev: TopTabsProps, next: TopTabsProps): boolean => {
     prev.windowOpacity === next.windowOpacity &&
     prev.setWindowOpacity === next.setWindowOpacity &&
     prev.onSyncNow === next.onSyncNow &&
-    prev.onToggleTheme === next.onToggleTheme &&
+    prev.themePreference === next.themePreference &&
+    prev.onThemeChange === next.onThemeChange &&
     prev.showSftpTab === next.showSftpTab &&
     prev.showHostTreeSidebar === next.showHostTreeSidebar &&
     prev.dynamicTabTitleMode === next.dynamicTabTitleMode

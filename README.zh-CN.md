@@ -128,6 +128,7 @@
 ### 🖥️ 终端工作区
 - **分屏** —— 水平/垂直分割，多任务并行
 - **多会话管理** —— 多连接并排处理
+- **内联图片** —— 直接渲染远端程序输出的 Kitty 图形、SIXEL 与 iTerm 内联图片
 
 ### 📁 SFTP + 内置编辑器
 - **文件工作流** —— 拖拽上传/下载更直观
@@ -309,11 +310,11 @@ npm run pack:linux   # Linux (AppImage + DEB + RPM)
 <a name="star-历史"></a>
 # Star 历史
 
-<a href="https://star-history.com/#binaricat/Netcatty&Date">
+<a href="https://www.star-history.com/#binaricat/Netcatty&Date">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=binaricat/Netcatty&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=binaricat/Netcatty&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=binaricat/Netcatty&type=Date" />
+   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/star-history/star-history-dark.svg" />
+   <source media="(prefers-color-scheme: light)" srcset="docs/assets/star-history/star-history-light.svg" />
+   <img alt="Star History Chart" src="docs/assets/star-history/star-history-light.svg" />
  </picture>
 </a>
 

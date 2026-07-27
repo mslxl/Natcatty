@@ -9,6 +9,7 @@ import type {
   SudoPasswordAutofillCandidate,
 } from "./terminalSudoAutofill";
 import type { ProgrammaticCommandLogRewrite } from "../programmaticCommandLog";
+import type { TerminalSessionExitEvent } from "../../../application/state/resolveTerminalSessionExitIntent";
 
 export type TerminalBackendApi = {
   backendAvailable: () => boolean;
@@ -17,6 +18,7 @@ export type TerminalBackendApi = {
   etAvailable: () => boolean;
   localAvailable: () => boolean;
   serialAvailable: () => boolean;
+  pluginConnectionAvailable: () => boolean;
   execAvailable: () => boolean;
   startSSHSession: (options: NetcattySSHOptions) => Promise<string>;
   startTelnetSession: (
@@ -34,6 +36,17 @@ export type TerminalBackendApi = {
   startSerialSession: (
     options: Parameters<NonNullable<NetcattyBridge["startSerialSession"]>>[0],
   ) => Promise<string>;
+  startPluginConnection: (options: NetcattyPluginConnectionStartRequest & { signal?: AbortSignal }) => Promise<{
+    sessionId: string;
+    providerId: string;
+    status: "connecting" | "connected";
+    diagnostics: ReadonlyArray<import("@netcatty/plugin-contract").ProviderValidationIssue>;
+  }>;
+  cancelPluginExtensionRequest?: (requestId: string) => Promise<boolean> | boolean;
+  signalPluginConnection?: (
+    sessionId: string,
+    signal?: "interrupt" | "terminate" | "kill" | "eof" | "break",
+  ) => Promise<unknown>;
   execCommand: (options: Parameters<NetcattyBridge["execCommand"]>[0]) => Promise<{
     stdout?: string;
     stderr?: string;
@@ -56,7 +69,7 @@ export type TerminalBackendApi = {
   ) => () => void;
   onSessionExit: (
     sessionId: string,
-    cb: (evt: { exitCode?: number; signal?: number; error?: string; reason?: "exited" | "error" | "timeout" | "closed" }) => void,
+    cb: (evt: TerminalSessionExitEvent) => void,
   ) => () => void;
   onTelnetAutoLoginComplete?: (
     sessionId: string,
@@ -87,7 +100,7 @@ export type TerminalBackendApi = {
   onConnectionReuseFallback?: (
     cb: (sessionId: string, sourceSessionId?: string) => void,
   ) => (() => void) | undefined;
-  writeToSession: (sessionId: string, data: string, options?: { automated?: boolean; lineDelayMs?: number; logRewrite?: ProgrammaticCommandLogRewrite }) => void;
+  writeToSession: (sessionId: string, data: string, options?: { automated?: boolean; sensitive?: boolean; lineDelayMs?: number; logRewrite?: ProgrammaticCommandLogRewrite }) => void;
   interruptSession?: (sessionId: string, trace?: NetcattyTerminalInterruptTrace) => void;
   resizeSession: (sessionId: string, cols: number, rows: number) => void;
   closeSession: (sessionId: string) => void | Promise<void>;
@@ -123,6 +136,12 @@ export type SessionLogConfig = {
 
 export type TerminalSessionStartersContext = {
   host: Host & Pick<Partial<TerminalSession>, "localStartDir">;
+  /**
+   * Live host snapshot updated every render. Session data handlers close over
+   * boot-time ctx, so mid-session host toggles (e.g. line timestamps) must be
+   * read from this ref rather than the frozen `host` field.
+   */
+  hostRef?: RefObject<Host & Pick<Partial<TerminalSession>, "localStartDir">>;
   keys: SSHKey[];
   identities?: Identity[];
   knownHosts?: KnownHost[];
@@ -153,6 +172,8 @@ export type TerminalSessionStartersContext = {
     active: boolean,
     state: PasswordPromptPickerState | null,
   ) => boolean;
+  /** Actual tab/pane visibility; the renderer may remain active while hidden. */
+  isPaneVisibleRef?: RefObject<boolean>;
   isVisibleRef?: RefObject<boolean>;
   /** False after unmount/teardown so in-flight session starts skip attach. */
   isBootActiveRef?: RefObject<boolean>;
@@ -186,7 +207,7 @@ export type TerminalSessionStartersContext = {
 
   onSessionAttached?: (sessionId: string) => void;
   onRestoreCwdIntentConsumed?: (cwd: string) => void;
-  onSessionExit?: (sessionId: string, evt: { exitCode?: number; signal?: number; error?: string; reason?: "exited" | "error" | "timeout" | "closed" }) => void;
+  onSessionExit?: (sessionId: string, evt: TerminalSessionExitEvent) => void;
   onTerminalDataCapture?: (sessionId: string, data: string) => void;
   onTerminalLogData?: (data: string) => void;
   onProgrammaticCommandLogRewrite?: (rewrite: ProgrammaticCommandLogRewrite) => void;
@@ -213,4 +234,12 @@ export type TerminalSessionDataMeta = {
   /** True while Mosh is still on the ephemeral SSH handshake PTY. */
   moshHandshake?: boolean;
   terminalPerf?: NetcattyTerminalOutputPerfMeta;
+  /** Original host output units acknowledged even when an interceptor changes display length. */
+  pluginPipelineIngressBytes?: number;
+  /** Host-owned provenance marker for output already processed by an interceptor. */
+  pluginPipelineProcessed?: boolean;
+  /** Host-owned classification from original output; plugins cannot mask it. */
+  pluginPipelineSensitiveInput?: boolean;
+  /** Host-owned marker that a Plugin connection Provider has explicitly reached connected status. */
+  pluginConnectionReady?: boolean;
 };

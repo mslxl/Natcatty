@@ -21,6 +21,7 @@ const RPC_ERRORS = Object.freeze({
   invalidArgument: -32003,
   deadlineExceeded: -32004,
   notFound: -32005,
+  alreadyExists: -32006,
   permissionDenied: -32007,
   resourceExhausted: -32008,
   failedPrecondition: -32009,
@@ -106,9 +107,12 @@ class PluginRpcRouter {
     this.streamChains = new Map();
   }
 
-  #sendRpc(message) {
+  #sendRpc(message, transfer = []) {
     assertRpcMessage(message);
-    this.send(message);
+    if (!Array.isArray(transfer)) {
+      throw new TypeError("Plugin RPC transfer list must be an array");
+    }
+    this.send(message, transfer);
   }
 
   #sendFailure(id, error) {
@@ -343,6 +347,9 @@ class PluginRpcRouter {
     if (options.validateResult != null && typeof options.validateResult !== "function") {
       return Promise.reject(new TypeError("Plugin RPC result validator must be a function"));
     }
+    if (options.transfer != null && !Array.isArray(options.transfer)) {
+      return Promise.reject(new TypeError("Plugin RPC transfer list must be an array"));
+    }
     const message = {
       jsonrpc: "2.0",
       id,
@@ -392,7 +399,7 @@ class PluginRpcRouter {
       this.pending.set(rpcIdKey(id), pending);
       this.pendingCancellationIds.add(cancellationId);
       try {
-        this.#sendRpc(message);
+        this.#sendRpc(message, options.transfer ?? []);
       } catch (error) {
         this.#forgetPending(id, pending);
         reject(error);

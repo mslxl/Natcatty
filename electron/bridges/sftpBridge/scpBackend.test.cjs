@@ -6,7 +6,12 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { EventEmitter } = require("node:events");
-const { createScpBackend, createTransferFromAbortSignal } = require("./scpBackend.cjs");
+const { Readable } = require("node:stream");
+const {
+  createScpBackend,
+  createSshExecAdapters,
+  createTransferFromAbortSignal,
+} = require("./scpBackend.cjs");
 const {
   buildFileControlLine,
   buildAck,
@@ -145,16 +150,20 @@ describe("scpBackend browse/manage with fake exec", () => {
     await backend.rename("/tmp/a b/c", "/tmp/a b/d");
     await backend.remove("/tmp/a b/d", { recursive: true });
     await backend.chmod("/tmp/file", "644");
+    await backend.chmod("/tmp/zero-mode", 0);
     assert.ok(commands.some((c) => c.command.includes("mkdir -p -- '/tmp/a b/c'")));
     assert.ok(commands.some((c) => c.command.includes("mv -- '/tmp/a b/c' '/tmp/a b/d'")));
     assert.ok(commands.some((c) => c.command.includes("rm -rf -- '/tmp/a b/d'")));
     assert.ok(commands.some((c) => c.command.includes("chmod 644 -- '/tmp/file'")));
+    assert.ok(commands.some((c) => c.command.includes("chmod 000 -- '/tmp/zero-mode'")));
   });
 
   it("stats a remote path", async () => {
     const st = await backend.stat("/home/test/readme.txt");
     assert.equal(st.size, 5);
     assert.equal(st.isDirectory, false);
+    const statCommand = commands.find((entry) => entry.command.includes("if [ ! -e"))?.command || "";
+    assert.match(statCommand, /\[ ! -L "\$p" \]/, "broken symlinks must not be reported as missing");
   });
 
   it("resolves home directory", async () => {
@@ -244,6 +253,119 @@ describe("scpBackend upload/download with fake scp streams", () => {
     assert.equal(progressCalls[progressCalls.length - 1][0], 9);
   });
 
+  it("uploads from a caller-provided verified read stream", async () => {
+    const localFile = path.join(tmpDir, "local.txt");
+    fs.writeFileSync(localFile, "local-data");
+    const verifiedPayload = Buffer.from("safe-stream");
+    const written = [];
+    let opened = 0;
+    const backend = createScpBackend({
+      exec: async () => ({ stdout: "", stderr: "", code: 0 }),
+      execStream: async () => {
+        const stream = createMockStream();
+        setImmediate(() => stream.pushFromRemote(Buffer.from([SCP_OK])));
+        stream.on("_write", (buf) => {
+          written.push(Buffer.from(buf));
+          const text = buf.toString("utf8");
+          if (text.startsWith("C") || (buf.length === 1 && buf[0] === 0x00)) {
+            setImmediate(() => stream.pushFromRemote(Buffer.from([SCP_OK])));
+          }
+        });
+        return stream;
+      },
+    });
+
+    await backend.uploadFile(localFile, "/remote/local.txt", {
+      fileSize: verifiedPayload.length,
+      openReadStream() {
+        opened += 1;
+        return Readable.from([verifiedPayload]);
+      },
+    });
+
+    const joined = Buffer.concat(written);
+    assert.equal(opened, 1);
+    assert.equal(joined.includes(verifiedPayload), true);
+    assert.equal(joined.includes(Buffer.from("local-data")), false);
+  });
+
+  it("rejects verified read streams whose bytes do not match the declared size", async () => {
+    const localFile = path.join(tmpDir, "local.txt");
+    fs.writeFileSync(localFile, "local-data");
+
+    async function runCase(payload, expectedSize, message) {
+      const backend = createScpBackend({
+        exec: async () => ({ stdout: "", stderr: "", code: 0 }),
+        execStream: async () => {
+          const stream = createMockStream();
+          setImmediate(() => stream.pushFromRemote(Buffer.from([SCP_OK])));
+          stream.on("_write", (buf) => {
+            const text = buf.toString("utf8");
+            if (text.startsWith("C")) {
+              setImmediate(() => stream.pushFromRemote(Buffer.from([SCP_OK])));
+            }
+          });
+          return stream;
+        },
+      });
+      await assert.rejects(
+        backend.uploadFile(localFile, "/remote/local.txt", {
+          fileSize: expectedSize,
+          openReadStream: () => Readable.from([Buffer.from(payload)]),
+        }),
+        message,
+      );
+    }
+
+    await runCase("short", 10, /ended early/);
+    await runCase("too-many-bytes", 5, /exceeded its declared size/);
+  });
+
+  it("waits for verified read cleanup before returning a stream error", async () => {
+    const localFile = path.join(tmpDir, "local.txt");
+    fs.writeFileSync(localFile, "local-data");
+    let resolveCleanup;
+    const cleanup = new Promise((resolve) => { resolveCleanup = resolve; });
+    let uploadSettled = false;
+    const backend = createScpBackend({
+      exec: async () => ({ stdout: "", stderr: "", code: 0 }),
+      execStream: async () => {
+        const stream = createMockStream();
+        setImmediate(() => stream.pushFromRemote(Buffer.from([SCP_OK])));
+        stream.on("_write", (buf) => {
+          if (buf.toString("utf8").startsWith("C")) {
+            setImmediate(() => stream.pushFromRemote(Buffer.from([SCP_OK])));
+          } else if (buf.toString("utf8") === "local-data") {
+            setImmediate(() => {
+              stream.emit("error", new Error("remote write failed"));
+            });
+          }
+        });
+        return stream;
+      },
+    });
+    let uploadError = null;
+    const running = backend.uploadFile(localFile, "/remote/local.txt", {
+      fileSize: 10,
+      openReadStream: () => ({
+        stream: Readable.from([Buffer.from("local-data")]),
+        completed: cleanup,
+      }),
+    }).then(
+      () => { uploadSettled = true; },
+      (err) => {
+        uploadSettled = true;
+        uploadError = err;
+      },
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(uploadSettled, false);
+    resolveCleanup();
+    await running;
+    assert.match(uploadError?.message || "", /remote write failed/);
+  });
+
   it("downloads via scp -f parser into a local file", async () => {
     const localOut = path.join(tmpDir, "out.bin");
     const payload = Buffer.from("ABCD");
@@ -278,12 +400,156 @@ describe("scpBackend upload/download with fake scp streams", () => {
     });
 
     const progress = [];
-    await backend.downloadFile("/remote/x.bin", localOut, {
+    const result = await backend.downloadFile("/remote/x.bin", localOut, {
       fileSize: 4,
       onProgress: (t, total) => progress.push([t, total]),
     });
     assert.equal(fs.readFileSync(localOut).toString(), "ABCD");
     assert.ok(progress.length > 0);
+    assert.deepEqual(result, { fileSize: 4, transferred: 4 });
+  });
+
+  it("cleans AbortSignal listeners after successful, failed, and early-closed downloads", async () => {
+    const runCase = async (outcome) => {
+      const listeners = new Set();
+      let addCalls = 0;
+      let removeCalls = 0;
+      const signal = {
+        aborted: false,
+        addEventListener(type, listener) {
+          if (type !== "abort") return;
+          addCalls += 1;
+          listeners.add(listener);
+        },
+        removeEventListener(type, listener) {
+          if (type !== "abort") return;
+          removeCalls += 1;
+          listeners.delete(listener);
+        },
+      };
+      const sshClient = {
+        exec(_command, callback) {
+          if (outcome === "sync-throw") throw new Error("session already closed");
+          const stream = createMockStream();
+          if (outcome === "success") {
+            let ackCount = 0;
+            stream.on("_write", (buf) => {
+              if (!(buf.length === 1 && buf[0] === SCP_OK)) return;
+              ackCount += 1;
+              if (ackCount === 1) {
+                setImmediate(() => stream.pushFromRemote(
+                  buildFileControlLine({ mode: 0o644, size: 4, name: "x.bin" }),
+                ));
+              } else if (ackCount === 2) {
+                setImmediate(() => stream.pushFromRemote(
+                  Buffer.concat([Buffer.from("ABCD"), Buffer.from([0x00])]),
+                ));
+              }
+            });
+          } else if (outcome === "failure") {
+            stream.on("_write", () => setImmediate(() => stream.emit("error", new Error("remote failed"))));
+          }
+          callback(null, stream);
+          if (outcome === "early-close") stream.close();
+        },
+      };
+      const backend = createScpBackend(createSshExecAdapters(sshClient));
+      if (outcome === "success") {
+        assert.deepEqual(await backend.readFile("/remote/x.bin", { signal }), Buffer.from("ABCD"));
+      } else {
+        await assert.rejects(
+          () => backend.readFile("/remote/x.bin", { signal }),
+          outcome === "failure"
+            ? /remote failed/
+            : outcome === "sync-throw"
+              ? /session already closed/
+              : /closed before protocol setup/,
+        );
+      }
+      assert.equal(addCalls, 1, `${outcome}: expected one abort listener`);
+      assert.equal(removeCalls, 1, `${outcome}: expected one abort listener cleanup`);
+      assert.equal(listeners.size, 0, `${outcome}: abort listener leaked`);
+    };
+
+    await runCase("success");
+    await runCase("failure");
+    await runCase("early-close");
+    await runCase("sync-throw");
+  });
+
+  it("rejects signal-only upload cancellation during the exec handoff", async () => {
+    const controller = new AbortController();
+    const stream = createMockStream();
+    let deliverStream = null;
+    const sshClient = {
+      exec(_command, callback) {
+        deliverStream = () => callback(null, stream);
+      },
+    };
+    const backend = createScpBackend(createSshExecAdapters(sshClient));
+    const upload = backend.uploadBuffer(Buffer.from("payload"), "file.bin", {
+      signal: controller.signal,
+    });
+    assert.equal(typeof deliverStream, "function");
+
+    controller.abort();
+    deliverStream();
+
+    await assert.rejects(
+      () => Promise.race([
+        upload,
+        new Promise((_, reject) => setTimeout(() => reject(new Error("cancel timed out")), 500)),
+      ]),
+      /cancel|abort/i,
+    );
+    assert.equal(stream._chunks.length, 0);
+  });
+
+  it("rejects signal-only upload cancellation when exec never calls back", async () => {
+    const controller = new AbortController();
+    const sshClient = {
+      exec() {
+        // Deliberately never calls back: cancellation must settle the pending
+        // execStream promise without waiting for an SSH channel.
+      },
+    };
+    const backend = createScpBackend(createSshExecAdapters(sshClient));
+    const upload = backend.uploadBuffer(Buffer.from("payload"), "file.bin", {
+      signal: controller.signal,
+    });
+    controller.abort();
+
+    await assert.rejects(
+      () => Promise.race([
+        upload,
+        new Promise((_, reject) => setTimeout(() => reject(new Error("cancel timed out")), 500)),
+      ]),
+      /cancel|abort/i,
+    );
+  });
+
+  it("rejects upload streams that close or error before ACK listeners attach", async () => {
+    const runCase = async (outcome) => {
+      const sshClient = {
+        exec(_command, callback) {
+          const stream = createMockStream();
+          callback(null, stream);
+          if (outcome === "close") stream.close();
+          else stream.emit("error", new Error("remote failed during handoff"));
+        },
+      };
+      const backend = createScpBackend(createSshExecAdapters(sshClient));
+      await assert.rejects(
+        () => Promise.race([
+          backend.uploadBuffer(Buffer.from("payload"), "file.bin"),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("handoff timed out")), 500)),
+        ]),
+        outcome === "close" ? /closed before waiting for ACK/ : /remote failed during handoff/,
+      );
+    };
+
+    await runCase("close");
+    await runCase("error");
   });
 
   it("cancel aborts an in-flight upload", async () => {
@@ -305,6 +571,43 @@ describe("scpBackend upload/download with fake scp streams", () => {
     transfer.cancelled = true;
     if (typeof transfer.abort === "function") transfer.abort();
     await assert.rejects(() => uploadPromise, /cancel/i);
+  });
+
+  it("download settles when abort closes the stream before parser listeners attach", async () => {
+    const localOut = path.join(tmpDir, "race-closed.bin");
+    const transfer = { cancelled: false, abort: null };
+    let sawAbortInstall = false;
+    Object.defineProperty(transfer, "abort", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        return this._abort;
+      },
+      set(fn) {
+        this._abort = fn;
+        if (sawAbortInstall || typeof fn !== "function") return;
+        sawAbortInstall = true;
+        // Simulate cancelTransfer winning immediately after abort is wired and
+        // closing the stream before downloadToWritable attaches parser listeners.
+        this.cancelled = true;
+        queueMicrotask(() => {
+          try { fn(); } catch { /* ignore */ }
+        });
+      },
+    });
+
+    const backend = createScpBackend({
+      exec: async () => ({ stdout: "", stderr: "", code: 0 }),
+      execStream: async () => createMockStream(),
+    });
+
+    await assert.rejects(
+      () => backend.downloadFile("/remote/x.bin", localOut, {
+        fileSize: 4,
+        transfer,
+      }),
+      /cancel/i,
+    );
   });
 
   it("AbortSignal via createTransferFromAbortSignal cancels in-flight upload (AI path)", async () => {

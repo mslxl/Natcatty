@@ -526,6 +526,9 @@ Highlight the focused split pane:
     'Adjust colors to meet contrast requirements (1 = disabled, 21 = max)',
   'settings.terminal.behavior.rightClick': 'Right-click behavior',
   'settings.terminal.behavior.rightClick.desc': 'Action when right-clicking in terminal',
+  'settings.terminal.behavior.autoCloseOnExit': 'Auto-close terminal on exit',
+  'settings.terminal.behavior.autoCloseOnExit.desc':
+    'Allow terminal tabs and windows to close automatically after session exit. Turn this off to keep them open after every exit.',
   'settings.terminal.behavior.rightClick.menu': 'Show menu',
   'settings.terminal.behavior.rightClick.paste': 'Paste',
   'settings.terminal.behavior.rightClick.selectWord': 'Select word',
@@ -686,6 +689,26 @@ Highlight the focused split pane:
   'settings.terminal.rendering.hibernateReplayChunkBytes.desc': 'Bytes replayed per animation frame when restoring a hibernated terminal (4–64 KB).',
   'settings.terminal.rendering.hibernatePreferWasmSerialize': 'Prefer WASM serialize',
   'settings.terminal.rendering.hibernatePreferWasmSerialize.desc': 'Use WASM terminal serialization when available; falls back to the JS serializer.',
+
+  // Settings > Terminal > Inline Images
+  'settings.terminal.section.inlineImages': 'Inline Images',
+  'settings.terminal.inlineImages.enabled': 'Render inline images',
+  'settings.terminal.inlineImages.enabled.desc': 'Draw real images sent by remote programs (kitten icat, chafa, image previews in file managers and TUIs). Changes take effect on new terminal sessions.',
+  'settings.terminal.inlineImages.kitty': 'Kitty graphics protocol',
+  'settings.terminal.inlineImages.kitty.desc': 'Accept Kitty graphics sequences, including direct/stream transmission over SSH.',
+  'settings.terminal.inlineImages.sixel': 'SIXEL',
+  'settings.terminal.inlineImages.sixel.desc': 'Accept SIXEL graphics, used by img2sixel, mpv, gnuplot and older DEC-style tools.',
+  'settings.terminal.inlineImages.iip': 'iTerm inline image protocol',
+  'settings.terminal.inlineImages.iip.desc': "Accept iTerm2's OSC 1337 inline image sequences (PNG, JPEG, first frame of GIF).",
+  'settings.terminal.inlineImages.storageLimit': 'Image cache per terminal',
+  'settings.terminal.inlineImages.storageLimit.desc': 'Memory each terminal may keep for decoded images before the oldest ones are evicted (8–512 MB).',
+  'settings.terminal.inlineImages.maxMegapixels': 'Maximum image size',
+  'settings.terminal.inlineImages.maxMegapixels.desc': 'Largest single image that will be decoded; bigger images are discarded without touching the terminal buffer (1–64 MP, 16 MP is 4096 × 4096).',
+  'settings.terminal.inlineImages.sequenceLimit': 'Maximum sequence size',
+  'settings.terminal.inlineImages.sequenceLimit.desc': 'Largest single image escape sequence accepted before decoding starts (1–64 MB).',
+  'settings.terminal.inlineImages.unit.mb': 'MB',
+  'settings.terminal.inlineImages.unit.megapixels': 'MP',
+  'settings.terminal.inlineImages.hibernateNote': 'Tabs that have drawn an inline image keep their renderer instead of hibernating, because hibernation restores text only.',
 
   // Settings > Terminal > Workspace Focus Indicator
   'settings.terminal.section.workspaceFocus': 'Workspace Focus Indicator',
@@ -961,5 +984,15 @@ Highlight the focused split pane:
   'settings.plugins.scopeTarget': '{scope} target',
   'settings.plugins.noScopeTargets': 'No available targets',
   'settings.plugins.thisDevice': 'This device',
+  'plugins.authentication.description': 'Complete the authentication request in this Netcatty dialog.',
+  'plugins.authentication.value': 'Value',
+  'plugins.authentication.password': 'Password',
+  'plugins.authentication.code': 'One-time code',
+  'plugins.authentication.deviceCode': 'Device code',
+  'plugins.authentication.openBrowser': 'Open browser',
+  'plugins.authentication.invalidUrl': 'The authentication provider returned an unsafe or invalid URL.',
+  'plugins.authentication.responseFailed': 'Could not send the authentication response. Try again or cancel the request.',
+  'plugins.authentication.responseFailedWithMessage': 'Could not send the authentication response: {message}. Try again or cancel the request.',
+  'plugins.authentication.continue': 'Continue',
 
 };

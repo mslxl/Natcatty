@@ -4,7 +4,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { openSftpWithSessionPreference } from "./useSftpConnections.ts";
+import {
+  createPinnedReconnectSideResolver,
+  openSftpWithSessionPreference,
+  rejectHostKeyVerificationRequest,
+  resolvePinnedReconnectSide,
+} from "./useSftpConnections.ts";
 
 const openOptions = {
   sessionId: "sftp-request-1",
@@ -74,4 +79,62 @@ test("openSftpWithSessionPreference opens normal SFTP without a source session",
 
   assert.equal(sftpId, "fresh-sftp");
   assert.deepEqual(calls, ["openSftp:sftp-request-1"]);
+});
+
+test("resolvePinnedReconnectSide follows a tab moved to the other side", () => {
+  assert.equal(
+    resolvePinnedReconnectSide("left", "tab-1", [], [{ id: "tab-1" }]),
+    "right",
+  );
+  assert.equal(
+    resolvePinnedReconnectSide("right", "tab-1", [{ id: "tab-1" }], []),
+    "left",
+  );
+  assert.equal(
+    resolvePinnedReconnectSide("left", "tab-1", [{ id: "tab-1" }], []),
+    "left",
+  );
+  assert.equal(
+    resolvePinnedReconnectSide("left", undefined, [], [{ id: "tab-1" }]),
+    "left",
+  );
+  assert.throws(
+    () => resolvePinnedReconnectSide("left", "gone", [], []),
+    /SFTP tab is no longer available/,
+  );
+});
+
+test("rejectHostKeyVerificationRequest rejects an orphaned verification", () => {
+  const responses: Array<[string, boolean, boolean]> = [];
+
+  rejectHostKeyVerificationRequest({
+    respondHostKeyVerification: async (requestId, accept, addToKnownHosts) => {
+      responses.push([requestId, accept, addToKnownHosts]);
+      return { success: true };
+    },
+  }, "hostkey-1");
+
+  assert.deepEqual(responses, [["hostkey-1", false, false]]);
+});
+
+test("pinned reconnect side resolver follows moves across async boundaries", async () => {
+  let leftTabs: ReadonlyArray<{ id: string }> = [{ id: "tab-1" }];
+  let rightTabs: ReadonlyArray<{ id: string }> = [];
+  const resolveSide = createPinnedReconnectSideResolver(
+    "left",
+    "tab-1",
+    () => leftTabs,
+    () => rightTabs,
+  );
+
+  assert.equal(resolveSide(), "left");
+
+  await Promise.resolve();
+  leftTabs = [];
+  rightTabs = [{ id: "tab-1" }];
+
+  assert.equal(resolveSide(), "right");
+
+  rightTabs = [];
+  assert.equal(resolveSide(), "right");
 });

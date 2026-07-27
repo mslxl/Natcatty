@@ -166,6 +166,7 @@ test("Mosh prepares the configured system agent before building native ssh optio
     "-i", path.join(os.homedir(), ".ssh", "id_work.pub"),
     "-o", "IdentitiesOnly=yes",
     "-o", "IdentityAgent=/tmp/custom-agent.sock",
+    "-o", "StrictHostKeyChecking=ask",
   ]);
   assert.equal(env.SSH_AUTH_SOCK, "/tmp/custom-agent.sock");
 
@@ -182,6 +183,85 @@ test("Mosh prepares the configured system agent before building native ssh optio
   api.cleanupMoshAuthTempFiles(selected.tempFiles);
 });
 
+test("Mosh injects vault known_hosts into the SSH bootstrap for key-change checks", async (t) => {
+  const tempBase = makeTmp();
+  t.after(() => fs.rmSync(tempBase, { recursive: true, force: true }));
+  const api = createMoshSessionApi({
+    os,
+    path,
+    fs,
+    process,
+    randomUUID: () => "fixed",
+    tempDirBridge: { getTempFilePath: (fileName) => path.join(tempBase, fileName) },
+  });
+
+  const auth = await api.buildMoshSshAuthArgs({
+    useSshAgent: false,
+    hostname: "host.example",
+    port: 22,
+    knownHosts: [{
+      hostname: "host.example",
+      port: 22,
+      keyType: "ssh-ed25519",
+      publicKey: "ssh-ed25519 AAAAMOSHVAULT",
+    }],
+  }, "session-vault-kh");
+
+  let trustPath = null;
+  for (let i = 0; i < auth.sshArgs.length - 1; i += 1) {
+    if (auth.sshArgs[i] === "-o" && String(auth.sshArgs[i + 1]).startsWith("UserKnownHostsFile=")) {
+      trustPath = auth.sshArgs[i + 1].slice("UserKnownHostsFile=".length);
+      break;
+    }
+  }
+  assert.ok(trustPath, "expected UserKnownHostsFile ssh option");
+  assert.ok(auth.sshArgs.includes(`GlobalKnownHostsFile=${trustPath}`));
+  assert.ok(fs.existsSync(trustPath));
+  assert.match(fs.readFileSync(trustPath, "utf8"), /host\.example ssh-ed25519 AAAAMOSHVAULT/);
+  // Force ask so a permissive user ssh_config cannot disable verification.
+  assert.ok(auth.sshArgs.includes("StrictHostKeyChecking=ask"));
+  api.cleanupMoshAuthTempFiles(auth.tempFiles);
+});
+
+test("Mosh disables host-key checks when verifyHostKeys is false", async (t) => {
+  const tempBase = makeTmp();
+  t.after(() => fs.rmSync(tempBase, { recursive: true, force: true }));
+  const api = createMoshSessionApi({
+    os,
+    path,
+    fs,
+    process,
+    randomUUID: () => "fixed",
+    tempDirBridge: { getTempFilePath: (fileName) => path.join(tempBase, fileName) },
+  });
+
+  const auth = await api.buildMoshSshAuthArgs({
+    useSshAgent: false,
+    verifyHostKeys: false,
+    knownHosts: [{
+      hostname: "host.example",
+      keyType: "ssh-ed25519",
+      publicKey: "ssh-ed25519 AAASTALE",
+    }],
+  }, "session-no-verify");
+
+  assert.equal(auth.sshArgs[0], "-o");
+  assert.equal(auth.sshArgs[1], "IdentityAgent=none");
+  let emptyPath = null;
+  for (let i = 0; i < auth.sshArgs.length - 1; i += 1) {
+    if (auth.sshArgs[i] === "-o" && String(auth.sshArgs[i + 1]).startsWith("UserKnownHostsFile=")) {
+      emptyPath = auth.sshArgs[i + 1].slice("UserKnownHostsFile=".length);
+      break;
+    }
+  }
+  assert.ok(emptyPath);
+  assert.ok(auth.sshArgs.includes(`GlobalKnownHostsFile=${emptyPath}`));
+  assert.ok(auth.sshArgs.includes("StrictHostKeyChecking=no"));
+  assert.equal(fs.readFileSync(emptyPath, "utf8").trim(), "");
+  assert.equal(auth.sshArgs.some((arg) => String(arg).includes("AAASTALE")), false);
+  api.cleanupMoshAuthTempFiles(auth.tempFiles);
+});
+
 test("Mosh explicitly disables native agent login after an opt-out", async () => {
   const api = createMoshSessionApi({
     os,
@@ -196,7 +276,10 @@ test("Mosh explicitly disables native agent login after an opt-out", async () =>
     { useSshAgent: false },
   );
 
-  assert.deepEqual(auth.sshArgs, ["-o", "IdentityAgent=none"]);
+  assert.deepEqual(auth.sshArgs, [
+    "-o", "IdentityAgent=none",
+    "-o", "StrictHostKeyChecking=ask",
+  ]);
   assert.equal(env.SSH_AUTH_SOCK, undefined);
 
   const forwardingAuth = await api.buildMoshSshAuthArgs({
@@ -210,6 +293,7 @@ test("Mosh explicitly disables native agent login after an opt-out", async () =>
   assert.deepEqual(forwardingAuth.sshArgs, [
     "-o", "IdentityAgent=none",
     "-o", "ForwardAgent=${SSH_AUTH_SOCK}",
+    "-o", "StrictHostKeyChecking=ask",
   ]);
   assert.equal(forwardingEnv.SSH_AUTH_SOCK, "/tmp/forwarded-agent.sock");
 });
@@ -236,6 +320,7 @@ test("Mosh automatic mode discovers custom local keys in preferred order", async
   assert.deepEqual(auth.sshArgs, [
     "-i", path.join(sshDir, "id_ed25519"),
     "-i", path.join(sshDir, "id_work"),
+    "-o", "StrictHostKeyChecking=ask",
   ]);
   assert.deepEqual(auth.identityFilePaths, [
     path.join(sshDir, "id_ed25519"),
@@ -250,6 +335,7 @@ test("Mosh automatic mode discovers custom local keys in preferred order", async
   assert.deepEqual(agentFallback.sshArgs, [
     "-i", path.join(sshDir, "id_ed25519"),
     "-i", path.join(sshDir, "id_work"),
+    "-o", "StrictHostKeyChecking=ask",
   ]);
   assert.deepEqual(agentFallback.identityFilePaths, [
     path.join(sshDir, "id_ed25519"),

@@ -107,6 +107,33 @@ test("buildSyncPayload includes reusable proxy profiles", () => {
   assert.deepEqual(payload.proxyProfiles, proxyProfiles);
 });
 
+test("sync payloads preserve opaque plugin hosts without requiring the plugin to be installed", async () => {
+  const providerId = "com.example.transport.connection";
+  const pluginHost = {
+    id: "plugin-host-1",
+    label: "Example transport",
+    hostname: providerId,
+    username: "",
+    tags: [],
+    os: "linux" as const,
+    protocol: `plugin:${providerId}` as const,
+    pluginConnection: {
+      providerId,
+      authenticationProviderId: "com.example.transport.authentication",
+      credentialId: "credential-reference-1234",
+      configuration: { endpoint: "opaque.example", options: { compression: true } },
+    },
+  };
+  const payload = buildSyncPayload({ ...vault([]), hosts: [pluginHost] });
+  assert.deepEqual(payload.hosts, [pluginHost]);
+
+  let imported: Record<string, unknown> | null = null;
+  await applySyncPayload(payload, {
+    importVaultData: (json) => { imported = JSON.parse(json); },
+  });
+  assert.deepEqual(imported?.hosts, [pluginHost]);
+});
+
 test("buildCloudSyncPayload includes notes and note groups", async () => {
   const payload = await buildCloudSyncPayload({
     ...vault([]),
@@ -967,6 +994,26 @@ test("buildSyncPayload includes the terminal host information bar preference", (
   const payload = buildSyncPayload(vault());
   const termSettings = (payload.settings?.terminalSettings ?? {}) as Record<string, unknown>;
   assert.equal(termSettings.showHostInfoBar, false);
+});
+
+test("terminal auto-close preference survives sync round-trip", async () => {
+  localStorage.setItem(
+    storageKeys.STORAGE_KEY_TERM_SETTINGS,
+    JSON.stringify({ autoCloseOnExit: false }),
+  );
+
+  const payload = buildSyncPayload(vault());
+  const termSettings = (payload.settings?.terminalSettings ?? {}) as Record<string, unknown>;
+  assert.equal(termSettings.autoCloseOnExit, false);
+
+  localStorage.setItem(
+    storageKeys.STORAGE_KEY_TERM_SETTINGS,
+    JSON.stringify({ autoCloseOnExit: true }),
+  );
+  await applySyncPayload(payload, { importVaultData: () => {} });
+
+  const restored = JSON.parse(localStorage.getItem(storageKeys.STORAGE_KEY_TERM_SETTINGS)!);
+  assert.equal(restored.autoCloseOnExit, false);
 });
 
 test("applySyncPayload restores the terminal host information bar preference", async () => {

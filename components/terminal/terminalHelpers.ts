@@ -2,6 +2,7 @@ import type { DragEvent, PointerEvent } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 
 import type { TerminalContextReader } from "../../domain/terminalContextRead";
+import type { TerminalSessionExitEvent } from "../../application/state/resolveTerminalSessionExitIntent";
 import { resolveSessionTabTitle } from "../../domain/sessionTabTitle";
 import { logger } from "../../lib/logger";
 import { getPathForFile, type DropEntry } from "../../lib/sftpFileUtils";
@@ -158,7 +159,7 @@ export interface TerminalProps {
   onHotkeyAction?: (action: string, event: KeyboardEvent) => void;
   onTerminalFontSizeChange?: (fontSize: number) => void;
   onStatusChange?: (sessionId: string, status: TerminalSession["status"]) => void;
-  onSessionExit?: (sessionId: string, evt: { exitCode?: number; signal?: number; error?: string; reason?: "exited" | "error" | "timeout" | "closed" }) => void;
+  onSessionExit?: (sessionId: string, evt: TerminalSessionExitEvent) => void;
   onTerminalDataCapture?: (sessionId: string, data: string) => void;
   onOsDetected?: (hostId: string, distro: string) => void;
   onCloseSession?: (sessionId: string) => void;
@@ -208,8 +209,12 @@ export interface TerminalProps {
     executor: ((
       command: string,
       noAutoRun?: boolean,
-      options?: { broadcast?: boolean; multiLineRunMode?: Snippet["multiLineRunMode"] },
-    ) => void) | null,
+      options?: {
+        broadcast?: boolean;
+        multiLineRunMode?: Snippet["multiLineRunMode"];
+        focus?: boolean;
+      },
+    ) => boolean | Promise<boolean>) | null,
   ) => void;
   onBroadcastInterruptPriorityChange?: (
     sessionId: string,

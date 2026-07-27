@@ -54,6 +54,24 @@ test("full hibernate flushes pending hidden output before taking the snapshot", 
   assert.ok(snapshotIndex < releaseIndex, "release flow only after snapshot");
 });
 
+test("live context reads flush pending hidden output before reading the buffer", () => {
+  const source = readFileSync(new URL("../Terminal.tsx", import.meta.url), "utf8");
+  const body = readFunctionBody(
+    source,
+    "const readTerminalContext = useCallback<TerminalContextReader>(async (request) =>",
+  );
+
+  const flushIndex = body.indexOf("await flushPendingTerminalWritesBeforeHibernate(targetTerm)");
+  const drainGuardIndex = body.indexOf("if (!flushed)");
+  const bufferReadIndex = body.indexOf("term.buffer.active");
+
+  assert.notEqual(flushIndex, -1, "context reads must flush pending terminal writes");
+  assert.notEqual(drainGuardIndex, -1, "context reads must reject an incomplete drain");
+  assert.notEqual(bufferReadIndex, -1, "context reads must inspect the live terminal buffer");
+  assert.ok(flushIndex < drainGuardIndex, "check the drain result after flushing");
+  assert.ok(flushIndex < bufferReadIndex, "flush pending writes before reading the live buffer");
+});
+
 test("hibernate retry preserves normal hibernate blockers", () => {
   const source = readFileSync(new URL("../Terminal.tsx", import.meta.url), "utf8");
   const body = readFunctionBody(source, "const scheduleHibernateRetry = useCallback(() =>");
@@ -104,4 +122,34 @@ test("a cancelled soft-hidden upgrade resumes its renderer", () => {
   assert.match(helperBody, /ensureWebglRenderer\(\)/);
   assert.match(helperBody, /clearTextureAtlas\(\)/);
   assert.match(helperBody, /safeFitRef\.current\(\{ force: true \}\)/);
+});
+
+test("snapshot and handoff paths reject output that misses the settle deadline", () => {
+  const source = readFileSync(new URL("../Terminal.tsx", import.meta.url), "utf8");
+
+  const drainWarningIndex = source.indexOf("Terminal output drain did not settle before the deadline");
+  const drainReturnIndex = source.indexOf("return;", drainWarningIndex);
+  const drainResponseIndex = source.indexOf("respondTerminalOutputDrain", drainReturnIndex);
+  assert.ok(drainWarningIndex >= 0 && drainWarningIndex < drainReturnIndex);
+  assert.ok(drainReturnIndex < drainResponseIndex);
+
+  const snapshotWarningIndex = source.indexOf("Terminal snapshot drain did not settle before the deadline");
+  const snapshotReturnIndex = source.indexOf("return;", snapshotWarningIndex);
+  const snapshotSerializeIndex = source.indexOf("serializeAddonRef.current.serialize", snapshotReturnIndex);
+  assert.ok(snapshotWarningIndex >= 0 && snapshotWarningIndex < snapshotReturnIndex);
+  assert.ok(snapshotReturnIndex < snapshotSerializeIndex);
+
+  const applyHandlerIndex = source.indexOf("onTerminalSessionApplySnapshot");
+  const applyDrainIndex = source.indexOf("flushPendingTerminalWritesBeforeHibernate(term)", applyHandlerIndex);
+  const applyFailureIndex = source.indexOf("Terminal output did not settle before applying the snapshot", applyDrainIndex);
+  const applyMetadataIndex = source.indexOf("setKittyKeyboardProtocolEnabled", applyHandlerIndex);
+  const applyResetIndex = source.indexOf("term.reset()", applyHandlerIndex);
+  assert.ok(applyHandlerIndex >= 0 && applyHandlerIndex < applyDrainIndex);
+  assert.ok(applyDrainIndex < applyFailureIndex);
+  assert.ok(applyFailureIndex < applyMetadataIndex, "failed drains must not mutate snapshot metadata");
+  assert.ok(applyMetadataIndex < applyResetIndex);
+  assert.match(
+    source,
+    /const flushed = await flushPendingTerminalWritesBeforeHibernate\(snapshotTerm\);\s*if \(!flushed\) \{\s*throw new Error\("Terminal output did not settle before closing the attached display"\);\s*\}/,
+  );
 });

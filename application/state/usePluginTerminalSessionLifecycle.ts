@@ -10,6 +10,7 @@ interface PluginTerminalSessionLifecycleOptions {
   status: 'connecting' | 'connected' | 'disconnected';
   shellType?: string;
   initialCwd?: string;
+  ownsBackendLifecycle?: boolean;
 }
 
 export interface PluginTerminalSnapshotState {
@@ -68,6 +69,38 @@ export function normalizePluginTerminalProtocol(
   return normalized || 'ssh';
 }
 
+export function shouldPublishPluginTerminalSessionMountLifecycle(
+  attachExistingSession: boolean,
+): boolean {
+  return !attachExistingSession;
+}
+
+export function beginPluginTerminalSessionMountLifecycle(
+  ownsBackendSessionMount: boolean,
+  publishCreated: () => void,
+  disposeBackendSession: () => void,
+): (() => void) | undefined {
+  if (!ownsBackendSessionMount) return undefined;
+  publishCreated();
+  return disposeBackendSession;
+}
+
+export function ownsPluginTerminalBackendLifecycle(value: boolean | undefined): boolean {
+  return value !== false;
+}
+
+const BACKEND_LIFECYCLE_EVENTS = new Set<NetcattyTerminalSessionEvent['type']>([
+  'created', 'connected', 'reconnected', 'disconnected', 'disposed',
+]);
+
+export function shouldPublishPluginTerminalEvent(
+  type: NetcattyTerminalSessionEvent['type'],
+  ownsBackendLifecycle: boolean | undefined,
+): boolean {
+  return ownsPluginTerminalBackendLifecycle(ownsBackendLifecycle)
+    || !BACKEND_LIFECYCLE_EVENTS.has(type);
+}
+
 function normalizeShellType(shellType: string | undefined): NetcattyTerminalSessionSnapshot['shellType'] | undefined {
   if (shellType === 'posix' || shellType === 'fish' || shellType === 'powershell' || shellType === 'cmd') {
     return shellType;
@@ -108,6 +141,7 @@ export function usePluginTerminalSessionLifecycle(options: PluginTerminalSession
     sessionOverrides: Partial<NetcattyTerminalSessionSnapshot> = {},
   ) => {
     if (!registry) return;
+    if (!shouldPublishPluginTerminalEvent(type, metadataRef.current.ownsBackendLifecycle)) return;
     void registry.publishSessionEvent({
       type,
       session: { ...snapshot(), ...sessionOverrides },
@@ -116,12 +150,15 @@ export function usePluginTerminalSessionLifecycle(options: PluginTerminalSession
   }, [registry, snapshot]);
 
   useEffect(() => {
-    publish('created');
-    return () => {
-      publish('disposed');
-      registry?.cancelSession(metadataRef.current.sessionId);
-    };
-  }, [publish, registry]);
+    return beginPluginTerminalSessionMountLifecycle(
+      ownsPluginTerminalBackendLifecycle(options.ownsBackendLifecycle),
+      () => publish('created'),
+      () => {
+        publish('disposed');
+        registry?.cancelSession(metadataRef.current.sessionId);
+      },
+    );
+  }, [options.ownsBackendLifecycle, publish, registry]);
 
   useEffect(() => {
     const transition = transitionPluginTerminalConnectionState(

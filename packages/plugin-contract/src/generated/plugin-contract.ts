@@ -4,6 +4,73 @@
 
 export type ActivationEvent = "onStartupFinished" | `onCommand:${ContributionId}` | `onView:${ContributionId}` | `onProvider:${ContributionId}`;
 
+export type AuthenticationBeginPayload = {
+  operationId: string;
+  connectionProviderId: ContributionId;
+  configuration: JsonValue;
+  credential?: (SecretRef) | (CredentialRef) | (SecretLeaseRef);
+};
+
+export type AuthenticationChallenge = ({
+  id: string;
+  kind: "text" | "password" | "otp";
+  title: string;
+  message?: string;
+  placeholder?: string;
+}) | ({
+  id: string;
+  kind: "choice";
+  title: string;
+  message?: string;
+  choices: Array<{
+    id: string;
+    label: string;
+    description?: string;
+  }>;
+  multiple?: boolean;
+}) | ({
+  id: string;
+  kind: "confirmation";
+  title: string;
+  message?: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+}) | ({
+  id: string;
+  kind: "browser";
+  title: string;
+  url: string;
+  callbackUri?: string;
+}) | ({
+  id: string;
+  kind: "deviceCode";
+  title: string;
+  verificationUri: string;
+  userCode: string;
+  expiresAt: number;
+  intervalMs?: number;
+});
+
+export type AuthenticationResponsePayload = {
+  operationId: string;
+  challengeId: string;
+  response: (string) | (boolean) | (Array<string>) | (SecretLeaseRef);
+};
+
+export type AuthenticationResult = ({
+  status: "challenge";
+  challenge: AuthenticationChallenge;
+}) | ({
+  status: "authenticated";
+  credential?: (SecretRef) | (CredentialRef);
+}) | ({
+  status: "cancelled";
+  message?: string;
+}) | ({
+  status: "failed";
+  message?: string;
+});
+
 export type BoundedPermissionResource = string;
 
 export type CommandContribution = {
@@ -29,6 +96,66 @@ export type CompanionExecutableVariant = {
 
 export type CompanionPlatform = "darwin-arm64" | "darwin-x64" | "linux-arm64" | "linux-x64" | "win32-arm64" | "win32-x64";
 
+export type ConnectionConfigurationPayload = {
+  configuration: JsonValue;
+};
+
+export type ConnectionControlPayload = {
+  connectionId: string;
+  operationId: string;
+};
+
+export type ConnectionControlResult = null;
+
+export type ConnectionOpenPayload = {
+  configuration: JsonValue;
+  operationId: string;
+  columns: number;
+  rows: number;
+  inputStreamId: string;
+  outputStreamId: string;
+  windowBytes: number;
+  credential?: (SecretRef) | (CredentialRef) | (SecretLeaseRef);
+  authenticationProviderId?: ContributionId;
+};
+
+export type ConnectionOpenResult = {
+  connectionId: string;
+  status: "connecting" | "connected";
+  diagnostics?: Array<ProviderValidationIssue>;
+};
+
+export type ConnectionProbeResult = {
+  available: boolean;
+  message?: string;
+  capabilities?: { [key: string]: JsonValue };
+};
+
+export type ConnectionResizePayload = {
+  connectionId: string;
+  operationId: string;
+  columns: number;
+  rows: number;
+};
+
+export type ConnectionSignalPayload = {
+  connectionId: string;
+  operationId: string;
+  signal: "interrupt" | "terminate" | "kill" | "eof" | "break";
+};
+
+export type ConnectionStatusResult = {
+  status: "connecting" | "connected" | "reconnecting" | "closed" | "error";
+  message?: string;
+  retryable?: boolean;
+  diagnostics?: Array<ProviderValidationIssue>;
+};
+
+export type ConnectionValidateResult = {
+  valid: boolean;
+  issues: Array<ProviderValidationIssue>;
+};
+
 export type ContextKeyExpression = string;
 
 export type ContributionId = string;
@@ -41,6 +168,156 @@ export type CredentialRef = {
 export type FeatureId = string;
 
 export type IconReference = (ThemeIcon) | (PackageIcon);
+
+export type ImporterDetectPayload = {
+  fileName?: string;
+  mediaType?: string;
+  sample: {
+    encoding: "base64";
+    data: string;
+  };
+};
+
+export type ImporterDetectResult = {
+  confidence: number;
+  format?: string;
+  reason?: string;
+};
+
+export type ImporterGroupDraft = string | { path: string; label?: string } | { path?: string; label: string };
+
+export type ImporterHostDraft = ({
+  id?: string;
+  label?: string;
+  username?: string;
+  group?: string;
+  tags?: Array<string>;
+  os?: "linux" | "windows" | "macos";
+  deviceType?: "general" | "network";
+  identityId?: string;
+  identityFileId?: string;
+  telnetIdentityId?: string;
+  notes?: string;
+  theme?: string;
+  sftpEncoding?: string;
+  sftpFileProtocol?: "auto" | "sftp" | "scp";
+  moshEnabled?: boolean;
+  etEnabled?: boolean;
+  telnetEnabled?: boolean;
+  sftpSudo?: boolean;
+  requiresMfa?: boolean;
+  useSshAgent?: boolean;
+  identitiesOnly?: boolean;
+  agentForwarding?: boolean;
+  x11Forwarding?: boolean;
+  showLineTimestamps?: boolean;
+  disableDynamicTabTitle?: boolean;
+  pinned?: boolean;
+  autoOpenSftpPanel?: boolean;
+  sftpFollowTerminalCwd?: boolean;
+  port?: number;
+  telnetPort?: number;
+  etPort?: number;
+  keepaliveInterval?: number;
+  keepaliveCountMax?: number;
+} & ({
+  hostname: string;
+  protocol?: "ssh" | "telnet" | "mosh" | "et" | "local" | "serial";
+  pluginConnection?: never;
+} | {
+  hostname?: string;
+  protocol: PluginHostProtocol;
+  pluginConnection: ImporterPluginConnectionDraft;
+}));
+
+export type ImporterIdentityDraft = {
+  id?: string;
+  label: string;
+  username: string;
+  authMethod: "password" | "key" | "certificate";
+  password?: string;
+  keyId?: string;
+};
+
+export type ImporterKeyDraft = ({
+  id?: string;
+  label: string;
+  type: "RSA" | "ECDSA" | "ED25519";
+  publicKey?: string;
+  certificate?: string;
+  passphrase?: string;
+  category?: "key" | "certificate" | "identity";
+} & ({
+  privateKey: string;
+  filePath?: never;
+} | {
+  privateKey?: never;
+  filePath: string;
+}));
+
+export type ImporterLimits = {"maxInputBytes":67108864,"maxOutputBytes":67108864,"maxRecordBytes":67108864,"maxRecords":10000};
+
+export type ImporterParsePayload = {
+  operationId: string;
+  fileName?: string;
+  mediaType?: string;
+  inputStreamId: string;
+  outputStreamId: string;
+  windowBytes: number;
+  options?: JsonValue;
+};
+
+export type ImporterParseResult = {
+  parsed: number;
+  warnings: number;
+  errors: number;
+};
+
+export type ImporterPluginConnectionDraft = {
+  providerId: ContributionId;
+  configuration: JsonValue;
+  authenticationProviderId?: ContributionId;
+  credentialId?: string;
+};
+
+export type ImporterRecord = ({
+  type: "draft";
+  draft: ({
+    kind: "host";
+    value: ImporterHostDraft;
+  }) | ({
+    kind: "identity";
+    value: ImporterIdentityDraft;
+  }) | ({
+    kind: "key";
+    value: ImporterKeyDraft;
+  }) | ({
+    kind: "snippet";
+    value: ImporterSnippetDraft;
+  }) | ({
+    kind: "group";
+    value: ImporterGroupDraft;
+  });
+}) | ({
+  type: "warning" | "error";
+  code?: string;
+  message: string;
+  path?: string;
+}) | ({
+  type: "progress";
+  completed: number;
+  total?: number;
+  message?: string;
+});
+
+export type ImporterSnippetDraft = {
+  id?: string;
+  label: string;
+  command: string;
+  tags?: Array<string>;
+  kind?: "snippet" | "script";
+  description?: string;
+};
 
 export type JsonPrimitive = (string) | (number) | (boolean) | (null);
 
@@ -116,6 +393,7 @@ export type PermissionRequest = {
   reason: string;
   operationId?: string;
   sessionId?: string;
+  allowedScopes?: Array<PermissionGrantScope>;
 };
 
 export type PermissionResource = string;
@@ -168,6 +446,8 @@ export type PluginFeatures = {
   required?: Array<FeatureId>;
   optional?: Array<FeatureId>;
 };
+
+export type PluginHostProtocol = `plugin:${ContributionId}`;
 
 export type PluginId = string;
 
@@ -261,6 +541,12 @@ export type ProviderResult = ({
   error: RpcErrorObject;
 });
 
+export type ProviderValidationIssue = {
+  path?: string;
+  severity: "warning" | "error";
+  message: string;
+};
+
 export type RelativePackagePath = string;
 
 export type RequiredPermissionDeclaration = (NonResourceScopedPermission) | (RequiredPermissionResourceDeclaration);
@@ -299,7 +585,7 @@ export type RpcId = (string) | (SafeUnsignedInteger);
 
 export type RpcLimits = {"maxJsonBytes":1048576};
 
-export type RpcMessage = (RpcRequest) | (RpcNotification) | (RpcSuccess) | (RpcFailure) | (RpcCancel) | (RpcProgressNotification) | (RuntimeInitializeRequest);
+export type RpcMessage = (RpcRequest) | (RpcNotification) | (RpcSuccess) | (RpcFailure) | (RpcCancel) | (RpcProgressNotification) | (RuntimeInitializeRequest) | (TerminalInterceptorAttachmentRequest);
 
 export type RpcNotification = {
   jsonrpc: "2.0";
@@ -460,6 +746,90 @@ export type StreamId = string;
 export type StreamLimits = {"maxStreamIdLength":128,"maxChunkBytes":16777216,"maxFrameJsonBytes":25165824,"minWindowBytes":1024,"maxWindowBytes":16777216,"maxCreditBytes":16777216};
 
 export type StreamWindowBytes = number;
+
+export type TerminalInterceptorAttachmentDescriptor = {
+  providerId: ContributionId;
+  direction: "input" | "output";
+  session: TerminalSessionSnapshot;
+};
+
+export type TerminalInterceptorAttachmentParams = {
+  descriptor: TerminalInterceptorAttachmentDescriptor;
+};
+
+export type TerminalInterceptorAttachmentRequest = {
+  jsonrpc: "2.0";
+  id: RpcId;
+  method: "plugin.terminal.interceptor.attach";
+  params: TerminalInterceptorAttachmentParams;
+  deadlineMs?: number;
+  cancellationId?: string;
+};
+
+export type TerminalInterceptorAttachmentResult = {
+  accepted: true;
+};
+
+export type TerminalInterceptorAttachmentSuccess = {
+  jsonrpc: "2.0";
+  id: RpcId;
+  result: TerminalInterceptorAttachmentResult;
+};
+
+export type TerminalInterceptorChunkByteLength = number;
+
+export type TerminalInterceptorChunkFrame = {
+  type: "netcatty:terminal-interceptor:chunk";
+  sequence: SafePositiveInteger;
+  direction: TerminalInterceptorDirection;
+  creditBytes: TerminalInterceptorCreditBytes;
+  byteLength: TerminalInterceptorChunkByteLength;
+};
+
+export type TerminalInterceptorCreditBytes = number;
+
+export type TerminalInterceptorDirection = "input" | "output";
+
+export type TerminalInterceptorFailedResultFrame = {
+  type: "netcatty:terminal-interceptor:result";
+  sequence: SafePositiveInteger;
+  status: "failed";
+};
+
+export type TerminalInterceptorFrame = (TerminalInterceptorReadyFrame) | (TerminalInterceptorChunkFrame) | (TerminalInterceptorOkResultFrame) | (TerminalInterceptorFailedResultFrame);
+
+export type TerminalInterceptorLimits = {"maxChunkBytes":65536,"maxWindowBytes":262144};
+
+export type TerminalInterceptorOkResultFrame = {
+  type: "netcatty:terminal-interceptor:result";
+  sequence: SafePositiveInteger;
+  status: "ok";
+  creditBytes: TerminalInterceptorChunkByteLength;
+  byteLength: TerminalInterceptorChunkByteLength;
+};
+
+export type TerminalInterceptorReadyFrame = {
+  type: "netcatty:terminal-interceptor:ready";
+  sessionId: string;
+  direction: TerminalInterceptorDirection;
+  windowBytes: TerminalInterceptorWindowBytes;
+};
+
+export type TerminalInterceptorWindowBytes = number;
+
+export type TerminalSessionSnapshot = {
+  sessionId: string;
+  hostId?: string;
+  workspaceId?: string;
+  protocol: string;
+  status: "connecting" | "connected" | "disconnected";
+  cwd?: string;
+  title?: string;
+  shellType?: "posix" | "fish" | "powershell" | "cmd" | "unknown";
+  cols?: number;
+  rows?: number;
+  alternateScreen?: boolean;
+};
 
 export type ThemeIcon = {
   kind: "theme";

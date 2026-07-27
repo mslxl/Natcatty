@@ -1,15 +1,42 @@
 import type React from "react";
-import type { FileConflict, FileConflictAction, TransferTask, SftpFilenameEncoding } from "../../../domain/models";
+import type { FileConflict, FileConflictAction, Host, TransferTask, SftpFilenameEncoding } from "../../../domain/models";
 import type { UploadResult } from "../../../lib/uploadService";
 import type { DropEntry } from "../../../lib/sftpFileUtils";
 import type { SftpPane } from "./types";
+import type { UploadEndpointPin } from "./uploadTargetPin";
 
 export interface UseSftpExternalOperationsParams {
+  ownerId: string;
   getActivePane: (side: "left" | "right") => SftpPane | null;
   getPaneByConnectionId: (connectionId: string) => SftpPane | null;
+  getPaneByTabId: (tabId: string) => SftpPane | null;
+  getSideByTabId?: (tabId: string) => "left" | "right" | null;
   refresh: (side: "left" | "right", options?: { tabId?: string }) => Promise<void>;
   sftpSessionsRef: React.MutableRefObject<Map<string, string>>;
   connectionCacheKeyMapRef: React.MutableRefObject<Map<string, string>>;
+  /**
+   * Ensure a live remote SFTP session for the pane (reconnect when missing/dead).
+   * Required for uploads/downloads that must not fail with "SFTP session not found".
+   */
+  ensureRemoteSftpId?: (
+    side: "left" | "right",
+    options?: { forceReconnect?: boolean; connectionId?: string; tabId?: string },
+  ) => Promise<string>;
+  /**
+   * Per-tab connect-time host (includes session hostname/port/user overrides).
+   * Used so pooled stream uploads open the pinned browse endpoint.
+   */
+  resolveConnectedHost?: (tabId: string) => Host | "local" | null | undefined;
+  /**
+   * FileZilla-style dedicated transfer sessions for bulk uploads.
+   * When set, remote stream uploads prefer pool connections (1–2/host)
+   * over the browse session so interactive listing stays responsive.
+   */
+  acquireTransferSession?: (
+    hostId: string,
+    transferId: string,
+    connectHost?: Host,
+  ) => Promise<{ sftpId: string; release: () => void; discard: () => void }>;
   clearDirCacheEntry?: (connectionId: string, path: string) => void;
   useCompressedUpload?: boolean;
   addExternalUpload?: (task: TransferTask) => void;
@@ -51,14 +78,15 @@ export interface SftpExternalOperationsResult {
   uploadExternalFolderPath: (
     side: "left" | "right",
     folderPath: string,
-    targetPath?: string
+    targetPath?: string,
+    options?: { connectionId?: string; tabId?: string; endpointPin?: UploadEndpointPin },
   ) => Promise<UploadResult[]>;
   uploadExternalEntries: (
     side: "left" | "right",
     entries: DropEntry[],
-    options?: { targetPath?: string }
+    options?: { targetPath?: string; connectionId?: string; tabId?: string; endpointPin?: UploadEndpointPin },
   ) => Promise<UploadResult[]>;
-  cancelExternalUpload: () => Promise<void>;
+  cancelExternalUpload: (taskId?: string) => Promise<void>;
   selectApplication: () => Promise<{ path: string; name: string } | null>;
   uploadConflicts: FileConflict[];
   resolveUploadConflict: (conflictId: string, action: FileConflictAction, applyToAll?: boolean) => void;

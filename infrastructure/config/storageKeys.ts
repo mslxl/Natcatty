@@ -116,6 +116,7 @@ export const STORAGE_KEY_SFTP_DOUBLE_CLICK_BEHAVIOR = 'netcatty_sftp_double_clic
 export const STORAGE_KEY_SFTP_AUTO_SYNC = 'netcatty_sftp_auto_sync_v1';
 export const STORAGE_KEY_SFTP_SHOW_HIDDEN_FILES = 'netcatty_sftp_show_hidden_files_v1';
 export const STORAGE_KEY_SFTP_USE_COMPRESSED_UPLOAD = 'netcatty_sftp_use_compressed_upload_v1';
+export const STORAGE_KEY_SFTP_TRANSFER_CENTER = 'netcatty_sftp_transfer_center_v1';
 export const STORAGE_KEY_SFTP_AUTO_OPEN_SIDEBAR = 'netcatty_sftp_auto_open_sidebar_v1';
 export const STORAGE_KEY_SFTP_FOLLOW_TERMINAL_CWD = 'netcatty_sftp_follow_terminal_cwd_v1';
 export const STORAGE_KEY_SFTP_DEFAULT_VIEW_MODE = 'netcatty_sftp_default_view_mode_v1';
@@ -196,6 +197,8 @@ export const STORAGE_KEY_AI_EXTERNAL_MCP_SILENT_SESSIONS = 'netcatty_ai_external
 
 // SFTP Transfer Concurrency
 export const STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY = 'netcatty_sftp_transfer_concurrency_v1';
+/** Dedicated transfer-pool idle TTL in ms (0 = never reclaim while app runs). */
+export const STORAGE_KEY_SFTP_TRANSFER_POOL_IDLE_TTL_MS = 'netcatty_sftp_transfer_pool_idle_ttl_ms_v1';
 
 // Workspace Focus Indicator Style
 export const STORAGE_KEY_WORKSPACE_FOCUS_STYLE = 'netcatty_workspace_focus_style_v1';
@@ -217,6 +220,8 @@ export const STORAGE_KEY_DISABLE_TERMINAL_FONT_ZOOM = 'netcatty_disable_terminal
 
 // Group Configurations (default settings inherited by hosts)
 export const STORAGE_KEY_GROUP_CONFIGS = 'netcatty_group_configs_v1';
+/** Crash-recovery journal for the plugin importer multi-key Vault commit. */
+export const STORAGE_KEY_PLUGIN_IMPORT_TRANSACTION = 'netcatty_plugin_import_transaction_v1';
 
 // Side Panel
 export const STORAGE_KEY_SIDE_PANEL_WIDTH = 'netcatty_side_panel_width';

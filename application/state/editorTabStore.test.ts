@@ -1,7 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import React from "react";
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
 
-import { EditorTabStore, type EditorTab } from "./editorTabStore.ts";
+import {
+  editorTabStore,
+  EditorTabStore,
+  useHasEditorTabForSessions,
+  type EditorTab,
+} from "./editorTabStore.ts";
 
 const makeTab = (overrides: Partial<EditorTab> = {}): EditorTab => ({
   id: "edt_1",
@@ -100,6 +107,77 @@ test("promoteFromModal creates a new tab and returns its id", () => {
   assert.equal(tab.remotePath, "/etc/nginx/nginx.conf");
   assert.equal(tab.fileName, "nginx.conf");
   assert.equal(tab.kind, "editor");
+});
+
+test("hasTabForSessions identifies the SFTP owner of a promoted editor", () => {
+  const store = new EditorTabStore();
+  store.promoteFromModal({
+    sessionId: "conn_owned",
+    hostId: "host_1",
+    remotePath: "/tmp/script.sh",
+    fileName: "script.sh",
+    languageId: "shell",
+    content: "echo changed",
+    baselineContent: "echo original",
+    wordWrap: false,
+    viewState: null,
+  });
+
+  assert.equal(store.hasTabForSessions(new Set(["conn_owned"])), true);
+  assert.equal(store.hasTabForSessions(new Set(["conn_other"])), false);
+});
+
+test("useHasEditorTabForSessions updates when the owning editor opens and closes", async () => {
+  const actEnvironment = globalThis as typeof globalThis & {
+    IS_REACT_ACT_ENVIRONMENT?: boolean;
+  };
+  const previousActEnvironment = actEnvironment.IS_REACT_ACT_ENVIRONMENT;
+  actEnvironment.IS_REACT_ACT_ENVIRONMENT = true;
+
+  const ownedSessionIdsRef = { current: new Set(["conn_hook_test"]) };
+  const getOwnedSessionIds = () => ownedSessionIdsRef.current;
+  let hasOwnedEditorTab = false;
+  const Probe = () => {
+    hasOwnedEditorTab = useHasEditorTabForSessions(getOwnedSessionIds);
+    return null;
+  };
+  let renderer: ReactTestRenderer | null = null;
+  let tabId: string | null = null;
+
+  try {
+    await act(async () => {
+      renderer = create(React.createElement(Probe));
+    });
+    assert.equal(hasOwnedEditorTab, false);
+
+    await act(async () => {
+      tabId = editorTabStore.promoteFromModal({
+        sessionId: "conn_hook_test",
+        hostId: "host_1",
+        remotePath: "/tmp/hook-test.sh",
+        fileName: "hook-test.sh",
+        languageId: "shell",
+        content: "echo changed",
+        baselineContent: "echo original",
+        wordWrap: false,
+        viewState: null,
+      });
+      await Promise.resolve();
+    });
+    assert.equal(hasOwnedEditorTab, true);
+
+    await act(async () => {
+      editorTabStore.close(tabId!);
+      await Promise.resolve();
+    });
+    assert.equal(hasOwnedEditorTab, false);
+  } finally {
+    if (tabId) editorTabStore.close(tabId);
+    await act(async () => {
+      renderer?.unmount();
+    });
+    actEnvironment.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+  }
 });
 
 test("promoteFromModal focuses existing tab for same sessionId+normalized path and overrides content", () => {

@@ -98,10 +98,23 @@ again after the runtime returns the handle. Browser and utility runtimes
 implement the same methods over their private router. Later registries do not
 reach into a runtime window, utility process, MessagePort, or router.
 
+Router requests may carry a reviewed structured-clone transfer list. This is
+used to establish privileged terminal interceptor ports while retaining one
+owner for correlation, deadlines, cancellation, validation, late responses,
+close cleanup, and protocol-failure containment. After the attachment request
+is accepted, terminal bytes travel only on the transferred dedicated port and
+do not enter the JSON-RPC control plane.
+
 Outgoing requests accept a method-specific result validator. Command and
 Provider adapters must validate their exact public result schema before using
 plugin data. The generic JSON boundary remains the first structural limit, not
-a substitute for operation-level validation.
+a substitute for operation-level validation. Connection Providers additionally
+validate the operation-specific result map: `resize`, `signal`, `reconnect`,
+and `close` must return JSON `null`; `getStatus` must return a bounded
+`ConnectionStatusResult` object and may attach structured diagnostics. Status
+diagnostics are propagated through the host-owned terminal finish route so
+later disconnect, reconnect, or authentication failures remain visible after
+the initial `open` response.
 
 Control-plane JSON is limited to 1 MiB. Large command results, importer data,
 sync objects, terminal snapshots, and connection traffic must use the bounded
@@ -211,9 +224,9 @@ new protocol route. Plugin packages still cannot add mappings themselves.
 | PR 4 contributions | host-to-plugin request/notify, runtime events, host module resources | implemented: lazy activation, command/settings/view registries, Context Keys, UI SDK and sandboxed views |
 | PR 5 terminal Providers | validated host requests, cancellation, lifecycle events | Provider ranking, deadlines, snapshots, built-in highlighter/autocomplete adapters |
 | PR 6 terminal pipeline | runtime identity and placement policy | direct MessagePort fast path, sensitive-input bypass, circuit breaker |
-| PR 7 connection/auth/import | requests, validated results, streams, crash containment, `CredentialRef` resolver and `SecretLease` consumer | profiles, challenges, provider lease consumption, importer transactions |
+| PR 7 connection/auth/import | activation-owned Provider requests, exact result validators, bounded streams, diagnostics, secret leases, credential refs | implemented: connection sessions, authentication challenges, importer preview/commit |
 | PR 8 sync | streams, lifecycle identity, namespaced storage boundary | dynamic providers, encrypted sidecar, CRDT state and account baselines |
-| PR 9 distribution | retained immutable versions, compare-and-set restore, placement resolver, module resources | signatures, trust, health checks, audited update and user rollback policy, API 1.0 |
+| PR 9 distribution | retained immutable versions, compare-and-set restore, placement resolver, module resources | signatures, trust, health checks, audited update and user rollback policy, API 1.0, and the reproducible terminal benchmark harness/environment/release gate for the 1% throughput and 4 ms p95 / 8 ms p99 input-latency targets |
 
 ## Data-model decisions that must remain explicit
 

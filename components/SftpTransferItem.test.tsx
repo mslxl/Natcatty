@@ -35,6 +35,8 @@ const renderTransferItem = (
       React.createElement(SftpTransferItem, {
         task,
         onCancel: () => {},
+        onPause: () => {},
+        onResume: () => {},
         onRetry: () => {},
         onDismiss: () => {},
         ...props,
@@ -59,6 +61,64 @@ test("renders active transfer cancel action with an item-specific label", () => 
   });
 
   assert.match(markup, /aria-label="Cancel: archive\.tar\.gz"/);
+  assert.match(markup, /aria-label="Pause: archive\.tar\.gz"/);
+});
+
+test("renders paused transfer resume action", () => {
+  const markup = renderTransferItem({
+    ...baseTask,
+    status: "paused",
+    error: undefined,
+    resumable: true,
+  });
+
+  assert.match(markup, /aria-label="Resume: archive\.tar\.gz"/);
+  // Paused rows keep the checkpoint progress bar (amber, no shimmer).
+  assert.match(markup, /bg-amber-500\/80/);
+  assert.doesNotMatch(markup, /progress-shimmer/);
+});
+
+test("renders resume spinner while reconnecting", () => {
+  const markup = renderTransferItem({
+    ...baseTask,
+    status: "pending",
+    error: undefined,
+    reconnectRequired: true,
+    resumable: true,
+  });
+
+  assert.match(markup, /aria-label="Reconnecting and resuming…: archive\.tar\.gz"/);
+  assert.match(markup, /aria-busy="true"/);
+  assert.doesNotMatch(markup, /aria-label="Resume: archive\.tar\.gz"/);
+  assert.match(markup, /animate-spin/);
+});
+
+test("renders pausing state feedback instead of a dead pause button", () => {
+  const markup = renderTransferItem({
+    ...baseTask,
+    status: "pausing",
+    error: undefined,
+    speed: 0,
+    resumable: true,
+  });
+
+  // Soft-drain is short; status copy is "Pausing" (not "finishing current step").
+  assert.match(markup, /aria-label="Pausing: archive\.tar\.gz"/);
+  assert.match(markup, /aria-busy="true"/);
+  assert.doesNotMatch(markup, /aria-label="Pause: archive\.tar\.gz"/);
+  assert.match(markup, />Pausing</);
+});
+
+test("surfaces pause unavailable reason on a transferring row", () => {
+  const markup = renderTransferItem({
+    ...baseTask,
+    status: "transferring",
+    error: undefined,
+    speed: 128,
+    pauseUnavailableReason: "This transfer cannot be paused yet",
+  });
+
+  assert.match(markup, /This transfer cannot be paused yet/);
 });
 
 test("renders child resize handle as a keyboard-reachable separator", () => {

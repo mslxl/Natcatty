@@ -24,6 +24,34 @@ let transferBridge = null;
 
 // Active compress operations
 const activeCompressions = new Map();
+const workerCompressionLifecycleEpochs = new Map();
+
+function broadcastCompressionEvent(payload) {
+  if (!payload?.transferId) return;
+  try {
+    transferBridge?.broadcastGlobalTransferEvent?.(payload);
+  } catch {
+    // Global UI fanout is best-effort; the job itself must keep running.
+  }
+}
+
+function waitWhilePaused(compression) {
+  if (!compression.paused || compression.cancelled) return Promise.resolve();
+  broadcastCompressionEvent({
+    type: 'paused',
+    transferId: compression.compressionId,
+    phase: compression.phase,
+    lifecycleEpoch: compression.lifecycleEpoch,
+    lifecycleState: 'paused',
+  });
+  return new Promise((resolve) => compression.resumeWaiters.push(resolve));
+}
+
+function releasePausedCompression(compression) {
+  compression.paused = false;
+  const waiters = compression.resumeWaiters.splice(0);
+  for (const resolve of waiters) resolve();
+}
 
 /**
  * Initialize the compress upload bridge with dependencies
@@ -267,21 +295,66 @@ async function startCompressedUpload(event, payload) {
     folderPath,
     targetPath,
     sftpId,
-    folderName
+    folderName,
+    totalBytes = 0,
   } = payload;
   const sender = event.sender;
 
   // Register compression for cancellation
-  const compression = { cancelled: false, process: null };
+  const compression = {
+    compressionId,
+    cancelled: false,
+    process: null,
+    phase: 'preparing',
+    paused: false,
+    lifecycleEpoch: Math.max(0, Number(payload.lifecycleEpoch) || 0),
+    lifecycleState: 'transferring',
+    resumeWaiters: [],
+  };
   activeCompressions.set(compressionId, compression);
+
+  broadcastCompressionEvent({
+    type: 'started',
+    transferId: compressionId,
+    direction: 'upload',
+    fileName: `${folderName} (compressed)`,
+    sourcePath: folderPath,
+    targetPath: `${targetPath}/${folderName}`,
+    totalBytes,
+    isDirectory: true,
+    controlKind: 'compressed-upload',
+    phase: 'compressing',
+    startedAt: Date.now(),
+    lifecycleEpoch: compression.lifecycleEpoch,
+    lifecycleState: compression.lifecycleState,
+  });
 
   const sendProgress = (phase, transferred, total) => {
     if (compression.cancelled) return;
+    const ratio = total > 0 ? Math.max(0, Math.min(1, transferred / total)) : 0;
+    const transferredBytes = Math.floor(ratio * totalBytes);
     sender.send("netcatty:compress:progress", { 
       compressionId, 
       phase, 
       transferred, 
-      total 
+      total,
+      transferredBytes,
+      totalBytes,
+      fileName: `${folderName} (compressed)`,
+      sourcePath: folderPath,
+      targetPath: `${targetPath}/${folderName}`,
+      lifecycleEpoch: compression.lifecycleEpoch,
+      lifecycleState: compression.lifecycleState,
+    });
+    broadcastCompressionEvent({
+      type: 'progress',
+      transferId: compressionId,
+      transferred: transferredBytes,
+      totalBytes,
+      speed: 0,
+      phase,
+      lifecycleEpoch: compression.lifecycleEpoch,
+      lifecycleState: compression.lifecycleState,
     });
   };
 
@@ -297,6 +370,13 @@ async function startCompressedUpload(event, payload) {
     }
     activeCompressions.delete(compressionId);
     sender.send("netcatty:compress:complete", { compressionId });
+    broadcastCompressionEvent({
+      type: 'completed',
+      transferId: compressionId,
+      transferred: totalBytes,
+      totalBytes,
+      endedAt: Date.now(),
+    });
   };
 
   const sendError = (error) => {
@@ -304,6 +384,12 @@ async function startCompressedUpload(event, payload) {
     sender.send("netcatty:compress:error", { 
       compressionId, 
       error: error.message || String(error) 
+    });
+    broadcastCompressionEvent({
+      type: 'failed',
+      transferId: compressionId,
+      error: error.message || String(error),
+      endedAt: Date.now(),
     });
   };
 
@@ -323,6 +409,8 @@ async function startCompressedUpload(event, payload) {
     }
 
     // Phase 1: Compression (0-30%)
+    compression.phase = 'compressing';
+    await waitWhilePaused(compression);
     sendProgress('compressing', 0, 100);
     
     tempArchivePath = getTempFilePath(`${folderName}.tar.gz`);
@@ -348,6 +436,8 @@ async function startCompressedUpload(event, payload) {
     sendProgress('compressing', 30, 100);
 
     // Phase 2: Upload (30-90%)
+    compression.phase = 'uploading';
+    await waitWhilePaused(compression);
     sendProgress('uploading', 30, 100);
 
     const remoteArchivePath = `${targetPath}/${folderName}.tar.gz`;
@@ -358,6 +448,7 @@ async function startCompressedUpload(event, payload) {
     // Progress callback to map upload progress to 30-90%
     const onUploadProgress = (transferred, total, _speed) => {
       if (compression.cancelled) return;
+      compression.checkpointBytes = transferred;
       const uploadProgress = Math.min(60, (transferred / total) * 60);
       sendProgress('uploading', 30 + uploadProgress, 100);
     };
@@ -370,7 +461,9 @@ async function startCompressedUpload(event, payload) {
       sourceType: 'local',
       targetType: 'sftp',
       targetSftpId: sftpId,
-      totalBytes: compressedSize
+      totalBytes: compressedSize,
+      resumable: true,
+      checkpointBytes: compression.checkpointBytes || 0,
     }, onUploadProgress);
 
     if (compression.cancelled) {
@@ -382,9 +475,15 @@ async function startCompressedUpload(event, payload) {
     sendProgress('uploading', 90, 100);
 
     // Phase 3: Extraction (90-100%)
+    compression.phase = 'extracting';
+    await waitWhilePaused(compression);
     sendProgress('extracting', 90, 100);
 
     await extractRemoteArchive(sftpId, remoteArchivePath, targetPath, compressedSize);
+
+    // Extraction is an atomic remote step. A pause requested during extraction
+    // takes effect here, before completion is published.
+    await waitWhilePaused(compression);
 
     // Update progress to 95% after extraction
     sendProgress('extracting', 95, 100);
@@ -452,6 +551,7 @@ async function startCompressedUpload(event, payload) {
     // Check if cancelled during extraction before reporting completion
     if (compression.cancelled) {
       sender.send("netcatty:compress:cancelled", { compressionId });
+      broadcastCompressionEvent({ type: 'cancelled', transferId: compressionId, endedAt: Date.now() });
       return { compressionId, cancelled: true };
     }
 
@@ -471,6 +571,7 @@ async function startCompressedUpload(event, payload) {
     if (err.message === 'Upload cancelled' || err.message === 'Compression cancelled' || err.message === 'Transfer cancelled') {
       activeCompressions.delete(compressionId);
       sender.send("netcatty:compress:cancelled", { compressionId });
+      broadcastCompressionEvent({ type: 'cancelled', transferId: compressionId, endedAt: Date.now() });
     } else {
       sendError(err.message || 'Unknown error occurred');
     }
@@ -490,6 +591,7 @@ async function cancelCompression(event, payload) {
 
   if (compression) {
     compression.cancelled = true;
+    releasePausedCompression(compression);
 
     // Kill the tar process if running
     if (compression.process) {
@@ -511,7 +613,88 @@ async function cancelCompression(event, payload) {
     }
   }
 
+  broadcastCompressionEvent({ type: 'cancelled', transferId: compressionId, endedAt: Date.now() });
+
   return { success: true };
+}
+
+async function pauseCompression(event, payload) {
+  const { compressionId } = payload;
+  const compression = activeCompressions.get(compressionId);
+  if (!compression || compression.cancelled) {
+    return { success: false, reason: 'Compression is not active' };
+  }
+
+  if (compression.paused) return { success: true, deferred: compression.phase === 'extracting' };
+  compression.paused = true;
+  compression.lifecycleEpoch += 1;
+  compression.lifecycleState = 'pausing';
+
+  if (compression.phase === 'compressing' && compression.process && process.platform !== 'win32') {
+    try {
+      compression.process.kill('SIGSTOP');
+    } catch {
+      // The process may have completed between the phase check and signal.
+    }
+  }
+  if (compression.phase === 'uploading' && transferBridge?.pauseTransfer) {
+    const result = await transferBridge.pauseTransfer(event, { transferId: `compress-${compressionId}` });
+    if (!result?.success) {
+      compression.paused = false;
+      compression.lifecycleEpoch += 1;
+      compression.lifecycleState = 'transferring';
+      broadcastCompressionEvent({
+        type: 'resumed',
+        transferId: compressionId,
+        phase: compression.phase,
+        lifecycleEpoch: compression.lifecycleEpoch,
+        lifecycleState: compression.lifecycleState,
+      });
+      return result || { success: false, reason: 'Upload pause is unavailable' };
+    }
+  }
+
+  const deferred = compression.phase === 'extracting' || (compression.phase === 'compressing' && process.platform === 'win32');
+  compression.lifecycleState = deferred ? 'pausing' : 'paused';
+  broadcastCompressionEvent({
+    type: deferred ? 'pausing' : 'paused',
+    transferId: compressionId,
+    phase: compression.phase,
+    lifecycleEpoch: compression.lifecycleEpoch,
+    lifecycleState: compression.lifecycleState,
+  });
+  return { success: true, deferred, lifecycleEpoch: compression.lifecycleEpoch };
+}
+
+async function resumeCompression(event, payload) {
+  const { compressionId } = payload;
+  const compression = activeCompressions.get(compressionId);
+  if (!compression || compression.cancelled) {
+    return { success: false, reason: 'Compression is not active' };
+  }
+
+  if (compression.phase === 'compressing' && compression.process && process.platform !== 'win32') {
+    try {
+      compression.process.kill('SIGCONT');
+    } catch {
+      // The process may have completed while the request was in flight.
+    }
+  }
+  if (compression.phase === 'uploading' && transferBridge?.resumeTransfer) {
+    const result = await transferBridge.resumeTransfer(event, { transferId: `compress-${compressionId}` });
+    if (!result?.success) return result || { success: false, reason: 'Upload resume is unavailable' };
+  }
+  compression.lifecycleEpoch += 1;
+  compression.lifecycleState = 'transferring';
+  releasePausedCompression(compression);
+  broadcastCompressionEvent({
+    type: 'resumed',
+    transferId: compressionId,
+    phase: compression.phase,
+    lifecycleEpoch: compression.lifecycleEpoch,
+    lifecycleState: compression.lifecycleState,
+  });
+  return { success: true, lifecycleEpoch: compression.lifecycleEpoch };
 }
 
 /**
@@ -551,8 +734,78 @@ function registerWorkerHandle(ipcMain, terminalWorkerManager, channel) {
 function registerHandlers(ipcMain, options = {}) {
   const terminalWorkerManager = options.terminalWorkerManager || null;
   if (terminalWorkerManager) {
+    const workerRequest = (event, channel, payload) => terminalWorkerManager.request(channel, payload, {
+      webContentsId: event?.sender?.id,
+    });
+    const nextEpoch = (compressionId, suggestedEpoch) => {
+      const current = Math.max(0, Number(workerCompressionLifecycleEpochs.get(compressionId)) || 0);
+      const suggested = Number(suggestedEpoch);
+      const next = Number.isFinite(suggested) && suggested > current ? suggested : current + 1;
+      workerCompressionLifecycleEpochs.set(compressionId, next);
+      return next;
+    };
+    ipcMain.handle("netcatty:compress:start", (event, payload) => {
+      if (payload?.compressionId) {
+        workerCompressionLifecycleEpochs.set(
+          payload.compressionId,
+          Math.max(0, Number(payload.lifecycleEpoch) || 0),
+        );
+      }
+      return workerRequest(event, "netcatty:compress:start", payload);
+    });
+    ipcMain.handle("netcatty:compress:pause", async (event, payload) => {
+      const lifecycleEpoch = nextEpoch(payload?.compressionId);
+      broadcastCompressionEvent({
+        type: 'pausing',
+        transferId: payload?.compressionId,
+        lifecycleEpoch,
+        lifecycleState: 'pausing',
+      });
+      try {
+        const result = await workerRequest(event, "netcatty:compress:pause", payload);
+        if (!result?.success) {
+          const rollbackEpoch = nextEpoch(payload?.compressionId);
+          broadcastCompressionEvent({
+            type: 'resumed',
+            transferId: payload?.compressionId,
+            lifecycleEpoch: rollbackEpoch,
+            lifecycleState: 'transferring',
+          });
+          return result;
+        }
+        const lifecycleState = result.deferred ? 'pausing' : 'paused';
+        broadcastCompressionEvent({
+          type: lifecycleState,
+          transferId: payload?.compressionId,
+          lifecycleEpoch,
+          lifecycleState,
+        });
+        return result;
+      } catch (error) {
+        const rollbackEpoch = nextEpoch(payload?.compressionId);
+        broadcastCompressionEvent({
+          type: 'resumed',
+          transferId: payload?.compressionId,
+          lifecycleEpoch: rollbackEpoch,
+          lifecycleState: 'transferring',
+        });
+        throw error;
+      }
+    });
+    ipcMain.handle("netcatty:compress:resume", async (event, payload) => {
+      const result = await workerRequest(event, "netcatty:compress:resume", payload);
+      if (result?.success) {
+        const lifecycleEpoch = nextEpoch(payload?.compressionId, result.lifecycleEpoch);
+        broadcastCompressionEvent({
+          type: 'resumed',
+          transferId: payload?.compressionId,
+          lifecycleEpoch,
+          lifecycleState: 'transferring',
+        });
+      }
+      return result;
+    });
     [
-      "netcatty:compress:start",
       "netcatty:compress:cancel",
       "netcatty:compress:checkSupport",
     ].forEach((channel) => registerWorkerHandle(ipcMain, terminalWorkerManager, channel));
@@ -560,10 +813,14 @@ function registerHandlers(ipcMain, options = {}) {
   }
   ipcMain.handle("netcatty:compress:start", startCompressedUpload);
   ipcMain.handle("netcatty:compress:cancel", cancelCompression);
+  ipcMain.handle("netcatty:compress:pause", pauseCompression);
+  ipcMain.handle("netcatty:compress:resume", resumeCompression);
   ipcMain.handle("netcatty:compress:checkSupport", checkCompressedUploadSupport);
 }
 
 module.exports = {
   init,
   registerHandlers,
+  pauseCompression,
+  resumeCompression,
 };

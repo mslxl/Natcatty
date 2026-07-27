@@ -1,31 +1,33 @@
 /**
- * QuickAddSnippetDialog — lightweight "new snippet" modal mounted at the
+ * QuickAddSnippetDialog — lightweight "new snippet" side panel mounted at the
  * App root and triggered by the `netcatty:snippets:add` window event.
  *
- * Intentionally minimal: label + command + package only. Advanced fields
- * (target hosts, shortkey, tags) can be set later via the full Snippets
- * manager. This keeps the user in their terminal context instead of
- * navigating to the Vault view just to add a command.
+ * Opens as a right-side drawer (AsidePanel) so it matches the host-list
+ * create/edit UX. Fields: label, command, package, shortkey, multi-line mode.
+ * Advanced fields (target hosts, tags) can still be set later in the full
+ * Snippets manager.
  */
 
-import { Package } from 'lucide-react';
+import { Keyboard, Package, RotateCcw } from 'lucide-react';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useI18n } from '../application/i18n/I18nProvider';
 import type { Snippet } from '../domain/models';
+import {
+  type HotkeyScheme,
+  type KeyBinding,
+  keyEventToString,
+  matchesKeyBinding,
+  parseKeyCombo,
+} from '../domain/models';
 import { isScriptSnippet } from '../domain/snippetScript.ts';
+import { cn, isMacPlatform } from '../lib/utils';
+import { AsidePanel, AsidePanelContent, AsidePanelFooter } from './ui/aside-panel';
 import { Button } from './ui/button';
 import { Combobox } from './ui/combobox';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from './ui/dialog';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
+import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import { SnippetScriptEditor } from './snippets/SnippetScriptEditor';
 
 export interface QuickAddSnippetDialogProps {
@@ -34,6 +36,9 @@ export interface QuickAddSnippetDialogProps {
   onCreateSnippet: (snippet: Snippet) => void;
   onUpdateSnippet?: (snippet: Snippet) => void;
   onCreatePackage?: (packagePath: string) => void;
+  /** Optional — used to validate shortkey conflicts with system bindings. */
+  hotkeyScheme?: HotkeyScheme;
+  keyBindings?: KeyBinding[];
 }
 
 export function getQuickAddSnippetInitialCommand(event: Event): string {
@@ -47,6 +52,8 @@ export const QuickAddSnippetDialog: React.FC<QuickAddSnippetDialogProps> = ({
   onCreateSnippet,
   onUpdateSnippet,
   onCreatePackage,
+  hotkeyScheme = 'disabled',
+  keyBindings = [],
 }) => {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
@@ -54,9 +61,14 @@ export const QuickAddSnippetDialog: React.FC<QuickAddSnippetDialogProps> = ({
   const [command, setCommand] = useState('');
   const [packagePath, setPackagePath] = useState('');
   const [noAutoRun, setNoAutoRun] = useState(false);
-  const [multiLineRunMode, setMultiLineRunMode] = useState<Snippet["multiLineRunMode"]>(undefined);
+  const [multiLineRunMode, setMultiLineRunMode] = useState<Snippet['multiLineRunMode']>(undefined);
+  const [shortkey, setShortkey] = useState<string | undefined>(undefined);
+  const [isRecordingShortkey, setIsRecordingShortkey] = useState(false);
+  const [shortkeyError, setShortkeyError] = useState<string | null>(null);
   const [editing, setEditing] = useState<Snippet | null>(null);
   const labelInputRef = useRef<HTMLInputElement>(null);
+  const dialogRootRef = useRef<HTMLDivElement>(null);
+  const previouslyFocusedRef = useRef<HTMLElement | null>(null);
 
   // Listen for the global "add snippet" request dispatched by the
   // terminal-side ScriptsSidePanel + button. We reset form state on
@@ -69,6 +81,9 @@ export const QuickAddSnippetDialog: React.FC<QuickAddSnippetDialogProps> = ({
       setPackagePath('');
       setNoAutoRun(false);
       setMultiLineRunMode(undefined);
+      setShortkey(undefined);
+      setShortkeyError(null);
+      setIsRecordingShortkey(false);
       setOpen(true);
     };
     window.addEventListener('netcatty:snippets:add', handler);
@@ -88,19 +103,262 @@ export const QuickAddSnippetDialog: React.FC<QuickAddSnippetDialogProps> = ({
       setPackagePath(snippet.package ?? '');
       setNoAutoRun(snippet.noAutoRun ?? false);
       setMultiLineRunMode(snippet.multiLineRunMode);
+      setShortkey(snippet.shortkey);
+      setShortkeyError(null);
+      setIsRecordingShortkey(false);
       setOpen(true);
     };
     window.addEventListener('netcatty:snippets:edit', handler);
     return () => window.removeEventListener('netcatty:snippets:edit', handler);
   }, []);
 
-  // Auto-focus the label input once the dialog renders, so the user can
-  // start typing immediately after clicking the + button.
+  // Capture opener focus on open; restore it when the drawer closes.
+  // Also trap Tab within the drawer so focus cannot fall into the covered terminal.
   useEffect(() => {
     if (!open) return;
-    const id = window.setTimeout(() => labelInputRef.current?.focus(), 50);
-    return () => window.clearTimeout(id);
-  }, [open]);
+    previouslyFocusedRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+
+    const root = () => dialogRootRef.current;
+
+    const isInsideOpenOverlay = (node: Node | null): boolean => {
+      if (!(node instanceof Element)) return false;
+      // Portaled Select/Combobox content is still part of the modal interaction.
+      if (node.closest('[data-radix-popper-content-wrapper], [role="listbox"]')) return true;
+      return Boolean(root()?.contains(node));
+    };
+
+    const listFocusable = (): HTMLElement[] => {
+      const container = root();
+      if (!container) return [];
+      const nodes = container.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      );
+      return Array.from(nodes).filter((el) => {
+        if (el.getAttribute('aria-hidden') === 'true') return false;
+        if (el.tabIndex < 0) return false;
+        // Skip the invisible full-screen backdrop and sr-only dialog-close control.
+        if (el.classList.contains('sr-only')) return false;
+        if (el.getAttribute('aria-label') === t('common.cancel') && el.classList.contains('absolute')) {
+          return false;
+        }
+        return el.offsetParent !== null || el === document.activeElement;
+      });
+    };
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab' || e.defaultPrevented) return;
+      const focusable = listFocusable();
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+      if (e.shiftKey) {
+        if (!active || active === first || !isInsideOpenOverlay(active)) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else if (!active || active === last || !isInsideOpenOverlay(active)) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+
+    const onFocusIn = (e: FocusEvent) => {
+      const target = e.target as Node | null;
+      if (isInsideOpenOverlay(target)) return;
+      // Keep focus inside the drawer when something outside tries to steal it.
+      const focusable = listFocusable();
+      (focusable[0] ?? labelInputRef.current)?.focus();
+    };
+
+    // Defer initial focus so AsidePanel / inputs mount first.
+    const focusTimer = window.setTimeout(() => labelInputRef.current?.focus(), 50);
+    document.addEventListener('keydown', onKeyDown, true);
+    document.addEventListener('focusin', onFocusIn);
+
+    return () => {
+      window.clearTimeout(focusTimer);
+      document.removeEventListener('keydown', onKeyDown, true);
+      document.removeEventListener('focusin', onFocusIn);
+      const previous = previouslyFocusedRef.current;
+      previouslyFocusedRef.current = null;
+      window.setTimeout(() => {
+        if (previous && document.contains(previous)) {
+          previous.focus();
+        }
+      }, 0);
+    };
+  }, [open, t]);
+
+  const isMac = useMemo(() => (
+    hotkeyScheme === 'mac' || (hotkeyScheme === 'disabled' && isMacPlatform())
+  ), [hotkeyScheme]);
+
+  const existingShortkeys = useMemo(() => (
+    snippets.filter((s) => Boolean(s.shortkey) && s.id !== editing?.id)
+  ), [snippets, editing?.id]);
+
+  const activeSystemBindings = useMemo(() => {
+    return keyBindings.flatMap((binding) => {
+      const entries: { binding: string; isMac: boolean }[] = [];
+      const macBinding = binding.mac;
+      const pcBinding = binding.pc;
+
+      if (hotkeyScheme === 'mac') {
+        if (macBinding && macBinding !== 'Disabled') {
+          entries.push({ binding: macBinding, isMac: true });
+        }
+        return entries;
+      }
+
+      if (hotkeyScheme === 'pc') {
+        if (pcBinding && pcBinding !== 'Disabled') {
+          entries.push({ binding: pcBinding, isMac: false });
+        }
+        return entries;
+      }
+
+      if (macBinding && macBinding !== 'Disabled') {
+        entries.push({ binding: macBinding, isMac: true });
+      }
+      if (pcBinding && pcBinding !== 'Disabled') {
+        entries.push({ binding: pcBinding, isMac: false });
+      }
+      return entries;
+    });
+  }, [hotkeyScheme, keyBindings]);
+
+  const buildKeyEventFromString = useCallback((keyString: string) => {
+    const parsed = parseKeyCombo(keyString);
+    if (!parsed) return null;
+
+    const modifiers = new Set(parsed.modifiers);
+    const key = parsed.key;
+    const normalizedKey = (() => {
+      switch (key) {
+        case 'Space':
+          return ' ';
+        case '↑':
+          return 'ArrowUp';
+        case '↓':
+          return 'ArrowDown';
+        case '←':
+          return 'ArrowLeft';
+        case '→':
+          return 'ArrowRight';
+        case 'Esc':
+          return 'Escape';
+        case '⌫':
+          return 'Backspace';
+        case 'Del':
+          return 'Delete';
+        case '↵':
+          return 'Enter';
+        case '⇥':
+          return 'Tab';
+        default:
+          return key.length === 1 ? key.toLowerCase() : key;
+      }
+    })();
+
+    return new KeyboardEvent('keydown', {
+      key: normalizedKey,
+      metaKey: modifiers.has('⌘') || modifiers.has('Win'),
+      ctrlKey: modifiers.has('⌃') || modifiers.has('Ctrl'),
+      altKey: modifiers.has('⌥') || modifiers.has('Alt'),
+      shiftKey: modifiers.has('Shift'),
+    });
+  }, []);
+
+  const normalizeKeyString = useCallback((value: string) => (
+    value.toLowerCase().replace(/\s+/g, '')
+  ), []);
+
+  const validateShortkey = useCallback((key: string): string | null => {
+    if (!key) return null;
+
+    const syntheticEvent = buildKeyEventFromString(key);
+    if (syntheticEvent) {
+      const conflictsSystem = activeSystemBindings.some(({ binding, isMac: bindingIsMac }) => (
+        matchesKeyBinding(syntheticEvent, binding, bindingIsMac)
+      ));
+      if (conflictsSystem) {
+        return t('snippets.shortkey.error.systemConflict');
+      }
+    }
+
+    if (syntheticEvent) {
+      for (const snippet of existingShortkeys) {
+        if (snippet.shortkey && matchesKeyBinding(syntheticEvent, snippet.shortkey, isMac)) {
+          return t('snippets.shortkey.error.snippetConflict', { name: snippet.label });
+        }
+      }
+    } else {
+      const normalizedKey = normalizeKeyString(key);
+      const conflictingSnippet = existingShortkeys.find((snippet) => (
+        snippet.shortkey && normalizeKeyString(snippet.shortkey) === normalizedKey
+      ));
+      if (conflictingSnippet) {
+        return t('snippets.shortkey.error.snippetConflict', { name: conflictingSnippet.label });
+      }
+    }
+
+    return null;
+  }, [
+    activeSystemBindings,
+    buildKeyEventFromString,
+    existingShortkeys,
+    isMac,
+    normalizeKeyString,
+    t,
+  ]);
+
+  // Shortkey recording capture. Escape cancels recording only (does not close the panel).
+  useEffect(() => {
+    if (!isRecordingShortkey) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      if (e.key === 'Escape') {
+        setIsRecordingShortkey(false);
+        setShortkeyError(null);
+        return;
+      }
+
+      if (['Meta', 'Control', 'Alt', 'Shift'].includes(e.key)) return;
+
+      const keyString = keyEventToString(e, isMac);
+      const error = validateShortkey(keyString);
+      if (error) {
+        setShortkeyError(error);
+        return;
+      }
+
+      setShortkeyError(null);
+      setShortkey(keyString);
+      setIsRecordingShortkey(false);
+    };
+
+    const handleClick = () => {
+      setIsRecordingShortkey(false);
+      setShortkeyError(null);
+    };
+
+    const timer = setTimeout(() => {
+      window.addEventListener('click', handleClick, true);
+    }, 100);
+
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('keydown', handleKeyDown, true);
+      window.removeEventListener('click', handleClick, true);
+    };
+  }, [isRecordingShortkey, isMac, validateShortkey]);
 
   // Derive combobox options from the union of existing packages (from
   // props) and any package path referenced by an existing snippet, so
@@ -118,6 +376,31 @@ export const QuickAddSnippetDialog: React.FC<QuickAddSnippetDialogProps> = ({
 
   const canSave = label.trim().length > 0 && command.trim().length > 0;
 
+  const handleClose = useCallback(() => {
+    setOpen(false);
+    setIsRecordingShortkey(false);
+    setShortkeyError(null);
+  }, []);
+
+  // Escape dismisses the drawer when not recording a shortkey (matches previous Dialog).
+  // Use bubble phase so nested Select/Combobox can consume Escape first.
+  useEffect(() => {
+    if (!open || isRecordingShortkey) return;
+    const onEscape = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      // Nested popovers/listboxes that stay open should keep Escape.
+      if (document.querySelector(
+        '[role="listbox"][data-state="open"], [data-radix-popper-content-wrapper] [data-state="open"]',
+      )) {
+        return;
+      }
+      e.preventDefault();
+      handleClose();
+    };
+    window.addEventListener('keydown', onEscape);
+    return () => window.removeEventListener('keydown', onEscape);
+  }, [open, isRecordingShortkey, handleClose]);
+
   const handleSave = useCallback(() => {
     if (!canSave) return;
     const trimmedPackage = packagePath.trim();
@@ -127,8 +410,7 @@ export const QuickAddSnippetDialog: React.FC<QuickAddSnippetDialogProps> = ({
       onCreatePackage?.(trimmedPackage);
     }
     if (editing && onUpdateSnippet) {
-      // Preserve tags/targets/shortkey/noAutoRun etc. that this lightweight
-      // dialog does not expose — only the three quick-edit fields change.
+      // Preserve tags/targets/etc. that this lightweight panel does not expose.
       onUpdateSnippet({
         ...editing,
         label: label.trim(),
@@ -136,6 +418,7 @@ export const QuickAddSnippetDialog: React.FC<QuickAddSnippetDialogProps> = ({
         package: trimmedPackage || '',
         noAutoRun: noAutoRun || undefined,
         multiLineRunMode,
+        shortkey: shortkey || undefined,
       });
     } else {
       onCreateSnippet({
@@ -147,15 +430,30 @@ export const QuickAddSnippetDialog: React.FC<QuickAddSnippetDialogProps> = ({
         targets: [],
         noAutoRun: noAutoRun || undefined,
         multiLineRunMode,
+        shortkey: shortkey || undefined,
       });
     }
-    setOpen(false);
-  }, [canSave, packagePath, packages, onCreatePackage, onCreateSnippet, onUpdateSnippet, editing, label, command, noAutoRun, multiLineRunMode]);
+    handleClose();
+  }, [
+    canSave,
+    packagePath,
+    packages,
+    onCreatePackage,
+    onCreateSnippet,
+    onUpdateSnippet,
+    editing,
+    label,
+    command,
+    noAutoRun,
+    multiLineRunMode,
+    shortkey,
+    handleClose,
+  ]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.defaultPrevented) return;
-      // Cmd/Ctrl+Enter from anywhere in the dialog saves the snippet.
+      // Cmd/Ctrl+Enter from anywhere in the panel saves the snippet.
       if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && canSave) {
         e.preventDefault();
         handleSave();
@@ -168,22 +466,46 @@ export const QuickAddSnippetDialog: React.FC<QuickAddSnippetDialogProps> = ({
     if (canSave) handleSave();
   }, [canSave, handleSave]);
 
-  return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent
-        className="max-w-md max-h-[min(90vh,720px)] flex flex-col overflow-hidden"
-        onKeyDown={handleKeyDown}
-      >
-        <DialogHeader className="shrink-0">
-          <DialogTitle>
-            {t(editing ? 'snippets.panel.editTitle' : 'snippets.panel.newTitle')}
-          </DialogTitle>
-          <DialogDescription>
-            {t('snippets.empty.desc')}
-          </DialogDescription>
-        </DialogHeader>
+  if (!open) return null;
 
-        <div className="min-h-0 space-y-3 overflow-y-auto pr-1">
+  return (
+    <div
+      ref={dialogRootRef}
+      className="fixed inset-0 z-50"
+      onKeyDown={handleKeyDown}
+      role="dialog"
+      aria-modal="true"
+      data-state="open"
+      aria-label={t(editing ? 'snippets.panel.editTitle' : 'snippets.panel.newTitle')}
+    >
+      <button
+        type="button"
+        className="absolute inset-0 bg-black/40 cursor-default"
+        aria-label={t('common.cancel')}
+        tabIndex={-1}
+        onClick={handleClose}
+      />
+      {/* Hidden control so Cmd/Ctrl+W / hasOpenAppDialog() treat this drawer as an open dialog. */}
+      <button
+        type="button"
+        data-dialog-close="true"
+        tabIndex={-1}
+        aria-hidden="true"
+        className="sr-only"
+        onClick={handleClose}
+      >
+        {t('common.close')}
+      </button>
+      <AsidePanel
+        open={open}
+        onClose={handleClose}
+        title={t(editing ? 'snippets.panel.editTitle' : 'snippets.panel.newTitle')}
+        subtitle={t('snippets.empty.desc')}
+        layout="overlay"
+        width="w-[400px]"
+        className="shadow-[-16px_0_32px_hsl(var(--foreground)/0.12)]"
+      >
+        <AsidePanelContent>
           <div className="space-y-1.5">
             <Label htmlFor="quick-add-snippet-label" className="text-xs">
               {t('snippets.field.description')}
@@ -248,18 +570,68 @@ export const QuickAddSnippetDialog: React.FC<QuickAddSnippetDialogProps> = ({
               </SelectContent>
             </Select>
           </div>
-        </div>
 
-        <DialogFooter className="shrink-0">
-          <Button variant="outline" onClick={() => setOpen(false)}>
-            {t('common.cancel')}
-          </Button>
-          <Button onClick={handleSave} disabled={!canSave}>
-            {t('common.save')}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Label className="text-xs">{t('snippets.field.shortkey')}</Label>
+              {shortkey ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 px-2 text-xs"
+                      onClick={() => {
+                        setShortkey(undefined);
+                        setShortkeyError(null);
+                      }}
+                    >
+                      <RotateCcw size={12} />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>{t('snippets.shortkey.clear')}</TooltipContent>
+                </Tooltip>
+              ) : null}
+            </div>
+            <button
+              type="button"
+              aria-pressed={isRecordingShortkey}
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsRecordingShortkey(true);
+                setShortkeyError(null);
+              }}
+              className={cn(
+                'w-full h-10 px-3 text-sm font-mono rounded-lg border transition-colors flex items-center justify-center gap-2',
+                isRecordingShortkey
+                  ? 'border-primary bg-primary/10 animate-pulse'
+                  : 'border-border hover:border-primary/50 bg-background',
+              )}
+            >
+              <Keyboard size={14} className="text-muted-foreground" />
+              {isRecordingShortkey
+                ? t('snippets.shortkey.recording')
+                : shortkey || t('snippets.shortkey.placeholder')}
+            </button>
+            {shortkeyError ? (
+              <p className="text-xs text-destructive">{shortkeyError}</p>
+            ) : null}
+            <p className="text-[11px] text-muted-foreground">{t('snippets.shortkey.hint')}</p>
+          </div>
+        </AsidePanelContent>
+        <AsidePanelFooter>
+          <div className="flex gap-2">
+            <Button variant="outline" className="flex-1" onClick={handleClose}>
+              {t('common.cancel')}
+            </Button>
+            <Button className="flex-1" onClick={handleSave} disabled={!canSave}>
+              {t('common.save')}
+            </Button>
+          </div>
+        </AsidePanelFooter>
+      </AsidePanel>
+    </div>
   );
 };
 

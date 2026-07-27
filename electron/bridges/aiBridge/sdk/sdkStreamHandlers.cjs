@@ -36,16 +36,28 @@ function parseSdkSessionIdentity(value) {
     backendKey: parsed.backend,
     binPath: parsed.binPath || "",
     runtime: parsed.runtime === "app-server" ? "app-server" : "sdk",
+    authMode: parsed.authMode === "cli-login" ? "cli-login" : parsed.authMode === "api-key" ? "api-key" : "",
+    cliMode: parsed.cliMode === "ask" ? "ask" : parsed.cliMode === "agent" ? "agent" : "",
   };
 }
 
-function buildSdkSessionKey(chatSessionId, backendKey, binPath, runtime = "sdk") {
+function buildSdkSessionKey(chatSessionId, backendKey, binPath, runtime = "sdk", authMode = "", cliMode = "") {
   return [
     String(chatSessionId || ""),
     String(backendKey || ""),
     String(binPath || ""),
     String(runtime || "sdk"),
+    String(authMode || ""),
+    String(cliMode || ""),
   ].join("\u0000");
+}
+
+function normalizeResumeAuthMode(authMode) {
+  return authMode === "cli-login" ? "cli-login" : authMode === "api-key" ? "api-key" : "";
+}
+
+function normalizeResumeCliMode(cliMode) {
+  return cliMode === "ask" ? "ask" : cliMode === "agent" ? "agent" : "";
 }
 
 // Environment that can change an SDK agent's model catalog without changing the
@@ -90,6 +102,36 @@ function deleteSdkSessionKeysForChat(sdkSessionIds, chatSessionId) {
   }
 }
 
+/**
+ * Cursor CLI --resume is sticky for ask vs agent. When permission mode flips
+ * (Observer ↔ Confirm/Auto), drop the inactive mode's in-memory session so a
+ * later switch-back cannot revive a stale thread without the intervening turns.
+ * Returns true when a sibling key was removed.
+ */
+function expireSiblingCursorCliModeSessions(sdkSessionIds, {
+  chatSessionId,
+  backendKey,
+  binPath,
+  runtime = "sdk",
+  authMode = "",
+  cliMode = "",
+} = {}) {
+  const activeCliMode = normalizeResumeCliMode(cliMode);
+  if (!activeCliMode || !sdkSessionIds) return false;
+  const siblingCliMode = activeCliMode === "ask" ? "agent" : "ask";
+  const siblingKey = buildSdkSessionKey(
+    chatSessionId,
+    backendKey,
+    binPath,
+    runtime,
+    authMode,
+    siblingCliMode,
+  );
+  if (!sdkSessionIds.has(siblingKey)) return false;
+  sdkSessionIds.delete(siblingKey);
+  return true;
+}
+
 function resolveSdkResumeSessionId({
   sdkSessionIds,
   sdkSessionKey,
@@ -97,19 +139,38 @@ function resolveSdkResumeSessionId({
   backendKey,
   binPath,
   runtime = "sdk",
+  authMode = "",
+  cliMode = "",
   hasConfiguredCommand,
 }) {
   const inMemorySessionId = sdkSessionIds.get(sdkSessionKey);
   if (inMemorySessionId) return inMemorySessionId;
 
+  const requestedAuthMode = normalizeResumeAuthMode(authMode);
+  const requestedCliMode = normalizeResumeCliMode(cliMode);
   const persisted = parseSdkSessionIdentity(existingSessionId);
   if (persisted) {
+    // Legacy identities omit authMode; treat them as api-key so CLI session
+    // UUIDs never resume onto the Cursor SDK path after a mode switch.
+    const persistedAuthMode = normalizeResumeAuthMode(persisted.authMode) || "api-key";
+    const effectiveRequestedAuthMode = requestedAuthMode || "api-key";
+    // Cursor CLI ask vs agent sessions must not resume across each other —
+    // --resume keeps the original Cursor execution mode sticky.
+    if (requestedCliMode) {
+      const persistedCliMode = normalizeResumeCliMode(persisted.cliMode);
+      if (!persistedCliMode || persistedCliMode !== requestedCliMode) return undefined;
+    }
     return persisted.backendKey === backendKey
       && persisted.binPath === String(binPath || "")
       && persisted.runtime === runtime
+      && persistedAuthMode === effectiveRequestedAuthMode
       ? persisted.sessionId
       : undefined;
   }
+
+  // Bare legacy IDs are only safe for the SDK/api-key path. CLI login always
+  // persists an encoded identity after the first turn.
+  if (requestedAuthMode === "cli-login") return undefined;
 
   return runtime === "sdk" && existingSessionId && !hasConfiguredCommand
     ? existingSessionId
@@ -376,6 +437,15 @@ function registerSdkStreamHandlers(ctx) {
           const normalizedAgentEnv = normalizeAgentEnv(requestedAgentEnv);
           const claudeSettings = normalizedAgentEnv.NETCATTY_CLAUDE_SETTINGS;
           delete normalizedAgentEnv.NETCATTY_CLAUDE_SETTINGS;
+          const cursorAuthMode = normalizedAgentEnv.NETCATTY_CURSOR_AUTH_MODE === "cli-login"
+            ? "cli-login"
+            : "api-key";
+          delete normalizedAgentEnv.NETCATTY_CURSOR_AUTH_MODE;
+          let cursorCliBinPath = String(normalizedAgentEnv.NETCATTY_CURSOR_CLI_BIN || "").trim() || null;
+          delete normalizedAgentEnv.NETCATTY_CURSOR_CLI_BIN;
+          if (cursorAuthMode === "cli-login") {
+            delete normalizedAgentEnv.CURSOR_API_KEY;
+          }
 
           let env = buildSdkAgentEnv({
             shellEnv,
@@ -383,6 +453,9 @@ function registerSdkStreamHandlers(ctx) {
             withCliDiscoveryEnv,
             normalizeClaudeCodeExecutableEnv: normalizeClaudeCodeExecutableEnvForSdk,
           });
+          if (cursorAuthMode === "cli-login") {
+            delete env.CURSOR_API_KEY;
+          }
           if (backendKey === "cursor") {
             logCursorApiKeySummary({ requestedAgentEnv: normalizedAgentEnv, shellEnv, env });
           }
@@ -403,21 +476,68 @@ function registerSdkStreamHandlers(ctx) {
             env = addCodexExecutableEnvForSdk(env, binPath);
           }
 
+          if (backendKey === "cursor" && cursorAuthMode === "cli-login") {
+            const looksLikeSentinel = !cursorCliBinPath
+              || cursorCliBinPath === "cursor"
+              || /(?:^|[/\\])cursor$/i.test(cursorCliBinPath);
+            if (looksLikeSentinel && typeof probeCursorCliAuth === "function") {
+              try {
+                const cliAuth = probeCursorCliAuth({ env: shellEnv });
+                if (cliAuth?.binPath) cursorCliBinPath = cliAuth.binPath;
+              } catch { /* best effort */ }
+            }
+            if (!cursorCliBinPath) {
+              // Only `cursor-agent` — bare `agent` collides with other CLIs (e.g. Grok).
+              cursorCliBinPath = await resolveCliFromPathAsync?.("cursor-agent", shellEnv)
+                || null;
+            }
+          }
+
           const codexRuntime = backendKey === "codex" && requestedCodexRuntime === "app-server"
             ? "app-server"
             : "sdk";
           sdkRequestRuntimes.set(requestId, { backendKey, codexRuntime, binPath });
 
           const hasConfiguredCommand = isPathLikeCommand(agentCommand);
-          const sdkSessionKey = buildSdkSessionKey(chatSessionId, backendKey, binPath, codexRuntime);
+          const sessionBinPath = backendKey === "cursor" && cursorAuthMode === "cli-login"
+            ? (cursorCliBinPath || binPath)
+            : binPath;
+          const cursorSessionAuthMode = backendKey === "cursor" ? cursorAuthMode : "";
+          // Cursor CLI --resume keeps ask vs agent sticky; isolate session keys
+          // so switching Observer ↔ Confirm/Auto starts a fresh CLI thread.
+          const cursorCliMode = backendKey === "cursor" && cursorAuthMode === "cli-login"
+            ? (String(permissionMode || "confirm").toLowerCase() === "observer" ? "ask" : "agent")
+            : "";
+          // Expire the inactive mode first so Obs → Conf → Obs cannot resume the
+          // original Ask thread (which would also skip history of Confirm turns).
+          if (cursorCliMode) {
+            expireSiblingCursorCliModeSessions(sdkSessionIds, {
+              chatSessionId,
+              backendKey,
+              binPath: sessionBinPath,
+              runtime: codexRuntime,
+              authMode: cursorSessionAuthMode,
+              cliMode: cursorCliMode,
+            });
+          }
+          const sdkSessionKey = buildSdkSessionKey(
+            chatSessionId,
+            backendKey,
+            sessionBinPath,
+            codexRuntime,
+            cursorSessionAuthMode,
+            cursorCliMode,
+          );
           const hasInMemorySession = sdkSessionIds.has(sdkSessionKey);
           const resumeSessionId = resolveSdkResumeSessionId({
             sdkSessionIds,
             sdkSessionKey,
             existingSessionId,
             backendKey,
-            binPath,
+            binPath: sessionBinPath,
             runtime: codexRuntime,
+            authMode: cursorSessionAuthMode,
+            cliMode: cursorCliMode,
             hasConfiguredCommand,
           });
           const stagedAttachments = [];
@@ -453,8 +573,10 @@ function registerSdkStreamHandlers(ctx) {
                   type: "session-id",
                   sessionId,
                   sdkBackend: backendKey,
-                  binPath: binPath || "",
+                  binPath: sessionBinPath || "",
                   runtime: codexRuntime,
+                  ...(cursorSessionAuthMode ? { authMode: cursorSessionAuthMode } : {}),
+                  ...(cursorCliMode ? { cliMode: cursorCliMode } : {}),
                 });
               }
             },
@@ -485,6 +607,8 @@ function registerSdkStreamHandlers(ctx) {
             permissionMode: permissionMode || "confirm",
             env,
             binPath,
+            cursorAuthMode: backendKey === "cursor" ? cursorAuthMode : undefined,
+            cursorCliBinPath: backendKey === "cursor" ? cursorCliBinPath : undefined,
             injectedMcpServers,
             claudeSettings,
             toolIntegrationMode: effectiveMode,
@@ -544,12 +668,25 @@ function registerSdkStreamHandlers(ctx) {
           return { ok: true, currentModelId: null, models: [] };
         }
         const shellEnv = await getShellEnv();
+        const normalizedAgentEnv = normalizeAgentEnv(requestedAgentEnv);
+        const cursorAuthMode = normalizedAgentEnv.NETCATTY_CURSOR_AUTH_MODE === "cli-login"
+          ? "cli-login"
+          : "api-key";
+        delete normalizedAgentEnv.NETCATTY_CURSOR_AUTH_MODE;
+        let cursorCliBinPath = String(normalizedAgentEnv.NETCATTY_CURSOR_CLI_BIN || "").trim() || null;
+        delete normalizedAgentEnv.NETCATTY_CURSOR_CLI_BIN;
+        if (cursorAuthMode === "cli-login") {
+          delete normalizedAgentEnv.CURSOR_API_KEY;
+        }
         const env = buildSdkAgentEnv({
           shellEnv,
-          requestedAgentEnv: normalizeAgentEnv(requestedAgentEnv),
+          requestedAgentEnv: normalizedAgentEnv,
           withCliDiscoveryEnv,
           normalizeClaudeCodeExecutableEnv: normalizeClaudeCodeExecutableEnvForSdk,
         });
+        if (cursorAuthMode === "cli-login") {
+          delete env.CURSOR_API_KEY;
+        }
         const binPath = resolveSdkBackendBinPath({
           backendKey,
           configuredCommand: agentCommand,
@@ -562,13 +699,34 @@ function registerSdkStreamHandlers(ctx) {
           resolveCodexExecutableForSdk,
           resolveCodebuddyExecutableForSdk,
         });
+        if (backendKey === "cursor" && cursorAuthMode === "cli-login") {
+          const looksLikeSentinel = !cursorCliBinPath
+            || cursorCliBinPath === "cursor"
+            || /(?:^|[/\\])cursor$/i.test(cursorCliBinPath);
+          if (looksLikeSentinel && typeof probeCursorCliAuth === "function") {
+            try {
+              const cliAuth = probeCursorCliAuth({ env: shellEnv });
+              if (cliAuth?.binPath) cursorCliBinPath = cliAuth.binPath;
+            } catch { /* best effort */ }
+          }
+          if (!cursorCliBinPath) {
+            // Only `cursor-agent` — bare `agent` collides with other CLIs (e.g. Grok).
+            cursorCliBinPath = await resolveCliFromPathAsync?.("cursor-agent", shellEnv)
+              || null;
+          }
+        }
         const codexRuntime = backendKey === "codex" && requestedCodexRuntime === "app-server"
           ? "app-server"
           : "sdk";
         // claude/copilot/opencode enumerate models via the SDK; codex has no
         // catalog (its driver returns []), so the renderer falls back to curated
         // presets. Cache + in-flight coalescing avoid spawn storms (#2184).
-        const cacheKey = buildSdkModelCacheKey(backendKey, binPath, env, codexRuntime);
+        const cacheKey = buildSdkModelCacheKey(
+          backendKey,
+          cursorAuthMode === "cli-login" ? (cursorCliBinPath || binPath) : binPath,
+          env,
+          `${codexRuntime}:${cursorAuthMode}`,
+        );
         const shouldCacheModels = shouldCacheSdkRuntimeModels(backendKey);
         const cached = shouldCacheModels ? sdkModelCache.get(cacheKey) : null;
         if (cached && Date.now() - cached.at < MODEL_CACHE_TTL_MS) {
@@ -584,7 +742,13 @@ function registerSdkStreamHandlers(ctx) {
             const raw = await withTimeout(
               codexRuntime === "app-server"
                 ? codexAppServerRuntime.listModels({ binPath, env })
-                : driver.listModels({ binPath, env, abortController }),
+                : driver.listModels({
+                  binPath,
+                  env,
+                  abortController,
+                  cursorAuthMode: backendKey === "cursor" ? cursorAuthMode : undefined,
+                  cursorCliBinPath: backendKey === "cursor" ? cursorCliBinPath : undefined,
+                }),
               MODEL_LIST_TIMEOUT_MS,
               abortController,
             );
@@ -894,6 +1058,7 @@ module.exports = {
   buildSdkModelCacheKey,
   normalizeSdkListModelsResult,
   resolveSdkResumeSessionId,
+  expireSiblingCursorCliModeSessions,
   shouldCacheSdkRuntimeModels,
   normalizeHistoryMessages,
   buildSdkTurnPrompt,

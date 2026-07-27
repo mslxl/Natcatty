@@ -210,11 +210,15 @@ const SYNCABLE_TERMINAL_KEYS = [
   'linkModifier', 'keywordHighlightEnabled', 'keywordHighlightRules',
   'keepaliveInterval', 'keepaliveCountMax', 'disableBracketedPaste', 'clearWipesScrollback',
   'preserveSelectionOnInput', 'forcePromptNewLine', 'osc52Clipboard', 'dynamicTabTitleMode',
+  'autoCloseOnExit',
   'showHostInfoBar', 'showServerStats',
   'serverStatsRefreshInterval',
   'systemManagerProcessRefreshInterval', 'systemManagerTmuxRefreshInterval',
   'systemManagerDockerListRefreshInterval', 'systemManagerDockerStatsRefreshInterval',
   'rendererType',
+  // Inline image protocol switches are a preference and sync; the per-terminal
+  // memory limits stay local because they are tuned per device (like hibernate*).
+  'inlineImagesEnabled', 'inlineImageKittyEnabled', 'inlineImageSixelEnabled', 'inlineImageIipEnabled',
   'autocompleteEnabled', 'autocompleteGhostText', 'autocompletePopupMenu',
   'autocompleteDebounceMs', 'autocompleteMinChars', 'autocompleteMaxSuggestions',
 ] as const;

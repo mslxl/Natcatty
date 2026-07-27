@@ -28,6 +28,9 @@ function formatValidationErrors(errors) {
 
 const rpcMessageValidator = createDefinitionValidator("RpcMessage");
 const initializeResultValidator = createDefinitionValidator("RuntimeInitializeResult");
+const terminalInterceptorAttachmentParamsValidator = createDefinitionValidator("TerminalInterceptorAttachmentParams");
+const terminalInterceptorAttachmentResultValidator = createDefinitionValidator("TerminalInterceptorAttachmentResult");
+const terminalInterceptorFrameValidator = createDefinitionValidator("TerminalInterceptorFrame");
 const providerRequestValidator = createDefinitionValidator("ProviderRequest");
 const providerResultValidator = createDefinitionValidator("ProviderResult");
 const streamFrameValidator = createDefinitionValidator("StreamFrame");
@@ -47,6 +50,32 @@ function assertRpcMessage(value) {
 function assertInitializeResult(value) {
   assertPluginJsonValue(value, { maxBytes: PLUGIN_RPC_MAX_JSON_BYTES });
   return assertContractValue(initializeResultValidator, value, "Initialize result");
+}
+
+function assertTerminalInterceptorAttachmentParams(value) {
+  assertPluginJsonValue(value, { maxBytes: PLUGIN_RPC_MAX_JSON_BYTES });
+  return assertContractValue(
+    terminalInterceptorAttachmentParamsValidator,
+    value,
+    "Terminal interceptor attachment params",
+  );
+}
+
+function assertTerminalInterceptorAttachmentResult(value) {
+  assertPluginJsonValue(value, { maxBytes: PLUGIN_RPC_MAX_JSON_BYTES });
+  return assertContractValue(
+    terminalInterceptorAttachmentResultValidator,
+    value,
+    "Terminal interceptor attachment result",
+  );
+}
+
+function assertTerminalInterceptorFrameSchema(value) {
+  return assertContractValue(
+    terminalInterceptorFrameValidator,
+    value,
+    "Terminal interceptor frame",
+  );
 }
 
 function assertProviderRequest(value) {
@@ -70,6 +99,9 @@ function resolveContractRuntimePath(...segments) {
 
 module.exports = {
   assertInitializeResult,
+  assertTerminalInterceptorAttachmentParams,
+  assertTerminalInterceptorAttachmentResult,
+  assertTerminalInterceptorFrameSchema,
   assertProviderRequest,
   assertProviderResult,
   assertRpcMessage,

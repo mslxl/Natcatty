@@ -18,6 +18,7 @@ import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef }
 import { useI18n } from "../application/i18n/I18nProvider";
 import { useIsSftpActive } from "../application/state/activeTabStore";
 import { useSftpState } from "../application/state/useSftpState";
+import { useSettingsState } from "../application/state/useSettingsState";
 import { useSftpBackend } from "../application/state/useSftpBackend";
 import { getParentPath, isConcreteTransferTargetPath } from "../application/state/sftp/utils";
 import { HotkeyScheme, KeyBinding, TerminalSession } from "../domain/models";
@@ -29,6 +30,7 @@ import { Host, Identity, KnownHost, ProxyProfile, SSHKey, TransferTask } from ".
 import { resolveGroupDefaults, applyGroupDefaults } from "../domain/groupConfig";
 import { materializeHostProxyProfile } from "../domain/proxyProfiles";
 import { useSftpFileAssociations } from "../application/state/useSftpFileAssociations";
+import { useWarmSftpTransferPool } from "../application/state/sftp/useSftpTransferLifecycle";
 import { registerEditorSftpWriterScoped } from "../application/state/editorSftpBridge";
 import { toast } from "./ui/toast";
 
@@ -98,6 +100,7 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
   terminalSettings,
 }) => {
   const { t } = useI18n();
+  const { sftpTransferPoolIdleTtlMs } = useSettingsState();
   const isActive = useIsSftpActive();
   const rootRef = useRef<HTMLDivElement>(null);
   const dialogActionScopeIdRef = useRef("sftp-main-view");
@@ -115,14 +118,40 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
     },
   }), [t]);
 
+  const connectedHostsForOptions = useMemo(() => {
+    const hostsById = new Map<string, Host>(hosts.map((host) => [host.id, host]));
+    return listSftpConnectedHosts(sessions, hostsById);
+  }, [hosts, sessions]);
+
+  const resolveTransferSourceSessionId = useCallback((hostId: string) => {
+    return connectedHostsForOptions.find((entry) => entry.host.id === hostId)?.sessionId;
+  }, [connectedHostsForOptions]);
+
   const sftpOptions = useMemo(() => ({
     ...fileWatchHandlers,
+    transferOwnerId: "main-sftp-view",
+    // Main SFTP page stays interactive while mounted so top-tab switches
+    // (e.g. Terminal ↔ SFTP) must not soft-close every tab's session;
+    // the terminal side panel still parks when its panel is hidden.
+    // Bulk transfers use dedicated pool sessions regardless.
+    interactive: true,
     useCompressedUpload: sftpUseCompressedUpload,
     defaultShowHiddenFiles: sftpShowHiddenFiles,
     terminalSettings,
     knownHosts,
     onAddKnownHost,
-  }), [fileWatchHandlers, sftpUseCompressedUpload, sftpShowHiddenFiles, terminalSettings, knownHosts, onAddKnownHost]);
+    resolveTransferSourceSessionId,
+    transferPoolIdleTtlMs: sftpTransferPoolIdleTtlMs,
+  }), [
+    fileWatchHandlers,
+    sftpUseCompressedUpload,
+    sftpShowHiddenFiles,
+    terminalSettings,
+    knownHosts,
+    onAddKnownHost,
+    resolveTransferSourceSessionId,
+    sftpTransferPoolIdleTtlMs,
+  ]);
 
   // Pre-resolve group defaults so SFTP connections inherit group config
   const effectiveHosts = useMemo(() => {
@@ -163,6 +192,11 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
   // without needing to re-create when sftp changes
   const sftpRef = useRef(sftp);
   sftpRef.current = sftp;
+
+  useWarmSftpTransferPool({
+    hostIds: connectedHosts.map((entry) => entry.host.id),
+    warmTransferPoolForHost: sftp.warmTransferPoolForHost,
+  });
 
   // Register this useSftpState's writeTextFileByConnection with the bridge so
   // the editor tab's save path can reach the active SFTP session. The bridge

@@ -1031,29 +1031,6 @@ export function handleProtocolSelectImpl(getCtx: AppContextGetter, protocol: Hos
   }
 }
 
-export function handleToggleThemeImpl(getCtx: AppContextGetter) {
-  const { openSettingsWindow, resolvedTheme, setTheme, t, theme, toast } = getCtx();
-{
-    if (theme === 'system') {
-      toast.info(
-        t('topTabs.toggleTheme.systemExitMessage'),
-        {
-          title: t('topTabs.toggleTheme.systemExitTitle'),
-          actionLabel: t('topTabs.toggleTheme.openSettings'),
-          onClick: () => {
-            void (async () => {
-              const opened = await openSettingsWindow();
-              if (!opened) toast.error(t('toast.settingsUnavailable'), t('common.settings'));
-            })();
-          },
-        }
-      );
-      return;
-    }
-    setTheme(resolvedTheme === 'dark' ? 'light' : 'dark');
-  }
-}
-
 export function handleRootContextMenuImpl(getCtx: AppContextGetter, e: React.MouseEvent<HTMLDivElement>) {
   void getCtx;
 {

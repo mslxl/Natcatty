@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import type { TerminalSession, Workspace } from '../../domain/models';
@@ -10,6 +11,8 @@ import {
   insertCopiedTabOrderIdOnce,
   insertWorkspacePaneIfMissing,
 } from './useSessionState';
+
+const source = readFileSync(new URL('./useSessionState.ts', import.meta.url), 'utf8');
 
 const session = (id: string, workspaceId?: string): TerminalSession => ({
   id,
@@ -80,4 +83,19 @@ test('copied tab order insertion remains idempotent when the same update runs tw
 
   assert.deepEqual(twice, ['s1', 's2', 'ws-1']);
   assert.equal(twice.filter(id => id === 's2').length, 1);
+});
+
+test('workspace host creation paths use the host session snapshot factory', () => {
+  assert.match(
+    source,
+    /createWorkspaceHostTerminalSession\(id,\s*host,\s*workspace\.id\)/,
+  );
+  assert.match(
+    source,
+    /return createHostTerminalSession\(crypto\.randomUUID\(\),\s*host\);/,
+  );
+  assert.match(
+    source,
+    /createWorkspaceHostTerminalSession\(newSessionId,\s*host,\s*workspaceId\)/,
+  );
 });

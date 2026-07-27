@@ -8,6 +8,7 @@ import { resolveTerminalPopupHost, resolveTerminalPopupReuseId } from './Termina
 
 const source = readFileSync(new URL('./TerminalPopupPage.tsx', import.meta.url), 'utf8');
 const terminalSource = readFileSync(new URL('./Terminal.tsx', import.meta.url), 'utf8');
+const terminalLayerSource = readFileSync(new URL('./TerminalLayer.tsx', import.meta.url), 'utf8');
 
 const vaultHost = (overrides: Partial<Host> = {}): Host => ({
   id: 'host-1',
@@ -61,6 +62,31 @@ test('resolveTerminalPopupHost still falls back to source session details when t
   assert.equal(host.moshEnabled, false);
 });
 
+test('resolveTerminalPopupHost preserves plugin transport and configuration for copied windows', () => {
+  const providerId = 'com.example.transport.connection';
+  const protocol = `plugin:${providerId}` as const;
+  const pluginConnection = {
+    providerId,
+    authenticationProviderId: 'com.example.transport.auth',
+    configuration: { endpoint: 'gateway.example', features: ['importers'] },
+    credentialId: 'credential-reference-1234',
+  };
+
+  const host = resolveTerminalPopupHost(
+    popupPayload(sourceSession({
+      protocol,
+      pluginConnection,
+      hostId: 'missing-plugin-host',
+      hostname: 'provider-placeholder.example',
+    })),
+    [],
+  );
+
+  assert.equal(host.protocol, protocol);
+  assert.deepEqual(host.pluginConnection, pluginConnection);
+  assert.notEqual(host.pluginConnection, pluginConnection);
+});
+
 test('resolveTerminalPopupHost does not turn command popups into serial sessions without serial config', () => {
   const host = resolveTerminalPopupHost(
     popupPayload(sourceSession({ protocol: 'serial' })),
@@ -112,15 +138,41 @@ test('popup terminals resolve complete host config and pass jump hosts into Term
   assert.match(source, /chainHosts=\{chainHosts\}/);
 });
 
+test('popup provider tree mounts the plugin authentication host', () => {
+  assert.match(source, /import \{ PluginAuthenticationHost \} from '\.\/plugins\/PluginAuthenticationHost';/);
+  assert.match(
+    source,
+    /<I18nProvider locale=\{settings\.uiLanguage\}>\s+<TerminalPopupPageInner \/>\s+<PluginAuthenticationHost \/>\s+<\/I18nProvider>/,
+  );
+});
+
 test('attach popup close preparation has a bounded timeout', () => {
   assert.match(source, /Promise\.race\(\[/);
   assert.match(source, /Attach close preparation timed out/);
   assert.match(source, /1500/);
 });
 
-test('an explicitly closed attached session closes its observe popup', () => {
-  assert.match(source, /onSessionExit=\{\(_closedSessionId, evt\) => \{\s+if \(isAttachMode\)/);
-  assert.match(source, /void handleClose\(\)/);
+test('terminal exit auto-close setting reaches tabs, workspaces, and popups', () => {
+  assert.match(
+    terminalLayerSource,
+    /resolveTerminalSessionExitIntent\(\s+evt,\s+terminalSettings\?\.autoCloseOnExit \?\? true,\s+\)/,
+  );
+  assert.match(
+    terminalSource,
+    /const onSessionExitRef = useRef\(onSessionExit\);[\s\S]*?useLayoutEffect\(\(\) => \{\s+onSessionExitRef\.current = onSessionExit;\s+\}, \[onSessionExit\]\);/,
+  );
+  assert.match(
+    terminalSource,
+    /onSessionExitRef\.current\?\.\(closedSessionId, evt\)/,
+  );
+  assert.match(
+    source,
+    /shouldCloseTerminalPopupOnExit\(evt, \{\s+autoCloseOnExit: settings\.terminalSettings\.autoCloseOnExit,\s+isAttachMode,\s+\}\)/,
+  );
+  assert.match(
+    source,
+    /shouldRevealTerminalPopupOnExit\(evt, \{\s+autoCloseOnExit: settings\.terminalSettings\.autoCloseOnExit,\s+isAttachMode,\s+\}\)[\s\S]*?revealTerminal\(\);\s+return;[\s\S]*?setStartupError/,
+  );
 });
 
 test('an attached observe popup never owns automatic reconnect', () => {

@@ -1,4 +1,5 @@
 import { FitAddon } from "@xterm/addon-fit";
+import { ImageAddon } from "@xterm/addon-image";
 import { SearchAddon } from "@xterm/addon-search";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { UnicodeGraphemesAddon } from "@xterm/addon-unicode-graphemes";
@@ -30,18 +31,20 @@ import {
   shouldEnableNativeUserInputAutoScroll,
   shouldScrollOnTerminalPaste,
 } from "../../../domain/terminalScroll";
+import { resolveTerminalInlineImageAddonOptions } from "../../../domain/terminalInlineImages";
 import {
   resolveHostTerminalFontFamilyId,
   resolveHostTerminalFontSize,
   resolveHostTerminalFontWeight,
 } from "../../../domain/terminalAppearance";
 import { resolveFontWeightBold } from "../../../lib/fontWeightAvailability";
+import { isPluginHostProtocol } from "../../../domain/pluginConnection";
 import { resolveTerminalFontFamilyId } from "../../../infrastructure/config/fonts";
 import { logger } from "../../../lib/logger";
 import { isMacPlatform } from "../../../lib/utils";
 import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
 import {
-  clearTerminalViewport,
+  clearTerminalViewportAndSyncPty,
   installEraseInDisplayHandlers,
 } from "../clearTerminalViewport";
 import { getTerminalSelectionForClipboard } from "../normalizeTerminalSelection";
@@ -116,6 +119,7 @@ import {
 import { clearTerminalInputStateForInterrupt } from "./terminalInterruptInputState";
 import { getFlowControllerForTerm } from "./terminalSessionAttachment";
 import { createTerminalResizeScheduler } from "./terminalResizeScheduler";
+import { writeLocalTerminalDataInOrder } from "./terminalUnfocusedRepaint";
 import {
   prioritizeTerminalInput,
   shouldArmTerminalInterruptDisplayGateForProtocol,
@@ -155,7 +159,12 @@ type TerminalBackendApi = {
   openExternal: (url: string) => Promise<void>;
   writeToSession: (sessionId: string, data: string) => void;
   interruptSession?: (sessionId: string, trace?: NetcattyTerminalInterruptTrace) => void;
+  signalPluginConnection?: (
+    sessionId: string,
+    signal?: "interrupt" | "terminate" | "kill" | "eof" | "break",
+  ) => Promise<unknown>;
   resizeSession: (sessionId: string, cols: number, rows: number) => void;
+  clearSessionPtyBuffer?: (sessionId: string) => void;
   setSessionFlowPaused?: (sessionId: string, paused: boolean) => void;
 };
 
@@ -201,6 +210,14 @@ export type XTermRuntime = {
   ensureWebglRenderer: () => void;
   /** Drop the WebGL addon while keeping the terminal alive (soft-hide). */
   suspendWebglRenderer: () => void;
+  /**
+   * True while this terminal holds decoded inline images (Kitty / SIXEL / IIP).
+   * Hibernate snapshots are text-only, so a session that reports true must not
+   * be fully hibernated — the images would be gone on wake. Returns false when
+   * inline images are disabled, or once the image cache has been emptied by a
+   * terminal reset or FIFO eviction.
+   */
+  hasInlineImages: () => boolean;
   /** Clear local/per-target keyboard state before reusing this runtime. */
   resetKittyConnectionInputState: () => void;
   /** Emit any owed releases before detaching or closing this renderer. */
@@ -553,6 +570,36 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
 
   term.open(ctx.container);
 
+  // Inline raster images (Kitty graphics / SIXEL / iTerm IIP). Loaded right after
+  // term.open so the addon can patch IRenderService.setRenderer before the WebGL
+  // renderer is created: on every renderer swap (WebGL create / suspend / context
+  // loss recovery) the addon detaches its canvas layers and re-inserts them on the
+  // next render, so images survive DOM <-> WebGL transitions. Options are resolved
+  // once per terminal; changing them takes effect on the next terminal, exactly
+  // like rendererType.
+  const inlineImageOptions = resolveTerminalInlineImageAddonOptions(settings);
+  let imageAddon: ImageAddon | null = null;
+  if (inlineImageOptions) {
+    try {
+      imageAddon = new ImageAddon(inlineImageOptions);
+      term.loadAddon(imageAddon);
+    } catch (err) {
+      logger.warn("[XTerm] Inline image addon failed to load", err);
+      imageAddon = null;
+    }
+  }
+  // Decoded bitmaps live outside the terminal buffer, so they are absent from the
+  // text snapshot a hibernated tab is rebuilt from. Terminal.tsx reads this to keep
+  // a session with images out of full hibernate (soft-hide is still fine).
+  const hasInlineImages = (): boolean => {
+    if (!imageAddon) return false;
+    try {
+      return imageAddon.storageUsage > 0;
+    } catch {
+      return false;
+    }
+  };
+
   type KeyboardLayoutMapLike = { get: (code: string) => string | undefined };
   type KeyboardApiLike = {
     getLayoutMap?: () => Promise<KeyboardLayoutMapLike>;
@@ -778,7 +825,11 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   const appLevelActions = getAppLevelActions();
   const terminalActions = getTerminalPassthroughActions();
   const broadcastUserPasteData = (data: string) => {
-    if (ctx.isBroadcastEnabledRef.current && ctx.onBroadcastInputRef.current) {
+    if (
+      ctx.passwordPromptActiveRef?.current !== true
+      && ctx.isBroadcastEnabledRef.current
+      && ctx.onBroadcastInputRef.current
+    ) {
       ctx.onBroadcastInputRef.current(data, ctx.sessionId);
       return true;
     }
@@ -904,8 +955,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   });
 
   const writeLocalTerminalData = (nextData: string) => {
-    ctx.onTerminalLogData?.(nextData);
-    term.write(nextData);
+    writeLocalTerminalDataInOrder(term, nextData, ctx.onTerminalLogData);
   };
 
   const handleTerminalInputData = (
@@ -920,6 +970,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     const inputSource = options?.source ?? "terminal";
     const id = ctx.sessionRef.current;
     const dataToWrite = data;
+    const sensitive = ctx.passwordPromptActiveRef?.current === true;
     let handledSubmittedInput = false;
     const submittedInput: { text: string; lineEnding: "\r\n" | "\r" | "\n" } | null =
       inputSource === "shift-enter"
@@ -931,7 +982,8 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     const broadcastDataBeforeSudo = mapTerminalBackspaceInput(data, ctx.host.backspaceBehavior);
     const suppressTerminalBroadcast = inputSource === "terminal" && suppressNextTerminalDataBroadcast;
     if (suppressTerminalBroadcast) suppressNextTerminalDataBroadcast = false;
-    const willBroadcastInput = inputSource !== "kitty" &&
+    const willBroadcastInput = !sensitive &&
+      inputSource !== "kitty" &&
       !handlingKittyBroadcast &&
       !suppressTerminalBroadcast &&
       !!id && shouldBroadcastTerminalUserInput(term, broadcastDataBeforeSudo, {
@@ -939,7 +991,6 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       hasBroadcastInputHandler: !!onBroadcastInput,
     });
     if (ctx.statusRef.current === "connected" && submittedInput) {
-      const sensitive = ctx.passwordPromptActiveRef?.current === true;
       if (submittedInput.text) {
         ctx.commandBufferRef.current += submittedInput.text;
         ctx.scriptRecorderRef?.current?.recordInput(submittedInput.text);
@@ -971,7 +1022,6 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     ) {
       const pastedCommand = getSinglePastedCommand(data);
       if (pastedCommand) {
-        const sensitive = ctx.passwordPromptActiveRef?.current === true;
         if (ctx.passwordPromptActiveRef) ctx.passwordPromptActiveRef.current = false;
         const recordedCommand = recordTerminalCommandExecution(
           `${ctx.commandBufferRef.current}${pastedCommand.command}`,
@@ -1010,7 +1060,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
           localEcho: ctx.serialLocalEcho,
           writeToSession: (nextData) => {
             ctx.onOutputTriggerUserInputRef?.current?.(nextData);
-            ctx.terminalBackend.writeToSession(id, nextData);
+            ctx.terminalBackend.writeToSession(id, nextData, { sensitive });
           },
           writeToTerminal: writeLocalTerminalData,
         });
@@ -1019,7 +1069,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         // When backspaceBehavior is configured, remap the Backspace key output
         const outData = mapTerminalBackspaceInput(dataToWrite, ctx.host.backspaceBehavior);
         ctx.onOutputTriggerUserInputRef?.current?.(outData);
-        ctx.terminalBackend.writeToSession(id, outData);
+        ctx.terminalBackend.writeToSession(id, outData, { sensitive });
 
         // Local echo for serial connections only when explicitly enabled
         if (inputSource !== "kitty" && ctx.host.protocol === "serial" && ctx.serialLocalEcho) {
@@ -1111,6 +1161,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     sourceSessionId: ctx.sessionId,
     isHandlingBroadcast: () => handlingKittyBroadcast,
     isBroadcastEnabled: () => ctx.isBroadcastEnabledRef.current,
+    isSensitiveInput: () => ctx.passwordPromptActiveRef?.current === true,
     getDispatcher: () => ctx.onBroadcastInputRef.current,
   });
 
@@ -1327,7 +1378,18 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
           serialLineBufferRef: ctx.serialLineBufferRef,
           onAutocompleteInput: ctx.onAutocompleteInput,
         });
-        if (ctx.terminalBackend.interruptSession) {
+        if (ctx.passwordPromptActiveRef) {
+          ctx.passwordPromptActiveRef.current = false;
+        }
+        if (isPluginHostProtocol(ctx.host.protocol) && ctx.terminalBackend.signalPluginConnection) {
+          void ctx.terminalBackend.signalPluginConnection(id, "interrupt").catch(() => {
+            if (ctx.terminalBackend.interruptSession) {
+              ctx.terminalBackend.interruptSession(id, interruptTrace);
+            } else {
+              ctx.terminalBackend.writeToSession(id, "\x03");
+            }
+          });
+        } else if (ctx.terminalBackend.interruptSession) {
           ctx.terminalBackend.interruptSession(id, interruptTrace);
         } else {
           ctx.terminalBackend.writeToSession(id, "\x03");
@@ -1454,8 +1516,14 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
               break;
             }
             case "clearBuffer": {
-              clearTerminalViewport(term, {
+              clearTerminalViewportAndSyncPty(term, {
                 wipeScrollback: ctx.terminalSettingsRef.current?.clearWipesScrollback ?? true,
+                syncPty: () => {
+                  const clearId = ctx.sessionRef.current;
+                  if (clearId) {
+                    ctx.terminalBackend.clearSessionPtyBuffer?.(clearId);
+                  }
+                },
               });
               break;
             }
@@ -1543,11 +1611,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       if (id) {
         e.preventDefault();
         e.stopPropagation();
-        ctx.onAutocompleteInput?.(wordJumpSequence);
-        ctx.terminalBackend.writeToSession(id, wordJumpSequence);
-        if (ctx.isBroadcastEnabledRef.current && ctx.onBroadcastInputRef.current) {
-          ctx.onBroadcastInputRef.current(wordJumpSequence, ctx.sessionId);
-        }
+        handleTerminalInputData(wordJumpSequence);
         scrollToBottomAfterInput(wordJumpSequence);
         return false;
       }
@@ -1737,6 +1801,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       legacySuppressedKeys: broadcastLegacySuppressedKeys,
     }),
     getSessionId: () => ctx.sessionRef.current,
+    isSensitiveInput: () => ctx.passwordPromptActiveRef?.current === true,
     isConnected: () => ctx.statusRef.current === "connected",
     isRuntimeDisposed: () => runtimeDisposed,
     interruptSession: ctx.terminalBackend.interruptSession
@@ -1745,6 +1810,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     writeDisposed: (id, data) => ctx.terminalBackend.writeToSession(
       id,
       mapTerminalBackspaceInput(data, ctx.host.backspaceBehavior),
+      { sensitive: ctx.passwordPromptActiveRef?.current === true },
     ),
     writeActive: (data) => handleTerminalInputData(data, { source: "kitty" }),
   });
@@ -1909,7 +1975,15 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
             binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
           }
           const b64 = btoa(binary);
-          ctx.terminalBackend.writeToSession(sessionId, `\x1b]52;${target};${b64}\x07`);
+          // This host-generated protocol reply contains clipboard contents. It
+          // must bypass plugin input interceptors just like password/OTP data;
+          // otherwise terminal interception would become an undeclared
+          // clipboard-read capability.
+          ctx.terminalBackend.writeToSession(
+            sessionId,
+            `\x1b]52;${target};${b64}\x07`,
+            { sensitive: true },
+          );
         };
         doRead().catch((err) => {
           logger.warn('[XTerm] OSC 52 clipboard read failed:', err);
@@ -1973,6 +2047,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     clearTextureAtlas: clearWebglTextureAtlas,
     ensureWebglRenderer: loadWebglRenderer,
     suspendWebglRenderer,
+    hasInlineImages,
     resetKittyConnectionInputState: clearKittyConnectionInputState,
     flushKittyKeyboardReleases: clearKittyTransientInputState,
     getKittyKeyboardModeState: () => snapshotKittyKeyboardModeState(kittyKeyboardMode),
@@ -2026,6 +2101,16 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       titleChangeDisposable.dispose();
       bellDisposable.dispose();
       cursorPreferenceDisposable?.dispose();
+      // Release decoded bitmaps and the image canvas layers before xterm tears the
+      // screen element down, otherwise the storage would outlive its terminal.
+      if (imageAddon) {
+        try {
+          imageAddon.dispose();
+        } catch (err) {
+          logger.warn("[XTerm] imageAddon dispose failed", err);
+        }
+        imageAddon = null;
+      }
       try {
         term.dispose();
       } catch (err) {

@@ -1,6 +1,23 @@
 import type {
+  AuthenticationBeginPayload,
+  AuthenticationResponsePayload,
+  AuthenticationResult,
+  ConnectionConfigurationPayload,
+  ConnectionControlResult,
+  ConnectionControlPayload,
+  ConnectionOpenPayload,
+  ConnectionOpenResult,
+  ConnectionProbeResult,
+  ConnectionResizePayload,
+  ConnectionSignalPayload,
+  ConnectionStatusResult,
+  ConnectionValidateResult,
   CredentialRef,
   FeatureId,
+  ImporterDetectPayload,
+  ImporterDetectResult,
+  ImporterParsePayload,
+  ImporterParseResult,
   JsonValue,
   PluginErrorData,
   PluginErrorName,
@@ -11,6 +28,7 @@ import type {
   SecretLeaseRef,
   SecretRef,
   SemanticVersion,
+  TerminalSessionSnapshot,
 } from "@netcatty/plugin-contract";
 
 export type * from "@netcatty/plugin-contract";
@@ -101,33 +119,86 @@ export type PluginProviderHandler<
   TResult extends JsonValue = JsonValue,
 > = (invocation: PluginProviderInvocation<TPayload>) => TResult | void | Promise<TResult | void>;
 
+type TypedPluginProviderInvocation<TPayload> = Omit<PluginProviderInvocation, "payload"> & {
+  readonly payload: TPayload;
+};
+
+type ProviderHandlerForKind<
+  K extends ProviderKind,
+  TPayload extends JsonValue,
+  TResult extends JsonValue,
+> = K extends TerminalInterceptorKind
+  ? TerminalInterceptorHandler
+  : K extends OrdinaryTerminalProviderKind
+    ? OrdinaryTerminalProviderHandler<K>
+    : K extends "connection"
+      ? ConnectionProviderHandler
+      : K extends "authentication"
+        ? AuthenticationProviderHandler
+        : K extends "importer"
+          ? ImporterProviderHandler
+    : PluginProviderHandler<TPayload, TResult>;
+
 export interface PluginProviders {
   register<K extends OrdinaryTerminalProviderKind>(
     providerId: string,
     kind: K,
     handler: OrdinaryTerminalProviderHandler<K>,
   ): Disposable;
+  register(
+    providerId: string,
+    kind: TerminalInterceptorKind,
+    handler: TerminalInterceptorHandler,
+  ): Disposable;
+  register(
+    providerId: string,
+    kind: "connection",
+    handler: ConnectionProviderHandler,
+  ): Disposable;
+  register(
+    providerId: string,
+    kind: "authentication",
+    handler: AuthenticationProviderHandler,
+  ): Disposable;
+  register(
+    providerId: string,
+    kind: "importer",
+    handler: ImporterProviderHandler,
+  ): Disposable;
   register<TPayload extends JsonValue = JsonValue, TResult extends JsonValue = JsonValue>(
     providerId: string,
-    kind: ProviderKind,
+    kind: Exclude<
+      ProviderKind,
+      TerminalInterceptorKind | OrdinaryTerminalProviderKind | "connection" | "authentication" | "importer"
+    >,
     handler: PluginProviderHandler<TPayload, TResult>,
+  ): Disposable;
+  register<
+    K extends ProviderKind,
+    TPayload extends JsonValue = JsonValue,
+    TResult extends JsonValue = JsonValue,
+  >(
+    providerId: string,
+    kind: K,
+    handler: ProviderHandlerForKind<NoInfer<K>, TPayload, TResult>,
   ): Disposable;
 }
 
-export interface TerminalSessionSnapshot {
-  readonly sessionId: string;
-  readonly hostId?: string;
-  readonly workspaceId?: string;
-  /** Built-in or namespaced plugin connection protocol identifier. */
-  readonly protocol: string;
-  readonly status: "connecting" | "connected" | "disconnected";
-  readonly cwd?: string;
-  readonly title?: string;
-  readonly shellType?: "posix" | "fish" | "powershell" | "cmd" | "unknown";
-  readonly cols?: number;
-  readonly rows?: number;
-  readonly alternateScreen?: boolean;
+export type TerminalInterceptorKind = "terminal.interceptor.input" | "terminal.interceptor.output";
+
+export interface TerminalInterceptorInvocation {
+  readonly providerId: string;
+  readonly kind: TerminalInterceptorKind;
+  readonly direction: "input" | "output";
+  readonly sequence: number;
+  readonly session: TerminalSessionSnapshot;
+  /** UTF-8 terminal data. The buffer is owned by this invocation. */
+  readonly data: Uint8Array;
 }
+
+export type TerminalInterceptorHandler = (
+  invocation: TerminalInterceptorInvocation,
+) => Uint8Array | ArrayBuffer | Promise<Uint8Array | ArrayBuffer>;
 
 export interface TerminalSessionEvent {
   readonly type:
@@ -351,6 +422,118 @@ export type OrdinaryTerminalProviderHandler<K extends OrdinaryTerminalProviderKi
   invocation: OrdinaryTerminalProviderInvocation<K>,
 ) => OrdinaryTerminalProviderResultByKind[K] | Promise<OrdinaryTerminalProviderResultByKind[K]>;
 
+export interface ConnectionProviderInvocationByOperation {
+  readonly validateConfiguration: TypedPluginProviderInvocation<ConnectionConfigurationPayload> & {
+    readonly kind: "connection";
+    readonly operation: "validateConfiguration";
+  };
+  readonly probe: TypedPluginProviderInvocation<ConnectionConfigurationPayload> & {
+    readonly kind: "connection";
+    readonly operation: "probe";
+  };
+  readonly open: TypedPluginProviderInvocation<ConnectionOpenPayload> & {
+    readonly kind: "connection";
+    readonly operation: "open";
+    readonly input: Promise<PluginReadableByteStream>;
+    readonly output: PluginWritableByteStream;
+  };
+  readonly resize: TypedPluginProviderInvocation<ConnectionResizePayload> & {
+    readonly kind: "connection";
+    readonly operation: "resize";
+  };
+  readonly signal: TypedPluginProviderInvocation<ConnectionSignalPayload> & {
+    readonly kind: "connection";
+    readonly operation: "signal";
+  };
+  readonly reconnect: TypedPluginProviderInvocation<ConnectionControlPayload> & {
+    readonly kind: "connection";
+    readonly operation: "reconnect";
+  };
+  readonly close: TypedPluginProviderInvocation<ConnectionControlPayload> & {
+    readonly kind: "connection";
+    readonly operation: "close";
+  };
+  readonly getStatus: TypedPluginProviderInvocation<ConnectionControlPayload> & {
+    readonly kind: "connection";
+    readonly operation: "getStatus";
+  };
+}
+
+export interface ConnectionProviderResultByOperation {
+  readonly validateConfiguration: ConnectionValidateResult;
+  readonly probe: ConnectionProbeResult;
+  readonly open: ConnectionOpenResult;
+  readonly resize: ConnectionControlResult;
+  readonly signal: ConnectionControlResult;
+  readonly reconnect: ConnectionControlResult;
+  readonly close: ConnectionControlResult;
+  readonly getStatus: ConnectionStatusResult;
+}
+
+export type ConnectionProviderOperation = keyof ConnectionProviderInvocationByOperation;
+
+export type ConnectionProviderInvocation =
+  ConnectionProviderInvocationByOperation[ConnectionProviderOperation];
+
+export type ConnectionProviderResult =
+  ConnectionProviderResultByOperation[ConnectionProviderOperation];
+
+export type ConnectionProviderOperationHandler<TOperation extends ConnectionProviderOperation> = (
+  invocation: ConnectionProviderInvocationByOperation[TOperation],
+) => ConnectionProviderResultByOperation[TOperation] | Promise<ConnectionProviderResultByOperation[TOperation]>;
+
+export type ConnectionProviderHandler = Readonly<{
+  [TOperation in ConnectionProviderOperation]: ConnectionProviderOperationHandler<TOperation>;
+}>;
+
+export type AuthenticationProviderInvocation =
+  | (TypedPluginProviderInvocation<AuthenticationBeginPayload> & {
+      readonly kind: "authentication";
+      readonly operation: "begin";
+    })
+  | (TypedPluginProviderInvocation<AuthenticationResponsePayload> & {
+      readonly kind: "authentication";
+      readonly operation: "respond";
+    })
+  | (TypedPluginProviderInvocation<Readonly<{ operationId: string }>> & {
+      readonly kind: "authentication";
+      readonly operation: "cancel";
+    });
+
+export type AuthenticationProviderHandler = (
+  invocation: AuthenticationProviderInvocation,
+) => AuthenticationResult | Promise<AuthenticationResult>;
+
+export interface ImporterProviderInvocationByOperation {
+  readonly detect: TypedPluginProviderInvocation<ImporterDetectPayload> & {
+    readonly kind: "importer";
+    readonly operation: "detect";
+  };
+  readonly parse: TypedPluginProviderInvocation<ImporterParsePayload> & {
+    readonly kind: "importer";
+    readonly operation: "parse";
+    readonly input: Promise<PluginReadableByteStream>;
+    readonly output: PluginWritableByteStream;
+  };
+}
+
+export interface ImporterProviderResultByOperation {
+  readonly detect: ImporterDetectResult;
+  readonly parse: ImporterParseResult;
+}
+
+export type ImporterProviderOperation = keyof ImporterProviderInvocationByOperation;
+export type ImporterProviderInvocation =
+  ImporterProviderInvocationByOperation[ImporterProviderOperation];
+export type ImporterProviderResult =
+  ImporterProviderResultByOperation[ImporterProviderOperation];
+export type ImporterProviderOperationHandler<TOperation extends ImporterProviderOperation> = (
+  invocation: ImporterProviderInvocationByOperation[TOperation],
+) => ImporterProviderResultByOperation[TOperation] | Promise<ImporterProviderResultByOperation[TOperation]>;
+export type ImporterProviderHandler = Readonly<{
+  [TOperation in ImporterProviderOperation]: ImporterProviderOperationHandler<TOperation>;
+}>;
+
 export interface PluginTerminalSessions {
   onDidChange(listener: (event: TerminalSessionEvent) => void): Disposable;
 }
@@ -419,6 +602,13 @@ export interface PluginFilesystemClient {
 
 export interface PluginCompanionRequestOptions {
   readonly timeoutMs?: number;
+  /**
+   * Operation-bound one-use leases consumed by the host immediately before
+   * dispatching this request to the isolated companion. When present, the
+   * companion receives `{ payload, credentials }` instead of the raw params.
+   */
+  readonly credentialLeases?: Readonly<Record<string, SecretLeaseRef>>;
+  readonly operationId?: string;
 }
 
 export interface PluginCompanionHandle extends Disposable {
@@ -433,6 +623,30 @@ export interface PluginCompanionHandle extends Disposable {
 
 export interface PluginCompanionService {
   start(companionId: string): Promise<PluginCompanionHandle>;
+}
+
+export interface PluginReadableByteStream extends Disposable {
+  readonly id: string;
+  /**
+   * Returns the next owned byte chunk or null after a normal end. Calling read
+   * again releases receive credit for the previous chunk, so consumers should
+   * finish processing one chunk before requesting the next.
+   */
+  read(): Promise<Uint8Array | null>;
+  cancel(): void;
+}
+
+export interface PluginWritableByteStream extends Disposable {
+  readonly id: string;
+  write(data: Uint8Array | ArrayBuffer): Promise<void>;
+  end(): Promise<void>;
+  fail(error: Readonly<{ message: string }>): void;
+  cancel(): void;
+}
+
+export interface PluginStreams {
+  acceptReadable(streamId: string): Promise<PluginReadableByteStream>;
+  openWritable(streamId: string, options?: Readonly<{ windowBytes?: number }>): Promise<PluginWritableByteStream>;
 }
 
 export interface PluginContext {
@@ -454,6 +668,7 @@ export interface PluginContext {
   readonly network: PluginNetworkClient;
   readonly filesystem: PluginFilesystemClient;
   readonly companions: PluginCompanionService;
+  readonly streams: PluginStreams;
   readonly logger: PluginLogger;
 }
 

@@ -77,8 +77,18 @@ export type PendingSftpUpload = {
 export type SnippetExecutor = (
   command: string,
   noAutoRun?: boolean,
-  options?: { broadcast?: boolean; multiLineRunMode?: Snippet["multiLineRunMode"] },
-) => void;
+  options?: {
+    broadcast?: boolean;
+    multiLineRunMode?: Snippet["multiLineRunMode"];
+    /** When false, do not steal keyboard focus (multi-tab fan-out). Default true. */
+    focus?: boolean;
+  },
+  /**
+   * Returns true when the command was written to the session. False means the
+   * executor could not write and the caller may fall back to a direct backend
+   * write. May be async when the pane needs to wake from hibernation first.
+   */
+) => boolean | Promise<boolean>;
 
 export type PendingTerminalSelectionForAI = {
   requestId: string;

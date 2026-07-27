@@ -93,6 +93,8 @@ The first-party placement path selects the utility runtime whenever companions
 are declared, including manifests that also provide a browser entrypoint.
 The supervisor repeats the placement check immediately before reserving or
 spawning a process. Phase 9 adds verified publisher trust to this same boundary.
+Privileged Terminal interceptors use the same deterministic utility placement
+rule and additionally require their direction-specific interception grant.
 
 ### Network
 
@@ -149,7 +151,10 @@ they exist; secret keys are already plugin-declared resources. Ownership,
 ID-to-key binding, and existence are checked only after permission,
 immediately before lease issue. Plaintext resolves only when the one-use lease
 is consumed. This is the stable credential handoff used by
-connection/authentication Providers in PR 7.
+connection/authentication Providers in PR 7. Importer Providers cannot smuggle
+hidden built-in plaintext credentials through host drafts; credentials must be
+declared as identity/key drafts and then pass through the same host-owned
+encrypted persistence and credential-reference flow.
 
 ### Companion executables
 
@@ -211,7 +216,9 @@ after durable user data can exist.
   larger payloads use streams rather than the 128 KiB control-plane budget.
 - PR 7 consumes operation-bound secret leases and digest-verified companions;
   secret lease authorization uses the declared key while ID ownership remains
-  a post-permission lookup. Importers use bounded streams, not directory walks.
+  a post-permission lookup. Importers use bounded streams, not directory walks,
+  and their draft schemas reject executable startup commands and hidden
+  plaintext built-in credential fields before Vault persistence.
 - PR 8 stores encrypted sync sidecars separately from package cascade storage
   and transports larger encrypted objects over the existing stream seam.
 - PR 9 supplies signed publisher principals and trust policy through placement;

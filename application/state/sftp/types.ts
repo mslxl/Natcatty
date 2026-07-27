@@ -75,11 +75,18 @@ export interface FileWatchErrorEvent {
 }
 
 export interface SftpStateOptions {
+  transferOwnerId?: string;
+  canPrepareTransferAdoption?: boolean;
   onFileWatchSynced?: (event: FileWatchSyncedEvent) => void;
   onFileWatchError?: (event: FileWatchErrorEvent) => void;
   useCompressedUpload?: boolean;
   defaultShowHiddenFiles?: boolean;
   autoConnectLocalOnMount?: boolean;
+  /**
+   * When false, park (soft-close) browse SFTP channels so transfer-pool
+   * sessions stay independent. Defaults to true (interactive).
+   */
+  interactive?: boolean;
   /**
    * Global SSH keepalive settings, forwarded through to per-SFTP-connection
    * keepalive resolution so a host that has opted into its own override
@@ -88,4 +95,11 @@ export interface SftpStateOptions {
   terminalSettings?: { verifyHostKeys: boolean; keepaliveInterval: number; keepaliveCountMax: number };
   knownHosts?: KnownHost[];
   onAddKnownHost?: (knownHost: KnownHost) => void;
+  /**
+   * Resolve a live terminal session id for a vault host so transfer-pool opens
+   * can reuse that SSH transport (openSftpForSession) instead of a cold connect.
+   */
+  resolveTransferSourceSessionId?: (hostId: string) => string | undefined;
+  /** Idle TTL for dedicated transfer-pool sessions (0 = never reclaim idle). */
+  transferPoolIdleTtlMs?: number;
 }

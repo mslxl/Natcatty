@@ -11,6 +11,10 @@ const {
   PLUGIN_UTILITY_TERMINATION_GRACE_MS,
 } = require("./constants.cjs");
 const { PluginRpcRouter } = require("./rpcRouter.cjs");
+const {
+  assertTerminalInterceptorAttachmentParams,
+  assertTerminalInterceptorAttachmentResult,
+} = require("./contractValidator.cjs");
 const { isPathInside } = require("./paths.cjs");
 
 const PLUGIN_CONTAINMENT_ERROR_CODE = "ERR_PLUGIN_RUNTIME_CONTAINMENT_FAILED";
@@ -209,6 +213,20 @@ class UtilityPluginRuntime {
     return this.router.streams.openOutgoing(streamId, windowBytes);
   }
 
+  attachTerminalInterceptor(descriptor, port) {
+    if (!this.router) throw new Error("Plugin utility runtime is not connected");
+    if (!port) throw new TypeError("Terminal interceptor port is required");
+    const params = assertTerminalInterceptorAttachmentParams({ descriptor });
+    return this.router.request("plugin.terminal.interceptor.attach", params, {
+      timeoutMs: PLUGIN_ACTIVATION_TIMEOUT_MS,
+      transfer: [port],
+      validateResult(result) {
+        assertTerminalInterceptorAttachmentResult(result);
+        return undefined;
+      },
+    });
+  }
+
   getProcessId() {
     return this.child?.pid ?? null;
   }
@@ -275,6 +293,7 @@ class UtilityPluginRuntime {
     router?.close(error);
     this.onExit({ expected: false, error });
   }
+
 }
 
 module.exports = {

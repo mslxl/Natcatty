@@ -310,14 +310,35 @@ declare global {
       data: string,
       options?: {
         automated?: boolean;
+        /** Host-classified secret/no-echo input; always bypasses plugin observers and interceptors. */
+        sensitive?: boolean;
         lineDelayMs?: number;
         logRewrite?: { sentCommand: string; displayCommand: string };
       },
     ): void;
     interruptSession?(sessionId: string, trace?: NetcattyTerminalInterruptTrace): void;
     resizeSession(sessionId: string, cols: number, rows: number): void;
+    /**
+     * Sync Windows ConPTY after the renderer clears the xterm viewport.
+     * No-op for SSH and non-ConPTY sessions.
+     */
+    clearSessionPtyBuffer?(sessionId: string): void;
     setSessionFlowPaused(sessionId: string, paused: boolean): void;
     setSessionFlowPausedAndWait?(sessionId: string, paused: boolean): Promise<{ success: boolean; error?: string }>;
+    acquireSessionFlowPauseLease?(sessionId: string): Promise<{
+      success: boolean;
+      leaseId?: string;
+      error?: string;
+    }>;
+    waitSessionFlowPauseLease?(sessionId: string, leaseId: string): Promise<{
+      success: boolean;
+      error?: string;
+    }>;
+    releaseSessionFlowPauseLease?(
+      sessionId: string,
+      leaseId: string,
+      options?: { keepPaused?: boolean },
+    ): Promise<{ success: boolean; error?: string }>;
     onTerminalOutputDrainRequest?(
       sessionId: string,
       cb: (payload: { sessionId: string; requestId: string }) => void | Promise<void>,
@@ -345,6 +366,9 @@ declare global {
       snapshot?: string;
       kittyKeyboardModeState?: NetcattyKittyKeyboardModeState;
       kittyKeyboardProtocolEnabled?: boolean;
+      passwordPromptActive?: boolean;
+      cwd?: string | null;
+      title?: string | null;
       error?: string;
     }>;
     /** Home renderer: listen for snapshot requests. */
@@ -357,6 +381,9 @@ declare global {
       snapshot: string,
       kittyKeyboardModeState?: NetcattyKittyKeyboardModeState,
       kittyKeyboardProtocolEnabled?: boolean,
+      passwordPromptActive?: boolean,
+      cwd?: string | null,
+      title?: string | null,
     ): void;
     /** Observe popup: push current state back to the home renderer before restore. */
     applyTerminalSessionSnapshot?(
@@ -369,6 +396,9 @@ declare global {
         alternateScreen: boolean;
         kittyKeyboardModeState?: NetcattyKittyKeyboardModeState;
         kittyKeyboardProtocolEnabled?: boolean;
+        passwordPromptActive?: boolean;
+        cwd?: string | null;
+        title?: string | null;
       },
       authorization: string,
     ): Promise<{
@@ -388,6 +418,9 @@ declare global {
         alternateScreen: boolean;
         kittyKeyboardModeState?: NetcattyKittyKeyboardModeState;
         kittyKeyboardProtocolEnabled?: boolean;
+        passwordPromptActive?: boolean;
+        cwd?: string | null;
+        title?: string | null;
         requestId: string;
       }) => boolean | Promise<boolean>,
     ): () => void;
@@ -437,6 +470,14 @@ declare global {
           /** True while Mosh is still on the ephemeral SSH handshake PTY. */
           moshHandshake?: boolean;
           terminalPerf?: NetcattyTerminalOutputPerfMeta;
+          /** Original host output units acknowledged even when an interceptor changes display length. */
+          pluginPipelineIngressBytes?: number;
+          /** Host-owned provenance marker for output already processed by an interceptor. */
+          pluginPipelineProcessed?: boolean;
+          /** Host-classified authentication prompt state for protecting subsequent input. */
+          pluginPipelineSensitiveInput?: boolean;
+          /** Host-owned marker that a Plugin connection Provider has explicitly reached connected status. */
+          pluginConnectionReady?: boolean;
         },
       ) => void,
       options?: { replayBacklog?: boolean },

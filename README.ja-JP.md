@@ -128,6 +128,7 @@ Catty Agent にサーバーの健全性チェックを依頼すると、適切�
 ### 🖥️ ターミナルワークスペース
 - **分割ペイン** — 水平・垂直分割でマルチタスク
 - **セッション管理** — 複数の接続を並行して扱う
+- **インライン画像** — リモートプログラムが出力する Kitty グラフィックス、SIXEL、iTerm インライン画像を描画
 
 ### 📁 SFTP + 内蔵エディタ
 - **ファイル作業** — ドラッグ＆ドロップでアップロード/ダウンロード
@@ -309,11 +310,11 @@ npm run pack:linux   # Linux (AppImage + DEB + RPM)
 <a name="star-履歴"></a>
 # Star 履歴
 
-<a href="https://star-history.com/#binaricat/Netcatty&Date">
+<a href="https://www.star-history.com/#binaricat/Netcatty&Date">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=binaricat/Netcatty&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=binaricat/Netcatty&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=binaricat/Netcatty&type=Date" />
+   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/star-history/star-history-dark.svg" />
+   <source media="(prefers-color-scheme: light)" srcset="docs/assets/star-history/star-history-light.svg" />
+   <img alt="Star History Chart" src="docs/assets/star-history/star-history-light.svg" />
  </picture>
 </a>
 

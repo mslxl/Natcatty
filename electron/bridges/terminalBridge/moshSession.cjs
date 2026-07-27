@@ -10,6 +10,11 @@ const {
 const { createSshConnExecProbe } = require("../ai/sessionShellKind.cjs");
 const { orderSshIdentityNames, SSH_KEY_PATTERN } = require("../sshAuthHelper.cjs");
 const { fanoutSessionExit } = require("../terminalAttachRestore.cjs");
+const {
+  buildAuthoritativeKnownHostsContent,
+  buildExternalHostKeySshOptions,
+  vaultPinsConnectionHosts,
+} = require("../externalSshHostKeyPolicy.cjs");
 
 const execFileAsync = promisify(execFile);
 
@@ -356,6 +361,62 @@ function createMoshSessionApi(ctx) {
         if (preferredAuthentications) {
           sshArgs.push("-o", `PreferredAuthentications=${preferredAuthentications}`);
         }
+
+        // Vault known_hosts (issue #2501): Mosh bootstraps via system OpenSSH.
+        // When the vault pins hosts, write an authoritative known_hosts
+        // snapshot (vault pins + filtered system entries) and force
+        // StrictHostKeyChecking=ask so a permissive user ssh_config cannot
+        // disable verification. Vault hosts exclude conflicting system pins
+        // so a rotated system key cannot override the vault.
+        const verifyHostKeys = options.verifyHostKeys !== false;
+        let authoritativeKnownHostsPath = null;
+        let emptyKnownHostsPath = null;
+        if (verifyHostKeys) {
+          // Only override system known_hosts when the vault pins this target
+          // (or a jump host). Unrelated vault entries must not force a temp
+          // UserKnownHostsFile for every Mosh session.
+          const connectionHosts = [
+            { hostname: options.hostname, port: options.port || 22 },
+            ...(Array.isArray(options.jumpHosts)
+              ? options.jumpHosts.map((jump) => ({
+                hostname: jump.hostname,
+                port: jump.port || 22,
+              }))
+              : []),
+          ];
+          if (vaultPinsConnectionHosts(options.knownHosts, connectionHosts)) {
+            const authoritativeContent = buildAuthoritativeKnownHostsContent({
+              knownHosts: options.knownHosts,
+              fs,
+              hostname: options.hostname,
+              port: options.port || 22,
+              username: options.username,
+              pathModule: path,
+              homedir: os.homedir(),
+              memo: new Map(),
+            });
+            if (authoritativeContent) {
+              authoritativeKnownHostsPath = await writeMoshAuthTempFile(
+                safeMoshAuthFileName(sessionId, "authoritative-known-hosts", ".txt"),
+                authoritativeContent,
+              );
+              tempFiles.push(authoritativeKnownHostsPath);
+            }
+          }
+        } else {
+          emptyKnownHostsPath = await writeMoshAuthTempFile(
+            safeMoshAuthFileName(sessionId, "empty-known-hosts", ".txt"),
+            "",
+          );
+          tempFiles.push(emptyKnownHostsPath);
+        }
+        sshArgs.push(...buildExternalHostKeySshOptions({
+          authoritativeKnownHostsPath,
+          emptyKnownHostsPath,
+          verifyHostKeys,
+          protocol: "mosh",
+          style: "args",
+        }));
       } catch (err) {
         cleanupMoshAuthTempFiles(tempFiles);
         throw err;
@@ -427,6 +488,7 @@ function createMoshSessionApi(ctx) {
           env: sshEnv,
           cwd: os.homedir(),
           encoding: null,
+          useConptyDll: process.platform === "win32",
         });
       } catch (err) {
         cleanupMoshAuthTempFiles(moshAuth.tempFiles);
@@ -499,13 +561,14 @@ function createMoshSessionApi(ctx) {
           ? { ...(meta || {}), moshHandshake: true }
           : meta;
         emitTerminalSessionData(contents, sessionId, data, {
+          session,
           cols: session.cols,
           rows: session.rows,
           meta: handshakeMeta,
         });
       }, {
         onPendingBytesChange: (bytes) => setBufferedOutputBytes(session, bytes),
-        shouldAcceptOutput: () => shouldAcceptSessionOutput(session),
+        shouldAcceptOutput: () => sessions.get(sessionId) === session && shouldAcceptSessionOutput(session),
       });
       session.flushPendingData = flushPaced;
       session.discardPendingData = discard;
@@ -518,6 +581,7 @@ function createMoshSessionApi(ctx) {
       // during handshake — it can't appear during ssh login output and
       // would only complicate the swap.
       sshPty.onData((chunk) => {
+        if (sessions.get(sessionId) !== session) return;
         const { visible, parsed } = sniffer.feed(chunk);
         if (visible && (visible.length || (typeof visible === "string" && visible))) {
           const str = Buffer.isBuffer(visible) ? visible.toString("utf8") : visible;
@@ -573,12 +637,14 @@ function createMoshSessionApi(ctx) {
             });
           } catch (err) {
             flushPaced(() => {
+              if (sessions.get(sessionId) !== session) return;
               sessionLogStreamManager.stopStream(sessionId, logStreamToken);
               const contents = electronModule.webContents.fromId(session.webContentsId);
               fanoutSessionExit(sessionId, contents, {
                 sessionId,
                 reason: "error",
                 error: `Failed to spawn mosh-client: ${err.message}`,
+                _terminalSessionGeneration: session._terminalSessionGeneration,
               });
               closeTerminalOutputSession?.(sessionId);
               sessions.delete(sessionId);
@@ -604,6 +670,7 @@ function createMoshSessionApi(ctx) {
           // Best-effort diagnostics; still tear the session down below.
         }
         flushPaced(() => {
+          if (sessions.get(sessionId) !== session) return;
           sessionLogStreamManager.stopStream(sessionId, logStreamToken);
           const contents = electronModule.webContents.fromId(session.webContentsId);
           fanoutSessionExit(sessionId, contents, {
@@ -612,6 +679,7 @@ function createMoshSessionApi(ctx) {
             signal,
             reason: "error",
             error: "Mosh SSH startup failed: no MOSH CONNECT from mosh-server (UDP client not started)",
+            _terminalSessionGeneration: session._terminalSessionGeneration,
           });
           closeTerminalOutputSession?.(sessionId);
           sessions.delete(sessionId);
@@ -668,6 +736,7 @@ function createMoshSessionApi(ctx) {
         env,
         cwd: os.homedir(),
         encoding: null,
+        useConptyDll: process.platform === "win32",
       });
     
       // Atomic swap — writeToSession / resizeSession both read
@@ -752,21 +821,23 @@ function createMoshSessionApi(ctx) {
           },
           getWebContents() { return electronModule.webContents.fromId(session.webContentsId); },
           selectUploadFiles: selectZmodemUploadFiles
-            ? () => selectZmodemUploadFiles(session.webContentsId)
+            ? () => selectZmodemUploadFiles(session.webContentsId, sessionId)
             : undefined,
           selectDownloadDirectory: selectZmodemDownloadDirectory
-            ? () => selectZmodemDownloadDirectory(session.webContentsId)
+            ? () => selectZmodemDownloadDirectory(session.webContentsId, sessionId)
             : undefined,
           protocolLabel: "Mosh",
         });
         session.zmodemSentry = sentry;
         mcPty.onData((data) => {
+          if (sessions.get(sessionId) !== session) return;
           if (!shouldProcessSessionOutput(session, sentry)) return;
           sentry.consume(data);
         });
       } else {
         const decodeMoshOutput = createMoshUtf8Decoder();
         mcPty.onData((data) => {
+          if (sessions.get(sessionId) !== session) return;
           if (!shouldProcessSessionOutput(session)) return;
           const str = decodeMoshOutput(data);
           if (!str) return;
@@ -786,6 +857,7 @@ function createMoshSessionApi(ctx) {
         try { session.moshStatsConn?.end(); } catch { /* ignore */ }
         bufferData(MOSH_PRIMARY_SCREEN_RESET);
         flushPaced(() => {
+          if (sessions.get(sessionId) !== session) return;
           sessionLogStreamManager.stopStream(sessionId, session.logStreamToken);
           const contents = electronModule.webContents.fromId(session.webContentsId);
           fanoutSessionExit(sessionId, contents, {
@@ -793,6 +865,7 @@ function createMoshSessionApi(ctx) {
             exitCode,
             signal,
             reason: exitCode !== 0 ? "error" : "exited",
+            _terminalSessionGeneration: session._terminalSessionGeneration,
           });
           closeTerminalOutputSession?.(sessionId);
           sessions.delete(sessionId);
@@ -833,7 +906,7 @@ function createMoshSessionApi(ctx) {
       const sshExe = moshHandshake.resolveSshExecutable({
         findExecutable: (name) => (
           process.platform === "win32"
-            ? findExecutable(name, { pathOverride: mergedPathForResolution })
+            ? (opts.findExecutable || findExecutable)(name, { pathOverride: mergedPathForResolution })
             : resolvePosixExecutable(name, { pathOverride: mergedPathForResolution })
         ),
         fileExists: (p) => isExecutableFile(p) || fs.existsSync(p),

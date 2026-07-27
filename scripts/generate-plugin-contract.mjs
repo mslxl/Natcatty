@@ -26,6 +26,78 @@ const typescriptTypeOverrides = new Map([
     "ActivationEvent",
     '"onStartupFinished" | `onCommand:${ContributionId}` | `onView:${ContributionId}` | `onProvider:${ContributionId}`',
   ],
+  [
+    "PluginHostProtocol",
+    "`plugin:${ContributionId}`",
+  ],
+  [
+    "ImporterGroupDraft",
+    "string | { path: string; label?: string } | { path?: string; label: string }",
+  ],
+  [
+    "ImporterHostDraft",
+    `({
+  id?: string;
+  label?: string;
+  username?: string;
+  group?: string;
+  tags?: Array<string>;
+  os?: "linux" | "windows" | "macos";
+  deviceType?: "general" | "network";
+  identityId?: string;
+  identityFileId?: string;
+  telnetIdentityId?: string;
+  notes?: string;
+  theme?: string;
+  sftpEncoding?: string;
+  sftpFileProtocol?: "auto" | "sftp" | "scp";
+  moshEnabled?: boolean;
+  etEnabled?: boolean;
+  telnetEnabled?: boolean;
+  sftpSudo?: boolean;
+  requiresMfa?: boolean;
+  useSshAgent?: boolean;
+  identitiesOnly?: boolean;
+  agentForwarding?: boolean;
+  x11Forwarding?: boolean;
+  showLineTimestamps?: boolean;
+  disableDynamicTabTitle?: boolean;
+  pinned?: boolean;
+  autoOpenSftpPanel?: boolean;
+  sftpFollowTerminalCwd?: boolean;
+  port?: number;
+  telnetPort?: number;
+  etPort?: number;
+  keepaliveInterval?: number;
+  keepaliveCountMax?: number;
+} & ({
+  hostname: string;
+  protocol?: "ssh" | "telnet" | "mosh" | "et" | "local" | "serial";
+  pluginConnection?: never;
+} | {
+  hostname?: string;
+  protocol: PluginHostProtocol;
+  pluginConnection: ImporterPluginConnectionDraft;
+}))`,
+  ],
+  [
+    "ImporterKeyDraft",
+    `({
+  id?: string;
+  label: string;
+  type: "RSA" | "ECDSA" | "ED25519";
+  publicKey?: string;
+  certificate?: string;
+  passphrase?: string;
+  category?: "key" | "certificate" | "identity";
+} & ({
+  privateKey: string;
+  filePath?: never;
+} | {
+  privateKey?: never;
+  filePath: string;
+}))`,
+  ],
 ]);
 
 const schemaText = await readFile(schemaPath, "utf8");
@@ -81,6 +153,37 @@ const streamLimits = schema.$defs.StreamLimits?.const;
 if (!Number.isSafeInteger(streamLimits?.maxFrameJsonBytes)
   || streamLimits.maxFrameJsonBytes < streamLimits?.maxChunkBytes) {
   throw new Error("StreamLimits.maxFrameJsonBytes must cover one maximum stream chunk");
+}
+const terminalInterceptorLimits = schema.$defs.TerminalInterceptorLimits?.const;
+if (!Number.isSafeInteger(terminalInterceptorLimits?.maxChunkBytes)
+  || terminalInterceptorLimits.maxChunkBytes < 1
+  || !Number.isSafeInteger(terminalInterceptorLimits?.maxWindowBytes)
+  || terminalInterceptorLimits.maxWindowBytes < terminalInterceptorLimits.maxChunkBytes) {
+  throw new Error("TerminalInterceptorLimits must define bounded chunk and window sizes");
+}
+const importerLimits = schema.$defs.ImporterLimits?.const;
+if (!Number.isSafeInteger(importerLimits?.maxInputBytes)
+  || !Number.isSafeInteger(importerLimits?.maxOutputBytes)
+  || !Number.isSafeInteger(importerLimits?.maxRecordBytes)
+  || !Number.isSafeInteger(importerLimits?.maxRecords)
+  || importerLimits.maxInputBytes < 1
+  || importerLimits.maxOutputBytes < 1
+  || importerLimits.maxRecordBytes < 1
+  || importerLimits.maxRecordBytes > importerLimits.maxOutputBytes
+  || importerLimits.maxRecords < 1) {
+  throw new Error("ImporterLimits must define positive bounded input, output, record, and count limits");
+}
+for (const [name, minimum, maximum] of [
+  ["TerminalInterceptorChunkByteLength", 0, terminalInterceptorLimits.maxChunkBytes],
+  ["TerminalInterceptorWindowBytes", 1, terminalInterceptorLimits.maxWindowBytes],
+  ["TerminalInterceptorCreditBytes", 0, terminalInterceptorLimits.maxWindowBytes],
+]) {
+  const definition = schema.$defs[name];
+  if (definition?.type !== "integer"
+    || definition.minimum !== minimum
+    || definition.maximum !== maximum) {
+    throw new Error(`${name} must match the canonical TerminalInterceptorLimits range`);
+  }
 }
 const streamIdDefinition = schema.$defs.StreamId;
 if (!Number.isSafeInteger(streamLimits?.maxStreamIdLength)
@@ -219,6 +322,12 @@ const generatedLimits = [
   `export const PLUGIN_STREAM_MIN_WINDOW_BYTES = ${streamLimits.minWindowBytes} as const;`,
   `export const PLUGIN_STREAM_MAX_WINDOW_BYTES = ${streamLimits.maxWindowBytes} as const;`,
   `export const PLUGIN_STREAM_MAX_CREDIT_BYTES = ${streamLimits.maxCreditBytes} as const;`,
+  `export const PLUGIN_TERMINAL_INTERCEPTOR_MAX_CHUNK_BYTES = ${terminalInterceptorLimits.maxChunkBytes} as const;`,
+  `export const PLUGIN_TERMINAL_INTERCEPTOR_MAX_WINDOW_BYTES = ${terminalInterceptorLimits.maxWindowBytes} as const;`,
+  `export const PLUGIN_IMPORTER_MAX_INPUT_BYTES = ${importerLimits.maxInputBytes} as const;`,
+  `export const PLUGIN_IMPORTER_MAX_OUTPUT_BYTES = ${importerLimits.maxOutputBytes} as const;`,
+  `export const PLUGIN_IMPORTER_MAX_RECORD_BYTES = ${importerLimits.maxRecordBytes} as const;`,
+  `export const PLUGIN_IMPORTER_MAX_RECORDS = ${importerLimits.maxRecords} as const;`,
   "",
 ].join("\n");
 const normalizedSchema = `${JSON.stringify(schema, null, 2)}\n`;

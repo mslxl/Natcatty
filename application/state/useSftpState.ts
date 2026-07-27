@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import {
   Host,
   Identity,
@@ -27,6 +27,20 @@ import { useSftpConnections } from "./sftp/useSftpConnections";
 import { useSftpFileWatch } from "./sftp/useSftpFileWatch";
 import { useSftpSessionCleanup } from "./sftp/useSftpSessionCleanup";
 import { useSftpSessionErrors } from "./sftp/useSftpSessionErrors";
+import { ensureRemoteSftpSession } from "./sftp/ensureRemoteSftpSession";
+import { openTransferSftpSession } from "./sftp/dedicatedTransferResume";
+import {
+  buildTransferPoolKey,
+  getSharedTransferConnectionPool,
+} from "./sftp/transferConnectionPool";
+import {
+  shouldParkBrowseSessions,
+  shouldRestoreBrowseSessions,
+  takeBrowseSessionsForClose,
+} from "./sftp/browseSessionLifecycle";
+import { sftpTransferCenterStore } from "./sftpTransferCenterStore";
+import { netcattyBridge } from "../../infrastructure/services/netcattyBridge";
+import { logger } from "../../lib/logger";
 
 // types + utils now live in ./sftp/*
 
@@ -36,6 +50,7 @@ export const useSftpState = (
   identities: Identity[],
   options?: SftpStateOptions
 ) => {
+  const transferOwnerIdRef = useRef(options?.transferOwnerId ?? crypto.randomUUID());
   const createPane = useCallback(
     (id?: string, showHiddenFiles = options?.defaultShowHiddenFiles ?? false) =>
       createEmptyPane(id, showHiddenFiles),
@@ -121,6 +136,22 @@ export const useSftpState = (
     return null;
   }, [leftTabsRef, rightTabsRef]);
 
+  const getPaneByTabId = useCallback((tabId: string) => {
+    for (const tab of leftTabsRef.current.tabs) {
+      if (tab.id === tabId) return tab;
+    }
+    for (const tab of rightTabsRef.current.tabs) {
+      if (tab.id === tabId) return tab;
+    }
+    return null;
+  }, [leftTabsRef, rightTabsRef]);
+
+  const getSideByTabId = useCallback((tabId: string): "left" | "right" | null => {
+    if (leftTabsRef.current.tabs.some((tab) => tab.id === tabId)) return "left";
+    if (rightTabsRef.current.tabs.some((tab) => tab.id === tabId)) return "right";
+    return null;
+  }, [leftTabsRef, rightTabsRef]);
+
   const getTabByConnectionId = useCallback((connectionId: string) => {
     for (const tab of leftTabsRef.current.tabs) {
       if (tab.connection?.id === connectionId) {
@@ -146,6 +177,10 @@ export const useSftpState = (
   // share the same hostId with different session-time overrides.
   const connectionCacheKeyMapRef = useRef<Map<string, string>>(new Map());
 
+  // Full Host used when each tab connected (includes session-time overrides).
+  // Tab ids are stable across reconnect; connection ids are not.
+  const connectedHostByTabIdRef = useRef<Map<string, Host | "local">>(new Map());
+
   // Full endpoint key captured at connect time (hostId:hostname:port:…).
   const getConnectionCacheKey = useCallback((connectionId: string) => {
     return connectionCacheKeyMapRef.current.get(connectionId) ?? null;
@@ -162,12 +197,30 @@ export const useSftpState = (
 
   // Keep reconnect metadata in sync when auto-connect reuses an existing tab
   // without calling connect() (selectTab alone does not update this ref).
+  // Callers that selectTab then setLastConnectedHost must pass tabId explicitly:
+  // selectTab only schedules a state update, so activeTabId on the ref is still
+  // the previous tab until the next render.
   const setLastConnectedHost = useCallback((
     side: "left" | "right",
     host: Host | "local" | null,
+    tabId?: string | null,
   ) => {
     lastConnectedHostRef.current[side] = host;
-  }, []);
+    const resolvedTabId =
+      tabId
+      ?? (side === "left" ? leftTabsRef : rightTabsRef).current.activeTabId;
+    if (!resolvedTabId) return;
+    if (host) {
+      connectedHostByTabIdRef.current.set(resolvedTabId, host);
+    } else {
+      connectedHostByTabIdRef.current.delete(resolvedTabId);
+    }
+  }, [leftTabsRef, rightTabsRef]);
+
+  const closeTabAndClearHost = useCallback((side: "left" | "right", tabId: string) => {
+    connectedHostByTabIdRef.current.delete(tabId);
+    closeTab(side, tabId);
+  }, [closeTab]);
 
   const handleSessionError = useSftpSessionErrors({
     getActivePane,
@@ -183,6 +236,127 @@ export const useSftpState = (
 
   useSftpSessionCleanup(sftpSessionsRef);
   useSftpFileWatch(options);
+
+  // FileZilla-style dedicated transfer connection pool (1–2 sessions per host).
+  // Shared across SFTP panels so we never open more than maxPerHost globally.
+  const transferPoolRef = useRef(
+    getSharedTransferConnectionPool({
+      closeSession: async (sftpId) => {
+        try {
+          await netcattyBridge.get()?.closeSftp?.(sftpId);
+        } catch {
+          // best-effort idle/session cleanup
+        }
+      },
+      idleTtlMs: options?.transferPoolIdleTtlMs,
+    }),
+  );
+
+  // Keep shared pool TTL in sync with settings (singleton may already exist).
+  useEffect(() => {
+    if (options?.transferPoolIdleTtlMs === undefined) return;
+    transferPoolRef.current.setIdleTtlMs(options.transferPoolIdleTtlMs);
+  }, [options?.transferPoolIdleTtlMs]);
+
+  // Periodically reclaim idle transfer sessions (busy holders are never closed).
+  useEffect(() => {
+    const pool = transferPoolRef.current;
+    const timer = window.setInterval(() => {
+      void pool.closeIdle().then((closed) => {
+        if (closed > 0) {
+          logger.debug(`[SFTP] Closed ${closed} idle transfer connection(s)`);
+        }
+      });
+    }, 15_000);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  const openPoolSftpSession = useCallback(
+    async (host: Host) => {
+      // Always dedicated vault SSH: bulk transfers must survive SFTP/terminal
+      // tab close. Warm this in the background so the user does not feel the handshake.
+      logger.info(`[SFTP] Opening dedicated transfer connection for ${host.label || host.hostname}`);
+      return openTransferSftpSession(
+        host,
+        {
+          hosts,
+          keys,
+          identities,
+          knownHosts: options?.knownHosts,
+          terminalSettings: options?.terminalSettings,
+        },
+        { dedicated: true },
+      );
+    },
+    [hosts, identities, keys, options?.knownHosts, options?.terminalSettings],
+  );
+
+  const acquireTransferSession = useCallback(
+    async (hostId: string, transferId: string, connectHost?: Host) => {
+      // Prefer the connect-time Host (terminal session overrides) so pooled
+      // uploads open the same endpoint as the browse tab, not the vault entry.
+      const host = connectHost && connectHost.id === hostId
+        ? connectHost
+        : hosts.find((candidate) => candidate.id === hostId);
+      if (!host) {
+        throw new Error(`Host not found for transfer session: ${hostId}`);
+      }
+      if (connectHost && connectHost.id !== hostId) {
+        throw new Error(
+          `Transfer connect host id mismatch: expected ${hostId}, got ${connectHost.id}`,
+        );
+      }
+      const poolKey = buildTransferPoolKey({
+        hostId: host.id,
+        hostname: host.hostname,
+        port: host.port,
+        username: host.username,
+        protocol: host.protocol,
+        sftpSudo: host.sftpSudo,
+      });
+      return transferPoolRef.current.acquire(poolKey, transferId, () => openPoolSftpSession(host));
+    },
+    [hosts, openPoolSftpSession],
+  );
+
+  /**
+   * Warm one idle transfer-pool slot for a host (background). Prefer terminal
+   * session reuse so the first real transfer skips a cold SSH handshake.
+   */
+  const warmTransferPoolForHost = useCallback(
+    async (hostId: string) => {
+      const host = hosts.find((candidate) => candidate.id === hostId);
+      if (!host || host.protocol === "serial") return;
+      const poolKey = buildTransferPoolKey({
+        hostId: host.id,
+        hostname: host.hostname,
+        port: host.port,
+        username: host.username,
+        protocol: host.protocol,
+        sftpSudo: host.sftpSudo,
+      });
+      const stats = transferPoolRef.current.getStats(poolKey);
+      if (stats.connections > 0) return;
+      try {
+        const lease = await transferPoolRef.current.acquire(
+          poolKey,
+          `warm:${hostId}`,
+          () => openPoolSftpSession(host),
+        );
+        lease.release();
+        logger.debug(`[SFTP] Warmed transfer pool for ${host.label || host.hostname}`);
+      } catch (err) {
+        logger.debug("[SFTP] Transfer pool warm failed (will open on first transfer)", err);
+      }
+    },
+    [hosts, openPoolSftpSession],
+  );
+
+  /** True after browse channels were soft-closed while this owner stayed mounted. */
+  const browseParkedRef = useRef(false);
+  const browseLifecycleGenRef = useRef(0);
 
   const {
     connect,
@@ -215,6 +389,7 @@ export const useSftpState = (
     sftpSessionsRef,
     lastConnectedHostRef,
     connectionCacheKeyMapRef,
+    connectedHostByTabIdRef,
     reconnectingRef,
     makeCacheKey,
     clearCacheForConnection,
@@ -304,12 +479,17 @@ export const useSftpState = (
     addExternalUpload,
     updateExternalUpload,
     cancelTransfer,
+    pauseTransfer,
+    resumeTransfer,
+    prioritizeTransfer,
     isTransferCancelled,
     retryTransfer,
     clearCompletedTransfers,
     dismissTransfer,
     resolveConflict: resolveTransferConflict,
   } = useSftpTransfers({
+    ownerId: transferOwnerIdRef.current,
+    canPrepareAdoption: options?.canPrepareTransferAdoption,
     getActivePane,
     getPaneByConnectionId,
     getTabByConnectionId,
@@ -321,6 +501,7 @@ export const useSftpState = (
     listLocalFiles,
     listRemoteFiles,
     handleSessionError,
+    acquireTransferSession,
   });
 
   const {
@@ -340,11 +521,56 @@ export const useSftpState = (
     uploadConflicts,
     resolveUploadConflict,
   } = useSftpExternalOperations({
+    ownerId: transferOwnerIdRef.current,
     getActivePane,
     getPaneByConnectionId,
+    getPaneByTabId,
+    getSideByTabId,
     refresh,
     sftpSessionsRef,
     connectionCacheKeyMapRef,
+    ensureRemoteSftpId: async (side, ensureOptions) => {
+      const bridge = netcattyBridge.get();
+      const connectionId = ensureOptions?.connectionId;
+      // Tab ids survive reconnect; connection ids are regenerated by connect().
+      const tabId =
+        ensureOptions?.tabId
+        ?? (connectionId ? getTabByConnectionId(connectionId)?.tabId : undefined);
+      // Prefer live side when the pinned tab was dragged left↔right mid-upload.
+      const reconnectSide = tabId ? (getSideByTabId(tabId) ?? side) : side;
+      const pinnedGetActivePane = tabId
+        ? (_side: "left" | "right") => {
+            const pane = getPaneByTabId(tabId);
+            if (!pane) {
+              throw new Error("Upload target connection is no longer available");
+            }
+            return pane;
+          }
+        : getActivePane;
+      return ensureRemoteSftpSession({
+        side: reconnectSide,
+        getActivePane: pinnedGetActivePane,
+        sftpSessionsRef,
+        lastConnectedHostRef,
+        connect,
+        resolveConnectedHost: (id) => connectedHostByTabIdRef.current.get(id) ?? null,
+        resolveHostById: (hostId) => hosts.find((host) => host.id === hostId) ?? null,
+        forceReconnect: ensureOptions?.forceReconnect,
+        tabId,
+        probeSession: async (sftpId) => {
+          // Lightweight liveness check; any session-error from the bridge
+          // triggers a reconnect in ensureRemoteSftpSession.
+          if (!bridge?.getSftpHomeDir) return true;
+          const result = await bridge.getSftpHomeDir(sftpId);
+          if (result && result.success === false) {
+            throw new Error(result.error || "SFTP session not found");
+          }
+          return true;
+        },
+      });
+    },
+    resolveConnectedHost: (tabId) => connectedHostByTabIdRef.current.get(tabId) ?? null,
+    acquireTransferSession,
     clearDirCacheEntry,
     useCompressedUpload: options?.useCompressedUpload,
     addExternalUpload,
@@ -368,12 +594,112 @@ export const useSftpState = (
     [resolveTransferConflict, resolveUploadConflict, uploadConflicts],
   );
 
+  // FileZilla-style: when the browser UI is hidden, soft-close browse SFTP
+  // channels. Defer park while this owner still has unfinished transfers so
+  // pre-lease prep (conflict/stat) cannot race a hard-close of the browse id.
+  // In-flight streams also soft-close via leases; pool handles bulk I/O.
+  const interactive = options?.interactive !== false;
+  useEffect(() => {
+    const gen = ++browseLifecycleGenRef.current;
+
+    const parkBrowse = async () => {
+      // Include global-center rows owned by this panel so we never soft-close
+      // browse sessions while bulk work is still arming/running.
+      // Match retain semantics: paused/interrupted folder walks still need the
+      // browse (or work) session until resume finishes — do not hard-park them.
+      const centerActive = sftpTransferCenterStore.getSnapshot().tasks.some((task) => (
+        task.ownerId === transferOwnerIdRef.current
+        && !task.parentTaskId
+        && task.status !== "completed"
+        && task.status !== "cancelled"
+      ));
+      if (!shouldParkBrowseSessions({
+        interactive,
+        browseParked: browseParkedRef.current,
+        activeTransfersCount: Math.max(activeTransfersCount, centerActive ? 1 : 0),
+      })) {
+        return;
+      }
+      const entries = takeBrowseSessionsForClose(sftpSessionsRef.current);
+      if (entries.length === 0) {
+        browseParkedRef.current = true;
+        return;
+      }
+      browseParkedRef.current = true;
+      logger.info(`[SFTP] Parking ${entries.length} browse session(s) (transfers keep pool leases)`);
+      await Promise.all(entries.map(async ({ connectionId, sftpId }) => {
+        clearCacheForConnection(connectionId);
+        try {
+          // closeSftp soft-closes when transfer leases still hold the id.
+          await netcattyBridge.get()?.closeSftp?.(sftpId);
+        } catch {
+          // best-effort — session may already be gone
+        }
+      }));
+    };
+
+    const restoreBrowse = async () => {
+      if (!shouldRestoreBrowseSessions({
+        interactive,
+        browseParked: browseParkedRef.current,
+      })) {
+        return;
+      }
+      browseParkedRef.current = false;
+      const sides: Array<"left" | "right"> = ["left", "right"];
+      for (const side of sides) {
+        if (gen !== browseLifecycleGenRef.current) return;
+        const pane = getActivePane(side);
+        if (!pane?.connection || pane.connection.isLocal) continue;
+        if (sftpSessionsRef.current.has(pane.connection.id)) continue;
+        try {
+          await ensureRemoteSftpSession({
+            side,
+            getActivePane,
+            sftpSessionsRef,
+            lastConnectedHostRef,
+            connect,
+            resolveConnectedHost: (id) => connectedHostByTabIdRef.current.get(id) ?? null,
+            resolveHostById: (hostId) => hosts.find((host) => host.id === hostId) ?? null,
+            probeSession: async (sftpId) => {
+              const bridge = netcattyBridge.get();
+              if (!bridge?.getSftpHomeDir) return true;
+              const result = await bridge.getSftpHomeDir(sftpId);
+              if (result && result.success === false) {
+                throw new Error(result.error || "SFTP session not found");
+              }
+              return true;
+            },
+          });
+          logger.info(`[SFTP] Restored browse session on ${side}`);
+        } catch (err) {
+          logger.warn(`[SFTP] Failed to restore browse session on ${side}`, err);
+        }
+      }
+    };
+
+    if (!interactive) {
+      void parkBrowse();
+    } else {
+      void restoreBrowse();
+    }
+  }, [
+    interactive,
+    activeTransfersCount,
+    clearCacheForConnection,
+    connect,
+    getActivePane,
+    hosts,
+    lastConnectedHostRef,
+    sftpSessionsRef,
+  ]);
+
   // Store methods in a ref to create stable wrapper functions
   // This prevents callback reference changes from causing re-renders in consumers
   const methodsRef = useRef({
     getFilteredFiles,
     addTab,
-    closeTab,
+    closeTab: closeTabAndClearHost,
     selectTab,
     reorderTabs,
     moveTabToOtherSide,
@@ -421,6 +747,9 @@ export const useSftpState = (
     addExternalUpload,
     updateExternalUpload,
     cancelTransfer,
+    pauseTransfer,
+    resumeTransfer,
+    prioritizeTransfer,
     retryTransfer,
     clearCompletedTransfers,
     dismissTransfer,
@@ -432,11 +761,12 @@ export const useSftpState = (
     rejectHostKeyVerification,
     acceptHostKeyVerification,
     acceptAndSaveHostKeyVerification,
+    warmTransferPoolForHost,
   });
   methodsRef.current = {
     getFilteredFiles,
     addTab,
-    closeTab,
+    closeTab: closeTabAndClearHost,
     selectTab,
     reorderTabs,
     moveTabToOtherSide,
@@ -495,6 +825,7 @@ export const useSftpState = (
     rejectHostKeyVerification,
     acceptHostKeyVerification,
     acceptAndSaveHostKeyVerification,
+    warmTransferPoolForHost,
   };
 
   // Create stable method wrappers that call through methodsRef
@@ -502,7 +833,7 @@ export const useSftpState = (
   const stableMethods = useMemo(() => ({
     getFilteredFiles: (...args: Parameters<typeof getFilteredFiles>) => methodsRef.current.getFilteredFiles(...args),
     addTab: (...args: Parameters<typeof addTab>) => methodsRef.current.addTab(...args),
-    closeTab: (...args: Parameters<typeof closeTab>) => methodsRef.current.closeTab(...args),
+    closeTab: (...args: Parameters<typeof closeTabAndClearHost>) => methodsRef.current.closeTab(...args),
     selectTab: (...args: Parameters<typeof selectTab>) => methodsRef.current.selectTab(...args),
     reorderTabs: (...args: Parameters<typeof reorderTabs>) => methodsRef.current.reorderTabs(...args),
     moveTabToOtherSide: (...args: Parameters<typeof moveTabToOtherSide>) => methodsRef.current.moveTabToOtherSide(...args),
@@ -554,13 +885,16 @@ export const useSftpState = (
       methodsRef.current.uploadExternalFolderPath(...args),
     uploadExternalEntries: (...args: Parameters<typeof uploadExternalEntries>) =>
       methodsRef.current.uploadExternalEntries(...args),
-    cancelExternalUpload: () => methodsRef.current.cancelExternalUpload(),
+    cancelExternalUpload: (taskId?: string) => methodsRef.current.cancelExternalUpload(taskId),
     selectApplication: () => methodsRef.current.selectApplication(),
     startTransfer: (...args: Parameters<typeof startTransfer>) => methodsRef.current.startTransfer(...args),
     downloadToLocal: (...args: Parameters<typeof downloadToLocal>) => methodsRef.current.downloadToLocal(...args),
     addExternalUpload: (...args: Parameters<typeof addExternalUpload>) => methodsRef.current.addExternalUpload(...args),
     updateExternalUpload: (...args: Parameters<typeof updateExternalUpload>) => methodsRef.current.updateExternalUpload(...args),
     cancelTransfer: (...args: Parameters<typeof cancelTransfer>) => methodsRef.current.cancelTransfer(...args),
+    pauseTransfer: (...args: Parameters<typeof pauseTransfer>) => methodsRef.current.pauseTransfer(...args),
+    resumeTransfer: (...args: Parameters<typeof resumeTransfer>) => methodsRef.current.resumeTransfer(...args),
+    prioritizeTransfer: (...args: Parameters<typeof prioritizeTransfer>) => methodsRef.current.prioritizeTransfer(...args),
     retryTransfer: (...args: Parameters<typeof retryTransfer>) => methodsRef.current.retryTransfer(...args),
     clearCompletedTransfers: () => methodsRef.current.clearCompletedTransfers(),
     dismissTransfer: (...args: Parameters<typeof dismissTransfer>) => methodsRef.current.dismissTransfer(...args),
@@ -572,6 +906,8 @@ export const useSftpState = (
     rejectHostKeyVerification: () => methodsRef.current.rejectHostKeyVerification(),
     acceptHostKeyVerification: () => methodsRef.current.acceptHostKeyVerification(),
     acceptAndSaveHostKeyVerification: () => methodsRef.current.acceptAndSaveHostKeyVerification(),
+    warmTransferPoolForHost: (...args: Parameters<typeof warmTransferPoolForHost>) =>
+      methodsRef.current.warmTransferPoolForHost(...args),
     activeFileWatchCountRef,
   }), [activeFileWatchCountRef]); // activeFileWatchCountRef is a stable ref
 

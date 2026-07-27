@@ -73,6 +73,12 @@ import { HostDetailsScriptsSection } from "./host/HostDetailsScriptsSection";
 import { ensureHostConnectScriptIds, getHostConnectScriptIds, prepareSnippetForHostConnectQueue } from "@/domain/hostConnectScripts.ts";
 import { isScriptSnippet } from "@/domain/snippetScript.ts";
 import { unlinkHostFromScripts } from "@/domain/snippetTargets.ts";
+import {
+  isPluginHostProtocol,
+  sanitizePluginConnection,
+  stripBuiltInConnectionFieldsForPluginHost,
+} from "../domain/pluginConnection";
+import { PluginConnectionSection } from "./PluginConnectionSection";
 
 type CredentialType = "sshid" | "key" | "certificate" | "localKeyFile" | null;
 type SubPanel =
@@ -178,6 +184,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
   const [showTelnetPassword, setShowTelnetPassword] = useState(false);
   const [showAlgorithmOverrides, setShowAlgorithmOverrides] = useState(false);
   const [showNotesEditor, setShowNotesEditor] = useState(() => Boolean(initialData?.notes?.trim()));
+  const [pluginConnectionValid, setPluginConnectionValid] = useState(true);
 
   const [newKeyFilePath, setNewKeyFilePath] = useState("");
   const [pendingReferenceKeyPath, setPendingReferenceKeyPath] = useState<string | null>(null);
@@ -431,16 +438,23 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
       return { ...prev, environmentVariables: filtered.length > 0 ? filtered : undefined };
     });
   };
+  const pluginProtocolActive = isPluginHostProtocol(form.protocol);
   const hasHostname = form.hostname.trim().length > 0;
+  const canSaveHost = pluginProtocolActive
+    ? pluginConnectionValid && Boolean(sanitizePluginConnection(form.pluginConnection, form.protocol))
+    : hasHostname;
 
   const handleSubmit = () => {
-    const hostname = form.hostname.trim();
-    if (!hostname) return;
-    if (!hasRequiredHostAuthCredential({ host: effectiveAuthHost, keys: availableKeys, identities })) {
+    const hostname = form.hostname.trim()
+      || (pluginProtocolActive ? form.label.trim() || form.pluginConnection?.providerId || "plugin" : "");
+    if (!hostname || !canSaveHost) return;
+    if (!pluginProtocolActive && !hasRequiredHostAuthCredential({ host: effectiveAuthHost, keys: availableKeys, identities })) {
       toast.error(t("hostDetails.auth.credentialRequired"));
       return;
     }
-    const proxySave = prepareProxyConfigForSave({
+    const proxySave = pluginProtocolActive
+      ? { normalizedProxyConfig: undefined, error: undefined }
+      : prepareProxyConfigForSave({
       proxyConfig: form.proxyConfig,
       proxyProfileId: form.proxyProfileId,
       proxyProfiles,
@@ -511,6 +525,11 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
       authPolicyVersion: 1,
       managedSourceId: finalManagedSourceId,
     };
+    if (pluginProtocolActive) {
+      const pluginConnection = sanitizePluginConnection(cleaned.pluginConnection, cleaned.protocol);
+      if (!pluginConnection) return;
+      cleaned = stripBuiltInConnectionFieldsForPluginHost({ ...cleaned, pluginConnection });
+    }
     cleaned = prepareTelnetCredentialsForSave(normalizePrimaryTelnetState(cleaned));
     if (
       onImportKey &&
@@ -589,7 +608,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
         onSnippetsChange(nextSnippets);
       }
     }
-    onSave(cleaned);
+    onSave(stripBuiltInConnectionFieldsForPluginHost(cleaned));
   };
 
   const handleCreateGroup = () => {
@@ -871,7 +890,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
           size="icon"
           className="h-8 w-8"
           onClick={handleSubmit}
-          disabled={!hasHostname}
+          disabled={!canSaveHost}
           aria-label={t("hostDetails.saveAria")}
         >
           <Check size={16} />
@@ -941,7 +960,16 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
           </div>
         </HostDetailsSection>
 
-        <HostDetailsConnectionSections
+        <PluginConnectionSection
+          form={form}
+          setForm={setForm}
+          t={t}
+          onValidityChange={setPluginConnectionValid}
+          identities={identities}
+          keys={availableKeys}
+        />
+
+        {!pluginProtocolActive ? <HostDetailsConnectionSections
           t={t}
           form={form}
           setForm={setForm}
@@ -974,7 +1002,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
           distroOptions={distroOptions}
           effectiveFormDistro={effectiveFormDistro}
           getDistroOptionLabel={getDistroOptionLabel}
-        />
+        /> : null}
 
         {onSnippetsChange ? (
           <HostDetailsScriptsSection
@@ -1191,7 +1219,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
         <Button
           className="w-full h-10"
           onClick={handleSubmit}
-          disabled={!hasHostname}
+          disabled={!canSaveHost}
         >
           {t("common.save")}
         </Button>

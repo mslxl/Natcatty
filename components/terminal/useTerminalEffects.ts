@@ -36,6 +36,7 @@ import {
 } from './terminalHibernateRuntime';
 import {
   cancelScheduledUnfocusedRepaint,
+  flushPendingTerminalWritesBeforeHibernate,
   flushPendingTerminalWritesOnResume,
   forceTerminalRepaintBypassingAnimationFrame,
   repaintTerminalAfterReveal,
@@ -57,6 +58,7 @@ import {
 } from './connectionTimeouts';
 import { resolveHostSshConnectionTimeouts } from '../../domain/sshConnectionTimeouts';
 import { resolveEffectiveTerminalProtocol } from '../../domain/terminalProtocol';
+import { isPluginHostProtocol } from '../../domain/pluginConnection';
 
 type TerminalEffectsContext = Record<string, any>;
 
@@ -169,7 +171,7 @@ export function resolveSelectionOverlayPosition(term: any, container: HTMLElemen
 }
 
 export function useTerminalEffects(ctx: TerminalEffectsContext) {
-  const { CONNECTION_TIMEOUT, Error, XTERM_PERFORMANCE_CONFIG, applyUserCursorPreference, auth, autocompleteCloseRef, autocompleteInputRef, autocompleteKeyEventRef, captureTerminalLogData, chainHosts, chainProgress, clearTerminalCwd, commandBufferRef, connectionLogBufferRef, containerRef, createPromptLineBreakState, createReplaySafeTerminalLogSanitizer, createXTermRuntime, deferTerminalResizeRef, disableTerminalFontZoomRef, effectiveFontSize, effectiveFontWeight, effectiveTheme, error, executeSnippetCommand, finalizeTerminalLogData, fitAddonRef, fontFamilyId, fontSize, fontWeightFixupDoneRef, forceCloseHibernatedSession, forceSyncRenderAfterResize, handleOsc52ReadRequest, handleTerminalDataCaptureOnce, hasConnectedRef, hasRuntimeRef, host, hotkeySchemeRef, hibernatedRef, identities, inWorkspace, isBootActiveRef, isBroadcastEnabledRef, isComposeBarOpen, isConnectionAwaitingUserInput, isConnectionPastTcpDial, isFocusMode, isFocused, isLocalConnection, isNetworkDevice, isResizing, isRestoringSelectionRef, isSearchOpen, isSerialConnection, isVisible, isVisibleRef, keyBindingsRef, keys, kittyKeyboardProtocolEnabledForSession, knownCwdRef, lastFittedSizeRef, lastToastedErrorRef, logger, mouseTrackingRef, needsHostKeyVerification, onBroadcastInputRef, onBroadcastInterruptPriorityChange, onCommandExecuted, onCommandSubmitted, onHotkeyActionRef, onOutputTriggerUserInputRef, onPluginRuntimeCwdChange, onSnippetExecutorChange, onTerminalTitleChange, onTerminalBell, onTerminalFontSizeChange, paneLayoutKey, passwordPromptActiveRef, pendingAuthRef, pendingOutputScrollRef, pluginDecorationRules, pluginTerminalLifecycle, pluginTerminalProviderRevision, isPluginTerminalProviderAvailable, requestPluginTerminalProviders, prepareRestoredReconnect, prevIsResizingRef, promptLineBreakStateRef, resizeSession, resolveHostAuth, resolvedFontFamily, safeFit, scriptRecorderRef, searchAddonRef, serialConfig, serialLineBufferRef, serializeAddonRef, sessionId, sessionRef, sessionStarters, setError, setHasMouseTracking, setHasSelection, setIsCancelling, setIsDisconnectedDialogDismissed, requestSearchFocus, setNeedsHostKeyVerification, setPendingHostKeyInfo, setPendingHostKeyRequestId, setProgressLogs, setProgressValue, setSelectionOverlayPosition, setShowLogs, setStatus, setTimeLeft, shouldEnableNativeUserInputAutoScroll, shouldProbeSessionCwd, shouldStartTerminalBackend, attachExistingSession, attachAuthorization, attachHomeWebContentsIdRef, onSnippetShortkeyRef, snippetsRef, splitResizeActive, status, statusRef, sudoAutofillRef, t, teardown, telnetLocalEchoRef, termRef, terminalAltKeyOptions, terminalBackend, terminalContextActionsRef, terminalCwdTracker, terminalDataCapturedRef, terminalLogSanitizerRef, terminalSettings, terminalSettingsRef, toHostKeyInfo, toast, updateStatus, useEffect, useLayoutEffect, xtermRuntimeRef, zmodem, zmodemToastedRef, restoreState } = ctx;
+  const { CONNECTION_TIMEOUT, Error, XTERM_PERFORMANCE_CONFIG, applyUserCursorPreference, auth, autocompleteCloseRef, autocompleteInputRef, autocompleteKeyEventRef, captureTerminalLogData, chainHosts, chainProgress, clearTerminalCwd, commandBufferRef, connectionLogBufferRef, containerRef, createPromptLineBreakState, createReplaySafeTerminalLogSanitizer, createXTermRuntime, deferTerminalResizeRef, disableTerminalFontZoomRef, effectiveFontSize, effectiveFontWeight, effectiveTheme, error, executeSnippetCommand, finalizeTerminalLogData, fitAddonRef, fontFamilyId, fontSize, fontWeightFixupDoneRef, forceCloseHibernatedSession, forceSyncRenderAfterResize, handleOsc52ReadRequest, handleTerminalDataCaptureOnce, hasConnectedRef, hasRuntimeRef, host, hotkeySchemeRef, hibernatedRef, identities, inWorkspace, isBootActiveRef, isBroadcastEnabledRef, isComposeBarOpen, isConnectionAwaitingUserInput, isConnectionPastTcpDial, isFocusMode, isFocused, isLocalConnection, isNetworkDevice, isResizing, isRestoringSelectionRef, isSearchOpen, isSerialConnection, isVisible, isVisibleRef, keyBindingsRef, keys, kittyKeyboardProtocolEnabledForSession, knownCwdRef, lastFittedSizeRef, lastToastedErrorRef, logger, mouseTrackingRef, needsHostKeyVerification, onBroadcastInputRef, onBroadcastInterruptPriorityChange, onCommandExecuted, onCommandSubmitted, onHotkeyActionRef, onOutputTriggerUserInputRef, onPluginRuntimeCwdChange, onSnippetExecutorChange, onTerminalCwdChange, onTerminalTitleChange, onTerminalBell, onTerminalFontSizeChange, paneLayoutKey, passwordPromptActiveRef, pendingAuthRef, pendingOutputScrollRef, pluginDecorationRules, pluginTerminalLifecycle, pluginTerminalProviderRevision, isPluginTerminalProviderAvailable, requestPluginTerminalProviders, prepareRestoredReconnect, prevIsResizingRef, promptLineBreakStateRef, resizeSession, resolveHostAuth, resolvedFontFamily, safeFit, scriptRecorderRef, searchAddonRef, serialConfig, serialLineBufferRef, serializeAddonRef, sessionId, sessionRef, sessionStarters, setError, setHasMouseTracking, setHasSelection, setIsCancelling, setIsDisconnectedDialogDismissed, requestSearchFocus, setNeedsHostKeyVerification, setPendingHostKeyInfo, setPendingHostKeyRequestId, setProgressLogs, setProgressValue, setSelectionOverlayPosition, setShowLogs, setStatus, setTimeLeft, shouldEnableNativeUserInputAutoScroll, shouldProbeSessionCwd, shouldStartTerminalBackend, attachExistingSession, attachAuthorization, attachHomeWebContentsIdRef, onSnippetShortkeyRef, snippetsRef, splitResizeActive, status, statusRef, sudoAutofillRef, t, teardown, telnetLocalEchoRef, termRef, terminalAltKeyOptions, terminalBackend, terminalContextActionsRef, terminalCwdTracker, terminalDataCapturedRef, terminalLogSanitizerRef, terminalSettings, terminalSettingsRef, terminalTitleRef, toHostKeyInfo, toast, updateStatus, useEffect, useLayoutEffect, xtermRuntimeRef, zmodem, zmodemToastedRef, restoreState } = ctx;
   const effectiveTerminalProtocol = resolveEffectiveTerminalProtocol(host);
   const hibernateHiddenTabs = resolveTerminalHibernateEnabledForProtocol(
     terminalSettings,
@@ -291,7 +293,8 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
 
 
   useEffect(() => {
-    if (host.protocol === "local" || host.protocol === "serial" || host.protocol === "telnet") {
+    if (host.protocol === "local" || host.protocol === "serial" || host.protocol === "telnet"
+      || isPluginHostProtocol(host.protocol)) {
       return;
     }
     if (status !== "connected" || !sessionRef.current || knownCwdRef.current) return;
@@ -449,6 +452,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
             onPluginRuntimeCwdChange(cwd, { source: 'osc7' });
           },
           onTitleChange: (title: string | null) => {
+            terminalTitleRef.current = title || undefined;
             publishPluginTerminalRuntimeLifecycleEvent(
               pluginTerminalLifecycle,
               'titleChanged',
@@ -522,21 +526,16 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
           // fall into the gap between snapshot and route handoff.
           let outputRebound = false;
           let reboundHomeWebContentsId: number | null = null;
+          const outputPauseLease = await terminalBackend.acquireSessionFlowPauseLease(sessionId);
           try {
-            if (terminalBackend.setSessionFlowPausedAndWait) {
-              const paused = await terminalBackend.setSessionFlowPausedAndWait(sessionId, true);
-              if (!paused?.success && paused?.error === "Output drain unavailable") {
-                terminalBackend.setSessionFlowPaused?.(sessionId, true);
-                await new Promise((resolve) => setTimeout(resolve, 40));
-              } else if (!paused?.success) {
-                throw new Error(paused?.error || "Failed to drain terminal output");
-              }
-            } else {
-              terminalBackend.setSessionFlowPaused?.(sessionId, true);
+            const paused = await outputPauseLease.waitForPause();
+            if (!paused?.success && paused?.error === "Output drain unavailable") {
               await new Promise((resolve) => setTimeout(resolve, 40));
+            } else if (!paused?.success) {
+              throw new Error(paused?.error || "Failed to drain terminal output");
             }
             if (disposed) {
-              try { terminalBackend.setSessionFlowPaused?.(sessionId, false); } catch { /* ignore */ }
+              outputPauseLease.release();
               return;
             }
             // Snapshot while home still owns the display route (and stream is paused).
@@ -545,7 +544,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
               attachAuthorization || "",
             );
             if (disposed) {
-              try { terminalBackend.setSessionFlowPaused?.(sessionId, false); } catch { /* ignore */ }
+              outputPauseLease.release();
               return;
             }
             if (!snap?.success) {
@@ -553,6 +552,29 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
             }
             if (typeof snap.kittyKeyboardProtocolEnabled === "boolean") {
               runtime.setKittyKeyboardProtocolEnabled(snap.kittyKeyboardProtocolEnabled);
+            }
+            if (typeof snap.passwordPromptActive === "boolean") {
+              passwordPromptActiveRef.current = snap.passwordPromptActive;
+            }
+            if (snap.cwd !== undefined) {
+              const cwd = terminalCwdTracker.setRendererCwd(snap.cwd);
+              knownCwdRef.current = cwd;
+              publishPluginTerminalRuntimeLifecycleEvent(
+                pluginTerminalLifecycle,
+                'cwdChanged',
+                { ...(cwd ? { cwd } : {}) },
+              );
+              onTerminalCwdChange?.(sessionId, cwd ?? null);
+            }
+            if (snap.title !== undefined) {
+              const title = snap.title || null;
+              terminalTitleRef.current = title ?? undefined;
+              publishPluginTerminalRuntimeLifecycleEvent(
+                pluginTerminalLifecycle,
+                'titleChanged',
+                { ...(title ? { title } : {}) },
+              );
+              onTerminalTitleChange?.(sessionId, title);
             }
             if (snap.kittyKeyboardModeState) {
               runtime.restoreKittyKeyboardModeState(snap.kittyKeyboardModeState);
@@ -581,11 +603,11 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
                   // Main-process closed lifecycle remains the final fallback.
                 }
               }
-              try { terminalBackend.setSessionFlowPaused?.(sessionId, false); } catch { /* ignore */ }
+              outputPauseLease.release();
               return;
             }
             if (!rebind?.success) {
-              try { terminalBackend.setSessionFlowPaused?.(sessionId, false); } catch { /* ignore */ }
+              outputPauseLease.release();
               setError(rebind?.error || "Failed to attach to session");
               updateStatus("disconnected");
               isBootActiveRef.current = false;
@@ -602,7 +624,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
               throw new Error("Failed to attach display to session");
             }
             // Resume only after the popup has subscribed to the live session.
-            terminalBackend.setSessionFlowPaused?.(sessionId, false);
+            outputPauseLease.release();
             hasConnectedRef.current = true;
             updateStatus("connected");
             setTimeout(() => {
@@ -627,12 +649,12 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
                   reboundHomeWebContentsId,
                   attachAuthorization || "",
                 );
-                if (restored?.success) terminalBackend.setSessionFlowPaused?.(sessionId, false);
+                if (restored?.success) outputPauseLease.release();
               } catch {
                 // Main-process close/recovery lifecycle remains the fallback.
               }
             } else {
-              try { terminalBackend.setSessionFlowPaused?.(sessionId, false); } catch { /* ignore */ }
+              outputPauseLease.release();
             }
             if (disposed) return;
             logger.error("Failed to attach existing session", attachErr);
@@ -648,7 +670,12 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
           return;
         }
 
-        if (effectiveTerminalProtocol === "serial") {
+        if (effectiveTerminalProtocol.startsWith("plugin:")) {
+          setBackendConnectingStatus();
+          setProgressLogs(["Initializing plugin connection..."]);
+          await sessionStarters.startPluginConnection(term);
+          if (disposed) return;
+        } else if (effectiveTerminalProtocol === "serial") {
           setBackendConnectingStatus();
           setProgressLogs(["Initializing serial connection..."]);
           await sessionStarters.startSerial(term);
@@ -723,25 +750,44 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
         handleTerminalDataCaptureOnce(sessionId, data, { finalized: true });
       };
 
-      const connectionLogPayload = !terminalDataCapturedRef.current
-        ? resolveConnectionLogCapturePayload(finalizeTerminalLogData)
-        : null;
-      if (connectionLogPayload) {
-        persistCloseCapture(
-          connectionLogPayload.data,
-          connectionLogPayload.source,
-          connectionLogPayload.data.length,
-        );
-        scheduleTerminalCloseTeardown(teardown);
-        return;
-      }
-
       const term = termRef.current;
-      const serializeAddon = serializeAddonRef.current;
-      if (!terminalDataCapturedRef.current && term && serializeAddon) {
-        const preferWasm = resolveHibernatePreferWasmSerialize(terminalSettingsRef.current);
-        void serializeTerminalCloseFallback(term, serializeAddon, { preferWasm })
-          .then((payload) => {
+      const completeClose = async () => {
+        if (term) {
+          // A hidden terminal can have more output queued than the synchronous
+          // resume helper intentionally drains. Wait for the complete ordered
+          // backlog before finalizing the saved capture.
+          const flushed = await flushPendingTerminalWritesBeforeHibernate(term);
+          if (!isTerminalCloseGenerationCurrent(
+            closeGeneration,
+            terminalBootCloseGenerationRef.current,
+          )) {
+            return;
+          }
+          if (!flushed) {
+            logger.warn("Terminal output did not drain before close capture; skipping stale capture");
+            teardown();
+            return;
+          }
+        }
+
+        const connectionLogPayload = !terminalDataCapturedRef.current
+          ? resolveConnectionLogCapturePayload(finalizeTerminalLogData)
+          : null;
+        if (connectionLogPayload) {
+          persistCloseCapture(
+            connectionLogPayload.data,
+            connectionLogPayload.source,
+            connectionLogPayload.data.length,
+          );
+          scheduleTerminalCloseTeardown(teardown);
+          return;
+        }
+
+        const serializeAddon = serializeAddonRef.current;
+        if (!terminalDataCapturedRef.current && term && serializeAddon) {
+          const preferWasm = resolveHibernatePreferWasmSerialize(terminalSettingsRef.current);
+          try {
+            const payload = await serializeTerminalCloseFallback(term, serializeAddon, { preferWasm });
             if (!isTerminalCloseGenerationCurrent(
               closeGeneration,
               terminalBootCloseGenerationRef.current,
@@ -752,8 +798,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
               persistCloseCapture(payload.data, payload.source, payload.data.length);
             }
             scheduleTerminalCloseTeardown(teardown);
-          })
-          .catch((err) => {
+          } catch (err) {
             if (!isTerminalCloseGenerationCurrent(
               closeGeneration,
               terminalBootCloseGenerationRef.current,
@@ -762,11 +807,14 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
             }
             logger.warn("Failed to serialize terminal data on unmount:", err);
             scheduleTerminalCloseTeardown(teardown);
-          });
-        return;
-      }
+          }
+          return;
+        }
 
-      teardown();
+        teardown();
+      };
+
+      void completeClose();
     };
      
   }, [forceCloseHibernatedSession, handleTerminalDataCaptureOnce, host.id, sessionId]);
@@ -780,7 +828,8 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       && host.protocol !== "mosh"
       && !host.moshEnabled
       && host.protocol !== "et"
-      && !host.etEnabled;
+      && !host.etEnabled
+      && !isPluginHostProtocol(host.protocol);
     const timeoutState = {
       status,
       needsAuth: auth.needsAuth,

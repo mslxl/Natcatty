@@ -1,4 +1,8 @@
-const { clearTerminalDataSession } = require("./terminalDataBacklog.cjs");
+const {
+  clearTerminalDataSession,
+  hasPluginPipelineIngressMarker,
+} = require("./terminalDataBacklog.cjs");
+const { randomUUID } = require("node:crypto");
 
 function createPreloadApi(ctx) {
   const terminalDataBacklog = ctx.terminalDataBacklog || null;
@@ -98,6 +102,67 @@ function createPreloadApi(ctx) {
   providePluginTerminal: (request) => ipcRenderer.invoke("netcatty:plugins:terminal-provide", request),
   cancelPluginTerminalRequest: (requestId) => ipcRenderer.invoke("netcatty:plugins:terminal-cancel", { requestId }),
   publishPluginTerminalSessionEvent: (event) => ipcRenderer.invoke("netcatty:plugins:terminal-session-event", event),
+  listPluginExtensionProviders: (options) => ipcRenderer.invoke("netcatty:plugins:extension-providers", options ?? {}),
+  updatePluginCredentialCatalog: (entries) => ipcRenderer.invoke(
+    "netcatty:plugins:credential-catalog-update",
+    { entries },
+  ),
+  invokePluginExtensionProvider: (request) => ipcRenderer.invoke("netcatty:plugins:extension-invoke", {
+    requestId: request?.requestId ?? randomUUID(),
+    ...request,
+  }),
+  cancelPluginExtensionRequest: (requestId) => ipcRenderer.invoke("netcatty:plugins:extension-cancel", { requestId }),
+  startPluginConnection: async (request) => {
+    markRequestedTerminalDataSessionOpen(request);
+    const result = await ipcRenderer.invoke("netcatty:plugins:connection-start", {
+      requestId: request?.requestId ?? randomUUID(),
+      ...request,
+    });
+    markTerminalDataSessionOpen(result?.sessionId);
+    return result;
+  },
+  writePluginConnection: (sessionId, data) => ipcRenderer.invoke("netcatty:plugins:connection-write", { sessionId, data }),
+  controlPluginConnection: (sessionId, operation, payload) => ipcRenderer.invoke(
+    "netcatty:plugins:connection-control",
+    { sessionId, operation, payload: payload ?? {} },
+  ),
+  detectPluginImporter: (request) => ipcRenderer.invoke("netcatty:plugins:importer-detect", {
+    requestId: request?.requestId ?? randomUUID(),
+    ...request,
+  }),
+  selectPluginImporterFile: () => ipcRenderer.invoke("netcatty:plugins:importer-select-file", {}),
+  releasePluginImporterFile: (selectionToken) => ipcRenderer.invoke(
+    "netcatty:plugins:importer-release-file",
+    { selectionToken },
+  ),
+  parsePluginImporterFile: (request) => ipcRenderer.invoke("netcatty:plugins:importer-parse-file", {
+    requestId: request?.requestId ?? randomUUID(),
+    ...request,
+  }),
+  onPluginImporterProgress: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("netcatty:plugins:importer-progress", listener);
+    return () => ipcRenderer.removeListener("netcatty:plugins:importer-progress", listener);
+  },
+  respondPluginAuthenticationChallenge: (response) => ipcRenderer.invoke(
+    "netcatty:plugins:authentication-respond",
+    response,
+  ),
+  onPluginAuthenticationChallenge: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("netcatty:plugins:authentication-challenge", listener);
+    return () => ipcRenderer.removeListener("netcatty:plugins:authentication-challenge", listener);
+  },
+  onPluginConnectionData: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("netcatty:plugins:connection-data", listener);
+    return () => ipcRenderer.removeListener("netcatty:plugins:connection-data", listener);
+  },
+  onPluginConnectionClosed: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("netcatty:plugins:connection-closed", listener);
+    return () => ipcRenderer.removeListener("netcatty:plugins:connection-closed", listener);
+  },
   openPluginView: (payload) => ipcRenderer.invoke("netcatty:plugins:open-view", payload),
   closePluginView: (instanceId) => ipcRenderer.invoke("netcatty:plugins:close-view", { instanceId }),
   setPluginViewBounds: (instanceId, bounds) => ipcRenderer.invoke("netcatty:plugins:set-view-bounds", { instanceId, bounds }),
@@ -199,6 +264,7 @@ function createPreloadApi(ctx) {
       sessionId,
       data,
       automated: Boolean(options?.automated),
+      sensitive: options?.sensitive === true,
       lineDelayMs: Number.isFinite(lineDelayMs) && lineDelayMs > 0 ? lineDelayMs : undefined,
       logRewrite: options?.logRewrite && typeof options.logRewrite === "object"
         ? {
@@ -320,6 +386,10 @@ function createPreloadApi(ctx) {
   resizeSession: (sessionId, cols, rows) => {
     ipcRenderer.send("netcatty:resize", { sessionId, cols, rows });
   },
+  clearSessionPtyBuffer: (sessionId) => {
+    if (!sessionId) return;
+    ipcRenderer.send("netcatty:pty:clear", { sessionId });
+  },
   setSessionFlowPaused: (sessionId, paused) => {
     ipcRenderer.send("netcatty:flow", { sessionId, paused: Boolean(paused) });
   },
@@ -327,6 +397,16 @@ function createPreloadApi(ctx) {
     ipcRenderer.invoke("netcatty:terminal:setFlowPausedAndWait", {
       sessionId,
       paused: Boolean(paused),
+    }),
+  acquireSessionFlowPauseLease: (sessionId) =>
+    ipcRenderer.invoke("netcatty:terminal:acquireFlowPauseLease", { sessionId }),
+  waitSessionFlowPauseLease: (sessionId, leaseId) =>
+    ipcRenderer.invoke("netcatty:terminal:waitFlowPauseLease", { sessionId, leaseId }),
+  releaseSessionFlowPauseLease: (sessionId, leaseId, options) =>
+    ipcRenderer.invoke("netcatty:terminal:releaseFlowPauseLease", {
+      sessionId,
+      leaseId,
+      keepPaused: options?.keepPaused === true,
     }),
   onTerminalOutputDrainRequest: (sessionId, cb) => {
     const listeners = ctx.terminalOutputDrainListeners;
@@ -382,6 +462,9 @@ function createPreloadApi(ctx) {
     snapshot,
     kittyKeyboardModeState,
     kittyKeyboardProtocolEnabled,
+    passwordPromptActive,
+    cwd,
+    title,
   ) => {
     ipcRenderer.send("netcatty:terminal:snapshot-response", {
       requestId,
@@ -390,6 +473,11 @@ function createPreloadApi(ctx) {
       kittyKeyboardProtocolEnabled: typeof kittyKeyboardProtocolEnabled === "boolean"
         ? kittyKeyboardProtocolEnabled
         : undefined,
+      passwordPromptActive: typeof passwordPromptActive === "boolean"
+        ? passwordPromptActive
+        : undefined,
+      cwd: cwd === null ? null : typeof cwd === "string" ? cwd : undefined,
+      title: title === null ? null : typeof title === "string" ? title : undefined,
     });
   },
   applyTerminalSessionSnapshot: (sessionId, snapshot, context, authorization) =>
@@ -408,6 +496,11 @@ function createPreloadApi(ctx) {
       kittyKeyboardProtocolEnabled: typeof context?.kittyKeyboardProtocolEnabled === "boolean"
         ? context.kittyKeyboardProtocolEnabled
         : undefined,
+      passwordPromptActive: typeof context?.passwordPromptActive === "boolean"
+        ? context.passwordPromptActive
+        : undefined,
+      cwd: context?.cwd === null ? null : typeof context?.cwd === "string" ? context.cwd : undefined,
+      title: context?.title === null ? null : typeof context?.title === "string" ? context.title : undefined,
       authorization,
     }),
   markAttachPopupClosePrepared: (sessionId, authorization) =>
@@ -487,7 +580,7 @@ function createPreloadApi(ctx) {
       displayDataListeners.get(sessionId).add(cb);
       const pendingEntry = terminalDataBacklog?.takeEntry?.(sessionId)
         ?? { data: terminalDataBacklog?.take?.(sessionId) || "", meta: undefined };
-      if (pendingEntry.data) {
+      if (pendingEntry.data || hasPluginPipelineIngressMarker(pendingEntry.meta)) {
         try {
           cb(pendingEntry.data, pendingEntry.meta);
         } catch (err) {
@@ -749,6 +842,29 @@ function createPreloadApi(ctx) {
     cleanupTransferListeners(transferId);
     return ipcRenderer.invoke("netcatty:transfer:cancel", { transferId });
   },
+  clearPendingTransferCancel: async (transferId) => {
+    return ipcRenderer.invoke("netcatty:transfer:clear-pending-cancel", { transferId });
+  },
+  pauseTransfer: async (transferId) => {
+    return ipcRenderer.invoke("netcatty:transfer:pause", { transferId });
+  },
+  resumeTransfer: async (transferId) => {
+    return ipcRenderer.invoke("netcatty:transfer:resume", { transferId });
+  },
+  prioritizeTransfer: async (transferId) => {
+    return ipcRenderer.invoke("netcatty:transfer:prioritize", { transferId });
+  },
+  setGlobalTransferConcurrency: async (limit) => {
+    return ipcRenderer.invoke("netcatty:transfer:set-concurrency", { limit });
+  },
+  cleanupTransferArtifacts: async (payload) => {
+    return ipcRenderer.invoke("netcatty:transfer:cleanup", payload);
+  },
+  onGlobalSftpTransferEvent: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on("netcatty:sftp:global-transfer", handler);
+    return () => ipcRenderer.removeListener("netcatty:sftp:global-transfer", handler);
+  },
   sameHostCopyDirectory: async (sftpId, sourcePath, targetPath, encoding, transferId) => {
     return ipcRenderer.invoke("netcatty:transfer:same-host-copy-dir", { sftpId, sourcePath, targetPath, encoding, transferId });
   },
@@ -768,6 +884,12 @@ function createPreloadApi(ctx) {
     compressCompleteListeners.delete(compressionId);
     compressErrorListeners.delete(compressionId);
     return ipcRenderer.invoke("netcatty:compress:cancel", { compressionId });
+  },
+  pauseCompressedUpload: async (compressionId) => {
+    return ipcRenderer.invoke("netcatty:compress:pause", { compressionId });
+  },
+  resumeCompressedUpload: async (compressionId) => {
+    return ipcRenderer.invoke("netcatty:compress:resume", { compressionId });
   },
   checkCompressedUploadSupport: async (sftpId) => {
     return ipcRenderer.invoke("netcatty:compress:checkSupport", { sftpId });

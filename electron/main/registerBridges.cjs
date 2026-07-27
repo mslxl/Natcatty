@@ -93,6 +93,7 @@ function createBridgeRegistrar(context) {
       createTrustedPluginBridgeSender,
       registerPluginBridge,
     } = require("../plugins/pluginBridge.cjs");
+    let terminalWorkerManager = null;
     const { toElectronAccelerator } = require("../plugins/keybindings.cjs");
     const { startDevelopmentPluginHost } = require("../plugins/hostBootstrap.cjs");
     const pluginHostService = startDevelopmentPluginHost({
@@ -102,6 +103,11 @@ function createBridgeRegistrar(context) {
         const {
           createNativePermissionDecisionProvider,
         } = require("../plugins/nativePermissionDecision.cjs");
+        const {
+          terminalInterceptorChoiceLabel,
+          terminalInterceptorIdentifier,
+          terminalInterceptorMessages,
+        } = require("../plugins/terminalInterceptorMessages.cjs");
         return createPluginHostService({
           app,
           electron: electronModule,
@@ -111,6 +117,36 @@ function createBridgeRegistrar(context) {
             window: win,
           }),
           getLocale: () => getWindowManager().getCurrentLanguage?.() ?? "en",
+          requestTerminalInterceptorSelection: async ({ direction, providers }) => {
+            const messages = terminalInterceptorMessages(getWindowManager().getCurrentLanguage?.() ?? "en");
+            const buttons = [
+              ...providers.map(terminalInterceptorChoiceLabel),
+              messages.noInterceptor,
+            ];
+            const result = await electronModule.dialog.showMessageBox(win, {
+              type: "question",
+              title: messages.selectTitle(direction),
+              message: messages.selectMessage(direction),
+              buttons,
+              cancelId: buttons.length - 1,
+              defaultId: buttons.length - 1,
+              noLink: true,
+            });
+            return result.response >= 0 && result.response < providers.length
+              ? providers[result.response].provider.id
+              : null;
+          },
+          showTerminalInterceptorWarning: (warning) => {
+            const messages = terminalInterceptorMessages(getWindowManager().getCurrentLanguage?.() ?? "en");
+            void electronModule.dialog.showMessageBox(win, {
+              type: "warning",
+              title: messages.warningTitle,
+              message: messages.warningMessage,
+              detail: warning?.providerId
+                ? `${messages.warningDetail}\n${terminalInterceptorIdentifier(warning.providerId)}`
+                : messages.warningDetail,
+            }).catch(() => {});
+          },
         });
       },
       registerShutdown: (handler) => {
@@ -123,6 +159,19 @@ function createBridgeRegistrar(context) {
       manager: pluginHostService?.manager,
       contributionService: pluginHostService?.contributionService,
       terminalProviderService: pluginHostService?.terminalProviderService,
+      terminalDataPipelineService: pluginHostService?.terminalDataPipelineService,
+      extensionProviderService: pluginHostService?.extensionProviderService,
+      credentialResolver: pluginHostService?.credentialResolver,
+      getTerminalWorkerManager: () => terminalWorkerManager,
+      selectImporterFile: async (event) => {
+        const owner = electronModule.BrowserWindow.fromWebContents(event.sender);
+        const result = await electronModule.dialog.showOpenDialog(owner || undefined, {
+          title: "Select file to import",
+          properties: ["openFile", "showHiddenFiles"],
+          filters: [{ name: "All Files", extensions: ["*"] }],
+        });
+        return result.canceled ? null : result.filePaths[0] ?? null;
+      },
       resolveContributionIcon: (payload) => pluginHostService?.contributionIconService?.resolve(payload),
       viewHost: pluginHostService?.viewHost,
       env: process.env,
@@ -282,7 +331,7 @@ function createBridgeRegistrar(context) {
     const terminalOutputChannel = createTerminalOutputChannel({
       MessageChannelMain: electronModule.MessageChannelMain,
     });
-    const terminalWorkerManager = isTerminalWorkerEnabled({ env: process.env }) && electronModule.utilityProcess
+    terminalWorkerManager = isTerminalWorkerEnabled({ env: process.env }) && electronModule.utilityProcess
       ? createTerminalWorkerManager({
           utilityProcess: electronModule.utilityProcess,
           electronModule,
@@ -290,6 +339,19 @@ function createBridgeRegistrar(context) {
           MessageChannelMain: electronModule.MessageChannelMain,
         })
       : null;
+    const terminalPipelineSessionManager = terminalWorkerManager ?? {
+      getSessionOwnerWebContentsId(sessionId) {
+        const owner = sessions.get(sessionId)?.webContentsId;
+        return Number.isSafeInteger(owner) ? owner : null;
+      },
+      ownsSession(sessionId, webContentsId) {
+        return Number.isSafeInteger(webContentsId)
+          && sessions.get(sessionId)?.webContentsId === webContentsId;
+      },
+    };
+    pluginHostService?.terminalDataPipelineService?.bindTerminalWorkerManager(
+      terminalPipelineSessionManager,
+    );
     const reportOpenedSessionActivity = (event) => aiBridge.reportOpenedSessionActivity?.(event);
     terminalWorkerManager?.addOutputTap?.((sessionId) => {
       reportOpenedSessionActivity({ sessionId, phase: "touch" });
@@ -306,6 +368,7 @@ function createBridgeRegistrar(context) {
       terminalOutputChannel,
       terminalWorkerManager,
       reportOpenedSessionActivity,
+      transferBridge,
     };
   
     sshBridge.init(deps);
@@ -970,9 +1033,19 @@ function createBridgeRegistrar(context) {
 
       try {
         const result = terminalWorkerManager
-          ? await terminalWorkerManager.request("netcatty:transfer:start", payload, {
+          ? await (transferBridge.runAdmittedTransfer ? transferBridge.runAdmittedTransfer(
+              event,
+              payload,
+              undefined,
+              () => terminalWorkerManager.request("netcatty:transfer:start", {
+                ...payload,
+                skipAdmission: true,
+              }, {
+                webContentsId: event?.sender?.id,
+              }),
+            ) : terminalWorkerManager.request("netcatty:transfer:start", payload, {
               webContentsId: event?.sender?.id,
-            })
+            }))
           : await transferBridge.startTransfer(event, payload);
         if (result?.error) throw new Error(result.error);
         console.log(`[Main]   File downloaded successfully`);
@@ -1011,9 +1084,19 @@ function createBridgeRegistrar(context) {
         };
   
         const result = terminalWorkerManager
-          ? await terminalWorkerManager.request("netcatty:transfer:start", payload, {
+          ? await (transferBridge.runAdmittedTransfer ? transferBridge.runAdmittedTransfer(
+              event,
+              payload,
+              undefined,
+              () => terminalWorkerManager.request("netcatty:transfer:start", {
+                ...payload,
+                skipAdmission: true,
+              }, {
+                webContentsId: event?.sender?.id,
+              }),
+            ) : terminalWorkerManager.request("netcatty:transfer:start", payload, {
               webContentsId: event?.sender?.id,
-            })
+            }))
           : await transferBridge.startTransfer(event, payload);
   
         if (result.error) {

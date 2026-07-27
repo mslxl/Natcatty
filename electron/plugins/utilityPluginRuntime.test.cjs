@@ -9,6 +9,82 @@ const { EventEmitter } = require("node:events");
 
 const { UtilityPluginRuntime, resolveUtilityEntrypoint } = require("./utilityPluginRuntime.cjs");
 
+test("utility runtime waits for acceptance of a dedicated terminal interceptor port", async () => {
+  const requests = [];
+  const runtime = new UtilityPluginRuntime({
+    utilityProcess: {},
+    plugin: { id: "com.example", manifest: { main: { node: "dist/index.js" } } },
+    packageRoot: "/tmp/plugin",
+    bootstrapPath: "/runtime.mjs",
+    moduleMappings: {},
+  });
+  runtime.router = {
+    request(method, params, options) {
+      requests.push({ method, params, options });
+      return Promise.resolve(options.validateResult({ accepted: true }));
+    },
+  };
+  const port = { close() {} };
+  await runtime.attachTerminalInterceptor(
+    {
+      providerId: "com.example.input",
+      direction: "input",
+      session: { sessionId: "session-1", protocol: "ssh", status: "connected" },
+    },
+    port,
+  );
+  assert.equal(requests[0].method, "plugin.terminal.interceptor.attach");
+  assert.deepEqual(requests[0].params, {
+    descriptor: {
+      providerId: "com.example.input",
+      direction: "input",
+      session: { sessionId: "session-1", protocol: "ssh", status: "connected" },
+    },
+  });
+  assert.deepEqual(requests[0].options.transfer, [port]);
+  assert.equal(requests[0].options.timeoutMs > 0, true);
+});
+
+test("utility runtime validates terminal attachment params and results against the canonical contract", async () => {
+  const runtime = new UtilityPluginRuntime({
+    utilityProcess: {},
+    plugin: { id: "com.example", manifest: { main: { node: "dist/index.js" } } },
+    packageRoot: "/tmp/plugin",
+    bootstrapPath: "/runtime.mjs",
+    moduleMappings: {},
+  });
+  let requests = 0;
+  runtime.router = {
+    request(_method, _params, options) {
+      requests += 1;
+      return Promise.resolve().then(() => (
+        options.validateResult({ accepted: true, unexpected: true })
+      ));
+    },
+  };
+  const port = { close() {} };
+  assert.throws(
+    () => runtime.attachTerminalInterceptor(
+      { providerId: "com.example.input", direction: "input", session: { sessionId: "session-1" } },
+      port,
+    ),
+    /attachment params violates the plugin contract/,
+  );
+  assert.equal(requests, 0);
+  await assert.rejects(
+    runtime.attachTerminalInterceptor(
+      {
+        providerId: "com.example.input",
+        direction: "input",
+        session: { sessionId: "session-1", protocol: "ssh", status: "connected" },
+      },
+      port,
+    ),
+    /attachment result violates the plugin contract/,
+  );
+  assert.equal(requests, 1);
+});
+
 test("utility entrypoint is realpath-contained at the moment of launch", async (context) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-plugin-utility-entry-"));
   context.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -63,6 +139,12 @@ test("utility runtime launches without a shell using a minimal environment", asy
         }));
       } else if (message.method === "plugin.activate") {
         queueMicrotask(() => this.emit("message", { jsonrpc: "2.0", id: message.id, result: null }));
+      } else if (message.method === "plugin.terminal.interceptor.attach") {
+        queueMicrotask(() => this.emit("message", {
+          jsonrpc: "2.0",
+          id: message.id,
+          result: { accepted: true },
+        }));
       }
     }
     kill() { return true; }
@@ -103,6 +185,16 @@ test("utility runtime launches without a shell using a minimal environment", asy
   assert.deepEqual(messages.find((message) => message.method === "plugin.activate").params, {
     environment: { locale: "zh-CN", theme: "dark" },
   });
+  const interceptorPort = { close() {} };
+  await runtime.attachTerminalInterceptor(
+    {
+      providerId: "com.example.input",
+      direction: "input",
+      session: { sessionId: "session-1", protocol: "ssh", status: "connected" },
+    },
+    interceptorPort,
+  );
+  assert.deepEqual(transferLists.at(-1), [interceptorPort]);
   const transferable = new ArrayBuffer(8);
   runtime.router.send({ type: "transfer-test", transferable }, [transferable]);
   assert.deepEqual(transferLists.at(-1), [transferable]);

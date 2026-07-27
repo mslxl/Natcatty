@@ -2,6 +2,7 @@ import { Plug } from "lucide-react";
 import React, { useMemo, useState } from "react";
 import { useI18n } from "../application/i18n/I18nProvider";
 import { formatHostPort } from "../domain/host";
+import { isPluginHostProtocol } from "../domain/pluginConnection";
 import { cn } from "../lib/utils";
 import { Host, HostProtocol } from "../types";
 import { getProtocolVisualStyle, type ProtocolVisualKey } from "./protocolVisuals";
@@ -9,7 +10,7 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 
 interface ProtocolOption {
-  protocol: ProtocolVisualKey;
+  protocol: HostProtocol;
   port: number;
   label: string;
   description: string;
@@ -31,6 +32,17 @@ const ProtocolSelectDialog: React.FC<ProtocolSelectDialogProps> = ({
 
   const protocolOptions = useMemo<ProtocolOption[]>(() => {
     const options: ProtocolOption[] = [];
+    const pluginOption = isPluginHostProtocol(host.protocol) && host.pluginConnection
+      ? {
+        protocol: host.protocol,
+        port: host.port || 22,
+        label: host.pluginConnection.providerId,
+        description: host.pluginConnection.providerId,
+        enabled: true,
+      } satisfies ProtocolOption
+      : null;
+
+    if (pluginOption) options.push(pluginOption);
 
     const sshEnabled =
       host.protocol === "ssh" ||
@@ -109,10 +121,12 @@ const ProtocolSelectDialog: React.FC<ProtocolSelectDialogProps> = ({
     onSelect(selectedProtocol, ports[selectedProtocol] || 22);
   };
 
-  const hostEndpoint = formatHostPort(
-    host.hostname,
-    ports[selectedProtocol] || host.port || 22,
-  );
+  const hostEndpoint = isPluginHostProtocol(selectedProtocol)
+    ? host.hostname
+    : formatHostPort(
+      host.hostname,
+      ports[selectedProtocol] || host.port || 22,
+    );
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={onCancel}>
@@ -143,7 +157,13 @@ const ProtocolSelectDialog: React.FC<ProtocolSelectDialogProps> = ({
             <h3 className="text-sm font-medium">{t("protocolSelect.chooseProtocol")}</h3>
             <div className="space-y-3">
               {protocolOptions.map((option) => {
-                const visual = getProtocolVisualStyle(option.protocol);
+                const visual = isPluginHostProtocol(option.protocol)
+                  ? {
+                    icon: <Plug size={18} />,
+                    selected: "bg-primary text-primary-foreground",
+                    idle: "bg-secondary text-muted-foreground",
+                  }
+                  : getProtocolVisualStyle(option.protocol as ProtocolVisualKey);
                 return (
                   <button
                     key={option.protocol}
@@ -171,21 +191,23 @@ const ProtocolSelectDialog: React.FC<ProtocolSelectDialogProps> = ({
                         </div>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-muted-foreground">{t("protocolSelect.port")}</span>
-                      <Input
-                        type="number"
-                        value={ports[option.protocol] || option.port}
-                        onChange={(e) => handlePortChange(option.protocol, e.target.value)}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSelectedProtocol(option.protocol);
-                        }}
-                        className="w-16 h-7 text-xs text-center"
-                        min={1}
-                        max={65535}
-                      />
-                    </div>
+                    {!isPluginHostProtocol(option.protocol) && (
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-muted-foreground">{t("protocolSelect.port")}</span>
+                        <Input
+                          type="number"
+                          value={ports[option.protocol] || option.port}
+                          onChange={(e) => handlePortChange(option.protocol, e.target.value)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedProtocol(option.protocol);
+                          }}
+                          className="w-16 h-7 text-xs text-center"
+                          min={1}
+                          max={65535}
+                        />
+                      </div>
+                    )}
                   </button>
                 );
               })}
