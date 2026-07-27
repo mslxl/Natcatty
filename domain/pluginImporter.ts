@@ -170,6 +170,10 @@ const normalizeHost = (value: JsonValue): Host | null => {
     ? asObject(object.pluginConnection)
     : undefined;
   if (pluginConnection === null) return null;
+  const sourceCredentialId = pluginConnection
+    ? optionalStringValue(pluginConnection, 'credentialId', 256)
+    : undefined;
+  if (sourceCredentialId === INVALID_FIELD) return null;
   const tags = Object.prototype.hasOwnProperty.call(object, 'tags') && !Array.isArray(object.tags)
     ? null
     : stringArray(object.tags);
@@ -232,7 +236,13 @@ const normalizeHost = (value: JsonValue): Host | null => {
     ...Object.fromEntries(Object.entries(optionalIntegers).filter(([, item]) => item !== undefined)),
   } as unknown as Host;
   const sanitized = sanitizeHost(draft);
-  return sanitized.hostname && (!pluginProtocol || sanitized.pluginConnection) ? sanitized : null;
+  if (!sanitized.hostname || (pluginProtocol && !sanitized.pluginConnection)) return null;
+  return sanitized.pluginConnection && sourceCredentialId
+    ? {
+        ...sanitized,
+        pluginConnection: { ...sanitized.pluginConnection, credentialId: sourceCredentialId },
+      }
+    : sanitized;
 };
 
 const normalizeIdentity = (value: JsonValue): Identity | null => {
@@ -353,21 +363,37 @@ export function normalizePluginImporterRecords(records: ReadonlyArray<ImporterRe
     ...identity,
     ...(identity.keyId && keyIds.has(identity.keyId) ? { keyId: keyIds.get(identity.keyId) } : { keyId: undefined }),
   }));
-  result.hosts = result.hosts.map((host) => ({
-    ...host,
-    ...(host.identityId && identityIds.has(host.identityId)
-      ? { identityId: identityIds.get(host.identityId) }
-      : { identityId: undefined }),
-    ...(host.telnetIdentityId && identityIds.has(host.telnetIdentityId)
-      ? { telnetIdentityId: identityIds.get(host.telnetIdentityId) }
-      : { telnetIdentityId: undefined }),
-    ...(host.identityFileId && keyIds.has(host.identityFileId)
-      ? { identityFileId: keyIds.get(host.identityFileId) }
-      : { identityFileId: undefined }),
-    ...(host.pluginConnection
-      ? { pluginConnection: { ...host.pluginConnection, credentialId: undefined } }
-      : {}),
-  }));
+  result.hosts = result.hosts.map((host) => {
+    const sourceCredentialId = host.pluginConnection?.credentialId;
+    const identityCredentialId = sourceCredentialId ? identityIds.get(sourceCredentialId) : undefined;
+    const keyCredentialId = sourceCredentialId ? keyIds.get(sourceCredentialId) : undefined;
+    const credentialId = identityCredentialId && keyCredentialId
+      ? undefined
+      : identityCredentialId ?? keyCredentialId;
+    if (sourceCredentialId && !credentialId) {
+      result.errors.push('Importer returned an unresolved plugin credential reference.');
+    }
+    return {
+      ...host,
+      ...(host.identityId && identityIds.has(host.identityId)
+        ? { identityId: identityIds.get(host.identityId) }
+        : { identityId: undefined }),
+      ...(host.telnetIdentityId && identityIds.has(host.telnetIdentityId)
+        ? { telnetIdentityId: identityIds.get(host.telnetIdentityId) }
+        : { telnetIdentityId: undefined }),
+      ...(host.identityFileId && keyIds.has(host.identityFileId)
+        ? { identityFileId: keyIds.get(host.identityFileId) }
+        : { identityFileId: undefined }),
+      ...(host.pluginConnection
+        ? {
+            pluginConnection: {
+              ...host.pluginConnection,
+              ...(credentialId ? { credentialId } : { credentialId: undefined }),
+            },
+          }
+        : {}),
+    };
+  });
   result.groups = [...new Set(result.groups)];
   return result;
 }
@@ -465,6 +491,10 @@ export function mergePluginImporterDrafts(
   const hostFingerprints = new Set(existing.hosts.map(hostFingerprint));
   const addedHosts: Host[] = [];
   for (const source of drafts.hosts) {
+    const pluginCredentialId = source.pluginConnection?.credentialId;
+    const remappedPluginCredentialId = pluginCredentialId
+      ? identityIdRemap.get(pluginCredentialId) ?? keyIdRemap.get(pluginCredentialId)
+      : undefined;
     const host = sanitizeHost({
       ...source,
       ...(source.identityId && identityIdRemap.has(source.identityId)
@@ -475,6 +505,14 @@ export function mergePluginImporterDrafts(
         : {}),
       ...(source.identityFileId && keyIdRemap.has(source.identityFileId)
         ? { identityFileId: keyIdRemap.get(source.identityFileId) }
+        : {}),
+      ...(source.pluginConnection && remappedPluginCredentialId
+        ? {
+            pluginConnection: {
+              ...source.pluginConnection,
+              credentialId: remappedPluginCredentialId,
+            },
+          }
         : {}),
     });
     const fingerprint = hostFingerprint(host);

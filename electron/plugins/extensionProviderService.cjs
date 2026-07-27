@@ -12,6 +12,7 @@ const {
 const { assertPluginJsonValue } = require("./jsonBoundary.cjs");
 const { PluginRpcError, RPC_ERRORS, raceWithAbort } = require("./rpcRouter.cjs");
 const { compileRestrictedJsonSchema } = require("./restrictedJsonSchema.cjs");
+const pluginContractSchema = require("./generated/plugin-contract.schema.json");
 
 const EXTENSION_PROVIDER_KINDS = Object.freeze(["connection", "authentication", "importer"]);
 const PROVIDER_PERMISSIONS = Object.freeze({
@@ -29,9 +30,12 @@ const DEFAULT_DEADLINE_MS = 30_000;
 const STREAM_WINDOW_BYTES = 256 * 1024;
 const MAX_AUTH_CHALLENGES = 32;
 const AUTHENTICATION_SECRET_LEASE_TTL_MS = 30_000;
-const MAX_IMPORT_BYTES = 64 * 1024 * 1024;
-const MAX_IMPORT_RECORDS = 10_000;
-const MAX_IMPORT_LINE_BYTES = 256 * 1024;
+const AUTHENTICATION_CANCEL_DEADLINE_MS = 1_000;
+const importerLimits = pluginContractSchema.$defs.ImporterLimits.const;
+const MAX_IMPORT_BYTES = importerLimits.maxInputBytes;
+const MAX_IMPORT_OUTPUT_BYTES = importerLimits.maxOutputBytes;
+const MAX_IMPORT_RECORDS = importerLimits.maxRecords;
+const MAX_IMPORT_RECORD_BYTES = importerLimits.maxRecordBytes;
 const definitionValidators = Object.freeze({
   AuthenticationResult: createDefinitionValidator("AuthenticationResult"),
   ConnectionOpenResult: createDefinitionValidator("ConnectionOpenResult"),
@@ -65,7 +69,10 @@ function assertBoundedJson(value, label, maxBytes = MAX_PROVIDER_JSON_BYTES) {
 }
 
 function assertString(value, label, maximum = 256) {
-  if (typeof value !== "string" || value.length < 1 || value.length > maximum || value.includes("\0")) {
+  if (typeof value !== "string"
+    || value.length < 1
+    || Array.from(value).length > maximum
+    || value.includes("\0")) {
     throw invalidArgument(`${label} is invalid`);
   }
   return value;
@@ -248,7 +255,7 @@ function assertAuthenticationResult(value) {
 
 function assertAuthenticationResponse(challenge, response) {
   if (["text", "password", "otp"].includes(challenge.kind)) {
-    if (typeof response !== "string" || response.length < 1 || Buffer.byteLength(response, "utf8") > 8_192) {
+    if (typeof response !== "string" || response.length < 1 || Array.from(response).length > 8_192) {
       throw invalidArgument("Authentication text response is invalid or too large");
     }
     return response;
@@ -301,7 +308,7 @@ function normalizeImportRecord(value) {
   } else {
     throw new TypeError("Importer record type is invalid");
   }
-  assertBoundedJson(value, "Importer record", MAX_IMPORT_LINE_BYTES);
+  assertBoundedJson(value, "Importer record", MAX_IMPORT_RECORD_BYTES);
   return freezeJson(value);
 }
 
@@ -315,6 +322,12 @@ class PluginExtensionProviderService {
     this.permissionEngine = options.permissionEngine;
     this.runtimeSupervisor = options.runtimeSupervisor;
     this.leaseStore = options.leaseStore;
+    this.maxImportRecordBytes = options.maxImportRecordBytes ?? MAX_IMPORT_RECORD_BYTES;
+    if (!Number.isSafeInteger(this.maxImportRecordBytes)
+      || this.maxImportRecordBytes < 1
+      || this.maxImportRecordBytes > MAX_IMPORT_RECORD_BYTES) {
+      throw new TypeError("Extension Provider importer record limit is invalid");
+    }
     this.expectations = new Map();
     this.sessions = new Map();
     this.streamRegistration = options.rpcRegistry.registerIncomingStream((stream, context) => (
@@ -642,12 +655,25 @@ class PluginExtensionProviderService {
       return result;
     } catch (error) {
       if (!completed) {
-        void this.invoke({
-          providerId,
-          kind: "authentication",
-          operation: "cancel",
-          payload: { operationId },
-        }, { ...options, activation }).catch(() => {});
+        const cleanupController = new AbortController();
+        const cleanupTimer = setTimeout(() => {
+          cleanupController.abort(new DOMException("Authentication cancellation timed out", "TimeoutError"));
+        }, AUTHENTICATION_CANCEL_DEADLINE_MS);
+        cleanupTimer.unref?.();
+        try {
+          await this.invoke({
+            providerId,
+            kind: "authentication",
+            operation: "cancel",
+            payload: { operationId },
+            deadlineMs: AUTHENTICATION_CANCEL_DEADLINE_MS,
+          }, { activation, signal: cleanupController.signal });
+        } catch {
+          // Cancellation is best-effort, but it must use a fresh signal so the
+          // runtime has a bounded chance to release operation-owned resources.
+        } finally {
+          clearTimeout(cleanupTimer);
+        }
       }
       throw error;
     } finally {
@@ -704,7 +730,7 @@ class PluginExtensionProviderService {
     void outputDone.catch(() => {});
     const assertPendingLineWithinLimit = () => {
       const line = pending.endsWith("\r") ? pending.slice(0, -1) : pending;
-      if (Buffer.byteLength(line, "utf8") > MAX_IMPORT_LINE_BYTES) {
+      if (Buffer.byteLength(line, "utf8") > this.maxImportRecordBytes) {
         throw new PluginRpcError(RPC_ERRORS.resourceExhausted, "Importer output exceeds its record limits");
       }
     };
@@ -714,7 +740,7 @@ class PluginExtensionProviderService {
       for (const raw of lines) {
         const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
         if (!line) continue;
-        if (Buffer.byteLength(line, "utf8") > MAX_IMPORT_LINE_BYTES || records.length >= MAX_IMPORT_RECORDS) {
+        if (Buffer.byteLength(line, "utf8") > this.maxImportRecordBytes || records.length >= MAX_IMPORT_RECORDS) {
           throw new PluginRpcError(RPC_ERRORS.resourceExhausted, "Importer output exceeds its record limits");
         }
         const record = normalizeImportRecord(JSON.parse(line));
@@ -728,7 +754,7 @@ class PluginExtensionProviderService {
           try {
             if (chunk.encoding !== "binary") throw new Error("Importer output must be UTF-8 JSONL bytes");
             outputBytes += chunk.bytes.byteLength;
-            if (outputBytes > MAX_IMPORT_BYTES) throw new PluginRpcError(RPC_ERRORS.resourceExhausted, "Importer output is too large");
+            if (outputBytes > MAX_IMPORT_OUTPUT_BYTES) throw new PluginRpcError(RPC_ERRORS.resourceExhausted, "Importer output is too large");
             pending += decoder.decode(chunk.bytes, { stream: true });
             consumeLines(false);
             assertPendingLineWithinLimit();

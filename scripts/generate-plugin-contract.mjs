@@ -92,9 +92,9 @@ const typescriptTypeOverrides = new Map([
   category?: "key" | "certificate" | "identity";
 } & ({
   privateKey: string;
-  filePath?: string;
+  filePath?: never;
 } | {
-  privateKey?: string;
+  privateKey?: never;
   filePath: string;
 }))`,
   ],
@@ -160,6 +160,18 @@ if (!Number.isSafeInteger(terminalInterceptorLimits?.maxChunkBytes)
   || !Number.isSafeInteger(terminalInterceptorLimits?.maxWindowBytes)
   || terminalInterceptorLimits.maxWindowBytes < terminalInterceptorLimits.maxChunkBytes) {
   throw new Error("TerminalInterceptorLimits must define bounded chunk and window sizes");
+}
+const importerLimits = schema.$defs.ImporterLimits?.const;
+if (!Number.isSafeInteger(importerLimits?.maxInputBytes)
+  || !Number.isSafeInteger(importerLimits?.maxOutputBytes)
+  || !Number.isSafeInteger(importerLimits?.maxRecordBytes)
+  || !Number.isSafeInteger(importerLimits?.maxRecords)
+  || importerLimits.maxInputBytes < 1
+  || importerLimits.maxOutputBytes < 1
+  || importerLimits.maxRecordBytes < 1
+  || importerLimits.maxRecordBytes > importerLimits.maxOutputBytes
+  || importerLimits.maxRecords < 1) {
+  throw new Error("ImporterLimits must define positive bounded input, output, record, and count limits");
 }
 for (const [name, minimum, maximum] of [
   ["TerminalInterceptorChunkByteLength", 0, terminalInterceptorLimits.maxChunkBytes],
@@ -312,6 +324,10 @@ const generatedLimits = [
   `export const PLUGIN_STREAM_MAX_CREDIT_BYTES = ${streamLimits.maxCreditBytes} as const;`,
   `export const PLUGIN_TERMINAL_INTERCEPTOR_MAX_CHUNK_BYTES = ${terminalInterceptorLimits.maxChunkBytes} as const;`,
   `export const PLUGIN_TERMINAL_INTERCEPTOR_MAX_WINDOW_BYTES = ${terminalInterceptorLimits.maxWindowBytes} as const;`,
+  `export const PLUGIN_IMPORTER_MAX_INPUT_BYTES = ${importerLimits.maxInputBytes} as const;`,
+  `export const PLUGIN_IMPORTER_MAX_OUTPUT_BYTES = ${importerLimits.maxOutputBytes} as const;`,
+  `export const PLUGIN_IMPORTER_MAX_RECORD_BYTES = ${importerLimits.maxRecordBytes} as const;`,
+  `export const PLUGIN_IMPORTER_MAX_RECORDS = ${importerLimits.maxRecords} as const;`,
   "",
 ].join("\n");
 const normalizedSchema = `${JSON.stringify(schema, null, 2)}\n`;

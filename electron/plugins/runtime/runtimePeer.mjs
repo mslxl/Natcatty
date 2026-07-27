@@ -56,6 +56,7 @@ const CONNECTION_PROVIDER_OPERATIONS = Object.freeze([
   "close",
   "getStatus",
 ]);
+const IMPORTER_PROVIDER_OPERATIONS = Object.freeze(["detect", "parse"]);
 
 function pluginErrorNameFromRpcError(error) {
   if (typeof error?.data?.pluginCode === "string") return error.data.pluginCode;
@@ -243,19 +244,23 @@ function assertProviderKind(kind) {
 }
 
 function normalizeProviderHandler(kind, handler) {
-  if (kind !== "connection") {
+  if (kind !== "connection" && kind !== "importer") {
     if (typeof handler !== "function") {
       throw new PluginError("invalid_argument", "Plugin Provider handler must be a function");
     }
     return handler;
   }
+  const label = kind === "connection" ? "Connection" : "Importer";
   if (!handler || typeof handler !== "object" || Array.isArray(handler)) {
-    throw new PluginError("invalid_argument", "Connection Provider handler must be an operation map");
+    throw new PluginError("invalid_argument", `${label} Provider handler must be an operation map`);
   }
   const normalized = {};
-  for (const operation of CONNECTION_PROVIDER_OPERATIONS) {
+  const operations = kind === "connection"
+    ? CONNECTION_PROVIDER_OPERATIONS
+    : IMPORTER_PROVIDER_OPERATIONS;
+  for (const operation of operations) {
     if (typeof handler[operation] !== "function") {
-      throw new PluginError("invalid_argument", `Connection Provider handler is missing operation: ${operation}`);
+      throw new PluginError("invalid_argument", `${label} Provider handler is missing operation: ${operation}`);
     }
     normalized[operation] = handler[operation].bind(handler);
   }
@@ -677,11 +682,11 @@ export async function startPluginRuntime({
         ...(streamed ? { input, output } : {}),
       });
       try {
-        const handler = registration.kind === "connection"
+        const handler = registration.kind === "connection" || registration.kind === "importer"
           ? registration.handler[operation]
           : registration.handler;
         if (typeof handler !== "function") {
-          throw new PluginError("invalid_argument", `Connection Provider operation is not implemented: ${operation}`);
+          throw new PluginError("invalid_argument", `${kind} Provider operation is not implemented: ${operation}`);
         }
         const result = await handler(invocation);
         if (cancellationToken.isCancellationRequested) {

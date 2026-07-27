@@ -504,21 +504,35 @@ export type AuthenticationProviderHandler = (
   invocation: AuthenticationProviderInvocation,
 ) => AuthenticationResult | Promise<AuthenticationResult>;
 
-export type ImporterProviderInvocation =
-  | (TypedPluginProviderInvocation<ImporterDetectPayload> & {
-      readonly kind: "importer";
-      readonly operation: "detect";
-    })
-  | (TypedPluginProviderInvocation<ImporterParsePayload> & {
-      readonly kind: "importer";
-      readonly operation: "parse";
-      readonly input: Promise<PluginReadableByteStream>;
-      readonly output: PluginWritableByteStream;
-    });
+export interface ImporterProviderInvocationByOperation {
+  readonly detect: TypedPluginProviderInvocation<ImporterDetectPayload> & {
+    readonly kind: "importer";
+    readonly operation: "detect";
+  };
+  readonly parse: TypedPluginProviderInvocation<ImporterParsePayload> & {
+    readonly kind: "importer";
+    readonly operation: "parse";
+    readonly input: Promise<PluginReadableByteStream>;
+    readonly output: PluginWritableByteStream;
+  };
+}
 
-export type ImporterProviderHandler = (
-  invocation: ImporterProviderInvocation,
-) => ImporterDetectResult | ImporterParseResult | Promise<ImporterDetectResult | ImporterParseResult>;
+export interface ImporterProviderResultByOperation {
+  readonly detect: ImporterDetectResult;
+  readonly parse: ImporterParseResult;
+}
+
+export type ImporterProviderOperation = keyof ImporterProviderInvocationByOperation;
+export type ImporterProviderInvocation =
+  ImporterProviderInvocationByOperation[ImporterProviderOperation];
+export type ImporterProviderResult =
+  ImporterProviderResultByOperation[ImporterProviderOperation];
+export type ImporterProviderOperationHandler<TOperation extends ImporterProviderOperation> = (
+  invocation: ImporterProviderInvocationByOperation[TOperation],
+) => ImporterProviderResultByOperation[TOperation] | Promise<ImporterProviderResultByOperation[TOperation]>;
+export type ImporterProviderHandler = Readonly<{
+  [TOperation in ImporterProviderOperation]: ImporterProviderOperationHandler<TOperation>;
+}>;
 
 export interface PluginTerminalSessions {
   onDidChange(listener: (event: TerminalSessionEvent) => void): Disposable;

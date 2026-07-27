@@ -57,12 +57,19 @@ export type AuthenticationResponsePayload = {
   response: (string) | (boolean) | (Array<string>) | (SecretLeaseRef);
 };
 
-export type AuthenticationResult = {
-  status: "challenge" | "authenticated" | "cancelled" | "failed";
-  challenge?: AuthenticationChallenge;
+export type AuthenticationResult = ({
+  status: "challenge";
+  challenge: AuthenticationChallenge;
+}) | ({
+  status: "authenticated";
   credential?: (SecretRef) | (CredentialRef);
+}) | ({
+  status: "cancelled";
   message?: string;
-};
+}) | ({
+  status: "failed";
+  message?: string;
+});
 
 export type BoundedPermissionResource = string;
 
@@ -242,11 +249,13 @@ export type ImporterKeyDraft = ({
   category?: "key" | "certificate" | "identity";
 } & ({
   privateKey: string;
-  filePath?: string;
+  filePath?: never;
 } | {
-  privateKey?: string;
+  privateKey?: never;
   filePath: string;
 }));
+
+export type ImporterLimits = {"maxInputBytes":67108864,"maxOutputBytes":67108864,"maxRecordBytes":67108864,"maxRecords":10000};
 
 export type ImporterParsePayload = {
   operationId: string;

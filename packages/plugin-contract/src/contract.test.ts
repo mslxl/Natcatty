@@ -62,6 +62,7 @@ test("plugin manifest schema accepts the internal contract", () => {
 test("connection authentication and importer provider payloads are canonical and bounded", () => {
   const connectionOpen = validator("ConnectionOpenPayload");
   const authenticationChallenge = validator("AuthenticationChallenge");
+  const authenticationResult = validator("AuthenticationResult");
   const importerRecord = validator("ImporterRecord");
   assert.equal(connectionOpen({
     configuration: { endpoint: "example" },
@@ -94,6 +95,16 @@ test("connection authentication and importer provider payloads are canonical and
     title: "Password",
     choices: [],
   }), false);
+  assert.equal(authenticationResult({ status: "challenge" }), false);
+  assert.equal(authenticationResult({
+    status: "challenge",
+    challenge: { id: "challenge-1", kind: "text", title: "Input" },
+  }), true, JSON.stringify(authenticationResult.errors));
+  assert.equal(authenticationResult({
+    status: "authenticated",
+    challenge: { id: "challenge-1", kind: "text", title: "Input" },
+  }), false);
+  assert.equal(authenticationResult({ status: "failed", message: "Denied" }), true);
   assert.equal(importerRecord({
     type: "draft",
     draft: { kind: "host", value: { hostname: "imported.example", label: "Imported" } },
@@ -143,6 +154,18 @@ test("connection authentication and importer provider payloads are canonical and
     type: "draft",
     draft: { kind: "key", value: { label: "Key", type: "ED25519", privateKey: "private" } },
   }), true, JSON.stringify(importerRecord.errors));
+  assert.equal(importerRecord({
+    type: "draft",
+    draft: {
+      kind: "key",
+      value: {
+        label: "Ambiguous key",
+        type: "ED25519",
+        privateKey: "private",
+        filePath: "/keys/id_ed25519",
+      },
+    },
+  }), false, "importer key drafts must declare exactly one key source");
   assert.equal(importerRecord({
     type: "draft",
     draft: { kind: "snippet", value: { label: "Check", command: "uptime" } },

@@ -214,6 +214,41 @@ test('plugin importer remaps provider-local key and identity references into hos
   assert.equal(result.hosts[0].identityFileId, result.keys[0].id);
 });
 
+test('plugin importer maps plugin credential references to imported host-owned credentials', () => {
+  const result = normalizePluginImporterRecords([
+    { type: 'draft', draft: { kind: 'identity', value: {
+      id: 'provider-credential', label: 'Plugin password', username: 'root', authMethod: 'password', password: 'secret',
+    } } },
+    { type: 'draft', draft: { kind: 'host', value: {
+      label: 'Plugin host',
+      protocol: 'plugin:com.example.transport.connection',
+      pluginConnection: {
+        providerId: 'com.example.transport.connection',
+        configuration: {},
+        credentialId: 'provider-credential',
+      },
+    } } },
+  ]);
+  assert.equal(result.errors.length, 0);
+  assert.equal(result.hosts[0].pluginConnection?.credentialId, result.identities[0].id);
+});
+
+test('plugin importer rejects unresolved plugin credential references instead of silently dropping them', () => {
+  const result = normalizePluginImporterRecords([
+    { type: 'draft', draft: { kind: 'host', value: {
+      label: 'Plugin host',
+      protocol: 'plugin:com.example.transport.connection',
+      pluginConnection: {
+        providerId: 'com.example.transport.connection',
+        configuration: {},
+        credentialId: 'missing-credential',
+      },
+    } } },
+  ]);
+  assert.equal(result.hosts[0].pluginConnection?.credentialId, undefined);
+  assert.deepEqual(result.errors, ['Importer returned an unresolved plugin credential reference.']);
+});
+
 test('plugin importer merge skips duplicates and remaps relationships to retained Vault records', () => {
   const records = [
     { type: 'draft', draft: { kind: 'key', value: {

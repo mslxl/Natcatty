@@ -137,7 +137,13 @@ test("terminal interceptor typing stays specialized while broad ProviderKind hel
 test("provider registrations infer typed connection and importer stream invocations", () => {
   assertSdkTypeChecks(`
     import { definePlugin } from "./index.ts";
-    import type { ConnectionProviderHandler, ConnectionProviderResultByOperation } from "./index.ts";
+    import type {
+      ConnectionProviderHandler,
+      ConnectionProviderResultByOperation,
+      AuthenticationResult,
+      ImporterKeyDraft,
+      ImporterProviderHandler,
+    } from "./index.ts";
 
     const resizeAck: ConnectionProviderResultByOperation["resize"] = null;
     void resizeAck;
@@ -157,6 +163,38 @@ test("provider registrations infer typed connection and importer stream invocati
       getStatus: () => ({ status: "connected" }),
     };
     void invalidConnectionProvider;
+
+    const inlineImporterKey: ImporterKeyDraft = {
+      label: "Inline key",
+      type: "ED25519",
+      privateKey: "private",
+    };
+    const fileImporterKey: ImporterKeyDraft = {
+      label: "File key",
+      type: "ED25519",
+      filePath: "/keys/id_ed25519",
+    };
+    void inlineImporterKey;
+    void fileImporterKey;
+    // @ts-expect-error runtime validation requires exactly one key source.
+    const ambiguousImporterKey: ImporterKeyDraft = {
+      label: "Ambiguous key",
+      type: "ED25519",
+      privateKey: "private",
+      filePath: "/keys/id_ed25519",
+    };
+    void ambiguousImporterKey;
+
+    const invalidImporterProvider: ImporterProviderHandler = {
+      // @ts-expect-error detect must return a detection result, not parse counters.
+      detect: () => ({ parsed: 0, warnings: 0, errors: 0 }),
+      parse: () => ({ parsed: 0, warnings: 0, errors: 0 }),
+    };
+    void invalidImporterProvider;
+
+    // @ts-expect-error challenge results must include the exact challenge payload.
+    const incompleteAuthenticationResult: AuthenticationResult = { status: "challenge" };
+    void incompleteAuthenticationResult;
 
     definePlugin({
       activate(context) {
@@ -201,16 +239,18 @@ test("provider registrations infer typed connection and importer stream invocati
         // @ts-expect-error connection Providers use operation-keyed handlers so each operation has its exact result.
         context.providers.register("com.example.connection.invalid", "connection", async () => ({ available: true }));
 
-        context.providers.register("com.example.importer", "importer", async (invocation) => {
-          if (invocation.operation === "parse") {
+        context.providers.register("com.example.importer", "importer", {
+          async parse(invocation) {
             const input = await invocation.input;
             await invocation.output.write(new Uint8Array([65]));
             await input.read();
             return { parsed: 0, warnings: 0, errors: 0 };
-          }
-          const sampleData: string = invocation.payload.sample.data;
-          void sampleData;
-          return { confidence: 1 };
+          },
+          detect(invocation) {
+            const sampleData: string = invocation.payload.sample.data;
+            void sampleData;
+            return { confidence: 1 };
+          },
         });
       },
     });

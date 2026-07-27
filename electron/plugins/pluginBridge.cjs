@@ -404,6 +404,7 @@ function registerPluginBridge(ipcMain, options) {
   }) => {
     if (typeof extensionProviderService?.control !== "function") return;
     let hasPublishedReady = readyPublished;
+    let reconnectAttempted = false;
     try {
       while (!controller.signal.aborted && sessions.has(sessionId)) {
         await waitForConnectionStatusPoll(controller.signal);
@@ -415,6 +416,7 @@ function registerPluginBridge(ipcMain, options) {
           { signal: controller.signal },
         );
         if (status.status === "connected") {
+          reconnectAttempted = false;
           // A zero-byte terminal delivery transitions silent protocols out of
           // the connecting UI without inventing visible terminal output.
           if (!hasPublishedReady) {
@@ -424,6 +426,16 @@ function registerPluginBridge(ipcMain, options) {
           continue;
         }
         if (status.status === "closed" || status.status === "error") {
+          if (status.retryable === true && !reconnectAttempted) {
+            reconnectAttempted = true;
+            await extensionProviderService.control(
+              sessionId,
+              "reconnect",
+              {},
+              { signal: controller.signal },
+            );
+            continue;
+          }
           sessions.delete(sessionId);
           extensionProviderService.closeSessionLocal(sessionId);
           await terminalWorkerManager.finishExternalSession(sessionId, connectionStatusCloseDetails(status));
@@ -613,6 +625,7 @@ function registerPluginBridge(ipcMain, options) {
     let closedDuringStart = false;
     let providerOpened = false;
     let providerCloseStarted = false;
+    let acceptProviderOutput = true;
     const connectionController = new AbortController();
     const abortConnection = () => connectionController.abort(
       signal.reason ?? new DOMException("Plugin connection request was cancelled", "AbortError"),
@@ -637,6 +650,7 @@ function registerPluginBridge(ipcMain, options) {
           { columns, rows },
         ),
         onClose: async () => {
+          acceptProviderOutput = false;
           sessions.delete(sessionId);
           connectionController.abort(new DOMException("Terminal session closed", "AbortError"));
           providerCloseStarted = true;
@@ -671,10 +685,20 @@ function registerPluginBridge(ipcMain, options) {
       }, {
         signal: connectionController.signal,
         onData: async (bytes) => {
+          if (!acceptProviderOutput || (providerOpened && !sessions.has(sessionId))) return;
           const data = outputDecoder.decode(bytes, { stream: true });
-          if (data) await terminalWorkerManager.pushExternalOutput(sessionId, data);
+          if (!data) return;
+          try {
+            await terminalWorkerManager.pushExternalOutput(sessionId, data);
+          } catch (error) {
+            if (!acceptProviderOutput
+              || connectionController.signal.aborted
+              || (providerOpened && !sessions.has(sessionId))) return;
+            throw error;
+          }
         },
         onOutputClose: async (reason) => {
+          acceptProviderOutput = false;
           closedDuringStart = true;
           sessions.delete(sessionId);
           const finalData = outputDecoder.decode();
@@ -701,6 +725,7 @@ function registerPluginBridge(ipcMain, options) {
       }
       return opened;
     } catch (error) {
+      acceptProviderOutput = false;
       sessions.delete(sessionId);
       connectionController.abort(error);
       if (!providerCloseStarted && providerOpened) {

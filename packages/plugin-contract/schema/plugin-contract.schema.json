@@ -70,6 +70,15 @@
         "maxWindowBytes": 262144
       }
     },
+    "ImporterLimits": {
+      "description": "Host-enforced byte and record limits for one importer operation.",
+      "const": {
+        "maxInputBytes": 67108864,
+        "maxOutputBytes": 67108864,
+        "maxRecordBytes": 67108864,
+        "maxRecords": 10000
+      }
+    },
     "StreamId": {
       "type": "string",
       "minLength": 1,
@@ -823,7 +832,7 @@
         "challengeId": { "type": "string", "minLength": 1, "maxLength": 128 },
         "response": {
           "oneOf": [
-            { "type": "string", "maxLength": 8192 },
+            { "type": "string", "minLength": 1, "maxLength": 8192 },
             { "type": "boolean" },
             { "type": "array", "maxItems": 64, "uniqueItems": true, "items": { "type": "string", "maxLength": 128 } },
             { "$ref": "#/$defs/SecretLeaseRef" }
@@ -833,15 +842,44 @@
       "additionalProperties": false
     },
     "AuthenticationResult": {
-      "type": "object",
-      "required": ["status"],
-      "properties": {
-        "status": { "type": "string", "enum": ["challenge", "authenticated", "cancelled", "failed"] },
-        "challenge": { "$ref": "#/$defs/AuthenticationChallenge" },
-        "credential": { "oneOf": [{ "$ref": "#/$defs/SecretRef" }, { "$ref": "#/$defs/CredentialRef" }] },
-        "message": { "type": "string", "maxLength": 2048 }
-      },
-      "additionalProperties": false
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["status", "challenge"],
+          "properties": {
+            "status": { "const": "challenge" },
+            "challenge": { "$ref": "#/$defs/AuthenticationChallenge" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["status"],
+          "properties": {
+            "status": { "const": "authenticated" },
+            "credential": { "oneOf": [{ "$ref": "#/$defs/SecretRef" }, { "$ref": "#/$defs/CredentialRef" }] }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["status"],
+          "properties": {
+            "status": { "const": "cancelled" },
+            "message": { "type": "string", "maxLength": 2048 }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["status"],
+          "properties": {
+            "status": { "const": "failed" },
+            "message": { "type": "string", "maxLength": 2048 }
+          },
+          "additionalProperties": false
+        }
+      ]
     },
     "ImporterDetectPayload": {
       "type": "object",
@@ -901,7 +939,12 @@
         "providerId": { "$ref": "#/$defs/ContributionId" },
         "configuration": { "$ref": "#/$defs/JsonValue" },
         "authenticationProviderId": { "$ref": "#/$defs/ContributionId" },
-        "credentialId": { "type": "string", "minLength": 16, "maxLength": 256 }
+        "credentialId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "description": "Source id of an identity or key draft in the same import. Netcatty maps it to the newly persisted host-owned credential id."
+        }
       },
       "additionalProperties": false
     },

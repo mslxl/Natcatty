@@ -18,6 +18,7 @@ import { inferCodingCliProviderFromTitleSignals, shouldClearCodingCliProviderFor
 import { sessionCapabilitiesStore } from '../application/state/sessionCapabilitiesStore';
 import { useTerminalBackend } from '../application/state/useTerminalBackend';
 import { collectSessionIds } from '../domain/workspace';
+import { isPluginHostProtocol } from '../domain/pluginConnection';
 
 import { cn, normalizeLineEndings } from '../lib/utils';
 import { detectLocalOs } from '../lib/localShell';
@@ -959,6 +960,16 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       }
 
       const lineDelayMs = options?.lineDelayMs;
+      if (data === "\x03"
+        && isPluginHostProtocol(session.protocol)
+        && terminalBackend.signalPluginConnection) {
+        broadcastInterruptPrioritizersRef.current.get(session.id)?.();
+        void terminalBackend.signalPluginConnection(session.id, "interrupt").catch(() => {
+          terminalBackend.interruptSession(session.id);
+        });
+        deliveredSessionIds.push(session.id);
+        continue;
+      }
       if (data === "\x03" && terminalBackend.interruptSession) {
         broadcastInterruptPrioritizersRef.current.get(session.id)?.();
         terminalBackend.interruptSession(session.id);

@@ -43,6 +43,10 @@ export type TerminalBackendApi = {
     diagnostics: ReadonlyArray<import("@netcatty/plugin-contract").ProviderValidationIssue>;
   }>;
   cancelPluginExtensionRequest?: (requestId: string) => Promise<boolean> | boolean;
+  signalPluginConnection?: (
+    sessionId: string,
+    signal?: "interrupt" | "terminate" | "kill" | "eof" | "break",
+  ) => Promise<unknown>;
   execCommand: (options: Parameters<NetcattyBridge["execCommand"]>[0]) => Promise<{
     stdout?: string;
     stderr?: string;

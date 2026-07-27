@@ -77,8 +77,8 @@ function fixture(options = {}) {
   };
   const runtimeSupervisor = {
     onDidChangeRuntime(listener) { runtimeListeners.push(listener); return { dispose() {} }; },
-    async request(pluginId, method, params) {
-      return options.request({ pluginId, method, params, identity, accept: streamHandlers[0] });
+    async request(pluginId, method, params, requestOptions) {
+      return options.request({ pluginId, method, params, requestOptions, identity, accept: streamHandlers[0] });
     },
     async openStream(_pluginId, streamId) {
       return {
@@ -94,6 +94,9 @@ function fixture(options = {}) {
     permissionEngine,
     rpcRegistry,
     runtimeSupervisor,
+    ...(options.maxImportRecordBytes === undefined
+      ? {}
+      : { maxImportRecordBytes: options.maxImportRecordBytes }),
   });
   return { identity, issuedLeases, permissions, revokedOperations, runtimeListeners, service, writes };
 }
@@ -468,6 +471,68 @@ test("authentication providers fail closed on malformed nested challenge contrac
   }, async () => "unused"), /failed validation|challenge/i);
 });
 
+test("authentication cancellation reaches the provider with a fresh bounded signal", async () => {
+  const controller = new AbortController();
+  const operations = [];
+  const h = fixture({
+    async request({ params, requestOptions }) {
+      operations.push(params.operation);
+      if (params.operation === "begin") {
+        return {
+          requestId: params.requestId,
+          status: "ok",
+          result: {
+            status: "challenge",
+            challenge: { id: "password", kind: "password", title: "Password" },
+          },
+        };
+      }
+      assert.equal(params.operation, "cancel");
+      assert.equal(requestOptions.signal.aborted, false);
+      assert.equal(params.deadlineMs, 1_000);
+      return { requestId: params.requestId, status: "ok", result: { status: "cancelled" } };
+    },
+  });
+
+  await assert.rejects(h.service.authenticate({
+    providerId: "com.example.transport.auth",
+    connectionProviderId: "com.example.transport.connection",
+    configuration: {},
+  }, async () => {
+    controller.abort(new DOMException("Cancelled", "AbortError"));
+    throw controller.signal.reason;
+  }, { signal: controller.signal }), (error) => error?.name === "AbortError");
+  assert.deepEqual(operations, ["begin", "cancel"]);
+});
+
+test("authentication text responses use the public Unicode code-point limit", async () => {
+  const response = "😀".repeat(8_192);
+  const h = fixture({
+    async request({ params }) {
+      if (params.operation === "begin") {
+        return {
+          requestId: params.requestId,
+          status: "ok",
+          result: {
+            status: "challenge",
+            challenge: { id: "text", kind: "text", title: "Input" },
+          },
+        };
+      }
+      assert.equal(params.operation, "respond");
+      assert.equal(params.payload.response, response);
+      return { requestId: params.requestId, status: "ok", result: { status: "authenticated" } };
+    },
+  });
+
+  const result = await h.service.authenticate({
+    providerId: "com.example.transport.auth",
+    connectionProviderId: "com.example.transport.connection",
+    configuration: {},
+  }, async () => response);
+  assert.equal(result.status, "authenticated");
+});
+
 test("authentication responses are host-validated against the exact challenge before plugin delivery", async () => {
   const operations = [];
   const h = fixture({
@@ -581,6 +646,7 @@ test("importer providers produce a validated preview without mutating Vault stat
 test("import parsing rejects an unterminated JSONL record as soon as it exceeds the line cap", async () => {
   let h;
   h = fixture({
+    maxImportRecordBytes: 256 * 1024,
     async request({ params, identity, accept }) {
       const stream = incoming(params.payload.outputStreamId, async (handlers) => {
         const first = new Uint8Array(192 * 1024).fill(0x61);
@@ -606,6 +672,39 @@ test("import parsing rejects an unterminated JSONL record as soon as it exceeds 
   }), /record limits/i);
   assert.equal(h.revokedOperations.length, 1);
   assert.match(h.revokedOperations[0].operationId, /^importer:/u);
+});
+
+test("import parsing accepts public records larger than the old private line limit", async () => {
+  let h;
+  const jsonl = `${JSON.stringify({
+    type: "draft",
+    draft: {
+      kind: "snippet",
+      value: { label: "Large snippet", command: "x".repeat(300_000) },
+    },
+  })}\n`;
+  h = fixture({
+    async request({ params, identity, accept }) {
+      const stream = incoming(params.payload.outputStreamId, async (handlers) => {
+        await handlers.onChunk({ encoding: "binary", bytes: new TextEncoder().encode(jsonl) }, () => {});
+        await handlers.onClose("end");
+      });
+      assert.equal(await accept(stream, identity), true);
+      await new Promise((resolve) => setImmediate(resolve));
+      return {
+        requestId: params.requestId,
+        status: "ok",
+        result: { parsed: 1, warnings: 0, errors: 0 },
+      };
+    },
+  });
+
+  const preview = await h.service.parseImporter({
+    providerId: "com.example.transport.importer",
+    data: new TextEncoder().encode("source"),
+  });
+  assert.equal(preview.records[0].type, "draft");
+  assert.equal(preview.records[0].draft.value.command.length, 300_000);
 });
 
 test("importer input streams fail closed if the selected file changes size", async () => {

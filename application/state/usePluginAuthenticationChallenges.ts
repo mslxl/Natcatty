@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AuthenticationChallenge } from "@netcatty/plugin-contract";
 import { isSafePluginAuthenticationUrl } from "../../domain/pluginConnection";
 import { pluginExtensionBridge } from "./pluginExtensionBridge";
@@ -6,6 +6,41 @@ import { pluginExtensionBridge } from "./pluginExtensionBridge";
 type ChallengeEvent = NetcattyPluginAuthenticationChallengeEvent;
 export type PluginAuthenticationChallengeResponse = string | boolean | ReadonlyArray<string>;
 type ActiveChallengeEvent = Extract<ChallengeEvent, { challenge: AuthenticationChallenge }>;
+type ChallengeQueueRef = { current: ActiveChallengeEvent[] };
+type ChallengeQueueSetter = (next: ActiveChallengeEvent[]) => void;
+type ChallengeResponder = typeof pluginExtensionBridge.respondAuthenticationChallenge;
+
+const MAX_PENDING_AUTHENTICATION_CHALLENGES = 32;
+
+export const handlePluginAuthenticationChallengeEvent = (
+  queueRef: ChallengeQueueRef,
+  setQueue: ChallengeQueueSetter,
+  event: ChallengeEvent,
+  respond: ChallengeResponder,
+) => {
+  const existing = queueRef.current;
+  if ("cancelled" in event && event.cancelled === true) {
+    const next = existing.filter((item) => item.challengeRequestId !== event.challengeRequestId);
+    if (next.length !== existing.length) {
+      queueRef.current = next;
+      setQueue(next);
+    }
+    return;
+  }
+  if (existing.some((item) => item.challengeRequestId === event.challengeRequestId)) return;
+  if (existing.length >= MAX_PENDING_AUTHENTICATION_CHALLENGES) {
+    void respond({
+      requestId: event.requestId,
+      challengeRequestId: event.challengeRequestId,
+      challengeId: event.challenge.id,
+      cancelled: true,
+    }).catch(() => {});
+    return;
+  }
+  const next = [...existing, event];
+  queueRef.current = next;
+  setQueue(next);
+};
 
 export const pluginAuthenticationChallengeMessage = (challenge: AuthenticationChallenge): string | undefined => (
   "message" in challenge && typeof challenge.message === "string" ? challenge.message : undefined
@@ -20,6 +55,7 @@ export const pluginAuthenticationResponseErrorMessage = (error: unknown): string
 
 export function usePluginAuthenticationChallenges() {
   const [queue, setQueue] = useState<ActiveChallengeEvent[]>([]);
+  const queueRef = useRef<ActiveChallengeEvent[]>([]);
   const [textValue, setTextValue] = useState("");
   const [selectedChoices, setSelectedChoices] = useState<string[]>([]);
   const [responseError, setResponseError] = useState<string | null>(null);
@@ -29,22 +65,12 @@ export function usePluginAuthenticationChallenges() {
 
   useEffect(() => {
     return pluginExtensionBridge.onAuthenticationChallenge((event) => {
-      setQueue((existing) => {
-        if ("cancelled" in event && event.cancelled === true) {
-          return existing.filter((item) => item.challengeRequestId !== event.challengeRequestId);
-        }
-        if (existing.some((item) => item.challengeRequestId === event.challengeRequestId)) return existing;
-        if (existing.length >= 32) {
-          void pluginExtensionBridge.respondAuthenticationChallenge({
-            requestId: event.requestId,
-            challengeRequestId: event.challengeRequestId,
-            challengeId: event.challenge.id,
-            cancelled: true,
-          }).catch(() => {});
-          return existing;
-        }
-        return [...existing, event].slice(0, 32);
-      });
+      handlePluginAuthenticationChallengeEvent(
+        queueRef,
+        setQueue,
+        event,
+        (response) => pluginExtensionBridge.respondAuthenticationChallenge(response),
+      );
     });
   }, []);
 
@@ -68,7 +94,11 @@ export function usePluginAuthenticationChallenges() {
         challengeId: current.challenge.id,
         ...(cancelled ? { cancelled: true } : { response }),
       });
-      setQueue((existing) => existing.filter((item) => item.challengeRequestId !== current.challengeRequestId));
+      const next = queueRef.current.filter(
+        (item) => item.challengeRequestId !== current.challengeRequestId,
+      );
+      queueRef.current = next;
+      setQueue(next);
       setResponseError(null);
     } catch (error) {
       setResponseError(pluginAuthenticationResponseErrorMessage(error));

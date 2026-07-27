@@ -904,6 +904,64 @@ test("plugin connection status monitoring closes asynchronous provider errors", 
   assert.deepEqual(closed, ["session-late-error"]);
 });
 
+test("plugin connection status monitoring invokes Provider reconnect for retryable failures", async () => {
+  const ipcMain = createIpcMain();
+  const controls = [];
+  const outputs = [];
+  let statusIndex = 0;
+  let resolveFinished;
+  const finished = new Promise((resolve) => { resolveFinished = resolve; });
+  const statuses = [
+    { status: "error", message: "Temporary loss", retryable: true },
+    { status: "connected" },
+    { status: "closed", message: "Done" },
+  ];
+  registerPluginBridge(ipcMain, {
+    manager: { initialize: async () => {} },
+    extensionProviderService: {
+      async openConnection(params) {
+        return { sessionId: params.sessionId, providerId: params.providerId, status: "connecting", diagnostics: [] };
+      },
+      async control(sessionId, operation) {
+        controls.push([sessionId, operation]);
+        if (operation === "reconnect") return null;
+        return statuses[statusIndex++];
+      },
+      closeSessionLocal() {},
+    },
+    getTerminalWorkerManager: () => ({
+      async startExternalSession(options) { return { sessionId: options.sessionId }; },
+      async pushExternalOutput(sessionId, data, meta) { outputs.push([sessionId, data, meta]); },
+      async finishExternalSession(sessionId, details) { resolveFinished([sessionId, details]); return true; },
+    }),
+    connectionStatusPollMs: 0,
+    env: { NETCATTY_PLUGIN_DEV: "1" },
+    isTrustedSender: () => true,
+  });
+  const event = { sender: { id: 86, once() {}, isDestroyed: () => false } };
+  await ipcMain.handlers.get(CHANNELS.connectionStart)(event, {
+    requestId: "connection-retryable-status",
+    sessionId: "session-retryable-status",
+    providerId: "com.example.transport.connection",
+    configuration: {},
+    columns: 80,
+    rows: 24,
+  });
+
+  assert.deepEqual(await finished, [
+    "session-retryable-status",
+    { reason: "closed", error: "Done" },
+  ]);
+  assert.deepEqual(controls, [
+    ["session-retryable-status", "getStatus"],
+    ["session-retryable-status", "reconnect"],
+    ["session-retryable-status", "getStatus"],
+    ["session-retryable-status", "getStatus"],
+  ]);
+  assert.equal(outputs.length, 1);
+  assert.equal(outputs[0][2].pluginConnectionReady, true);
+});
+
 test("plugin connection output stream failures finish the terminal as errors", async () => {
   const ipcMain = createIpcMain();
   let closeOutput;
@@ -940,6 +998,51 @@ test("plugin connection output stream failures finish the terminal as errors", a
     "session-output-failure",
     { reason: "error", error: "Provider output failed" },
   ]);
+});
+
+test("plugin connection ignores output that races with renderer session close", async () => {
+  const ipcMain = createIpcMain();
+  let externalOptions;
+  let providerOptions;
+  let outputAttempts = 0;
+  registerPluginBridge(ipcMain, {
+    manager: { initialize: async () => {} },
+    extensionProviderService: {
+      async openConnection(params, options) {
+        providerOptions = options;
+        return { sessionId: params.sessionId, providerId: params.providerId, status: "connected", diagnostics: [] };
+      },
+      async control() { return null; },
+      closeSessionLocal() {},
+    },
+    getTerminalWorkerManager: () => ({
+      async startExternalSession(options) {
+        externalOptions = options;
+        return { sessionId: options.sessionId };
+      },
+      async pushExternalOutput(_sessionId, data) {
+        if (data === "") return true;
+        outputAttempts += 1;
+        throw new Error("session no longer exists");
+      },
+      async finishExternalSession() { return true; },
+    }),
+    env: { NETCATTY_PLUGIN_DEV: "1" },
+    isTrustedSender: () => true,
+  });
+  const event = { sender: { id: 85, once() {}, isDestroyed: () => false } };
+  await ipcMain.handlers.get(CHANNELS.connectionStart)(event, {
+    requestId: "connection-output-close-race",
+    sessionId: "session-output-close-race",
+    providerId: "com.example.transport.connection",
+    configuration: {},
+    columns: 80,
+    rows: 24,
+  });
+
+  await externalOptions.onClose("renderer-close");
+  await assert.doesNotReject(providerOptions.onData(new TextEncoder().encode("late output")));
+  assert.equal(outputAttempts, 0);
 });
 
 test("closing the terminal during plugin authentication cancels the challenge before provider open", async () => {

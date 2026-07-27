@@ -36,6 +36,7 @@ import {
   resolveHostTerminalFontWeight,
 } from "../../../domain/terminalAppearance";
 import { resolveFontWeightBold } from "../../../lib/fontWeightAvailability";
+import { isPluginHostProtocol } from "../../../domain/pluginConnection";
 import { resolveTerminalFontFamilyId } from "../../../infrastructure/config/fonts";
 import { logger } from "../../../lib/logger";
 import { isMacPlatform } from "../../../lib/utils";
@@ -156,6 +157,10 @@ type TerminalBackendApi = {
   openExternal: (url: string) => Promise<void>;
   writeToSession: (sessionId: string, data: string) => void;
   interruptSession?: (sessionId: string, trace?: NetcattyTerminalInterruptTrace) => void;
+  signalPluginConnection?: (
+    sessionId: string,
+    signal?: "interrupt" | "terminate" | "kill" | "eof" | "break",
+  ) => Promise<unknown>;
   resizeSession: (sessionId: string, cols: number, rows: number) => void;
   clearSessionPtyBuffer?: (sessionId: string) => void;
   setSessionFlowPaused?: (sessionId: string, paused: boolean) => void;
@@ -1336,7 +1341,15 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         if (ctx.passwordPromptActiveRef) {
           ctx.passwordPromptActiveRef.current = false;
         }
-        if (ctx.terminalBackend.interruptSession) {
+        if (isPluginHostProtocol(ctx.host.protocol) && ctx.terminalBackend.signalPluginConnection) {
+          void ctx.terminalBackend.signalPluginConnection(id, "interrupt").catch(() => {
+            if (ctx.terminalBackend.interruptSession) {
+              ctx.terminalBackend.interruptSession(id, interruptTrace);
+            } else {
+              ctx.terminalBackend.writeToSession(id, "\x03");
+            }
+          });
+        } else if (ctx.terminalBackend.interruptSession) {
           ctx.terminalBackend.interruptSession(id, interruptTrace);
         } else {
           ctx.terminalBackend.writeToSession(id, "\x03");

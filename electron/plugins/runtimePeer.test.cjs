@@ -461,7 +461,7 @@ test("runtime peer registers provider handlers and routes immutable terminal lif
   host.close();
 });
 
-test("runtime peer routes connection Provider operation maps", async () => {
+test("runtime peer routes connection and importer Provider operation maps", async () => {
   const { startPluginRuntime } = await import("./runtime/runtimePeer.mjs");
   const { port1, port2 } = new MessageChannel();
   const host = new PluginRpcRouter({
@@ -471,6 +471,7 @@ test("runtime peer routes connection Provider operation maps", async () => {
   port1.on("message", (message) => host.accept(message));
   const invocations = [];
   let legacyError;
+  let legacyImporterError;
   const peer = await startPluginRuntime({
     port: port2,
     config: {
@@ -522,6 +523,20 @@ test("runtime peer routes connection Provider operation maps", async () => {
                 return { status: "connected" };
               },
             });
+            try {
+              context.providers.register("com.example.connection.legacyImporter", "importer", async () => null);
+            } catch (error) {
+              legacyImporterError = { code: error?.code, message: error?.message };
+            }
+            context.providers.register("com.example.connection.importer", "importer", {
+              detect(invocation) {
+                invocations.push([invocation.operation, invocation.payload.fileName]);
+                return { confidence: 0.75, format: "example" };
+              },
+              parse() {
+                throw new Error("parse is not invoked by this test");
+              },
+            });
           },
         },
       };
@@ -538,6 +553,10 @@ test("runtime peer routes connection Provider operation maps", async () => {
     code: "invalid_argument",
     message: "Connection Provider handler must be an operation map",
   });
+  assert.deepEqual(legacyImporterError, {
+    code: "invalid_argument",
+    message: "Importer Provider handler must be an operation map",
+  });
   assert.deepEqual(await host.request("provider.invoke", {
     providerId: "com.example.connection.transport",
     kind: "connection",
@@ -549,6 +568,21 @@ test("runtime peer routes connection Provider operation maps", async () => {
     requestId: "connection-resize-1",
     status: "ok",
     result: null,
+  });
+  assert.deepEqual(await host.request("provider.invoke", {
+    providerId: "com.example.connection.importer",
+    kind: "importer",
+    operation: "detect",
+    requestId: "importer-detect-1",
+    payload: {
+      fileName: "hosts.json",
+      sample: { encoding: "base64", data: "e30=" },
+    },
+    deadlineMs: 1_000,
+  }), {
+    requestId: "importer-detect-1",
+    status: "ok",
+    result: { confidence: 0.75, format: "example" },
   });
   assert.deepEqual(await host.request("provider.invoke", {
     providerId: "com.example.connection.transport",
@@ -565,6 +599,7 @@ test("runtime peer routes connection Provider operation maps", async () => {
   assert.deepEqual(invocations, [
     ["resize", 132, 44],
     ["getStatus", "connection-1"],
+    ["detect", "hosts.json"],
   ]);
 
   await peer.dispose();

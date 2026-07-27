@@ -66,7 +66,28 @@ export async function startPluginConnectionWithBridge(
     throw new Error(issues?.[0]?.message || "Plugin connection configuration is invalid");
   }
   throwIfPluginConnectionStartAborted(signal);
+  const probe = await raceWithPluginConnectionStartAbort(bridge.invokePluginExtensionProvider({
+    providerId: bridgeOptions.providerId,
+    kind: "connection",
+    operation: "probe",
+    payload: { configuration: bridgeOptions.configuration },
+    deadlineMs: bridgeOptions.deadlineMs,
+  }), signal);
+  throwIfPluginConnectionStartAborted(signal);
+  if (!probe || typeof probe !== "object" || Array.isArray(probe)
+    || (probe as { available?: unknown }).available !== true) {
+    throw new Error((probe as { reason?: string } | null)?.reason || "Plugin connection provider is unavailable");
+  }
   return bridge.startPluginConnection(bridgeOptions);
+}
+
+export async function signalPluginConnectionWithBridge(
+  bridge: Pick<NetcattyBridge, "controlPluginConnection">,
+  sessionId: string,
+  signal: "interrupt" | "terminate" | "kill" | "eof" | "break" = "interrupt",
+) {
+  if (!bridge?.controlPluginConnection) throw new Error("Plugin connection signaling unavailable");
+  return bridge.controlPluginConnection(sessionId, "signal", { signal });
 }
 
 export const useTerminalBackend = () => {
@@ -150,6 +171,15 @@ export const useTerminalBackend = () => {
   const cancelPluginExtensionRequest = useCallback(async (requestId: string) => {
     const bridge = netcattyBridge.get();
     return bridge?.cancelPluginExtensionRequest?.(requestId) ?? false;
+  }, []);
+
+  const signalPluginConnection = useCallback(async (
+    sessionId: string,
+    signal: "interrupt" | "terminate" | "kill" | "eof" | "break" = "interrupt",
+  ) => {
+    const bridge = netcattyBridge.get();
+    if (!bridge) throw new Error("Plugin connection signaling unavailable");
+    return signalPluginConnectionWithBridge(bridge, sessionId, signal);
   }, []);
 
   const execCommand = useCallback(async (options: Parameters<NetcattyBridge["execCommand"]>[0]) => {
@@ -539,6 +569,7 @@ export const useTerminalBackend = () => {
         startSerialSession,
         startPluginConnection,
         cancelPluginExtensionRequest,
+        signalPluginConnection,
         listSerialPorts,
         serialYmodemAvailable,
         serialYmodemReceiveAvailable,
@@ -620,6 +651,7 @@ export const useTerminalBackend = () => {
       startSerialSession,
       startPluginConnection,
       cancelPluginExtensionRequest,
+      signalPluginConnection,
       listSerialPorts,
       serialYmodemAvailable,
       serialYmodemReceiveAvailable,
