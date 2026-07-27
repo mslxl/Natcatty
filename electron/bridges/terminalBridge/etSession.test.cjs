@@ -978,9 +978,46 @@ test("prepareEtSshEnvironment applies vault host-key policy to jump hosts", (t) 
   assert.ok(fs.existsSync(configPath));
   const config = fs.readFileSync(configPath, "utf8");
   assert.match(config, /Host jump\.example/);
-  assert.match(config, /GlobalKnownHostsFile /);
-  assert.match(config, /StrictHostKeyChecking /);
-  assert.match(config, /accept-new/);
+  // Jump is vault-pinned → authoritative snapshot.
+  assert.match(config, /Host jump\.example[\s\S]*GlobalKnownHostsFile /);
+  assert.match(config, /Host jump\.example[\s\S]*StrictHostKeyChecking /);
+  // Target is not vault-pinned → persistent user known_hosts.
+  assert.match(config, /Host target\.example[\s\S]*UserKnownHostsFile /);
+  assert.match(config, /Host target\.example[\s\S]*StrictHostKeyChecking accept-new/);
+  // Host-key policy must not be forced globally via --ssh-option (would override hop).
+  assert.equal(
+    env.sshOptions.some((option) => option.startsWith("GlobalKnownHostsFile=")),
+    false,
+  );
+});
+
+test("prepareEtSshEnvironment keeps unpinned jump on persistent known_hosts", (t) => {
+  const { api, base } = makeApi(t);
+  api.prepareEtSshEnvironment("sess1", {
+    hostname: "target.example",
+    username: "alice",
+    knownHosts: [{
+      hostname: "target.example",
+      keyType: "ssh-ed25519",
+      publicKey: "ssh-ed25519 AAATARGET",
+    }],
+    jumpHosts: [{
+      hostname: "jump.example",
+      username: "jumpuser",
+      authMethod: "password",
+      password: "secret",
+    }],
+  });
+
+  const configPath = path.join(base, "et-ssh-home-sess1", ".ssh", "config");
+  const config = fs.readFileSync(configPath, "utf8");
+  // Target vault-pinned → authoritative snapshot in Host target block.
+  assert.match(config, /Host target\.example[\s\S]*GlobalKnownHostsFile /);
+  // Jump unpinned → persistent user known_hosts, not the session snapshot.
+  const jumpBlock = config.slice(config.indexOf("Host jump.example"));
+  assert.match(jumpBlock, /UserKnownHostsFile /);
+  assert.match(jumpBlock, /StrictHostKeyChecking accept-new/);
+  assert.doesNotMatch(jumpBlock, /GlobalKnownHostsFile /);
 });
 
 test("execOnEtSession honors session StrictHostKeyChecking=no over accept-new default", async (t) => {

@@ -255,6 +255,53 @@ test("parseSshGKnownHostsPaths reads multi-path directives", () => {
   );
 });
 
+test("parseSshGKnownHostsPaths preserves paths that contain spaces", () => {
+  const { parseSshGKnownHostsPaths } = require("./externalSshHostKeyPolicy.cjs");
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-kh-space-"));
+  try {
+    const spaced = path.join(base, "dir with space", "global kh");
+    fs.mkdirSync(path.dirname(spaced), { recursive: true });
+    fs.writeFileSync(spaced, "ok\n");
+    assert.deepEqual(
+      parseSshGKnownHostsPaths(
+        `globalknownhostsfile ${spaced}\n`,
+        "globalknownhostsfile",
+        { fs, pathModule: path },
+      ),
+      [spaced],
+    );
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("buildAuthoritativeKnownHostsContent merges effective user known_hosts paths", () => {
+  const {
+    buildAuthoritativeKnownHostsContent: build,
+  } = require("./externalSshHostKeyPolicy.cjs");
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-kh-user-"));
+  try {
+    const customUser = path.join(base, "custom_user_known_hosts");
+    fs.writeFileSync(customUser, "admin.user ssh-ed25519 AAAUSERCUSTOM\n");
+    const content = build({
+      knownHosts: [{
+        hostname: "host.example",
+        keyType: "ssh-ed25519",
+        publicKey: "ssh-ed25519 AAAVAULT",
+      }],
+      fs,
+      hostname: "host.example",
+      globalPaths: [],
+      userPaths: undefined,
+      execFileSyncFn: () => `userknownhostsfile ${customUser}\n`,
+    });
+    assert.match(content, /host\.example ssh-ed25519 AAAVAULT/);
+    assert.match(content, /admin\.user ssh-ed25519 AAAUSERCUSTOM/);
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+});
+
 test("buildAuthoritativeKnownHostsContent is empty when vault has no usable pins", () => {
   assert.equal(
     buildAuthoritativeKnownHostsContent({

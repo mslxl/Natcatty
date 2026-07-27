@@ -316,6 +316,56 @@ const expandKnownHostsPath = (rawPath, { homedir = os.homedir(), pathModule = pa
 };
 
 /**
+ * Split an ssh -G known_hosts path list. OpenSSH emits unquoted paths, so a
+ * single path containing spaces looks like multiple tokens. Prefer the full
+ * remainder when it exists on disk, otherwise greedily reassemble tokens into
+ * existing paths before falling back to whitespace splits.
+ */
+const splitKnownHostsPathList = (rest, {
+  fs: fsApi = null,
+  homedir = os.homedir(),
+  pathModule = path,
+} = {}) => {
+  const raw = String(rest || "").trim();
+  if (!raw) return [];
+  const expand = (value) => expandKnownHostsPath(value, { homedir, pathModule });
+  const exists = (value) => {
+    if (!value) return false;
+    try {
+      return typeof fsApi?.existsSync === "function" ? fsApi.existsSync(value) : false;
+    } catch {
+      return false;
+    }
+  };
+
+  const expandedAll = expand(raw);
+  if (exists(expandedAll)) return [expandedAll];
+
+  const tokens = raw.split(/\s+/).filter(Boolean);
+  if (tokens.length <= 1) return tokens.map(expand).filter(Boolean);
+
+  const paths = [];
+  let index = 0;
+  while (index < tokens.length) {
+    let end = index;
+    let candidate = expand(tokens[index]);
+    // Grow the token span while the candidate path does not exist.
+    while (end + 1 < tokens.length && !exists(candidate)) {
+      end += 1;
+      candidate = expand(tokens.slice(index, end + 1).join(" "));
+    }
+    if (!exists(candidate)) {
+      // Nothing exists for this span; keep the single token and continue.
+      candidate = expand(tokens[index]);
+      end = index;
+    }
+    if (candidate) paths.push(candidate);
+    index = end + 1;
+  }
+  return paths;
+};
+
+/**
  * Parse `ssh -G` output for a multi-path known_hosts directive
  * (`globalknownhostsfile` / `userknownhostsfile`).
  */
@@ -331,13 +381,26 @@ const parseSshGKnownHostsPaths = (sshGOutput, directive, opts = {}) => {
     if (key !== want) continue;
     const rest = line.slice(space).trim();
     if (!rest) return [];
-    // ssh -G prints unquoted space-separated paths.
-    return rest
-      .split(/\s+/)
-      .map((entry) => expandKnownHostsPath(entry, opts))
-      .filter(Boolean);
+    return splitKnownHostsPathList(rest, opts);
   }
   return null;
+};
+
+const runSshG = ({
+  hostname,
+  platform = process.platform,
+  execFileSyncFn = execFileSync,
+  sshCommand,
+} = {}) => {
+  const target = String(hostname || "").trim() || "localhost";
+  if (typeof execFileSyncFn !== "function") return "";
+  const cmd = sshCommand || "ssh";
+  return execFileSyncFn(cmd, ["-G", target], {
+    encoding: "utf8",
+    timeout: 4000,
+    windowsHide: true,
+    env: process.env,
+  });
 };
 
 /**
@@ -353,27 +416,55 @@ const resolveEffectiveGlobalKnownHostsPaths = ({
   programData = process.env.ProgramData,
   homedir = os.homedir(),
   pathModule = path,
+  fs: fsApi = null,
   execFileSyncFn = execFileSync,
   sshCommand,
+  sshGOutput,
 } = {}) => {
   const defaults = getDefaultGlobalKnownHostsPaths({ platform, programData, pathModule });
-  const target = String(hostname || "").trim() || "localhost";
   try {
-    if (typeof execFileSyncFn !== "function") return defaults;
-    const cmd = sshCommand || (platform === "win32" ? "ssh" : "ssh");
-    const output = execFileSyncFn(cmd, ["-G", target], {
-      encoding: "utf8",
-      timeout: 4000,
-      windowsHide: true,
-      env: process.env,
-    });
+    const output = sshGOutput != null
+      ? sshGOutput
+      : runSshG({ hostname, platform, execFileSyncFn, sshCommand });
     const parsed = parseSshGKnownHostsPaths(output, "globalknownhostsfile", {
+      fs: fsApi,
       homedir,
       pathModule,
     });
     if (Array.isArray(parsed) && parsed.length > 0) return parsed;
   } catch {
     // Discovery is best-effort; fall back to compiled-in defaults.
+  }
+  return defaults;
+};
+
+/**
+ * Resolve the effective UserKnownHostsFile list for a target host via
+ * `ssh -G`, falling back to the default ~/.ssh/known_hosts{,2} paths.
+ */
+const resolveEffectiveUserKnownHostsPaths = ({
+  hostname,
+  platform = process.platform,
+  homedir = os.homedir(),
+  pathModule = path,
+  fs: fsApi = null,
+  execFileSyncFn = execFileSync,
+  sshCommand,
+  sshGOutput,
+} = {}) => {
+  const defaults = getDefaultUserKnownHostsPaths({ homedir, pathModule });
+  try {
+    const output = sshGOutput != null
+      ? sshGOutput
+      : runSshG({ hostname, platform, execFileSyncFn, sshCommand });
+    const parsed = parseSshGKnownHostsPaths(output, "userknownhostsfile", {
+      fs: fsApi,
+      homedir,
+      pathModule,
+    });
+    if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+  } catch {
+    // Best-effort.
   }
   return defaults;
 };
@@ -415,6 +506,16 @@ const buildAuthoritativeKnownHostsContent = ({
   const vaultSelectors = extractVaultHostSelectors(knownHosts);
   const chunks = [vaultContent];
 
+  // One ssh -G probe for both global and user path discovery.
+  let sshGOutput;
+  if (!Array.isArray(globalPaths) || !Array.isArray(userPaths)) {
+    try {
+      sshGOutput = runSshG({ hostname, platform, execFileSyncFn, sshCommand });
+    } catch {
+      sshGOutput = "";
+    }
+  }
+
   const globals = Array.isArray(globalPaths)
     ? globalPaths
     : resolveEffectiveGlobalKnownHostsPaths({
@@ -423,8 +524,10 @@ const buildAuthoritativeKnownHostsContent = ({
       programData,
       homedir,
       pathModule,
+      fs: fsApi,
       execFileSyncFn,
       sshCommand,
+      sshGOutput,
     });
   for (const filePath of globals) {
     const filtered = filterKnownHostsContentExcludingVaultHosts(
@@ -434,9 +537,18 @@ const buildAuthoritativeKnownHostsContent = ({
     if (filtered) chunks.push(filtered);
   }
 
-  const users = Array.isArray(userPaths) && userPaths.length > 0
+  const users = Array.isArray(userPaths)
     ? userPaths
-    : getDefaultUserKnownHostsPaths({ homedir, pathModule });
+    : resolveEffectiveUserKnownHostsPaths({
+      hostname,
+      platform,
+      homedir,
+      pathModule,
+      fs: fsApi,
+      execFileSyncFn,
+      sshCommand,
+      sshGOutput,
+    });
   for (const filePath of users) {
     const filtered = filterKnownHostsContentExcludingVaultHosts(
       readKnownHostsFileContent(fsApi, filePath),
@@ -618,6 +730,8 @@ module.exports = {
   parseSshGKnownHostsPaths,
   quoteOpenSshOptionValue,
   resolveEffectiveGlobalKnownHostsPaths,
+  resolveEffectiveUserKnownHostsPaths,
   resolveExternalStrictHostKeyChecking,
+  splitKnownHostsPathList,
   vaultPinsConnectionHosts,
 };
