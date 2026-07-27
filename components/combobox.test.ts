@@ -89,3 +89,12 @@ test("combobox exposes active-option semantics for keyboard navigation", () => {
 test("combobox trigger shows a focus-within ring for keyboard users", () => {
   assert.match(source, /focus-within:outline-none focus-within:ring-1 focus-within:ring-ring/);
 });
+
+test("combobox selects the current label on focus so typing replaces instead of appending", () => {
+  assert.match(source, /onFocus=\{handleInputFocus\}/);
+  assert.match(source, /inputRef\.current\?\.select\(\)/);
+  assert.match(
+    source,
+    /if \(nextOpen\) \{\s*\/\/ Focus \+ select so opening via the chevron still replaces on first keystroke\.\s*focusAndSelectInput\(\)/,
+  );
+});

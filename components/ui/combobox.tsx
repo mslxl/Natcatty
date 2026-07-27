@@ -180,6 +180,14 @@ export function Combobox({
         }
     }
 
+    const focusAndSelectInput = () => {
+        // Defer so selection wins over click-to-place-caret on focus.
+        requestAnimationFrame(() => {
+            inputRef.current?.focus()
+            inputRef.current?.select()
+        })
+    }
+
     const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         setInputValue(e.target.value)
         onInputValueChange?.(e.target.value)
@@ -188,10 +196,19 @@ export function Combobox({
         if (!open) setOpen(true)
     }
 
+    const handleInputFocus = () => {
+        focusAndSelectInput()
+    }
+
     const handleOpenChange = (nextOpen: boolean) => {
         setOpen(nextOpen)
         setActiveIndex(-1)
-        if (!nextOpen) onInputValueChange?.(value ?? "")
+        if (nextOpen) {
+            // Focus + select so opening via the chevron still replaces on first keystroke.
+            focusAndSelectInput()
+        } else {
+            onInputValueChange?.(value ?? "")
+        }
     }
 
     const handleInputKeyDown = (e: React.KeyboardEvent) => {
@@ -248,6 +265,7 @@ export function Combobox({
                         type="text"
                         value={inputValue}
                         onChange={handleInputChange}
+                        onFocus={handleInputFocus}
                         onKeyDown={handleInputKeyDown}
                         role="combobox"
                         aria-autocomplete="list"
