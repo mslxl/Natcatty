@@ -2155,6 +2155,10 @@ test('every Cursor agent invocation uses the one-shot credential descriptor brid
   }
   assert.match(workflow, /AGENT_CLI_CREDENTIAL_STORE=memory/);
   assert.match(workflow, /CURSOR_INVOKED_AS=agent/);
+  assert.match(workflow, /CURSOR_TOOL_PATH="\$runner_node_dir:/);
+  assert.match(workflow, /export PATH=\$\{JSON\.stringify\(toolPath\)\}/);
+  assert.match(workflow, /"\$RUNNER_TOOL_CACHE"\/node\/\*\/bin/);
+  assert.match(workflow, /official install directory/);
   assert.match(workflow, /CURSOR_API_KEY_FD=3/);
   assert.match(workflow, /process\.argv\.splice\(2, 0, '--api-key', value\)/);
   assert.match(workflow, /delete process\.env\.CURSOR_API_KEY/);

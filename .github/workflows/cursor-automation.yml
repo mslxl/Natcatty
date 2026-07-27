@@ -478,8 +478,21 @@ jobs:
           command -v setpriv >/dev/null
           agent_path="$(realpath "$(command -v agent)")"
           export CURSOR_AGENT_DIR="$(dirname "$agent_path")"
+          if [[ "$CURSOR_AGENT_DIR" != "$HOME/.local/share/cursor-agent/versions/"* ]]; then
+            echo "Cursor CLI resolved outside the official install directory." >&2
+            exit 1
+          fi
           test -x "$CURSOR_AGENT_DIR/node"
           test -f "$CURSOR_AGENT_DIR/index.js"
+          runner_node_dir="$(dirname "$(realpath "$(command -v node)")")"
+          case "$runner_node_dir" in
+            "$RUNNER_TOOL_CACHE"/node/*/bin|/usr/local/bin|/usr/bin) ;;
+            *)
+              echo "Runner Node resolved outside a trusted tool directory." >&2
+              exit 1
+              ;;
+          esac
+          export CURSOR_TOOL_PATH="$runner_node_dir:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
           wrapper_version="$(agent --version)"
           direct_version="$("$CURSOR_AGENT_DIR/node" --use-system-ca "$CURSOR_AGENT_DIR/index.js" --version)"
           test "$wrapper_version" = "$direct_version"
@@ -491,6 +504,8 @@ jobs:
           const launcherPath = path.join(root, 'cursor-agent-authenticated');
           const agentDir = process.env.CURSOR_AGENT_DIR;
           if (!agentDir) throw new Error('CURSOR_AGENT_DIR is missing.');
+          const toolPath = process.env.CURSOR_TOOL_PATH;
+          if (!toolPath) throw new Error('CURSOR_TOOL_PATH is missing.');
           const nodePath = path.join(agentDir, 'node');
           const indexPath = path.join(agentDir, 'index.js');
           fs.writeFileSync(preloadPath, String.raw`'use strict';
@@ -532,6 +547,7 @@ jobs:
             'chmod 0700 "$auth_config"',
             'export AGENT_CLI_CREDENTIAL_STORE=memory',
             'export CURSOR_INVOKED_AS=agent',
+            `export PATH=${JSON.stringify(toolPath)}`,
             'export CURSOR_API_KEY_FD=3',
             'export NODE_OPTIONS="--require=${RUNNER_TEMP}/cursor-api-key-fd.cjs"',
             'export XDG_CONFIG_HOME="$auth_config"',
