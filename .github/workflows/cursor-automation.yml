@@ -535,9 +535,9 @@ jobs:
               configPath: process.env.HOME + "/.cursor/cli-config.json",
             });
           '
-          agent sandbox run -- bash -c 'touch .cursor-runtime/sandbox-check'
+          agent sandbox run -- touch .cursor-runtime/sandbox-check
           test -f .cursor-runtime/sandbox-check
-          if agent sandbox run -- bash -c 'curl -fsS --max-time 3 https://example.com >/dev/null'; then
+          if agent sandbox run -- curl -fsS --max-time 3 -o /dev/null https://example.com; then
             echo "Cursor command sandbox unexpectedly allowed network access." >&2
             exit 1
           fi
@@ -889,9 +889,9 @@ jobs:
               denyWeb: true,
             });
           '
-          agent sandbox run -- bash -c 'touch .cursor-runtime/sandbox-smoke'
+          agent sandbox run -- touch .cursor-runtime/sandbox-smoke
           test -f .cursor-runtime/sandbox-smoke
-          if agent sandbox run -- bash -c 'curl -fsS --max-time 3 https://example.com >/dev/null'; then
+          if agent sandbox run -- curl -fsS --max-time 3 -o /dev/null https://example.com; then
             echo "Cursor sandbox unexpectedly allowed network access." >&2
             exit 1
           fi
@@ -1132,9 +1132,9 @@ jobs:
               configPath: process.env.HOME + "/.cursor/cli-config.json",
             });
           '
-          agent sandbox run -- bash -c 'touch .cursor-runtime/followup-sandbox-check'
+          agent sandbox run -- touch .cursor-runtime/followup-sandbox-check
           test -f .cursor-runtime/followup-sandbox-check
-          if agent sandbox run -- bash -c 'curl -fsS --max-time 3 https://example.com >/dev/null'; then
+          if agent sandbox run -- curl -fsS --max-time 3 -o /dev/null https://example.com; then
             echo "Cursor command sandbox unexpectedly allowed network access." >&2
             exit 1
           fi
@@ -2380,9 +2380,9 @@ jobs:
               denyWeb: true,
             });
           '
-          agent sandbox run -- bash -c 'touch .cursor-runtime/implement-sandbox-check'
+          agent sandbox run -- touch .cursor-runtime/implement-sandbox-check
           test -f .cursor-runtime/implement-sandbox-check
-          if agent sandbox run -- bash -c 'curl -fsS --max-time 3 https://example.com >/dev/null'; then
+          if agent sandbox run -- curl -fsS --max-time 3 -o /dev/null https://example.com; then
             echo "Cursor command sandbox unexpectedly allowed network access." >&2
             exit 1
           fi
@@ -3656,9 +3656,9 @@ jobs:
               denyWeb: true,
             });
           '
-          agent sandbox run -- bash -c 'touch .cursor-runtime/fix-sandbox-check'
+          agent sandbox run -- touch .cursor-runtime/fix-sandbox-check
           test -f .cursor-runtime/fix-sandbox-check
-          if agent sandbox run -- bash -c 'curl -fsS --max-time 3 https://example.com >/dev/null'; then
+          if agent sandbox run -- curl -fsS --max-time 3 -o /dev/null https://example.com; then
             echo "Cursor command sandbox unexpectedly allowed network access." >&2
             exit 1
           fi

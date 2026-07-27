@@ -1762,11 +1762,11 @@ test('workflow exposes a write-credential-free Cursor sandbox smoke check', () =
   assert.match(smokeJob, /agent sandbox enable/);
   assert.match(
     smokeJob,
-    /prepareCursorCliConfig[\s\S]*?agent sandbox run -- bash -c 'touch \.cursor-runtime\/sandbox-smoke'/,
+    /prepareCursorCliConfig[\s\S]*?agent sandbox run -- touch \.cursor-runtime\/sandbox-smoke/,
   );
   assert.match(
     smokeJob,
-    /agent sandbox run -- bash -c 'curl -fsS --max-time 3 https:\/\/example\.com >\/dev\/null'/,
+    /agent sandbox run -- curl -fsS --max-time 3 -o \/dev\/null https:\/\/example\.com/,
   );
   assert.match(smokeJob, /--policy "\$sandbox_policy_file"/);
   assert.match(smokeJob, /sandbox: \{/);
@@ -1801,19 +1801,34 @@ test('workflow prepares missing Cursor config on every agent path and checks it 
   assert.match(smokeJob, /prepareCursorCliConfig/);
 });
 
-test('workflow passes sandbox commands after the Cursor option boundary', () => {
+test('workflow passes direct commands after the Cursor option boundary', () => {
   const workflow = fs.readFileSync(
     path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
     'utf8',
   );
   const sandboxRunLines = workflow
     .split('\n')
-    .filter((line) => line.includes('agent sandbox run'));
+    .filter((line) => line.includes('agent sandbox run'))
+    .map((line) => line.trim());
+  const expectedTouchCommands = [
+    'agent sandbox run -- touch .cursor-runtime/sandbox-check',
+    'agent sandbox run -- touch .cursor-runtime/sandbox-smoke',
+    'agent sandbox run -- touch .cursor-runtime/followup-sandbox-check',
+    'agent sandbox run -- touch .cursor-runtime/implement-sandbox-check',
+    'agent sandbox run -- touch .cursor-runtime/fix-sandbox-check',
+  ];
+  const expectedCurlCommand =
+    'if agent sandbox run -- curl -fsS --max-time 3 -o /dev/null https://example.com; then';
 
   assert.equal(sandboxRunLines.length, 10);
-  for (const line of sandboxRunLines) {
-    assert.match(line, /agent sandbox run -- bash -c/);
-  }
+  assert.deepEqual(
+    sandboxRunLines.filter((line) => line.includes(' -- touch ')).sort(),
+    expectedTouchCommands.sort(),
+  );
+  assert.equal(
+    sandboxRunLines.filter((line) => line === expectedCurlCommand).length,
+    5,
+  );
 });
 
 test('normalizeExternalResearchText accepts sourced research and explicit no-op', () => {
