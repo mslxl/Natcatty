@@ -1737,14 +1737,14 @@ test('every Cursor job prepares and verifies the Linux sandbox host', () => {
   }
 });
 
-test('workflow exposes a write-credential-free Cursor sandbox smoke check', () => {
+test('workflow keeps sandbox probes credential-free and runs an authenticated agent smoke', () => {
   const workflow = fs.readFileSync(
     path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
     'utf8',
   );
   assert.match(
     workflow,
-    /sandbox_smoke:\n\s+description: Verify the Cursor sandbox without repository credentials\n\s+required: false\n\s+type: boolean\n\s+default: false/,
+    /sandbox_smoke:\n\s+description: Verify the Cursor sandbox and authenticated agent\n\s+required: false\n\s+type: boolean\n\s+default: false/,
   );
   const smokeJob = workflow.match(
     /\n  sandbox_smoke:\n[\s\S]*?(?=\n  [a-zA-Z0-9_]+:\n)/,
@@ -1774,7 +1774,20 @@ test('workflow exposes a write-credential-free Cursor sandbox smoke check', () =
   assert.match(smokeJob, /touch \.cursor-runtime\/sandbox-smoke/);
   assert.match(smokeJob, /Cursor sandbox unexpectedly allowed network access/);
   assert.doesNotMatch(smokeJob, /--sandbox-policy/);
-  assert.doesNotMatch(smokeJob, /CURSOR_API_KEY|GITHUB_TOKEN|GH_TOKEN/);
+  const sandboxStep = smokeJob.match(
+    /- name: Verify Cursor sandbox[\s\S]*?(?=\n\s{6}- name:)/,
+  )?.[0] || '';
+  assert.doesNotMatch(sandboxStep, /CURSOR_API_KEY|GITHUB_TOKEN|GH_TOKEN/);
+  assert.match(
+    smokeJob,
+    /- name: Run authenticated Cursor agent smoke[\s\S]*?CURSOR_API_KEY: \$\{\{ secrets\.CURSOR_API_KEY \}\}/,
+  );
+  assert.match(smokeJob, /unset CURSOR_API_KEY CURSOR_AUTH_TOKEN/);
+  assert.match(
+    smokeJob,
+    /agent --api-key "\$cursor_api_key" -p --mode=ask --force --trust/,
+  );
+  assert.match(smokeJob, /CURSOR_AGENT_SMOKE_OK/);
 });
 
 test('workflow prepares missing Cursor config on every agent path and checks it daily', () => {
@@ -2071,9 +2084,15 @@ test('workflow confines forced WebSearch to isolated read-only research passes',
   assert.equal(researchRuns.length, 2);
   for (const run of researchRuns) {
     assert.match(run, /mktemp -d \/tmp\/cursor-web-research/);
-    assert.match(run, /agent -p --mode=ask --force --trust --sandbox enabled/);
+    assert.match(
+      run,
+      /CURSOR_API_KEY: \$\{\{ secrets\.CURSOR_API_KEY \}\}[\s\S]*?unset CURSOR_API_KEY CURSOR_AUTH_TOKEN/,
+    );
+    assert.match(
+      run,
+      /agent --api-key "\$cursor_api_key" -p --mode=ask --force --trust --sandbox enabled/,
+    );
     assert.match(run, /--output-format stream-json/);
-    assert.match(run, /env -u CURSOR_API_KEY -u CURSOR_AUTH_TOKEN/);
     assert.match(run, /GITHUB_TOKEN: ''/);
     assert.match(run, /GH_TOKEN: ''/);
     assert.match(run, /Shell\(\*\)/);
@@ -2087,15 +2106,44 @@ test('workflow confines forced WebSearch to isolated read-only research passes',
 
   const nonResearchAgentLines = workflow
     .split('\n')
-    .filter((line) => line.includes('agent -p') && !line.includes('--force'));
+    .filter((line) => line.includes('agent --api-key "$cursor_api_key" -p') && !line.includes('--force'));
   assert.ok(nonResearchAgentLines.length >= 4);
   assert.equal(
-    workflow.split('\n').filter((line) => line.includes('agent -p') && line.includes('--force')).length,
-    2,
+    workflow.split('\n').filter((line) => (
+      line.includes('agent --api-key "$cursor_api_key" -p') && line.includes('--force')
+    )).length,
+    3,
   );
   assert.equal((workflow.match(/denyWeb: true/g) || []).length, 5);
   assert.doesNotMatch(workflow, /issue-research-\$\{\{ github\.run_id \}\}-\$\{\{ github\.run_attempt \}\}/);
   assert.match(workflow, /name: issue-research-\$\{\{ github\.run_id \}\}[\s\S]*?overwrite: true/);
+});
+
+test('every Cursor agent invocation receives the API key without exporting it to tools', () => {
+  const workflow = fs.readFileSync(
+    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    'utf8',
+  );
+  const agentCalls = workflow
+    .split('\n')
+    .filter((line) => line.includes('agent --api-key "$cursor_api_key" -p'));
+
+  assert.equal(agentCalls.length, 8);
+  assert.doesNotMatch(workflow, /env -u CURSOR_API_KEY -u CURSOR_AUTH_TOKEN/);
+  assert.equal((workflow.match(/unset CURSOR_API_KEY CURSOR_AUTH_TOKEN/g) || []).length, 7);
+  const keyedRunSteps = [...workflow.matchAll(
+    /      - name: (?:Research external context for classification|Classify with Cursor CLI|Run authenticated Cursor agent smoke|Research external context for follow-up|Review follow-up with Cursor CLI|Implement with Cursor CLI|Fix with Cursor CLI)\n[\s\S]*?(?=\n      - name:|\n  [a-zA-Z0-9_]+:)/g,
+  )].map((match) => match[0]);
+  assert.equal(keyedRunSteps.length, 7);
+  for (const step of keyedRunSteps) {
+    assert.match(step, /CURSOR_API_KEY: \$\{\{ secrets\.CURSOR_API_KEY \}\}/);
+    assert.match(step, /cursor_api_key="\$CURSOR_API_KEY"/);
+    assert.match(step, /unset CURSOR_API_KEY CURSOR_AUTH_TOKEN/);
+  }
+  assert.doesNotMatch(
+    workflow,
+    /env -u CURSOR_API_KEY -u CURSOR_AUTH_TOKEN agent status/,
+  );
 });
 
 test('workflow denies WebSearch only after isolated research, not before it', () => {
