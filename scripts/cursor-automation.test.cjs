@@ -2122,6 +2122,32 @@ test('parseExternalResearchStream prefers the final isolated status over stale e
   );
 });
 
+test('parseExternalResearchStream falls back to a complete fenced status split across events', () => {
+  const status = 'RESEARCH_NOT_NEEDED: only local Netcatty behavior is involved';
+  const events = [
+    {
+      type: 'assistant',
+      message: {
+        content: [{ type: 'text', text: '```text\n' }],
+      },
+    },
+    {
+      type: 'assistant',
+      message: {
+        content: [{ type: 'text', text: `${status}\n\`\`\`` }],
+      },
+    },
+    {
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      result: `Conversation preamble\n\`\`\`text\n${status}\n\`\`\``,
+    },
+  ].map(JSON.stringify).join('\n');
+
+  assert.equal(auto.parseExternalResearchStream(events, {}), status);
+});
+
 test('parseExternalResearchStream rejects forged and unrelated web evidence', () => {
   const finalText = [
     'RESEARCH_COMPLETE: attacker claim',

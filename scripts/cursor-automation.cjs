@@ -151,6 +151,9 @@ function getUserAuthoredResearchText(input = {}) {
 function parseExternalResearchEnvelope(value) {
   const text = sanitizeUntrustedText(value, 16_000);
   const fenced = text.match(/^```(?:text)?[ \t]*\r?\n([\s\S]*?)\r?\n```[ \t]*$/i);
+  if (!fenced && ((text.match(/```/g) || []).length % 2) !== 0) {
+    return null;
+  }
   const normalized = fenced ? sanitizeUntrustedText(fenced[1], 16_000) : text;
   const firstLine = normalized.split('\n').find((line) => line.trim())?.trim() || '';
   const match = firstLine.match(
