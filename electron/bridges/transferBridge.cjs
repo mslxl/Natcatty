@@ -169,19 +169,46 @@ async function resolveRemoteResumeCheckpoint(client, sftpId, filePath, encoding,
   }
 }
 
-async function hashReadable(readable) {
+async function hashReadable(readable, signal = null) {
+  if (signal?.aborted) {
+    try { readable.destroy?.(); } catch { /* ignore */ }
+    throw new Error("Transfer cancelled");
+  }
   const hash = crypto.createHash("sha256");
-  for await (const chunk of readable) hash.update(chunk);
-  return hash.digest("hex");
+  const onAbort = () => {
+    try { readable.destroy?.(new Error("Transfer cancelled")); } catch { /* ignore */ }
+  };
+  if (signal) {
+    signal.addEventListener("abort", onAbort, { once: true });
+  }
+  try {
+    for await (const chunk of readable) {
+      if (signal?.aborted) throw new Error("Transfer cancelled");
+      hash.update(chunk);
+    }
+    if (signal?.aborted) throw new Error("Transfer cancelled");
+    return hash.digest("hex");
+  } finally {
+    if (signal) {
+      try { signal.removeEventListener("abort", onAbort); } catch { /* ignore */ }
+    }
+  }
 }
 
-function hashLocalPrefix(filePath, bytes) {
-  if (!bytes) return Promise.resolve(null);
-  return hashReadable(fs.createReadStream(filePath, { start: 0, end: bytes - 1 }));
+function hashLocalRange(filePath, start, endExclusive, signal = null) {
+  const length = Math.max(0, (Number(endExclusive) || 0) - (Number(start) || 0));
+  if (!length) return Promise.resolve(null);
+  return hashReadable(
+    fs.createReadStream(filePath, {
+      start: Math.max(0, Number(start) || 0),
+      end: Math.max(0, Number(endExclusive) || 0) - 1,
+    }),
+    signal,
+  );
 }
 
-function hashLocalFile(filePath) {
-  return hashReadable(fs.createReadStream(filePath));
+function hashLocalFile(filePath, signal = null) {
+  return hashReadable(fs.createReadStream(filePath), signal);
 }
 
 async function hashRemoteFile(client, sftpId, filePath, encoding) {
@@ -319,8 +346,8 @@ async function computeMatchingSourceFingerprint(storedFingerprint, params) {
 
 /**
  * meta: fingerprints gained an optional content-sample suffix. Legacy
- * meta:size:mtime values still match when size+mtime agree; full checkpoint
- * content verify (see resumeContentVerifyBytes) covers same-size rewrites.
+ * meta:size:mtime values still match when size+mtime agree; bounded checkpoint
+ * content verify (see resumeContentVerifyRanges) covers same-size rewrites.
  */
 function sourceFingerprintsMatch(storedFingerprint, currentFingerprint) {
   if (!storedFingerprint || !currentFingerprint) return false;
@@ -341,38 +368,61 @@ function sourceFingerprintsMatch(storedFingerprint, currentFingerprint) {
   return false;
 }
 
-async function hashRemotePrefix(client, sftpId, filePath, encoding, bytes) {
-  if (!bytes) return null;
+async function hashRemoteRange(client, sftpId, filePath, encoding, start, endExclusive, signal = null) {
+  const length = Math.max(0, (Number(endExclusive) || 0) - (Number(start) || 0));
+  if (!length) return null;
   if (isScpModeClient(client)) return null;
   await requireSftpChannel(client);
   const encodedPath = encodePathForSession(sftpId, filePath, encoding);
-  return hashReadable(client.sftp.createReadStream(encodedPath, { start: 0, end: bytes - 1 }));
+  return hashReadable(
+    client.sftp.createReadStream(encodedPath, {
+      start: Math.max(0, Number(start) || 0),
+      end: Math.max(0, Number(endExclusive) || 0) - 1,
+    }),
+    signal,
+  );
 }
 
 /**
- * Cap content re-hash on resume for strong (sha256:) fingerprints. Full-prefix
- * hashing of multi-MB .part files over SFTP can take longer than the remaining
- * transfer and freezes the UI at "transferring" with no byte movement.
+ * Cap content re-hash on resume. Full-prefix hashing of multi-GB .part files
+ * over SFTP can take longer than the remaining transfer and freezes the UI at
+ * "transferring" with no byte movement; cancel must also destroy the hash stream.
  *
- * meta: identities are only size+mtime(+samples). Same-size rewrites past the
- * sample points / 256 KiB leading window still need a full checkpoint compare
- * before appending, or the staged file mixes two source versions.
+ * Strong (sha256:) fingerprints only need a leading window. meta: identities
+ * are size+mtime(+sparse samples), so also hash a trailing window of the
+ * checkpoint to catch same-size rewrites past the leading 256 KiB without
+ * re-reading the entire saved prefix.
  */
 const RESUME_CONTENT_VERIFY_MAX_BYTES = 256 * 1024;
 
-function resumeContentVerifyBytes(checkpoint, fingerprint) {
+function resumeContentVerifyRanges(checkpoint, fingerprint) {
   const claimed = Math.max(0, Number(checkpoint) || 0);
-  if (!claimed) return 0;
-  if (typeof fingerprint === "string" && fingerprint.startsWith("meta:")) {
-    return claimed;
+  if (!claimed) return [];
+  const window = RESUME_CONTENT_VERIFY_MAX_BYTES;
+  const leadingEnd = Math.min(claimed, window);
+  if (!(typeof fingerprint === "string" && fingerprint.startsWith("meta:")) || claimed <= window) {
+    return [{ start: 0, end: leadingEnd }];
   }
-  return Math.min(claimed, RESUME_CONTENT_VERIFY_MAX_BYTES);
+  const trailingStart = Math.max(0, claimed - window);
+  if (trailingStart <= leadingEnd) {
+    // Checkpoint fits in at most two overlapping windows — one contiguous hash.
+    return [{ start: 0, end: claimed }];
+  }
+  return [
+    { start: 0, end: leadingEnd },
+    { start: trailingStart, end: claimed },
+  ];
 }
 
-async function assertMatchingResumeContent(sourceHashPromise, stagedHashPromise) {
-  const [sourceHash, stagedHash] = await Promise.all([sourceHashPromise, stagedHashPromise]);
-  if (sourceHash && stagedHash && sourceHash !== stagedHash) {
-    throw new Error("Resume safety check failed: saved content does not match the source");
+async function assertMatchingResumeRanges(ranges, hashSourceRange, hashStagedRange) {
+  for (const range of ranges) {
+    const [sourceHash, stagedHash] = await Promise.all([
+      hashSourceRange(range.start, range.end),
+      hashStagedRange(range.start, range.end),
+    ]);
+    if (sourceHash && stagedHash && sourceHash !== stagedHash) {
+      throw new Error("Resume safety check failed: saved content does not match the source");
+    }
   }
 }
 
@@ -3020,14 +3070,22 @@ async function startTransferNow(event, payload, onProgress) {
             : 0;
           sendProgress(transfer.checkpointBytes, fileSize, { force: true });
           if (usesStage && transfer.checkpointBytes > 0) {
-            const verifyBytes = resumeContentVerifyBytes(
-              transfer.checkpointBytes,
-              transfer.sourceFingerprint,
-            );
-            await runCancelablePreflight(() => assertMatchingResumeContent(
-                hashLocalPrefix(sourcePath, verifyBytes),
-                hashRemotePrefix(client, targetSftpId, uploadTargetPath, targetEncoding, verifyBytes),
-              ));
+            await runCancelablePreflight(() => assertMatchingResumeRanges(
+              resumeContentVerifyRanges(
+                transfer.checkpointBytes,
+                transfer.sourceFingerprint,
+              ),
+              (start, end) => hashLocalRange(sourcePath, start, end, transfer.signal),
+              (start, end) => hashRemoteRange(
+                client,
+                targetSftpId,
+                uploadTargetPath,
+                targetEncoding,
+                start,
+                end,
+                transfer.signal,
+              ),
+            ));
           }
           await uploadFile(
             sourcePath,
@@ -3065,13 +3123,21 @@ async function startTransferNow(event, payload, onProgress) {
       );
       sendProgress(transfer.checkpointBytes, fileSize, { force: true });
       await runCancelablePreflight(async () => {
-        const verifyBytes = resumeContentVerifyBytes(
-          transfer.checkpointBytes,
-          transfer.sourceFingerprint,
-        );
-        await assertMatchingResumeContent(
-          hashRemotePrefix(client, sourceSftpId, sourcePath, sourceEncoding, verifyBytes),
-          hashLocalPrefix(downloadTargetPath, verifyBytes),
+        await assertMatchingResumeRanges(
+          resumeContentVerifyRanges(
+            transfer.checkpointBytes,
+            transfer.sourceFingerprint,
+          ),
+          (start, end) => hashRemoteRange(
+            client,
+            sourceSftpId,
+            sourcePath,
+            sourceEncoding,
+            start,
+            end,
+            transfer.signal,
+          ),
+          (start, end) => hashLocalRange(downloadTargetPath, start, end, transfer.signal),
         );
       });
       const downloadResult = await downloadFile(
@@ -3147,13 +3213,11 @@ async function startTransferNow(event, payload, onProgress) {
       );
       transfer.checkpointBytes = checkpoint;
       sendProgress(checkpoint, fileSize, { force: true });
-      {
-        const verifyBytes = resumeContentVerifyBytes(checkpoint, transfer.sourceFingerprint);
-        await assertMatchingResumeContent(
-          hashLocalPrefix(sourcePath, verifyBytes),
-          hashLocalPrefix(localTargetPath, verifyBytes),
-        );
-      }
+      await assertMatchingResumeRanges(
+        resumeContentVerifyRanges(checkpoint, transfer.sourceFingerprint),
+        (start, end) => hashLocalRange(sourcePath, start, end, transfer.signal),
+        (start, end) => hashLocalRange(localTargetPath, start, end, transfer.signal),
+      );
 
       await new Promise((resolve, reject) => {
         transfer.pauseSupported = Boolean(transfer.resumable);
@@ -3294,13 +3358,21 @@ async function startTransferNow(event, payload, onProgress) {
             ? sourcePath
             : encodePathForSession(sourceSftpId, sourcePath, sourceEncoding);
           await runCancelablePreflight(async () => {
-            const verifyBytes = resumeContentVerifyBytes(
-              transfer.downloadCheckpointBytes,
-              transfer.sourceFingerprint,
-            );
-            await assertMatchingResumeContent(
-              hashRemotePrefix(sourceClient, sourceSftpId, sourcePath, sourceEncoding, verifyBytes),
-              hashLocalPrefix(tempPath, verifyBytes),
+            await assertMatchingResumeRanges(
+              resumeContentVerifyRanges(
+                transfer.downloadCheckpointBytes,
+                transfer.sourceFingerprint,
+              ),
+              (start, end) => hashRemoteRange(
+                sourceClient,
+                sourceSftpId,
+                sourcePath,
+                sourceEncoding,
+                start,
+                end,
+                transfer.signal,
+              ),
+              (start, end) => hashLocalRange(tempPath, start, end, transfer.signal),
             );
           });
           const downloadProgress = (transferred, reportedTotal, options = {}) => {
@@ -3422,20 +3494,22 @@ async function startTransferNow(event, payload, onProgress) {
             sendProgress(lastObservedTransferred, fileSize, { force: true });
             transfer.checkpointBytes = transfer.uploadCheckpointBytes;
             if (usesStage && transfer.uploadCheckpointBytes > 0) {
-              const verifyBytes = resumeContentVerifyBytes(
-                transfer.uploadCheckpointBytes,
-                transfer.sourceFingerprint,
-              );
-              await runCancelablePreflight(() => assertMatchingResumeContent(
-                  hashLocalPrefix(tempPath, verifyBytes),
-                  hashRemotePrefix(
-                    targetClient,
-                    targetSftpId,
-                    uploadTargetPath,
-                    targetEncoding,
-                    verifyBytes,
-                  ),
-                ));
+              await runCancelablePreflight(() => assertMatchingResumeRanges(
+                resumeContentVerifyRanges(
+                  transfer.uploadCheckpointBytes,
+                  transfer.sourceFingerprint,
+                ),
+                (start, end) => hashLocalRange(tempPath, start, end, transfer.signal),
+                (start, end) => hashRemoteRange(
+                  targetClient,
+                  targetSftpId,
+                  uploadTargetPath,
+                  targetEncoding,
+                  start,
+                  end,
+                  transfer.signal,
+                ),
+              ));
             }
             await uploadFile(
               tempPath,
@@ -4339,4 +4413,5 @@ module.exports = {
   listTransferSftpIds,
   _promoteLocalTransferForTests: promoteLocalTransfer,
   _stableLocalFileIdentityForTests: stableLocalFileIdentity,
+  _resumeContentVerifyRangesForTests: resumeContentVerifyRanges,
 };

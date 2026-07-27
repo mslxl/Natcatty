@@ -1633,10 +1633,32 @@ test("remote pause identity reads modifyTime from session-backed stat", async (t
   assert.match(restarted.error || "", /source file has changed/i);
 });
 
+test("meta resume content verify stays bounded for large checkpoints", () => {
+  const ranges = transferBridge._resumeContentVerifyRangesForTests(
+    8 * 1024 * 1024 * 1024,
+    "meta:8589934592:1700000000000:deadbeef",
+  );
+  assert.deepEqual(ranges, [
+    { start: 0, end: 256 * 1024 },
+    { start: 8 * 1024 * 1024 * 1024 - 256 * 1024, end: 8 * 1024 * 1024 * 1024 },
+  ]);
+  const verifiedBytes = ranges.reduce((sum, range) => sum + (range.end - range.start), 0);
+  assert.equal(verifiedBytes, 512 * 1024);
+  assert.deepEqual(
+    transferBridge._resumeContentVerifyRangesForTests(400 * 1024, "meta:524288:1"),
+    [{ start: 0, end: 400 * 1024 }],
+  );
+  assert.deepEqual(
+    transferBridge._resumeContentVerifyRangesForTests(400 * 1024, "sha256:abc"),
+    [{ start: 0, end: 256 * 1024 }],
+  );
+});
+
 test("meta resume rejects same-size rewrite past the 256 KiB content window", async (t) => {
-  // Codex P1: size+mtime alone (and a 256 KiB leading content window) miss a
-  // same-size rewrite between identity sample points. meta: resumes must hash
-  // the full checkpoint against the staged .part before appending.
+  // Codex P1: size+mtime alone (and a leading 256 KiB window) miss a same-size
+  // rewrite between identity sample points. meta: resumes also hash a trailing
+  // checkpoint window (bounded; overlapping windows merge) so rewrites near the
+  // saved prefix tip are caught without re-reading multi-GB checkpoints.
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-meta-rewrite-"));
   t.after(async () => {
     await fs.promises.rm(tempDir, { recursive: true, force: true });
@@ -1673,7 +1695,7 @@ test("meta resume rejects same-size rewrite past the 256 KiB content window", as
   transferBridge.init({ sftpClients: new Map([["source", client]]) });
 
   // Legacy meta:size:mtime (no samples) still passes the identity gate when
-  // size+mtime agree; the full-checkpoint content compare must catch the gap.
+  // size+mtime agree; the trailing checkpoint window must catch the gap.
   const result = await transferBridge.startTransfer(
     { sender: createSender() },
     {
