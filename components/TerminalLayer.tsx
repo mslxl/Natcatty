@@ -1620,7 +1620,10 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
 
   const handleRunScriptFromPanel = useCallback(async (snippet: Snippet) => {
     const sessionId = getActiveTerminalSessionId();
-    if (!sessionId) return;
+    if (!sessionId) {
+      toast.error(t('scripts.recording.noSession'));
+      return;
+    }
     try {
       await runAutomationScript({
         snippet,
@@ -1633,15 +1636,77 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     }
   }, [getActiveTerminalSessionId, hosts, t]);
 
+  const sendCommandSnippetToSession = useCallback(async (
+    sessionId: string,
+    command: string,
+    snippet: Snippet,
+    options?: { focus?: boolean },
+  ): Promise<boolean> => {
+    // Never inject into a peer tab sitting on a password/sensitive prompt.
+    if (isTerminalSensitiveInputActive(sessionId)) return false;
+
+    const executor = snippetExecutorsRef.current.get(sessionId);
+    if (executor) {
+      // Executor may wake a hibernated pane first so bracketed-paste mode and
+      // encoding match the normal single-pane path.
+      const wrote = await executor(command, snippet.noAutoRun, {
+        multiLineRunMode: snippet.multiLineRunMode,
+        broadcast: false,
+        // Multi-tab fan-out must not call term.focus() on every peer.
+        focus: options?.focus !== false,
+      });
+      // Wake can surface a password prompt from buffered output — recheck.
+      if (isTerminalSensitiveInputActive(sessionId)) return false;
+      if (wrote) return true;
+    }
+
+    // Recheck before last-resort backend write as well.
+    if (isTerminalSensitiveInputActive(sessionId)) return false;
+
+    const session = sessionsRef.current.find((candidate) => candidate.id === sessionId);
+    if (!session || !canUseDirectSessionWriteFallback(session)) return false;
+
+    // Last-resort fallback when the executor could not write (rare). Prefer the
+    // executor path so terminal modes (bracketed paste) stay authoritative.
+    // Do not invent bracketed-paste markers without live term.modes.
+    let data = normalizeLineEndings(command);
+    const lineDelayMs = shouldDelayAutoRunSnippetInput(data, {
+      noAutoRun: snippet.noAutoRun,
+      multiLineRunMode: snippet.multiLineRunMode,
+    })
+      ? AUTO_RUN_SNIPPET_LINE_DELAY_MS
+      : undefined;
+    if (!snippet.noAutoRun) data = `${data}\r`;
+    terminalBackend.writeToSession(sessionId, data, {
+      automated: true,
+      sensitive: false,
+      ...(lineDelayMs ? { lineDelayMs } : {}),
+    });
+    return true;
+  }, [terminalBackend]);
+
   const handleRunScriptOnWorkspace = useCallback(async (
     snippet: Snippet,
     mode: 'sequential' | 'parallel' = 'parallel',
   ) => {
     const workspace = activeWorkspaceRef.current;
     if (!workspace) {
+      // Single terminal tab (no workspace): fall back to focused session.
       const sessionId = getActiveTerminalSessionId();
       if (!sessionId) {
         toast.error(t('scripts.recording.noSession'));
+        return;
+      }
+      if (isTerminalSensitiveInputActive(sessionId)) {
+        toast.info(t('scripts.actions.skippedSensitiveSessions', { count: 1 }));
+        return;
+      }
+      if (!isScriptSnippet(snippet)) {
+        const command = await resolveSnippetCommand(snippet);
+        if (command === null) return;
+        handleSnippetClickForFocusedSession(command, snippet.noAutoRun, {
+          multiLineRunMode: snippet.multiLineRunMode,
+        });
         return;
       }
       try {
@@ -1672,6 +1737,47 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     if (skippedConnecting > 0) {
       toast.info(t('scripts.actions.skippedConnectingSessions', { count: skippedConnecting }));
     }
+
+    // Code snippets: paste/send the resolved command to every connected tab.
+    // Sequential vs parallel only affects automation scripts (which await run
+    // completion); plain snippets are fire-and-forget writes.
+    if (!isScriptSnippet(snippet)) {
+      const command = await resolveSnippetCommand(snippet);
+      if (command === null) return;
+      const focusedBefore = workspace.focusedSessionId
+        ?? getActiveTerminalSessionId()
+        ?? null;
+      let sent = 0;
+      let skippedSensitive = 0;
+      for (const sid of sessionIds) {
+        if (isTerminalSensitiveInputActive(sid)) {
+          skippedSensitive += 1;
+          continue;
+        }
+        // Never steal focus from peer panes during fan-out; restore below.
+        if (await sendCommandSnippetToSession(sid, command, snippet, { focus: false })) sent += 1;
+      }
+      if (skippedSensitive > 0) {
+        toast.info(t('scripts.actions.skippedSensitiveSessions', { count: skippedSensitive }));
+      }
+      if (sent === 0 && skippedSensitive === 0) {
+        toast.error(t('scripts.recording.noSession'));
+      } else if (focusedBefore) {
+        focusTerminalSessionInput(focusedBefore);
+      }
+      return;
+    }
+
+    const runnableSessionIds = sessionIds.filter((sid) => !isTerminalSensitiveInputActive(sid));
+    const skippedSensitive = sessionIds.length - runnableSessionIds.length;
+    if (skippedSensitive > 0) {
+      toast.info(t('scripts.actions.skippedSensitiveSessions', { count: skippedSensitive }));
+    }
+    if (runnableSessionIds.length === 0) {
+      // Connected sessions all sensitive — do not claim "no session".
+      return;
+    }
+
     try {
       const runOnSession = (sid: string) => runAutomationScript({
         snippet,
@@ -1679,18 +1785,18 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
         sessionMeta: buildScriptSessionMeta(sid, sessionsRef.current, hosts),
       });
       if (mode === 'sequential') {
-        for (const sid of sessionIds) {
+        for (const sid of runnableSessionIds) {
           const { runId } = await runOnSession(sid);
           await waitForScriptRun(runId);
         }
       } else {
-        await Promise.all(sessionIds.map((sid) => runOnSession(sid)));
+        await Promise.all(runnableSessionIds.map((sid) => runOnSession(sid)));
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       toast.error(message.includes('Observer mode') ? t('scripts.observer.blocked') : message);
     }
-  }, [getActiveTerminalSessionId, hosts, t]);
+  }, [getActiveTerminalSessionId, handleSnippetClickForFocusedSession, hosts, sendCommandSnippetToSession, t]);
 
   useEffect(() => {
     const handler = (event: Event) => {

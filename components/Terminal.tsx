@@ -440,6 +440,8 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const autoReconnectAttemptRef = useRef(0);
   const startReconnectRef = useRef<((mode: "manual" | "auto") => void) | null>(null);
   const wakeHibernatedRuntimeForReconnectRef = useRef<(() => Promise<boolean>) | null>(null);
+  /** Connected wake for multi-tab snippet fan-out (reattaches session listeners). */
+  const wakeHibernatedRuntimeForConnectedRef = useRef<(() => Promise<boolean>) | null>(null);
   const reconnectWakeInFlightRef = useRef(false);
   const reconnectWakeTokenRef = useRef<symbol | null>(null);
   const manualReconnectRequestRef = useRef<() => void>(() => {});
@@ -2659,14 +2661,43 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     return false;
   }, [sessionId]);
 
-  const executeSnippetCommand = useCallback((
+  const executeSnippetCommand = useCallback(async (
     command: string,
     noAutoRun?: boolean,
-    options?: { broadcast?: boolean; multiLineRunMode?: Snippet["multiLineRunMode"] },
-  ) => {
+    options?: {
+      broadcast?: boolean;
+      multiLineRunMode?: Snippet["multiLineRunMode"];
+      /** When false, skip term.focus() so multi-tab fan-out does not steal focus. */
+      focus?: boolean;
+    },
+  ): Promise<boolean> => {
+    // Hidden-tab hibernation clears termRef. Wake via the *connected* path so
+    // reattachSession restores output listeners before we write the snippet.
+    // (The reconnect helper skips reattach and leaves the tab detached.)
+    if ((!termRef.current || !sessionRef.current) && hibernatedRef.current) {
+      const wake = wakeHibernatedRuntimeForConnectedRef.current;
+      if (wake) {
+        try {
+          await wake();
+        } catch {
+          // Fall through; we still report failure if term is unavailable.
+        }
+      }
+    }
+
     const term = termRef.current;
     const id = sessionRef.current;
-    if (!term || !id) return;
+    if (!term || !id) return false;
+
+    // Multi-tab fan-out uses focus:false + broadcast:false. After wake, buffered
+    // output may have activated a password prompt — refuse to inject the snippet.
+    if (
+      options?.focus === false
+      && options?.broadcast === false
+      && passwordPromptActiveRef.current
+    ) {
+      return false;
+    }
 
     let data = normalizeLineEndings(command);
     const lineDelayMs = shouldDelayAutoRunSnippetInput(data, {
@@ -2706,7 +2737,10 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       ...(lineDelayMs ? { lineDelayMs } : {}),
     });
     scrollToBottomAfterProgrammaticInput(data);
-    term.focus();
+    if (options?.focus !== false) {
+      term.focus();
+    }
+    return true;
   }, [prepareProgrammaticSudoInput, scrollToBottomAfterProgrammaticInput, terminalBackend, sessionId]);
 
   const executeSnippet = useCallback(async (snippet: Snippet) => {
@@ -3509,7 +3543,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     return wakePromise;
   }, [sessionId, terminalBackend, terminalRuntimeRefs, resizeSession, terminalSettings]);
 
-  wakeHibernatedRuntimeForReconnectRef.current = async () => {
+  const wakeHibernatedRuntime = useCallback(async (sessionConnected: boolean): Promise<boolean> => {
     if (!hibernatedRef.current) {
       return Boolean(termRef.current);
     }
@@ -3522,22 +3556,32 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       alternateScreen: hibernateAlternateScreenRef.current,
     });
 
-    logger.info("[Terminal] Waking hibernated runtime for reconnect", {
+    logger.info("[Terminal] Waking hibernated runtime", {
       sessionId,
+      sessionConnected,
       snapshotChars: hibernateSnapshotRef.current.length,
       viewportChars: hibernateViewportSnapshotRef.current.length,
       scrollbackChars: hibernateScrollbackSnapshotRef.current.length,
       pendingChars: hibernatePendingBufferRef.current.length,
     });
 
-    const accepted = await Promise.resolve(wakeFromHibernateRuntime(getPayload, { sessionConnected: false }));
+    const accepted = await Promise.resolve(wakeFromHibernateRuntime(getPayload, { sessionConnected }));
     if (accepted === false || !termRef.current) {
       return false;
     }
 
     clearHibernateRuntimeState();
+    // Connected multi-tab fan-out may wake still-hidden peers. Re-arm the
+    // hibernate timer so the full xterm runtime does not stay mounted forever
+    // (visibility/status do not change, so the hibernate effect will not rerun).
+    if (sessionConnected && !isVisibleRef.current) {
+      scheduleHibernateRetry();
+    }
     return true;
-  };
+  }, [sessionId, wakeFromHibernateRuntime, clearHibernateRuntimeState, scheduleHibernateRetry]);
+
+  wakeHibernatedRuntimeForReconnectRef.current = () => wakeHibernatedRuntime(false);
+  wakeHibernatedRuntimeForConnectedRef.current = () => wakeHibernatedRuntime(true);
 
   const hibernateFileTransferActive = isTerminalFileTransferActive({
     zmodemActive: zmodem.active,

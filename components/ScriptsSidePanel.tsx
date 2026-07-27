@@ -7,7 +7,7 @@
  * list of matching snippets regardless of package nesting.
  */
 
-import { ChevronRight, Edit2, Layers, Package, Play, Plus, Search, Trash2, Zap } from 'lucide-react';
+import { ChevronDown, ChevronRight, Edit2, FolderPlus, Layers, Package, Play, Plus, Search, Trash2, Zap } from 'lucide-react';
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useI18n } from '../application/i18n/I18nProvider';
 import { getScriptRecordingSnapshot, subscribeScriptRecording } from '../application/state/scriptRecordingStore.ts';
@@ -24,8 +24,11 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from './ui/context-menu';
+import { Dropdown, DropdownContent, DropdownTrigger } from './ui/dropdown';
 import { FixedSizeVirtualList } from './ui/FixedSizeVirtualList';
+import { Button } from './ui/button';
 import { Input } from './ui/input';
+import { Label } from './ui/label';
 import { SnippetCommandTooltipContent } from './snippets/SnippetCommandTooltipContent';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
 
@@ -251,6 +254,12 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
   const [search, setSearch] = useState('');
   const [subView, setSubView] = useState<'library' | 'running'>('library');
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
+  const [isPackageDialogOpen, setIsPackageDialogOpen] = useState(false);
+  const [newPackageName, setNewPackageName] = useState('');
+  const [packageError, setPackageError] = useState('');
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const packageDialogRef = useRef<HTMLDivElement>(null);
+  const packageNameInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const handler = (event: Event) => {
@@ -588,6 +597,105 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
     window.dispatchEvent(new CustomEvent('netcatty:scripts:add'));
   }, []);
 
+  const openPackageDialog = useCallback(() => {
+    setNewPackageName('');
+    setPackageError('');
+    setIsPackageDialogOpen(true);
+  }, []);
+
+  // Keep Tab focus inside the package dialog while it is open.
+  useEffect(() => {
+    if (!isPackageDialogOpen) return;
+    const focusTimer = window.setTimeout(() => packageNameInputRef.current?.focus(), 30);
+
+    const listFocusable = (): HTMLElement[] => {
+      const root = packageDialogRef.current;
+      if (!root) return [];
+      const nodes = root.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      );
+      return Array.from(nodes).filter((el) => {
+        if (el.classList.contains('sr-only')) return false;
+        if (el.getAttribute('aria-hidden') === 'true') return false;
+        return el.tabIndex >= 0 || el.tagName === 'INPUT' || el.tagName === 'BUTTON';
+      });
+    };
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab') return;
+      const focusable = listFocusable();
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+      if (e.shiftKey) {
+        if (!active || active === first || !packageDialogRef.current?.contains(active)) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else if (!active || active === last || !packageDialogRef.current?.contains(active)) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+
+    const onFocusIn = (e: FocusEvent) => {
+      const target = e.target as Node | null;
+      if (target && packageDialogRef.current?.contains(target)) return;
+      (listFocusable()[0] ?? packageNameInputRef.current)?.focus();
+    };
+
+    document.addEventListener('keydown', onKeyDown, true);
+    document.addEventListener('focusin', onFocusIn);
+    return () => {
+      window.clearTimeout(focusTimer);
+      document.removeEventListener('keydown', onKeyDown, true);
+      document.removeEventListener('focusin', onFocusIn);
+    };
+  }, [isPackageDialogOpen]);
+
+  const handleCreatePackage = useCallback(() => {
+    if (!onPackagesChange) {
+      setPackageError(t('snippets.renameDialog.error.empty'));
+      return;
+    }
+    const name = newPackageName.trim();
+    if (!name) {
+      setPackageError(t('snippets.renameDialog.error.empty'));
+      return;
+    }
+    // Match SnippetsManager.createPackage path rules so tree rows stay stable.
+    if (!/^\/?([\w\p{L}\p{N}-]+(\/[\w\p{L}\p{N}-]+)*)\/?$/u.test(name)) {
+      setPackageError(t('snippets.renameDialog.error.invalidChars'));
+      return;
+    }
+    let full = name.endsWith('/') ? name.slice(0, -1) : name;
+    if (full !== '/' && full.endsWith('/')) full = full.slice(0, -1);
+    const existingPackage = packages.find((p) => p.toLowerCase() === full.toLowerCase());
+    if (existingPackage) {
+      setPackageError(t('snippets.renameDialog.error.duplicate'));
+      return;
+    }
+    onPackagesChange([...packages, full]);
+    setExpandedPaths((prev) => {
+      const next = new Set(prev);
+      let path = full.startsWith('/') ? full.slice(1) : full;
+      // Expand both absolute and relative forms used by the tree walker.
+      next.add(full);
+      while (path) {
+        next.add(path);
+        if (full.startsWith('/')) next.add(`/${path}`);
+        const slash = path.lastIndexOf('/');
+        if (slash < 0) break;
+        path = path.slice(0, slash);
+      }
+      return next;
+    });
+    setIsPackageDialogOpen(false);
+    setNewPackageName('');
+    setPackageError('');
+  }, [newPackageName, onPackagesChange, packages, t]);
+
   const handleEditSnippet = useCallback((snippet: Snippet) => {
     window.dispatchEvent(
       new CustomEvent('netcatty:snippets:edit', { detail: { snippet } }),
@@ -607,7 +715,7 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
   return (
     <TooltipProvider delayDuration={300}>
     <div
-      className="h-full flex flex-col bg-background overflow-hidden"
+      className="relative h-full flex flex-col bg-background overflow-hidden"
       data-section="snippets-panel"
     >
       {/* Sub view tabs */}
@@ -656,19 +764,72 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
             className="h-7 pl-7 text-xs bg-muted/30 border-none"
           />
         </div>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              onClick={handleAddSnippet}
-              aria-label={t('snippets.action.newSnippet')}
-              className="shrink-0 h-7 w-7 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
-            >
-              <Plus size={14} />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>{t('snippets.action.newSnippet')}</TooltipContent>
-        </Tooltip>
+        {/* Split add control: primary = new snippet; menu = package / automation script */}
+        <div className="shrink-0 flex items-center">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={handleAddSnippet}
+                aria-label={t('snippets.action.newSnippet')}
+                className="h-7 w-7 flex items-center justify-center rounded-l-md text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
+              >
+                <Plus size={14} />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>{t('snippets.action.newSnippet')}</TooltipContent>
+          </Tooltip>
+          <Dropdown open={addMenuOpen} onOpenChange={setAddMenuOpen}>
+            <DropdownTrigger asChild>
+              <button
+                type="button"
+                aria-label={t('common.more')}
+                aria-haspopup="menu"
+                aria-expanded={addMenuOpen}
+                className="h-7 w-5 flex items-center justify-center rounded-r-md border-l border-border/40 text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
+              >
+                <ChevronDown size={12} />
+              </button>
+            </DropdownTrigger>
+            <DropdownContent className="w-48 p-1" align="end">
+              <button
+                type="button"
+                className="w-full flex items-center gap-2 px-2 py-1.5 text-xs rounded-md hover:bg-muted transition-colors"
+                onClick={() => {
+                  setAddMenuOpen(false);
+                  handleAddSnippet();
+                }}
+              >
+                <Zap size={12} className="text-muted-foreground" />
+                {t('snippets.action.newSnippet')}
+              </button>
+              {onPackagesChange ? (
+                <button
+                  type="button"
+                  className="w-full flex items-center gap-2 px-2 py-1.5 text-xs rounded-md hover:bg-muted transition-colors"
+                  onClick={() => {
+                    setAddMenuOpen(false);
+                    openPackageDialog();
+                  }}
+                >
+                  <FolderPlus size={12} className="text-muted-foreground" />
+                  {t('snippets.action.newPackage')}
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className="w-full flex items-center gap-2 px-2 py-1.5 text-xs rounded-md hover:bg-muted transition-colors"
+                onClick={() => {
+                  setAddMenuOpen(false);
+                  handleAddScript();
+                }}
+              >
+                <Play size={12} className="text-primary" />
+                {t('snippets.action.newScript')}
+              </button>
+            </DropdownContent>
+          </Dropdown>
+        </div>
       </div>
 
       {/* Content */}
@@ -691,6 +852,7 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
             getItemKey={(item) => item.key}
             renderItem={(item) => {
               if (item.kind === 'search') {
+                const isScript = isScriptSnippet(item.snippet);
                 return (
                   <SnippetRow
                     snippet={item.snippet}
@@ -704,6 +866,16 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
                     onClick={() => handleSnippetClick(item.snippet)}
                     onEdit={() => handleEditSnippet(item.snippet)}
                     onDelete={() => handleDeleteSnippet(item.snippet.id)}
+                    onRunParallel={onRunScriptOnWorkspace
+                      ? () => onRunScriptOnWorkspace(item.snippet, 'parallel')
+                      : undefined}
+                    onRunSequential={isScript && onRunScriptOnWorkspace
+                      ? () => onRunScriptOnWorkspace(item.snippet, 'sequential')
+                      : undefined}
+                    runParallelLabel={isScript
+                      ? t('scripts.actions.runParallel')
+                      : t('scripts.actions.runOnAllTabs')}
+                    runSequentialLabel={t('scripts.actions.runSequential')}
                     editLabel={t('action.edit')}
                     deleteLabel={t('action.delete')}
                   />
@@ -722,30 +894,35 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
                   />
                 );
               }
-              return (
-                <SnippetRow
-                  snippet={item.row.snippet}
-                  depth={item.row.depth}
-                  draggable={Boolean(onSnippetsChange)}
-                  sortableTarget={true}
-                  onDragOver={handleRowDragOver}
-                  onDrop={handleRowDrop}
-                  onDragEnd={clearScriptsDropIndicator}
-                  onClick={() => handleSnippetClick(item.row.snippet)}
-                  onEdit={() => handleEditSnippet(item.row.snippet)}
-                  onDelete={() => handleDeleteSnippet(item.row.snippet.id)}
-                  onRunParallel={isScriptSnippet(item.row.snippet) && onRunScriptOnWorkspace
-                    ? () => onRunScriptOnWorkspace(item.row.snippet, 'parallel')
-                    : undefined}
-                  onRunSequential={isScriptSnippet(item.row.snippet) && onRunScriptOnWorkspace
-                    ? () => onRunScriptOnWorkspace(item.row.snippet, 'sequential')
-                    : undefined}
-                  runParallelLabel={t('scripts.actions.runParallel')}
-                  runSequentialLabel={t('scripts.actions.runSequential')}
-                  editLabel={t('action.edit')}
-                  deleteLabel={t('action.delete')}
-                />
-              );
+              {
+                const isScript = isScriptSnippet(item.row.snippet);
+                return (
+                  <SnippetRow
+                    snippet={item.row.snippet}
+                    depth={item.row.depth}
+                    draggable={Boolean(onSnippetsChange)}
+                    sortableTarget={true}
+                    onDragOver={handleRowDragOver}
+                    onDrop={handleRowDrop}
+                    onDragEnd={clearScriptsDropIndicator}
+                    onClick={() => handleSnippetClick(item.row.snippet)}
+                    onEdit={() => handleEditSnippet(item.row.snippet)}
+                    onDelete={() => handleDeleteSnippet(item.row.snippet.id)}
+                    onRunParallel={onRunScriptOnWorkspace
+                      ? () => onRunScriptOnWorkspace(item.row.snippet, 'parallel')
+                      : undefined}
+                    onRunSequential={isScript && onRunScriptOnWorkspace
+                      ? () => onRunScriptOnWorkspace(item.row.snippet, 'sequential')
+                      : undefined}
+                    runParallelLabel={isScript
+                      ? t('scripts.actions.runParallel')
+                      : t('scripts.actions.runOnAllTabs')}
+                    runSequentialLabel={t('scripts.actions.runSequential')}
+                    editLabel={t('action.edit')}
+                    deleteLabel={t('action.delete')}
+                  />
+                );
+              }
             }}
           />
         )}
@@ -793,6 +970,83 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
       ) : null}
       </>
       )}
+
+      {isPackageDialogOpen ? (
+        <div
+          ref={packageDialogRef}
+          className="absolute inset-0 z-40 flex items-center justify-center bg-background/80 p-3"
+          role="dialog"
+          aria-modal="true"
+          data-state="open"
+          aria-label={t('snippets.packageDialog.title')}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') {
+              e.preventDefault();
+              e.stopPropagation();
+              setIsPackageDialogOpen(false);
+            }
+          }}
+          onClick={() => setIsPackageDialogOpen(false)}
+        >
+          <button
+            type="button"
+            data-dialog-close="true"
+            tabIndex={-1}
+            aria-hidden="true"
+            className="sr-only"
+            onClick={() => setIsPackageDialogOpen(false)}
+          >
+            {t('common.close')}
+          </button>
+          <div
+            className="w-full max-w-[280px] rounded-lg border border-border/60 bg-background p-3 space-y-3 shadow-lg"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div>
+              <p className="text-sm font-semibold">{t('snippets.packageDialog.title')}</p>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                {t('snippets.packageDialog.parent', { parent: t('snippets.packageDialog.root') })}
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">{t('field.name')}</Label>
+              <Input
+                ref={packageNameInputRef}
+                value={newPackageName}
+                onChange={(e) => {
+                  setNewPackageName(e.target.value);
+                  setPackageError('');
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleCreatePackage();
+                  }
+                }}
+                placeholder={t('snippets.packageDialog.placeholder')}
+                className="h-8 text-xs"
+              />
+              <p className="text-[10px] text-muted-foreground">{t('snippets.packageDialog.hint')}</p>
+              {packageError ? (
+                <p className="text-[10px] text-destructive">{packageError}</p>
+              ) : null}
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setIsPackageDialogOpen(false)}
+              >
+                {t('common.cancel')}
+              </Button>
+              <Button type="button" size="sm" onClick={handleCreatePackage}>
+                {t('common.create')}
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
     </TooltipProvider>
   );
