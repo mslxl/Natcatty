@@ -72,6 +72,7 @@ const triggersPackageValidation = (filePath) => {
 test("PR validation runs once per commit and includes a production build", () => {
   assert.match(testWorkflow, /push:\s*\n\s*branches:\s*\n\s*- main/);
   assert.doesNotMatch(testWorkflow, /branches:\s*\n\s*- "\*\*"/);
+  assert.match(testWorkflow, /name: lint-and-test\s*\n\s*runs-on: ubuntu-latest\s*\n\s*timeout-minutes: 20/);
   assert.match(testWorkflow, /- name: Build\s*\n\s*run: npm run build/);
   assert.doesNotMatch(testWorkflow, /\n  mosh-windows-conpty:/);
 });

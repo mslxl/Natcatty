@@ -25,6 +25,14 @@ function createSender() {
   };
 }
 
+async function waitUntil(predicate, timeoutMs = 1000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate() && Date.now() < deadline) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  return predicate();
+}
+
 function createFastSftp(overrides) {
   const sftp = new EventEmitter();
   sftp.readdir = (_path, callback) => callback(null, []);
@@ -1488,6 +1496,11 @@ test("pause stores a lightweight source identity without full-file hashing", asy
         resumable: true,
       },
     );
+    t.after(async () => {
+      await transferBridge.cancelTransfer(null, { transferId: "late-pause-race" });
+      await running?.catch(() => {});
+      transferBridge.clearPendingCancel("late-pause-race");
+    });
     const writeDeadline = Date.now() + 1000;
     while (pendingWrites.length < UPLOAD_TRANSFER_CONCURRENCY && Date.now() < writeDeadline) {
       await new Promise((resolve) => setImmediate(resolve));
@@ -1503,14 +1516,16 @@ test("pause stores a lightweight source identity without full-file hashing", asy
     assert.equal(paused.success, true);
     assert.ok(pauseElapsed < 1500, `pause blocked too long: ${pauseElapsed}ms`);
     assert.equal(fullHashStreamOpened, false, "pause must not open a full-file hash stream");
-    assert.match(paused.sourceFingerprint || "", /^meta:\d+:\d+:[a-f0-9]{64}$/);
-    assert.ok(
-      sender.sent.some((entry) => (
+    const fingerprintPublished = await waitUntil(() => sender.sent.some((entry) => (
+      entry.channel === "netcatty:transfer:progress"
+      && /^meta:\d+:\d+:[a-f0-9]{64}$/.test(entry.payload.sourceFingerprint || "")
+    )));
+    assert.equal(fingerprintPublished, true, "pause identity must be published after pause acknowledgement");
+    const fingerprintEntry = sender.sent.findLast((entry) => (
         entry.channel === "netcatty:transfer:progress"
-        && entry.payload.sourceFingerprint === paused.sourceFingerprint
-      )),
-      "pause identity must be published for transfer-center persistence",
-    );
+        && /^meta:\d+:\d+:[a-f0-9]{64}$/.test(entry.payload.sourceFingerprint || "")
+    ));
+    assert.match(fingerprintEntry?.payload.sourceFingerprint || "", /^meta:\d+:\d+:[a-f0-9]{64}$/);
 
     assert.deepEqual(
       await transferBridge.resumeTransfer(null, { transferId: "late-pause-race" }),
@@ -1566,6 +1581,12 @@ test("remote pause identity reads modifyTime from session-backed stat", async (t
       resumable: true,
     },
   );
+  t.after(async () => {
+    source.destroy();
+    await transferBridge.cancelTransfer(null, { transferId: "download-modifytime-id" });
+    await running.catch(() => {});
+    transferBridge.clearPendingCancel("download-modifytime-id");
+  });
 
   const readyDeadline = Date.now() + 1000;
   while (source.listenerCount("data") === 0 && Date.now() < readyDeadline) {
@@ -1577,7 +1598,18 @@ test("remote pause identity reads modifyTime from session-backed stat", async (t
 
   const paused = await transferBridge.pauseTransfer(null, { transferId: "download-modifytime-id" });
   assert.equal(paused.success, true);
-  assert.match(paused.sourceFingerprint || "", new RegExp(`^meta:${payload.length}:${modifyTimeMs}:[a-f0-9]{64}$`));
+  const expectedFingerprint = new RegExp(`^meta:${payload.length}:${modifyTimeMs}:[a-f0-9]{64}$`);
+  const fingerprintPublished = await waitUntil(() => sender.sent.some((entry) => (
+    entry.channel === "netcatty:transfer:progress"
+    && expectedFingerprint.test(entry.payload.sourceFingerprint || "")
+  )));
+  assert.equal(fingerprintPublished, true, "remote pause identity must be published after pause acknowledgement");
+  const fingerprintEntry = sender.sent.findLast((entry) => (
+    entry.channel === "netcatty:transfer:progress"
+    && expectedFingerprint.test(entry.payload.sourceFingerprint || "")
+  ));
+  const sourceFingerprint = fingerprintEntry?.payload.sourceFingerprint;
+  assert.match(sourceFingerprint || "", expectedFingerprint);
 
   await transferBridge.cancelTransfer(null, { transferId: "download-modifytime-id" });
   assert.match((await running).error || "", /cancel/i);
@@ -1595,7 +1627,7 @@ test("remote pause identity reads modifyTime from session-backed stat", async (t
       totalBytes: payload.length,
       resumable: true,
       checkpointBytes: 3,
-      sourceFingerprint: paused.sourceFingerprint,
+      sourceFingerprint,
     },
   );
   assert.match(restarted.error || "", /source file has changed/i);
@@ -5206,13 +5238,21 @@ test("bridge admission applies one global concurrency limit across callers", asy
     globalConcurrency: 1,
   });
   const first = start("admission-first", "/first");
-  while (firstSource.listenerCount("data") === 0) await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(
+    await waitUntil(() => firstSource.listenerCount("data") > 0),
+    true,
+    "first admitted transfer did not start",
+  );
   const second = start("admission-second", "/second");
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(secondSource.listenerCount("data"), 0);
   firstSource.end(Buffer.from("a"));
   assert.equal((await first).error, undefined);
-  while (secondSource.listenerCount("data") === 0) await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(
+    await waitUntil(() => secondSource.listenerCount("data") > 0),
+    true,
+    "second admitted transfer did not start after the first completed",
+  );
   secondSource.end(Buffer.from("b"));
   assert.equal((await second).error, undefined);
 });

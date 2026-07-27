@@ -363,12 +363,9 @@ const RESUME_CONTENT_VERIFY_MAX_BYTES = 256 * 1024;
 function resumeContentVerifyBytes(checkpoint, fingerprint) {
   const claimed = Math.max(0, Number(checkpoint) || 0);
   if (!claimed) return 0;
-  // Always cap the leading-window hash. Hashing the full multi-MB checkpoint
-  // over SFTP after force-quit continue freezes the transfer-center bar at the
-  // resume offset (status "transferring", 0 B/s) for a long time with no
-  // progress events. meta: fingerprints already encode size/mtime/samples;
-  // a 256 KiB window is enough to catch mixed-stage corruption without stalling.
-  void fingerprint;
+  if (typeof fingerprint === "string" && fingerprint.startsWith("meta:")) {
+    return claimed;
+  }
   return Math.min(claimed, RESUME_CONTENT_VERIFY_MAX_BYTES);
 }
 
