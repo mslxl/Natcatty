@@ -204,16 +204,16 @@ test("Mosh injects vault known_hosts into the SSH bootstrap for key-change check
     }],
   }, "session-vault-kh");
 
-  let vaultPath = null;
+  let trustPath = null;
   for (let i = 0; i < auth.sshArgs.length - 1; i += 1) {
     if (auth.sshArgs[i] === "-o" && String(auth.sshArgs[i + 1]).startsWith("GlobalKnownHostsFile=")) {
-      vaultPath = auth.sshArgs[i + 1].slice("GlobalKnownHostsFile=".length);
+      trustPath = auth.sshArgs[i + 1].slice("GlobalKnownHostsFile=".length);
       break;
     }
   }
-  assert.ok(vaultPath, "expected GlobalKnownHostsFile ssh option");
-  assert.ok(fs.existsSync(vaultPath));
-  assert.match(fs.readFileSync(vaultPath, "utf8"), /host\.example ssh-ed25519 AAAAMOSHVAULT/);
+  assert.ok(trustPath, "expected GlobalKnownHostsFile ssh option");
+  assert.ok(fs.existsSync(trustPath));
+  assert.match(fs.readFileSync(trustPath, "utf8"), /host\.example ssh-ed25519 AAAAMOSHVAULT/);
   // Interactive Mosh leaves StrictHostKeyChecking alone so OpenSSH can ask
   // for first-seen hosts in the PTY while still rejecting vault mismatches.
   assert.equal(
@@ -238,12 +238,28 @@ test("Mosh disables host-key checks when verifyHostKeys is false", async (t) => 
   const auth = await api.buildMoshSshAuthArgs({
     useSshAgent: false,
     verifyHostKeys: false,
+    knownHosts: [{
+      hostname: "host.example",
+      keyType: "ssh-ed25519",
+      publicKey: "ssh-ed25519 AAASTALE",
+    }],
   }, "session-no-verify");
 
-  assert.deepEqual(auth.sshArgs, [
-    "-o", "IdentityAgent=none",
-    "-o", "StrictHostKeyChecking=no",
-  ]);
+  assert.equal(auth.sshArgs[0], "-o");
+  assert.equal(auth.sshArgs[1], "IdentityAgent=none");
+  let emptyPath = null;
+  for (let i = 0; i < auth.sshArgs.length - 1; i += 1) {
+    if (auth.sshArgs[i] === "-o" && String(auth.sshArgs[i + 1]).startsWith("UserKnownHostsFile=")) {
+      emptyPath = auth.sshArgs[i + 1].slice("UserKnownHostsFile=".length);
+      break;
+    }
+  }
+  assert.ok(emptyPath);
+  assert.ok(auth.sshArgs.includes(`GlobalKnownHostsFile=${emptyPath}`));
+  assert.ok(auth.sshArgs.includes("StrictHostKeyChecking=no"));
+  assert.equal(fs.readFileSync(emptyPath, "utf8").trim(), "");
+  assert.equal(auth.sshArgs.some((arg) => String(arg).includes("AAASTALE")), false);
+  api.cleanupMoshAuthTempFiles(auth.tempFiles);
 });
 
 test("Mosh explicitly disables native agent login after an opt-out", async () => {

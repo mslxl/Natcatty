@@ -881,13 +881,13 @@ test("prepareEtSshEnvironment injects vault known_hosts for key-change checks", 
 
   const globalOption = env.sshOptions.find((option) => option.startsWith("GlobalKnownHostsFile="));
   assert.ok(globalOption, "expected GlobalKnownHostsFile for vault keys");
-  const vaultPath = globalOption.slice("GlobalKnownHostsFile=".length);
-  assert.ok(fs.existsSync(vaultPath));
-  assert.match(fs.readFileSync(vaultPath, "utf8"), /host\.example ssh-ed25519 AAAAVAULTBLOB/);
+  const trustPath = globalOption.slice("GlobalKnownHostsFile=".length);
+  assert.ok(fs.existsSync(trustPath));
+  assert.match(fs.readFileSync(trustPath, "utf8"), /host\.example ssh-ed25519 AAAAVAULTBLOB/);
   assert.ok(env.sshOptions.includes("StrictHostKeyChecking=accept-new"));
   // Still pin the persistent user known_hosts for first-seen accept-new writes.
   assert.ok(env.sshOptions.some((option) => option.startsWith("UserKnownHostsFile=")));
-  assert.ok(vaultPath.startsWith(path.join(base, "et-ssh-home-sess1")));
+  assert.ok(trustPath.startsWith(path.join(base, "et-ssh-home-sess1")));
 });
 
 test("prepareEtSshEnvironment disables host-key checks when verifyHostKeys is false", (t) => {
@@ -896,6 +896,11 @@ test("prepareEtSshEnvironment disables host-key checks when verifyHostKeys is fa
     hostname: "host.example",
     username: "alice",
     verifyHostKeys: false,
+    knownHosts: [{
+      hostname: "host.example",
+      keyType: "ssh-ed25519",
+      publicKey: "ssh-ed25519 AAASTALE",
+    }],
   });
 
   assert.ok(env.sshOptions.includes("StrictHostKeyChecking=no"));
@@ -904,6 +909,17 @@ test("prepareEtSshEnvironment disables host-key checks when verifyHostKeys is fa
     1,
   );
   assert.doesNotMatch(env.sshOptions.join("\n"), /StrictHostKeyChecking=accept-new/);
+
+  const userKh = env.sshOptions.find((option) => option.startsWith("UserKnownHostsFile="));
+  const globalKh = env.sshOptions.find((option) => option.startsWith("GlobalKnownHostsFile="));
+  assert.ok(userKh, "expected neutralized UserKnownHostsFile");
+  assert.ok(globalKh, "expected neutralized GlobalKnownHostsFile");
+  assert.equal(userKh.slice("UserKnownHostsFile=".length), globalKh.slice("GlobalKnownHostsFile=".length));
+  const emptyPath = userKh.slice("UserKnownHostsFile=".length);
+  assert.ok(fs.existsSync(emptyPath));
+  assert.equal(fs.readFileSync(emptyPath, "utf8").trim(), "");
+  // Must not keep loading the stale vault pin when verification is off.
+  assert.doesNotMatch(fs.readFileSync(emptyPath, "utf8"), /AAASTALE/);
 });
 
 test("prepareEtSshEnvironment applies vault host-key policy to jump hosts", (t) => {

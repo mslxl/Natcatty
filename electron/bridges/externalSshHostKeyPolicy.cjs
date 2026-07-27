@@ -9,17 +9,24 @@
  * different key of the same type.
  *
  * Strategy (aligned with issue #2501 user priority — key-change intercept):
- *   - When verifyHostKeys is enabled (default), inject vault entries that
- *     carry a full public-key blob as GlobalKnownHostsFile so OpenSSH checks
- *     them alongside the user's ~/.ssh/known_hosts.
+ *   - When verifyHostKeys is enabled (default) and the vault has usable
+ *     public-key blobs, write a single GlobalKnownHostsFile that merges
+ *     OpenSSH's default global files (/etc/ssh/ssh_known_hosts{,2} or the
+ *     Windows ProgramData equivalents) with the vault. Replacing
+ *     GlobalKnownHostsFile without merging would drop admin-pinned hosts.
  *   - ET keeps StrictHostKeyChecking=accept-new (cannot answer interactive
  *     yes/no via SSH_ASKPASS; accept-new still rejects changed keys).
  *   - Mosh runs OpenSSH in an interactive PTY, so it leaves the default
- *     ask/accept policy alone and only adds the vault trust source unless
+ *     ask/accept policy alone and only adds the merged trust source unless
  *     verification is disabled.
- *   - When verifyHostKeys is false, force StrictHostKeyChecking=no to match
- *     the in-app SSH setting.
+ *   - When verifyHostKeys is false, force StrictHostKeyChecking=no and point
+ *     both UserKnownHostsFile and GlobalKnownHostsFile at an empty file.
+ *     OpenSSH still consults known_hosts under `no` for password-auth MITM
+ *     protection, so an outdated vault/system pin would otherwise still
+ *     reject password / keyboard-interactive auth.
  */
+
+const path = require("node:path");
 
 const formatVaultKnownHostLine = (knownHost) => {
   if (!knownHost?.hostname) return null;
@@ -53,6 +60,70 @@ const buildVaultKnownHostsContent = (knownHosts) => {
 };
 
 /**
+ * OpenSSH default GlobalKnownHostsFile locations.
+ * Matches `ssh -G -F /dev/null` on OpenSSH 9.x (Unix) and Windows OpenSSH.
+ */
+const getDefaultGlobalKnownHostsPaths = ({
+  platform = process.platform,
+  programData = process.env.ProgramData,
+  pathModule = path,
+} = {}) => {
+  if (platform === "win32") {
+    const base = programData || "C:\\ProgramData";
+    return [
+      pathModule.join(base, "ssh", "ssh_known_hosts"),
+      pathModule.join(base, "ssh", "ssh_known_hosts2"),
+    ];
+  }
+  return [
+    "/etc/ssh/ssh_known_hosts",
+    "/etc/ssh/ssh_known_hosts2",
+  ];
+};
+
+const readKnownHostsFileContent = (fsApi, filePath) => {
+  if (!fsApi || !filePath) return "";
+  try {
+    if (typeof fsApi.existsSync === "function" && !fsApi.existsSync(filePath)) {
+      return "";
+    }
+    const content = fsApi.readFileSync(filePath, "utf8");
+    return typeof content === "string" && content.trim() ? content.trimEnd() : "";
+  } catch {
+    return "";
+  }
+};
+
+/**
+ * Merge OpenSSH default global known_hosts files with Netcatty vault entries.
+ * Returns "" when there is nothing usable to inject (caller should leave
+ * GlobalKnownHostsFile unset so OpenSSH keeps its built-in defaults).
+ */
+const buildMergedGlobalKnownHostsContent = ({
+  knownHosts,
+  fs: fsApi,
+  platform = process.platform,
+  programData = process.env.ProgramData,
+  pathModule = path,
+  globalPaths,
+} = {}) => {
+  const chunks = [];
+  const defaults = Array.isArray(globalPaths) && globalPaths.length > 0
+    ? globalPaths
+    : getDefaultGlobalKnownHostsPaths({ platform, programData, pathModule });
+  for (const filePath of defaults) {
+    const content = readKnownHostsFileContent(fsApi, filePath);
+    if (content) chunks.push(content);
+  }
+  const vaultContent = buildVaultKnownHostsContent(knownHosts).trimEnd();
+  // Only emit a custom GlobalKnownHostsFile when the vault contributes pins.
+  // If the vault is empty, leave OpenSSH's built-in global defaults alone.
+  if (!vaultContent) return "";
+  chunks.push(vaultContent);
+  return `${chunks.join("\n")}\n`;
+};
+
+/**
  * @param {object} opts
  * @param {boolean} [opts.verifyHostKeys=true]
  * @param {"et"|"mosh"} [opts.protocol="et"]
@@ -74,16 +145,23 @@ const resolveExternalStrictHostKeyChecking = ({
  * Build OpenSSH -o style option strings (or bare KEY=VALUE for ET --ssh-option).
  *
  * @param {object} opts
- * @param {string|null|undefined} opts.vaultKnownHostsPath
+ * @param {string|null|undefined} opts.mergedGlobalKnownHostsPath
+ *   Path to a file that already merges default global known_hosts + vault.
+ *   Only used when verification is enabled. Omit / null when the vault is
+ *   empty so OpenSSH keeps its built-in GlobalKnownHostsFile defaults.
+ * @param {string|null|undefined} opts.emptyKnownHostsPath
+ *   Empty trust file used when verification is disabled so OpenSSH cannot
+ *   still block password auth against a stale vault/system pin.
  * @param {boolean} [opts.verifyHostKeys=true]
  * @param {"et"|"mosh"} [opts.protocol="et"]
  * @param {"args"|"values"} [opts.style="values"]
- *   - values: ["StrictHostKeyChecking=accept-new", ...] (ET --ssh-option)
- *   - args: ["-o", "StrictHostKeyChecking=accept-new", ...] (Mosh ssh argv)
  * @param {(p: string) => string} [opts.normalizePath]
  * @returns {string[]}
  */
 const buildExternalHostKeySshOptions = ({
+  mergedGlobalKnownHostsPath,
+  emptyKnownHostsPath,
+  // Back-compat alias used by earlier call sites / tests.
   vaultKnownHostsPath,
   verifyHostKeys = true,
   protocol = "et",
@@ -91,17 +169,32 @@ const buildExternalHostKeySshOptions = ({
   normalizePath = (p) => p,
 } = {}) => {
   const values = [];
-  const vaultPath = typeof vaultKnownHostsPath === "string" && vaultKnownHostsPath.trim()
-    ? normalizePath(vaultKnownHostsPath.trim())
-    : "";
-  if (vaultPath) {
-    // GlobalKnownHostsFile is read-only trust input; new keys still land in
-    // UserKnownHostsFile (system ~/.ssh/known_hosts for ET / default for Mosh).
-    values.push(`GlobalKnownHostsFile=${vaultPath}`);
-  }
-  const strict = resolveExternalStrictHostKeyChecking({ verifyHostKeys, protocol });
-  if (strict) {
-    values.push(`StrictHostKeyChecking=${strict}`);
+  const normalize = (p) => {
+    if (typeof p !== "string" || !p.trim()) return "";
+    return normalizePath(p.trim());
+  };
+
+  if (verifyHostKeys === false) {
+    const emptyPath = normalize(emptyKnownHostsPath);
+    if (emptyPath) {
+      // Neutralize every trust source. StrictHostKeyChecking=no alone is not
+      // enough: OpenSSH still refuses password auth when a known_hosts pin
+      // mismatches the live key.
+      values.push(`UserKnownHostsFile=${emptyPath}`);
+      values.push(`GlobalKnownHostsFile=${emptyPath}`);
+    }
+    values.push("StrictHostKeyChecking=no");
+  } else {
+    const trustPath = normalize(mergedGlobalKnownHostsPath || vaultKnownHostsPath);
+    if (trustPath) {
+      // Read-only trust input. New keys still land in the caller's
+      // UserKnownHostsFile (system ~/.ssh/known_hosts for ET / default Mosh).
+      values.push(`GlobalKnownHostsFile=${trustPath}`);
+    }
+    const strict = resolveExternalStrictHostKeyChecking({ verifyHostKeys, protocol });
+    if (strict) {
+      values.push(`StrictHostKeyChecking=${strict}`);
+    }
   }
 
   if (style === "args") {
@@ -123,6 +216,8 @@ const buildExternalHostKeySshOptions = ({
  * would resolve "accept-new" into a filesystem path.
  */
 const buildExternalHostKeyConfigLines = ({
+  mergedGlobalKnownHostsPath,
+  emptyKnownHostsPath,
   vaultKnownHostsPath,
   verifyHostKeys = true,
   protocol = "et",
@@ -131,6 +226,8 @@ const buildExternalHostKeyConfigLines = ({
   quotePath = (v) => v,
 } = {}) => {
   const values = buildExternalHostKeySshOptions({
+    mergedGlobalKnownHostsPath,
+    emptyKnownHostsPath,
     vaultKnownHostsPath,
     verifyHostKeys,
     protocol,
@@ -152,7 +249,9 @@ const buildExternalHostKeyConfigLines = ({
 module.exports = {
   buildExternalHostKeyConfigLines,
   buildExternalHostKeySshOptions,
+  buildMergedGlobalKnownHostsContent,
   buildVaultKnownHostsContent,
   formatVaultKnownHostLine,
+  getDefaultGlobalKnownHostsPaths,
   resolveExternalStrictHostKeyChecking,
 };

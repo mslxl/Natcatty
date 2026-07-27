@@ -4,6 +4,7 @@ const { createSystemKnownHostsApi } = require("../sshBridge/systemKnownHosts.cjs
 const {
   buildExternalHostKeyConfigLines,
   buildExternalHostKeySshOptions,
+  buildMergedGlobalKnownHostsContent,
   buildVaultKnownHostsContent,
 } = require("../externalSshHostKeyPolicy.cjs");
 const { emitTerminalSessionData } = require("../emitTerminalSessionData.cjs");
@@ -357,7 +358,7 @@ main();
         // sessions must still work when ~/.ssh cannot be read.
       }
       const knownHostsPath = path.join(realSshDir, "known_hosts");
-      sshOptions.push(`UserKnownHostsFile=${normalizeSshConfigPath(knownHostsPath)}`);
+      const verifyHostKeys = options.verifyHostKeys !== false;
 
       // et drives ssh itself and feeds credentials through SSH_ASKPASS, which
       // only answers password/passphrase prompts — never the interactive
@@ -373,17 +374,33 @@ main();
       //
       // Vault known_hosts (issue #2501): keys the user already trusted via
       // Netcatty SSH live in the in-app vault, not necessarily in
-      // ~/.ssh/known_hosts. Inject them as GlobalKnownHostsFile so a rotated
-      // server key is rejected the same way OpenSSH rejects system mismatches.
-      let vaultKnownHostsPath = null;
-      const vaultContent = buildVaultKnownHostsContent(options.knownHosts);
-      if (vaultContent) {
-        vaultKnownHostsPath = path.join(sshDir, `${safeId}-vault-known_hosts`);
-        writeSecureFile(vaultKnownHostsPath, vaultContent, 0o600);
+      // ~/.ssh/known_hosts. Merge vault pins with OpenSSH's default global
+      // known_hosts files into one GlobalKnownHostsFile so admin-pinned
+      // hosts in /etc/ssh/ssh_known_hosts are preserved (Codex review).
+      let mergedGlobalKnownHostsPath = null;
+      let emptyKnownHostsPath = null;
+      if (verifyHostKeys) {
+        sshOptions.push(`UserKnownHostsFile=${normalizeSshConfigPath(knownHostsPath)}`);
+        const mergedContent = buildMergedGlobalKnownHostsContent({
+          knownHosts: options.knownHosts,
+          fs,
+          pathModule: path,
+        });
+        if (mergedContent) {
+          mergedGlobalKnownHostsPath = path.join(sshDir, `${safeId}-global-known_hosts`);
+          writeSecureFile(mergedGlobalKnownHostsPath, mergedContent, 0o600);
+        }
+      } else {
+        // StrictHostKeyChecking=no still consults known_hosts for password-auth
+        // MITM protection. Point both trust files at an empty snapshot so
+        // verifyHostKeys=false truly bypasses stale vault/system pins.
+        emptyKnownHostsPath = path.join(sshDir, `${safeId}-empty-known_hosts`);
+        writeSecureFile(emptyKnownHostsPath, "", 0o600);
       }
       sshOptions.push(...buildExternalHostKeySshOptions({
-        vaultKnownHostsPath,
-        verifyHostKeys: options.verifyHostKeys,
+        mergedGlobalKnownHostsPath,
+        emptyKnownHostsPath,
+        verifyHostKeys,
         protocol: "et",
         style: "values",
         normalizePath: normalizeSshConfigPath,
@@ -647,17 +664,25 @@ main();
         // non-interactive host-key handling as the target hop — the jump's
         // ssh is just as unable to answer a yes/no prompt via SSH_ASKPASS.
         // Vault keys (issue #2501) must also protect the jump hop.
-        jumpConfigLines.push(`  UserKnownHostsFile ${quoteSshConfigValue(knownHostsPath)}`);
+        if (verifyHostKeys) {
+          jumpConfigLines.push(`  UserKnownHostsFile ${quoteSshConfigValue(knownHostsPath)}`);
+        }
         const jumpHostKeyLines = buildExternalHostKeyConfigLines({
-          vaultKnownHostsPath,
-          verifyHostKeys: options.verifyHostKeys,
+          mergedGlobalKnownHostsPath,
+          emptyKnownHostsPath,
+          verifyHostKeys,
           protocol: "et",
           normalizePath: normalizeSshConfigPath,
           quotePath: quoteSshConfigValue,
         });
         if (jumpHostKeyLines.length > 0) {
-          jumpConfigLines.push(...jumpHostKeyLines);
-        } else {
+          jumpHostKeyLines.forEach((line) => {
+            // Avoid duplicating UserKnownHostsFile when verification is on
+            // (already set above to the persistent system file).
+            if (verifyHostKeys && line.includes("UserKnownHostsFile ")) return;
+            jumpConfigLines.push(line);
+          });
+        } else if (verifyHostKeys) {
           jumpConfigLines.push("  StrictHostKeyChecking accept-new");
         }
         jumpConfigLines.push("  LogLevel ERROR");
