@@ -647,24 +647,40 @@ const buildAuthoritativeKnownHostsContent = ({
   } catch {
     sshGOutput = "";
   }
+  // OpenSSH known_hosts lookup uses HostKeyAlias when set, otherwise the
+  // resolved HostName (which may differ from the connection alias).
   const hostKeyAlias = parseSshGScalar(sshGOutput, "hostkeyalias");
+  const resolvedHostName = parseSshGScalar(sshGOutput, "hostname") || hostname;
+  const lookupHostName = hostKeyAlias || resolvedHostName;
   const connectionPort = Number.isFinite(port) ? Number(port) : 22;
 
   const vaultContent = buildVaultKnownHostsContent(knownHosts, {
     connectionHostname: hostname,
     connectionPort,
-    hostKeyAlias,
+    // Prefer HostKeyAlias; else rewrite the connection pin under the resolved
+    // HostName so OpenSSH's lookup finds it.
+    hostKeyAlias: lookupHostName && normalizeHostname(lookupHostName) !== normalizeHostname(hostname)
+      ? lookupHostName
+      : hostKeyAlias,
   }).trimEnd();
   if (!vaultContent) return "";
 
-  // Filter system pins for both the real hostname and HostKeyAlias so neither
-  // trust name can override the vault pin.
+  // Filter system pins for the connection alias, resolved HostName, and
+  // HostKeyAlias so none of those names can override the vault pin.
   const vaultSelectors = extractVaultHostSelectors(knownHosts);
-  if (hostKeyAlias) {
-    vaultSelectors.push({
-      hostname: normalizeHostname(hostKeyAlias),
-      port: 22,
-    });
+  const extraLookupNames = new Set([
+    normalizeHostname(hostname),
+    normalizeHostname(resolvedHostName),
+    normalizeHostname(hostKeyAlias),
+    normalizeHostname(lookupHostName),
+  ]);
+  for (const name of extraLookupNames) {
+    if (!name) continue;
+    // HostKeyAlias / resolved names are stored as bare host tokens.
+    vaultSelectors.push({ hostname: name, port: 22 });
+    if (connectionPort !== 22) {
+      vaultSelectors.push({ hostname: name, port: connectionPort });
+    }
   }
   const chunks = [vaultContent];
 
