@@ -148,12 +148,20 @@ function getUserAuthoredResearchText(input = {}) {
  * Validate the bounded handoff emitted by the isolated WebSearch pass.
  * Research output remains untrusted input for every later agent.
  */
-function normalizeExternalResearchText(value, { input, webToolUsed = false } = {}) {
+function parseExternalResearchEnvelope(value) {
   const text = sanitizeUntrustedText(value, 16_000);
-  const firstLine = text.split('\n').find((line) => line.trim())?.trim() || '';
+  const fenced = text.match(/^```(?:text)?[ \t]*\r?\n([\s\S]*?)\r?\n```[ \t]*$/i);
+  const normalized = fenced ? sanitizeUntrustedText(fenced[1], 16_000) : text;
+  const firstLine = normalized.split('\n').find((line) => line.trim())?.trim() || '';
   const match = firstLine.match(
     /^(RESEARCH_COMPLETE|RESEARCH_NOT_NEEDED|RESEARCH_BLOCKED):\s+(.+)$/,
   );
+  return match ? { text: normalized, match } : null;
+}
+
+function normalizeExternalResearchText(value, { input, webToolUsed = false } = {}) {
+  const envelope = parseExternalResearchEnvelope(value);
+  const match = envelope?.match;
   if (!match) {
     throw new Error('External research output is missing a valid research status.');
   }
@@ -168,14 +176,14 @@ function normalizeExternalResearchText(value, { input, webToolUsed = false } = {
     if (!webToolUsed) {
       throw new Error('Completed external research requires a recorded WebSearch/WebFetch tool call.');
     }
-    const sourceLines = text.match(
+    const sourceLines = envelope.text.match(
       /^-\s+https:\/\/[^\s<>()]+\s+(?:—|–|-)\s+\S.*$/gim,
     ) || [];
     if (!sourceLines.length) {
       throw new Error('Completed external research must include at least one structured HTTPS source URL.');
     }
   }
-  return text;
+  return envelope.text;
 }
 
 function normalizeResearchSourceUrl(value) {
@@ -212,6 +220,7 @@ function extractHttpsUrls(value) {
 /** Parse Cursor stream-json and prove that completed research used a web tool. */
 function parseExternalResearchStream(value, input) {
   let assistantText = '';
+  const assistantMessages = [];
   let terminalResult = '';
   let webToolUsed = false;
   const webEvidenceUrls = new Set();
@@ -256,10 +265,23 @@ function parseExternalResearchStream(value, input) {
       .filter((block) => block?.type === 'text' && block.text)
       .map((block) => String(block.text))
       .join('');
-    if (eventText) assistantText += eventText;
+    if (eventText) {
+      assistantMessages.push(eventText);
+      assistantText += eventText;
+    }
   }
 
-  const normalized = normalizeExternalResearchText(terminalResult || assistantText, {
+  // Cursor's terminal result may prepend earlier conversational text to the
+  // final answer. Prefer it when it is already a valid envelope, otherwise
+  // accept the complete assistant stream or one isolated final message. Never
+  // search arbitrary prose for a status marker.
+  const candidates = [
+    terminalResult,
+    assistantText,
+    ...assistantMessages.slice().reverse(),
+  ].filter(Boolean);
+  const selected = candidates.find((candidate) => parseExternalResearchEnvelope(candidate));
+  const normalized = normalizeExternalResearchText(selected || candidates[0] || '', {
     input,
     webToolUsed,
   });

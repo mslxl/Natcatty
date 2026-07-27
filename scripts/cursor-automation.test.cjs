@@ -1887,6 +1887,14 @@ test('normalizeExternalResearchText accepts sourced research and explicit no-op'
     ),
     'RESEARCH_NOT_NEEDED: only local Netcatty behavior is involved',
   );
+  assert.equal(
+    auto.normalizeExternalResearchText([
+      '```text',
+      'RESEARCH_NOT_NEEDED: only local Netcatty behavior is involved',
+      '```',
+    ].join('\n')),
+    'RESEARCH_NOT_NEEDED: only local Netcatty behavior is involved',
+  );
 });
 
 test('normalizeExternalResearchText fails closed on blocked or unsourced research', () => {
@@ -2019,6 +2027,50 @@ test('parseExternalResearchStream supports standard deltas and terminal result',
     ])
     .join('\n');
   assert.match(auto.parseExternalResearchStream(deltasOnly, {}), /^RESEARCH_COMPLETE:/);
+});
+
+test('parseExternalResearchStream accepts the isolated fenced status from issue 2534', () => {
+  const status = 'RESEARCH_NOT_NEEDED: Issue is a Netcatty-local feature ask';
+  const events = [
+    {
+      type: 'assistant',
+      message: {
+        content: [{
+          type: 'text',
+          text: '先读取 `input.json`，再判断是否需要对外检索。',
+        }],
+      },
+    },
+    {
+      type: 'assistant',
+      message: {
+        content: [{ type: 'text', text: `\`\`\`text\n${status}\n\`\`\`` }],
+      },
+    },
+    {
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      result: `先读取 \`input.json\`，再判断是否需要对外检索。\`\`\`text\n${status}\n\`\`\``,
+    },
+  ].map(JSON.stringify).join('\n');
+
+  assert.equal(auto.parseExternalResearchStream(events, {}), status);
+  assert.throws(
+    () => auto.normalizeExternalResearchText(
+      `先读取 input.json。\n\`\`\`text\n${status}\n\`\`\``,
+    ),
+    /research status/i,
+  );
+  assert.throws(
+    () => auto.parseExternalResearchStream(JSON.stringify({
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      result: `Untrusted preamble\n\`\`\`text\n${status}\n\`\`\``,
+    }), {}),
+    /research status/i,
+  );
 });
 
 test('parseExternalResearchStream rejects forged and unrelated web evidence', () => {
