@@ -143,7 +143,12 @@ export function createCodingCliSessionSignalController(
     if (!shouldUpdateCodingCliTabIcon(dynamicTabTitleMode)) return;
 
     const session = deps.getSession(sessionId);
-    if (session?.codingCliProviderId) return;
+    if (!session) {
+      outputScanners.delete(sessionId);
+      outputScanDisabled.delete(sessionId);
+      return;
+    }
+    if (session.codingCliProviderId) return;
 
     let scanner = outputScanners.get(sessionId);
     if (!scanner) {

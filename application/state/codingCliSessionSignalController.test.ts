@@ -200,7 +200,7 @@ test('useCodingCliSessionSignals forgets scans for sessions removed from props',
     controller = useCodingCliSessionSignals({
       dynamicTabTitleMode: 'agent',
       sessionIds,
-      getSession: () => session,
+      getSession: (sessionId) => sessionIds.includes(sessionId) ? session : undefined,
       onUpdateSessionCodingCliProvider: (_sessionId, providerId) => {
         providerUpdates.push(providerId);
       },
@@ -217,9 +217,12 @@ test('useCodingCliSessionSignals forgets scans for sessions removed from props',
 
     sessionIds = [];
     await act(async () => renderer!.update(React.createElement(Probe)));
+    controller!.handleTerminalOutput(session.id, 'Welcome to Claude ');
     sessionIds = [session.id];
     await act(async () => renderer!.update(React.createElement(Probe)));
-    controller!.handleTerminalOutput(session.id, 'Welcome to Claude Code');
+    controller!.handleTerminalOutput(session.id, 'Code');
+    assert.deepEqual(providerUpdates, []);
+    controller!.handleTerminalOutput(session.id, '\nWelcome to Claude Code');
     assert.deepEqual(providerUpdates, ['claude']);
   } finally {
     await act(async () => renderer?.unmount());
