@@ -394,6 +394,7 @@ main();
           const authoritativeContent = buildAuthoritativeKnownHostsContent({
             knownHosts: options.knownHosts,
             fs,
+            hostname: options.hostname,
             pathModule: path,
             homedir: os.homedir(),
           });

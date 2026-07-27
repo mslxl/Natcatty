@@ -204,6 +204,57 @@ test("buildAuthoritativeKnownHostsContent makes vault authoritative over system 
   }
 });
 
+test("buildAuthoritativeKnownHostsContent merges ssh -G global known_hosts paths", () => {
+  const {
+    buildAuthoritativeKnownHostsContent: build,
+  } = require("./externalSshHostKeyPolicy.cjs");
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-kh-sshg-"));
+  try {
+    const customGlobal = path.join(base, "custom_global_known_hosts");
+    fs.writeFileSync(customGlobal, "admin.custom ssh-ed25519 AAAADMINCUSTOM\n");
+    const content = build({
+      knownHosts: [{
+        hostname: "host.example",
+        keyType: "ssh-ed25519",
+        publicKey: "ssh-ed25519 AAAVAULT",
+      }],
+      fs,
+      hostname: "host.example",
+      // Force discovery path (no explicit globalPaths).
+      globalPaths: undefined,
+      userPaths: [],
+      execFileSyncFn: () => `globalknownhostsfile ${customGlobal}\n`,
+    });
+    assert.match(content, /host\.example ssh-ed25519 AAAVAULT/);
+    assert.match(content, /admin\.custom ssh-ed25519 AAAADMINCUSTOM/);
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("parseSshGKnownHostsPaths reads multi-path directives", () => {
+  const { parseSshGKnownHostsPaths } = require("./externalSshHostKeyPolicy.cjs");
+  assert.deepEqual(
+    parseSshGKnownHostsPaths(
+      "globalknownhostsfile /etc/ssh/ssh_known_hosts /etc/custom/known_hosts\nuserknownhostsfile ~/.ssh/known_hosts\n",
+      "globalknownhostsfile",
+      { homedir: "/home/me", pathModule: path },
+    ),
+    ["/etc/ssh/ssh_known_hosts", "/etc/custom/known_hosts"],
+  );
+  assert.deepEqual(
+    parseSshGKnownHostsPaths(
+      "userknownhostsfile ~/.ssh/known_hosts ~/.ssh/known_hosts2\n",
+      "userknownhostsfile",
+      { homedir: "/home/me", pathModule: path },
+    ),
+    [
+      path.join("/home/me", ".ssh", "known_hosts"),
+      path.join("/home/me", ".ssh", "known_hosts2"),
+    ],
+  );
+});
+
 test("buildAuthoritativeKnownHostsContent is empty when vault has no usable pins", () => {
   assert.equal(
     buildAuthoritativeKnownHostsContent({
