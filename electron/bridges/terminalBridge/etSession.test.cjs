@@ -1120,6 +1120,11 @@ test("prepareEtSshEnvironment injects a PATH ssh wrapper that forces -F", (t) =>
   const wrapperBody = fs.readFileSync(wrapperPath, "utf8");
   assert.match(wrapperBody, /-F/);
   assert.match(wrapperBody, /\.ssh[\\/]config/);
+  // Must invoke an absolute OpenSSH binary, not a bare `ssh` that would
+  // recurse into this wrapper via PATH.
+  if (process.platform !== "win32") {
+    assert.match(wrapperBody, /exec '\/[^']+\/ssh'/);
+  }
 });
 
 test("execOnEtSession requireTrustedHost uses strict host-key checking", async (t) => {

@@ -776,9 +776,40 @@ main();
       const pathEnv = {};
       if (configPath) {
         try {
-          const realSsh = process.platform === "win32"
-            ? (findExecutable("ssh") || "ssh")
-            : "ssh";
+          // Resolve the real OpenSSH binary to an absolute path BEFORE we
+          // prepend the wrapper directory to PATH. Embedding a bare `ssh`
+          // name would recurse into the wrapper forever.
+          let realSsh = process.platform === "win32"
+            ? (findExecutable("ssh") || "")
+            : "";
+          if (!realSsh || !path.isAbsolute(realSsh)) {
+            try {
+              const resolved = execFileSync(
+                process.platform === "win32" ? "where" : "sh",
+                process.platform === "win32" ? ["ssh"] : ["-c", "command -v ssh"],
+                {
+                  encoding: "utf8",
+                  timeout: 2000,
+                  windowsHide: true,
+                  env: process.env,
+                },
+              ).trim().split(/\r?\n/)[0];
+              if (resolved) realSsh = resolved;
+            } catch {
+              // Fall through to common absolute locations.
+            }
+          }
+          if (!realSsh || !path.isAbsolute(String(realSsh))) {
+            const candidates = process.platform === "win32"
+              ? []
+              : ["/usr/bin/ssh", "/bin/ssh", "/usr/local/bin/ssh"];
+            realSsh = candidates.find((candidate) => {
+              try { return fs.existsSync(candidate); } catch { return false; }
+            }) || realSsh || "ssh";
+          }
+          if (!path.isAbsolute(String(realSsh))) {
+            throw new Error("unable to resolve absolute OpenSSH path for wrapper");
+          }
           const wrapperDir = path.join(sshDir, "bin");
           fs.mkdirSync(wrapperDir, { recursive: true });
           if (process.platform === "win32") {
