@@ -2358,6 +2358,35 @@ test('parseExternalResearchStream rejects conflicts across every valid candidate
     () => auto.parseExternalResearchStream(prefixedAggregateConflict, {}),
     /conflicting research statuses/,
   );
+
+  const quotedNoOp = 'RESEARCH_NOT_NEEDED: quoted example, not the result';
+  const sameStatusConflict = [
+    {
+      type: 'assistant',
+      timestamp_ms: 1,
+      message: { content: [{ type: 'text', text: '```text\n' }] },
+    },
+    {
+      type: 'assistant',
+      timestamp_ms: 2,
+      message: { content: [{ type: 'text', text: `${quotedNoOp}\n\`\`\`` }] },
+    },
+    {
+      type: 'assistant',
+      message: { content: [{ type: 'text', text: noOp }] },
+    },
+    {
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      result: noOp,
+    },
+  ].map(JSON.stringify).join('\n');
+
+  assert.throws(
+    () => auto.parseExternalResearchStream(sameStatusConflict, {}),
+    /conflicting research statuses/,
+  );
 });
 
 test('parseExternalResearchStream keeps a valid terminal status over assistant fragments', () => {

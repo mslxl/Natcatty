@@ -311,10 +311,10 @@ function parseExternalResearchStream(value, input) {
     terminalResult,
     partialAssistantText || assistantText,
   ].filter(Boolean);
-  const candidateStatuses = new Set(candidates
-    .map((candidate) => parseExternalResearchEnvelope(candidate)?.match[1])
+  const candidateTexts = new Set(candidates
+    .map((candidate) => parseExternalResearchEnvelope(candidate)?.text)
     .filter(Boolean));
-  if (candidateStatuses.size > 1) {
+  if (candidateTexts.size > 1) {
     throw new Error('External research output contains conflicting research statuses.');
   }
   const selected = candidates.find((candidate) => parseExternalResearchEnvelope(candidate));
