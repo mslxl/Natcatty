@@ -813,6 +813,96 @@ test("plugin connections that open connected continue status monitoring", async 
   assert.deepEqual(statusCalls, [["session-connected-monitored", "getStatus"]]);
 });
 
+test("an explicit slow close stops status monitoring before the Provider responds", async () => {
+  const ipcMain = createIpcMain();
+  let releaseClose;
+  const closeGate = new Promise((resolve) => { releaseClose = resolve; });
+  let resolveCloseStarted;
+  const closeStarted = new Promise((resolve) => { resolveCloseStarted = resolve; });
+  const statusCalls = [];
+  const finished = [];
+  const externalSessions = new Map();
+  const owners = [];
+  registerPluginBridge(ipcMain, {
+    manager: { initialize: async () => {} },
+    extensionProviderService: {
+      async openConnection(params) {
+        return { sessionId: params.sessionId, providerId: params.providerId, status: "connected", diagnostics: [] };
+      },
+      async control(sessionId, operation) {
+        if (operation === "close") {
+          resolveCloseStarted();
+          await closeGate;
+          return null;
+        }
+        statusCalls.push([sessionId, operation]);
+        throw new Error("Plugin connection session was not found");
+      },
+      closeSessionLocal() {},
+    },
+    getTerminalWorkerManager: () => ({
+      async startExternalSession(options) {
+        if (externalSessions.has(options.sessionId)) throw new Error("external session already registered");
+        owners.push(options.ownerToken);
+        externalSessions.set(options.sessionId, options.ownerToken);
+        return { sessionId: options.sessionId };
+      },
+      async pushExternalOutput() { return true; },
+      async finishExternalSession(sessionId, details, owner) {
+        if (externalSessions.get(sessionId) !== owner) return false;
+        externalSessions.delete(sessionId);
+        finished.push([sessionId, details, owner]);
+        return true;
+      },
+    }),
+    connectionStatusPollMs: 5,
+    env: { NETCATTY_PLUGIN_DEV: "1" },
+    isTrustedSender: () => true,
+  });
+  const event = { sender: { id: 89, once() {}, isDestroyed: () => false } };
+  await ipcMain.handlers.get(CHANNELS.connectionStart)(event, {
+    requestId: "connection-explicit-slow-close",
+    sessionId: "session-explicit-slow-close",
+    providerId: "com.example.transport.connection",
+    configuration: {},
+    columns: 80,
+    rows: 24,
+  });
+
+  const closing = ipcMain.handlers.get(CHANNELS.connectionControl)(event, {
+    sessionId: "session-explicit-slow-close",
+    operation: "close",
+    payload: {},
+  });
+  await closeStarted;
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  assert.deepEqual(statusCalls, []);
+  assert.deepEqual(finished, [[
+    "session-explicit-slow-close",
+    { reason: "closed" },
+    owners[0],
+  ]]);
+  await assert.rejects(ipcMain.handlers.get(CHANNELS.connectionWrite)(event, {
+    sessionId: "session-explicit-slow-close",
+    data: "late input",
+  }), /not owned/i);
+
+  await ipcMain.handlers.get(CHANNELS.connectionStart)(event, {
+    requestId: "connection-explicit-slow-close-replacement",
+    sessionId: "session-explicit-slow-close",
+    providerId: "com.example.transport.connection",
+    configuration: {},
+    columns: 80,
+    rows: 24,
+  });
+  assert.notEqual(owners[1], owners[0]);
+  assert.equal(externalSessions.get("session-explicit-slow-close"), owners[1]);
+  releaseClose();
+  assert.equal(await closing, null);
+  assert.equal(externalSessions.get("session-explicit-slow-close"), owners[1]);
+});
+
 test("silent connection readiness delivery failure closes the opened provider session", async () => {
   const ipcMain = createIpcMain();
   const controls = [];
@@ -858,12 +948,16 @@ test("silent connection readiness delivery failure closes the opened provider se
 test("plugin connection status monitoring closes asynchronous provider errors", async () => {
   const ipcMain = createIpcMain();
   const closed = [];
+  const externalSessions = new Map();
+  const finishAttempts = [];
+  let providerOptions;
   let resolveFinished;
   const finished = new Promise((resolve) => { resolveFinished = resolve; });
   registerPluginBridge(ipcMain, {
     manager: { initialize: async () => {} },
     extensionProviderService: {
-      async openConnection(params) {
+      async openConnection(params, options) {
+        providerOptions = options;
         return { sessionId: params.sessionId, providerId: params.providerId, status: "connecting", diagnostics: [] };
       },
       async control() {
@@ -873,12 +967,25 @@ test("plugin connection status monitoring closes asynchronous provider errors", 
           diagnostics: [{ severity: "error", message: "Host key mismatch", path: "configuration.hostKey" }],
         };
       },
-      closeSessionLocal(sessionId) { closed.push(sessionId); },
+      closeSessionLocal(sessionId) {
+        closed.push(sessionId);
+        void providerOptions.onOutputClose(new Error("Plugin stream cancelled: status-close-repro"));
+      },
     },
     getTerminalWorkerManager: () => ({
-      async startExternalSession(options) { return { sessionId: options.sessionId }; },
+      async startExternalSession(options) {
+        externalSessions.set(options.sessionId, options.ownerToken);
+        return { sessionId: options.sessionId };
+      },
       async pushExternalOutput() {},
-      async finishExternalSession(sessionId, details) { resolveFinished([sessionId, details]); return true; },
+      async finishExternalSession(sessionId, details, owner) {
+        const accepted = externalSessions.get(sessionId) === owner;
+        finishAttempts.push([sessionId, details, accepted]);
+        if (!accepted) return false;
+        externalSessions.delete(sessionId);
+        resolveFinished([sessionId, details]);
+        return true;
+      },
     }),
     connectionStatusPollMs: 0,
     env: { NETCATTY_PLUGIN_DEV: "1" },
@@ -901,7 +1008,12 @@ test("plugin connection status monitoring closes asynchronous provider errors", 
       diagnostics: [{ severity: "error", message: "Host key mismatch", path: "configuration.hostKey" }],
     },
   ]);
+  await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(closed, ["session-late-error"]);
+  assert.equal(finishAttempts[0][1].error, "Handshake rejected");
+  assert.equal(finishAttempts[0][2], true);
+  assert.equal(finishAttempts[1][1].error, "Plugin stream cancelled: status-close-repro");
+  assert.equal(finishAttempts[1][2], false);
 });
 
 test("plugin connection status monitoring invokes Provider reconnect for retryable failures", async () => {

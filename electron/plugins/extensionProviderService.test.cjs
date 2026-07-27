@@ -292,7 +292,11 @@ test("connection control operations must acknowledge with null", async () => {
           : {}),
       /must be null|failed validation/i,
     );
-    assert.ok(h.service.getSession(`session-${operation}`));
+    if (operation === "close") {
+      assert.throws(() => h.service.getSession(`session-${operation}`), /not found/i);
+    } else {
+      assert.ok(h.service.getSession(`session-${operation}`));
+    }
   }
 });
 
@@ -312,6 +316,50 @@ test("stale connection owners cannot close a same-ID replacement", () => {
   assert.equal(h.service.getSession("session-replaced", newOwner).sessionOwner, newOwner);
   assert.equal(h.service.closeSessionLocal("session-replaced", undefined, newOwner), true);
   assert.deepEqual(cancelled, ["input", "output"]);
+});
+
+test("a same-ID replacement can open while the previous Provider close is pending", async () => {
+  let releaseClose;
+  const closeGate = new Promise((resolve) => { releaseClose = resolve; });
+  let openCount = 0;
+  let h;
+  h = fixture({
+    async request({ params, identity, accept }) {
+      if (params.operation === "open") {
+        openCount += 1;
+        const stream = incoming(params.payload.outputStreamId, async () => {});
+        assert.equal(await accept(stream, identity), true);
+        return {
+          requestId: params.requestId,
+          status: "ok",
+          result: { connectionId: `provider-replacement-${openCount}`, status: "connected" },
+        };
+      }
+      assert.equal(params.operation, "close");
+      await closeGate;
+      return { requestId: params.requestId, status: "ok", result: null };
+    },
+  });
+  const oldOwner = Symbol("old-owner");
+  const newOwner = Symbol("new-owner");
+  const params = {
+    providerId: "com.example.transport.connection",
+    sessionId: "session-fast-reconnect",
+    configuration: {},
+    columns: 80,
+    rows: 24,
+  };
+
+  await h.service.openConnection(params, { sessionOwner: oldOwner });
+  const closing = h.service.control(params.sessionId, "close", {}, { sessionOwner: oldOwner });
+  assert.throws(() => h.service.getSession(params.sessionId, oldOwner), /not found/i);
+
+  await h.service.openConnection(params, { sessionOwner: newOwner });
+  assert.equal(h.service.getSession(params.sessionId, newOwner).sessionOwner, newOwner);
+
+  releaseClose();
+  await closing;
+  assert.equal(h.service.getSession(params.sessionId, newOwner).sessionOwner, newOwner);
 });
 
 test("connection status results preserve structured diagnostics", async () => {

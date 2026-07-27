@@ -571,6 +571,10 @@ class PluginExtensionProviderService {
   async control(sessionId, operation, payload = {}, options = {}) {
     const session = this.getSession(sessionId, options.sessionOwner);
     const operationId = `connection:${operation}:${randomUUID()}`;
+    const isClose = operation === "close";
+    if (isClose && this.sessions.get(sessionId) === session) {
+      this.sessions.delete(sessionId);
+    }
     try {
       const result = await this.invoke({
         providerId: session.providerId,
@@ -579,11 +583,16 @@ class PluginExtensionProviderService {
         payload: { ...payload, connectionId: session.pluginConnectionId, operationId },
         deadlineMs: options.deadlineMs,
       }, { ...options, activation: { activation: session.activation, identity: session.identity } });
-      if (operation === "close") this.closeSessionLocal(sessionId, undefined, session.sessionOwner);
       return result;
     } finally {
       this.leaseStore.revokeOperation(session.identity.pluginId, operationId);
+      if (isClose) this.disposeSession(session);
     }
+  }
+
+  disposeSession(session, error) {
+    try { session.input.cancel?.(); } catch {}
+    try { session.output.cancel?.(error); } catch {}
   }
 
   closeSessionLocal(sessionId, error, sessionOwner) {
@@ -591,8 +600,7 @@ class PluginExtensionProviderService {
     if (!session) return false;
     if (sessionOwner !== undefined && session.sessionOwner !== sessionOwner) return false;
     this.sessions.delete(sessionId);
-    try { session.input.cancel?.(); } catch {}
-    try { session.output.cancel?.(error); } catch {}
+    this.disposeSession(session, error);
     return true;
   }
 

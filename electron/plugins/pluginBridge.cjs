@@ -192,6 +192,7 @@ function registerPluginBridge(ipcMain, options) {
   const extensionRequestsBySender = new WeakMap();
   const observedExtensionRequestSenders = new WeakSet();
   const connectionSessionsBySender = new WeakMap();
+  const connectionMonitorsBySender = new WeakMap();
   const observedConnectionSenders = new WeakSet();
   const authenticationChallengesBySender = new WeakMap();
   const observedAuthenticationSenders = new WeakSet();
@@ -301,6 +302,9 @@ function registerPluginBridge(ipcMain, options) {
     if (!observedConnectionSenders.has(sender)) {
       observedConnectionSenders.add(sender);
       sender.once?.("destroyed", () => {
+        const monitors = connectionMonitorsBySender.get(sender);
+        for (const monitor of monitors?.values?.() ?? []) monitor.controller.abort();
+        monitors?.clear?.();
         const ownedSessions = [...sessions];
         sessions.clear();
         for (const [sessionId, sessionOwner] of ownedSessions) {
@@ -318,6 +322,15 @@ function registerPluginBridge(ipcMain, options) {
       });
     }
     return sessions;
+  };
+  const connectionMonitorMap = (sender) => {
+    if (!sender || typeof sender !== "object") throw new Error("Plugin connection sender is unavailable");
+    let monitors = connectionMonitorsBySender.get(sender);
+    if (!monitors) {
+      monitors = new Map();
+      connectionMonitorsBySender.set(sender, monitors);
+    }
+    return monitors;
   };
   const authenticationChallengeMap = (sender) => {
     if (!sender || typeof sender !== "object") throw new Error("Plugin authentication sender is unavailable");
@@ -411,6 +424,7 @@ function registerPluginBridge(ipcMain, options) {
     sessionId,
     sessionOwner,
     sessions,
+    monitors,
     controller,
     terminalWorkerManager,
     readyPublished = false,
@@ -450,23 +464,31 @@ function registerPluginBridge(ipcMain, options) {
             continue;
           }
           if (sessions.get(sessionId) === sessionOwner) sessions.delete(sessionId);
-          extensionProviderService.closeSessionLocal(sessionId, undefined, sessionOwner);
-          await terminalWorkerManager.finishExternalSession(
-            sessionId,
-            connectionStatusCloseDetails(status),
-            sessionOwner,
-          );
+          try {
+            await terminalWorkerManager.finishExternalSession(
+              sessionId,
+              connectionStatusCloseDetails(status),
+              sessionOwner,
+            );
+          } finally {
+            extensionProviderService.closeSessionLocal(sessionId, undefined, sessionOwner);
+          }
           return;
         }
       }
     } catch (error) {
       if (controller.signal.aborted) return;
       if (sessions.get(sessionId) === sessionOwner) sessions.delete(sessionId);
-      extensionProviderService.closeSessionLocal(sessionId, undefined, sessionOwner);
-      await terminalWorkerManager.finishExternalSession(sessionId, {
-        reason: "error",
-        error: boundedErrorMessage(error),
-      }, sessionOwner);
+      try {
+        await terminalWorkerManager.finishExternalSession(sessionId, {
+          reason: "error",
+          error: boundedErrorMessage(error),
+        }, sessionOwner);
+      } finally {
+        extensionProviderService.closeSessionLocal(sessionId, undefined, sessionOwner);
+      }
+    } finally {
+      if (monitors.get(sessionId)?.sessionOwner === sessionOwner) monitors.delete(sessionId);
     }
   };
   const importerSelectionMap = (sender) => {
@@ -636,6 +658,7 @@ function registerPluginBridge(ipcMain, options) {
       throw new Error("Host terminal pipeline is unavailable for plugin connections");
     }
     const sessions = connectionSessionMap(event.sender);
+    const monitors = connectionMonitorMap(event.sender);
     const sessionId = payload?.sessionId;
     const sessionOwner = Symbol(`plugin-connection:${sessionId}`);
     const outputDecoder = new TextDecoder("utf-8");
@@ -674,6 +697,7 @@ function registerPluginBridge(ipcMain, options) {
         onClose: async () => {
           acceptProviderOutput = false;
           if (sessions.get(sessionId) === sessionOwner) sessions.delete(sessionId);
+          if (monitors.get(sessionId)?.sessionOwner === sessionOwner) monitors.delete(sessionId);
           connectionController.abort(new DOMException("Terminal session closed", "AbortError"));
           providerCloseStarted = true;
           if (providerOpened) {
@@ -727,6 +751,8 @@ function registerPluginBridge(ipcMain, options) {
           acceptProviderOutput = false;
           closedDuringStart = true;
           if (sessions.get(sessionId) === sessionOwner) sessions.delete(sessionId);
+          if (monitors.get(sessionId)?.sessionOwner === sessionOwner) monitors.delete(sessionId);
+          connectionController.abort(new DOMException("Plugin connection output closed", "AbortError"));
           const finalData = outputDecoder.decode();
           let finalOutputError;
           if (shouldFlushOutput && finalData) {
@@ -745,6 +771,7 @@ function registerPluginBridge(ipcMain, options) {
       providerOpened = true;
       if (!closedDuringStart) {
         sessions.set(opened.sessionId, sessionOwner);
+        monitors.set(opened.sessionId, { sessionOwner, controller: connectionController });
         if (opened.status === "connected") {
           // The terminal renderer treats the first delivery as the connection
           // readiness boundary. Preserve that boundary for silent protocols
@@ -760,6 +787,7 @@ function registerPluginBridge(ipcMain, options) {
           sessionId: opened.sessionId,
           sessionOwner,
           sessions,
+          monitors,
           controller: connectionController,
           terminalWorkerManager,
           readyPublished: opened.status === "connected",
@@ -769,6 +797,7 @@ function registerPluginBridge(ipcMain, options) {
     } catch (error) {
       acceptProviderOutput = false;
       if (sessions.get(sessionId) === sessionOwner) sessions.delete(sessionId);
+      if (monitors.get(sessionId)?.sessionOwner === sessionOwner) monitors.delete(sessionId);
       connectionController.abort(error);
       if (!providerCloseStarted && providerOpened) {
         try { await extensionProviderService.control(sessionId, "close", {}, { sessionOwner }); }
@@ -814,18 +843,40 @@ function registerPluginBridge(ipcMain, options) {
   handle(CHANNELS.connectionControl, async (_activeManager, payload, event) => {
     if (!extensionProviderService) throw new Error("Plugin connection Providers are unavailable");
     const sessions = connectionSessionMap(event.sender);
+    const monitors = connectionMonitorMap(event.sender);
+    const terminalWorkerManager = getTerminalWorkerManager();
     const sessionOwner = sessions.get(payload?.sessionId);
     if (sessionOwner === undefined) throw new Error("Plugin connection session is not owned by this window");
-    const result = await extensionProviderService.control(
+    const isClose = payload.operation === "close";
+    if (isClose) {
+      if (sessions.get(payload.sessionId) === sessionOwner) sessions.delete(payload.sessionId);
+      const monitor = monitors.get(payload.sessionId);
+      if (monitor?.sessionOwner === sessionOwner) {
+        monitors.delete(payload.sessionId);
+        monitor.controller.abort(new DOMException("Plugin connection closed", "AbortError"));
+      }
+    }
+    const controlResult = Promise.resolve(extensionProviderService.control(
       payload.sessionId,
       payload.operation,
       payload.payload ?? {},
       { sessionOwner },
+    ));
+    if (!isClose) return controlResult;
+    const settledControl = controlResult.then(
+      (value) => ({ status: "fulfilled", value }),
+      (reason) => ({ status: "rejected", reason }),
     );
-    if (payload.operation === "close" && sessions.get(payload.sessionId) === sessionOwner) {
-      sessions.delete(payload.sessionId);
-    }
-    return result;
+    try {
+      await terminalWorkerManager?.finishExternalSession?.(
+        payload.sessionId,
+        { reason: "closed" },
+        sessionOwner,
+      );
+    } catch {}
+    const outcome = await settledControl;
+    if (outcome.status === "rejected") throw outcome.reason;
+    return outcome.value;
   });
   ipcMain.handle(CHANNELS.importerDetect, async (event, payload) => runExtensionRequest(event, payload, async (signal) => {
     if (!extensionProviderService) throw new Error("Plugin importer Providers are unavailable");
