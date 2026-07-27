@@ -2180,7 +2180,7 @@ test('parseExternalResearchStream prefers a split final status over an earlier v
 
   assert.throws(
     () => auto.parseExternalResearchStream(events, {}),
-    /External research blocked: WebSearch became unavailable/,
+    /conflicting research statuses/,
   );
 });
 
@@ -2226,7 +2226,67 @@ test('parseExternalResearchStream prefers a split final fence over cumulative fl
 
   assert.throws(
     () => auto.parseExternalResearchStream(events, {}),
-    /External research blocked: WebSearch became unavailable/,
+    /conflicting research statuses/,
+  );
+});
+
+test('parseExternalResearchStream rejects a fenced status example that conflicts with success', () => {
+  const completeStatus = [
+    'RESEARCH_COMPLETE: Cursor documentation was checked.',
+    'Sources:',
+    '- https://docs.cursor.com/en/cli/reference/output-format — official format',
+  ].join('\n');
+  const fencedExample = '```text\nRESEARCH_BLOCKED: example only\n```';
+  const cumulative = `${completeStatus}\n${fencedExample}`;
+  const events = [
+    {
+      type: 'tool_call',
+      subtype: 'completed',
+      tool_call: {
+        webFetchToolCall: {
+          args: { url: 'https://docs.cursor.com/en/cli/reference/output-format' },
+          result: { success: { content: 'Cursor output format documentation' } },
+        },
+      },
+    },
+    {
+      type: 'assistant',
+      timestamp_ms: 1,
+      message: {
+        content: [{ type: 'text', text: `${completeStatus}\n` }],
+      },
+    },
+    {
+      type: 'assistant',
+      timestamp_ms: 2,
+      message: {
+        content: [{ type: 'text', text: '```text\n' }],
+      },
+    },
+    {
+      type: 'assistant',
+      timestamp_ms: 3,
+      message: {
+        content: [{ type: 'text', text: 'RESEARCH_BLOCKED: example only\n```' }],
+      },
+    },
+    {
+      type: 'assistant',
+      message: {
+        content: [{ type: 'text', text: cumulative }],
+      },
+    },
+    {
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      result: cumulative,
+    },
+  ].map(JSON.stringify).join('\n');
+
+  assert.throws(
+    () => auto.parseExternalResearchStream(events, {}),
+    /conflicting research statuses/,
   );
 });
 
