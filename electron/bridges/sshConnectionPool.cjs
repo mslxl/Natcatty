@@ -1,28 +1,530 @@
 "use strict";
 
 /**
- * Shared SSH connection pool helpers.
+ * Shared SSH transport registry (borrow / return + idle park).
  *
  * Background (issue #1204): "Copy Tab" on an MFA-protected host used to open a
  * brand-new SSH connection, forcing the user through a second MFA prompt. Like
- * Tabby's session-multiplexing, we instead open an additional shell *channel*
- * on the already-authenticated connection. The SSH protocol natively supports
- * many session channels over one transport, so no re-authentication is needed.
+ * Tabby's session-multiplexing, we open additional channels on an already-
+ * authenticated connection. The SSH protocol natively supports many session
+ * channels over one transport, so no re-authentication is needed.
  *
- * Multiplexing means several terminal sessions can share one ssh2 `Client`
- * (`conn`) and one underlying jump-host chain. The transport must only be torn
- * down once the *last* of those sessions goes away — closing a single channel
- * (or even the channel of the session that originally opened the connection)
- * must not kill the siblings. We model that with a small reference-counted
- * descriptor shared by every session on the same connection, mirroring Tabby's
- * ref()/unref()/destroy() lifecycle.
+ * Lifecycle model (OpenSSH ControlPersist-style):
+ * - Consumers **borrow** a lease (shell / sftp / transfer / forward).
+ * - **return** drops the lease. When no leases remain, the transport enters
+ *   idle park for a configurable TTL instead of ending immediately.
+ * - A later borrow against the same endpoint can wake an idle transport.
+ * - When the idle TTL fires (or TTL is 0 on last return), the underlying
+ *   ssh2 Client and jump-host chain are torn down.
+ *
+ * Compatibility: createConnectionRef / acquireConnectionRef /
+ * releaseConnectionRef / findReusableSession keep working. `connRef` is the
+ * transport object; `count` mirrors active lease size for existing callers.
  *
  * The same `sessions` Map is shared by sshBridge and terminalBridge (see
- * registerBridges.cjs), so the session objects — and the `connRef` descriptor
- * attached here — are visible to both. That lets terminalBridge's closeSession
- * and sshBridge's own connection event handlers funnel teardown through the
- * same release path.
+ * registerBridges.cjs). SFTP session-backed clients and (later) port-forward
+ * tunnels borrow the same transports via this registry.
  */
+
+const { randomUUID } = require("node:crypto");
+
+/**
+ * Default idle park after last lease returns (5 minutes).
+ * 0 = park until app quit / discard (ControlPersist-style, never auto-reclaim).
+ * Positive = park that many ms then end.
+ */
+const DEFAULT_SSH_TRANSPORT_IDLE_TTL_MS = 5 * 60_000;
+
+/** Storage key mirrored in infrastructure/config/storageKeys.ts (main + renderer). */
+const STORAGE_KEY_SSH_TRANSPORT_IDLE_TTL_MS = "netcatty_ssh_transport_idle_ttl_ms_v1";
+
+const LEASE_KINDS = Object.freeze({
+  shell: "shell",
+  sftp: "sftp",
+  transfer: "transfer",
+  forward: "forward",
+});
+
+/** @type {Map<string, object>} transportId -> transport */
+const transportsById = new Map();
+/** @type {Map<string, Set<string>>} endpointKey -> transport ids */
+const transportIdsByEndpoint = new Map();
+/** @type {Map<string, { transport: object, holder: object|null }>} leaseId -> entry */
+const leasesById = new Map();
+
+let defaultIdleTtlMs = resolveEnvIdleTtlMs(DEFAULT_SSH_TRANSPORT_IDLE_TTL_MS);
+let timerApi = {
+  setTimeout: (...args) => setTimeout(...args),
+  clearTimeout: (...args) => clearTimeout(...args),
+};
+let nowFn = () => Date.now();
+let nextLeaseSeq = 0;
+
+function resolveEnvIdleTtlMs(fallback) {
+  const raw = process.env.NETCATTY_SSH_TRANSPORT_IDLE_TTL_MS;
+  if (raw === undefined || raw === "") return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return fallback;
+  return n;
+}
+
+function normalizeEndpoint(endpoint) {
+  if (!endpoint || typeof endpoint !== "object") return null;
+  const hostname = String(endpoint.hostname || "").trim();
+  if (!hostname) return null;
+  return {
+    hostname,
+    port: endpoint.port || 22,
+    username: endpoint.username || "root",
+    protocol: endpoint.protocol || "ssh",
+    sftpSudo: Boolean(endpoint.sftpSudo),
+    jumpFingerprint: endpoint.jumpFingerprint
+      ? String(endpoint.jumpFingerprint)
+      : (Array.isArray(endpoint.jumpHosts)
+        ? endpoint.jumpHosts.map((h) => (
+          typeof h === "string"
+            ? h
+            : `${h?.hostname || ""}:${h?.port || 22}:${h?.username || "root"}`
+        )).join(">")
+        : ""),
+  };
+}
+
+function buildEndpointKey(endpoint) {
+  const ep = normalizeEndpoint(endpoint);
+  if (!ep) return null;
+  const sudo = ep.sftpSudo ? "sudo" : "nosudo";
+  const jump = ep.jumpFingerprint || "-";
+  return [
+    ep.hostname,
+    ep.port,
+    ep.username,
+    ep.protocol,
+    sudo,
+    jump,
+  ].join("|");
+}
+
+function sameEndpoint(a, b) {
+  const left = normalizeEndpoint(a);
+  const right = normalizeEndpoint(b);
+  if (!left || !right) return false;
+  return buildEndpointKey(left) === buildEndpointKey(right);
+}
+
+function isTransportSocketHealthy(transport) {
+  if (!transport || !transport.conn) return false;
+  if (transport.state === "dead" || transport.state === "closing") return false;
+  const sock = transport.conn._sock;
+  if (sock && sock.destroyed) return false;
+  return true;
+}
+
+function clearIdleTimer(transport) {
+  if (!transport?.idleTimer) return;
+  try {
+    timerApi.clearTimeout(transport.idleTimer);
+  } catch {
+    /* ignore */
+  }
+  transport.idleTimer = null;
+  transport.idleDeadlineAt = null;
+}
+
+function unregisterTransport(transport) {
+  if (!transport) return;
+  transportsById.delete(transport.id);
+  if (transport.endpointKey) {
+    const set = transportIdsByEndpoint.get(transport.endpointKey);
+    if (set) {
+      set.delete(transport.id);
+      if (set.size === 0) transportIdsByEndpoint.delete(transport.endpointKey);
+    }
+  }
+}
+
+function endTransport(transport, reason = "end") {
+  if (!transport) return false;
+  if (transport.state === "dead" || transport.state === "closing") return false;
+
+  transport.state = "closing";
+  clearIdleTimer(transport);
+
+  for (const leaseId of [...transport.leases.keys()]) {
+    const entry = leasesById.get(leaseId);
+    leasesById.delete(leaseId);
+    transport.leases.delete(leaseId);
+    if (entry?.holder && entry.holder.connRef === transport) {
+      entry.holder.connRef = null;
+      entry.holder._sshTransportLeaseId = null;
+    }
+  }
+  transport.count = 0;
+
+  try {
+    transport.conn?.end();
+  } catch {
+    /* connection may already be gone */
+  }
+  const chain = Array.isArray(transport.chainConnections) ? transport.chainConnections : [];
+  for (const c of chain) {
+    try {
+      c?.end();
+    } catch {
+      /* ignore */
+    }
+  }
+  transport.chainConnections = [];
+  transport.conn = null;
+  transport.state = "dead";
+  transport.endedReason = reason;
+  unregisterTransport(transport);
+  return true;
+}
+
+function scheduleIdleEnd(transport) {
+  clearIdleTimer(transport);
+  const ttl = Number.isFinite(transport.idleTtlMs) ? transport.idleTtlMs : defaultIdleTtlMs;
+
+  transport.state = "idle";
+  transport.idleSince = nowFn();
+
+  // 0 (or negative/non-finite): park until quit/discard — matches settings
+  // "Until app quit" and OpenSSH ControlPersist yes.
+  if (!Number.isFinite(ttl) || ttl <= 0) {
+    transport.idleDeadlineAt = null;
+    return { ended: false, idle: true };
+  }
+
+  transport.idleDeadlineAt = transport.idleSince + ttl;
+  transport.idleTimer = timerApi.setTimeout(() => {
+    transport.idleTimer = null;
+    if (transport.state !== "idle" || transport.leases.size > 0) return;
+    endTransport(transport, "idle-ttl");
+  }, ttl);
+
+  return { ended: false, idle: true };
+}
+
+function wakeFromIdle(transport) {
+  if (transport.state !== "idle") return;
+  clearIdleTimer(transport);
+  transport.state = "live";
+  transport.idleSince = null;
+  transport.idleDeadlineAt = null;
+}
+
+function attachEndpointIndex(transport) {
+  if (!transport.endpointKey) return;
+  let set = transportIdsByEndpoint.get(transport.endpointKey);
+  if (!set) {
+    set = new Set();
+    transportIdsByEndpoint.set(transport.endpointKey, set);
+  }
+  set.add(transport.id);
+}
+
+function allocateLeaseId(kind) {
+  nextLeaseSeq += 1;
+  return `${kind || "lease"}-${nextLeaseSeq}-${randomUUID().slice(0, 8)}`;
+}
+
+/**
+ * Create a transport around an authenticated ssh2 Client.
+ * Does not automatically create a lease — call borrowTransport next, or use
+ * createConnectionRef which creates + borrows a shell lease for a session.
+ */
+function createTransport({
+  conn,
+  chainConnections = [],
+  endpoint = null,
+  idleTtlMs = defaultIdleTtlMs,
+  meta = null,
+} = {}) {
+  if (!conn) throw new Error("createTransport requires conn");
+
+  const normalized = normalizeEndpoint(endpoint);
+  const transport = {
+    id: randomUUID(),
+    // Compat: existing code reads connRef.count / conn / chainConnections /
+    // shellOpenQueue on the shared descriptor.
+    count: 0,
+    conn,
+    chainConnections: Array.isArray(chainConnections) ? chainConnections : [],
+    shellOpenQueue: undefined,
+    leases: new Map(),
+    endpoint: normalized,
+    endpointKey: buildEndpointKey(normalized),
+    state: "live",
+    idleTtlMs: Number.isFinite(idleTtlMs) && idleTtlMs >= 0 ? idleTtlMs : defaultIdleTtlMs,
+    idleTimer: null,
+    idleSince: null,
+    idleDeadlineAt: null,
+    createdAt: nowFn(),
+    meta: meta || null,
+    endedReason: null,
+  };
+
+  transportsById.set(transport.id, transport);
+  attachEndpointIndex(transport);
+  return transport;
+}
+
+/**
+ * Borrow a lease on a transport. Wakes idle park if needed.
+ *
+ * @param {object} transport
+ * @param {{ kind?: string, leaseId?: string, holder?: object|null, meta?: object }} [options]
+ */
+function borrowTransport(transport, options = {}) {
+  if (!transport || transport.state === "dead" || transport.state === "closing") {
+    throw new Error("Cannot borrow a closed SSH transport");
+  }
+  if (!isTransportSocketHealthy(transport)) {
+    endTransport(transport, "unhealthy");
+    throw new Error("SSH transport socket is not healthy");
+  }
+
+  wakeFromIdle(transport);
+
+  const kind = options.kind && LEASE_KINDS[options.kind] ? options.kind : (options.kind || "shell");
+  const leaseId = options.leaseId || allocateLeaseId(kind);
+  if (transport.leases.has(leaseId) || leasesById.has(leaseId)) {
+    throw new Error(`SSH transport lease already exists: ${leaseId}`);
+  }
+
+  const holder = options.holder ?? null;
+  const lease = {
+    id: leaseId,
+    kind,
+    holder,
+    meta: options.meta || null,
+    borrowedAt: nowFn(),
+  };
+  transport.leases.set(leaseId, lease);
+  leasesById.set(leaseId, { transport, holder });
+  transport.count = transport.leases.size;
+  transport.state = "live";
+
+  if (holder && typeof holder === "object") {
+    holder.connRef = transport;
+    holder._sshTransportLeaseId = leaseId;
+  }
+
+  return { transport, leaseId, lease };
+}
+
+/**
+ * Move an existing lease from a temporary holder to the real session without
+ * changing the lease count. Used when Copy Tab / reuse opens a shell while
+ * pinned on a refHolder, then hands the pin to the live session object.
+ *
+ * @returns {boolean} true if the lease was rebound
+ */
+function transferConnectionRef(fromHolder, toHolder) {
+  if (!fromHolder || !toHolder || fromHolder === toHolder) return false;
+  const leaseId = fromHolder._sshTransportLeaseId;
+  const transport = fromHolder.connRef;
+  if (!leaseId || !transport?.leases) return false;
+  const lease = transport.leases.get(leaseId);
+  if (!lease) return false;
+
+  lease.holder = toHolder;
+  leasesById.set(leaseId, { transport, holder: toHolder });
+
+  fromHolder.connRef = null;
+  fromHolder._sshTransportLeaseId = null;
+  toHolder.connRef = transport;
+  toHolder._sshTransportLeaseId = leaseId;
+  return true;
+}
+
+/**
+ * Return a lease by id or by holder object (compat with session/refHolder).
+ * @returns {{ released: boolean, ended: boolean, idle: boolean, remaining: number }}
+ */
+function returnTransport(leaseIdOrHolder) {
+  if (leaseIdOrHolder == null) {
+    return { released: false, ended: false, idle: false, remaining: 0 };
+  }
+
+  let leaseId = null;
+  let holder = null;
+
+  if (typeof leaseIdOrHolder === "string") {
+    leaseId = leaseIdOrHolder;
+  } else if (typeof leaseIdOrHolder === "object") {
+    holder = leaseIdOrHolder;
+    leaseId = holder._sshTransportLeaseId || null;
+    // Legacy: holder still points at transport but lease id was lost — try match.
+    if (!leaseId && holder.connRef?.leases) {
+      for (const [id, lease] of holder.connRef.leases) {
+        if (lease.holder === holder) {
+          leaseId = id;
+          break;
+        }
+      }
+    }
+  }
+
+  if (!leaseId) {
+    return { released: false, ended: false, idle: false, remaining: 0 };
+  }
+
+  const entry = leasesById.get(leaseId);
+  if (!entry) {
+    if (holder) {
+      holder.connRef = null;
+      holder._sshTransportLeaseId = null;
+    }
+    return { released: false, ended: false, idle: false, remaining: 0 };
+  }
+
+  const { transport } = entry;
+  leasesById.delete(leaseId);
+  transport.leases.delete(leaseId);
+  transport.count = transport.leases.size;
+
+  if (entry.holder && typeof entry.holder === "object") {
+    if (entry.holder.connRef === transport) entry.holder.connRef = null;
+    entry.holder._sshTransportLeaseId = null;
+  } else if (holder) {
+    holder.connRef = null;
+    holder._sshTransportLeaseId = null;
+  }
+
+  if (transport.leases.size > 0) {
+    return {
+      released: true,
+      ended: false,
+      idle: false,
+      remaining: transport.leases.size,
+    };
+  }
+
+  const park = scheduleIdleEnd(transport);
+  return {
+    released: true,
+    ended: park.ended,
+    idle: park.idle,
+    remaining: 0,
+  };
+}
+
+function discardTransport(transportOrId, reason = "discard") {
+  const transport = typeof transportOrId === "string"
+    ? transportsById.get(transportOrId)
+    : transportOrId;
+  if (!transport) return false;
+  return endTransport(transport, reason);
+}
+
+function discardAllTransports(reason = "discard-all") {
+  let n = 0;
+  for (const transport of [...transportsById.values()]) {
+    if (endTransport(transport, reason)) n += 1;
+  }
+  return n;
+}
+
+function findTransportById(id) {
+  const transport = transportsById.get(id);
+  if (!transport || !isTransportSocketHealthy(transport)) return null;
+  return transport;
+}
+
+/**
+ * Find a healthy live or idle transport for an endpoint.
+ * Prefers live transports with fewer leases, then idle.
+ */
+function findTransportByEndpoint(endpoint) {
+  const key = buildEndpointKey(endpoint);
+  if (!key) return null;
+  const ids = transportIdsByEndpoint.get(key);
+  if (!ids || ids.size === 0) return null;
+
+  /** @type {object[]} */
+  const candidates = [];
+  for (const id of ids) {
+    const transport = transportsById.get(id);
+    if (!transport || !isTransportSocketHealthy(transport)) {
+      if (transport && (transport.state === "dead" || !transport.conn)) {
+        unregisterTransport(transport);
+      }
+      continue;
+    }
+    if (transport.state === "live" || transport.state === "idle") {
+      candidates.push(transport);
+    }
+  }
+  if (candidates.length === 0) return null;
+
+  candidates.sort((a, b) => {
+    // Prefer live over idle, then fewer leases.
+    if (a.state !== b.state) return a.state === "live" ? -1 : 1;
+    return a.leases.size - b.leases.size;
+  });
+  return candidates[0];
+}
+
+function getTransportStats() {
+  let live = 0;
+  let idle = 0;
+  let leases = 0;
+  for (const t of transportsById.values()) {
+    if (t.state === "live") live += 1;
+    else if (t.state === "idle") idle += 1;
+    leases += t.leases.size;
+  }
+  return {
+    transports: transportsById.size,
+    live,
+    idle,
+    leases,
+    defaultIdleTtlMs,
+  };
+}
+
+function setDefaultTransportIdleTtlMs(ms) {
+  if (!Number.isFinite(ms) || ms < 0) return defaultIdleTtlMs;
+  defaultIdleTtlMs = ms;
+  // Reschedule already-idle transports so a settings change takes effect without
+  // waiting for a new borrow/return cycle.
+  for (const transport of transportsById.values()) {
+    transport.idleTtlMs = defaultIdleTtlMs;
+    if (transport.state === "idle" && transport.leases.size === 0) {
+      scheduleIdleEnd(transport);
+    }
+  }
+  return defaultIdleTtlMs;
+}
+
+function getDefaultTransportIdleTtlMs() {
+  return defaultIdleTtlMs;
+}
+
+/**
+ * Test helpers: reset registry and optionally inject timers/clock.
+ */
+function resetSshTransportRegistryForTests(options = {}) {
+  discardAllTransports("test-reset");
+  transportsById.clear();
+  transportIdsByEndpoint.clear();
+  leasesById.clear();
+  nextLeaseSeq = 0;
+  defaultIdleTtlMs = Number.isFinite(options.defaultIdleTtlMs)
+    ? options.defaultIdleTtlMs
+    : resolveEnvIdleTtlMs(DEFAULT_SSH_TRANSPORT_IDLE_TTL_MS);
+  timerApi = {
+    setTimeout: options.setTimeout || ((...args) => setTimeout(...args)),
+    clearTimeout: options.clearTimeout || ((...args) => clearTimeout(...args)),
+  };
+  nowFn = options.now || (() => Date.now());
+}
+
+// ---------------------------------------------------------------------------
+// Compatibility wrappers (pre-registry call sites)
+// ---------------------------------------------------------------------------
 
 /**
  * Attach a fresh reference-counted connection descriptor to the session that
@@ -33,16 +535,36 @@
  * @param {object} conn - the ssh2 Client for the established connection
  * @param {Array} chainConnections - jump-host connections that must be ended
  *   together with the transport (owned by the connection, not any one channel)
- * @returns {{ count: number, conn: object, chainConnections: Array }} descriptor
+ * @returns {object} transport descriptor (still exposed as session.connRef)
  */
 function createConnectionRef(session, conn, chainConnections) {
-  const connRef = {
-    count: 1,
+  const endpoint = session?._reuseEndpoint
+    ? {
+      hostname: session._reuseEndpoint.hostname,
+      port: session._reuseEndpoint.port,
+      username: session._reuseEndpoint.username,
+      protocol: session._reuseEndpoint.protocol,
+      sftpSudo: session._reuseEndpoint.sftpSudo,
+      jumpFingerprint: session._reuseEndpoint.jumpFingerprint,
+      jumpHosts: session._reuseEndpoint.jumpHosts,
+    }
+    : null;
+
+  const transport = createTransport({
     conn,
-    chainConnections: Array.isArray(chainConnections) ? chainConnections : [],
-  };
-  session.connRef = connRef;
-  return connRef;
+    chainConnections,
+    endpoint,
+    idleTtlMs: defaultIdleTtlMs,
+  });
+
+  borrowTransport(transport, {
+    kind: LEASE_KINDS.shell,
+    holder: session,
+    leaseId: session?.id ? `shell:${session.id}` : undefined,
+    meta: { source: "createConnectionRef" },
+  });
+
+  return transport;
 }
 
 /**
@@ -50,57 +572,50 @@ function createConnectionRef(session, conn, chainConnections) {
  * connection descriptor, incrementing its reference count.
  *
  * @param {object} session - the new session sharing the connection
- * @param {{ count: number }} connRef - descriptor from createConnectionRef
+ * @param {object} connRef - transport from createConnectionRef / createTransport
  */
 function acquireConnectionRef(session, connRef) {
   if (!connRef) return;
-  connRef.count += 1;
-  session.connRef = connRef;
+  const kind = session?.__sshLeaseKind && LEASE_KINDS[session.__sshLeaseKind]
+    ? session.__sshLeaseKind
+    : LEASE_KINDS.shell;
+  // Prefer stable lease ids when session/sftp ids exist.
+  let leaseId;
+  if (session?.id && kind === LEASE_KINDS.shell) leaseId = `shell:${session.id}`;
+  else if (session?.id && kind === LEASE_KINDS.sftp) leaseId = `sftp:${session.id}`;
+  else if (session?.id && kind === LEASE_KINDS.transfer) leaseId = `transfer:${session.id}`;
+  else if (session?.id && kind === LEASE_KINDS.forward) leaseId = `forward:${session.id}`;
+
+  // If this holder already has a lease on this transport, no-op (idempotent).
+  if (session?._sshTransportLeaseId && connRef.leases?.has(session._sshTransportLeaseId)) {
+    return;
+  }
+
+  borrowTransport(connRef, {
+    kind,
+    holder: session,
+    leaseId,
+    meta: { source: "acquireConnectionRef" },
+  });
 }
 
 /**
  * Release this session's hold on its shared connection.
  *
- * Decrements the reference count. When it reaches zero (the last channel is
- * gone) the underlying transport and any jump-host chain connections are torn
- * down. The caller remains responsible for closing this session's own shell
- * stream/channel; this only governs the *shared* transport.
+ * Decrements the lease count. When it reaches zero the transport enters idle
+ * park (or ends immediately when idle TTL is 0). The caller remains responsible
+ * for closing this session's own shell stream/channel; this only governs the
+ * *shared* transport.
  *
- * Safe to call multiple times for the same session — the descriptor is detached
- * after the first release so a later duplicate call is a no-op (important
- * because both a stream "close" event and an explicit closeSession can fire).
+ * Safe to call multiple times for the same session — the lease is detached
+ * after the first release so a later duplicate call is a no-op.
  *
  * @param {object} session - the session being torn down
  * @returns {boolean} true if the shared transport was ended by this call
  */
 function releaseConnectionRef(session) {
-  const connRef = session && session.connRef;
-  if (!connRef) return false;
-  // Detach immediately so re-entrant / duplicate releases for the same session
-  // cannot double-decrement the shared counter.
-  session.connRef = null;
-
-  connRef.count -= 1;
-  if (connRef.count > 0) {
-    return false;
-  }
-
-  try {
-    connRef.conn?.end();
-  } catch {
-    /* connection may already be gone */
-  }
-  for (const c of connRef.chainConnections) {
-    try {
-      c?.end();
-    } catch {
-      /* ignore */
-    }
-  }
-  // Drop references so the descriptor doesn't pin connections after teardown.
-  connRef.chainConnections = [];
-  connRef.conn = null;
-  return true;
+  const result = returnTransport(session);
+  return result.ended;
 }
 
 /**
@@ -113,16 +628,9 @@ function releaseConnectionRef(session) {
  * authenticated to a *different* target than the one now requested, so the
  * caller can safely fall back to establishing a fresh connection.
  *
- * The target check matters because a saved host can be edited after the source
- * tab connected; the duplicate would then carry the new hostname/port/username
- * while the source connection still points at the old machine. Reusing it would
- * silently run commands on the wrong host, so we require an exact endpoint match.
- *
  * @param {Map} sessions - the shared sessions Map
  * @param {string} sourceSessionId - id of the session to reuse
  * @param {{ hostname: string, port?: number, username?: string }} [requestedTarget]
- *   the endpoint the duplicate wants to connect to; when provided, the source's
- *   recorded endpoint must match it
  * @returns {object|null} the reusable source session, or null
  */
 function findReusableSession(sessions, sourceSessionId, requestedTarget) {
@@ -134,6 +642,8 @@ function findReusableSession(sessions, sourceSessionId, requestedTarget) {
   // through startSession.cjs; SFTP/exec-only or local/telnet/serial sessions
   // won't have both, so they're skipped.
   if (!source.conn || !source.stream || !source.connRef) return null;
+  // Registry-managed transports: refuse dead/closing.
+  if (source.connRef.state === "dead" || source.connRef.state === "closing") return null;
   // ssh2 Client exposes no public "is connected" flag; rely on the descriptor
   // still being attached (it is nulled out on teardown) plus a non-destroyed
   // underlying socket when ssh2 exposes one.
@@ -141,21 +651,65 @@ function findReusableSession(sessions, sourceSessionId, requestedTarget) {
   if (sock && sock.destroyed) return null;
 
   if (requestedTarget) {
-    const ep = source._reuseEndpoint;
+    const ep = source._reuseEndpoint || source.connRef.endpoint;
     // No recorded endpoint -> can't prove it's the same target, so don't reuse.
     if (!ep) return null;
-    const sameHost = ep.hostname === (requestedTarget.hostname || '');
-    const samePort = (ep.port || 22) === (requestedTarget.port || 22);
-    const sameUser = (ep.username || 'root') === (requestedTarget.username || 'root');
-    if (!sameHost || !samePort || !sameUser) return null;
+    if (!sameEndpoint(ep, requestedTarget)) return null;
   }
 
   return source;
 }
 
+/**
+ * Resolve a transport for channel reuse: prefer an explicit source session,
+ * otherwise any healthy transport for the endpoint (including idle park).
+ */
+function resolveTransportForReuse({
+  sessions,
+  sourceSessionId,
+  endpoint,
+} = {}) {
+  if (sourceSessionId && sessions) {
+    const source = findReusableSession(
+      sessions,
+      sourceSessionId,
+      endpoint || undefined,
+    );
+    if (source?.connRef && isTransportSocketHealthy(source.connRef)) {
+      return source.connRef;
+    }
+  }
+  if (endpoint) {
+    return findTransportByEndpoint(endpoint);
+  }
+  return null;
+}
+
 module.exports = {
+  // Constants
+  DEFAULT_SSH_TRANSPORT_IDLE_TTL_MS,
+  STORAGE_KEY_SSH_TRANSPORT_IDLE_TTL_MS,
+  LEASE_KINDS,
+  // New registry API
+  createTransport,
+  borrowTransport,
+  returnTransport,
+  discardTransport,
+  discardAllTransports,
+  findTransportById,
+  findTransportByEndpoint,
+  resolveTransportForReuse,
+  getTransportStats,
+  setDefaultTransportIdleTtlMs,
+  getDefaultTransportIdleTtlMs,
+  buildEndpointKey,
+  normalizeEndpoint,
+  sameEndpoint,
+  resetSshTransportRegistryForTests,
+  // Compat API
   createConnectionRef,
   acquireConnectionRef,
   releaseConnectionRef,
+  transferConnectionRef,
   findReusableSession,
 };

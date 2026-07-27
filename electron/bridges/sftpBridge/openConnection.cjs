@@ -74,7 +74,9 @@ function createOpenConnectionApi(ctx) {
       if (typeof client.end === "function" && !client.__netcattyScpEndWrapped) {
         const prevEnd = client.end.bind(client);
         client.end = async (...args) => {
-          const ownsSocket = !client.__netcattySessionBacked && !client.__netcattySourceSessionId;
+          const ownsSocket = !client.__netcattySessionBacked
+            && !client.__netcattySourceSessionId
+            && !client.__netcattyTransportManaged;
           if (ownsSocket) {
             try { client.client?.end?.(); } catch { /* ignore */ }
             try { client.client?.destroy?.(); } catch { /* ignore */ }
@@ -740,6 +742,7 @@ function createOpenConnectionApi(ctx) {
             conn: sourceSession.conn,
             stream: null,
             webContentsId: event.sender?.id,
+            __sshLeaseKind: "sftp",
           };
           acquireConnectionRef?.(refHolder, sourceSession.connRef);
           const reusedClient = createSessionBackedSftpClient(
@@ -802,6 +805,67 @@ function createOpenConnectionApi(ctx) {
           );
         } else {
           console.log(`[SFTP] Reuse requested for ${connId} but source session is not reusable; connecting fresh`);
+        }
+      }
+
+      // Parked / shared transport without a live terminal session: open an SFTP
+      // channel on the registry transport (no second MFA).
+      if (
+        !options.sudo
+        && typeof findTransportByEndpoint === "function"
+        && typeof createSessionBackedSftpClient === "function"
+      ) {
+        const endpoint = {
+          hostname: options.hostname,
+          port: options.port || 22,
+          username: options.username || "root",
+          jumpHosts: options.jumpHosts,
+        };
+        const transport = findTransportByEndpoint(endpoint);
+        if (transport?.conn) {
+          const refHolder = {
+            id: connId,
+            __sshLeaseKind: "sftp",
+            webContentsId: event.sender?.id,
+          };
+          try {
+            acquireConnectionRef?.(refHolder, transport);
+            const reusedClient = createSessionBackedSftpClient(connId, transport.conn, {
+              refHolder,
+              sourceSessionId: options.sourceSessionId || null,
+            });
+            reusedClient.__netcattyTransportManaged = true;
+            const fileProtocol = normalizeFileProtocol(options.fileProtocol);
+            sendSftpProgress(event.sender, connId, options.hostname, "connecting", "reusing parked SSH transport");
+            if (fileProtocol === "scp") {
+              await activateScpMode(reusedClient);
+              reusedClient.__netcattySudoMode = false;
+              sftpClients.set(connId, reusedClient);
+              sendSftpProgress(event.sender, connId, options.hostname, "connected", "reused parked transport (SCP mode)");
+              return { sftpId: connId, fileProtocol: "scp" };
+            }
+            try {
+              await requireSftpChannel(reusedClient);
+              reusedClient.__netcattyFileProtocol = "sftp";
+              reusedClient.__netcattySudoMode = false;
+              sftpClients.set(connId, reusedClient);
+              sendSftpProgress(event.sender, connId, options.hostname, "connected", "reused parked transport");
+              return { sftpId: connId, fileProtocol: "sftp" };
+            } catch (sftpErr) {
+              if (fileProtocol === "sftp") throw sftpErr;
+              await activateScpMode(reusedClient);
+              reusedClient.__netcattySudoMode = false;
+              sftpClients.set(connId, reusedClient);
+              sendSftpProgress(event.sender, connId, options.hostname, "connected", "reused parked transport (SCP mode)");
+              return { sftpId: connId, fileProtocol: "scp" };
+            }
+          } catch (parkErr) {
+            try { releaseConnectionRef?.(refHolder); } catch { /* ignore */ }
+            console.warn(
+              `[SFTP] Parked transport reuse failed for ${connId}; connecting fresh:`,
+              parkErr?.message || String(parkErr),
+            );
+          }
         }
       }
 
@@ -1240,10 +1304,55 @@ function createOpenConnectionApi(ctx) {
         if (!client.__netcattyFileProtocol) {
           client.__netcattyFileProtocol = "sftp";
         }
+
+        // Register dedicated dials in the shared SSH transport registry so
+        // later terminal/SFTP/transfer/port-forward work can borrow without MFA.
+        const sshConn = client.client;
+        if (
+          sshConn
+          && typeof createTransport === "function"
+          && typeof borrowTransport === "function"
+        ) {
+          try {
+            const endpoint = {
+              hostname: options.hostname,
+              port: options.port || 22,
+              username: options.username || "root",
+              jumpHosts: options.jumpHosts,
+            };
+            const refHolder = {
+              id: connId,
+              __sshLeaseKind: "sftp",
+              webContentsId: event.sender?.id,
+            };
+            const transport = createTransport({
+              conn: sshConn,
+              chainConnections,
+              endpoint,
+            });
+            borrowTransport(transport, {
+              kind: "sftp",
+              holder: refHolder,
+              leaseId: `sftp:${connId}`,
+              meta: { source: "openSftp-dedicated" },
+            });
+            client.__netcattyRefHolder = refHolder;
+            client.__netcattyTransportManaged = true;
+            // Chain lifetime is owned by the transport; do not double-end on close.
+            chainConnections = [];
+          } catch (regErr) {
+            console.warn(
+              `[SFTP] Failed to register dedicated transport for ${connId}:`,
+              regErr?.message || String(regErr),
+            );
+          }
+        }
+
         sftpClients.set(connId, client);
     
-        // Store jump connections for cleanup when SFTP is closed
-        if (chainConnections.length > 0) {
+        // Store jump connections for cleanup when SFTP is closed (legacy path
+        // only — transport-managed connections park chain on the registry).
+        if (chainConnections.length > 0 && !client.__netcattyTransportManaged) {
           jumpConnectionsMap.set(connId, {
             connections: chainConnections,
             socket: connectionSocket

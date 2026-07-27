@@ -110,22 +110,24 @@ function isAuthError(err: unknown): boolean {
 
 export type OpenTransferSftpSessionOptions = {
   /**
-   * Prefer a live terminal SSH channel (fast). Only use for disposable probes —
-   * bulk transfers must use a dedicated vault open so closing the terminal/SFTP
-   * tab cannot kill in-flight global-center work.
+   * Prefer a live terminal SSH transport (borrow a lease + open SFTP channel).
+   * Safe for bulk transfers when the main-process transport registry holds a
+   * transfer/sftp lease: closing the terminal tab returns only the shell lease
+   * and does not tear down the shared transport until this SFTP handle closes.
    */
   sourceSessionId?: string;
   /**
    * When true (default), open an independent SSH/SFTP session from vault
-   * credentials. Session-backed channels die when the terminal tab closes.
+   * credentials. When false, try sourceSessionId first (shared transport).
    */
   dedicated?: boolean;
 };
 
 /**
  * Open a transfer-owned SFTP session.
- * Default is a dedicated vault connection so transfers outlive panel/tab close.
- * Optional sourceSessionId is only used when dedicated:false (not for bulk I/O).
+ * Default is a dedicated vault connection. When dedicated:false and a
+ * sourceSessionId is provided, borrows the terminal's SSH transport instead
+ * (no second MFA) via openSftpForSession.
  */
 export async function openTransferSftpSession(
   host: Host,
@@ -137,8 +139,9 @@ export async function openTransferSftpSession(
     if (!bridge?.openSftp) throw new Error("SFTP bridge unavailable");
 
     const wantDedicated = options?.dedicated !== false;
-    // Bulk transfer pool always uses dedicated sessions. Session-backed SFTP
-    // shares the terminal SSH socket — closing that tab aborts the transfer.
+    // Shared transport path: open an SFTP channel on the already-authenticated
+    // terminal connection. The transport registry lease keeps the conn alive
+    // after the shell tab closes until this sftpId is closed.
     if (
       !wantDedicated
       && options?.sourceSessionId

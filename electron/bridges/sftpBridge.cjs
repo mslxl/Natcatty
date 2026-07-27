@@ -1777,7 +1777,7 @@ async function openSftpForSession(_event, payload) {
   throwIfAborted(payload?.abortSignal);
   const { session, sshClient } = ensureRemoteSftpSupport(sessionId);
   const sftpId = `${sessionId}-sftp-${randomUUID()}`;
-  const refHolder = {};
+  const refHolder = { id: sftpId, __sshLeaseKind: "sftp" };
   if (session.connRef && typeof acquireConnectionRef === "function") {
     acquireConnectionRef(refHolder, session.connRef);
   }
@@ -2139,6 +2139,9 @@ const {
   acquireConnectionRef,
   releaseConnectionRef,
   findReusableSession,
+  createTransport,
+  borrowTransport,
+  findTransportByEndpoint,
 } = require("./sshConnectionPool.cjs");
 const openConnectionApi = createOpenConnectionApi({
   get sftpClients() { return sftpClients; },
@@ -2155,6 +2158,7 @@ const openConnectionApi = createOpenConnectionApi({
   resolveEncodingForRequest, updateResolvedEncoding, requireSftpChannel, realpathAsync,
   connectSudoSftp: undefined,
   acquireConnectionRef, releaseConnectionRef, findReusableSession, createSessionBackedSftpClient,
+  createTransport, borrowTransport, findTransportByEndpoint,
 });
 const { connectThroughChainForSftp, connectSudoSftp, openSftp } = openConnectionApi;
 const { createFileOpsApi } = require("./sftpBridge/fileOps.cjs");

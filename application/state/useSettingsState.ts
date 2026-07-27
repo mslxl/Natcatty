@@ -35,7 +35,7 @@ import {
   STORAGE_KEY_SFTP_AUTO_OPEN_SIDEBAR,
   STORAGE_KEY_SFTP_FOLLOW_TERMINAL_CWD,
   STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY,
-  STORAGE_KEY_SFTP_TRANSFER_POOL_IDLE_TTL_MS,
+  STORAGE_KEY_SSH_TRANSPORT_IDLE_TTL_MS,
   STORAGE_KEY_SFTP_DEFAULT_VIEW_MODE,
   STORAGE_KEY_EDITOR_WORD_WRAP,
   STORAGE_KEY_SESSION_LOGS_ENABLED,
@@ -83,7 +83,7 @@ import { uiFontStore, useUIFontsLoaded } from './uiFontStore';
 import { localStorageAdapter } from '../../infrastructure/persistence/localStorageAdapter';
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
 import { resolveSftpTransferConcurrency } from './sftp/transferConcurrency';
-import { resolveSftpTransferPoolIdleTtlMs } from '../../infrastructure/config/sftpTransferPool';
+import { resolveSshTransportIdleTtlMs } from '../../infrastructure/config/sshTransportIdleTtl';
 import {
   DEFAULT_ACCENT_MODE,
   DEFAULT_CUSTOM_ACCENT,
@@ -325,9 +325,9 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
   // Do not push it into main-process host admission — that made multi-select
   // top-level files queue against each other and against folder children.
 
-  const [sftpTransferPoolIdleTtlMs, setSftpTransferPoolIdleTtlMsState] = useState<number>(() => {
-    return resolveSftpTransferPoolIdleTtlMs(() =>
-      localStorageAdapter.readNumber(STORAGE_KEY_SFTP_TRANSFER_POOL_IDLE_TTL_MS),
+  const [sshTransportIdleTtlMs, setSshTransportIdleTtlMsState] = useState<number>(() => {
+    return resolveSshTransportIdleTtlMs(() =>
+      localStorageAdapter.readNumber(STORAGE_KEY_SSH_TRANSPORT_IDLE_TTL_MS),
     );
   });
 
@@ -601,12 +601,18 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     notifySettingsChanged(STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY, clamped);
   }, [notifySettingsChanged]);
 
-  const setSftpTransferPoolIdleTtlMs = useCallback((value: number) => {
-    const next = resolveSftpTransferPoolIdleTtlMs(() => value);
-    setSftpTransferPoolIdleTtlMsState(next);
-    localStorageAdapter.writeString(STORAGE_KEY_SFTP_TRANSFER_POOL_IDLE_TTL_MS, String(next));
-    notifySettingsChanged(STORAGE_KEY_SFTP_TRANSFER_POOL_IDLE_TTL_MS, next);
+  const setSshTransportIdleTtlMs = useCallback((value: number) => {
+    const next = resolveSshTransportIdleTtlMs(() => value);
+    setSshTransportIdleTtlMsState(next);
+    localStorageAdapter.writeString(STORAGE_KEY_SSH_TRANSPORT_IDLE_TTL_MS, String(next));
+    notifySettingsChanged(STORAGE_KEY_SSH_TRANSPORT_IDLE_TTL_MS, next);
   }, [notifySettingsChanged]);
+
+  // Push idle TTL to the main-process transport registry on load and whenever
+  // it changes (including cross-window IPC/storage updates to local state).
+  useEffect(() => {
+    notifySettingsChanged(STORAGE_KEY_SSH_TRANSPORT_IDLE_TTL_MS, sshTransportIdleTtlMs);
+  }, [sshTransportIdleTtlMs, notifySettingsChanged]);
 
   const [workspaceFocusStyle, setWorkspaceFocusStyleState] = useState<'dim' | 'border'>(() => {
     const stored = localStorageAdapter.readString(STORAGE_KEY_WORKSPACE_FOCUS_STYLE);
@@ -913,7 +919,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     setRestorePreviousSessionState,
     setRestoreTerminalCwdState,
     setSftpTransferConcurrencyState,
-    setSftpTransferPoolIdleTtlMsState,
+    setSshTransportIdleTtlMsState,
   });
 
   useEffect(() => {
@@ -953,7 +959,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     setShowRecentHostsState, setHostClickBehaviorState, setShowOnlyUngroupedHostsInRootState, setShowSftpTabState, setShowHostTreeSidebarState, setTerminalSidePanelAutoOpenState, setTerminalSidePanelAutoOpenTabState, setShellOnlyTabNumberShortcutsState, setDisableTerminalFontZoomState, setRestorePreviousSessionState, setRestoreTerminalCwdState,
     setEditorWordWrapState, setSessionLogsEnabled, setSessionLogsDir, setSessionLogsFormat, setSessionLogsTimestampsEnabled, setSshDebugLogsEnabled, setSshDeepLinkEnabledState: applyIncomingSshDeepLinkEnabled, setJmsDeepLinkEnabledState: applyIncomingJmsDeepLinkEnabled,
     setGlobalHotkeyEnabled, setWindowOpacity: applyIncomingWindowOpacity, setAppIconVariant, setAutoUpdateEnabled, setWorkspaceFocusStyleState,
-    setSftpTransferConcurrencyState, setSftpTransferPoolIdleTtlMsState,
+    setSftpTransferConcurrencyState, setSshTransportIdleTtlMsState,
     applyIncomingCustomKeyBindings, mergeIncomingTerminalSettings,
   });
 
@@ -1502,8 +1508,8 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     setRestoreTerminalCwd,
     sftpTransferConcurrency,
     setSftpTransferConcurrency,
-    sftpTransferPoolIdleTtlMs,
-    setSftpTransferPoolIdleTtlMs,
+    sshTransportIdleTtlMs,
+    setSshTransportIdleTtlMs,
     // Editor Settings
     editorWordWrap,
     setEditorWordWrap: useCallback((enabled: boolean) => {

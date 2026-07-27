@@ -292,6 +292,9 @@ printf '%s\n' '${scanCompleteMarker}'`;
           hostname: options.hostname || '',
           port: options.port || 22,
           username: options.username || 'root',
+          // Include jump chain so SFTP/port-forward/parked lookup cannot
+          // match a different bastion path to the same final host.
+          jumpHosts: Array.isArray(options.jumpHosts) ? options.jumpHosts : [],
         },
         tcpLatencyDirect:
           !Array.isArray(options.jumpHosts) || options.jumpHosts.length === 0
@@ -733,10 +736,10 @@ printf '%s\n' '${scanCompleteMarker}'`;
 
               sendProgress('connected');
 
-              // Hand the up-front ref hold over to the real session: detach it from
-              // the temporary holder (without ending the transport) and attach the
-              // descriptor to the session. The count already includes this channel.
-              refHolder.connRef = null;
+              // Hand the up-front lease over to the real session without changing
+              // the lease count (transferConnectionRef). setupShellSession still
+              // records connRef; transfer rebinds _sshTransportLeaseId so a later
+              // releaseConnectionRef(session) returns the right lease.
               setupShellSession({
                 conn,
                 stream,
@@ -748,13 +751,24 @@ printf '%s\n' '${scanCompleteMarker}'`;
                 chainConnections: [],
                 isReused: true,
               });
+              const copiedSession = sessions.get(sessionId);
+              if (copiedSession) {
+                if (typeof transferConnectionRef === "function") {
+                  transferConnectionRef(refHolder, copiedSession);
+                } else {
+                  // Legacy count model: detach holder without decrement.
+                  refHolder.connRef = null;
+                }
+              } else {
+                refHolder.connRef = null;
+              }
               const newShellPidPromise = shellDiscoveryBeforeOpen.available
                 ? waitForNewInteractiveShellPid(conn, shellPidsBeforeOpen)
                 : Promise.resolve(null);
               void newShellPidPromise.then((newShellPid) => {
-                const copiedSession = sessions.get(sessionId);
-                if (copiedSession && newShellPid) {
-                  copiedSession.shellPid = newShellPid;
+                const liveSession = sessions.get(sessionId);
+                if (liveSession && newShellPid) {
+                  liveSession.shellPid = newShellPid;
                 }
                 settled = true;
                 resolve({ sessionId });
@@ -828,12 +842,15 @@ printf '%s\n' '${scanCompleteMarker}'`;
       // cookie wired up at connection time, so a reused channel would not carry
       // X11. For X11 hosts we deliberately skip reuse and make a fresh
       // connection so the duplicate keeps working X11 forwarding.
+      const reuseEndpoint = {
+        hostname: options.hostname,
+        port: options.port || 22,
+        username: options.username || "root",
+        jumpHosts: Array.isArray(options.jumpHosts) ? options.jumpHosts : [],
+      };
+
       if (options.sourceSessionId && !options.x11Forwarding) {
-        const sourceSession = findReusableSession(sessions, options.sourceSessionId, {
-          hostname: options.hostname,
-          port: options.port || 22,
-          username: options.username || "root",
-        });
+        const sourceSession = findReusableSession(sessions, options.sourceSessionId, reuseEndpoint);
         if (sourceSession) {
           try {
             return await reuseShellSession(event, options, sourceSession, sessionId, log);
@@ -852,6 +869,42 @@ printf '%s\n' '${scanCompleteMarker}'`;
             sourceSessionId: options.sourceSessionId,
           });
           sendConnectionReuseFallback();
+        }
+      }
+
+      // Idle-park / endpoint reuse: after the last tab returns its lease the
+      // transport may still be warm. Open a new shell channel without re-auth.
+      if (!options.x11Forwarding && typeof findTransportByEndpoint === "function") {
+        const parked = findTransportByEndpoint(reuseEndpoint);
+        if (parked?.conn && (parked.state === "live" || parked.state === "idle")) {
+          try {
+            log("reusing parked or shared transport for new shell channel", {
+              sessionId,
+              hostname: options.hostname,
+              transportId: parked.id,
+              transportState: parked.state,
+            });
+            return await reuseShellSession(
+              event,
+              options,
+              {
+                conn: parked.conn,
+                connRef: parked,
+                // openReusedShellSerialized only needs conn + connRef; stream is
+                // required by findReusableSession but we bypass that path here.
+                stream: {},
+              },
+              sessionId,
+              log,
+            );
+          } catch (parkErr) {
+            log("parked transport reuse failed, falling back to fresh connection", {
+              sessionId,
+              hostname: options.hostname,
+              error: parkErr?.message,
+            });
+            // Fall through to a normal dial.
+          }
         }
       }
 

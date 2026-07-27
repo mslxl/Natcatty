@@ -18,7 +18,6 @@ import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef }
 import { useI18n } from "../application/i18n/I18nProvider";
 import { useIsSftpActive } from "../application/state/activeTabStore";
 import { useSftpState } from "../application/state/useSftpState";
-import { useSettingsState } from "../application/state/useSettingsState";
 import { useSftpBackend } from "../application/state/useSftpBackend";
 import { getParentPath, isConcreteTransferTargetPath } from "../application/state/sftp/utils";
 import { HotkeyScheme, KeyBinding, TerminalSession } from "../domain/models";
@@ -100,7 +99,6 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
   terminalSettings,
 }) => {
   const { t } = useI18n();
-  const { sftpTransferPoolIdleTtlMs } = useSettingsState();
   const isActive = useIsSftpActive();
   const rootRef = useRef<HTMLDivElement>(null);
   const dialogActionScopeIdRef = useRef("sftp-main-view");
@@ -141,7 +139,6 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
     knownHosts,
     onAddKnownHost,
     resolveTransferSourceSessionId,
-    transferPoolIdleTtlMs: sftpTransferPoolIdleTtlMs,
   }), [
     fileWatchHandlers,
     sftpUseCompressedUpload,
@@ -150,7 +147,6 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
     knownHosts,
     onAddKnownHost,
     resolveTransferSourceSessionId,
-    sftpTransferPoolIdleTtlMs,
   ]);
 
   // Pre-resolve group defaults so SFTP connections inherit group config

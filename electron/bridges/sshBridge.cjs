@@ -465,7 +465,11 @@ const {
   createConnectionRef,
   acquireConnectionRef,
   releaseConnectionRef,
+  transferConnectionRef,
   findReusableSession,
+  findTransportByEndpoint,
+  resolveTransportForReuse,
+  discardAllTransports,
 } = require("./sshConnectionPool.cjs");
 
 const zmodemOverwritePending = new Map(); // requestId -> (decision) => void
@@ -953,7 +957,8 @@ const startSessionApi = createStartSessionApi({
   get selectZmodemUploadFiles() { return selectZmodemUploadFiles; },
   get selectZmodemDownloadDirectory() { return selectZmodemDownloadDirectory; },
   preparePrivateKeyForAuth, loadFirstIdentityFileForAuth, prepareSystemSshAgentForAuth, hasUserConfiguredKey, isPasswordProvided, createKeyboardInteractiveHandler, createOrderedStringAuthHandler, createAuthPhase, markAuthPhasePartialSuccess, canRepeatKeyboardInteractive, shouldSkipKiPasswordAutoFill,
-  createConnectionRef, acquireConnectionRef, releaseConnectionRef, findReusableSession,
+  createConnectionRef, acquireConnectionRef, releaseConnectionRef, transferConnectionRef,
+  findReusableSession, findTransportByEndpoint, resolveTransportForReuse, discardAllTransports,
   get probeReceiveConflicts() { return probeReceiveConflicts; },
   get removeRemoteFiles() { return removeRemoteFiles; },
   get restoreRemoteModes() { return restoreRemoteModes; },

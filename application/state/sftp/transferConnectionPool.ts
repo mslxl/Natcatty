@@ -1,21 +1,21 @@
 /**
- * FileZilla-style dedicated transfer connection pool.
+ * Transfer channel pool (FileZilla-style concurrency, not a second SSH stack).
  *
- * Browse/list uses the panel SFTP session. Bulk transfers use 1–2 separate
- * sessions per host so interactive navigation is not blocked by multi-file
- * uploads/downloads (same idea as FileZilla's transfer connections).
+ * Bulk transfers share the main-process SSH transport registry. This pool only
+ * limits how many SFTP channels (sftpIds) may be open per host for parallel
+ * transfers, and reuses a busy-vs-idle slot within that cap.
+ *
+ * When the last transfer releases a channel it is closed immediately so the
+ * transport lease can return and the unified SSH idle park can reclaim the
+ * connection. SSH keep-alive is controlled only by ssh transport idle TTL.
  */
-
-import {
-  DEFAULT_SFTP_TRANSFER_POOL_IDLE_TTL_MS,
-  isTransferPoolIdleReclaimDisabled,
-} from "../../../infrastructure/config/sftpTransferPool";
 
 export const DEFAULT_TRANSFER_CONNECTIONS_PER_HOST = 2;
 export const MIN_TRANSFER_CONNECTIONS_PER_HOST = 1;
 export const MAX_TRANSFER_CONNECTIONS_PER_HOST = 4;
-/** @deprecated Prefer DEFAULT_SFTP_TRANSFER_POOL_IDLE_TTL_MS — kept for import stability. */
-export const DEFAULT_TRANSFER_CONNECTION_IDLE_TTL_MS = DEFAULT_SFTP_TRANSFER_POOL_IDLE_TTL_MS;
+
+/** @deprecated Idle TTL moved to SSH transport registry; kept for import stability. */
+export const DEFAULT_TRANSFER_CONNECTION_IDLE_TTL_MS = 0;
 
 export type TransferPoolOpenFn = (poolKey: string) => Promise<string>;
 export type TransferPoolCloseFn = (sftpId: string) => void | Promise<void>;
@@ -23,7 +23,7 @@ export type TransferPoolCloseFn = (sftpId: string) => void | Promise<void>;
 export interface TransferConnectionLease {
   sftpId: string;
   poolKey: string;
-  /** Drop the holder count; connection stays pooled for reuse. */
+  /** Drop the holder count; last holder closes the channel. */
   release: () => void;
   /** Drop holder, remove from pool, and close — use when the session is dead. */
   discard: () => void;
@@ -40,6 +40,7 @@ interface PoolSlot {
 
 export interface TransferConnectionPoolOptions {
   maxPerHost?: number;
+  /** @deprecated Ignored — channels close when idle; SSH park owns keep-alive. */
   idleTtlMs?: number;
   closeSession?: TransferPoolCloseFn;
   now?: () => number;
@@ -56,10 +57,13 @@ export interface TransferConnectionPool {
     idle: number;
     holders: number;
   };
+  /** Close every channel with zero holders (defensive sweep). */
   closeIdle(now?: number): Promise<number>;
   closeAll(): Promise<void>;
   setMaxPerHost(max: number): void;
+  /** @deprecated No-op — transfer channels no longer park independently. */
   setIdleTtlMs(ms: number): void;
+  /** @deprecated Always 0 (immediate reclaim of idle channels). */
   getIdleTtlMs(): number;
 }
 
@@ -75,7 +79,6 @@ export function createTransferConnectionPool(
   options: TransferConnectionPoolOptions = {},
 ): TransferConnectionPool {
   let maxPerHost = normalizeMaxPerHost(options.maxPerHost);
-  let idleTtlMs = options.idleTtlMs ?? DEFAULT_TRANSFER_CONNECTION_IDLE_TTL_MS;
   const closeSession = options.closeSession;
   const now = options.now ?? (() => Date.now());
 
@@ -136,8 +139,8 @@ export function createTransferConnectionPool(
     const slot = list[idx]!;
     slot.holders.delete(transferId);
     slot.lastUsedAt = now();
-    // Last holder of an unhealthy session → close now.
-    if (slot.unhealthy && slot.holders.size === 0) {
+    // Last holder → close channel so the SSH transport lease can return.
+    if (slot.holders.size === 0) {
       removeAndCloseSlot(poolKey, list, idx);
     }
   };
@@ -187,6 +190,8 @@ export function createTransferConnectionPool(
       const existing = pickSlot(list);
       // Reuse when we already have max healthy connections, or when an idle one exists.
       // FileZilla-style: open a second connection only when the first is busy.
+      // Note: idle slots are rare now (release closes immediately) but still
+      // possible while a close is in-flight or under concurrent acquire.
       if (existing && (existing.holders.size === 0 || healthyCount >= maxPerHost)) {
         existing.holders.add(transferId);
         existing.lastUsedAt = now();
@@ -222,25 +227,18 @@ export function createTransferConnectionPool(
     });
   };
 
-  const closeIdle = async (at = now()): Promise<number> => {
-    // Active holders are never reclaimed (busy transfers keep the slot).
-    // idleTtlMs <= 0 means keep warm until explicit closeAll / discard.
-    if (isTransferPoolIdleReclaimDisabled(idleTtlMs)) return 0;
-
-    // Detach idle slots from the pool *before* awaiting close so concurrent
-    // acquires cannot re-lease a session that is about to be torn down.
+  const closeIdle = async (): Promise<number> => {
+    // Defensive: release() already closes zero-holder slots. Sweep any leftover
+    // idle channels (e.g. after a failed close) so transport leases do not stick.
     const toClose: string[] = [];
     for (const [poolKey, list] of pools.entries()) {
       const kept: PoolSlot[] = [];
       for (const slot of list) {
-        const idle = !slot.unhealthy
-          && slot.holders.size === 0
-          && at - slot.lastUsedAt >= idleTtlMs;
-        if (!idle) {
-          kept.push(slot);
+        if (slot.holders.size === 0) {
+          toClose.push(slot.sftpId);
           continue;
         }
-        toClose.push(slot.sftpId);
+        kept.push(slot);
       }
       if (kept.length === 0) pools.delete(poolKey);
       else pools.set(poolKey, kept);
@@ -297,12 +295,11 @@ export function createTransferConnectionPool(
     setMaxPerHost(max: number) {
       maxPerHost = normalizeMaxPerHost(max);
     },
-    setIdleTtlMs(ms: number) {
-      if (!Number.isFinite(ms) || ms < 0) return;
-      idleTtlMs = ms;
+    setIdleTtlMs(_ms: number) {
+      // No-op: SSH transport registry owns connection keep-alive.
     },
     getIdleTtlMs() {
-      return idleTtlMs;
+      return 0;
     },
   };
 }
@@ -311,7 +308,7 @@ export function createTransferConnectionPool(
 let sharedPool: TransferConnectionPool | null = null;
 
 /**
- * Process-wide transfer pool (FileZilla-style, max 2 sessions per host).
+ * Process-wide transfer channel pool (FileZilla-style, max 2 sftpIds per host).
  * `closeSession` is applied on first creation; later callers share the same pool.
  */
 export function getSharedTransferConnectionPool(
@@ -320,11 +317,8 @@ export function getSharedTransferConnectionPool(
   if (!sharedPool) {
     sharedPool = createTransferConnectionPool({
       maxPerHost: DEFAULT_TRANSFER_CONNECTIONS_PER_HOST,
-      idleTtlMs: DEFAULT_TRANSFER_CONNECTION_IDLE_TTL_MS,
       ...options,
     });
-  } else if (options?.idleTtlMs !== undefined) {
-    sharedPool.setIdleTtlMs(options.idleTtlMs);
   }
   return sharedPool;
 }

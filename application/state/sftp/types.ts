@@ -100,6 +100,9 @@ export interface SftpStateOptions {
    * can reuse that SSH transport (openSftpForSession) instead of a cold connect.
    */
   resolveTransferSourceSessionId?: (hostId: string) => string | undefined;
-  /** Idle TTL for dedicated transfer-pool sessions (0 = never reclaim idle). */
+  /**
+   * @deprecated Transfer channels no longer park independently. SSH keep-alive
+   * is controlled by sshTransportIdleTtlMs in settings.
+   */
   transferPoolIdleTtlMs?: number;
 }

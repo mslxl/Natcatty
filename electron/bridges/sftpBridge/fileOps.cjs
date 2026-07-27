@@ -638,10 +638,13 @@ function createFileOpsApi(ctx) {
           // Abort in-flight scp/exec channels first so agent Stop/timeout via
           // closeSftp actually stops transfers without needing a serialized AbortSignal.
           try { abortScpClientStreams(client); } catch { /* ignore */ }
-          // Only tear down SSH sockets we own (fresh dials). Session-backed /
-          // reused-terminal clients share the terminal SSH connection — ending
-          // it here would disconnect the interactive shell.
-          const ownsSocket = !client.__netcattySessionBacked && !client.__netcattySourceSessionId;
+          // Only tear down SSH sockets we own (fresh dials not registered in the
+          // transport registry). Session-backed and transport-managed clients
+          // return a lease instead of ending the shared/parkable connection.
+          const ownsSocket = !client.__netcattySessionBacked
+            && !client.__netcattySourceSessionId
+            && !client.__netcattyTransportManaged
+            && !client.__netcattyRefHolder;
           if (ownsSocket) {
             try { client.client?.end?.(); } catch { /* ignore */ }
             try { client.client?.destroy?.(); } catch { /* ignore */ }
@@ -659,7 +662,25 @@ function createFileOpsApi(ctx) {
             };
           }
         } catch { /* optional */ }
-        await client.end();
+        // Transport-managed / session-backed: close channel + return lease only.
+        if (client.__netcattyRefHolder || client.__netcattyTransportManaged || client.__netcattySessionBacked) {
+          try {
+            if (client.sftp && typeof client.sftp.end === "function") client.sftp.end();
+            else if (client.sftp && typeof client.sftp.close === "function") client.sftp.close();
+          } catch { /* ignore */ }
+          client.sftp = null;
+          try {
+            const { releaseConnectionRef } = require("../sshConnectionPool.cjs");
+            if (client.__netcattyRefHolder) releaseConnectionRef(client.__netcattyRefHolder);
+          } catch { /* ignore */ }
+          // Session-backed end() also releases; dedicated managed clients must
+          // not call ssh2-sftp-client end() (that would kill the parked transport).
+          if (typeof client.end === "function" && client.__netcattySessionBacked) {
+            try { await client.end(); } catch { /* ignore */ }
+          }
+        } else {
+          await client.end();
+        }
       } catch (err) {
         console.warn("SFTP close failed", err);
       }

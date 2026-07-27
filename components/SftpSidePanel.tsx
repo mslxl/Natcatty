@@ -15,7 +15,6 @@ import { SftpSidePanelDeferredMount } from "./SftpSidePanelDeferredMount";
 import { formatHostPort } from "../domain/host";
 import { useI18n } from "../application/i18n/I18nProvider";
 import { useSftpState } from "../application/state/useSftpState";
-import { useSettingsState } from "../application/state/useSettingsState";
 import {
   useReportSftpTransferOwnerActivity,
   useWarmSftpTransferPool,
@@ -160,7 +159,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   terminalSettings,
 }) => {
   const { t } = useI18n();
-  const { sftpTransferPoolIdleTtlMs } = useSettingsState();
+
   const hostWriteSource = writableHosts ?? hosts;
   const connectedHosts = useMemo(() => {
     const hostsById = new Map<string, Host>(
@@ -209,7 +208,6 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     knownHosts,
     onAddKnownHost,
     resolveTransferSourceSessionId,
-    transferPoolIdleTtlMs: sftpTransferPoolIdleTtlMs,
   }), [
     fileWatchHandlers,
     hasOwnedEditorTab,
@@ -221,7 +219,6 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     knownHosts,
     onAddKnownHost,
     resolveTransferSourceSessionId,
-    sftpTransferPoolIdleTtlMs,
   ]);
 
   const sftp = useSftpState(hosts, keys, identities, sftpOptions);
