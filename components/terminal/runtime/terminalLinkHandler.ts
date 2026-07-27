@@ -36,14 +36,11 @@ export function createTerminalLinkHandler(
         return;
       }
 
-      const result = (options.openWindow ?? ((url) => window.open(
+      (options.openWindow ?? ((url) => window.open(
         url,
         "_blank",
         "noopener,noreferrer",
       )))(uri);
-      if (result === null) {
-        throw new Error("Opening terminal link was blocked");
-      }
     } catch (error) {
       warn("[XTerm] Failed to open terminal link:", error);
       options.onError?.(error);

@@ -100,6 +100,24 @@ test("terminal links fall back to window.open when the bridge is unavailable", a
   assert.deepEqual(opened, ["https://example.com"]);
 });
 
+test("terminal links do not report a noopener fallback as blocked", async () => {
+  const failures: unknown[] = [];
+  const handler = createTerminalLinkHandler({
+    canActivate: () => true,
+    openExternalAvailable: () => false,
+    confirmOscLink: () => true,
+    openExternal: async () => {
+      throw new Error("bridge should not be used when unavailable");
+    },
+    openWindow: () => null,
+    onError: (error) => failures.push(error),
+  });
+
+  await handler.open("https://example.com");
+
+  assert.deepEqual(failures, []);
+});
+
 test("terminal link failures are reported to the UI", async () => {
   const failures: unknown[] = [];
   const handler = createTerminalLinkHandler({
