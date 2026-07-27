@@ -2228,6 +2228,34 @@ test('parseExternalResearchStream keeps a valid terminal status over assistant f
   ].map(JSON.stringify).join('\n');
 
   assert.equal(auto.parseExternalResearchStream(statusLikeBodyFragment, {}), terminalNoOp);
+
+  const prefixedTerminalWithStatusLikeDelta = [
+    {
+      type: 'assistant',
+      timestamp_ms: 1,
+      message: {
+        content: [{ type: 'text', text: `${terminalNoOp}\n` }],
+      },
+    },
+    {
+      type: 'assistant',
+      timestamp_ms: 2,
+      message: {
+        content: [{ type: 'text', text: 'RESEARCH_BLOCKED: quoted source wording, not the result' }],
+      },
+    },
+    {
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      result: `Conversation preamble\n${terminalNoOp}`,
+    },
+  ].map(JSON.stringify).join('\n');
+
+  assert.match(
+    auto.parseExternalResearchStream(prefixedTerminalWithStatusLikeDelta, {}),
+    /^RESEARCH_NOT_NEEDED: only local Netcatty behavior is involved/,
+  );
 });
 
 test('parseExternalResearchStream rejects forged and unrelated web evidence', () => {

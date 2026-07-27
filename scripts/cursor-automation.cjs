@@ -269,7 +269,12 @@ function parseExternalResearchStream(value, input) {
       .map((block) => String(block.text))
       .join('');
     if (eventText) {
-      assistantMessages.push(eventText);
+      assistantMessages.push({
+        text: eventText,
+        isFinalFlush: event.timestamp_ms == null
+          && event.model_call_id == null
+          && event.modelCallId == null,
+      });
       assistantText += eventText;
     }
   }
@@ -282,16 +287,19 @@ function parseExternalResearchStream(value, input) {
   const assistantSuffixes = [];
   let assistantSuffix = '';
   for (let index = assistantMessages.length - 1; index >= 0; index -= 1) {
-    assistantSuffix = assistantMessages[index] + assistantSuffix;
+    assistantSuffix = assistantMessages[index].text + assistantSuffix;
     assistantSuffixes.push(assistantSuffix);
   }
   const fencedAssistantSuffixes = assistantSuffixes.filter(
     (candidate) => parseExternalResearchEnvelope(candidate)?.fenced,
   );
+  const finalAssistantText = assistantMessages.findLast(
+    (message) => message.isFinalFlush,
+  )?.text;
   const candidates = [
     terminalResult,
     ...fencedAssistantSuffixes,
-    assistantMessages[assistantMessages.length - 1],
+    finalAssistantText,
     assistantText,
   ].filter(Boolean);
   const selected = candidates.find((candidate) => parseExternalResearchEnvelope(candidate));
