@@ -561,6 +561,8 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
       <QuickAddSnippetDialog
         snippets={snippets}
         packages={snippetPackages}
+        hotkeyScheme={hotkeyScheme}
+        keyBindings={keyBindings}
         onCreateSnippet={(snippet) => updateSnippets([...snippets, snippet])}
         onUpdateSnippet={(snippet) =>
           updateSnippets(snippets.map((s) => (s.id === snippet.id ? snippet : s)))

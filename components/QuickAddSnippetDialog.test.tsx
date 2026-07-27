@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import { getQuickAddSnippetInitialCommand } from "./QuickAddSnippetDialog.tsx";
+
+const source = readFileSync(new URL("./QuickAddSnippetDialog.tsx", import.meta.url), "utf8");
 
 test("quick add snippet event can prefill command", () => {
   const event = {
@@ -19,4 +22,12 @@ test("quick add snippet event defaults to an empty command", () => {
     } as unknown as Event),
     "",
   );
+});
+
+test("quick add snippet form binds shortkeys and uses a side panel drawer", () => {
+  assert.match(source, /AsidePanel/);
+  assert.match(source, /snippets\.field\.shortkey/);
+  assert.match(source, /keyEventToString/);
+  assert.match(source, /shortkey: shortkey \|\| undefined/);
+  assert.match(source, /if \(e\.defaultPrevented\) return/);
 });

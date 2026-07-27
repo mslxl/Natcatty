@@ -35,3 +35,20 @@ test("scripts side panel rows keep manual snippet order inside a package", () =>
 test("scripts side panel active tabs pair the accent background with its foreground", () => {
   assert.equal(source.match(/bg-accent text-accent-foreground/g)?.length, 2);
 });
+
+test("scripts side panel offers run-on-all-tabs for every snippet, not only automation scripts", () => {
+  // Guard against re-introducing the isScriptSnippet gate on workspace run actions.
+  assert.doesNotMatch(
+    source,
+    /onRunParallel=\{isScriptSnippet\(item\.row\.snippet\) && onRunScriptOnWorkspace/,
+  );
+  assert.match(source, /onRunParallel=\{onRunScriptOnWorkspace/);
+  assert.match(source, /snippets\.action\.newPackage/);
+  assert.match(source, /openPackageDialog/);
+});
+
+test("scripts side panel add control is a split button with secondary create actions", () => {
+  assert.match(source, /ChevronDown/);
+  assert.match(source, /snippets\.action\.newScript/);
+  assert.match(source, /snippets\.action\.newSnippet/);
+});

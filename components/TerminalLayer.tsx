@@ -1622,12 +1622,53 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     }
   }, [getActiveTerminalSessionId, hosts, t]);
 
+  const sendCommandSnippetToSession = useCallback((
+    sessionId: string,
+    command: string,
+    snippet: Snippet,
+  ) => {
+    const executor = snippetExecutorsRef.current.get(sessionId);
+    if (executor) {
+      executor(command, snippet.noAutoRun, {
+        multiLineRunMode: snippet.multiLineRunMode,
+        broadcast: false,
+      });
+      return;
+    }
+
+    const session = sessionsRef.current.find((candidate) => candidate.id === sessionId);
+    if (!session || !canUseDirectSessionWriteFallback(session)) return;
+
+    let data = normalizeLineEndings(command);
+    if (!snippet.noAutoRun) data = `${data}\r`;
+    const lineDelayMs = shouldDelayAutoRunSnippetInput(data, {
+      noAutoRun: snippet.noAutoRun,
+      multiLineRunMode: snippet.multiLineRunMode,
+    })
+      ? AUTO_RUN_SNIPPET_LINE_DELAY_MS
+      : undefined;
+    terminalBackend.writeToSession(sessionId, data, {
+      automated: true,
+      sensitive: isTerminalSensitiveInputActive(sessionId),
+      ...(lineDelayMs ? { lineDelayMs } : {}),
+    });
+  }, [terminalBackend]);
+
   const handleRunScriptOnWorkspace = useCallback(async (
     snippet: Snippet,
     mode: 'sequential' | 'parallel' = 'parallel',
   ) => {
     const workspace = activeWorkspaceRef.current;
     if (!workspace) {
+      // Single terminal tab (no workspace): fall back to focused session.
+      if (!isScriptSnippet(snippet)) {
+        const command = await resolveSnippetCommand(snippet);
+        if (command === null) return;
+        handleSnippetClickForFocusedSession(command, snippet.noAutoRun, {
+          multiLineRunMode: snippet.multiLineRunMode,
+        });
+        return;
+      }
       const sessionId = getActiveTerminalSessionId();
       if (!sessionId) {
         toast.error(t('scripts.recording.noSession'));
@@ -1661,6 +1702,19 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     if (skippedConnecting > 0) {
       toast.info(t('scripts.actions.skippedConnectingSessions', { count: skippedConnecting }));
     }
+
+    // Code snippets: paste/send the resolved command to every connected tab.
+    // Sequential vs parallel only affects automation scripts (which await run
+    // completion); plain snippets are fire-and-forget writes, so order is enough.
+    if (!isScriptSnippet(snippet)) {
+      const command = await resolveSnippetCommand(snippet);
+      if (command === null) return;
+      for (const sid of sessionIds) {
+        sendCommandSnippetToSession(sid, command, snippet);
+      }
+      return;
+    }
+
     try {
       const runOnSession = (sid: string) => runAutomationScript({
         snippet,
@@ -1679,7 +1733,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       const message = err instanceof Error ? err.message : String(err);
       toast.error(message.includes('Observer mode') ? t('scripts.observer.blocked') : message);
     }
-  }, [getActiveTerminalSessionId, hosts, t]);
+  }, [getActiveTerminalSessionId, handleSnippetClickForFocusedSession, hosts, sendCommandSnippetToSession, t]);
 
   useEffect(() => {
     const handler = (event: Event) => {

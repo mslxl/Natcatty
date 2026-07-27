@@ -7,7 +7,7 @@
  * list of matching snippets regardless of package nesting.
  */
 
-import { ChevronRight, Edit2, Layers, Package, Play, Plus, Search, Trash2, Zap } from 'lucide-react';
+import { ChevronDown, ChevronRight, Edit2, FolderPlus, Layers, Package, Play, Plus, Search, Trash2, Zap } from 'lucide-react';
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useI18n } from '../application/i18n/I18nProvider';
 import { getScriptRecordingSnapshot, subscribeScriptRecording } from '../application/state/scriptRecordingStore.ts';
@@ -24,8 +24,11 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from './ui/context-menu';
+import { Dropdown, DropdownContent, DropdownTrigger } from './ui/dropdown';
 import { FixedSizeVirtualList } from './ui/FixedSizeVirtualList';
+import { Button } from './ui/button';
 import { Input } from './ui/input';
+import { Label } from './ui/label';
 import { SnippetCommandTooltipContent } from './snippets/SnippetCommandTooltipContent';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
 
@@ -251,6 +254,10 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
   const [search, setSearch] = useState('');
   const [subView, setSubView] = useState<'library' | 'running'>('library');
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
+  const [isPackageDialogOpen, setIsPackageDialogOpen] = useState(false);
+  const [newPackageName, setNewPackageName] = useState('');
+  const [packageError, setPackageError] = useState('');
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
 
   useEffect(() => {
     const handler = (event: Event) => {
@@ -588,6 +595,39 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
     window.dispatchEvent(new CustomEvent('netcatty:scripts:add'));
   }, []);
 
+  const openPackageDialog = useCallback(() => {
+    setNewPackageName('');
+    setPackageError('');
+    setIsPackageDialogOpen(true);
+  }, []);
+
+  const handleCreatePackage = useCallback(() => {
+    const trimmed = newPackageName.trim().replace(/^\/+|\/+$/g, '');
+    if (!trimmed) {
+      setPackageError(t('snippets.packageDialog.placeholder'));
+      return;
+    }
+    if (packages.includes(trimmed) || packages.includes(`/${trimmed}`)) {
+      setPackageError(t('snippets.renameDialog.error.duplicate'));
+      return;
+    }
+    onPackagesChange?.([...packages, trimmed]);
+    setExpandedPaths((prev) => {
+      const next = new Set(prev);
+      let path = trimmed;
+      while (path) {
+        next.add(path);
+        const slash = path.lastIndexOf('/');
+        if (slash < 0) break;
+        path = path.slice(0, slash);
+      }
+      return next;
+    });
+    setIsPackageDialogOpen(false);
+    setNewPackageName('');
+    setPackageError('');
+  }, [newPackageName, onPackagesChange, packages, t]);
+
   const handleEditSnippet = useCallback((snippet: Snippet) => {
     window.dispatchEvent(
       new CustomEvent('netcatty:snippets:edit', { detail: { snippet } }),
@@ -607,7 +647,7 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
   return (
     <TooltipProvider delayDuration={300}>
     <div
-      className="h-full flex flex-col bg-background overflow-hidden"
+      className="relative h-full flex flex-col bg-background overflow-hidden"
       data-section="snippets-panel"
     >
       {/* Sub view tabs */}
@@ -656,19 +696,68 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
             className="h-7 pl-7 text-xs bg-muted/30 border-none"
           />
         </div>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              onClick={handleAddSnippet}
-              aria-label={t('snippets.action.newSnippet')}
-              className="shrink-0 h-7 w-7 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
-            >
-              <Plus size={14} />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>{t('snippets.action.newSnippet')}</TooltipContent>
-        </Tooltip>
+        {/* Split add control: primary = new snippet; menu = package / automation script */}
+        <div className="shrink-0 flex items-center">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={handleAddSnippet}
+                aria-label={t('snippets.action.newSnippet')}
+                className="h-7 w-7 flex items-center justify-center rounded-l-md text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
+              >
+                <Plus size={14} />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>{t('snippets.action.newSnippet')}</TooltipContent>
+          </Tooltip>
+          <Dropdown open={addMenuOpen} onOpenChange={setAddMenuOpen}>
+            <DropdownTrigger asChild>
+              <button
+                type="button"
+                aria-label={t('snippets.action.newSnippet')}
+                className="h-7 w-5 flex items-center justify-center rounded-r-md border-l border-border/40 text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
+              >
+                <ChevronDown size={12} />
+              </button>
+            </DropdownTrigger>
+            <DropdownContent className="w-48 p-1" align="end">
+              <button
+                type="button"
+                className="w-full flex items-center gap-2 px-2 py-1.5 text-xs rounded-md hover:bg-muted transition-colors"
+                onClick={() => {
+                  setAddMenuOpen(false);
+                  handleAddSnippet();
+                }}
+              >
+                <Zap size={12} className="text-muted-foreground" />
+                {t('snippets.action.newSnippet')}
+              </button>
+              <button
+                type="button"
+                className="w-full flex items-center gap-2 px-2 py-1.5 text-xs rounded-md hover:bg-muted transition-colors"
+                onClick={() => {
+                  setAddMenuOpen(false);
+                  openPackageDialog();
+                }}
+              >
+                <FolderPlus size={12} className="text-muted-foreground" />
+                {t('snippets.action.newPackage')}
+              </button>
+              <button
+                type="button"
+                className="w-full flex items-center gap-2 px-2 py-1.5 text-xs rounded-md hover:bg-muted transition-colors"
+                onClick={() => {
+                  setAddMenuOpen(false);
+                  handleAddScript();
+                }}
+              >
+                <Play size={12} className="text-primary" />
+                {t('snippets.action.newScript')}
+              </button>
+            </DropdownContent>
+          </Dropdown>
+        </div>
       </div>
 
       {/* Content */}
@@ -704,6 +793,14 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
                     onClick={() => handleSnippetClick(item.snippet)}
                     onEdit={() => handleEditSnippet(item.snippet)}
                     onDelete={() => handleDeleteSnippet(item.snippet.id)}
+                    onRunParallel={onRunScriptOnWorkspace
+                      ? () => onRunScriptOnWorkspace(item.snippet, 'parallel')
+                      : undefined}
+                    onRunSequential={onRunScriptOnWorkspace
+                      ? () => onRunScriptOnWorkspace(item.snippet, 'sequential')
+                      : undefined}
+                    runParallelLabel={t('scripts.actions.runParallel')}
+                    runSequentialLabel={t('scripts.actions.runSequential')}
                     editLabel={t('action.edit')}
                     deleteLabel={t('action.delete')}
                   />
@@ -734,10 +831,10 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
                   onClick={() => handleSnippetClick(item.row.snippet)}
                   onEdit={() => handleEditSnippet(item.row.snippet)}
                   onDelete={() => handleDeleteSnippet(item.row.snippet.id)}
-                  onRunParallel={isScriptSnippet(item.row.snippet) && onRunScriptOnWorkspace
+                  onRunParallel={onRunScriptOnWorkspace
                     ? () => onRunScriptOnWorkspace(item.row.snippet, 'parallel')
                     : undefined}
-                  onRunSequential={isScriptSnippet(item.row.snippet) && onRunScriptOnWorkspace
+                  onRunSequential={onRunScriptOnWorkspace
                     ? () => onRunScriptOnWorkspace(item.row.snippet, 'sequential')
                     : undefined}
                   runParallelLabel={t('scripts.actions.runParallel')}
@@ -793,6 +890,57 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
       ) : null}
       </>
       )}
+
+      {isPackageDialogOpen ? (
+        <div className="absolute inset-0 z-40 flex items-center justify-center bg-background/80 p-3">
+          <div className="w-full max-w-[280px] rounded-lg border border-border/60 bg-background p-3 space-y-3 shadow-lg">
+            <div>
+              <p className="text-sm font-semibold">{t('snippets.packageDialog.title')}</p>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                {t('snippets.packageDialog.parent', { parent: t('snippets.packageDialog.root') })}
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">{t('field.name')}</Label>
+              <Input
+                autoFocus
+                value={newPackageName}
+                onChange={(e) => {
+                  setNewPackageName(e.target.value);
+                  setPackageError('');
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleCreatePackage();
+                  } else if (e.key === 'Escape') {
+                    setIsPackageDialogOpen(false);
+                  }
+                }}
+                placeholder={t('snippets.packageDialog.placeholder')}
+                className="h-8 text-xs"
+              />
+              <p className="text-[10px] text-muted-foreground">{t('snippets.packageDialog.hint')}</p>
+              {packageError ? (
+                <p className="text-[10px] text-destructive">{packageError}</p>
+              ) : null}
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setIsPackageDialogOpen(false)}
+              >
+                {t('common.cancel')}
+              </Button>
+              <Button type="button" size="sm" onClick={handleCreatePackage}>
+                {t('common.create')}
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
     </TooltipProvider>
   );
