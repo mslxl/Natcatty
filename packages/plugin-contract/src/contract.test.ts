@@ -59,6 +59,164 @@ test("plugin manifest schema accepts the internal contract", () => {
   assert.equal(validate({ ...validManifest, version: "1.0.0-01" }), false);
 });
 
+test("connection authentication and importer provider payloads are canonical and bounded", () => {
+  const connectionOpen = validator("ConnectionOpenPayload");
+  const authenticationChallenge = validator("AuthenticationChallenge");
+  const authenticationResult = validator("AuthenticationResult");
+  const importerRecord = validator("ImporterRecord");
+  assert.equal(connectionOpen({
+    configuration: { endpoint: "example" },
+    operationId: "connection:1",
+    columns: 120,
+    rows: 40,
+    inputStreamId: "connection:1:input",
+    outputStreamId: "connection:1:output",
+    windowBytes: 262_144,
+    credential: { kind: "credential", id: "credential-reference-1234" },
+  }), true, JSON.stringify(connectionOpen.errors));
+  assert.equal(connectionOpen({
+    configuration: {},
+    operationId: "connection:1",
+    columns: 0,
+    rows: 40,
+    inputStreamId: "input",
+    outputStreamId: "output",
+    windowBytes: 262_144,
+  }), false);
+  assert.equal(authenticationChallenge({
+    id: "challenge-1",
+    kind: "choice",
+    title: "Select account",
+    choices: [{ id: "primary", label: "Primary" }],
+  }), true, JSON.stringify(authenticationChallenge.errors));
+  assert.equal(authenticationChallenge({
+    id: "challenge-1",
+    kind: "password",
+    title: "Password",
+    choices: [],
+  }), false);
+  assert.equal(authenticationResult({ status: "challenge" }), false);
+  assert.equal(authenticationResult({
+    status: "challenge",
+    challenge: { id: "challenge-1", kind: "text", title: "Input" },
+  }), true, JSON.stringify(authenticationResult.errors));
+  assert.equal(authenticationResult({
+    status: "authenticated",
+    challenge: { id: "challenge-1", kind: "text", title: "Input" },
+  }), false);
+  assert.equal(authenticationResult({ status: "failed", message: "Denied" }), true);
+  assert.equal(importerRecord({
+    type: "draft",
+    draft: { kind: "host", value: { hostname: "imported.example", label: "Imported" } },
+  }), true, JSON.stringify(importerRecord.errors));
+  assert.equal(importerRecord({
+    type: "draft",
+    draft: {
+      kind: "host",
+      value: {
+        label: "Plugin endpoint",
+        protocol: "plugin:com.example.contract-test.connection",
+        pluginConnection: {
+          providerId: "com.example.contract-test.connection",
+          configuration: { endpoint: "opaque" },
+        },
+      },
+    },
+  }), true, JSON.stringify(importerRecord.errors));
+  assert.equal(importerRecord({
+    type: "draft",
+    draft: {
+      kind: "host",
+      value: {
+        hostname: "imported.example",
+        protocol: "ssh",
+        pluginConnection: {
+          providerId: "com.example.contract-test.connection",
+          configuration: {},
+        },
+      },
+    },
+  }), false, "pluginConnection drafts must use a plugin host protocol");
+  assert.equal(importerRecord({ type: "draft", draft: { kind: "unknown", value: {} } }), false);
+  assert.equal(importerRecord({
+    type: "draft",
+    draft: { kind: "host", value: { hostname: "imported.example", startupCommand: "rm -rf /tmp/example" } },
+  }), false, "importer host drafts must reject hidden executable startup commands");
+  assert.equal(importerRecord({
+    type: "draft",
+    draft: { kind: "host", value: { hostname: "imported.example", telnetPassword: "plaintext", savePassword: true } },
+  }), false, "importer host drafts must reject hidden plaintext built-in credentials");
+  assert.equal(importerRecord({
+    type: "draft",
+    draft: { kind: "identity", value: { label: "Deploy", username: "deploy", authMethod: "password", password: "secret" } },
+  }), true, JSON.stringify(importerRecord.errors));
+  assert.equal(importerRecord({
+    type: "draft",
+    draft: { kind: "key", value: { label: "Key", type: "ED25519", privateKey: "private" } },
+  }), true, JSON.stringify(importerRecord.errors));
+  assert.equal(importerRecord({
+    type: "draft",
+    draft: {
+      kind: "key",
+      value: {
+        label: "Ambiguous key",
+        type: "ED25519",
+        privateKey: "private",
+        filePath: "/keys/id_ed25519",
+      },
+    },
+  }), false, "importer key drafts must declare exactly one key source");
+  assert.equal(importerRecord({
+    type: "draft",
+    draft: { kind: "snippet", value: { label: "Check", command: "uptime" } },
+  }), true, JSON.stringify(importerRecord.errors));
+  assert.equal(importerRecord({
+    type: "draft",
+    draft: { kind: "group", value: { path: "Imported/Prod" } },
+  }), true, JSON.stringify(importerRecord.errors));
+  assert.equal(validator("ConnectionControlResult")(null), true);
+  assert.equal(validator("ConnectionControlResult")({ unexpected: true }), false);
+  assert.equal(validator("ConnectionStatusResult")({
+    status: "error",
+    message: "Handshake failed",
+    diagnostics: [{ severity: "error", message: "Invalid host key" }],
+  }), true);
+});
+
+test("Provider configuration schemas use only the host restricted JSON subset", async () => {
+  const { validateManifestValue } = await import("../../plugin-cli/src/manifest.ts");
+  const connectionProvider = {
+    ...validManifest.contributes.providers[0],
+    kind: "connection",
+    configurationSchema: {
+      type: "object",
+      properties: { endpoint: { type: "string" } },
+      required: ["endpoint"],
+      additionalProperties: false,
+    },
+  };
+  const manifest = {
+    ...validManifest,
+    permissions: { required: ["provider.connection"], optional: [] },
+    contributes: { providers: [connectionProvider] },
+  };
+  assert.equal(validateManifestValue(manifest).valid, true);
+  const unsafe = validateManifestValue({
+    ...manifest,
+    contributes: {
+      providers: [{
+        ...connectionProvider,
+        configurationSchema: {
+          ...connectionProvider.configurationSchema,
+          $ref: "https://attacker.invalid/schema.json",
+        },
+      }],
+    },
+  });
+  assert.equal(unsafe.valid, false);
+  assert.match(unsafe.errors.join("\n"), /configurationSchema.*keyword is not allowed.*\$ref/i);
+});
+
 test("terminal interceptor fast-path frames are owned by the canonical schema", () => {
   const validate = validator("TerminalInterceptorFrame");
   assert.equal(validate({
@@ -1203,6 +1361,7 @@ test("planned phase consumers are representable without private application type
             configurationSchema: {
               type: "object",
               properties: { endpoint: { type: "string" } },
+              additionalProperties: false,
             },
           },
           {

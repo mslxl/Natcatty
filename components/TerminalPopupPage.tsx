@@ -10,6 +10,7 @@ import {
   shouldRevealTerminalPopupOnExit,
 } from '../application/state/resolveTerminalSessionExitIntent';
 import { upsertKnownHost } from '../domain/knownHosts';
+import { isPluginHostProtocol, sanitizePluginConnection } from '../domain/pluginConnection';
 import { resolveTerminalChainHosts, resolveTerminalSessionHost } from '../domain/terminalHostResolution';
 import type { TerminalPopupPayload } from '../domain/systemManager/types';
 import type { GroupConfig, Host, ProxyProfile, TerminalTheme } from '../domain/models';
@@ -17,6 +18,7 @@ import type { KnownHost } from '../types';
 import { getEffectiveKnownHosts } from '../infrastructure/syncHelpers';
 import { detectLocalOs } from '../lib/localShell';
 import { cn } from '../lib/utils';
+import { PluginAuthenticationHost } from './plugins/PluginAuthenticationHost';
 
 const Terminal = lazy(() => import('./Terminal'));
 
@@ -186,6 +188,7 @@ function resolveHostProtocolFromSourceSession(
   if (
     source.protocol === 'local' ||
     source.protocol === 'telnet' ||
+    isPluginHostProtocol(source.protocol) ||
     (attachExistingSession && source.protocol === 'serial')
   ) {
     return source.protocol;
@@ -199,8 +202,13 @@ function applySourceSessionConnectionOverrides(
   attachExistingSession: boolean,
 ): Host {
   const protocol = resolveHostProtocolFromSourceSession(source, attachExistingSession);
+  const pluginConnection = isPluginHostProtocol(protocol)
+    ? sanitizePluginConnection(source.pluginConnection, protocol)
+      ?? sanitizePluginConnection(host.pluginConnection, protocol)
+    : undefined;
+  const { pluginConnection: _pluginConnection, ...baseHost } = host;
   return {
-    ...host,
+    ...baseHost,
     hostname: source.hostname || host.hostname,
     username: source.username || host.username,
     port: source.port ?? (protocol === 'local' ? undefined : host.port),
@@ -208,6 +216,7 @@ function applySourceSessionConnectionOverrides(
     moshEnabled: source.moshEnabled === true,
     etEnabled: source.etEnabled === true,
     charset: source.charset ?? host.charset,
+    ...(pluginConnection ? { pluginConnection } : {}),
     ...(protocol === 'serial' && source.serialConfig
       ? { serialConfig: source.serialConfig }
       : {}),
@@ -509,6 +518,7 @@ export default function TerminalPopupPage() {
   return (
     <I18nProvider locale={settings.uiLanguage}>
       <TerminalPopupPageInner />
+      <PluginAuthenticationHost />
     </I18nProvider>
   );
 }

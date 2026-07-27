@@ -25,6 +25,14 @@ const serialHost: Host = {
   protocol: "serial",
 };
 
+const pluginHost: Host = {
+  ...sshHost,
+  id: "plugin-1",
+  label: "Plugin",
+  hostname: "com.example.transport.connection",
+  protocol: "plugin:com.example.transport.connection",
+};
+
 const renderToolbar = (
   host: Host,
   status: "connecting" | "connected" | "disconnected" = "connected",
@@ -105,6 +113,14 @@ test("hides SFTP for local terminal sessions", () => {
   });
 
   assert.equal(markup.includes('aria-label="Open SFTP"'), false);
+});
+
+test("hides SSH history for plugin terminal sessions", () => {
+  const markup = renderToolbar(pluginHost, "connected", {
+    onOpenHistory: () => {},
+  });
+
+  assert.equal(markup.includes('aria-label="Command history"'), false);
 });
 
 test("shows YMODEM send only for connected serial sessions", () => {

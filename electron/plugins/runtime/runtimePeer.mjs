@@ -6,6 +6,7 @@ import {
   pluginErrorToRpcError,
 } from "@netcatty/plugin-sdk";
 import { createMessagePortStreamEnvelope } from "@netcatty/plugin-contract";
+import { createPluginStreamEndpoint } from "./pluginStreamEndpoint.mjs";
 
 let terminalInterceptorTransportPromise;
 
@@ -44,6 +45,18 @@ const PROVIDER_KINDS = new Set([
   "sync",
   "importer",
 ]);
+
+const CONNECTION_PROVIDER_OPERATIONS = Object.freeze([
+  "validateConfiguration",
+  "probe",
+  "open",
+  "resize",
+  "signal",
+  "reconnect",
+  "close",
+  "getStatus",
+]);
+const IMPORTER_PROVIDER_OPERATIONS = Object.freeze(["detect", "parse"]);
 
 function pluginErrorNameFromRpcError(error) {
   if (typeof error?.data?.pluginCode === "string") return error.data.pluginCode;
@@ -230,6 +243,30 @@ function assertProviderKind(kind) {
   return kind;
 }
 
+function normalizeProviderHandler(kind, handler) {
+  if (kind !== "connection" && kind !== "importer") {
+    if (typeof handler !== "function") {
+      throw new PluginError("invalid_argument", "Plugin Provider handler must be a function");
+    }
+    return handler;
+  }
+  const label = kind === "connection" ? "Connection" : "Importer";
+  if (!handler || typeof handler !== "object" || Array.isArray(handler)) {
+    throw new PluginError("invalid_argument", `${label} Provider handler must be an operation map`);
+  }
+  const normalized = {};
+  const operations = kind === "connection"
+    ? CONNECTION_PROVIDER_OPERATIONS
+    : IMPORTER_PROVIDER_OPERATIONS;
+  for (const operation of operations) {
+    if (typeof handler[operation] !== "function") {
+      throw new PluginError("invalid_argument", `${label} Provider handler is missing operation: ${operation}`);
+    }
+    normalized[operation] = handler[operation].bind(handler);
+  }
+  return Object.freeze(normalized);
+}
+
 function assertOwnedContextKey(pluginId, key) {
   const prefix = `${pluginId}.`;
   const suffix = typeof key === "string" && key.startsWith(prefix)
@@ -348,7 +385,11 @@ function createPluginContext(config, client, runtimeApi) {
             handleId: result.handleId,
             method,
             ...(params === undefined ? {} : { params }),
-            ...options,
+            ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+            ...(options.credentialLeases === undefined ? {} : {
+              credentialLeases: options.credentialLeases,
+              operationId: options.operationId,
+            }),
           },
           { deadlineMs: forwardedDeadline(options.timeoutMs, 60_000) },
         ),
@@ -356,6 +397,13 @@ function createPluginContext(config, client, runtimeApi) {
         dispose() { void stop().catch(() => {}); },
       });
     },
+  };
+  const streams = {
+    acceptReadable: (streamId) => runtimeApi.streams.acceptReadable(streamId),
+    openWritable: (streamId, options = {}) => runtimeApi.streams.openWritable(
+      streamId,
+      options.windowBytes,
+    ),
   };
   const settings = {
     get: (settingId, options = {}) => client.request("settings.get", {
@@ -422,13 +470,11 @@ function createPluginContext(config, client, runtimeApi) {
     register(providerId, kind, handler) {
       const id = assertOwnedContributionId(config.pluginId, providerId, "Plugin Provider");
       const normalizedKind = assertProviderKind(kind);
-      if (typeof handler !== "function") {
-        throw new PluginError("invalid_argument", "Plugin Provider handler must be a function");
-      }
+      const normalizedHandler = normalizeProviderHandler(normalizedKind, handler);
       if (runtimeApi.providerHandlers.has(id)) {
         throw new PluginError("already_exists", `Plugin Provider is already registered: ${id}`);
       }
-      const registration = Object.freeze({ kind: normalizedKind, handler });
+      const registration = Object.freeze({ kind: normalizedKind, handler: normalizedHandler });
       runtimeApi.providerHandlers.set(id, registration);
       return Object.freeze({
         dispose() {
@@ -477,6 +523,7 @@ function createPluginContext(config, client, runtimeApi) {
     network,
     filesystem,
     companions,
+    streams,
     logger,
   };
 }
@@ -503,7 +550,9 @@ export async function startPluginRuntime({
     environment: normalizeRuntimeEnvironment(config.environment),
     viewMessages: new Map(),
     terminalInterceptorPorts: new Set(),
+    streams: null,
   };
+  runtimeApi.streams = createPluginStreamEndpoint(transport);
   const pluginModule = await loadPlugin(config.entryUrl);
   plugin = pluginModule?.default;
   if (!plugin || typeof plugin.activate !== "function") {
@@ -587,23 +636,65 @@ export async function startPluginRuntime({
       if (deadlineMs != null && (!Number.isInteger(deadlineMs) || deadlineMs < 1 || deadlineMs > 300_000)) {
         throw new PluginError("invalid_argument", "Plugin Provider deadline is invalid");
       }
+      const payload = message.params?.payload === undefined
+        ? undefined
+        : freezeRuntimeJson(message.params.payload);
+      const streamed = (kind === "connection" && operation === "open")
+        || (kind === "importer" && operation === "parse");
+      let input;
+      let output;
+      let cancelStreams;
+      if (streamed) {
+        const inputStreamId = payload?.inputStreamId;
+        const outputStreamId = payload?.outputStreamId;
+        const windowBytes = payload?.windowBytes;
+        if (typeof inputStreamId !== "string" || typeof outputStreamId !== "string") {
+          throw new PluginError("invalid_argument", "Streamed Provider invocation requires input and output stream IDs");
+        }
+        input = runtimeApi.streams.acceptReadable(inputStreamId);
+        // Prevent a cancelled request from creating an unhandled rejected
+        // promise when the Provider never awaited its input stream.
+        void input.catch(() => {});
+        try {
+          output = await runtimeApi.streams.openWritable(outputStreamId, windowBytes);
+        } catch (error) {
+          runtimeApi.streams.rejectReadable(inputStreamId, error);
+          throw error;
+        }
+        cancelStreams = () => {
+          const error = new PluginError("cancelled", "Streamed Provider invocation was cancelled");
+          runtimeApi.streams.rejectReadable(inputStreamId, error);
+          output.cancel();
+          void input.then((stream) => stream.cancel(), () => {});
+        };
+      }
+      const cancellationDisposable = cancelStreams
+        ? cancellationToken.onCancellationRequested(cancelStreams)
+        : null;
+      const invocation = Object.freeze({
+        providerId,
+        kind,
+        operation,
+        requestId,
+        payload,
+        deadlineMs,
+        cancellationToken,
+        ...(streamed ? { input, output } : {}),
+      });
       try {
-        const result = await registration.handler(Object.freeze({
-          providerId,
-          kind,
-          operation,
-          requestId,
-          payload: message.params?.payload === undefined
-            ? undefined
-            : freezeRuntimeJson(message.params.payload),
-          deadlineMs,
-          cancellationToken,
-        }));
+        const handler = registration.kind === "connection" || registration.kind === "importer"
+          ? registration.handler[operation]
+          : registration.handler;
+        if (typeof handler !== "function") {
+          throw new PluginError("invalid_argument", `${kind} Provider operation is not implemented: ${operation}`);
+        }
+        const result = await handler(invocation);
         if (cancellationToken.isCancellationRequested) {
           return { requestId, status: "cancelled" };
         }
         return { requestId, status: "ok", result: result === undefined ? null : result };
       } catch (error) {
+        cancelStreams?.();
         if (cancellationToken.isCancellationRequested) {
           return { requestId, status: "cancelled" };
         }
@@ -613,6 +704,9 @@ export async function startPluginRuntime({
           status: "failed",
           error: { code: rpcError.code, message: rpcError.message, ...(rpcError.data === undefined ? {} : { data: rpcError.data }) },
         };
+      } finally {
+        cancellationDisposable?.dispose();
+        if (streamed && cancellationToken.isCancellationRequested) cancelStreams();
       }
     }
     throw new PluginError("unsupported", `Unsupported host method: ${message.method}`);
@@ -750,7 +844,9 @@ export async function startPluginRuntime({
   const dispose = transport.onMessage((message, ports) => {
     if (message && typeof message === "object" && Object.hasOwn(message, "frame")) {
       for (const port of ports) port?.close?.();
-      try { cancelUnhandledStream(transport, message); }
+      try {
+        if (!runtimeApi.streams.accept(message)) cancelUnhandledStream(transport, message);
+      }
       catch { transport.close(); }
       return;
     }
@@ -803,6 +899,7 @@ export async function startPluginRuntime({
       runtimeApi.terminalEvents.clear();
       for (const interceptorPort of runtimeApi.terminalInterceptorPorts) interceptorPort.close?.();
       runtimeApi.terminalInterceptorPorts.clear();
+      runtimeApi.streams.close();
       for (const emitter of runtimeApi.viewMessages.values()) emitter.clear();
       cancellation.clear();
       if (!deactivated) {

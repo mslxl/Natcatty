@@ -138,6 +138,321 @@ test("worker manager retains the stable host id for session-backed transfers", a
   assert.equal(manager.getSessionHostId("session-1"), null);
 });
 
+test("external sessions reuse worker output routing and propagate input, resize, flow, and close", async () => {
+  const child = new FakeChild();
+  const observed = [];
+  const manager = createTerminalWorkerManager({
+    utilityProcess: { fork: () => child },
+    electronModule: {
+      webContents: {
+        fromId(id) {
+          return { id, isDestroyed: () => false, once() {}, removeListener() {}, send() {} };
+        },
+      },
+    },
+    workerScriptPath: "/worker.cjs",
+  });
+
+  const started = manager.startExternalSession({
+    sessionId: "plugin-1",
+    webContentsId: 7,
+    columns: 80,
+    rows: 24,
+    protocol: "plugin:example.transport",
+    hostLabel: "Example transport",
+    hostname: "example.test",
+    sessionLog: {
+      enabled: true,
+      directory: "/logs",
+      format: "txt",
+      timestampsEnabled: true,
+    },
+    onInput: (data) => observed.push(["input", data]),
+    onResize: (size) => observed.push(["resize", size]),
+    onClose: (reason) => observed.push(["close", reason]),
+  });
+  const startRequest = child.messages.at(-1);
+  assert.equal(startRequest.channel, "netcatty:external:start");
+  assert.deepEqual(startRequest.payload, {
+    sessionId: "plugin-1",
+    columns: 80,
+    rows: 24,
+    protocol: "plugin:example.transport",
+    hostLabel: "Example transport",
+    hostname: "example.test",
+    sessionLog: {
+      enabled: true,
+      directory: "/logs",
+      format: "txt",
+      timestampsEnabled: true,
+    },
+  });
+  child.emit("message", {
+    kind: "response",
+    requestId: startRequest.requestId,
+    result: { sessionId: "plugin-1" },
+    sessionGeneration: 0,
+  });
+  assert.deepEqual(await started, { sessionId: "plugin-1" });
+
+  child.emit("message", { kind: "external-session-event", sessionId: "plugin-1", event: "input", data: "hello" });
+  child.emit("message", { kind: "external-session-event", sessionId: "plugin-1", event: "resize", columns: 100, rows: 30 });
+  child.emit("message", { kind: "external-session-event", sessionId: "plugin-1", event: "flow", paused: true });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(observed, [
+    ["input", "hello"],
+    ["resize", { columns: 100, rows: 30 }],
+  ]);
+
+  let outputResolved = false;
+  const output = manager.pushExternalOutput("plugin-1", "world", {
+    pluginPipelineIngressBytes: 0,
+  }).then(() => { outputResolved = true; });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(outputResolved, false);
+  child.emit("message", { kind: "external-session-event", sessionId: "plugin-1", event: "flow", paused: false });
+  await new Promise((resolve) => setImmediate(resolve));
+  const outputRequest = child.messages.at(-1);
+  assert.equal(outputRequest.channel, "netcatty:external:output");
+  assert.deepEqual(outputRequest.payload, {
+    sessionId: "plugin-1",
+    data: "world",
+    meta: { pluginPipelineIngressBytes: 0 },
+  });
+  child.emit("message", { kind: "response", requestId: outputRequest.requestId, result: null });
+  await output;
+
+  child.emit("message", { kind: "external-session-event", sessionId: "plugin-1", event: "close", reason: "closed" });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(observed.at(-1), ["close", "closed"]);
+});
+
+test("external session finish forwards plugin diagnostics to the worker", async () => {
+  const child = new FakeChild();
+  const manager = createTerminalWorkerManager({
+    utilityProcess: { fork: () => child },
+    electronModule: {
+      webContents: {
+        fromId(id) {
+          return { id, isDestroyed: () => false, once() {}, removeListener() {}, send() {} };
+        },
+      },
+    },
+    workerScriptPath: "/worker.cjs",
+  });
+
+  const started = manager.startExternalSession({
+    sessionId: "plugin-diagnostics",
+    webContentsId: 7,
+    columns: 80,
+    rows: 24,
+    protocol: "plugin:example.transport",
+  });
+  const startRequest = child.messages.at(-1);
+  child.emit("message", {
+    kind: "response",
+    requestId: startRequest.requestId,
+    result: { sessionId: "plugin-diagnostics" },
+    sessionGeneration: 0,
+  });
+  await started;
+
+  const finished = manager.finishExternalSession("plugin-diagnostics", {
+    reason: "error",
+    error: "Connection failed",
+    diagnostics: [{ severity: "error", message: "Host key mismatch", path: "configuration.hostKey" }],
+  });
+  const finishRequest = child.messages.at(-1);
+  assert.equal(finishRequest.channel, "netcatty:external:finish");
+  assert.deepEqual(finishRequest.payload, {
+    sessionId: "plugin-diagnostics",
+    reason: "error",
+    error: "Connection failed",
+    diagnostics: [{ severity: "error", message: "Host key mismatch", path: "configuration.hostKey" }],
+  });
+  child.emit("message", { kind: "response", requestId: finishRequest.requestId, result: null });
+  assert.equal(await finished, true);
+});
+
+test("late external-session cleanup cannot finish a same-ID replacement", async () => {
+  const child = new FakeChild();
+  const manager = createTerminalWorkerManager({
+    utilityProcess: { fork: () => child },
+    electronModule: {
+      webContents: {
+        fromId(id) {
+          return { id, isDestroyed: () => false, once() {}, removeListener() {}, send() {} };
+        },
+      },
+    },
+    workerScriptPath: "/worker.cjs",
+  });
+  const oldOwner = Symbol("old-owner");
+  const newOwner = Symbol("new-owner");
+  const oldStart = manager.startExternalSession({
+    sessionId: "plugin-replaced",
+    ownerToken: oldOwner,
+    webContentsId: 7,
+    columns: 80,
+    rows: 24,
+    protocol: "plugin:example.transport",
+  });
+  let request = child.messages.at(-1);
+  child.emit("message", {
+    kind: "response",
+    requestId: request.requestId,
+    result: { sessionId: "plugin-replaced" },
+    sessionGeneration: 0,
+  });
+  await oldStart;
+  child.emit("message", { kind: "external-session-event", sessionId: "plugin-replaced", event: "close" });
+
+  const newStart = manager.startExternalSession({
+    sessionId: "plugin-replaced",
+    ownerToken: newOwner,
+    webContentsId: 8,
+    columns: 100,
+    rows: 30,
+    protocol: "plugin:example.transport",
+  });
+  request = child.messages.at(-1);
+  child.emit("message", {
+    kind: "response",
+    requestId: request.requestId,
+    result: { sessionId: "plugin-replaced" },
+    sessionGeneration: 1,
+  });
+  await newStart;
+
+  const messageCount = child.messages.length;
+  assert.equal(await manager.pushExternalOutput("plugin-replaced", "late", undefined, oldOwner), false);
+  assert.equal(await manager.finishExternalSession("plugin-replaced", { reason: "closed" }, oldOwner), false);
+  assert.equal(child.messages.length, messageCount);
+
+  const finish = manager.finishExternalSession("plugin-replaced", { reason: "closed" }, newOwner);
+  const finishRequest = child.messages.at(-1);
+  assert.equal(finishRequest.channel, "netcatty:external:finish");
+  child.emit("message", { kind: "response", requestId: finishRequest.requestId, result: null });
+  assert.equal(await finish, true);
+});
+
+test("external input failures close both the worker route and its provider lifecycle", async () => {
+  const child = new FakeChild();
+  const observed = [];
+  const inputs = [];
+  const manager = createTerminalWorkerManager({
+    utilityProcess: { fork: () => child },
+    electronModule: {
+      webContents: {
+        fromId(id) {
+          return { id, isDestroyed: () => false, once() {}, removeListener() {}, send() {} };
+        },
+      },
+    },
+    workerScriptPath: "/worker.cjs",
+  });
+  const started = manager.startExternalSession({
+    sessionId: "plugin-input-error",
+    webContentsId: 7,
+    columns: 80,
+    rows: 24,
+    protocol: "plugin:example.transport",
+    async onInput(data) {
+      inputs.push(data);
+      throw new Error("provider input failed");
+    },
+    onClose: (reason) => observed.push(reason),
+  });
+  const startRequest = child.messages.at(-1);
+  child.emit("message", {
+    kind: "response",
+    requestId: startRequest.requestId,
+    result: { sessionId: "plugin-input-error" },
+    sessionGeneration: 0,
+  });
+  await started;
+  child.emit("message", {
+    kind: "external-session-event",
+    sessionId: "plugin-input-error",
+    event: "input",
+    data: "hello",
+  });
+  child.emit("message", {
+    kind: "external-session-event",
+    sessionId: "plugin-input-error",
+    event: "input",
+    data: "late",
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(inputs, ["hello"]);
+  const finishRequest = child.messages.at(-1);
+  assert.equal(finishRequest.channel, "netcatty:external:finish");
+  assert.equal(finishRequest.payload.reason, "error");
+  child.emit("message", { kind: "response", requestId: finishRequest.requestId, result: null });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(inputs, ["hello"]);
+  assert.deepEqual(observed, ["input-error"]);
+  await assert.rejects(manager.pushExternalOutput("plugin-input-error", "late"), /not registered/i);
+});
+
+test("external session input waits for prior plugin writes before accepting more input", async () => {
+  const child = new FakeChild();
+  const observed = [];
+  let releaseFirst;
+  const firstWrite = new Promise((resolve) => { releaseFirst = resolve; });
+  const manager = createTerminalWorkerManager({
+    utilityProcess: { fork: () => child },
+    electronModule: {
+      webContents: {
+        fromId(id) {
+          return { id, isDestroyed: () => false, once() {}, removeListener() {}, send() {} };
+        },
+      },
+    },
+    workerScriptPath: "/worker.cjs",
+  });
+  const started = manager.startExternalSession({
+    sessionId: "plugin-input-chain",
+    webContentsId: 7,
+    columns: 80,
+    rows: 24,
+    protocol: "plugin:example.transport",
+    async onInput(data) {
+      observed.push(data);
+      if (data === "first") await firstWrite;
+    },
+  });
+  const startRequest = child.messages.at(-1);
+  child.emit("message", {
+    kind: "response",
+    requestId: startRequest.requestId,
+    result: { sessionId: "plugin-input-chain" },
+    sessionGeneration: 0,
+  });
+  await started;
+
+  child.emit("message", {
+    kind: "external-session-event",
+    sessionId: "plugin-input-chain",
+    event: "input",
+    data: "first",
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  child.emit("message", {
+    kind: "external-session-event",
+    sessionId: "plugin-input-chain",
+    event: "input",
+    data: "second",
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(observed, ["first"]);
+
+  releaseFirst();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(observed, ["first", "second"]);
+  assert.equal(child.messages.some((message) => message.channel === "netcatty:external:finish"), false);
+});
+
 test("session ownership listeners finish before buffered output is released", async () => {
   const child = new FakeChild();
   const routed = [];

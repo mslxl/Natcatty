@@ -58,7 +58,18 @@ test("runtime peer exposes secure host capabilities over the canonical RPC trans
       "log.write": async () => null,
     },
   });
-  port1.on("message", (message) => host.accept(message));
+  let resolveUnhandledStreamCancellation;
+  let rejectUnhandledStreamCancellation;
+  const unhandledStreamCancellation = new Promise((resolve, reject) => {
+    resolveUnhandledStreamCancellation = resolve;
+    rejectUnhandledStreamCancellation = reject;
+  });
+  port1.on("message", (message) => {
+    const accepted = host.accept(message);
+    if (message?.frame?.streamId === "unhandled" && message.frame.kind === "cancel") {
+      accepted.then(resolveUnhandledStreamCancellation, rejectUnhandledStreamCancellation);
+    }
+  });
   const lifecycle = [];
   const peer = await startPluginRuntime({
     port: port2,
@@ -121,7 +132,7 @@ test("runtime peer exposes secure host capabilities over the canonical RPC trans
   });
   assert.equal(initialized.pluginId, "com.example.peer");
   const unhandledStream = await host.streams.openOutgoing("unhandled", 1024);
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  await unhandledStreamCancellation;
   await assert.rejects(unhandledStream.write(new Uint8Array([1])), /closed/);
   await assert.rejects(
     host.request("plugin.unknown", {}),
@@ -456,6 +467,151 @@ test("runtime peer registers provider handlers and routes immutable terminal lif
   controller.abort();
   await assert.rejects(cancelledRequest, (error) => error?.code === RPC_ERRORS.cancelled);
   await cancellationObserved;
+
+  await peer.dispose();
+  host.close();
+});
+
+test("runtime peer routes connection and importer Provider operation maps", async () => {
+  const { startPluginRuntime } = await import("./runtime/runtimePeer.mjs");
+  const { port1, port2 } = new MessageChannel();
+  const host = new PluginRpcRouter({
+    pluginId: "com.example.connection",
+    send(message) { port1.postMessage(message); },
+  });
+  port1.on("message", (message) => host.accept(message));
+  const invocations = [];
+  let legacyError;
+  let legacyImporterError;
+  const peer = await startPluginRuntime({
+    port: port2,
+    config: {
+      pluginId: "com.example.connection",
+      pluginVersion: "1.0.0",
+      netcattyVersion: "1.0.0",
+      apiVersion: "0.1.0-internal",
+      enabledFeatures: [],
+    },
+    async loadPlugin() {
+      return {
+        default: {
+          async activate(context) {
+            try {
+              context.providers.register("com.example.connection.legacy", "connection", async () => null);
+            } catch (error) {
+              legacyError = { code: error?.code, message: error?.message };
+            }
+            context.providers.register("com.example.connection.transport", "connection", {
+              validateConfiguration(invocation) {
+                invocations.push([invocation.operation, invocation.payload.configuration]);
+                return { valid: true, issues: [] };
+              },
+              probe(invocation) {
+                invocations.push([invocation.operation, invocation.payload.configuration]);
+                return { available: true };
+              },
+              open() {
+                throw new Error("open is not invoked by this test");
+              },
+              resize(invocation) {
+                invocations.push([invocation.operation, invocation.payload.columns, invocation.payload.rows]);
+                return null;
+              },
+              signal(invocation) {
+                invocations.push([invocation.operation, invocation.payload.signal]);
+                return null;
+              },
+              reconnect(invocation) {
+                invocations.push([invocation.operation, invocation.payload.connectionId]);
+                return null;
+              },
+              close(invocation) {
+                invocations.push([invocation.operation, invocation.payload.connectionId]);
+                return null;
+              },
+              getStatus(invocation) {
+                invocations.push([invocation.operation, invocation.payload.connectionId]);
+                return { status: "connected" };
+              },
+            });
+            try {
+              context.providers.register("com.example.connection.legacyImporter", "importer", async () => null);
+            } catch (error) {
+              legacyImporterError = { code: error?.code, message: error?.message };
+            }
+            context.providers.register("com.example.connection.importer", "importer", {
+              detect(invocation) {
+                invocations.push([invocation.operation, invocation.payload.fileName]);
+                return { confidence: 0.75, format: "example" };
+              },
+              parse() {
+                throw new Error("parse is not invoked by this test");
+              },
+            });
+          },
+        },
+      };
+    },
+  });
+  await host.request("plugin.initialize", {
+    netcattyVersion: "1.0.0",
+    apiVersion: "0.1.0-internal",
+    supportedFeatures: [],
+  });
+  await host.request("plugin.activate", {});
+
+  assert.deepEqual(legacyError, {
+    code: "invalid_argument",
+    message: "Connection Provider handler must be an operation map",
+  });
+  assert.deepEqual(legacyImporterError, {
+    code: "invalid_argument",
+    message: "Importer Provider handler must be an operation map",
+  });
+  assert.deepEqual(await host.request("provider.invoke", {
+    providerId: "com.example.connection.transport",
+    kind: "connection",
+    operation: "resize",
+    requestId: "connection-resize-1",
+    payload: { connectionId: "connection-1", operationId: "operation-1", columns: 132, rows: 44 },
+    deadlineMs: 1_000,
+  }), {
+    requestId: "connection-resize-1",
+    status: "ok",
+    result: null,
+  });
+  assert.deepEqual(await host.request("provider.invoke", {
+    providerId: "com.example.connection.importer",
+    kind: "importer",
+    operation: "detect",
+    requestId: "importer-detect-1",
+    payload: {
+      fileName: "hosts.json",
+      sample: { encoding: "base64", data: "e30=" },
+    },
+    deadlineMs: 1_000,
+  }), {
+    requestId: "importer-detect-1",
+    status: "ok",
+    result: { confidence: 0.75, format: "example" },
+  });
+  assert.deepEqual(await host.request("provider.invoke", {
+    providerId: "com.example.connection.transport",
+    kind: "connection",
+    operation: "getStatus",
+    requestId: "connection-status-1",
+    payload: { connectionId: "connection-1", operationId: "operation-2" },
+    deadlineMs: 1_000,
+  }), {
+    requestId: "connection-status-1",
+    status: "ok",
+    result: { status: "connected" },
+  });
+  assert.deepEqual(invocations, [
+    ["resize", 132, 44],
+    ["detect", "hosts.json"],
+    ["getStatus", "connection-1"],
+  ]);
 
   await peer.dispose();
   host.close();

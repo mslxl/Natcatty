@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
+
+import * as ts from "typescript";
 
 import {
   CancellationError,
@@ -29,6 +33,40 @@ const testSecretStore: PluginSecretStore = {
   },
   async delete() {},
 };
+
+function assertSdkTypeChecks(source: string) {
+  const sdkDirectory = dirname(fileURLToPath(import.meta.url));
+  const fixturePath = join(sdkDirectory, "__provider-overload-fixture.ts");
+  const compilerOptions: ts.CompilerOptions = {
+    allowImportingTsExtensions: true,
+    module: ts.ModuleKind.NodeNext,
+    moduleResolution: ts.ModuleResolutionKind.NodeNext,
+    noEmit: true,
+    skipLibCheck: true,
+    strict: true,
+    target: ts.ScriptTarget.ES2022,
+  };
+  const host = ts.createCompilerHost(compilerOptions, true);
+  const fileExists = host.fileExists.bind(host);
+  const readCompilerFile = host.readFile.bind(host);
+  host.fileExists = (fileName) => fileName === fixturePath || fileExists(fileName);
+  host.readFile = (fileName) => fileName === fixturePath ? source : readCompilerFile(fileName);
+
+  const program = ts.createProgram([fixturePath], compilerOptions, host);
+  const diagnostics = ts.getPreEmitDiagnostics(program)
+    .filter((diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error);
+  assert.deepEqual(
+    diagnostics.map((diagnostic) => {
+      const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n");
+      if (!diagnostic.file || diagnostic.start === undefined) {
+        return `TS${diagnostic.code}: ${message}`;
+      }
+      const { line, character } = diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start);
+      return `${diagnostic.file.fileName}:${line + 1}:${character + 1} TS${diagnostic.code}: ${message}`;
+    }),
+    [],
+  );
+}
 
 test("PluginError maps stable SDK codes to stable JSON-RPC wire errors", () => {
   const error = new PluginError("permission_denied", "Approval required", { scope: "terminal" });
@@ -84,7 +122,7 @@ test("terminal interceptor typing stays specialized while broad ProviderKind hel
   const source = await readFile(new URL("./index.ts", import.meta.url), "utf8");
   assert.match(
     source,
-    /kind: Exclude<ProviderKind, TerminalInterceptorKind>,\s*handler: PluginProviderHandler/u,
+    /kind: Exclude<\s*ProviderKind,\s*TerminalInterceptorKind \| OrdinaryTerminalProviderKind \| "connection" \| "authentication" \| "importer"\s*>,\s*handler: PluginProviderHandler/u,
   );
   assert.match(
     source,
@@ -94,6 +132,129 @@ test("terminal interceptor typing stays specialized while broad ProviderKind hel
     source,
     /kind: K,\s*handler: ProviderHandlerForKind<NoInfer<K>, TPayload, TResult>/u,
   );
+});
+
+test("provider registrations infer typed connection and importer stream invocations", () => {
+  assertSdkTypeChecks(`
+    import { definePlugin } from "./index.ts";
+    import type {
+      ConnectionProviderHandler,
+      ConnectionProviderResultByOperation,
+      AuthenticationResult,
+      ImporterKeyDraft,
+      ImporterProviderHandler,
+    } from "./index.ts";
+
+    const resizeAck: ConnectionProviderResultByOperation["resize"] = null;
+    void resizeAck;
+    // @ts-expect-error connection control operations acknowledge with JSON null, never object payloads.
+    const invalidResizeAck: ConnectionProviderResultByOperation["resize"] = { ok: true };
+    void invalidResizeAck;
+
+    const invalidConnectionProvider: ConnectionProviderHandler = {
+      validateConfiguration: () => ({ valid: true, issues: [] }),
+      probe: () => ({ available: true }),
+      open: () => ({ connectionId: "connection-1", status: "connected" }),
+      // @ts-expect-error resize must return the resize control acknowledgement, not a probe result.
+      resize: () => ({ available: true }),
+      signal: () => null,
+      reconnect: () => null,
+      close: () => null,
+      getStatus: () => ({ status: "connected" }),
+    };
+    void invalidConnectionProvider;
+
+    const inlineImporterKey: ImporterKeyDraft = {
+      label: "Inline key",
+      type: "ED25519",
+      privateKey: "private",
+    };
+    const fileImporterKey: ImporterKeyDraft = {
+      label: "File key",
+      type: "ED25519",
+      filePath: "/keys/id_ed25519",
+    };
+    void inlineImporterKey;
+    void fileImporterKey;
+    // @ts-expect-error runtime validation requires exactly one key source.
+    const ambiguousImporterKey: ImporterKeyDraft = {
+      label: "Ambiguous key",
+      type: "ED25519",
+      privateKey: "private",
+      filePath: "/keys/id_ed25519",
+    };
+    void ambiguousImporterKey;
+
+    const invalidImporterProvider: ImporterProviderHandler = {
+      // @ts-expect-error detect must return a detection result, not parse counters.
+      detect: () => ({ parsed: 0, warnings: 0, errors: 0 }),
+      parse: () => ({ parsed: 0, warnings: 0, errors: 0 }),
+    };
+    void invalidImporterProvider;
+
+    // @ts-expect-error challenge results must include the exact challenge payload.
+    const incompleteAuthenticationResult: AuthenticationResult = { status: "challenge" };
+    void incompleteAuthenticationResult;
+
+    definePlugin({
+      activate(context) {
+        context.providers.register("com.example.connection", "connection", {
+          async open(invocation) {
+            const input = await invocation.input;
+            const chunk: Uint8Array | null = await input.read();
+            if (chunk) {
+              await invocation.output.write(chunk);
+            }
+            await invocation.output.end();
+            return { connectionId: "connection-1", status: "connected" };
+          },
+          validateConfiguration(invocation) {
+            const configuration = invocation.payload.configuration;
+            void configuration;
+            return { valid: true, issues: [] };
+          },
+          probe() {
+            return { available: true };
+          },
+          resize() {
+            return null;
+          },
+          signal() {
+            return null;
+          },
+          reconnect() {
+            return null;
+          },
+          close() {
+            return null;
+          },
+          getStatus() {
+            return {
+              status: "connected",
+              diagnostics: [{ severity: "warning", message: "using fallback host key algorithm" }],
+            };
+          },
+        });
+
+        // @ts-expect-error connection Providers use operation-keyed handlers so each operation has its exact result.
+        context.providers.register("com.example.connection.invalid", "connection", async () => ({ available: true }));
+
+        context.providers.register("com.example.importer", "importer", {
+          async parse(invocation) {
+            const input = await invocation.input;
+            await invocation.output.write(new Uint8Array([65]));
+            await input.read();
+            return { parsed: 0, warnings: 0, errors: 0 };
+          },
+          detect(invocation) {
+            const sampleData: string = invocation.payload.sample.data;
+            void sampleData;
+            return { confidence: 1 };
+          },
+        });
+      },
+    });
+  `);
 });
 
 test("DisposableStore disposes every item once", () => {

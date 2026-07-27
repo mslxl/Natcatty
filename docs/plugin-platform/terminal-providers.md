@@ -280,7 +280,8 @@ fan-out invokes at most the first 32 deterministically ranked Providers.
 
 The registry uses the existing generic Provider request/result envelopes,
 runtime identity, cancellation, progress, permission names, and stream
-protocol. PR 6 can add its direct interceptor transport without changing the
-ordinary registry. PR 7 connection/auth/import, PR 8 sync, and PR 9 rollout can
-reuse the same registration and runtime lifecycle while defining their own
-operation-specific result validators and bounded stream consumers.
+protocol. PR 6 added its direct interceptor transport without changing the
+ordinary registry. PR 7 reused that registration and runtime lifecycle for
+connection, authentication, and importer Providers, with operation-specific
+result validators and bounded stream consumers. PR 8 sync Providers and PR 9
+rollout can reuse the same boundaries.

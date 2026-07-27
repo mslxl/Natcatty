@@ -9,6 +9,7 @@ import type {
   SudoPasswordAutofillCandidate,
 } from "./terminalSudoAutofill";
 import type { ProgrammaticCommandLogRewrite } from "../programmaticCommandLog";
+import type { TerminalSessionExitEvent } from "../../../application/state/resolveTerminalSessionExitIntent";
 
 export type TerminalBackendApi = {
   backendAvailable: () => boolean;
@@ -17,6 +18,7 @@ export type TerminalBackendApi = {
   etAvailable: () => boolean;
   localAvailable: () => boolean;
   serialAvailable: () => boolean;
+  pluginConnectionAvailable: () => boolean;
   execAvailable: () => boolean;
   startSSHSession: (options: NetcattySSHOptions) => Promise<string>;
   startTelnetSession: (
@@ -34,6 +36,17 @@ export type TerminalBackendApi = {
   startSerialSession: (
     options: Parameters<NonNullable<NetcattyBridge["startSerialSession"]>>[0],
   ) => Promise<string>;
+  startPluginConnection: (options: NetcattyPluginConnectionStartRequest & { signal?: AbortSignal }) => Promise<{
+    sessionId: string;
+    providerId: string;
+    status: "connecting" | "connected";
+    diagnostics: ReadonlyArray<import("@netcatty/plugin-contract").ProviderValidationIssue>;
+  }>;
+  cancelPluginExtensionRequest?: (requestId: string) => Promise<boolean> | boolean;
+  signalPluginConnection?: (
+    sessionId: string,
+    signal?: "interrupt" | "terminate" | "kill" | "eof" | "break",
+  ) => Promise<unknown>;
   execCommand: (options: Parameters<NetcattyBridge["execCommand"]>[0]) => Promise<{
     stdout?: string;
     stderr?: string;
@@ -56,7 +69,7 @@ export type TerminalBackendApi = {
   ) => () => void;
   onSessionExit: (
     sessionId: string,
-    cb: (evt: { exitCode?: number; signal?: number; error?: string; reason?: "exited" | "error" | "timeout" | "closed" }) => void,
+    cb: (evt: TerminalSessionExitEvent) => void,
   ) => () => void;
   onTelnetAutoLoginComplete?: (
     sessionId: string,
@@ -194,7 +207,7 @@ export type TerminalSessionStartersContext = {
 
   onSessionAttached?: (sessionId: string) => void;
   onRestoreCwdIntentConsumed?: (cwd: string) => void;
-  onSessionExit?: (sessionId: string, evt: { exitCode?: number; signal?: number; error?: string; reason?: "exited" | "error" | "timeout" | "closed" }) => void;
+  onSessionExit?: (sessionId: string, evt: TerminalSessionExitEvent) => void;
   onTerminalDataCapture?: (sessionId: string, data: string) => void;
   onTerminalLogData?: (data: string) => void;
   onProgrammaticCommandLogRewrite?: (rewrite: ProgrammaticCommandLogRewrite) => void;
@@ -227,4 +240,6 @@ export type TerminalSessionDataMeta = {
   pluginPipelineProcessed?: boolean;
   /** Host-owned classification from original output; plugins cannot mask it. */
   pluginPipelineSensitiveInput?: boolean;
+  /** Host-owned marker that a Plugin connection Provider has explicitly reached connected status. */
+  pluginConnectionReady?: boolean;
 };

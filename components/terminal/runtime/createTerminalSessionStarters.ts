@@ -1,6 +1,8 @@
 import type { Terminal as XTerm } from "@xterm/xterm";
+import type { ProviderValidationIssue } from "@netcatty/plugin-contract";
 import { logger } from "../../../lib/logger";
 import type { Host, SSHKey } from "../../../types";
+import type { TerminalSessionExitEvent } from "../../../application/state/resolveTerminalSessionExitIntent";
 import type { TerminalSessionStartersContext } from "./createTerminalSessionStarters.types";
 export type {
   PendingAuth,
@@ -50,9 +52,31 @@ import {
 } from "../../../domain/proxyProfiles";
 import { hasConnectionPassedTcpDial } from "../connectionTimeouts";
 import { resolveHostSshConnectionTimeouts } from "../../../domain/sshConnectionTimeouts";
+import { isPluginHostProtocol, sanitizePluginConnection } from "../../../domain/pluginConnection";
 
 const TELNET_SESSION_REPLACED_ERROR = "Telnet session start was replaced";
 const JUMP_HOST_AUTH_FAILED_PREFIX = "Jump host authentication failed";
+
+const createPluginConnectionRequestId = (): string => {
+  const randomId = globalThis.crypto?.randomUUID?.()
+    ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 18)}`;
+  return `plugin-connection-${randomId}`.slice(0, 128);
+};
+
+const formatPluginDiagnosticLines = (
+  diagnostics: ReadonlyArray<ProviderValidationIssue> | undefined,
+): string[] => (diagnostics ?? [])
+  .map((issue) => `[Plugin ${issue.severity}] ${issue.message}`);
+
+const formatPluginConnectionExitMessage = (event: TerminalSessionExitEvent): string => {
+  const lines = [
+    event.error
+      ? `[Plugin connection closed: ${event.error}]`
+      : "[Plugin connection closed]",
+    ...formatPluginDiagnosticLines(event.diagnostics),
+  ];
+  return `\r\n${lines.join("\r\n")}`;
+};
 
 const isAuthFailureMessage = (message: string): boolean => {
   const normalized = message.toLowerCase();
@@ -837,6 +861,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       attachTelnetEchoMode(ctx.sessionId);
       const id = await ctx.terminalBackend.startTelnetSession({
         sessionId: ctx.sessionId,
+        protocol: ctx.host.protocol,
         hostname: ctx.host.hostname,
         port: resolveTelnetPort(ctx.host),
         username: telnetUsername,
@@ -1411,6 +1436,139 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
     }
   };
 
+  const startPluginConnection = async (term: XTerm) => {
+    if (!ctx.terminalBackend.pluginConnectionAvailable()) {
+      ctx.setError("Plugin connection bridge unavailable. Please run the desktop build with Plugin Development enabled.");
+      writeTerminalLine(ctx, term, "\r\n[Plugin connection bridge unavailable.]");
+      ctx.updateStatus("disconnected");
+      return;
+    }
+    if (!isPluginHostProtocol(ctx.host.protocol)) {
+      ctx.setError("Plugin connection protocol is invalid.");
+      ctx.updateStatus("disconnected");
+      return;
+    }
+    const connection = sanitizePluginConnection(ctx.host.pluginConnection, ctx.host.protocol);
+    if (!connection) {
+      const message = "Plugin connection configuration is missing or invalid. Open host settings and select an installed connection Provider.";
+      ctx.setError(message);
+      writeTerminalLine(ctx, term, `\r\n[${message}]`);
+      ctx.updateStatus("disconnected");
+      return;
+    }
+    const requestId = createPluginConnectionRequestId();
+    const startController = new AbortController();
+    let pendingCancelReleased = false;
+    let bootMonitorTimer: ReturnType<typeof setTimeout> | null = null;
+    const previousDisposeExit = ctx.disposeExitRef.current;
+    const clearBootMonitor = () => {
+      if (bootMonitorTimer === null) return;
+      clearTimeout(bootMonitorTimer);
+      bootMonitorTimer = null;
+    };
+    const cancelPendingStart = () => {
+      previousDisposeExit?.();
+      if (pendingCancelReleased) return;
+      pendingCancelReleased = true;
+      clearBootMonitor();
+      startController.abort(new DOMException("Plugin connection request was cancelled", "AbortError"));
+      if (ctx.terminalBackend.cancelPluginExtensionRequest) {
+        try {
+          void Promise.resolve(ctx.terminalBackend.cancelPluginExtensionRequest(requestId)).catch((err) => {
+            logger.warn("Failed to cancel pending plugin connection request", err);
+          });
+        } catch (err) {
+          logger.warn("Failed to cancel pending plugin connection request", err);
+        }
+      }
+    };
+    const scheduleBootMonitor = () => {
+      if (pendingCancelReleased) return;
+      bootMonitorTimer = setTimeout(() => {
+        bootMonitorTimer = null;
+        if (pendingCancelReleased) return;
+        if (!isTerminalBootActive(ctx)) {
+          cancelPendingStart();
+          return;
+        }
+        scheduleBootMonitor();
+      }, 50);
+    };
+    const releasePendingStartCancellation = () => {
+      if (ctx.disposeExitRef.current === cancelPendingStart) {
+        ctx.disposeExitRef.current = previousDisposeExit;
+      }
+      pendingCancelReleased = true;
+      clearBootMonitor();
+    };
+    ctx.disposeExitRef.current = cancelPendingStart;
+    scheduleBootMonitor();
+    try {
+      const opened = await ctx.terminalBackend.startPluginConnection({
+        requestId,
+        sessionId: ctx.sessionId,
+        protocol: ctx.host.protocol,
+        hostLabel: ctx.host.label,
+        hostname: ctx.host.hostname,
+        providerId: connection.providerId,
+        configuration: connection.configuration,
+        columns: term.cols,
+        rows: term.rows,
+        sessionLog: ctx.sessionLog?.enabled ? ctx.sessionLog : undefined,
+        ...(connection.authenticationProviderId
+          ? { authenticationProviderId: connection.authenticationProviderId }
+          : {}),
+        ...(connection.credentialId
+          ? { credential: { kind: "credential" as const, id: connection.credentialId } }
+          : {}),
+        signal: startController.signal,
+      });
+      releasePendingStartCancellation();
+      if (startController.signal.aborted || !isTerminalBootActive(ctx)) {
+        closeOrphanBackendSession(ctx, opened.sessionId);
+        abortSessionStartAfterUnmount();
+        return;
+      }
+      const id = opened.sessionId;
+      if (opened.diagnostics.length > 0) {
+        ctx.setProgressLogs((previous) => [
+          ...previous,
+          ...formatPluginDiagnosticLines(opened.diagnostics),
+        ]);
+      }
+      let startupScheduled = false;
+      const schedulePluginStartup = () => {
+        if (startupScheduled) return;
+        startupScheduled = true;
+        scheduleStartupCommand(ctx, term, id);
+      };
+      if (!tryAttachSessionToTerminal(ctx, term, id, {
+        onExitMessage: formatPluginConnectionExitMessage,
+        requireExplicitConnectionReady: true,
+        onConnected: (meta) => {
+          if (meta?.pluginConnectionReady === true) schedulePluginStartup();
+        },
+      })) {
+        abortSessionStartAfterUnmount();
+        return;
+      }
+      if (opened.status === "connected") {
+        ctx.updateStatus("connected");
+        schedulePluginStartup();
+      }
+    } catch (error) {
+      releasePendingStartCancellation();
+      if (!isTerminalBootActive(ctx)) {
+        abortSessionStartAfterUnmount();
+        return;
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      ctx.setError(message);
+      writeTerminalLine(ctx, term, "\r\n[Failed to start plugin connection. See connection details.]");
+      ctx.updateStatus("disconnected");
+    }
+  };
+
   const startLocal = async (term: XTerm) => {
     if (!ctx.terminalBackend.localAvailable()) {
       ctx.setError("Local shell bridge unavailable. Please run the desktop build.");
@@ -1596,5 +1754,5 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
     return true;
   };
 
-  return { startSSH, startTelnet, startMosh, startEt, startLocal, startSerial, reattachSession };
+  return { startSSH, startTelnet, startMosh, startEt, startPluginConnection, startLocal, startSerial, reattachSession };
 };

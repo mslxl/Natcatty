@@ -62,6 +62,31 @@ test('resolveTerminalPopupHost still falls back to source session details when t
   assert.equal(host.moshEnabled, false);
 });
 
+test('resolveTerminalPopupHost preserves plugin transport and configuration for copied windows', () => {
+  const providerId = 'com.example.transport.connection';
+  const protocol = `plugin:${providerId}` as const;
+  const pluginConnection = {
+    providerId,
+    authenticationProviderId: 'com.example.transport.auth',
+    configuration: { endpoint: 'gateway.example', features: ['importers'] },
+    credentialId: 'credential-reference-1234',
+  };
+
+  const host = resolveTerminalPopupHost(
+    popupPayload(sourceSession({
+      protocol,
+      pluginConnection,
+      hostId: 'missing-plugin-host',
+      hostname: 'provider-placeholder.example',
+    })),
+    [],
+  );
+
+  assert.equal(host.protocol, protocol);
+  assert.deepEqual(host.pluginConnection, pluginConnection);
+  assert.notEqual(host.pluginConnection, pluginConnection);
+});
+
 test('resolveTerminalPopupHost does not turn command popups into serial sessions without serial config', () => {
   const host = resolveTerminalPopupHost(
     popupPayload(sourceSession({ protocol: 'serial' })),
@@ -111,6 +136,14 @@ test('popup terminals resolve complete host config and pass jump hosts into Term
   assert.match(source, /resolveTerminalPopupHost\(config,\s*hosts,\s*\{\s+groupConfigs,\s+proxyProfiles,/);
   assert.match(source, /resolveTerminalChainHosts\(\{\s+host,\s+hosts,\s+groupConfigs,\s+proxyProfiles,/);
   assert.match(source, /chainHosts=\{chainHosts\}/);
+});
+
+test('popup provider tree mounts the plugin authentication host', () => {
+  assert.match(source, /import \{ PluginAuthenticationHost \} from '\.\/plugins\/PluginAuthenticationHost';/);
+  assert.match(
+    source,
+    /<I18nProvider locale=\{settings\.uiLanguage\}>\s+<TerminalPopupPageInner \/>\s+<PluginAuthenticationHost \/>\s+<\/I18nProvider>/,
+  );
 });
 
 test('attach popup close preparation has a bounded timeout', () => {

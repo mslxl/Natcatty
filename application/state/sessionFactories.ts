@@ -106,6 +106,9 @@ export const createHostTerminalSession = (
     username: host.username,
     status: "connecting",
     protocol: host.protocol,
+    pluginConnection: host.pluginConnection == null
+      ? undefined
+      : structuredClone(host.pluginConnection),
     port: host.port,
     moshEnabled: host.moshEnabled,
     etEnabled: host.etEnabled,
@@ -114,3 +117,12 @@ export const createHostTerminalSession = (
     ...(host.autoOpenSftpPanel ? { autoOpenSidePanel: "sftp" as const } : {}),
   };
 };
+
+export const createWorkspaceHostTerminalSession = (
+  sessionId: string,
+  host: Host,
+  workspaceId: string,
+): TerminalSession => ({
+  ...createHostTerminalSession(sessionId, host),
+  workspaceId,
+});

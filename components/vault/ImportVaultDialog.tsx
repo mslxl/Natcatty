@@ -1,10 +1,12 @@
-import React, { useCallback, useRef, useState } from "react";
-import { FileSymlink, Import } from "lucide-react";
+import React, { useCallback, useMemo, useRef, useState } from "react";
+import { FileSymlink, Import, Plug } from "lucide-react";
 import { useI18n } from "../../application/i18n/I18nProvider";
 import type { VaultImportFileEncoding } from "../../application/state/vaultImportFile";
+import { usePluginVaultImporter } from "../../application/state/usePluginVaultImporter";
 import { getVaultCsvTemplate } from "../../domain/vaultImport";
 import type { VaultImportFormat } from "../../domain/vaultImport";
 import { cn } from "../../lib/utils";
+import { Button } from "../ui/button";
 import {
   Dialog,
   DialogContent,
@@ -63,12 +65,20 @@ export type ImportVaultDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onFileSelected: (format: VaultImportFormat, file: File, options?: ImportOptions) => void;
+  onPluginPreviewCommit: (preview: NetcattyPluginImporterPreview) => Promise<void> | void;
+  getPluginPreviewAnalysis: (preview: NetcattyPluginImporterPreview) => {
+    duplicateCount: number;
+    validationErrorCount: number;
+    safePreview: import('../../domain/pluginImporter').PluginImporterSafePreview;
+  };
 };
 
 export const ImportVaultDialog: React.FC<ImportVaultDialogProps> = ({
   open,
   onOpenChange,
   onFileSelected,
+  onPluginPreviewCommit,
+  getPluginPreviewAnalysis,
 }) => {
   const { t } = useI18n();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -76,6 +86,12 @@ export const ImportVaultDialog: React.FC<ImportVaultDialogProps> = ({
   const pendingOptionsRef = useRef<ImportOptions | undefined>(undefined);
   const [showManagedChoice, setShowManagedChoice] = useState(false);
   const [showMobaEncodingChoice, setShowMobaEncodingChoice] = useState(false);
+  const pluginImporter = usePluginVaultImporter({
+    open,
+    onOpenChange,
+    onPluginPreviewCommit,
+    t,
+  });
 
   const downloadCsvTemplate = useCallback(() => {
     const csv = getVaultCsvTemplate();
@@ -135,8 +151,10 @@ export const ImportVaultDialog: React.FC<ImportVaultDialogProps> = ({
       const file = e.target.files?.[0];
       const format = pendingFormatRef.current;
       const options = pendingOptionsRef.current;
-      if (!file || !format) return;
-      onFileSelected(format, file, options);
+      if (!file) return;
+      if (format) {
+        onFileSelected(format, file, options);
+      }
       e.target.value = "";
       pendingOptionsRef.current = undefined;
     },
@@ -149,9 +167,20 @@ export const ImportVaultDialog: React.FC<ImportVaultDialogProps> = ({
         setShowManagedChoice(false);
         setShowMobaEncodingChoice(false);
       }
-      onOpenChange(newOpen);
+      pluginImporter.handleOpenChange(newOpen);
     },
-    [onOpenChange],
+    [pluginImporter],
+  );
+
+  const previewAnalysis = useMemo(
+    () => pluginImporter.pluginPreview
+      ? getPluginPreviewAnalysis(pluginImporter.pluginPreview)
+      : {
+        duplicateCount: 0,
+        validationErrorCount: 0,
+        safePreview: { items: [], warnings: [], errors: [], omittedItemCount: 0, omittedDiagnosticCount: 0 },
+      },
+    [getPluginPreviewAnalysis, pluginImporter.pluginPreview],
   );
 
   return (
@@ -183,7 +212,75 @@ export const ImportVaultDialog: React.FC<ImportVaultDialogProps> = ({
         />
 
         <div className="flex flex-col gap-4">
-          {showManagedChoice ? (
+          {pluginImporter.pluginPreview ? (
+            <div className="space-y-4">
+              <div className="rounded-xl border border-border/60 bg-muted/20 p-4">
+                <div className="text-sm font-medium">{t('vault.import.plugins.preview')}</div>
+                <div className="mt-1 text-sm text-muted-foreground">{pluginImporter.previewSummary || t('vault.import.plugins.empty')}</div>
+                <div className="mt-2 text-xs text-muted-foreground">
+                  {t('vault.import.plugins.summary', {
+                    parsed: pluginImporter.pluginPreview.result.parsed,
+                    warnings: pluginImporter.pluginPreview.result.warnings,
+                    errors: pluginImporter.pluginPreview.result.errors,
+                  })}
+                </div>
+                {previewAnalysis.duplicateCount > 0 ? (
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    {t('vault.import.plugins.duplicates', { count: previewAnalysis.duplicateCount })}
+                  </div>
+                ) : null}
+                {previewAnalysis.validationErrorCount > 0 ? (
+                  <div className="mt-1 text-xs text-destructive">
+                    {t('vault.import.plugins.validationErrors', { count: previewAnalysis.validationErrorCount })}
+                  </div>
+                ) : null}
+                {previewAnalysis.safePreview.items.length > 0 ? (
+                  <div className="mt-3 max-h-56 space-y-1 overflow-y-auto rounded-lg border border-border/50 bg-background/60 p-2">
+                    {previewAnalysis.safePreview.items.map((item, index) => (
+                      <div key={`${item.kind}:${index}`} className="flex min-w-0 items-start gap-2 text-xs">
+                        <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase text-muted-foreground">
+                          {t(`vault.import.plugins.kind.${item.kind}`)}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate font-medium text-foreground">{item.label}</span>
+                          {item.detail ? <span className="block truncate text-muted-foreground">{item.detail}</span> : null}
+                        </span>
+                      </div>
+                    ))}
+                    {previewAnalysis.safePreview.omittedItemCount > 0 ? (
+                      <div className="pt-1 text-xs text-muted-foreground">
+                        {t('vault.import.plugins.moreItems', { count: previewAnalysis.safePreview.omittedItemCount })}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+                {[...previewAnalysis.safePreview.warnings, ...previewAnalysis.safePreview.errors].length > 0 ? (
+                  <div className="mt-3 space-y-1" role="status">
+                    {previewAnalysis.safePreview.warnings.map((message, index) => (
+                      <div key={`warning:${index}`} className="text-xs text-amber-600 dark:text-amber-400">{message}</div>
+                    ))}
+                    {previewAnalysis.safePreview.errors.map((message, index) => (
+                      <div key={`error:${index}`} className="text-xs text-destructive">{message}</div>
+                    ))}
+                    {previewAnalysis.safePreview.omittedDiagnosticCount > 0 ? (
+                      <div className="text-xs text-muted-foreground">
+                        {t('vault.import.plugins.moreDiagnostics', { count: previewAnalysis.safePreview.omittedDiagnosticCount })}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={pluginImporter.clearPluginPreview}>{t('common.back')}</Button>
+                <Button
+                  disabled={pluginImporter.pluginPreview.result.errors > 0 || previewAnalysis.validationErrorCount > 0 || pluginImporter.pluginBusy}
+                  onClick={() => void pluginImporter.commitPluginPreview()}
+                >
+                  {t('vault.import.plugins.commit')}
+                </Button>
+              </div>
+            </div>
+          ) : showManagedChoice ? (
             <>
               <div className="text-sm font-medium text-center text-muted-foreground">
                 {t("vault.import.sshConfig.modeQuestion")}
@@ -319,6 +416,43 @@ export const ImportVaultDialog: React.FC<ImportVaultDialogProps> = ({
                   </button>
                 ))}
               </div>
+
+              {pluginImporter.pluginProviders.length > 0 && (
+                <>
+                  <div className="pt-2 text-sm font-medium text-center text-muted-foreground">
+                    {t('vault.import.plugins.title')}
+                  </div>
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    {pluginImporter.pluginProviders.map((provider) => (
+                      <button
+                        key={provider.provider.id}
+                        type="button"
+                        disabled={pluginImporter.pluginBusy}
+                        className="flex items-center gap-3 rounded-xl border border-border/60 p-3 text-left transition-colors hover:bg-muted/30 disabled:opacity-50"
+                        onClick={() => pluginImporter.pickPluginFile(provider)}
+                      >
+                        <span className="rounded-lg bg-primary/10 p-2 text-primary"><Plug className="h-5 w-5" /></span>
+                        <span className="min-w-0">
+                          <span className="block truncate text-sm font-medium">{pluginImporter.localizeProviderLabel(provider)}</span>
+                          <span className="block truncate text-xs text-muted-foreground">{provider.pluginDisplayName || provider.provider.id}</span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+              {pluginImporter.pluginBusy && (
+                <div className="text-center text-sm text-muted-foreground" role="status">
+                  {pluginImporter.pluginProgress
+                    ? t('vault.import.plugins.progress', {
+                      completed: pluginImporter.pluginProgress.completed,
+                      total: pluginImporter.pluginProgress.total ?? '?',
+                      message: pluginImporter.pluginProgress.message ?? '',
+                    })
+                    : t('vault.import.plugins.loading')}
+                </div>
+              )}
+              {pluginImporter.pluginError && <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">{pluginImporter.pluginError}</div>}
 
               <div className="flex items-center justify-between gap-3 pt-2 border-t border-border/60">
                 <div className="text-xs text-muted-foreground">

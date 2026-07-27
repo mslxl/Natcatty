@@ -287,6 +287,7 @@ const SESSION_START_CHANNELS = new Set([
   "netcatty:et:start",
   "netcatty:serial:start",
   "netcatty:local:reconnect",
+  "netcatty:external:start",
 ]);
 
 function createTerminalWorkerManager(options = {}) {
@@ -322,6 +323,7 @@ function createTerminalWorkerManager(options = {}) {
   const terminalInterceptorWarningListeners = new Set();
   const sessionOwnedListeners = new Set();
   const sessionClosedListeners = new Set();
+  const externalSessions = new Map();
   const maxPendingOutputChunks = Number.isFinite(options.maxPendingOutputChunks)
     ? Math.max(0, Math.trunc(options.maxPendingOutputChunks))
     : 512;
@@ -1023,6 +1025,51 @@ function createTerminalWorkerManager(options = {}) {
   function handleMessage(eventOrMessage) {
     const message = unwrapMessageEvent(eventOrMessage);
     if (!message || typeof message !== "object") return;
+    if (message.kind === "external-session-event") {
+      const external = externalSessions.get(message.sessionId);
+      if (!external) return;
+      if (message.event === "input") {
+        const runInput = async () => {
+          if (externalSessions.get(message.sessionId) !== external) return;
+          await external.onInput?.(message.data);
+        };
+        const inputPromise = external.inputChain
+          ? external.inputChain.then(runInput, runInput)
+          : Promise.resolve(runInput());
+        const settledInput = inputPromise.catch(async (error) => {
+          const notifyClose = external.onClose;
+          await finishExternalSession(message.sessionId, {
+            reason: "error",
+            error: error?.message || String(error),
+          }, external.ownerToken).finally(() => Promise.resolve(notifyClose?.("input-error")).catch(() => {}));
+        });
+        external.inputChain = settledInput;
+        void settledInput.finally(() => {
+          if (external.inputChain === settledInput) external.inputChain = null;
+        });
+        return;
+      }
+      if (message.event === "resize") {
+        void Promise.resolve(external.onResize?.({
+          columns: message.columns,
+          rows: message.rows,
+        })).catch(() => {});
+        return;
+      }
+      if (message.event === "flow") {
+        external.paused = message.paused === true;
+        if (!external.paused) {
+          for (const resolve of external.resumeWaiters.splice(0)) resolve();
+        }
+        return;
+      }
+      if (message.event === "close") {
+        externalSessions.delete(message.sessionId);
+        for (const resolve of external.resumeWaiters.splice(0)) resolve();
+        void Promise.resolve(external.onClose?.(message.reason || "closed")).catch(() => {});
+      }
+      return;
+    }
     if (message.kind === "session-superseding") {
       recordSupersedingSessionGeneration(message);
       return;
@@ -1421,6 +1468,12 @@ function createTerminalWorkerManager(options = {}) {
     closeAllUrgentInputPorts();
     rejectAllPending(error);
     terminalOutputChannel?.closeAll?.();
+    const retiredExternalSessions = [...externalSessions.entries()];
+    externalSessions.clear();
+    for (const [, external] of retiredExternalSessions) {
+      for (const resolve of external.resumeWaiters.splice(0)) resolve();
+      void Promise.resolve(external.onClose?.("worker-exit")).catch(() => {});
+    }
     for (const listener of [...terminalInterceptorWarningListeners]) {
       try {
         listener(Object.freeze({ code: "worker-exit", message: error.message }));
@@ -1482,6 +1535,7 @@ function createTerminalWorkerManager(options = {}) {
         webContentsId: optionsForRequest.webContentsId,
         opensOutputSession: channel === "netcatty:start"
           || channel === "netcatty:local:reconnect"
+          || channel === "netcatty:external:start"
           || /^(?:netcatty:)(?:local|telnet|mosh|et|serial):start$/u.test(channel),
       });
     });
@@ -1521,6 +1575,77 @@ function createTerminalWorkerManager(options = {}) {
     }
     if (notifyClosedAfterPost) notifySessionClosed(payload.sessionId, "closed");
     return promise;
+  }
+
+  async function startExternalSession(optionsForSession = {}) {
+    const sessionId = optionsForSession.sessionId;
+    const webContentsId = optionsForSession.webContentsId;
+    if (typeof sessionId !== "string" || sessionId.length < 1 || sessionId.length > 128) {
+      throw new TypeError("External terminal session ID is invalid");
+    }
+    if (!Number.isSafeInteger(webContentsId) || externalSessions.has(sessionId)) {
+      throw new TypeError("External terminal session owner is invalid or already registered");
+    }
+    const ownerToken = optionsForSession.ownerToken ?? Symbol(`external-session:${sessionId}`);
+    const external = {
+      ownerToken,
+      onInput: optionsForSession.onInput,
+      onResize: optionsForSession.onResize,
+      onClose: optionsForSession.onClose,
+      inputChain: null,
+      paused: false,
+      resumeWaiters: [],
+    };
+    externalSessions.set(sessionId, external);
+    try {
+      return await request("netcatty:external:start", {
+        sessionId,
+        columns: optionsForSession.columns,
+        rows: optionsForSession.rows,
+        protocol: optionsForSession.protocol,
+        hostLabel: optionsForSession.hostLabel,
+        hostname: optionsForSession.hostname,
+        sessionLog: optionsForSession.sessionLog,
+      }, { webContentsId });
+    } catch (error) {
+      if (externalSessions.get(sessionId) === external) externalSessions.delete(sessionId);
+      throw error;
+    }
+  }
+
+  async function pushExternalOutput(sessionId, data, meta, ownerToken) {
+    const external = externalSessions.get(sessionId);
+    if (!external) throw new Error("External terminal session is not registered");
+    if (ownerToken !== undefined && external.ownerToken !== ownerToken) return false;
+    if (external.paused) {
+      await new Promise((resolve) => external.resumeWaiters.push(resolve));
+      if (externalSessions.get(sessionId) !== external) return false;
+    }
+    await request("netcatty:external:output", {
+      sessionId,
+      data,
+      ...(meta === undefined ? {} : { meta }),
+    });
+    return true;
+  }
+
+  async function finishExternalSession(sessionId, details = {}, ownerToken) {
+    const external = externalSessions.get(sessionId);
+    if (!external) return false;
+    if (ownerToken !== undefined && external.ownerToken !== ownerToken) return false;
+    externalSessions.delete(sessionId);
+    for (const resolve of external.resumeWaiters.splice(0)) resolve();
+    try {
+      await request("netcatty:external:finish", {
+        sessionId,
+        reason: details.reason || "closed",
+        ...(details.error ? { error: details.error } : {}),
+        ...(Array.isArray(details.diagnostics) ? { diagnostics: details.diagnostics } : {}),
+      });
+    } catch {
+      closeOutputSession(sessionId);
+    }
+    return true;
   }
 
   function send(channel, payload, optionsForSend = {}) {
@@ -1645,6 +1770,10 @@ function createTerminalWorkerManager(options = {}) {
       terminalInterceptorWarningListeners.clear();
       sessionOwnedListeners.clear();
       sessionClosedListeners.clear();
+      for (const external of externalSessions.values()) {
+        for (const resolve of external.resumeWaiters.splice(0)) resolve();
+      }
+      externalSessions.clear();
       terminalOutputChannel?.closeAll?.();
       rejectAllPending(new Error("Terminal worker stopped"));
     }
@@ -1654,6 +1783,9 @@ function createTerminalWorkerManager(options = {}) {
     ensureStarted,
     request,
     send,
+    startExternalSession,
+    pushExternalOutput,
+    finishExternalSession,
     openOutputSession,
     rebindOutputSession,
     drainOutputSession,

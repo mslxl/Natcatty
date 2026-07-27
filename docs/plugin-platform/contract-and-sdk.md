@@ -12,8 +12,10 @@ credentials and host-mediated capabilities.
 
 This document describes the canonical contract first delivered by phase 1 and
 extended before public release. Runtime loading and capability enforcement live
-in the host rather than the schema package. UI contributions, terminal and
-connection Providers, synchronization, and distribution remain later phases.
+in the host rather than the schema package. UI contributions, terminal
+Providers, terminal interceptors, and connection/authentication/importer
+Providers have now extended the same internal contract before public release.
+Synchronization Providers and signed distribution remain later phases.
 
 ## Contract ownership
 
@@ -376,6 +378,41 @@ generated Schema shape and the shared transfer envelope verifies that only
 chunk and successful-result frames carry a real attached `ArrayBuffer` whose
 length exactly matches the declared bounded `byteLength`.
 
+The PR 7 implementation adds connection, authentication, and importer Providers without changing
+the Provider ownership model. Connection Provider result types are operation
+specific. The SDK registers connection Providers as an operation-keyed handler
+map so TypeScript binds each invocation to its exact result: `validateConfiguration`,
+`probe`, `open`, and `getStatus` each return their named result object, while
+`resize`, `signal`, `reconnect`, and `close` acknowledge completion with JSON
+`null`. Objects on those control operations are rejected by the generated
+schema, SDK type map, runtime dispatch shape, and runtime validator.
+`ConnectionStatusResult` may carry bounded `ProviderValidationIssue`
+diagnostics; when a later status poll reports `closed` or `error`, those
+diagnostics are forwarded with the terminal-session exit event rather than
+being available only during the initial `open`.
+The application validates configuration and runs `probe` before opening a
+session, routes an explicit terminal interrupt through `signal`, and gives a
+retryable runtime failure one host-owned `reconnect` attempt before closing the
+session. Resize, close, status polling, and reconnect remain bound to the same
+host-owned session identity.
+
+Importer draft records are also exact public shapes, not arbitrary JSON bags.
+Host, identity, key, snippet, and group drafts each declare required fields,
+allowed enums, byte/array limits, and closed object properties. Host drafts may
+either name a built-in host with a hostname or a plugin protocol plus an opaque
+`pluginConnection` object whose provider ID must match the `plugin:<id>`
+protocol during host-owned semantic normalization. Executable startup commands,
+hidden built-in plaintext credentials, and unknown host properties are not part
+of the importer contract; plugin-owned credentials must flow through identity
+or key drafts and then through the existing host-owned encrypted persistence
+path. Safe preview output is redacted and bounded before UI display.
+Importer Providers use their own operation-keyed handler map, so `detect` must
+return a detection result and `parse` must return completion counters. Streamed
+records use the public `ImporterLimits` byte and count bounds. A plugin
+connection draft may reference an identity or key draft from the same import by
+its source ID; Netcatty maps that reference to the new host-owned credential ID
+before encrypted persistence and rejects unresolved or ambiguous references.
+
 `PluginSecretStore.get()` never returns plaintext. It returns a host-issued
 `SecretRef`. Its random ID stays opaque; its non-secret `key` binds later lease
 authorization to the same manifest resource used by `get()`/`set()`. `set()`
@@ -383,7 +420,7 @@ immediately transfers a value already known to the plugin into host storage
 before returning the same kind of reference. Network,
 authentication, and companion brokers can consume a one-use lease for the
 reference while the main process revalidates plugin ownership and operation
-scope. PR 7 may also supply a host-issued `CredentialRef` for Netcatty-owned
+scope. PR 7 also supplies a host-issued `CredentialRef` for Netcatty-owned
 Vault credentials through the same SDK method; its injected resolver does not
 materialize plaintext until lease consumption. Neither reference kind is a
 bearer capability, and neither may bypass permission, ownership, runtime, and
@@ -496,8 +533,7 @@ must not trust a package merely because the publisher previously ran the CLI.
 
 ## Compatibility rules for later phases
 
-The following rules are already fixed even though their implementations arrive
-later:
+The following rules are fixed for this internal pre-release contract:
 
 1. JSON Schema is the wire authority. TypeScript types alone never justify
    accepting an unvalidated message.
