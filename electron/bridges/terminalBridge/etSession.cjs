@@ -393,6 +393,9 @@ main();
       const vaultPinsTarget = vaultPinsConnectionHosts(options.knownHosts, [targetConnectionHost]);
       const vaultPinsJump = vaultPinsConnectionHosts(options.knownHosts, jumpConnectionHosts);
       if (verifyHostKeys) {
+        // Per-connection memo only — never process-lifetime, so ssh_config
+        // edits are observed on the next connect (Codex P1).
+        const sshGMemo = new Map();
         if (vaultPinsTarget) {
           const targetContent = buildAuthoritativeKnownHostsContent({
             knownHosts: options.knownHosts,
@@ -402,6 +405,7 @@ main();
             username: options.username,
             pathModule: path,
             homedir: os.homedir(),
+            memo: sshGMemo,
           });
           if (targetContent) {
             targetAuthoritativeKnownHostsPath = path.join(
@@ -420,6 +424,7 @@ main();
             username: jumpHosts[0].username,
             pathModule: path,
             homedir: os.homedir(),
+            memo: sshGMemo,
           });
           if (jumpContent) {
             jumpAuthoritativeKnownHostsPath = path.join(

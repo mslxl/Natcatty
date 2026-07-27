@@ -393,6 +393,7 @@ function createMoshSessionApi(ctx) {
               username: options.username,
               pathModule: path,
               homedir: os.homedir(),
+              memo: new Map(),
             });
             if (authoritativeContent) {
               authoritativeKnownHostsPath = await writeMoshAuthTempFile(
