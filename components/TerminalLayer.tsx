@@ -1609,7 +1609,10 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
 
   const handleRunScriptFromPanel = useCallback(async (snippet: Snippet) => {
     const sessionId = getActiveTerminalSessionId();
-    if (!sessionId) return;
+    if (!sessionId) {
+      toast.error(t('scripts.recording.noSession'));
+      return;
+    }
     try {
       await runAutomationScript({
         snippet,
@@ -1737,7 +1740,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       toast.info(t('scripts.actions.skippedSensitiveSessions', { count: skippedSensitive }));
     }
     if (runnableSessionIds.length === 0) {
-      toast.error(t('scripts.recording.noSession'));
+      // Connected sessions all sensitive — do not claim "no session".
       return;
     }
 
