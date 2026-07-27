@@ -94,6 +94,77 @@ test('createCodingCliOutputScanner detects the ANSI-colored OpenCode TUI logo ac
   );
 });
 
+test('createCodingCliOutputScanner preserves ANSI sequences split across chunks', () => {
+  const scanner = createCodingCliOutputScanner();
+  assert.equal(
+    scanner.feed('\x1b[36m█▀▀█ █▀▀█ █▀▀█ █▀▀▄\x1b[0m █▀▀▀ █▀▀█ █▀▀█ █▀▀█\n'),
+    undefined,
+  );
+  assert.equal(
+    scanner.feed('\x1b[36m█  █ \x1b['),
+    undefined,
+  );
+  assert.equal(
+    scanner.feed('0m█  █ █▀▀▀ █  █\x1b[0m █    █  █ █  █ █▀▀▀'),
+    'opencode',
+  );
+});
+
+test('createCodingCliOutputScanner hides OSC payloads split before BEL or ST terminators', () => {
+  const belScanner = createCodingCliOutputScanner();
+  assert.equal(belScanner.feed('\x1b]0;Welcome to Claude Code'), undefined);
+  assert.equal(belScanner.feed('\x07ordinary output'), undefined);
+
+  const stScanner = createCodingCliOutputScanner();
+  assert.equal(stScanner.feed('\x1b]0;GitHub Copilot CLI'), undefined);
+  assert.equal(stScanner.feed('\x1b\\ordinary output'), undefined);
+});
+
+test('createCodingCliOutputScanner preserves visible output between ST-terminated OSC sequences', () => {
+  const scanner = createCodingCliOutputScanner();
+  assert.equal(
+    scanner.feed('\x1b]0;first title\x1b\\Welcome to Claude '),
+    undefined,
+  );
+  assert.equal(
+    scanner.feed('Code\x1b]0;second title\x1b\\'),
+    'claude',
+  );
+});
+
+test('createCodingCliOutputScanner hides provider text in OSC payloads longer than the scan buffer', () => {
+  const belScanner = createCodingCliOutputScanner();
+  assert.equal(
+    belScanner.feed(`\x1b]0;${'x'.repeat(9000)} Welcome to Claude Code`),
+    undefined,
+  );
+  assert.equal(belScanner.feed('\x07ordinary output'), undefined);
+
+  const stScanner = createCodingCliOutputScanner();
+  assert.equal(
+    stScanner.feed(`\x1b]0;${'x'.repeat(9000)} GitHub Copilot CLI`),
+    undefined,
+  );
+  assert.equal(stScanner.feed('\x1b\\ordinary output'), undefined);
+});
+
+test('createCodingCliOutputScanner strips split ESC intermediate sequences inside banners', () => {
+  const scanner = createCodingCliOutputScanner();
+  assert.equal(scanner.feed('Welcome to Claude \x1b('), undefined);
+  assert.equal(scanner.feed('BCode'), 'claude');
+});
+
+test('createCodingCliOutputScanner hides split DCS, SOS, PM, and APC payloads', () => {
+  for (const introducer of ['P', 'X', '^', '_']) {
+    const scanner = createCodingCliOutputScanner();
+    assert.equal(
+      scanner.feed(`\x1b${introducer}Welcome to Claude`),
+      undefined,
+    );
+    assert.equal(scanner.feed(' Code\x1b\\ordinary output'), undefined);
+  }
+});
+
 test('createCodingCliOutputScanner finds providers across chunked output', () => {
   const scanner = createCodingCliOutputScanner();
   assert.equal(scanner.feed('>_ Open'), undefined);
