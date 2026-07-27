@@ -14,10 +14,8 @@ import { sessionActivityStore } from '../application/state/sessionActivityStore'
 import { sessionCapabilitiesStore } from '../application/state/sessionCapabilitiesStore';
 import { useTerminalBackend } from '../application/state/useTerminalBackend';
 import {
-  createCodingCliSessionSignalController,
-  type CodingCliSessionSignalController,
-  type CodingCliSessionSignalControllerDeps,
-} from './terminalLayer/codingCliSessionSignalController';
+  useCodingCliSessionSignals,
+} from '../application/state/codingCliSessionSignalController';
 import { collectSessionIds } from '../domain/workspace';
 import { isPluginHostProtocol } from '../domain/pluginConnection';
 
@@ -302,35 +300,12 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     setTerminalCwdRevision(terminalCwdRevisionRef.current);
   }, [onUpdateSessionRestoreCwd]);
 
-  const codingCliSignalDepsRef = useRef<CodingCliSessionSignalControllerDeps>({
-    getDynamicTabTitleMode: () => 'agent',
-    getSession: () => undefined,
-  });
-  codingCliSignalDepsRef.current = {
-    getDynamicTabTitleMode: () => terminalSettings?.dynamicTabTitleMode ?? 'agent',
+  const codingCliSignalController = useCodingCliSessionSignals({
+    dynamicTabTitleMode: terminalSettings?.dynamicTabTitleMode ?? 'agent',
     getSession: (sessionId) => sessionsRef.current.find((candidate) => candidate.id === sessionId),
     onUpdateSessionCodingCliProvider,
     onUpdateSessionDynamicTitle,
-  };
-  const codingCliSignalControllerRef = useRef<CodingCliSessionSignalController | null>(null);
-  if (!codingCliSignalControllerRef.current) {
-    codingCliSignalControllerRef.current = createCodingCliSessionSignalController({
-      getDynamicTabTitleMode: () => codingCliSignalDepsRef.current.getDynamicTabTitleMode(),
-      getSession: (sessionId) => codingCliSignalDepsRef.current.getSession(sessionId),
-      onUpdateSessionCodingCliProvider: (sessionId, providerId) => {
-        codingCliSignalDepsRef.current.onUpdateSessionCodingCliProvider?.(sessionId, providerId);
-      },
-      onUpdateSessionDynamicTitle: (sessionId, title) => {
-        codingCliSignalDepsRef.current.onUpdateSessionDynamicTitle?.(sessionId, title);
-      },
-    });
-  }
-  const codingCliSignalController = codingCliSignalControllerRef.current;
-  useEffect(() => {
-    codingCliSignalController.handleDynamicTabTitleModeChange(
-      terminalSettings?.dynamicTabTitleMode ?? 'agent',
-    );
-  }, [codingCliSignalController, terminalSettings?.dynamicTabTitleMode]);
+  });
   const handleTerminalTitleChange = codingCliSignalController.handleTerminalTitleChange;
   const handleTerminalOutput = codingCliSignalController.handleTerminalOutput;
 

@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { matchCodingCliProviderFromCommand } from '../../domain/codingCliProviderMatch';
 import {
   createCodingCliOutputScanner,
@@ -35,6 +36,13 @@ export type CodingCliSessionSignalController = {
   handleTerminalOutput: (sessionId: string, chunk: string) => void;
   handleTerminalTitleChange: (sessionId: string, title: string | null) => void;
   forgetSession: (sessionId: string) => void;
+};
+
+type UseCodingCliSessionSignalsOptions = Omit<
+  CodingCliSessionSignalControllerDeps,
+  'getDynamicTabTitleMode'
+> & {
+  dynamicTabTitleMode: DynamicTabTitleMode;
 };
 
 export function createCodingCliSessionSignalController(
@@ -164,4 +172,32 @@ export function createCodingCliSessionSignalController(
       outputScanDisabled.delete(sessionId);
     },
   };
+}
+
+export function useCodingCliSessionSignals(
+  options: UseCodingCliSessionSignalsOptions,
+): CodingCliSessionSignalController {
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
+
+  const controllerRef = useRef<CodingCliSessionSignalController | null>(null);
+  if (!controllerRef.current) {
+    controllerRef.current = createCodingCliSessionSignalController({
+      getDynamicTabTitleMode: () => optionsRef.current.dynamicTabTitleMode,
+      getSession: (sessionId) => optionsRef.current.getSession(sessionId),
+      onUpdateSessionCodingCliProvider: (sessionId, providerId) => {
+        optionsRef.current.onUpdateSessionCodingCliProvider?.(sessionId, providerId);
+      },
+      onUpdateSessionDynamicTitle: (sessionId, title) => {
+        optionsRef.current.onUpdateSessionDynamicTitle?.(sessionId, title);
+      },
+    });
+  }
+
+  const controller = controllerRef.current;
+  useEffect(() => {
+    controller.handleDynamicTabTitleModeChange(options.dynamicTabTitleMode);
+  }, [controller, options.dynamicTabTitleMode]);
+
+  return controller;
 }
