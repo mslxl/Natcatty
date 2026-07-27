@@ -274,12 +274,18 @@ function parseExternalResearchStream(value, input) {
     }
   }
 
-  // Cursor's terminal result may prepend earlier conversational text to the
-  // final answer. Prefer an isolated final message, then a valid terminal
-  // result, and retain the complete stream only for statuses split across
-  // events. Never search arbitrary prose for a status marker.
+  // Cursor can split the final envelope across assistant events. Try the
+  // shortest suffix ending at the final event first, so an earlier status can
+  // never override a later revision. Use the terminal/complete streams only
+  // as fallbacks. Never search arbitrary prose for a status marker.
+  const assistantSuffixes = [];
+  let assistantSuffix = '';
+  for (let index = assistantMessages.length - 1; index >= 0; index -= 1) {
+    assistantSuffix = assistantMessages[index] + assistantSuffix;
+    assistantSuffixes.push(assistantSuffix);
+  }
   const candidates = [
-    assistantMessages[assistantMessages.length - 1],
+    ...assistantSuffixes,
     terminalResult,
     assistantText,
   ].filter(Boolean);

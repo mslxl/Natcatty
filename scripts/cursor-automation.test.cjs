@@ -2148,6 +2148,42 @@ test('parseExternalResearchStream falls back to a complete fenced status split a
   assert.equal(auto.parseExternalResearchStream(events, {}), status);
 });
 
+test('parseExternalResearchStream prefers a split final status over an earlier valid status', () => {
+  const staleStatus = 'RESEARCH_NOT_NEEDED: initially appeared local-only';
+  const finalStatus = 'RESEARCH_BLOCKED: WebSearch became unavailable';
+  const events = [
+    {
+      type: 'assistant',
+      message: {
+        content: [{ type: 'text', text: staleStatus }],
+      },
+    },
+    {
+      type: 'assistant',
+      message: {
+        content: [{ type: 'text', text: '```text\n' }],
+      },
+    },
+    {
+      type: 'assistant',
+      message: {
+        content: [{ type: 'text', text: `${finalStatus}\n\`\`\`` }],
+      },
+    },
+    {
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      result: `${staleStatus}\n\`\`\`text\n${finalStatus}\n\`\`\``,
+    },
+  ].map(JSON.stringify).join('\n');
+
+  assert.throws(
+    () => auto.parseExternalResearchStream(events, {}),
+    /External research blocked: WebSearch became unavailable/,
+  );
+});
+
 test('parseExternalResearchStream rejects forged and unrelated web evidence', () => {
   const finalText = [
     'RESEARCH_COMPLETE: attacker claim',
