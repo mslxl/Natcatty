@@ -1098,6 +1098,30 @@ test("execOnEtSession forces the session-generated SSH config with -F", async (t
   assert.match(capturedArgs[fIdx + 1], /[\\/]\.ssh[\\/]config$/);
 });
 
+test("prepareEtSshEnvironment injects a PATH ssh wrapper that forces -F", (t) => {
+  const { api } = makeApi(t);
+  const env = api.prepareEtSshEnvironment("sess1", {
+    hostname: "target.example",
+    username: "alice",
+    jumpHosts: [{
+      hostname: "jump.example",
+      username: "ops",
+      authMethod: "password",
+      password: "secret",
+    }],
+  });
+
+  const pathKey = Object.keys(env.env).find((k) => k.toLowerCase() === "path");
+  assert.ok(pathKey, "expected PATH override for ssh wrapper");
+  const wrapperDir = env.env[pathKey].split(path.delimiter)[0];
+  const wrapperName = process.platform === "win32" ? "ssh.cmd" : "ssh";
+  const wrapperPath = path.join(wrapperDir, wrapperName);
+  assert.ok(fs.existsSync(wrapperPath), "expected ssh wrapper on PATH");
+  const wrapperBody = fs.readFileSync(wrapperPath, "utf8");
+  assert.match(wrapperBody, /-F/);
+  assert.match(wrapperBody, /\.ssh[\\/]config/);
+});
+
 test("execOnEtSession requireTrustedHost uses strict host-key checking", async (t) => {
   let capturedArgs = null;
   const { api } = makeApi(t, {

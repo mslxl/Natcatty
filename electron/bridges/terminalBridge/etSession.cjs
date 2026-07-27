@@ -759,13 +759,52 @@ main();
       }
 
       const writesConfigFile = configFileLines.length > 0;
+      let configPath = null;
       if (writesConfigFile) {
-        const configPath = path.join(sshDir, "config");
+        configPath = path.join(sshDir, "config");
         writeSecureFile(configPath, configFileLines.join("\n") + "\n", 0o600);
       }
 
       // Create askpass artifacts
       const askpass = createEtAskpassArtifacts(sshDir, askpassEntries);
+
+      // OpenSSH resolves the user config from the account home directory, not
+      // $HOME. When we generate a private config (ProxyJump + jump host-key
+      // policy), inject a PATH-fronted `ssh` wrapper that always passes
+      // `-F <session-config>` so both interactive ET (ssh -J) and follow-up
+      // execOnEtSession honor the generated Host stanzas.
+      const pathEnv = {};
+      if (configPath) {
+        try {
+          const realSsh = process.platform === "win32"
+            ? (findExecutable("ssh") || "ssh")
+            : "ssh";
+          const wrapperDir = path.join(sshDir, "bin");
+          fs.mkdirSync(wrapperDir, { recursive: true });
+          if (process.platform === "win32") {
+            const wrapperPath = path.join(wrapperDir, "ssh.cmd");
+            writeSecureFile(
+              wrapperPath,
+              `@echo off\r\n"${String(realSsh).replace(/"/g, '""')}" -F "${configPath.replace(/"/g, '""')}" %*\r\n`,
+              0o700,
+            );
+          } else {
+            const wrapperPath = path.join(wrapperDir, "ssh");
+            const quotedSsh = `'${String(realSsh).replace(/'/g, `'\\''`)}'`;
+            const quotedConfig = `'${String(configPath).replace(/'/g, `'\\''`)}'`;
+            writeSecureFile(
+              wrapperPath,
+              `#!/bin/sh\nexec ${quotedSsh} -F ${quotedConfig} "$@"\n`,
+              0o700,
+            );
+          }
+          const pathKey = Object.keys(process.env).find((k) => k.toLowerCase() === "path") || "PATH";
+          const currentPath = process.env[pathKey] || "";
+          pathEnv[pathKey] = currentPath ? `${wrapperDir}${path.delimiter}${currentPath}` : wrapperDir;
+        } catch {
+          // Wrapper is best-effort; destination --ssh-option still applies.
+        }
+      }
 
       const userHost = `${options.username || os.userInfo().username}@${options.hostname}`;
 
@@ -775,8 +814,10 @@ main();
         identityFilePaths: identityPaths,
         etJumpArgs,
         env: {
-          // Set HOME/USERPROFILE so ssh finds .ssh/config for comma-containing options
+          // Set HOME/USERPROFILE so helpers that honor $HOME still find the
+          // session config; the PATH wrapper above is the enforceable path.
           ...(writesConfigFile ? { HOME: tempDir, USERPROFILE: tempDir } : {}),
+          ...pathEnv,
           ...askpass.env,
         },
         artifacts: [tempDir, ...askpass.artifacts],
