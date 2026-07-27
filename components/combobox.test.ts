@@ -7,6 +7,7 @@ import {
   comboboxWheelDeltaToPixels,
   filterComboboxOptions,
   focusComboboxInput,
+  selectComboboxInputIfFocused,
   canComboboxOpen,
   getNextComboboxActiveIndex,
   type ComboboxScrollableTarget,
@@ -118,6 +119,23 @@ test("combobox focus helper selects only when the caller opts in", () => {
   focusComboboxInput(input, true);
   assert.equal(focusCount, 2);
   assert.equal(selectCount, 1);
+});
+
+test("combobox reselects a restored value only while its input remains focused", () => {
+  let selectCount = 0;
+  const input = {
+    focus: () => {},
+    select: () => { selectCount += 1; },
+  };
+
+  selectComboboxInputIfFocused(input, null);
+  assert.equal(selectCount, 0);
+
+  selectComboboxInputIfFocused(input, input as unknown as Element);
+  assert.equal(selectCount, 1);
+
+  assert.match(source, /const wasOpen = wasOpenRef\.current[\s\S]*wasOpenRef\.current = open/);
+  assert.match(source, /if \(wasOpen && selectValueOnFocus\) \{[\s\S]*requestAnimationFrame/);
 });
 
 test("disabled comboboxes cannot open or commit a selection", () => {

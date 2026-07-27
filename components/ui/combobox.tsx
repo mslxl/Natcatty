@@ -91,6 +91,13 @@ export const focusComboboxInput = (
     if (selectValue) input?.select()
 }
 
+export const selectComboboxInputIfFocused = (
+    input: ComboboxFocusableInput | null,
+    activeElement: Element | null,
+): void => {
+    if (input && input === activeElement) input.select()
+}
+
 export const canComboboxOpen = (disabled: boolean, nextOpen: boolean): boolean =>
     !disabled || !nextOpen
 
@@ -149,17 +156,32 @@ export function Combobox({
     // Track if user is actively searching (typed something after opening)
     const [isSearching, setIsSearching] = React.useState(false)
     const inputRef = React.useRef<HTMLInputElement>(null)
+    const wasOpenRef = React.useRef(false)
     const activeOptionRef = React.useRef<HTMLButtonElement>(null)
     const listboxId = React.useId()
 
     // Sync input value with external value when not focused
     React.useEffect(() => {
+        const wasOpen = wasOpenRef.current
+        wasOpenRef.current = open
+
         if (!open) {
             const selected = options.find((opt) => opt.value === value)
             setInputValue(selected?.label || value || "")
             setIsSearching(false)
+
+            if (wasOpen && selectValueOnFocus) {
+                // The restored label lands after the close event. Reselect it on the next
+                // frame so the next keystroke replaces it instead of appending to it.
+                requestAnimationFrame(() => {
+                    selectComboboxInputIfFocused(
+                        inputRef.current,
+                        typeof document === "undefined" ? null : document.activeElement,
+                    )
+                })
+            }
         }
-    }, [value, options, open])
+    }, [value, options, open, selectValueOnFocus])
 
     // Show all options when dropdown is open but user hasn't started searching
     const filteredOptions = React.useMemo(() => {
