@@ -129,9 +129,9 @@ function probeCodebuddyAuth({ env, fileExists, readFile, homeDir } = {}) {
   return { authenticated: false, authSource: null };
 }
 
-// ── Cursor CLI login (agent / cursor-agent) ──
-// Prefer `cursor-agent`: bare `agent` collides with other tools on PATH (e.g. Grok).
-const CURSOR_CLI_BINARY_CANDIDATES = ["cursor-agent", "agent"];
+// ── Cursor CLI login (cursor-agent only) ──
+// Do not probe bare `agent` — it collides with other CLIs on PATH (e.g. Grok).
+const CURSOR_CLI_BINARY_CANDIDATES = ["cursor-agent"];
 
 function stripCursorApiKeyFromProbeEnv(env) {
   const out = { ...(env || {}) };
@@ -190,9 +190,8 @@ function parseCursorStatusJson(stdout) {
 
 /**
  * Probe local Cursor Agent CLI login (subscription session).
- * Tries `cursor-agent` then `agent`, keeping the first binary that returns a
- * Cursor-shaped status JSON. Strips CURSOR_API_KEY so "cli-login" is not
- * proven by a metered API key alone.
+ * Resolves only `cursor-agent` (not bare `agent`) to avoid PATH collisions.
+ * Strips CURSOR_API_KEY so "cli-login" is not proven by a metered API key alone.
  *
  * @returns {{ authenticated: boolean, authSource: string|null, email: string|null, binPath: string|null }}
  */

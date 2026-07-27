@@ -31,6 +31,41 @@ const {
 const PAUSE_RANGE_DRAIN_MS = 50;
 /** Cap stream drain / pending-open waits for non-concurrent (pipe) pauses. */
 const PAUSE_STREAM_DRAIN_MS = 80;
+/** Resume never overlaps old range writes; report a retryable miss if they stall. */
+const RESUME_RANGE_SETTLE_MS = 1500;
+
+/**
+ * Fan transfer lifecycle to every window so the global transfer center keeps
+ * updating after the originating SFTP panel is hidden or unmounted.
+ * Panel-local callbacks (netcatty:transfer:progress) alone die with the panel.
+ */
+function broadcastGlobalTransferEvent(payload) {
+  if (!payload || !payload.transferId) return;
+  // Bare Node unit tests must never require("electron"): that package's entry
+  // downloads the binary when dist/ is missing, hanging transferBridge tests
+  // for tens of seconds per progress/pause event. process.versions.electron is
+  // only set inside a real Electron main/renderer process.
+  if (typeof process.versions?.electron !== "string") return;
+  try {
+    const electron = require("electron");
+    // Outside Electron, require("electron") is a path string — not the API.
+    if (!electron || typeof electron !== "object") return;
+    const BrowserWindow = electron.BrowserWindow;
+    if (!BrowserWindow?.getAllWindows) return;
+    for (const win of BrowserWindow.getAllWindows()) {
+      try {
+        if (win?.isDestroyed?.()) continue;
+        const wc = win.webContents;
+        if (!wc || wc.isDestroyed?.()) continue;
+        wc.send("netcatty:sftp:global-transfer", payload);
+      } catch {
+        // best-effort per window
+      }
+    }
+  } catch {
+    // electron unavailable
+  }
+}
 
 /**
  * Verify a completed remote upload matches the expected byte count.
@@ -328,9 +363,12 @@ const RESUME_CONTENT_VERIFY_MAX_BYTES = 256 * 1024;
 function resumeContentVerifyBytes(checkpoint, fingerprint) {
   const claimed = Math.max(0, Number(checkpoint) || 0);
   if (!claimed) return 0;
-  if (typeof fingerprint === "string" && fingerprint.startsWith("meta:")) {
-    return claimed;
-  }
+  // Always cap the leading-window hash. Hashing the full multi-MB checkpoint
+  // over SFTP after force-quit continue freezes the transfer-center bar at the
+  // resume offset (status "transferring", 0 B/s) for a long time with no
+  // progress events. meta: fingerprints already encode size/mtime/samples;
+  // a 256 KiB window is enough to catch mixed-stage corruption without stalling.
+  void fingerprint;
   return Math.min(claimed, RESUME_CONTENT_VERIFY_MAX_BYTES);
 }
 
@@ -677,6 +715,7 @@ let sftpClients = null;
 const activeTransfers = new Map();
 const admittedTransferQueue = [];
 const pausedAdmittedTransfers = new Map();
+const workerTransferLifecycleEpochs = new Map();
 /** Transfer ids cancelled before startTransferNow registered them (skipAdmission open window). */
 const pendingCancelTransferIds = new Set();
 const admittedActiveByResource = new Map();
@@ -2635,6 +2674,8 @@ async function startTransferNow(event, payload, onProgress) {
     transferId,
     cancelled: false,
     paused: false,
+    lifecycleEpoch: Math.max(0, Number(payload.lifecycleEpoch) || 0),
+    lifecycleState: "transferring",
     pauseSupported: false,
     pauseUnavailableReason: "This transfer cannot be paused safely",
     resumable: payload.resumable === true,
@@ -2746,7 +2787,7 @@ async function startTransferNow(event, payload, onProgress) {
     ) {
       lastProgressSentTime = now;
       lastProgressSentBytes = transferred;
-      sender.send("netcatty:transfer:progress", {
+      const progressPayload = {
         transferId,
         transferred,
         speed,
@@ -2756,12 +2797,32 @@ async function startTransferNow(event, payload, onProgress) {
         downloadCheckpointBytes: transfer.downloadCheckpointBytes,
         uploadCheckpointBytes: transfer.uploadCheckpointBytes,
         sourceFingerprint: transfer.sourceFingerprint,
+        lifecycleEpoch: transfer.lifecycleEpoch,
+        lifecycleState: transfer.lifecycleState,
         resumable: transfer.resumable && transfer.pauseSupported,
         // Only surface a reason when pause is actually unavailable; never keep
         // the startup default once pauseSupported is true.
         pauseUnavailableReason: transfer.pauseSupported
           ? undefined
           : transfer.pauseUnavailableReason,
+      };
+      sender.send("netcatty:transfer:progress", progressPayload);
+      // Global center must not depend on the panel still being mounted.
+      broadcastGlobalTransferEvent({
+        type: "progress",
+        transferId,
+        transferred,
+        totalBytes: total,
+        speed,
+        checkpointBytes: transfer.checkpointBytes,
+        resumeStage: transfer.resumeStage,
+        downloadCheckpointBytes: transfer.downloadCheckpointBytes,
+        uploadCheckpointBytes: transfer.uploadCheckpointBytes,
+        sourceFingerprint: transfer.sourceFingerprint,
+        lifecycleEpoch: transfer.lifecycleEpoch,
+        lifecycleState: transfer.lifecycleState,
+        sourceHostId: transfer.sourceHostId || payload?.sourceHostId,
+        targetHostId: transfer.targetHostId || payload?.targetHostId,
       });
     }
   };
@@ -2828,12 +2889,27 @@ async function startTransferNow(event, payload, onProgress) {
 
   const sendComplete = () => {
     sender.send("netcatty:transfer:complete", { transferId });
+    broadcastGlobalTransferEvent({
+      type: "completed",
+      transferId,
+      endedAt: Date.now(),
+      transferred: lastObservedTransferred,
+      totalBytes: lastObservedTotal,
+    });
     cleanupTransfer();
   };
 
   const sendError = (error) => {
     cleanupTransfer();
-    sender.send("netcatty:transfer:error", { transferId, error: error.message || String(error) });
+    const message = error?.message || String(error);
+    sender.send("netcatty:transfer:error", { transferId, error: message });
+    const cancelled = /cancel/i.test(message);
+    broadcastGlobalTransferEvent({
+      type: cancelled ? "cancelled" : "failed",
+      transferId,
+      endedAt: Date.now(),
+      error: message,
+    });
   };
 
   try {
@@ -3497,19 +3573,34 @@ function pauseQueuedTransfer(transferId) {
     Number(queued.job.payload?.uploadCheckpointBytes) || 0,
   );
   const resumeStage = queued.job.payload?.resumeStage || "direct";
+  const lifecycleEpoch = Math.max(0, Number(queued.job.payload?.lifecycleEpoch) || 0) + 1;
+  queued.job.payload.lifecycleEpoch = lifecycleEpoch;
   queued.job.event?.sender?.send?.("netcatty:transfer:paused", {
     transferId,
     checkpointBytes,
     resumeStage,
+    lifecycleEpoch,
   });
-  return {
+  const result = {
     success: true,
     checkpointBytes,
     resumeStage,
     downloadCheckpointBytes: queued.job.payload?.downloadCheckpointBytes,
     uploadCheckpointBytes: queued.job.payload?.uploadCheckpointBytes,
     sourceFingerprint: queued.job.payload?.sourceFingerprint,
+    lifecycleEpoch,
   };
+  broadcastGlobalTransferEvent({
+    type: "paused",
+    transferId,
+    checkpointBytes: result.checkpointBytes,
+    resumeStage: result.resumeStage,
+    downloadCheckpointBytes: result.downloadCheckpointBytes,
+    uploadCheckpointBytes: result.uploadCheckpointBytes,
+    sourceFingerprint: result.sourceFingerprint,
+    lifecycleEpoch: result.lifecycleEpoch,
+  });
+  return result;
 }
 
 function cancelQueuedTransfer(transferId) {
@@ -3527,8 +3618,11 @@ function resumeQueuedTransfer(transferId) {
   const job = pausedAdmittedTransfers.get(transferId);
   if (!job) return false;
   pausedAdmittedTransfers.delete(transferId);
+  const lifecycleEpoch = Math.max(0, Number(job.payload?.lifecycleEpoch) || 0) + 1;
+  job.payload.lifecycleEpoch = lifecycleEpoch;
   admittedTransferQueue.push(job);
   job.event?.sender?.send?.("netcatty:transfer:queued", { transferId });
+  broadcastGlobalTransferEvent({ type: "queued", transferId, lifecycleEpoch, lifecycleState: "queued" });
   pumpAdmittedTransfers();
   return true;
 }
@@ -3648,9 +3742,44 @@ async function pauseTransfer(_event, payload) {
     return { success: false, reason: "This transfer cannot be paused yet" };
   }
   if (transfer.pauseOperation) return transfer.pauseOperation;
+  if (transfer.paused && transfer.lifecycleState === "paused") {
+    const result = {
+      success: true,
+      checkpointBytes: transfer.checkpointBytes || 0,
+      resumeStage: transfer.resumeStage,
+      downloadCheckpointBytes: transfer.downloadCheckpointBytes || 0,
+      uploadCheckpointBytes: transfer.uploadCheckpointBytes || 0,
+      lifecycleEpoch: transfer.lifecycleEpoch,
+      ...(transfer.sourceFingerprint ? { sourceFingerprint: transfer.sourceFingerprint } : {}),
+    };
+    broadcastGlobalTransferEvent({
+      type: "paused",
+      transferId: payload.transferId,
+      checkpointBytes: result.checkpointBytes,
+      resumeStage: result.resumeStage,
+      downloadCheckpointBytes: result.downloadCheckpointBytes,
+      uploadCheckpointBytes: result.uploadCheckpointBytes,
+      sourceFingerprint: result.sourceFingerprint,
+      lifecycleEpoch: result.lifecycleEpoch,
+      lifecycleState: "paused",
+    });
+    return result;
+  }
   transfer.pauseSuperseded = false;
   const pauseOperation = (async () => {
   transfer.paused = true;
+  transfer.lifecycleEpoch += 1;
+  transfer.lifecycleState = "pausing";
+  broadcastGlobalTransferEvent({
+    type: "pausing",
+    transferId: payload.transferId,
+    checkpointBytes: transfer.checkpointBytes || 0,
+    resumeStage: transfer.resumeStage,
+    downloadCheckpointBytes: transfer.downloadCheckpointBytes || 0,
+    uploadCheckpointBytes: transfer.uploadCheckpointBytes || 0,
+    lifecycleEpoch: transfer.lifecycleEpoch,
+    lifecycleState: transfer.lifecycleState,
+  });
   // Stream transfers use readStream.pipe(writeStream). Node's pipe resumes the
   // source on destination 'drain', and pauseTransfer waits for that drain to
   // flush durable bytes — so pause() alone is undone and upload continues while
@@ -3757,45 +3886,78 @@ async function pauseTransfer(_event, payload) {
     } else {
       transfer.deferredSparseTruncate = false;
       transfer.paused = false;
+      transfer.lifecycleEpoch += 1;
+      transfer.lifecycleState = "transferring";
       resumeStreamPair(transfer);
+      broadcastGlobalTransferEvent({
+        type: "resumed",
+        transferId: payload.transferId,
+        lifecycleEpoch: transfer.lifecycleEpoch,
+      });
       return { success: false, reason: "Could not verify the saved transfer checkpoint" };
     }
   }
   if (transfer.resumeStage === 'download') transfer.downloadCheckpointBytes = transfer.checkpointBytes;
   if (transfer.resumeStage === 'upload') transfer.uploadCheckpointBytes = transfer.checkpointBytes;
-  // Durable identity before confirming pause — size+mtime only. Full-file
-  // SHA-256 is too slow for pause UX and must not continue as a background
-  // remote read after the UI shows paused (Codex P1/P2 on #2486).
-  if (transfer.resumable && !transfer.sourceFingerprint) {
-    try {
-      transfer.sourceFingerprint = await computeSourceIdentityLite({
-        sourceType: transfer.sourceType,
-        sourcePath: transfer.sourcePath,
-        sourceSftpId: transfer.sourceSftpId,
-        sourceEncoding: transfer.sourceEncoding,
-      });
-      if (transfer.paused) transfer.publishCurrentProgress?.();
-    } catch {
-      transfer.deferredSparseTruncate = false;
-      transfer.paused = false;
-      resumeStreamPair(transfer);
-      return { success: false, reason: "Could not verify that the source is safe to resume" };
-    }
-  }
   if (transfer.cancelled || activeTransfers.get(payload?.transferId) !== transfer) {
     return { success: false, reason: "Transfer is no longer active" };
   }
   if (!transfer.paused || transfer.pauseSuperseded) {
     return { success: false, reason: "Pause was superseded by resume" };
   }
-  return {
+  // Confirm pause as soon as soft-drain + durable checkpoint are ready.
+  // Source identity (remote sample reads on download) used to block this IPC
+  // for seconds while the UI sat on "finishing current step". Fingerprint is
+  // only required at resume — compute it after the user already sees paused.
+  transfer.lifecycleState = "paused";
+  const result = {
     success: true,
     checkpointBytes: transfer.checkpointBytes || 0,
     resumeStage: transfer.resumeStage,
     downloadCheckpointBytes: transfer.downloadCheckpointBytes || 0,
     uploadCheckpointBytes: transfer.uploadCheckpointBytes || 0,
+    lifecycleEpoch: transfer.lifecycleEpoch,
     ...(transfer.sourceFingerprint ? { sourceFingerprint: transfer.sourceFingerprint } : {}),
   };
+  broadcastGlobalTransferEvent({
+    type: "paused",
+    transferId: payload.transferId,
+    checkpointBytes: result.checkpointBytes,
+    resumeStage: result.resumeStage,
+    downloadCheckpointBytes: result.downloadCheckpointBytes,
+    uploadCheckpointBytes: result.uploadCheckpointBytes,
+    ...(result.sourceFingerprint ? { sourceFingerprint: result.sourceFingerprint } : {}),
+    lifecycleEpoch: result.lifecycleEpoch,
+    lifecycleState: transfer.lifecycleState,
+  });
+  if (transfer.resumable && !transfer.sourceFingerprint) {
+    const captureId = payload.transferId;
+    void computeSourceIdentityLite({
+      sourceType: transfer.sourceType,
+      sourcePath: transfer.sourcePath,
+      sourceSftpId: transfer.sourceSftpId,
+      sourceEncoding: transfer.sourceEncoding,
+    }).then((fingerprint) => {
+      const live = activeTransfers.get(captureId);
+      if (!live || live !== transfer || !live.paused || live.cancelled) return;
+      live.sourceFingerprint = fingerprint;
+      try { live.publishCurrentProgress?.(); } catch { /* best-effort */ }
+      broadcastGlobalTransferEvent({
+        type: "paused",
+        transferId: captureId,
+        checkpointBytes: live.checkpointBytes || 0,
+        resumeStage: live.resumeStage,
+        downloadCheckpointBytes: live.downloadCheckpointBytes || 0,
+        uploadCheckpointBytes: live.uploadCheckpointBytes || 0,
+        sourceFingerprint: fingerprint,
+        lifecycleEpoch: live.lifecycleEpoch,
+        lifecycleState: "paused",
+      });
+    }).catch(() => {
+      // Resume can recompute identity if pause-time fingerprint is missing.
+    });
+  }
+  return result;
   })();
   transfer.pauseOperation = pauseOperation;
   try {
@@ -3828,19 +3990,24 @@ async function resumeTransfer(_event, payload) {
   }
   // Already flowing (e.g. double-click resume): do not pipe() again.
   if (!transfer.paused) {
+    transfer.lifecycleState = "transferring";
+    broadcastGlobalTransferEvent({
+      type: "resumed",
+      transferId: payload.transferId,
+      lifecycleEpoch: transfer.lifecycleEpoch,
+    });
     return { success: true };
   }
   // Soft-drained concurrent pause may leave a sparse tail past the contiguous
   // checkpoint. Stay paused until leftover ranges settle, then truncate before
-  // unpausing. No new ranges are scheduled while paused. Bound the wait so a
-  // stalled SFTP WRITE/READ cannot hang Resume forever; after the deadline we
-  // still truncate only when active===0, otherwise skip truncate and resume
-  // from the contiguous checkpoint (range retries will overwrite holes).
+  // unpausing. No new ranges are scheduled while paused. A stalled range gets
+  // a retryable failure while the transfer remains paused; resuming on top of
+  // an old write can corrupt the staged file.
   if (transfer.deferredSparseTruncate) {
     // Soft-drain already returned after PAUSE_RANGE_DRAIN_MS; leftover ranges
     // almost always settle quickly. A multi-second wait made folder resume
     // feel stuck (each child could block the resume path for up to 6s).
-    const settleDeadline = Date.now() + Math.max(PAUSE_RANGE_DRAIN_MS * 8, 400);
+    const settleDeadline = Date.now() + RESUME_RANGE_SETTLE_MS;
     while (
       typeof transfer.getActiveRangeCount === "function"
       && transfer.getActiveRangeCount() > 0
@@ -3857,6 +4024,12 @@ async function resumeTransfer(_event, payload) {
     const activeLeft = typeof transfer.getActiveRangeCount === "function"
       ? transfer.getActiveRangeCount()
       : 0;
+    if (activeLeft > 0) {
+      return {
+        success: false,
+        reason: "The current file is still finishing. Try resume again.",
+      };
+    }
     if (activeLeft === 0) {
       try {
         await prepareStreamFallbackAfterRangeFailure(transfer, transfer.stagedRemote?.client);
@@ -3871,7 +4044,14 @@ async function resumeTransfer(_event, payload) {
   }
   transfer.paused = false;
   transfer.pauseSuperseded = false;
+  transfer.lifecycleEpoch += 1;
+  transfer.lifecycleState = "transferring";
   resumeStreamPair(transfer);
+  broadcastGlobalTransferEvent({
+    type: "resumed",
+    transferId: payload.transferId,
+    lifecycleEpoch: transfer.lifecycleEpoch,
+  });
   return { success: true };
 }
 
@@ -4003,10 +4183,23 @@ function registerWorkerHandle(ipcMain, terminalWorkerManager, channel) {
 function registerHandlers(ipcMain, options = {}) {
   const terminalWorkerManager = options.terminalWorkerManager || null;
   if (terminalWorkerManager) {
+    const nextWorkerLifecycleEpoch = (transferId, suggestedEpoch) => {
+      const current = Math.max(0, Number(workerTransferLifecycleEpochs.get(transferId)) || 0);
+      const suggested = Number(suggestedEpoch);
+      const next = Number.isFinite(suggested) && suggested > current ? suggested : current + 1;
+      workerTransferLifecycleEpochs.set(transferId, next);
+      return next;
+    };
     const workerRequest = (event, channel, payload) => terminalWorkerManager.request(channel, payload, {
       webContentsId: event?.sender?.id,
     });
     ipcMain.handle("netcatty:transfer:start", (event, payload) => {
+      if (payload?.transferId) {
+        workerTransferLifecycleEpochs.set(
+          payload.transferId,
+          Math.max(0, Number(payload.lifecycleEpoch) || 0),
+        );
+      }
       // Renderer (or outer main) already admitted — skip a second queue so
       // dedicated pool leases are not pinned while waiting on main admission.
       if (payload?.skipAdmission === true) {
@@ -4027,15 +4220,65 @@ function registerHandlers(ipcMain, options = {}) {
         ? { success: true }
         : workerRequest(event, "netcatty:transfer:cancel", payload)
     ));
-    ipcMain.handle("netcatty:transfer:pause", (event, payload) => (
-      pauseQueuedTransfer(payload?.transferId)
-        ?? workerRequest(event, "netcatty:transfer:pause", payload)
-    ));
-    ipcMain.handle("netcatty:transfer:resume", (event, payload) => (
-      resumeQueuedTransfer(payload?.transferId)
-        ? { success: true }
-        : workerRequest(event, "netcatty:transfer:resume", payload)
-    ));
+    ipcMain.handle("netcatty:transfer:pause", async (event, payload) => {
+      const queued = pauseQueuedTransfer(payload?.transferId);
+      if (queued) return queued;
+      const lifecycleEpoch = nextWorkerLifecycleEpoch(payload?.transferId);
+      broadcastGlobalTransferEvent({
+        type: "pausing",
+        transferId: payload?.transferId,
+        lifecycleEpoch,
+        lifecycleState: "pausing",
+      });
+      try {
+        const result = await workerRequest(event, "netcatty:transfer:pause", payload);
+        if (!result?.success) {
+          const rollbackEpoch = nextWorkerLifecycleEpoch(payload?.transferId);
+          broadcastGlobalTransferEvent({
+            type: "resumed",
+            transferId: payload?.transferId,
+            lifecycleEpoch: rollbackEpoch,
+            lifecycleState: "transferring",
+          });
+          return result;
+        }
+        broadcastGlobalTransferEvent({
+          type: "paused",
+          transferId: payload?.transferId,
+          checkpointBytes: result.checkpointBytes,
+          resumeStage: result.resumeStage,
+          downloadCheckpointBytes: result.downloadCheckpointBytes,
+          uploadCheckpointBytes: result.uploadCheckpointBytes,
+          sourceFingerprint: result.sourceFingerprint,
+          lifecycleEpoch,
+          lifecycleState: "paused",
+        });
+        return result;
+      } catch (error) {
+        const rollbackEpoch = nextWorkerLifecycleEpoch(payload?.transferId);
+        broadcastGlobalTransferEvent({
+          type: "resumed",
+          transferId: payload?.transferId,
+          lifecycleEpoch: rollbackEpoch,
+          lifecycleState: "transferring",
+        });
+        throw error;
+      }
+    });
+    ipcMain.handle("netcatty:transfer:resume", async (event, payload) => {
+      if (resumeQueuedTransfer(payload?.transferId)) return { success: true };
+      const result = await workerRequest(event, "netcatty:transfer:resume", payload);
+      if (result?.success) {
+        const lifecycleEpoch = nextWorkerLifecycleEpoch(payload?.transferId, result.lifecycleEpoch);
+        broadcastGlobalTransferEvent({
+          type: "resumed",
+          transferId: payload?.transferId,
+          lifecycleEpoch,
+          lifecycleState: "transferring",
+        });
+      }
+      return result;
+    });
     ipcMain.handle("netcatty:transfer:prioritize", (event, payload) => (
       prioritizeQueuedTransfer(payload?.transferId)
         ? { success: true }
@@ -4090,6 +4333,7 @@ module.exports = {
   prioritizeTransfer,
   setGlobalTransferConcurrency,
   getGlobalTransferConcurrency,
+  broadcastGlobalTransferEvent,
   cleanupTransferArtifacts,
   sameHostCopyDirectory,
   // Test / integration helpers for session leases

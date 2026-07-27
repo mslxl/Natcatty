@@ -3,8 +3,8 @@
 /**
  * Cursor Agent CLI turn runner — subscription / login session path.
  *
- * Spawns `agent` (or `cursor-agent`) in print/stream-json mode so Catty can use
- * the local CLI login quota without CURSOR_API_KEY.
+ * Spawns `cursor-agent` in print/stream-json mode so Catty can use the local
+ * CLI login quota without CURSOR_API_KEY.
  */
 const { spawn } = require("node:child_process");
 const fs = require("node:fs");
@@ -23,6 +23,11 @@ function stripCursorApiKeyFromEnv(env) {
 function resolveCursorCliModel(model) {
   const raw = String(model || "").trim();
   return raw || DEFAULT_CURSOR_CLI_MODEL;
+}
+
+/** Map Netcatty permission mode → Cursor CLI execution class. */
+function resolveCursorCliExecMode(permissionMode) {
+  return String(permissionMode || "confirm").toLowerCase() === "observer" ? "ask" : "agent";
 }
 
 function buildCursorCliArgs({
@@ -51,8 +56,7 @@ function buildCursorCliArgs({
     args.push("--resume", String(resumeSessionId));
   }
 
-  const mode = String(permissionMode || "confirm").toLowerCase();
-  if (mode === "observer") {
+  if (resolveCursorCliExecMode(permissionMode) === "ask") {
     // Read-only ask mode; no shell write approvals expected.
     args.push("--mode", "ask");
   } else {
@@ -238,8 +242,12 @@ function translateCursorCliEvent(event, emitter, state = {}) {
 
     case "assistant": {
       closeReasoning(state, emitter);
-      // Prefer partial deltas; the final non-timestamped assistant often repeats
-      // the full message — skip duplicates when we already streamed partials.
+      // With --stream-partial-output, Cursor emits three assistant shapes:
+      //   timestamp_ms only          → streaming delta (use)
+      //   timestamp_ms + model_call_id → buffered flush before tool (skip)
+      //   neither                    → final flush (skip if already streamed)
+      // See https://cursor.com/docs/cli/reference/output-format.md#stream-json-format
+      if (event.model_call_id) return false;
       const isPartial = Boolean(event.timestamp_ms);
       const content = event.message?.content;
       if (!Array.isArray(content)) return false;
@@ -317,10 +325,10 @@ function formatCursorCliErrorForUser(message) {
     /not authenticated|not logged in|please run .*login|unauthenticated|unauthorized/i.test(text)
     || /(?:^|\b)(?:agent|cursor-agent)\s+login\b/i.test(text)
   ) {
-    return "Cursor CLI is not logged in. Run `agent login` in a terminal, then retry.";
+    return "Cursor CLI is not logged in. Run `cursor-agent login` in a terminal, then retry.";
   }
   if (/\bapi[_\s-]?key\b/i.test(text) && /invalid|missing|required|auth/i.test(text)) {
-    return "Cursor CLI authentication failed. Run `agent login` or switch Cursor to API Key mode in Settings → AI.";
+    return "Cursor CLI authentication failed. Run `cursor-agent login` or switch Cursor to API Key mode in Settings → AI.";
   }
   return text || "Cursor CLI turn failed";
 }
@@ -361,7 +369,7 @@ async function runCursorCliTurn({
 }) {
   const cliPath = String(binPath || "").trim();
   if (!cliPath) {
-    emitter.emitError("Cursor Agent CLI not found. Install the Cursor CLI (`agent`) and ensure it is on PATH.");
+    emitter.emitError("Cursor Agent CLI not found. Install the Cursor CLI (`cursor-agent`) and ensure it is on PATH.");
     return { sessionId: resumeSessionId || null };
   }
 
@@ -553,6 +561,7 @@ module.exports = {
   listCursorCliModels,
   mergeWorkspaceMcpJson,
   resetMcpMergeRefcountsForTests,
+  resolveCursorCliExecMode,
   resolveCursorCliModel,
   runCursorCliTurn,
   stripCursorApiKeyFromEnv,

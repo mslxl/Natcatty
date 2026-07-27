@@ -5,11 +5,14 @@ import type { TransferTask } from "../domain/models";
 import {
   buildGlobalTransferProgressDisplay,
   getGlobalTransferBadge,
+  getGlobalTransferBatchEligibility,
+  getGlobalTransferStatusOverride,
   getGlobalTransferBucket,
   getTasksForGlobalTransferBucket,
   isDirectoryParentTask,
   listChildTasksForParent,
   pickActiveChildSummaries,
+  shouldShowCollapsedActiveChildren,
   splitBackgroundTransfers,
 } from "./GlobalSftpTransferCenter";
 
@@ -30,16 +33,37 @@ const task = (id: string, status: TransferTask["status"], background = false) =>
   background,
 });
 
-test("global transfer statuses map to the five user-facing buckets", () => {
+test("global transfer statuses keep paused work separate from items needing attention", () => {
   assert.equal(getGlobalTransferBucket(task("a", "transferring")), "active");
   assert.equal(getGlobalTransferBucket(task("a", "pausing")), "active");
   assert.equal(getGlobalTransferBucket(task("a", "queued")), "queued");
   assert.equal(getGlobalTransferBucket(task("a", "paused")), "paused");
-  assert.equal(getGlobalTransferBucket(task("a", "interrupted")), "paused");
-  assert.equal(getGlobalTransferBucket(task("a", "attention")), "paused");
-  assert.equal(getGlobalTransferBucket(task("a", "failed")), "failed");
+  assert.equal(getGlobalTransferBucket(task("a", "interrupted")), "attention");
+  assert.equal(getGlobalTransferBucket(task("a", "attention")), "attention");
+  assert.equal(getGlobalTransferBucket(task("a", "failed")), "attention");
   assert.equal(getGlobalTransferBucket(task("a", "completed")), "completed");
   assert.equal(getGlobalTransferBucket(task("a", "cancelled")), "completed");
+});
+
+test("batch actions are disabled when no task can accept them", () => {
+  assert.deepEqual(getGlobalTransferBatchEligibility([
+    task("done", "completed"),
+    task("cancelled", "cancelled"),
+  ]), { pausableCount: 0, resumableCount: 0 });
+
+  assert.deepEqual(getGlobalTransferBatchEligibility([
+    task("running", "transferring"),
+    task("waiting", "queued"),
+    task("paused", "paused"),
+    { ...task("failed", "failed"), checkpointBytes: 4 },
+  ]), { pausableCount: 2, resumableCount: 2 });
+});
+
+test("paused transfer errors remain visible instead of looking safely paused", () => {
+  assert.equal(getGlobalTransferStatusOverride({
+    error: "Upload resume is unavailable",
+    pauseUnavailableReason: undefined,
+  }), "Upload resume is unavailable");
 });
 
 test("the all bucket includes every top-level task regardless of status", () => {
@@ -156,6 +180,14 @@ test("active child summary prefers transferring files over queued", () => {
     pickActiveChildSummaries(children, 2).map((item) => item.id),
     ["t1", "t2"],
   );
+});
+
+test("collapsed active children only show while transferring or soft-draining", () => {
+  assert.equal(shouldShowCollapsedActiveChildren("transferring"), true);
+  assert.equal(shouldShowCollapsedActiveChildren("pausing"), true);
+  assert.equal(shouldShowCollapsedActiveChildren("paused"), false);
+  assert.equal(shouldShowCollapsedActiveChildren("interrupted"), false);
+  assert.equal(shouldShowCollapsedActiveChildren("queued"), false);
 });
 
 test("listChildTasksForParent skips cancelled siblings", () => {

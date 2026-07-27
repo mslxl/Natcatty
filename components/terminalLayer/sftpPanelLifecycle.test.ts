@@ -140,12 +140,17 @@ test("listTerminalTabIdsWithRetainingTransfers only returns terminal owners with
 test("terminal side panel reports transfer activity and uses store-backed retain on close", () => {
   const layerSource = readFileSync(new URL("../TerminalLayer.tsx", import.meta.url), "utf8");
   const panelSource = readFileSync(new URL("../SftpSidePanel.tsx", import.meta.url), "utf8");
+  const transferLifecycleSource = readFileSync(
+    new URL("../../application/state/sftp/useSftpTransferLifecycle.ts", import.meta.url),
+    "utf8",
+  );
   const slotsSource = readFileSync(new URL("./terminalLayerSidePanelSlots.tsx", import.meta.url), "utf8");
   const stateSource = readFileSync(new URL("../../application/state/useSftpState.ts", import.meta.url), "utf8");
 
-  assert.match(panelSource, /onActiveTransfersChangeRef\.current\?\.\(sftp\.activeTransfersCount\)/);
-  // Cleanup must not re-subscribe to callback identity (race that zeros mid-transfer).
-  assert.match(panelSource, /onActiveTransfersChangeRef\.current\?\.\(0\)/);
+  assert.match(panelSource, /useReportSftpTransferOwnerActivity\(\{/);
+  // Unmount reports store-backed unfinished count — never force-zero while work lives.
+  assert.match(transferLifecycleSource, /sftpTransferCenterStore\.getSnapshot\(\)\.tasks/);
+  assert.match(transferLifecycleSource, /onChangeRef\.current\?\.\(unfinished\)/);
   assert.doesNotMatch(panelSource, /useEffect\(\(\) => \(\) => \{\s*onActiveTransfersChange\?\.\(0\);\s*\}, \[onActiveTransfersChange\]\)/);
   assert.match(panelSource, /interactive:\s*isVisible/);
   assert.match(slotsSource, /onActiveTransfersChange=\{handleActiveTransfersChange\}/);

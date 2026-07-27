@@ -23,10 +23,12 @@ test('getAgentModelPresets returns CodeBuddy fallback models for command paths',
   assert.ok(CODEBUDDY_MODEL_PRESETS.some((model) => model.id === 'deepseek-v4-pro'));
 });
 
-test('getAgentModelPresets returns Cursor presets for agent CLI paths and sdkBackend', () => {
-  assert.deepEqual(getAgentModelPresets('/Users/me/.local/bin/agent', 'cursor'), CURSOR_MODEL_PRESETS);
+test('getAgentModelPresets returns Cursor presets for cursor-agent paths and sdkBackend', () => {
+  assert.deepEqual(getAgentModelPresets('/Users/me/.local/bin/cursor-agent', 'cursor'), CURSOR_MODEL_PRESETS);
   assert.deepEqual(getAgentModelPresets('/usr/bin/cursor-agent'), CURSOR_MODEL_PRESETS);
-  assert.equal(getAgentModelPresets('/Users/me/.local/bin/agent')[0]?.id, 'auto');
+  // Bare `agent` is no longer treated as Cursor without an explicit sdkBackend.
+  assert.deepEqual(getAgentModelPresets('/Users/me/.local/bin/agent'), []);
+  assert.equal(getAgentModelPresets('/Users/me/.local/bin/agent', 'cursor')[0]?.id, 'auto');
 });
 
 test('getAgentModelPresets keeps Codex presets separate from CodeBuddy presets', () => {

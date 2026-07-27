@@ -7,12 +7,21 @@ import {
   DEFAULT_TRANSFER_CONNECTIONS_PER_HOST,
 } from "./transferConnectionPool";
 
-test("buildTransferPoolKey prefers host id", () => {
-  assert.equal(buildTransferPoolKey({ hostId: "h1", hostname: "x" }), "host:h1");
+test("buildTransferPoolKey includes endpoint when hostname is known", () => {
+  assert.equal(
+    buildTransferPoolKey({ hostId: "h1", hostname: "vault.example", port: 22, username: "root" }),
+    "host:h1|ep:vault.example:22:root:ssh:nosudo",
+  );
+  // Same hostId with session override must not share the vault pool key.
+  assert.equal(
+    buildTransferPoolKey({ hostId: "h1", hostname: "override.example", port: 2222, username: "ubuntu" }),
+    "host:h1|ep:override.example:2222:ubuntu:ssh:nosudo",
+  );
   assert.equal(
     buildTransferPoolKey({ hostname: "ci.example", port: 22, username: "root" }),
     "ep:ci.example:22:root:ssh:nosudo",
   );
+  assert.equal(buildTransferPoolKey({ hostId: "h1" }), "host:h1");
 });
 
 test("pool opens at most maxPerHost connections and reuses them", async () => {
@@ -75,6 +84,28 @@ test("different hosts get independent connection pools", async () => {
   assert.notEqual(a.sftpId, b.sftpId);
   a.release();
   b.release();
+});
+
+test("idle reclaim skips busy holders and can be disabled", async () => {
+  const closed: string[] = [];
+  const pool = createTransferConnectionPool({
+    maxPerHost: 2,
+    idleTtlMs: 1,
+    closeSession: async (id) => { closed.push(id); },
+  });
+  const open = async () => "sftp-busy";
+  const lease = await pool.acquire("host:x", "t1", open);
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(await pool.closeIdle(Date.now() + 1000), 0, "busy slot must not idle-close");
+  lease.release();
+  assert.equal(await pool.closeIdle(Date.now() + 1000), 1);
+
+  const open2 = async () => "sftp-keep";
+  const warm = await pool.acquire("host:x", "t2", open2);
+  warm.release();
+  pool.setIdleTtlMs(0);
+  assert.equal(await pool.closeIdle(Date.now() + 999_999), 0, "ttl 0 keeps warm connections");
+  assert.equal(pool.getStats("host:x").connections, 1);
 });
 
 test("default max per host is FileZilla-like (2)", () => {

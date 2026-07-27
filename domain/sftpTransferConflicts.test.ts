@@ -89,6 +89,38 @@ test("findActivePathConflict collides different sources writing one destination"
   );
 });
 
+test("findActivePathConflict requires local endpoint on the candidate (downloadToLocal regression)", () => {
+  // createDirectDownloadTransferTask stores targetConnectionId:"local".
+  // A bare { targetPath } candidate is not isLocalTransferDestination — it
+  // used to miss every active download and allow duplicate concurrent writers.
+  const tasks = [
+    base({
+      id: "active-download",
+      targetPath: "/Users/me/Downloads/frpc.tar",
+      targetConnectionId: "local",
+      targetHostLabel: "Local",
+      status: "transferring",
+    }),
+  ];
+  assert.equal(
+    findActivePathConflict(tasks, {
+      id: "broken-candidate",
+      targetPath: "/Users/me/Downloads/frpc.tar",
+    }),
+    undefined,
+    "missing local endpoint must not false-match (documents the bug shape)",
+  );
+  assert.equal(
+    findActivePathConflict(tasks, {
+      id: "fixed-candidate",
+      targetPath: "/Users/me/Downloads/frpc.tar",
+      targetConnectionId: "local",
+      targetHostLabel: "Local",
+    })?.id,
+    "active-download",
+  );
+});
+
 test("findActivePathConflict treats local pane id and local sentinel as one endpoint", () => {
   const tasks = [
     base({

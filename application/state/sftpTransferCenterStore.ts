@@ -11,10 +11,30 @@ import {
   pathConflictMessage,
 } from "../../domain/sftpTransferConflicts";
 import { STORAGE_KEY_SFTP_TRANSFER_CENTER } from "../../infrastructure/config/storageKeys";
+import { localStorageAdapter } from "../../infrastructure/persistence/localStorageAdapter";
 import { netcattyBridge } from "../../infrastructure/services/netcattyBridge";
 import { notify } from "../notification";
 import { globalSftpTransferScheduler } from "./sftp/globalTransferScheduler";
-import { isBenignPauseMiss, planPartialPauseRollback } from "./sftp/pauseTransferOutcome";
+import {
+  isTransferOrRootPauseLatched,
+  isTransferPauseLatched,
+  releaseTransferPauseTree,
+} from "./sftp/transferPauseLatch";
+import {
+  bumpTransferControlEpoch,
+  getTransferControlEpoch,
+  isTransferControlEpochCurrent,
+} from "./sftp/transferControlEpoch";
+import { isTransferWalkInFlight } from "./sftp/transferWalkRegistry";
+import {
+  markTransferCancelledTree,
+} from "./sftp/transferCancelLatch";
+import {
+  defaultTransferControlBridge,
+  softPauseTransfer,
+  softResumeTransfer,
+  type TransferControlHost,
+} from "./sftp/globalSftpTransferControl";
 
 type Listener = () => void;
 
@@ -24,7 +44,17 @@ export interface SftpTransferOwnerControls {
   cancel: (taskId: string) => void | Promise<void>;
   retry: (taskId: string) => void | Promise<void>;
   prioritize: (taskId: string) => void | Promise<void>;
-  dismiss: (taskId: string) => void;
+  dismiss: (taskId: string, task?: TransferTask) => void;
+  /** Remove a pruned group in one owner update to avoid publish/dismiss feedback loops. */
+  dismissMany?: (tasks: readonly TransferTask[]) => void;
+  /**
+   * True when the panel still lists this task locally.
+   * Used only for adopt/retry UX after hard reconnect — never for soft
+   * pause/resume (those are process-global via TransferRuntime / store).
+   */
+  ownsTask?: (taskId: string) => boolean;
+  /** Pull lifecycle fields from the store after unified soft-control. */
+  syncOwnedTasks?: () => void;
   canAdopt?: (task: TransferTask) => boolean;
   canPrepareAdoption?: boolean;
   adopt?: (task: TransferTask) => void | Promise<void>;
@@ -66,9 +96,10 @@ export interface SftpTransferCenterStore {
   markReconnectRequired(taskId: string, error?: string): void;
   reportResumePreparationFailure(taskId: string, error: string): void;
   ingestBackgroundEvent(event: {
-    type: "queued" | "started" | "progress" | "paused" | "resumed" | "cancelled" | "completed" | "failed";
+    type: "queued" | "started" | "progress" | "pausing" | "paused" | "resumed" | "cancelled" | "completed" | "failed";
     transferId: string;
     direction?: TransferTask["direction"];
+    fileName?: string;
     sourcePath?: string;
     targetPath?: string;
     startedAt?: number;
@@ -85,6 +116,11 @@ export interface SftpTransferCenterStore {
     sessionId?: string;
     sourceHostId?: string;
     targetHostId?: string;
+    isDirectory?: boolean;
+    controlKind?: TransferTask["controlKind"];
+    phase?: TransferTask["phase"];
+    lifecycleEpoch?: number;
+    lifecycleState?: "queued" | "pausing" | "paused" | "transferring";
   }): void;
   resolveConflict(taskId: string, action: FileConflictAction, applyToAll?: boolean): Promise<void>;
 }
@@ -111,30 +147,333 @@ function buildSnapshot(tasks: readonly TransferTask[]): SftpTransferCenterSnapsh
   };
 }
 
+const TERMINAL_OWNER_STATUSES = new Set<TransferTask["status"]>([
+  "completed",
+  "cancelled",
+  "failed",
+]);
+
+/**
+ * Panel snapshots and main-process progress IPC both write the same rows.
+ * Never let a stale panel paint roll back bytes that background events already
+ * advanced (tab-close / hide dual-writer race freezes the global center bar).
+ * Also never resurrect completed/cancelled store rows from a late transferring
+ * panel snapshot (ingest already guards terminal; publishOwner must too).
+ */
+export function mergeOwnerPublishedTask(
+  existing: TransferTask,
+  incoming: TransferTask,
+  ownerId: string,
+  parentStatus?: TransferTask["status"],
+): TransferTask {
+  // Explicit restart / re-queue may reset progress to 0 — allow that.
+  const incomingReset = (
+    (incoming.status === "pending" || incoming.status === "queued")
+    && (incoming.transferredBytes ?? 0) === 0
+    && (incoming.checkpointBytes ?? 0) === 0
+  );
+  const incomingTerminal = TERMINAL_OWNER_STATUSES.has(incoming.status);
+  // completed/cancelled stick on the store. A late panel "transferring" paint
+  // must not un-complete after ingestBackgroundEvent(completed|cancelled).
+  // failed is intentionally not sticky: same-id checkpoint resume re-opens it.
+  if (
+    (existing.status === "completed" || existing.status === "cancelled")
+    && !incomingTerminal
+    && !incomingReset
+  ) {
+    return {
+      ...existing,
+      ownerId,
+      updatedAt: existing.updatedAt ?? Date.now(),
+    };
+  }
+  // Prefer cancelled over a late completed when both sides are terminal.
+  if (
+    existing.status === "cancelled"
+    && incoming.status === "completed"
+  ) {
+    return {
+      ...existing,
+      ownerId,
+      updatedAt: existing.updatedAt ?? Date.now(),
+    };
+  }
+
+  const merged: TransferTask = {
+    ...incoming,
+    ownerId,
+    updatedAt: incoming.updatedAt ?? Date.now(),
+  };
+
+  if (incomingReset || incomingTerminal) {
+    return merged;
+  }
+
+  // Keep higher water marks while either side still treats the row as live work.
+  const existingLive = !TERMINAL_OWNER_STATUSES.has(existing.status);
+  const incomingLive = !TERMINAL_OWNER_STATUSES.has(incoming.status);
+  if (existingLive && incomingLive) {
+    const existingBytes = existing.transferredBytes ?? 0;
+    const incomingBytes = incoming.transferredBytes ?? 0;
+    if (existingBytes > incomingBytes) {
+      merged.transferredBytes = existingBytes;
+      // Prefer the fresher non-zero speed from either side when bytes stall.
+      if (!(Number.isFinite(merged.speed) && merged.speed > 0) && existing.speed > 0) {
+        merged.speed = existing.speed;
+      }
+    }
+    const existingCheckpoint = existing.checkpointBytes ?? 0;
+    const incomingCheckpoint = incoming.checkpointBytes ?? 0;
+    if (existingCheckpoint > incomingCheckpoint) {
+      merged.checkpointBytes = existingCheckpoint;
+    }
+    if ((existing.totalBytes ?? 0) > (incoming.totalBytes ?? 0)) {
+      merged.totalBytes = existing.totalBytes;
+    }
+    const existingLifecycleEpoch = Number.isFinite(existing.lifecycleEpoch)
+      ? (existing.lifecycleEpoch as number)
+      : -1;
+    const incomingLifecycleEpoch = Number.isFinite(incoming.lifecycleEpoch)
+      ? (incoming.lifecycleEpoch as number)
+      : -1;
+    if (existingLifecycleEpoch > incomingLifecycleEpoch) {
+      merged.lifecycleEpoch = existing.lifecycleEpoch;
+      merged.status = existing.status;
+      if (existing.status === "paused" || existing.status === "pausing") {
+        merged.transferredBytes = existing.transferredBytes;
+        merged.checkpointBytes = existing.checkpointBytes;
+        merged.speed = 0;
+      }
+    }
+    // Background progress re-opens transferring; don't let a frozen panel
+    // snapshot paint a non-terminal lower status over a live transferring row
+    // when bytes moved forward on the store.
+    if (
+      existing.status === "transferring"
+      && (incoming.status === "pending" || incoming.status === "queued")
+      && (merged.transferredBytes ?? 0) > 0
+    ) {
+      merged.status = "transferring";
+    }
+    // Intentional pause from the panel must always win over soft-drain water
+    // marks. Freezing transferredBytes on pause used to leave store bytes ahead
+    // of the panel snapshot; the old "higher bytes keep transferring" rule then
+    // rejected pause and the global transfer center looked stuck on 传输中.
+    // Only a strictly newer lifecycle epoch may re-open transferring (resume).
+    const incomingPaused = incoming.status === "paused" || incoming.status === "pausing";
+    const existingPaused = existing.status === "paused" || existing.status === "pausing";
+    if (incomingPaused && incomingLifecycleEpoch >= existingLifecycleEpoch) {
+      merged.status = incoming.status;
+      merged.speed = 0;
+      // Pin the visible bar while paused/latched. Soft-drain must not keep
+      // raising transferredBytes after the user paused (checkpoint may still rise).
+      const latched = isTransferOrRootPauseLatched(
+        existing.parentTaskId ?? existing.id,
+        existing.id,
+      ) || isTransferPauseLatched(existing.id);
+      if (latched || existingPaused) {
+        merged.transferredBytes = existingBytes;
+      } else {
+        merged.transferredBytes = Math.max(existingBytes, incomingBytes);
+      }
+      if (existingCheckpoint > 0 || incomingCheckpoint > 0) {
+        merged.checkpointBytes = Math.max(existingCheckpoint, incomingCheckpoint);
+      }
+    } else if (
+      existingPaused
+      && (incoming.status === "transferring" || incoming.status === "pending" || incoming.status === "queued")
+      // Only a strictly older epoch is a stale snapshot. Equal/missing epochs must
+      // allow intentional Resume (publishOwner after unlatch) to re-open the row.
+      && incomingLifecycleEpoch < existingLifecycleEpoch
+    ) {
+      // Soft-drain / late progress publish must not un-pause without resume epoch.
+      merged.status = existing.status;
+      merged.speed = 0;
+      merged.transferredBytes = existing.transferredBytes;
+      merged.checkpointBytes = existing.checkpointBytes ?? merged.checkpointBytes;
+    }
+    // Folder parent already paused/pausing: never re-open a child as live from a
+    // late panel paint. That made the collapsed "current file" row blink in/out.
+    const parentHoldsPause = parentStatus === "paused" || parentStatus === "pausing";
+    if (
+      parentHoldsPause
+      && !["completed", "cancelled", "failed"].includes(merged.status)
+      && (merged.status === "transferring" || merged.status === "pending" || merged.status === "queued")
+    ) {
+      merged.status = parentStatus === "pausing" ? "pausing" : "paused";
+      merged.speed = 0;
+    }
+  }
+
+  return merged;
+}
+
+function areTransferTasksEquivalent(left: TransferTask, right: TransferTask): boolean {
+  const leftRecord = left as unknown as Record<string, unknown>;
+  const rightRecord = right as unknown as Record<string, unknown>;
+  const keys = new Set([...Object.keys(leftRecord), ...Object.keys(rightRecord)]);
+  for (const key of keys) {
+    // updatedAt is bookkeeping, not a visible or durable transfer change.
+    if (key === "updatedAt") continue;
+    if (!Object.is(leftRecord[key], rightRecord[key])) return false;
+  }
+  return true;
+}
+
 export function createSftpTransferCenterStore(persistence?: StorePersistence): SftpTransferCenterStore {
   const restored = deserializeSftpTransferCenter(persistence?.read() ?? null);
   let tasks = pruneSftpTransferHistory(restored.tasks);
   let snapshot = tasks.length > 0 ? buildSnapshot(tasks) : EMPTY_SNAPSHOT;
   const listeners = new Set<Listener>();
   const controllers = new Map<string, SftpTransferOwnerControls>();
+  const lastPublishedByOwner = new Map<string, ReadonlyMap<string, TransferTask>>();
+  const PERSIST_INTERVAL_MS = 250;
+  let lastPersistedAt = 0;
+  let persistenceDirty = false;
+  let persistenceTimer: ReturnType<typeof setTimeout> | null = null;
   const resumeInvocations = new Map<string, Promise<void>>();
   const resumePreparationFailures = new Map<string, string>();
   let dedicatedResumeHandler: DedicatedTransferResumeHandler | null = null;
+  const dedicatedResumeWaiters = new Set<{
+    taskId: string;
+    resolve: () => void;
+    timer: ReturnType<typeof setTimeout>;
+  }>();
 
-  const persist = () => {
-    persistence?.write(serializeSftpTransferCenter(tasks));
+  const notifyDedicatedResumeWaiters = () => {
+    for (const waiter of dedicatedResumeWaiters) {
+      const current = tasks.find((task) => task.id === waiter.taskId);
+      if (
+        !dedicatedResumeHandler
+        && current
+        && current.status !== "cancelled"
+        && current.status !== "completed"
+      ) continue;
+      clearTimeout(waiter.timer);
+      dedicatedResumeWaiters.delete(waiter);
+      waiter.resolve();
+    }
   };
-  const emit = () => {
+
+  const waitForDedicatedResumeHandler = (taskId: string) => new Promise<void>((resolve) => {
+    if (dedicatedResumeHandler) {
+      resolve();
+      return;
+    }
+    const waiter = {
+      taskId,
+      resolve,
+      // Vault unlock + first host load can exceed a few seconds after force-quit.
+      timer: setTimeout(() => {
+        dedicatedResumeWaiters.delete(waiter);
+        resolve();
+      }, 15000),
+    };
+    dedicatedResumeWaiters.add(waiter);
+  });
+
+  const writePersistence = () => {
+    if (!persistence || !persistenceDirty) return;
+    persistenceDirty = false;
+    try {
+      persistence.write(serializeSftpTransferCenter(tasks));
+    } catch (error) {
+      // Transfer history is recoverability metadata. Storage exhaustion or a
+      // transient browser storage failure must never take down the renderer.
+      console.warn("[SFTP] Could not persist transfer history", error);
+    } finally {
+      // Measure the interval from completion, since stringify/setItem itself can
+      // be expensive for a large directory snapshot.
+      lastPersistedAt = Date.now();
+    }
+  };
+  const persist = (immediate = false) => {
+    if (!persistence) return;
+    persistenceDirty = true;
+    const elapsed = Date.now() - lastPersistedAt;
+    if (immediate || lastPersistedAt === 0 || elapsed >= PERSIST_INTERVAL_MS) {
+      if (persistenceTimer) {
+        clearTimeout(persistenceTimer);
+        persistenceTimer = null;
+      }
+      writePersistence();
+      return;
+    }
+    if (persistenceTimer) return;
+    persistenceTimer = setTimeout(() => {
+      persistenceTimer = null;
+      writePersistence();
+    }, PERSIST_INTERVAL_MS - elapsed);
+  };
+  const notifyOwnersOfPrunedTasks = (removed: readonly TransferTask[]) => {
+    if (removed.length === 0) return;
+    const byOwner = new Map<string, TransferTask[]>();
+    for (const task of removed) {
+      if (!task.ownerId) continue;
+      const ownerTasks = byOwner.get(task.ownerId) ?? [];
+      ownerTasks.push(task);
+      byOwner.set(task.ownerId, ownerTasks);
+    }
+    for (const [ownerId, ownerTasks] of byOwner) {
+      const controller = controllers.get(ownerId);
+      if (!controller) continue;
+      if (controller.dismissMany) {
+        controller.dismissMany(ownerTasks);
+      } else {
+        for (const task of ownerTasks) controller.dismiss(task.id, task);
+      }
+    }
+  };
+  const hasCriticalPersistenceChange = (
+    previous: readonly TransferTask[],
+    next: readonly TransferTask[],
+  ) => {
+    const previousById = new Map(previous.map((task) => [task.id, task]));
+    for (const task of next) {
+      const before = previousById.get(task.id);
+      if (task.sourceFingerprint !== before?.sourceFingerprint) return true;
+      if (task.status === "paused" || task.status === "pausing") {
+        if (
+          task.status !== before?.status
+          || task.checkpointBytes !== before?.checkpointBytes
+          || task.resumeStage !== before?.resumeStage
+          || task.downloadCheckpointBytes !== before?.downloadCheckpointBytes
+          || task.uploadCheckpointBytes !== before?.uploadCheckpointBytes
+        ) return true;
+      }
+      if (
+        !task.parentTaskId
+        && task.status !== before?.status
+        && (task.status === "completed" || task.status === "failed" || task.status === "cancelled")
+      ) return true;
+    }
+    return false;
+  };
+  const emit = (persistImmediately = false) => {
+    const shouldPersistImmediately = persistImmediately
+      || hasCriticalPersistenceChange(snapshot.tasks, tasks);
     const beforePrune = tasks;
     tasks = pruneSftpTransferHistory(tasks);
     const retainedIds = new Set(tasks.map((task) => task.id));
-    for (const removed of beforePrune) {
-      if (retainedIds.has(removed.id)) continue;
-      controllers.get(removed.ownerId ?? "")?.dismiss(removed.id);
+    const removed = beforePrune.filter((task) => !retainedIds.has(task.id));
+    if (removed.length > 0) {
+      for (const [ownerId, published] of lastPublishedByOwner) {
+        if (published.size === 0) continue;
+        const retained = new Map(
+          [...published].filter(([taskId]) => retainedIds.has(taskId)),
+        );
+        if (retained.size === 0) lastPublishedByOwner.delete(ownerId);
+        else if (retained.size !== published.size) lastPublishedByOwner.set(ownerId, retained);
+      }
     }
     snapshot = buildSnapshot(tasks);
-    persist();
+    persist(shouldPersistImmediately);
+    notifyDedicatedResumeWaiters();
     for (const listener of listeners) listener();
+    // Notify only after the store snapshot is final. Owners must remove the
+    // whole group atomically; per-row callbacks republish the remaining stale
+    // rows and recursively re-enter pruning for large completed directories.
+    notifyOwnersOfPrunedTasks(removed);
   };
   const findOwner = (taskId: string) => tasks.find((task) => task.id === taskId)?.ownerId;
   const findAdopter = (task: TransferTask) => [...controllers.entries()].find(([, controls]) => (
@@ -192,11 +531,21 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
     resumePreparationFailures.delete(task.id);
     return { adopter, error: preparationError, cancelled };
   };
+  const resolveLiveController = (taskId: string) => {
+    const ownerId = findOwner(taskId);
+    const candidate = ownerId ? controllers.get(ownerId) : undefined;
+    if (!candidate) return undefined;
+    // Stale owner after tab close: registered but no longer tracking the task.
+    if (typeof candidate.ownsTask === "function" && !candidate.ownsTask(taskId)) {
+      return undefined;
+    }
+    return candidate;
+  };
+
   const invoke = async (taskId: string, requestedAction: "pause" | "resume" | "cancel" | "retry" | "prioritize") => {
     let action = requestedAction;
-    const ownerId = findOwner(taskId);
-    let controller = ownerId ? controllers.get(ownerId) : undefined;
-    const task = tasks.find((candidate) => candidate.id === taskId);
+    let controller = resolveLiveController(taskId);
+    let task = tasks.find((candidate) => candidate.id === taskId);
     // Intentional resume/retry must clear a pre-start cancel latch left by an
     // earlier cancel that never hit startTransferNow (same transferId).
     if (action === "resume" || action === "retry") {
@@ -205,6 +554,97 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
       } catch {
         // best-effort
       }
+    }
+    // Compressed soft-control is process-global: do not gate on a live panel owner.
+    const liveCompressedJob = task?.controlKind === "compressed-upload"
+      && task.reconnectRequired !== true
+      && task.status !== "interrupted"
+      && task.status !== "attention";
+    if (liveCompressedJob && (action === "pause" || action === "resume" || action === "cancel")) {
+      const bridge = netcattyBridge.get();
+      if (action === "pause") {
+        // Control epoch supersedes races; bridge lifecycleEpoch is stamped on success.
+        const pauseControlEpoch = bumpTransferControlEpoch(taskId);
+        tasks = tasks.map((candidate) => candidate.id === taskId ? {
+          ...candidate,
+          status: "pausing" as const,
+          pauseUnavailableReason: undefined,
+          speed: 0,
+        } : candidate);
+        emit();
+        const result = await (bridge?.pauseCompressedUpload?.(taskId)
+          ?? { success: false, deferred: false, reason: "Pause unavailable" });
+        const latest = tasks.find((candidate) => candidate.id === taskId);
+        if (!latest || latest.status === "cancelled") return;
+        // Drop stale paint if a newer control resume already superseded this pause.
+        if (!isTransferControlEpochCurrent(taskId, pauseControlEpoch)
+          && (latest.status === "transferring" || latest.status === "paused")) {
+          return;
+        }
+        const bridgeEpoch = Number.isFinite(result.lifecycleEpoch)
+          ? (result.lifecycleEpoch as number)
+          : undefined;
+        tasks = tasks.map((candidate) => candidate.id === taskId ? {
+          ...candidate,
+          status: result.success
+            ? (result.deferred ? "pausing" as const : "paused" as const)
+            : "transferring" as const,
+          pauseUnavailableReason: result.success ? undefined : result.reason,
+          speed: result.success ? 0 : candidate.speed,
+          ...(bridgeEpoch !== undefined ? { lifecycleEpoch: bridgeEpoch } : null),
+        } : candidate);
+        emit();
+        if (!result.success && result.reason) notify.warning(result.reason, "SFTP");
+        return;
+      }
+      if (action === "resume") {
+        bumpTransferControlEpoch(taskId);
+        const result = await (bridge?.resumeCompressedUpload?.(taskId)
+          ?? { success: false, reason: "Resume unavailable" });
+        const latest = tasks.find((candidate) => candidate.id === taskId);
+        if (!latest || latest.status === "cancelled") return;
+        const bridgeEpoch = Number.isFinite(result.lifecycleEpoch)
+          ? (result.lifecycleEpoch as number)
+          : undefined;
+        tasks = tasks.map((candidate) => candidate.id === taskId ? {
+          ...candidate,
+          status: result.success ? "transferring" as const : candidate.status,
+          error: result.success ? undefined : (result.reason ?? candidate.error),
+          pauseUnavailableReason: result.success ? undefined : candidate.pauseUnavailableReason,
+          speed: 0,
+          // Bridge epoch or clear so fanout progress is not stale-dropped.
+          lifecycleEpoch: result.success ? bridgeEpoch : candidate.lifecycleEpoch,
+        } : candidate);
+        emit();
+        if (!result.success && result.reason) notify.warning(result.reason, "SFTP");
+        return;
+      }
+      const result = await (bridge?.cancelCompressedUpload?.(taskId)
+        ?? { success: false });
+      if (!result.success) {
+        const reason = "Could not cancel the compressed upload.";
+        tasks = tasks.map((candidate) => candidate.id === taskId ? {
+          ...candidate,
+          status: "attention" as const,
+          error: reason,
+          speed: 0,
+        } : candidate);
+        emit();
+        notify.warning(reason, "SFTP");
+        return;
+      }
+      markTransferCancelledTree(taskId);
+      releaseTransferPauseTree(taskId);
+      tasks = tasks.map((candidate) => candidate.id === taskId ? {
+        ...candidate,
+        status: "cancelled" as const,
+        error: undefined,
+        endTime: Date.now(),
+        speed: 0,
+        phase: undefined,
+      } : candidate);
+      emit();
+      return;
     }
     // After app restart (or any reconnectRequired task), a retained panel owner
     // often cannot resume (missing panes / dead sftpId). Prefer a dedicated
@@ -223,8 +663,11 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
     // Prefer the live owner controller for pause/resume of still-active work.
     // Do NOT drop it just because canAdopt is false when the transfer is still
     // live in the backend — downloads often have only a remote pane open.
-    if (action === "resume" && task && (needsDedicatedReconnect || !controller)) {
-      // Immediate UI feedback: spinner + "Reconnecting…" while we open a session.
+    //
+    // Only paint "Reconnecting…" when we truly need a dedicated/session reopen.
+    // Soft-paused live streams after tab close must soft-resume without this
+    // flash (otherwise Resume feels laggy / "broken").
+    if (action === "resume" && task && needsDedicatedReconnect) {
       tasks = tasks.map((candidate) => candidate.id === taskId ? {
         ...candidate,
         status: "pending",
@@ -232,199 +675,89 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
         speed: 0,
         phase: undefined,
         reconnectRequired: true,
+        lifecycleEpoch: undefined,
       } : candidate);
       emit();
     }
-    if (!controller && (action === "resume" || action === "pause")) {
-      // Transfer-owned session leases keep the backend transfer alive after the
-      // SFTP panel disconnects/unmounts. Unpause/pause directly before forcing
-      // a UI re-connect.
-      try {
-        const bridge = netcattyBridge.get();
-        if (action === "resume" && bridge?.resumeTransfer) {
-          const live = await bridge.resumeTransfer(taskId);
-          const afterLiveResume = tasks.find((candidate) => candidate.id === taskId);
-          if (afterLiveResume?.status === "cancelled") return;
-          // After quit/restart there is no live stream — success must mean a
-          // real handle rejoined. Never paint "transferring" on a soft miss.
-          if (live?.success) {
-            tasks = tasks.map((candidate) => candidate.id === taskId ? {
-              ...candidate,
-              status: "transferring",
-              error: undefined,
-              reconnectRequired: false,
-              pauseUnavailableReason: undefined,
-              phase: undefined,
-              speed: candidate.speed,
-            } : candidate);
-            emit();
-            return;
-          }
-        }
-        if (action === "pause" && bridge?.pauseTransfer) {
-          // Dedicated reconnect cannot soft-pause before the stream exists.
-          // Do not cancel here (quit confirmation also calls pause) — user must
-          // Cancel explicitly; skip demotion so the reconnect spinner remains.
-          if (task?.ownerId === "dedicated-resume" && task.reconnectRequired) {
-            return;
-          }
-          // Show pausing until soft-drain settles — do not offer Resume early.
-          if (task && ["transferring", "pending", "queued", "pausing"].includes(task.status)) {
-            tasks = tasks.map((candidate) => (
-              candidate.id === taskId || candidate.parentTaskId === taskId
-                ? {
-                  ...candidate,
-                  status: (["completed", "cancelled", "failed"].includes(candidate.status)
-                    ? candidate.status
-                    : "pausing") as TransferTask["status"],
-                  speed: 0,
-                }
-                : candidate
-            ));
-            emit();
-          }
-          // Directory dedicated resume streams use child transferIds — pause them all.
-          const childIds = task?.isDirectory
-            ? tasks
-              .filter((candidate) => candidate.parentTaskId === taskId
-                && !["completed", "cancelled", "failed"].includes(candidate.status))
-              .map((candidate) => candidate.id)
-            : [];
-          const pauseIds = task?.isDirectory ? childIds : [taskId, ...childIds];
-          const pauseResults = await Promise.all(pauseIds.map(async (id) => ({
-            id,
-            result: await bridge.pauseTransfer?.(id) ?? { success: false, reason: "Pause unavailable" },
-          })));
-          const afterLivePause = tasks.find((candidate) => candidate.id === taskId);
-          if (afterLivePause?.status === "cancelled") return;
-          const allBenignOrSuccess = pauseIds.length === 0 || pauseResults.every(
-            ({ result }) => result.success || isBenignPauseMiss(result.reason),
-          );
-          // Folder pause is latch-first: keep parent paused even when some child
-          // streams miss (arming / checkpoint races). Rolling back re-opened the
-          // queue and looked like pause did nothing.
-          // Single-file: still require full success, else unpause partials.
-          if (allBenignOrSuccess || task?.isDirectory) {
-            const byId = new Map(pauseResults.map((row) => [row.id, row.result]));
-            tasks = tasks.map((candidate) => {
-              if (candidate.id === taskId) {
-                return {
-                  ...candidate,
-                  status: "paused" as const,
-                  speed: 0,
-                  // Directory parents keep file-count transferredBytes.
-                  checkpointBytes: task?.isDirectory
-                    ? candidate.transferredBytes
-                    : (byId.get(taskId)?.checkpointBytes ?? candidate.checkpointBytes),
-                  resumeStage: byId.get(taskId)?.resumeStage ?? candidate.resumeStage,
-                  downloadCheckpointBytes: byId.get(taskId)?.downloadCheckpointBytes ?? candidate.downloadCheckpointBytes,
-                  uploadCheckpointBytes: byId.get(taskId)?.uploadCheckpointBytes ?? candidate.uploadCheckpointBytes,
-                  sourceFingerprint: byId.get(taskId)?.sourceFingerprint ?? candidate.sourceFingerprint,
-                  pauseUnavailableReason: undefined,
-                };
-              }
-              if (!pauseIds.includes(candidate.id)) return candidate;
-              const result = byId.get(candidate.id);
-              if (result && !result.success && !isBenignPauseMiss(result.reason)) {
-                return {
-                  ...candidate,
-                  status: "paused" as const,
-                  speed: 0,
-                  pauseUnavailableReason: undefined,
-                };
-              }
-              return {
-                ...candidate,
-                status: "paused" as const,
-                speed: 0,
-                checkpointBytes: result?.checkpointBytes ?? candidate.checkpointBytes ?? candidate.transferredBytes,
-                resumeStage: result?.resumeStage ?? candidate.resumeStage,
-                downloadCheckpointBytes: result?.downloadCheckpointBytes ?? candidate.downloadCheckpointBytes,
-                uploadCheckpointBytes: result?.uploadCheckpointBytes ?? candidate.uploadCheckpointBytes,
-                sourceFingerprint: result?.sourceFingerprint ?? candidate.sourceFingerprint,
-              };
-            });
-            emit();
-            return;
-          }
-          // Single-file partial / hard fail: unpause streams we paused so work
-          // continues (match panel planPartialPauseRollback path).
-          const rollback = planPartialPauseRollback({
-            activeIds: pauseIds,
-            backendIds: pauseIds,
-            bridgeResults: pauseResults.map((row) => row.result),
-          });
-          for (const id of rollback.bridgeIdsToResume) {
-            try { await bridge.resumeTransfer?.(id); } catch { /* best-effort */ }
-          }
-          const hard = pauseResults.find(({ result }) =>
-            result && !result.success && !isBenignPauseMiss(result.reason),
-          )?.result;
-          const revertIds = new Set([taskId, ...pauseIds]);
-          tasks = tasks.map((candidate) => {
-            if (!revertIds.has(candidate.id)) return candidate;
-            // Intermediate "pausing" (and any premature "paused") must roll back.
-            if (
-              candidate.status !== "pausing"
-              && candidate.status !== "paused"
-              && candidate.id !== taskId
-            ) {
-              return candidate;
-            }
-            return {
-              ...candidate,
-              status: "transferring" as const,
-              pauseUnavailableReason: candidate.id === taskId
-                ? (hard?.reason ?? candidate.pauseUnavailableReason)
-                : candidate.pauseUnavailableReason,
-            };
-          });
+    // The transfer center can render before vault startup has installed the
+    // dedicated reconnect handler. Only wait when nothing else can take the
+    // job yet (no owner controller and no panel adopter).
+    if (
+      needsDedicatedReconnect
+      && !dedicatedResumeHandler
+      && !controller
+      && task
+      && !findAdopter(task)
+    ) {
+      await waitForDedicatedResumeHandler(taskId);
+      task = tasks.find((candidate) => candidate.id === taskId);
+      if (!task || task.status === "cancelled" || task.status === "completed") return;
+      // A panel may have registered while we waited for vault startup.
+      controller = resolveLiveController(taskId);
+    }
+    // Unified soft pause/resume — process-global, not tied to panel/terminal
+    // lifecycle. Controllers only sync local React lists after the store paints.
+    if (action === "pause" || action === "resume") {
+      const controlHost: TransferControlHost = {
+        getTasks: () => tasks,
+        setTasks: (next) => {
+          tasks = next;
           emit();
-          // Bridge was reachable — do not demote to interrupted (ghost restart path
-          // only applies when pauseTransfer is unavailable).
-          return;
+        },
+        getBridge: defaultTransferControlBridge,
+      };
+      const notifyOwners = () => {
+        for (const controls of controllers.values()) {
+          try { controls.syncOwnedTasks?.(); } catch { /* best-effort */ }
         }
-      } catch {
-        // Bridge unavailable (tests / non-Electron) — fall through.
-      }
-      // Dead "transferring" rows after restart have no backend handle. Demote
-      // them so pause-all / the UI stop claiming work is still active.
-      // Do not demote a row that was cancelled while pause was in flight.
-      const afterPause = tasks.find((candidate) => candidate.id === taskId);
-      if (afterPause?.status === "cancelled") return;
-      if (action === "pause" && task && ["transferring", "pausing", "pending", "queued"].includes(afterPause?.status ?? task.status)) {
-        const demoteIds = new Set([
-          taskId,
-          ...tasks.filter((candidate) => candidate.parentTaskId === taskId
-            && !["completed", "cancelled"].includes(candidate.status))
-            .map((candidate) => candidate.id),
-        ]);
-        // Stop backends immediately so streams do not finish under a demoted parent.
-        for (const id of demoteIds) {
-          try { await netcattyBridge.get()?.cancelTransfer?.(id); } catch { /* best-effort */ }
-        }
-        tasks = tasks.map((candidate) => demoteIds.has(candidate.id) ? {
-          ...candidate,
-          status: candidate.status === "completed" || candidate.status === "cancelled"
-            ? candidate.status
-            : "interrupted",
-          speed: 0,
-          phase: undefined,
-          reconnectRequired: true,
-          error: candidate.id === taskId
-            ? (candidate.error ?? "Transfer was interrupted. Resume to continue.")
-            : candidate.error,
-        } : candidate);
-        emit();
+      };
+
+      if (action === "pause") {
+        await softPauseTransfer(controlHost, taskId);
+        notifyOwners();
         return;
       }
+
+      // Soft-resume whenever a walk may still be alive, even if reconnectRequired
+      // was set spuriously. Dedicated only when soft-resume cannot rejoin.
+      const preferSoft = !needsDedicatedReconnect || isTransferWalkInFlight(taskId);
+      if (preferSoft) {
+        const handled = await softResumeTransfer(controlHost, taskId);
+        if (handled) {
+          notifyOwners();
+          return;
+        }
+        // Soft could not rejoin (dead walk + bridge miss). Never silent-return:
+        // demote so the hard reconnect / adopt path below can run even when a
+        // stale panel owner is still registered.
+        if (action === "resume") {
+          tasks = tasks.map((candidate) => candidate.id === taskId ? {
+            ...candidate,
+            status: "interrupted" as const,
+            reconnectRequired: true,
+            speed: 0,
+            phase: undefined,
+            error: candidate.error
+              ?? "Transfer session is no longer active. Resume will reconnect.",
+          } : candidate);
+          emit();
+          task = tasks.find((candidate) => candidate.id === taskId);
+          controller = undefined;
+          notifyOwners();
+        }
+      }
     }
+
     // Preferred path after app restart / closed server: open a dedicated SFTP
     // session from vault credentials and continue from the checkpoint. Does not
     // require any UI panel. Single files resume the stream; directories re-walk
     // the tree, skip completed children, and resume partial files.
+    const softFailedNeedsHard = action === "resume"
+      && !!task
+      && task.reconnectRequired === true
+      && task.status === "interrupted";
     if (
-      (!controller || needsDedicatedReconnect)
+      (!controller || needsDedicatedReconnect || softFailedNeedsHard)
       && action === "resume"
       && task
       && !task.conflict
@@ -464,6 +797,7 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
             speed: 0,
             phase: undefined,
             updatedAt: Date.now(),
+            lifecycleEpoch: undefined,
           };
         }
         // Re-home children (keep completed status for skip-on-resume).
@@ -471,6 +805,7 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
           ...candidate,
           ownerId: "dedicated-resume",
           updatedAt: Date.now(),
+          lifecycleEpoch: undefined,
         };
       });
       emit();
@@ -681,6 +1016,10 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
       const childIds = tasks
         .filter((candidate) => candidate.parentTaskId === taskId)
         .map((candidate) => candidate.id);
+      // Stop surviving processTransfer walks immediately (panel-local
+      // cancelledTasksRef is gone after unmount).
+      markTransferCancelledTree(taskId, childIds);
+      releaseTransferPauseTree(taskId, childIds);
       try {
         globalSftpTransferScheduler.cancel(taskId);
         for (const childId of childIds) globalSftpTransferScheduler.cancel(childId);
@@ -717,6 +1056,10 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
       emit();
       return;
     }
+    // pause/resume always handled above (unified soft-control or dedicated).
+    // Controllers remain for cancel/retry/prioritize when a live owner exists.
+    if (action === "pause" || action === "resume") return;
+    controller = resolveLiveController(taskId);
     if (!controller) return;
     await controller[action](taskId);
   };
@@ -731,33 +1074,152 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
       return tasks.filter((task) => task.ownerId === ownerId).map((task) => ({ ...task }));
     },
     publishOwner(ownerId, ownerTasks) {
+      const previousTasks = tasks;
+      let changed = false;
+      let persistImmediately = false;
       const incoming = new Map(ownerTasks.map((task) => [task.id, task]));
+      const previousPublished = lastPublishedByOwner.get(ownerId);
+      lastPublishedByOwner.set(ownerId, incoming);
       const existingIds = new Set(tasks.map((task) => task.id));
+      // Resolve parent status from the store first when runtime owns the walk
+      // (panel is view-only for live lifecycle), else prefer the panel snapshot.
+      const resolveParentStatus = (parentTaskId: string | undefined): TransferTask["status"] | undefined => {
+        if (!parentTaskId) return undefined;
+        const storeParent = tasks.find((candidate) => candidate.id === parentTaskId);
+        if (
+          storeParent
+          && (isTransferWalkInFlight(parentTaskId)
+            || isTransferPauseLatched(parentTaskId)
+            || storeParent.status === "paused"
+            || storeParent.status === "pausing")
+        ) {
+          return storeParent.status;
+        }
+        return incoming.get(parentTaskId)?.status ?? storeParent?.status;
+      };
       tasks = tasks.flatMap((task) => {
         // Tasks reassigned to dedicated-resume (or other owners) are not
         // clobbered by this panel's local snapshot.
         if (task.ownerId !== ownerId) return [task];
         const replacement = incoming.get(task.id);
-        if (!replacement) return [];
-        return [{ ...replacement, ownerId, updatedAt: replacement.updatedAt ?? Date.now() }];
+        if (!replacement) {
+          // Runtime-owned live walks keep their store row even when the panel
+          // unmounts and stops publishing (no orphan drop of in-flight work).
+          if (
+            isTransferWalkInFlight(task.id)
+            || (task.parentTaskId && isTransferWalkInFlight(task.parentTaskId))
+            || isTransferPauseLatched(task.id)
+            || (task.parentTaskId && isTransferPauseLatched(task.parentTaskId))
+            || task.status === "transferring"
+            || task.status === "pausing"
+            || task.status === "paused"
+            || task.status === "queued"
+            || task.status === "pending"
+          ) {
+            return [task];
+          }
+          changed = true;
+          persistImmediately = true;
+          return [];
+        }
+        // setTransfers keeps unchanged rows by reference. If this exact owner
+        // row was already published, the store may only be newer (for example
+        // from global progress), so leave it untouched without comparing every
+        // field of thousands of directory children.
+        if (previousPublished?.get(task.id) === replacement) return [task];
+        let merged = mergeOwnerPublishedTask(
+          task,
+          replacement,
+          ownerId,
+          resolveParentStatus(replacement.parentTaskId ?? task.parentTaskId),
+        );
+        // Runtime writer is authority for live walks: panel cannot roll lifecycle
+        // back past the process-global control epoch (soft pause/resume).
+        const runtimeOwned = isTransferWalkInFlight(task.id)
+          || (task.parentTaskId ? isTransferWalkInFlight(task.parentTaskId) : false)
+          || isTransferOrRootPauseLatched(task.parentTaskId ?? task.id, task.id);
+        if (runtimeOwned) {
+          const storeEpoch = Number.isFinite(task.lifecycleEpoch)
+            ? (task.lifecycleEpoch as number)
+            : getTransferControlEpoch(task.parentTaskId ?? task.id);
+          const panelEpoch = Number.isFinite(replacement.lifecycleEpoch)
+            ? (replacement.lifecycleEpoch as number)
+            : -1;
+          if (storeEpoch > panelEpoch) {
+            merged = {
+              ...merged,
+              status: task.status,
+              lifecycleEpoch: task.lifecycleEpoch ?? merged.lifecycleEpoch,
+              speed: (task.status === "paused" || task.status === "pausing") ? 0 : merged.speed,
+              transferredBytes: Math.max(task.transferredBytes ?? 0, merged.transferredBytes ?? 0),
+              checkpointBytes: Math.max(task.checkpointBytes ?? 0, merged.checkpointBytes ?? 0),
+            };
+          }
+        }
+        if (areTransferTasksEquivalent(task, merged)) return [task];
+        if (
+          merged.sourceFingerprint !== task.sourceFingerprint
+          || (
+            merged.status !== task.status
+            && (merged.status === "paused" || merged.status === "pausing")
+          )
+          || (
+            merged.status !== task.status
+            && !merged.parentTaskId
+            && (merged.status === "completed" || merged.status === "failed" || merged.status === "cancelled")
+          )
+        ) {
+          persistImmediately = true;
+        }
+        changed = true;
+        return [merged];
       });
       for (const task of ownerTasks) {
         // Never re-introduce a panel row that already exists under another owner
         // (e.g. completed via dedicated resume while the panel still holds interrupted).
         if (!existingIds.has(task.id)) {
-          tasks.push({ ...task, ownerId, updatedAt: task.updatedAt ?? Date.now() });
+          const parentStatus = resolveParentStatus(task.parentTaskId);
+          const parentHoldsPause = parentStatus === "paused" || parentStatus === "pausing";
+          const seeded = { ...task, ownerId, updatedAt: task.updatedAt ?? Date.now() };
+          if (
+            parentHoldsPause
+            && !["completed", "cancelled", "failed", "paused", "pausing"].includes(seeded.status)
+          ) {
+            seeded.status = parentStatus === "pausing" ? "pausing" : "paused";
+            seeded.speed = 0;
+          }
+          tasks.push(seeded);
+          if (
+            seeded.sourceFingerprint !== undefined
+            || seeded.status === "paused"
+            || seeded.status === "pausing"
+            || (!seeded.parentTaskId && (
+              seeded.status === "completed" || seeded.status === "failed" || seeded.status === "cancelled"
+            ))
+          ) {
+            persistImmediately = true;
+          }
+          changed = true;
         }
       }
-      emit();
+      if (!changed) {
+        tasks = previousTasks;
+        return;
+      }
+      emit(persistImmediately);
     },
     registerOwner(ownerId, controls) {
       controllers.set(ownerId, controls);
       return () => {
-        if (controllers.get(ownerId) === controls) controllers.delete(ownerId);
+        if (controllers.get(ownerId) === controls) {
+          controllers.delete(ownerId);
+          lastPublishedByOwner.delete(ownerId);
+        }
       };
     },
     setDedicatedResumeHandler(handler) {
       dedicatedResumeHandler = handler;
+      notifyDedicatedResumeWaiters();
     },
     patchTask(taskId, updates) {
       let changed = false;
@@ -767,17 +1229,93 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
         if (task.status === "cancelled") return task;
         // Dedicated-owned rows may move pending → transferring while a panel
         // still holds a local interrupted copy that is no longer authoritative.
+        // Force-quit continue rehomes to dedicated-resume first; allow that owner
+        // (and explicit ownerId updates in the patch) to leave interrupted.
+        const nextOwner = updates.ownerId ?? task.ownerId;
+        const currentEpoch = Number.isFinite(task.lifecycleEpoch)
+          ? (task.lifecycleEpoch as number)
+          : -1;
+        const incomingEpoch = Number.isFinite(updates.lifecycleEpoch)
+          ? (updates.lifecycleEpoch as number)
+          : -1;
+        const explicitResume = updates.status === "transferring"
+          && (incomingEpoch > currentEpoch
+            || (incomingEpoch >= currentEpoch && updates.lifecycleEpoch !== undefined)
+            || nextOwner === "dedicated-resume"
+            || task.ownerId === "dedicated-resume");
         if (
-          task.ownerId !== "dedicated-resume"
+          nextOwner !== "dedicated-resume"
+          && task.ownerId !== "dedicated-resume"
           && (task.status === "paused" || task.status === "interrupted")
           && (updates.status === "transferring" || updates.status === "pending" || updates.status === "completed")
+          && !explicitResume
         ) {
           return task;
         }
         changed = true;
-        return { ...task, ...updates, updatedAt: Date.now() };
+        const merged = { ...task, ...updates, updatedAt: Date.now() };
+        // Soft-drain / walk progress must not move the visible bar after Pause.
+        // Latch or paused/pausing freezes transferredBytes/speed unless this patch
+        // is an explicit resume (transferring + epoch, or dedicated-resume).
+        const pauseHeld = isTransferOrRootPauseLatched(task.parentTaskId ?? task.id, task.id)
+          || isTransferPauseLatched(task.id)
+          || task.status === "paused"
+          || task.status === "pausing"
+          || (!!task.parentTaskId && (
+            isTransferPauseLatched(task.parentTaskId)
+            || (() => {
+              const parent = tasks.find((candidate) => candidate.id === task.parentTaskId);
+              return parent?.status === "paused" || parent?.status === "pausing";
+            })()
+          ));
+        if (pauseHeld && !explicitResume) {
+          // Keep lifecycle at paused/pausing; allow checkpoint metadata only.
+          if (task.status === "pausing" || task.status === "paused") {
+            merged.status = task.status;
+          } else {
+            merged.status = "paused";
+          }
+          merged.transferredBytes = task.transferredBytes;
+          merged.speed = 0;
+          if (updates.checkpointBytes !== undefined) {
+            merged.checkpointBytes = Math.max(
+              task.checkpointBytes ?? 0,
+              Number(updates.checkpointBytes) || 0,
+            );
+          } else {
+            merged.checkpointBytes = task.checkpointBytes;
+          }
+          if (updates.resumeStage !== undefined) merged.resumeStage = updates.resumeStage;
+          if (updates.downloadCheckpointBytes !== undefined) {
+            merged.downloadCheckpointBytes = updates.downloadCheckpointBytes;
+          }
+          if (updates.uploadCheckpointBytes !== undefined) {
+            merged.uploadCheckpointBytes = updates.uploadCheckpointBytes;
+          }
+          if (updates.sourceFingerprint !== undefined) {
+            merged.sourceFingerprint = updates.sourceFingerprint;
+          }
+          return merged;
+        }
+        // Dedicated-resume / dual-writer progress must never roll the bar back
+        // while the row is still live (force-quit continue freezes at checkpoint
+        // if a late lower sample wins).
+        if (
+          updates.transferredBytes !== undefined
+          && !["completed", "cancelled", "failed"].includes(merged.status)
+          && (updates.status === "transferring" || merged.status === "transferring" || merged.status === "pausing")
+        ) {
+          merged.transferredBytes = Math.max(task.transferredBytes ?? 0, Number(updates.transferredBytes) || 0);
+        }
+        if (
+          updates.checkpointBytes !== undefined
+          && !["completed", "cancelled", "failed"].includes(merged.status)
+        ) {
+          merged.checkpointBytes = Math.max(task.checkpointBytes ?? 0, Number(updates.checkpointBytes) || 0);
+        }
+        return merged;
       });
-      if (changed) emit();
+      if (changed) emit(updates.sourceFingerprint !== undefined);
     },
     upsertTasks(incoming) {
       if (incoming.length === 0) return;
@@ -852,6 +1390,12 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
                 || candidate.status === "transferring"))
             .map((candidate) => candidate.id);
 
+          // Always clear process-global latches + control epoch so walks wake and
+          // late soft-drain / pauseWatch cannot re-pause streams. Do not stamp
+          // control epoch as task.lifecycleEpoch (bridge-aligned only).
+          bumpTransferControlEpoch(taskId);
+          releaseTransferPauseTree(taskId, childIds);
+
           if (task.ownerId === "dedicated-resume" && task.isDirectory) {
             const bridge = netcattyBridge.get();
             // Cancel soft-paused child streams so the held walk settles. When a
@@ -886,6 +1430,17 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
             const successIds = resumeIds.filter((_, index) => results[index]?.success);
             if (successIds.length > 0) {
               const resumed = new Set(successIds);
+              // Align with softResumeTransfer: prefer bridge lifecycleEpoch; clear
+              // if omitted so main-process progress is not stale-dropped.
+              let bridgeEpoch: number | undefined;
+              for (let index = 0; index < results.length; index += 1) {
+                if (!results[index]?.success) continue;
+                const epoch = (results[index] as { lifecycleEpoch?: number } | undefined)?.lifecycleEpoch;
+                if (!Number.isFinite(epoch)) continue;
+                bridgeEpoch = bridgeEpoch === undefined
+                  ? (epoch as number)
+                  : Math.max(bridgeEpoch, epoch as number);
+              }
               tasks = tasks.map((candidate) => {
                 if (candidate.id === taskId || resumed.has(candidate.id)) {
                   return {
@@ -895,6 +1450,7 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
                     reconnectRequired: false,
                     pauseUnavailableReason: undefined,
                     phase: undefined,
+                    lifecycleEpoch: bridgeEpoch,
                   };
                 }
                 return candidate;
@@ -948,6 +1504,7 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
           reconnectRequired: true,
           speed: 0,
           endTime: undefined,
+          lifecycleEpoch: undefined,
         } : candidate);
         emit();
         try {
@@ -963,7 +1520,7 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
       }
       await this.resume(taskId);
     },
-    prioritize(taskId) {
+    async prioritize(taskId) {
       const ownerId = findOwner(taskId);
       const controller = controllers.get(ownerId ?? "");
       if (controller) {
@@ -1018,13 +1575,14 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
       await controller?.resolveConflict?.(taskId, action, applyToAll);
     },
     dismiss(taskId) {
-      const ownerId = findOwner(taskId);
+      const task = tasks.find((candidate) => candidate.id === taskId);
+      const ownerId = task?.ownerId;
       const controller = ownerId ? controllers.get(ownerId) : undefined;
       if (controller) {
-        controller.dismiss(taskId);
+        controller.dismiss(taskId, task);
       }
       tasks = tasks.filter((task) => task.id !== taskId && task.parentTaskId !== taskId);
-      emit();
+      emit(true);
     },
     clearTerminal(status) {
       const terminal = new Set<TransferTask["status"]>(["completed", "failed", "cancelled"]);
@@ -1038,12 +1596,10 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
         && (status === undefined || task.status === status)
         && !(task.parentTaskId && unfinishedParents.has(task.parentTaskId)),
       );
-      for (const task of removing) {
-        controllers.get(task.ownerId ?? "")?.dismiss(task.id);
-      }
       const removingIds = new Set(removing.map((task) => task.id));
       tasks = tasks.filter((task) => !removingIds.has(task.id) && !removingIds.has(task.parentTaskId ?? ""));
-      emit();
+      emit(true);
+      notifyOwnersOfPrunedTasks(removing);
     },
     markReconnectRequired(taskId, error) {
       tasks = tasks.map((task) => task.id === taskId ? {
@@ -1052,6 +1608,7 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
         error: error ?? "The original server connection is unavailable",
         reconnectRequired: true,
         speed: 0,
+        lifecycleEpoch: undefined,
       } : task);
       emit();
     },
@@ -1060,6 +1617,13 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
     },
     ingestBackgroundEvent(event) {
       const existing = tasks.find((task) => task.id === event.transferId);
+      const persistImmediately = event.type === "paused"
+        || event.type === "pausing"
+        || (
+          !existing?.parentTaskId
+          && (event.type === "completed" || event.type === "failed" || event.type === "cancelled")
+        )
+        || (event.sourceFingerprint !== undefined && event.sourceFingerprint !== existing?.sourceFingerprint);
       const terminal = existing
         && (existing.status === "cancelled" || existing.status === "completed" || existing.status === "failed");
       // Never resurrect a finished/cancelled agent row with late queued/progress.
@@ -1069,17 +1633,63 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
           // Keep existing terminal state (prefer cancelled over late completed).
           return;
         }
-        if (event.type === "queued" || event.type === "started" || event.type === "progress" || event.type === "resumed" || event.type === "paused") {
+        if (event.type === "queued" || event.type === "started" || event.type === "progress" || event.type === "pausing" || event.type === "resumed" || event.type === "paused") {
           return;
         }
       }
-      if ((event.type === "queued" || event.type === "started") && !existing) {
+      if (existing && event.type === "progress") {
+        const parent = existing.parentTaskId
+          ? tasks.find((task) => task.id === existing.parentTaskId)
+          : undefined;
+        const pauseHeld = existing.status === "paused"
+          || existing.status === "pausing"
+          || parent?.status === "paused"
+          || parent?.status === "pausing"
+          || isTransferOrRootPauseLatched(existing.parentTaskId ?? existing.id, existing.id)
+          || isTransferPauseLatched(existing.id);
+        const lifecycleStatus = event.lifecycleState === "paused"
+          ? "paused"
+          : event.lifecycleState === "pausing"
+            ? "pausing"
+            : event.lifecycleState === "queued"
+              ? "queued"
+              : "transferring";
+        const sameLifecycle = event.lifecycleState === undefined
+          ? existing.status === "transferring"
+          : existing.status === lifecycleStatus;
+        const sameOptional = <T>(incoming: T | undefined, current: T | undefined) => (
+          incoming === undefined || incoming === current
+        );
+        if (
+          !pauseHeld
+          && sameLifecycle
+          && existing.error === undefined
+          && existing.endTime === undefined
+          && sameOptional(event.transferred, existing.transferredBytes)
+          && sameOptional(event.totalBytes, existing.totalBytes)
+          && sameOptional(event.speed, existing.speed)
+          && sameOptional(event.checkpointBytes, existing.checkpointBytes)
+          && sameOptional(event.resumeStage, existing.resumeStage)
+          && sameOptional(event.downloadCheckpointBytes, existing.downloadCheckpointBytes)
+          && sameOptional(event.uploadCheckpointBytes, existing.uploadCheckpointBytes)
+          && sameOptional(event.sourceFingerprint, existing.sourceFingerprint)
+          && sameOptional(event.phase, existing.phase)
+          && sameOptional(event.lifecycleEpoch, existing.lifecycleEpoch)
+        ) {
+          return;
+        }
+      }
+      if ((event.type === "queued" || event.type === "started" || event.type === "progress") && !existing) {
         const sourcePath = event.sourcePath ?? "";
         const targetPath = event.targetPath ?? "";
         tasks.push({
           id: event.transferId,
-          ownerId: "background-agent",
-          fileName: targetPath.split(/[\\/]/).pop() || sourcePath.split(/[\\/]/).pop() || event.transferId,
+          ownerId: event.controlKind === "compressed-upload" ? "background-transfer" : "background-agent",
+          fileName: event.fileName ?? (
+            targetPath.split(/[\\/]/).pop()
+            || sourcePath.split(/[\\/]/).pop()
+            || event.transferId
+          ),
           sourcePath,
           targetPath,
           sourceConnectionId: event.direction === "upload" ? "local" : (event.sessionId ?? "agent"),
@@ -1088,45 +1698,167 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
           targetHostId: event.targetHostId,
           direction: event.direction ?? "upload",
           status: event.type === "queued" ? "queued" : "transferring",
-          totalBytes: 0,
-          transferredBytes: 0,
-          speed: 0,
+          totalBytes: event.totalBytes ?? 0,
+          transferredBytes: event.transferred ?? 0,
+          speed: event.speed ?? 0,
           startTime: event.startedAt ?? Date.now(),
-          isDirectory: false,
+          isDirectory: event.isDirectory ?? false,
           origin: "agent",
           background: true,
           resumable: true,
+          controlKind: event.controlKind,
+          phase: event.phase,
+          lifecycleEpoch: event.lifecycleEpoch,
         });
       } else if (existing && (event.type === "queued" || event.type === "started")) {
-        tasks = tasks.map((task) => task.id === event.transferId ? {
-          ...task,
-          status: event.type === "queued" ? "queued" : "transferring",
-          error: undefined,
-          endTime: undefined,
-        } : task);
+        tasks = tasks.map((task) => {
+          if (task.id !== event.transferId) return task;
+          const currentEpoch = Number.isFinite(task.lifecycleEpoch) ? (task.lifecycleEpoch as number) : -1;
+          const incomingEpoch = Number.isFinite(event.lifecycleEpoch) ? (event.lifecycleEpoch as number) : -1;
+          const acceptsLifecycle = task.lifecycleEpoch === undefined
+            ? true
+            : event.lifecycleEpoch !== undefined && incomingEpoch >= currentEpoch;
+          return {
+            ...task,
+            status: acceptsLifecycle
+              ? (event.type === "queued" ? "queued" : "transferring")
+              : task.status,
+            error: acceptsLifecycle ? undefined : task.error,
+            endTime: acceptsLifecycle ? undefined : task.endTime,
+            fileName: event.fileName ?? task.fileName,
+            totalBytes: event.totalBytes ?? task.totalBytes,
+            isDirectory: event.isDirectory ?? task.isDirectory,
+            controlKind: event.controlKind ?? task.controlKind,
+            phase: event.phase ?? task.phase,
+            lifecycleEpoch: acceptsLifecycle && event.lifecycleEpoch !== undefined
+              ? event.lifecycleEpoch
+              : task.lifecycleEpoch,
+          };
+        });
       } else if (existing && event.type === "progress") {
-        tasks = tasks.map((task) => task.id === event.transferId ? {
-          ...task,
-          transferredBytes: event.transferred ?? task.transferredBytes,
-          totalBytes: event.totalBytes ?? task.totalBytes,
-          speed: event.speed ?? task.speed,
-          checkpointBytes: event.checkpointBytes ?? task.checkpointBytes,
-          resumeStage: event.resumeStage ?? task.resumeStage,
-          downloadCheckpointBytes: event.downloadCheckpointBytes ?? task.downloadCheckpointBytes,
-          uploadCheckpointBytes: event.uploadCheckpointBytes ?? task.uploadCheckpointBytes,
-          sourceFingerprint: event.sourceFingerprint ?? task.sourceFingerprint,
-        } : task);
-      } else if (existing && (event.type === "paused" || event.type === "resumed")) {
-        tasks = tasks.map((task) => task.id === event.transferId ? {
-          ...task,
-          status: event.type === "paused" ? "paused" : "transferring",
-          speed: event.type === "paused" ? 0 : task.speed,
-          checkpointBytes: event.checkpointBytes ?? task.checkpointBytes,
-          resumeStage: event.resumeStage ?? task.resumeStage,
-          downloadCheckpointBytes: event.downloadCheckpointBytes ?? task.downloadCheckpointBytes,
-          uploadCheckpointBytes: event.uploadCheckpointBytes ?? task.uploadCheckpointBytes,
-          sourceFingerprint: event.sourceFingerprint ?? task.sourceFingerprint,
-        } : task);
+        tasks = tasks.map((task) => {
+          if (task.id !== event.transferId) return task;
+          // Main-process progress must re-open a live bar even if the panel is
+          // hidden and no longer painting "transferring" via React callbacks.
+          const nextTransferred = event.transferred ?? task.transferredBytes;
+          const currentEpoch = Number.isFinite(task.lifecycleEpoch) ? (task.lifecycleEpoch as number) : -1;
+          const incomingEpoch = Number.isFinite(event.lifecycleEpoch) ? (event.lifecycleEpoch as number) : -1;
+          const staleLifecycle = task.lifecycleEpoch !== undefined
+            && (event.lifecycleEpoch === undefined || incomingEpoch < currentEpoch);
+          if (staleLifecycle) return task;
+          const acceptsLifecycle = incomingEpoch >= currentEpoch;
+          const lifecycleStatus = event.lifecycleState === "paused"
+            ? "paused"
+            : event.lifecycleState === "pausing"
+              ? "pausing"
+              : event.lifecycleState === "queued"
+                ? "queued"
+                : "transferring";
+          // Soft-drain continues writing after Pause, but the bar must freeze as
+          // soon as the user asked to pause. Only an explicit resume (higher
+          // epoch + transferring) may move bytes again.
+          // Also freeze children when the folder parent is paused/latched — otherwise
+          // soft-drain progress re-opens them as "transferring" and the collapsed
+          // current-file row blinks in and out under an already-paused parent.
+          const parentRow = task.parentTaskId
+            ? tasks.find((candidate) => candidate.id === task.parentTaskId)
+            : undefined;
+          const parentHoldsPause = !!parentRow && (
+            parentRow.status === "paused"
+            || parentRow.status === "pausing"
+            || isTransferPauseLatched(parentRow.id)
+          );
+          const selfLatched = isTransferOrRootPauseLatched(
+            task.parentTaskId ?? task.id,
+            task.id,
+          ) || isTransferPauseLatched(task.id);
+          const uiPauseLatched = task.status === "paused"
+            || task.status === "pausing"
+            || parentHoldsPause
+            || selfLatched;
+          const explicitResume = lifecycleStatus === "transferring"
+            && event.lifecycleEpoch !== undefined
+            && incomingEpoch > currentEpoch;
+          if (uiPauseLatched && !explicitResume) {
+            const nextCheckpoint = Math.max(
+              task.checkpointBytes ?? 0,
+              Number(event.checkpointBytes) || 0,
+            );
+            const holdStatus = event.lifecycleState === "paused" && acceptsLifecycle
+              ? "paused" as const
+              : (task.status === "paused" || task.status === "pausing"
+                ? task.status
+                : parentHoldsPause
+                  ? (parentRow!.status === "pausing" ? "pausing" as const : "paused" as const)
+                  : "pausing" as const);
+            return {
+              ...task,
+              // Keep pausing until backend confirms paused; never flip back to
+              // transferring from soft-drain progress.
+              status: holdStatus,
+              speed: 0,
+              checkpointBytes: nextCheckpoint || task.checkpointBytes,
+              resumeStage: event.resumeStage ?? task.resumeStage,
+              downloadCheckpointBytes: event.downloadCheckpointBytes ?? task.downloadCheckpointBytes,
+              uploadCheckpointBytes: event.uploadCheckpointBytes ?? task.uploadCheckpointBytes,
+              sourceFingerprint: event.sourceFingerprint ?? task.sourceFingerprint,
+              updatedAt: Date.now(),
+              lifecycleEpoch: acceptsLifecycle && event.lifecycleEpoch !== undefined
+                ? event.lifecycleEpoch
+                : task.lifecycleEpoch,
+            };
+          }
+          const nextStatus = event.lifecycleEpoch !== undefined && acceptsLifecycle
+            ? lifecycleStatus
+            : task.lifecycleEpoch === undefined
+              ? ((task.status === "paused" || task.status === "pausing") ? task.status : "transferring")
+              : task.status;
+          const keepPaused = nextStatus === "paused" || nextStatus === "pausing";
+          return {
+            ...task,
+            status: nextStatus,
+            transferredBytes: keepPaused ? task.transferredBytes : nextTransferred,
+            totalBytes: event.totalBytes ?? task.totalBytes,
+            speed: keepPaused ? 0 : (event.speed ?? task.speed),
+            checkpointBytes: event.checkpointBytes ?? task.checkpointBytes,
+            resumeStage: event.resumeStage ?? task.resumeStage,
+            downloadCheckpointBytes: event.downloadCheckpointBytes ?? task.downloadCheckpointBytes,
+            uploadCheckpointBytes: event.uploadCheckpointBytes ?? task.uploadCheckpointBytes,
+            sourceFingerprint: event.sourceFingerprint ?? task.sourceFingerprint,
+            phase: event.phase ?? task.phase,
+            error: keepPaused ? task.error : undefined,
+            endTime: undefined,
+            updatedAt: Date.now(),
+            lifecycleEpoch: acceptsLifecycle && event.lifecycleEpoch !== undefined
+              ? event.lifecycleEpoch
+              : task.lifecycleEpoch,
+          };
+        });
+      } else if (existing && (event.type === "pausing" || event.type === "paused" || event.type === "resumed")) {
+        tasks = tasks.map((task) => {
+          if (task.id !== event.transferId) return task;
+          const currentEpoch = Number.isFinite(task.lifecycleEpoch) ? (task.lifecycleEpoch as number) : -1;
+          const incomingEpoch = Number.isFinite(event.lifecycleEpoch) ? (event.lifecycleEpoch as number) : -1;
+          const acceptsLifecycle = task.lifecycleEpoch === undefined
+            ? true
+            : event.lifecycleEpoch !== undefined && incomingEpoch >= currentEpoch;
+          return {
+            ...task,
+            status: acceptsLifecycle
+              ? (event.type === "pausing" ? "pausing" : event.type === "paused" ? "paused" : "transferring")
+              : task.status,
+            speed: acceptsLifecycle && event.type !== "resumed" ? 0 : task.speed,
+            checkpointBytes: event.checkpointBytes ?? task.checkpointBytes,
+            resumeStage: event.resumeStage ?? task.resumeStage,
+            downloadCheckpointBytes: event.downloadCheckpointBytes ?? task.downloadCheckpointBytes,
+            uploadCheckpointBytes: event.uploadCheckpointBytes ?? task.uploadCheckpointBytes,
+            sourceFingerprint: event.sourceFingerprint ?? task.sourceFingerprint,
+            phase: event.phase ?? task.phase,
+            lifecycleEpoch: acceptsLifecycle && event.lifecycleEpoch !== undefined
+              ? event.lifecycleEpoch
+              : task.lifecycleEpoch,
+          };
+        });
       } else if (existing && event.type !== "started") {
         tasks = tasks.map((task) => task.id === event.transferId ? {
           ...task,
@@ -1136,7 +1868,7 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
           speed: 0,
         } : task);
       }
-      emit();
+      emit(persistImmediately);
     },
   };
 }
@@ -1145,7 +1877,7 @@ const browserPersistence: StorePersistence | undefined = typeof globalThis.local
   ? undefined
   : {
       read: () => globalThis.localStorage.getItem(STORAGE_KEY_SFTP_TRANSFER_CENTER),
-      write: (value) => globalThis.localStorage.setItem(STORAGE_KEY_SFTP_TRANSFER_CENTER, value),
+      write: (value) => { localStorageAdapter.writeString(STORAGE_KEY_SFTP_TRANSFER_CENTER, value); },
     };
 
 export const sftpTransferCenterStore = createSftpTransferCenterStore(browserPersistence);

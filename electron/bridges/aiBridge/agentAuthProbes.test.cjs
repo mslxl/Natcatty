@@ -186,28 +186,26 @@ test("probeCursorCliAuth: prefers cursor-agent and parses authenticated JSON", (
   assert.equal(r.binPath, "/bin/cursor-agent");
 });
 
-test("probeCursorCliAuth: skips non-Cursor agent then uses cursor-shaped agent binary", () => {
+test("probeCursorCliAuth: does not fall back to bare agent binary", () => {
   const statusCalls = [];
+  const resolveCalls = [];
   const r = probeCursorCliAuth({
-    resolveBinary: (name) => (name === "cursor-agent"
-      ? "/usr/local/bin/grok-agent-shim"
-      : name === "agent"
-        ? "/bin/agent"
-        : null),
+    resolveBinary: (name) => {
+      resolveCalls.push(name);
+      return name === "agent" ? "/bin/agent" : null;
+    },
     runStatus: (bin) => {
       statusCalls.push(bin);
-      if (bin.includes("grok")) {
-        return { exitCode: 1, stdout: "error: unexpected argument '--format'", stderr: "" };
-      }
       return {
         exitCode: 0,
         stdout: JSON.stringify({ isAuthenticated: true, userInfo: { email: "a@b.c" } }),
       };
     },
   });
-  assert.deepEqual(statusCalls, ["/usr/local/bin/grok-agent-shim", "/bin/agent"]);
-  assert.equal(r.authenticated, true);
-  assert.equal(r.binPath, "/bin/agent");
+  assert.deepEqual(resolveCalls, ["cursor-agent"]);
+  assert.deepEqual(statusCalls, []);
+  assert.equal(r.authenticated, false);
+  assert.equal(r.binPath, null);
 });
 
 test("probeCursorCliAuth: unauthenticated JSON -> not authenticated but keeps binPath", () => {
@@ -234,7 +232,7 @@ test("probeCursorCliAuth: missing binary -> not authenticated", () => {
 
 test("probeCursorCliAuth: status command failure -> not authenticated", () => {
   const r = probeCursorCliAuth({
-    resolveBinary: () => "/bin/agent",
+    resolveBinary: () => "/bin/cursor-agent",
     runStatus: () => ({ exitCode: 1, stdout: "", stderr: "boom" }),
   });
   assert.equal(r.authenticated, false);

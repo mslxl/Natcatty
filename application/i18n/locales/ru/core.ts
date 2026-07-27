@@ -650,6 +650,26 @@ export const ruCoreMessages: Messages = {
   'settings.terminal.rendering.renderer.desc': 'Выберите технологию рендеринга терминала. В режиме "Авто" на устройствах с малым объёмом памяти будет использоваться DOM. Изменения применяются к новым терминальным сессиям.',
   'settings.terminal.rendering.auto': 'Авто',
 
+  // Settings > Terminal > Inline Images
+  'settings.terminal.section.inlineImages': 'Встроенные изображения',
+  'settings.terminal.inlineImages.enabled': 'Отображать встроенные изображения',
+  'settings.terminal.inlineImages.enabled.desc': 'Показывать настоящие изображения, которые выводят удалённые программы (kitten icat, chafa, предпросмотр в файловых менеджерах и TUI). Изменения применяются к новым терминальным сессиям.',
+  'settings.terminal.inlineImages.kitty': 'Графический протокол Kitty',
+  'settings.terminal.inlineImages.kitty.desc': 'Принимать графические последовательности Kitty, включая режим direct/stream по SSH.',
+  'settings.terminal.inlineImages.sixel': 'SIXEL',
+  'settings.terminal.inlineImages.sixel.desc': 'Принимать графику SIXEL, которую используют img2sixel, mpv, gnuplot и другие инструменты в стиле DEC.',
+  'settings.terminal.inlineImages.iip': 'Протокол встроенных изображений iTerm',
+  'settings.terminal.inlineImages.iip.desc': 'Принимать последовательности OSC 1337 из iTerm2 (PNG, JPEG, первый кадр GIF).',
+  'settings.terminal.inlineImages.storageLimit': 'Кэш изображений на терминал',
+  'settings.terminal.inlineImages.storageLimit.desc': 'Сколько памяти терминал может занимать декодированными изображениями до вытеснения самых старых (8–512 МБ).',
+  'settings.terminal.inlineImages.maxMegapixels': 'Максимальный размер изображения',
+  'settings.terminal.inlineImages.maxMegapixels.desc': 'Наибольшее изображение, которое будет декодировано; более крупные отбрасываются без изменения буфера терминала (1–64 Мпикс, 16 Мпикс — это 4096 × 4096).',
+  'settings.terminal.inlineImages.sequenceLimit': 'Максимальный размер последовательности',
+  'settings.terminal.inlineImages.sequenceLimit.desc': 'Наибольшая escape-последовательность изображения, принимаемая до начала декодирования (1–64 МБ).',
+  'settings.terminal.inlineImages.unit.mb': 'МБ',
+  'settings.terminal.inlineImages.unit.megapixels': 'Мпикс',
+  'settings.terminal.inlineImages.hibernateNote': 'Вкладки, показавшие встроенное изображение, сохраняют свой рендерер и не уходят в спящий режим, потому что снимок восстанавливает только текст.',
+
   // Settings > Terminal > Workspace Focus Indicator
   'settings.terminal.section.workspaceFocus': 'Индикатор фокуса рабочей области',
   'settings.terminal.workspaceFocus.style': 'Стиль индикатора фокуса',

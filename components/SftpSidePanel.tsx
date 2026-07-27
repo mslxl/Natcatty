@@ -10,11 +10,16 @@
  * Used in TerminalLayer to provide SFTP alongside terminal sessions.
  */
 
-import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import { SftpSidePanelDeferredMount } from "./SftpSidePanelDeferredMount";
 import { formatHostPort } from "../domain/host";
 import { useI18n } from "../application/i18n/I18nProvider";
 import { useSftpState } from "../application/state/useSftpState";
+import { useSettingsState } from "../application/state/useSettingsState";
+import {
+  useReportSftpTransferOwnerActivity,
+  useWarmSftpTransferPool,
+} from "../application/state/sftp/useSftpTransferLifecycle";
 import { registerEditorSftpWriterScoped } from "../application/state/editorSftpBridge";
 import { editorTabStore } from "../application/state/editorTabStore";
 import { releaseEditorTabSaveCoordinator } from "../application/state/editorTabSave";
@@ -54,6 +59,7 @@ import {
 import {
   connectionKeyMatchesHost,
   findReusableSftpSidePanelTab,
+  shouldAcceptPendingSftpUpload,
   shouldResetSftpSidePanelSourceSession,
   shouldSkipSftpSidePanelAutoConnect,
 } from "./sftp/sftpSidePanelAutoConnect";
@@ -147,6 +153,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   terminalSettings,
 }) => {
   const { t } = useI18n();
+  const { sftpTransferPoolIdleTtlMs } = useSettingsState();
   const hostWriteSource = writableHosts ?? hosts;
   const connectedHosts = useMemo(() => {
     const hostsById = new Map<string, Host>(
@@ -154,6 +161,10 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     );
     return listSftpConnectedHosts(sessions, hostsById);
   }, [hosts, sessions]);
+
+  const resolveTransferSourceSessionId = useCallback((hostId: string) => {
+    return connectedHosts.find((entry) => entry.host.id === hostId)?.sessionId;
+  }, [connectedHosts]);
 
   const fileWatchHandlers = useMemo(() => ({
     onFileWatchSynced: (payload: { remotePath: string }) => {
@@ -179,7 +190,20 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     terminalSettings,
     knownHosts,
     onAddKnownHost,
-  }), [fileWatchHandlers, isVisible, transferOwnerId, sftpUseCompressedUpload, sftpShowHiddenFiles, terminalSettings, knownHosts, onAddKnownHost]);
+    resolveTransferSourceSessionId,
+    transferPoolIdleTtlMs: sftpTransferPoolIdleTtlMs,
+  }), [
+    fileWatchHandlers,
+    isVisible,
+    transferOwnerId,
+    sftpUseCompressedUpload,
+    sftpShowHiddenFiles,
+    terminalSettings,
+    knownHosts,
+    onAddKnownHost,
+    resolveTransferSourceSessionId,
+    sftpTransferPoolIdleTtlMs,
+  ]);
 
   const sftp = useSftpState(hosts, keys, identities, sftpOptions);
   const {
@@ -196,6 +220,14 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
 
   const sftpRef = useRef(sftp);
   sftpRef.current = sftp;
+
+  useWarmSftpTransferPool({
+    hostIds: connectedHosts.map((entry) => entry.host.id),
+    activeHostId: activeHost?.protocol === "serial" ? undefined : activeHost?.id,
+    warmTransferPoolForHost: sftp.warmTransferPoolForHost,
+  });
+
+  const { getConnectionCacheKey, leftPane } = sftp;
 
   useEffect(() => {
     /** Per-task locks so resume-all can prepare multiple transfers sequentially. */
@@ -300,20 +332,11 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     return () => window.removeEventListener("netcatty:prepare-sftp-transfer-resume", handler);
   }, [hosts, transferOwnerId]);
 
-  // Report via a ref so callback identity churn never re-runs a cleanup that
-  // spuriously zeros the parent's active-transfer count mid-transfer (that
-  // would unmount the retained owner and abort live work).
-  const onActiveTransfersChangeRef = useRef(onActiveTransfersChange);
-  onActiveTransfersChangeRef.current = onActiveTransfersChange;
-
-  useLayoutEffect(() => {
-    onActiveTransfersChangeRef.current?.(sftp.activeTransfersCount);
-  }, [sftp.activeTransfersCount]);
-
-  useEffect(() => () => {
-    // True unmount only — owner is going away; allow parent to release retain.
-    onActiveTransfersChangeRef.current?.(0);
-  }, []);
+  useReportSftpTransferOwnerActivity({
+    ownerId: transferOwnerId,
+    activeTransfersCount: sftp.activeTransfersCount,
+    onActiveTransfersChange,
+  });
 
   // Register this instance's writeTextFileByConnection with the editor bridge
   // so editor tabs promoted from SFTP files opened in a terminal side panel
@@ -489,7 +512,8 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
       s.selectTab("left", existingTab.id);
       // selectTab does not update reconnect metadata; keep lastConnectedHost
       // aligned with the tab we just activated so channel drops rebind correctly.
-      s.setLastConnectedHost?.("left", activeHost);
+      // Pass tab id explicitly — selectTab has not flushed activeTabId yet.
+      s.setLastConnectedHost?.("left", activeHost, existingTab.id);
       connectedKeyRef.current = connectionKey;
       connectedHostObjRef.current = activeHost;
       // Session memory keys are per terminal session; republish the visible
@@ -695,19 +719,38 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   useEffect(() => {
     if (!pendingUpload || !activeHost) return;
     if (handledPendingUploadIdRef.current === pendingUpload.requestId) return;
-    if (pendingUpload.hostId !== activeHost.id) return;
 
-    const activePane = sftp.leftPane;
+    const activePane = leftPane;
     const connection = activePane.connection;
-    if (!connection || connection.isLocal || connection.hostId !== activeHost.id) return;
-    if (connection.status !== "connected") return;
+    // Prefer the live connection cache key (includes session overrides). Fall
+    // back to the tab map only when the connect-time stamp is not yet readable.
+    const paneConnectionKey = connection && !connection.isLocal
+      ? (
+        getConnectionCacheKey?.(connection.id)
+        ?? tabConnectionKeyMapRef.current.get(activePane.id)
+        ?? null
+      )
+      : null;
+    if (!shouldAcceptPendingSftpUpload({
+      pendingHostId: pendingUpload.hostId,
+      pendingConnectionKey: pendingUpload.connectionKey,
+      activeHostId: activeHost.id,
+      connection,
+      paneConnectionKey,
+    }) || !connection) {
+      return;
+    }
 
     handledPendingUploadIdRef.current = pendingUpload.requestId;
 
+    const pinnedConnectionId = connection.id;
+    const pinnedTabId = activePane.id;
     const runUpload = async () => {
       try {
         const results = await sftpRef.current.uploadExternalEntries("left", pendingUpload.entries, {
           targetPath: pendingUpload.targetPath,
+          connectionId: pinnedConnectionId,
+          tabId: pinnedTabId,
         });
         reportSftpUploadResults({ results, t, toast });
       } catch (error) {
@@ -726,9 +769,10 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     void runUpload();
   }, [
     activeHost,
+    getConnectionCacheKey,
+    leftPane,
     onPendingUploadHandled,
     pendingUpload,
-    sftp.leftPane,
     t,
   ]);
 

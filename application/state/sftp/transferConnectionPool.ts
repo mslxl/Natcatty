@@ -6,10 +6,16 @@
  * uploads/downloads (same idea as FileZilla's transfer connections).
  */
 
+import {
+  DEFAULT_SFTP_TRANSFER_POOL_IDLE_TTL_MS,
+  isTransferPoolIdleReclaimDisabled,
+} from "../../../infrastructure/config/sftpTransferPool";
+
 export const DEFAULT_TRANSFER_CONNECTIONS_PER_HOST = 2;
 export const MIN_TRANSFER_CONNECTIONS_PER_HOST = 1;
 export const MAX_TRANSFER_CONNECTIONS_PER_HOST = 4;
-export const DEFAULT_TRANSFER_CONNECTION_IDLE_TTL_MS = 30_000;
+/** @deprecated Prefer DEFAULT_SFTP_TRANSFER_POOL_IDLE_TTL_MS — kept for import stability. */
+export const DEFAULT_TRANSFER_CONNECTION_IDLE_TTL_MS = DEFAULT_SFTP_TRANSFER_POOL_IDLE_TTL_MS;
 
 export type TransferPoolOpenFn = (poolKey: string) => Promise<string>;
 export type TransferPoolCloseFn = (sftpId: string) => void | Promise<void>;
@@ -53,6 +59,8 @@ export interface TransferConnectionPool {
   closeIdle(now?: number): Promise<number>;
   closeAll(): Promise<void>;
   setMaxPerHost(max: number): void;
+  setIdleTtlMs(ms: number): void;
+  getIdleTtlMs(): number;
 }
 
 function normalizeMaxPerHost(value: number | undefined): number {
@@ -67,7 +75,7 @@ export function createTransferConnectionPool(
   options: TransferConnectionPoolOptions = {},
 ): TransferConnectionPool {
   let maxPerHost = normalizeMaxPerHost(options.maxPerHost);
-  const idleTtlMs = options.idleTtlMs ?? DEFAULT_TRANSFER_CONNECTION_IDLE_TTL_MS;
+  let idleTtlMs = options.idleTtlMs ?? DEFAULT_TRANSFER_CONNECTION_IDLE_TTL_MS;
   const closeSession = options.closeSession;
   const now = options.now ?? (() => Date.now());
 
@@ -215,6 +223,10 @@ export function createTransferConnectionPool(
   };
 
   const closeIdle = async (at = now()): Promise<number> => {
+    // Active holders are never reclaimed (busy transfers keep the slot).
+    // idleTtlMs <= 0 means keep warm until explicit closeAll / discard.
+    if (isTransferPoolIdleReclaimDisabled(idleTtlMs)) return 0;
+
     // Detach idle slots from the pool *before* awaiting close so concurrent
     // acquires cannot re-lease a session that is about to be torn down.
     const toClose: string[] = [];
@@ -285,6 +297,13 @@ export function createTransferConnectionPool(
     setMaxPerHost(max: number) {
       maxPerHost = normalizeMaxPerHost(max);
     },
+    setIdleTtlMs(ms: number) {
+      if (!Number.isFinite(ms) || ms < 0) return;
+      idleTtlMs = ms;
+    },
+    getIdleTtlMs() {
+      return idleTtlMs;
+    },
   };
 }
 
@@ -304,6 +323,8 @@ export function getSharedTransferConnectionPool(
       idleTtlMs: DEFAULT_TRANSFER_CONNECTION_IDLE_TTL_MS,
       ...options,
     });
+  } else if (options?.idleTtlMs !== undefined) {
+    sharedPool.setIdleTtlMs(options.idleTtlMs);
   }
   return sharedPool;
 }
@@ -321,11 +342,16 @@ export function buildTransferPoolKey(input: {
   protocol?: string;
   sftpSudo?: boolean;
 }): string {
+  // Include endpoint identity whenever hostname is known so session-time
+  // hostname/port/username overrides do not share a pool with the vault host.
+  if (input.hostname) {
+    const port = input.port || 22;
+    const user = input.username || "root";
+    const protocol = input.protocol || "ssh";
+    const sudo = input.sftpSudo ? "sudo" : "nosudo";
+    const ep = `${input.hostname}:${port}:${user}:${protocol}:${sudo}`;
+    return input.hostId ? `host:${input.hostId}|ep:${ep}` : `ep:${ep}`;
+  }
   if (input.hostId) return `host:${input.hostId}`;
-  const host = input.hostname || "unknown";
-  const port = input.port || 22;
-  const user = input.username || "root";
-  const protocol = input.protocol || "ssh";
-  const sudo = input.sftpSudo ? "sudo" : "nosudo";
-  return `ep:${host}:${port}:${user}:${protocol}:${sudo}`;
+  return "ep:unknown:22:root:ssh:nosudo";
 }

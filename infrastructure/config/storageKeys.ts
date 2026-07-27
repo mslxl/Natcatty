@@ -197,6 +197,8 @@ export const STORAGE_KEY_AI_EXTERNAL_MCP_SILENT_SESSIONS = 'netcatty_ai_external
 
 // SFTP Transfer Concurrency
 export const STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY = 'netcatty_sftp_transfer_concurrency_v1';
+/** Dedicated transfer-pool idle TTL in ms (0 = never reclaim while app runs). */
+export const STORAGE_KEY_SFTP_TRANSFER_POOL_IDLE_TTL_MS = 'netcatty_sftp_transfer_pool_idle_ttl_ms_v1';
 
 // Workspace Focus Indicator Style
 export const STORAGE_KEY_WORKSPACE_FOCUS_STYLE = 'netcatty_workspace_focus_style_v1';

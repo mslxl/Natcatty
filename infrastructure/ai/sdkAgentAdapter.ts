@@ -490,6 +490,7 @@ function handleStreamEvent(event: StreamEvent, callbacks: SdkAgentCallbacks): bo
           event.binPath as string | undefined,
           event.runtime === 'app-server' ? 'app-server' : 'sdk',
           event.authMode as string | undefined,
+          event.cliMode as string | undefined,
         ));
       }
       return false;

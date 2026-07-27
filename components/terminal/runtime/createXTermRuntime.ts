@@ -1,4 +1,5 @@
 import { FitAddon } from "@xterm/addon-fit";
+import { ImageAddon } from "@xterm/addon-image";
 import { SearchAddon } from "@xterm/addon-search";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { UnicodeGraphemesAddon } from "@xterm/addon-unicode-graphemes";
@@ -30,6 +31,7 @@ import {
   shouldEnableNativeUserInputAutoScroll,
   shouldScrollOnTerminalPaste,
 } from "../../../domain/terminalScroll";
+import { resolveTerminalInlineImageAddonOptions } from "../../../domain/terminalInlineImages";
 import {
   resolveHostTerminalFontFamilyId,
   resolveHostTerminalFontSize,
@@ -208,6 +210,14 @@ export type XTermRuntime = {
   ensureWebglRenderer: () => void;
   /** Drop the WebGL addon while keeping the terminal alive (soft-hide). */
   suspendWebglRenderer: () => void;
+  /**
+   * True while this terminal holds decoded inline images (Kitty / SIXEL / IIP).
+   * Hibernate snapshots are text-only, so a session that reports true must not
+   * be fully hibernated — the images would be gone on wake. Returns false when
+   * inline images are disabled, or once the image cache has been emptied by a
+   * terminal reset or FIFO eviction.
+   */
+  hasInlineImages: () => boolean;
   /** Clear local/per-target keyboard state before reusing this runtime. */
   resetKittyConnectionInputState: () => void;
   /** Emit any owed releases before detaching or closing this renderer. */
@@ -559,6 +569,36 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   term.loadAddon(searchAddon);
 
   term.open(ctx.container);
+
+  // Inline raster images (Kitty graphics / SIXEL / iTerm IIP). Loaded right after
+  // term.open so the addon can patch IRenderService.setRenderer before the WebGL
+  // renderer is created: on every renderer swap (WebGL create / suspend / context
+  // loss recovery) the addon detaches its canvas layers and re-inserts them on the
+  // next render, so images survive DOM <-> WebGL transitions. Options are resolved
+  // once per terminal; changing them takes effect on the next terminal, exactly
+  // like rendererType.
+  const inlineImageOptions = resolveTerminalInlineImageAddonOptions(settings);
+  let imageAddon: ImageAddon | null = null;
+  if (inlineImageOptions) {
+    try {
+      imageAddon = new ImageAddon(inlineImageOptions);
+      term.loadAddon(imageAddon);
+    } catch (err) {
+      logger.warn("[XTerm] Inline image addon failed to load", err);
+      imageAddon = null;
+    }
+  }
+  // Decoded bitmaps live outside the terminal buffer, so they are absent from the
+  // text snapshot a hibernated tab is rebuilt from. Terminal.tsx reads this to keep
+  // a session with images out of full hibernate (soft-hide is still fine).
+  const hasInlineImages = (): boolean => {
+    if (!imageAddon) return false;
+    try {
+      return imageAddon.storageUsage > 0;
+    } catch {
+      return false;
+    }
+  };
 
   type KeyboardLayoutMapLike = { get: (code: string) => string | undefined };
   type KeyboardApiLike = {
@@ -2007,6 +2047,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     clearTextureAtlas: clearWebglTextureAtlas,
     ensureWebglRenderer: loadWebglRenderer,
     suspendWebglRenderer,
+    hasInlineImages,
     resetKittyConnectionInputState: clearKittyConnectionInputState,
     flushKittyKeyboardReleases: clearKittyTransientInputState,
     getKittyKeyboardModeState: () => snapshotKittyKeyboardModeState(kittyKeyboardMode),
@@ -2060,6 +2101,16 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       titleChangeDisposable.dispose();
       bellDisposable.dispose();
       cursorPreferenceDisposable?.dispose();
+      // Release decoded bitmaps and the image canvas layers before xterm tears the
+      // screen element down, otherwise the storage would outlive its terminal.
+      if (imageAddon) {
+        try {
+          imageAddon.dispose();
+        } catch (err) {
+          logger.warn("[XTerm] imageAddon dispose failed", err);
+        }
+        imageAddon = null;
+      }
       try {
         term.dispose();
       } catch (err) {

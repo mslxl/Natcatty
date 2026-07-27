@@ -153,6 +153,16 @@ smoke coverage. Packaged-resource changes must also pass `npm run pack:dir`.
 - Avoid direct network/fetch in components; add a service/adaptor first.
 - Maintain ASCII-only unless required by existing file content.
 
+## Reporting Issues & PRs
+
+Issues opened without the required format are **auto-closed** by the issue-format bot. Agents that file issues via `gh` or the API must still follow these rules:
+
+- **Title:** start with `[Bug]`, `[Feature]`, or `[Other]`, then a short summary (≥ 4 characters after the prefix). Example: `[Bug] SFTP upload fails on Windows`.
+- **Body:** use the templates under [`.github/ISSUE_TEMPLATE/`](.github/ISSUE_TEMPLATE/) (Bug Report or Feature Request) and fill every required field. Blank issues are disabled.
+- **PRs:** follow [`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md).
+
+Full contributor guidance (setup, commits, PR process): [CONTRIBUTING.md](./CONTRIBUTING.md).
+
 ## Review Boundaries
 - Treat `electron/cli/*`, `netcatty-tool-cli`, the CLI discovery file, and the local TCP bridge as internal Netcatty integration surfaces unless a task explicitly says otherwise.
 - Do not review those surfaces as public APIs by default, and do not assume they must support third-party callers, manual launches, or non-Netcatty agents.

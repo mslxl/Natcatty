@@ -1806,6 +1806,17 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     return true;
   }, [sessionId, terminalSettings]);
 
+  // Hibernate rebuilds a tab from a serialized *text* snapshot. Inline images
+  // (Kitty graphics / SIXEL / iTerm IIP) live in the ImageAddon's own storage and
+  // are not part of that snapshot, so a session holding images degrades to
+  // soft-hide (WebGL suspended, xterm and its image layers kept alive) instead of
+  // a full renderer release. The check reads the live image cache, so it stops
+  // blocking once the cache is emptied by a terminal reset or FIFO eviction.
+  const runtimeHasInlineImages = useCallback(
+    () => xtermRuntimeRef.current?.hasInlineImages() === true,
+    [],
+  );
+
   const fullHibernateRuntime = useCallback(async (): Promise<boolean> => {
     if (hibernatedRef.current || softHiddenRef.current || !termRef.current || !serializeAddonRef.current) return false;
     clearHibernateRetry();
@@ -1821,6 +1832,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       && statusRef.current === "connected"
       && !isSearchOpenRef.current
       && !hibernateFileTransferActiveRef.current
+      && !runtimeHasInlineImages()
       && hibernateEnabledRef.current
       && termRef.current === term
       && sessionRef.current === backendId
@@ -1881,6 +1893,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     beginHibernatedSessionListeners,
     clearHibernateRetry,
     scheduleHibernateRetry,
+    runtimeHasInlineImages,
     sessionId,
     shouldSkipHibernateForActiveAlternateScreen,
     terminalBackend,
@@ -1902,6 +1915,13 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       return;
     }
 
+    // Images cannot be restored from the text snapshot: keep the renderer alive
+    // and only suspend WebGL, and never evict another tab on this session's behalf.
+    if (runtimeHasInlineImages()) {
+      hideRuntimeOnly();
+      return;
+    }
+
     const keepCount = resolveHibernateKeepRendererCount(terminalSettings);
     if (keepCount > 0 && terminalHiddenRendererStore.getSoftHiddenCount() < keepCount) {
       hideRuntimeOnly();
@@ -1916,7 +1936,14 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     }
 
     void fullHibernateRuntime();
-  }, [fullHibernateRuntime, hideRuntimeOnly, sessionId, shouldSkipHibernateForActiveAlternateScreen, terminalSettings]);
+  }, [
+    fullHibernateRuntime,
+    hideRuntimeOnly,
+    runtimeHasInlineImages,
+    sessionId,
+    shouldSkipHibernateForActiveAlternateScreen,
+    terminalSettings,
+  ]);
 
   const terminalRuntimeRefs = useMemo<TerminalRuntimeRefs>(() => ({
     xtermRuntimeRef,
@@ -3377,6 +3404,10 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     return terminalHiddenRendererStore.subscribe(() => {
       if (!terminalHiddenRendererStore.consumeEvictionRequest(sessionId)) return;
       if (!softHiddenRef.current || hibernatedRef.current) return;
+      // The eviction request is consumed above so the store does not keep retrying,
+      // but a session holding inline images stays soft-hidden: full hibernate would
+      // drop bitmaps the text snapshot cannot restore.
+      if (runtimeHasInlineImages()) return;
       // Resume the soft-hidden renderer before the asynchronous full-hibernate
       // upgrade. If the pane is revealed while the upgrade is draining output
       // or serializing, it then already has a live renderer instead of waiting
@@ -3392,7 +3423,13 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         },
       );
     });
-  }, [fullHibernateRuntime, resumeRendererAfterCancelledHibernateUpgrade, sessionId, wakeSoftHiddenRuntime]);
+  }, [
+    fullHibernateRuntime,
+    resumeRendererAfterCancelledHibernateUpgrade,
+    runtimeHasInlineImages,
+    sessionId,
+    wakeSoftHiddenRuntime,
+  ]);
 
   const wakeFromHibernateRuntime = useCallback((
     getPayload: () => TerminalHibernateWakePayload,

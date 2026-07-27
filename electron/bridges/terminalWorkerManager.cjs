@@ -15,6 +15,114 @@ function isTerminalWorkerEnabled(options = {}) {
   return env.NETCATTY_TERMINAL_WORKER !== "0";
 }
 
+/**
+ * Map worker transfer IPC onto the global transfer-center channel.
+ * The utilityProcess cannot call BrowserWindow; main must fan these out.
+ * Exported for unit tests.
+ */
+function mapWorkerTransferChannelToGlobalEvent(channel, payload) {
+  const transferId = payload?.transferId || payload?.compressionId;
+  if (!payload || !transferId) return null;
+  if (channel === "netcatty:transfer:progress") {
+    return {
+      type: "progress",
+      transferId,
+      transferred: payload.transferred,
+      totalBytes: payload.totalBytes,
+      speed: payload.speed,
+      checkpointBytes: payload.checkpointBytes,
+      resumeStage: payload.resumeStage,
+      downloadCheckpointBytes: payload.downloadCheckpointBytes,
+      uploadCheckpointBytes: payload.uploadCheckpointBytes,
+      sourceFingerprint: payload.sourceFingerprint,
+      lifecycleEpoch: payload.lifecycleEpoch,
+      lifecycleState: payload.lifecycleState,
+    };
+  }
+  if (channel === "netcatty:transfer:complete") {
+    return {
+      type: "completed",
+      transferId,
+      endedAt: Date.now(),
+      transferred: payload.transferred,
+      totalBytes: payload.totalBytes,
+    };
+  }
+  if (channel === "netcatty:transfer:cancelled") {
+    return {
+      type: "cancelled",
+      transferId,
+      endedAt: Date.now(),
+    };
+  }
+  if (channel === "netcatty:transfer:error") {
+    const message = payload.error || String(payload.error || "Transfer failed");
+    const cancelled = /cancel/i.test(message);
+    return {
+      type: cancelled ? "cancelled" : "failed",
+      transferId,
+      endedAt: Date.now(),
+      error: message,
+    };
+  }
+  if (channel === "netcatty:compress:progress") {
+    return {
+      type: "progress",
+      transferId,
+      phase: payload.phase,
+      transferred: payload.transferredBytes,
+      totalBytes: payload.totalBytes,
+      fileName: payload.fileName,
+      sourcePath: payload.sourcePath,
+      targetPath: payload.targetPath,
+      direction: "upload",
+      isDirectory: true,
+      controlKind: "compressed-upload",
+      lifecycleEpoch: payload.lifecycleEpoch,
+      lifecycleState: payload.lifecycleState,
+    };
+  }
+  if (channel === "netcatty:compress:complete") {
+    return { type: "completed", transferId, endedAt: Date.now() };
+  }
+  if (channel === "netcatty:compress:cancelled") {
+    return { type: "cancelled", transferId, endedAt: Date.now() };
+  }
+  if (channel === "netcatty:compress:error") {
+    return {
+      type: "failed",
+      transferId,
+      endedAt: Date.now(),
+      error: payload.error || "Compressed upload failed",
+    };
+  }
+  return null;
+}
+
+function broadcastGlobalTransferEventOnMain(electronModule, eventPayload) {
+  if (!eventPayload) return 0;
+  const BrowserWindow = electronModule?.BrowserWindow;
+  if (!BrowserWindow?.getAllWindows) return 0;
+  let sent = 0;
+  for (const win of BrowserWindow.getAllWindows()) {
+    try {
+      if (win?.isDestroyed?.()) continue;
+      const wc = win.webContents;
+      if (!wc || wc.isDestroyed?.()) continue;
+      wc.send("netcatty:sftp:global-transfer", eventPayload);
+      sent += 1;
+    } catch {
+      // best-effort
+    }
+  }
+  return sent;
+}
+
+function fanoutGlobalTransferFromWorkerEvent(electronModule, channel, payload) {
+  const eventPayload = mapWorkerTransferChannelToGlobalEvent(channel, payload);
+  return broadcastGlobalTransferEventOnMain(electronModule, eventPayload);
+}
+
 function defaultWorkerScriptPath() {
   return path.join(__dirname, "..", "terminalWorker", "process.cjs");
 }
@@ -1115,6 +1223,11 @@ function createTerminalWorkerManager(options = {}) {
       return;
     }
     if (message.kind === "renderer-event") {
+      // Transfer lifecycle from the utilityProcess cannot use BrowserWindow
+      // inside the worker. Fan global-center events from the main process so
+      // progress survives SFTP panel hide/unmount.
+      fanoutGlobalTransferFromWorkerEvent(electronModule, message.channel, message.payload);
+
       // Prefer the currently rebound display target. Worker-captured
       // webContentsId is from session start and goes stale after attach/rebind.
       const sessionId = message.payload?.sessionId;
@@ -1728,4 +1841,7 @@ function createTerminalWorkerManager(options = {}) {
 module.exports = {
   createTerminalWorkerManager,
   isTerminalWorkerEnabled,
+  mapWorkerTransferChannelToGlobalEvent,
+  fanoutGlobalTransferFromWorkerEvent,
+  broadcastGlobalTransferEventOnMain,
 };

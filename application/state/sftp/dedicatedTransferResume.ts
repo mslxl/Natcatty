@@ -4,7 +4,11 @@ import { STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY } from "../../../infrastructure/c
 import { localStorageAdapter } from "../../../infrastructure/persistence/localStorageAdapter";
 import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
 import { buildSftpHostCredentials } from "./useSftpHostCredentials";
-import { getSftpTransferResourceKeys, globalSftpTransferScheduler } from "./globalTransferScheduler";
+import {
+  getSftpTransferResourceKeys,
+  globalSftpTransferScheduler,
+  unlimitedSftpSchedulerAdmission,
+} from "./globalTransferScheduler";
 import { runWithTransferRetry } from "./transferRetry";
 import { runSftpTransferWorkers } from "./transferConcurrency";
 import { getParentPath, joinPath } from "./utils";
@@ -104,17 +108,50 @@ function isAuthError(err: unknown): boolean {
   );
 }
 
+export type OpenTransferSftpSessionOptions = {
+  /**
+   * Prefer a live terminal SSH channel (fast). Only use for disposable probes —
+   * bulk transfers must use a dedicated vault open so closing the terminal/SFTP
+   * tab cannot kill in-flight global-center work.
+   */
+  sourceSessionId?: string;
+  /**
+   * When true (default), open an independent SSH/SFTP session from vault
+   * credentials. Session-backed channels die when the terminal tab closes.
+   */
+  dedicated?: boolean;
+};
+
 /**
- * Open a transfer-owned SFTP session from vault credentials.
- * Shared entry for dedicated resume / bulk transfer (not browse-panel sessions).
+ * Open a transfer-owned SFTP session.
+ * Default is a dedicated vault connection so transfers outlive panel/tab close.
+ * Optional sourceSessionId is only used when dedicated:false (not for bulk I/O).
  */
 export async function openTransferSftpSession(
   host: Host,
   deps: DedicatedResumeDeps,
+  options?: OpenTransferSftpSessionOptions,
 ): Promise<string> {
   return withDedicatedSessionOpenSlot(async () => {
     const bridge = netcattyBridge.get();
     if (!bridge?.openSftp) throw new Error("SFTP bridge unavailable");
+
+    const wantDedicated = options?.dedicated !== false;
+    // Bulk transfer pool always uses dedicated sessions. Session-backed SFTP
+    // shares the terminal SSH socket — closing that tab aborts the transfer.
+    if (
+      !wantDedicated
+      && options?.sourceSessionId
+      && !host.sftpSudo
+      && bridge.openSftpForSession
+    ) {
+      try {
+        const sftpId = await bridge.openSftpForSession(options.sourceSessionId);
+        if (sftpId) return sftpId;
+      } catch {
+        // Fall through to vault credentials.
+      }
+    }
 
     const credentials = buildSftpHostCredentials({
       host,
@@ -384,7 +421,9 @@ async function resumeSingleFileWithDedicatedSession(
       "dedicated-resume",
       task.id,
       endpoints.resourceKeys,
-      () => localStorageAdapter.readNumber(STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY),
+      // Folder concurrency is for in-folder fan-out only. Dedicated reconnect of
+      // a single top-level task must not wait behind that host admission cap.
+      unlimitedSftpSchedulerAdmission,
       async () => {
         if (shouldAbort?.()) throw new Error("Transfer cancelled");
         await runWithTransferRetry(async (attempt) => {
@@ -665,7 +704,8 @@ async function resumeDirectoryWithDedicatedSession(
       "dedicated-resume",
       parent.id,
       endpoints.resourceKeys,
-      () => localStorageAdapter.readNumber(STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY),
+      // Parent walk admits freely; per-file fan-out still uses folder concurrency.
+      unlimitedSftpSchedulerAdmission,
       async () => {
         if (options?.shouldAbort?.()) throw new Error("Transfer cancelled");
         const opened = await openEndpointSessions(endpoints, deps);
