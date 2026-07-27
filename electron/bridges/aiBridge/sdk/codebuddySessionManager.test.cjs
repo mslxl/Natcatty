@@ -22,14 +22,16 @@ function collector() {
 function fakeSession(messages, opts = {}) {
   let sentMessages = [];
   let closed = false;
+  let interruptCalls = 0;
   return {
     sessionId: opts.sessionId || "fake-sess-1",
     sentMessages,
     get closed() { return closed; },
+    get interruptCalls() { return interruptCalls; },
     async connect() {},
     async send(msg) { sentMessages.push(msg); },
     async *stream() { for (const m of messages) yield m; },
-    async interrupt() {},
+    async interrupt() { interruptCalls += 1; },
     async setModel(model) { this._model = model; },
     setHooks(hooks) { this._hooks = hooks; },
     setCanUseTool(handler) { this._canUseTool = handler; },
@@ -182,6 +184,71 @@ test("runTurn streams messages via V2 session when available", async () => {
   assert.ok(session.sentMessages.includes("say hi"));
 });
 
+test("runTurn does not connect or send when already aborted", async () => {
+  let loadSdkCalls = 0;
+  const mgr = new CodebuddySessionManager({
+    loadSdk: async () => {
+      loadSdkCalls += 1;
+      return {};
+    },
+  });
+  const controller = new AbortController();
+  controller.abort();
+  const { events, emitter } = collector();
+
+  const result = await mgr.runTurn({
+    sessionKey: "pre-aborted-key",
+    prompt: "must not run",
+    attachments: [],
+    options: { abortController: controller },
+    emitter,
+    sessionOptions: {},
+  });
+
+  assert.deepEqual(result, { sessionId: null, usedV2: true });
+  assert.equal(loadSdkCalls, 0);
+  assert.deepEqual(events, [{ k: "done" }]);
+});
+
+test("runTurn does not send when aborted while the session connects", async () => {
+  let releaseConnect;
+  const session = fakeSession([], { sessionId: "slow-connect-session" });
+  session.connect = () => new Promise((resolve) => {
+    releaseConnect = resolve;
+  });
+  const mgr = new CodebuddySessionManager({
+    loadSdk: async () => ({
+      unstable_v2_createSession: () => session,
+      unstable_v2_resumeSession: () => session,
+    }),
+  });
+  const controller = new AbortController();
+  const { events, emitter } = collector();
+
+  const runPromise = mgr.runTurn({
+    sessionKey: "slow-connect-key",
+    prompt: "must not run",
+    attachments: [],
+    options: { abortController: controller },
+    emitter,
+    sessionOptions: {},
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(typeof releaseConnect, "function");
+
+  controller.abort();
+  releaseConnect();
+  const result = await runPromise;
+
+  assert.deepEqual(result, {
+    sessionId: "slow-connect-session",
+    usedV2: true,
+  });
+  assert.deepEqual(session.sentMessages, []);
+  assert.equal(session.interruptCalls, 1);
+  assert.deepEqual(events, [{ k: "done" }]);
+});
+
 test("steer returns unsupported when no session exists", async () => {
   const mgr = new CodebuddySessionManager();
   const { emitter } = collector();
@@ -194,70 +261,22 @@ test("steer returns unsupported when no session exists", async () => {
   assert.deepEqual(result, { status: "unsupported" });
 });
 
-test("steer sends into the active session and leaves streaming to runTurn", async () => {
+test("steer stays unsupported because Session.send resets the active SDK stream", async () => {
   const mgr = new CodebuddySessionManager();
   const session = fakeSession([]);
-  let streamCalls = 0;
-  let markStreamStarted;
-  let releaseOriginalStream;
-  const streamStarted = new Promise((resolve) => { markStreamStarted = resolve; });
-  const originalStreamGate = new Promise((resolve) => { releaseOriginalStream = resolve; });
-  session.stream = async function* stream() {
-    streamCalls += 1;
-    if (streamCalls === 1) {
-      markStreamStarted();
-      yield {
-        type: "stream_event",
-        event: { type: "content_block_delta", delta: { type: "text_delta", text: "before steer" } },
-      };
-      await originalStreamGate;
-      yield {
-        type: "stream_event",
-        event: { type: "content_block_delta", delta: { type: "text_delta", text: "after steer" } },
-      };
-      return;
-    }
-    yield {
-      type: "stream_event",
-      event: { type: "content_block_delta", delta: { type: "text_delta", text: "second consumer" } },
-    };
-  };
   mgr.sessions.set("steer-key", {
     session,
     fingerprint: computeOptionsFingerprint({}),
   });
 
-  const { events, emitter } = collector();
-  const run = mgr.runTurn({
-    sessionKey: "steer-key",
-    prompt: "start",
-    attachments: [],
-    options: { abortController: new AbortController() },
-    emitter,
-    sessionOptions: {},
-  });
-  await streamStarted;
-
   const result = await mgr.steer({
     sessionKey: "steer-key",
     prompt: "now do this",
     attachments: [],
-    emitter,
   });
 
-  assert.deepEqual(result, { status: "accepted" });
-  assert.ok(session.sentMessages.includes("now do this"));
-  assert.equal(streamCalls, 1);
-  assert.equal(events.filter((event) => event.k === "done").length, 0);
-
-  releaseOriginalStream();
-  await run;
-
-  assert.deepEqual(
-    events.filter((event) => event.k === "text").map((event) => event.t),
-    ["before steer", "after steer"],
-  );
-  assert.equal(events.filter((event) => event.k === "done").length, 1);
+  assert.deepEqual(result, { status: "unsupported" });
+  assert.deepEqual(session.sentMessages, []);
 });
 
 test("closeSession removes and closes the session", () => {
@@ -288,6 +307,27 @@ test("closeForChat closes all sessions matching the chat prefix", () => {
   assert.ok(!s3.closed);
 });
 
+test("closeForChat cancels pending elicitations scoped to the chat", () => {
+  const mgr = new CodebuddySessionManager();
+  const resolved = [];
+  mgr.elicitationPending.set("el-chat1", {
+    resolve: (v) => resolved.push(["el-chat1", v]),
+    reject: () => {},
+    chatSessionId: "chat1",
+  });
+  mgr.elicitationPending.set("el-chat2", {
+    resolve: (v) => resolved.push(["el-chat2", v]),
+    reject: () => {},
+    chatSessionId: "chat2",
+  });
+
+  mgr.closeForChat("chat1");
+
+  assert.deepEqual(resolved, [["el-chat1", { action: "cancel" }]]);
+  assert.ok(!mgr.elicitationPending.has("el-chat1"));
+  assert.ok(mgr.elicitationPending.has("el-chat2"));
+});
+
 test("closeAll closes every session", () => {
   const mgr = new CodebuddySessionManager();
   const s1 = fakeSession([]);
@@ -299,6 +339,29 @@ test("closeAll closes every session", () => {
   assert.equal(mgr.sessions.size, 0);
   assert.ok(s1.closed);
   assert.ok(s2.closed);
+});
+
+test("closeAll cancels every pending elicitation", () => {
+  const mgr = new CodebuddySessionManager();
+  const resolved = [];
+  mgr.elicitationPending.set("el-a", {
+    resolve: (v) => resolved.push(["el-a", v]),
+    reject: () => {},
+    chatSessionId: "chat1",
+  });
+  mgr.elicitationPending.set("el-b", {
+    resolve: (v) => resolved.push(["el-b", v]),
+    reject: () => {},
+    chatSessionId: "chat2",
+  });
+
+  mgr.closeAll();
+
+  assert.equal(mgr.elicitationPending.size, 0);
+  assert.deepEqual(resolved, [
+    ["el-a", { action: "cancel" }],
+    ["el-b", { action: "cancel" }],
+  ]);
 });
 
 test("setModel returns false when session does not exist", async () => {

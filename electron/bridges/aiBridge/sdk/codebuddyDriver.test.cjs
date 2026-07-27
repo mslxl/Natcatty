@@ -1,5 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const { getEventListeners } = require("node:events");
 const {
   buildCodebuddyQueryOptions,
   buildCodebuddyCanUseTool,
@@ -324,10 +325,11 @@ test("buildCodebuddyElicitation forwards create and resolves on response", async
   emitter.emitEvent = (ev) => events.push({ k: "event", ev });
   const pendingMap = new Map();
   const handler = buildCodebuddyElicitation(emitter, pendingMap);
+  const controller = new AbortController();
 
   const createPromise = handler.create(
     { _meta: { "codebuddy.ai": { elicitationId: "el-1" } }, message: "Confirm?" },
-    { signal: new AbortController().signal },
+    { signal: controller.signal },
   );
 
   // Should have emitted elicitation-create event
@@ -340,6 +342,73 @@ test("buildCodebuddyElicitation forwards create and resolves on response", async
   pendingMap.get("el-1").resolve({ action: "accept", content: { confirmed: true } });
   const response = await createPromise;
   assert.deepEqual(response, { action: "accept", content: { confirmed: true } });
+  assert.equal(pendingMap.size, 0);
+  assert.equal(getEventListeners(controller.signal, "abort").length, 0);
+});
+
+test("buildCodebuddyElicitation cancels immediately for an aborted signal", async () => {
+  const { events, emitter } = collector();
+  emitter.emitEvent = (ev) => events.push({ k: "event", ev });
+  const pendingMap = new Map();
+  const handler = buildCodebuddyElicitation(emitter, pendingMap);
+  const controller = new AbortController();
+  controller.abort();
+
+  const response = await handler.create(
+    { _meta: { "codebuddy.ai": { elicitationId: "el-aborted" } } },
+    { signal: controller.signal },
+  );
+
+  assert.deepEqual(response, { action: "cancel" });
+  assert.equal(pendingMap.size, 0);
+  assert.equal(events.length, 0);
+});
+
+test("buildCodebuddyElicitation tags pendings with chatSessionId and uses UUID fallback ids", async () => {
+  const { events, emitter } = collector();
+  emitter.emitEvent = (ev) => events.push({ k: "event", ev });
+  const pendingMap = new Map();
+  const handler = buildCodebuddyElicitation(emitter, pendingMap, { chatSessionId: "chat-1" });
+
+  // No _meta id — the fallback must be a UUID, distinct across creates so a
+  // same-millisecond collision cannot cancel the earlier pending.
+  const first = handler.create({ message: "one" }, {});
+  const second = handler.create({ message: "two" }, {});
+  const ids = [...pendingMap.keys()];
+  assert.equal(ids.length, 2);
+  assert.notEqual(ids[0], ids[1]);
+  for (const id of ids) {
+    assert.match(id, /^elicitation_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    assert.equal(pendingMap.get(id).chatSessionId, "chat-1");
+  }
+
+  pendingMap.get(ids[0]).resolve({ action: "accept" });
+  pendingMap.get(ids[1]).resolve({ action: "cancel" });
+  assert.deepEqual(await first, { action: "accept" });
+  assert.deepEqual(await second, { action: "cancel" });
+  assert.equal(pendingMap.size, 0);
+});
+
+test("buildCodebuddyElicitation complete cancels and removes a pending create", async () => {
+  const { events, emitter } = collector();
+  emitter.emitEvent = (ev) => events.push({ k: "event", ev });
+  const pendingMap = new Map();
+  const handler = buildCodebuddyElicitation(emitter, pendingMap);
+  const controller = new AbortController();
+
+  const createPromise = handler.create(
+    { _meta: { "codebuddy.ai": { elicitationId: "el-complete" } } },
+    { signal: controller.signal },
+  );
+  handler.complete({ elicitationId: "el-complete" });
+
+  assert.deepEqual(await createPromise, { action: "cancel" });
+  assert.equal(pendingMap.size, 0);
+  assert.equal(getEventListeners(controller.signal, "abort").length, 0);
+  assert.deepEqual(events.map(({ ev }) => ev.type), [
+    "elicitation-create",
+    "elicitation-complete",
+  ]);
 });
 
 // ---------------------------------------------------------------------------

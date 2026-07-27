@@ -869,6 +869,9 @@ function cleanup() {
   try {
     registeredContext?.codexAppServerRuntime?.close?.();
   } catch {}
+  try {
+    registeredContext?.codebuddySessionManager?.closeAll?.();
+  } catch {}
 
   for (const [id, session] of codexLoginSessions) {
     try {

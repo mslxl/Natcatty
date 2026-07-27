@@ -13,6 +13,7 @@
  *   resume, thinking mode config, and model listing.
  */
 const { mcpEnvPairsToObject } = require("./injectMcp.cjs");
+const { randomUUID } = require("node:crypto");
 
 // Built-in tools that need interactive UI netcatty doesn't provide — they would
 // hang the turn waiting for a response, so they are blocked in BOTH modes.
@@ -262,7 +263,9 @@ function buildCodebuddyQueryOptions({
   if (sessionId) options.sessionId = sessionId;
   // Lifecycle hooks.
   if (hooks && typeof hooks === "object") options.hooks = hooks;
-  // Elicitation handler.
+  // Supported by @tencent-ai/agent-sdk 0.3.230 Options.elicitation.
+  // QueryController advertises capabilities.elicitation.form during
+  // initialization and routes elicitation_create control requests here.
   if (elicitation && typeof elicitation === "object") options.elicitation = elicitation;
   // Permission handler: when the CLI hits a security restriction, route the
   // decision through Netcatty (auto-confirm / user approval / deny) instead
@@ -432,7 +435,9 @@ async function runCodebuddyTurn({ prompt, attachments, options, emitter, queryFn
     const signal = options.abortController?.signal;
     const interruptQuery = () => {
       if (typeof queryRef?.interrupt === "function") {
-        void queryRef.interrupt().catch(() => {});
+        void queryRef.interrupt().catch((err) => {
+          console.debug("[CodeBuddy SDK] interrupt failed:", err?.message || err);
+        });
       }
     };
     if (signal) {
@@ -445,7 +450,10 @@ async function runCodebuddyTurn({ prompt, attachments, options, emitter, queryFn
     for await (const message of queryRef) {
       if (options.abortController?.signal?.aborted) {
         if (typeof queryRef.interrupt === "function") {
-          try { await queryRef.interrupt(); } catch { /* best effort */ }
+          try { await queryRef.interrupt(); } catch (err) {
+            // Best effort — surface for diagnostics without failing the turn.
+            console.debug("[CodeBuddy SDK] interrupt failed:", err?.message || err);
+          }
         }
         break;
       }
@@ -617,29 +625,74 @@ function buildCodebuddyHooks(emitter) {
  * Build an elicitation handler that forwards create/complete events to the
  * renderer and waits for the user's decision via a pending-response map.
  * @param {object} emitter  createStreamEmitter(...)
- * @param {Map} pendingMap  Map<elicitationId, { resolve, reject }> — shared
- *   with the IPC response handler so it can resolve waiting promises.
+ * @param {Map} pendingMap  Map<elicitationId, { resolve, reject, chatSessionId }> —
+ *   shared with the IPC response handler so it can resolve waiting promises.
+ * @param {object} [opts]
+ * @param {string} [opts.chatSessionId]  chat scope, so cleanup can cancel
+ *   pending elicitations when the chat session is torn down.
  * @returns {object} ElicitationHandler
  */
-function buildCodebuddyElicitation(emitter, pendingMap) {
+function buildCodebuddyElicitation(emitter, pendingMap, { chatSessionId } = {}) {
   return {
-    async create(request, { signal }) {
+    async create(request, { signal } = {}) {
+      if (signal?.aborted) {
+        return { action: "cancel" };
+      }
       const elicitationId = request?._meta?.["codebuddy.ai"]?.elicitationId
-        || `elicitation_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-      emitter.emitEvent({ type: "elicitation-create", elicitationId, request });
+        || `elicitation_${randomUUID()}`;
+
+      const previous = pendingMap.get(elicitationId);
+      if (previous) {
+        pendingMap.delete(elicitationId);
+        previous.resolve({ action: "cancel" });
+      }
+
       return await new Promise((resolve, reject) => {
-        pendingMap.set(elicitationId, { resolve, reject });
+        let settled = false;
+        const cleanup = () => {
+          signal?.removeEventListener("abort", onAbort);
+          if (pendingMap.get(elicitationId) === pending) {
+            pendingMap.delete(elicitationId);
+          }
+        };
+        const finish = (response) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          resolve(response);
+        };
+        const fail = (error) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          reject(error);
+        };
+        const onAbort = () => finish({ action: "cancel" });
+        const pending = { resolve: finish, reject: fail, chatSessionId };
+        pendingMap.set(elicitationId, pending);
+
         if (signal) {
-          signal.addEventListener("abort", () => {
-            if (pendingMap.has(elicitationId)) {
-              pendingMap.delete(elicitationId);
-              resolve({ action: "cancel" });
-            }
-          }, { once: true });
+          signal.addEventListener("abort", onAbort, { once: true });
+          if (signal.aborted) {
+            onAbort();
+            return;
+          }
+        }
+
+        try {
+          emitter.emitEvent({ type: "elicitation-create", elicitationId, request });
+        } catch (error) {
+          fail(error);
         }
       });
     },
     complete(notification) {
+      const elicitationId = String(notification?.elicitationId || "");
+      const pending = elicitationId ? pendingMap.get(elicitationId) : null;
+      if (pending) {
+        pendingMap.delete(elicitationId);
+        pending.resolve({ action: "cancel" });
+      }
       emitter.emitEvent({ type: "elicitation-complete", notification });
     },
   };

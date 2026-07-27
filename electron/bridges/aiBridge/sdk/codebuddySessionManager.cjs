@@ -173,10 +173,22 @@ class CodebuddySessionManager {
     sessionKey, prompt, attachments, options, emitter,
     sessionOptions, resumeSessionId,
   }) {
+    const signal = options.abortController?.signal;
+    if (signal?.aborted) {
+      emitter.emitDone();
+      return { sessionId: null, usedV2: true };
+    }
+
     const session = await this.getOrCreateSession({
       sessionKey, sessionOptions, resumeSessionId,
     });
-    if (!session) return null; // signal caller to use query() fallback
+    if (!session) {
+      if (signal?.aborted) {
+        emitter.emitDone();
+        return { sessionId: null, usedV2: true };
+      }
+      return null; // signal caller to use query() fallback
+    }
 
     const promptInput = buildCodebuddyPromptInput(prompt, attachments);
     let sessionId = session.sessionId || null;
@@ -185,6 +197,25 @@ class CodebuddySessionManager {
     let removeAbortListener = null;
 
     try {
+      // Register before sending so cancellation during connection or send
+      // cannot start a prompt without also interrupting the SDK session.
+      const interruptSession = () => {
+        if (typeof session.interrupt === "function") {
+          void Promise.resolve(session.interrupt()).catch((err) => {
+            console.debug("[CodeBuddy SDK] session interrupt failed:", err?.message || err);
+          });
+        }
+      };
+      if (signal) {
+        signal.addEventListener("abort", interruptSession, { once: true });
+        removeAbortListener = () => signal.removeEventListener("abort", interruptSession);
+        if (signal.aborted) {
+          interruptSession();
+          emitter.emitDone();
+          return { sessionId, usedV2: true };
+        }
+      }
+
       // Send the prompt (string or async iterable).
       if (typeof promptInput === "string") {
         await session.send(promptInput);
@@ -195,28 +226,18 @@ class CodebuddySessionManager {
         }
       }
 
-      // Register an abort listener that interrupts the session immediately,
-      // so stop reaches the CLI even while parked inside stream().next()
-      // waiting for the next message (e.g. during a long tool call).
-      const signal = options.abortController?.signal;
-      const interruptSession = () => {
-        if (typeof session.interrupt === "function") {
-          void session.interrupt().catch(() => {});
-        }
-      };
-      if (signal) {
-        if (signal.aborted) {
-          interruptSession();
-        } else {
-          signal.addEventListener("abort", interruptSession, { once: true });
-          removeAbortListener = () => signal.removeEventListener("abort", interruptSession);
-        }
+      if (signal?.aborted) {
+        emitter.emitDone();
+        return { sessionId, usedV2: true };
       }
 
       // Stream responses.
       for await (const message of session.stream()) {
         if (options.abortController?.signal?.aborted) {
-          try { await session.interrupt(); } catch { /* best effort */ }
+          try { await session.interrupt(); } catch (err) {
+            // Best effort — surface for diagnostics without failing the turn.
+            console.debug("[CodeBuddy SDK] session interrupt failed:", err?.message || err);
+          }
           break;
         }
         if (message?.session_id && message.session_id !== sessionId) {
@@ -265,33 +286,14 @@ class CodebuddySessionManager {
   }
 
   /**
-   * Steer (mid-turn追加消息) using the V2 Session.
-   * Returns { status: 'accepted' } on success, or { status: 'unsupported' }.
+   * Report mid-turn steer as unsupported for the current V2 Session API.
    */
-  async steer({ sessionKey, prompt, attachments }) {
-    const entry = this.sessions.get(sessionKey);
-    if (!entry) return { status: "unsupported" };
-    const session = entry.session;
-
-    const promptInput = buildCodebuddyPromptInput(prompt, attachments);
-
-    try {
-      if (typeof promptInput === "string") {
-        await session.send(promptInput);
-      } else {
-        for await (const msg of promptInput) {
-          await session.send(msg);
-        }
-      }
-
-      // runTurn() owns the single stream consumer for an active session.
-      // Starting another session.stream() here resets the SDK's shared
-      // iterator and strands the original IPC request. The active consumer
-      // will receive and emit the steered continuation.
-      return { status: "accepted" };
-    } catch (error) {
-      return { status: "failed", message: error?.message || String(error) };
-    }
+  async steer() {
+    // SDK 0.3.230 Session.send() starts a new turn by resetting the shared
+    // message iterator and discarding pending messages. Calling it while
+    // runTurn() owns session.stream() can strand that active consumer.
+    // Keep this disabled until the SDK exposes a dedicated mid-turn steer API.
+    return { status: "unsupported" };
   }
 
   /**
@@ -321,6 +323,8 @@ class CodebuddySessionManager {
 
   /**
    * Close all sessions for a given chat session prefix.
+   * Also cancels pending elicitations scoped to the chat so main-process
+   * promises cannot leak when the renderer never responds (chat closed).
    */
   closeForChat(chatSessionId) {
     const prefix = `${String(chatSessionId || "")}\u0000`;
@@ -329,6 +333,7 @@ class CodebuddySessionManager {
         this.closeSession(key);
       }
     }
+    this.cancelElicitationsForChat(chatSessionId);
   }
 
   /**
@@ -337,6 +342,23 @@ class CodebuddySessionManager {
   closeAll() {
     for (const key of [...this.sessions.keys()]) {
       this.closeSession(key);
+    }
+    for (const [elicitationId, pending] of [...this.elicitationPending]) {
+      this.elicitationPending.delete(elicitationId);
+      try { pending.resolve({ action: "cancel" }); } catch { /* best effort */ }
+    }
+  }
+
+  /**
+   * Cancel pending elicitations belonging to a chat session, resolving each
+   * as { action: "cancel" } so waiting create() promises settle.
+   */
+  cancelElicitationsForChat(chatSessionId) {
+    const target = String(chatSessionId || "");
+    for (const [elicitationId, pending] of [...this.elicitationPending]) {
+      if (String(pending?.chatSessionId || "") !== target) continue;
+      this.elicitationPending.delete(elicitationId);
+      try { pending.resolve({ action: "cancel" }); } catch { /* best effort */ }
     }
   }
 

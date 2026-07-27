@@ -152,9 +152,11 @@ const DRIVER_REGISTRY = {
       // Build the elicitation handler: forwards create/complete events to the
       // renderer and waits for the user's decision via the session manager's
       // pending-response map (resolved by the elicitation-response IPC).
+      // chatSessionId lets closeForChat cancel pendings when the chat closes.
       const elicitation = codebuddy.buildCodebuddyElicitation(
         ctx.emitter,
         codebuddySessionManager.elicitationPending,
+        { chatSessionId: ctx.chatSessionId },
       );
       const options = codebuddy.buildCodebuddyQueryOptions({
         cwd: ctx.cwd,

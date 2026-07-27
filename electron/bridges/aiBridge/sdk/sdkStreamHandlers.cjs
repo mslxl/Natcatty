@@ -93,6 +93,19 @@ function normalizeSdkListModelsResult(raw) {
   return { currentModelId, models };
 }
 
+function resolveSdkPromptPlacement({
+  backendKey,
+  turnPrompt,
+  contextualPrompt,
+  systemContext,
+}) {
+  const supportsSystemContext = backendKey === "opencode" || backendKey === "codebuddy";
+  return {
+    prompt: supportsSystemContext ? turnPrompt : contextualPrompt,
+    systemPrompt: supportsSystemContext ? systemContext : undefined,
+  };
+}
+
 function deleteSdkSessionKeysForChat(sdkSessionIds, chatSessionId) {
   const prefix = `${String(chatSessionId || "")}\u0000`;
   for (const key of sdkSessionIds.keys()) {
@@ -597,11 +610,16 @@ function registerSdkStreamHandlers(ctx) {
                 .filter(Boolean),
             })
             : undefined;
+          const promptPlacement = resolveSdkPromptPlacement({
+            backendKey,
+            turnPrompt,
+            contextualPrompt,
+            systemContext,
+          });
           const commonTurnContext = {
             requestId,
             chatSessionId,
-            prompt: backendKey === "opencode" ? turnPrompt : contextualPrompt,
-            systemPrompt: (backendKey === "opencode" || backendKey === "codebuddy") ? systemContext : undefined,
+            ...promptPlacement,
             cwd: cwd || process.cwd(),
             model: model || undefined,
             permissionMode: permissionMode || "confirm",
@@ -810,25 +828,9 @@ function registerSdkStreamHandlers(ctx) {
       const runtime = sdkRequestRuntimes.get(requestId);
       if (!runtime) return { status: "busy" };
 
-      // CodeBuddy steer via V2 Session API.
+      // SDK 0.3.230 Session.send() resets the active message stream, so it
+      // cannot safely implement mid-turn steering.
       if (runtime.backendKey === "codebuddy") {
-        const stagedAttachments = [];
-        const steerPrompt = buildSdkTurnPrompt({
-          prompt,
-          replayHistory: false,
-          attachments: payload?.images,
-          onStagedAttachment: (attachment) => stagedAttachments.push(attachment),
-        });
-        mcpServerBridge.updateAttachmentMetadata?.(stagedAttachments, chatSessionId);
-        const driver = getDriver("codebuddy");
-        if (typeof driver.steerTurn === "function") {
-          return await driver.steerTurn({
-            chatSessionId,
-            prompt: steerPrompt,
-            attachments: stagedAttachments,
-            binPath: runtime.binPath || "",
-          });
-        }
         return { status: "unsupported" };
       }
 
@@ -877,6 +879,19 @@ function registerSdkStreamHandlers(ctx) {
       mcpServerBridge.setChatSessionCancelled?.(chatSessionId, true);
       mcpServerBridge.cancelPtyExecsForSession(chatSessionId);
       mcpServerBridge.cancelWorkerBackgroundJobsForSession?.(chatSessionId);
+      // Abort any in-flight SDK turns for this chat and drop their
+      // request-scoped entries immediately: if a turn never settles (renderer
+      // crash / window closed mid-stream), the stream handler's finally never
+      // runs and sdkActiveStreams/sdkRequestSessions/sdkRequestRuntimes would
+      // leak forever. Steer then reports "inactive" for these requests, which
+      // is correct for a chat being torn down.
+      for (const [requestId, requestChatSessionId] of [...sdkRequestSessions]) {
+        if (requestChatSessionId !== chatSessionId) continue;
+        try { sdkActiveStreams.get(requestId)?.abort(); } catch { /* best effort */ }
+        sdkActiveStreams.delete(requestId);
+        sdkRequestSessions.delete(requestId);
+        sdkRequestRuntimes.delete(requestId);
+      }
       deleteSdkSessionKeysForChat(sdkSessionIds, chatSessionId);
       codebuddySessionManager.closeForChat(chatSessionId);
       await codexAppServerRuntime.cleanupChatSession(chatSessionId);
@@ -1031,8 +1046,12 @@ function registerSdkStreamHandlers(ctx) {
       }
     });
 
-    // Expose teardown so aiBridge.cleanup() can abort active SDK streams.
+    // Expose teardown so aiBridge.cleanup() can abort active streams and close
+    // persistent SDK runtimes, including idle CodeBuddy V2 sessions. The
+    // request-scoped maps are also exposed for lifecycle tests.
     ctx.sdkActiveStreams = sdkActiveStreams;
+    ctx.sdkRequestSessions = sdkRequestSessions;
+    ctx.sdkRequestRuntimes = sdkRequestRuntimes;
     ctx.codexAppServerRuntime = codexAppServerRuntime;
     ctx.codebuddySessionManager = codebuddySessionManager;
   }
@@ -1045,6 +1064,7 @@ module.exports = {
   buildSdkSessionKey,
   buildSdkModelCacheKey,
   normalizeSdkListModelsResult,
+  resolveSdkPromptPlacement,
   resolveSdkResumeSessionId,
   expireSiblingCursorCliModeSessions,
   shouldCacheSdkRuntimeModels,
