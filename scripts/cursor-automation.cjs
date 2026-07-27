@@ -278,7 +278,7 @@ function parseExternalResearchStream(value, input) {
   const candidates = [
     terminalResult,
     assistantText,
-    ...assistantMessages.slice().reverse(),
+    assistantMessages[assistantMessages.length - 1],
   ].filter(Boolean);
   const selected = candidates.find((candidate) => parseExternalResearchEnvelope(candidate));
   const normalized = normalizeExternalResearchText(selected || candidates[0] || '', {
