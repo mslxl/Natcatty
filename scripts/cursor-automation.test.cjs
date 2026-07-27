@@ -1788,7 +1788,7 @@ test('workflow keeps sandbox probes credential-free and runs an authenticated ag
   assert.doesNotMatch(authenticatedSmokeStep, /CURSOR_API_KEY|CURSOR_AUTH_TOKEN/);
   assert.match(
     authenticatedSmokeStep,
-    /"\$RUNNER_TEMP\/cursor-agent-authenticated" \\\n\s+-p --mode=ask --trust/,
+    /"\$RUNNER_TEMP\/cursor-agent-authenticated" \\\n\s+-p --trust/,
   );
   assert.doesNotMatch(smokeJob, /--api-key/);
   assert.match(smokeJob, /allow: \["Shell\(node\)"\]/);

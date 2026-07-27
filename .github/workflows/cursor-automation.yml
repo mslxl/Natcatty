@@ -1103,7 +1103,7 @@ jobs:
           ' "$smoke_dir/.cursor"
           sudo --preserve-env=HOME,RUNNER_TEMP,GITHUB_WORKSPACE \
             "$RUNNER_TEMP/cursor-agent-authenticated" \
-            -p --mode=ask --trust --sandbox enabled --model auto --output-format text \
+            -p --trust --sandbox enabled --model auto --output-format text \
             --workspace "$smoke_dir" \
             "Run exactly one shell command: node $RUNNER_TEMP/cursor-auth-probe.cjs. Then reply with its output verbatim. Do not use any other tool." \
             > .cursor-runtime/agent-smoke-raw.txt
