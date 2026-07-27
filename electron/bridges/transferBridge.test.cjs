@@ -25,6 +25,14 @@ function createSender() {
   };
 }
 
+async function waitUntil(predicate, timeoutMs = 1000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate() && Date.now() < deadline) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  return predicate();
+}
+
 function createFastSftp(overrides) {
   const sftp = new EventEmitter();
   sftp.readdir = (_path, callback) => callback(null, []);
@@ -925,7 +933,7 @@ test("shared SFTP channel reopen preserves the requested timeout", async () => {
   assert.equal(client._reopeningPromise, null);
 });
 
-test("server-to-server resume cancellation settles while source prefix verification is stalled", async (t) => {
+test("server-to-server resume cancellation settles while source identity verification is stalled", async (t) => {
   const transferId = `server-prefix-cancel-${crypto.randomUUID()}`;
   const sourcePath = "/source/payload.bin";
   const tempPath = tempDirBridge.getTransferTempFilePath(transferId, path.basename(sourcePath));
@@ -960,6 +968,7 @@ test("server-to-server resume cancellation settles while source prefix verificat
     resumeStage: "download",
     checkpointBytes: 4,
     downloadCheckpointBytes: 4,
+    sourceFingerprint: `sha256:${"0".repeat(64)}`,
   });
 
   await prefixStarted;
@@ -1416,10 +1425,10 @@ test("resuming while a fast pause is pending settles the pause request", async (
   assert.equal((await running).error, undefined);
 });
 
-test("pause stores a lightweight source identity without full-file hashing", async (t) => {
-  // Pause must not await full-file SHA-256 (or start a post-pause background
-  // full read). A size+mtime+sample meta fingerprint is durable for resume and
-  // cheap (head/mid/tail reads only).
+test("pause acknowledges quickly then publishes a full source identity", async (t) => {
+  // Pause acknowledgement must not wait for full-file SHA-256. The background
+  // identity is nevertheless a complete digest so a later resume cannot mix
+  // bytes from different source versions.
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-late-pause-race-"));
   t.after(async () => {
     await fs.promises.rm(tempDir, { recursive: true, force: true });
@@ -1461,19 +1470,8 @@ test("pause stores a lightweight source identity without full-file hashing", asy
   };
   transferBridge.init({ sftpClients: new Map([["target", client]]) });
 
-  const originalCreateReadStream = fs.createReadStream;
-  let fullHashStreamOpened = false;
-  fs.createReadStream = (filePath, options) => {
-    // Full-file fingerprint uses createReadStream(path) with no options.
-    if (filePath === localPath && !options) {
-      fullHashStreamOpened = true;
-      return new Readable({ read() {} });
-    }
-    return originalCreateReadStream(filePath, options);
-  };
-
   let running;
-  try {
+  {
     const sender = createSender();
     running = transferBridge.startTransfer(
       { sender },
@@ -1488,6 +1486,11 @@ test("pause stores a lightweight source identity without full-file hashing", asy
         resumable: true,
       },
     );
+    t.after(async () => {
+      await transferBridge.cancelTransfer(null, { transferId: "late-pause-race" });
+      await running?.catch(() => {});
+      transferBridge.clearPendingCancel("late-pause-race");
+    });
     const writeDeadline = Date.now() + 1000;
     while (pendingWrites.length < UPLOAD_TRANSFER_CONCURRENCY && Date.now() < writeDeadline) {
       await new Promise((resolve) => setImmediate(resolve));
@@ -1502,31 +1505,30 @@ test("pause stores a lightweight source identity without full-file hashing", asy
     const pauseElapsed = Date.now() - pauseStarted;
     assert.equal(paused.success, true);
     assert.ok(pauseElapsed < 1500, `pause blocked too long: ${pauseElapsed}ms`);
-    assert.equal(fullHashStreamOpened, false, "pause must not open a full-file hash stream");
-    assert.match(paused.sourceFingerprint || "", /^meta:\d+:\d+:[a-f0-9]{64}$/);
-    assert.ok(
-      sender.sent.some((entry) => (
+    const fingerprintPublished = await waitUntil(() => sender.sent.some((entry) => (
+      entry.channel === "netcatty:transfer:progress"
+      && /^sha256:[a-f0-9]{64}$/.test(entry.payload.sourceFingerprint || "")
+    )));
+    assert.equal(fingerprintPublished, true, "full pause identity must be published after pause acknowledgement");
+    const fingerprintEntry = sender.sent.findLast((entry) => (
         entry.channel === "netcatty:transfer:progress"
-        && entry.payload.sourceFingerprint === paused.sourceFingerprint
-      )),
-      "pause identity must be published for transfer-center persistence",
+        && /^sha256:[a-f0-9]{64}$/.test(entry.payload.sourceFingerprint || "")
+    ));
+    assert.equal(
+      fingerprintEntry?.payload.sourceFingerprint,
+      `sha256:${crypto.createHash("sha256").update(payload).digest("hex")}`,
     );
 
     assert.deepEqual(
       await transferBridge.resumeTransfer(null, { transferId: "late-pause-race" }),
       { success: true },
     );
-  } finally {
-    fs.createReadStream = originalCreateReadStream;
   }
 
   assert.equal((await running).error, undefined);
 });
 
-test("remote pause identity reads modifyTime from session-backed stat", async (t) => {
-  // Session-backed client.stat() returns modifyTime (ms), not mtime/mtimeMs.
-  // Ignoring it collapses every remote identity to meta:<size>:0 and lets a
-  // same-size rewrite with an unchanged 256 KiB prefix resume unsafely.
+test("remote pause identity rejects a same-size source rewrite", async (t) => {
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-modifytime-id-"));
   t.after(async () => {
     await fs.promises.rm(tempDir, { recursive: true, force: true });
@@ -1534,18 +1536,18 @@ test("remote pause identity reads modifyTime from session-backed stat", async (t
 
   const payload = Buffer.from("abcdef");
   const modifyTimeMs = 1_700_000_000_000;
-  let currentModifyTime = modifyTimeMs;
+  let currentPayload = payload;
   const source = new PassThrough();
   let readStreamCalls = 0;
   const client = {
     sftp: createFastSftp({
       createReadStream() {
         readStreamCalls += 1;
-        return readStreamCalls === 1 ? source : Readable.from(payload);
+        return readStreamCalls === 1 ? source : Readable.from(currentPayload);
       },
     }),
     stat() {
-      return Promise.resolve({ size: payload.length, modifyTime: currentModifyTime });
+      return Promise.resolve({ size: currentPayload.length, modifyTime: modifyTimeMs });
     },
     client: { sftp(callback) { callback(new Error("isolated channel unavailable")); } },
   };
@@ -1566,6 +1568,12 @@ test("remote pause identity reads modifyTime from session-backed stat", async (t
       resumable: true,
     },
   );
+  t.after(async () => {
+    source.destroy();
+    await transferBridge.cancelTransfer(null, { transferId: "download-modifytime-id" });
+    await running.catch(() => {});
+    transferBridge.clearPendingCancel("download-modifytime-id");
+  });
 
   const readyDeadline = Date.now() + 1000;
   while (source.listenerCount("data") === 0 && Date.now() < readyDeadline) {
@@ -1577,12 +1585,24 @@ test("remote pause identity reads modifyTime from session-backed stat", async (t
 
   const paused = await transferBridge.pauseTransfer(null, { transferId: "download-modifytime-id" });
   assert.equal(paused.success, true);
-  assert.match(paused.sourceFingerprint || "", new RegExp(`^meta:${payload.length}:${modifyTimeMs}:[a-f0-9]{64}$`));
+  const expectedFingerprint = `sha256:${crypto.createHash("sha256").update(payload).digest("hex")}`;
+  const fingerprintPublished = await waitUntil(() => sender.sent.some((entry) => (
+    entry.channel === "netcatty:transfer:progress"
+    && entry.payload.sourceFingerprint === expectedFingerprint
+  )));
+  assert.equal(fingerprintPublished, true, "remote pause identity must be published after pause acknowledgement");
+  const fingerprintEntry = sender.sent.findLast((entry) => (
+    entry.channel === "netcatty:transfer:progress"
+    && entry.payload.sourceFingerprint === expectedFingerprint
+  ));
+  const sourceFingerprint = fingerprintEntry?.payload.sourceFingerprint;
+  assert.equal(sourceFingerprint, expectedFingerprint);
 
   await transferBridge.cancelTransfer(null, { transferId: "download-modifytime-id" });
   assert.match((await running).error || "", /cancel/i);
 
-  currentModifyTime = modifyTimeMs + 1000;
+  currentPayload = Buffer.from(payload);
+  currentPayload[4] = 90;
   const restarted = await transferBridge.startTransfer(
     { sender: createSender() },
     {
@@ -1595,16 +1615,13 @@ test("remote pause identity reads modifyTime from session-backed stat", async (t
       totalBytes: payload.length,
       resumable: true,
       checkpointBytes: 3,
-      sourceFingerprint: paused.sourceFingerprint,
+      sourceFingerprint,
     },
   );
   assert.match(restarted.error || "", /source file has changed/i);
 });
 
-test("meta resume rejects same-size rewrite past the 256 KiB content window", async (t) => {
-  // Codex P1: size+mtime alone (and a 256 KiB leading content window) miss a
-  // same-size rewrite between identity sample points. meta: resumes must hash
-  // the full checkpoint against the staged .part before appending.
+test("legacy sampled identity restarts safely instead of resuming mixed content", async (t) => {
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-meta-rewrite-"));
   t.after(async () => {
     await fs.promises.rm(tempDir, { recursive: true, force: true });
@@ -1640,8 +1657,6 @@ test("meta resume rejects same-size rewrite past the 256 KiB content window", as
   };
   transferBridge.init({ sftpClients: new Map([["source", client]]) });
 
-  // Legacy meta:size:mtime (no samples) still passes the identity gate when
-  // size+mtime agree; the full-checkpoint content compare must catch the gap.
   const result = await transferBridge.startTransfer(
     { sender: createSender() },
     {
@@ -1657,7 +1672,227 @@ test("meta resume rejects same-size rewrite past the 256 KiB content window", as
       sourceFingerprint: `meta:${fileSize}:${modifyTimeMs}`,
     },
   );
-  assert.match(result.error || "", /content does not match|Resume safety/i);
+  assert.equal(result.error, undefined);
+  assert.deepEqual(await fs.promises.readFile(targetPath), rewritten);
+});
+
+test("resume rejects a rewrite beyond the first 256 KiB of the saved prefix", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-full-prefix-"));
+  t.after(async () => { await fs.promises.rm(tempDir, { recursive: true, force: true }); });
+  const transferId = `full-prefix-${crypto.randomUUID()}`;
+  const sourcePath = path.join(tempDir, "source.bin");
+  const targetPath = path.join(tempDir, "target.bin");
+  const stagedPath = tempDirBridge.getTransferTempFilePath(transferId, "target.bin");
+  const fileSize = 768 * 1024;
+  const checkpoint = 400 * 1024;
+  const original = Buffer.alloc(fileSize, 17);
+  const current = Buffer.from(original);
+  current.fill(99, 300 * 1024, 332 * 1024);
+  await fs.promises.writeFile(sourcePath, current);
+  await fs.promises.writeFile(stagedPath, original.subarray(0, checkpoint));
+  t.after(async () => { await fs.promises.unlink(stagedPath).catch(() => {}); });
+
+  transferBridge.init({ sftpClients: new Map() });
+  const result = await transferBridge.startTransfer({ sender: createSender() }, {
+    transferId,
+    sourcePath,
+    targetPath,
+    sourceType: "local",
+    targetType: "local",
+    totalBytes: fileSize,
+    resumable: true,
+    checkpointBytes: checkpoint,
+    sourceFingerprint: `sha256:${crypto.createHash("sha256").update(current).digest("hex")}`,
+  });
+
+  assert.match(result.error || "", /saved content does not match/i);
+  assert.equal(fs.existsSync(targetPath), false);
+});
+
+test("local resume verification reports progress and destroys both readers on cancellation", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-verify-cancel-"));
+  t.after(async () => { await fs.promises.rm(tempDir, { recursive: true, force: true }); });
+  const transferId = `verify-cancel-${crypto.randomUUID()}`;
+  const sourcePath = path.join(tempDir, "source.bin");
+  const targetPath = path.join(tempDir, "target.bin");
+  const stagedPath = tempDirBridge.getTransferTempFilePath(transferId, "target.bin");
+  const checkpoint = 512 * 1024;
+  const verifyBytes = checkpoint;
+  const payload = Buffer.alloc(checkpoint + 1, 31);
+  await fs.promises.writeFile(sourcePath, payload);
+  await fs.promises.writeFile(stagedPath, payload.subarray(0, checkpoint));
+  t.after(async () => { await fs.promises.unlink(stagedPath).catch(() => {}); });
+
+  const sourceFingerprint = `sha256:${crypto.createHash("sha256").update(payload).digest("hex")}`;
+  const originalCreateReadStream = fs.createReadStream;
+  const verificationStreams = [];
+  fs.createReadStream = (filePath, options = {}) => {
+    if (
+      (filePath === sourcePath || filePath === stagedPath)
+      && options.start === 0
+      && options.end === verifyBytes - 1
+    ) {
+      const stream = new PassThrough();
+      verificationStreams.push(stream);
+      return stream;
+    }
+    return originalCreateReadStream(filePath, options);
+  };
+  t.after(() => { fs.createReadStream = originalCreateReadStream; });
+
+  transferBridge.init({ sftpClients: new Map() });
+  const sender = createSender();
+  const running = transferBridge.startTransfer({ sender }, {
+    transferId,
+    sourcePath,
+    targetPath,
+    sourceType: "local",
+    targetType: "local",
+    totalBytes: payload.length,
+    resumable: true,
+    checkpointBytes: checkpoint,
+    sourceFingerprint,
+  });
+  t.after(async () => {
+    await transferBridge.cancelTransfer(null, { transferId });
+    await running.catch(() => {});
+    transferBridge.clearPendingCancel(transferId);
+  });
+
+  assert.equal(await waitUntil(() => verificationStreams.length === 2), true);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  for (const stream of verificationStreams) stream.write(Buffer.alloc(256 * 1024, 31));
+  assert.equal(await waitUntil(() => sender.sent.some((entry) => (
+    entry.channel === "netcatty:transfer:progress"
+    && entry.payload.phase === "verifying"
+    && entry.payload.speed > 0
+  ))), true, "resume verification progress must be visible");
+  const verifyingEvent = sender.sent.findLast((entry) => entry.payload?.phase === "verifying");
+  assert.equal(verifyingEvent?.payload.transferred, checkpoint);
+  assert.equal(verifyingEvent?.payload.checkpointBytes, checkpoint);
+
+  await transferBridge.cancelTransfer(null, { transferId });
+  const result = await running;
+  assert.match(result.error || "", /cancel/i);
+  assert.equal(verificationStreams.every((stream) => stream.destroyed), true);
+});
+
+test("remote resume verification destroys the SFTP reader on cancellation", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-remote-verify-cancel-"));
+  t.after(async () => { await fs.promises.rm(tempDir, { recursive: true, force: true }); });
+  const transferId = `remote-verify-cancel-${crypto.randomUUID()}`;
+  const targetPath = path.join(tempDir, "target.bin");
+  const stagedPath = tempDirBridge.getTransferTempFilePath(transferId, "target.bin");
+  const checkpoint = 512 * 1024;
+  const verifyBytes = checkpoint;
+  const payload = Buffer.alloc(checkpoint + 1, 47);
+  await fs.promises.writeFile(stagedPath, payload.subarray(0, checkpoint));
+  t.after(async () => { await fs.promises.unlink(stagedPath).catch(() => {}); });
+
+  const sourceFingerprint = `sha256:${crypto.createHash("sha256").update(payload).digest("hex")}`;
+  let verificationStream;
+  const sftp = createFastSftp({
+    createReadStream(_remotePath, options = {}) {
+      const start = Number(options.start) || 0;
+      const end = Number.isFinite(options.end) ? options.end : payload.length - 1;
+      if (start === 0 && end === verifyBytes - 1) {
+        verificationStream = new PassThrough();
+        return verificationStream;
+      }
+      return Readable.from(payload.subarray(start, end + 1));
+    },
+  });
+  const client = {
+    sftp,
+    stat: async () => ({ size: payload.length }),
+  };
+  transferBridge.init({ sftpClients: new Map([["source", client]]) });
+
+  const sender = createSender();
+  const running = transferBridge.startTransfer({ sender }, {
+    transferId,
+    sourcePath: "/tmp/source.bin",
+    targetPath,
+    sourceType: "sftp",
+    targetType: "local",
+    sourceSftpId: "source",
+    totalBytes: payload.length,
+    resumable: true,
+    checkpointBytes: checkpoint,
+    sourceFingerprint,
+  });
+  t.after(async () => {
+    await transferBridge.cancelTransfer(null, { transferId });
+    await running.catch(() => {});
+    transferBridge.clearPendingCancel(transferId);
+  });
+
+  assert.equal(await waitUntil(() => verificationStream !== undefined), true);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  verificationStream.write(Buffer.alloc(256 * 1024, 47));
+  assert.equal(await waitUntil(() => sender.sent.some((entry) => (
+    entry.channel === "netcatty:transfer:progress"
+    && entry.payload.phase === "verifying"
+    && entry.payload.speed > 0
+  ))), true);
+  await transferBridge.cancelTransfer(null, { transferId });
+  const result = await running;
+  assert.match(result.error || "", /cancel/i);
+  assert.equal(verificationStream.destroyed, true);
+});
+
+test("remote resume verification cancellation does not wait for SFTP channel reopen", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-remote-verify-reopen-"));
+  t.after(async () => { await fs.promises.rm(tempDir, { recursive: true, force: true }); });
+  const transferId = `remote-verify-reopen-${crypto.randomUUID()}`;
+  const targetPath = path.join(tempDir, "target.bin");
+  const stagedPath = tempDirBridge.getTransferTempFilePath(transferId, "target.bin");
+  const checkpoint = 64 * 1024;
+  const totalBytes = checkpoint + 1;
+  await fs.promises.writeFile(stagedPath, Buffer.alloc(checkpoint, 19));
+  t.after(async () => { await fs.promises.unlink(stagedPath).catch(() => {}); });
+
+  let reopenStarted = false;
+  let finishReopen;
+  const client = {
+    sftp: null,
+    stat: async () => ({ size: totalBytes }),
+    client: {
+      sftp(callback) {
+        reopenStarted = true;
+        finishReopen = () => callback(null, createFastSftp({}));
+      },
+    },
+  };
+  transferBridge.init({ sftpClients: new Map([["source", client]]) });
+
+  const running = transferBridge.startTransfer({ sender: createSender() }, {
+    transferId,
+    sourcePath: "/tmp/source.bin",
+    targetPath,
+    sourceType: "sftp",
+    targetType: "local",
+    sourceSftpId: "source",
+    totalBytes,
+    resumable: true,
+    checkpointBytes: checkpoint,
+    sourceFingerprint: `sha256:${"0".repeat(64)}`,
+  });
+  t.after(async () => {
+    await transferBridge.cancelTransfer(null, { transferId });
+    await running.catch(() => {});
+    transferBridge.clearPendingCancel(transferId);
+  });
+
+  assert.equal(await waitUntil(() => reopenStarted), true);
+  await transferBridge.cancelTransfer(null, { transferId });
+  const result = await Promise.race([
+    running,
+    new Promise((_, reject) => setTimeout(() => reject(new Error("cancel timed out")), 250)),
+  ]);
+  assert.match(result.error || "", /cancel/i);
+  finishReopen?.();
+  assert.equal(await waitUntil(() => client._reopeningPromise === null), true);
 });
 
 test("failed resumable upload opens close their isolated channel", async (t) => {
@@ -5047,7 +5282,7 @@ test("server-to-server concurrent failure does not complete via serial stream", 
   assert.equal(fs.statSync(localStage).size, payload.length);
 });
 
-test("upload resume after hard quit clamps checkpoint to durable remote .part size", async (t) => {
+test("upload recovery without a full source identity restarts from zero", async (t) => {
   // Simulates force-quit mid-upload: UI progress saved a high checkpoint, but
   // only a shorter prefix made it into the remote staged .part file.
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-crash-resume-"));
@@ -5122,8 +5357,9 @@ test("upload resume after hard quit clamps checkpoint to durable remote .part si
   assert.equal(result.error, undefined, result.error);
   assert.deepEqual(remote, payload);
   assert.equal(promoted, true);
-  // Resume must not rewrite the durable prefix from offset 0.
-  assert.ok(minWritePosition >= 4, `expected resume from >=4, got ${minWritePosition}`);
+  // A checkpoint without a full source digest cannot prove the source suffix
+  // stayed unchanged across the crash, so the safe recovery is a full restart.
+  assert.equal(minWritePosition, 0);
 });
 
 test("local resume after hard quit clamps checkpoint to durable staged file size", async (t) => {
@@ -5175,6 +5411,7 @@ test("resume rejects a same-size temporary prefix that does not match the source
     totalBytes: 6,
     resumable: true,
     checkpointBytes: 3,
+    sourceFingerprint: `sha256:${crypto.createHash("sha256").update("abcdef").digest("hex")}`,
   });
 
   assert.match(result.error || "", /saved content does not match/i);
@@ -5206,13 +5443,21 @@ test("bridge admission applies one global concurrency limit across callers", asy
     globalConcurrency: 1,
   });
   const first = start("admission-first", "/first");
-  while (firstSource.listenerCount("data") === 0) await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(
+    await waitUntil(() => firstSource.listenerCount("data") > 0),
+    true,
+    "first admitted transfer did not start",
+  );
   const second = start("admission-second", "/second");
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(secondSource.listenerCount("data"), 0);
   firstSource.end(Buffer.from("a"));
   assert.equal((await first).error, undefined);
-  while (secondSource.listenerCount("data") === 0) await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(
+    await waitUntil(() => secondSource.listenerCount("data") > 0),
+    true,
+    "second admitted transfer did not start after the first completed",
+  );
   secondSource.end(Buffer.from("b"));
   assert.equal((await second).error, undefined);
 });
