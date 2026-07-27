@@ -259,9 +259,45 @@ const hostFieldMatchesAnyVaultSelector = (hostField, selectors) => {
 };
 
 /**
- * Drop known_hosts lines that pin any vault-covered host so vault keys are
- * the only trust source for those hosts. OpenSSH accepts a match from ANY
+ * Rewrite a plain (non-hashed) host field by removing patterns that match
+ * vault-covered hosts, while keeping patterns that only cover other hosts.
+ * Returns null when nothing remains (caller should drop the line).
+ */
+const rewriteHostFieldExcludingVaultHosts = (hostField, vaultSelectors) => {
+  const field = String(hostField || "").trim();
+  if (!field || field.startsWith("|1|")) {
+    // Hashed fields are all-or-nothing: drop if they match any vault host.
+    if (field.startsWith("|1|") && hostFieldMatchesAnyVaultSelector(field, vaultSelectors)) {
+      return null;
+    }
+    return field || null;
+  }
+  const keptPatterns = [];
+  for (const pattern of field.split(",")) {
+    const token = pattern.trim();
+    if (!token) continue;
+    const positive = token.startsWith("!") ? token.slice(1) : token;
+    // Drop a pattern when its positive form matches a vault-covered host.
+    // Keep negation patterns only when their positive form is also kept.
+    const matchesVault = vaultSelectors.some((selector) =>
+      plainHostPatternMatchesSelector(positive, selector),
+    );
+    if (matchesVault) continue;
+    keptPatterns.push(token);
+  }
+  // A host field with only negations left is not a useful trust pin.
+  if (!keptPatterns.some((pattern) => !pattern.startsWith("!"))) return null;
+  return keptPatterns.join(",");
+};
+
+/**
+ * Drop or rewrite known_hosts lines that pin vault-covered hosts so vault keys
+ * are the only trust source for those hosts. OpenSSH accepts a match from ANY
  * configured file; leaving a system K2 next to vault K1 would let K2 win.
+ *
+ * Multi-host lines such as `jump.example,target.example` keep the patterns
+ * that do not match vault hosts, so an unpinned hop is not accidentally
+ * converted to first-use trust.
  *
  * `@revoked` lines for vault-covered hosts are KEPT — admin revocations must
  * remain authoritative and cannot be replaced by a vault pin alone.
@@ -278,6 +314,7 @@ const filterKnownHostsContentExcludingVaultHosts = (content, vaultSelectors) => 
       continue;
     }
     let rest = line;
+    let markerPrefix = "";
     let revoked = false;
     while (rest.startsWith("@")) {
       const spaceIdx = rest.search(/\s/);
@@ -286,6 +323,7 @@ const filterKnownHostsContentExcludingVaultHosts = (content, vaultSelectors) => 
         break;
       }
       const marker = rest.slice(0, spaceIdx);
+      markerPrefix += `${marker} `;
       if (marker === "@revoked") revoked = true;
       rest = rest.slice(spaceIdx).trim();
     }
@@ -293,10 +331,17 @@ const filterKnownHostsContentExcludingVaultHosts = (content, vaultSelectors) => 
       kept.push(rawLine.trimEnd());
       continue;
     }
-    const hostField = rest.split(/\s+/)[0];
+    const parts = rest.split(/\s+/);
+    const hostField = parts[0];
+    const tail = parts.slice(1).join(" ");
     if (hostFieldMatchesAnyVaultSelector(hostField, vaultSelectors)) {
-      // Keep revocations; drop alternate trust pins for vault-covered hosts.
-      if (revoked) kept.push(rawLine.trimEnd());
+      if (revoked) {
+        kept.push(rawLine.trimEnd());
+        continue;
+      }
+      const rewrittenHost = rewriteHostFieldExcludingVaultHosts(hostField, vaultSelectors);
+      if (!rewrittenHost || !tail) continue;
+      kept.push(`${markerPrefix}${rewrittenHost} ${tail}`.trim());
       continue;
     }
     kept.push(rawLine.trimEnd());
@@ -731,6 +776,8 @@ const buildExternalHostKeySshOptions = ({
       values.push(`UserKnownHostsFile=${quoted}`);
       values.push(`GlobalKnownHostsFile=${quoted}`);
     }
+    // Disable KnownHostsCommand so dynamic trust cannot reintroduce pins.
+    values.push("KnownHostsCommand=none");
     values.push("StrictHostKeyChecking=no");
   } else {
     const trustPath = normalize(
@@ -744,6 +791,10 @@ const buildExternalHostKeySshOptions = ({
       // back to an unfiltered system known_hosts that still pins a rotated key.
       values.push(`UserKnownHostsFile=${quoted}`);
       values.push(`GlobalKnownHostsFile=${quoted}`);
+      // KnownHostsCommand runs in addition to known_hosts files; disable it
+      // when enforcing vault authority so a dynamic command cannot return a
+      // rotated live key that bypasses the vault pin.
+      values.push("KnownHostsCommand=none");
     }
     const strict = resolveExternalStrictHostKeyChecking({ verifyHostKeys, protocol });
     if (strict) {

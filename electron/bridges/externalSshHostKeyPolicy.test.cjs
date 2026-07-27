@@ -111,6 +111,16 @@ test("filterKnownHostsContentExcludingVaultHosts drops conflicting system pins",
   assert.match(filtered, /# comment kept/);
 });
 
+test("filterKnownHostsContentExcludingVaultHosts rewrites multi-host lines", () => {
+  const content = "jump.example,target.example ssh-ed25519 AAASHARED\n";
+  const filtered = filterKnownHostsContentExcludingVaultHosts(content, [
+    { hostname: "jump.example", port: 22 },
+  ]);
+  // Jump pattern removed; target pattern kept so unpinned target stays trusted.
+  assert.match(filtered, /^target\.example ssh-ed25519 AAASHARED$/m);
+  assert.doesNotMatch(filtered, /jump\.example/);
+});
+
 test("filterKnownHostsContentExcludingVaultHosts drops wildcards covering vault hosts", () => {
   const {
     filterKnownHostsContentExcludingVaultHosts: filter,
@@ -399,6 +409,7 @@ test("buildExternalHostKeySshOptions uses authoritative trust for both slots", (
   assert.deepEqual(values, [
     "UserKnownHostsFile=/tmp/auth-kh",
     "GlobalKnownHostsFile=/tmp/auth-kh",
+    "KnownHostsCommand=none",
     "StrictHostKeyChecking=accept-new",
   ]);
 
@@ -410,6 +421,7 @@ test("buildExternalHostKeySshOptions uses authoritative trust for both slots", (
   assert.deepEqual(moshArgs, [
     "-o", "UserKnownHostsFile=/tmp/auth-kh",
     "-o", "GlobalKnownHostsFile=/tmp/auth-kh",
+    "-o", "KnownHostsCommand=none",
     "-o", "StrictHostKeyChecking=ask",
   ]);
 });
@@ -423,6 +435,7 @@ test("buildExternalHostKeySshOptions quotes whitespace paths", () => {
   assert.deepEqual(values, [
     'UserKnownHostsFile="/tmp/user name/auth-kh"',
     'GlobalKnownHostsFile="/tmp/user name/auth-kh"',
+    "KnownHostsCommand=none",
     "StrictHostKeyChecking=accept-new",
   ]);
 });
@@ -438,6 +451,7 @@ test("buildExternalHostKeySshOptions neutralizes trust when verification is disa
   assert.deepEqual(disabled, [
     "-o", "UserKnownHostsFile=/tmp/empty-kh",
     "-o", "GlobalKnownHostsFile=/tmp/empty-kh",
+    "-o", "KnownHostsCommand=none",
     "-o", "StrictHostKeyChecking=no",
   ]);
   assert.equal(disabled.some((part) => String(part).includes("/tmp/auth-kh")), false);
@@ -451,6 +465,7 @@ test("buildExternalHostKeyConfigLines formats indented jump-host stanzas", () =>
   assert.deepEqual(lines, [
     "  UserKnownHostsFile /tmp/auth-kh",
     "  GlobalKnownHostsFile /tmp/auth-kh",
+    "  KnownHostsCommand none",
     "  StrictHostKeyChecking accept-new",
   ]);
 });

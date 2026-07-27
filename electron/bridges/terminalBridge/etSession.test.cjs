@@ -980,21 +980,27 @@ test("prepareEtSshEnvironment applies vault host-key policy via ssh-option for j
     }],
   });
 
-  // Destination hop: --ssh-option (ET applies these only to the final target).
-  assert.ok(env.sshOptions.some((option) => option.startsWith("GlobalKnownHostsFile=")));
+  // Destination is not vault-pinned: keep persistent known_hosts via --ssh-option.
   assert.ok(env.sshOptions.includes("StrictHostKeyChecking=accept-new"));
-  const trustPath = env.sshOptions
-    .find((option) => option.startsWith("UserKnownHostsFile="))
-    .slice("UserKnownHostsFile=".length);
-  assert.match(
-    fs.readFileSync(trustPath, "utf8"),
-    new RegExp(`jump\\.example ssh-ed25519 ${VALID_ED25519_BLOB}`),
+  assert.ok(env.sshOptions.some((option) => option.startsWith("UserKnownHostsFile=")));
+  assert.equal(
+    env.sshOptions.some((option) => option.startsWith("GlobalKnownHostsFile=")),
+    false,
   );
-  // Jump hop: Host block (ProxyJump child process does not inherit --ssh-option).
+  // Jump hop: Host block carries the vault-authoritative snapshot.
   const config = fs.readFileSync(path.join(env.env.HOME, ".ssh", "config"), "utf8");
   const jumpBlock = config.slice(config.indexOf("Host jump.example"));
   assert.match(jumpBlock, /UserKnownHostsFile /);
+  assert.match(jumpBlock, /GlobalKnownHostsFile /);
   assert.match(jumpBlock, /StrictHostKeyChecking /);
+  assert.match(jumpBlock, /KnownHostsCommand /);
+  const jumpTrustMatch = jumpBlock.match(/UserKnownHostsFile "?([^"\n]+)"?/);
+  assert.ok(jumpTrustMatch);
+  const jumpTrustPath = jumpTrustMatch[1].trim();
+  assert.match(
+    fs.readFileSync(jumpTrustPath, "utf8"),
+    new RegExp(`jump\\.example ssh-ed25519 ${VALID_ED25519_BLOB}`),
+  );
 });
 
 test("prepareEtSshEnvironment merges vault pins for target hop with jump present", (t) => {

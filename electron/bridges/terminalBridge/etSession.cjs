@@ -372,13 +372,15 @@ main();
       // ssh banners so the first real PTY bytes are the remote shell. Mirrors
       // the options already used by execOnEtSession.
       //
-      // Vault known_hosts (issue #2501): when the vault pins the target and/or
-      // jump hop, build authoritative session snapshot(s) and apply them via
-      // --ssh-option. ET only passes --ssh-option to OpenSSH reliably; Host
-      // blocks under a temp HOME are not always read on POSIX (OpenSSH uses
-      // the account home for config resolution), so command-line policy is
-      // the enforceable path.
-      let authoritativeKnownHostsPath = null;
+      // Vault known_hosts (issue #2501):
+      //  - Destination hop: enforced via --ssh-option (ET applies these only
+      //    to the final target; temp-HOME Host blocks are unreliable on POSIX).
+      //  - Jump hop: enforced via Host <jump> config block (ProxyJump child
+      //    process does not inherit --ssh-option).
+      // Build per-hop snapshots so shared multi-host system lines are filtered
+      // only for the hop that is vault-pinned.
+      let targetAuthoritativeKnownHostsPath = null;
+      let jumpAuthoritativeKnownHostsPath = null;
       let emptyKnownHostsPath = null;
       const targetConnectionHost = {
         hostname: options.hostname,
@@ -391,7 +393,6 @@ main();
       const vaultPinsTarget = vaultPinsConnectionHosts(options.knownHosts, [targetConnectionHost]);
       const vaultPinsJump = vaultPinsConnectionHosts(options.knownHosts, jumpConnectionHosts);
       if (verifyHostKeys) {
-        const contentChunks = [];
         if (vaultPinsTarget) {
           const targetContent = buildAuthoritativeKnownHostsContent({
             knownHosts: options.knownHosts,
@@ -402,7 +403,13 @@ main();
             pathModule: path,
             homedir: os.homedir(),
           });
-          if (targetContent) contentChunks.push(targetContent.trimEnd());
+          if (targetContent) {
+            targetAuthoritativeKnownHostsPath = path.join(
+              sshDir,
+              `${safeId}-authoritative-target-known_hosts`,
+            );
+            writeSecureFile(targetAuthoritativeKnownHostsPath, targetContent, 0o600);
+          }
         }
         if (vaultPinsJump && jumpHosts[0]) {
           const jumpContent = buildAuthoritativeKnownHostsContent({
@@ -414,24 +421,13 @@ main();
             pathModule: path,
             homedir: os.homedir(),
           });
-          if (jumpContent) contentChunks.push(jumpContent.trimEnd());
-        }
-        if (contentChunks.length > 0) {
-          // De-dupe lines across hop snapshots while preserving order.
-          const seen = new Set();
-          const merged = [];
-          for (const chunk of contentChunks) {
-            for (const line of chunk.split("\n")) {
-              if (!line || seen.has(line)) continue;
-              seen.add(line);
-              merged.push(line);
-            }
+          if (jumpContent) {
+            jumpAuthoritativeKnownHostsPath = path.join(
+              sshDir,
+              `${safeId}-authoritative-jump-known_hosts`,
+            );
+            writeSecureFile(jumpAuthoritativeKnownHostsPath, jumpContent, 0o600);
           }
-          authoritativeKnownHostsPath = path.join(
-            sshDir,
-            `${safeId}-authoritative-known_hosts`,
-          );
-          writeSecureFile(authoritativeKnownHostsPath, `${merged.join("\n")}\n`, 0o600);
         }
       } else {
         // StrictHostKeyChecking=no still consults known_hosts for password-auth
@@ -441,12 +437,12 @@ main();
         writeSecureFile(emptyKnownHostsPath, "", 0o600);
       }
 
-      // Always apply host-key policy through --ssh-option (see comment above).
-      if (verifyHostKeys && !authoritativeKnownHostsPath) {
+      // Destination hop host-key policy via --ssh-option.
+      if (verifyHostKeys && !targetAuthoritativeKnownHostsPath) {
         sshOptions.push(`UserKnownHostsFile=${normalizeSshConfigPath(knownHostsPath)}`);
       }
       sshOptions.push(...buildExternalHostKeySshOptions({
-        authoritativeKnownHostsPath,
+        authoritativeKnownHostsPath: targetAuthoritativeKnownHostsPath,
         emptyKnownHostsPath,
         verifyHostKeys,
         protocol: "et",
@@ -710,9 +706,9 @@ main();
         // ProxyJump starts a separate OpenSSH process that reads the jump
         // stanza (see comment near etJumpArgs).
         if (verifyHostKeys) {
-          if (authoritativeKnownHostsPath && vaultPinsJump) {
+          if (jumpAuthoritativeKnownHostsPath) {
             jumpConfigLines.push(...buildExternalHostKeyConfigLines({
-              authoritativeKnownHostsPath,
+              authoritativeKnownHostsPath: jumpAuthoritativeKnownHostsPath,
               verifyHostKeys: true,
               protocol: "et",
               normalizePath: normalizeSshConfigPath,
