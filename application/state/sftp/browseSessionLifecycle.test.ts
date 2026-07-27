@@ -2,11 +2,22 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  isBrowseSessionInteractive,
   listRemoteConnectionIdsForRestore,
   shouldParkBrowseSessions,
   shouldRestoreBrowseSessions,
   takeBrowseSessionsForClose,
 } from "./browseSessionLifecycle.ts";
+
+test("keeps a hidden SFTP owner interactive while its promoted editor tab is open", () => {
+  const interactive = isBrowseSessionInteractive({
+    surfaceVisible: false,
+    hasOwnedEditorTab: true,
+  });
+
+  assert.equal(interactive, true);
+  assert.equal(shouldParkBrowseSessions({ interactive, browseParked: false }), false);
+});
 
 test("parks browse only when the interactive surface hides and not already parked", () => {
   assert.equal(shouldParkBrowseSessions({ interactive: false, browseParked: false }), true);

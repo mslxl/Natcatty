@@ -21,13 +21,17 @@ import {
   useWarmSftpTransferPool,
 } from "../application/state/sftp/useSftpTransferLifecycle";
 import { registerEditorSftpWriterScoped } from "../application/state/editorSftpBridge";
-import { editorTabStore } from "../application/state/editorTabStore";
+import {
+  editorTabStore,
+  useHasEditorTabForSessions,
+} from "../application/state/editorTabStore";
 import { releaseEditorTabSaveCoordinator } from "../application/state/editorTabSave";
 import { useSftpBackend } from "../application/state/useSftpBackend";
 import { useSftpFileAssociations } from "../application/state/useSftpFileAssociations";
 import { getParentPath, isConcreteTransferTargetPath } from "../application/state/sftp/utils";
 import { buildCacheKey } from "../application/state/sftp/sharedRemoteHostCache";
 import { resolveSftpAutoConnectPath } from "../application/state/sftp/sftpReopenLocation";
+import { isBrowseSessionInteractive } from "../application/state/sftp/browseSessionLifecycle";
 import { logger } from "../lib/logger";
 import type { DropEntry } from "../lib/sftpFileUtils";
 import { Host, Identity, KnownHost, SSHKey } from "../types";
@@ -178,12 +182,23 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     },
   }), [t]);
 
+  const ownedEditorSessionIdsRef = useRef<ReadonlySet<string>>(new Set());
+  const getOwnedEditorSessionIds = useCallback(
+    () => ownedEditorSessionIdsRef.current,
+    [],
+  );
+  const hasOwnedEditorTab = useHasEditorTabForSessions(getOwnedEditorSessionIds);
+
   const sftpOptions = useMemo(() => ({
     ...fileWatchHandlers,
     transferOwnerId,
     canPrepareTransferAdoption: isVisible,
-    // Hidden side panel parks browse channels; transfer pool keeps running.
-    interactive: isVisible,
+    // A promoted editor still saves through this owner after the side panel
+    // becomes hidden, so its browse channel must stay alive until the editor closes.
+    interactive: isBrowseSessionInteractive({
+      surfaceVisible: isVisible,
+      hasOwnedEditorTab,
+    }),
     useCompressedUpload: sftpUseCompressedUpload,
     defaultShowHiddenFiles: sftpShowHiddenFiles,
     autoConnectLocalOnMount: false,
@@ -194,6 +209,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     transferPoolIdleTtlMs: sftpTransferPoolIdleTtlMs,
   }), [
     fileWatchHandlers,
+    hasOwnedEditorTab,
     isVisible,
     transferOwnerId,
     sftpUseCompressedUpload,
@@ -206,6 +222,11 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   ]);
 
   const sftp = useSftpState(hosts, keys, identities, sftpOptions);
+  ownedEditorSessionIdsRef.current = new Set(
+    [...sftp.leftTabs.tabs, ...sftp.rightTabs.tabs]
+      .map((tab) => tab.connection?.id)
+      .filter((id): id is string => !!id),
+  );
   const {
     showSaveDialog,
     selectDirectory,

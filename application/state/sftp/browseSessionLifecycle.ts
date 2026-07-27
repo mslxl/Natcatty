@@ -6,6 +6,13 @@
  * sessions held by in-flight streams).
  */
 
+export function isBrowseSessionInteractive(params: {
+  surfaceVisible: boolean;
+  hasOwnedEditorTab: boolean;
+}): boolean {
+  return params.surfaceVisible || params.hasOwnedEditorTab;
+}
+
 export function shouldParkBrowseSessions(params: {
   interactive: boolean;
   /** True after we already soft-closed browse while the owner stayed mounted. */
