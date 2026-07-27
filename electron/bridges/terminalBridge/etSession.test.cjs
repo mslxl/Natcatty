@@ -1065,6 +1065,39 @@ test("execOnEtSession honors session StrictHostKeyChecking=no over accept-new de
   assert.doesNotMatch(joined, /StrictHostKeyChecking=accept-new/);
 });
 
+test("execOnEtSession forces the session-generated SSH config with -F", async (t) => {
+  let capturedArgs = null;
+  const { api } = makeApi(t, {
+    execFile: (_cmd, args, _opts, cb) => {
+      capturedArgs = args;
+      process.nextTick(() => cb(null, "", ""));
+    },
+  });
+  const env = api.prepareEtSshEnvironment("sess1", {
+    hostname: "target.example",
+    username: "alice",
+    jumpHosts: [{
+      hostname: "jump.example",
+      username: "ops",
+      authMethod: "password",
+      password: "secret",
+    }],
+  });
+  const session = {
+    sshUserHost: env.userHost,
+    sshOptions: env.sshOptions,
+    sshEnv: env.env,
+    externalAuthArtifacts: env.artifacts,
+    externalAuthArtifactsCleaned: false,
+  };
+
+  await api.execOnEtSession(session, "echo ok", 1000);
+
+  const fIdx = capturedArgs.indexOf("-F");
+  assert.ok(fIdx >= 0, "expected -F session config");
+  assert.match(capturedArgs[fIdx + 1], /[\\/]\.ssh[\\/]config$/);
+});
+
 test("execOnEtSession requireTrustedHost uses strict host-key checking", async (t) => {
   let capturedArgs = null;
   const { api } = makeApi(t, {

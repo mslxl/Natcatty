@@ -483,6 +483,12 @@ const parseSshGKnownHostsPaths = (sshGOutput, directive, opts = {}) => {
   return null;
 };
 
+// Cache ssh -G output per hop identity so vault-pinned target+jump connections
+// do not pay for discovery twice, and so reconnects do not re-block the main
+// process on the same probe.
+const sshGCache = new Map();
+const SSH_G_CACHE_LIMIT = 64;
+
 const runSshG = ({
   hostname,
   port,
@@ -502,12 +508,26 @@ const runSshG = ({
   }
   if (username) args.push("-l", String(username));
   args.push(target);
-  return execFileSyncFn(cmd, args, {
+  // Only cache real OpenSSH probes. Injected test doubles must not share the
+  // production cache (and vice versa).
+  const useCache = execFileSyncFn === execFileSync;
+  const cacheKey = `${cmd}\0${args.join("\0")}`;
+  if (useCache && sshGCache.has(cacheKey)) return sshGCache.get(cacheKey);
+  const output = execFileSyncFn(cmd, args, {
     encoding: "utf8",
-    timeout: 4000,
+    // Keep the timeout short so a hung Match exec cannot freeze the app long.
+    timeout: 1500,
     windowsHide: true,
     env: process.env,
   });
+  if (useCache) {
+    if (sshGCache.size >= SSH_G_CACHE_LIMIT) {
+      const oldest = sshGCache.keys().next().value;
+      sshGCache.delete(oldest);
+    }
+    sshGCache.set(cacheKey, output);
+  }
+  return output;
 };
 
 /**

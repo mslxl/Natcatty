@@ -930,6 +930,20 @@ main();
 
       const sshCmd = process.platform === "win32" ? findExecutable("ssh") : "ssh";
       const args = ["-o", "BatchMode=no"];
+      // OpenSSH resolves the user config from the account home directory, not
+      // $HOME. Force the session-generated config (ProxyJump + jump Host-key
+      // policy) with -F so the ProxyJump child actually sees it.
+      const sessionHome = session.sshEnv?.HOME || session.sshEnv?.USERPROFILE;
+      if (sessionHome) {
+        const sessionConfigPath = path.join(sessionHome, ".ssh", "config");
+        try {
+          if (fs.existsSync(sessionConfigPath)) {
+            args.push("-F", sessionConfigPath);
+          }
+        } catch {
+          // Best-effort; fall through without -F.
+        }
+      }
       // OpenSSH keeps the first StrictHostKeyChecking value it sees. Only inject
       // accept-new when the session did not already supply a policy (e.g.
       // verifyHostKeys=false → StrictHostKeyChecking=no on the interactive ET
