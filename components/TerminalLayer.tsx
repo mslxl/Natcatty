@@ -1644,8 +1644,13 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
         // Multi-tab fan-out must not call term.focus() on every peer.
         focus: options?.focus !== false,
       });
+      // Wake can surface a password prompt from buffered output — recheck.
+      if (isTerminalSensitiveInputActive(sessionId)) return false;
       if (wrote) return true;
     }
+
+    // Recheck before last-resort backend write as well.
+    if (isTerminalSensitiveInputActive(sessionId)) return false;
 
     const session = sessionsRef.current.find((candidate) => candidate.id === sessionId);
     if (!session || !canUseDirectSessionWriteFallback(session)) return false;

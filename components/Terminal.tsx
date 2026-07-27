@@ -3548,8 +3548,14 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     }
 
     clearHibernateRuntimeState();
+    // Connected multi-tab fan-out may wake still-hidden peers. Re-arm the
+    // hibernate timer so the full xterm runtime does not stay mounted forever
+    // (visibility/status do not change, so the hibernate effect will not rerun).
+    if (sessionConnected && !isVisibleRef.current) {
+      scheduleHibernateRetry();
+    }
     return true;
-  }, [sessionId, wakeFromHibernateRuntime, clearHibernateRuntimeState]);
+  }, [sessionId, wakeFromHibernateRuntime, clearHibernateRuntimeState, scheduleHibernateRetry]);
 
   wakeHibernatedRuntimeForReconnectRef.current = () => wakeHibernatedRuntime(false);
   wakeHibernatedRuntimeForConnectedRef.current = () => wakeHibernatedRuntime(true);
