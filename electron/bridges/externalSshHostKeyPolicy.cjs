@@ -680,21 +680,31 @@ const buildAuthoritativeKnownHostsContent = ({
   }).trimEnd();
   if (!vaultContent) return "";
 
-  // Filter system pins for the connection alias, resolved HostName, and
-  // HostKeyAlias so none of those names can override the vault pin.
+  // Filter system pins for vault-covered hosts. Only when the vault pins THIS
+  // hop do we also strip system entries under HostName / HostKeyAlias aliases
+  // for the hop — otherwise an unrelated vault pin would wipe a trusted
+  // system entry for the current target and break strict stats probes.
   const vaultSelectors = extractVaultHostSelectors(knownHosts);
-  const extraLookupNames = new Set([
-    normalizeHostname(hostname),
-    normalizeHostname(resolvedHostName),
-    normalizeHostname(hostKeyAlias),
-    normalizeHostname(lookupHostName),
-  ]);
-  for (const name of extraLookupNames) {
-    if (!name) continue;
-    // HostKeyAlias / resolved names are stored as bare host tokens.
-    vaultSelectors.push({ hostname: name, port: 22 });
-    if (connectionPort !== 22) {
-      vaultSelectors.push({ hostname: name, port: connectionPort });
+  const vaultPinsThisHop = vaultSelectors.some(
+    (selector) => (
+      selector.hostname === normalizeHostname(hostname)
+      && selector.port === connectionPort
+    ),
+  );
+  if (vaultPinsThisHop) {
+    const extraLookupNames = new Set([
+      normalizeHostname(hostname),
+      normalizeHostname(resolvedHostName),
+      normalizeHostname(hostKeyAlias),
+      normalizeHostname(lookupHostName),
+    ]);
+    for (const name of extraLookupNames) {
+      if (!name) continue;
+      // HostKeyAlias / resolved names are stored as bare host tokens.
+      vaultSelectors.push({ hostname: name, port: 22 });
+      if (connectionPort !== 22) {
+        vaultSelectors.push({ hostname: name, port: connectionPort });
+      }
     }
   }
   const chunks = [vaultContent];
