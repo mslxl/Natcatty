@@ -980,10 +980,8 @@ test("prepareEtSshEnvironment applies vault host-key policy via ssh-option for j
     }],
   });
 
-  // Host-key policy must ride --ssh-option so OpenSSH on POSIX enforces it
-  // even when a temp-HOME Host config block is not consulted.
+  // Destination hop: --ssh-option (ET applies these only to the final target).
   assert.ok(env.sshOptions.some((option) => option.startsWith("GlobalKnownHostsFile=")));
-  assert.ok(env.sshOptions.some((option) => option.startsWith("UserKnownHostsFile=")));
   assert.ok(env.sshOptions.includes("StrictHostKeyChecking=accept-new"));
   const trustPath = env.sshOptions
     .find((option) => option.startsWith("UserKnownHostsFile="))
@@ -992,6 +990,11 @@ test("prepareEtSshEnvironment applies vault host-key policy via ssh-option for j
     fs.readFileSync(trustPath, "utf8"),
     new RegExp(`jump\\.example ssh-ed25519 ${VALID_ED25519_BLOB}`),
   );
+  // Jump hop: Host block (ProxyJump child process does not inherit --ssh-option).
+  const config = fs.readFileSync(path.join(env.env.HOME, ".ssh", "config"), "utf8");
+  const jumpBlock = config.slice(config.indexOf("Host jump.example"));
+  assert.match(jumpBlock, /UserKnownHostsFile /);
+  assert.match(jumpBlock, /StrictHostKeyChecking /);
 });
 
 test("prepareEtSshEnvironment merges vault pins for target hop with jump present", (t) => {

@@ -3,6 +3,7 @@ const crypto = require("node:crypto");
 const { createSystemKnownHostsApi } = require("../sshBridge/systemKnownHosts.cjs");
 const {
   buildAuthoritativeKnownHostsContent,
+  buildExternalHostKeyConfigLines,
   buildExternalHostKeySshOptions,
   vaultPinsConnectionHosts,
 } = require("../externalSshHostKeyPolicy.cjs");
@@ -704,9 +705,32 @@ main();
           }), jumpPwPath);
         }
 
-        // Jump host identity/auth options only. Host-key policy is applied via
-        // --ssh-option (command line) so it is enforceable on POSIX where a
-        // temp-HOME config Host block may not be consulted by OpenSSH.
+        // Jump-host host-key policy must live in this Host block: ET's
+        // --ssh-option values apply only to the final destination hop, while
+        // ProxyJump starts a separate OpenSSH process that reads the jump
+        // stanza (see comment near etJumpArgs).
+        if (verifyHostKeys) {
+          if (authoritativeKnownHostsPath && vaultPinsJump) {
+            jumpConfigLines.push(...buildExternalHostKeyConfigLines({
+              authoritativeKnownHostsPath,
+              verifyHostKeys: true,
+              protocol: "et",
+              normalizePath: normalizeSshConfigPath,
+              quotePath: quoteSshConfigValue,
+            }));
+          } else {
+            jumpConfigLines.push(`  UserKnownHostsFile ${quoteSshConfigValue(knownHostsPath)}`);
+            jumpConfigLines.push("  StrictHostKeyChecking accept-new");
+          }
+        } else if (emptyKnownHostsPath) {
+          jumpConfigLines.push(...buildExternalHostKeyConfigLines({
+            emptyKnownHostsPath,
+            verifyHostKeys: false,
+            protocol: "et",
+            normalizePath: normalizeSshConfigPath,
+            quotePath: quoteSshConfigValue,
+          }));
+        }
         jumpConfigLines.push("  LogLevel ERROR");
         jumpConfigLines.push("  KbdInteractiveAuthentication yes");
         jumpConfigLines.push("  NumberOfPasswordPrompts 1");
