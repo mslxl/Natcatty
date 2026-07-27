@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   applyComboboxWheelScroll,
   comboboxWheelDeltaToPixels,
+  filterComboboxOptions,
   getNextComboboxActiveIndex,
   type ComboboxScrollableTarget,
 } from "./ui/combobox.tsx";
@@ -37,6 +38,20 @@ test("combobox wheel input is ignored when the option list does not overflow", (
 
   assert.equal(applyComboboxWheelScroll(target, 5, 1), false);
   assert.equal(target.scrollTop, 20);
+});
+
+test("combobox search filters font-like options by name and value without case sensitivity", () => {
+  const options = [
+    { value: "jetbrains-mono", label: "JetBrains Mono" },
+    { value: "local-maple-mono", label: "Maple Mono NF", sublabel: "Installed font" },
+    { value: "system-ui", label: "System Default" },
+  ];
+
+  assert.deepEqual(filterComboboxOptions(options, "JETBRAINS", true), [options[0]]);
+  assert.deepEqual(filterComboboxOptions(options, "local-maple", true), [options[1]]);
+  assert.deepEqual(filterComboboxOptions(options, "installed", true), [options[1]]);
+  assert.deepEqual(filterComboboxOptions(options, "missing", true), []);
+  assert.equal(filterComboboxOptions(options, "JetBrains Mono", false), options);
 });
 
 test("combobox option popovers capture wheel events inside the popup list", () => {

@@ -26,6 +26,7 @@ interface ComboboxProps {
     inputStyle?: React.CSSProperties;
     onInputValueChange?: (value: string) => void;
     disabled?: boolean;
+    clearable?: boolean;
 }
 
 export const comboboxWheelDeltaToPixels = (deltaY: number, deltaMode: number): number => {
@@ -38,6 +39,21 @@ export type ComboboxScrollableTarget = {
     clientHeight: number;
     scrollHeight: number;
     scrollTop: number;
+}
+
+export const filterComboboxOptions = (
+    options: ComboboxOption[],
+    inputValue: string,
+    isSearching: boolean,
+): ComboboxOption[] => {
+    if (!isSearching || !inputValue.trim()) return options
+    const lower = inputValue.toLowerCase()
+    return options.filter(
+        (option) =>
+            option.label.toLowerCase().includes(lower) ||
+            option.value.toLowerCase().includes(lower) ||
+            option.sublabel?.toLowerCase().includes(lower)
+    )
 }
 
 export const applyComboboxWheelScroll = (
@@ -108,6 +124,7 @@ export function Combobox({
     inputStyle,
     onInputValueChange,
     disabled = false,
+    clearable = true,
 }: ComboboxProps) {
     const [open, setOpen] = React.useState(false)
     const [inputValue, setInputValue] = React.useState("")
@@ -129,14 +146,7 @@ export function Combobox({
 
     // Show all options when dropdown is open but user hasn't started searching
     const filteredOptions = React.useMemo(() => {
-        if (!isSearching || !inputValue.trim()) return options
-        const lower = inputValue.toLowerCase()
-        return options.filter(
-            (opt) =>
-                opt.label.toLowerCase().includes(lower) ||
-                opt.value.toLowerCase().includes(lower) ||
-                opt.sublabel?.toLowerCase().includes(lower)
-        )
+        return filterComboboxOptions(options, inputValue, isSearching)
     }, [options, inputValue, isSearching])
 
     const showCreateOption = React.useMemo(() => {
@@ -250,7 +260,7 @@ export function Combobox({
                         className="flex-1 min-w-0 h-full px-3 bg-transparent outline-none placeholder:text-muted-foreground"
                         disabled={disabled}
                     />
-                    {inputValue && (
+                    {clearable && inputValue && (
                         <button
                             type="button"
                             onClick={handleClear}
