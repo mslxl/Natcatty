@@ -610,8 +610,14 @@ main();
 
         // Per-hop jump settings live in a `Host <jumpHost>` block so they apply
         // to the ProxyJump connection only (not the destination).
+        // Do NOT set HostName to the alias token here: OpenSSH keeps the first
+        // obtained value, so a redundant `HostName bastion` would freeze the
+        // literal name and prevent the later Include of ~/.ssh/config from
+        // supplying the real HostName (e.g. 10.0.0.5). That would also diverge
+        // from the vault snapshot built via `ssh -G` against the real config.
+        // Omitting HostName lets Include resolve aliases; plain hostnames still
+        // default HostName to the Host token (Codex P1 on PR #2529).
         jumpConfigLines.push(`Host ${jumpHost}`);
-        jumpConfigLines.push(`  HostName ${jumpHost}`);
         jumpConfigLines.push(`  User ${jumpUser}`);
         jumpConfigLines.push(`  Port ${jumpPort}`);
 

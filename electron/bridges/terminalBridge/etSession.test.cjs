@@ -1166,6 +1166,40 @@ test("prepareEtSshEnvironment includes the real user SSH config under -F", (t) =
   );
 });
 
+test("prepareEtSshEnvironment does not freeze jump HostName to the alias token", (t) => {
+  const { api, base } = makeApi(t);
+  const realUserConfig = path.join(base, "home", ".ssh", "config");
+  fs.mkdirSync(path.dirname(realUserConfig), { recursive: true });
+  fs.writeFileSync(
+    realUserConfig,
+    "Host bastion\n  HostName 10.0.0.5\n  User jumpuser\n",
+  );
+
+  const env = api.prepareEtSshEnvironment("sess1", {
+    hostname: "target.example",
+    username: "alice",
+    jumpHosts: [{
+      hostname: "bastion",
+      username: "ops",
+      authMethod: "password",
+      password: "secret",
+    }],
+  });
+
+  const sessionConfig = fs.readFileSync(path.join(env.env.HOME, ".ssh", "config"), "utf8");
+  const jumpBlockStart = sessionConfig.indexOf("Host bastion");
+  assert.ok(jumpBlockStart >= 0, "expected Host bastion block");
+  const afterJump = sessionConfig.slice(jumpBlockStart);
+  const nextSection = afterJump.search(/\n(?:Host |Match )/);
+  const jumpBlock = nextSection >= 0 ? afterJump.slice(0, nextSection) : afterJump;
+
+  // Freezing HostName bastion would win over Include's HostName 10.0.0.5.
+  assert.doesNotMatch(jumpBlock, /^\s*HostName\s+/m);
+  assert.match(jumpBlock, /^\s*User ops\s*$/m);
+  assert.match(sessionConfig, /Include /);
+  assert.match(sessionConfig, /Match all/);
+});
+
 test("prepareEtSshEnvironment prepends ssh wrapper onto session PATH", (t) => {
   const { api } = makeApi(t);
   const env = api.prepareEtSshEnvironment("sess1", {
