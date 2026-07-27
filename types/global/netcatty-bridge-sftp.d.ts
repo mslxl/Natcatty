@@ -97,6 +97,7 @@ declare global {
         skipAdmission?: boolean;
       },
       onProgress?: (transferred: number, total: number, speed: number, checkpoint?: {
+        phase?: import('../../domain/models/sftp').TransferPhase;
         resumeStage?: 'direct' | 'download' | 'upload';
         checkpointBytes?: number;
         downloadCheckpointBytes?: number;

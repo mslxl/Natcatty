@@ -4,6 +4,7 @@ export interface UploadProgress {
   speed: number;
   /** Percentage (0-100) */
   percent: number;
+  phase?: import('../domain/models/sftp').TransferPhase;
   /** Contiguous durable offset from the transfer bridge (may lag transferred). */
   checkpointBytes?: number;
   sourceFingerprint?: string;
@@ -92,6 +93,7 @@ export interface UploadBridge {
       totalBytes?: number;
     },
     onProgress?: (transferred: number, total: number, speed: number, capability?: {
+      phase?: import('../domain/models/sftp').TransferPhase;
       resumable?: boolean;
       pauseUnavailableReason?: string;
     }) => void,

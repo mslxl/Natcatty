@@ -14,6 +14,7 @@ test("mapWorkerTransferChannelToGlobalEvent maps progress for store ingest", () 
     transferred: 42,
     totalBytes: 100,
     speed: 7,
+    phase: "verifying",
     checkpointBytes: 40,
     lifecycleEpoch: 2,
     lifecycleState: "transferring",
@@ -23,6 +24,7 @@ test("mapWorkerTransferChannelToGlobalEvent maps progress for store ingest", () 
   assert.equal(event.transferred, 42);
   assert.equal(event.totalBytes, 100);
   assert.equal(event.checkpointBytes, 40);
+  assert.equal(event.phase, "verifying");
   assert.equal(event.lifecycleEpoch, 2);
   assert.equal(event.lifecycleState, "transferring");
 });

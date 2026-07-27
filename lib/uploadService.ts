@@ -652,6 +652,7 @@ async function uploadEntries(
         transferred: number;
         total: number;
         speed: number;
+        phase?: UploadProgress['phase'];
         checkpointBytes?: number;
         sourceFingerprint?: string;
         resumable?: boolean;
@@ -660,6 +661,7 @@ async function uploadEntries(
       let rafScheduled = false;
 
       return (transferred: number, total: number, speed: number, capability?: {
+        phase?: UploadProgress['phase'];
         checkpointBytes?: number;
         sourceFingerprint?: string;
         resumable?: boolean;
@@ -681,6 +683,7 @@ async function uploadEntries(
                 transferred: update.transferred,
                 total: update.total,
                 speed: update.speed,
+                phase: update.phase,
                 percent: update.total > 0 ? (update.transferred / update.total) * 100 : 0,
                 // Forward contiguous offset + fingerprint for soft-drain pause safety.
                 checkpointBytes: update.checkpointBytes,

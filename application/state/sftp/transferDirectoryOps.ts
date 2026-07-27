@@ -385,6 +385,7 @@ export function useSftpDirectoryTransferOps({
               total: number,
               speed: number,
               checkpoint?: {
+                phase?: TransferTask["phase"];
                 resumeStage?: TransferTask["resumeStage"];
                 checkpointBytes?: number;
                 downloadCheckpointBytes?: number;
@@ -461,6 +462,7 @@ export function useSftpDirectoryTransferOps({
                     downloadCheckpointBytes: checkpoint?.downloadCheckpointBytes ?? t.downloadCheckpointBytes,
                     uploadCheckpointBytes: checkpoint?.uploadCheckpointBytes ?? t.uploadCheckpointBytes,
                     sourceFingerprint: checkpoint?.sourceFingerprint ?? t.sourceFingerprint,
+                    phase: checkpoint?.phase ?? t.phase,
                     // Keep pause affordance while paused even if a progress event
                     // briefly reports pauseSupported=false mid soft-drain.
                     resumable: pauseRequested ? true : (checkpoint?.resumable ?? t.resumable),

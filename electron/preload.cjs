@@ -675,6 +675,7 @@ ipcRenderer.on("netcatty:transfer:progress", (_event, payload) => {
   if (cb) {
     try {
       cb(payload.transferred, payload.totalBytes, payload.speed, {
+        phase: payload.phase,
         resumeStage: payload.resumeStage,
         checkpointBytes: payload.checkpointBytes,
         downloadCheckpointBytes: payload.downloadCheckpointBytes,

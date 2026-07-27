@@ -93,6 +93,7 @@ export const createUploadTaskCallbacks = ({
       // Soft-drain high-water transferred must not become the resume offset.
       checkpointBytes: durableCheckpoint,
       speed: progress.speed,
+      phase: progress.phase,
       resumable: progress.resumable,
       pauseUnavailableReason: progress.pauseUnavailableReason,
       // Durable pause identity may arrive on a forced progress event while

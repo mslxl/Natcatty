@@ -30,6 +30,7 @@ function mapWorkerTransferChannelToGlobalEvent(channel, payload) {
       transferred: payload.transferred,
       totalBytes: payload.totalBytes,
       speed: payload.speed,
+      phase: payload.phase,
       checkpointBytes: payload.checkpointBytes,
       resumeStage: payload.resumeStage,
       downloadCheckpointBytes: payload.downloadCheckpointBytes,

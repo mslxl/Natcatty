@@ -95,6 +95,34 @@ function loadPreloadWithFakeElectron() {
   };
 }
 
+test("stream transfer progress preserves the verification phase", async (t) => {
+  const preload = loadPreloadWithFakeElectron();
+  t.after(preload.cleanup);
+  let observedCapability;
+
+  await preload.api.startStreamTransfer(
+    {
+      transferId: "verify-phase",
+      sourcePath: "/source.bin",
+      targetPath: "/target.bin",
+      sourceType: "local",
+      targetType: "local",
+    },
+    (_transferred, _total, _speed, capability) => {
+      observedCapability = capability;
+    },
+  );
+  preload.handlers.get("netcatty:transfer:progress")?.({}, {
+    transferId: "verify-phase",
+    transferred: 10,
+    totalBytes: 20,
+    speed: 5,
+    phase: "verifying",
+  });
+
+  assert.equal(observedCapability?.phase, "verifying");
+});
+
 test("stores early terminal data until the listener is registered", () => {
   const backlog = createTerminalDataBacklog();
 
