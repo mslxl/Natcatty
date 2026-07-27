@@ -438,6 +438,8 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const autoReconnectAttemptRef = useRef(0);
   const startReconnectRef = useRef<((mode: "manual" | "auto") => void) | null>(null);
   const wakeHibernatedRuntimeForReconnectRef = useRef<(() => Promise<boolean>) | null>(null);
+  /** Connected wake for multi-tab snippet fan-out (reattaches session listeners). */
+  const wakeHibernatedRuntimeForConnectedRef = useRef<(() => Promise<boolean>) | null>(null);
   const reconnectWakeInFlightRef = useRef(false);
   const reconnectWakeTokenRef = useRef<symbol | null>(null);
   const manualReconnectRequestRef = useRef<() => void>(() => {});
@@ -2658,10 +2660,11 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       focus?: boolean;
     },
   ): Promise<boolean> => {
-    // Hidden-tab hibernation clears termRef. Wake first so bracketed-paste mode
-    // and the normal write path stay available for multi-tab fan-out.
+    // Hidden-tab hibernation clears termRef. Wake via the *connected* path so
+    // reattachSession restores output listeners before we write the snippet.
+    // (The reconnect helper skips reattach and leaves the tab detached.)
     if ((!termRef.current || !sessionRef.current) && hibernatedRef.current) {
-      const wake = wakeHibernatedRuntimeForReconnectRef.current;
+      const wake = wakeHibernatedRuntimeForConnectedRef.current;
       if (wake) {
         try {
           await wake();
@@ -3517,7 +3520,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     return wakePromise;
   }, [sessionId, terminalBackend, terminalRuntimeRefs, resizeSession, terminalSettings]);
 
-  wakeHibernatedRuntimeForReconnectRef.current = async () => {
+  const wakeHibernatedRuntime = useCallback(async (sessionConnected: boolean): Promise<boolean> => {
     if (!hibernatedRef.current) {
       return Boolean(termRef.current);
     }
@@ -3530,22 +3533,26 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       alternateScreen: hibernateAlternateScreenRef.current,
     });
 
-    logger.info("[Terminal] Waking hibernated runtime for reconnect", {
+    logger.info("[Terminal] Waking hibernated runtime", {
       sessionId,
+      sessionConnected,
       snapshotChars: hibernateSnapshotRef.current.length,
       viewportChars: hibernateViewportSnapshotRef.current.length,
       scrollbackChars: hibernateScrollbackSnapshotRef.current.length,
       pendingChars: hibernatePendingBufferRef.current.length,
     });
 
-    const accepted = await Promise.resolve(wakeFromHibernateRuntime(getPayload, { sessionConnected: false }));
+    const accepted = await Promise.resolve(wakeFromHibernateRuntime(getPayload, { sessionConnected }));
     if (accepted === false || !termRef.current) {
       return false;
     }
 
     clearHibernateRuntimeState();
     return true;
-  };
+  }, [sessionId, wakeFromHibernateRuntime, clearHibernateRuntimeState]);
+
+  wakeHibernatedRuntimeForReconnectRef.current = () => wakeHibernatedRuntime(false);
+  wakeHibernatedRuntimeForConnectedRef.current = () => wakeHibernatedRuntime(true);
 
   const hibernateFileTransferActive = isTerminalFileTransferActive({
     zmodemActive: zmodem.active,
