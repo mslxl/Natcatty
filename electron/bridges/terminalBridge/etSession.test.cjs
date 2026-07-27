@@ -1153,15 +1153,35 @@ test("prepareEtSshEnvironment includes the real user SSH config under -F", (t) =
   const sessionConfig = fs.readFileSync(sessionConfigPath, "utf8");
   // Session Host blocks come first (first-obtained-value keeps overrides).
   const hostIdx = sessionConfig.indexOf("Host target.example");
+  const matchAllIdx = sessionConfig.indexOf("Match all");
   const includeIdx = sessionConfig.indexOf("Include ");
   assert.ok(hostIdx >= 0, "expected session Host block");
-  assert.ok(includeIdx > hostIdx, "Include must follow session Host blocks");
+  assert.ok(matchAllIdx > hostIdx, "Match all must reset Host context after session blocks");
+  assert.ok(includeIdx > matchAllIdx, "Include must follow Match all");
   // Real user config is preserved so HostName aliases still resolve.
   const normalizedUserConfig = realUserConfig.replace(/\\/g, "/");
   assert.match(
     sessionConfig,
     new RegExp(`Include ["']?${normalizedUserConfig.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`),
   );
+});
+
+test("prepareEtSshEnvironment prepends ssh wrapper onto session PATH", (t) => {
+  const { api } = makeApi(t);
+  const env = api.prepareEtSshEnvironment("sess1", {
+    hostname: "target.example",
+    username: "alice",
+    env: { PATH: "/custom/bin:/usr/bin" },
+    jumpHosts: [{
+      hostname: "jump.example",
+      username: "ops",
+      authMethod: "password",
+      password: "secret",
+    }],
+  });
+  const pathKey = Object.keys(env.env).find((k) => k.toLowerCase() === "path");
+  assert.ok(pathKey);
+  assert.match(env.env[pathKey], /^[^:]+\/bin:\/custom\/bin:\/usr\/bin$/);
 });
 
 test("execOnEtSession requireTrustedHost uses strict host-key checking", async (t) => {

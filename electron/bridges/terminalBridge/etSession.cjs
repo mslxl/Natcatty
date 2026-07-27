@@ -789,7 +789,11 @@ main();
           // ignore
         }
         if (includeLines.length > 0) {
+          // Reset Host/Match context first. Without this, Includes after a
+          // `Host <jump>` stanza stay conditional on the jump host and are
+          // skipped for the destination (Codex P1).
           configFileLines.push("");
+          configFileLines.push("Match all");
           configFileLines.push("# Preserve normal OpenSSH user/system configuration under -F.");
           configFileLines.push(...includeLines);
         }
@@ -861,8 +865,19 @@ main();
               0o700,
             );
           }
-          const pathKey = Object.keys(process.env).find((k) => k.toLowerCase() === "path") || "PATH";
-          const currentPath = process.env[pathKey] || "";
+          // Prepend the wrapper to the effective session PATH (options.env),
+          // not bare process.env — host/session PATH may carry ProxyCommand
+          // helpers that must remain visible (Codex P2).
+          const sessionEnv = options.env && typeof options.env === "object" ? options.env : {};
+          const pathKey = Object.keys(sessionEnv).find((k) => k.toLowerCase() === "path")
+            || Object.keys(process.env).find((k) => k.toLowerCase() === "path")
+            || "PATH";
+          const currentPath = sessionEnv[pathKey]
+            || sessionEnv.PATH
+            || sessionEnv.Path
+            || process.env[pathKey]
+            || process.env.PATH
+            || "";
           pathEnv[pathKey] = currentPath ? `${wrapperDir}${path.delimiter}${currentPath}` : wrapperDir;
         } catch {
           // Wrapper is best-effort; destination --ssh-option still applies.
