@@ -19,6 +19,11 @@ import type {
   TurnSteerResult,
 } from './types';
 import { resolveEstimatedUsageFallback, upsertAgentActivity } from './externalSdkEventState';
+import {
+  clearCodebuddyElicitationsForChat,
+  completeCodebuddyElicitation,
+  registerCodebuddyElicitation,
+} from '../../shared/codebuddyElicitations';
 
 interface LiveExternalTurn {
   requestId: string;
@@ -287,18 +292,14 @@ async function runExternalTurn(
       }
     },
     onElicitationCreate: (elicitationId: string, request: Record<string, unknown>) => {
-      // Surface elicitation as a warning activity so the user knows input is needed.
-      runOrBufferUiOperation(() => {
-        updateActivity({
-          id: elicitationId,
-          type: 'warning',
-          status: 'running',
-          message: `Agent requests input: ${(request as Record<string, unknown>)?.message || 'confirmation required'}`,
-        });
+      registerCodebuddyElicitation({
+        elicitationId,
+        chatSessionId: sessionId,
+        request,
       });
     },
-    onElicitationComplete: () => {
-      // Elicitation resolved — no additional UI action needed.
+    onElicitationComplete: (notification) => {
+      completeCodebuddyElicitation(notification);
     },
     onSessionId: (externalSessionId: string) => {
       context.updateExternalSessionId?.(sessionId, externalSessionId);
@@ -400,6 +401,7 @@ async function runExternalTurn(
   } finally {
     ended = true;
     liveTurn.ended = true;
+    clearCodebuddyElicitationsForChat(sessionId);
     if (steerInFlight) {
       steerInFlight = false;
       flushBufferedUiOperations();

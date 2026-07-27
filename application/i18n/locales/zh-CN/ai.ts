@@ -209,7 +209,7 @@ export const zhCNAiMessages: Messages = {
   'ai.codebuddy.envVars': '环境变量',
   'ai.codebuddy.envVars.placeholder': 'CODEBUDDY_API_KEY=...\nCODEBUDDY_AUTH_TOKEN=...\nOTHER_VAR=...',
   'ai.codebuddy.envVars.hint': '每行一个 KEY=VALUE，传给 CodeBuddy agent。可在此设置 CODEBUDDY_API_KEY 或 CODEBUDDY_AUTH_TOKEN 完成认证。明文存在本地。',
-  'ai.codebuddy.advancedSection': '高级选项（SDK 0.3.222）',
+  'ai.codebuddy.advancedSection': '高级选项（SDK 0.3.230）',
   'ai.codebuddy.effort': '推理力度',
   'ai.codebuddy.effort.default': '默认',
   'ai.codebuddy.effort.low': 'Low',
@@ -225,6 +225,13 @@ export const zhCNAiMessages: Messages = {
   'ai.codebuddy.sandbox.hint': '在沙箱中执行工具调用，限制文件系统和网络访问。',
   'ai.codebuddy.fileCheckpointing': '文件检查点',
   'ai.codebuddy.fileCheckpointing.hint': '启用文件操作检查点，AI 修改文件后可回滚。',
+  'ai.codebuddy.elicitation.title': 'CodeBuddy 需要你的输入',
+  'ai.codebuddy.elicitation.description': '请确认或填写请求内容以继续当前轮次。',
+  'ai.codebuddy.elicitation.select': '请选择',
+  'ai.codebuddy.elicitation.yes': '是',
+  'ai.codebuddy.elicitation.no': '否',
+  'ai.codebuddy.elicitation.decline': '拒绝',
+  'ai.codebuddy.elicitation.accept': '继续',
 
   // AI OpenCode
   'ai.opencode.title': 'OpenCode',

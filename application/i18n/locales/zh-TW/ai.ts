@@ -209,7 +209,7 @@ export const zhTWAiMessages: Messages = {
   'ai.codebuddy.envVars': '環境變數',
   'ai.codebuddy.envVars.placeholder': 'CODEBUDDY_API_KEY=...\nCODEBUDDY_AUTH_TOKEN=...\nOTHER_VAR=...',
   'ai.codebuddy.envVars.hint': '每行一個 KEY=VALUE，傳給 CodeBuddy agent。可在此設定 CODEBUDDY_API_KEY 或 CODEBUDDY_AUTH_TOKEN 完成認證。明文存在本機。',
-  'ai.codebuddy.advancedSection': '進階選項（SDK 0.3.222）',
+  'ai.codebuddy.advancedSection': '進階選項（SDK 0.3.230）',
   'ai.codebuddy.effort': '推理力度',
   'ai.codebuddy.effort.default': '預設',
   'ai.codebuddy.effort.low': 'Low',
@@ -225,6 +225,13 @@ export const zhTWAiMessages: Messages = {
   'ai.codebuddy.sandbox.hint': '在沙箱中執行工具呼叫，限制檔案系統和網路存取。',
   'ai.codebuddy.fileCheckpointing': '檔案檢查點',
   'ai.codebuddy.fileCheckpointing.hint': '啟用檔案操作檢查點，AI 修改檔案後可回滾。',
+  'ai.codebuddy.elicitation.title': 'CodeBuddy 需要你的輸入',
+  'ai.codebuddy.elicitation.description': '請確認或填寫請求內容以繼續目前輪次。',
+  'ai.codebuddy.elicitation.select': '請選擇',
+  'ai.codebuddy.elicitation.yes': '是',
+  'ai.codebuddy.elicitation.no': '否',
+  'ai.codebuddy.elicitation.decline': '拒絕',
+  'ai.codebuddy.elicitation.accept': '繼續',
 
   // AI OpenCode
   'ai.opencode.title': 'OpenCode',

@@ -40,6 +40,12 @@ function computeOptionsFingerprint(sessionOptions) {
     tools: sessionOptions.tools,
     disallowedTools: sessionOptions.disallowedTools,
     maxTurns: sessionOptions.maxTurns,
+    agents: sessionOptions.agents,
+    thinking: sessionOptions.thinking,
+    effort: sessionOptions.effort,
+    hasHooks: Boolean(sessionOptions.hooks),
+    hasCanUseTool: typeof sessionOptions.canUseTool === "function",
+    hasElicitation: Boolean(sessionOptions.elicitation),
   };
   try {
     return JSON.stringify(relevant);
@@ -48,12 +54,54 @@ function computeOptionsFingerprint(sessionOptions) {
   }
 }
 
+function createSessionCallbackState(sessionOptions) {
+  const state = {
+    elicitation: sessionOptions.elicitation,
+    elicitationDelegate: null,
+  };
+  if (state.elicitation) {
+    state.elicitationDelegate = {
+      create(request, options) {
+        const handler = state.elicitation;
+        return handler?.create
+          ? handler.create(request, options)
+          : Promise.resolve({ action: "cancel" });
+      },
+      complete(notification) {
+        return state.elicitation?.complete?.(notification);
+      },
+    };
+  }
+  return state;
+}
+
+function refreshSessionCallbacks(entry, sessionOptions) {
+  if (sessionOptions.hooks) {
+    if (typeof entry.session.setHooks !== "function") return false;
+    entry.session.setHooks(sessionOptions.hooks);
+  }
+  if (typeof sessionOptions.canUseTool === "function") {
+    if (typeof entry.session.setCanUseTool !== "function") return false;
+    entry.session.setCanUseTool(sessionOptions.canUseTool);
+  }
+  if (sessionOptions.elicitation) {
+    if (!entry.callbackState?.elicitationDelegate) return false;
+    entry.callbackState.elicitation = sessionOptions.elicitation;
+  }
+  return true;
+}
+
 class CodebuddySessionManager {
-  constructor() {
-    /** @type {Map<string, { session: object, fingerprint: string|null }>} */
+  constructor({ loadSdk } = {}) {
+    /** @type {Map<string, {
+     *   session: object,
+     *   fingerprint: string|null,
+     *   callbackState?: ReturnType<typeof createSessionCallbackState>,
+     * }>} */
     this.sessions = new Map();
     /** @type {Map<string, { resolve: Function, reject: Function }>} */
     this.elicitationPending = new Map();
+    this.loadSdk = loadSdk || (() => import("@tencent-ai/agent-sdk"));
   }
 
   /**
@@ -70,8 +118,17 @@ class CodebuddySessionManager {
     const fingerprint = computeOptionsFingerprint(sessionOptions);
     const existing = this.sessions.get(sessionKey);
     if (existing) {
-      // Reuse only when options still match.
-      if (existing.fingerprint === fingerprint) return existing.session;
+      // Reuse only when serialized options still match, but always refresh
+      // turn-scoped callbacks so events target the current request emitter.
+      if (existing.fingerprint === fingerprint) {
+        try {
+          if (refreshSessionCallbacks(existing, sessionOptions)) {
+            return existing.session;
+          }
+        } catch {
+          // Recreate below if the installed SDK cannot refresh callbacks.
+        }
+      }
       // Options changed — close the stale session and create a fresh one.
       try { existing.session.close(); } catch { /* best effort */ }
       this.sessions.delete(sessionKey);
@@ -79,7 +136,7 @@ class CodebuddySessionManager {
 
     let sdk;
     try {
-      sdk = await import("@tencent-ai/agent-sdk");
+      sdk = await this.loadSdk();
     } catch {
       return null;
     }
@@ -90,13 +147,17 @@ class CodebuddySessionManager {
 
     let session;
     try {
+      const callbackState = createSessionCallbackState(sessionOptions);
+      const sdkSessionOptions = callbackState.elicitationDelegate
+        ? { ...sessionOptions, elicitation: callbackState.elicitationDelegate }
+        : sessionOptions;
       if (resumeSessionId) {
-        session = resumeSession(resumeSessionId, sessionOptions);
+        session = resumeSession(resumeSessionId, sdkSessionOptions);
       } else {
-        session = createSession(sessionOptions);
+        session = createSession(sdkSessionOptions);
       }
       await session.connect();
-      this.sessions.set(sessionKey, { session, fingerprint });
+      this.sessions.set(sessionKey, { session, fingerprint, callbackState });
       return session;
     } catch {
       // V2 session creation failed — caller should fall back to query().
@@ -207,13 +268,12 @@ class CodebuddySessionManager {
    * Steer (mid-turn追加消息) using the V2 Session.
    * Returns { status: 'accepted' } on success, or { status: 'unsupported' }.
    */
-  async steer({ sessionKey, prompt, attachments, emitter }) {
+  async steer({ sessionKey, prompt, attachments }) {
     const entry = this.sessions.get(sessionKey);
     if (!entry) return { status: "unsupported" };
     const session = entry.session;
 
     const promptInput = buildCodebuddyPromptInput(prompt, attachments);
-    let hasStreamedText = false;
 
     try {
       if (typeof promptInput === "string") {
@@ -224,21 +284,12 @@ class CodebuddySessionManager {
         }
       }
 
-      for await (const message of session.stream()) {
-        translateCodebuddyMessage(message, emitter, { skipAssistantText: hasStreamedText });
-        if (
-          message?.type === "stream_event" &&
-          message.event?.type === "content_block_delta" &&
-          message.event?.delta?.type === "text_delta" &&
-          message.event.delta.text
-        ) {
-          hasStreamedText = true;
-        }
-      }
-      emitter.emitDone();
+      // runTurn() owns the single stream consumer for an active session.
+      // Starting another session.stream() here resets the SDK's shared
+      // iterator and strands the original IPC request. The active consumer
+      // will receive and emit the steered continuation.
       return { status: "accepted" };
     } catch (error) {
-      emitter.emitError(error?.message || "CodeBuddy steer failed");
       return { status: "failed", message: error?.message || String(error) };
     }
   }

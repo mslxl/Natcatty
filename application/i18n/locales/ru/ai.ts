@@ -190,6 +190,13 @@ export const ruAiMessages: Messages = {
   'ai.codebuddy.envVars': 'Переменные окружения',
   'ai.codebuddy.envVars.placeholder': 'CODEBUDDY_API_KEY=...\nCODEBUDDY_AUTH_TOKEN=...\nOTHER_VAR=...',
   'ai.codebuddy.envVars.hint': 'По одной записи KEY=VALUE на строку, передаются агенту CodeBuddy. Укажите CODEBUDDY_API_KEY или CODEBUDDY_AUTH_TOKEN для аутентификации. Хранятся локально в открытом виде.',
+  'ai.codebuddy.elicitation.title': 'CodeBuddy требуется ваш ответ',
+  'ai.codebuddy.elicitation.description': 'Проверьте запрос, чтобы продолжить текущий ход.',
+  'ai.codebuddy.elicitation.select': 'Выберите вариант',
+  'ai.codebuddy.elicitation.yes': 'Да',
+  'ai.codebuddy.elicitation.no': 'Нет',
+  'ai.codebuddy.elicitation.decline': 'Отклонить',
+  'ai.codebuddy.elicitation.accept': 'Продолжить',
 
   // AI Default Agent
   'ai.defaultAgent': 'Агент по умолчанию',

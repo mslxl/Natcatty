@@ -70,6 +70,7 @@ interface SdkAgentBridge {
     agentCommand?: string,
     codexRuntime?: 'sdk' | 'app-server',
     permissionMode?: AIPermissionMode,
+    codebuddyOptions?: ExternalAgentConfig['codebuddyOptions'],
   ): Promise<{ ok: boolean; error?: unknown }>;
   aiSdkAgentSteer?(
     requestId: string,

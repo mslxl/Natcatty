@@ -22,6 +22,7 @@ import ThinkingBlock from './ThinkingBlock';
 import AgentActivityGroup from './AgentActivityGroup';
 import ToolCallGroup from './ToolCallGroup';
 import { CodexUserInputCard } from './CodexUserInputCard';
+import { CodebuddyElicitationCard } from './CodebuddyElicitationCard';
 import {
   VaultArtifactNavigationProvider,
   type VaultArtifactNavSection,
@@ -49,6 +50,14 @@ import {
   respondCodexUserInput,
   type CodexAppServerInteraction,
 } from '../../infrastructure/ai/shared/codexAppServerInteractions';
+import {
+  onCodebuddyElicitation,
+  onCodebuddyElicitationCleared,
+  replayPendingCodebuddyElicitations,
+  respondCodebuddyElicitation,
+  type CodebuddyElicitation,
+  type CodebuddyElicitationAction,
+} from '../../infrastructure/ai/shared/codebuddyElicitations';
 import {
   buildGrantsFromApproval,
   resolveCapabilityId,
@@ -145,6 +154,7 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({
   const [pendingApprovals, setPendingApprovals] = useState<Map<string, ApprovalRequest>>(new Map());
   const [resolvedApprovals, setResolvedApprovals] = useState<Map<string, boolean>>(new Map());
   const [pendingCodexInteractions, setPendingCodexInteractions] = useState<Map<string, CodexAppServerInteraction>>(new Map());
+  const [pendingCodebuddyElicitations, setPendingCodebuddyElicitations] = useState<Map<string, CodebuddyElicitation>>(new Map());
 
   // Subscribe to approval gate events (SDK + MCP tool calls)
   useEffect(() => {
@@ -181,6 +191,24 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({
     setPendingCodexInteractions((current) => {
       const next = new Map(current);
       for (const interactionId of interactionIds) next.delete(interactionId);
+      return next;
+    });
+  }), []);
+
+  useEffect(() => {
+    const handler = (elicitation: CodebuddyElicitation) => {
+      setPendingCodebuddyElicitations((current) =>
+        new Map(current).set(elicitation.elicitationId, elicitation));
+    };
+    const unsubscribe = onCodebuddyElicitation(handler);
+    replayPendingCodebuddyElicitations(handler);
+    return unsubscribe;
+  }, []);
+
+  useEffect(() => onCodebuddyElicitationCleared((elicitationIds) => {
+    setPendingCodebuddyElicitations((current) => {
+      const next = new Map(current);
+      for (const elicitationId of elicitationIds) next.delete(elicitationId);
       return next;
     });
   }), []);
@@ -223,6 +251,11 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({
       console.error('[Codex App Server] Failed to answer request_user_input:', error);
     });
   }, []);
+  const handleCodebuddyElicitation = useCallback((
+    elicitationId: string,
+    action: CodebuddyElicitationAction,
+    content?: Record<string, unknown>,
+  ) => respondCodebuddyElicitation(elicitationId, action, content), []);
   const [preview, setPreview] = useState<{ src: string; name: string } | null>(null);
   const [zoom, setZoom] = useState(100);
   const [dragged, setDragged] = useState(false);
@@ -731,6 +764,16 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({
               interaction={interaction}
               onSubmit={(answers) => handleCodexUserInput(interaction.interactionId, answers)}
               onSkip={() => handleCodexUserInput(interaction.interactionId, {})}
+            />
+          ))}
+        {(Array.from(pendingCodebuddyElicitations.values()) as CodebuddyElicitation[])
+          .filter((elicitation) => !activeSessionId || elicitation.chatSessionId === activeSessionId)
+          .map((elicitation) => (
+            <CodebuddyElicitationCard
+              key={elicitation.elicitationId}
+              elicitation={elicitation}
+              onRespond={(action, content) =>
+                handleCodebuddyElicitation(elicitation.elicitationId, action, content)}
             />
           ))}
         {/* Transient compaction status — inline, no banner */}

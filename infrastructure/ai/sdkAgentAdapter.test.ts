@@ -509,3 +509,75 @@ test('runSdkAgentTurn forwards Codex activities and usage without treating warni
   }]);
   assert.deepEqual(errors, []);
 });
+
+test('runSdkAgentTurn forwards CodeBuddy options, hooks, and elicitation events', async () => {
+  const errors: string[] = [];
+  const hooks: unknown[] = [];
+  const elicitations: unknown[] = [];
+  let streamArgs: unknown[] = [];
+  let onEvent: ((event: unknown) => void) | null = null;
+  let done: (() => void) | null = null;
+  const bridge: Record<string, (...args: unknown[]) => unknown> = {
+    aiSdkAgentStream: async (...args: unknown[]) => {
+      streamArgs = args;
+      queueMicrotask(() => {
+        onEvent?.({ type: 'hook', hookEvent: 'PreToolUse', toolName: 'Bash' });
+        onEvent?.({
+          type: 'elicitation-create',
+          elicitationId: 'el-1',
+          request: { message: 'Confirm?' },
+        });
+        onEvent?.({
+          type: 'elicitation-complete',
+          notification: { elicitationId: 'el-1' },
+        });
+        done?.();
+      });
+      return { ok: true };
+    },
+    aiSdkAgentCancel: async () => ({ ok: true }),
+    onAiSdkAgentEvent: (_requestId: unknown, cb: unknown) => {
+      onEvent = cb as (event: unknown) => void;
+      return () => {};
+    },
+    onAiSdkAgentDone: (_requestId: unknown, cb: unknown) => {
+      done = cb as () => void;
+      return () => {};
+    },
+    onAiSdkAgentError: () => () => {},
+  };
+  const codebuddyConfig: ExternalAgentConfig = {
+    id: 'codebuddy',
+    name: 'CodeBuddy',
+    command: 'codebuddy',
+    enabled: true,
+    sdkBackend: 'codebuddy',
+    codebuddyOptions: { effort: 'high' },
+  };
+
+  await runSdkAgentTurn(
+    bridge,
+    'request-codebuddy',
+    'chat-codebuddy',
+    codebuddyConfig,
+    'hello',
+    {
+      ...createCallbacks(errors),
+      onHook: (hookEvent, payload) => hooks.push({ hookEvent, payload }),
+      onElicitationCreate: (elicitationId, request) => {
+        elicitations.push({ elicitationId, request });
+      },
+      onElicitationComplete: (notification) => {
+        elicitations.push({ notification });
+      },
+    },
+  );
+
+  assert.deepEqual(streamArgs[17], { effort: 'high' });
+  assert.equal((hooks[0] as { hookEvent: string }).hookEvent, 'PreToolUse');
+  assert.deepEqual(elicitations, [
+    { elicitationId: 'el-1', request: { message: 'Confirm?' } },
+    { notification: { elicitationId: 'el-1' } },
+  ]);
+  assert.deepEqual(errors, []);
+});

@@ -74,7 +74,7 @@ function buildCodebuddyThinkingEnv(thinking) {
 // ---------------------------------------------------------------------------
 
 /** Convert neutral injectMcp configs into the SDK's keyed mcpServers map.
- *  Supports stdio (default), sse, http, and sdk (in-process) transport types (SDK 0.3.222). */
+ *  Supports stdio (default), sse, http, and sdk (in-process) transport types (SDK 0.3.230). */
 function toSdkMcpServers(injectedMcpServers) {
   const map = {};
   for (const cfg of injectedMcpServers || []) {
@@ -194,7 +194,7 @@ function codebuddyBuiltinTools(toolIntegrationMode) {
 function buildCodebuddyQueryOptions({
   cwd, model, env, injectedMcpServers, abortController,
   resume, pathToCodebuddyCode, toolIntegrationMode, thinking,
-  // Phase 1: new SDK 0.3.222 options
+  // Phase 1: SDK 0.3.230 options
   systemPrompt, effort, maxTurns, maxBudgetUsd, fallbackModel,
   sandbox, agents, outputFormat, enableFileCheckpointing,
   traceId, parentSpanId, persistSession, sessionId, hooks,
@@ -231,7 +231,7 @@ function buildCodebuddyQueryOptions({
   if (thinkingConfig) {
     options.thinking = thinkingConfig;
   }
-  // --- New SDK 0.3.222 options ---
+  // --- SDK 0.3.230 options ---
   // System prompt: string is treated as append to default.
   if (systemPrompt) {
     options.systemPrompt = typeof systemPrompt === "string"
@@ -561,7 +561,7 @@ async function listCodebuddyModels({ pathToCodebuddyCode, env, queryFn }) {
 }
 
 // ---------------------------------------------------------------------------
-// Hooks (SDK 0.3.222 lifecycle callbacks)
+// Hooks (SDK 0.3.230 lifecycle callbacks)
 // ---------------------------------------------------------------------------
 
 /**
@@ -610,7 +610,7 @@ function buildCodebuddyHooks(emitter) {
 }
 
 // ---------------------------------------------------------------------------
-// Elicitation handler (SDK 0.3.222 — interactive confirmations)
+// Elicitation handler (SDK 0.3.230 — interactive confirmations)
 // ---------------------------------------------------------------------------
 
 /**
@@ -646,7 +646,7 @@ function buildCodebuddyElicitation(emitter, pendingMap) {
 }
 
 // ---------------------------------------------------------------------------
-// MCP server status & account info (SDK 0.3.222)
+// MCP server status & account info (SDK 0.3.230)
 // ---------------------------------------------------------------------------
 
 /**
@@ -714,7 +714,7 @@ async function getCodebuddyAccountInfo({ pathToCodebuddyCode, env, queryFn }) {
 }
 
 // ---------------------------------------------------------------------------
-// Plugin management (SDK 0.3.222)
+// Plugin management (SDK 0.3.230)
 // ---------------------------------------------------------------------------
 
 async function codebuddyInstallPlugin(options) {

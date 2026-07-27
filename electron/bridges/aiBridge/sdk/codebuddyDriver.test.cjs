@@ -232,10 +232,10 @@ test("mapCodebuddyModels maps model ids and drops invalid entries", () => {
 });
 
 // ---------------------------------------------------------------------------
-// SDK 0.3.222 new options
+// SDK 0.3.230 options
 // ---------------------------------------------------------------------------
 
-test("buildCodebuddyQueryOptions passes new SDK 0.3.222 options", () => {
+test("buildCodebuddyQueryOptions passes SDK 0.3.230 options", () => {
   const opts = buildCodebuddyQueryOptions({
     cwd: "/tmp",
     env: {},

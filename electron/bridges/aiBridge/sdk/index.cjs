@@ -18,6 +18,16 @@ const codebuddy = require("./codebuddyDriver.cjs");
 const opencode = require("./opencodeDriver.cjs");
 const { codebuddySessionManager } = require("./codebuddySessionManager.cjs");
 
+function hasCodebuddyQueryOnlyOptions(options) {
+  return Boolean(
+    options.maxBudgetUsd ||
+    options.sandbox ||
+    options.fallbackModel ||
+    options.enableFileCheckpointing != null ||
+    options.outputFormat,
+  );
+}
+
 const DRIVER_REGISTRY = {
   claude: {
     async runTurn(ctx) {
@@ -155,7 +165,7 @@ const DRIVER_REGISTRY = {
         resume: ctx.resumeSessionId,
         pathToCodebuddyCode: ctx.binPath,
         toolIntegrationMode: ctx.toolIntegrationMode,
-        // SDK 0.3.222 new options
+        // SDK 0.3.230 options
         systemPrompt: ctx.systemPrompt,
         effort: ctx.effort,
         maxTurns: ctx.maxTurns,
@@ -172,30 +182,18 @@ const DRIVER_REGISTRY = {
         canUseTool,
       });
 
-      // Try V2 Session API first (persistent multi-turn), fall back to query().
-      // However, SessionOptions only supports a subset of Options. When the user
-      // has configured options that V2 cannot consume (maxBudgetUsd, sandbox,
-      // fallbackModel, enableFileCheckpointing, agents, outputFormat, effort,
-      // thinking), skip V2 entirely so those settings actually take effect via
-      // the legacy query() path.
-      const hasQueryOnlyOptions = Boolean(
-        options.maxBudgetUsd ||
-        options.sandbox ||
-        options.fallbackModel ||
-        options.enableFileCheckpointing != null ||
-        options.agents ||
-        options.outputFormat ||
-        options.effort ||
-        options.thinking,
-      );
+      const sessionKey = [
+        String(ctx.chatSessionId || ""),
+        "codebuddy",
+        String(ctx.binPath || ""),
+        "sdk",
+      ].join("\u0000");
+
+      // Try V2 Session API first (persistent multi-turn), falling back to
+      // query() only for fields that SessionOptions does not support.
+      const hasQueryOnlyOptions = hasCodebuddyQueryOnlyOptions(options);
 
       if (!hasQueryOnlyOptions) {
-        const sessionKey = [
-          String(ctx.chatSessionId || ""),
-          "codebuddy",
-          String(ctx.binPath || ""),
-          "sdk",
-        ].join("\u0000");
         const sessionOptions = {
           cwd: options.cwd,
           model: options.model,
@@ -211,6 +209,9 @@ const DRIVER_REGISTRY = {
           tools: options.tools,
           disallowedTools: options.disallowedTools,
           maxTurns: options.maxTurns,
+          agents: options.agents,
+          thinking: options.thinking,
+          effort: options.effort,
         };
         const v2Result = await codebuddySessionManager.runTurn({
           sessionKey,
@@ -222,6 +223,10 @@ const DRIVER_REGISTRY = {
           resumeSessionId: ctx.resumeSessionId,
         });
         if (v2Result) return v2Result;
+      } else {
+        // Do not leave a warm V2 process with stale context while query() is
+        // resuming and advancing the same persisted conversation.
+        codebuddySessionManager.closeSession(sessionKey);
       }
 
       // Fallback: legacy query() per-turn (supports all Options fields).
@@ -243,7 +248,6 @@ const DRIVER_REGISTRY = {
         sessionKey,
         prompt: ctx.prompt,
         attachments: ctx.attachments,
-        emitter: ctx.emitter,
       });
     },
     async listModels(ctx) {
@@ -288,4 +292,9 @@ function listBackends() {
   return Object.keys(DRIVER_REGISTRY);
 }
 
-module.exports = { DRIVER_REGISTRY, getDriver, listBackends };
+module.exports = {
+  DRIVER_REGISTRY,
+  getDriver,
+  listBackends,
+  hasCodebuddyQueryOnlyOptions,
+};

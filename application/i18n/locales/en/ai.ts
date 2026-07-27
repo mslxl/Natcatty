@@ -209,7 +209,7 @@ export const enAiMessages: Messages = {
   'ai.codebuddy.envVars': 'Environment variables',
   'ai.codebuddy.envVars.placeholder': 'CODEBUDDY_API_KEY=...\nCODEBUDDY_AUTH_TOKEN=...\nOTHER_VAR=...',
   'ai.codebuddy.envVars.hint': 'One KEY=VALUE per line, passed to the CodeBuddy agent. Set CODEBUDDY_API_KEY or CODEBUDDY_AUTH_TOKEN here for authentication. Stored locally in plaintext.',
-  'ai.codebuddy.advancedSection': 'Advanced options (SDK 0.3.222)',
+  'ai.codebuddy.advancedSection': 'Advanced options (SDK 0.3.230)',
   'ai.codebuddy.effort': 'Reasoning Effort',
   'ai.codebuddy.effort.default': 'Default',
   'ai.codebuddy.effort.low': 'Low',
@@ -225,6 +225,13 @@ export const enAiMessages: Messages = {
   'ai.codebuddy.sandbox.hint': 'Execute tool calls in a sandbox, restricting filesystem and network access.',
   'ai.codebuddy.fileCheckpointing': 'File Checkpointing',
   'ai.codebuddy.fileCheckpointing.hint': 'Enable file operation checkpoints so AI file modifications can be rolled back.',
+  'ai.codebuddy.elicitation.title': 'CodeBuddy needs your input',
+  'ai.codebuddy.elicitation.description': 'Review the request to continue the current turn.',
+  'ai.codebuddy.elicitation.select': 'Select an option',
+  'ai.codebuddy.elicitation.yes': 'Yes',
+  'ai.codebuddy.elicitation.no': 'No',
+  'ai.codebuddy.elicitation.decline': 'Decline',
+  'ai.codebuddy.elicitation.accept': 'Continue',
 
   // AI OpenCode
   'ai.opencode.title': 'OpenCode',

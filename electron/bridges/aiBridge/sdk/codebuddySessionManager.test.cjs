@@ -31,6 +31,8 @@ function fakeSession(messages, opts = {}) {
     async *stream() { for (const m of messages) yield m; },
     async interrupt() {},
     async setModel(model) { this._model = model; },
+    setHooks(hooks) { this._hooks = hooks; },
+    setCanUseTool(handler) { this._canUseTool = handler; },
     close() { closed = true; },
   };
 }
@@ -48,41 +50,110 @@ test("getOrCreateSession reuses existing session when options match", async () =
   assert.equal(result, session);
 });
 
-test("getOrCreateSession closes stale session when options change", () => {
-  const mgr = new CodebuddySessionManager();
+test("getOrCreateSession refreshes turn-scoped callbacks on a reused session", async () => {
+  let createdOptions;
+  const session = fakeSession([], { sessionId: "callback-session" });
+  const mgr = new CodebuddySessionManager({
+    loadSdk: async () => ({
+      unstable_v2_createSession: (options) => {
+        createdOptions = options;
+        return session;
+      },
+      unstable_v2_resumeSession: () => session,
+    }),
+  });
+  const firstEvents = [];
+  const secondEvents = [];
+  const firstOptions = {
+    cwd: "/tmp",
+    hooks: { Notification: [{ hooks: [() => firstEvents.push("hook")] }] },
+    canUseTool: async () => ({ behavior: "allow", updatedInput: {} }),
+    elicitation: {
+      create: async () => {
+        firstEvents.push("elicitation");
+        return { action: "accept" };
+      },
+    },
+  };
+  const secondOptions = {
+    cwd: "/tmp",
+    hooks: { Notification: [{ hooks: [() => secondEvents.push("hook")] }] },
+    canUseTool: async () => ({ behavior: "deny", message: "second turn" }),
+    elicitation: {
+      create: async () => {
+        secondEvents.push("elicitation");
+        return { action: "decline" };
+      },
+    },
+  };
+
+  const first = await mgr.getOrCreateSession({
+    sessionKey: "callback-key",
+    sessionOptions: firstOptions,
+  });
+  const second = await mgr.getOrCreateSession({
+    sessionKey: "callback-key",
+    sessionOptions: secondOptions,
+  });
+
+  assert.equal(first, session);
+  assert.equal(second, session);
+  assert.equal(session._hooks, secondOptions.hooks);
+  assert.equal(session._canUseTool, secondOptions.canUseTool);
+  assert.notEqual(createdOptions.elicitation, firstOptions.elicitation);
+  await session._hooks.Notification[0].hooks[0]();
+  assert.deepEqual(await session._canUseTool(), {
+    behavior: "deny",
+    message: "second turn",
+  });
+  assert.deepEqual(
+    await createdOptions.elicitation.create({}, { signal: new AbortController().signal }),
+    { action: "decline" },
+  );
+  assert.deepEqual(firstEvents, []);
+  assert.deepEqual(secondEvents, ["hook", "elicitation"]);
+});
+
+test("getOrCreateSession closes stale session when options change", async () => {
   const oldSession = fakeSession([], { sessionId: "old-sess" });
+  const replacementSession = fakeSession([], { sessionId: "new-sess" });
+  const mgr = new CodebuddySessionManager({
+    loadSdk: async () => ({
+      unstable_v2_createSession: () => replacementSession,
+      unstable_v2_resumeSession: () => replacementSession,
+    }),
+  });
   const oldOpts = { cwd: "/tmp", model: "glm-4" };
   const newOpts = { cwd: "/tmp", model: "glm-5" };
-  const oldFingerprint = computeOptionsFingerprint(oldOpts);
-  const newFingerprint = computeOptionsFingerprint(newOpts);
-  mgr.sessions.set("stale-key", { session: oldSession, fingerprint: oldFingerprint });
+  mgr.sessions.set("stale-key", {
+    session: oldSession,
+    fingerprint: computeOptionsFingerprint(oldOpts),
+  });
 
-  // Verify fingerprints differ so the manager would detect the change.
-  assert.notEqual(oldFingerprint, newFingerprint);
-
-  // Verify the manager's stale-detection and close logic without triggering
-  // a real SDK import (which spawns a live CodeBuddy backend and prevents the
-  // test process from exiting).
-  const entry = mgr.sessions.get("stale-key");
-  assert.ok(entry);
-  assert.notEqual(entry.fingerprint, newFingerprint);
-
-  // Simulate the stale-close path that getOrCreateSession executes.
-  try { entry.session.close(); } catch { /* best effort */ }
-  mgr.sessions.delete("stale-key");
+  const result = await mgr.getOrCreateSession({
+    sessionKey: "stale-key",
+    sessionOptions: newOpts,
+  });
 
   assert.ok(oldSession.closed);
-  assert.ok(!mgr.sessions.has("stale-key"));
+  assert.equal(result, replacementSession);
+  assert.equal(mgr.sessions.get("stale-key").session, replacementSession);
+  assert.equal(
+    mgr.sessions.get("stale-key").fingerprint,
+    computeOptionsFingerprint(newOpts),
+  );
 });
 
 test("computeOptionsFingerprint detects option changes", () => {
-  const base = { cwd: "/tmp", model: "glm-5", maxTurns: 10 };
-  const same = { cwd: "/tmp", model: "glm-5", maxTurns: 10 };
-  const diffModel = { cwd: "/tmp", model: "glm-4", maxTurns: 10 };
-  const diffMaxTurns = { cwd: "/tmp", model: "glm-5", maxTurns: 20 };
+  const base = { cwd: "/tmp", model: "glm-5", maxTurns: 10, effort: "high" };
+  const same = { cwd: "/tmp", model: "glm-5", maxTurns: 10, effort: "high" };
+  const diffModel = { cwd: "/tmp", model: "glm-4", maxTurns: 10, effort: "high" };
+  const diffMaxTurns = { cwd: "/tmp", model: "glm-5", maxTurns: 20, effort: "high" };
+  const diffEffort = { cwd: "/tmp", model: "glm-5", maxTurns: 10, effort: "low" };
   assert.equal(computeOptionsFingerprint(base), computeOptionsFingerprint(same));
   assert.notEqual(computeOptionsFingerprint(base), computeOptionsFingerprint(diffModel));
   assert.notEqual(computeOptionsFingerprint(base), computeOptionsFingerprint(diffMaxTurns));
+  assert.notEqual(computeOptionsFingerprint(base), computeOptionsFingerprint(diffEffort));
 });
 
 test("runTurn streams messages via V2 session when available", async () => {
@@ -123,15 +194,50 @@ test("steer returns unsupported when no session exists", async () => {
   assert.deepEqual(result, { status: "unsupported" });
 });
 
-test("steer sends follow-up message on existing session", async () => {
+test("steer sends into the active session and leaves streaming to runTurn", async () => {
   const mgr = new CodebuddySessionManager();
-  const messages = [
-    { type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: "steered" } } },
-  ];
-  const session = fakeSession(messages);
-  mgr.sessions.set("steer-key", { session, fingerprint: null });
+  const session = fakeSession([]);
+  let streamCalls = 0;
+  let markStreamStarted;
+  let releaseOriginalStream;
+  const streamStarted = new Promise((resolve) => { markStreamStarted = resolve; });
+  const originalStreamGate = new Promise((resolve) => { releaseOriginalStream = resolve; });
+  session.stream = async function* stream() {
+    streamCalls += 1;
+    if (streamCalls === 1) {
+      markStreamStarted();
+      yield {
+        type: "stream_event",
+        event: { type: "content_block_delta", delta: { type: "text_delta", text: "before steer" } },
+      };
+      await originalStreamGate;
+      yield {
+        type: "stream_event",
+        event: { type: "content_block_delta", delta: { type: "text_delta", text: "after steer" } },
+      };
+      return;
+    }
+    yield {
+      type: "stream_event",
+      event: { type: "content_block_delta", delta: { type: "text_delta", text: "second consumer" } },
+    };
+  };
+  mgr.sessions.set("steer-key", {
+    session,
+    fingerprint: computeOptionsFingerprint({}),
+  });
 
   const { events, emitter } = collector();
+  const run = mgr.runTurn({
+    sessionKey: "steer-key",
+    prompt: "start",
+    attachments: [],
+    options: { abortController: new AbortController() },
+    emitter,
+    sessionOptions: {},
+  });
+  await streamStarted;
+
   const result = await mgr.steer({
     sessionKey: "steer-key",
     prompt: "now do this",
@@ -141,8 +247,17 @@ test("steer sends follow-up message on existing session", async () => {
 
   assert.deepEqual(result, { status: "accepted" });
   assert.ok(session.sentMessages.includes("now do this"));
-  assert.ok(events.some((e) => e.k === "text" && e.t === "steered"));
-  assert.ok(events.some((e) => e.k === "done"));
+  assert.equal(streamCalls, 1);
+  assert.equal(events.filter((event) => event.k === "done").length, 0);
+
+  releaseOriginalStream();
+  await run;
+
+  assert.deepEqual(
+    events.filter((event) => event.k === "text").map((event) => event.t),
+    ["before steer", "after steer"],
+  );
+  assert.equal(events.filter((event) => event.k === "done").length, 1);
 });
 
 test("closeSession removes and closes the session", () => {

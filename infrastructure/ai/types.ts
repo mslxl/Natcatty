@@ -263,11 +263,11 @@ export interface ExternalAgentConfig {
   acpArgs?: string[];
   /** Internal: disabled only because the managed CLI was unavailable. */
   autoDisabledUntilAvailable?: boolean;
-  /** CodeBuddy-specific advanced options (SDK 0.3.222). */
+  /** CodeBuddy-specific advanced options (SDK 0.3.230). */
   codebuddyOptions?: CodebuddyAdvancedOptions;
 }
 
-/** Advanced options specific to the CodeBuddy backend (SDK 0.3.222+). */
+/** Advanced options specific to the CodeBuddy backend (SDK 0.3.230+). */
 export interface CodebuddyAdvancedOptions {
   /** Effort level for model reasoning. */
   effort?: 'low' | 'medium' | 'high' | 'xhigh';

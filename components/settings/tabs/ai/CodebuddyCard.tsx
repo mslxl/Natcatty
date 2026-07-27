@@ -193,7 +193,7 @@ export const CodebuddyCard: React.FC<{
         )}
       </div>
 
-      {/* Advanced SDK options (SDK 0.3.222) */}
+      {/* Advanced SDK options (SDK 0.3.230) */}
       {onAdvancedOptionsChange && (
         <div className="border-t border-border/60 pt-3">
           <button
