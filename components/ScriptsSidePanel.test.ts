@@ -55,3 +55,9 @@ test("scripts side panel add control is a split button with secondary create act
   assert.match(source, /snippets\.action\.newScript/);
   assert.match(source, /snippets\.action\.newSnippet/);
 });
+
+test("scripts side panel package dialog traps focus and exposes dialog close contract", () => {
+  assert.match(source, /packageDialogRef/);
+  assert.match(source, /data-dialog-close="true"/);
+  assert.match(source, /isPackageDialogOpen/);
+});

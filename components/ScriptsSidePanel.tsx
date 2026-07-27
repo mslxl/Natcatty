@@ -258,6 +258,8 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
   const [newPackageName, setNewPackageName] = useState('');
   const [packageError, setPackageError] = useState('');
   const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const packageDialogRef = useRef<HTMLDivElement>(null);
+  const packageNameInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const handler = (event: Event) => {
@@ -601,6 +603,57 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
     setIsPackageDialogOpen(true);
   }, []);
 
+  // Keep Tab focus inside the package dialog while it is open.
+  useEffect(() => {
+    if (!isPackageDialogOpen) return;
+    const focusTimer = window.setTimeout(() => packageNameInputRef.current?.focus(), 30);
+
+    const listFocusable = (): HTMLElement[] => {
+      const root = packageDialogRef.current;
+      if (!root) return [];
+      const nodes = root.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      );
+      return Array.from(nodes).filter((el) => {
+        if (el.classList.contains('sr-only')) return false;
+        if (el.getAttribute('aria-hidden') === 'true') return false;
+        return el.tabIndex >= 0 || el.tagName === 'INPUT' || el.tagName === 'BUTTON';
+      });
+    };
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab') return;
+      const focusable = listFocusable();
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+      if (e.shiftKey) {
+        if (!active || active === first || !packageDialogRef.current?.contains(active)) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else if (!active || active === last || !packageDialogRef.current?.contains(active)) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+
+    const onFocusIn = (e: FocusEvent) => {
+      const target = e.target as Node | null;
+      if (target && packageDialogRef.current?.contains(target)) return;
+      (listFocusable()[0] ?? packageNameInputRef.current)?.focus();
+    };
+
+    document.addEventListener('keydown', onKeyDown, true);
+    document.addEventListener('focusin', onFocusIn);
+    return () => {
+      window.clearTimeout(focusTimer);
+      document.removeEventListener('keydown', onKeyDown, true);
+      document.removeEventListener('focusin', onFocusIn);
+    };
+  }, [isPackageDialogOpen]);
+
   const handleCreatePackage = useCallback(() => {
     if (!onPackagesChange) {
       setPackageError(t('snippets.renameDialog.error.empty'));
@@ -920,6 +973,7 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
 
       {isPackageDialogOpen ? (
         <div
+          ref={packageDialogRef}
           className="absolute inset-0 z-40 flex items-center justify-center bg-background/80 p-3"
           role="dialog"
           aria-modal="true"
@@ -957,7 +1011,7 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
             <div className="space-y-1.5">
               <Label className="text-xs">{t('field.name')}</Label>
               <Input
-                autoFocus
+                ref={packageNameInputRef}
                 value={newPackageName}
                 onChange={(e) => {
                   setNewPackageName(e.target.value);

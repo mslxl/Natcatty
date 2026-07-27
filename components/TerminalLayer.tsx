@@ -1676,6 +1676,10 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
         toast.error(t('scripts.recording.noSession'));
         return;
       }
+      if (isTerminalSensitiveInputActive(sessionId)) {
+        toast.info(t('scripts.actions.skippedSensitiveSessions', { count: 1 }));
+        return;
+      }
       if (!isScriptSnippet(snippet)) {
         const command = await resolveSnippetCommand(snippet);
         if (command === null) return;
