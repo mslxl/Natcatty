@@ -1222,6 +1222,34 @@ export const useSftpTransfers = ({
     setTransfers((prev) => prev.filter((t) => t.id !== transferId && t.parentTaskId !== transferId));
   }, [cleanupTaskArtifacts, setTransfers]);
 
+  const dismissTransfers = useCallback((transferIds: readonly string[]) => {
+    if (transferIds.length === 0) return;
+    const removing = new Set(transferIds);
+    const artifactTasks = transfersRef.current.filter((task) => (
+      task.status !== "completed"
+      && (removing.has(task.id) || removing.has(task.parentTaskId ?? ""))
+    ));
+    // This callback is used only for automatic history eviction. Completed
+    // streams already cleaned their staging files; sending one cleanup IPC per
+    // pruned child recreates a main-process event storm at folder completion.
+    setTransfers((prev) => prev.filter((task) => (
+      !removing.has(task.id) && !removing.has(task.parentTaskId ?? "")
+    )));
+    // Failed/cancelled transfers can retain resumable staging files. Clean them
+    // sequentially in the background so a large eviction never floods IPC.
+    if (artifactTasks.length > 0) {
+      void (async () => {
+        for (const task of artifactTasks) {
+          try {
+            await cleanupTaskArtifacts(task);
+          } catch {
+            // best-effort history cleanup
+          }
+        }
+      })();
+    }
+  }, [cleanupTaskArtifacts, setTransfers]);
+
   const isTransferCancelled = useCallback((transferId: string) => {
     return cancelledTasksRef.current.has(transferId) || isTransferCancelledFlag(transferId);
   }, []);
@@ -1834,6 +1862,7 @@ export const useSftpTransfers = ({
     retry: retryTransfer,
     prioritize: prioritizeTransfer,
     dismiss: dismissTransfer,
+    dismissMany: dismissTransfers,
     resolveConflict,
     // Origin/local listing only — soft pause/resume must not key on this.
     ownsTask: (taskId: string) => transfersRef.current.some(
@@ -1843,7 +1872,7 @@ export const useSftpTransfers = ({
     canAdopt: (task) => resolveAdoptionPanes(task) !== null,
     canPrepareAdoption,
     adopt: adoptInterruptedTransfer,
-  }), [adoptInterruptedTransfer, canPrepareAdoption, cancelTransfer, dismissTransfer, ownerId, prioritizeTransfer, resolveAdoptionPanes, resolveConflict, resumeTransfer, retryTransfer, syncOwnedTasksFromStore]);
+  }), [adoptInterruptedTransfer, canPrepareAdoption, cancelTransfer, dismissTransfer, dismissTransfers, ownerId, prioritizeTransfer, resolveAdoptionPanes, resolveConflict, resumeTransfer, retryTransfer, syncOwnedTasksFromStore]);
 
   return {
     transfers,

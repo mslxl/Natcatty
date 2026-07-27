@@ -11,6 +11,7 @@ import {
   pathConflictMessage,
 } from "../../domain/sftpTransferConflicts";
 import { STORAGE_KEY_SFTP_TRANSFER_CENTER } from "../../infrastructure/config/storageKeys";
+import { localStorageAdapter } from "../../infrastructure/persistence/localStorageAdapter";
 import { netcattyBridge } from "../../infrastructure/services/netcattyBridge";
 import { notify } from "../notification";
 import { globalSftpTransferScheduler } from "./sftp/globalTransferScheduler";
@@ -44,6 +45,8 @@ export interface SftpTransferOwnerControls {
   retry: (taskId: string) => void | Promise<void>;
   prioritize: (taskId: string) => void | Promise<void>;
   dismiss: (taskId: string) => void;
+  /** Remove a pruned group in one owner update to avoid publish/dismiss feedback loops. */
+  dismissMany?: (taskIds: readonly string[]) => void;
   /**
    * True when the panel still lists this task locally.
    * Used only for adopt/retry UX after hard reconnect — never for soft
@@ -305,12 +308,29 @@ export function mergeOwnerPublishedTask(
   return merged;
 }
 
+function areTransferTasksEquivalent(left: TransferTask, right: TransferTask): boolean {
+  const leftRecord = left as unknown as Record<string, unknown>;
+  const rightRecord = right as unknown as Record<string, unknown>;
+  const keys = new Set([...Object.keys(leftRecord), ...Object.keys(rightRecord)]);
+  for (const key of keys) {
+    // updatedAt is bookkeeping, not a visible or durable transfer change.
+    if (key === "updatedAt") continue;
+    if (!Object.is(leftRecord[key], rightRecord[key])) return false;
+  }
+  return true;
+}
+
 export function createSftpTransferCenterStore(persistence?: StorePersistence): SftpTransferCenterStore {
   const restored = deserializeSftpTransferCenter(persistence?.read() ?? null);
   let tasks = pruneSftpTransferHistory(restored.tasks);
   let snapshot = tasks.length > 0 ? buildSnapshot(tasks) : EMPTY_SNAPSHOT;
   const listeners = new Set<Listener>();
   const controllers = new Map<string, SftpTransferOwnerControls>();
+  const lastPublishedByOwner = new Map<string, ReadonlyMap<string, TransferTask>>();
+  const PERSIST_INTERVAL_MS = 250;
+  let lastPersistedAt = 0;
+  let persistenceDirty = false;
+  let persistenceTimer: ReturnType<typeof setTimeout> | null = null;
   const resumeInvocations = new Map<string, Promise<void>>();
   const resumePreparationFailures = new Map<string, string>();
   let dedicatedResumeHandler: DedicatedTransferResumeHandler | null = null;
@@ -352,21 +372,108 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
     dedicatedResumeWaiters.add(waiter);
   });
 
-  const persist = () => {
-    persistence?.write(serializeSftpTransferCenter(tasks));
+  const writePersistence = () => {
+    if (!persistence || !persistenceDirty) return;
+    persistenceDirty = false;
+    try {
+      persistence.write(serializeSftpTransferCenter(tasks));
+    } catch (error) {
+      // Transfer history is recoverability metadata. Storage exhaustion or a
+      // transient browser storage failure must never take down the renderer.
+      console.warn("[SFTP] Could not persist transfer history", error);
+    } finally {
+      // Measure the interval from completion, since stringify/setItem itself can
+      // be expensive for a large directory snapshot.
+      lastPersistedAt = Date.now();
+    }
   };
-  const emit = () => {
+  const persist = (immediate = false) => {
+    if (!persistence) return;
+    persistenceDirty = true;
+    const elapsed = Date.now() - lastPersistedAt;
+    if (immediate || lastPersistedAt === 0 || elapsed >= PERSIST_INTERVAL_MS) {
+      if (persistenceTimer) {
+        clearTimeout(persistenceTimer);
+        persistenceTimer = null;
+      }
+      writePersistence();
+      return;
+    }
+    if (persistenceTimer) return;
+    persistenceTimer = setTimeout(() => {
+      persistenceTimer = null;
+      writePersistence();
+    }, PERSIST_INTERVAL_MS - elapsed);
+  };
+  const notifyOwnersOfPrunedTasks = (removed: readonly TransferTask[]) => {
+    if (removed.length === 0) return;
+    const byOwner = new Map<string, string[]>();
+    for (const task of removed) {
+      if (!task.ownerId) continue;
+      const ids = byOwner.get(task.ownerId) ?? [];
+      ids.push(task.id);
+      byOwner.set(task.ownerId, ids);
+    }
+    for (const [ownerId, ids] of byOwner) {
+      const controller = controllers.get(ownerId);
+      if (!controller) continue;
+      if (controller.dismissMany) {
+        controller.dismissMany(ids);
+      } else {
+        for (const id of ids) controller.dismiss(id);
+      }
+    }
+  };
+  const hasCriticalPersistenceChange = (
+    previous: readonly TransferTask[],
+    next: readonly TransferTask[],
+  ) => {
+    const previousById = new Map(previous.map((task) => [task.id, task]));
+    for (const task of next) {
+      const before = previousById.get(task.id);
+      if (task.sourceFingerprint !== before?.sourceFingerprint) return true;
+      if (task.status === "paused" || task.status === "pausing") {
+        if (
+          task.status !== before?.status
+          || task.checkpointBytes !== before?.checkpointBytes
+          || task.resumeStage !== before?.resumeStage
+          || task.downloadCheckpointBytes !== before?.downloadCheckpointBytes
+          || task.uploadCheckpointBytes !== before?.uploadCheckpointBytes
+        ) return true;
+      }
+      if (
+        !task.parentTaskId
+        && task.status !== before?.status
+        && (task.status === "completed" || task.status === "failed" || task.status === "cancelled")
+      ) return true;
+    }
+    return false;
+  };
+  const emit = (persistImmediately = false) => {
+    const shouldPersistImmediately = persistImmediately
+      || hasCriticalPersistenceChange(snapshot.tasks, tasks);
     const beforePrune = tasks;
     tasks = pruneSftpTransferHistory(tasks);
     const retainedIds = new Set(tasks.map((task) => task.id));
-    for (const removed of beforePrune) {
-      if (retainedIds.has(removed.id)) continue;
-      controllers.get(removed.ownerId ?? "")?.dismiss(removed.id);
+    const removed = beforePrune.filter((task) => !retainedIds.has(task.id));
+    if (removed.length > 0) {
+      for (const [ownerId, published] of lastPublishedByOwner) {
+        if (published.size === 0) continue;
+        const retained = new Map(
+          [...published].filter(([taskId]) => retainedIds.has(taskId)),
+        );
+        if (retained.size === 0) lastPublishedByOwner.delete(ownerId);
+        else if (retained.size !== published.size) lastPublishedByOwner.set(ownerId, retained);
+      }
     }
     snapshot = buildSnapshot(tasks);
-    persist();
+    persist(shouldPersistImmediately);
     notifyDedicatedResumeWaiters();
     for (const listener of listeners) listener();
+    // Notify only after the store snapshot is final. Owners must remove the
+    // whole group atomically; per-row callbacks republish the remaining stale
+    // rows and recursively re-enter pruning for large completed directories.
+    notifyOwnersOfPrunedTasks(removed);
   };
   const findOwner = (taskId: string) => tasks.find((task) => task.id === taskId)?.ownerId;
   const findAdopter = (task: TransferTask) => [...controllers.entries()].find(([, controls]) => (
@@ -967,7 +1074,12 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
       return tasks.filter((task) => task.ownerId === ownerId).map((task) => ({ ...task }));
     },
     publishOwner(ownerId, ownerTasks) {
+      const previousTasks = tasks;
+      let changed = false;
+      let persistImmediately = false;
       const incoming = new Map(ownerTasks.map((task) => [task.id, task]));
+      const previousPublished = lastPublishedByOwner.get(ownerId);
+      lastPublishedByOwner.set(ownerId, incoming);
       const existingIds = new Set(tasks.map((task) => task.id));
       // Resolve parent status from the store first when runtime owns the walk
       // (panel is view-only for live lifecycle), else prefer the panel snapshot.
@@ -1006,8 +1118,14 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
           ) {
             return [task];
           }
+          changed = true;
           return [];
         }
+        // setTransfers keeps unchanged rows by reference. If this exact owner
+        // row was already published, the store may only be newer (for example
+        // from global progress), so leave it untouched without comparing every
+        // field of thousands of directory children.
+        if (previousPublished?.get(task.id) === replacement) return [task];
         let merged = mergeOwnerPublishedTask(
           task,
           replacement,
@@ -1037,6 +1155,22 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
             };
           }
         }
+        if (areTransferTasksEquivalent(task, merged)) return [task];
+        if (
+          merged.sourceFingerprint !== task.sourceFingerprint
+          || (
+            merged.status !== task.status
+            && (merged.status === "paused" || merged.status === "pausing")
+          )
+          || (
+            merged.status !== task.status
+            && !merged.parentTaskId
+            && (merged.status === "completed" || merged.status === "failed" || merged.status === "cancelled")
+          )
+        ) {
+          persistImmediately = true;
+        }
+        changed = true;
         return [merged];
       });
       for (const task of ownerTasks) {
@@ -1054,14 +1188,32 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
             seeded.speed = 0;
           }
           tasks.push(seeded);
+          if (
+            seeded.sourceFingerprint !== undefined
+            || seeded.status === "paused"
+            || seeded.status === "pausing"
+            || (!seeded.parentTaskId && (
+              seeded.status === "completed" || seeded.status === "failed" || seeded.status === "cancelled"
+            ))
+          ) {
+            persistImmediately = true;
+          }
+          changed = true;
         }
       }
-      emit();
+      if (!changed) {
+        tasks = previousTasks;
+        return;
+      }
+      emit(persistImmediately);
     },
     registerOwner(ownerId, controls) {
       controllers.set(ownerId, controls);
       return () => {
-        if (controllers.get(ownerId) === controls) controllers.delete(ownerId);
+        if (controllers.get(ownerId) === controls) {
+          controllers.delete(ownerId);
+          lastPublishedByOwner.delete(ownerId);
+        }
       };
     },
     setDedicatedResumeHandler(handler) {
@@ -1162,7 +1314,7 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
         }
         return merged;
       });
-      if (changed) emit();
+      if (changed) emit(updates.sourceFingerprint !== undefined);
     },
     upsertTasks(incoming) {
       if (incoming.length === 0) return;
@@ -1442,12 +1594,10 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
         && (status === undefined || task.status === status)
         && !(task.parentTaskId && unfinishedParents.has(task.parentTaskId)),
       );
-      for (const task of removing) {
-        controllers.get(task.ownerId ?? "")?.dismiss(task.id);
-      }
       const removingIds = new Set(removing.map((task) => task.id));
       tasks = tasks.filter((task) => !removingIds.has(task.id) && !removingIds.has(task.parentTaskId ?? ""));
       emit();
+      notifyOwnersOfPrunedTasks(removing);
     },
     markReconnectRequired(taskId, error) {
       tasks = tasks.map((task) => task.id === taskId ? {
@@ -1465,6 +1615,13 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
     },
     ingestBackgroundEvent(event) {
       const existing = tasks.find((task) => task.id === event.transferId);
+      const persistImmediately = event.type === "paused"
+        || event.type === "pausing"
+        || (
+          !existing?.parentTaskId
+          && (event.type === "completed" || event.type === "failed" || event.type === "cancelled")
+        )
+        || (event.sourceFingerprint !== undefined && event.sourceFingerprint !== existing?.sourceFingerprint);
       const terminal = existing
         && (existing.status === "cancelled" || existing.status === "completed" || existing.status === "failed");
       // Never resurrect a finished/cancelled agent row with late queued/progress.
@@ -1475,6 +1632,48 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
           return;
         }
         if (event.type === "queued" || event.type === "started" || event.type === "progress" || event.type === "pausing" || event.type === "resumed" || event.type === "paused") {
+          return;
+        }
+      }
+      if (existing && event.type === "progress") {
+        const parent = existing.parentTaskId
+          ? tasks.find((task) => task.id === existing.parentTaskId)
+          : undefined;
+        const pauseHeld = existing.status === "paused"
+          || existing.status === "pausing"
+          || parent?.status === "paused"
+          || parent?.status === "pausing"
+          || isTransferOrRootPauseLatched(existing.parentTaskId ?? existing.id, existing.id)
+          || isTransferPauseLatched(existing.id);
+        const lifecycleStatus = event.lifecycleState === "paused"
+          ? "paused"
+          : event.lifecycleState === "pausing"
+            ? "pausing"
+            : event.lifecycleState === "queued"
+              ? "queued"
+              : "transferring";
+        const sameLifecycle = event.lifecycleState === undefined
+          ? existing.status === "transferring"
+          : existing.status === lifecycleStatus;
+        const sameOptional = <T>(incoming: T | undefined, current: T | undefined) => (
+          incoming === undefined || incoming === current
+        );
+        if (
+          !pauseHeld
+          && sameLifecycle
+          && existing.error === undefined
+          && existing.endTime === undefined
+          && sameOptional(event.transferred, existing.transferredBytes)
+          && sameOptional(event.totalBytes, existing.totalBytes)
+          && sameOptional(event.speed, existing.speed)
+          && sameOptional(event.checkpointBytes, existing.checkpointBytes)
+          && sameOptional(event.resumeStage, existing.resumeStage)
+          && sameOptional(event.downloadCheckpointBytes, existing.downloadCheckpointBytes)
+          && sameOptional(event.uploadCheckpointBytes, existing.uploadCheckpointBytes)
+          && sameOptional(event.sourceFingerprint, existing.sourceFingerprint)
+          && sameOptional(event.phase, existing.phase)
+          && sameOptional(event.lifecycleEpoch, existing.lifecycleEpoch)
+        ) {
           return;
         }
       }
@@ -1667,7 +1866,7 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
           speed: 0,
         } : task);
       }
-      emit();
+      emit(persistImmediately);
     },
   };
 }
@@ -1676,7 +1875,7 @@ const browserPersistence: StorePersistence | undefined = typeof globalThis.local
   ? undefined
   : {
       read: () => globalThis.localStorage.getItem(STORAGE_KEY_SFTP_TRANSFER_CENTER),
-      write: (value) => globalThis.localStorage.setItem(STORAGE_KEY_SFTP_TRANSFER_CENTER, value),
+      write: (value) => { localStorageAdapter.writeString(STORAGE_KEY_SFTP_TRANSFER_CENTER, value); },
     };
 
 export const sftpTransferCenterStore = createSftpTransferCenterStore(browserPersistence);

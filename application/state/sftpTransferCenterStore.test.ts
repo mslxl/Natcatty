@@ -176,6 +176,83 @@ test("paused source fingerprint patches are persisted for restart", () => {
   assert.equal(restored.getSnapshot().tasks[0]?.sourceFingerprint, "sha256:durable");
 });
 
+test("background source fingerprint progress is persisted immediately for restart", () => {
+  let persisted = "";
+  const first = createSftpTransferCenterStore({
+    read: () => null,
+    write: (value) => { persisted = value; },
+  });
+  first.publishOwner("panel-a", [makeTask("background-fingerprint", "paused")]);
+  first.ingestBackgroundEvent({
+    type: "progress",
+    transferId: "background-fingerprint",
+    transferred: 2,
+    totalBytes: 10,
+    speed: 0,
+    checkpointBytes: 2,
+    sourceFingerprint: "sha256:background-durable",
+    lifecycleState: "paused",
+  });
+
+  const restored = createSftpTransferCenterStore({
+    read: () => persisted,
+    write: () => {},
+  });
+  assert.equal(restored.getSnapshot().tasks[0]?.sourceFingerprint, "sha256:background-durable");
+});
+
+test("owner source fingerprint publish is persisted immediately for restart", () => {
+  let persisted = "";
+  const first = createSftpTransferCenterStore({
+    read: () => null,
+    write: (value) => { persisted = value; },
+  });
+  const paused = makeTask("owner-fingerprint", "paused");
+  first.publishOwner("panel-a", [paused]);
+  first.publishOwner("panel-a", [{
+    ...paused,
+    sourceFingerprint: "sha256:owner-durable",
+  }]);
+
+  const restored = createSftpTransferCenterStore({
+    read: () => persisted,
+    write: () => {},
+  });
+  assert.equal(restored.getSnapshot().tasks[0]?.sourceFingerprint, "sha256:owner-durable");
+});
+
+test("top-level completion is persisted immediately while child completions stay coalesced", () => {
+  let writes = 0;
+  let persisted = "";
+  const first = createSftpTransferCenterStore({
+    read: () => null,
+    write: (value) => {
+      writes += 1;
+      persisted = value;
+    },
+  });
+  const parent = {
+    ...makeTask("completed-parent"),
+    isDirectory: true,
+    progressMode: "files" as const,
+  };
+  const child = { ...makeTask("completed-child"), parentTaskId: parent.id };
+  first.publishOwner("panel-a", [parent, child]);
+  first.publishOwner("panel-a", [parent, { ...child, status: "completed", endTime: Date.now() }]);
+  assert.equal(writes, 1, "child completion should remain coalesced");
+  first.publishOwner("panel-a", [
+    { ...parent, status: "completed", endTime: Date.now() },
+    { ...child, status: "completed", endTime: Date.now() },
+  ]);
+  assert.equal(writes, 2, "parent completion should flush immediately");
+
+  const restored = createSftpTransferCenterStore({
+    read: () => persisted,
+    write: () => {},
+  });
+  assert.equal(restored.getSnapshot().tasks.find((task) => task.id === parent.id)?.status, "completed");
+});
+
 test("orphaned unfinished tasks stay controllable so dead rows can be cancelled", () => {
   const store = createSftpTransferCenterStore();
   store.publishOwner("gone-panel", [
@@ -381,6 +458,69 @@ test("main-process progress ingest keeps panel-owned transfers moving without Re
     endedAt: Date.now(),
   });
   assert.equal(store.getSnapshot().tasks.find((row) => row.id === "upload-1")?.status, "completed");
+});
+
+test("duplicate main-process progress does not notify or persist a second renderer update", async () => {
+  let writes = 0;
+  let notifications = 0;
+  const store = createSftpTransferCenterStore({
+    read: () => null,
+    write: () => { writes += 1; },
+  });
+  store.publishOwner("panel-a", [{
+    ...makeTask("duplicate-progress"),
+    transferredBytes: 5,
+    totalBytes: 10,
+    speed: 2,
+    lifecycleEpoch: 0,
+  }]);
+  store.subscribe(() => { notifications += 1; });
+
+  store.ingestBackgroundEvent({
+    type: "progress",
+    transferId: "duplicate-progress",
+    transferred: 5,
+    totalBytes: 10,
+    speed: 2,
+    lifecycleEpoch: 0,
+    lifecycleState: "transferring",
+  });
+  await new Promise((resolve) => setTimeout(resolve, 300));
+
+  assert.equal(notifications, 0);
+  assert.equal(writes, 1);
+});
+
+test("owner publish after global progress does not repeat the same renderer update", () => {
+  const store = createSftpTransferCenterStore();
+  store.publishOwner("panel-a", [{
+    ...makeTask("global-first"),
+    transferredBytes: 0,
+    totalBytes: 10,
+    speed: 0,
+    lifecycleEpoch: 0,
+  }]);
+  let notifications = 0;
+  store.subscribe(() => { notifications += 1; });
+
+  store.ingestBackgroundEvent({
+    type: "progress",
+    transferId: "global-first",
+    transferred: 5,
+    totalBytes: 10,
+    speed: 2,
+    lifecycleEpoch: 0,
+    lifecycleState: "transferring",
+  });
+  store.publishOwner("panel-a", [{
+    ...makeTask("global-first"),
+    transferredBytes: 5,
+    totalBytes: 10,
+    speed: 2,
+    lifecycleEpoch: 0,
+  }]);
+
+  assert.equal(notifications, 1);
 });
 
 test("newer backend lifecycle progress reopens a paused row", () => {
@@ -864,6 +1004,48 @@ test("pause after terminal close works without any React owner", async () => {
   assert.equal(isTransferPauseLatched("stale-dir"), true);
   assert.ok(pauseCalls.includes("stale-child"));
   cleanup();
+});
+
+test("soft pause checkpoint and source fingerprint persist before pause returns", async (t) => {
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  t.after(() => {
+    if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
+    else Reflect.deleteProperty(globalThis, "window");
+  });
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      netcatty: {
+        pauseTransfer: async () => ({
+          success: true,
+          checkpointBytes: 7,
+          sourceFingerprint: "sha256:pause-return",
+          lifecycleEpoch: 1,
+        }),
+      },
+    },
+  });
+  let persisted = "";
+  const store = createSftpTransferCenterStore({
+    read: () => null,
+    write: (value) => { persisted = value; },
+  });
+  store.publishOwner("closed-panel", [{
+    ...makeTask("pause-durable", "transferring"),
+    transferredBytes: 7,
+    totalBytes: 10,
+  }]);
+
+  await store.pause("pause-durable");
+
+  const restored = createSftpTransferCenterStore({
+    read: () => persisted,
+    write: () => {},
+  });
+  const restoredTask = restored.getSnapshot().tasks[0];
+  assert.equal(restoredTask?.status, "interrupted");
+  assert.equal(restoredTask?.checkpointBytes, 7);
+  assert.equal(restoredTask?.sourceFingerprint, "sha256:pause-return");
 });
 
 test("publishOwner still allows explicit restart that resets progress to zero", () => {
@@ -2464,4 +2646,122 @@ test("directory soft resume then new/queued child progress at bridge epoch 0 adv
   // Soft resume left queued status; progress with transferring lifecycle should open bar.
   const queued = store.getSnapshot().tasks.find((t) => t.id === "queued-child");
   assert.equal(queued?.transferredBytes, 25, "queued sibling progress at epoch 0 must not be stale-dropped");
+});
+
+test("large directory progress coalesces synchronous persistence work", async () => {
+  let writes = 0;
+  let writtenCharacters = 0;
+  const store = createSftpTransferCenterStore({
+    read: () => null,
+    write(value) {
+      writes += 1;
+      writtenCharacters += value.length;
+    },
+  });
+  const parent = {
+    ...makeTask("large-folder"),
+    isDirectory: true,
+    progressMode: "files" as const,
+    totalBytes: 2_000,
+    transferredBytes: 0,
+  };
+  let tasks: TransferTask[] = [
+    parent,
+    ...Array.from({ length: 2_000 }, (_, index) => ({
+      ...makeTask(`large-child-${index}`, index < 1_000 ? "completed" : "queued"),
+      parentTaskId: parent.id,
+      startTime: index + 2,
+    })),
+  ];
+
+  store.publishOwner("panel-a", tasks);
+  const oneSnapshotCharacters = writtenCharacters;
+  for (let tick = 1; tick <= 24; tick += 1) {
+    tasks = tasks.map((task) => task.id === parent.id
+      ? { ...task, transferredBytes: 1_000 + tick }
+      : task);
+    store.publishOwner("panel-a", tasks);
+  }
+
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.ok(writes <= 3, `expected at most 3 storage writes, got ${writes}`);
+  assert.ok(
+    writtenCharacters <= oneSnapshotCharacters * 3,
+    `expected bounded persistence volume, wrote ${writtenCharacters} characters for a ${oneSnapshotCharacters}-character snapshot`,
+  );
+});
+
+test("completed directory history is pruned with one owner update and no reentrant dismiss storm", () => {
+  const store = createSftpTransferCenterStore();
+  const now = Date.now();
+  const parent = {
+    ...makeTask("finished-folder"),
+    isDirectory: true,
+    progressMode: "files" as const,
+    totalBytes: 250,
+    transferredBytes: 250,
+  };
+  let ownerTasks: TransferTask[] = [
+    parent,
+    ...Array.from({ length: 250 }, (_, index) => ({
+      ...makeTask(`finished-child-${index}`, "completed"),
+      parentTaskId: parent.id,
+      startTime: index + 2,
+      endTime: now - index,
+    })),
+  ];
+  let individualDismisses = 0;
+  let batchDismisses = 0;
+  let publishDepth = 0;
+  let maxPublishDepth = 0;
+  const republish = () => {
+    publishDepth += 1;
+    maxPublishDepth = Math.max(maxPublishDepth, publishDepth);
+    store.publishOwner("panel-a", ownerTasks);
+    publishDepth -= 1;
+  };
+  const controls = {
+    pause: async () => {},
+    resume: async () => {},
+    cancel: async () => {},
+    retry: async () => {},
+    prioritize: async () => {},
+    dismiss(id: string) {
+      individualDismisses += 1;
+      ownerTasks = ownerTasks.filter((task) => task.id !== id && task.parentTaskId !== id);
+      republish();
+    },
+    dismissMany(ids: readonly string[]) {
+      batchDismisses += 1;
+      const removing = new Set(ids);
+      ownerTasks = ownerTasks.filter((task) => !removing.has(task.id) && !removing.has(task.parentTaskId ?? ""));
+      republish();
+    },
+  };
+  store.registerOwner("panel-a", controls);
+
+  republish();
+  ownerTasks = ownerTasks.map((task) => task.id === parent.id
+    ? { ...task, status: "completed", endTime: now }
+    : task);
+  republish();
+
+  assert.equal(individualDismisses, 0);
+  assert.equal(batchDismisses, 1);
+  assert.equal(maxPublishDepth, 2);
+  assert.ok(store.getSnapshot().tasks.length <= 200);
+});
+
+test("storage exhaustion cannot escape into the renderer update path", () => {
+  const store = createSftpTransferCenterStore({
+    read: () => null,
+    write() {
+      throw new DOMException("quota exceeded", "QuotaExceededError");
+    },
+  });
+
+  assert.doesNotThrow(() => {
+    store.publishOwner("panel-a", [makeTask("quota-safe")]);
+  });
+  assert.equal(store.getSnapshot().tasks[0]?.id, "quota-safe");
 });
