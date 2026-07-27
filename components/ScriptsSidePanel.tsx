@@ -730,7 +730,7 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
             <DropdownTrigger asChild>
               <button
                 type="button"
-                aria-label={t('snippets.action.newPackage')}
+                aria-label={t('common.more')}
                 aria-haspopup="menu"
                 aria-expanded={addMenuOpen}
                 className="h-7 w-5 flex items-center justify-center rounded-r-md border-l border-border/40 text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
@@ -934,6 +934,16 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
           }}
           onClick={() => setIsPackageDialogOpen(false)}
         >
+          <button
+            type="button"
+            data-dialog-close="true"
+            tabIndex={-1}
+            aria-hidden="true"
+            className="sr-only"
+            onClick={() => setIsPackageDialogOpen(false)}
+          >
+            {t('common.close')}
+          </button>
           <div
             className="w-full max-w-[280px] rounded-lg border border-border/60 bg-background p-3 space-y-3 shadow-lg"
             onClick={(e) => e.stopPropagation()}

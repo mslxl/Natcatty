@@ -1731,6 +1731,16 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       return;
     }
 
+    const runnableSessionIds = sessionIds.filter((sid) => !isTerminalSensitiveInputActive(sid));
+    const skippedSensitive = sessionIds.length - runnableSessionIds.length;
+    if (skippedSensitive > 0) {
+      toast.info(t('scripts.actions.skippedSensitiveSessions', { count: skippedSensitive }));
+    }
+    if (runnableSessionIds.length === 0) {
+      toast.error(t('scripts.recording.noSession'));
+      return;
+    }
+
     try {
       const runOnSession = (sid: string) => runAutomationScript({
         snippet,
@@ -1738,12 +1748,12 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
         sessionMeta: buildScriptSessionMeta(sid, sessionsRef.current, hosts),
       });
       if (mode === 'sequential') {
-        for (const sid of sessionIds) {
+        for (const sid of runnableSessionIds) {
           const { runId } = await runOnSession(sid);
           await waitForScriptRun(runId);
         }
       } else {
-        await Promise.all(sessionIds.map((sid) => runOnSession(sid)));
+        await Promise.all(runnableSessionIds.map((sid) => runOnSession(sid)));
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

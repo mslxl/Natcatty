@@ -309,16 +309,22 @@ export const QuickAddSnippetDialog: React.FC<QuickAddSnippetDialogProps> = ({
   }, []);
 
   // Escape dismisses the drawer when not recording a shortkey (matches previous Dialog).
+  // Use bubble phase so nested Select/Combobox can consume Escape first.
   useEffect(() => {
     if (!open || isRecordingShortkey) return;
     const onEscape = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      // Nested popovers/listboxes that stay open should keep Escape.
+      if (document.querySelector(
+        '[role="listbox"][data-state="open"], [data-radix-popper-content-wrapper] [data-state="open"]',
+      )) {
+        return;
+      }
       e.preventDefault();
-      e.stopPropagation();
       handleClose();
     };
-    window.addEventListener('keydown', onEscape, true);
-    return () => window.removeEventListener('keydown', onEscape, true);
+    window.addEventListener('keydown', onEscape);
+    return () => window.removeEventListener('keydown', onEscape);
   }, [open, isRecordingShortkey, handleClose]);
 
   const handleSave = useCallback(() => {
