@@ -868,6 +868,11 @@ test("prepareEtSshEnvironment uses a persistent user known_hosts file", (t) => {
 
 test("prepareEtSshEnvironment injects vault known_hosts for key-change checks", (t) => {
   const { api, base } = makeApi(t);
+  // Seed a conflicting system pin so we can assert vault wins.
+  const systemKh = path.join(base, "home", ".ssh", "known_hosts");
+  fs.mkdirSync(path.dirname(systemKh), { recursive: true });
+  fs.writeFileSync(systemKh, "host.example ssh-ed25519 AAASYSTEM\n");
+
   const env = api.prepareEtSshEnvironment("sess1", {
     hostname: "host.example",
     username: "alice",
@@ -879,14 +884,18 @@ test("prepareEtSshEnvironment injects vault known_hosts for key-change checks", 
     }],
   });
 
+  const userOption = env.sshOptions.find((option) => option.startsWith("UserKnownHostsFile="));
   const globalOption = env.sshOptions.find((option) => option.startsWith("GlobalKnownHostsFile="));
+  assert.ok(userOption, "expected UserKnownHostsFile for vault keys");
   assert.ok(globalOption, "expected GlobalKnownHostsFile for vault keys");
-  const trustPath = globalOption.slice("GlobalKnownHostsFile=".length);
+  const trustPath = userOption.slice("UserKnownHostsFile=".length);
+  assert.equal(trustPath, globalOption.slice("GlobalKnownHostsFile=".length));
   assert.ok(fs.existsSync(trustPath));
-  assert.match(fs.readFileSync(trustPath, "utf8"), /host\.example ssh-ed25519 AAAAVAULTBLOB/);
+  const trustContent = fs.readFileSync(trustPath, "utf8");
+  assert.match(trustContent, /host\.example ssh-ed25519 AAAAVAULTBLOB/);
+  // System pin for the same host must not remain (would override vault).
+  assert.doesNotMatch(trustContent, /AAASYSTEM/);
   assert.ok(env.sshOptions.includes("StrictHostKeyChecking=accept-new"));
-  // Still pin the persistent user known_hosts for first-seen accept-new writes.
-  assert.ok(env.sshOptions.some((option) => option.startsWith("UserKnownHostsFile=")));
   assert.ok(trustPath.startsWith(path.join(base, "et-ssh-home-sess1")));
 });
 

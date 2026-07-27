@@ -2,9 +2,9 @@
 const crypto = require("node:crypto");
 const { createSystemKnownHostsApi } = require("../sshBridge/systemKnownHosts.cjs");
 const {
+  buildAuthoritativeKnownHostsContent,
   buildExternalHostKeyConfigLines,
   buildExternalHostKeySshOptions,
-  buildMergedGlobalKnownHostsContent,
   buildVaultKnownHostsContent,
 } = require("../externalSshHostKeyPolicy.cjs");
 const { emitTerminalSessionData } = require("../emitTerminalSessionData.cjs");
@@ -372,23 +372,27 @@ main();
       // ssh banners so the first real PTY bytes are the remote shell. Mirrors
       // the options already used by execOnEtSession.
       //
-      // Vault known_hosts (issue #2501): keys the user already trusted via
-      // Netcatty SSH live in the in-app vault, not necessarily in
-      // ~/.ssh/known_hosts. Merge vault pins with OpenSSH's default global
-      // known_hosts files into one GlobalKnownHostsFile so admin-pinned
-      // hosts in /etc/ssh/ssh_known_hosts are preserved (Codex review).
-      let mergedGlobalKnownHostsPath = null;
+      // Vault known_hosts (issue #2501): when the vault pins a host, build an
+      // authoritative known_hosts snapshot (vault pins + system entries for
+      // non-vault hosts) and point BOTH User/Global known_hosts at it. OpenSSH
+      // accepts a match from any trust source, so a rotated system K2 next to
+      // vault K1 would otherwise win.
+      let authoritativeKnownHostsPath = null;
       let emptyKnownHostsPath = null;
       if (verifyHostKeys) {
-        sshOptions.push(`UserKnownHostsFile=${normalizeSshConfigPath(knownHostsPath)}`);
-        const mergedContent = buildMergedGlobalKnownHostsContent({
+        const authoritativeContent = buildAuthoritativeKnownHostsContent({
           knownHosts: options.knownHosts,
           fs,
           pathModule: path,
+          homedir: os.homedir(),
         });
-        if (mergedContent) {
-          mergedGlobalKnownHostsPath = path.join(sshDir, `${safeId}-global-known_hosts`);
-          writeSecureFile(mergedGlobalKnownHostsPath, mergedContent, 0o600);
+        if (authoritativeContent) {
+          authoritativeKnownHostsPath = path.join(sshDir, `${safeId}-authoritative-known_hosts`);
+          writeSecureFile(authoritativeKnownHostsPath, authoritativeContent, 0o600);
+        } else {
+          // No vault pins: keep the persistent user known_hosts so accept-new
+          // records first-seen keys for later mismatch detection.
+          sshOptions.push(`UserKnownHostsFile=${normalizeSshConfigPath(knownHostsPath)}`);
         }
       } else {
         // StrictHostKeyChecking=no still consults known_hosts for password-auth
@@ -398,7 +402,7 @@ main();
         writeSecureFile(emptyKnownHostsPath, "", 0o600);
       }
       sshOptions.push(...buildExternalHostKeySshOptions({
-        mergedGlobalKnownHostsPath,
+        authoritativeKnownHostsPath,
         emptyKnownHostsPath,
         verifyHostKeys,
         protocol: "et",
@@ -664,11 +668,11 @@ main();
         // non-interactive host-key handling as the target hop — the jump's
         // ssh is just as unable to answer a yes/no prompt via SSH_ASKPASS.
         // Vault keys (issue #2501) must also protect the jump hop.
-        if (verifyHostKeys) {
+        if (verifyHostKeys && !authoritativeKnownHostsPath) {
           jumpConfigLines.push(`  UserKnownHostsFile ${quoteSshConfigValue(knownHostsPath)}`);
         }
         const jumpHostKeyLines = buildExternalHostKeyConfigLines({
-          mergedGlobalKnownHostsPath,
+          authoritativeKnownHostsPath,
           emptyKnownHostsPath,
           verifyHostKeys,
           protocol: "et",
@@ -676,12 +680,7 @@ main();
           quotePath: quoteSshConfigValue,
         });
         if (jumpHostKeyLines.length > 0) {
-          jumpHostKeyLines.forEach((line) => {
-            // Avoid duplicating UserKnownHostsFile when verification is on
-            // (already set above to the persistent system file).
-            if (verifyHostKeys && line.includes("UserKnownHostsFile ")) return;
-            jumpConfigLines.push(line);
-          });
+          jumpConfigLines.push(...jumpHostKeyLines);
         } else if (verifyHostKeys) {
           jumpConfigLines.push("  StrictHostKeyChecking accept-new");
         }

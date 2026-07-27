@@ -11,8 +11,8 @@ const { createSshConnExecProbe } = require("../ai/sessionShellKind.cjs");
 const { orderSshIdentityNames, SSH_KEY_PATTERN } = require("../sshAuthHelper.cjs");
 const { fanoutSessionExit } = require("../terminalAttachRestore.cjs");
 const {
+  buildAuthoritativeKnownHostsContent,
   buildExternalHostKeySshOptions,
-  buildMergedGlobalKnownHostsContent,
 } = require("../externalSshHostKeyPolicy.cjs");
 
 const execFileAsync = promisify(execFile);
@@ -361,28 +361,28 @@ function createMoshSessionApi(ctx) {
           sshArgs.push("-o", `PreferredAuthentications=${preferredAuthentications}`);
         }
 
-        // Vault known_hosts (issue #2501): Mosh bootstraps via system OpenSSH,
-        // which only sees ~/.ssh/known_hosts by default. Keys the user already
-        // trusted through Netcatty SSH live in the in-app vault — merge them
-        // with OpenSSH default global known_hosts into one GlobalKnownHostsFile
-        // so a changed host key is rejected without dropping admin pins.
-        // The handshake runs in an interactive PTY, so first-seen hosts keep
-        // OpenSSH's default ask prompt unless verification is disabled.
+        // Vault known_hosts (issue #2501): Mosh bootstraps via system OpenSSH.
+        // When the vault pins hosts, write an authoritative known_hosts
+        // snapshot (vault pins + filtered system entries) and force
+        // StrictHostKeyChecking=ask so a permissive user ssh_config cannot
+        // disable verification. Vault hosts exclude conflicting system pins
+        // so a rotated system key cannot override the vault.
         const verifyHostKeys = options.verifyHostKeys !== false;
-        let mergedGlobalKnownHostsPath = null;
+        let authoritativeKnownHostsPath = null;
         let emptyKnownHostsPath = null;
         if (verifyHostKeys) {
-          const mergedContent = buildMergedGlobalKnownHostsContent({
+          const authoritativeContent = buildAuthoritativeKnownHostsContent({
             knownHosts: options.knownHosts,
             fs,
             pathModule: path,
+            homedir: os.homedir(),
           });
-          if (mergedContent) {
-            mergedGlobalKnownHostsPath = await writeMoshAuthTempFile(
-              safeMoshAuthFileName(sessionId, "global-known-hosts", ".txt"),
-              mergedContent,
+          if (authoritativeContent) {
+            authoritativeKnownHostsPath = await writeMoshAuthTempFile(
+              safeMoshAuthFileName(sessionId, "authoritative-known-hosts", ".txt"),
+              authoritativeContent,
             );
-            tempFiles.push(mergedGlobalKnownHostsPath);
+            tempFiles.push(authoritativeKnownHostsPath);
           }
         } else {
           emptyKnownHostsPath = await writeMoshAuthTempFile(
@@ -392,7 +392,7 @@ function createMoshSessionApi(ctx) {
           tempFiles.push(emptyKnownHostsPath);
         }
         sshArgs.push(...buildExternalHostKeySshOptions({
-          mergedGlobalKnownHostsPath,
+          authoritativeKnownHostsPath,
           emptyKnownHostsPath,
           verifyHostKeys,
           protocol: "mosh",

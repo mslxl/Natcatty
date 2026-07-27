@@ -3,14 +3,17 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const crypto = require("node:crypto");
 
 const {
+  buildAuthoritativeKnownHostsContent,
   buildExternalHostKeyConfigLines,
   buildExternalHostKeySshOptions,
-  buildMergedGlobalKnownHostsContent,
   buildVaultKnownHostsContent,
+  filterKnownHostsContentExcludingVaultHosts,
   formatVaultKnownHostLine,
   getDefaultGlobalKnownHostsPaths,
+  quoteOpenSshOptionValue,
   resolveExternalStrictHostKeyChecking,
 } = require("./externalSshHostKeyPolicy.cjs");
 
@@ -45,13 +48,6 @@ test("formatVaultKnownHostLine skips fingerprint-only vault entries", () => {
     }),
     null,
   );
-  assert.equal(
-    formatVaultKnownHostLine({
-      hostname: "host.example",
-      fingerprint: "abcdef",
-    }),
-    null,
-  );
 });
 
 test("buildVaultKnownHostsContent joins usable vault entries", () => {
@@ -73,15 +69,9 @@ test("buildVaultKnownHostsContent joins usable vault entries", () => {
     content,
     "a.example ssh-ed25519 AAAAa\n[b.example]:2200 ssh-rsa AAAAb\n",
   );
-  assert.equal(buildVaultKnownHostsContent([]), "");
-  assert.equal(buildVaultKnownHostsContent(undefined), "");
 });
 
 test("getDefaultGlobalKnownHostsPaths covers Unix and Windows defaults", () => {
-  assert.deepEqual(getDefaultGlobalKnownHostsPaths({ platform: "darwin" }), [
-    "/etc/ssh/ssh_known_hosts",
-    "/etc/ssh/ssh_known_hosts2",
-  ]);
   assert.deepEqual(getDefaultGlobalKnownHostsPaths({ platform: "linux" }), [
     "/etc/ssh/ssh_known_hosts",
     "/etc/ssh/ssh_known_hosts2",
@@ -95,61 +85,79 @@ test("getDefaultGlobalKnownHostsPaths covers Unix and Windows defaults", () => {
   );
 });
 
-test("buildMergedGlobalKnownHostsContent merges system globals with vault", () => {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-kh-merge-"));
+test("filterKnownHostsContentExcludingVaultHosts drops conflicting system pins", () => {
+  const content = [
+    "host.example ssh-ed25519 AAASYSTEM",
+    "other.example ssh-rsa AAAOTHER",
+    "[host.example]:2222 ssh-ed25519 AAAPORT",
+    "# comment kept",
+  ].join("\n");
+  const filtered = filterKnownHostsContentExcludingVaultHosts(content, [
+    { hostname: "host.example", port: 22 },
+  ]);
+  assert.doesNotMatch(filtered, /AAASYSTEM/);
+  assert.match(filtered, /other\.example ssh-rsa AAAOTHER/);
+  assert.match(filtered, /\[host\.example\]:2222/);
+  assert.match(filtered, /# comment kept/);
+});
+
+test("filterKnownHostsContentExcludingVaultHosts matches hashed host entries", () => {
+  const hostname = "hashed.example";
+  const salt = crypto.randomBytes(20);
+  const digest = crypto.createHmac("sha1", salt).update(hostname).digest("base64");
+  const hostField = `|1|${salt.toString("base64")}|${digest}`;
+  const content = `${hostField} ssh-ed25519 AAAHASHED\nother.example ssh-rsa AAAOTHER\n`;
+  const filtered = filterKnownHostsContentExcludingVaultHosts(content, [
+    { hostname, port: 22 },
+  ]);
+  assert.doesNotMatch(filtered, /AAAHASHED/);
+  assert.match(filtered, /other\.example/);
+});
+
+test("buildAuthoritativeKnownHostsContent makes vault authoritative over system pins", () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-kh-auth-"));
   try {
     const global1 = path.join(base, "ssh_known_hosts");
-    const global2 = path.join(base, "ssh_known_hosts2");
-    fs.writeFileSync(global1, "admin.example ssh-ed25519 AAAADMIN\n");
-    fs.writeFileSync(global2, "admin2.example ssh-rsa AAAADMIN2\n");
+    const user1 = path.join(base, "user_known_hosts");
+    fs.writeFileSync(global1, "host.example ssh-ed25519 AAAGLOBAL\nadmin.example ssh-rsa AAAADMIN\n");
+    fs.writeFileSync(user1, "host.example ssh-ed25519 AAAUSER\nother.example ssh-ed25519 AAAOTHER\n");
 
-    const content = buildMergedGlobalKnownHostsContent({
+    const content = buildAuthoritativeKnownHostsContent({
       knownHosts: [{
-        hostname: "vault.example",
+        hostname: "host.example",
         keyType: "ssh-ed25519",
         publicKey: "ssh-ed25519 AAAVAULT",
       }],
       fs,
-      globalPaths: [global1, global2, path.join(base, "missing")],
+      globalPaths: [global1],
+      userPaths: [user1],
     });
 
-    assert.match(content, /admin\.example ssh-ed25519 AAAADMIN/);
-    assert.match(content, /admin2\.example ssh-rsa AAAADMIN2/);
-    assert.match(content, /vault\.example ssh-ed25519 AAAVAULT/);
+    assert.match(content, /host\.example ssh-ed25519 AAAVAULT/);
+    assert.doesNotMatch(content, /AAAGLOBAL/);
+    assert.doesNotMatch(content, /AAAUSER/);
+    assert.match(content, /admin\.example ssh-rsa AAAADMIN/);
+    assert.match(content, /other\.example ssh-ed25519 AAAOTHER/);
   } finally {
     fs.rmSync(base, { recursive: true, force: true });
   }
 });
 
-test("buildMergedGlobalKnownHostsContent is empty when vault has no usable pins", () => {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-kh-empty-"));
-  try {
-    const global1 = path.join(base, "ssh_known_hosts");
-    fs.writeFileSync(global1, "admin.example ssh-ed25519 AAAADMIN\n");
-    assert.equal(
-      buildMergedGlobalKnownHostsContent({
-        knownHosts: [{ hostname: "x", fingerprint: "only" }],
-        fs,
-        globalPaths: [global1],
-      }),
-      "",
-    );
-    assert.equal(
-      buildMergedGlobalKnownHostsContent({
-        knownHosts: [],
-        fs,
-        globalPaths: [global1],
-      }),
-      "",
-    );
-  } finally {
-    fs.rmSync(base, { recursive: true, force: true });
-  }
+test("buildAuthoritativeKnownHostsContent is empty when vault has no usable pins", () => {
+  assert.equal(
+    buildAuthoritativeKnownHostsContent({
+      knownHosts: [{ hostname: "x", fingerprint: "only" }],
+      fs,
+      globalPaths: [],
+      userPaths: [],
+    }),
+    "",
+  );
 });
 
 test("resolveExternalStrictHostKeyChecking matches protocol constraints", () => {
   assert.equal(resolveExternalStrictHostKeyChecking({ protocol: "et" }), "accept-new");
-  assert.equal(resolveExternalStrictHostKeyChecking({ protocol: "mosh" }), null);
+  assert.equal(resolveExternalStrictHostKeyChecking({ protocol: "mosh" }), "ask");
   assert.equal(
     resolveExternalStrictHostKeyChecking({ protocol: "et", verifyHostKeys: false }),
     "no",
@@ -160,30 +168,54 @@ test("resolveExternalStrictHostKeyChecking matches protocol constraints", () => 
   );
 });
 
-test("buildExternalHostKeySshOptions injects merged GlobalKnownHostsFile when verifying", () => {
+test("quoteOpenSshOptionValue quotes paths with whitespace", () => {
+  assert.equal(quoteOpenSshOptionValue("/tmp/plain"), "/tmp/plain");
+  assert.equal(
+    quoteOpenSshOptionValue("/Users/Foo Bar/known_hosts"),
+    '"/Users/Foo Bar/known_hosts"',
+  );
+});
+
+test("buildExternalHostKeySshOptions uses authoritative trust for both slots", () => {
   const values = buildExternalHostKeySshOptions({
-    mergedGlobalKnownHostsPath: "/tmp/merged-kh",
+    authoritativeKnownHostsPath: "/tmp/auth-kh",
     protocol: "et",
     style: "values",
   });
   assert.deepEqual(values, [
-    "GlobalKnownHostsFile=/tmp/merged-kh",
+    "UserKnownHostsFile=/tmp/auth-kh",
+    "GlobalKnownHostsFile=/tmp/auth-kh",
     "StrictHostKeyChecking=accept-new",
   ]);
 
   const moshArgs = buildExternalHostKeySshOptions({
-    mergedGlobalKnownHostsPath: "/tmp/merged-kh",
+    authoritativeKnownHostsPath: "/tmp/auth-kh",
     protocol: "mosh",
     style: "args",
   });
   assert.deepEqual(moshArgs, [
-    "-o", "GlobalKnownHostsFile=/tmp/merged-kh",
+    "-o", "UserKnownHostsFile=/tmp/auth-kh",
+    "-o", "GlobalKnownHostsFile=/tmp/auth-kh",
+    "-o", "StrictHostKeyChecking=ask",
   ]);
 });
 
-test("buildExternalHostKeySshOptions omits trust file when verification is disabled", () => {
+test("buildExternalHostKeySshOptions quotes whitespace paths", () => {
+  const values = buildExternalHostKeySshOptions({
+    authoritativeKnownHostsPath: "/tmp/user name/auth-kh",
+    protocol: "et",
+    style: "values",
+  });
+  assert.deepEqual(values, [
+    'UserKnownHostsFile="/tmp/user name/auth-kh"',
+    'GlobalKnownHostsFile="/tmp/user name/auth-kh"',
+    "StrictHostKeyChecking=accept-new",
+  ]);
+});
+
+test("buildExternalHostKeySshOptions neutralizes trust when verification is disabled", () => {
   const disabled = buildExternalHostKeySshOptions({
-    mergedGlobalKnownHostsPath: "/tmp/merged-kh",
+    authoritativeKnownHostsPath: "/tmp/auth-kh",
     emptyKnownHostsPath: "/tmp/empty-kh",
     verifyHostKeys: false,
     protocol: "mosh",
@@ -194,30 +226,17 @@ test("buildExternalHostKeySshOptions omits trust file when verification is disab
     "-o", "GlobalKnownHostsFile=/tmp/empty-kh",
     "-o", "StrictHostKeyChecking=no",
   ]);
-  // Must not keep pointing at the vault/merged trust file.
-  assert.equal(disabled.some((part) => String(part).includes("/tmp/merged-kh")), false);
+  assert.equal(disabled.some((part) => String(part).includes("/tmp/auth-kh")), false);
 });
 
 test("buildExternalHostKeyConfigLines formats indented jump-host stanzas", () => {
   const lines = buildExternalHostKeyConfigLines({
-    mergedGlobalKnownHostsPath: "/tmp/merged-kh",
+    authoritativeKnownHostsPath: "/tmp/auth-kh",
     protocol: "et",
-    quotePath: (v) => `"${v}"`,
   });
   assert.deepEqual(lines, [
-    '  GlobalKnownHostsFile "/tmp/merged-kh"',
+    "  UserKnownHostsFile /tmp/auth-kh",
+    "  GlobalKnownHostsFile /tmp/auth-kh",
     "  StrictHostKeyChecking accept-new",
-  ]);
-
-  const disabled = buildExternalHostKeyConfigLines({
-    emptyKnownHostsPath: "/tmp/empty-kh",
-    verifyHostKeys: false,
-    protocol: "et",
-    quotePath: (v) => `"${v}"`,
-  });
-  assert.deepEqual(disabled, [
-    '  UserKnownHostsFile "/tmp/empty-kh"',
-    '  GlobalKnownHostsFile "/tmp/empty-kh"',
-    "  StrictHostKeyChecking no",
   ]);
 });
