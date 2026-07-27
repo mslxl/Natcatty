@@ -993,20 +993,10 @@ function registerSdkStreamHandlers(ctx) {
       }
     });
 
-    ipcMain.handle("netcatty:ai:sdk-agent:plugin-remove", async (event, payload) => {
-      if (!validateSender(event)) return { ok: false, error: "Unauthorized IPC sender" };
-      try {
-        const result = await codebuddyDriver.codebuddyRemovePlugin(payload?.options || {});
-        return { ok: true, result };
-      } catch (err) {
-        return { ok: false, error: err?.message || String(err) };
-      }
-    });
-
     ipcMain.handle("netcatty:ai:sdk-agent:plugin-enable", async (event, payload) => {
       if (!validateSender(event)) return { ok: false, error: "Unauthorized IPC sender" };
       try {
-        const result = await codebuddyDriver.codebuddyEnablePlugin(payload?.name, payload?.options);
+        const result = await codebuddyDriver.codebuddyEnablePlugin(payload?.name, payload?.marketplace);
         return { ok: true, result };
       } catch (err) {
         return { ok: false, error: err?.message || String(err) };
@@ -1016,7 +1006,7 @@ function registerSdkStreamHandlers(ctx) {
     ipcMain.handle("netcatty:ai:sdk-agent:plugin-disable", async (event, payload) => {
       if (!validateSender(event)) return { ok: false, error: "Unauthorized IPC sender" };
       try {
-        const result = await codebuddyDriver.codebuddyDisablePlugin(payload?.name, payload?.options);
+        const result = await codebuddyDriver.codebuddyDisablePlugin(payload?.name, payload?.marketplace);
         return { ok: true, result };
       } catch (err) {
         return { ok: false, error: err?.message || String(err) };

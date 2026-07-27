@@ -214,6 +214,14 @@ declare global {
     externalMcpGrokAdd?(): Promise<Record<string, unknown>>;
     aiSdkAgentCancel?(requestId: string, chatSessionId?: string): Promise<{ ok: boolean; error?: string }>;
     aiSdkAgentCleanup?(chatSessionId: string): Promise<{ ok: boolean }>;
+    aiSdkAgentElicitationResponse?(elicitationId: string, action: string, content?: Record<string, unknown>): Promise<{ ok: boolean; error?: string }>;
+    aiSdkAgentMcpStatus?(agentEnv?: Record<string, string>, agentCommand?: string): Promise<{ ok: boolean; servers?: Array<Record<string, unknown>>; error?: string }>;
+    aiSdkAgentAccountInfo?(agentEnv?: Record<string, string>, agentCommand?: string): Promise<{ ok: boolean; account?: Record<string, unknown> | null; error?: string }>;
+    aiSdkAgentPluginInstall?(options: { name: string; marketplace: string }): Promise<{ ok: boolean; result?: { success: boolean; message: string }; error?: string }>;
+    aiSdkAgentPluginEnable?(name: string, marketplace: string): Promise<{ ok: boolean; result?: { success: boolean; message: string }; error?: string }>;
+    aiSdkAgentPluginDisable?(name: string, marketplace: string): Promise<{ ok: boolean; result?: { success: boolean; message: string }; error?: string }>;
+    aiSdkAgentMarketplaceInstall?(options: { name: string; repo: string; autoUpdate?: boolean }): Promise<{ ok: boolean; result?: { success: boolean; message: string }; error?: string }>;
+    aiSdkAgentMarketplaceRemove?(options: { name: string; removePlugins?: boolean }): Promise<{ ok: boolean; result?: { success: boolean; message: string }; error?: string }>;
     onAiSdkAgentEvent?(requestId: string, cb: (event: Record<string, unknown>) => void): () => void;
     onAiSdkAgentDone?(requestId: string, cb: () => void): () => void;
     onAiSdkAgentError?(requestId: string, cb: (error: string) => void): () => void;

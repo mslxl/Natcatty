@@ -722,19 +722,14 @@ async function codebuddyInstallPlugin(options) {
   return sdk.installPlugin(options);
 }
 
-async function codebuddyRemovePlugin(options) {
+async function codebuddyEnablePlugin(name, marketplace) {
   const sdk = await import("@tencent-ai/agent-sdk");
-  return sdk.removePlugin(options);
+  return sdk.enablePlugin(name, marketplace);
 }
 
-async function codebuddyEnablePlugin(name, options) {
+async function codebuddyDisablePlugin(name, marketplace) {
   const sdk = await import("@tencent-ai/agent-sdk");
-  return sdk.enablePlugin(name, options);
-}
-
-async function codebuddyDisablePlugin(name, options) {
-  const sdk = await import("@tencent-ai/agent-sdk");
-  return sdk.disablePlugin(name, options);
+  return sdk.disablePlugin(name, marketplace);
 }
 
 async function codebuddyInstallMarketplace(options) {
@@ -766,7 +761,6 @@ module.exports = {
   getCodebuddyMcpStatus,
   getCodebuddyAccountInfo,
   codebuddyInstallPlugin,
-  codebuddyRemovePlugin,
   codebuddyEnablePlugin,
   codebuddyDisablePlugin,
   codebuddyInstallMarketplace,

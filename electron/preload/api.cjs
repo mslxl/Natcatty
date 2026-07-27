@@ -1590,6 +1590,30 @@ function createPreloadApi(ctx) {
   aiSdkAgentCleanup: async (chatSessionId) => {
     return ipcRenderer.invoke("netcatty:ai:sdk-agent:cleanup", { chatSessionId });
   },
+  aiSdkAgentElicitationResponse: async (elicitationId, action, content) => {
+    return ipcRenderer.invoke("netcatty:ai:sdk-agent:elicitation-response", { elicitationId, action, content });
+  },
+  aiSdkAgentMcpStatus: async (agentEnv, agentCommand) => {
+    return ipcRenderer.invoke("netcatty:ai:sdk-agent:mcp-status", { agentEnv, agentCommand });
+  },
+  aiSdkAgentAccountInfo: async (agentEnv, agentCommand) => {
+    return ipcRenderer.invoke("netcatty:ai:sdk-agent:account-info", { agentEnv, agentCommand });
+  },
+  aiSdkAgentPluginInstall: async (options) => {
+    return ipcRenderer.invoke("netcatty:ai:sdk-agent:plugin-install", { options });
+  },
+  aiSdkAgentPluginEnable: async (name, marketplace) => {
+    return ipcRenderer.invoke("netcatty:ai:sdk-agent:plugin-enable", { name, marketplace });
+  },
+  aiSdkAgentPluginDisable: async (name, marketplace) => {
+    return ipcRenderer.invoke("netcatty:ai:sdk-agent:plugin-disable", { name, marketplace });
+  },
+  aiSdkAgentMarketplaceInstall: async (options) => {
+    return ipcRenderer.invoke("netcatty:ai:sdk-agent:marketplace-install", { options });
+  },
+  aiSdkAgentMarketplaceRemove: async (options) => {
+    return ipcRenderer.invoke("netcatty:ai:sdk-agent:marketplace-remove", { options });
+  },
   onAiSdkAgentEvent: (requestId, cb) => {
     const handler = (_event, payload) => {
       if (payload.requestId === requestId) cb(payload.event);

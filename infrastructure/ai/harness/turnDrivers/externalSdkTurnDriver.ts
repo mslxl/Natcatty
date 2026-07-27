@@ -270,6 +270,36 @@ async function runExternalTurn(
     onStatus: (message: string) => runOrBufferUiOperation(() => {
       updateActiveAssistant(msg => ({ ...msg, statusText: message }));
     }),
+    onHook: (hookEvent: string, payload: Record<string, unknown>) => {
+      // Surface lifecycle hooks as status text so the user sees tool activity.
+      const toolName = (payload.toolName as string) || '';
+      if (hookEvent === 'PreToolUse' && toolName) {
+        runOrBufferUiOperation(() => {
+          updateActiveAssistant(msg => ({ ...msg, statusText: `Running ${toolName}…` }));
+        });
+      } else if (hookEvent === 'Notification') {
+        const message = (payload.message as string) || '';
+        if (message) {
+          runOrBufferUiOperation(() => {
+            updateActiveAssistant(msg => ({ ...msg, statusText: message }));
+          });
+        }
+      }
+    },
+    onElicitationCreate: (elicitationId: string, request: Record<string, unknown>) => {
+      // Surface elicitation as a warning activity so the user knows input is needed.
+      runOrBufferUiOperation(() => {
+        updateActivity({
+          id: elicitationId,
+          type: 'warning',
+          status: 'running',
+          message: `Agent requests input: ${(request as Record<string, unknown>)?.message || 'confirmation required'}`,
+        });
+      });
+    },
+    onElicitationComplete: () => {
+      // Elicitation resolved — no additional UI action needed.
+    },
     onSessionId: (externalSessionId: string) => {
       context.updateExternalSessionId?.(sessionId, externalSessionId);
     },

@@ -139,6 +139,13 @@ const DRIVER_REGISTRY = {
         chatSessionId: ctx.chatSessionId,
         requestApproval: ctx.requestApprovalFromRenderer,
       });
+      // Build the elicitation handler: forwards create/complete events to the
+      // renderer and waits for the user's decision via the session manager's
+      // pending-response map (resolved by the elicitation-response IPC).
+      const elicitation = codebuddy.buildCodebuddyElicitation(
+        ctx.emitter,
+        codebuddySessionManager.elicitationPending,
+      );
       const options = codebuddy.buildCodebuddyQueryOptions({
         cwd: ctx.cwd,
         model: ctx.model,
@@ -161,50 +168,63 @@ const DRIVER_REGISTRY = {
         traceId: ctx.traceId,
         parentSpanId: ctx.parentSpanId,
         hooks: ctx.hooks || codebuddy.buildCodebuddyHooks(ctx.emitter),
-        elicitation: ctx.elicitation,
+        elicitation,
         canUseTool,
       });
 
       // Try V2 Session API first (persistent multi-turn), fall back to query().
-      const sessionKey = [
-        String(ctx.chatSessionId || ""),
-        "codebuddy",
-        String(ctx.binPath || ""),
-        "sdk",
-      ].join("\u0000");
-      const sessionOptions = {
-        cwd: options.cwd,
-        model: options.model,
-        env: options.env,
-        pathToCodebuddyCode: options.pathToCodebuddyCode,
-        mcpServers: options.mcpServers,
-        permissionMode: options.permissionMode,
-        systemPrompt: options.systemPrompt,
-        hooks: options.hooks,
-        elicitation: options.elicitation,
-        canUseTool: options.canUseTool,
-        includePartialMessages: true,
-        tools: options.tools,
-        disallowedTools: options.disallowedTools,
-        maxTurns: options.maxTurns,
-        maxBudgetUsd: options.maxBudgetUsd,
-        effort: options.effort,
-        thinking: options.thinking,
-        sandbox: options.sandbox,
-        agents: options.agents,
-      };
-      const v2Result = await codebuddySessionManager.runTurn({
-        sessionKey,
-        prompt: ctx.prompt,
-        attachments: ctx.attachments,
-        options,
-        emitter: ctx.emitter,
-        sessionOptions,
-        resumeSessionId: ctx.resumeSessionId,
-      });
-      if (v2Result) return v2Result;
+      // However, SessionOptions only supports a subset of Options. When the user
+      // has configured options that V2 cannot consume (maxBudgetUsd, sandbox,
+      // fallbackModel, enableFileCheckpointing, agents, outputFormat, effort,
+      // thinking), skip V2 entirely so those settings actually take effect via
+      // the legacy query() path.
+      const hasQueryOnlyOptions = Boolean(
+        options.maxBudgetUsd ||
+        options.sandbox ||
+        options.fallbackModel ||
+        options.enableFileCheckpointing != null ||
+        options.agents ||
+        options.outputFormat ||
+        options.effort ||
+        options.thinking,
+      );
 
-      // Fallback: legacy query() per-turn.
+      if (!hasQueryOnlyOptions) {
+        const sessionKey = [
+          String(ctx.chatSessionId || ""),
+          "codebuddy",
+          String(ctx.binPath || ""),
+          "sdk",
+        ].join("\u0000");
+        const sessionOptions = {
+          cwd: options.cwd,
+          model: options.model,
+          env: options.env,
+          pathToCodebuddyCode: options.pathToCodebuddyCode,
+          mcpServers: options.mcpServers,
+          permissionMode: options.permissionMode,
+          systemPrompt: options.systemPrompt,
+          hooks: options.hooks,
+          elicitation: options.elicitation,
+          canUseTool: options.canUseTool,
+          includePartialMessages: true,
+          tools: options.tools,
+          disallowedTools: options.disallowedTools,
+          maxTurns: options.maxTurns,
+        };
+        const v2Result = await codebuddySessionManager.runTurn({
+          sessionKey,
+          prompt: ctx.prompt,
+          attachments: ctx.attachments,
+          options,
+          emitter: ctx.emitter,
+          sessionOptions,
+          resumeSessionId: ctx.resumeSessionId,
+        });
+        if (v2Result) return v2Result;
+      }
+
+      // Fallback: legacy query() per-turn (supports all Options fields).
       return codebuddy.runCodebuddyTurn({
         prompt: ctx.prompt,
         attachments: ctx.attachments,

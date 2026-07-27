@@ -40,11 +40,6 @@ function computeOptionsFingerprint(sessionOptions) {
     tools: sessionOptions.tools,
     disallowedTools: sessionOptions.disallowedTools,
     maxTurns: sessionOptions.maxTurns,
-    maxBudgetUsd: sessionOptions.maxBudgetUsd,
-    effort: sessionOptions.effort,
-    thinking: sessionOptions.thinking,
-    sandbox: sessionOptions.sandbox,
-    agents: sessionOptions.agents,
   };
   try {
     return JSON.stringify(relevant);
