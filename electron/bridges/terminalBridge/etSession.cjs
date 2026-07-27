@@ -5,7 +5,6 @@ const {
   buildAuthoritativeKnownHostsContent,
   buildExternalHostKeyConfigLines,
   buildExternalHostKeySshOptions,
-  buildVaultKnownHostsContent,
   vaultPinsConnectionHosts,
 } = require("../externalSshHostKeyPolicy.cjs");
 const { emitTerminalSessionData } = require("../emitTerminalSessionData.cjs");
