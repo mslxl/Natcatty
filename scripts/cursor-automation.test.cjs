@@ -2184,6 +2184,52 @@ test('parseExternalResearchStream prefers a split final status over an earlier v
   );
 });
 
+test('parseExternalResearchStream prefers a split final fence over cumulative flushes', () => {
+  const staleStatus = 'RESEARCH_NOT_NEEDED: initially appeared local-only';
+  const finalStatus = 'RESEARCH_BLOCKED: WebSearch became unavailable';
+  const cumulative = `${staleStatus}\n\`\`\`text\n${finalStatus}\n\`\`\``;
+  const events = [
+    {
+      type: 'assistant',
+      timestamp_ms: 1,
+      message: {
+        content: [{ type: 'text', text: `${staleStatus}\n` }],
+      },
+    },
+    {
+      type: 'assistant',
+      timestamp_ms: 2,
+      message: {
+        content: [{ type: 'text', text: '```text\n' }],
+      },
+    },
+    {
+      type: 'assistant',
+      timestamp_ms: 3,
+      message: {
+        content: [{ type: 'text', text: `${finalStatus}\n\`\`\`` }],
+      },
+    },
+    {
+      type: 'assistant',
+      message: {
+        content: [{ type: 'text', text: cumulative }],
+      },
+    },
+    {
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      result: cumulative,
+    },
+  ].map(JSON.stringify).join('\n');
+
+  assert.throws(
+    () => auto.parseExternalResearchStream(events, {}),
+    /External research blocked: WebSearch became unavailable/,
+  );
+});
+
 test('parseExternalResearchStream keeps a valid terminal status over assistant fragments', () => {
   const terminalStatus = 'RESEARCH_BLOCKED: WebSearch became unavailable';
   const staleAssistantEvents = [

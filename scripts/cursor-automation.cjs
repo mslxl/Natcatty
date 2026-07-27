@@ -306,8 +306,8 @@ function parseExternalResearchStream(value, input) {
     (message) => message.isFinalFlush,
   )?.text;
   const candidates = [
-    finalAssistantText,
     ...fencedAssistantSuffixes,
+    finalAssistantText,
     terminalResult,
     partialAssistantText || assistantText,
   ].filter(Boolean);
