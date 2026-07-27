@@ -770,7 +770,7 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({
           .filter((elicitation) => !activeSessionId || elicitation.chatSessionId === activeSessionId)
           .map((elicitation) => (
             <CodebuddyElicitationCard
-              key={elicitation.elicitationId}
+              key={`${elicitation.elicitationId}:${elicitation.requestInstanceId ?? 0}`}
               elicitation={elicitation}
               onRespond={(action, content) =>
                 handleCodebuddyElicitation(elicitation.elicitationId, action, content)}

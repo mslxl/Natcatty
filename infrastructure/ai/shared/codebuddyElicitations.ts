@@ -13,6 +13,7 @@ export interface CodebuddyElicitation {
   elicitationId: string;
   chatSessionId: string;
   request: CodebuddyElicitationRequest;
+  requestInstanceId?: number;
 }
 
 type ElicitationListener = (elicitation: CodebuddyElicitation) => void;
@@ -21,6 +22,7 @@ type ClearedListener = (elicitationIds: string[]) => void;
 const pendingElicitations = new Map<string, CodebuddyElicitation>();
 const listeners = new Set<ElicitationListener>();
 const clearedListeners = new Set<ClearedListener>();
+let nextRequestInstanceId = 0;
 
 function notifyCleared(elicitationIds: string[]): void {
   if (elicitationIds.length === 0) return;
@@ -31,9 +33,13 @@ function notifyCleared(elicitationIds: string[]): void {
 
 export function registerCodebuddyElicitation(elicitation: CodebuddyElicitation): void {
   if (!elicitation.elicitationId) return;
-  pendingElicitations.set(elicitation.elicitationId, elicitation);
+  const registeredElicitation = {
+    ...elicitation,
+    requestInstanceId: ++nextRequestInstanceId,
+  };
+  pendingElicitations.set(elicitation.elicitationId, registeredElicitation);
   for (const listener of listeners) {
-    try { listener(elicitation); } catch { /* ignore listener failures */ }
+    try { listener(registeredElicitation); } catch { /* ignore listener failures */ }
   }
 }
 

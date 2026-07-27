@@ -86,3 +86,27 @@ test('CodeBuddy elicitation gate replays, responds, completes, and clears by cha
     value: previousWindow,
   });
 });
+
+test('CodeBuddy elicitation registration assigns a new instance to reused protocol ids', () => {
+  const received: CodebuddyElicitation[] = [];
+  const unsubscribe = onCodebuddyElicitation((elicitation) => received.push(elicitation));
+
+  registerCodebuddyElicitation({
+    elicitationId: 'reused-id',
+    chatSessionId: 'chat-1',
+    request: { message: 'First request' },
+  });
+  registerCodebuddyElicitation({
+    elicitationId: 'reused-id',
+    chatSessionId: 'chat-1',
+    request: { message: 'Replacement request' },
+  });
+
+  assert.equal(received.length, 2);
+  assert.equal(typeof received[0].requestInstanceId, 'number');
+  assert.equal(typeof received[1].requestInstanceId, 'number');
+  assert.notEqual(received[0].requestInstanceId, received[1].requestInstanceId);
+
+  completeCodebuddyElicitation({ elicitationId: 'reused-id' });
+  unsubscribe();
+});

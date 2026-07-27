@@ -197,6 +197,18 @@ export const ruAiMessages: Messages = {
   'ai.codebuddy.elicitation.no': 'Нет',
   'ai.codebuddy.elicitation.decline': 'Отклонить',
   'ai.codebuddy.elicitation.accept': 'Продолжить',
+  'ai.codebuddy.elicitation.validation.required': 'Поле «{field}» обязательно.',
+  'ai.codebuddy.elicitation.validation.invalidType': 'Поле «{field}» содержит недопустимое значение.',
+  'ai.codebuddy.elicitation.validation.integer': 'Поле «{field}» должно быть целым числом.',
+  'ai.codebuddy.elicitation.validation.notInteger': 'Поле «{field}» должно быть целым числом.',
+  'ai.codebuddy.elicitation.validation.minimum': 'Значение «{field}» должно быть не меньше {limit}.',
+  'ai.codebuddy.elicitation.validation.maximum': 'Значение «{field}» должно быть не больше {limit}.',
+  'ai.codebuddy.elicitation.validation.minLength': 'Поле «{field}» должно содержать не менее {limit} символов.',
+  'ai.codebuddy.elicitation.validation.maxLength': 'Поле «{field}» должно содержать не более {limit} символов.',
+  'ai.codebuddy.elicitation.validation.minItems': 'Выберите не менее {limit} вариантов для «{field}».',
+  'ai.codebuddy.elicitation.validation.maxItems': 'Выберите не более {limit} вариантов для «{field}».',
+  'ai.codebuddy.elicitation.validation.format': 'Поле «{field}» должно соответствовать формату {format}.',
+  'ai.codebuddy.elicitation.validation.option': 'Выберите допустимый вариант для «{field}».',
 
   // AI Default Agent
   'ai.defaultAgent': 'Агент по умолчанию',

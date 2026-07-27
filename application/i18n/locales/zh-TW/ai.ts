@@ -232,6 +232,18 @@ export const zhTWAiMessages: Messages = {
   'ai.codebuddy.elicitation.no': '否',
   'ai.codebuddy.elicitation.decline': '拒絕',
   'ai.codebuddy.elicitation.accept': '繼續',
+  'ai.codebuddy.elicitation.validation.required': '{field} 為必填項。',
+  'ai.codebuddy.elicitation.validation.invalidType': '{field} 的值無效。',
+  'ai.codebuddy.elicitation.validation.integer': '{field} 必須是整數。',
+  'ai.codebuddy.elicitation.validation.notInteger': '{field} 必須是整數。',
+  'ai.codebuddy.elicitation.validation.minimum': '{field} 不能小於 {limit}。',
+  'ai.codebuddy.elicitation.validation.maximum': '{field} 不能大於 {limit}。',
+  'ai.codebuddy.elicitation.validation.minLength': '{field} 至少需要 {limit} 個字元。',
+  'ai.codebuddy.elicitation.validation.maxLength': '{field} 最多允許 {limit} 個字元。',
+  'ai.codebuddy.elicitation.validation.minItems': '{field} 至少選擇 {limit} 項。',
+  'ai.codebuddy.elicitation.validation.maxItems': '{field} 最多選擇 {limit} 項。',
+  'ai.codebuddy.elicitation.validation.format': '{field} 必須符合 {format} 格式。',
+  'ai.codebuddy.elicitation.validation.option': '請為 {field} 選擇有效選項。',
 
   // AI OpenCode
   'ai.opencode.title': 'OpenCode',

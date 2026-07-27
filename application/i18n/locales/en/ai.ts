@@ -232,6 +232,18 @@ export const enAiMessages: Messages = {
   'ai.codebuddy.elicitation.no': 'No',
   'ai.codebuddy.elicitation.decline': 'Decline',
   'ai.codebuddy.elicitation.accept': 'Continue',
+  'ai.codebuddy.elicitation.validation.required': '{field} is required.',
+  'ai.codebuddy.elicitation.validation.invalidType': '{field} has an invalid value.',
+  'ai.codebuddy.elicitation.validation.integer': '{field} must be an integer.',
+  'ai.codebuddy.elicitation.validation.notInteger': '{field} must be a whole number.',
+  'ai.codebuddy.elicitation.validation.minimum': '{field} must be at least {limit}.',
+  'ai.codebuddy.elicitation.validation.maximum': '{field} must be at most {limit}.',
+  'ai.codebuddy.elicitation.validation.minLength': '{field} must contain at least {limit} characters.',
+  'ai.codebuddy.elicitation.validation.maxLength': '{field} must contain at most {limit} characters.',
+  'ai.codebuddy.elicitation.validation.minItems': 'Select at least {limit} options for {field}.',
+  'ai.codebuddy.elicitation.validation.maxItems': 'Select at most {limit} options for {field}.',
+  'ai.codebuddy.elicitation.validation.format': '{field} must match the {format} format.',
+  'ai.codebuddy.elicitation.validation.option': 'Select a valid option for {field}.',
 
   // AI OpenCode
   'ai.opencode.title': 'OpenCode',
