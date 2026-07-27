@@ -28,16 +28,18 @@ export interface PluginImporterSafePreview {
   omittedDiagnosticCount: number;
 }
 
+const unicodeLength = (value: string): number => [...value].length;
+const truncateUnicode = (value: string, maximum: number): string => [...value].slice(0, maximum).join('');
+
 const visiblePreviewText = (value: string, maximum = 512): string => (
-  [...value]
+  truncateUnicode([...value]
     .map((character) => {
       const code = character.charCodeAt(0);
       return code <= 31 || code === 127 ? ' ' : character;
     })
     .join('')
     .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, maximum)
+    .trim(), maximum)
 );
 
 export function buildPluginImporterSafePreview(
@@ -97,7 +99,19 @@ type InvalidField = typeof INVALID_FIELD;
 const stringValue = (value: JsonValue | undefined, maximum: number): string | undefined => {
   if (typeof value !== 'string') return undefined;
   const result = value.trim();
-  return result && result.length <= maximum && !result.includes('\0') ? result : undefined;
+  return result && unicodeLength(result) <= maximum && !result.includes('\0') ? result : undefined;
+};
+
+const optionalRawStringValue = (
+  object: Record<string, JsonValue>,
+  key: string,
+  maximum: number,
+): string | undefined | InvalidField => {
+  if (!Object.prototype.hasOwnProperty.call(object, key)) return undefined;
+  const value = object[key];
+  return typeof value === 'string' && unicodeLength(value) <= maximum
+    ? value
+    : INVALID_FIELD;
 };
 
 const optionalStringValue = (
@@ -251,13 +265,15 @@ const normalizeIdentity = (value: JsonValue): Identity | null => {
   const label = stringValue(object.label, 512);
   const username = stringValue(object.username, 512);
   const authMethod = stringValue(object.authMethod, 32);
-  if (!label || !username || !['password', 'key', 'certificate'].includes(authMethod ?? '')) return null;
+  const password = optionalRawStringValue(object, 'password', 65_536);
+  if (!label || !username || !['password', 'key', 'certificate'].includes(authMethod ?? '')
+    || password === INVALID_FIELD) return null;
   return {
     id: crypto.randomUUID(),
     label,
     username,
     authMethod: authMethod as Identity['authMethod'],
-    ...(typeof object.password === 'string' ? { password: object.password.slice(0, 65_536) } : {}),
+    ...(password !== undefined ? { password } : {}),
     ...(stringValue(object.keyId, 256) ? { keyId: stringValue(object.keyId, 256) } : {}),
     created: Date.now(),
   };
@@ -268,17 +284,22 @@ const normalizeKey = (value: JsonValue): SSHKey | null => {
   if (!object) return null;
   const label = stringValue(object.label, 512);
   const type = stringValue(object.type, 32);
-  const privateKey = typeof object.privateKey === 'string' ? object.privateKey : '';
+  const privateKey = optionalRawStringValue(object, 'privateKey', 2 * 1024 * 1024);
+  const publicKey = optionalRawStringValue(object, 'publicKey', 1024 * 1024);
+  const certificate = optionalRawStringValue(object, 'certificate', 1024 * 1024);
+  const passphrase = optionalRawStringValue(object, 'passphrase', 65_536);
   const filePath = stringValue(object.filePath, 8192);
-  if (!label || !['RSA', 'ECDSA', 'ED25519'].includes(type ?? '') || (!privateKey && !filePath)) return null;
+  if (!label || !['RSA', 'ECDSA', 'ED25519'].includes(type ?? '')
+    || [privateKey, publicKey, certificate, passphrase].some((item) => item === INVALID_FIELD)
+    || (!privateKey && !filePath)) return null;
   return {
     id: crypto.randomUUID(),
     label,
     type: type as SSHKey['type'],
-    privateKey: privateKey.slice(0, 2 * 1024 * 1024),
-    ...(typeof object.publicKey === 'string' ? { publicKey: object.publicKey.slice(0, 1024 * 1024) } : {}),
-    ...(typeof object.certificate === 'string' ? { certificate: object.certificate.slice(0, 1024 * 1024) } : {}),
-    ...(typeof object.passphrase === 'string' ? { passphrase: object.passphrase.slice(0, 65_536) } : {}),
+    privateKey: privateKey ?? '',
+    ...(publicKey !== undefined ? { publicKey } : {}),
+    ...(certificate !== undefined ? { certificate } : {}),
+    ...(passphrase !== undefined ? { passphrase } : {}),
     ...(filePath ? { filePath } : {}),
     source: filePath && !privateKey ? 'reference' : 'imported',
     category: ['key', 'certificate', 'identity'].includes(String(object.category))
@@ -292,8 +313,8 @@ const normalizeSnippet = (value: JsonValue): Snippet | null => {
   const object = asObject(value);
   if (!object) return null;
   const label = stringValue(object.label, 512);
-  const command = typeof object.command === 'string' ? object.command : undefined;
-  if (!label || !command || command.length > 1024 * 1024 || command.includes('\0')) return null;
+  const command = optionalRawStringValue(object, 'command', 1024 * 1024);
+  if (!label || !command || command === INVALID_FIELD || command.includes('\0')) return null;
   return {
     id: crypto.randomUUID(),
     label,
@@ -308,8 +329,23 @@ export function normalizePluginImporterRecords(records: ReadonlyArray<ImporterRe
   const result: PluginImporterDrafts = {
     hosts: [], identities: [], keys: [], snippets: [], groups: [], warnings: [], errors: [],
   };
-  const keyIds = new Map<string, string>();
-  const identityIds = new Map<string, string>();
+  const keyIds = new Map<string, string | null>();
+  const identityIds = new Map<string, string | null>();
+  const registerSourceId = (
+    index: Map<string, string | null>,
+    sourceId: string,
+    id: string,
+    kind: 'identity' | 'key',
+  ): void => {
+    if (!index.has(sourceId)) {
+      index.set(sourceId, id);
+      return;
+    }
+    if (index.get(sourceId) !== null) {
+      result.errors.push(`Importer returned a duplicate ${kind} source ID.`);
+    }
+    index.set(sourceId, null);
+  };
   const sourceIds = (value: JsonValue): string | undefined => {
     const object = asObject(value);
     return object ? stringValue(object.id, 256) : undefined;
@@ -350,39 +386,63 @@ export function normalizePluginImporterRecords(records: ReadonlyArray<ImporterRe
       const identity = normalized as Identity;
       result.identities.push(identity);
       const sourceId = sourceIds(value);
-      if (sourceId) identityIds.set(sourceId, identity.id);
+      if (sourceId) registerSourceId(identityIds, sourceId, identity.id, 'identity');
     } else if (kind === 'key') {
       const key = normalized as SSHKey;
       result.keys.push(key);
       const sourceId = sourceIds(value);
-      if (sourceId) keyIds.set(sourceId, key.id);
+      if (sourceId) registerSourceId(keyIds, sourceId, key.id, 'key');
     }
     else result.snippets.push(normalized as Snippet);
   }
-  result.identities = result.identities.map((identity) => ({
-    ...identity,
-    ...(identity.keyId && keyIds.has(identity.keyId) ? { keyId: keyIds.get(identity.keyId) } : { keyId: undefined }),
-  }));
+  const resolveReference = (
+    index: Map<string, string | null>,
+    sourceId: string | undefined,
+    label: string,
+  ): string | undefined => {
+    if (!sourceId) return undefined;
+    const resolved = index.get(sourceId);
+    if (typeof resolved === 'string') return resolved;
+    result.errors.push(resolved === null
+      ? `Importer returned an ambiguous ${label} reference.`
+      : `Importer returned an unresolved ${label} reference.`);
+    return undefined;
+  };
+  result.identities = result.identities.map((identity) => {
+    const keyId = resolveReference(keyIds, identity.keyId, 'identity key');
+    return {
+      ...identity,
+      ...(typeof keyId === 'string' ? { keyId } : { keyId: undefined }),
+    };
+  });
   result.hosts = result.hosts.map((host) => {
     const sourceCredentialId = host.pluginConnection?.credentialId;
     const identityCredentialId = sourceCredentialId ? identityIds.get(sourceCredentialId) : undefined;
     const keyCredentialId = sourceCredentialId ? keyIds.get(sourceCredentialId) : undefined;
-    const credentialId = identityCredentialId && keyCredentialId
+    const hasAmbiguousCredential = identityCredentialId === null
+      || keyCredentialId === null
+      || (typeof identityCredentialId === 'string' && typeof keyCredentialId === 'string');
+    const credentialId = hasAmbiguousCredential
       ? undefined
       : identityCredentialId ?? keyCredentialId;
     if (sourceCredentialId && !credentialId) {
-      result.errors.push('Importer returned an unresolved plugin credential reference.');
+      result.errors.push(hasAmbiguousCredential
+        ? 'Importer returned an ambiguous plugin credential reference.'
+        : 'Importer returned an unresolved plugin credential reference.');
     }
+    const identityId = resolveReference(identityIds, host.identityId, 'host identity');
+    const telnetIdentityId = resolveReference(identityIds, host.telnetIdentityId, 'host Telnet identity');
+    const identityFileId = resolveReference(keyIds, host.identityFileId, 'host key');
     return {
       ...host,
-      ...(host.identityId && identityIds.has(host.identityId)
-        ? { identityId: identityIds.get(host.identityId) }
+      ...(typeof identityId === 'string'
+        ? { identityId }
         : { identityId: undefined }),
-      ...(host.telnetIdentityId && identityIds.has(host.telnetIdentityId)
-        ? { telnetIdentityId: identityIds.get(host.telnetIdentityId) }
+      ...(typeof telnetIdentityId === 'string'
+        ? { telnetIdentityId }
         : { telnetIdentityId: undefined }),
-      ...(host.identityFileId && keyIds.has(host.identityFileId)
-        ? { identityFileId: keyIds.get(host.identityFileId) }
+      ...(typeof identityFileId === 'string'
+        ? { identityFileId }
         : { identityFileId: undefined }),
       ...(host.pluginConnection
         ? {

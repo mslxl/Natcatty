@@ -1030,7 +1030,7 @@ function createTerminalWorkerManager(options = {}) {
       if (!external) return;
       if (message.event === "input") {
         const runInput = async () => {
-          if (!externalSessions.has(message.sessionId)) return;
+          if (externalSessions.get(message.sessionId) !== external) return;
           await external.onInput?.(message.data);
         };
         const inputPromise = external.inputChain
@@ -1041,7 +1041,7 @@ function createTerminalWorkerManager(options = {}) {
           await finishExternalSession(message.sessionId, {
             reason: "error",
             error: error?.message || String(error),
-          }).finally(() => Promise.resolve(notifyClose?.("input-error")).catch(() => {}));
+          }, external.ownerToken).finally(() => Promise.resolve(notifyClose?.("input-error")).catch(() => {}));
         });
         external.inputChain = settledInput;
         void settledInput.finally(() => {
@@ -1586,7 +1586,9 @@ function createTerminalWorkerManager(options = {}) {
     if (!Number.isSafeInteger(webContentsId) || externalSessions.has(sessionId)) {
       throw new TypeError("External terminal session owner is invalid or already registered");
     }
+    const ownerToken = optionsForSession.ownerToken ?? Symbol(`external-session:${sessionId}`);
     const external = {
+      ownerToken,
       onInput: optionsForSession.onInput,
       onResize: optionsForSession.onResize,
       onClose: optionsForSession.onClose,
@@ -1606,17 +1608,18 @@ function createTerminalWorkerManager(options = {}) {
         sessionLog: optionsForSession.sessionLog,
       }, { webContentsId });
     } catch (error) {
-      externalSessions.delete(sessionId);
+      if (externalSessions.get(sessionId) === external) externalSessions.delete(sessionId);
       throw error;
     }
   }
 
-  async function pushExternalOutput(sessionId, data, meta) {
+  async function pushExternalOutput(sessionId, data, meta, ownerToken) {
     const external = externalSessions.get(sessionId);
     if (!external) throw new Error("External terminal session is not registered");
+    if (ownerToken !== undefined && external.ownerToken !== ownerToken) return false;
     if (external.paused) {
       await new Promise((resolve) => external.resumeWaiters.push(resolve));
-      if (!externalSessions.has(sessionId)) return false;
+      if (externalSessions.get(sessionId) !== external) return false;
     }
     await request("netcatty:external:output", {
       sessionId,
@@ -1626,9 +1629,10 @@ function createTerminalWorkerManager(options = {}) {
     return true;
   }
 
-  async function finishExternalSession(sessionId, details = {}) {
+  async function finishExternalSession(sessionId, details = {}, ownerToken) {
     const external = externalSessions.get(sessionId);
     if (!external) return false;
+    if (ownerToken !== undefined && external.ownerToken !== ownerToken) return false;
     externalSessions.delete(sessionId);
     for (const resolve of external.resumeWaiters.splice(0)) resolve();
     try {

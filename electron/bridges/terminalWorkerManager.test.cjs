@@ -274,6 +274,68 @@ test("external session finish forwards plugin diagnostics to the worker", async 
   assert.equal(await finished, true);
 });
 
+test("late external-session cleanup cannot finish a same-ID replacement", async () => {
+  const child = new FakeChild();
+  const manager = createTerminalWorkerManager({
+    utilityProcess: { fork: () => child },
+    electronModule: {
+      webContents: {
+        fromId(id) {
+          return { id, isDestroyed: () => false, once() {}, removeListener() {}, send() {} };
+        },
+      },
+    },
+    workerScriptPath: "/worker.cjs",
+  });
+  const oldOwner = Symbol("old-owner");
+  const newOwner = Symbol("new-owner");
+  const oldStart = manager.startExternalSession({
+    sessionId: "plugin-replaced",
+    ownerToken: oldOwner,
+    webContentsId: 7,
+    columns: 80,
+    rows: 24,
+    protocol: "plugin:example.transport",
+  });
+  let request = child.messages.at(-1);
+  child.emit("message", {
+    kind: "response",
+    requestId: request.requestId,
+    result: { sessionId: "plugin-replaced" },
+    sessionGeneration: 0,
+  });
+  await oldStart;
+  child.emit("message", { kind: "external-session-event", sessionId: "plugin-replaced", event: "close" });
+
+  const newStart = manager.startExternalSession({
+    sessionId: "plugin-replaced",
+    ownerToken: newOwner,
+    webContentsId: 8,
+    columns: 100,
+    rows: 30,
+    protocol: "plugin:example.transport",
+  });
+  request = child.messages.at(-1);
+  child.emit("message", {
+    kind: "response",
+    requestId: request.requestId,
+    result: { sessionId: "plugin-replaced" },
+    sessionGeneration: 1,
+  });
+  await newStart;
+
+  const messageCount = child.messages.length;
+  assert.equal(await manager.pushExternalOutput("plugin-replaced", "late", undefined, oldOwner), false);
+  assert.equal(await manager.finishExternalSession("plugin-replaced", { reason: "closed" }, oldOwner), false);
+  assert.equal(child.messages.length, messageCount);
+
+  const finish = manager.finishExternalSession("plugin-replaced", { reason: "closed" }, newOwner);
+  const finishRequest = child.messages.at(-1);
+  assert.equal(finishRequest.channel, "netcatty:external:finish");
+  child.emit("message", { kind: "response", requestId: finishRequest.requestId, result: null });
+  assert.equal(await finish, true);
+});
+
 test("external input failures close both the worker route and its provider lifecycle", async () => {
   const child = new FakeChild();
   const observed = [];

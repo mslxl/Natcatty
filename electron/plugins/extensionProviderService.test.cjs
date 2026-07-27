@@ -296,6 +296,24 @@ test("connection control operations must acknowledge with null", async () => {
   }
 });
 
+test("stale connection owners cannot close a same-ID replacement", () => {
+  const h = fixture({ async request() { throw new Error("not used"); } });
+  const oldOwner = Symbol("old-owner");
+  const newOwner = Symbol("new-owner");
+  const cancelled = [];
+  h.service.sessions.set("session-replaced", {
+    sessionOwner: newOwner,
+    input: { cancel() { cancelled.push("input"); } },
+    output: { cancel() { cancelled.push("output"); } },
+  });
+
+  assert.equal(h.service.closeSessionLocal("session-replaced", undefined, oldOwner), false);
+  assert.throws(() => h.service.getSession("session-replaced", oldOwner), /replaced/i);
+  assert.equal(h.service.getSession("session-replaced", newOwner).sessionOwner, newOwner);
+  assert.equal(h.service.closeSessionLocal("session-replaced", undefined, newOwner), true);
+  assert.deepEqual(cancelled, ["input", "output"]);
+});
+
 test("connection status results preserve structured diagnostics", async () => {
   let h;
   h = fixture({

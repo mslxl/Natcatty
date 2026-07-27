@@ -1040,9 +1040,135 @@ test("plugin connection ignores output that races with renderer session close", 
     rows: 24,
   });
 
+  await providerOptions.onData(Uint8Array.from([0xe2]));
   await externalOptions.onClose("renderer-close");
   await assert.doesNotReject(providerOptions.onData(new TextEncoder().encode("late output")));
+  await assert.doesNotReject(providerOptions.onOutputClose("end"));
   assert.equal(outputAttempts, 0);
+});
+
+test("destroying a plugin connection owner closes the Provider and terminal worker session", async () => {
+  const ipcMain = createIpcMain();
+  const destroyedListeners = [];
+  const controls = [];
+  const localCloses = [];
+  const finished = [];
+  let registeredOwner;
+  registerPluginBridge(ipcMain, {
+    manager: { initialize: async () => {} },
+    extensionProviderService: {
+      async openConnection(params) {
+        return { sessionId: params.sessionId, providerId: params.providerId, status: "connected", diagnostics: [] };
+      },
+      async control(sessionId, operation, payload, options) {
+        controls.push([sessionId, operation, payload, options]);
+        return null;
+      },
+      closeSessionLocal(sessionId) { localCloses.push(sessionId); },
+    },
+    getTerminalWorkerManager: () => ({
+      async startExternalSession(options) {
+        registeredOwner = options.ownerToken;
+        return { sessionId: options.sessionId };
+      },
+      async pushExternalOutput() { return true; },
+      async finishExternalSession(sessionId, details, owner) {
+        finished.push([sessionId, details, owner]);
+        return true;
+      },
+    }),
+    env: { NETCATTY_PLUGIN_DEV: "1" },
+    isTrustedSender: () => true,
+  });
+  const event = {
+    sender: {
+      id: 87,
+      once(name, listener) {
+        if (name === "destroyed") destroyedListeners.push(listener);
+      },
+      isDestroyed: () => false,
+    },
+  };
+  await ipcMain.handlers.get(CHANNELS.connectionStart)(event, {
+    requestId: "connection-owner-destroyed",
+    sessionId: "session-owner-destroyed",
+    providerId: "com.example.transport.connection",
+    configuration: {},
+    columns: 80,
+    rows: 24,
+  });
+
+  for (const listener of destroyedListeners) listener();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(controls.map((call) => call.slice(0, 3)), [["session-owner-destroyed", "close", {}]]);
+  assert.equal(controls[0][3].sessionOwner, registeredOwner);
+  assert.deepEqual(localCloses, []);
+  assert.deepEqual(finished, [["session-owner-destroyed", { reason: "closed" }, registeredOwner]]);
+});
+
+test("a late Provider close cannot finish a same-ID replacement connection", async () => {
+  const ipcMain = createIpcMain();
+  const providerOptions = [];
+  const externalSessions = new Map();
+  const owners = [];
+  const finishedOwners = [];
+  const writes = [];
+  registerPluginBridge(ipcMain, {
+    manager: { initialize: async () => {} },
+    extensionProviderService: {
+      async openConnection(params, options) {
+        providerOptions.push(options);
+        return { sessionId: params.sessionId, providerId: params.providerId, status: "connected", diagnostics: [] };
+      },
+      async control() { return null; },
+      async write(_sessionId, data, owner) { writes.push([data, owner]); },
+      closeSessionLocal() {},
+    },
+    getTerminalWorkerManager: () => ({
+      async startExternalSession(options) {
+        if (externalSessions.has(options.sessionId)) throw new Error("external session already registered");
+        owners.push(options.ownerToken);
+        externalSessions.set(options.sessionId, { options, owner: options.ownerToken });
+        return { sessionId: options.sessionId };
+      },
+      async pushExternalOutput(sessionId, _data, _meta, owner) {
+        return externalSessions.get(sessionId)?.owner === owner;
+      },
+      async finishExternalSession(sessionId, _details, owner) {
+        if (externalSessions.get(sessionId)?.owner !== owner) return false;
+        externalSessions.delete(sessionId);
+        finishedOwners.push(owner);
+        return true;
+      },
+    }),
+    env: { NETCATTY_PLUGIN_DEV: "1" },
+    isTrustedSender: () => true,
+  });
+  const event = { sender: { id: 88, once() {}, isDestroyed: () => false } };
+  const start = (requestId) => ipcMain.handlers.get(CHANNELS.connectionStart)(event, {
+    requestId,
+    sessionId: "session-replaced",
+    providerId: "com.example.transport.connection",
+    configuration: {},
+    columns: 80,
+    rows: 24,
+  });
+
+  await start("connection-replaced-old");
+  const oldExternal = externalSessions.get("session-replaced");
+  externalSessions.delete("session-replaced");
+  await oldExternal.options.onClose("renderer-close");
+  await start("connection-replaced-new");
+
+  await assert.doesNotReject(providerOptions[0].onOutputClose("end"));
+  assert.equal(externalSessions.get("session-replaced")?.owner, owners[1]);
+  assert.deepEqual(finishedOwners, []);
+  await ipcMain.handlers.get(CHANNELS.connectionWrite)(event, {
+    sessionId: "session-replaced",
+    data: "new input",
+  });
+  assert.deepEqual(writes, [["new input", owners[1]]]);
 });
 
 test("closing the terminal during plugin authentication cancels the challenge before provider open", async () => {

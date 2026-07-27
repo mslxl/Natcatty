@@ -67,6 +67,7 @@ export async function startPluginConnectionWithBridge(
   }
   throwIfPluginConnectionStartAborted(signal);
   const probe = await raceWithPluginConnectionStartAbort(bridge.invokePluginExtensionProvider({
+    requestId: bridgeOptions.requestId,
     providerId: bridgeOptions.providerId,
     kind: "connection",
     operation: "probe",
@@ -76,7 +77,7 @@ export async function startPluginConnectionWithBridge(
   throwIfPluginConnectionStartAborted(signal);
   if (!probe || typeof probe !== "object" || Array.isArray(probe)
     || (probe as { available?: unknown }).available !== true) {
-    throw new Error((probe as { reason?: string } | null)?.reason || "Plugin connection provider is unavailable");
+    throw new Error((probe as { message?: string } | null)?.message || "Plugin connection provider is unavailable");
   }
   return bridge.startPluginConnection(bridgeOptions);
 }

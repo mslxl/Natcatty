@@ -58,7 +58,18 @@ test("runtime peer exposes secure host capabilities over the canonical RPC trans
       "log.write": async () => null,
     },
   });
-  port1.on("message", (message) => host.accept(message));
+  let resolveUnhandledStreamCancellation;
+  let rejectUnhandledStreamCancellation;
+  const unhandledStreamCancellation = new Promise((resolve, reject) => {
+    resolveUnhandledStreamCancellation = resolve;
+    rejectUnhandledStreamCancellation = reject;
+  });
+  port1.on("message", (message) => {
+    const accepted = host.accept(message);
+    if (message?.frame?.streamId === "unhandled" && message.frame.kind === "cancel") {
+      accepted.then(resolveUnhandledStreamCancellation, rejectUnhandledStreamCancellation);
+    }
+  });
   const lifecycle = [];
   const peer = await startPluginRuntime({
     port: port2,
@@ -121,7 +132,7 @@ test("runtime peer exposes secure host capabilities over the canonical RPC trans
   });
   assert.equal(initialized.pluginId, "com.example.peer");
   const unhandledStream = await host.streams.openOutgoing("unhandled", 1024);
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  await unhandledStreamCancellation;
   await assert.rejects(unhandledStream.write(new Uint8Array([1])), /closed/);
   await assert.rejects(
     host.request("plugin.unknown", {}),
@@ -598,8 +609,8 @@ test("runtime peer routes connection and importer Provider operation maps", asyn
   });
   assert.deepEqual(invocations, [
     ["resize", 132, 44],
-    ["getStatus", "connection-1"],
     ["detect", "hosts.json"],
+    ["getStatus", "connection-1"],
   ]);
 
   await peer.dispose();

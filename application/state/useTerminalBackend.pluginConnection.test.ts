@@ -44,7 +44,7 @@ test("startPluginConnectionWithBridge uses the caller request ID and strips the 
 
   assert.equal(providerRequests[0]?.requestId, startOptions.requestId);
   assert.equal(providerRequests[0]?.operation, "validateConfiguration");
-  assert.equal(providerRequests[1]?.requestId, undefined);
+  assert.equal(providerRequests[1]?.requestId, startOptions.requestId);
   assert.equal(providerRequests[1]?.operation, "probe");
   assert.equal(startRequest?.requestId, startOptions.requestId);
   assert.equal("signal" in (startRequest as Record<string, unknown>), false);
@@ -83,7 +83,7 @@ test("startPluginConnectionWithBridge stops before connection start when the Pro
     async invokePluginExtensionProvider(request: NetcattyExtensionProviderRequest) {
       return request.operation === "validateConfiguration"
         ? { valid: true, issues: [] }
-        : { available: false, reason: "Required helper is missing" };
+        : { available: false, message: "Required helper is missing" };
     },
     async startPluginConnection(_request: NetcattyPluginConnectionStartRequest) {
       startCalled = true;
@@ -92,6 +92,37 @@ test("startPluginConnectionWithBridge stops before connection start when the Pro
   };
 
   await assert.rejects(startPluginConnectionWithBridge(bridge, startOptions), /Required helper is missing/);
+  assert.equal(startCalled, false);
+});
+
+test("startPluginConnectionWithBridge keeps the caller request ID while a Provider probe is cancelled", async () => {
+  const controller = new AbortController();
+  let probeRequest: NetcattyExtensionProviderRequest | null = null;
+  let probeEnteredResolve: (() => void) | null = null;
+  const probeEntered = new Promise<void>((resolve) => { probeEnteredResolve = resolve; });
+  let startCalled = false;
+  const bridge = {
+    async invokePluginExtensionProvider(request: NetcattyExtensionProviderRequest) {
+      if (request.operation === "validateConfiguration") return { valid: true, issues: [] };
+      probeRequest = request;
+      probeEnteredResolve?.();
+      return new Promise<never>(() => {});
+    },
+    async startPluginConnection(_request: NetcattyPluginConnectionStartRequest) {
+      startCalled = true;
+      throw new Error("connection start should not run after cancellation");
+    },
+  };
+
+  const opening = startPluginConnectionWithBridge(bridge, {
+    ...startOptions,
+    signal: controller.signal,
+  });
+  await probeEntered;
+  controller.abort(new DOMException("Terminal closed during probe", "AbortError"));
+
+  await assert.rejects(opening, /Terminal closed during probe/);
+  assert.equal(probeRequest?.requestId, startOptions.requestId);
   assert.equal(startCalled, false);
 });
 

@@ -23,6 +23,20 @@ test('plugin importer drafts receive host-owned identities and reject malformed 
   assert.deepEqual(result.errors, ['Importer returned an invalid snippet draft.']);
 });
 
+test('plugin importer uses canonical Unicode character limits without truncating valid secrets', () => {
+  const label = '😀'.repeat(512);
+  const password = '🔒'.repeat(65_536);
+  const result = normalizePluginImporterRecords([
+    { type: 'draft', draft: { kind: 'identity', value: {
+      label, username: 'root', authMethod: 'password', password,
+    } } },
+  ]);
+
+  assert.deepEqual(result.errors, []);
+  assert.equal(result.identities[0].label, label);
+  assert.equal(result.identities[0].password, password);
+});
+
 test('plugin importer host drafts preserve unavailable namespaced configuration', () => {
   const result = normalizePluginImporterRecords([{ type: 'draft', draft: {
     kind: 'host',
@@ -247,6 +261,91 @@ test('plugin importer rejects unresolved plugin credential references instead of
   ]);
   assert.equal(result.hosts[0].pluginConnection?.credentialId, undefined);
   assert.deepEqual(result.errors, ['Importer returned an unresolved plugin credential reference.']);
+});
+
+test('plugin importer rejects unresolved standard Vault references instead of committing incomplete drafts', () => {
+  const result = normalizePluginImporterRecords([
+    { type: 'draft', draft: { kind: 'identity', value: {
+      label: 'Missing key identity', username: 'root', authMethod: 'key', keyId: 'missing-key',
+    } } },
+    { type: 'draft', draft: { kind: 'host', value: {
+      label: 'Missing credentials host', hostname: 'host.test',
+      identityId: 'missing-identity',
+      telnetIdentityId: 'missing-telnet-identity',
+      identityFileId: 'missing-host-key',
+    } } },
+  ]);
+
+  assert.equal(result.identities[0].keyId, undefined);
+  assert.equal(result.hosts[0].identityId, undefined);
+  assert.equal(result.hosts[0].telnetIdentityId, undefined);
+  assert.equal(result.hosts[0].identityFileId, undefined);
+  assert.deepEqual(result.errors, [
+    'Importer returned an unresolved identity key reference.',
+    'Importer returned an unresolved host identity reference.',
+    'Importer returned an unresolved host Telnet identity reference.',
+    'Importer returned an unresolved host key reference.',
+  ]);
+});
+
+test('plugin importer rejects plugin credential references to duplicate identity source ids', () => {
+  const result = normalizePluginImporterRecords([
+    { type: 'draft', draft: { kind: 'identity', value: {
+      id: 'duplicate-credential', label: 'First identity', username: 'first', authMethod: 'password', password: 'first',
+    } } },
+    { type: 'draft', draft: { kind: 'identity', value: {
+      id: 'duplicate-credential', label: 'Second identity', username: 'second', authMethod: 'password', password: 'second',
+    } } },
+    { type: 'draft', draft: { kind: 'host', value: {
+      label: 'Plugin host', hostname: 'plugin.test', protocol: 'plugin:com.example.transport.connection',
+      identityId: 'duplicate-credential',
+      pluginConnection: {
+        providerId: 'com.example.transport.connection',
+        configuration: {},
+        credentialId: 'duplicate-credential',
+      },
+    } } },
+  ]);
+
+  assert.equal(result.hosts[0].pluginConnection?.credentialId, undefined);
+  assert.equal(result.hosts[0].identityId, undefined);
+  assert.deepEqual(result.errors, [
+    'Importer returned a duplicate identity source ID.',
+    'Importer returned an ambiguous plugin credential reference.',
+  ]);
+});
+
+test('plugin importer rejects plugin credential references to duplicate key source ids', () => {
+  const result = normalizePluginImporterRecords([
+    { type: 'draft', draft: { kind: 'key', value: {
+      id: 'duplicate-credential', label: 'First key', type: 'ED25519', privateKey: 'first',
+    } } },
+    { type: 'draft', draft: { kind: 'key', value: {
+      id: 'duplicate-credential', label: 'Second key', type: 'RSA', privateKey: 'second',
+    } } },
+    { type: 'draft', draft: { kind: 'identity', value: {
+      id: 'dependent-identity', label: 'Dependent identity', username: 'root', authMethod: 'key',
+      keyId: 'duplicate-credential',
+    } } },
+    { type: 'draft', draft: { kind: 'host', value: {
+      label: 'Plugin host', hostname: 'plugin.test', protocol: 'plugin:com.example.transport.connection',
+      identityFileId: 'duplicate-credential',
+      pluginConnection: {
+        providerId: 'com.example.transport.connection',
+        configuration: {},
+        credentialId: 'duplicate-credential',
+      },
+    } } },
+  ]);
+
+  assert.equal(result.hosts[0].pluginConnection?.credentialId, undefined);
+  assert.equal(result.hosts[0].identityFileId, undefined);
+  assert.equal(result.identities[0].keyId, undefined);
+  assert.deepEqual(result.errors, [
+    'Importer returned a duplicate key source ID.',
+    'Importer returned an ambiguous identity key reference.',
+    'Importer returned an ambiguous plugin credential reference.',
+  ]);
 });
 
 test('plugin importer merge skips duplicates and remaps relationships to retained Vault records', () => {

@@ -474,6 +474,7 @@ class PluginExtensionProviderService {
     const activation = await this.activate(providerId, "connection", options.signal);
     const sessionId = assertString(params?.sessionId ?? `plugin-session-${randomUUID()}`, "Plugin session ID", 128);
     if (this.sessions.has(sessionId)) throw new PluginRpcError(RPC_ERRORS.alreadyExists, "Plugin session already exists");
+    const sessionOwner = options.sessionOwner ?? Symbol(`plugin-connection:${sessionId}`);
     const operationId = `connection:${randomUUID()}`;
     const inputStreamId = `${operationId}:input`;
     const outputStreamId = `${operationId}:output`;
@@ -487,7 +488,7 @@ class PluginExtensionProviderService {
         },
         onClose: (reason) => {
           outputClosed = reason ?? "closed";
-          this.closeSessionLocal(sessionId);
+          this.closeSessionLocal(sessionId, undefined, sessionOwner);
           return options.onOutputClose?.(reason);
         },
       });
@@ -528,6 +529,7 @@ class PluginExtensionProviderService {
         input,
         output,
         configuration,
+        sessionOwner,
       });
       this.sessions.set(sessionId, session);
       return freezeJson({ sessionId, providerId, status: result.status, diagnostics: result.diagnostics ?? [] });
@@ -541,14 +543,17 @@ class PluginExtensionProviderService {
     }
   }
 
-  getSession(sessionId) {
+  getSession(sessionId, sessionOwner) {
     const session = this.sessions.get(assertString(sessionId, "Plugin session ID", 128));
     if (!session) throw new PluginRpcError(RPC_ERRORS.notFound, "Plugin connection session was not found");
+    if (sessionOwner !== undefined && session.sessionOwner !== sessionOwner) {
+      throw new PluginRpcError(RPC_ERRORS.notFound, "Plugin connection session was replaced");
+    }
     return session;
   }
 
-  async write(sessionId, data) {
-    const session = this.getSession(sessionId);
+  async write(sessionId, data, sessionOwner) {
+    const session = this.getSession(sessionId, sessionOwner);
     const bytes = typeof data === "string"
       ? new TextEncoder().encode(data)
       : data instanceof Uint8Array
@@ -564,7 +569,7 @@ class PluginExtensionProviderService {
   }
 
   async control(sessionId, operation, payload = {}, options = {}) {
-    const session = this.getSession(sessionId);
+    const session = this.getSession(sessionId, options.sessionOwner);
     const operationId = `connection:${operation}:${randomUUID()}`;
     try {
       const result = await this.invoke({
@@ -574,16 +579,17 @@ class PluginExtensionProviderService {
         payload: { ...payload, connectionId: session.pluginConnectionId, operationId },
         deadlineMs: options.deadlineMs,
       }, { ...options, activation: { activation: session.activation, identity: session.identity } });
-      if (operation === "close") this.closeSessionLocal(sessionId);
+      if (operation === "close") this.closeSessionLocal(sessionId, undefined, session.sessionOwner);
       return result;
     } finally {
       this.leaseStore.revokeOperation(session.identity.pluginId, operationId);
     }
   }
 
-  closeSessionLocal(sessionId, error) {
+  closeSessionLocal(sessionId, error, sessionOwner) {
     const session = this.sessions.get(sessionId);
     if (!session) return false;
+    if (sessionOwner !== undefined && session.sessionOwner !== sessionOwner) return false;
     this.sessions.delete(sessionId);
     try { session.input.cancel?.(); } catch {}
     try { session.output.cancel?.(error); } catch {}

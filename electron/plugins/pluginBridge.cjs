@@ -291,18 +291,30 @@ function registerPluginBridge(ipcMain, options) {
       if (requests.get(requestId) === controller) requests.delete(requestId);
     }
   };
-  const connectionSessionSet = (sender) => {
+  const connectionSessionMap = (sender) => {
     if (!sender || typeof sender !== "object") throw new Error("Plugin connection sender is unavailable");
     let sessions = connectionSessionsBySender.get(sender);
     if (!sessions) {
-      sessions = new Set();
+      sessions = new Map();
       connectionSessionsBySender.set(sender, sessions);
     }
     if (!observedConnectionSenders.has(sender)) {
       observedConnectionSenders.add(sender);
       sender.once?.("destroyed", () => {
-        for (const sessionId of sessions) extensionProviderService?.closeSessionLocal(sessionId);
+        const ownedSessions = [...sessions];
         sessions.clear();
+        for (const [sessionId, sessionOwner] of ownedSessions) {
+          void (async () => {
+            try {
+              await extensionProviderService?.control?.(sessionId, "close", {}, { sessionOwner });
+            } catch {
+              extensionProviderService?.closeSessionLocal?.(sessionId, undefined, sessionOwner);
+            }
+            try {
+              await getTerminalWorkerManager()?.finishExternalSession?.(sessionId, { reason: "closed" }, sessionOwner);
+            } catch {}
+          })();
+        }
       });
     }
     return sessions;
@@ -397,6 +409,7 @@ function registerPluginBridge(ipcMain, options) {
   const pluginConnectionReadyMeta = Object.freeze({ pluginPipelineIngressBytes: 0, pluginConnectionReady: true });
   const monitorPluginConnection = async ({
     sessionId,
+    sessionOwner,
     sessions,
     controller,
     terminalWorkerManager,
@@ -406,21 +419,21 @@ function registerPluginBridge(ipcMain, options) {
     let hasPublishedReady = readyPublished;
     let reconnectAttempted = false;
     try {
-      while (!controller.signal.aborted && sessions.has(sessionId)) {
+      while (!controller.signal.aborted && sessions.get(sessionId) === sessionOwner) {
         await waitForConnectionStatusPoll(controller.signal);
-        if (controller.signal.aborted || !sessions.has(sessionId)) return;
+        if (controller.signal.aborted || sessions.get(sessionId) !== sessionOwner) return;
         const status = await extensionProviderService.control(
           sessionId,
           "getStatus",
           {},
-          { signal: controller.signal },
+          { signal: controller.signal, sessionOwner },
         );
         if (status.status === "connected") {
           reconnectAttempted = false;
           // A zero-byte terminal delivery transitions silent protocols out of
           // the connecting UI without inventing visible terminal output.
           if (!hasPublishedReady) {
-            await terminalWorkerManager.pushExternalOutput(sessionId, "", pluginConnectionReadyMeta);
+            await terminalWorkerManager.pushExternalOutput(sessionId, "", pluginConnectionReadyMeta, sessionOwner);
             hasPublishedReady = true;
           }
           continue;
@@ -432,24 +445,28 @@ function registerPluginBridge(ipcMain, options) {
               sessionId,
               "reconnect",
               {},
-              { signal: controller.signal },
+              { signal: controller.signal, sessionOwner },
             );
             continue;
           }
-          sessions.delete(sessionId);
-          extensionProviderService.closeSessionLocal(sessionId);
-          await terminalWorkerManager.finishExternalSession(sessionId, connectionStatusCloseDetails(status));
+          if (sessions.get(sessionId) === sessionOwner) sessions.delete(sessionId);
+          extensionProviderService.closeSessionLocal(sessionId, undefined, sessionOwner);
+          await terminalWorkerManager.finishExternalSession(
+            sessionId,
+            connectionStatusCloseDetails(status),
+            sessionOwner,
+          );
           return;
         }
       }
     } catch (error) {
       if (controller.signal.aborted) return;
-      sessions.delete(sessionId);
-      extensionProviderService.closeSessionLocal(sessionId);
+      if (sessions.get(sessionId) === sessionOwner) sessions.delete(sessionId);
+      extensionProviderService.closeSessionLocal(sessionId, undefined, sessionOwner);
       await terminalWorkerManager.finishExternalSession(sessionId, {
         reason: "error",
         error: boundedErrorMessage(error),
-      });
+      }, sessionOwner);
     }
   };
   const importerSelectionMap = (sender) => {
@@ -618,8 +635,9 @@ function registerPluginBridge(ipcMain, options) {
     if (!terminalWorkerManager?.startExternalSession) {
       throw new Error("Host terminal pipeline is unavailable for plugin connections");
     }
-    const sessions = connectionSessionSet(event.sender);
+    const sessions = connectionSessionMap(event.sender);
     const sessionId = payload?.sessionId;
+    const sessionOwner = Symbol(`plugin-connection:${sessionId}`);
     const outputDecoder = new TextDecoder("utf-8");
     let credential = payload?.credential;
     let closedDuringStart = false;
@@ -636,6 +654,7 @@ function registerPluginBridge(ipcMain, options) {
       if (connectionController.signal.aborted) throw connectionController.signal.reason;
       await terminalWorkerManager.startExternalSession({
         sessionId,
+        ownerToken: sessionOwner,
         webContentsId: event.sender.id,
         columns: payload?.columns,
         rows: payload?.rows,
@@ -643,22 +662,25 @@ function registerPluginBridge(ipcMain, options) {
         hostLabel: payload?.hostLabel,
         hostname: payload?.hostname,
         sessionLog: payload?.sessionLog,
-        onInput: (data) => (providerOpened ? extensionProviderService.write(sessionId, data) : undefined),
+        onInput: (data) => (providerOpened
+          ? extensionProviderService.write(sessionId, data, sessionOwner)
+          : undefined),
         onResize: ({ columns, rows }) => extensionProviderService.control(
           sessionId,
           "resize",
           { columns, rows },
+          { sessionOwner },
         ),
         onClose: async () => {
           acceptProviderOutput = false;
-          sessions.delete(sessionId);
+          if (sessions.get(sessionId) === sessionOwner) sessions.delete(sessionId);
           connectionController.abort(new DOMException("Terminal session closed", "AbortError"));
           providerCloseStarted = true;
           if (providerOpened) {
-            try { await extensionProviderService.control(sessionId, "close", {}); }
-            catch { extensionProviderService.closeSessionLocal(sessionId); }
+            try { await extensionProviderService.control(sessionId, "close", {}, { sessionOwner }); }
+            catch { extensionProviderService.closeSessionLocal(sessionId, undefined, sessionOwner); }
           } else {
-            extensionProviderService.closeSessionLocal(sessionId);
+            extensionProviderService.closeSessionLocal(sessionId, undefined, sessionOwner);
           }
         },
       });
@@ -684,39 +706,59 @@ function registerPluginBridge(ipcMain, options) {
         ...(credential === undefined ? {} : { credential }),
       }, {
         signal: connectionController.signal,
+        sessionOwner,
         onData: async (bytes) => {
-          if (!acceptProviderOutput || (providerOpened && !sessions.has(sessionId))) return;
+          if (!acceptProviderOutput || (providerOpened && sessions.get(sessionId) !== sessionOwner)) return;
           const data = outputDecoder.decode(bytes, { stream: true });
           if (!data) return;
           try {
-            await terminalWorkerManager.pushExternalOutput(sessionId, data);
+            await terminalWorkerManager.pushExternalOutput(sessionId, data, undefined, sessionOwner);
           } catch (error) {
             if (!acceptProviderOutput
               || connectionController.signal.aborted
-              || (providerOpened && !sessions.has(sessionId))) return;
+              || (providerOpened && sessions.get(sessionId) !== sessionOwner)) return;
             throw error;
           }
         },
         onOutputClose: async (reason) => {
+          const shouldFlushOutput = acceptProviderOutput
+            && !connectionController.signal.aborted
+            && (!providerOpened || sessions.get(sessionId) === sessionOwner);
           acceptProviderOutput = false;
           closedDuringStart = true;
-          sessions.delete(sessionId);
+          if (sessions.get(sessionId) === sessionOwner) sessions.delete(sessionId);
           const finalData = outputDecoder.decode();
-          if (finalData) await terminalWorkerManager.pushExternalOutput(sessionId, finalData);
-          await terminalWorkerManager.finishExternalSession(sessionId, connectionOutputCloseDetails(reason));
+          let finalOutputError;
+          if (shouldFlushOutput && finalData) {
+            try { await terminalWorkerManager.pushExternalOutput(sessionId, finalData, undefined, sessionOwner); }
+            catch (error) { finalOutputError = error; }
+          }
+          await terminalWorkerManager.finishExternalSession(
+            sessionId,
+            finalOutputError
+              ? { reason: "error", error: boundedErrorMessage(finalOutputError, "Plugin connection final output failed") }
+              : connectionOutputCloseDetails(reason),
+            sessionOwner,
+          );
         },
       });
       providerOpened = true;
       if (!closedDuringStart) {
-        sessions.add(opened.sessionId);
+        sessions.set(opened.sessionId, sessionOwner);
         if (opened.status === "connected") {
           // The terminal renderer treats the first delivery as the connection
           // readiness boundary. Preserve that boundary for silent protocols
           // whose Provider completes open before producing terminal bytes.
-          await terminalWorkerManager.pushExternalOutput(opened.sessionId, "", pluginConnectionReadyMeta);
+          await terminalWorkerManager.pushExternalOutput(
+            opened.sessionId,
+            "",
+            pluginConnectionReadyMeta,
+            sessionOwner,
+          );
         }
         void monitorPluginConnection({
           sessionId: opened.sessionId,
+          sessionOwner,
           sessions,
           controller: connectionController,
           terminalWorkerManager,
@@ -726,18 +768,18 @@ function registerPluginBridge(ipcMain, options) {
       return opened;
     } catch (error) {
       acceptProviderOutput = false;
-      sessions.delete(sessionId);
+      if (sessions.get(sessionId) === sessionOwner) sessions.delete(sessionId);
       connectionController.abort(error);
       if (!providerCloseStarted && providerOpened) {
-        try { await extensionProviderService.control(sessionId, "close", {}); }
-        catch { extensionProviderService.closeSessionLocal(sessionId); }
+        try { await extensionProviderService.control(sessionId, "close", {}, { sessionOwner }); }
+        catch { extensionProviderService.closeSessionLocal(sessionId, undefined, sessionOwner); }
       } else if (!providerCloseStarted && !closedDuringStart) {
-        extensionProviderService.closeSessionLocal(sessionId);
+        extensionProviderService.closeSessionLocal(sessionId, undefined, sessionOwner);
       }
       await terminalWorkerManager.finishExternalSession(sessionId, {
         reason: "error",
         error: boundedErrorMessage(error),
-      });
+      }, sessionOwner);
       throw error;
     } finally {
       signal.removeEventListener("abort", abortConnection);
@@ -763,21 +805,26 @@ function registerPluginBridge(ipcMain, options) {
   });
   handle(CHANNELS.connectionWrite, async (_activeManager, payload, event) => {
     if (!extensionProviderService) throw new Error("Plugin connection Providers are unavailable");
-    const sessions = connectionSessionSet(event.sender);
-    if (!sessions.has(payload?.sessionId)) throw new Error("Plugin connection session is not owned by this window");
-    await extensionProviderService.write(payload.sessionId, payload.data);
+    const sessions = connectionSessionMap(event.sender);
+    const sessionOwner = sessions.get(payload?.sessionId);
+    if (sessionOwner === undefined) throw new Error("Plugin connection session is not owned by this window");
+    await extensionProviderService.write(payload.sessionId, payload.data, sessionOwner);
     return null;
   });
   handle(CHANNELS.connectionControl, async (_activeManager, payload, event) => {
     if (!extensionProviderService) throw new Error("Plugin connection Providers are unavailable");
-    const sessions = connectionSessionSet(event.sender);
-    if (!sessions.has(payload?.sessionId)) throw new Error("Plugin connection session is not owned by this window");
+    const sessions = connectionSessionMap(event.sender);
+    const sessionOwner = sessions.get(payload?.sessionId);
+    if (sessionOwner === undefined) throw new Error("Plugin connection session is not owned by this window");
     const result = await extensionProviderService.control(
       payload.sessionId,
       payload.operation,
       payload.payload ?? {},
+      { sessionOwner },
     );
-    if (payload.operation === "close") sessions.delete(payload.sessionId);
+    if (payload.operation === "close" && sessions.get(payload.sessionId) === sessionOwner) {
+      sessions.delete(payload.sessionId);
+    }
     return result;
   });
   ipcMain.handle(CHANNELS.importerDetect, async (event, payload) => runExtensionRequest(event, payload, async (signal) => {
