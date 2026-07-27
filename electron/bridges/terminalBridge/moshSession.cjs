@@ -10,6 +10,11 @@ const {
 const { createSshConnExecProbe } = require("../ai/sessionShellKind.cjs");
 const { orderSshIdentityNames, SSH_KEY_PATTERN } = require("../sshAuthHelper.cjs");
 const { fanoutSessionExit } = require("../terminalAttachRestore.cjs");
+const {
+  buildAuthoritativeKnownHostsContent,
+  buildExternalHostKeySshOptions,
+  vaultPinsConnectionHosts,
+} = require("../externalSshHostKeyPolicy.cjs");
 
 const execFileAsync = promisify(execFile);
 
@@ -356,6 +361,62 @@ function createMoshSessionApi(ctx) {
         if (preferredAuthentications) {
           sshArgs.push("-o", `PreferredAuthentications=${preferredAuthentications}`);
         }
+
+        // Vault known_hosts (issue #2501): Mosh bootstraps via system OpenSSH.
+        // When the vault pins hosts, write an authoritative known_hosts
+        // snapshot (vault pins + filtered system entries) and force
+        // StrictHostKeyChecking=ask so a permissive user ssh_config cannot
+        // disable verification. Vault hosts exclude conflicting system pins
+        // so a rotated system key cannot override the vault.
+        const verifyHostKeys = options.verifyHostKeys !== false;
+        let authoritativeKnownHostsPath = null;
+        let emptyKnownHostsPath = null;
+        if (verifyHostKeys) {
+          // Only override system known_hosts when the vault pins this target
+          // (or a jump host). Unrelated vault entries must not force a temp
+          // UserKnownHostsFile for every Mosh session.
+          const connectionHosts = [
+            { hostname: options.hostname, port: options.port || 22 },
+            ...(Array.isArray(options.jumpHosts)
+              ? options.jumpHosts.map((jump) => ({
+                hostname: jump.hostname,
+                port: jump.port || 22,
+              }))
+              : []),
+          ];
+          if (vaultPinsConnectionHosts(options.knownHosts, connectionHosts)) {
+            const authoritativeContent = buildAuthoritativeKnownHostsContent({
+              knownHosts: options.knownHosts,
+              fs,
+              hostname: options.hostname,
+              port: options.port || 22,
+              username: options.username,
+              pathModule: path,
+              homedir: os.homedir(),
+              memo: new Map(),
+            });
+            if (authoritativeContent) {
+              authoritativeKnownHostsPath = await writeMoshAuthTempFile(
+                safeMoshAuthFileName(sessionId, "authoritative-known-hosts", ".txt"),
+                authoritativeContent,
+              );
+              tempFiles.push(authoritativeKnownHostsPath);
+            }
+          }
+        } else {
+          emptyKnownHostsPath = await writeMoshAuthTempFile(
+            safeMoshAuthFileName(sessionId, "empty-known-hosts", ".txt"),
+            "",
+          );
+          tempFiles.push(emptyKnownHostsPath);
+        }
+        sshArgs.push(...buildExternalHostKeySshOptions({
+          authoritativeKnownHostsPath,
+          emptyKnownHostsPath,
+          verifyHostKeys,
+          protocol: "mosh",
+          style: "args",
+        }));
       } catch (err) {
         cleanupMoshAuthTempFiles(tempFiles);
         throw err;
