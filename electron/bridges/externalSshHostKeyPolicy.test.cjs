@@ -294,6 +294,28 @@ test("buildAuthoritativeKnownHostsContent rewrites pins under resolved HostName"
   assert.doesNotMatch(content, /^prod ssh-ed25519 AAAVAULT$/m);
 });
 
+test("buildAuthoritativeKnownHostsContent keeps port form for resolved HostName", () => {
+  const {
+    buildAuthoritativeKnownHostsContent: build,
+  } = require("./externalSshHostKeyPolicy.cjs");
+  const content = build({
+    knownHosts: [{
+      hostname: "prod",
+      port: 2222,
+      keyType: "ssh-ed25519",
+      publicKey: "ssh-ed25519 AAAVAULT",
+    }],
+    fs,
+    hostname: "prod",
+    port: 2222,
+    globalPaths: [],
+    userPaths: [],
+    execFileSyncFn: () => "hostname 10.0.0.5\n",
+  });
+  assert.match(content, /^\[10\.0\.0\.5\]:2222 ssh-ed25519 AAAVAULT$/m);
+  assert.doesNotMatch(content, /^10\.0\.0\.5 ssh-ed25519 AAAVAULT$/m);
+});
+
 test("runSshG discovery receives port and username", () => {
   const { buildAuthoritativeKnownHostsContent: build } = require("./externalSshHostKeyPolicy.cjs");
   let capturedArgs = null;

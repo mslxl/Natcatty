@@ -35,12 +35,15 @@ const path = require("node:path");
 const os = require("node:os");
 const { execFileSync } = require("node:child_process");
 
-const formatVaultKnownHostLine = (knownHost, { hostnameOverride } = {}) => {
+const formatVaultKnownHostLine = (knownHost, { hostnameOverride, portOverride, bareHostField = false } = {}) => {
   const hostname = String(hostnameOverride || knownHost?.hostname || "").trim();
   if (!hostname) return null;
-  const port = Number.isFinite(knownHost.port) ? Number(knownHost.port) : 22;
+  const port = Number.isFinite(portOverride)
+    ? Number(portOverride)
+    : (Number.isFinite(knownHost.port) ? Number(knownHost.port) : 22);
   // HostKeyAlias pins are looked up by alias name only (default port form).
-  const hostField = hostnameOverride
+  // Resolved HostName pins keep the connection port encoding.
+  const hostField = bareHostField
     ? hostname
     : (port !== 22 ? `[${hostname}]:${port}` : hostname);
   const pubKey = String(knownHost.publicKey || "").trim();
@@ -80,12 +83,14 @@ const formatVaultKnownHostLine = (knownHost, { hostnameOverride } = {}) => {
  * @param {string} [opts.connectionHostname] Netcatty connection hostname
  * @param {number} [opts.connectionPort]
  * @param {string} [opts.hostKeyAlias] Effective OpenSSH HostKeyAlias for the hop
+ * @param {string} [opts.resolvedHostName] Effective OpenSSH HostName for the hop
  */
 const buildVaultKnownHostsContent = (knownHosts, opts = {}) => {
   if (!Array.isArray(knownHosts) || knownHosts.length === 0) return "";
   const connectionHostname = normalizeHostname(opts.connectionHostname);
   const connectionPort = Number.isFinite(opts.connectionPort) ? Number(opts.connectionPort) : 22;
   const hostKeyAlias = String(opts.hostKeyAlias || "").trim();
+  const resolvedHostName = String(opts.resolvedHostName || "").trim();
   const lines = [];
   for (const knownHost of knownHosts) {
     const host = normalizeHostname(knownHost?.hostname);
@@ -93,11 +98,23 @@ const buildVaultKnownHostsContent = (knownHosts, opts = {}) => {
     const isConnectionHost = connectionHostname
       && host === connectionHostname
       && port === connectionPort;
-    // When OpenSSH uses HostKeyAlias, vault pins for this hop must be written
-    // under the alias name so lookup succeeds.
-    const line = formatVaultKnownHostLine(knownHost, {
-      hostnameOverride: isConnectionHost && hostKeyAlias ? hostKeyAlias : undefined,
-    });
+    let lineOpts;
+    if (isConnectionHost && hostKeyAlias) {
+      // HostKeyAlias pins are bare names (default-port form).
+      lineOpts = { hostnameOverride: hostKeyAlias, bareHostField: true };
+    } else if (
+      isConnectionHost
+      && resolvedHostName
+      && normalizeHostname(resolvedHostName) !== connectionHostname
+    ) {
+      // Resolved HostName keeps the connection port encoding.
+      lineOpts = {
+        hostnameOverride: resolvedHostName,
+        portOverride: connectionPort,
+        bareHostField: false,
+      };
+    }
+    const line = formatVaultKnownHostLine(knownHost, lineOpts);
     if (line) lines.push(line);
   }
   if (lines.length === 0) return "";
@@ -657,11 +674,9 @@ const buildAuthoritativeKnownHostsContent = ({
   const vaultContent = buildVaultKnownHostsContent(knownHosts, {
     connectionHostname: hostname,
     connectionPort,
-    // Prefer HostKeyAlias; else rewrite the connection pin under the resolved
-    // HostName so OpenSSH's lookup finds it.
-    hostKeyAlias: lookupHostName && normalizeHostname(lookupHostName) !== normalizeHostname(hostname)
-      ? lookupHostName
-      : hostKeyAlias,
+    // Prefer HostKeyAlias; else rewrite under the resolved HostName (with port).
+    hostKeyAlias,
+    resolvedHostName,
   }).trimEnd();
   if (!vaultContent) return "";
 
