@@ -887,7 +887,15 @@ main();
 
       const sshCmd = process.platform === "win32" ? findExecutable("ssh") : "ssh";
       const args = ["-o", "BatchMode=no"];
-      if (!requireTrustedHost) {
+      // OpenSSH keeps the first StrictHostKeyChecking value it sees. Only inject
+      // accept-new when the session did not already supply a policy (e.g.
+      // verifyHostKeys=false → StrictHostKeyChecking=no on the interactive ET
+      // bootstrap). Prepending accept-new would otherwise win over the session
+      // setting and re-enable mismatch rejection on follow-up ssh execs.
+      const sessionHasStrictHostKeyChecking = (session.sshOptions || []).some(
+        (opt) => typeof opt === "string" && opt.startsWith("StrictHostKeyChecking="),
+      );
+      if (!requireTrustedHost && !sessionHasStrictHostKeyChecking) {
         args.push("-o", "StrictHostKeyChecking=accept-new");
       }
       for (const opt of session.sshOptions) {

@@ -116,6 +116,20 @@ test("filterKnownHostsContentExcludingVaultHosts drops wildcards covering vault 
   assert.match(filtered, /AAAOK/);
 });
 
+test("filterKnownHostsContentExcludingVaultHosts respects negated patterns", () => {
+  const {
+    filterKnownHostsContentExcludingVaultHosts: filter,
+  } = require("./externalSshHostKeyPolicy.cjs");
+  // OpenSSH: target.example.com is excluded by !target; jump still matches.
+  const content = "*.example.com,!target.example.com ssh-ed25519 AAAJUMP\n";
+  const filteredForTarget = filter(content, [{ hostname: "target.example.com", port: 22 }]);
+  // Negation means this line does not pin target → keep it for the jump host.
+  assert.match(filteredForTarget, /AAAJUMP/);
+  const filteredForJump = filter(content, [{ hostname: "jump.example.com", port: 22 }]);
+  // Jump matches the positive wildcard → drop so vault remains authoritative.
+  assert.doesNotMatch(filteredForJump, /AAAJUMP/);
+});
+
 test("filterKnownHostsContentExcludingVaultHosts keeps @revoked for vault hosts", () => {
   const {
     filterKnownHostsContentExcludingVaultHosts: filter,

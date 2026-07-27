@@ -171,6 +171,30 @@ const hashedHostFieldMatchesSelector = (hostField, selector) => {
   return false;
 };
 
+/**
+ * OpenSSH known_hosts host-field matching: a host matches when it matches any
+ * positive pattern and does not match any negated (`!`) pattern. Patterns are
+ * comma-separated in the host field (see known_hosts(5)).
+ */
+const plainHostFieldMatchesSelector = (hostField, selector) => {
+  const patterns = String(hostField || "").split(",");
+  let matchedPositive = false;
+  for (const pattern of patterns) {
+    const token = pattern.trim();
+    if (!token) continue;
+    if (token.startsWith("!")) {
+      if (plainHostPatternMatchesSelector(token.slice(1), selector)) {
+        return false;
+      }
+      continue;
+    }
+    if (plainHostPatternMatchesSelector(token, selector)) {
+      matchedPositive = true;
+    }
+  }
+  return matchedPositive;
+};
+
 const hostFieldMatchesAnyVaultSelector = (hostField, selectors) => {
   if (!selectors.length) return false;
   const field = String(hostField || "").trim();
@@ -178,15 +202,7 @@ const hostFieldMatchesAnyVaultSelector = (hostField, selectors) => {
   if (field.startsWith("|1|")) {
     return selectors.some((selector) => hashedHostFieldMatchesSelector(field, selector));
   }
-  const patterns = field.split(",");
-  for (const pattern of patterns) {
-    const token = pattern.trim();
-    if (!token) continue;
-    if (selectors.some((selector) => plainHostPatternMatchesSelector(token, selector))) {
-      return true;
-    }
-  }
-  return false;
+  return selectors.some((selector) => plainHostFieldMatchesSelector(field, selector));
 };
 
 /**

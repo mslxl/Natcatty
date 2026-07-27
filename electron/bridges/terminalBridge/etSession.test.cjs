@@ -983,6 +983,40 @@ test("prepareEtSshEnvironment applies vault host-key policy to jump hosts", (t) 
   assert.match(config, /accept-new/);
 });
 
+test("execOnEtSession honors session StrictHostKeyChecking=no over accept-new default", async (t) => {
+  let capturedArgs = null;
+  const { api } = makeApi(t, {
+    execFile: (_cmd, args, _opts, cb) => {
+      capturedArgs = args;
+      process.nextTick(() => cb(null, "", ""));
+    },
+  });
+  const env = api.prepareEtSshEnvironment("sess1", {
+    hostname: "host.example",
+    username: "alice",
+    verifyHostKeys: false,
+  });
+  const session = {
+    sshUserHost: env.userHost,
+    sshOptions: env.sshOptions,
+    sshEnv: env.env,
+    externalAuthArtifacts: env.artifacts,
+    externalAuthArtifactsCleaned: false,
+  };
+
+  await api.execOnEtSession(session, "echo ok", 1000);
+
+  const joined = capturedArgs.join(" ");
+  assert.match(joined, /StrictHostKeyChecking=no/);
+  // OpenSSH keeps the first value; accept-new must not precede =no.
+  const firstStrict = capturedArgs.findIndex(
+    (arg, index) => arg === "-o" && String(capturedArgs[index + 1] || "").startsWith("StrictHostKeyChecking="),
+  );
+  assert.ok(firstStrict >= 0);
+  assert.equal(capturedArgs[firstStrict + 1], "StrictHostKeyChecking=no");
+  assert.doesNotMatch(joined, /StrictHostKeyChecking=accept-new/);
+});
+
 test("execOnEtSession requireTrustedHost uses strict host-key checking", async (t) => {
   let capturedArgs = null;
   const { api } = makeApi(t, {
