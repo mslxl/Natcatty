@@ -501,6 +501,7 @@ export const zhTWAiMessages: Messages = {
   'topTabs.controlPanel.theme': '主題',
   'topTabs.controlPanel.theme.light': '淺色',
   'topTabs.controlPanel.theme.dark': '深色',
+  'topTabs.controlPanel.theme.system': '系統',
   'topTabs.externalMcp.enable': '啟用對外 MCP',
   'topTabs.externalMcp.disable': '停用對外 MCP',
   'topTabs.windowOpacity': '視窗透明度',
