@@ -463,6 +463,7 @@ export const ruAiMessages: Messages = {
   'topTabs.controlPanel.theme': 'Тема',
   'topTabs.controlPanel.theme.light': 'Светлая',
   'topTabs.controlPanel.theme.dark': 'Тёмная',
+  'topTabs.controlPanel.theme.system': 'Системная',
   'topTabs.externalMcp.enable': 'Включить внешний MCP',
   'topTabs.externalMcp.disable': 'Отключить внешний MCP',
   'topTabs.windowOpacity': 'Прозрачность окна',

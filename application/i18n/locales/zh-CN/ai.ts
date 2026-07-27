@@ -502,6 +502,7 @@ export const zhCNAiMessages: Messages = {
   'topTabs.controlPanel.theme': '主题',
   'topTabs.controlPanel.theme.light': '浅色',
   'topTabs.controlPanel.theme.dark': '深色',
+  'topTabs.controlPanel.theme.system': '系统',
   'topTabs.externalMcp.enable': '启用对外 MCP',
   'topTabs.externalMcp.disable': '停用对外 MCP',
   'topTabs.windowOpacity': '窗口透明度',

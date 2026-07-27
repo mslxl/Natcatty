@@ -502,6 +502,7 @@ export const enAiMessages: Messages = {
   'topTabs.controlPanel.theme': 'Theme',
   'topTabs.controlPanel.theme.light': 'Light',
   'topTabs.controlPanel.theme.dark': 'Dark',
+  'topTabs.controlPanel.theme.system': 'System',
   'topTabs.externalMcp.enable': 'Enable External MCP',
   'topTabs.externalMcp.disable': 'Disable External MCP',
   'topTabs.windowOpacity': 'Window opacity',

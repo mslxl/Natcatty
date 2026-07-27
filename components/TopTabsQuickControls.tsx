@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import {
   ChevronDown,
   Droplets,
+  Monitor,
   Moon,
   Plug,
   SlidersHorizontal,
@@ -22,7 +23,8 @@ const OPACITY_PRESETS = [
 
 export interface TopTabsQuickControlsProps {
   theme: 'dark' | 'light';
-  onToggleTheme: () => void;
+  themePreference: 'dark' | 'light' | 'system';
+  onThemeChange: (theme: 'dark' | 'light' | 'system') => void;
   externalMcpEnabled: boolean;
   onToggleExternalMcp: (enabled: boolean) => void;
   showExternalMcpToggle?: boolean;
@@ -34,7 +36,8 @@ export interface TopTabsQuickControlsProps {
 
 export const TopTabsQuickControls: React.FC<TopTabsQuickControlsProps> = ({
   theme,
-  onToggleTheme,
+  themePreference,
+  onThemeChange,
   externalMcpEnabled,
   onToggleExternalMcp,
   showExternalMcpToggle = true,
@@ -50,6 +53,11 @@ export const TopTabsQuickControls: React.FC<TopTabsQuickControlsProps> = ({
   const isPresetActive = (value: number) => Math.round(value * 100) === opacityPercent;
   const isDark = theme === 'dark';
   const externalMcpLabelId = React.useId();
+  const themeOptions = [
+    { value: 'light' as const, label: t('topTabs.controlPanel.theme.light') },
+    { value: 'dark' as const, label: t('topTabs.controlPanel.theme.dark') },
+    { value: 'system' as const, label: t('topTabs.controlPanel.theme.system') },
+  ];
 
   return (
     <Popover
@@ -81,7 +89,7 @@ export const TopTabsQuickControls: React.FC<TopTabsQuickControlsProps> = ({
       </Tooltip>
 
       <PopoverContent
-        className="w-64 p-0 app-no-drag"
+        className="w-72 p-0 app-no-drag"
         align="end"
         sideOffset={6}
       >
@@ -152,18 +160,31 @@ export const TopTabsQuickControls: React.FC<TopTabsQuickControlsProps> = ({
 
             <div className="flex items-center justify-between gap-3 rounded-md px-2 py-2 hover:bg-muted/40">
               <div className="flex min-w-0 items-center gap-2 text-sm">
-                {isDark
-                  ? <Sun size={14} className="shrink-0 text-muted-foreground" />
-                  : <Moon size={14} className="shrink-0 text-muted-foreground" />}
+                {themePreference === 'system'
+                  ? <Monitor size={14} className="shrink-0 text-muted-foreground" />
+                  : isDark
+                    ? <Moon size={14} className="shrink-0 text-muted-foreground" />
+                    : <Sun size={14} className="shrink-0 text-muted-foreground" />}
                 <span className="truncate">{t('topTabs.controlPanel.theme')}</span>
               </div>
-              <button
-                type="button"
-                onClick={onToggleTheme}
-                className="h-6 shrink-0 rounded-md bg-muted/50 px-2 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-              >
-                {isDark ? t('topTabs.controlPanel.theme.light') : t('topTabs.controlPanel.theme.dark')}
-              </button>
+              <div className="flex shrink-0 items-center rounded-md bg-muted/50 p-0.5" role="group" aria-label={t('topTabs.controlPanel.theme')}>
+                {themeOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    aria-pressed={themePreference === option.value}
+                    onClick={() => onThemeChange(option.value)}
+                    className={cn(
+                      'h-5 rounded px-1.5 text-[10px] font-medium transition-colors',
+                      themePreference === option.value
+                        ? 'bg-background text-foreground shadow-sm'
+                        : 'text-muted-foreground hover:text-foreground',
+                    )}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 

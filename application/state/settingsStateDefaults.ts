@@ -17,7 +17,7 @@ export {
   resolveReadableForegroundForHsl,
 } from '../../domain/colorContrast';
 
-export const DEFAULT_THEME: 'light' | 'dark' | 'system' = 'dark';
+export const DEFAULT_THEME: 'light' | 'dark' | 'system' = 'system';
 export const DEFAULT_WINDOW_OPACITY = 1;
 export function clampWindowOpacity(opacity: unknown): number {
   const value = Number(opacity);
