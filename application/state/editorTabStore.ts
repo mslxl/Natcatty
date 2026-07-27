@@ -44,6 +44,8 @@ export class EditorTabStore {
 
   getTabs = (): readonly EditorTab[] => this.tabs;
   getTab = (id: EditorTabId): EditorTab | undefined => this.tabs.find((t) => t.id === id);
+  hasTabForSessions = (sessionIds: ReadonlySet<string>): boolean =>
+    this.tabs.some((tab) => sessionIds.has(tab.sessionId));
   isDirty = (id: EditorTabId): boolean => {
     const t = this.getTab(id);
     return !!t && t.content !== t.baselineContent;
@@ -239,6 +241,16 @@ const getTabsSnapshot = () => editorTabStore.getTabs();
 
 export const useEditorTabs = (): readonly EditorTab[] =>
   useSyncExternalStore(editorTabStore.subscribe, getTabsSnapshot, getTabsSnapshot);
+
+export const useHasEditorTabForSessions = (
+  getSessionIds: () => ReadonlySet<string>,
+): boolean => {
+  const getSnapshot = useCallback(
+    () => editorTabStore.hasTabForSessions(getSessionIds()),
+    [getSessionIds],
+  );
+  return useSyncExternalStore(editorTabStore.subscribe, getSnapshot, getSnapshot);
+};
 
 export const useEditorTab = (id: EditorTabId): EditorTab | undefined => {
   const getSnapshot = useCallback(() => editorTabStore.getTab(id), [id]);

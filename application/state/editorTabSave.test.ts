@@ -3,6 +3,11 @@ import assert from "node:assert/strict";
 
 import { EditorTabStore, type EditorTab } from "./editorTabStore.ts";
 import { createEditorTabSaveService } from "./editorTabSave.ts";
+import {
+  isBrowseSessionInteractive,
+  shouldParkBrowseSessions,
+  takeBrowseSessionsForClose,
+} from "./sftp/browseSessionLifecycle.ts";
 
 const deferred = <T = void>() => {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -85,4 +90,48 @@ test("editor tab save service queues newer tab content after an in-flight save",
   assert.equal(await second, true);
   assert.equal(store.getTab("edt_1")?.baselineContent, "v2");
   assert.equal(store.getTab("edt_1")?.content, "v2");
+});
+
+test("promoted side-panel editor saves while hidden and releases its session after close", async () => {
+  const store = new EditorTabStore();
+  const tabId = store.promoteFromModal({
+    sessionId: "conn_1",
+    hostId: "host_1",
+    remotePath: "/tmp/script.sh",
+    fileName: "script.sh",
+    languageId: "shell",
+    content: "echo changed",
+    baselineContent: "echo original",
+    wordWrap: false,
+    viewState: null,
+  });
+  const browseSessions = new Map([["conn_1", "sftp_1"]]);
+  const ownedSessionIds = new Set(["conn_1"]);
+  const applyHiddenLifecycle = () => {
+    const interactive = isBrowseSessionInteractive({
+      surfaceVisible: false,
+      hasOwnedEditorTab: store.hasTabForSessions(ownedSessionIds),
+    });
+    if (shouldParkBrowseSessions({ interactive, browseParked: false })) {
+      takeBrowseSessionsForClose(browseSessions);
+    }
+  };
+
+  applyHiddenLifecycle();
+  assert.equal(browseSessions.get("conn_1"), "sftp_1");
+
+  const writes: string[] = [];
+  const service = createEditorTabSaveService({
+    store,
+    write: async (connectionId, _hostId, _remotePath, content) => {
+      assert.equal(browseSessions.has(connectionId), true);
+      writes.push(content);
+    },
+  });
+  assert.equal(await service.saveTab(tabId), true);
+  assert.deepEqual(writes, ["echo changed"]);
+
+  store.close(tabId);
+  applyHiddenLifecycle();
+  assert.equal(browseSessions.size, 0);
 });

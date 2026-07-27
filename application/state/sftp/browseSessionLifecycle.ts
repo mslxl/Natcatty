@@ -6,6 +6,27 @@
  * sessions held by in-flight streams).
  */
 
+export function isBrowseSessionInteractive(params: {
+  surfaceVisible: boolean;
+  hasOwnedEditorTab: boolean;
+}): boolean {
+  return params.surfaceVisible || params.hasOwnedEditorTab;
+}
+
+export function listRemoteBrowseConnectionIds(
+  tabs: ReadonlyArray<{
+    connection: { id: string; isLocal: boolean } | null;
+  }>,
+): string[] {
+  const ids = new Set<string>();
+  for (const tab of tabs) {
+    const connection = tab.connection;
+    if (!connection || connection.isLocal) continue;
+    ids.add(connection.id);
+  }
+  return [...ids];
+}
+
 export function shouldParkBrowseSessions(params: {
   interactive: boolean;
   /** True after we already soft-closed browse while the owner stayed mounted. */

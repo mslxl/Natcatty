@@ -2,11 +2,32 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  listRemoteBrowseConnectionIds,
+  isBrowseSessionInteractive,
   listRemoteConnectionIdsForRestore,
   shouldParkBrowseSessions,
   shouldRestoreBrowseSessions,
   takeBrowseSessionsForClose,
 } from "./browseSessionLifecycle.ts";
+
+test("editor retention tracks remote browse connections but excludes local panes", () => {
+  assert.deepEqual(listRemoteBrowseConnectionIds([
+    { connection: { id: "remote-a", isLocal: false } },
+    { connection: { id: "local-a", isLocal: true } },
+    { connection: null },
+    { connection: { id: "remote-a", isLocal: false } },
+  ]), ["remote-a"]);
+});
+
+test("keeps a hidden SFTP owner interactive while its promoted editor tab is open", () => {
+  const interactive = isBrowseSessionInteractive({
+    surfaceVisible: false,
+    hasOwnedEditorTab: true,
+  });
+
+  assert.equal(interactive, true);
+  assert.equal(shouldParkBrowseSessions({ interactive, browseParked: false }), false);
+});
 
 test("parks browse only when the interactive surface hides and not already parked", () => {
   assert.equal(shouldParkBrowseSessions({ interactive: false, browseParked: false }), true);
