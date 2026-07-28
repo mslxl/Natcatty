@@ -165,18 +165,26 @@ export async function openTransferSftpSession(
       terminalSettings: deps.terminalSettings,
     });
 
+    // Dedicated transfer / restart-resume must own an independent SSH dial.
+    // Never silently borrow a parked terminal transport (that path is for
+    // dedicated:false + sourceSessionId only). App restart resume depends on
+    // a clean vault connection + checkpoint, not a half-bound lease.
+    const openOpts = wantDedicated
+      ? { ...credentials, reuseTransport: false as const }
+      : credentials;
+
     const hasKey = !!credentials.privateKey || !!credentials.identityFilePaths?.length;
     const hasPassword = !!credentials.password;
 
     if (hasKey) {
       try {
-        const keyFirst = { ...credentials };
+        const keyFirst = { ...openOpts };
         if (!credentials.sudo) keyFirst.password = undefined;
         return await bridge.openSftp(keyFirst);
       } catch (err) {
         if (hasPassword && isAuthError(err)) {
           return await bridge.openSftp({
-            ...credentials,
+            ...openOpts,
             privateKey: undefined,
             certificate: undefined,
             publicKey: undefined,
@@ -189,7 +197,7 @@ export async function openTransferSftpSession(
       }
     }
 
-    return bridge.openSftp(credentials);
+    return bridge.openSftp(openOpts);
   });
 }
 

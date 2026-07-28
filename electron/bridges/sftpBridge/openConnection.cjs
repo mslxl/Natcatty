@@ -810,8 +810,11 @@ function createOpenConnectionApi(ctx) {
 
       // Parked / shared transport without a live terminal session: open an SFTP
       // channel on the registry transport (no second MFA).
+      // Dedicated bulk transfer / restart-resume passes reuseTransport:false so
+      // a transfer never silently attaches to a terminal/parked conn.
       if (
-        !options.sudo
+        options.reuseTransport !== false
+        && !options.sudo
         && typeof findTransportByEndpoint === "function"
         && typeof createSessionBackedSftpClient === "function"
       ) {

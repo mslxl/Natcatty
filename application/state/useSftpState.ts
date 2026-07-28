@@ -283,6 +283,9 @@ export const useSftpState = (
         }
       }
 
+      // Independent vault dial (reuseTransport:false inside openTransferSftpSession).
+      // Must not silently attach to a terminal/parked lease — restart resume and
+      // bulk I/O need a connection the transfer owns for the stream lifetime.
       logger.info(`[SFTP] Opening dedicated transfer connection for ${host.label || host.hostname}`);
       return openTransferSftpSession(
         host,

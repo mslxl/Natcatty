@@ -170,6 +170,14 @@ declare global {
     // picker probe can reuse the named live session even if session.username
     // /port lag the authenticated bridge endpoint.
     reuseOnly?: boolean;
+    /**
+     * When false, openSftp must dial a fresh SSH connection and must not
+     * borrow a parked/shared registry transport. Used for dedicated bulk
+     * transfer / restart-resume so transfers do not attach to a terminal
+     * conn that may die or leave checkpoint resume half-bound.
+     * Default true (browse / MFA-skip reuse of parked transports).
+     */
+    reuseTransport?: boolean;
   }
 
   interface SftpStatResult {
