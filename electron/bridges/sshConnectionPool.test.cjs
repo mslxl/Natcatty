@@ -413,6 +413,21 @@ test("resolveTransportForReuse finds idle transport by endpoint without a sessio
   assert.ok(timers.length >= 1);
 });
 
+test("findTransportByEndpoint ends transports whose socket is destroyed", () => {
+  resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 });
+  const endpoint = { hostId: "h1", hostname: "dead.example", username: "root" };
+  const conn = makeConn();
+  const transport = createTransport({ conn, endpoint });
+  const holder = {};
+  borrowTransport(transport, { holder });
+  returnTransport(holder);
+  assert.equal(transport.state, "idle");
+  conn._sock.destroyed = true;
+  assert.equal(findTransportByEndpoint(endpoint), null);
+  assert.equal(conn.ended, 1);
+  assert.equal(getTransportStats().transports, 0);
+});
+
 test("discardTransport force-ends and unregisters", () => {
   resetSshTransportRegistryForTests({ defaultIdleTtlMs: 60_000 });
   const conn = makeConn();

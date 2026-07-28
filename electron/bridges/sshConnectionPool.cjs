@@ -465,8 +465,13 @@ function findTransportByEndpoint(endpoint) {
   const candidates = [];
   for (const id of ids) {
     const transport = transportsById.get(id);
-    if (!transport || !isTransportSocketHealthy(transport)) {
-      if (transport && (transport.state === "dead" || !transport.conn)) {
+    if (!transport) continue;
+    if (!isTransportSocketHealthy(transport)) {
+      // Socket died under park/live without last-lease teardown — drop it so
+      // "Until app quit" cannot pin unusable jump chains forever.
+      if (transport.state !== "dead") {
+        endTransport(transport, "unhealthy-lookup");
+      } else {
         unregisterTransport(transport);
       }
       continue;

@@ -46,6 +46,45 @@ function buildPortForwardEndpoint({ hostId, hostname, port, username, jumpHosts 
 }
 
 /**
+ * When a shared/reused transport dies, tear down local listeners and mark the
+ * tunnel inactive so rules can restart without a zombie "active" entry.
+ */
+function attachSharedTransportLifecycle(tunnelId, tunnelState, conn, sendStatus) {
+  if (!conn || !tunnelState) return;
+  const onTransportGone = (reason) => {
+    const tunnel = portForwardingTunnels.get(tunnelId) || tunnelState;
+    if (!tunnel || tunnel.cancelled || tunnel._sharedLifecycleSettled) return;
+    tunnel._sharedLifecycleSettled = true;
+    console.log(`[PortForward] Shared transport ${reason} for tunnel ${tunnelId}`);
+    if (tunnel.tcpConnectionHandler && tunnel.conn?.removeListener) {
+      try { tunnel.conn.removeListener("tcp connection", tunnel.tcpConnectionHandler); } catch { /* ignore */ }
+      tunnel.tcpConnectionHandler = null;
+    }
+    if (tunnel.server) {
+      try { tunnel.server.close(); } catch { /* ignore */ }
+      tunnel.server = null;
+    }
+    if (tunnel.sshTransportManaged) {
+      try { returnTransport(tunnel); } catch { /* ignore */ }
+      tunnel.sshTransportManaged = false;
+    }
+    tunnel.conn = null;
+    if (shouldFinalizeTunnelClose(tunnel)) {
+      sendStatus?.("inactive");
+      portForwardingTunnels.delete(tunnelId);
+    }
+  };
+  // Prefer once so a dead socket does not re-enter cleanup.
+  try { conn.once("close", () => onTransportGone("closed")); } catch { /* ignore */ }
+  try {
+    conn.once("error", (err) => {
+      console.warn(`[PortForward] Shared transport error for ${tunnelId}:`, err?.message || err);
+      onTransportGone("error");
+    });
+  } catch { /* ignore */ }
+}
+
+/**
  * Release SSH for a tunnel: if the tunnel holds a transport lease, return it
  * (may idle-park). Otherwise end the dedicated Client as before.
  */
@@ -182,10 +221,13 @@ function bindPortForwardChannels({
         if (destPort !== Number(localPort)) return;
         const destIP = String(info?.destIP || "").trim();
         const expectedBind = String(bindAddress || "127.0.0.1").trim();
-        // ssh2 may report 0.0.0.0 / :: for wildcard listens; accept those as a
-        // match for the configured bind when the port matches.
-        const wildcard = !destIP || destIP === "0.0.0.0" || destIP === "::" || destIP === "*";
-        if (!wildcard && destIP !== expectedBind) return;
+        // For wildcard listens (0.0.0.0 / ::), ssh2 reports the concrete NIC
+        // address that received the connection — accept any destIP.
+        const wildcardBind = !expectedBind
+          || expectedBind === "0.0.0.0"
+          || expectedBind === "::"
+          || expectedBind === "*";
+        if (!wildcardBind && destIP && destIP !== expectedBind) return;
         let stream;
         try {
           stream = accept();
@@ -604,6 +646,9 @@ async function startPortForward(event, payload) {
         sendStatus,
         releaseOnError: true,
       });
+      // Fresh-dial path installs error/close cleanup; shared reuse must too so a
+      // dropped terminal transport does not leave zombie active tunnels.
+      attachSharedTransportLifecycle(tunnelId, tunnelState, existingTransport.conn, sendStatus);
       return sharedResult;
     } catch (shareErr) {
       console.warn(
